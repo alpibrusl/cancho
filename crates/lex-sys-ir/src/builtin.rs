@@ -298,6 +298,16 @@ pub enum Builtin {
     /// (`NULL, NULL`, as `examples/serve/`'s own hand-written call
     /// already does). Fixed, for the same reason `listen` is.
     Accept,
+    /// `null_ptr() -> [] c_ptr` — the one producer of a `c_ptr` that is
+    /// not a foreign call's return, edition 3 only
+    /// (`docs/opaque-pointers.md` §3).
+    ///
+    /// Needed because OpenSSL's own error convention is "returns `NULL`
+    /// on failure" for `SSL_CTX_new`/`SSL_new`, and the no-coercion rule
+    /// on `c_ptr` forbids building that comparison value out of an `int`
+    /// literal. Fixed, like `sqrt`: nothing about it depends on the
+    /// call site.
+    NullPtr,
 }
 
 impl Builtin {
@@ -336,6 +346,7 @@ impl Builtin {
         Builtin::Bind,
         Builtin::Listen,
         Builtin::Accept,
+        Builtin::NullPtr,
     ];
 
     pub fn name(self) -> &'static str {
@@ -374,6 +385,7 @@ impl Builtin {
             Builtin::Bind => "bind",
             Builtin::Listen => "listen",
             Builtin::Accept => "accept",
+            Builtin::NullPtr => "null_ptr",
         }
     }
 
@@ -389,6 +401,11 @@ impl Builtin {
     pub fn since(self) -> u32 {
         match self {
             Builtin::Connect | Builtin::Bind | Builtin::Listen | Builtin::Accept => 2,
+            // `docs/opaque-pointers.md` §4: purely additive, the same
+            // reason `Net`'s builtins needed edition 2 rather than
+            // silently widening edition 1 -- an edition-1 file may
+            // already declare its own `extern fn null_ptr`.
+            Builtin::NullPtr => 3,
             _ => 1,
         }
     }
@@ -598,6 +615,10 @@ impl Builtin {
             // signatures (`docs/listen.md` §6).
             Builtin::Listen => (vec![Type::Int, Type::Int], Type::Int),
             Builtin::Accept => (vec![Type::Int], Type::Int),
+            // No capability, no data in, one opaque handle out
+            // (`docs/opaque-pointers.md` §3) -- a fixed signature like
+            // `sqrt`'s, not a call-site check like `len`'s.
+            Builtin::NullPtr => (Vec::new(), Type::CPtr),
         }
     }
 

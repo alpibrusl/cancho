@@ -41,6 +41,15 @@ pub(crate) fn leaves_into(
 ) {
     match ty {
         Type::Int => out.push(types::I64),
+        // `docs/opaque-pointers.md` §4: a handle rides in a register
+        // exactly like an integer-shaped file descriptor already does
+        // (`docs/reach.md` §3.1.1) -- one pointer-width leaf, same as a
+        // reference's own leaf just below.
+        Type::CPtr => out.push(pointer),
+        // `docs/function-values.md` §4.2: `val`, one leaf, a pointer to
+        // the target's compiled entry point -- the same treatment
+        // `Type::CPtr` and a reference's own pointer leaf already get.
+        Type::Fn(..) => out.push(pointer),
         // `docs/floating-point.md` §1: binary64, which is `F64` and
         // nothing else. A `float` is one leaf, like an `int`.
         Type::Float => out.push(types::F64),

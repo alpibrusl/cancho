@@ -144,6 +144,16 @@ pub(crate) fn leaves_of(ty: &Type, program: &Program) -> Result<Vec<LKind>, Stri
 fn leaves_into(ty: &Type, program: &Program, out: &mut Vec<LKind>) -> Result<(), String> {
     match ty {
         Type::Int => out.push(LKind::I64),
+        // `docs/opaque-pointers.md` §4: LLVM's own `ptr` kind, not `i64`
+        // -- an opaque handle is never arithmetic here, so there is no
+        // reason to spell it as an integer the way Cranelift's pointer-
+        // width leaf does; `LKind::Ptr`'s `zero()` is already `"null"`,
+        // exactly the sentinel `null_ptr()` needs.
+        Type::CPtr => out.push(LKind::Ptr),
+        // `docs/function-values.md` §4.2: `val`, one leaf, a pointer to
+        // the target's compiled entry point -- LLVM's own `ptr` kind,
+        // the same one `Type::CPtr` and a reference's own leaf use.
+        Type::Fn(..) => out.push(LKind::Ptr),
         Type::Byte | Type::Bool => out.push(LKind::I8),
         Type::Float => out.push(LKind::F64),
         Type::Ref { inner, .. } => {
@@ -255,27 +265,49 @@ pub(crate) fn emit_module(
     // IEEE-754, which is why this is the one arithmetic builtin that is
     // an intrinsic rather than an instruction sequence.
     text.push_str("declare double @llvm.sqrt.f64(double)\n");
+
+    // Every libc symbol from here down is one a program predating `Net`/
+    // `Fs` (`examples/serve/`, `examples/vsock/`, and siblings) may
+    // declare for itself through `extern fn`, at lex-sys's own crossing
+    // widths (`docs/reach.md` §3) rather than libc's true ones -- exactly
+    // the collision `read`/`write` were first guarded against
+    // (`tests/accept/bytes_to_c.ls`, this backend's #117). Declaring
+    // unconditionally, the way `putchar`/`malloc` safely do, made
+    // `--backend llvm` refuse every socket-declaring example the moment
+    // it became the default (`docs/llvm-backend.md`'s own long-recorded
+    // "already-accepted exposure," #92's Cranelift equivalent) -- not
+    // hypothetical once this is what `build` reaches without a flag. So
+    // every one of these is now guarded the same way: a program naming
+    // the symbol itself is trusted to have declared the signature it
+    // actually needs, and this backend does not also insist on its own.
+    let extern_symbols: std::collections::BTreeSet<&str> =
+        program.externs.iter().map(|e| e.symbol.as_str()).collect();
+    let declare_libc_unless_own = |text: &mut String, symbol: &str, signature: &str| {
+        if !extern_symbols.contains(symbol) {
+            text.push_str(&format!("declare {signature}\n"));
+        }
+    };
+
     // `listen`/`accept` (`docs/net.md` §7.20, `docs/listen.md` §6):
     // neither takes a capability -- the port was already bound at
-    // `bind` -- so both are ordinary fixed-signature libc calls,
-    // declared unconditionally the same way every other libc symbol
-    // here is.
-    text.push_str("declare i32 @listen(i32, i32)\n");
-    text.push_str("declare i32 @accept(i32, ptr, ptr)\n");
+    // `bind`.
+    declare_libc_unless_own(&mut text, "listen", "i32 @listen(i32, i32)");
+    declare_libc_unless_own(&mut text, "accept", "i32 @accept(i32, ptr, ptr)");
     // `bind` (§7.21, `docs/listen.md` §6): `socket`+`setsockopt`+`bind`
     // folded into one call, the same libc surface `examples/serve/
     // serve.ls` reaches by hand and `lex-sys-codegen`'s own `body/net.rs`
     // already declares for Cranelift.
-    text.push_str("declare i32 @socket(i32, i32, i32)\n");
-    text.push_str("declare i32 @setsockopt(i32, i32, i32, ptr, i32)\n");
-    text.push_str("declare i32 @bind(i32, ptr, i32)\n");
-    text.push_str("declare i32 @close(i32)\n");
+    declare_libc_unless_own(&mut text, "socket", "i32 @socket(i32, i32, i32)");
+    declare_libc_unless_own(&mut text, "setsockopt", "i32 @setsockopt(i32, i32, i32, ptr, i32)");
+    declare_libc_unless_own(&mut text, "bind", "i32 @bind(i32, ptr, i32)");
+    declare_libc_unless_own(&mut text, "close", "i32 @close(i32)");
     // `connect` (§7.22, `docs/connect.md` §10): the last of `Net`'s four
     // builtins, needing `getaddrinfo`/`freeaddrinfo` (host resolution)
     // and `connect` itself alongside the `socket` already declared above.
-    text.push_str("declare i32 @getaddrinfo(ptr, ptr, ptr, ptr)\n");
-    text.push_str("declare void @freeaddrinfo(ptr)\n");
-    text.push_str("declare i32 @connect(i32, ptr, i32)\n\n");
+    declare_libc_unless_own(&mut text, "getaddrinfo", "i32 @getaddrinfo(ptr, ptr, ptr, ptr)");
+    declare_libc_unless_own(&mut text, "freeaddrinfo", "void @freeaddrinfo(ptr)");
+    declare_libc_unless_own(&mut text, "connect", "i32 @connect(i32, ptr, i32)");
+    text.push('\n');
 
     // `Fs` (§7.24, `docs/filesystem.md` §3-4, `docs/file-handles.md`):
     // `fs_read`/`fs_write` (`creat`/`open` then `read`/`write` then
@@ -285,26 +317,10 @@ pub(crate) fn emit_module(
     // modern libc -- `__errno_location` on glibc, `__error` on Darwin --
     // both answering a pointer to a thread-local `int`, the same split
     // `lex-sys-codegen`'s own `errno` already makes.
-    //
-    // `read`/`write` are guarded, unlike every other declare here: they
-    // are also the two libc symbols a foreign-call program is likeliest
-    // to declare for itself (`tests/accept/bytes_to_c.ls`'s own `extern
-    // fn write`, found breaking exactly that fixture this slice's own
-    // session) -- lex-sys's own `int` crosses `extern fn` at `i64`
-    // (`docs/reach.md` §3), never libc's true 32-bit `fd`, so the two
-    // declarations disagree whenever both exist. A program naming
-    // either symbol itself is trusted to have declared the signature it
-    // actually needs; this backend does not also insist on its own.
-    text.push_str("declare i32 @creat(ptr, i32)\n");
-    text.push_str("declare i32 @open(ptr, i32)\n");
-    let extern_symbols: std::collections::BTreeSet<&str> =
-        program.externs.iter().map(|e| e.symbol.as_str()).collect();
-    if !extern_symbols.contains("read") {
-        text.push_str("declare i64 @read(i32, ptr, i64)\n");
-    }
-    if !extern_symbols.contains("write") {
-        text.push_str("declare i64 @write(i32, ptr, i64)\n");
-    }
+    declare_libc_unless_own(&mut text, "creat", "i32 @creat(ptr, i32)");
+    declare_libc_unless_own(&mut text, "open", "i32 @open(ptr, i32)");
+    declare_libc_unless_own(&mut text, "read", "i64 @read(i32, ptr, i64)");
+    declare_libc_unless_own(&mut text, "write", "i64 @write(i32, ptr, i64)");
     let errno_symbol = match triple.operating_system {
         target_lexicon::OperatingSystem::Darwin(_) => "__error",
         _ => "__errno_location",

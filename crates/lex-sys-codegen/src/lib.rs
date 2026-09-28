@@ -40,22 +40,33 @@ pub use layout::*;
 
 /// Code generation failed (`docs/internal-errors.md`).
 ///
-/// Every one of these is a bug in the compiler, not in the program: the
-/// checker accepted it. `function` is what makes that reportable -- the
-/// CLI turns it into an `internal` refusal located at the function's
-/// declaration -- and it is `None` only for a failure outside any one
-/// function, such as defining a data object or finishing the module.
+/// Every one of these used to be a bug in the compiler, not in the
+/// program -- true of Cranelift, which has no environment to fail in.
+/// `lex-sys-codegen-llvm` shells out to a real external tool, so one
+/// failure mode here genuinely is not a bug: `clang` not being on the
+/// host at all. `environment` is `true` for exactly that case and
+/// `false` for everything else, so the CLI can tell "lex-sys has a bug"
+/// from "the host is missing a tool" apart rather than reporting both as
+/// `internal` (`docs/llvm-backend.md`). `function` is what makes the
+/// `internal` case reportable -- the CLI turns it into a refusal located
+/// at the function's declaration -- and it is `None` only for a failure
+/// outside any one function, such as defining a data object, finishing
+/// the module, or (always, since no function caused it) an
+/// `environment` failure.
 #[derive(Debug)]
 pub struct CodegenError {
     /// The index into `Program::funcs` of the function being generated.
     pub function: Option<usize>,
     /// Cranelift's own text, or the panic's: what a bug report needs.
     pub message: String,
+    /// `true` when the host's environment is what failed (a missing
+    /// tool), not lex-sys's own code generation.
+    pub environment: bool,
 }
 
 impl CodegenError {
     fn plain(message: impl Into<String>) -> CodegenError {
-        CodegenError { function: None, message: message.into() }
+        CodegenError { function: None, message: message.into(), environment: false }
     }
 }
 

@@ -1,10 +1,20 @@
-//~ ERROR no function values
+//~ ERROR cannot be a value
 //~ RULE no-function-values
 
-fn helper() -> [] int {
-    return 0;
+// `docs/function-values.md` §4.2, corrected in place: a named,
+// top-level function with no type parameters is a real value now
+// (`tests/accept/function_value.ls`). What stays refused under this
+// rule is exactly what §4.2's own table names: a function that IS
+// generic has no address until its type arguments are known, so it
+// cannot be one -- monomorphisation needs every instantiation settled
+// where the value is made, and a value has no call-site arguments to
+// settle it from.
+
+fn helper[T](x: T) -> [] T {
+    return x;
 }
 
 fn main() -> [] int {
-    return helper;
+    let h = helper;
+    return 0;
 }

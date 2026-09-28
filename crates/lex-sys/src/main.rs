@@ -322,7 +322,7 @@ fn parse_args(args: &[String], allow_output: bool) -> Result<Invocation, Failure
     let mut emit = Emit::Exe;
     let mut with_std = false;
     let mut json = false;
-    let mut backend = Backend::Cranelift;
+    let mut backend = Backend::Llvm;
     let mut it = args.iter();
 
     while let Some(arg) = it.next() {
@@ -481,7 +481,8 @@ fn check_program(
     let refusals = match compile_reporting(inputs, with_std) {
         Ok((program, _)) => match backend(&program, inputs, backend_kind) {
             Ok(_) => Vec::new(),
-            Err(refusals) => refusals,
+            Err(BackendFailure::Refusals(refusals)) => refusals,
+            Err(BackendFailure::Environment(message)) => return Err(environment(message)),
         },
         Err(refusals) => refusals,
     };
@@ -660,11 +661,17 @@ fn compile_reporting(
 /// `CodegenError` for everything its first slice does not lower), but the
 /// same catch applies to it too: a bug there should read as `internal`,
 /// not as a crash, exactly like a bug in `lex-sys-codegen` does.
+///
+/// A bug is not the only way this backend fails now that it is the
+/// default: `Backend::Llvm` shells out to a real `clang`, so a host
+/// missing one is not lex-sys's bug, it is the environment's
+/// (`CodegenError::environment`). `BackendFailure` keeps that apart from
+/// an ordinary refusal so a caller reports exit 3, not 1.
 fn backend(
     program: &lex_sys_ir::Program,
     inputs: &[PathBuf],
     backend_kind: Backend,
-) -> Result<Vec<u8>, Vec<Refusal>> {
+) -> Result<Vec<u8>, BackendFailure> {
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
     let result = match backend_kind {
@@ -672,7 +679,22 @@ fn backend(
         Backend::Llvm => lex_sys_codegen_llvm::compile_object(program, "main"),
     };
     std::panic::set_hook(hook);
-    result.map_err(|e| vec![internal_refusal(program, &e, inputs)])
+    result.map_err(|e| {
+        if e.environment {
+            BackendFailure::Environment(e.message.clone())
+        } else {
+            BackendFailure::Refusals(vec![internal_refusal(program, &e, inputs)])
+        }
+    })
+}
+
+enum BackendFailure {
+    /// The compiler's own bug, reported as it always was: rule
+    /// `internal`, exit 1, located at the function that failed.
+    Refusals(Vec<Refusal>),
+    /// The host's, not lex-sys's: `--backend llvm` could not reach a
+    /// real `clang`. Exit 3 (`docs/llvm-backend.md`).
+    Environment(String),
 }
 
 fn internal_refusal(
@@ -1063,15 +1085,20 @@ fn build(
     backend_kind: Backend,
 ) -> Result<(), Failure> {
     let program = compile_to_ir(inputs, with_std)?;
-    // A backend failure is a refusal with rule `internal`, exit 1, located
-    // at the function (`docs/internal-errors.md` §2) -- no longer exit 3,
-    // which says the *environment* failed.
-    let object = backend(&program, inputs, backend_kind).map_err(|refusals| {
-        let text: Vec<String> = match parse_program(inputs, with_std) {
-            Ok((_, map)) => refusals.iter().map(|r| r.render(&map)).collect(),
-            Err(_) => refusals.iter().map(|r| r.message.clone()).collect(),
-        };
-        refused(text.join("\n\n"))
+    // A compiler bug in the backend is a refusal with rule `internal`,
+    // exit 1, located at the function (`docs/internal-errors.md` §2).
+    // Since `--backend llvm` became the default, a *host* missing
+    // `clang` is not that -- it is exit 3, the environment, same as any
+    // other missing tool.
+    let object = backend(&program, inputs, backend_kind).map_err(|failure| match failure {
+        BackendFailure::Refusals(refusals) => {
+            let text: Vec<String> = match parse_program(inputs, with_std) {
+                Ok((_, map)) => refusals.iter().map(|r| r.render(&map)).collect(),
+                Err(_) => refusals.iter().map(|r| r.message.clone()).collect(),
+            };
+            refused(text.join("\n\n"))
+        }
+        BackendFailure::Environment(message) => environment(message),
     })?;
 
     match emit {
@@ -1128,8 +1155,11 @@ mod tests {
 
     fn refusal_for(body: lex_sys_ir::Stmt) -> (Refusal, lex_sys_syntax::Span) {
         let (program, span) = broken(body);
-        let mut refusals = backend(&program, &[PathBuf::from("seven.ls")], Backend::Cranelift)
+        let failure = backend(&program, &[PathBuf::from("seven.ls")], Backend::Cranelift)
             .expect_err("the backend should refuse");
+        let BackendFailure::Refusals(mut refusals) = failure else {
+            panic!("Cranelift has no environment failure mode; expected a refusal");
+        };
         assert_eq!(refusals.len(), 1, "code generation stops at the first failure");
         (refusals.remove(0), span)
     }

@@ -105,10 +105,23 @@ fn arity_is_checked_for_functions_and_builtins() {
 }
 
 #[test]
-fn a_function_is_not_a_value() {
+fn a_captureless_function_is_a_value() {
+    // `docs/function-values.md` §4.2: a named, top-level function with
+    // no type parameters is a real value now, `Type::Fn` and not a
+    // type mismatch.
+    let p = lower_src("fn g() -> [] int { return 1; } fn f() -> [] int { let h = g; return h(); }")
+        .expect("should check");
+    assert_eq!(p.funcs.len(), 2);
+}
+
+#[test]
+fn a_generic_function_is_not_a_value() {
+    // §4.2's own condition: monomorphisation needs every instantiation
+    // known where the value is made, and a value has no call-site
+    // arguments to determine one from.
     assert!(
-        error("fn g() -> [] int { return 1; } fn f() -> [] int { return g; }")
-            .contains("no function values")
+        error("fn g[T](x: T) -> [] T { return x; } fn f() -> [] int { let h = g; return 1; }")
+            .contains("cannot be a value")
     );
 }
 

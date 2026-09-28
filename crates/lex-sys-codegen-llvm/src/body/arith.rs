@@ -49,10 +49,12 @@ impl<'a> FuncEmitter<'a> {
                 .into_iter()
                 .next()
                 .ok_or_else(|| "a zero-leaf element has no scalar kind".to_owned()),
-            Expr::Deref { ty, .. } | Expr::Contents { ty, .. } => leaves_of(ty, self.program)?
-                .into_iter()
-                .next()
-                .ok_or_else(|| "a zero-leaf value has no scalar kind".to_owned()),
+            Expr::Deref { ty, .. } | Expr::Contents { ty, .. } | Expr::Unboxed { ty, .. } => {
+                leaves_of(ty, self.program)?
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| "a zero-leaf value has no scalar kind".to_owned())
+            }
             // `len(s)`/`unbox_slice(h, b)` are their own nodes, not
             // `Callee::Builtin` calls (`lex-sys-codegen`'s own `Expr::Len`/
             // `Expr::UnboxedSlice` arms are `unreachable!()` inside
@@ -82,6 +84,10 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::Release,
                 ) => Ok(LKind::I64),
                 Callee::Builtin(Builtin::IsNan | Builtin::ByteOf) => Ok(LKind::I8),
+                // `docs/opaque-pointers.md` §3: the one builtin whose
+                // fixed return is `c_ptr` rather than a scalar the
+                // arms above already cover.
+                Callee::Builtin(Builtin::NullPtr) => Ok(LKind::Ptr),
                 Callee::Fn(id) => {
                     let target = self.program.func(*id);
                     leaves_of(&target.ret, self.program)?
@@ -224,6 +230,21 @@ impl<'a> FuncEmitter<'a> {
     /// which trap on both (`docs/defined-behaviour.md`). So both checks
     /// this backend needs are explicit, ahead of the instruction, rather
     /// than inherited from the instruction the way `checked_arith`'s is.
+    ///
+    /// `int::MIN / -1` traps for real: the mathematical answer does not
+    /// fit in 64 bits. `int::MIN % -1` does not -- a remainder can never
+    /// overflow, so `a % -1` is exactly `0` for every `a`, the identity
+    /// `docs/emitted-checks.md` §4.1-4.2 measured Cranelift's own
+    /// optimiser already exploits (it never emits a trapping instruction
+    /// for this case at all). This backend used to trap on
+    /// `int::MIN % -1` too, conflating "the pair `srem` cannot answer"
+    /// with "the pair `sdiv` cannot answer" -- found once `--backend
+    /// llvm` became the default and a Cranelift-passing fixture started
+    /// dying by signal instead of returning 0. Fixed with real control
+    /// flow, not a `select`: `select`'s two arms are both evaluated, so
+    /// `srem` would still see the undefined pair even if its answer were
+    /// discarded. A branch is the only way to keep LLVM from ever
+    /// lowering `srem i64 int::MIN, -1` at all.
     pub(crate) fn checked_div(
         &mut self,
         a: LValue,
@@ -240,11 +261,30 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("  {is_neg1} = icmp eq i64 {b_op}, -1\n"));
         let both = self.fresh();
         self.out.push_str(&format!("  {both} = and i1 {is_min}, {is_neg1}\n"));
-        self.trap_if(&both)?;
-        let result = self.fresh();
-        let instr = if remainder { "srem" } else { "sdiv" };
-        self.out.push_str(&format!("  {result} = {instr} i64 {a_op}, {b_op}\n"));
-        Ok(vec![LValue::Reg(result)])
+        if remainder {
+            let n = self.blocks;
+            self.blocks += 1;
+            let (special, compute, end) =
+                (format!("remspecial{n}"), format!("remcompute{n}"), format!("remend{n}"));
+            self.out.push_str(&format!("  br i1 {both}, label %{special}, label %{compute}\n"));
+            self.out.push_str(&format!("{compute}:\n"));
+            let computed = self.fresh();
+            self.out.push_str(&format!("  {computed} = srem i64 {a_op}, {b_op}\n"));
+            self.out.push_str(&format!("  br label %{end}\n"));
+            self.out.push_str(&format!("{special}:\n"));
+            self.out.push_str(&format!("  br label %{end}\n"));
+            self.out.push_str(&format!("{end}:\n"));
+            let result = self.fresh();
+            self.out.push_str(&format!(
+                "  {result} = phi i64 [ 0, %{special} ], [ {computed}, %{compute} ]\n"
+            ));
+            Ok(vec![LValue::Reg(result)])
+        } else {
+            self.trap_if(&both)?;
+            let result = self.fresh();
+            self.out.push_str(&format!("  {result} = sdiv i64 {a_op}, {b_op}\n"));
+            Ok(vec![LValue::Reg(result)])
+        }
     }
 
     /// `Shl`/`Shr`: an amount outside `0..64` traps (`docs/bitwise.md`

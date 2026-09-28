@@ -501,6 +501,26 @@ pub enum Expr {
         callee: Callee,
         args: Vec<Expr>,
     },
+    /// A captureless function value, naming its target's own `DefId`
+    /// (`docs/function-values.md` §4.2's "Identity" row): the address a
+    /// call through it dials, and nothing else. The backend reads the
+    /// target's own compiled signature off `Program::funcs`, the same
+    /// place `Callee::Fn`'s own call already reads it from.
+    FnValue(FuncId),
+    /// A call through a value rather than a name: `h(args)` where `h`'s
+    /// type is `Type::Fn` (`docs/function-values.md` §4.2's "A call
+    /// through it performs exactly the row in its type").
+    ///
+    /// `params`/`ret` travel with the node because by lowering time only
+    /// the *type* is known, the same reason [`Expr::FileOp`]'s prefix
+    /// does — the backend needs them to build the indirect call's own
+    /// signature, since there is no declaration to read one from.
+    CallIndirect {
+        target: Box<Expr>,
+        args: Vec<Expr>,
+        params: Vec<Type>,
+        ret: Box<Type>,
+    },
     /// A `static`'s data, by index into [`Program::statics`]
     /// (`docs/compile-time-data.md` §2).
     ///

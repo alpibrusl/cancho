@@ -341,6 +341,13 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::Release) => {
                         vec![self.builder.ins().iconst(types::I64, 0)]
                     }
+                    // `docs/opaque-pointers.md` §3: the null handle,
+                    // pointer-width and zero like every other null
+                    // pointer this backend already emits (`abi::leaves_
+                    // into`'s own `Type::Ref` arm).
+                    Callee::Builtin(Builtin::NullPtr) => {
+                        vec![self.builder.ins().iconst(self.pointer, 0)]
+                    }
                     Callee::Fn(id) => {
                         let callee = &self.program.funcs[id.0 as usize];
                         let ret = callee.ret.clone();
@@ -608,6 +615,53 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                         vec![self.builder.ins().sextend(types::I64, result)]
                     }
                 }
+            }
+            // `docs/function-values.md` §4.2: the target's own address,
+            // taken rather than called -- the same `FuncId` `Callee::Fn`
+            // above declares into this function, read here as a value
+            // instead of called.
+            Expr::FnValue(id) => {
+                let f = self
+                    .module
+                    .declare_func_in_func(self.declared[id.0 as usize], self.builder.func);
+                vec![self.builder.ins().func_addr(self.pointer, f)]
+            }
+            // A call through a value: `params`/`ret` build the callee's
+            // signature the same way `emit.rs`'s own declare loop builds
+            // one for every named function, since there is no
+            // declaration to read one from at an indirect call site.
+            Expr::CallIndirect { target, args, params, ret } => {
+                let addr = self.scalar(target);
+                let flat_args: Vec<Value> = args.iter().flat_map(|a| self.expr(a)).collect();
+                let mut sig = self.module.make_signature();
+                sig.call_conv = self.module.isa().default_call_conv();
+                for param in params {
+                    for leaf in leaves(param, self.program, self.pointer) {
+                        sig.params.push(AbiParam::new(leaf));
+                    }
+                }
+                let indirect = returns_indirectly(ret, self.program, self.pointer);
+                if indirect {
+                    sig.params.insert(0, AbiParam::new(self.pointer));
+                } else {
+                    for leaf in leaves(ret, self.program, self.pointer) {
+                        sig.returns.push(AbiParam::new(leaf));
+                    }
+                }
+                let sig_ref = self.builder.import_signature(sig);
+                if !indirect {
+                    let call = self.builder.ins().call_indirect(sig_ref, addr, &flat_args);
+                    return self.builder.inst_results(call).to_vec();
+                }
+                // Too wide for registers: the same out-buffer convention
+                // `Callee::Fn`'s own wide-return branch uses.
+                let buffer = self.return_buffer(ret);
+                let mut with_buffer = Vec::with_capacity(flat_args.len() + 1);
+                with_buffer.push(buffer);
+                with_buffer.extend(flat_args);
+                self.builder.ins().call_indirect(sig_ref, addr, &with_buffer);
+                let kinds = leaves(ret, self.program, self.pointer);
+                self.load_leaves(buffer, &kinds)
             }
         }
     }

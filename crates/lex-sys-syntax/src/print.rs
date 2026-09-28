@@ -432,6 +432,15 @@ impl Printer<'_> {
             TypeExpr::Slice(inner) => format!("[{}]", self.ty(*inner)),
             TypeExpr::Tuple(parts) => tuple(parts.iter().map(|p| self.ty(*p)).collect()),
             TypeExpr::Lit(text) => format!("\"{}\"", escape(text)),
+            TypeExpr::Fn { params, effects, ret } => {
+                let params: Vec<String> = params.iter().map(|p| self.ty(*p)).collect();
+                format!(
+                    "fn({}) -> {} {}",
+                    params.join(", "),
+                    self.effect_row(effects),
+                    self.ty(*ret)
+                )
+            }
         }
     }
 

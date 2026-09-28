@@ -115,6 +115,13 @@ pub enum TypeExpr {
     /// different types, which is how a narrowed capability differs from a
     /// wider one in a way the checker can see.
     Lit(String),
+    /// `fn(A, B) -> [row] R` — a captureless function value's type
+    /// (`docs/function-values.md` §4.2).
+    ///
+    /// The row is written here exactly like an `fn`/`extern fn`
+    /// declaration's own, reusing `EffectLabel` rather than a second
+    /// syntax for one row.
+    Fn { params: Vec<TypeId>, effects: Vec<EffectLabel>, ret: TypeId },
 }
 
 impl TypeExpr {
@@ -123,9 +130,11 @@ impl TypeExpr {
     pub fn head(&self) -> Option<Symbol> {
         match self {
             TypeExpr::Name { name, .. } => Some(*name),
-            TypeExpr::Ref { .. } | TypeExpr::Lit(_) | TypeExpr::Slice(_) | TypeExpr::Tuple(_) => {
-                None
-            }
+            TypeExpr::Ref { .. }
+            | TypeExpr::Lit(_)
+            | TypeExpr::Slice(_)
+            | TypeExpr::Tuple(_)
+            | TypeExpr::Fn { .. } => None,
         }
     }
 
@@ -135,7 +144,9 @@ impl TypeExpr {
             // traversal: they are the types written inside it, which is
             // what every caller of this wants.
             TypeExpr::Name { args, .. } | TypeExpr::Tuple(args) => args,
-            TypeExpr::Ref { .. } | TypeExpr::Lit(_) | TypeExpr::Slice(_) => &[],
+            TypeExpr::Ref { .. } | TypeExpr::Lit(_) | TypeExpr::Slice(_) | TypeExpr::Fn { .. } => {
+                &[]
+            }
         }
     }
 }

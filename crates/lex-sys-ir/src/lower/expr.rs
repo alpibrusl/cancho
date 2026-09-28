@@ -71,13 +71,54 @@ impl<'a> FnLowering<'a> {
                             },
                         )
                     }
+                    // `docs/function-values.md` §4.2: a named, top-level
+                    // function that declares no type parameters is a
+                    // real value now, `val` and captureless. Everything
+                    // else that could be called by this name -- a
+                    // builtin, an `extern fn`, or a generic function,
+                    // which has no address until its type arguments are
+                    // known -- stays refused under the same rule tag
+                    // this refusal always used.
                     None if self.signatures.iter().any(|s| s.name == *name)
                         || Builtin::from_name(text).is_some() =>
                     {
+                        if let Resolved::Fn(index) = Resolved::find(self, text, *name, self.module)
+                            && self.signatures[index].generics.is_empty()
+                        {
+                            let signature = &self.signatures[index];
+                            // §5.1: instantiated exactly like a call's
+                            // region parameters, solved by whatever the
+                            // value's own type is checked against next
+                            // -- an annotation, or a higher-order
+                            // parameter's declared type.
+                            let fresh_regions: Vec<Region> = (0..signature.regions.len())
+                                .map(|_| self.unifier.fresh_region())
+                                .collect();
+                            let params: Vec<Type> = signature
+                                .params
+                                .iter()
+                                .map(|t| t.substitute(&[], &fresh_regions))
+                                .collect();
+                            let ret = signature.ret.substitute(&[], &fresh_regions);
+                            let labels: Vec<FnLabel> = signature
+                                .effects
+                                .labels()
+                                .iter()
+                                .map(|l| FnLabel {
+                                    name: l.name.clone(),
+                                    argument: l.argument.clone(),
+                                })
+                                .collect();
+                            let func_id = self.mono.request(index, Vec::new());
+                            return Ok((
+                                Expr::FnValue(func_id),
+                                Type::Fn(params, labels, Box::new(ret)),
+                            ));
+                        }
                         return Err(Diagnostic::new(
                             Rule::NoFunctionValues,
                             format!(
-                                "`{text}` is a function; M1 has no function values, so it can only be called"
+                                "`{text}` cannot be a value; only a written function with no type parameters can (`docs/function-values.md` §4.2)"
                             ),
                             span,
                         ));
@@ -570,12 +611,21 @@ impl<'a> FnLowering<'a> {
                     // `byte` is among them: comparing storage is not
                     // arithmetic (`docs/strings.md` §2), and a parser that
                     // cannot say `b == byte_of(44)` is not worth having.
+                    // `docs/opaque-pointers.md` §3: `c_ptr` joins this list
+                    // and no other -- an opaque handle carries no claim the
+                    // checker could verify beyond "is it this one" (or
+                    // null_ptr()), the same nullness check C code does with
+                    // `== NULL`. No ordering, no arithmetic: neither means
+                    // anything the checker could stand behind.
                     BinOp::Eq | BinOp::Ne => {
-                        if !matches!(operand, Type::Int | Type::Bool | Type::Byte | Type::Float) {
+                        if !matches!(
+                            operand,
+                            Type::Int | Type::Bool | Type::Byte | Type::Float | Type::CPtr
+                        ) {
                             return Err(Diagnostic::new(
                                 Rule::OperatorTypeMismatch,
                                 format!(
-                                    "`{}` cannot be compared with `==` (`int`, `byte`, `bool` and `float` can)",
+                                    "`{}` cannot be compared with `==` (`int`, `byte`, `bool`, `float` and `c_ptr` can)",
                                     self.unifier.display(&operand)
                                 ),
                                 lhs_span,
@@ -603,11 +653,57 @@ impl<'a> FnLowering<'a> {
             }
             AstExpr::Call { callee, qualifier, args } => {
                 let text = self.ast.name_of(*callee);
-                if self.lookup(*callee).is_some() {
-                    return Err(Diagnostic::new(
-                        Rule::NotAFunction,
-                        format!("`{text}` is a local binding, not a function"),
-                        span,
+                if let Some(binding) = self.lookup(*callee) {
+                    let (slot, ty) = (binding.slot, binding.ty.clone());
+                    // `docs/function-values.md` §4.2: a local binding
+                    // may now be called, but only if its type is a
+                    // function value's -- any other local stays refused
+                    // exactly as before.
+                    let Type::Fn(params, effects, ret) = self.unifier.shallow(&ty) else {
+                        return Err(Diagnostic::new(
+                            Rule::NotAFunction,
+                            format!("`{text}` is a local binding, not a function"),
+                            span,
+                        ));
+                    };
+                    if args.len() != params.len() {
+                        return Err(Diagnostic::new(
+                            Rule::ArityMismatch,
+                            format!(
+                                "`{text}` takes {} argument{}, but {} {} given",
+                                params.len(),
+                                if params.len() == 1 { "" } else { "s" },
+                                args.len(),
+                                if args.len() == 1 { "was" } else { "were" }
+                            ),
+                            span,
+                        ));
+                    }
+                    let mut lowered = Vec::with_capacity(args.len());
+                    for (&arg, expected) in args.iter().zip(params.iter()) {
+                        let arg_span = self.ast.expr_span(arg);
+                        let (value, found) = self.expr(arg)?;
+                        self.expect_type(expected, &found, arg_span)?;
+                        lowered.push(value);
+                    }
+                    // A read of the local, same as any other use of it
+                    // (`AstExpr::Name`'s own `Some(binding)` arm) --
+                    // `Type::Fn` is `val`, so this is a copy, not a move.
+                    self.trace.emit(Event::Use { slot, span });
+                    self.performed.union(&Effects::new(
+                        effects
+                            .iter()
+                            .map(|l| Label { name: l.name.clone(), argument: l.argument.clone() }),
+                    ));
+                    let ret = *ret;
+                    return Ok((
+                        Expr::CallIndirect {
+                            target: Box::new(Expr::Load(slot)),
+                            args: lowered,
+                            params,
+                            ret: Box::new(ret.clone()),
+                        },
+                        ret,
                     ));
                 }
 

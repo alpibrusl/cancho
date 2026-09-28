@@ -589,42 +589,57 @@ fn the_two_backends_agree_on_tree() {
 /// landed; `Type::Float` moved out once §7.17 landed; matching through
 /// a reference moved out once §7.19 landed; a foreign call moved out
 /// once §7.23 landed; `Fs` moved out once §7.24 landed; `Expr::Static`
-/// and `Expr::BitNot` moved out once §7.25 landed -- and with them,
-/// every real fixture in `tests/accept/` and `examples/` builds on
-/// `--backend llvm`, checked directly in that slice's own session by
-/// building all of them. The one still-refusing program left is
-/// `examples/collect/collect.ls`, and not because anything is unbuilt:
-/// it declares its own `extern fn socket`, which collides with this
-/// backend's internal `@socket` declaration the same already-documented,
-/// already-accepted way every `Net`-declaring `extern fn` does (§7.23,
-/// `docs/ROADMAP.md` #92). This test now names that refusal instead of
-/// an unbuilt `Expr` -- still located, still not a crash, just a
-/// different reason.
+/// and `Expr::BitNot` moved out once §7.25 landed. The last item on this
+/// list, `examples/collect/collect.ls`'s own `extern fn socket`
+/// colliding with this backend's internal `@socket` declaration
+/// (`docs/ROADMAP.md` #92, once "already-documented, already-accepted"
+/// because nothing built by default ever hit it), moved out too, once
+/// `--backend llvm` becoming the default made it a live regression
+/// rather than a theoretical one: every libc symbol a pre-`Net` program
+/// might declare for itself (`socket`/`bind`/`listen`/`accept`/
+/// `connect`/`getaddrinfo`/`freeaddrinfo`/`close`/`creat`/`open`, beside
+/// `read`/`write`, already guarded) is now declared only when the
+/// program's own `extern fn` does not already claim the symbol -- the
+/// same rule `read`/`write` were guarded by first. This test now proves
+/// the fix rather than pinning the collision: every socket-declaring
+/// example in the corpus builds clean on `--backend llvm`.
 #[test]
-fn a_program_outside_this_backend_is_refused_through_the_cli() {
-    let dir = scratch("backends-llvm-socket-collision");
-    let exe = dir.join("out");
-    let build = Command::new(BIN)
-        .args([
-            "build".as_ref(),
-            repo_root().join("examples/collect/collect.ls").as_os_str(),
-            "--std".as_ref(),
-            "--backend".as_ref(),
-            "llvm".as_ref(),
-            "-o".as_ref(),
-            exe.as_os_str(),
-        ])
-        .output()
-        .expect("the compiler runs");
-    let _ = std::fs::remove_dir_all(&dir);
+fn every_socket_declaring_example_builds_clean_on_llvm() {
+    for relative in [
+        "examples/collect/collect.ls",
+        "examples/serve/serve.ls",
+        "examples/fetch/fetch.ls",
+        "examples/report/report.ls",
+        "examples/vsock/vsock.ls",
+        "examples/agent_guest/agent_guest.ls",
+        "examples/agent_supervisor/agent_supervisor.ls",
+    ] {
+        let dir = scratch(&format!(
+            "backends-llvm-socket-{}",
+            relative.rsplit('/').next().unwrap().trim_end_matches(".ls")
+        ));
+        let exe = dir.join("out");
+        let build = Command::new(BIN)
+            .args([
+                "build".as_ref(),
+                repo_root().join(relative).as_os_str(),
+                "--std".as_ref(),
+                "--backend".as_ref(),
+                "llvm".as_ref(),
+                "-o".as_ref(),
+                exe.as_os_str(),
+            ])
+            .output()
+            .expect("the compiler runs");
+        let _ = std::fs::remove_dir_all(&dir);
 
-    assert!(
-        !build.status.success(),
-        "`collect.ls`'s own `extern fn socket` should still collide and refuse"
-    );
-    assert_eq!(build.status.code(), Some(1), "an unsupported program is rule `internal`, exit 1");
-    let message = String::from_utf8_lossy(&build.stderr).to_lowercase();
-    assert!(message.contains("socket"), "the refusal should name the symbol it hit: {message}");
+        assert!(
+            build.status.success(),
+            "`{relative}` should build on `--backend llvm` now that its own `extern fn` wins \
+             over this backend's internal declaration, but the compiler said:\n{}",
+            String::from_utf8_lossy(&build.stderr)
+        );
+    }
 }
 
 /// §7.25: `Expr::Static`, closed. `tests/accept/static_data.ls` is the
@@ -944,5 +959,35 @@ fn the_two_backends_agree_on_a_narrow_foreign_return() {
         "backends-narrow-return",
         "tests/accept/foreign_narrow_return.ls",
         "ok\n-1\n",
+    );
+}
+
+/// `docs/opaque-pointers.md` §3: `c_ptr`, checked on both backends.
+/// Cranelift holds it as a pointer-width `int`
+/// (`abi::leaves_into`); LLVM holds it as its own distinct `ptr` kind
+/// (`emit::leaves_into`) -- two different representations of the same
+/// checker-level type, so agreement here is the one place a divergence
+/// between them would actually show.
+#[test]
+fn the_two_backends_agree_on_an_opaque_pointer() {
+    assert_backends_agree(
+        "backends-opaque-pointer",
+        "tests/accept/opaque_pointer.ls",
+        "stdin opened\nclosed 0\nbad fd is null\n",
+    );
+}
+
+/// `docs/function-values.md` §4.2, checked on both backends: Cranelift
+/// takes a function's address with `func_addr` and calls through it
+/// with `call_indirect`; LLVM reads a global symbol directly as a
+/// `ptr` value and spells the callee's signature explicitly at the
+/// call (opaque pointers carry none of their own). Two different
+/// mechanisms for the same value.
+#[test]
+fn the_two_backends_agree_on_a_function_value() {
+    assert_backends_agree(
+        "backends-function-value",
+        "tests/accept/function_value.ls",
+        "30\nhello from a function value\n",
     );
 }

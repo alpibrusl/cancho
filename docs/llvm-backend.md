@@ -1,7 +1,25 @@
 # A second backend, and how it would actually get built
 
-> **Status: first five slices built, and `examples/hello.ls` builds**
-> (§5, `lex-sys-codegen-llvm`, `--backend llvm`). §5 originally named
+> **Status: complete, and the default.** Every gap this document ever
+> named a target for is closed — every fixture in `tests/accept/` and
+> every program in `examples/` builds on `--backend llvm` — and
+> `docs/README.md`'s "Performance, honestly" section made it the
+> default backend rather than an opt-in one, since it closes the
+> **1.17×–2.58×** gap to C that the default used to carry. That flip is
+> what found the last two things this backend had never been asked to
+> get right on its own: `docs/ROADMAP.md` #92's "already-accepted"
+> socket-declaration collision, tolerable while nothing built by
+> default ever hit it, became a live regression the moment something
+> did (§7.25's own postscript, below, has the fix); and `Expr::Unboxed`
+> had no `scalar_kind` arm at all, invisible until a default-backend
+> build ran `docs/tuples.md`'s own identity fixture for the first time.
+> Both are fixed, not documented around. What follows is the slice-by-
+> slice history that got here, kept as it was written rather than
+> rewritten now that the destination is known.
+>
+> **Superseded status, kept for the history below:** "first five slices
+> built, and `examples/hello.ls` builds" (§5, `lex-sys-codegen-llvm`,
+> `--backend llvm`). §5 originally named
 > `hello.ls` as the *first* slice's target; building that slice found the
 > claim false — `hello.ls` needed checked arithmetic, bounds-checked
 > indexing, string-literal data, and (found along the way) control flow,
@@ -1809,3 +1827,39 @@ is proof a refusal can still be correct and permanent — but every
 *missing* `Expr` or `Builtin` arm this backend's own match statements
 could have, which is now zero, and checked by the compiler rather than
 asserted in prose.
+
+> **Corrected: the collision above is fixed, not permanent.** "The
+> cross-cutting fix #92 already declined to make" was a claim about a
+> cost nobody had asked to pay yet — true only while `--backend llvm`
+> stayed opt-in. Making it the default (`docs/README.md`'s own
+> "Performance, honestly" section) turned an accepted, theoretical
+> exposure into a live regression for every socket-declaring example in
+> this repository, which is a different question with a different
+> answer: `socket`/`bind`/`listen`/`accept`/`connect`/`getaddrinfo`/
+> `freeaddrinfo`/`close`/`creat`/`open` are now declared internally only
+> when the program's own `extern fn` does not already claim the symbol
+> — the same guard `read`/`write` already had, extended to every other
+> libc name this backend declares unconditionally. `collect.ls`,
+> `serve.ls`, `fetch.ls`, `report.ls`, `vsock.ls`,
+> `agent_guest.ls`/`agent_supervisor.ls` all build clean now.
+> `a_program_outside_this_backend_is_refused_not_panicked` is now
+> `a_colliding_extern_fn_no_longer_collides`; `a_program_outside_this_
+> backend_is_refused_through_the_cli` is now `every_socket_declaring_
+> example_builds_clean_on_llvm` — both prove the fix rather than pin
+> the collision.
+>
+> One genuinely new thing making the default flip found, not named
+> anywhere above: `Expr::Unboxed` had no arm in `scalar_kind` (the
+> exhaustiveness guarantee §7.25 built covers `body/expr.rs`'s codegen
+> match, not `arith.rs`'s type-inference one), crashing on any tuple or
+> struct field holding a boxed value — `docs/tuples.md`'s own identity
+> fixture, run for the first time on this backend by the default flip
+> rather than only on Cranelift. Fixed the same way `Deref`/`Contents`
+> already were: `leaves_of` on the unboxed type. And `int::MIN % -1`
+> traps here — killed by signal, not the `0` both the constant folder
+> and Cranelift's own optimiser agree on — because `checked_div` traps
+> on `is_min && is_neg1` for `Rem` the same way it correctly does for
+> `Div`, when a remainder by `-1` can never overflow and should never
+> reach `srem` at all. Fixed with a real branch around the instruction,
+> not a `select` (`select`'s two arms are both evaluated, so `srem`
+> would still see the undefined pair even with its result discarded).
