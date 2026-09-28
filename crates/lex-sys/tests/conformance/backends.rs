@@ -1101,3 +1101,116 @@ fn the_two_backends_agree_on_spawn_owned_io() {
 fn the_two_backends_agree_on_spawn_owned_file() {
     assert_backends_agree("backends-spawn-owned-file", "tests/accept/spawn_owned_file.ls", "30\n");
 }
+
+/// The lex-sys epic issue's own "lex-os component ported/written in
+/// lex-sys (first production use)": `examples/results_stub/
+/// results_stub.ls`, the lex-sys twin of `lex-os/crates/results-stub` --
+/// the single allowed-egress target the lex-os demo's manifest narrows
+/// to (issue #10 there). Built and run for real on both backends, hit
+/// with a real HTTP request over loopback the way the Rust original's
+/// own client would, and checked against the same response shape and
+/// request-log line it answers with.
+#[test]
+fn the_two_backends_answer_the_results_stub_port() {
+    use std::io::{Read as _, Write as _};
+    use std::net::TcpStream;
+    use std::time::{Duration, Instant};
+
+    for backend in ["cranelift", "llvm"] {
+        let port = free_port();
+        let dir = scratch(&format!("backends-results-stub-{backend}"));
+        let exe = dir.join("results_stub");
+        let build = Command::new(BIN)
+            .args([
+                "build".as_ref(),
+                repo_root().join("examples/results_stub/results_stub.ls").as_os_str(),
+                "--std".as_ref(),
+                "--backend".as_ref(),
+                backend.as_ref(),
+                "-o".as_ref(),
+                exe.as_os_str(),
+            ])
+            .output()
+            .expect("the compiler runs");
+        assert!(
+            build.status.success(),
+            "`--backend {backend}` should build `results_stub.ls`, but said:\n{}",
+            String::from_utf8_lossy(&build.stderr)
+        );
+
+        let mut child = Command::new(&exe)
+            .arg("--listen")
+            .arg(format!("127.0.0.1:{port}"))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("the stub runs");
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut stream = loop {
+            match TcpStream::connect(("127.0.0.1", port)) {
+                Ok(s) => break s,
+                Err(_) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(e) => {
+                    let _ = child.kill();
+                    panic!(
+                        "`--backend {backend}`: could not connect to the stub within the \
+                         deadline: {e}"
+                    )
+                }
+            }
+        };
+
+        let body = b"{\"hello\":\"world\"}";
+        let request = format!(
+            "POST /report HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\nConnection: \
+             close\r\n\r\n",
+            body.len()
+        );
+        stream.write_all(request.as_bytes()).expect("the request writes");
+        stream.write_all(body).expect("the body writes");
+
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).expect("the response reads");
+        let response = String::from_utf8_lossy(&response);
+
+        assert!(
+            response.starts_with("HTTP/1.1 200 OK\r\n"),
+            "`--backend {backend}`: expected a 200, got:\n{response}"
+        );
+        assert!(
+            response.contains("Content-Type: application/json"),
+            "`--backend {backend}`: expected a JSON content type, got:\n{response}"
+        );
+        assert!(
+            response.ends_with("{\"ok\":true,\"stub\":true}"),
+            "`--backend {backend}`: expected the stub's own fixed body, got:\n{response}"
+        );
+
+        // Killed rather than waited on: the server never exits on its
+        // own, the same as the real Rust binary it ports.
+        child.kill().expect("the stub can be killed");
+        let output = child.wait_with_output().expect("the stub's output reads after being killed");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("results-stub: listening"),
+            "`--backend {backend}`: expected a startup line, got:\n{stdout}"
+        );
+        assert!(
+            stdout.contains("req=\"POST /report HTTP/1.1\""),
+            "`--backend {backend}`: expected the request line logged, got:\n{stdout}"
+        );
+        assert!(
+            stdout.contains("body_len=17"),
+            "`--backend {backend}`: expected the real body length logged, got:\n{stdout}"
+        );
+        assert!(
+            stdout.contains("body_preview=\"{\"hello\":\"world\"}\""),
+            "`--backend {backend}`: expected the body preview logged, got:\n{stdout}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

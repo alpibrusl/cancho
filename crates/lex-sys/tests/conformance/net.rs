@@ -163,6 +163,9 @@ fn the_authority_report_names_the_syscalls_the_row_cannot() {
 /// `examples/agent_guest/`/`examples/agent_supervisor/` -- the
 /// guest/supervisor exchange over plain HTTP, `docs/net.md`'s own
 /// entry on them -- recount outbound to 4 and inbound to 3.
+/// `examples/results_stub/` -- the lex-sys port of `lex-os/crates/
+/// results-stub`, `examples/README.md`'s own entry on it -- recounts
+/// inbound to 4.
 #[test]
 fn the_network_programs_are_counted() {
     let root = repo_root();
@@ -209,6 +212,7 @@ fn the_network_programs_are_counted() {
             vec![
                 "examples/agent_supervisor/agent_supervisor.ls",
                 "examples/collect/collect.ls",
+                "examples/results_stub/results_stub.ls",
                 "examples/serve/serve.ls"
             ],
             vec![
@@ -218,7 +222,7 @@ fn the_network_programs_are_counted() {
                 "examples/vsock/vsock.ls"
             ]
         ),
-        "the network programs changed: `net.md` §5 counts inbound 3, outbound 4, and \
+        "the network programs changed: `net.md` §5 counts inbound 4, outbound 4, and \
          two is the bar for building `Net`. Rewrite §5, then this."
     );
 }

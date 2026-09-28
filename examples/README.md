@@ -408,6 +408,35 @@ end to end, over a real `AF_UNIX` `socketpair` standing in for
 actual `AF_VSOCK` round trip against `lex-os-guest` stays untested here,
 honestly, in the program's own comments.
 
+### `results_stub/` — a real lex-os component, not a stand-in
+
+```sh
+cargo run -p lex-sys -- build --std examples/results_stub/results_stub.ls -o results_stub
+./results_stub --listen 127.0.0.1:8443
+```
+
+`vsock/` and `agent_supervisor/`/`agent_guest/` are lex-sys *analogues*
+of lex-os's own guest/supervisor exchange, checked against its wire
+format but not built from lex-os's own source. This one is a real
+lex-os component, ported: `lex-os/crates/results-stub`, the single
+allowed-egress target the demo's manifest narrows to
+(`lex-os` issue #10) — the epic issue's own long-unchecked box, "a
+lex-os component ported/written in lex-sys (first production use)."
+
+Checked directly against the Rust original's behaviour, not just its
+intent: same HTTP/1.1 stub over a raw socket, same fixed `200`, same
+per-request log line shape. Two places this port is honestly narrower,
+both because of what this language's foreign-call boundary can and
+cannot cross (`docs/reach.md` §3) rather than by oversight, and both
+recorded in the file's own header comment — no peer address (`accept`'s
+own two `NULL`s in `serve.ls` already made the identical call for the
+identical reason), and a request body beyond its 200-byte preview
+buffer is drained, not kept, since a whole unbounded body has nowhere
+to live in a 64 KiB arena. `crates/lex-sys/tests/conformance/
+backends.rs`'s `the_two_backends_answer_the_results_stub_port` builds
+it on both backends, sends it a real HTTP request over loopback, and
+checks the response and the log line both.
+
 ### `agent_supervisor/` and `agent_guest/` — the same exchange, over HTTP
 
 ```sh
