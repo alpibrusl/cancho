@@ -271,6 +271,17 @@ half with an asker is the one the grant does not ask about.
 > declarations `fetch/`/`report/`/`serve/`/`collect/` already made; a
 > fourth and third program clearing the same bar, not a new one.
 
+> **Recounted (#129): inbound 4.** `examples/results_stub/` is the
+> lex-sys port of `lex-os/crates/results-stub` -- the single
+> allowed-egress target the lex-os demo's manifest narrows to
+> (`lex-os` issue #10), and the lex-sys epic issue's own "lex-os
+> component ported/written in lex-sys" -- `socket`/`bind`/`listen`/
+> `accept` again, the same declarations `serve/`/`collect`/
+> `agent_supervisor` already made; a fourth program clearing the same
+> bar, unlike `vsock/`/`agent_guest/`/`agent_supervisor`, which are
+> lex-sys *analogues* of a lex-os exchange rather than a port of a real
+> lex-os source file.
+
 That is the honest state up to here. Both halves of the two-asker bar
 §5 set are cleared, and §3's own reason to build now rather than before
 still applies in full: `Ffi("libc")` lets a program declare
