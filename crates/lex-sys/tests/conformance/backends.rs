@@ -1075,3 +1075,29 @@ fn spawn_and_join_run_concurrently_not_sequentially() {
         );
     }
 }
+
+/// `docs/threads.md` §5 step 3: an owned capability payload, checked on
+/// both backends. `Io` is a zero-field capability (`defs.rs`'s own
+/// `prelude_types`), so it crosses to `pthread_create`'s `void *arg` as
+/// no leaves at all -- the same path this backend already built for a
+/// `()` payload, extended in `crosses_to_a_thread` from "`Unit`" to "any
+/// zero-field capability." No codegen changed for this slice; only the
+/// checker's allowlist did.
+#[test]
+fn the_two_backends_agree_on_spawn_owned_io() {
+    assert_backends_agree(
+        "backends-spawn-owned-io",
+        "tests/accept/spawn_owned_io.ls",
+        "hello from a thread\n",
+    );
+}
+
+/// The other named case: `File`, one real `i64` leaf (the fd) rather than
+/// zero, crossing exactly the way a plain `int` payload already does --
+/// both backends' `Spawn`/`Join` codegen work off the value's actual
+/// machine width, not its surface `Type`, so a capability whose ABI
+/// shape happens to match `int`'s costs nothing new either.
+#[test]
+fn the_two_backends_agree_on_spawn_owned_file() {
+    assert_backends_agree("backends-spawn-owned-file", "tests/accept/spawn_owned_file.ls", "30\n");
+}

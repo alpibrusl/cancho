@@ -19,26 +19,39 @@
 > **What is built, and what is deliberately narrower than §2's own
 > illustrative signature:** `spawn`'s `payload` and `body`'s return type
 > are each restricted to one pointer-width leaf — `int`, `bool`, `c_ptr`,
-> a captureless function value, or a single non-slice reference —
-> checked by `Rule::ThreadPayloadType` (`crates/lex-sys-ir/src/lower/
-> conc.rs`). `body`'s own compiled entry point becomes
-> `pthread_create`'s start routine directly; the reason is not a missing
-> feature but a missing *prerequisite* feature — this language has no
+> a captureless function value, a single non-slice reference, or an
+> *owned* zero-or-one-leaf capability (`Io`, `File`, `Ffi`, `Fs`, `Args`,
+> `Heap`) — checked by `Rule::ThreadPayloadType`
+> (`crates/lex-sys-ir/src/lower/conc.rs`). `body`'s own compiled entry
+> point becomes `pthread_create`'s start routine directly; the reason a
+> general struct payload is still refused is not a missing feature but a
+> missing *prerequisite* feature — this language has no
 > compiler-synthesised trampoline function yet (nothing builds a
 > hand-crafted `Func` outside a parsed source body), which is what a
-> multi-field struct payload would need. `res Thread[T, R]` — two type
-> parameters, not the one sketched below, because `T` rides along purely
-> so its region is tracked, getting §3's entire escape-check argument for
-> free from `Type::Named`'s already-generic `mentions`/`regions_into`
-> walk into its type arguments rather than needing any new checker
-> code. Real threads (`std::thread`-adjacent: a genuine `pthread_create`/
-> `pthread_join` pair on both backends), not a simulation — verified
-> under §5 step 2, distinct thread IDs and real wall-clock parallelism,
-> both checked directly rather than trusted from the type checker alone.
-> §5 steps 3 and 4's owned-capability and struct-payload cases, and step
-> 5's `Rc` exclusion (moot today: `Rc` itself is not yet an implemented
-> type in this compiler, so nothing of that shape can be written to
-> exclude), remain future slices, tracked in §4 below.
+> multi-field struct payload would need. **§5 step 3's owned-capability
+> case turned out to need none of that**: `File` is already one leaf at
+> the ABI level (the fd) and every zero-field capability (`Io` and the
+> rest) is already zero, so both cross through the exact same paths this
+> slice already built for `int` and `()` — the fix was widening the
+> checker's allowlist, not new codegen, confirmed by running real
+> capability-moving programs on both backends before writing it down.
+> `res Thread[T, R]` — two type parameters, not the one sketched below,
+> because `T` rides along purely so its region is tracked, getting §3's
+> entire escape-check argument for free from `Type::Named`'s
+> already-generic `mentions`/`regions_into` walk into its type arguments
+> rather than needing any new checker code. Real threads
+> (`std::thread`-adjacent: a genuine `pthread_create`/`pthread_join` pair
+> on both backends), not a simulation — verified under §5 step 2,
+> distinct thread IDs and real wall-clock parallelism, and under step 3,
+> a real file read and a real console write each performed by a second
+> OS thread holding the only reference to the capability that authorised
+> it, all checked directly rather than trusted from the type checker
+> alone. §5 step 3's *struct*-shaped capability case (an owned, non-flat
+> resource with real fields — none exists among today's capabilities, so
+> untested), step 4's unique-reference-across-join case, and step 5's
+> `Rc` exclusion (moot today: `Rc` itself is not yet an implemented type
+> in this compiler, so nothing of that shape can be written to exclude),
+> remain future slices, tracked in §4 below.
 
 ---
 
@@ -271,30 +284,51 @@ feature that does not exist yet for any of them to ask for.
    spawn_payload_type_not_supported.ls` checks this slice's own wall:
    a multi-field struct payload is refused by `Rule::ThreadPayloadType`
    before it ever reaches codegen.
-3. **`spawn`/`join` with a moved capability.** Not built: an *owned*
-   `File`/`Io` is a multi-field struct under the hood, not a single
-   leaf, so it needs the same trampoline this slice deliberately does
-   without (§2's status note). A *borrowed* capability already crosses
-   today (step 2, above) — this step is specifically the owned case.
+3. **`spawn`/`join` with a moved capability. Built — and this step's own
+   original text was wrong.** It assumed an owned `File`/`Io` is a
+   multi-field struct under the hood needing the same trampoline the
+   struct-payload case does; checked against `abi::leaves_into` on both
+   backends before writing any code, `File` turns out to be exactly one
+   leaf (the fd, `PRELUDE_FILE`'s own dedicated arm) and every
+   zero-field capability (`Io`, `Ffi`, `Fs`, `Args`, `Heap`) is exactly
+   zero — the same shapes this slice's codegen already handles for
+   `int` and `()`, so the fix was a wider `crosses_to_a_thread`
+   allowlist, not a trampoline. `tests/accept/spawn_owned_io.ls` moves
+   an owned `Io` into a thread that writes to the real console (a
+   zero-leaf capability, `worker`'s own row correctly `[]` since owning
+   `Io` outright *discharges* `io_write`, `defs.rs`'s `discharged_by`);
+   `tests/accept/spawn_owned_file.ls` moves an owned, already-`open_read`
+   `File` into a thread that reads it and closes it there (one real
+   leaf, the fd). Both checked on both backends
+   (`the_two_backends_agree_on_spawn_owned_io`/`_file`,
+   `crates/lex-sys/tests/conformance/backends.rs`). Left genuinely
+   unbuilt: a capability shaped like a real multi-field struct — none
+   of today's capabilities are, so this step's trampoline-free answer
+   may not generalise past `File`/`Io`'s own accidentally-simple shape.
 4. **`spawn`/`join` with a shared reference across the join.** The
    shared-reference half is built, folded into step 2 above. Its
-   companion — a `tests/reject/` fixture proving a *unique* reference
-   cannot be read from the spawning side before `join` — is not built
-   separately; it is `linearity-and-effects.md`'s existing
-   `use-after-move` rule applied to a `spawn` call like any other,
-   already covered by that rule's own fixtures rather than needing a
-   thread-specific one.
+   companion — a `tests/reject/` fixture proving a *unique* value
+   cannot be read from the spawning side before `join` — is built as
+   the owned-capability case's own mirror rather than a separate
+   reference fixture: `tests/reject/spawn_owned_capability_reused.ls`
+   moves an owned `Io` into `spawn` and then `release`s it again from
+   the spawning function, refused by the pre-existing
+   `linear-use-after-move` rule with no thread-specific rule added,
+   confirming §3's "the existing rule, not a new one" claim by running
+   it rather than only stating it.
 5. **The `Rc` exclusion, checked, not assumed.** Not built, and cannot
    be yet: `Rc[h] T` is not an implemented type in this compiler at
    all, so no fixture can construct the payload this step needs to
    refuse. `crosses_to_a_thread`'s allowlist (`int`, `bool`, `c_ptr`, a
-   captureless function value, a non-slice reference) already excludes
-   anything shaped like an `Rc` structurally, the same way it excludes
-   every other multi-field type — vacuously true today, worth a real
-   fixture once `Rc` exists to write one against.
+   captureless function value, a non-slice reference, and today's
+   zero-or-one-leaf capabilities) already excludes anything shaped like
+   an `Rc` structurally, the same way it excludes every other
+   multi-field type — vacuously true today, worth a real fixture once
+   `Rc` exists to write one against.
 
-Step 1 and step 2 are built. Steps 3 and 5 wait on infrastructure this
-slice deliberately did not build (a compiler-synthesised trampoline,
-and `Rc` itself); step 4's companion is deferred to the existing rule
-it already reduces to rather than duplicated as a thread-specific
-fixture.
+Steps 1, 2, 3 and 4 are built. Step 5 waits on `Rc` itself, which
+this project has not built; the struct-shaped-capability half of step 3
+waits on the same compiler-synthesised trampoline the general
+multi-field payload case does, since nothing among today's capabilities
+tests whether the owned-capability fix generalises past a
+coincidentally flat ABI shape.

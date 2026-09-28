@@ -19,6 +19,20 @@ use crate::*;
 /// reference are already pointers. `float` is refused even though it
 /// is one leaf too: the wrong register class, and pthread's own C
 /// signature has no way to carry one.
+///
+/// `docs/threads.md` §5 step 3: an *owned* capability, checked by
+/// `DefId` rather than by walking its fields structurally. `File`
+/// (`abi::leaves_into`'s own `PRELUDE_FILE` arm, both backends) is one
+/// `i64` leaf — the fd, no different in shape from a plain `int` —
+/// and `Io`/`Ffi`/`Fs`/`Args`/`Heap`/`Net` are all declared with **no**
+/// fields at all (`defs.rs`'s own `prelude_types`), so neither backend's
+/// `leaves_into` gives any of them a leaf to carry: the same zero-leaf
+/// path this function already gives `Unit`. Both shapes are exactly
+/// what this slice's codegen already handles for `()` and `int`, so
+/// admitting them costs no new machinery — only the check. Not every
+/// capability is listed: `World` and `Split` are the *root* and a
+/// bundle of every other one, and nothing here has asked to move a
+/// thread the whole program's authority yet.
 fn crosses_to_a_thread(ty: &Type) -> bool {
     match ty {
         Type::Unit | Type::Int | Type::Byte | Type::Bool | Type::CPtr | Type::Fn(..) => true,
@@ -26,6 +40,10 @@ fn crosses_to_a_thread(ty: &Type) -> bool {
         // which is a pointer *and* a length (`docs/strings.md` §6) --
         // two leaves, one too many for this first slice.
         Type::Ref { inner, .. } => !matches!(inner.as_ref(), Type::Slice(_)),
+        Type::Named(def, _) => matches!(
+            def.0 as usize,
+            PRELUDE_FILE | PRELUDE_IO | PRELUDE_FFI | PRELUDE_FS | PRELUDE_ARGS | PRELUDE_HEAP
+        ),
         _ => false,
     }
 }
