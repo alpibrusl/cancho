@@ -341,6 +341,13 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::Release) => {
                         vec![self.builder.ins().iconst(types::I64, 0)]
                     }
+                    // `docs/opaque-pointers.md` §3: the null handle,
+                    // pointer-width and zero like every other null
+                    // pointer this backend already emits (`abi::leaves_
+                    // into`'s own `Type::Ref` arm).
+                    Callee::Builtin(Builtin::NullPtr) => {
+                        vec![self.builder.ins().iconst(self.pointer, 0)]
+                    }
                     Callee::Fn(id) => {
                         let callee = &self.program.funcs[id.0 as usize];
                         let ret = callee.ret.clone();

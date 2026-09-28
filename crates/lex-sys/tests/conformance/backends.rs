@@ -961,3 +961,18 @@ fn the_two_backends_agree_on_a_narrow_foreign_return() {
         "ok\n-1\n",
     );
 }
+
+/// `docs/opaque-pointers.md` §3: `c_ptr`, checked on both backends.
+/// Cranelift holds it as a pointer-width `int`
+/// (`abi::leaves_into`); LLVM holds it as its own distinct `ptr` kind
+/// (`emit::leaves_into`) -- two different representations of the same
+/// checker-level type, so agreement here is the one place a divergence
+/// between them would actually show.
+#[test]
+fn the_two_backends_agree_on_an_opaque_pointer() {
+    assert_backends_agree(
+        "backends-opaque-pointer",
+        "tests/accept/opaque_pointer.ls",
+        "stdin opened\nclosed 0\nbad fd is null\n",
+    );
+}

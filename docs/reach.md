@@ -88,13 +88,29 @@ This cuts both ways, and §5 is the cut.
 | A command-line tool | **Yes** | `Args`, `examples/lines.ls`, `examples/wordfreq/` |
 | Several processes | **Yes** | `fork` returns an `int`, and an `int` is a value |
 | Threads | **No** | `pthread_create` takes a function pointer, and M1 has no function values (§3.3) |
-| TLS | **No** | `SSL_CTX *` (§3.1) |
-| A Postgres client | **No** | `PGconn *` (§3.1) |
+| TLS | **Partial** | `SSL_CTX *`/`SSL *` cross today (§3.1, corrected below); nothing links `libssl` yet |
+| A Postgres client | **No** | `PGconn *` (§3.1) — the same handle-shaped gap TLS's own correction closes, not yet spent on this one |
 | `malloc`-style allocation | **No**, and it is not wanted | `void *` (§3.1); the heap is a capability with `box` (`heap.md`) |
 | Floating-point arithmetic | **No** | There is no `float` type yet. Dated, not structural (§4) |
 
-Read down the "because" column. Three of the four no's are the same
-sentence.
+> **Corrected: [`opaque-pointers.md`](opaque-pointers.md).** §3.1's own
+> "everything that hands back an opaque handle is therefore out" is no
+> longer true as stated. `c_ptr` is a real, distinct type — an opaque
+> handle a foreign call returns or takes, checked for equality and
+> nullness only, never dereferenced — which is exactly the shape §3.1.1
+> already accepted for an "integer-shaped pointer" like a file
+> descriptor, made a first-class type instead of a convention. TLS is
+> marked **Partial** rather than **Yes** for a reason that has nothing
+> to do with the type system: `lex-sys build` only ever links libc, and
+> a real TLS client needs `-lssl -lcrypto`, which the build pipeline
+> has no way to ask for yet (`opaque-pointers.md` §5). A Postgres
+> client is unaffected by this correction only because nothing has
+> spent the same effort grounding `libpq`'s real signatures and writing
+> its own accept fixture — the type-level gap `PGconn *` cited is the
+> same one `c_ptr` closed.
+
+Read down the "because" column. Two of the remaining three flat no's
+share one sentence.
 
 ---
 
@@ -109,8 +125,8 @@ extern fn getenv[&f, &n](ffi: &f Ffi("libc"), name: &n [byte])
 
 ```
 error: `getenv` returns `&r1 [byte]`, which has no agreed layout across a
-foreign boundary; a foreign result is `int` or `bool`, and a C function
-that returns nothing is declared `int` and its result discarded
+foreign boundary; a foreign result is `int`, `bool` or `c_ptr`, and a C
+function that returns nothing is declared `int` and its result discarded
 ```
 
 A foreign **result** is a scalar. Not because a pointer is hard to
@@ -133,9 +149,13 @@ callee is handed a pointer and a length that cannot disagree
 (`strings.md` §6). A pointer coming *in* does not, and that is the whole
 of the list in §2's right-hand column.
 
-Everything that hands back an opaque handle is therefore out: OpenSSL,
+Everything that hands back an opaque handle was therefore out: OpenSSL,
 libpq, libcurl, `FILE *`, `dlopen`. Not one of them for a reason of its
-own.
+own. **Corrected: [`opaque-pointers.md`](opaque-pointers.md) §3** opens
+exactly one shape back in — a handle that is returned, passed around
+and compared for nullness, never dereferenced — which does not weaken
+this rule; it satisfies it the same way accepting a plain `int` already
+does, by claiming nothing the checker cannot back up.
 
 ### 3.1.1 And smuggling one does not help
 

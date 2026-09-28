@@ -570,12 +570,21 @@ impl<'a> FnLowering<'a> {
                     // `byte` is among them: comparing storage is not
                     // arithmetic (`docs/strings.md` §2), and a parser that
                     // cannot say `b == byte_of(44)` is not worth having.
+                    // `docs/opaque-pointers.md` §3: `c_ptr` joins this list
+                    // and no other -- an opaque handle carries no claim the
+                    // checker could verify beyond "is it this one" (or
+                    // null_ptr()), the same nullness check C code does with
+                    // `== NULL`. No ordering, no arithmetic: neither means
+                    // anything the checker could stand behind.
                     BinOp::Eq | BinOp::Ne => {
-                        if !matches!(operand, Type::Int | Type::Bool | Type::Byte | Type::Float) {
+                        if !matches!(
+                            operand,
+                            Type::Int | Type::Bool | Type::Byte | Type::Float | Type::CPtr
+                        ) {
                             return Err(Diagnostic::new(
                                 Rule::OperatorTypeMismatch,
                                 format!(
-                                    "`{}` cannot be compared with `==` (`int`, `byte`, `bool` and `float` can)",
+                                    "`{}` cannot be compared with `==` (`int`, `byte`, `bool`, `float` and `c_ptr` can)",
                                     self.unifier.display(&operand)
                                 ),
                                 lhs_span,

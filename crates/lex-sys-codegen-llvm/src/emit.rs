@@ -144,6 +144,12 @@ pub(crate) fn leaves_of(ty: &Type, program: &Program) -> Result<Vec<LKind>, Stri
 fn leaves_into(ty: &Type, program: &Program, out: &mut Vec<LKind>) -> Result<(), String> {
     match ty {
         Type::Int => out.push(LKind::I64),
+        // `docs/opaque-pointers.md` §4: LLVM's own `ptr` kind, not `i64`
+        // -- an opaque handle is never arithmetic here, so there is no
+        // reason to spell it as an integer the way Cranelift's pointer-
+        // width leaf does; `LKind::Ptr`'s `zero()` is already `"null"`,
+        // exactly the sentinel `null_ptr()` needs.
+        Type::CPtr => out.push(LKind::Ptr),
         Type::Byte | Type::Bool => out.push(LKind::I8),
         Type::Float => out.push(LKind::F64),
         Type::Ref { inner, .. } => {

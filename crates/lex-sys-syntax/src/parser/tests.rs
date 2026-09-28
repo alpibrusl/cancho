@@ -630,14 +630,23 @@ fn edition_two_is_accepted() {
     assert_eq!(ast.edition_of(ItemId(item.unwrap() as u32)), 2);
 }
 
-/// There is nothing later than edition 2 to opt into yet
+/// Edition 3 is `c_ptr`/`null_ptr` (`docs/opaque-pointers.md` §4), the
+/// same additive shape edition 2 gave `Net`.
+#[test]
+fn edition_three_is_accepted() {
+    let (ast, decl) = one_fn("edition 3;\nfn f() -> [] int { return 1; }");
+    let item = ast.items.iter().position(|i| matches!(i, Item::Fn(d) if d.name == decl.name));
+    assert_eq!(ast.edition_of(ItemId(item.unwrap() as u32)), 3);
+}
+
+/// There is nothing later than edition 3 to opt into yet
 /// (`docs/editions.md` §7), so any other number is refused rather than
 /// silently accepted.
 #[test]
 fn an_unknown_edition_is_refused() {
-    let err = parse("edition 3;\nfn f() -> [] int { return 1; }").unwrap_err();
+    let err = parse("edition 4;\nfn f() -> [] int { return 1; }").unwrap_err();
     assert_eq!(err.rule, Rule::UnknownEdition);
-    assert!(err.message.contains("unknown edition 3"), "{}", err.message);
+    assert!(err.message.contains("unknown edition 4"), "{}", err.message);
 }
 
 /// The marker comes before even `module` (§6.1) — checked once, ahead

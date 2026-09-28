@@ -322,6 +322,13 @@ impl<'a> FuncEmitter<'a> {
         match callee {
             Callee::Builtin(Builtin::Split | Builtin::Narrow) => Ok(Vec::new()),
             Callee::Builtin(Builtin::Release) => Ok(vec![LValue::Const(0)]),
+            // `docs/opaque-pointers.md` §3: the null handle. `LKind::Ptr`'s
+            // own `zero()` is already the literal LLVM needs here --
+            // `null`, not `0`, since a bare integer is not a valid `ptr`
+            // operand.
+            Callee::Builtin(Builtin::NullPtr) => {
+                Ok(vec![LValue::Reg(LKind::Ptr.zero().to_owned())])
+            }
             // The escape from checked arithmetic (`docs/llvm-backend.md`
             // §7.3's first named gap): LLVM's own `add`/`sub`/`mul`, with
             // no `nsw`/`nuw` requested, are already two's-complement

@@ -126,6 +126,20 @@ pub enum Type {
     Lit(String),
     /// An unsolved inference variable.
     Var(TyVar),
+    /// `c_ptr` (`docs/opaque-pointers.md`): an opaque handle a foreign
+    /// function returned or takes, such as OpenSSL's `SSL_CTX *`.
+    ///
+    /// `val`, like `int` — copyable, discardable, and equal to itself and
+    /// nothing else meaningfully, because the checker has no idea what it
+    /// points at or how long it is valid. That is exactly why it is safe
+    /// to accept at all (`docs/reach.md` §3.1: "a value crosses ... only
+    /// if the checker can say where it came from" — an opaque handle
+    /// qualifies the same way an `int` does, by carrying no claim to
+    /// check). Unlike `c_int` it does not collapse to another type: it
+    /// stays `Type::CPtr` everywhere, so arithmetic, dereference and
+    /// coercion to or from a reference or `int` are ordinary type
+    /// mismatches rather than things that happen to be meaningless.
+    CPtr,
 }
 
 impl Type {
@@ -432,6 +446,7 @@ impl Unifier {
             Type::Bool => "bool".to_owned(),
             Type::Float => "float".to_owned(),
             Type::Unit => "()".to_owned(),
+            Type::CPtr => "c_ptr".to_owned(),
             Type::Param(i) => {
                 self.param_names.get(i as usize).cloned().unwrap_or_else(|| format!("T{i}"))
             }

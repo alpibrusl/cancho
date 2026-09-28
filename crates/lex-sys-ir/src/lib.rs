@@ -140,12 +140,28 @@ fn lower_inner(ast: &Ast, rest: &mut Vec<Diagnostic>) -> Result<Program, Diagnos
             .params
             .iter()
             .map(|p| {
-                resolve_type(
-                    Resolving { ast, defs: &defs, unifier: &unifier, module, edition },
-                    Params::unbounded(&[]),
-                    &region_scope,
-                    p.ty,
-                )
+                // `c_ptr` (`docs/opaque-pointers.md`): unlike `c_int` this
+                // needs recognising on the *parameter* side too, since a
+                // handle flows both ways across a real foreign boundary
+                // (`SSL_new` takes the `SSL_CTX *` that `SSL_CTX_new`
+                // returned). It resolves directly to `Type::CPtr` rather
+                // than through `resolve_type`, the same bypass `c_int`
+                // uses below, so it is never registered as a general type
+                // name and stays refused everywhere else.
+                if matches!(
+                    ast.ty(p.ty),
+                    TypeExpr::Name { name, qualifier: None, args }
+                        if args.is_empty() && ast.name_of(*name) == "c_ptr"
+                ) {
+                    Ok(Type::CPtr)
+                } else {
+                    resolve_type(
+                        Resolving { ast, defs: &defs, unifier: &unifier, module, edition },
+                        Params::unbounded(&[]),
+                        &region_scope,
+                        p.ty,
+                    )
+                }
             })
             .collect::<Result<Vec<_>, _>>()?;
         // `c_int` (`docs/reach.md` §3.4): a foreign *return* is not the
@@ -164,8 +180,21 @@ fn lower_inner(ast: &Ast, rest: &mut Vec<Diagnostic>) -> Result<Program, Diagnos
             TypeExpr::Name { name, qualifier: None, args }
                 if args.is_empty() && ast.name_of(*name) == "c_int"
         );
+        // `c_ptr` in return position: `TLS_client_method`, `SSL_CTX_new`
+        // and `SSL_new` all hand back an opaque handle this way
+        // (`docs/opaque-pointers.md` §3). No narrowing question here —
+        // a handle is one register wide on every target this backend
+        // supports, same as `int` — so it needs no sibling to
+        // `narrow_return`.
+        let is_cptr_return = matches!(
+            ast.ty(decl.ret),
+            TypeExpr::Name { name, qualifier: None, args }
+                if args.is_empty() && ast.name_of(*name) == "c_ptr"
+        );
         let ret = if narrow_return {
             Type::Int
+        } else if is_cptr_return {
+            Type::CPtr
         } else {
             resolve_type(
                 Resolving { ast, defs: &defs, unifier: &unifier, module, edition },
@@ -188,7 +217,7 @@ fn lower_inner(ast: &Ast, rest: &mut Vec<Diagnostic>) -> Result<Program, Diagnos
         for (param, decl_param) in params.iter().zip(&decl.params) {
             let what = ast.name_of(decl_param.name);
             match param {
-                Type::Int | Type::Bool => {}
+                Type::Int | Type::Bool | Type::CPtr => {}
                 Type::Ref { inner, .. } if matches!(inner.as_ref(), Type::Named(def, _) if is_capability(*def)) =>
                     {}
                 // `docs/strings.md` §6: a byte slice crosses as a pointer
@@ -212,7 +241,7 @@ fn lower_inner(ast: &Ast, rest: &mut Vec<Diagnostic>) -> Result<Program, Diagnos
                     return Err(Diagnostic::new(
                         Rule::ForeignBoundaryType,
                         format!(
-                            "`{name}` takes `{what}` of type `{}`, which has no agreed layout across a foreign boundary; a foreign parameter is `int`, `bool`, or a borrowed capability",
+                            "`{name}` takes `{what}` of type `{}`, which has no agreed layout across a foreign boundary; a foreign parameter is `int`, `bool`, `c_ptr`, or a borrowed capability",
                             unifier.display(other)
                         ),
                         span,
@@ -227,11 +256,11 @@ fn lower_inner(ast: &Ast, rest: &mut Vec<Diagnostic>) -> Result<Program, Diagnos
         // because a message that names a type the grammar refuses sends a
         // programmer to write `()` and be told there is no `()`
         // (`docs/reach.md` §4).
-        if !matches!(ret, Type::Int | Type::Bool | Type::Unit) {
+        if !matches!(ret, Type::Int | Type::Bool | Type::Unit | Type::CPtr) {
             return Err(Diagnostic::new(
                 Rule::ForeignBoundaryType,
                 format!(
-                    "`{name}` returns `{}`, which has no agreed layout across a foreign boundary; a foreign result is `int` or `bool`, and a C function that returns nothing is declared `int` and its result discarded",
+                    "`{name}` returns `{}`, which has no agreed layout across a foreign boundary; a foreign result is `int`, `bool` or `c_ptr`, and a C function that returns nothing is declared `int` and its result discarded",
                     unifier.display(&ret)
                 ),
                 span,

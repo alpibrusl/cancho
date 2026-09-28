@@ -30,11 +30,13 @@ impl<'a> Parser<'a> {
             let value = self.int_value(tok, false)?;
             self.expect(TokenKind::Semi)?;
             // Edition 2 is edition 1 plus `Net` (`docs/editions.md` §7);
-            // nothing later than that exists to opt into yet.
-            if value != 1 && value != 2 {
+            // edition 3 is edition 2 plus `c_ptr`/`null_ptr`
+            // (`docs/opaque-pointers.md` §4). Nothing later than that
+            // exists to opt into yet.
+            if value != 1 && value != 2 && value != 3 {
                 return Err(Diagnostic::new(
                     Rule::UnknownEdition,
-                    format!("unknown edition {value}; the only editions today are 1 and 2"),
+                    format!("unknown edition {value}; the only editions today are 1, 2 and 3"),
                     keyword.span.to(tok.span),
                 ));
             }
