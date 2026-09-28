@@ -291,7 +291,7 @@ pub fn compile_object_for(
     triple: Triple,
 ) -> Result<Vec<u8>, CodegenError> {
     let text = emit::emit_module(program, entry, &triple)
-        .map_err(|(function, message)| CodegenError { function, message })?;
+        .map_err(|(function, message)| CodegenError { function, message, environment: false })?;
     run_clang(&text, &triple)
 }
 
@@ -318,6 +318,7 @@ fn run_clang(module: &str, triple: &Triple) -> Result<Vec<u8>, CodegenError> {
     std::fs::write(&ll_path, module).map_err(|e| CodegenError {
         function: None,
         message: format!("cannot write `{}`: {e}", ll_path.display()),
+        environment: true,
     })?;
 
     let result = (|| -> Result<Vec<u8>, CodegenError> {
@@ -333,7 +334,12 @@ fn run_clang(module: &str, triple: &Triple) -> Result<Vec<u8>, CodegenError> {
             .output()
             .map_err(|e| CodegenError {
                 function: None,
-                message: format!("cannot run `{cc}`: {e}"),
+                message: format!(
+                    "cannot run `{cc}`: {e}\n\n`--backend llvm` shells out to a real `clang` \
+                     (docs/llvm-backend.md); install it, point `CLANG` at one, or pass \
+                     `--backend cranelift` instead."
+                ),
+                environment: true,
             })?;
         if !status.status.success() {
             return Err(CodegenError {
@@ -342,11 +348,13 @@ fn run_clang(module: &str, triple: &Triple) -> Result<Vec<u8>, CodegenError> {
                     "`{cc} -c` refused the emitted module:\n{}",
                     String::from_utf8_lossy(&status.stderr)
                 ),
+                environment: false,
             });
         }
         std::fs::read(&obj_path).map_err(|e| CodegenError {
             function: None,
             message: format!("cannot read `{}`: {e}", obj_path.display()),
+            environment: true,
         })
     })();
 

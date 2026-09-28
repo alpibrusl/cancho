@@ -196,6 +196,13 @@ fn identity_is_content_not_location() {
 /// That is what makes tuples an ergonomic feature rather than a
 /// representation choice, and it is why `examples/slab/` could drop two
 /// declared types without anyone having to ask what it cost.
+///
+/// Pinned to `--backend cranelift` explicitly: the claim is about one
+/// backend's own layout policy (`lex-sys-codegen`'s struct/tuple
+/// representation), not a portable behavioural guarantee, so it should
+/// not silently start meaning "whichever backend is the default today."
+/// `--backend llvm` was never measured for object-level byte-identity
+/// here and is not assumed to have it.
 #[test]
 fn a_tuple_emits_the_same_object_as_the_struct_it_replaces() {
     const STRUCT: &str = "\
@@ -246,6 +253,8 @@ fn main(world: World) -> [] int {
                 path.as_os_str(),
                 "--emit".as_ref(),
                 "obj".as_ref(),
+                "--backend".as_ref(),
+                "cranelift".as_ref(),
                 "-o".as_ref(),
                 object.as_os_str(),
             ])

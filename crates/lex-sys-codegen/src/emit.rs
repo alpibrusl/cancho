@@ -211,12 +211,17 @@ impl<'a> Emitter<'a> {
             match generated {
                 Ok(Ok(())) => {}
                 Ok(Err(message)) => {
-                    return Err(CodegenError { function: Some(index), message });
+                    return Err(CodegenError {
+                        function: Some(index),
+                        message,
+                        environment: false,
+                    });
                 }
                 Err(payload) => {
                     return Err(CodegenError {
                         function: Some(index),
                         message: panic_text(payload.as_ref()),
+                        environment: false,
                     });
                 }
             }

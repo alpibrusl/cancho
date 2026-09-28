@@ -291,6 +291,13 @@ fn std_is_available_behind_a_flag() {
 /// it is a test: the library added 5.6 KB to a program that called none
 /// of it, because pass 2 seeded from every non-generic function rather
 /// than from the entry point.
+///
+/// Pinned to `--backend cranelift`: `--backend llvm` embeds its own
+/// per-invocation temp file name (`run_clang`'s `.ll` path, which
+/// includes `std::process::id()`) in the object it emits, so two builds
+/// in two separate processes are never byte-identical on that backend
+/// regardless of source -- a real difference between the backends, not
+/// a bug this test should chase.
 #[test]
 fn std_declarations_cost_nothing_unless_called() {
     const BARE: &str = "fn main(world: World) -> [] int {\n\
@@ -311,7 +318,7 @@ fn std_declarations_cost_nothing_unless_called() {
         for flag in extra {
             command.arg(flag);
         }
-        command.arg("--emit").arg("obj").arg("-o").arg(&out);
+        command.arg("--emit").arg("obj").arg("--backend").arg("cranelift").arg("-o").arg(&out);
         let build = command.output().expect("the compiler runs");
         assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
         std::fs::read(&out).expect("a readable object file")

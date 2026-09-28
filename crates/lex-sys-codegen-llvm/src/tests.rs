@@ -116,19 +116,24 @@ fn the_first_slice_builds_and_runs_the_smoke_fixture() {
 /// `body/expr.rs`'s own `expr` match has no wildcard arm any more, so
 /// the compiler itself now enforces that this test's title stays true
 /// for `Expr`: a variant this backend does not lower is a build failure
-/// here, not a runtime refusal to go looking for. There is no longer a
-/// real `tests/accept`/`examples` fixture that reaches an unbuilt `Expr`
-/// or `Builtin` for this test to name -- checked directly, by building
-/// every fixture in both directories against `--backend llvm` in this
-/// slice's own session, and the only one that still refuses is the
-/// already-documented, already-accepted `socket`/`bind`/`connect`/etc.
-/// symbol collision (§7.23, `docs/ROADMAP.md` #92): a program's own
-/// `extern fn socket` disagreeing with this backend's internal
-/// declaration for the same libc symbol. So this test now names that
-/// refusal instead -- still refused, still not panicked, just no longer
-/// "unbuilt".
+/// here, not a runtime refusal to go looking for.
+///
+/// The one item this list used to keep -- a program's own `extern fn
+/// socket` colliding with this backend's internal declaration for the
+/// same libc symbol (§7.23, `docs/ROADMAP.md` #92) -- moved out too, once
+/// `--backend llvm` becoming the default made the "already-accepted"
+/// framing false: `socket`/`bind`/`listen`/`accept`/`connect`/
+/// `getaddrinfo`/`freeaddrinfo`/`close`/`creat`/`open` are now declared
+/// only when the program's own `extern fn` does not already claim the
+/// symbol, the same guard `read`/`write` already had. So there is no
+/// longer a real fixture that reaches an unbuilt `Expr`/`Builtin` or an
+/// avoidable collision for this test to name -- checked directly, by
+/// building every fixture in `tests/accept/` and `examples/` against
+/// `--backend llvm`. This test now proves the fix rather than pinning
+/// the collision: the program that used to be refused here builds and
+/// links clean.
 #[test]
-fn a_program_outside_this_backend_is_refused_not_panicked() {
+fn a_colliding_extern_fn_no_longer_collides() {
     let source = "\
 extern fn socket[&f](ffi: &f Ffi(\"libc\"), domain: int, kind: int, protocol: int) \
     -> [ffi(\"libc\")] int;
@@ -141,12 +146,9 @@ fn main(world: World) -> [] int {
 ";
     let ast = parse(source).expect("parses");
     let program = lex_sys_ir::lower(&ast).expect("type-checks");
-    let error = compile_object(&program, "main")
-        .expect_err("a colliding `extern fn socket` should still be refused, not silently linked");
-    assert!(
-        error.message.to_lowercase().contains("socket"),
-        "the refusal should name the symbol it collided on: {}",
-        error.message
+    compile_object(&program, "main").expect(
+        "a program's own `extern fn socket` should build clean now that this backend defers \
+         to it instead of insisting on its own declaration",
     );
 }
 
