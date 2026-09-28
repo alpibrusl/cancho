@@ -401,8 +401,9 @@ impl Rule {
             }
             Rule::ThreadPayloadType => {
                 "`spawn`'s payload and `body`'s return type must each cross to a real OS thread \
-                 as one pointer-width value -- `int`, `bool`, `c_ptr`, a reference, or `()` -- the \
-                 same shape `pthread_create`'s own `void *(*)(void *)` start routine can carry."
+                 as one pointer-width value -- `int`, `bool`, `c_ptr`, a reference, a function \
+                 value, `()`, or an owned zero-leaf/one-leaf capability such as `Io` or `File` -- \
+                 the same shape `pthread_create`'s own `void *(*)(void *)` start routine can carry."
             }
             Rule::TypeArgsNotTaken => {
                 "A type parameter stands for one type and is not itself generic, so it takes no \
