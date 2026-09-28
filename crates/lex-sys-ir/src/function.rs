@@ -172,6 +172,10 @@ pub(crate) fn settle_expr(expr: &mut Expr, unifier: &Unifier) {
             }
             **ret = unifier.resolve(ret);
         }
+        Expr::Joined { handle, ret } => {
+            settle_expr(handle, unifier);
+            **ret = unifier.resolve(ret);
+        }
     }
 }
 

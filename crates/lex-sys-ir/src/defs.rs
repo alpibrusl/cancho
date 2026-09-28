@@ -482,6 +482,10 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     // name, not a rename.
     let net = symbol("Net");
     let split_net = symbol("Split");
+    // `docs/threads.md` §2: `spawn`'s handle, edition 4 only.
+    let thread = symbol("Thread");
+    let thread_payload_param = symbol("T");
+    let thread_ret_param = symbol("R");
     let ok_arm = symbol("Ok");
     let failed_arm = symbol("Failed");
     let got_arm = symbol("Got");
@@ -518,6 +522,9 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     // below is what keeps an edition-1 file from ever resolving to it.
     let net_def = unifier.declare("Net");
     let split_net_def = unifier.declare("Split");
+    // `PRELUDE_THREAD` (`ir.rs`): edition 4 only, appended last so no
+    // earlier index moves.
+    let thread_def = unifier.declare("Thread");
 
     vec![
         TypeDef {
@@ -748,6 +755,39 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
             ]),
             span,
             since: 2,
+        },
+        // `docs/threads.md` §2: `spawn`'s own handle. `res`, like `Box`
+        // -- an obligation the type system tracks, discharged by
+        // exactly one operation (`join`, the same "one consumer" shape
+        // `unbox`/`close` already have for `Box`/`File`). No fields, for
+        // the same reason `Box` has none: what it owns (a real OS
+        // thread id) has nothing a pattern could usefully name, and
+        // naming it would be a way to end the obligation without
+        // joining.
+        //
+        // Two generic parameters, not one: `R` is `body`'s return type,
+        // read back by `join`, but `T` -- the *payload* type -- is here
+        // too, carried for no reason but its region. A payload that
+        // borrows (`&r Io`, say) makes `Thread[T, R]`'s type mention
+        // `r` through `Type::Named`'s existing, already-generic
+        // `mentions`/`regions_into` walk into its own type arguments
+        // (`crates/lex-sys-types/src/lib.rs`) -- the same escape check
+        // a `borrow` block's own result is held to (`linearity-and-
+        // effects.md` §5 rule 4), applied here with no new rule at all.
+        // A handle whose payload borrowed `r` cannot survive past where
+        // `r`'s block closes, which is `docs/threads.md` §3's whole
+        // soundness argument, for free.
+        TypeDef {
+            name: thread,
+            def: thread_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: vec![thread_payload_param, thread_ret_param],
+            bounds: Vec::new(),
+            declared_mode: Some(Mode::Res),
+            kind: DefKind::Struct(Vec::new()),
+            span,
+            since: 4,
         },
     ]
 }

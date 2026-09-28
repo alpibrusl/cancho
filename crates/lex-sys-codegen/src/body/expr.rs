@@ -131,6 +131,31 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
             // `docs/compile-time-data.md` §2: the same two leaves a
             // literal is, because that is what it became. The bytes were
             // computed rather than written, and by here nothing can tell.
+            // `docs/threads.md` §2: blocks until the thread `spawn`
+            // started returns, then reads `R`'s own leaves back out of
+            // what `pthread_join` wrote -- zero, for `()`, or one,
+            // since `lower/conc.rs::spawn` already refused anything
+            // wider.
+            Expr::Joined { handle, ret } => {
+                let pointer = self.pointer;
+                let handle_value = self.scalar(handle);
+                let join = self.libc_fn("pthread_join", &[pointer, pointer], &[types::I32]);
+                let join_ref = self.module.declare_func_in_func(join, self.builder.func);
+                let result_slot = self.return_buffer(&Type::Int);
+                let call = self.builder.ins().call(join_ref, &[handle_value, result_slot]);
+                let status = self.builder.inst_results(call)[0];
+                let failed = self.builder.ins().icmp_imm(IntCC::NotEqual, status, 0);
+                self.builder.ins().trapnz(failed, TrapCode::HEAP_OUT_OF_BOUNDS);
+                match leaves(ret, self.program, pointer).as_slice() {
+                    [] => Vec::new(),
+                    [kind] => {
+                        vec![self.builder.ins().load(*kind, MemFlags::trusted(), result_slot, 0)]
+                    }
+                    _ => unreachable!(
+                        "`docs/threads.md` §1 restricts a thread's return to at most one leaf"
+                    ),
+                }
+            }
             Expr::Static(index) => self.static_data(*index),
             Expr::FileOp { write, prefix, args } => {
                 let (write, prefix, args) = (*write, prefix.clone(), args.clone());
@@ -348,6 +373,57 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::NullPtr) => {
                         vec![self.builder.ins().iconst(self.pointer, 0)]
                     }
+                    // `docs/threads.md` §2: `body`'s own compiled entry
+                    // point (`args[1]`, `Expr::FnValue`'s address)
+                    // becomes `pthread_create`'s start routine directly
+                    // -- checked at the call site
+                    // (`lower/conc.rs::spawn`) to be safe as one, so no
+                    // trampoline is built here. `Thread[T, R]`'s own
+                    // single leaf is the raw `pthread_t` `pthread_create`
+                    // wrote into a stack slot this call owns.
+                    Callee::Builtin(Builtin::Spawn) => {
+                        let pointer = self.pointer;
+                        // A `()` payload contributes zero leaves, so
+                        // `args` (already skip-flattened above) holds
+                        // only `body`'s own address; anything else
+                        // contributes exactly one.
+                        let (payload, start_routine) = if args.len() == 1 {
+                            (self.builder.ins().iconst(pointer, 0), args[0])
+                        } else {
+                            let raw = args[0];
+                            let widened = if self.builder.func.dfg.value_type(raw) == pointer {
+                                raw
+                            } else {
+                                // A `byte`/`bool` payload is Cranelift
+                                // `I8`; `pthread_create`'s signature
+                                // declares every parameter
+                                // `pointer`-width, and `call` requires
+                                // an exact type match.
+                                self.builder.ins().uextend(pointer, raw)
+                            };
+                            (widened, args[1])
+                        };
+                        let create = self.libc_fn(
+                            "pthread_create",
+                            &[pointer, pointer, pointer, pointer],
+                            &[types::I32],
+                        );
+                        let create_ref =
+                            self.module.declare_func_in_func(create, self.builder.func);
+                        let thread_slot = self.return_buffer(&Type::Int);
+                        let attr = self.builder.ins().iconst(pointer, 0);
+                        let call = self
+                            .builder
+                            .ins()
+                            .call(create_ref, &[thread_slot, attr, start_routine, payload]);
+                        let status = self.builder.inst_results(call)[0];
+                        // `body/memory.rs`'s own `malloc` check: a
+                        // resource failure is a trap, not a value this
+                        // program pretends is a real thread.
+                        let failed = self.builder.ins().icmp_imm(IntCC::NotEqual, status, 0);
+                        self.builder.ins().trapnz(failed, TrapCode::HEAP_OUT_OF_BOUNDS);
+                        vec![self.builder.ins().load(pointer, MemFlags::trusted(), thread_slot, 0)]
+                    }
                     Callee::Fn(id) => {
                         let callee = &self.program.funcs[id.0 as usize];
                         let ret = callee.ret.clone();
@@ -476,6 +552,11 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     }
                     Callee::Builtin(Builtin::Bind) => {
                         unreachable!("`bind` is lowered as `Expr::Bind`")
+                    }
+                    // `R`, `join`'s real return type, travels with its
+                    // own node the same reason the three above do.
+                    Callee::Builtin(Builtin::Join) => {
+                        unreachable!("`join` is lowered as `Expr::Joined`")
                     }
                     // Neither takes a capability, so both are ordinary
                     // fixed-signature calls (`docs/listen.md` §6).

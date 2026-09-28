@@ -234,6 +234,43 @@ impl<'a> FuncEmitter<'a> {
                     LValue::Const(data.values.len() as i64),
                 ])
             }
+            // `docs/threads.md` §2: blocks until the thread `spawn`
+            // started returns, then reads `R`'s own leaves back out of
+            // the cell `pthread_join` wrote into -- zero, for `()`, or
+            // one, since `lower/conc.rs::spawn` already refused
+            // anything wider.
+            Expr::Joined { handle, ret } => {
+                let handle_value = operand(&self.scalar(handle)?);
+                let result_slot = self.fresh();
+                self.out.push_str(&format!("  {result_slot} = alloca ptr\n"));
+                let status = self.fresh();
+                self.out.push_str(&format!(
+                    "  {status} = call i32 @pthread_join(ptr {handle_value}, ptr {result_slot})\n"
+                ));
+                let failed = self.fresh();
+                self.out.push_str(&format!("  {failed} = icmp ne i32 {status}, 0\n"));
+                self.trap_if(&failed)?;
+                match leaves_of(ret, self.program)?.as_slice() {
+                    [] => Ok(Vec::new()),
+                    // The same "load whatever kind the type says straight
+                    // out of a `ptr`-typed cell" idiom `body/mod.rs`'s own
+                    // slot loads already use -- an `alloca` imposes no
+                    // type of its own, and on both this project's
+                    // little-endian targets a narrower load already
+                    // reads exactly the low bits `pthread_join` wrote.
+                    [kind] => {
+                        let value = self.fresh();
+                        self.out.push_str(&format!(
+                            "  {value} = load {}, ptr {result_slot}\n",
+                            kind.llvm()
+                        ));
+                        Ok(vec![LValue::Reg(value)])
+                    }
+                    _ => unreachable!(
+                        "`docs/threads.md` §1 restricts a thread's return to at most one leaf"
+                    ),
+                }
+            }
             // `-x`: on `int`, `0 - x`, checked -- `-int::MIN` has no
             // positive counterpart, the one place negation overflows,
             // the same reasoning `lex-sys-codegen`'s own `Expr::Neg`
@@ -345,6 +382,63 @@ impl<'a> FuncEmitter<'a> {
             // operand.
             Callee::Builtin(Builtin::NullPtr) => {
                 Ok(vec![LValue::Reg(LKind::Ptr.zero().to_owned())])
+            }
+            // `docs/threads.md` §2: `body`'s own compiled entry point
+            // (`evaluated[1]`, `Expr::FnValue`'s address) becomes
+            // `pthread_create`'s start routine directly -- checked at
+            // the call site (`lower/conc.rs::spawn`) to be safe as one,
+            // so no trampoline is built here. `Thread[T, R]`'s own
+            // single leaf is the raw `pthread_t` `pthread_create` wrote
+            // into an `alloca`'d cell this call owns.
+            Callee::Builtin(Builtin::Spawn) => {
+                // `void *arg` needs a real `ptr` operand: `int`/`bool`
+                // cross a call as their own width (`i64`/`i8`), so a
+                // non-`ptr` payload is reinterpreted with `inttoptr`
+                // first -- the bits are unchanged, only how LLVM's
+                // textual IR is allowed to spell them at a call site. A
+                // `()` payload (`docs/threads.md` §2, zero leaves) has
+                // nothing real to pass; `body`'s own compiled code never
+                // reads it either, so `null` is exactly as good as
+                // anything else would be.
+                let payload = match evaluated[0].as_slice() {
+                    [] => "null".to_owned(),
+                    [value] => {
+                        let kind = self.scalar_kind(&args[0])?;
+                        if kind == LKind::Ptr {
+                            operand(value)
+                        } else {
+                            let converted = self.fresh();
+                            self.out.push_str(&format!(
+                                "  {converted} = inttoptr {} {} to ptr\n",
+                                kind.llvm(),
+                                operand(value)
+                            ));
+                            converted
+                        }
+                    }
+                    _ => {
+                        unreachable!("`docs/threads.md` §1 restricts a payload to at most one leaf")
+                    }
+                };
+                let start_routine = operand(&evaluated[1][0]);
+                let thread_slot = self.fresh();
+                self.out.push_str(&format!("  {thread_slot} = alloca ptr\n"));
+                let status = self.fresh();
+                self.out.push_str(&format!(
+                    "  {status} = call i32 @pthread_create(ptr {thread_slot}, ptr null, ptr {start_routine}, ptr {payload})\n"
+                ));
+                let failed = self.fresh();
+                self.out.push_str(&format!("  {failed} = icmp ne i32 {status}, 0\n"));
+                self.trap_if(&failed)?;
+                let thread_value = self.fresh();
+                self.out.push_str(&format!("  {thread_value} = load ptr, ptr {thread_slot}\n"));
+                Ok(vec![LValue::Reg(thread_value)])
+            }
+            // `R`, `join`'s real return type, travels with its own
+            // node, `Expr::Joined`, the same reason a file operation's
+            // prefix or `connect`'s bound do.
+            Callee::Builtin(Builtin::Join) => {
+                unreachable!("`join` is lowered as `Expr::Joined`")
             }
             // The escape from checked arithmetic (`docs/llvm-backend.md`
             // §7.3's first named gap): LLVM's own `add`/`sub`/`mul`, with

@@ -704,6 +704,13 @@ pub const PRELUDE: &[&str] = &[
     // (`docs/editions.md` §7), and the field name `Split` grows in
     // that edition.
     "Net", "net",
+    // `docs/threads.md`: `spawn`/`join`'s own handle, edition 4 only.
+    // `T`/`R` name its two generic parameters -- the payload type and
+    // `body`'s return type, both threaded through so the escape check
+    // sees a payload reference's region without a region parameter of
+    // its own (`Type::Named`'s existing `mentions`/`regions_into`
+    // already recurse into a type argument).
+    "Thread", "T", "R",
 ];
 
 impl Ast {

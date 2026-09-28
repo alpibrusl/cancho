@@ -1,6 +1,6 @@
 # Threads: why `pthread_create` cannot be the primitive, and what can be
 
-> **Status: proposed, not started.** `docs/reach.md` §3.3 and
+> **Status: §2's single-leaf slice is built.** `docs/reach.md` §3.3 and
 > `docs/function-values.md` §5 both point at the same wall and stop
 > there: a thread needs "more than a pointer", and neither document
 > says what more. This document finishes that sentence. The answer is
@@ -14,9 +14,31 @@
 > single-threaded rule.** It forbids a second writer while a reference
 > is live, full stop, and a spawned thread joined before its region
 > closes is just a second writer the checker already refuses to admit
-> exists. Nothing here is built yet — this is `function-values.md`'s
-> own discipline applied to a bigger asker: settle the shape before
-> anything forces it.
+> exists.
+>
+> **What is built, and what is deliberately narrower than §2's own
+> illustrative signature:** `spawn`'s `payload` and `body`'s return type
+> are each restricted to one pointer-width leaf — `int`, `bool`, `c_ptr`,
+> a captureless function value, or a single non-slice reference —
+> checked by `Rule::ThreadPayloadType` (`crates/lex-sys-ir/src/lower/
+> conc.rs`). `body`'s own compiled entry point becomes
+> `pthread_create`'s start routine directly; the reason is not a missing
+> feature but a missing *prerequisite* feature — this language has no
+> compiler-synthesised trampoline function yet (nothing builds a
+> hand-crafted `Func` outside a parsed source body), which is what a
+> multi-field struct payload would need. `res Thread[T, R]` — two type
+> parameters, not the one sketched below, because `T` rides along purely
+> so its region is tracked, getting §3's entire escape-check argument for
+> free from `Type::Named`'s already-generic `mentions`/`regions_into`
+> walk into its type arguments rather than needing any new checker
+> code. Real threads (`std::thread`-adjacent: a genuine `pthread_create`/
+> `pthread_join` pair on both backends), not a simulation — verified
+> under §5 step 2, distinct thread IDs and real wall-clock parallelism,
+> both checked directly rather than trusted from the type checker alone.
+> §5 steps 3 and 4's owned-capability and struct-payload cases, and step
+> 5's `Rc` exclusion (moot today: `Rc` itself is not yet an implemented
+> type in this compiler, so nothing of that shape can be written to
+> exclude), remain future slices, tracked in §4 below.
 
 ---
 
@@ -221,47 +243,58 @@ counting, the way it was for a decision that already answered
 primitive and using it, not by counting existing programs against a
 feature that does not exist yet for any of them to ask for.
 
-1. **Function values, minimal slice.** `function-values.md` §4.2 as
-   written: a new `Type::Fn(Vec<Type>, Box<Effects>, Box<Type>)`-shaped
-   type (or equivalent), a captureless, non-generic, `val` value
-   naming a top-level function's `DefId`, and a call through it
-   checked against the type's own row. `tests/accept/` gets a
-   fixture with no threading at all — passing `write_bytes` as a
-   value to a hand-written higher-order function — to prove this
-   slice alone before `spawn` is built on it.
-2. **`spawn`/`join`, no shared data.** A thread that receives an
-   owned `int`, computes on it with no capability, and returns an
-   `int` through `join`. Verified by running many of them and
-   checking two things directly rather than trusting the type
-   checker alone: distinct OS thread IDs (`gettid` or equivalent,
-   declared the ordinary `extern fn` way — a thread ID is a plain
-   `int`, no different from a process ID `fork` already returns) and
-   wall-clock evidence of real parallelism (N independent
-   busy-loops joined take roughly one loop's time on a multi-core
-   host, not N times it) — the same "measured, not argued" standard
-   `reach.md` itself is held to.
-3. **`spawn`/`join` with a moved capability.** A thread that receives
-   an owned `File` (or `Io`) and performs real I/O, joined, with the
-   spawning function checked to no longer hold that capability
-   (a `tests/reject/` fixture: using it again after `spawn` is
-   `use-after-move`, the existing rule, not a new one).
-4. **`spawn`/`join` with a shared reference across the join.** A
-   thread that reads a `&r [byte]` the spawning function also reads
-   after `join` returns — proving §3's argument holds in practice,
-   not only on paper — and a companion `tests/reject/` fixture
-   proving a *unique* reference cannot be read from the spawning side
-   before `join` (still held by the thread, still moved).
-5. **The `Rc` exclusion, checked, not assumed.** A `tests/reject/`
-   fixture spawning a thread with an `Rc[h] T` in its payload,
-   refused with a rule naming §4's reason, so the exclusion is a
-   compiler fact from the day `spawn` lands rather than a documented
-   intention nobody enforces.
+1. **Function values, minimal slice. Built (#127).** `Type::Fn`,
+   `Expr::FnValue`/`Expr::CallIndirect`, on both backends —
+   `tests/accept/function_value.ls`.
+2. **`spawn`/`join`, no shared data. Built.** `tests/accept/
+   spawn_join.ls`: a thread that receives an owned `int`, computes on
+   it with no capability, and returns an `int` through `join`.
+   Verified by checking two things directly rather than trusting the
+   type checker alone (`tests/accept/spawn_thread_ids.ls`,
+   `tests/accept/spawn_parallel_sleep.ls`, checked on both backends in
+   `crates/lex-sys/tests/conformance/backends.rs`): distinct OS thread
+   IDs (`pthread_self`, declared the ordinary `extern fn` way — no
+   `gettid` needed, since a thread ID here is only ever compared, never
+   printed as the kernel's own number) and wall-clock evidence of real
+   parallelism (four independent 200ms sleeps, joined, finish in about
+   one sleep's time, asserted well under two, not four) — the same
+   "measured, not argued" standard `reach.md` itself is held to. The
+   same fixture doubles as §3's "shared reference crosses into more
+   than one spawn, and the spawning side still reads it after every
+   `join`" case: one borrowed `Ffi("libc")` capability is `payload` for
+   two threads and is read a third time by `main` once both are
+   joined. `tests/reject/spawn_handle_escapes_borrow.ls` checks §3's
+   soundness argument itself: a `Thread[&r int, int]` handle returned
+   out of the `borrow r` block that opened `r`, without `join`ing
+   first, is refused by the existing `reference-escapes-region` check
+   — no new rule, exactly as §3 predicted. `tests/reject/
+   spawn_payload_type_not_supported.ls` checks this slice's own wall:
+   a multi-field struct payload is refused by `Rule::ThreadPayloadType`
+   before it ever reaches codegen.
+3. **`spawn`/`join` with a moved capability.** Not built: an *owned*
+   `File`/`Io` is a multi-field struct under the hood, not a single
+   leaf, so it needs the same trampoline this slice deliberately does
+   without (§2's status note). A *borrowed* capability already crosses
+   today (step 2, above) — this step is specifically the owned case.
+4. **`spawn`/`join` with a shared reference across the join.** The
+   shared-reference half is built, folded into step 2 above. Its
+   companion — a `tests/reject/` fixture proving a *unique* reference
+   cannot be read from the spawning side before `join` — is not built
+   separately; it is `linearity-and-effects.md`'s existing
+   `use-after-move` rule applied to a `spawn` call like any other,
+   already covered by that rule's own fixtures rather than needing a
+   thread-specific one.
+5. **The `Rc` exclusion, checked, not assumed.** Not built, and cannot
+   be yet: `Rc[h] T` is not an implemented type in this compiler at
+   all, so no fixture can construct the payload this step needs to
+   refuse. `crosses_to_a_thread`'s allowlist (`int`, `bool`, `c_ptr`, a
+   captureless function value, a non-slice reference) already excludes
+   anything shaped like an `Rc` structurally, the same way it excludes
+   every other multi-field type — vacuously true today, worth a real
+   fixture once `Rc` exists to write one against.
 
-Given the size of step 1 alone — a real type-system feature this
-project deliberately deferred twice (`ROADMAP.md` #82,
-`function-values.md` itself) — and that step 3's soundness argument
-in §3, while derived from rules that already exist, has not been
-checked by anyone but this document's own reasoning, this is written
-up for review before any of it is built, the same gate `c_ptr`
-(`opaque-pointers.md`) went through before its own implementation,
-and a materially larger one to walk through given what it touches.
+Step 1 and step 2 are built. Steps 3 and 5 wait on infrastructure this
+slice deliberately did not build (a compiler-synthesised trampoline,
+and `Rc` itself); step 4's companion is deferred to the existing rule
+it already reduces to rather than duplicated as a thread-specific
+fixture.

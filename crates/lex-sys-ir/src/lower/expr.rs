@@ -781,6 +781,20 @@ impl<'a> FnLowering<'a> {
                 if resolved == Resolved::Builtin(Builtin::Bind) {
                     return self.bind(args, span);
                 }
+                // `docs/threads.md` §2: `T`/`R` are read off `payload`'s
+                // and `body`'s own types, which a fixed signature has no
+                // parameter to name -- the same reason `split` above is
+                // checked here rather than through one. `resolved`
+                // rather than `Builtin::from_name`, for the same
+                // edition-filtering reason `split`/`connect`/`bind` use
+                // it: an edition-3-or-earlier file's own `fn spawn`
+                // must reach its own declaration, not this one.
+                if resolved == Resolved::Builtin(Builtin::Spawn) {
+                    return self.spawn(args, span);
+                }
+                if resolved == Resolved::Builtin(Builtin::Join) {
+                    return self.join(args, span);
+                }
                 let (params, ret) = if let Resolved::Builtin(builtin) = resolved {
                     // A builtin's region parameters are instantiated exactly
                     // like a written function's (§5.1): one fresh region per

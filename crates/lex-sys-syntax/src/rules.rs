@@ -76,6 +76,7 @@ pub enum Rule {
     RegionNotInScope,
     SharedReferenceWritten,
     StaticItem,
+    ThreadPayloadType,
     TypeArgsNotTaken,
     TypeMismatch,
     UnexpectedCharacter,
@@ -88,7 +89,7 @@ pub enum Rule {
 
 impl Rule {
     /// Every rule, in tag order. The catalogue as data.
-    pub const ALL: [Rule; 54] = [
+    pub const ALL: [Rule; 55] = [
         Rule::AmbiguousType,
         Rule::ArityMismatch,
         Rule::AssignToImmutable,
@@ -135,6 +136,7 @@ impl Rule {
         Rule::RegionNotInScope,
         Rule::SharedReferenceWritten,
         Rule::StaticItem,
+        Rule::ThreadPayloadType,
         Rule::TypeArgsNotTaken,
         Rule::TypeMismatch,
         Rule::UnexpectedCharacter,
@@ -194,6 +196,7 @@ impl Rule {
             Rule::RegionNotInScope => "region-not-in-scope",
             Rule::SharedReferenceWritten => "shared-reference-written",
             Rule::StaticItem => "static-item",
+            Rule::ThreadPayloadType => "thread-payload-type",
             Rule::TypeArgsNotTaken => "type-args-not-taken",
             Rule::TypeMismatch => "type-mismatch",
             Rule::UnexpectedCharacter => "unexpected-character",
@@ -333,7 +336,8 @@ impl Rule {
                 "A qualified name reaches another module only where this file has imported it."
             }
             Rule::NoFunctionValues => {
-                "A function name can be called and nothing else: there are no function values."
+                "A named, top-level function with no type parameters can be a value; a generic \
+                 function, a builtin, an `extern fn`, or anything else in call position cannot."
             }
             Rule::NotAFunction => {
                 "The name in call position is not a function in this program: a local binding is a \
@@ -395,6 +399,11 @@ impl Rule {
                 "A `static` is compile-time data: a slice of scalars, evaluated during \
                  compilation, performing nothing and reading only `static`s declared before it."
             }
+            Rule::ThreadPayloadType => {
+                "`spawn`'s payload and `body`'s return type must each cross to a real OS thread \
+                 as one pointer-width value -- `int`, `bool`, `c_ptr`, a reference, or `()` -- the \
+                 same shape `pthread_create`'s own `void *(*)(void *)` start routine can carry."
+            }
             Rule::TypeArgsNotTaken => {
                 "A type parameter stands for one type and is not itself generic, so it takes no \
                  type arguments."
@@ -409,7 +418,7 @@ impl Rule {
             }
             Rule::UnknownEdition => {
                 "A file's `edition N;` marker names one of the editions this compiler knows; a \
-                 file with no marker is edition 1, and there is nothing later than edition 3 to \
+                 file with no marker is edition 1, and there is nothing later than edition 4 to \
                  name yet."
             }
             Rule::UnknownEscape => {

@@ -1,0 +1,174 @@
+//! `spawn`/`join` (`docs/threads.md` §2): a real OS thread, with
+//! `body`'s own compiled entry point becoming `pthread_create`'s start
+//! routine directly. No compiler-synthesised trampoline exists in this
+//! IR yet, which is why this first slice restricts the payload and the
+//! return type to one pointer-width leaf each.
+
+use crate::*;
+
+/// Does `ty` cross to a real thread as exactly one pointer-width leaf,
+/// or none at all (`docs/threads.md` §1)?
+///
+/// `pthread_create`'s start routine is `void *(*)(void *)` — one
+/// pointer in, one pointer out — and every kind allowed here already
+/// lowers to a single leaf that fits the general-purpose register
+/// `void *` does: `int` is `i64`, `bool`/`byte` are narrower but cost
+/// nothing wider (the same "a caller writing more than the callee
+/// asked for costs nothing" rule a foreign parameter already relies
+/// on, `docs/reach.md` §3.4), and `c_ptr`, a function value and a
+/// reference are already pointers. `float` is refused even though it
+/// is one leaf too: the wrong register class, and pthread's own C
+/// signature has no way to carry one.
+fn crosses_to_a_thread(ty: &Type) -> bool {
+    match ty {
+        Type::Unit | Type::Int | Type::Byte | Type::Bool | Type::CPtr | Type::Fn(..) => true,
+        // A reference is one pointer leaf, unless it points at a slice,
+        // which is a pointer *and* a length (`docs/strings.md` §6) --
+        // two leaves, one too many for this first slice.
+        Type::Ref { inner, .. } => !matches!(inner.as_ref(), Type::Slice(_)),
+        _ => false,
+    }
+}
+
+impl<'a> FnLowering<'a> {
+    /// `spawn(payload, body) -> [conc] res Thread[T, R]`
+    /// (`docs/threads.md` §2).
+    ///
+    /// Checked here rather than through a written signature because
+    /// `T` and `R` are read off `payload`'s and `body`'s own types,
+    /// the same reason [`Self::boxed`] is checked here and not there.
+    pub(crate) fn spawn(
+        &mut self,
+        args: &[ExprId],
+        span: Span,
+    ) -> Result<(Expr, Type), Diagnostic> {
+        let [payload, body] = args else {
+            return Err(Diagnostic::new(
+                Rule::ArityMismatch,
+                format!(
+                    "`spawn` takes 2 arguments -- the payload and the function to run -- but {} were given",
+                    args.len()
+                ),
+                span,
+            ));
+        };
+        let payload_span = self.ast.expr_span(*payload);
+        let (payload_value, payload_ty) = self.expr(*payload)?;
+        let payload_ty = self.unifier.resolve(&payload_ty);
+
+        let body_span = self.ast.expr_span(*body);
+        let (body_value, body_ty) = self.expr(*body)?;
+        let Type::Fn(params, effects, ret) = self.unifier.shallow(&body_ty) else {
+            return Err(Diagnostic::new(
+                Rule::NotAFunction,
+                format!(
+                    "`spawn`'s second argument must be a captureless function value, and `{}` is not one",
+                    self.unifier.display(&body_ty)
+                ),
+                body_span,
+            ));
+        };
+        if params.len() != 1 {
+            return Err(Diagnostic::new(
+                Rule::ArityMismatch,
+                format!(
+                    "`spawn`'s `body` must take exactly one parameter (the payload), but it takes {}",
+                    params.len()
+                ),
+                body_span,
+            ));
+        }
+        self.expect_type(&params[0], &payload_ty, payload_span)?;
+        let ret = *ret;
+
+        // `docs/threads.md` §1: the one wall this first slice does not
+        // cross. Checked *after* the arity/type agreement above, so a
+        // caller who passed the wrong kind of function hears about that
+        // first.
+        if !crosses_to_a_thread(&payload_ty) {
+            return Err(Diagnostic::new(
+                Rule::ThreadPayloadType,
+                format!(
+                    "`spawn`'s payload has type `{}`, which cannot cross to a real thread yet",
+                    self.unifier.display(&payload_ty)
+                ),
+                payload_span,
+            ));
+        }
+        if !crosses_to_a_thread(&ret) {
+            return Err(Diagnostic::new(
+                Rule::ThreadPayloadType,
+                format!(
+                    "`body` returns `{}`, which cannot cross back from a real thread yet",
+                    self.unifier.display(&ret)
+                ),
+                body_span,
+            ));
+        }
+
+        // `docs/threads.md` §2: the row this costs is `conc` -- real
+        // concurrency entering the program's authority surface -- plus
+        // whatever `body` itself performs, because `body` only ever
+        // runs because this call caused it to. Exactly the same union
+        // `Expr::CallIndirect`'s own lowering already does for an
+        // ordinary call through a value.
+        self.performed.union(&Effects::plain(["conc"]));
+        self.performed.union(&Effects::new(
+            effects.iter().map(|l| Label { name: l.name.clone(), argument: l.argument.clone() }),
+        ));
+
+        Ok((
+            Expr::Call {
+                callee: Callee::Builtin(Builtin::Spawn),
+                args: vec![payload_value, body_value],
+            },
+            // `T` rides along purely for its region: a payload that
+            // borrows makes this type mention that region through
+            // `Type::Named`'s own already-generic `mentions`/
+            // `regions_into` walk into its type arguments, which is
+            // what stops the handle from escaping the borrow the same
+            // way any other reference is stopped (`docs/threads.md`
+            // §3).
+            Type::Named(self.prelude()[PRELUDE_THREAD], vec![payload_ty, ret]),
+        ))
+    }
+
+    /// `join(handle) -> [row] R` (`docs/threads.md` §2) — the one
+    /// consumer a `Thread[T, R]` has, the same "one consumer" shape
+    /// [`Self::unboxed`] already has for `Box`.
+    pub(crate) fn join(&mut self, args: &[ExprId], span: Span) -> Result<(Expr, Type), Diagnostic> {
+        let [handle] = args else {
+            return Err(Diagnostic::new(
+                Rule::ArityMismatch,
+                format!("`join` takes 1 argument, but {} were given", args.len()),
+                span,
+            ));
+        };
+        let handle_span = self.ast.expr_span(*handle);
+        let (handle_value, handle_ty) = self.expr(*handle)?;
+        let resolved = self.unifier.resolve(&handle_ty);
+        let Type::Named(def, type_args) = &resolved else {
+            return Err(Diagnostic::new(
+                Rule::TypeMismatch,
+                format!(
+                    "`join` takes a thread handle from `spawn`, and `{}` is not one",
+                    self.unifier.display(&resolved)
+                ),
+                handle_span,
+            ));
+        };
+        if *def != self.prelude()[PRELUDE_THREAD] {
+            return Err(Diagnostic::new(
+                Rule::TypeMismatch,
+                format!(
+                    "`join` takes a thread handle from `spawn`, and `{}` is not one",
+                    self.unifier.display(&resolved)
+                ),
+                handle_span,
+            ));
+        }
+        let ret = type_args[1].clone();
+
+        Ok((Expr::Joined { handle: Box::new(handle_value), ret: Box::new(ret.clone()) }, ret))
+    }
+}

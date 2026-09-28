@@ -534,6 +534,7 @@ pub(crate) fn collect_static_refs(e: &Expr, out: &mut std::collections::BTreeSet
                 collect_static_refs(a, out);
             }
         }
+        Expr::Joined { handle, .. } => collect_static_refs(handle, out),
     }
 }
 
@@ -635,6 +636,7 @@ pub(crate) fn remap_static_refs(e: &mut Expr, remap: &std::collections::BTreeMap
                 remap_static_refs(a, remap);
             }
         }
+        Expr::Joined { handle, .. } => remap_static_refs(handle, remap),
     }
 }
 
