@@ -139,6 +139,10 @@ mod tag {
     /// under `==`, different in behaviour — hash as the two values they
     /// are.
     pub const FLOAT: u8 = 0x72;
+    /// `fn(A, B) -> [row] R` — a function value's type
+    /// (`docs/function-values.md` §4.2). Appended, not inserted, for the
+    /// same reason every tag above it was.
+    pub const TYPE_FN: u8 = 0x73;
 
     /// The tag for a declared mode. Written out rather than cast from the
     /// enum, so adding a mode cannot silently renumber the others.
@@ -479,6 +483,22 @@ fn encode_type(
         return;
     }
 
+    // `fn(A, B) -> [row] R` (`docs/function-values.md` §4.2): a shape,
+    // like a tuple or a slice, so it gets its own tag rather than being
+    // a `Name` nothing declares. The row is encoded the same
+    // canonicalised way a declaration's own row is (`encode_effects`),
+    // since two spellings of one row are one type here too.
+    if let TypeExpr::Fn { params, effects, ret } = written {
+        let (params, effects, ret) = (params.clone(), effects.clone(), *ret);
+        encoder.tag(tag::TYPE_FN).len(params.len());
+        for param in params {
+            encode_type(ast, encoder, param, module, type_ids, generics, regions);
+        }
+        encode_effects(ast, encoder, &effects);
+        encode_type(ast, encoder, ret, module, type_ids, generics, regions);
+        return;
+    }
+
     // A literal stands where a type argument does: `Ffi("libc")` is a
     // different type from `Ffi("libm")`, and the text is the whole of the
     // difference (§7.4).
@@ -490,7 +510,9 @@ fn encode_type(
     let (name, qualifier, args) = match written {
         TypeExpr::Name { name, qualifier, args } => (*name, *qualifier, args.clone()),
         other => {
-            unreachable!("a reference, a literal, a slice and a tuple were handled: {other:?}")
+            unreachable!(
+                "a reference, a literal, a slice, a tuple and a function type were handled: {other:?}"
+            )
         }
     };
     encoder.tag(tag::TYPE_NAME);

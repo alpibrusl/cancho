@@ -524,6 +524,16 @@ pub(crate) fn collect_static_refs(e: &Expr, out: &mut std::collections::BTreeSet
                 collect_static_refs(a, out);
             }
         }
+        // A function value names its target's `DefId` directly, not a
+        // static -- `lower/expr.rs`'s own `self.mono.request` already
+        // marked the target reachable when the value was created.
+        Expr::FnValue(_) => {}
+        Expr::CallIndirect { target, args, .. } => {
+            collect_static_refs(target, out);
+            for a in args {
+                collect_static_refs(a, out);
+            }
+        }
     }
 }
 
@@ -614,6 +624,13 @@ pub(crate) fn remap_static_refs(e: &mut Expr, remap: &std::collections::BTreeMap
         | Expr::OpenFile { args, .. }
         | Expr::Connect { args, .. }
         | Expr::Bind { args, .. } => {
+            for a in args {
+                remap_static_refs(a, remap);
+            }
+        }
+        Expr::FnValue(_) => {}
+        Expr::CallIndirect { target, args, .. } => {
+            remap_static_refs(target, remap);
             for a in args {
                 remap_static_refs(a, remap);
             }

@@ -150,6 +150,10 @@ fn leaves_into(ty: &Type, program: &Program, out: &mut Vec<LKind>) -> Result<(),
         // width leaf does; `LKind::Ptr`'s `zero()` is already `"null"`,
         // exactly the sentinel `null_ptr()` needs.
         Type::CPtr => out.push(LKind::Ptr),
+        // `docs/function-values.md` §4.2: `val`, one leaf, a pointer to
+        // the target's compiled entry point -- LLVM's own `ptr` kind,
+        // the same one `Type::CPtr` and a reference's own leaf use.
+        Type::Fn(..) => out.push(LKind::Ptr),
         Type::Byte | Type::Bool => out.push(LKind::I8),
         Type::Float => out.push(LKind::F64),
         Type::Ref { inner, .. } => {

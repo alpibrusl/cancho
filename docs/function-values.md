@@ -1,27 +1,43 @@
 # Function values: the shape, settled before anything forces it
 
-> **Status: a documented "not yet", with every decision written down.**
+> **Status: built.** §4.2's design shipped as written: `Type::Fn`, a
+> captureless, non-generic, `val` value naming a top-level function's
+> own `DefId`, checked through exactly like a named call and costing no
+> row variable, per this section's own prediction below. The asker was
+> not one of the "zero" this document counted in §2 — it was
+> [`threads.md`](threads.md), which needs a function value as `spawn`'s
+> own callback parameter before `spawn` itself can exist. Building it
+> ahead of that asker, rather than waiting for it the way §6 says to,
+> was a deliberate choice once the design was settled and reviewed:
+> `spawn`/`join` still need `docs/threads.md`'s own further review
+> before they are built on top of this.
 >
 > The audit's L1 asked for this document *before* anything forced it.
-> `Rule::NoFunctionValues` refuses function values, and a sort
-> comparator, an iterator, a callback, `pthread_create` and a plugin
-> interface all want one. The audit called this "the decision most likely
-> to force changes to existing row semantics", so it should be settled
-> while the vocabulary is still moving.
+> `Rule::NoFunctionValues` refuses a **generic** function value now —
+> narrowed from refusing every one — and a sort comparator, an
+> iterator, a callback, `pthread_create` and a plugin interface all
+> wanted one. The audit called this "the decision most likely to force
+> changes to existing row semantics", so it was settled while the
+> vocabulary was still moving, and it turned out not to force one.
 >
-> Counted by reading, **no program here asks**. There are 594 function
-> bodies, and the only pair that differs by nothing but its callee is
-> `io.write_all` against `io.error_all`, which
-> [`effect-polymorphism.md`](effect-polymorphism.md) §3 had already found.
-> The one sort has one comparator. None of the 22 enums picks an
-> operation.
+> Counted by reading, at the time this was written **no program here
+> asked**. There were 594 function bodies, and the only pair that
+> differed by nothing but its callee was `io.write_all` against
+> `io.error_all`, which [`effect-polymorphism.md`](effect-polymorphism.md)
+> §3 had already found. The one sort had one comparator. None of the 22
+> enums picked an operation. That count is history now, not a
+> precondition — §2 is kept below for the reasoning, not as a gate this
+> feature is still waiting behind.
 >
-> The design question has a firm answer, and it is the useful part.
+> The design question had a firm answer, and it was the useful part.
 > **Function values do not force row variables, and they change no
 > existing row rule.** A captureless function value whose type carries a
-> fixed row is checked exactly as a named call is. What *would* change the
-> row semantics is abstracting over rows, and that is a separate feature
-> that has already been answered no.
+> fixed row is checked exactly as a named call is — confirmed, not just
+> designed: `tests/accept/function_value.ls` passes a region-polymorphic,
+> effectful function as a value and the row is checked at the call
+> exactly like a named call's. What *would* change the row semantics is
+> abstracting over rows, and that is a separate feature that has already
+> been answered no.
 
 ---
 
@@ -150,9 +166,15 @@ So the answer to "what mode does a closure capturing a `res` have" is
 written down (`res`, called once), and closures stay out. Nothing asks
 for them (§2), and the one thing they add over §4.2 is hidden authority.
 
-### 4.2 Function values, when an asker arrives
+### 4.2 Function values, built
 
-This is the audit's candidate, with its conditions made exact:
+This was the audit's candidate, with its conditions made exact, and it
+is now exactly what is built — `Type::Fn` in `crates/lex-sys-types`,
+`Expr::FnValue`/`Expr::CallIndirect` in `crates/lex-sys-ir`, and
+codegen in both backends (Cranelift: `func_addr` and `call_indirect`;
+LLVM: a global symbol read directly as a `ptr` value, with the
+callee's signature spelled explicitly at the call since an opaque
+pointer carries none of its own):
 
 | | Rule | Why |
 |---|---|---|
@@ -245,22 +267,36 @@ A second comparator, from `sort -r` or `sort -n` through
 [`flags.md`](flags.md), would **not** count. Comparators are pure, so an
 enum costs them nothing (§3).
 
+**Corrected: the asker that actually arrived was none of these three.**
+[`threads.md`](threads.md) needs a captureless function value as
+`spawn`'s own callback parameter — not a `pthread_create` callback
+(§5 already refuses that permanently, for a reason a function value
+cannot fix), but this language's *own* `spawn`/`join` primitive, which
+never crosses the C ABI at all and so is never bound by §5's row-`[]`,
+scalars-only conditions. A fourth kind of asker this table did not
+name: a language primitive under active design that turned out to want
+one, rather than a real program in the existing corpus.
+
 ---
 
 ## 7. What this does not say
 
-- **Not that function values are wrong.** §4.2 is a design that could be
-  built as written. The claim is only that nothing here needs it yet,
-  and that building it would not disturb the row system.
-- **Not that `Rule::NoFunctionValues` is permanent.** It is the current
-  answer to a counted question. Its fixture,
-  `tests/reject/function_as_value.ls`, stays. The rule's message still
-  names "M1", a milestone it has outlived, and this slice leaves it alone
-  because `reach.md` §3.3 quotes it word for word.
 - **Not a claim about higher-order code in general.** In a language with
   separate compilation, or with an effect system that infers rows,
   §3's substitute would not be available and the arithmetic would be
   different.
+- **Not that abstracting over rows is settled.** §4.3 still holds:
+  function values alone recover none of `defunctionalized_stream.ls`'s
+  lost precision, because that needs a row-*polymorphic* higher-order
+  function, and `effect-polymorphism.md` still answers that no.
+- **Not that `Rule::NoFunctionValues` is gone.** It now refuses exactly
+  what §4.2's table always said a function value could not be: generic
+  (`tests/reject/function_as_value.ls`, updated to that case) or
+  anything other than a named, top-level, captureless function
+  (a builtin, an `extern fn`). The rule's message still names
+  "M1", a milestone it has outlived, and this correction leaves that
+  alone because `reach.md` §3.3 used to quote it word for word and no
+  longer does — that quote is corrected there instead.
 
 ---
 
@@ -270,4 +306,9 @@ enum costs them nothing (§3).
 |---|---|
 | `tests/accept/defunctionalized_stream.ls` | §3: an enum and a `match` write what a function value would, today, with no new feature |
 | `tests/reject/defunctionalized_row_is_the_union.ls` | §3: the cost, since a caller of the enum version cannot declare less than the union of the arms' rows (`effect-not-declared`) |
-| `tests/reject/function_as_value.ls` | The rule this document leaves in place (`no-function-values`) |
+| `tests/accept/function_value.ls` | §4.2, built: a captureless, region-polymorphic, effectful function taken as a value, called through it twice (`val`, no move), on both backends |
+| `tests/reject/function_as_value.ls` | §4.2's own condition: a **generic** function has no address until its type arguments are known, so it cannot be a value (`no-function-values`) |
+| `tests/reject/function_value_wrong_arity.ls` / `function_value_wrong_type.ls` | A call through a value is checked against the value's own type exactly as a named call is |
+| `tests/reject/function_value_row_undeclared.ls` | The row travels with the type and is checked against the *caller's* row the same way a named call's is (`effect-not-declared`) |
+| `tests/reject/function_value_compared.ls` | §4.2 gives a function value no identity to compare; `==`/`!=` stay exactly the scalar list they always were |
+| `tests/reject/call_a_local_binding.ls` | The mirror: a local binding whose type is *not* `fn(...)` still cannot be called (`not-a-function`) |

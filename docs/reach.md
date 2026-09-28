@@ -87,7 +87,7 @@ This cuts both ways, and §5 is the cut.
 | Reading and writing files | **Yes**, without FFI at all | `Fs(prefix)` builtins, narrowable to a directory (`filesystem.md`) |
 | A command-line tool | **Yes** | `Args`, `examples/lines.ls`, `examples/wordfreq/` |
 | Several processes | **Yes** | `fork` returns an `int`, and an `int` is a value |
-| Threads | **No** | `pthread_create` takes a function pointer, and M1 has no function values (§3.3) |
+| Threads | **No** | Function values exist now, but `pthread_create`'s `void *arg` is still `c_ptr`-opaque and un-crossable (§3.3); `threads.md`'s own `spawn`/`join` is proposed, not yet built |
 | TLS | **Partial** | `SSL_CTX *`/`SSL *` cross today (§3.1, corrected below); nothing links `libssl` yet |
 | A Postgres client | **No** | `PGconn *` (§3.1) — the same handle-shaped gap TLS's own correction closes, not yet spent on this one |
 | `malloc`-style allocation | **No**, and it is not wanted | `void *` (§3.1); the heap is a capability with `box` (`heap.md`) |
@@ -210,22 +210,29 @@ same trade `strings.md` §6 makes for `write` — the length C is told is
 the length the bounds check enforces — applied to a struct instead of a
 string.
 
-### 3.3 There are no function values
+### 3.3 Function values exist now; that still does not unlock threads
 
 ```
 let h = g;
-error: `g` is a function; M1 has no function values, so it can only be called
 ```
 
-A different root, and a smaller one: this is a scope decision, not a
-soundness claim. But it is load-bearing for the question people actually
-ask, because it is why **threads** are out — `pthread_create` takes a
-function pointer, and there is nothing to pass — while `fork` is in, since
-it returns an `int` and the child simply continues.
+**Corrected: [`function-values.md`](function-values.md) §4.2.** This
+used to be refused outright; a captureless, non-generic, top-level
+function is a real value now, and `h(...)` calls through it. Still a
+scope decision rather than a soundness claim, and still load-bearing
+for the question people actually ask — it is *still* why **threads**
+are out, for a reason that turned out to be sharper than "there is
+nothing to pass": [`threads.md`](threads.md) §1 shows that
+`pthread_create`'s one `void *arg` is exactly §3.1's own un-crossable
+pointer, so even with function values a callback that takes and
+returns `void *` is unreachable for the same reason `malloc` is. What
+function values unlock instead is `threads.md`'s own `spawn`/`join`, a
+primitive that never crosses the C ABI at all.
 
-So `examples/serve/` answers one request at a time. A pre-forking server
-is expressible today with the same eight declarations plus `fork` and
-`waitpid`; a thread pool is not expressible at all.
+So `examples/serve/` still answers one request at a time. A pre-forking
+server is expressible today with the same eight declarations plus
+`fork` and `waitpid`; a thread pool needs `threads.md`'s own primitive,
+proposed and not yet built.
 
 ---
 

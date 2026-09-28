@@ -62,6 +62,20 @@ pub enum Region {
     Var(RegionVar),
 }
 
+/// One label of a function type's row, mirroring `lex_sys_ir::Label`
+/// exactly. Duplicated rather than shared because this crate "holds no
+/// opinion about programs" (its own module doc) and cannot depend on
+/// `lex-sys-ir`, which already depends on it. The IR crate is the one
+/// place that constructs a `Vec<FnLabel>`, always from an already
+/// canonicalised `Effects` (`Effects::new` sorts and dedups), so this
+/// type carries the same `Ord` a `Label` does without ever needing to
+/// re-sort one itself.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct FnLabel {
+    pub name: String,
+    pub argument: Option<String>,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Type {
     Int,
@@ -140,6 +154,19 @@ pub enum Type {
     /// coercion to or from a reference or `int` are ordinary type
     /// mismatches rather than things that happen to be meaningless.
     CPtr,
+    /// `fn(A, B) -> [row] R` (`docs/function-values.md` §4.2): a
+    /// captureless, non-generic, top-level function's own value.
+    ///
+    /// `val` — copying it copies no obligation, since it captures
+    /// nothing (§4.1's whole reason closures stay out). One leaf, a
+    /// pointer to the target's compiled entry point; calling through
+    /// it performs exactly the row named here, checked the same way a
+    /// named call is checked against a declaration. The row is
+    /// written and exact, never inferred across this boundary
+    /// (`linearity-and-effects.md` §7.2) — which is also why nothing
+    /// here unifies two `Fn` types' rows against each other; they are
+    /// either the same list or two different types.
+    Fn(Vec<Type>, Vec<FnLabel>, Box<Type>),
 }
 
 impl Type {
@@ -150,6 +177,7 @@ impl Type {
             Type::Var(v) => *v == var,
             Type::Named(_, args) | Type::Tuple(args) => args.iter().any(|a| a.occurs(var)),
             Type::Ref { inner, .. } | Type::Slice(inner) => inner.occurs(var),
+            Type::Fn(params, _, ret) => params.iter().any(|p| p.occurs(var)) || ret.occurs(var),
             _ => false,
         }
     }
@@ -164,6 +192,9 @@ impl Type {
             Type::Named(_, args) | Type::Tuple(args) => args.iter().any(|a| a.mentions(region)),
             Type::Ref { region: r, inner, .. } => *r == region || inner.mentions(region),
             Type::Slice(inner) => inner.mentions(region),
+            Type::Fn(params, _, ret) => {
+                params.iter().any(|p| p.mentions(region)) || ret.mentions(region)
+            }
             _ => false,
         }
     }
@@ -179,6 +210,10 @@ impl Type {
                 inner.regions_into(out);
             }
             Type::Slice(inner) => inner.regions_into(out),
+            Type::Fn(params, _, ret) => {
+                params.iter().for_each(|p| p.regions_into(out));
+                ret.regions_into(out);
+            }
             _ => {}
         }
     }
@@ -193,6 +228,7 @@ impl Type {
             Type::Var(_) => true,
             Type::Named(_, args) | Type::Tuple(args) => args.iter().any(Type::has_var),
             Type::Ref { inner, .. } | Type::Slice(inner) => inner.has_var(),
+            Type::Fn(params, _, ret) => params.iter().any(Type::has_var) || ret.has_var(),
             _ => false,
         }
     }
@@ -222,6 +258,17 @@ impl Type {
                 inner: Box::new(inner.substitute(types, regions)),
             },
             Type::Slice(inner) => Type::Slice(Box::new(inner.substitute(types, regions))),
+            // A function value itself declares no type parameters
+            // (`docs/function-values.md` §4.2), but a *caller's* own
+            // generic parameter can appear inside the type of a `fn(...)`
+            // it accepts -- `fn apply[T](x: T, f: fn(T) -> [] T) -> []
+            // T` -- so this still has to substitute through, the same
+            // as any other type built from `T`.
+            Type::Fn(params, effects, ret) => Type::Fn(
+                params.iter().map(|t| t.substitute(types, regions)).collect(),
+                effects.clone(),
+                Box::new(ret.substitute(types, regions)),
+            ),
             other => other.clone(),
         }
     }
@@ -381,6 +428,11 @@ impl Unifier {
                 region: self.resolve_region(region),
                 inner: Box::new(self.resolve(&inner)),
             },
+            Type::Fn(params, effects, ret) => Type::Fn(
+                params.iter().map(|p| self.resolve(p)).collect(),
+                effects,
+                Box::new(self.resolve(&ret)),
+            ),
             other => other,
         }
     }
@@ -431,6 +483,20 @@ impl Unifier {
                 }
                 Ok(())
             }
+            // `docs/function-values.md` §4.2: the row is written and
+            // exact, never inferred across this boundary, so it is
+            // compared as plain data rather than unified -- two `Fn`
+            // types with different rows are simply two different types,
+            // the same way two `Named` types with different `DefId`s
+            // are. Parameters and the return type still unify normally,
+            // since a generic caller's own type parameter can appear
+            // inside either (`Type::substitute`'s own `Fn` arm).
+            (Type::Fn(p1, e1, r1), Type::Fn(p2, e2, r2)) if p1.len() == p2.len() && e1 == e2 => {
+                for (x, y) in p1.iter().zip(p2.iter()) {
+                    self.unify(x, y)?;
+                }
+                self.unify(&r1, &r2)
+            }
             (x, y) if x == y => Ok(()),
             (x, y) => {
                 Err(UnifyError::Mismatch { expected: self.resolve(&x), found: self.resolve(&y) })
@@ -472,6 +538,17 @@ impl Unifier {
             Type::Ref { unique, region, inner } => {
                 let bang = if unique { "!" } else { "" };
                 format!("&{}{} {}", bang, self.display_region(region), self.display(&inner))
+            }
+            Type::Fn(params, effects, ret) => {
+                let params: Vec<String> = params.iter().map(|p| self.display(p)).collect();
+                let row: Vec<String> = effects
+                    .iter()
+                    .map(|l| match &l.argument {
+                        Some(arg) => format!("{}(\"{}\")", l.name, arg),
+                        None => l.name.clone(),
+                    })
+                    .collect();
+                format!("fn({}) -> [{}] {}", params.join(", "), row.join(", "), self.display(&ret))
             }
         }
     }

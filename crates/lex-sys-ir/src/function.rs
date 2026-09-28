@@ -157,6 +157,21 @@ pub(crate) fn settle_expr(expr: &mut Expr, unifier: &Unifier) {
                 settle_expr(value, unifier);
             }
         }
+        // Names its target's `DefId` and holds no `Type` of its own --
+        // the function value's own type is read off `Program::funcs`
+        // by the backend, the same place `Callee::Fn`'s call already
+        // reads it from.
+        Expr::FnValue(_) => {}
+        Expr::CallIndirect { target, args, params, ret } => {
+            settle_expr(target, unifier);
+            for arg in args {
+                settle_expr(arg, unifier);
+            }
+            for param in params.iter_mut() {
+                *param = unifier.resolve(param);
+            }
+            **ret = unifier.resolve(ret);
+        }
     }
 }
 
@@ -740,10 +755,33 @@ pub(crate) fn resolve_type_at(
         return Ok(Type::Tuple(components));
     }
 
+    // `fn(A, B) -> [row] R`: a captureless function value's type
+    // (`docs/function-values.md` §4.2). Nothing to look up either --
+    // it is a shape, like a tuple or a slice, and its own parameters
+    // and return type are resolved the same way any other function's
+    // are, in the same scope this type was written in.
+    if let TypeExpr::Fn { params: fn_params, effects, ret } = ast.ty(id) {
+        let (fn_params, effects, ret) = (fn_params.clone(), effects.clone(), *ret);
+        let param_types = fn_params
+            .iter()
+            .map(|p| resolve_type(cx, params, regions, *p))
+            .collect::<Result<Vec<_>, _>>()?;
+        let ret_type = resolve_type(cx, params, regions, ret)?;
+        let mut labels: Vec<FnLabel> = effects
+            .iter()
+            .map(|e| FnLabel { name: ast.name_of(e.name).to_owned(), argument: e.argument.clone() })
+            .collect();
+        labels.sort();
+        labels.dedup();
+        return Ok(Type::Fn(param_types, labels, Box::new(ret_type)));
+    }
+
     let TypeExpr::Name { name: written_name, qualifier: written_qualifier, args: written_args } =
         ast.ty(id)
     else {
-        unreachable!("a reference, a literal, a slice and a tuple were handled above");
+        unreachable!(
+            "a reference, a literal, a slice, a tuple and a function type were handled above"
+        );
     };
     let (written_name, written_qualifier, written_args) =
         (*written_name, *written_qualifier, written_args.clone());

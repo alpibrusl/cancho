@@ -1,10 +1,11 @@
 //~ ERROR is a local binding, not a function
 //~ RULE not-a-function
 
-// `docs/reach.md` §3.3: there are no function values, so a name in call
-// position is a function in this program or it is nothing. A binding
-// that happens to hold an `int` is not a thing to call, and the
-// refusal says which of the two it found.
+// `docs/function-values.md` §4.2, corrected in place: a local binding
+// *can* be called now, if its type is `fn(...) -> [row] R`
+// (`tests/accept/function_value.ls`). A binding that holds a plain
+// `int` is still not a thing to call, and the refusal says which of
+// the two this one is.
 
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args } = split(world);

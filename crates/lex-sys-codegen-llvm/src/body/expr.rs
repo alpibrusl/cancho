@@ -280,6 +280,23 @@ impl<'a> FuncEmitter<'a> {
                 let (prefix, args) = (prefix.clone(), args.clone());
                 self.open_file(&prefix, &args)
             }
+            // `docs/function-values.md` §4.2: the target's own address,
+            // taken rather than called. An LLVM global symbol is already
+            // a usable `ptr` constant wherever one is expected -- the
+            // same reason `bytes_lit`'s own literal needs no instruction
+            // either, and `Expr::Static`'s own arm above reads a global
+            // the identical way.
+            Expr::FnValue(id) => {
+                let target = self.program.func(*id);
+                Ok(vec![LValue::Reg(format!("@lexs_{}", target.name))])
+            }
+            // A call through a value: `params`/`ret` build the callee's
+            // signature the same way `emit.rs`'s own declare loop builds
+            // one for every named function, since there is no
+            // declaration to read one from at an indirect call site.
+            Expr::CallIndirect { target, args, params, ret } => {
+                self.call_indirect(target, args, params, ret)
+            }
         }
         // §7.25 closed the last two -- `Expr::BitNot` and `Expr::Static`,
         // both above, next to `Expr::Not` where the operator table
@@ -778,5 +795,95 @@ impl<'a> FuncEmitter<'a> {
                 unpacked
             }
         }
+    }
+
+    /// `docs/function-values.md` §4.2: a call through a value rather
+    /// than a name. Everything [`Self::emit_call`] does, minus the one
+    /// thing it cannot share: the callee here is an operand (`%tN`,
+    /// `Type::CPtr`'s and `Type::Fn`'s shared `ptr` kind), not a global
+    /// symbol, and with LLVM's opaque pointers a `ptr` value carries no
+    /// signature of its own -- unlike a direct call to `@symbol`, whose
+    /// declaration already states one, an indirect call has to spell
+    /// the callee's parameter types explicitly, `call <ret> (<params>)
+    /// <callee>(<args>)`, or LLVM has no way to know how many bytes of
+    /// registers or stack the call touches.
+    fn emit_call_indirect(
+        &mut self,
+        callee: &str,
+        param_kinds: &[LKind],
+        printed: &[String],
+        ret_kinds: &[LKind],
+    ) -> Vec<LValue> {
+        let params: Vec<&str> = param_kinds.iter().map(|k| k.llvm()).collect();
+        let sig = format!("({})", params.join(", "));
+        match ret_kinds {
+            [] => {
+                self.out.push_str(&format!("  call void {sig} {callee}({})\n", printed.join(", ")));
+                Vec::new()
+            }
+            [kind] => {
+                let result = self.fresh();
+                self.out.push_str(&format!(
+                    "  {result} = call {} {sig} {callee}({})\n",
+                    kind.llvm(),
+                    printed.join(", ")
+                ));
+                vec![LValue::Reg(result)]
+            }
+            kinds => {
+                let ty = struct_ty(kinds);
+                let agg = self.fresh();
+                self.out.push_str(&format!(
+                    "  {agg} = call {ty} {sig} {callee}({})\n",
+                    printed.join(", ")
+                ));
+                let mut unpacked = Vec::with_capacity(kinds.len());
+                for (i, _) in kinds.iter().enumerate() {
+                    let reg = self.fresh();
+                    self.out.push_str(&format!("  {reg} = extractvalue {ty} {agg}, {i}\n"));
+                    unpacked.push(LValue::Reg(reg));
+                }
+                unpacked
+            }
+        }
+    }
+
+    /// [`Expr::CallIndirect`]: `params`/`ret` are the callee's own type,
+    /// carried on the node because there is no declaration to read a
+    /// signature from at an indirect call site (mirrors `Callee::Fn`'s
+    /// own arm in [`Self::call`], reading `params`/`ret` from the node
+    /// instead of from `Program::funcs`).
+    fn call_indirect(
+        &mut self,
+        target: &Expr,
+        args: &[Expr],
+        params: &[Type],
+        ret: &Type,
+    ) -> Result<Vec<LValue>, String> {
+        let addr = self.scalar(target)?;
+        let param_kinds: Vec<LKind> = params
+            .iter()
+            .map(|ty| leaves_of(ty, self.program))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flatten()
+            .collect();
+        let evaluated: Vec<Vec<LValue>> =
+            args.iter().map(|a| self.expr(a)).collect::<Result<_, _>>()?;
+        let flat: Vec<LValue> = evaluated.into_iter().flatten().collect();
+        if flat.len() != param_kinds.len() {
+            return Err(format!(
+                "an indirect call takes {} leaves but {} were given",
+                param_kinds.len(),
+                flat.len()
+            ));
+        }
+        let printed: Vec<String> = param_kinds
+            .iter()
+            .zip(&flat)
+            .map(|(kind, value)| format!("{} {}", kind.llvm(), operand(value)))
+            .collect();
+        let ret_kinds = leaves_of(ret, self.program)?;
+        Ok(self.emit_call_indirect(&operand(&addr), &param_kinds, &printed, &ret_kinds))
     }
 }

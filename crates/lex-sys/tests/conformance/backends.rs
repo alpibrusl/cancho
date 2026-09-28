@@ -976,3 +976,18 @@ fn the_two_backends_agree_on_an_opaque_pointer() {
         "stdin opened\nclosed 0\nbad fd is null\n",
     );
 }
+
+/// `docs/function-values.md` §4.2, checked on both backends: Cranelift
+/// takes a function's address with `func_addr` and calls through it
+/// with `call_indirect`; LLVM reads a global symbol directly as a
+/// `ptr` value and spells the callee's signature explicitly at the
+/// call (opaque pointers carry none of their own). Two different
+/// mechanisms for the same value.
+#[test]
+fn the_two_backends_agree_on_a_function_value() {
+    assert_backends_agree(
+        "backends-function-value",
+        "tests/accept/function_value.ls",
+        "30\nhello from a function value\n",
+    );
+}

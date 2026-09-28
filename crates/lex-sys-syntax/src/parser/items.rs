@@ -514,6 +514,25 @@ impl<'a> Parser<'a> {
                 .ast
                 .push_type(TypeExpr::Ref { unique, region, inner }, tok.span.to(end)));
         }
+        // `fn(A, B) -> [row] R` — a captureless function value's type
+        // (`docs/function-values.md` §4.2). Unambiguous at the *start* of
+        // a type: `fn` is a keyword, never a type name.
+        if self.eat(TokenKind::Fn) {
+            self.expect(TokenKind::LParen)?;
+            let mut params = Vec::new();
+            while self.peek().kind != TokenKind::RParen {
+                params.push(self.type_expr()?);
+                if !self.eat(TokenKind::Comma) {
+                    break;
+                }
+            }
+            self.expect(TokenKind::RParen)?;
+            self.expect(TokenKind::Arrow)?;
+            let effects = self.effect_row()?;
+            let ret = self.type_expr()?;
+            let end = self.ast.type_span(ret);
+            return Ok(self.ast.push_type(TypeExpr::Fn { params, effects, ret }, tok.span.to(end)));
+        }
         // `(A, B)` — a tuple (`docs/tuples.md`). Unambiguous at the *start*
         // of a type: the only other parenthesis in type position is the one
         // in `Ffi("libc")`, and that follows a name.

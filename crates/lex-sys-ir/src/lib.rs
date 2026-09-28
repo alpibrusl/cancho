@@ -29,7 +29,7 @@ use lex_sys_syntax::ast::{
 };
 use lex_sys_syntax::rules::Rule;
 use lex_sys_syntax::span::{Diagnostic, Span};
-use lex_sys_types::{DefId, Region, Type, Unifier, UnifyError};
+use lex_sys_types::{DefId, FnLabel, Region, Type, Unifier, UnifyError};
 
 mod fold;
 mod linear;
