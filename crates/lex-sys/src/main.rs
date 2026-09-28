@@ -24,6 +24,9 @@ use lex_sys_ir::TypeInfo;
 use lex_sys_syntax::{Ast, Rule, SourceFile, SourceMap};
 use lex_sys_types::{DefId, Type};
 
+mod docsync;
+mod repo_stats;
+
 const USAGE: &str = "\
 lex-sys — the bootstrap compiler for the lex-sys systems dialect
 
@@ -36,6 +39,8 @@ usage:
     lex-sys layout    <file.ls>... [--std]
     lex-sys print <file.ls>
     lex-sys agent-guidelines
+    lex-sys docsync [--check] [manifest]
+    lex-sys repo-stats
     lex-sys --version
 
 options:
@@ -84,6 +89,14 @@ not the file it sits in. See docs/canonical-ast.md.
 `print` renders one parsed file in canonical form. It is the AST-to-text
 direction of that same pipeline, not a formatter: comments never reach the
 AST, so they are not in the output.
+
+`docsync` regenerates every target `docsync.toml` names -- a whole file,
+or a marked region inside a hand-written one -- from its own generator
+command, and `docsync --check` fails naming each target that has drifted
+rather than silently letting a stale fact sit in a doc. `repo-stats` is
+the one generator this repository has today: crate/example/doc counts and
+the `Net` outbound/inbound tally, counted fresh every run rather than
+carried by hand. See `crates/lex-sys/src/docsync.rs`.
 ";
 
 const EXIT_REFUSED: u8 = 1;
@@ -169,6 +182,29 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
                 Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Ok(ExitCode::SUCCESS),
                 Err(e) => Err(environment(format!("cannot write to stdout: {e}"))),
             }
+        }
+        "docsync" => match docsync::cmd_docsync(&args[1..]) {
+            Ok(message) => {
+                if !message.is_empty() {
+                    println!("{message}");
+                }
+                Ok(ExitCode::SUCCESS)
+            }
+            Err(docsync::DocsyncError::Usage(m)) => Err(usage(m)),
+            Err(docsync::DocsyncError::Refused(m)) => Err(refused(m)),
+            Err(docsync::DocsyncError::Environment(m)) => Err(environment(m)),
+        },
+        // The generator `docsync.toml`'s `repo-stats` block runs. Reads
+        // the current directory as the repo root, matching `docsync`'s
+        // own `current_dir(root)` before invoking it.
+        "repo-stats" => {
+            if args.len() > 1 {
+                return Err(usage("`repo-stats` takes no arguments"));
+            }
+            let root = std::env::current_dir()
+                .map_err(|e| environment(format!("cannot read the current directory: {e}")))?;
+            println!("{}", repo_stats::render(&root));
+            Ok(ExitCode::SUCCESS)
         }
         // `docs/many-files.md` §5: printing is about text, and text is
         // what a file is -- so this renders exactly one.
