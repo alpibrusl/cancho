@@ -46,12 +46,27 @@
 > a real file read and a real console write each performed by a second
 > OS thread holding the only reference to the capability that authorised
 > it, all checked directly rather than trusted from the type checker
-> alone. §5 step 3's *struct*-shaped capability case (an owned, non-flat
-> resource with real fields — none exists among today's capabilities, so
-> untested), step 4's unique-reference-across-join case, and step 5's
-> `Rc` exclusion (moot today: `Rc` itself is not yet an implemented type
-> in this compiler, so nothing of that shape can be written to exclude),
-> remain future slices, tracked in §4 below.
+> alone. Step 4 is also built, folded into steps 2 and 3's own fixtures
+> rather than needing a separate one.
+>
+> **§5 steps 3's struct-shaped case and 5, checked and closed as "not
+> yet," not left open.** A genuinely multi-field payload needs the same
+> compiler-synthesised trampoline (§4 below) whether or not it happens
+> to be a capability, and `Rc[h] T` is not an implemented type in this
+> compiler at all, so no fixture can even construct what step 5 would
+> refuse. Rather than build the trampoline speculatively, this project's
+> own rule (`AGENTS.md` §7: a feature earns its way in when a program
+> asks) was applied and checked directly: nothing across `lex-sys`,
+> `lex-os`, `lex-lang` or `lex-gpu` asks for a multi-field spawn
+> payload today — `lex-os-guest`'s own reasoning loop is single-threaded
+> by design with no expressed want for concurrency, and `lex-lang`'s own
+> `conc.spawn_thread` (a parallel, independent design for the same
+> problem in a different language) sidesteps the question entirely with
+> a zero-argument closure rather than an explicit payload, which is a
+> mild signal that real background-task askers in this shape of problem
+> tend to route around a fat payload rather than demand one. Decided,
+> the same way `self-hosting.md` decided **not yet**: revisit when a
+> concrete asker exists, not on a schedule.
 
 ---
 
@@ -218,16 +233,19 @@ What this buys, precisely:
 
 ## 4. What this does not solve
 
-- **`Rc[h] T` must not cross.** `linearity-and-effects.md` §9 names
-  it "non-atomic reference count" as a deliberate, single-threaded
-  simplicity trade. Two threads each holding an `Rc` to the same
-  value could race its increment/decrement, corrupting the count —
-  the exact hazard the "non-atomic" word warns about, latent until
-  something lets an `Rc` reach a second thread. `spawn`'s payload
-  type must exclude it explicitly (a new, narrow check, not derived
-  from anything above) until an atomic variant exists, the same way
-  `Gen[T]`'s own handle would need auditing before it could cross —
-  neither is a hatch this document opens.
+- **`Rc[h] T` must not cross — moot today, checked rather than
+  assumed.** `linearity-and-effects.md` §9 names it "non-atomic
+  reference count" as a deliberate, single-threaded simplicity trade.
+  Two threads each holding an `Rc` to the same value could race its
+  increment/decrement, corrupting the count — the exact hazard the
+  "non-atomic" word warns about, latent until something lets an `Rc`
+  reach a second thread. The exclusion needs no new check at all right
+  now: `Rc` is not an implemented type in this compiler (`sharing.md`),
+  so `crosses_to_a_thread`'s allowlist already excludes anything shaped
+  like it, the same way it excludes every other multi-field type. Worth
+  a real, narrow check and a fixture the day `Rc` (or an atomic variant
+  of it) exists — not before, and not a hatch this document opens in
+  the meantime.
 - **No shared *mutable* state.** `&!r T` crossing means the unique
   reference moved, not that two threads can now both mutate the same
   memory. A `Mutex`-shaped capability — lock, get a unique reference
@@ -316,19 +334,32 @@ feature that does not exist yet for any of them to ask for.
    `linear-use-after-move` rule with no thread-specific rule added,
    confirming §3's "the existing rule, not a new one" claim by running
    it rather than only stating it.
-5. **The `Rc` exclusion, checked, not assumed.** Not built, and cannot
-   be yet: `Rc[h] T` is not an implemented type in this compiler at
-   all, so no fixture can construct the payload this step needs to
-   refuse. `crosses_to_a_thread`'s allowlist (`int`, `bool`, `c_ptr`, a
-   captureless function value, a non-slice reference, and today's
-   zero-or-one-leaf capabilities) already excludes anything shaped like
-   an `Rc` structurally, the same way it excludes every other
-   multi-field type — vacuously true today, worth a real fixture once
-   `Rc` exists to write one against.
+5. **The `Rc` exclusion — measured, decided *not yet*, not left open.**
+   Cannot be built today: `Rc[h] T` is not an implemented type in this
+   compiler at all, so no fixture can construct the payload this step
+   needs to refuse, and `crosses_to_a_thread` already excludes anything
+   of that shape structurally with no code written for it specifically.
+   The step this document actually owes an answer to is broader — does
+   a multi-field spawn payload (`Rc`-shaped or otherwise) have a real
+   asker anywhere today — and that was checked directly rather than
+   left as a standing TODO: a repo-wide search across all four reachable
+   repositories (`lex-sys`, `lex-os`, `lex-lang`, `lex-gpu`) found none.
+   `lex-os-guest`'s reasoning loop (the concrete production target §2's
+   own status note names) is single-threaded by design, with no comment
+   or TODO anywhere in it wanting concurrency. `lex-lang`'s own,
+   independently-designed `conc.spawn_thread` answers the same "how does
+   a background task get its state" question with a captured, zero-argument
+   closure rather than an explicit payload — evidence, not proof, that
+   this problem shape does not actually want a fat payload even where a
+   language's design is free to offer one. `AGENTS.md` §7's rule (a
+   feature earns its way in when a program asks) applies as written:
+   not built, and not because of missing infrastructure alone.
 
-Steps 1, 2, 3 and 4 are built. Step 5 waits on `Rc` itself, which
-this project has not built; the struct-shaped-capability half of step 3
-waits on the same compiler-synthesised trampoline the general
-multi-field payload case does, since nothing among today's capabilities
-tests whether the owned-capability fix generalises past a
-coincidentally flat ABI shape.
+Steps 1 through 4 are built. Step 3's struct-shaped-capability half and
+step 5 are **measured and decided not yet**, the same verdict
+`self-hosting.md` reached the same way: nothing found is a hard
+blocker (the trampoline is buildable, `Rc` is buildable), but nothing
+asks for either today. Revisit both together — the trampoline is one
+piece of infrastructure whether the payload that needs it is `Rc`-shaped
+or any other multi-field struct — the day a concrete asker exists,
+rather than on a schedule.
