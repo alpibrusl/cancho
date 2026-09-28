@@ -31,12 +31,13 @@ impl<'a> Parser<'a> {
             self.expect(TokenKind::Semi)?;
             // Edition 2 is edition 1 plus `Net` (`docs/editions.md` §7);
             // edition 3 is edition 2 plus `c_ptr`/`null_ptr`
-            // (`docs/opaque-pointers.md` §4). Nothing later than that
-            // exists to opt into yet.
-            if value != 1 && value != 2 && value != 3 {
+            // (`docs/opaque-pointers.md` §4); edition 4 is edition 3
+            // plus `spawn`/`join` (`docs/threads.md` §2). Nothing later
+            // than that exists to opt into yet.
+            if value != 1 && value != 2 && value != 3 && value != 4 {
                 return Err(Diagnostic::new(
                     Rule::UnknownEdition,
-                    format!("unknown edition {value}; the only editions today are 1, 2 and 3"),
+                    format!("unknown edition {value}; the only editions today are 1, 2, 3 and 4"),
                     keyword.span.to(tok.span),
                 ));
             }

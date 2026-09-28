@@ -192,6 +192,13 @@ fn leaves_into(ty: &Type, program: &Program, out: &mut Vec<LKind>) -> Result<(),
                 out.push(LKind::I64);
             }
         }
+        // `docs/threads.md` §2: a `Thread[T, R]` at run time is a real
+        // `pthread_t`, one leaf -- the same "no fields on purpose" shape
+        // `Box` already has above. Matches `lex-sys-codegen`'s own
+        // `abi::leaves_into` exactly.
+        Type::Named(def, _) if def.0 as usize == lex_sys_ir::PRELUDE_THREAD => {
+            out.push(LKind::Ptr);
+        }
         Type::Named(def, args) => match program.type_info(*def) {
             lex_sys_ir::TypeInfo::Struct { fields, .. } => {
                 for (_, field) in fields {
@@ -326,6 +333,16 @@ pub(crate) fn emit_module(
         _ => "__errno_location",
     };
     text.push_str(&format!("declare ptr @{errno_symbol}()\n\n"));
+
+    // `docs/threads.md` §2: `spawn`/`join`, real `pthread_create`/
+    // `pthread_join`. `pthread_t` is opaque on both this project's
+    // targets (glibc's own `unsigned long`, Darwin's own pointer) but
+    // always one register-width value, so `ptr` -- the same kind
+    // `c_ptr` already uses -- holds it either way; `pthread_create`'s
+    // own `pthread_t *thread` and `pthread_join`'s own `void **retval`
+    // are the same `ptr` a step further, pointing at one.
+    declare_libc_unless_own(&mut text, "pthread_create", "i32 @pthread_create(ptr, ptr, ptr, ptr)");
+    declare_libc_unless_own(&mut text, "pthread_join", "i32 @pthread_join(ptr, ptr)");
 
     // `extern fn` (§7.23, §8.4): an import under the symbol the
     // declaration named. A capability parameter carries no data and

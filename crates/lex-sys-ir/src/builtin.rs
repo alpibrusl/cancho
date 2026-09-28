@@ -308,6 +308,26 @@ pub enum Builtin {
     /// literal. Fixed, like `sqrt`: nothing about it depends on the
     /// call site.
     NullPtr,
+    /// `spawn(payload: T, body: fn(T) -> [row] R) -> [conc] res
+    /// Thread[T, R]` — a real OS thread, edition 4 only
+    /// (`docs/threads.md` §2).
+    ///
+    /// Checked at the call site, like [`Builtin::Len`]: `T` and `R` are
+    /// read off `payload`'s and `body`'s own types, not fixed by a
+    /// signature, and this first slice restricts both to exactly one
+    /// pointer-width leaf (`int`, `bool`, `c_ptr`, or a reference) --
+    /// what `pthread_create`'s own `void *(*)(void *)` start routine
+    /// can carry without a compiler-synthesised trampoline function,
+    /// which nothing in this IR can build yet. `body`'s own compiled
+    /// entry point becomes the start routine directly.
+    Spawn,
+    /// `join(handle: res Thread[T, R]) -> [row] R` — blocks until the
+    /// thread `spawn` started returns, edition 4 only.
+    ///
+    /// Checked at the call site: `R` is read off `handle`'s own type.
+    /// The only operation that consumes a `Thread[T, R]`, the same
+    /// "one consumer" shape `unbox`/`close` already have.
+    Join,
 }
 
 impl Builtin {
@@ -347,6 +367,8 @@ impl Builtin {
         Builtin::Listen,
         Builtin::Accept,
         Builtin::NullPtr,
+        Builtin::Spawn,
+        Builtin::Join,
     ];
 
     pub fn name(self) -> &'static str {
@@ -386,6 +408,8 @@ impl Builtin {
             Builtin::Listen => "listen",
             Builtin::Accept => "accept",
             Builtin::NullPtr => "null_ptr",
+            Builtin::Spawn => "spawn",
+            Builtin::Join => "join",
         }
     }
 
@@ -406,6 +430,8 @@ impl Builtin {
             // silently widening edition 1 -- an edition-1 file may
             // already declare its own `extern fn null_ptr`.
             Builtin::NullPtr => 3,
+            // `docs/threads.md` §4: purely additive, same reasoning.
+            Builtin::Spawn | Builtin::Join => 4,
             _ => 1,
         }
     }
@@ -619,6 +645,11 @@ impl Builtin {
             // (`docs/opaque-pointers.md` §3) -- a fixed signature like
             // `sqrt`'s, not a call-site check like `len`'s.
             Builtin::NullPtr => (Vec::new(), Type::CPtr),
+            // Checked at the call site, like `len`: `T` and `R` come
+            // from `payload`'s and `body`'s own types
+            // (`docs/threads.md` §2).
+            Builtin::Spawn => (Vec::new(), Type::Unit),
+            Builtin::Join => (Vec::new(), Type::Unit),
         }
     }
 

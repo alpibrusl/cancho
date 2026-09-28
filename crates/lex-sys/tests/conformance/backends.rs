@@ -991,3 +991,87 @@ fn the_two_backends_agree_on_a_function_value() {
         "30\nhello from a function value\n",
     );
 }
+
+/// `docs/threads.md` §2/§5 step 2: `spawn`/`join`, the single-leaf slice,
+/// checked on both backends. Cranelift passes `body`'s address and the
+/// payload straight to a `pthread_create` it declares on demand
+/// (`libc_fn`, the same mechanism `malloc`/`free` already use), widening
+/// a narrower-than-pointer payload with `uextend` since `call` requires
+/// an exact type match; LLVM converts the same payload with an explicit
+/// `inttoptr` (a bare integer is not a legal `ptr`-typed call operand in
+/// its textual IR) and reads `join`'s result back with a plain `load`
+/// from an untyped `alloca` cell, no conversion needed on that side.
+#[test]
+fn the_two_backends_agree_on_spawn_join() {
+    assert_backends_agree("backends-spawn-join", "tests/accept/spawn_join.ls", "42\n");
+}
+
+/// The other half of the same slice: `spawn` hands back a *real* OS
+/// thread, not a disguised ordinary call, checked directly rather than
+/// trusted from the type checker alone (`docs/threads.md` §5 step 2).
+/// `tests/accept/spawn_thread_ids.ls` also exercises §3's "shared
+/// reference crosses into two spawns, and the spawning side still reads
+/// it after both are joined" case -- the same `Ffi("libc")` capability
+/// is the payload for two threads and is read a third time by `main`.
+#[test]
+fn the_two_backends_agree_on_spawn_thread_ids() {
+    assert_backends_agree(
+        "backends-spawn-thread-ids",
+        "tests/accept/spawn_thread_ids.ls",
+        "main and t1 differ\nmain and t2 differ\nt1 and t2 differ\n",
+    );
+}
+
+/// `docs/threads.md` §5 step 2's wall-clock evidence: four threads each
+/// blocked in a real `usleep(200ms)`, joined. This is what makes
+/// `tests/accept/spawn_thread_ids.ls`'s distinct-thread-IDs check airtight
+/// rather than merely suggestive -- four *simultaneous* sleeps are only
+/// possible with genuine OS-level parallelism, not with `spawn`
+/// secretly running `body` on the calling thread before returning a
+/// handle. A sequential implementation would take about four times a
+/// single sleep; this asserts comfortably under twice one sleep,
+/// leaving generous headroom for process startup and scheduler jitter
+/// on a loaded CI host.
+#[test]
+fn spawn_and_join_run_concurrently_not_sequentially() {
+    use std::time::{Duration, Instant};
+
+    for backend in ["cranelift", "llvm"] {
+        let dir = scratch(&format!("backends-spawn-parallel-{backend}"));
+        let exe = dir.join("out");
+        let build = Command::new(BIN)
+            .args([
+                "build".as_ref(),
+                repo_root().join("tests/accept/spawn_parallel_sleep.ls").as_os_str(),
+                "--std".as_ref(),
+                "--backend".as_ref(),
+                backend.as_ref(),
+                "-o".as_ref(),
+                exe.as_os_str(),
+            ])
+            .output()
+            .expect("the compiler runs");
+        assert!(
+            build.status.success(),
+            "`--backend {backend}` should build the parallel-sleep fixture, but said:\n{}",
+            String::from_utf8_lossy(&build.stderr)
+        );
+
+        let start = Instant::now();
+        let run = Command::new(&exe).output().expect("the program runs");
+        let elapsed = start.elapsed();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(
+            run.status.code(),
+            Some(0),
+            "`--backend {backend}` should exit 0, but said:\n{}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        assert!(
+            elapsed < Duration::from_millis(400),
+            "`--backend {backend}`: four 200ms sleeps took {elapsed:?} -- that looks \
+             sequential, not concurrent"
+        );
+    }
+}

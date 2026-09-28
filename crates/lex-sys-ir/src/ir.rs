@@ -41,11 +41,18 @@ pub const PRELUDE_READ: usize = 10;
 /// edition-2 file's `split()` answers this one instead.
 pub const PRELUDE_NET: usize = 11;
 pub const PRELUDE_SPLIT_NET: usize = 12;
+/// `docs/threads.md` §2: `spawn`'s own handle, `res`, two generic
+/// parameters (`T` the payload type, `R` `body`'s return type) and no
+/// fields — the same "nothing to name" shape [`PRELUDE_BOX`] already
+/// has, for the same reason: what it owns is an opaque thread id, and a
+/// pattern that could name it would be a way to end the obligation
+/// without joining.
+pub const PRELUDE_THREAD: usize = 13;
 
 /// How many types the prelude declares. Written once, because a builtin's
 /// signature indexes this table and a stale slice is a panic rather than a
 /// diagnostic.
-pub const PRELUDE_COUNT: usize = 13;
+pub const PRELUDE_COUNT: usize = 14;
 
 /// The library an unnarrowed `Ffi` names: none of them yet.
 ///
@@ -519,6 +526,16 @@ pub enum Expr {
         target: Box<Expr>,
         args: Vec<Expr>,
         params: Vec<Type>,
+        ret: Box<Type>,
+    },
+    /// `join(handle)` (`docs/threads.md` §2). Its own node rather than
+    /// an ordinary `Expr::Call`, because `handle`'s type carries `R` --
+    /// `join`'s real return type, which the backend needs to know how
+    /// many leaves (zero, for `()`, or one) to read back out of what
+    /// `pthread_join` wrote, and `Callee::Builtin` names no type of its
+    /// own for it to read.
+    Joined {
+        handle: Box<Expr>,
         ret: Box<Type>,
     },
     /// A `static`'s data, by index into [`Program::statics`]

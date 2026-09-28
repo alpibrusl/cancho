@@ -85,6 +85,14 @@ pub(crate) fn leaves_into(
                 out.push(types::I64);
             }
         }
+        // `docs/threads.md` §2: a `Thread[T, R]` at run time is a real
+        // `pthread_t` and nothing else -- one register-width leaf, the
+        // same "no fields on purpose" shape `Box` already has, for the
+        // same reason (a pattern that could name it would be a way to
+        // end the `res` obligation without joining).
+        Type::Named(def, _) if def.0 as usize == lex_sys_ir::PRELUDE_THREAD => {
+            out.push(pointer);
+        }
         // `docs/tuples.md` §5: a tuple's leaves are its components' leaves
         // in order -- a struct's layout with the names removed. No tag, no
         // new padding question, and nothing a `DefId` was needed for.

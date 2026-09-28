@@ -5,6 +5,7 @@
 
 use crate::*;
 
+mod conc;
 mod expr;
 mod memory;
 mod net;
