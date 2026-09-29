@@ -455,25 +455,20 @@ fn main(world: World) -> [] int {
 }
 
 /// What the authority report says about a program that connects: the
-/// same unbounded `ffi("libc")` as the server, and `connect` is the one
-/// symbol only the client's report can show.
+/// same unbounded `ffi("libc")` as the server, and a symbol list that
+/// tells the two apart -- `connect` here, `bind`/`listen`/`accept` there.
 ///
-/// This test used to assert the reverse too -- that the client's report
-/// does **not** name `bind`/`listen`/`accept`. Building `fetch.ls` as
-/// the first program to import a package (`net.sockets`) without
-/// calling every name it declares (§6, `docs/package-system.md`) found
-/// that assertion false, and found why: `lex-sys-ir::lower_all` collects
-/// every `extern fn` declared in the compiled unit unconditionally
-/// (`crates/lex-sys-ir/src/lib.rs`'s extern pass, before pass 2's own
-/// reachability walk from `main` even runs), so `Program::externs` is
-/// not reachability-pruned the way `Program::funcs` is. The report
-/// still names every symbol the program's foreign declarations *could*
-/// reach, which was always true and always safe (over-naming authority
-/// is the direction that fails closed) -- it is just no longer true
-/// that declaring and calling coincide once a program imports a package
-/// it does not fully use. Tracked as a real, separate gap: `authority`'s
-/// `foreign_symbols` should probably be pruned to the reachable set the
-/// same way effects already are, not fixed here.
+/// Building `fetch.ls` as the first program to import a package
+/// (`net.sockets`) without calling every name it declares (§6,
+/// `docs/package-system.md`) briefly made this assertion false: it found
+/// that `Program::externs` was not reachability-pruned the way
+/// `Program::funcs` is (`docs/authority.md` §3), so the report named
+/// `setsockopt`/`bind`/`listen`/`accept` even though `fetch.ls` never
+/// calls them. Fixed at the source, in `lex-sys-ir` (`fold::
+/// collect_extern_refs`/`reachable_externs`) -- `main.rs`'s
+/// `print_authority` now filters `program.externs` to that set before
+/// building `foreign_symbols`, `Program::externs` and every
+/// `Callee::Extern` index untouched, so codegen needed no change.
 #[test]
 fn the_client_and_the_server_differ_only_in_their_symbols() {
     let (client_effects, client_symbols, _) =
@@ -484,6 +479,7 @@ fn the_client_and_the_server_differ_only_in_their_symbols() {
     assert!(server_effects.contains(&"ffi".to_owned()), "{server_effects:?}");
     assert!(client_symbols.contains(&"connect".to_owned()), "{client_symbols:?}");
     for inbound in ["bind", "listen", "accept"] {
+        assert!(!client_symbols.contains(&inbound.to_owned()), "{client_symbols:?}");
         assert!(server_symbols.contains(&inbound.to_owned()), "{server_symbols:?}");
     }
     assert!(!server_symbols.contains(&"connect".to_owned()), "{server_symbols:?}");
