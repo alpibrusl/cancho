@@ -26,34 +26,22 @@
 //
 // Like `examples/serve/`, it is `extern fn` declarations against libc
 // through `Ffi("libc")`, and its authority report says so and no more.
+//
+// `socket`/`read`/`write`/`close`/`put` used to be declared here, same
+// as `examples/serve/`'s own copies were before #142 -- and `connect`
+// too, byte-for-byte the same as `examples/report/`'s,
+// `examples/vsock/`'s and `examples/agent_guest/`'s. This is the first
+// program to need more than one real package at once: `net.sockets`
+// (`packages/net-sockets/`) for the first four, `net.connect`
+// (`packages/net-connect/`) for the fifth, because no inbound program
+// here needs `connect` and no outbound one needs `bind`/`listen`/
+// `accept` (`docs/net.md` §1). Two locks, two fetches, one build --
+// `examples/README.md`'s own section on this file has the commands.
 
 import std.bytes;
 import std.io;
-
-// ---------------------------------------------------------------------
-// libc
-// ---------------------------------------------------------------------
-
-// `c_int`, not `int` (`docs/reach.md` §3.4): `socket`/`connect`/`close`
-// all really return a 32-bit C `int`.
-extern fn socket[&f](ffi: &f Ffi("libc"), domain: int, kind: int, proto: int)
-    -> [ffi("libc")] c_int;
-
-// The address crosses as a pointer and a length, the way `bind` does in
-// `examples/serve/`: the slice is the `struct sockaddr_in` and its length
-// is the `socklen_t`.
-extern fn connect[&f, &a](ffi: &f Ffi("libc"), fd: int, addr: &a [byte])
-    -> [ffi("libc")] c_int;
-
-// `read`/`write` stay plain `int`: their real return is `ssize_t`,
-// genuinely 64 bits here.
-extern fn read[&f, &b](ffi: &f Ffi("libc"), fd: int, buf: &!b [byte])
-    -> [ffi("libc")] int;
-
-extern fn write[&f, &b](ffi: &f Ffi("libc"), fd: int, buf: &b [byte])
-    -> [ffi("libc")] int;
-
-extern fn close[&f](ffi: &f Ffi("libc"), fd: int) -> [ffi("libc")] c_int;
+import net.sockets;
+import net.connect;
 
 // ---------------------------------------------------------------------
 // The command line
@@ -157,15 +145,15 @@ fn connect_to[&f, &o](libc: &f Ffi("libc"), octets: &o [byte], port: int)
     -> [ffi("libc")] int {
     region scratch {
         let addr = alloc_slice[scratch](16, byte_of(0));
-        let fd = socket(libc, 2, 1, 0);
+        let fd = sockets.socket(libc, 2, 1, 0);
         if fd < 0 {
             return 0 - 1;
         }
         address(addr, octets, port);
-        if connect(libc, fd, addr) == 0 {
+        if connect.connect(libc, fd, addr) == 0 {
             return fd;
         }
-        close(libc, fd);
+        sockets.close(libc, fd);
     }
     return 0 - 1;
 }
@@ -174,20 +162,11 @@ fn connect_to[&f, &o](libc: &f Ffi("libc"), octets: &o [byte], port: int)
 // HTTP
 // ---------------------------------------------------------------------
 
-fn put[&s, &d](dst: &!d [byte], at: int, src: &s [byte]) -> [] int {
-    var i = 0;
-    while i < len(src) {
-        dst[at + i] = src[i];
-        i = i + 1;
-    }
-    return at + len(src);
-}
-
 // Write all of `bytes`, which one `write` on a socket does not promise.
 fn send_all[&f, &b](libc: &f Ffi("libc"), fd: int, data: &b [byte]) -> [ffi("libc")] bool {
     var sent = 0;
     while sent < len(data) {
-        let n = write(libc, fd, data[sent..len(data)]);
+        let n = sockets.write(libc, fd, data[sent..len(data)]);
         if n <= 0 {
             return false;
         }
@@ -225,11 +204,11 @@ fn exchange[&f, &i, &h, &p](libc: &f Ffi("libc"), io: &!i Io, fd: int, host: &h 
     path: &p [byte]) -> [ffi("libc"), io_write] int {
     region scratch {
         let request = alloc_slice[scratch](len(path) + len(host) + 64, byte_of(0));
-        var at = put(request, 0, "GET ");
-        at = put(request, at, path);
-        at = put(request, at, " HTTP/1.0\r\nHost: ");
-        at = put(request, at, host);
-        at = put(request, at, "\r\nConnection: close\r\n\r\n");
+        var at = sockets.put(request, 0, "GET ");
+        at = sockets.put(request, at, path);
+        at = sockets.put(request, at, " HTTP/1.0\r\nHost: ");
+        at = sockets.put(request, at, host);
+        at = sockets.put(request, at, "\r\nConnection: close\r\n\r\n");
         if !send_all(libc, fd, request[0..at]) {
             return 0 - 1;
         }
@@ -241,7 +220,7 @@ fn exchange[&f, &i, &h, &p](libc: &f Ffi("libc"), io: &!i Io, fd: int, host: &h 
         var body = false;
         var going = true;
         while going {
-            let got = read(libc, fd, chunk);
+            let got = sockets.read(libc, fd, chunk);
             if got <= 0 {
                 going = false;
             } else if body {
@@ -261,7 +240,7 @@ fn exchange[&f, &i, &h, &p](libc: &f Ffi("libc"), io: &!i Io, fd: int, host: &h 
                 if take > len(head) - held {
                     take = len(head) - held;
                 }
-                put(head, held, chunk[0..take]);
+                sockets.put(head, held, chunk[0..take]);
                 held = held + take;
                 let end = bytes.find(head[0..held], "\r\n\r\n");
                 if end >= 0 {
@@ -315,7 +294,7 @@ fn main(world: World) -> [] int {
                                 status = 3;
                             } else {
                                 let code = exchange(f, i, fd, arg(g, 1), arg(g, 3));
-                                close(f, fd);
+                                sockets.close(f, fd);
                                 if code < 0 {
                                     io.error_all(i, "fetch: the response was not HTTP\n");
                                     status = 4;

@@ -59,6 +59,37 @@
 > duplicating it, verified end to end: built together, run, and hit with
 > a real HTTP request on both backends, the same as before the
 > extraction.
+>
+> **A second real package, `net.connect` (`packages/net-connect/
+> connect.ls`), and the first program with two real dependencies at
+> once.** Six more examples turned out to duplicate `net.sockets`'
+> declarations independently -- `examples/fetch/`, `examples/report/`,
+> `examples/collect/`, `examples/vsock/`, `examples/agent_guest/`,
+> `examples/agent_supervisor/` -- and they split cleanly on
+> `net.md` §1's own line, "the two directions do not meet": the inbound
+> ones (`collect`/`agent_supervisor`, joining `serve`/`results_stub`)
+> want `net.sockets` alone, the outbound ones want `net.sockets` plus
+> `connect`, which is now its own package rather than joining
+> `net.sockets`, for the same reason. `examples/fetch/fetch.ls` migrated
+> onto both, proving what §6 flagged as unbuilt is not the same question
+> as "does more than one dependency work at all": **it already does**,
+> with no new tooling -- two independent `vcs lock`/`vcs fetch` pairs,
+> composed at the same `build` command line, each re-verified
+> separately. What §6 still means by "not built" is narrower: a program
+> that depends on a package which itself has dependencies (a true
+> closure), and conflict detection when two dependencies disagree about
+> a third. Composing N *direct*, independent dependencies was never the
+> open question; it just had not been tried against a real program
+> before now.
+>
+> **Found a real, separate compiler gap, not a package-system one**:
+> `lex-sys authority`'s `foreign_symbols` field is not reachability-
+> pruned the way effects and `Program::funcs` are -- it lists every
+> `extern fn` declared in the compiled unit, called or not, so importing
+> a package that declares more than a program calls makes the report
+> over-name what the program reaches. Documented at `docs/authority.md`
+> §3 and `docs/under-a-grant.md` §6; not fixed here, since it is a
+> reachability-analysis change to `lex-sys-ir`, not a package-system one.
 
 ## 1. What asked for it
 
@@ -337,14 +368,24 @@ after the extraction — the strongest evidence yet that a fetched package
 composes with the rest of the toolchain exactly the way an ordinary file
 does, because it *is* one.
 
-What is not real yet, and is the actual next slice: `resolve --lock`
-and `vcs fetch` still check one store against one lock, not a
-*program's* dependency graph. There is no recursion across a closure of
-stores (§4.2's "each dependency's own dependencies resolve against that
-dependency's committed lock"), no cycle detection, no diamond-conflict
-refusal — those all need more than one dependency in the loop at once,
-and nothing here has tried that yet. `standard-library.md` §2.1's
-"versioning the library separately from the compiler" is still the
-likely candidate for what exercises that next, and `--std` is still
-the wrong first dependency to force it with — nothing here has a
-reason to make it optional.
+**Done too: `net.connect` (`packages/net-connect/connect.ls`) and a real
+program with two dependencies at once.** `examples/fetch/fetch.ls`
+locks and fetches `net.sockets` and `net.connect` independently — two
+`vcs lock`/`vcs fetch` pairs, composed at the same `build` command
+line — and builds, runs, and answers a real request exactly as before
+either package existed. This answers a question this section's previous
+revision had conflated with the one below: composing *N direct,
+independent* dependencies needed no new tooling at all, only a second
+real package to try it against. (It also found a real compiler gap,
+unrelated to packages: `authority.md` §3.)
+
+What is not real yet, and is the actual remaining gap: a program whose
+dependency *is itself* a dependency of something else — a true closure
+of stores, not just several direct ones. `resolve --lock` and `vcs
+fetch` still check one store against one lock each; nothing here walks
+a dependency's own lock to find *its* dependencies, detects a cycle, or
+refuses a diamond conflict (two paths to the same package pinning
+different heads). `standard-library.md` §2.1's "versioning the library
+separately from the compiler" is still the likely candidate for what
+would exercise that, and `--std` is still the wrong first dependency to
+force it with — nothing here has a reason to make it optional.

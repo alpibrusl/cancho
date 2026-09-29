@@ -219,35 +219,52 @@ fn build_example_paths(tag: &str, paths: &[PathBuf], binary: &str) -> (PathBuf, 
     (dir, exe)
 }
 
+/// Fetch several locked dependencies fresh, one `vcs fetch` per
+/// `(lock, store)` pair, each into its own scratch directory, and hand
+/// back every file written across all of them -- composed with no new
+/// tooling, the same way `examples/fetch/fetch.ls` composes two real
+/// packages (`net.sockets` and `net.connect`) at its own command line.
+/// Every test that builds or authority-checks a program that imports a
+/// fetched package calls this first, re-verifying every pin the same
+/// way `vcs resolve` always does rather than trusting a checked-in
+/// copy.
+fn fetch_net_dependencies(tag: &str, pairs: &[(&str, &str)]) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    for (i, (lock, store)) in pairs.iter().enumerate() {
+        let dir = scratch(&format!("{tag}-fetch-{i}"));
+        let fetch = Command::new(BIN)
+            .args([
+                "vcs".as_ref(),
+                "fetch".as_ref(),
+                "--lock".as_ref(),
+                repo_root().join(lock).as_os_str(),
+                "--store".as_ref(),
+                repo_root().join(store).as_os_str(),
+                "-o".as_ref(),
+                dir.as_os_str(),
+            ])
+            .output()
+            .expect("the compiler runs");
+        assert!(fetch.status.success(), "{}", String::from_utf8_lossy(&fetch.stderr));
+        for entry in std::fs::read_dir(&dir).expect("fetch wrote its output directory") {
+            let path = entry.expect("a readable directory entry").path();
+            if path.extension().is_some_and(|e| e == "ls") {
+                files.push(path);
+            }
+        }
+    }
+    files
+}
+
 /// `net.sockets` (`packages/net-sockets/`), this repository's first real
 /// `lex-sys-vcs` package (`docs/package-system.md` §6), fetched fresh
-/// into its own scratch directory and handed back as the one file `vcs
-/// fetch` wrote there. Every test that builds or authority-checks
-/// `examples/serve/serve.ls` or `examples/results_stub/results_stub.ls`
-/// -- both of which `import net.sockets` rather than duplicating its
-/// declarations -- calls this first, re-verifying the pin the same way
-/// `vcs resolve` always does rather than trusting a checked-in copy.
+/// and handed back as the one file `vcs fetch` wrote. Every test that
+/// builds or authority-checks `examples/serve/serve.ls` or
+/// `examples/results_stub/results_stub.ls` -- both of which `import
+/// net.sockets` rather than duplicating its declarations -- calls this.
 fn fetch_net_sockets(tag: &str, lock_relative: &str) -> PathBuf {
-    let dir = scratch(tag);
-    let fetch = Command::new(BIN)
-        .args([
-            "vcs".as_ref(),
-            "fetch".as_ref(),
-            "--lock".as_ref(),
-            repo_root().join(lock_relative).as_os_str(),
-            "--store".as_ref(),
-            repo_root().join("packages/net-sockets/.lex-sys-vcs").as_os_str(),
-            "-o".as_ref(),
-            dir.as_os_str(),
-        ])
-        .output()
-        .expect("the compiler runs");
-    assert!(fetch.status.success(), "{}", String::from_utf8_lossy(&fetch.stderr));
-    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .expect("fetch wrote its output directory")
-        .map(|entry| entry.expect("a readable directory entry").path())
-        .filter(|p| p.extension().is_some_and(|e| e == "ls"))
-        .collect();
+    let mut files =
+        fetch_net_dependencies(tag, &[(lock_relative, "packages/net-sockets/.lex-sys-vcs")]);
     assert_eq!(files.len(), 1, "`net.sockets` should fetch to exactly one file, found {files:?}");
     files.remove(0)
 }
@@ -260,4 +277,30 @@ fn build_serve(tag: &str) -> (PathBuf, PathBuf) {
 fn authority_of_serve(tag: &str) -> (Vec<String>, Vec<String>, Vec<String>) {
     let fetched = fetch_net_sockets(&format!("{tag}-fetch"), "examples/serve/net.lock");
     authority_of_paths(&[repo_root().join("examples/serve/serve.ls"), fetched])
+}
+
+/// `examples/fetch/fetch.ls`: the first program here to need two real
+/// packages at once (`net.sockets` and `net.connect`,
+/// `docs/package-system.md` §6) -- two separate `vcs lock`/`vcs fetch`
+/// pairs, composed at the same `build` command line.
+fn fetch_dependencies(tag: &str) -> Vec<PathBuf> {
+    fetch_net_dependencies(
+        tag,
+        &[
+            ("examples/fetch/net.lock", "packages/net-sockets/.lex-sys-vcs"),
+            ("examples/fetch/connect.lock", "packages/net-connect/.lex-sys-vcs"),
+        ],
+    )
+}
+
+fn build_fetch(tag: &str) -> (PathBuf, PathBuf) {
+    let mut paths = vec![repo_root().join("examples/fetch/fetch.ls")];
+    paths.extend(fetch_dependencies(&format!("{tag}-fetch")));
+    build_example_paths(tag, &paths, "fetch")
+}
+
+fn authority_of_fetch(tag: &str) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let mut paths = vec![repo_root().join("examples/fetch/fetch.ls")];
+    paths.extend(fetch_dependencies(&format!("{tag}-fetch")));
+    authority_of_paths(&paths)
 }

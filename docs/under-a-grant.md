@@ -214,6 +214,13 @@ What this does and does not change:
 * **Not that `syscall` is a hole to be plugged.** Refusing that one name
   would be theatre — the next spelling is a wrapper. The hole is
   `Ffi(lib)`'s width, not any symbol's name.
+* **Not that the symbol list is reachability-pruned.** `authority.md` §3
+  found it is not: `Program::externs` lists every `extern fn` declared in
+  the compiled unit, not only the ones a reachable call site actually
+  reaches, which surfaced once a program (`examples/fetch/fetch.ls`)
+  imported a package declaring more than it calls. Still a proof about
+  names — just a looser one than "what `main` reaches" until that gap
+  closes.
 
 ---
 
