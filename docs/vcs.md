@@ -293,6 +293,16 @@ the same crate on the Rust side and a purpose-built module on the `.ls`
 side, each serving the consumer that actually needs it rather than one
 serving both.
 
+**Found while scoping what came after this list, not by anything this
+section itself named**: none of the built pieces above can be reached
+from a real `.ls` file yet. Every one of them is exercised only by this
+crate's own tests, hand-constructing an `Operation` literal — there is
+no walk from real source to an `Operation`, no way to list what a store
+already contains without already knowing its `OpId`s, and no CLI command
+at all. [`vcs-publish.md`](vcs-publish.md) scopes that gap as its own
+slice, ahead of everything below, since none of it has anything to
+operate on until a first publish exists.
+
 What is left from §3's "largely unmodified" list — whole-function
 merge (`lex-vcs::merge`), multi-file merge sessions, typed issues,
 predicate branches, the op log's own history index — has no asker in
