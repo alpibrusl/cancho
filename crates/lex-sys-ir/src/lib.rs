@@ -54,6 +54,26 @@ pub fn lower(ast: &Ast) -> Result<Program, Diagnostic> {
     lower_all(ast).map_err(|mut all| all.remove(0))
 }
 
+/// Every `Program::externs` index a program's own reachable functions
+/// actually call (`docs/authority.md` §3).
+///
+/// `Program::funcs` is already pass 2's reachable set; `Program::externs`
+/// is not the same kind of thing -- it is collected once, unconditionally,
+/// before pass 2 ever runs (this file's own extern-collection loop, above
+/// `lower_inner`), and never intersected with it. A consumer such as
+/// `lex-sys authority` that wants only what the program actually reaches,
+/// the same promise it already keeps for effects, filters `externs` by
+/// this set rather than trusting its length. `Program::externs` itself is
+/// left alone: nothing renumbers it, so `Callee::Extern`'s index is never
+/// rewritten and codegen is untouched.
+pub fn reachable_externs(program: &Program) -> std::collections::BTreeSet<u32> {
+    let mut used = std::collections::BTreeSet::new();
+    for func in &program.funcs {
+        fold::collect_extern_refs_body(&func.body, &mut used);
+    }
+    used
+}
+
 /// Lower a program, answering **every** independent refusal rather than
 /// the first (`docs/agent-errors.md` §4).
 ///

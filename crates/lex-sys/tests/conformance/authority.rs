@@ -397,6 +397,54 @@ fn the_symbol_list_is_a_proof_about_names() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `docs/authority.md` §3 — `foreign_symbols` is reachability-pruned.
+///
+/// A declaration nobody calls is not reachable, the same standard
+/// `Program::funcs` is already held to (`standard-library.md` §5.2), so a
+/// program that declares two `extern fn`s and calls one should report
+/// only the one it calls. Found false while building `examples/fetch/
+/// fetch.ls` as the first program to import a package without calling
+/// every name it declares: `Program::externs` was collected once,
+/// unconditionally, before pass 2's reachability walk ever ran, so it
+/// never intersected with the reachable set the way effects already do.
+/// Fixed in `lex-sys-ir` (`fold::collect_extern_refs`/
+/// `reachable_externs`), read-only over `Program::externs` -- nothing
+/// renumbers it, so `Callee::Extern`'s index and codegen are untouched.
+#[test]
+fn foreign_symbols_names_only_what_the_program_calls() {
+    let dir = scratch("authority-unreachable-extern");
+    let source = dir.join("two_externs.ls");
+    std::fs::write(
+        &source,
+        "extern fn used[&f](ffi: &f Ffi(\"libc\"), n: int) -> [ffi(\"libc\")] int;\n\
+         extern fn unused[&f](ffi: &f Ffi(\"libc\"), n: int) -> [ffi(\"libc\")] int;\n\
+         fn main(world: World) -> [] int {\n\
+             let Split { io, ffi, fs, heap, args } = split(world);\n\
+             release(io); release(fs); release(heap); release(args);\n\
+             var r = 0;\n\
+             let libc = narrow(ffi, \"libc\");\n\
+             borrow libc as &f in { r = used(f, 41); }\n\
+             release(libc);\n\
+             return r;\n\
+         }\n",
+    )
+    .expect("a writable fixture");
+
+    let out = Command::new(BIN)
+        .args(["authority".as_ref(), source.as_os_str(), "--output".as_ref(), "json".as_ref()])
+        .output()
+        .expect("the compiler runs");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let report = String::from_utf8_lossy(&out.stdout);
+
+    assert!(
+        report.contains("\"foreign_symbols\": [\"used\"]"),
+        "`unused` is declared but never called, so it should not be in the report:\n{report}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `docs/under-a-grant.md` §2 and §4 — the dimension that *does* work.
 ///
 /// `filesystem.md` §2 took files out of libc and made them builtins under

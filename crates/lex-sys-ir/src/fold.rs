@@ -569,6 +569,124 @@ pub(crate) fn collect_static_refs_body(body: &[Stmt], out: &mut std::collections
     }
 }
 
+/// Every `Callee::Extern` index reachable from `e` (`docs/authority.md`
+/// §3's own finding: `Program::externs` lists every `extern fn` declared
+/// in the compiled unit, called or not, unlike `Program::funcs`, which
+/// pass 2 already prunes to what `main` reaches).
+///
+/// The same shape [`collect_static_refs`] takes, and exhaustive for the
+/// same reason: seeing every call is what lets a caller of this report
+/// the reachable set precisely rather than conservatively, so a future
+/// `Expr` variant with no arm here is a compile error rather than a call
+/// this pass silently misses.
+pub(crate) fn collect_extern_refs(e: &Expr, out: &mut std::collections::BTreeSet<u32>) {
+    match e {
+        Expr::Call { callee, args } => {
+            if let Callee::Extern(index) = callee {
+                out.insert(*index);
+            }
+            for a in args {
+                collect_extern_refs(a, out);
+            }
+        }
+        Expr::Int(_)
+        | Expr::Bool(_)
+        | Expr::Float(_)
+        | Expr::Load(_)
+        | Expr::Bytes(_)
+        | Expr::Static(_) => {}
+        Expr::FieldRef { base, .. }
+        | Expr::FieldAddr { base, .. }
+        | Expr::Field { base, .. }
+        | Expr::TupleField { base, .. }
+        | Expr::TupleFieldRef { base, .. }
+        | Expr::TupleFieldAddr { base, .. }
+        | Expr::Len(base)
+        | Expr::Neg(base)
+        | Expr::Not(base)
+        | Expr::BitNot(base)
+        | Expr::Deref { value: base, .. }
+        | Expr::Boxed { value: base, .. }
+        | Expr::Unboxed { value: base, .. }
+        | Expr::Contents { value: base, .. }
+        | Expr::UnboxedSlice { value: base }
+        | Expr::Alloc { value: base, .. } => collect_extern_refs(base, out),
+        Expr::Index { base, index, .. } => {
+            collect_extern_refs(base, out);
+            collect_extern_refs(index, out);
+        }
+        Expr::Subslice { base, start, end, .. } => {
+            collect_extern_refs(base, out);
+            collect_extern_refs(start, out);
+            collect_extern_refs(end, out);
+        }
+        Expr::AllocSlice { count, fill, .. } | Expr::BoxedSlice { count, fill, .. } => {
+            collect_extern_refs(count, out);
+            collect_extern_refs(fill, out);
+        }
+        Expr::Struct { fields, .. }
+        | Expr::Tuple { parts: fields }
+        | Expr::Enum { payload: fields, .. } => {
+            for f in fields {
+                collect_extern_refs(f, out);
+            }
+        }
+        Expr::Bin { lhs, rhs, .. } => {
+            collect_extern_refs(lhs, out);
+            collect_extern_refs(rhs, out);
+        }
+        Expr::FileOp { args, .. }
+        | Expr::OpenFile { args, .. }
+        | Expr::Connect { args, .. }
+        | Expr::Bind { args, .. } => {
+            for a in args {
+                collect_extern_refs(a, out);
+            }
+        }
+        // A function value names its target's `DefId` directly, and a
+        // captureless function value can never target an `extern fn`
+        // (`docs/function-values.md`'s own surface is ordinary functions).
+        Expr::FnValue(_) => {}
+        Expr::CallIndirect { target, args, .. } => {
+            collect_extern_refs(target, out);
+            for a in args {
+                collect_extern_refs(a, out);
+            }
+        }
+        Expr::Joined { handle, .. } => collect_extern_refs(handle, out),
+    }
+}
+
+/// [`collect_extern_refs`], over every expression a function body holds --
+/// the same statement shape [`collect_static_refs_body`] walks.
+pub(crate) fn collect_extern_refs_body(body: &[Stmt], out: &mut std::collections::BTreeSet<u32>) {
+    for stmt in body {
+        match stmt {
+            Stmt::Store { value, .. } | Stmt::Eval(value) | Stmt::Return(value) => {
+                collect_extern_refs(value, out)
+            }
+            Stmt::If { cond, then_body, else_body } => {
+                collect_extern_refs(cond, out);
+                collect_extern_refs_body(then_body, out);
+                collect_extern_refs_body(else_body, out);
+            }
+            Stmt::While { cond, body } => {
+                collect_extern_refs(cond, out);
+                collect_extern_refs_body(body, out);
+            }
+            Stmt::Borrow { body, .. } | Stmt::Region { body, .. } => {
+                collect_extern_refs_body(body, out)
+            }
+            Stmt::Match { scrutinee, arms, .. } => {
+                collect_extern_refs(scrutinee, out);
+                for arm in arms {
+                    collect_extern_refs_body(&arm.body, out);
+                }
+            }
+        }
+    }
+}
+
 /// Rewrite every `Expr::Static` index `remap` names, in place -- the
 /// mutating counterpart of [`collect_static_refs`], over the same
 /// exhaustive match for the same reason: a variant this one does not

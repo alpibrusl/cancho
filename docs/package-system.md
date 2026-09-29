@@ -82,14 +82,16 @@
 > open question; it just had not been tried against a real program
 > before now.
 >
-> **Found a real, separate compiler gap, not a package-system one**:
-> `lex-sys authority`'s `foreign_symbols` field is not reachability-
-> pruned the way effects and `Program::funcs` are -- it lists every
-> `extern fn` declared in the compiled unit, called or not, so importing
-> a package that declares more than a program calls makes the report
-> over-name what the program reaches. Documented at `docs/authority.md`
-> §3 and `docs/under-a-grant.md` §6; not fixed here, since it is a
-> reachability-analysis change to `lex-sys-ir`, not a package-system one.
+> **Found and fixed a real, separate compiler gap, not a package-system
+> one**: `lex-sys authority`'s `foreign_symbols` field was not
+> reachability-pruned the way effects and `Program::funcs` are -- it
+> listed every `extern fn` declared in the compiled unit, called or not,
+> so importing a package that declares more than a program calls made
+> the report over-name what the program reaches. Fixed in `lex-sys-ir`
+> (`fold::collect_extern_refs`/`reachable_externs`), read-only over
+> `Program::externs` so `Callee::Extern`'s index and codegen are
+> untouched. `docs/authority.md` §3 and `docs/under-a-grant.md` §6 have
+> the detail.
 
 ## 1. What asked for it
 

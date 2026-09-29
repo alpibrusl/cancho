@@ -951,8 +951,19 @@ fn print_authority(inputs: &[PathBuf], with_std: bool, json: bool) -> Result<(),
 
     let bounded = performed.iter().all(|(name, _)| bounds_its_domain(name));
 
-    let mut symbols: Vec<&str> =
-        program.externs.iter().map(|declared| declared.symbol.as_str()).collect();
+    // `docs/authority.md` §3: `Program::externs` lists every `extern fn`
+    // declared in the compiled unit whether anything calls it or not,
+    // unlike `Program::funcs`, which pass 2 already pruned to what `main`
+    // reaches -- so the report is filtered to the same reachable set,
+    // rather than trusting `program.externs`'s own length.
+    let reachable = lex_sys_ir::reachable_externs(&program);
+    let mut symbols: Vec<&str> = program
+        .externs
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| reachable.contains(&(*index as u32)))
+        .map(|(_, declared)| declared.symbol.as_str())
+        .collect();
     symbols.sort_unstable();
     symbols.dedup();
 
