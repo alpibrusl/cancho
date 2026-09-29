@@ -38,7 +38,7 @@ usage:
     lex-sys layout    <file.ls>... [--std]
     lex-sys print <file.ls>
     lex-sys agent-guidelines
-    lex-sys vcs publish [--store <dir>] <file.ls>
+    lex-sys vcs publish [--store <dir>] [--requires <lock>:<dep-store>]... <file.ls>
     lex-sys vcs log     [--store <dir>]
     lex-sys vcs resolve [--lock <file>] <store-dir>
     lex-sys vcs lock --store <dir> -o <file> <name>...
@@ -101,7 +101,13 @@ operation in a content-addressed store at `--store` (default
 `.lex-sys-vcs`), gated by the same checker `check` runs. A second publish
 of an unchanged declaration is a no-op; a second publish of a *changed*
 one is refused -- incremental publish is design-stage, not built. `vcs
-log` lists what a store already has. See docs/vcs-publish.md.
+log` lists what a store already has. `--requires <lock>:<dep-store>`
+(repeatable) is for a package that itself needs another package: the
+identity published is still this file's own (structural, unaffected by
+any dependency), but the file must still type-check with that
+dependency's source in scope, and the pin is recorded so a later `vcs
+resolve`/`vcs fetch` finds it without the consumer needing to know it
+exists. See docs/vcs-publish.md and docs/package-system.md §4.6.
 
 `vcs resolve <store-dir>` never trusts that store's own manifest: it
 re-parses and re-typechecks the source behind every pin under today's
@@ -110,8 +116,10 @@ every mismatch reported at once, if a pin no longer matches its own
 source, its source no longer type-checks, or a source blob is missing.
 Exit 0 only if every pin still resolves exactly as published. `--lock
 <file>` scopes this to just the names `vcs lock` pinned, instead of
-everything the store has ever published. See docs/package-system.md
-§4.2.
+everything the store has ever published. If the store itself has a
+dependency (`--requires` at publish time), its own closure is walked
+and verified too, refusing on a cycle or a diamond conflict rather than
+guessing. See docs/package-system.md §4.2 and §4.6.
 
 `vcs lock --store <dir> -o <file> <name>...` looks each name up in a
 dependency store's manifest and pins it -- by hash, not by name -- into
@@ -127,7 +135,10 @@ written unless everything verifies. This needs no compiler support: a
 program is already the set of files named on the command line, and
 `import` already resolves a name against whatever module is among
 them (docs/modules.md §4.2), so a fetched file is `import`-able the
-moment it exists on disk. See docs/package-system.md §4.6.
+moment it exists on disk. A dependency's own dependency (`--requires`)
+is fetched too, into the same `-o`, so a consumer of a package that has
+one never has to fetch it separately. See docs/package-system.md §4.6
+and §4.7.
 
 `-l`/`-L` are `cc`'s own flags, passed through unexamined: this project
 invents no manifest and no dependency resolution, only the ability to

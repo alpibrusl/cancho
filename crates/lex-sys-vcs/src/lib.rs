@@ -13,7 +13,10 @@
 //! neither can turn a pin back into text to re-check it. Per §4.5, a
 //! consumer's own name-keyed pin file (`Lock`) — a `Manifest` says what a
 //! *store* has; a `Lock` says what *one program* meant when it wrote a
-//! name down. Not built, and named in `vcs.md` §8: whole-function merge,
+//! name down. Per §4.6, a store's own dependency on another store
+//! (`Requirement`) — a `Lock` says what *one program* meant; a
+//! `Requirement` says what *the package itself* meant, chosen once at
+//! publish time the same way. Not built, and named in `vcs.md` §8: whole-function merge,
 //! multi-file merge sessions, typed issues, predicate branches, the op
 //! log's own history index.
 //!
@@ -30,6 +33,7 @@ mod lock;
 mod manifest;
 mod op_log;
 mod operation;
+mod requirement;
 
 pub use attestation::{
     AttestationEvent, BrokenAt, Chain, ChainPayload, Entry as AttestationEntry, GENESIS, Seal,
@@ -43,4 +47,7 @@ pub use manifest::{Manifest, ManifestEntry, ManifestError};
 pub use op_log::{OpLog, OpLogError};
 pub use operation::{
     EffectSet, ModuleRef, OpId, Operation, OperationKind, OperationRecord, SigId, StageId,
+};
+pub use requirement::{
+    Requirement, RequirementError, load_all as load_requirements, save_all as save_requirements,
 };
