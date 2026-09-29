@@ -56,14 +56,15 @@ cargo run -p lex-sys -- run examples/tour.ls
   identity — a design commitment kept from the day this project started,
   not added on later.
 
-And honestly, **not a usable language yet**: `lex-sys build` only ever
-links libc, so `c_ptr` already lets `SSL_CTX *` and similar opaque
-handles type-check, but nothing can produce a binary that links them.
-There is no package system — a program is just files named on the
-command line — and the effect vocabulary itself is still moving:
-measured at 71% of this repository's own historical revisions no longer
-type-checking under today's build. Nothing here is guaranteed to keep
-compiling yet. [The roadmap](https://alpibrusl.github.io/lex-sys/ROADMAP.html)
+And honestly, **not a usable language yet**: there is no package
+system — a program is just files named on the command line — and the
+effect vocabulary itself is still moving: measured at 71% of this
+repository's own historical revisions no longer type-checking under
+today's build. `c_ptr` lets `SSL_CTX *` and similar opaque handles
+type-check, and `-l`/`-L` (`docs/foreign-linking.md`) let `build` link
+a library beyond libc, so a real TLS handshake compiles and runs
+today (`examples/tls_client/`) — but nothing here is guaranteed to
+keep compiling yet. [The roadmap](https://alpibrusl.github.io/lex-sys/ROADMAP.html)
 tracks what landed, what's next, and what each slice found out.
 
 ## Building

@@ -88,8 +88,8 @@ This cuts both ways, and §5 is the cut.
 | A command-line tool | **Yes** | `Args`, `examples/lines.ls`, `examples/wordfreq/` |
 | Several processes | **Yes** | `fork` returns an `int`, and an `int` is a value |
 | Threads | **No** | Function values exist now, but `pthread_create`'s `void *arg` is still `c_ptr`-opaque and un-crossable (§3.3); `threads.md`'s own `spawn`/`join` is proposed, not yet built |
-| TLS | **Partial** | `SSL_CTX *`/`SSL *` cross today (§3.1, corrected below); nothing links `libssl` yet |
-| A Postgres client | **No** | `PGconn *` (§3.1) — the same handle-shaped gap TLS's own correction closes, not yet spent on this one |
+| TLS | **Yes** (corrected below, twice) | `SSL_CTX *`/`SSL *` cross (§3.1), and `-lssl -lcrypto` links (`docs/foreign-linking.md`) — `examples/tls_client/`, a real handshake |
+| A Postgres client | **No** | `PGconn *` (§3.1) — the same handle-shaped gap TLS's own correction closes, and now the same link-time gap too; not yet spent on this one |
 | `malloc`-style allocation | **No**, and it is not wanted | `void *` (§3.1); the heap is a capability with `box` (`heap.md`) |
 | Floating-point arithmetic | **No** | There is no `float` type yet. Dated, not structural (§4) |
 
@@ -108,6 +108,15 @@ This cuts both ways, and §5 is the cut.
 > spent the same effort grounding `libpq`'s real signatures and writing
 > its own accept fixture — the type-level gap `PGconn *` cited is the
 > same one `c_ptr` closed.
+
+> **Corrected again: [`docs/foreign-linking.md`](foreign-linking.md).**
+> The link-time gap above is closed too — `-l`/`-L` on `build`/`run`,
+> and `examples/tls_client/` is a real handshake and encrypted round
+> trip against `openssl s_server`, on both backends. TLS moves from
+> **Partial** to **Yes** above. A Postgres client stays **No**: the
+> type-level and link-time gaps are both closed in general now, but
+> nothing has yet spent the effort grounding `libpq`'s own signatures
+> the way §1 did for OpenSSL's.
 
 Read down the "because" column. Two of the remaining three flat no's
 share one sentence.

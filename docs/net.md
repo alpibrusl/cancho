@@ -282,6 +282,15 @@ half with an asker is the one the grant does not ask about.
 > lex-sys *analogues* of a lex-os exchange rather than a port of a real
 > lex-os source file.
 
+> **Recounted: outbound 5.** `examples/tls_client/` (`docs/foreign-linking.md`)
+> is a fifth, and the only one on edition 1 by necessity rather than by
+> age: it declares its own `socket`/`connect` in a file kept off edition
+> 2 specifically because `connect` became this document's own builtin,
+> and a `Net` bound's port half has to be a compile-time literal
+> (§4), which cannot express a port a test picks freely at run time --
+> the same reason every program in this list still hand-rolls the
+> socket it connects.
+
 That is the honest state up to here. Both halves of the two-asker bar
 §5 set are cleared, and §3's own reason to build now rather than before
 still applies in full: `Ffi("libc")` lets a program declare

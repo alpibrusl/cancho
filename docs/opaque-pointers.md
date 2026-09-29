@@ -10,11 +10,14 @@
 > (`crates/lex-sys/tests/conformance/backends.rs`'s
 > `the_two_backends_agree_on_an_opaque_pointer`); three `tests/reject/`
 > fixtures pin arithmetic, coercion, and the "not a general type" rule
-> §4 predicted. §5's TLS example was not built: it needs the build
-> pipeline to link a library beyond libc, which nothing in this project
-> has ever needed before and which is a separate piece of work, tracked
-> rather than assumed here. §1's real OpenSSL signatures and §3's
-> design are otherwise exactly what shipped — reached by writing a
+> §4 predicted. §5's TLS example was not built at the time: it needed
+> the build pipeline to link a library beyond libc, which nothing in
+> this project had ever needed before. **Corrected:
+> [`docs/foreign-linking.md`](foreign-linking.md)** closed that gap and
+> built the example — `examples/tls_client/`, a real handshake and an
+> encrypted round trip against `openssl s_server` on both backends,
+> that document's §4 has the transcript. §1's real OpenSSL signatures
+> and §3's design are otherwise exactly what shipped — reached by writing a
 > first accept fixture against `fopen`/`fopen`'s two string parameters,
 > watching it segfault, and finding the actual bug: a pre-existing,
 > `c_ptr`-unrelated gap in how a `&r [byte]` parameter crosses (§4 note
