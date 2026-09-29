@@ -82,6 +82,7 @@
 
 - [What lex-sys-vcs would need](vcs.md)
 - [The first publish](vcs-publish.md)
+- [A package system](package-system.md)
 
 # Backend and performance
 
