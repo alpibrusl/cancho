@@ -1,15 +1,29 @@
 # A package system for lex-sys
 
-> **Status: design, not yet built.** `modules.md` §7 named "a package and
-> version story" as open and explicitly out of scope for naming
-> ("distribution, not naming"); `standard-library.md` §2.1 named it "the
-> decision to revisit first when a package story exists." Both waited on
-> two things that did not exist yet and now do: `lex-sys-vcs`
-> (`vcs-publish.md`, #123–#134 — a real content-addressed store with a
-> gate) and editions (`editions.md`, #85–#92 — a way for a file to stay
-> compatible with an older compiler without a version number). This
-> document is the first slice: not a manifest format, a CLI, or code —
-> what the pieces already built here mean for the two or three decisions
+> **Status: design, not yet built** — except §4.2's own recheck step,
+> which is: **`lex-sys vcs resolve <store-dir>`** re-parses and
+> re-typechecks the source behind every pin in a real second
+> `.lex-sys-vcs` store under today's compiler, and refuses if a pin no
+> longer matches its own source, its source no longer type-checks, or a
+> source blob is missing. This is §6's own proposed smallest slice, done,
+> and it needed a real prerequisite this document had not named: neither
+> `OpLog` nor `Manifest` store a declaration's actual source, only its
+> hash — `Blobs` (`crates/lex-sys-vcs/src/blobs.rs`), a small
+> content-addressed store for exactly that, is the piece that was
+> missing. What is **not** built yet: the lock-driven, recursive,
+> multi-package resolution §4.2's first paragraph describes — `resolve`
+> checks one store's own pins against itself, not a consumer program's
+> dependency graph, cycle detection, or diamond conflicts. `modules.md`
+> §7 named "a package and version story" as open and explicitly out of
+> scope for naming ("distribution, not naming"); `standard-library.md`
+> §2.1 named it "the decision to revisit first when a package story
+> exists." Both waited on two things that did not exist yet and now do:
+> `lex-sys-vcs` (`vcs-publish.md`, #123–#134 — a real content-addressed
+> store with a gate) and editions (`editions.md`, #85–#92 — a way for a
+> file to stay compatible with an older compiler without a version
+> number). This document is otherwise still the first slice: not a
+> manifest format, a full CLI, or code for the rest of it — what the
+> pieces already built here mean for the two or three decisions
 > a package system cannot avoid, and which of them this project has
 > effectively already made.
 
@@ -216,14 +230,26 @@ machine that resolves, agent or human).
 
 ## 6. What would make this real
 
-The next slice is not code — it is a smaller design doc, the way
-`vcs-publish.md` scoped `lex-sys-vcs`'s first publish before anything
-shipped. The likely candidate: `standard-library.md` §2.1 already named
-"versioning the library separately from the compiler" as the first
-thing to revisit once a package story exists, but `--std` is exactly
-the wrong first dependency to test this against — nothing here has a
-reason to make it optional. A smaller, real first case is the minimum
-resolver in §4.1–§4.2 against a **second, genuinely separate**
-`.lex-sys-vcs` store — not `std` — which answers whether §4.2's
-recheck-under-today's-compiler step is as cheap in practice as this
-document assumes, before anything depends on it for real.
+**Done: `lex-sys vcs resolve`** — the minimum resolver in §4.1–§4.2
+against a real, genuinely separate `.lex-sys-vcs` store, exactly as
+proposed here. The answer to whether the recheck step is as cheap in
+practice as this document assumed: yes, for a store this size — a
+re-parse and a re-typecheck per distinct source file, deduplicated
+across the declarations that share one, is the same cost `lex-sys
+check` already pays for an ordinary program. What it found that this
+document had not named: source itself had nowhere to live (`Blobs`,
+now built).
+
+What is not real yet, and is the actual next slice: `resolve` checks
+one store against itself. It does not walk a *consumer's* dependency
+graph, does not have a lock file format of its own, and does not
+implement §4.2's "each dependency's own dependencies resolve against
+that dependency's committed lock" recursion — there is only one store
+in the loop today, not a closure of them. `standard-library.md` §2.1's
+"versioning the library separately from the compiler" is still the
+likely candidate for what exercises that next, and `--std` is still
+the wrong first dependency to force it with — nothing here has a
+reason to make it optional. A smaller, real next case is a single
+`import` resolving a name against one locked, resolved dependency,
+which is the first point this document's naming half (§4.5) has
+anything to attach to.

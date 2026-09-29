@@ -40,6 +40,7 @@ usage:
     lex-sys agent-guidelines
     lex-sys vcs publish [--store <dir>] <file.ls>
     lex-sys vcs log     [--store <dir>]
+    lex-sys vcs resolve <store-dir>
     lex-sys --version
 
 options:
@@ -99,6 +100,14 @@ operation in a content-addressed store at `--store` (default
 of an unchanged declaration is a no-op; a second publish of a *changed*
 one is refused -- incremental publish is design-stage, not built. `vcs
 log` lists what a store already has. See docs/vcs-publish.md.
+
+`vcs resolve <store-dir>` never trusts that store's own manifest: it
+re-parses and re-typechecks the source behind every pin under today's
+compiler, then re-derives each declaration's identity and refuses, with
+every mismatch reported at once, if a pin no longer matches its own
+source, its source no longer type-checks, or a source blob is missing.
+Exit 0 only if every pin still resolves exactly as published. See
+docs/package-system.md §4.2.
 
 `-l`/`-L` are `cc`'s own flags, passed through unexamined: this project
 invents no manifest and no dependency resolution, only the ability to

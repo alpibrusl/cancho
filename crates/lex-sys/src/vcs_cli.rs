@@ -19,7 +19,9 @@ use std::process::ExitCode;
 
 use lex_sys_id::identify;
 use lex_sys_ir::{Effects, Func};
-use lex_sys_vcs::{Manifest, ManifestEntry, OpLog, Operation, OperationKind, OperationRecord};
+use lex_sys_vcs::{
+    Blobs, Manifest, ManifestEntry, OpLog, Operation, OperationKind, OperationRecord,
+};
 
 use crate::{Failure, environment, parse_program, refused, usage};
 
@@ -34,8 +36,9 @@ pub fn cmd_vcs(args: &[String]) -> Result<ExitCode, Failure> {
     match args.first().map(String::as_str) {
         Some("publish") => cmd_publish(&args[1..]),
         Some("log") => cmd_log(&args[1..]),
+        Some("resolve") => cmd_resolve(&args[1..]),
         Some(other) => Err(usage(format!("unknown `vcs` subcommand `{other}`"))),
-        None => Err(usage("`vcs` needs a subcommand: `publish` or `log`")),
+        None => Err(usage("`vcs` needs a subcommand: `publish`, `log` or `resolve`")),
     }
 }
 
@@ -111,8 +114,16 @@ fn cmd_publish(args: &[String]) -> Result<ExitCode, Failure> {
 
     let op_log = OpLog::open(&store)
         .map_err(|e| environment(format!("cannot open store at `{}`: {e}", store.display())))?;
+    let blobs = Blobs::open(&store)
+        .map_err(|e| environment(format!("cannot open store at `{}`: {e}", store.display())))?;
     let mut manifest = Manifest::load(&store)
         .map_err(|e| environment(format!("cannot read manifest at `{}`: {e}", store.display())))?;
+
+    // Stored once per publish, addressed by its own content — `vcs
+    // resolve` (`docs/package-system.md` §4.2) is the reader; a hash alone
+    // cannot be re-typechecked, only the source behind it can.
+    let source_hash =
+        blobs.put(&source).map_err(|e| environment(format!("cannot write to store: {e}")))?;
 
     let mut published = 0usize;
     let mut unchanged = 0usize;
@@ -165,7 +176,10 @@ fn cmd_publish(args: &[String]) -> Result<ExitCode, Failure> {
         op_log
             .put(&OperationRecord::new(op))
             .map_err(|e| environment(format!("cannot write to store: {e}")))?;
-        manifest.insert(sig_id, ManifestEntry { name: func.name.clone(), stage_id });
+        manifest.insert(
+            sig_id,
+            ManifestEntry { name: func.name.clone(), stage_id, source_hash: source_hash.clone() },
+        );
         published += 1;
         println!("published {}", func.name);
     }
@@ -199,5 +213,109 @@ fn cmd_log(args: &[String]) -> Result<ExitCode, Failure> {
     for (sig_id, entry) in rows {
         println!("{:<24} sig {}  body {}", entry.name, sig_id, entry.stage_id);
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `docs/package-system.md` §4.2 and §6: the smallest resolver, against a
+/// real second store rather than `std`. A dependency's lock (its
+/// manifest) is never trusted on its own — this re-parses and
+/// re-typechecks the *source* behind every pin under today's compiler,
+/// then re-derives each declaration's identity and compares it against
+/// what the manifest claims. `hash-stability.md` measured that 71% of
+/// this repository's own history stops type-checking under today's
+/// build; this is that measurement, run against someone else's store
+/// instead of assumed away.
+///
+/// Groups by `source_hash` first, so a file several declarations came
+/// from is re-checked once rather than once per declaration.
+fn cmd_resolve(args: &[String]) -> Result<ExitCode, Failure> {
+    let mut it = args.iter();
+    let Some(store) = it.next() else {
+        return Err(usage("`vcs resolve` needs a store directory"));
+    };
+    if it.next().is_some() {
+        return Err(usage("`vcs resolve` takes exactly one store directory"));
+    }
+    let store = PathBuf::from(store);
+
+    let manifest = Manifest::load(&store)
+        .map_err(|e| environment(format!("cannot read manifest at `{}`: {e}", store.display())))?;
+    if manifest.is_empty() {
+        println!("nothing published at `{}`; nothing to resolve", store.display());
+        return Ok(ExitCode::SUCCESS);
+    }
+    let blobs = Blobs::open(&store)
+        .map_err(|e| environment(format!("cannot open store at `{}`: {e}", store.display())))?;
+
+    let mut by_source: std::collections::BTreeMap<String, Vec<(&String, &ManifestEntry)>> =
+        std::collections::BTreeMap::new();
+    for (sig_id, entry) in manifest.entries() {
+        by_source.entry(entry.source_hash.clone()).or_default().push((sig_id, entry));
+    }
+
+    let mut problems: Vec<String> = Vec::new();
+    let mut checked_files = 0usize;
+
+    for (source_hash, entries) in &by_source {
+        let text = match blobs.get(source_hash) {
+            Ok(Some(text)) => text,
+            Ok(None) => {
+                problems.push(format!(
+                    "{source_hash}: no source blob recorded for it ({} declaration(s))",
+                    entries.len()
+                ));
+                continue;
+            }
+            Err(e) => {
+                return Err(environment(format!("cannot read source blob `{source_hash}`: {e}")));
+            }
+        };
+
+        let ast = match lex_sys_syntax::parse(&text) {
+            Ok(ast) => ast,
+            Err(d) => {
+                problems.push(format!(
+                    "{source_hash} no longer parses ({}): {}",
+                    d.rule.tag(),
+                    d.message
+                ));
+                continue;
+            }
+        };
+        if let Err(diagnostics) = lex_sys_ir::lower_all(&ast) {
+            let text: Vec<String> =
+                diagnostics.iter().map(|d| format!("{}: {}", d.rule.tag(), d.message)).collect();
+            problems.push(format!("{source_hash} no longer type-checks:\n{}", text.join("\n\n")));
+            continue;
+        }
+        checked_files += 1;
+
+        let identities = identify(&ast);
+        for (sig_id, entry) in entries {
+            match identities.functions.iter().find(|f| &f.sig.to_hex() == *sig_id) {
+                None => problems.push(format!(
+                    "{}: signature {sig_id} is no longer produced by its own source",
+                    entry.name
+                )),
+                Some(func) if func.body.to_hex() != entry.stage_id => problems.push(format!(
+                    "{}: body moved from {} to {} — the manifest's pin no longer matches",
+                    entry.name,
+                    entry.stage_id,
+                    func.body.to_hex()
+                )),
+                Some(_) => {}
+            }
+        }
+    }
+
+    if !problems.is_empty() {
+        return Err(refused(problems.join("\n\n")));
+    }
+    println!(
+        "{} declaration(s) across {} file(s) at `{}` still resolve exactly as published",
+        manifest.len(),
+        checked_files,
+        store.display()
+    );
     Ok(ExitCode::SUCCESS)
 }

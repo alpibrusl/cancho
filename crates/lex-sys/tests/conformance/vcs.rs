@@ -162,3 +162,124 @@ fn publishing_a_type_error_is_refused_with_its_rule_not_a_panic() {
     assert_eq!(output.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&output.stderr).contains("expected `int`"));
 }
+
+// ---------------------------------------------------------------------
+// `lex-sys vcs resolve` (`docs/package-system.md` §4.2/§6) -- a real
+// second store, never trusted from its own lock alone.
+// ---------------------------------------------------------------------
+
+fn publish(store: &Path, file: &Path) {
+    let output = Command::new(BIN)
+        .args(["vcs", "publish", "--store"])
+        .arg(store)
+        .arg(file)
+        .output()
+        .expect("the compiler runs");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+}
+
+fn resolve(store: &Path) -> std::process::Output {
+    Command::new(BIN).args(["vcs", "resolve"]).arg(store).output().expect("the compiler runs")
+}
+
+#[test]
+fn resolve_confirms_a_clean_store_matches_exactly() {
+    let dir = scratch("vcs-resolve-clean");
+    let file = write_source(&dir, SOURCE);
+    let store = dir.join("store");
+    publish(&store, &file);
+
+    let output = resolve(&store);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("2 declaration(s)"), "{stdout}");
+    assert!(stdout.contains("still resolve exactly as published"), "{stdout}");
+}
+
+#[test]
+fn resolve_against_an_empty_store_says_so_rather_than_erroring() {
+    let dir = scratch("vcs-resolve-empty");
+    let output = resolve(&dir.join("store"));
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("nothing published"));
+}
+
+#[test]
+fn resolve_refuses_a_pin_that_no_longer_matches_its_own_source() {
+    let dir = scratch("vcs-resolve-drifted");
+    let file = write_source(&dir, SOURCE);
+    let store = dir.join("store");
+    publish(&store, &file);
+
+    // Hand-corrupt one pin's `stage_id` without touching the source blob
+    // it points at -- exactly what a stale or hand-edited lock looks like,
+    // the case `docs/package-system.md` §4.2 says a resolver must never
+    // trust silently.
+    let manifest_path = store.join("manifest.json");
+    let manifest = std::fs::read_to_string(&manifest_path).expect("a readable manifest");
+    let real_stage_id = "b".repeat(64);
+    assert!(
+        !manifest.contains(&real_stage_id),
+        "the sentinel stage_id must not collide with a real one"
+    );
+    // `sub`'s own stage_id, from `SOURCE` -- swapped for a well-formed but
+    // wrong one.
+    let (_, after_sub) = manifest.split_once("\"name\": \"sub\"").expect("sub is in the manifest");
+    let start = after_sub.find("\"stage_id\": \"").expect("sub has a stage_id") + 13;
+    let real = &after_sub[start..start + 64];
+    let corrupted = manifest.replacen(real, &real_stage_id, 1);
+    std::fs::write(&manifest_path, corrupted).expect("a writable manifest");
+
+    let output = resolve(&store);
+    assert_eq!(output.status.code(), Some(1), "{}", String::from_utf8_lossy(&output.stdout));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("sub"), "{stderr}");
+    assert!(stderr.contains("no longer matches"), "{stderr}");
+}
+
+#[test]
+fn resolve_refuses_source_that_no_longer_typechecks() {
+    let dir = scratch("vcs-resolve-broken");
+    let file = write_source(&dir, SOURCE);
+    let store = dir.join("store");
+    publish(&store, &file);
+
+    // A source blob that is self-consistent (its name really is its own
+    // hash, so `Blobs::get` accepts it) but does not type-check under
+    // today's compiler -- what `docs/hash-stability.md`'s 71% figure
+    // means in practice, constructed directly rather than waited for.
+    let broken = "fn add(a: int, b: int) -> [] int { return a + unknown_name; }\n\
+                  fn sub(a: int, b: int) -> [] int { return a - b; }\n";
+    let blobs = lex_sys_vcs::Blobs::open(&store).expect("the store's sources/ dir opens");
+    let broken_hash = blobs.put(broken).expect("a writable blob store");
+
+    let manifest_path = store.join("manifest.json");
+    let manifest = std::fs::read_to_string(&manifest_path).expect("a readable manifest");
+    let (_, after_add) = manifest.split_once("\"name\": \"add\"").expect("add is in the manifest");
+    let start = after_add.find("\"source_hash\": \"").expect("add has a source_hash") + 16;
+    let real_hash = &after_add[start..start + 64];
+    let corrupted = manifest.replacen(real_hash, &broken_hash, 1);
+    std::fs::write(&manifest_path, corrupted).expect("a writable manifest");
+
+    let output = resolve(&store);
+    assert_eq!(output.status.code(), Some(1), "{}", String::from_utf8_lossy(&output.stdout));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("no longer type-checks"), "{stderr}");
+    assert!(stderr.contains("unknown-name"), "{stderr}");
+}
+
+#[test]
+fn resolve_refuses_a_pin_whose_source_blob_is_missing() {
+    let dir = scratch("vcs-resolve-missing-blob");
+    let file = write_source(&dir, SOURCE);
+    let store = dir.join("store");
+    publish(&store, &file);
+
+    for entry in std::fs::read_dir(store.join("sources")).expect("sources/ exists") {
+        std::fs::remove_file(entry.expect("a readable entry").path()).expect("a removable blob");
+    }
+
+    let output = resolve(&store);
+    assert_eq!(output.status.code(), Some(1), "{}", String::from_utf8_lossy(&output.stdout));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no source blob recorded"));
+}

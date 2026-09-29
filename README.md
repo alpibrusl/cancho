@@ -82,9 +82,9 @@ default codegen path (LLVM via `clang`, no new build dependency);
 ### The compiler's whole surface
 
 ```sh
-lex-sys build <file.ls>... [-o <output>] [--emit exe|obj] [--std] [--backend cranelift|llvm]
+lex-sys build <file.ls>... [-o <output>] [--emit exe|obj] [--std] [--backend cranelift|llvm] [-l <name>]... [-L <path>]...
 lex-sys check <file.ls>... [--std] [--output json] [--backend cranelift|llvm]   # refuse, or say nothing
-lex-sys run   <file.ls>... [--std] [--backend cranelift|llvm]   # build, run, exit with the program's status
+lex-sys run   <file.ls>... [--std] [--backend cranelift|llvm] [-l <name>]... [-L <path>]...   # build, run, exit with the program's status
 lex-sys ids   <file.ls>... [--std]    # each declaration's content hash
 lex-sys authority <file.ls>... [--std] [--output json]  # what it can reach
 lex-sys layout    <file.ls>... [--std]  # what every leaf costs, and what packing would save
@@ -92,6 +92,7 @@ lex-sys print <file.ls>               # the unit, rendered in canonical form
 lex-sys agent-guidelines              # AGENTS.md, from inside the binary
 lex-sys vcs publish [--store <dir>] <file.ls>  # log every declaration as an operation
 lex-sys vcs log     [--store <dir>]            # what a store already has
+lex-sys vcs resolve <store-dir>                # re-check every pin under today's compiler
 ```
 
 This block is checked against `--help` in both directions by a test
