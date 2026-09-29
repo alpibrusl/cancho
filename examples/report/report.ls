@@ -25,31 +25,19 @@
 //
 // Like `examples/fetch/`, it is `extern fn` declarations against libc
 // through `Ffi("libc")`, and its authority report says so and no more.
+//
+// `socket`/`read`/`write`/`close`/`put`/`put_nat` used to be declared
+// here, byte-for-byte the same as `examples/fetch/fetch.ls`'s own
+// copies, and `connect` too. Both are now real packages
+// (`packages/net-sockets/`, `packages/net-connect/`,
+// `docs/package-system.md` §6), locked and fetched the same way
+// `fetch.ls` does -- see that file's own header for why the split is
+// two packages, not one.
 
 import std.bytes;
 import std.io;
-
-// ---------------------------------------------------------------------
-// libc
-// ---------------------------------------------------------------------
-
-// `c_int`, not `int` (`docs/reach.md` §3.4): `socket`/`connect`/`close`
-// all really return a 32-bit C `int`.
-extern fn socket[&f](ffi: &f Ffi("libc"), domain: int, kind: int, proto: int)
-    -> [ffi("libc")] c_int;
-
-extern fn connect[&f, &a](ffi: &f Ffi("libc"), fd: int, addr: &a [byte])
-    -> [ffi("libc")] c_int;
-
-// `read`/`write` stay plain `int`: their real return is `ssize_t`,
-// genuinely 64 bits here.
-extern fn read[&f, &b](ffi: &f Ffi("libc"), fd: int, buf: &!b [byte])
-    -> [ffi("libc")] int;
-
-extern fn write[&f, &b](ffi: &f Ffi("libc"), fd: int, buf: &b [byte])
-    -> [ffi("libc")] int;
-
-extern fn close[&f](ffi: &f Ffi("libc"), fd: int) -> [ffi("libc")] c_int;
+import net.sockets;
+import net.connect;
 
 // ---------------------------------------------------------------------
 // The command line
@@ -140,15 +128,15 @@ fn connect_to[&f, &o](libc: &f Ffi("libc"), octets: &o [byte], port: int)
     -> [ffi("libc")] int {
     region scratch {
         let addr = alloc_slice[scratch](16, byte_of(0));
-        let fd = socket(libc, 2, 1, 0);
+        let fd = sockets.socket(libc, 2, 1, 0);
         if fd < 0 {
             return 0 - 1;
         }
         address(addr, octets, port);
-        if connect(libc, fd, addr) == 0 {
+        if connect.connect(libc, fd, addr) == 0 {
             return fd;
         }
-        close(libc, fd);
+        sockets.close(libc, fd);
     }
     return 0 - 1;
 }
@@ -157,47 +145,11 @@ fn connect_to[&f, &o](libc: &f Ffi("libc"), octets: &o [byte], port: int)
 // HTTP
 // ---------------------------------------------------------------------
 
-fn put[&s, &d](dst: &!d [byte], at: int, src: &s [byte]) -> [] int {
-    var i = 0;
-    while i < len(src) {
-        dst[at + i] = src[i];
-        i = i + 1;
-    }
-    return at + len(src);
-}
-
-// A decimal integer, written forwards by reversing the digits in place
-// -- the same `Content-Length` trick `examples/serve/`'s `put_nat` uses
-// for a response, now needed for a request.
-fn put_nat[&d](dst: &!d [byte], at: int, n: int) -> [] int {
-    if n == 0 {
-        dst[at] = byte_of('0');
-        return at + 1;
-    }
-    var rest = n;
-    var end = at;
-    while rest > 0 {
-        dst[end] = byte_of('0' + rest - (rest / 10) * 10);
-        rest = rest / 10;
-        end = end + 1;
-    }
-    var lo = at;
-    var hi = end - 1;
-    while lo < hi {
-        let swap = dst[lo];
-        dst[lo] = dst[hi];
-        dst[hi] = swap;
-        lo = lo + 1;
-        hi = hi - 1;
-    }
-    return end;
-}
-
 // Write all of `bytes`, which one `write` on a socket does not promise.
 fn send_all[&f, &b](libc: &f Ffi("libc"), fd: int, data: &b [byte]) -> [ffi("libc")] bool {
     var sent = 0;
     while sent < len(data) {
-        let n = write(libc, fd, data[sent..len(data)]);
+        let n = sockets.write(libc, fd, data[sent..len(data)]);
         if n <= 0 {
             return false;
         }
@@ -251,13 +203,13 @@ fn exchange[&f, &i, &h, &p, &m](libc: &f Ffi("libc"), io: &!i Io, fd: int, host:
     path: &p [byte], message: &m [byte]) -> [ffi("libc"), io_write] int {
     region scratch {
         let head_out = alloc_slice[scratch](len(path) + len(host) + 96, byte_of(0));
-        var at = put(head_out, 0, "POST ");
-        at = put(head_out, at, path);
-        at = put(head_out, at, " HTTP/1.0\r\nHost: ");
-        at = put(head_out, at, host);
-        at = put(head_out, at, "\r\nContent-Length: ");
-        at = put_nat(head_out, at, len(message));
-        at = put(head_out, at, "\r\nConnection: close\r\n\r\n");
+        var at = sockets.put(head_out, 0, "POST ");
+        at = sockets.put(head_out, at, path);
+        at = sockets.put(head_out, at, " HTTP/1.0\r\nHost: ");
+        at = sockets.put(head_out, at, host);
+        at = sockets.put(head_out, at, "\r\nContent-Length: ");
+        at = sockets.put_nat(head_out, at, len(message));
+        at = sockets.put(head_out, at, "\r\nConnection: close\r\n\r\n");
         if !send_all(libc, fd, head_out[0..at]) || !send_all(libc, fd, message) {
             return 0 - 1;
         }
@@ -269,7 +221,7 @@ fn exchange[&f, &i, &h, &p, &m](libc: &f Ffi("libc"), io: &!i Io, fd: int, host:
         var body = false;
         var going = true;
         while going {
-            let got = read(libc, fd, chunk);
+            let got = sockets.read(libc, fd, chunk);
             if got <= 0 {
                 going = false;
             } else if body {
@@ -280,7 +232,7 @@ fn exchange[&f, &i, &h, &p, &m](libc: &f Ffi("libc"), io: &!i Io, fd: int, host:
                 if take > len(head) - held {
                     take = len(head) - held;
                 }
-                put(head, held, chunk[0..take]);
+                sockets.put(head, held, chunk[0..take]);
                 held = held + take;
                 let end = bytes.find(head[0..held], "\r\n\r\n");
                 if end >= 0 {
@@ -331,7 +283,7 @@ fn main(world: World) -> [] int {
                                 status = 3;
                             } else {
                                 let code = exchange(f, i, fd, arg(g, 1), arg(g, 3), arg(g, 4));
-                                close(f, fd);
+                                sockets.close(f, fd);
                                 if code < 0 {
                                     io.error_all(i, "report: the response was not HTTP\n");
                                     status = 4;

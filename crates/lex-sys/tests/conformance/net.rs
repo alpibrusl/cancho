@@ -158,16 +158,23 @@ fn the_authority_report_names_the_syscalls_the_row_cannot() {
 /// would need a port fixed at compile time, which a test-picked free
 /// port cannot be.
 ///
-/// **`net.sockets` (#141, `docs/package-system.md` §6) moved two of those
-/// declarations out from under this walker.** `examples/serve/` and
-/// `examples/results_stub/` no longer write `extern fn bind`/`listen`/
-/// `accept` themselves -- they `import net.sockets`
-/// (`packages/net-sockets/sockets.ls`) instead, this repository's first
-/// real published package. The four *programs* still ask for inbound
-/// socket authority exactly as before; what changed is where the source
-/// text asking for it lives, so `packages` joins the walked directories
-/// and the package's one file stands in for the two programs that import
-/// it rather than declare it.
+/// **`net.sockets`/`net.connect` (#141, #144, `docs/package-system.md`
+/// §6) moved every one of those declarations out from under this
+/// walker, not just two.** `examples/serve/`, `examples/results_stub/`,
+/// `examples/collect/`, and `examples/agent_supervisor/` no longer write
+/// their own `extern fn socket`/`bind`/`listen`/`accept`/`read`/`write`/
+/// `close` -- they `import net.sockets` (`packages/net-sockets/
+/// sockets.ls`) instead. `examples/fetch/`, `examples/report/`,
+/// `examples/vsock/`, and `examples/agent_guest/` no longer write their
+/// own `extern fn connect` -- they `import net.connect`
+/// (`packages/net-connect/connect.ls`) instead. The five *programs* on
+/// each side still ask for exactly the same socket authority as before;
+/// what changed is where the source text asking for it lives, so
+/// `packages` joins the walked directories and each package's one file
+/// now stands in for every program that imports it rather than declares
+/// it. `examples/tls_client/socket.ls` is the one program on either side
+/// that has not moved (edition 1, per its own note above), so it is
+/// still its own declaring file.
 #[test]
 fn the_network_programs_are_counted() {
     let root = repo_root();
@@ -221,25 +228,15 @@ fn the_network_programs_are_counted() {
             outbound.iter().map(String::as_str).collect::<Vec<_>>()
         ),
         (
-            vec![
-                "examples/agent_supervisor/agent_supervisor.ls",
-                "examples/collect/collect.ls",
-                "packages/net-sockets/sockets.ls"
-            ],
-            vec![
-                "examples/agent_guest/agent_guest.ls",
-                "examples/report/report.ls",
-                "examples/tls_client/socket.ls",
-                "examples/vsock/vsock.ls",
-                "packages/net-connect/connect.ls"
-            ]
+            vec!["packages/net-sockets/sockets.ls"],
+            vec!["examples/tls_client/socket.ls", "packages/net-connect/connect.ls"]
         ),
-        "the network programs changed: `net.md` §5 counts inbound 4 programs across 3 \
-         declaring source files (`packages/net-sockets/sockets.ls` covers two of the \
-         four), outbound 5 across 4 declaring source files (`packages/net-connect/ \
-         connect.ls` covers `examples/fetch/`), and two is the bar for building `Net`. \
-         Rewrite §5, then \
-         this."
+        "the network programs changed: `net.md` §5 counts inbound 4 programs across 1 \
+         declaring source file (`packages/net-sockets/sockets.ls` covers all four), \
+         outbound 5 across 2 declaring source files (`packages/net-connect/connect.ls` \
+         covers four of the five; `examples/tls_client/socket.ls` is the one still on \
+         edition 1 that has not migrated), and two is the bar for building `Net`. \
+         Rewrite §5, then this."
     );
 }
 
@@ -501,8 +498,7 @@ fn the_client_and_the_server_differ_only_in_their_symbols() {
 fn a_lex_sys_agent_reports_to_a_lex_sys_server() {
     use std::time::{Duration, Instant};
     let (server_dir, server) = build_serve("report-server");
-    let (client_dir, client) =
-        build_example("report-client", "examples/report/report.ls", "report");
+    let (client_dir, client) = build_report("report-client");
 
     let port = free_port().to_string();
     let mut child = Command::new(&server)
@@ -542,7 +538,7 @@ fn a_lex_sys_agent_reports_to_a_lex_sys_server() {
 fn report_sends_a_body_the_server_can_read_in_full() {
     use std::io::{Read, Write as _};
     use std::time::Duration;
-    let (dir, client) = build_example("report-wire", "examples/report/report.ls", "report");
+    let (dir, client) = build_report("report-wire");
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback listener");
     let port = listener.local_addr().expect("a bound address").port().to_string();
     let message: String = (0..100_000u32).map(|i| (b'a' + (i % 26) as u8) as char).collect();
@@ -646,7 +642,7 @@ fn post_when_ready(port: u16, deadline: std::time::Instant, path: &str, body: &[
 #[test]
 fn an_inbound_agent_reads_several_requests_in_a_row() {
     use std::time::{Duration, Instant};
-    let (dir, exe) = build_example("collect-several", "examples/collect/collect.ls", "collect");
+    let (dir, exe) = build_collect("collect-several");
     let port = free_port();
     let child = Command::new(&exe)
         .args([port.to_string(), "3".to_owned()])
@@ -694,7 +690,7 @@ fn an_inbound_agent_reads_several_requests_in_a_row() {
 fn collect_reads_a_body_larger_than_one_read() {
     use std::io::Read as _;
     use std::time::{Duration, Instant};
-    let (dir, exe) = build_example("collect-large", "examples/collect/collect.ls", "collect");
+    let (dir, exe) = build_collect("collect-large");
     let port = free_port();
     let mut child = Command::new(&exe)
         .args([port.to_string(), "1".to_owned()])
@@ -947,13 +943,8 @@ fn binding_the_wrong_port_traps() {
 #[test]
 fn a_lex_sys_guest_exchanges_a_view_with_a_lex_sys_supervisor() {
     use std::time::{Duration, Instant};
-    let (supervisor_dir, supervisor) = build_example(
-        "agent-supervisor",
-        "examples/agent_supervisor/agent_supervisor.ls",
-        "agent_supervisor",
-    );
-    let (guest_dir, guest) =
-        build_example("agent-guest", "examples/agent_guest/agent_guest.ls", "agent_guest");
+    let (supervisor_dir, supervisor) = build_agent_supervisor("agent-supervisor");
+    let (guest_dir, guest) = build_agent_guest("agent-guest");
 
     let port = free_port().to_string();
     let mut child = Command::new(&supervisor)
@@ -993,13 +984,8 @@ fn a_lex_sys_guest_exchanges_a_view_with_a_lex_sys_supervisor() {
 #[test]
 fn a_goal_needing_json_escaping_survives_the_round_trip() {
     use std::time::{Duration, Instant};
-    let (supervisor_dir, supervisor) = build_example(
-        "agent-supervisor-escape",
-        "examples/agent_supervisor/agent_supervisor.ls",
-        "agent_supervisor",
-    );
-    let (guest_dir, guest) =
-        build_example("agent-guest-escape", "examples/agent_guest/agent_guest.ls", "agent_guest");
+    let (supervisor_dir, supervisor) = build_agent_supervisor("agent-supervisor-escape");
+    let (guest_dir, guest) = build_agent_guest("agent-guest-escape");
 
     let port = free_port().to_string();
     let mut child = Command::new(&supervisor)

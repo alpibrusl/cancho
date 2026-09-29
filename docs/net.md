@@ -314,6 +314,21 @@ half with an asker is the one the grant does not ask about.
 > done here. The five programs still ask for outbound socket authority
 > exactly as before; only `fetch/`'s own source text moved.
 
+> **Recounted: both halves down to their package files alone.**
+> `report/`, `vsock/`, `agent_guest/` now `import net.connect` too, and
+> `collect/`/`agent_supervisor/` now `import net.sockets` instead of
+> declaring their own eight `extern fn`s -- the move #141 made for
+> `serve/`/`results_stub/` and the move above made for `fetch/`, finished
+> for the rest of the corpus rather than left as the "candidates, not
+> done here" #141 named them. Inbound is 4 programs across the one
+> `packages/net-sockets/sockets.ls` file now; outbound is 5 programs
+> across `packages/net-connect/connect.ls` and `examples/tls_client/
+> socket.ls` alone, the latter still on edition 1 for the reason given
+> above. Nothing about what `Net` would need to cover changed on either
+> side -- every program still asks for exactly the socket authority it
+> always did; nine files' worth of duplicated declarations collapsed
+> into two.
+
 That is the honest state up to here. Both halves of the two-asker bar
 §5 set are cleared, and §3's own reason to build now rather than before
 still applies in full: `Ffi("libc")` lets a program declare

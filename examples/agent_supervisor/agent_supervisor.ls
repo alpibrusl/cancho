@@ -32,74 +32,15 @@
 
 import std.bytes;
 import std.io;
+import net.sockets;
 
 // ---------------------------------------------------------------------
-// libc
+// libc -- the eight `extern fn`s and the two byte helpers used to live
+// here -- byte-for-byte the same as `examples/serve/serve.ls`'s and
+// `examples/collect/collect.ls`'s own copies. All three now `import
+// net.sockets` (`packages/net-sockets/`, `docs/package-system.md` §6)
+// instead.
 // ---------------------------------------------------------------------
-
-// `c_int`, not `int` (`docs/reach.md` §3.4): `socket`/`setsockopt`/
-// `bind`/`listen`/`accept`/`close` all really return a 32-bit C `int`.
-extern fn socket[&f](ffi: &f Ffi("libc"), domain: int, kind: int, proto: int)
-    -> [ffi("libc")] c_int;
-
-extern fn setsockopt[&f, &v](ffi: &f Ffi("libc"), fd: int, level: int,
-    name: int, value: &v [byte]) -> [ffi("libc")] c_int;
-
-extern fn bind[&f, &a](ffi: &f Ffi("libc"), fd: int, addr: &a [byte])
-    -> [ffi("libc")] c_int;
-
-extern fn listen[&f](ffi: &f Ffi("libc"), fd: int, backlog: int)
-    -> [ffi("libc")] c_int;
-
-extern fn accept[&f](ffi: &f Ffi("libc"), fd: int, addr: int, len: int)
-    -> [ffi("libc")] c_int;
-
-// `read`/`write` stay plain `int`: their real return is `ssize_t`,
-// genuinely 64 bits here.
-extern fn read[&f, &b](ffi: &f Ffi("libc"), fd: int, buf: &!b [byte])
-    -> [ffi("libc")] int;
-
-extern fn write[&f, &b](ffi: &f Ffi("libc"), fd: int, buf: &b [byte])
-    -> [ffi("libc")] int;
-
-extern fn close[&f](ffi: &f Ffi("libc"), fd: int) -> [ffi("libc")] c_int;
-
-// ---------------------------------------------------------------------
-// Bytes
-// ---------------------------------------------------------------------
-
-fn put[&s, &d](dst: &!d [byte], at: int, src: &s [byte]) -> [] int {
-    var i = 0;
-    while i < len(src) {
-        dst[at + i] = src[i];
-        i = i + 1;
-    }
-    return at + len(src);
-}
-
-fn put_nat[&d](dst: &!d [byte], at: int, n: int) -> [] int {
-    if n == 0 {
-        dst[at] = byte_of('0');
-        return at + 1;
-    }
-    var rest = n;
-    var end = at;
-    while rest > 0 {
-        dst[end] = byte_of('0' + rest - (rest / 10) * 10);
-        rest = rest / 10;
-        end = end + 1;
-    }
-    var lo = at;
-    var hi = end - 1;
-    while lo < hi {
-        let swap = dst[lo];
-        dst[lo] = dst[hi];
-        dst[hi] = swap;
-        lo = lo + 1;
-        hi = hi - 1;
-    }
-    return end;
-}
 
 // A base-ten value, as the command line spells it. Anything that is not
 // a digit ends the number, the same rule `examples/serve/`'s `port_of`
@@ -139,15 +80,15 @@ fn put_escaped[&s, &d](dst: &!d [byte], at: int, src: &s [byte]) -> [] int {
     while i < len(src) {
         let c = int_of(src[i]);
         if c == 34 {
-            out = put(dst, out, "\\\"");
+            out = sockets.put(dst, out, "\\\"");
         } else if c == 92 {
-            out = put(dst, out, "\\\\");
+            out = sockets.put(dst, out, "\\\\");
         } else if c == 10 {
-            out = put(dst, out, "\\n");
+            out = sockets.put(dst, out, "\\n");
         } else if c == 13 {
-            out = put(dst, out, "\\r");
+            out = sockets.put(dst, out, "\\r");
         } else if c == 9 {
-            out = put(dst, out, "\\t");
+            out = sockets.put(dst, out, "\\t");
         } else {
             dst[out] = src[i];
             out = out + 1;
@@ -162,11 +103,11 @@ fn put_escaped[&s, &d](dst: &!d [byte], at: int, src: &s [byte]) -> [] int {
 // `AgentViewMsg { goal, step, last_outcome: None, completed: vec![],
 // reprovisions: 0 }`.
 fn encode_view[&g, &d](dst: &!d [byte], goal: &g [byte], step: int) -> [] int {
-    var at = put(dst, 0, "{\"goal\":\"");
+    var at = sockets.put(dst, 0, "{\"goal\":\"");
     at = put_escaped(dst, at, goal);
-    at = put(dst, at, "\",\"step\":");
-    at = put_nat(dst, at, step);
-    return put(dst, at, ",\"last_outcome\":null,\"completed\":[],\"reprovisions\":0}");
+    at = sockets.put(dst, at, "\",\"step\":");
+    at = sockets.put_nat(dst, at, step);
+    return sockets.put(dst, at, ",\"last_outcome\":null,\"completed\":[],\"reprovisions\":0}");
 }
 
 // ---------------------------------------------------------------------
@@ -209,7 +150,7 @@ fn read_request[&f, &i](libc: &f Ffi("libc"), io: &!i Io, conn: int) -> [ffi("li
         var done = false;
         var going = true;
         while going {
-            let got = read(libc, conn, chunk);
+            let got = sockets.read(libc, conn, chunk);
             if got <= 0 {
                 going = false;
             } else if body_total >= 0 {
@@ -225,7 +166,7 @@ fn read_request[&f, &i](libc: &f Ffi("libc"), io: &!i Io, conn: int) -> [ffi("li
                 if take > len(head) - held {
                     take = len(head) - held;
                 }
-                put(head, held, chunk[0..take]);
+                sockets.put(head, held, chunk[0..take]);
                 held = held + take;
                 let end = bytes.find(head[0..held], "\r\n\r\n");
                 if end >= 0 {
@@ -254,11 +195,11 @@ fn respond_with_view[&f, &g](libc: &f Ffi("libc"), conn: int, goal: &g [byte], s
         let body = alloc_slice[scratch](len(goal) * 2 + 96, byte_of(0));
         let blen = encode_view(body, goal, step);
         let out = alloc_slice[scratch](blen + 96, byte_of(0));
-        var at = put(out, 0, "HTTP/1.1 200 OK\r\nContent-Length: ");
-        at = put_nat(out, at, blen);
-        at = put(out, at, "\r\nConnection: close\r\nContent-Type: application/json\r\n\r\n");
-        at = put(out, at, body[0..blen]);
-        write(libc, conn, out[0..at]);
+        var at = sockets.put(out, 0, "HTTP/1.1 200 OK\r\nContent-Length: ");
+        at = sockets.put_nat(out, at, blen);
+        at = sockets.put(out, at, "\r\nConnection: close\r\nContent-Type: application/json\r\n\r\n");
+        at = sockets.put(out, at, body[0..blen]);
+        sockets.write(libc, conn, out[0..at]);
     }
     return 0;
 }
@@ -270,37 +211,37 @@ fn respond_with_view[&f, &g](libc: &f Ffi("libc"), conn: int, goal: &g [byte], s
 fn run_supervisor[&f, &i, &g](libc: &f Ffi("libc"), io: &!i Io, port: int, goal: &g [byte],
     step: int) -> [ffi("libc"), io_write] int {
     region scratch {
-        let fd = socket(libc, 2, 1, 0);
+        let fd = sockets.socket(libc, 2, 1, 0);
         if fd < 0 {
             return 1;
         }
         let enable = alloc_slice[scratch](4, byte_of(0));
         enable[0] = byte_of(1);
-        setsockopt(libc, fd, 1, 2, enable);
+        sockets.setsockopt(libc, fd, 1, 2, enable);
 
         let addr = alloc_slice[scratch](16, byte_of(0));
         addr[0] = byte_of(2);
         addr[2] = byte_of(port / 256);
         addr[3] = byte_of(port - (port / 256) * 256);
-        if bind(libc, fd, addr) < 0 {
-            close(libc, fd);
+        if sockets.bind(libc, fd, addr) < 0 {
+            sockets.close(libc, fd);
             return 2;
         }
-        listen(libc, fd, 16);
+        sockets.listen(libc, fd, 16);
 
-        let conn = accept(libc, fd, 0, 0);
+        let conn = sockets.accept(libc, fd, 0, 0);
         if conn < 0 {
-            close(libc, fd);
+            sockets.close(libc, fd);
             return 3;
         }
         if !read_request(libc, io, conn) {
-            close(libc, conn);
-            close(libc, fd);
+            sockets.close(libc, conn);
+            sockets.close(libc, fd);
             return 4;
         }
         respond_with_view(libc, conn, goal, step);
-        close(libc, conn);
-        close(libc, fd);
+        sockets.close(libc, conn);
+        sockets.close(libc, fd);
     }
     return 0;
 }

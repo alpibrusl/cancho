@@ -375,9 +375,17 @@ pointer.
 ### `report/` — the second outbound program
 
 ```sh
-cargo run -p lex-sys -- build --std examples/report/report.ls -o report
+cargo run -p lex-sys -- vcs fetch --lock examples/report/net.lock \
+    --store packages/net-sockets/.lex-sys-vcs -o /tmp/net-sockets
+cargo run -p lex-sys -- vcs fetch --lock examples/report/connect.lock \
+    --store packages/net-connect/.lex-sys-vcs -o /tmp/net-connect
+cargo run -p lex-sys -- build --std examples/report/report.ls \
+    /tmp/net-sockets/*.ls /tmp/net-connect/*.ls -o report
 ./report 127.0.0.1 8080 /result "42"
 ```
+
+Locks and fetches `net.sockets` and `net.connect` independently, the
+same two-package shape `fetch/`'s own section above uses.
 
 `docs/net.md` §5 and `docs/connect.md` §6 put the bar at two askers per
 half of the network before `Net` gets built, and `fetch/` was the only
@@ -400,9 +408,14 @@ bytes short. Both are `docs/connect.md` §8.
 ### `collect/` — the second inbound program
 
 ```sh
-cargo run -p lex-sys -- build --std examples/collect/collect.ls -o collect
+cargo run -p lex-sys -- vcs fetch --lock examples/collect/net.lock \
+    --store packages/net-sockets/.lex-sys-vcs -o /tmp/net-sockets
+cargo run -p lex-sys -- build --std examples/collect/collect.ls /tmp/net-sockets/*.ls -o collect
 ./collect 8080 3
 ```
+
+Locks and fetches the same `net.sockets` package `serve/` does above --
+`serve/`'s own section says why it exists.
 
 `report/`'s inbound counterpart, and `docs/listen.md` is its report.
 `serve/` accepts one connection and never reads a body; `collect`
@@ -419,9 +432,17 @@ concurrently, on its own thread, is the fix.
 ### `vsock/` — the third outbound program, and the first slice of `lex-os`
 
 ```sh
-cargo run -p lex-sys -- build --std examples/vsock/vsock.ls -o vsock
+cargo run -p lex-sys -- vcs fetch --lock examples/vsock/net.lock \
+    --store packages/net-sockets/.lex-sys-vcs -o /tmp/net-sockets
+cargo run -p lex-sys -- vcs fetch --lock examples/vsock/connect.lock \
+    --store packages/net-connect/.lex-sys-vcs -o /tmp/net-connect
+cargo run -p lex-sys -- build --std examples/vsock/vsock.ls \
+    /tmp/net-sockets/*.ls /tmp/net-connect/*.ls -o vsock
 ./vsock <cid> <port>
 ```
+
+Locks and fetches `net.sockets` and `net.connect` independently, the
+same two-package shape `fetch/`'s and `report/`'s own sections use.
 
 Connects over `AF_VSOCK`, the channel `lex-os-guest` uses to reach its
 host supervisor, and — once connected — speaks one round of the real
@@ -473,13 +494,28 @@ checks the response and the log line both.
 ### `agent_supervisor/` and `agent_guest/` — the same exchange, over HTTP
 
 ```sh
-cargo run -p lex-sys -- build --std examples/agent_supervisor/agent_supervisor.ls -o agent_supervisor
-cargo run -p lex-sys -- build --std examples/agent_guest/agent_guest.ls -o agent_guest
+cargo run -p lex-sys -- vcs fetch --lock examples/agent_supervisor/net.lock \
+    --store packages/net-sockets/.lex-sys-vcs -o /tmp/net-sockets
+cargo run -p lex-sys -- build --std examples/agent_supervisor/agent_supervisor.ls \
+    /tmp/net-sockets/*.ls -o agent_supervisor
+
+cargo run -p lex-sys -- vcs fetch --lock examples/agent_guest/net.lock \
+    --store packages/net-sockets/.lex-sys-vcs -o /tmp/net-sockets-guest
+cargo run -p lex-sys -- vcs fetch --lock examples/agent_guest/connect.lock \
+    --store packages/net-connect/.lex-sys-vcs -o /tmp/net-connect-guest
+cargo run -p lex-sys -- build --std examples/agent_guest/agent_guest.ls \
+    /tmp/net-sockets-guest/*.ls /tmp/net-connect-guest/*.ls -o agent_guest
+
 ./agent_supervisor 8080 "write the report" 3 &
 ./agent_guest 127.0.0.1 8080
 # goal: write the report
 # step: 3
 ```
+
+`agent_supervisor` locks and fetches `net.sockets` alone, the same
+shape `collect/`'s own section above uses; `agent_guest` locks and
+fetches `net.sockets` and `net.connect` independently, the same shape
+`fetch/`'s own section uses.
 
 The same guest/supervisor exchange `vsock/` plays over `AF_VSOCK`,
 played over plain HTTP/1.0 instead — not a second transport for
