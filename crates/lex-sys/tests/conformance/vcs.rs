@@ -283,3 +283,106 @@ fn resolve_refuses_a_pin_whose_source_blob_is_missing() {
     assert_eq!(output.status.code(), Some(1), "{}", String::from_utf8_lossy(&output.stdout));
     assert!(String::from_utf8_lossy(&output.stderr).contains("no source blob recorded"));
 }
+
+// ---------------------------------------------------------------------
+// `lex-sys vcs lock` and `vcs resolve --lock` (`docs/package-system.md`
+// §4.5) -- a name chosen once, resolved by hash forever after.
+// ---------------------------------------------------------------------
+
+fn lock(store: &Path, out: &Path, names: &[&str]) -> std::process::Output {
+    Command::new(BIN)
+        .args(["vcs", "lock", "--store"])
+        .arg(store)
+        .arg("-o")
+        .arg(out)
+        .args(names)
+        .output()
+        .expect("the compiler runs")
+}
+
+fn resolve_locked(lock_file: &Path, store: &Path) -> std::process::Output {
+    Command::new(BIN)
+        .args(["vcs", "resolve", "--lock"])
+        .arg(lock_file)
+        .arg(store)
+        .output()
+        .expect("the compiler runs")
+}
+
+#[test]
+fn lock_pins_a_name_to_its_current_hashes() {
+    let dir = scratch("vcs-lock-basic");
+    let file = write_source(&dir, SOURCE);
+    let store = dir.join("store");
+    publish(&store, &file);
+
+    let lock_file = dir.join("lex-sys.lock");
+    let output = lock(&store, &lock_file, &["add"]);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("locked add"));
+
+    let contents = std::fs::read_to_string(&lock_file).expect("a readable lock file");
+    assert!(contents.contains("\"add\""), "{contents}");
+    assert!(!contents.contains("\"sub\""), "only the locked name should appear: {contents}");
+}
+
+#[test]
+fn locking_an_unpublished_name_is_refused() {
+    let dir = scratch("vcs-lock-unknown");
+    let file = write_source(&dir, SOURCE);
+    let store = dir.join("store");
+    publish(&store, &file);
+
+    let output = lock(&store, &dir.join("lex-sys.lock"), &["nonexistent"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("is not published"));
+}
+
+#[test]
+fn resolve_with_lock_scopes_to_just_the_locked_names() {
+    let dir = scratch("vcs-resolve-lock-scoped");
+    let file = write_source(&dir, SOURCE);
+    let store = dir.join("store");
+    publish(&store, &file);
+
+    let lock_file = dir.join("lex-sys.lock");
+    assert!(lock(&store, &lock_file, &["add"]).status.success());
+
+    let output = resolve_locked(&lock_file, &store);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("1 declaration(s)"), "only `add` was locked: {stdout}");
+}
+
+#[test]
+fn resolve_with_lock_against_a_store_that_never_had_it_is_refused() {
+    let dir = scratch("vcs-resolve-lock-elsewhere");
+    let file = write_source(&dir, SOURCE);
+    let store = dir.join("store");
+    publish(&store, &file);
+    let lock_file = dir.join("lex-sys.lock");
+    assert!(lock(&store, &lock_file, &["add"]).status.success());
+
+    // A second, unrelated store that never published `add` at all.
+    let other_file = write_source(&dir, "fn nine() -> [] int { return 9; }\n");
+    let other_store = dir.join("other-store");
+    publish(&other_store, &other_file);
+
+    let output = resolve_locked(&lock_file, &other_store);
+    assert_eq!(output.status.code(), Some(1), "{}", String::from_utf8_lossy(&output.stdout));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("add"), "{stderr}");
+    assert!(stderr.contains("no longer published"), "{stderr}");
+}
+
+#[test]
+fn resolve_with_an_unwritten_lock_file_says_so_rather_than_erroring() {
+    let dir = scratch("vcs-resolve-lock-empty");
+    let file = write_source(&dir, SOURCE);
+    let store = dir.join("store");
+    publish(&store, &file);
+
+    let output = resolve_locked(&dir.join("never-written.lock"), &store);
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("nothing locked"));
+}

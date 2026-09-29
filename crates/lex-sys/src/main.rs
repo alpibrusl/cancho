@@ -40,7 +40,8 @@ usage:
     lex-sys agent-guidelines
     lex-sys vcs publish [--store <dir>] <file.ls>
     lex-sys vcs log     [--store <dir>]
-    lex-sys vcs resolve <store-dir>
+    lex-sys vcs resolve [--lock <file>] <store-dir>
+    lex-sys vcs lock --store <dir> -o <file> <name>...
     lex-sys --version
 
 options:
@@ -106,8 +107,17 @@ re-parses and re-typechecks the source behind every pin under today's
 compiler, then re-derives each declaration's identity and refuses, with
 every mismatch reported at once, if a pin no longer matches its own
 source, its source no longer type-checks, or a source blob is missing.
-Exit 0 only if every pin still resolves exactly as published. See
-docs/package-system.md §4.2.
+Exit 0 only if every pin still resolves exactly as published. `--lock
+<file>` scopes this to just the names `vcs lock` pinned, instead of
+everything the store has ever published. See docs/package-system.md
+§4.2.
+
+`vcs lock --store <dir> -o <file> <name>...` looks each name up in a
+dependency store's manifest and pins it -- by hash, not by name -- into
+a lock file at `-o`, refusing if a name is unpublished or ambiguous.
+A name is chosen once, when it is first locked; nothing later can
+silently substitute a different declaration under it. See
+docs/package-system.md §4.5.
 
 `-l`/`-L` are `cc`'s own flags, passed through unexamined: this project
 invents no manifest and no dependency resolution, only the ability to

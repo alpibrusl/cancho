@@ -10,9 +10,12 @@
 //! (`crates/lex-sys/src/vcs_cli.rs`). Per `docs/package-system.md` §4.2, a
 //! content-addressed store for a published file's raw source (`Blobs`) —
 //! the manifest and the op log both address a declaration's *shape*, and
-//! neither can turn a pin back into text to re-check it. Not built, and
-//! named in `vcs.md` §8: whole-function merge, multi-file merge sessions,
-//! typed issues, predicate branches, the op log's own history index.
+//! neither can turn a pin back into text to re-check it. Per §4.5, a
+//! consumer's own name-keyed pin file (`Lock`) — a `Manifest` says what a
+//! *store* has; a `Lock` says what *one program* meant when it wrote a
+//! name down. Not built, and named in `vcs.md` §8: whole-function merge,
+//! multi-file merge sessions, typed issues, predicate branches, the op
+//! log's own history index.
 //!
 //! This crate shares `lex-vcs`'s *scheme* — `String`-keyed ids, canonical
 //! JSON, a content hash of `(kind, sorted parents, edition)` — and no code,
@@ -23,6 +26,7 @@ mod attestation;
 mod blobs;
 mod canonical;
 mod gate;
+mod lock;
 mod manifest;
 mod op_log;
 mod operation;
@@ -34,6 +38,7 @@ pub use blobs::{BlobError, Blobs};
 pub use canonical::canonical_bytes;
 pub use ed25519_dalek::{SigningKey, VerifyingKey};
 pub use gate::{GateDiagnostic, check_candidate};
+pub use lock::{Lock, LockEntry, LockError};
 pub use manifest::{Manifest, ManifestEntry, ManifestError};
 pub use op_log::{OpLog, OpLogError};
 pub use operation::{
