@@ -303,12 +303,25 @@ edges, which is §9.3.
 
 ### `serve/` — a REST endpoint over a real socket
 
+```sh
+cargo run -p lex-sys -- vcs fetch --lock examples/serve/net.lock \
+    --store packages/net-sockets/.lex-sys-vcs -o /tmp/net-sockets
+cargo run -p lex-sys -- build --std examples/serve/serve.ls /tmp/net-sockets/*.ls -o serve
+./serve 8080
+```
+
 The answer to *can this language do X?*, where X is the one everybody
 asks. It binds a TCP port named on the command line, accepts one
 connection, routes the request line and answers with JSON — `GET /health`
 gets a 200, anything else gets a 404.
 
-Eight `extern fn` declarations against libc and nothing else. No socket
+Eight `extern fn` declarations against libc and nothing else, plus two
+byte-writing helpers — no longer written here, though: they moved to
+`packages/net-sockets/sockets.ls`, this repository's first real
+`lex-sys-vcs` package (`docs/package-system.md` §6), because
+`results_stub/` below declared the exact same eight and two,
+independently. `serve.ls` locks the names it needs in `net.lock` and
+`import`s the fetched result rather than duplicating them. No socket
 type, no `Net` capability, no HTTP module. The test suite makes the
 request from Rust over loopback, both routes, and checks that the
 `Content-Length` it declares is the body it sends — which it is by
@@ -411,9 +424,14 @@ honestly, in the program's own comments.
 ### `results_stub/` — a real lex-os component, not a stand-in
 
 ```sh
-cargo run -p lex-sys -- build --std examples/results_stub/results_stub.ls -o results_stub
+cargo run -p lex-sys -- vcs fetch --lock examples/results_stub/net.lock \
+    --store packages/net-sockets/.lex-sys-vcs -o /tmp/net-sockets
+cargo run -p lex-sys -- build --std examples/results_stub/results_stub.ls /tmp/net-sockets/*.ls -o results_stub
 ./results_stub --listen 127.0.0.1:8443
 ```
+
+Locks and fetches the same `net.sockets` package `serve/` does above --
+`serve/`'s own section says why it exists.
 
 `vsock/` and `agent_supervisor/`/`agent_guest/` are lex-sys *analogues*
 of lex-os's own guest/supervisor exchange, checked against its wire

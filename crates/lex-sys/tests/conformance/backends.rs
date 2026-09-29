@@ -607,7 +607,6 @@ fn the_two_backends_agree_on_tree() {
 fn every_socket_declaring_example_builds_clean_on_llvm() {
     for relative in [
         "examples/collect/collect.ls",
-        "examples/serve/serve.ls",
         "examples/fetch/fetch.ls",
         "examples/report/report.ls",
         "examples/vsock/vsock.ls",
@@ -640,6 +639,35 @@ fn every_socket_declaring_example_builds_clean_on_llvm() {
             String::from_utf8_lossy(&build.stderr)
         );
     }
+
+    // `examples/serve/serve.ls` no longer declares its own socket
+    // `extern fn`s -- it `import`s `net.sockets` (`packages/net-sockets/`,
+    // `docs/package-system.md` §6) -- so it needs the fetched package
+    // alongside it rather than a bare single-file build like the rest of
+    // this loop.
+    let fetched = fetch_net_sockets("backends-llvm-socket-serve-fetch", "examples/serve/net.lock");
+    let dir = scratch("backends-llvm-socket-serve");
+    let exe = dir.join("out");
+    let build = Command::new(BIN)
+        .args([
+            "build".as_ref(),
+            repo_root().join("examples/serve/serve.ls").as_os_str(),
+            fetched.as_os_str(),
+            "--std".as_ref(),
+            "--backend".as_ref(),
+            "llvm".as_ref(),
+            "-o".as_ref(),
+            exe.as_os_str(),
+        ])
+        .output()
+        .expect("the compiler runs");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        build.status.success(),
+        "`examples/serve/serve.ls` should build on `--backend llvm` with its fetched \
+         `net.sockets` package, but the compiler said:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
 }
 
 /// §7.25: `Expr::Static`, closed. `tests/accept/static_data.ls` is the
@@ -1118,12 +1146,17 @@ fn the_two_backends_answer_the_results_stub_port() {
 
     for backend in ["cranelift", "llvm"] {
         let port = free_port();
+        let fetched = fetch_net_sockets(
+            &format!("results-stub-fetch-{backend}"),
+            "examples/results_stub/net.lock",
+        );
         let dir = scratch(&format!("backends-results-stub-{backend}"));
         let exe = dir.join("results_stub");
         let build = Command::new(BIN)
             .args([
                 "build".as_ref(),
                 repo_root().join("examples/results_stub/results_stub.ls").as_os_str(),
+                fetched.as_os_str(),
                 "--std".as_ref(),
                 "--backend".as_ref(),
                 backend.as_ref(),

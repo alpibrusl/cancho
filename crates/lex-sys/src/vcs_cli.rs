@@ -156,9 +156,26 @@ fn cmd_publish(args: &[String]) -> Result<ExitCode, Failure> {
             )));
         }
 
-        let ir_func = find_func(&program.funcs, &func.name).ok_or_else(|| {
-            refused(format!("internal: `{}` has an identity but no lowered function", func.name))
-        })?;
+        // An ordinary function's effects come from its lowered body; a
+        // foreign declaration has no body to lower (`lex-sys-id`'s own
+        // `identify()` already gives it the same hash for both its
+        // identities, for the same reason), so its effects are read from
+        // `program.externs` instead -- the row it declared, not one a
+        // lowering pass computed.
+        let effects = match find_func(&program.funcs, &func.name) {
+            Some(ir_func) => effect_strings(&ir_func.effects),
+            None => program
+                .externs
+                .iter()
+                .find(|e| e.name == func.name)
+                .map(|e| effect_strings(&e.effects))
+                .ok_or_else(|| {
+                    refused(format!(
+                        "internal: `{}` has an identity but no lowered function or extern",
+                        func.name
+                    ))
+                })?,
+        };
 
         lex_sys_vcs::check_candidate(&[(file_name.as_str(), source.as_str())]).map_err(
             |diagnostics| {
@@ -172,7 +189,7 @@ fn cmd_publish(args: &[String]) -> Result<ExitCode, Failure> {
             OperationKind::AddFunction {
                 sig_id: sig_id.clone(),
                 stage_id: stage_id.clone(),
-                effects: effect_strings(&ir_func.effects),
+                effects,
                 in_file: None,
             },
             EDITION,

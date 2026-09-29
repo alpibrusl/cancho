@@ -31,96 +31,18 @@
 //
 // Read from the bottom: `main` splits the world, keeps exactly two
 // capabilities and destroys the other three, and never regains them.
+//
+// The eight `extern fn`s against libc and the `put`/`put_nat` byte
+// helpers used to live in this file -- byte-for-byte the same as
+// `examples/results_stub/results_stub.ls`'s own copies. They are now
+// `packages/net-sockets/sockets.ls`, this repository's first real
+// `lex-sys-vcs` package (`docs/package-system.md` §6): published once,
+// locked by name in `net.lock`, and fetched into a real file this
+// program imports rather than duplicates. Building with `--std` alone is
+// not enough to run this file any more -- see `net.lock`'s own header.
 
 import std.bytes;
-
-// ---------------------------------------------------------------------
-// libc
-// ---------------------------------------------------------------------
-//
-// A `&s [byte]` crosses as a pointer *and* a length (`docs/strings.md`
-// §6), which is why `bind`, `read` and `write` take one parameter where C
-// takes two: the slice supplies both, and the length C is told is the
-// length the bounds check enforces. That is not a convenience. A buffer
-// and a wrong length is how a C server is attacked, and here they cannot
-// disagree.
-
-// `c_int`, not `int` (`docs/reach.md` §3.4): the real `socket`/
-// `setsockopt`/`bind`/`listen`/`accept`/`close` all return a 32-bit C
-// `int`, and this program's own `< 0` checks below need the sign bit
-// this backend actually put there, not the upper 32 bits of a register
-// C's `int` never promised were clean.
-extern fn socket[&f](ffi: &f Ffi("libc"), domain: int, kind: int, proto: int)
-    -> [ffi("libc")] c_int;
-
-extern fn setsockopt[&f, &v](ffi: &f Ffi("libc"), fd: int, level: int,
-    name: int, value: &v [byte]) -> [ffi("libc")] c_int;
-
-extern fn bind[&f, &a](ffi: &f Ffi("libc"), fd: int, addr: &a [byte])
-    -> [ffi("libc")] c_int;
-
-extern fn listen[&f](ffi: &f Ffi("libc"), fd: int, backlog: int)
-    -> [ffi("libc")] c_int;
-
-// The two trailing pointers are `NULL`: a foreign result is `int`, `bool`
-// or `()` (`docs/reach.md` §3), so a `struct sockaddr *` the kernel fills
-// in is not something this program could hold. It does not need the peer's
-// address, so it passes nothing and asks for nothing.
-extern fn accept[&f](ffi: &f Ffi("libc"), fd: int, addr: int, len: int)
-    -> [ffi("libc")] c_int;
-
-// `read`/`write` stay plain `int`: their real return is `ssize_t`, which
-// is genuinely 64 bits here, not a narrower C `int` this backend would
-// need to sign-extend.
-extern fn read[&f, &b](ffi: &f Ffi("libc"), fd: int, buf: &!b [byte])
-    -> [ffi("libc")] int;
-
-extern fn write[&f, &b](ffi: &f Ffi("libc"), fd: int, buf: &b [byte])
-    -> [ffi("libc")] int;
-
-extern fn close[&f](ffi: &f Ffi("libc"), fd: int) -> [ffi("libc")] c_int;
-
-// ---------------------------------------------------------------------
-// Bytes
-// ---------------------------------------------------------------------
-
-// Copy `src` into `dst` at `at` and hand back where the next one goes.
-// Every response below is assembled by chaining this.
-fn put[&s, &d](dst: &!d [byte], at: int, src: &s [byte]) -> [] int {
-    var i = 0;
-    while i < len(src) {
-        dst[at + i] = src[i];
-        i = i + 1;
-    }
-    return at + len(src);
-}
-
-// A decimal integer, written into `dst` and not allocated anywhere. The
-// digits come out backwards and are reversed in place, which is the one
-// thing a `Content-Length` header costs when there is no string type.
-fn put_nat[&d](dst: &!d [byte], at: int, n: int) -> [] int {
-    if n == 0 {
-        dst[at] = byte_of('0');
-        return at + 1;
-    }
-    var rest = n;
-    var end = at;
-    while rest > 0 {
-        dst[end] = byte_of('0' + rest - (rest / 10) * 10);
-        rest = rest / 10;
-        end = end + 1;
-    }
-    var lo = at;
-    var hi = end - 1;
-    while lo < hi {
-        let swap = dst[lo];
-        dst[lo] = dst[hi];
-        dst[hi] = swap;
-        lo = lo + 1;
-        hi = hi - 1;
-    }
-    return end;
-}
+import net.sockets;
 
 // A base-ten port, as the command line spells it. Anything that is not a
 // digit ends the number, so a trailing newline or a stray character
@@ -152,14 +74,14 @@ fn port_of[&a](text: &a [byte]) -> [] int {
 // bytes that follow it. A server that gets that wrong hangs its client.
 fn respond[&o, &r, &b](out: &!o [byte], status: int, reason: &r [byte],
     body: &b [byte]) -> [] int {
-    var at = put(out, 0, "HTTP/1.1 ");
-    at = put_nat(out, at, status);
-    at = put(out, at, " ");
-    at = put(out, at, reason);
-    at = put(out, at, "\r\nContent-Length: ");
-    at = put_nat(out, at, len(body));
-    at = put(out, at, "\r\nConnection: close\r\nContent-Type: application/json\r\n\r\n");
-    return put(out, at, body);
+    var at = sockets.put(out, 0, "HTTP/1.1 ");
+    at = sockets.put_nat(out, at, status);
+    at = sockets.put(out, at, " ");
+    at = sockets.put(out, at, reason);
+    at = sockets.put(out, at, "\r\nContent-Length: ");
+    at = sockets.put_nat(out, at, len(body));
+    at = sockets.put(out, at, "\r\nConnection: close\r\nContent-Type: application/json\r\n\r\n");
+    return sockets.put(out, at, body);
 }
 
 // One route, and a default. `starts_with` on the request line is the whole
@@ -189,7 +111,7 @@ fn read_request[&f, &b](libc: &f Ffi("libc"), conn: int, buffer: &!b [byte])
     -> [ffi("libc")] int {
     var filled = 0;
     while filled < len(buffer) {
-        let got = read(libc, conn, buffer[filled..len(buffer)]);
+        let got = sockets.read(libc, conn, buffer[filled..len(buffer)]);
         if got < 0 {
             return 0 - 1;
         }
@@ -218,7 +140,7 @@ fn read_request[&f, &b](libc: &f Ffi("libc"), conn: int, buffer: &!b [byte])
 // else, and its row says exactly that.
 fn serve[&f, &a](libc: &f Ffi("libc"), port: &a [byte]) -> [ffi("libc")] int {
     region scratch {
-        let fd = socket(libc, 2, 1, 0);
+        let fd = sockets.socket(libc, 2, 1, 0);
         if fd < 0 {
             return 1;
         }
@@ -229,7 +151,7 @@ fn serve[&f, &a](libc: &f Ffi("libc"), port: &a [byte]) -> [ffi("libc")] int {
         // (`docs/reach.md` §3.2), and it is checkable only by reading it.
         let enable = alloc_slice[scratch](4, byte_of(0));
         enable[0] = byte_of(1);
-        setsockopt(libc, fd, 1, 2, enable);
+        sockets.setsockopt(libc, fd, 1, 2, enable);
 
         // `struct sockaddr_in`: AF_INET, the port in network byte order,
         // then `INADDR_ANY` and eight bytes of padding, all zero.
@@ -238,15 +160,15 @@ fn serve[&f, &a](libc: &f Ffi("libc"), port: &a [byte]) -> [ffi("libc")] int {
         addr[0] = byte_of(2);
         addr[2] = byte_of(number / 256);
         addr[3] = byte_of(number - (number / 256) * 256);
-        if bind(libc, fd, addr) < 0 {
-            close(libc, fd);
+        if sockets.bind(libc, fd, addr) < 0 {
+            sockets.close(libc, fd);
             return 2;
         }
-        listen(libc, fd, 16);
+        sockets.listen(libc, fd, 16);
 
-        let conn = accept(libc, fd, 0, 0);
+        let conn = sockets.accept(libc, fd, 0, 0);
         if conn < 0 {
-            close(libc, fd);
+            sockets.close(libc, fd);
             return 3;
         }
 
@@ -256,16 +178,16 @@ fn serve[&f, &a](libc: &f Ffi("libc"), port: &a [byte]) -> [ffi("libc")] int {
         let request = alloc_slice[scratch](4096, byte_of(0));
         let got = read_request(libc, conn, request);
         if got < 0 {
-            close(libc, conn);
-            close(libc, fd);
+            sockets.close(libc, conn);
+            sockets.close(libc, fd);
             return 4;
         }
         let reply = alloc_slice[scratch](512, byte_of(0));
         let end = route(request[0..got], reply);
-        write(libc, conn, reply[0..end]);
+        sockets.write(libc, conn, reply[0..end]);
 
-        close(libc, conn);
-        close(libc, fd);
+        sockets.close(libc, conn);
+        sockets.close(libc, fd);
     }
     return 0;
 }
