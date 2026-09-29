@@ -22,6 +22,13 @@
 >
 > A content-addressed VCS keyed on these hashes inherits the second rate,
 > not the first.
+>
+> **Current reading, as of #142: 37%, not 71%, and falling in relative
+> terms as the corpus grows** (§2's "Re-measured (#142)" below). The
+> figure never drops on its own — the `io`-split debt is permanent — but
+> `editions.md`'s edition-gating means growth since has stopped adding to
+> it: 24 more revisions, 3 more unreadable. §3's own "Corrected again"
+> entry has the reasoning.
 
 ---
 
@@ -96,6 +103,21 @@ And the causes are not spread out. Classified by first error:
 > still the largest class, at 45. §2 there also shows that an alias
 > cannot absorb it, because rows are exact.
 
+> **Re-measured (#142): 37%, and the growth almost stopped adding to
+> it.** `scripts/history.py` again, against 24 more commits' worth of
+> history: **165** revisions, **104** (63%) read, **61** (37%) do not.
+> The `io` split is still the whole story — `--alias` still recovers
+> **zero** (a row is exact, so aliasing just moves which half is
+> missing, exactly as `editions.md` §3 found), and `--migrate`'s two
+> mechanical steps still recover exactly the same **23**. What changed
+> is the *rate*: the corpus grew by 24 revisions since #85 and only
+> **3** joined the unreadable pile. Not because the vocabulary stopped
+> growing — §3 below found real growth in the same window — but because
+> everything added since (`null_ptr`, `spawn`/`join`, `Thread`) is
+> edition-gated and additive by construction, the property
+> `editions.md` exists to guarantee. The 61 unreadable revisions are a
+> closed debt from one pre-editions rename, not a target still moving.
+
 **One label rename accounts for 42% of the unreadable past.** When
 `standard-input.md` §2 split `io` into `io_read` and `io_write` —
 correctly, and for reasons that document argues well — it invalidated
@@ -147,6 +169,21 @@ builtins.
 > enough — long enough that a `lex-vcs` design written against it would
 > not immediately need revising — is a judgement call this section
 > leaves open rather than answers for it.
+
+> **Corrected again (current as of #142): the plateau did not hold, and
+> that turns out to be the wrong thing to have measured.** `null_ptr`
+> (#137, [`opaque-pointers.md`](opaque-pointers.md) §3) and `spawn`/
+> `join`/`Thread` ([`threads.md`](threads.md)) all landed after #120,
+> touching `builtin.rs`/`defs.rs`/`crates/lex-sys-types` exactly the way
+> this section's own reasoning predicted growth would. But every one of
+> them is edition-gated and additive by its own stated design
+> (`opaque-pointers.md` §4, `threads.md` §4): an edition-1 or -2 file
+> cannot be broken by a builtin or type that only edition 3 or 4 grants.
+> That is the actual property a hash-keyed tool needs, and it is not "no
+> growth" — it is "no growth that reaches backward." §2's fresh
+> measurement above is the evidence, not an assumption: the corpus grew
+> by 24 revisions in this same window and only 3 joined the unreadable
+> pile. The vocabulary moved. The past it could break did not.
 
 ---
 

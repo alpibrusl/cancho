@@ -56,15 +56,24 @@ cargo run -p lex-sys -- run examples/tour.ls
   identity — a design commitment kept from the day this project started,
   not added on later.
 
-And honestly, **not a usable language yet**: there is no package
-system — a program is just files named on the command line — and the
-effect vocabulary itself is still moving: measured at 71% of this
-repository's own historical revisions no longer type-checking under
-today's build. `c_ptr` lets `SSL_CTX *` and similar opaque handles
+And honestly, **not a usable language yet**: a real dependency now
+resolves end to end (`lex-sys vcs publish`/`lock`/`fetch`,
+`docs/package-system.md`) — `packages/net-sockets/` is a real published
+package, consumed by two real programs instead of duplicated into
+them — but there is still no manifest, and nothing resolves more than
+one dependency at a time. The effect vocabulary keeps growing, but every
+addition since editions.md landed has been edition-gated and additive by
+construction, so it can no longer break a file that does not opt into
+the edition that adds it: 37% of this repository's own historical
+revisions still do not type-check under today's build
+(`docs/hash-stability.md` §2), and that figure is a closed debt from one
+pre-editions rename, not a number still climbing — this repository's
+own history since has added 24 more revisions and only 3 joined the
+unreadable pile. `c_ptr` lets `SSL_CTX *` and similar opaque handles
 type-check, and `-l`/`-L` (`docs/foreign-linking.md`) let `build` link
 a library beyond libc, so a real TLS handshake compiles and runs
-today (`examples/tls_client/`) — but nothing here is guaranteed to
-keep compiling yet. [The roadmap](https://alpibrusl.github.io/lex-sys/ROADMAP.html)
+today (`examples/tls_client/`).
+[The roadmap](https://alpibrusl.github.io/lex-sys/ROADMAP.html)
 tracks what landed, what's next, and what each slice found out.
 
 ## Building
