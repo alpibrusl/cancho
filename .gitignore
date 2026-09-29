@@ -11,6 +11,9 @@ Cargo.lock.bak
 *.dylib
 *.out
 
+# mdBook output (docs/SUMMARY.md, book.toml -- built and deployed by CI)
+/book
+
 # Editor / OS
 .DS_Store
 .idea/
