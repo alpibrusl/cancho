@@ -94,6 +94,7 @@ lex-sys vcs publish [--store <dir>] <file.ls>  # log every declaration as an ope
 lex-sys vcs log     [--store <dir>]            # what a store already has
 lex-sys vcs resolve [--lock <file>] <store-dir>  # re-check every pin under today's compiler
 lex-sys vcs lock --store <dir> -o <file> <name>...  # pin a name to a dependency's hash
+lex-sys vcs fetch --lock <file> --store <dir> -o <dir>  # verify a lock, write its sources to disk
 ```
 
 This block is checked against `--help` in both directions by a test

@@ -42,6 +42,7 @@ usage:
     lex-sys vcs log     [--store <dir>]
     lex-sys vcs resolve [--lock <file>] <store-dir>
     lex-sys vcs lock --store <dir> -o <file> <name>...
+    lex-sys vcs fetch --lock <file> --store <dir> -o <dir>
     lex-sys --version
 
 options:
@@ -118,6 +119,15 @@ a lock file at `-o`, refusing if a name is unpublished or ambiguous.
 A name is chosen once, when it is first locked; nothing later can
 silently substitute a different declaration under it. See
 docs/package-system.md §4.5.
+
+`vcs fetch --lock <file> --store <dir> -o <dir>` re-verifies every pin
+in a lock the same way `vcs resolve --lock` does, then writes each
+distinct verified source to `-o` as `<source_hash>.ls` -- nothing is
+written unless everything verifies. This needs no compiler support: a
+program is already the set of files named on the command line, and
+`import` already resolves a name against whatever module is among
+them (docs/modules.md §4.2), so a fetched file is `import`-able the
+moment it exists on disk. See docs/package-system.md §4.6.
 
 `-l`/`-L` are `cc`'s own flags, passed through unexamined: this project
 invents no manifest and no dependency resolution, only the ability to

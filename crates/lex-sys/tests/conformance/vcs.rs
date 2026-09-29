@@ -386,3 +386,134 @@ fn resolve_with_an_unwritten_lock_file_says_so_rather_than_erroring() {
     assert!(output.status.success());
     assert!(String::from_utf8_lossy(&output.stdout).contains("nothing locked"));
 }
+
+// ---------------------------------------------------------------------
+// `lex-sys vcs fetch` (`docs/package-system.md` §6) -- real bytes on
+// disk, so a locked dependency is buildable without the compiler's own
+// module resolution changing at all.
+// ---------------------------------------------------------------------
+
+fn fetch(lock_file: &Path, store: &Path, out: &Path) -> std::process::Output {
+    Command::new(BIN)
+        .args(["vcs", "fetch", "--lock"])
+        .arg(lock_file)
+        .arg("--store")
+        .arg(store)
+        .arg("-o")
+        .arg(out)
+        .output()
+        .expect("the compiler runs")
+}
+
+#[test]
+fn fetch_materializes_a_verified_file_a_real_program_can_import() {
+    let dir = scratch("vcs-fetch-e2e");
+    let dep_file = write_source(&dir, "module dep;\npub fn seven() -> [] int { return 7; }\n");
+    let store = dir.join("store");
+    publish(&store, &dep_file);
+
+    let lock_file = dir.join("lex-sys.lock");
+    assert!(lock(&store, &lock_file, &["seven"]).status.success());
+
+    let fetch_dir = dir.join("fetched");
+    let output = fetch(&lock_file, &store, &fetch_dir);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("fetched"));
+
+    let fetched_files: Vec<PathBuf> = std::fs::read_dir(&fetch_dir)
+        .expect("the fetch dir exists")
+        .map(|e| e.expect("a readable entry").path())
+        .collect();
+    assert_eq!(fetched_files.len(), 1, "one distinct source file was locked");
+
+    // `docs/modules.md` §4.2's own claim, proved rather than assumed: an
+    // `import` is a rule for resolving a name against whatever files are
+    // on the command line, not an instruction to go and read something
+    // -- so nothing in the compiler needs to change for a fetched
+    // dependency to be `import`-able, only the file needs to exist.
+    let consumer = write_source(
+        &dir,
+        "import dep;\n\
+         fn main(world: World) -> [] int {\n\
+             let Split { io, ffi, fs, heap, args } = split(world);\n\
+             release(io); release(ffi); release(fs); release(heap); release(args);\n\
+             return dep.seven();\n\
+         }\n",
+    );
+    let exe = dir.join("consumer");
+    let build = Command::new(BIN)
+        .args([
+            "build".as_ref(),
+            consumer.as_os_str(),
+            fetched_files[0].as_os_str(),
+            "-o".as_ref(),
+            exe.as_os_str(),
+        ])
+        .output()
+        .expect("the compiler runs");
+    assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+
+    let run = Command::new(&exe).output().expect("the compiled program runs");
+    assert_eq!(run.status.code(), Some(7), "main should return dep.seven()'s own 7");
+}
+
+#[test]
+fn fetch_deduplicates_a_file_shared_by_two_locked_names() {
+    let dir = scratch("vcs-fetch-dedup");
+    let file = write_source(&dir, SOURCE);
+    let store = dir.join("store");
+    publish(&store, &file);
+
+    let lock_file = dir.join("lex-sys.lock");
+    assert!(lock(&store, &lock_file, &["add", "sub"]).status.success());
+
+    let fetch_dir = dir.join("fetched");
+    let output = fetch(&lock_file, &store, &fetch_dir);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+
+    let fetched_files: Vec<_> =
+        std::fs::read_dir(&fetch_dir).expect("the fetch dir exists").collect();
+    assert_eq!(
+        fetched_files.len(),
+        1,
+        "add and sub came from the same file; fetch should write it once"
+    );
+}
+
+#[test]
+fn fetch_writes_nothing_when_a_pin_no_longer_matches() {
+    let dir = scratch("vcs-fetch-drifted");
+    let file = write_source(&dir, SOURCE);
+    let store = dir.join("store");
+    publish(&store, &file);
+    let lock_file = dir.join("lex-sys.lock");
+    assert!(lock(&store, &lock_file, &["add"]).status.success());
+
+    let manifest_path = store.join("manifest.json");
+    let manifest = std::fs::read_to_string(&manifest_path).expect("a readable manifest");
+    let bogus_stage_id = "b".repeat(64);
+    assert!(!manifest.contains(&bogus_stage_id));
+    let (_, after_add) = manifest.split_once("\"name\": \"add\"").expect("add is in the manifest");
+    let start = after_add.find("\"stage_id\": \"").expect("add has a stage_id") + 13;
+    let real = &after_add[start..start + 64];
+    let corrupted = manifest.replacen(real, &bogus_stage_id, 1);
+    std::fs::write(&manifest_path, corrupted).expect("a writable manifest");
+
+    let fetch_dir = dir.join("fetched");
+    let output = fetch(&lock_file, &store, &fetch_dir);
+    assert_eq!(output.status.code(), Some(1), "{}", String::from_utf8_lossy(&output.stdout));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no longer matches"));
+    assert!(!fetch_dir.exists(), "a refused fetch must not partially write");
+}
+
+#[test]
+fn fetch_with_an_unwritten_lock_file_says_so_rather_than_erroring() {
+    let dir = scratch("vcs-fetch-empty-lock");
+    let file = write_source(&dir, SOURCE);
+    let store = dir.join("store");
+    publish(&store, &file);
+
+    let output = fetch(&dir.join("never-written.lock"), &store, &dir.join("fetched"));
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("nothing locked"));
+}
