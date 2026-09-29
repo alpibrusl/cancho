@@ -15,11 +15,12 @@
 > manifest and pins it by hash into a lock file, refusing if the name is
 > unpublished or ambiguous; `vcs resolve --lock <file> <store-dir>` scopes
 > resolution to just those pins instead of everything the store has ever
-> published. What is **not** built yet: the lock-driven, recursive,
-> multi-package resolution §4.2's first paragraph describes — a lock pins
-> one store's own names, not a *program's* dependency graph, and nothing
-> here walks a closure of stores, detects a cycle, or catches a diamond
-> conflict. **§4.7's first fetch step is built too**: `lex-sys vcs fetch
+> published. **The lock-driven, recursive, multi-package resolution
+> §4.2's first paragraph describes is built too, as of §4.6**: a store
+> may carry its own `requires/*.json`, written by `vcs publish
+> --requires <lock>:<dep-store>`, and `vcs resolve`/`vcs fetch` walk it
+> however deep, detecting a cycle and catching a diamond conflict rather
+> than guessing. **§4.7's first fetch step is built too**: `lex-sys vcs fetch
 > --lock <file> --store <dep-store> -o <dir>` re-verifies a lock the same
 > way `vcs resolve --lock` does, then writes each distinct verified
 > source to `-o` as `<source_hash>.ls`. It needed no compiler change at
@@ -114,15 +115,25 @@
 > escaper on the encoding side of the same wire protocol stays
 > unextracted.
 >
-> **Found a fourth duplication, and it needs the real remaining gap to
-> extract.** `examples/collect/collect.ls` and
-> `examples/agent_supervisor/agent_supervisor.ls` duplicate
-> `content_length_of`/`read_request` byte-for-byte, but the package that
-> would hold them needs `net.sockets` itself — confirmed today's `vcs
-> publish` refuses that outright. §4.6 is now the design for closing it:
-> a store-carried `requires/`, `vcs publish --requires`, and a recursive,
-> cycle/diamond-checked walk in `vcs resolve`/`vcs fetch`. §6 has the
-> detail; not built yet as of this revision.
+> **Closure resolution, built (§4.6): a package can depend on a
+> package.** Found from a real fourth duplication — `examples/collect/
+> collect.ls` and `examples/agent_supervisor/agent_supervisor.ls`
+> duplicate `content_length_of`/`read_request` byte-for-byte, but the
+> package that would hold them needs `net.sockets` itself, and `vcs
+> publish` refused that outright until now. `vcs publish --requires
+> <lock>:<dep-store>` (repeatable) writes a store-carried
+> `requires/*.json`; `vcs resolve`/`vcs fetch` walk it recursively,
+> refusing a cycle or a diamond conflict (two paths pinning the same
+> store's same name to two different heads) rather than guessing.
+> **Found one real thing wrong with this section's own first draft**:
+> `lex-sys-id::identify()` is not resolution-independent the way it
+> claimed — a call's contribution to its own caller's body hash is the
+> *resolved* callee's signature when the callee resolves, so computing
+> identity without the dependency present recorded the wrong hash,
+> refusing on the very first `vcs resolve` with a body that had not
+> moved at all. §4.6 has the correction and the fix. Proven against
+> synthetic packages built for exactly that, not yet against
+> `http.request` itself, which is the next slice.
 
 ## 1. What asked for it
 
@@ -320,19 +331,37 @@ pinned source blob **alone**, the same restriction. Both are real, not
 incidental: a package with no dependency of its own (all three built so
 far) never needed either to change.
 
-**What does not need to change.** `lex-sys-id::identify()` is purely
-structural — a function's `SigId`/`StageId` is a hash of its own written
-signature and body, never of what an imported callee's declaration
-actually says (`docs/design/canonicalization.md`). Resolving `import
-net.sockets` is `lex-sys-ir`'s job (`defs.rs`'s module-scope pass, run
-during `lower_all`), not `identify()`'s — the "no module" refusal above
-comes from there. So a package's own `SigId` is computable, and matches
-what a manifest already pinned, without its dependency present at all.
-Only the **soundness gate** — confirming a pinned declaration still
-type-checks under today's compiler, the actual point of re-verifying
-rather than trusting a hash (`hash-stability.md`'s whole finding) —
-needs the dependency's source in scope. That gate is a `lower_all` call
-already made from an `Ast` built by merging named texts
+**One prediction this section made turned out wrong, and building the
+fix found it rather than assuming it.** The first draft here claimed
+`lex-sys-id::identify()` is purely structural — a hash of a function's
+own written signature and body, never of what an imported callee's
+declaration actually says — and that only the soundness gate below
+needed a dependency's source in scope. Wiring `vcs publish --requires`
+against a real dependency and then re-verifying it with `vcs resolve`
+found that false on the very first try: identity computed with the
+dependency absent and identity computed with it present disagreed,
+`vcs resolve` refusing a body that had, in truth, not moved at all.
+`lex-sys-id::qualified_name` (`crates/lex-sys-id/src/lib.rs`) is why —
+a call's contribution to its caller's body hash is the *resolved*
+callee's own signature hash (`tag::FREE`) when the callee resolves, and
+only the bare written name (`tag::NONE`) when it does not; a callee's
+signature changing is meant to count as a body change for its caller,
+which is sound, but it means identity is not resolution-independent
+after all. Fixed by computing `identify()` from the same merged,
+dependency-resolved `Ast` the soundness gate below builds, keeping only
+the names a first pass over the primary file *alone* declared (reliable
+regardless of resolution, since it is asking "does this function
+exist," never "what does its call hash to") to filter a dependency's
+own declarations back out before publishing.
+
+**What does not need to change**, once identity itself is computed
+correctly: resolving `import net.sockets` is `lex-sys-ir`'s job
+(`defs.rs`'s module-scope pass, run during `lower_all`), not a second
+identity pass — the "no module" refusal above comes from there, and the
+soundness gate — confirming a pinned declaration still type-checks
+under today's compiler, the actual point of re-verifying rather than
+trusting a hash (`hash-stability.md`'s whole finding) — is a `lower_all`
+call already made from an `Ast` built by merging named texts
 (`parse_program`'s own loop, `crates/lex-sys/src/main.rs`); nothing
 about multi-file lowering itself is new, `net.connect`+`net.sockets`
 compose that way at `build` time already. What is new is doing it from
@@ -549,24 +578,21 @@ into a fixed slice with a cursor, because `agent_supervisor.ls` has no
 `Heap` to spend), so bundling them would be guessing at a shape neither
 file asked for rather than naming one that is already duplicated.
 
-What is not real yet, and is the actual remaining gap: a program whose
-dependency *is itself* a dependency of something else — a true closure
-of stores, not just several direct ones. `resolve --lock` and `vcs
-fetch` still check one store against one lock each; nothing here walks
-a dependency's own lock to find *its* dependencies, detects a cycle, or
-refuses a diamond conflict (two paths to the same package pinning
-different heads). **No longer a hypothetical case waiting on
-`standard-library.md` §2.1**: `examples/collect/collect.ls` and
-`examples/agent_supervisor/agent_supervisor.ls` duplicate a fourth
-byte-for-byte pair, `content_length_of`/`read_request`, and extracting
-it needs exactly this — a package (`http.request`, not yet built) that
-itself needs `net.sockets`. §4.6 is the design this gap now has: a
-`requires/` directory a store may carry, `vcs publish --requires
-<lock>:<store>` to write it, and a recursive `resolve_requirements`
-walk in `vcs resolve`/`vcs fetch` with cycle and diamond-conflict
-refusal. Confirmed directly, not assumed: publishing a file with
-`import net.sockets` today refuses with "no module `net.sockets` in
-this program," and `lex-sys-id::identify()` needing no resolved import
-at all (it is purely structural; only `lower_all`'s soundness gate
-does) is why the fix does not need to touch the compiler's identity
-machinery, only `vcs publish`/`vcs resolve`/`vcs fetch` themselves.
+**Done: closure resolution (§4.6), against a real motivating case
+rather than the hypothetical one this section used to point at.**
+`examples/collect/collect.ls` and `examples/agent_supervisor/
+agent_supervisor.ls` duplicate a fourth byte-for-byte pair,
+`content_length_of`/`read_request`, and extracting it needs a package
+that itself needs `net.sockets` — a true closure of stores, not just
+several direct ones, the gap this section used to say was not built.
+`vcs publish` grows `--requires <lock-file>:<dep-store>` (repeatable),
+writing a store-carried `requires/*.json`; `vcs resolve`/`vcs fetch`
+walk it recursively, refusing a cycle (a store's own canonicalized path
+already on the current walk) or a diamond conflict (the same
+`(store, name)` pinned to two different heads by two different paths)
+rather than guessing. Building it found `identify()` is *not*
+resolution-independent, contrary to this section's own first draft —
+§4.6 has the correction and the fix. `packages/http-request/` itself —
+the package this gap was found *from* — is the next slice, not this
+one: this PR proves the mechanism against synthetic packages built
+for exactly that, before trusting it with a real one.
