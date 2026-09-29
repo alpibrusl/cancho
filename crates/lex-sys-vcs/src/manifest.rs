@@ -32,6 +32,14 @@ pub struct ManifestEntry {
     /// (`docs/vcs.md`'s own `ModuleRef` doc comment makes the same call).
     pub name: String,
     pub stage_id: StageId,
+    /// The [`crate::Blobs`] hash of the file this declaration was
+    /// published from — `docs/package-system.md` §4.2's prerequisite for
+    /// `lex-sys vcs resolve`: a hash alone cannot be re-typechecked, only
+    /// the source behind it can. Required rather than `Option`: unlike
+    /// `Operation`, a `ManifestEntry` is not content-addressed and not a
+    /// store-wide format (this file's own opening comment), so it carries
+    /// no hash-stability obligation to stay additive.
+    pub source_hash: String,
 }
 
 /// `SigId -> ManifestEntry`, one working copy's own record of what it has

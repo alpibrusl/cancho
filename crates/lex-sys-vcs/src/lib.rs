@@ -7,9 +7,12 @@
 //! and, per `docs/vcs-publish.md`, a working copy's own manifest of what
 //! it last published (`Manifest`) — the smallest piece that turns the rest
 //! of this into something a real `.ls` file can actually go through
-//! (`crates/lex-sys/src/vcs_cli.rs`). Not built, and named in `vcs.md` §8:
-//! whole-function merge, multi-file merge sessions, typed issues,
-//! predicate branches, the op log's own history index.
+//! (`crates/lex-sys/src/vcs_cli.rs`). Per `docs/package-system.md` §4.2, a
+//! content-addressed store for a published file's raw source (`Blobs`) —
+//! the manifest and the op log both address a declaration's *shape*, and
+//! neither can turn a pin back into text to re-check it. Not built, and
+//! named in `vcs.md` §8: whole-function merge, multi-file merge sessions,
+//! typed issues, predicate branches, the op log's own history index.
 //!
 //! This crate shares `lex-vcs`'s *scheme* — `String`-keyed ids, canonical
 //! JSON, a content hash of `(kind, sorted parents, edition)` — and no code,
@@ -17,6 +20,7 @@
 //! (`README.md`'s "Where this sits").
 
 mod attestation;
+mod blobs;
 mod canonical;
 mod gate;
 mod manifest;
@@ -26,6 +30,7 @@ mod operation;
 pub use attestation::{
     AttestationEvent, BrokenAt, Chain, ChainPayload, Entry as AttestationEntry, GENESIS, Seal,
 };
+pub use blobs::{BlobError, Blobs};
 pub use canonical::canonical_bytes;
 pub use ed25519_dalek::{SigningKey, VerifyingKey};
 pub use gate::{GateDiagnostic, check_candidate};
