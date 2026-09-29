@@ -92,6 +92,15 @@
 > `Program::externs` so `Callee::Extern`'s index and codegen are
 > untouched. `docs/authority.md` §3 and `docs/under-a-grant.md` §6 have
 > the detail.
+>
+> **The other five of those six duplicating examples migrated too.**
+> `examples/report/`, `examples/vsock/`, and `examples/agent_guest/` now
+> `import net.sockets`/`net.connect`, the same shape as `fetch.ls`;
+> `examples/collect/` and `examples/agent_supervisor/` now `import
+> net.sockets` alone, the same shape as `serve.ls`/`results_stub.ls`.
+> Nothing in this section's own "not built yet" gap moved: this was nine
+> already-real files converging on the two already-real packages, not a
+> new question about composition.
 
 ## 1. What asked for it
 
@@ -380,6 +389,17 @@ revision had conflated with the one below: composing *N direct,
 independent* dependencies needed no new tooling at all, only a second
 real package to try it against. (It also found a real compiler gap,
 unrelated to packages: `authority.md` §3.)
+
+**Done too: every other duplicated consumer moved onto both packages.**
+`examples/report/`, `examples/vsock/`, and `examples/agent_guest/` --
+named above as candidates for the `net.connect` move and left there --
+now `import net.sockets` and `net.connect` the same way `fetch.ls` does;
+`examples/collect/` and `examples/agent_supervisor/` now `import
+net.sockets` alone, the same way `serve.ls`/`results_stub.ls` do. Every
+one of the nine files that used to declare its own copy of these
+`extern fn`s now imports the package instead, verified the same way
+each earlier one was: locked, fetched fresh, and built. `docs/net.md`
+§5 has the recount.
 
 What is not real yet, and is the actual remaining gap: a program whose
 dependency *is itself* a dependency of something else — a true closure

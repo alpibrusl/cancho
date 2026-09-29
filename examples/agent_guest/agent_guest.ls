@@ -30,25 +30,14 @@
 
 import std.bytes;
 import std.io;
+import net.sockets;
+import net.connect;
 
 // ---------------------------------------------------------------------
-// libc
-// ---------------------------------------------------------------------
-
-extern fn socket[&f](ffi: &f Ffi("libc"), domain: int, kind: int, proto: int)
-    -> [ffi("libc")] c_int;
-
-extern fn connect[&f, &a](ffi: &f Ffi("libc"), fd: int, addr: &a [byte])
-    -> [ffi("libc")] c_int;
-
-extern fn read[&f, &b](ffi: &f Ffi("libc"), fd: int, buf: &!b [byte])
-    -> [ffi("libc")] int;
-
-extern fn write[&f, &b](ffi: &f Ffi("libc"), fd: int, buf: &b [byte])
-    -> [ffi("libc")] int;
-
-extern fn close[&f](ffi: &f Ffi("libc"), fd: int) -> [ffi("libc")] c_int;
-
+// libc -- `socket`/`read`/`write`/`close` used to be declared here,
+// byte-for-byte the same as `examples/fetch/fetch.ls`'s own copies, and
+// `connect` too. Both are now real packages (`packages/net-sockets/`,
+// `packages/net-connect/`, `docs/package-system.md` §6).
 // ---------------------------------------------------------------------
 // The command line -- copied from `examples/report/report.ls`
 // ---------------------------------------------------------------------
@@ -129,15 +118,15 @@ fn connect_to[&f, &o](libc: &f Ffi("libc"), octets: &o [byte], port: int)
     -> [ffi("libc")] int {
     region scratch {
         let addr = alloc_slice[scratch](16, byte_of(0));
-        let fd = socket(libc, 2, 1, 0);
+        let fd = sockets.socket(libc, 2, 1, 0);
         if fd < 0 {
             return 0 - 1;
         }
         address(addr, octets, port);
-        if connect(libc, fd, addr) == 0 {
+        if connect.connect(libc, fd, addr) == 0 {
             return fd;
         }
-        close(libc, fd);
+        sockets.close(libc, fd);
     }
     return 0 - 1;
 }
@@ -146,43 +135,10 @@ fn connect_to[&f, &o](libc: &f Ffi("libc"), octets: &o [byte], port: int)
 // Bytes and the wire protocol
 // ---------------------------------------------------------------------
 
-fn put[&s, &d](dst: &!d [byte], at: int, src: &s [byte]) -> [] int {
-    var i = 0;
-    while i < len(src) {
-        dst[at + i] = src[i];
-        i = i + 1;
-    }
-    return at + len(src);
-}
-
-fn put_nat[&d](dst: &!d [byte], at: int, n: int) -> [] int {
-    if n == 0 {
-        dst[at] = byte_of('0');
-        return at + 1;
-    }
-    var rest = n;
-    var end = at;
-    while rest > 0 {
-        dst[end] = byte_of('0' + rest - (rest / 10) * 10);
-        rest = rest / 10;
-        end = end + 1;
-    }
-    var lo = at;
-    var hi = end - 1;
-    while lo < hi {
-        let swap = dst[lo];
-        dst[lo] = dst[hi];
-        dst[hi] = swap;
-        lo = lo + 1;
-        hi = hi - 1;
-    }
-    return end;
-}
-
 fn send_all[&f, &b](libc: &f Ffi("libc"), fd: int, data: &b [byte]) -> [ffi("libc")] bool {
     var sent = 0;
     while sent < len(data) {
-        let n = write(libc, fd, data[sent..len(data)]);
+        let n = sockets.write(libc, fd, data[sent..len(data)]);
         if n <= 0 {
             return false;
         }
@@ -304,11 +260,11 @@ fn exchange[&f, &i, &h](libc: &f Ffi("libc"), io: &!i Io, fd: int, host: &h [byt
     region scratch {
         let action = "{\"action\":\"done\"}";
         let head_out = alloc_slice[scratch](len(host) + 96, byte_of(0));
-        var at = put(head_out, 0, "POST /step HTTP/1.0\r\nHost: ");
-        at = put(head_out, at, host);
-        at = put(head_out, at, "\r\nContent-Length: ");
-        at = put_nat(head_out, at, len(action));
-        at = put(head_out, at, "\r\nConnection: close\r\n\r\n");
+        var at = sockets.put(head_out, 0, "POST /step HTTP/1.0\r\nHost: ");
+        at = sockets.put(head_out, at, host);
+        at = sockets.put(head_out, at, "\r\nContent-Length: ");
+        at = sockets.put_nat(head_out, at, len(action));
+        at = sockets.put(head_out, at, "\r\nConnection: close\r\n\r\n");
         if !send_all(libc, fd, head_out[0..at]) || !send_all(libc, fd, action) {
             return 0 - 1;
         }
@@ -320,7 +276,7 @@ fn exchange[&f, &i, &h](libc: &f Ffi("libc"), io: &!i Io, fd: int, host: &h [byt
             if held == len(buf) {
                 going = false;
             } else {
-                let got = read(libc, fd, buf[held..len(buf)]);
+                let got = sockets.read(libc, fd, buf[held..len(buf)]);
                 if got <= 0 {
                     going = false;
                 } else {
@@ -350,8 +306,8 @@ fn exchange[&f, &i, &h](libc: &f Ffi("libc"), io: &!i Io, fd: int, host: &h [byt
         io.write_all(io, body[goal_start..goal_end]);
         io.write_all(io, "\n");
         let digits = alloc_slice[scratch](24, byte_of(0));
-        var dat = put(digits, 0, "step: ");
-        dat = put_nat(digits, dat, step);
+        var dat = sockets.put(digits, 0, "step: ");
+        dat = sockets.put_nat(digits, dat, step);
         digits[dat] = byte_of(10);
         dat = dat + 1;
         io.write_all(io, digits[0..dat]);
@@ -386,7 +342,7 @@ fn main(world: World) -> [] int {
                                 status = 3;
                             } else {
                                 let code = exchange(f, i, fd, arg(g, 1));
-                                close(f, fd);
+                                sockets.close(f, fd);
                                 if code == 0 - 1 {
                                     io.error_all(i, "agent_guest: the response was not HTTP\n");
                                     status = 4;

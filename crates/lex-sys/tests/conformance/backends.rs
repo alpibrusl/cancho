@@ -605,39 +605,70 @@ fn the_two_backends_agree_on_tree() {
 /// example in the corpus builds clean on `--backend llvm`.
 #[test]
 fn every_socket_declaring_example_builds_clean_on_llvm() {
-    for relative in [
-        "examples/collect/collect.ls",
-        "examples/report/report.ls",
-        "examples/vsock/vsock.ls",
-        "examples/agent_guest/agent_guest.ls",
-        "examples/agent_supervisor/agent_supervisor.ls",
-    ] {
-        let dir = scratch(&format!(
-            "backends-llvm-socket-{}",
-            relative.rsplit('/').next().unwrap().trim_end_matches(".ls")
-        ));
+    // Every program this test used to build bare now `import`s
+    // `net.sockets` and/or `net.connect` (`docs/package-system.md` §6)
+    // rather than declaring its own socket `extern fn`s, so each needs
+    // its fetched package(s) alongside it rather than a bare
+    // single-file build -- the same shape `examples/serve/`'s and
+    // `examples/fetch/`'s own blocks below already use. The collision
+    // this test guards against now lives in the *package's* `extern fn
+    // socket`, not the program's own, but the guard is the same: the
+    // first declaration on the command line wins over this backend's
+    // internal one.
+    fn assert_llvm_builds_with_deps(tag: &str, main_relative: &str, deps: &[PathBuf]) {
+        let dir = scratch(tag);
         let exe = dir.join("out");
-        let build = Command::new(BIN)
-            .args([
-                "build".as_ref(),
-                repo_root().join(relative).as_os_str(),
-                "--std".as_ref(),
-                "--backend".as_ref(),
-                "llvm".as_ref(),
-                "-o".as_ref(),
-                exe.as_os_str(),
-            ])
-            .output()
-            .expect("the compiler runs");
+        let mut command = Command::new(BIN);
+        command.arg("build");
+        command.arg(repo_root().join(main_relative));
+        for f in deps {
+            command.arg(f);
+        }
+        command.args([
+            "--std".as_ref(),
+            "--backend".as_ref(),
+            "llvm".as_ref(),
+            "-o".as_ref(),
+            exe.as_os_str(),
+        ]);
+        let build = command.output().expect("the compiler runs");
         let _ = std::fs::remove_dir_all(&dir);
-
         assert!(
             build.status.success(),
-            "`{relative}` should build on `--backend llvm` now that its own `extern fn` wins \
-             over this backend's internal declaration, but the compiler said:\n{}",
+            "`{main_relative}` should build on `--backend llvm` now that its own `extern fn` \
+             wins over this backend's internal declaration, but the compiler said:\n{}",
             String::from_utf8_lossy(&build.stderr)
         );
     }
+
+    assert_llvm_builds_with_deps(
+        "backends-llvm-socket-collect",
+        "examples/collect/collect.ls",
+        &[fetch_net_sockets("backends-llvm-socket-collect-fetch", "examples/collect/net.lock")],
+    );
+    assert_llvm_builds_with_deps(
+        "backends-llvm-socket-report",
+        "examples/report/report.ls",
+        &fetch_report_dependencies("backends-llvm-socket-report-fetch"),
+    );
+    assert_llvm_builds_with_deps(
+        "backends-llvm-socket-vsock",
+        "examples/vsock/vsock.ls",
+        &fetch_vsock_dependencies("backends-llvm-socket-vsock-fetch"),
+    );
+    assert_llvm_builds_with_deps(
+        "backends-llvm-socket-agent-guest",
+        "examples/agent_guest/agent_guest.ls",
+        &fetch_agent_guest_dependencies("backends-llvm-socket-agent-guest-fetch"),
+    );
+    assert_llvm_builds_with_deps(
+        "backends-llvm-socket-agent-supervisor",
+        "examples/agent_supervisor/agent_supervisor.ls",
+        &[fetch_net_sockets(
+            "backends-llvm-socket-agent-supervisor-fetch",
+            "examples/agent_supervisor/net.lock",
+        )],
+    );
 
     // `examples/serve/serve.ls` no longer declares its own socket
     // `extern fn`s -- it `import`s `net.sockets` (`packages/net-sockets/`,

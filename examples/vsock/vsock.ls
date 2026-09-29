@@ -32,25 +32,18 @@
 // "connected" for a `connect` to a nonsense CID -- a real bug in how
 // `extern fn` crossed a foreign return, found here and fixed at its
 // root rather than worked around with a different check in this file.
+//
+// `socket`/`close`/`read`/`write` used to be declared here, byte-for-byte
+// the same as `examples/fetch/fetch.ls`'s own copies, and `connect` too.
+// Both are now real packages (`packages/net-sockets/`,
+// `packages/net-connect/`, `docs/package-system.md` §6) -- this file's
+// third consumer of both, after `fetch.ls` and `report.ls`.
 
 import std.bytes;
 import std.buffer;
 import std.io;
-
-extern fn socket[&f](ffi: &f Ffi("libc"), domain: int, kind: int, proto: int)
-    -> [ffi("libc")] c_int;
-
-extern fn connect[&f, &a](ffi: &f Ffi("libc"), fd: int, addr: &a [byte])
-    -> [ffi("libc")] c_int;
-
-extern fn close[&f](ffi: &f Ffi("libc"), fd: int) -> [ffi("libc")] c_int;
-
-// `read`/`write` stay plain `int`: their real return is `ssize_t`,
-// genuinely 64 bits here -- the same declaration `examples/fetch/`'s own
-// header comment explains.
-extern fn read[&f, &b](ffi: &f Ffi("libc"), fd: int, buf: &!b [byte]) -> [ffi("libc")] int;
-
-extern fn write[&f, &b](ffi: &f Ffi("libc"), fd: int, buf: &b [byte]) -> [ffi("libc")] int;
+import net.sockets;
+import net.connect;
 
 // Little-endian, four bytes, host order -- what `svm_port`/`svm_cid` both
 // want.
@@ -88,12 +81,12 @@ fn u32_of[&a](text: &a [byte]) -> [] int {
 // `-1` for a `socket` failure, `-2` for a `connect` failure (the fd is
 // closed first), or the connected fd.
 fn dial[&f, &a](libc: &f Ffi("libc"), addr: &a [byte]) -> [ffi("libc")] int {
-    let fd = socket(libc, 40, 1, 0);
+    let fd = sockets.socket(libc, 40, 1, 0);
     if fd < 0 {
         return 0 - 1;
     }
-    if connect(libc, fd, addr) < 0 {
-        close(libc, fd);
+    if connect.connect(libc, fd, addr) < 0 {
+        sockets.close(libc, fd);
         return 0 - 2;
     }
     return fd;
@@ -281,7 +274,7 @@ fn recv_line[&h, &f](
         var buf = into;
         var rounds = 0;
         while rounds < 16 {
-            let got = read(libc, fd, chunk);
+            let got = sockets.read(libc, fd, chunk);
             if got <= 0 {
                 return (buf, 0 - 1);
             }
@@ -309,14 +302,14 @@ fn send_line[&f, &b](libc: &f Ffi("libc"), fd: int, line: &b [byte]) -> [ffi("li
     var sent = 0;
     let n = len(line);
     while sent < n {
-        let got = write(libc, fd, line[sent..n]);
+        let got = sockets.write(libc, fd, line[sent..n]);
         if got <= 0 {
             return false;
         }
         sent = sent + got;
     }
     let nl = "\n";
-    return write(libc, fd, nl) == 1;
+    return sockets.write(libc, fd, nl) == 1;
 }
 
 // After a successful `dial()`: read one `AgentViewMsg` line, print the
@@ -423,7 +416,7 @@ fn main(world: World) -> [] int {
                                 } else {
                                     io.write_all(i, "connected\n");
                                     status = converse(h, f, i, fd);
-                                    close(f, fd);
+                                    sockets.close(f, fd);
                                 }
                             }
                         }

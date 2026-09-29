@@ -304,3 +304,72 @@ fn authority_of_fetch(tag: &str) -> (Vec<String>, Vec<String>, Vec<String>) {
     paths.extend(fetch_dependencies(&format!("{tag}-fetch")));
     authority_of_paths(&paths)
 }
+
+/// `examples/report/report.ls`: outbound, the same two-package shape as
+/// `fetch.ls` (`net.sockets` and `net.connect`).
+fn fetch_report_dependencies(tag: &str) -> Vec<PathBuf> {
+    fetch_net_dependencies(
+        tag,
+        &[
+            ("examples/report/net.lock", "packages/net-sockets/.lex-sys-vcs"),
+            ("examples/report/connect.lock", "packages/net-connect/.lex-sys-vcs"),
+        ],
+    )
+}
+
+fn build_report(tag: &str) -> (PathBuf, PathBuf) {
+    let mut paths = vec![repo_root().join("examples/report/report.ls")];
+    paths.extend(fetch_report_dependencies(&format!("{tag}-fetch")));
+    build_example_paths(tag, &paths, "report")
+}
+
+/// `examples/collect/collect.ls`: inbound, `net.sockets` alone.
+fn build_collect(tag: &str) -> (PathBuf, PathBuf) {
+    let fetched = fetch_net_sockets(&format!("{tag}-fetch"), "examples/collect/net.lock");
+    build_example_paths(tag, &[repo_root().join("examples/collect/collect.ls"), fetched], "collect")
+}
+
+/// `examples/vsock/vsock.ls`: outbound, the same two-package shape as
+/// `fetch.ls`/`report.ls`. No dedicated `build_vsock`: unlike the other
+/// four migrated files, nothing here spawns `vsock` as a running process
+/// (`docs/vsock.md`'s own note that a real `AF_VSOCK` round trip stays
+/// untested in this sandbox) -- only the LLVM-backend build below needs
+/// its fetched dependencies.
+fn fetch_vsock_dependencies(tag: &str) -> Vec<PathBuf> {
+    fetch_net_dependencies(
+        tag,
+        &[
+            ("examples/vsock/net.lock", "packages/net-sockets/.lex-sys-vcs"),
+            ("examples/vsock/connect.lock", "packages/net-connect/.lex-sys-vcs"),
+        ],
+    )
+}
+
+/// `examples/agent_guest/agent_guest.ls`: outbound, the same two-package
+/// shape as `fetch.ls`/`report.ls`/`vsock.ls`.
+fn fetch_agent_guest_dependencies(tag: &str) -> Vec<PathBuf> {
+    fetch_net_dependencies(
+        tag,
+        &[
+            ("examples/agent_guest/net.lock", "packages/net-sockets/.lex-sys-vcs"),
+            ("examples/agent_guest/connect.lock", "packages/net-connect/.lex-sys-vcs"),
+        ],
+    )
+}
+
+fn build_agent_guest(tag: &str) -> (PathBuf, PathBuf) {
+    let mut paths = vec![repo_root().join("examples/agent_guest/agent_guest.ls")];
+    paths.extend(fetch_agent_guest_dependencies(&format!("{tag}-fetch")));
+    build_example_paths(tag, &paths, "agent_guest")
+}
+
+/// `examples/agent_supervisor/agent_supervisor.ls`: inbound, `net.sockets`
+/// alone.
+fn build_agent_supervisor(tag: &str) -> (PathBuf, PathBuf) {
+    let fetched = fetch_net_sockets(&format!("{tag}-fetch"), "examples/agent_supervisor/net.lock");
+    build_example_paths(
+        tag,
+        &[repo_root().join("examples/agent_supervisor/agent_supervisor.ls"), fetched],
+        "agent_supervisor",
+    )
+}
