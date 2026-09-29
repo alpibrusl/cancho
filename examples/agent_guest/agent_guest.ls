@@ -32,6 +32,7 @@ import std.bytes;
 import std.io;
 import net.sockets;
 import net.connect;
+import agent.wire;
 
 // ---------------------------------------------------------------------
 // libc -- `socket`/`read`/`write`/`close` used to be declared here,
@@ -166,80 +167,11 @@ fn status_of[&h](head: &h [byte]) -> [] int {
     return code;
 }
 
-// The `AgentViewMsg` decoder -- copied from `examples/vsock/vsock.ls`'s
-// `find_after`/`end_of_quoted`/`goal_start_of`/`goal_end_of`/`step_of`,
-// unchanged: the JSON shape crossing this wire is the exact same shape
-// crossing that one, and there is nowhere to put a shared function
-// between two examples (`docs/many-files.md`).
-fn find_after[&hay, &needle](hay: &hay [byte], needle: &needle [byte], start: int) -> [] int {
-    let hn = len(hay);
-    let nn = len(needle);
-    var i = start;
-    while i + nn <= hn {
-        var matched = true;
-        var j = 0;
-        while j < nn {
-            if int_of(hay[i + j]) != int_of(needle[j]) {
-                matched = false;
-            }
-            j = j + 1;
-        }
-        if matched {
-            return i + nn;
-        }
-        i = i + 1;
-    }
-    return 0 - 1;
-}
-
-fn end_of_quoted[&s](s: &s [byte], start: int) -> [] int {
-    var i = start;
-    let n = len(s);
-    while i < n {
-        let c = int_of(s[i]);
-        if c == 92 {
-            i = i + 2;
-        } else if c == 34 {
-            return i;
-        } else {
-            i = i + 1;
-        }
-    }
-    return 0 - 1;
-}
-
-fn goal_start_of[&line](line: &line [byte]) -> [] int {
-    return find_after(line, "{\"goal\":\"", 0);
-}
-
-fn goal_end_of[&line](line: &line [byte], start: int) -> [] int {
-    return end_of_quoted(line, start);
-}
-
-fn step_of[&line](line: &line [byte], after: int) -> [] int {
-    let after_key = find_after(line, "\"step\":", after);
-    if after_key < 0 {
-        return 0 - 1;
-    }
-    var i = after_key;
-    let n = len(line);
-    var step = 0;
-    var saw_digit = false;
-    while i < n {
-        let d = bytes.digit_of(int_of(line[i]));
-        if d < 0 {
-            i = n;
-        } else {
-            step = step * 10 + d;
-            saw_digit = true;
-            i = i + 1;
-        }
-    }
-    if !saw_digit {
-        return 0 - 1;
-    }
-    return step;
-}
+// The `AgentViewMsg` decoder -- used to be declared here, copied from
+// `examples/vsock/vsock.ls`'s `find_after`/`end_of_quoted`/
+// `goal_start_of`/`goal_end_of`/`step_of` unchanged. Now
+// `packages/agent-wire/wire.ls`, this repository's third real package
+// (`docs/package-system.md` §6).
 
 // ---------------------------------------------------------------------
 // The exchange
@@ -292,12 +224,12 @@ fn exchange[&f, &i, &h](libc: &f Ffi("libc"), io: &!i Io, fd: int, host: &h [byt
         let status = status_of(buf[0..held]);
         let body = buf[end + 4..held];
 
-        let goal_start = goal_start_of(body);
+        let goal_start = wire.goal_start_of(body);
         if goal_start < 0 {
             return 0 - 2;
         }
-        let goal_end = goal_end_of(body, goal_start);
-        let step = step_of(body, goal_start);
+        let goal_end = wire.goal_end_of(body, goal_start);
+        let step = wire.step_of(body, goal_start);
         if goal_end < 0 || step < 0 {
             return 0 - 2;
         }

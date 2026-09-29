@@ -436,20 +436,26 @@ cargo run -p lex-sys -- vcs fetch --lock examples/vsock/net.lock \
     --store packages/net-sockets/.lex-sys-vcs -o /tmp/net-sockets
 cargo run -p lex-sys -- vcs fetch --lock examples/vsock/connect.lock \
     --store packages/net-connect/.lex-sys-vcs -o /tmp/net-connect
+cargo run -p lex-sys -- vcs fetch --lock examples/vsock/wire.lock \
+    --store packages/agent-wire/.lex-sys-vcs -o /tmp/agent-wire
 cargo run -p lex-sys -- build --std examples/vsock/vsock.ls \
-    /tmp/net-sockets/*.ls /tmp/net-connect/*.ls -o vsock
+    /tmp/net-sockets/*.ls /tmp/net-connect/*.ls /tmp/agent-wire/*.ls -o vsock
 ./vsock <cid> <port>
 ```
 
 Locks and fetches `net.sockets` and `net.connect` independently, the
-same two-package shape `fetch/`'s and `report/`'s own sections use.
+same two-package shape `fetch/`'s and `report/`'s own sections use, plus
+`agent.wire` (`packages/agent-wire/wire.ls`) for the `AgentViewMsg`
+decoder it shares with `agent_guest/` below.
 
 Connects over `AF_VSOCK`, the channel `lex-os-guest` uses to reach its
 host supervisor, and — once connected — speaks one round of the real
 `lex-os-proto` wire protocol: reads one newline-delimited `AgentViewMsg`
 line, prints the goal and step it carries, and answers with a `Done`
-action, encoded and decoded by hand rather than pulled in as a JSON
-library. `docs/reach.md` §3.4 is the bug this program found scoping it:
+action, encoded by hand rather than pulled in as a JSON library (the
+decoder is `agent.wire`; the encoder differs too much between this file
+and `agent_supervisor/`'s own to share — `docs/package-system.md` §6).
+`docs/reach.md` §3.4 is the bug this program found scoping it:
 a foreign *return*, not just a parameter, can cross at the wrong width.
 The exchange itself was verified against real `serde_json` output and,
 end to end, over a real `AF_UNIX` `socketpair` standing in for
@@ -503,8 +509,10 @@ cargo run -p lex-sys -- vcs fetch --lock examples/agent_guest/net.lock \
     --store packages/net-sockets/.lex-sys-vcs -o /tmp/net-sockets-guest
 cargo run -p lex-sys -- vcs fetch --lock examples/agent_guest/connect.lock \
     --store packages/net-connect/.lex-sys-vcs -o /tmp/net-connect-guest
+cargo run -p lex-sys -- vcs fetch --lock examples/agent_guest/wire.lock \
+    --store packages/agent-wire/.lex-sys-vcs -o /tmp/agent-wire-guest
 cargo run -p lex-sys -- build --std examples/agent_guest/agent_guest.ls \
-    /tmp/net-sockets-guest/*.ls /tmp/net-connect-guest/*.ls -o agent_guest
+    /tmp/net-sockets-guest/*.ls /tmp/net-connect-guest/*.ls /tmp/agent-wire-guest/*.ls -o agent_guest
 
 ./agent_supervisor 8080 "write the report" 3 &
 ./agent_guest 127.0.0.1 8080
@@ -515,7 +523,8 @@ cargo run -p lex-sys -- build --std examples/agent_guest/agent_guest.ls \
 `agent_supervisor` locks and fetches `net.sockets` alone, the same
 shape `collect/`'s own section above uses; `agent_guest` locks and
 fetches `net.sockets` and `net.connect` independently, the same shape
-`fetch/`'s own section uses.
+`fetch/`'s own section uses, plus `agent.wire` for the same
+`AgentViewMsg` decoder `vsock/`'s own section above uses.
 
 The same guest/supervisor exchange `vsock/` plays over `AF_VSOCK`,
 played over plain HTTP/1.0 instead — not a second transport for

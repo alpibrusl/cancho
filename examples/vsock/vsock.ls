@@ -38,12 +38,19 @@
 // Both are now real packages (`packages/net-sockets/`,
 // `packages/net-connect/`, `docs/package-system.md` §6) -- this file's
 // third consumer of both, after `fetch.ls` and `report.ls`.
+//
+// `find_after`/`end_of_quoted`/`goal_start_of`/`goal_end_of`/`step_of`
+// used to be declared here too, byte-for-byte the same as
+// `examples/agent_guest/agent_guest.ls`'s own copies (that file's own
+// header said so plainly). Now `packages/agent-wire/wire.ls`, this
+// repository's third real package.
 
 import std.bytes;
 import std.buffer;
 import std.io;
 import net.sockets;
 import net.connect;
+import agent.wire;
 
 // Little-endian, four bytes, host order -- what `svm_port`/`svm_cid` both
 // want.
@@ -166,95 +173,6 @@ fn encode_exec_result[&h, &out, &err](
     return buffer.append(heap, buf, "}");
 }
 
-// The index just past the first occurrence of `needle` in `hay` at or
-// after `start`, or `-1`. `needle` is always a literal this file wrote,
-// so a naive scan (no Boyer-Moore, no skip table) is the whole search
-// this decoder ever needs.
-fn find_after[&hay, &needle](hay: &hay [byte], needle: &needle [byte], start: int) -> [] int {
-    let hn = len(hay);
-    let nn = len(needle);
-    var i = start;
-    while i + nn <= hn {
-        var matched = true;
-        var j = 0;
-        while j < nn {
-            if int_of(hay[i + j]) != int_of(needle[j]) {
-                matched = false;
-            }
-            j = j + 1;
-        }
-        if matched {
-            return i + nn;
-        }
-        i = i + 1;
-    }
-    return 0 - 1;
-}
-
-// The end of the quoted string starting at `start` (the index right
-// after its opening `"`) -- the first unescaped `"`. Goals and outcomes
-// in this repository's own examples never contain a backslash, so
-// skipping exactly one character after a `\` is enough to step over an
-// escape without decoding it.
-fn end_of_quoted[&s](s: &s [byte], start: int) -> [] int {
-    var i = start;
-    let n = len(s);
-    while i < n {
-        let c = int_of(s[i]);
-        if c == 92 {
-            i = i + 2;
-        } else if c == 34 {
-            return i;
-        } else {
-            i = i + 1;
-        }
-    }
-    return 0 - 1;
-}
-
-// The index right after `{"goal":"` in `line`, i.e. where the goal
-// text itself starts -- or `-1` if `line` does not open that way.
-fn goal_start_of[&line](line: &line [byte]) -> [] int {
-    return find_after(line, "{\"goal\":\"", 0);
-}
-
-// The index of the `"` that closes the goal text starting at `start`,
-// so a caller slices the goal out as `line[start..goal_end_of(line,
-// start)]` with no further allocation -- or `-1` if it never closes.
-fn goal_end_of[&line](line: &line [byte], start: int) -> [] int {
-    return end_of_quoted(line, start);
-}
-
-// `AgentViewMsg`'s `step`, the field right after `completed`'s own
-// close in real `lex-os-proto` JSON but read starting from wherever the
-// caller's own scan of `goal` already reached, since `"step":` never
-// repeats. `-1` on a decode failure: no `"step":` key found, or no
-// digit after it.
-fn step_of[&line](line: &line [byte], after: int) -> [] int {
-    let after_key = find_after(line, "\"step\":", after);
-    if after_key < 0 {
-        return 0 - 1;
-    }
-    var i = after_key;
-    let n = len(line);
-    var step = 0;
-    var saw_digit = false;
-    while i < n {
-        let d = bytes.digit_of(int_of(line[i]));
-        if d < 0 {
-            i = n;
-        } else {
-            step = step * 10 + d;
-            saw_digit = true;
-            i = i + 1;
-        }
-    }
-    if !saw_digit {
-        return 0 - 1;
-    }
-    return step;
-}
-
 // Read one newline-delimited JSON line from `fd` into `into` (a growable
 // `Buffer`, since a real `AgentViewMsg` line's length is not known in
 // advance) -- `StreamGuestTransport::recv_view`'s own shape, minus the
@@ -341,13 +259,13 @@ fn converse[&h, &f, &i](
     } else {
         borrow line as &l in {
             let view = buffer.bytes(l);
-            let goal_start = goal_start_of(view);
+            let goal_start = wire.goal_start_of(view);
             if goal_start < 0 {
                 io.error_all(io, "vsock: could not find \"goal\" in the view\n");
                 status = 4;
             } else {
-                let goal_end = goal_end_of(view, goal_start);
-                let step = step_of(view, goal_start);
+                let goal_end = wire.goal_end_of(view, goal_start);
+                let step = wire.step_of(view, goal_start);
                 if goal_end < 0 || step < 0 {
                     io.error_all(io, "vsock: malformed view line\n");
                     status = 4;

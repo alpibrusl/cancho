@@ -34,10 +34,11 @@ fn printing_preserves_every_identity_and_is_idempotent() {
         "examples/fetch",
         "examples/report",
         "examples/collect",
-        // The first two real published packages (`docs/package-system.md`
+        // The three real published packages (`docs/package-system.md`
         // §6) are code too, and get the same contract.
         "packages/net-sockets",
         "packages/net-connect",
+        "packages/agent-wire",
         // The benchmarks are code too, and the pairs are the place a
         // careless edit would land without anyone reading it.
         "benches",
