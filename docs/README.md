@@ -370,8 +370,9 @@ not repeated here; a doc's own header carries its own detail.
 | [`defer.md`](defer.md) | `defer E;` as sugar, expanded during lowering | settled and built |
 | [`authority.md`](authority.md) | `lex-sys authority`; `release` at `main` is the declaration | settled and built |
 | [`budget.md`](budget.md) | Whether `[budget]` is a type-system feature | settled — no |
-| [`reach.md`](reach.md) | What a program can reach, via a real REST endpoint | settled and built; corrected by `opaque-pointers.md` |
-| [`opaque-pointers.md`](opaque-pointers.md) | `c_ptr`: one opaque foreign-pointer shape | settled and built (edition 3) — linking beyond libc is a separate, unbuilt feature |
+| [`reach.md`](reach.md) | What a program can reach, via a real REST endpoint | settled and built; corrected by `opaque-pointers.md` and `foreign-linking.md` |
+| [`opaque-pointers.md`](opaque-pointers.md) | `c_ptr`: one opaque foreign-pointer shape | settled and built (edition 3) |
+| [`foreign-linking.md`](foreign-linking.md) | `-l`/`-L`: linking beyond libc | settled and built — `examples/tls_client/`, a real handshake |
 | [`overflow-cost.md`](overflow-cost.md) | What the overflow trap costs, measured | measured — corrects the README and `defined-behaviour.md` §2.1 |
 | [`bitwise.md`](bitwise.md) | `& \| ^ ~ << >>`, hex literals | settled and built |
 | [`porting.md`](porting.md) | Real programs ported and checked byte-for-byte: `base64`, `sort` | done twice |

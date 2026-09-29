@@ -165,7 +165,12 @@ fn the_authority_report_names_the_syscalls_the_row_cannot() {
 /// entry on them -- recount outbound to 4 and inbound to 3.
 /// `examples/results_stub/` -- the lex-sys port of `lex-os/crates/
 /// results-stub`, `examples/README.md`'s own entry on it -- recounts
-/// inbound to 4.
+/// inbound to 4. `examples/tls_client/socket.ls` (`docs/foreign-linking.md`)
+/// recounts outbound to 5 -- on edition 1 rather than the file it backs
+/// (`tls_client.ls`, edition 3 for `c_ptr`), because edition 2 made
+/// `connect` this document's own builtin and this program's `Net` bound
+/// would need a port fixed at compile time, which a test-picked free
+/// port cannot be.
 #[test]
 fn the_network_programs_are_counted() {
     let root = repo_root();
@@ -219,10 +224,11 @@ fn the_network_programs_are_counted() {
                 "examples/agent_guest/agent_guest.ls",
                 "examples/fetch/fetch.ls",
                 "examples/report/report.ls",
+                "examples/tls_client/socket.ls",
                 "examples/vsock/vsock.ls"
             ]
         ),
-        "the network programs changed: `net.md` §5 counts inbound 4, outbound 4, and \
+        "the network programs changed: `net.md` §5 counts inbound 4, outbound 5, and \
          two is the bar for building `Net`. Rewrite §5, then this."
     );
 }

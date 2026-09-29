@@ -30,9 +30,9 @@ const USAGE: &str = "\
 lex-sys — the bootstrap compiler for the lex-sys systems dialect
 
 usage:
-    lex-sys build <file.ls>... [-o <output>] [--emit exe|obj] [--std] [--backend cranelift|llvm]
+    lex-sys build <file.ls>... [-o <output>] [--emit exe|obj] [--std] [--backend cranelift|llvm] [-l <name>]... [-L <path>]...
     lex-sys check <file.ls>... [--std] [--output json] [--backend cranelift|llvm]
-    lex-sys run   <file.ls>... [--std] [--backend cranelift|llvm]
+    lex-sys run   <file.ls>... [--std] [--backend cranelift|llvm] [-l <name>]... [-L <path>]...
     lex-sys ids   <file.ls>... [--std]
     lex-sys authority <file.ls>... [--std] [--output json]
     lex-sys layout    <file.ls>... [--std]
@@ -53,6 +53,10 @@ options:
                     (docs/llvm-backend.md §5): opt-in, and it refuses -- with
                     an ordinary located error, not a crash -- any program
                     outside that slice. `cranelift` is unaffected either way.
+    -l <name>       link `lib<name>` at the final link step (`build`/`run`
+                    only); repeatable, passed to `cc` unexamined
+    -L <path>       add `<path>` to the linker's search path for the above;
+                    repeatable, same treatment
 
 A program is the set of files named on the command line, in any order.
 Each file is in a module -- the root, unless it says `module a.b;` -- and
@@ -95,6 +99,13 @@ operation in a content-addressed store at `--store` (default
 of an unchanged declaration is a no-op; a second publish of a *changed*
 one is refused -- incremental publish is design-stage, not built. `vcs
 log` lists what a store already has. See docs/vcs-publish.md.
+
+`-l`/`-L` are `cc`'s own flags, passed through unexamined: this project
+invents no manifest and no dependency resolution, only the ability to
+ask the linker for a library beyond libc at all, which nothing here
+could do before. `c_ptr` (docs/opaque-pointers.md) lets a foreign
+signature name a handle from a library like OpenSSL; this is what
+makes that library reachable at link time. See docs/foreign-linking.md.
 ";
 
 const EXIT_REFUSED: u8 = 1;
@@ -163,7 +174,8 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
             Ok(ExitCode::SUCCESS)
         }
         "check" => {
-            let Invocation { inputs, with_std, json, backend, .. } = parse_args(&args[1..], false)?;
+            let Invocation { inputs, with_std, json, backend, .. } =
+                parse_args(&args[1..], false, false)?;
             check_program(&inputs, with_std, json, backend)
         }
         // The one command that reads no program: it is a contract with
@@ -187,7 +199,7 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
         // `docs/many-files.md` §5: printing is about text, and text is
         // what a file is -- so this renders exactly one.
         "print" => {
-            let Invocation { inputs, .. } = parse_args(&args[1..], false)?;
+            let Invocation { inputs, .. } = parse_args(&args[1..], false, false)?;
             let [input] = &inputs[..] else {
                 return Err(usage("`print` renders one file at a time"));
             };
@@ -199,39 +211,43 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
             Ok(ExitCode::SUCCESS)
         }
         "ids" => {
-            let Invocation { inputs, with_std, .. } = parse_args(&args[1..], false)?;
+            let Invocation { inputs, with_std, .. } = parse_args(&args[1..], false, false)?;
             print_ids(&inputs, with_std)?;
             Ok(ExitCode::SUCCESS)
         }
         "authority" => {
-            let Invocation { inputs, with_std, json, .. } = parse_args(&args[1..], false)?;
+            let Invocation { inputs, with_std, json, .. } = parse_args(&args[1..], false, false)?;
             print_authority(&inputs, with_std, json)?;
             Ok(ExitCode::SUCCESS)
         }
         "layout" => {
-            let Invocation { inputs, with_std, .. } = parse_args(&args[1..], false)?;
+            let Invocation { inputs, with_std, .. } = parse_args(&args[1..], false, false)?;
             print_layout(&inputs, with_std)?;
             Ok(ExitCode::SUCCESS)
         }
         "build" => {
-            let Invocation { inputs, output, emit, with_std, backend, .. } =
-                parse_args(&args[1..], true)?;
+            let Invocation {
+                inputs, output, emit, with_std, backend, link_libs, link_paths, ..
+            } = parse_args(&args[1..], true, true)?;
             let output = output.unwrap_or_else(|| default_output(&inputs[0], emit));
-            build(&inputs, &output, emit, with_std, backend)?;
+            build(&inputs, &output, emit, with_std, backend, &link_libs, &link_paths)?;
             Ok(ExitCode::SUCCESS)
         }
         "run" => {
-            let Invocation { inputs, with_std, backend, .. } = parse_args(&args[1..], false)?;
+            let Invocation { inputs, with_std, backend, link_libs, link_paths, .. } =
+                parse_args(&args[1..], false, true)?;
             let dir = std::env::temp_dir().join(format!("lex-sys-run-{}", std::process::id()));
             std::fs::create_dir_all(&dir)
                 .map_err(|e| environment(format!("cannot create `{}`: {e}", dir.display())))?;
             let exe =
                 dir.join(default_output(&inputs[0], Emit::Exe).file_name().unwrap_or_default());
-            let result = build(&inputs, &exe, Emit::Exe, with_std, backend).and_then(|()| {
-                Command::new(&exe)
-                    .status()
-                    .map_err(|e| environment(format!("cannot run `{}`: {e}", exe.display())))
-            });
+            let result =
+                build(&inputs, &exe, Emit::Exe, with_std, backend, &link_libs, &link_paths)
+                    .and_then(|()| {
+                        Command::new(&exe).status().map_err(|e| {
+                            environment(format!("cannot run `{}`: {e}", exe.display()))
+                        })
+                    });
             let _ = std::fs::remove_dir_all(&dir);
             let status = result?;
             Ok(ExitCode::from(status.code().unwrap_or(EXIT_ENVIRONMENT as i32) as u8))
@@ -292,15 +308,27 @@ struct Invocation {
     json: bool,
     /// `--backend` (`docs/llvm-backend.md` §4).
     backend: Backend,
+    /// `-l <name>` (`docs/foreign-linking.md` §3): libraries to link
+    /// beyond libc, in the order given, passed to `cc` unexamined.
+    link_libs: Vec<String>,
+    /// `-L <path>` (`docs/foreign-linking.md` §3): search paths for the
+    /// above, same order, same treatment.
+    link_paths: Vec<String>,
 }
 
-fn parse_args(args: &[String], allow_output: bool) -> Result<Invocation, Failure> {
+fn parse_args(
+    args: &[String],
+    allow_output: bool,
+    allow_link: bool,
+) -> Result<Invocation, Failure> {
     let mut inputs: Vec<PathBuf> = Vec::new();
     let mut output = None;
     let mut emit = Emit::Exe;
     let mut with_std = false;
     let mut json = false;
     let mut backend = Backend::Llvm;
+    let mut link_libs = Vec::new();
+    let mut link_paths = Vec::new();
     let mut it = args.iter();
 
     while let Some(arg) = it.next() {
@@ -335,6 +363,14 @@ fn parse_args(args: &[String], allow_output: bool) -> Result<Invocation, Failure
                     None => return Err(usage("`--backend` needs a name")),
                 };
             }
+            "-l" if allow_link => {
+                let value = it.next().ok_or_else(|| usage("`-l` needs a library name"))?;
+                link_libs.push(value.clone());
+            }
+            "-L" if allow_link => {
+                let value = it.next().ok_or_else(|| usage("`-L` needs a path"))?;
+                link_paths.push(value.clone());
+            }
             other if other.starts_with('-') => {
                 return Err(usage(format!("unknown option `{other}`")));
             }
@@ -347,7 +383,7 @@ fn parse_args(args: &[String], allow_output: bool) -> Result<Invocation, Failure
     if inputs.is_empty() {
         return Err(usage("no input file given"));
     }
-    Ok(Invocation { inputs, output, emit, with_std, json, backend })
+    Ok(Invocation { inputs, output, emit, with_std, json, backend, link_libs, link_paths })
 }
 
 fn default_output(input: &Path, emit: Emit) -> PathBuf {
@@ -1061,6 +1097,8 @@ fn build(
     emit: Emit,
     with_std: bool,
     backend_kind: Backend,
+    link_libs: &[String],
+    link_paths: &[String],
 ) -> Result<(), Failure> {
     let program = compile_to_ir(inputs, with_std)?;
     // A compiler bug in the backend is a refusal with rule `internal`,
@@ -1087,7 +1125,7 @@ fn build(
             std::fs::write(&object_path, &object).map_err(|e| {
                 environment(format!("cannot write `{}`: {e}", object_path.display()))
             })?;
-            let result = link(&object_path, output);
+            let result = link(&object_path, output, link_libs, link_paths);
             let _ = std::fs::remove_file(&object_path);
             result
         }
@@ -1099,10 +1137,22 @@ fn build(
 /// M0 shells out to `cc` rather than driving a linker itself: the C runtime
 /// provides `_start` and `putchar`, and "no C" is a much later goal than "no
 /// Rust" (#1).
-fn link(object: &Path, output: &Path) -> Result<(), Failure> {
+///
+/// `link_libs`/`link_paths` are `-l`/`-L`, passed to `cc` unexamined, in the
+/// order given, between the object and `-o` (`docs/foreign-linking.md` §3.1:
+/// a library named before the object whose symbols it resolves is a library
+/// the linker never looks at, measured against this project's own `ld`).
+fn link(
+    object: &Path,
+    output: &Path,
+    link_libs: &[String],
+    link_paths: &[String],
+) -> Result<(), Failure> {
     let cc = std::env::var("CC").unwrap_or_else(|_| "cc".to_owned());
     let status = Command::new(&cc)
         .arg(object)
+        .args(link_paths.iter().map(|path| format!("-L{path}")))
+        .args(link_libs.iter().map(|lib| format!("-l{lib}")))
         .arg("-o")
         .arg(output)
         .status()
