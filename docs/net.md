@@ -303,6 +303,17 @@ half with an asker is the one the grant does not ask about.
 > lives: `agent_supervisor/`, `collect/`, and the one package file
 > `serve/`/`results_stub/` both import now.
 
+> **Recounted: outbound still 5 programs, now 4 declaring files.**
+> `examples/fetch/` no longer writes `extern fn connect` itself -- it
+> `import`s `net.connect` (`packages/net-connect/connect.ls`), a second
+> real package, alongside `net.sockets` for `socket`/`read`/`write`/
+> `close`: the first program here with two real dependencies at once,
+> composed with no new tooling (`docs/package-system.md`'s own status
+> header has the detail). `report/`, `vsock/`, `agent_guest/` still
+> declare their own `connect` and are candidates for the same move, not
+> done here. The five programs still ask for outbound socket authority
+> exactly as before; only `fetch/`'s own source text moved.
+
 That is the honest state up to here. Both halves of the two-asker bar
 §5 set are cleared, and §3's own reason to build now rather than before
 still applies in full: `Ffi("libc")` lets a program declare

@@ -56,12 +56,14 @@ cargo run -p lex-sys -- run examples/tour.ls
   identity — a design commitment kept from the day this project started,
   not added on later.
 
-And honestly, **not a usable language yet**: a real dependency now
-resolves end to end (`lex-sys vcs publish`/`lock`/`fetch`,
-`docs/package-system.md`) — `packages/net-sockets/` is a real published
-package, consumed by two real programs instead of duplicated into
-them — but there is still no manifest, and nothing resolves more than
-one dependency at a time. The effect vocabulary keeps growing, but every
+And honestly, **not a usable language yet**: real dependencies now
+resolve end to end (`lex-sys vcs publish`/`lock`/`fetch`,
+`docs/package-system.md`) — `packages/net-sockets/` and
+`packages/net-connect/` are two real published packages, and
+`examples/fetch/fetch.ls` depends on both at once, composed with no new
+tooling — but there is still no manifest, and no dependency's own
+dependencies resolve (a closure of stores, not just several direct
+ones). The effect vocabulary keeps growing, but every
 addition since editions.md landed has been edition-gated and additive by
 construction, so it can no longer break a file that does not opt into
 the edition that adds it: 37% of this repository's own historical

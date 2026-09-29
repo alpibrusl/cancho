@@ -340,7 +340,12 @@ what this **cannot** reach and why it is one sentence rather than a list.
 ### `fetch/` — the other direction
 
 ```sh
-cargo run -p lex-sys -- build --std examples/fetch/fetch.ls -o fetch
+cargo run -p lex-sys -- vcs fetch --lock examples/fetch/net.lock \
+    --store packages/net-sockets/.lex-sys-vcs -o /tmp/net-sockets
+cargo run -p lex-sys -- vcs fetch --lock examples/fetch/connect.lock \
+    --store packages/net-connect/.lex-sys-vcs -o /tmp/net-connect
+cargo run -p lex-sys -- build --std examples/fetch/fetch.ls \
+    /tmp/net-sockets/*.ls /tmp/net-connect/*.ls -o fetch
 ./fetch 127.0.0.1 8080 /health
 ```
 
@@ -349,6 +354,16 @@ An HTTP client, and the first program here that connects. It sends
 header bytes are held until the blank line, and every later byte is
 written straight through, so it needs no `Heap`. The test suite points
 it at `serve/`, so a lex-sys client fetches from a lex-sys server.
+
+The first program here with two real dependencies at once:
+`net.sockets` (`serve/`'s own section above) for `socket`/`read`/
+`write`/`close`, and `net.connect` (`packages/net-connect/connect.ls`)
+for the one declaration `net.sockets` deliberately does not carry --
+no program here needs both halves of the network at once
+(`docs/net.md` §1), so the outbound half got its own package rather
+than joining the inbound one. Two independent `vcs lock`/`vcs fetch`
+pairs, composed at the same `build` command line: this needed no new
+tooling, which is itself the finding (`docs/package-system.md` §6).
 
 Its comments mark the three places where it works around the language,
 and `docs/connect.md` is the report. The address has to be four octets

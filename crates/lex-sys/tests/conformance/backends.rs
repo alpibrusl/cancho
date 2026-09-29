@@ -607,7 +607,6 @@ fn the_two_backends_agree_on_tree() {
 fn every_socket_declaring_example_builds_clean_on_llvm() {
     for relative in [
         "examples/collect/collect.ls",
-        "examples/fetch/fetch.ls",
         "examples/report/report.ls",
         "examples/vsock/vsock.ls",
         "examples/agent_guest/agent_guest.ls",
@@ -666,6 +665,33 @@ fn every_socket_declaring_example_builds_clean_on_llvm() {
         build.status.success(),
         "`examples/serve/serve.ls` should build on `--backend llvm` with its fetched \
          `net.sockets` package, but the compiler said:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    // `examples/fetch/fetch.ls` needs two fetched packages at once
+    // (`net.sockets` and `net.connect`, `docs/package-system.md` §6).
+    let fetched = fetch_dependencies("backends-llvm-socket-fetch-fetch");
+    let dir = scratch("backends-llvm-socket-fetch");
+    let exe = dir.join("out");
+    let mut command = Command::new(BIN);
+    command.arg("build");
+    command.arg(repo_root().join("examples/fetch/fetch.ls"));
+    for f in &fetched {
+        command.arg(f);
+    }
+    command.args([
+        "--std".as_ref(),
+        "--backend".as_ref(),
+        "llvm".as_ref(),
+        "-o".as_ref(),
+        exe.as_os_str(),
+    ]);
+    let build = command.output().expect("the compiler runs");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        build.status.success(),
+        "`examples/fetch/fetch.ls` should build on `--backend llvm` with its fetched \
+         `net.sockets`/`net.connect` packages, but the compiler said:\n{}",
         String::from_utf8_lossy(&build.stderr)
     );
 }

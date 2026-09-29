@@ -127,6 +127,7 @@ opening either.
 | `release(a, b, c)` | Would make the five lines two while keeping every name, so it loses nothing §1 defends. It is also a variadic form in a language with none, for a saving of three lines once per program |
 | ~~A machine-readable form~~ | **Done** — `--output json`, in the shape `lex-os-check`'s `CheckReport` already uses. `docs/budget.md` §5 is why it was the half actually wanted |
 | Authority of a *library* | With no `main` there is no program, so there is no surface — only per-function rows, which `lex-sys ids` already lists |
+| **`foreign_symbols` is not reachability-pruned** | Found building `examples/fetch/fetch.ls` (`docs/package-system.md` §6): `Program::funcs` is already the reachable set from `main` (§2 above, `lex-sys-ir`'s pass 2), but `Program::externs` is collected once, unconditionally, before that pass runs, and is never intersected with it. Importing a package that declares more than a program calls (any real dependency, now that one exists) makes the symbol list list names the program never reaches — over-naming authority, which fails closed rather than unsafely, but is a precision gap against this document's own "the surface is the union of ... everything `main` reaches" claim. Not fixed here; `crates/lex-sys/tests/conformance/net.rs`'s `the_client_and_the_server_differ_only_in_their_symbols` documents it in place |
 
 ---
 
