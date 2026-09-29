@@ -10,30 +10,22 @@ content-addressable, designed in from day one rather than retrofitted.
 > time. A bootstrap compiler takes a `.ls` file to a real native
 > executable, green on **linux-x86_64 and darwin-aarch64**.
 >
-> **What works today:** the thesis, built and enforced —
-> capabilities, exact effect rows, one-way narrowing, lexical borrowing,
-> arenas and a general heap, file handles, the console in three
-> directions, libc FFI, compile-time evaluation, a standard library
-> written in lex-sys, a `Net` capability with outbound `connect` and
-> inbound `bind`/`listen`/`accept` (edition 2, [`docs/net.md`](docs/net.md)),
-> and `lex-sys authority`, which computes what a program can reach from
-> the same reachability that decides what goes in the binary. Real
-> programs: GNU `base64`, `cut` and `sort` ported and checked byte-for-byte
-> against the originals, a REST endpoint answered over a real socket, and
-> `examples/seek/` — not a port, a search tool shaped for an agent calling
-> it rather than a person typing at a shell
-> ([`docs/agent-tools.md`](docs/agent-tools.md)).
+> **What works today:** capabilities, exact effect rows, one-way
+> narrowing, lexical borrowing, arenas and a general heap, file handles,
+> the console in three directions, libc FFI, threads (`spawn`/`join`,
+> [`docs/threads.md`](docs/threads.md)), compile-time evaluation, a
+> standard library written in lex-sys, a `Net` capability with outbound
+> `connect` and inbound `bind`/`listen`/`accept`
+> ([`docs/net.md`](docs/net.md)), and `lex-sys authority`, which computes
+> what a program can reach from the same reachability that decides what
+> goes in the binary.
 >
-> **What does not:** it is **not a usable language yet** — no threads,
-> and TLS itself now type-checks (`c_ptr`, edition 3,
-> [`docs/opaque-pointers.md`](docs/opaque-pointers.md)) but nothing can
-> yet link `libssl`, since the build pipeline only ever links libc.
-> Threads are blocked deeper, by the type system rather than by the
-> backend ([below](#performance-honestly) explains why). The backend side of
-> that sentence used to be a **1.17×–2.58×** gap to C on the default
-> backend; `--backend llvm` is now that default, measured within noise
-> of C on the kernels this repository tracks. [`docs/ROADMAP.md`](docs/ROADMAP.md)
-> tracks what landed, what is next, and what each slice found.
+> **What does not:** it is **not a usable language yet**. `c_ptr`
+> ([`docs/opaque-pointers.md`](docs/opaque-pointers.md)) lets an opaque
+> handle like `SSL_CTX *` type-check, but nothing can build one, because
+> `lex-sys build` only ever links libc — linking a second library is a
+> real, unstarted feature. [`docs/ROADMAP.md`](docs/ROADMAP.md) tracks
+> what landed, what is next, and what each slice found.
 
 > **Writing lex-sys?** [`AGENTS.md`](AGENTS.md) is the one page — the
 > rules, the six things that cost this repository a compile each, and
@@ -76,28 +68,20 @@ the ecosystem's libraries are written in.
 
 **`lex-os`** is the runtime that takes an agent's goal, seals it in a
 microVM, and mediates everything it does against **one** declaration —
-the trust `Grant`. That grant is enforced twice: statically, by
-`lex-os-check`, which rejects a program whose effects exceed it *before
-it loads*; and at run time, by a supervisor the agent cannot reach,
-which logs every request to a hash-chained audit file outside the box
-before deciding it. Its demo runs an agent as root, lets it attempt
-three escapes, and stops each with a different mechanism.
+the trust `Grant`, enforced twice: statically by `lex-os-check` before
+the program loads, and at run time by a supervisor the agent cannot
+reach.
 
 **`lex-sys`** — this repository — is a *second, lower-level language*
 sharing that worldview, targeting the work Lex cannot do: native
 binaries, manual and region memory, syscalls, embedding, FFI. It shares
 the idea and **no code**: `lex-os` takes its grant from `lex-lang` and
-checks `.lex`, and does not depend on this repository at all. Two joins
-are named and both are gated —
+does not depend on this repository at all.
 
 | Join | State |
 |---|---|
-| lex-sys code in `lex-vcs` | 81% of that crate is already language-agnostic; gated on a **plateau** in the effect vocabulary rather than on a feature — [`hash-stability.md`](docs/hash-stability.md) |
-| lex-sys code under a lex-os grant | Not a compiler integration: `authority --output json` is already the right interface, and the grant's **filesystem** dimension works through it today. The vocabulary now has `network` too — `net_out`/`net_in`, [`net.md`](docs/net.md) — but no program in this repository has been ported onto it yet, so today's reports still say `ffi("libc")`; `exec` remains invisible either way — [`under-a-grant.md`](docs/under-a-grant.md) |
-
-Saying so plainly is deliberate: a reader of an earlier version of this
-page could not tell that `lex-os` existed at all, which is what
-[`docs/first-page.md`](docs/first-page.md) measures.
+| lex-sys code in `lex-vcs` | Most of that crate is already language-agnostic; gated on a plateau in the effect vocabulary rather than on a feature — [`vcs.md`](docs/vcs.md) |
+| lex-sys code under a lex-os grant | Not a compiler integration: `authority --output json` is already the interface a supervisor reads, and its filesystem dimension is already enforceable through it. `network` and `exec` are not, because both are libc — [`under-a-grant.md`](docs/under-a-grant.md) |
 
 ---
 
@@ -129,15 +113,18 @@ combines:
 | **Effect rows** | A canonically ordered set, exact in both directions, every label tracing to a builtin | [`linearity-and-effects.md`](docs/linearity-and-effects.md) |
 | **Narrowing** | Prefix extension, one way, and it *consumes* what it attenuates | [`filesystem.md`](docs/filesystem.md), [`reach.md`](docs/reach.md) |
 | **Authority report** | `lex-sys authority`, computed from reachability; `--output json` for a supervisor, and it **fails closed** on foreign code | [`authority.md`](docs/authority.md) |
-| **Borrowing** | Lexical regions, no borrow checker; `&!` is a lock on the binding, answered with a measurement | [`aliasing.md`](docs/aliasing.md) |
+| **Borrowing** | Lexical regions, no borrow checker; `&!` is a lock on the binding | [`aliasing.md`](docs/aliasing.md) |
 | **Memory** | Arenas, a general heap with recursive types, boxed slices, growable buffers | [`heap.md`](docs/heap.md), [`boxed-slices.md`](docs/boxed-slices.md) |
 | **Types** | `int` `byte` `bool` `float`, structs, enums with exhaustive `match`, tuples, generics with `[T: val]` bounds | [`floating-point.md`](docs/floating-point.md), [`tuples.md`](docs/tuples.md) |
 | **Defined behaviour** | Checked arithmetic that traps, left-to-right evaluation, every C hole named and closed | [`defined-behaviour.md`](docs/defined-behaviour.md) |
-| **Program identity** | `lex-sys ids` — per-declaration content hashes, 35 golden fixtures | [`canonical-ast.md`](docs/canonical-ast.md), [`hash-stability.md`](docs/hash-stability.md) |
+| **Threads** | Compiler-provided `spawn`/`join`, never crossing the C ABI; one pointer-width payload today | [`threads.md`](docs/threads.md) |
+| **Program identity** | `lex-sys ids` — per-declaration content hashes, checked against golden fixtures | [`canonical-ast.md`](docs/canonical-ast.md), [`hash-stability.md`](docs/hash-stability.md) |
+| **A content-addressed op log** | `lex-sys vcs publish`/`log` — every declaration as a typed, gated operation | [`vcs.md`](docs/vcs.md), [`vcs-publish.md`](docs/vcs-publish.md) |
 | **Compile time** | Pure calls on constant arguments folded; `static` items whose bodies run during compilation | [`compile-time-data.md`](docs/compile-time-data.md) |
-| **I/O** | The console in three directions, file handles as linear resources, bulk reads and writes | [`file-handles.md`](docs/file-handles.md), [`bulk-io.md`](docs/bulk-io.md) |
-| **Refusals** | 53 rules, each with a stable tag; `check --output json` reports every independent one | [`agent-errors.md`](docs/agent-errors.md) |
-| **Standard library** | 11 modules written in lex-sys, including shortest round-trip float printing and a UTF-8 decoder | [`standard-library.md`](docs/standard-library.md) |
+| **I/O** | The console in three directions, file handles as linear resources, bulk reads and writes, a `Net` capability for sockets | [`file-handles.md`](docs/file-handles.md), [`bulk-io.md`](docs/bulk-io.md), [`net.md`](docs/net.md) |
+| **Refusals** | Every rule carries a stable tag; `check --output json` reports every independent one as data | [`agent-errors.md`](docs/agent-errors.md) |
+| **Standard library** | Written in lex-sys, including shortest round-trip float printing and a UTF-8 decoder | [`standard-library.md`](docs/standard-library.md) |
+| **Two backends** | Cranelift (dev) and LLVM (release, **default**) — an opt-in second backend became the default once nothing it refused had an asker left | [`llvm-backend.md`](docs/llvm-backend.md) |
 
 What is **not** there yet, and why, is [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
@@ -226,9 +213,8 @@ borrow libc as &f in { n = labs(f, 0 - 7); }
 Narrowing is prefix extension and goes one way. `Ffi("")` names no library,
 so it authorises nothing until narrowed; an `Ffi("libcrypto")` can never
 become an `Ffi("libc")`. It also *consumes* what it attenuates, so there is
-no way back to the wider capability — the same commitment `lex-os` makes for
-manifests, for the same reason. The capability is checked and then erased:
-what libc receives is the integer and nothing else.
+no way back to the wider capability. The capability is checked and then
+erased: what libc receives is the integer and nothing else.
 
 **Memory has three shapes**, and the same region machinery checks all of
 them.
@@ -245,26 +231,15 @@ let tail = unbox(h, node);                   // the only thing that ends one
 
 An arena *is* a region — same block, same parent chain, same occurs-check.
 Nothing whose type mentions `a` leaves the block, and release is one `free`
-whatever was allocated. Arenas and boxed slices hold `val` data only:
-releasing one reclaims memory and **runs nothing**, so a linear value inside
-would have its obligation dropped rather than discharged.
-
-`Box[T]` is `res`, so the exactly-once rule written for capabilities and
-file handles turns out to be a *memory safety* rule for free: no leaks, no
-double frees, no use-after-free, none of them checked by anything new. A
-type may contain itself through a `Box`, which is what makes linked
-structures compile.
+whatever was allocated. `Box[T]` is `res`, so the exactly-once rule written
+for capabilities and file handles turns out to be a *memory safety* rule
+for free: no leaks, no double frees, no use-after-free, none of them checked
+by anything new.
 
 **A string is a run of bytes and claims no encoding.** `str` is not a type;
 a string is `&r [byte]`, an ordinary slice and therefore an ordinary
 reference, so regions, the escape check and the unique-to-shared coercion
-all came for free. `byte` is storage rather than arithmetic — `byte_of` and
-`int_of` convert, and `byte_of` traps rather than truncating.
-
-**A reference gives references.** Matching `&l List` binds every payload as
-a reference into the list, carrying the scrutinee's mode and region, and
-`*r` reads a `val` referent. Nothing moves out of a reference, so a `res`
-payload binds as a borrow and linearity is untouched.
+all came for free.
 
 **Arithmetic is checked.** `+`, `-`, `*` and unary `-` produce the right
 answer or **trap** — they never wrap. Wrapping is expressible but has to be
@@ -273,95 +248,12 @@ rather than being undefined. Evaluation order is left to right everywhere,
 including a struct literal's fields, and that is enforced rather than merely
 intended.
 
----
-
-
----
-
-### What that adds up to
-
-A REST endpoint, for one — `examples/serve/` binds a TCP port, accepts a
-connection, routes the request and answers with JSON, and the test suite
-makes the request over a real socket:
-
-```sh
-$ ./serve 8080 &
-$ ./fetch 127.0.0.1 8080 /health
-{"ok":true}
-```
-
-Both ends of that exchange are lex-sys: `examples/fetch/` is the client,
-written the same way. It takes `127.0.0.1` and not `localhost`, because
-resolving a name means `getaddrinfo`, which answers a pointer. Writing it
-also showed that `struct sockaddr_in` is different bytes on Linux and
-macOS, and that both programs are portable only because macOS forgives
-the Linux bytes ([`docs/connect.md`](docs/connect.md)).
-
-There is no socket type and no HTTP library. There **is** now a `Net`
-capability: `connect(net, name, port)` dials out and `bind(net, port)`,
-`listen` and `accept` take connections in, each checked against the
-capability's bound before `getaddrinfo` or `socket` ever runs
-([`docs/net.md`](docs/net.md)). `examples/serve/` and `examples/fetch/`,
-shown above, predate it and still declare `socket`/`bind`/`listen`/
-`accept`/`connect` by hand against `Ffi("libc")` — deliberately not
-ported, since `read`, `write` and `close` on the resulting socket still
-need `extern fn`, and porting only the calls `Net` now covers would add
-a capability to the authority report without removing `Ffi("libc")` from
-it. Sockets are libc, libc has a name, and the capability that names it
-has existed since M2 — **what decides whether a program is writable
-here is not a feature list, it is whether the authority it needs has a
-name.**
-
-The same rule used to say what was out of reach in one sentence: a
-foreign *result* is a scalar, so anything that hands back an opaque
-pointer was not reachable, because a pointer from C carries no region
-and this language had no reference that lacks one. `c_ptr` (edition 3,
-[`docs/opaque-pointers.md`](docs/opaque-pointers.md)) opens exactly one
-pointer shape back in — a handle, returned or taken, compared for
-nullness, never dereferenced — which is why `FILE *` crosses today
-(`tests/accept/opaque_pointer.ls`, real `fdopen`/`fclose`) and TLS's own
-`SSL_CTX *`/`SSL *` type-checks against real OpenSSL signatures. What
-still blocks a real TLS client is unrelated to the type system: nothing
-in `lex-sys build` can link a library beyond libc yet, so `libssl`
-cannot be linked in. `libpq`/`dlopen` are the same type-level shape,
-unspent only because nothing has written their real signatures down.
-Threads are out for a different, deeper reason
-([`docs/threads.md`](docs/threads.md)): `pthread_create`'s one `void
-*arg` is the same un-crossable pointer by another name, and `c_ptr`
-does not help it either, because it is opaque by design — the
-compiler's own `spawn`/`join`, never crossing the C ABI at all, is the
-proposed way through. Its own prerequisite is built —
-[`docs/function-values.md`](docs/function-values.md) §4.2's captureless,
-non-generic, `val` function value, real now
-(`tests/accept/function_value.ls`) — but `spawn`/`join` itself is not;
-`fork` returns an `int`, so several processes are fine today.
-
-[`docs/reach.md`](docs/reach.md) is the measured version of the gap `Net`
-was built to close; [`docs/under-a-grant.md`](docs/under-a-grant.md) is
-what a supervisor sees today, since neither program above has been ported
-onto the capability that would let its row say `net` instead of
-`ffi("libc")`.
-
-And one program here did not start here. `examples/base64/` is GNU
-coreutils' `base64`, ported and checked byte-for-byte against it in both
-directions. It needed the bit operators, which did not exist, and nothing
-else — no new capability, no library, no change to linearity or effect
-rows. Its authority report is four lines and every one is checkable from
-outside: `args`, `io_read`, `io_write`, `err_write` — the last because it
-now says `base64: invalid input` rather than exiting 1 in silence
-([`docs/standard-error.md`](docs/standard-error.md)) — and it never
-touches the filesystem, the heap or foreign code.
-[`docs/porting.md`](docs/porting.md), including §6 on what one small port
-does not establish.
-
-`examples/sort/` is the answer to that §6: `LC_ALL=C sort`, five owned
-resources on the heap, checked against GNU `sort`. It found four missing
-library functions — a vector could be read and appended to but never
-written — and left `fs_read`'s inability to report truncation with a
-program waiting on it.
-
----
-
+**Real programs run on this**, byte-for-byte checked against the originals:
+GNU coreutils `base64` and `sort` ([`docs/porting.md`](docs/porting.md)),
+a REST endpoint answered over a real socket
+([`docs/net.md`](docs/net.md)), and `examples/seek/`, not a port — a
+search tool shaped for an agent calling it rather than a person typing at
+a shell ([`docs/agent-tools.md`](docs/agent-tools.md)).
 
 ---
 
@@ -392,12 +284,8 @@ there first.
 **The competitor is WASI, not Rust.** For running code you did not write,
 WebAssembly with WASI enforces authority at run time, by trying. lex-sys
 knows it **before execution**, from the program's text, with no runtime
-cost — a narrower claim, and a stronger one where it applies. Under
-`lex-os` it is defence in depth: a static proof before load, a supervisor
-while it runs.
-
-What each project contributed, traced to the document that used it, and
-what differs: [`docs/related-work.md`](docs/related-work.md).
+cost. What each project contributed, traced to the document that used it:
+[`docs/related-work.md`](docs/related-work.md).
 
 ---
 
@@ -413,7 +301,7 @@ what differs: [`docs/related-work.md`](docs/related-work.md).
 | Metaprogramming | Hygienic deterministic `comptime` — **no** textual or proc macros | Macros break stable content-addressing |
 | Generics | Monomorphised | Zero-cost, matches Rust's codegen |
 | FFI | Explicit, capability-gated | C's effects must not be invisible |
-| Backend | Cranelift for dev, LLVM for release | Reuse; own backend only if zero-C becomes a goal |
+| Backend | LLVM by default, Cranelift for fast dev builds | Reuse; own backend only if zero-C becomes a goal |
 
 Carried over from Lex: examples-as-tests, `[budget]`, effect declarations as
 the function's contract.
@@ -428,142 +316,27 @@ the function's contract.
   end-state, not a starting point.
 - **Not a replacement for Lex.** Different layer, different job.
 
-
-## Performance, honestly
+## Performance
 
 Linearity and effects are erased at compile time; generics monomorphise.
+The gap to C is a backend question, not a price of ownership: Rust sits
+within 4% of C on the same kernels
+([`against-c-and-rust.md`](docs/against-c-and-rust.md)), and once the
+overflow trap and a vectorising backend (`--backend llvm`, now the
+default) are both in place, this language measures statistically
+indistinguishable from C on the one kernel checked directly against it.
 
-On Cranelift, the gap to C is **1.17×–2.58×** across five kernels, and it
-tracks how much of the run is in code Cranelift generated
-([`benchmarks-game.md`](docs/benchmarks-game.md)). Rust sits within 4% of
-C on the same programs, so the gap is **Cranelift against LLVM rather
-than the price of ownership**
-([`against-c-and-rust.md`](docs/against-c-and-rust.md)) — the reason
-`--backend llvm` exists, and, since the section below, the reason it is
-the default.
-
-Two claims this page used to make were false, and both were corrected by
-measuring rather than by deleting:
-
-- *"Linearity can hand the optimiser stronger aliasing facts than `&mut`
-  does."* It cannot — `&!` is a lock on the *binding*, and `both(s, s)`
-  compiles. There is no aliasing fact to emit, and Cranelift has no
-  `noalias` to emit it to ([`aliasing.md`](docs/aliasing.md)).
-- *The overflow trap costs a never-taken branch.* It costs up to **40.5%**
-  in a pure arithmetic loop, because a trap is observable and the loop
-  therefore cannot vectorise — and **six of eight** loop-body checks have
-  the same property ([`overflow-cost.md`](docs/overflow-cost.md),
-  [`check-cost.md`](docs/check-cost.md)).
-
-Removing the trap is necessary and **not sufficient** on Cranelift:
-without it, Cranelift-generated code is still scalar, 2.27× off
-vectorised clang and 1.55× off *scalar* clang, so everything remaining
-there is the backend ([`gpu.md`](docs/gpu.md) §2.3). Cranelift has no
-aliasing fact to accept, no call-purity attribute to carry this
-language's checked purity proof, and no pass that makes vectors out of
-scalar code — each a property of its design rather than a version it
-has not reached ([`backend-limits.md`](docs/backend-limits.md)).
-
-So **a vectoriser, or a backend with one, is the single largest open
-item**, and it is the answer to the number above rather than a
-performance nicety.
-
-**It was picked up, and it is no longer hypothetical — or opt-in.**
-`lex-sys-codegen-llvm`, behind a `--backend cranelift|llvm` flag
-(**default: `llvm`**, since every gap below closed and the CI matrix
-already exercises it on both targets), is real and complete for
-everything this repository builds — [`llvm-backend.md`](docs/llvm-backend.md)
-tracks each slice. Measured, not assumed: on `mandelbrot.ls`,
-`--backend llvm` is statistically indistinguishable from C
-(**0.96×–1.00×**), where `--backend cranelift` still reproduces the
-**1.6×–1.8×** gap above almost exactly — and
-`objdump`, not the wall clock, confirms why on several kernels: once a
-loop's trap comes out (`wrapping_add`/`sub`/`mul` in place of `+`/`-`/
-`*`), `--backend llvm` actually vectorises it, where the checked twin,
-otherwise identical, compiles to zero SIMD instructions. Sixteen of
-`benches/`'s programs build through it today, every one this document
-tracks: `revcomp.ls` — **42%–46% faster** on `--backend llvm`, once
-writing through a reference (`Place::Field`/`Place::Deref`) closed —
-`fannkuch.ls` — **22%–28% faster**, once `arg_count`/`arg` closed —
-`binarytrees.ls`, once single-value allocation (`alloc`/`box`/`unbox`)
-closed too — and `spectral.ls`/`fasta.ls` (**45%–56%**/**10%–20%
-faster**), once `float` arithmetic closed. `float`'s own gap turned out
-to be structural, not arithmetic: this backend's `LValue` carries no
-type tag the way Cranelift's `Value` does, so telling a `float`
-operand from an `int` one needed a new helper, `scalar_kind`, reading
-the expression that produced a value rather than the value itself.
-Matching through a reference — the last gap this document tracked —
-closed the same way: the address arithmetic it needed had already been
-built for `Place::Field`/`Place::Deref` and structs/enums, so the
-whole change was one conditional tag-load plus an address-only mirror
-of the existing by-value binding path. **Every gap `llvm-backend.md`
-names a target for is now closed.** It is still **not** a complete
-backend — `Ffi`/`extern fn` and `Net` are what it refuses, with no
-`benches/` program or fixture asking for them yet, deliberately, as an
-opt-in and partial backend rather than a finished second one. `Net`
-has since been scoped directly rather than waiting on a `benches/`
-program: `listen`/`accept`, the two of its four builtins that take no
-capability, closed first, then `bind` itself — `socket`+
-`setsockopt(SO_REUSEADDR)`+`bind` folded into one call, the same
-`struct sockaddr_in` `lex-sys-codegen`'s own `bind` builds by hand,
-and the first `--backend llvm` expression needing a value conditional
-on which of three runtime paths ran rather than trapping or writing
-into an already-`alloca`'d `var`. A differential test now builds a
-listener on each backend, connects a real `TcpStream`, and checks
-both accept it — the first Net-capable program `--backend llvm` has
-ever actually run. `connect` closed next, the larger piece as
-predicted — a 256-byte stack buffer and a byte-by-byte prefix check
-against the capability's bound, this backend's first loop built for
-`Net`, then `getaddrinfo`, the same port patch `bind` already does,
-and `socket`/`connect`. An all-LLVM listener and client, built in the
-same session, talked to each other over real loopback — the first
-time two programs this backend built have ever talked to each other.
-**`Net` is now fully built on `--backend llvm`.** `Ffi`/`extern fn`
-closed next — and checking it against real programs found this
-paragraph's own earlier claim, that it was "the only gap left," false:
-`Fs` had been unbuilt the entire time, unnamed anywhere because no
-slice had tried a real `Fs`-using program against this backend before
-`examples/seek/` did. Corrected in place. `extern fn` itself now
-lowers — an `int` crosses at `i64` whatever the C function's own width
-is, a capability parameter never crosses at all — checked against
-`tests/accept/bytes_to_c.ls` unmodified and a fresh `labs(-5) == 5` on
-both backends. `Fs` is what's refused now, and a second, pre-existing
-finding surfaced with it: a program whose own `extern fn` names a
-symbol this backend already declares for `Net` makes `clang` correctly
-refuse to link rather than silently miscompile — the same exposure
-already on record against Cranelift for `close`, not a new one. `Fs`
-closed next — the same prefix-checked-path machinery `Net`'s host check
-already built, plus a `..`-traversal refusal. Checking it against real
-programs found and fixed two more things: `read`/`write`'s own
-unconditional declares broke `bytes_to_c.ls`, a program that had
-**already been working**, unlike `socket`/`bind`'s accepted exposure —
-fixed by declaring them only when a program's own `extern fn` doesn't
-already claim the symbol; and every comparison had been hardcoded to
-`i64` since this backend's first slice, silently wrong for `byte`,
-caught only once `cut`/`seek` exercised one for the first time in
-eighteen slices. `Expr::Static` closed next — laid out as one read-only
-global per `static`, packed at the same stride every other slice in
-this backend uses, with a reference to it costing nothing but the
-symbol name. Checking whether that really was the last gap found one
-more anyway: `Expr::BitNot` (`~x`) had no arm at all, invisible until
-now because `bitwise.ls`'s own `~0` is a literal the checker folds
-away before codegen runs. Fixed as `Not`'s own `xor`, just at `i64`
-and `-1` instead of `i8` and `1`. With both closed, the backend's own
-`Expr` match has no variant left unhandled, so its "not built yet"
-fallback came out entirely — the compiler itself now refuses to build
-this crate if a future `Expr` variant goes unmatched, and the same
-check over every `Builtin` found nothing missing either. Every fixture
-in `tests/accept/` and every program in `examples/` now builds on
-`--backend llvm`, checked directly rather than assumed. What used to be
-refused here — a program's own `extern fn socket` colliding with this
-backend's internal declaration for the same libc symbol
-([`ROADMAP.md`](docs/ROADMAP.md) #92) — is fixed, not just documented:
-`--backend llvm` becoming the default turned an "already-accepted"
-exposure into a live regression the moment it did, so every libc symbol
-a pre-`Net` program might declare for itself is now declared internally
-only when that program's own `extern fn` does not already claim it, the
-same guard `read`/`write` already had. [`ROADMAP.md`](docs/ROADMAP.md)
-says what's next.
+The derivation — what the trap costs, what each backend can and cannot
+express, and every kernel measured — lives where it was measured rather
+than restated here:
+[`overflow-cost.md`](docs/overflow-cost.md),
+[`check-cost.md`](docs/check-cost.md),
+[`backend-limits.md`](docs/backend-limits.md),
+[`llvm-backend.md`](docs/llvm-backend.md),
+[`benchmarks-game.md`](docs/benchmarks-game.md). Two claims this page used
+to make were false and are corrected in those documents rather than here,
+because that is where the measurement — and the next one — actually
+happens.
 
 ---
 
@@ -596,6 +369,9 @@ lex-sys vcs publish [--store <dir>] <file.ls>  # log every declaration as an ope
 lex-sys vcs log     [--store <dir>]            # what a store already has
 ```
 
+This block is checked against `--help` in both directions by
+`the_readme_commands_still_work`, so it cannot drift silently.
+
 `authority` is the one worth trying on something you did not write:
 
 ```sh
@@ -612,19 +388,11 @@ never touches
 
 The surface is the union of what everything `main` reaches performs, so
 it is precise rather than conservative — rows are exact in both
-directions. An absent label is a proof: the capability was released, and
-nothing in the language creates another. `--output json` gives the same
-report as data, and it **fails closed**: its first field is `"bounded"`,
-`false` for any program that reaches foreign code, because a library is
-not an authority domain and `ffi("libc")` bounds nothing.
-
-That was learned by trying. [`docs/under-a-grant.md`](docs/under-a-grant.md)
-checked the report against `lex-os`'s real grant: the filesystem
-dimension is enforceable, and **more precisely than the grant can
-express**; network and exec are not, because sockets and processes are
-libc. So a supervisor that reads nothing but `bounded` refuses exactly the
-programs it cannot see into.
-[`docs/authority.md`](docs/authority.md).
+directions. `--output json` gives the same report as data, and it
+**fails closed**: its first field is `"bounded"`, `false` for any program
+that reaches foreign code, because a library is not an authority domain
+and `ffi("libc")` bounds nothing. [`docs/authority.md`](docs/authority.md),
+[`docs/under-a-grant.md`](docs/under-a-grant.md).
 
 A program is the **set of files named on the command line**, in any order.
 Each is in a module — the root, unless it says `module a.b;` — and reaches
@@ -656,7 +424,7 @@ crates/lex-sys-syntax    lexer, canonical-shaped AST, parser
 crates/lex-sys-types     the type vocabulary: representation and unification
 crates/lex-sys-ir        resolution, type checking, monomorphisation; the IR
 crates/lex-sys-codegen   Cranelift lowering, native object emission
-crates/lex-sys-codegen-llvm  the LLVM backend, `--backend llvm`
+crates/lex-sys-codegen-llvm  the LLVM backend, --backend llvm (default)
 crates/lex-sys-id        canonical encoding and content hashes
 crates/lex-sys-vcs       content-addressed operation log (docs/vcs.md)
 crates/lex-sys           the CLI
@@ -689,8 +457,9 @@ fixture.
 
 Design lands in `docs/` **before** the code that implements it, which is the
 cheap place for it to be wrong. When it turns out wrong anyway, the document
-that made the claim is corrected in place rather than quietly edited — four
-of them carry a correction now, and the roadmap says which.
+that made the claim is corrected in place rather than quietly edited — the
+roadmap says which. History belongs there, not here: this page says what the
+language *is*.
 
 ## Licence
 
