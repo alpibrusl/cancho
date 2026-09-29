@@ -13,8 +13,8 @@
 //! refused rather than silently logged as a second, disconnected
 //! `AddFunction`.
 
-use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use lex_sys_id::identify;
@@ -39,8 +39,11 @@ pub fn cmd_vcs(args: &[String]) -> Result<ExitCode, Failure> {
         Some("log") => cmd_log(&args[1..]),
         Some("resolve") => cmd_resolve(&args[1..]),
         Some("lock") => cmd_lock(&args[1..]),
+        Some("fetch") => cmd_fetch(&args[1..]),
         Some(other) => Err(usage(format!("unknown `vcs` subcommand `{other}`"))),
-        None => Err(usage("`vcs` needs a subcommand: `publish`, `log`, `resolve` or `lock`")),
+        None => {
+            Err(usage("`vcs` needs a subcommand: `publish`, `log`, `resolve`, `lock` or `fetch`"))
+        }
     }
 }
 
@@ -218,23 +221,129 @@ fn cmd_log(args: &[String]) -> Result<ExitCode, Failure> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// A lock's pins, read against a store's *current* manifest — never the
+/// lock's own stale copy of a `stage_id`/`source_hash`, because a lock
+/// only ever chooses *which* declaration a name means (`docs/
+/// package-system.md` §4.5), not what is true about it today. Refuses,
+/// naming every one, if a locked `sig_id` is no longer published at all.
+fn select_locked(
+    lock: &Lock,
+    manifest: &Manifest,
+    store: &Path,
+) -> Result<Vec<(SigId, ManifestEntry)>, Vec<String>> {
+    let mut selected = Vec::new();
+    let mut missing: Vec<String> = Vec::new();
+    for (name, lock_entry) in lock.entries() {
+        match manifest.get(&lock_entry.sig_id) {
+            Some(entry) => selected.push((lock_entry.sig_id.clone(), entry.clone())),
+            None => missing.push(format!(
+                "{name}: sig_id {} is no longer published at `{}`",
+                lock_entry.sig_id,
+                store.display()
+            )),
+        }
+    }
+    if missing.is_empty() { Ok(selected) } else { Err(missing) }
+}
+
+/// `docs/package-system.md` §4.2: never trust a pin without re-checking
+/// the source behind it. Groups `selected` by `source_hash` first, so a
+/// file several declarations came from is re-parsed and re-typechecked
+/// once rather than once per declaration, then re-derives each
+/// declaration's identity via `lex-sys-id` and compares it against what
+/// the manifest claims. `hash-stability.md` measured that 71% of this
+/// repository's own history stops type-checking under today's build;
+/// this is that measurement, run against someone else's store instead of
+/// assumed away.
+///
+/// On success, every problem is reported at once rather than the first
+/// -- the same discipline `check --output json` already applies. On
+/// success, answers the verified source text keyed by `source_hash`,
+/// for a caller (`cmd_fetch`) that needs the bytes, not only the verdict.
+fn verify_selected(
+    blobs: &Blobs,
+    selected: &[(SigId, ManifestEntry)],
+) -> Result<BTreeMap<String, String>, Vec<String>> {
+    let mut by_source: BTreeMap<String, Vec<(&SigId, &ManifestEntry)>> = BTreeMap::new();
+    for (sig_id, entry) in selected {
+        by_source.entry(entry.source_hash.clone()).or_default().push((sig_id, entry));
+    }
+
+    let mut problems: Vec<String> = Vec::new();
+    let mut verified: BTreeMap<String, String> = BTreeMap::new();
+
+    for (source_hash, entries) in &by_source {
+        let text = match blobs.get(source_hash) {
+            Ok(Some(text)) => text,
+            Ok(None) => {
+                problems.push(format!(
+                    "{source_hash}: no source blob recorded for it ({} declaration(s))",
+                    entries.len()
+                ));
+                continue;
+            }
+            Err(e) => {
+                problems.push(format!("cannot read source blob `{source_hash}`: {e}"));
+                continue;
+            }
+        };
+
+        let ast = match lex_sys_syntax::parse(&text) {
+            Ok(ast) => ast,
+            Err(d) => {
+                problems.push(format!(
+                    "{source_hash} no longer parses ({}): {}",
+                    d.rule.tag(),
+                    d.message
+                ));
+                continue;
+            }
+        };
+        if let Err(diagnostics) = lex_sys_ir::lower_all(&ast) {
+            let text: Vec<String> =
+                diagnostics.iter().map(|d| format!("{}: {}", d.rule.tag(), d.message)).collect();
+            problems.push(format!("{source_hash} no longer type-checks:\n{}", text.join("\n\n")));
+            continue;
+        }
+
+        let identities = identify(&ast);
+        let mut sound = true;
+        for (sig_id, entry) in entries {
+            match identities.functions.iter().find(|f| &f.sig.to_hex() == *sig_id) {
+                None => {
+                    sound = false;
+                    problems.push(format!(
+                        "{}: signature {sig_id} is no longer produced by its own source",
+                        entry.name
+                    ));
+                }
+                Some(func) if func.body.to_hex() != entry.stage_id => {
+                    sound = false;
+                    problems.push(format!(
+                        "{}: body moved from {} to {} — the manifest's pin no longer matches",
+                        entry.name,
+                        entry.stage_id,
+                        func.body.to_hex()
+                    ));
+                }
+                Some(_) => {}
+            }
+        }
+        if sound {
+            verified.insert(source_hash.clone(), text);
+        }
+    }
+
+    if problems.is_empty() { Ok(verified) } else { Err(problems) }
+}
+
 /// `docs/package-system.md` §4.2 and §6: the smallest resolver, against a
-/// real second store rather than `std`. A dependency's lock (its
-/// manifest) is never trusted on its own — this re-parses and
-/// re-typechecks the *source* behind every pin under today's compiler,
-/// then re-derives each declaration's identity and compares it against
-/// what the manifest claims. `hash-stability.md` measured that 71% of
-/// this repository's own history stops type-checking under today's
-/// build; this is that measurement, run against someone else's store
-/// instead of assumed away.
+/// real second store rather than `std`.
 ///
 /// `--lock <file>` (§4.5) scopes this to just the names a consumer's own
 /// `vcs lock` pinned, rather than everything the store has ever
 /// published — the difference between "does this store still hold
 /// together" and "do *my* dependencies."
-///
-/// Groups by `source_hash` first, so a file several declarations came
-/// from is re-checked once rather than once per declaration.
 fn cmd_resolve(args: &[String]) -> Result<ExitCode, Failure> {
     let mut lock_path: Option<PathBuf> = None;
     let mut store: Option<PathBuf> = None;
@@ -268,11 +377,8 @@ fn cmd_resolve(args: &[String]) -> Result<ExitCode, Failure> {
     let blobs = Blobs::open(&store)
         .map_err(|e| environment(format!("cannot open store at `{}`: {e}", store.display())))?;
 
-    // Everything the store has, or -- with `--lock` -- only the sig_ids a
-    // consumer actually pinned. Either way this is now the manifest's own
-    // current entry for each one, not the lock's stale copy of it: the
-    // lock only ever chooses *which* declarations, never what is true
-    // about them today.
+    // Everything the store has, or -- with `--lock` -- only what a
+    // consumer actually pinned.
     let selected: Vec<(SigId, ManifestEntry)> = match &lock_path {
         None => manifest.entries().map(|(sig_id, entry)| (sig_id.clone(), entry.clone())).collect(),
         Some(lock_path) => {
@@ -283,95 +389,98 @@ fn cmd_resolve(args: &[String]) -> Result<ExitCode, Failure> {
                 println!("nothing locked at `{}`; nothing to resolve", lock_path.display());
                 return Ok(ExitCode::SUCCESS);
             }
-            let mut selected = Vec::new();
-            let mut missing: Vec<String> = Vec::new();
-            for (name, lock_entry) in lock.entries() {
-                match manifest.get(&lock_entry.sig_id) {
-                    Some(entry) => selected.push((lock_entry.sig_id.clone(), entry.clone())),
-                    None => missing.push(format!(
-                        "{name}: sig_id {} is no longer published at `{}`",
-                        lock_entry.sig_id,
-                        store.display()
-                    )),
-                }
-            }
-            if !missing.is_empty() {
-                return Err(refused(missing.join("\n\n")));
-            }
-            selected
+            select_locked(&lock, &manifest, &store)
+                .map_err(|missing| refused(missing.join("\n\n")))?
         }
     };
 
-    let mut by_source: std::collections::BTreeMap<String, Vec<(&SigId, &ManifestEntry)>> =
-        std::collections::BTreeMap::new();
-    for (sig_id, entry) in &selected {
-        by_source.entry(entry.source_hash.clone()).or_default().push((sig_id, entry));
-    }
-
-    let mut problems: Vec<String> = Vec::new();
-    let mut checked_files = 0usize;
-
-    for (source_hash, entries) in &by_source {
-        let text = match blobs.get(source_hash) {
-            Ok(Some(text)) => text,
-            Ok(None) => {
-                problems.push(format!(
-                    "{source_hash}: no source blob recorded for it ({} declaration(s))",
-                    entries.len()
-                ));
-                continue;
-            }
-            Err(e) => {
-                return Err(environment(format!("cannot read source blob `{source_hash}`: {e}")));
-            }
-        };
-
-        let ast = match lex_sys_syntax::parse(&text) {
-            Ok(ast) => ast,
-            Err(d) => {
-                problems.push(format!(
-                    "{source_hash} no longer parses ({}): {}",
-                    d.rule.tag(),
-                    d.message
-                ));
-                continue;
-            }
-        };
-        if let Err(diagnostics) = lex_sys_ir::lower_all(&ast) {
-            let text: Vec<String> =
-                diagnostics.iter().map(|d| format!("{}: {}", d.rule.tag(), d.message)).collect();
-            problems.push(format!("{source_hash} no longer type-checks:\n{}", text.join("\n\n")));
-            continue;
+    match verify_selected(&blobs, &selected) {
+        Ok(verified) => {
+            println!(
+                "{} declaration(s) across {} file(s) at `{}` still resolve exactly as published",
+                selected.len(),
+                verified.len(),
+                store.display()
+            );
+            Ok(ExitCode::SUCCESS)
         }
-        checked_files += 1;
+        Err(problems) => Err(refused(problems.join("\n\n"))),
+    }
+}
 
-        let identities = identify(&ast);
-        for (sig_id, entry) in entries {
-            match identities.functions.iter().find(|f| &f.sig.to_hex() == *sig_id) {
-                None => problems.push(format!(
-                    "{}: signature {sig_id} is no longer produced by its own source",
-                    entry.name
-                )),
-                Some(func) if func.body.to_hex() != entry.stage_id => problems.push(format!(
-                    "{}: body moved from {} to {} — the manifest's pin no longer matches",
-                    entry.name,
-                    entry.stage_id,
-                    func.body.to_hex()
-                )),
-                Some(_) => {}
+/// `docs/package-system.md` §6's own next slice: not compiler surgery,
+/// but the one thing `many-files.md`/`modules.md` already need to make a
+/// locked dependency buildable -- real bytes on disk. `modules.md` §4.2
+/// is explicit that `import` is "a rule for resolving a name" against
+/// whatever files are on the command line, never an instruction to go
+/// and read something; nothing in the compiler's own module resolution
+/// needs to change once a dependency's verified source exists as an
+/// ordinary file next to a consumer's own.
+///
+/// `lex-sys vcs fetch --lock <file> --store <dep-store> -o <dir>`
+/// verifies every locked pin the same way `resolve --lock` does (never
+/// writing an unverified or broken file to disk) and materialises each
+/// distinct source file at `<dir>/<source_hash>.ls`, ready to be named
+/// on a `lex-sys build`/`check` command line alongside the consumer's
+/// own files, the module `import` chain doing the rest unmodified.
+fn cmd_fetch(args: &[String]) -> Result<ExitCode, Failure> {
+    let mut lock_path: Option<PathBuf> = None;
+    let mut store: Option<PathBuf> = None;
+    let mut out: Option<PathBuf> = None;
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--lock" => {
+                let value = it.next().ok_or_else(|| usage("`--lock` needs a path"))?;
+                lock_path = Some(PathBuf::from(value));
+            }
+            "--store" => {
+                let value = it.next().ok_or_else(|| usage("`--store` needs a path"))?;
+                store = Some(PathBuf::from(value));
+            }
+            "-o" => {
+                let value = it.next().ok_or_else(|| usage("`-o` needs a path"))?;
+                out = Some(PathBuf::from(value));
+            }
+            other if other.starts_with('-') => {
+                return Err(usage(format!("unknown option `{other}`")));
+            }
+            other => {
+                return Err(usage(format!(
+                    "`vcs fetch` takes no positional arguments, found `{other}`"
+                )));
             }
         }
     }
+    let lock_path = lock_path.ok_or_else(|| usage("`vcs fetch` needs `--lock <file>`"))?;
+    let store = store.ok_or_else(|| usage("`vcs fetch` needs `--store <dependency-store>`"))?;
+    let out = out.ok_or_else(|| usage("`vcs fetch` needs `-o <dir>`"))?;
 
-    if !problems.is_empty() {
-        return Err(refused(problems.join("\n\n")));
+    let lock = Lock::load(&lock_path).map_err(|e| {
+        environment(format!("cannot read lock file at `{}`: {e}", lock_path.display()))
+    })?;
+    if lock.is_empty() {
+        println!("nothing locked at `{}`; nothing to fetch", lock_path.display());
+        return Ok(ExitCode::SUCCESS);
     }
-    println!(
-        "{} declaration(s) across {} file(s) at `{}` still resolve exactly as published",
-        selected.len(),
-        checked_files,
-        store.display()
-    );
+    let manifest = Manifest::load(&store)
+        .map_err(|e| environment(format!("cannot read manifest at `{}`: {e}", store.display())))?;
+    let blobs = Blobs::open(&store)
+        .map_err(|e| environment(format!("cannot open store at `{}`: {e}", store.display())))?;
+
+    let selected =
+        select_locked(&lock, &manifest, &store).map_err(|missing| refused(missing.join("\n\n")))?;
+    let verified =
+        verify_selected(&blobs, &selected).map_err(|problems| refused(problems.join("\n\n")))?;
+
+    std::fs::create_dir_all(&out)
+        .map_err(|e| environment(format!("cannot create `{}`: {e}", out.display())))?;
+    for (source_hash, text) in &verified {
+        let path = out.join(format!("{source_hash}.ls"));
+        std::fs::write(&path, text)
+            .map_err(|e| environment(format!("cannot write `{}`: {e}", path.display())))?;
+        println!("fetched {}", path.display());
+    }
     Ok(ExitCode::SUCCESS)
 }
 

@@ -19,7 +19,14 @@
 > multi-package resolution §4.2's first paragraph describes — a lock pins
 > one store's own names, not a *program's* dependency graph, and nothing
 > here walks a closure of stores, detects a cycle, or catches a diamond
-> conflict. `modules.md`
+> conflict. **§4.6's first fetch step is built too**: `lex-sys vcs fetch
+> --lock <file> --store <dep-store> -o <dir>` re-verifies a lock the same
+> way `vcs resolve --lock` does, then writes each distinct verified
+> source to `-o` as `<source_hash>.ls`. It needed no compiler change at
+> all — `modules.md` §4.2 already means a program is the set of files
+> named on the command line and `import` already resolves a name against
+> whichever of them declares it, so a fetched file is `import`-able the
+> moment it exists on disk; see §6. `modules.md`
 > §7 named "a package and version story" as open and explicitly out of
 > scope for naming ("distribution, not naming"); `standard-library.md`
 > §2.1 named it "the decision to revisit first when a package story
@@ -221,6 +228,14 @@ content-addressed stores — never a second source of truth, and never a
 place authority is decided (that stays local, per §4.4, on every
 machine that resolves, agent or human).
 
+**The first fetch step is built as `lex-sys vcs fetch`.** It re-verifies
+a lock exactly the way `vcs resolve --lock` does, then materializes each
+distinct verified source as `<out-dir>/<source_hash>.ls` — nothing is
+written unless every pin verifies. This is the `DepLocator`-shaped
+"local path" case above, made concrete: a plain directory of files is
+already a valid resolution target, because §6 found that `import` needs
+no new mechanism to consume one.
+
 ## 5. What this does not solve
 
 - **Editions across a dependency boundary.** `editions.md` solved "a
@@ -271,17 +286,30 @@ One prediction this section made turned out wrong and is corrected at
 re-running the command by hand is a deliberate choice, not the
 automatic substitution the guarantee is actually about.
 
+**Done too: `lex-sys vcs fetch`** — a lock's pins, re-verified and
+materialized on disk as `<source_hash>.ls` files, one per distinct
+source. This was scoped, in the previous revision of this section, as
+needing `import` to learn to read a lock at compile time. Building it
+found that premise wrong: `modules.md` §4.2 already means a program is
+the set of files named on the command line and `import` already resolves
+a name against whichever of them declares it — there is no search path,
+no manifest lookup, nothing in the compiler that only knows about
+locally-written files. A fetched file is exactly such a file the moment
+it lands on disk. So the real next slice needed zero compiler changes;
+it needed only a place to fetch *to*, which is what `vcs fetch` is. This
+is confirmed end to end by a test that publishes a dependency, locks it,
+fetches it, and then builds and runs a second, separate source file that
+`import`s it — the fetched file, unmodified by anything package-specific
+in the compiler.
+
 What is not real yet, and is the actual next slice: `resolve --lock`
-still checks one store against one lock, not a *program's* dependency
-graph. There is no recursion across a closure of stores (§4.2's "each
-dependency's own dependencies resolve against that dependency's
-committed lock"), no cycle detection, no diamond-conflict refusal —
-those all need more than one dependency in the loop at once, and
-nothing here has tried that yet. `standard-library.md` §2.1's
+and `vcs fetch` still check one store against one lock, not a
+*program's* dependency graph. There is no recursion across a closure of
+stores (§4.2's "each dependency's own dependencies resolve against that
+dependency's committed lock"), no cycle detection, no diamond-conflict
+refusal — those all need more than one dependency in the loop at once,
+and nothing here has tried that yet. `standard-library.md` §2.1's
 "versioning the library separately from the compiler" is still the
 likely candidate for what exercises that next, and `--std` is still
 the wrong first dependency to force it with — nothing here has a
-reason to make it optional. The smaller, real next case is a single
-`import` actually resolving a name against one locked dependency at
-compile time — the lock format exists now, and nothing in the compiler
-reads one yet.
+reason to make it optional.
