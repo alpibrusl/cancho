@@ -403,6 +403,7 @@ not repeated here; a doc's own header carries its own detail.
 | [`hash-stability.md`](hash-stability.md) | How often a content hash actually moves | measured — the plateau `vcs.md` needed |
 | [`vcs.md`](vcs.md) | How much of `lex-vcs` lex-sys can reuse | plateau answered yes; foundation, gate, op log and attestation built |
 | [`vcs-publish.md`](vcs-publish.md) | The first real caller of `lex-sys-vcs`: publish, no diffing needed | built (`lex-sys vcs publish`/`log`) |
+| [`package-system.md`](package-system.md) | What a package would be, built from what already exists rather than invented fresh | design, not yet built |
 | [`character-literals.md`](character-literals.md) | `'a'`: a third spelling of an integer | settled and built |
 | [`emitted-checks.md`](emitted-checks.md) | The price list, read out of the binary | an audit; found a real compiler bug |
 | [`flags.md`](flags.md) | `std.flags`: a cursor, not a `getopt_long` table | settled and built |
