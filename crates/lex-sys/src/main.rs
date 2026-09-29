@@ -26,6 +26,7 @@ use lex_sys_types::{DefId, Type};
 
 mod docsync;
 mod repo_stats;
+mod vcs_cli;
 
 const USAGE: &str = "\
 lex-sys — the bootstrap compiler for the lex-sys systems dialect
@@ -41,6 +42,8 @@ usage:
     lex-sys agent-guidelines
     lex-sys docsync [--check] [manifest]
     lex-sys repo-stats
+    lex-sys vcs publish [--store <dir>] <file.ls>
+    lex-sys vcs log     [--store <dir>]
     lex-sys --version
 
 options:
@@ -97,6 +100,13 @@ rather than silently letting a stale fact sit in a doc. `repo-stats` is
 the one generator this repository has today: crate/example/doc counts and
 the `Net` outbound/inbound tally, counted fresh every run rather than
 carried by hand. See `crates/lex-sys/src/docsync.rs`.
+
+`vcs publish` logs every declaration in one file as an `AddFunction`
+operation in a content-addressed store at `--store` (default
+`.lex-sys-vcs`), gated by the same checker `check` runs. A second publish
+of an unchanged declaration is a no-op; a second publish of a *changed*
+one is refused -- incremental publish is design-stage, not built. `vcs
+log` lists what a store already has. See docs/vcs-publish.md.
 ";
 
 const EXIT_REFUSED: u8 = 1;
@@ -206,6 +216,9 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
             println!("{}", repo_stats::render(&root));
             Ok(ExitCode::SUCCESS)
         }
+        // `docs/vcs-publish.md`: a real `.ls` file through
+        // `crates/lex-sys-vcs` for the first time.
+        "vcs" => vcs_cli::cmd_vcs(&args[1..]),
         // `docs/many-files.md` §5: printing is about text, and text is
         // what a file is -- so this renders exactly one.
         "print" => {
