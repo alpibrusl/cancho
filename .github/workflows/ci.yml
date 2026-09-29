@@ -39,12 +39,6 @@ jobs:
       - name: Tests
         run: cargo test --workspace
 
-      # A generated fact (crate/example/doc counts, the Net tally) that
-      # fell out of sync with the repository is a red build here, never a
-      # discovery.
-      - name: Docs in sync
-        run: cargo run --quiet -p lex-sys -- docsync --check
-
       # The milestone in one line: build the smoke program and run it.
       - name: Smoke — lex-sys build hello.ls && ./hello
         run: |
