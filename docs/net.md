@@ -291,6 +291,18 @@ half with an asker is the one the grant does not ask about.
 > the same reason every program in this list still hand-rolls the
 > socket it connects.
 
+> **Recounted (#141): inbound still 4 programs, now 3 declaring files.**
+> `serve/` and `results_stub/` no longer write `extern fn bind`/`listen`/
+> `accept` themselves -- both `import net.sockets`
+> (`packages/net-sockets/sockets.ls`, `docs/package-system.md` §6), this
+> repository's first real published package, built because the two files
+> had duplicated the same eight `extern fn`s and two byte helpers,
+> byte-for-byte, since #129. The four programs still ask for inbound
+> socket authority exactly as before -- nothing about what `Net` would
+> need to cover changed -- only where the source text asking for it
+> lives: `agent_supervisor/`, `collect/`, and the one package file
+> `serve/`/`results_stub/` both import now.
+
 That is the honest state up to here. Both halves of the two-asker bar
 §5 set are cleared, and §3's own reason to build now rather than before
 still applies in full: `Ffi("libc")` lets a program declare

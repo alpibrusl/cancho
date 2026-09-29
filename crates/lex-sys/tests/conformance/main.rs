@@ -131,16 +131,21 @@ fn shown(ret: &str, e: &str) -> String {
 ///
 /// Returns `(effect names, foreign symbols, labels as name=argument)`.
 fn authority_of(relative: &str) -> (Vec<String>, Vec<String>, Vec<String>) {
-    let out = Command::new(BIN)
-        .args([
-            "authority".as_ref(),
-            repo_root().join(relative).as_os_str(),
-            "--std".as_ref(),
-            "--output".as_ref(),
-            "json".as_ref(),
-        ])
-        .output()
-        .expect("the compiler runs");
+    authority_of_paths(&[repo_root().join(relative)])
+}
+
+/// `authority_of`, over more than one file -- what a program that
+/// `import`s a fetched package needs, since `net.sockets`
+/// (`packages/net-sockets/`, `docs/package-system.md` §6) is not on the
+/// command line by itself.
+fn authority_of_paths(paths: &[PathBuf]) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let mut command = Command::new(BIN);
+    command.arg("authority");
+    for path in paths {
+        command.arg(path);
+    }
+    command.args(["--std", "--output", "json"]);
+    let out = command.output().expect("the compiler runs");
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let text = String::from_utf8(out.stdout).expect("the report is utf-8");
 
@@ -195,18 +200,64 @@ fn authority_of(relative: &str) -> (Vec<String>, Vec<String>, Vec<String>) {
 }
 
 fn build_example(tag: &str, relative: &str, binary: &str) -> (PathBuf, PathBuf) {
+    build_example_paths(tag, &[repo_root().join(relative)], binary)
+}
+
+/// `build_example`, over more than one file -- what a program that
+/// `import`s a fetched package needs.
+fn build_example_paths(tag: &str, paths: &[PathBuf], binary: &str) -> (PathBuf, PathBuf) {
     let dir = scratch(tag);
     let exe = dir.join(binary);
-    let build = Command::new(BIN)
+    let mut command = Command::new(BIN);
+    command.arg("build");
+    for path in paths {
+        command.arg(path);
+    }
+    command.args(["--std".as_ref(), "-o".as_ref(), exe.as_os_str()]);
+    let build = command.output().expect("the compiler runs");
+    assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+    (dir, exe)
+}
+
+/// `net.sockets` (`packages/net-sockets/`), this repository's first real
+/// `lex-sys-vcs` package (`docs/package-system.md` §6), fetched fresh
+/// into its own scratch directory and handed back as the one file `vcs
+/// fetch` wrote there. Every test that builds or authority-checks
+/// `examples/serve/serve.ls` or `examples/results_stub/results_stub.ls`
+/// -- both of which `import net.sockets` rather than duplicating its
+/// declarations -- calls this first, re-verifying the pin the same way
+/// `vcs resolve` always does rather than trusting a checked-in copy.
+fn fetch_net_sockets(tag: &str, lock_relative: &str) -> PathBuf {
+    let dir = scratch(tag);
+    let fetch = Command::new(BIN)
         .args([
-            "build".as_ref(),
-            repo_root().join(relative).as_os_str(),
-            "--std".as_ref(),
+            "vcs".as_ref(),
+            "fetch".as_ref(),
+            "--lock".as_ref(),
+            repo_root().join(lock_relative).as_os_str(),
+            "--store".as_ref(),
+            repo_root().join("packages/net-sockets/.lex-sys-vcs").as_os_str(),
             "-o".as_ref(),
-            exe.as_os_str(),
+            dir.as_os_str(),
         ])
         .output()
         .expect("the compiler runs");
-    assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
-    (dir, exe)
+    assert!(fetch.status.success(), "{}", String::from_utf8_lossy(&fetch.stderr));
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .expect("fetch wrote its output directory")
+        .map(|entry| entry.expect("a readable directory entry").path())
+        .filter(|p| p.extension().is_some_and(|e| e == "ls"))
+        .collect();
+    assert_eq!(files.len(), 1, "`net.sockets` should fetch to exactly one file, found {files:?}");
+    files.remove(0)
+}
+
+fn build_serve(tag: &str) -> (PathBuf, PathBuf) {
+    let fetched = fetch_net_sockets(&format!("{tag}-fetch"), "examples/serve/net.lock");
+    build_example_paths(tag, &[repo_root().join("examples/serve/serve.ls"), fetched], "serve")
+}
+
+fn authority_of_serve(tag: &str) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let fetched = fetch_net_sockets(&format!("{tag}-fetch"), "examples/serve/net.lock");
+    authority_of_paths(&[repo_root().join("examples/serve/serve.ls"), fetched])
 }

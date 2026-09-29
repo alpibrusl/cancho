@@ -39,6 +39,26 @@
 > pieces already built here mean for the two or three decisions
 > a package system cannot avoid, and which of them this project has
 > effectively already made.
+>
+> **A first real package now exists: `net.sockets`
+> (`packages/net-sockets/sockets.ls`, #141).** Not a fixture built to
+> exercise the pipeline — `examples/serve/serve.ls` and
+> `examples/results_stub/results_stub.ls` had independently declared the
+> same eight `extern fn`s against libc and the same two byte-writing
+> helpers since #129, an organic duplication this project's own rule
+> (`standard-library.md`: "a feature earns its way in when a program
+> asks") already justified extracting. Publishing it found a real gap
+> `vcs publish` had never hit: every store published here before now held
+> only ordinary functions with bodies, and `cmd_publish` looked up a
+> lowered IR function to read its effects, which an `extern fn`
+> declaration — a signature and nothing else, per `lex-sys-id`'s own
+> `identify()` — does not have. Fixed by reading effects from
+> `Program::externs` instead when no lowered function matches, the row
+> the declaration itself carries, not one a lowering pass computed. Both
+> consumer programs now lock `net.sockets` and `import` it rather than
+> duplicating it, verified end to end: built together, run, and hit with
+> a real HTTP request on both backends, the same as before the
+> extraction.
 
 ## 1. What asked for it
 
@@ -301,6 +321,21 @@ is confirmed end to end by a test that publishes a dependency, locks it,
 fetches it, and then builds and runs a second, separate source file that
 `import`s it — the fetched file, unmodified by anything package-specific
 in the compiler.
+
+**Done too, and the first time any of this ran on a real program rather
+than a fixture: `net.sockets`** (`packages/net-sockets/sockets.ls`) —
+`examples/serve/serve.ls`'s and `examples/results_stub/results_stub.ls`'s
+own duplicated `extern fn`s and byte helpers, published once, locked by
+each consumer, and `import`ed rather than copy-pasted. This is what found
+`vcs publish`'s only real gap so far: it had never been asked to publish
+a foreign declaration, which has a signature and no lowered body, and the
+publish path read effects off a lowered body unconditionally. Fixed by
+reading `Program::externs` when no lowered function matches (§4's own
+status header has the detail). Two real, already-tested example programs
+still build, still run, and still answer identically on both backends
+after the extraction — the strongest evidence yet that a fetched package
+composes with the rest of the toolchain exactly the way an ordinary file
+does, because it *is* one.
 
 What is not real yet, and is the actual next slice: `resolve --lock`
 and `vcs fetch` still check one store against one lock, not a

@@ -19,7 +19,9 @@
 routes the request line and answers with JSON:
 
 ```
-$ lex-sys build examples/serve/serve.ls --std -o serve && ./serve 8080 &
+$ lex-sys vcs fetch --lock examples/serve/net.lock \
+      --store packages/net-sockets/.lex-sys-vcs -o /tmp/net-sockets
+$ lex-sys build examples/serve/serve.ls /tmp/net-sockets/*.ls --std -o serve && ./serve 8080 &
 $ curl -i http://127.0.0.1:8080/health
 HTTP/1.1 200 OK
 Content-Length: 11
@@ -28,6 +30,13 @@ Content-Type: application/json
 
 {"ok":true}
 ```
+
+The `fetch` line pulls in `net.sockets` (`packages/net-sockets/`), this
+repository's first real `lex-sys-vcs` package (`docs/package-system.md`
+§6): the eight `extern fn`s against libc it declares used to live in
+`serve.ls` itself, byte-for-byte duplicated in
+`examples/results_stub/results_stub.ls`, and now live in one published,
+locked, fetched file both `import` instead.
 
 That is a real socket, a real `accept`, and a real client. The test
 harness makes the same request from Rust over loopback and checks the

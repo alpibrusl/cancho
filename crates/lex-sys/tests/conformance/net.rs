@@ -24,23 +24,7 @@ fn an_http_server_written_in_lex_sys_answers_a_real_request() {
     use std::net::{TcpListener, TcpStream};
     use std::time::{Duration, Instant};
 
-    let scratch = scratch("example-serve");
-    let exe = scratch.join("serve");
-    let build = Command::new(BIN)
-        .args([
-            "build".as_ref(),
-            repo_root().join("examples/serve/serve.ls").as_os_str(),
-            "--std".as_ref(),
-            "-o".as_ref(),
-            exe.as_os_str(),
-        ])
-        .output()
-        .expect("the compiler runs");
-    assert!(
-        build.status.success(),
-        "`serve` should compile, but the compiler said:\n{}",
-        String::from_utf8_lossy(&build.stderr)
-    );
+    let (scratch, exe) = build_serve("example-serve");
 
     // `[(request target, status line, body)]` — one exchange per run.
     let exchanges = [
@@ -120,8 +104,10 @@ fn an_http_server_written_in_lex_sys_answers_a_real_request() {
 /// supervisor reading that list knows what it is being asked to run.
 #[test]
 fn the_authority_report_names_the_syscalls_the_row_cannot() {
+    let fetched = fetch_net_sockets("syscalls-named-fetch", "examples/serve/net.lock");
     let output = Command::new(BIN)
         .args(["authority".as_ref(), repo_root().join("examples/serve/serve.ls").as_os_str()])
+        .arg(fetched.as_os_str())
         .args(["--std", "--output", "json"])
         .output()
         .expect("the compiler runs");
@@ -171,6 +157,17 @@ fn the_authority_report_names_the_syscalls_the_row_cannot() {
 /// `connect` this document's own builtin and this program's `Net` bound
 /// would need a port fixed at compile time, which a test-picked free
 /// port cannot be.
+///
+/// **`net.sockets` (#141, `docs/package-system.md` §6) moved two of those
+/// declarations out from under this walker.** `examples/serve/` and
+/// `examples/results_stub/` no longer write `extern fn bind`/`listen`/
+/// `accept` themselves -- they `import net.sockets`
+/// (`packages/net-sockets/sockets.ls`) instead, this repository's first
+/// real published package. The four *programs* still ask for inbound
+/// socket authority exactly as before; what changed is where the source
+/// text asking for it lives, so `packages` joins the walked directories
+/// and the package's one file stands in for the two programs that import
+/// it rather than declare it.
 #[test]
 fn the_network_programs_are_counted() {
     let root = repo_root();
@@ -178,12 +175,17 @@ fn the_network_programs_are_counted() {
     let mut outbound = std::collections::BTreeSet::new();
 
     let mut sources: Vec<PathBuf> = Vec::new();
-    for directory in ["examples", "std", "tests/accept"] {
+    for directory in ["examples", "std", "tests/accept", "packages"] {
         let mut stack = vec![root.join(directory)];
         while let Some(at) = stack.pop() {
             for entry in std::fs::read_dir(&at).expect("a readable directory") {
                 let path = entry.expect("a readable entry").path();
-                if path.is_dir() {
+                // A published store (`.lex-sys-vcs`) keeps its own copy of
+                // every blob it holds, under `sources/`; walking into it
+                // would count `packages/net-sockets/sockets.ls`'s
+                // declarations twice under two different paths.
+                let is_store = path.file_name().is_some_and(|n| n == ".lex-sys-vcs");
+                if path.is_dir() && !is_store {
                     stack.push(path);
                 } else if path.extension().is_some_and(|e| e == "ls") {
                     sources.push(path);
@@ -196,7 +198,12 @@ fn the_network_programs_are_counted() {
         let text = std::fs::read_to_string(path).expect("a readable program");
         let relative = path.strip_prefix(&root).unwrap_or(path).display().to_string();
         for line in text.lines() {
-            let Some(rest) = line.trim().strip_prefix("extern fn ") else { continue };
+            // `packages/net-sockets/sockets.ls` is the first source here
+            // whose `extern fn`s are `pub` -- a package's declarations
+            // have to be, or nothing that imports it could reach them.
+            let trimmed = line.trim();
+            let trimmed = trimmed.strip_prefix("pub ").unwrap_or(trimmed);
+            let Some(rest) = trimmed.strip_prefix("extern fn ") else { continue };
             let Some(name) = rest.split(['[', '(']).next() else { continue };
             let name = name.trim();
             if ["bind", "listen", "accept"].contains(&name) {
@@ -217,8 +224,7 @@ fn the_network_programs_are_counted() {
             vec![
                 "examples/agent_supervisor/agent_supervisor.ls",
                 "examples/collect/collect.ls",
-                "examples/results_stub/results_stub.ls",
-                "examples/serve/serve.ls"
+                "packages/net-sockets/sockets.ls"
             ],
             vec![
                 "examples/agent_guest/agent_guest.ls",
@@ -228,8 +234,10 @@ fn the_network_programs_are_counted() {
                 "examples/vsock/vsock.ls"
             ]
         ),
-        "the network programs changed: `net.md` §5 counts inbound 4, outbound 5, and \
-         two is the bar for building `Net`. Rewrite §5, then this."
+        "the network programs changed: `net.md` §5 counts inbound 4 programs across 3 \
+         declaring source files (`packages/net-sockets/sockets.ls` covers two of the \
+         four), outbound 5, and two is the bar for building `Net`. Rewrite §5, then \
+         this."
     );
 }
 
@@ -247,7 +255,7 @@ fn the_network_programs_are_counted() {
 #[test]
 fn a_lex_sys_client_fetches_from_a_lex_sys_server() {
     use std::time::{Duration, Instant};
-    let (server_dir, server) = build_example("fetch-server", "examples/serve/serve.ls", "serve");
+    let (server_dir, server) = build_serve("fetch-server");
     let (client_dir, client) = build_example("fetch-client", "examples/fetch/fetch.ls", "fetch");
 
     // `(path, body, exit status)` -- one exchange per server run, because
@@ -450,7 +458,8 @@ fn main(world: World) -> [] int {
 #[test]
 fn the_client_and_the_server_differ_only_in_their_symbols() {
     let (client_effects, client_symbols, _) = authority_of("examples/fetch/fetch.ls");
-    let (server_effects, server_symbols, _) = authority_of("examples/serve/serve.ls");
+    let (server_effects, server_symbols, _) =
+        authority_of_serve("client-and-server-differ-in-symbols");
     assert!(client_effects.contains(&"ffi".to_owned()), "{client_effects:?}");
     assert!(server_effects.contains(&"ffi".to_owned()), "{server_effects:?}");
     assert!(client_symbols.contains(&"connect".to_owned()), "{client_symbols:?}");
@@ -476,7 +485,7 @@ fn the_client_and_the_server_differ_only_in_their_symbols() {
 #[test]
 fn a_lex_sys_agent_reports_to_a_lex_sys_server() {
     use std::time::{Duration, Instant};
-    let (server_dir, server) = build_example("report-server", "examples/serve/serve.ls", "serve");
+    let (server_dir, server) = build_serve("report-server");
     let (client_dir, client) =
         build_example("report-client", "examples/report/report.ls", "report");
 

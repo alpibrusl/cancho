@@ -324,6 +324,7 @@ crates/lex-sys-vcs       content-addressed operation log (vcs.md)
 crates/lex-sys           the CLI
 std/                     the standard library, as Lex source
 examples/                programs meant to be read
+packages/                published lex-sys-vcs packages (package-system.md)
 tests/accept             fixtures that must compile and run
 tests/reject             fixtures that must be refused, each stating why
 benches/                 checked/wrapping pairs; what the overflow trap costs
@@ -403,7 +404,7 @@ not repeated here; a doc's own header carries its own detail.
 | [`hash-stability.md`](hash-stability.md) | How often a content hash actually moves | measured — the plateau `vcs.md` needed |
 | [`vcs.md`](vcs.md) | How much of `lex-vcs` lex-sys can reuse | plateau answered yes; foundation, gate, op log and attestation built |
 | [`vcs-publish.md`](vcs-publish.md) | The first real caller of `lex-sys-vcs`: publish, no diffing needed | built (`lex-sys vcs publish`/`log`) |
-| [`package-system.md`](package-system.md) | What a package would be, built from what already exists rather than invented fresh | design, mostly unbuilt — `lex-sys vcs resolve`/`vcs lock`/`vcs fetch` are the first three real slices; a fetched dependency is already `import`-able with no compiler changes |
+| [`package-system.md`](package-system.md) | What a package would be, built from what already exists rather than invented fresh | design, mostly unbuilt — `lex-sys vcs resolve`/`vcs lock`/`vcs fetch` are the first three real slices, and `net.sockets` (`packages/net-sockets/`) is the first real package, built and consumed by two real example programs |
 | [`character-literals.md`](character-literals.md) | `'a'`: a third spelling of an integer | settled and built |
 | [`emitted-checks.md`](emitted-checks.md) | The price list, read out of the binary | an audit; found a real compiler bug |
 | [`flags.md`](flags.md) | `std.flags`: a cursor, not a `getopt_long` table | settled and built |

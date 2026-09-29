@@ -272,7 +272,7 @@ fn purity_is_the_row_plus_what_a_reference_may_do() {
 /// `lex-os` join in `ROADMAP.md` becomes possible.
 #[test]
 fn a_network_program_reports_no_network() {
-    let (effects, symbols, _) = authority_of("examples/serve/serve.ls");
+    let (effects, symbols, _) = authority_of_serve("a-network-program-reports-no-network");
     assert_eq!(
         effects,
         vec!["args", "ffi"],
@@ -308,23 +308,27 @@ fn a_network_program_reports_no_network() {
 /// first half of this test and be worthless.
 #[test]
 fn the_report_fails_closed() {
-    let report = |relative: &str| -> String {
-        let out = Command::new(BIN)
-            .args(["authority".as_ref(), repo_root().join(relative).as_os_str()])
-            .args(["--std", "--output", "json"])
-            .output()
-            .expect("the compiler runs");
+    let report = |paths: &[PathBuf]| -> String {
+        let mut command = Command::new(BIN);
+        command.arg("authority");
+        for path in paths {
+            command.arg(path);
+        }
+        command.args(["--std", "--output", "json"]);
+        let out = command.output().expect("the compiler runs");
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         String::from_utf8(out.stdout).expect("the report is utf-8")
     };
 
-    let serve = report("examples/serve/serve.ls");
+    let serve_fetched = fetch_net_sockets("report-fails-closed-fetch", "examples/serve/net.lock");
+    let serve_paths = [repo_root().join("examples/serve/serve.ls"), serve_fetched.clone()];
+    let serve = report(&serve_paths);
     assert!(
         serve.trim_start().starts_with("{\n  \"bounded\": false,"),
         "a program reaching foreign code must lead with `bounded: false`:\n{serve}"
     );
 
-    let cut = report("examples/cut/cut.ls");
+    let cut = report(&[repo_root().join("examples/cut/cut.ls")]);
     assert!(
         cut.trim_start().starts_with("{\n  \"bounded\": true,"),
         "a program with no foreign code is bounded, or the flag means nothing:\n{cut}"
@@ -333,6 +337,7 @@ fn the_report_fails_closed() {
     // And the prose form says so before anything else.
     let prose = Command::new(BIN)
         .args(["authority".as_ref(), repo_root().join("examples/serve/serve.ls").as_os_str()])
+        .arg(serve_fetched.as_os_str())
         .arg("--std")
         .output()
         .expect("the compiler runs");

@@ -1,0 +1,12 @@
+{
+  "op_id": "c95301ff54b0d059482f4e8b20d3c085c9ac462760f543e70a84ab92fa283f7c",
+  "operation": {
+    "kind": "AddFunction",
+    "sig_id": "c54a0414deb8f2822b8af25a94cf160024328ed76e62b59ab65700db98761b60",
+    "stage_id": "c54a0414deb8f2822b8af25a94cf160024328ed76e62b59ab65700db98761b60",
+    "effects": [
+      "ffi(\"libc\")"
+    ],
+    "edition": 1
+  }
+}
