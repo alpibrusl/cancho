@@ -101,6 +101,18 @@
 > Nothing in this section's own "not built yet" gap moved: this was nine
 > already-real files converging on the two already-real packages, not a
 > new question about composition.
+>
+> **A third package, `agent.wire` (`packages/agent-wire/wire.ls`), with
+> no `extern fn` in it.** `examples/vsock/vsock.ls` and
+> `examples/agent_guest/agent_guest.ls` duplicated the same five pure
+> functions -- an `AgentViewMsg` decoder, byte-for-byte, the same "two
+> real askers" bar `net.sockets` cleared first. Confirms a package is
+> just a `lex-sys-vcs` store, indifferent to whether what it publishes
+> declares against libc or is ordinary Lex with a body. §6 has the
+> detail, including the one real publish-time constraint it found
+> (`--std` is never available to `vcs publish`) and why the JSON
+> escaper on the encoding side of the same wire protocol stays
+> unextracted.
 
 ## 1. What asked for it
 
@@ -400,6 +412,28 @@ one of the nine files that used to declare its own copy of these
 `extern fn`s now imports the package instead, verified the same way
 each earlier one was: locked, fetched fresh, and built. `docs/net.md`
 §5 has the recount.
+
+**Done too: `agent.wire` (`packages/agent-wire/wire.ls`), the third real
+package and the first with no `extern fn` in it at all.**
+`examples/vsock/vsock.ls` and `examples/agent_guest/agent_guest.ls`
+duplicated the same five pure functions -- `find_after`/`end_of_quoted`/
+`goal_start_of`/`goal_end_of`/`step_of`, a decoder for one field of a
+real `lex-os-proto` `AgentViewMsg` line -- byte-for-byte, exactly the
+"two real askers" bar `net.sockets` itself cleared first. Everything
+about publishing and fetching a package works the same whether its
+declarations are `extern fn` against libc or ordinary `fn` with a body:
+`vcs publish` type-checks and hashes either kind identically, and the
+one real constraint this slice found -- `vcs publish` never makes
+`--std` available (`cmd_publish` parses with `with_std: false`
+unconditionally, unlike `build`/`check`) -- was already true for
+`net.sockets`'s own `put`/`put_nat`, which is why neither package
+imports anything from `std`. The escaper on the other side of this same
+wire protocol (`append_json_escaped` in `vsock.ls`, `put_escaped` in
+`agent_supervisor.ls`) stays unextracted: same escaping rule, but two
+different signatures (one writes into a `std.buffer.Buffer`, the other
+into a fixed slice with a cursor, because `agent_supervisor.ls` has no
+`Heap` to spend), so bundling them would be guessing at a shape neither
+file asked for rather than naming one that is already duplicated.
 
 What is not real yet, and is the actual remaining gap: a program whose
 dependency *is itself* a dependency of something else — a true closure
