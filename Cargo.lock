@@ -513,6 +513,7 @@ dependencies = [
  "lex-sys-ir",
  "lex-sys-syntax",
  "lex-sys-types",
+ "lex-sys-vcs",
  "serde",
  "tempfile",
  "toml",

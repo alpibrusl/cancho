@@ -18,6 +18,7 @@ lex-sys-types.workspace = true
 lex-sys-id.workspace = true
 lex-sys-codegen.workspace = true
 lex-sys-codegen-llvm.workspace = true
+lex-sys-vcs.workspace = true
 serde = { version = "1", features = ["derive"] }
 toml = "1"
 
