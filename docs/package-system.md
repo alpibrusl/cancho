@@ -19,7 +19,7 @@
 > multi-package resolution §4.2's first paragraph describes — a lock pins
 > one store's own names, not a *program's* dependency graph, and nothing
 > here walks a closure of stores, detects a cycle, or catches a diamond
-> conflict. **§4.6's first fetch step is built too**: `lex-sys vcs fetch
+> conflict. **§4.7's first fetch step is built too**: `lex-sys vcs fetch
 > --lock <file> --store <dep-store> -o <dir>` re-verifies a lock the same
 > way `vcs resolve --lock` does, then writes each distinct verified
 > source to `-o` as `<source_hash>.ls`. It needed no compiler change at
@@ -113,6 +113,16 @@
 > (`--std` is never available to `vcs publish`) and why the JSON
 > escaper on the encoding side of the same wire protocol stays
 > unextracted.
+>
+> **Found a fourth duplication, and it needs the real remaining gap to
+> extract.** `examples/collect/collect.ls` and
+> `examples/agent_supervisor/agent_supervisor.ls` duplicate
+> `content_length_of`/`read_request` byte-for-byte, but the package that
+> would hold them needs `net.sockets` itself — confirmed today's `vcs
+> publish` refuses that outright. §4.6 is now the design for closing it:
+> a store-carried `requires/`, `vcs publish --requires`, and a recursive,
+> cycle/diamond-checked walk in `vcs resolve`/`vcs fetch`. §6 has the
+> detail; not built yet as of this revision.
 
 ## 1. What asked for it
 
@@ -286,7 +296,111 @@ nothing *other* than that explicit command ever changes what a name
 resolves to, and `vcs resolve --lock` only ever reads the lock, never
 re-derives a name from anything live.
 
-### 4.6 Distribution: no hub required to start
+### 4.6 Closure resolution: a package that depends on a package
+
+The real motivating case, found rather than invented: `examples/collect/
+collect.ls` and `examples/agent_supervisor/agent_supervisor.ls` — both
+already `import net.sockets` — duplicate a second pair of functions
+byte-for-byte, `content_length_of` and `read_request` (63 lines
+together), an HTTP request reader built on top of `sockets.read`. That
+is the same "two real askers" bar every package here has cleared, but
+extracting it hits a wall none of the first three packages did: the new
+package's own source would need `import net.sockets` too, and confirmed
+directly (`vcs publish` on a file importing `net.sockets` today) —
+
+```
+error: no module `net.sockets` in this program; a module exists where a
+file declares it
+```
+
+— because `vcs publish` only ever sees the one file it is publishing
+(§4.1), and `vcs resolve --lock`/`vcs fetch --lock`'s own re-check
+(`verify_selected` in `crates/lex-sys/src/vcs_cli.rs`) type-checks each
+pinned source blob **alone**, the same restriction. Both are real, not
+incidental: a package with no dependency of its own (all three built so
+far) never needed either to change.
+
+**What does not need to change.** `lex-sys-id::identify()` is purely
+structural — a function's `SigId`/`StageId` is a hash of its own written
+signature and body, never of what an imported callee's declaration
+actually says (`docs/design/canonicalization.md`). Resolving `import
+net.sockets` is `lex-sys-ir`'s job (`defs.rs`'s module-scope pass, run
+during `lower_all`), not `identify()`'s — the "no module" refusal above
+comes from there. So a package's own `SigId` is computable, and matches
+what a manifest already pinned, without its dependency present at all.
+Only the **soundness gate** — confirming a pinned declaration still
+type-checks under today's compiler, the actual point of re-verifying
+rather than trusting a hash (`hash-stability.md`'s whole finding) —
+needs the dependency's source in scope. That gate is a `lower_all` call
+already made from an `Ast` built by merging named texts
+(`parse_program`'s own loop, `crates/lex-sys/src/main.rs`); nothing
+about multi-file lowering itself is new, `net.connect`+`net.sockets`
+compose that way at `build` time already. What is new is doing it from
+already-verified **text in memory** rather than files a caller named on
+a command line — `vcs publish`/`verify_selected` hold dependency source
+as trusted strings, not paths, so the shared helper this needs
+(`parse_texts`, a text-only version of `parse_program`'s inner loop) has
+to accept `(name, text)` pairs directly.
+
+**The shape, concretely:**
+
+- **A store may carry `requires/*.json`** alongside `manifest.json`/
+  `ops/`/`sources/` — each file a `Requirement { store: String, lock:
+  Lock }`: `store` is a path exactly as the publisher typed it after
+  `--store` for that dependency (interpreted relative to *whoever runs
+  resolve/fetch next*'s own working directory, never rewritten — the
+  same meaning a bare `--store <dir>` argument already has everywhere
+  else in this document, so a repo-relative path recorded at publish
+  time inside this monorepo stays valid for every consumer, the same
+  way every existing example's own command already assumes running from
+  the repo root). `lock` is an ordinary `Lock` (§4.5's format,
+  unchanged) — the *package's own* pin into its dependency, chosen once
+  at publish time exactly the way a program's own `net.lock` is chosen
+  today. One file per distinct dependency store, the same "one lock per
+  store" shape a program with two direct dependencies already uses
+  (`examples/fetch/net.lock` + `connect.lock`).
+- **`vcs publish` grows `--requires <lock-file>:<dep-store>`
+  (repeatable).** For each one: resolve and verify it exactly the way
+  `vcs resolve --lock` already does (reusing `select_locked`/
+  `verify_selected` unchanged) to get real, trusted dependency source;
+  feed that alongside the primary file into the new soundness gate; on
+  success, publish exactly as today (`identify()` on the primary file
+  *alone*, unaffected by any of this) and write `requires/` from the
+  `--requires` pairs given. Requirements are whole-store, last-publish-
+  wins metadata, not diffed or versioned per declaration — consistent
+  with every package here so far having exactly one publish, ever
+  (`vcs-publish.md` §5: incremental publish is not built yet either).
+- **`vcs resolve`/`vcs fetch` walk `requires/` recursively before
+  verifying.** A new `resolve_requirements` gathers every transitively
+  required source, bottoming out at a leaf store (no `requires/` at
+  all, today's exact behaviour, unchanged) and threading two things
+  through the whole walk rather than resetting per level, because
+  either violation can appear between siblings as easily as between a
+  level and its own ancestor:
+  - **a cycle** — the same store's canonicalized path already on the
+    current path — refused, naming the chain;
+  - **a diamond conflict** — the same `(store, name)` pair pinned to
+    two different `sig_id`s by two different paths through the graph —
+    refused, naming both pins. Two paths agreeing on the same head is
+    not a conflict and is not refused; only disagreement is.
+  `verify_selected` gains an `extra_context: &BTreeMap<source_hash,
+  text>` parameter — the closure's gathered text, merged into every
+  group's `lower_all` call so an `import` in the group's own blob
+  resolves — everything else about it, including the per-entry
+  `SigId`/`StageId` check, is unchanged. `vcs fetch` writes the whole
+  closure's text to `-o`, not just the directly-locked store's own, so
+  one fetch of `http.request` hands back `net.sockets`' source too — a
+  consumer of a package that has a dependency never has to know that,
+  let alone fetch it themselves.
+
+What this still does not solve, on purpose: **conflict resolution
+beyond refusal.** Two disagreeing pins are refused, never reconciled
+(no "pick the newer one," no semver range) — the same reason §5 defers
+semantic versioning: a hash is the only thing actually depended on, and
+there is no rule here for choosing between two different hashes a human
+did not choose between explicitly.
+
+### 4.7 Distribution: no hub required to start
 
 `lex pkg`'s hub (`crates/lex-syntax/src/registry.rs`, hosted at
 `vcs.lexlang.org`) is real, useful infrastructure, but nothing here
@@ -326,7 +440,7 @@ no new mechanism to consume one.
   resolver itself.
 - **A hosted hub, a search index, anything like `lex pkg search`.**
   `lex-cli/src/pkg_search.rs` is real prior art for when this is worth
-  building; §4.6 argues it is not the first thing needed.
+  building; §4.7 argues it is not the first thing needed.
 - **Signing, or trust-of-signer.** `lex-os-capsule`'s own stated gap —
   *"verifies a signature is valid for a given key, not that the key is
   trusted"* — is inherited here unresolved, not solved by anything
@@ -441,7 +555,18 @@ of stores, not just several direct ones. `resolve --lock` and `vcs
 fetch` still check one store against one lock each; nothing here walks
 a dependency's own lock to find *its* dependencies, detects a cycle, or
 refuses a diamond conflict (two paths to the same package pinning
-different heads). `standard-library.md` §2.1's "versioning the library
-separately from the compiler" is still the likely candidate for what
-would exercise that, and `--std` is still the wrong first dependency to
-force it with — nothing here has a reason to make it optional.
+different heads). **No longer a hypothetical case waiting on
+`standard-library.md` §2.1**: `examples/collect/collect.ls` and
+`examples/agent_supervisor/agent_supervisor.ls` duplicate a fourth
+byte-for-byte pair, `content_length_of`/`read_request`, and extracting
+it needs exactly this — a package (`http.request`, not yet built) that
+itself needs `net.sockets`. §4.6 is the design this gap now has: a
+`requires/` directory a store may carry, `vcs publish --requires
+<lock>:<store>` to write it, and a recursive `resolve_requirements`
+walk in `vcs resolve`/`vcs fetch` with cycle and diamond-conflict
+refusal. Confirmed directly, not assumed: publishing a file with
+`import net.sockets` today refuses with "no module `net.sockets` in
+this program," and `lex-sys-id::identify()` needing no resolved import
+at all (it is purely structural; only `lower_all`'s soundness gate
+does) is why the fix does not need to touch the compiler's identity
+machinery, only `vcs publish`/`vcs resolve`/`vcs fetch` themselves.
