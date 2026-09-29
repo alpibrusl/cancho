@@ -20,7 +20,8 @@ use std::process::ExitCode;
 use lex_sys_id::identify;
 use lex_sys_ir::{Effects, Func};
 use lex_sys_vcs::{
-    Blobs, Manifest, ManifestEntry, OpLog, Operation, OperationKind, OperationRecord,
+    Blobs, Lock, LockEntry, Manifest, ManifestEntry, OpLog, Operation, OperationKind,
+    OperationRecord, SigId,
 };
 
 use crate::{Failure, environment, parse_program, refused, usage};
@@ -37,8 +38,9 @@ pub fn cmd_vcs(args: &[String]) -> Result<ExitCode, Failure> {
         Some("publish") => cmd_publish(&args[1..]),
         Some("log") => cmd_log(&args[1..]),
         Some("resolve") => cmd_resolve(&args[1..]),
+        Some("lock") => cmd_lock(&args[1..]),
         Some(other) => Err(usage(format!("unknown `vcs` subcommand `{other}`"))),
-        None => Err(usage("`vcs` needs a subcommand: `publish`, `log` or `resolve`")),
+        None => Err(usage("`vcs` needs a subcommand: `publish`, `log`, `resolve` or `lock`")),
     }
 }
 
@@ -226,17 +228,36 @@ fn cmd_log(args: &[String]) -> Result<ExitCode, Failure> {
 /// build; this is that measurement, run against someone else's store
 /// instead of assumed away.
 ///
+/// `--lock <file>` (§4.5) scopes this to just the names a consumer's own
+/// `vcs lock` pinned, rather than everything the store has ever
+/// published — the difference between "does this store still hold
+/// together" and "do *my* dependencies."
+///
 /// Groups by `source_hash` first, so a file several declarations came
 /// from is re-checked once rather than once per declaration.
 fn cmd_resolve(args: &[String]) -> Result<ExitCode, Failure> {
+    let mut lock_path: Option<PathBuf> = None;
+    let mut store: Option<PathBuf> = None;
     let mut it = args.iter();
-    let Some(store) = it.next() else {
-        return Err(usage("`vcs resolve` needs a store directory"));
-    };
-    if it.next().is_some() {
-        return Err(usage("`vcs resolve` takes exactly one store directory"));
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--lock" => {
+                let value = it.next().ok_or_else(|| usage("`--lock` needs a path"))?;
+                lock_path = Some(PathBuf::from(value));
+            }
+            other if other.starts_with('-') => {
+                return Err(usage(format!("unknown option `{other}`")));
+            }
+            other if store.is_none() => store = Some(PathBuf::from(other)),
+            other => {
+                return Err(usage(format!(
+                    "`vcs resolve` takes exactly one store directory, found a second \
+                     argument `{other}`"
+                )));
+            }
+        }
     }
-    let store = PathBuf::from(store);
+    let store = store.ok_or_else(|| usage("`vcs resolve` needs a store directory"))?;
 
     let manifest = Manifest::load(&store)
         .map_err(|e| environment(format!("cannot read manifest at `{}`: {e}", store.display())))?;
@@ -247,9 +268,43 @@ fn cmd_resolve(args: &[String]) -> Result<ExitCode, Failure> {
     let blobs = Blobs::open(&store)
         .map_err(|e| environment(format!("cannot open store at `{}`: {e}", store.display())))?;
 
-    let mut by_source: std::collections::BTreeMap<String, Vec<(&String, &ManifestEntry)>> =
+    // Everything the store has, or -- with `--lock` -- only the sig_ids a
+    // consumer actually pinned. Either way this is now the manifest's own
+    // current entry for each one, not the lock's stale copy of it: the
+    // lock only ever chooses *which* declarations, never what is true
+    // about them today.
+    let selected: Vec<(SigId, ManifestEntry)> = match &lock_path {
+        None => manifest.entries().map(|(sig_id, entry)| (sig_id.clone(), entry.clone())).collect(),
+        Some(lock_path) => {
+            let lock = Lock::load(lock_path).map_err(|e| {
+                environment(format!("cannot read lock file at `{}`: {e}", lock_path.display()))
+            })?;
+            if lock.is_empty() {
+                println!("nothing locked at `{}`; nothing to resolve", lock_path.display());
+                return Ok(ExitCode::SUCCESS);
+            }
+            let mut selected = Vec::new();
+            let mut missing: Vec<String> = Vec::new();
+            for (name, lock_entry) in lock.entries() {
+                match manifest.get(&lock_entry.sig_id) {
+                    Some(entry) => selected.push((lock_entry.sig_id.clone(), entry.clone())),
+                    None => missing.push(format!(
+                        "{name}: sig_id {} is no longer published at `{}`",
+                        lock_entry.sig_id,
+                        store.display()
+                    )),
+                }
+            }
+            if !missing.is_empty() {
+                return Err(refused(missing.join("\n\n")));
+            }
+            selected
+        }
+    };
+
+    let mut by_source: std::collections::BTreeMap<String, Vec<(&SigId, &ManifestEntry)>> =
         std::collections::BTreeMap::new();
-    for (sig_id, entry) in manifest.entries() {
+    for (sig_id, entry) in &selected {
         by_source.entry(entry.source_hash.clone()).or_default().push((sig_id, entry));
     }
 
@@ -313,9 +368,81 @@ fn cmd_resolve(args: &[String]) -> Result<ExitCode, Failure> {
     }
     println!(
         "{} declaration(s) across {} file(s) at `{}` still resolve exactly as published",
-        manifest.len(),
+        selected.len(),
         checked_files,
         store.display()
     );
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `docs/package-system.md` §4.5: a name is chosen once, when a
+/// dependency is first added, and resolved by hash forever after -- this
+/// is that choice. `lex-sys vcs lock --store <dep-store> -o <lockfile>
+/// <name>...` looks each name up in the dependency's own manifest (by
+/// `ManifestEntry::name`, never by a hash the caller does not have yet)
+/// and pins it, refusing rather than guessing if the name is missing or
+/// ambiguous. `vcs resolve --lock <lockfile> <dep-store>` is the reader.
+fn cmd_lock(args: &[String]) -> Result<ExitCode, Failure> {
+    let mut store: Option<PathBuf> = None;
+    let mut out: Option<PathBuf> = None;
+    let mut names: Vec<String> = Vec::new();
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--store" => {
+                let value = it.next().ok_or_else(|| usage("`--store` needs a path"))?;
+                store = Some(PathBuf::from(value));
+            }
+            "-o" => {
+                let value = it.next().ok_or_else(|| usage("`-o` needs a path"))?;
+                out = Some(PathBuf::from(value));
+            }
+            other if other.starts_with('-') => {
+                return Err(usage(format!("unknown option `{other}`")));
+            }
+            other => names.push(other.to_owned()),
+        }
+    }
+    let store = store.ok_or_else(|| usage("`vcs lock` needs `--store <dependency-store>`"))?;
+    let out = out.ok_or_else(|| usage("`vcs lock` needs `-o <lockfile>`"))?;
+    if names.is_empty() {
+        return Err(usage("`vcs lock` needs at least one declaration name"));
+    }
+
+    let manifest = Manifest::load(&store)
+        .map_err(|e| environment(format!("cannot read manifest at `{}`: {e}", store.display())))?;
+    let mut lock = Lock::load(&out)
+        .map_err(|e| environment(format!("cannot read lock file at `{}`: {e}", out.display())))?;
+
+    for name in &names {
+        let matches: Vec<(&SigId, &ManifestEntry)> =
+            manifest.entries().filter(|(_, entry)| &entry.name == name).collect();
+        match matches.as_slice() {
+            [] => {
+                return Err(refused(format!("`{name}` is not published at `{}`", store.display())));
+            }
+            [(sig_id, entry)] => {
+                lock.insert(
+                    name.clone(),
+                    LockEntry {
+                        sig_id: (*sig_id).clone(),
+                        stage_id: entry.stage_id.clone(),
+                        source_hash: entry.source_hash.clone(),
+                    },
+                );
+                println!("locked {name}");
+            }
+            _ => {
+                return Err(refused(format!(
+                    "`{name}` is ambiguous at `{}`: {} declarations share that name",
+                    store.display(),
+                    matches.len()
+                )));
+            }
+        }
+    }
+
+    lock.save(&out)
+        .map_err(|e| environment(format!("cannot write lock file at `{}`: {e}", out.display())))?;
     Ok(ExitCode::SUCCESS)
 }

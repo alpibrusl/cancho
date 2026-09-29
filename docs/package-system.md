@@ -10,10 +10,16 @@
 > `OpLog` nor `Manifest` store a declaration's actual source, only its
 > hash — `Blobs` (`crates/lex-sys-vcs/src/blobs.rs`), a small
 > content-addressed store for exactly that, is the piece that was
-> missing. What is **not** built yet: the lock-driven, recursive,
-> multi-package resolution §4.2's first paragraph describes — `resolve`
-> checks one store's own pins against itself, not a consumer program's
-> dependency graph, cycle detection, or diamond conflicts. `modules.md`
+> missing. **§4.5's naming half is built too**: `lex-sys vcs lock --store
+> <dep-store> -o <file> <name>...` looks a name up in a dependency's
+> manifest and pins it by hash into a lock file, refusing if the name is
+> unpublished or ambiguous; `vcs resolve --lock <file> <store-dir>` scopes
+> resolution to just those pins instead of everything the store has ever
+> published. What is **not** built yet: the lock-driven, recursive,
+> multi-package resolution §4.2's first paragraph describes — a lock pins
+> one store's own names, not a *program's* dependency graph, and nothing
+> here walks a closure of stores, detects a cycle, or catches a diamond
+> conflict. `modules.md`
 > §7 named "a package and version story" as open and explicitly out of
 > scope for naming ("distribution, not naming"); `standard-library.md`
 > §2.1 named it "the decision to revisit first when a package story
@@ -182,8 +188,22 @@ chosen exactly once, by whoever ran the add command; nothing downstream
 can silently substitute a different package under the same name later
 — the mutable name-resolves-to-latest model that is dependency
 confusion and typosquatting's entire attack surface in a registry that
-works that way. Re-adding a name that already has a lock entry, with a
-different hash, is a refusal, never a silent replace.
+works that way.
+
+**Built as `lex-sys vcs lock`, and one prediction corrected on
+contact.** This paragraph originally said re-locking an existing name to
+a different hash should be a refusal; building it found that too strict.
+The attack this section is about is *automatic* substitution — a build
+silently re-resolving a name against a live registry, with nothing in
+the loop to notice. Running `vcs lock` a second time, by hand or by an
+agent that decided to, is not that: it is the same deliberate act as
+`cargo update` or `git tag -f`, and there is nothing to protect a
+consumer *from* in their own explicit choice to re-pin. So a second
+`vcs lock <name>` overwrites the lock entry, and what actually
+implements this section's guarantee is narrower and correct as stated:
+nothing *other* than that explicit command ever changes what a name
+resolves to, and `vcs resolve --lock` only ever reads the lock, never
+re-derives a name from anything live.
 
 ### 4.6 Distribution: no hub required to start
 
@@ -240,16 +260,28 @@ check` already pays for an ordinary program. What it found that this
 document had not named: source itself had nowhere to live (`Blobs`,
 now built).
 
-What is not real yet, and is the actual next slice: `resolve` checks
-one store against itself. It does not walk a *consumer's* dependency
-graph, does not have a lock file format of its own, and does not
-implement §4.2's "each dependency's own dependencies resolve against
-that dependency's committed lock" recursion — there is only one store
-in the loop today, not a closure of them. `standard-library.md` §2.1's
+**Done too: `lex-sys vcs lock` / `vcs resolve --lock`** — §4.5's naming
+half now has a lock file format (`crates/lex-sys-vcs/src/lock.rs`,
+name-keyed rather than `Manifest`'s `SigId`-keyed, because a consumer
+looks a dependency up by the name it wrote down, not by a hash it does
+not have yet) and a command that writes one, plus `resolve`'s own
+`--lock` flag to check only what was pinned rather than a whole store.
+One prediction this section made turned out wrong and is corrected at
+§4.5 itself: re-locking a name is an overwrite, not a refusal, because
+re-running the command by hand is a deliberate choice, not the
+automatic substitution the guarantee is actually about.
+
+What is not real yet, and is the actual next slice: `resolve --lock`
+still checks one store against one lock, not a *program's* dependency
+graph. There is no recursion across a closure of stores (§4.2's "each
+dependency's own dependencies resolve against that dependency's
+committed lock"), no cycle detection, no diamond-conflict refusal —
+those all need more than one dependency in the loop at once, and
+nothing here has tried that yet. `standard-library.md` §2.1's
 "versioning the library separately from the compiler" is still the
 likely candidate for what exercises that next, and `--std` is still
 the wrong first dependency to force it with — nothing here has a
-reason to make it optional. A smaller, real next case is a single
-`import` resolving a name against one locked, resolved dependency,
-which is the first point this document's naming half (§4.5) has
-anything to attach to.
+reason to make it optional. The smaller, real next case is a single
+`import` actually resolving a name against one locked dependency at
+compile time — the lock format exists now, and nothing in the compiler
+reads one yet.
