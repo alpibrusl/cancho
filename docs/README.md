@@ -1,99 +1,430 @@
-# Design documents
+# The guide
 
-Design lands here before the code that implements it, which is the cheap
-place for it to be wrong. M0, M1 and M2 are built; `bootstrap.md` records
-what M0 settled, and `linearity-and-effects.md` carries a "what was built"
-note in every section whose code exists.
+`README.md` is a thin pointer. This is where the depth lives: what the
+language is, why it's built this way, what exists, and an index of
+every design document. History — what shipped when, and what each
+slice found, including corrections — is [`ROADMAP.md`](ROADMAP.md).
+Neither belongs in the index below, which says what each document
+*settles*, not how it got there.
 
-This file is the index of what each document *settles*.
-[`ROADMAP.md`](ROADMAP.md) is the index of what **shipped when**, and what
-each slice found — including the claims these documents got wrong and had
-to correct. Neither belongs in the README, which says what the language is
-rather than how it got there.
+Design lands here **before** the code that implements it, which is the
+cheap place for it to be wrong. When it turns out wrong anyway, the
+document that made the claim is corrected in place rather than quietly
+edited — `ROADMAP.md` says which.
+
+---
+
+## Where this sits
+
+Three repositories share one idea. **Two of them are wired together, and
+this is the third.**
+
+```
+                    lex-lang
+             the high-level language
+       16 crates: syntax, ast, types, store,
+          vcs, jit, lsp, bytecode, trace
+                       │
+                       │  Grant, and the real Lex front end
+                       ▼
+                    lex-os
+           the autonomous-agent runtime
+     manifest + grant → static check → perimeter
+            → supervisor → audit chain
+
+
+                    lex-sys
+                    this repo
+       a second, native language, same worldview
+```
+
+**`lex-lang`** is the high-level, functional, GC'd, interpreted language
+the ecosystem's libraries are written in.
+
+**`lex-os`** is the runtime that takes an agent's goal, seals it in a
+microVM, and mediates everything it does against **one** declaration —
+the trust `Grant`, enforced twice: statically by `lex-os-check` before
+the program loads, and at run time by a supervisor the agent cannot
+reach.
+
+**`lex-sys`** — this repository — is a *second, lower-level language*
+sharing that worldview, targeting the work Lex cannot do: native
+binaries, manual and region memory, syscalls, embedding, FFI. It shares
+the idea and **no code**: `lex-os` takes its grant from `lex-lang` and
+does not depend on this repository at all.
+
+| Join | State |
+|---|---|
+| lex-sys code in `lex-vcs` | Most of that crate is already language-agnostic; gated on a plateau in the effect vocabulary rather than on a feature — [`vcs.md`](vcs.md) |
+| lex-sys code under a lex-os grant | Not a compiler integration: `authority --output json` is already the interface a supervisor reads, and its filesystem dimension is already enforceable through it. `network` and `exec` are not, because both are libc — [`under-a-grant.md`](under-a-grant.md) |
+
+---
+
+## Why
+
+Three things this philosophy buys that no systems language currently
+combines:
+
+1. **Capabilities all the way down.** Ownership and effects are the same
+   idea — both are resource tracking. Allocation is an effect, a heap
+   value is a linear resource, FFI is a capability you must be granted.
+   Owning a capability *discharges* its effects and borrowing *declares*
+   them, so `main`'s row is `[]` however much it does.
+2. **Determinism as a language property.** No UB, defined evaluation
+   order, deterministic layout — which is what makes replay, attestation
+   and content-addressing mean anything, and exactly what C throws away.
+   Written out operation by operation in
+   [`defined-behaviour.md`](defined-behaviour.md).
+3. **A checker that is fast and total,** because the guarantee is only
+   worth what it costs to verify.
+
+---
+
+## What exists
+
+| | | Settled by |
+|---|---|---|
+| **Capabilities** | `World`, `Io`, `Fs(prefix)`, `Ffi(lib)`, `Heap`, `Args`, `File`, `Net(bound)` — linear values, `split` once, released by name | [`linearity-and-effects.md`](linearity-and-effects.md) |
+| **Effect rows** | A canonically ordered set, exact in both directions, every label tracing to a builtin | [`linearity-and-effects.md`](linearity-and-effects.md) |
+| **Narrowing** | Prefix extension, one way, and it *consumes* what it attenuates | [`filesystem.md`](filesystem.md), [`reach.md`](reach.md) |
+| **Authority report** | `lex-sys authority`, computed from reachability; `--output json` for a supervisor, and it **fails closed** on foreign code | [`authority.md`](authority.md) |
+| **Borrowing** | Lexical regions, no borrow checker; `&!` is a lock on the binding | [`aliasing.md`](aliasing.md) |
+| **Memory** | Arenas, a general heap with recursive types, boxed slices, growable buffers | [`heap.md`](heap.md), [`boxed-slices.md`](boxed-slices.md) |
+| **Types** | `int` `byte` `bool` `float`, structs, enums with exhaustive `match`, tuples, generics with `[T: val]` bounds | [`floating-point.md`](floating-point.md), [`tuples.md`](tuples.md) |
+| **Defined behaviour** | Checked arithmetic that traps, left-to-right evaluation, every C hole named and closed | [`defined-behaviour.md`](defined-behaviour.md) |
+| **Threads** | Compiler-provided `spawn`/`join`, never crossing the C ABI; one pointer-width payload today | [`threads.md`](threads.md) |
+| **Program identity** | `lex-sys ids` — per-declaration content hashes, checked against golden fixtures | [`canonical-ast.md`](canonical-ast.md), [`hash-stability.md`](hash-stability.md) |
+| **A content-addressed op log** | `lex-sys vcs publish`/`log` — every declaration as a typed, gated operation | [`vcs.md`](vcs.md), [`vcs-publish.md`](vcs-publish.md) |
+| **Compile time** | Pure calls on constant arguments folded; `static` items whose bodies run during compilation | [`compile-time-data.md`](compile-time-data.md) |
+| **I/O** | The console in three directions, file handles as linear resources, bulk reads and writes, a `Net` capability for sockets | [`file-handles.md`](file-handles.md), [`bulk-io.md`](bulk-io.md), [`net.md`](net.md) |
+| **Refusals** | Every rule carries a stable tag; `check --output json` reports every independent one as data | [`agent-errors.md`](agent-errors.md) |
+| **Standard library** | Written in lex-sys, including shortest round-trip float printing and a UTF-8 decoder | [`standard-library.md`](standard-library.md) |
+| **Two backends** | Cranelift (dev) and LLVM (release, **default**) — an opt-in second backend became the default once nothing it refused had an asker left | [`llvm-backend.md`](llvm-backend.md) |
+
+What is **not** there yet, and why, is [`ROADMAP.md`](ROADMAP.md).
+
+---
+
+## The language in one page
+
+**A value is `res` or `val`.** A `res` value is consumed exactly once on
+every path. Mode is structural — a `res` member makes the whole aggregate
+`res` — so `Held[File]` is `res` where `Held[int]` is `val`.
+
+```
+res struct Ticket { serial: int }
+
+fn redeem(t: Ticket) -> [] int {
+    let Ticket { serial } = t;      // the whole is spent, the parts produced
+    return serial;                  // `int` is `val`, so nothing is owed now
+}
+```
+
+There is no `drop` and no destructor: a resource is destroyed by naming the
+function that knows how, which is what keeps an effect row honest once there
+are effect rows.
+
+**Looking without spending is a borrow.** `borrow` freezes for a read,
+`borrow mut` *locks* for a write — nothing else may touch the value at all,
+not even a read.
+
+```
+fn serial_of[&r](t: &r Ticket) -> [] int { return t.serial; }
+
+borrow held as &r in {
+    putchar(i, 48 + serial_of(r));    // `held` is frozen; `r` reads it
+}                                     // owned again here
+```
+
+There is **no borrow checker**. A region is a block, so a reference's
+validity is lexical rather than inferred: no non-lexical lifetimes, no
+variance, no dataflow. A binding is `Owned`, `Frozen` or `Locked`, set at
+block entry and restored at block exit; `r_inner <= r_outer` holds exactly
+when the outer block encloses the inner one, which is a walk up a stack; and
+escape is an occurs-check over one type.
+
+**An effect *is* a borrowed capability.**
+
+```
+fn triple(n: int) -> [] int { return n * 3; }                // pure, and says so
+fn show[&i](io: &!i Io, n: int) -> [io_write] int { ... }    // borrows the console
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);    // the one source of authority
+    release(args); release(heap); release(fs); release(ffi); // unused authority is still a resource
+    borrow mut io as &!i in { show(i, 7); }
+    release(io);                                             // destroyed exactly once
+    return 0;
+}
+```
+
+`[io_write]` on a signature means the function was handed an `&!i Io` it did
+not create — so reading the row and reading the parameter list are the same
+act, and a function that was given nothing cannot print however much it
+wants to. There is no ambient constructor: `Io { }` is refused, `main`'s
+`World` is the only authority in the program, and it is linear, so forgetting
+to release it does not compile.
+
+`main`'s own row is `[]` even though it prints, because it *owns* the
+capability rather than borrowing one — and ownership is already visible in
+the parameter list.
+
+A row is a canonically ordered **set**, so it hashes, which is what per-unit
+identity is made of. It is exact in both directions: performing an effect you
+did not declare and declaring one you never perform are both errors, because
+an inexact row means `[]` stops meaning pure. And there is no list of legal
+labels — every label traces back to a builtin that performs one, so a label
+with nothing underneath it is refused the moment it is written.
+
+**A foreign call is the same idea pointed at C.**
+
+```
+extern fn labs[&f](ffi: &f Ffi("libc"), n: int) -> [ffi("libc")] int;
+
+let libc = narrow(ffi, "libc");        // `Ffi("")` -> `Ffi("libc")`, one way only
+borrow libc as &f in { n = labs(f, 0 - 7); }
+```
+
+Narrowing is prefix extension and goes one way. `Ffi("")` names no library,
+so it authorises nothing until narrowed; an `Ffi("libcrypto")` can never
+become an `Ffi("libc")`. It also *consumes* what it attenuates, so there is
+no way back to the wider capability. The capability is checked and then
+erased: what libc receives is the integer and nothing else.
+
+**Memory has three shapes**, and the same region machinery checks all of
+them.
+
+```
+region a {                                   // an arena: released in one call
+    let xs = alloc_slice[a](5, 0);           // xs : &!a [int]
+    xs[0] = 3;                               // bounds-checked; out of range traps
+}
+
+let node = box(h, Node { value: 1 });        // the heap: `Box[T]` is `res`
+let tail = unbox(h, node);                   // the only thing that ends one
+```
+
+An arena *is* a region — same block, same parent chain, same occurs-check.
+Nothing whose type mentions `a` leaves the block, and release is one `free`
+whatever was allocated. `Box[T]` is `res`, so the exactly-once rule written
+for capabilities and file handles turns out to be a *memory safety* rule
+for free: no leaks, no double frees, no use-after-free, none of them checked
+by anything new.
+
+**A string is a run of bytes and claims no encoding.** `str` is not a type;
+a string is `&r [byte]`, an ordinary slice and therefore an ordinary
+reference, so regions, the escape check and the unique-to-shared coercion
+all came for free.
+
+**Arithmetic is checked.** `+`, `-`, `*` and unary `-` produce the right
+answer or **trap** — they never wrap. Wrapping is expressible but has to be
+asked for by name. Division traps on a zero divisor and on `int::MIN / -1`
+rather than being undefined. Evaluation order is left to right everywhere,
+including a struct literal's fields, and that is enforced rather than merely
+intended.
+
+**Real programs run on this**, byte-for-byte checked against the originals:
+GNU coreutils `base64` and `sort` ([`porting.md`](porting.md)), a REST
+endpoint answered over a real socket ([`net.md`](net.md)), and
+`examples/seek/`, not a port — a search tool shaped for an agent calling it
+rather than a person typing at a shell ([`agent-tools.md`](agent-tools.md)).
+
+---
+
+## Related work
+
+lex-sys builds on other people's ideas, and the closest of them got
+there first.
+
+- **Austral** — the nearest relative: linear types, capabilities as linear
+  values with a root capability handed to the entry point, lexical
+  borrowing, no borrow checker. Most of this core is Austral's first.
+  lex-sys adds the same authority stated as an **exact effect row**, which
+  is what `lex-sys authority` reads.
+- **Koka** — effects as a row of labels. Kept the row; no handlers, no row
+  polymorphism.
+- **Effekt** — *effects as capabilities*, from the effect-handler side:
+  the closest statement of "an effect is a borrowed capability".
+- **Cyclone** — lexical regions; here without Rust's inference.
+- **Rust** — ownership as move; the borrow checker declined.
+- **Vale** — generational references, which `Gen` is.
+- **Zig** — `defer`.
+- **Pony**, **Hylo** — other answers to aliasing and ownership. Pony's
+  `val` means something different from this one.
+- **The object-capability model** (E, *Robust Composition*) and
+  **Capsicum** — no ambient authority.
+- **Lex** — the parent language, and the worldview.
+
+**The competitor is WASI, not Rust.** For running code you did not write,
+WebAssembly with WASI enforces authority at run time, by trying. lex-sys
+knows it **before execution**, from the program's text, with no runtime
+cost. What each project contributed, traced to the document that used it:
+[`related-work.md`](related-work.md).
+
+---
+
+## Design commitments
+
+| Area | Commitment | Why |
+|---|---|---|
+| Memory | Linear/affine types + regions/arenas — **not** an NLL borrow checker | Local, cheap, total to check |
+| Effects | Capability-typed effects in the type system, unified with linearity | One resource system, not two |
+| Behaviour | No UB, defined evaluation order, deterministic layout | Reproducibility is load-bearing |
+| AST | Canonical, content-addressable, stable per-unit identity | Designed in, never retrofitted |
+| Types | Fast, total, decidable inference | The guarantee must be cheap |
+| Metaprogramming | Hygienic deterministic `comptime` — **no** textual or proc macros | Macros break stable content-addressing |
+| Generics | Monomorphised | Zero-cost, matches Rust's codegen |
+| FFI | Explicit, capability-gated | C's effects must not be invisible |
+| Backend | LLVM by default, Cranelift for fast dev builds | Reuse; own backend only if zero-C becomes a goal |
+
+Carried over from Lex: examples-as-tests, `[budget]`, effect declarations as
+the function's contract.
+
+### Explicit non-goals
+
+- **Not a Rust clone.** No trait-system maximalism, no GATs, no
+  specialisation, no borrow checker. Chasing Rust's *power* means inheriting
+  Rust's implementation cost and abandoning totality — the failure mode this
+  design exists to avoid.
+- **Not self-hosting-first.** Porting the lex-lang toolchain is a possible
+  end-state, not a starting point.
+- **Not a replacement for Lex.** Different layer, different job.
+
+---
+
+## Performance
+
+Linearity and effects are erased at compile time; generics monomorphise.
+The gap to C is a backend question, not a price of ownership: Rust sits
+within 4% of C on the same kernels
+([`against-c-and-rust.md`](against-c-and-rust.md)), and once the overflow
+trap and a vectorising backend (`--backend llvm`, now the default) are
+both in place, this language measures statistically indistinguishable
+from C on the one kernel checked directly against it.
+
+The derivation — what the trap costs, what each backend can and cannot
+express, and every kernel measured — lives where it was measured rather
+than restated here: [`overflow-cost.md`](overflow-cost.md),
+[`check-cost.md`](check-cost.md), [`backend-limits.md`](backend-limits.md),
+[`llvm-backend.md`](llvm-backend.md),
+[`benchmarks-game.md`](benchmarks-game.md).
+
+---
+
+## Layout
+
+```
+crates/lex-sys-syntax    lexer, canonical-shaped AST, parser
+crates/lex-sys-types     the type vocabulary: representation and unification
+crates/lex-sys-ir        resolution, type checking, monomorphisation; the IR
+crates/lex-sys-codegen   Cranelift lowering, native object emission
+crates/lex-sys-codegen-llvm  the LLVM backend, --backend llvm (default)
+crates/lex-sys-id        canonical encoding and content hashes
+crates/lex-sys-vcs       content-addressed operation log (vcs.md)
+crates/lex-sys           the CLI
+std/                     the standard library, as Lex source
+examples/                programs meant to be read
+tests/accept             fixtures that must compile and run
+tests/reject             fixtures that must be refused, each stating why
+benches/                 checked/wrapping pairs; what the overflow trap costs
+scripts/bench.py         runs them and prints the table
+docs/                    this directory
+```
+
+Everything a program can be refused for is refused in `lex-sys-ir`, so the
+backend has no error path for a *program* — only for the environment. Each
+fixture declares its own expectation in its header (`//~ STDOUT`, `//~
+EXIT`, `//~ ERROR`), so adding a rule to the language means adding a
+fixture.
+
+---
+
+## Every design document
+
+One line of purpose, one short phrase of status. What each slice found —
+the measurements, the bugs, the corrections — is [`ROADMAP.md`](ROADMAP.md),
+not repeated here; a doc's own header carries its own detail.
 
 | Doc | Purpose | Status |
 |---|---|---|
-| `linearity-and-effects.md` | The core type-system rules: linear/affine ownership, capability-typed effects, how they unify, and the cases that **must** be rejected. Worked examples throughout. | **settled and built** ([#2](https://github.com/alpibrusl/lex-sys/issues/2)) — §3 through §8 implemented, every row of §11's must-reject table enforced by a fixture |
-| `bootstrap.md` | What M0 settled to exist: bootstrap host language, file extension, layout, the M0 surface, what is scaffolding and what replaces it. | written ([#3](https://github.com/alpibrusl/lex-sys/issues/3)) |
-| `canonical-ast.md` | AST shape, canonicalisation rules, per-unit identity (signature vs body hashing), and the determinism invariants. | **written** — implemented by `lex-sys-id`; `lex-sys ids <file>` prints them. §8 lists what is not yet a contract, and now carries a **falsifier**: 35 golden hashes make a moved identity visible instead of silent. §8's field-order entry is **closed** and the correction recorded — the literal half was never a gap (the checker refuses the reordered spelling rather than reordering it) and the pattern half needed no declaration lookup to fix |
-| `memory-model.md` | Regions/arenas, what escapes, the escape hatches (refcount / generational refs) and their runtime cost. | not written — §5 and §6 settled regions, arenas and escape, `heap.md` settled the general heap, and `sharing.md` has now settled §9's hatches. Nothing is left that a document of its own would say |
-| `strings.md` | What a string is: bytes rather than an encoding, `byte` as storage rather than arithmetic, packed `[byte]` layout, literals and the static region, and what crosses to C. | **settled and built** — gated M3's last item, and §9's must-reject suite is enforced fixture by fixture |
-| `boxed-slices.md` | `Box[[T]]`: the second shape a box comes in, a pointer *and* a length, and the three operations a run of heap values needs. The foundation every collection wants. | **settled and built** — §7's must-reject suite is enforced, and `examples/buffer/` is the growable buffer it unblocks |
-| `many-files.md` | A program in more than one file: named on the command line, one flat namespace, identity by content rather than location, and why spans became global. | **settled and built** — the precondition for a library of any kind; §8's cases are enforced by conformance tests |
-| `arguments.md` | The `Args` capability: why reading argv is an effect at all, `arg_count` / `arg`, and why an argument is a shared `&static [byte]`. | **settled and built** — the "command-line" half of M3's acceptance criterion; §7's must-reject suite is enforced fixture by fixture |
-| `reading-references.md` | Reading a value through a reference: `*r`, `match` on a reference binding payloads as references, and a `res` field coming back as a **borrow**. One rule — a reference gives references. | **settled and built** — closed the two limits `heap.md` §3.0 and §4.1 left open, and §2.0's own refusal, which turned out to be broader than the hazard it was written for; §7's must-reject suite is enforced fixture by fixture |
-| `heap.md` | The `Heap` capability and `Box[T]`: one value one allocation, why the heap cannot leak, recursive types, and heap versus arena. | **settled and built** — closes M2's last unchecked item; §8's must-reject suite is enforced fixture by fixture |
-| `filesystem.md` | The `Fs(prefix)` capability, why the file operations are builtins rather than `extern fn`, the runtime path check and why `..` is refused rather than normalised. | **settled and built** — the last mile to M3's acceptance criterion; §7's must-reject suite is enforced fixture by fixture |
-| `sharing.md` | The two escape hatches of §9 as built: why `Rc` is **not expressible** without a copyable pointer, why `Gen` is, and what a linear library costs to write. | **settled and built, and it corrects `linearity-and-effects.md` §9** — three reject fixtures for the three ways `Rc` fails, and `examples/slab/` for the one that works |
-| `tuples.md` | `(A, B)`: an anonymous struct with positional components, and the first **structural** type here — no declaration, so two files agree on one without either declaring it. Mode is computed rather than declared. | **settled and built** — the first feature whose case was made by a library rather than a design (`sharing.md` §4); §8's must-reject suite is enforced fixture by fixture |
-| `shadowing.md` | Shadowing within a block: why it was refused, and the rule that replaces the refusal — a binding may be shadowed exactly when it is dead, which is the rule assignment already had. | **settled and built** — the last of `sharing.md` §4's three gaps; §7's suite is enforced, and one must-reject fixture was retired to it |
-| `standard-input.md` | Reading the console: `getchar`, and why it is not a seventh capability but a second **label** on `Io` — which renames `putchar`'s `io` to `io_write`, following `Fs`'s `fs_read`/`fs_write`. | **settled and built** — the one I/O direction the language did not have; `examples/tally.ls` is `wc` over a pipe, and §7's suite is enforced |
-| `modules.md` | `module`, `import`, `pub`, and qualified names. A module is a **namespace, not an identity**: it reaches no hash, which is a property of content-addressing rather than luck. Not a trust boundary — `pub` means reachable, never safe. | **settled and built** — the precondition for a standard library; §8's suite is enforced, and `moving_a_function_into_a_module_changes_no_hash` checks the central claim |
-| `standard-library.md` | `std.bytes`, `std.io`, `std.math`, `std.buffer`, and `--std` — the library's source compiled into the binary rather than looked up, so it adds no search path. Opt-in, never a prelude. | **settled and built** — and it found the compiler emitting every non-generic function rather than what `main` reaches; §5.2 |
-| `mode-polymorphism.md` | `[T: val]` bounds, and what an unbounded parameter means: checked as `res`, the stronger obligation, so the error lands on the definition. | **settled and built, and it began by finding a leak and a double free** — a `val` on a generic was trusted rather than checked; §7's suite is enforced |
-| `collections.md` | Which collections hold a **resource** and which cannot, and why the answer is about *shape* rather than generics: a list works, an array does not, because freeing a run of elements is one `free` that runs nothing. Plus the bound a `res` aggregate needs — `res struct Vec[T: val]` — and the rule that a generic function can move a resource and never end one. | **settled and built** — `std.option`, `std.result`, `std.list` and `std.vec`; §8's suite is enforced, and it corrects a claim in each of the two documents before it |
-| `slicing.md` | `s[a..b]`: half-open, trapping bounds, and a subslice that is an ordinary reference — same region, same mode, so nothing about references had to be written twice. §6 answers *a writer abstraction* with a **no**, and says why. | **settled and built** — the case was made by a library that already shipped, since `bytes.find` returned an index nothing could take; §8's suite is enforced |
-| `defer.md` | `defer E;` — run `E` at every exit from its block, in reverse order. Sugar that **stays** sugar: expanded during lowering, so nothing downstream knows it exists and there is one set of linearity rules rather than two. | **settled and built** — answers `linearity-and-effects.md` §12's question about whether a consumption the programmer did not write is still *visible*; §6's suite is enforced |
-| `authority.md` | What a program can reach, and why the `release` calls at `main` are the declaration rather than ceremony around it: `main` owns rather than borrows, so its row is `[]` and every entry point has the same signature. `lex-sys authority` computes the surface from the same reachability that decides what goes in the binary. | **settled and built** — answers `linearity-and-effects.md` §12's release question with a **no**; §4's suite is enforced |
-| `budget.md` | Why `[budget]` is **not** a type-system feature here: a budget is wall-clock seconds, commands and money in cents, and none of those is a property of a program's text. The three layers `lex-os` already separates — type check, perimeter, supervisor — and where each question belongs. | **settled** — answers `linearity-and-effects.md` §12's last carried-over item with a **no**, and ships the legibility half as `authority --output json` |
-| `reach.md` | **What a program can reach**, answered by building a REST endpoint rather than by listing features: a real TCP socket, no socket type and no `Net` capability, because sockets are libc and libc has a name. The no's are one rule — a foreign *result* is a scalar, so every opaque handle is out — and §5 is where narrowing stops, since a library is not an authority domain. | **settled and built** — `examples/serve/`, answered over loopback by the test suite; §7's suite is enforced, and building it earned the `\r` escape and corrected a refusal that named `()`. **§3.4 (found scoping `examples/vsock/`, the `lex-os` port's own first slice): a foreign *return* was never checked the way a parameter was** — `close`/`connect`'s real 32-bit C `int` read back as `4294967295` instead of `-1` on a failure, because the upper 32 bits of the return register were zero rather than sign-extended, and this backend trusted the full 64 bits regardless. `c_int` names the real width explicitly, in return position only; every existing socket declaration across `examples/serve/`, `fetch/`, `report/` and `collect/` was migrated, and their own `< 0` checks had silently had this bug the whole time, untested only because nothing exercised a real `bind`/`accept` failure. **Corrected: [`opaque-pointers.md`](opaque-pointers.md).** §3.1's "every opaque handle is out" no longer holds — `c_ptr` opens exactly one pointer shape, a handle that is returned, passed and compared for nullness, never dereferenced |
-| [`opaque-pointers.md`](opaque-pointers.md) | `c_ptr`: an opaque handle from a foreign call, real enough to unblock TLS's own `SSL_CTX *`/`SSL *` without weakening `reach.md` §3.1's rule — it stays a distinct type all the way through the program, unlike `c_int`'s collapse to `int`, so arithmetic, dereference and coercion are ordinary type mismatches rather than accidents. | **settled and built (edition 3)** — `tests/accept/opaque_pointer.ls` round-trips a real handle through `fdopen`/`fclose` on both backends; three `tests/reject/` fixtures pin the refusals. **The real OpenSSL example was not built**: nothing in `lex-sys build` can link a library beyond libc yet, a separate feature `docs/opaque-pointers.md` §5 tracks rather than assumes. Building the first attempt (`fopen`'s own two string parameters) found a real, `c_ptr`-unrelated bug: a `&r [byte]` parameter is only safe as an `extern fn`'s *last* parameter, because its own pointer-and-length pair silently misaligns anything declared after it |
-| `overflow-cost.md` | **What the overflow trap costs**, measured instead of estimated. Not a percentage but a rule: the cost is whether arithmetic is on the critical path — +2.8% where calls dominate, −9.1% where branches do, **+40.5%** in a pure arithmetic loop. And the reason is not the never-taken branch the README named: a trap is observable, so the loop cannot vectorise. | **measured, and it corrects the README and `defined-behaviour.md` §2.1** — the first benchmark this repository has ever had, prompted by an outside reader pointing out the claim had never been checked |
-| `bitwise.md` | `& | ^ ~ << >>`, hexadecimal literals, and the four decisions they need: `>>` is arithmetic, an out-of-range shift **traps** rather than being masked, a shift does **not** trap on the value it produces, and the precedence is Rust's rather than C's — so `flags & mask == 0` means what it looks like. | **settled and built** — closes `defined-behaviour.md` §8's first row, and adding six operators moved no hash, which `ids_are_stable_across_the_operator_set` checks against a build of the previous commit |
-| `porting.md` | **Programs that already existed**, ported and checked against them. `base64`: what it needed (bit operators, hex literals) and did not need (no capability, no library, no change to linearity or rows). `sort` (§9): the one with five owned resources on the heap, which found four missing library functions and measured what move-based linearity actually costs to write. | **done twice** — §6's four untested things are answered in §9, and the honest verdict on the move loop is "nothing hard, three tokens every time" |
-| `against-c-and-rust.md` | **lex-sys against C and Rust on the same algorithm**, line for line and at the same semantics. 1.6× on both a compute-bound and a memory-bound kernel — and Rust within 4% of C, so the gap is Cranelift against LLVM rather than the price of ownership. §4 is what the missing `float` costs: 17% *faster* than f64 on this kernel, and ten orders of magnitude less precise. | **measured** — answers `overflow-cost.md` §4's own open row, and makes the README's "implementation maturity, not language design" falsifiable rather than merely stated |
-| `purity.md` | **The one thing lex-sys can state that C can only promise and Rust cannot say at all**: the effect row is a *checked* purity proof, on 35% of the functions here. Worth 1.94× as common-subexpression elimination and 158× where the call is also loop-invariant — and nothing collects it, because Cranelift has no call attribute and an own optimiser is a stated non-goal. | **measured and unspent** — it makes that non-goal an informed one, and gives the LLVM backend its first argument that is about capability rather than speed |
-| `floating-point.md` | `float` — IEEE-754 binary64, one type named for what it is. NaN and infinity exist and propagate, and §2.1 is why that is not a retreat from the no-silently-wrong-answers rule: **wrapping lies about a value, NaN announces the absence of one.** No reassociation, ever. Conversions are spelled, and `truncate` traps on exactly what C leaves undefined. | **settled and built** — closes `defined-behaviour.md` §8's last big row; §1 carries a correction the parser's own test forced within the hour |
-| `float-printing.md` | The shortest decimal that reads back to the same bits, and **where it lives**: `std.fmt.float_into` is written in lex-sys, not in the compiler, and the compiler's whole contribution is `bits_of` — a bitcast, and one NaN pattern (`differential.md` §4). Steele and White, with no bignum division because the digit is 0..9 and nine subtractions settle it. | **settled and built** — closes `floating-point.md` §7's first row. Checked against Rust's `{:e}` over 9000 values, which found two real defects; §3.4 records where Rust and Python disagree and why both are right |
-| `compile-time.md` | What the compiler works out before the program runs: constant arithmetic, and calls to **pure** functions on constant arguments — no `const` keyword, because the purity predicate already exists and is already checked. A certain trap becomes a compile error. | **settled and built** — found `2 + 3 * 4 - 14` emitting fifteen instructions where C emits one, because a checked add is opaque to Cranelift's folding rules: `overflow-cost.md` §3.2's mechanism in a second place. §1.2 corrects §1.1's own estimate, which over-counted the interesting half four times |
-| `compile-time-data.md` | `static name: [int] { .. }` — a function body with no parameters and no run time, evaluated during compilation and emitted as read-only data. `alloc_slice[static]` is legal there and nowhere else. Failure is a **refusal**, not a fallback: a `static` has nothing to run instead. | **settled and built** — and §1 corrects `compile-time.md` §8, which called this "the one that pays": the table is worth 5.7× and was already writable in 36 lines. What the feature buys is the plumbing, read-only pages, and a table an arena **cannot hold** — 65 536 entries traps |
-| `layout.md` | What every leaf costing 8 bytes is worth, measured both ways — and mostly the answer is **no**. Packing pays up to 2.6× on a struct that is mostly `byte` or `bool`, and 3 of this repository's 83 struct fields are. Transposing array-of-structs is **not** a lex-sys advantage: C gains 1.31× from it and lex-sys 1.43×, so it moves both along together. | **measured, deferred with a trigger** — corrects `ROADMAP.md`'s claim that transposing "goes past C". `lex-sys layout` is the falsifier: when its `size` and `packed` columns differ on a program someone cares about, the deferral stops being right |
-| `benchmarks-game.md` | Three more programs from the Computer Language Benchmarks Game, and the answer to *are there official benchmarks?* — **no**. The gap to C is **1.17× to 2.58×** across five kernels, not the 1.6× two of them suggested, and it tracks how much of the run is in code Cranelift generated. | **measured** — broadens `against-c-and-rust.md` rather than contradicting it. Porting found a **compiler crash**: two *sibling* `region` blocks, which no program here had. Rules are are-we-fast-yet's; outputs are checked against the Game's published values on every run |
-| `bulk-io.md` | `write_bytes(io, bytes)` — a whole slice in one call, behind the capability one byte already needed. Output is **12.8×** faster and within **1.1×** of C's `fwrite`. The finding underneath it is about authority, not speed: bulk output was reachable all along through `Ffi("libc")`, which is *every* authority at once, so **the cheap thing to grant was the expensive thing to run**. | **settled and built** — the authority report is byte-identical before and after, which is the test. §4.1 is a **correction to §4**: the 12.8× is real only for a loop that does nothing but write. `examples/sort/` writes 9 MB and gains **1.22×**, because volume written is not time spent writing, and §4 had conflated them |
-| [`file-handles.md`](file-handles.md) | An open file as a linear resource: `open_read` answering an `Opened`, a three-constructor `Read` for the outcome `int` has been carrying two of, and `file_close` consuming the handle. | **settled and built** — and the milestone was **smaller than `filesystem.md` §3 advertised**: two of its three questions were already answered by machinery that exists, and a forgotten `file_close` is a compile error with no new rule. Building it found three things the design had not: `Result[File, int]` **cannot be a builtin's signature** (`Result` is `std`, and `std` is opt-in), the label is `file_read` and carries **no path** because the path is spent at `open_read`, and three new prelude names cost **31 fixtures** plus the `extern fn read` in `examples/serve/`. §6's last open row is closed: `Failed(int)` carries the real `errno`, so a program can say **ENOENT** where `fs_read` said `-1` §1 is **measured again after the port**: every ratio is now 1.00x, and three times less I/O bought **7%** — `bulk-io.md` §4.1's correction arriving from the reading side. What handles were worth is the code they delete |
-| `standard-library.md` | What belongs in `std` and what does not, and how a function earns its way in — by a program asking for it. | **written, and §5.3 carries a correction**: it claimed `tally.ls` and `wordcount.ls` had been reduced to one definition of a word boundary, and only `wordcount.ls` had moved. Two definitions agreed for a year with nothing checking |
-| `utf8.md` | Decoding `&r [byte]` into code points: `std.utf8`, a `Step` enum of `Code(point, width)` or `Invalid(width)`, strict about overlongs, surrogates and anything above U+10FFFF, skipping by the Unicode maximal-subpart rule. | **settled and built** — and §1 is the part worth reading: the language needed **nothing**, so this is a library, written in lex-sys. The decision is §2, where `strings.md` §1's three-way question comes due — GNU, Python strict, Python replace and a naive decoder give **four different answers** on the same seven fixtures, and GNU disagrees with itself. Checked against Rust's own decoder over 2,000 generated cases |
-| [`standard-error.md`](standard-error.md) | The third stream of the console: `write_err`, and why it is a **third label** on `Io` rather than an eighth capability — `err_write`, named for the stream because `1>` and `2>` are two redirections. | **settled and built** — and §1 is why it is not cosmetic: every failing program here produced **zero bytes** on every stream, the workaround fed a line of prose to the `sort` downstream of it, and a diagnostic on standard output is **lost on a trap**, which is the case it exists for. §1.3 corrects itself: the failing path *was* tested, against me rather than against GNU, because a silent program gives a test nothing to compare |
-| [`../AGENTS.md`](../AGENTS.md) | How to write lex-sys in one page: ownership moves, a `res` value is consumed once, own-or-borrow and the row that follows, and the six facts that each cost this repository a compile. | **written and enforced** — `docs/` is 90,000 words across 42 documents and none of them was a first page. `lex-sys agent-guidelines` prints it from inside the binary, and every checked code block is a fixture: the valid ones must compile, the refused ones must be refused **with the rule they name** |
-| [`float-math.md`](float-math.md) | `sqrt` as a builtin, and why the capability question `floating-point.md` §7 was waiting on was the wrong question. | **settled and built** — `sqrt` is *one instruction*, so it reaches no library and needs no `Ffi`. What decided it: the two programs that hand-rolled a square root are **both wrong** — 58.4% of 40,008 values not correctly rounded, and one off by **143 orders of magnitude** on an input it accepts without complaint. A builtin rather than library code, which is the opposite of `float-printing.md`'s call and right for the same reason: put it where it can be correct |
-| [`gpu.md`](gpu.md) | Whether lex-sys can run on a GPU, what a native one would look like, and whether `lex-gpu` should be its own language. | **measured, and it decides the third question** — a bounds check is **free** even in vectorised code (1.01×, SIMD count unmoved) and an overflow trap is not (1.46×, SIMD 10 → 0), so the *memory* half of the no-UB claim survives a GPU at no cost and the *arithmetic* half cannot survive at all. And deleting the trap from lex-sys does **not** reach C — it stays scalar at 2.27× — so the thing that buys GPU speed is LLVM, equally, whichever language the kernels are written in. §2.1 **corrects `overflow-cost.md` §3.2**, which measured one guard and wrote "the check" |
-| [`line-reading.md`](line-reading.md) | Whether `std` should have a line reader. **No** — one program reads a line at a time, and the bar is two. | **measured, and it found a silent bug** — the roadmap row asking for it said two programs hand-rolled the loop and one of them keeps nothing at all. What the row was right about: `examples/cut/` truncated a long line, and a truncated line loses its delimiters, so it answered **60 KB of the wrong field with exit 0**. Correctness costs **1.18×**; `buffer.clear`, the one function earned, is worth **13.0×** |
-| [`agent-errors.md`](agent-errors.md) | Refusals a machine can read: a stable `rule` tag on every diagnostic, `check --output json`, and every independent refusal rather than the first. | **settled and built** — §1 measured what the second audience had: **125** message shapes across 196 fixtures, **101** seen exactly once, and one error per invocation. §2 splits lex-lang's answer — the `rule_tag` half transfers whole, the `suggested_transform` half does not, because in lex-lang's *source* it lives in the store and the VCS rather than beside `rule_tag` where its own guidelines page shows it. And §3.2 is the finding nobody was looking for: counting the rules made the harness's own *"every rule has a fixture"* checkable for the first time, and it was **43 of 52** |
-| [`agent-tools.md`](agent-tools.md) | Whether the properties this repo already built for other reasons — a legible authority report, no silent truncation, no UB on adversarial input — add up to a tool genuinely better shaped for an agent's own tool-use loop than a straight port of an existing one would be. | **built** — `examples/seek/`, a literal-text search over named files, not a `grep` port. `lex-sys authority` on it names exactly seven labels and `bounded: true`, pinned by `agent_tools.rs`. Two honest limits found while building it: M2's `narrow` takes a literal, so no flag can narrow this tool's `Fs` to a directory at invocation time — a supervisor gets a scoped copy by substituting the literal at build time, not by a `--root` flag; and `-m` caps matches across every file rather than per file, because an agent bounding output is bounding its own context, not any one file's share of it |
-| [`aliasing.md`](aliasing.md) | Whether `&!` should mean what Rust's `&mut` means. **No** — and the reason is not the one three documents had written down. | **measured, and it answers a question `README.md` asked two sections after its own table had settled it** — across 82 programs the rule refuses **one fixture**, so the stated cost (*"it refuses programs that compile today"*) was wrong. There are **three** ways to alias a `&!`; two close syntactically and the third, a reference returned from a call, needs provenance in signatures — lifetimes, and the borrow checker the non-goals exclude by name. And the fact has no consumer even if proved: Cranelift has **no `noalias`**, only three fixed WebAssembly alias regions. Two independent blockers; §6 is what would reopen it |
-| [`check-cost.md`](check-cost.md) | What **every** check this language emits costs, and the rule underneath the two documents that got there first. | **measured, and it corrects both of them** — `overflow-cost.md` §3.2 said "the check" having measured one, `gpu.md` §2.1 narrowed it to "only the overflow check" having measured two, and **six of eight** loop-body checks take the SIMD count to zero. The axis is neither memory-safety nor arithmetic: `s[lo..hi]` and `s[i]` are both bounds checks and cost **2.16×** and **1.00×**, and the same two comparisons on the induction variable cost 0.99×. **Provable is free, and loaded is not.** The worst check in the language is `truncate(f)` at **3.35×**, which nothing had looked at |
-| [`poison.md`](poison.md) | Whether a flag reduced at a boundary costs less than a trap. **It depends on the check, and the split is exactly where the thesis lives.** | **measured, and it answers `gpu.md` §5.1's one number with three** — on a wide vector ISA poison is a large win for every per-element check: `a << b` and `-x` become **free**, and the worst check in the language drops from **3.28× to 1.33×**. On the overflow check **carried by a reduction** it does not help and is worse, and four kernels show that is structural: four lanes compute four different partial sums, so "no partial sum overflowed" is not the same property after vectorising. One of them also finds the overflow test is only opaque as a *builtin* — written as sign logic it vectorises and is free. And on baseline x86-64 the whole win disappears, so the answer is a property of the target rather than of the semantics |
-| [`backend-limits.md`](backend-limits.md) | What Cranelift can and cannot be asked for, checked against `cranelift-codegen` 0.121.2 rather than remembered. | **an audit, and it found one thing nobody was looking for** — five documents gate the roadmap's largest row on four claims about the backend, and only one had ever been read from the source. All four hold. The fifth fact is the reason to write it down: `is_call()` and `can_trap()` are **adjacent clauses of one four-line predicate**, so this project's checked purity proof (158×) and its defined behaviour (3.35×) are blocked by the same function. Also: `sadd_overflow` is *pure* — it is the `trapnz` beside it that pins the loop — and Cranelift's SIMD is an **input** language for WebAssembly, with no pass that makes vectors out of scalar code |
-| [`llvm-backend.md`](llvm-backend.md) | How a second backend actually gets wired in — not whether one is worth building, `backend-limits.md` already answered that. | **complete, and the default (#127)** — `lex-sys-codegen-llvm`, `--backend llvm`, textual LLVM IR shelled out to `clang`, not `inkwell`/`llvm-sys`, needing no new CI tooling on either target. The spike found a real bug before any code existed: the obvious overflow-trap translation, `llvm.trap()`, lowers to `brk #0x1` on AArch64 — **`SIGTRAP`, not `SIGILL`** — caught by nothing in the existing suite, since every trap test there checks `status.code() == None` and none reads *which* signal. Target-specific inline assembly (`udf #0xc11f` / `ud2`) fixes it, confirmed on both targets by this backend's own tests. §5 originally named `hello.ls` as the *first* slice's target; building that slice found the claim false — `hello.ls` actually needed checked arithmetic (slice 2), control flow (slice 3, found along the way), and slices/strings (slice 4) — four things, not the one the doc first assumed, corrected in place each time. Slice 2 found LLVM's `sdiv`/`srem` are **undefined, not trapping**, on a zero divisor or `int::MIN / -1`, unlike Cranelift's; slice 3 needed **no `phi`** for `if`/`while`/`&&`/`||`, because every local is already memory (the first slice's own `alloca`-per-leaf design, for `clang`'s `mem2reg`); slice 4 reused that fact a third time — a string literal's global symbol is already a usable `ptr` constant, so `Expr::Bytes` costs a declaration and no instruction, and `s[i]`'s bounds check is textually the same `trap_if` shape `Shl`/`Shr`'s range check already was. Slice 5, structs and enums, reused `trap_if` again for `match`'s tag-test chain and needed no `phi` either; the one real subtlety was that a `match` with no wildcard arm still needs a well-formed fall-through block even when every tested arm returns, unlike `if`/`else`, which is syntactically (not just value-wise) exhaustive. `hello.ls` and `enums.ls` both build and run through both backends, byte for byte the same output. §7: `run_clang` never passed `clang` an optimisation level, so the `mem2reg` promotion the design leans on never ran — measurably *slower* than Cranelift as a result. Fixed (`-O2`, always); on the `benches/` kernels that build on both backends, LLVM is now **8%–54% faster**, not slower — `scripts/backend_compare.py` is where the numbers come from. §7.4 closed `wrapping_add`/`sub`/`mul` (LLVM's own `add`/`sub`/`mul`, no overflow check needed) — found that removing the trap lets LLVM prove `sum_wrapping.ls`'s whole two-hundred-million-iteration loop is a no-op and delete it outright (`xor eax,eax; ret`), which Cranelift does not do; `fib_wrapping.ls`, with no such algebraic collapse, is a real **23% faster** than Cranelift instead. §7.5 closed `region`/`alloc_slice` (one `malloc` in, one `free` out, a bump pointer in two `ptr`-typed `alloca` cells) plus `byte_of` and `Expr::Not`, found sitting in front of `sieve`/`scan` once building against them was tried — nine `benches/` programs now build on both backends, and `sieve`/`scan` are **29%–79% faster** on `--backend llvm`. **The first real vectorisation in this document**, checked with `objdump` rather than assumed: `scan_wrapping.ls` compiles to 409 SIMD instructions and `sieve_wrapping.ls` to 22, where their checked twins — otherwise identical source, diffed to confirm it — compile to zero, the same "an observable trap is not reassociable" finding `check-cost.md` established, now confirmed on a real backend and on a bounds-checked memory scan rather than only arithmetic. §7.7 closed heap boxing (`box_slice`/`contents`/`unbox_slice`, sharing `alloc_slice`'s own checked-multiply sizing and reaching for `malloc` instead of `bump`) and, found underneath it, a second unrelated gap nothing had tried to lift since the first slice: a function could not return more than one leaf. Closed in general — `struct_ty`/`pack_struct` pack any number of leaves into one LLVM struct via `insertvalue`, unpacked at the call site with `extractvalue`, the same shape `checked_arith` already reads `{i64, i1}` out of LLVM's own overflow intrinsics. `reduce_checked.ls` — `docs/gpu.md`'s own kernel — needed both, and is now **61% faster** on `--backend llvm`; `objdump` confirms the vectorisation split a fourth time (`reduce_wrapping.ls`: 54 SIMD instructions, `reduce_checked.ls`: zero). Eleven `benches/` programs now build on both backends. §7.9 closed `getchar` (the mirror of `putchar`) and, found sitting in front of `revcomp.ls`, `s[a..b]` (`Expr::Subslice`, the same two bounds checks `element_address` already makes, over a range) — checked against `tests/accept/stdin_roundtrip.ls`, piped stdin and diffed byte-for-byte against Cranelift. `revcomp.ls` itself still refused past both: `std.buffer`'s `Buffer.clear` needs `Place::Field`/`Place::Deref` — named since §5, materially bigger than either gap that slice closed. §7.11 closed it, and the read-side cluster sitting behind the same name — `Expr::Deref`/`FieldRef`/`FieldAddr`, tuple-shaped counterparts, `Expr::Tuple`/`TupleField`, one shared `field_offset` helper underneath all of them — plus, found while building `revcomp.ls` against it, `write_bytes`/`write_err` (`fwrite` through `stdout`/`stderr`). `revcomp.ls` now builds, runs, and matches the Benchmarks Game's own published output, **42%–46% faster** on `--backend llvm`. §7.13 closed `arg_count`/`arg` — `argc`/`argv` stashed once into module-local storage by `@main`, mirroring `lex-sys-codegen`'s own `emit_c_main`. Only one of its two named targets built past it at the time: `fannkuch.ls`, checked against a real argument, **22%–28% faster** on `--backend llvm`; `binarytrees.ls` reached bare `Expr::Boxed` instead. §7.15 closed that too — single-value allocation, arena (`alloc`) or heap (`box`/`unbox`), each a smaller version of a primitive this backend had already built for a slice's many elements (`alloc_slice`'s own `bump`, `boxed_slice`'s own `malloc`-and-null-check, both minus their fill loop) — and `binarytrees.ls` builds too now, taking both of §7.13's named targets with it. §7.17 closed `Type::Float` — the real work was `scalar_kind`, a new structural helper answering whether an expression's value is `float` or `int`/`bool` without evaluating it, because unlike Cranelift's intrinsically-typed `Value` this backend's `LValue` carries no type tag, so `binop` had no way to dispatch between checked `int` arithmetic and unchecked IEEE-754 `float` arithmetic at all. Once that existed, arithmetic, ordered comparison (`!=` the one unordered exception), `float_of`/`truncate` (three checks ahead of `fptosi`, which is poison rather than trapping), `bits_of`'s NaN canonicalisation, `sqrt`, and both halves of a previously-unhandled `Expr::Neg` all followed. `spectral.ls` (**45%–56% faster**) and `fasta.ls` (**10%–20% faster**), `Type::Float`'s two named targets, both build and match Cranelift exactly — every `benches/` program this document tracks now builds on `--backend llvm`. This slice's own diff also pushed `emit.rs` past `CONTRIBUTING.md`'s 2,000-line budget, split by concern into `body/{mod,arith,control,memory,expr}.rs`, the same shape `lex-sys-codegen`'s own `body/` directory already is — a pure reorganisation, confirmed by rebuilding every fixture and `benches/` program before and after. §7.19 closed the last one — matching through a reference — and unlike every slice before it, this one was close to what it looked like on the surface: §7.11's `getelementptr`-address idiom and the fifth slice's `variant_layout`/`bind_payload` had already built everything it needed, so the whole change was one conditional tag-load plus one address-only half of `bind_payload`. `tests/accept/match_a_reference.ls` and `examples/tree.ls` (a three-field variant, `_` discarding past two positions, folded into a multi-leaf struct return) both match Cranelift exactly. **Every gap this document names a target for is now closed** — what's left (`Ffi`/`extern fn`, `Net`, a handful of builtins) has no `benches/` program or `tests/accept/` fixture asking for it yet. §7.20 opened `Net` itself, scoped directly rather than by a `benches/` program: `listen`/`accept` are closed — neither takes a capability, so both are ordinary fixed-signature `libc` calls — checked against a deliberately invalid fd (`tests/accept/listen_accept_bad_fd.ls`), since `connect`/`bind` and `Ffi`/`extern fn` are still refused and with them the only way to obtain a real one. §7.21 closed `bind` — `socket`+`setsockopt(SO_REUSEADDR)`+`bind` folded into one call, the same `struct sockaddr_in` `lex-sys-codegen`'s own `bind` builds by hand — and with it the first expression needing a value conditional on which of three runtime paths ran (`socket`/`bind` can each fail, returning `-1` rather than trapping): a plain `alloca i64` result cell written in each branch and loaded once at the merge label, no `phi`, the same rule `if_stmt` already follows. `crates/lex-sys/tests/conformance/backends.rs`'s `the_two_backends_bind_and_accept_a_real_connection` builds a listener on each backend, connects a real `TcpStream`, and checks both exit `0` — the first Net-capable program `--backend llvm` has ever actually run. §7.22 closed `connect`, the larger remaining piece as predicted: `checked_host` is this backend's first *loop* built for `Net` — copying a dialled name into a 256-byte stack buffer while checking the bound's prefix byte by byte, the same "cursor in an `alloca i64` cell, no `phi`" shape the arena-fill loop already established — then `getaddrinfo`, the same big-endian port patch `bind` already does, and `socket`/`connect`, three failure points funnelled into one result cell. This slice's own session built an all-LLVM pair — a listener and a client, both `--backend llvm` — talking over real loopback, the first time two programs this backend built have ever talked to each other; `the_two_backends_connect_to_a_real_listener` checks the same claim against a plain `std::net::TcpListener` peer. `Net` is now fully built on `--backend llvm`. §7.23 closed `Ffi`/`extern fn` — and found the "only gap left" claim repeated across §7.20–§7.22 **false**: `Fs` had been unbuilt the whole time, unnamed because no slice had tried a real `Fs`-using program against this backend until `examples/seek/` did. Corrected in place, not deleted. `Callee::Extern` mirrors `lex-sys-codegen`'s own arm — a capability parameter never crosses to C, everything else crosses at lex-sys's own widths — and reuses `Callee::Fn`'s call-and-unpack shape, factored out as `emit_call` once both needed it; `scalar_kind` gained the matching new arm. Checked against `tests/accept/bytes_to_c.ls` unmodified, plus a fresh `labs(-5) == 5` on both backends. Two findings the checking itself turned up: `Fs` is still refused, the boundary fixture moved a sixth time to `tests/accept/file_handle.ls`; and a user-declared `extern fn` naming a symbol this backend already declares for `Net` (`socket` et al.) at a different width makes `clang` correctly refuse to link — not a new bug, `docs/ROADMAP.md`'s #92 entry already recorded the identical exposure on Cranelift for `close`, left unfixed here for the same reason. §7.24 closed `Fs` — `checked_path` is `checked_host`'s loop plus a `..`-traversal refusal and a `/`-boundary check, reused by `fs_read`/`fs_write`/`open_read`; `file_read` and a per-thread `errno` accessor round it out. Checking it against real programs found two more things: `read`/`write`'s own unconditional declares broke `bytes_to_c.ls` (a program that **had** worked, unlike `socket`/`bind`'s already-accepted exposure) — fixed, not documented away, by declaring them only when a program's own `extern fn` doesn't already claim the symbol; and `compare` had hardcoded `icmp {cc} i64` regardless of operand type since it was written, silently correct for `int`, silently ill-typed for `byte`, caught only once `examples/cut/`/`examples/seek/` exercised `std.bytes.find`'s raw byte comparison — nothing in eighteen prior slices had. Fixed by threading `binop`'s own `lhs_kind` through. The boundary fixture moves a seventh time, to `tests/accept/static_data.ls`, refusing on `Expr::Static`. §7.25 closed it — `emit_module` lays out each `Program::statics` entry as one read-only global, packed at the same byte-or-eight-byte stride every slice in this backend already uses, and `Expr::Static` is only a reference to it — and, found next to it by checking whether `body/expr.rs`'s `expr` match was *actually* exhaustive rather than assuming it a fourth time, `Expr::BitNot` (`~x`) had no arm at all: `tests/accept/bitwise.ls`'s own `~0` folds to a literal before codegen runs, so it could never have caught the gap. Fixed as `Not`'s own `xor`, at `i64`/`-1` instead of `i8`/`1`. Both closures leave `expr`'s match with no unmatched `Expr` variant, so its wildcard arm came out entirely — `rustc` itself now refuses to build this crate if a future `Expr` variant goes unhandled, a stronger guarantee than any test gave before. The same check run over `Callee::Builtin` found nothing left either. `static_data.ls` and `bitwise.ls` (the latter checked against `--backend llvm` for the first time) both match Cranelift byte for byte; `bitnot_flips_every_bit_not_just_the_low_one` forces a genuinely unfoldable operand `bitwise.ls` alone cannot. Every fixture in `tests/accept/` and every program in `examples/` builds on `--backend llvm`, checked directly. **#127 (corrected in place): the `extern fn socket` collision above is fixed, not permanent.** Making `--backend llvm` the default turned that "already-documented, already-accepted" exposure into a live regression for every socket-declaring example the moment it did, so every libc symbol this backend declares unconditionally is now declared only when a program's own `extern fn` doesn't already claim it — the guard `read`/`write` already had, extended everywhere else. The same default flip found two bugs neither Cranelift parity testing nor five years of opt-in use ever had: `Expr::Unboxed` had no `scalar_kind` arm (`docs/tuples.md`'s identity fixture, fixed the same way `Deref`/`Contents` already were), and `int::MIN % -1` trapped by signal instead of answering `0`, because `checked_div` wrongly applied `Div`'s overflow check to `Rem` too — fixed with a real branch around `srem`, since a `select` still evaluates the instruction it is meant to avoid |
-| [`effect-polymorphism.md`](effect-polymorphism.md) | The roadmap's last language row, and the only one with no design behind it. **No** — there is nothing to be polymorphic over. | **a documented no, counted by reading** — **537** functions here write a row, **298** of them `[]`, and four rows cover 91% of the rest. None could vary: a row is fixed at the declaration, and neither type nor region parameters can select a callee. The nearest asker (`write_all` against `error_all`) differs by the *builtin* first, so row polymorphism turns out to be the shadow of higher-order code — which `Rule::NoFunctionValues` refuses with a fixture. §4 lists what would have to arrive before it has an asker |
-| [`hash-stability.md`](hash-stability.md) | How often a content hash actually moves — the number `canonical-ast.md` §8 said nothing was measuring, and the one `ROADMAP`'s `lex-vcs` row was gated on. | **measured, and the instrument turns out never to have been tested** — 20 commits touched the encoder and the golden fixtures observed **zero** of them, because they landed after the movement stopped. The rate that does move is the language's: **71% of this repository's own 117 `.ls` revisions no longer type-check** under today's build, and a single label rename (`io` → `io_read`/`io_write`) is 42% of that. A hash-keyed VCS inherits the second rate, so what to wait for is a **plateau**, not a number |
-| [`vcs.md`](vcs.md) | Now that the plateau `hash-stability.md` asked to wait for has been measured: how much of `lex-lang`'s `lex-vcs` lex-sys could actually reuse, and what has to be native. | **the plateau question answered yes, and the foundation slice built** — read file by file rather than estimated a second time, `operation.rs`/`attestation.rs`/`signing.rs`/`merge.rs`/`merge_session.rs`/`issue.rs`/`predicate.rs`/`op_log.rs`/`history_index.rs` are exactly the ~81% (`String`/`BTreeSet<String>`-keyed, stated as decoupled in their own doc comments) and `compute_diff.rs`+`diff_to_ops.rs`+`body_merge.rs` are exactly the ~1,500 `CExpr`-walking lines `ROADMAP.md` #55 estimated, confirmed to the line (449+617+411=1477). The apply→gate pipeline ports as an idea with no code changed, because `gate.rs` already defers all type judgement to the caller's checker — which also answers `ROADMAP.md` #55's own linearity worry: a merge that is structurally clean but double-consumes a linear value is exactly the case the gate already exists to catch, no new invariant needed, only a higher expected *rate* of merge-then-gate-rejects than lex-lang sees, worth measuring rather than assumed. `crates/lex-sys-vcs` is now real: a native crate sharing the scheme and no code (the same shape `lex-os`/`lex-sys` already committed to, down to picking BLAKE3 over `lex-vcs`'s SHA-256 for the same reason `lex-sys-id` did), an edition tag on every op from day one, and a scoped-down `OperationKind` with no `budget_cost` field at all — `budget.md` already settled that lex-sys has nothing for it to hold. Checked against a golden case built from real `lex-sys-id`/`lex-sys ids` output, not invented strings. **The gate, op log, attestation and signing are now built too**: `gate.rs` type-checks a candidate program with no code changed at the `lex-vcs` boundary, a loose-file op log persists what it accepts, and a hash-chained attestation log records the verdict, sealable with Ed25519 via `ed25519-dalek` — the same crate `lex-os-audit` uses, not `std.ed25519` (`ed25519.md`, a different consumer). Merge, merge sessions and issue tracking remain unbuilt, with no asker yet |
-| [`character-literals.md`](character-literals.md) | `'a'` — the third spelling of an integer, after decimal and hexadecimal. | **settled and built** — and it exists because `examples/wordcount.ls` was writing the translation by hand, in a comment, three lines running. **121 places** in this repository spell an ASCII character as a decimal number, and 75 of them are one idiom (`48 + n % 10`). The design question is which type a character literal has, and counting answers it: **91 of the 121 sites want an `int`**, because `putchar` and `getchar` mirror libc. So it is a *spelling, not a type* — `bitwise.md` §1.1's rule for `0xff`, applied a second time — which means no new node and no moved hash. §2.1 states the half it does not buy: the 30 `byte` sites keep their `byte_of`, and gain only a legible argument |
-| [`emitted-checks.md`](emitted-checks.md) | The price list, read out of the binary rather than off the IR and a C proxy. | **an audit, and four things came out of it** — `check-cost.md` measured C, and each kernel's comment about what lex-sys emits had never been checked. **Six of eight proxies are exact.** The headline row is not: the C guard tests the range with two `ucomisd` per element where Cranelift emits `cvttsd2si` and one `cmp`/`jno` on a sentinel, so **3.35×** prices a guard this language does not emit and the *ranking* does not survive. Division is backwards twice — both operators emit one comparison and not the same one, so `1 / 0` is **SIGILL** and `1 % 0` is SIGFPE. `int::MIN % -1` **answers 0** and `defined-behaviour.md` §2.3 said it traps, borrowing the quotient's reason for an operator with no quotient. And writing the probe found a **compiler bug**: a folded `byte`-returning call put an `int`-shaped literal where the backend wanted one machine byte |
-| [`flags.md`](flags.md) | The shape of a command line: `std.flags`, a cursor rather than a `getopt_long` table. | **settled and built, and the roadmap row was wrong about why** — it listed flag parsing as work that would make two programs shorter. They are not too long, they are **wrong**: of the twelve spellings GNU accepts across the two ports, **six disagreed**. `cut` refused four loudly; `base64` answered `--decode` and `-di` by **encoding its input and exiting 0**, because `--decode` is not two bytes. And every base64 test in the suite passed exactly `-d` — twelve sizes, both directions, three malformed inputs, through one spelling of one flag, which is `line-reading.md` §1's shape again. §3 is why the parser is a cursor: a table has to know which options take values and then resolve GNU's abbreviations against itself, so instead the program says when it wants a value and there is nothing to search |
-| [`first-page.md`](first-page.md) | What a reader of `README.md` actually learns, and the rewrite that follows. | **measured, and the instrument arrived on its own** — someone outside the project read the README and wrote a fifteen-proposal design document. **Eight of the fifteen were already shipped**, each with a document behind it, and its phases 1–4 are done; it opens at phase 1. The finding is not tone: the words `sandbox`, `audit`, `evidence` and `agent`-in-the-execution-sense appeared **zero** times in 572 lines, and `lex-os` once, in a parenthesis — so the three proposals that live in the runtime were **unmentionable** from this project's first page, and all three were re-proposed. Meanwhile *"Performance expectation"* was **31%** of the file, the largest section, about the thing the project is weakest at. §4 is the ecosystem map that did not exist, including the honest part: `lex-os` takes its grant from `lex-lang` and shares **no code** with this repository |
-| [`under-a-grant.md`](under-a-grant.md) | Whether a supervisor holding a `lex-os` grant can decide a lex-sys authority report. | **measured, and it falsifies a sentence in `reach.md` §5.2** — `README.md` and `authority.md` both said `--output json` was for *"a supervisor checking it against a grant"*, and no supervisor had been asked. Of the grant's three dimensions, **filesystem is enforceable and more precisely than the grant can express** (the report carries a path prefix where the grant has a tri-state), and **network and exec are not enforceable at all**: `examples/serve/` binds a TCP port and reports `args`, `ffi`. §3 removes the rescue — the foreign symbol list is a proof about *names* and a heuristic about *domains*, and six lines of `syscall` report `["syscall"]` while opening a socket. §4 is the diagnosis: **`Ffi(lib)` is the one capability whose label does not bound what it authorises**, and the filesystem dimension works precisely because `filesystem.md` §2 already took files out of libc |
-| [`net.md`](net.md) | Taking sockets out of libc: what a `Net` capability would have to say, and which half of it anything here asks for. | **settled, cleared to build — and the probe found that `reach.md` §5.1's framing describes neither side.** *"A host is a thing worth narrowing to"* is the **outbound** question. §2 is why the two halves are asymmetric rather than an oversight: outbound is the program's choice and belongs in the type, inbound is routing's answer — which is why lex-os enforces it with iptables on the tap device. So `Net` has **two axes**, a host outbound and a port inbound, each needing its own two askers. §5 is the count, five times recounted: outbound has **4** (`examples/fetch/`, `examples/report/`, `examples/vsock/`, `examples/agent_guest/`) and inbound has **3** (`examples/serve/`, `examples/collect/`, `examples/agent_supervisor/`) — **both halves have cleared the bar**. **Who resolves names is decided (§4.1): the builtin**, after checking the name against its capability's bound, because lex-sys has to be usable without `lex-os`. Under `lex-os` the firewall stays as the outer wall, and the perimeter writing its pinned addresses into the guest's hosts file makes the two resolvers agree. The future `connect` takes a name and a port |
-| [`related-work.md`](related-work.md) | What lex-sys took from Cyclone, Koka, Rust, Vale, Zig, Lex and the object-capability model; the relatives that got there first, **Austral** above all; and WASI as the competitor. | **written, and overdue** — the repository had never mentioned Austral |
-| [`differential.md`](differential.md) | The constant folder against the backend: every operator the folder evaluates, on every pair of boundary operands, computed three ways. | **a test, and it found one thing** — `fold.rs` cited a test that never existed, and the one disagreement it would have caught (`int::MIN % -1`) shipped. Now: **5,156 cases, 0 disagreements**, 436 traps on both sides, and every one of five deliberately broken folders caught. Writing it found that `bits_of(0.0 / 0.0)` was a **different number on each CI target**, which made `compile-time.md` §6's *one value on every target* false for one builtin; every NaN now reads as one pattern |
-| [`connect.md`](connect.md) | The program `net.md` §5 asked for: `examples/fetch/`, an HTTP client, and what `connect` turned out to need. | **a probe, and it found four things, then a second program found two more.** **No names**: `getaddrinfo` answers a pointer, so a lex-sys program can only connect to an address while a `lex-os` grant only names hosts, and whoever resolves owns the check. **The destination is data**, so `net.md` §4's literal is a bound checked at run time, the way `Fs(prefix)` is. **`struct sockaddr_in` is different bytes on Linux and macOS**, and both network programs are portable only because macOS forgives the Linux bytes. The first version of that finding said macOS refuses them, and CI refuted it. **`errno` is a pointer**, so why a connection failed is not observable. Outbound askers were 1, the bar two; §6 recounts to **2** with `examples/report/`, an agent that posts a result — the first program here to send a request body. §8: doing that found a region's 64 KiB arena cap and a five-byte-short header buffer, both bugs rather than design questions |
-| [`listen.md`](listen.md) | The inbound counterpart to `connect.md`: `examples/collect/`, an agent that accepts several requests in a row and reads their bodies, and what a second inbound program needed. | **a probe, and it cleared the last bar `Net` had left.** `examples/serve/` accepts one connection and never reads a body; `collect/` accepts a count of connections in a loop and reads each request's body by `Content-Length`, streamed to standard output rather than materialised, the same discipline `connect.md` §8 already paid for. Found nothing new in `collect.ls` itself — but found a real deadlock in the *test*: `collect`'s stdout is a pipe smaller than a 100,000-byte body, and a test that reads it only after the HTTP exchange finishes blocks forever once the pipe fills, since the exchange cannot finish until the write does. Draining the pipe concurrently, on its own thread, is the fix. **Inbound is now 2 and has cleared its bar; both halves of `Net` have** |
-| [`internal-errors.md`](internal-errors.md) | When the compiler is wrong: a backend failure as a refusal with rule `internal`, located at the function whose code failed. | **settled and built** — the audit's C2(c). Measured by putting #71's bug back for one build: `check` answered **`{ "refused": [] }`, exit 0**, and `build` printed an unlocated *"code generation failed"* with **exit 3**, which the CLI documents as the *environment's* fault. Now `check` runs the backend too (about 2× its old time, a few ms per real program), both say the same located `internal` refusal with exit 1, and a panic in any of codegen's 22 invariant sites is caught at its function rather than printing a Rust backtrace hint and exiting 101 |
-| [`fuzzing.md`](fuzzing.md) | A stable-Rust mutation fuzzer over the whole corpus, in `cargo test`: nothing panics, what parses prints back to the same tree, what the checker accepts the backend compiles. | **a test, and it found four bugs, all in the printer** — the audit's C2(a). `(e,)` lost its comma, turning a refused program into an accepted one; a label argument printed unescaped; since #43 `-(a / 10)` printed as `-a / 10`; and `1 . 2` printed as the float `1.2`. 450,000 distinct mutants found nothing in the checker or the backend. It also falsified `tuples.md` §2.1's "there is no one-tuple to write" |
-| [`function-values.md`](function-values.md) | The audit's L1: whether closures exist, what mode a capturing one has, how a higher-order row is spelled. Settled before anything forces it, then built once `threads.md` asked. | **settled and built** — `Type::Fn`, `Expr::FnValue`/`Expr::CallIndirect`, both backends; `tests/accept/function_value.ls` calls a region-polymorphic, effectful function through a value taken twice (`val`, no move) on both. No closures, still — a captured capability stays authority no parameter names. Callbacks into C still need row `[]` and scalar parameters, which is exactly why this does not reach `pthread_create` (`threads.md` §1) |
-| [`threads.md`](threads.md) | Why `pthread_create` cannot be an `extern fn` — its one `void *arg` is `reach.md` §3.1's un-crossable pointer by another name, and `c_ptr` does not help because it is opaque by design. Proposes `spawn`/`join` as compiler primitives instead, the same kind `fork`/`box`/`split` already are, never crossing the C ABI at all. | **§2's single-leaf slice and §5 step 3's owned capability are both built.** `spawn`'s payload and `body`'s return type are each one pointer-width leaf (`int`, `bool`, `c_ptr`, a function value, a reference, or an owned capability) — `body`'s own compiled entry point becomes `pthread_create`'s start routine directly, since nothing in this compiler yet synthesises a trampoline for a genuinely multi-field payload. `res Thread[T, R]` carries `T` purely so its region is tracked, getting §3's whole escape-check soundness argument for free from `Type::Named`'s existing generic walk. **The owned-capability case needed no trampoline after all**: checked against both backends' `leaves_into` before writing any code, `File` is one real leaf (the fd) and `Io`/`Ffi`/`Fs`/`Args`/`Heap` are all zero, the exact shapes this slice's codegen already handles for `int` and `()` — so admitting them cost a wider checker allowlist, not new machinery, correcting §5 step 3's own original text in place. Checked directly throughout: `tests/accept/spawn_thread_ids.ls` verifies genuinely distinct OS thread IDs and a shared capability still readable after `join`, `tests/accept/spawn_parallel_sleep.ls` verifies real wall-clock parallelism, `tests/accept/spawn_owned_io.ls`/`spawn_owned_file.ls` move an owned `Io`/`File` into a thread that performs real I/O with it, `tests/reject/spawn_handle_escapes_borrow.ls` verifies a `Thread` handle cannot outlive its payload's region unjoined, and `tests/reject/spawn_owned_capability_reused.ls` verifies the spawning side loses the capability it moved — the pre-existing `linear-use-after-move` rule, not a new one. **A capability shaped like a genuine multi-field struct and the `Rc[h] T` exclusion are measured and decided *not yet*, not left open**: both need the same compiler-synthesised trampoline (`Rc` doesn't exist as a type either way), and a repo-wide check across `lex-sys`/`lex-os`/`lex-lang`/`lex-gpu` found no program asking for a multi-field spawn payload today — `lex-os-guest`'s own reasoning loop is single-threaded by design, and `lex-lang`'s own, independently-designed `conc.spawn_thread` answers the same problem with a captured closure rather than an explicit payload. `AGENTS.md` §7's rule applied and checked, the same verdict `self-hosting.md` reached the same way |
-| [`editions.md`](editions.md) | The audit's L2: an edition marker, a path for renames, and a vocabulary freeze. Measured on the repository's own history before any of it is built. | **design, measured** — 58 of 141 old revisions no longer check. An alias recovers **none** of the 45 the `io` split broke, because rows are exact, so editions hold open only **additions**. A checker-driven migration tool would recover 30. Edition 2 will be edition 1 plus `Net`, so the 210 files that destructure `Split` need no edit |
-| `defined-behaviour.md` | Every place C/Rust leave behaviour open, and what we define it to instead. Integer overflow, evaluation order, layout. | **written and enforced** — overflow traps, evaluation order is left to right everywhere, and §9 lists the fixture behind each rule. §8 is what does not exist yet, which is absent rather than undefined |
-| [`crypto.md`](crypto.md) | `std.crypto`'s first slice: SHA-256, built ahead of a same-repo consumer because `lex-os-audit`'s hash-chained log needs one to be a port target at all. | **built** — FIPS 180-4 in masked 64-bit `int` arithmetic (§2), the round constants as this backend's first real `static` consumer outside its own design doc (§3), and four vectors checked against the system `sha256sum` rather than from memory, including the smallest input that forces the multi-block path. **Found, building it, a real gap `static_data.ls` never could**: a `static` was never gated by reachability the way a function is, so `std.crypto`'s tables reached the object file of every program that merely `import`ed the module, whether or not it called `sha256` — caught by `modules.rs`'s own byte-identical-objects test. Fixed in `lex-sys-ir`: an exhaustive, no-wildcard walk (§6) collects which `static`s a reachable function actually names, closes over statics reading earlier statics, and renumbers what survives before anything is evaluated. Ed25519 signing (`lex-os-capsule`'s own need) is named as the next slice and deliberately not started here |
-| [`sha512.md`](sha512.md) | `std.crypto`'s second slice: SHA-512, the hash Ed25519 actually needs (RFC 8032), not SHA-256. | **built** — structurally `compress` again at double the width and eighty rounds, `wrapping_add` doing directly what `mask32(checked +)` had to simulate. **Found two things SHA-256's narrower word had hidden**: this language's `>>` is arithmetic, so a full 64-bit rotate needs a real logical shift, built as an arithmetic shift with the sign-extended top bits masked off (§2) — and a 64-bit literal with the top bit set does not parse at all, fixed by splitting every such constant into `(hi << 32) \| lo` (§2), a mechanical, checked-by-reconstruction transform rather than a per-constant judgement call. Four vectors checked against Python's `hashlib.sha512` and the system `sha512sum` independently. §5 is explicit about what Ed25519 still needs beyond this — field arithmetic `std.bignum` cannot yet do, curve point operations, and a constant-time posture nothing here provides yet — named and deliberately not started |
-| [`ed25519.md`](ed25519.md) | `std.ed25519`: sign and verify, `sha512.md` §5's own three named gaps closed. For a future lex-sys port of `lex-os-guest`, not this repository's own Rust tooling — `lex-sys-vcs`'s signing keeps `ed25519-dalek`. | **built** — every "big number" a bit-serial `[byte]`-slice toolkit (compare, add, subtract, shift-by-one, schoolbook multiply) rather than a radix-limbed one, on purpose: `sha512.md` §2's carry-chain bug was for one 64-bit rotate, and Ed25519 is that risk hundreds of operations over, so this module trades speed for a toolkit simple enough that four hand-computable cases could catch its one real bug. **Found one**: `bn_modpow`/`sign`/`verify` all reuse one scratch buffer across many calls, and the reduction step assumed its output arrived zeroed rather than zeroing it itself — correct in isolation, wrong the moment a buffer was reused unzeroed, caught by `3^1 mod 7` returning `1` instead of `3`. `p`/`L`/`d`/√-1/the base point are each derived and checked (on-curve, correct order) rather than transcribed. Checked against four fresh `openssl`-generated keypairs: key derivation and signing match `openssl` byte for byte on all four; verify accepts a real `openssl` signature over a 512-byte message this module never produced and rejects it once either the signature or the message is tampered with. §6 states plainly what is not built: no constant-time posture, no key generation (lex-sys has no CSPRNG capability), no combined double-scalar verification |
-| [`self-hosting.md`](self-hosting.md) | `bootstrap.md`'s own deferred experiment, run: port `lex-ast`'s canonicalization algorithm and check byte-identical `SigId`/`StageId` — not against `ROADMAP.md`'s "existing ~136k-op corpus" (checked; it lives in none of the four repositories this session can reach), against the real 31-file `.lex` corpus this sandbox actually has. | **run, and decided: not yet.** A from-scratch reimplementation of `canon_json` + `sig_id`/`stage_id`, never calling the original functions, reproduced all 168 real `Stage`s' `SigId`/`StageId` byte-for-byte (2 of 31 files excluded as deliberately-malformed fuzz seeds) — the algorithm is specified precisely enough in its own source to port. Recursion and heap-allocated recursive data (an AST node's own shape) already work, proven rather than assumed (`examples/tree.ls`). `bootstrap.md`'s Cranelift-is-a-Rust-library blocker still holds for reaching a code generator directly, but `reach.md` §3.4's `fork` already names the way around it — emit assembly, shell out to `as`/`ld` — untried but not blocked. What stops the decision at "not yet" is scale (29,368 real lines across the compiler crates) with no asker (`AGENTS.md` §7): nothing in this repository needs a lex-sys compiler written in lex-sys today |
+| [`linearity-and-effects.md`](linearity-and-effects.md) | Core type-system rules: linear/affine ownership, capability-typed effects, how they unify | settled and built ([#2](https://github.com/alpibrusl/lex-sys/issues/2)) |
+| [`bootstrap.md`](bootstrap.md) | What M0 settled: host language, file extension, the M0 surface | written ([#3](https://github.com/alpibrusl/lex-sys/issues/3)) |
+| [`canonical-ast.md`](canonical-ast.md) | AST shape, canonicalisation, per-unit identity (`lex-sys ids`) | written and built |
+| `memory-model.md` | Regions/arenas, escape, the escape hatches | not written — settled piecemeal by `heap.md`/`sharing.md`; nothing left to write on its own |
+| [`strings.md`](strings.md) | A string is bytes, not an encoding; `byte` as storage | settled and built |
+| [`boxed-slices.md`](boxed-slices.md) | `Box[[T]]`: a pointer and a length | settled and built |
+| [`many-files.md`](many-files.md) | A program in more than one file; identity by content | settled and built |
+| [`arguments.md`](arguments.md) | The `Args` capability | settled and built |
+| [`reading-references.md`](reading-references.md) | Reading through a reference; a reference gives references | settled and built |
+| [`heap.md`](heap.md) | `Heap` and `Box[T]`: one value, one allocation | settled and built |
+| [`filesystem.md`](filesystem.md) | `Fs(prefix)`, the path check | settled and built |
+| [`sharing.md`](sharing.md) | Why `Rc` is not expressible, and `Gen` | settled and built — corrects `linearity-and-effects.md` §9 |
+| [`tuples.md`](tuples.md) | `(A, B)` as a structural anonymous struct | settled and built |
+| [`shadowing.md`](shadowing.md) | Shadowing: allowed exactly when the binding is dead | settled and built |
+| [`standard-input.md`](standard-input.md) | `getchar`: a second label on `Io`, not a new capability | settled and built |
+| [`modules.md`](modules.md) | `module`/`import`/`pub`; a module is a namespace, not a trust boundary | settled and built |
+| [`standard-library.md`](standard-library.md) | What belongs in `std`, and how a function earns its way in | written and built |
+| [`mode-polymorphism.md`](mode-polymorphism.md) | `[T: val]` bounds | settled and built — found a leak and a double free |
+| [`collections.md`](collections.md) | Which collections hold a resource, and why it's about shape | settled and built |
+| [`slicing.md`](slicing.md) | `s[a..b]`, half-open and trapping | settled and built |
+| [`defer.md`](defer.md) | `defer E;` as sugar, expanded during lowering | settled and built |
+| [`authority.md`](authority.md) | `lex-sys authority`; `release` at `main` is the declaration | settled and built |
+| [`budget.md`](budget.md) | Whether `[budget]` is a type-system feature | settled — no |
+| [`reach.md`](reach.md) | What a program can reach, via a real REST endpoint | settled and built; corrected by `opaque-pointers.md` |
+| [`opaque-pointers.md`](opaque-pointers.md) | `c_ptr`: one opaque foreign-pointer shape | settled and built (edition 3) — linking beyond libc is a separate, unbuilt feature |
+| [`overflow-cost.md`](overflow-cost.md) | What the overflow trap costs, measured | measured — corrects the README and `defined-behaviour.md` §2.1 |
+| [`bitwise.md`](bitwise.md) | `& \| ^ ~ << >>`, hex literals | settled and built |
+| [`porting.md`](porting.md) | Real programs ported and checked byte-for-byte: `base64`, `sort` | done twice |
+| [`against-c-and-rust.md`](against-c-and-rust.md) | lex-sys against C and Rust on the same algorithm | measured |
+| [`purity.md`](purity.md) | The checked purity proof C can only promise and Rust can't state | measured and unspent |
+| [`floating-point.md`](floating-point.md) | `float`, IEEE-754 binary64 | settled and built |
+| [`float-printing.md`](float-printing.md) | Shortest round-trip decimal printing | settled and built |
+| [`compile-time.md`](compile-time.md) | Constant folding and pure-call evaluation | settled and built |
+| [`compile-time-data.md`](compile-time-data.md) | `static` items evaluated during compilation | settled and built |
+| [`layout.md`](layout.md) | What every leaf costs; packing and transposing | measured, deferred with a trigger (`lex-sys layout`) |
+| [`benchmarks-game.md`](benchmarks-game.md) | Five kernels from the Computer Language Benchmarks Game | measured |
+| [`bulk-io.md`](bulk-io.md) | `write_bytes`: a whole slice in one call | settled and built |
+| [`file-handles.md`](file-handles.md) | An open file as a linear resource | settled and built |
+| [`utf8.md`](utf8.md) | Decoding `&r [byte]` into code points | settled and built |
+| [`standard-error.md`](standard-error.md) | `err_write`: a third label on `Io`, not an eighth capability | settled and built |
+| [`../AGENTS.md`](../AGENTS.md) | How to write lex-sys in one page | written and enforced |
+| [`float-math.md`](float-math.md) | `sqrt` as a builtin | settled and built |
+| [`gpu.md`](gpu.md) | Whether lex-sys can run on a GPU, and whether `lex-gpu` should exist | measured; decided |
+| [`line-reading.md`](line-reading.md) | Whether `std` needs a line reader | measured — no; found and fixed a silent truncation bug |
+| [`agent-errors.md`](agent-errors.md) | Refusals a machine can read: stable rule tags, `check --output json` | settled and built |
+| [`agent-tools.md`](agent-tools.md) | A tool genuinely shaped for an agent's own loop | built (`examples/seek/`) |
+| [`aliasing.md`](aliasing.md) | Whether `&!` should mean Rust's `&mut` | measured — no |
+| [`check-cost.md`](check-cost.md) | The price of every check this language emits | measured — corrects `overflow-cost.md` and `gpu.md` |
+| [`poison.md`](poison.md) | A per-lane flag instead of a trap, on a vector ISA | measured — depends on the check |
+| [`backend-limits.md`](backend-limits.md) | What Cranelift can and cannot be asked for | an audit, checked against source |
+| [`llvm-backend.md`](llvm-backend.md) | A second backend, `--backend llvm` | **complete, and the default** |
+| [`effect-polymorphism.md`](effect-polymorphism.md) | Whether an effect row can be polymorphic | a documented no, counted by reading |
+| [`hash-stability.md`](hash-stability.md) | How often a content hash actually moves | measured — the plateau `vcs.md` needed |
+| [`vcs.md`](vcs.md) | How much of `lex-vcs` lex-sys can reuse | plateau answered yes; foundation, gate, op log and attestation built |
+| [`vcs-publish.md`](vcs-publish.md) | The first real caller of `lex-sys-vcs`: publish, no diffing needed | built (`lex-sys vcs publish`/`log`) |
+| [`character-literals.md`](character-literals.md) | `'a'`: a third spelling of an integer | settled and built |
+| [`emitted-checks.md`](emitted-checks.md) | The price list, read out of the binary | an audit; found a real compiler bug |
+| [`flags.md`](flags.md) | `std.flags`: a cursor, not a `getopt_long` table | settled and built |
+| [`first-page.md`](first-page.md) | What a reader of `README.md` actually learns | measured, and acted on — this guide is the result |
+| [`under-a-grant.md`](under-a-grant.md) | Whether a `lex-os` grant can decide a lex-sys authority report | measured — filesystem is enforceable; network and exec are not |
+| [`net.md`](net.md) | `Net`: sockets, taken out of libc | settled and built |
+| [`related-work.md`](related-work.md) | What lex-sys took from Cyclone, Koka, Rust, Vale, Zig, Lex, Austral | written |
+| [`differential.md`](differential.md) | The constant folder against the backend | a test; found and fixed one disagreement |
+| [`connect.md`](connect.md) | `examples/fetch/`: an HTTP client, and what `connect` needed | a probe |
+| [`listen.md`](listen.md) | `examples/collect/`: the inbound counterpart | a probe; cleared `Net`'s last bar |
+| [`internal-errors.md`](internal-errors.md) | A backend failure as a located refusal, not an environment error | settled and built |
+| [`fuzzing.md`](fuzzing.md) | A mutation fuzzer over the whole corpus | a test; found four printer bugs |
+| [`function-values.md`](function-values.md) | Whether closures exist, and what mode a capturing one has | settled and built |
+| [`threads.md`](threads.md) | Compiler-provided `spawn`/`join`, never crossing the C ABI | single-leaf slice and owned-capability case built; multi-field payload decided not yet |
+| [`editions.md`](editions.md) | An edition marker, a path for renames | design, measured |
+| [`defined-behaviour.md`](defined-behaviour.md) | Every place C/Rust leave behaviour open, defined instead | written and enforced |
+| [`crypto.md`](crypto.md) | `std.crypto`'s first slice: SHA-256 | built |
+| [`sha512.md`](sha512.md) | `std.crypto`'s second slice: SHA-512 | built |
+| [`ed25519.md`](ed25519.md) | `std.ed25519`: sign and verify | built |
+| [`self-hosting.md`](self-hosting.md) | Whether lex-sys could host its own toolchain | run; decided not yet — no asker |
 
 `linearity-and-effects.md` was the gating artifact: the decision set that
 determined whether this is a three-month prototype or a three-year project.
 It was settled before M2 started, its must-reject list was read as what it is
 — the M2 conformance suite, stated in advance — and M2 was then built against
-it slice by slice. Every rule in it now has a fixture, and the two places the
-implementation had to decide something the document left open (§3.1's
-instantiation rule, §6's unique-to-shared coercion) are written back into it
-rather than living only in code.
+it slice by slice.
