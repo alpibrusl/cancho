@@ -426,6 +426,7 @@ not repeated here; a doc's own header carries its own detail.
 | [`ed25519.md`](ed25519.md) | `std.ed25519`: sign and verify | built |
 | [`self-hosting.md`](self-hosting.md) | Whether lex-sys could host its own toolchain | run; decided not yet — no asker |
 | [`agent-cli.md`](agent-cli.md) | `lex-sys introspect`/`skill`: the CLI surface as data, imported from `lex-lang`'s ACLI integration | built; found a false-familiarity bug in the process (`-o`/`-l`/`-L` would have rendered as `--o`/`--l`/`--L`) |
+| [`next-phase.md`](next-phase.md) | Replacing episodic duplication/staleness hunts with a mechanical check, argued from `MANIFESTO.md` and three of this session's own mistakes | proposed; §3 already found a real instance (10 examples duplicating `std.io`) |
 
 `linearity-and-effects.md` was the gating artifact: the decision set that
 determined whether this is a three-month prototype or a three-year project.

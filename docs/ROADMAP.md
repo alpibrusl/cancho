@@ -284,8 +284,17 @@ outright.
 
 ## Beyond
 
-The first real target is **`lex-os`** — production systems work, no
-rewrite risk.
+**Inside lex-sys, the next phase is [`next-phase.md`](next-phase.md):**
+not a feature list — "What is next" above has nothing left unstruck —
+but a proposal to replace *hunting* for stale docs and duplicated code
+with a *mechanical check* for the latter, argued from `MANIFESTO.md`
+and from three of this session's own mistakes. Its §3 already found a
+real instance: ten examples duplicate `std.io`'s `print_nat`/`write_all`,
+eight of them still on the pre-bulk-I/O `putchar` loop `docs/bulk-io.md`
+replaced.
+
+Beyond lex-sys, the first real target is **`lex-os`** — production
+systems work, no rewrite risk.
 
 Self-hosting the lex-lang toolchain was a *spike before a plan*, and
 the spike has run: [`self-hosting.md`](self-hosting.md). Not against
