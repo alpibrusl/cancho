@@ -70,15 +70,17 @@ walk that closure recursively, refusing a cycle or a diamond conflict
 rather than guessing — a claim this paragraph made and got wrong once
 already, corrected here the way `ROADMAP.md` requires. There is still
 no manifest, and no human-readable version string at all: a hash is the
-only thing actually depended on. The effect vocabulary keeps growing, but every
-addition since editions.md landed has been edition-gated and additive by
-construction, so it can no longer break a file that does not opt into
-the edition that adds it: 37% of this repository's own historical
-revisions still do not type-check under today's build
-(`docs/hash-stability.md` §2), and that figure is a closed debt from one
-pre-editions rename, not a number still climbing — this repository's
-own history since has added 24 more revisions and only 3 joined the
-unreadable pile. `c_ptr` lets `SSL_CTX *` and similar opaque handles
+only thing actually depended on. The effect vocabulary keeps growing, and
+every addition since editions.md landed has been edition-gated and
+additive by construction, so a file that does not opt into the edition
+that adds a feature cannot be broken by it: 39% of this repository's own
+historical revisions do not type-check under today's build
+(`docs/hash-stability.md` §2, re-measured), most of it a closed debt from
+one pre-editions rename — but that figure moved since the last time this
+paragraph was corrected (37%, then thought to have stopped climbing), and
+the honest reading now is that it grew again and not everything in that
+growth has been individually explained yet. `c_ptr` lets `SSL_CTX *` and
+similar opaque handles
 type-check, and `-l`/`-L` (`docs/foreign-linking.md`) let `build` link
 a library beyond libc, so a real TLS handshake compiles and runs
 today (`examples/tls_client/`).
