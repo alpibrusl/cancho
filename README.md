@@ -58,12 +58,18 @@ cargo run -p lex-sys -- run examples/tour.ls
 
 And honestly, **not a usable language yet**: real dependencies now
 resolve end to end (`lex-sys vcs publish`/`lock`/`fetch`,
-`docs/package-system.md`) — `packages/net-sockets/` and
-`packages/net-connect/` are two real published packages, and
-`examples/fetch/fetch.ls` depends on both at once, composed with no new
-tooling — but there is still no manifest, and no dependency's own
-dependencies resolve (a closure of stores, not just several direct
-ones). The effect vocabulary keeps growing, but every
+`docs/package-system.md`) — `packages/net-sockets/`,
+`packages/net-connect/`, `packages/agent-wire/`, and
+`packages/http-request/` are four real published packages, and
+`examples/fetch/fetch.ls` depends on two of them at once, composed with
+no new tooling. **A dependency's own dependencies resolve too now**
+(`docs/package-system.md` §4.6): `packages/http-request/` itself needs
+`net.sockets`, and `vcs publish --requires`/`vcs resolve`/`vcs fetch`
+walk that closure recursively, refusing a cycle or a diamond conflict
+rather than guessing — a claim this paragraph made and got wrong once
+already, corrected here the way `ROADMAP.md` requires. There is still
+no manifest, and no human-readable version string at all: a hash is the
+only thing actually depended on. The effect vocabulary keeps growing, but every
 addition since editions.md landed has been edition-gated and additive by
 construction, so it can no longer break a file that does not opt into
 the edition that adds it: 37% of this repository's own historical
