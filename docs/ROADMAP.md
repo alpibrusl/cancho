@@ -296,7 +296,13 @@ three stayed (`modular/text.ls`'s own worked example for
 `docs/modules.md`, `hello.ls`'s load-bearing role in three unrelated
 tests, `buffer/main.ls`'s copy was dead code and just deleted) and a
 root-namespace import collision the migration found along the way.
-§4's own standing check — the actual proposal — is not built yet.
+§4's own standing check — the actual proposal — is built now
+(`duplication::no_function_body_is_duplicated_across_files`), and
+being alpha-equivalence-aware rather than text-based, it immediately
+found three more real duplicates the original hunt's regex could not
+have (§4.1): two under a different name on each side (`larger`/`max`,
+`append`/`put`), and a package (`net.connect`) whose own extraction
+never reached one of its three source files.
 
 Beyond lex-sys, the first real target is **`lex-os`** — production
 systems work, no rewrite risk.

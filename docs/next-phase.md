@@ -1,16 +1,18 @@
 # The next phase: verification, not another hunt
 
-> **Status: the argument is made, §3's migration has landed, §4's
-> standing check has not.** M0–M3 are done, the LLVM backend is the
-> default, the package system closes real duplication, and the CLI is
-> self-describing (`docs/agent-cli.md`). `docs/ROADMAP.md`'s own "What
-> is next" table has nothing left unstruck. This document is what
-> comes after that table is empty: not a list of features, but a
-> change in *how* the next features get found — argued from
-> `MANIFESTO.md` ("Trust Without Comprehension") and from three things
-> this repository just did to itself in the same session. §3.1 has the
-> migration's own two findings, one of them (a root-namespace import
-> collision) not previously documented anywhere in this repository.
+> **Status: the argument is made, §3's migration has landed, and so
+> has §4's standing check (§4.1) — which promptly found more of what
+> §3 found, by a stronger method than the hunt that found §3.** M0–M3
+> are done, the LLVM backend is the default, the package system closes
+> real duplication, and the CLI is self-describing
+> (`docs/agent-cli.md`). `docs/ROADMAP.md`'s own "What is next" table
+> has nothing left unstruck. This document is what comes after that
+> table is empty: not a list of features, but a change in *how* the
+> next features get found — argued from `MANIFESTO.md` ("Trust Without
+> Comprehension") and from three things this repository just did to
+> itself in the same session. §3.1 has the migration's own two
+> findings, one of them (a root-namespace import collision) not
+> previously documented anywhere in this repository.
 
 ---
 
@@ -194,6 +196,68 @@ actually about — a red build instead of an occasional discovery. Worth
 building once the §3 migration lands, so the new test starts clean
 rather than red on day one.
 
+### 4.1 Landed, and it found more than the hunt did
+
+`duplication::no_function_body_is_duplicated_across_files`
+(`crates/lex-sys/tests/conformance/duplication.rs`) is that test. It
+settles §6's open question: a conformance test, not a `lex-sys audit`
+subcommand — `identity.rs`'s own precedent, and nothing here needs an
+agent to run it mid-task rather than `cargo test` catching it on every
+build.
+
+It is built on `lex-sys-id`, not on `lex-sys print`'s text, for a
+reason found while building it rather than argued in advance: each
+file is parsed and identified **alone**, exactly as
+`identity.rs::printing_preserves_every_identity_and_is_idempotent`
+already does — no `--std`, no cross-file resolution — and
+`lex-sys-id`'s own `qualified_name` already encodes a call to a name
+declared in the *same* file as that declaration's hash, and a call to
+anything else (a builtin, an import) as the literal name. Two files
+calling the same builtins the same way still collide, which is what
+catches a real copy; two files whose functions merely *read* alike but
+resolve an unqualified name against two different local declarations
+do not. `examples/rational.ls` and `std/result.ls` both define an
+`is_ok` whose `match` arms print identically — but `rational.ls`'s own
+`Result[T]` (§3.1's own migration left it alone: it is a different,
+locally-declared enum, not `std.result`'s `Result[T, E]`) makes its
+`Result::Ok`/`Result::Err` hash differently from `std/result.ls`'s own.
+A text diff cannot tell those two cases apart — the regex hunt behind
+§3 would have flagged it as a third cluster — a content hash always
+can, and the test finds no cluster there at all. `benches/`'s own
+`*_checked.ls`/`*_wrapping.ls` pairs are excluded from the scan for the
+opposite reason: `benchmarks.rs::every_benchmark_pair_agrees` already
+asserts each pair agrees on purpose, so including them here would mean
+allowlisting every pair for no added safety.
+
+Being alpha-equivalence-aware (`docs/canonical-ast.md`: "bodies hash up
+to alpha-equivalence") also means it caught what the raw-text hunt
+behind §3 structurally could not: three clusters with **different**
+parameter or function names on the two sides, not previously
+documented anywhere —
+
+| Function(s) | Files | Already under a shared name? |
+|---|---|---|
+| `abs` | `examples/rational.ls`, `std/math.ls` | Yes — `std.math.abs`, byte-for-byte the same `if` under a different parameter name |
+| `larger` / `max` | `examples/tree.ls`, `std/math.ls` | Yes — `std.math.max`, same body, different name |
+| `append` / `put` | `examples/lines.ls`, `packages/net-sockets/sockets.ls` | Yes — `net.sockets.put`, same byte-blit loop, different name |
+
+— plus one the §3 hunt's own scope already should have caught and
+didn't, because it only hashed the four files each duplicate cluster
+already lived in and never rechecked a package's own extraction
+point: `packages/net-connect/connect.ls`'s `address` says in its own
+comment it was "extracted from" three files' copies, but
+`examples/tls_client/socket.ls` was never migrated onto the package
+and still carries the pre-extraction copy.
+
+All of these, plus §3.1's own two already-documented exceptions and
+the §3 `nat_of`/`port_of` cluster, are recorded in the test's own
+`ALLOWED` list with the same reasoning as here, so the check starts
+green rather than red — each one a real, mechanical migration same
+shape as §3's, not yet done, same as `nat_of`/`port_of` already was.
+The test itself asserts every `ALLOWED` entry still names a real
+cross-file match, so an entry that stops being true (because someone
+does the migration) fails loudly rather than rotting.
+
 ## 5. What this does not propose
 
 Not a doc-staleness checker for §1.1/§1.2's category: those are prose
@@ -222,7 +286,12 @@ document is making.
 
 | Question | Why it waits |
 |---|---|
-| Does `audit::no_function_body_is_duplicated` belong in this repo's own test suite, or as a `lex-sys audit` subcommand an agent can run on demand? | The conformance-test form is simpler and matches `identity.rs`'s precedent; the CLI-subcommand form would fit `docs/agent-cli.md`'s own "the CLI as data" argument better if an agent, not CI, is meant to run it mid-task. Decide when building §4, not here |
+| ~~Does `audit::no_function_body_is_duplicated` belong in this repo's own test suite, or as a `lex-sys audit` subcommand an agent can run on demand?~~ | Decided, §4.1: a conformance test, `identity.rs`'s own precedent |
 | Is there a mechanical check for §1.1/§1.2's category at all, even a partial one (e.g. flag a doc paragraph whose cited PR number is more than N merges behind `HEAD`)? | Speculative; no design exists yet, and §5 says why it's harder than §4 |
 | The `nat_of`/`port_of` cluster (§3) | Real, smaller, a shape question rather than a mechanical fix — pick up opportunistically |
+| `address` (`examples/tls_client/socket.ls`, never migrated onto `packages/net-connect/connect.ls`, §4.1) | Real, mechanical, same shape as §3 — a package import swap, not yet done |
+| `abs` / `larger` (`examples/rational.ls`, `examples/tree.ls`, not yet calling `std.math`, §4.1) | Real, mechanical — two one-line migrations onto an existing `std.math` function, not yet done |
+| `append` (`examples/lines.ls`, not yet calling `packages/net-sockets/sockets.ls`'s `put`, §4.1) | Real, mechanical, but pulls a network package into a file that otherwise has no package dependency — worth a second look before migrating, not a pure copy-paste |
+| `read_stdin`/`read_file` (`examples/sort/sort.ls`, `examples/seek/seek.ls`, §4.1) | Real, identical present-day logic kept apart on purpose as two worked examples of the same fix (`docs/file-handles.md` §1) — extracting a shared helper would need a place to put it that isn't either example |
+| The whole of `examples/buffer/buffer.ls` (predates `std/buffer.ls`, never migrated, §4.1) | Real, larger than a one-function fix — the example's own `res struct Buffer` would need to become `std.buffer.Buffer` throughout, which is a rewrite of the file, not a swap |
 | `n-body`, why `fasta` moved the "wrong" direction under `--backend llvm`, a quieter `revcomp` host, a stated precision in `std.fmt` | `benchmarks-game.md` §5 and `float-printing.md` §7's own Open rows, unrelated to this document's argument, still on file |
