@@ -23,12 +23,16 @@
 > A content-addressed VCS keyed on these hashes inherits the second rate,
 > not the first.
 >
-> **Current reading, as of #142: 37%, not 71%, and falling in relative
-> terms as the corpus grows** (§2's "Re-measured (#142)" below). The
-> figure never drops on its own — the `io`-split debt is permanent — but
-> `editions.md`'s edition-gating means growth since has stopped adding to
-> it: 24 more revisions, 3 more unreadable. §3's own "Corrected again"
-> entry has the reasoning.
+> **Current reading, as of #163: 39%, not 71%**, up from 37% at #142
+> (§2's "Re-measured (#163)" below, appended rather than correcting the
+> "growth has stopped" sentence two rounds up — that sentence was true
+> when written and is not true now, and the record keeps both). The
+> `io`-split debt itself has not grown — `--migrate`/`--alias` still
+> recover exactly 23/0, unchanged across all three measurements — but
+> the corpus gained 28 revisions since #142 and 15 joined the unreadable
+> pile, not 3. One cause is confirmed (a harness gap: `scripts/history.py`
+> never learned to replay a file that imports a `vcs`-fetched package);
+> the rest is measured, not yet explained.
 
 ---
 
@@ -117,6 +121,44 @@ And the causes are not spread out. Classified by first error:
 > edition-gated and additive by construction, the property
 > `editions.md` exists to guarantee. The 61 unreadable revisions are a
 > closed debt from one pre-editions rename, not a target still moving.
+
+> **Re-measured (#163): 39%, and the growth resumed.** `scripts/history.py`
+> again, against 8 more commits touching `std`/`examples` (20 total since
+> #143's measurement commit): **193** revisions, **117** (61%) read,
+> **76** (39%) do not. `--migrate` still recovers exactly **23** and
+> `--alias` still **0** — the `io`-split debt itself has not grown by one
+> revision — but the corpus gained 28 revisions this time and **15**
+> joined the unreadable pile, not 3. The "growth has stopped adding to
+> it" sentence two entries up is **false as of this measurement** and is
+> kept above anyway, uncorrected in place, so the record shows what was
+> believed and when.
+>
+> One new cause is confirmed, not guessed: `examples/tls_client/socket.ls`
+> (`docs/next-phase.md` §4.1's own migration onto `net.connect`) is
+> unreadable by this harness for a reason that has nothing to do with the
+> language moving. `scripts/history.py`'s own `lay_out` passes `--std` or
+> a file's same-folder siblings and nothing else — it has never known how
+> to hand a replayed file the `packages/` source a `vcs`-fetched import
+> needs. Every other package-importing example (`fetch.ls`, `report.ls`,
+> `serve.ls`, `collect.ls`, `vsock.ls`, `agent_guest.ls`,
+> `agent_supervisor.ls`, `results_stub.ls`) was already unreadable by this
+> same gap before this measurement, already inside the 61 — confirmed
+> directly, `lex-sys check <file> --std` on each reproduces the identical
+> `no module 'net.sockets'` refusal `socket.ls` now also gets. `socket.ls`
+> joining that list is the harness missing an argument, not a program
+> whose identity moved.
+>
+> The other roughly 14 of the 15 newly unreadable revisions are **not**
+> individually diagnosed here. Attributing each one would mean replaying
+> every new revision by hand and reading its refusal, which this entry
+> has not done — and `next-phase.md` §4.1's own lesson applies just as
+> much to a number as to a duplicate: a check that measures correctly can
+> still be wrong to explain without doing the reading. What is measured
+> and certain: the full current corpus builds and passes `cargo test
+> --workspace` at 100% (that is a different, stronger guarantee than this
+> historical replay — it says today's code is right, not that yesterday's
+> stays readable), the `io`-split debt is unchanged, and the harness gap
+> above accounts for exactly one of the fifteen.
 
 **One label rename accounts for 42% of the unreadable past.** When
 `standard-input.md` §2 split `io` into `io_read` and `io_write` —
