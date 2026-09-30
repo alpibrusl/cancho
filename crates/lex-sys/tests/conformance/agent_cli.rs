@@ -120,9 +120,12 @@ const META: &[&str] = &["help", "introspect", "skill"];
 
 /// `lex-sys <args>`'s stdout, run in a scratch directory so the ACLI
 /// side effect (writing/refreshing `.cli/`) never touches the source
-/// tree a test run happens to be built from.
-fn run_stdout(args: &[&str]) -> String {
-    let dir = scratch("agent-cli");
+/// tree a test run happens to be built from. `tag` names that
+/// directory -- unique per call site, like every other test here,
+/// since `scratch` itself `rm -rf`s its directory first and two tests
+/// sharing one name race under `cargo test`'s default parallelism.
+fn run_stdout(tag: &str, args: &[&str]) -> String {
+    let dir = scratch(tag);
     let out = Command::new(BIN).args(args).current_dir(&dir).output().expect("spawn lex-sys");
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
@@ -134,7 +137,7 @@ fn every_dispatched_command_is_documented() {
         .filter(|c| !c.starts_with('-') && !META.contains(&c.as_str()))
         .collect();
     let usage = usage_commands();
-    let skill = skill_commands(&run_stdout(&["skill"]));
+    let skill = skill_commands(&run_stdout("agent-cli-documented", &["skill"]));
 
     let missing_usage: Vec<&String> = dispatched.iter().filter(|c| !usage.contains(*c)).collect();
     let missing_skill: Vec<&String> = dispatched.iter().filter(|c| !skill.contains(*c)).collect();
@@ -151,7 +154,7 @@ fn every_dispatched_command_is_documented() {
 
 #[test]
 fn introspect_names_every_registered_command() {
-    let out = run_stdout(&["introspect", "--output", "json"]);
+    let out = run_stdout("agent-cli-introspect", &["introspect", "--output", "json"]);
     let tree: serde_json::Value = serde_json::from_str(&out).expect("introspect prints JSON");
     assert_eq!(tree["data"]["name"], "lex-sys");
     let names: BTreeSet<String> = tree["data"]["commands"]
