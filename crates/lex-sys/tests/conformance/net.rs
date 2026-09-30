@@ -160,21 +160,30 @@ fn the_authority_report_names_the_syscalls_the_row_cannot() {
 ///
 /// **`net.sockets`/`net.connect` (#141, #144, `docs/package-system.md`
 /// §6) moved every one of those declarations out from under this
-/// walker, not just two.** `examples/serve/`, `examples/results_stub/`,
+/// walker.** `examples/serve/`, `examples/results_stub/`,
 /// `examples/collect/`, and `examples/agent_supervisor/` no longer write
 /// their own `extern fn socket`/`bind`/`listen`/`accept`/`read`/`write`/
 /// `close` -- they `import net.sockets` (`packages/net-sockets/
 /// sockets.ls`) instead. `examples/fetch/`, `examples/report/`,
-/// `examples/vsock/`, and `examples/agent_guest/` no longer write their
-/// own `extern fn connect` -- they `import net.connect`
-/// (`packages/net-connect/connect.ls`) instead. The five *programs* on
-/// each side still ask for exactly the same socket authority as before;
-/// what changed is where the source text asking for it lives, so
-/// `packages` joins the walked directories and each package's one file
-/// now stands in for every program that imports it rather than declares
-/// it. `examples/tls_client/socket.ls` is the one program on either side
-/// that has not moved (edition 1, per its own note above), so it is
-/// still its own declaring file.
+/// `examples/vsock/`, `examples/agent_guest/`, and (`docs/next-phase.md`
+/// §4.1, the duplication check's own find) `examples/tls_client/
+/// socket.ls` no longer write their own `extern fn connect` -- they
+/// `import net.connect` (`packages/net-connect/connect.ls`) instead.
+/// The five *programs* on each side still ask for exactly the same
+/// socket authority as before; what changed is where the source text
+/// asking for it lives, so `packages` joins the walked directories and
+/// each package's one file now stands in for every program that
+/// imports it rather than declares it. Both halves are down to their
+/// package file alone now -- `examples/tls_client/socket.ls` stays its
+/// own file (still edition 1, still a marker of *that file*, not the
+/// program: `tls_client.ls` needs edition 3 for `c_ptr`), but it
+/// declares no `extern fn` of its own any more, just two thin `pub fn`s
+/// forwarding into the packages, named to dodge a real find of this
+/// migration: the backend's own symbol for a function is its name alone
+/// (`crates/lex-sys-codegen/src/abi.rs`, no module qualifier), so a
+/// second `pub fn connect_to` here would collide with `net.connect`'s
+/// at the object file, past what the type checker's own module scoping
+/// catches.
 #[test]
 fn the_network_programs_are_counted() {
     let root = repo_root();
@@ -227,15 +236,12 @@ fn the_network_programs_are_counted() {
             inbound.iter().map(String::as_str).collect::<Vec<_>>(),
             outbound.iter().map(String::as_str).collect::<Vec<_>>()
         ),
-        (
-            vec!["packages/net-sockets/sockets.ls"],
-            vec!["examples/tls_client/socket.ls", "packages/net-connect/connect.ls"]
-        ),
+        (vec!["packages/net-sockets/sockets.ls"], vec!["packages/net-connect/connect.ls"]),
         "the network programs changed: `net.md` §5 counts inbound 4 programs across 1 \
          declaring source file (`packages/net-sockets/sockets.ls` covers all four), \
-         outbound 5 across 2 declaring source files (`packages/net-connect/connect.ls` \
-         covers four of the five; `examples/tls_client/socket.ls` is the one still on \
-         edition 1 that has not migrated), and two is the bar for building `Net`. \
+         outbound 5 across 1 declaring source file (`packages/net-connect/connect.ls` \
+         now covers all five -- `examples/tls_client/socket.ls` migrated onto it too, \
+         `docs/next-phase.md` §4.1), and two is the bar for building `Net`. \
          Rewrite §5, then this."
     );
 }

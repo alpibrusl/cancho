@@ -1,64 +1,37 @@
 // `socket` -- the raw TCP connect `tls_client.ls`'s TLS layer sits on
 // top of, kept in its own module and on its own edition for one reason:
-// this file declares its own `extern fn connect`, and edition 2 made
-// `connect` a builtin (`Net`, `docs/net.md`'s own narrowed capability).
-// `docs/editions.md` §7 made a file's edition a marker of that file, not
-// of the whole program, exactly so a file written before a name became
-// a builtin does not have to be rewritten around the collision --
-// `tls_client.ls` needs edition 3 for `c_ptr`, and this file, needing
-// none of edition 2 or 3's additions, stays on edition 1, where
-// `connect` still resolves to this declaration rather than the builtin
-// (`crates/lex-sys-ir/src/lower/expr.rs`'s own comment: "an edition-1
-// file's own `extern fn connect` must reach its `Extern` arm, not
-// [the builtin]").
+// `net.connect`'s own `connect` is `pub extern fn connect`, an ordinary
+// declaration rather than a builtin, and importing it here needs no
+// edition beyond 1 -- `tls_client.ls` needs edition 3 for `c_ptr`, and
+// this file, needing none of edition 2 or 3's additions, stays behind
+// so the two do not have to share one.
 //
-// The builtin was not usable here regardless of the name collision:
-// `narrow`'s bound must be a literal (`docs/net.md`), which cannot
-// express a port a test picks freely at run time -- the same reason
-// `examples/fetch/` and `examples/report/` never adopted it either.
-// Copied from those two, unchanged, down to the comments.
+// `packages/net-connect/connect.ls` (`docs/package-system.md` §6) is
+// `octets_of`/`port_of`/`address`/`connect_to` -- what this file used
+// to declare for itself, byte for byte, until `docs/next-phase.md`
+// §4.1's standing duplication check found the copy: `net.connect`'s own
+// header already named `examples/fetch/`, `examples/report/`,
+// `examples/vsock/`, and `examples/agent_guest/` as the four files it
+// was extracted from, and this was the pre-extraction fifth the move
+// never reached. `net.sockets` supplies the `socket`/`close` `connect_to`
+// itself now calls internally.
 
 module socket;
 
-extern fn socket[&f](ffi: &f Ffi("libc"), domain: int, kind: int, proto: int)
-    -> [ffi("libc")] c_int;
-extern fn connect[&f, &a](ffi: &f Ffi("libc"), fd: int, addr: &a [byte])
-    -> [ffi("libc")] c_int;
-extern fn close[&f](ffi: &f Ffi("libc"), fd: int) -> [ffi("libc")] c_int;
+import net.sockets;
+import net.connect;
 
-// `struct sockaddr_in`, sixteen bytes, in the Linux layout
-// (`docs/connect.md` §3 -- portable to macOS by BSD's own compatibility
-// rule, not by being right).
-fn address[&o, &a](out: &!a [byte], octets: &o [byte], port: int) -> [] int {
-    out[0] = byte_of(2);
-    out[1] = byte_of(0);
-    out[2] = byte_of(port / 256);
-    out[3] = byte_of(port % 256);
-    var i = 0;
-    while i < 4 {
-        out[4 + i] = octets[i];
-        i = i + 1;
-    }
-    return 0;
-}
-
-pub fn connect_to[&f, &o](libc: &f Ffi("libc"), octets: &o [byte], port: int)
+// Not named `connect_to`: this file and `net.connect` are compiled into
+// one program, and the backend's own symbol for a function is its name
+// alone (`crates/lex-sys-codegen/src/abi.rs`'s `lexs_` prefix, no module
+// qualifier) -- two `pub fn connect_to`s in one build collide at the
+// object file, caught only by `clang -c` refusing the emitted module,
+// not by the type checker, which resolves the two by module just fine.
+pub fn open[&f, &o](libc: &f Ffi("libc"), octets: &o [byte], port: int)
     -> [ffi("libc")] int {
-    region scratch {
-        let addr = alloc_slice[scratch](16, byte_of(0));
-        let fd = socket(libc, 2, 1, 0);
-        if fd < 0 {
-            return 0 - 1;
-        }
-        address(addr, octets, port);
-        if connect(libc, fd, addr) == 0 {
-            return fd;
-        }
-        close(libc, fd);
-    }
-    return 0 - 1;
+    return connect.connect_to(libc, octets, port);
 }
 
 pub fn close_fd[&f](libc: &f Ffi("libc"), fd: int) -> [ffi("libc")] int {
-    return close(libc, fd);
+    return sockets.close(libc, fd);
 }

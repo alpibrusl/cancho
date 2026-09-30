@@ -247,24 +247,41 @@ already lived in and never rechecked a package's own extraction
 point: `packages/net-connect/connect.ls`'s `address` says in its own
 comment it was "extracted from" three files' copies, but
 `examples/tls_client/socket.ls` was never migrated onto the package
-and still carries the pre-extraction copy.
+and still carried the pre-extraction copy. **Migrated too**:
+`socket.ls` now `import`s `net.connect`/`net.sockets` and forwards into
+them, verified against a real OpenSSL server over an actual TLS 1.3
+handshake, not just a build. The migration surfaced a real gap the
+type checker does not cover: the backend's own symbol for a function
+is its name alone (`crates/lex-sys-codegen/src/abi.rs`'s `lexs_`
+prefix, no module qualifier), so naming the forwarding wrapper
+`connect_to` — the obvious choice, and what the type checker itself
+resolves without complaint, module-scoped — collides with
+`net.connect`'s own `connect_to` at the object file the moment both
+are linked into one program; `clang -c` refuses the emitted LLVM IR
+with "invalid redefinition of function." Renamed to `socket.open`
+instead. `crates/lex-sys/tests/conformance/net.rs`'s
+`the_network_programs_are_counted` — the standing count `docs/net.md`
+§5 rests on — moved with it: outbound is one declaring file now,
+matching inbound.
 
 Both migrated rows landed the same session `§4.1` was written, each
 output-diffed against its own `//~ STDOUT` before and after (identical
-in both cases) and the full gate rerun. `rational.ls`'s migration also
+in both cases, and `address`'s migration diffed a real TLS handshake's
+bytes too) and the full gate rerun. `rational.ls`'s migration also
 moved `identity.rs::ids_are_stable_across_runs_and_survive_a_body_rewrite`,
 which patched `abs`'s own body text to exercise "a body rewrite moves
 no signature" — `gcd` carries that job now, and the `ids` calls there
 gained `--std` for the same reason every other example needs it once
 it imports something.
 
-Everything still open — `append`/`put`, `address`, §3.1's own two
+Everything still open — `append`/`put`, §3.1's own two
 already-documented exceptions, and the §3 `nat_of`/`port_of`
 cluster — is recorded in the test's own `ALLOWED` list with the same
 reasoning as here, so the check stays green rather than red. The test
 itself asserts every `ALLOWED` entry still names a real cross-file
 match, so an entry that stops being true (because someone does the
-migration, as just happened twice) fails loudly rather than rotting.
+migration, as just happened three times now) fails loudly rather than
+rotting.
 
 ## 5. What this does not propose
 
@@ -297,7 +314,7 @@ document is making.
 | ~~Does `audit::no_function_body_is_duplicated` belong in this repo's own test suite, or as a `lex-sys audit` subcommand an agent can run on demand?~~ | Decided, §4.1: a conformance test, `identity.rs`'s own precedent |
 | Is there a mechanical check for §1.1/§1.2's category at all, even a partial one (e.g. flag a doc paragraph whose cited PR number is more than N merges behind `HEAD`)? | Speculative; no design exists yet, and §5 says why it's harder than §4 |
 | The `nat_of`/`port_of` cluster (§3) | Real, smaller, a shape question rather than a mechanical fix — pick up opportunistically |
-| `address` (`examples/tls_client/socket.ls`, never migrated onto `packages/net-connect/connect.ls`, §4.1) | Real, mechanical, same shape as §3 — a package import swap, not yet done |
+| ~~`address` (`examples/tls_client/socket.ls`, never migrated onto `packages/net-connect/connect.ls`)~~ | **Migrated**, §4.1 — and found a real backend gap doing it (a same-named `pub fn` in two modules collides at the object file; the type checker does not catch it) |
 | ~~`abs` / `larger` (`examples/rational.ls`, `examples/tree.ls`, not yet calling `std.math`)~~ | **Migrated**, §4.1 |
 | `append` (`examples/lines.ls`, not yet calling `packages/net-sockets/sockets.ls`'s `put`, §4.1) | Real, mechanical, but pulls a network package into a file that otherwise has no package dependency — worth a second look before migrating, not a pure copy-paste |
 | `read_stdin`/`read_file` (`examples/sort/sort.ls`, `examples/seek/seek.ls`, §4.1) | Real, identical present-day logic kept apart on purpose as two worked examples of the same fix (`docs/file-handles.md` §1) — extracting a shared helper would need a place to put it that isn't either example |

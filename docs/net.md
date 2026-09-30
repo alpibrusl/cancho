@@ -329,6 +329,34 @@ half with an asker is the one the grant does not ask about.
 > always did; nine files' worth of duplicated declarations collapsed
 > into two.
 
+> **Recounted: outbound down to its package file alone, the last
+> straggler found by a standing check rather than a fresh hunt.**
+> `examples/tls_client/socket.ls` -- kept on edition 1 for the reason
+> given above, and for that reason not part of the move above -- no
+> longer declares its own `extern fn socket`/`connect`/`close` or its
+> own `address`: `docs/next-phase.md` §4.1's duplicate-body conformance
+> check (built after this document's own count had gone stale twice, by
+> the same hunt-vs-verify argument `next-phase.md` §1--2 makes) found
+> the copy `packages/net-connect/connect.ls`'s own header already named
+> as one of the files its declarations were extracted from, never
+> migrated. It now `import`s `net.connect`/`net.sockets` and forwards
+> into them, verified against a real OpenSSL server over an actual
+> TLS 1.3 handshake. It is still its own file (edition 1, a marker of
+> *that file* rather than the program, `tls_client.ls` needing edition 3
+> for `c_ptr`) and still declares no builtin `Net` capability, for the
+> reason already on record -- but it declares no `extern fn` of its own
+> either now, just two `pub fn`s forwarding into the packages. One of
+> those two is not named `connect_to`: the backend's own symbol for a
+> function is its name alone, with no module qualifier
+> (`crates/lex-sys-codegen/src/abi.rs`), so a second `pub fn connect_to`
+> compiled into the same program as `net.connect`'s own collides at the
+> object file -- `clang -c` refuses the emitted LLVM IR outright, past
+> what the type checker's own module-scoped resolution catches. Named
+> `socket.open` instead. Inbound is still 4 programs across
+> `packages/net-sockets/sockets.ls` alone; outbound is now 5 programs
+> across `packages/net-connect/connect.ls` alone -- both halves down to
+> one declaring file each, matching.
+
 That is the honest state up to here. Both halves of the two-asker bar
 §5 set are cleared, and §3's own reason to build now rather than before
 still applies in full: `Ffi("libc")` lets a program declare
