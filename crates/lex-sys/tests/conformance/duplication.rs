@@ -53,13 +53,6 @@ const ALLOWED: &[(&str, &str)] = &[
     ("examples/collect/collect.ls", "nat_of"),
     ("examples/agent_supervisor/agent_supervisor.ls", "nat_of"),
     ("examples/results_stub/results_stub.ls", "nat_of"),
-    // Found building this check, not previously documented:
-    // `packages/net-connect/connect.ls`'s own header says `address` was
-    // "extracted from" three files' duplicate copies, but
-    // `examples/tls_client/socket.ls` was not one of the three migrated
-    // onto the package -- it still carries the pre-extraction copy.
-    ("examples/tls_client/socket.ls", "address"),
-    ("packages/net-connect/connect.ls", "address"),
     // Found building this check: `examples/sort/sort.ls` and
     // `examples/seek/seek.ls` share `read_stdin` verbatim, and
     // `docs/file-handles.md` §1's fix to `read_file` (measured: six

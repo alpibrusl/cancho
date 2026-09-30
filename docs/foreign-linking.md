@@ -192,11 +192,19 @@ loopback, on both backends:
 
 ```sh
 $ lex-sys build examples/tls_client/tls_client.ls examples/tls_client/socket.ls \
+      packages/net-connect/connect.ls packages/net-sockets/sockets.ls \
       --std -l ssl -l crypto -o tls_client
 $ openssl s_server -accept 48395 -cert cert.pem -key key.pem -rev -naccept 1 -quiet &
 $ ./tls_client 127.0.0.1 48395 "hello lex-sys"
 sys-xel olleh
 ```
+
+The two extra paths are `docs/next-phase.md` §4.1's own migration:
+`socket.ls` used to declare `socket`/`connect`/`close`/`address` for
+itself; it now `import`s `net.connect`/`net.sockets` and needs both on
+the command line the same way any package-importing example does
+(`vcs fetch` for a pinned copy, or — as here, since both are already
+checked into this repository — the source files directly).
 
 A genuine TLS 1.3 handshake (confirmed in the server's own diagnostic
 output: `Protocol version: TLSv1.3`, `Ciphersuite: TLS_AES_256_GCM_SHA384`)

@@ -227,7 +227,7 @@ fn main(world: World) -> [] int {
                         } else if port < 0 {
                             io.error_all(i, "tls_client: the port must be 1..65535\n");
                         } else {
-                            let fd = socket.connect_to(f, octets, port);
+                            let fd = socket.open(f, octets, port);
                             if fd < 0 {
                                 io.error_all(i, "tls_client: could not connect\n");
                                 status = 3;
