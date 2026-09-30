@@ -130,6 +130,48 @@ fn split_requires(pair: &str) -> Result<(&str, &str), Failure> {
     })
 }
 
+/// A lexical relative path from `base` (a directory) to `target` --
+/// computed from path components alone, never touching the filesystem,
+/// since `base` is a store about to be published for the first time and
+/// may not exist yet on disk.
+///
+/// Found needed here, not designed in: `Requirement.store` was first
+/// recorded as the `--requires` argument's own string, verbatim
+/// (`docs/package-system.md` §4.6) -- which is only ever correct when
+/// the *reading* process's current directory happens to match whatever
+/// directory the *publishing* process's was, since a bare relative path
+/// is silently interpreted against the reader's own cwd. A real build
+/// (`cargo test`'s own integration binaries run from their crate
+/// directory, not the repo root) breaks that assumption. Storing the
+/// path relative to the depending store's own directory instead, and
+/// resolving it by joining against that store's own path
+/// (`resolve_own_requirements`, below) rather than reading it bare,
+/// makes the closure walk correct regardless of either process's cwd --
+/// the same way a relative `import` inside a `.ls` file is never
+/// cwd-sensitive.
+///
+/// Requires `base` and `target` to agree on absolute vs. relative (both
+/// halves of every `--store`/`--requires` pair this project's own
+/// tooling ever builds do, since both come from the same command line);
+/// falls back to `target` unchanged otherwise.
+fn relative_from(base: &Path, target: &Path) -> PathBuf {
+    if base.is_absolute() != target.is_absolute() {
+        return target.to_path_buf();
+    }
+    let base_components: Vec<_> = base.components().collect();
+    let target_components: Vec<_> = target.components().collect();
+    let common =
+        base_components.iter().zip(target_components.iter()).take_while(|(a, b)| a == b).count();
+    let mut result = PathBuf::new();
+    for _ in common..base_components.len() {
+        result.push("..");
+    }
+    for component in &target_components[common..] {
+        result.push(component);
+    }
+    result
+}
+
 fn cmd_publish(args: &[String]) -> Result<ExitCode, Failure> {
     let VcsInvocation { store, inputs, requires } = parse_vcs_args(args)?;
     if inputs.is_empty() {
@@ -182,7 +224,8 @@ fn cmd_publish(args: &[String]) -> Result<ExitCode, Failure> {
         let closure = resolve_closure(&lock, Path::new(dep_store), &mut visiting, &mut pinned)
             .map_err(|problems| refused(problems.join("\n\n")))?;
         dependency_context.extend(closure);
-        requirements.push(Requirement { store: dep_store.to_owned(), lock });
+        let stored_store = relative_from(&store, Path::new(dep_store));
+        requirements.push(Requirement { store: stored_store.to_string_lossy().into_owned(), lock });
     }
 
     let mut named = vec![(file_name.clone(), source.clone())];
@@ -539,7 +582,14 @@ fn resolve_own_requirements(
         .map_err(|e| vec![format!("cannot read requirements at `{}`: {e}", store.display())])?;
     let mut context = BTreeMap::new();
     for req in &requirements {
-        let dep_store = PathBuf::from(&req.store);
+        // `req.store` is recorded relative to *this* store's own
+        // directory (`relative_from`, `cmd_publish`), so it is joined
+        // against `store` here rather than read as a bare path -- a
+        // bare `PathBuf::from` would instead be silently interpreted
+        // against whatever cwd this process happens to have, which is
+        // not necessarily the one `--requires` was given relative to
+        // at publish time.
+        let dep_store = store.join(&req.store);
         let deeper = resolve_closure(&req.lock, &dep_store, visiting, pinned)?;
         context.extend(deeper);
     }

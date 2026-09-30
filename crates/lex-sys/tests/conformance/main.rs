@@ -323,10 +323,22 @@ fn build_report(tag: &str) -> (PathBuf, PathBuf) {
     build_example_paths(tag, &paths, "report")
 }
 
-/// `examples/collect/collect.ls`: inbound, `net.sockets` alone.
+/// `examples/collect/collect.ls`: `http.request` (`packages/http-request/
+/// request.ls`, `docs/package-system.md` §4.6), the fourth real package
+/// and the first that itself depends on a package. One fetch is enough:
+/// a store is always exactly one file (`vcs publish` takes one input),
+/// so fetching any of `http.request`'s own declarations transitively
+/// writes the *whole* `net.sockets` file too -- every direct
+/// `sockets.*` call `collect.ls` still makes resolves from the same
+/// fetched file, with no separate `net.sockets` lock needed.
 fn build_collect(tag: &str) -> (PathBuf, PathBuf) {
-    let fetched = fetch_net_sockets(&format!("{tag}-fetch"), "examples/collect/net.lock");
-    build_example_paths(tag, &[repo_root().join("examples/collect/collect.ls"), fetched], "collect")
+    let fetched = fetch_net_dependencies(
+        &format!("{tag}-fetch"),
+        &[("examples/collect/request.lock", "packages/http-request/.lex-sys-vcs")],
+    );
+    let mut paths = vec![repo_root().join("examples/collect/collect.ls")];
+    paths.extend(fetched);
+    build_example_paths(tag, &paths, "collect")
 }
 
 /// `examples/vsock/vsock.ls`: outbound, `net.sockets`/`net.connect` the
@@ -368,13 +380,14 @@ fn build_agent_guest(tag: &str) -> (PathBuf, PathBuf) {
     build_example_paths(tag, &paths, "agent_guest")
 }
 
-/// `examples/agent_supervisor/agent_supervisor.ls`: inbound, `net.sockets`
-/// alone.
+/// `examples/agent_supervisor/agent_supervisor.ls`: `http.request`, the
+/// same one-fetch shape `build_collect` uses and for the same reason.
 fn build_agent_supervisor(tag: &str) -> (PathBuf, PathBuf) {
-    let fetched = fetch_net_sockets(&format!("{tag}-fetch"), "examples/agent_supervisor/net.lock");
-    build_example_paths(
-        tag,
-        &[repo_root().join("examples/agent_supervisor/agent_supervisor.ls"), fetched],
-        "agent_supervisor",
-    )
+    let fetched = fetch_net_dependencies(
+        &format!("{tag}-fetch"),
+        &[("examples/agent_supervisor/request.lock", "packages/http-request/.lex-sys-vcs")],
+    );
+    let mut paths = vec![repo_root().join("examples/agent_supervisor/agent_supervisor.ls")];
+    paths.extend(fetched);
+    build_example_paths(tag, &paths, "agent_supervisor")
 }

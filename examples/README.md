@@ -408,14 +408,21 @@ bytes short. Both are `docs/connect.md` §8.
 ### `collect/` — the second inbound program
 
 ```sh
-cargo run -p lex-sys -- vcs fetch --lock examples/collect/net.lock \
-    --store packages/net-sockets/.lex-sys-vcs -o /tmp/net-sockets
-cargo run -p lex-sys -- build --std examples/collect/collect.ls /tmp/net-sockets/*.ls -o collect
+cargo run -p lex-sys -- vcs fetch --lock examples/collect/request.lock \
+    --store packages/http-request/.lex-sys-vcs -o /tmp/http-request
+cargo run -p lex-sys -- build --std examples/collect/collect.ls /tmp/http-request/*.ls -o collect
 ./collect 8080 3
 ```
 
-Locks and fetches the same `net.sockets` package `serve/` does above --
-`serve/`'s own section says why it exists.
+Locks and fetches `http.request` (`packages/http-request/request.ls`,
+`docs/package-system.md` §4.6), the fourth real package and the first
+that itself depends on a package (`net.sockets`). One fetch is enough --
+a store is always exactly one file (`vcs publish` takes one input), so
+fetching any of `http.request`'s own declarations transitively writes
+the *whole* `net-sockets.ls` file too, closure-resolved and verified the
+same way a direct dependency's own file is; every direct `sockets.*`
+call `collect.ls` still makes resolves from that same fetched file, with
+no separate `net.sockets` lock needed.
 
 `report/`'s inbound counterpart, and `docs/listen.md` is its report.
 `serve/` accepts one connection and never reads a body; `collect`
@@ -500,10 +507,10 @@ checks the response and the log line both.
 ### `agent_supervisor/` and `agent_guest/` — the same exchange, over HTTP
 
 ```sh
-cargo run -p lex-sys -- vcs fetch --lock examples/agent_supervisor/net.lock \
-    --store packages/net-sockets/.lex-sys-vcs -o /tmp/net-sockets
+cargo run -p lex-sys -- vcs fetch --lock examples/agent_supervisor/request.lock \
+    --store packages/http-request/.lex-sys-vcs -o /tmp/http-request
 cargo run -p lex-sys -- build --std examples/agent_supervisor/agent_supervisor.ls \
-    /tmp/net-sockets/*.ls -o agent_supervisor
+    /tmp/http-request/*.ls -o agent_supervisor
 
 cargo run -p lex-sys -- vcs fetch --lock examples/agent_guest/net.lock \
     --store packages/net-sockets/.lex-sys-vcs -o /tmp/net-sockets-guest
@@ -520,7 +527,7 @@ cargo run -p lex-sys -- build --std examples/agent_guest/agent_guest.ls \
 # step: 3
 ```
 
-`agent_supervisor` locks and fetches `net.sockets` alone, the same
+`agent_supervisor` locks and fetches `http.request` alone, the same
 shape `collect/`'s own section above uses; `agent_guest` locks and
 fetches `net.sockets` and `net.connect` independently, the same shape
 `fetch/`'s own section uses, plus `agent.wire` for the same
