@@ -34,6 +34,7 @@
 //~ EXIT 0
 
 import std.io;
+import std.math;
 
 // ---------------------------------------------------------------------
 // The type that needed a heap
@@ -61,13 +62,6 @@ fn yes_no(b: bool) -> [] int {
         return 1;
     }
     return 0;
-}
-
-fn larger(a: int, b: int) -> [] int {
-    if a > b {
-        return a;
-    }
-    return b;
 }
 
 // ---------------------------------------------------------------------
@@ -146,7 +140,7 @@ fn tally[&t](tree: &t Tree) -> [] Walk {
             return Walk {
                 sum: low.sum + *value + high.sum,
                 count: low.count + high.count + 1,
-                depth: larger(low.depth, high.depth) + 1,
+                depth: math.max(low.depth, high.depth) + 1,
             };
         }
     }
@@ -190,7 +184,7 @@ fn drain[&h, &i](heap: &!h Heap, io: &!i Io, t: Tree, first: bool) -> [heap, io_
             return Walk {
                 sum: low.sum + value + high.sum,
                 count: low.count + high.count + 1,
-                depth: larger(low.depth, high.depth) + 1,
+                depth: math.max(low.depth, high.depth) + 1,
             };
         }
     }

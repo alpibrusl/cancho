@@ -283,9 +283,14 @@ fn main(world: World) -> [] int {
 fn ids_are_stable_across_runs_and_survive_a_body_rewrite() {
     let source = repo_root().join("examples").join("rational.ls");
 
-    let once = Command::new(BIN).arg("ids").arg(&source).output().expect("the compiler runs");
+    // `rational.ls` imports `std.math` (its own `abs` moved onto
+    // `math.abs`, `docs/next-phase.md` §4.1), so `ids` needs `--std` the
+    // same way every other example does now.
+    let once =
+        Command::new(BIN).arg("ids").arg(&source).arg("--std").output().expect("the compiler runs");
     assert!(once.status.success(), "{}", String::from_utf8_lossy(&once.stderr));
-    let again = Command::new(BIN).arg("ids").arg(&source).output().expect("the compiler runs");
+    let again =
+        Command::new(BIN).arg("ids").arg(&source).arg("--std").output().expect("the compiler runs");
     assert_eq!(once.stdout, again.stdout, "hashing is a function of the program alone");
 
     let text = String::from_utf8(once.stdout).expect("hashes are ascii");
@@ -293,18 +298,24 @@ fn ids_are_stable_across_runs_and_survive_a_body_rewrite() {
     assert!(text.contains("type Rational"), "{text}");
 
     // Rewrite a body without touching any signature: every `sig` line must be
-    // unchanged and at least one `body` line must move.
+    // unchanged and at least one `body` line must move. `gcd` rather than
+    // `abs`, since `abs` is `std.math`'s own now.
     let dir = scratch("ids-rewrite");
     let rewritten = dir.join("rational.ls");
     let original = std::fs::read_to_string(&source).expect("a readable example");
     let patched = original.replace(
-        "fn abs(x: int) -> [] int {\n    if x < 0 {\n        return 0 - x;\n    }\n    return x;\n}",
-        "fn abs(x: int) -> [] int {\n    if x >= 0 {\n        return x;\n    }\n    return 0 - x;\n}",
+        "fn gcd(a: int, b: int) -> [] int {\n    if b == 0 {\n        return math.abs(a);\n    }\n    return gcd(b, a % b);\n}",
+        "fn gcd(a: int, b: int) -> [] int {\n    if b != 0 {\n        return gcd(b, a % b);\n    }\n    return math.abs(a);\n}",
     );
     assert_ne!(patched, original, "the body rewrite should have applied");
     std::fs::write(&rewritten, patched).expect("a writable copy");
 
-    let after = Command::new(BIN).arg("ids").arg(&rewritten).output().expect("the compiler runs");
+    let after = Command::new(BIN)
+        .arg("ids")
+        .arg(&rewritten)
+        .arg("--std")
+        .output()
+        .expect("the compiler runs");
     assert!(after.status.success(), "{}", String::from_utf8_lossy(&after.stderr));
     let after = String::from_utf8(after.stdout).expect("hashes are ascii");
 

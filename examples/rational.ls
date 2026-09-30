@@ -20,6 +20,8 @@
 //~ STDOUT 49/20
 //~ EXIT 0
 
+import std.math;
+
 // ---------------------------------------------------------------- output ---
 
 fn newline[&i](io: &!i Io) -> [io_write] int {
@@ -92,16 +94,9 @@ fn unwrap_or[T: val](r: Result[T], fallback: T) -> [] T {
 
 // ------------------------------------------------------------ arithmetic ---
 
-fn abs(x: int) -> [] int {
-    if x < 0 {
-        return 0 - x;
-    }
-    return x;
-}
-
 fn gcd(a: int, b: int) -> [] int {
     if b == 0 {
-        return abs(a);
+        return math.abs(a);
     }
     return gcd(b, a % b);
 }
