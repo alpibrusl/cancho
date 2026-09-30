@@ -12,6 +12,7 @@
 //! | 1 | the program was refused (a located diagnostic was printed) -- including by the compiler's own failure, rule `internal` (`docs/internal-errors.md`) |
 //! | 2 | the command line was wrong |
 //! | 3 | the environment failed: no linker, unwritable output, unsupported host |
+//! | 4 | `test` only: the program built, and at least one `test_*` function failed |
 //!
 //! `run` is the exception: it replaces its own status with the compiled
 //! program's, so `lex-sys run p.ls` and `lex-sys build p.ls && ./p` agree.
@@ -25,6 +26,7 @@ use lex_sys_syntax::{Ast, Rule, SourceFile, SourceMap};
 use lex_sys_types::{DefId, Type};
 
 mod acli;
+mod test_cli;
 mod vcs_cli;
 
 const USAGE: &str = "\
@@ -34,6 +36,7 @@ usage:
     lex-sys build <file.ls>... [-o <output>] [--emit exe|obj] [--std] [--backend cranelift|llvm] [-l <name>]... [-L <path>]...
     lex-sys check <file.ls>... [--std] [--output json] [--backend cranelift|llvm]
     lex-sys run   <file.ls>... [--std] [--backend cranelift|llvm] [-l <name>]... [-L <path>]...
+    lex-sys test  <file.ls>... [--std] [--backend cranelift|llvm] [-l <name>]... [-L <path>]...
     lex-sys ids   <file.ls>... [--std]
     lex-sys authority <file.ls>... [--std] [--output json]
     lex-sys layout    <file.ls>... [--std]
@@ -85,6 +88,11 @@ docs/agent-errors.md.
 accepts is one `build` can compile. If the compiler itself fails, that
 is a refusal with rule `internal`, at the function it failed on. See
 docs/internal-errors.md.
+
+`test` runs every `fn test_*` in the files named, one process each, and
+exits 4 if any failed. A test answers 0 to pass; `std.test`'s `assert`
+traps otherwise. The files must not declare `main`: the runner writes
+one. See docs/testing.md.
 
 `agent-guidelines` prints AGENTS.md, which is how to write lex-sys in
 one page rather than in 42 documents. Every checked code block in it is
@@ -164,6 +172,7 @@ makes that library reachable at link time. See docs/foreign-linking.md.
 const EXIT_REFUSED: u8 = 1;
 const EXIT_USAGE: u8 = 2;
 const EXIT_ENVIRONMENT: u8 = 3;
+const EXIT_TEST_FAILED: u8 = 4;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -301,6 +310,8 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
             print!("{}", lex_sys_syntax::print(&ast));
             Ok(ExitCode::SUCCESS)
         }
+        // `docs/testing.md` §3.
+        "test" => test_cli::cmd_test(&args[1..]),
         "ids" => {
             let Invocation { inputs, with_std, .. } = parse_args(&args[1..], false, false)?;
             print_ids(&inputs, with_std)?;

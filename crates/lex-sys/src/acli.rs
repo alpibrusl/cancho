@@ -54,6 +54,7 @@ fn commands() -> Vec<CommandInfo> {
         cmd_build(),
         cmd_check(),
         cmd_run(),
+        cmd_test(),
         cmd_ids(),
         cmd_authority(),
         cmd_layout(),
@@ -163,6 +164,31 @@ fn cmd_run() -> CommandInfo {
     )
     .with_examples(vec![("Run a program", "lex-sys run hello.ls")])
     .with_see_also(vec!["build", "check"])
+}
+
+fn cmd_test() -> CommandInfo {
+    CommandInfo::new(
+        "test",
+        "build once and run every `fn test_*` in the files named, one process each; \
+         a test answers 0 to pass, and a trap fails it \
+         (exit 0 = all passed, 4 = a test failed, 1 = refused, 2 = bad command line or no \
+         tests found, 3 = environment failure; docs/testing.md)",
+    )
+    .idempotent(false)
+    .add_argument("file", "string[]", "one or more .ls files, none declaring `main`", true)
+    // Single-dash flags, as arguments rather than options -- see the
+    // same note on `cmd_build`.
+    .add_argument("-l <name>", "string[]", "link `lib<name>` (repeatable)", false)
+    .add_argument("-L <path>", "string[]", "linker search path for `-l` (repeatable)", false)
+    .add_option("std", "bool", "make the standard library's source available", None)
+    .add_option(
+        "backend",
+        "enum[cranelift|llvm]",
+        "which backend generates code",
+        Some(json!("llvm")),
+    )
+    .with_examples(vec![("Run a file's tests", "lex-sys test --std tests.ls")])
+    .with_see_also(vec!["run", "check"])
 }
 
 fn cmd_ids() -> CommandInfo {

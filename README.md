@@ -105,6 +105,7 @@ default codegen path (LLVM via `clang`, no new build dependency);
 lex-sys build <file.ls>... [-o <output>] [--emit exe|obj] [--std] [--backend cranelift|llvm] [-l <name>]... [-L <path>]...
 lex-sys check <file.ls>... [--std] [--output json] [--backend cranelift|llvm]   # refuse, or say nothing
 lex-sys run   <file.ls>... [--std] [--backend cranelift|llvm] [-l <name>]... [-L <path>]...   # build, run, exit with the program's status
+lex-sys test  <file.ls>... [--std] [--backend cranelift|llvm]   # run every `fn test_*`, one process each; exit 4 if one failed
 lex-sys ids   <file.ls>... [--std]    # each declaration's content hash
 lex-sys authority <file.ls>... [--std] [--output json]  # what it can reach
 lex-sys layout    <file.ls>... [--std]  # what every leaf costs, and what packing would save
@@ -143,7 +144,7 @@ never touches
 first field is `"bounded"`, `false` for any program that reaches foreign
 code. Exit codes are semantic throughout: `0` success, `1` refused with
 a located diagnostic, `2` the command line was wrong, `3` the
-environment failed.
+environment failed, and (`test` only) `4` a test failed.
 
 ## Docs
 
