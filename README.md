@@ -108,6 +108,8 @@ lex-sys authority <file.ls>... [--std] [--output json]  # what it can reach
 lex-sys layout    <file.ls>... [--std]  # what every leaf costs, and what packing would save
 lex-sys print <file.ls>               # the unit, rendered in canonical form
 lex-sys agent-guidelines              # AGENTS.md, from inside the binary
+lex-sys introspect [--output json]    # the full command tree, as data (docs/agent-cli.md)
+lex-sys skill [--output json] [<out-file>]  # a generated SKILL.md, agentskills.io
 lex-sys vcs publish [--store <dir>] <file.ls>  # log every declaration as an operation
 lex-sys vcs log     [--store <dir>]            # what a store already has
 lex-sys vcs resolve [--lock <file>] <store-dir>  # re-check every pin under today's compiler
