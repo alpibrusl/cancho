@@ -33,30 +33,16 @@
 //     lex-sys build examples/slab/main.ls examples/slab/slab.ls -o slab
 //     ./slab
 
-fn write_all[&r, &i](io: &!i Io, s: &r [byte]) -> [io_write] int {
-    var n = 0;
-    while n < len(s) {
-        putchar(io, int_of(s[n]));
-        n = n + 1;
-    }
-    return len(s);
-}
-
-fn print_nat[&i](io: &!i Io, n: int) -> [io_write] int {
-    if n >= 10 {
-        print_nat(io, n / 10);
-    }
-    return putchar(io, '0' + n % 10);
-}
+import std.io;
 
 fn show[&i](io: &!i Io, f: Found) -> [io_write] int {
     match f {
         Found::Missing => {
-            write_all(io, "missing");
+            io.write_all(io, "missing");
             return 0;
         }
         Found::Value(v) => {
-            print_nat(io, v);
+            io.print_nat(io, v);
             return v;
         }
     }
@@ -64,7 +50,7 @@ fn show[&i](io: &!i Io, f: Found) -> [io_write] int {
 
 // Look one handle up, say what came back, and hand the slab on.
 fn probe[&i](io: &!i Io, s: Slab, g: Gen, label: &static [byte]) -> [io_write] Slab {
-    write_all(io, label);
+    io.write_all(io, label);
     let (slab, found) = look(s, g);
     show(io, found);
     putchar(io, 10);

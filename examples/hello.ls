@@ -10,6 +10,14 @@
 // hands it, splits it, and threads the console capability down to the one
 // function that writes — delete the `io` parameter from `write_all` and the
 // body stops compiling. That is the language's whole argument in ten lines.
+//
+// `write_all` is `std.io`'s too (`docs/next-phase.md` §3) and every other
+// duplicate of it was migrated onto that -- this one stays: three other
+// tests (`corpus::run_builds_and_executes_in_one_step`,
+// `corpus::emitting_a_bare_object_file_works`,
+// `refusals::a_clean_program_answers_an_empty_list`) build this exact file
+// **without** `--std`, precisely because it is the one example that needs
+// nothing else, and `import std.io;` would refuse to resolve without it.
 //~ STDOUT Hello, world!
 //~ EXIT 0
 

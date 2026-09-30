@@ -25,6 +25,8 @@
 //~ STDOUT M3 args: 1 (named)
 //~ EXIT 0
 
+import std.io;
+
 // ---------------------------------------------------------------- output ---
 // There are still no strings, so text is written a byte at a time. M3's
 // slices are what change this.
@@ -48,13 +50,6 @@ fn space[&i](io: &!i Io) -> [io_write] int {
     return putchar(io, 32);
 }
 
-fn print_nat[&i](io: &!i Io, n: int) -> [io_write] int {
-    if n >= 10 {
-        print_nat(io, n / 10);
-    }
-    return putchar(io, '0' + n % 10);
-}
-
 // ------------------------------------------------------------- M0: ints ----
 // Functions, arithmetic, `if`/`else`, `while`, and `let`/`var` bindings.
 // `let` is immutable; parameters are too.
@@ -66,10 +61,10 @@ fn label_m0[&i](io: &!i Io) -> [io_write] int {
 
 fn m0[&i](io: &!i Io) -> [io_write] int {
     label_m0(io);
-    space(io); print_nat(io, 1 + 2 * 3);              // precedence: 7
-    space(io); print_nat(io, 10 - 3 - 2);             // left-associative: 5
-    space(io); print_nat(io, 0 - (-6 / 2 + 6) + 6);   // truncating division: 3
-    space(io); print_nat(io, 7 % 3);                  // remainder: 1
+    space(io); io.print_nat(io, 1 + 2 * 3);              // precedence: 7
+    space(io); io.print_nat(io, 10 - 3 - 2);             // left-associative: 5
+    space(io); io.print_nat(io, 0 - (-6 / 2 + 6) + 6);   // truncating division: 3
+    space(io); io.print_nat(io, 7 % 3);                  // remainder: 1
     return newline(io);
 }
 
@@ -114,9 +109,9 @@ fn m1_struct[&i](io: &!i Io) -> [io_write] int {
     putchar(io, 77); putchar(io, 49); space(io);            // "M1 "
     putchar(io, 115); putchar(io, 116); putchar(io, 114); putchar(io, 117); putchar(io, 99);
     putchar(io, 116); putchar(io, 58); space(io);
-    putchar(io, 40); print_nat(io, v.x); putchar(io, 44); space(io); print_nat(io, v.y); putchar(io, 41);
+    putchar(io, 40); io.print_nat(io, v.x); putchar(io, 44); space(io); io.print_nat(io, v.y); putchar(io, 41);
     space(io); putchar(io, 45); putchar(io, 62); space(io);
-    print_nat(io, length_squared(v));               // 25
+    io.print_nat(io, length_squared(v));               // 25
     return newline(io);
 }
 
@@ -141,9 +136,9 @@ fn area(s: Shape) -> [] int {
 fn m1_enum[&i](io: &!i Io) -> [io_write] int {
     putchar(io, 77); putchar(io, 49); space(io);            // "M1 "
     putchar(io, 101); putchar(io, 110); putchar(io, 117); putchar(io, 109); putchar(io, 58); space(io);
-    print_nat(io, area(Shape::Empty));              // 0
-    space(io); print_nat(io, area(Shape::Circle(2))); // 12
-    space(io); print_nat(io, area(Shape::Rect(4, 5)));// 20
+    io.print_nat(io, area(Shape::Empty));              // 0
+    space(io); io.print_nat(io, area(Shape::Circle(2))); // 12
+    space(io); io.print_nat(io, area(Shape::Rect(4, 5)));// 20
     return newline(io);
 }
 
@@ -169,9 +164,9 @@ fn m1_generic[&i](io: &!i Io) -> [io_write] int {
     putchar(io, 105); putchar(io, 99); putchar(io, 58); space(io);
 
     // Instantiated at `int` twice...
-    print_nat(io, unwrap_or(Opt::Some(5), 0));      // 5
+    io.print_nat(io, unwrap_or(Opt::Some(5), 0));      // 5
     let missing: Opt[int] = Opt::None;          // the annotation settles `T`
-    space(io); print_nat(io, unwrap_or(missing, 3));  // 3
+    space(io); io.print_nat(io, unwrap_or(missing, 3));  // 3
 
     // ...and at `bool`, which is a second copy of the same source.
     space(io);
@@ -246,14 +241,14 @@ fn m2_linear[&i](io: &!i Io) -> [io_write] int {
     putchar(io, 108); putchar(io, 105); putchar(io, 110); putchar(io, 101); putchar(io, 97);
     putchar(io, 114); putchar(io, 58); space(io);         // "linear: "
 
-    print_nat(io, redeem(issue(4)));                                    // 4
-    space(io); print_nat(io, redeem(stamp(issue(6))));                    // 7
-    space(io); print_nat(io, redeem_both(Booking {
+    io.print_nat(io, redeem(issue(4)));                                    // 4
+    space(io); io.print_nat(io, redeem(stamp(issue(6))));                    // 7
+    space(io); io.print_nat(io, redeem_both(Booking {
         outbound: issue(2),
         inbound: issue(7),
     }));                                                            // 9
-    space(io); print_nat(io, redeem_either(issue(5), true));              // 5
-    space(io); print_nat(io, redeem_either(issue(5), false));             // 6
+    space(io); io.print_nat(io, redeem_either(issue(5), true));              // 5
+    space(io); io.print_nat(io, redeem_either(issue(5), false));             // 6
     return newline(io);
 }
 
@@ -294,20 +289,20 @@ fn m2_borrow[&i](io: &!i Io) -> [io_write] int {
 
     borrow held as &r in {
         // Reading through the reference, which the owned value refuses.
-        print_nat(io, r.serial);
+        io.print_nat(io, r.serial);
 
         // Shared borrows nest: freezing is not exclusive, because two
         // readers neither move the value nor change it.
         space(io);
         borrow held as &inner in {
-            print_nat(io, serial_of(r) + serial_of(inner));
+            io.print_nat(io, serial_of(r) + serial_of(inner));
         }
 
         // `r` comes from the enclosing block, so it outlives `inner` and may
         // be used where `&inner` is expected. Nothing else coerces.
         space(io);
         borrow held as &inner in {
-            print_nat(io, later_of(r, inner) + serial_of(r));
+            io.print_nat(io, later_of(r, inner) + serial_of(r));
         }
     }
 
@@ -351,14 +346,14 @@ fn m2_unique[&i](io: &!i Io) -> [io_write] int {
     var meter = Meter { reading: 1, step: 2 };
 
     borrow mut meter as &!r in {
-        print_nat(io, advance(r));
-        space(io); print_nat(io, advance(r));
+        io.print_nat(io, advance(r));
+        space(io); io.print_nat(io, advance(r));
     }
 
     // Owned again, and carrying what the reference wrote. The value lived in
     // a buffer for the block and was read back when it closed, which is
     // sound precisely because the lock meant nothing else could have moved on.
-    space(io); print_nat(io, meter.reading);
+    space(io); io.print_nat(io, meter.reading);
     return newline(io);
 }
 
@@ -388,7 +383,7 @@ fn triple(n: int) -> [] int {
 // Performs `io_write`, because `print_nat` does. Nothing else about the body
 // matters to the row.
 fn show[&i](io: &!i Io, n: int) -> [io_write] int {
-    return print_nat(io, n);
+    return io.print_nat(io, n);
 }
 
 fn m2_effects[&i](io: &!i Io) -> [io_write] int {
@@ -450,7 +445,7 @@ fn m2_arena[&i](io: &!i Io) -> [io_write] int {
             if n > 1 {
                 space(io);
             }
-            print_nat(io, cell_value(cell));
+            io.print_nat(io, cell_value(cell));
             total = total + cell_value(cell);
             n = n + 1;
         }
@@ -458,7 +453,7 @@ fn m2_arena[&i](io: &!i Io) -> [io_write] int {
     // Three allocations, one release, and it already happened.
 
     space(io); putchar(io, 45); putchar(io, 62); space(io);   // " -> "
-    print_nat(io, total);
+    io.print_nat(io, total);
     return newline(io);
 }
 
@@ -492,8 +487,8 @@ fn run[&i](io: &!i Io) -> [io_write] int {
 // that is not given a capability cannot perform its effect.
 
 fn twice[&i](io: &!i Io, n: int) -> [io_write] int {
-    print_nat(io, n);
-    return print_nat(io, n);
+    io.print_nat(io, n);
+    return io.print_nat(io, n);
 }
 
 fn m2_capability[&i](io: &!i Io) -> [io_write] int {
@@ -543,8 +538,8 @@ fn m2_foreign[&f, &i](libc: &f Ffi("libc"), io: &!i Io) -> [ffi("libc"), io_writ
 
     // The capability is checked and then erased: what libc receives is the
     // integer and nothing else, because a capability carries no data.
-    print_nat(io, labs(libc, 0 - 7));                     // 7
-    space(io); print_nat(io, labs(libc, 9));              // 9
+    io.print_nat(io, labs(libc, 0 - 7));                     // 7
+    space(io); io.print_nat(io, labs(libc, 9));              // 9
     return newline(io);
 }
 
@@ -576,7 +571,7 @@ fn m3_arithmetic[&i](io: &!i Io) -> [io_write] int {
     putchar(io, 105); putchar(io, 99); putchar(io, 58); space(io);
 
     // Checked, and right. `highest() + 1` here would kill the process.
-    print_nat(io, 2 + 4);
+    io.print_nat(io, 2 + 4);
 
     // Asked for, and wrapped: one past the top is the bottom, which is
     // negative -- so the digit is 1.
@@ -631,7 +626,7 @@ fn m3_slice[&i](io: &!i Io) -> [io_write] int {
             if n > 0 {
                 space(io);
             }
-            print_nat(io, digits[n]);
+            io.print_nat(io, digits[n]);
             n = n + 1;
         }
         // Written through a unique slice above, read through a shared one
@@ -641,7 +636,7 @@ fn m3_slice[&i](io: &!i Io) -> [io_write] int {
     // The slice and its arena are both gone by here, in one call.
 
     space(io); putchar(io, 45); putchar(io, 62); space(io);   // " -> "
-    print_nat(io, total);
+    io.print_nat(io, total);
     return newline(io);
 }
 
@@ -668,33 +663,24 @@ fn m3_slice[&i](io: &!i Io) -> [io_write] int {
 // because truncation is the silently wrong answer §2.1 already refused.
 // `==` is allowed, because comparing storage is not arithmetic.
 
-fn write_all[&r, &i](io: &!i Io, s: &r [byte]) -> [io_write] int {
-    var n = 0;
-    while n < len(s) {
-        putchar(io, int_of(s[n]));
-        n = n + 1;
-    }
-    return len(s);
-}
-
 fn m3_string[&i](io: &!i Io) -> [io_write] int {
     putchar(io, 77); putchar(io, 51); space(io);          // "M3 "
     putchar(io, 115); putchar(io, 116); putchar(io, 114); putchar(io, 105);
     putchar(io, 110); putchar(io, 103); putchar(io, 58); space(io);
 
     let word = "hello";
-    write_all(io, word);
+    io.write_all(io, word);
 
     // `len` is the *byte* length: this design claims no encoding, so there
     // are no characters to count.
     space(io); putchar(io, 40);                           // " ("
-    print_nat(io, len(word));
-    space(io); write_all(io, "bytes,");
+    io.print_nat(io, len(word));
+    space(io); io.write_all(io, "bytes,");
 
     // Indexing yields a `byte`, which has to be widened to be printed --
     // the conversion is where the range is checked, visibly.
-    space(io); write_all(io, "e is");
-    space(io); print_nat(io, int_of(word[1]));
+    space(io); io.write_all(io, "e is");
+    space(io); io.print_nat(io, int_of(word[1]));
     putchar(io, 41);                                      // ")"
     return newline(io);
 }
@@ -728,7 +714,7 @@ fn m3_file[&f, &i](
     fs: &f Fs("/tmp"),
     io: &!i Io,
 ) -> [fs_read("/tmp"), fs_write("/tmp"), io_write] int {
-    write_all(io, "M3 file:"); space(io);
+    io.write_all(io, "M3 file:"); space(io);
 
     let wrote = fs_write(fs, "/tmp/lex-sys-tour.txt", "on disk");
 
@@ -744,7 +730,7 @@ fn m3_file[&f, &i](
             n = n + 1;
         }
         space(io); putchar(io, 40);                       // " ("
-        print_nat(io, wrote);
+        io.print_nat(io, wrote);
         putchar(io, 41);                                  // ")"
         status = read;
     }
@@ -787,7 +773,7 @@ enum List {
 }
 
 fn m3_heap[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
-    write_all(io, "M3 heap:"); space(io);
+    io.write_all(io, "M3 heap:"); space(io);
 
     // Built backwards, so this reads 3 1 4.
     var list = List::Empty;
@@ -798,9 +784,9 @@ fn m3_heap[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
     // `drain` leaves a trailing space after the last value, so this does
     // not add one.
     let total = drain(heap, io, list);
-    write_all(io, "->"); space(io);
-    print_nat(io, total);
-    space(io); write_all(io, "(freed)");
+    io.write_all(io, "->"); space(io);
+    io.print_nat(io, total);
+    space(io); io.write_all(io, "(freed)");
     return newline(io);
 }
 
@@ -814,7 +800,7 @@ fn drain[&h, &i](heap: &!h Heap, io: &!i Io, list: List) -> [heap, io_write] int
     match list {
         List::Empty => { return 0; }
         List::Cons(value, rest) => {
-            print_nat(io, value);
+            io.print_nat(io, value);
             space(io);
             let tail = unbox(heap, rest);
             return value + drain(heap, io, tail);
@@ -867,7 +853,7 @@ fn count_kept[&l](list: &l List) -> [] int {
 }
 
 fn m3_reading[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
-    write_all(io, "M3 reading:"); space(io);
+    io.write_all(io, "M3 reading:"); space(io);
 
     var list = List::Empty;
     list = push(heap, list, 4);
@@ -878,13 +864,13 @@ fn m3_reading[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
     // `count_kept` hold no capability at all, so their rows are `[]` and
     // they could not free anything if they tried.
     borrow list as &l in {
-        print_nat(io, sum_kept(l));
+        io.print_nat(io, sum_kept(l));
         space(io);
-        print_nat(io, count_kept(l));
+        io.print_nat(io, count_kept(l));
         space(io);
-        print_nat(io, sum_kept(l));
+        io.print_nat(io, sum_kept(l));
     }
-    space(io); write_all(io, "(kept)");
+    space(io); io.write_all(io, "(kept)");
     newline(io);
 
     // Still owned here, and still owing exactly one traversal that ends it.
@@ -929,18 +915,18 @@ fn drain_quiet[&h](heap: &!h Heap, list: List) -> [heap] int {
 // because argv outlives every region there is.
 
 fn m3_args[&g, &i](args: &g Args, io: &!i Io) -> [args, io_write] int {
-    write_all(io, "M3 args:"); space(io);
+    io.write_all(io, "M3 args:"); space(io);
 
     // Run with no arguments by the example harness, so this is 1: a
     // program always has at least its own name.
     let count = arg_count(args);
-    print_nat(io, count);
+    io.print_nat(io, count);
 
     space(io); putchar(io, 40);                           // " ("
     if len(arg(args, 0)) > 0 {
-        write_all(io, "named");
+        io.write_all(io, "named");
     } else {
-        write_all(io, "anonymous");
+        io.write_all(io, "anonymous");
     }
     putchar(io, 41);                                      // ")"
     return newline(io);
