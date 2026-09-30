@@ -237,8 +237,8 @@ documented anywhere —
 
 | Function(s) | Files | Already under a shared name? |
 |---|---|---|
-| `abs` | `examples/rational.ls`, `std/math.ls` | Yes — `std.math.abs`, byte-for-byte the same `if` under a different parameter name |
-| `larger` / `max` | `examples/tree.ls`, `std/math.ls` | Yes — `std.math.max`, same body, different name |
+| ~~`abs`~~ | `examples/rational.ls`, `std/math.ls` | **Migrated** — `rational.ls` now `import`s `std.math` and calls `math.abs`; its own copy is gone |
+| ~~`larger` / `max`~~ | `examples/tree.ls`, `std/math.ls` | **Migrated** — `tree.ls` now `import`s `std.math` and calls `math.max`; its own copy is gone |
 | `append` / `put` | `examples/lines.ls`, `packages/net-sockets/sockets.ls` | Yes — `net.sockets.put`, same byte-blit loop, different name |
 
 — plus one the §3 hunt's own scope already should have caught and
@@ -249,14 +249,22 @@ comment it was "extracted from" three files' copies, but
 `examples/tls_client/socket.ls` was never migrated onto the package
 and still carries the pre-extraction copy.
 
-All of these, plus §3.1's own two already-documented exceptions and
-the §3 `nat_of`/`port_of` cluster, are recorded in the test's own
-`ALLOWED` list with the same reasoning as here, so the check starts
-green rather than red — each one a real, mechanical migration same
-shape as §3's, not yet done, same as `nat_of`/`port_of` already was.
-The test itself asserts every `ALLOWED` entry still names a real
-cross-file match, so an entry that stops being true (because someone
-does the migration) fails loudly rather than rotting.
+Both migrated rows landed the same session `§4.1` was written, each
+output-diffed against its own `//~ STDOUT` before and after (identical
+in both cases) and the full gate rerun. `rational.ls`'s migration also
+moved `identity.rs::ids_are_stable_across_runs_and_survive_a_body_rewrite`,
+which patched `abs`'s own body text to exercise "a body rewrite moves
+no signature" — `gcd` carries that job now, and the `ids` calls there
+gained `--std` for the same reason every other example needs it once
+it imports something.
+
+Everything still open — `append`/`put`, `address`, §3.1's own two
+already-documented exceptions, and the §3 `nat_of`/`port_of`
+cluster — is recorded in the test's own `ALLOWED` list with the same
+reasoning as here, so the check stays green rather than red. The test
+itself asserts every `ALLOWED` entry still names a real cross-file
+match, so an entry that stops being true (because someone does the
+migration, as just happened twice) fails loudly rather than rotting.
 
 ## 5. What this does not propose
 
@@ -290,7 +298,7 @@ document is making.
 | Is there a mechanical check for §1.1/§1.2's category at all, even a partial one (e.g. flag a doc paragraph whose cited PR number is more than N merges behind `HEAD`)? | Speculative; no design exists yet, and §5 says why it's harder than §4 |
 | The `nat_of`/`port_of` cluster (§3) | Real, smaller, a shape question rather than a mechanical fix — pick up opportunistically |
 | `address` (`examples/tls_client/socket.ls`, never migrated onto `packages/net-connect/connect.ls`, §4.1) | Real, mechanical, same shape as §3 — a package import swap, not yet done |
-| `abs` / `larger` (`examples/rational.ls`, `examples/tree.ls`, not yet calling `std.math`, §4.1) | Real, mechanical — two one-line migrations onto an existing `std.math` function, not yet done |
+| ~~`abs` / `larger` (`examples/rational.ls`, `examples/tree.ls`, not yet calling `std.math`)~~ | **Migrated**, §4.1 |
 | `append` (`examples/lines.ls`, not yet calling `packages/net-sockets/sockets.ls`'s `put`, §4.1) | Real, mechanical, but pulls a network package into a file that otherwise has no package dependency — worth a second look before migrating, not a pure copy-paste |
 | `read_stdin`/`read_file` (`examples/sort/sort.ls`, `examples/seek/seek.ls`, §4.1) | Real, identical present-day logic kept apart on purpose as two worked examples of the same fix (`docs/file-handles.md` §1) — extracting a shared helper would need a place to put it that isn't either example |
 | The whole of `examples/buffer/buffer.ls` (predates `std/buffer.ls`, never migrated, §4.1) | Real, larger than a one-function fix — the example's own `res struct Buffer` would need to become `std.buffer.Buffer` throughout, which is a rewrite of the file, not a swap |

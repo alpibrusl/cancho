@@ -84,17 +84,13 @@ const ALLOWED: &[(&str, &str)] = &[
     ("std/buffer.ls", "push"),
     // Found building this check: alpha-equivalent under `lex-sys-id`
     // (`docs/canonical-ast.md`: "bodies hash up to alpha-equivalence")
-    // but textually different enough -- different parameter names,
-    // `abs`/`max` a hand-written `if` in `examples/rational.ls` and
-    // `examples/tree.ls` against `std/math.ls`'s own, `append`/`put`
-    // the same byte-blit loop under two names in `examples/lines.ls`
-    // and `packages/net-sockets/sockets.ls` -- that the raw-text hunt
-    // behind #160 never found. Real, small, a migration each; not yet
-    // acted on for the same reason `nat_of`/`port_of` above is not.
-    ("examples/rational.ls", "abs"),
-    ("std/math.ls", "abs"),
-    ("examples/tree.ls", "larger"),
-    ("std/math.ls", "max"),
+    // but textually different enough -- the same byte-blit loop under
+    // two names, `append` in `examples/lines.ls` and `put` in
+    // `packages/net-sockets/sockets.ls` -- that the raw-text hunt
+    // behind #160 never found. `examples/rational.ls`'s own `abs` and
+    // `examples/tree.ls`'s own `larger` were the same shape and are
+    // migrated onto `std.math` now; `append`/`put` is not yet, for the
+    // same reason `nat_of`/`port_of` above is not.
     ("examples/lines.ls", "append"),
     ("packages/net-sockets/sockets.ls", "put"),
 ];
