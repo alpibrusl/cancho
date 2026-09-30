@@ -44,6 +44,7 @@ mod compile_time;
 mod corpus;
 mod differential;
 mod docs;
+mod duplication;
 mod filesystem;
 mod floats;
 mod identity;
