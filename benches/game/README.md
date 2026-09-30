@@ -21,14 +21,23 @@ the Game's own maintainers caution against.
 
 ## What is here
 
-| | what it stresses | measured |
+| | what it stresses | measured (`--backend llvm`, the default since #127) |
 |---|---|---|
-| `fannkuch.ls` / `.c` | Integer arrays, branches | 1.32× |
-| `spectral.ls` / `.c` | Float compute, a division in the inner loop | 2.58× |
-| `binarytrees.ls` / `.c` | `malloc` and `free` | 1.17× |
+| `fannkuch.ls` / `.c` | Integer arrays, branches | ~1.0× |
+| `spectral.ls` / `.c` | Float compute, a division in the inner loop | 1.27×–1.46× |
+| `binarytrees.ls` / `.c` | `malloc` and `free` | 1.20×–1.34× |
+| `fasta.ls` / `.c` | Bulk output vs. per-byte `putchar` | 0.89×–0.90× (faster than C) |
+| `revcomp.c` / `.ls` | `getchar`, one byte at a time, no bulk read | noisy here, ~1.0×–1.6× |
+
+`docs/benchmarks-game.md` §8 has the full numbers, the run-to-run
+spread, and why `fasta` moved less than a "faster backend" story alone
+would predict; §4 there has the same table for the Cranelift backend
+these programs measured against before #127.
 
 Each takes `N` on the command line and defaults to the size its header
-states an expected output for.
+states an expected output for; `revcomp` reads a FASTA file from
+`stdin` instead (`scripts/game.py` generates it from `fasta`'s own
+output).
 
 ## Running them
 

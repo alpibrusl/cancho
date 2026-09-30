@@ -208,6 +208,16 @@ what they may rely on.
 | ~~A line reader~~ | **Answered, no** — [`line-reading.md`](line-reading.md). This row said `examples/cut/` and `examples/tally.ls` *"both read `getchar` into a fixed buffer"*, and **`tally.ls` has no buffer**: it streams. Five programs call `getchar`, one of them reads a line at a time, and the bar here is two. What the row was right about is that something was wrong: `cut` was **silently** printing the wrong field on a long line — a truncated line loses its delimiters, so it switched to the no-delimiter rule and answered 60 KB of `a` with exit 0. Fixed by growing on the heap, at 1.18×, and the one function that *was* earned is `buffer.clear`, at 13.0× against the alternative |
 | ~~Effect polymorphism~~ | **Answered, no** — [`effect-polymorphism.md`](effect-polymorphism.md). This row and `mode-polymorphism.md` §8 were the entire design, and counting by reading says the feature has nothing to quantify over: **537 functions here write a row and not one could be polymorphic in it**. A row is fixed at the declaration (`Signature.effects`, read straight off it by every caller), and the two things a function is generic over — types and regions — cannot select a callee. The nearest asker, `io.write_all` against `io.error_all`, differs by the *builtin* as well as the row, so collapsing it needs a function value: row polymorphism is the shadow of higher-order code, and `Rule::NoFunctionValues` refuses that with a fixture |
 
+**Superseded by the row above, kept as it was written.** Everything from
+here to "not ours to do" argues for building an LLVM backend, written
+before it existed. It exists now — the row above this one, and #127
+(`docs/llvm-backend.md`) made it the default. The 1.17–2.58× this essay
+names below is the number that argument was made against, not a current
+figure: `docs/benchmarks-game.md` §8 re-ran the same five kernels on
+`--backend llvm` and found a narrower, less uniform range, one kernel
+(fasta) still faster than C. The reasoning stays, for the record of why
+this was prioritized; the number it ends on does not.
+
 An LLVM backend is **not** next, and the case for it is now argued from
 two directions at once — which is worth keeping written down, because
 the two arrive at opposite conclusions about its *priority* and agree

@@ -1,16 +1,26 @@
 # Against a wider set
 
-> **Status: measured.**
+> **Status: measured, twice — once on Cranelift, once on LLVM.**
 >
 > `against-c-and-rust.md` reported **1.6×** against C, from two kernels.
-> Three more, from the Computer Language Benchmarks Game, say the gap is
-> **1.17× to 2.58×** — and that it tracks something legible rather than
-> being a constant with noise on it (§4).
+> Three more, from the Computer Language Benchmarks Game, said the gap
+> was **1.17× to 2.58×** on `--backend cranelift` — and that it tracked
+> something legible rather than being a constant with noise on it (§4).
+> Two more Game programs, fasta and reverse-complement, widened that
+> range in a direction the others did not: fasta measured **0.54×** —
+> *faster* than C — because past a certain point the comparison stops
+> being about the backend and starts being about the I/O call underneath
+> it (§7). All of that was Cranelift.
 >
-> Two more Game programs, fasta and reverse-complement, widen that range
-> in a direction the others do not: fasta measures **0.54×** — *faster*
-> than C — because past a certain point the comparison stops being about
-> the backend and starts being about the I/O call underneath it (§7).
+> **§8 re-runs the same five kernels now that `--backend llvm` is the
+> default** (`llvm-backend.md`, #127) — `scripts/game.py` takes no
+> `--backend` flag, so it was always going to measure whichever backend
+> a plain `lex-sys build` uses, and that stopped being Cranelift the day
+> the default flipped. The high end came down hard, as §4's own
+> falsifier predicted: spectral-norm's 2.58× is now **1.27×–1.46×**. The
+> low end did *not* fall the way a "LLVM is strictly better" story would
+> predict — fasta's own 0.54× is now **0.89×–0.90×**, still faster than
+> C, but by less, not more. §8 has the numbers and why.
 >
 > This document is also the answer to *"are there official benchmarks?"*:
 > **no.** §2 is what exists, what it is worth, and which rules were
@@ -144,6 +154,17 @@ now with the shape of the dependence rather than one number. **The
 falsifier stands and gets sharper**: if an LLVM backend lands and the
 *range* does not collapse toward its low end, the claim was wrong.
 
+**Answered, §8: the high end collapsed, the low end did not.** An LLVM
+backend landed and became the default (#127); re-running these same
+five kernels against it moves spectral-norm from 2.58× to 1.27×–1.46×,
+confirming this section's own claim — the gap really was how much of
+the run Cranelift generated. But binary-trees (`malloc`-bound, "less of
+the run to be slower at") barely moves, 1.17× to 1.20×–1.34×, and fasta
+(the one point *below* 1.0×) moves the wrong way, 0.54× to 0.89×–0.90×
+— still faster than C, less so. §8 is why: this section's own
+explanation was correct for the kernels it was built from, and
+incomplete for the two it did not have yet.
+
 ### 4.1 Report the spread, or the number is not checkable
 
 `scripts/three.py` reports best-of-7: the minimum. That suppresses OS
@@ -169,8 +190,10 @@ build here, and a best-of-N report would have shown none of that.
 
 | Question | Why it waits |
 |---|---|
-| n-body | §2.1. Reachable now that `sqrt` exists, and it would add a second float-heavy point beside spectral-norm's 2.58× |
+| n-body | §2.1. Reachable now that `sqrt` exists, and it would add a second float-heavy point beside spectral-norm's own (now much smaller) gap |
 | ~~fasta and reverse-complement~~ | **Answered, by measuring** — §7. `fasta` is faster than C; `reverse-complement` is not |
+| Why `fasta` moved from 0.54× to 0.89×–0.90× under `--backend llvm` | §8. §7's own "this is an I/O-call-shape fact, not a backend fact" would predict no move at all, since `fasta.c` is unchanged; `objdump` on the per-line loop around `io.write_all`, the way §7.16 of `llvm-backend.md` already did for `spectral.ls`, is the next thing that would actually answer it rather than guess |
+| A quieter host for `revcomp` | §8. 97%–203% spread on this container swallows any real signal; the three re-runs bracket 1.05×–1.60× without narrowing it |
 | `std.math` over floats | §3. Two programs have now written their own `sqrt`. `floating-point.md` §7's capability question is still the blocker, and the queue behind it is growing |
 | A stated precision in `std.fmt` | §3. `float-printing.md` §7's row, with a second caller now |
 | Confidence intervals rather than a range | §4.1. The spread is honest and it is not a statistical model. Georges et al. (OOPSLA 2007) is the standard method; nothing here needs that rigour until a change is claimed on a difference smaller than the spread |
@@ -243,7 +266,85 @@ any gap. It is evidence that "the same algorithm" can leave two
 languages with genuinely different *cheapest* ways to do the same I/O,
 and when it does, the ratio measures that instead.
 
+---
+
+## 8. Recounted: `--backend llvm` is the default now, and so is this range
+
+Everything above §8 was measured on `--backend cranelift`, whichever
+backend happened to be the default at the time — `scripts/game.py`
+passes no `--backend` flag to `lex-sys build`, by design, so it has
+always measured "the compiler," not one specific backend. That stopped
+meaning Cranelift the day #127 flipped the default to LLVM, and nobody
+had gone back and re-read what the script now reports until this slice
+did.
+
+Three full runs, `scripts/game.py --rounds 9`, this session:
+
+```
+program        run 1   run 2   run 3
+fannkuch       1.02x   1.01x   0.99x
+spectral       1.27x   1.35x   1.46x
+binarytrees    1.20x   1.25x   1.34x
+fasta          0.90x   0.89x   0.90x
+revcomp        1.60x   1.27x   1.05x
+```
+
+Four of five kernels are stable across runs. `revcomp` is not: its own
+spread within a single run reads 97%–203% here, wide enough that no
+single number below is worth trusting to two significant figures —
+this container has 4 cores and a low load average, so the jitter reads
+as scheduling noise rather than contention, but a quieter host would be
+needed to pin it down further than "somewhere around 1.0×–1.6×." Every
+other row's own spread is the ordinary 10%–40% this document has
+reported since §4.1.
+
+**The high end moved exactly the way §4's falsifier called it.**
+spectral-norm was the kernel §4 named as the reassociation wall's
+clearest case — a tight float loop with a division, the shape a
+vectoriser earns its keep on — and it dropped the most, 2.58× to
+1.27×–1.46×. `llvm-backend.md` §7.16 already measured this kernel in
+isolation and found real vectorisation (62 SIMD instructions,
+`objdump`-confirmed); this is that same fact showing up in the wider
+suite's own numbers rather than a standalone reading.
+
+**binary-trees moved the least, for the reason §4 already gave.** §4's
+own explanation was "mostly inside `malloc`/`free`, the same libc
+either way — the backend has less of the run to be slower at," and
+1.17× to 1.20×–1.34× is that explanation holding: a program dominated
+by a shared library call has little room for a faster backend to show
+up in, whichever backend it is.
+
+**fasta is the real surprise, and it argues against its own headline.**
+§7's own reading was that 0.54× "says nothing new about the backend" —
+it measured `io.write_all`'s bulk path beating `fasta.c`'s `putchar`-
+per-byte loop, a fact about the *libc call shape* the two programs use,
+independent of which backend compiles either one. If that reading is
+right, the ratio should not have moved when only the lex-sys side's
+backend changed — `fasta.c` is still `cc -O2`, unchanged, call for
+call. It moved anyway, from 0.54× to 0.89×–0.90×: still faster than C,
+markedly less so. The likely account, not yet confirmed the way §7's
+own claim was: LLVM's `-O2` optimizes the *scalar* per-line loop around
+each `io.write_all` call differently than Cranelift did — nothing here
+has `objdump`-checked that loop the way §7.16 checked `spectral.ls`'s —
+so §7's own "this is an I/O-call-shape fact, not a backend fact" is
+probably still the larger effect, and what moved is a smaller backend-
+shaped one sitting on top of it that this slice did not isolate. Marked
+open, not answered, in §5.
+
+**revcomp's own noise here means its number cannot confirm or refute
+anything past "still in the ordinary range."** §7 measured it at 1.19×
+on Cranelift, inside the range every other kernel described; the three
+runs above (1.05×, 1.27×, 1.60×) bracket that number without pinning a
+tighter one.
+
+`against-c-and-rust.md`'s own two kernels, re-run the same way
+(`scripts/three.py --rounds 9`, no `--backend` flag there either),
+move further than any of the five above: mandelbrot from 1.69× to
+**0.95×** (two runs, both 0.95×) and the memory-bound sieve from 1.56×
+to **0.93×–0.95×** (two runs) — both now *faster* than C, not merely
+closer to it. That document's own status header carries the correction.
+
 | Bench | |
 |---|---|
-| `benches/game/` | Three programs, each in lex-sys and C to the same algorithm |
-| `scripts/game.py` | Runs them, checks the output every time, reports the spread |
+| `benches/game/` | Five programs, each in lex-sys and C to the same algorithm |
+| `scripts/game.py` | Runs them against whichever backend `lex-sys build` defaults to today, checks the output every time, reports the spread |

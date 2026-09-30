@@ -15,7 +15,9 @@
 > build ran `docs/tuples.md`'s own identity fixture for the first time.
 > Both are fixed, not documented around. What follows is the slice-by-
 > slice history that got here, kept as it was written rather than
-> rewritten now that the destination is known.
+> rewritten now that the destination is known. `docs/benchmarks-game.md`
+> §8 has the current gap to C, re-measured on this backend rather than
+> quoted from the Cranelift-era number above.
 >
 > **Superseded status, kept for the history below:** "first five slices
 > built, and `examples/hello.ls` builds" (§5, `lex-sys-codegen-llvm`,

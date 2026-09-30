@@ -110,9 +110,12 @@ Four changes, and no new claims:
 4. **The status line says what is usable**, rather than only what is
    not. Both halves are true and only one was there.
 
-What it does **not** do: soften anything. The gap to C is 1.17×–2.58×
-and stays on the page; "not a usable language" stays on the page; the
-three-word count above is why it moved, not why it shrank.
+What it does **not** do: soften anything. The gap to C stays on the
+page, whatever it currently measures — 1.17×–2.58× when this was
+written, `benchmarks-game.md` §8's own narrower, less uniform range
+since `--backend llvm` became the default; "not a usable language"
+stays on the page; the three-word count above is why it moved, not why
+it shrank.
 
 ---
 
