@@ -220,18 +220,25 @@ fn build_example_paths(tag: &str, paths: &[PathBuf], binary: &str) -> (PathBuf, 
 }
 
 /// Fetch several locked dependencies fresh, one `vcs fetch` per
-/// `(lock, store)` pair, each into its own scratch directory, and hand
-/// back every file written across all of them -- composed with no new
-/// tooling, the same way `examples/fetch/fetch.ls` composes two real
-/// packages (`net.sockets` and `net.connect`) at its own command line.
-/// Every test that builds or authority-checks a program that imports a
-/// fetched package calls this first, re-verifying every pin the same
-/// way `vcs resolve` always does rather than trusting a checked-in
-/// copy.
+/// `(lock, store)` pair, all into the *same* scratch directory, and hand
+/// back every distinct file written across all of them -- composed with
+/// no new tooling, the same way `examples/fetch/fetch.ls` composes two
+/// real packages (`net.sockets` and `net.connect`) at its own command
+/// line. Every test that builds or authority-checks a program that
+/// imports a fetched package calls this first, re-verifying every pin
+/// the same way `vcs resolve` always does rather than trusting a
+/// checked-in copy.
+///
+/// One shared directory, not one per pair: `vcs fetch` writes each file
+/// as `<source_hash>.ls`, so two pairs whose closures overlap (`net.
+/// connect` and `http.response` now both transitively require `net.
+/// sockets`, `docs/package-system.md` §6) write the *same* path twice
+/// with identical content rather than the same content at two different
+/// paths -- the latter is what `build`/`check` refuse as a duplicate
+/// declaration.
 fn fetch_net_dependencies(tag: &str, pairs: &[(&str, &str)]) -> Vec<PathBuf> {
-    let mut files = Vec::new();
-    for (i, (lock, store)) in pairs.iter().enumerate() {
-        let dir = scratch(&format!("{tag}-fetch-{i}"));
+    let dir = scratch(&format!("{tag}-fetch"));
+    for (lock, store) in pairs {
         let fetch = Command::new(BIN)
             .args([
                 "vcs".as_ref(),
@@ -246,11 +253,12 @@ fn fetch_net_dependencies(tag: &str, pairs: &[(&str, &str)]) -> Vec<PathBuf> {
             .output()
             .expect("the compiler runs");
         assert!(fetch.status.success(), "{}", String::from_utf8_lossy(&fetch.stderr));
-        for entry in std::fs::read_dir(&dir).expect("fetch wrote its output directory") {
-            let path = entry.expect("a readable directory entry").path();
-            if path.extension().is_some_and(|e| e == "ls") {
-                files.push(path);
-            }
+    }
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(&dir).expect("fetch wrote its output directory") {
+        let path = entry.expect("a readable directory entry").path();
+        if path.extension().is_some_and(|e| e == "ls") {
+            files.push(path);
         }
     }
     files
@@ -279,16 +287,19 @@ fn authority_of_serve(tag: &str) -> (Vec<String>, Vec<String>, Vec<String>) {
     authority_of_paths(&[repo_root().join("examples/serve/serve.ls"), fetched])
 }
 
-/// `examples/fetch/fetch.ls`: the first program here to need two real
-/// packages at once (`net.sockets` and `net.connect`,
-/// `docs/package-system.md` §6) -- two separate `vcs lock`/`vcs fetch`
-/// pairs, composed at the same `build` command line.
+/// `examples/fetch/fetch.ls`: `net.connect` (extended with
+/// `octets_of`/`port_of`/`connect_to`) and `http.response`
+/// (`send_all`/`status_of`, the fifth real package and the
+/// client-side mirror of `http.request`, `docs/package-system.md` §6)
+/// -- both now transitively require `net.sockets` too, so no separate
+/// `net.sockets` lock is needed, the same reason `build_collect` below
+/// dropped its own.
 fn fetch_dependencies(tag: &str) -> Vec<PathBuf> {
     fetch_net_dependencies(
         tag,
         &[
-            ("examples/fetch/net.lock", "packages/net-sockets/.lex-sys-vcs"),
             ("examples/fetch/connect.lock", "packages/net-connect/.lex-sys-vcs"),
+            ("examples/fetch/response.lock", "packages/http-response/.lex-sys-vcs"),
         ],
     )
 }
@@ -305,14 +316,14 @@ fn authority_of_fetch(tag: &str) -> (Vec<String>, Vec<String>, Vec<String>) {
     authority_of_paths(&paths)
 }
 
-/// `examples/report/report.ls`: outbound, the same two-package shape as
-/// `fetch.ls` (`net.sockets` and `net.connect`).
+/// `examples/report/report.ls`: outbound, the same shape as `fetch.ls`
+/// (`net.connect` and `http.response`).
 fn fetch_report_dependencies(tag: &str) -> Vec<PathBuf> {
     fetch_net_dependencies(
         tag,
         &[
-            ("examples/report/net.lock", "packages/net-sockets/.lex-sys-vcs"),
             ("examples/report/connect.lock", "packages/net-connect/.lex-sys-vcs"),
+            ("examples/report/response.lock", "packages/http-response/.lex-sys-vcs"),
         ],
     )
 }
@@ -360,15 +371,16 @@ fn fetch_vsock_dependencies(tag: &str) -> Vec<PathBuf> {
     )
 }
 
-/// `examples/agent_guest/agent_guest.ls`: outbound, the same three-package
-/// shape as `vsock.ls` -- `net.sockets`/`net.connect` plus `agent.wire`
-/// for the same decoder `vsock.ls`'s own header once copied by hand.
+/// `examples/agent_guest/agent_guest.ls`: outbound, `net.connect` and
+/// `http.response` the same shape as `fetch.ls`/`report.ls`, plus
+/// `agent.wire` for the same decoder `vsock.ls`'s own header once
+/// copied by hand.
 fn fetch_agent_guest_dependencies(tag: &str) -> Vec<PathBuf> {
     fetch_net_dependencies(
         tag,
         &[
-            ("examples/agent_guest/net.lock", "packages/net-sockets/.lex-sys-vcs"),
             ("examples/agent_guest/connect.lock", "packages/net-connect/.lex-sys-vcs"),
+            ("examples/agent_guest/response.lock", "packages/http-response/.lex-sys-vcs"),
             ("examples/agent_guest/wire.lock", "packages/agent-wire/.lex-sys-vcs"),
         ],
     )

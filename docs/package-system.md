@@ -152,6 +152,30 @@
 > than the repo root. Fixed by recording it relative to the depending
 > store's own directory instead, and joining rather than reading it bare
 > on the way back. §4.6 has the correction and the fix.
+>
+> **`net.connect` extended, and a fifth package, `http.response`.**
+> Hashing every function body across `examples/`, `packages/`, `std/`
+> and `benches/` and grouping the ones that collide -- rather than
+> rereading files by eye -- found a fifth duplicated cluster: `fetch.ls`,
+> `report.ls` and `agent_guest.ls` each declare the same six functions.
+> `octets_of`/`port_of`/`address`/`connect_to` are generic to any
+> outbound program and joined `net.connect` itself (growing an
+> already-published store is the same act as its first publish, just a
+> second `vcs publish` against the same `--store`); `send_all`/
+> `status_of` are HTTP-specific and became `http.response`, the
+> client-side mirror of `http.request`. Both now `import net.sockets`
+> too -- its third and fourth real consumer, closure resolution doing
+> the same work again with no changes needed. **Found one thing the
+> design had not foreseen**: two *sibling* packages transitively
+> requiring the *same* dependency means fetching each into its own
+> output directory -- every earlier multi-package example's own shape --
+> now fetches that shared dependency twice, under two different paths,
+> which `build`/`check` correctly refuse as a duplicate declaration. Not
+> a resolver gap (`vcs resolve` on either store alone is silent), only in
+> how a consumer composes two fetches: one shared output directory is
+> enough, since `vcs fetch` writes each file as `<source_hash>.ls` and a
+> second fetch of the same content overwrites the same path rather than
+> writing a new one.
 
 ## 1. What asked for it
 
@@ -661,3 +685,40 @@ bare, working-directory-relative path, rather than resolved against the
 depending store's own directory — surfaced only once a real,
 non-synthetic dependency pair was fetched from a working directory other
 than the repo root.
+
+**Done too: `net.connect` extended, and a fifth package,
+`packages/http-response/` (`response.ls`).** `examples/fetch/fetch.ls`,
+`examples/report/report.ls` and `examples/agent_guest/agent_guest.ls`
+turned out to duplicate a fifth cluster, six functions byte-for-byte
+this time — `octets_of`/`port_of`/`address`/`connect_to` and
+`send_all`/`status_of` — three real askers each, found by hashing every
+function body across `examples/`, `packages/`, `std/` and `benches/`
+and grouping the ones that collide, rather than by rereading files by
+eye the way every earlier slice here found its own duplication. The
+first four are generic to any outbound program, not HTTP-specific, and
+joined `net.connect` itself — growing an already-published store with
+more declarations turns out to be the same act as its first publish,
+just a second `vcs publish` against the same `--store`: unchanged
+entries (`connect` itself, here) are skipped, only the new ones log.
+`send_all`/`status_of` are HTTP-specific and became `http.response`, a
+new, fifth package and the client-side mirror of `http.request`: that
+one reads a request head server-side, this one writes a request fully
+and reads a response's status line client-side. `connect_to` needs
+`socket`/`close` and `send_all` needs `write`, so both now `import
+net.sockets` too — the third and fourth real consumers of that package
+alongside `http.request`, `docs/package-system.md` §4.6's own closure
+resolution doing the same work a third and fourth time with no changes
+needed. One thing the design doc had not foreseen: two *sibling*
+packages (`net.connect`, `http.response`) transitively requiring the
+*same* dependency (`net.sockets`) means fetching each into its own
+output directory — the pattern every earlier multi-package example
+used, back when no two packages shared a transitive dependency —
+now fetches `net.sockets` twice, under two different paths, which
+`build`/`check` correctly refuse as a duplicate declaration. Not a gap
+in the resolver itself (`vcs resolve` on either store alone is silent),
+only in how a *consumer* composes two fetches: fetching both locks into
+one shared output directory is enough, since `vcs fetch` writes each
+file as `<source_hash>.ls` and two fetches of the same content
+overwrite the same path rather than writing two different ones.
+`examples/README.md` and the conformance test harness
+(`fetch_net_dependencies`) both moved to that shape.

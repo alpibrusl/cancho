@@ -27,11 +27,20 @@
 // `examples/fetch/` and `examples/report/` unchanged; `docs/connect.md`
 // already settled it and a third program asking the same question gets
 // the same answer.
+//
+// `octets_of`/`port_of`/`connect_to` and `send_all`/`status_of` used to
+// live here too, byte-for-byte the same as `fetch.ls`'s and `report.ls`'s
+// own copies. The first three moved into `net.connect` itself (generic
+// to any outbound program); `send_all`/`status_of` are
+// `packages/http-response/response.ls`, the fifth real package and the
+// HTTP-specific, client-side mirror of `http.request`
+// (`docs/package-system.md` §6).
 
 import std.bytes;
 import std.io;
 import net.sockets;
 import net.connect;
+import http.response;
 import agent.wire;
 
 // ---------------------------------------------------------------------
@@ -40,132 +49,8 @@ import agent.wire;
 // `connect` too. Both are now real packages (`packages/net-sockets/`,
 // `packages/net-connect/`, `docs/package-system.md` §6).
 // ---------------------------------------------------------------------
-// The command line -- copied from `examples/report/report.ls`
-// ---------------------------------------------------------------------
-
-fn octets_of[&t, &o](text: &t [byte], out: &!o [byte]) -> [] bool {
-    var octet = 0;
-    var digits = 0;
-    var filled = 0;
-    var i = 0;
-    while i < len(text) {
-        let c = int_of(text[i]);
-        if c == '.' {
-            if digits == 0 || filled == 3 {
-                return false;
-            }
-            out[filled] = byte_of(octet);
-            filled = filled + 1;
-            octet = 0;
-            digits = 0;
-        } else {
-            let digit = bytes.digit_of(c);
-            if digit < 0 || digits == 3 {
-                return false;
-            }
-            octet = octet * 10 + digit;
-            if octet > 255 {
-                return false;
-            }
-            digits = digits + 1;
-        }
-        i = i + 1;
-    }
-    if digits == 0 || filled != 3 {
-        return false;
-    }
-    out[3] = byte_of(octet);
-    return true;
-}
-
-fn port_of[&a](text: &a [byte]) -> [] int {
-    if len(text) == 0 || len(text) > 5 {
-        return 0 - 1;
-    }
-    var value = 0;
-    var i = 0;
-    while i < len(text) {
-        let digit = bytes.digit_of(int_of(text[i]));
-        if digit < 0 {
-            return 0 - 1;
-        }
-        value = value * 10 + digit;
-        i = i + 1;
-    }
-    if value < 1 || value > 65535 {
-        return 0 - 1;
-    }
-    return value;
-}
-
-// ---------------------------------------------------------------------
-// The address
-// ---------------------------------------------------------------------
-
-fn address[&o, &a](out: &!a [byte], octets: &o [byte], port: int) -> [] int {
-    out[0] = byte_of(2);
-    out[1] = byte_of(0);
-    out[2] = byte_of(port / 256);
-    out[3] = byte_of(port % 256);
-    var i = 0;
-    while i < 4 {
-        out[4 + i] = octets[i];
-        i = i + 1;
-    }
-    return 0;
-}
-
-fn connect_to[&f, &o](libc: &f Ffi("libc"), octets: &o [byte], port: int)
-    -> [ffi("libc")] int {
-    region scratch {
-        let addr = alloc_slice[scratch](16, byte_of(0));
-        let fd = sockets.socket(libc, 2, 1, 0);
-        if fd < 0 {
-            return 0 - 1;
-        }
-        address(addr, octets, port);
-        if connect.connect(libc, fd, addr) == 0 {
-            return fd;
-        }
-        sockets.close(libc, fd);
-    }
-    return 0 - 1;
-}
-
-// ---------------------------------------------------------------------
 // Bytes and the wire protocol
 // ---------------------------------------------------------------------
-
-fn send_all[&f, &b](libc: &f Ffi("libc"), fd: int, data: &b [byte]) -> [ffi("libc")] bool {
-    var sent = 0;
-    while sent < len(data) {
-        let n = sockets.write(libc, fd, data[sent..len(data)]);
-        if n <= 0 {
-            return false;
-        }
-        sent = sent + n;
-    }
-    return true;
-}
-
-// The status code from `HTTP/1.x NNN ...`, or -1 -- copied from
-// `examples/report/report.ls`.
-fn status_of[&h](head: &h [byte]) -> [] int {
-    if len(head) < 12 || !bytes.starts_with(head, "HTTP/1.") || int_of(head[8]) != ' ' {
-        return 0 - 1;
-    }
-    var code = 0;
-    var i = 9;
-    while i < 12 {
-        let digit = bytes.digit_of(int_of(head[i]));
-        if digit < 0 {
-            return 0 - 1;
-        }
-        code = code * 10 + digit;
-        i = i + 1;
-    }
-    return code;
-}
 
 // The `AgentViewMsg` decoder -- used to be declared here, copied from
 // `examples/vsock/vsock.ls`'s `find_after`/`end_of_quoted`/
@@ -197,7 +82,7 @@ fn exchange[&f, &i, &h](libc: &f Ffi("libc"), io: &!i Io, fd: int, host: &h [byt
         at = sockets.put(head_out, at, "\r\nContent-Length: ");
         at = sockets.put_nat(head_out, at, len(action));
         at = sockets.put(head_out, at, "\r\nConnection: close\r\n\r\n");
-        if !send_all(libc, fd, head_out[0..at]) || !send_all(libc, fd, action) {
+        if !response.send_all(libc, fd, head_out[0..at]) || !response.send_all(libc, fd, action) {
             return 0 - 1;
         }
 
@@ -221,7 +106,7 @@ fn exchange[&f, &i, &h](libc: &f Ffi("libc"), io: &!i Io, fd: int, host: &h [byt
         if end < 0 {
             return 0 - 1;
         }
-        let status = status_of(buf[0..held]);
+        let status = response.status_of(buf[0..held]);
         let body = buf[end + 4..held];
 
         let goal_start = wire.goal_start_of(body);
@@ -262,13 +147,13 @@ fn main(world: World) -> [] int {
                 } else {
                     region scratch {
                         let octets = alloc_slice[scratch](4, byte_of(0));
-                        let port = port_of(arg(g, 2));
-                        if !octets_of(arg(g, 1), octets) {
+                        let port = connect.port_of(arg(g, 2));
+                        if !connect.octets_of(arg(g, 1), octets) {
                             io.error_all(i, "agent_guest: the address must be four decimal octets; there is no name resolution\n");
                         } else if port < 0 {
                             io.error_all(i, "agent_guest: the port must be 1..65535\n");
                         } else {
-                            let fd = connect_to(f, octets, port);
+                            let fd = connect.connect_to(f, octets, port);
                             if fd < 0 {
                                 io.error_all(i, "agent_guest: could not connect\n");
                                 status = 3;

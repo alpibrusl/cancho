@@ -1,0 +1,14 @@
+{
+  "entries": {
+    "close": {
+      "sig_id": "4659ca22743a04b0eb6701faa8bc15e6282e7b3630f4dbaa19359059a34f663d",
+      "stage_id": "4659ca22743a04b0eb6701faa8bc15e6282e7b3630f4dbaa19359059a34f663d",
+      "source_hash": "00d8ee51a4f70f2b2cbb2fe19e50f2436892d03401e016cf331fcf44baad35dd"
+    },
+    "socket": {
+      "sig_id": "1c42d675c174e0a3b04b7d27a22fd24c7c8951869b4c2cf46b454ea053ef0d76",
+      "stage_id": "1c42d675c174e0a3b04b7d27a22fd24c7c8951869b4c2cf46b454ea053ef0d76",
+      "source_hash": "00d8ee51a4f70f2b2cbb2fe19e50f2436892d03401e016cf331fcf44baad35dd"
+    }
+  }
+}
