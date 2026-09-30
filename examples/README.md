@@ -340,12 +340,12 @@ what this **cannot** reach and why it is one sentence rather than a list.
 ### `fetch/` — the other direction
 
 ```sh
-cargo run -p lex-sys -- vcs fetch --lock examples/fetch/net.lock \
-    --store packages/net-sockets/.lex-sys-vcs -o /tmp/net-sockets
 cargo run -p lex-sys -- vcs fetch --lock examples/fetch/connect.lock \
-    --store packages/net-connect/.lex-sys-vcs -o /tmp/net-connect
+    --store packages/net-connect/.lex-sys-vcs -o /tmp/fetch-deps
+cargo run -p lex-sys -- vcs fetch --lock examples/fetch/response.lock \
+    --store packages/http-response/.lex-sys-vcs -o /tmp/fetch-deps
 cargo run -p lex-sys -- build --std examples/fetch/fetch.ls \
-    /tmp/net-sockets/*.ls /tmp/net-connect/*.ls -o fetch
+    /tmp/fetch-deps/*.ls -o fetch
 ./fetch 127.0.0.1 8080 /health
 ```
 
@@ -355,15 +355,18 @@ header bytes are held until the blank line, and every later byte is
 written straight through, so it needs no `Heap`. The test suite points
 it at `serve/`, so a lex-sys client fetches from a lex-sys server.
 
-The first program here with two real dependencies at once:
-`net.sockets` (`serve/`'s own section above) for `socket`/`read`/
-`write`/`close`, and `net.connect` (`packages/net-connect/connect.ls`)
-for the one declaration `net.sockets` deliberately does not carry --
-no program here needs both halves of the network at once
-(`docs/net.md` §1), so the outbound half got its own package rather
-than joining the inbound one. Two independent `vcs lock`/`vcs fetch`
-pairs, composed at the same `build` command line: this needed no new
-tooling, which is itself the finding (`docs/package-system.md` §6).
+The first program here with two real dependencies at once: `net.connect`
+(`packages/net-connect/connect.ls`) for `octets_of`/`port_of`/
+`connect_to` -- everything needed to turn `argv` into a connected
+socket, generic to any outbound program -- and `http.response`
+(`packages/http-response/response.ls`) for `send_all`/`status_of`, the
+HTTP-specific, client-side mirror of `http.request`
+(`docs/package-system.md` §6). Both now transitively require
+`net.sockets` too (for `socket`/`close`/`write` respectively), so both
+fetches land in the *same* output directory -- a store is always
+exactly one file, so `net.sockets` materializes once no matter which of
+the two closures reaches it first, rather than colliding as a duplicate
+declaration the way fetching it into two separate directories would.
 
 Its comments mark the three places where it works around the language,
 and `docs/connect.md` is the report. The address has to be four octets
@@ -375,17 +378,17 @@ pointer.
 ### `report/` — the second outbound program
 
 ```sh
-cargo run -p lex-sys -- vcs fetch --lock examples/report/net.lock \
-    --store packages/net-sockets/.lex-sys-vcs -o /tmp/net-sockets
 cargo run -p lex-sys -- vcs fetch --lock examples/report/connect.lock \
-    --store packages/net-connect/.lex-sys-vcs -o /tmp/net-connect
+    --store packages/net-connect/.lex-sys-vcs -o /tmp/report-deps
+cargo run -p lex-sys -- vcs fetch --lock examples/report/response.lock \
+    --store packages/http-response/.lex-sys-vcs -o /tmp/report-deps
 cargo run -p lex-sys -- build --std examples/report/report.ls \
-    /tmp/net-sockets/*.ls /tmp/net-connect/*.ls -o report
+    /tmp/report-deps/*.ls -o report
 ./report 127.0.0.1 8080 /result "42"
 ```
 
-Locks and fetches `net.sockets` and `net.connect` independently, the
-same two-package shape `fetch/`'s own section above uses.
+Locks and fetches `net.connect` and `http.response` into one shared
+directory, the same shape `fetch/`'s own section above uses.
 
 `docs/net.md` §5 and `docs/connect.md` §6 put the bar at two askers per
 half of the network before `Net` gets built, and `fetch/` was the only
@@ -440,20 +443,23 @@ concurrently, on its own thread, is the fix.
 
 ```sh
 cargo run -p lex-sys -- vcs fetch --lock examples/vsock/net.lock \
-    --store packages/net-sockets/.lex-sys-vcs -o /tmp/net-sockets
+    --store packages/net-sockets/.lex-sys-vcs -o /tmp/vsock-deps
 cargo run -p lex-sys -- vcs fetch --lock examples/vsock/connect.lock \
-    --store packages/net-connect/.lex-sys-vcs -o /tmp/net-connect
+    --store packages/net-connect/.lex-sys-vcs -o /tmp/vsock-deps
 cargo run -p lex-sys -- vcs fetch --lock examples/vsock/wire.lock \
-    --store packages/agent-wire/.lex-sys-vcs -o /tmp/agent-wire
+    --store packages/agent-wire/.lex-sys-vcs -o /tmp/vsock-deps
 cargo run -p lex-sys -- build --std examples/vsock/vsock.ls \
-    /tmp/net-sockets/*.ls /tmp/net-connect/*.ls /tmp/agent-wire/*.ls -o vsock
+    /tmp/vsock-deps/*.ls -o vsock
 ./vsock <cid> <port>
 ```
 
-Locks and fetches `net.sockets` and `net.connect` independently, the
-same two-package shape `fetch/`'s and `report/`'s own sections use, plus
-`agent.wire` (`packages/agent-wire/wire.ls`) for the `AgentViewMsg`
-decoder it shares with `agent_guest/` below.
+Locks and fetches `net.sockets`, `net.connect` and `agent.wire`
+(`packages/agent-wire/wire.ls`) into one shared directory, the same
+`fetch/`'s and `report/`'s own sections use -- `net.connect` now
+transitively requires `net.sockets` too (`docs/package-system.md` §6),
+so a separate output directory per package would fetch `net.sockets`
+twice, under two different paths, which `build` refuses as a duplicate
+declaration.
 
 Connects over `AF_VSOCK`, the channel `lex-os-guest` uses to reach its
 host supervisor, and — once connected — speaks one round of the real
@@ -512,14 +518,14 @@ cargo run -p lex-sys -- vcs fetch --lock examples/agent_supervisor/request.lock 
 cargo run -p lex-sys -- build --std examples/agent_supervisor/agent_supervisor.ls \
     /tmp/http-request/*.ls -o agent_supervisor
 
-cargo run -p lex-sys -- vcs fetch --lock examples/agent_guest/net.lock \
-    --store packages/net-sockets/.lex-sys-vcs -o /tmp/net-sockets-guest
 cargo run -p lex-sys -- vcs fetch --lock examples/agent_guest/connect.lock \
-    --store packages/net-connect/.lex-sys-vcs -o /tmp/net-connect-guest
+    --store packages/net-connect/.lex-sys-vcs -o /tmp/agent-guest-deps
+cargo run -p lex-sys -- vcs fetch --lock examples/agent_guest/response.lock \
+    --store packages/http-response/.lex-sys-vcs -o /tmp/agent-guest-deps
 cargo run -p lex-sys -- vcs fetch --lock examples/agent_guest/wire.lock \
-    --store packages/agent-wire/.lex-sys-vcs -o /tmp/agent-wire-guest
+    --store packages/agent-wire/.lex-sys-vcs -o /tmp/agent-guest-deps
 cargo run -p lex-sys -- build --std examples/agent_guest/agent_guest.ls \
-    /tmp/net-sockets-guest/*.ls /tmp/net-connect-guest/*.ls /tmp/agent-wire-guest/*.ls -o agent_guest
+    /tmp/agent-guest-deps/*.ls -o agent_guest
 
 ./agent_supervisor 8080 "write the report" 3 &
 ./agent_guest 127.0.0.1 8080
@@ -529,9 +535,9 @@ cargo run -p lex-sys -- build --std examples/agent_guest/agent_guest.ls \
 
 `agent_supervisor` locks and fetches `http.request` alone, the same
 shape `collect/`'s own section above uses; `agent_guest` locks and
-fetches `net.sockets` and `net.connect` independently, the same shape
-`fetch/`'s own section uses, plus `agent.wire` for the same
-`AgentViewMsg` decoder `vsock/`'s own section above uses.
+fetches `net.connect` and `http.response` into one shared directory,
+the same shape `fetch/`'s own section uses, plus `agent.wire` for the
+same `AgentViewMsg` decoder `vsock/`'s own section above uses.
 
 The same guest/supervisor exchange `vsock/` plays over `AF_VSOCK`,
 played over plain HTTP/1.0 instead — not a second transport for

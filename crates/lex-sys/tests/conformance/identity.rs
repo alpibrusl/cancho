@@ -40,6 +40,7 @@ fn printing_preserves_every_identity_and_is_idempotent() {
         "packages/net-connect",
         "packages/agent-wire",
         "packages/http-request",
+        "packages/http-response",
         // The benchmarks are code too, and the pairs are the place a
         // careless edit would land without anyone reading it.
         "benches",

@@ -15,10 +15,10 @@
 // program on purpose -- not a generic client but the thing a run of any
 // kind eventually needs, a way to tell someone what it produced. It
 // reuses everything `docs/connect.md` already settled about the
-// outbound half unchanged: no names (`octets_of` below is copied
-// verbatim), the destination as run-time data, the Linux `struct
-// sockaddr_in` layout that connects on both targets (§3), and the same
-// opaque `errno` (§4). What it adds is a request with a body: the
+// outbound half unchanged: no names (`net.connect`'s own `octets_of` is
+// the same one `fetch.ls` calls), the destination as run-time data, the
+// Linux `struct sockaddr_in` layout that connects on both targets (§3),
+// and the same opaque `errno` (§4). What it adds is a request with a body: the
 // `Content-Length` this writes going *out* is the same assembly
 // `examples/serve/`'s responses already do coming *back*, now exercised
 // symmetrically on both sides of one connection.
@@ -33,148 +33,23 @@
 // `docs/package-system.md` §6), locked and fetched the same way
 // `fetch.ls` does -- see that file's own header for why the split is
 // two packages, not one.
+//
+// `octets_of`/`port_of`/`connect_to` and `send_all`/`status_of` used to
+// live here too, byte-for-byte the same as `examples/fetch/fetch.ls`'s
+// own copies. The first three moved into `net.connect` itself (generic
+// to any outbound program); `send_all`/`status_of` are
+// `packages/http-response/response.ls`, the fifth real package and the
+// HTTP-specific, client-side mirror of `http.request` (§6).
 
 import std.bytes;
 import std.io;
 import net.sockets;
 import net.connect;
-
-// ---------------------------------------------------------------------
-// The command line
-// ---------------------------------------------------------------------
-
-// Four decimal octets separated by dots, into `out[0..4]`. Copied from
-// `examples/fetch/fetch.ls` unchanged: `docs/connect.md` §1 already
-// settled that there is no name resolution here, and a second program
-// asking the same question gets the same answer.
-fn octets_of[&t, &o](text: &t [byte], out: &!o [byte]) -> [] bool {
-    var octet = 0;
-    var digits = 0;
-    var filled = 0;
-    var i = 0;
-    while i < len(text) {
-        let c = int_of(text[i]);
-        if c == '.' {
-            if digits == 0 || filled == 3 {
-                return false;
-            }
-            out[filled] = byte_of(octet);
-            filled = filled + 1;
-            octet = 0;
-            digits = 0;
-        } else {
-            let digit = bytes.digit_of(c);
-            if digit < 0 || digits == 3 {
-                return false;
-            }
-            octet = octet * 10 + digit;
-            if octet > 255 {
-                return false;
-            }
-            digits = digits + 1;
-        }
-        i = i + 1;
-    }
-    if digits == 0 || filled != 3 {
-        return false;
-    }
-    out[3] = byte_of(octet);
-    return true;
-}
-
-// A port in `1..65536`, or -1.
-fn port_of[&a](text: &a [byte]) -> [] int {
-    if len(text) == 0 || len(text) > 5 {
-        return 0 - 1;
-    }
-    var value = 0;
-    var i = 0;
-    while i < len(text) {
-        let digit = bytes.digit_of(int_of(text[i]));
-        if digit < 0 {
-            return 0 - 1;
-        }
-        value = value * 10 + digit;
-        i = i + 1;
-    }
-    if value < 1 || value > 65535 {
-        return 0 - 1;
-    }
-    return value;
-}
-
-// ---------------------------------------------------------------------
-// The address
-// ---------------------------------------------------------------------
-
-// `struct sockaddr_in`, sixteen bytes, in the Linux layout that connects
-// on both targets (`docs/connect.md` §3). Copied from `fetch.ls`.
-fn address[&o, &a](out: &!a [byte], octets: &o [byte], port: int) -> [] int {
-    out[0] = byte_of(2);
-    out[1] = byte_of(0);
-    out[2] = byte_of(port / 256);
-    out[3] = byte_of(port % 256);
-    var i = 0;
-    while i < 4 {
-        out[4 + i] = octets[i];
-        i = i + 1;
-    }
-    return 0;
-}
-
-// A connected socket, or -1. `errno` is a pointer (`docs/connect.md`
-// §4), so -1 is all a failure here can say.
-fn connect_to[&f, &o](libc: &f Ffi("libc"), octets: &o [byte], port: int)
-    -> [ffi("libc")] int {
-    region scratch {
-        let addr = alloc_slice[scratch](16, byte_of(0));
-        let fd = sockets.socket(libc, 2, 1, 0);
-        if fd < 0 {
-            return 0 - 1;
-        }
-        address(addr, octets, port);
-        if connect.connect(libc, fd, addr) == 0 {
-            return fd;
-        }
-        sockets.close(libc, fd);
-    }
-    return 0 - 1;
-}
+import http.response;
 
 // ---------------------------------------------------------------------
 // HTTP
 // ---------------------------------------------------------------------
-
-// Write all of `bytes`, which one `write` on a socket does not promise.
-fn send_all[&f, &b](libc: &f Ffi("libc"), fd: int, data: &b [byte]) -> [ffi("libc")] bool {
-    var sent = 0;
-    while sent < len(data) {
-        let n = sockets.write(libc, fd, data[sent..len(data)]);
-        if n <= 0 {
-            return false;
-        }
-        sent = sent + n;
-    }
-    return true;
-}
-
-// The status code from `HTTP/1.x NNN ...`, or -1.
-fn status_of[&h](head: &h [byte]) -> [] int {
-    if len(head) < 12 || !bytes.starts_with(head, "HTTP/1.") || int_of(head[8]) != ' ' {
-        return 0 - 1;
-    }
-    var code = 0;
-    var i = 9;
-    while i < 12 {
-        let digit = bytes.digit_of(int_of(head[i]));
-        if digit < 0 {
-            return 0 - 1;
-        }
-        code = code * 10 + digit;
-        i = i + 1;
-    }
-    return code;
-}
 
 // Send `POST <path>` with `message` as its body, then read until the
 // server closes: the header block into `head`, and every byte after the
@@ -210,7 +85,7 @@ fn exchange[&f, &i, &h, &p, &m](libc: &f Ffi("libc"), io: &!i Io, fd: int, host:
         at = sockets.put(head_out, at, "\r\nContent-Length: ");
         at = sockets.put_nat(head_out, at, len(message));
         at = sockets.put(head_out, at, "\r\nConnection: close\r\n\r\n");
-        if !send_all(libc, fd, head_out[0..at]) || !send_all(libc, fd, message) {
+        if !response.send_all(libc, fd, head_out[0..at]) || !response.send_all(libc, fd, message) {
             return 0 - 1;
         }
 
@@ -236,7 +111,7 @@ fn exchange[&f, &i, &h, &p, &m](libc: &f Ffi("libc"), io: &!i Io, fd: int, host:
                 held = held + take;
                 let end = bytes.find(head[0..held], "\r\n\r\n");
                 if end >= 0 {
-                    status = status_of(head[0..held]);
+                    status = response.status_of(head[0..held]);
                     body = true;
                     let from = end + 4 - before;
                     if from < got {
@@ -271,13 +146,13 @@ fn main(world: World) -> [] int {
                 } else {
                     region scratch {
                         let octets = alloc_slice[scratch](4, byte_of(0));
-                        let port = port_of(arg(g, 2));
-                        if !octets_of(arg(g, 1), octets) {
+                        let port = connect.port_of(arg(g, 2));
+                        if !connect.octets_of(arg(g, 1), octets) {
                             io.error_all(i, "report: the address must be four decimal octets; there is no name resolution\n");
                         } else if port < 0 {
                             io.error_all(i, "report: the port must be 1..65535\n");
                         } else {
-                            let fd = connect_to(f, octets, port);
+                            let fd = connect.connect_to(f, octets, port);
                             if fd < 0 {
                                 io.error_all(i, "report: could not connect\n");
                                 status = 3;
