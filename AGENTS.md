@@ -31,6 +31,14 @@ name, there are 53 of them, and `docs/agent-errors.md` is the contract.
 One of them, `internal`, is the compiler's own failure, not your
 program's (`docs/internal-errors.md`).
 
+`lex-sys skill` and `lex-sys introspect` are how *this* page and the
+full command surface stay the same age: both are generated from one
+registration (`src/acli.rs`), not copied by hand, so a new command
+cannot ship without them (`docs/agent-cli.md`). Their "Exit codes" /
+"Output format" sections are the ACLI SDK's own generic template,
+though, not this binary's -- the real exit codes are at the top of
+`main.rs` and in `docs/agent-errors.md`.
+
 **Do not regenerate a body because it was refused.** Every rule below
 names what to change.
 
@@ -321,6 +329,7 @@ that is the intent.
 |---|---|
 | The rules of the type system | `docs/linearity-and-effects.md` |
 | What a refusal means, as data | `docs/agent-errors.md` |
+| The CLI as data, not a doc that can drift | `docs/agent-cli.md` |
 | What a program can reach, and how it is reported | `docs/reach.md`, `docs/authority.md` |
 | Which collection holds a resource | `docs/collections.md` |
 | Everything else | `docs/README.md` indexes all 42, with a one-line status each |

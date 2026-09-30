@@ -24,6 +24,7 @@ use lex_sys_ir::TypeInfo;
 use lex_sys_syntax::{Ast, Rule, SourceFile, SourceMap};
 use lex_sys_types::{DefId, Type};
 
+mod acli;
 mod vcs_cli;
 
 const USAGE: &str = "\
@@ -38,6 +39,8 @@ usage:
     lex-sys layout    <file.ls>... [--std]
     lex-sys print <file.ls>
     lex-sys agent-guidelines
+    lex-sys introspect [--output json]
+    lex-sys skill [--output json] [<out-file>]
     lex-sys vcs publish [--store <dir>] [--requires <lock>:<dep-store>]... <file.ls>
     lex-sys vcs log     [--store <dir>]
     lex-sys vcs resolve [--lock <file>] <store-dir>
@@ -87,6 +90,16 @@ docs/internal-errors.md.
 one page rather than in 42 documents. Every checked code block in it is
 run by the test suite, so a guideline that stops being true is a red
 build. See docs/agent-errors.md for what a refusal says as data.
+
+`introspect` prints the full command tree as JSON (ACLI spec §1.2) and
+`skill` prints a generated agentskills.io SKILL.md -- both sourced from
+one registration in src/acli.rs, so the command list an agent reads
+cannot drift from the dispatch table the way a hand-written doc could.
+Neither is the exit-code contract: `skill`'s own \"Exit codes\" section
+is the ACLI SDK's generic template, not this binary's. `--version`,
+`build`, `check`, `run` keep the codes at the top of this file, and
+`check --output json` keeps its own `rule` tag as the machine-readable
+form. See docs/agent-cli.md.
 
 `ids` prints each declaration's content hash: a signature and a body for
 every function, one identity for every type. A unit hashes its content,
@@ -195,6 +208,30 @@ enum Backend {
     Llvm,
 }
 
+/// Strip a leading `--output FORMAT` (or `--output=FORMAT`) from `args`,
+/// for the two ACLI-native commands (`introspect`, `skill`). Kept
+/// separate from `parse_args`'s own `--output json` (a bool flag on
+/// `check`/`authority`, unrelated to this): those two commands are not
+/// `Invocation`-shaped at all, and this accepts `text`/`json`/`table`
+/// rather than just `json`, per the acli crate's own `OutputFormat`.
+fn parse_agent_output(args: &[String]) -> Result<(::acli::OutputFormat, Vec<String>), Failure> {
+    use std::str::FromStr;
+    let mut out: Vec<String> = Vec::with_capacity(args.len());
+    let mut format = ::acli::OutputFormat::Text;
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        if arg == "--output" {
+            let value = it.next().ok_or_else(|| usage("`--output` needs a form"))?;
+            format = ::acli::OutputFormat::from_str(value).map_err(usage)?;
+        } else if let Some(v) = arg.strip_prefix("--output=") {
+            format = ::acli::OutputFormat::from_str(v).map_err(usage)?;
+        } else {
+            out.push(arg.clone());
+        }
+    }
+    Ok((format, out))
+}
+
 fn run(args: &[String]) -> Result<ExitCode, Failure> {
     let Some(command) = args.first() else {
         return Err(usage("no command given"));
@@ -211,6 +248,20 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
         }
         "--help" | "-h" | "help" => {
             print!("{USAGE}");
+            Ok(ExitCode::SUCCESS)
+        }
+        // ACLI built-ins (docs/agent-cli.md): the command tree and a
+        // generated skill file, so an agent learns the surface from the
+        // binary itself rather than from a doc that can drift.
+        "introspect" => {
+            let (fmt, _) = parse_agent_output(&args[1..])?;
+            acli::build_app().handle_introspect(&fmt);
+            Ok(ExitCode::SUCCESS)
+        }
+        "skill" => {
+            let (fmt, rest) = parse_agent_output(&args[1..])?;
+            let out_path = rest.first().map(String::as_str);
+            acli::build_app().handle_skill(out_path, &fmt);
             Ok(ExitCode::SUCCESS)
         }
         "check" => {

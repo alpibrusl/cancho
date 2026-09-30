@@ -425,6 +425,7 @@ not repeated here; a doc's own header carries its own detail.
 | [`sha512.md`](sha512.md) | `std.crypto`'s second slice: SHA-512 | built |
 | [`ed25519.md`](ed25519.md) | `std.ed25519`: sign and verify | built |
 | [`self-hosting.md`](self-hosting.md) | Whether lex-sys could host its own toolchain | run; decided not yet — no asker |
+| [`agent-cli.md`](agent-cli.md) | `lex-sys introspect`/`skill`: the CLI surface as data, imported from `lex-lang`'s ACLI integration | built; found a false-familiarity bug in the process (`-o`/`-l`/`-L` would have rendered as `--o`/`--l`/`--L`) |
 
 `linearity-and-effects.md` was the gating artifact: the decision set that
 determined whether this is a three-month prototype or a three-year project.
