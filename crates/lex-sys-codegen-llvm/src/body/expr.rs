@@ -383,6 +383,17 @@ impl<'a> FuncEmitter<'a> {
             Callee::Builtin(Builtin::NullPtr) => {
                 Ok(vec![LValue::Reg(LKind::Ptr.zero().to_owned())])
             }
+            // An explicit, deliberate trap (`docs/testing.md` §2) rather
+            // than a check the compiler inserted on its own. `trap_if`
+            // already takes an arbitrary condition; a literal `i1 true`
+            // makes it unconditional, reusing the exact instruction every
+            // checked operation already traps with, on both targets.
+            // Nothing after it runs, but the call still has to answer
+            // with a value of the right shape.
+            Callee::Builtin(Builtin::Trap) => {
+                self.trap_if("true")?;
+                Ok(vec![LValue::Reg(LKind::I64.zero().to_owned())])
+            }
             // `docs/threads.md` §2: `body`'s own compiled entry point
             // (`evaluated[1]`, `Expr::FnValue`'s address) becomes
             // `pthread_create`'s start routine directly -- checked at

@@ -328,6 +328,22 @@ pub enum Builtin {
     /// The only operation that consumes a `Thread[T, R]`, the same
     /// "one consumer" shape `unbox`/`close` already have.
     Join,
+    /// `trap() -> [] int` — end the process now, the same way every
+    /// checked operation already does (`docs/defined-behaviour.md` §1).
+    ///
+    /// `docs/testing.md` §2 is why: a test framework needs a primitive
+    /// a library can build `assert` out of, and this repository's own
+    /// answer to "what happens when an assumption fails" has been a
+    /// trap since M0 -- no message, no exception, `SIGILL` on both
+    /// targets, exactly like an overflowing `+` or an out-of-range
+    /// index. Both backends already carry the one instruction this
+    /// needs (`trapnz`/`trap_if`); this is the first builtin that
+    /// reaches it **unconditionally** rather than behind an
+    /// arithmetic or bounds check the compiler emits on its own.
+    /// Fixed, like `sqrt`: nothing about it depends on the call site,
+    /// and it needs no capability, because deciding to trap is not an
+    /// effect on the world.
+    Trap,
 }
 
 impl Builtin {
@@ -369,6 +385,7 @@ impl Builtin {
         Builtin::NullPtr,
         Builtin::Spawn,
         Builtin::Join,
+        Builtin::Trap,
     ];
 
     pub fn name(self) -> &'static str {
@@ -410,6 +427,7 @@ impl Builtin {
             Builtin::NullPtr => "null_ptr",
             Builtin::Spawn => "spawn",
             Builtin::Join => "join",
+            Builtin::Trap => "trap",
         }
     }
 
@@ -650,6 +668,11 @@ impl Builtin {
             // (`docs/threads.md` §2).
             Builtin::Spawn => (Vec::new(), Type::Unit),
             Builtin::Join => (Vec::new(), Type::Unit),
+            // No arguments, no capability, and a fixed `int` result like
+            // `byte_of`'s -- the value is never actually produced, since
+            // the call never returns, but the type checker needs one to
+            // check the call site the ordinary way.
+            Builtin::Trap => (Vec::new(), Type::Int),
         }
     }
 

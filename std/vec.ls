@@ -157,3 +157,58 @@ pub fn swap[T: val, &v](v: &!v Vec[T], i: int, j: int) -> [] int {
     s[j] = held;
     return i;
 }
+
+// Remove and answer the last element.
+//
+// By reference, like `get`/`set`/`swap`: nothing here reallocates, so
+// there is no new `Vec[T]` to hand back, only the field this shrinks.
+// Traps on an empty vector the same way every other out-of-range index
+// here does — `used - 1` is `-1` when `used` is `0`, and `s[-1]` is out
+// of range like any other, so this needs no bounds check of its own.
+pub fn pop[T: val, &v](v: &!v Vec[T]) -> [] T {
+    let s = contents(v.held);
+    let value = s[v.used - 1];
+    v.used = v.used - 1;
+    return value;
+}
+
+// Remove the element at `i`, shifting everything after it left by one,
+// and answer what was removed.
+//
+// The shift is what makes this cost more than `pop`: every element
+// past `i` moves, so removing near the front of a long vector is
+// $O(n)$. Traps on an out-of-range `i` the same way `get` does, on the
+// same read.
+pub fn remove[T: val, &v](v: &!v Vec[T], i: int) -> [] T {
+    let s = contents(v.held);
+    let value = s[i];
+    var j = i;
+    while j < v.used - 1 {
+        s[j] = s[j + 1];
+        j = j + 1;
+    }
+    v.used = v.used - 1;
+    return value;
+}
+
+// Insert `value` at `i`, shifting everything from `i` on right by one.
+//
+// By value, like `push`: `reserve` may replace `held` with a bigger
+// box, so this has the same shape as `push` for the same reason. `i`
+// may be `used` — inserting at the end is `push` — and anything outside
+// `0..=used` traps when the shift's own read or write falls out of
+// range, the same way every other index here does.
+pub fn insert[T: val, &h](heap: &!h Heap, v: Vec[T], i: int, value: T) -> [heap] Vec[T] {
+    let room = reserve(heap, v, 1);
+    let Vec { held, used, fill } = room;
+    borrow mut held as &!w in {
+        let s = contents(w);
+        var j = used;
+        while j > i {
+            s[j] = s[j - 1];
+            j = j - 1;
+        }
+        s[i] = value;
+    }
+    return Vec { held: held, used: used + 1, fill: fill };
+}

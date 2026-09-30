@@ -576,3 +576,134 @@ fn truncate_traps_where_c_is_undefined() {
 
     let _ = std::fs::remove_dir_all(&scratch);
 }
+
+/// `std.vec`'s `pop`/`remove`/`insert` (`docs/next-phase.md` §4.1's own
+/// find: a `Vec` that only grew) trap on an out-of-range index the same
+/// way `get`/`set` already do, by the same bounds-checked slice index --
+/// not a check written in the library. One case per function: `pop` on
+/// an empty vector, `remove` past the end, `insert` past `used + 1`.
+#[test]
+fn vec_pop_remove_insert_trap_out_of_range() {
+    let scratch = scratch("vec-shrink-traps");
+    let cases = [
+        (
+            "pop-empty",
+            "import std.vec;\n\
+             fn main(world: World) -> [] int {\n\
+             \x20   let Split { io, ffi, fs, heap, args } = split(world);\n\
+             \x20   release(args); release(fs); release(ffi); release(io);\n\
+             \x20   var n = 0;\n\
+             \x20   borrow mut heap as &!h in {\n\
+             \x20       var v = vec.empty(h, 2, 0);\n\
+             \x20       borrow mut v as &!r in { n = vec.pop(r); }\n\
+             \x20       vec.drop(h, v);\n\
+             \x20   }\n\
+             \x20   release(heap);\n\
+             \x20   return n;\n\
+             }\n",
+        ),
+        (
+            "remove-past-end",
+            "import std.vec;\n\
+             fn main(world: World) -> [] int {\n\
+             \x20   let Split { io, ffi, fs, heap, args } = split(world);\n\
+             \x20   release(args); release(fs); release(ffi); release(io);\n\
+             \x20   var n = 0;\n\
+             \x20   borrow mut heap as &!h in {\n\
+             \x20       var v = vec.empty(h, 2, 0);\n\
+             \x20       v = vec.push(h, v, 1);\n\
+             \x20       borrow mut v as &!r in { n = vec.remove(r, 5); }\n\
+             \x20       vec.drop(h, v);\n\
+             \x20   }\n\
+             \x20   release(heap);\n\
+             \x20   return n;\n\
+             }\n",
+        ),
+        (
+            "insert-past-end",
+            "import std.vec;\n\
+             fn main(world: World) -> [] int {\n\
+             \x20   let Split { io, ffi, fs, heap, args } = split(world);\n\
+             \x20   release(args); release(fs); release(ffi); release(io);\n\
+             \x20   var n = 0;\n\
+             \x20   borrow mut heap as &!h in {\n\
+             \x20       var v = vec.empty(h, 2, 0);\n\
+             \x20       v = vec.push(h, v, 1);\n\
+             \x20       v = vec.insert(h, v, 9, 2);\n\
+             \x20       vec.drop(h, v);\n\
+             \x20   }\n\
+             \x20   release(heap);\n\
+             \x20   return n;\n\
+             }\n",
+        ),
+    ];
+
+    for (name, source) in cases {
+        let path = scratch.join(format!("{name}.ls"));
+        std::fs::write(&path, source).expect("a writable fixture");
+        let exe = scratch.join(name);
+        let build = Command::new(BIN)
+            .args([
+                "build".as_ref(),
+                path.as_os_str(),
+                "--std".as_ref(),
+                "-o".as_ref(),
+                exe.as_os_str(),
+            ])
+            .output()
+            .expect("the compiler runs");
+        assert!(build.status.success(), "`{name}`: {}", String::from_utf8_lossy(&build.stderr));
+
+        let run = Command::new(&exe).output().expect("the compiled program runs");
+        assert_eq!(
+            run.status.code(),
+            None,
+            "`{name}` should be killed by a signal, not exit with {:?}",
+            run.status.code()
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&scratch);
+}
+
+/// `trap()` (`docs/testing.md` §2) and `std.test.assert` built on it: a
+/// failed assertion is killed by a signal the same way every other
+/// trap here is, not a value a program's own `return` could produce.
+/// `tests/accept/assert.ls` is the pass side of this same primitive.
+#[test]
+fn assert_fails_the_same_way_every_other_trap_does() {
+    let dir = scratch("assert-trap");
+    let source = dir.join("assert.ls");
+    std::fs::write(
+        &source,
+        "import std.test;\n\
+         fn main(world: World) -> [] int {\n\
+         \x20   let Split { io, ffi, fs, heap, args } = split(world);\n\
+         \x20   release(args); release(heap); release(fs); release(ffi); release(io);\n\
+         \x20   return test.assert_eq(2 + 2, 5);\n\
+         }\n",
+    )
+    .expect("a writable fixture");
+    let exe = dir.join("assert");
+    let build = Command::new(BIN)
+        .args([
+            "build".as_ref(),
+            source.as_os_str(),
+            "--std".as_ref(),
+            "-o".as_ref(),
+            exe.as_os_str(),
+        ])
+        .output()
+        .expect("the compiler runs");
+    assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+
+    let run = Command::new(&exe).output().expect("the compiled program runs");
+    assert_eq!(
+        run.status.code(),
+        None,
+        "a failed `assert_eq` should be killed by a signal, not exit with {:?}",
+        run.status.code()
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
