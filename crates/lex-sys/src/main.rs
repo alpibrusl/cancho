@@ -51,11 +51,11 @@ options:
     --std           make the standard library's source available
     --output json   `check` and `authority` as data rather than prose
     --backend cranelift|llvm
-                    which backend generates code (default: cranelift). `llvm`
-                    is `lex-sys-codegen-llvm`'s first slice
-                    (docs/llvm-backend.md §5): opt-in, and it refuses -- with
-                    an ordinary located error, not a crash -- any program
-                    outside that slice. `cranelift` is unaffected either way.
+                    which backend generates code (default: llvm, since #127).
+                    `llvm` is `lex-sys-codegen-llvm` (docs/llvm-backend.md):
+                    every program this repository tracks builds on it, and
+                    anything outside that is refused with an ordinary located
+                    error, not a crash. `cranelift` is unaffected either way.
     -l <name>       link `lib<name>` at the final link step (`build`/`run`
                     only); repeatable, passed to `cc` unexamined
     -L <path>       add `<path>` to the linker's search path for the above;

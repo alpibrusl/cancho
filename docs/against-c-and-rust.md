@@ -20,12 +20,22 @@
 > `malloc`, 2.58× in a tight float loop — which is the same conclusion
 > this document reaches, with a shape instead of a point.
 >
-> **§2's own falsifier is now answered.** `docs/llvm-backend.md` §7
-> measured `mandelbrot.ls` through `--backend llvm` against `mandelbrot.c`:
-> **0.999×**, not 1.786×. The gap was Cranelift, exactly as claimed, and
-> switching backends on this one kernel closed it. Most of `benches/`
-> still can't build on `--backend llvm` (§7.3's own gap list), so this is
-> one point re-measured, not the whole range collapsing — yet.
+> **§2's own falsifier is now answered, and the whole range did
+> collapse.** `docs/llvm-backend.md` §7 measured `mandelbrot.ls` through
+> `--backend llvm` against `mandelbrot.c`: **0.999×**, not 1.786×. That
+> was one point, re-measured while most of `benches/` still couldn't
+> build on this backend at all. `--backend llvm` is the default now
+> (#127), every kernel this document and `benchmarks-game.md` track
+> builds on it, and `benchmarks-game.md` §8 re-ran all five of the
+> wider set plus the two kernels below: **§2's own two numbers**,
+> re-run the same way (`scripts/three.py --rounds 9`, no `--backend`
+> flag), move to **mandelbrot 0.95×** (two runs, both 0.95×) and
+> **sieve 0.93×–0.95×** (two runs) — both now *faster* than C, not
+> merely level with it. `benchmarks-game.md`'s own five kernels move
+> less uniformly: the float-heavy one (spectral-norm) drops the most,
+> the `malloc`-bound one barely moves, and one (fasta) moves the wrong
+> way while staying faster than C — see that document's §8 for the
+> shape, not just the headline.
 
 ---
 
@@ -82,6 +92,26 @@ All five compute 39,690,297.
 | Rust `-O` | 0.1633s | 0.80× |
 
 All three compute 6057.
+
+### 2.1 Recounted: `--backend llvm` is the default now
+
+Both tables above are `--backend cranelift`, whichever backend was the
+default the day they were measured. `scripts/three.py` passes no
+`--backend` flag to `lex-sys build`, so it has always measured
+whatever "the compiler" defaults to — Cranelift then, LLVM since #127.
+Re-run on a cloud container reporting the same CPU model
+(`Intel(R) Xeon(R) Processor @ 2.10GHz`, so not necessarily the same
+physical host or as quiet a one), two runs of `scripts/three.py
+--rounds 9` each:
+
+| kernel | vs C, `--backend cranelift` | vs C, `--backend llvm` |
+|---|---|---|
+| mandelbrot (traps) | 1.69× | **0.95×** (both runs) |
+| sieve | 1.56× | **0.93×–0.95×** |
+
+Both now faster than C, not merely closer to it — `benchmarks-game.md`
+§8 has the wider five-kernel set this pair sits inside, where the move
+is real but less uniform.
 
 ---
 
