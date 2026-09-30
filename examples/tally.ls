@@ -43,6 +43,7 @@
 // `docs/tuples.md` §4: a tuple is for a pair that has no name, not for
 // three things that do.
 import std.bytes;
+import std.io;
 
 val struct Counts {
     lines: int,
@@ -79,13 +80,6 @@ fn count[&i](io: &!i Io) -> [io_read] Counts {
     return Counts { lines: lines, words: words, bytes: bytes };
 }
 
-fn print_nat[&i](io: &!i Io, n: int) -> [io_write] int {
-    if n >= 10 {
-        print_nat(io, n / 10);
-    }
-    return putchar(io, '0' + n % 10);
-}
-
 // How many digits a count takes, so the columns line up. The column
 // widths are this program's own: `wc` picks a common width from the
 // largest count, which is a second pass this does not need.
@@ -118,7 +112,7 @@ fn column[&i](io: &!i Io, n: int) -> [io_write] int {
         putchar(io, 32);
         pad = pad - 1;
     }
-    return print_nat(io, n);
+    return io.print_nat(io, n);
 }
 
 fn main(world: World) -> [] int {

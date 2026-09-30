@@ -18,6 +18,8 @@
 //~ STDOUT headroom: 1
 //~ EXIT 0
 
+import std.io;
+
 // ---------------------------------------------------------------- libc ----
 // §8.4: the declaration is the only place this signature is written, the
 // capability is the only way to reach it, and the row names the library.
@@ -67,13 +69,6 @@ fn space[&i](io: &!i Io) -> [io_write] int {
 
 fn newline[&i](io: &!i Io) -> [io_write] int {
     return putchar(io, 10);
-}
-
-fn print_nat[&i](io: &!i Io, n: int) -> [io_write] int {
-    if n >= 10 {
-        print_nat(io, n / 10);
-    }
-    return putchar(io, '0' + n % 10);
 }
 
 // ------------------------------------------------------------ the tally ---
@@ -142,10 +137,10 @@ fn run[&f, &i](libc: &f Ffi("libc"), io: &!i Io, budget: int) -> [io_write, ffi(
 
     putchar(io, 106); putchar(io, 111); putchar(io, 98); putchar(io, 115);
     putchar(io, 58); space(io);                                    // "jobs: "
-    print_nat(io, done);
+    io.print_nat(io, done);
     space(io); putchar(io, 100); putchar(io, 111); putchar(io, 110); putchar(io, 101);
     putchar(io, 44); space(io);                                    // " done, "
-    print_nat(io, dropped);
+    io.print_nat(io, dropped);
     space(io); putchar(io, 99); putchar(io, 97); putchar(io, 110); putchar(io, 99);
     putchar(io, 101); putchar(io, 108); putchar(io, 108); putchar(io, 101);
     putchar(io, 100);                                              // " cancelled"
@@ -153,15 +148,15 @@ fn run[&f, &i](libc: &f Ffi("libc"), io: &!i Io, budget: int) -> [io_write, ffi(
 
     putchar(io, 115); putchar(io, 112); putchar(io, 101); putchar(io, 110);
     putchar(io, 116); putchar(io, 58); space(io);                  // "spent: "
-    print_nat(io, spent);
+    io.print_nat(io, spent);
     space(io); putchar(io, 111); putchar(io, 102); space(io);      // " of "
-    print_nat(io, budget);
+    io.print_nat(io, budget);
     newline(io);
 
     putchar(io, 104); putchar(io, 101); putchar(io, 97); putchar(io, 100);
     putchar(io, 114); putchar(io, 111); putchar(io, 111); putchar(io, 109);
     putchar(io, 58); space(io);                                    // "headroom: "
-    print_nat(io, headroom);
+    io.print_nat(io, headroom);
     newline(io);
 
     return done - 4 + dropped - 2 + headroom - 1;

@@ -28,6 +28,11 @@
 //
 // The list is built by prepending, so the output is in reverse
 // first-seen order.
+//
+// `import std.io;` lives in `text.ls`: this program has no `module`
+// line in any of its three files, so they share one root namespace and
+// the same import bound twice in that namespace is refused, the same
+// way two definitions of one name would be.
 
 // Counted by scanning `text[0 .. length]` for runs of non-space bytes.
 // Each run is a word: found in the tally, it is incremented in place;
@@ -75,7 +80,7 @@ fn run[&h, &f, &g, &i](
         if arg_count(args) > 1 {
             length = fs_read(fs, arg(args, 1), text);
             if length < 0 {
-                write_all(io, "cannot read that file\n");
+                io.write_all(io, "cannot read that file\n");
                 return 1;
             }
         } else {

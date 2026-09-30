@@ -1,13 +1,16 @@
 # The next phase: verification, not another hunt
 
-> **Status: proposed.** M0–M3 are done, the LLVM backend is the
+> **Status: the argument is made, §3's migration has landed, §4's
+> standing check has not.** M0–M3 are done, the LLVM backend is the
 > default, the package system closes real duplication, and the CLI is
 > self-describing (`docs/agent-cli.md`). `docs/ROADMAP.md`'s own "What
 > is next" table has nothing left unstruck. This document is what
 > comes after that table is empty: not a list of features, but a
 > change in *how* the next features get found — argued from
 > `MANIFESTO.md` ("Trust Without Comprehension") and from three things
-> this repository just did to itself in the same session.
+> this repository just did to itself in the same session. §3.1 has the
+> migration's own two findings, one of them (a root-namespace import
+> collision) not previously documented anywhere in this repository.
 
 ---
 
@@ -83,22 +86,75 @@ neither previously flagged:
 | Function | Duplicated in | Already in `std/io.ls`? |
 |---|---|---|
 | `print_nat` | 7 examples (`tally.ls`, `pipeline.ls`, `tree.ls`, `tour.ls`, `modular/text.ls`, `slab/main.ls`, `wordfreq/text.ls`) | Yes, `pub fn print_nat`, byte-identical body |
-| `write_all` | 8 examples (`lines.ls`, `hello.ls`, `tree.ls`, `tour.ls`, `modular/text.ls`, `slab/main.ls`, `wordfreq/text.ls`, `buffer/main.ls`) | Yes, `pub fn write_all` — but `std.io`'s calls the `write_bytes` builtin (`docs/bulk-io.md`); every example's own copy is the pre-bulk-I/O `putchar`-per-byte loop |
+| `write_all` | 8 examples (`lines.ls`, `hello.ls`, `tree.ls`, `tour.ls`, `modular/text.ls`, `slab/main.ls`, `wordfreq/text.ls`, `buffer/main.ls`) | Yes, `pub fn write_all` — but `std.io`'s calls the `write_bytes` builtin (`docs/bulk-io.md`); every example's own copy is the pre-bulk-I/O `putchar`-per-byte loop. `hello.ls`'s copy stays: §3.1 |
 
 This is `docs/line-reading.md`'s "cut's long line" pattern a second
-time: ten example programs are not merely duplicating a helper, eight
-of them are stuck on the exact byte-at-a-time path `docs/bulk-io.md`
-built a replacement for and never migrated onto. All ten already build
-with `--std` (confirmed against `backends.rs`'s own build invocations),
-so the fix is import, delete, and qualify the call sites — no design
-question, unlike every prior package extraction. `tour.ls` (993 lines,
-~35 call sites between the two functions) and `tree.ls` (283 lines, 15
-call sites) are the real work; the other eight are one or two call
-sites each. Scoped, not done here — the next PR, not this document.
+time: example programs are not merely duplicating a helper, most of
+them are stuck on the exact byte-at-a-time path `docs/bulk-io.md`
+built a replacement for and never migrated onto. Files that get
+`--std` through the generic example walker
+(`corpus.rs::every_example_runs_and_prints_what_it_says`) already have
+it; the four that live in their own subdirectory (`wordfreq/`,
+`modular/`, `slab/`, `buffer/`) are built by their own dedicated test
+instead, and two of those four needed `--std` added to that test's own
+build command as part of this migration.
 
-`examples/buffer/main.ls`'s own `write_all` has **zero** call sites in
+`examples/buffer/main.ls`'s own `write_all` had **zero** call sites in
 that file: dead code, found by the same grep that found the
-duplication, worth deleting regardless of the migration.
+duplication, deleted outright rather than migrated.
+
+### 3.1 Landed, with two exceptions found doing it
+
+The migration above is done (this PR). `lines.ls`, `tally.ls`,
+`pipeline.ls`, `tree.ls`, `tour.ls`, `wordfreq/{text,main,counts}.ls`
+and `slab/main.ls` now `import std.io;` and call
+`io.write_all`/`io.print_nat`; `buffer/main.ls`'s dead copy is gone.
+Every migrated example's output was diffed against its own `//~
+STDOUT` directive before and after — byte-identical in every case,
+which is the whole point of the fix being mechanical. Seven files
+moved, not the ten §3 counted, for two reasons found only by doing it:
+
+**`examples/modular/text.ls` is deliberately excluded.** Its own header
+comment says why it exists: *"The functions here are byte-for-byte the
+ones 25 other files in this repository each define for themselves --
+and moving them here changed **no hash**... because a call encodes the
+callee's hash rather than its spelling."* That sentence is this
+document's §3 finding, stated as a `docs/modules.md` teaching point
+four PRs before this one noticed it as duplication. Migrating this
+file onto `std.io` would delete the functions its own comment uses as
+the worked example.
+
+**`examples/hello.ls` is excluded for a different reason, found only
+by running the full gate.** The first pass migrated it too, and `cargo
+test --workspace` immediately failed three unrelated tests —
+`corpus::run_builds_and_executes_in_one_step`,
+`corpus::emitting_a_bare_object_file_works`, and
+`refusals::a_clean_program_answers_an_empty_list` — all three of which
+build this exact file **without** `--std`, on purpose: it is the one
+example every one of them can rely on needing nothing else. `import
+std.io;` made that assumption false. Reverted, with a comment on the
+file recording why and naming the three tests, so a future hunt does
+not propose the same fix and hit the same wall silently.
+
+**A third thing found doing the mechanical part, not before.**
+`wordfreq/`'s three files (`text.ls`, `main.ls`, `counts.ls`) have no
+`module` line, so they share one root namespace the way `write_all`
+and `print_nat` themselves used to be reached unqualified from `main.ls`
+and `counts.ls`. `import std.io;` in more than one of them is refused —
+*"`io` is already bound to another import here"* — the same rule that
+refuses two definitions of one name in that namespace, applied to an
+import for the first time in this repository. One import, in `text.ls`,
+serves the whole program; a comment in the other two says where it
+lives and why it is not repeated. Not previously documented anywhere,
+because nothing here had shared one root namespace across an import
+before.
+
+The lesson worth keeping, for §4's own design: a check that flags a
+duplicate body correctly can still be wrong to *act on* without asking
+whether that particular copy is load-bearing elsewhere, for a reason
+the check itself cannot see (a test fixture's own contract, a
+document's own worked example). Verification finds the candidate; it
+does not replace reading the one file that explains why it exists.
 
 A second, smaller cluster — `nat_of`/`port_of`/`port_of_listen`, four
 files, ~182 characters each, already under different names in

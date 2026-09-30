@@ -33,6 +33,8 @@
 //~ STDOUT has 4: 1  has 6: 0  deepest 9
 //~ EXIT 0
 
+import std.io;
+
 // ---------------------------------------------------------------------
 // The type that needed a heap
 // ---------------------------------------------------------------------
@@ -53,22 +55,6 @@ struct Walk {
 // ---------------------------------------------------------------------
 // Console
 // ---------------------------------------------------------------------
-
-fn print_nat[&i](io: &!i Io, n: int) -> [io_write] int {
-    if n >= 10 {
-        print_nat(io, n / 10);
-    }
-    return putchar(io, '0' + n % 10);
-}
-
-fn write_all[&r, &i](io: &!i Io, s: &r [byte]) -> [io_write] int {
-    var n = 0;
-    while n < len(s) {
-        putchar(io, int_of(s[n]));
-        n = n + 1;
-    }
-    return len(s);
-}
 
 fn yes_no(b: bool) -> [] int {
     if b {
@@ -194,10 +180,10 @@ fn drain[&h, &i](heap: &!h Heap, io: &!i Io, t: Tree, first: bool) -> [heap, io_
             // anything was printed to its left.
             let low = drain(heap, io, l, first);
             if first && low.count == 0 {
-                print_nat(io, value);
+                io.print_nat(io, value);
             } else {
                 putchar(io, 32);
-                print_nat(io, value);
+                io.print_nat(io, value);
             }
             let high = drain(heap, io, r, false);
 
@@ -238,23 +224,23 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
     let found = drain(heap, io, tree, true);
     putchar(io, 10);
 
-    write_all(io, "sum ");
-    print_nat(io, found.sum);
-    write_all(io, " count ");
-    print_nat(io, found.count);
-    write_all(io, " depth ");
-    print_nat(io, found.depth);
+    io.write_all(io, "sum ");
+    io.print_nat(io, found.sum);
+    io.write_all(io, " count ");
+    io.print_nat(io, found.count);
+    io.write_all(io, " depth ");
+    io.print_nat(io, found.depth);
     putchar(io, 10);
 
     // The read-only pass agreed with the consuming one about the count,
     // which is the point: both walked the same tree, and only one of them
     // was allowed to end it.
-    write_all(io, "has 4: ");
-    print_nat(io, yes_no(has_four));
-    write_all(io, "  has 6: ");
-    print_nat(io, yes_no(has_six));
-    write_all(io, "  deepest ");
-    print_nat(io, biggest);
+    io.write_all(io, "has 4: ");
+    io.print_nat(io, yes_no(has_four));
+    io.write_all(io, "  has 6: ");
+    io.print_nat(io, yes_no(has_six));
+    io.write_all(io, "  deepest ");
+    io.print_nat(io, biggest);
     putchar(io, 10);
     return found.sum + counted - found.count;
 }

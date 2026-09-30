@@ -3,23 +3,11 @@
 // Nothing here knows what a word count is. That is the point of
 // `docs/many-files.md`: before it, every helper a program needed had to
 // live in the same file as the program, so there was no such thing as a
-// library. These four functions are one now.
+// library. `same_word` and `write_word` are this program's own; the
+// console helpers this file used to carry too are `std.io`'s now
+// (`docs/next-phase.md` §3).
 
-fn print_nat[&i](io: &!i Io, n: int) -> [io_write] int {
-    if n >= 10 {
-        print_nat(io, n / 10);
-    }
-    return putchar(io, '0' + n % 10);
-}
-
-fn write_all[&r, &i](io: &!i Io, s: &r [byte]) -> [io_write] int {
-    var n = 0;
-    while n < len(s) {
-        putchar(io, int_of(s[n]));
-        n = n + 1;
-    }
-    return len(s);
-}
+import std.io;
 
 // A space, a tab or a newline. `==` on `byte` compares storage, which is
 // allowed; `+` on one is arithmetic, which is not (`docs/strings.md` §2).

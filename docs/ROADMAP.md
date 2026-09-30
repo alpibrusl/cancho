@@ -288,10 +288,15 @@ outright.
 not a feature list — "What is next" above has nothing left unstruck —
 but a proposal to replace *hunting* for stale docs and duplicated code
 with a *mechanical check* for the latter, argued from `MANIFESTO.md`
-and from three of this session's own mistakes. Its §3 already found a
-real instance: ten examples duplicate `std.io`'s `print_nat`/`write_all`,
-eight of them still on the pre-bulk-I/O `putchar` loop `docs/bulk-io.md`
-replaced.
+and from three of this session's own mistakes. Its §3 found a real
+instance (ten examples duplicating `std.io`'s `print_nat`/`write_all`,
+most of them still on the pre-bulk-I/O `putchar` loop `docs/bulk-io.md`
+replaced) and migrated seven of them; §3.1 records why the other
+three stayed (`modular/text.ls`'s own worked example for
+`docs/modules.md`, `hello.ls`'s load-bearing role in three unrelated
+tests, `buffer/main.ls`'s copy was dead code and just deleted) and a
+root-namespace import collision the migration found along the way.
+§4's own standing check — the actual proposal — is not built yet.
 
 Beyond lex-sys, the first real target is **`lex-os`** — production
 systems work, no rewrite risk.

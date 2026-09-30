@@ -21,18 +21,7 @@
 //~ STDOUT longest 15
 //~ EXIT 0
 
-// ---------------------------------------------------------------------
-// Console
-// ---------------------------------------------------------------------
-
-fn write_all[&r, &i](io: &!i Io, s: &r [byte]) -> [io_write] int {
-    var n = 0;
-    while n < len(s) {
-        putchar(io, int_of(s[n]));
-        n = n + 1;
-    }
-    return len(s);
-}
+import std.io;
 
 // ---------------------------------------------------------------------
 // Building bytes in a buffer
@@ -137,7 +126,7 @@ fn report[&f, &p, &i](
             // not a trap (`docs/filesystem.md` §3). A path outside what the
             // capability granted *would* trap -- but this one granted
             // everything, so nothing here is outside it.
-            write_all(io, "cannot read that file\n");
+            io.write_all(io, "cannot read that file\n");
             return 1;
         }
 

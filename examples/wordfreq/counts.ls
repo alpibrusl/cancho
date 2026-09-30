@@ -4,6 +4,9 @@
 // rather than a copy. It needs the heap (`docs/heap.md`) because a list
 // that grows as the document is read is exactly the thing a block-scoped
 // lifetime cannot hold.
+//
+// `import std.io;` lives in `text.ls` -- see `main.ls`'s note on why
+// it is not repeated here.
 
 enum Counts {
     Empty,
@@ -50,7 +53,7 @@ fn report[&c, &t, &i](counts: &c Counts, text: &t [byte], io: &!i Io) -> [io_wri
         Counts::Entry(at, size, total, rest) => {
             write_word(io, text, *at, *size);
             putchar(io, 32);
-            print_nat(io, *total);
+            io.print_nat(io, *total);
             putchar(io, 10);
             return 1 + report(contents(rest), text, io);
         }
