@@ -98,6 +98,19 @@ already showed converges to the limit of binary64. The C program uses
 **the same hand-written Newton rather than libm's `sqrt`**, because
 otherwise the comparison would be between an intrinsic and a loop.
 
+**Superseded by #62.** `sqrt` is a builtin now — one instruction, no
+capability needed — and `spectral.ls` was one of the two programs whose
+hand-rolled root motivated it: measured against a correctly-rounded
+root, its own twenty-step Newton loop was wrong on 58.4% of values and
+off by 143 orders of magnitude on a large one (`float-math.md` §2).
+`spectral.ls` calls the builtin now; the comparison this paragraph
+describes as avoided is the one that exists today, between lex-sys's
+intrinsic and C's still hand-written Newton (`spectral.c` keeps it, on
+purpose, for its own reasons). It does not bias the numbers below: the
+call happens once, outside the O(n²) loop this benchmark actually
+measures. The paragraph stays as it was written; the comparison it
+describes does not hold since #62.
+
 **Fixed-precision printing.** The benchmark's answer is nine decimal
 places. `std.fmt.float_into` prints the *shortest* decimal that
 round-trips — `1.2742199912349306e0` — and a stated precision is
@@ -194,7 +207,7 @@ build here, and a best-of-N report would have shown none of that.
 | ~~fasta and reverse-complement~~ | **Answered, by measuring** — §7. `fasta` is faster than C; `reverse-complement` is not |
 | Why `fasta` moved from 0.54× to 0.89×–0.90× under `--backend llvm` | §8. §7's own "this is an I/O-call-shape fact, not a backend fact" would predict no move at all, since `fasta.c` is unchanged; `objdump` on the per-line loop around `io.write_all`, the way §7.16 of `llvm-backend.md` already did for `spectral.ls`, is the next thing that would actually answer it rather than guess |
 | A quieter host for `revcomp` | §8. 97%–203% spread on this container swallows any real signal; the three re-runs bracket 1.05×–1.60× without narrowing it |
-| `std.math` over floats | §3. Two programs have now written their own `sqrt`. `floating-point.md` §7's capability question is still the blocker, and the queue behind it is growing |
+| ~~`std.math` over floats~~ | **Answered, and stale here since #62** — `sqrt` is a builtin (`float-math.md`), closing the capability question this row named; the n-body row above already assumed it. `exp`/`log`/`pow` followed (#95, `float-math.md` §7). Only `sin` is still open, for lack of an asker |
 | A stated precision in `std.fmt` | §3. `float-printing.md` §7's row, with a second caller now |
 | Confidence intervals rather than a range | §4.1. The spread is honest and it is not a statistical model. Georges et al. (OOPSLA 2007) is the standard method; nothing here needs that rigour until a change is claimed on a difference smaller than the spread |
 
