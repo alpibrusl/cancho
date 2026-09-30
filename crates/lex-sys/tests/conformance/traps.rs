@@ -665,3 +665,45 @@ fn vec_pop_remove_insert_trap_out_of_range() {
 
     let _ = std::fs::remove_dir_all(&scratch);
 }
+
+/// `trap()` (`docs/testing.md` §2) and `std.test.assert` built on it: a
+/// failed assertion is killed by a signal the same way every other
+/// trap here is, not a value a program's own `return` could produce.
+/// `tests/accept/assert.ls` is the pass side of this same primitive.
+#[test]
+fn assert_fails_the_same_way_every_other_trap_does() {
+    let dir = scratch("assert-trap");
+    let source = dir.join("assert.ls");
+    std::fs::write(
+        &source,
+        "import std.test;\n\
+         fn main(world: World) -> [] int {\n\
+         \x20   let Split { io, ffi, fs, heap, args } = split(world);\n\
+         \x20   release(args); release(heap); release(fs); release(ffi); release(io);\n\
+         \x20   return test.assert_eq(2 + 2, 5);\n\
+         }\n",
+    )
+    .expect("a writable fixture");
+    let exe = dir.join("assert");
+    let build = Command::new(BIN)
+        .args([
+            "build".as_ref(),
+            source.as_os_str(),
+            "--std".as_ref(),
+            "-o".as_ref(),
+            exe.as_os_str(),
+        ])
+        .output()
+        .expect("the compiler runs");
+    assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+
+    let run = Command::new(&exe).output().expect("the compiled program runs");
+    assert_eq!(
+        run.status.code(),
+        None,
+        "a failed `assert_eq` should be killed by a signal, not exit with {:?}",
+        run.status.code()
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

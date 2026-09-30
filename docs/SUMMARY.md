@@ -17,6 +17,7 @@
 - [Sharing, and why Rc is not expressible](sharing.md)
 - [Aliasing: does `&!` mean `&mut`?](aliasing.md)
 - [Collections](collections.md)
+- [Testing](testing.md)
 - [Slicing](slicing.md)
 - [Tuples](tuples.md)
 - [Shadowing](shadowing.md)

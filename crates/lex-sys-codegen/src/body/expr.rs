@@ -373,6 +373,21 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::NullPtr) => {
                         vec![self.builder.ins().iconst(self.pointer, 0)]
                     }
+                    // An explicit, deliberate trap (`docs/testing.md` §2)
+                    // rather than a check the compiler inserted on its
+                    // own -- a distinct user trap code, not one of the
+                    // four reserved ones above, says so in a debugger.
+                    // `trap` is a terminator, so the block it ends needs
+                    // a fresh one after it; nothing reaches this block,
+                    // but the call still has to answer with a value of
+                    // the right shape.
+                    Callee::Builtin(Builtin::Trap) => {
+                        self.builder.ins().trap(TrapCode::unwrap_user(1));
+                        let dead = self.builder.create_block();
+                        self.builder.switch_to_block(dead);
+                        self.builder.seal_block(dead);
+                        vec![self.builder.ins().iconst(types::I64, 0)]
+                    }
                     // `docs/threads.md` §2: `body`'s own compiled entry
                     // point (`args[1]`, `Expr::FnValue`'s address)
                     // becomes `pthread_create`'s start routine directly
