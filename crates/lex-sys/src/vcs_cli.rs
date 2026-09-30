@@ -21,10 +21,30 @@ use lex_sys_id::identify;
 use lex_sys_ir::{Effects, Func};
 use lex_sys_vcs::{
     Blobs, Lock, LockEntry, Manifest, ManifestEntry, OpLog, Operation, OperationKind,
-    OperationRecord, SigId,
+    OperationRecord, Requirement, SigId, load_requirements, save_requirements,
 };
 
-use crate::{Failure, environment, parse_program, refused, usage};
+use crate::{Failure, environment, refused, usage};
+
+/// Parse several already-in-memory named texts as one program, the same
+/// way [`crate::parse_program`] merges real files. `vcs publish`'s own
+/// dependency gate and [`verify_selected`]'s closure check both hold
+/// their dependency source as trusted strings, never as paths on disk,
+/// so they need this rather than writing a temp file just to hand
+/// `parse_program` something it can re-read.
+fn parse_texts(
+    named: &[(String, String)],
+) -> Result<(lex_sys_syntax::Ast, lex_sys_syntax::SourceMap), String> {
+    let mut map = lex_sys_syntax::SourceMap::new();
+    let mut ast = lex_sys_syntax::Ast::new();
+    for (name, text) in named {
+        let base = map.add(name.clone(), text.clone());
+        if let Err(d) = lex_sys_syntax::parse_into(&mut ast, text, base) {
+            return Err(d.render_in(&map));
+        }
+    }
+    Ok((ast, map))
+}
 
 /// `docs/editions.md`: only edition 1 exists today, so this is not a
 /// simplification pending a real one — it is the one plateau
@@ -50,11 +70,16 @@ pub fn cmd_vcs(args: &[String]) -> Result<ExitCode, Failure> {
 struct VcsInvocation {
     store: PathBuf,
     inputs: Vec<PathBuf>,
+    /// `--requires <lock-file>:<dep-store>`, raw and unsplit -- only
+    /// `cmd_publish` reads this; every other caller of
+    /// [`parse_vcs_args`] just carries an empty one.
+    requires: Vec<String>,
 }
 
 fn parse_vcs_args(args: &[String]) -> Result<VcsInvocation, Failure> {
     let mut store = PathBuf::from(DEFAULT_STORE);
     let mut inputs = Vec::new();
+    let mut requires = Vec::new();
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -62,13 +87,19 @@ fn parse_vcs_args(args: &[String]) -> Result<VcsInvocation, Failure> {
                 let value = it.next().ok_or_else(|| usage("`--store` needs a path"))?;
                 store = PathBuf::from(value);
             }
+            "--requires" => {
+                let value = it
+                    .next()
+                    .ok_or_else(|| usage("`--requires` needs `<lock-file>:<dep-store>`"))?;
+                requires.push(value.clone());
+            }
             other if other.starts_with('-') => {
                 return Err(usage(format!("unknown option `{other}`")));
             }
             other => inputs.push(PathBuf::from(other)),
         }
     }
-    Ok(VcsInvocation { store, inputs })
+    Ok(VcsInvocation { store, inputs, requires })
 }
 
 /// The declared row, formatted exactly the way `lex-sys authority` already
@@ -89,8 +120,18 @@ fn find_func<'a>(funcs: &'a [Func], name: &str) -> Option<&'a Func> {
     funcs.iter().find(|f| f.name == name)
 }
 
+/// `--requires <lock-file>:<dep-store>`, split on the first `:` -- a
+/// path never contains one on the two targets this project builds for
+/// (`docs/reach.md`'s own platform list), so there is no ambiguity to
+/// guard against here the way a Windows drive letter would force.
+fn split_requires(pair: &str) -> Result<(&str, &str), Failure> {
+    pair.split_once(':').ok_or_else(|| {
+        usage(format!("`--requires {pair}` needs `<lock-file>:<dep-store>`, separated by `:`"))
+    })
+}
+
 fn cmd_publish(args: &[String]) -> Result<ExitCode, Failure> {
-    let VcsInvocation { store, inputs } = parse_vcs_args(args)?;
+    let VcsInvocation { store, inputs, requires } = parse_vcs_args(args)?;
     if inputs.is_empty() {
         return Err(usage("no input file given"));
     }
@@ -106,16 +147,54 @@ fn cmd_publish(args: &[String]) -> Result<ExitCode, Failure> {
         ));
     }
 
-    let (ast, map) = parse_program(&inputs, false)?;
-    let identities = identify(&ast);
-    let program = lex_sys_ir::lower_all(&ast).map_err(|diagnostics| {
-        let text: Vec<String> = diagnostics.iter().map(|d| d.render_in(&map)).collect();
-        refused(text.join("\n\n"))
-    })?;
-
     let source = std::fs::read_to_string(&inputs[0])
         .map_err(|e| environment(format!("cannot read `{}`: {e}", inputs[0].display())))?;
     let file_name = inputs[0].to_string_lossy().into_owned();
+
+    // Not purely structural after all -- found here, not assumed:
+    // `lex-sys-id`'s own `qualified_name` contributes a *resolved*
+    // callee's signature hash into the caller's body hash
+    // (`tag::FREE`) when the callee can be resolved, and only falls
+    // back to the bare written name (`tag::NONE`) when it cannot. So a
+    // function that calls into a `--requires` dependency hashes
+    // *differently* depending on whether that dependency is in scope
+    // when `identify()` runs -- computing it from this file alone would
+    // record a `StageId` that `verify_selected`'s later, dependency-aware
+    // recheck could never match, a guaranteed false "body moved"
+    // refusal on the very first `vcs resolve`. So identity is computed
+    // from the same merged, dependency-resolved AST the soundness gate
+    // below uses, and only this file's own names -- known regardless of
+    // resolution, from a first pass over the primary file alone -- are
+    // kept, so a dependency's own declarations are never republished
+    // under this store.
+    let (own_ast, _) = parse_texts(&[(file_name.clone(), source.clone())]).map_err(refused)?;
+    let own_names: BTreeSet<String> =
+        identify(&own_ast).functions.iter().map(|f| f.name.clone()).collect();
+
+    let mut requirements = Vec::with_capacity(requires.len());
+    let mut dependency_context: BTreeMap<String, String> = BTreeMap::new();
+    let mut visiting = Vec::new();
+    let mut pinned = BTreeMap::new();
+    for pair in &requires {
+        let (lock_path, dep_store) = split_requires(pair)?;
+        let lock = Lock::load(Path::new(lock_path))
+            .map_err(|e| environment(format!("cannot read lock file at `{lock_path}`: {e}")))?;
+        let closure = resolve_closure(&lock, Path::new(dep_store), &mut visiting, &mut pinned)
+            .map_err(|problems| refused(problems.join("\n\n")))?;
+        dependency_context.extend(closure);
+        requirements.push(Requirement { store: dep_store.to_owned(), lock });
+    }
+
+    let mut named = vec![(file_name.clone(), source.clone())];
+    for (hash, text) in &dependency_context {
+        named.push((format!("{hash}.ls"), text.clone()));
+    }
+    let (merged_ast, merged_map) = parse_texts(&named).map_err(refused)?;
+    let program = lex_sys_ir::lower_all(&merged_ast).map_err(|diagnostics| {
+        let text: Vec<String> = diagnostics.iter().map(|d| d.render_in(&merged_map)).collect();
+        refused(text.join("\n\n"))
+    })?;
+    let identities = identify(&merged_ast);
 
     let op_log = OpLog::open(&store)
         .map_err(|e| environment(format!("cannot open store at `{}`: {e}", store.display())))?;
@@ -134,6 +213,12 @@ fn cmd_publish(args: &[String]) -> Result<ExitCode, Failure> {
     let mut unchanged = 0usize;
 
     for func in &identities.functions {
+        // A dependency's own declarations are in `identities` too, now
+        // that it is computed from the merged AST -- never republished
+        // here; they already live in their own store.
+        if !own_names.contains(&func.name) {
+            continue;
+        }
         let sig_id = func.sig.to_hex();
         let stage_id = func.body.to_hex();
 
@@ -177,13 +262,16 @@ fn cmd_publish(args: &[String]) -> Result<ExitCode, Failure> {
                 })?,
         };
 
-        lex_sys_vcs::check_candidate(&[(file_name.as_str(), source.as_str())]).map_err(
-            |diagnostics| {
-                let text: Vec<String> =
-                    diagnostics.into_iter().map(|d| format!("{}: {}", d.rule, d.message)).collect();
-                refused(text.join("\n\n"))
-            },
-        )?;
+        // `check_candidate` re-parses and re-lowers independently of the
+        // gate just above -- it needs the same dependency context in
+        // scope, for the same reason.
+        let candidate_files: Vec<(&str, &str)> =
+            named.iter().map(|(name, text)| (name.as_str(), text.as_str())).collect();
+        lex_sys_vcs::check_candidate(&candidate_files).map_err(|diagnostics| {
+            let text: Vec<String> =
+                diagnostics.into_iter().map(|d| format!("{}: {}", d.rule, d.message)).collect();
+            refused(text.join("\n\n"))
+        })?;
 
         let op = Operation::new(
             OperationKind::AddFunction {
@@ -210,6 +298,13 @@ fn cmd_publish(args: &[String]) -> Result<ExitCode, Failure> {
         .save(&store)
         .map_err(|e| environment(format!("cannot write manifest at `{}`: {e}", store.display())))?;
 
+    // Whole-store, last-publish-wins metadata (§4.6's own note: not
+    // diffed or versioned per declaration, consistent with every
+    // package published here so far having exactly one publish, ever).
+    save_requirements(&store, &requirements).map_err(|e| {
+        environment(format!("cannot write requirements at `{}`: {e}", store.display()))
+    })?;
+
     if published == 0 {
         println!("nothing new ({unchanged} declaration(s) unchanged)");
     }
@@ -217,7 +312,7 @@ fn cmd_publish(args: &[String]) -> Result<ExitCode, Failure> {
 }
 
 fn cmd_log(args: &[String]) -> Result<ExitCode, Failure> {
-    let VcsInvocation { store, inputs } = parse_vcs_args(args)?;
+    let VcsInvocation { store, inputs, .. } = parse_vcs_args(args)?;
     if !inputs.is_empty() {
         return Err(usage("`vcs log` takes no input files, only `--store`"));
     }
@@ -277,9 +372,19 @@ fn select_locked(
 /// -- the same discipline `check --output json` already applies. On
 /// success, answers the verified source text keyed by `source_hash`,
 /// for a caller (`cmd_fetch`) that needs the bytes, not only the verdict.
+/// `extra_context` is every distinct source text a transitive dependency
+/// closure has already gathered (`resolve_closure`, §4.6) — merged into
+/// every group's own `lower_all` call so an `import` in that group's
+/// blob resolves, the same way `net.sockets`+`net.connect` already
+/// compose at `build` time. Empty for every store with no dependency of
+/// its own, which is every check this function made before §4.6 and is
+/// unaffected by any of it: an empty `extra_context` merged with one
+/// text is that one text, parsed exactly as `lex_sys_syntax::parse`
+/// alone already did.
 fn verify_selected(
     blobs: &Blobs,
     selected: &[(SigId, ManifestEntry)],
+    extra_context: &BTreeMap<String, String>,
 ) -> Result<BTreeMap<String, String>, Vec<String>> {
     let mut by_source: BTreeMap<String, Vec<(&SigId, &ManifestEntry)>> = BTreeMap::new();
     for (sig_id, entry) in selected {
@@ -305,14 +410,14 @@ fn verify_selected(
             }
         };
 
-        let ast = match lex_sys_syntax::parse(&text) {
-            Ok(ast) => ast,
-            Err(d) => {
-                problems.push(format!(
-                    "{source_hash} no longer parses ({}): {}",
-                    d.rule.tag(),
-                    d.message
-                ));
+        let mut named = vec![(format!("{source_hash}.ls"), text.clone())];
+        for (hash, dep_text) in extra_context {
+            named.push((format!("{hash}.ls"), dep_text.clone()));
+        }
+        let ast = match parse_texts(&named) {
+            Ok((ast, _map)) => ast,
+            Err(message) => {
+                problems.push(format!("{source_hash} no longer parses: {message}"));
                 continue;
             }
         };
@@ -354,6 +459,93 @@ fn verify_selected(
     if problems.is_empty() { Ok(verified) } else { Err(problems) }
 }
 
+/// Recursively resolve everything one `(lock, store)` pin needs to lower
+/// cleanly (`docs/package-system.md` §4.6): this pin's own selected
+/// entries, verified, plus every distinct source text its own store's
+/// `requires/` says it depends on — walked the same way, however deep.
+///
+/// `visiting` guards against a cycle (the same store's canonicalized
+/// path already on the current path); `pinned` guards against a diamond
+/// (two different paths pinning the same store's same name to two
+/// different heads). Both are threaded through the whole walk rather
+/// than reset per level, because either violation can appear between
+/// siblings just as easily as between a level and its own ancestor.
+///
+/// Returns every distinct verified source text this pin's own blobs
+/// need in scope to lower — this level's own, merged with every level
+/// beneath it — or every problem found anywhere in the walk.
+fn resolve_closure(
+    lock: &Lock,
+    store: &Path,
+    visiting: &mut Vec<PathBuf>,
+    pinned: &mut BTreeMap<(PathBuf, String), SigId>,
+) -> Result<BTreeMap<String, String>, Vec<String>> {
+    let canonical = store.canonicalize().unwrap_or_else(|_| store.to_path_buf());
+    if visiting.contains(&canonical) {
+        return Err(vec![format!(
+            "dependency cycle: `{}` is already on the path {}",
+            store.display(),
+            visiting.iter().map(|p| format!("`{}`", p.display())).collect::<Vec<_>>().join(" -> ")
+        )]);
+    }
+
+    for (name, entry) in lock.entries() {
+        let key = (canonical.clone(), name.clone());
+        match pinned.get(&key) {
+            Some(prior) if prior != &entry.sig_id => {
+                return Err(vec![format!(
+                    "diamond dependency: `{name}` from `{}` is pinned to two different heads \
+                     ({prior} and {}) by different paths through the dependency graph",
+                    store.display(),
+                    entry.sig_id
+                )]);
+            }
+            Some(_) => {}
+            None => {
+                pinned.insert(key, entry.sig_id.clone());
+            }
+        }
+    }
+
+    visiting.push(canonical);
+    let result = (|| -> Result<BTreeMap<String, String>, Vec<String>> {
+        let manifest = Manifest::load(store)
+            .map_err(|e| vec![format!("cannot read manifest at `{}`: {e}", store.display())])?;
+        let blobs = Blobs::open(store)
+            .map_err(|e| vec![format!("cannot open store at `{}`: {e}", store.display())])?;
+        let selected = select_locked(lock, &manifest, store)?;
+
+        let mut context = resolve_own_requirements(store, visiting, pinned)?;
+        let verified = verify_selected(&blobs, &selected, &context)?;
+        context.extend(verified);
+        Ok(context)
+    })();
+    visiting.pop();
+    result
+}
+
+/// The whole-store half of the same walk (`vcs resolve`/`vcs fetch` with
+/// no `--lock`, and every level's own entry point): no name to
+/// diamond-check against at *this* level — nothing pins a name to it,
+/// it is the thing being resolved, not an `import`ed dependency of
+/// something else — but its own `requires/`, if it has any, still gets
+/// walked exactly the way a deeper level's would.
+fn resolve_own_requirements(
+    store: &Path,
+    visiting: &mut Vec<PathBuf>,
+    pinned: &mut BTreeMap<(PathBuf, String), SigId>,
+) -> Result<BTreeMap<String, String>, Vec<String>> {
+    let requirements = load_requirements(store)
+        .map_err(|e| vec![format!("cannot read requirements at `{}`: {e}", store.display())])?;
+    let mut context = BTreeMap::new();
+    for req in &requirements {
+        let dep_store = PathBuf::from(&req.store);
+        let deeper = resolve_closure(&req.lock, &dep_store, visiting, pinned)?;
+        context.extend(deeper);
+    }
+    Ok(context)
+}
+
 /// `docs/package-system.md` §4.2 and §6: the smallest resolver, against a
 /// real second store rather than `std`.
 ///
@@ -361,6 +553,10 @@ fn verify_selected(
 /// `vcs lock` pinned, rather than everything the store has ever
 /// published — the difference between "does this store still hold
 /// together" and "do *my* dependencies."
+///
+/// §4.6: a store's own `requires/`, if it has any, is walked
+/// recursively too, so this answers "does the whole closure still hold
+/// together," not just this one store.
 fn cmd_resolve(args: &[String]) -> Result<ExitCode, Failure> {
     let mut lock_path: Option<PathBuf> = None;
     let mut store: Option<PathBuf> = None;
@@ -411,14 +607,33 @@ fn cmd_resolve(args: &[String]) -> Result<ExitCode, Failure> {
         }
     };
 
-    match verify_selected(&blobs, &selected) {
+    let canonical = store.canonicalize().unwrap_or_else(|_| store.clone());
+    let mut visiting = vec![canonical];
+    let mut pinned = BTreeMap::new();
+    let closure_context = resolve_own_requirements(&store, &mut visiting, &mut pinned)
+        .map_err(|problems| refused(problems.join("\n\n")))?;
+
+    match verify_selected(&blobs, &selected, &closure_context) {
         Ok(verified) => {
-            println!(
-                "{} declaration(s) across {} file(s) at `{}` still resolve exactly as published",
-                selected.len(),
-                verified.len(),
-                store.display()
-            );
+            if closure_context.is_empty() {
+                println!(
+                    "{} declaration(s) across {} file(s) at `{}` still resolve exactly as \
+                     published",
+                    selected.len(),
+                    verified.len(),
+                    store.display()
+                );
+            } else {
+                println!(
+                    "{} declaration(s) across {} file(s) at `{}` still resolve exactly as \
+                     published, plus {} file(s) verified transitively through its own \
+                     `requires/`",
+                    selected.len(),
+                    verified.len(),
+                    store.display(),
+                    closure_context.len()
+                );
+            }
             Ok(ExitCode::SUCCESS)
         }
         Err(problems) => Err(refused(problems.join("\n\n"))),
@@ -487,12 +702,23 @@ fn cmd_fetch(args: &[String]) -> Result<ExitCode, Failure> {
 
     let selected =
         select_locked(&lock, &manifest, &store).map_err(|missing| refused(missing.join("\n\n")))?;
-    let verified =
-        verify_selected(&blobs, &selected).map_err(|problems| refused(problems.join("\n\n")))?;
+
+    let canonical = store.canonicalize().unwrap_or_else(|_| store.clone());
+    let mut visiting = vec![canonical];
+    let mut pinned = BTreeMap::new();
+    let closure_context = resolve_own_requirements(&store, &mut visiting, &mut pinned)
+        .map_err(|problems| refused(problems.join("\n\n")))?;
+
+    let verified = verify_selected(&blobs, &selected, &closure_context)
+        .map_err(|problems| refused(problems.join("\n\n")))?;
 
     std::fs::create_dir_all(&out)
         .map_err(|e| environment(format!("cannot create `{}`: {e}", out.display())))?;
-    for (source_hash, text) in &verified {
+    // The whole closure, not just this store's own -- a consumer that
+    // fetches `http.request` (`docs/package-system.md` §4.6) gets
+    // `net.sockets`' source alongside it in the same directory, and
+    // never has to know it needed fetching at all.
+    for (source_hash, text) in verified.iter().chain(closure_context.iter()) {
         let path = out.join(format!("{source_hash}.ls"));
         std::fs::write(&path, text)
             .map_err(|e| environment(format!("cannot write `{}`: {e}", path.display())))?;
