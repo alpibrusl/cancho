@@ -134,6 +134,24 @@
 > moved at all. §4.6 has the correction and the fix. Proven against
 > synthetic packages built for exactly that, not yet against
 > `http.request` itself, which is the next slice.
+>
+> **`packages/http-request/` built too, the real case §4.6 was found
+> from.** `content_length_of`/`read_request` move into `request.ls`,
+> published with `--requires <net.lock>:packages/net-sockets/
+> .lex-sys-vcs`; `collect.ls` and `agent_supervisor.ls` both `import
+> http.request` instead, and drop their separate `net.sockets` lock
+> entirely — one fetch of `http.request` transitively materializes the
+> whole `net-sockets.ls` file too, since a store is always exactly one
+> file. **Found a second real thing wrong with this section's own first
+> draft**: `Requirement.store`, read back as a bare path, was silently
+> interpreted against *whoever runs `vcs resolve`/`vcs fetch` next*'s own
+> working directory rather than the one it was recorded relative to —
+> invisible against the synthetic tests above (their stores are always
+> absolute paths under one scratch directory), but real against
+> `http.request`+`net.sockets`, fetched from a working directory other
+> than the repo root. Fixed by recording it relative to the depending
+> store's own directory instead, and joining rather than reading it bare
+> on the way back. §4.6 has the correction and the fix.
 
 ## 1. What asked for it
 
@@ -371,18 +389,46 @@ as trusted strings, not paths, so the shared helper this needs
 (`parse_texts`, a text-only version of `parse_program`'s inner loop) has
 to accept `(name, text)` pairs directly.
 
+**A second prediction this section made turned out wrong too, and again
+building the real package (`packages/http-request/`, not the synthetic
+stores the mechanism was first proven against) found it, not a review of
+the design.** The first draft's `Requirement.store` bullet, below, said a
+repo-relative path recorded at publish time "stays valid for every
+consumer... the same way every existing example's own command already
+assumes running from the repo root" — true of every hand-typed `cargo
+run` command in this document, but not of `cargo test`'s own integration
+binaries, which run with their crate directory as their working
+directory, not the repo root. Reading `req.store` as a bare path and
+letting the OS interpret it against *whoever calls resolve/fetch next*'s
+own working directory means the exact same closure walk succeeds from
+one working directory and fails from another — reproduced directly:
+`vcs fetch --store packages/http-request/.lex-sys-vcs ...` from the repo
+root fetches `net.sockets` transitively without complaint; the identical
+command, with both `--lock`/`--store` made absolute first, run from
+`crates/lex-sys/` instead, refuses with `put`/`read ... is no longer
+published at packages/net-sockets/.lex-sys-vcs` — the *store's own*
+`--store` argument was absolute and correct, but the *string inside
+`requires/0.json`* was still read bare and resolved against the wrong
+base. Fixed the same way `import` itself is never working-directory-
+sensitive: `Requirement.store` is now recorded **relative to the
+depending store's own directory**, computed lexically at publish time
+(`relative_from`, comparing path components, never touching the
+filesystem, since the store being published to may not exist yet), and
+resolved by **joining it against that store's own already-resolved
+path** (`store.join(&req.store)`) rather than reading it as a stray path
+of its own — so the walk composes correctly however deep, and however
+its own top-level `--store` argument was spelled, with no dependence on
+any process's working directory at all.
+
 **The shape, concretely:**
 
 - **A store may carry `requires/*.json`** alongside `manifest.json`/
   `ops/`/`sources/` — each file a `Requirement { store: String, lock:
-  Lock }`: `store` is a path exactly as the publisher typed it after
-  `--store` for that dependency (interpreted relative to *whoever runs
-  resolve/fetch next*'s own working directory, never rewritten — the
-  same meaning a bare `--store <dir>` argument already has everywhere
-  else in this document, so a repo-relative path recorded at publish
-  time inside this monorepo stays valid for every consumer, the same
-  way every existing example's own command already assumes running from
-  the repo root). `lock` is an ordinary `Lock` (§4.5's format,
+  Lock }`: `store` is a relative path from *this store's own directory*
+  to the dependency's, computed once at publish time and joined against
+  the depending store's own path whenever it is read back — never
+  interpreted against a process's own working directory, the correction
+  above. `lock` is an ordinary `Lock` (§4.5's format,
   unchanged) — the *package's own* pin into its dependency, chosen once
   at publish time exactly the way a program's own `net.lock` is chosen
   today. One file per distinct dependency store, the same "one lock per
@@ -596,3 +642,22 @@ resolution-independent, contrary to this section's own first draft —
 the package this gap was found *from* — is the next slice, not this
 one: this PR proves the mechanism against synthetic packages built
 for exactly that, before trusting it with a real one.
+
+**Done too: `packages/http-request/` (`request.ls`), the real motivating
+case §4.6 was found from, and the first package that itself depends on
+another.** `content_length_of`/`read_request` move out of `collect.ls`
+and `agent_supervisor.ls` into one file, published with `--requires
+<net.lock>:packages/net-sockets/.lex-sys-vcs`; both examples now `import
+http.request` instead of duplicating the pair, calling
+`request.content_length_of`/`request.read_request`. A store is always
+exactly one file (`vcs publish` refuses more than one input), so
+fetching any of `http.request`'s own declarations transitively
+materializes the *whole* `net-sockets.ls` file too — both examples drop
+their own separate direct `net.sockets` lock entirely, since the one
+`http.request` fetch already brings in every `sockets.*` declaration
+they call directly. Publishing it also found the second wrong prediction
+§4.6 now carries its own correction for — `Requirement.store` read as a
+bare, working-directory-relative path, rather than resolved against the
+depending store's own directory — surfaced only once a real,
+non-synthetic dependency pair was fetched from a working directory other
+than the repo root.

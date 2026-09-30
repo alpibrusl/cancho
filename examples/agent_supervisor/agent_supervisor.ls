@@ -33,6 +33,7 @@
 import std.bytes;
 import std.io;
 import net.sockets;
+import http.request;
 
 // ---------------------------------------------------------------------
 // libc -- the eight `extern fn`s and the two byte helpers used to live
@@ -40,6 +41,11 @@ import net.sockets;
 // `examples/collect/collect.ls`'s own copies. All three now `import
 // net.sockets` (`packages/net-sockets/`, `docs/package-system.md` §6)
 // instead.
+//
+// `content_length_of`/`read_request` used to live here too, copied
+// from `examples/collect/collect.ls`. Now `packages/http-request/
+// request.ls`, this repository's fourth real package and the first
+// that itself depends on a package (net.sockets, §4.6).
 // ---------------------------------------------------------------------
 
 // A base-ten value, as the command line spells it. Anything that is not
@@ -114,81 +120,6 @@ fn encode_view[&g, &d](dst: &!d [byte], goal: &g [byte], step: int) -> [] int {
 // HTTP
 // ---------------------------------------------------------------------
 
-// The value of `Content-Length:` inside a header block already known to
-// hold one, or 0 -- copied from `examples/collect/collect.ls`.
-fn content_length_of[&h](head: &h [byte]) -> [] int {
-    let at = bytes.find(head, "Content-Length: ");
-    if at < 0 {
-        return 0;
-    }
-    var i = at + len("Content-Length: ");
-    var value = 0;
-    while i < len(head) {
-        let digit = bytes.digit_of(int_of(head[i]));
-        if digit < 0 {
-            return value;
-        }
-        value = value * 10 + digit;
-        i = i + 1;
-    }
-    return value;
-}
-
-// Read the one request this program ever answers -- headers, then the
-// body by `Content-Length` -- writing the body (the guest's own
-// `AgentActionMsg` line) to standard output as it arrives. Copied from
-// `examples/collect/collect.ls`'s `read_request`, minus the connection
-// count: this program accepts exactly one, the way `examples/serve/`
-// does.
-fn read_request[&f, &i](libc: &f Ffi("libc"), io: &!i Io, conn: int) -> [ffi("libc"), io_write] bool {
-    region scratch {
-        let head = alloc_slice[scratch](4096, byte_of(0));
-        let chunk = alloc_slice[scratch](4096, byte_of(0));
-        var held = 0;
-        var body_total = 0 - 1;
-        var body_seen = 0;
-        var done = false;
-        var going = true;
-        while going {
-            let got = sockets.read(libc, conn, chunk);
-            if got <= 0 {
-                going = false;
-            } else if body_total >= 0 {
-                io.write_all(io, chunk[0..got]);
-                body_seen = body_seen + got;
-                if body_seen >= body_total {
-                    done = true;
-                    going = false;
-                }
-            } else {
-                let before = held;
-                var take = got;
-                if take > len(head) - held {
-                    take = len(head) - held;
-                }
-                sockets.put(head, held, chunk[0..take]);
-                held = held + take;
-                let end = bytes.find(head[0..held], "\r\n\r\n");
-                if end >= 0 {
-                    body_total = content_length_of(head[0..held]);
-                    let from = end + 4 - before;
-                    if from < got {
-                        io.write_all(io, chunk[from..got]);
-                        body_seen = got - from;
-                    }
-                    if body_total == 0 || body_seen >= body_total {
-                        done = true;
-                        going = false;
-                    }
-                } else if held == len(head) {
-                    going = false;
-                }
-            }
-        }
-        return done;
-    }
-}
-
 fn respond_with_view[&f, &g](libc: &f Ffi("libc"), conn: int, goal: &g [byte], step: int)
     -> [ffi("libc")] int {
     region scratch {
@@ -234,7 +165,7 @@ fn run_supervisor[&f, &i, &g](libc: &f Ffi("libc"), io: &!i Io, port: int, goal:
             sockets.close(libc, fd);
             return 3;
         }
-        if !read_request(libc, io, conn) {
+        if !request.read_request(libc, io, conn) {
             sockets.close(libc, conn);
             sockets.close(libc, fd);
             return 4;

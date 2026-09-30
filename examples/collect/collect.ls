@@ -28,10 +28,17 @@
 // `examples/agent_supervisor/agent_supervisor.ls`'s own copies. All
 // three now `import net.sockets` (`packages/net-sockets/`,
 // `docs/package-system.md` §6) instead.
+//
+// `content_length_of`/`read_request` used to live here too, byte-for-
+// byte the same as `examples/agent_supervisor/agent_supervisor.ls`'s
+// own copies. Now `packages/http-request/request.ls`, this
+// repository's fourth real package and the first that itself depends
+// on a package (`net.sockets`, §4.6).
 
 import std.bytes;
 import std.io;
 import net.sockets;
+import http.request;
 
 // ---------------------------------------------------------------------
 // Bytes
@@ -53,91 +60,9 @@ fn nat_of[&a](text: &a [byte]) -> [] int {
     return value;
 }
 
-// The value of `Content-Length:` inside a header block already known to
-// hold one, or 0 if there is none -- a request with a body always
-// declares one here, and one without a body is treated as empty rather
-// than refused, so `collect` accepts a bare `POST` too.
-fn content_length_of[&h](head: &h [byte]) -> [] int {
-    let at = bytes.find(head, "Content-Length: ");
-    if at < 0 {
-        return 0;
-    }
-    var i = at + len("Content-Length: ");
-    var value = 0;
-    while i < len(head) {
-        let digit = bytes.digit_of(int_of(head[i]));
-        if digit < 0 {
-            return value;
-        }
-        value = value * 10 + digit;
-        i = i + 1;
-    }
-    return value;
-}
-
 // ---------------------------------------------------------------------
 // The connection
 // ---------------------------------------------------------------------
-
-// Read one request in full and write its body to standard output,
-// streamed rather than materialised. Answers `true` once a complete
-// header block was found and its body, if any, fully read; `false` for
-// a connection that closed before either.
-//
-// The shape mirrors `examples/report/`'s `exchange`, reading a status
-// line: hold header bytes in `head` until the blank line, then forward
-// everything after it. What is new here is that a fixed byte count
-// -- `Content-Length`, not "until the peer closes" -- decides when this
-// is done, since a client on a real connection (this program's own
-// tests included) may keep it open past the body it sent.
-fn read_request[&f, &i](libc: &f Ffi("libc"), io: &!i Io, conn: int) -> [ffi("libc"), io_write] bool {
-    region scratch {
-        let head = alloc_slice[scratch](4096, byte_of(0));
-        let chunk = alloc_slice[scratch](4096, byte_of(0));
-        var held = 0;
-        var body_total = 0 - 1;
-        var body_seen = 0;
-        var done = false;
-        var going = true;
-        while going {
-            let got = sockets.read(libc, conn, chunk);
-            if got <= 0 {
-                going = false;
-            } else if body_total >= 0 {
-                io.write_all(io, chunk[0..got]);
-                body_seen = body_seen + got;
-                if body_seen >= body_total {
-                    done = true;
-                    going = false;
-                }
-            } else {
-                let before = held;
-                var take = got;
-                if take > len(head) - held {
-                    take = len(head) - held;
-                }
-                sockets.put(head, held, chunk[0..take]);
-                held = held + take;
-                let end = bytes.find(head[0..held], "\r\n\r\n");
-                if end >= 0 {
-                    body_total = content_length_of(head[0..held]);
-                    let from = end + 4 - before;
-                    if from < got {
-                        io.write_all(io, chunk[from..got]);
-                        body_seen = got - from;
-                    }
-                    if body_total == 0 || body_seen >= body_total {
-                        done = true;
-                        going = false;
-                    }
-                } else if held == len(head) {
-                    going = false;
-                }
-            }
-        }
-        return done;
-    }
-}
 
 fn respond[&f](libc: &f Ffi("libc"), conn: int) -> [ffi("libc")] int {
     region scratch {
@@ -184,7 +109,7 @@ fn collect[&f, &i](libc: &f Ffi("libc"), io: &!i Io, port: int, count: int)
                 sockets.close(libc, fd);
                 return 3;
             }
-            if !read_request(libc, io, conn) {
+            if !request.read_request(libc, io, conn) {
                 sockets.close(libc, conn);
                 sockets.close(libc, fd);
                 return 4;

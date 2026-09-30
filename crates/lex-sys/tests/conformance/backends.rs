@@ -644,7 +644,10 @@ fn every_socket_declaring_example_builds_clean_on_llvm() {
     assert_llvm_builds_with_deps(
         "backends-llvm-socket-collect",
         "examples/collect/collect.ls",
-        &[fetch_net_sockets("backends-llvm-socket-collect-fetch", "examples/collect/net.lock")],
+        &fetch_net_dependencies(
+            "backends-llvm-socket-collect-fetch",
+            &[("examples/collect/request.lock", "packages/http-request/.lex-sys-vcs")],
+        ),
     );
     assert_llvm_builds_with_deps(
         "backends-llvm-socket-report",
@@ -664,10 +667,10 @@ fn every_socket_declaring_example_builds_clean_on_llvm() {
     assert_llvm_builds_with_deps(
         "backends-llvm-socket-agent-supervisor",
         "examples/agent_supervisor/agent_supervisor.ls",
-        &[fetch_net_sockets(
+        &fetch_net_dependencies(
             "backends-llvm-socket-agent-supervisor-fetch",
-            "examples/agent_supervisor/net.lock",
-        )],
+            &[("examples/agent_supervisor/request.lock", "packages/http-request/.lex-sys-vcs")],
+        ),
     );
 
     // `examples/serve/serve.ls` no longer declares its own socket

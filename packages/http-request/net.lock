@@ -1,0 +1,14 @@
+{
+  "entries": {
+    "put": {
+      "sig_id": "e46d4d2d9ed236638c5f1a3795b914a27b568dd7d6554755ee03e6586f317eac",
+      "stage_id": "783239ad0d01b269f93916c5ac728a155ea8df7ec5afe25caf5409206b336bc4",
+      "source_hash": "00d8ee51a4f70f2b2cbb2fe19e50f2436892d03401e016cf331fcf44baad35dd"
+    },
+    "read": {
+      "sig_id": "82b3948a81ea90fcb446e1d61e9ca75911349989b196f952886ced437ead67f3",
+      "stage_id": "82b3948a81ea90fcb446e1d61e9ca75911349989b196f952886ced437ead67f3",
+      "source_hash": "00d8ee51a4f70f2b2cbb2fe19e50f2436892d03401e016cf331fcf44baad35dd"
+    }
+  }
+}
