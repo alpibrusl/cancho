@@ -46,6 +46,12 @@ pub fn live[&t](table: &t Table) -> [] int {
     return table.live;
 }
 
+// How many slots there are, free or not: slot numbers run `0..slots`, which
+// is what a sweep over every connection walks.
+pub fn slots[&t](table: &t Table) -> [] int {
+    return vec.size(table.tickets);
+}
+
 // The ticket in `slot`, or -1 for a slot that is free or out of range.
 fn ticket_at[&t](table: &t Table, slot: int) -> [] int {
     if slot < 0 || slot >= vec.size(table.tickets) {

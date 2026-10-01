@@ -185,6 +185,8 @@ per event. It is also the scalable answer — `poll(2)` is O(registered
 handles) per wait, and the api server's whole loop is currently a scan
 of its own record array — so it is a performance change as well as a
 safety one, and gets benchmarked as one (§8).
+**Corrected by measurement (§10.4): in the one environment it was run in,
+`epoll` is the slower of the two.**
 
 The kernel drops a registration when the descriptor closes, so a
 `Conn` closed while registered cannot leave a stale entry that a *new*
@@ -448,3 +450,17 @@ not bump.
 **The cost is a number to be measured**, not argued: every read or write
 through the table is two extra builtin calls and two table accesses. The api
 benchmark below says whether it matters.
+
+### 10.4 What measuring the migration found: `epoll` is slower here
+
+`examples/api` fell from about 136,000 to about 73,000 requests a second
+when its `poll` loop became a `Poller`, and a C server with no parsing falls the
+same way (about 150,000 to about 80,000) when only its `poll` is swapped for
+`epoll`. §4's claim that `epoll` is the scalable choice and "a performance
+change as well as a safety one" is therefore **not borne out**: in a Firecracker
+VM with four cores, `poll` was faster at 32 and at 300 connections. The full
+account, with what was ruled out, is `server.md` §8. It does not touch the
+safety half of the argument -- a `Poller` still names handles by token and never
+by descriptor -- and it makes one open question of the performance half: whether
+the Linux `Poller` should be `poll(2)`-backed, which needs a registration table
+the runtime owns. Not decided here; the number is the reason to decide it.

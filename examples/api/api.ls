@@ -1,3 +1,5 @@
+edition 5;
+
 // `api` -- a JSON API server: keep-alive, pipelining, routed, one thread.
 //
 //     api <port> [reuseport] [idle-seconds] [send-chunk-bytes]
@@ -5,9 +7,9 @@
 // `docs/server.md` is the design. This is the program the last four
 // library pieces were for: `std.http` parses each request, `std.route`
 // picks the handler, `std.json` reads and writes the bodies, and the loop
-// around them is `poll(2)` over every open connection, so a connection
-// that is open and silent costs a slot and nothing else -- one slow client
-// cannot make another wait.
+// around them waits on a `Poller` (epoll on Linux, kqueue on macOS), so a
+// connection that is open and silent costs a slot and nothing else -- one
+// slow client cannot make another wait.
 //
 // What it answers:
 //
@@ -28,30 +30,32 @@
 // 64 KiB of output buffer each, nine seconds without progress before a
 // connection is closed unless the third argument says otherwise.
 //
-// The fourth argument is a quantum: no `send` is handed more than that many
+// The fourth argument is a quantum: no write is handed more than that many
 // bytes, so an answer larger than it takes several, which is what a loop that
 // wants to be fair to its other connections might choose. It is also how the
-// tests make partial sends certain: on Linux a loopback `send` is whole or
+// tests make partial writes certain: on Linux a loopback send is whole or
 // refused, never partial, and the code that resumes a partial one would
 // otherwise never run.
 //
-// **Writes do not wait.** A `send` that cannot go whole returns at once, or
-// within a millisecond, with whatever the kernel took (`MSG_DONTWAIT` where the
-// operating system honours it, a one-millisecond `SO_SNDTIMEO` where it does not:
-// macOS ignores the flag on a blocking socket, which CI found). What was not
-// taken waits in the connection's own output buffer, the connection asks `poll`
-// for `POLLOUT` instead of `POLLIN` -- it is not read from until its output is
-// gone, which is what keeps a client that never reads from making the server
-// buffer without bound -- and every other connection is served meanwhile.
-// A client that makes no progress for `idle` seconds is closed.
+// **Writes do not wait.** Every connection is non-blocking, so a write that
+// cannot go whole answers at once with what the kernel took (or `Again`). What
+// was not taken waits in the connection's own output buffer, the connection is
+// watched for writability instead of readability -- it is not read from until
+// its output is gone, which is what keeps a client that never reads from making
+// the server buffer without bound -- and every other connection is served
+// meanwhile. A client that makes no progress for `idle` seconds is closed.
 //
 // **What it does not do**, and `docs/server.md` §6 is the list: decode a
 // chunked body (it answers 501), or use more than one core -- `reuseport`
 // lets several copies of this program share a port and the kernel spreads the
 // connections, which is how it scales.
 //
-// The sockets come from the `net.sockets` package; `poll`, `signal` and
-// `time` are declared here because nothing else wants them yet.
+// **Authority.** This program declares no `extern fn` and holds no `Ffi`:
+// `lex-sys authority` reports `net_in` (with no port named, because the port is
+// an argument), `conn_accept`, `conn_read`, `conn_write`, `poll`, `clock`,
+// `heap`, `args` and the console, and "never touches" foreign code or the
+// filesystem. Its predecessor reported `ffi("libc")`, which said nothing.
+// `docs/native-sockets.md` is how it got here.
 
 import std.buffer;
 import std.bytes;
@@ -59,28 +63,7 @@ import std.http;
 import std.io;
 import std.json;
 import std.route;
-import net.sockets;
-
-// `poll(struct pollfd *fds, nfds_t nfds, int timeout)`. A foreign slice is
-// passed as pointer and length, and only a `[byte]` slice may cross, so the
-// array of 8-byte records is a byte array and the slice handed over is a
-// *prefix of it whose length is the number of records*: C reads `nfds`
-// records from the pointer and the allocation behind it is eight times as
-// long as the slice says.
-extern fn poll[&f, &p](ffi: &f Ffi("libc"), fds: &!p [byte], timeout: int) -> [ffi("libc")] c_int;
-
-// `signal(SIGPIPE, SIG_IGN)`: writing to a connection the peer has closed
-// would otherwise kill the process. 13 and 1 are the same on Linux and macOS.
-extern fn signal[&f](ffi: &f Ffi("libc"), sig: int, handler: int) -> [ffi("libc")] int;
-
-extern fn time[&f](ffi: &f Ffi("libc"), t: int) -> [ffi("libc")] int;
-
-// `send(fd, buf, len, flags)`. Unlike `fcntl(F_SETFL, O_NONBLOCK)`, which is
-// variadic -- and variadic arguments are not passed like fixed ones on Apple
-// arm64, so declaring it here would be wrong on one of the two targets --
-// `send` has a fixed signature, and `MSG_DONTWAIT` makes one call
-// non-blocking without changing the socket.
-extern fn send[&f, &b](ffi: &f Ffi("libc"), fd: int, buf: &b [byte], flags: int) -> [ffi("libc")] int;
+import std.conns;
 
 fn max_connections() -> [] int {
     return 1024;
@@ -294,7 +277,7 @@ fn handle[&h, &r, &q, &t, &p, &b](heap: &!h Heap, router: &r route.Router, reque
 // One connection's bytes
 // ---------------------------------------------------------------------
 
-// How many of `wanted` bytes one `send` is handed: all of them, or `chunk` of
+// How many of `wanted` bytes one write is handed: all of them, or `chunk` of
 // them if there is a limit (`chunk` of 0 means none).
 fn quantum(wanted: int, chunk: int) -> [] int {
     if chunk > 0 && wanted > chunk {
@@ -307,21 +290,27 @@ fn quantum(wanted: int, chunk: int) -> [] int {
 // take.
 //
 // `pend[0..pending]` is what this connection already has waiting. If there is
-// none, the answer is offered to `send` straight away -- the common case, and
-// the whole of the fast path; if there is some, the new bytes must queue behind
-// it or the answers would arrive out of order. Whatever was not sent is
-// appended to `pend`. Answers the new `pending`, or -1 if the queue cannot hold
-// it, which is a client that is not reading and has asked for more than the
-// buffer: the caller closes it.
+// none, the answer is offered to the connection straight away -- the common
+// case, and the whole of the fast path; if there is some, the new bytes must
+// queue behind it or the answers would arrive out of order. Whatever was not
+// sent is appended to `pend`. Answers the new `pending`, or -1 if the queue
+// cannot hold it, which is a client that is not reading and has asked for more
+// than the buffer -- or a connection that has failed: the caller closes it.
 //
-// A `send` that fails is treated as "the kernel is full": the real error, if it
-// is one, arrives as `POLLERR` or `POLLHUP` and the connection is closed then.
-fn emit[&f, &d, &e](libc: &f Ffi("libc"), fd: int, mflag: int, chunk: int, data: &d [byte], pend: &!e [byte], pending: int) -> [ffi("libc")] int {
+// A connection that takes nothing (`Again`) is the kernel being full, which is
+// the one case this queue exists for.
+fn emit[&c, &d, &e](table: &!c conns.Table, slot: int, chunk: int, data: &d [byte], pend: &!e [byte], pending: int) -> [conn_write] int {
     var at = 0;
     if pending == 0 {
-        let n = send(libc, fd, data[0..quantum(len(data), chunk)], mflag);
-        if n > 0 {
-            at = n;
+        match conns.write(table, slot, data[0..quantum(len(data), chunk)]) {
+            Sent::Wrote(n) => {
+                at = n;
+            }
+            Sent::Again => {
+            }
+            Sent::Failed(e) => {
+                return 0 - 1;
+            }
         }
     }
     if at >= len(data) {
@@ -343,7 +332,7 @@ fn emit[&f, &d, &e](libc: &f Ffi("libc"), fd: int, mflag: int, chunk: int, data:
 //
 // The answer is the bytes consumed: the caller moves the rest (the start of a
 // request still arriving, or requests held back for now) to the front. `-1`
-// means the connection must close *now*; `st[4 * k + 3]` set means it closes
+// means the connection must close *now*; `st[6 * k + 3]` set means it closes
 // once its output has gone, which is what a refusal or `Connection: close`
 // asks for.
 //
@@ -352,7 +341,7 @@ fn emit[&f, &d, &e](libc: &f Ffi("libc"), fd: int, mflag: int, chunk: int, data:
 // taken from a connection that is not taking its answers), when a body has not
 // all arrived, and when a request could never fit the buffer, which is refused
 // now rather than waited on for ever.
-fn drain[&f, &h, &r, &d, &t, &p, &e, &s](libc: &f Ffi("libc"), heap: &!h Heap, router: &r route.Router, data: &!d [byte], filled: int, fd: int, mflag: int, chunk: int, table: &!t [int], params: &!p [int], pend: &!e [byte], st: &!s [int], k: int, out: buffer.Buffer) -> [ffi("libc"), heap] (buffer.Buffer, int) {
+fn drain[&c, &h, &r, &d, &t, &p, &e, &s](conn: &!c conns.Table, heap: &!h Heap, router: &r route.Router, data: &!d [byte], filled: int, chunk: int, table: &!t [int], params: &!p [int], pend: &!e [byte], st: &!s [int], k: int, out: buffer.Buffer) -> [conn_write, heap] (buffer.Buffer, int) {
     var o = out;
     var used = 0;
     var abandon = false;
@@ -396,17 +385,17 @@ fn drain[&f, &h, &r, &d, &t, &p, &e, &s](libc: &f Ffi("libc"), heap: &!h Heap, r
                 }
                 o = handle(heap, router, view, table, params, view[n..n + body_length], o);
                 borrow o as &ob in {
-                    st[4 * k + 2] = emit(libc, fd, mflag, chunk, buffer.bytes(ob), pend, st[4 * k + 2]);
+                    st[6 * k + 2] = emit(conn, k, chunk, buffer.bytes(ob), pend, st[6 * k + 2]);
                 }
-                if st[4 * k + 2] < 0 {
+                if st[6 * k + 2] < 0 {
                     abandon = true;
                 }
                 if !http.keeps_alive(table) {
-                    st[4 * k + 3] = 1;
+                    st[6 * k + 3] = 1;
                 }
                 used = used + n + body_length;
                 // Output left over, or the connection is ending: take no more.
-                if st[4 * k + 2] != 0 || st[4 * k + 3] != 0 {
+                if st[6 * k + 2] != 0 || st[6 * k + 3] != 0 {
                     going = false;
                 }
             }
@@ -417,12 +406,12 @@ fn drain[&f, &h, &r, &d, &t, &p, &e, &s](libc: &f Ffi("libc"), heap: &!h Heap, r
             }
             o = failure(heap, o, refuse, message, false);
             borrow o as &ob in {
-                st[4 * k + 2] = emit(libc, fd, mflag, chunk, buffer.bytes(ob), pend, st[4 * k + 2]);
+                st[6 * k + 2] = emit(conn, k, chunk, buffer.bytes(ob), pend, st[6 * k + 2]);
             }
-            if st[4 * k + 2] < 0 {
+            if st[6 * k + 2] < 0 {
                 abandon = true;
             }
-            st[4 * k + 3] = 1;
+            st[6 * k + 3] = 1;
             going = false;
         }
     }
@@ -436,138 +425,64 @@ fn drain[&f, &h, &r, &d, &t, &p, &e, &s](libc: &f Ffi("libc"), heap: &!h Heap, r
 // The loop
 // ---------------------------------------------------------------------
 
-// A poll record's `fd` and `events` (POLLIN, 1), written into slot `k`:
-// `struct pollfd` is a 4-byte int, then two 2-byte shorts, little-endian on
-// both targets.
-fn set_record[&p](polls: &!p [byte], k: int, fd: int) -> [] int {
-    polls[8 * k] = byte_of(fd & 255);
-    polls[8 * k + 1] = byte_of(fd >> 8 & 255);
-    polls[8 * k + 2] = byte_of(fd >> 16 & 255);
-    polls[8 * k + 3] = byte_of(fd >> 24 & 255);
-    polls[8 * k + 4] = byte_of(1);
-    polls[8 * k + 5] = byte_of(0);
-    polls[8 * k + 6] = byte_of(0);
-    polls[8 * k + 7] = byte_of(0);
-    return k;
-}
-
-// What to wait for on slot `k`: 1 (POLLIN) to read, 4 (POLLOUT) to send.
-fn set_events[&p](polls: &!p [byte], k: int, events: int) -> [] int {
-    polls[8 * k + 4] = byte_of(events);
-    return k;
-}
-
-// Slot `to` takes over slot `from`: the descriptor and what it waits for.
-fn move_record[&p](polls: &!p [byte], from: int, to: int) -> [] int {
-    var i = 0;
-    while i < 6 {
-        polls[8 * to + i] = polls[8 * from + i];
-        i = i + 1;
-    }
-    polls[8 * to + 6] = byte_of(0);
-    polls[8 * to + 7] = byte_of(0);
-    return to;
-}
-
-fn record_fd[&p](polls: &p [byte], k: int) -> [] int {
-    return int_of(polls[8 * k]) + int_of(polls[8 * k + 1]) * 256 + int_of(polls[8 * k + 2]) * 65536 + int_of(polls[8 * k + 3]) * 16777216;
-}
-
-// What poll found for slot `k`: nonzero if anything happened to it (data,
-// hang-up, error).
-fn record_events[&p](polls: &p [byte], k: int) -> [] int {
-    return int_of(polls[8 * k + 6]) + int_of(polls[8 * k + 7]) * 256;
-}
-
-// The listening socket: reusable, optionally shared (`reuse`), bound to every
-// address on `port`. `-1` if any step fails.
-//
-// Both operating systems' spellings of `SO_REUSEADDR` and `SO_REUSEPORT` are
-// tried, because the numbers differ between Linux (level 1; options 2 and 15)
-// and macOS (level 0xffff; options 4 and 0x200) and the wrong pair is refused
-// harmlessly by the kernel that does not know it.
-fn listener[&f](libc: &f Ffi("libc"), port: int, reuse: bool) -> [ffi("libc")] int {
-    let fd = sockets.socket(libc, 2, 1, 0);
-    if fd < 0 {
-        return 0 - 1;
-    }
-    var bound = fd;
-    region scratch {
-        let on = alloc_slice[scratch](4, byte_of(0));
-        on[0] = byte_of(1);
-        sockets.setsockopt(libc, fd, 1, 2, on);
-        sockets.setsockopt(libc, fd, 65535, 4, on);
-        if reuse {
-            sockets.setsockopt(libc, fd, 1, 15, on);
-            sockets.setsockopt(libc, fd, 65535, 512, on);
-        }
-        // `struct sockaddr_in`: AF_INET, the port big-endian, INADDR_ANY.
-        let addr = alloc_slice[scratch](16, byte_of(0));
-        addr[0] = byte_of(2);
-        addr[2] = byte_of(port / 256);
-        addr[3] = byte_of(port - port / 256 * 256);
-        if sockets.bind(libc, fd, addr) < 0 {
-            bound = 0 - 1;
-        } else if sockets.listen(libc, fd, 1024) < 0 {
-            bound = 0 - 1;
+// Take every connection waiting on the listener, up to the limit: each goes
+// in the table, is made non-blocking, and is watched for input under the token
+// `slot + 1` (the listener is token 0).
+fn accept_all[&h, &l, &p, &s](heap: &!h Heap, conn: conns.Table, listener: &!l Listener, poller: &!p Poller, st: &!s [int], now: int, limit: int) -> [heap, conn_accept, poll] conns.Table {
+    var table = conn;
+    var more = true;
+    while more {
+        match tcp_accept(listener) {
+            Accepted::Ok(c) => {
+                var held = 0;
+                borrow table as &tt in {
+                    held = conns.live(tt);
+                }
+                if held >= limit {
+                    conn_close(c);
+                } else {
+                    let (grown, slot) = conns.put(heap, table, c);
+                    table = grown;
+                    if slot >= 0 {
+                        st[6 * slot] = 0;
+                        st[6 * slot + 1] = now;
+                        st[6 * slot + 2] = 0;
+                        st[6 * slot + 3] = 0;
+                        st[6 * slot + 4] = 1;
+                        st[6 * slot + 5] = 1;
+                        borrow mut table as &!ct in {
+                            if conns.nonblocking(ct, slot) != 0 || conns.watch(ct, poller, slot, slot + 1, 1) != 0 {
+                                conns.close(ct, slot);
+                                st[6 * slot + 4] = 0;
+                            }
+                        }
+                    }
+                }
+            }
+            Accepted::Again => {
+                more = false;
+            }
+            Accepted::Failed(e) => {
+                more = false;
+            }
         }
     }
-    if bound < 0 {
-        sockets.close(libc, fd);
-    }
-    return bound;
-}
-
-// A send timeout of one millisecond on `fd`, in both operating systems'
-// spellings (Linux: level 1, option 21; macOS: level 0xffff, option 0x1005),
-// the wrong one being refused harmlessly. `struct timeval` is 16 bytes on both
-// (seconds, then microseconds), so one buffer serves.
-//
-// **This is what keeps a `send` from waiting on macOS**, which does not honour
-// `MSG_DONTWAIT` on a blocking socket: with a timeout, a `send` into a full
-// buffer returns after at most a millisecond, with what it managed or `EAGAIN`,
-// which the output buffer already handles. On Linux `MSG_DONTWAIT` returns at
-// once and the timeout is never reached.
-fn set_send_timeout[&f](libc: &f Ffi("libc"), fd: int) -> [ffi("libc")] int {
-    region scratch {
-        let value = alloc_slice[scratch](16, byte_of(0));
-        value[8] = byte_of(232);
-        value[9] = byte_of(3);
-        sockets.setsockopt(libc, fd, 1, 21, value);
-        sockets.setsockopt(libc, fd, 65535, 4101, value);
-    }
-    return fd;
-}
-
-// Whether this is Linux rather than macOS, found by asking: `SO_REUSEADDR` is
-// level 1, option 2 there and means something else (or nothing) here. It picks
-// `MSG_DONTWAIT`, which is 0x40 on Linux and 0x80 on macOS.
-fn is_linux[&f](libc: &f Ffi("libc")) -> [ffi("libc")] bool {
-    let fd = sockets.socket(libc, 2, 1, 0);
-    var linux = false;
-    if fd >= 0 {
-        region scratch {
-            let on = alloc_slice[scratch](4, byte_of(0));
-            on[0] = byte_of(1);
-            linux = sockets.setsockopt(libc, fd, 1, 2, on) == 0;
-        }
-        sockets.close(libc, fd);
-    }
-    return linux;
+    return table;
 }
 
 // Serve until killed. `idle` is how many seconds a connection may go without
 // progress -- a byte read, a byte sent -- before it is closed.
 //
-// Per connection `k`, `st[4k..4k+4]` is: bytes of input buffered, the time of
-// its last progress, bytes of output waiting, and 1 if it is to close once that
-// output has gone.
-fn serve[&f, &h, &r](libc: &f Ffi("libc"), heap: &!h Heap, router: &r route.Router, lfd: int, idle: int, chunk: int, mflag: int) -> [ffi("libc"), heap] int {
+// Per connection `k` (a slot in the connection table), `st[6k..6k+6]` is:
+// bytes of input buffered, the time of its last progress, bytes of output
+// waiting, 1 if it is to close once that output has gone, 1 if the slot is in
+// use, and what it is watched for (1 to read, 2 to write).
+fn serve_on[&h, &r, &k, &l, &p](heap: &!h Heap, router: &r route.Router, clock: &k Clock, listener: &!l Listener, poller: &!p Poller, idle: int, chunk: int) -> [heap, conn_accept, conn_read, conn_write, poll, clock] int {
     let limit = max_connections();
     let size = buffer_size();
     let osize = output_size();
-    let polls = box_slice(heap, 8 * (limit + 1), byte_of(0));
-    let state = box_slice(heap, 4 * limit, 0);
+    let events = box_slice(heap, 128, 0);
+    let state = box_slice(heap, 6 * limit, 0);
     let bufs = box_slice(heap, limit * size, byte_of(0));
     let pends = box_slice(heap, limit * osize, byte_of(0));
     let table = box_slice(heap, http.slots(64), 0);
@@ -577,139 +492,143 @@ fn serve[&f, &h, &r](libc: &f Ffi("libc"), heap: &!h Heap, router: &r route.Rout
     }
     let params = box_slice(heap, 2 * widest, 0);
     var out = buffer.empty(heap, 4096);
+    var tab = conns.empty(heap, 64);
+    poller_add_listener(poller, listener, 0);
 
-    borrow mut polls as &!pw in {
+    borrow mut events as &!ew in {
         borrow mut state as &!sw in {
             borrow mut bufs as &!bw in {
                 borrow mut pends as &!ow in {
                     borrow mut table as &!tw in {
                         borrow mut params as &!qw in {
-                            let pl = contents(pw);
+                            let ev = contents(ew);
                             let st = contents(sw);
                             let bf = contents(bw);
                             let pd = contents(ow);
                             let tb = contents(tw);
                             let pr = contents(qw);
-                            set_record(pl, 0, lfd);
-                            var n = 0;
+                            var last_sweep = 0;
                             while true {
-                                let ready = poll(libc, pl[0..n + 1], 1000);
-                                let now = time(libc, 0);
+                                let ready = poller_wait(poller, ev, 1000);
+                                let now = clock_ms(clock) / 1000;
                                 if ready >= 0 {
-                                    // A new connection, if the listener woke.
-                                    if record_events(pl, 0) != 0 {
-                                        let c = sockets.accept(libc, lfd, 0, 0);
-                                        if c >= 0 {
-                                            if n >= limit {
-                                                sockets.close(libc, c);
-                                            } else {
-                                                set_send_timeout(libc, c);
-                                                set_record(pl, n + 1, c);
-                                                st[4 * n] = 0;
-                                                st[4 * n + 1] = now;
-                                                st[4 * n + 2] = 0;
-                                                st[4 * n + 3] = 0;
-                                                n = n + 1;
-                                            }
+                                    // New connections first, while the table is
+                                    // ours to grow.
+                                    var j = 0;
+                                    while j < ready {
+                                        if ev[2 * j] == 0 {
+                                            tab = accept_all(heap, tab, listener, poller, st, now, limit);
                                         }
+                                        j = j + 1;
                                     }
-                                    // The connections, last first, so that closing one
-                                    // (which moves the last into its place) only ever
-                                    // moves one already looked at.
-                                    var k = n - 1;
-                                    while k >= 0 {
-                                        let cfd = record_fd(pl, k + 1);
-                                        let base = k * size;
-                                        let obase = k * osize;
-                                        var drop = false;
-                                        // Is there input to answer: just read, or held back
-                                        // while the last answer was being sent?
-                                        var answer = false;
-                                        if record_events(pl, k + 1) != 0 {
-                                            if st[4 * k + 2] > 0 {
-                                                // Waiting to send: the kernel can take more.
-                                                let sent = send(libc, cfd, pd[obase..obase + quantum(st[4 * k + 2], chunk)], mflag);
-                                                if sent <= 0 {
-                                                    drop = true;
-                                                } else {
-                                                    st[4 * k + 1] = now;
-                                                    var at = 0;
-                                                    while at < st[4 * k + 2] - sent {
-                                                        pd[obase + at] = pd[obase + sent + at];
-                                                        at = at + 1;
-                                                    }
-                                                    st[4 * k + 2] = st[4 * k + 2] - sent;
-                                                    if st[4 * k + 2] == 0 {
-                                                        if st[4 * k + 3] == 1 {
+                                    borrow mut tab as &!ct in {
+                                        // The connections that woke.
+                                        j = 0;
+                                        while j < ready {
+                                            let token = ev[2 * j];
+                                            let k = token - 1;
+                                            if token > 0 && st[6 * k + 4] == 1 {
+                                                let base = k * size;
+                                                let obase = k * osize;
+                                                var drop = false;
+                                                // Is there input to answer: just read, or held back
+                                                // while the last answer was being sent?
+                                                var answer = false;
+                                                if st[6 * k + 2] > 0 {
+                                                    // Waiting to send: the kernel can take more.
+                                                    match conns.write(ct, k, pd[obase..obase + quantum(st[6 * k + 2], chunk)]) {
+                                                        Sent::Wrote(sent) => {
+                                                            st[6 * k + 1] = now;
+                                                            var at = 0;
+                                                            while at < st[6 * k + 2] - sent {
+                                                                pd[obase + at] = pd[obase + sent + at];
+                                                                at = at + 1;
+                                                            }
+                                                            st[6 * k + 2] = st[6 * k + 2] - sent;
+                                                            if st[6 * k + 2] == 0 {
+                                                                if st[6 * k + 3] == 1 {
+                                                                    drop = true;
+                                                                } else {
+                                                                    answer = st[6 * k] > 0;
+                                                                }
+                                                            }
+                                                        }
+                                                        Sent::Again => {
+                                                        }
+                                                        Sent::Failed(e) => {
                                                             drop = true;
-                                                        } else {
-                                                            answer = st[4 * k] > 0;
+                                                        }
+                                                    }
+                                                } else {
+                                                    match conns.read(ct, k, bf[base + st[6 * k]..base + size]) {
+                                                        Received::Data(got) => {
+                                                            st[6 * k] = st[6 * k] + got;
+                                                            st[6 * k + 1] = now;
+                                                            answer = true;
+                                                        }
+                                                        Received::End => {
+                                                            drop = true;
+                                                        }
+                                                        Received::Again => {
+                                                        }
+                                                        Received::Failed(e) => {
+                                                            drop = true;
                                                         }
                                                     }
                                                 }
-                                            } else {
-                                                let got = sockets.read(libc, cfd, bf[base + st[4 * k]..base + size]);
-                                                if got <= 0 {
-                                                    drop = true;
-                                                } else {
-                                                    st[4 * k] = st[4 * k] + got;
-                                                    st[4 * k + 1] = now;
-                                                    answer = true;
-                                                }
-                                            }
-                                        } else if now - st[4 * k + 1] > idle {
-                                            drop = true;
-                                        }
-                                        if answer && !drop {
-                                            let (grown, used) = drain(libc, heap, router, bf[base..base + size], st[4 * k], cfd, mflag, chunk, tb, pr, pd[obase..obase + osize], st, k, out);
-                                            out = grown;
-                                            if used < 0 {
-                                                drop = true;
-                                            } else {
-                                                if used > 0 {
-                                                    // Whatever is left is the start of the next
-                                                    // request, or a request held back: move it to
-                                                    // the front.
-                                                    var at = 0;
-                                                    while at < st[4 * k] - used {
-                                                        bf[base + at] = bf[base + used + at];
-                                                        at = at + 1;
+                                                if answer && !drop {
+                                                    let (grown, used) = drain(ct, heap, router, bf[base..base + size], st[6 * k], chunk, tb, pr, pd[obase..obase + osize], st, k, out);
+                                                    out = grown;
+                                                    if used < 0 {
+                                                        drop = true;
+                                                    } else {
+                                                        if used > 0 {
+                                                            // Whatever is left is the start of the next
+                                                            // request, or a request held back: move it to
+                                                            // the front.
+                                                            var at = 0;
+                                                            while at < st[6 * k] - used {
+                                                                bf[base + at] = bf[base + used + at];
+                                                                at = at + 1;
+                                                            }
+                                                            st[6 * k] = st[6 * k] - used;
+                                                        }
+                                                        if st[6 * k + 3] == 1 && st[6 * k + 2] == 0 {
+                                                            drop = true;
+                                                        }
                                                     }
-                                                    st[4 * k] = st[4 * k] - used;
                                                 }
-                                                if st[4 * k + 3] == 1 && st[4 * k + 2] == 0 {
-                                                    drop = true;
+                                                if drop {
+                                                    conns.close(ct, k);
+                                                    st[6 * k + 4] = 0;
+                                                } else {
+                                                    // Output waiting: wait for room, and read no
+                                                    // more. Otherwise wait for input.
+                                                    var want = 1;
+                                                    if st[6 * k + 2] > 0 {
+                                                        want = 2;
+                                                    }
+                                                    if want != st[6 * k + 5] {
+                                                        conns.rewatch(ct, poller, k, token, want);
+                                                        st[6 * k + 5] = want;
+                                                    }
                                                 }
                                             }
+                                            j = j + 1;
                                         }
-                                        if drop {
-                                            sockets.close(libc, cfd);
-                                            let last = n - 1;
-                                            if k != last {
-                                                var at = 0;
-                                                while at < st[4 * last] {
-                                                    bf[base + at] = bf[last * size + at];
-                                                    at = at + 1;
+                                        // Once a second: close the connections that have
+                                        // gone quiet.
+                                        if now != last_sweep {
+                                            last_sweep = now;
+                                            var s = 0;
+                                            while s < conns.slots(ct) {
+                                                if st[6 * s + 4] == 1 && now - st[6 * s + 1] > idle {
+                                                    conns.close(ct, s);
+                                                    st[6 * s + 4] = 0;
                                                 }
-                                                at = 0;
-                                                while at < st[4 * last + 2] {
-                                                    pd[obase + at] = pd[last * osize + at];
-                                                    at = at + 1;
-                                                }
-                                                st[4 * k] = st[4 * last];
-                                                st[4 * k + 1] = st[4 * last + 1];
-                                                st[4 * k + 2] = st[4 * last + 2];
-                                                st[4 * k + 3] = st[4 * last + 3];
-                                                move_record(pl, last + 1, k + 1);
+                                                s = s + 1;
                                             }
-                                            n = last;
-                                        } else if st[4 * k + 2] > 0 {
-                                            // Output is waiting: wait for room, and read no more.
-                                            set_events(pl, k + 1, 4);
-                                        } else {
-                                            set_events(pl, k + 1, 1);
                                         }
-                                        k = k - 1;
                                     }
                                 }
                             }
@@ -719,25 +638,45 @@ fn serve[&f, &h, &r](libc: &f Ffi("libc"), heap: &!h Heap, router: &r route.Rout
             }
         }
     }
+    conns.drop(heap, tab);
     buffer.drop(heap, out);
     unbox_slice(heap, params);
     unbox_slice(heap, table);
     unbox_slice(heap, pends);
     unbox_slice(heap, bufs);
     unbox_slice(heap, state);
-    unbox_slice(heap, polls);
+    unbox_slice(heap, events);
     return 0;
 }
 
+// The `Poller` the loop waits on, for as long as it runs.
+fn serve[&h, &r, &k, &l](heap: &!h Heap, router: &r route.Router, clock: &k Clock, listener: &!l Listener, idle: int, chunk: int) -> [heap, conn_accept, conn_read, conn_write, poll, clock] int {
+    match poller_new() {
+        Polling::Ok(p) => {
+            var poller = p;
+            var status = 1;
+            borrow mut poller as &!pw in {
+                status = serve_on(heap, router, clock, listener, pw, idle, chunk);
+            }
+            poller_close(poller);
+            return status;
+        }
+        Polling::Failed(e) => {
+            return 4;
+        }
+    }
+}
+
 fn main(world: World) -> [] int {
-    let Split { io, ffi, fs, heap, args } = split(world);
-    // A server: no files. It keeps the console for one line and the heap for
-    // its tables, and the one foreign library it needs.
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    // A server: no files and no foreign code. It keeps the console for one
+    // line, the heap for its tables, the network for its port, and the clock
+    // for its idle timeout.
     release(fs);
-    let libc = narrow(ffi, "libc");
+    release(ffi);
 
     var port = 0 - 1;
-    var reuse = false;
+    var reuse = 0;
     var idle = 9;
     var chunk = 0;
     borrow args as &g in {
@@ -745,7 +684,9 @@ fn main(world: World) -> [] int {
             port = number_of(arg(g, 1));
         }
         if arg_count(g) > 2 {
-            reuse = len(arg(g, 2)) > 0 && (int_of(arg(g, 2)[0]) == '1' || int_of(arg(g, 2)[0]) == 'r');
+            if len(arg(g, 2)) > 0 && (int_of(arg(g, 2)[0]) == '1' || int_of(arg(g, 2)[0]) == 'r') {
+                reuse = 1;
+            }
         }
         if arg_count(g) > 3 {
             idle = number_of(arg(g, 3));
@@ -758,41 +699,46 @@ fn main(world: World) -> [] int {
     var status = 2;
     if port > 0 && port < 65536 && idle > 0 && chunk >= 0 {
         status = 3;
-        borrow libc as &f in {
-            signal(f, 13, 1);
-            // `MSG_DONTWAIT`: 0x40 on Linux, 0x80 on macOS, where 0x40 is
-            // `MSG_WAITALL` and would make every send block.
-            var mflag = 128;
-            if is_linux(f) {
-                mflag = 64;
-            }
-            let lfd = listener(f, port, reuse);
-            if lfd >= 0 {
-                borrow mut heap as &!h in {
-                    let router = routes(h);
-                    borrow mut io as &!i in {
-                        // On the unbuffered stream: standard output, piped,
-                        // is held until the process ends, and a server that
-                        // announces itself only then has not announced itself.
-                        var line = buffer.append(h, buffer.empty(h, 64), "listening on ");
-                        line = buffer.push_nat(h, line, port);
-                        line = buffer.append(h, line, " send-flag ");
-                        line = buffer.push_nat(h, line, mflag);
-                        line = buffer.push(h, line, byte_of(10));
-                        borrow line as &lb in {
-                            io.error_all(i, buffer.bytes(lb));
+        // `Net` is not narrowed: the port is an argument, so which one is not
+        // known until the program runs, and the authority report says so
+        // (`net_in` with no port named) rather than pretending otherwise.
+        borrow net as &nn in {
+            match tcp_listen(nn, port, 1024, reuse) {
+                Listening::Ok(l) => {
+                    var listener = l;
+                    borrow mut listener as &!lh in {
+                        listener_nonblocking(lh);
+                        borrow mut heap as &!h in {
+                            let router = routes(h);
+                            borrow mut io as &!i in {
+                                // On the unbuffered stream: standard output, piped,
+                                // is held until the process ends, and a server that
+                                // announces itself only then has not announced itself.
+                                var line = buffer.append(h, buffer.empty(h, 64), "listening on ");
+                                line = buffer.push_nat(h, line, port);
+                                line = buffer.push(h, line, byte_of(10));
+                                borrow line as &lb in {
+                                    io.error_all(i, buffer.bytes(lb));
+                                }
+                                buffer.drop(h, line);
+                            }
+                            borrow router as &r in {
+                                borrow clock as &c in {
+                                    status = serve(h, r, c, lh, idle, chunk);
+                                }
+                            }
+                            route.drop(h, router);
                         }
-                        buffer.drop(h, line);
                     }
-                    borrow router as &r in {
-                        status = serve(f, h, r, lfd, idle, chunk, mflag);
-                    }
-                    route.drop(h, router);
+                    listener_close(listener);
+                }
+                Listening::Failed(e) => {
                 }
             }
         }
     }
-    release(libc);
+    release(net);
+    release(clock);
     release(args);
     release(io);
     release(heap);
