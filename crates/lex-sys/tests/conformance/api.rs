@@ -586,3 +586,48 @@ fn the_server_picks_this_systems_dont_wait_flag() {
     let want = if cfg!(target_os = "macos") { 128 } else { 64 };
     assert_eq!(line.trim(), format!("listening on {port} send-flag {want}"));
 }
+
+#[test]
+fn msg_dontwait_makes_send_return_instead_of_blocking() {
+    // The server depends on this: a `send` with `MSG_DONTWAIT` on a *blocking*
+    // socket whose peer is not reading must return (partial, or EAGAIN) rather
+    // than wait for room. It is a property of the operating system, so it is
+    // checked here directly, with nothing of ours in the way, and the failure
+    // says which system declined to give it.
+    use std::os::fd::AsRawFd;
+    unsafe extern "C" {
+        fn send(fd: i32, buf: *const u8, len: usize, flags: i32) -> isize;
+    }
+    // 0x40 on Linux; 0x80 on macOS and the BSDs.
+    let flag = if cfg!(target_os = "linux") { 0x40 } else { 0x80 };
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let writer = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let (_reader, _) = listener.accept().unwrap();
+    let fd = writer.as_raw_fd();
+    let (done, finished) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let chunk = vec![7u8; 65536];
+        let mut total = 0usize;
+        // Until the kernel refuses; a call that never returns is the failure.
+        loop {
+            // SAFETY: `chunk` is live for the call and the length is its own.
+            let n = unsafe { send(fd, chunk.as_ptr(), chunk.len(), flag) };
+            if n < 0 {
+                break;
+            }
+            total += n as usize;
+            if total > 1 << 30 {
+                break;
+            }
+        }
+        let _ = done.send(total);
+    });
+    match finished.recv_timeout(Duration::from_secs(5)) {
+        Ok(total) => assert!(total > 0, "the first send queued nothing"),
+        Err(_) => panic!(
+            "send(MSG_DONTWAIT = {flag:#x}) blocked on a blocking socket whose peer was not reading; this system does not honour it"
+        ),
+    }
+    drop(writer);
+}
