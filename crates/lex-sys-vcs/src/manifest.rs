@@ -40,6 +40,14 @@ pub struct ManifestEntry {
     /// store-wide format (this file's own opening comment), so it carries
     /// no hash-stability obligation to stay additive.
     pub source_hash: String,
+    /// The source `import`s `std.*`, so a consumer must build it with
+    /// `--std` (`docs/package-system.md` §7). Informational: `resolve`
+    /// and `fetch` re-derive it from the source they verify, never from
+    /// this flag, so a hand-edited manifest cannot make a package look
+    /// std-free. `#[serde(default)]` keeps a manifest written before the
+    /// field readable.
+    #[serde(default)]
+    pub uses_std: bool,
 }
 
 /// `SigId -> ManifestEntry`, one working copy's own record of what it has

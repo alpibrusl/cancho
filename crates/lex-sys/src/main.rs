@@ -46,7 +46,7 @@ usage:
     lex-sys agent-guidelines
     lex-sys introspect [--output json]
     lex-sys skill [--output json] [<out-file>]
-    lex-sys vcs publish [--store <dir>] [--requires <lock>:<dep-store>]... <file.ls>
+    lex-sys vcs publish [--store <dir>] [--std] [--requires <lock>:<dep-store>]... <file.ls>
     lex-sys vcs log     [--store <dir>]
     lex-sys vcs resolve [--lock <file>] <store-dir>
     lex-sys vcs lock --store <dir> -o <file> <name>...
@@ -137,6 +137,10 @@ any dependency), but the file must still type-check with that
 dependency's source in scope, and the pin is recorded so a later `vcs
 resolve`/`vcs fetch` finds it without the consumer needing to know it
 exists. See docs/vcs-publish.md and docs/package-system.md §4.6.
+`--std` lets the package import the bundled library; a publish that
+imports `std` (itself or through a `--requires` package) without it is
+refused. `resolve` and `fetch` need no flag, and `fetch` notes when the
+consumer must `build --std` (docs/package-system.md §4.8).
 
 `vcs resolve <store-dir>` never trusts that store's own manifest: it
 re-parses and re-typechecks the source behind every pin under today's

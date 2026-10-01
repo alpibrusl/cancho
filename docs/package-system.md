@@ -111,7 +111,8 @@
 > just a `lex-sys-vcs` store, indifferent to whether what it publishes
 > declares against libc or is ordinary Lex with a body. §6 has the
 > detail, including the one real publish-time constraint it found
-> (`--std` is never available to `vcs publish`) and why the JSON
+> (`--std` was not available to `vcs publish` -- corrected: §4.8
+> built it) and why the JSON
 > escaper on the encoding side of the same wire protocol stays
 > unextracted.
 >
@@ -523,6 +524,55 @@ written unless every pin verifies. This is the `DepLocator`-shaped
 already a valid resolution target, because §6 found that `import` needs
 no new mechanism to consume one.
 
+### 4.8 A package that imports `std`
+
+**Built.** Until this, `vcs publish` parsed its input alone, so a
+package could not `import std.math`: the import resolved against
+nothing and the publish was refused. Every package so far worked around
+it by re-declaring the few functions it needed (`net.sockets`'s
+`put`/`put_nat`), which is the duplication `std` exists to end.
+
+- **`vcs publish --std`** merges the bundled library (the same bytes
+  `build --std` uses) into the publish's own parse, lowering, identity
+  computation and soundness gate. It is a flag, not automatic: a
+  publish that imports `std` without it, directly *or through a
+  `--requires` package*, is refused and the refusal names the flag.
+  `--std` is the same consent `build` asks for, and a package quietly
+  widening its own dependencies would be one a consumer cannot read off
+  its command line.
+- **Attribution is by `(module, name)`.** `FunctionId` gained a dotted
+  `module` (not part of either hash -- a hash never mentions a module).
+  With `std` merged in, a package's `abs` and `std.math`'s `abs` are two
+  functions; attributing by name alone published the library's under the
+  package's store (measured by mutation: the own-functions test fails
+  with the name-only rule). Effects are looked up the same way.
+- **`resolve`, `lock` and `fetch` need nothing from the user.**
+  `verify_selected` brings the library in whenever the blob it is
+  checking, or anything in its `requires/` closure, imports `std`. That
+  is read off the parsed imports, never off `ManifestEntry.uses_std`:
+  the flag is informational (it marks `vcs log` rows and is
+  `#[serde(default)]`, so older manifests still load), and a test
+  forges it to `false` and shows `resolve` still verifies against the
+  library.
+- **`fetch` does not write `std` into the output directory.** The
+  library belongs to the compiler, not to the package; `fetch` prints a
+  note that the consumer must build with `--std`, and a consumer built
+  without it is refused rather than compiled against a library that is
+  not there.
+
+**No pin on `std` itself.** The store records no hash of the library it
+was published against. A package function's body hash includes the
+*signature* hash of each callee it resolved (`identify`), so a std
+function whose signature changed moves the dependent's body hash and
+`resolve` reports "body moved" -- loudly, as it does for any drift. A
+std function whose body changed but whose signature did not leaves the
+package's identity alone, which is the right answer: the consumer gets
+the library its own compiler carries. That follows from how `identify`
+treats callees; it is not separately tested here, because `std` cannot
+be varied under a test. If the library ever needs to be pinned
+(reproducibility across compiler versions), the place is a `std`
+identity in the store's `requires/` metadata, not a manifest flag.
+
 ## 5. What this does not solve
 
 - **Editions across a dependency boundary.** `editions.md` solved "a
@@ -637,8 +687,9 @@ about publishing and fetching a package works the same whether its
 declarations are `extern fn` against libc or ordinary `fn` with a body:
 `vcs publish` type-checks and hashes either kind identically, and the
 one real constraint this slice found -- `vcs publish` never makes
-`--std` available (`cmd_publish` parses with `with_std: false`
-unconditionally, unlike `build`/`check`) -- was already true for
+`--std` available (`cmd_publish` parsed with `with_std: false`
+unconditionally, unlike `build`/`check`; **no longer true** -- §4.8) --
+was already true for
 `net.sockets`'s own `put`/`put_nat`, which is why neither package
 imports anything from `std`. The escaper on the other side of this same
 wire protocol (`append_json_escaped` in `vsock.ls`, `put_escaped` in
