@@ -458,6 +458,14 @@ fn a_misused_router_or_response_traps_instead_of_going_on() {
             "out = http.respond_head(heap, out, 200, \"text/plain\\r\\nSet-Cookie: x=1\", 0, true);",
         ),
         ("status-out-of-range", "out = http.respond_head(heap, out, 42, \"text/plain\", 0, true);"),
+        // A bodiless response is `204` or `304` only: any other status with no
+        // length leaves a keep-alive client with no end to find.
+        ("no-content-200", "out = http.respond_no_content(heap, out, 200, true, \"\");"),
+        ("no-content-404", "out = http.respond_no_content(heap, out, 404, true, \"\");"),
+        (
+            "no-content-extra-injection",
+            "out = http.respond_no_content(heap, out, 204, true, \"X: a\\nSet-Cookie: b\\r\\n\");",
+        ),
         (
             "negative-length",
             "out = http.respond_head(heap, out, 200, \"text/plain\", 0 - 1, true);",

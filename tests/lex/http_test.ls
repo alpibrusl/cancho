@@ -336,3 +336,22 @@ fn test_every_chunked_refusal_has_its_code[&h](heap: &!h Heap) -> [heap] int {
     unbox_slice(heap, scratch);
     return 0;
 }
+
+// `204` and `304` have no body, so no `Content-Length` and no `Content-Type`.
+fn test_a_response_with_no_body[&h](heap: &!h Heap) -> [heap] int {
+    var out = buffer.empty(heap, 16);
+    out = http.respond_no_content(heap, out, 204, true, "");
+    borrow out as &b in {
+        let want = "HTTP/1.1 204 No Content\r\nConnection: keep-alive\r\n\r\n";
+        test.assert(bytes.equal(buffer.bytes(b), want));
+    }
+    buffer.drop(heap, out);
+    var cached = buffer.empty(heap, 16);
+    cached = http.respond_no_content(heap, cached, 304, false, "ETag: \"v1\"\r\n");
+    borrow cached as &b in {
+        let want = "HTTP/1.1 304 Not Modified\r\nConnection: close\r\nETag: \"v1\"\r\n\r\n";
+        test.assert(bytes.equal(buffer.bytes(b), want));
+    }
+    buffer.drop(heap, cached);
+    return 0;
+}

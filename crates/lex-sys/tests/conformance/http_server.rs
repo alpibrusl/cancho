@@ -110,3 +110,42 @@ fn the_checked_in_store_still_resolves_and_holds_this_source() {
         "packages/http-server/server.ls is not what the store published; re-run `vcs publish --std`"
     );
 }
+
+#[test]
+fn replies_of_any_type_and_bodiless_ones_keep_the_connection_framed() {
+    // `reply_as` writes the content type it is given; `reply_empty` writes a `204`
+    // with no `Content-Length` and no `Content-Type` (RFC 9110 §15.3.5), so the
+    // client must find the end of it at the blank line. Between two ordinary
+    // answers on one keep-alive connection, a wrong frame would shift every
+    // answer after it.
+    let (dir, exe) = one_per_round("hs-reply-kinds");
+    let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let mut child = Command::new(&exe)
+        .arg(port.to_string())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("the compiled server runs");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut s = loop {
+        match TcpStream::connect(("127.0.0.1", port)) {
+            Ok(s) => break s,
+            Err(e) => {
+                assert!(Instant::now() < deadline, "never listened: {e}");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    };
+    s.set_read_timeout(Some(Duration::from_millis(500))).unwrap();
+    let get = |p: &str| format!("GET {p} HTTP/1.1\r\nHost: t\r\n\r\n");
+    s.write_all(format!("{}{}{}{}", get("/a"), get("/empty"), get("/typed"), get("/b")).as_bytes())
+        .unwrap();
+    let want = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\n/a\
+                HTTP/1.1 204 No Content\r\nConnection: keep-alive\r\n\r\n\
+                HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 2\r\nConnection: keep-alive\r\nX-Test: 1\r\n\r\nhi\
+                HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\n/b";
+    assert_eq!(read_until(&mut s, want.len()), want);
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&dir);
+}

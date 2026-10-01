@@ -388,6 +388,17 @@ fn a_misused_writer_traps_instead_of_writing_bad_json() {
             "unfinished",
             "w = json.begin_array(heap, w); let kept = json.finish(w); buffer.drop(heap, kept); w = json.writer(heap, 4);",
         ),
+        // `put_fragment` checks what it splices: a fragment that is not exactly one
+        // value would make the whole document invalid from a distance.
+        ("fragment-empty", "w = json.put_fragment(heap, w, \"\");"),
+        ("fragment-whitespace-only", "w = json.put_fragment(heap, w, \"  \");"),
+        ("fragment-two-values", "w = json.put_fragment(heap, w, \"1 2\");"),
+        ("fragment-trailing-comma", "w = json.put_fragment(heap, w, \"[1,]\");"),
+        ("fragment-unterminated", "w = json.put_fragment(heap, w, \"{\\\"a\\\":\");"),
+        (
+            "fragment-keyless-in-object",
+            "w = json.begin_object(heap, w); w = json.put_fragment(heap, w, \"1\");",
+        ),
     ] {
         let dir = scratch(&format!("json-misuse-{tag}"));
         let source = dir.join("misuse.ls");

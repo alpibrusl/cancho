@@ -543,6 +543,32 @@ pub fn header_value[&s, &t](src: &s [byte], table: &t [int], i: int) -> [] &s [b
     return src[table[16 + 4 * i + 2]..table[16 + 4 * i + 3]];
 }
 
+// The head of a response that has no body at all: `204 No Content` and `304
+// Not Modified`. Neither may carry a `Content-Length` (RFC 9110 §8.6, §15.3.5)
+// or has any use for a `Content-Type`, which `respond_head` always writes, so
+// they need their own: the status line, `Connection`, whatever `extra` lines
+// are given (`ETag: ...`, `Location: ...`), and the blank line.
+//
+// Traps on any other status -- a `200` with no length on a keep-alive
+// connection has no end the client can find -- and on a bad `extra`, as
+// `respond_head_with` does.
+pub fn respond_no_content[&h, &e](heap: &!h Heap, out: buffer.Buffer, status: int, keep_alive: bool, extra: &e [byte]) -> [heap] buffer.Buffer {
+    if status != 204 && status != 304 || !valid_extra(extra) {
+        trap();
+    }
+    var b = buffer.append(heap, out, "HTTP/1.1 ");
+    b = buffer.push_nat(heap, b, status);
+    b = buffer.push(heap, b, byte_of(32));
+    b = buffer.append(heap, b, reason(status));
+    if keep_alive {
+        b = buffer.append(heap, b, "\r\nConnection: keep-alive\r\n");
+    } else {
+        b = buffer.append(heap, b, "\r\nConnection: close\r\n");
+    }
+    b = buffer.append(heap, b, extra);
+    return buffer.append(heap, b, "\r\n");
+}
+
 // The index of the first header named `name` (compared ignoring ASCII
 // case; `name` is written lowercase), or -1.
 pub fn find_header[&s, &t, &n](src: &s [byte], table: &t [int], name: &n [byte]) -> [] int {

@@ -255,3 +255,70 @@ fn math_scale(i: int) -> [] float {
     }
     return scale;
 }
+
+// A fragment goes where a value goes: after a key, between array elements,
+// as a whole document -- and the writer supplies the commas and colons.
+fn test_put_fragment_is_a_value_like_any_other[&h](heap: &!h Heap) -> [heap] int {
+    var w = json.writer(heap, 16);
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "user");
+    w = json.put_fragment(heap, w, "{\"id\":1,\"tags\":[\"a\",\"b\"]}");
+    w = json.put_key(heap, w, "items");
+    w = json.begin_array(heap, w);
+    w = json.put_fragment(heap, w, "1");
+    w = json.put_int(heap, w, 2);
+    w = json.put_fragment(heap, w, "[3, 4]");
+    w = json.put_fragment(heap, w, "null");
+    w = json.end_array(heap, w);
+    w = json.put_key(heap, w, "last");
+    w = json.put_fragment(heap, w, "\"s\"");
+    w = json.end_object(heap, w);
+    borrow w as &wr in {
+        let want = "{\"user\":{\"id\":1,\"tags\":[\"a\",\"b\"]},\"items\":[1,2,[3, 4],null],\"last\":\"s\"}";
+        test.assert(bytes.equal(json.bytes(wr), want));
+    }
+    json.drop(heap, w);
+    return 0;
+}
+
+fn test_a_fragment_may_be_the_whole_document_and_may_have_whitespace_around_it[&h](heap: &!h Heap) -> [heap] int {
+    var w = json.writer(heap, 16);
+    w = json.put_fragment(heap, w, "  {\"a\": 1}\n");
+    borrow w as &wr in {
+        test.assert(bytes.equal(json.bytes(wr), "  {\"a\": 1}\n"));
+    }
+    json.drop(heap, w);
+    return 0;
+}
+
+// What is spliced in reads back: the document the writer made parses, and the
+// fragment is in it unchanged.
+fn test_a_document_with_fragments_reads_back[&h](heap: &!h Heap) -> [heap] int {
+    var inner = json.writer(heap, 16);
+    inner = json.begin_object(heap, inner);
+    inner = json.put_key(heap, inner, "n");
+    inner = json.put_int(heap, inner, 42);
+    inner = json.end_object(heap, inner);
+    let kept = json.finish(inner);
+    var w = json.writer(heap, 16);
+    w = json.begin_array(heap, w);
+    borrow kept as &kr in {
+        w = json.put_fragment(heap, w, buffer.bytes(kr));
+        w = json.put_fragment(heap, w, buffer.bytes(kr));
+    }
+    w = json.end_array(heap, w);
+    buffer.drop(heap, kept);
+    borrow w as &wr in {
+        let doc = json.bytes(wr);
+        let tape = box_slice(heap, json.tape_len(doc), 0);
+        borrow mut tape as &!tw in {
+            let t = contents(tw);
+            test.assert(json.parse(doc, t) > 0);
+            test.assert_eq(json.count(t, 0), 2);
+            test.assert_eq(json.to_int(doc, t, json.get(doc, t, json.at(t, 0, 1), "n")), 42);
+        }
+        unbox_slice(heap, tape);
+    }
+    json.drop(heap, w);
+    return 0;
+}

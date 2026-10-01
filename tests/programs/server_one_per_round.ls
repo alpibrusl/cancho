@@ -7,9 +7,12 @@ edition 5;
 // `next` per `wait` -- so a test can pipeline several requests down several
 // connections and check that none is lost or answered out of order.
 //
-// Answers every request with its own path, so a misplaced answer shows.
+// Answers every request with its own path, so a misplaced answer shows -- except
+// `/empty`, a `204` with no `Content-Length`, and `/typed`, a `text/plain` answer
+// with an extra header, which are `server.reply_empty` and `server.reply_as`.
 
 import std.buffer;
+import std.bytes;
 import std.http;
 import http.server;
 
@@ -40,7 +43,13 @@ fn run[&h, &k, &l](heap: &!h Heap, clock: &k Clock, listener: &!l Listener) -> [
                     }
                     borrow srv as &sr in {
                         let path = http.path(server.head(sr), server.parsed(sr));
-                        out = server.reply(heap, out, 200, path, true);
+                        if bytes.equal(path, "/empty") {
+                            out = server.reply_empty(heap, out, 204, true, "");
+                        } else if bytes.equal(path, "/typed") {
+                            out = server.reply_as(heap, out, 200, "text/plain; charset=utf-8", "hi", true, "X-Test: 1\r\n");
+                        } else {
+                            out = server.reply(heap, out, 200, path, true);
+                        }
                     }
                     borrow mut srv as &!sw in {
                         borrow out as &ob in {

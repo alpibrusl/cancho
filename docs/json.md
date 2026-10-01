@@ -168,6 +168,21 @@ writing from **6 µs to under 0.5 µs** where it applies, and the existing
 oracle test (against Rust's `{:e}`) now includes 2,000 short decimals and
 their one-ulp neighbours, which must fall back correctly.
 
+### 6.1 Splicing a document in: `put_fragment`
+
+The writer had no way to take an already-written value -- a schema another
+library generated, a stored row, a cached answer -- so a service assembling an
+OpenAPI document or a list response from stored JSON built it by hand with a
+`Buffer` and commas, correct only by construction. `put_fragment(heap, w,
+fragment)` writes the fragment as the next value, with the writer's own commas
+and colons. The fragment is **checked**: parsed with this module's strict parser,
+it must be exactly one value (whitespace around it is fine); a second value, a
+trailing comma, or nothing traps, for the reason `finish` traps on an open
+container -- splicing a non-value makes the whole document invalid from a
+distance. The cost is one pass over the fragment and a tape freed before it
+returns. (`put_raw` is the writer's private helper for `null`, `true` and the
+rest, and is not that: it trusts its text.)
+
 ## 7. What it does not do
 
 | | |
