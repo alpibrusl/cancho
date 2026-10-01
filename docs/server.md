@@ -191,7 +191,7 @@ only as a connection uses them.
 
 What this does **not** show. It is one request shape, a small answer, on
 loopback: no TLS, no body larger than a few bytes, no 10,000 connections, no
-tail latencies (the generator reports throughput, not percentiles). The
+tail latencies (the generator reported throughput, not percentiles; §10 has them now). The
 Python figures are for this container's Python 3.11 and this machine; a faster
 interpreter would shrink the ratio, not close it. FastAPI with two workers
 measured *lower* than with one in this setup (1,200); that is the way uvicorn
@@ -297,3 +297,47 @@ parameters (`route.param_nat`, `param`, `param_decoded`) -- both in `http.md` §
 -- and `examples/api` uses them: `GET /add` answers `405` with `Allow: POST`,
 and `/users/:id` and `/blob/:n` read their number with `param_nat` instead of a
 private parser.
+
+## 10. Tail latency
+
+§5 said *"no tail latencies (the generator reports throughput, not
+percentiles)"*. `benches/server/kload.c` now takes a sixth argument, `lat`, and
+prints percentiles in microseconds: from just before a request is written to the
+whole response having been read, one sample per request, every sample kept and
+sorted (no sketch). **It is a closed loop with K requests in flight a thread, so
+a sample is a request's service time plus its wait behind the others in its
+round** -- what a client of a busy server sees, not what an idle one does, and
+the reason these numbers grow with the connection count below. Same machine and
+placement as §5 (server on one core, load on two others), 32 connections, four
+seconds, one run each:
+
+| Server, one core | req/s | p50 | p90 | p99 | p99.9 | max |
+|---|---|---|---|---|---|---|
+| C, `poll`, no parsing | 149,000 | 137 us | 220 us | 349 us | 1.1 ms | 3.3 ms |
+| **lex-sys, `poll` + `Ffi` (before §8)** | 139,000 | 147 us | 229 us | 418 us | 1.7 ms | 33 ms |
+| C, `epoll`, no parsing | 84,000 | 228 us | 374 us | 591 us | 2.0 ms | 5.1 ms |
+| **lex-sys, `Poller` + handles (now)** | 71,000 | 285 us | 449 us | 647 us | 1.8 ms | 7.8 ms |
+| FastAPI on uvicorn, stock | 2,100 | 12.7 ms | 18.3 ms | 53 ms | 62 ms | 64 ms |
+
+What it says. **lex-sys tracks the C loop of the same kind at every
+percentile** -- its p99 is within 10% of C's `epoll` and its p99.9 is below it --
+so the loop has no pathological tail of its own; the shape is the kernel's, which
+§8 found. The one thing worth noticing is the `max` of 33 ms in the `poll`
+version: one sample in 555,000, a single stall (a scheduler hiccup in a shared VM
+is the likeliest cause; it did not recur in the later runs and is reported rather
+than explained away). Against FastAPI the gap is **about 45 times at the median
+and about 80 times at p99**, wider than the throughput gap because Python's tail is
+long -- garbage collection and the event loop's own scheduling -- where this
+program allocates from a heap it controls.
+
+With 400 connections (the generator could not open more than 256 a thread until
+this change; it now allocates its connection table) the same server does 84,000 a
+second at **p50 2.9 ms, p99 7.5 ms, p99.9 9.9 ms, max 10.9 ms**. That is queueing,
+not slowness: 400 requests in flight at 84,000 a second is 4.8 ms each by Little's
+law, and the p50 is 2.9.
+
+Caveats, and they are the §5 ones plus this: one run each, so a ratio is the
+claim and a digit is not; a shared VM with a noisy tail of its own; loopback, so
+no network; FastAPI measured here with the versions this container installs
+(0.142, uvicorn 0.54) at 2,100 requests a second, a little under §5's 2,560 --
+which is the point of keeping the ratio and not the figure.

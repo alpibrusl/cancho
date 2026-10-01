@@ -9,7 +9,7 @@
 # prints the three requests-a-second figures, and stops the servers. Pin the
 # servers yourself (`taskset -c 0 ...`), on cores the load does not use.
 #
-#   gcc -O2 -o kload benches/server/kload.c -lpthread
+#   gcc -O2 -o kload benches/server/kload.c -lpthread   (a sixth argument, `lat`, adds latency percentiles)
 #   gcc -O2 -o cpoll benches/server/cpoll.c
 #   PORT=19001 benches/server/bench.sh "lex-sys" 2,3 "taskset -c 0 ./api 19001"
 #
