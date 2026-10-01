@@ -23,6 +23,7 @@
 - [Hash map](map.md)
 - [HTTP and routing](http.md)
 - [The API server](server.md)
+- [Native sockets](native-sockets.md)
 - [Slicing](slicing.md)
 - [Tuples](tuples.md)
 - [Shadowing](shadowing.md)
