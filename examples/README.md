@@ -340,13 +340,18 @@ what this **cannot** reach and why it is one sentence rather than a list.
 ### `api/` — a JSON API server: keep-alive, routed, one thread
 
 ```sh
-cargo run -p lex-sys -- build --std examples/api/api.ls -o api
+cargo run -p lex-sys -- vcs fetch --lock examples/api/server.lock \
+    --store packages/http-server/.lex-sys-vcs -o /tmp/api-deps
+cargo run -p lex-sys -- build --std examples/api/api.ls /tmp/api-deps/*.ls -o api
 ./api 8080                       # or: ./api 8080 reuseport 30   (share the port; 30 s without progress)
 curl localhost:8080/users/42     # {"id":42,"name":"user-42"}
 ```
 
 `serve/` answers one request and exits; this is the server the last four
-library pieces (`std.json`, `std.map`, `std.http`, `std.route`) were for. It
+library pieces (`std.json`, `std.map`, `std.http`, `std.route`) were for. The
+loop itself is the `http.server` package (`packages/http-server/`,
+[`docs/http-server.md`](../docs/http-server.md)) -- the first package that
+imports `std` -- and `api.ls` is its routes, its handlers and a `main`. It
 keeps every connection open behind a `Poller` (`epoll` on Linux, `kqueue` on
 macOS) -- and holds no `Ffi` and declares no `extern fn`, which
 `docs/native-sockets.md` is the account of -- answers pipelined requests

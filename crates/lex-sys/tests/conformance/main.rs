@@ -50,6 +50,7 @@ mod filesystem;
 mod floats;
 mod formatting;
 mod http;
+mod http_server;
 mod identity;
 mod io;
 mod json;
