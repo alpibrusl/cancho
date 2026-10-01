@@ -318,7 +318,8 @@ Built: `Listener`, `Conn`, the five answers (`Listening`, `Accepted`,
 `conn_close`, `listener_close`, all edition 5, on both backends. **Slice 2 added `tcp_connect`** (`Dialed`): `connect`'s bound check and
 `getaddrinfo` walk, answering a `Conn`. `Failed(-1)` is a name that did not
 resolve -- no `errno` is negative -- and any positive value is the kernel's.
-**Not yet built:** `Poller` (slice 3), `Clock` (slice 4), `conn_raw_fd`. Nine conformance tests over real sockets run every program on both
+**Slice 3 added the `Poller`** (§4, below). **Not yet built:** `Clock`
+(slice 4), `conn_raw_fd`. Nine conformance tests over real sockets run every program on both
 backends (`conformance/sockets.rs`), plus six corpus fixtures that pin the
 refusals (a forged, dismantled or leaked handle; an undeclared
 `conn_read`; the builtins at edition 4) and the edition-1 name freedom.
@@ -351,3 +352,37 @@ Four things the design did not know:
 
 The non-blocking switches answer `0` or the `errno` (not the `-1` of
 `fcntl`): a sentinel is how `fs_read` came to disagree with `getchar`.
+
+### 10.1 The `Poller` as built
+
+`poller_new() -> Polling` (`Ok(Poller)` | `Failed(errno)`; it needs no
+capability, since a set watching nothing observes nothing),
+`poller_add_listener(&!Poller, &Listener, token)`,
+`poller_add_conn(&!Poller, &Conn, token, events)`,
+`poller_modify`, `poller_remove(&!Poller, &Conn)`,
+`poller_wait(&!Poller, &![int], timeout_ms)` and `poller_close`. `events`
+is 1 for readable, 2 for writable. The first five answer `0` or the
+`errno`; `poller_wait` answers how many `(token, events)` pairs it wrote
+into the slice -- at most 64 a call and at most `len / 2` -- or `-errno`,
+and a negative timeout waits for ever. The label is `poll`, discharged by
+owning a `Poller` or the `Net` that made what it watches.
+
+- **Level-triggered on both kernels**, which is what `poll(2)` was: a
+  connection with unread data is reported again next wait. `kqueue` is
+  level-triggered without `EV_CLEAR`.
+- **Error and hang-up read as readable**, so the read is what reports
+  them. *This mapping is not exercised by a test*: a clean `FIN` already
+  sets `EPOLLIN`, and the mutation that dropped `EPOLLERR | EPOLLHUP`
+  survived. It needs a peer that resets, which std's `TcpStream` cannot
+  do without `SO_LINGER`.
+- **A token can arrive twice in one wait on macOS**, once per filter
+  (`kqueue` reports readable and writable separately); on Linux they are
+  one entry. A program ORs the events of a token, which is correct on
+  both.
+- **`epoll_event` is 12 packed bytes on x86-64 and 16 elsewhere**, and
+  `kevent` is 32; both are written and read by the compiler. The
+  `kqueue` path -- two single-filter `kevent` changes per registration, a
+  `timespec` timeout -- is verified only by macOS CI.
+- Closing a handle removes it from the set (both kernels do), so a closed
+  `Conn` cannot leave a stale entry for a new connection with the same
+  descriptor number to inherit.

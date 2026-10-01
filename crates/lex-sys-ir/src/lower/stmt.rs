@@ -307,6 +307,7 @@ impl<'a> FnLowering<'a> {
             let closer = match def_id.0 as usize {
                 PRELUDE_LISTENER => "listener_close",
                 PRELUDE_CONN => "conn_close",
+                PRELUDE_POLLER => "poller_close",
                 _ => "file_close",
             };
             return Err(Diagnostic::new(

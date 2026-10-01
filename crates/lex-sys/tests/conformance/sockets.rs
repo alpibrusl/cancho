@@ -901,3 +901,134 @@ fn a_client_reports_its_host_and_no_ffi() {
     assert!(json.contains("\"conn_write\"") && json.contains("\"conn_read\""), "{json}");
     assert!(!json.contains("\"ffi\""), "no foreign code anywhere:\n{json}");
 }
+
+const POLLER: &str = r#"
+fn run(bound: Net("PORT"), io: Io) -> [] int {
+    var score = 0;
+    borrow mut io as &!i in {
+        borrow bound as &n in {
+            match tcp_listen(n, PORT, 8, 0) {
+                Listening::Ok(l) => {
+                    var listener = l;
+                    borrow mut listener as &!lh in {
+                        listener_nonblocking(lh);
+                        match poller_new() {
+                            Polling::Ok(p) => {
+                                var poller = p;
+                                borrow mut poller as &!ph in {
+                                    poller_add_listener(ph, lh, 100);
+                                    region a {
+                                        var ev = alloc_slice[a](16, 0);
+                                        var buf = alloc_slice[a](16, byte_of(0));
+                                        // 1. Nothing is ready: a timed wait answers 0.
+                                        if poller_wait(ph, ev, 50) == 0 { score = score + 1; }
+                                        io.error_all(i, "ready\n");
+                                        // 2. A client arrives: the listener, token 100, readable.
+                                        let ready = poller_wait(ph, ev, 5000);
+                                        if ready == 1 && ev[0] == 100 && ev[1] == 1 { score = score + 1; }
+                                        match tcp_accept(lh) {
+                                            Accepted::Ok(c) => {
+                                                var conn = c;
+                                                borrow mut conn as &!ch in {
+                                                    conn_nonblocking(ch);
+                                                    poller_add_conn(ph, ch, 7, 1);
+                                                    // 3. The client sent "hello": token 7, readable.
+                                                    let got = poller_wait(ph, ev, 5000);
+                                                    if got == 1 && ev[0] == 7 && ev[1] == 1 { score = score + 1; }
+                                                    match conn_read(ch, buf) {
+                                                        Received::Data(k) => { }
+                                                        Received::End => { }
+                                                        Received::Again => { }
+                                                        Received::Failed(e) => { }
+                                                    }
+                                                    // 4. Removed from the set, a connection is silent
+                                                    //    however much it is sent.
+                                                    poller_remove(ph, ch);
+                                                    io.error_all(i, "removed\n");
+                                                    if poller_wait(ph, ev, 200) == 0 { score = score + 1; }
+                                                    // 5. Added again, what was sent while it was
+                                                    //    away is still there to be read.
+                                                    poller_add_conn(ph, ch, 7, 1);
+                                                    let back = poller_wait(ph, ev, 5000);
+                                                    var more = 0;
+                                                    match conn_read(ch, buf) {
+                                                        Received::Data(k) => { more = k; }
+                                                        Received::End => { }
+                                                        Received::Again => { }
+                                                        Received::Failed(e) => { }
+                                                    }
+                                                    if back == 1 && ev[0] == 7 && more == 4 { score = score + 1; }
+                                                    // 6. Asking for writability alone: ready at
+                                                    //    once, and only writable.
+                                                    poller_modify(ph, ch, 7, 2);
+                                                    let room = poller_wait(ph, ev, 5000);
+                                                    if room == 1 && ev[0] == 7 && ev[1] == 2 { score = score + 1; }
+                                                    io.error_all(i, "writable\n");
+                                                    // 7. The client has gone: readable, and the
+                                                    //    read says End.
+                                                    poller_modify(ph, ch, 7, 1);
+                                                    let gone = poller_wait(ph, ev, 5000);
+                                                    var ended = false;
+                                                    match conn_read(ch, buf) {
+                                                        Received::End => { ended = true; }
+                                                        Received::Data(k) => { }
+                                                        Received::Again => { }
+                                                        Received::Failed(e) => { }
+                                                    }
+                                                    if gone == 1 && ended { score = score + 1; }
+                                                }
+                                                conn_close(conn);
+                                            }
+                                            Accepted::Again => { }
+                                            Accepted::Failed(e) => { }
+                                        }
+                                    }
+                                }
+                                poller_close(poller);
+                            }
+                            Polling::Failed(e) => { }
+                        }
+                    }
+                    listener_close(listener);
+                }
+                Listening::Failed(e) => { }
+            }
+        }
+    }
+    release(bound);
+    release(io);
+    if score == 7 {
+        return 0;
+    }
+    return 100 + score;
+}
+"#;
+
+/// One `Poller` over a listener and a connection, on both backends: a timed
+/// wait that answers 0, readiness by token, removal that really silences,
+/// a re-added handle's pending data, writability alone, and a hang-up read
+/// as `End` -- epoll on Linux and kqueue on macOS behind one surface.
+#[test]
+fn a_poller_reports_readiness_by_token() {
+    use std::io::Write as _;
+    for backend in BACKENDS {
+        let port = free_port();
+        let dir = scratch(&format!("sockets-poller-{backend}"));
+        let exe = build(&dir, "poller", &io_program(port, POLLER), backend);
+
+        let mut child = Command::new(&exe).stderr(Stdio::piped()).spawn().expect("the server runs");
+        let mut lines = std::io::BufReader::new(child.stderr.take().unwrap());
+        wait_for(&mut lines, "ready");
+        let mut stream = connect(port);
+        stream.write_all(b"hello").unwrap();
+        wait_for(&mut lines, "removed");
+        stream.write_all(b"more").unwrap();
+        wait_for(&mut lines, "writable");
+        drop(stream);
+
+        let status = child.wait().expect("the server exits");
+        // 0 is all seven checks; otherwise 100 plus how many passed.
+        assert_eq!(status.code(), Some(0), "{backend}: score {:?}", status.code());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

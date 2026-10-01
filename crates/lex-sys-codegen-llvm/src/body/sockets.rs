@@ -13,17 +13,17 @@ use crate::*;
 use lex_sys_ir::{EINVAL, F_GETFL, F_SETFL, SocketOs as Os};
 
 impl<'a> FuncEmitter<'a> {
-    fn os(&self) -> Os {
+    pub(crate) fn os(&self) -> Os {
         Os::for_darwin(self.is_darwin())
     }
 
-    fn is_darwin(&self) -> bool {
+    pub(crate) fn is_darwin(&self) -> bool {
         matches!(self.triple.operating_system, target_lexicon::OperatingSystem::Darwin(_))
     }
 
     /// A handle's descriptor, read through the reference it arrived as and
     /// narrowed for libc.
-    fn handle_fd(&mut self, reference: &LValue) -> String {
+    pub(crate) fn handle_fd(&mut self, reference: &LValue) -> String {
         let fd64 = self.fresh();
         self.out.push_str(&format!("  {fd64} = load i64, ptr {}\n", operand(reference)));
         let fd = self.fresh();

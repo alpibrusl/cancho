@@ -59,11 +59,15 @@ pub const PRELUDE_ACCEPTED: usize = 17;
 pub const PRELUDE_RECEIVED: usize = 18;
 pub const PRELUDE_SENT: usize = 19;
 pub const PRELUDE_DIALED: usize = 20;
+/// `docs/native-sockets.md` §4, edition 5: a set of handles the kernel is
+/// watching (`epoll`/`kqueue`), and what creating one answers.
+pub const PRELUDE_POLLER: usize = 21;
+pub const PRELUDE_POLLING: usize = 22;
 
 /// How many types the prelude declares. Written once, because a builtin's
 /// signature indexes this table and a stale slice is a panic rather than a
 /// diagnostic.
-pub const PRELUDE_COUNT: usize = 21;
+pub const PRELUDE_COUNT: usize = 23;
 
 /// The library an unnarrowed `Ffi` names: none of them yet.
 ///

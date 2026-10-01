@@ -85,6 +85,12 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::ListenerNonblocking
                     | Builtin::ConnClose
                     | Builtin::ListenerClose
+                    | Builtin::PollerAddListener
+                    | Builtin::PollerAddConn
+                    | Builtin::PollerModify
+                    | Builtin::PollerRemove
+                    | Builtin::PollerWait
+                    | Builtin::PollerClose
                     | Builtin::Release,
                 ) => Ok(LKind::I64),
                 Callee::Builtin(Builtin::IsNan | Builtin::ByteOf) => Ok(LKind::I8),

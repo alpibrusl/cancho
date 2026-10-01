@@ -284,6 +284,7 @@ pub(crate) fn is_capability(def: DefId) -> bool {
             | PRELUDE_FILE
             | PRELUDE_LISTENER
             | PRELUDE_CONN
+            | PRELUDE_POLLER
     )
 }
 
@@ -313,7 +314,7 @@ pub(crate) fn released_only(def: DefId) -> bool {
 /// Destructuring a `File` would drop it without calling `close`, which is
 /// a leak the kernel keeps rather than one the allocator does.
 pub(crate) fn closed_only(def: DefId) -> bool {
-    matches!(def.0 as usize, PRELUDE_FILE | PRELUDE_LISTENER | PRELUDE_CONN)
+    matches!(def.0 as usize, PRELUDE_FILE | PRELUDE_LISTENER | PRELUDE_CONN | PRELUDE_POLLER)
 }
 
 /// Is this a type whose only consumer is `unbox` (`docs/heap.md` §3)?
@@ -386,6 +387,9 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
         // labels carry no argument.
         PRELUDE_LISTENER => Effects::plain(["conn_accept"]),
         PRELUDE_CONN => Effects::plain(["conn_read", "conn_write"]),
+        // `docs/native-sockets.md` §4: observing handles already held, so
+        // one plain label with nothing to narrow.
+        PRELUDE_POLLER => Effects::plain(["poll"]),
         // `docs/arguments.md` §2: one plain label. There is one command
         // line and no part of it to name, so nothing to narrow.
         PRELUDE_ARGS => Effects::plain(["args"]),
@@ -405,6 +409,7 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
                 "conn_accept",
                 "conn_read",
                 "conn_write",
+                "poll",
             ]);
             // `docs/net.md` §4.1, edition 2 only: `net_out` and `net_in`
             // are two more labels the root discharges the unnarrowed way
@@ -462,8 +467,10 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
                 ]);
                 // The handles `tcp_listen` mints out of a `Net` carry
                 // path-free labels, and the capability that paid the bound
-                // discharges them -- `Fs` and `file_read`, again.
-                all.union(&Effects::plain(["conn_accept", "conn_read", "conn_write"]));
+                // discharges them -- `Fs` and `file_read`, again. `poll`
+                // too: the only things a `Poller` can watch are the
+                // sockets a `Net` made.
+                all.union(&Effects::plain(["conn_accept", "conn_read", "conn_write", "poll"]));
                 all
             }
             _ => Effects::pure(),
@@ -517,6 +524,8 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     let received = symbol("Received");
     let sent = symbol("Sent");
     let dialed = symbol("Dialed");
+    let poller = symbol("Poller");
+    let polling = symbol("Polling");
     let again_arm = symbol("Again");
     let data_arm = symbol("Data");
     let wrote_arm = symbol("Wrote");
@@ -568,6 +577,8 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     let received_def = unifier.declare("Received");
     let sent_def = unifier.declare("Sent");
     let dialed_def = unifier.declare("Dialed");
+    let poller_def = unifier.declare("Poller");
+    let polling_def = unifier.declare("Polling");
 
     vec![
         TypeDef {
@@ -943,6 +954,36 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
             declared_mode: None,
             kind: DefKind::Enum(vec![
                 (ok_arm, vec![Type::Named(conn_def, Vec::new())]),
+                (failed_arm, vec![Type::Int]),
+            ]),
+            span,
+            since: 5,
+        },
+        // `docs/native-sockets.md` §4: the set of handles the kernel
+        // watches. `res`, one descriptor leaf -- an `epoll`/`kqueue` fd --
+        // and no literal form.
+        TypeDef {
+            name: poller,
+            def: poller_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: Some(Mode::Res),
+            kind: DefKind::Struct(Vec::new()),
+            span,
+            since: 5,
+        },
+        TypeDef {
+            name: polling,
+            def: polling_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: None,
+            kind: DefKind::Enum(vec![
+                (ok_arm, vec![Type::Named(poller_def, Vec::new())]),
                 (failed_arm, vec![Type::Int]),
             ]),
             span,

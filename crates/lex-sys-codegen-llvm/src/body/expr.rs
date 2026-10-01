@@ -806,11 +806,39 @@ impl<'a> FuncEmitter<'a> {
                 }
                 self.conn_write(&args)
             }
+            // `docs/native-sockets.md` §4: the poller.
+            Callee::Builtin(Builtin::PollerNew) => self.poller_new(),
+            Callee::Builtin(Builtin::PollerAddListener) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.poller_ctl(&args, true, false)
+            }
+            Callee::Builtin(Builtin::PollerAddConn) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.poller_ctl(&args, false, false)
+            }
+            Callee::Builtin(Builtin::PollerModify) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.poller_ctl(&args, false, true)
+            }
+            Callee::Builtin(Builtin::PollerRemove) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.poller_remove(&args)
+            }
+            Callee::Builtin(Builtin::PollerWait) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                if args.len() != 4 {
+                    return Err(format!(
+                        "`poller_wait` needs 4 leaves but {} were given",
+                        args.len()
+                    ));
+                }
+                self.poller_wait(&args)
+            }
             Callee::Builtin(Builtin::ConnNonblocking | Builtin::ListenerNonblocking) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.nonblocking(&args)
             }
-            Callee::Builtin(Builtin::ConnClose | Builtin::ListenerClose) => {
+            Callee::Builtin(Builtin::ConnClose | Builtin::ListenerClose | Builtin::PollerClose) => {
                 let fd64 = evaluated
                     .into_iter()
                     .flatten()

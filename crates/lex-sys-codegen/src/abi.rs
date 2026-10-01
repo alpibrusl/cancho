@@ -74,7 +74,10 @@ pub(crate) fn leaves_into(
         Type::Named(def, _)
             if matches!(
                 def.0 as usize,
-                lex_sys_ir::PRELUDE_FILE | lex_sys_ir::PRELUDE_LISTENER | lex_sys_ir::PRELUDE_CONN
+                lex_sys_ir::PRELUDE_FILE
+                    | lex_sys_ir::PRELUDE_LISTENER
+                    | lex_sys_ir::PRELUDE_CONN
+                    | lex_sys_ir::PRELUDE_POLLER
             ) =>
         {
             out.push(types::I64);

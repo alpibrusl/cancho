@@ -178,7 +178,10 @@ fn leaves_into(ty: &Type, program: &Program, out: &mut Vec<LKind>) -> Result<(),
         Type::Named(def, _)
             if matches!(
                 def.0 as usize,
-                lex_sys_ir::PRELUDE_FILE | lex_sys_ir::PRELUDE_LISTENER | lex_sys_ir::PRELUDE_CONN
+                lex_sys_ir::PRELUDE_FILE
+                    | lex_sys_ir::PRELUDE_LISTENER
+                    | lex_sys_ir::PRELUDE_CONN
+                    | lex_sys_ir::PRELUDE_POLLER
             ) =>
         {
             out.push(LKind::I64);
@@ -323,6 +326,23 @@ pub(crate) fn emit_module(
     // variadic, which is what it is: on Apple arm64 a variadic argument is
     // passed on the stack, so a fixed-signature declaration would put the
     // flags where `fcntl` does not look.
+    // `docs/native-sockets.md` §4: the poller. Only the target's own
+    // facility is declared -- `epoll` on Linux, `kqueue` on Darwin.
+    match triple.operating_system {
+        target_lexicon::OperatingSystem::Darwin(_) => {
+            declare_libc_unless_own(&mut text, "kqueue", "i32 @kqueue()");
+            declare_libc_unless_own(
+                &mut text,
+                "kevent",
+                "i32 @kevent(i32, ptr, i32, ptr, i32, ptr)",
+            );
+        }
+        _ => {
+            declare_libc_unless_own(&mut text, "epoll_create1", "i32 @epoll_create1(i32)");
+            declare_libc_unless_own(&mut text, "epoll_ctl", "i32 @epoll_ctl(i32, i32, i32, ptr)");
+            declare_libc_unless_own(&mut text, "epoll_wait", "i32 @epoll_wait(i32, ptr, i32, i32)");
+        }
+    }
     declare_libc_unless_own(&mut text, "recv", "i64 @recv(i32, ptr, i64, i32)");
     declare_libc_unless_own(&mut text, "send", "i64 @send(i32, ptr, i64, i32)");
     declare_libc_unless_own(&mut text, "fcntl", "i32 @fcntl(i32, i32, ...)");

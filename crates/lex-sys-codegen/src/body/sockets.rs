@@ -8,7 +8,7 @@ use crate::*;
 use lex_sys_ir::{EINVAL, F_GETFL, F_SETFL, SocketOs};
 
 impl<'a, 'f> BodyEmitter<'a, 'f> {
-    fn is_darwin(&self) -> bool {
+    pub(crate) fn is_darwin(&self) -> bool {
         matches!(
             self.module.isa().triple().operating_system,
             target_lexicon::OperatingSystem::Darwin(_)
@@ -20,7 +20,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     }
 
     /// One call to a libc function, answering its first result.
-    fn libc_call(
+    pub(crate) fn libc_call(
         &mut self,
         name: &str,
         params: &[cranelift_codegen::ir::Type],
@@ -101,7 +101,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     }
 
     /// A handle's descriptor, read through the reference it arrived as.
-    fn handle_fd(&mut self, reference: Value) -> Value {
+    pub(crate) fn handle_fd(&mut self, reference: Value) -> Value {
         let fd = self.builder.ins().load(types::I64, MemFlags::trusted(), reference, 0);
         self.builder.ins().ireduce(types::I32, fd)
     }

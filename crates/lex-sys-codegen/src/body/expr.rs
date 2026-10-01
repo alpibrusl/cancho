@@ -590,10 +590,21 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::TcpAccept) => self.tcp_accept(&args),
                     Callee::Builtin(Builtin::ConnRead) => self.conn_read(&args),
                     Callee::Builtin(Builtin::ConnWrite) => self.conn_write(&args),
+                    // `docs/native-sockets.md` §4: the poller.
+                    Callee::Builtin(Builtin::PollerNew) => self.poller_new(),
+                    Callee::Builtin(Builtin::PollerAddListener) => {
+                        self.poller_ctl(&args, true, false)
+                    }
+                    Callee::Builtin(Builtin::PollerAddConn) => self.poller_ctl(&args, false, false),
+                    Callee::Builtin(Builtin::PollerModify) => self.poller_ctl(&args, false, true),
+                    Callee::Builtin(Builtin::PollerRemove) => self.poller_remove(&args),
+                    Callee::Builtin(Builtin::PollerWait) => self.poller_wait(&args),
                     Callee::Builtin(Builtin::ConnNonblocking | Builtin::ListenerNonblocking) => {
                         self.nonblocking(&args)
                     }
-                    Callee::Builtin(Builtin::ConnClose | Builtin::ListenerClose) => {
+                    Callee::Builtin(
+                        Builtin::ConnClose | Builtin::ListenerClose | Builtin::PollerClose,
+                    ) => {
                         let close = self.libc_fn("close", &[types::I32], &[types::I32]);
                         let close = self.module.declare_func_in_func(close, self.builder.func);
                         let fd = self.builder.ins().ireduce(types::I32, args[0]);

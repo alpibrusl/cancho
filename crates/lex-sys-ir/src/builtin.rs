@@ -311,6 +311,26 @@ pub enum Builtin {
     /// `docs/native-sockets.md` §3, edition 5 only: `connect`, answering a
     /// `Conn` handle (or the reason) rather than a descriptor.
     TcpConnect,
+    /// `poller_new() -> [] Polling` -- `docs/native-sockets.md` §4: an
+    /// `epoll` (Linux) or `kqueue` (Darwin) set, empty. It needs no
+    /// capability: a set watching nothing observes nothing.
+    PollerNew,
+    /// `poller_add_listener(&!Poller, &Listener, token) -> [poll] int`:
+    /// watch a listener for connections. `0`, or the `errno`.
+    PollerAddListener,
+    /// `poller_add_conn(&!Poller, &Conn, token, events) -> [poll] int`:
+    /// `events` is 1 for readable, 2 for writable, 3 for both.
+    PollerAddConn,
+    /// `poller_modify(&!Poller, &Conn, token, events) -> [poll] int`.
+    PollerModify,
+    /// `poller_remove(&!Poller, &Conn) -> [poll] int`.
+    PollerRemove,
+    /// `poller_wait(&!Poller, &![int], timeout_ms) -> [poll] int`: writes
+    /// `(token, events)` pairs into the slice (at most 64 at a time) and
+    /// answers how many, or `-errno`. A negative timeout waits for ever.
+    PollerWait,
+    /// `poller_close(Poller) -> [] int`.
+    PollerClose,
     /// `tcp_accept(&!Listener) -> [conn_accept] Accepted`.
     TcpAccept,
     /// `conn_read(&!Conn, &![byte]) -> [conn_read] Received`.
@@ -413,6 +433,13 @@ impl Builtin {
         Builtin::TcpListen,
         Builtin::TcpConnect,
         Builtin::TcpAccept,
+        Builtin::PollerNew,
+        Builtin::PollerAddListener,
+        Builtin::PollerAddConn,
+        Builtin::PollerModify,
+        Builtin::PollerRemove,
+        Builtin::PollerWait,
+        Builtin::PollerClose,
         Builtin::ConnRead,
         Builtin::ConnWrite,
         Builtin::ConnNonblocking,
@@ -464,6 +491,13 @@ impl Builtin {
             Builtin::TcpListen => "tcp_listen",
             Builtin::TcpConnect => "tcp_connect",
             Builtin::TcpAccept => "tcp_accept",
+            Builtin::PollerNew => "poller_new",
+            Builtin::PollerAddListener => "poller_add_listener",
+            Builtin::PollerAddConn => "poller_add_conn",
+            Builtin::PollerModify => "poller_modify",
+            Builtin::PollerRemove => "poller_remove",
+            Builtin::PollerWait => "poller_wait",
+            Builtin::PollerClose => "poller_close",
             Builtin::ConnRead => "conn_read",
             Builtin::ConnWrite => "conn_write",
             Builtin::ConnNonblocking => "conn_nonblocking",
@@ -502,6 +536,13 @@ impl Builtin {
             Builtin::TcpListen
             | Builtin::TcpConnect
             | Builtin::TcpAccept
+            | Builtin::PollerNew
+            | Builtin::PollerAddListener
+            | Builtin::PollerAddConn
+            | Builtin::PollerModify
+            | Builtin::PollerRemove
+            | Builtin::PollerWait
+            | Builtin::PollerClose
             | Builtin::ConnRead
             | Builtin::ConnWrite
             | Builtin::ConnNonblocking
@@ -569,6 +610,12 @@ impl Builtin {
             // The handle's region, and for `conn_read`/`conn_write` the
             // buffer's own.
             Builtin::ConnRead | Builtin::ConnWrite => 2,
+            // The poller's region and the handle's (or the buffer's).
+            Builtin::PollerAddListener
+            | Builtin::PollerAddConn
+            | Builtin::PollerModify
+            | Builtin::PollerRemove
+            | Builtin::PollerWait => 2,
             Builtin::TcpAccept | Builtin::ConnNonblocking | Builtin::ListenerNonblocking => 1,
             _ => 0,
         }
@@ -767,6 +814,73 @@ impl Builtin {
                 ],
                 named(PRELUDE_SENT),
             ),
+            Builtin::PollerNew => (Vec::new(), named(PRELUDE_POLLING)),
+            Builtin::PollerAddListener => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_POLLER)),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(named(PRELUDE_LISTENER)),
+                    },
+                    Type::Int,
+                ],
+                Type::Int,
+            ),
+            Builtin::PollerAddConn | Builtin::PollerModify => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_POLLER)),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(named(PRELUDE_CONN)),
+                    },
+                    Type::Int,
+                    Type::Int,
+                ],
+                Type::Int,
+            ),
+            Builtin::PollerRemove => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_POLLER)),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(named(PRELUDE_CONN)),
+                    },
+                ],
+                Type::Int,
+            ),
+            // The events land in a slice of ints: `(token, events)` pairs.
+            Builtin::PollerWait => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_POLLER)),
+                    },
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Int))),
+                    },
+                    Type::Int,
+                ],
+                Type::Int,
+            ),
+            Builtin::PollerClose => (vec![named(PRELUDE_POLLER)], Type::Int),
             Builtin::ConnNonblocking => (
                 vec![Type::Ref {
                     unique: true,
@@ -840,6 +954,11 @@ impl Builtin {
             // bound at the call site.
             Builtin::TcpAccept => Effects::plain(["conn_accept"]),
             Builtin::ConnRead => Effects::plain(["conn_read"]),
+            Builtin::PollerAddListener
+            | Builtin::PollerAddConn
+            | Builtin::PollerModify
+            | Builtin::PollerRemove
+            | Builtin::PollerWait => Effects::plain(["poll"]),
             Builtin::ConnWrite => Effects::plain(["conn_write"]),
             // Moving authority around is not an effect. Splitting a `World`
             // observes nothing outside the program and releasing a
