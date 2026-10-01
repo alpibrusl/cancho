@@ -165,8 +165,8 @@ where `sqrt_of` was off by 10⁴³ and more.
 | Question | Why it waits |
 |---|---|
 | ~~`exp`, `log`, `pow`~~ | **Built** — §7 |
-| `sin` (and `cos`) | Still nothing has asked, and unlike `exp`/`log`/`pow` it needs its own range reduction (mod 2π, which loses precision by subtraction for large arguments in a way none of the other three does) rather than sharing theirs |
-| Float `abs`, `min`, `max` | §4. One asker with a working alternative |
+| ~~`sin` (and `cos`)~~ | **Built** — §8, with its own reduction by quarter turns, to a stated domain of `|x| ≤ 10⁶` |
+| ~~Float `abs`, `min`, `max`~~ | **Built** as `fabs`/`fmin`/`fmax` — §8 says why the §1 rule was set aside |
 | A total order | `floating-point.md` §7's other row, untouched here |
 | `sqrt` of a negative | Answers NaN, which is what the instruction does and what IEEE-754 says. Not a trap: `floating-point.md` §2.1 already settled that NaN announces the absence of a value rather than lying about one, and a square root of −1 is exactly that case |
 
@@ -242,3 +242,86 @@ an input its own domain does not exclude. `exp`'s `|x| > 750` guard and
 `log`'s `x > f64::MAX` guard exist for the same reason, one step further
 out: an infinite `x` would also send `x / ln2` or `x / pow2(e)` somewhere
 `truncate` traps on.
+
+---
+
+## 8. `fabs`, `fmin`, `fmax`, `floor`, `ceil`, `round`, `sin`, `cos`
+
+**Not asked for by a program. Added anyway, and the reason is the
+change.** §1's rule — a function is earned when programs write it for
+themselves — was the right rule while the question was what a handful of
+example programs needed. The question this repository is answering now
+is what an agent writing a program here would reach for and not find,
+and rounding to a whole number is the first thing on that list: `floor`
+and `ceil` are what every "how many pages" and "which bucket" sum is
+written with, and the only way to get one before this was
+`float_of(truncate(x))`, which is wrong for every negative non-integer
+(it rounds toward zero) and traps near 2⁶³. §4 declined `abs`/`min`/`max`
+because `if x < 0.0 { return -x; }` is three lines; that stays true, and
+it is also three lines every caller gets subtly wrong at `-0.0` and NaN,
+which is what a library function is for.
+
+All eight are library code in `std/math.ls`, not builtins — a few lines
+of `float` and `truncate` arithmetic each, like `exp`/`log`/`pow`.
+
+* **`fabs`**: C's. `fabs(-0.0)` is `+0.0`, a NaN stays a NaN.
+* **`fmin`, `fmax`**: C's. A NaN is missing data — the other argument is
+  the answer, and the answer is NaN only if both are.
+* **`floor`, `ceil`, `round`**: exact, not approximate. For `|x| < 2⁵²`
+  the distance `x - truncate(x)` is computed without rounding, so the
+  three compare it against zero or one half directly. Every float at or
+  past 2⁵² is already whole and is returned as it is, which keeps
+  `truncate` away from its own trap near 2⁶³; NaN and the infinities come
+  back unchanged. `round` is ties-away-from-zero, as C's; the one-line
+  `floor(x + 0.5)` is wrong at `0.49999999999999994`, where the addition
+  itself rounds up to `1.0`, and `tests/accept/math_floats.ls` pins that
+  case. One difference from C: a zero result is `+0.0` where C's
+  `floor(-0.0)` keeps the minus sign, which only `bits_of` can see.
+* **`sin`, `cos`**: fdlibm's two kernel polynomials on `[-π/4, π/4]`
+  (minimax coefficients, chosen to minimise the worst error over the
+  interval, not a Taylor series's), and an argument reduction by
+  quarter turns, with `π/2` subtracted in three 33-bit pieces so that
+  `k × piece` is exact for `|k| < 2²⁰`. That bound is the **domain**:
+  `|x| ≤ 10⁶`. Outside it the reduction is no longer exact and there is a
+  right answer this does not compute, so **it traps** — the same answer
+  every other operation here with no right answer gives
+  (`defined-behaviour.md` §2.1), not a NaN indistinguishable from the
+  one a NaN argument returns. A NaN argument is answered with that NaN.
+
+**Measured against the C library**, not asserted. A foreign signature
+cannot carry a `float` (`opaque-pointers.md`), so libm cannot be called
+from a lex-sys program; the comparison is made from outside.
+`tests/programs/trig_samples.ls` prints the bit pattern of `sin` and
+`cos` at a fixed sample, `conformance/trig.rs` replays the same
+arguments (a fixed linear-congruential sequence, every step exact or
+correctly rounded, so Rust and lex-sys compute the same argument bit for
+bit) and measures the distance from glibc's answer in units in the last
+place. 20,000 arguments per range, `sin` and `cos` each, 40,000 answers:
+
+| range | worst error | answers that differ from libm at all |
+|---|---|---|
+| [−1, 1] | **1 ulp** | 3,586 (9.0%) |
+| [−10, 10] | **1 ulp** | 6,399 (16.0%) |
+| [−10³, 10³] | **1 ulp** | 6,362 (15.9%) |
+| [−10⁶, 10⁶] | **2 ulp** | 8,373 (20.9%) |
+| within 10⁻³ of 100·π/2 | **1 ulp** | 4,341 (10.9%) |
+| within 10⁻³ of 10⁵·π/2 | **1 ulp** | 5,491 (13.7%) |
+
+**Not correctly rounded, and not claimed to be** — one answer in ten to
+one in five is one float away from the library's, which is the usual
+state of a small hand-written `sin` and is what a test bound of "within
+a few ulp" is for. The test allows one ulp more than measured, because
+the reference is itself a library and another platform's rounds
+differently from glibc's in the last place.
+
+### 8.1 What this does not do
+
+* **No `tan`, `atan`, `atan2`, `asin`, `acos`, `sinh`, …** Nothing here
+  needs them yet, and each is its own reduction and its own measurement.
+  `atan2` is the one most likely to be asked for next.
+* **No reduction past `10⁶`.** Payne–Hanek reduction handles every
+  finite argument; it needs a table of 2/π to 1,200 bits and a multi-word
+  multiply, and a program whose angle is a million radians is usually a
+  phase accumulator that should have been reduced as it went. It traps
+  rather than answering wrongly.
+* **No `π` constant.** `3.141592653589793` is what a caller writes.

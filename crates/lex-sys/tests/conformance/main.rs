@@ -57,6 +57,7 @@ mod ports;
 mod refusals;
 mod testing;
 mod traps;
+mod trig;
 mod vcs;
 
 const BIN: &str = env!("CARGO_BIN_EXE_lex-sys");
