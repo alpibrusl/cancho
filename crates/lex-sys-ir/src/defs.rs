@@ -245,6 +245,7 @@ pub fn leaf_free(ty: &Type) -> bool {
             | PRELUDE_HEAP
             | PRELUDE_ARGS
             | PRELUDE_NET
+            | PRELUDE_CLOCK
     ))
 }
 
@@ -276,12 +277,17 @@ pub(crate) fn is_capability(def: DefId) -> bool {
             | PRELUDE_ARGS
             | PRELUDE_SPLIT
             | PRELUDE_SPLIT_NET
+            | PRELUDE_SPLIT_CLOCK
+            | PRELUDE_CLOCK
             | PRELUDE_NET
             // §8.2 again, and more sharply: a program that could write
             // `File { }` would be conjuring a descriptor, which is worse
             // than conjuring authority because the number would be someone
             // else's open file.
             | PRELUDE_FILE
+            | PRELUDE_LISTENER
+            | PRELUDE_CONN
+            | PRELUDE_POLLER
     )
 }
 
@@ -301,6 +307,7 @@ pub(crate) fn released_only(def: DefId) -> bool {
             | PRELUDE_HEAP
             | PRELUDE_ARGS
             | PRELUDE_NET
+            | PRELUDE_CLOCK
     )
 }
 
@@ -311,7 +318,7 @@ pub(crate) fn released_only(def: DefId) -> bool {
 /// Destructuring a `File` would drop it without calling `close`, which is
 /// a leak the kernel keeps rather than one the allocator does.
 pub(crate) fn closed_only(def: DefId) -> bool {
-    def.0 as usize == PRELUDE_FILE
+    matches!(def.0 as usize, PRELUDE_FILE | PRELUDE_LISTENER | PRELUDE_CONN | PRELUDE_POLLER)
 }
 
 /// Is this a type whose only consumer is `unbox` (`docs/heap.md` §3)?
@@ -379,6 +386,17 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
         // could not be passed to a function that had not been told where it
         // came from.
         PRELUDE_FILE => Effects::plain(["file_read"]),
+        // `docs/native-sockets.md` §3: the same rule for the socket handles
+        // -- the port was spent at `tcp_listen`, so the handle's own
+        // labels carry no argument.
+        PRELUDE_LISTENER => Effects::plain(["conn_accept"]),
+        PRELUDE_CONN => Effects::plain(["conn_read", "conn_write"]),
+        // `docs/native-sockets.md` §4: observing handles already held, so
+        // one plain label with nothing to narrow.
+        PRELUDE_POLLER => Effects::plain(["poll"]),
+        // `docs/native-sockets.md` §5: reading the time is an effect, and
+        // owning the clock discharges it.
+        PRELUDE_CLOCK => Effects::plain(["clock"]),
         // `docs/arguments.md` §2: one plain label. There is one command
         // line and no part of it to name, so nothing to narrow.
         PRELUDE_ARGS => Effects::plain(["args"]),
@@ -388,8 +406,19 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
         // declaring `[]` is not a gap in the row — it is the parameter list
         // saying something stronger.
         PRELUDE_WORLD => {
-            let mut all =
-                Effects::plain(["io_read", "io_write", "err_write", "heap", "args", "file_read"]);
+            let mut all = Effects::plain([
+                "io_read",
+                "io_write",
+                "err_write",
+                "heap",
+                "args",
+                "file_read",
+                "conn_accept",
+                "conn_read",
+                "conn_write",
+                "poll",
+                "clock",
+            ]);
             // `docs/net.md` §4.1, edition 2 only: `net_out` and `net_in`
             // are two more labels the root discharges the unnarrowed way
             // `ffi` and `fs_read`/`fs_write` already do. An edition-1
@@ -439,10 +468,19 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
         // `Fs(prefix)` discharges both `fs_read(prefix)` and
         // `fs_write(prefix)` -- one bound, either operation.
         PRELUDE_NET => match args.first() {
-            Some(Type::Lit(bound)) => Effects::new([
-                Label { name: "net_out".to_owned(), argument: Some(bound.clone()) },
-                Label { name: "net_in".to_owned(), argument: Some(bound.clone()) },
-            ]),
+            Some(Type::Lit(bound)) => {
+                let mut all = Effects::new([
+                    Label { name: "net_out".to_owned(), argument: Some(bound.clone()) },
+                    Label { name: "net_in".to_owned(), argument: Some(bound.clone()) },
+                ]);
+                // The handles `tcp_listen` mints out of a `Net` carry
+                // path-free labels, and the capability that paid the bound
+                // discharges them -- `Fs` and `file_read`, again. `poll`
+                // too: the only things a `Poller` can watch are the
+                // sockets a `Net` made.
+                all.union(&Effects::plain(["conn_accept", "conn_read", "conn_write", "poll"]));
+                all
+            }
             _ => Effects::pure(),
         },
         _ => Effects::pure(),
@@ -486,6 +524,23 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     let thread = symbol("Thread");
     let thread_payload_param = symbol("T");
     let thread_ret_param = symbol("R");
+    // `docs/native-sockets.md` §3: edition 5's handles and their answers.
+    let listener = symbol("Listener");
+    let conn = symbol("Conn");
+    let listening = symbol("Listening");
+    let accepted = symbol("Accepted");
+    let received = symbol("Received");
+    let sent = symbol("Sent");
+    let dialed = symbol("Dialed");
+    let poller = symbol("Poller");
+    let polling = symbol("Polling");
+    let clock = symbol("Clock");
+    let clock_field = symbol("clock");
+    let split_clock = symbol("Split");
+    let attached = symbol("Attached");
+    let again_arm = symbol("Again");
+    let data_arm = symbol("Data");
+    let wrote_arm = symbol("Wrote");
     let ok_arm = symbol("Ok");
     let failed_arm = symbol("Failed");
     let got_arm = symbol("Got");
@@ -525,6 +580,22 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     // `PRELUDE_THREAD` (`ir.rs`): edition 4 only, appended last so no
     // earlier index moves.
     let thread_def = unifier.declare("Thread");
+    // `PRELUDE_LISTENER` .. `PRELUDE_SENT` (`ir.rs`): edition 5 only, in
+    // the order those constants fix.
+    let listener_def = unifier.declare("Listener");
+    let conn_def = unifier.declare("Conn");
+    let listening_def = unifier.declare("Listening");
+    let accepted_def = unifier.declare("Accepted");
+    let received_def = unifier.declare("Received");
+    let sent_def = unifier.declare("Sent");
+    let dialed_def = unifier.declare("Dialed");
+    let poller_def = unifier.declare("Poller");
+    let polling_def = unifier.declare("Polling");
+    // `PRELUDE_CLOCK` and `PRELUDE_SPLIT_CLOCK`: a third `Split`, for the
+    // same reason edition 2 got a second (`editions.md` §7).
+    let clock_def = unifier.declare("Clock");
+    let split_clock_def = unifier.declare("Split");
+    let attached_def = unifier.declare("Attached");
 
     vec![
         TypeDef {
@@ -789,6 +860,204 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
             span,
             since: 4,
         },
+        // `docs/native-sockets.md` §3: the two socket handles. `res`, one
+        // descriptor leaf each, no fields -- `File`'s shape, for the reason
+        // `File`'s is that shape: a descriptor is owned exactly once, and a
+        // pattern that could name one would be conjuring someone else's.
+        TypeDef {
+            name: listener,
+            def: listener_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: Some(Mode::Res),
+            kind: DefKind::Struct(Vec::new()),
+            span,
+            since: 5,
+        },
+        TypeDef {
+            name: conn,
+            def: conn_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: Some(Mode::Res),
+            kind: DefKind::Struct(Vec::new()),
+            span,
+            since: 5,
+        },
+        // What `tcp_listen` answers: `Opened`'s shape, for a listener.
+        TypeDef {
+            name: listening,
+            def: listening_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: None,
+            kind: DefKind::Enum(vec![
+                (ok_arm, vec![Type::Named(listener_def, Vec::new())]),
+                (failed_arm, vec![Type::Int]),
+            ]),
+            span,
+            since: 5,
+        },
+        // `tcp_accept`: `Again` is its own constructor, not `Failed` of a
+        // number whose value is 11 on Linux and 35 on macOS (§3).
+        TypeDef {
+            name: accepted,
+            def: accepted_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: None,
+            kind: DefKind::Enum(vec![
+                (ok_arm, vec![Type::Named(conn_def, Vec::new())]),
+                (again_arm, Vec::new()),
+                (failed_arm, vec![Type::Int]),
+            ]),
+            span,
+            since: 5,
+        },
+        // `conn_read`: `Read`'s three outcomes plus `Again`. `Data(0)` is
+        // not reachable, as `Got(0)` is not.
+        TypeDef {
+            name: received,
+            def: received_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: None,
+            kind: DefKind::Enum(vec![
+                (data_arm, vec![Type::Int]),
+                (end_arm, Vec::new()),
+                (again_arm, Vec::new()),
+                (failed_arm, vec![Type::Int]),
+            ]),
+            span,
+            since: 5,
+        },
+        // `conn_write`: how much the kernel took, or why it took none.
+        TypeDef {
+            name: sent,
+            def: sent_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: None,
+            kind: DefKind::Enum(vec![
+                (wrote_arm, vec![Type::Int]),
+                (again_arm, Vec::new()),
+                (failed_arm, vec![Type::Int]),
+            ]),
+            span,
+            since: 5,
+        },
+        // `tcp_connect`: `Listening`'s shape, for an outbound connection.
+        // `Failed(-1)` is a name that did not resolve; any positive value
+        // is the kernel's `errno`.
+        TypeDef {
+            name: dialed,
+            def: dialed_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: None,
+            kind: DefKind::Enum(vec![
+                (ok_arm, vec![Type::Named(conn_def, Vec::new())]),
+                (failed_arm, vec![Type::Int]),
+            ]),
+            span,
+            since: 5,
+        },
+        // `docs/native-sockets.md` §4: the set of handles the kernel
+        // watches. `res`, one descriptor leaf -- an `epoll`/`kqueue` fd --
+        // and no literal form.
+        TypeDef {
+            name: poller,
+            def: poller_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: Some(Mode::Res),
+            kind: DefKind::Struct(Vec::new()),
+            span,
+            since: 5,
+        },
+        TypeDef {
+            name: polling,
+            def: polling_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: None,
+            kind: DefKind::Enum(vec![
+                (ok_arm, vec![Type::Named(poller_def, Vec::new())]),
+                (failed_arm, vec![Type::Int]),
+            ]),
+            span,
+            since: 5,
+        },
+        // `docs/native-sockets.md` §5: the clock, a capability like `Io` --
+        // authority with nothing behind it, so zero-sized.
+        TypeDef {
+            name: clock,
+            def: clock_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: Some(Mode::Res),
+            kind: DefKind::Struct(Vec::new()),
+            span,
+            since: 5,
+        },
+        // Edition 5's `Split`: edition 2's six fields and `clock`.
+        TypeDef {
+            name: split_clock,
+            def: split_clock_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: None,
+            kind: DefKind::Struct(vec![
+                (io_field, Type::Named(io_def, Vec::new())),
+                (ffi_field, Type::Named(ffi_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+                (fs_field, Type::Named(fs_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+                (heap_field, Type::Named(heap_def, Vec::new())),
+                (args_field, Type::Named(args_def, Vec::new())),
+                (net_field, Type::Named(net_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+                (clock_field, Type::Named(clock_def, Vec::new())),
+            ]),
+            span,
+            since: 5,
+        },
+        // `conn_attach`: `Dialed`'s shape. `Failed(EBADF)` is a ticket that
+        // was never issued, was already redeemed, or was copied.
+        TypeDef {
+            name: attached,
+            def: attached_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: None,
+            kind: DefKind::Enum(vec![
+                (ok_arm, vec![Type::Named(conn_def, Vec::new())]),
+                (failed_arm, vec![Type::Int]),
+            ]),
+            span,
+            since: 5,
+        },
     ]
 }
 
@@ -885,7 +1154,12 @@ pub(crate) fn collect_types(ast: &Ast, unifier: &mut Unifier) -> Result<Vec<Type
         let span = ast.item_span(item_id);
         let name = ast.name_of(name_sym);
 
-        if matches!(name, "int" | "bool") || defs[..predeclared].iter().any(|d| d.name == name_sym)
+        // A prelude type is a built-in only for the files that can see it:
+        // `Conn` is edition 5's, and an edition-1 file that declares its own
+        // `Conn` is not redeclaring anything it can name.
+        let edition = ast.edition_of(item_id);
+        if matches!(name, "int" | "bool")
+            || defs[..predeclared].iter().any(|d| d.name == name_sym && d.since <= edition)
         {
             return Err(Diagnostic::new(
                 Rule::BuiltinRedeclared,

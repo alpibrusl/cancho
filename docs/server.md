@@ -1,10 +1,14 @@
 # `examples/api`: a JSON API server, and what it costs
 
-> **Status: built.** `examples/api/api.ls` (about 760 lines) over
-> `std.http`, `std.route`, `std.json` and the `net.sockets` package;
+> **Status: built, and migrated (§8).** `examples/api/api.ls` over `std.http`,
+> `std.route`, `std.json`, `std.conns` and the native socket builtins of
+> [`native-sockets.md`](native-sockets.md) -- no `Ffi`, no `extern fn`;
 > `conformance/api.rs` (17 tests over real sockets); the load generator and the
 > references behind §5's figures are in `benches/server/`. One thread,
-> `poll(2)`, keep-alive, pipelining, a JSON API with four routes.
+> keep-alive, pipelining, a JSON API with four routes. **§§1-7 describe the
+> first version, a `poll(2)` loop over `Ffi("libc")`; §8 says what replaced it
+> and what that cost.** Where §§1-7 name `poll`, `send`, `MSG_DONTWAIT` or the
+> `net.sockets` package they are history, not description.
 
 ## 1. Why
 
@@ -218,3 +222,70 @@ pieces each found a bug: after two signature slips the compiler caught (a
 the server answered every route correctly on its first run. What the tests found was two places the
 *tests* were thin (§2), and one wrong expectation of mine (`"a b cé"` is seven
 bytes, not six).
+
+## 8. Over native sockets: what changed, and the number that fell
+
+`native-sockets.md` is the account of the builtins; this is what they did to
+this program.
+
+**What went.** Four `extern fn`s of its own and eight imported from
+`packages/net-sockets` -- twelve libc symbols behind `Ffi("libc")`, which made
+the authority report say `ffi("libc")` and nothing else. `signal(SIGPIPE)`
+(`conn_write` cannot raise it), the `SO_SNDTIMEO` workaround and the per-OS
+`MSG_DONTWAIT` flag with the `is_linux` probe (`conn_write` does not wait on a
+non-blocking connection, on either kernel), the `SO_REUSE*` guesses (a flag on
+`tcp_listen`), the hand-built `sockaddr_in`, and the poll-record byte array and
+its `set_record`/`move_record` (a `Poller` and tokens). `net.lock` and the
+package fetch are gone from the build. `lex-sys authority` now reports
+`net_in` -- naming no port, because the port is an argument -- `conn_accept`,
+`conn_read`, `conn_write`, `poll`, `clock`, `heap`, `args` and the console, and
+`the_server_holds_no_foreign_authority` pins it.
+
+**What changed in the loop.** Connections are a `std.conns.Table`, found by
+slot, and the `Poller`'s token is the slot plus one. Closing one frees its slot
+instead of moving the last connection into its place (so the swap-remove, and
+the test named for it, now check only that closing one never disturbs another).
+The idle timeout is a once-a-second sweep over the slots with a monotonic
+clock, not a check made as each connection is visited.
+
+**The number.** Same machine, same load (2 threads x 16 connections, closed
+loop, `GET /users/42`), server on one core, three five-second runs:
+
+| | `poll` + `Ffi` (before) | `epoll` + handles (after) |
+|---|---|---|
+| `examples/api` | 134,600 - 137,700 | **72,700 - 74,400** |
+| C, no parsing | 145,000 - 156,000 (`poll`) | 74,000 - 84,000 (`epoll`) |
+
+**A 47% fall, and it is the kernel, not the program.** The C reference with
+the same loop and no parsing falls the same way when its `poll` is replaced by
+`epoll` -- about 150,000 to about 80,000 -- so the lex-sys server holds about
+nine tenths of the C ceiling for either, as it did before. What was ruled out,
+in order: the extra builtin calls and the ticket round trip (`conns.read` and
+`conns.write` are about one percent of the instructions each, under
+`callgrind`); extra syscalls (`strace -c`: one receive and one send per request
+and a wait every 20-odd, for both); the clock (19 ns a call, no syscall);
+`O_NONBLOCK` (the same with blocking connections); and server CPU (identical --
+about 390 ticks in the window for both, so each request costs the kernel twice
+as much). What is left is `epoll` against `poll` in this environment: a
+Firecracker VM, four cores, kernel 6.18, where a persistent wait-queue
+registration costs every arriving packet a callback that `poll` -- registering
+only while it waits -- never pays. That last step is an inference from the C
+comparison, not something observed inside the kernel.
+
+**What this corrects.** `native-sockets.md` §4 said `epoll` was *"also the
+scalable answer ... a performance change as well as a safety one"*. Measured
+here it is the reverse: `poll` is faster by about 1.8x at 32 connections and by
+about 1.8x at 300 (C: 186,000 and 165,000 against 96,000 and 105,000; lex-sys
+before and after: 173,000 and 159,000 against 86,000 and 88,000). The crossover
+where `epoll`'s O(ready) beats `poll`'s O(registered) was **not found at or
+below 300 connections**; 800 could not be measured (the load generator reported
+short reads against every server, C included). So the claim is withdrawn until
+it is measured on hardware that is not a VM. The `Poller` is the same
+abstraction either way: a `poll(2)`-backed one would need a registration table
+in memory the runtime owns, a larger change than this was, and it is recorded in
+`native-sockets.md` §10.4 as the open question it now is.
+
+**Still true.** Against FastAPI (2,560 - 3,550 in §5) the migrated server is
+still about **twenty-five times faster** on the same core and request, down from
+forty, and at 73,000 it holds about nine tenths of what a C `epoll` loop does
+without parsing anything.

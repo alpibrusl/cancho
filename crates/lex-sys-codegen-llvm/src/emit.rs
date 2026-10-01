@@ -175,7 +175,15 @@ fn leaves_into(ty: &Type, program: &Program, out: &mut Vec<LKind>) -> Result<(),
         // `Opened`/`Read` are ordinary prelude *enums* instead, and
         // fall through to the general `TypeInfo::Enum` arm below
         // unaided, the same way they do for Cranelift.
-        Type::Named(def, _) if def.0 as usize == lex_sys_ir::PRELUDE_FILE => {
+        Type::Named(def, _)
+            if matches!(
+                def.0 as usize,
+                lex_sys_ir::PRELUDE_FILE
+                    | lex_sys_ir::PRELUDE_LISTENER
+                    | lex_sys_ir::PRELUDE_CONN
+                    | lex_sys_ir::PRELUDE_POLLER
+            ) =>
+        {
             out.push(LKind::I64);
         }
         // `docs/heap.md` §3: a box at run time is a pointer and nothing
@@ -314,6 +322,31 @@ pub(crate) fn emit_module(
     declare_libc_unless_own(&mut text, "getaddrinfo", "i32 @getaddrinfo(ptr, ptr, ptr, ptr)");
     declare_libc_unless_own(&mut text, "freeaddrinfo", "void @freeaddrinfo(ptr)");
     declare_libc_unless_own(&mut text, "connect", "i32 @connect(i32, ptr, i32)");
+    // The socket handles (`docs/native-sockets.md` §3). `fcntl` is declared
+    // variadic, which is what it is: on Apple arm64 a variadic argument is
+    // passed on the stack, so a fixed-signature declaration would put the
+    // flags where `fcntl` does not look.
+    // `docs/native-sockets.md` §4: the poller. Only the target's own
+    // facility is declared -- `epoll` on Linux, `kqueue` on Darwin.
+    match triple.operating_system {
+        target_lexicon::OperatingSystem::Darwin(_) => {
+            declare_libc_unless_own(&mut text, "kqueue", "i32 @kqueue()");
+            declare_libc_unless_own(
+                &mut text,
+                "kevent",
+                "i32 @kevent(i32, ptr, i32, ptr, i32, ptr)",
+            );
+        }
+        _ => {
+            declare_libc_unless_own(&mut text, "epoll_create1", "i32 @epoll_create1(i32)");
+            declare_libc_unless_own(&mut text, "epoll_ctl", "i32 @epoll_ctl(i32, i32, i32, ptr)");
+            declare_libc_unless_own(&mut text, "epoll_wait", "i32 @epoll_wait(i32, ptr, i32, i32)");
+        }
+    }
+    declare_libc_unless_own(&mut text, "clock_gettime", "i32 @clock_gettime(i32, ptr)");
+    declare_libc_unless_own(&mut text, "recv", "i64 @recv(i32, ptr, i64, i32)");
+    declare_libc_unless_own(&mut text, "send", "i64 @send(i32, ptr, i64, i32)");
+    declare_libc_unless_own(&mut text, "fcntl", "i32 @fcntl(i32, i32, ...)");
     text.push('\n');
 
     // `Fs` (§7.24, `docs/filesystem.md` §3-4, `docs/file-handles.md`):
@@ -432,6 +465,13 @@ pub(crate) fn emit_module(
     // a NUL-terminated C string back from `argv`, so its length needs
     // libc's own `strlen` the way `docs/arguments.md` §3.2 describes.
     text.push_str("declare i64 @strlen(ptr)\n");
+    // `conn_detach`/`conn_attach`'s epoch table (`docs/native-sockets.md`
+    // §10.3): a counter per descriptor, in bss.
+    text.push_str(&format!(
+        "@{} = internal global [{} x i32] zeroinitializer\n",
+        lex_sys_ir::FD_EPOCH_GLOBAL,
+        lex_sys_ir::FD_EPOCH_SLOTS
+    ));
     text.push_str("@lexs_argc = internal global i64 0\n");
     text.push_str("@lexs_argv = internal global ptr null\n\n");
 

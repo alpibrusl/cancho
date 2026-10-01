@@ -304,10 +304,16 @@ impl<'a> FnLowering<'a> {
         // be a way to drop one without `close`, and the kernel keeps that
         // leak rather than the allocator.
         if closed_only(def_id) {
+            let closer = match def_id.0 as usize {
+                PRELUDE_LISTENER => "listener_close",
+                PRELUDE_CONN => "conn_close",
+                PRELUDE_POLLER => "poller_close",
+                _ => "file_close",
+            };
             return Err(Diagnostic::new(
                 Rule::LinearValueTakenApart,
                 format!(
-                    "`{text}` owns an open descriptor and is ended by `file_close`, not by being taken apart"
+                    "`{text}` owns an open descriptor and is ended by `{closer}`, not by being taken apart"
                 ),
                 span,
             ));

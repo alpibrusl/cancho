@@ -42,12 +42,14 @@ mod defs;
 mod function;
 mod ir;
 mod lower;
+mod socket_os;
 
 pub use builtin::*;
 pub use defs::*;
 use function::*;
 pub use ir::*;
 use lower::*;
+pub use socket_os::*;
 
 /// Resolve and check an AST, producing IR a backend can lower without failing.
 pub fn lower(ast: &Ast) -> Result<Program, Diagnostic> {

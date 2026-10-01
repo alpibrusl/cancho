@@ -419,7 +419,7 @@ impl Rule {
             }
             Rule::UnknownEdition => {
                 "A file's `edition N;` marker names one of the editions this compiler knows; a \
-                 file with no marker is edition 1, and there is nothing later than edition 4 to \
+                 file with no marker is edition 1, and there is nothing later than edition 5 to \
                  name yet."
             }
             Rule::UnknownEscape => {

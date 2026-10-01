@@ -173,6 +173,16 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                 let (bound, args) = (bound.clone(), args.clone());
                 self.bind(&bound, &args)
             }
+            // `docs/native-sockets.md` §3: `bind`'s node with a handle for
+            // an answer.
+            Expr::TcpListen { bound, args } => {
+                let (bound, args) = (bound.clone(), args.clone());
+                self.tcp_listen(&bound, &args)
+            }
+            Expr::TcpConnect { bound, args } => {
+                let (bound, args) = (bound.clone(), args.clone());
+                self.tcp_connect(&bound, &args)
+            }
             Expr::FieldRef { base, def, args, index } => {
                 let address = self.scalar(base);
                 let TypeInfo::Struct { fields, .. } = self.program.type_info(*def) else {
@@ -567,6 +577,43 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     }
                     Callee::Builtin(Builtin::Bind) => {
                         unreachable!("`bind` is lowered as `Expr::Bind`")
+                    }
+                    Callee::Builtin(Builtin::TcpListen) => {
+                        unreachable!("`tcp_listen` is lowered as `Expr::TcpListen`")
+                    }
+                    Callee::Builtin(Builtin::TcpConnect) => {
+                        unreachable!("`tcp_connect` is lowered as `Expr::TcpConnect`")
+                    }
+                    // `docs/native-sockets.md` §3. A borrowed handle arrives
+                    // as its address, a buffer as pointer and length, an
+                    // owned handle as the descriptor.
+                    Callee::Builtin(Builtin::TcpAccept) => self.tcp_accept(&args),
+                    Callee::Builtin(Builtin::ConnRead) => self.conn_read(&args),
+                    Callee::Builtin(Builtin::ConnWrite) => self.conn_write(&args),
+                    // `docs/native-sockets.md` §4: the poller.
+                    Callee::Builtin(Builtin::PollerNew) => self.poller_new(),
+                    Callee::Builtin(Builtin::ClockMs) => self.clock_ms(),
+                    Callee::Builtin(Builtin::ConnDetach) => self.conn_detach(&args),
+                    Callee::Builtin(Builtin::ConnAttach) => self.conn_attach(&args),
+                    Callee::Builtin(Builtin::PollerAddListener) => {
+                        self.poller_ctl(&args, true, false)
+                    }
+                    Callee::Builtin(Builtin::PollerAddConn) => self.poller_ctl(&args, false, false),
+                    Callee::Builtin(Builtin::PollerModify) => self.poller_ctl(&args, false, true),
+                    Callee::Builtin(Builtin::PollerRemove) => self.poller_remove(&args),
+                    Callee::Builtin(Builtin::PollerWait) => self.poller_wait(&args),
+                    Callee::Builtin(Builtin::ConnNonblocking | Builtin::ListenerNonblocking) => {
+                        self.nonblocking(&args)
+                    }
+                    Callee::Builtin(
+                        Builtin::ConnClose | Builtin::ListenerClose | Builtin::PollerClose,
+                    ) => {
+                        let close = self.libc_fn("close", &[types::I32], &[types::I32]);
+                        let close = self.module.declare_func_in_func(close, self.builder.func);
+                        let fd = self.builder.ins().ireduce(types::I32, args[0]);
+                        let call = self.builder.ins().call(close, &[fd]);
+                        let answer = self.builder.inst_results(call)[0];
+                        vec![self.builder.ins().sextend(types::I64, answer)]
                     }
                     // `R`, `join`'s real return type, travels with its
                     // own node the same reason the three above do.

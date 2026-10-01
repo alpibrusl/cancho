@@ -408,6 +408,7 @@ const STD: &[(&str, &str)] = &[
     ("<std>/map.ls", include_str!("../../../std/map.ls")),
     ("<std>/http.ls", include_str!("../../../std/http.ls")),
     ("<std>/route.ls", include_str!("../../../std/route.ls")),
+    ("<std>/conns.ls", include_str!("../../../std/conns.ls")),
 ];
 
 /// What a command line asked for.
@@ -1138,8 +1139,11 @@ fn print_authority(inputs: &[PathBuf], with_std: bool, json: bool) -> Result<(),
             // output is a diagnostic touches the console —
             // `docs/standard-error.md` §4 is the lie this row prevents.
             ("the console", ["io_read", "io_write", "err_write"].as_slice()),
-            ("the filesystem", ["fs_read", "fs_write"].as_slice()),
-            ("the network", ["net_out", "net_in"].as_slice()),
+            ("the filesystem", ["fs_read", "fs_write", "file_read"].as_slice()),
+            (
+                "the network",
+                ["net_out", "net_in", "conn_accept", "conn_read", "conn_write"].as_slice(),
+            ),
             ("the heap", ["heap"].as_slice()),
             ("the command line", ["args"].as_slice()),
             ("foreign code", ["ffi"].as_slice()),

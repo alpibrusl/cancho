@@ -27,9 +27,7 @@ impl Drop for Server {
 }
 
 fn start(tag: &str, extra: &[&str]) -> Server {
-    let fetched = fetch_net_sockets(&format!("{tag}-fetch"), "examples/api/net.lock");
-    let (dir, exe) =
-        build_example_paths(tag, &[repo_root().join("examples/api/api.ls"), fetched], "api");
+    let (dir, exe) = build_example_paths(tag, &[repo_root().join("examples/api/api.ls")], "api");
     let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     let child = Command::new(&exe)
         .arg(port.to_string())
@@ -560,13 +558,13 @@ fn a_connection_that_is_to_close_closes_only_once_its_answer_has_gone() {
 }
 
 #[test]
-fn the_server_picks_this_systems_dont_wait_flag() {
-    // `MSG_DONTWAIT` is 0x40 on Linux and 0x80 on macOS -- where 0x40 is
-    // `MSG_WAITALL`, which would make every `send` block and every test about
-    // a client that does not read fail. The server announces what it chose.
-    let fetched = fetch_net_sockets("api-flag-fetch", "examples/api/net.lock");
+fn the_server_announces_its_port_on_standard_error() {
+    // On the unbuffered stream: a piped standard output is held until the
+    // process ends, and a server that announces itself only then has not
+    // announced itself. No send flag is announced any more -- there is none:
+    // `conn_write` picks the system's way of not waiting (`native-sockets.md`).
     let (dir, exe) =
-        build_example_paths("api-flag", &[repo_root().join("examples/api/api.ls"), fetched], "api");
+        build_example_paths("api-flag", &[repo_root().join("examples/api/api.ls")], "api");
     let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     let mut child = Command::new(&exe)
         .arg(port.to_string())
@@ -583,62 +581,19 @@ fn the_server_picks_this_systems_dont_wait_flag() {
     let _ = child.kill();
     let _ = child.wait();
     let _ = std::fs::remove_dir_all(&dir);
-    let want = if cfg!(target_os = "macos") { 128 } else { 64 };
-    assert_eq!(line.trim(), format!("listening on {port} send-flag {want}"));
+    assert_eq!(line.trim(), format!("listening on {port}"));
 }
 
 #[test]
-fn a_send_to_a_peer_that_is_not_reading_returns_instead_of_waiting() {
-    // The server depends on this, and it is a property of the operating system,
-    // so it is checked directly, with nothing of ours in the way: a `send` on a
-    // *blocking* socket whose peer is not reading, with `MSG_DONTWAIT` and a
-    // one-millisecond `SO_SNDTIMEO` set exactly as the server sets them, must
-    // return (partial, or an error) rather than wait for room.
-    //
-    // CI found that macOS does not honour `MSG_DONTWAIT` here -- this test, with
-    // only the flag, was its first form and failed there -- and that is why the
-    // timeout exists.
-    use std::os::fd::AsRawFd;
-    unsafe extern "C" {
-        fn send(fd: i32, buf: *const u8, len: usize, flags: i32) -> isize;
-        fn setsockopt(fd: i32, level: i32, name: i32, value: *const u8, len: u32) -> i32;
+fn the_server_holds_no_foreign_authority() {
+    // The point of `docs/native-sockets.md`: the same server that reported
+    // `ffi("libc")` -- "may call anything in libc" -- now reports exactly what
+    // it does. The port is an argument, so `net_in` names none; that is said
+    // rather than hidden.
+    let source = std::fs::read_to_string(repo_root().join("examples/api/api.ls")).unwrap();
+    let json = authority_json(&source, "api-authority");
+    assert!(!json.contains("\"ffi\""), "no foreign code anywhere:\n{json}");
+    for label in ["net_in", "conn_accept", "conn_read", "conn_write", "poll", "clock", "heap"] {
+        assert!(json.contains(&format!("\"name\": \"{label}\"")), "`{label}` is reported:\n{json}");
     }
-    let (flag, level, name) =
-        if cfg!(target_os = "linux") { (0x40, 1, 21) } else { (0x80, 0xffff, 0x1005) };
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let writer = TcpStream::connect(("127.0.0.1", port)).unwrap();
-    let (_reader, _) = listener.accept().unwrap();
-    let fd = writer.as_raw_fd();
-    // `struct timeval { 0 s, 1000 us }`, 16 bytes.
-    let mut timeout = [0u8; 16];
-    timeout[8..10].copy_from_slice(&1000u16.to_le_bytes());
-    // SAFETY: the buffer is live for the call and its length is passed.
-    let set = unsafe { setsockopt(fd, level, name, timeout.as_ptr(), 16) };
-    assert_eq!(set, 0, "setsockopt(SO_SNDTIMEO) failed");
-    let (done, finished) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let chunk = vec![7u8; 65536];
-        let mut total = 0usize;
-        // Until the kernel refuses; a call that never returns is the failure.
-        loop {
-            // SAFETY: `chunk` is live for the call and the length is its own.
-            let n = unsafe { send(fd, chunk.as_ptr(), chunk.len(), flag) };
-            if n < 0 {
-                break;
-            }
-            total += n as usize;
-            if total > 1 << 30 {
-                break;
-            }
-        }
-        let _ = done.send(total);
-    });
-    match finished.recv_timeout(Duration::from_secs(5)) {
-        Ok(total) => assert!(total > 0, "the first send queued nothing"),
-        Err(_) => panic!(
-            "send(flags {flag:#x}) with a 1 ms send timeout blocked on a blocking socket whose peer was not reading"
-        ),
-    }
-    drop(writer);
 }

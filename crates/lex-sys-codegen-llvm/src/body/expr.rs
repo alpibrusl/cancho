@@ -294,6 +294,16 @@ impl<'a> FuncEmitter<'a> {
                 let (bound, args) = (bound.clone(), args.clone());
                 self.bind(&bound, &args)
             }
+            // `tcp_listen` (`docs/native-sockets.md` §3): `bind`'s node with
+            // a handle for an answer.
+            Expr::TcpListen { bound, args } => {
+                let (bound, args) = (bound.clone(), args.clone());
+                self.tcp_listen(&bound, &args)
+            }
+            Expr::TcpConnect { bound, args } => {
+                let (bound, args) = (bound.clone(), args.clone());
+                self.tcp_connect(&bound, &args)
+            }
             // `connect(net, name, port)` (§7.22, `docs/connect.md` §10):
             // the last of `Net`'s four builtins, mirroring
             // `lex-sys-codegen`'s own `Expr::Connect` arm (`body/net.rs`).
@@ -761,6 +771,88 @@ impl<'a> FuncEmitter<'a> {
                     .flatten()
                     .next()
                     .ok_or_else(|| "`file_close` needs a file argument".to_owned())?;
+                let fd = self.fresh();
+                self.out.push_str(&format!("  {fd} = trunc i64 {} to i32\n", operand(&fd64)));
+                let result = self.fresh();
+                self.out.push_str(&format!("  {result} = call i32 @close(i32 {fd})\n"));
+                let widened = self.fresh();
+                self.out.push_str(&format!("  {widened} = sext i32 {result} to i64\n"));
+                Ok(vec![LValue::Reg(widened)])
+            }
+            // `docs/native-sockets.md` §3: the socket handles. A borrowed
+            // handle arrives as its address (one leaf), a buffer as a
+            // pointer and a length, an owned handle as the descriptor.
+            Callee::Builtin(Builtin::TcpAccept) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.tcp_accept(&args)
+            }
+            Callee::Builtin(Builtin::ConnRead) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                if args.len() != 3 {
+                    return Err(format!(
+                        "`conn_read` needs 3 leaves but {} were given",
+                        args.len()
+                    ));
+                }
+                self.conn_read(&args)
+            }
+            Callee::Builtin(Builtin::ConnWrite) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                if args.len() != 3 {
+                    return Err(format!(
+                        "`conn_write` needs 3 leaves but {} were given",
+                        args.len()
+                    ));
+                }
+                self.conn_write(&args)
+            }
+            // `docs/native-sockets.md` §4: the poller.
+            Callee::Builtin(Builtin::PollerNew) => self.poller_new(),
+            Callee::Builtin(Builtin::ClockMs) => self.clock_ms(),
+            Callee::Builtin(Builtin::ConnDetach) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.conn_detach(&args)
+            }
+            Callee::Builtin(Builtin::ConnAttach) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.conn_attach(&args)
+            }
+            Callee::Builtin(Builtin::PollerAddListener) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.poller_ctl(&args, true, false)
+            }
+            Callee::Builtin(Builtin::PollerAddConn) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.poller_ctl(&args, false, false)
+            }
+            Callee::Builtin(Builtin::PollerModify) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.poller_ctl(&args, false, true)
+            }
+            Callee::Builtin(Builtin::PollerRemove) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.poller_remove(&args)
+            }
+            Callee::Builtin(Builtin::PollerWait) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                if args.len() != 4 {
+                    return Err(format!(
+                        "`poller_wait` needs 4 leaves but {} were given",
+                        args.len()
+                    ));
+                }
+                self.poller_wait(&args)
+            }
+            Callee::Builtin(Builtin::ConnNonblocking | Builtin::ListenerNonblocking) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.nonblocking(&args)
+            }
+            Callee::Builtin(Builtin::ConnClose | Builtin::ListenerClose | Builtin::PollerClose) => {
+                let fd64 = evaluated
+                    .into_iter()
+                    .flatten()
+                    .next()
+                    .ok_or_else(|| "a close needs a handle argument".to_owned())?;
                 let fd = self.fresh();
                 self.out.push_str(&format!("  {fd} = trunc i64 {} to i32\n", operand(&fd64)));
                 let result = self.fresh();

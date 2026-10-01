@@ -274,6 +274,21 @@ impl<'a> Emitter<'a> {
                 .map_err(|e| CodegenError::plain(e.to_string()))?;
         }
 
+        // `conn_detach`/`conn_attach`'s epoch table
+        // (`docs/native-sockets.md` §10.3): a counter per descriptor, zero
+        // at start, in bss.
+        {
+            let id = self
+                .module
+                .declare_data(lex_sys_ir::FD_EPOCH_GLOBAL, Linkage::Local, true, false)
+                .map_err(|e| CodegenError::plain(e.to_string()))?;
+            let mut description = DataDescription::new();
+            description.define_zeroinit(4 * lex_sys_ir::FD_EPOCH_SLOTS as usize);
+            self.module
+                .define_data(id, &description)
+                .map_err(|e| CodegenError::plain(e.to_string()))?;
+        }
+
         ctx.clear();
         ctx.func.signature = sig;
         {

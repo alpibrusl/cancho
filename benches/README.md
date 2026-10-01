@@ -143,3 +143,5 @@ bottleneck" rather than as measurements.
 Not an overflow pair: the load generator, a C reference server and the FastAPI
 baseline behind the requests-a-second figures in
 [`docs/server.md`](../docs/server.md) §5. `bench.sh` says how to run them.
+
+`benches/server/cepoll.c` is `cpoll.c` with `epoll(7)` in place of `poll(2)` -- the control that separated what the kernel costs from what `examples/api` does (`docs/server.md` §8). Build: `gcc -O2 -o cepoll cepoll.c`.

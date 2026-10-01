@@ -24,21 +24,21 @@ const ADDRINFO_SIZE: i64 = 48;
 /// be asked for, rather than as `None`, so a narrowing that failed to
 /// *tighten* as intended still enforces something (`docs/listen.md`
 /// §6.2).
-fn port_bound_of(text: &str) -> Option<i64> {
+pub(super) fn port_bound_of(text: &str) -> Option<i64> {
     if text.is_empty() { None } else { Some(text.parse().unwrap_or(-1)) }
 }
 
 impl<'a> FuncEmitter<'a> {
     /// Store one byte -- a constant (`"2"`) or a register (`%t3`) -- at
     /// `base + offset`.
-    fn store_byte(&mut self, base: &str, offset: i32, byte: &str) {
+    pub(crate) fn store_byte(&mut self, base: &str, offset: i32, byte: &str) {
         self.store_field(base, offset, "i8", byte);
     }
 
     /// Store any fixed-width field -- `store_byte`'s general form, needed
     /// once `connect`'s `struct addrinfo hints` has `i32` and `ptr`
     /// fields alongside the `i8`s `bind`'s own `sockaddr_in` was all of.
-    fn store_field(&mut self, base: &str, offset: i32, ty: &str, value: &str) {
+    pub(crate) fn store_field(&mut self, base: &str, offset: i32, ty: &str, value: &str) {
         let addr = self.fresh();
         self.out.push_str(&format!("  {addr} = getelementptr i8, ptr {base}, i64 {offset}\n"));
         self.out.push_str(&format!("  store {ty} {value}, ptr {addr}\n"));
@@ -47,7 +47,7 @@ impl<'a> FuncEmitter<'a> {
     /// Load any fixed-width field at `base + offset` -- `store_field`'s
     /// mirror, needed to read `ai_addr`/`ai_addrlen` back out of the
     /// `struct addrinfo` `getaddrinfo` filled in.
-    fn load_field(&mut self, base: &str, offset: i32, ty: &str) -> String {
+    pub(crate) fn load_field(&mut self, base: &str, offset: i32, ty: &str) -> String {
         let addr = self.fresh();
         self.out.push_str(&format!("  {addr} = getelementptr i8, ptr {base}, i64 {offset}\n"));
         let reg = self.fresh();
@@ -257,6 +257,22 @@ impl<'a> FuncEmitter<'a> {
     /// path all store into one `alloca i64` result cell rather than
     /// merging through a block parameter.
     pub(crate) fn connect(&mut self, bound: &str, args: &[Expr]) -> Result<Vec<LValue>, String> {
+        let (fd, _) = self.connect_raw(bound, args, false)?;
+        Ok(vec![fd])
+    }
+
+    /// [`Self::connect`]'s walk, answering the descriptor **and why it
+    /// failed**: `(fd, errno)`, with `fd == -1` on failure and `errno == -1`
+    /// when the *name* did not resolve (no `errno` has that value, so a
+    /// program can tell the resolver from the kernel). `connection` is
+    /// `tcp_connect`'s: the descriptor becomes a `Conn`, so on Darwin it
+    /// gets `SO_NOSIGPIPE` (`docs/native-sockets.md` §3).
+    pub(crate) fn connect_raw(
+        &mut self,
+        bound: &str,
+        args: &[Expr],
+        connection: bool,
+    ) -> Result<(LValue, LValue), String> {
         let name = self.expr(&args[1])?;
         let port = self.scalar(&args[2])?;
 
@@ -312,6 +328,9 @@ impl<'a> FuncEmitter<'a> {
 
         let result_cell = self.fresh();
         self.hoist(format!("  {result_cell} = alloca i64\n"));
+        let reason_cell = self.fresh();
+        self.hoist(format!("  {reason_cell} = alloca i64\n"));
+        self.out.push_str(&format!("  store i64 0, ptr {reason_cell}\n"));
         let minus_one = LValue::Const(-1);
 
         let failed_resolve = self.fresh();
@@ -333,6 +352,7 @@ impl<'a> FuncEmitter<'a> {
 
         self.out.push_str(&format!("{not_resolved}:\n"));
         self.out.push_str(&format!("  store i64 {}, ptr {result_cell}\n", operand(&minus_one)));
+        self.out.push_str(&format!("  store i64 -1, ptr {reason_cell}\n"));
         self.out.push_str(&format!("  br label %{merge}\n"));
 
         self.out.push_str(&format!("{resolved}:\n"));
@@ -366,6 +386,9 @@ impl<'a> FuncEmitter<'a> {
             .push_str(&format!("  br i1 {bad_socket}, label %{no_socket}, label %{have_socket}\n"));
 
         self.out.push_str(&format!("{no_socket}:\n"));
+        // `errno` before anything that could overwrite it.
+        let reason = self.errno();
+        self.out.push_str(&format!("  store i64 {}, ptr {reason_cell}\n", operand(&reason)));
         self.out.push_str(&format!("  call void @freeaddrinfo(ptr {res})\n"));
         self.out.push_str(&format!("  store i64 {}, ptr {result_cell}\n", operand(&minus_one)));
         self.out.push_str(&format!("  br label %{merge}\n"));
@@ -381,12 +404,17 @@ impl<'a> FuncEmitter<'a> {
 
         self.out.push_str(&format!("{connected}:\n"));
         self.out.push_str(&format!("  call void @freeaddrinfo(ptr {res})\n"));
+        if connection {
+            self.suppress_sigpipe(&fd);
+        }
         let fd64 = self.fresh();
         self.out.push_str(&format!("  {fd64} = sext i32 {fd} to i64\n"));
         self.out.push_str(&format!("  store i64 {fd64}, ptr {result_cell}\n"));
         self.out.push_str(&format!("  br label %{merge}\n"));
 
         self.out.push_str(&format!("{not_connected}:\n"));
+        let reason = self.errno();
+        self.out.push_str(&format!("  store i64 {}, ptr {reason_cell}\n", operand(&reason)));
         self.out.push_str(&format!("  call i32 @close(i32 {fd})\n"));
         self.out.push_str(&format!("  call void @freeaddrinfo(ptr {res})\n"));
         self.out.push_str(&format!("  store i64 {}, ptr {result_cell}\n", operand(&minus_one)));
@@ -395,6 +423,24 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("{merge}:\n"));
         let result = self.fresh();
         self.out.push_str(&format!("  {result} = load i64, ptr {result_cell}\n"));
-        Ok(vec![LValue::Reg(result)])
+        let reason = self.fresh();
+        self.out.push_str(&format!("  {reason} = load i64, ptr {reason_cell}\n"));
+        Ok((LValue::Reg(result), LValue::Reg(reason)))
+    }
+
+    /// `tcp_connect(net, host, port)` (`docs/native-sockets.md` §3):
+    /// `connect`'s check and walk, answering `Dialed`'s three leaves --
+    /// `Ok` 0 with the descriptor, `Failed` 1 with the reason.
+    pub(crate) fn tcp_connect(
+        &mut self,
+        bound: &str,
+        args: &[Expr],
+    ) -> Result<Vec<LValue>, String> {
+        let (fd, reason) = self.connect_raw(bound, args, true)?;
+        let failed = self.fresh();
+        self.out.push_str(&format!("  {failed} = icmp slt i64 {}, 0\n", operand(&fd)));
+        let tag = self.fresh();
+        self.out.push_str(&format!("  {tag} = select i1 {failed}, i64 1, i64 0\n"));
+        Ok(vec![LValue::Reg(tag), fd, reason])
     }
 }
