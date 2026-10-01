@@ -8,6 +8,7 @@ mod control;
 mod expr;
 mod memory;
 mod net;
+mod sockets;
 
 pub(crate) struct BodyEmitter<'a, 'f> {
     pub(crate) builder: FunctionBuilder<'f>,

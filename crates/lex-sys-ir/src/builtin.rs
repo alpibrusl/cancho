@@ -298,6 +298,30 @@ pub enum Builtin {
     /// (`NULL, NULL`, as `examples/serve/`'s own hand-written call
     /// already does). Fixed, for the same reason `listen` is.
     Accept,
+    /// `tcp_listen(net, port, backlog, flags) -> [net_in(bound)] Listening`
+    /// -- `docs/native-sockets.md` §3, edition 5 only.
+    ///
+    /// `socket`, `SO_REUSEADDR`, `bind` and `listen` in one call, answering
+    /// a `Listener` handle (or the `errno`) rather than a descriptor a
+    /// program could forge. `flags` bit 1 is `SO_REUSEPORT`. Checked at the
+    /// call site, like [`Builtin::Bind`], because the row it performs is
+    /// the bound its `Net` was narrowed to.
+    TcpListen,
+    /// `tcp_accept(&!Listener) -> [conn_accept] Accepted`.
+    TcpAccept,
+    /// `conn_read(&!Conn, &![byte]) -> [conn_read] Received`.
+    ConnRead,
+    /// `conn_write(&!Conn, &[byte]) -> [conn_write] Sent`: never waits on a
+    /// non-blocking connection, and never raises `SIGPIPE`.
+    ConnWrite,
+    /// `conn_nonblocking(&!Conn) -> [] int`: one way, explicit.
+    ConnNonblocking,
+    /// `listener_nonblocking(&!Listener) -> [] int`.
+    ListenerNonblocking,
+    /// `conn_close(Conn) -> [] int`: consumes the handle.
+    ConnClose,
+    /// `listener_close(Listener) -> [] int`.
+    ListenerClose,
     /// `null_ptr() -> [] c_ptr` — the one producer of a `c_ptr` that is
     /// not a foreign call's return, edition 3 only
     /// (`docs/opaque-pointers.md` §3).
@@ -382,6 +406,14 @@ impl Builtin {
         Builtin::Bind,
         Builtin::Listen,
         Builtin::Accept,
+        Builtin::TcpListen,
+        Builtin::TcpAccept,
+        Builtin::ConnRead,
+        Builtin::ConnWrite,
+        Builtin::ConnNonblocking,
+        Builtin::ListenerNonblocking,
+        Builtin::ConnClose,
+        Builtin::ListenerClose,
         Builtin::NullPtr,
         Builtin::Spawn,
         Builtin::Join,
@@ -424,6 +456,14 @@ impl Builtin {
             Builtin::Bind => "bind",
             Builtin::Listen => "listen",
             Builtin::Accept => "accept",
+            Builtin::TcpListen => "tcp_listen",
+            Builtin::TcpAccept => "tcp_accept",
+            Builtin::ConnRead => "conn_read",
+            Builtin::ConnWrite => "conn_write",
+            Builtin::ConnNonblocking => "conn_nonblocking",
+            Builtin::ListenerNonblocking => "listener_nonblocking",
+            Builtin::ConnClose => "conn_close",
+            Builtin::ListenerClose => "listener_close",
             Builtin::NullPtr => "null_ptr",
             Builtin::Spawn => "spawn",
             Builtin::Join => "join",
@@ -450,6 +490,17 @@ impl Builtin {
             Builtin::NullPtr => 3,
             // `docs/threads.md` §4: purely additive, same reasoning.
             Builtin::Spawn | Builtin::Join => 4,
+            // `docs/native-sockets.md` §3: edition 5, and for the same
+            // reason -- `conn_read` is a name an edition-1 file may
+            // already declare against libc.
+            Builtin::TcpListen
+            | Builtin::TcpAccept
+            | Builtin::ConnRead
+            | Builtin::ConnWrite
+            | Builtin::ConnNonblocking
+            | Builtin::ListenerNonblocking
+            | Builtin::ConnClose
+            | Builtin::ListenerClose => 5,
             _ => 1,
         }
     }
@@ -508,6 +559,10 @@ impl Builtin {
             Builtin::Write | Builtin::WriteErr => 2,
             // Two: the borrowed handle and the buffer's own region.
             Builtin::ReadFile => 2,
+            // The handle's region, and for `conn_read`/`conn_write` the
+            // buffer's own.
+            Builtin::ConnRead | Builtin::ConnWrite => 2,
+            Builtin::TcpAccept | Builtin::ConnNonblocking | Builtin::ListenerNonblocking => 1,
             _ => 0,
         }
     }
@@ -659,6 +714,71 @@ impl Builtin {
             // signatures (`docs/listen.md` §6).
             Builtin::Listen => (vec![Type::Int, Type::Int], Type::Int),
             Builtin::Accept => (vec![Type::Int], Type::Int),
+            // Checked at the call site, like `bind`: the port is spent
+            // against the bound in the capability's type.
+            Builtin::TcpListen => (Vec::new(), Type::Unit),
+            Builtin::TcpAccept => (
+                vec![Type::Ref {
+                    unique: true,
+                    region: Region::Param(0),
+                    inner: Box::new(named(PRELUDE_LISTENER)),
+                }],
+                named(PRELUDE_ACCEPTED),
+            ),
+            // The handle is borrowed uniquely for a read (it moves the
+            // stream) and the buffer is written into.
+            Builtin::ConnRead => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_CONN)),
+                    },
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                named(PRELUDE_RECEIVED),
+            ),
+            // The handle is unique -- a write moves the stream -- and the
+            // buffer is only read, so a program can send from the same
+            // bytes it is parsing.
+            Builtin::ConnWrite => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_CONN)),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                named(PRELUDE_SENT),
+            ),
+            Builtin::ConnNonblocking => (
+                vec![Type::Ref {
+                    unique: true,
+                    region: Region::Param(0),
+                    inner: Box::new(named(PRELUDE_CONN)),
+                }],
+                Type::Int,
+            ),
+            Builtin::ListenerNonblocking => (
+                vec![Type::Ref {
+                    unique: true,
+                    region: Region::Param(0),
+                    inner: Box::new(named(PRELUDE_LISTENER)),
+                }],
+                Type::Int,
+            ),
+            // By value: `close` ends the handle.
+            Builtin::ConnClose => (vec![named(PRELUDE_CONN)], Type::Int),
+            Builtin::ListenerClose => (vec![named(PRELUDE_LISTENER)], Type::Int),
             // No capability, no data in, one opaque handle out
             // (`docs/opaque-pointers.md` §3) -- a fixed signature like
             // `sqrt`'s, not a call-site check like `len`'s.
@@ -708,6 +828,12 @@ impl Builtin {
             // `release` does not -- ending a capability is not using one --
             // even though this one ends with a syscall.
             Builtin::ReadFile => Effects::plain(["file_read"]),
+            // `docs/native-sockets.md` §3: path-free labels named after the
+            // handle and the direction; `tcp_listen`'s row comes from the
+            // bound at the call site.
+            Builtin::TcpAccept => Effects::plain(["conn_accept"]),
+            Builtin::ConnRead => Effects::plain(["conn_read"]),
+            Builtin::ConnWrite => Effects::plain(["conn_write"]),
             // Moving authority around is not an effect. Splitting a `World`
             // observes nothing outside the program and releasing a
             // capability only ends one; what a capability *authorises* is

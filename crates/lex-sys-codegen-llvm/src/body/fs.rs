@@ -8,7 +8,7 @@ impl<'a> FuncEmitter<'a> {
     /// declared -- `__errno_location` on glibc, `__error` on Darwin,
     /// both answering a pointer to it. Mirrors `lex-sys-codegen`'s own
     /// `errno` (`body/memory.rs`).
-    fn errno(&mut self) -> LValue {
+    pub(crate) fn errno(&mut self) -> LValue {
         let symbol = match self.triple.operating_system {
             target_lexicon::OperatingSystem::Darwin(_) => "__error",
             _ => "__errno_location",

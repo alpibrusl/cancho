@@ -694,23 +694,57 @@ pub struct Ast {
 /// of the source. Nothing downstream notices, because a hash encodes a
 /// name's *text* and never its index (`docs/canonical-ast.md` §4.1).
 pub const PRELUDE: &[&str] = &[
-    "World", "Io", "Split", "io", "Ffi", "ffi", "L", "Fs", "fs", "P", "Heap", "heap", "Box", "B",
-    "Args", "args",
+    "World",
+    "Io",
+    "Split",
+    "io",
+    "Ffi",
+    "ffi",
+    "L",
+    "Fs",
+    "fs",
+    "P",
+    "Heap",
+    "heap",
+    "Box",
+    "B",
+    "Args",
+    "args",
     // `docs/file-handles.md`: a handle and the two enums its verbs answer.
     // The constructors are interned too, because a `match` arm names one
     // and the prelude is what makes those names exist without a library.
-    "File", "Opened", "Ok", "Failed", "Read", "Got", "End",
+    "File",
+    "Opened",
+    "Ok",
+    "Failed",
+    "Read",
+    "Got",
+    "End",
     // `docs/net.md`: the outbound capability, edition 2 only
     // (`docs/editions.md` §7), and the field name `Split` grows in
     // that edition.
-    "Net", "net",
+    "Net",
+    "net",
     // `docs/threads.md`: `spawn`/`join`'s own handle, edition 4 only.
     // `T`/`R` name its two generic parameters -- the payload type and
     // `body`'s return type, both threaded through so the escape check
     // sees a payload reference's region without a region parameter of
     // its own (`Type::Named`'s existing `mentions`/`regions_into`
     // already recurse into a type argument).
-    "Thread", "T", "R",
+    "Thread",
+    "T",
+    "R",
+    // `docs/native-sockets.md`: a listening socket, an established
+    // connection, and the enums their verbs answer; edition 5 only.
+    "Listener",
+    "Conn",
+    "Listening",
+    "Accepted",
+    "Received",
+    "Sent",
+    "Again",
+    "Data",
+    "Wrote",
 ];
 
 impl Ast {

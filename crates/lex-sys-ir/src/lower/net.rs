@@ -115,6 +115,47 @@ impl<'a> FnLowering<'a> {
         Ok((Expr::Bind { bound, args: vec![net_value, port_value] }, Type::Int))
     }
 
+    /// `tcp_listen(net, port, backlog, flags)` -- `docs/native-sockets.md`
+    /// §3, edition 5: [`Self::bind`]'s check and row, answering a
+    /// `Listening` handle rather than a descriptor.
+    pub(crate) fn tcp_listen(
+        &mut self,
+        args: &[ExprId],
+        span: Span,
+    ) -> Result<(Expr, Type), Diagnostic> {
+        let [capability, port, backlog, flags] = args else {
+            return Err(Diagnostic::new(
+                Rule::ArityMismatch,
+                format!(
+                    "`tcp_listen` takes 4 arguments -- the capability, a port, a backlog and flags -- but {} were given",
+                    args.len()
+                ),
+                span,
+            ));
+        };
+        let capability_span = self.ast.expr_span(*capability);
+        let (net_value, net_ty) = self.expr(*capability)?;
+        let bound = self.granted_net_bound(&net_ty, capability_span)?;
+
+        let mut lowered = vec![net_value];
+        for arg in [port, backlog, flags] {
+            let arg_span = self.ast.expr_span(*arg);
+            let (value, found) = self.expr(*arg)?;
+            self.expect_type(&Type::Int, &found, arg_span)?;
+            lowered.push(value);
+        }
+
+        self.performed.union(&Effects::new([Label {
+            name: "net_in".to_owned(),
+            argument: Some(bound.clone()),
+        }]));
+
+        Ok((
+            Expr::TcpListen { bound, args: lowered },
+            Type::Named(self.prelude()[PRELUDE_LISTENING], Vec::new()),
+        ))
+    }
+
     /// The `host:port` bound a borrowed `Net` was narrowed to, the same
     /// shape [`Self::granted_prefix`] reads off a borrowed `Fs`.
     pub(crate) fn granted_net_bound(

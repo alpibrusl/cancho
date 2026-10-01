@@ -32,12 +32,16 @@ impl<'a> Parser<'a> {
             // Edition 2 is edition 1 plus `Net` (`docs/editions.md` §7);
             // edition 3 is edition 2 plus `c_ptr`/`null_ptr`
             // (`docs/opaque-pointers.md` §4); edition 4 is edition 3
-            // plus `spawn`/`join` (`docs/threads.md` §2). Nothing later
-            // than that exists to opt into yet.
-            if value != 1 && value != 2 && value != 3 && value != 4 {
+            // plus `spawn`/`join` (`docs/threads.md` §2); edition 5 is
+            // edition 4 plus the socket handles
+            // (`docs/native-sockets.md` §3). Nothing later than that
+            // exists to opt into yet.
+            if !(1..=5).contains(&value) {
                 return Err(Diagnostic::new(
                     Rule::UnknownEdition,
-                    format!("unknown edition {value}; the only editions today are 1, 2, 3 and 4"),
+                    format!(
+                        "unknown edition {value}; the only editions today are 1, 2, 3, 4 and 5"
+                    ),
                     keyword.span.to(tok.span),
                 ));
             }

@@ -48,11 +48,21 @@ pub const PRELUDE_SPLIT_NET: usize = 12;
 /// pattern that could name it would be a way to end the obligation
 /// without joining.
 pub const PRELUDE_THREAD: usize = 13;
+/// `docs/native-sockets.md` §3, edition 5: a listening socket and an
+/// established connection -- `res`, one descriptor leaf each, no literal
+/// form -- and the enums their verbs answer. Appended after `Thread` so no
+/// earlier index moves.
+pub const PRELUDE_LISTENER: usize = 14;
+pub const PRELUDE_CONN: usize = 15;
+pub const PRELUDE_LISTENING: usize = 16;
+pub const PRELUDE_ACCEPTED: usize = 17;
+pub const PRELUDE_RECEIVED: usize = 18;
+pub const PRELUDE_SENT: usize = 19;
 
 /// How many types the prelude declares. Written once, because a builtin's
 /// signature indexes this table and a stale slice is a panic rather than a
 /// diagnostic.
-pub const PRELUDE_COUNT: usize = 14;
+pub const PRELUDE_COUNT: usize = 20;
 
 /// The library an unnarrowed `Ffi` names: none of them yet.
 ///
@@ -364,6 +374,14 @@ pub enum Expr {
     /// `args` is the capability (zero-sized, stopping at the backend) and
     /// the port, an `int`.
     Bind {
+        bound: String,
+        args: Vec<Expr>,
+    },
+    /// `tcp_listen(net, port, backlog, flags)` --
+    /// `docs/native-sockets.md` §3, edition 5: `bind` and `listen` answering
+    /// a `Listening` instead of a descriptor. `args` is the capability
+    /// (zero-sized), the port, the backlog and the flags, each an `int`.
+    TcpListen {
         bound: String,
         args: Vec<Expr>,
     },

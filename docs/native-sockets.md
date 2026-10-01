@@ -1,6 +1,6 @@
 # Native sockets: servers without `Ffi("libc")`
 
-> **Status: design settled (open questions in §9 answered), slice 1 in progress.** Stage 1 of removing C from the
+> **Status: design settled; slice 1 built (§10).** Stage 1 of removing C from the
 > path between a lex-sys program and the kernel. §7 is the whole
 > roadmap to a toolchain with no C in it; this document is only the
 > first of its four stages, and it is the one with an asker — the
@@ -93,7 +93,7 @@ the compiler and `std` is opt-in.
 
 | builtin | signature | row |
 |---|---|---|
-| `tcp_listen` | `(net, port, backlog) -> Listening` | `net_in(bound)` |
+| `tcp_listen` | `(net, port, backlog, flags) -> Listening` | `net_in(bound)` |
 | `tcp_connect` | `(net, host, port) -> Dialed` | `net_out(bound)` |
 | `tcp_accept` | `(&!Listener) -> Accepted` | `conn_accept` |
 | `conn_read` | `(&!Conn, &![byte]) -> Received` | `conn_read` |
@@ -113,8 +113,8 @@ enum Sent      { Wrote(int),    Again, Failed(int) }
 `Again` is its own constructor, not `Failed(EAGAIN)`: the value of
 `EAGAIN` is 11 on Linux and 35 on macOS, and a program that compares an
 `errno` against a number it had to look up per platform has a sentinel
-with a constructor around it (`file-handles.md` §3). `Data(0)` and
-`Wrote(0)` are not reachable, as `Got(0)` is not.
+with a constructor around it (`file-handles.md` §3). `Data(0)` is not reachable, as `Got(0)` is not (a read into an empty
+buffer is `Failed(EINVAL)`, §10); `Wrote(0)` is, for an empty write.
 
 **Rows follow the file rule** (`file-handles.md` §4.1): the authority is
 spent where the handle is minted — `tcp_listen` performs
@@ -309,3 +309,44 @@ paragraph pointing here when this one is built, not before.
 | Peer address on `accept` | **Not in `Accepted`.** A later `conn_peer(&Conn, &![byte]) -> int` is additive and costs nothing now; no asker until an access log exists |
 | Packages depending on `std` (#63) | **Yes**, separately, after slice 1 |
 | UDP and Unix sockets | No asker. `Conn` is deliberately not named `TcpConn` — if a second transport arrives it should find the name free — but nothing here is built for it |
+
+## 10. What slice 1 built, and what building it corrected
+
+Built: `Listener`, `Conn`, the five answers (`Listening`, `Accepted`,
+`Received`, `Sent`, and `Accepted`'s `Again`), `tcp_listen`, `tcp_accept`,
+`conn_read`, `conn_write`, `conn_nonblocking`, `listener_nonblocking`,
+`conn_close`, `listener_close`, all edition 5, on both backends. **Not yet
+built:** `tcp_connect` (slice 2), `Poller` (slice 3), `Clock` (slice 4),
+`conn_raw_fd`. Nine conformance tests over real sockets run every program on both
+backends (`conformance/sockets.rs`), plus six corpus fixtures that pin the
+refusals (a forged, dismantled or leaked handle; an undeclared
+`conn_read`; the builtins at edition 4) and the edition-1 name freedom.
+
+Four things the design did not know:
+
+1. **`bind` has been wrong on macOS since it was written.** It passes
+   `SOL_SOCKET = 1` and `SO_REUSEADDR = 2` -- Linux's numbers; Darwin's are
+   `0xffff` and `4`. On macOS the `setsockopt` quietly did nothing and
+   nobody saw it, because a failed `setsockopt` is ignored and a bind to a
+   fresh port needs no reuse. `tcp_listen` takes its constants from
+   `lex_sys_ir::SocketOs`, one table both backends read; the old `bind` is
+   untouched, as §9 decided. A program that needs `SO_REUSEADDR` on macOS
+   should use `tcp_listen`.
+2. **A blocking `recv` of zero bytes waits for data.** `conn_read` into an
+   empty buffer first reached the kernel, hung, and would have reported
+   end-of-stream had it returned. It now never reaches the kernel and
+   answers `Failed(EINVAL)`.
+3. **`accept` hands a connection its listener's `O_NONBLOCK` on Darwin and
+   not on Linux.** A `Conn` arrives *blocking* on both -- Darwin clears the
+   flag after `accept` -- so a program's first read means the same thing on
+   either.
+4. **`fcntl` is variadic, and Cranelift cannot say so.** LLVM declares it
+   `i32 (i32, i32, ...)` and the call is correct everywhere. Cranelift's
+   modules refuse two signatures for one symbol, so it declares one,
+   always with a third argument; on **Apple arm64 only** that one has nine
+   integer parameters -- the first eight in registers, the ninth in the
+   first stack slot, which is where `va_arg` reads a variadic argument.
+   Verified by reasoning and by the macOS CI job, not on a Mac.
+
+The non-blocking switches answer `0` or the `errno` (not the `-1` of
+`fcntl`): a sentinel is how `fs_read` came to disagree with `getchar`.

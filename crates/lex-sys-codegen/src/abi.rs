@@ -71,7 +71,12 @@ pub(crate) fn leaves_into(
         // That is the whole difference between a `File` and an `Io`: one
         // is authority the type system tracks and the kernel has never
         // heard of, and the other is a number the kernel gave us.
-        Type::Named(def, _) if def.0 as usize == lex_sys_ir::PRELUDE_FILE => {
+        Type::Named(def, _)
+            if matches!(
+                def.0 as usize,
+                lex_sys_ir::PRELUDE_FILE | lex_sys_ir::PRELUDE_LISTENER | lex_sys_ir::PRELUDE_CONN
+            ) =>
+        {
             out.push(types::I64);
         }
         Type::Named(def, args) if def.0 as usize == lex_sys_ir::PRELUDE_BOX => {

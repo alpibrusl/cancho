@@ -81,6 +81,10 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::BitsOf
                     | Builtin::Listen
                     | Builtin::Accept
+                    | Builtin::ConnNonblocking
+                    | Builtin::ListenerNonblocking
+                    | Builtin::ConnClose
+                    | Builtin::ListenerClose
                     | Builtin::Release,
                 ) => Ok(LKind::I64),
                 Callee::Builtin(Builtin::IsNan | Builtin::ByteOf) => Ok(LKind::I8),

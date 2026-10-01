@@ -519,7 +519,8 @@ pub(crate) fn collect_static_refs(e: &Expr, out: &mut std::collections::BTreeSet
         | Expr::FileOp { args, .. }
         | Expr::OpenFile { args, .. }
         | Expr::Connect { args, .. }
-        | Expr::Bind { args, .. } => {
+        | Expr::Bind { args, .. }
+        | Expr::TcpListen { args, .. } => {
             for a in args {
                 collect_static_refs(a, out);
             }
@@ -638,7 +639,8 @@ pub(crate) fn collect_extern_refs(e: &Expr, out: &mut std::collections::BTreeSet
         Expr::FileOp { args, .. }
         | Expr::OpenFile { args, .. }
         | Expr::Connect { args, .. }
-        | Expr::Bind { args, .. } => {
+        | Expr::Bind { args, .. }
+        | Expr::TcpListen { args, .. } => {
             for a in args {
                 collect_extern_refs(a, out);
             }
@@ -742,7 +744,8 @@ pub(crate) fn remap_static_refs(e: &mut Expr, remap: &std::collections::BTreeMap
         | Expr::FileOp { args, .. }
         | Expr::OpenFile { args, .. }
         | Expr::Connect { args, .. }
-        | Expr::Bind { args, .. } => {
+        | Expr::Bind { args, .. }
+        | Expr::TcpListen { args, .. } => {
             for a in args {
                 remap_static_refs(a, remap);
             }

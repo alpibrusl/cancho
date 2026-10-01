@@ -24,21 +24,21 @@ const ADDRINFO_SIZE: i64 = 48;
 /// be asked for, rather than as `None`, so a narrowing that failed to
 /// *tighten* as intended still enforces something (`docs/listen.md`
 /// §6.2).
-fn port_bound_of(text: &str) -> Option<i64> {
+pub(super) fn port_bound_of(text: &str) -> Option<i64> {
     if text.is_empty() { None } else { Some(text.parse().unwrap_or(-1)) }
 }
 
 impl<'a> FuncEmitter<'a> {
     /// Store one byte -- a constant (`"2"`) or a register (`%t3`) -- at
     /// `base + offset`.
-    fn store_byte(&mut self, base: &str, offset: i32, byte: &str) {
+    pub(crate) fn store_byte(&mut self, base: &str, offset: i32, byte: &str) {
         self.store_field(base, offset, "i8", byte);
     }
 
     /// Store any fixed-width field -- `store_byte`'s general form, needed
     /// once `connect`'s `struct addrinfo hints` has `i32` and `ptr`
     /// fields alongside the `i8`s `bind`'s own `sockaddr_in` was all of.
-    fn store_field(&mut self, base: &str, offset: i32, ty: &str, value: &str) {
+    pub(crate) fn store_field(&mut self, base: &str, offset: i32, ty: &str, value: &str) {
         let addr = self.fresh();
         self.out.push_str(&format!("  {addr} = getelementptr i8, ptr {base}, i64 {offset}\n"));
         self.out.push_str(&format!("  store {ty} {value}, ptr {addr}\n"));

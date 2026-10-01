@@ -13,6 +13,7 @@ mod expr;
 mod fs;
 mod memory;
 mod net;
+mod sockets;
 
 /// Where `hoist`ed allocas land: a line no instruction can be mistaken for.
 const HOIST_MARK: &str = "  ; hoisted allocas\n";

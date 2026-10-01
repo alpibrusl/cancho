@@ -270,6 +270,21 @@ used by an edition-2 `main` unchanged, since nothing in them mentions
 `Net`. What an edition-1 file cannot do is name something only edition 2
 has, and that is refused like any other unknown name.
 
+**Edition 5 is edition 4 plus the socket handles**
+([`native-sockets.md`](native-sockets.md)): the types `Listener`, `Conn`,
+`Listening`, `Accepted`, `Received` and `Sent`, the builtins
+`tcp_listen`, `tcp_accept`, `conn_read`, `conn_write`, the two
+`*_nonblocking` and the two `*_close`, and the `conn_accept`,
+`conn_read` and `conn_write` labels. Purely additive, so no `Split`
+changes: an edition-5 file's `split()` is edition 2's, with `net`.
+
+One rule this edition tightened rather than added: a user type named like
+a *prelude* type used to be refused whatever the file's edition
+(`BuiltinRedeclared`), so a file that declared its own `Net` or `Thread`
+was refused even at an edition that cannot name them. The check now asks
+the file's edition, which `Conn` -- a name a great many programs want --
+would otherwise have broken (`tests/accept/socket_names_are_edition_five.ls`).
+
 ---
 
 ## 8. What this does not do

@@ -25,7 +25,7 @@ const ADDRINFO_SIZE: u32 = 48;
 /// bound is not the same fact as an absent one, and reading them alike
 /// would let a narrowing that failed to *tighten* as intended enforce
 /// nothing instead (`docs/listen.md` §6.2).
-fn port_bound_of(text: &str) -> Option<i64> {
+pub(super) fn port_bound_of(text: &str) -> Option<i64> {
     if text.is_empty() { None } else { Some(text.parse().unwrap_or(-1)) }
 }
 
