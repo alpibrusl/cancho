@@ -1,8 +1,9 @@
-// `docs/float-math.md` §8: `std.math`'s float helpers -- `fabs`, `fmin`,
-// `fmax`, `floor`, `ceil`, `round` -- and the edges of `sin`/`cos` that do
-// not depend on how many digits are right (their accuracy is measured
-// against libm in `conformance/mathfn.rs`; their trap outside `|x| <= 1e6` is
-// `conformance/traps.rs`, because a trapping program is not a fixture).
+// `docs/float-math.md` §8-§10: `std.math`'s float helpers -- `fabs`, `fmin`,
+// `fmax`, `floor`, `ceil`, `round` -- and every claim about the transcendental
+// functions that is not about how many digits are right (their accuracy is
+// measured against libm in `conformance/mathfn.rs`): exact powers, the
+// specials (NaN, zeros, infinities, the overflow and underflow edges), the
+// inverse pairs, and the arguments argument reduction finds hardest.
 //
 // Every line is `name 1` when the claim holds, so a regression prints which
 // claim moved rather than a bare number.
@@ -83,6 +84,37 @@
 //~ STDOUT pow-overflows-and-underflows 1
 //~ STDOUT pow-square-root 1
 //~ STDOUT pow-nan 1
+//~ STDOUT tan-zero-and-odd 1
+//~ STDOUT tan-quarter-pi 1
+//~ STDOUT tan-near-half-pi-is-large-and-finite 1
+//~ STDOUT tan-is-sin-over-cos 1
+//~ STDOUT tan-nan 1
+//~ STDOUT atan-zero-and-odd 1
+//~ STDOUT atan-one-is-quarter-pi 1
+//~ STDOUT atan-infinity-is-half-pi 1
+//~ STDOUT atan-huge 1
+//~ STDOUT atan-nan 1
+//~ STDOUT asin-ends 1
+//~ STDOUT asin-half 1
+//~ STDOUT asin-beyond-is-nan 1
+//~ STDOUT acos-ends 1
+//~ STDOUT acos-half 1
+//~ STDOUT acos-beyond-is-nan 1
+//~ STDOUT asin-plus-acos-is-half-pi 1
+//~ STDOUT asin-inverts-sin 1
+//~ STDOUT atan2-axes 1
+//~ STDOUT atan2-the-sign-of-zero-chooses-the-half-plane 1
+//~ STDOUT atan2-quadrants 1
+//~ STDOUT atan2-infinities 1
+//~ STDOUT atan2-nan 1
+//~ STDOUT atan2-extreme-ratio 1
+//~ STDOUT sin-and-cos-of-infinity-are-nan 1
+//~ STDOUT sin-of-ten-to-the-twenty-two 1
+//~ STDOUT sin-and-cos-of-large-arguments-are-odd-and-even 1
+//~ STDOUT sin-of-the-largest-float 1
+//~ STDOUT cos-at-the-worst-case-for-argument-reduction 1
+//~ STDOUT pythagoras-at-a-huge-argument 1
+//~ STDOUT sin-continues-across-the-reduction-boundary 1
 //~ EXIT 0
 
 import std.io;
@@ -192,6 +224,37 @@ fn main(world: World) -> [] int {
         flag(i, "pow-overflows-and-underflows", math.pow(10.0, 400.0) == inf() && math.pow(10.0, 0.0 - 400.0) == 0.0);
         flag(i, "pow-square-root", math.pow(2.0, 0.5) == sqrt(2.0));
         flag(i, "pow-nan", is_nan(math.pow(nan(), 2.0)) && is_nan(math.pow(2.0, nan())));
+        flag(i, "tan-zero-and-odd", math.tan(0.0) == 0.0 && math.tan(0.0 - 0.7) == 0.0 - math.tan(0.7));
+        flag(i, "tan-quarter-pi", math.fabs(math.tan(0.7853981633974483) - 1.0) < 3.0e-16);
+        flag(i, "tan-near-half-pi-is-large-and-finite", math.tan(1.5707963267948966) > 1.0e16 && math.tan(1.5707963267948966) < inf());
+        flag(i, "tan-is-sin-over-cos", math.fabs(math.tan(1.1) - math.sin(1.1) / math.cos(1.1)) < 1.0e-15);
+        flag(i, "tan-nan", is_nan(math.tan(nan())));
+        flag(i, "atan-zero-and-odd", math.atan(0.0) == 0.0 && math.atan(0.0 - 0.7) == 0.0 - math.atan(0.7));
+        flag(i, "atan-one-is-quarter-pi", math.atan(1.0) == 0.7853981633974483);
+        flag(i, "atan-infinity-is-half-pi", math.atan(inf()) == 1.5707963267948966 && math.atan(0.0 - inf()) == 0.0 - 1.5707963267948966);
+        flag(i, "atan-huge", math.atan(1.0e300) == 1.5707963267948966);
+        flag(i, "atan-nan", is_nan(math.atan(nan())));
+        flag(i, "asin-ends", math.asin(1.0) == 1.5707963267948966 && math.asin(0.0 - 1.0) == 0.0 - 1.5707963267948966 && math.asin(0.0) == 0.0);
+        flag(i, "asin-half", math.fabs(math.asin(0.5) - 0.5235987755982989) < 1.2e-16);
+        flag(i, "asin-beyond-is-nan", is_nan(math.asin(1.5)) && is_nan(math.asin(0.0 - 1.5)) && is_nan(math.asin(inf())) && is_nan(math.asin(nan())));
+        flag(i, "acos-ends", math.acos(1.0) == 0.0 && math.acos(0.0 - 1.0) == 3.141592653589793 && math.acos(0.0) == 1.5707963267948966);
+        flag(i, "acos-half", math.fabs(math.acos(0.5) - 1.0471975511965979) < 2.3e-16);
+        flag(i, "acos-beyond-is-nan", is_nan(math.acos(1.5)) && is_nan(math.acos(0.0 - 1.5)) && is_nan(math.acos(nan())));
+        flag(i, "asin-plus-acos-is-half-pi", math.fabs(math.asin(0.3) + math.acos(0.3) - 1.5707963267948966) < 3.0e-16);
+        flag(i, "asin-inverts-sin", math.fabs(math.asin(math.sin(0.9)) - 0.9) < 2.0e-16);
+        flag(i, "atan2-axes", math.atan2(0.0, 1.0) == 0.0 && math.atan2(1.0, 0.0) == 1.5707963267948966 && math.atan2(0.0, 0.0 - 1.0) == 3.141592653589793 && math.atan2(0.0 - 1.0, 0.0) == 0.0 - 1.5707963267948966);
+        flag(i, "atan2-the-sign-of-zero-chooses-the-half-plane", math.atan2(0.0 * (0.0 - 1.0), 0.0 - 1.0) == 0.0 - 3.141592653589793 && bits_of(math.atan2(0.0 * (0.0 - 1.0), 1.0)) == bits_of(0.0 * (0.0 - 1.0)));
+        flag(i, "atan2-quadrants", math.fabs(math.atan2(1.0, 1.0) - 0.7853981633974483) < 1.0e-16 && math.fabs(math.atan2(1.0, 0.0 - 1.0) - 2.356194490192345) < 1.0e-15 && math.fabs(math.atan2(0.0 - 1.0, 0.0 - 1.0) + 2.356194490192345) < 1.0e-15 && math.fabs(math.atan2(0.0 - 1.0, 1.0) + 0.7853981633974483) < 1.0e-16);
+        flag(i, "atan2-infinities", math.atan2(inf(), inf()) == 0.7853981633974483 && math.atan2(inf(), 0.0 - inf()) == 2.356194490192345 && math.atan2(1.0, inf()) == 0.0 && math.atan2(1.0, 0.0 - inf()) == 3.141592653589793 && math.atan2(inf(), 1.0) == 1.5707963267948966);
+        flag(i, "atan2-nan", is_nan(math.atan2(nan(), 1.0)) && is_nan(math.atan2(1.0, nan())));
+        flag(i, "atan2-extreme-ratio", math.atan2(1.0e300, 1.0e-300) == 1.5707963267948966 && math.atan2(1.0e-300, 1.0e-10) > 0.0);
+        flag(i, "sin-and-cos-of-infinity-are-nan", is_nan(math.sin(inf())) && is_nan(math.cos(0.0 - inf())) && is_nan(math.tan(inf())));
+        flag(i, "sin-of-ten-to-the-twenty-two", math.fabs(math.sin(1.0e22) + 0.8522008497671888) < 2.0e-16 && math.fabs(math.cos(1.0e22) - 0.523214785395139) < 2.0e-16);
+        flag(i, "sin-and-cos-of-large-arguments-are-odd-and-even", math.sin(0.0 - 1.0e15) == 0.0 - math.sin(1.0e15) && math.cos(0.0 - 1.0e15) == math.cos(1.0e15) && math.tan(0.0 - 1.0e15) == 0.0 - math.tan(1.0e15));
+        flag(i, "sin-of-the-largest-float", math.fabs(math.sin(1.7976931348623157e308) - 0.004961954789184062) < 2.0e-18 && math.fabs(math.cos(1.7976931348623157e308) + 0.9999876894265599) < 2.0e-16);
+        flag(i, "cos-at-the-worst-case-for-argument-reduction", math.fabs(math.cos(6381956970095103.0 * math.pow(2.0, 797.0)) / (0.0 - 4.687165924254627611e-19) - 1.0) < 3.0e-16);
+        flag(i, "pythagoras-at-a-huge-argument", math.fabs(math.sin(1.0e200) * math.sin(1.0e200) + math.cos(1.0e200) * math.cos(1.0e200) - 1.0) < 3.0e-16);
+        flag(i, "sin-continues-across-the-reduction-boundary", math.fabs(math.sin(1000000.0) + 0.34999350217129294) < 2.0e-16 && math.fabs(math.sin(1000001.0) - 0.5991474390141922) < 2.0e-16);
     }
     release(io);
     return 0;

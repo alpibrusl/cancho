@@ -392,7 +392,7 @@ not repeated here; a doc's own header carries its own detail.
 | [`utf8.md`](utf8.md) | Decoding `&r [byte]` into code points | settled and built |
 | [`standard-error.md`](standard-error.md) | `err_write`: a third label on `Io`, not an eighth capability | settled and built |
 | [`../AGENTS.md`](../AGENTS.md) | How to write lex-sys in one page | written and enforced |
-| [`float-math.md`](float-math.md) | `sqrt` as a builtin, then `exp`/`log`/`pow`, then `floor`/`ceil`/`round`/`fabs`/`fmin`/`fmax`/`sin`/`cos`, then `exp`/`log`/`pow` fixed to 1–4 ulp and `expm1`/`log1p`/`log2`/`log10`/the hyperbolics added | settled and built; every function measured against libm in ulps |
+| [`float-math.md`](float-math.md) | `sqrt` as a builtin, then `exp`/`log`/`pow`, then `floor`/`ceil`/`round`/`fabs`/`fmin`/`fmax`/`sin`/`cos`, then `exp`/`log`/`pow` fixed to 1–4 ulp and `expm1`/`log1p`/`log2`/`log10`/the hyperbolics added, then `tan`/`atan`/`atan2`/`asin`/`acos` and a Payne–Hanek reduction for every finite argument | settled and built; every function measured against libm in ulps |
 | [`gpu.md`](gpu.md) | Whether lex-sys can run on a GPU, and whether `lex-gpu` should exist | measured; decided |
 | [`line-reading.md`](line-reading.md) | Whether `std` needs a line reader | measured — no; found and fixed a silent truncation bug |
 | [`agent-errors.md`](agent-errors.md) | Refusals a machine can read: stable rule tags, `check --output json` | settled and built |
