@@ -1,6 +1,6 @@
 # Native sockets: servers without `Ffi("libc")`
 
-> **Status: design, nothing built.** Stage 1 of removing C from the
+> **Status: design settled (open questions in §9 answered), slice 1 in progress.** Stage 1 of removing C from the
 > path between a lex-sys program and the kernel. §7 is the whole
 > roadmap to a toolchain with no C in it; this document is only the
 > first of its four stages, and it is the one with an asker — the
@@ -299,12 +299,13 @@ paragraph pointing here when this one is built, not before.
 2. **`tcp_connect`** — and `packages/net-connect` / `net-sockets`
    reduced to what is left, which may be nothing.
 3. **`Poller`** — and `examples/api` migrated; the benchmark in §8.5.
-4. **`Clock`** — if the answer to the first question below is yes.
+4. **`Clock`** (decided: yes).
 
-| Question | Why it waits |
+| Question | Settled |
 |---|---|
-| Is a `Clock` capability (§5) the right way to get monotonic time into a program, or does the idle timeout belong in the `Poller` (e.g. a per-registration deadline the kernel enforces and reports as an event)? | The second needs no new capability, and moves the timeout out of the program. It is also less general: a program cannot ask the time for any other purpose, which is arguably the point |
-| `SO_REUSEPORT` as a flag on `tcp_listen`, or not at all? | One process per core is how the api server is meant to scale, and that is a flag; whether it belongs to the builtin or to a later `tcp_listen_with` is taste |
-| Should the old `bind`/`listen`/`accept`/`connect` (int-returning, edition 2) be kept? | They cannot be removed without breaking files that work, and the conformance test that counts their declarers keeps them honest. Probably: kept, documented as superseded, and removed at no edition |
-| Whether `tcp_accept` should hand back the peer address | The api server ignores it; an access log wants it. `Accepted` could carry a second leaf — which is a design question about a `Conn` that remembers where it came from |
+| `Clock` capability, or a per-registration deadline in the `Poller`? | **`Clock`** (§5). A deadline the kernel reports as an event is less general, and the web layer will want the time for logs and `Date:` headers anyway; `poller_wait`'s timeout stays |
+| `SO_REUSEPORT` | **A flags argument on `tcp_listen`** (bit 1), not a second builtin |
+| The old int-returning `bind`/`listen`/`accept`/`connect` | **Kept**, documented as superseded; they cannot be removed without breaking files that check today |
+| Peer address on `accept` | **Not in `Accepted`.** A later `conn_peer(&Conn, &![byte]) -> int` is additive and costs nothing now; no asker until an access log exists |
+| Packages depending on `std` (#63) | **Yes**, separately, after slice 1 |
 | UDP and Unix sockets | No asker. `Conn` is deliberately not named `TcpConn` — if a second transport arrives it should find the name free — but nothing here is built for it |
