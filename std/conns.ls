@@ -254,7 +254,8 @@ pub fn drop[&h](heap: &!h Heap, table: Table) -> [heap] int {
                 Attached::Ok(c) => {
                     conn_close(c);
                 }
-                Attached::Failed(e) => { }
+                Attached::Failed(e) => {
+                }
             }
         }
         i = i + 1;
