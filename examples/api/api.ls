@@ -105,12 +105,22 @@ fn number_of[&t](text: &t [byte]) -> [] int {
 
 // A whole response: the head, then `body`.
 fn reply[&h, &b](heap: &!h Heap, out: buffer.Buffer, status: int, body: &b [byte], keep: bool) -> [heap] buffer.Buffer {
-    let head = http.respond_head(heap, out, status, "application/json", len(body), keep);
+    return reply_with(heap, out, status, body, keep, "");
+}
+
+// `reply`, with extra header lines in the head.
+fn reply_with[&h, &b, &x](heap: &!h Heap, out: buffer.Buffer, status: int, body: &b [byte], keep: bool, extra: &x [byte]) -> [heap] buffer.Buffer {
+    let head = http.respond_head_with(heap, out, status, "application/json", len(body), keep, extra);
     return buffer.append(heap, head, body);
 }
 
 // `{"error": message}`.
 fn failure[&h, &m](heap: &!h Heap, out: buffer.Buffer, status: int, message: &m [byte], keep: bool) -> [heap] buffer.Buffer {
+    return failure_with(heap, out, status, message, keep, "");
+}
+
+// `failure`, with extra header lines (`Allow: GET\r\n`) in the head.
+fn failure_with[&h, &m, &x](heap: &!h Heap, out: buffer.Buffer, status: int, message: &m [byte], keep: bool, extra: &x [byte]) -> [heap] buffer.Buffer {
     var w = json.writer(heap, 64);
     w = json.begin_object(heap, w);
     w = json.put_key(heap, w, "error");
@@ -119,14 +129,14 @@ fn failure[&h, &m](heap: &!h Heap, out: buffer.Buffer, status: int, message: &m 
     let body = json.finish(w);
     var answer = out;
     borrow body as &bb in {
-        answer = reply(heap, answer, status, buffer.bytes(bb), keep);
+        answer = reply_with(heap, answer, status, buffer.bytes(bb), keep, extra);
     }
     buffer.drop(heap, body);
     return answer;
 }
 
 fn user[&h, &p, &s](heap: &!h Heap, out: buffer.Buffer, path: &s [byte], params: &p [int], keep: bool) -> [heap] buffer.Buffer {
-    let id = number_of(path[params[0]..params[1]]);
+    let id = route.param_nat(path, params, 0);
     if id < 0 {
         return failure(heap, out, 400, "id must be a number", keep);
     }
@@ -189,7 +199,7 @@ fn add[&h, &b](heap: &!h Heap, out: buffer.Buffer, body: &b [byte], keep: bool) 
 // test wants, within the output buffer. The body is not one repeated byte, so a
 // byte sent twice or out of place changes it.
 fn blob[&h, &p, &s](heap: &!h Heap, out: buffer.Buffer, path: &s [byte], params: &p [int], keep: bool) -> [heap] buffer.Buffer {
-    let n = number_of(path[params[0]..params[1]]);
+    let n = route.param_nat(path, params, 0);
     if n < 0 || n > 32768 {
         return failure(heap, out, 400, "n must be a number up to 32768", keep);
     }
@@ -268,7 +278,16 @@ fn handle[&h, &r, &q, &t, &p, &b](heap: &!h Heap, router: &r route.Router, reque
         return blob(heap, out, path, params, keep);
     }
     if id == 0 - 2 {
-        return failure(heap, out, 405, "method not allowed", keep);
+        // A 405 says what would have been allowed (RFC 9110 §15.5.6).
+        var extra = buffer.append(heap, buffer.empty(heap, 48), "Allow: ");
+        extra = route.allowed(heap, router, path, params, extra);
+        extra = buffer.append(heap, extra, "\r\n");
+        var answer = out;
+        borrow extra as &eb in {
+            answer = failure_with(heap, answer, 405, "method not allowed", keep, buffer.bytes(eb));
+        }
+        buffer.drop(heap, extra);
+        return answer;
     }
     return failure(heap, out, 404, "not found", keep);
 }

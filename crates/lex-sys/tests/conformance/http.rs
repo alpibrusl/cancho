@@ -462,6 +462,29 @@ fn a_misused_router_or_response_traps_instead_of_going_on() {
             "negative-length",
             "out = http.respond_head(heap, out, 200, \"text/plain\", 0 - 1, true);",
         ),
+        // `extra` is whole `name: value` lines or it traps: a bare line feed
+        // would end the head early, and what followed would be a body the client
+        // never asked for.
+        (
+            "extra-bare-line-feed",
+            "out = http.respond_head_with(heap, out, 200, \"text/plain\", 0, true, \"X: a\\nSet-Cookie: b\\r\\n\");",
+        ),
+        (
+            "extra-bare-carriage-return",
+            "out = http.respond_head_with(heap, out, 200, \"text/plain\", 0, true, \"X: a\\rY: b\\r\\n\");",
+        ),
+        (
+            "extra-without-a-colon",
+            "out = http.respond_head_with(heap, out, 200, \"text/plain\", 0, true, \"not a header\\r\\n\");",
+        ),
+        (
+            "extra-without-its-line-ending",
+            "out = http.respond_head_with(heap, out, 200, \"text/plain\", 0, true, \"X: a\");",
+        ),
+        (
+            "extra-a-blank-line",
+            "out = http.respond_head_with(heap, out, 200, \"text/plain\", 0, true, \"X: a\\r\\n\\r\\nbody\");",
+        ),
     ] {
         let dir = scratch(&format!("http-misuse-{tag}"));
         let source = dir.join("misuse.ls");

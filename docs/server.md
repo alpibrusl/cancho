@@ -289,3 +289,11 @@ in memory the runtime owns, a larger change than this was, and it is recorded in
 still about **twenty-five times faster** on the same core and request, down from
 forty, and at 73,000 it holds about nine tenths of what a C `epoll` loop does
 without parsing anything.
+
+## 9. Gaps closed since
+
+`Allow` on a 405 (`route.allowed`, `http.respond_head_with`) and typed route
+parameters (`route.param_nat`, `param`, `param_decoded`) -- both in `http.md` §8
+-- and `examples/api` uses them: `GET /add` answers `405` with `Allow: POST`,
+and `/users/:id` and `/blob/:n` read their number with `param_nat` instead of a
+private parser.

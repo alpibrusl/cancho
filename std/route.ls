@@ -2,6 +2,7 @@ module std.route;
 
 import std.buffer;
 import std.bytes;
+import std.http;
 import std.map;
 import std.vec;
 
@@ -341,4 +342,82 @@ pub fn find[&r, &m, &p, &t](router: &r Router, method: &m [byte], path: &p [byte
         return 0 - 2;
     }
     return 0 - 1;
+}
+
+// The methods some route has for `path`, as `GET, POST` appended to `out` --
+// what a 405 must tell the client in its `Allow` header (RFC 9110 §15.5.6).
+// Registration order, each method once; nothing is appended for a path no
+// route has. `params` is `find`'s scratch table.
+pub fn allowed[&h, &r, &p, &t](heap: &!h Heap, router: &r Router, path: &p [byte], params: &!t [int], out: buffer.Buffer) -> [heap] buffer.Buffer {
+    let text = buffer.bytes(router.text);
+    var o = out;
+    var wrote = false;
+    let n = vec.size(router.routes) / 8;
+    var i = 0;
+    while i < n {
+        let ps = vec.get(router.routes, i * 8 + 2);
+        let pl = vec.get(router.routes, i * 8 + 3);
+        if matches(text[ps..ps + pl], path, params) {
+            let ms = vec.get(router.routes, i * 8);
+            let ml = vec.get(router.routes, i * 8 + 1);
+            // Already listed by an earlier route that fits too?
+            var seen = false;
+            var j = 0;
+            while j < i && !seen {
+                let qs = vec.get(router.routes, j * 8 + 2);
+                let ql = vec.get(router.routes, j * 8 + 3);
+                let ns = vec.get(router.routes, j * 8);
+                let nl = vec.get(router.routes, j * 8 + 1);
+                if bytes.equal(text[ns..ns + nl], text[ms..ms + ml]) && matches(text[qs..qs + ql], path, params) {
+                    seen = true;
+                }
+                j = j + 1;
+            }
+            if !seen {
+                if wrote {
+                    o = buffer.append(heap, o, ", ");
+                }
+                o = buffer.append(heap, o, text[ms..ms + ml]);
+                wrote = true;
+            }
+        }
+        i = i + 1;
+    }
+    return o;
+}
+
+// Parameter `i` of a match, as the text it matched: a slice of `path`.
+pub fn param[&p, &t](path: &p [byte], params: &t [int], i: int) -> [] &p [byte] {
+    return path[params[2 * i]..params[2 * i + 1]];
+}
+
+// Parameter `i` as a non-negative decimal number, or -1 if it is empty, has a
+// character that is not a digit, or has more than 17 digits (which no id a
+// handler would echo can have, and which would overflow an `int` at 19). The
+// typed `:id` of a framework without the type syntax: the handler says
+// `route.param_nat(path, params, 0)` and refuses a negative answer.
+pub fn param_nat[&p, &t](path: &p [byte], params: &t [int], i: int) -> [] int {
+    let text = path[params[2 * i]..params[2 * i + 1]];
+    if len(text) == 0 || len(text) > 17 {
+        return 0 - 1;
+    }
+    var n = 0;
+    var k = 0;
+    while k < len(text) {
+        let c = int_of(text[k]);
+        if c < 48 || c > 57 {
+            return 0 - 1;
+        }
+        n = n * 10 + (c - 48);
+        k = k + 1;
+    }
+    return n;
+}
+
+// Parameter `i`, percent-decoded into `out` (`std.http.percent_decode`'s
+// rules, `+` kept as a plus): the length written, or -1 for a bad escape or
+// no room. A route's raw parameter is what was matched; this is what it
+// *means*.
+pub fn param_decoded[&p, &t, &o](path: &p [byte], params: &t [int], i: int, out: &!o [byte]) -> [] int {
+    return http.percent_decode(path[params[2 * i]..params[2 * i + 1]], out, false);
 }

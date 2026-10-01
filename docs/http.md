@@ -223,8 +223,8 @@ this work; a router-backed server is the next thing to build.
 | ~~A server loop that reads, parses, routes and writes~~ | **Built**: `examples/api`, [`server.md`](server.md), with the requests-a-second figures. Still missing there: streaming a body larger than its buffer, and chunked decoding |
 | Chunked decoding, `Expect: 100-continue`, trailers | a stream, not a parse |
 | Refusing a malformed head before its blank line arrives | §3, last paragraph |
-| `Allow` on a 405 | `find` does not say which methods; wants a second query |
-| Typed parameters (`:id:int`), regex constraints | a handler can check; a router that does adds a grammar |
+| ~~`Allow` on a 405~~ | **Built**: `route.allowed(heap, router, path, params, out)` appends `GET, POST` -- registration order, each once -- and `http.respond_head_with` writes whole header lines it was handed (anything but `name: value` + CRLF traps, for the reason a header injection does). `examples/api` answers `Allow:` on its 405s |
+| Typed parameters (`:id:int`), regex constraints | **Half built, without the grammar**: the handler asks for the type -- `route.param_nat(path, params, i)` (a non-negative decimal of at most 17 digits, else -1), `route.param(path, params, i)` (the matched text), `route.param_decoded(path, params, i, out)` (percent-decoded). A router that refuses a non-number itself still adds a grammar, and nothing has asked |
 | Many routes under one prefix | linear within the prefix (§7); a trie would fix it, and nothing has that many |
 | Query string into a map | `query_value` is a scan; a map is a few lines for a caller who wants one |
 | JSON body binding and validation (what makes FastAPI feel like FastAPI) | no reflection and no macros here: a model is a hand-written function over the `std.json` tape |

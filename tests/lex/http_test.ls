@@ -233,3 +233,26 @@ fn test_the_response_head[&h](heap: &!h Heap) -> [heap] int {
     buffer.drop(heap, again);
     return 0;
 }
+
+fn test_extra_header_lines_go_before_the_blank_line[&h](heap: &!h Heap) -> [heap] int {
+    var out = buffer.empty(heap, 16);
+    out = http.respond_head_with(heap, out, 405, "application/json", 2, true, "Allow: GET, POST\r\nCache-Control: no-store\r\n");
+    borrow out as &b in {
+        let want = "HTTP/1.1 405 Method Not Allowed\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: keep-alive\r\nAllow: GET, POST\r\nCache-Control: no-store\r\n\r\n";
+        test.assert(bytes.equal(buffer.bytes(b), want));
+    }
+    buffer.drop(heap, out);
+    // No extra lines is exactly `respond_head`.
+    var plain = buffer.empty(heap, 16);
+    plain = http.respond_head_with(heap, plain, 200, "text/plain", 0, false, "");
+    var same = buffer.empty(heap, 16);
+    same = http.respond_head(heap, same, 200, "text/plain", 0, false);
+    borrow plain as &p in {
+        borrow same as &s in {
+            test.assert(bytes.equal(buffer.bytes(p), buffer.bytes(s)));
+        }
+    }
+    buffer.drop(heap, plain);
+    buffer.drop(heap, same);
+    return 0;
+}

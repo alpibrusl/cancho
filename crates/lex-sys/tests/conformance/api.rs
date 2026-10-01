@@ -133,6 +133,15 @@ fn the_routes_answer() {
     assert_eq!(r.status, 422);
     let r = ask(&mut s, &post("/health", ""));
     assert_eq!((r.status, r.body.as_str()), (405, "{\"error\":\"method not allowed\"}"));
+    // RFC 9110 §15.5.6: a 405 says what the path does allow, and a path with two
+    // methods says both.
+    assert!(r.head.contains("\r\nAllow: GET\r\n") || r.head.ends_with("Allow: GET"), "{}", r.head);
+    let r = ask(&mut s, &get("/add"));
+    assert_eq!(r.status, 405);
+    assert!(r.head.contains("Allow: POST"), "{}", r.head);
+    // A 404 has none: no route has the path.
+    let r = ask(&mut s, &get("/nothing"));
+    assert!(!r.head.contains("Allow:"), "{}", r.head);
     let r = ask(&mut s, &get("/nothing"));
     assert_eq!((r.status, r.body.as_str()), (404, "{\"error\":\"not found\"}"));
 }
