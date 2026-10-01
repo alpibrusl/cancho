@@ -174,6 +174,14 @@ where `sqrt_of` was off by 10⁴³ and more.
 
 ## 7. `exp`, `log` and `pow`, closed the way §6 said they would be
 
+> **Superseded by §9.** The algorithms and the accuracy figures below
+> describe the first version — a Taylor series for `exp`, an `atanh`
+> series for `log`, `exp(y * log(x))` for `pow` — which was off by up to a
+> hundred ulp. They are kept because §7.1's bug and the reasoning behind
+> the guards are still true; the *numbers* are not, and §9 has the
+> measured ones. `exp`, `log` and `pow` are now fdlibm's algorithms and a
+> double-double product, within 1, 1 and 4 ulp of the C library.
+
 Three askers, the two-per-half bar §1 already used, each wanting more
 than one of the three: `examples/growth.ls` (continuous and discrete
 compound growth, plus a doubling time — `exp`, `pow` and `log` in one
@@ -291,24 +299,20 @@ of `float` and `truncate` arithmetic each, like `exp`/`log`/`pow`.
 **Measured against the C library**, not asserted. A foreign signature
 cannot carry a `float` (`opaque-pointers.md`), so libm cannot be called
 from a lex-sys program; the comparison is made from outside.
-`tests/programs/trig_samples.ls` prints the bit pattern of `sin` and
-`cos` at a fixed sample, `conformance/trig.rs` replays the same
+`tests/programs/math_samples.ls` prints the bit pattern of a function's
+answers at a fixed sample, `conformance/mathfn.rs` replays the same
 arguments (a fixed linear-congruential sequence, every step exact or
 correctly rounded, so Rust and lex-sys compute the same argument bit for
 bit) and measures the distance from glibc's answer in units in the last
-place. 20,000 arguments per range, `sin` and `cos` each, 40,000 answers:
+place. The first measurement used 20,000 arguments per range; it is now
+the same harness as §9's, 10,000 per range, and the worst error is **1
+ulp on `[-10³, 10³]` and below and on both neighbourhoods of a multiple
+of π/2, and 2 ulp on `[-10⁶, 10⁶]`** — `sin` and `cos` alike, between 8%
+and 28% of answers differing from libm's at all (and none for `cos` near
+a zero of `cos`, where the answer is exactly the reduced argument).
 
-| range | worst error | answers that differ from libm at all |
-|---|---|---|
-| [−1, 1] | **1 ulp** | 3,586 (9.0%) |
-| [−10, 10] | **1 ulp** | 6,399 (16.0%) |
-| [−10³, 10³] | **1 ulp** | 6,362 (15.9%) |
-| [−10⁶, 10⁶] | **2 ulp** | 8,373 (20.9%) |
-| within 10⁻³ of 100·π/2 | **1 ulp** | 4,341 (10.9%) |
-| within 10⁻³ of 10⁵·π/2 | **1 ulp** | 5,491 (13.7%) |
-
-**Not correctly rounded, and not claimed to be** — one answer in ten to
-one in five is one float away from the library's, which is the usual
+**Not correctly rounded, and not claimed to be** — up to one answer in
+four is one float away from the library's, which is the usual
 state of a small hand-written `sin` and is what a test bound of "within
 a few ulp" is for. The test allows one ulp more than measured, because
 the reference is itself a library and another platform's rounds
@@ -325,3 +329,113 @@ differently from glibc's in the last place.
   phase accumulator that should have been reduced as it went. It traps
   rather than answering wrongly.
 * **No `π` constant.** `3.141592653589793` is what a caller writes.
+
+---
+
+## 9. `exp`, `log` and `pow` fixed; `expm1`, `log1p`, `log2`, `log10` and the hyperbolics added
+
+§7 shipped `exp`, `log` and `pow` with an accuracy stated honestly as
+"2.4e-14 relative" and "6e-14". That is a hundred ulp, and the first
+thing measured against the C library in the unit that matters (ulps, not
+a relative tolerance two orders of magnitude loose, which is what
+`floats.rs` checks) was worse than the figure suggested for `pow`: **60
+ulp at `5e5 ^ 3.7`, and 275 at `1.7 ^ -552`**. A program that computes
+`pow(x, 2.0)` and compares it to `x * x` would not have noticed; one that
+compares `pow(7.0, 2.0)` to `49.0` would, because it was not 49.
+
+### 9.1 What changed
+
+* **`exp`** is fdlibm's: reduction by `ln2` in two pieces, a degree-4
+  minimax polynomial in a rational form, scaling by `2^k`. **1 ulp.**
+* **`log`** is fdlibm's: the exponent out of the float's own bits, a
+  mantissa in `[√2/2, √2]`, a degree-14 minimax polynomial in `s²`
+  with `s = f/(2+f)`. **1 ulp**, including near `x == 1`, where the
+  series it replaces had an *absolute* floor of 1e-12, and for
+  **subnormal** `x`, which the old one got wrong: `log(5e-324)` is
+  `-744.4400719213812`, to the bit. (A subnormal is scaled by `2^54`
+  first, which is exact.)
+* **`pow`** carries `y * log(x)` as a pair of floats. A relative error
+  `d` in the exponent is a relative error `d` in the result, and the
+  exponent reaches 700, so rounding it to one float was the whole
+  error. `log(x)` is kept as `hi + lo` (`two_sum` keeps what `k * ln2`
+  loses) and the product through `two_product`, Dekker's, which needs no
+  fused multiply-add. What remains is `log`'s own error times `y` — about
+  `y/3` ulp, small for the exponents programs use. Four cases are
+  answered exactly rather than approximately: `y == 1` (`x`), `y == 2`
+  (`x * x`), `y == -1` (`1 / x`) and `y == 0.5` (`sqrt`); and **a whole
+  exponent whose power is representable is computed by repeated
+  squaring** with every multiplication checked for exactness, so
+  `pow(7.0, 2.0) == 49.0`, `pow(10.0, 15.0) == 1e15` and
+  `pow(2.0, 100.0)` are exact, as C's are. Infinite exponents and bases
+  and the overflow and underflow edges are settled before the pair is
+  formed (`pow(1.0, inf)` is 1, as C says; it was NaN).
+* **New: `expm1`, `log1p`** (Kahan's identities over the new `exp`/`log`:
+  `u = exp(x)`, `(u - 1) * x / log(u)`, in which `u`'s rounding error
+  cancels), **`log2`** and **`log10`** (`k + log(m)/ln2`, so
+  `log2` of a power of two is exact, which `log(x)/ln2` is not;
+  `log10` with `log10(2)` in two pieces), and **`sinh`, `cosh`, `tanh`,
+  `asinh`, `acosh`, `atanh`** — fdlibm's, built on `expm1`/`log1p`
+  because `(e^x - e^-x)/2` and `log(x + √(x²-1))` lose the whole answer
+  to cancellation for small arguments.
+
+### 9.2 Measured
+
+`conformance/mathfn.rs` replays a fixed sample (a linear-congruential
+sequence, exact at every step, so Rust and lex-sys agree on every
+argument bit for bit — `tests/programs/math_samples.ls` prints the
+answers' bit patterns, one process per function and range) and measures
+the distance from glibc's answer in ulps. 10,000 arguments per range,
+three to six ranges per function, chosen to include the places each is
+hard: near zero, near 1, the overflow and underflow edges, and
+`5e299`.
+
+| function | ranges | worst error | answers that differ from libm at all |
+|---|---|---|---|
+| `exp` | ±1, ±10, ±700, ±1e-3, ±1e-9, [-745, -695] | **1 ulp** | 0 – 9.7% |
+| `log` | [0.5, 1.5], [1, 100], [0, 1e6], 1 ± 1e-3, (0, 1e-3), up to 1e300 | **1 ulp** | 0 – 6.4% |
+| `expm1` | ±1, ±10, ±30, ±1e-3, ±1e-9 | **2 ulp** | 19 – 31% |
+| `log1p` | ±0.999, (0, 1e-3), ±1e-9, [1, 100], [0, 1e6] | **2 ulp** | 8 – 38% |
+| `log2` | as `log` | **1 ulp** | 0 – 28% |
+| `log10` | as `log` | **2 ulp** | 0 – 16% |
+| `sinh` | ±1, ±10, ±30, ±1e-3, ±1e-9, [0, 710] | **3 ulp** | 0 – 38% |
+| `cosh` | ±1, ±10, ±30, ±1e-3, [0, 710] | **2 ulp** | 0 – 9.5% |
+| `tanh` | ±1, ±10, ±30, ±1e-3, ±1e-9 | **3 ulp** | 0.8 – 25% |
+| `asinh` | ±1, ±10, ±1e6, ±1e-3, ±1e-9, up to 1e300 | **2 ulp** | 0 – 37% |
+| `acosh` | [1, 3], [1, 100], [0, 1e6], up to 1e300 | **2 ulp** | 0 – 14% |
+| `atanh` | ±0.999, ±1e-3, ±1e-9, ±1 | **2 ulp** | 0 – 38% |
+| `pow(x, 3.7)` | [0.5, 1.5], [1, 100], [0, 1e6] | **2 ulp** (was 60) | 31 – 40% |
+| `pow(x, 0.3)` | same | **2 ulp** | 4.5 – 38% |
+| `pow(1.7, x)` | ±1, ±700, ±1e-3 | **4 ulp** (was 275) | 0 – 78% |
+| `pow(x, 2)` | same as `pow(x, 3.7)` | **1 ulp** | 0.1 – 0.6% |
+| `pow(x, 7)` | [0.5, 1.5], [1, 100] | **3 ulp** | 43 – 49% |
+| `pow(x, -3)` | same as `pow(x, 3.7)` | **2 ulp** | 28 – 39% |
+
+**Not correctly rounded, and not claimed to be.** `expm1`/`log1p` are
+Kahan's identities, not fdlibm's long rational approximations, which is
+why they sit at 2 ulp where `exp`/`log` sit at 1; the hyperbolics inherit
+that through `expm1`. The test bounds are the measured worst plus one,
+because the reference is itself a library: another platform's rounds
+differently in the last place. `pow(1.7, x)` at `x = ±700` is the case
+the `y/3`-ulp rule is about, and 4 ulp is what it costs.
+
+`tests/accept/math_floats.ls` holds the claims that are not about ulps:
+exact powers, `log2` of a power of two, `log10` of a power of ten,
+specials (NaN, ±0, ±inf, the overflow and underflow edges) for every
+function, and the inverse pairs.
+
+### 9.3 What this still does not do
+
+* **No `tan`, `atan`, `atan2`, `asin`, `acos`.** `atan2` is the one most
+  likely to be asked for next; each is its own reduction and its own
+  table.
+* **`pow` is not fdlibm's.** fdlibm computes `log2` to about 68 bits
+  internally, which gives < 1 ulp for every `y`; this gets there for
+  `|y|` up to a few dozen and degrades as `y/3` ulp beyond. Closing it
+  is a longer `log_pair`, not a new design.
+* **A subnormal result is rounded twice** (once in `exp`, once by the
+  scaling), so the last place can be a ulp off in that range. The
+  `[-745, -695]` row above is it: still 1 ulp, but it is not the whole
+  range's guarantee.
+* **`floats.rs`'s old sweep still checks `exp`, `log` and `pow` to 1e-9
+  relative**, which is what §7 claimed. It is a floor under the ulp
+  table, not the claim: that is `mathfn.rs`.
