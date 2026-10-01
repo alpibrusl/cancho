@@ -170,3 +170,8 @@ quietly edited — the roadmap says which.
 [EUPL-1.2](LICENSE), matching the rest of the ecosystem. See `LICENSE`
 for the notice and where to obtain the full text in any of the 23 EU
 languages.
+
+Every package under `packages/` carries its own copy of the same `LICENSE`, so a
+package published or extracted on its own is still EUPL-1.2. The copy is a
+file beside the source, not a line in it: a comment in a `.ls` file would change
+its `source_hash` and so every lock that pins it.
