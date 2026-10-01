@@ -55,6 +55,7 @@ fn commands() -> Vec<CommandInfo> {
         cmd_check(),
         cmd_run(),
         cmd_test(),
+        cmd_fmt(),
         cmd_ids(),
         cmd_authority(),
         cmd_layout(),
@@ -189,6 +190,28 @@ fn cmd_test() -> CommandInfo {
     )
     .with_examples(vec![("Run a file's tests", "lex-sys test --std tests.ls")])
     .with_see_also(vec!["run", "check"])
+}
+
+fn cmd_fmt() -> CommandInfo {
+    CommandInfo::new(
+        "fmt",
+        "rewrite files in canonical layout, keeping comments, blank lines and literal \
+         spellings; --check writes nothing and exits 1 if any file would change \
+         (exit 1 also = a file it cannot format safely; docs/formatting.md)",
+    )
+    .idempotent(true)
+    .add_argument(
+        "file",
+        "string[]",
+        "one or more .ls files, or directories searched for them",
+        true,
+    )
+    .add_option("check", "bool", "report what would change and write nothing", None)
+    .with_examples(vec![
+        ("Format a tree in place", "lex-sys fmt src/"),
+        ("Fail if anything is not canonical (CI)", "lex-sys fmt --check src/ tests/"),
+    ])
+    .with_see_also(vec!["check", "print"])
 }
 
 fn cmd_ids() -> CommandInfo {

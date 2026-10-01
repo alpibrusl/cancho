@@ -6,6 +6,7 @@
 //! types beyond `int`, no linearity, no effects — those are M1 and M2.
 
 pub mod ast;
+pub mod format;
 pub mod lexer;
 pub mod parser;
 pub mod print;
@@ -13,6 +14,7 @@ pub mod rules;
 pub mod span;
 
 pub use ast::Ast;
+pub use format::{FormatError, format};
 pub use parser::{parse, parse_into};
 pub use print::print;
 pub use rules::Rule;

@@ -26,6 +26,7 @@ use lex_sys_syntax::{Ast, Rule, SourceFile, SourceMap};
 use lex_sys_types::{DefId, Type};
 
 mod acli;
+mod fmt_cli;
 mod test_cli;
 mod vcs_cli;
 
@@ -37,6 +38,7 @@ usage:
     lex-sys check <file.ls>... [--std] [--output json] [--backend cranelift|llvm]
     lex-sys run   <file.ls>... [--std] [--backend cranelift|llvm] [-l <name>]... [-L <path>]...
     lex-sys test  <file.ls>... [--std] [--backend cranelift|llvm] [-l <name>]... [-L <path>]...
+    lex-sys fmt   <file.ls|dir>... [--check]
     lex-sys ids   <file.ls>... [--std]
     lex-sys authority <file.ls>... [--std] [--output json]
     lex-sys layout    <file.ls>... [--std]
@@ -94,6 +96,12 @@ exits 4 if any failed. A test answers 0 to pass; `std.test`'s `assert`
 traps otherwise. The files must not declare `main`: the runner writes
 one. See docs/testing.md.
 
+`fmt` rewrites each file (or each `.ls` under a directory) in canonical
+layout, keeping its comments, its blank lines and the way it spelled each
+literal. `--check` writes nothing and exits 1 if any file would change.
+A file it cannot format without moving or losing a comment is left alone
+and reported, also exit 1. See docs/formatting.md.
+
 `agent-guidelines` prints AGENTS.md, which is how to write lex-sys in
 one page rather than in 42 documents. Every checked code block in it is
 run by the test suite, so a guideline that stops being true is a red
@@ -115,7 +123,7 @@ not the file it sits in. See docs/canonical-ast.md.
 
 `print` renders one parsed file in canonical form. It is the AST-to-text
 direction of that same pipeline, not a formatter: comments never reach the
-AST, so they are not in the output.
+AST, so they are not in the output. `fmt` is the formatter.
 
 `vcs publish` logs every declaration in one file as an `AddFunction`
 operation in a content-addressed store at `--store` (default
@@ -310,6 +318,8 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
             print!("{}", lex_sys_syntax::print(&ast));
             Ok(ExitCode::SUCCESS)
         }
+        // `docs/formatting.md`.
+        "fmt" => fmt_cli::cmd_fmt(&args[1..]),
         // `docs/testing.md` §3.
         "test" => test_cli::cmd_test(&args[1..]),
         "ids" => {

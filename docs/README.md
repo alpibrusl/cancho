@@ -367,6 +367,7 @@ not repeated here; a doc's own header carries its own detail.
 | [`standard-library.md`](standard-library.md) | What belongs in `std`, and how a function earns its way in | written and built |
 | [`mode-polymorphism.md`](mode-polymorphism.md) | `[T: val]` bounds | settled and built — found a leak and a double free |
 | [`collections.md`](collections.md) | Which collections hold a resource, and why it's about shape | settled and built |
+| [`formatting.md`](formatting.md) | `lex-sys fmt`: the canonical layout with comments, blank lines and literal spellings kept | built; refuses, rather than risks, a file it cannot reproduce |
 | [`testing.md`](testing.md) | `trap()` and `std.test`'s `assert` — what a program needed to state "this must be true" at all | `trap()`, `std.test`, and `lex-sys test` are built; no per-test timeout, no message on a failed assertion |
 | [`slicing.md`](slicing.md) | `s[a..b]`, half-open and trapping | settled and built |
 | [`defer.md`](defer.md) | `defer E;` as sugar, expanded during lowering | settled and built |

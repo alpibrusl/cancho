@@ -18,6 +18,7 @@
 - [Aliasing: does `&!` mean `&mut`?](aliasing.md)
 - [Collections](collections.md)
 - [Testing](testing.md)
+- [Formatting](formatting.md)
 - [Slicing](slicing.md)
 - [Tuples](tuples.md)
 - [Shadowing](shadowing.md)
