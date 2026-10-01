@@ -1,13 +1,11 @@
 # Testing a program written here, not the compiler that builds it
 
-> **Status: §2's primitive is built. §3's runner is not.** A program —
-> an agent's or a person's — had no way to state "this must be true"
-> at all before this, not even that. What exists now is `trap()`
-> (`crates/lex-sys-ir/src/builtin.rs`) and `std.test`'s `assert`/
-> `assert_eq`/`assert_ne` built on it, on both backends. There is no
-> `lex-sys test` command, no test discovery, and no way to run many
-> assertions in one process and see which failed rather than the
-> first: §3 names that, and does not build it.
+> **Status: built.** §2's primitive (`trap()`, and `std.test`'s
+> `assert`/`assert_eq`/`assert_ne` on it) is on both backends, and §3's
+> runner is `lex-sys test`. A program — an agent's or a person's — had
+> no way to state "this must be true" at all before this, not even
+> that. What is *not* built is listed in §5: no per-test timeout, no
+> message on a failed assertion, nothing generic over `T`.
 
 ## 1. What was missing, and how it was found
 
@@ -83,25 +81,62 @@ the way every other trap fixture here is checked — built, run, and
 confirmed killed by a signal (`run.status.code() == None`), not
 exited.
 
-## 3. What this does not build: a runner
+## 3. The runner: `lex-sys test`
 
 This language has no macros and no reflection (`README.md`'s own
 "what's deliberately not here"), so nothing can enumerate a program's
-own declarations from inside it. A `lex-sys test some_file.ls` that
-found every `test_*` function and ran each one, reporting `ok`/`FAILED`
-the way `cargo test`'s own output does, would need the *compiler* to
-do that enumeration — parse the file, walk its `Item::Fn`s for a name
-convention and a plain (`[] int`, no parameters, no generics) shape,
-and build a synthetic program per match, one process each, since a
-trap kills the process it happens in and a runner has to survive one
-test's failure to report the next.
+own declarations from inside it. `lex-sys test some_file.ls` does it
+from outside: it parses each named file, takes every `fn test_*`, writes
+a `main` that runs whichever one `argv[1]` names, builds **once**, and
+runs the executable **once per test**, because a trap kills the process
+it happens in and a runner has to survive one test's failure to report
+the next (`crates/lex-sys/src/test_cli.rs`).
 
-None of that is built. It is a real, separate piece of work — a new
-CLI subcommand, a naming convention, a synthesized `main` per test,
-one subprocess per test for isolation — and building it without first
-having something to *call* inside each test would have been building
-the frame before the primitive. §2 is that primitive. The runner is
-next, not done here.
+```
+$ lex-sys test --std ok.ls
+running 4 tests
+test test_add ... ok
+test test_returns_nonzero ... FAILED
+test test_traps ... FAILED
+test test_with_caps ... ok
+
+failures:
+
+---- test_returns_nonzero ----
+returned 7, and a test answers 0 to pass
+
+---- test_traps ----
+trapped: killed by signal 4 (SIGILL, the trap every checked operation ends with)
+
+test result: FAILED. 2 passed; 2 failed
+```
+
+**The shape of a test.** `fn test_x[regions](caps) -> [row] int`: no
+type parameters, returns `int`, and every parameter is a *unique*
+reference to `Heap` or to `Io`, at most one of each. It answers `0` to
+pass; anything else, or a signal, is a failure. A `fn test_*` of any
+other shape is refused with exit 2 rather than skipped, because a test
+that silently did not run reads as a pass. A test in a module other than
+the root must be `pub`, since the runner reaches it from outside.
+
+**Capabilities (the row this closes in §5).** A test that needs a heap
+or the console declares it, exactly as `main` would: the synthesized
+`main` splits `World`, releases `ffi`/`fs`/`args`, borrows `heap` and
+`io` uniquely, passes each test the ones it names, and releases them
+after. The row is exact, as everywhere here (`[heap]` on a test that
+never touches the heap is a refusal), so a test that asks for `Io`
+has to use it.
+
+**No `main` in a test file.** The runner supplies its own, so a file
+that declares a root-module `main` is refused with exit 2.
+
+**Exit codes.** `0` every test passed; `4` the program built and at
+least one test failed (a new code, `test` only, so a caller can tell a
+red test from `1`, "the program was refused", a broken build); `2` no
+`test_*` functions were found — a run that found none is not a pass —
+or one has the wrong shape; `3` the environment failed. A status that
+is a multiple of 256 would read back as `0` as a process exit, so the
+synthesized `main` answers `1` for it instead.
 
 ## 4. What this does not propose
 
@@ -123,7 +158,8 @@ open, not answered here, the same way `docs/collections.md` §7 leaves
 
 | Question | Why it waits |
 |---|---|
-| The test runner (§3) | Real, separate work — a CLI subcommand, a naming convention, one subprocess per test. Not built here |
+| A per-test timeout | A test that loops forever hangs the run. One process per test makes a kill easy to add, but nothing has asked for it yet |
 | A message on a failed assertion | Would make `assert` the one trap with text, against every other trap's own design (§4) |
 | `assert_eq`/`assert_ne` over a generic `T` | Wants `==` over an arbitrary type, which nothing here has built yet |
-| Capability-carrying tests (a test that needs `Heap`/`Io` to do anything) | The runner would need to synthesize a `main` that splits `World` and threads the right capability in — open until §3 is |
+| Running tests in parallel | One process per test makes it possible; output would need buffering per test, which the runner already does |
+| Filtering (`lex-sys test f.ls -- name`) | Not needed until a file has enough tests to want one |

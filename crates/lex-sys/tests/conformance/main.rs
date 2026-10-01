@@ -54,6 +54,7 @@ mod modules;
 mod net;
 mod ports;
 mod refusals;
+mod testing;
 mod traps;
 mod vcs;
 

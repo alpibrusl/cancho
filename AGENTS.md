@@ -23,6 +23,7 @@ lex-sys check src/*.ls --std               # does it type-check?
 lex-sys check src/*.ls --std --output json # …and which rule, as data
 lex-sys authority src/*.ls --std           # what can it reach?
 lex-sys run src/*.ls --std                 # build and run in one step
+lex-sys test tests/*.ls --std              # run every `fn test_*`; exit 4 if one failed (docs/testing.md)
 ```
 
 `check` reports **every** independent refusal, not the first. On a
