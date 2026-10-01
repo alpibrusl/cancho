@@ -159,6 +159,28 @@ lookup like a table of ten; only routes sharing a first segment, and routes
 that *begin* with a parameter, are compared one by one. The first version
 scanned every parameterised route in order, and §7 has what that cost.
 
+### 5.1 `http.dechunk`: a chunked request body
+
+`dechunk(src, out) -> (consumed, decoded)` reads the chunked body at `src[0]`
+(where `parse` said the body starts) into `out`. `consumed` is the bytes of `src`
+the whole body took -- terminating chunk and blank line included, so a pipelined
+request is found right after -- and `decoded` the bytes written; `consumed` is
+negative when there is no body to return: `-1` not all here yet, `-2` a size that
+is not 1-8 hex digits, `-3` framing that is not exactly CRLF, `-4` too large for
+`out`, `-5` a chunk extension or trailer. `dechunk_incomplete` and
+`dechunk_message` read the code.
+
+**Strict on purpose**: extensions and trailers are where smuggling lives, nothing
+here needs them, and refusing is one line where interpreting them is a page.
+When more bytes arrive the decode starts again from the first chunk (cost
+proportional to the body, bounded by `out`). Tested three ways: unit tests for a
+good body, every prefix of one (never wrongly refused -- that is what lets a
+server call it again after each read), and each refusal; a differential test
+against a second decoder written independently in Rust over 600 generated bodies,
+each mutated four ways and cut once, plus overflow sizes -- every one of the six
+outcomes reached; and two mutations of the decoder (nine digits allowed; a
+trailer treated as "wait") each failing it.
+
 ## 6. Evidence
 
 | Check | Result |
@@ -220,11 +242,11 @@ this work; a router-backed server is the next thing to build.
 
 | Missing | Why it waits |
 |---|---|
-| ~~A server loop that reads, parses, routes and writes~~ | **Built**: `examples/api`, [`server.md`](server.md), with the requests-a-second figures. Still missing there: streaming a body larger than its buffer, and chunked decoding |
-| Chunked decoding, `Expect: 100-continue`, trailers | a stream, not a parse |
+| ~~A server loop that reads, parses, routes and writes~~ | **Built**: `examples/api`, [`server.md`](server.md), with the requests-a-second figures. Chunked decoding and a configurable buffer are built (§5.1); still missing: streaming a body larger than the buffer to a handler |
+| ~~Chunked decoding~~ | **Built** (§5.1): `http.dechunk`. Still not: `Expect: 100-continue`, trailers (refused), chunk extensions (refused) |
 | Refusing a malformed head before its blank line arrives | §3, last paragraph |
-| `Allow` on a 405 | `find` does not say which methods; wants a second query |
-| Typed parameters (`:id:int`), regex constraints | a handler can check; a router that does adds a grammar |
+| ~~`Allow` on a 405~~ | **Built**: `route.allowed(heap, router, path, params, out)` appends `GET, POST` -- registration order, each once -- and `http.respond_head_with` writes whole header lines it was handed (anything but `name: value` + CRLF traps, for the reason a header injection does). `examples/api` answers `Allow:` on its 405s |
+| Typed parameters (`:id:int`), regex constraints | **Half built, without the grammar**: the handler asks for the type -- `route.param_nat(path, params, i)` (a non-negative decimal of at most 17 digits, else -1), `route.param(path, params, i)` (the matched text), `route.param_decoded(path, params, i, out)` (percent-decoded). A router that refuses a non-number itself still adds a grammar, and nothing has asked |
 | Many routes under one prefix | linear within the prefix (§7); a trie would fix it, and nothing has that many |
 | Query string into a map | `query_value` is a scan; a map is a few lines for a caller who wants one |
 | JSON body binding and validation (what makes FastAPI feel like FastAPI) | no reflection and no macros here: a model is a hand-written function over the `std.json` tape |

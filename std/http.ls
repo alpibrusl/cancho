@@ -717,17 +717,161 @@ pub fn reason(status: int) -> [] &static [byte] {
     return "Unknown";
 }
 
-// Append `HTTP/1.1 <status> <reason>`, `Content-Type`, `Content-Length`,
-// `Connection` and the blank line to `out`. The body is the caller's to
-// append after it, and its length is `length` -- this module never sees
-// the body, so it cannot check that they agree.
+// ---------------------------------------------------------------------
+// A chunked request body
+// ---------------------------------------------------------------------
+
+// Decode the chunked body that starts at `src[0]` -- just past the head, where
+// `parse` said the body starts -- into `out`.
 //
-// Traps if `content_type` holds a carriage return or line feed, or if
-// `status` is not three digits: both are a program writing a bug into its
-// own output, and a header injection is the worse one to find out about
-// from a client.
-pub fn respond_head[&h, &c](heap: &!h Heap, out: buffer.Buffer, status: int, content_type: &c [byte], length: int, keep_alive: bool) -> [heap] buffer.Buffer {
-    if status < 100 || status > 999 || length < 0 {
+// Answers `(consumed, decoded)`: how many bytes of `src` the whole body took,
+// the terminating chunk and its blank line included, and how many bytes of
+// `out` it filled. `consumed` is negative when there is no body to return:
+//
+//     -1  not all of it has arrived (decode again when more has)
+//     -2  a chunk size that is not 1-8 hex digits
+//     -3  framing that is not exactly CRLF where CRLF belongs (a bare LF, a
+//         chunk that is not followed by one, a size line with something after
+//         its digits)
+//     -4  the decoded body would not fit in `out`
+//     -5  a chunk extension (`;...`) or trailer fields, which this refuses
+//
+// **Strict on purpose.** Chunk extensions and trailers are where request
+// smuggling lives, nothing here needs them, and refusing is one line where
+// interpreting them correctly is a page. A decoded byte is copied once, from
+// `src` to `out`; `src` is not modified. When more bytes arrive the decode
+// starts again from the first chunk -- cost proportional to the body, which is
+// bounded by `out`.
+pub fn dechunk[&s, &o](src: &s [byte], out: &!o [byte]) -> [] (int, int) {
+    var at = 0;
+    var wrote = 0;
+    while true {
+        var size = 0;
+        var digits = 0;
+        while at < len(src) && hex_value(int_of(src[at])) >= 0 {
+            if digits == 8 {
+                return (0 - 2, 0);
+            }
+            size = size * 16 + hex_value(int_of(src[at]));
+            digits = digits + 1;
+            at = at + 1;
+        }
+        if at >= len(src) {
+            return (0 - 1, 0);
+        }
+        if digits == 0 {
+            return (0 - 2, 0);
+        }
+        if int_of(src[at]) == 59 {
+            return (0 - 5, 0);
+        }
+        if int_of(src[at]) != 13 {
+            return (0 - 3, 0);
+        }
+        if at + 1 >= len(src) {
+            return (0 - 1, 0);
+        }
+        if int_of(src[at + 1]) != 10 {
+            return (0 - 3, 0);
+        }
+        at = at + 2;
+        if size == 0 {
+            // The trailer section must be empty: straight to the blank line.
+            if at >= len(src) {
+                return (0 - 1, 0);
+            }
+            if int_of(src[at]) != 13 {
+                return (0 - 5, 0);
+            }
+            if at + 1 >= len(src) {
+                return (0 - 1, 0);
+            }
+            if int_of(src[at + 1]) != 10 {
+                return (0 - 3, 0);
+            }
+            return (at + 2, wrote);
+        }
+        if wrote + size > len(out) {
+            return (0 - 4, 0);
+        }
+        if at + size + 2 > len(src) {
+            return (0 - 1, 0);
+        }
+        var i = 0;
+        while i < size {
+            out[wrote + i] = src[at + i];
+            i = i + 1;
+        }
+        at = at + size;
+        if int_of(src[at]) != 13 || int_of(src[at + 1]) != 10 {
+            return (0 - 3, 0);
+        }
+        at = at + 2;
+        wrote = wrote + size;
+    }
+    return (0 - 1, 0);
+}
+
+// Whether `dechunk` is only waiting for more bytes.
+pub fn dechunk_incomplete(consumed: int) -> [] bool {
+    return consumed == 0 - 1;
+}
+
+// What a refusal from `dechunk` means, for a response body.
+pub fn dechunk_message(consumed: int) -> [] &static [byte] {
+    if consumed == 0 - 2 {
+        return "bad chunk size";
+    }
+    if consumed == 0 - 3 {
+        return "bad chunk framing";
+    }
+    if consumed == 0 - 4 {
+        return "request too large";
+    }
+    if consumed == 0 - 5 {
+        return "chunk extensions and trailers are not supported";
+    }
+    return "bad chunked body";
+}
+
+// Whether `extra` is zero or more complete header lines -- `name: value`
+// and a CRLF each -- and nothing else: a name of token characters, a value of
+// the characters a value may hold, and no bare CR or LF anywhere. It is what
+// `respond_head_with` insists on before it lets a caller's text into a
+// response head.
+fn valid_extra[&e](extra: &e [byte]) -> [] bool {
+    var i = 0;
+    while i < len(extra) {
+        let start = i;
+        while i < len(extra) && is_tchar(int_of(extra[i])) {
+            i = i + 1;
+        }
+        if i == start || i >= len(extra) || int_of(extra[i]) != 58 {
+            return false;
+        }
+        i = i + 1;
+        while i < len(extra) && (is_value_char(int_of(extra[i])) || is_ows(int_of(extra[i]))) {
+            i = i + 1;
+        }
+        if i + 1 >= len(extra) || int_of(extra[i]) != 13 || int_of(extra[i + 1]) != 10 {
+            return false;
+        }
+        i = i + 2;
+    }
+    return true;
+}
+
+// `respond_head`, with more header lines: `extra` is a block of complete
+// lines -- `Allow: GET, POST\r\n` -- written between `Connection` and the
+// blank line. It is the one place a response head takes text from a caller
+// that is not a content type, so it is checked as strictly: **anything but
+// whole `name: value` lines traps**, for the reason a header injection does.
+// `Content-Type`, `Content-Length` and `Connection` are this function's own;
+// naming one of them again in `extra` is the caller's bug and is not
+// detected (two of them is a malformed response, which a client is entitled
+// to refuse).
+pub fn respond_head_with[&h, &c, &e](heap: &!h Heap, out: buffer.Buffer, status: int, content_type: &c [byte], length: int, keep_alive: bool, extra: &e [byte]) -> [heap] buffer.Buffer {
+    if status < 100 || status > 999 || length < 0 || !valid_extra(extra) {
         trap();
     }
     var i = 0;
@@ -747,9 +891,23 @@ pub fn respond_head[&h, &c](heap: &!h Heap, out: buffer.Buffer, status: int, con
     b = buffer.append(heap, b, "\r\nContent-Length: ");
     b = buffer.push_nat(heap, b, length);
     if keep_alive {
-        b = buffer.append(heap, b, "\r\nConnection: keep-alive\r\n\r\n");
+        b = buffer.append(heap, b, "\r\nConnection: keep-alive\r\n");
     } else {
-        b = buffer.append(heap, b, "\r\nConnection: close\r\n\r\n");
+        b = buffer.append(heap, b, "\r\nConnection: close\r\n");
     }
-    return b;
+    b = buffer.append(heap, b, extra);
+    return buffer.append(heap, b, "\r\n");
+}
+
+// Append `HTTP/1.1 <status> <reason>`, `Content-Type`, `Content-Length`,
+// `Connection` and the blank line to `out`. The body is the caller's to
+// append after it, and its length is `length` -- this module never sees
+// the body, so it cannot check that they agree.
+//
+// Traps if `content_type` holds a carriage return or line feed, or if
+// `status` is not three digits: both are a program writing a bug into its
+// own output, and a header injection is the worse one to find out about
+// from a client.
+pub fn respond_head[&h, &c](heap: &!h Heap, out: buffer.Buffer, status: int, content_type: &c [byte], length: int, keep_alive: bool) -> [heap] buffer.Buffer {
+    return respond_head_with(heap, out, status, content_type, length, keep_alive, "");
 }

@@ -2,7 +2,7 @@ edition 5;
 
 // `api` -- a JSON API server: keep-alive, pipelining, routed, one thread.
 //
-//     api <port> [reuseport] [idle-seconds] [send-chunk-bytes]
+//     api <port> [reuseport] [idle-seconds] [send-chunk-bytes] [input-buffer-bytes]
 //
 // `docs/server.md` is the design. This is the program the last four
 // library pieces were for: `std.http` parses each request, `std.route`
@@ -25,10 +25,19 @@ edition 5;
 // saying where the next one starts), 413 for a body that cannot fit, 431
 // for a head that cannot.
 //
-// **Limits, all constants, all said aloud:** 1024 connections, 16 KiB of
-// input buffer each (a request, head and body together, must fit in it),
-// 64 KiB of output buffer each, nine seconds without progress before a
-// connection is closed unless the third argument says otherwise.
+// **Limits, all said aloud:** 1024 connections, 16 KiB of input buffer each (a
+// request, head and body together, must fit in it; the fifth argument sets it,
+// from 4 KiB to 1 MiB, and the connections that fit shrink with it so that the
+// input buffers together never pass 256 MiB), 64 KiB of output buffer each,
+// nine seconds without progress before a connection is closed unless the third
+// argument says otherwise.
+//
+// **Bodies.** A body with a `Content-Length`, or a chunked one, is read into that
+// buffer and handed to the handler whole; a chunked body is decoded first
+// (`std.http.dechunk`, which refuses chunk extensions and trailers) so the
+// handler cannot tell the two apart. A request that cannot fit is refused at
+// once with 413. Streaming a body larger than the buffer to a handler as it
+// arrives is not done.
 //
 // The fourth argument is a quantum: no write is handed more than that many
 // bytes, so an answer larger than it takes several, which is what a loop that
@@ -45,8 +54,8 @@ edition 5;
 // the server buffer without bound -- and every other connection is served
 // meanwhile. A client that makes no progress for `idle` seconds is closed.
 //
-// **What it does not do**, and `docs/server.md` §6 is the list: decode a
-// chunked body (it answers 501), or use more than one core -- `reuseport`
+// **What it does not do**, and `docs/server.md` §6 is the list: stream a body
+// larger than its buffer, or use more than one core -- `reuseport`
 // lets several copies of this program share a port and the kernel spreads the
 // connections, which is how it scales.
 //
@@ -69,8 +78,25 @@ fn max_connections() -> [] int {
     return 1024;
 }
 
+// The default input buffer a connection gets; the sixth argument sets it.
 fn buffer_size() -> [] int {
     return 16384;
+}
+
+// How much input buffer all the connections may hold together: 256 MiB, so a
+// bigger per-connection buffer means fewer connections rather than more memory.
+fn input_budget() -> [] int {
+    return 268435456;
+}
+
+// How many connections fit: `max_connections`, or what `budget` allows at this
+// buffer size if that is fewer.
+fn connection_limit(size: int) -> [] int {
+    var limit = input_budget() / size;
+    if limit > max_connections() {
+        limit = max_connections();
+    }
+    return limit;
 }
 
 // What one connection may have waiting to be sent. The largest answer is a
@@ -105,12 +131,22 @@ fn number_of[&t](text: &t [byte]) -> [] int {
 
 // A whole response: the head, then `body`.
 fn reply[&h, &b](heap: &!h Heap, out: buffer.Buffer, status: int, body: &b [byte], keep: bool) -> [heap] buffer.Buffer {
-    let head = http.respond_head(heap, out, status, "application/json", len(body), keep);
+    return reply_with(heap, out, status, body, keep, "");
+}
+
+// `reply`, with extra header lines in the head.
+fn reply_with[&h, &b, &x](heap: &!h Heap, out: buffer.Buffer, status: int, body: &b [byte], keep: bool, extra: &x [byte]) -> [heap] buffer.Buffer {
+    let head = http.respond_head_with(heap, out, status, "application/json", len(body), keep, extra);
     return buffer.append(heap, head, body);
 }
 
 // `{"error": message}`.
 fn failure[&h, &m](heap: &!h Heap, out: buffer.Buffer, status: int, message: &m [byte], keep: bool) -> [heap] buffer.Buffer {
+    return failure_with(heap, out, status, message, keep, "");
+}
+
+// `failure`, with extra header lines (`Allow: GET\r\n`) in the head.
+fn failure_with[&h, &m, &x](heap: &!h Heap, out: buffer.Buffer, status: int, message: &m [byte], keep: bool, extra: &x [byte]) -> [heap] buffer.Buffer {
     var w = json.writer(heap, 64);
     w = json.begin_object(heap, w);
     w = json.put_key(heap, w, "error");
@@ -119,14 +155,14 @@ fn failure[&h, &m](heap: &!h Heap, out: buffer.Buffer, status: int, message: &m 
     let body = json.finish(w);
     var answer = out;
     borrow body as &bb in {
-        answer = reply(heap, answer, status, buffer.bytes(bb), keep);
+        answer = reply_with(heap, answer, status, buffer.bytes(bb), keep, extra);
     }
     buffer.drop(heap, body);
     return answer;
 }
 
 fn user[&h, &p, &s](heap: &!h Heap, out: buffer.Buffer, path: &s [byte], params: &p [int], keep: bool) -> [heap] buffer.Buffer {
-    let id = number_of(path[params[0]..params[1]]);
+    let id = route.param_nat(path, params, 0);
     if id < 0 {
         return failure(heap, out, 400, "id must be a number", keep);
     }
@@ -189,7 +225,7 @@ fn add[&h, &b](heap: &!h Heap, out: buffer.Buffer, body: &b [byte], keep: bool) 
 // test wants, within the output buffer. The body is not one repeated byte, so a
 // byte sent twice or out of place changes it.
 fn blob[&h, &p, &s](heap: &!h Heap, out: buffer.Buffer, path: &s [byte], params: &p [int], keep: bool) -> [heap] buffer.Buffer {
-    let n = number_of(path[params[0]..params[1]]);
+    let n = route.param_nat(path, params, 0);
     if n < 0 || n > 32768 {
         return failure(heap, out, 400, "n must be a number up to 32768", keep);
     }
@@ -268,7 +304,16 @@ fn handle[&h, &r, &q, &t, &p, &b](heap: &!h Heap, router: &r route.Router, reque
         return blob(heap, out, path, params, keep);
     }
     if id == 0 - 2 {
-        return failure(heap, out, 405, "method not allowed", keep);
+        // A 405 says what would have been allowed (RFC 9110 §15.5.6).
+        var extra = buffer.append(heap, buffer.empty(heap, 48), "Allow: ");
+        extra = route.allowed(heap, router, path, params, extra);
+        extra = buffer.append(heap, extra, "\r\n");
+        var answer = out;
+        borrow extra as &eb in {
+            answer = failure_with(heap, answer, 405, "method not allowed", keep, buffer.bytes(eb));
+        }
+        buffer.drop(heap, extra);
+        return answer;
     }
     return failure(heap, out, 404, "not found", keep);
 }
@@ -327,6 +372,24 @@ fn emit[&c, &d, &e](table: &!c conns.Table, slot: int, chunk: int, data: &d [byt
     return pending + len(data) - at;
 }
 
+// Answer one request whose head and body are in hand: route it, build the
+// answer and hand it to the connection. Answers the output buffer back and
+// whether the connection has to be abandoned (an answer it could not hold).
+fn answer_one[&c, &h, &r, &q, &t, &p, &b, &e, &s](conn: &!c conns.Table, heap: &!h Heap, router: &r route.Router, request: &q [byte], table: &t [int], params: &!p [int], body: &b [byte], chunk: int, pend: &!e [byte], st: &!s [int], k: int, out: buffer.Buffer) -> [conn_write, heap] (buffer.Buffer, bool) {
+    var o = out;
+    borrow mut o as &!ob in {
+        buffer.clear(ob);
+    }
+    o = handle(heap, router, request, table, params, body, o);
+    borrow o as &ob in {
+        st[6 * k + 2] = emit(conn, k, chunk, buffer.bytes(ob), pend, st[6 * k + 2]);
+    }
+    if !http.keeps_alive(table) {
+        st[6 * k + 3] = 1;
+    }
+    return (o, st[6 * k + 2] < 0);
+}
+
 // Answer the complete requests at the front of `data[0..filled]`, until one of
 // them leaves output the kernel would not take.
 //
@@ -336,12 +399,15 @@ fn emit[&c, &d, &e](table: &!c conns.Table, slot: int, chunk: int, data: &d [byt
 // once its output has gone, which is what a refusal or `Connection: close`
 // asks for.
 //
+// A chunked body is decoded into `scratch` (the same size as `data`) and the
+// handler is given the decoded bytes, so it cannot tell the two apart.
+//
 // Pipelined requests -- several in one read -- are answered in order. It stops
 // when an answer could not be sent whole (backpressure: no more requests are
 // taken from a connection that is not taking its answers), when a body has not
 // all arrived, and when a request could never fit the buffer, which is refused
 // now rather than waited on for ever.
-fn drain[&c, &h, &r, &d, &t, &p, &e, &s](conn: &!c conns.Table, heap: &!h Heap, router: &r route.Router, data: &!d [byte], filled: int, chunk: int, table: &!t [int], params: &!p [int], pend: &!e [byte], st: &!s [int], k: int, out: buffer.Buffer) -> [conn_write, heap] (buffer.Buffer, int) {
+fn drain[&c, &h, &r, &d, &t, &p, &e, &s, &z](conn: &!c conns.Table, heap: &!h Heap, router: &r route.Router, data: &!d [byte], filled: int, chunk: int, table: &!t [int], params: &!p [int], pend: &!e [byte], st: &!s [int], k: int, scratch: &!z [byte], out: buffer.Buffer) -> [conn_write, heap] (buffer.Buffer, int) {
     var o = out;
     var used = 0;
     var abandon = false;
@@ -352,6 +418,8 @@ fn drain[&c, &h, &r, &d, &t, &p, &e, &s](conn: &!c conns.Table, heap: &!h Heap, 
         // What to refuse with, or 0 to carry on.
         var refuse = 0;
         var message = "bad request";
+        // How many bytes of the request, past its head, were its body.
+        var taken = 0 - 1;
         if n < 0 {
             going = false;
             if http.is_incomplete(n) {
@@ -365,8 +433,26 @@ fn drain[&c, &h, &r, &d, &t, &p, &e, &s](conn: &!c conns.Table, heap: &!h Heap, 
                 message = http.error_message(http.error_code(n));
             }
         } else if http.is_chunked(table) {
-            refuse = 501;
-            message = "chunked request bodies are not supported";
+            let (took, decoded) = http.dechunk(view[n..filled], scratch);
+            if http.dechunk_incomplete(took) {
+                // The body is still arriving -- unless it could never fit.
+                going = false;
+                if used == 0 && filled >= len(data) {
+                    refuse = 413;
+                    message = "request too large";
+                }
+            } else if took < 0 {
+                refuse = 400;
+                if took == 0 - 4 {
+                    refuse = 413;
+                }
+                message = http.dechunk_message(took);
+            } else {
+                let (grown, ab) = answer_one(conn, heap, router, view, table, params, scratch[0..decoded], chunk, pend, st, k, o);
+                o = grown;
+                abandon = abandon || ab;
+                taken = took;
+            }
         } else {
             let length = http.content_length(table);
             var body_length = 0;
@@ -380,24 +466,17 @@ fn drain[&c, &h, &r, &d, &t, &p, &e, &s](conn: &!c conns.Table, heap: &!h Heap, 
                 // The body is still arriving.
                 going = false;
             } else {
-                borrow mut o as &!ob in {
-                    buffer.clear(ob);
-                }
-                o = handle(heap, router, view, table, params, view[n..n + body_length], o);
-                borrow o as &ob in {
-                    st[6 * k + 2] = emit(conn, k, chunk, buffer.bytes(ob), pend, st[6 * k + 2]);
-                }
-                if st[6 * k + 2] < 0 {
-                    abandon = true;
-                }
-                if !http.keeps_alive(table) {
-                    st[6 * k + 3] = 1;
-                }
-                used = used + n + body_length;
-                // Output left over, or the connection is ending: take no more.
-                if st[6 * k + 2] != 0 || st[6 * k + 3] != 0 {
-                    going = false;
-                }
+                let (grown, ab) = answer_one(conn, heap, router, view, table, params, view[n..n + body_length], chunk, pend, st, k, o);
+                o = grown;
+                abandon = abandon || ab;
+                taken = body_length;
+            }
+        }
+        if taken >= 0 {
+            used = used + n + taken;
+            // Output left over, or the connection is ending: take no more.
+            if st[6 * k + 2] != 0 || st[6 * k + 3] != 0 {
+                going = false;
             }
         }
         if refuse != 0 {
@@ -477,15 +556,17 @@ fn accept_all[&h, &l, &p, &s](heap: &!h Heap, conn: conns.Table, listener: &!l L
 // bytes of input buffered, the time of its last progress, bytes of output
 // waiting, 1 if it is to close once that output has gone, 1 if the slot is in
 // use, and what it is watched for (1 to read, 2 to write).
-fn serve_on[&h, &r, &k, &l, &p](heap: &!h Heap, router: &r route.Router, clock: &k Clock, listener: &!l Listener, poller: &!p Poller, idle: int, chunk: int) -> [heap, conn_accept, conn_read, conn_write, poll, clock] int {
-    let limit = max_connections();
-    let size = buffer_size();
+fn serve_on[&h, &r, &k, &l, &p](heap: &!h Heap, router: &r route.Router, clock: &k Clock, listener: &!l Listener, poller: &!p Poller, idle: int, chunk: int, size: int) -> [heap, conn_accept, conn_read, conn_write, poll, clock] int {
+    let limit = connection_limit(size);
     let osize = output_size();
     let events = box_slice(heap, 128, 0);
     let state = box_slice(heap, 6 * limit, 0);
     let bufs = box_slice(heap, limit * size, byte_of(0));
     let pends = box_slice(heap, limit * osize, byte_of(0));
     let table = box_slice(heap, http.slots(64), 0);
+    // Where a chunked body is decoded: one connection's worth, used by one
+    // request at a time.
+    let decoded = box_slice(heap, size, byte_of(0));
     var widest = 1;
     if route.most_params(router) > 1 {
         widest = route.most_params(router);
@@ -500,133 +581,136 @@ fn serve_on[&h, &r, &k, &l, &p](heap: &!h Heap, router: &r route.Router, clock: 
             borrow mut bufs as &!bw in {
                 borrow mut pends as &!ow in {
                     borrow mut table as &!tw in {
-                        borrow mut params as &!qw in {
-                            let ev = contents(ew);
-                            let st = contents(sw);
-                            let bf = contents(bw);
-                            let pd = contents(ow);
-                            let tb = contents(tw);
-                            let pr = contents(qw);
-                            var last_sweep = 0;
-                            while true {
-                                let ready = poller_wait(poller, ev, 1000);
-                                let now = clock_ms(clock) / 1000;
-                                if ready >= 0 {
-                                    // New connections first, while the table is
-                                    // ours to grow.
-                                    var j = 0;
-                                    while j < ready {
-                                        if ev[2 * j] == 0 {
-                                            tab = accept_all(heap, tab, listener, poller, st, now, limit);
-                                        }
-                                        j = j + 1;
-                                    }
-                                    borrow mut tab as &!ct in {
-                                        // The connections that woke.
-                                        j = 0;
+                        borrow mut decoded as &!dw in {
+                            borrow mut params as &!qw in {
+                                let dc = contents(dw);
+                                let ev = contents(ew);
+                                let st = contents(sw);
+                                let bf = contents(bw);
+                                let pd = contents(ow);
+                                let tb = contents(tw);
+                                let pr = contents(qw);
+                                var last_sweep = 0;
+                                while true {
+                                    let ready = poller_wait(poller, ev, 1000);
+                                    let now = clock_ms(clock) / 1000;
+                                    if ready >= 0 {
+                                        // New connections first, while the table is
+                                        // ours to grow.
+                                        var j = 0;
                                         while j < ready {
-                                            let token = ev[2 * j];
-                                            let k = token - 1;
-                                            if token > 0 && st[6 * k + 4] == 1 {
-                                                let base = k * size;
-                                                let obase = k * osize;
-                                                var drop = false;
-                                                // Is there input to answer: just read, or held back
-                                                // while the last answer was being sent?
-                                                var answer = false;
-                                                if st[6 * k + 2] > 0 {
-                                                    // Waiting to send: the kernel can take more.
-                                                    match conns.write(ct, k, pd[obase..obase + quantum(st[6 * k + 2], chunk)]) {
-                                                        Sent::Wrote(sent) => {
-                                                            st[6 * k + 1] = now;
-                                                            var at = 0;
-                                                            while at < st[6 * k + 2] - sent {
-                                                                pd[obase + at] = pd[obase + sent + at];
-                                                                at = at + 1;
-                                                            }
-                                                            st[6 * k + 2] = st[6 * k + 2] - sent;
-                                                            if st[6 * k + 2] == 0 {
-                                                                if st[6 * k + 3] == 1 {
-                                                                    drop = true;
-                                                                } else {
-                                                                    answer = st[6 * k] > 0;
-                                                                }
-                                                            }
-                                                        }
-                                                        Sent::Again => {
-                                                        }
-                                                        Sent::Failed(e) => {
-                                                            drop = true;
-                                                        }
-                                                    }
-                                                } else {
-                                                    match conns.read(ct, k, bf[base + st[6 * k]..base + size]) {
-                                                        Received::Data(got) => {
-                                                            st[6 * k] = st[6 * k] + got;
-                                                            st[6 * k + 1] = now;
-                                                            answer = true;
-                                                        }
-                                                        Received::End => {
-                                                            drop = true;
-                                                        }
-                                                        Received::Again => {
-                                                        }
-                                                        Received::Failed(e) => {
-                                                            drop = true;
-                                                        }
-                                                    }
-                                                }
-                                                if answer && !drop {
-                                                    let (grown, used) = drain(ct, heap, router, bf[base..base + size], st[6 * k], chunk, tb, pr, pd[obase..obase + osize], st, k, out);
-                                                    out = grown;
-                                                    if used < 0 {
-                                                        drop = true;
-                                                    } else {
-                                                        if used > 0 {
-                                                            // Whatever is left is the start of the next
-                                                            // request, or a request held back: move it to
-                                                            // the front.
-                                                            var at = 0;
-                                                            while at < st[6 * k] - used {
-                                                                bf[base + at] = bf[base + used + at];
-                                                                at = at + 1;
-                                                            }
-                                                            st[6 * k] = st[6 * k] - used;
-                                                        }
-                                                        if st[6 * k + 3] == 1 && st[6 * k + 2] == 0 {
-                                                            drop = true;
-                                                        }
-                                                    }
-                                                }
-                                                if drop {
-                                                    conns.close(ct, k);
-                                                    st[6 * k + 4] = 0;
-                                                } else {
-                                                    // Output waiting: wait for room, and read no
-                                                    // more. Otherwise wait for input.
-                                                    var want = 1;
-                                                    if st[6 * k + 2] > 0 {
-                                                        want = 2;
-                                                    }
-                                                    if want != st[6 * k + 5] {
-                                                        conns.rewatch(ct, poller, k, token, want);
-                                                        st[6 * k + 5] = want;
-                                                    }
-                                                }
+                                            if ev[2 * j] == 0 {
+                                                tab = accept_all(heap, tab, listener, poller, st, now, limit);
                                             }
                                             j = j + 1;
                                         }
-                                        // Once a second: close the connections that have
-                                        // gone quiet.
-                                        if now != last_sweep {
-                                            last_sweep = now;
-                                            var s = 0;
-                                            while s < conns.slots(ct) {
-                                                if st[6 * s + 4] == 1 && now - st[6 * s + 1] > idle {
-                                                    conns.close(ct, s);
-                                                    st[6 * s + 4] = 0;
+                                        borrow mut tab as &!ct in {
+                                            // The connections that woke.
+                                            j = 0;
+                                            while j < ready {
+                                                let token = ev[2 * j];
+                                                let k = token - 1;
+                                                if token > 0 && st[6 * k + 4] == 1 {
+                                                    let base = k * size;
+                                                    let obase = k * osize;
+                                                    var drop = false;
+                                                    // Is there input to answer: just read, or held back
+                                                    // while the last answer was being sent?
+                                                    var answer = false;
+                                                    if st[6 * k + 2] > 0 {
+                                                        // Waiting to send: the kernel can take more.
+                                                        match conns.write(ct, k, pd[obase..obase + quantum(st[6 * k + 2], chunk)]) {
+                                                            Sent::Wrote(sent) => {
+                                                                st[6 * k + 1] = now;
+                                                                var at = 0;
+                                                                while at < st[6 * k + 2] - sent {
+                                                                    pd[obase + at] = pd[obase + sent + at];
+                                                                    at = at + 1;
+                                                                }
+                                                                st[6 * k + 2] = st[6 * k + 2] - sent;
+                                                                if st[6 * k + 2] == 0 {
+                                                                    if st[6 * k + 3] == 1 {
+                                                                        drop = true;
+                                                                    } else {
+                                                                        answer = st[6 * k] > 0;
+                                                                    }
+                                                                }
+                                                            }
+                                                            Sent::Again => {
+                                                            }
+                                                            Sent::Failed(e) => {
+                                                                drop = true;
+                                                            }
+                                                        }
+                                                    } else {
+                                                        match conns.read(ct, k, bf[base + st[6 * k]..base + size]) {
+                                                            Received::Data(got) => {
+                                                                st[6 * k] = st[6 * k] + got;
+                                                                st[6 * k + 1] = now;
+                                                                answer = true;
+                                                            }
+                                                            Received::End => {
+                                                                drop = true;
+                                                            }
+                                                            Received::Again => {
+                                                            }
+                                                            Received::Failed(e) => {
+                                                                drop = true;
+                                                            }
+                                                        }
+                                                    }
+                                                    if answer && !drop {
+                                                        let (grown, used) = drain(ct, heap, router, bf[base..base + size], st[6 * k], chunk, tb, pr, pd[obase..obase + osize], st, k, dc, out);
+                                                        out = grown;
+                                                        if used < 0 {
+                                                            drop = true;
+                                                        } else {
+                                                            if used > 0 {
+                                                                // Whatever is left is the start of the next
+                                                                // request, or a request held back: move it to
+                                                                // the front.
+                                                                var at = 0;
+                                                                while at < st[6 * k] - used {
+                                                                    bf[base + at] = bf[base + used + at];
+                                                                    at = at + 1;
+                                                                }
+                                                                st[6 * k] = st[6 * k] - used;
+                                                            }
+                                                            if st[6 * k + 3] == 1 && st[6 * k + 2] == 0 {
+                                                                drop = true;
+                                                            }
+                                                        }
+                                                    }
+                                                    if drop {
+                                                        conns.close(ct, k);
+                                                        st[6 * k + 4] = 0;
+                                                    } else {
+                                                        // Output waiting: wait for room, and read no
+                                                        // more. Otherwise wait for input.
+                                                        var want = 1;
+                                                        if st[6 * k + 2] > 0 {
+                                                            want = 2;
+                                                        }
+                                                        if want != st[6 * k + 5] {
+                                                            conns.rewatch(ct, poller, k, token, want);
+                                                            st[6 * k + 5] = want;
+                                                        }
+                                                    }
                                                 }
-                                                s = s + 1;
+                                                j = j + 1;
+                                            }
+                                            // Once a second: close the connections that have
+                                            // gone quiet.
+                                            if now != last_sweep {
+                                                last_sweep = now;
+                                                var s = 0;
+                                                while s < conns.slots(ct) {
+                                                    if st[6 * s + 4] == 1 && now - st[6 * s + 1] > idle {
+                                                        conns.close(ct, s);
+                                                        st[6 * s + 4] = 0;
+                                                    }
+                                                    s = s + 1;
+                                                }
                                             }
                                         }
                                     }
@@ -641,6 +725,7 @@ fn serve_on[&h, &r, &k, &l, &p](heap: &!h Heap, router: &r route.Router, clock: 
     conns.drop(heap, tab);
     buffer.drop(heap, out);
     unbox_slice(heap, params);
+    unbox_slice(heap, decoded);
     unbox_slice(heap, table);
     unbox_slice(heap, pends);
     unbox_slice(heap, bufs);
@@ -650,13 +735,13 @@ fn serve_on[&h, &r, &k, &l, &p](heap: &!h Heap, router: &r route.Router, clock: 
 }
 
 // The `Poller` the loop waits on, for as long as it runs.
-fn serve[&h, &r, &k, &l](heap: &!h Heap, router: &r route.Router, clock: &k Clock, listener: &!l Listener, idle: int, chunk: int) -> [heap, conn_accept, conn_read, conn_write, poll, clock] int {
+fn serve[&h, &r, &k, &l](heap: &!h Heap, router: &r route.Router, clock: &k Clock, listener: &!l Listener, idle: int, chunk: int, size: int) -> [heap, conn_accept, conn_read, conn_write, poll, clock] int {
     match poller_new() {
         Polling::Ok(p) => {
             var poller = p;
             var status = 1;
             borrow mut poller as &!pw in {
-                status = serve_on(heap, router, clock, listener, pw, idle, chunk);
+                status = serve_on(heap, router, clock, listener, pw, idle, chunk, size);
             }
             poller_close(poller);
             return status;
@@ -679,6 +764,7 @@ fn main(world: World) -> [] int {
     var reuse = 0;
     var idle = 9;
     var chunk = 0;
+    var size = buffer_size();
     borrow args as &g in {
         if arg_count(g) > 1 {
             port = number_of(arg(g, 1));
@@ -694,10 +780,13 @@ fn main(world: World) -> [] int {
         if arg_count(g) > 4 {
             chunk = number_of(arg(g, 4));
         }
+        if arg_count(g) > 5 {
+            size = number_of(arg(g, 5));
+        }
     }
 
     var status = 2;
-    if port > 0 && port < 65536 && idle > 0 && chunk >= 0 {
+    if port > 0 && port < 65536 && idle > 0 && chunk >= 0 && size >= 4096 && size <= 1048576 {
         status = 3;
         // `Net` is not narrowed: the port is an argument, so which one is not
         // known until the program runs, and the authority report says so
@@ -724,7 +813,7 @@ fn main(world: World) -> [] int {
                             }
                             borrow router as &r in {
                                 borrow clock as &c in {
-                                    status = serve(h, r, c, lh, idle, chunk);
+                                    status = serve(h, r, c, lh, idle, chunk, size);
                                 }
                             }
                             route.drop(h, router);

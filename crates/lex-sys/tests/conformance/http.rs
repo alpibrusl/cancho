@@ -462,6 +462,29 @@ fn a_misused_router_or_response_traps_instead_of_going_on() {
             "negative-length",
             "out = http.respond_head(heap, out, 200, \"text/plain\", 0 - 1, true);",
         ),
+        // `extra` is whole `name: value` lines or it traps: a bare line feed
+        // would end the head early, and what followed would be a body the client
+        // never asked for.
+        (
+            "extra-bare-line-feed",
+            "out = http.respond_head_with(heap, out, 200, \"text/plain\", 0, true, \"X: a\\nSet-Cookie: b\\r\\n\");",
+        ),
+        (
+            "extra-bare-carriage-return",
+            "out = http.respond_head_with(heap, out, 200, \"text/plain\", 0, true, \"X: a\\rY: b\\r\\n\");",
+        ),
+        (
+            "extra-without-a-colon",
+            "out = http.respond_head_with(heap, out, 200, \"text/plain\", 0, true, \"not a header\\r\\n\");",
+        ),
+        (
+            "extra-without-its-line-ending",
+            "out = http.respond_head_with(heap, out, 200, \"text/plain\", 0, true, \"X: a\");",
+        ),
+        (
+            "extra-a-blank-line",
+            "out = http.respond_head_with(heap, out, 200, \"text/plain\", 0, true, \"X: a\\r\\n\\r\\nbody\");",
+        ),
     ] {
         let dir = scratch(&format!("http-misuse-{tag}"));
         let source = dir.join("misuse.ls");
@@ -499,4 +522,146 @@ fn a_misused_router_or_response_traps_instead_of_going_on() {
         assert_eq!(run.status.code(), None, "{tag} should be killed by a signal, not exit");
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+// ---------------------------------------------------------------------
+// `std.http.dechunk`, against a second decoder
+// ---------------------------------------------------------------------
+
+/// The same rules as `dechunk`'s header states them, written independently --
+/// line by line over the bytes rather than by a cursor -- so that agreeing is
+/// evidence and not an echo. `(consumed, decoded)`; `consumed` is -1 for "not
+/// all here", -2 a bad size, -3 bad framing, -4 too large for `room`, -5 an
+/// extension or a trailer.
+fn reference_dechunk(src: &[u8], room: usize) -> (i64, Vec<u8>) {
+    let mut at = 0usize;
+    let mut out = Vec::new();
+    loop {
+        // The size: hex digits up to the first byte that is not one.
+        let start = at;
+        while at < src.len() && src[at].is_ascii_hexdigit() {
+            if at - start == 8 {
+                return (-2, Vec::new());
+            }
+            at += 1;
+        }
+        if at >= src.len() {
+            return (-1, Vec::new());
+        }
+        if at == start {
+            return (-2, Vec::new());
+        }
+        let size =
+            usize::from_str_radix(std::str::from_utf8(&src[start..at]).unwrap(), 16).unwrap();
+        match src[at] {
+            b';' => return (-5, Vec::new()),
+            b'\r' => {}
+            _ => return (-3, Vec::new()),
+        }
+        match src.get(at + 1) {
+            None => return (-1, Vec::new()),
+            Some(b'\n') => {}
+            Some(_) => return (-3, Vec::new()),
+        }
+        at += 2;
+        if size == 0 {
+            return match (src.get(at), src.get(at + 1)) {
+                (None, _) => (-1, Vec::new()),
+                (Some(b'\r'), None) => (-1, Vec::new()),
+                (Some(b'\r'), Some(b'\n')) => ((at + 2) as i64, out),
+                (Some(b'\r'), Some(_)) => (-3, Vec::new()),
+                (Some(_), _) => (-5, Vec::new()),
+            };
+        }
+        if out.len() + size > room {
+            return (-4, Vec::new());
+        }
+        if at + size + 2 > src.len() {
+            return (-1, Vec::new());
+        }
+        out.extend_from_slice(&src[at..at + size]);
+        if &src[at + size..at + size + 2] != b"\r\n" {
+            return (-3, Vec::new());
+        }
+        at += size + 2;
+    }
+}
+
+fn chunked_body(rng: &mut Lcg) -> Vec<u8> {
+    let mut out = Vec::new();
+    for _ in 0..rng.below(5) {
+        let size = rng.below(40) as usize + 1;
+        // Data may hold anything, a CRLF and a chunk-looking line included.
+        let data: Vec<u8> = (0..size)
+            .map(|_| match rng.below(8) {
+                0 => b'\r',
+                1 => b'\n',
+                2 => b';',
+                _ => rng.below(256) as u8,
+            })
+            .collect();
+        let text = if rng.below(2) == 0 { format!("{size:x}") } else { format!("{size:X}") };
+        out.extend(text.bytes());
+        out.extend(b"\r\n");
+        out.extend(data);
+        out.extend(b"\r\n");
+    }
+    out.extend(b"0\r\n\r\n");
+    // And sometimes something pipelined behind it.
+    if rng.below(3) == 0 {
+        out.extend(b"GET / HTTP/1.1\r\n");
+    }
+    out
+}
+
+/// 600 generated chunked bodies, each mutated four ways and cut once, and the
+/// decoder agrees with the reference on all 3,600: the same `consumed`, the
+/// same decoded bytes, with 256 bytes of room so that "too large" is reached.
+/// Not one of them may trap -- that is what the same run asserts by exiting 0.
+#[test]
+fn the_chunked_decoder_agrees_with_a_second_decoder_on_valid_and_mutated_bodies() {
+    let mut rng = Lcg(0xc4);
+    let mut cases: Vec<Vec<u8>> = Vec::new();
+    for _ in 0..600 {
+        let body = chunked_body(&mut rng);
+        cases.push(body.clone());
+        for _ in 0..4 {
+            cases.push(mutate(&mut rng, body.clone()));
+        }
+        let cut = rng.below(body.len() as u64 + 1) as usize;
+        cases.push(body[..cut].to_vec());
+    }
+    // Sizes that overflow, that would overflow `size * 16`, and lots of room.
+    for text in ["ffffffff\r\n", "100000000\r\n", "fffffffe\r\nx", "7fffffff\r\n"] {
+        cases.push(text.as_bytes().to_vec());
+    }
+
+    let (dir, exe) = build_driver("dechunk-driver", "dechunk_driver.ls");
+    let out = feed(&exe, &frame(&cases));
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    let text = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), cases.len());
+
+    let mut by_code = std::collections::BTreeMap::new();
+    for (case, line) in cases.iter().zip(&lines) {
+        let shown = String::from_utf8_lossy(case).escape_debug().to_string();
+        let words: Vec<&str> = line.split(' ').collect();
+        let consumed: i64 = words[0].parse().unwrap();
+        let (want, bytes) = reference_dechunk(case, 256);
+        assert_eq!(consumed, want, "consumed, for {shown}\n{line}");
+        if want > 0 {
+            let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+            assert_eq!(words.get(2).copied().unwrap_or(""), hex, "decoded, for {shown}");
+        }
+        *by_code.entry(if want > 0 { 1 } else { want }).or_insert(0) += 1;
+    }
+    // Every outcome was exercised, or the test proves less than it says.
+    for code in [1, -1, -2, -3, -4, -5] {
+        assert!(
+            by_code.get(&code).copied().unwrap_or(0) > 0,
+            "no case reached {code}: {by_code:?}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }

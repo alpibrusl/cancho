@@ -1,4 +1,13 @@
-// Closed-loop keep-alive load generator for docs/server.md §5; see bench.sh.
+// Closed-loop keep-alive load generator for docs/server.md §5 and §10; see bench.sh.
+//
+//   kload <port> <threads> <connections-per-thread> <seconds> <path> [lat]
+//
+// Prints requests a second. With a sixth argument, `lat`, also prints one line
+// of latency percentiles in microseconds: from just before a request is written
+// to the whole response having been read. Closed loop, K in flight per thread, so
+// this is a request's service time *plus the wait behind the others in its
+// round* -- the latency a client of a busy server sees, not the latency of an
+// idle one.
 // Closed-loop keep-alive load: T threads, each owning K connections. A round is
 // "send one request on every connection, then read every response", so K
 // requests are in flight per thread. Counts completed responses for SECS seconds.
@@ -10,7 +19,10 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
-static int port, secs, K; static volatile int stop; static long counts[64]; static const char *path;
+static int port, secs, K, want_lat; static volatile int stop; static long counts[64]; static const char *path;
+static unsigned *lats[64]; static long nlat[64], caplat[64];
+static unsigned long long now_ns(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec * 1000000000ull + t.tv_nsec; }
+static int cmp(const void *a, const void *b) { unsigned x = *(const unsigned*)a, y = *(const unsigned*)b; return x < y ? -1 : x > y; }
 static int readresp(int fd, char *buf) {          // one response, by Content-Length; returns bytes or -1
   int have = 0, need = -1, head = -1;
   for (;;) {
@@ -22,18 +34,25 @@ static int readresp(int fd, char *buf) {          // one response, by Content-Le
 }
 static void *run(void *a) {
   long id = (long)a; char req[512]; snprintf(req, sizeof req, "GET %s HTTP/1.1\r\nHost: x\r\n\r\n", path);
-  int fds[256]; char buf[4096]; struct sockaddr_in sa = {0}; sa.sin_family = AF_INET; sa.sin_port = htons(port); inet_pton(AF_INET, "127.0.0.1", &sa.sin_addr);
+  int *fds = malloc(sizeof(int) * K); unsigned long long *sent = malloc(sizeof(unsigned long long) * K); char buf[4096]; struct sockaddr_in sa = {0}; sa.sin_family = AF_INET; sa.sin_port = htons(port); inet_pton(AF_INET, "127.0.0.1", &sa.sin_addr);
   for (int i = 0; i < K; i++) { fds[i] = socket(AF_INET, SOCK_STREAM, 0); int one = 1; setsockopt(fds[i], IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
     if (connect(fds[i], (struct sockaddr*)&sa, sizeof sa) < 0) { perror("connect"); exit(1); } }
   while (!stop) {
-    for (int i = 0; i < K; i++) if (write(fds[i], req, strlen(req)) < 0) { perror("write"); return 0; }
-    for (int i = 0; i < K; i++) { if (readresp(fds[i], buf) < 0) { fprintf(stderr, "short read\n"); return 0; } counts[id]++; }
+    for (int i = 0; i < K; i++) { sent[i] = want_lat ? now_ns() : 0; if (write(fds[i], req, strlen(req)) < 0) { perror("write"); return 0; } }
+    for (int i = 0; i < K; i++) { if (readresp(fds[i], buf) < 0) { fprintf(stderr, "short read\n"); return 0; } counts[id]++;
+      if (want_lat) { if (nlat[id] == caplat[id]) { caplat[id] = caplat[id] ? caplat[id] * 2 : 1 << 16; lats[id] = realloc(lats[id], caplat[id] * sizeof(unsigned)); }
+        unsigned long long d = (now_ns() - sent[i]) / 1000; lats[id][nlat[id]++] = d > 4000000000ull ? 4000000000u : (unsigned)d; } }
   }
   return 0;
 }
 int main(int c, char **v) {
-  port = atoi(v[1]); int threads = atoi(v[2]); K = atoi(v[3]); secs = atoi(v[4]); path = v[5];
+  port = atoi(v[1]); int threads = atoi(v[2]); K = atoi(v[3]); secs = atoi(v[4]); path = v[5]; want_lat = c > 6;
   pthread_t t[64]; for (long i = 0; i < threads; i++) pthread_create(&t[i], 0, run, (void*)i);
   sleep(secs); stop = 1; long sum = 0; for (int i = 0; i < threads; i++) { pthread_join(t[i], 0); sum += counts[i]; }
-  printf("%ld\n", sum / secs); return 0;
+  printf("%ld\n", sum / secs);
+  if (want_lat) { long n = 0; for (int i = 0; i < threads; i++) n += nlat[i];
+    unsigned *all = malloc(n * sizeof(unsigned)); long at = 0; for (int i = 0; i < threads; i++) { memcpy(all + at, lats[i], nlat[i] * sizeof(unsigned)); at += nlat[i]; }
+    qsort(all, n, sizeof(unsigned), cmp);
+    printf("p50 %u p90 %u p99 %u p99.9 %u max %u us (%ld samples)\n", all[n / 2], all[n * 9 / 10], all[n * 99 / 100], all[n * 999 / 1000], all[n - 1], n); }
+  return 0;
 }
