@@ -43,14 +43,14 @@ impl<'a> FuncEmitter<'a> {
         self.trap_if(&short)?;
 
         let buffer = self.fresh();
-        self.out.push_str(&format!("  {buffer} = alloca i8, i64 {PATH_MAX}\n"));
+        self.hoist(format!("  {buffer} = alloca i8, i64 {PATH_MAX}\n"));
         let expected = operand(&self.bytes_lit(prefix)[0]);
 
         let cursor = self.fresh();
-        self.out.push_str(&format!("  {cursor} = alloca i64\n"));
+        self.hoist(format!("  {cursor} = alloca i64\n"));
         self.out.push_str(&format!("  store i64 0, ptr {cursor}\n"));
         let previous = self.fresh();
-        self.out.push_str(&format!("  {previous} = alloca i8\n"));
+        self.hoist(format!("  {previous} = alloca i8\n"));
         self.out.push_str(&format!("  store i8 0, ptr {previous}\n"));
 
         let n = self.blocks;
@@ -167,7 +167,7 @@ impl<'a> FuncEmitter<'a> {
         }
 
         let result_cell = self.fresh();
-        self.out.push_str(&format!("  {result_cell} = alloca i64\n"));
+        self.hoist(format!("  {result_cell} = alloca i64\n"));
 
         let bad = self.fresh();
         self.out.push_str(&format!("  {bad} = icmp slt i32 {fd}, 0\n"));

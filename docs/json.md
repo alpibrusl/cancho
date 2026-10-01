@@ -185,6 +185,6 @@ their one-ulp neighbours, which must fall back correctly.
 
 | Question | Why it waits |
 |---|---|
-| A hash map, for objects too wide for a linear `get` | Needs `std.map`, which wants a decision about keys that are byte slices |
+| A hash map, for objects too wide for a linear `get` | `std.map` exists now ([`map.md`](map.md)) with byte-string keys; indexing a parsed object into one is a few lines a caller can write, and nothing here does it for them |
 | Float reading and writing at Python speed | §7's first row |
 | An HTTP layer that uses it | `packages/http-request` parses a request line and headers; a body reader and a router are the next pieces |

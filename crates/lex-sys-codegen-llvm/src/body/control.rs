@@ -18,7 +18,7 @@ impl<'a> FuncEmitter<'a> {
         // slice lowers reads through a reference's pointee.
         let bytes = (kinds.len() as u32 * 8).max(1);
         let buffer = self.fresh();
-        self.out.push_str(&format!("  {buffer} = alloca i8, i64 {bytes}\n"));
+        self.hoist(format!("  {buffer} = alloca i8, i64 {bytes}\n"));
 
         let mut loaded = Vec::with_capacity(kinds.len());
         for (leaf, kind) in kinds.iter().enumerate() {

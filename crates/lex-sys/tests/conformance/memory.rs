@@ -71,6 +71,66 @@ fn the_heap_actually_frees() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn a_loop_body_does_not_grow_the_stack_on_either_backend() {
+    // The LLVM backend emitted an `alloca` at the point of use for a
+    // `borrow` and for every `&&`/`||`. An `alloca` outside the entry block
+    // is dynamic -- it takes more stack each time it runs and gives it back
+    // only when the function returns -- so a loop containing either one ran
+    // out of the 8 MiB stack after about 30,000 iterations and died with
+    // SIGSEGV, in code that was correct on Cranelift (`docs/map.md` §7:
+    // found by a million-key hash map benchmark, not by any test).
+    //
+    // Twenty million iterations of both constructs: with the allocas in the
+    // entry block it is a constant footprint; with them in the loop it needs
+    // several hundred megabytes of stack. The reference goes to a recursive
+    // function, with a depth known only at run time, so it escapes: an `alloca` nothing can read through is
+    // deleted by the optimiser, and the first version of this test passed
+    // on the broken compiler for exactly that reason.
+    const ROUNDS: usize = 20_000_000;
+    let source = format!(
+        "struct P {{ a: int }}\n\
+         fn read[&r](p: &r P, depth: int) -> [] int {{\n\
+             if depth <= 0 {{ return p.a; }}\n\
+             return read(p, depth - 1) + 1;\n\
+         }}\n\
+         fn work(n: int) -> [] int {{\n\
+             var total = 0;\n\
+             var i = 0;\n\
+             while i < n {{\n\
+                 var cell = P {{ a: i }};\n\
+                 borrow cell as &r in {{\n\
+                     if read(r, i % 3) >= 0 && n > 0 || i < 0 {{ total = total + 1; }}\n\
+                 }}\n\
+                 i = i + 1;\n\
+             }}\n\
+             return total;\n\
+         }}\n\
+         fn main(world: World) -> [] int {{\n\
+             let Split {{ io, ffi, fs, heap, args }} = split(world);\n\
+             release(args); release(ffi); release(fs); release(heap); release(io);\n\
+             return work({ROUNDS}) - {ROUNDS};\n\
+         }}\n"
+    );
+    for backend in ["llvm", "cranelift"] {
+        let dir = scratch(&format!("loop-stack-{backend}"));
+        let path = dir.join("loop.ls");
+        std::fs::write(&path, &source).expect("a writable fixture");
+        let exe = dir.join("loop");
+        let build = Command::new(BIN)
+            .args(["build", "--backend", backend])
+            .arg(&path)
+            .arg("-o")
+            .arg(&exe)
+            .output()
+            .expect("the compiler runs");
+        assert!(build.status.success(), "{backend}: {}", String::from_utf8_lossy(&build.stderr));
+        let run = Command::new(&exe).output().expect("the program runs");
+        assert_eq!(run.status.code(), Some(0), "{backend}: the loop must run to the end");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
 /// `docs/compile-time-data.md` §1.1 — the row that is a capability
 /// argument rather than a convenience.
 ///

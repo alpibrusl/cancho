@@ -14,6 +14,9 @@ mod fs;
 mod memory;
 mod net;
 
+/// Where `hoist`ed allocas land: a line no instruction can be mistaken for.
+const HOIST_MARK: &str = "  ; hoisted allocas\n";
+
 pub(crate) struct FuncEmitter<'a> {
     pub(crate) program: &'a Program,
     pub(crate) func: &'a Func,
@@ -29,6 +32,12 @@ pub(crate) struct FuncEmitter<'a> {
     /// functions still get two distinct symbol names.
     pub(crate) next_literal: &'a mut u32,
     pub(crate) out: String,
+    /// `alloca`s emitted while lowering the body, spliced into the entry
+    /// block at the end (`hoist`). An `alloca` outside the entry block is
+    /// *dynamic*: it grows the stack each time it runs and is only freed
+    /// on return, so one inside a loop body (a `borrow`, a `&&`) used up
+    /// the whole stack after ~30,000 iterations (`docs/map.md` §7).
+    pub(crate) hoisted: String,
     pub(crate) temp: u32,
     /// Numbers each `trap`/`ok` block pair a checked operator opens
     /// (§5's second slice) -- distinct from `temp`, which numbers SSA
@@ -64,10 +73,19 @@ impl<'a> FuncEmitter<'a> {
             globals,
             next_literal,
             out: String::new(),
+            hoisted: String::new(),
             temp: 0,
             blocks: 0,
             arenas: Vec::new(),
         })
+    }
+
+    /// Emit an `alloca` into the entry block, whatever block is being
+    /// written: the cell is the same one every time the code runs, which is
+    /// what every use here wants, and `mem2reg` only promotes entry-block
+    /// allocas.
+    pub(crate) fn hoist(&mut self, line: String) {
+        self.hoisted.push_str(&line);
     }
 
     pub(crate) fn fresh(&mut self) -> String {
@@ -212,6 +230,8 @@ impl<'a> FuncEmitter<'a> {
             }
         }
 
+        self.out.push_str(HOIST_MARK);
+
         let mut arg_index = 0u32;
         for slot in 0..self.func.n_params {
             for (leaf, kind) in self.slot_kinds[slot as usize].clone().into_iter().enumerate() {
@@ -240,7 +260,8 @@ impl<'a> FuncEmitter<'a> {
             self.emit_default_return()?;
         }
         self.out.push_str("}\n");
-        Ok(std::mem::take(&mut self.out))
+        let hoisted = std::mem::take(&mut self.hoisted);
+        Ok(std::mem::take(&mut self.out).replacen(HOIST_MARK, &hoisted, 1))
     }
 
     pub(crate) fn stmts(&mut self, stmts: &[Stmt]) -> Result<bool, String> {
