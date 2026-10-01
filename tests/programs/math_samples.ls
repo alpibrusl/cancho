@@ -77,6 +77,27 @@ fn apply(function: int, x: float) -> [] float {
     if function == 19 {
         return math.pow(x, 0.0 - 3.0);
     }
+    if function == 20 {
+        return math.tan(x);
+    }
+    if function == 21 {
+        return math.asin(x);
+    }
+    if function == 22 {
+        return math.acos(x);
+    }
+    if function == 23 {
+        return math.atan(x);
+    }
+    if function == 24 {
+        return math.atan2(x, 1.7);
+    }
+    if function == 25 {
+        return math.atan2(1.7, x);
+    }
+    if function == 26 {
+        return math.atan2(x, 0.0 - 0.9);
+    }
     return 0.0 / 0.0;
 }
 
@@ -139,7 +160,19 @@ fn range(id: int) -> [] (float, float) {
     if id == 18 {
         return (355.0, 355.0);
     }
-    return (5.0e299, 5.0e299);
+    if id == 19 {
+        return (5.0e299, 5.0e299);
+    }
+    if id == 20 {
+        return (1.5707963267948966, 0.001);
+    }
+    if id == 21 {
+        return (0.99, 0.0099);
+    }
+    if id == 22 {
+        return (500000000.0, 500000000.0);
+    }
+    return (0.0, 1.0e15);
 }
 
 fn next(state: int) -> [] int {

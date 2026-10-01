@@ -289,12 +289,7 @@ of `float` and `truncate` arithmetic each, like `exp`/`log`/`pow`.
   (minimax coefficients, chosen to minimise the worst error over the
   interval, not a Taylor series's), and an argument reduction by
   quarter turns, with `π/2` subtracted in three 33-bit pieces so that
-  `k × piece` is exact for `|k| < 2²⁰`. That bound is the **domain**:
-  `|x| ≤ 10⁶`. Outside it the reduction is no longer exact and there is a
-  right answer this does not compute, so **it traps** — the same answer
-  every other operation here with no right answer gives
-  (`defined-behaviour.md` §2.1), not a NaN indistinguishable from the
-  one a NaN argument returns. A NaN argument is answered with that NaN.
+  `k × piece` is exact for `|k| < 2²⁰`. ~~That bound is the **domain**: `|x| ≤ 10⁶`; outside it, **it traps**.~~ **Corrected, §10.2:** that was the first version. Past `|x| = 10⁶` it now uses Payne–Hanek reduction and answers for every finite `x`; only an infinity, which has no sine, gives NaN. A NaN argument is answered with that NaN.
 
 **Measured against the C library**, not asserted. A foreign signature
 cannot carry a `float` (`opaque-pointers.md`), so libm cannot be called
@@ -320,14 +315,8 @@ differently from glibc's in the last place.
 
 ### 8.1 What this does not do
 
-* **No `tan`, `atan`, `atan2`, `asin`, `acos`, `sinh`, …** Nothing here
-  needs them yet, and each is its own reduction and its own measurement.
-  `atan2` is the one most likely to be asked for next.
-* **No reduction past `10⁶`.** Payne–Hanek reduction handles every
-  finite argument; it needs a table of 2/π to 1,200 bits and a multi-word
-  multiply, and a program whose angle is a million radians is usually a
-  phase accumulator that should have been reduced as it went. It traps
-  rather than answering wrongly.
+* ~~No `tan`, `atan`, `atan2`, `asin`, `acos`.~~ **Built — §10.**
+* ~~No reduction past `10⁶`.~~ **Built — §10.2.**
 * **No `π` constant.** `3.141592653589793` is what a caller writes.
 
 ---
@@ -439,3 +428,106 @@ function, and the inverse pairs.
 * **`floats.rs`'s old sweep still checks `exp`, `log` and `pow` to 1e-9
   relative**, which is what §7 claimed. It is a floor under the ulp
   table, not the claim: that is `mathfn.rs`.
+
+---
+
+## 10. The rest of the trigonometric family, and a reduction that has no limit
+
+§8 shipped `sin` and `cos` with two stated gaps: no `tan`/`atan`/
+`atan2`/`asin`/`acos`, and a trap for `|x| > 10⁶`. A trap is the honest
+answer to "there is a right answer and this does not compute it", and it
+is still a hole: `sin(1e22)` is a perfectly good question with a
+well-known answer (`-0.8522008497671888`), and an agent that computes a
+phase from a timestamp times a frequency will reach it.
+
+### 10.1 The functions
+
+* **`atan`, `asin`, `acos`**: fdlibm's — a minimax rational/odd
+  polynomial, and the half-angle identities that keep `1 - x` from
+  cancelling near 1. `asin` and `acos` take `|x| ≤ 1` and answer NaN
+  beyond; `atan` takes any float, and is `±π/2` to the last bit from
+  `2⁶⁶` up. fdlibm clears the low 32 bits of a float to get a "high
+  half" of a square root; there is no way to write one here, so this
+  clears the low 27 by Veltkamp's split (`pow` already needed it), which
+  does the same job.
+* **`atan2(y, x)`**, argument order as in C: every case C settles is
+  settled the same way — the sign of a zero decides the half-plane
+  (`atan2(+0, -1) = π`, `atan2(-0, -1) = -π`; told apart by `bits_of`,
+  because `x < 0.0` cannot), an infinity gives one of eight multiples of
+  π/4, and otherwise `atan(|y/x|)` is moved to the quadrant the two signs
+  name, with `π` in two pieces so the subtraction does not round. A ratio
+  past `2⁶⁰` is `π/2` outright. (The first version fell through to
+  `π - (π/2 - tiny)` there and was a float off for every `x < 0`, which
+  `5e299`'s sweep showed as 10,000 of 10,000 differing.)
+* **`tan`**: `sin(r)/cos(r)` on the same reduced argument, or
+  `-cos(r)/sin(r)` in an odd quarter turn. A quotient of two answers
+  each good to a fraction of an ulp is good to about two; fdlibm's own
+  `__kernel_tan` gets one by a longer path, which is a separate piece of
+  work and is listed in §10.4.
+
+### 10.2 Payne–Hanek, and what it took
+
+`remainder_of` subtracts `k·π/2` in three 33-bit pieces, exact while
+`k < 2²⁰`. Past that, the product `x · 2/π` has to be taken with enough
+bits of `2/π` that its fractional part survives: for the worst-case
+`double` (`6381956970095103 × 2⁷⁹⁷`) the fraction starts 62 zero bits
+down, so the reduction needs 115+ bits *after* them.
+
+`reduce_large` does it in base 2²⁴ so that every partial product fits an
+`int`: `x = mant × 2^e` is four 24-bit limbs, `2/π` is a **52-limb
+`static` table, 1,248 bits, generated here with integer arithmetic**
+(Machin's formula; its first nine limbs match fdlibm's `ipio2`), and the
+limb of the product at each weight is a four-term sum plus a carry.
+Limbs of weight `2²⁴` and up are multiples of 4 and are never computed;
+limbs below `2⁻¹⁹²` are dropped. Limb 0's low two bits are the
+quadrant; limbs `-1..-8` are the fraction. If the fraction is a half or
+more, the quadrant is rounded up and the remainder is the **negative
+complement, formed from the limbs by subtraction with a borrow** — not
+`1 - f` in floating point, which would throw away exactly the bits the
+rest of this was done to keep. The limbs become a float by Horner's rule
+from the low limb up, so a fraction with leading zero limbs still gets
+all 53 bits of those below.
+
+It answers for every finite `x`. An infinity has no sine; it is NaN, as
+`sqrt(-1)` is, which is the trap's replacement: a trap was for "right
+answer exists, not computed", and now it is computed.
+
+### 10.3 Measured
+
+Same harness as §9 (`conformance/mathfn.rs`, 10,000 arguments per range,
+ulps against glibc's own functions). The sweeps cover the old domain, the
+new one (`[0, 10⁹]`, `±10¹⁵`, `[0, 10³⁰⁰]`), and the neighbourhoods of
+multiples of π/2 where reduction cancels the most.
+
+| function | ranges | worst error | answers that differ from libm at all |
+|---|---|---|---|
+| `sin` | ±1 … ±10⁶, near 100·π/2 and 10⁵·π/2, **[0, 10⁹], ±10¹⁵, [0, 10³⁰⁰]** | **2 ulp** (1 below 10⁶) | 8 – 28% |
+| `cos` | same | **2 ulp** (1 below 10⁶) | 0 – 24% |
+| `tan` | same, and π/2 ± 10⁻³ | **4 ulp** (2 below 10⁶) | 36 – 52% |
+| `asin` | ±0.999, ±1, ±10⁻⁹, [0.981, 0.999] | **1 ulp** | 0 – 6% |
+| `acos` | same | **1 ulp** | 0 – 8% |
+| `atan` | ±1, ±10, ±10⁶, ±10⁻⁹, up to 10³⁰⁰ | **1 ulp** | 0 – 6% |
+| `atan2(x, 1.7)` | ±1, ±10, ±10⁶, up to 10³⁰⁰ | **1 ulp** | 0 – 24% |
+| `atan2(1.7, x)` | ±1, ±10, ±10⁻³, ±10⁻⁹ | **1 ulp** | 16 – 24% |
+| `atan2(x, -0.9)` | ±1, ±10, ±10⁶, up to 10³⁰⁰ | **1 ulp** | 0 – 45% |
+
+**The worst case.** `x = 6381956970095103 × 2⁷⁹⁷` is the double whose
+`cos` is closest to zero (`-4.687165924254627611…e-19`, 62 bits down). It
+is pinned in `tests/accept/math_floats.ls` against that literature value,
+to 3e-16 relative. The C library on the machine this was measured on (through
+Python's `math.cos`) answers `-4.68716592425462e-19` for it — **8 ulp off the true value, which
+this reduction gets to the digit**. It is in no sweep because a random
+sample will not find it; it is exactly why the reduction keeps 115 bits.
+
+### 10.4 What this still does not do
+
+* **`tan` is 2 – 4 ulp, not 1.** fdlibm's `__kernel_tan` (a degree-13
+  polynomial with a reciprocal correction for `|x| > 0.67`) is the one
+  to port if a program needs better.
+* **`sin`/`cos` are 2 ulp past `10⁶`**, 1 below it: the reduced argument
+  is one float, so its own rounding is carried into the result.
+  Carrying the tail through the kernels (fdlibm's `__kernel_sin(x, y)`)
+  would cost the 2 back.
+* **No `sincos`, `sinpi`/`cospi`, `atanpi`, `hypot`, `cbrt`.** Not asked
+  for, and the three `*pi` forms are the better answer to "an angle in
+  turns" than a large argument to `sin`.
