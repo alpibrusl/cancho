@@ -538,14 +538,10 @@ fn is_linux[&f](libc: &f Ffi("libc")) -> [ffi("libc")] bool {
 // Per connection `k`, `st[4k..4k+4]` is: bytes of input buffered, the time of
 // its last progress, bytes of output waiting, and 1 if it is to close once that
 // output has gone.
-fn serve[&f, &h, &r](libc: &f Ffi("libc"), heap: &!h Heap, router: &r route.Router, lfd: int, idle: int, chunk: int) -> [ffi("libc"), heap] int {
+fn serve[&f, &h, &r](libc: &f Ffi("libc"), heap: &!h Heap, router: &r route.Router, lfd: int, idle: int, chunk: int, mflag: int) -> [ffi("libc"), heap] int {
     let limit = max_connections();
     let size = buffer_size();
     let osize = output_size();
-    var mflag = 128;
-    if is_linux(libc) {
-        mflag = 64;
-    }
     let polls = box_slice(heap, 8 * (limit + 1), byte_of(0));
     let state = box_slice(heap, 4 * limit, 0);
     let bufs = box_slice(heap, limit * size, byte_of(0));
@@ -739,17 +735,32 @@ fn main(world: World) -> [] int {
         status = 3;
         borrow libc as &f in {
             signal(f, 13, 1);
+            // `MSG_DONTWAIT`: 0x40 on Linux, 0x80 on macOS, where 0x40 is
+            // `MSG_WAITALL` and would make every send block.
+            var mflag = 128;
+            if is_linux(f) {
+                mflag = 64;
+            }
             let lfd = listener(f, port, reuse);
             if lfd >= 0 {
                 borrow mut heap as &!h in {
                     let router = routes(h);
                     borrow mut io as &!i in {
-                        io.write_all(i, "listening on ");
-                        io.print_nat(i, port);
-                        io.newline(i);
+                        // On the unbuffered stream: standard output, piped,
+                        // is held until the process ends, and a server that
+                        // announces itself only then has not announced itself.
+                        var line = buffer.append(h, buffer.empty(h, 64), "listening on ");
+                        line = buffer.push_nat(h, line, port);
+                        line = buffer.append(h, line, " send-flag ");
+                        line = buffer.push_nat(h, line, mflag);
+                        line = buffer.push(h, line, byte_of(10));
+                        borrow line as &lb in {
+                            io.error_all(i, buffer.bytes(lb));
+                        }
+                        buffer.drop(h, line);
                     }
                     borrow router as &r in {
-                        status = serve(f, h, r, lfd, idle, chunk);
+                        status = serve(f, h, r, lfd, idle, chunk, mflag);
                     }
                     route.drop(h, router);
                 }

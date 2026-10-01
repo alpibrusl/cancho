@@ -382,6 +382,45 @@ fn an_idle_connection_is_closed_after_the_timeout() {
 
 // ---- writes that do not block ---------------------------------------------
 
+/// How many bytes the kernel will queue on a loopback connection whose far end
+/// never reads: a writer that is never refused until the buffers are full, and
+/// then refused. Linux holds a few megabytes; macOS may hold far more, and the
+/// tests that need a client to be *stalled* must send more than that, so they
+/// ask rather than assume.
+fn loopback_capacity() -> usize {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let writer = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let (_reader, _) = listener.accept().unwrap();
+    writer.set_nonblocking(true).unwrap();
+    let chunk = vec![0u8; 65536];
+    let mut total = 0usize;
+    let mut refused = 0;
+    let mut writer = writer;
+    // Refused twice in a row, 150 ms apart, means full: the first refusal can be
+    // the buffer waiting to grow.
+    while refused < 2 && total < 1 << 30 {
+        match writer.write(&chunk) {
+            Ok(n) => {
+                total += n;
+                refused = 0;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                refused += 1;
+                std::thread::sleep(Duration::from_millis(150));
+            }
+            Err(e) => panic!("measuring the loopback buffers: {e}"),
+        }
+    }
+    total
+}
+
+/// How many 32 KiB answers it takes to be sure of filling `capacity` twice over,
+/// and at least a thousand.
+fn requests_to_stall(capacity: usize) -> usize {
+    (2 * capacity / 32768 + 200).max(1000)
+}
+
 /// `count` requests for blobs, as one string to write in one go.
 fn blob_requests(sizes: impl Iterator<Item = usize>) -> String {
     sizes.map(|n| get(&format!("/blob/{n}"))).collect()
@@ -389,18 +428,24 @@ fn blob_requests(sizes: impl Iterator<Item = usize>) -> String {
 
 #[test]
 fn a_client_that_stops_reading_stalls_only_itself() {
-    // A thousand requests for 32 KiB each is 32 MB of answers, far beyond what
+    // Enough requests for 32 KiB each that the answers are more than twice what
     // the kernel will hold for a client that reads none of it. A server that
     // *blocks* in `write` stops dead there; this one parks the rest of that
     // connection's answers and serves everyone else.
+    let capacity = loopback_capacity();
+    let count = requests_to_stall(capacity);
     let server = start("api-stall", &[]);
     let mut slow = connect(&server);
-    slow.write_all(blob_requests((0..1000).map(|_| 32768)).as_bytes()).unwrap();
+    slow.write_all(blob_requests((0..count).map(|_| 32768)).as_bytes()).unwrap();
     std::thread::sleep(Duration::from_millis(500));
 
     let started = Instant::now();
     for i in 0..30 {
-        let r = ask(&mut connect(&server), &get(&format!("/users/{i}")));
+        let mut other = connect(&server);
+        other.write_all(get(&format!("/users/{i}")).as_bytes()).unwrap();
+        let r = read_response(&mut other, &mut Vec::new()).unwrap_or_else(|| {
+            panic!("request {i} on another connection got no answer ({count} requests, loopback holds {capacity} bytes)")
+        });
         assert_eq!(r.status, 200);
     }
     assert!(
@@ -411,11 +456,12 @@ fn a_client_that_stops_reading_stalls_only_itself() {
     // And the stalled client loses nothing: it now reads every answer, whole
     // and in order.
     let mut carry = Vec::new();
-    for i in 0..1000 {
-        let r =
-            read_response(&mut slow, &mut carry).unwrap_or_else(|| panic!("answer {i} missing"));
+    for i in 0..count {
+        let r = read_response(&mut slow, &mut carry).unwrap_or_else(|| {
+            panic!("answer {i} of {count} missing (loopback holds {capacity} bytes)")
+        });
         assert_eq!(r.status, 200, "answer {i}");
-        assert_eq!(r.body.len(), 32768, "answer {i}");
+        assert_eq!(r.body.len(), 32768, "answer {i} of {count}");
     }
 }
 
@@ -454,10 +500,12 @@ fn a_slow_reader_gets_every_byte_in_the_right_order() {
 fn a_client_that_never_reads_is_closed_after_the_idle_timeout() {
     // Two seconds without progress. The connection has output waiting and no
     // `POLLIN` interest, so nothing it sends can keep it alive.
+    let capacity = loopback_capacity();
+    let count = requests_to_stall(capacity);
     let server = start("api-never-reads", &["0", "2"]);
     let mut s = connect(&server);
     s.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
-    s.write_all(blob_requests((0..1000).map(|_| 32768)).as_bytes()).unwrap();
+    s.write_all(blob_requests((0..count).map(|_| 32768)).as_bytes()).unwrap();
     std::thread::sleep(Duration::from_secs(5));
     // Whatever the kernel was holding comes out, and then the connection ends
     // -- by end of stream, or by a reset, which is what closing a socket with
@@ -476,10 +524,15 @@ fn a_client_that_never_reads_is_closed_after_the_idle_timeout() {
             {
                 break;
             }
-            Err(e) => panic!("the connection was still open after the timeout: {e}"),
+            Err(e) => {
+                panic!("the connection was still open after the timeout ({total} bytes read): {e}")
+            }
         }
     }
-    assert!(total < 1000 * 32768, "every answer was delivered to a client that was not reading");
+    assert!(
+        total < count * 32768,
+        "every answer ({count} of them, {total} bytes) was delivered to a client that was not reading; loopback holds {capacity} bytes"
+    );
     assert_eq!(ask(&mut connect(&server), &get("/health")).status, 200);
 }
 
@@ -504,4 +557,32 @@ fn a_connection_that_is_to_close_closes_only_once_its_answer_has_gone() {
     );
     let r = read_response(&mut s, &mut Vec::new()).expect("a refusal");
     assert_eq!(r.status, 431);
+}
+
+#[test]
+fn the_server_picks_this_systems_dont_wait_flag() {
+    // `MSG_DONTWAIT` is 0x40 on Linux and 0x80 on macOS -- where 0x40 is
+    // `MSG_WAITALL`, which would make every `send` block and every test about
+    // a client that does not read fail. The server announces what it chose.
+    let fetched = fetch_net_sockets("api-flag-fetch", "examples/api/net.lock");
+    let (dir, exe) =
+        build_example_paths("api-flag", &[repo_root().join("examples/api/api.ls"), fetched], "api");
+    let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let mut child = Command::new(&exe)
+        .arg(port.to_string())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the compiled server runs");
+    let mut line = String::new();
+    {
+        use std::io::BufRead;
+        let mut out = std::io::BufReader::new(child.stderr.take().unwrap());
+        out.read_line(&mut line).expect("a first line");
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&dir);
+    let want = if cfg!(target_os = "macos") { 128 } else { 64 };
+    assert_eq!(line.trim(), format!("listening on {port} send-flag {want}"));
 }
