@@ -253,7 +253,12 @@ fn what_cannot_be_trusted_is_refused_and_the_connection_closes() {
         ("garbage method", "G@T /health HTTP/1.1\r\nHost: t\r\n\r\n".into(), 400),
         ("version", "GET /health HTTP/2.0\r\nHost: t\r\n\r\n".into(), 400),
         ("two lengths", "POST /add HTTP/1.1\r\nHost: t\r\nContent-Length: 2\r\nContent-Length: 3\r\n\r\n{}".into(), 400),
-        ("chunked", "POST /add HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n".into(), 501),
+        ("chunk size not hex", "POST /add HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n{}\r\n0\r\n\r\n".into(), 400),
+        ("chunk extension", "POST /add HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\n\r\n2;x=1\r\n{}\r\n0\r\n\r\n".into(), 400),
+        ("chunked trailer", "POST /add HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n{}\r\n0\r\nX: 1\r\n\r\n".into(), 400),
+        ("chunk framing", "POST /add HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\n\r\n2\n{}\r\n0\r\n\r\n".into(), 400),
+        ("other encoding", "POST /add HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: gzip, chunked\r\n\r\n0\r\n\r\n".into(), 400),
+        ("chunked body too large", format!("POST /add HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\n\r\n{:x}\r\n", 100_000), 413),
         ("body too large", "POST /add HTTP/1.1\r\nHost: t\r\nContent-Length: 100000\r\n\r\n".into(), 413),
         ("head too large", format!("GET /health HTTP/1.1\r\nHost: t\r\nX: {}\r\n\r\n", "a".repeat(20_000)), 431),
     ];
@@ -604,5 +609,102 @@ fn the_server_holds_no_foreign_authority() {
     assert!(!json.contains("\"ffi\""), "no foreign code anywhere:\n{json}");
     for label in ["net_in", "conn_accept", "conn_read", "conn_write", "poll", "clock", "heap"] {
         assert!(json.contains(&format!("\"name\": \"{label}\"")), "`{label}` is reported:\n{json}");
+    }
+}
+
+fn chunked(path: &str, pieces: &[&str]) -> String {
+    let mut out = format!("POST {path} HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\n\r\n");
+    for piece in pieces {
+        out.push_str(&format!("{:x}\r\n{piece}\r\n", piece.len()));
+    }
+    out.push_str("0\r\n\r\n");
+    out
+}
+
+#[test]
+fn a_chunked_body_is_decoded_and_the_handler_cannot_tell() {
+    let server = start("api-chunked", &[]);
+    let mut s = connect(&server);
+    // The same answer as a body with a length.
+    let r = ask(&mut s, &chunked("/add", &["{\"a\": 40,", " \"b\": 2}"]));
+    assert_eq!((r.status, r.body.as_str()), (200, "{\"sum\":42}"));
+    // One chunk, and a body that splits mid-token across chunks.
+    let r = ask(&mut s, &chunked("/add", &["{\"a\": 1, \"b\": 2}"]));
+    assert_eq!(r.body, "{\"sum\":3}");
+    let r = ask(&mut s, &chunked("/add", &["{\"a", "\": 7, \"b\"", ": 8}"]));
+    assert_eq!(r.body, "{\"sum\":15}");
+    // An empty chunked body is an empty body, which `/add` refuses as it does any.
+    let r = ask(&mut s, &chunked("/add", &[]));
+    assert_eq!(r.status, 422);
+    // And the connection is still good for the next request, chunked or not.
+    assert_eq!(ask(&mut s, &get("/health")).status, 200);
+}
+
+#[test]
+fn a_chunked_body_arriving_a_byte_at_a_time_is_answered_once_and_whole() {
+    let server = start("api-chunked-slow", &[]);
+    let mut s = connect(&server);
+    s.set_nodelay(true).unwrap();
+    let request = chunked("/add", &["{\"a\": 20,", " \"b\": 22}"]);
+    for byte in request.as_bytes() {
+        s.write_all(&[*byte]).unwrap();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let r = read_response(&mut s, &mut Vec::new()).expect("an answer");
+    assert_eq!((r.status, r.body.as_str()), (200, "{\"sum\":42}"));
+    // A pipelined pair: a chunked request and a plain one in one write.
+    let both = format!("{}{}", chunked("/add", &["{\"a\": 1, \"b\": 1}"]), get("/health"));
+    s.write_all(both.as_bytes()).unwrap();
+    let mut carry = Vec::new();
+    assert_eq!(read_response(&mut s, &mut carry).unwrap().body, "{\"sum\":2}");
+    assert_eq!(read_response(&mut s, &mut carry).unwrap().body, "{\"ok\":true}");
+}
+
+/// A body of whitespace around a small object: valid JSON, 40,000 bytes.
+fn padded() -> String {
+    format!("{{\"a\": 1, \"b\": 2}}{}", " ".repeat(40_000))
+}
+
+#[test]
+fn a_body_larger_than_the_default_buffer_needs_the_buffer_argument() {
+    // By default a request must fit 16 KiB, and is refused at once if it cannot.
+    let small = start("api-body-default", &[]);
+    let r = ask(&mut connect(&small), &post("/add", &padded()));
+    assert_eq!(r.status, 413, "{}", r.body);
+    // With the sixth argument -- a 64 KiB buffer -- the same request is answered.
+    // (`no` is not `1` or `r`, so the port is not shared; 9 seconds idle; 0, no
+    // write quantum.)
+    let big = start("api-body-64k", &["no", "9", "0", "65536"]);
+    let r = ask(&mut connect(&big), &post("/add", &padded()));
+    assert_eq!((r.status, r.body.as_str()), (200, "{\"sum\":3}"));
+    // A chunked one too, across several chunks.
+    let body = padded();
+    let (head, tail) = body.split_at(20_000);
+    let r = ask(&mut connect(&big), &chunked("/add", &[head, tail]));
+    assert_eq!((r.status, r.body.as_str()), (200, "{\"sum\":3}"));
+    // Still refused past the bigger buffer.
+    let huge = format!("{{\"a\": 1, \"b\": 2}}{}", " ".repeat(70_000));
+    let r = ask(&mut connect(&big), &post("/add", &huge));
+    assert_eq!(r.status, 413);
+}
+
+#[test]
+fn a_buffer_the_server_cannot_honour_is_refused_at_start() {
+    // Below a page, or above a megabyte: the server says nothing and exits 2.
+    for size in ["100", "2097152"] {
+        let (dir, exe) = build_example_paths(
+            "api-bad-buffer",
+            &[repo_root().join("examples/api/api.ls")],
+            "api",
+        );
+        let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let status = Command::new(&exe)
+            .args([port.to_string().as_str(), "no", "9", "0", size])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        assert_eq!(status.code(), Some(2), "buffer {size}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -717,6 +717,123 @@ pub fn reason(status: int) -> [] &static [byte] {
     return "Unknown";
 }
 
+// ---------------------------------------------------------------------
+// A chunked request body
+// ---------------------------------------------------------------------
+
+// Decode the chunked body that starts at `src[0]` -- just past the head, where
+// `parse` said the body starts -- into `out`.
+//
+// Answers `(consumed, decoded)`: how many bytes of `src` the whole body took,
+// the terminating chunk and its blank line included, and how many bytes of
+// `out` it filled. `consumed` is negative when there is no body to return:
+//
+//     -1  not all of it has arrived (decode again when more has)
+//     -2  a chunk size that is not 1-8 hex digits
+//     -3  framing that is not exactly CRLF where CRLF belongs (a bare LF, a
+//         chunk that is not followed by one, a size line with something after
+//         its digits)
+//     -4  the decoded body would not fit in `out`
+//     -5  a chunk extension (`;...`) or trailer fields, which this refuses
+//
+// **Strict on purpose.** Chunk extensions and trailers are where request
+// smuggling lives, nothing here needs them, and refusing is one line where
+// interpreting them correctly is a page. A decoded byte is copied once, from
+// `src` to `out`; `src` is not modified. When more bytes arrive the decode
+// starts again from the first chunk -- cost proportional to the body, which is
+// bounded by `out`.
+pub fn dechunk[&s, &o](src: &s [byte], out: &!o [byte]) -> [] (int, int) {
+    var at = 0;
+    var wrote = 0;
+    while true {
+        var size = 0;
+        var digits = 0;
+        while at < len(src) && hex_value(int_of(src[at])) >= 0 {
+            if digits == 8 {
+                return (0 - 2, 0);
+            }
+            size = size * 16 + hex_value(int_of(src[at]));
+            digits = digits + 1;
+            at = at + 1;
+        }
+        if at >= len(src) {
+            return (0 - 1, 0);
+        }
+        if digits == 0 {
+            return (0 - 2, 0);
+        }
+        if int_of(src[at]) == 59 {
+            return (0 - 5, 0);
+        }
+        if int_of(src[at]) != 13 {
+            return (0 - 3, 0);
+        }
+        if at + 1 >= len(src) {
+            return (0 - 1, 0);
+        }
+        if int_of(src[at + 1]) != 10 {
+            return (0 - 3, 0);
+        }
+        at = at + 2;
+        if size == 0 {
+            // The trailer section must be empty: straight to the blank line.
+            if at >= len(src) {
+                return (0 - 1, 0);
+            }
+            if int_of(src[at]) != 13 {
+                return (0 - 5, 0);
+            }
+            if at + 1 >= len(src) {
+                return (0 - 1, 0);
+            }
+            if int_of(src[at + 1]) != 10 {
+                return (0 - 3, 0);
+            }
+            return (at + 2, wrote);
+        }
+        if wrote + size > len(out) {
+            return (0 - 4, 0);
+        }
+        if at + size + 2 > len(src) {
+            return (0 - 1, 0);
+        }
+        var i = 0;
+        while i < size {
+            out[wrote + i] = src[at + i];
+            i = i + 1;
+        }
+        at = at + size;
+        if int_of(src[at]) != 13 || int_of(src[at + 1]) != 10 {
+            return (0 - 3, 0);
+        }
+        at = at + 2;
+        wrote = wrote + size;
+    }
+    return (0 - 1, 0);
+}
+
+// Whether `dechunk` is only waiting for more bytes.
+pub fn dechunk_incomplete(consumed: int) -> [] bool {
+    return consumed == 0 - 1;
+}
+
+// What a refusal from `dechunk` means, for a response body.
+pub fn dechunk_message(consumed: int) -> [] &static [byte] {
+    if consumed == 0 - 2 {
+        return "bad chunk size";
+    }
+    if consumed == 0 - 3 {
+        return "bad chunk framing";
+    }
+    if consumed == 0 - 4 {
+        return "request too large";
+    }
+    if consumed == 0 - 5 {
+        return "chunk extensions and trailers are not supported";
+    }
+    return "bad chunked body";
+}
+
 // Whether `extra` is zero or more complete header lines -- `name: value`
 // and a CRLF each -- and nothing else: a name of token characters, a value of
 // the characters a value may hold, and no bare CR or LF anywhere. It is what

@@ -256,3 +256,83 @@ fn test_extra_header_lines_go_before_the_blank_line[&h](heap: &!h Heap) -> [heap
     buffer.drop(heap, same);
     return 0;
 }
+
+fn test_a_chunked_body_is_decoded[&h](heap: &!h Heap) -> [heap] int {
+    let scratch = box_slice(heap, 64, byte_of(0));
+    borrow mut scratch as &!sw in {
+        let o = contents(sw);
+        // Two chunks, a hex size in either case, and the final blank line.
+        let body = "5\r\nhello\r\nA\r\n, world!!!\r\n0\r\n\r\n";
+        let (used, n) = http.dechunk(body, o);
+        test.assert_eq(used, 30);
+        test.assert_eq(n, 15);
+        test.assert(bytes.equal(o[0..n], "hello, world!!!"));
+        // Bytes after the body are not touched and not counted: a pipelined
+        // request follows, and `used` says where it starts.
+        let (used2, n2) = http.dechunk("3\r\nabc\r\n0\r\n\r\nGET / HTTP/1.1\r\n", o);
+        test.assert_eq(used2, 13);
+        test.assert_eq(n2, 3);
+        // An empty body is just the last chunk.
+        let (used3, n3) = http.dechunk("0\r\n\r\n", o);
+        test.assert_eq(used3, 5);
+        test.assert_eq(n3, 0);
+    }
+    unbox_slice(heap, scratch);
+    return 0;
+}
+
+// Every prefix of a good body is "not all here yet" and never an error: that
+// is what lets a server call it again after each read.
+fn test_a_chunked_body_arriving_in_pieces_is_never_wrongly_refused[&h](heap: &!h Heap) -> [heap] int {
+    let scratch = box_slice(heap, 64, byte_of(0));
+    borrow mut scratch as &!sw in {
+        let o = contents(sw);
+        let body = "5\r\nhello\r\nA\r\n, world!!!\r\n0\r\n\r\n";
+        var cut = 0;
+        while cut < len(body) {
+            let (used, n) = http.dechunk(body[0..cut], o);
+            test.assert(http.dechunk_incomplete(used));
+            cut = cut + 1;
+        }
+        let (used, n) = http.dechunk(body[0..len(body)], o);
+        test.assert_eq(used, len(body));
+    }
+    unbox_slice(heap, scratch);
+    return 0;
+}
+
+fn test_every_chunked_refusal_has_its_code[&h](heap: &!h Heap) -> [heap] int {
+    let scratch = box_slice(heap, 8, byte_of(0));
+    borrow mut scratch as &!sw in {
+        let o = contents(sw);
+        // -2: a size that is not hex, is empty, or is nine digits.
+        let (a, an) = http.dechunk("zz\r\nxx\r\n0\r\n\r\n", o);
+        test.assert_eq(a, 0 - 2);
+        let (b, bn) = http.dechunk("\r\n0\r\n\r\n", o);
+        test.assert_eq(b, 0 - 2);
+        let (c, cn) = http.dechunk("000000001\r\nx\r\n0\r\n\r\n", o);
+        test.assert_eq(c, 0 - 2);
+        // -3: a bare line feed, a chunk not followed by CRLF, junk after the size.
+        let (d, dn) = http.dechunk("1\nx\r\n0\r\n\r\n", o);
+        test.assert_eq(d, 0 - 3);
+        let (e, en) = http.dechunk("1\r\nxyz0\r\n\r\n", o);
+        test.assert_eq(e, 0 - 3);
+        let (f, fn_) = http.dechunk("1 \r\nx\r\n0\r\n\r\n", o);
+        test.assert_eq(f, 0 - 3);
+        // -4: the decoded body would not fit (8 bytes of room).
+        let (g, gn) = http.dechunk("9\r\n123456789\r\n0\r\n\r\n", o);
+        test.assert_eq(g, 0 - 4);
+        let (h2, hn) = http.dechunk("4\r\n1234\r\n5\r\n56789\r\n0\r\n\r\n", o);
+        test.assert_eq(h2, 0 - 4);
+        // -5: an extension, a trailer.
+        let (i, in_) = http.dechunk("1;ext=1\r\nx\r\n0\r\n\r\n", o);
+        test.assert_eq(i, 0 - 5);
+        let (j, jn) = http.dechunk("1\r\nx\r\n0\r\nX-Trailer: 1\r\n\r\n", o);
+        test.assert_eq(j, 0 - 5);
+        // Every refusal has a message.
+        test.assert(len(http.dechunk_message(0 - 2)) > 0);
+        test.assert(len(http.dechunk_message(0 - 5)) > 0);
+    }
+    unbox_slice(heap, scratch);
+    return 0;
+}
