@@ -809,6 +809,14 @@ impl<'a> FuncEmitter<'a> {
             // `docs/native-sockets.md` §4: the poller.
             Callee::Builtin(Builtin::PollerNew) => self.poller_new(),
             Callee::Builtin(Builtin::ClockMs) => self.clock_ms(),
+            Callee::Builtin(Builtin::ConnDetach) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.conn_detach(&args)
+            }
+            Callee::Builtin(Builtin::ConnAttach) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.conn_attach(&args)
+            }
             Callee::Builtin(Builtin::PollerAddListener) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.poller_ctl(&args, true, false)

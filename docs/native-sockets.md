@@ -400,3 +400,51 @@ as 1000-3000. It was 120 ms first, and the mutation that multiplied seconds
 by 1 instead of 1000 survived it: the sub-second part alone measures a short
 wait correctly, and the bug shows only when the span crosses a second
 boundary, which a wait over a second always does.
+
+### 10.3 What migrating the server found: a resource cannot be in a table
+
+`examples/api` holds up to 1,024 connections and finds each by the number
+the `Poller` returns. `Conn` is a resource, and **no table can hold one**:
+`std.vec` and `std.map` hold only copyable things (`collections.md` §2),
+because freeing an array runs nothing and an obligation inside it would be
+dropped; the one container for resources is `std.list`, a chain of boxes,
+where finding connection 700 walks 700 links. Making `Conn` copyable would
+fix that and bring back what a typed handle is for -- a stale copy closing
+the wrong connection after the descriptor is reused.
+
+So two builtins and a library:
+
+- `conn_detach(Conn) -> int` ends the `Conn` and answers a **ticket**; the
+  descriptor stays open. `-1` means it could not (a descriptor beyond the
+  table), and the connection was closed rather than leaked.
+- `conn_attach(int) -> Attached` (`Ok(Conn)` | `Failed(EBADF)`) turns a ticket
+  back into the `Conn` **once**.
+- `std.conns` is a `Table` of tickets over an ordinary `Vec[int]`, with
+  `put`, `read`, `write`, `nonblocking`, `watch`/`rewatch`, `close` and
+  `drop` by slot number. Each is `attach`, the one builtin, `detach`: the
+  `Conn` exists for exactly that long, so linearity does not stop at the
+  table's edge. A free slot's cell holds the next free slot, so `close`
+  needs no heap. `drop` closes every connection left.
+
+**Why a ticket is not authority.** The runtime keeps a 32-bit counter per
+descriptor below 65,536 (256 KiB of bss, one global in both backends). A
+ticket is `epoch << 32 | descriptor`. `conn_detach` bumps the counter to an
+odd value and issues it; `conn_attach` accepts a ticket only if the descriptor
+is in range, the epoch is odd, and it equals the descriptor's **current**
+counter -- then bumps it to even. So `conn_attach(1)` -- standard output as a
+guess -- fails (the counter is 0, not odd and not 1), a ticket copied before
+redemption fails the second time, and a ticket whose connection has since been
+closed fails after the number is reused. The epoch is masked to 31 bits so a
+ticket stays non-negative; parity survives the wrap.
+
+Tests: nine forged tickets refused (the standard streams, a descriptor never
+ticketed, negatives, `i64::MAX`, past the table); a ticket redeemed twice and a
+ticket after `conn_close`; a table of three clients with slot order, each
+read and write finding its own client, a freed slot refusing stale use and
+being reused, and `drop` closing the rest. Mutation-checked: validity without
+the epoch comparison, an `attach` that does not spend, and a `detach` that does
+not bump.
+
+**The cost is a number to be measured**, not argued: every read or write
+through the table is two extra builtin calls and two table accesses. The api
+benchmark below says whether it matters.

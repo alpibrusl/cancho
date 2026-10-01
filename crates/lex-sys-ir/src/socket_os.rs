@@ -51,3 +51,9 @@ pub const EINVAL: i64 = 22;
 /// `fcntl` commands, the same on both.
 pub const F_GETFL: i64 = 3;
 pub const F_SETFL: i64 = 4;
+
+/// How many descriptors a ticket can name (`conn_detach`): the epoch table
+/// has one 32-bit counter per descriptor below this.
+pub const FD_EPOCH_SLOTS: i64 = 65536;
+/// The epoch table's symbol, defined once per program by the entry point.
+pub const FD_EPOCH_GLOBAL: &str = "lexs_fd_epoch";

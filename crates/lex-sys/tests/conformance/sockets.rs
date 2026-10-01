@@ -1093,3 +1093,258 @@ fn a_program_that_reads_the_clock_reports_it() {
     );
     assert!(json.contains("\"poll\""), "the poller is reported too:\n{json}");
 }
+
+const FORGED: &str = r#"
+edition 5;
+fn refused(ticket: int) -> [] int {
+    match conn_attach(ticket) {
+        Attached::Ok(c) => { conn_close(c); return 0; }
+        Attached::Failed(e) => { if e == 9 { return 1; } return 0; }
+    }
+}
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(net); release(clock);
+    // Numbers a program might guess: the standard streams (as odd-epoch
+    // tickets for descriptors 0-2), a ticket for a descriptor that was
+    // never ticketed, negatives, and descriptors beyond the table.
+    var refused_all = 0;
+    refused_all = refused_all + refused(0);
+    refused_all = refused_all + refused(1);
+    refused_all = refused_all + refused(2);
+    refused_all = refused_all + refused(4294967296 + 1);
+    refused_all = refused_all + refused(4294967296 + 2);
+    refused_all = refused_all + refused(8589934592 + 1);
+    refused_all = refused_all + refused(0 - 1);
+    refused_all = refused_all + refused(9223372036854775807);
+    refused_all = refused_all + refused(4294967296 + 70000);
+    if refused_all == 9 {
+        return 0;
+    }
+    return 1;
+}
+"#;
+
+/// A ticket is not authority: numbers a program might guess -- the
+/// standard streams as odd-epoch tickets, a descriptor never ticketed,
+/// negatives, descriptors past the table -- all answer `Failed(EBADF)`.
+/// Without this, `conn_attach(1)` would be `write(1, ..)` without an `Io`.
+#[test]
+fn a_forged_ticket_reaches_nothing() {
+    for backend in BACKENDS {
+        let dir = scratch(&format!("sockets-forged-{backend}"));
+        let exe = build(&dir, "forged", FORGED, backend);
+        let run = Command::new(&exe).output().expect("the program runs");
+        assert_eq!(run.status.code(), Some(0), "{backend}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+const TICKETS: &str = r#"
+edition 5;
+import std.conns;
+import std.io;
+
+// Accept one connection and put it in the table: its slot, or -2 / -3.
+fn take[&h, &l](heap: &!h Heap, table: conns.Table, listener: &!l Listener) -> [heap, conn_accept] (conns.Table, int) {
+    match tcp_accept(listener) {
+        Accepted::Ok(c) => { return conns.put(heap, table, c); }
+        Accepted::Again => { return (table, 0 - 2); }
+        Accepted::Failed(e) => { return (table, 0 - 3); }
+    }
+}
+
+// Read up to 8 bytes from `slot` and say what the first one is, or -1.
+fn first[&t, &b](table: &!t conns.Table, slot: int, buf: &!b [byte]) -> [conn_read] int {
+    match conns.read(table, slot, buf) {
+        Received::Data(n) => { return int_of(buf[0]); }
+        Received::End => { return 0 - 1; }
+        Received::Again => { return 0 - 2; }
+        Received::Failed(e) => { return 0 - 3; }
+    }
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi); release(fs); release(args); release(clock);
+    var h = heap;
+    var io2 = io;
+    let bound = narrow(net, "PORT");
+    var score = 0;
+    borrow mut io2 as &!i in {
+    borrow mut h as &!hh in {
+        borrow bound as &n in {
+            match tcp_listen(n, PORT, 8, 0) {
+                Listening::Ok(l) => {
+                    var listener = l;
+                    borrow mut listener as &!lh in {
+                        io.error_all(i, "ready\n");
+                        var table = conns.empty(hh, 2);
+                        // Two clients: slots 0 and 1.
+                        let (t1, a) = take(hh, table, lh);
+                        let (t2, b) = take(hh, t1, lh);
+                        table = t2;
+                        if a == 0 && b == 1 { score = score + 1; }
+                        region r {
+                            var buf = alloc_slice[r](8, byte_of(0));
+                            borrow mut table as &!tb in {
+                                // Read each by slot: "B" is 66 on slot 1, "A" is 65 on slot 0.
+                                if first(tb, 1, buf) == 66 { score = score + 1; }
+                                if first(tb, 0, buf) == 65 { score = score + 1; }
+                                match conns.write(tb, 0, "a!") {
+                                    Sent::Wrote(w) => { if w == 2 { score = score + 1; } }
+                                    Sent::Again => { }
+                                    Sent::Failed(e) => { }
+                                }
+                                match conns.write(tb, 1, "b!") {
+                                    Sent::Wrote(w) => { }
+                                    Sent::Again => { }
+                                    Sent::Failed(e) => { }
+                                }
+                                // Close slot 0: the slot is free, and writing it is a
+                                // stale use -- a refusal, not another connection.
+                                if conns.close(tb, 0) == 0 && conns.live(tb) == 1 { score = score + 1; }
+                                match conns.write(tb, 0, "x") {
+                                    Sent::Failed(e) => { if e == 9 { score = score + 1; } }
+                                    Sent::Wrote(w) => { }
+                                    Sent::Again => { }
+                                }
+                                // A closed slot closes twice as a refusal too.
+                                if conns.close(tb, 0) == 9 { score = score + 1; }
+                            }
+                            io.error_all(i, "freed\n");
+                            // The next client takes the freed slot.
+                            let (t3, c) = take(hh, table, lh);
+                            table = t3;
+                            if c == 0 { score = score + 1; }
+                            borrow mut table as &!tb in {
+                                if first(tb, 0, buf) == 67 { score = score + 1; }
+                            }
+                        }
+                        // Ending the table closes what is left; the clients see it.
+                        if conns.drop(hh, table) == 2 { score = score + 1; }
+                    }
+                    listener_close(listener);
+                }
+                Listening::Failed(e) => { }
+            }
+        }
+    }
+    }
+    release(bound);
+    release(io2);
+    release(h);
+    if score == 10 {
+        return 0;
+    }
+    return 100 + score;
+}
+"#;
+
+/// Many connections by slot, through `std.conns`: slots are handed out in
+/// order, each read and write finds its own client, a closed slot is free
+/// and refuses stale use, the next client takes the freed slot, and ending
+/// the table closes what is left -- all over tickets, with `Conn` linear
+/// everywhere a program can see it.
+#[test]
+fn a_connection_table_finds_each_client_by_slot() {
+    use std::io::Write as _;
+    for backend in BACKENDS {
+        let port = free_port();
+        let dir = scratch(&format!("sockets-table-{backend}"));
+        let source = TICKETS.replace("PORT", &port.to_string());
+        let exe = build(&dir, "table", &source, backend);
+
+        let mut child = Command::new(&exe).stderr(Stdio::piped()).spawn().expect("the server runs");
+        let mut lines = std::io::BufReader::new(child.stderr.take().unwrap());
+        wait_for(&mut lines, "ready");
+        let mut first = connect(port);
+        first.write_all(b"A").unwrap();
+        let mut second = connect(port);
+        second.write_all(b"B").unwrap();
+
+        // Slot 0 answers "a!" and is then closed: "a!" then end of stream.
+        let mut seen = Vec::new();
+        first.read_to_end(&mut seen).unwrap();
+        assert_eq!(seen, b"a!", "{backend}: slot 0's client got its own answer, then EOF");
+        let mut other = [0u8; 2];
+        second.read_exact(&mut other).unwrap();
+        assert_eq!(&other, b"b!", "{backend}: slot 1's client got its own answer");
+
+        wait_for(&mut lines, "freed");
+        let mut third = connect(port);
+        third.write_all(b"C").unwrap();
+
+        // The table is dropped last: both remaining clients see EOF.
+        let mut rest = Vec::new();
+        second.read_to_end(&mut rest).unwrap();
+        assert!(rest.is_empty(), "{backend}: ending the table closed slot 1");
+        let mut rest = Vec::new();
+        third.read_to_end(&mut rest).unwrap();
+        assert!(rest.is_empty(), "{backend}: ending the table closed the reused slot");
+
+        let status = child.wait().expect("the server exits");
+        assert_eq!(status.code(), Some(0), "{backend}: score {:?}", status.code());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+const SPENT: &str = r#"
+fn run(bound: Net("BOUND"), io: Io) -> [] int {
+    var score = 0;
+    borrow bound as &n in {
+        match tcp_connect(n, "127.0.0.1", PORT) {
+            Dialed::Ok(c) => {
+                let ticket = conn_detach(c);
+                if ticket >= 0 { score = score + 1; }
+                // The first redemption gives the connection back...
+                match conn_attach(ticket) {
+                    Attached::Ok(back) => {
+                        score = score + 1;
+                        // ...and a copy of the ticket is spent: it does not give
+                        // the same descriptor a second time.
+                        match conn_attach(ticket) {
+                            Attached::Ok(twin) => { conn_close(twin); }
+                            Attached::Failed(e) => { if e == 9 { score = score + 1; } }
+                        }
+                        // After a close the descriptor number may be reused; the
+                        // old ticket must not reach whatever has it now.
+                        conn_close(back);
+                        match conn_attach(ticket) {
+                            Attached::Ok(ghost) => { conn_close(ghost); }
+                            Attached::Failed(e) => { if e == 9 { score = score + 1; } }
+                        }
+                    }
+                    Attached::Failed(e) => { }
+                }
+            }
+            Dialed::Failed(e) => { }
+        }
+    }
+    release(bound);
+    release(io);
+    if score == 4 {
+        return 0;
+    }
+    return 100 + score;
+}
+"#;
+
+/// A ticket is redeemed once. The first `conn_attach` gives the connection
+/// back; a copy of the same ticket, and the ticket after the connection is
+/// closed, are both `Failed(EBADF)` -- so a stale copy cannot reach a
+/// connection that has since taken the descriptor number.
+#[test]
+fn a_ticket_is_spent_when_it_is_redeemed() {
+    for backend in BACKENDS {
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = server.local_addr().unwrap().port();
+        let dir = scratch(&format!("sockets-spent-{backend}"));
+        let exe =
+            build(&dir, "spent", &dial_program(port, &format!("127.0.0.1:{port}"), SPENT), backend);
+        let run = Command::new(&exe).output().expect("the program runs");
+        assert_eq!(run.status.code(), Some(0), "{backend}: {:?}", run.status.code());
+        drop(server);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

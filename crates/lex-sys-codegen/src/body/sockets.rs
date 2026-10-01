@@ -389,4 +389,95 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         let rest = self.builder.ins().udiv_imm(nanos, 1_000_000);
         vec![self.builder.ins().iadd(millis, rest)]
     }
+
+    /// The address of a descriptor's epoch counter.
+    fn epoch_slot(&mut self, fd: Value) -> Value {
+        let table = self.global(lex_sys_ir::FD_EPOCH_GLOBAL);
+        let offset = self.builder.ins().imul_imm(fd, 4);
+        self.builder.ins().iadd(table, offset)
+    }
+
+    /// `conn_detach(Conn)` (`docs/native-sockets.md` §10.3): the descriptor
+    /// stays open, the `Conn` ends, and what comes back is a ticket -- the
+    /// descriptor's epoch, bumped to an odd number, over its number. A
+    /// descriptor too large for the table is closed and answers `-1`.
+    pub(crate) fn conn_detach(&mut self, args: &[Value]) -> Vec<Value> {
+        let fd = args[0];
+        let merge = self.builder.create_block();
+        self.builder.append_block_param(merge, types::I64);
+        let refuse = self.builder.create_block();
+        let issue = self.builder.create_block();
+        let too_big = self.builder.ins().icmp_imm(
+            IntCC::UnsignedGreaterThanOrEqual,
+            fd,
+            lex_sys_ir::FD_EPOCH_SLOTS,
+        );
+        self.builder.ins().brif(too_big, refuse, &[], issue, &[]);
+
+        self.builder.switch_to_block(refuse);
+        self.builder.seal_block(refuse);
+        let fd32 = self.builder.ins().ireduce(types::I32, fd);
+        self.libc_call("close", &[types::I32], &[types::I32], &[fd32]);
+        let minus_one = self.builder.ins().iconst(types::I64, -1);
+        self.builder.ins().jump(merge, &[minus_one.into()]);
+
+        self.builder.switch_to_block(issue);
+        self.builder.seal_block(issue);
+        let slot = self.epoch_slot(fd);
+        let epoch = self.builder.ins().load(types::I32, MemFlags::trusted(), slot, 0);
+        let next = self.builder.ins().iadd_imm(epoch, 1);
+        self.builder.ins().store(MemFlags::trusted(), next, slot, 0);
+        let next64 = self.builder.ins().uextend(types::I64, next);
+        let masked = self.builder.ins().band_imm(next64, 0x7fff_ffff);
+        let high = self.builder.ins().ishl_imm(masked, 32);
+        let ticket = self.builder.ins().bor(high, fd);
+        self.builder.ins().jump(merge, &[ticket.into()]);
+
+        self.builder.switch_to_block(merge);
+        self.builder.seal_block(merge);
+        vec![self.builder.block_params(merge)[0]]
+    }
+
+    /// `conn_attach(int)`: valid only if the descriptor is in range, the
+    /// ticket's epoch is odd, and it is the descriptor's *current* epoch --
+    /// then the epoch moves on, so the ticket is spent. `Attached` is `Ok`
+    /// 0 with the descriptor, `Failed` 1 with `EBADF`.
+    pub(crate) fn conn_attach(&mut self, args: &[Value]) -> Vec<Value> {
+        let ticket = args[0];
+        let fd = self.builder.ins().band_imm(ticket, 0xffff_ffff);
+        let epoch = self.builder.ins().ushr_imm(ticket, 32);
+        let in_range =
+            self.builder.ins().icmp_imm(IntCC::UnsignedLessThan, fd, lex_sys_ir::FD_EPOCH_SLOTS);
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        // Index zero when out of range, so the load below is always inside
+        // the table; the answer is discarded then.
+        let index = self.builder.ins().select(in_range, fd, zero);
+        let slot = self.epoch_slot(index);
+        let current = self.builder.ins().load(types::I32, MemFlags::trusted(), slot, 0);
+        let current64 = self.builder.ins().uextend(types::I64, current);
+        let current_masked = self.builder.ins().band_imm(current64, 0x7fff_ffff);
+        let same = self.builder.ins().icmp(IntCC::Equal, current_masked, epoch);
+        let odd_bit = self.builder.ins().band_imm(epoch, 1);
+        let odd = self.builder.ins().icmp_imm(IntCC::NotEqual, odd_bit, 0);
+        let non_negative = self.builder.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, ticket, 0);
+        let a = self.builder.ins().band(in_range, same);
+        let b = self.builder.ins().band(odd, non_negative);
+        let valid = self.builder.ins().band(a, b);
+
+        let spend = self.builder.create_block();
+        let after = self.builder.create_block();
+        self.builder.ins().brif(valid, spend, &[], after, &[]);
+        self.builder.switch_to_block(spend);
+        self.builder.seal_block(spend);
+        let next = self.builder.ins().iadd_imm(current, 1);
+        self.builder.ins().store(MemFlags::trusted(), next, slot, 0);
+        self.builder.ins().jump(after, &[]);
+        self.builder.switch_to_block(after);
+        self.builder.seal_block(after);
+
+        let one = self.builder.ins().iconst(types::I64, 1);
+        let tag = self.builder.ins().select(valid, zero, one);
+        let ebadf = self.builder.ins().iconst(types::I64, 9);
+        vec![tag, fd, ebadf]
+    }
 }

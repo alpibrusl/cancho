@@ -335,6 +335,17 @@ pub enum Builtin {
     /// edition 5 only: monotonic milliseconds from an arbitrary origin, so
     /// an idle timeout survives the wall clock being set.
     ClockMs,
+    /// `conn_detach(Conn) -> [] int` -- `docs/native-sockets.md` §10.3:
+    /// turns a connection into an inert **ticket** (an integer) so it can
+    /// sit in a `Vec`, which holds only copyable things. The `Conn` is
+    /// consumed; the descriptor stays open. `-1` if it could not be done,
+    /// in which case the connection has been closed.
+    ConnDetach,
+    /// `conn_attach(int) -> [] Attached` -- redeems a ticket **once**. A
+    /// ticket that was never issued, was already redeemed, or belongs to a
+    /// descriptor since reused is `Failed(EBADF)`: the number is not
+    /// authority, and forging one reaches nothing.
+    ConnAttach,
     /// `tcp_accept(&!Listener) -> [conn_accept] Accepted`.
     TcpAccept,
     /// `conn_read(&!Conn, &![byte]) -> [conn_read] Received`.
@@ -445,6 +456,8 @@ impl Builtin {
         Builtin::PollerWait,
         Builtin::PollerClose,
         Builtin::ClockMs,
+        Builtin::ConnDetach,
+        Builtin::ConnAttach,
         Builtin::ConnRead,
         Builtin::ConnWrite,
         Builtin::ConnNonblocking,
@@ -504,6 +517,8 @@ impl Builtin {
             Builtin::PollerWait => "poller_wait",
             Builtin::PollerClose => "poller_close",
             Builtin::ClockMs => "clock_ms",
+            Builtin::ConnDetach => "conn_detach",
+            Builtin::ConnAttach => "conn_attach",
             Builtin::ConnRead => "conn_read",
             Builtin::ConnWrite => "conn_write",
             Builtin::ConnNonblocking => "conn_nonblocking",
@@ -550,6 +565,8 @@ impl Builtin {
             | Builtin::PollerWait
             | Builtin::PollerClose
             | Builtin::ClockMs
+            | Builtin::ConnDetach
+            | Builtin::ConnAttach
             | Builtin::ConnRead
             | Builtin::ConnWrite
             | Builtin::ConnNonblocking
@@ -891,6 +908,8 @@ impl Builtin {
                 Type::Int,
             ),
             Builtin::PollerClose => (vec![named(PRELUDE_POLLER)], Type::Int),
+            Builtin::ConnDetach => (vec![named(PRELUDE_CONN)], Type::Int),
+            Builtin::ConnAttach => (vec![Type::Int], named(PRELUDE_ATTACHED)),
             Builtin::ClockMs => (
                 vec![Type::Ref {
                     unique: false,

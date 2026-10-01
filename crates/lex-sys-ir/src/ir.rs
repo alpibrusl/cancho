@@ -67,11 +67,14 @@ pub const PRELUDE_POLLING: usize = 22;
 /// like `Io`) and the `Split` that carries it as its seventh field.
 pub const PRELUDE_CLOCK: usize = 23;
 pub const PRELUDE_SPLIT_CLOCK: usize = 24;
+/// What `conn_attach` answers: a `Conn` redeemed from a ticket, or why the
+/// ticket was refused (`docs/native-sockets.md` §10.3).
+pub const PRELUDE_ATTACHED: usize = 25;
 
 /// How many types the prelude declares. Written once, because a builtin's
 /// signature indexes this table and a stale slice is a panic rather than a
 /// diagnostic.
-pub const PRELUDE_COUNT: usize = 25;
+pub const PRELUDE_COUNT: usize = 26;
 
 /// The library an unnarrowed `Ffi` names: none of them yet.
 ///

@@ -378,4 +378,120 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("  {total} = add i64 {millis}, {rest}\n"));
         Ok(vec![LValue::Reg(total)])
     }
+
+    /// The address of a descriptor's epoch counter (`fd` an `i64`).
+    fn epoch_slot(&mut self, fd: &str) -> String {
+        let slot = self.fresh();
+        self.out.push_str(&format!(
+            "  {slot} = getelementptr i32, ptr @{}, i64 {fd}\n",
+            lex_sys_ir::FD_EPOCH_GLOBAL
+        ));
+        slot
+    }
+
+    /// `conn_detach(Conn)` (`docs/native-sockets.md` §10.3): the descriptor
+    /// stays open, the `Conn` ends, and what comes back is a ticket -- the
+    /// descriptor's epoch, bumped to an odd number, over its number. A
+    /// descriptor too large for the table is closed and answers `-1`.
+    pub(crate) fn conn_detach(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        let fd = operand(&args[0]);
+        let cell = self.fresh();
+        self.hoist(format!("  {cell} = alloca i64\n"));
+        let too_big = self.fresh();
+        self.out.push_str(&format!(
+            "  {too_big} = icmp uge i64 {fd}, {}\n",
+            lex_sys_ir::FD_EPOCH_SLOTS
+        ));
+        let n = self.blocks;
+        self.blocks += 1;
+        let (refuse, issue, merge) =
+            (format!("detachrefuse{n}"), format!("detachissue{n}"), format!("detachmerge{n}"));
+        self.out.push_str(&format!("  br i1 {too_big}, label %{refuse}, label %{issue}\n"));
+
+        self.out.push_str(&format!("{refuse}:\n"));
+        let fd32 = self.fresh();
+        self.out.push_str(&format!("  {fd32} = trunc i64 {fd} to i32\n"));
+        self.out.push_str(&format!("  call i32 @close(i32 {fd32})\n"));
+        self.out.push_str(&format!("  store i64 -1, ptr {cell}\n"));
+        self.out.push_str(&format!("  br label %{merge}\n"));
+
+        self.out.push_str(&format!("{issue}:\n"));
+        let slot = self.epoch_slot(&fd);
+        let epoch = self.fresh();
+        self.out.push_str(&format!("  {epoch} = load i32, ptr {slot}\n"));
+        let next = self.fresh();
+        self.out.push_str(&format!("  {next} = add i32 {epoch}, 1\n"));
+        self.out.push_str(&format!("  store i32 {next}, ptr {slot}\n"));
+        let next64 = self.fresh();
+        self.out.push_str(&format!("  {next64} = zext i32 {next} to i64\n"));
+        let masked = self.fresh();
+        self.out.push_str(&format!("  {masked} = and i64 {next64}, 2147483647\n"));
+        let high = self.fresh();
+        self.out.push_str(&format!("  {high} = shl i64 {masked}, 32\n"));
+        let ticket = self.fresh();
+        self.out.push_str(&format!("  {ticket} = or i64 {high}, {fd}\n"));
+        self.out.push_str(&format!("  store i64 {ticket}, ptr {cell}\n"));
+        self.out.push_str(&format!("  br label %{merge}\n"));
+
+        self.out.push_str(&format!("{merge}:\n"));
+        let result = self.fresh();
+        self.out.push_str(&format!("  {result} = load i64, ptr {cell}\n"));
+        Ok(vec![LValue::Reg(result)])
+    }
+
+    /// `conn_attach(int)`: valid only if the descriptor is in range, the
+    /// ticket's epoch is odd, and it is the descriptor's *current* epoch --
+    /// then the epoch moves on, so the ticket is spent. `Attached` is `Ok`
+    /// 0 with the descriptor, `Failed` 1 with `EBADF`.
+    pub(crate) fn conn_attach(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        let ticket = operand(&args[0]);
+        let fd = self.fresh();
+        self.out.push_str(&format!("  {fd} = and i64 {ticket}, 4294967295\n"));
+        let epoch = self.fresh();
+        self.out.push_str(&format!("  {epoch} = lshr i64 {ticket}, 32\n"));
+        let in_range = self.fresh();
+        self.out.push_str(&format!(
+            "  {in_range} = icmp ult i64 {fd}, {}\n",
+            lex_sys_ir::FD_EPOCH_SLOTS
+        ));
+        // Index zero when out of range, so the load is inside the table.
+        let index = self.fresh();
+        self.out.push_str(&format!("  {index} = select i1 {in_range}, i64 {fd}, i64 0\n"));
+        let slot = self.epoch_slot(&index);
+        let current = self.fresh();
+        self.out.push_str(&format!("  {current} = load i32, ptr {slot}\n"));
+        let current64 = self.fresh();
+        self.out.push_str(&format!("  {current64} = zext i32 {current} to i64\n"));
+        let current_masked = self.fresh();
+        self.out.push_str(&format!("  {current_masked} = and i64 {current64}, 2147483647\n"));
+        let same = self.fresh();
+        self.out.push_str(&format!("  {same} = icmp eq i64 {current_masked}, {epoch}\n"));
+        let odd_bit = self.fresh();
+        self.out.push_str(&format!("  {odd_bit} = and i64 {epoch}, 1\n"));
+        let odd = self.fresh();
+        self.out.push_str(&format!("  {odd} = icmp ne i64 {odd_bit}, 0\n"));
+        let non_negative = self.fresh();
+        self.out.push_str(&format!("  {non_negative} = icmp sge i64 {ticket}, 0\n"));
+        let a = self.fresh();
+        self.out.push_str(&format!("  {a} = and i1 {in_range}, {same}\n"));
+        let b = self.fresh();
+        self.out.push_str(&format!("  {b} = and i1 {odd}, {non_negative}\n"));
+        let valid = self.fresh();
+        self.out.push_str(&format!("  {valid} = and i1 {a}, {b}\n"));
+
+        let n = self.blocks;
+        self.blocks += 1;
+        let (spend, after) = (format!("attachspend{n}"), format!("attachdone{n}"));
+        self.out.push_str(&format!("  br i1 {valid}, label %{spend}, label %{after}\n"));
+        self.out.push_str(&format!("{spend}:\n"));
+        let next = self.fresh();
+        self.out.push_str(&format!("  {next} = add i32 {current}, 1\n"));
+        self.out.push_str(&format!("  store i32 {next}, ptr {slot}\n"));
+        self.out.push_str(&format!("  br label %{after}\n"));
+        self.out.push_str(&format!("{after}:\n"));
+
+        let tag = self.fresh();
+        self.out.push_str(&format!("  {tag} = select i1 {valid}, i64 0, i64 1\n"));
+        Ok(vec![LValue::Reg(tag), LValue::Reg(fd), LValue::Const(9)])
+    }
 }

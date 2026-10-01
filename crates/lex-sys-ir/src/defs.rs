@@ -537,6 +537,7 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     let clock = symbol("Clock");
     let clock_field = symbol("clock");
     let split_clock = symbol("Split");
+    let attached = symbol("Attached");
     let again_arm = symbol("Again");
     let data_arm = symbol("Data");
     let wrote_arm = symbol("Wrote");
@@ -594,6 +595,7 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     // same reason edition 2 got a second (`editions.md` §7).
     let clock_def = unifier.declare("Clock");
     let split_clock_def = unifier.declare("Split");
+    let attached_def = unifier.declare("Attached");
 
     vec![
         TypeDef {
@@ -1035,6 +1037,23 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
                 (args_field, Type::Named(args_def, Vec::new())),
                 (net_field, Type::Named(net_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
                 (clock_field, Type::Named(clock_def, Vec::new())),
+            ]),
+            span,
+            since: 5,
+        },
+        // `conn_attach`: `Dialed`'s shape. `Failed(EBADF)` is a ticket that
+        // was never issued, was already redeemed, or was copied.
+        TypeDef {
+            name: attached,
+            def: attached_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: None,
+            kind: DefKind::Enum(vec![
+                (ok_arm, vec![Type::Named(conn_def, Vec::new())]),
+                (failed_arm, vec![Type::Int]),
             ]),
             span,
             since: 5,

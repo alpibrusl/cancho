@@ -593,6 +593,8 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     // `docs/native-sockets.md` §4: the poller.
                     Callee::Builtin(Builtin::PollerNew) => self.poller_new(),
                     Callee::Builtin(Builtin::ClockMs) => self.clock_ms(),
+                    Callee::Builtin(Builtin::ConnDetach) => self.conn_detach(&args),
+                    Callee::Builtin(Builtin::ConnAttach) => self.conn_attach(&args),
                     Callee::Builtin(Builtin::PollerAddListener) => {
                         self.poller_ctl(&args, true, false)
                     }

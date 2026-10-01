@@ -465,6 +465,13 @@ pub(crate) fn emit_module(
     // a NUL-terminated C string back from `argv`, so its length needs
     // libc's own `strlen` the way `docs/arguments.md` §3.2 describes.
     text.push_str("declare i64 @strlen(ptr)\n");
+    // `conn_detach`/`conn_attach`'s epoch table (`docs/native-sockets.md`
+    // §10.3): a counter per descriptor, in bss.
+    text.push_str(&format!(
+        "@{} = internal global [{} x i32] zeroinitializer\n",
+        lex_sys_ir::FD_EPOCH_GLOBAL,
+        lex_sys_ir::FD_EPOCH_SLOTS
+    ));
     text.push_str("@lexs_argc = internal global i64 0\n");
     text.push_str("@lexs_argv = internal global ptr null\n\n");
 
