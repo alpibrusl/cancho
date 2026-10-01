@@ -1,4 +1,5 @@
 module std.ed25519;
+import std.crypto;
 
 // Ed25519 (RFC 8032). `docs/ed25519.md` is the design; §6 is explicit
 // about what this module does not provide: constant-time execution.
@@ -752,7 +753,6 @@ fn point_equal[&p, &q](p: &p [byte], q: &q [byte]) -> [] int {
     return 0;
 }
 
-import std.crypto;
 
 // RFC 8032 §5.1.5's clamp: clear the low three bits (a multiple of the
 // cofactor 8, keeping the scalar in the prime-order subgroup), clear

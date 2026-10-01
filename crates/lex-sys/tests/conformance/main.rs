@@ -47,6 +47,7 @@ mod docs;
 mod duplication;
 mod filesystem;
 mod floats;
+mod formatting;
 mod identity;
 mod io;
 mod memory;

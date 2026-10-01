@@ -125,7 +125,7 @@ fn statement_count(ast: &Ast, block: &Block) -> usize {
 /// Every `.ls` file under `dir`, recursively, skipping
 /// `.lex-sys-vcs` -- content-addressed package-store blobs, copies by
 /// design and not a meaningful duplication target.
-fn walk_ls_files(dir: &Path, out: &mut Vec<PathBuf>) {
+pub(super) fn walk_ls_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries {
         let path = entry.expect("a readable directory entry").path();

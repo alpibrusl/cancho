@@ -180,7 +180,18 @@ pub struct Token {
 
 /// Tokenise a whole source file. The final token is always `Eof`.
 pub fn tokenize(text: &str) -> Result<Vec<Token>, Diagnostic> {
+    tokenize_with_comments(text).map(|(tokens, _)| tokens)
+}
+
+/// [`tokenize`], and the span of every line comment too, in source order.
+///
+/// Comments still never reach the AST (the module's first paragraph); this
+/// is for the one consumer that has to put them back, the formatter
+/// (`docs/formatting.md`). Each span runs from the `//` to the end of its
+/// line, not including the newline.
+pub fn tokenize_with_comments(text: &str) -> Result<(Vec<Token>, Vec<Span>), Diagnostic> {
     let bytes = text.as_bytes();
+    let mut comments = Vec::new();
     let mut out = Vec::new();
     let mut i = 0usize;
 
@@ -194,9 +205,11 @@ pub fn tokenize(text: &str) -> Result<Vec<Token>, Diagnostic> {
 
         // Line comment.
         if b == b'/' && bytes.get(i + 1) == Some(&b'/') {
+            let start = i;
             while i < bytes.len() && bytes[i] != b'\n' {
                 i += 1;
             }
+            comments.push(Span::new(start as u32, i as u32));
             continue;
         }
 
@@ -486,7 +499,7 @@ pub fn tokenize(text: &str) -> Result<Vec<Token>, Diagnostic> {
     }
 
     out.push(Token { kind: TokenKind::Eof, span: Span::new(text.len() as u32, text.len() as u32) });
-    Ok(out)
+    Ok((out, comments))
 }
 
 fn next_char_boundary(text: &str, i: usize) -> usize {

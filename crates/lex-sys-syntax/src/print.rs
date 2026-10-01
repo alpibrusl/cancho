@@ -14,7 +14,8 @@
 //! 2. **Idempotent.** Printing the output again changes nothing, so the form
 //!    is a fixed point rather than a direction of travel.
 //!
-//! It is deliberately **not** a `gofmt`. Comments are discarded by the lexer
+//! It is deliberately **not** a `gofmt` -- that is `format.rs`, which runs this
+//! and puts the comments back. Comments are discarded by the lexer
 //! so that formatting cannot change a content hash, which means a printer
 //! built on the AST cannot preserve them — and a formatter that silently
 //! deletes every comment in a file would be a bad trade. What this is for is
@@ -334,18 +335,7 @@ impl Printer<'_> {
                 self.line(&text);
             }
             Stmt::If { cond, then_block, else_block } => {
-                let text = format!("if {} {{", self.condition(*cond));
-                self.line(&text);
-                self.depth += 1;
-                self.block_body(then_block);
-                self.depth -= 1;
-                match else_block {
-                    Some(body) => {
-                        self.line("} else {");
-                        self.nested(body);
-                    }
-                    None => self.line("}"),
-                }
+                self.if_chain("", *cond, then_block, else_block.as_ref());
             }
             Stmt::While { cond, body } => {
                 let text = format!("while {} {{", self.condition(*cond));
@@ -391,6 +381,41 @@ impl Printer<'_> {
                 let text = format!("defer {};", self.expr(*value));
                 self.line(&text);
             }
+        }
+    }
+
+    /// `if c { .. }`, and what follows it. `head` is what the first line
+    /// starts with: nothing for a statement, `} else ` for the link of a chain.
+    ///
+    /// An `else` block holding exactly one `if` prints as `else if`. The
+    /// parser reads `else if` as that block (`parser/stmt.rs`), so the two
+    /// spellings are one AST and one hash; the chain is the one a person
+    /// writes, and a ladder of `else { if` nested one level deeper each
+    /// time is the one nobody does.
+    fn if_chain(
+        &mut self,
+        head: &str,
+        cond: ExprId,
+        then_block: &Block,
+        else_block: Option<&Block>,
+    ) {
+        let text = format!("{head}if {} {{", self.condition(cond));
+        self.line(&text);
+        self.depth += 1;
+        self.block_body(then_block);
+        self.depth -= 1;
+        match else_block {
+            Some(body) => {
+                if let [only] = body.stmts.as_slice() {
+                    if let Stmt::If { cond, then_block, else_block } = self.ast.stmt(*only) {
+                        self.if_chain("} else ", *cond, then_block, else_block.as_ref());
+                        return;
+                    }
+                }
+                self.line("} else {");
+                self.nested(body);
+            }
+            None => self.line("}"),
         }
     }
 
