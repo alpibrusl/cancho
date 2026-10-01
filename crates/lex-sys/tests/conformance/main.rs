@@ -36,6 +36,7 @@ use std::process::{Command, Stdio};
 
 mod agent_cli;
 mod agent_tools;
+mod api;
 mod arguments;
 mod authority;
 mod backends;

@@ -22,6 +22,7 @@
 - [JSON](json.md)
 - [Hash map](map.md)
 - [HTTP and routing](http.md)
+- [The API server](server.md)
 - [Slicing](slicing.md)
 - [Tuples](tuples.md)
 - [Shadowing](shadowing.md)

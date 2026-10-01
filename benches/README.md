@@ -137,3 +137,9 @@ It is still one machine. A difference of a few percent is below what this
 harness can resolve — `scan` moved between −5.8% and −10.5% purely from
 shifting the code's address — so treat small numbers as "not the
 bottleneck" rather than as measurements.
+
+## `server/`
+
+Not an overflow pair: the load generator, a C reference server and the FastAPI
+baseline behind the requests-a-second figures in
+[`docs/server.md`](../docs/server.md) §5. `bench.sh` says how to run them.

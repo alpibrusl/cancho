@@ -337,6 +337,29 @@ its row says so.
 `docs/reach.md` is the argument the program is evidence for, including
 what this **cannot** reach and why it is one sentence rather than a list.
 
+### `api/` — a JSON API server: keep-alive, routed, one thread
+
+```sh
+cargo run -p lex-sys -- vcs fetch --lock examples/api/net.lock \
+    --store packages/net-sockets/.lex-sys-vcs -o /tmp/net-sockets
+cargo run -p lex-sys -- build --std examples/api/api.ls /tmp/net-sockets/*.ls -o api
+./api 8080                       # or: ./api 8080 reuseport 30   (share the port; 30 s idle timeout)
+curl localhost:8080/users/42     # {"id":42,"name":"user-42"}
+```
+
+`serve/` answers one request and exits; this is the server the last four
+library pieces (`std.json`, `std.map`, `std.http`, `std.route`) were for. It
+keeps every connection open in a `poll(2)` loop, answers pipelined requests
+in order, reads requests that arrive in pieces, refuses what the parser
+refuses (and closes), and routes four JSON endpoints. A silent client costs a
+slot and nothing else. On one core it does about 120,000 requests a second
+against about 3,000 for FastAPI on the same request
+([`docs/server.md`](../docs/server.md) §5 has the method and the caveats).
+
+The sockets are the `net.sockets` package, as in `serve/`; `poll`, `signal`
+and `time` are declared in the file. Read `drain` first (one connection's
+bytes into answers), then `serve` (the loop and the dense connection array).
+
 ### `fetch/` — the other direction
 
 ```sh

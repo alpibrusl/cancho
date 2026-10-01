@@ -220,7 +220,7 @@ this work; a router-backed server is the next thing to build.
 
 | Missing | Why it waits |
 |---|---|
-| A server loop that reads, parses, routes and writes | needs `net.sockets` and a body reader; the next piece, and the place to measure requests per second |
+| ~~A server loop that reads, parses, routes and writes~~ | **Built**: `examples/api`, [`server.md`](server.md), with the requests-a-second figures. Still missing there: streaming a body larger than its buffer, and chunked decoding |
 | Chunked decoding, `Expect: 100-continue`, trailers | a stream, not a parse |
 | Refusing a malformed head before its blank line arrives | §3, last paragraph |
 | `Allow` on a 405 | `find` does not say which methods; wants a second query |
