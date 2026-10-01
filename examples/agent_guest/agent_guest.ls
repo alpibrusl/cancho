@@ -72,8 +72,7 @@ import agent.wire;
 // KiB` (two 64 KiB regions apart, `docs/defined-behaviour.md`) is far
 // more than a demo `AgentViewMsg` line ever is, so a real one is never
 // truncated by this ceiling.
-fn exchange[&f, &i, &h](libc: &f Ffi("libc"), io: &!i Io, fd: int, host: &h [byte])
-    -> [ffi("libc"), io_write] int {
+fn exchange[&f, &i, &h](libc: &f Ffi("libc"), io: &!i Io, fd: int, host: &h [byte]) -> [ffi("libc"), io_write] int {
     region scratch {
         let action = "{\"action\":\"done\"}";
         let head_out = alloc_slice[scratch](len(host) + 96, byte_of(0));

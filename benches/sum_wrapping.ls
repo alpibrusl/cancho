@@ -29,8 +29,13 @@ fn run(rounds: int) -> [] int {
     }
     return total;
 }
+
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args } = split(world);
-    release(args); release(heap); release(fs); release(io); release(ffi);
+    release(args);
+    release(heap);
+    release(fs);
+    release(io);
+    release(ffi);
     return run(200);
 }

@@ -32,11 +32,7 @@ fn shout[&i, &r](out: &!i Io, s: &r [byte]) -> [io_write] int {
     return io.write_all(out, s);
 }
 
-fn call_with[&i, &r](
-    out: &!i Io,
-    s: &r [byte],
-    f: fn(&!i Io, &r [byte]) -> [io_write] int,
-) -> [io_write] int {
+fn call_with[&i, &r](out: &!i Io, s: &r [byte], f: fn(&!i Io, &r [byte]) -> [io_write] int) -> [io_write] int {
     return f(out, s);
 }
 

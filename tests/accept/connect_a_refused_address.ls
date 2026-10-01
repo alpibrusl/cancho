@@ -15,11 +15,7 @@ edition 2;
 import std.io;
 
 // The row names the bound, exactly as `roundtrip`'s names a directory.
-fn probe[&n, &a, &i](
-    net: &n Net("127.0.0.1:1"),
-    host: &a [byte],
-    io: &!i Io,
-) -> [net_out("127.0.0.1:1"), io_write] int {
+fn probe[&n, &a, &i](net: &n Net("127.0.0.1:1"), host: &a [byte], io: &!i Io) -> [net_out("127.0.0.1:1"), io_write] int {
     let fd = connect(net, host, 1);
     io.print_int(io, fd);
     putchar(io, 10);

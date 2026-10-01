@@ -26,8 +26,12 @@ pub enum Result[T, E] {
 // two bounds, each earned by a different line of the body.
 pub fn unwrap_or[T: val, E: val](r: Result[T, E], fallback: T) -> [] T {
     match r {
-        Result::Ok(v) => { return v; }
-        Result::Err(_) => { return fallback; }
+        Result::Ok(v) => {
+            return v;
+        }
+        Result::Err(_) => {
+            return fallback;
+        }
     }
 }
 
@@ -36,8 +40,12 @@ pub fn unwrap_or[T: val, E: val](r: Result[T, E], fallback: T) -> [] T {
 // By reference, so it works over a resource in either position.
 pub fn is_ok[T, E, &r](r: &r Result[T, E]) -> [] bool {
     match r {
-        Result::Ok(_) => { return true; }
-        Result::Err(_) => { return false; }
+        Result::Ok(_) => {
+            return true;
+        }
+        Result::Err(_) => {
+            return false;
+        }
     }
 }
 

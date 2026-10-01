@@ -28,7 +28,9 @@ enum Counts {
 // could not allocate or free if it tried.
 fn bump[&c, &t](counts: &!c Counts, text: &t [byte], start: int, length: int) -> [] bool {
     match counts {
-        Counts::Empty => { return false; }
+        Counts::Empty => {
+            return false;
+        }
         Counts::Entry(at, size, total, rest) => {
             if same_word(text, *at, *size, start, length) {
                 *total = *total + 1;
@@ -49,7 +51,9 @@ fn add[&h](heap: &!h Heap, counts: Counts, start: int, length: int) -> [heap] Co
 // binds each payload as a shared reference into it.
 fn report[&c, &t, &i](counts: &c Counts, text: &t [byte], io: &!i Io) -> [io_write] int {
     match counts {
-        Counts::Empty => { return 0; }
+        Counts::Empty => {
+            return 0;
+        }
         Counts::Entry(at, size, total, rest) => {
             write_word(io, text, *at, *size);
             putchar(io, 32);
@@ -65,7 +69,9 @@ fn report[&c, &t, &i](counts: &c Counts, text: &t [byte], io: &!i Io) -> [io_wri
 // §3.1).
 fn release_counts[&h](heap: &!h Heap, counts: Counts) -> [heap] int {
     match counts {
-        Counts::Empty => { return 0; }
+        Counts::Empty => {
+            return 0;
+        }
         Counts::Entry(at, size, total, rest) => {
             let tail = unbox(heap, rest);
             return 1 + release_counts(heap, tail);

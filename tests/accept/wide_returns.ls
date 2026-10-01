@@ -7,10 +7,22 @@
 //~ STDOUT 17321
 //~ EXIT 0
 
-struct Three { a: int, b: int, c: int }
-struct Nested { left: Three, right: Three, flag: bool }
+struct Three {
+    a: int,
+    b: int,
+    c: int,
+}
 
-enum Wide { Small(int), Big(Three) }
+struct Nested {
+    left: Three,
+    right: Three,
+    flag: bool,
+}
+
+enum Wide {
+    Small(int),
+    Big(Three),
+}
 
 fn three(a: int, b: int, c: int) -> [] Three {
     return Three { a: a, b: b, c: c };
@@ -29,28 +41,32 @@ fn widen(n: int) -> [] Wide {
 
 fn total(w: Wide) -> [] int {
     match w {
-        Wide::Small(n) => { return n; }
-        Wide::Big(t) => { return t.a + t.b + t.c; }
+        Wide::Small(n) => {
+            return n;
+        }
+        Wide::Big(t) => {
+            return t.a + t.b + t.c;
+        }
     }
 }
 
 fn run[&i](io: &!i Io) -> [io_write] int {
     let t = three(1, 2, 3);
-    putchar(io, '0' + t.a);                       // 1
+    putchar(io, '0' + t.a); // 1
 
     let n = nest(true);
-    putchar(io, '0' + n.right.c - 6 + 7);         // 7
+    putchar(io, '0' + n.right.c - 6 + 7); // 7
     if n.flag {
-        putchar(io, '0' + n.left.b + 1);          // 3
+        putchar(io, '0' + n.left.b + 1); // 3
     } else {
         putchar(io, 48);
     }
 
     // The wide path: `Wide::Big` carries a three-field struct, so the enum is
     // four leaves and comes back through the buffer.
-    let big = total(widen(7));               // Big(7, 7, 7) -> 21
-    putchar(io, '0' + big / 10);                  // 2
-    putchar(io, '0' + big % 10);                  // 1
+    let big = total(widen(7)); // Big(7, 7, 7) -> 21
+    putchar(io, '0' + big / 10); // 2
+    putchar(io, '0' + big % 10); // 1
     putchar(io, 10);
     return 0;
 }

@@ -34,6 +34,7 @@ fn words[&b](text: &b [byte]) -> [] int {
     }
     return count;
 }
+
 fn run(rounds: int) -> [] int {
     var total = 0;
     var r = 0;
@@ -53,8 +54,13 @@ fn run(rounds: int) -> [] int {
     }
     return wrapping_sub(total, 8572);
 }
+
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args } = split(world);
-    release(args); release(heap); release(fs); release(io); release(ffi);
+    release(args);
+    release(heap);
+    release(fs);
+    release(io);
+    release(ffi);
     return run(2000);
 }

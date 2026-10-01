@@ -135,27 +135,58 @@ fn run[&f, &i](libc: &f Ffi("libc"), io: &!i Io, budget: int) -> [io_write, ffi(
     // The arena is gone by here, in one call. Everything above survives
     // because it is `int` — nothing whose type mentions `a` may leave.
 
-    putchar(io, 106); putchar(io, 111); putchar(io, 98); putchar(io, 115);
-    putchar(io, 58); space(io);                                    // "jobs: "
+    putchar(io, 106);
+    putchar(io, 111);
+    putchar(io, 98);
+    putchar(io, 115);
+    putchar(io, 58);
+    space(io); // "jobs: "
     io.print_nat(io, done);
-    space(io); putchar(io, 100); putchar(io, 111); putchar(io, 110); putchar(io, 101);
-    putchar(io, 44); space(io);                                    // " done, "
+    space(io);
+    putchar(io, 100);
+    putchar(io, 111);
+    putchar(io, 110);
+    putchar(io, 101);
+    putchar(io, 44);
+    space(io); // " done, "
     io.print_nat(io, dropped);
-    space(io); putchar(io, 99); putchar(io, 97); putchar(io, 110); putchar(io, 99);
-    putchar(io, 101); putchar(io, 108); putchar(io, 108); putchar(io, 101);
-    putchar(io, 100);                                              // " cancelled"
+    space(io);
+    putchar(io, 99);
+    putchar(io, 97);
+    putchar(io, 110);
+    putchar(io, 99);
+    putchar(io, 101);
+    putchar(io, 108);
+    putchar(io, 108);
+    putchar(io, 101);
+    putchar(io, 100); // " cancelled"
     newline(io);
 
-    putchar(io, 115); putchar(io, 112); putchar(io, 101); putchar(io, 110);
-    putchar(io, 116); putchar(io, 58); space(io);                  // "spent: "
+    putchar(io, 115);
+    putchar(io, 112);
+    putchar(io, 101);
+    putchar(io, 110);
+    putchar(io, 116);
+    putchar(io, 58);
+    space(io); // "spent: "
     io.print_nat(io, spent);
-    space(io); putchar(io, 111); putchar(io, 102); space(io);      // " of "
+    space(io);
+    putchar(io, 111);
+    putchar(io, 102);
+    space(io); // " of "
     io.print_nat(io, budget);
     newline(io);
 
-    putchar(io, 104); putchar(io, 101); putchar(io, 97); putchar(io, 100);
-    putchar(io, 114); putchar(io, 111); putchar(io, 111); putchar(io, 109);
-    putchar(io, 58); space(io);                                    // "headroom: "
+    putchar(io, 104);
+    putchar(io, 101);
+    putchar(io, 97);
+    putchar(io, 100);
+    putchar(io, 114);
+    putchar(io, 111);
+    putchar(io, 111);
+    putchar(io, 109);
+    putchar(io, 58);
+    space(io); // "headroom: "
     io.print_nat(io, headroom);
     newline(io);
 

@@ -37,7 +37,10 @@ fn bump[&r](n: &!r int) -> [] int {
     return *n;
 }
 
-struct Point { x: int, y: int }
+struct Point {
+    x: int,
+    y: int,
+}
 
 // A whole struct replaced through a reference, rather than field by
 // field. `Point` is `val`, which is what makes the copy sound.

@@ -81,8 +81,7 @@ fn respond[&f](libc: &f Ffi("libc"), conn: int) -> [ffi("libc")] int {
 // The server
 // ---------------------------------------------------------------------
 
-fn collect[&f, &i](libc: &f Ffi("libc"), io: &!i Io, port: int, count: int)
-    -> [ffi("libc"), io_write] int {
+fn collect[&f, &i](libc: &f Ffi("libc"), io: &!i Io, port: int, count: int) -> [ffi("libc"), io_write] int {
     region scratch {
         let fd = sockets.socket(libc, 2, 1, 0);
         if fd < 0 {
@@ -95,7 +94,7 @@ fn collect[&f, &i](libc: &f Ffi("libc"), io: &!i Io, port: int, count: int)
         let addr = alloc_slice[scratch](16, byte_of(0));
         addr[0] = byte_of(2);
         addr[2] = byte_of(port / 256);
-        addr[3] = byte_of(port - (port / 256) * 256);
+        addr[3] = byte_of(port - port / 256 * 256);
         if sockets.bind(libc, fd, addr) < 0 {
             sockets.close(libc, fd);
             return 2;

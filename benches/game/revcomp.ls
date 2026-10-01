@@ -59,13 +59,7 @@ fn build_complement[&c](table: &!c [byte]) -> [] int {
 // The header, as read, then the sequence reversed and complemented,
 // wrapped at 60 columns. Read-only over both buffers: the caller still
 // owns them and clears them for the next record.
-fn flush_record[&i, &c, &l, &hb, &sb](
-    out: &!i Io,
-    complement: &c [byte],
-    line: &!l [byte],
-    header: &hb buffer.Buffer,
-    seq: &sb buffer.Buffer,
-) -> [io_write] int {
+fn flush_record[&i, &c, &l, &hb, &sb](out: &!i Io, complement: &c [byte], line: &!l [byte], header: &hb buffer.Buffer, seq: &sb buffer.Buffer) -> [io_write] int {
     io.write_all(out, buffer.bytes(header));
     io.newline(out);
 
@@ -111,29 +105,25 @@ fn run[&h, &i](heap: &!h Heap, term: &!i Io) -> [heap, io_read, io_write] int {
                 } else {
                     header = buffer.push(heap, header, byte_of(c));
                 }
-            } else {
-                if c == '>' {
-                    if have_record {
-                        borrow header as &hb in {
-                            borrow seq as &sb in {
-                                flush_record(term, complement, line, hb, sb);
-                            }
-                        }
-                        borrow mut header as &!hbm in {
-                            buffer.clear(hbm);
-                        }
-                        borrow mut seq as &!sbm in {
-                            buffer.clear(sbm);
+            } else if c == '>' {
+                if have_record {
+                    borrow header as &hb in {
+                        borrow seq as &sb in {
+                            flush_record(term, complement, line, hb, sb);
                         }
                     }
-                    have_record = true;
-                    header = buffer.push(heap, header, byte_of(c));
-                    in_header = true;
-                } else {
-                    if c != '\n' {
-                        seq = buffer.push(heap, seq, byte_of(c));
+                    borrow mut header as &!hbm in {
+                        buffer.clear(hbm);
+                    }
+                    borrow mut seq as &!sbm in {
+                        buffer.clear(sbm);
                     }
                 }
+                have_record = true;
+                header = buffer.push(heap, header, byte_of(c));
+                in_header = true;
+            } else if c != '\n' {
+                seq = buffer.push(heap, seq, byte_of(c));
             }
             c = getchar(term);
         }

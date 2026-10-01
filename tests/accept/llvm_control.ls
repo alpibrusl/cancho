@@ -17,13 +17,11 @@
 fn classify[&i](io: &!i Io, n: int) -> [io_write] int {
     if n > 100 {
         putchar(io, 43); // '+'
+    } else if n <= 0 {
+        putchar(io, 45); // '-'
     } else {
-        if n <= 0 {
-            putchar(io, 45); // '-'
-        } else {
-            putchar(io, 48 + n / 10);
-            putchar(io, 48 + n % 10);
-        }
+        putchar(io, 48 + n / 10);
+        putchar(io, 48 + n % 10);
     }
     return 0;
 }
@@ -69,28 +67,28 @@ fn main(world: World) -> [] int {
         putchar(i, 10);
 
         // `&&`: lhs false, so `shout` must not run.
-        if (1 < 0) && (shout(i) >= 1) {
+        if 1 < 0 && shout(i) >= 1 {
             putchar(i, 84); // 'T'
         } else {
             putchar(i, 70); // 'F'
         }
         putchar(i, 10);
         // `&&`: lhs true, so `shout` must run.
-        if (1 > 0) && (shout(i) >= 1) {
+        if 1 > 0 && shout(i) >= 1 {
             putchar(i, 84);
         } else {
             putchar(i, 70);
         }
         putchar(i, 10);
         // `||`: lhs true, so `shout` must not run.
-        if (1 > 0) || (shout(i) >= 1) {
+        if 1 > 0 || shout(i) >= 1 {
             putchar(i, 84);
         } else {
             putchar(i, 70);
         }
         putchar(i, 10);
         // `||`: lhs false, so `shout` must run.
-        if (1 < 0) || (shout(i) >= 1) {
+        if 1 < 0 || shout(i) >= 1 {
             putchar(i, 84);
         } else {
             putchar(i, 70);

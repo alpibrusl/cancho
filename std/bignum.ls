@@ -36,7 +36,7 @@ pub fn zero[&a](a: &!a [int]) -> [] int {
 pub fn set[&a](a: &!a [int], value: int) -> [] int {
     zero(a);
     a[0] = value & 0xffffffff;
-    a[1] = (value >> 32) & 0xffffffff;
+    a[1] = value >> 32 & 0xffffffff;
     return 0;
 }
 
@@ -76,7 +76,7 @@ pub fn shift_left[&a](a: &!a [int], places: int) -> [] int {
         var carry = 0;
         var i = 0;
         while i < len(a) {
-            let shifted = (a[i] << bits) | carry;
+            let shifted = a[i] << bits | carry;
             a[i] = shifted & 0xffffffff;
             carry = shifted >> 32;
             i = i + 1;

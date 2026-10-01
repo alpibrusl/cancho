@@ -109,7 +109,9 @@ fn insert[&h](heap: &!h Heap, t: Tree, v: int) -> [heap] Tree {
 // borrows no longer than this frame does.
 fn contains[&t](tree: &t Tree, wanted: int) -> [] bool {
     match tree {
-        Tree::Leaf => { return false; }
+        Tree::Leaf => {
+            return false;
+        }
         Tree::Node(left, value, right) => {
             // `value` is `&t int`, so `*value` reads it.
             if *value == wanted {
@@ -126,22 +128,24 @@ fn contains[&t](tree: &t Tree, wanted: int) -> [] bool {
 // The right spine, which in a search tree is the largest value.
 fn deepest[&t](tree: &t Tree, fallback: int) -> [] int {
     match tree {
-        Tree::Leaf => { return fallback; }
-        Tree::Node(_, value, right) => { return deepest(contents(right), *value); }
+        Tree::Leaf => {
+            return fallback;
+        }
+        Tree::Node(_, value, right) => {
+            return deepest(contents(right), *value);
+        }
     }
 }
 
 fn tally[&t](tree: &t Tree) -> [] Walk {
     match tree {
-        Tree::Leaf => { return Walk { sum: 0, count: 0, depth: 0 }; }
+        Tree::Leaf => {
+            return Walk { sum: 0, count: 0, depth: 0 };
+        }
         Tree::Node(left, value, right) => {
             let low = tally(contents(left));
             let high = tally(contents(right));
-            return Walk {
-                sum: low.sum + *value + high.sum,
-                count: low.count + high.count + 1,
-                depth: math.max(low.depth, high.depth) + 1,
-            };
+            return Walk { sum: low.sum + *value + high.sum, count: low.count + high.count + 1, depth: math.max(low.depth, high.depth) + 1 };
         }
     }
 }
@@ -181,11 +185,7 @@ fn drain[&h, &i](heap: &!h Heap, io: &!i Io, t: Tree, first: bool) -> [heap, io_
             }
             let high = drain(heap, io, r, false);
 
-            return Walk {
-                sum: low.sum + value + high.sum,
-                count: low.count + high.count + 1,
-                depth: math.max(low.depth, high.depth) + 1,
-            };
+            return Walk { sum: low.sum + value + high.sum, count: low.count + high.count + 1, depth: math.max(low.depth, high.depth) + 1 };
         }
     }
 }

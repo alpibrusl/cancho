@@ -22,10 +22,7 @@ fn print_nat[&i](io: &!i Io, n: int) -> [io_write] int {
 }
 
 // The bottom of the chain: the only frame that actually performs the write.
-fn store[&f, &r](
-    fs: &f Fs("/tmp/lex-sys-narrowed.txt"),
-    bytes: &r [byte],
-) -> [fs_write("/tmp/lex-sys-narrowed.txt")] int {
+fn store[&f, &r](fs: &f Fs("/tmp/lex-sys-narrowed.txt"), bytes: &r [byte]) -> [fs_write("/tmp/lex-sys-narrowed.txt")] int {
     return fs_write(fs, "/tmp/lex-sys-narrowed.txt", bytes);
 }
 

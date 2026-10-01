@@ -27,7 +27,7 @@ pub enum Step {
 
 // A continuation byte is `10xxxxxx`.
 fn is_tail(b: int) -> [] bool {
-    return (b & 0xc0) == 0x80;
+    return b & 0xc0 == 0x80;
 }
 
 // Whether `b` is a continuation byte in `[lo, hi]`.
@@ -46,28 +46,52 @@ fn in_range(b: int, lo: int, hi: int) -> [] bool {
 // Answers `(lo, hi)`, or `(1, 0)` — an empty range — when the first byte
 // cannot begin a multi-byte sequence at all.
 fn second_range(first: int) -> [] (int, int) {
-    if in_range(first, 0xc2, 0xdf) { return (0x80, 0xbf); }
+    if in_range(first, 0xc2, 0xdf) {
+        return (0x80, 0xbf);
+    }
     // `e0 80..9f` would be an overlong three-byte form.
-    if first == 0xe0 { return (0xa0, 0xbf); }
-    if in_range(first, 0xe1, 0xec) { return (0x80, 0xbf); }
+    if first == 0xe0 {
+        return (0xa0, 0xbf);
+    }
+    if in_range(first, 0xe1, 0xec) {
+        return (0x80, 0xbf);
+    }
     // `ed a0..bf` is the UTF-16 surrogate block, which is not a scalar
     // value and has no UTF-8 encoding.
-    if first == 0xed { return (0x80, 0x9f); }
-    if in_range(first, 0xee, 0xef) { return (0x80, 0xbf); }
+    if first == 0xed {
+        return (0x80, 0x9f);
+    }
+    if in_range(first, 0xee, 0xef) {
+        return (0x80, 0xbf);
+    }
     // `f0 80..8f` would be an overlong four-byte form.
-    if first == 0xf0 { return (0x90, 0xbf); }
-    if in_range(first, 0xf1, 0xf3) { return (0x80, 0xbf); }
+    if first == 0xf0 {
+        return (0x90, 0xbf);
+    }
+    if in_range(first, 0xf1, 0xf3) {
+        return (0x80, 0xbf);
+    }
     // `f4 90..bf` would be above U+10FFFF.
-    if first == 0xf4 { return (0x80, 0x8f); }
+    if first == 0xf4 {
+        return (0x80, 0x8f);
+    }
     return (1, 0);
 }
 
 // How many bytes a sequence beginning with `first` claims.
 fn width_of(first: int) -> [] int {
-    if first < 0x80 { return 1; }
-    if in_range(first, 0xc2, 0xdf) { return 2; }
-    if in_range(first, 0xe0, 0xef) { return 3; }
-    if in_range(first, 0xf0, 0xf4) { return 4; }
+    if first < 0x80 {
+        return 1;
+    }
+    if in_range(first, 0xc2, 0xdf) {
+        return 2;
+    }
+    if in_range(first, 0xe0, 0xef) {
+        return 3;
+    }
+    if in_range(first, 0xf0, 0xf4) {
+        return 4;
+    }
     // `80..bf` is a lone continuation; `c0`, `c1` are always overlong;
     // `f5` and above are always out of range.
     return 0;
@@ -75,8 +99,12 @@ fn width_of(first: int) -> [] int {
 
 // How many low bits of the first byte belong to the code point.
 fn lead_bits(width: int) -> [] int {
-    if width == 2 { return 0x1f; }
-    if width == 3 { return 0x0f; }
+    if width == 2 {
+        return 0x1f;
+    }
+    if width == 3 {
+        return 0x0f;
+    }
     return 0x07;
 }
 
@@ -110,7 +138,7 @@ pub fn decode[&r](text: &r [byte], at: int) -> [] Step {
         return Step::Invalid(1);
     }
 
-    var point = (first & lead_bits(width)) << 6 | (second & 0x3f);
+    var point = (first & lead_bits(width)) << 6 | second & 0x3f;
     var k = 2;
     while k < width {
         // Ran out of text, or a byte that is not a continuation: the
@@ -123,7 +151,7 @@ pub fn decode[&r](text: &r [byte], at: int) -> [] Step {
         if !is_tail(b) {
             return Step::Invalid(k);
         }
-        point = point << 6 | (b & 0x3f);
+        point = point << 6 | b & 0x3f;
         k = k + 1;
     }
     return Step::Code(point, width);
@@ -141,8 +169,12 @@ pub fn count[&r](text: &r [byte]) -> [] int {
     var at = 0;
     while at < len(text) {
         match decode(text, at) {
-            Step::Code(_, width) => { at = at + width; }
-            Step::Invalid(width) => { at = at + width; }
+            Step::Code(_, width) => {
+                at = at + width;
+            }
+            Step::Invalid(width) => {
+                at = at + width;
+            }
         }
         n = n + 1;
     }
@@ -154,8 +186,12 @@ pub fn is_valid[&r](text: &r [byte]) -> [] bool {
     var at = 0;
     while at < len(text) {
         match decode(text, at) {
-            Step::Code(_, width) => { at = at + width; }
-            Step::Invalid(_) => { return false; }
+            Step::Code(_, width) => {
+                at = at + width;
+            }
+            Step::Invalid(_) => {
+                return false;
+            }
         }
     }
     return true;

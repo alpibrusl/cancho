@@ -18,7 +18,10 @@ fn print_nat[&i](io: &!i Io, n: int) -> [io_write] int {
     return putchar(io, '0' + n % 10);
 }
 
-struct Point { x: int, y: int }
+struct Point {
+    x: int,
+    y: int,
+}
 
 fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
     // One `malloc`. The box is a `res` value from here on, so the program

@@ -16,7 +16,7 @@ fn print_hex[&i, &d](io: &!i Io, digest: &d [byte]) -> [io_write] int {
     var n = 0;
     while n < len(digest) {
         let b = int_of(digest[n]);
-        putchar(io, int_of(alphabet[(b >> 4) & 0xf]));
+        putchar(io, int_of(alphabet[b >> 4 & 0xf]));
         putchar(io, int_of(alphabet[b & 0xf]));
         n = n + 1;
     }

@@ -42,6 +42,33 @@ fn every_tracked_program_formats() {
 }
 
 #[test]
+fn the_repository_is_formatted() {
+    // `lex-sys fmt` was applied to every tracked program (`docs/formatting.md`
+    // §5), so a program that is not canonical is a program someone wrote or
+    // edited without running it: `lex-sys fmt <file>`. `benches/` is here
+    // too -- it is not in `corpus()` only because most of it is not a
+    // program the other sweeps are about.
+    let root = repo_root();
+    let mut files = corpus();
+    super::duplication::walk_ls_files(&root.join("benches"), &mut files);
+    files.sort();
+    files.dedup();
+    let mut unformatted = Vec::new();
+    for path in files {
+        let text = std::fs::read_to_string(&path).expect("a readable source file");
+        match lex_sys_syntax::format(&text) {
+            Ok(formatted) if formatted == text => {}
+            _ => unformatted.push(path.strip_prefix(&root).unwrap_or(&path).display().to_string()),
+        }
+    }
+    assert!(
+        unformatted.is_empty(),
+        "not canonical -- run `lex-sys fmt` on them:\n{}",
+        unformatted.join("\n")
+    );
+}
+
+#[test]
 fn formatting_never_panics_on_a_damaged_program() {
     // `CLAUDE.md`: no input may reach a panic. Delete each line of a few
     // real files, one at a time, and format what is left: most of those

@@ -35,8 +35,7 @@ import std.flags;
 
 // Standard input, one byte at a time, appended to a buffer that grows --
 // `examples/sort/`'s own `read_stdin`, unchanged.
-fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer)
-    -> [heap, io_read] buffer.Buffer {
+fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap, io_read] buffer.Buffer {
     var out = text;
     var c = getchar(io);
     while c >= 0 {
@@ -51,8 +50,7 @@ fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer)
 // applied: one pass, no doubling retry, no ceiling. `-1` on a read
 // failure; the buffer comes back either way, because an error is not a
 // reason to leak.
-fn read_file[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte],
-    text: buffer.Buffer) -> [heap, fs_read(""), file_read] (buffer.Buffer, int) {
+fn read_file[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte], text: buffer.Buffer) -> [heap, fs_read(""), file_read] (buffer.Buffer, int) {
     var out = text;
     var total = 0;
     var trouble = 0;
@@ -148,9 +146,7 @@ fn parse_nat[&s](text: &s [byte]) -> [] int {
 // text at all, is searched exactly the same way and cannot make this
 // trap or misbehave (`docs/defined-behaviour.md` §2.1's guarantee,
 // exercised here rather than only claimed).
-fn search_lines[&i, &t, &p, &f](io: &!i Io, text: &t [byte], pattern: &p [byte],
-    name: &f [byte], show_name: bool, show_lines: bool, count_only: bool,
-    max_count: int, total: int) -> [io_write] (int, int) {
+fn search_lines[&i, &t, &p, &f](io: &!i Io, text: &t [byte], pattern: &p [byte], name: &f [byte], show_name: bool, show_lines: bool, count_only: bool, max_count: int, total: int) -> [io_write] (int, int) {
     var running = total;
     var found = 0;
     var line_no = 0;
@@ -282,9 +278,7 @@ fn main(world: World) -> [] int {
                                 } else {
                                     borrow mut io as &!o in {
                                         borrow scratch as &s in {
-                                            let (grown_total, found_here) = search_lines(o,
-                                                buffer.bytes(s), pattern, text, true,
-                                                show_lines, count_only, max_count, total);
+                                            let (grown_total, found_here) = search_lines(o, buffer.bytes(s), pattern, text, true, show_lines, count_only, max_count, total);
                                             total = grown_total;
                                         }
                                     }
@@ -316,9 +310,7 @@ fn main(world: World) -> [] int {
             }
             borrow mut io as &!o in {
                 borrow text as &t in {
-                    let (grown_total, found_here) =
-                        search_lines(o, buffer.bytes(t), pattern, "-", false, show_lines,
-                            count_only, max_count, total);
+                    let (grown_total, found_here) = search_lines(o, buffer.bytes(t), pattern, "-", false, show_lines, count_only, max_count, total);
                     total = grown_total;
                 }
             }

@@ -250,13 +250,7 @@ fn accumulate[&p](probabilities: &!p [float]) -> [] int {
 // Draws `total` symbols from `symbols`, weighted by `cumulative`
 // (already run through `accumulate`), and returns the LCG seed after the
 // last draw so the next call continues the same stream.
-fn random_fasta[&i, &s, &p](
-    out: &!i Io,
-    symbols: &s [byte],
-    cumulative: &p [float],
-    total: int,
-    seed_in: int,
-) -> [io_write] int {
+fn random_fasta[&i, &s, &p](out: &!i Io, symbols: &s [byte], cumulative: &p [float], total: int, seed_in: int) -> [io_write] int {
     let im = 139968;
     let im_f = float_of(im);
     var seed = seed_in;
@@ -329,8 +323,7 @@ fn main(world: World) -> [] int {
 
     borrow mut io as &!i in {
         io.write_all(i, ">ONE Homo sapiens alu\n");
-        let alu =
-            "GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGGGAGGCCGAGGCGGGCGGATCACCTGAGGTCAGGAGTTCGAGACCAGCCTGGCCAACATGGTGAAACCCCGTCTCTACTAAAAATACAAAAATTAGCCGGGCGTGGTGGCGCGCGCCTGTAATCCCAGCTACTCGGGAGGCTGAGGCAGGAGAATCGCTTGAACCCGGGAGGCGGAGGTTGCAGTGAGCCGAGATCGCGCCACTGCACTCCAGCCTGGGCGACAGAGCGAGACTCCGTCTCAAAAA";
+        let alu = "GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGGGAGGCCGAGGCGGGCGGATCACCTGAGGTCAGGAGTTCGAGACCAGCCTGGCCAACATGGTGAAACCCCGTCTCTACTAAAAATACAAAAATTAGCCGGGCGTGGTGGCGCGCGCCTGTAATCCCAGCTACTCGGGAGGCTGAGGCAGGAGAATCGCTTGAACCCGGGAGGCGGAGGTTGCAGTGAGCCGAGATCGCGCCACTGCACTCCAGCCTGGGCGACAGAGCGAGACTCCGTCTCAAAAA";
         repeat_fasta(i, alu, n * 2);
 
         io.write_all(i, ">TWO IUB ambiguity codes\n");

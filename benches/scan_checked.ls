@@ -34,6 +34,7 @@ fn words[&b](text: &b [byte]) -> [] int {
     }
     return count;
 }
+
 fn run(rounds: int) -> [] int {
     var total = 0;
     var r = 0;
@@ -41,7 +42,7 @@ fn run(rounds: int) -> [] int {
         let text = alloc_slice[a](60000, byte_of(97));
         var k = 0;
         while k < 60000 {
-            if k - (k / 7) * 7 == 0 {
+            if k - k / 7 * 7 == 0 {
                 text[k] = byte_of(32);
             }
             k = k + 1;
@@ -53,8 +54,13 @@ fn run(rounds: int) -> [] int {
     }
     return total - 8572;
 }
+
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args } = split(world);
-    release(args); release(heap); release(fs); release(io); release(ffi);
+    release(args);
+    release(heap);
+    release(fs);
+    release(io);
+    release(ffi);
     return run(2000);
 }

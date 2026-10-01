@@ -48,17 +48,25 @@ fn push[&h](heap: &!h Heap, rest: List, value: int) -> [heap] List {
 // exactly as long as this frame does.
 fn total[&l](list: &l List) -> [] int {
     match list {
-        List::Empty => { return 0; }
-        List::Cons(value, rest) => { return *value + total(contents(rest)); }
+        List::Empty => {
+            return 0;
+        }
+        List::Cons(value, rest) => {
+            return *value + total(contents(rest));
+        }
     }
 }
 
 fn length[&l](list: &l List) -> [] int {
     match list {
-        List::Empty => { return 0; }
+        List::Empty => {
+            return 0;
+        }
         // `_` through a reference discards nothing: the match never owned
         // the value, so there is nothing here to drop.
-        List::Cons(_, rest) => { return 1 + length(contents(rest)); }
+        List::Cons(_, rest) => {
+            return 1 + length(contents(rest));
+        }
     }
 }
 
@@ -66,7 +74,9 @@ fn length[&l](list: &l List) -> [] int {
 // list: it takes the list rather than a reference to it.
 fn drain[&h](heap: &!h Heap, list: List) -> [heap] int {
     match list {
-        List::Empty => { return 0; }
+        List::Empty => {
+            return 0;
+        }
         List::Cons(value, rest) => {
             let tail = unbox(heap, rest);
             return value + drain(heap, tail);

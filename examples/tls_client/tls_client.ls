@@ -44,19 +44,26 @@ import socket;
 // ---------------------------------------------------------------------
 
 extern fn TLS_client_method[&f](ffi: &f Ffi("libc")) -> [ffi("libc")] c_ptr;
+
 extern fn SSL_CTX_new[&f](ffi: &f Ffi("libc"), method: c_ptr) -> [ffi("libc")] c_ptr;
+
 extern fn SSL_new[&f](ffi: &f Ffi("libc"), ctx: c_ptr) -> [ffi("libc")] c_ptr;
+
 extern fn SSL_set_fd[&f](ffi: &f Ffi("libc"), ssl: c_ptr, fd: int) -> [ffi("libc")] int;
+
 extern fn SSL_connect[&f](ffi: &f Ffi("libc"), ssl: c_ptr) -> [ffi("libc")] int;
+
 // `buf` crosses as a pointer and a length, exactly the way `write`/`read`
 // already do (`docs/strings.md` §6) -- `SSL_write`/`SSL_read`'s own `num`
 // parameter is that length, so it needs no separate `int` argument here.
-extern fn SSL_write[&f, &b](ffi: &f Ffi("libc"), ssl: c_ptr, buf: &b [byte])
-    -> [ffi("libc")] int;
-extern fn SSL_read[&f, &b](ffi: &f Ffi("libc"), ssl: c_ptr, buf: &!b [byte])
-    -> [ffi("libc")] int;
+extern fn SSL_write[&f, &b](ffi: &f Ffi("libc"), ssl: c_ptr, buf: &b [byte]) -> [ffi("libc")] int;
+
+extern fn SSL_read[&f, &b](ffi: &f Ffi("libc"), ssl: c_ptr, buf: &!b [byte]) -> [ffi("libc")] int;
+
 extern fn SSL_shutdown[&f](ffi: &f Ffi("libc"), ssl: c_ptr) -> [ffi("libc")] int;
+
 extern fn SSL_free[&f](ffi: &f Ffi("libc"), ssl: c_ptr) -> [ffi("libc")] int;
+
 extern fn SSL_CTX_free[&f](ffi: &f Ffi("libc"), ctx: c_ptr) -> [ffi("libc")] int;
 
 // ---------------------------------------------------------------------
@@ -134,8 +141,7 @@ fn port_of[&a](text: &a [byte]) -> [] int {
 // `SSL_CTX_new`/`SSL_new`/`SSL_connect` fails this way, and none of them
 // says more without `SSL_get_error`'s reason codes, which nothing here
 // needs yet), 5 for a write, 6 for a read, 0 for a full round trip.
-fn tls_exchange[&f, &i, &m](libc: &f Ffi("libc"), io: &!i Io, fd: int, message: &m [byte])
-    -> [ffi("libc"), io_write] int {
+fn tls_exchange[&f, &i, &m](libc: &f Ffi("libc"), io: &!i Io, fd: int, message: &m [byte]) -> [ffi("libc"), io_write] int {
     let method = TLS_client_method(libc);
     if method == null_ptr() {
         return 4;

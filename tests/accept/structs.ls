@@ -4,8 +4,16 @@
 //~ STDOUT 18.
 //~ EXIT 0
 
-struct Point { x: int, y: int }
-struct Line { from: Point, to: Point, dashed: bool }
+struct Point {
+    x: int,
+    y: int,
+}
+
+struct Line {
+    from: Point,
+    to: Point,
+    dashed: bool,
+}
 
 fn length_squared(l: Line) -> [] int {
     let dx = l.to.x - l.from.x;

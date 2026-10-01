@@ -18,8 +18,13 @@ fn fib(n: int) -> [] int {
     }
     return fib(n - 1) + fib(n - 2);
 }
+
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args } = split(world);
-    release(args); release(heap); release(fs); release(io); release(ffi);
+    release(args);
+    release(heap);
+    release(fs);
+    release(io);
+    release(ffi);
     return fib(32) - 2178309;
 }

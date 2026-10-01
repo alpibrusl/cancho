@@ -34,6 +34,7 @@
 // line. `as` exists for exactly this (`docs/modules.md` §4).
 import std.io as console;
 import std.bytes;
+
 //~ STDOUT the quick brown fox
 //~ STDOUT jumps over the lazy dog
 //~ STDOUT and then the fox rests

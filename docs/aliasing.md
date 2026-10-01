@@ -75,7 +75,7 @@ fixtures alias on purpose, so they would each add a row to the table;
 leaving them out is what makes it a measurement of the corpus rather
 than of this document.
 
-The single aliasing call site is `examples/sort/sort.ls:148`:
+The single aliasing call site is `before` in `examples/sort/sort.ls` (named by function, not line: this sentence said `:148` when the call was already on line 177, and a formatter moves lines):
 
 ```
 bytes.compare(text[a_at..a_at + a_len], text[b_at..b_at + b_len])

@@ -3,11 +3,17 @@
 // 8-byte leaves and C stores as three bytes.
 import std.io;
 
-struct Rgb { r: byte, g: byte, b: byte }
+struct Rgb {
+    r: byte,
+    g: byte,
+    b: byte,
+}
 
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args } = split(world);
-    release(args); release(fs); release(ffi);
+    release(args);
+    release(fs);
+    release(ffi);
 
     let n = 4000000;
     var total = 0;

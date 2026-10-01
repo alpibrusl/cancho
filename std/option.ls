@@ -32,8 +32,12 @@ pub enum Option[T] {
 // it with a resource rather than into this file.
 pub fn unwrap_or[T: val](o: Option[T], fallback: T) -> [] T {
     match o {
-        Option::None => { return fallback; }
-        Option::Some(v) => { return v; }
+        Option::None => {
+            return fallback;
+        }
+        Option::Some(v) => {
+            return v;
+        }
     }
 }
 
@@ -45,8 +49,12 @@ pub fn unwrap_or[T: val](o: Option[T], fallback: T) -> [] T {
 // §3 is what makes the `match` arms bind references rather than move.
 pub fn is_some[T, &o](o: &o Option[T]) -> [] bool {
     match o {
-        Option::None => { return false; }
-        Option::Some(_) => { return true; }
+        Option::None => {
+            return false;
+        }
+        Option::Some(_) => {
+            return true;
+        }
     }
 }
 

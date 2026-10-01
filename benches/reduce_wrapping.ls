@@ -45,7 +45,10 @@ fn run[&b](v: &b [int], rounds: int) -> [] int {
 
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args } = split(world);
-    release(args); release(fs); release(io); release(ffi);
+    release(args);
+    release(fs);
+    release(io);
+    release(ffi);
 
     var total = 0;
     borrow mut heap as &!h in {

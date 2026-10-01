@@ -74,10 +74,7 @@ fn insert(s: Slab, value: int) -> [] (Slab, Gen) {
             i = i + 1;
         }
     }
-    return (
-        Slab { entries: entries, live: live + added },
-        Gen { index: at, generation: generation },
-    );
+    return (Slab { entries: entries, live: live + added }, Gen { index: at, generation: generation });
 }
 
 // The three checks a handle is worth: in range, live, and the right
@@ -114,11 +111,7 @@ fn remove(s: Slab, g: Gen) -> [] Slab {
         if g.index >= 0 && g.index < len(slots) {
             let slot = slots[g.index];
             if slot.live && slot.generation == g.generation {
-                slots[g.index] = Entry {
-                    generation: slot.generation + 1,
-                    live: false,
-                    value: 0,
-                };
+                slots[g.index] = Entry { generation: slot.generation + 1, live: false, value: 0 };
                 removed = 1;
             }
         }

@@ -2,7 +2,7 @@
 
 > **Status: built.** `lex-sys fmt <file|dir>... [--check]`
 > (`crates/lex-sys-syntax/src/format.rs`, `crates/lex-sys/src/fmt_cli.rs`).
-> Not run over the repository's own sources: §5.
+> Applied to every tracked program, and held there by a test (§5).
 
 ## 1. What was missing
 
@@ -94,10 +94,14 @@ real files in turn and formats what is left.
 
 ## 5. What this does not do
 
-* **Not applied to the repository.** 74 of 138 files would change, mostly
-  the one-line `if c { x; }` form, in a first-week codebase whose
-  `//~` fixtures and design documents quote its own line numbers.
-  Doing that is one `lex-sys fmt` away and is its own, reviewable change.
+* **Applied, and kept applied.** 93 files under `std/`, `examples/`,
+  `packages/`, `tests/accept/` and `benches/` changed (1,281 lines added,
+  817 removed, nearly all of it one-line `if c { x; }` made three), and
+  `formatting::the_repository_is_formatted` fails on any of them that
+  stops being canonical. `tests/reject/` is left alone: most of it does
+  not parse, on purpose, and its line numbers are what the fixtures
+  assert. The full suite passes unchanged, which is also the check that
+  no identity moved: the conformance tests hash these files.
 * **No line wrapping.** The printer writes one statement per line however
   long. Wrapping a long call is a layout decision with its own
   documentation to write, not a side effect of this.
@@ -113,6 +117,5 @@ real files in turn and formats what is left.
 
 | Question | Why it waits |
 |---|---|
-| Apply it to this repository | A diff of 74 files; wants its own PR and a look at what it does to the documents that quote line numbers |
 | Wrapping long lines | No measured case yet where one matters |
 | A distinct exit code for `--check` | Nothing has asked to tell "would change" from "cannot format" |

@@ -80,15 +80,23 @@ struct Rational {
 
 fn is_ok[T: val](r: Result[T]) -> [] bool {
     match r {
-        Result::Ok(_) => { return true; }
-        Result::Err(_) => { return false; }
+        Result::Ok(_) => {
+            return true;
+        }
+        Result::Err(_) => {
+            return false;
+        }
     }
 }
 
 fn unwrap_or[T: val](r: Result[T], fallback: T) -> [] T {
     match r {
-        Result::Ok(value) => { return value; }
-        Result::Err(_) => { return fallback; }
+        Result::Ok(value) => {
+            return value;
+        }
+        Result::Err(_) => {
+            return fallback;
+        }
     }
 }
 
@@ -169,23 +177,37 @@ fn print_rational[&i](io: &!i Io, r: Rational) -> [io_write] int {
 
 fn print_error[&i](io: &!i Io, e: Error) -> [io_write] int {
     match e {
-        Error::DivideByZero => { return putchar(io, 68); }
-        Error::ZeroDenominator => { return putchar(io, 90); }
+        Error::DivideByZero => {
+            return putchar(io, 68);
+        }
+        Error::ZeroDenominator => {
+            return putchar(io, 90);
+        }
     }
 }
 
 fn print_result[&i](io: &!i Io, r: Result[Rational]) -> [io_write] int {
     match r {
-        Result::Ok(value) => { return print_rational(io, value); }
-        Result::Err(e) => { return print_error(io, e); }
+        Result::Ok(value) => {
+            return print_rational(io, value);
+        }
+        Result::Err(e) => {
+            return print_error(io, e);
+        }
     }
 }
 
 fn print_ordering[&i](io: &!i Io, o: Ordering) -> [io_write] int {
     match o {
-        Ordering::Less => { return putchar(io, 60); }
-        Ordering::Equal => { return putchar(io, 61); }
-        Ordering::Greater => { return putchar(io, 62); }
+        Ordering::Less => {
+            return putchar(io, 60);
+        }
+        Ordering::Equal => {
+            return putchar(io, 61);
+        }
+        Ordering::Greater => {
+            return putchar(io, 62);
+        }
     }
 }
 
@@ -221,28 +243,40 @@ fn run[&i](io: &!i Io) -> [io_write] int {
     let half = unwrap_or(rational(1, 2), zero());
     let third = unwrap_or(rational(1, 3), zero());
 
-    print_result(io, add(half, third));      // 5/6
+    print_result(io, add(half, third)); // 5/6
     space(io);
-    print_result(io, sub(half, third));      // 1/6
+    print_result(io, sub(half, third)); // 1/6
     space(io);
-    print_result(io, mul(half, third));      // 1/6
+    print_result(io, mul(half, third)); // 1/6
     space(io);
-    print_result(io, div(half, third));      // 3/2
+    print_result(io, div(half, third)); // 3/2
     newline(io);
 
     // The failures, reported rather than trapped.
-    print_result(io, div(half, zero()));     // D
+    print_result(io, div(half, zero())); // D
     space(io);
-    print_result(io, rational(1, 0));        // Z
+    print_result(io, rational(1, 0)); // Z
     newline(io);
 
     // `is_ok` and `unwrap_or` at two different instantiations.
-    if is_ok(rational(1, 2)) { putchar(io, 89); } else { putchar(io, 78); }
-    if is_ok(div(one(), zero())) { putchar(io, 89); } else { putchar(io, 78); }
+    if is_ok(rational(1, 2)) {
+        putchar(io, 89);
+    } else {
+        putchar(io, 78);
+    }
+    if is_ok(div(one(), zero())) {
+        putchar(io, 89);
+    } else {
+        putchar(io, 78);
+    }
     space(io);
     print_int(io, unwrap_or(Result::Ok(7), 0));
     space(io);
-    if unwrap_or(Result::Err(Error::DivideByZero), true) { putchar(io, 84); } else { putchar(io, 70); }
+    if unwrap_or(Result::Err(Error::DivideByZero), true) {
+        putchar(io, 84);
+    } else {
+        putchar(io, 70);
+    }
     newline(io);
 
     // Ordering, matched exhaustively.

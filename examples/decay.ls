@@ -29,7 +29,7 @@ fn print_six[&i](out: &!i Io, x: float) -> [io_write] int {
     var place = 100000;
     while place > 0 {
         io.print_int(out, rest / place);
-        rest = rest - (rest / place) * place;
+        rest = rest - rest / place * place;
         place = place / 10;
     }
     return 0;

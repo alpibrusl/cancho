@@ -54,7 +54,9 @@ fn squares[&i](io: &!i Io) -> [io_write] int {
             i = i + 1;
         }
     }
-    putchar(io, 32); putchar(io, 61); putchar(io, 32);   // " = "
+    putchar(io, 32);
+    putchar(io, 61);
+    putchar(io, 32); // " = "
     print_nat(io, total);
     putchar(io, 10);
     return total;
@@ -73,8 +75,14 @@ fn nested[&i](io: &!i Io) -> [io_write] int {
             answer = value_of(base) + value_of(extra);
         }
     }
-    putchar(io, 110); putchar(io, 101); putchar(io, 115); putchar(io, 116);
-    putchar(io, 101); putchar(io, 100); putchar(io, 58); putchar(io, 32);
+    putchar(io, 110);
+    putchar(io, 101);
+    putchar(io, 115);
+    putchar(io, 116);
+    putchar(io, 101);
+    putchar(io, 100);
+    putchar(io, 58);
+    putchar(io, 32);
     print_nat(io, answer);
     putchar(io, 10);
     return answer;

@@ -45,7 +45,9 @@ pub fn push[T, &h](heap: &!h Heap, rest: List[T], value: T) -> [heap] List[T] {
 // way to get a resource out of a list at all.
 pub fn pop[T, &h](heap: &!h Heap, list: List[T]) -> [heap] option.Option[(T, List[T])] {
     match list {
-        List::Empty => { return option.Option::None; }
+        List::Empty => {
+            return option.Option::None;
+        }
         List::Cons(value, rest) => {
             let tail = unbox(heap, rest);
             return option.Option::Some((value, tail));
@@ -57,8 +59,12 @@ pub fn pop[T, &h](heap: &!h Heap, list: List[T]) -> [heap] option.Option[(T, Lis
 // owning one.
 pub fn length[T, &l](list: &l List[T]) -> [] int {
     match list {
-        List::Empty => { return 0; }
-        List::Cons(_, rest) => { return 1 + length(contents(rest)); }
+        List::Empty => {
+            return 0;
+        }
+        List::Cons(_, rest) => {
+            return 1 + length(contents(rest));
+        }
     }
 }
 
@@ -76,7 +82,9 @@ pub fn length[T, &l](list: &l List[T]) -> [] int {
 // `match` consumes outright.
 pub fn drop[T: val, &h](heap: &!h Heap, list: List[T]) -> [heap] int {
     match list {
-        List::Empty => { return 0; }
+        List::Empty => {
+            return 0;
+        }
         List::Cons(_, rest) => {
             let tail = unbox(heap, rest);
             return 1 + drop(heap, tail);

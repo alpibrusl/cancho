@@ -55,16 +55,22 @@ fn space[&i](io: &!i Io) -> [io_write] int {
 // `let` is immutable; parameters are too.
 
 fn label_m0[&i](io: &!i Io) -> [io_write] int {
-    putchar(io, 77); putchar(io, 48); putchar(io, 58);      // "M0:"
+    putchar(io, 77);
+    putchar(io, 48);
+    putchar(io, 58); // "M0:"
     return 0;
 }
 
 fn m0[&i](io: &!i Io) -> [io_write] int {
     label_m0(io);
-    space(io); io.print_nat(io, 1 + 2 * 3);              // precedence: 7
-    space(io); io.print_nat(io, 10 - 3 - 2);             // left-associative: 5
-    space(io); io.print_nat(io, 0 - (-6 / 2 + 6) + 6);   // truncating division: 3
-    space(io); io.print_nat(io, 7 % 3);                  // remainder: 1
+    space(io);
+    io.print_nat(io, 1 + 2 * 3); // precedence: 7
+    space(io);
+    io.print_nat(io, 10 - 3 - 2); // left-associative: 5
+    space(io);
+    io.print_nat(io, 0 - (-6 / 2 + 6) + 6); // truncating division: 3
+    space(io);
+    io.print_nat(io, 7 % 3); // remainder: 1
     return newline(io);
 }
 
@@ -80,8 +86,15 @@ fn digit[&i](io: &!i Io, b: bool) -> [io_write] int {
 }
 
 fn m1_bool[&i](io: &!i Io) -> [io_write] int {
-    putchar(io, 77); putchar(io, 49); space(io);            // "M1 "   // "M1:"
-    putchar(io, 98); putchar(io, 111); putchar(io, 111); putchar(io, 108); putchar(io, 58); space(io);
+    putchar(io, 77);
+    putchar(io, 49);
+    space(io); // "M1 "   // "M1:"
+    putchar(io, 98);
+    putchar(io, 111);
+    putchar(io, 111);
+    putchar(io, 108);
+    putchar(io, 58);
+    space(io);
     digit(io, 2 < 3);
     digit(io, 3 <= 2);
     digit(io, 4 == 4);
@@ -106,12 +119,28 @@ fn length_squared(v: Vec2) -> [] int {
 
 fn m1_struct[&i](io: &!i Io) -> [io_write] int {
     let v = Vec2 { x: 3, y: 4 };
-    putchar(io, 77); putchar(io, 49); space(io);            // "M1 "
-    putchar(io, 115); putchar(io, 116); putchar(io, 114); putchar(io, 117); putchar(io, 99);
-    putchar(io, 116); putchar(io, 58); space(io);
-    putchar(io, 40); io.print_nat(io, v.x); putchar(io, 44); space(io); io.print_nat(io, v.y); putchar(io, 41);
-    space(io); putchar(io, 45); putchar(io, 62); space(io);
-    io.print_nat(io, length_squared(v));               // 25
+    putchar(io, 77);
+    putchar(io, 49);
+    space(io); // "M1 "
+    putchar(io, 115);
+    putchar(io, 116);
+    putchar(io, 114);
+    putchar(io, 117);
+    putchar(io, 99);
+    putchar(io, 116);
+    putchar(io, 58);
+    space(io);
+    putchar(io, 40);
+    io.print_nat(io, v.x);
+    putchar(io, 44);
+    space(io);
+    io.print_nat(io, v.y);
+    putchar(io, 41);
+    space(io);
+    putchar(io, 45);
+    putchar(io, 62);
+    space(io);
+    io.print_nat(io, length_squared(v)); // 25
     return newline(io);
 }
 
@@ -127,18 +156,33 @@ enum Shape {
 
 fn area(s: Shape) -> [] int {
     match s {
-        Shape::Empty => { return 0; }
-        Shape::Circle(r) => { return 3 * r * r; }
-        Shape::Rect(w, h) => { return w * h; }
+        Shape::Empty => {
+            return 0;
+        }
+        Shape::Circle(r) => {
+            return 3 * r * r;
+        }
+        Shape::Rect(w, h) => {
+            return w * h;
+        }
     }
 }
 
 fn m1_enum[&i](io: &!i Io) -> [io_write] int {
-    putchar(io, 77); putchar(io, 49); space(io);            // "M1 "
-    putchar(io, 101); putchar(io, 110); putchar(io, 117); putchar(io, 109); putchar(io, 58); space(io);
-    io.print_nat(io, area(Shape::Empty));              // 0
-    space(io); io.print_nat(io, area(Shape::Circle(2))); // 12
-    space(io); io.print_nat(io, area(Shape::Rect(4, 5)));// 20
+    putchar(io, 77);
+    putchar(io, 49);
+    space(io); // "M1 "
+    putchar(io, 101);
+    putchar(io, 110);
+    putchar(io, 117);
+    putchar(io, 109);
+    putchar(io, 58);
+    space(io);
+    io.print_nat(io, area(Shape::Empty)); // 0
+    space(io);
+    io.print_nat(io, area(Shape::Circle(2))); // 12
+    space(io);
+    io.print_nat(io, area(Shape::Rect(4, 5))); // 20
     return newline(io);
 }
 
@@ -153,25 +197,39 @@ enum Opt[T] {
 
 fn unwrap_or[T: val](o: Opt[T], fallback: T) -> [] T {
     match o {
-        Opt::None => { return fallback; }
-        Opt::Some(value) => { return value; }
+        Opt::None => {
+            return fallback;
+        }
+        Opt::Some(value) => {
+            return value;
+        }
     }
 }
 
 fn m1_generic[&i](io: &!i Io) -> [io_write] int {
-    putchar(io, 77); putchar(io, 49); space(io);            // "M1 "
-    putchar(io, 103); putchar(io, 101); putchar(io, 110); putchar(io, 101); putchar(io, 114);
-    putchar(io, 105); putchar(io, 99); putchar(io, 58); space(io);
+    putchar(io, 77);
+    putchar(io, 49);
+    space(io); // "M1 "
+    putchar(io, 103);
+    putchar(io, 101);
+    putchar(io, 110);
+    putchar(io, 101);
+    putchar(io, 114);
+    putchar(io, 105);
+    putchar(io, 99);
+    putchar(io, 58);
+    space(io);
 
     // Instantiated at `int` twice...
-    io.print_nat(io, unwrap_or(Opt::Some(5), 0));      // 5
-    let missing: Opt[int] = Opt::None;          // the annotation settles `T`
-    space(io); io.print_nat(io, unwrap_or(missing, 3));  // 3
+    io.print_nat(io, unwrap_or(Opt::Some(5), 0)); // 5
+    let missing: Opt[int] = Opt::None; // the annotation settles `T`
+    space(io);
+    io.print_nat(io, unwrap_or(missing, 3)); // 3
 
     // ...and at `bool`, which is a second copy of the same source.
     space(io);
     if unwrap_or(Opt::Some(true), false) {
-        putchar(io, 122);                           // 'z'
+        putchar(io, 122); // 'z'
     } else {
         putchar(io, 45);
     }
@@ -237,18 +295,27 @@ fn redeem_either(t: Ticket, as_is: bool) -> [] int {
 }
 
 fn m2_linear[&i](io: &!i Io) -> [io_write] int {
-    putchar(io, 77); putchar(io, 50); space(io);          // "M2 "
-    putchar(io, 108); putchar(io, 105); putchar(io, 110); putchar(io, 101); putchar(io, 97);
-    putchar(io, 114); putchar(io, 58); space(io);         // "linear: "
+    putchar(io, 77);
+    putchar(io, 50);
+    space(io); // "M2 "
+    putchar(io, 108);
+    putchar(io, 105);
+    putchar(io, 110);
+    putchar(io, 101);
+    putchar(io, 97);
+    putchar(io, 114);
+    putchar(io, 58);
+    space(io); // "linear: "
 
-    io.print_nat(io, redeem(issue(4)));                                    // 4
-    space(io); io.print_nat(io, redeem(stamp(issue(6))));                    // 7
-    space(io); io.print_nat(io, redeem_both(Booking {
-        outbound: issue(2),
-        inbound: issue(7),
-    }));                                                            // 9
-    space(io); io.print_nat(io, redeem_either(issue(5), true));              // 5
-    space(io); io.print_nat(io, redeem_either(issue(5), false));             // 6
+    io.print_nat(io, redeem(issue(4))); // 4
+    space(io);
+    io.print_nat(io, redeem(stamp(issue(6)))); // 7
+    space(io);
+    io.print_nat(io, redeem_both(Booking { outbound: issue(2), inbound: issue(7) })); // 9
+    space(io);
+    io.print_nat(io, redeem_either(issue(5), true)); // 5
+    space(io);
+    io.print_nat(io, redeem_either(issue(5), false)); // 6
     return newline(io);
 }
 
@@ -281,9 +348,17 @@ fn later_of[&dst, &src where src <= dst](a: &dst Ticket, b: &src Ticket) -> [] i
 }
 
 fn m2_borrow[&i](io: &!i Io) -> [io_write] int {
-    putchar(io, 77); putchar(io, 50); space(io);          // "M2 "
-    putchar(io, 98); putchar(io, 111); putchar(io, 114); putchar(io, 114); putchar(io, 111);
-    putchar(io, 119); putchar(io, 58); space(io);         // "borrow: "
+    putchar(io, 77);
+    putchar(io, 50);
+    space(io); // "M2 "
+    putchar(io, 98);
+    putchar(io, 111);
+    putchar(io, 114);
+    putchar(io, 114);
+    putchar(io, 111);
+    putchar(io, 119);
+    putchar(io, 58);
+    space(io); // "borrow: "
 
     let held = issue(4);
 
@@ -339,21 +414,31 @@ fn advance[&r](m: &!r Meter) -> [] int {
 }
 
 fn m2_unique[&i](io: &!i Io) -> [io_write] int {
-    putchar(io, 77); putchar(io, 50); space(io);          // "M2 "
-    putchar(io, 117); putchar(io, 110); putchar(io, 105); putchar(io, 113); putchar(io, 117);
-    putchar(io, 101); putchar(io, 58); space(io);         // "unique: "
+    putchar(io, 77);
+    putchar(io, 50);
+    space(io); // "M2 "
+    putchar(io, 117);
+    putchar(io, 110);
+    putchar(io, 105);
+    putchar(io, 113);
+    putchar(io, 117);
+    putchar(io, 101);
+    putchar(io, 58);
+    space(io); // "unique: "
 
     var meter = Meter { reading: 1, step: 2 };
 
     borrow mut meter as &!r in {
         io.print_nat(io, advance(r));
-        space(io); io.print_nat(io, advance(r));
+        space(io);
+        io.print_nat(io, advance(r));
     }
 
     // Owned again, and carrying what the reference wrote. The value lived in
     // a buffer for the block and was read back when it closed, which is
     // sound precisely because the lock meant nothing else could have moved on.
-    space(io); io.print_nat(io, meter.reading);
+    space(io);
+    io.print_nat(io, meter.reading);
     return newline(io);
 }
 
@@ -387,9 +472,18 @@ fn show[&i](io: &!i Io, n: int) -> [io_write] int {
 }
 
 fn m2_effects[&i](io: &!i Io) -> [io_write] int {
-    putchar(io, 77); putchar(io, 50); space(io);          // "M2 "
-    putchar(io, 101); putchar(io, 102); putchar(io, 102); putchar(io, 101); putchar(io, 99);
-    putchar(io, 116); putchar(io, 115); putchar(io, 58); space(io);   // "effects: "
+    putchar(io, 77);
+    putchar(io, 50);
+    space(io); // "M2 "
+    putchar(io, 101);
+    putchar(io, 102);
+    putchar(io, 102);
+    putchar(io, 101);
+    putchar(io, 99);
+    putchar(io, 116);
+    putchar(io, 115);
+    putchar(io, 58);
+    space(io); // "effects: "
 
     // A pure call inside an effectful body adds nothing to the row.
     show(io, triple(14));
@@ -430,9 +524,16 @@ fn cell_value[&r](c: &r Cell) -> [] int {
 }
 
 fn m2_arena[&i](io: &!i Io) -> [io_write] int {
-    putchar(io, 77); putchar(io, 50); space(io);          // "M2 "
-    putchar(io, 97); putchar(io, 114); putchar(io, 101); putchar(io, 110);
-    putchar(io, 97); putchar(io, 58); space(io);          // "arena: "
+    putchar(io, 77);
+    putchar(io, 50);
+    space(io); // "M2 "
+    putchar(io, 97);
+    putchar(io, 114);
+    putchar(io, 101);
+    putchar(io, 110);
+    putchar(io, 97);
+    putchar(io, 58);
+    space(io); // "arena: "
 
     var total = 0;
     region a {
@@ -452,7 +553,10 @@ fn m2_arena[&i](io: &!i Io) -> [io_write] int {
     }
     // Three allocations, one release, and it already happened.
 
-    space(io); putchar(io, 45); putchar(io, 62); space(io);   // " -> "
+    space(io);
+    putchar(io, 45);
+    putchar(io, 62);
+    space(io); // " -> "
     io.print_nat(io, total);
     return newline(io);
 }
@@ -492,10 +596,21 @@ fn twice[&i](io: &!i Io, n: int) -> [io_write] int {
 }
 
 fn m2_capability[&i](io: &!i Io) -> [io_write] int {
-    putchar(io, 77); putchar(io, 50); space(io);          // "M2 "
-    putchar(io, 99); putchar(io, 97); putchar(io, 112); putchar(io, 97);
-    putchar(io, 98); putchar(io, 105); putchar(io, 108); putchar(io, 105);
-    putchar(io, 116); putchar(io, 121); putchar(io, 58); space(io);
+    putchar(io, 77);
+    putchar(io, 50);
+    space(io); // "M2 "
+    putchar(io, 99);
+    putchar(io, 97);
+    putchar(io, 112);
+    putchar(io, 97);
+    putchar(io, 98);
+    putchar(io, 105);
+    putchar(io, 108);
+    putchar(io, 105);
+    putchar(io, 116);
+    putchar(io, 121);
+    putchar(io, 58);
+    space(io);
 
     // Prints "8" twice -- and could not print at all without the `io` it was
     // handed. Delete the parameter and the body stops compiling.
@@ -532,14 +647,24 @@ extern fn labs[&f](ffi: &f Ffi("libc"), n: int) -> [ffi("libc")] int;
 // console, and that it can do nothing else -- there is nothing else it was
 // handed.
 fn m2_foreign[&f, &i](libc: &f Ffi("libc"), io: &!i Io) -> [ffi("libc"), io_write] int {
-    putchar(io, 77); putchar(io, 50); space(io);          // "M2 "
-    putchar(io, 102); putchar(io, 111); putchar(io, 114); putchar(io, 101);
-    putchar(io, 105); putchar(io, 103); putchar(io, 110); putchar(io, 58); space(io);
+    putchar(io, 77);
+    putchar(io, 50);
+    space(io); // "M2 "
+    putchar(io, 102);
+    putchar(io, 111);
+    putchar(io, 114);
+    putchar(io, 101);
+    putchar(io, 105);
+    putchar(io, 103);
+    putchar(io, 110);
+    putchar(io, 58);
+    space(io);
 
     // The capability is checked and then erased: what libc receives is the
     // integer and nothing else, because a capability carries no data.
-    io.print_nat(io, labs(libc, 0 - 7));                     // 7
-    space(io); io.print_nat(io, labs(libc, 9));              // 9
+    io.print_nat(io, labs(libc, 0 - 7)); // 7
+    space(io);
+    io.print_nat(io, labs(libc, 9)); // 9
     return newline(io);
 }
 
@@ -565,17 +690,29 @@ fn highest() -> [] int {
 }
 
 fn m3_arithmetic[&i](io: &!i Io) -> [io_write] int {
-    putchar(io, 77); putchar(io, 51); space(io);          // "M3 "
-    putchar(io, 97); putchar(io, 114); putchar(io, 105); putchar(io, 116);
-    putchar(io, 104); putchar(io, 109); putchar(io, 101); putchar(io, 116);
-    putchar(io, 105); putchar(io, 99); putchar(io, 58); space(io);
+    putchar(io, 77);
+    putchar(io, 51);
+    space(io); // "M3 "
+    putchar(io, 97);
+    putchar(io, 114);
+    putchar(io, 105);
+    putchar(io, 116);
+    putchar(io, 104);
+    putchar(io, 109);
+    putchar(io, 101);
+    putchar(io, 116);
+    putchar(io, 105);
+    putchar(io, 99);
+    putchar(io, 58);
+    space(io);
 
     // Checked, and right. `highest() + 1` here would kill the process.
     io.print_nat(io, 2 + 4);
 
     // Asked for, and wrapped: one past the top is the bottom, which is
     // negative -- so the digit is 1.
-    space(io); digit(io, wrapping_add(highest(), 1) < 0);
+    space(io);
+    digit(io, wrapping_add(highest(), 1) < 0);
     return newline(io);
 }
 
@@ -609,9 +746,16 @@ fn sum_of[&r](xs: &r [int]) -> [] int {
 }
 
 fn m3_slice[&i](io: &!i Io) -> [io_write] int {
-    putchar(io, 77); putchar(io, 51); space(io);          // "M3 "
-    putchar(io, 115); putchar(io, 108); putchar(io, 105); putchar(io, 99);
-    putchar(io, 101); putchar(io, 58); space(io);         // "slice: "
+    putchar(io, 77);
+    putchar(io, 51);
+    space(io); // "M3 "
+    putchar(io, 115);
+    putchar(io, 108);
+    putchar(io, 105);
+    putchar(io, 99);
+    putchar(io, 101);
+    putchar(io, 58);
+    space(io); // "slice: "
 
     var total = 0;
     region a {
@@ -619,7 +763,11 @@ fn m3_slice[&i](io: &!i Io) -> [io_write] int {
         // is what makes this a slice rather than an array -- an array's
         // length would live in its type.
         let digits = alloc_slice[a](5, 0);
-        digits[0] = 3; digits[1] = 1; digits[2] = 4; digits[3] = 1; digits[4] = 5;
+        digits[0] = 3;
+        digits[1] = 1;
+        digits[2] = 4;
+        digits[3] = 1;
+        digits[4] = 5;
 
         var n = 0;
         while n < len(digits) {
@@ -635,7 +783,10 @@ fn m3_slice[&i](io: &!i Io) -> [io_write] int {
     }
     // The slice and its arena are both gone by here, in one call.
 
-    space(io); putchar(io, 45); putchar(io, 62); space(io);   // " -> "
+    space(io);
+    putchar(io, 45);
+    putchar(io, 62);
+    space(io); // " -> "
     io.print_nat(io, total);
     return newline(io);
 }
@@ -664,24 +815,36 @@ fn m3_slice[&i](io: &!i Io) -> [io_write] int {
 // `==` is allowed, because comparing storage is not arithmetic.
 
 fn m3_string[&i](io: &!i Io) -> [io_write] int {
-    putchar(io, 77); putchar(io, 51); space(io);          // "M3 "
-    putchar(io, 115); putchar(io, 116); putchar(io, 114); putchar(io, 105);
-    putchar(io, 110); putchar(io, 103); putchar(io, 58); space(io);
+    putchar(io, 77);
+    putchar(io, 51);
+    space(io); // "M3 "
+    putchar(io, 115);
+    putchar(io, 116);
+    putchar(io, 114);
+    putchar(io, 105);
+    putchar(io, 110);
+    putchar(io, 103);
+    putchar(io, 58);
+    space(io);
 
     let word = "hello";
     io.write_all(io, word);
 
     // `len` is the *byte* length: this design claims no encoding, so there
     // are no characters to count.
-    space(io); putchar(io, 40);                           // " ("
+    space(io);
+    putchar(io, 40); // " ("
     io.print_nat(io, len(word));
-    space(io); io.write_all(io, "bytes,");
+    space(io);
+    io.write_all(io, "bytes,");
 
     // Indexing yields a `byte`, which has to be widened to be printed --
     // the conversion is where the range is checked, visibly.
-    space(io); io.write_all(io, "e is");
-    space(io); io.print_nat(io, int_of(word[1]));
-    putchar(io, 41);                                      // ")"
+    space(io);
+    io.write_all(io, "e is");
+    space(io);
+    io.print_nat(io, int_of(word[1]));
+    putchar(io, 41); // ")"
     return newline(io);
 }
 
@@ -710,11 +873,9 @@ fn m3_string[&i](io: &!i Io) -> [io_write] int {
 // declare `extern fn open`. The claim is that authority is visible in the
 // types, and that `main` chooses. `examples/lines.ls` is the whole tool.
 
-fn m3_file[&f, &i](
-    fs: &f Fs("/tmp"),
-    io: &!i Io,
-) -> [fs_read("/tmp"), fs_write("/tmp"), io_write] int {
-    io.write_all(io, "M3 file:"); space(io);
+fn m3_file[&f, &i](fs: &f Fs("/tmp"), io: &!i Io) -> [fs_read("/tmp"), fs_write("/tmp"), io_write] int {
+    io.write_all(io, "M3 file:");
+    space(io);
 
     let wrote = fs_write(fs, "/tmp/lex-sys-tour.txt", "on disk");
 
@@ -729,9 +890,10 @@ fn m3_file[&f, &i](
             putchar(io, int_of(buffer[n]));
             n = n + 1;
         }
-        space(io); putchar(io, 40);                       // " ("
+        space(io);
+        putchar(io, 40); // " ("
         io.print_nat(io, wrote);
-        putchar(io, 41);                                  // ")"
+        putchar(io, 41); // ")"
         status = read;
     }
     newline(io);
@@ -773,7 +935,8 @@ enum List {
 }
 
 fn m3_heap[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
-    io.write_all(io, "M3 heap:"); space(io);
+    io.write_all(io, "M3 heap:");
+    space(io);
 
     // Built backwards, so this reads 3 1 4.
     var list = List::Empty;
@@ -784,9 +947,11 @@ fn m3_heap[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
     // `drain` leaves a trailing space after the last value, so this does
     // not add one.
     let total = drain(heap, io, list);
-    io.write_all(io, "->"); space(io);
+    io.write_all(io, "->");
+    space(io);
     io.print_nat(io, total);
-    space(io); io.write_all(io, "(freed)");
+    space(io);
+    io.write_all(io, "(freed)");
     return newline(io);
 }
 
@@ -798,7 +963,9 @@ fn push[&h](heap: &!h Heap, rest: List, value: int) -> [heap] List {
 // `unbox` ends that node and yields the tail.
 fn drain[&h, &i](heap: &!h Heap, io: &!i Io, list: List) -> [heap, io_write] int {
     match list {
-        List::Empty => { return 0; }
+        List::Empty => {
+            return 0;
+        }
         List::Cons(value, rest) => {
             io.print_nat(io, value);
             space(io);
@@ -836,24 +1003,33 @@ fn drain[&h, &i](heap: &!h Heap, io: &!i Io, list: List) -> [heap, io_write] int
 
 fn sum_kept[&l](list: &l List) -> [] int {
     match list {
-        List::Empty => { return 0; }
+        List::Empty => {
+            return 0;
+        }
         // `value` is `&l int` and `rest` is `&l Box[List]`. `contents`
         // follows the box to `&l List`, for exactly as long as `l` lasts.
-        List::Cons(value, rest) => { return *value + sum_kept(contents(rest)); }
+        List::Cons(value, rest) => {
+            return *value + sum_kept(contents(rest));
+        }
     }
 }
 
 fn count_kept[&l](list: &l List) -> [] int {
     match list {
-        List::Empty => { return 0; }
+        List::Empty => {
+            return 0;
+        }
         // `_` through a reference discards nothing: this match never owned
         // the value, so there is nothing to drop.
-        List::Cons(_, rest) => { return 1 + count_kept(contents(rest)); }
+        List::Cons(_, rest) => {
+            return 1 + count_kept(contents(rest));
+        }
     }
 }
 
 fn m3_reading[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
-    io.write_all(io, "M3 reading:"); space(io);
+    io.write_all(io, "M3 reading:");
+    space(io);
 
     var list = List::Empty;
     list = push(heap, list, 4);
@@ -870,7 +1046,8 @@ fn m3_reading[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
         space(io);
         io.print_nat(io, sum_kept(l));
     }
-    space(io); io.write_all(io, "(kept)");
+    space(io);
+    io.write_all(io, "(kept)");
     newline(io);
 
     // Still owned here, and still owing exactly one traversal that ends it.
@@ -879,7 +1056,9 @@ fn m3_reading[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
 
 fn drain_quiet[&h](heap: &!h Heap, list: List) -> [heap] int {
     match list {
-        List::Empty => { return 0; }
+        List::Empty => {
+            return 0;
+        }
         List::Cons(value, rest) => {
             let tail = unbox(heap, rest);
             return value + drain_quiet(heap, tail);
@@ -915,20 +1094,22 @@ fn drain_quiet[&h](heap: &!h Heap, list: List) -> [heap] int {
 // because argv outlives every region there is.
 
 fn m3_args[&g, &i](args: &g Args, io: &!i Io) -> [args, io_write] int {
-    io.write_all(io, "M3 args:"); space(io);
+    io.write_all(io, "M3 args:");
+    space(io);
 
     // Run with no arguments by the example harness, so this is 1: a
     // program always has at least its own name.
     let count = arg_count(args);
     io.print_nat(io, count);
 
-    space(io); putchar(io, 40);                           // " ("
+    space(io);
+    putchar(io, 40); // " ("
     if len(arg(args, 0)) > 0 {
         io.write_all(io, "named");
     } else {
         io.write_all(io, "anonymous");
     }
-    putchar(io, 41);                                      // ")"
+    putchar(io, 41); // ")"
     return newline(io);
 }
 
@@ -948,23 +1129,23 @@ fn main(world: World) -> [] int {
     // caller's authority.
     borrow libc as &f in {
         borrow tmp as &t in {
-        borrow args as &g in {
-        borrow mut heap as &!p in {
-        borrow mut io as &!i in {
-            status = run(i);
-            m2_capability(i);
-            m2_foreign(f, i);
-            m2_arena(i);
-            m3_arithmetic(i);
-            m3_slice(i);
-            m3_string(i);
-            m3_file(t, i);
-            m3_heap(p, i);
-            m3_reading(p, i);
-            m3_args(g, i);
-        }
-        }
-        }
+            borrow args as &g in {
+                borrow mut heap as &!p in {
+                    borrow mut io as &!i in {
+                        status = run(i);
+                        m2_capability(i);
+                        m2_foreign(f, i);
+                        m2_arena(i);
+                        m3_arithmetic(i);
+                        m3_slice(i);
+                        m3_string(i);
+                        m3_file(t, i);
+                        m3_heap(p, i);
+                        m3_reading(p, i);
+                        m3_args(g, i);
+                    }
+                }
+            }
         }
     }
 

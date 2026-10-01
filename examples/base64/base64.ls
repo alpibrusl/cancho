@@ -111,12 +111,12 @@ fn encode[&i](io: &!i Io) -> [io_read, io_write] int {
 
         var c = getchar(io);
         while c >= 0 {
-            bits = (bits << 8) | c;
+            bits = bits << 8 | c;
             held = held + 1;
             if held == 3 {
-                let a = emit(out, at, column, int_of(table[(bits >> 18) & 0x3f]));
-                let b = emit(out, a.0, a.1, int_of(table[(bits >> 12) & 0x3f]));
-                let d = emit(out, b.0, b.1, int_of(table[(bits >> 6) & 0x3f]));
+                let a = emit(out, at, column, int_of(table[bits >> 18 & 0x3f]));
+                let b = emit(out, a.0, a.1, int_of(table[bits >> 12 & 0x3f]));
+                let d = emit(out, b.0, b.1, int_of(table[bits >> 6 & 0x3f]));
                 let e = emit(out, d.0, d.1, int_of(table[bits & 0x3f]));
                 at = e.0;
                 column = e.1;
@@ -136,8 +136,8 @@ fn encode[&i](io: &!i Io) -> [io_read, io_write] int {
         // is what the padding is *for*.
         if held == 1 {
             bits = bits << 16;
-            let a = emit(out, at, column, int_of(table[(bits >> 18) & 0x3f]));
-            let b = emit(out, a.0, a.1, int_of(table[(bits >> 12) & 0x3f]));
+            let a = emit(out, at, column, int_of(table[bits >> 18 & 0x3f]));
+            let b = emit(out, a.0, a.1, int_of(table[bits >> 12 & 0x3f]));
             let d = emit(out, b.0, b.1, 61);
             let e = emit(out, d.0, d.1, 61);
             at = e.0;
@@ -145,9 +145,9 @@ fn encode[&i](io: &!i Io) -> [io_read, io_write] int {
         }
         if held == 2 {
             bits = bits << 8;
-            let a = emit(out, at, column, int_of(table[(bits >> 18) & 0x3f]));
-            let b = emit(out, a.0, a.1, int_of(table[(bits >> 12) & 0x3f]));
-            let d = emit(out, b.0, b.1, int_of(table[(bits >> 6) & 0x3f]));
+            let a = emit(out, at, column, int_of(table[bits >> 18 & 0x3f]));
+            let b = emit(out, a.0, a.1, int_of(table[bits >> 12 & 0x3f]));
+            let d = emit(out, b.0, b.1, int_of(table[bits >> 6 & 0x3f]));
             let e = emit(out, d.0, d.1, 61);
             at = e.0;
             column = e.1;
@@ -175,26 +175,24 @@ fn decode[&i](io: &!i Io) -> [io_read, io_write] int {
     while c >= 0 {
         if c == '=' {
             padded = true;
-        } else {
-            if c != '\n' && c != '\r' {
-                // A character after the padding is malformed even if it is
-                // in the alphabet: `=` means the stream ended.
-                if padded {
-                    return 1;
-                }
-                let v = value_of(c);
-                if v < 0 {
-                    return 1;
-                }
-                bits = (bits << 6) | v;
-                held = held + 1;
-                if held == 4 {
-                    putchar(io, (bits >> 16) & 0xff);
-                    putchar(io, (bits >> 8) & 0xff);
-                    putchar(io, bits & 0xff);
-                    bits = 0;
-                    held = 0;
-                }
+        } else if c != '\n' && c != '\r' {
+            // A character after the padding is malformed even if it is
+            // in the alphabet: `=` means the stream ended.
+            if padded {
+                return 1;
+            }
+            let v = value_of(c);
+            if v < 0 {
+                return 1;
+            }
+            bits = bits << 6 | v;
+            held = held + 1;
+            if held == 4 {
+                putchar(io, bits >> 16 & 0xff);
+                putchar(io, bits >> 8 & 0xff);
+                putchar(io, bits & 0xff);
+                bits = 0;
+                held = 0;
             }
         }
         c = getchar(io);
@@ -206,11 +204,11 @@ fn decode[&i](io: &!i Io) -> [io_read, io_write] int {
         return 1;
     }
     if held == 2 {
-        putchar(io, (bits >> 4) & 0xff);
+        putchar(io, bits >> 4 & 0xff);
     }
     if held == 3 {
-        putchar(io, (bits >> 10) & 0xff);
-        putchar(io, (bits >> 2) & 0xff);
+        putchar(io, bits >> 10 & 0xff);
+        putchar(io, bits >> 2 & 0xff);
     }
     return 0;
 }
@@ -243,16 +241,28 @@ fn main(world: World) -> [] int {
             c = next;
             match step {
                 flags.Arg::Short(letter) => {
-                    if letter == 'd' { decoding = true; } else { usage = true; }
+                    if letter == 'd' {
+                        decoding = true;
+                    } else {
+                        usage = true;
+                    }
                 }
                 flags.Arg::Long(name) => {
-                    if flags.named(name, "decode") { decoding = true; } else { usage = true; }
+                    if flags.named(name, "decode") {
+                        decoding = true;
+                    } else {
+                        usage = true;
+                    }
                 }
                 // GNU reads a named file; this one is a filter, the way
                 // `examples/cut/` is, because `main` releases `Fs`
                 // before anything runs.
-                flags.Arg::Operand(_) => { usage = true; }
-                flags.Arg::Done => { going = false; }
+                flags.Arg::Operand(_) => {
+                    usage = true;
+                }
+                flags.Arg::Done => {
+                    going = false;
+                }
             }
         }
     }

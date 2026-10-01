@@ -72,8 +72,7 @@ fn port_of[&a](text: &a [byte]) -> [] int {
 // string type to template with -- and the assembling is where the length
 // comes from, so the `Content-Length` this sends cannot disagree with the
 // bytes that follow it. A server that gets that wrong hangs its client.
-fn respond[&o, &r, &b](out: &!o [byte], status: int, reason: &r [byte],
-    body: &b [byte]) -> [] int {
+fn respond[&o, &r, &b](out: &!o [byte], status: int, reason: &r [byte], body: &b [byte]) -> [] int {
     var at = sockets.put(out, 0, "HTTP/1.1 ");
     at = sockets.put_nat(out, at, status);
     at = sockets.put(out, at, " ");
@@ -107,8 +106,7 @@ fn route[&q, &o](request: &q [byte], out: &!o [byte]) -> [] int {
 // The loop ends at the first newline, because the request line is all the
 // router reads. A server that parsed headers would look for CRLF CRLF and
 // would be the same shape.
-fn read_request[&f, &b](libc: &f Ffi("libc"), conn: int, buffer: &!b [byte])
-    -> [ffi("libc")] int {
+fn read_request[&f, &b](libc: &f Ffi("libc"), conn: int, buffer: &!b [byte]) -> [ffi("libc")] int {
     var filled = 0;
     while filled < len(buffer) {
         let got = sockets.read(libc, conn, buffer[filled..len(buffer)]);
@@ -159,7 +157,7 @@ fn serve[&f, &a](libc: &f Ffi("libc"), port: &a [byte]) -> [ffi("libc")] int {
         let addr = alloc_slice[scratch](16, byte_of(0));
         addr[0] = byte_of(2);
         addr[2] = byte_of(number / 256);
-        addr[3] = byte_of(number - (number / 256) * 256);
+        addr[3] = byte_of(number - number / 256 * 256);
         if sockets.bind(libc, fd, addr) < 0 {
             sockets.close(libc, fd);
             return 2;

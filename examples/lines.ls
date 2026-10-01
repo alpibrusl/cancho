@@ -112,11 +112,7 @@ fn tally[&b](text: &b [byte], length: int) -> [] Counts {
 // The row is the documentation. A caller that wanted to know whether this
 // function could read `/etc` would not have to look inside it -- and the
 // honest answer here is *yes*, which is the point of §1 below.
-fn report[&f, &p, &i](
-    fs: &f Fs(""),
-    path: &p [byte],
-    io: &!i Io,
-) -> [fs_read(""), fs_write(""), io_write] int {
+fn report[&f, &p, &i](fs: &f Fs(""), path: &p [byte], io: &!i Io) -> [fs_read(""), fs_write(""), io_write] int {
     var status = 1;
     region a {
         let text = alloc_slice[a](512, byte_of(0));
@@ -209,11 +205,7 @@ fn main(world: World) -> [] int {
                     // which is how a tool with no input behaves anyway,
                     // and is what lets a harness that passes no arguments
                     // still run this file.
-                    fs_write(
-                        f,
-                        "/tmp/lex-sys-lines.log",
-                        "INFO  boot\nERROR disk full\nINFO  retry\nERROR disk full\nWARN  slow\nINFO  done\n",
-                    );
+                    fs_write(f, "/tmp/lex-sys-lines.log", "INFO  boot\nERROR disk full\nINFO  retry\nERROR disk full\nWARN  slow\nINFO  done\n");
                     status = report(f, "/tmp/lex-sys-lines.log", i);
                 }
             }
