@@ -268,3 +268,192 @@ pub fn pow(x: float, y: float) -> [] float {
     }
     return magnitude;
 }
+
+// ---- floats: sign, rounding, and the trigonometric pair ------------------
+//
+// `docs/float-math.md` §8. None of these is a builtin: each is a few lines
+// of `float`/`truncate` arithmetic, so each is library code with a stated
+// accuracy, the same shape as `exp`/`log`/`pow` above.
+
+// |x|, as C's `fabs`: `fabs(-0.0)` is `+0.0` and a NaN stays a NaN. `x <= 0.0`
+// rather than `x < 0.0` is what makes the zero case come out positive
+// (`0.0 - -0.0` is `+0.0`), and a NaN fails the comparison and falls through.
+pub fn fabs(x: float) -> [] float {
+    if x <= 0.0 {
+        return 0.0 - x;
+    }
+    return x;
+}
+
+// The smaller of two floats. As C's `fmin`, a NaN is treated as missing data:
+// the other argument is the answer, and the answer is a NaN only if both are.
+pub fn fmin(a: float, b: float) -> [] float {
+    if is_nan(a) {
+        return b;
+    }
+    if is_nan(b) {
+        return a;
+    }
+    if a < b {
+        return a;
+    }
+    return b;
+}
+
+// The larger of two floats; a NaN is missing data, as for `fmin`.
+pub fn fmax(a: float, b: float) -> [] float {
+    if is_nan(a) {
+        return b;
+    }
+    if is_nan(b) {
+        return a;
+    }
+    if a > b {
+        return a;
+    }
+    return b;
+}
+
+// Every float at or past 2^52 is already a whole number, so these three
+// answer it unchanged: that is the right answer, and it keeps `truncate`
+// (which traps near 2^63, `docs/floating-point.md` §4) out of the range
+// where it would matter.
+fn whole_beyond(x: float) -> [] bool {
+    return x >= 4503599627370496.0 || x <= 0.0 - 4503599627370496.0;
+}
+
+// The largest whole number not above `x`. Exact: `x - truncate(x)` is
+// computed without rounding for any `|x| < 2^52`, so nothing here depends on
+// an addition that could round across a boundary. The sign of a zero result
+// is `+0.0`, where C's `floor(-0.0)` keeps the minus; nothing observable
+// short of `bits_of` tells them apart.
+pub fn floor(x: float) -> [] float {
+    if is_nan(x) || whole_beyond(x) {
+        return x;
+    }
+    let t = float_of(truncate(x));
+    if t > x {
+        return t - 1.0;
+    }
+    return t;
+}
+
+// The smallest whole number not below `x`; same exactness and zero as `floor`.
+pub fn ceil(x: float) -> [] float {
+    if is_nan(x) || whole_beyond(x) {
+        return x;
+    }
+    let t = float_of(truncate(x));
+    if t < x {
+        return t + 1.0;
+    }
+    return t;
+}
+
+// The nearest whole number, ties away from zero (C's `round`; `floor(x + 0.5)`
+// is not it -- `0.49999999999999994 + 0.5` rounds up to `1.0`). The distance
+// to `truncate(x)` is exact, so it is compared against one half directly.
+pub fn round(x: float) -> [] float {
+    if is_nan(x) || whole_beyond(x) {
+        return x;
+    }
+    let t = float_of(truncate(x));
+    let d = x - t;
+    if d >= 0.5 {
+        return t + 1.0;
+    }
+    if d <= -0.5 {
+        return t - 1.0;
+    }
+    return t;
+}
+
+// sin/cos on `[-pi/4, pi/4]`: fdlibm's `__kernel_sin` and `__kernel_cos`
+// polynomials, whose coefficients are a minimax fit (chosen to minimise the
+// worst error over the interval) and not a Taylor series's.
+fn kernel_sin(x: float) -> [] float {
+    let z = x * x;
+    let r = 8.33333333332248946124e-03 + z * (-1.98412698298579493134e-04 + z * (2.75573137070700676789e-06 + z * (-2.50507602534068634195e-08 + z * 1.58969099521155010221e-10)));
+    return x + z * x * (-1.66666666666666324348e-01 + z * r);
+}
+
+fn kernel_cos(x: float) -> [] float {
+    let z = x * x;
+    let r = z * (4.16666666666666019037e-02 + z * (-1.38888888888741095749e-03 + z * (2.48015872894767294178e-05 + z * (-2.75573143513906633035e-07 + z * (2.08757232129817482790e-09 + z * -1.13596475577881948265e-11)))));
+    let half_z = 0.5 * z;
+    let w = 1.0 - half_z;
+    return w + (1.0 - w - half_z + z * r);
+}
+
+// The quarter-turn count nearest `x`, and what is left of `x` after taking
+// it away, packed as `k` and the remainder `r` with `|r| <= pi/4`. `pi/2` is
+// subtracted in three pieces of 33 bits each (fdlibm's `pio2_1..3`), so that
+// `k * piece` is exact for `|k| < 2^20` and the cancellation in `x - k*pi/2`
+// loses nothing: the three together carry `pi/2` to about 99 bits.
+fn quarter_turns(x: float) -> [] int {
+    return round_to_int(x * 6.36619772367581382433e-01);
+}
+
+fn remainder_of(x: float, k: int) -> [] float {
+    let n = float_of(k);
+    let r = x - n * 1.57079632673412561417e+00;
+    let r = r - n * 6.07710050630396597660e-11;
+    let r = r - n * 2.02226624871116645580e-21;
+    return r - n * 8.47842766036889956997e-32;
+}
+
+// The reduction below is exact only while `k` fits in 20 bits, which is
+// `|x| < 1.6e6`. Past that there is a right answer this does not compute --
+// so, like every operation here with none to give (`docs/defined-behaviour.md`
+// §2.1), it stops: the trap, not a NaN that looks like one of `sin`'s own.
+// A NaN argument is not out of range; it is returned, as C does.
+fn trig_domain(x: float) -> [] bool {
+    return x >= -1.0e6 && x <= 1.0e6;
+}
+
+// sine, `|x| <= 1e6`; NaN in, NaN out; traps outside the range. Accuracy is
+// measured in `docs/float-math.md` §8.
+pub fn sin(x: float) -> [] float {
+    if is_nan(x) {
+        return x;
+    }
+    if !trig_domain(x) {
+        return float_of(trap());
+    }
+    let k = quarter_turns(x);
+    let r = remainder_of(x, k);
+    let q = (k % 4 + 4) % 4;
+    if q == 0 {
+        return kernel_sin(r);
+    }
+    if q == 1 {
+        return kernel_cos(r);
+    }
+    if q == 2 {
+        return 0.0 - kernel_sin(r);
+    }
+    return 0.0 - kernel_cos(r);
+}
+
+// cosine; same domain and accuracy as `sin`.
+pub fn cos(x: float) -> [] float {
+    if is_nan(x) {
+        return x;
+    }
+    if !trig_domain(x) {
+        return float_of(trap());
+    }
+    let k = quarter_turns(x);
+    let r = remainder_of(x, k);
+    let q = (k % 4 + 4) % 4;
+    if q == 0 {
+        return kernel_cos(r);
+    }
+    if q == 1 {
+        return 0.0 - kernel_sin(r);
+    }
+    if q == 2 {
+        return 0.0 - kernel_cos(r);
+    }
+    return kernel_sin(r);
+}
