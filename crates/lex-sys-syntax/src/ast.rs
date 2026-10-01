@@ -745,6 +745,7 @@ pub const PRELUDE: &[&str] = &[
     "Again",
     "Data",
     "Wrote",
+    "Dialed",
 ];
 
 impl Ast {

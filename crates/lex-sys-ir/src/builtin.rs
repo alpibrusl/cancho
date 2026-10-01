@@ -307,6 +307,10 @@ pub enum Builtin {
     /// call site, like [`Builtin::Bind`], because the row it performs is
     /// the bound its `Net` was narrowed to.
     TcpListen,
+    /// `tcp_connect(net, host, port) -> [net_out(bound)] Dialed` --
+    /// `docs/native-sockets.md` §3, edition 5 only: `connect`, answering a
+    /// `Conn` handle (or the reason) rather than a descriptor.
+    TcpConnect,
     /// `tcp_accept(&!Listener) -> [conn_accept] Accepted`.
     TcpAccept,
     /// `conn_read(&!Conn, &![byte]) -> [conn_read] Received`.
@@ -407,6 +411,7 @@ impl Builtin {
         Builtin::Listen,
         Builtin::Accept,
         Builtin::TcpListen,
+        Builtin::TcpConnect,
         Builtin::TcpAccept,
         Builtin::ConnRead,
         Builtin::ConnWrite,
@@ -457,6 +462,7 @@ impl Builtin {
             Builtin::Listen => "listen",
             Builtin::Accept => "accept",
             Builtin::TcpListen => "tcp_listen",
+            Builtin::TcpConnect => "tcp_connect",
             Builtin::TcpAccept => "tcp_accept",
             Builtin::ConnRead => "conn_read",
             Builtin::ConnWrite => "conn_write",
@@ -494,6 +500,7 @@ impl Builtin {
             // reason -- `conn_read` is a name an edition-1 file may
             // already declare against libc.
             Builtin::TcpListen
+            | Builtin::TcpConnect
             | Builtin::TcpAccept
             | Builtin::ConnRead
             | Builtin::ConnWrite
@@ -716,7 +723,7 @@ impl Builtin {
             Builtin::Accept => (vec![Type::Int], Type::Int),
             // Checked at the call site, like `bind`: the port is spent
             // against the bound in the capability's type.
-            Builtin::TcpListen => (Vec::new(), Type::Unit),
+            Builtin::TcpListen | Builtin::TcpConnect => (Vec::new(), Type::Unit),
             Builtin::TcpAccept => (
                 vec![Type::Ref {
                     unique: true,

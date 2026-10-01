@@ -179,6 +179,10 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                 let (bound, args) = (bound.clone(), args.clone());
                 self.tcp_listen(&bound, &args)
             }
+            Expr::TcpConnect { bound, args } => {
+                let (bound, args) = (bound.clone(), args.clone());
+                self.tcp_connect(&bound, &args)
+            }
             Expr::FieldRef { base, def, args, index } => {
                 let address = self.scalar(base);
                 let TypeInfo::Struct { fields, .. } = self.program.type_info(*def) else {
@@ -576,6 +580,9 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     }
                     Callee::Builtin(Builtin::TcpListen) => {
                         unreachable!("`tcp_listen` is lowered as `Expr::TcpListen`")
+                    }
+                    Callee::Builtin(Builtin::TcpConnect) => {
+                        unreachable!("`tcp_connect` is lowered as `Expr::TcpConnect`")
                     }
                     // `docs/native-sockets.md` §3. A borrowed handle arrives
                     // as its address, a buffer as pointer and length, an

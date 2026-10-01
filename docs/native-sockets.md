@@ -315,9 +315,10 @@ paragraph pointing here when this one is built, not before.
 Built: `Listener`, `Conn`, the five answers (`Listening`, `Accepted`,
 `Received`, `Sent`, and `Accepted`'s `Again`), `tcp_listen`, `tcp_accept`,
 `conn_read`, `conn_write`, `conn_nonblocking`, `listener_nonblocking`,
-`conn_close`, `listener_close`, all edition 5, on both backends. **Not yet
-built:** `tcp_connect` (slice 2), `Poller` (slice 3), `Clock` (slice 4),
-`conn_raw_fd`. Nine conformance tests over real sockets run every program on both
+`conn_close`, `listener_close`, all edition 5, on both backends. **Slice 2 added `tcp_connect`** (`Dialed`): `connect`'s bound check and
+`getaddrinfo` walk, answering a `Conn`. `Failed(-1)` is a name that did not
+resolve -- no `errno` is negative -- and any positive value is the kernel's.
+**Not yet built:** `Poller` (slice 3), `Clock` (slice 4), `conn_raw_fd`. Nine conformance tests over real sockets run every program on both
 backends (`conformance/sockets.rs`), plus six corpus fixtures that pin the
 refusals (a forged, dismantled or leaked handle; an undeclared
 `conn_read`; the builtins at edition 4) and the edition-1 name freedom.

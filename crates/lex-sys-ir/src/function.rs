@@ -120,7 +120,8 @@ pub(crate) fn settle_expr(expr: &mut Expr, unifier: &Unifier) {
         | Expr::OpenFile { args, .. }
         | Expr::Connect { args, .. }
         | Expr::Bind { args, .. }
-        | Expr::TcpListen { args, .. } => {
+        | Expr::TcpListen { args, .. }
+        | Expr::TcpConnect { args, .. } => {
             for arg in args {
                 settle_expr(arg, unifier);
             }

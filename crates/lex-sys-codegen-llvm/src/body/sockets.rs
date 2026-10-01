@@ -31,6 +31,15 @@ impl<'a> FuncEmitter<'a> {
         fd
     }
 
+    /// Darwin has no `MSG_NOSIGNAL`: a socket opts out of `SIGPIPE` for
+    /// good with `SO_NOSIGPIPE`. Linux does it per send, so this is nothing.
+    pub(crate) fn suppress_sigpipe(&mut self, fd: &str) {
+        if self.is_darwin() {
+            let os = self.os();
+            self.set_int_option(fd, os.sol_socket, os.so_nosigpipe, 1);
+        }
+    }
+
     /// `setsockopt(fd, level, name, &value, 4)` with a C `int` value.
     fn set_int_option(&mut self, fd: &str, level: i64, name: i64, value: i64) {
         let cell = self.fresh();

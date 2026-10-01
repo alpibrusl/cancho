@@ -105,6 +105,22 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     /// `args` is the capability (zero-sized, stopping here), the name as
     /// `&r [byte]`, and the port as an `int`.
     pub(crate) fn connect(&mut self, bound: &str, args: &[Expr]) -> Vec<Value> {
+        let (fd, _) = self.connect_raw(bound, args, false);
+        vec![fd]
+    }
+
+    /// [`Self::connect`]'s walk, answering the descriptor **and why it
+    /// failed**: `(fd, errno)`, with `fd == -1` on failure and `errno == -1`
+    /// when the *name* did not resolve (no `errno` has that value, so a
+    /// program can tell the resolver from the kernel). `connection` is
+    /// `tcp_connect`'s: the descriptor becomes a `Conn`, so on Darwin it
+    /// gets `SO_NOSIGPIPE` (`docs/native-sockets.md` §3).
+    pub(crate) fn connect_raw(
+        &mut self,
+        bound: &str,
+        args: &[Expr],
+        connection: bool,
+    ) -> (Value, Value) {
         let pointer = self.pointer;
         let name = self.expr(&args[1]);
         let port = self.scalar(&args[2]);
@@ -181,12 +197,13 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         let not_resolved = self.builder.create_block();
         let merge = self.builder.create_block();
         self.builder.append_block_param(merge, types::I64);
+        self.builder.append_block_param(merge, types::I64);
         let failed_resolve = self.builder.ins().icmp_imm(IntCC::NotEqual, resolve_result, 0);
         self.builder.ins().brif(failed_resolve, not_resolved, &[], resolved, &[]);
 
         self.builder.switch_to_block(not_resolved);
         self.builder.seal_block(not_resolved);
-        self.builder.ins().jump(merge, &[minus_one.into()]);
+        self.builder.ins().jump(merge, &[minus_one.into(), minus_one.into()]);
 
         self.builder.switch_to_block(resolved);
         self.builder.seal_block(resolved);
@@ -224,8 +241,10 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
 
         self.builder.switch_to_block(no_socket);
         self.builder.seal_block(no_socket);
+        // `errno` before anything that could overwrite it.
+        let reason = self.errno();
         self.builder.ins().call(freeaddrinfo, &[res]);
-        self.builder.ins().jump(merge, &[minus_one.into()]);
+        self.builder.ins().jump(merge, &[minus_one.into(), reason.into()]);
 
         self.builder.switch_to_block(have_socket);
         self.builder.seal_block(have_socket);
@@ -242,20 +261,37 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         self.builder.switch_to_block(connected);
         self.builder.seal_block(connected);
         self.builder.ins().call(freeaddrinfo, &[res]);
+        if connection {
+            self.suppress_sigpipe(fd);
+        }
         let fd64 = self.builder.ins().sextend(types::I64, fd);
-        self.builder.ins().jump(merge, &[fd64.into()]);
+        let no_error = self.builder.ins().iconst(types::I64, 0);
+        self.builder.ins().jump(merge, &[fd64.into(), no_error.into()]);
 
         self.builder.switch_to_block(not_connected);
         self.builder.seal_block(not_connected);
+        let reason = self.errno();
         let close = self.libc_fn("close", &[types::I32], &[types::I32]);
         let close = self.module.declare_func_in_func(close, self.builder.func);
         self.builder.ins().call(close, &[fd]);
         self.builder.ins().call(freeaddrinfo, &[res]);
-        self.builder.ins().jump(merge, &[minus_one.into()]);
+        self.builder.ins().jump(merge, &[minus_one.into(), reason.into()]);
 
         self.builder.switch_to_block(merge);
         self.builder.seal_block(merge);
-        vec![self.builder.block_params(merge)[0]]
+        (self.builder.block_params(merge)[0], self.builder.block_params(merge)[1])
+    }
+
+    /// `tcp_connect(net, host, port)` (`docs/native-sockets.md` §3):
+    /// `connect`'s check and walk, answering `Dialed`'s three leaves --
+    /// `Ok` 0 with the descriptor, `Failed` 1 with the reason.
+    pub(crate) fn tcp_connect(&mut self, bound: &str, args: &[Expr]) -> Vec<Value> {
+        let (fd, reason) = self.connect_raw(bound, args, true);
+        let failed = self.builder.ins().icmp_imm(IntCC::SignedLessThan, fd, 0);
+        let one = self.builder.ins().iconst(types::I64, 1);
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        let tag = self.builder.ins().select(failed, one, zero);
+        vec![tag, fd, reason]
     }
 
     /// `bind(net, port)` (`docs/listen.md` §6): the inbound mirror of

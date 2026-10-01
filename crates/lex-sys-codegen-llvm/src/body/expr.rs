@@ -300,6 +300,10 @@ impl<'a> FuncEmitter<'a> {
                 let (bound, args) = (bound.clone(), args.clone());
                 self.tcp_listen(&bound, &args)
             }
+            Expr::TcpConnect { bound, args } => {
+                let (bound, args) = (bound.clone(), args.clone());
+                self.tcp_connect(&bound, &args)
+            }
             // `connect(net, name, port)` (§7.22, `docs/connect.md` §10):
             // the last of `Net`'s four builtins, mirroring
             // `lex-sys-codegen`'s own `Expr::Connect` arm (`body/net.rs`).

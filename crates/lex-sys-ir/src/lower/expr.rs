@@ -784,6 +784,9 @@ impl<'a> FnLowering<'a> {
                 if resolved == Resolved::Builtin(Builtin::TcpListen) {
                     return self.tcp_listen(args, span);
                 }
+                if resolved == Resolved::Builtin(Builtin::TcpConnect) {
+                    return self.tcp_connect(args, span);
+                }
                 // `docs/threads.md` §2: `T`/`R` are read off `payload`'s
                 // and `body`'s own types, which a fixed signature has no
                 // parameter to name -- the same reason `split` above is

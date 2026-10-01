@@ -676,3 +676,228 @@ fn a_socket_program_reports_its_port_and_no_ffi() {
     }
     assert!(!json.contains("\"ffi\""), "no foreign code anywhere:\n{json}");
 }
+
+/// Like [`io_program`], but the capability is narrowed to `bound` (a
+/// `host:port`) rather than to the port: `BOUND` and `PORT` are
+/// substituted, and `run` takes a `Net("BOUND")`.
+fn dial_program(port: u16, bound: &str, source: &str) -> String {
+    let main = r#"
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net } = split(world);
+    release(ffi); release(fs); release(heap); release(args);
+    let bound = narrow(net, "BOUND");
+    return run(bound, io);
+}
+"#;
+    format!("edition 5;\nimport std.io;\n{source}\n{main}")
+        .replace("BOUND", bound)
+        .replace("PORT", &port.to_string())
+}
+
+const DIAL: &str = r#"
+fn run(bound: Net("BOUND"), io: Io) -> [] int {
+    var status = 1;
+    borrow bound as &n in {
+        match tcp_connect(n, "127.0.0.1", PORT) {
+            Dialed::Ok(c) => {
+                var conn = c;
+                borrow mut conn as &!ch in {
+                    match conn_write(ch, "ping") {
+                        Sent::Wrote(w) => {
+                            region a {
+                                var buf = alloc_slice[a](16, byte_of(0));
+                                match conn_read(ch, buf) {
+                                    Received::Data(k) => {
+                                        // The peer upper-cases what it was sent.
+                                        if k == 4 && int_of(buf[0]) == 80 { status = 0; }
+                                    }
+                                    Received::End => { status = 5; }
+                                    Received::Again => { status = 6; }
+                                    Received::Failed(e) => { status = 7; }
+                                }
+                            }
+                        }
+                        Sent::Again => { status = 3; }
+                        Sent::Failed(e) => { status = 4; }
+                    }
+                }
+                conn_close(conn);
+            }
+            Dialed::Failed(e) => { status = 2; }
+        }
+    }
+    release(bound);
+    release(io);
+    return status;
+}
+"#;
+
+/// `tcp_connect` dials a real server, writes, reads the answer and closes
+/// -- the outbound half of the stage, with no `Ffi`, on both backends.
+#[test]
+fn a_dialled_connection_exchanges_bytes_with_a_real_server() {
+    for backend in BACKENDS {
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = server.local_addr().unwrap().port();
+        let dir = scratch(&format!("sockets-dial-{backend}"));
+        let exe =
+            build(&dir, "dial", &dial_program(port, &format!("127.0.0.1:{port}"), DIAL), backend);
+
+        let peer = std::thread::spawn(move || {
+            use std::io::Write as _;
+            let (mut stream, _) = server.accept().unwrap();
+            let mut request = [0u8; 4];
+            stream.read_exact(&mut request).unwrap();
+            stream.write_all(&request.to_ascii_uppercase()).unwrap();
+            request
+        });
+        let run = Command::new(&exe).output().expect("the program runs");
+        assert_eq!(
+            run.status.code(),
+            Some(0),
+            "{backend}: {}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        assert_eq!(
+            &peer.join().unwrap(),
+            b"ping",
+            "{backend}: the server received what was written"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+const REFUSED: &str = r#"
+fn run(bound: Net("BOUND"), io: Io) -> [] int {
+    var status = 1;
+    borrow bound as &n in {
+        match tcp_connect(n, "127.0.0.1", PORT) {
+            Dialed::Ok(c) => { conn_close(c); status = 2; }
+            // The kernel's own reason: a positive `errno`.
+            Dialed::Failed(e) => { if e > 0 { status = 0; } }
+        }
+    }
+    release(bound);
+    release(io);
+    return status;
+}
+"#;
+
+/// Nothing listening: `Failed` with a positive `errno`, and no descriptor
+/// leaked (the program would fail to close it -- it has none to close).
+#[test]
+fn dialling_a_closed_port_answers_failed_with_an_errno() {
+    for backend in BACKENDS {
+        let port = free_port();
+        let dir = scratch(&format!("sockets-refused-{backend}"));
+        let exe = build(
+            &dir,
+            "refused",
+            &dial_program(port, &format!("127.0.0.1:{port}"), REFUSED),
+            backend,
+        );
+        let run = Command::new(&exe).output().expect("the program runs");
+        assert_eq!(run.status.code(), Some(0), "{backend}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+const UNRESOLVED: &str = r#"
+fn run(bound: Net("BOUND"), io: Io) -> [] int {
+    var status = 1;
+    borrow bound as &n in {
+        match tcp_connect(n, "no-such-host.invalid", 80) {
+            Dialed::Ok(c) => { conn_close(c); status = 2; }
+            // No `errno` is negative: -1 says the *name* did not resolve.
+            Dialed::Failed(e) => { if e == 0 - 1 { status = 0; } }
+        }
+    }
+    release(bound);
+    release(io);
+    return status;
+}
+"#;
+
+/// A name that does not resolve is `Failed(-1)`, which no kernel `errno`
+/// ever is -- so a program can tell the resolver's refusal from the
+/// network's.
+#[test]
+fn an_unresolvable_name_is_failed_minus_one() {
+    for backend in BACKENDS {
+        let dir = scratch(&format!("sockets-unresolved-{backend}"));
+        let exe = build(
+            &dir,
+            "unresolved",
+            &dial_program(0, "no-such-host.invalid:80", UNRESOLVED),
+            backend,
+        );
+        let run = Command::new(&exe).output().expect("the program runs");
+        assert_eq!(run.status.code(), Some(0), "{backend}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+const OUTSIDE_HOST: &str = r#"
+fn run(bound: Net("BOUND"), io: Io) -> [] int {
+    borrow bound as &n in {
+        match tcp_connect(n, "localhost", PORT) {
+            Dialed::Ok(c) => { conn_close(c); }
+            Dialed::Failed(e) => { }
+        }
+    }
+    release(bound);
+    release(io);
+    return 1;
+}
+"#;
+
+const OUTSIDE_PORT: &str = r#"
+fn run(bound: Net("BOUND"), io: Io) -> [] int {
+    borrow bound as &n in {
+        match tcp_connect(n, "127.0.0.1", 1) {
+            Dialed::Ok(c) => { conn_close(c); }
+            Dialed::Failed(e) => { }
+        }
+    }
+    release(bound);
+    release(io);
+    return 1;
+}
+"#;
+
+/// The bound is `host:port` and both halves are enforced, as `connect`'s
+/// are: a program granted `127.0.0.1:P` can reach neither another host nor
+/// another port.
+#[test]
+fn dialling_outside_the_bound_traps() {
+    for backend in BACKENDS {
+        for (name, source) in [("host", OUTSIDE_HOST), ("port", OUTSIDE_PORT)] {
+            let port = free_port();
+            let dir = scratch(&format!("sockets-outside-{name}-{backend}"));
+            let exe = build(
+                &dir,
+                "outside",
+                &dial_program(port, &format!("127.0.0.1:{port}"), source),
+                backend,
+            );
+            let run = Command::new(&exe).output().expect("the program runs");
+            assert_eq!(run.status.code(), None, "{backend}/{name}: killed by the trap");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+}
+
+/// The report of a client names the host and port it may dial -- and no
+/// `ffi` -- the outbound half of `a_socket_program_reports_its_port_and_no_ffi`.
+#[test]
+fn a_client_reports_its_host_and_no_ffi() {
+    let json = authority_json(&dial_program(9, "127.0.0.1:9", DIAL), "sockets-client-authority");
+    assert!(
+        json.contains(
+            "{ \"name\": \"net_out\", \"argument\": \"127.0.0.1:9\", \"bounded\": true }"
+        ),
+        "the bound survives the move to handles:\n{json}"
+    );
+    assert!(json.contains("\"conn_write\"") && json.contains("\"conn_read\""), "{json}");
+    assert!(!json.contains("\"ffi\""), "no foreign code anywhere:\n{json}");
+}

@@ -58,11 +58,12 @@ pub const PRELUDE_LISTENING: usize = 16;
 pub const PRELUDE_ACCEPTED: usize = 17;
 pub const PRELUDE_RECEIVED: usize = 18;
 pub const PRELUDE_SENT: usize = 19;
+pub const PRELUDE_DIALED: usize = 20;
 
 /// How many types the prelude declares. Written once, because a builtin's
 /// signature indexes this table and a stale slice is a panic rather than a
 /// diagnostic.
-pub const PRELUDE_COUNT: usize = 20;
+pub const PRELUDE_COUNT: usize = 21;
 
 /// The library an unnarrowed `Ffi` names: none of them yet.
 ///
@@ -382,6 +383,13 @@ pub enum Expr {
     /// a `Listening` instead of a descriptor. `args` is the capability
     /// (zero-sized), the port, the backlog and the flags, each an `int`.
     TcpListen {
+        bound: String,
+        args: Vec<Expr>,
+    },
+    /// `tcp_connect(net, host, port)` -- `docs/native-sockets.md` §3,
+    /// edition 5: `connect`'s check and walk answering a `Dialed`. `args` is
+    /// the capability (zero-sized), the host as `&r [byte]`, and the port.
+    TcpConnect {
         bound: String,
         args: Vec<Expr>,
     },

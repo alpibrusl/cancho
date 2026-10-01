@@ -516,6 +516,7 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     let accepted = symbol("Accepted");
     let received = symbol("Received");
     let sent = symbol("Sent");
+    let dialed = symbol("Dialed");
     let again_arm = symbol("Again");
     let data_arm = symbol("Data");
     let wrote_arm = symbol("Wrote");
@@ -566,6 +567,7 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     let accepted_def = unifier.declare("Accepted");
     let received_def = unifier.declare("Received");
     let sent_def = unifier.declare("Sent");
+    let dialed_def = unifier.declare("Dialed");
 
     vec![
         TypeDef {
@@ -923,6 +925,24 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
             kind: DefKind::Enum(vec![
                 (wrote_arm, vec![Type::Int]),
                 (again_arm, Vec::new()),
+                (failed_arm, vec![Type::Int]),
+            ]),
+            span,
+            since: 5,
+        },
+        // `tcp_connect`: `Listening`'s shape, for an outbound connection.
+        // `Failed(-1)` is a name that did not resolve; any positive value
+        // is the kernel's `errno`.
+        TypeDef {
+            name: dialed,
+            def: dialed_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: None,
+            kind: DefKind::Enum(vec![
+                (ok_arm, vec![Type::Named(conn_def, Vec::new())]),
                 (failed_arm, vec![Type::Int]),
             ]),
             span,

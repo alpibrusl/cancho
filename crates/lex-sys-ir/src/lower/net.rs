@@ -156,6 +156,52 @@ impl<'a> FnLowering<'a> {
         ))
     }
 
+    /// `tcp_connect(net, host, port)` -- `docs/native-sockets.md` §3,
+    /// edition 5: [`Self::connect`]'s check and row, answering a `Dialed`
+    /// handle rather than a descriptor.
+    pub(crate) fn tcp_connect(
+        &mut self,
+        args: &[ExprId],
+        span: Span,
+    ) -> Result<(Expr, Type), Diagnostic> {
+        let [capability, name, port] = args else {
+            return Err(Diagnostic::new(
+                Rule::ArityMismatch,
+                format!(
+                    "`tcp_connect` takes 3 arguments -- the capability, the name and a port -- but {} were given",
+                    args.len()
+                ),
+                span,
+            ));
+        };
+        let capability_span = self.ast.expr_span(*capability);
+        let (net_value, net_ty) = self.expr(*capability)?;
+        let bound = self.granted_net_bound(&net_ty, capability_span)?;
+
+        let bytes = Type::Ref {
+            unique: false,
+            region: self.unifier.fresh_region(),
+            inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+        };
+        let name_span = self.ast.expr_span(*name);
+        let (name_value, name_ty) = self.expr(*name)?;
+        self.expect_type(&bytes, &name_ty, name_span)?;
+
+        let port_span = self.ast.expr_span(*port);
+        let (port_value, port_ty) = self.expr(*port)?;
+        self.expect_type(&Type::Int, &port_ty, port_span)?;
+
+        self.performed.union(&Effects::new([Label {
+            name: "net_out".to_owned(),
+            argument: Some(bound.clone()),
+        }]));
+
+        Ok((
+            Expr::TcpConnect { bound, args: vec![net_value, name_value, port_value] },
+            Type::Named(self.prelude()[PRELUDE_DIALED], Vec::new()),
+        ))
+    }
+
     /// The `host:port` bound a borrowed `Net` was narrowed to, the same
     /// shape [`Self::granted_prefix`] reads off a borrowed `Fs`.
     pub(crate) fn granted_net_bound(
