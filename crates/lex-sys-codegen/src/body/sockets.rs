@@ -368,4 +368,25 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         let zero = self.builder.ins().iconst(types::I64, 0);
         vec![self.builder.ins().select(failed, reason, zero)]
     }
+
+    /// `clock_ms(&Clock)` (`docs/native-sockets.md` §5): `CLOCK_MONOTONIC`
+    /// as milliseconds. The clock id is 1 on Linux and 6 on Darwin; both
+    /// answer a `timespec` of two 64-bit fields.
+    pub(crate) fn clock_ms(&mut self) -> Vec<Value> {
+        let pointer = self.pointer;
+        let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            16,
+            3,
+        ));
+        let ts = self.builder.ins().stack_addr(pointer, slot, 0);
+        let monotonic = if self.is_darwin() { 6 } else { 1 };
+        let id = self.builder.ins().iconst(types::I32, monotonic);
+        self.libc_call("clock_gettime", &[types::I32, pointer], &[types::I32], &[id, ts]);
+        let seconds = self.builder.ins().load(types::I64, MemFlags::trusted(), ts, 0);
+        let nanos = self.builder.ins().load(types::I64, MemFlags::trusted(), ts, 8);
+        let millis = self.builder.ins().imul_imm(seconds, 1000);
+        let rest = self.builder.ins().udiv_imm(nanos, 1_000_000);
+        vec![self.builder.ins().iadd(millis, rest)]
+    }
 }

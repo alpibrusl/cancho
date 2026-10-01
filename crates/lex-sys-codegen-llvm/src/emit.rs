@@ -343,6 +343,7 @@ pub(crate) fn emit_module(
             declare_libc_unless_own(&mut text, "epoll_wait", "i32 @epoll_wait(i32, ptr, i32, i32)");
         }
     }
+    declare_libc_unless_own(&mut text, "clock_gettime", "i32 @clock_gettime(i32, ptr)");
     declare_libc_unless_own(&mut text, "recv", "i64 @recv(i32, ptr, i64, i32)");
     declare_libc_unless_own(&mut text, "send", "i64 @send(i32, ptr, i64, i32)");
     declare_libc_unless_own(&mut text, "fcntl", "i32 @fcntl(i32, i32, ...)");

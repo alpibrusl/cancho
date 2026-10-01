@@ -359,4 +359,23 @@ impl<'a> FuncEmitter<'a> {
         ));
         Ok(vec![LValue::Reg(ok)])
     }
+
+    /// `clock_ms(&Clock)` (`docs/native-sockets.md` §5): `CLOCK_MONOTONIC`
+    /// as milliseconds (clock id 1 on Linux, 6 on Darwin).
+    pub(crate) fn clock_ms(&mut self) -> Result<Vec<LValue>, String> {
+        let ts = self.fresh();
+        self.hoist(format!("  {ts} = alloca i8, i64 16\n"));
+        let id = if self.is_darwin() { 6 } else { 1 };
+        let ignored = self.fresh();
+        self.out.push_str(&format!("  {ignored} = call i32 @clock_gettime(i32 {id}, ptr {ts})\n"));
+        let seconds = self.load_field(&ts, 0, "i64");
+        let nanos = self.load_field(&ts, 8, "i64");
+        let millis = self.fresh();
+        self.out.push_str(&format!("  {millis} = mul i64 {seconds}, 1000\n"));
+        let rest = self.fresh();
+        self.out.push_str(&format!("  {rest} = udiv i64 {nanos}, 1000000\n"));
+        let total = self.fresh();
+        self.out.push_str(&format!("  {total} = add i64 {millis}, {rest}\n"));
+        Ok(vec![LValue::Reg(total)])
+    }
 }

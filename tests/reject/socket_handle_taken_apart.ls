@@ -11,12 +11,13 @@ fn take(c: Conn) -> [] int {
 }
 
 fn main(world: World) -> [] int {
-    let Split { io, ffi, fs, heap, args, net } = split(world);
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
     release(io);
     release(ffi);
     release(fs);
     release(heap);
     release(args);
+    release(clock);
     release(net);
     return 0;
 }

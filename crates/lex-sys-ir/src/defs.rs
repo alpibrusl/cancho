@@ -245,6 +245,7 @@ pub fn leaf_free(ty: &Type) -> bool {
             | PRELUDE_HEAP
             | PRELUDE_ARGS
             | PRELUDE_NET
+            | PRELUDE_CLOCK
     ))
 }
 
@@ -276,6 +277,8 @@ pub(crate) fn is_capability(def: DefId) -> bool {
             | PRELUDE_ARGS
             | PRELUDE_SPLIT
             | PRELUDE_SPLIT_NET
+            | PRELUDE_SPLIT_CLOCK
+            | PRELUDE_CLOCK
             | PRELUDE_NET
             // §8.2 again, and more sharply: a program that could write
             // `File { }` would be conjuring a descriptor, which is worse
@@ -304,6 +307,7 @@ pub(crate) fn released_only(def: DefId) -> bool {
             | PRELUDE_HEAP
             | PRELUDE_ARGS
             | PRELUDE_NET
+            | PRELUDE_CLOCK
     )
 }
 
@@ -390,6 +394,9 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
         // `docs/native-sockets.md` §4: observing handles already held, so
         // one plain label with nothing to narrow.
         PRELUDE_POLLER => Effects::plain(["poll"]),
+        // `docs/native-sockets.md` §5: reading the time is an effect, and
+        // owning the clock discharges it.
+        PRELUDE_CLOCK => Effects::plain(["clock"]),
         // `docs/arguments.md` §2: one plain label. There is one command
         // line and no part of it to name, so nothing to narrow.
         PRELUDE_ARGS => Effects::plain(["args"]),
@@ -410,6 +417,7 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
                 "conn_read",
                 "conn_write",
                 "poll",
+                "clock",
             ]);
             // `docs/net.md` §4.1, edition 2 only: `net_out` and `net_in`
             // are two more labels the root discharges the unnarrowed way
@@ -526,6 +534,9 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     let dialed = symbol("Dialed");
     let poller = symbol("Poller");
     let polling = symbol("Polling");
+    let clock = symbol("Clock");
+    let clock_field = symbol("clock");
+    let split_clock = symbol("Split");
     let again_arm = symbol("Again");
     let data_arm = symbol("Data");
     let wrote_arm = symbol("Wrote");
@@ -579,6 +590,10 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     let dialed_def = unifier.declare("Dialed");
     let poller_def = unifier.declare("Poller");
     let polling_def = unifier.declare("Polling");
+    // `PRELUDE_CLOCK` and `PRELUDE_SPLIT_CLOCK`: a third `Split`, for the
+    // same reason edition 2 got a second (`editions.md` §7).
+    let clock_def = unifier.declare("Clock");
+    let split_clock_def = unifier.declare("Split");
 
     vec![
         TypeDef {
@@ -985,6 +1000,41 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
             kind: DefKind::Enum(vec![
                 (ok_arm, vec![Type::Named(poller_def, Vec::new())]),
                 (failed_arm, vec![Type::Int]),
+            ]),
+            span,
+            since: 5,
+        },
+        // `docs/native-sockets.md` §5: the clock, a capability like `Io` --
+        // authority with nothing behind it, so zero-sized.
+        TypeDef {
+            name: clock,
+            def: clock_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: Some(Mode::Res),
+            kind: DefKind::Struct(Vec::new()),
+            span,
+            since: 5,
+        },
+        // Edition 5's `Split`: edition 2's six fields and `clock`.
+        TypeDef {
+            name: split_clock,
+            def: split_clock_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: None,
+            kind: DefKind::Struct(vec![
+                (io_field, Type::Named(io_def, Vec::new())),
+                (ffi_field, Type::Named(ffi_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+                (fs_field, Type::Named(fs_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+                (heap_field, Type::Named(heap_def, Vec::new())),
+                (args_field, Type::Named(args_def, Vec::new())),
+                (net_field, Type::Named(net_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+                (clock_field, Type::Named(clock_def, Vec::new())),
             ]),
             span,
             since: 5,

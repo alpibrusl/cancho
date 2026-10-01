@@ -63,11 +63,15 @@ pub const PRELUDE_DIALED: usize = 20;
 /// watching (`epoll`/`kqueue`), and what creating one answers.
 pub const PRELUDE_POLLER: usize = 21;
 pub const PRELUDE_POLLING: usize = 22;
+/// `docs/native-sockets.md` §5, edition 5: the clock capability (leaf-free,
+/// like `Io`) and the `Split` that carries it as its seventh field.
+pub const PRELUDE_CLOCK: usize = 23;
+pub const PRELUDE_SPLIT_CLOCK: usize = 24;
 
 /// How many types the prelude declares. Written once, because a builtin's
 /// signature indexes this table and a stale slice is a panic rather than a
 /// diagnostic.
-pub const PRELUDE_COUNT: usize = 23;
+pub const PRELUDE_COUNT: usize = 25;
 
 /// The library an unnarrowed `Ffi` names: none of them yet.
 ///

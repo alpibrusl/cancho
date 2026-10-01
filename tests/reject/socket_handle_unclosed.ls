@@ -6,12 +6,13 @@
 
 edition 5;
 fn main(world: World) -> [] int {
-    let Split { io, ffi, fs, heap, args, net } = split(world);
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
     release(io);
     release(ffi);
     release(fs);
     release(heap);
     release(args);
+    release(clock);
     let bound = narrow(net, "8080");
     borrow bound as &n in {
         match tcp_listen(n, 8080, 8, 0) {

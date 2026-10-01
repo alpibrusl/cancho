@@ -331,6 +331,10 @@ pub enum Builtin {
     PollerWait,
     /// `poller_close(Poller) -> [] int`.
     PollerClose,
+    /// `clock_ms(&Clock) -> [clock] int` -- `docs/native-sockets.md` §5,
+    /// edition 5 only: monotonic milliseconds from an arbitrary origin, so
+    /// an idle timeout survives the wall clock being set.
+    ClockMs,
     /// `tcp_accept(&!Listener) -> [conn_accept] Accepted`.
     TcpAccept,
     /// `conn_read(&!Conn, &![byte]) -> [conn_read] Received`.
@@ -440,6 +444,7 @@ impl Builtin {
         Builtin::PollerRemove,
         Builtin::PollerWait,
         Builtin::PollerClose,
+        Builtin::ClockMs,
         Builtin::ConnRead,
         Builtin::ConnWrite,
         Builtin::ConnNonblocking,
@@ -498,6 +503,7 @@ impl Builtin {
             Builtin::PollerRemove => "poller_remove",
             Builtin::PollerWait => "poller_wait",
             Builtin::PollerClose => "poller_close",
+            Builtin::ClockMs => "clock_ms",
             Builtin::ConnRead => "conn_read",
             Builtin::ConnWrite => "conn_write",
             Builtin::ConnNonblocking => "conn_nonblocking",
@@ -543,6 +549,7 @@ impl Builtin {
             | Builtin::PollerRemove
             | Builtin::PollerWait
             | Builtin::PollerClose
+            | Builtin::ClockMs
             | Builtin::ConnRead
             | Builtin::ConnWrite
             | Builtin::ConnNonblocking
@@ -616,7 +623,10 @@ impl Builtin {
             | Builtin::PollerModify
             | Builtin::PollerRemove
             | Builtin::PollerWait => 2,
-            Builtin::TcpAccept | Builtin::ConnNonblocking | Builtin::ListenerNonblocking => 1,
+            Builtin::TcpAccept
+            | Builtin::ConnNonblocking
+            | Builtin::ListenerNonblocking
+            | Builtin::ClockMs => 1,
             _ => 0,
         }
     }
@@ -881,6 +891,14 @@ impl Builtin {
                 Type::Int,
             ),
             Builtin::PollerClose => (vec![named(PRELUDE_POLLER)], Type::Int),
+            Builtin::ClockMs => (
+                vec![Type::Ref {
+                    unique: false,
+                    region: Region::Param(0),
+                    inner: Box::new(named(PRELUDE_CLOCK)),
+                }],
+                Type::Int,
+            ),
             Builtin::ConnNonblocking => (
                 vec![Type::Ref {
                     unique: true,
@@ -954,6 +972,7 @@ impl Builtin {
             // bound at the call site.
             Builtin::TcpAccept => Effects::plain(["conn_accept"]),
             Builtin::ConnRead => Effects::plain(["conn_read"]),
+            Builtin::ClockMs => Effects::plain(["clock"]),
             Builtin::PollerAddListener
             | Builtin::PollerAddConn
             | Builtin::PollerModify

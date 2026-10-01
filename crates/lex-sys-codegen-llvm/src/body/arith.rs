@@ -91,6 +91,7 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::PollerRemove
                     | Builtin::PollerWait
                     | Builtin::PollerClose
+                    | Builtin::ClockMs
                     | Builtin::Release,
                 ) => Ok(LKind::I64),
                 Callee::Builtin(Builtin::IsNan | Builtin::ByteOf) => Ok(LKind::I8),

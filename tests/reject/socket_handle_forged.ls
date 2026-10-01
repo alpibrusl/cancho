@@ -8,12 +8,13 @@
 
 edition 5;
 fn main(world: World) -> [] int {
-    let Split { io, ffi, fs, heap, args, net } = split(world);
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
     release(io);
     release(ffi);
     release(fs);
     release(heap);
     release(args);
+    release(clock);
     release(net);
     let c = Conn { };
     conn_close(c);

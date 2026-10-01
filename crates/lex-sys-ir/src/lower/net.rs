@@ -29,7 +29,13 @@ impl<'a> FnLowering<'a> {
         let (value, found) = self.expr(*world)?;
         let expected = Type::Named(self.prelude()[PRELUDE_WORLD], Vec::new());
         self.expect_type(&expected, &found, world_span)?;
-        let split_index = if self.edition >= 2 { PRELUDE_SPLIT_NET } else { PRELUDE_SPLIT };
+        let split_index = if self.edition >= 5 {
+            PRELUDE_SPLIT_CLOCK
+        } else if self.edition >= 2 {
+            PRELUDE_SPLIT_NET
+        } else {
+            PRELUDE_SPLIT
+        };
         Ok((
             Expr::Call { callee: Callee::Builtin(Builtin::Split), args: vec![value] },
             Type::Named(self.prelude()[split_index], Vec::new()),

@@ -55,8 +55,8 @@ fn program(port: u16, body: &str) -> String {
         "edition 5;\n\
          {body}\n\
          fn main(world: World) -> [] int {{\n\
-             let Split {{ io, ffi, fs, heap, args, net }} = split(world);\n\
-             release(io); release(ffi); release(fs); release(heap); release(args);\n\
+             let Split {{ io, ffi, fs, heap, args, net, clock }} = split(world);\n\
+             release(io); release(ffi); release(fs); release(heap); release(args); release(clock);\n\
              let bound = narrow(net, \"{port}\");\n\
              let status = run(bound);\n\
              return status;\n\
@@ -163,8 +163,8 @@ fn a_listener_echoes_a_real_client_on_both_backends() {
 fn io_program(port: u16, source: &str) -> String {
     let main = r#"
 fn main(world: World) -> [] int {
-    let Split { io, ffi, fs, heap, args, net } = split(world);
-    release(ffi); release(fs); release(heap); release(args);
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi); release(fs); release(heap); release(args); release(clock);
     let bound = narrow(net, "PORT");
     return run(bound, io);
 }
@@ -683,8 +683,8 @@ fn a_socket_program_reports_its_port_and_no_ffi() {
 fn dial_program(port: u16, bound: &str, source: &str) -> String {
     let main = r#"
 fn main(world: World) -> [] int {
-    let Split { io, ffi, fs, heap, args, net } = split(world);
-    release(ffi); release(fs); release(heap); release(args);
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi); release(fs); release(heap); release(args); release(clock);
     let bound = narrow(net, "BOUND");
     return run(bound, io);
 }
@@ -1031,4 +1031,65 @@ fn a_poller_reports_readiness_by_token() {
         assert_eq!(status.code(), Some(0), "{backend}: score {:?}", status.code());
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+const CLOCK: &str = r#"
+edition 5;
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(net);
+    var status = 1;
+    match poller_new() {
+        Polling::Ok(p) => {
+            var poller = p;
+            borrow mut poller as &!ph in {
+                borrow clock as &c in {
+                    region a {
+                        var ev = alloc_slice[a](4, 0);
+                        let before = clock_ms(c);
+                        // An empty set: the wait is a sleep, and the clock says how long.
+                        poller_wait(ph, ev, 1100);
+                        let after = clock_ms(c);
+                        let slept = after - before;
+                        // Milliseconds, monotonic: a wait longer than a second always
+                        // crosses a second boundary, which is where seconds and
+                        // milliseconds mixed up would show as a negative span.
+                        if slept >= 1000 && slept < 3000 && before > 0 { status = 0; }
+                    }
+                }
+            }
+            poller_close(poller);
+        }
+        Polling::Failed(e) => { }
+    }
+    release(clock);
+    return status;
+}
+"#;
+
+/// `clock_ms` reads a monotonic clock in **milliseconds**: a 1.1 s wait on
+/// an empty `Poller` is seen as 1000-3000 -- so the unit is right, the clock
+/// moves, and the seconds and nanoseconds are combined across a second
+/// boundary -- on both backends.
+#[test]
+fn the_clock_measures_a_wait_in_milliseconds() {
+    for backend in BACKENDS {
+        let dir = scratch(&format!("sockets-clock-{backend}"));
+        let exe = build(&dir, "clock", CLOCK, backend);
+        let run = Command::new(&exe).output().expect("the program runs");
+        assert_eq!(run.status.code(), Some(0), "{backend}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// Reading the time is an effect, reported: `clock` is a path-free label
+/// and a program that reads it says so.
+#[test]
+fn a_program_that_reads_the_clock_reports_it() {
+    let json = authority_json(CLOCK, "sockets-clock-authority");
+    assert!(
+        json.contains("{ \"name\": \"clock\", \"argument\": null, \"bounded\": true }"),
+        "{json}"
+    );
+    assert!(json.contains("\"poll\""), "the poller is reported too:\n{json}");
 }

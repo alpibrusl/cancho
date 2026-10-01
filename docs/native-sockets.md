@@ -318,8 +318,7 @@ Built: `Listener`, `Conn`, the five answers (`Listening`, `Accepted`,
 `conn_close`, `listener_close`, all edition 5, on both backends. **Slice 2 added `tcp_connect`** (`Dialed`): `connect`'s bound check and
 `getaddrinfo` walk, answering a `Conn`. `Failed(-1)` is a name that did not
 resolve -- no `errno` is negative -- and any positive value is the kernel's.
-**Slice 3 added the `Poller`** (§4, below). **Not yet built:** `Clock`
-(slice 4), `conn_raw_fd`. Nine conformance tests over real sockets run every program on both
+**Slice 3 added the `Poller`** (§4, below). **Slice 4 added the `Clock`** (§10.2). **Not yet built:** `conn_raw_fd`. Nine conformance tests over real sockets run every program on both
 backends (`conformance/sockets.rs`), plus six corpus fixtures that pin the
 refusals (a forged, dismantled or leaked handle; an undeclared
 `conn_read`; the builtins at edition 4) and the edition-1 name freedom.
@@ -386,3 +385,18 @@ owning a `Poller` or the `Net` that made what it watches.
 - Closing a handle removes it from the set (both kernels do), so a closed
   `Conn` cannot leave a stale entry for a new connection with the same
   descriptor number to inherit.
+
+### 10.2 The `Clock` as built
+
+`Clock` is a leaf-free capability like `Io`, carried by a **third `Split`**
+(`PRELUDE_SPLIT_CLOCK`): an edition-5 `split(world)` answers seven fields,
+`io, ffi, fs, heap, args, net, clock`. That broke every edition-5 file that
+destructured six -- there were none outside this document's own tests, which
+is the argument for adding it now rather than later. `clock_ms(&Clock) ->
+int` is `CLOCK_MONOTONIC` in milliseconds (clock id 1 on Linux, 6 on Darwin)
+and performs the path-free label `clock`; owning a `Clock` discharges it.
+The test measures a **1.1 s** wait on an empty `Poller` and asserts it reads
+as 1000-3000. It was 120 ms first, and the mutation that multiplied seconds
+by 1 instead of 1000 survived it: the sub-second part alone measures a short
+wait correctly, and the bug shows only when the span crosses a second
+boundary, which a wait over a second always does.

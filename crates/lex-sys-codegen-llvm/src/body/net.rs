@@ -47,7 +47,7 @@ impl<'a> FuncEmitter<'a> {
     /// Load any fixed-width field at `base + offset` -- `store_field`'s
     /// mirror, needed to read `ai_addr`/`ai_addrlen` back out of the
     /// `struct addrinfo` `getaddrinfo` filled in.
-    fn load_field(&mut self, base: &str, offset: i32, ty: &str) -> String {
+    pub(crate) fn load_field(&mut self, base: &str, offset: i32, ty: &str) -> String {
         let addr = self.fresh();
         self.out.push_str(&format!("  {addr} = getelementptr i8, ptr {base}, i64 {offset}\n"));
         let reg = self.fresh();
