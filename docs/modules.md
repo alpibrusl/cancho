@@ -75,6 +75,24 @@ the file system back into the language: a build that reorganises
 directories would rename modules, and a hash that does not depend on
 location would sit inside a name that does.
 
+### 3.1.1 Corrected: a name is unique per module, and the object file now agrees
+
+This section said a name is unique *within* a module. The type checker held
+to that; the backends did not. Every function was emitted as `lexs_<name>`
+and every `static` as `lexs_static_<name>`, so two modules each declaring
+`pub fn drop` -- `std.buffer`, `std.vec` and `std.json` all do -- were
+accepted by the checker and refused by the *assembler* (`invalid
+redefinition of function 'lexs_drop'`). Worse, two modules each declaring
+`static table` were not refused at all: the lowering looked a static up
+among every module's and took the first, so `a.first() * 10 + b.first()`
+answered **55** for tables holding 5 and 7. Both are fixed: a symbol is
+`module.name` for any function or static outside the root module (`.` is
+legal in a symbol and cannot appear in an identifier), the root keeps its
+bare names so `main` is still `main`, and a static is looked up in its own
+module. Both backends; `conformance/modules.rs` has the two programs.
+Found by writing `std.json`, which was the first module to need a `drop`
+alongside `std.buffer`'s.
+
 ### 3.2 Two files may declare the same module
 
 They share its namespace, exactly as two files in the root share the root

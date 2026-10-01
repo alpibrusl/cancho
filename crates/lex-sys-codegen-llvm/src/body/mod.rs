@@ -193,7 +193,7 @@ impl<'a> FuncEmitter<'a> {
 
         self.out.push_str(&format!(
             "define {ret_ty} @lexs_{}({}) {{\n",
-            self.func.name,
+            self.func.symbol(),
             params.join(", ")
         ));
         self.out.push_str("entry:\n");

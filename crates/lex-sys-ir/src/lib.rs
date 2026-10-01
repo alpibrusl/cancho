@@ -729,6 +729,11 @@ fn lower_inner(ast: &Ast, rest: &mut Vec<Diagnostic>) -> Result<Program, Diagnos
         let mut body = static_bodies[index].clone();
         fold::remap_static_refs_body(&mut body.body, &remap);
         let name = ast.name_of(def.name).to_owned();
+        // The symbol the data goes by in the object file: unique per module,
+        // like a function's (`Func::symbol`). Two modules may each declare a
+        // `static table`, and under the bare name they were one table.
+        let module = function::module_path(ast, ast.module_of(ast::ItemId(item as u32)));
+        let symbol = if module.is_empty() { name.clone() } else { format!("{module}.{name}") };
         let values = fold::evaluate_static(&program, &body, &evaluated).map_err(|why| {
             Diagnostic::new(
                 Rule::ConstantTraps,
@@ -740,7 +745,7 @@ fn lower_inner(ast: &Ast, rest: &mut Vec<Diagnostic>) -> Result<Program, Diagnos
             unreachable!("a static's referent is checked to be a slice when it is collected");
         };
         evaluated.push(values.clone());
-        program.statics.push(StaticValue { name, element: (**element).clone(), values });
+        program.statics.push(StaticValue { name: symbol, element: (**element).clone(), values });
     }
     Ok(program)
 }

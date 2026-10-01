@@ -644,6 +644,16 @@ pub struct Arm {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Func {
     pub name: String,
+    /// The module that declares it, as a dotted path (`std.json`), empty for
+    /// the root module (`docs/modules.md` §3).
+    ///
+    /// A name is only unique *within* a module, so this is half of what
+    /// identifies a function to a linker: two modules may each declare a
+    /// `pub fn drop`, and `std.buffer` and `std.vec` and `std.json` do.
+    /// Before this field the backends named every function `lexs_<name>`,
+    /// the type checker accepted the program, and the *assembler* refused
+    /// it with `invalid redefinition of function 'lexs_drop'`.
+    pub module: String,
     /// The declared row, checked exact against what the body performs.
     pub effects: Effects,
     /// What the body actually performs, **before** ownership discharges
@@ -678,6 +688,19 @@ pub struct Func {
 }
 
 impl Func {
+    /// The name a backend gives the function in the object file, without
+    /// the `lexs_` every backend prefixes: the bare name for a root-module
+    /// function (so `main` stays `main`), and `module.name` for any other --
+    /// `.` is legal in an object-file symbol, and cannot appear in a
+    /// lex-sys identifier, so the two cannot collide.
+    pub fn symbol(&self) -> String {
+        if self.module.is_empty() {
+            self.name.clone()
+        } else {
+            format!("{}.{}", self.module, self.name)
+        }
+    }
+
     pub fn n_slots(&self) -> u32 {
         self.slots.len() as u32
     }

@@ -325,7 +325,7 @@ impl<'a> FuncEmitter<'a> {
             // the identical way.
             Expr::FnValue(id) => {
                 let target = self.program.func(*id);
-                Ok(vec![LValue::Reg(format!("@lexs_{}", target.name))])
+                Ok(vec![LValue::Reg(format!("@lexs_{}", target.symbol()))])
             }
             // A call through a value: `params`/`ret` build the callee's
             // signature the same way `emit.rs`'s own declare loop builds
@@ -793,7 +793,7 @@ impl<'a> FuncEmitter<'a> {
                     .map(|(kind, value)| format!("{} {}", kind.llvm(), operand(value)))
                     .collect();
                 let ret_kinds = leaves_of(&target.ret, self.program)?;
-                let symbol = format!("lexs_{}", target.name);
+                let symbol = format!("lexs_{}", target.symbol());
                 Ok(self.emit_call(&symbol, &printed, &ret_kinds))
             }
             Callee::Builtin(other) => Err(format!(

@@ -480,7 +480,7 @@ pub(crate) fn emit_module(
     text.push_str("  store ptr %argv, ptr @lexs_argv\n");
     match ret.first() {
         Some(LKind::I64) => {
-            text.push_str(&format!("  %r = call i64 @lexs_{entry}()\n"));
+            text.push_str(&format!("  %r = call i64 @lexs_{}()\n", entry_func.symbol()));
             text.push_str("  %status = trunc i64 %r to i32\n");
             text.push_str("  ret i32 %status\n");
         }

@@ -432,3 +432,98 @@ fn a_name_is_declared_once_per_program_not_per_file() {
 
     let _ = std::fs::remove_dir_all(scratch("many-files-duplicate"));
 }
+
+#[test]
+fn two_modules_may_each_declare_a_function_of_the_same_name() {
+    // The type checker has always accepted it -- a name is unique per module
+    // (`docs/modules.md` §3) -- and the backends named every function
+    // `lexs_<name>`, so the *assembler* refused the program with `invalid
+    // redefinition of function`. `std.buffer`, `std.vec` and `std.json` each
+    // have a `drop`, which is how it was found: a program that used two of
+    // them did not build. Symbols are `module.name` now. Both backends.
+    const FIRST: &str = "module first;\n\
+                         pub fn drop(n: int) -> [] int { return n + 1; }\n";
+    const SECOND: &str = "module second;\n\
+                          pub fn drop(n: int) -> [] int { return n * 10; }\n";
+    const MAIN: &str = "import first;\n\
+                        import second;\n\
+                        fn drop(n: int) -> [] int { return n - 1; }\n\
+                        fn main(world: World) -> [] int {\n\
+                            let Split { io, ffi, fs, heap, args } = split(world);\n\
+                            release(args); release(ffi); release(fs); release(heap); release(io);\n\
+                            return first.drop(1) * 100 + second.drop(2) + drop(3);\n\
+                        }\n";
+    for backend in ["llvm", "cranelift"] {
+        let dir = scratch(&format!("same-name-{backend}"));
+        let mut paths = Vec::new();
+        for (name, text) in [("main.ls", MAIN), ("first.ls", FIRST), ("second.ls", SECOND)] {
+            let path = dir.join(name);
+            std::fs::write(&path, text).expect("a writable fixture");
+            paths.push(path);
+        }
+        let exe = dir.join("program");
+        let build = Command::new(BIN)
+            .args(["build", "--backend", backend])
+            .args(&paths)
+            .arg("-o")
+            .arg(&exe)
+            .output()
+            .expect("the compiler runs");
+        assert!(build.status.success(), "{backend}: {}", String::from_utf8_lossy(&build.stderr));
+        let run = Command::new(&exe).output().expect("the program runs");
+        // 2 * 100 + 20 + 2
+        assert_eq!(run.status.code(), Some(222), "{backend}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[test]
+fn two_modules_may_each_declare_a_static_of_the_same_name() {
+    // A `static` is scoped to its module like every other name
+    // (`docs/modules.md` §3), but the lowering looked one up among every
+    // module's and took the first: this program answered 55, not 57, and
+    // nothing refused it. Found while fixing the function-symbol collision
+    // above, by writing the same test for the other kind of global.
+    const A: &str = "module a;\n\
+                     static table: [int] {\n\
+                         let t = alloc_slice[static](2, 0);\n\
+                         t[0] = 5;\n\
+                         return t;\n\
+                     }\n\
+                     pub fn first() -> [] int { return table[0]; }\n";
+    const B: &str = "module b;\n\
+                     static table: [int] {\n\
+                         let t = alloc_slice[static](2, 0);\n\
+                         t[0] = 7;\n\
+                         return t;\n\
+                     }\n\
+                     pub fn first() -> [] int { return table[0]; }\n";
+    const MAIN: &str = "import a;\n\
+                        import b;\n\
+                        fn main(world: World) -> [] int {\n\
+                            let Split { io, ffi, fs, heap, args } = split(world);\n\
+                            release(args); release(ffi); release(fs); release(heap); release(io);\n\
+                            return a.first() * 10 + b.first();\n\
+                        }\n";
+    for backend in ["llvm", "cranelift"] {
+        let dir = scratch(&format!("same-static-{backend}"));
+        let mut paths = Vec::new();
+        for (name, text) in [("main.ls", MAIN), ("a.ls", A), ("b.ls", B)] {
+            let path = dir.join(name);
+            std::fs::write(&path, text).expect("a writable fixture");
+            paths.push(path);
+        }
+        let exe = dir.join("program");
+        let build = Command::new(BIN)
+            .args(["build", "--backend", backend])
+            .args(&paths)
+            .arg("-o")
+            .arg(&exe)
+            .output()
+            .expect("the compiler runs");
+        assert!(build.status.success(), "{backend}: {}", String::from_utf8_lossy(&build.stderr));
+        let run = Command::new(&exe).output().expect("the program runs");
+        assert_eq!(run.status.code(), Some(57), "{backend}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

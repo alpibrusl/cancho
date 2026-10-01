@@ -77,7 +77,7 @@ impl<'a> Emitter<'a> {
             }
             let id = self
                 .module
-                .declare_function(&format!("{PREFIX}{}", func.name), Linkage::Local, &sig)
+                .declare_function(&format!("{PREFIX}{}", func.symbol()), Linkage::Local, &sig)
                 .map_err(|e| CodegenError::plain(e.to_string()))?;
             declared.push(id);
         }

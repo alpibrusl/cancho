@@ -282,6 +282,7 @@ pub(crate) fn lower_static(
 
     Ok(Func {
         name: ast.name_of(decl.name).to_owned(),
+        module: module_path(ast, module),
         effects: Effects::pure(),
         performs: Effects::pure(),
         n_params: 0,
@@ -517,6 +518,7 @@ pub(crate) fn lower_function(
 
     Ok(Func {
         name: instance_name(ast.name_of(decl.name), args, unifier),
+        module: module_path(ast, signature.module),
         effects: signature.effects.clone(),
         performs,
         n_params: decl.params.len() as u32,
@@ -936,4 +938,11 @@ pub(crate) fn resolve_type_at(
         ));
     }
     Ok(ty)
+}
+
+/// A module's path as text: `std.json`, or empty for the root.
+pub(crate) fn module_path(ast: &ast::Ast, module: u32) -> String {
+    let path: Vec<&str> =
+        ast.module(module).path.iter().map(|segment| ast.name_of(*segment)).collect();
+    path.join(".")
 }

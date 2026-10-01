@@ -50,6 +50,7 @@ mod floats;
 mod formatting;
 mod identity;
 mod io;
+mod json;
 mod mathfn;
 mod memory;
 mod modules;
