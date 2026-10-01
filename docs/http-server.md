@@ -1,6 +1,6 @@
 # `http.server`: the server loop as a package
 
-> **Status: design, then built (§7).** `examples/api/api.ls` carried the whole
+> **Status: built (§7).** `examples/api/api.ls` carried the whole
 > loop -- accept, read, parse, frame, pipeline, back-pressure, idle sweep --
 > with the application's routes inside it. A second server would copy 600
 > lines. This extracts the loop; `docs/server.md` stays the account of what the
@@ -91,3 +91,52 @@ The behaviour. Every test in `conformance/api.rs` runs against the migrated
 
 Streaming bodies, `Expect: 100-continue`, TLS and more than one core are
 `server.md` §6's list and remain the list. Handlers see a request whole.
+
+## 7. Built
+
+`packages/http-server/server.ls` (module `http.server`, published with `vcs
+publish --std` into `packages/http-server/.lex-sys-vcs`), and
+`examples/api/api.ls` rewritten onto it: the example is its routes, its
+handlers and a 60-line `run` loop, and consumes the package through
+`examples/api/server.lock` like every other package consumer.
+
+**The tests.** All 21 `conformance/api.rs` tests pass unchanged against the
+migrated server -- keep-alive, pipelining, split requests, slow readers,
+vanishing clients, chunked and oversized bodies, refusals, idle timeouts. The
+contract's one clause `api` does not follow (`next` until `-1` before the next
+`wait`) has its own test over `tests/programs/server_one_per_round.ls`: four
+connections, six pipelined requests each, one `next` per `wait`. It **found a
+bug the first time it ran**: the connection `next` was part-way through was
+finished (its input compacted) but never queued again, and no input would
+arrive to wake it, so five of its six requests were never answered. `wait` now
+re-queues it when requests remain buffered. Without that fix the test fails;
+with the unvisited-connections shift broken it fails too (both checked by
+mutation). A second test holds the checked-in store to the checked-in source,
+so an edit that is not re-published is red.
+
+**Throughput.** Same machine, same session, the old and new binaries
+alternated, server pinned to core 0, `kload` 2x16 connections on cores 2-3:
+
+| | requests a second (three 5 s rounds) |
+|---|---|
+| before (loop inside `api.ls`) | 71,446 70,979 73,180 / 73,926 70,432 71,683 |
+| after (`http.server`) | 81,516 78,185 76,806 / 76,566 76,640 76,755 |
+
+It is not slower; it measured about 7% faster. Why was not investigated, and
+the two series overlap in one round, so the claim is "no regression", not
+"a speed-up".
+
+**What it cost the application.** The `borrow` nesting moved. Reading a
+request is a `borrow srv as &sr` around the handler, sending is a
+`borrow mut srv as &!sw` around `respond`, and the answer lives in a buffer of
+the application's own between them. The application's variables (the router,
+the parameter slots, the output buffer) are plain locals, which is what a
+callback could not have given it.
+
+**Left over.** `wait` takes and returns the `Server` by value, because
+`std.conns.put` consumes the table to grow it. A `put` that works in place on a
+table made with its final capacity would make `wait` take `&!s Server` like the
+rest; it is a change to `std.conns` and nothing here asked for it. The package
+publishes every declaration in its file, helpers included (`vcs publish`
+cannot yet publish only the `pub` ones), so the lock pins the interface and
+the rest is reachable but not depended on.

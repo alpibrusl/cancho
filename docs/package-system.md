@@ -560,6 +560,8 @@ it by re-declaring the few functions it needed (`net.sockets`'s
   without it is refused rather than compiled against a library that is
   not there.
 
+**The first real consumer is `http.server`** (`packages/http-server/`, `http-server.md`): 730 lines that import `std.http`, `std.json`, `std.buffer` and `std.conns`, published with `--std`, locked and fetched by `examples/api` like any other package.
+
 **No pin on `std` itself.** The store records no hash of the library it
 was published against. A package function's body hash includes the
 *signature* hash of each callee it resolved (`identify`), so a std
