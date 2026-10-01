@@ -114,7 +114,7 @@ lex-sys print <file.ls>               # the unit, rendered in canonical form
 lex-sys agent-guidelines              # AGENTS.md, from inside the binary
 lex-sys introspect [--output json]    # the full command tree, as data (docs/agent-cli.md)
 lex-sys skill [--output json] [<out-file>]  # a generated SKILL.md, agentskills.io
-lex-sys vcs publish [--store <dir>] <file.ls>  # log every declaration as an operation
+lex-sys vcs publish [--store <dir>] [--std] <file.ls>  # log every declaration as an operation
 lex-sys vcs log     [--store <dir>]            # what a store already has
 lex-sys vcs resolve [--lock <file>] <store-dir>  # re-check every pin under today's compiler
 lex-sys vcs lock --store <dir> -o <file> <name>...  # pin a name to a dependency's hash
@@ -170,3 +170,8 @@ quietly edited — the roadmap says which.
 [EUPL-1.2](LICENSE), matching the rest of the ecosystem. See `LICENSE`
 for the notice and where to obtain the full text in any of the 23 EU
 languages.
+
+Every package under `packages/` carries its own copy of the same `LICENSE`, so a
+package published or extracted on its own is still EUPL-1.2. The copy is a
+file beside the source, not a line in it: a comment in a `.ls` file would change
+its `source_hash` and so every lock that pins it.

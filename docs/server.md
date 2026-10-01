@@ -1,9 +1,10 @@
 # `examples/api`: a JSON API server, and what it costs
 
-> **Status: built, and migrated (§8).** `examples/api/api.ls` over `std.http`,
+> **Status: built, migrated (§8), and the loop extracted into a package
+> ([`http-server.md`](http-server.md)).** `examples/api/api.ls` over `std.http`,
 > `std.route`, `std.json`, `std.conns` and the native socket builtins of
 > [`native-sockets.md`](native-sockets.md) -- no `Ffi`, no `extern fn`;
-> `conformance/api.rs` (17 tests over real sockets); the load generator and the
+> `conformance/api.rs` (21 tests over real sockets); the load generator and the
 > references behind §5's figures are in `benches/server/`. One thread,
 > keep-alive, pipelining, a JSON API with four routes. **§§1-7 describe the
 > first version, a `poll(2)` loop over `Ffi("libc")`; §8 says what replaced it

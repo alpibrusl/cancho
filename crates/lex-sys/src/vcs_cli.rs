@@ -46,6 +46,29 @@ fn parse_texts(
     Ok((ast, map))
 }
 
+/// Whether any module of `ast` imports from `std` (`docs/package-system.md`
+/// §7). Read off the parsed imports, never off the source text, so a
+/// comment or a string saying `import std.json;` does not count.
+fn imports_std(ast: &lex_sys_syntax::Ast) -> bool {
+    ast.modules
+        .iter()
+        .flat_map(|m| &m.imports)
+        .any(|i| i.path.first().is_some_and(|s| ast.name_of(*s) == "std"))
+}
+
+/// A module index as the dotted path `FunctionId::module` uses.
+fn module_path(ast: &lex_sys_syntax::Ast, module: u32) -> String {
+    let path: Vec<&str> = ast.module(module).path.iter().map(|s| ast.name_of(*s)).collect();
+    path.join(".")
+}
+
+/// The library as named texts, for a package that imports it. The same
+/// bytes `--std` hands `build`, so a store's identities and a consumer's
+/// agree on what `std.json` is.
+fn std_texts() -> Vec<(String, String)> {
+    crate::STD.iter().map(|(n, t)| ((*n).to_owned(), (*t).to_owned())).collect()
+}
+
 /// `docs/editions.md`: only edition 1 exists today, so this is not a
 /// simplification pending a real one — it is the one plateau
 /// `docs/vcs.md` §7 already measured. Revisit when a second edition does.
@@ -74,12 +97,16 @@ struct VcsInvocation {
     /// `cmd_publish` reads this; every other caller of
     /// [`parse_vcs_args`] just carries an empty one.
     requires: Vec<String>,
+    /// `--std`: the package may import the library (`docs/package-system.md`
+    /// §7). Only `publish` reads it.
+    with_std: bool,
 }
 
 fn parse_vcs_args(args: &[String]) -> Result<VcsInvocation, Failure> {
     let mut store = PathBuf::from(DEFAULT_STORE);
     let mut inputs = Vec::new();
     let mut requires = Vec::new();
+    let mut with_std = false;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -93,13 +120,14 @@ fn parse_vcs_args(args: &[String]) -> Result<VcsInvocation, Failure> {
                     .ok_or_else(|| usage("`--requires` needs `<lock-file>:<dep-store>`"))?;
                 requires.push(value.clone());
             }
+            "--std" => with_std = true,
             other if other.starts_with('-') => {
                 return Err(usage(format!("unknown option `{other}`")));
             }
             other => inputs.push(PathBuf::from(other)),
         }
     }
-    Ok(VcsInvocation { store, inputs, requires })
+    Ok(VcsInvocation { store, inputs, requires, with_std })
 }
 
 /// The declared row, formatted exactly the way `lex-sys authority` already
@@ -116,8 +144,8 @@ fn effect_strings(effects: &Effects) -> BTreeSet<String> {
         .collect()
 }
 
-fn find_func<'a>(funcs: &'a [Func], name: &str) -> Option<&'a Func> {
-    funcs.iter().find(|f| f.name == name)
+fn find_func<'a>(funcs: &'a [Func], module: &str, name: &str) -> Option<&'a Func> {
+    funcs.iter().find(|f| f.name == name && f.module == module)
 }
 
 /// `--requires <lock-file>:<dep-store>`, split on the first `:` -- a
@@ -173,7 +201,7 @@ fn relative_from(base: &Path, target: &Path) -> PathBuf {
 }
 
 fn cmd_publish(args: &[String]) -> Result<ExitCode, Failure> {
-    let VcsInvocation { store, inputs, requires } = parse_vcs_args(args)?;
+    let VcsInvocation { store, inputs, requires, with_std } = parse_vcs_args(args)?;
     if inputs.is_empty() {
         return Err(usage("no input file given"));
     }
@@ -210,8 +238,12 @@ fn cmd_publish(args: &[String]) -> Result<ExitCode, Failure> {
     // kept, so a dependency's own declarations are never republished
     // under this store.
     let (own_ast, _) = parse_texts(&[(file_name.clone(), source.clone())]).map_err(refused)?;
-    let own_names: BTreeSet<String> =
-        identify(&own_ast).functions.iter().map(|f| f.name.clone()).collect();
+    // Keyed by (module, name): with `std` merged in, a package's own `get`
+    // and `std.map`'s are two functions, and a name alone would republish
+    // the library under the package's store.
+    let own_names: BTreeSet<(String, String)> =
+        identify(&own_ast).functions.iter().map(|f| (f.module.clone(), f.name.clone())).collect();
+    let own_uses_std = imports_std(&own_ast);
 
     let mut requirements = Vec::with_capacity(requires.len());
     let mut dependency_context: BTreeMap<String, String> = BTreeMap::new();
@@ -231,6 +263,25 @@ fn cmd_publish(args: &[String]) -> Result<ExitCode, Failure> {
     let mut named = vec![(file_name.clone(), source.clone())];
     for (hash, text) in &dependency_context {
         named.push((format!("{hash}.ls"), text.clone()));
+    }
+    // A package needs the library if it imports it or if anything it
+    // requires does (`docs/package-system.md` §7). Refuse rather than
+    // add it silently: `--std` is the same consent `build` asks for, and a
+    // package that quietly widened its own dependencies would be one a
+    // consumer cannot read off its command line.
+    let needs_std = match parse_texts(&named) {
+        Ok((ast, _)) => imports_std(&ast),
+        Err(message) => return Err(refused(message)),
+    };
+    if needs_std && !with_std {
+        return Err(refused(format!(
+            "`{file_name}` imports `std` (directly or through a `--requires` package) but \
+             `vcs publish` was not given `--std`; pass `--std` to publish against the library \
+             (docs/package-system.md §7)"
+        )));
+    }
+    if with_std {
+        named.extend(std_texts());
     }
     let (merged_ast, merged_map) = parse_texts(&named).map_err(refused)?;
     let program = lex_sys_ir::lower_all(&merged_ast).map_err(|diagnostics| {
@@ -259,7 +310,7 @@ fn cmd_publish(args: &[String]) -> Result<ExitCode, Failure> {
         // A dependency's own declarations are in `identities` too, now
         // that it is computed from the merged AST -- never republished
         // here; they already live in their own store.
-        if !own_names.contains(&func.name) {
+        if !own_names.contains(&(func.module.clone(), func.name.clone())) {
             continue;
         }
         let sig_id = func.sig.to_hex();
@@ -290,12 +341,12 @@ fn cmd_publish(args: &[String]) -> Result<ExitCode, Failure> {
         // identities, for the same reason), so its effects are read from
         // `program.externs` instead -- the row it declared, not one a
         // lowering pass computed.
-        let effects = match find_func(&program.funcs, &func.name) {
+        let effects = match find_func(&program.funcs, &func.module, &func.name) {
             Some(ir_func) => effect_strings(&ir_func.effects),
             None => program
                 .externs
                 .iter()
-                .find(|e| e.name == func.name)
+                .find(|e| e.name == func.name && module_path(&merged_ast, e.module) == func.module)
                 .map(|e| effect_strings(&e.effects))
                 .ok_or_else(|| {
                     refused(format!(
@@ -331,7 +382,12 @@ fn cmd_publish(args: &[String]) -> Result<ExitCode, Failure> {
             .map_err(|e| environment(format!("cannot write to store: {e}")))?;
         manifest.insert(
             sig_id,
-            ManifestEntry { name: func.name.clone(), stage_id, source_hash: source_hash.clone() },
+            ManifestEntry {
+                name: func.name.clone(),
+                stage_id,
+                source_hash: source_hash.clone(),
+                uses_std: own_uses_std,
+            },
         );
         published += 1;
         println!("published {}", func.name);
@@ -371,7 +427,8 @@ fn cmd_log(args: &[String]) -> Result<ExitCode, Failure> {
     let mut rows: Vec<(&String, &ManifestEntry)> = manifest.entries().collect();
     rows.sort_by(|a, b| a.1.name.cmp(&b.1.name));
     for (sig_id, entry) in rows {
-        println!("{:<24} sig {}  body {}", entry.name, sig_id, entry.stage_id);
+        let std = if entry.uses_std { "  std" } else { "" };
+        println!("{:<24} sig {}  body {}{std}", entry.name, sig_id, entry.stage_id);
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -457,13 +514,28 @@ fn verify_selected(
         for (hash, dep_text) in extra_context {
             named.push((format!("{hash}.ls"), dep_text.clone()));
         }
-        let ast = match parse_texts(&named) {
+        let mut ast = match parse_texts(&named) {
             Ok((ast, _map)) => ast,
             Err(message) => {
                 problems.push(format!("{source_hash} no longer parses: {message}"));
                 continue;
             }
         };
+        // A package that imports the library is verified against it
+        // (`docs/package-system.md` §7). Detected from the parsed imports of
+        // this blob and its closure, not from `ManifestEntry::uses_std`: the
+        // check must not be satisfiable by editing a flag.
+        if imports_std(&ast) {
+            for (name, std_text) in std_texts() {
+                let mut map = lex_sys_syntax::SourceMap::new();
+                let base = map.add(name, std_text.clone());
+                if let Err(d) = lex_sys_syntax::parse_into(&mut ast, &std_text, base) {
+                    problems
+                        .push(format!("the bundled `std` no longer parses: {}", d.render_in(&map)));
+                    break;
+                }
+            }
+        }
         if let Err(diagnostics) = lex_sys_ir::lower_all(&ast) {
             let text: Vec<String> =
                 diagnostics.iter().map(|d| format!("{}: {}", d.rule.tag(), d.message)).collect();
@@ -773,6 +845,14 @@ fn cmd_fetch(args: &[String]) -> Result<ExitCode, Failure> {
         std::fs::write(&path, text)
             .map_err(|e| environment(format!("cannot write `{}`: {e}", path.display())))?;
         println!("fetched {}", path.display());
+    }
+    // Detected from the verified sources, the same way `verify_selected`
+    // decides to bring the library in.
+    let needs_std = verified.iter().chain(closure_context.iter()).any(|(hash, text)| {
+        parse_texts(&[(format!("{hash}.ls"), text.clone())]).is_ok_and(|(ast, _)| imports_std(&ast))
+    });
+    if needs_std {
+        println!("note: these files import `std`; build the consumer with `--std`");
     }
     Ok(ExitCode::SUCCESS)
 }

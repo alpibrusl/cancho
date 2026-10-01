@@ -134,7 +134,7 @@ migratable shape at the same discipline `editions.md` already applies to
 
 ## 6. What "built" would look like
 
-- `lex-sys vcs publish [--store <dir>] <inputs...>` — new top-level match
+- `lex-sys vcs publish [--store <dir>] [--std] <inputs...>` — new top-level match
   arm in `crates/lex-sys/src/main.rs`, next to `build`/`run`/`ids`; parses
   and lowers exactly as `ids`/`check` already do, then runs §3's walk.
   Refuses (not panics) on: a gate rejection (reports the rejected

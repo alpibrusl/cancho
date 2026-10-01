@@ -12,6 +12,18 @@ use std::io::Read;
 use std::net::{TcpListener, TcpStream};
 use std::time::{Duration, Instant};
 
+/// `examples/api/api.ls` and the one file `http.server` fetches to
+/// (`packages/http-server/`, `docs/http-server.md`), in the order a build
+/// names them. Fetched fresh each time: `vcs fetch` re-verifies the pin.
+fn api_paths(tag: &str) -> Vec<PathBuf> {
+    let mut paths = vec![repo_root().join("examples/api/api.ls")];
+    paths.extend(fetch_net_dependencies(
+        tag,
+        &[("examples/api/server.lock", "packages/http-server/.lex-sys-vcs")],
+    ));
+    paths
+}
+
 struct Server {
     child: std::process::Child,
     port: u16,
@@ -27,7 +39,7 @@ impl Drop for Server {
 }
 
 fn start(tag: &str, extra: &[&str]) -> Server {
-    let (dir, exe) = build_example_paths(tag, &[repo_root().join("examples/api/api.ls")], "api");
+    let (dir, exe) = build_example_paths(tag, &api_paths(tag), "api");
     let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     let child = Command::new(&exe)
         .arg(port.to_string())
@@ -577,8 +589,7 @@ fn the_server_announces_its_port_on_standard_error() {
     // process ends, and a server that announces itself only then has not
     // announced itself. No send flag is announced any more -- there is none:
     // `conn_write` picks the system's way of not waiting (`native-sockets.md`).
-    let (dir, exe) =
-        build_example_paths("api-flag", &[repo_root().join("examples/api/api.ls")], "api");
+    let (dir, exe) = build_example_paths("api-flag", &api_paths("api-flag"), "api");
     let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     let mut child = Command::new(&exe)
         .arg(port.to_string())
@@ -604,8 +615,14 @@ fn the_server_holds_no_foreign_authority() {
     // `ffi("libc")` -- "may call anything in libc" -- now reports exactly what
     // it does. The port is an argument, so `net_in` names none; that is said
     // rather than hidden.
-    let source = std::fs::read_to_string(repo_root().join("examples/api/api.ls")).unwrap();
-    let json = authority_json(&source, "api-authority");
+    let mut command = Command::new(BIN);
+    command.arg("authority");
+    for path in api_paths("api-authority") {
+        command.arg(path);
+    }
+    let out = command.args(["--std", "--output", "json"]).output().expect("the compiler runs");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let json = String::from_utf8_lossy(&out.stdout).into_owned();
     assert!(!json.contains("\"ffi\""), "no foreign code anywhere:\n{json}");
     for label in ["net_in", "conn_accept", "conn_read", "conn_write", "poll", "clock", "heap"] {
         assert!(json.contains(&format!("\"name\": \"{label}\"")), "`{label}` is reported:\n{json}");
@@ -692,11 +709,7 @@ fn a_body_larger_than_the_default_buffer_needs_the_buffer_argument() {
 fn a_buffer_the_server_cannot_honour_is_refused_at_start() {
     // Below a page, or above a megabyte: the server says nothing and exits 2.
     for size in ["100", "2097152"] {
-        let (dir, exe) = build_example_paths(
-            "api-bad-buffer",
-            &[repo_root().join("examples/api/api.ls")],
-            "api",
-        );
+        let (dir, exe) = build_example_paths("api-bad-buffer", &api_paths("api-bad-buffer"), "api");
         let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         let status = Command::new(&exe)
             .args([port.to_string().as_str(), "no", "9", "0", size])

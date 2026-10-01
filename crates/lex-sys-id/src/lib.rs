@@ -268,6 +268,12 @@ pub struct Identities {
 #[derive(Clone, Debug)]
 pub struct FunctionId {
     pub name: String,
+    /// The declaring module as a dotted path (`std.json`), empty for the
+    /// root. Not part of either hash -- a hash never mentions a module --
+    /// but a name is only unique *within* one, so anything that attributes
+    /// a function to a file (`vcs publish`) needs it to tell `std.map`'s
+    /// `get` from the package's own.
+    pub module: String,
     /// What a caller depends on, and all it depends on.
     pub sig: Hash,
     /// The implementation.
@@ -356,6 +362,7 @@ pub fn identify(ast: &Ast) -> Identities {
         match &ast.items[id.index()] {
             Item::Fn(decl) => identities.functions.push(FunctionId {
                 name: ast.name_of(decl.name).to_owned(),
+                module: dotted(ast, module),
                 sig: sig_ids[&(module, decl.name)],
                 body: hash_body(ast, decl, module, &sig_ids, &type_ids),
             }),
@@ -364,6 +371,7 @@ pub fn identify(ast: &Ast) -> Identities {
             // fail to notice.
             Item::Extern(decl) => identities.functions.push(FunctionId {
                 name: ast.name_of(decl.name).to_owned(),
+                module: dotted(ast, module),
                 sig: sig_ids[&(module, decl.name)],
                 body: sig_ids[&(module, decl.name)],
             }),
@@ -382,12 +390,18 @@ pub fn identify(ast: &Ast) -> Identities {
             // without changing the first.
             Item::Static(decl) => identities.functions.push(FunctionId {
                 name: ast.name_of(decl.name).to_owned(),
+                module: dotted(ast, module),
                 sig: hash_static_type(ast, decl, module, &type_ids),
                 body: hash_static_body(ast, decl, module, &sig_ids, &type_ids),
             }),
         }
     }
     identities
+}
+
+fn dotted(ast: &Ast, module: u32) -> String {
+    let path: Vec<&str> = ast.module(module).path.iter().map(|s| ast.name_of(*s)).collect();
+    path.join(".")
 }
 
 fn hash_static_type(ast: &Ast, decl: &StaticDecl, module: u32, type_ids: &Names) -> Hash {
