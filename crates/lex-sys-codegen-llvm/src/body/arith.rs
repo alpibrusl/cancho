@@ -384,7 +384,7 @@ impl<'a> FuncEmitter<'a> {
         let (rhs_label, short_label, end_label) =
             (format!("sc_rhs{n}"), format!("sc_short{n}"), format!("sc_end{n}"));
         let slot = self.fresh();
-        self.out.push_str(&format!("  {slot} = alloca i8\n"));
+        self.hoist(format!("  {slot} = alloca i8\n"));
         // `&&`: a true `lhs` still needs `rhs`; a false one already
         // answered `false`, so the branch taken on `lhs == true` goes to
         // `rhs_label` and `lhs == false` goes to `short_label`. `||` is

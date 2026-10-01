@@ -242,7 +242,7 @@ impl<'a> FuncEmitter<'a> {
             Expr::Joined { handle, ret } => {
                 let handle_value = operand(&self.scalar(handle)?);
                 let result_slot = self.fresh();
-                self.out.push_str(&format!("  {result_slot} = alloca ptr\n"));
+                self.hoist(format!("  {result_slot} = alloca ptr\n"));
                 let status = self.fresh();
                 self.out.push_str(&format!(
                     "  {status} = call i32 @pthread_join(ptr {handle_value}, ptr {result_slot})\n"
@@ -433,7 +433,7 @@ impl<'a> FuncEmitter<'a> {
                 };
                 let start_routine = operand(&evaluated[1][0]);
                 let thread_slot = self.fresh();
-                self.out.push_str(&format!("  {thread_slot} = alloca ptr\n"));
+                self.hoist(format!("  {thread_slot} = alloca ptr\n"));
                 let status = self.fresh();
                 self.out.push_str(&format!(
                     "  {status} = call i32 @pthread_create(ptr {thread_slot}, ptr null, ptr {start_routine}, ptr {payload})\n"

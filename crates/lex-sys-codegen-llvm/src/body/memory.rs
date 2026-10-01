@@ -16,10 +16,10 @@ impl<'a> FuncEmitter<'a> {
         self.trap_if(&is_null)?;
 
         let base_cell = self.fresh();
-        self.out.push_str(&format!("  {base_cell} = alloca ptr\n"));
+        self.hoist(format!("  {base_cell} = alloca ptr\n"));
         self.out.push_str(&format!("  store ptr {base}, ptr {base_cell}\n"));
         let bump_cell = self.fresh();
-        self.out.push_str(&format!("  {bump_cell} = alloca ptr\n"));
+        self.hoist(format!("  {bump_cell} = alloca ptr\n"));
         self.out.push_str(&format!("  store ptr {base}, ptr {bump_cell}\n"));
 
         // Grow to fit rather than push: a sibling `region` carries a
@@ -104,7 +104,7 @@ impl<'a> FuncEmitter<'a> {
             (format!("fillhead{n}"), format!("fillbody{n}"), format!("filldone{n}"));
 
         let cursor = self.fresh();
-        self.out.push_str(&format!("  {cursor} = alloca i64\n"));
+        self.hoist(format!("  {cursor} = alloca i64\n"));
         self.out.push_str(&format!("  store i64 0, ptr {cursor}\n"));
         self.out.push_str(&format!("  br label %{head}\n"));
 

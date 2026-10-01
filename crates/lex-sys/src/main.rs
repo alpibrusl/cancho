@@ -405,6 +405,7 @@ const STD: &[(&str, &str)] = &[
     ("<std>/ed25519.ls", include_str!("../../../std/ed25519.ls")),
     ("<std>/test.ls", include_str!("../../../std/test.ls")),
     ("<std>/json.ls", include_str!("../../../std/json.ls")),
+    ("<std>/map.ls", include_str!("../../../std/map.ls")),
 ];
 
 /// What a command line asked for.

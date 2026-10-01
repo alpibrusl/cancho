@@ -20,6 +20,7 @@
 - [Testing](testing.md)
 - [Formatting](formatting.md)
 - [JSON](json.md)
+- [Hash map](map.md)
 - [Slicing](slicing.md)
 - [Tuples](tuples.md)
 - [Shadowing](shadowing.md)

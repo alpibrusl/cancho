@@ -422,7 +422,19 @@ block after an `if` simply `load`s whatever the taken arm last `store`d,
 and a `while`'s loop header is re-entered by its back edge the same way
 — fresh loads each time, no value carried in a register across the
 edge. `&&`/`||` use the same trick over a one-leaf temporary `alloca`
-rather than a `phi` merging two live values. The only real branching
+rather than a `phi` merging two live values. **Corrected (#173): that
+temporary, and the buffer each `borrow` writes its referent into, were
+emitted *where they were used*, which is wrong inside a loop.** An `alloca`
+outside the entry block is dynamic: it takes stack every time it executes
+and returns it only when the function does, and `mem2reg` promotes only
+entry-block ones. A loop with a `borrow` of a nine-word value used up the
+8 MiB stack in about 30,000 iterations and died with SIGSEGV -- on the
+LLVM backend only, in programs Cranelift ran correctly, and in none of the
+fixtures here, because their loops were short or their references never
+escaped the optimiser. Every `alloca` outside the slot prologue is now
+emitted into the entry block (`FuncEmitter::hoist`); the cell is the same
+one each time the code runs, which is all any of these uses wanted. See
+`docs/map.md` §7. The only real branching
 this slice added is the diamond `if_stmt` builds and the loop `br` pair
 `while_stmt` builds; `trap_if`'s branches, from the second slice, turn
 out to have been this backend's first working example of exactly that

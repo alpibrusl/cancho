@@ -87,7 +87,7 @@ impl<'a> FuncEmitter<'a> {
         }
 
         let addr = self.fresh();
-        self.out.push_str(&format!("  {addr} = alloca i8, i64 16\n"));
+        self.hoist(format!("  {addr} = alloca i8, i64 16\n"));
         // Family bytes -- `2, 0` -- the same choice `connect`'s own
         // `docs/connect.md` §3 measured: BSD kernels read family `0` as
         // `AF_INET` too, for backward compatibility, so writing only the
@@ -114,7 +114,7 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("  {fd} = call i32 @socket(i32 2, i32 1, i32 0)\n"));
 
         let result_cell = self.fresh();
-        self.out.push_str(&format!("  {result_cell} = alloca i64\n"));
+        self.hoist(format!("  {result_cell} = alloca i64\n"));
         let minus_one = LValue::Const(-1);
 
         let bad_socket = self.fresh();
@@ -140,7 +140,7 @@ impl<'a> FuncEmitter<'a> {
         // least significant first, the same value `serve.ls` assembles by
         // hand (`docs/reach.md` §3.2).
         let reuse = self.fresh();
-        self.out.push_str(&format!("  {reuse} = alloca i8, i64 4\n"));
+        self.hoist(format!("  {reuse} = alloca i8, i64 4\n"));
         self.store_byte(&reuse, 0, "1");
         self.store_byte(&reuse, 1, "0");
         self.store_byte(&reuse, 2, "0");
@@ -192,11 +192,11 @@ impl<'a> FuncEmitter<'a> {
         self.trap_if(&short)?;
 
         let buffer = self.fresh();
-        self.out.push_str(&format!("  {buffer} = alloca i8, i64 {HOST_MAX}\n"));
+        self.hoist(format!("  {buffer} = alloca i8, i64 {HOST_MAX}\n"));
         let expected = operand(&self.bytes_lit(bound)[0]);
 
         let cursor = self.fresh();
-        self.out.push_str(&format!("  {cursor} = alloca i64\n"));
+        self.hoist(format!("  {cursor} = alloca i64\n"));
         self.out.push_str(&format!("  store i64 0, ptr {cursor}\n"));
 
         let n = self.blocks;
@@ -289,7 +289,7 @@ impl<'a> FuncEmitter<'a> {
         // for one address family and one socket kind -- IPv4 and TCP, the
         // only shape this project has ever built a `sockaddr_in` for.
         let hints = self.fresh();
-        self.out.push_str(&format!("  {hints} = alloca i8, i64 {ADDRINFO_SIZE}\n"));
+        self.hoist(format!("  {hints} = alloca i8, i64 {ADDRINFO_SIZE}\n"));
         self.store_field(&hints, AI_FLAGS, "i32", "0");
         self.store_field(&hints, AI_FAMILY, "i32", "2");
         self.store_field(&hints, AI_SOCKTYPE, "i32", "1");
@@ -300,7 +300,7 @@ impl<'a> FuncEmitter<'a> {
         self.store_field(&hints, AI_NEXT, "ptr", "null");
 
         let res_slot = self.fresh();
-        self.out.push_str(&format!("  {res_slot} = alloca ptr\n"));
+        self.hoist(format!("  {res_slot} = alloca ptr\n"));
 
         // `service` is always `NULL`: the port is read out of the
         // bound's own text and patched in afterward, not looked up by
@@ -311,7 +311,7 @@ impl<'a> FuncEmitter<'a> {
         ));
 
         let result_cell = self.fresh();
-        self.out.push_str(&format!("  {result_cell} = alloca i64\n"));
+        self.hoist(format!("  {result_cell} = alloca i64\n"));
         let minus_one = LValue::Const(-1);
 
         let failed_resolve = self.fresh();
