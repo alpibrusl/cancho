@@ -185,10 +185,17 @@ impl<'a> FnLowering<'a> {
 
     /// Which `static` a name refers to, if any. Scoped to the module that
     /// declares it, like every other name (`docs/modules.md` §3).
+    ///
+    /// The doc comment said so and the code did not: it looked a name up
+    /// among *every* module's statics and took the first, so two modules
+    /// each declaring `static table` read one table -- `a.first() * 10 +
+    /// b.first()` answered 55 for tables holding 5 and 7, with no refusal
+    /// and no warning. `conformance/modules.rs` has the program.
     pub(crate) fn static_index(&self, name: Symbol) -> Option<u32> {
-        let module = self.ast.module_of(ast::ItemId(0));
-        let _ = module;
-        self.statics.iter().position(|s| s.name == name).map(|i| i as u32)
+        self.statics
+            .iter()
+            .position(|s| s.name == name && s.module == self.module)
+            .map(|i| i as u32)
     }
 
     pub(crate) fn target_module(

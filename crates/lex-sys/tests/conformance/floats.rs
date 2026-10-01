@@ -51,6 +51,48 @@ fn float_corpus() -> Vec<f64> {
         values.push(text.parse().expect("a float in range"));
     }
 
+    // Numbers with a short decimal form -- `3.5`, `19.99`, `0.000125`,
+    // `12345.6789`, a whole number -- which `std.fmt` prints without the exact
+    // arithmetic (its short path). This is where the two could disagree: the
+    // oracle's digits are the exact algorithm's, and the short path has to
+    // find the same ones. Every number of decimals from 0 to 17, in magnitudes
+    // from 1e-9 to 1e15, and the neighbours of each (one ulp either side),
+    // which are not short and must fall back correctly.
+    let mut short: u64 = 0x1234_5678_9abc_def1;
+    for decimals in 0..=17u32 {
+        for _ in 0..120 {
+            short = short.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let digits = 1 + (short >> 60) as u32 % 15;
+            let m = (short >> 8) % 10u64.pow(digits);
+            if m == 0 {
+                continue;
+            }
+            let x: f64 = format!("{m}e-{decimals}").parse().expect("a decimal");
+            values.push(x);
+            values.push(f64::from_bits(x.to_bits() + 1));
+            values.push(f64::from_bits(x.to_bits() - 1));
+        }
+    }
+    for text in [
+        "0.1",
+        "0.2",
+        "0.3",
+        "1.1",
+        "2.5",
+        "100",
+        "1000",
+        "1e15",
+        "999999999999999",
+        "123456789012345",
+        "0.000001",
+        "0.0000001",
+        "4.35",
+        "5e-5",
+        "0.30000000000000004",
+    ] {
+        values.push(text.parse().expect("a decimal"));
+    }
+
     // And a deterministic spread of bit patterns, so the corpus is not
     // only the cases someone thought of. splitmix64 rather than a
     // dependency: the seed is fixed, so a failure here reproduces.

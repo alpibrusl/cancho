@@ -101,6 +101,18 @@ pub fn float_into[&o](out: &!o [byte], x: float) -> [] int {
         return put(out, at, "0e0");
     }
 
+    // A float that has a short decimal form -- most of the numbers a program
+    // prints: `3.5`, `0.125`, `19.99`, `12345.6789` -- is found without the
+    // exact arithmetic below, which costs microseconds.
+    var magnitude = x;
+    if negative {
+        magnitude = 0.0 - x;
+    }
+    let (fm, fk) = short_form(magnitude);
+    if fm > 0 {
+        return put_short(out, at, fm, fk);
+    }
+
     var written = 0 - 1;
     region a {
         // Five numbers and the digits. `limbs()` is the worst case, so
@@ -260,6 +272,88 @@ pub fn float_into[&o](out: &!o [byte], x: float) -> [] int {
         written = at;
     }
     return written;
+}
+
+// ---------------------------------------------------------------------
+// The short path
+// ---------------------------------------------------------------------
+
+// `x = m / 10^k` for the smallest `k`, if one exists with `m` under 2^50:
+// answers `(m, k)`, or `(-1, 0)` if there is none and the exact algorithm has
+// to be asked. `x` is positive and finite.
+//
+// This is the shortest representation, and the same one the exact algorithm
+// finds, for a reason worth stating: the digits before the point are fixed by
+// the value, so fewest digits is smallest `k`; and with `m < 2^50` the grid of
+// `k`-digit decimals is wider than the gap between floats (`10^-k > ulp(x)`),
+// so at most one grid point can read back as `x`, and it is the nearest one.
+// A candidate reads back as `x` exactly when `m / 10^k` -- two operands that
+// are both exact floats, one correctly rounded division -- is `x`. The
+// nearest integer to `x * 10^k` is only found to within the rounding of that
+// product, so its neighbours are tried too.
+fn short_form(x: float) -> [] (int, int) {
+    var k = 0;
+    var scale = 1.0;
+    while k <= 22 {
+        let scaled = x * scale;
+        if scaled >= 1125899906842624.0 {
+            return (0 - 1, 0);
+        }
+        let near = truncate(scaled + 0.5);
+        var step = 0 - 1;
+        while step <= 1 {
+            let candidate = near + step;
+            if candidate > 0 && float_of(candidate) / scale == x {
+                return (candidate, k);
+            }
+            step = step + 1;
+        }
+        k = k + 1;
+        scale = scale * 10.0;
+    }
+    return (0 - 1, 0);
+}
+
+// Write `m / 10^k` in the one form `float_into` uses, `d[.ddd]e[-]k`.
+fn put_short[&o](out: &!o [byte], at: int, m: int, k: int) -> [] int {
+    var digits = m;
+    var exponent = 0 - k;
+    // `m` has trailing zeros only for `k == 0` (a smaller `k` would have
+    // matched otherwise): `1000` is `1e3`, not `1000e0`.
+    while digits % 10 == 0 {
+        digits = digits / 10;
+        exponent = exponent + 1;
+    }
+    var width = 0;
+    var rest = digits;
+    while rest > 0 {
+        rest = rest / 10;
+        width = width + 1;
+    }
+    var here = at;
+    var place = width - 1;
+    var divisor = 1;
+    var n = 0;
+    while n < place {
+        divisor = divisor * 10;
+        n = n + 1;
+    }
+    here = put_digit(out, here, digits / divisor);
+    if width > 1 {
+        here = put(out, here, ".");
+        var rest_digits = digits % divisor;
+        var scale = divisor / 10;
+        var left = width - 1;
+        while left > 0 {
+            here = put_digit(out, here, rest_digits / scale % 10);
+            if scale > 1 {
+                scale = scale / 10;
+            }
+            left = left - 1;
+        }
+    }
+    here = put(out, here, "e");
+    return put_int(out, here, exponent + width - 1);
 }
 
 // ---------------------------------------------------------------------

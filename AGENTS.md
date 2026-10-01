@@ -300,8 +300,52 @@ fn main(world: World) -> [] int {
 
 `std.bytes`, `std.io`, `std.math`, `std.buffer`, `std.option`,
 `std.result`, `std.list`, `std.vec`, `std.fmt`, `std.bignum`,
-`std.utf8`, `std.flags`, `std.crypto`. Pass `--std` and write the
-`import` — there is no prelude.
+`std.utf8`, `std.flags`, `std.crypto`, `std.ed25519`, `std.json`,
+`std.test`. Pass `--std` and write the `import` — there is no prelude.
+
+`std.json` parses into a **tape** you provide (`docs/json.md`) rather than
+building a tree, and writes through a `Writer` you move from call to
+call, like a `Buffer`:
+
+```lex-sys
+import std.buffer;
+import std.json;
+
+// Read `age` from a request body; answer `{"next_age":N}`, or `{"error":...}`.
+fn reply[&h, &s](heap: &!h Heap, body: &s [byte]) -> [heap] buffer.Buffer {
+    var w = json.writer(heap, 64);
+    region a {
+        let tape = alloc_slice[a](json.tape_len(body), 0);
+        let nodes = json.parse(body, tape);
+        w = json.begin_object(heap, w);
+        if nodes < 0 {
+            w = json.put_key(heap, w, "error");
+            w = json.put_string(heap, w, json.error_message(json.error_code(nodes)));
+        } else {
+            w = json.put_key(heap, w, "next_age");
+            w = json.put_int(heap, w, json.to_int(body, tape, json.get(body, tape, 0, "age")) + 1);
+        }
+        w = json.end_object(heap, w);
+    }
+    return json.finish(w);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi); release(fs); release(args); release(io);
+    borrow mut heap as &!h in {
+        let ok = reply(h, "{\"age\": 41}");
+        let bad = reply(h, "{\"age\": }");
+        buffer.drop(h, ok);
+        buffer.drop(h, bad);
+    }
+    release(heap);
+    return 0;
+}
+```
+
+A parse error is a value (`nodes < 0`), and a writer misused -- a key
+outside an object, a value with no key -- is a trap, not bad JSON.
 
 **A function earns its way into `std` by a program asking for it**, and
 that is how most of these arrived — `std.crypto` is named as the one

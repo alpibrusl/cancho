@@ -19,6 +19,7 @@
 - [Collections](collections.md)
 - [Testing](testing.md)
 - [Formatting](formatting.md)
+- [JSON](json.md)
 - [Slicing](slicing.md)
 - [Tuples](tuples.md)
 - [Shadowing](shadowing.md)

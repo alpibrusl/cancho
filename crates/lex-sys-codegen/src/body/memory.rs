@@ -421,7 +421,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     /// and the section it lands in would refuse a write anyway.
     pub(crate) fn bytes(&mut self, text: &str) -> Vec<Value> {
         let pointer = self.pointer;
-        let name = format!("{PREFIX}str_{}_{}", self.func.name, self.literals);
+        let name = format!("{PREFIX}str_{}_{}", self.func.symbol(), self.literals);
         self.literals += 1;
 
         let mut description = DataDescription::new();

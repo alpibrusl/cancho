@@ -108,6 +108,17 @@ fn pow2(k: int) -> [] float {
     return result;
 }
 
+// `x * 2^e`, exactly where the answer is representable (a power of two scales a
+// float's exponent and touches nothing else), and the overflow or underflow the
+// hardware would give where it is not. The exponent is applied in two halves so
+// that neither factor overflows by itself while the product would not -- the
+// same split `exp` makes, and the one a correctly rounded decimal parse needs
+// to place a subnormal (`2^-1074` alone is not a float).
+pub fn ldexp(x: float, e: int) -> [] float {
+    let half = e / 2;
+    return x * pow2(e - half) * pow2(half);
+}
+
 // Nearest integer, ties away from zero. `truncate` rounds toward zero,
 // which is a different function (`docs/floating-point.md` §4); this is
 // what `exp`'s range reduction needs to pick the closest multiple of
