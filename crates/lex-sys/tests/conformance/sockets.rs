@@ -493,8 +493,12 @@ fn run(bound: Net("PORT"), io: Io) -> [] int {
 fn listening_on_a_port_that_is_taken_answers_failed() {
     for backend in BACKENDS {
         // `SO_REUSEADDR` lets a bind succeed over a closed socket's
-        // TIME_WAIT, not over a live listener -- so hold one.
-        let holder = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        // TIME_WAIT, not over a live listener -- so hold one. On the
+        // *wildcard* address, because that is what `tcp_listen` binds: BSD
+        // lets a wildcard bind sit beside a listener on one specific
+        // address (`127.0.0.1`) when `SO_REUSEADDR` is set, and Linux does
+        // not, which is how this passed on Linux and failed on macOS.
+        let holder = std::net::TcpListener::bind("0.0.0.0:0").unwrap();
         let port = holder.local_addr().unwrap().port();
         let dir = scratch(&format!("sockets-taken-{backend}"));
         let exe = build(&dir, "taken", &io_program(port, PORT_TAKEN), backend);
