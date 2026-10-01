@@ -343,7 +343,7 @@ what this **cannot** reach and why it is one sentence rather than a list.
 cargo run -p lex-sys -- vcs fetch --lock examples/api/net.lock \
     --store packages/net-sockets/.lex-sys-vcs -o /tmp/net-sockets
 cargo run -p lex-sys -- build --std examples/api/api.ls /tmp/net-sockets/*.ls -o api
-./api 8080                       # or: ./api 8080 reuseport 30   (share the port; 30 s idle timeout)
+./api 8080                       # or: ./api 8080 reuseport 30   (share the port; 30 s without progress)
 curl localhost:8080/users/42     # {"id":42,"name":"user-42"}
 ```
 
@@ -352,7 +352,10 @@ library pieces (`std.json`, `std.map`, `std.http`, `std.route`) were for. It
 keeps every connection open in a `poll(2)` loop, answers pipelined requests
 in order, reads requests that arrive in pieces, refuses what the parser
 refuses (and closes), and routes four JSON endpoints. A silent client costs a
-slot and nothing else. On one core it does about 120,000 requests a second
+slot and nothing else, and so does one that stops reading its answers:
+writes are `send(MSG_DONTWAIT)`, what the kernel does not take waits in the
+connection's own buffer, and the connection is not read until it has gone.
+On one core it does about 120,000 requests a second
 against about 3,000 for FastAPI on the same request
 ([`docs/server.md`](../docs/server.md) §5 has the method and the caveats).
 

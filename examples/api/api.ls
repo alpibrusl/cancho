@@ -1,6 +1,6 @@
 // `api` -- a JSON API server: keep-alive, pipelining, routed, one thread.
 //
-//     api <port> [reuseport] [idle-seconds]
+//     api <port> [reuseport] [idle-seconds] [send-chunk-bytes]
 //
 // `docs/server.md` is the design. This is the program the last four
 // library pieces were for: `std.http` parses each request, `std.route`
@@ -15,6 +15,7 @@
 //     GET  /users/:id     {"id":42,"name":"user-42"}      400 if :id is not a number
 //     POST /add           {"a":1,"b":2}  ->  {"sum":3}     422 if the body is not that
 //     GET  /search?q=...  {"q":"a b","length":3}           q is percent-decoded
+//     GET  /blob/:n       n bytes of a-z repeating (n <= 32768)   a large answer, to watch a slow reader
 //
 // and a JSON `{"error":...}` for everything else: 404 for a path no route
 // has, 405 for a path with another method, 400 for a request the parser
@@ -23,16 +24,29 @@
 // for a head that cannot.
 //
 // **Limits, all constants, all said aloud:** 1024 connections, 16 KiB of
-// buffer each (a request, head and body together, must fit in it), nine
-// seconds of silence before an idle connection is closed unless the third
-// argument says otherwise.
+// input buffer each (a request, head and body together, must fit in it),
+// 64 KiB of output buffer each, nine seconds without progress before a
+// connection is closed unless the third argument says otherwise.
 //
-// **What it does not do**, and `docs/server.md` §6 is the list: write
-// without blocking (a client that stops reading can stall the loop once its
-// socket buffer is full; the answers are small, so it takes a client trying),
-// decode a chunked body (it answers 501), or use more than one core --
-// `reuseport` lets several copies of this program share a port and the
-// kernel spreads the connections, which is how it scales.
+// The fourth argument is a quantum: no `send` is handed more than that many
+// bytes, so an answer larger than it takes several, which is what a loop that
+// wants to be fair to its other connections might choose. It is also how the
+// tests make partial sends certain: on Linux a loopback `send` is whole or
+// refused, never partial, and the code that resumes a partial one would
+// otherwise never run.
+//
+// **Writes never block.** Every `send` carries `MSG_DONTWAIT`, so one call
+// returns at once with whatever the kernel took. What it did not take waits in
+// the connection's own output buffer, the connection asks `poll` for
+// `POLLOUT` instead of `POLLIN` -- it is not read from until its output is
+// gone, which is what keeps a client that never reads from making the server
+// buffer without bound -- and every other connection is served meanwhile.
+// A client that makes no progress for `idle` seconds is closed.
+//
+// **What it does not do**, and `docs/server.md` §6 is the list: decode a
+// chunked body (it answers 501), or use more than one core -- `reuseport`
+// lets several copies of this program share a port and the kernel spreads the
+// connections, which is how it scales.
 //
 // The sockets come from the `net.sockets` package; `poll`, `signal` and
 // `time` are declared here because nothing else wants them yet.
@@ -59,12 +73,26 @@ extern fn signal[&f](ffi: &f Ffi("libc"), sig: int, handler: int) -> [ffi("libc"
 
 extern fn time[&f](ffi: &f Ffi("libc"), t: int) -> [ffi("libc")] int;
 
+// `send(fd, buf, len, flags)`. Unlike `fcntl(F_SETFL, O_NONBLOCK)`, which is
+// variadic -- and variadic arguments are not passed like fixed ones on Apple
+// arm64, so declaring it here would be wrong on one of the two targets --
+// `send` has a fixed signature, and `MSG_DONTWAIT` makes one call
+// non-blocking without changing the socket.
+extern fn send[&f, &b](ffi: &f Ffi("libc"), fd: int, buf: &b [byte], flags: int) -> [ffi("libc")] int;
+
 fn max_connections() -> [] int {
     return 1024;
 }
 
 fn buffer_size() -> [] int {
     return 16384;
+}
+
+// What one connection may have waiting to be sent. The largest answer is a
+// `/blob` of 32 KiB, so a connection holds one whole answer and a little
+// more; one that cannot even do that is closed.
+fn output_size() -> [] int {
+    return 65536;
 }
 
 // A decimal number, or -1 for empty text, a non-digit, or more than 17
@@ -172,6 +200,28 @@ fn add[&h, &b](heap: &!h Heap, out: buffer.Buffer, body: &b [byte], keep: bool) 
     return answer;
 }
 
+// `n` bytes of `abcdefghijklmnopqrstuvwxyzabc...`: an answer as large as a
+// test wants, within the output buffer. The body is not one repeated byte, so a
+// byte sent twice or out of place changes it.
+fn blob[&h, &p, &s](heap: &!h Heap, out: buffer.Buffer, path: &s [byte], params: &p [int], keep: bool) -> [heap] buffer.Buffer {
+    let n = number_of(path[params[0]..params[1]]);
+    if n < 0 || n > 32768 {
+        return failure(heap, out, 400, "n must be a number up to 32768", keep);
+    }
+    var body = buffer.empty(heap, n + 1);
+    var i = 0;
+    while i < n {
+        body = buffer.push(heap, body, byte_of('a' + i % 26));
+        i = i + 1;
+    }
+    var answer = out;
+    borrow body as &bb in {
+        answer = reply(heap, answer, 200, buffer.bytes(bb), keep);
+    }
+    buffer.drop(heap, body);
+    return answer;
+}
+
 fn search[&h, &q](heap: &!h Heap, out: buffer.Buffer, query: &q [byte], keep: bool) -> [heap] buffer.Buffer {
     let (from, to) = http.query_value(query, "q");
     if from < 0 {
@@ -208,6 +258,7 @@ fn routes[&h](heap: &!h Heap) -> [heap] route.Router {
     r = route.add(heap, r, "GET", "/users/:id", 2);
     r = route.add(heap, r, "POST", "/add", 3);
     r = route.add(heap, r, "GET", "/search", 4);
+    r = route.add(heap, r, "GET", "/blob/:n", 5);
     return r;
 }
 
@@ -228,6 +279,9 @@ fn handle[&h, &r, &q, &t, &p, &b](heap: &!h Heap, router: &r route.Router, reque
     if id == 4 {
         return search(heap, out, http.query(request, table), keep);
     }
+    if id == 5 {
+        return blob(heap, out, path, params, keep);
+    }
     if id == 0 - 2 {
         return failure(heap, out, 405, "method not allowed", keep);
     }
@@ -238,37 +292,67 @@ fn handle[&h, &r, &q, &t, &p, &b](heap: &!h Heap, router: &r route.Router, reque
 // One connection's bytes
 // ---------------------------------------------------------------------
 
-// Write all of `data`, answering how many bytes went before a failure --
-// `len(data)` if none did. (`http.response.send_all` answers a `bool` and
-// is a package; this one is told how far it got.)
-fn flush[&f, &d](libc: &f Ffi("libc"), fd: int, data: &d [byte]) -> [ffi("libc")] int {
-    var sent = 0;
-    var going = true;
-    while going && sent < len(data) {
-        let n = sockets.write(libc, fd, data[sent..len(data)]);
-        if n <= 0 {
-            going = false;
-        } else {
-            sent = sent + n;
-        }
+// How many of `wanted` bytes one `send` is handed: all of them, or `chunk` of
+// them if there is a limit (`chunk` of 0 means none).
+fn quantum(wanted: int, chunk: int) -> [] int {
+    if chunk > 0 && wanted > chunk {
+        return chunk;
     }
-    return sent;
+    return wanted;
 }
 
-// Answer every complete request at the front of `data[0..filled]`.
+// Hand `data` to the kernel without waiting, and keep what it did not take.
 //
-// The answer is the bytes consumed: the caller moves the rest (the start of
-// a request still arriving) to the front. `-1` means the connection must
-// close, and whatever response was owed to it has been written already.
+// `pend[0..pending]` is what this connection already has waiting. If there is
+// none, the answer is offered to `send` straight away -- the common case, and
+// the whole of the fast path; if there is some, the new bytes must queue behind
+// it or the answers would arrive out of order. Whatever was not sent is
+// appended to `pend`. Answers the new `pending`, or -1 if the queue cannot hold
+// it, which is a client that is not reading and has asked for more than the
+// buffer: the caller closes it.
 //
-// Pipelined requests -- several in one read -- are answered in order, one
-// `write` each. A request whose body has not all arrived is left alone and
-// the loop waits for more; a head or body that could never fit the buffer is
-// refused now rather than waited on for ever.
-fn drain[&f, &h, &r, &d, &t, &p](libc: &f Ffi("libc"), heap: &!h Heap, router: &r route.Router, data: &!d [byte], filled: int, fd: int, table: &!t [int], params: &!p [int], out: buffer.Buffer) -> [ffi("libc"), heap] (buffer.Buffer, int) {
+// A `send` that fails is treated as "the kernel is full": the real error, if it
+// is one, arrives as `POLLERR` or `POLLHUP` and the connection is closed then.
+fn emit[&f, &d, &e](libc: &f Ffi("libc"), fd: int, mflag: int, chunk: int, data: &d [byte], pend: &!e [byte], pending: int) -> [ffi("libc")] int {
+    var at = 0;
+    if pending == 0 {
+        let n = send(libc, fd, data[0..quantum(len(data), chunk)], mflag);
+        if n > 0 {
+            at = n;
+        }
+    }
+    if at >= len(data) {
+        return pending;
+    }
+    if pending + len(data) - at > len(pend) {
+        return 0 - 1;
+    }
+    var i = at;
+    while i < len(data) {
+        pend[pending + i - at] = data[i];
+        i = i + 1;
+    }
+    return pending + len(data) - at;
+}
+
+// Answer the complete requests at the front of `data[0..filled]`, until one of
+// them leaves output the kernel would not take.
+//
+// The answer is the bytes consumed: the caller moves the rest (the start of a
+// request still arriving, or requests held back for now) to the front. `-1`
+// means the connection must close *now*; `st[4 * k + 3]` set means it closes
+// once its output has gone, which is what a refusal or `Connection: close`
+// asks for.
+//
+// Pipelined requests -- several in one read -- are answered in order. It stops
+// when an answer could not be sent whole (backpressure: no more requests are
+// taken from a connection that is not taking its answers), when a body has not
+// all arrived, and when a request could never fit the buffer, which is refused
+// now rather than waited on for ever.
+fn drain[&f, &h, &r, &d, &t, &p, &e, &s](libc: &f Ffi("libc"), heap: &!h Heap, router: &r route.Router, data: &!d [byte], filled: int, fd: int, mflag: int, chunk: int, table: &!t [int], params: &!p [int], pend: &!e [byte], st: &!s [int], k: int, out: buffer.Buffer) -> [ffi("libc"), heap] (buffer.Buffer, int) {
     var o = out;
     var used = 0;
-    var close_after = false;
+    var abandon = false;
     var going = true;
     while going && used < filled {
         let view = data[used..filled];
@@ -308,18 +392,18 @@ fn drain[&f, &h, &r, &d, &t, &p](libc: &f Ffi("libc"), heap: &!h Heap, router: &
                     buffer.clear(ob);
                 }
                 o = handle(heap, router, view, table, params, view[n..n + body_length], o);
-                var flushed = 0;
                 borrow o as &ob in {
-                    flushed = flush(libc, fd, buffer.bytes(ob));
-                    if flushed < buffer.size(ob) {
-                        close_after = true;
-                    }
+                    st[4 * k + 2] = emit(libc, fd, mflag, chunk, buffer.bytes(ob), pend, st[4 * k + 2]);
+                }
+                if st[4 * k + 2] < 0 {
+                    abandon = true;
                 }
                 if !http.keeps_alive(table) {
-                    close_after = true;
+                    st[4 * k + 3] = 1;
                 }
                 used = used + n + body_length;
-                if close_after {
+                // Output left over, or the connection is ending: take no more.
+                if st[4 * k + 2] != 0 || st[4 * k + 3] != 0 {
                     going = false;
                 }
             }
@@ -330,13 +414,16 @@ fn drain[&f, &h, &r, &d, &t, &p](libc: &f Ffi("libc"), heap: &!h Heap, router: &
             }
             o = failure(heap, o, refuse, message, false);
             borrow o as &ob in {
-                flush(libc, fd, buffer.bytes(ob));
+                st[4 * k + 2] = emit(libc, fd, mflag, chunk, buffer.bytes(ob), pend, st[4 * k + 2]);
             }
-            close_after = true;
+            if st[4 * k + 2] < 0 {
+                abandon = true;
+            }
+            st[4 * k + 3] = 1;
             going = false;
         }
     }
-    if close_after {
+    if abandon {
         return (o, 0 - 1);
     }
     return (o, used);
@@ -359,6 +446,24 @@ fn set_record[&p](polls: &!p [byte], k: int, fd: int) -> [] int {
     polls[8 * k + 6] = byte_of(0);
     polls[8 * k + 7] = byte_of(0);
     return k;
+}
+
+// What to wait for on slot `k`: 1 (POLLIN) to read, 4 (POLLOUT) to send.
+fn set_events[&p](polls: &!p [byte], k: int, events: int) -> [] int {
+    polls[8 * k + 4] = byte_of(events);
+    return k;
+}
+
+// Slot `to` takes over slot `from`: the descriptor and what it waits for.
+fn move_record[&p](polls: &!p [byte], from: int, to: int) -> [] int {
+    var i = 0;
+    while i < 6 {
+        polls[8 * to + i] = polls[8 * from + i];
+        i = i + 1;
+    }
+    polls[8 * to + 6] = byte_of(0);
+    polls[8 * to + 7] = byte_of(0);
+    return to;
 }
 
 fn record_fd[&p](polls: &p [byte], k: int) -> [] int {
@@ -410,14 +515,41 @@ fn listener[&f](libc: &f Ffi("libc"), port: int, reuse: bool) -> [ffi("libc")] i
     return bound;
 }
 
-// Serve until killed. `idle` is how many seconds a connection may say nothing.
-fn serve[&f, &h, &r](libc: &f Ffi("libc"), heap: &!h Heap, router: &r route.Router, lfd: int, idle: int) -> [ffi("libc"), heap] int {
+// Whether this is Linux rather than macOS, found by asking: `SO_REUSEADDR` is
+// level 1, option 2 there and means something else (or nothing) here. It picks
+// `MSG_DONTWAIT`, which is 0x40 on Linux and 0x80 on macOS.
+fn is_linux[&f](libc: &f Ffi("libc")) -> [ffi("libc")] bool {
+    let fd = sockets.socket(libc, 2, 1, 0);
+    var linux = false;
+    if fd >= 0 {
+        region scratch {
+            let on = alloc_slice[scratch](4, byte_of(0));
+            on[0] = byte_of(1);
+            linux = sockets.setsockopt(libc, fd, 1, 2, on) == 0;
+        }
+        sockets.close(libc, fd);
+    }
+    return linux;
+}
+
+// Serve until killed. `idle` is how many seconds a connection may go without
+// progress -- a byte read, a byte sent -- before it is closed.
+//
+// Per connection `k`, `st[4k..4k+4]` is: bytes of input buffered, the time of
+// its last progress, bytes of output waiting, and 1 if it is to close once that
+// output has gone.
+fn serve[&f, &h, &r](libc: &f Ffi("libc"), heap: &!h Heap, router: &r route.Router, lfd: int, idle: int, chunk: int) -> [ffi("libc"), heap] int {
     let limit = max_connections();
     let size = buffer_size();
+    let osize = output_size();
+    var mflag = 128;
+    if is_linux(libc) {
+        mflag = 64;
+    }
     let polls = box_slice(heap, 8 * (limit + 1), byte_of(0));
-    let fills = box_slice(heap, limit, 0);
-    let seen = box_slice(heap, limit, 0);
+    let state = box_slice(heap, 4 * limit, 0);
     let bufs = box_slice(heap, limit * size, byte_of(0));
+    let pends = box_slice(heap, limit * osize, byte_of(0));
     let table = box_slice(heap, http.slots(64), 0);
     var widest = 1;
     if route.most_params(router) > 1 {
@@ -427,15 +559,15 @@ fn serve[&f, &h, &r](libc: &f Ffi("libc"), heap: &!h Heap, router: &r route.Rout
     var out = buffer.empty(heap, 4096);
 
     borrow mut polls as &!pw in {
-        borrow mut fills as &!fw in {
-            borrow mut seen as &!sw in {
-                borrow mut bufs as &!bw in {
+        borrow mut state as &!sw in {
+            borrow mut bufs as &!bw in {
+                borrow mut pends as &!ow in {
                     borrow mut table as &!tw in {
                         borrow mut params as &!qw in {
                             let pl = contents(pw);
-                            let fl = contents(fw);
-                            let sn = contents(sw);
+                            let st = contents(sw);
                             let bf = contents(bw);
+                            let pd = contents(ow);
                             let tb = contents(tw);
                             let pr = contents(qw);
                             set_record(pl, 0, lfd);
@@ -452,8 +584,10 @@ fn serve[&f, &h, &r](libc: &f Ffi("libc"), heap: &!h Heap, router: &r route.Rout
                                                 sockets.close(libc, c);
                                             } else {
                                                 set_record(pl, n + 1, c);
-                                                fl[n] = 0;
-                                                sn[n] = now;
+                                                st[4 * n] = 0;
+                                                st[4 * n + 1] = now;
+                                                st[4 * n + 2] = 0;
+                                                st[4 * n + 3] = 0;
                                                 n = n + 1;
                                             }
                                         }
@@ -465,46 +599,94 @@ fn serve[&f, &h, &r](libc: &f Ffi("libc"), heap: &!h Heap, router: &r route.Rout
                                     while k >= 0 {
                                         let cfd = record_fd(pl, k + 1);
                                         let base = k * size;
+                                        let obase = k * osize;
                                         var drop = false;
+                                        // Is there input to answer: just read, or held back
+                                        // while the last answer was being sent?
+                                        var answer = false;
                                         if record_events(pl, k + 1) != 0 {
-                                            let got = sockets.read(libc, cfd, bf[base + fl[k]..base + size]);
-                                            if got <= 0 {
+                                            if st[4 * k + 2] > 0 {
+                                                // Waiting to send: the kernel can take more.
+                                                let sent = send(libc, cfd, pd[obase..obase + quantum(st[4 * k + 2], chunk)], mflag);
+                                                if sent <= 0 {
+                                                    drop = true;
+                                                } else {
+                                                    st[4 * k + 1] = now;
+                                                    var at = 0;
+                                                    while at < st[4 * k + 2] - sent {
+                                                        pd[obase + at] = pd[obase + sent + at];
+                                                        at = at + 1;
+                                                    }
+                                                    st[4 * k + 2] = st[4 * k + 2] - sent;
+                                                    if st[4 * k + 2] == 0 {
+                                                        if st[4 * k + 3] == 1 {
+                                                            drop = true;
+                                                        } else {
+                                                            answer = st[4 * k] > 0;
+                                                        }
+                                                    }
+                                                }
+                                            } else {
+                                                let got = sockets.read(libc, cfd, bf[base + st[4 * k]..base + size]);
+                                                if got <= 0 {
+                                                    drop = true;
+                                                } else {
+                                                    st[4 * k] = st[4 * k] + got;
+                                                    st[4 * k + 1] = now;
+                                                    answer = true;
+                                                }
+                                            }
+                                        } else if now - st[4 * k + 1] > idle {
+                                            drop = true;
+                                        }
+                                        if answer && !drop {
+                                            let (grown, used) = drain(libc, heap, router, bf[base..base + size], st[4 * k], cfd, mflag, chunk, tb, pr, pd[obase..obase + osize], st, k, out);
+                                            out = grown;
+                                            if used < 0 {
                                                 drop = true;
                                             } else {
-                                                fl[k] = fl[k] + got;
-                                                sn[k] = now;
-                                                let (grown, used) = drain(libc, heap, router, bf[base..base + size], fl[k], cfd, tb, pr, out);
-                                                out = grown;
-                                                if used < 0 {
-                                                    drop = true;
-                                                } else if used > 0 {
-                                                    // Whatever is left is the start of the
-                                                    // next request: move it to the front.
+                                                if used > 0 {
+                                                    // Whatever is left is the start of the next
+                                                    // request, or a request held back: move it to
+                                                    // the front.
                                                     var at = 0;
-                                                    while at < fl[k] - used {
+                                                    while at < st[4 * k] - used {
                                                         bf[base + at] = bf[base + used + at];
                                                         at = at + 1;
                                                     }
-                                                    fl[k] = fl[k] - used;
+                                                    st[4 * k] = st[4 * k] - used;
+                                                }
+                                                if st[4 * k + 3] == 1 && st[4 * k + 2] == 0 {
+                                                    drop = true;
                                                 }
                                             }
-                                        } else if now - sn[k] > idle {
-                                            drop = true;
                                         }
                                         if drop {
                                             sockets.close(libc, cfd);
                                             let last = n - 1;
                                             if k != last {
                                                 var at = 0;
-                                                while at < fl[last] {
+                                                while at < st[4 * last] {
                                                     bf[base + at] = bf[last * size + at];
                                                     at = at + 1;
                                                 }
-                                                fl[k] = fl[last];
-                                                sn[k] = sn[last];
-                                                set_record(pl, k + 1, record_fd(pl, last + 1));
+                                                at = 0;
+                                                while at < st[4 * last + 2] {
+                                                    pd[obase + at] = pd[last * osize + at];
+                                                    at = at + 1;
+                                                }
+                                                st[4 * k] = st[4 * last];
+                                                st[4 * k + 1] = st[4 * last + 1];
+                                                st[4 * k + 2] = st[4 * last + 2];
+                                                st[4 * k + 3] = st[4 * last + 3];
+                                                move_record(pl, last + 1, k + 1);
                                             }
                                             n = last;
+                                        } else if st[4 * k + 2] > 0 {
+                                            // Output is waiting: wait for room, and read no more.
+                                            set_events(pl, k + 1, 4);
+                                        } else {
+                                            set_events(pl, k + 1, 1);
                                         }
                                         k = k - 1;
                                     }
@@ -519,9 +701,9 @@ fn serve[&f, &h, &r](libc: &f Ffi("libc"), heap: &!h Heap, router: &r route.Rout
     buffer.drop(heap, out);
     unbox_slice(heap, params);
     unbox_slice(heap, table);
+    unbox_slice(heap, pends);
     unbox_slice(heap, bufs);
-    unbox_slice(heap, seen);
-    unbox_slice(heap, fills);
+    unbox_slice(heap, state);
     unbox_slice(heap, polls);
     return 0;
 }
@@ -536,6 +718,7 @@ fn main(world: World) -> [] int {
     var port = 0 - 1;
     var reuse = false;
     var idle = 9;
+    var chunk = 0;
     borrow args as &g in {
         if arg_count(g) > 1 {
             port = number_of(arg(g, 1));
@@ -546,10 +729,13 @@ fn main(world: World) -> [] int {
         if arg_count(g) > 3 {
             idle = number_of(arg(g, 3));
         }
+        if arg_count(g) > 4 {
+            chunk = number_of(arg(g, 4));
+        }
     }
 
     var status = 2;
-    if port > 0 && port < 65536 && idle > 0 {
+    if port > 0 && port < 65536 && idle > 0 && chunk >= 0 {
         status = 3;
         borrow libc as &f in {
             signal(f, 13, 1);
@@ -563,7 +749,7 @@ fn main(world: World) -> [] int {
                         io.newline(i);
                     }
                     borrow router as &r in {
-                        status = serve(f, h, r, lfd, idle);
+                        status = serve(f, h, r, lfd, idle, chunk);
                     }
                     route.drop(h, router);
                 }

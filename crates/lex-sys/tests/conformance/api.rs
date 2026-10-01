@@ -379,3 +379,129 @@ fn an_idle_connection_is_closed_after_the_timeout() {
     assert!(started.elapsed() < Duration::from_secs(15));
     assert_eq!(ask(&mut busy, &get("/health")).status, 200);
 }
+
+// ---- writes that do not block ---------------------------------------------
+
+/// `count` requests for blobs, as one string to write in one go.
+fn blob_requests(sizes: impl Iterator<Item = usize>) -> String {
+    sizes.map(|n| get(&format!("/blob/{n}"))).collect()
+}
+
+#[test]
+fn a_client_that_stops_reading_stalls_only_itself() {
+    // A thousand requests for 32 KiB each is 32 MB of answers, far beyond what
+    // the kernel will hold for a client that reads none of it. A server that
+    // *blocks* in `write` stops dead there; this one parks the rest of that
+    // connection's answers and serves everyone else.
+    let server = start("api-stall", &[]);
+    let mut slow = connect(&server);
+    slow.write_all(blob_requests((0..1000).map(|_| 32768)).as_bytes()).unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+
+    let started = Instant::now();
+    for i in 0..30 {
+        let r = ask(&mut connect(&server), &get(&format!("/users/{i}")));
+        assert_eq!(r.status, 200);
+    }
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "the loop waited on a client that was not reading"
+    );
+
+    // And the stalled client loses nothing: it now reads every answer, whole
+    // and in order.
+    let mut carry = Vec::new();
+    for i in 0..1000 {
+        let r =
+            read_response(&mut slow, &mut carry).unwrap_or_else(|| panic!("answer {i} missing"));
+        assert_eq!(r.status, 200, "answer {i}");
+        assert_eq!(r.body.len(), 32768, "answer {i}");
+    }
+}
+
+#[test]
+fn a_slow_reader_gets_every_byte_in_the_right_order() {
+    // Answers of a thousand different sizes, read a little at a time. Each time
+    // the kernel takes only part of one, the rest waits in the connection's
+    // output buffer and is sent when `poll` says there is room: a byte
+    // dropped, repeated or reordered there changes a length.
+    // `1500` is the fourth argument: no `send` is handed more than that, so
+    // every answer is sent in pieces and the rest of a partial one has to be
+    // resumed. On Linux loopback a `send` is otherwise whole or refused and
+    // that path never runs.
+    let server = start("api-slow", &["0", "9", "1500"]);
+    let sizes: Vec<usize> = (0..1000).map(|i| 1 + (i * 7919) % 32768).collect();
+    let mut slow = connect(&server);
+    slow.write_all(blob_requests(sizes.iter().copied()).as_bytes()).unwrap();
+    let mut carry = Vec::new();
+    for (i, &size) in sizes.iter().enumerate() {
+        let r =
+            read_response(&mut slow, &mut carry).unwrap_or_else(|| panic!("answer {i} missing"));
+        assert_eq!((r.status, r.body.len()), (200, size), "answer {i}");
+        assert!(
+            r.body.bytes().enumerate().all(|(at, b)| b == b'a' + (at % 26) as u8),
+            "answer {i} has the wrong bytes"
+        );
+        if i % 50 == 0 {
+            std::thread::sleep(Duration::from_millis(20));
+            // Others are served in the middle of it.
+            assert_eq!(ask(&mut connect(&server), &get("/health")).status, 200);
+        }
+    }
+}
+
+#[test]
+fn a_client_that_never_reads_is_closed_after_the_idle_timeout() {
+    // Two seconds without progress. The connection has output waiting and no
+    // `POLLIN` interest, so nothing it sends can keep it alive.
+    let server = start("api-never-reads", &["0", "2"]);
+    let mut s = connect(&server);
+    s.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+    s.write_all(blob_requests((0..1000).map(|_| 32768)).as_bytes()).unwrap();
+    std::thread::sleep(Duration::from_secs(5));
+    // Whatever the kernel was holding comes out, and then the connection ends
+    // -- by end of stream, or by a reset, which is what closing a socket with
+    // unread input sends. It must not still be open.
+    let mut total = 0usize;
+    let mut buf = vec![0u8; 65536];
+    loop {
+        match s.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => total += n,
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::BrokenPipe
+                ) =>
+            {
+                break;
+            }
+            Err(e) => panic!("the connection was still open after the timeout: {e}"),
+        }
+    }
+    assert!(total < 1000 * 32768, "every answer was delivered to a client that was not reading");
+    assert_eq!(ask(&mut connect(&server), &get("/health")).status, 200);
+}
+
+#[test]
+fn a_connection_that_is_to_close_closes_only_once_its_answer_has_gone() {
+    // `Connection: close` on a 20 KB answer, with `send` limited to 1500 bytes
+    // at a time: the answer goes out in pieces over several `poll` rounds, and
+    // the connection must stay open until the last of them -- closing at the
+    // first partial send would cut the answer short.
+    let server = start("api-close-large", &["0", "30", "1500"]);
+    let mut s = connect(&server);
+    s.write_all(b"GET /blob/20000 HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n").unwrap();
+    let mut carry = Vec::new();
+    let r = read_response(&mut s, &mut carry).expect("an answer");
+    assert_eq!((r.status, r.body.len()), (200, 20000));
+    assert!(r.head.contains("Connection: close"));
+    assert!(read_response(&mut s, &mut carry).is_none(), "the connection stayed open");
+    // And so does a refusal that is bigger than one piece: 20,000 bytes of header.
+    let mut s = connect(&server);
+    let _ = s.write_all(
+        format!("GET /health HTTP/1.1\r\nHost: t\r\nX: {}\r\n\r\n", "a".repeat(20_000)).as_bytes(),
+    );
+    let r = read_response(&mut s, &mut Vec::new()).expect("a refusal");
+    assert_eq!(r.status, 431);
+}

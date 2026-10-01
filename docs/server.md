@@ -1,8 +1,8 @@
 # `examples/api`: a JSON API server, and what it costs
 
-> **Status: built.** `examples/api/api.ls` (about 580 lines) over
+> **Status: built.** `examples/api/api.ls` (about 760 lines) over
 > `std.http`, `std.route`, `std.json` and the `net.sockets` package;
-> `conformance/api.rs` (11 tests over real sockets); the load generator and the
+> `conformance/api.rs` (15 tests over real sockets); the load generator and the
 > references behind §5's figures are in `benches/server/`. One thread,
 > `poll(2)`, keep-alive, pipelining, a JSON API with four routes.
 
@@ -51,6 +51,10 @@ What that buys, and `conformance/api.rs` checks each of them:
 | **Sixty-four concurrent clients**, forty requests each, every answer checked against what that client asked | `many_clients_at_once...` |
 | **Clients that vanish**: ask and leave without reading (the write to a closed socket is `SIGPIPE`), leave in a head, leave in a body | `clients_that_vanish...` |
 | **Idle timeout**: a quiet connection is closed, a busy one never is | `an_idle_connection_is_closed...` |
+| **A client that stops reading stalls only itself**: a thousand requests for 32 KiB (32 MB of answers) and none read; thirty other requests served inside two seconds; then the stalled client reads every answer, whole and in order | `a_client_that_stops_reading_stalls_only_itself` |
+| **A slow reader gets every byte in the right order**: a thousand answers of different sizes, `send` limited to 1,500 bytes so each goes in pieces, bodies a repeating alphabet so a misplaced byte shows | `a_slow_reader_gets_every_byte...` |
+| **A client that never reads is closed** after the idle time, and the server is unharmed | `a_client_that_never_reads_is_closed...` |
+| **A closing connection closes only once its large answer has gone** (and a refusal bigger than one piece still arrives) | `a_connection_that_is_to_close_closes_only_once...` |
 | **`Connection: close`**, and HTTP/1.0 closing by default | `connection_close_is_honoured` |
 | **Refusals close the connection**: ten malformed or ambiguous requests each get their status, `Connection: close`, and EOF | `what_cannot_be_trusted...` |
 
@@ -61,6 +65,32 @@ in the close path passed too, because none closed a connection while the last
 one held a half-sent head. Each now has a test that fails with the mutation and
 passes without it.
 
+The write path went through the same exercise, and it was harder, for reasons
+worth keeping. Making `send` blocking again failed the stall tests at once (the
+other clients starve). But deleting the shift of unsent bytes after a partial
+send **survived three versions of the test**:
+
+1. The first never made a `send` partial at all. **On Linux loopback a `send`
+   is whole or refused, never partial** -- the kernel accepts a whole skb once
+   any room is free -- so the resume code ran only for the last hundred bytes of
+   an answer and its shift loop ran zero times. A small receive buffer on the
+   client made the test crawl (a window under one segment and delayed ACKs: about
+   100 KB/s), and a small `SO_SNDBUF` still gave whole sends.
+2. So the program gained a fourth argument, a **send quantum**: no `send` is
+   handed more than that many bytes. It is a plausible fairness knob, and the
+   only deterministic way to make partial sends certain on both operating
+   systems.
+3. Even then the mutation survived, because the `/blob` body was one repeated
+   byte and a chunk sent twice is indistinguishable from the right one. The
+   body is now `abcdefghij...` repeating, and the test checks every byte's
+   position.
+
+The last case, a connection that is to close after a large answer, was caught
+by neither the stall tests nor the refusal tests; its first test could not tell
+"closed promptly" from "closed by the idle timeout nine seconds later" and
+passed on the mutation anyway. It now runs with a thirty-second timeout, so only
+a prompt close passes.
+
 ## 3. Decisions
 
 | Question | Answer | Why |
@@ -68,7 +98,10 @@ passes without it.
 | Threads, an event loop, or processes? | **One thread, `poll`; scale by running copies** | A thread per connection needs a spawn payload of more than one leaf (`threads.md`), which does not exist; `poll` is POSIX and needs no per-OS code. `reuseport` as the second argument lets copies share a port and the kernel spreads the connections |
 | `poll`, `epoll` or `kqueue`? | `poll` | It is the one both CI targets have. It is linear in the connections, which at the 1,024 this allows is a few microseconds a wake-up and shows up in §5 as nothing |
 | How does a `[byte]`-only foreign boundary pass `struct pollfd[]`? | **A prefix of a byte array, whose length is the record count** | A foreign slice is `(pointer, length)` and only `[byte]` may cross. `poll(fds, nfds, timeout)` wants a count of 8-byte records, so the program hands over `polls[0..n + 1]`: C reads `nfds` records from the pointer, and the allocation behind it is eight times as long as the slice says. Checked on a probe before it was built on |
-| Non-blocking writes? | **No** | `fcntl(F_SETFL)` is variadic in C and variadic arguments are not passed like fixed ones on Apple arm64, so calling it as an ordinary function would be wrong on one of the two targets. The cost is §6's first row |
+| Non-blocking writes? | **Yes: `send(fd, buf, len, MSG_DONTWAIT)`, not `fcntl(O_NONBLOCK)`** | `fcntl(F_SETFL)` is variadic in C, and variadic arguments are not passed like fixed ones on Apple arm64, so declaring it as an ordinary function would be wrong on one of the two targets. `send` has a fixed signature and the flag makes one call non-blocking without touching the socket. `MSG_DONTWAIT` is `0x40` on Linux and `0x80` on macOS, so the program asks which it is running on (`SO_REUSEADDR` at level 1, option 2 succeeds only on Linux) |
+| What happens to what the kernel did not take? | **It waits in the connection's own 64 KiB output buffer, and the connection is read no more** | The record asks `poll` for `POLLOUT` instead of `POLLIN`, so a client that does not take its answers cannot make the server buffer without bound: its next requests wait in the kernel. A connection that cannot hold even one more answer is closed, and one that makes no progress for the idle time (a byte read, a byte sent) is closed too |
+| Several answers queued behind a partial send? | **Never: `drain` stops at the first answer that did not go whole** | At most one answer is ever waiting, so order cannot be wrong and the buffer needs to hold one answer, which `/blob`'s 32 KiB maximum bounds |
+| After a refusal, or `Connection: close` | Close **once the output has gone**, not at the first partial send | Closing early would cut the answer short; closing never would hold the slot for ever |
 | `SIGPIPE` | `signal(13, SIG_IGN)` at start | 13 and 1 are the same on both targets, and the alternative is a client that can kill the server by hanging up |
 | `SO_REUSEADDR`, `SO_REUSEPORT` | Both operating systems' numbers are set; the wrong pair is refused harmlessly | Linux: level 1, options 2 and 15. macOS: level `0xffff`, options 4 and `0x200`. There is no way to ask which OS this is, and ignoring the result is correct |
 | Where is a request's body? | In the same buffer as its head, so head and body together must fit 16 KiB | A request that cannot is refused at once: 413 for a body, 431 for a head. Not waited on |
@@ -112,6 +145,15 @@ ranges are 33 and 50) on the same core and the same request. Two copies sharing 
 spent on the load generator that is a measure of the generator and the kernel
 as much as of the server, and is reported as that and not as scaling.
 
+**After non-blocking writes** (`send(..., MSG_DONTWAIT)`, per-connection state,
+`POLLOUT` bookkeeping), measured in the same session against the blocking
+version it replaced, three runs each, twice: the blocking version
+128,000 - 151,000, the new one 119,000 - 141,000, with the C ceiling itself
+spread over 123,000 - 150,000 in that session. **No measurable regression
+within the machine's noise**; the point estimates are about four percent apart,
+which three five-second runs cannot resolve. The figures in the table above are
+from an earlier, quieter session and are kept as measured.
+
 Memory: **1.5 MB resident idle, 1.6 MB after three seconds under load with 32
 connections** -- the 16 MiB of connection buffers are `calloc`ed and touched
 only as a connection uses them.
@@ -132,7 +174,6 @@ keep-alive, which is why both numbers are so much higher and the gap is wider.
 
 | | |
 |---|---|
-| **Block-proof writes** | A client that stops reading can stall the loop once its socket buffer is full. The answers are small, so it takes a client trying; the fix is non-blocking writes, which wants a portable `fcntl` first (§3) |
 | **More than one core in one process** | Run copies with `reuseport` (second argument) |
 | **A body larger than the buffer, or chunked** | 413 and 501; streaming a body is a loop, and nothing here needs one |
 | **TLS** | `examples/tls_client` is the client half; nothing serves it |
