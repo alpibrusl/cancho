@@ -6,7 +6,7 @@ use std::io::Write;
 use std::process::Stdio;
 
 /// Build one of `tests/programs/` against the standard library.
-fn build_driver(tag: &str, program: &str) -> (PathBuf, PathBuf) {
+pub(super) fn build_driver(tag: &str, program: &str) -> (PathBuf, PathBuf) {
     let dir = scratch(tag);
     let exe = dir.join("driver");
     let build = Command::new(BIN)
@@ -20,7 +20,7 @@ fn build_driver(tag: &str, program: &str) -> (PathBuf, PathBuf) {
     (dir, exe)
 }
 
-fn feed(exe: &Path, input: &[u8]) -> std::process::Output {
+pub(super) fn feed(exe: &Path, input: &[u8]) -> std::process::Output {
     let mut child = Command::new(exe)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -72,13 +72,13 @@ fn the_library_tests_pass_on_both_backends() {
 }
 
 /// A small deterministic generator, so a failure names a reproducible input.
-struct Lcg(u64);
+pub(super) struct Lcg(pub(super) u64);
 impl Lcg {
-    fn next(&mut self) -> u64 {
+    pub(super) fn next(&mut self) -> u64 {
         self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
         self.0 >> 11
     }
-    fn below(&mut self, n: u64) -> u64 {
+    pub(super) fn below(&mut self, n: u64) -> u64 {
         self.next() % n
     }
 }

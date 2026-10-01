@@ -369,6 +369,7 @@ not repeated here; a doc's own header carries its own detail.
 | [`collections.md`](collections.md) | Which collections hold a resource, and why it's about shape | settled and built |
 | [`json.md`](json.md) | `std.json`: a strict, zero-copy tape parser and a Writer that cannot write bad JSON | built; 13,000 numbers bit-exact against Rust, 1,500 mutated documents against `serde_json`, 355 MB/s to the tape |
 | [`map.md`](map.md) | `std.map`: a hash map from byte strings to copyable values, iterating in insertion order | built; tested against a model over 30,000 random operations; found the LLVM backend growing the stack inside loops |
+| [`http.md`](http.md) | `std.http` and `std.route`: a strict request parser (refuses what request smuggling lives on) and a router that answers with an id you `match` on | built; 1,089 requests identical to `httparse` field for field, none accepted that it refuses; 1.0-1.4 µs a request, flat to 5,000 routes |
 | [`formatting.md`](formatting.md) | `lex-sys fmt`: the canonical layout with comments, blank lines and literal spellings kept | built; refuses, rather than risks, a file it cannot reproduce |
 | [`testing.md`](testing.md) | `trap()` and `std.test`'s `assert` — what a program needed to state "this must be true" at all | `trap()`, `std.test`, and `lex-sys test` are built; no per-test timeout, no message on a failed assertion |
 | [`slicing.md`](slicing.md) | `s[a..b]`, half-open and trapping | settled and built |

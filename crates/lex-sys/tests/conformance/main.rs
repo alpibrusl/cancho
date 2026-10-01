@@ -48,6 +48,7 @@ mod duplication;
 mod filesystem;
 mod floats;
 mod formatting;
+mod http;
 mod identity;
 mod io;
 mod json;

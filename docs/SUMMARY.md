@@ -21,6 +21,7 @@
 - [Formatting](formatting.md)
 - [JSON](json.md)
 - [Hash map](map.md)
+- [HTTP and routing](http.md)
 - [Slicing](slicing.md)
 - [Tuples](tuples.md)
 - [Shadowing](shadowing.md)

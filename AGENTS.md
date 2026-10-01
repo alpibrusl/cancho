@@ -301,7 +301,7 @@ fn main(world: World) -> [] int {
 `std.bytes`, `std.io`, `std.math`, `std.buffer`, `std.option`,
 `std.result`, `std.list`, `std.vec`, `std.fmt`, `std.bignum`,
 `std.utf8`, `std.flags`, `std.crypto`, `std.ed25519`, `std.json`,
-`std.map`, `std.test`. Pass `--std` and write the `import` — there is no prelude.
+`std.map`, `std.http`, `std.route`, `std.test`. Pass `--std` and write the `import` — there is no prelude.
 
 `std.json` parses into a **tape** you provide (`docs/json.md`) rather than
 building a tree, and writes through a `Writer` you move from call to
@@ -346,6 +346,71 @@ fn main(world: World) -> [] int {
 
 A parse error is a value (`nodes < 0`), and a writer misused -- a key
 outside an object, a value with no key -- is a trap, not bad JSON.
+
+`std.http` parses one request head into an integer table you provide and
+`std.route` maps a method and path to an id you chose (`docs/http.md`);
+you `match` on the id, so there is no handler registry:
+
+```lex-sys
+import std.buffer;
+import std.http;
+import std.route;
+
+// One request in, one response out: 200 with the `:id` segment, 404, 405 or 400.
+fn handle[&h, &r, &q](heap: &!h Heap, router: &r route.Router, request: &q [byte]) -> [heap] buffer.Buffer {
+    let table = box_slice(heap, http.slots(32), 0);
+    let params = box_slice(heap, 2 * route.most_params(router), 0);
+    var out = buffer.empty(heap, 256);
+    borrow mut table as &!tw in {
+        borrow mut params as &!pw in {
+            let t = contents(tw);
+            let p = contents(pw);
+            let n = http.parse(request, t);
+            if n < 0 {
+                out = http.respond_head(heap, out, 400, "text/plain", 0, false);
+            } else {
+                let path = http.path(request, t);
+                let id = route.find(router, http.method(request, t), path, p);
+                if id == 1 {
+                    let who = path[p[0]..p[1]];
+                    out = http.respond_head(heap, out, 200, "text/plain", len(who), http.keeps_alive(t));
+                    out = buffer.append(heap, out, who);
+                } else if id == 0 - 2 {
+                    out = http.respond_head(heap, out, 405, "text/plain", 0, false);
+                } else {
+                    out = http.respond_head(heap, out, 404, "text/plain", 0, false);
+                }
+            }
+        }
+    }
+    unbox_slice(heap, params);
+    unbox_slice(heap, table);
+    return out;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi); release(fs); release(args); release(io);
+    borrow mut heap as &!h in {
+        var router = route.empty(h);
+        router = route.add(h, router, "GET", "/users/:id", 1);
+        borrow router as &r in {
+            let ok = handle(h, r, "GET /users/42 HTTP/1.1\r\nHost: x\r\n\r\n");
+            let wrong = handle(h, r, "DELETE /users/42 HTTP/1.1\r\nHost: x\r\n\r\n");
+            buffer.drop(h, ok);
+            buffer.drop(h, wrong);
+        }
+        route.drop(h, router);
+    }
+    release(heap);
+    return 0;
+}
+```
+
+An incomplete head is a value too (`http.is_incomplete`): read more and call
+`parse` again. A request that is ambiguous about where its body ends --
+obsolete line folding, two different `Content-Length`s, a `Transfer-Encoding`
+beside a length -- is refused, not guessed at.
 
 **A function earns its way into `std` by a program asking for it**, and
 that is how most of these arrived — `std.crypto` is named as the one
