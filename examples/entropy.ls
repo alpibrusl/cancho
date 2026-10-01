@@ -28,7 +28,7 @@ fn print_nine[&i](out: &!i Io, x: float) -> [io_write] int {
     var place = 100000000;
     while place > 0 {
         io.print_int(out, rest / place);
-        rest = rest - (rest / place) * place;
+        rest = rest - rest / place * place;
         place = place / 10;
     }
     io.newline(out);

@@ -46,7 +46,9 @@ fn rewrap[T: val](w: Wrap[T]) -> [] T {
 // a generic function can move a `T` and can never end one.
 fn spend[&h, &i](heap: &!h Heap, io: &!i Io, held: list.List[Ticket]) -> [heap, io_write] int {
     match list.pop(heap, held) {
-        option.Option::None => { return 0; }
+        option.Option::None => {
+            return 0;
+        }
         option.Option::Some(pair) => {
             let (head, rest) = pair;
             let Ticket { serial } = head;
@@ -62,7 +64,9 @@ fn spend[&h, &i](heap: &!h Heap, io: &!i Io, held: list.List[Ticket]) -> [heap, 
 // not about which variant a value happens to be in.
 fn redeem(o: option.Option[Ticket]) -> [] int {
     match o {
-        option.Option::None => { return 0; }
+        option.Option::None => {
+            return 0;
+        }
         option.Option::Some(t) => {
             let Ticket { serial } = t;
             return serial;
@@ -78,7 +82,9 @@ fn settle(r: result.Result[Ticket, int]) -> [] int {
             let Ticket { serial } = t;
             return serial;
         }
-        result.Result::Err(code) => { return 0 - code; }
+        result.Result::Err(code) => {
+            return 0 - code;
+        }
     }
 }
 

@@ -25,28 +25,21 @@
 
 module net.sockets;
 
-pub extern fn socket[&f](ffi: &f Ffi("libc"), domain: int, kind: int, proto: int)
-    -> [ffi("libc")] c_int;
+extern fn socket[&f](ffi: &f Ffi("libc"), domain: int, kind: int, proto: int) -> [ffi("libc")] c_int;
 
-pub extern fn setsockopt[&f, &v](ffi: &f Ffi("libc"), fd: int, level: int,
-    name: int, value: &v [byte]) -> [ffi("libc")] c_int;
+extern fn setsockopt[&f, &v](ffi: &f Ffi("libc"), fd: int, level: int, name: int, value: &v [byte]) -> [ffi("libc")] c_int;
 
-pub extern fn bind[&f, &a](ffi: &f Ffi("libc"), fd: int, addr: &a [byte])
-    -> [ffi("libc")] c_int;
+extern fn bind[&f, &a](ffi: &f Ffi("libc"), fd: int, addr: &a [byte]) -> [ffi("libc")] c_int;
 
-pub extern fn listen[&f](ffi: &f Ffi("libc"), fd: int, backlog: int)
-    -> [ffi("libc")] c_int;
+extern fn listen[&f](ffi: &f Ffi("libc"), fd: int, backlog: int) -> [ffi("libc")] c_int;
 
-pub extern fn accept[&f](ffi: &f Ffi("libc"), fd: int, addr: int, len: int)
-    -> [ffi("libc")] c_int;
+extern fn accept[&f](ffi: &f Ffi("libc"), fd: int, addr: int, len: int) -> [ffi("libc")] c_int;
 
-pub extern fn read[&f, &b](ffi: &f Ffi("libc"), fd: int, buf: &!b [byte])
-    -> [ffi("libc")] int;
+extern fn read[&f, &b](ffi: &f Ffi("libc"), fd: int, buf: &!b [byte]) -> [ffi("libc")] int;
 
-pub extern fn write[&f, &b](ffi: &f Ffi("libc"), fd: int, buf: &b [byte])
-    -> [ffi("libc")] int;
+extern fn write[&f, &b](ffi: &f Ffi("libc"), fd: int, buf: &b [byte]) -> [ffi("libc")] int;
 
-pub extern fn close[&f](ffi: &f Ffi("libc"), fd: int) -> [ffi("libc")] c_int;
+extern fn close[&f](ffi: &f Ffi("libc"), fd: int) -> [ffi("libc")] c_int;
 
 // Copy `src` into `dst` at `at` and hand back where the next one goes.
 pub fn put[&s, &d](dst: &!d [byte], at: int, src: &s [byte]) -> [] int {
@@ -68,7 +61,7 @@ pub fn put_nat[&d](dst: &!d [byte], at: int, n: int) -> [] int {
     var rest = n;
     var end = at;
     while rest > 0 {
-        dst[end] = byte_of('0' + rest - (rest / 10) * 10);
+        dst[end] = byte_of('0' + rest - rest / 10 * 10);
         rest = rest / 10;
         end = end + 1;
     }

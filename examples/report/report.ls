@@ -74,8 +74,7 @@ import http.response;
 // rather than shared because there is nowhere to put a shared function
 // between two examples (`docs/many-files.md` is about a program's own
 // files, not the corpus).
-fn exchange[&f, &i, &h, &p, &m](libc: &f Ffi("libc"), io: &!i Io, fd: int, host: &h [byte],
-    path: &p [byte], message: &m [byte]) -> [ffi("libc"), io_write] int {
+fn exchange[&f, &i, &h, &p, &m](libc: &f Ffi("libc"), io: &!i Io, fd: int, host: &h [byte], path: &p [byte], message: &m [byte]) -> [ffi("libc"), io_write] int {
     region scratch {
         let head_out = alloc_slice[scratch](len(path) + len(host) + 96, byte_of(0));
         var at = sockets.put(head_out, 0, "POST ");

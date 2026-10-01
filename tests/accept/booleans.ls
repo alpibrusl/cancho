@@ -5,9 +5,9 @@
 
 fn digit(b: bool) -> [] int {
     if b {
-        return 49;                   // '1'
+        return 49; // '1'
     } else {
-        return 48;                   // '0'
+        return 48; // '0'
     }
 }
 

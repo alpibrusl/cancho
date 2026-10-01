@@ -42,11 +42,11 @@ fn main(world: World) -> [] int {
         label(i, "shl", 1 << 4);
         // Arithmetic, so the sign survives: -8 >> 1 is -4 and not a large
         // positive number (§2).
-        label(i, "shr", (0 - 8) >> 1);
+        label(i, "shr", 0 - 8 >> 1);
         // §4: `1 << 63` sets the sign bit and that is the answer, not an
         // overflow. Printed as 1 so the expectation reads as a claim.
         var sign = 0;
-        if (1 << 63) < 0 {
+        if 1 << 63 < 0 {
             sign = 1;
         }
         label(i, "sign", sign);

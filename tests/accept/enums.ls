@@ -4,7 +4,10 @@
 //~ STDOUT 001220069901
 //~ EXIT 0
 
-struct Point { x: int, y: int }
+struct Point {
+    x: int,
+    y: int,
+}
 
 enum Shape {
     Empty,
@@ -15,17 +18,29 @@ enum Shape {
 
 fn area(s: Shape) -> [] int {
     match s {
-        Shape::Empty => { return 0; }
-        Shape::Circle(r) => { return 3 * r * r; }
-        Shape::Rect(w, h) => { return w * h; }
-        Shape::At(p, r) => { return p.x + p.y + r; }
+        Shape::Empty => {
+            return 0;
+        }
+        Shape::Circle(r) => {
+            return 3 * r * r;
+        }
+        Shape::Rect(w, h) => {
+            return w * h;
+        }
+        Shape::At(p, r) => {
+            return p.x + p.y + r;
+        }
     }
 }
 
 fn describe(s: Shape) -> [] int {
     match s {
-        Shape::Circle(_) => { return 99; }
-        _ => { return 1; }
+        Shape::Circle(_) => {
+            return 99;
+        }
+        _ => {
+            return 1;
+        }
     }
 }
 
@@ -36,12 +51,12 @@ fn digits[&i](io: &!i Io, n: int) -> [io_write] int {
 }
 
 fn run[&i](io: &!i Io) -> [io_write] int {
-    digits(io, area(Shape::Empty));            // 00
-    digits(io, area(Shape::Circle(2)));        // 12
-    digits(io, area(Shape::Rect(4, 5)));       // 20
-    digits(io, area(Shape::At(Point { x: 1, y: 2 }, 3)));  // 06
-    digits(io, describe(Shape::Circle(1)));    // 99
-    digits(io, describe(Shape::Empty));        // 01
+    digits(io, area(Shape::Empty)); // 00
+    digits(io, area(Shape::Circle(2))); // 12
+    digits(io, area(Shape::Rect(4, 5))); // 20
+    digits(io, area(Shape::At(Point { x: 1, y: 2 }, 3))); // 06
+    digits(io, describe(Shape::Circle(1))); // 99
+    digits(io, describe(Shape::Empty)); // 01
     putchar(io, 10);
     return 0;
 }

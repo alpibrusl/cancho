@@ -16,8 +16,7 @@ import std.io;
 // no NUL of its own (`docs/strings.md`), so both calls below append one
 // by hand -- the same thing `checked_path`'s own NUL-termination does
 // internally for `Fs`.
-extern fn access[&f, &p](ffi: &f Ffi("libc"), path: &p [byte], mode: int)
-    -> [ffi("libc")] c_int;
+extern fn access[&f, &p](ffi: &f Ffi("libc"), path: &p [byte], mode: int) -> [ffi("libc")] c_int;
 
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args } = split(world);

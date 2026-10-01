@@ -70,7 +70,10 @@ fn run[&i](io: &!i Io) -> [io_write] int {
         let xs = alloc_slice[a](5, 0);
         squares(xs);
         show(io, xs);
-        putchar(io, 32); putchar(io, 45); putchar(io, 62); space(io);   // " -> "
+        putchar(io, 32);
+        putchar(io, 45);
+        putchar(io, 62);
+        space(io); // " -> "
         answer = total(xs);
         print_nat(io, answer);
         putchar(io, 10);
@@ -83,8 +86,13 @@ fn run[&i](io: &!i Io) -> [io_write] int {
             evens[i] = 2 * i + 2;
             i = i + 1;
         }
-        putchar(io, 101); putchar(io, 118); putchar(io, 101); putchar(io, 110);
-        putchar(io, 115); putchar(io, 58); space(io);                   // "evens: "
+        putchar(io, 101);
+        putchar(io, 118);
+        putchar(io, 101);
+        putchar(io, 110);
+        putchar(io, 115);
+        putchar(io, 58);
+        space(io); // "evens: "
         show(io, evens);
         putchar(io, 10);
     }

@@ -45,8 +45,13 @@ fn run(limit: int, rounds: int) -> [] int {
     }
     return found - 6057;
 }
+
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args } = split(world);
-    release(args); release(heap); release(fs); release(io); release(ffi);
+    release(args);
+    release(heap);
+    release(fs);
+    release(io);
+    release(ffi);
     return run(60000, 1000);
 }

@@ -34,8 +34,7 @@ import std.bytes;
 // **moves** it round and round: `text = buffer.push(h, text, ...)`. That
 // is linearity at its most ordinary, and it is the shape every function
 // here has.
-fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer)
-    -> [heap, io_read] buffer.Buffer {
+fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap, io_read] buffer.Buffer {
     var out = text;
     var c = getchar(io);
     while c >= 0 {
@@ -60,8 +59,7 @@ fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer)
 // like a typo in a filename.
 //
 // The buffer comes back either way: an error is not a reason to leak.
-fn read_file[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte],
-    text: buffer.Buffer) -> [heap, fs_read(""), file_read] (buffer.Buffer, int) {
+fn read_file[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte], text: buffer.Buffer) -> [heap, fs_read(""), file_read] (buffer.Buffer, int) {
     var out = text;
     var total = 0;
     var trouble = 0;
@@ -146,8 +144,7 @@ fn read_file[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte],
 //
 // A trailing byte that is not a newline still ends a line, which is what
 // `sort` does: a file without a final newline gets one on the way out.
-fn find_lines[&h, &t](heap: &!h Heap, text: &t [byte], starts: vec.Vec[int],
-    lengths: vec.Vec[int]) -> [heap] (vec.Vec[int], vec.Vec[int]) {
+fn find_lines[&h, &t](heap: &!h Heap, text: &t [byte], starts: vec.Vec[int], lengths: vec.Vec[int]) -> [heap] (vec.Vec[int], vec.Vec[int]) {
     var s = starts;
     var l = lengths;
     var at = 0;
@@ -172,8 +169,7 @@ fn find_lines[&h, &t](heap: &!h Heap, text: &t [byte], starts: vec.Vec[int],
 // triples this used to take, because `slicing.md` §1's subslice is
 // exactly that triple with the arithmetic done once -- and a subslice
 // cannot outlive `text`, which the triples could not promise.
-fn before[&t](text: &t [byte], a_at: int, a_len: int, b_at: int, b_len: int)
-    -> [] bool {
+fn before[&t](text: &t [byte], a_at: int, a_len: int, b_at: int, b_len: int) -> [] bool {
     return bytes.compare(text[a_at..a_at + a_len], text[b_at..b_at + b_len]) < 0;
 }
 
@@ -189,9 +185,7 @@ fn before[&t](text: &t [byte], a_at: int, a_len: int, b_at: int, b_len: int)
 // scratch unique. The checker keeps them apart because they are different
 // values -- `borrow mut` freezes what it borrows, and nothing here
 // borrows the same thing twice.
-fn merge[&t, &p, &q, &o, &s](text: &t [byte], starts: &p vec.Vec[int],
-    lengths: &q vec.Vec[int], order: &!o vec.Vec[int],
-    scratch: &!s vec.Vec[int], lo: int, mid: int, hi: int) -> [] int {
+fn merge[&t, &p, &q, &o, &s](text: &t [byte], starts: &p vec.Vec[int], lengths: &q vec.Vec[int], order: &!o vec.Vec[int], scratch: &!s vec.Vec[int], lo: int, mid: int, hi: int) -> [] int {
     var i = lo;
     while i < mid {
         vec.set(scratch, i, vec.get(order, i));
@@ -208,8 +202,7 @@ fn merge[&t, &p, &q, &o, &s](text: &t [byte], starts: &p vec.Vec[int],
         // the order they arrived in. GNU's default sort is not stable and
         // this does not need to be, but a stable merge is not more code
         // and a reader should not have to wonder.
-        if before(text, vec.get(starts, b), vec.get(lengths, b),
-                  vec.get(starts, a), vec.get(lengths, a)) {
+        if before(text, vec.get(starts, b), vec.get(lengths, b), vec.get(starts, a), vec.get(lengths, a)) {
             vec.set(order, out, b);
             right = right + 1;
         } else {
@@ -227,9 +220,7 @@ fn merge[&t, &p, &q, &o, &s](text: &t [byte], starts: &p vec.Vec[int],
 }
 
 // Top-down merge sort over `[lo, hi)`.
-fn msort[&t, &p, &q, &o, &s](text: &t [byte], starts: &p vec.Vec[int],
-    lengths: &q vec.Vec[int], order: &!o vec.Vec[int],
-    scratch: &!s vec.Vec[int], lo: int, hi: int) -> [] int {
+fn msort[&t, &p, &q, &o, &s](text: &t [byte], starts: &p vec.Vec[int], lengths: &q vec.Vec[int], order: &!o vec.Vec[int], scratch: &!s vec.Vec[int], lo: int, hi: int) -> [] int {
     if hi - lo < 2 {
         return 0;
     }
@@ -244,9 +235,7 @@ fn msort[&t, &p, &q, &o, &s](text: &t [byte], starts: &p vec.Vec[int],
 // Writing
 // ---------------------------------------------------------------------
 
-fn write_lines[&i, &t, &p, &q, &o](io: &!i Io, text: &t [byte],
-    starts: &p vec.Vec[int], lengths: &q vec.Vec[int],
-    order: &o vec.Vec[int], count: int) -> [io_write] int {
+fn write_lines[&i, &t, &p, &q, &o](io: &!i Io, text: &t [byte], starts: &p vec.Vec[int], lengths: &q vec.Vec[int], order: &o vec.Vec[int], count: int) -> [io_write] int {
     var n = 0;
     while n < count {
         let which = vec.get(order, n);

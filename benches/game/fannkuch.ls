@@ -69,7 +69,7 @@ fn run[&i](out: &!i Io, n: int) -> [io_write] int {
             }
             // The sign alternates by permutation index, which is why the
             // order above is the benchmark's and not any order.
-            if permcount - (permcount / 2) * 2 == 0 {
+            if permcount - permcount / 2 * 2 == 0 {
                 checksum = checksum + flips;
             } else {
                 checksum = checksum - flips;

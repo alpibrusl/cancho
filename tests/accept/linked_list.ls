@@ -42,7 +42,9 @@ fn push[&h](heap: &!h Heap, rest: List, value: int) -> [heap] List {
 // node, guaranteed by the checker rather than by a convention or a test.
 fn drain[&h, &i](heap: &!h Heap, io: &!i Io, list: List, first: bool) -> [heap, io_write] int {
     match list {
-        List::Empty => { return 0; }
+        List::Empty => {
+            return 0;
+        }
         List::Cons(value, rest) => {
             if first == false {
                 putchar(io, 32);

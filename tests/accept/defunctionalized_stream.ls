@@ -14,7 +14,10 @@
 // only ever picks `Out`. `defunctionalized_row_is_the_union.ls` is the
 // refusal that proves the caller cannot say less.
 
-enum Stream { Out, Err }
+enum Stream {
+    Out,
+    Err,
+}
 
 fn write_to[&r, &i](io: &!i Io, which: Stream, s: &r [byte]) -> [io_write, err_write] int {
     match which {

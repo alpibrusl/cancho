@@ -21,9 +21,15 @@
 //~ STDOUT 719532
 //~ EXIT 0
 
-struct Pair[A, B] { first: A, second: B }
+struct Pair[A, B] {
+    first: A,
+    second: B,
+}
 
-enum Option[T] { None, Some(T) }
+enum Option[T] {
+    None,
+    Some(T),
+}
 
 fn identity[T](x: T) -> [] T {
     return x;
@@ -36,8 +42,12 @@ fn swap[A, B](p: Pair[A, B]) -> [] Pair[B, A] {
 
 fn unwrap_or[T: val](o: Option[T], fallback: T) -> [] T {
     match o {
-        Option::None => { return fallback; }
-        Option::Some(v) => { return v; }
+        Option::None => {
+            return fallback;
+        }
+        Option::Some(v) => {
+            return v;
+        }
     }
 }
 
@@ -46,20 +56,28 @@ fn digit[&i](io: &!i Io, n: int) -> [io_write] int {
 }
 
 fn run[&i](io: &!i Io) -> [io_write] int {
-    digit(io, identity(7));                                  // 7
+    digit(io, identity(7)); // 7
     let p = Pair { first: 1, second: true };
-    let q = swap(p);                                     // Pair[bool, int]
-    digit(io, q.second);                                     // 1
-    if q.first { digit(io, 9); } else { digit(io, 0); }          // 9
+    let q = swap(p); // Pair[bool, int]
+    digit(io, q.second); // 1
+    if q.first {
+        digit(io, 9);
+    } else {
+        digit(io, 0);
+    } // 9
 
     let some: Option[int] = Option::Some(5);
     let none: Option[int] = Option::None;
-    digit(io, unwrap_or(some, 0));                           // 5
-    digit(io, unwrap_or(none, 3));                           // 3
+    digit(io, unwrap_or(some, 0)); // 5
+    digit(io, unwrap_or(none, 3)); // 3
 
     // The same generic function at a second type.
     let flag: Option[bool] = Option::Some(false);
-    if unwrap_or(flag, true) { digit(io, 1); } else { digit(io, 2); }   // 2
+    if unwrap_or(flag, true) {
+        digit(io, 1);
+    } else {
+        digit(io, 2);
+    } // 2
     putchar(io, 10);
     return 0;
 }

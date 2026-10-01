@@ -6,18 +6,18 @@
 //~ EXIT 0
 
 fn noisy[&i](io: &!i Io) -> [io_write] bool {
-    putchar(io, 88);                     // 'X'
+    putchar(io, 88); // 'X'
     return true;
 }
 
 fn run[&i](io: &!i Io) -> [io_write] int {
     if false && noisy(io) {
-        putchar(io, 63);                 // '?'
+        putchar(io, 63); // '?'
     }
     if true || noisy(io) {
-        putchar(io, 97);                 // 'a'
+        putchar(io, 97); // 'a'
     }
-    putchar(io, 98);                     // 'b'
+    putchar(io, 98); // 'b'
     putchar(io, 10);
     return 0;
 }

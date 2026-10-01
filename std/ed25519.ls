@@ -97,8 +97,8 @@ fn bn_shl1_into[&a](a: &!a [byte], bit_in: int) -> [] int {
     let n = len(a);
     while i < n {
         let v = int_of(a[i]);
-        let new_carry = (v >> 7) & 1;
-        a[i] = byte_of(((v << 1) & 0xff) | carry);
+        let new_carry = v >> 7 & 1;
+        a[i] = byte_of(v << 1 & 0xff | carry);
         carry = new_carry;
         i = i + 1;
     }
@@ -156,7 +156,7 @@ fn bn_reduce_wide[&o, &x, &m](o: &!o [byte], x: &x [byte], m: &m [byte]) -> [] i
     while bit >= 0 {
         let byte_idx = bit / 8;
         let bit_idx = bit % 8;
-        let b = (int_of(x[byte_idx]) >> bit_idx) & 1;
+        let b = int_of(x[byte_idx]) >> bit_idx & 1;
         bn_shl1_into(o, b);
         if bn_compare(o, m) >= 0 {
             bn_sub_into(o, m);
@@ -200,12 +200,7 @@ fn bn_submod[&o, &a, &b, &m](o: &!o [byte], a: &a [byte], b: &b [byte], m: &m [b
 // decides the loop's own length, so the same function serves both the
 // field's `p - 2` inversion exponent and its `(p + 3) / 8` square-root
 // exponent without a second copy.
-fn bn_modpow[&o, &base, &exp, &m](
-    o: &!o [byte],
-    base: &base [byte],
-    exp: &exp [byte],
-    m: &m [byte],
-) -> [] int {
+fn bn_modpow[&o, &base, &exp, &m](o: &!o [byte], base: &base [byte], exp: &exp [byte], m: &m [byte]) -> [] int {
     region r {
         let result = alloc_slice[r](len(m), byte_of(0));
         result[0] = byte_of(1);
@@ -216,7 +211,7 @@ fn bn_modpow[&o, &base, &exp, &m](
             bn_copy_into(result, scratch);
             let byte_idx = bit / 8;
             let bit_idx = bit % 8;
-            let b = (int_of(exp[byte_idx]) >> bit_idx) & 1;
+            let b = int_of(exp[byte_idx]) >> bit_idx & 1;
             if b == 1 {
                 bn_mulmod(scratch, result, base, m);
                 bn_copy_into(result, scratch);
@@ -227,6 +222,7 @@ fn bn_modpow[&o, &base, &exp, &m](
     }
     return 0;
 }
+
 // 2^255 - 19, the field modulus.
 static p_const: [byte] {
     let k = alloc_slice[static](32, byte_of(0));
@@ -493,7 +489,6 @@ static base_point_enc: [byte] {
     return k;
 }
 
-
 // ---- Field arithmetic over GF(p), p = 2^255 - 19 ----
 // Thin wrappers over the bignum toolkit above, fixed to `p_const`.
 
@@ -621,7 +616,7 @@ fn point_scalarmult[&o, &p, &s](o: &!o [byte], p: &p [byte], s: &s [byte]) -> []
 
             let byte_idx = bit / 8;
             let bit_idx = bit % 8;
-            let bset = (int_of(s[byte_idx]) >> bit_idx) & 1;
+            let bset = int_of(s[byte_idx]) >> bit_idx & 1;
             if bset == 1 {
                 point_add(result, p, scratch);
                 point_copy(scratch, result);
@@ -673,7 +668,7 @@ fn point_unpack[&enc, &o](enc: &enc [byte], o: &!o [byte]) -> [] int {
     region r {
         let y = alloc_slice[r](32, byte_of(0));
         bn_copy_into(y, enc);
-        let sign = (int_of(y[31]) >> 7) & 1;
+        let sign = int_of(y[31]) >> 7 & 1;
         y[31] = byte_of(int_of(y[31]) & 0x7f);
 
         if bn_compare(y, p_const) < 0 {
@@ -753,13 +748,12 @@ fn point_equal[&p, &q](p: &p [byte], q: &q [byte]) -> [] int {
     return 0;
 }
 
-
 // RFC 8032 §5.1.5's clamp: clear the low three bits (a multiple of the
 // cofactor 8, keeping the scalar in the prime-order subgroup), clear
 // bit 255, set bit 254. Specified by the RFC itself, not derived here.
 fn clamp[&a](a: &!a [byte]) -> [] int {
     a[0] = byte_of(int_of(a[0]) & 0xf8);
-    a[31] = byte_of((int_of(a[31]) & 0x7f) | 0x40);
+    a[31] = byte_of(int_of(a[31]) & 0x7f | 0x40);
     return 0;
 }
 

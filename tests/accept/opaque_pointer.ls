@@ -30,8 +30,8 @@ edition 3;
 
 import std.io;
 
-extern fn fdopen[&f, &m](ffi: &f Ffi("libc"), fd: int, mode: &m [byte])
-    -> [ffi("libc")] c_ptr;
+extern fn fdopen[&f, &m](ffi: &f Ffi("libc"), fd: int, mode: &m [byte]) -> [ffi("libc")] c_ptr;
+
 extern fn fclose[&f](ffi: &f Ffi("libc"), stream: c_ptr) -> [ffi("libc")] int;
 
 fn main(world: World) -> [] int {

@@ -34,11 +34,11 @@ fn escape(cx: int, cy: int, maxiter: int) -> [] int {
     var zy2 = 0;
     var i = 0;
     while i < maxiter && zx2 + zy2 <= limit() {
-        let zxy = (zx * zy) >> 16;
+        let zxy = zx * zy >> 16;
         zx = zx2 - zy2 + cx;
         zy = 2 * zxy + cy;
-        zx2 = (zx * zx) >> 16;
-        zy2 = (zy * zy) >> 16;
+        zx2 = zx * zx >> 16;
+        zy2 = zy * zy >> 16;
         i = i + 1;
     }
     return i;
@@ -51,11 +51,11 @@ fn grid(width: int, height: int, maxiter: int) -> [] int {
     var py = 0;
     while py < height {
         // cy from -1.25 to +1.25
-        let cy = ((py * 163840) / height) - 81920;
+        let cy = py * 163840 / height - 81920;
         var px = 0;
         while px < width {
             // cx from -2.0 to +0.5
-            let cx = ((px * 163840) / width) - 131072;
+            let cx = px * 163840 / width - 131072;
             total = total + escape(cx, cy, maxiter);
             px = px + 1;
         }

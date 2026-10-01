@@ -27,8 +27,7 @@ import net.connect;
 // qualifier) -- two `pub fn connect_to`s in one build collide at the
 // object file, caught only by `clang -c` refusing the emitted module,
 // not by the type checker, which resolves the two by module just fine.
-pub fn open[&f, &o](libc: &f Ffi("libc"), octets: &o [byte], port: int)
-    -> [ffi("libc")] int {
+pub fn open[&f, &o](libc: &f Ffi("libc"), octets: &o [byte], port: int) -> [ffi("libc")] int {
     return connect.connect_to(libc, octets, port);
 }
 

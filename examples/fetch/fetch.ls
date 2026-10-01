@@ -63,8 +63,7 @@ import http.response;
 //
 // Answers the status, or -1 for a response that never finished its
 // header block or did not start with a status line.
-fn exchange[&f, &i, &h, &p](libc: &f Ffi("libc"), io: &!i Io, fd: int, host: &h [byte],
-    path: &p [byte]) -> [ffi("libc"), io_write] int {
+fn exchange[&f, &i, &h, &p](libc: &f Ffi("libc"), io: &!i Io, fd: int, host: &h [byte], path: &p [byte]) -> [ffi("libc"), io_write] int {
     region scratch {
         let request = alloc_slice[scratch](len(path) + len(host) + 64, byte_of(0));
         var at = sockets.put(request, 0, "GET ");

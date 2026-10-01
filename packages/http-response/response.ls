@@ -44,9 +44,7 @@ pub fn send_all[&f, &b](libc: &f Ffi("libc"), fd: int, data: &b [byte]) -> [ffi(
 
 // The status code from `HTTP/1.x NNN ...`, or -1.
 pub fn status_of[&h](head: &h [byte]) -> [] int {
-    if len(head) < 12 || int_of(head[0]) != 'H' || int_of(head[1]) != 'T'
-        || int_of(head[2]) != 'T' || int_of(head[3]) != 'P' || int_of(head[4]) != '/'
-        || int_of(head[5]) != '1' || int_of(head[6]) != '.' || int_of(head[8]) != ' ' {
+    if len(head) < 12 || int_of(head[0]) != 'H' || int_of(head[1]) != 'T' || int_of(head[2]) != 'T' || int_of(head[3]) != 'P' || int_of(head[4]) != '/' || int_of(head[5]) != '1' || int_of(head[6]) != '.' || int_of(head[8]) != ' ' {
         return 0 - 1;
     }
     var code = 0;

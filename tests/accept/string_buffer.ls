@@ -30,8 +30,7 @@ fn write_all[&r, &i](io: &!i Io, s: &r [byte]) -> [io_write] int {
 
 // Comparing storage is not arithmetic, so `==` on bytes is allowed (§2).
 fn is_vowel(b: byte) -> [] bool {
-    return b == byte_of('A') || b == byte_of('E') || b == byte_of('I')
-        || b == byte_of('O') || b == byte_of('U');
+    return b == byte_of('A') || b == byte_of('E') || b == byte_of('I') || b == byte_of('O') || b == byte_of('U');
 }
 
 fn count_vowels[&r](s: &r [byte]) -> [] int {

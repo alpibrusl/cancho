@@ -28,14 +28,20 @@ fn show[&i, &r, &t](io: &!i Io, label: &t [byte], text: &r [byte]) -> [io_write]
     io.write_all(io, label);
     io.write_all(io, ": ");
     io.print_int(io, utf8.count(text));
-    if utf8.is_valid(text) { io.write_all(io, " valid"); }
-    else { io.write_all(io, " invalid"); }
+    if utf8.is_valid(text) {
+        io.write_all(io, " valid");
+    } else {
+        io.write_all(io, " invalid");
+    }
     return io.newline(io);
 }
 
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args } = split(world);
-    release(args); release(heap); release(fs); release(ffi);
+    release(args);
+    release(heap);
+    release(fs);
+    release(ffi);
     borrow mut io as &!i in {
         show(i, "ascii", "A");
         show(i, "euro", "€");
@@ -51,7 +57,8 @@ fn main(world: World) -> [] int {
             // can never begin a sequence, so neither byte is a maximal
             // subpart of anything longer.
             var bad = alloc_slice[a](2, byte_of(0));
-            bad[0] = byte_of(0xc0); bad[1] = byte_of(0x80);
+            bad[0] = byte_of(0xc0);
+            bad[1] = byte_of(0x80);
             show(i, "overlong-nul", bad);
         }
         region b {
@@ -59,7 +66,9 @@ fn main(world: World) -> [] int {
             // UTF-8 encoding. Three errors: `ed` is a legal lead byte,
             // but `a0` is outside the range `ed` allows.
             var bad = alloc_slice[b](3, byte_of(0));
-            bad[0] = byte_of(0xed); bad[1] = byte_of(0xa0); bad[2] = byte_of(0x80);
+            bad[0] = byte_of(0xed);
+            bad[1] = byte_of(0xa0);
+            bad[2] = byte_of(0x80);
             show(i, "surrogate", bad);
         }
         region c {
@@ -67,15 +76,18 @@ fn main(world: World) -> [] int {
             // as one character, which is the row that disqualified it
             // as an oracle (§2).
             var bad = alloc_slice[c](4, byte_of(0));
-            bad[0] = byte_of(0xf5); bad[1] = byte_of(0x80);
-            bad[2] = byte_of(0x80); bad[3] = byte_of(0x80);
+            bad[0] = byte_of(0xf5);
+            bad[1] = byte_of(0x80);
+            bad[2] = byte_of(0x80);
+            bad[3] = byte_of(0x80);
             show(i, "above-max", bad);
         }
         region d {
             // `e2 82` — the first two bytes of `€`. **One** error,
             // because the pair was a plausible beginning.
             var bad = alloc_slice[d](2, byte_of(0));
-            bad[0] = byte_of(0xe2); bad[1] = byte_of(0x82);
+            bad[0] = byte_of(0xe2);
+            bad[1] = byte_of(0x82);
             show(i, "truncated", bad);
         }
         region e {

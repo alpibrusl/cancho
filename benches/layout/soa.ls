@@ -5,7 +5,9 @@ import std.io;
 
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args } = split(world);
-    release(args); release(fs); release(ffi);
+    release(args);
+    release(fs);
+    release(ffi);
     let n = 4000000;
     var total = 0;
     borrow mut heap as &!h in {
@@ -29,7 +31,10 @@ fn main(world: World) -> [] int {
         unbox_slice(h, xs);
     }
     release(heap);
-    borrow mut io as &!i in { io.print_int(i, total); io.newline(i); }
+    borrow mut io as &!i in {
+        io.print_int(i, total);
+        io.newline(i);
+    }
     release(io);
     return 0;
 }

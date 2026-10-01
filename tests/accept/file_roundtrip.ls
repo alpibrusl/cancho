@@ -47,10 +47,7 @@ fn same[&a, &b](left: &a [byte], right: &b [byte], count: int) -> [] bool {
 // The row names the directory. A caller reads `fs_read("/tmp")` and
 // `fs_write("/tmp")` and knows what this function can touch without
 // opening it.
-fn roundtrip[&f, &i](
-    fs: &f Fs("/tmp"),
-    io: &!i Io,
-) -> [fs_read("/tmp"), fs_write("/tmp"), io_write] int {
+fn roundtrip[&f, &i](fs: &f Fs("/tmp"), io: &!i Io) -> [fs_read("/tmp"), fs_write("/tmp"), io_write] int {
     let contents = "round trip\n";
     let wrote = fs_write(fs, "/tmp/lex-sys-roundtrip.txt", contents);
     write_all(io, "wrote ");

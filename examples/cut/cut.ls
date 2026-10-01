@@ -66,8 +66,9 @@ fn parse_list[&r, &o](spec: &r [byte], bits: &!o [byte]) -> [] int {
             at = at + 1;
             saw = true;
         }
-        if !saw { bad = true; }
-        else {
+        if !saw {
+            bad = true;
+        } else {
             var hi = lo;
             if at < len(spec) && int_of(spec[at]) == '-' {
                 at = at + 1;
@@ -81,36 +82,48 @@ fn parse_list[&r, &o](spec: &r [byte], bits: &!o [byte]) -> [] int {
                 // `n-` with nothing after it: everything from n on.
                 if !saw_hi {
                     hi = 0;
-                    if open_at == 0 || lo < open_at { open_at = lo; }
+                    if open_at == 0 || lo < open_at {
+                        open_at = lo;
+                    }
                 }
             }
-            if lo < 1 { bad = true; }
+            if lo < 1 {
+                bad = true;
+            }
             var n = lo;
             while n <= hi && n <= max_field() {
                 bits[n] = byte_of(1);
                 n = n + 1;
             }
             if at < len(spec) {
-                if int_of(spec[at]) == ',' { at = at + 1; }
-                else { bad = true; }
+                if int_of(spec[at]) == ',' {
+                    at = at + 1;
+                } else {
+                    bad = true;
+                }
             }
         }
     }
-    if bad { return 0 - 1; }
+    if bad {
+        return 0 - 1;
+    }
     return open_at;
 }
 
 fn is_wanted[&o](bits: &o [byte], from_open: int, n: int) -> [] bool {
-    if from_open > 0 && n >= from_open { return true; }
-    if n > max_field() { return false; }
+    if from_open > 0 && n >= from_open {
+        return true;
+    }
+    if n > max_field() {
+        return false;
+    }
     return int_of(bits[n]) == 1;
 }
 
 // ---------------------------------------------------------- the work -----
 
 // One line, cut. Answers how many fields it wrote.
-fn cut_line[&i, &l, &o](io: &!i Io, line: &l [byte], delim: int,
-    bits: &o [byte], from_open: int) -> [io_write] int {
+fn cut_line[&i, &l, &o](io: &!i Io, line: &l [byte], delim: int, bits: &o [byte], from_open: int) -> [io_write] int {
     let fields = bytes.count_byte(line, delim) + 1;
     // GNU passes a line with no delimiter through whole (no `-s`).
     if fields == 1 {
@@ -122,7 +135,9 @@ fn cut_line[&i, &l, &o](io: &!i Io, line: &l [byte], delim: int,
     var n = 1;
     while n <= fields {
         if is_wanted(bits, from_open, n) {
-            if written > 0 { putchar(io, delim); }
+            if written > 0 {
+                putchar(io, delim);
+            }
             io.write_all(io, bytes.field(line, delim, n));
             written = written + 1;
         }
@@ -134,7 +149,8 @@ fn cut_line[&i, &l, &o](io: &!i Io, line: &l [byte], delim: int,
 
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args } = split(world);
-    release(ffi); release(fs);
+    release(ffi);
+    release(fs);
 
     var delim = '\t';
     var spec = "1";
@@ -159,9 +175,15 @@ fn main(world: World) -> [] int {
                         if letter == 'd' {
                             // GNU: "the delimiter must be a single
                             // character", and an empty one is not one.
-                            if len(given) == 1 { delim = int_of(given[0]); } else { usage = true; }
+                            if len(given) == 1 {
+                                delim = int_of(given[0]);
+                            } else {
+                                usage = true;
+                            }
+                        } else if len(given) > 0 {
+                            spec = given;
                         } else {
-                            if len(given) > 0 { spec = given; } else { usage = true; }
+                            usage = true;
                         }
                     } else {
                         usage = true;
@@ -172,9 +194,15 @@ fn main(world: World) -> [] int {
                         let (after, given) = flags.value(g, c);
                         c = after;
                         if flags.named(name, "delimiter") {
-                            if len(given) == 1 { delim = int_of(given[0]); } else { usage = true; }
+                            if len(given) == 1 {
+                                delim = int_of(given[0]);
+                            } else {
+                                usage = true;
+                            }
+                        } else if len(given) > 0 {
+                            spec = given;
                         } else {
-                            if len(given) > 0 { spec = given; } else { usage = true; }
+                            usage = true;
                         }
                     } else {
                         usage = true;
@@ -185,8 +213,12 @@ fn main(world: World) -> [] int {
                 // before anything runs. So an operand is a usage error
                 // here where GNU would open it -- a divergence about
                 // *files* rather than about flags (`flags.md` §4).
-                flags.Arg::Operand(_) => { usage = true; }
-                flags.Arg::Done => { going = false; }
+                flags.Arg::Operand(_) => {
+                    usage = true;
+                }
+                flags.Arg::Done => {
+                    going = false;
+                }
             }
         }
     }
@@ -218,8 +250,7 @@ fn main(world: World) -> [] int {
                     io.error_all(i, spec);
                     io.error_all(i, "'\n");
                 }
-            }
-            else {
+            } else {
                 // One line at a time: `getchar` is the only input
                 // primitive there is (`standard-input.md`), and a line
                 // is the unit `cut` works in.
@@ -246,7 +277,9 @@ fn main(world: World) -> [] int {
                                 // `clear` keeps the allocation, so the
                                 // next line writes into room this one
                                 // already grew (§4).
-                                borrow mut line as &!l in { buffer.clear(l); }
+                                borrow mut line as &!l in {
+                                    buffer.clear(l);
+                                }
                             } else {
                                 line = buffer.push(h, line, byte_of(c));
                             }
@@ -255,7 +288,9 @@ fn main(world: World) -> [] int {
                         // A final line with no newline still counts, and
                         // gets one on the way out -- as GNU does.
                         var last = 0;
-                        borrow line as &l in { last = buffer.size(l); }
+                        borrow line as &l in {
+                            last = buffer.size(l);
+                        }
                         if last > 0 {
                             borrow line as &l in {
                                 cut_line(i, buffer.bytes(l), delim, bits, from_open);

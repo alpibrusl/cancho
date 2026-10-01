@@ -20,16 +20,16 @@ fn main(world: World) -> [] int {
     release(ffi);
 
     borrow mut io as &!i in {
-        putchar(i, 40 + 32);       // Add: 72 'H'
-        putchar(i, 110 - 5);       // Sub: 105 'i'
-        putchar(i, 11 * 3);        // Mul: 33 '!'
-        putchar(i, 1 << 5);        // Shl: 32 ' '
-        putchar(i, 64 | 15);       // BitOr: 79 'O'
-        putchar(i, 79 & 75);       // BitAnd: 75 'K'
-        putchar(i, 107 ^ 79);      // BitXor: 36 '$'
-        putchar(i, 210 / 2);       // Div: 105 'i'
-        putchar(i, 300 >> 2);      // Shr: 75 'K'
-        putchar(i, 22 % 12);       // Rem: 10 '\n'
+        putchar(i, 40 + 32); // Add: 72 'H'
+        putchar(i, 110 - 5); // Sub: 105 'i'
+        putchar(i, 11 * 3); // Mul: 33 '!'
+        putchar(i, 1 << 5); // Shl: 32 ' '
+        putchar(i, 64 | 15); // BitOr: 79 'O'
+        putchar(i, 79 & 75); // BitAnd: 75 'K'
+        putchar(i, 107 ^ 79); // BitXor: 36 '$'
+        putchar(i, 210 / 2); // Div: 105 'i'
+        putchar(i, 300 >> 2); // Shr: 75 'K'
+        putchar(i, 22 % 12); // Rem: 10 '\n'
     }
     release(io);
     return 0;

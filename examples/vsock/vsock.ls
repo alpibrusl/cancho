@@ -56,9 +56,9 @@ import agent.wire;
 // want.
 fn store_u32[&d](dst: &!d [byte], at: int, value: int) -> [] int {
     dst[at] = byte_of(value & 0xff);
-    dst[at + 1] = byte_of((value >> 8) & 0xff);
-    dst[at + 2] = byte_of((value >> 16) & 0xff);
-    dst[at + 3] = byte_of((value >> 24) & 0xff);
+    dst[at + 1] = byte_of(value >> 8 & 0xff);
+    dst[at + 2] = byte_of(value >> 16 & 0xff);
+    dst[at + 3] = byte_of(value >> 24 & 0xff);
     return 0;
 }
 
@@ -145,15 +145,7 @@ fn encode_done[&h](heap: &!h Heap, b: buffer.Buffer) -> [heap] buffer.Buffer {
 
 // `AgentActionMsg::ExecResult` -- checked against real `serde_json`
 // output on both a normal exit and a timed-out one with no exit code.
-fn encode_exec_result[&h, &out, &err](
-    heap: &!h Heap,
-    b: buffer.Buffer,
-    has_exit_code: bool,
-    exit_code: int,
-    out: &out [byte],
-    err: &err [byte],
-    timed_out: bool,
-) -> [heap] buffer.Buffer {
+fn encode_exec_result[&h, &out, &err](heap: &!h Heap, b: buffer.Buffer, has_exit_code: bool, exit_code: int, out: &out [byte], err: &err [byte], timed_out: bool) -> [heap] buffer.Buffer {
     var buf = buffer.append(heap, b, "{\"action\":\"exec_result\",\"exit_code\":");
     if has_exit_code {
         buf = buffer.push_nat(heap, buf, exit_code);
@@ -181,12 +173,7 @@ fn encode_exec_result[&h, &out, &err](
 // or a negative number on a closed connection or a line that never fits
 // the read loop's own bound (4096 chunks, sixteen of them: a real
 // `AgentViewMsg` is a few hundred bytes at most).
-fn recv_line[&h, &f](
-    heap: &!h Heap,
-    libc: &f Ffi("libc"),
-    fd: int,
-    into: buffer.Buffer,
-) -> [heap, ffi("libc")] (buffer.Buffer, int) {
+fn recv_line[&h, &f](heap: &!h Heap, libc: &f Ffi("libc"), fd: int, into: buffer.Buffer) -> [heap, ffi("libc")] (buffer.Buffer, int) {
     region scratch {
         let chunk = alloc_slice[scratch](4096, byte_of(0));
         var buf = into;
@@ -245,12 +232,7 @@ fn send_line[&f, &b](libc: &f Ffi("libc"), fd: int, line: &b [byte]) -> [ffi("li
 // This sandbox has no `vhost_vsock`, so an actual `AF_VSOCK` round trip
 // against `lex-os-guest`/its supervisor stays untested here; that gap
 // is real and unclosed by this change.
-fn converse[&h, &f, &i](
-    heap: &!h Heap,
-    libc: &f Ffi("libc"),
-    io: &!i Io,
-    fd: int,
-) -> [heap, ffi("libc"), io_write, err_write] int {
+fn converse[&h, &f, &i](heap: &!h Heap, libc: &f Ffi("libc"), io: &!i Io, fd: int) -> [heap, ffi("libc"), io_write, err_write] int {
     var status = 0;
     let (line, n) = recv_line(heap, libc, fd, buffer.empty(heap, 4096));
     if n < 0 {

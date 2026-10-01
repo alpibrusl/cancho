@@ -20,7 +20,12 @@ edition 2;
 
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args, net } = split(world);
-    release(args); release(heap); release(fs); release(ffi); release(io); release(net);
+    release(args);
+    release(heap);
+    release(fs);
+    release(ffi);
+    release(io);
+    release(net);
 
     let l = listen(999, 16);
     let a = accept(999);

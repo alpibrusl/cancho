@@ -21,7 +21,7 @@ fn print_hex[&i, &d](io: &!i Io, digest: &d [byte]) -> [io_write] int {
     var n = 0;
     while n < len(digest) {
         let b = int_of(digest[n]);
-        putchar(io, int_of(alphabet[(b >> 4) & 0xf]));
+        putchar(io, int_of(alphabet[b >> 4 & 0xf]));
         putchar(io, int_of(alphabet[b & 0xf]));
         n = n + 1;
     }
@@ -52,11 +52,7 @@ fn hex_decode[&t, &o](text: &t [byte], o: &!o [byte]) -> [] int {
 
 // Signs `msg` with `seed_hex`, prints the signature, prints `1` for a
 // genuine verify and `0` once the signature is tampered with.
-fn check_one[&i, &seed_hex, &msg](
-    io: &!i Io,
-    seed_hex: &seed_hex [byte],
-    msg: &msg [byte],
-) -> [io_write] int {
+fn check_one[&i, &seed_hex, &msg](io: &!i Io, seed_hex: &seed_hex [byte], msg: &msg [byte]) -> [io_write] int {
     region r {
         let seed = alloc_slice[r](32, byte_of(0));
         hex_decode(seed_hex, seed);
@@ -87,16 +83,8 @@ fn main(world: World) -> [] int {
 
     borrow mut io as &!i in {
         check_one(i, "413e712d11b9fcb4af989036dd2f253106e2f0d49a1d954b1880a98308b698af", "a");
-        check_one(
-            i,
-            "b22b6ce8505d2603e5afabda2cc0b3844fdd6e5a7a74cf81ebd78c9d2ad95e80",
-            "hello world",
-        );
-        check_one(
-            i,
-            "a5541feee56a353b0570e1dbd90d46232897f5379e68392402c2b619ca9e50ea",
-            "The quick brown fox jumps over the lazy dog",
-        );
+        check_one(i, "b22b6ce8505d2603e5afabda2cc0b3844fdd6e5a7a74cf81ebd78c9d2ad95e80", "hello world");
+        check_one(i, "a5541feee56a353b0570e1dbd90d46232897f5379e68392402c2b619ca9e50ea", "The quick brown fox jumps over the lazy dog");
     }
 
     release(io);

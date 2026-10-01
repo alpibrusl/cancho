@@ -41,8 +41,7 @@ import net.sockets;
 // The address crosses as a pointer and a length, the way `bind` does in
 // `net.sockets`: the slice is the `struct sockaddr_in` and its length is
 // the `socklen_t`.
-pub extern fn connect[&f, &a](ffi: &f Ffi("libc"), fd: int, addr: &a [byte])
-    -> [ffi("libc")] c_int;
+extern fn connect[&f, &a](ffi: &f Ffi("libc"), fd: int, addr: &a [byte]) -> [ffi("libc")] c_int;
 
 // Four decimal octets separated by dots, into `out[0..4]`. Anything else
 // is refused: a name, a fifth octet, an octet over 255, an empty one --
@@ -143,8 +142,7 @@ fn address[&o, &a](out: &!a [byte], octets: &o [byte], port: int) -> [] int {
 // -1 is all a failure can say: *why* it failed is in `errno`, a
 // thread-local reached through a pointer (`docs/connect.md` §4), so
 // "nothing is listening" and "no route to the host" look the same.
-pub fn connect_to[&f, &o](libc: &f Ffi("libc"), octets: &o [byte], port: int)
-    -> [ffi("libc")] int {
+pub fn connect_to[&f, &o](libc: &f Ffi("libc"), octets: &o [byte], port: int) -> [ffi("libc")] int {
     region scratch {
         let addr = alloc_slice[scratch](16, byte_of(0));
         let fd = sockets.socket(libc, 2, 1, 0);

@@ -146,7 +146,7 @@ pub fn exp(x: float) -> [] float {
     }
 
     let k = round_to_int(x / (ln2_hi() + ln2_lo()));
-    let r = (x - float_of(k) * ln2_hi()) - float_of(k) * ln2_lo();
+    let r = x - float_of(k) * ln2_hi() - float_of(k) * ln2_lo();
 
     var term = 1.0;
     var sum = 1.0;
@@ -200,7 +200,7 @@ pub fn log(x: float) -> [] float {
         return x;
     }
 
-    let raw_exponent = (bits_of(x) >> 52) & 0x7ff;
+    let raw_exponent = bits_of(x) >> 52 & 0x7ff;
     let e = raw_exponent - 1023;
     let m = x / pow2(e);
 

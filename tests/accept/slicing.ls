@@ -49,12 +49,22 @@ fn run[&h, &i, &f](heap: &!h Heap, io: &!i Io, tmp: &!f Fs("/tmp")) -> [heap, io
     // clearest measure of what this bought: it existed *because* the
     // subslice could not be written.
     var checks = 0;
-    if bytes.starts_with(text, "hello") { checks = checks + 1; }
-    if bytes.ends_with(text, "world") { checks = checks + 1; }
-    if bytes.starts_with(text, "world") == false { checks = checks + 1; }
+    if bytes.starts_with(text, "hello") {
+        checks = checks + 1;
+    }
+    if bytes.ends_with(text, "world") {
+        checks = checks + 1;
+    }
+    if bytes.starts_with(text, "world") == false {
+        checks = checks + 1;
+    }
     // An empty range is legal and empty; a full one is the whole slice.
-    if len(text[4..4]) == 0 { checks = checks + 1; }
-    if len(text[0..len(text)]) == 12 { checks = checks + 1; }
+    if len(text[4..4]) == 0 {
+        checks = checks + 1;
+    }
+    if len(text[0..len(text)]) == 12 {
+        checks = checks + 1;
+    }
 
     var written = 0;
     var b = buffer.empty(heap, 8);

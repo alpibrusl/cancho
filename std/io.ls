@@ -58,7 +58,7 @@ fn print_negative[&i](io: &!i Io, n: int) -> [io_write] int {
     if n <= 0 - 10 {
         print_negative(io, n / 10);
     }
-    return putchar(io, '0' + (0 - (n % 10)));
+    return putchar(io, '0' + (0 - n % 10));
 }
 
 // How many characters `print_int` would write.

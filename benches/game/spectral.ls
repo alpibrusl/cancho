@@ -54,12 +54,7 @@ fn multiply_atv[&v, &o](n: int, v: &v [float], out: &!o [float]) -> [] int {
     return 0;
 }
 
-fn multiply_atav[&v, &o, &t](
-    n: int,
-    v: &v [float],
-    out: &!o [float],
-    scratch: &!t [float],
-) -> [] int {
+fn multiply_atav[&v, &o, &t](n: int, v: &v [float], out: &!o [float], scratch: &!t [float]) -> [] int {
     multiply_av(n, v, scratch);
     multiply_atv(n, scratch, out);
     return 0;
@@ -82,7 +77,7 @@ fn print_nine[&i](out: &!i Io, x: float) -> [io_write] int {
     var place = 100000000;
     while place > 0 {
         io.print_int(out, rest / place);
-        rest = rest - (rest / place) * place;
+        rest = rest - rest / place * place;
         place = place / 10;
     }
     io.newline(out);

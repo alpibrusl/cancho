@@ -40,15 +40,15 @@ fn limbs() -> [] int {
 // is the whole of the difference between the two.
 fn mantissa(bits: int) -> [] int {
     let raw = bits & 0xfffffffffffff;
-    let exponent = (bits >> 52) & 0x7ff;
+    let exponent = bits >> 52 & 0x7ff;
     if exponent == 0 {
         return raw;
     }
-    return raw | (1 << 52);
+    return raw | 1 << 52;
 }
 
 fn exponent_of(bits: int) -> [] int {
-    let exponent = (bits >> 52) & 0x7ff;
+    let exponent = bits >> 52 & 0x7ff;
     if exponent == 0 {
         // Subnormal: the exponent is the same as the smallest normal's,
         // and it is the mantissa that lost its implicit bit.
@@ -63,7 +63,7 @@ fn exponent_of(bits: int) -> [] int {
 // shortest-printing paper spends a paragraph on.
 fn uneven_neighbours(bits: int) -> [] bool {
     let raw = bits & 0xfffffffffffff;
-    let exponent = (bits >> 52) & 0x7ff;
+    let exponent = bits >> 52 & 0x7ff;
     return raw == 0 && exponent > 1;
 }
 
@@ -94,10 +94,10 @@ pub fn float_into[&o](out: &!o [byte], x: float) -> [] int {
     // Infinity is the one exponent with an empty mantissa reserved for
     // it, and `floating-point.md` §2 says it is a value rather than an
     // error, so it gets spelled rather than refused.
-    if (bits & 0x7fffffffffffffff) == 0x7ff0000000000000 {
+    if bits & 0x7fffffffffffffff == 0x7ff0000000000000 {
         return put(out, at, "inf");
     }
-    if (bits & 0x7fffffffffffffff) == 0 {
+    if bits & 0x7fffffffffffffff == 0 {
         return put(out, at, "0e0");
     }
 
@@ -121,7 +121,7 @@ pub fn float_into[&o](out: &!o [byte], x: float) -> [] int {
         // So every comparison against a boundary below is `<=` here and
         // `<` otherwise -- four places, and skipping them costs a digit
         // (§3.3).
-        let even = (m & 1) == 0;
+        let even = m & 1 == 0;
 
         // The value is `r / s`, and the midpoints to the neighbour above
         // and below are `plus / s` and `minus / s`. Scaled so every one
@@ -165,7 +165,7 @@ pub fn float_into[&o](out: &!o [byte], x: float) -> [] int {
         while !settled {
             bignum.add_into(scratch, r, plus);
             let over = bignum.compare(scratch, s);
-            if over > 0 || (even && over == 0) {
+            if over > 0 || even && over == 0 {
                 bignum.mul_small(s, 10);
                 k = k + 1;
             } else {
@@ -177,7 +177,7 @@ pub fn float_into[&o](out: &!o [byte], x: float) -> [] int {
             bignum.add_into(scratch, r, plus);
             bignum.mul_small(scratch, 10);
             let under = bignum.compare(scratch, s);
-            if under < 0 || (!even && under == 0) {
+            if under < 0 || !even && under == 0 {
                 bignum.mul_small(r, 10);
                 bignum.mul_small(minus, 10);
                 bignum.mul_small(plus, 10);
@@ -206,10 +206,10 @@ pub fn float_into[&o](out: &!o [byte], x: float) -> [] int {
             }
 
             let under = bignum.compare(r, minus);
-            let low = under < 0 || (even && under == 0);
+            let low = under < 0 || even && under == 0;
             bignum.add_into(scratch, r, plus);
             let over = bignum.compare(scratch, s);
-            let high = over > 0 || (even && over == 0);
+            let high = over > 0 || even && over == 0;
 
             if low || high {
                 var last = digit;
@@ -229,10 +229,8 @@ pub fn float_into[&o](out: &!o [byte], x: float) -> [] int {
                     if bignum.compare(scratch, s) >= 0 {
                         last = digit + 1;
                     }
-                } else {
-                    if high {
-                        last = digit + 1;
-                    }
+                } else if high {
+                    last = digit + 1;
                 }
                 digits[count] = last;
                 count = count + 1;
@@ -306,12 +304,12 @@ fn put_int[&o](out: &!o [byte], at: int, value: int) -> [] int {
     var reversed = 0;
     var places = 0;
     while rest > 0 {
-        reversed = reversed * 10 + rest - (rest / 10) * 10;
+        reversed = reversed * 10 + rest - rest / 10 * 10;
         rest = rest / 10;
         places = places + 1;
     }
     while places > 0 && here >= 0 {
-        here = put_digit(out, here, reversed - (reversed / 10) * 10);
+        here = put_digit(out, here, reversed - reversed / 10 * 10);
         reversed = reversed / 10;
         places = places - 1;
     }

@@ -14,8 +14,7 @@
 
 // libc's `ssize_t write(int fd, const void *buf, size_t n)`. The slice
 // supplies the middle two arguments from its two leaves.
-extern fn write[&f, &s](ffi: &f Ffi("libc"), fd: int, buf: &s [byte], n: int)
-    -> [ffi("libc")] int;
+extern fn write[&f, &s](ffi: &f Ffi("libc"), fd: int, buf: &s [byte], n: int) -> [ffi("libc")] int;
 
 fn say[&f, &s](libc: &f Ffi("libc"), line: &s [byte]) -> [ffi("libc")] int {
     return write(libc, 1, line, len(line));

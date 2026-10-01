@@ -106,12 +106,7 @@ fn vet[&h, &s](heap: &!h Heap, name: &s [byte]) -> [heap] result.Result[Job, int
 // even a copyable field, since reading one without owning the whole is
 // a borrow and a borrow is what this writes. Then the job is moved on
 // to the queue, whole and unspent.
-fn enqueue[&h](
-    heap: &!h Heap,
-    queue: list.List[Job],
-    sizes: vec.Vec[int],
-    job: Job,
-) -> [heap] (list.List[Job], vec.Vec[int]) {
+fn enqueue[&h](heap: &!h Heap, queue: list.List[Job], sizes: vec.Vec[int], job: Job) -> [heap] (list.List[Job], vec.Vec[int]) {
     var size = 0;
     borrow job as &j in {
         size = j.size;
@@ -127,7 +122,9 @@ fn enqueue[&h](
 // recursion ends on `Empty`, which a `match` consumes outright.
 fn drain[&h, &i](heap: &!h Heap, io: &!i Io, queue: list.List[Job]) -> [heap, io_write] int {
     match list.pop(heap, queue) {
-        option.Option::None => { return 0; }
+        option.Option::None => {
+            return 0;
+        }
         option.Option::Some(pair) => {
             let (job, rest) = pair;
             let bytes_held = finish(heap, io, job);
@@ -151,7 +148,9 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
             queue = q;
             sizes = s;
         }
-        result.Result::Err(n) => { rejected = rejected + 1; }
+        result.Result::Err(n) => {
+            rejected = rejected + 1;
+        }
     }
     match vet(heap, "test") {
         result.Result::Ok(job) => {
@@ -159,7 +158,9 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
             queue = q;
             sizes = s;
         }
-        result.Result::Err(n) => { rejected = rejected + 1; }
+        result.Result::Err(n) => {
+            rejected = rejected + 1;
+        }
     }
     match vet(heap, "link") {
         result.Result::Ok(job) => {
@@ -167,7 +168,9 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
             queue = q;
             sizes = s;
         }
-        result.Result::Err(n) => { rejected = rejected + 1; }
+        result.Result::Err(n) => {
+            rejected = rejected + 1;
+        }
     }
     match vet(heap, "compile") {
         result.Result::Ok(job) => {
@@ -175,7 +178,9 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
             queue = q;
             sizes = s;
         }
-        result.Result::Err(n) => { rejected = rejected + 1; }
+        result.Result::Err(n) => {
+            rejected = rejected + 1;
+        }
     }
 
     // Counted through a borrow, so counting costs the queue nothing --
