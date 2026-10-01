@@ -35,10 +35,12 @@
 // refused, never partial, and the code that resumes a partial one would
 // otherwise never run.
 //
-// **Writes never block.** Every `send` carries `MSG_DONTWAIT`, so one call
-// returns at once with whatever the kernel took. What it did not take waits in
-// the connection's own output buffer, the connection asks `poll` for
-// `POLLOUT` instead of `POLLIN` -- it is not read from until its output is
+// **Writes do not wait.** A `send` that cannot go whole returns at once, or
+// within a millisecond, with whatever the kernel took (`MSG_DONTWAIT` where the
+// operating system honours it, a one-millisecond `SO_SNDTIMEO` where it does not:
+// macOS ignores the flag on a blocking socket, which CI found). What was not
+// taken waits in the connection's own output buffer, the connection asks `poll`
+// for `POLLOUT` instead of `POLLIN` -- it is not read from until its output is
 // gone, which is what keeps a client that never reads from making the server
 // buffer without bound -- and every other connection is served meanwhile.
 // A client that makes no progress for `idle` seconds is closed.
@@ -301,7 +303,8 @@ fn quantum(wanted: int, chunk: int) -> [] int {
     return wanted;
 }
 
-// Hand `data` to the kernel without waiting, and keep what it did not take.
+// Hand `data` to the kernel without waiting for room, and keep what it did not
+// take.
 //
 // `pend[0..pending]` is what this connection already has waiting. If there is
 // none, the answer is offered to `send` straight away -- the common case, and
@@ -515,6 +518,27 @@ fn listener[&f](libc: &f Ffi("libc"), port: int, reuse: bool) -> [ffi("libc")] i
     return bound;
 }
 
+// A send timeout of one millisecond on `fd`, in both operating systems'
+// spellings (Linux: level 1, option 21; macOS: level 0xffff, option 0x1005),
+// the wrong one being refused harmlessly. `struct timeval` is 16 bytes on both
+// (seconds, then microseconds), so one buffer serves.
+//
+// **This is what keeps a `send` from waiting on macOS**, which does not honour
+// `MSG_DONTWAIT` on a blocking socket: with a timeout, a `send` into a full
+// buffer returns after at most a millisecond, with what it managed or `EAGAIN`,
+// which the output buffer already handles. On Linux `MSG_DONTWAIT` returns at
+// once and the timeout is never reached.
+fn set_send_timeout[&f](libc: &f Ffi("libc"), fd: int) -> [ffi("libc")] int {
+    region scratch {
+        let value = alloc_slice[scratch](16, byte_of(0));
+        value[8] = byte_of(232);
+        value[9] = byte_of(3);
+        sockets.setsockopt(libc, fd, 1, 21, value);
+        sockets.setsockopt(libc, fd, 65535, 4101, value);
+    }
+    return fd;
+}
+
 // Whether this is Linux rather than macOS, found by asking: `SO_REUSEADDR` is
 // level 1, option 2 there and means something else (or nothing) here. It picks
 // `MSG_DONTWAIT`, which is 0x40 on Linux and 0x80 on macOS.
@@ -579,6 +603,7 @@ fn serve[&f, &h, &r](libc: &f Ffi("libc"), heap: &!h Heap, router: &r route.Rout
                                             if n >= limit {
                                                 sockets.close(libc, c);
                                             } else {
+                                                set_send_timeout(libc, c);
                                                 set_record(pl, n + 1, c);
                                                 st[4 * n] = 0;
                                                 st[4 * n + 1] = now;

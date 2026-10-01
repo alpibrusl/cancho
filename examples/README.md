@@ -353,7 +353,7 @@ keeps every connection open in a `poll(2)` loop, answers pipelined requests
 in order, reads requests that arrive in pieces, refuses what the parser
 refuses (and closes), and routes four JSON endpoints. A silent client costs a
 slot and nothing else, and so does one that stops reading its answers:
-writes are `send(MSG_DONTWAIT)`, what the kernel does not take waits in the
+a `send` never waits for room (`MSG_DONTWAIT`, plus a one-millisecond send timeout because macOS ignores the flag), what the kernel does not take waits in the
 connection's own buffer, and the connection is not read until it has gone.
 On one core it does about 120,000 requests a second
 against about 3,000 for FastAPI on the same request

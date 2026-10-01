@@ -2,7 +2,7 @@
 
 > **Status: built.** `examples/api/api.ls` (about 760 lines) over
 > `std.http`, `std.route`, `std.json` and the `net.sockets` package;
-> `conformance/api.rs` (15 tests over real sockets); the load generator and the
+> `conformance/api.rs` (17 tests over real sockets); the load generator and the
 > references behind §5's figures are in `benches/server/`. One thread,
 > `poll(2)`, keep-alive, pipelining, a JSON API with four routes.
 
@@ -91,6 +91,33 @@ by neither the stall tests nor the refusal tests; its first test could not tell
 passed on the mutation anyway. It now runs with a thirty-second timeout, so only
 a prompt close passes.
 
+**And then macOS failed, which none of the above could have found.** The first
+push went green on Linux and red on macOS, on the two tests about a client that
+stops reading. The reasoning that followed went wrong twice before the data
+settled it, and the order is worth keeping:
+
+1. *Wrong flag?* `0x40` is `MSG_WAITALL` on macOS. A test of the flag the server
+   chose passed: it picked `0x80`, correctly.
+2. *Bigger kernel buffers, so 32 MB never stalled anything?* A Rust probe of how
+   much a loopback connection queues for a non-reading peer: **540 KB** on the
+   macOS runner. No.
+3. So the only way a client that never reads could be delivered all 32 MB was
+   for the server to have been *blocked in `send`* and let go when the client
+   finally read, which also explains the other client's read timing out. A probe
+   with nothing of ours in the path -- a blocking socket, a peer that does not
+   read, `send(MSG_DONTWAIT)` -- **blocked on macOS.** The flag is not honoured
+   there for a send.
+
+The fix is the timeout, and it was checked the way the rest were: with the flag
+removed and the timeout kept, the stall tests pass on Linux (Linux behaving as
+macOS does); with both removed they fail with the same `EAGAIN` the macOS job
+reported. That reproduces the failure on the machine I could run on and shows
+the fix is what cures it.
+
+`a_send_to_a_peer_that_is_not_reading_returns_instead_of_waiting` is that probe,
+kept: it sets the timeout and flag as the server does and fails, naming the
+flags, on a system where a send still waits.
+
 ## 3. Decisions
 
 | Question | Answer | Why |
@@ -98,7 +125,7 @@ a prompt close passes.
 | Threads, an event loop, or processes? | **One thread, `poll`; scale by running copies** | A thread per connection needs a spawn payload of more than one leaf (`threads.md`), which does not exist; `poll` is POSIX and needs no per-OS code. `reuseport` as the second argument lets copies share a port and the kernel spreads the connections |
 | `poll`, `epoll` or `kqueue`? | `poll` | It is the one both CI targets have. It is linear in the connections, which at the 1,024 this allows is a few microseconds a wake-up and shows up in §5 as nothing |
 | How does a `[byte]`-only foreign boundary pass `struct pollfd[]`? | **A prefix of a byte array, whose length is the record count** | A foreign slice is `(pointer, length)` and only `[byte]` may cross. `poll(fds, nfds, timeout)` wants a count of 8-byte records, so the program hands over `polls[0..n + 1]`: C reads `nfds` records from the pointer, and the allocation behind it is eight times as long as the slice says. Checked on a probe before it was built on |
-| Non-blocking writes? | **Yes: `send(fd, buf, len, MSG_DONTWAIT)`, not `fcntl(O_NONBLOCK)`** | `fcntl(F_SETFL)` is variadic in C, and variadic arguments are not passed like fixed ones on Apple arm64, so declaring it as an ordinary function would be wrong on one of the two targets. `send` has a fixed signature and the flag makes one call non-blocking without touching the socket. `MSG_DONTWAIT` is `0x40` on Linux and `0x80` on macOS, so the program asks which it is running on (`SO_REUSEADDR` at level 1, option 2 succeeds only on Linux) |
+| Non-blocking writes? | **A `send` that never waits for room: `MSG_DONTWAIT` where the OS honours it, a one-millisecond `SO_SNDTIMEO` where it does not. Not `fcntl(O_NONBLOCK)`** | `fcntl(F_SETFL)` is variadic in C, and variadic arguments are not passed like fixed ones on Apple arm64, so declaring it as an ordinary function would be wrong on one of the two targets; `setsockopt` and `send` have fixed signatures. **macOS ignores `MSG_DONTWAIT` on a send to a blocking socket** (§2 has how that was found), so on macOS it is the timeout that does the work: a `send` into a full buffer returns after at most a millisecond with what it managed or `EAGAIN`, which the output buffer already handles. The flag is `0x40` on Linux and `0x80` on macOS -- where `0x40` is `MSG_WAITALL`, so the program asks which it is running on (`SO_REUSEADDR` at level 1, option 2 succeeds only on Linux) |
 | What happens to what the kernel did not take? | **It waits in the connection's own 64 KiB output buffer, and the connection is read no more** | The record asks `poll` for `POLLOUT` instead of `POLLIN`, so a client that does not take its answers cannot make the server buffer without bound: its next requests wait in the kernel. A connection that cannot hold even one more answer is closed, and one that makes no progress for the idle time (a byte read, a byte sent) is closed too |
 | Several answers queued behind a partial send? | **Never: `drain` stops at the first answer that did not go whole** | At most one answer is ever waiting, so order cannot be wrong and the buffer needs to hold one answer, which `/blob`'s 32 KiB maximum bounds |
 | After a refusal, or `Connection: close` | Close **once the output has gone**, not at the first partial send | Closing early would cut the answer short; closing never would hold the slot for ever |
@@ -145,7 +172,7 @@ ranges are 33 and 50) on the same core and the same request. Two copies sharing 
 spent on the load generator that is a measure of the generator and the kernel
 as much as of the server, and is reported as that and not as scaling.
 
-**After non-blocking writes** (`send(..., MSG_DONTWAIT)`, per-connection state,
+**After non-blocking writes** (`send` with `MSG_DONTWAIT` and a send timeout, per-connection state,
 `POLLOUT` bookkeeping), measured in the same session against the blocking
 version it replaced, three runs each, twice: the blocking version
 128,000 - 151,000, the new one 119,000 - 141,000, with the C ceiling itself
@@ -174,6 +201,7 @@ keep-alive, which is why both numbers are so much higher and the gap is wider.
 
 | | |
 |---|---|
+| **A stalled client can still cost a millisecond** | Where `MSG_DONTWAIT` is ignored (macOS), a `send` into a full buffer waits out its one-millisecond timeout before returning; the connection then waits for `POLLOUT`, so it costs the loop one millisecond per stall, not per request. A thousand connections stalling at once would cost a second, once. On Linux `send` returns at once |
 | **More than one core in one process** | Run copies with `reuseport` (second argument) |
 | **A body larger than the buffer, or chunked** | 413 and 501; streaming a body is a loop, and nothing here needs one |
 | **TLS** | `examples/tls_client` is the client half; nothing serves it |
