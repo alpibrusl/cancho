@@ -86,6 +86,13 @@ pub enum Builtin {
     /// state of its own (§8.3); it carries no leaves, so neither backend
     /// emits anything for the call. Edition 4, like `spawn`.
     ForkHeap,
+    /// `copy_within(buf: &!r [byte], dst: int, src: int, n: int) -> int` — move `n` bytes inside one slice from `src` to
+    /// `dst`, as `memmove` does: the ranges may overlap and the result is as if the bytes were copied out first.
+    ///
+    /// Bounds-checked like indexing: it traps unless `0 <= dst`, `0 <= src`, `0 <= n`, `dst + n <= len(buf)` and
+    /// `src + n <= len(buf)` (the sums are not formed, so nothing can overflow). Answers 0. Pure and capability-free:
+    /// it reads and writes only the slice it was given. Edition 5. `docs/memory-moves.md`.
+    CopyWithin,
     /// `fork_clock(c: &x Clock) -> Clock` — a second owned `Clock` from a
     /// shared borrow of the first (`docs/parallelism.md` §9).
     ///
@@ -439,6 +446,7 @@ impl Builtin {
         Builtin::Narrow,
         Builtin::ForkHeap,
         Builtin::ForkClock,
+        Builtin::CopyWithin,
         Builtin::WrappingAdd,
         Builtin::WrappingSub,
         Builtin::WrappingMul,
@@ -502,6 +510,7 @@ impl Builtin {
             Builtin::Narrow => "narrow",
             Builtin::ForkHeap => "fork_heap",
             Builtin::ForkClock => "fork_clock",
+            Builtin::CopyWithin => "copy_within",
             Builtin::WrappingAdd => "wrapping_add",
             Builtin::WrappingSub => "wrapping_sub",
             Builtin::WrappingMul => "wrapping_mul",
@@ -596,6 +605,7 @@ impl Builtin {
             | Builtin::ListenerNonblocking
             | Builtin::ConnClose
             | Builtin::ForkClock
+            | Builtin::CopyWithin
             | Builtin::ListenerClose => 5,
             _ => 1,
         }
@@ -668,6 +678,7 @@ impl Builtin {
             | Builtin::ConnNonblocking
             | Builtin::ListenerNonblocking
             | Builtin::ForkClock
+            | Builtin::CopyWithin
             | Builtin::ClockMs => 1,
             _ => 0,
         }
@@ -944,6 +955,19 @@ impl Builtin {
                     region: Region::Param(0),
                     inner: Box::new(named(PRELUDE_CLOCK)),
                 }],
+                Type::Int,
+            ),
+            Builtin::CopyWithin => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Int,
+                    Type::Int,
+                    Type::Int,
+                ],
                 Type::Int,
             ),
             Builtin::ForkClock => (

@@ -592,6 +592,8 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::TcpAccept) => self.tcp_accept(&args),
                     Callee::Builtin(Builtin::ConnRead) => self.conn_read(&args),
                     Callee::Builtin(Builtin::ConnWrite) => self.conn_write(&args),
+                    // `docs/memory-moves.md`: a bounds-checked `memmove` inside one slice.
+                    Callee::Builtin(Builtin::CopyWithin) => self.copy_within(&args),
                     // `docs/native-sockets.md` §4: the poller.
                     Callee::Builtin(Builtin::PollerNew) => self.poller_new(),
                     Callee::Builtin(Builtin::ClockMs) => self.clock_ms(),

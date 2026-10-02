@@ -1230,6 +1230,12 @@ fn the_two_backends_agree_on_fork_clock_workers() {
     assert_backends_agree("backends-fork-clock-workers", "tests/accept/fork_clock_workers.ls", "");
 }
 
+/// `docs/memory-moves.md`: `copy_within`, overlapping in both directions, empty at either end, inside a sub-slice; on both backends.
+#[test]
+fn the_two_backends_agree_on_copy_within() {
+    assert_backends_agree("backends-copy-within", "tests/accept/copy_within.ls", "");
+}
+
 /// `join(a) + join(b)`: a join as an arithmetic operand, which the LLVM backend could not type.
 #[test]
 fn the_two_backends_agree_on_a_join_as_an_operand() {

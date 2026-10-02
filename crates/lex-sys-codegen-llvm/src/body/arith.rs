@@ -98,6 +98,7 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::PollerWait
                     | Builtin::PollerClose
                     | Builtin::ClockMs
+                    | Builtin::CopyWithin
                     | Builtin::ConnDetach
                     | Builtin::Release,
                 ) => Ok(LKind::I64),
