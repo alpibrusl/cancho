@@ -102,6 +102,14 @@ same as not having one.
 > 2.27× attributed to the backend here is a property of its design and
 > not a version it has not reached.
 
+
+> **Corrected (`parallelism.md` §3.1): the table above is Cranelift's, and Cranelift was the default when it was
+> written.** With `--backend llvm`, the default now, the same two programs on the same machine: wrapping **64-67
+> ms against C's 66-69** (SIMD present: 54 instructions), checked **93-95 ms** (1.4x C, scalar). So "deleting the
+> trap does not reach C" is a statement about Cranelift: on LLVM it does, and the trap costs 1.4x on this
+> memory-bound kernel and 2.6x on a cache-resident one. The finding that survives is the one about the *trap*:
+> a checked loop is still not reordered, on either backend.
+
 ---
 
 ## 3. How a native GPU lex-sys would work

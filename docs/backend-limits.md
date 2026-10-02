@@ -88,6 +88,11 @@ instructions and attributed the remaining 2.27× to Cranelift; this is
 why that attribution was right, and why it will not improve with a
 newer version.
 
+> **Scope (`parallelism.md` §3.1).** This section is about **Cranelift**. The default backend is LLVM, which has a
+> vectorizer and uses it on loops that cannot trap (`reduce_wrapping.ls`: 54 SIMD instructions, 64-67 ms against C's
+> 66-69 ms). Its default target is the architecture's baseline (`clang -c -O2 -target`, no `-march`), which on x86-64
+> is SSE2: no 64-bit integer compare, which is why a vectorized max/min pass there is *slower* than the scalar loop.
+
 ---
 
 ## 2. The fifth fact, which is the reason to write this down

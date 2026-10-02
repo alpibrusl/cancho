@@ -1190,6 +1190,16 @@ fn the_two_backends_agree_on_spawn_owned_file() {
     assert_backends_agree("backends-spawn-owned-file", "tests/accept/spawn_owned_file.ls", "30\n");
 }
 
+/// `docs/parallelism.md` §3.1: a unique reference to a *struct* is one
+/// pointer leaf, so a worker's whole job (a range, an answer, a boxed
+/// slice it owns) crosses in one payload with no trampoline -- the
+/// multi-field case `threads.md` §5 had put behind one. Two workers, two
+/// threads, a function value each, on both backends.
+#[test]
+fn the_two_backends_agree_on_spawn_struct_ref() {
+    assert_backends_agree("backends-spawn-struct-ref", "tests/accept/spawn_struct_ref.ls", "");
+}
+
 /// The lex-sys epic issue's own "lex-os component ported/written in
 /// lex-sys (first production use)": `examples/results_stub/
 /// results_stub.ls`, the lex-sys twin of `lex-os/crates/results-stub` --
