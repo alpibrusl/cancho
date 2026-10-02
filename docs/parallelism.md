@@ -115,7 +115,7 @@ Probes (each compiled and, where it passes, run on both backends; `tests/accept/
 | **a unique reference to a struct that owns a `Box[[int]]`** | accepted, runs, the thread reads and writes through it |
 | two workers at once | accepted only with **one function value per spawn**: `work` taken once is instantiated at the first borrow's region and the second reference "does not outlive" it |
 | a reference to a **slice** | refused (a pointer and a length: two leaves) |
-| an owned `Net(..)` or `Clock` | **refused**, though the allowlist's own comment says `Net` has no fields |
+| an owned `Net(..)` or `Clock` | **refused when measured**, though the allowlist's own comment says `Net` has no fields; **admitted since T2** (below), with `tests/accept/spawn_owned_net.ls` and `spawn_owned_clock.ls` |
 | two threads allocating | **no way to write it**: there is one `Heap`, borrowed uniquely, and `split` gives out one |
 
 So a multi-field payload by reference **works today**; `threads.md` §5 put it behind a trampoline, and that was
@@ -145,9 +145,9 @@ its way in when a program asks, and the asker here is a server that wants more t
 | step | what | gate (can fail) |
 |---|---|---|
 | **T0** | **no compiler change**: data-parallel kernels on today's threads, a job per `&!` struct (section 3.4). Put the pattern in `docs/threads.md`'s status, with the one-function-value-per-spawn rule and why | the thread-scaling program (`gen_threads.py`) stays at least 2.8x at 4 threads on both backends; a conformance test runs two workers on both |
-| **T1** | give a thread **its own `Heap`**. The runtime is `malloc`, which is thread-safe, and a `Heap` carries no state, so the uniqueness is a type-system choice (`heap.md` §2): the question is how a second one may be *made* without making allocation authority unbounded. Candidates: `spawn` takes the parent's `&!` heap and gives the thread a derived one; or a `fork_heap` that is itself `[conc]`. Decide in this step, on the budget document (`budget.md`) first | a worker thread allocates a `Box`, the parent frees it after `join`, on both backends, with `the_heap_actually_frees`'s footprint check still passing |
-| **T2** | admit `Net(..)` and `Clock` as payloads: both are zero- or one-leaf like `File` (the comment on `crosses_to_a_thread` says so) and the change is the allowlist, as `File`'s was | fixtures for each on both backends; the reject fixtures that pinned the refusal become the obsolete-pin case (`function-values.md`'s own precedent) |
-| **T3** | **server workers**: N threads each running `http.server`'s loop on its own `SO_REUSEPORT` listener, the schema and the OpenAPI document shared read-only through `&`. Pre-register the criterion before building: at N = 2 and 3 on 4 cores, **at least 0.9x of N processes sharing a port** (measure the process numbers first, for the in-memory `users` service) | if it is below 0.9x, say so and keep processes: they are free today |
+| **T1** | give a thread **its own `Heap`**: **decided on paper in section 8** (a `fork_heap` builtin; why it is sound while `Heap` is stateless, and the invariant that must hold if it ever is not). Not built | the fixture of section 8.4 on both backends: two forked heaps, two workers allocating and freeing, a box built in a thread and freed by the parent after `join`, the footprint check of `the_heap_actually_frees` unchanged |
+| **T2** | **built**: `Net(..)` and `Clock` admitted as payloads: both are zero-leaf like `Io` (`leaf_free`), and the change is two names in `crosses_to_a_thread`'s allowlist, as `File`'s was. A thread now dials a refused port and reads a clock, on both backends | done: two fixtures, two backend-agreement tests; no reject fixture had pinned the refusal, so none became an obsolete pin |
+| **T3** | **server workers**: N threads each running `http.server`'s loop on its own `SO_REUSEPORT` listener, the schema and the OpenAPI document shared read-only through `&`. **Baseline measured** (`copies_users.sh`, the in-memory `users` service on a stateless workload, an invalid `POST /users`: parse, validation, error, no store; copy *i* on core *i*, the load generator on cores 2-3): **one process 94,904 a second** (median of 5, 93.5k-100.0k), **two processes sharing a port 159,176** (139.9k-163.0k), 1.68x. N = 3 cannot be measured on this machine without the load generator sharing a core | **two threads at least 0.9x of two processes: 143,000 a second or more**; if it is below, say so and keep processes: they are free today |
 | **T4** | **shared read-only data** across threads (`&T` crossing to several threads at once): test it, document it. It already type-checks as one reference per thread (`tests/accept/spawn_thread_ids.ls` shares a borrowed capability); what is missing is a worked example | a reader pool over a shared `Box[[int]]` agrees with the single-thread answer |
 | **T5** | **communication**: a bounded queue between threads needs an atomic load and store with ordering, which does not exist. Design only: what the primitive is, and why it is not `Rc` | **not started until a program asks** (the pool and the HTTP loop are one thread today and do not) |
 
@@ -190,8 +190,70 @@ them from SQL**, single-threaded, with the target of section 3.3's numbers and V
 ## 7. What to do first
 
 1. Merge this document, the fixture and the corrections (V0, T0's pattern).
-2. **T1 on paper**: how a thread gets a `Heap`. It is the one blocker that is a design question and not a
-   check-list, and T3 cannot start without it.
-3. **T2** (the allowlist) and the T3 baseline (the in-memory `users` service as N processes), which cost an afternoon
+2. ~~**T1 on paper**: how a thread gets a `Heap`~~ (done, section 8). T1's build is next, and T3 cannot start without it.
+3. ~~**T2** (the allowlist)~~ (done) and the T3 baseline (the in-memory `users` service as N processes), which cost an afternoon
    each and decide whether T3 is worth building.
 4. **V2** and **V3** only after a column kernel exists to measure them on.
+
+## 8. T1: a thread's own `Heap` -- the decision
+
+### 8.1 What is true today
+
+* **A `Box` is a `malloc`, and a `Heap` is a type-level token.** `box` lowers to one `malloc` and `unbox` to one `free`
+  on both backends (`crates/lex-sys-codegen/src/body/memory.rs`, `lex-sys-codegen-llvm/src/body/memory.rs`); `Heap` has no fields
+  and no leaves (`leaf_free`), and there is no budget in the runtime (`budget.md`: it "does not belong here"). A region's
+  arena is one `malloc` plus a bump pointer kept in the function's own locals, so it is private to the thread that opens it.
+  glibc's `malloc` and `free` are thread-safe, and a block may be freed by a thread other than the one that allocated it.
+* **`Heap` is unique anyway**, "an allocator has state, and the honest type for shared mutable state is the one that says
+  only one reference reaches it" (`heap.md` §2) -- true of the *type's intent*, not of today's runtime -- and `split` hands out one.
+* **A struct holding a `Heap` crosses to a thread and the thread allocates through it** (`tests/accept/spawn_heap_in_struct.ls`, both backends):
+  a `res struct Worker { heap: Heap, out: int }` passed as `&!r Worker`, the worker calling `box_slice(w.heap, ..)` and
+  `unbox_slice(w.heap, ..)`. Its row is `[heap]` (only *owning* the capability discharges the label, as for `Io`); `main`'s is
+  `[conc]` because `main` owns the heap it moved into the struct. So the carrying side works; **what is missing is a second
+  `Heap` to carry**.
+
+### 8.2 The options
+
+| | idea | verdict |
+|---|---|---|
+| **A** | a builtin **`fork_heap(h: &!x Heap) -> [heap] Heap`**: a new owned `Heap` made from a unique borrow of one | **chosen**: nothing is amplified (the parent already holds the authority, and the label is the same `heap`); the child is an ordinary owned capability, moved into a worker struct or a payload |
+| B | make `Heap` copyable | rejected: it deletes the uniqueness the type was designed to state, for every future allocator, to fix a problem a fork solves |
+| C | `split` hands out *N* heaps | rejected: `Split` is a fixed record; the number of workers is a run-time decision |
+| D | workers use regions only | rejected: the library surface (`http.server.open`, `pg.pool`, `schema`) takes a `Heap`; a worker could not call any of it |
+| E | `spawn` gives the thread a heap implicitly | rejected: an authority the program text does not show; the capability language exists to show it |
+
+### 8.3 Why A is sound, and the one condition it depends on
+
+A `Box` freed through any `Heap` is correct while `Heap` has no state of its own: `malloc` and `free` need no heap value to agree
+on which allocation they are speaking of. So a forked `Heap` and its parent are interchangeable for memory safety, a box a worker
+builds can be freed by the parent after `join`, and no new linearity rule is needed (the child is `res`, so it is moved, and
+used once, by the existing rules).
+
+**The condition**: `Heap` must stay stateless. If it ever gets state -- a per-heap arena, a budget, a different allocator for a
+`no_std` target -- then `fork_heap` has to *split* that state, and `unbox` has to be tied to the allocator that made the box (a
+type-level obligation `Box[T]` does not carry today). This design says so rather than hiding it: the footprint test of
+`the_heap_actually_frees` (eight million 2 KiB boxes, one at a time) must keep passing with boxes freed by a different heap than
+allocated them, and a change that makes `Heap` stateful has to start by failing it.
+
+What this does **not** claim: that forked heaps are *faster* (glibc already keeps per-thread arenas; not measured here), or that
+allocation under contention scales (T3 measures the service, not the allocator).
+
+### 8.4 The gate (T1), and what building it touches
+
+A fixture `tests/accept/fork_heap_workers.ls`, on both backends, and its rejects:
+
+* **accepts**: the parent forks two heaps and moves each into a worker struct; two threads allocate and free boxes in a loop
+  (a million iterations each); one worker also builds a box that outlives its thread (stored in its struct), which the parent frees
+  with *its own* heap after `join`; the same run's resident size stays flat (the footprint check);
+* **rejects**: using a forked heap after moving it into a thread (`linear-use-after-move`, existing); forking from a shared
+  reference (`&Heap`: the builtin's signature wants `&!`); and releasing the parent heap and then forking.
+
+Expected cost, **not yet measured**: the value has no leaves, so neither backend should emit code for the call; the work is the
+builtin's signature and row in `lex-sys-ir/src/builtin.rs`, the lowering arm, and the fixture. `[heap]` stays the only label, so
+`lex-sys authority` reports nothing new and a `lex-os` grant needs no new field.
+
+### 8.5 After T1
+
+T3's workers hold `{ heap, listener, poller, schema, ... }` in one struct each, passed by `&!`, with `Net` and `Clock` crossing
+as owned payloads (T2, built) for the parts the struct cannot hold. Whether a *library* (`http.server`) can be driven from a
+thread through a struct field of its `Server` type is the first thing T3 has to find out, and may need its own change.

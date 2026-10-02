@@ -1190,6 +1190,33 @@ fn the_two_backends_agree_on_spawn_owned_file() {
     assert_backends_agree("backends-spawn-owned-file", "tests/accept/spawn_owned_file.ls", "30\n");
 }
 
+/// `docs/parallelism.md` T2: `Net` and `Clock` as thread payloads. Both are
+/// declared with no fields (`leaf_free`), so each crosses the way `Io` does;
+/// `crosses_to_a_thread` had left them off its list although its own comment
+/// named `Net` as zero-field. The threads do real work -- a clock read, a
+/// `connect` that is refused -- on both backends.
+#[test]
+fn the_two_backends_agree_on_spawn_owned_clock() {
+    assert_backends_agree("backends-spawn-owned-clock", "tests/accept/spawn_owned_clock.ls", "");
+}
+
+#[test]
+fn the_two_backends_agree_on_spawn_owned_net() {
+    assert_backends_agree("backends-spawn-owned-net", "tests/accept/spawn_owned_net.ls", "");
+}
+
+/// `docs/parallelism.md` §8.1: a struct holding a `Heap` crosses to a
+/// thread by `&!` reference and the thread allocates and frees through the
+/// field -- the carrying half of a worker's own heap, on both backends.
+#[test]
+fn the_two_backends_agree_on_spawn_heap_in_struct() {
+    assert_backends_agree(
+        "backends-spawn-heap-in-struct",
+        "tests/accept/spawn_heap_in_struct.ls",
+        "",
+    );
+}
+
 /// `docs/parallelism.md` §3.1: a unique reference to a *struct* is one
 /// pointer leaf, so a worker's whole job (a range, an answer, a boxed
 /// slice it owns) crosses in one payload with no trampoline -- the

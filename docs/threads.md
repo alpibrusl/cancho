@@ -360,8 +360,9 @@ feature that does not exist yet for any of them to ask for.
 > crosses today on both backends (`tests/accept/spawn_struct_ref.ls`); the trampoline is needed only for an *owned*
 > struct. Two further findings from the same probes: each spawn needs **its own function value** (one `work` taken
 > once is instantiated at the first borrow's region, and the second reference "does not outlive" it); and `Net(..)`
-> and `Clock` are refused as payloads although `crosses_to_a_thread`'s own comment lists `Net` among the zero-field
-> capabilities, which is an allowlist omission, not a design position.
+> and `Clock` were refused as payloads although `crosses_to_a_thread`'s own comment lists `Net` among the zero-field
+> capabilities, which was an allowlist omission, not a design position: both are admitted now
+> (`tests/accept/spawn_owned_net.ls`, `spawn_owned_clock.ls`).
 
 Steps 1 through 4 are built. Step 3's struct-shaped-capability half and
 step 5 are **measured and decided not yet**, the same verdict
