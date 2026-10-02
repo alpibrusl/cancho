@@ -24,6 +24,7 @@
 - [HTTP and routing](http.md)
 - [The API server](server.md)
 - [The server loop as a package](http-server.md)
+- [Parallelism: threads and vectorization](parallelism.md)
 - [Native sockets](native-sockets.md)
 - [Slicing](slicing.md)
 - [Tuples](tuples.md)

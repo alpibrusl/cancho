@@ -355,6 +355,14 @@ feature that does not exist yet for any of them to ask for.
    feature earns its way in when a program asks) applies as written:
    not built, and not because of missing infrastructure alone.
 
+> **Corrected (`parallelism.md` §3.4): a multi-field payload does not need the trampoline when it is passed by
+> reference.** A unique reference to a struct, including one that owns a `Box[[int]]`, is one pointer leaf and
+> crosses today on both backends (`tests/accept/spawn_struct_ref.ls`); the trampoline is needed only for an *owned*
+> struct. Two further findings from the same probes: each spawn needs **its own function value** (one `work` taken
+> once is instantiated at the first borrow's region, and the second reference "does not outlive" it); and `Net(..)`
+> and `Clock` are refused as payloads although `crosses_to_a_thread`'s own comment lists `Net` among the zero-field
+> capabilities, which is an allowlist omission, not a design position.
+
 Steps 1 through 4 are built. Step 3's struct-shaped-capability half and
 step 5 are **measured and decided not yet**, the same verdict
 `self-hosting.md` reached the same way: nothing found is a hard
