@@ -798,6 +798,17 @@ impl<'a> FuncEmitter<'a> {
                 }
                 self.conn_read(&args)
             }
+            // `docs/memory-moves.md`: a bounds-checked `memmove` inside one slice.
+            Callee::Builtin(Builtin::CopyWithin) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                if args.len() != 5 {
+                    return Err(format!(
+                        "`copy_within` needs 5 leaves but {} were given",
+                        args.len()
+                    ));
+                }
+                self.copy_within(&args)
+            }
             Callee::Builtin(Builtin::ConnWrite) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 if args.len() != 3 {

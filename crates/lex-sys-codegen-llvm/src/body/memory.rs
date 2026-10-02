@@ -5,6 +5,44 @@
 use crate::*;
 
 impl<'a> FuncEmitter<'a> {
+    /// `copy_within(buf, dst, src, n)` (`docs/memory-moves.md`): `memmove` inside one slice, after the checks that indexing
+    /// makes. `args` is the slice's pointer and length, then `dst`, `src` and `n`; it answers 0.
+    ///
+    /// Traps unless all of `dst`, `src`, `n` are non-negative and both `n <= len - dst` and `n <= len - src`: the sums
+    /// `dst + n` and `src + n` are never formed, so a huge `n` cannot wrap past the bound.
+    pub(crate) fn copy_within(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        let (base, length) = (operand(&args[0]), operand(&args[1]));
+        let (dst, src, count) = (operand(&args[2]), operand(&args[3]), operand(&args[4]));
+        let mut failed = self.fresh();
+        self.out.push_str(&format!("  {failed} = icmp slt i64 {dst}, 0\n"));
+        for value in [&src, &count] {
+            let negative = self.fresh();
+            self.out.push_str(&format!("  {negative} = icmp slt i64 {value}, 0\n"));
+            let joined = self.fresh();
+            self.out.push_str(&format!("  {joined} = or i1 {failed}, {negative}\n"));
+            failed = joined;
+        }
+        for start in [&dst, &src] {
+            let room = self.fresh();
+            self.out.push_str(&format!("  {room} = sub i64 {length}, {start}\n"));
+            let past = self.fresh();
+            self.out.push_str(&format!("  {past} = icmp sgt i64 {count}, {room}\n"));
+            let joined = self.fresh();
+            self.out.push_str(&format!("  {joined} = or i1 {failed}, {past}\n"));
+            failed = joined;
+        }
+        self.trap_if(&failed)?;
+        let to = self.fresh();
+        self.out.push_str(&format!("  {to} = getelementptr i8, ptr {base}, i64 {dst}\n"));
+        let from = self.fresh();
+        self.out.push_str(&format!("  {from} = getelementptr i8, ptr {base}, i64 {src}\n"));
+        let ignored = self.fresh();
+        self.out.push_str(&format!(
+            "  {ignored} = call ptr @memmove(ptr {to}, ptr {from}, i64 {count})\n"
+        ));
+        Ok(vec![LValue::Const(0)])
+    }
+
     pub(crate) fn region_stmt(&mut self, arena: u32, body: &[Stmt]) -> Result<bool, String> {
         let base = self.fresh();
         self.out.push_str(&format!("  {base} = call ptr @malloc(i64 {ARENA_CHUNK})\n"));

@@ -707,3 +707,73 @@ fn assert_fails_the_same_way_every_other_trap_does() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn copy_within_traps_outside_the_slice_on_both_backends() {
+    // `docs/memory-moves.md` §2: the same checks indexing makes, and the sums are never formed, so a count of 2^63 - 1
+    // cannot wrap past the bound. Each call below must be killed by a signal; the last three are the calls at the edge
+    // that must *not* be, so the checks are not simply refusing everything.
+    let bad = [
+        ("dst-negative", "0 - 1, 0, 1"),
+        ("src-negative", "0, 0 - 1, 1"),
+        ("count-negative", "0, 0, 0 - 1"),
+        ("dst-past-the-end", "4, 0, 5"),
+        ("src-past-the-end", "0, 4, 5"),
+        ("dst-beyond-length", "9, 0, 0"),
+        ("src-beyond-length", "0, 9, 0"),
+        ("count-would-overflow-the-sum", "1, 0, 9223372036854775807"),
+        ("count-would-overflow-the-source-sum", "0, 1, 9223372036854775807"),
+    ];
+    let fine =
+        [("whole", "0, 0, 8"), ("empty-at-the-end", "8, 8, 0"), ("one-byte-at-the-end", "7, 0, 1")];
+    for backend in ["cranelift", "llvm"] {
+        for (name, arguments, should_trap) in
+            bad.iter().map(|(n, a)| (n, a, true)).chain(fine.iter().map(|(n, a)| (n, a, false)))
+        {
+            let dir = scratch(&format!("copy-within-{name}-{backend}"));
+            let source = dir.join("move.ls");
+            std::fs::write(
+                &source,
+                format!(
+                    "edition 5;\n\
+                     fn main(world: World) -> [] int {{\n\
+                         let Split {{ io, ffi, fs, heap, args, net, clock }} = split(world);\n\
+                         release(args); release(heap); release(fs); release(ffi); release(io); release(net); release(clock);\n\
+                         var n = 0;\n\
+                         region a {{ let xs = alloc_slice[a](8, byte_of(7)); copy_within(xs, {arguments}); n = int_of(xs[0]); }}\n\
+                         return n - 7;\n\
+                     }}\n"
+                ),
+            )
+            .expect("a writable fixture");
+            let exe = dir.join("move");
+            let build = Command::new(BIN)
+                .args([
+                    "build".as_ref(),
+                    source.as_os_str(),
+                    "--backend".as_ref(),
+                    backend.as_ref(),
+                    "-o".as_ref(),
+                    exe.as_os_str(),
+                ])
+                .output()
+                .expect("the compiler runs");
+            assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+            let run = Command::new(&exe).output().expect("the compiled program runs");
+            if should_trap {
+                assert_eq!(
+                    run.status.code(),
+                    None,
+                    "`copy_within(xs, {arguments})` on {backend} should be killed by a signal"
+                );
+            } else {
+                assert_eq!(
+                    run.status.code(),
+                    Some(0),
+                    "`copy_within(xs, {arguments})` on {backend} should succeed"
+                );
+            }
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+}

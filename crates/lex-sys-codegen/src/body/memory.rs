@@ -4,6 +4,34 @@
 use crate::*;
 
 impl<'a, 'f> BodyEmitter<'a, 'f> {
+    /// `copy_within(buf, dst, src, n)` (`docs/memory-moves.md`): `memmove` inside one slice, after the checks that
+    /// indexing makes. `args` is the slice's pointer and length, then `dst`, `src` and `n`.
+    ///
+    /// Traps unless all of `dst`, `src`, `n` are non-negative and both `n <= len - dst` and `n <= len - src`: the sums
+    /// `dst + n` and `src + n` are never formed, so a huge `n` cannot wrap past the bound. Answers 0.
+    pub(crate) fn copy_within(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let (base, length, dst, src, count) = (args[0], args[1], args[2], args[3], args[4]);
+        let mut failed = self.builder.ins().icmp_imm(IntCC::SignedLessThan, dst, 0);
+        let src_negative = self.builder.ins().icmp_imm(IntCC::SignedLessThan, src, 0);
+        let count_negative = self.builder.ins().icmp_imm(IntCC::SignedLessThan, count, 0);
+        failed = self.builder.ins().bor(failed, src_negative);
+        failed = self.builder.ins().bor(failed, count_negative);
+        // `len - dst` and `len - src` cannot overflow once both are known to be non-negative and `len` is at most
+        // 2^63 - 1; a negative `dst` or `src` has already failed above, and the comparisons below only matter if not.
+        let room_dst = self.builder.ins().isub(length, dst);
+        let room_src = self.builder.ins().isub(length, src);
+        let past_dst = self.builder.ins().icmp(IntCC::SignedGreaterThan, count, room_dst);
+        let past_src = self.builder.ins().icmp(IntCC::SignedGreaterThan, count, room_src);
+        failed = self.builder.ins().bor(failed, past_dst);
+        failed = self.builder.ins().bor(failed, past_src);
+        self.builder.ins().trapnz(failed, TrapCode::HEAP_OUT_OF_BOUNDS);
+        let to = self.builder.ins().iadd(base, dst);
+        let from = self.builder.ins().iadd(base, src);
+        self.libc_call("memmove", &[pointer, pointer, pointer], &[pointer], &[to, from, count]);
+        vec![self.builder.ins().iconst(types::I64, 0)]
+    }
+
     /// `borrow x as &r in { .. }` — give `x` a home in memory and point at it.
     ///
     /// A reference has to be an address, and until now nothing did: a slot
