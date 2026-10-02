@@ -189,3 +189,70 @@ Left: both copies remain byte loops. `bulk-io.md` §4 names the primitive that w
 whole library (a slice-to-slice copy) and leaves open whether that is the compiler's or the
 backend's to do; this change does not decide it.
 
+
+## 10. Holding a request, and handles of the application's own
+
+A request whose answer is not ready -- it waits on a database -- used to have one choice: block in
+`next`'s caller until the answer came, and stop every other connection. Two additions let the
+loop go on, and neither makes the server know what it is waiting on (`lexsys-pg/docs/nonblocking.md`
+is the first user).
+
+**`hold` and `answer`.** `hold(srv)` takes the request `next` handed over and answers a *ticket*
+instead of leaving it to `respond`; the loop goes on to the next request. `answer(srv, ticket,
+bytes)` is `respond` for that request, at any later time. What the server does meanwhile:
+
+* A held connection is not read from once its buffer is full (the rest of what the client sent
+  stays in the kernel), and no request behind the held one is handed out until it is answered: the
+  answers must leave in the order the requests came, so the next request on that connection waits.
+  Requests already buffered behind it are served after the answer without waiting for new input.
+* It is not closed for being idle: the answer is the application's to give, and so is giving up
+  (an application that wants a deadline answers with `504`).
+* A ticket is a slot and a *generation* of that slot (`ticket % 2048`, `ticket / 2048`; the
+  generation increases every time a connection takes the slot). `answer` answers `-1` and writes
+  nothing for a ticket that was answered already, or whose connection is gone and whose slot may
+  now be someone else's. The `-1` is the whole protection against writing an answer to the wrong
+  client, so it is checked, not trusted.
+
+**`poller`, `first_token`, `foreign_count`, `foreign`.** `poller(srv)` is the server's own
+poller. The application registers its own handles in it (`std.conns.watch` with a token from
+`first_token(srv)` up: 0 is the listener, 1 to `limit` the connections), so that one `wait` serves
+them and the connections together. What `wait` reports for those tokens is not acted on; it is
+listed by `foreign_count`/`foreign` as (token, readiness) pairs, valid until the next `wait`, for
+the application to read from the handle and answer tickets. The list is 64 pairs; a pair beyond
+that is dropped, which is safe only for handles watched level-triggered (the poller reports them
+again next time), which `std.conns.watch` is.
+
+`tests/programs/server_hold.ls` is the application used in `conformance/http_server.rs`: it
+watches a connection to the test and answers one held request for every byte the test writes.
+
+| test | what it fixes |
+|---|---|
+| `a_held_request_does_not_stop_the_loop_and_what_follows_it_waits_its_turn` | other clients are answered while one is held; a request pipelined behind it, and one written later, wait and come out in order after it |
+| `held_requests_are_released_one_each_and_oldest_first` | three held requests; each release answers one |
+| `a_held_connection_with_a_full_buffer_waits_without_reading_and_loses_nothing` | 2,500 requests (about 80 KB) behind a held one, 5 buffers' worth: all answered, in order |
+| `a_held_request_is_not_the_idle_timeouts_to_close` | held for 12 s, the idle timeout being 9 |
+| `a_ticket_answers_once_and_never_reaches_a_connection_that_took_the_slot` | the same ticket twice; and, after the connection is gone and another holds a request in its slot, the old ticket does not answer the new one |
+
+Nine single-edit mutations of the new code, each published to a scratch store and run against
+all of the tests above; every one is caught:
+
+| mutation | first test to fail |
+|---|---|
+| `answer` does not check the generation | `a_ticket_answers_once...` |
+| `answer` does not check that the request is held | `a_ticket_answers_once...` |
+| the generation is not increased when a slot is taken again | `a_ticket_answers_once...` |
+| a held connection with a full buffer is still read | `a_held_connection_with_a_full_buffer...` |
+| a held request is produced again when more input arrives | `a_held_request_does_not_stop_the_loop...` |
+| the idle sweep closes held connections | `a_held_request_is_not_the_idle_timeouts_to_close` |
+| foreign events are not counted | five tests |
+| the ready queue is not compacted when full | `answering_more_than_the_table_has_rooms...` |
+| no requeue of requests buffered behind an answered one | two tests |
+
+The first attempt left three of the nine standing (the held-twice one, the full-buffer one and the
+idle one); the last three tests, and the "nothing was held twice" check in the first, were written
+for them. The queue-compaction mutation survived a further round until a test ran the server with
+buffers of 64 MiB (room for four connections, so a ready queue of four).
+
+One flake was found and fixed on the way: a release byte written before the server had registered
+the request it was meant for was read and lost, so the request was never released. The test
+application now keeps a byte as a credit until there is a held request to spend it on.
