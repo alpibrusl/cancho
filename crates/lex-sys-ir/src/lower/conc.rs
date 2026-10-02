@@ -24,13 +24,15 @@ use crate::*;
 /// `DefId` rather than by walking its fields structurally. `File`
 /// (`abi::leaves_into`'s own `PRELUDE_FILE` arm, both backends) is one
 /// `i64` leaf — the fd, no different in shape from a plain `int` —
-/// and `Io`/`Ffi`/`Fs`/`Args`/`Heap`/`Net` are all declared with **no**
+/// and `Io`/`Ffi`/`Fs`/`Args`/`Heap`/`Net`/`Clock` are all declared with **no**
 /// fields at all (`defs.rs`'s own `prelude_types`), so neither backend's
 /// `leaves_into` gives any of them a leaf to carry: the same zero-leaf
 /// path this function already gives `Unit`. Both shapes are exactly
 /// what this slice's codegen already handles for `()` and `int`, so
-/// admitting them costs no new machinery — only the check. Not every
-/// capability is listed: `World` and `Split` are the *root* and a
+/// admitting them costs no new machinery — only the check. (`Net` and
+/// `Clock` were described here as zero-field and left off the list until
+/// `docs/parallelism.md` §3.4 found them refused: an omission, not a
+/// position.) Not every capability is listed: `World` and `Split` are the *root* and a
 /// bundle of every other one, and nothing here has asked to move a
 /// thread the whole program's authority yet.
 fn crosses_to_a_thread(ty: &Type) -> bool {
@@ -42,7 +44,14 @@ fn crosses_to_a_thread(ty: &Type) -> bool {
         Type::Ref { inner, .. } => !matches!(inner.as_ref(), Type::Slice(_)),
         Type::Named(def, _) => matches!(
             def.0 as usize,
-            PRELUDE_FILE | PRELUDE_IO | PRELUDE_FFI | PRELUDE_FS | PRELUDE_ARGS | PRELUDE_HEAP
+            PRELUDE_FILE
+                | PRELUDE_IO
+                | PRELUDE_FFI
+                | PRELUDE_FS
+                | PRELUDE_ARGS
+                | PRELUDE_HEAP
+                | PRELUDE_NET
+                | PRELUDE_CLOCK
         ),
         _ => false,
     }
