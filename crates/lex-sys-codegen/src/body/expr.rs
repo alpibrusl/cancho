@@ -372,9 +372,9 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     // `narrow` is a compile-time fact: the capability it
                     // returns names a smaller library than the one it
                     // consumed, and neither carries a bit at runtime (§7.4).
-                    Callee::Builtin(Builtin::Split | Builtin::Narrow | Builtin::ForkHeap) => {
-                        Vec::new()
-                    }
+                    Callee::Builtin(
+                        Builtin::Split | Builtin::Narrow | Builtin::ForkHeap | Builtin::ForkClock,
+                    ) => Vec::new(),
                     Callee::Builtin(Builtin::Release) => {
                         vec![self.builder.ins().iconst(types::I64, 0)]
                     }

@@ -384,7 +384,9 @@ impl<'a> FuncEmitter<'a> {
             args.iter().map(|a| self.expr(a)).collect::<Result<_, _>>()?;
 
         match callee {
-            Callee::Builtin(Builtin::Split | Builtin::Narrow | Builtin::ForkHeap) => Ok(Vec::new()),
+            Callee::Builtin(
+                Builtin::Split | Builtin::Narrow | Builtin::ForkHeap | Builtin::ForkClock,
+            ) => Ok(Vec::new()),
             Callee::Builtin(Builtin::Release) => Ok(vec![LValue::Const(0)]),
             // `docs/opaque-pointers.md` §3: the null handle. `LKind::Ptr`'s
             // own `zero()` is already the literal LLVM needs here --

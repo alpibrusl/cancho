@@ -1224,6 +1224,12 @@ fn the_two_backends_agree_on_fork_heap_workers() {
     assert_backends_agree("backends-fork-heap-workers", "tests/accept/fork_heap_workers.ls", "");
 }
 
+/// `docs/parallelism.md` §9: a `Clock` forked from the parent's, owned by each of two threads, read there; on both backends.
+#[test]
+fn the_two_backends_agree_on_fork_clock_workers() {
+    assert_backends_agree("backends-fork-clock-workers", "tests/accept/fork_clock_workers.ls", "");
+}
+
 /// `join(a) + join(b)`: a join as an arithmetic operand, which the LLVM backend could not type.
 #[test]
 fn the_two_backends_agree_on_a_join_as_an_operand() {

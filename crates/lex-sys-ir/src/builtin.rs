@@ -86,6 +86,16 @@ pub enum Builtin {
     /// state of its own (§8.3); it carries no leaves, so neither backend
     /// emits anything for the call. Edition 4, like `spawn`.
     ForkHeap,
+    /// `fork_clock(c: &x Clock) -> Clock` — a second owned `Clock` from a
+    /// shared borrow of the first (`docs/parallelism.md` §9).
+    ///
+    /// A thread that runs a server loop needs a clock of its own, and `split`
+    /// hands out one. The capability reads the monotonic clock and nothing
+    /// else, the parent already holds the authority, and the effect row has
+    /// no label for it, so nothing is amplified. It does end the property
+    /// that a capability has exactly one holder, for `Heap` and `Clock` only:
+    /// `Net` deliberately has no fork. Edition 5, like `clock_ms`.
+    ForkClock,
     /// `release(io: Io) -> [] int` — destroys a capability.
     ///
     /// Authority is a resource and a resource is destroyed exactly once, so
@@ -428,6 +438,7 @@ impl Builtin {
         Builtin::Release,
         Builtin::Narrow,
         Builtin::ForkHeap,
+        Builtin::ForkClock,
         Builtin::WrappingAdd,
         Builtin::WrappingSub,
         Builtin::WrappingMul,
@@ -490,6 +501,7 @@ impl Builtin {
             Builtin::Release => "release",
             Builtin::Narrow => "narrow",
             Builtin::ForkHeap => "fork_heap",
+            Builtin::ForkClock => "fork_clock",
             Builtin::WrappingAdd => "wrapping_add",
             Builtin::WrappingSub => "wrapping_sub",
             Builtin::WrappingMul => "wrapping_mul",
@@ -583,6 +595,7 @@ impl Builtin {
             | Builtin::ConnNonblocking
             | Builtin::ListenerNonblocking
             | Builtin::ConnClose
+            | Builtin::ForkClock
             | Builtin::ListenerClose => 5,
             _ => 1,
         }
@@ -654,6 +667,7 @@ impl Builtin {
             Builtin::TcpAccept
             | Builtin::ConnNonblocking
             | Builtin::ListenerNonblocking
+            | Builtin::ForkClock
             | Builtin::ClockMs => 1,
             _ => 0,
         }
@@ -931,6 +945,14 @@ impl Builtin {
                     inner: Box::new(named(PRELUDE_CLOCK)),
                 }],
                 Type::Int,
+            ),
+            Builtin::ForkClock => (
+                vec![Type::Ref {
+                    unique: false,
+                    region: Region::Param(0),
+                    inner: Box::new(named(PRELUDE_CLOCK)),
+                }],
+                named(PRELUDE_CLOCK),
             ),
             Builtin::ConnNonblocking => (
                 vec![Type::Ref {
