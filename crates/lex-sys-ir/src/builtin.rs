@@ -77,6 +77,25 @@ pub enum Builtin {
     /// makes the refinement checkable structurally, which is why §7.4
     /// requires one.
     Narrow,
+    /// `fork_heap(h: &!x Heap) -> [heap] Heap` — a second owned `Heap`, made
+    /// from a unique borrow of the first (`docs/parallelism.md` §8).
+    ///
+    /// Nothing is amplified: the caller already holds the authority and the
+    /// label stays `heap`. The child is an ordinary `res` value, moved into a
+    /// worker's struct or a spawn payload. Sound only while `Heap` has no
+    /// state of its own (§8.3); it carries no leaves, so neither backend
+    /// emits anything for the call. Edition 4, like `spawn`.
+    ForkHeap,
+    /// `fork_clock(c: &x Clock) -> Clock` — a second owned `Clock` from a
+    /// shared borrow of the first (`docs/parallelism.md` §9).
+    ///
+    /// A thread that runs a server loop needs a clock of its own, and `split`
+    /// hands out one. The capability reads the monotonic clock and nothing
+    /// else, the parent already holds the authority, and the effect row has
+    /// no label for it, so nothing is amplified. It does end the property
+    /// that a capability has exactly one holder, for `Heap` and `Clock` only:
+    /// `Net` deliberately has no fork. Edition 5, like `clock_ms`.
+    ForkClock,
     /// `release(io: Io) -> [] int` — destroys a capability.
     ///
     /// Authority is a resource and a resource is destroyed exactly once, so
@@ -418,6 +437,8 @@ impl Builtin {
         Builtin::Split,
         Builtin::Release,
         Builtin::Narrow,
+        Builtin::ForkHeap,
+        Builtin::ForkClock,
         Builtin::WrappingAdd,
         Builtin::WrappingSub,
         Builtin::WrappingMul,
@@ -479,6 +500,8 @@ impl Builtin {
             Builtin::Split => "split",
             Builtin::Release => "release",
             Builtin::Narrow => "narrow",
+            Builtin::ForkHeap => "fork_heap",
+            Builtin::ForkClock => "fork_clock",
             Builtin::WrappingAdd => "wrapping_add",
             Builtin::WrappingSub => "wrapping_sub",
             Builtin::WrappingMul => "wrapping_mul",
@@ -550,7 +573,7 @@ impl Builtin {
             // already declare its own `extern fn null_ptr`.
             Builtin::NullPtr => 3,
             // `docs/threads.md` §4: purely additive, same reasoning.
-            Builtin::Spawn | Builtin::Join => 4,
+            Builtin::Spawn | Builtin::Join | Builtin::ForkHeap => 4,
             // `docs/native-sockets.md` §3: edition 5, and for the same
             // reason -- `conn_read` is a name an edition-1 file may
             // already declare against libc.
@@ -572,6 +595,7 @@ impl Builtin {
             | Builtin::ConnNonblocking
             | Builtin::ListenerNonblocking
             | Builtin::ConnClose
+            | Builtin::ForkClock
             | Builtin::ListenerClose => 5,
             _ => 1,
         }
@@ -643,6 +667,7 @@ impl Builtin {
             Builtin::TcpAccept
             | Builtin::ConnNonblocking
             | Builtin::ListenerNonblocking
+            | Builtin::ForkClock
             | Builtin::ClockMs => 1,
             _ => 0,
         }
@@ -783,6 +808,9 @@ impl Builtin {
             // argument *and* a result that depend on the literal written at
             // the call.
             Builtin::Release | Builtin::Narrow => (Vec::new(), Type::Unit),
+            // Checked at the call site, like `box`: the argument must be a
+            // uniquely borrowed `Heap`.
+            Builtin::ForkHeap => (Vec::new(), Type::Unit),
             // Checked at the call site, exactly as `fs_read` is: the bound
             // is in the capability's type, and a fixed signature cannot
             // say that (`docs/net.md` §4.1).
@@ -918,6 +946,14 @@ impl Builtin {
                 }],
                 Type::Int,
             ),
+            Builtin::ForkClock => (
+                vec![Type::Ref {
+                    unique: false,
+                    region: Region::Param(0),
+                    inner: Box::new(named(PRELUDE_CLOCK)),
+                }],
+                named(PRELUDE_CLOCK),
+            ),
             Builtin::ConnNonblocking => (
                 vec![Type::Ref {
                     unique: true,
@@ -974,9 +1010,11 @@ impl Builtin {
             Builtin::GetChar => Effects::plain(["io_read"]),
             // `docs/heap.md` §2. Both reach the allocator, so both perform
             // `heap`; `contents` is a load and performs nothing.
-            Builtin::Box | Builtin::Unbox | Builtin::BoxSlice | Builtin::UnboxSlice => {
-                Effects::plain(["heap"])
-            }
+            Builtin::Box
+            | Builtin::Unbox
+            | Builtin::BoxSlice
+            | Builtin::UnboxSlice
+            | Builtin::ForkHeap => Effects::plain(["heap"]),
             // §2: reading the command line is an effect, because a
             // function whose behaviour depends on it should say so.
             Builtin::ArgCount | Builtin::Arg => Effects::plain(["args"]),

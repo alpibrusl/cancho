@@ -60,6 +60,12 @@ impl<'a> FuncEmitter<'a> {
             // `Expr::UnboxedSlice` arms are `unreachable!()` inside
             // `call()` for the same reason) -- both always answer `int`.
             Expr::Len(_) | Expr::UnboxedSlice { .. } => Ok(LKind::I64),
+            // `join(t)` is its own node too: its kind is the thread's result
+            // type, which is how `join(a) + join(b)` can be an operand.
+            Expr::Joined { ret, .. } => leaves_of(ret, self.program)?
+                .into_iter()
+                .next()
+                .ok_or_else(|| "a zero-leaf join result has no scalar kind".to_owned()),
             Expr::Call { callee, .. } => match callee {
                 Callee::Builtin(Builtin::FloatOf | Builtin::Sqrt) => Ok(LKind::F64),
                 // Every builtin below has one fixed, scalar return type

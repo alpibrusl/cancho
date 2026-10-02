@@ -145,9 +145,9 @@ its way in when a program asks, and the asker here is a server that wants more t
 | step | what | gate (can fail) |
 |---|---|---|
 | **T0** | **no compiler change**: data-parallel kernels on today's threads, a job per `&!` struct (section 3.4). Put the pattern in `docs/threads.md`'s status, with the one-function-value-per-spawn rule and why | the thread-scaling program (`gen_threads.py`) stays at least 2.8x at 4 threads on both backends; a conformance test runs two workers on both |
-| **T1** | give a thread **its own `Heap`**: **decided on paper in section 8** (a `fork_heap` builtin; why it is sound while `Heap` is stateless, and the invariant that must hold if it ever is not). Not built | the fixture of section 8.4 on both backends: two forked heaps, two workers allocating and freeing, a box built in a thread and freed by the parent after `join`, the footprint check of `the_heap_actually_frees` unchanged |
+| **T1** | give a thread **its own `Heap`**: **built** (section 8.6): `fork_heap(&!Heap) -> Heap`, edition 4, row `[heap]`; sound while `Heap` is stateless (section 8.3) | `tests/accept/fork_heap_workers.ls` on both backends (two forked heaps, two workers, a box the fork allocates freed by the parent); three rejects; 100 million allocate-and-free rounds in two threads at a flat 10.1 MB resident, on Cranelift |
 | **T2** | **built**: `Net(..)` and `Clock` admitted as payloads: both are zero-leaf like `Io` (`leaf_free`), and the change is two names in `crosses_to_a_thread`'s allowlist, as `File`'s was. A thread now dials a refused port and reads a clock, on both backends | done: two fixtures, two backend-agreement tests; no reject fixture had pinned the refusal, so none became an obsolete pin |
-| **T3** | **server workers**: N threads each running `http.server`'s loop on its own `SO_REUSEPORT` listener, the schema and the OpenAPI document shared read-only through `&`. **Baseline measured** (`copies_users.sh`, the in-memory `users` service on a stateless workload, an invalid `POST /users`: parse, validation, error, no store; copy *i* on core *i*, the load generator on cores 2-3): **one process 94,904 a second** (median of 5, 93.5k-100.0k), **two processes sharing a port 159,176** (139.9k-163.0k), 1.68x. N = 3 cannot be measured on this machine without the load generator sharing a core | **two threads at least 0.9x of two processes: 143,000 a second or more**; if it is below, say so and keep processes: they are free today |
+| **T3** | **server workers**: N threads each running `http.server`'s loop on its own `SO_REUSEPORT` listener, the schema and the OpenAPI document shared read-only through `&`. **Baseline measured** (`copies_users.sh`, the in-memory `users` service on a stateless workload, an invalid `POST /users`: parse, validation, error, no store; copy *i* on core *i*, the load generator on cores 2-3): **one process 94,904 a second** (median of 5, 93.5k-100.0k), **two processes sharing a port 159,176** (139.9k-163.0k), 1.68x. N = 3 cannot be measured on this machine without the load generator sharing a core | **two threads at least 0.9x of two processes: 143,000 a second or more**; if it is below, say so and keep processes: they are free today. **Built and measured (section 9): met**, 149,380 against 141,208 a second for two processes in the same session, with ranges that overlap |
 | **T4** | **shared read-only data** across threads (`&T` crossing to several threads at once): test it, document it. It already type-checks as one reference per thread (`tests/accept/spawn_thread_ids.ls` shares a borrowed capability); what is missing is a worked example | a reader pool over a shared `Box[[int]]` agrees with the single-thread answer |
 | **T5** | **communication**: a bounded queue between threads needs an atomic load and store with ordering, which does not exist. Design only: what the primitive is, and why it is not `Rc` | **not started until a program asks** (the pool and the HTTP loop are one thread today and do not) |
 
@@ -190,8 +190,8 @@ them from SQL**, single-threaded, with the target of section 3.3's numbers and V
 ## 7. What to do first
 
 1. Merge this document, the fixture and the corrections (V0, T0's pattern).
-2. ~~**T1 on paper**: how a thread gets a `Heap`~~ (done, section 8). T1's build is next, and T3 cannot start without it.
-3. ~~**T2** (the allowlist)~~ (done) and the T3 baseline (the in-memory `users` service as N processes), which cost an afternoon
+2. ~~**T1**: how a thread gets a `Heap`~~ (decided in section 8, built in 8.6). T3 is next.
+3. ~~**T2** (the allowlist)~~ (done), ~~**T3**~~ (section 9), and the T3 baseline (the in-memory `users` service as N processes), which cost an afternoon
    each and decide whether T3 is worth building.
 4. **V2** and **V3** only after a column kernel exists to measure them on.
 
@@ -257,3 +257,46 @@ builtin's signature and row in `lex-sys-ir/src/builtin.rs`, the lowering arm, an
 T3's workers hold `{ heap, listener, poller, schema, ... }` in one struct each, passed by `&!`, with `Net` and `Clock` crossing
 as owned payloads (T2, built) for the parts the struct cannot hold. Whether a *library* (`http.server`) can be driven from a
 thread through a struct field of its `Server` type is the first thing T3 has to find out, and may need its own change.
+
+### 8.6 Built, and what building it found
+
+`fork_heap` is `Builtin::ForkHeap` (`lex-sys-ir/src/builtin.rs`), checked at the call site like `box` (`expect_heap`: the argument must be a uniquely borrowed `Heap`), effect `heap`, edition 4 (the same edition as `spawn`, so no older file's own `fork_heap` is shadowed). Its value has no leaves: both backends emit nothing for the call, one arm each next to `split`'s.
+
+The gate of 8.4, as built:
+
+* **accepts** `tests/accept/fork_heap_workers.ls`, agreeing on both backends: the parent forks two heaps, moves one into each worker struct, the two threads allocate and free boxes in a loop, and a box the *forked* heap allocates is freed by the *parent's* heap. Peak resident size on Cranelift is 10.1 MB at 2 million rounds and the same 10.1 MB at 100 million (50 million in each thread, 1.47 s), so nothing leaks.
+* **rejects**: `fork_heap_from_shared_borrow` (`capability-misused`), `fork_heap_after_release` and `fork_heap_child_reused` (`linear-use-after-move`, the existing rule; nothing specific to `fork_heap` was added).
+
+Three corrections to what 8.4 expected:
+
+1. **The loop is not a footprint test on LLVM.** The same binary built with LLVM runs the two million rounds in 4 ms: `clang -O2` removes a `malloc`/`free` pair whose result it can see through. The Cranelift build does the real traffic (1.47 s for the 100 million). The footprint claim above is therefore a Cranelift measurement; the LLVM build proves the program type-checks, links and agrees on the answer.
+2. **"A box built in a thread and freed by the parent after `join`" is not expressible yet**, and 8.4 should not have listed it. `join` refuses a `Box` result ("cannot cross back from a real thread yet"), and a `res` field cannot be moved out through a `&!` reference, so a worker has no way to hand a box back. What the fixture proves instead is the other direction of 8.3's claim, a box made by the fork and freed by the parent. Handing a box back is a separate, small piece of work for T3 if a worker needs it (a worker's reply is more likely to be bytes in a buffer the parent already owns).
+3. **A compiler bug turned up on the way and is fixed**: `join(a) + join(b)` failed on the default (LLVM) backend with "the compiler failed to generate code" because the scalar-kind inference had no arm for the `Joined` node. It now answers the thread's result type; `tests/accept/spawn_join_operands.ls` pins it on both backends. Cranelift was never affected.
+
+Not claimed: that a forked heap is faster than sharing one, which is T3's measurement.
+
+## 9. T3: two threads running `http.server`
+
+### 9.1 What it took
+
+`examples/users_threads/users_threads.ls` in `lexsys-web` is `users` with its `main` replaced; the application, the schema and the whole server loop (`run`) are unchanged. Main opens two `SO_REUSEPORT` listeners (it holds the only `Net`), and each worker is a struct `Lane { heap, clock, listener, status }` handed to a thread by `&!`, which calls `run(w.heap, w.clock, w.listener)` and builds its own `Poller`, `Server`, store, schema and buffers inside the thread. So the first question of 8.5 has a plain answer: **a library can be driven from a thread through struct fields**, because `run` takes its capabilities as borrows, and the `Server` itself never needs to live in the struct (the thread makes it). No change to `http.server` was needed.
+
+What the language needed was one more builtin. A thread needs a `Heap` (T1, `fork_heap`) **and a `Clock`** of its own, since `server.wait` takes `&Clock` and a `Clock` is `res`. `split` gives one, and a thread cannot borrow the parent's across `spawn` (only one `&!` struct reference crosses). So `fork_clock(&Clock) -> Clock`, edition 5, makes another from a shared borrow of the first. Its argument for soundness is `fork_heap`'s: a clock reads the monotonic time and nothing else, the parent already holds the authority, the label is unchanged, and no program's `lex-os` grant or `lex-sys authority` report changes. It is also where the capability discipline gives a little: **authority was conserved before (one holder of each capability), and for `Heap` and `Clock` it no longer is**. `Net` is deliberately not forkable: the listeners are made by the one thread that holds it, and workers receive listeners, not the right to make them. `tests/accept/fork_clock_workers.ls` (both backends) and `tests/reject/fork_clock_after_release.ls` pin it.
+
+### 9.2 Measured
+
+Same workload and machine as the baseline (invalid `POST /users`, 16 connections, 4 `kload` threads; server threads or processes on cores 0 and 1, the load generator on 2 and 3), the two variants **interleaved in three rounds of five runs each**, so the machine's drift hits both:
+
+| | runs (requests a second, sorted) | median of 15 |
+|---|---|---|
+| two processes, `SO_REUSEPORT` | 115,972 125,328 133,872 136,180 138,096 140,388 140,436 141,208 141,264 147,292 152,204 154,896 159,708 160,972 173,404 | **141,208** |
+| two threads, one process | 112,228 125,560 129,176 130,500 132,984 133,004 137,844 149,380 149,428 160,212 160,280 161,224 162,892 164,344 165,356 | **149,380** |
+
+Both threads are busy (about 1,500 and 1,700 ticks of CPU each over a run), so the load is spread and not carried by one. The ratio of the medians is 1.06, the criterion was at least 0.9 and at least 143,000 a second, and **both are met**; but the ranges overlap almost completely and the machine was slower than when the baseline was taken (processes then 159,176, today 141,208), so the honest reading is *threads are indistinguishable from processes here, and not worse*. The first single block of five gave the threads 161,432; the pooled median is the number to quote.
+
+### 9.3 What this does and does not say
+
+* It says a typed, linear, capability-checked server can use several cores **in one process** with the same code, no `unsafe` and no shared mutable state, at the throughput of the process-per-core arrangement it replaces.
+* It does not say threads *beat* processes. For a stateless service they should not: both are share-nothing. The reason to have threads is what processes cannot do, which is **share a store**, and that needs T4 and T5 (shared read-only data, then communication), neither built.
+* Three cores cannot be measured on this 4-core machine without the load generator sharing a core, so scaling past two is unmeasured.
+* The in-memory store (`POST` that succeeds) is per-thread today, so a `GET` may land on a worker that has not seen the `POST`. This example only demonstrates the stateless path; sharing the store is exactly T4/T5.

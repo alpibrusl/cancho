@@ -12,6 +12,7 @@ of several runs, the program pinned to one core with `taskset -c 2` (the thread 
 | `colscan.ls`, `colscan_duckdb.py` | a sum and a filtered count over 50 million `int64`, in lex-sys and in DuckDB, on the same values |
 | `gen_threads.py` | writes the 1-, 2- and 4-thread programs of the thread-scaling experiment |
 | `copies_users.sh` | the T3 baseline: one and two processes sharing a port, on a stateless workload of `lexsys-web`'s `users` service |
+| `threads_users.sh` | T3: the same workload, two processes against two threads (`examples/users_threads`), interleaved in rounds |
 
 The `reduce_*` programs are `benches/reduce_checked.ls` with the `run` function replaced; build them with
 `lex-sys build --std --backend llvm`, and for the cache-resident variant (128 KB, the same total work):

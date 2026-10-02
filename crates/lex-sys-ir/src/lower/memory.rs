@@ -413,6 +413,32 @@ impl<'a> FnLowering<'a> {
         Ok((Expr::UnboxedSlice { value: Box::new(lowered) }, Type::Int))
     }
 
+    /// `fork_heap(h)` — a second owned `Heap` from a unique borrow of one
+    /// (`docs/parallelism.md` §8). The value has no leaves, so the call
+    /// carries no operands.
+    pub(crate) fn fork_heap(
+        &mut self,
+        args: &[ExprId],
+        span: Span,
+    ) -> Result<(Expr, Type), Diagnostic> {
+        let [heap] = args else {
+            return Err(Diagnostic::new(
+                Rule::ArityMismatch,
+                format!(
+                    "`fork_heap` takes 1 argument -- the heap -- but {} were given",
+                    args.len()
+                ),
+                span,
+            ));
+        };
+        self.expect_heap(*heap)?;
+        self.performed.union(&Effects::plain(["heap"]));
+        Ok((
+            Expr::Call { callee: Callee::Builtin(Builtin::ForkHeap), args: Vec::new() },
+            Type::Named(DefId(PRELUDE_HEAP as u32), Vec::new()),
+        ))
+    }
+
     /// The `&!x Heap` a heap operation is reached through (§2).
     pub(crate) fn expect_heap(&mut self, heap: ExprId) -> Result<(), Diagnostic> {
         let span = self.ast.expr_span(heap);

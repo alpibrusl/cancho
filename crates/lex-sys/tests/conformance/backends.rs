@@ -1217,6 +1217,29 @@ fn the_two_backends_agree_on_spawn_heap_in_struct() {
     );
 }
 
+/// `docs/parallelism.md` §8: a heap forked from the parent's, moved into each of two workers, a million allocate-and-free
+/// rounds in each thread, and a box the fork allocates freed by the parent -- on both backends.
+#[test]
+fn the_two_backends_agree_on_fork_heap_workers() {
+    assert_backends_agree("backends-fork-heap-workers", "tests/accept/fork_heap_workers.ls", "");
+}
+
+/// `docs/parallelism.md` §9: a `Clock` forked from the parent's, owned by each of two threads, read there; on both backends.
+#[test]
+fn the_two_backends_agree_on_fork_clock_workers() {
+    assert_backends_agree("backends-fork-clock-workers", "tests/accept/fork_clock_workers.ls", "");
+}
+
+/// `join(a) + join(b)`: a join as an arithmetic operand, which the LLVM backend could not type.
+#[test]
+fn the_two_backends_agree_on_a_join_as_an_operand() {
+    assert_backends_agree(
+        "backends-spawn-join-operands",
+        "tests/accept/spawn_join_operands.ls",
+        "",
+    );
+}
+
 /// `docs/parallelism.md` §3.1: a unique reference to a *struct* is one
 /// pointer leaf, so a worker's whole job (a range, an answer, a boxed
 /// slice it owns) crosses in one payload with no trampoline -- the

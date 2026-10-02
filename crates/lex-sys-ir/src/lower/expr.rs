@@ -739,6 +739,9 @@ impl<'a> FnLowering<'a> {
                 if Builtin::from_name(text) == Some(Builtin::Release) {
                     return self.release(args, span);
                 }
+                if resolved == Resolved::Builtin(Builtin::ForkHeap) {
+                    return self.fork_heap(args, span);
+                }
                 if Builtin::from_name(text) == Some(Builtin::Len) {
                     return self.len(args, span);
                 }
