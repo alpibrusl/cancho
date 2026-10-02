@@ -145,7 +145,7 @@ its way in when a program asks, and the asker here is a server that wants more t
 | step | what | gate (can fail) |
 |---|---|---|
 | **T0** | **no compiler change**: data-parallel kernels on today's threads, a job per `&!` struct (section 3.4). Put the pattern in `docs/threads.md`'s status, with the one-function-value-per-spawn rule and why | the thread-scaling program (`gen_threads.py`) stays at least 2.8x at 4 threads on both backends; a conformance test runs two workers on both |
-| **T1** | give a thread **its own `Heap`**: **decided on paper in section 8** (a `fork_heap` builtin; why it is sound while `Heap` is stateless, and the invariant that must hold if it ever is not). Not built | the fixture of section 8.4 on both backends: two forked heaps, two workers allocating and freeing, a box built in a thread and freed by the parent after `join`, the footprint check of `the_heap_actually_frees` unchanged |
+| **T1** | give a thread **its own `Heap`**: **built** (section 8.6): `fork_heap(&!Heap) -> Heap`, edition 4, row `[heap]`; sound while `Heap` is stateless (section 8.3) | `tests/accept/fork_heap_workers.ls` on both backends (two forked heaps, two workers, a box the fork allocates freed by the parent); three rejects; 100 million allocate-and-free rounds in two threads at a flat 10.1 MB resident, on Cranelift |
 | **T2** | **built**: `Net(..)` and `Clock` admitted as payloads: both are zero-leaf like `Io` (`leaf_free`), and the change is two names in `crosses_to_a_thread`'s allowlist, as `File`'s was. A thread now dials a refused port and reads a clock, on both backends | done: two fixtures, two backend-agreement tests; no reject fixture had pinned the refusal, so none became an obsolete pin |
 | **T3** | **server workers**: N threads each running `http.server`'s loop on its own `SO_REUSEPORT` listener, the schema and the OpenAPI document shared read-only through `&`. **Baseline measured** (`copies_users.sh`, the in-memory `users` service on a stateless workload, an invalid `POST /users`: parse, validation, error, no store; copy *i* on core *i*, the load generator on cores 2-3): **one process 94,904 a second** (median of 5, 93.5k-100.0k), **two processes sharing a port 159,176** (139.9k-163.0k), 1.68x. N = 3 cannot be measured on this machine without the load generator sharing a core | **two threads at least 0.9x of two processes: 143,000 a second or more**; if it is below, say so and keep processes: they are free today |
 | **T4** | **shared read-only data** across threads (`&T` crossing to several threads at once): test it, document it. It already type-checks as one reference per thread (`tests/accept/spawn_thread_ids.ls` shares a borrowed capability); what is missing is a worked example | a reader pool over a shared `Box[[int]]` agrees with the single-thread answer |
@@ -190,7 +190,7 @@ them from SQL**, single-threaded, with the target of section 3.3's numbers and V
 ## 7. What to do first
 
 1. Merge this document, the fixture and the corrections (V0, T0's pattern).
-2. ~~**T1 on paper**: how a thread gets a `Heap`~~ (done, section 8). T1's build is next, and T3 cannot start without it.
+2. ~~**T1**: how a thread gets a `Heap`~~ (decided in section 8, built in 8.6). T3 is next.
 3. ~~**T2** (the allowlist)~~ (done) and the T3 baseline (the in-memory `users` service as N processes), which cost an afternoon
    each and decide whether T3 is worth building.
 4. **V2** and **V3** only after a column kernel exists to measure them on.
@@ -257,3 +257,20 @@ builtin's signature and row in `lex-sys-ir/src/builtin.rs`, the lowering arm, an
 T3's workers hold `{ heap, listener, poller, schema, ... }` in one struct each, passed by `&!`, with `Net` and `Clock` crossing
 as owned payloads (T2, built) for the parts the struct cannot hold. Whether a *library* (`http.server`) can be driven from a
 thread through a struct field of its `Server` type is the first thing T3 has to find out, and may need its own change.
+
+### 8.6 Built, and what building it found
+
+`fork_heap` is `Builtin::ForkHeap` (`lex-sys-ir/src/builtin.rs`), checked at the call site like `box` (`expect_heap`: the argument must be a uniquely borrowed `Heap`), effect `heap`, edition 4 (the same edition as `spawn`, so no older file's own `fork_heap` is shadowed). Its value has no leaves: both backends emit nothing for the call, one arm each next to `split`'s.
+
+The gate of 8.4, as built:
+
+* **accepts** `tests/accept/fork_heap_workers.ls`, agreeing on both backends: the parent forks two heaps, moves one into each worker struct, the two threads allocate and free boxes in a loop, and a box the *forked* heap allocates is freed by the *parent's* heap. Peak resident size on Cranelift is 10.1 MB at 2 million rounds and the same 10.1 MB at 100 million (50 million in each thread, 1.47 s), so nothing leaks.
+* **rejects**: `fork_heap_from_shared_borrow` (`capability-misused`), `fork_heap_after_release` and `fork_heap_child_reused` (`linear-use-after-move`, the existing rule; nothing specific to `fork_heap` was added).
+
+Three corrections to what 8.4 expected:
+
+1. **The loop is not a footprint test on LLVM.** The same binary built with LLVM runs the two million rounds in 4 ms: `clang -O2` removes a `malloc`/`free` pair whose result it can see through. The Cranelift build does the real traffic (1.47 s for the 100 million). The footprint claim above is therefore a Cranelift measurement; the LLVM build proves the program type-checks, links and agrees on the answer.
+2. **"A box built in a thread and freed by the parent after `join`" is not expressible yet**, and 8.4 should not have listed it. `join` refuses a `Box` result ("cannot cross back from a real thread yet"), and a `res` field cannot be moved out through a `&!` reference, so a worker has no way to hand a box back. What the fixture proves instead is the other direction of 8.3's claim, a box made by the fork and freed by the parent. Handing a box back is a separate, small piece of work for T3 if a worker needs it (a worker's reply is more likely to be bytes in a buffer the parent already owns).
+3. **A compiler bug turned up on the way and is fixed**: `join(a) + join(b)` failed on the default (LLVM) backend with "the compiler failed to generate code" because the scalar-kind inference had no arm for the `Joined` node. It now answers the thread's result type; `tests/accept/spawn_join_operands.ls` pins it on both backends. Cranelift was never affected.
+
+Not claimed: that a forked heap is faster than sharing one, which is T3's measurement.
