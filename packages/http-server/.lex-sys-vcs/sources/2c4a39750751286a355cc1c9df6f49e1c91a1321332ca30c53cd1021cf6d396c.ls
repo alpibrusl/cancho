@@ -114,15 +114,27 @@ pub res struct Server {
 // Answers
 // ---------------------------------------------------------------------
 
-// A whole response: the head, then `body`.
+// A whole JSON response: the head, then `body`.
 pub fn reply[&h, &b](heap: &!h Heap, out: buffer.Buffer, status: int, body: &b [byte], keep: bool) -> [heap] buffer.Buffer {
     return reply_with(heap, out, status, body, keep, "");
 }
 
 // `reply`, with extra header lines in the head.
 pub fn reply_with[&h, &b, &x](heap: &!h Heap, out: buffer.Buffer, status: int, body: &b [byte], keep: bool, extra: &x [byte]) -> [heap] buffer.Buffer {
-    let head = http.respond_head_with(heap, out, status, "application/json", len(body), keep, extra);
+    return reply_as(heap, out, status, "application/json", body, keep, extra);
+}
+
+// A whole response of any content type -- `application/problem+json`,
+// `text/plain` -- with extra header lines (`Location: /users/7\r\n`) in the head.
+pub fn reply_as[&h, &c, &b, &x](heap: &!h Heap, out: buffer.Buffer, status: int, content_type: &c [byte], body: &b [byte], keep: bool, extra: &x [byte]) -> [heap] buffer.Buffer {
+    let head = http.respond_head_with(heap, out, status, content_type, len(body), keep, extra);
     return buffer.append(heap, head, body);
+}
+
+// A response with no body: `204 No Content` or `304 Not Modified`, which carry
+// no `Content-Length` and no `Content-Type` (`std.http.respond_no_content`).
+pub fn reply_empty[&h, &x](heap: &!h Heap, out: buffer.Buffer, status: int, keep: bool, extra: &x [byte]) -> [heap] buffer.Buffer {
+    return http.respond_no_content(heap, out, status, keep, extra);
 }
 
 // `{"error": message}`.

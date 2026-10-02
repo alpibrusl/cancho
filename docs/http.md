@@ -99,6 +99,17 @@ line feed or NUL, and on a status outside 100-999 or a negative length:
 header injection is a program bug, and the place to find it is the first
 response, not a client's cookie jar.
 
+`respond_no_content(heap, out, status, keep_alive, extra)` is the head of a
+response with **no body at all** -- `204 No Content` and `304 Not Modified` --
+which may not carry a `Content-Length` (RFC 9110 §8.6, §15.3.5) and have no use
+for the `Content-Type` that `respond_head` always writes. It writes the status
+line, `Connection`, the `extra` lines and the blank line. It traps on any other
+status (a `200` with no length on a keep-alive connection has no end a client can
+find) and on a bad `extra`, like `respond_head_with`. *Found by building a
+service whose `DELETE` wanted a `204`: `respond_head` could only say
+`Content-Length: 0` with a type, and the example answered `200` with the deleted
+record instead.*
+
 ## 4. Decisions
 
 | Question | Answer | Why |

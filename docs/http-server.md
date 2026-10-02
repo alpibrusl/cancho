@@ -140,3 +140,25 @@ rest; it is a change to `std.conns` and nothing here asked for it. The package
 publishes every declaration in its file, helpers included (`vcs publish`
 cannot yet publish only the `pub` ones), so the lock pins the interface and
 the rest is reachable but not depended on.
+
+## 8. Reply helpers added after a real service used it
+
+`lexsys-web`'s `examples/users` (a CRUD API over this package and `lexsys-schema`)
+needed three things the package did not have, each now here:
+
+* **`reply_as(heap, out, status, content_type, body, keep, extra)`.** `reply`
+  hard-coded `application/json`, so an RFC 9457 `application/problem+json` answer
+  had to be assembled by hand. `reply`/`reply_with` are now `reply_as` with that
+  type, and nothing that called them changes.
+* **`reply_empty(heap, out, status, keep, extra)`**, a `204`/`304` with no
+  `Content-Length` and no `Content-Type` (`std.http.respond_no_content`), so a
+  `DELETE` can answer `204`.
+* `json.put_fragment` (in `std.json`, not here) for assembling a response from
+  stored JSON.
+
+`conformance/http_server.rs::replies_of_any_type_and_bodiless_ones_keep_the_connection_framed`
+sends four pipelined requests down one connection -- JSON, `204`, `text/plain` with
+an extra header, JSON -- and checks the exact bytes: a wrong frame on the bodiless
+one would shift every answer after it. The store was republished (a changed body is
+refused by incremental publish, so it is regenerated), and `examples/api/server.lock`
+re-pins it with the two new names.
