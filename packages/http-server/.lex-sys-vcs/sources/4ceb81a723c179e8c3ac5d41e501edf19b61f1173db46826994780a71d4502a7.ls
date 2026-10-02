@@ -73,6 +73,10 @@ fn connection_limit(size: int) -> [] int {
 //     10  1 if that body was decoded into `decoded`, 0 if it is in the buffer
 //     11  1 if the connection must be dropped now
 //     12  1 if it is in `ready`
+//     13  1 if the request in the front of the buffer is held: handed to the application
+//         and not yet answered (`hold`)
+//     14  how many connections have used this slot, so a held request's ticket can tell
+//         the connection it was taken from from a later one in the same slot
 fn stride() -> [] int {
     return 16;
 }
@@ -103,6 +107,10 @@ res struct Core {
     // The connection `next` is draining, or -1.
     cur: int,
     last_sweep: int,
+    // What `poller_wait` reported for tokens the application registered itself (above
+    // `limit`): (token, readiness) pairs, `nforeign` of them, from the last `wait`.
+    foreign: Box[[int]],
+    nforeign: int,
 }
 
 pub res struct Server {
@@ -218,6 +226,7 @@ fn shut[&t, &c](tab: &!t conns.Table, core: &!c Core, k: int) -> [] int {
     conns.close(tab, k);
     st[stride() * k + 4] = 0;
     st[stride() * k + 12] = 0;
+    st[stride() * k + 13] = 0;
     return 0;
 }
 
@@ -229,6 +238,10 @@ fn settle[&t, &c](tab: &!t conns.Table, core: &!c Core, k: int) -> [poll] int {
     var want = 1;
     if st[p + 2] > 0 {
         want = 2;
+    } else if st[p + 13] == 1 && st[p] >= core.size {
+        // A held request and a full buffer behind it: nothing to read into, so nothing
+        // to be woken for -- except the peer going away, which the poller reports anyway.
+        want = 0;
     }
     if want != st[p + 5] {
         conns.rewatch(tab, core.poller, k, k + 1, want);
@@ -277,6 +290,11 @@ fn step[&t, &c](tab: &!t conns.Table, core: &!c Core, k: int, now: int) -> [conn
                 code = 2;
             }
         }
+    } else if st[p] >= size {
+        // No room to read into. Only a held request can leave the buffer full (anything
+        // else is refused first), and `settle` then asks to be woken for nothing: what
+        // wakes it is the peer hanging up.
+        code = 2;
     } else {
         match conns.read(tab, k, bf[base + st[p]..base + size]) {
             Received::Data(got) => {
@@ -313,7 +331,7 @@ fn step[&t, &c](tab: &!t conns.Table, core: &!c Core, k: int, now: int) -> [conn
 fn produce[&h, &t, &c](heap: &!h Heap, tab: &!t conns.Table, core: &!c Core, k: int) -> [heap, conn_write] int {
     let st = contents(core.state);
     let p = stride() * k;
-    if st[p + 2] != 0 || st[p + 3] != 0 {
+    if st[p + 2] != 0 || st[p + 3] != 0 || st[p + 13] == 1 {
         return 0;
     }
     let size = core.size;
@@ -490,6 +508,8 @@ fn accept_all[&h, &l, &c](heap: &!h Heap, conn: conns.Table, listener: &!l Liste
                         st[p + 6] = 0;
                         st[p + 11] = 0;
                         st[p + 12] = 0;
+                        st[p + 13] = 0;
+                        st[p + 14] = st[p + 14] + 1;
                         borrow mut table as &!ct in {
                             if conns.nonblocking(ct, slot) != 0 || conns.watch(ct, core.poller, slot, slot + 1, 1) != 0 {
                                 shut(ct, core, slot);
@@ -516,11 +536,20 @@ fn serve_events[&t, &c](tab: &!t conns.Table, core: &!c Core, ready: int, now: i
     let st = contents(core.state);
     let ev = contents(core.events);
     let queue = contents(core.ready);
+    let outside = contents(core.foreign);
     var j = 0;
     while j < ready {
         let token = ev[2 * j];
         let k = token - 1;
-        if token > 0 && st[stride() * k + 4] == 1 {
+        if token > core.limit {
+            // The application's own handle (`first_token`): not a connection of ours, and
+            // `state` has no slot for it.
+            if 2 * core.nforeign + 1 < len(outside) {
+                outside[2 * core.nforeign] = token;
+                outside[2 * core.nforeign + 1] = ev[2 * j + 1];
+                core.nforeign = core.nforeign + 1;
+            }
+        } else if token > 0 && st[stride() * k + 4] == 1 {
             let code = step(tab, core, k, now);
             if code == 2 {
                 shut(tab, core, k);
@@ -541,7 +570,7 @@ fn serve_events[&t, &c](tab: &!t conns.Table, core: &!c Core, ready: int, now: i
         core.last_sweep = now;
         var s = 0;
         while s < conns.slots(tab) {
-            if st[stride() * s + 4] == 1 && now - st[stride() * s + 1] > core.idle {
+            if st[stride() * s + 4] == 1 && st[stride() * s + 13] == 0 && now - st[stride() * s + 1] > core.idle {
                 shut(tab, core, s);
             }
             s = s + 1;
@@ -567,7 +596,7 @@ pub fn open[&h, &l](heap: &!h Heap, poller: Poller, listener: &!l Listener, size
     borrow mut p as &!pw in {
         poller_add_listener(pw, listener, 0);
     }
-    let core = Core { poller: p, events: box_slice(heap, 128, 0), state: box_slice(heap, stride() * limit, 0), bufs: box_slice(heap, limit * size, byte_of(0)), pends: box_slice(heap, limit * output_size(), byte_of(0)), parsed: box_slice(heap, http.slots(64), 0), decoded: box_slice(heap, size, byte_of(0)), ready: box_slice(heap, limit, 0), limit: limit, size: size, chunk: chunk, idle: idle, nready: 0, cursor: 0, cur: 0 - 1, last_sweep: 0 };
+    let core = Core { poller: p, events: box_slice(heap, 128, 0), state: box_slice(heap, stride() * limit, 0), bufs: box_slice(heap, limit * size, byte_of(0)), pends: box_slice(heap, limit * output_size(), byte_of(0)), parsed: box_slice(heap, http.slots(64), 0), decoded: box_slice(heap, size, byte_of(0)), ready: box_slice(heap, limit, 0), limit: limit, size: size, chunk: chunk, idle: idle, nready: 0, cursor: 0, cur: 0 - 1, last_sweep: 0, foreign: box_slice(heap, 128, 0), nforeign: 0 };
     return Server { tab: conns.empty(heap, 64), core: core };
 }
 
@@ -576,7 +605,7 @@ pub fn open[&h, &l](heap: &!h Heap, poller: Poller, listener: &!l Listener, size
 pub fn close[&h](heap: &!h Heap, srv: Server) -> [heap] int {
     let Server { tab, core } = srv;
     conns.drop(heap, tab);
-    let Core { poller, events, state, bufs, pends, parsed, decoded, ready, limit, size, chunk, idle, nready, cursor, cur, last_sweep } = core;
+    let Core { poller, events, state, bufs, pends, parsed, decoded, ready, limit, size, chunk, idle, nready, cursor, cur, last_sweep, foreign, nforeign } = core;
     poller_close(poller);
     unbox_slice(heap, events);
     unbox_slice(heap, state);
@@ -585,6 +614,7 @@ pub fn close[&h](heap: &!h Heap, srv: Server) -> [heap] int {
     unbox_slice(heap, parsed);
     unbox_slice(heap, decoded);
     unbox_slice(heap, ready);
+    unbox_slice(heap, foreign);
     return 0;
 }
 
@@ -611,6 +641,7 @@ pub fn wait[&h, &k, &l](heap: &!h Heap, srv: Server, clock: &k Clock, listener: 
         borrow mut state as &!cw in {
             let st = contents(cw.state);
             let queue = contents(cw.ready);
+            cw.nforeign = 0;
             // What `next` did not reach goes to the front.
             var left = 0;
             while cw.cursor + left < cw.nready {
@@ -721,7 +752,11 @@ pub fn respond[&s, &a](srv: &!s Server, answer: &a [byte]) -> [conn_write] int {
 }
 
 fn deliver[&t, &c, &a](tab: &!t conns.Table, core: &!c Core, answer: &a [byte]) -> [conn_write] int {
-    let k = core.cur;
+    return deliver_to(tab, core, core.cur, answer);
+}
+
+// `deliver` for connection `k`, which is the one in hand or one whose request was held.
+fn deliver_to[&t, &c, &a](tab: &!t conns.Table, core: &!c Core, k: int, answer: &a [byte]) -> [conn_write] int {
     if k < 0 {
         return 0 - 1;
     }
@@ -740,4 +775,130 @@ fn deliver[&t, &c, &a](tab: &!t conns.Table, core: &!c Core, answer: &a [byte]) 
     // The request is answered: the next starts after it.
     st[p + 6] = st[p + 6] + st[p + 7] + st[p + 8];
     return st[p + 2];
+}
+
+// ---------------------------------------------------------------------
+// A request that is answered later
+// ---------------------------------------------------------------------
+
+// A held request is named by a ticket: the connection's slot and how many connections
+// have used that slot, so that an answer for a connection that has since gone cannot
+// reach whichever one took its place. The slot is `ticket % ticket_span()`.
+fn ticket_span() -> [] int {
+    return 2048;
+}
+
+// The slot a ticket names, to index the application's own per-connection records with.
+pub fn ticket_slot(ticket: int) -> [] int {
+    return ticket % ticket_span();
+}
+
+// Leave the request in hand unanswered and go on with the others. Answers its ticket, or -1
+// if there is no request in hand.
+//
+// What stays with the application is the ticket and whatever it noted about the request
+// (its route, the id in its path); what goes is the request's *views*: `head`, `parsed` and
+// `body` are for the request in hand, and the next `next` replaces it. The request itself
+// stays whole at the front of the connection's buffer. Nothing more is taken from the
+// connection until `answer`; what the client sends meanwhile is buffered (a client that
+// sends more than the buffer holds is read no more, and closed if it hangs up), and a
+// held connection is not closed for being idle: the application's own timeout says how
+// long it will wait. A held connection that is closed -- the client left -- makes `answer`
+// answer -1.
+pub fn hold[&s](srv: &!s Server) -> [poll] int {
+    return hold_in(srv.tab, srv.core);
+}
+
+fn hold_in[&t, &c](tab: &!t conns.Table, core: &!c Core) -> [poll] int {
+    let k = core.cur;
+    if k < 0 {
+        return 0 - 1;
+    }
+    let st = contents(core.state);
+    let p = stride() * k;
+    st[p + 13] = 1;
+    core.cur = 0 - 1;
+    // As if the visit were over: what was answered before it is dropped from the buffer and
+    // the held request becomes its front.
+    finish(tab, core, k);
+    return st[p + 14] * ticket_span() + k;
+}
+
+// Answer a held request, as `respond` would have answered it in hand. Answers the bytes
+// now waiting, or -1: the ticket is not one that was handed out and is still held (it was
+// answered already, or its connection closed, or another has taken its slot), or the
+// connection could not be written to and was abandoned.
+//
+// The connection goes back to being served: if the client had sent more requests behind
+// this one they are given by `next` now.
+pub fn answer[&s, &a](srv: &!s Server, ticket: int, bytes: &a [byte]) -> [conn_write, poll] int {
+    return answer_in(srv.tab, srv.core, ticket, bytes);
+}
+
+fn answer_in[&t, &c, &a](tab: &!t conns.Table, core: &!c Core, ticket: int, bytes: &a [byte]) -> [conn_write, poll] int {
+    if ticket < 0 {
+        return 0 - 1;
+    }
+    let k = ticket % ticket_span();
+    if k >= core.limit {
+        return 0 - 1;
+    }
+    let st = contents(core.state);
+    let p = stride() * k;
+    if st[p + 4] != 1 || st[p + 13] != 1 || st[p + 14] != ticket / ticket_span() {
+        return 0 - 1;
+    }
+    // The parse table holds whichever request came after; this one is still whole at the
+    // front of the buffer, so it parses again (`deliver` reads whether to keep alive from it).
+    let base = k * core.size;
+    http.parse(contents(core.bufs)[base..base + st[p]], contents(core.parsed));
+    st[p + 13] = 0;
+    let sent = deliver_to(tab, core, k, bytes);
+    finish(tab, core, k);
+    if st[p + 4] == 1 && st[p] > 0 && st[p + 2] == 0 && st[p + 3] == 0 && st[p + 11] == 0 && st[p + 12] == 0 {
+        // More requests were already buffered behind it, and no input will arrive to wake
+        // the connection for them.
+        let queue = contents(core.ready);
+        if core.nready >= core.limit {
+            var left = 0;
+            while core.cursor + left < core.nready {
+                queue[left] = queue[core.cursor + left];
+                left = left + 1;
+            }
+            core.nready = left;
+            core.cursor = 0;
+        }
+        st[p + 12] = 1;
+        queue[core.nready] = k;
+        core.nready = core.nready + 1;
+    }
+    return sent;
+}
+
+// ---------------------------------------------------------------------
+// Handles of the application's own
+// ---------------------------------------------------------------------
+
+// The server's poller, to register handles with (`std.conns.watch`) that are not its own
+// connections -- a database connection, say -- so that one `wait` serves both.
+pub fn poller[&s](srv: &!s Server) -> [] &!s Poller {
+    return srv.core.poller;
+}
+
+// The first token the application may register a handle under: the server uses 0 for the
+// listener and 1 to `limit` for its connections. Token `first_token(srv) + i` is the
+// application's `i`-th.
+pub fn first_token[&s](srv: &s Server) -> [] int {
+    return srv.core.limit + 1;
+}
+
+// What the last `wait` reported for those handles: `foreign_count` pairs, flat, of (token,
+// readiness) -- 1 for readable (or hung up), 2 for writable. The server does nothing for
+// them but tell the application.
+pub fn foreign_count[&s](srv: &s Server) -> [] int {
+    return srv.core.nforeign;
+}
+
+pub fn foreign[&s](srv: &s Server) -> [] &s [int] {
+    return contents(srv.core.foreign)[0..2 * srv.core.nforeign];
 }
