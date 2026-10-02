@@ -1348,3 +1348,88 @@ fn a_ticket_is_spent_when_it_is_redeemed() {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// `conn_nodelay` (`docs/native-sockets.md` section 11): `TCP_NODELAY` on, answering `0`, on an accepted connection, on both backends. Where `strace` is installed the test also reads the `setsockopt` the program made
+/// (`IPPROTO_TCP`, `TCP_NODELAY`, 1) and its answer, because the status alone cannot tell a call that did the work from one that
+/// only returned 0.
+#[test]
+fn conn_nodelay_turns_the_option_on_for_an_accepted_connection() {
+    use std::io::Write as _;
+    let source = r#"
+fn run(bound: Net("PORT"), io: Io) -> [] int {
+    var accepted = 99;
+    borrow mut io as &!i in {
+        borrow bound as &n in {
+            match tcp_listen(n, PORT, 8, 0) {
+                Listening::Ok(l) => {
+                    var listener = l;
+                    borrow mut listener as &!lh in {
+                        io.error_all(i, "ready\n");
+                        match tcp_accept(lh) {
+                            Accepted::Ok(c) => {
+                                var conn = c;
+                                borrow mut conn as &!ch in {
+                                    accepted = conn_nodelay(ch);
+                                    region a {
+                                        var buf = alloc_slice[a](8, byte_of(0));
+                                        match conn_read(ch, buf) {
+                                            Received::Data(k) => { conn_write(ch, buf[0..k]); }
+                                            Received::End => { }
+                                            Received::Again => { }
+                                            Received::Failed(e) => { }
+                                        }
+                                    }
+                                }
+                                conn_close(conn);
+                            }
+                            Accepted::Again => { }
+                            Accepted::Failed(e) => { }
+                        }
+                    }
+                    listener_close(listener);
+                }
+                Listening::Failed(e) => { }
+            }
+        }
+    }
+    release(bound);
+    release(io);
+    if accepted == 0 {
+        return 0;
+    }
+    return 1;
+}
+"#;
+    let strace = Command::new("strace").arg("-V").output().is_ok();
+    for backend in BACKENDS {
+        let port = free_port();
+        let dir = scratch(&format!("sockets-nodelay-{backend}"));
+        let exe = build(&dir, "nd", &io_program(port, source), backend);
+
+        let mut command = if strace {
+            let mut c = Command::new("strace");
+            c.args(["-f", "-e", "trace=setsockopt", "-o"]).arg(dir.join("trace.txt")).arg(&exe);
+            c
+        } else {
+            Command::new(&exe)
+        };
+        let mut child = command.stderr(Stdio::piped()).spawn().expect("the server runs");
+        let mut lines = std::io::BufReader::new(child.stderr.take().unwrap());
+        wait_for(&mut lines, "ready");
+        let mut stream = connect(port);
+        stream.write_all(b"x").unwrap();
+        let mut echoed = [0u8; 1];
+        stream.read_exact(&mut echoed).unwrap();
+        drop(stream);
+
+        let status = child.wait().expect("the server exits");
+        assert_eq!(status.code(), Some(0), "{backend}: the call should answer 0");
+        if strace {
+            let trace = std::fs::read_to_string(dir.join("trace.txt")).expect("a trace");
+            let set =
+                trace.lines().filter(|l| l.contains("TCP_NODELAY") && l.contains("= 0")).count();
+            assert_eq!(set, 1, "{backend}: one successful TCP_NODELAY, in:\n{trace}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

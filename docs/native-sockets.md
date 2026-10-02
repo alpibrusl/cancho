@@ -100,6 +100,7 @@ the compiler and `std` is opt-in.
 | `conn_write` | `(&!Conn, &[byte]) -> Sent` | `conn_write` |
 | `conn_nonblocking` / `listener_nonblocking` | `(&!H) -> int` | `[]` |
 | `conn_close` / `listener_close` | `(H) -> int` | `[]` |
+| `conn_nodelay` | `(&!Conn) -> int` | `[]` (§11) |
 | `conn_raw_fd` | `(&Ffi(..), &Conn) -> int` | `ffi(..)` (§6) |
 
 ```
@@ -464,3 +465,26 @@ safety half of the argument -- a `Poller` still names handles by token and never
 by descriptor -- and it makes one open question of the performance half: whether
 the Linux `Poller` should be `poll(2)`-backed, which needs a registration table
 the runtime owns. Not decided here; the number is the reason to decide it.
+
+## 11. `conn_nodelay`: what a proxy found it needed
+
+A connection pooler for PostgreSQL (`lexsys-pg`, `docs/pooler.md`) forwards what one peer sends to another. Its first slices ran with no way to set a socket
+option, and the stall it hit is the old one: Nagle's algorithm holds back a small write while an earlier write is unacknowledged, and the peer's delayed
+acknowledgement answers it tens of milliseconds later. Measured on loopback, one outstanding request at a time, a 70,000-byte result:
+
+| through | median round trip |
+|---|---|
+| PostgreSQL directly | 0.48 ms |
+| the proxy, `TCP_NODELAY` not set | **44.0 ms** (p99 56 ms) |
+| the same proxy with `TCP_NODELAY` set on both of its sockets (by a throwaway `LD_PRELOAD` shim, before this builtin) | 0.58 ms |
+
+A 3,000-byte result (one segment) shows no difference (0.10 against 0.06 ms): the stall needs a response that takes more than one write. A second case in the same
+program: PostgreSQL's extended protocol, forwarded message by message, fell from 25,700 to **90 transactions a second** at fifty clients; that one the proxy fixes itself by sending the messages that arrived together in one write, but
+the first case no program can fix without the option. PgBouncer sets `TCP_NODELAY` (and `SO_KEEPALIVE`) on every socket for this reason, which `strace` shows.
+
+`conn_nodelay(&!Conn) -> [] int` turns `TCP_NODELAY` on: `0`, or the `errno`, as `conn_nonblocking` answers. It has no effect row (it names no resource: it changes how one handle
+already held sends), is edition 5 on both backends (`setsockopt` with `IPPROTO_TCP` 6 and `TCP_NODELAY` 1, the same numbers on Linux and Darwin), and `std.conns` has `nodelay(table, slot)` beside `nonblocking`.
+It is one way: nothing turns it off, because nothing here has asked to. `SO_KEEPALIVE` is not here; the first asker for it will be a server that holds idle connections open for a long time.
+
+The test (`conn_nodelay_turns_the_option_on_for_an_accepted_connection`) runs on both backends and, where `strace` is installed, reads the `setsockopt` the program made and
+its answer, since a status of 0 alone cannot tell a call that set the option from one that did nothing; a mutant that sets `TCP_MAXSEG` instead is killed on each backend.

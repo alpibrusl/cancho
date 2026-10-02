@@ -360,6 +360,28 @@ impl<'a> FuncEmitter<'a> {
         Ok(vec![LValue::Reg(ok)])
     }
 
+    /// `conn_nodelay`: `TCP_NODELAY` on (`IPPROTO_TCP` is 6 and `TCP_NODELAY` is 1 on
+    /// Linux and on Darwin). `0` on success, otherwise the `errno`.
+    pub(crate) fn nodelay(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        let fd = self.handle_fd(&args[0]);
+        let cell = self.fresh();
+        self.hoist(format!("  {cell} = alloca i32\n"));
+        self.out.push_str(&format!("  store i32 1, ptr {cell}\n"));
+        let result = self.fresh();
+        self.out.push_str(&format!(
+            "  {result} = call i32 @setsockopt(i32 {fd}, i32 6, i32 1, ptr {cell}, i32 4)\n"
+        ));
+        let reason_set = self.errno();
+        let failed = self.fresh();
+        self.out.push_str(&format!("  {failed} = icmp slt i32 {result}, 0\n"));
+        let ok = self.fresh();
+        self.out.push_str(&format!(
+            "  {ok} = select i1 {failed}, i64 {}, i64 0\n",
+            operand(&reason_set)
+        ));
+        Ok(vec![LValue::Reg(ok)])
+    }
+
     /// `clock_ms(&Clock)` (`docs/native-sockets.md` §5): `CLOCK_MONOTONIC`
     /// as milliseconds (clock id 1 on Linux, 6 on Darwin).
     pub(crate) fn clock_ms(&mut self) -> Result<Vec<LValue>, String> {
