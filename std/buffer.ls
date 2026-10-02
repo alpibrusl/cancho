@@ -97,14 +97,22 @@ pub fn push[&h](heap: &!h Heap, b: Buffer, value: byte) -> [heap] Buffer {
     return Buffer { held: held, used: used + 1 };
 }
 
+// Room is made once, then the bytes are stored in one pass: appending `n`
+// bytes is one `reserve` and `n` stores, not `n` of each (`push` checks the
+// capacity and rebuilds the buffer on every byte, which is the right cost for
+// one byte and the wrong one for a response body).
 pub fn append[&h, &r](heap: &!h Heap, b: Buffer, text: &r [byte]) -> [heap] Buffer {
-    var out = reserve(heap, b, len(text));
-    var i = 0;
-    while i < len(text) {
-        out = push(heap, out, text[i]);
-        i = i + 1;
+    let room = reserve(heap, b, len(text));
+    let Buffer { held, used } = room;
+    borrow mut held as &!w in {
+        let s = contents(w);
+        var i = 0;
+        while i < len(text) {
+            s[used + i] = text[i];
+            i = i + 1;
+        }
     }
-    return out;
+    return Buffer { held: held, used: used + len(text) };
 }
 
 // Decimal, most significant digit first.
