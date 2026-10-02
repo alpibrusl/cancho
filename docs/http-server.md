@@ -162,3 +162,30 @@ an extra header, JSON -- and checks the exact bytes: a wrong frame on the bodile
 one would shift every answer after it. The store was republished (a changed body is
 refused by incremental publish, so it is regenerated), and `examples/api/server.lock`
 re-pins it with the two new names.
+
+## 9. What a page endpoint found in `std.buffer`
+
+`lexsys-web`'s `GET /users?limit=20` answered 40,000 requests a second against 99,900 for a
+hand-written C server (`lexsys-web/docs/benchmarks.md`), the widest gap of its four workloads.
+Two causes, one in the application and one here, measured one after the other on the same
+machine in the same session (page of 20 users, 1.8 KB, server on core 0, `kload` on cores 2-3,
+three 5 s rounds each):
+
+| | requests a second |
+|---|---|
+| each stored user re-parsed by `json.put_fragment` | 39,404 40,073 40,051 |
+| the page spliced as bytes (the users are the program's own canonical output) | 59,830 64,873 63,353 |
+| ... and `buffer.append` storing in one pass | 70,931 70,144 70,944 |
+
+The first is the application's, not this repository's: it was validating text it had itself
+rendered. The second is `std.buffer.append`, which was `push` once per byte, and `push` checks the
+capacity and rebuilds the `Buffer` every time. Appending `n` bytes now makes room once and stores
+`n` times (`tests/lex/buffer_test.ls` checks it at every capacity boundary and fails under two
+deliberate mutations). Cost per extra user in a page was about 0.36 microseconds, roughly 4 ns a
+byte, before the change, which is what two byte-at-a-time copies of a response (into the page, then
+into the reply) would cost; that reading was not profiled.
+
+Left: both copies remain byte loops. `bulk-io.md` §4 names the primitive that would fix it for the
+whole library (a slice-to-slice copy) and leaves open whether that is the compiler's or the
+backend's to do; this change does not decide it.
+
