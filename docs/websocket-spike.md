@@ -75,7 +75,7 @@ The same scenarios run against two servers on the `lex` runtime, each of which i
 labelled as such:
 
 * **`lex-csms` itself**, if it can be started on this machine (its dependencies are git repositories; some may
-  not be reachable from here). It does more per message than the spike (a SQLite write on `BootNotification`),
+  not be reachable from here). It does more per message than the spike (a database write on `BootNotification`),
   so on `Heartbeat` it is the fairer comparison and on `BootNotification` it is not.
 * **A minimal WebSocket echo of the same four answers written on the `lex` runtime** (`net.serve_ws_fn_actor`),
   which separates "the runtime" from "what `lex-csms` does". If `lex-csms` cannot be started, this is the only
@@ -83,7 +83,7 @@ labelled as such:
 
 **What was actually run:** the stand-in only (`scripts/ws_standin.lex`, run with `lex run --allow-effects concurrent,io,net,time`, `lex` built from `lex-lang` `main` at the time; it listens on 9201). `lex-csms` was **not** started: the stand-in already cannot hold the
 load (§8), `lex-csms` does strictly more per message than the stand-in, so a number from it could not change the
-conclusion about the connection layer, and it would have added a SQLite and a dependency-resolution variable. That is an
+conclusion about the connection layer, and it would have added a database and a dependency-resolution variable. That is an
 inference, not a measurement, and it is the first thing to repeat if the conclusion is ever disputed. The stand-in
 answers with a **constant** `currentTime` (cheaper than the real clock, so it flatters the `lex` runtime) and registers no
 actor name (`name_of` returns `""`; `lex-csms` registers one per connection).
@@ -195,13 +195,13 @@ Found by writing the spike (**found**), or read from the service and not tried (
 | 5 | no RESP client (the registry needs `SET EX`/`GET`/`DEL`) | found | `packages/resp`, beside `lexsys-pg` |
 | 6 | `lexsys-cache` has no `PUBLISH`/`PSUBSCRIBE` | found | `lexsys-cache`, only if a bus is wanted |
 | 7 | no TLS **server** (a charge point connects over `wss` in production; lex-sys has a TLS client through `Ffi("libc")`/OpenSSL) | inferred | a terminating proxy, or a TLS server (`opaque-pointers.md` covers the client) |
-| 8 | `lex-csms` stores in SQLite; lex-sys has Postgres (`lexsys-pg`) and no SQLite | inferred | port to Postgres, or a foreign-linked SQLite |
+| 8 | storage. The `lex-csms` checked in here opens SQLite (`conn.connect_sqlite`, `CSMS_DB`); the deployment uses **Postgres**, which is what lex-sys has (`lexsys-pg`: wire protocol, non-blocking `pg.pool`, generated typed queries). So the driver is not a gap; what is untried is `lex-csms`'s schema and queries (written through `lex-orm`) on `lexsys-pg`, and whether the SQL they emit is plain enough for `pgen` | inferred | a spike of its own: port one table (e.g. the `BootNotification` upsert) |
 | 9 | the HTTP API that sends commands **down** a socket must live in the same loop as the connections (one thread, one poller): `std.conns` has the table and `http-server` has the loop, but a server that runs both on one poller is untried | inferred | an example first; the design is `http-server.md` plus this one |
 | 10 | single thread: 10,000 idle is free, but CPU-bound work (JSON of a large `MeterValues`, authorisation) shares the one core; the answer is the threads strategy doc, not measured here | inferred | [`threads.md`](threads.md) |
 | 11 | small friction while writing it: `Split` has seven fields and every `main` must name them; `text`, `live` and `res` are not usable as local names; `http.version` answers 10 or 11, not a string | found | docs and diagnostics, not features |
 | 12 | OCPP itself: only four actions, no schemas; the 1.6, 2.0.1 and 2.1 message sets and their validation are `lex-ocpp`'s | inferred | a lex-sys port of `lex-ocpp`, the largest piece by far |
 
 Reading the table: 1 to 6 are what a **connection layer** needed, and are small; 7 to 12 are what the **service** needs and are
-where the work is. The spike supports "lex-sys can hold the sockets"; it does not support "lex-sys can replace `lex-csms`
+where the work is (8 is smaller than it first looked: the database is Postgres, and lex-sys has a Postgres client). The spike supports "lex-sys can hold the sockets"; it does not support "lex-sys can replace `lex-csms`
 soon". The sensible first step, if one is wanted, is the *connection layer only* behind `lex-csms` (a proxy that terminates
 WebSocket and forwards OCPP frames), which needs 1 to 4 and none of 7 to 12.
