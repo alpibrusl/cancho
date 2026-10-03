@@ -120,15 +120,28 @@ impl<'a> FnLowering<'a> {
     /// handed back is an `Opened` rather than an `int`, because "the file
     /// or the reason" is two outcomes and `-1` is one sentence
     /// (`file-handles.md` §3).
-    pub(crate) fn open_read(
+    ///
+    /// `open_append`, `open_write`, `open_new` and `open_rw`
+    /// (`docs/file-writes.md` section 3) are the same node with another
+    /// [`OpenMode`], and their row is the prefix's `fs_write` -- and for
+    /// `open_rw`, which can do both, `fs_read` as well.
+    pub(crate) fn open_file(
         &mut self,
+        op: Builtin,
         args: &[ExprId],
         span: Span,
     ) -> Result<(Expr, Type), Diagnostic> {
+        let mode = match op {
+            Builtin::OpenAppend => OpenMode::Append,
+            Builtin::OpenWrite => OpenMode::Write,
+            Builtin::OpenNew => OpenMode::New,
+            Builtin::OpenRw => OpenMode::ReadWrite,
+            _ => OpenMode::Read,
+        };
         let [capability, path] = args else {
             return Err(Diagnostic::new(
                 Rule::ArityMismatch,
-                format!("`open_read` takes 2 arguments, but {} were given", args.len()),
+                format!("`{}` takes 2 arguments, but {} were given", op.name(), args.len()),
                 span,
             ));
         };
@@ -147,13 +160,19 @@ impl<'a> FnLowering<'a> {
 
         // §4.1: the whole prefix is spent here. `read` performs a path-free
         // label afterwards precisely because this row named the directory.
-        self.performed.union(&Effects::new([Label {
-            name: "fs_read".to_owned(),
-            argument: Some(prefix.clone()),
-        }]));
+        let reads = matches!(mode, OpenMode::Read | OpenMode::ReadWrite);
+        let writes = !matches!(mode, OpenMode::Read);
+        for (wanted, name) in [(reads, "fs_read"), (writes, "fs_write")] {
+            if wanted {
+                self.performed.union(&Effects::new([Label {
+                    name: name.to_owned(),
+                    argument: Some(prefix.clone()),
+                }]));
+            }
+        }
 
         Ok((
-            Expr::OpenFile { prefix, args: vec![fs_value, path_value] },
+            Expr::OpenFile { prefix, mode, args: vec![fs_value, path_value] },
             Type::Named(self.prelude()[PRELUDE_OPENED], Vec::new()),
         ))
     }

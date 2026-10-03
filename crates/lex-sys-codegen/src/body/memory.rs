@@ -338,11 +338,19 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     /// prefix check, the same non-variadic `open(path, O_RDONLY)`, and the
     /// descriptor *kept* rather than spent on one transfer and closed. What
     /// comes back is an `Opened`, which is a tag and one payload leaf.
-    pub(crate) fn open_file(&mut self, prefix: &str, args: &[Expr]) -> Vec<Value> {
+    pub(crate) fn open_file(
+        &mut self,
+        prefix: &str,
+        mode: lex_sys_ir::OpenMode,
+        args: &[Expr],
+    ) -> Vec<Value> {
         let pointer = self.pointer;
         // The capability is zero-sized and stops here; the path does not.
         let path = self.expr(&args[1]);
         let path = self.checked_path(prefix, &path);
+        if mode != lex_sys_ir::OpenMode::Read {
+            return self.open_with_fopen(path, mode);
+        }
 
         let open = self.libc_fn("open", &[pointer, types::I32], &[types::I32]);
         let open = self.module.declare_func_in_func(open, self.builder.func);

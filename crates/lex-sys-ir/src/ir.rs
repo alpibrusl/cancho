@@ -70,11 +70,43 @@ pub const PRELUDE_SPLIT_CLOCK: usize = 24;
 /// What `conn_attach` answers: a `Conn` redeemed from a ticket, or why the
 /// ticket was refused (`docs/native-sockets.md` §10.3).
 pub const PRELUDE_ATTACHED: usize = 25;
+/// What a write-side file verb answers: a count (or `0`), or the `errno`
+/// (`docs/file-writes.md` section 4). Edition 5.
+pub const PRELUDE_DONE: usize = 26;
 
 /// How many types the prelude declares. Written once, because a builtin's
 /// signature indexes this table and a stale slice is a panic rather than a
 /// diagnostic.
-pub const PRELUDE_COUNT: usize = 26;
+pub const PRELUDE_COUNT: usize = 27;
+
+/// How `open_*` opens its file (`docs/file-handles.md` section 2.1,
+/// `docs/file-writes.md` section 3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenMode {
+    /// `open_read`: `open(path, O_RDONLY)`.
+    Read,
+    /// `open_append`: create if missing, every write at the end (`"ab"`).
+    Append,
+    /// `open_write`: create or truncate (`"wb"`).
+    Write,
+    /// `open_new`: create, and refuse with `EEXIST` if it is there (`"wbx"`).
+    New,
+    /// `open_rw`: an existing file, read and write, no truncation (`"r+b"`).
+    ReadWrite,
+}
+
+impl OpenMode {
+    /// The `fopen` mode string for a mode that is not `Read`.
+    pub fn fopen_mode(self) -> &'static str {
+        match self {
+            OpenMode::Read => "rb",
+            OpenMode::Append => "ab",
+            OpenMode::Write => "wb",
+            OpenMode::New => "wbx",
+            OpenMode::ReadWrite => "r+b",
+        }
+    }
+}
 
 /// The library an unnarrowed `Ffi` names: none of them yet.
 ///
@@ -365,6 +397,7 @@ pub enum Expr {
     /// is gone by then. What comes back is an `Opened`, tagged.
     OpenFile {
         prefix: String,
+        mode: OpenMode,
         args: Vec<Expr>,
     },
     /// `connect(net, name, port)` — `docs/net.md` §4.1

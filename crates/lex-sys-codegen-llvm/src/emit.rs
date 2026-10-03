@@ -363,6 +363,17 @@ pub(crate) fn emit_module(
     // `copy_within` (`docs/memory-moves.md`).
     declare_libc_unless_own(&mut text, "memmove", "ptr @memmove(ptr, ptr, i64)");
     declare_libc_unless_own(&mut text, "write", "i64 @write(i32, ptr, i64)");
+    // `docs/file-writes.md`: the write side of a file handle. `fopen`/`dup`/
+    // `fclose` are the opens' bridge (section 3); none of these is variadic.
+    declare_libc_unless_own(&mut text, "fopen", "ptr @fopen(ptr, ptr)");
+    declare_libc_unless_own(&mut text, "fileno", "i32 @fileno(ptr)");
+    declare_libc_unless_own(&mut text, "dup", "i32 @dup(i32)");
+    declare_libc_unless_own(&mut text, "fclose", "i32 @fclose(ptr)");
+    declare_libc_unless_own(&mut text, "pwrite", "i64 @pwrite(i32, ptr, i64, i64)");
+    declare_libc_unless_own(&mut text, "pread", "i64 @pread(i32, ptr, i64, i64)");
+    declare_libc_unless_own(&mut text, "fsync", "i32 @fsync(i32)");
+    declare_libc_unless_own(&mut text, "ftruncate", "i32 @ftruncate(i32, i64)");
+    declare_libc_unless_own(&mut text, "lseek", "i64 @lseek(i32, i64, i32)");
     let errno_symbol = match triple.operating_system {
         target_lexicon::OperatingSystem::Darwin(_) => "__error",
         _ => "__errno_location",

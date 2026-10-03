@@ -397,7 +397,7 @@ not repeated here; a doc's own header carries its own detail.
 | [`benchmarks-game.md`](benchmarks-game.md) | Five kernels from the Computer Language Benchmarks Game | measured |
 | [`bulk-io.md`](bulk-io.md) | `write_bytes`: a whole slice in one call | settled and built |
 | [`file-handles.md`](file-handles.md) | An open file as a linear resource | settled and built |
-| [`file-writes.md`](file-writes.md) | The write side of a file handle: append, positional read/write, `fsync`, truncate, rename, lock — what a durable log needs; `fopen`-based opens to avoid variadic `open` | design only; the cost of sync measured (0.4 µs written, ~190 µs durable, 4.2 µs batched by 100), nothing built |
+| [`file-writes.md`](file-writes.md) | The write side of a file handle: append, positional read/write, `fsync`, truncate, rename, lock — what a durable log needs; `fopen`-based opens to avoid variadic `open` | slice 1 built (edition 5): `open_append`/`open_write`/`open_new`/`open_rw`, `file_write`/`file_pwrite`/`file_pread`/`file_sync`/`file_truncate`/`file_size` on both backends; the cost of sync measured (0.4 µs written, ~190 µs durable, 4.2 µs batched by 100); rename, remove and lock are slice 2 |
 | [`utf8.md`](utf8.md) | Decoding `&r [byte]` into code points | settled and built |
 | [`standard-error.md`](standard-error.md) | `err_write`: a third label on `Io`, not an eighth capability | settled and built |
 | [`../AGENTS.md`](../AGENTS.md) | How to write lex-sys in one page | written and enforced |

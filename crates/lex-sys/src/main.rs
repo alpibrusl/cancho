@@ -1143,7 +1143,7 @@ fn print_authority(inputs: &[PathBuf], with_std: bool, json: bool) -> Result<(),
             // output is a diagnostic touches the console —
             // `docs/standard-error.md` §4 is the lie this row prevents.
             ("the console", ["io_read", "io_write", "err_write"].as_slice()),
-            ("the filesystem", ["fs_read", "fs_write", "file_read"].as_slice()),
+            ("the filesystem", ["fs_read", "fs_write", "file_read", "file_write"].as_slice()),
             (
                 "the network",
                 ["net_out", "net_in", "conn_accept", "conn_read", "conn_write"].as_slice(),

@@ -1,6 +1,9 @@
 # File writes: handles that append, sync, and rename
 
-> **Status: design only; nothing is built.** `file-handles.md` gave a
+> **Status: slice 1 built (§10).** The handle verbs are in both backends,
+> and 15 conformance tests judge them from outside the program. §2 onward
+> is the design as it stood; where building it showed a claim to be wrong,
+> the section says so where it was made. `file-handles.md` gave a
 > program a file it can *read* without knowing its size. This is the other
 > half: a file it can **append to, update in place, make durable, and
 > replace atomically**. The asker is a durable log
@@ -183,11 +186,20 @@ accepts a `write`. Three facts follow, and one of them is a limit:
 
 `fopen` is not the only way. The LLVM backend can emit a correct varargs
 call, and each target's `O_*` values could live in the backend, as the
-Poller's `epoll`/`kqueue` split already does. The Cranelift backend cannot
-express a variadic signature, and the two backends are held to the same
-conformance suite. `fopen` is the one answer that is the same on both, so
-it is the recommendation, and the per-target flag table is the fallback if
-a reason against `fopen` turns up.
+Poller's `epoll`/`kqueue` split already does.
+
+> **Corrected while building it.** This paragraph first said the Cranelift
+> backend *cannot express a variadic signature*. That is wrong: `fcntl` is
+> variadic too, and `body/sockets.rs` already shapes the call for Apple
+> arm64 (nine integer parameters, the ninth where `va_arg` reads it). So a
+> direct `open(path, flags, mode)` with a per-target flag table is
+> available on both backends, and it is the shorter path: no `FILE`, no
+> `dup`, no branch, and exactly the table a libc-free runtime would need
+> (§2.1). `fopen` was kept anyway, on the maintainer's call, because it is
+> the same code on both targets today and it is backend-internal either
+> way; the direct `open` is the first thing to try if `fopen` shows a cost.
+> Opening is one call per file, not per record, so nothing measured here
+> says it matters.
 
 ### 3.1 One `File`, or a `WFile`
 
@@ -446,17 +458,63 @@ sandbox).
 ## 10. Slices, and how each is checked
 
 The same rules as every earlier stage: both backends, one conformance
-suite, no source file over 2,000 lines (`fs.rs` is 254 and
-`filesystem.rs` is 304, so there is room), every refusal with a rule tag.
+suite, no source file over 2,000 lines (the largest touched is
+`builtin.rs` at 1,229), every refusal with a rule tag.
 
-1. **Handles.** `open_append`, `open_write`, `open_new`, `open_rw`,
+1. **Handles. Built.** `open_append`, `open_write`, `open_new`, `open_rw`,
    `file_write`, `file_pwrite`, `file_pread`, `file_sync`,
-   `file_truncate`, `file_size`; `std.fs` gets `write_all` and
-   `into_result`. This is enough to write and recover a log.
+   `file_truncate`, `file_size`, and the prelude enum `Done`, all edition 5.
+   This is enough to write and recover a log. `std.fs` (`write_all`,
+   `into_result`) is **not** built: nothing has asked for it yet, and the
+   first program that does (`lexsys-log`) will say what shape it wants.
 2. **Path operations.** `fs_rename`, `fs_remove`, `file_lock`. This is
    enough to rotate and seal a segment and to own a directory.
 3. **Listing, `mode`, `fdatasync`, `F_FULLFSYNC`**, each only when a program
    asks and a measurement says it is worth the name.
+
+### 10.1 What building slice 1 showed
+
+* **Owning an `Fs(p)` discharges `file_write`, as it discharges `file_read`.**
+  `PRELUDE_FS`, `PRELUDE_FILE` and `PRELUDE_WORLD` each gained the label, and
+  the authority report's "the filesystem" group lists it, so a program
+  that never touches a file still reports the filesystem as untouched.
+  This partly answers open question 6: a function that opens a directory
+  itself and syncs it reports only the `Fs` row, because the capability
+  that paid the prefix discharges the path-free label that follows.
+* **The opens are one lowering.** `Expr::OpenFile` gained an `OpenMode`, and
+  `open_read` is the `Read` case of the same node, so the prefix check,
+  the `..` refusal and the row are shared and not copied.
+* **The row is exact per mode.** `open_append`, `open_write` and `open_new`
+  perform `fs_write(p)` and no `fs_read`; `open_rw` performs both. A
+  test reads the authority report of an append-and-sync program and
+  requires `fs_write` with the directory, `file_write` with no argument,
+  and no `fs_read` anywhere.
+* **New names are edition 5 and resolved by edition.** An edition-4 file
+  that says `open_new` gets *not a function in this program*, which is
+  the same rule `connect` and `conn_read` follow, so a file that declares
+  its own `extern fn file_write` keeps reaching it.
+
+### 10.2 Verification
+
+Fifteen conformance tests (`tests/conformance/file_writes.rs`), each on
+both backends, judging from outside the program: the bytes on disk, the
+mode of a created file under `umask 027` (`0640`, read by `stat`), the
+errno of each refusal, and the `fsync` call and its descriptor read from an
+`strace` trace.
+
+**Mutation checked, in a scratch copy and never committed:** 21 mutants,
+all killed. Per backend: sync that does nothing, `pwrite` and `pread`
+with offset and length swapped, `file_size` that does not put the cursor
+back or seeks from the wrong place, a `Done` that never reports failure,
+`dup` omitted (the descriptor closed by `fclose`), and `fopen` failing
+without its `errno`. In the shared mode table: `open_append` truncating,
+`open_new` not exclusive, `open_rw` truncating or creating, and
+`open_write` appending. The test that kills the sync mutant is the
+`strace` one; before it was written, nothing here distinguished a sync
+that called `fsync` from one that returned `Ok`.
+
+What this does not verify is stated in §5.1 and §6: it cannot show that an
+acknowledged sync survives a power cut, and nothing here ran on macOS.
 
 What each slice's conformance tests check **from outside the program**,
 for the reason `filesystem.md` §2.2 gave (*a read that happens to succeed

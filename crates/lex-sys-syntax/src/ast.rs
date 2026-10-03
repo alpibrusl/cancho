@@ -751,6 +751,8 @@ pub const PRELUDE: &[&str] = &[
     "Clock",
     "clock",
     "Attached",
+    // `docs/file-writes.md` section 4.
+    "Done",
 ];
 
 impl Ast {

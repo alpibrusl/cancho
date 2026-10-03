@@ -323,9 +323,9 @@ impl<'a> FuncEmitter<'a> {
             // `open_read(fs, path)` (§7.24, `docs/file-handles.md`
             // §2.1), mirroring `lex-sys-codegen`'s own `Expr::OpenFile`
             // arm.
-            Expr::OpenFile { prefix, args } => {
-                let (prefix, args) = (prefix.clone(), args.clone());
-                self.open_file(&prefix, &args)
+            Expr::OpenFile { prefix, mode, args } => {
+                let (prefix, mode, args) = (prefix.clone(), *mode, args.clone());
+                self.open_file(&prefix, mode, &args)
             }
             // `docs/function-values.md` §4.2: the target's own address,
             // taken rather than called. An LLVM global symbol is already
@@ -763,6 +763,39 @@ impl<'a> FuncEmitter<'a> {
                     ));
                 }
                 self.read_file(&args)
+            }
+            // `docs/file-writes.md` section 4: one libc call each. The
+            // handle arrives as its address, a slice as pointer and length.
+            Callee::Builtin(
+                op @ (Builtin::FileWrite
+                | Builtin::FilePwrite
+                | Builtin::FilePread
+                | Builtin::FileSync
+                | Builtin::FileTruncate
+                | Builtin::FileSize),
+            ) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                let leaves = match op {
+                    Builtin::FileWrite => 3,
+                    Builtin::FilePwrite | Builtin::FilePread => 4,
+                    Builtin::FileTruncate => 2,
+                    _ => 1,
+                };
+                if args.len() != leaves {
+                    return Err(format!(
+                        "`{}` needs {leaves} leaves but {} were given",
+                        op.name(),
+                        args.len()
+                    ));
+                }
+                match op {
+                    Builtin::FileWrite => self.file_write(&args),
+                    Builtin::FilePwrite => self.file_pwrite(&args),
+                    Builtin::FilePread => self.file_pread(&args),
+                    Builtin::FileSync => self.file_sync(&args),
+                    Builtin::FileTruncate => self.file_truncate(&args),
+                    _ => self.file_size(&args),
+                }
             }
             // `file_close(file)` (§7.24): `file` is `File` by value, one
             // leaf -- the descriptor itself, not its address, unlike

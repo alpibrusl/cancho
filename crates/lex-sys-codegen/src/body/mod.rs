@@ -6,6 +6,7 @@ use crate::*;
 
 mod control;
 mod expr;
+mod files;
 mod memory;
 mod net;
 mod poller;
