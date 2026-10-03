@@ -845,6 +845,58 @@ fn cmd_resolve(args: &[String]) -> Result<ExitCode, Failure> {
     }
 }
 
+/// What [`fetch_verified`] wrote.
+pub(crate) struct Fetched {
+    /// Every file written to the output directory.
+    pub files: Vec<PathBuf>,
+    /// Whether any of them imports `std`, so the consumer must build with it.
+    pub needs_std: bool,
+}
+
+/// Verify everything `lock` pins in `store` (and, through the store's
+/// `requires/`, its whole closure) and write the sources to `out` as
+/// `<source_hash>.ls`. Nothing is written unless every pin verifies.
+/// `vcs fetch` is this, and so is `install` for each dependency of a project
+/// (`docs/package-system.md` §8).
+pub(crate) fn fetch_verified(lock: &Lock, store: &Path, out: &Path) -> Result<Fetched, Failure> {
+    let manifest = Manifest::load(store)
+        .map_err(|e| environment(format!("cannot read manifest at `{}`: {e}", store.display())))?;
+    let blobs = Blobs::open(store)
+        .map_err(|e| environment(format!("cannot open store at `{}`: {e}", store.display())))?;
+
+    let selected =
+        select_locked(lock, &manifest, store).map_err(|missing| refused(missing.join("\n\n")))?;
+
+    let canonical = store.canonicalize().unwrap_or_else(|_| store.to_path_buf());
+    let mut visiting = vec![canonical];
+    let mut pinned = BTreeMap::new();
+    let closure_context = resolve_own_requirements(store, &mut visiting, &mut pinned)
+        .map_err(|problems| refused(problems.join("\n\n")))?;
+
+    let verified = verify_selected(&blobs, &selected, &closure_context)
+        .map_err(|problems| refused(problems.join("\n\n")))?;
+
+    std::fs::create_dir_all(out)
+        .map_err(|e| environment(format!("cannot create `{}`: {e}", out.display())))?;
+    // The whole closure, not just this store's own -- a consumer that
+    // fetches `http.request` (`docs/package-system.md` §4.6) gets
+    // `net.sockets`' source alongside it in the same directory, and
+    // never has to know it needed fetching at all.
+    let mut files = Vec::new();
+    for (source_hash, text) in verified.iter().chain(closure_context.iter()) {
+        let path = out.join(format!("{source_hash}.ls"));
+        std::fs::write(&path, text)
+            .map_err(|e| environment(format!("cannot write `{}`: {e}", path.display())))?;
+        files.push(path);
+    }
+    // Detected from the verified sources, the same way `verify_selected`
+    // decides to bring the library in.
+    let needs_std = verified.iter().chain(closure_context.iter()).any(|(hash, text)| {
+        parse_texts(&[(format!("{hash}.ls"), text.clone())]).is_ok_and(|(ast, _)| imports_std(&ast))
+    });
+    Ok(Fetched { files, needs_std })
+}
+
 /// `docs/package-system.md` §6's own next slice: not compiler surgery,
 /// but the one thing `many-files.md`/`modules.md` already need to make a
 /// locked dependency buildable -- real bytes on disk. `modules.md` §4.2
@@ -902,41 +954,11 @@ fn cmd_fetch(args: &[String]) -> Result<ExitCode, Failure> {
     // `--store` wins when given (working on a dependency from a local
     // checkout); otherwise the lock's origin says where to go (§7.3).
     let store = store_of(&lock, store.as_deref())?;
-    let manifest = Manifest::load(&store)
-        .map_err(|e| environment(format!("cannot read manifest at `{}`: {e}", store.display())))?;
-    let blobs = Blobs::open(&store)
-        .map_err(|e| environment(format!("cannot open store at `{}`: {e}", store.display())))?;
-
-    let selected =
-        select_locked(&lock, &manifest, &store).map_err(|missing| refused(missing.join("\n\n")))?;
-
-    let canonical = store.canonicalize().unwrap_or_else(|_| store.clone());
-    let mut visiting = vec![canonical];
-    let mut pinned = BTreeMap::new();
-    let closure_context = resolve_own_requirements(&store, &mut visiting, &mut pinned)
-        .map_err(|problems| refused(problems.join("\n\n")))?;
-
-    let verified = verify_selected(&blobs, &selected, &closure_context)
-        .map_err(|problems| refused(problems.join("\n\n")))?;
-
-    std::fs::create_dir_all(&out)
-        .map_err(|e| environment(format!("cannot create `{}`: {e}", out.display())))?;
-    // The whole closure, not just this store's own -- a consumer that
-    // fetches `http.request` (`docs/package-system.md` §4.6) gets
-    // `net.sockets`' source alongside it in the same directory, and
-    // never has to know it needed fetching at all.
-    for (source_hash, text) in verified.iter().chain(closure_context.iter()) {
-        let path = out.join(format!("{source_hash}.ls"));
-        std::fs::write(&path, text)
-            .map_err(|e| environment(format!("cannot write `{}`: {e}", path.display())))?;
+    let fetched = fetch_verified(&lock, &store, &out)?;
+    for path in &fetched.files {
         println!("fetched {}", path.display());
     }
-    // Detected from the verified sources, the same way `verify_selected`
-    // decides to bring the library in.
-    let needs_std = verified.iter().chain(closure_context.iter()).any(|(hash, text)| {
-        parse_texts(&[(format!("{hash}.ls"), text.clone())]).is_ok_and(|(ast, _)| imports_std(&ast))
-    });
-    if needs_std {
+    if fetched.needs_std {
         println!("note: these files import `std`; build the consumer with `--std`");
     }
     Ok(ExitCode::SUCCESS)

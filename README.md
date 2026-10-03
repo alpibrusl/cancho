@@ -114,6 +114,9 @@ lex-sys print <file.ls>               # the unit, rendered in canonical form
 lex-sys agent-guidelines              # AGENTS.md, from inside the binary
 lex-sys introspect [--output json]    # the full command tree, as data (docs/agent-cli.md)
 lex-sys skill [--output json] [<out-file>]  # a generated SKILL.md, agentskills.io
+lex-sys install [--ignore-compiler-rev]  # fetch and check the dependencies named in lex-sys.toml
+lex-sys add <name> <git-url> [--rev <hash> | --ref <name>] [--path <dir>] [--ignore-compiler-rev]  # add one, pinned to a commit
+lex-sys build [--bin <name>] [--ignore-compiler-rev]  # with no files: install, then build the programs of lex-sys.toml
 lex-sys vcs publish [--store <dir>] [--std] [--requires <lock>[:<dep-store>]]... <file.ls>  # log every declaration as an operation
 lex-sys vcs publish [--store <root>] [--std] --dir <dir>  # a library of several files, one store each, in dependency order
 lex-sys vcs log     [--store <dir>]            # what a store already has

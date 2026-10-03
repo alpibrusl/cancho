@@ -60,6 +60,7 @@ mod memory;
 mod modules;
 mod net;
 mod ports;
+mod project;
 mod refusals;
 mod sockets;
 mod testing;

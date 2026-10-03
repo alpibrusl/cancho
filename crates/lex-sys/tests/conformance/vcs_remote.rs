@@ -11,7 +11,7 @@ use super::*;
 /// A library of two modules: `libx.base` has a `static` (a table, the thing
 /// `vcs publish` could not publish before §7.4) and a function that reads it;
 /// `libx.top` imports it.
-const BASE: &str = "\
+pub(crate) const BASE: &str = "\
 module libx.base;
 
 static table: [int] {
@@ -28,7 +28,7 @@ pub fn pick(i: int) -> [] int {
 }
 ";
 
-const TOP: &str = "\
+pub(crate) const TOP: &str = "\
 module libx.top;
 
 import libx.base;
@@ -38,14 +38,14 @@ pub fn twice(i: int) -> [] int {
 }
 ";
 
-fn write(dir: &Path, name: &str, text: &str) -> PathBuf {
+pub(crate) fn write(dir: &Path, name: &str, text: &str) -> PathBuf {
     std::fs::create_dir_all(dir).expect("a writable scratch directory");
     let path = dir.join(name);
     std::fs::write(&path, text).expect("a writable scratch file");
     path
 }
 
-fn vcs(cache: &Path, args: &[&dyn AsRef<std::ffi::OsStr>]) -> std::process::Output {
+pub(crate) fn vcs(cache: &Path, args: &[&dyn AsRef<std::ffi::OsStr>]) -> std::process::Output {
     let mut cmd = Command::new(BIN);
     cmd.arg("vcs").env("LEX_SYS_CACHE", cache);
     for a in args {
@@ -54,7 +54,7 @@ fn vcs(cache: &Path, args: &[&dyn AsRef<std::ffi::OsStr>]) -> std::process::Outp
     cmd.output().expect("the compiler runs")
 }
 
-fn ok(output: &std::process::Output) -> String {
+pub(crate) fn ok(output: &std::process::Output) -> String {
     assert!(
         output.status.success(),
         "stdout: {}\nstderr: {}",
@@ -64,7 +64,7 @@ fn ok(output: &std::process::Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
-fn git(dir: &Path, args: &[&str]) -> String {
+pub(crate) fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .arg("-C")
         .arg(dir)
@@ -80,7 +80,7 @@ fn git(dir: &Path, args: &[&str]) -> String {
 
 /// A repository holding `libx` (sources in `src/`, the published stores in
 /// `.lex-sys-vcs/`), committed. Returns its path and the commit.
-fn library_repo(tag: &str) -> (PathBuf, PathBuf, String) {
+pub(crate) fn library_repo(tag: &str) -> (PathBuf, PathBuf, String) {
     let work = scratch(tag);
     let repo = work.join("libx");
     write(&repo.join("src"), "base.ls", BASE);
@@ -115,7 +115,7 @@ fn lock_top(cache: &Path, repo: &Path, rev: &str, out: &Path) -> std::process::O
     )
 }
 
-fn files_in(dir: &Path) -> Vec<PathBuf> {
+pub(crate) fn files_in(dir: &Path) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
         .map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).collect())
         .unwrap_or_default();
