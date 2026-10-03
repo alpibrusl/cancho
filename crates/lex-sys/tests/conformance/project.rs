@@ -473,12 +473,13 @@ fn test_picks_one_set_and_refuses_an_unknown_one_or_none_at_all() {
 fn test_with_files_is_still_the_test_runner_and_a_bad_test_set_is_refused() {
     let (dir, cache) = project_with_tests("project-test-files", 0);
     // Files named: the old command, not the project's sets.
-    let out = run(
-        &dir,
-        &cache,
-        &[&"test", &dir.join("tests/checks.ls"), &dir.join("build/deps").join("x.ls")],
+    let standalone = write(
+        &dir.join("elsewhere"),
+        "alone.ls",
+        "pub fn test_one() -> [] int {\n    return 0;\n}\n",
     );
-    assert!(!out.status.success(), "no such file");
+    let stdout = ok(&run(&dir, &cache, &[&"test", &standalone]));
+    assert!(stdout.contains("running 1 test") && !stdout.contains("== test"), "{stdout}");
 
     let toml = std::fs::read_to_string(dir.join("lex-sys.toml")).unwrap();
     for (what, text, why) in [

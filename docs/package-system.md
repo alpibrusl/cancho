@@ -1043,7 +1043,7 @@ out = "build/hooks"                                    # default: build/<name>
 
 ### 8.5 What this does not do
 
-No version ranges, no registry, no feature flags, no dev-dependencies, no workspaces, no `remove` (delete the table), no `test` (the unit-test commands of `lexsys-hooks` are still written out), no linking options in `[[bin]]`. Each is a decision that waits for a program that asks, by the bar of `CONTRIBUTING.md`.
+No version ranges, no registry, no feature flags, no dev-dependencies, no workspaces, no `remove` (delete the table), no linking options in `[[bin]]`. (`test` was on this list and is built, §8.8.) Each is a decision that waits for a program that asks, by the bar of `CONTRIBUTING.md`.
 
 ### 8.6 Distributing a program
 
@@ -1064,3 +1064,17 @@ Built as designed in §8.2 to §8.4: `lex-sys.toml` (`[package]`, `[dependencies
 * **The commit is not known before it exists.** `lexsys-hooks` has to name a compiler that contains the project file, which this change is; the file in its pull request holds the commit of a build of this branch and is moved to the merge commit once there is one, the same dance as the `lexsys-log` pin in §7.
 
 **Not built, as §8.5 says.** And one thing noticed: `lex-sys test` has no project mode, so `lexsys-hooks` still spells out its three unit-test commands, with `build/deps/*.ls` as the way to name the libraries.
+
+### 8.8 `lex-sys test` in a project
+
+`[[test]]` is a set of files whose `test_*` functions run together, against the project's dependencies, with `std = true` if they need the library:
+
+```toml
+[[test]]
+name = "state"
+sources = ["tests/state_test.ls", "src/state.ls"]
+```
+
+`lex-sys test` with no files installs, then runs every set (`--test <name>` one), each as the file-taking `lex-sys test` always was (`testing.md` §3), under a header `== test <name>`. A failing set does not stop the others; the exit code is the first failure's (4, a failed test). With files, `test` is the runner it was. A set has the same checks as a program: a unique name, at least one source, no unknown keys. 10 mutants of the new code, 10 killed; one survived until the test of "files still mean the old runner" was actually written (an edit to the test file had silently not applied after `cargo fmt` reflowed it, which is why the mutation run was done after, not before, claiming it).
+
+**Found along the way: the compiler needs more than libc.** `lex-sys build` is not a closed box: the LLVM backend emits IR and runs **`clang`** (the `CLANG` environment variable names another), then links with **`cc`** (`CC`). A released compiler binary (§7.5 step 5) therefore depends on a C toolchain being installed where it runs, and an image of the compiler for CI would be the place that bundles it. `ldd` on the compiler itself: libc and libgcc_s, 8.5 MB.
