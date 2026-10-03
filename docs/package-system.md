@@ -996,3 +996,71 @@ reported as failed, not loosened:
 * **`--dir` skips a file with no `module` declaration** (a program such as `logtool.ls`) and says so. A library module that forgot its `module` line is skipped the same way, visibly.
 
 **Not built, as §7.5 says:** the project file, the compiler pin, prebuilt releases, and the authority diff on update. Also not built and noticed: a CI check in a library's repository that its committed `.lex-sys-vcs` matches `vcs publish --dir` of its source (needs this change in a pinned compiler first); a `git` that is not installed is an environment error with git's own message and no suggestion; an origin whose server serves only branches and tags falls back to a full fetch of them, which was written and is not tested.
+
+## 8. The project file
+
+> **Status: design, written before the code.** §7.5 steps 3 and 4. What was built is recorded in §8.7 when it is.
+
+### 8.1 What asked for it
+
+§7 let a program depend on a library in another repository, and `lexsys-hooks` is the proof; it also shows what is still done by hand. Its `scripts/build.sh` lists the source files, runs `vcs fetch` once per lock, clears the output directory so an old lock's files do not become second declarations, and passes `build/deps/*.ls` to `build`. Its CI repeats the file lists for the unit tests. Its two locks are moved by a second script that takes two full commit hashes. And nothing says which compiler the sources were written for: CI pins a commit of `lex-sys` in a YAML file, which `lex-sys` itself cannot read, and `hash-stability.md` measured what that costs when it is wrong (71% of this repository's own history stops type-checking under today's compiler). `lex-lang` found the same thing from the other side: a toolchain floor was written in `lex.toml` for a long time and nothing read it, until a dependency that had moved to a newer standard library installed without complaint and failed with errors that named a function nobody in the consuming repository had written (#803).
+
+### 8.2 The file
+
+`lex-sys.toml`, at the root of a project:
+
+```toml
+[package]
+name = "hooks"
+lex-sys = "f804ce7e6fcf5717ea52442bf648a1fe81090f98"   # the compiler these sources were written for
+
+[dependencies.log]
+git = "https://github.com/alpibrusl/lexsys-log"
+rev = "6b4f46fd045f9e6c1a3f4bda22ee9d850daf63d1"       # a full commit hash, never a name
+path = ".lex-sys-vcs/log"                              # the store inside the repository
+
+[[bin]]
+name = "hooks"
+sources = ["src"]                                      # files, or a directory: every .ls directly in it
+std = true
+out = "build/hooks"                                    # default: build/<name>
+```
+
+* **Unknown keys are refused**, not ignored: serde silently dropped `lex = "..."` in `lex.toml` for as long as nothing read it, and a misspelt key here would be the same trap.
+* **`rev` is a full commit hash** (`Origin::validate`, §7.3). There is no separate lock file: a manifest of exact commits has no ranges to resolve, and the declaration pins that `vcs lock --all` would write are derived from the store at that commit and re-checked on every install. A lock appears when a dependency can name something that moves.
+* **A dependency's own dependencies** (a package in another repository that a package requires) are not listed: they are in the store's `requires/` with their own origins (§7.3), and fetched with it.
+* **Paths are relative to the directory holding `lex-sys.toml`**, found by looking from the current directory upwards.
+
+### 8.3 The commands
+
+* `lex-sys install` reads the file, checks the compiler (below), and for each dependency fetches its commit into the cache, re-parses, re-typechecks and re-hashes every declaration, and writes the sources to `build/deps/<hash>.ls`, clearing that directory first. It is the `vcs fetch` of §7 for every dependency of the project at once.
+* `lex-sys add <name> <git-url> [--rev <hash> | --ref <name>] [--path <dir>]` adds a dependency: `--ref` (default: the repository's head) is resolved once and **the hash is what is written**; the store is fetched and checked before the file is touched; then the table is appended to `lex-sys.toml` (appended, so comments in the file survive) and the project is installed. A name that is already there is refused.
+* `lex-sys build` with no file arguments builds every `[[bin]]` (`--bin <name>` one of them): it installs first, which costs a directory lookup and a recheck when everything is cached (0.06 s for the two libraries of `lexsys-hooks`), so there is no staleness to get wrong. With files it is `build` as before.
+
+### 8.4 The compiler
+
+`lex-sys --version` reports the commit it was built from: `build.rs` reads it from git (suffixed `-dirty` if the working tree has uncommitted changes), or from `LEX_SYS_REV` for a build outside a git checkout, and says `unknown` otherwise. `install` and `build` compare it with `[package] lex-sys` and **refuse a difference**, naming both; `--ignore-compiler-rev` is the escape hatch for someone who knows. A binary that does not know its own revision cannot be checked and is refused the same way: a floor that cannot be read is how #803 happened. The pin is on a *commit* because that is what the repository can say exactly; when compilers are released as binaries (§7.5 step 5) the release will embed the commit it was built from.
+
+### 8.5 What this does not do
+
+No version ranges, no registry, no feature flags, no dev-dependencies, no workspaces, no `remove` (delete the table), no `test` (the unit-test commands of `lexsys-hooks` are still written out), no linking options in `[[bin]]`. Each is a decision that waits for a program that asks, by the bar of `CONTRIBUTING.md`.
+
+### 8.6 Distributing a program
+
+Asked alongside this: does `lex-sys build` make a binary that a package can be shipped as, and should `lex-sys` make Docker images? Measured on `lexsys-hooks`: `build` makes a native executable (an ELF PIE, 169 KB), linked by `cc` (the `CC` environment variable names another linker), and the only shared library it needs is libc (`ldd`: `libc.so.6` and the loader). A static one builds with a linker that adds `-static` (`CC=./static-cc`, a three-line script): 1.2 MB, `not a dynamic executable`, with the glibc warning that `getaddrinfo` still wants the shared libraries at run time, which the service avoids by dialling IP literals (§16 of its design). So a program is distributable as a file today, and a static one runs in an image with nothing else in it. **No Docker daemon was available in the environment this was written in, so no image was built here**; that is a claim about the binary, not a test of an image. The recommendation, not built: `lex-sys` does not generate images (an image is a deployment decision, not a compiler's), a release is the binary, its checksum and `lex-sys authority --output json` of it (what it can do, in the form `lex-os-capsule` already signs), and an image of the *compiler* for CI is a thin layer over a release.
+
+### 8.7 What building the project file showed
+
+Built as designed in §8.2 to §8.4: `lex-sys.toml` (`[package]`, `[dependencies.<name>]`, `[[bin]]`), `lex-sys install`, `lex-sys add`, `lex-sys build` with no files and `--bin`, and the compiler's revision in `--version` (`build.rs`) checked against `[package] lex-sys`. About 430 lines in `crates/lex-sys/src/project.rs`, one of them shared with `vcs fetch`: `fetch_verified` was cut out of `cmd_fetch`, and both call it.
+
+**Checked.** `lexsys-hooks` runs on it: `lex-sys.toml` replaces its two lock files, its `lock.sh`, the file lists in `build.sh`, and the second copy of the compiler pin in its CI (the workflow reads the commit out of `lex-sys.toml`, so there is one place to change). `lex-sys build` there takes 5.7 s from nothing, of which the installs are the same two libraries as in §7.7 and the rest is compiling. 11 conformance tests (`project.rs`), on local git repositories: add, install and build end to end with the program's exit code; a `--ref` is resolved once and the hash written; every refusal of `add` leaves the file as it was, and an install that fails *after* the file was written puts it back (a store whose blob was changed after publishing); a project file with an unknown key, an unknown section, a name for a `rev`, a path that leaves the repository, a `lex-sys` that is not a hash, duplicate programs, a program with no sources or a bad name is refused, each with its reason; the wrong compiler is refused naming both, and `--ignore-compiler-rev` goes on with a note; a moved pin replaces what the old one fetched; the project is found from a directory below it; `build <files>` is still the compiler it was; `--bin` picks one; an empty store is not a dependency.
+
+**Mutants of the new code: twenty-three, twenty-two killed, one unverified.** Killed: the compiler check always passing; `--ignore-compiler-rev` ignored; the fetched directory not cleared; unknown keys allowed (at the top, and in a program); a dependency's origin not validated at load; `lex-sys` not validated; `add` without its rollback, allowing a duplicate, writing the ref's name instead of its hash, accepting any name, or skipping the store check; a project build that did not install first; `wants_project` always true or the search not going upwards; `--bin` ignored or an unknown one accepted; an empty store accepted; an install failure that does not name the dependency; duplicate or source-less programs; a `--version` without the revision; a stamp that is always `unknown`. **Five of these survived the first tests, and each was a test that checked less than it said:** the "unknown key" case appended its key to the last table, which the program's own check caught, so nothing proved the top level refused; the origin and `lex-sys` cases were refused later by other checks, so the load-time ones were untested until the tests asserted the reason; a build that skipped its install passed because every test had installed before; and a bad dependency name was refused by a later check, not the name's. (Two more mutants, a failure that did not name its dependency and duplicate programs, were first written wrongly and did not apply; they were redone and killed.) **Unverified: the branch of `check_compiler` for a compiler that does not know its revision** (`unknown`, a build outside a git checkout without `LEX_SYS_REV`). It needs a second build of the compiler to reach, and is a plain refusal; I read it, I did not run it.
+
+**Found along the way.**
+
+* **A hash in the file is checked against a build that may be dirty.** The compiler says `-dirty` when tracked files differ from the commit, and such a revision can never equal the 40 hex digits the file holds. That is the right answer (a compiler with local edits is not the commit), and it means the test of the *accepted* case only runs when the tree is clean, as in CI; locally it is skipped and says nothing.
+* **`name = "app"` appears twice in a small project file**, and a string replace in a test put the compiler pin into the program too. `deny_unknown_fields` caught it, which is the case for having it.
+* **The commit is not known before it exists.** `lexsys-hooks` has to name a compiler that contains the project file, which this change is; the file in its pull request holds the commit of a build of this branch and is moved to the merge commit once there is one, the same dance as the `lexsys-log` pin in §7.
+
+**Not built, as §8.5 says.** And one thing noticed: `lex-sys test` has no project mode, so `lexsys-hooks` still spells out its three unit-test commands, with `build/deps/*.ls` as the way to name the libraries.

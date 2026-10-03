@@ -73,7 +73,7 @@ fn read_unit(file: &Path) -> Result<Option<(Unit, bool)>, Failure> {
 
 /// Every declaration a store holds, as a lock: what a file that imports the
 /// store's module requires.
-fn lock_of_all(store: &Path) -> Result<Lock, Failure> {
+pub(crate) fn lock_of_all(store: &Path) -> Result<Lock, Failure> {
     let manifest = Manifest::load(store)
         .map_err(|e| environment(format!("cannot read manifest at `{}`: {e}", store.display())))?;
     let mut lock = Lock::default();

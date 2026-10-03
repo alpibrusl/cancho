@@ -27,6 +27,7 @@ use lex_sys_types::{DefId, Type};
 
 mod acli;
 mod fmt_cli;
+mod project;
 mod test_cli;
 mod vcs_cli;
 mod vcs_dir;
@@ -48,6 +49,9 @@ usage:
     lex-sys agent-guidelines
     lex-sys introspect [--output json]
     lex-sys skill [--output json] [<out-file>]
+    lex-sys install [--ignore-compiler-rev]
+    lex-sys add <name> <git-url> [--rev <hash> | --ref <name>] [--path <dir>] [--ignore-compiler-rev]
+    lex-sys build [--bin <name>] [--ignore-compiler-rev]
     lex-sys vcs publish [--store <dir>] [--std] [--requires <lock>[:<dep-store>]]... <file.ls>
     lex-sys vcs publish [--store <root>] [--std] --dir <dir>
     lex-sys vcs log     [--store <dir>]
@@ -264,8 +268,9 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
     match command.as_str() {
         "--version" | "-V" => {
             println!(
-                "lex-sys {} (host {})",
+                "lex-sys {} (rev {}, host {})",
                 env!("CARGO_PKG_VERSION"),
+                project::COMPILER_REV,
                 lex_sys_codegen::host_triple()
             );
             Ok(ExitCode::SUCCESS)
@@ -344,6 +349,10 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
             print_layout(&inputs, with_std)?;
             Ok(ExitCode::SUCCESS)
         }
+        // `docs/package-system.md` §8: the project file.
+        "install" => project::cmd_install(&args[1..]),
+        "add" => project::cmd_add(&args[1..]),
+        "build" if project::wants_project(&args[1..]) => project::cmd_build(&args[1..]),
         "build" => {
             let Invocation {
                 inputs, output, emit, with_std, backend, link_libs, link_paths, ..

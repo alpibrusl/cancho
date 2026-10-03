@@ -62,6 +62,8 @@ fn commands() -> Vec<CommandInfo> {
         cmd_print(),
         cmd_agent_guidelines(),
         cmd_vcs(),
+        cmd_install(),
+        cmd_add(),
     ]
 }
 
@@ -282,6 +284,42 @@ fn cmd_agent_guidelines() -> CommandInfo {
         ("Capture into a repo", "lex-sys agent-guidelines > AGENTS.md"),
     ])
     .with_see_also(vec!["skill", "introspect"])
+}
+
+fn cmd_install() -> CommandInfo {
+    CommandInfo::new(
+        "install",
+        "fetch and check the dependencies named in lex-sys.toml into build/deps, after checking the \
+         compiler is the one the project was written for (docs/package-system.md section 8)",
+    )
+    .idempotent(true)
+    .add_option(
+        "ignore-compiler-rev",
+        "bool",
+        "go on although this compiler is not the commit the project names",
+        None,
+    )
+    .with_examples(vec![("Fetch the project's dependencies", "lex-sys install")])
+    .with_see_also(vec!["add", "build"])
+}
+
+fn cmd_add() -> CommandInfo {
+    CommandInfo::new(
+        "add",
+        "add a dependency to lex-sys.toml, pinned to a full commit hash (a --ref is resolved once and \
+         the hash written), then install it; the file is put back if the install fails",
+    )
+    .idempotent(false)
+    .add_argument("name", "string", "what the dependency is called in the project", true)
+    .add_argument("git-url", "string", "the repository", true)
+    .add_option("rev", "string", "a full commit hash", None)
+    .add_option("ref", "string", "a branch or tag, resolved once (default: the repository's head)", None)
+    .add_option("path", "string", "the store inside the repository (default .lex-sys-vcs)", None)
+    .with_examples(vec![(
+        "Depend on a library at its current head",
+        "lex-sys add log https://github.com/alpibrusl/lexsys-log --path .lex-sys-vcs/log",
+    )])
+    .with_see_also(vec!["install", "vcs"])
 }
 
 fn cmd_vcs() -> CommandInfo {
