@@ -52,6 +52,7 @@ usage:
     lex-sys install [--ignore-compiler-rev]
     lex-sys add <name> <git-url> [--rev <hash> | --ref <name>] [--path <dir>] [--ignore-compiler-rev]
     lex-sys build [--bin <name>] [--ignore-compiler-rev]
+    lex-sys test  [--test <name>] [--ignore-compiler-rev]
     lex-sys vcs publish [--store <dir>] [--std] [--requires <lock>[:<dep-store>]]... <file.ls>
     lex-sys vcs publish [--store <root>] [--std] --dir <dir>
     lex-sys vcs log     [--store <dir>]
@@ -333,6 +334,7 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
         // `docs/formatting.md`.
         "fmt" => fmt_cli::cmd_fmt(&args[1..]),
         // `docs/testing.md` §3.
+        "test" if project::wants_project_test(&args[1..]) => project::cmd_test(&args[1..]),
         "test" => test_cli::cmd_test(&args[1..]),
         "ids" => {
             let Invocation { inputs, with_std, .. } = parse_args(&args[1..], false, false)?;

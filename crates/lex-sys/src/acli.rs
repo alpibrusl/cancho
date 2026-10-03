@@ -77,8 +77,9 @@ fn cmd_build() -> CommandInfo {
     .add_argument(
         "file",
         "string[]",
-        "one or more .ls files -- a program is the set of files named on the command line",
-        true,
+        "one or more .ls files -- a program is the set of files named on the command line; with none, \
+         in a project, build the [[bin]] programs of lex-sys.toml (--bin <name> one of them)",
+        false,
     )
     // Single-dash flags (`-o`, `-l`, `-L`), registered as arguments rather
     // than options: `add_option` always renders with a `--` prefix
@@ -178,7 +179,13 @@ fn cmd_test() -> CommandInfo {
          tests found, 3 = environment failure; docs/testing.md)",
     )
     .idempotent(false)
-    .add_argument("file", "string[]", "one or more .ls files, none declaring `main`", true)
+    .add_argument(
+        "file",
+        "string[]",
+        "one or more .ls files, none declaring `main`; with none, in a project, run the [[test]] sets of \
+         lex-sys.toml (--test <name> one of them)",
+        false,
+    )
     // Single-dash flags, as arguments rather than options -- see the
     // same note on `cmd_build`.
     .add_argument("-l <name>", "string[]", "link `lib<name>` (repeatable)", false)
