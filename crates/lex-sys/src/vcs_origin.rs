@@ -38,7 +38,12 @@ fn cache_root() -> Result<PathBuf, String> {
 /// callers that have a repository.
 fn git() -> Command {
     let mut cmd = Command::new("git");
-    cmd.args(["-c", "core.hooksPath=/dev/null", "-c", "protocol.ext.allow=never"])
+    // Hooks off (a template directory can supply them to `git init`), and only
+    // the transports a repository location can honestly use: `ext::` and the
+    // other remote helpers run programs, and `http` is cleartext.
+    cmd.args(["-c", "core.hooksPath=/dev/null", "-c", "protocol.allow=never"])
+        .args(["-c", "protocol.https.allow=always", "-c", "protocol.ssh.allow=always"])
+        .args(["-c", "protocol.git.allow=always", "-c", "protocol.file.allow=always"])
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_OPTIONAL_LOCKS", "0");
     cmd

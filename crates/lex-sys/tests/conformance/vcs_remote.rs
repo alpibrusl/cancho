@@ -443,7 +443,10 @@ fn a_package_in_another_repository_requires_through_the_origin() {
     ));
     let recorded = std::fs::read_to_string(ystore.join("requires/0.json")).unwrap();
     assert!(recorded.contains("\"origin\"") && recorded.contains(&rev));
-    assert!(!recorded.contains(cache.to_str().unwrap()), "no machine-specific path is recorded");
+    assert!(
+        recorded.contains("\"store\": \"\""),
+        "no machine-specific path is recorded: {recorded}"
+    );
 
     git(&liby, &["init", "--quiet"]);
     git(&liby, &["add", "-A"]);
@@ -475,4 +478,86 @@ fn a_fetch_that_fails_leaves_no_half_made_checkout() {
         .filter(|p| p.to_string_lossy().contains(".tmp."))
         .collect();
     assert!(leftovers.is_empty(), "no temporary directory is left behind: {leftovers:?}");
+}
+
+#[test]
+fn a_lock_pins_one_store_and_will_not_be_extended_with_another() {
+    let (repo, cache, rev) = library_repo("vcs-origin-one-store");
+    let work = cache.parent().unwrap().to_path_buf();
+    let lock = work.join("top.lock");
+    ok(&lock_top(&cache, &repo, &rev, &lock));
+
+    // The same library, one commit later: a different origin.
+    write(&repo.join("src"), "base.ls", &BASE.replace("t[3] = 40;", "t[3] = 41;"));
+    ok(&vcs(
+        &cache,
+        &[&"publish", &"--dir", &repo.join("src"), &"--store", &repo.join(".lex-sys-vcs")],
+    ));
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "--quiet", "-m", "later"]);
+    let later = git(&repo, &["rev-parse", "HEAD"]);
+    let before = std::fs::read_to_string(&lock).unwrap();
+    let out = lock_top(&cache, &repo, &later, &lock);
+    assert!(!out.status.success(), "a lock that pins one commit is not quietly moved to another");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("already pins a different store"));
+    assert_eq!(std::fs::read_to_string(&lock).unwrap(), before, "and is left as it was");
+}
+
+#[test]
+fn a_hook_in_the_template_directory_does_not_run() {
+    let (repo, cache, rev) = library_repo("vcs-origin-hooks");
+    let work = cache.parent().unwrap().to_path_buf();
+    let template = work.join("template");
+    let marker = work.join("hook-ran");
+    let hooks = template.join("hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    let hook = hooks.join("post-checkout");
+    std::fs::write(&hook, format!("#!/bin/sh\ntouch '{}'\n", marker.display())).unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let output = Command::new(BIN)
+        .args(["vcs", "lock", "--git"])
+        .arg(&repo)
+        .args(["--rev", &rev, "--path", ".lex-sys-vcs/libx.top", "-o"])
+        .arg(work.join("h.lock"))
+        .arg("--all")
+        .env("LEX_SYS_CACHE", &cache)
+        .env("GIT_TEMPLATE_DIR", &template)
+        .output()
+        .expect("the compiler runs");
+    ok(&output);
+    assert!(!marker.exists(), "git ran a hook from the dependency's checkout");
+}
+
+#[test]
+fn only_honest_transports_are_used() {
+    let work = scratch("vcs-origin-transports");
+    let cache = work.join("cache");
+    let marker = work.join("ran");
+    // A listener standing in for a cleartext server: a connection to it is the failure.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    for url in
+        [format!("ext::sh -c 'touch {}'", marker.display()), format!("http://127.0.0.1:{port}/r")]
+    {
+        let out = vcs(
+            &cache,
+            &[
+                &"lock",
+                &"--git",
+                &url,
+                &"--rev",
+                &"0123456789abcdef0123456789abcdef01234567",
+                &"-o",
+                &work.join("t.lock"),
+                &"--all",
+            ],
+        );
+        assert!(!out.status.success(), "`{url}` should be refused");
+    }
+    assert!(!marker.exists(), "an `ext::` url ran its command");
+    assert!(listener.accept().is_err(), "git connected over cleartext http");
 }
