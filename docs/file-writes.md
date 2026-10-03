@@ -1,7 +1,8 @@
 # File writes: handles that append, sync, and rename
 
-> **Status: slice 1 built (§10).** The handle verbs are in both backends,
-> and 15 conformance tests judge them from outside the program. §2 onward
+> **Status: slices 1 and 2 built (§10).** The handle verbs and the path
+> operations are in both backends, and 20 conformance tests judge them from
+> outside the program. §2 onward
 > is the design as it stood; where building it showed a claim to be wrong,
 > the section says so where it was made. `file-handles.md` gave a
 > program a file it can *read* without knowing its size. This is the other
@@ -467,7 +468,7 @@ suite, no source file over 2,000 lines (the largest touched is
    This is enough to write and recover a log. `std.fs` (`write_all`,
    `into_result`) is **not** built: nothing has asked for it yet, and the
    first program that does (`lexsys-log`) will say what shape it wants.
-2. **Path operations.** `fs_rename`, `fs_remove`, `file_lock`. This is
+2. **Path operations. Built.** `fs_rename`, `fs_remove`, `file_lock`. This is
    enough to rotate and seal a segment and to own a directory.
 3. **Listing, `mode`, `fdatasync`, `F_FULLFSYNC`**, each only when a program
    asks and a measurement says it is worth the name.
@@ -494,16 +495,26 @@ suite, no source file over 2,000 lines (the largest touched is
   the same rule `connect` and `conn_read` follow, so a file that declares
   its own `extern fn file_write` keeps reaching it.
 
+* **One node for both path operations.** `Expr::PathOp` carries the prefix
+  and one path (`fs_remove`) or two (`fs_rename`); every path goes through
+  the same check as every other, so a rename whose *destination* is outside
+  the prefix, or whose either path holds `..`, traps like an open does.
+  Tested for source and destination separately, because a check on only
+  one of them is the mutant that matters most.
+* **`file_lock` reports `EWOULDBLOCK`, which is 11 on Linux and 35 on
+  macOS.** The test knows both. `LOCK_EX | LOCK_NB` is 6 in the Linux
+  headers (checked); the macOS value is what the darwin CI job now tests.
+
 ### 10.2 Verification
 
-Fifteen conformance tests (`tests/conformance/file_writes.rs`), each on
+Twenty conformance tests (`tests/conformance/file_writes.rs`), each on
 both backends, judging from outside the program: the bytes on disk, the
 mode of a created file under `umask 027` (`0640`, read by `stat`), the
 errno of each refusal, and the `fsync` call and its descriptor read from an
 `strace` trace.
 
-**Mutation checked, in a scratch copy and never committed:** 21 mutants,
-all killed. Per backend: sync that does nothing, `pwrite` and `pread`
+**Mutation checked, in a scratch copy and never committed:** 21 mutants for
+slice 1 and 13 for slice 2, all killed. Per backend: sync that does nothing, `pwrite` and `pread`
 with offset and length swapped, `file_size` that does not put the cursor
 back or seeks from the wrong place, a `Done` that never reports failure,
 `dup` omitted (the descriptor closed by `fclose`), and `fopen` failing
@@ -512,6 +523,15 @@ without its `errno`. In the shared mode table: `open_append` truncating,
 `open_write` appending. The test that kills the sync mutant is the
 `strace` one; before it was written, nothing here distinguished a sync
 that called `fsync` from one that returned `Ok`.
+
+Slice 2's mutants, per backend: `unlink` that does nothing, a rename that
+does not check its source or does not check its destination, a rename with
+its arguments swapped, a lock that is shared instead of exclusive or that
+does nothing; and in the shared lowering, a rename that performs `fs_read`
+instead of `fs_write`. The lock tests start two processes: a holder takes
+the lock and waits on standard input, a contender is refused, the holder is
+**killed with SIGKILL**, and the contender is admitted. That last step is
+the property that justifies a lock over a lock file.
 
 What this does not verify is stated in §5.1 and §6: it cannot show that an
 acknowledged sync survives a power cut, and nothing here ran on macOS.

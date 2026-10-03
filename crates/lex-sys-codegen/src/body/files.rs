@@ -4,7 +4,7 @@
 //! `lex-sys-codegen-llvm`'s own `body/files.rs`.
 
 use crate::*;
-use lex_sys_ir::OpenMode;
+use lex_sys_ir::{OpenMode, PathOp};
 
 impl<'a, 'f> BodyEmitter<'a, 'f> {
     /// A NUL-terminated copy of `text` on the stack, for a C call that wants a
@@ -191,5 +191,36 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         let tag = self.builder.ins().select(here_failed, one, tag);
         let value = self.builder.ins().select(here_failed, here, answer[1]);
         vec![tag, value, answer[2]]
+    }
+
+    /// `fs_remove(fs, path)` and `fs_rename(fs, from, to)`
+    /// (`docs/file-writes.md` section 7): every path is checked against the
+    /// prefix, `..` refused, then one `unlink(2)` or `rename(2)`. A rename
+    /// whose destination is outside the prefix traps like any other path.
+    pub(crate) fn path_op(&mut self, op: PathOp, prefix: &str, args: &[Expr]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let first = self.expr(&args[1]);
+        let first = self.checked_path(prefix, &first);
+        let result = match op {
+            PathOp::Remove => self.libc_call("unlink", &[pointer], &[types::I32], &[first]),
+            PathOp::Rename => {
+                let second = self.expr(&args[2]);
+                let second = self.checked_path(prefix, &second);
+                self.libc_call("rename", &[pointer, pointer], &[types::I32], &[first, second])
+            }
+        };
+        let result = self.builder.ins().sextend(types::I64, result);
+        self.done(result)
+    }
+
+    /// `file_lock(file)`: `flock(fd, LOCK_EX | LOCK_NB)`. `LOCK_EX` is 2 and
+    /// `LOCK_NB` is 4, so 6, on Linux (read from its headers) and, from the
+    /// BSD headers, on Darwin. Held by someone else it is `Failed(EWOULDBLOCK)`.
+    pub(crate) fn file_lock(&mut self, args: &[Value]) -> Vec<Value> {
+        let fd = self.file_fd(args[0]);
+        let how = self.builder.ins().iconst(types::I32, 6);
+        let result = self.libc_call("flock", &[types::I32, types::I32], &[types::I32], &[fd, how]);
+        let result = self.builder.ins().sextend(types::I64, result);
+        self.done(result)
     }
 }

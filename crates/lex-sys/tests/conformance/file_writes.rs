@@ -520,3 +520,239 @@ fn an_earlier_edition_does_not_see_the_new_names() {
     assert!(!out.status.success(), "an edition-4 file should not resolve `open_new`");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ---------------------------------------------------------------------------------------------
+// Slice 2 (`docs/file-writes.md` section 7): rename, remove, lock.
+// ---------------------------------------------------------------------------------------------
+
+/// A statement that calls `call`, a `Done`-answering builtin, and adds `weight` to `code` on `Ok` and
+/// `100 + errno` on `Failed`.
+fn done_weight(call: &str, weight: i32) -> String {
+    format!(
+        "match {call} {{ Done::Ok(n) => {{ code = code + {weight}; }} Done::Failed(e) => {{ code = 100 + e; }} }}\n"
+    )
+}
+
+#[test]
+fn rename_replaces_the_destination_and_leaves_no_old_name() {
+    // POSIX `rename` over an existing file replaces it in one step, which is how a segment is sealed or
+    // a `CURRENT` pointer is moved. Both paths are named in the same directory.
+    on_both(
+        "rename",
+        &[("new.bin", b"replacement"), ("live.bin", b"old contents")],
+        |data| {
+            done_weight(
+                &format!(
+                    "fs_rename(f, \"{}\", \"{}\")",
+                    data.join("new.bin").display(),
+                    data.join("live.bin").display()
+                ),
+                1,
+            )
+        },
+        |backend, data, status| {
+            assert_eq!(status, Some(1), "{backend}");
+            assert_eq!(std::fs::read(data.join("live.bin")).unwrap(), b"replacement", "{backend}");
+            assert!(!data.join("new.bin").exists(), "{backend}: the old name is gone");
+        },
+    );
+}
+
+#[test]
+fn remove_unlinks_a_file_and_a_missing_one_is_enoent() {
+    on_both(
+        "remove",
+        &[("gone.bin", b"x"), ("kept.bin", b"y")],
+        |data| {
+            let mut s =
+                done_weight(&format!("fs_remove(f, \"{}\")", data.join("gone.bin").display()), 1);
+            // A second removal of the same name fails with `ENOENT` (2): `Failed` carries it, and the
+            // program records it as `code + e * 10` so a wrong reason shows.
+            s.push_str(&format!(
+                "match fs_remove(f, \"{}\") {{ Done::Ok(n) => {{ code = 77; }} Done::Failed(e) => {{ code = code + e * 10; }} }}\n",
+                data.join("gone.bin").display()
+            ));
+            s
+        },
+        |backend, data, status| {
+            assert_eq!(status, Some(1 + 2 * 10), "{backend}: one removal, then `ENOENT`");
+            assert!(!data.join("gone.bin").exists(), "{backend}");
+            assert_eq!(
+                std::fs::read(data.join("kept.bin")).unwrap(),
+                b"y",
+                "{backend}: only the named file"
+            );
+        },
+    );
+}
+
+#[test]
+fn rename_and_remove_refuse_a_path_outside_the_prefix_or_with_dot_dot() {
+    // Every path is checked, and a rename names two: moving a file *out of* the granted directory is a
+    // write outside it, and so is moving one *in* from outside. `..` is refused wherever it appears.
+    // Each case must trap (killed by a signal) and leave the filesystem as it was.
+    for backend in BACKENDS {
+        let dir = scratch(&format!("file-writes-path-refusals-{backend}"));
+        let data = dir.join("data");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::write(data.join("inside.bin"), b"in").unwrap();
+        std::fs::write(dir.join("outside.bin"), b"out").unwrap();
+        let inside = data.join("inside.bin");
+        let outside = dir.join("outside.bin");
+        let dotted = data.join("..").join("outside.bin");
+        let cases = [
+            (
+                "rename-out",
+                format!(
+                    "fs_rename(f, \"{}\", \"{}\")",
+                    inside.display(),
+                    dir.join("moved.bin").display()
+                ),
+            ),
+            (
+                "rename-in",
+                format!(
+                    "fs_rename(f, \"{}\", \"{}\")",
+                    outside.display(),
+                    data.join("moved.bin").display()
+                ),
+            ),
+            (
+                "rename-dotdot",
+                format!("fs_rename(f, \"{}\", \"{}\")", inside.display(), dotted.display()),
+            ),
+            ("remove-out", format!("fs_remove(f, \"{}\")", outside.display())),
+            ("remove-dotdot", format!("fs_remove(f, \"{}\")", dotted.display())),
+        ];
+        for (name, call) in cases {
+            let source = program(&data, &done_weight(&call, 1));
+            let exe = build_program(&dir, name, &source, backend);
+            let run = Command::new(&exe).output().expect("the compiled program runs");
+            assert_eq!(
+                run.status.code(),
+                None,
+                "{backend}/{name}: killed by a signal, not an exit"
+            );
+            assert_eq!(
+                std::fs::read(&inside).unwrap(),
+                b"in",
+                "{backend}/{name}: the inside file is untouched"
+            );
+            assert_eq!(
+                std::fs::read(&outside).unwrap(),
+                b"out",
+                "{backend}/{name}: the outside file is untouched"
+            );
+            assert!(
+                !data.join("moved.bin").exists() && !dir.join("moved.bin").exists(),
+                "{backend}/{name}: nothing moved"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[test]
+fn a_lock_is_refused_while_another_process_holds_it_and_released_when_that_process_dies() {
+    // The property that justifies `file_lock` over a lock *file*: the kernel drops it when the holder ends,
+    // however it ends, so a crash leaves no stale lock and no human to remove it. The holder takes the lock
+    // and waits for a byte on its standard input; a contender then tries, is refused, the holder is killed,
+    // and the contender is admitted. The refusal is the kernel's `EWOULDBLOCK`.
+    use std::io::{BufRead, Read};
+    let wouldblock = if cfg!(target_os = "macos") { 35 } else { 11 };
+    for backend in BACKENDS {
+        let dir = scratch(&format!("file-writes-lock-{backend}"));
+        let data = dir.join("data");
+        std::fs::create_dir_all(&data).unwrap();
+        let lock = data.join("LOCK");
+        let take = format!(
+            "match open_append(f, \"{}\") {{\n\
+                 Opened::Failed(e) => {{ code = 100 + e; }}\n\
+                 Opened::Ok(opened) => {{\n\
+                     var file = opened;\n\
+                     borrow mut file as &!h in {{\n\
+                         match file_lock(h) {{\n\
+                             Done::Ok(n) => {{ code = 0; WAIT }}\n\
+                             Done::Failed(e) => {{ code = e; }}\n\
+                         }}\n\
+                     }}\n\
+                     file_close(file);\n\
+                 }}\n\
+             }}\n",
+            lock.display()
+        );
+        // The holder keeps its `Io` and says it has the lock, then waits for a byte.
+        let holder_source = format!(
+            "edition 5;\n\
+             import std.io;\n\
+             fn main(world: World) -> [] int {{\n\
+                 let Split {{ io, ffi, fs, heap, args, net, clock }} = split(world);\n\
+                 release(args); release(heap); release(ffi); release(net); release(clock);\n\
+                 let d = narrow(fs, \"{dir}\");\n\
+                 var code = 0;\n\
+                 borrow d as &f in {{\n{body}\n}}\n\
+                 release(d);\n\
+                 release(io);\n\
+                 return code;\n\
+             }}\n",
+            dir = data.display(),
+            body = take.replace(
+                "WAIT",
+                "borrow mut io as &!i in { io.error_all(i, \"locked\\n\"); getchar(i); }"
+            )
+        );
+        let holder_file = dir.join(format!("holder-{backend}.ls"));
+        std::fs::write(&holder_file, holder_source).unwrap();
+        let holder_exe = dir.join(format!("holder-{backend}"));
+        let built = Command::new(BIN)
+            .args([
+                "build".as_ref(),
+                holder_file.as_os_str(),
+                "--std".as_ref(),
+                "--backend".as_ref(),
+                backend.as_ref(),
+                "-o".as_ref(),
+                holder_exe.as_os_str(),
+            ])
+            .output()
+            .expect("the compiler runs");
+        assert!(built.status.success(), "{backend}: {}", String::from_utf8_lossy(&built.stderr));
+        let contender =
+            build_program(&dir, "contender", &program(&data, &take.replace("WAIT", "")), backend);
+
+        let mut holder = Command::new(&holder_exe)
+            .stdin(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("the holder runs");
+        let mut lines = std::io::BufReader::new(holder.stderr.take().unwrap());
+        let mut line = String::new();
+        lines.read_line(&mut line).expect("the holder's standard error");
+        assert_eq!(line.trim(), "locked", "{backend}: the holder should say it has the lock");
+
+        let refused = Command::new(&contender).output().expect("the contender runs");
+        assert_eq!(
+            refused.status.code(),
+            Some(wouldblock),
+            "{backend}: refused while the holder lives"
+        );
+
+        holder.kill().expect("the holder can be killed");
+        let _ = holder.wait();
+        let _ = lines.read_to_end(&mut Vec::new());
+        let admitted = Command::new(&contender).output().expect("the contender runs");
+        assert_eq!(admitted.status.code(), Some(0), "{backend}: admitted once the holder is gone");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[test]
+fn the_authority_report_of_a_rename_names_the_directory_under_fs_write() {
+    let source = program(
+        Path::new("/var/lib/log"),
+        &done_weight("fs_rename(f, \"/var/lib/log/a\", \"/var/lib/log/b\")", 1),
+    );
+    let json = authority_json(&source, "file-writes-rename-authority");
+    assert!(json.contains("\"fs_write\"") && json.contains("/var/lib/log"), "{json}");
+    assert!(!json.contains("\"fs_read\""), "a rename performs no read:\n{json}");
+}

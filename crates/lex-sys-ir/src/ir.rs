@@ -79,6 +79,15 @@ pub const PRELUDE_DONE: usize = 26;
 /// diagnostic.
 pub const PRELUDE_COUNT: usize = 27;
 
+/// Which path operation an [`Expr::PathOp`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathOp {
+    /// `fs_remove`: `unlink(2)`. It does not remove directories.
+    Remove,
+    /// `fs_rename`: `rename(2)`, both paths checked against the prefix.
+    Rename,
+}
+
 /// How `open_*` opens its file (`docs/file-handles.md` section 2.1,
 /// `docs/file-writes.md` section 3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -398,6 +407,17 @@ pub enum Expr {
     OpenFile {
         prefix: String,
         mode: OpenMode,
+        args: Vec<Expr>,
+    },
+    /// `fs_rename(fs, from, to)` and `fs_remove(fs, path)`
+    /// (`docs/file-writes.md` section 7). Its own node for the reason
+    /// [`Expr::OpenFile`] is one: the prefix travels with it, because the
+    /// backend checks every path against it and the type it came from is gone
+    /// by then. `args` is the capability (zero-sized) and then one path, or
+    /// two for a rename. What comes back is a `Done`, tagged.
+    PathOp {
+        op: PathOp,
+        prefix: String,
         args: Vec<Expr>,
     },
     /// `connect(net, name, port)` — `docs/net.md` §4.1

@@ -177,6 +177,60 @@ impl<'a> FnLowering<'a> {
         ))
     }
 
+    /// `fs_rename(fs, from, to)` and `fs_remove(fs, path)`
+    /// (`docs/file-writes.md` section 7). Every path is checked against the
+    /// prefix at run time, `..` refused, so a rename cannot move a file out of
+    /// the granted directory; the row is the prefix's `fs_write`.
+    pub(crate) fn path_op(
+        &mut self,
+        op: Builtin,
+        args: &[ExprId],
+        span: Span,
+    ) -> Result<(Expr, Type), Diagnostic> {
+        let (kind, paths) = match op {
+            Builtin::FsRename => (PathOp::Rename, 2),
+            _ => (PathOp::Remove, 1),
+        };
+        if args.len() != paths + 1 {
+            return Err(Diagnostic::new(
+                Rule::ArityMismatch,
+                format!(
+                    "`{}` takes {} arguments, but {} were given",
+                    op.name(),
+                    paths + 1,
+                    args.len()
+                ),
+                span,
+            ));
+        }
+        let capability_span = self.ast.expr_span(args[0]);
+        let (fs_value, fs_ty) = self.expr(args[0])?;
+        let prefix = self.granted_prefix(&fs_ty, capability_span)?;
+
+        let mut lowered = vec![fs_value];
+        for path in &args[1..] {
+            let bytes = Type::Ref {
+                unique: false,
+                region: self.unifier.fresh_region(),
+                inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+            };
+            let path_span = self.ast.expr_span(*path);
+            let (path_value, path_ty) = self.expr(*path)?;
+            self.expect_type(&bytes, &path_ty, path_span)?;
+            lowered.push(path_value);
+        }
+
+        self.performed.union(&Effects::new([Label {
+            name: "fs_write".to_owned(),
+            argument: Some(prefix.clone()),
+        }]));
+
+        Ok((
+            Expr::PathOp { op: kind, prefix, args: lowered },
+            Type::Named(self.prelude()[PRELUDE_DONE], Vec::new()),
+        ))
+    }
+
     /// The path prefix a borrowed `Fs` was narrowed to.
     pub(crate) fn granted_prefix(&mut self, ty: &Type, span: Span) -> Result<String, Diagnostic> {
         let resolved = self.unifier.resolve(ty);

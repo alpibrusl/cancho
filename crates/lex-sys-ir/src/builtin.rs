@@ -236,6 +236,14 @@ pub enum Builtin {
     OpenWrite,
     OpenNew,
     OpenRw,
+    /// `fs_rename(fs, from, to)` and `fs_remove(fs, path)`, both `[fs_write(p)] Done`
+    /// (`docs/file-writes.md` section 7): checked at the call site, because
+    /// the prefix is in the capability's type and every path is checked against it.
+    FsRename,
+    FsRemove,
+    /// `file_lock(&!File) -> [file_write] Done`: `flock(LOCK_EX | LOCK_NB)`, an advisory
+    /// lock the kernel releases when the process ends, however it ends.
+    FileLock,
     /// `file_write(&!File, &[byte]) -> [file_write] Done`: one `write(2)`,
     /// which may take fewer bytes than asked (section 4.1).
     FileWrite,
@@ -501,6 +509,9 @@ impl Builtin {
         Builtin::FileSync,
         Builtin::FileTruncate,
         Builtin::FileSize,
+        Builtin::FsRename,
+        Builtin::FsRemove,
+        Builtin::FileLock,
         Builtin::Box,
         Builtin::Unbox,
         Builtin::Contents,
@@ -575,6 +586,9 @@ impl Builtin {
             Builtin::FileSync => "file_sync",
             Builtin::FileTruncate => "file_truncate",
             Builtin::FileSize => "file_size",
+            Builtin::FsRename => "fs_rename",
+            Builtin::FsRemove => "fs_remove",
+            Builtin::FileLock => "file_lock",
             Builtin::FsWrite => "fs_write",
             Builtin::Box => "box",
             Builtin::Unbox => "unbox",
@@ -670,7 +684,10 @@ impl Builtin {
             | Builtin::FilePread
             | Builtin::FileSync
             | Builtin::FileTruncate
-            | Builtin::FileSize => 5,
+            | Builtin::FileSize
+            | Builtin::FsRename
+            | Builtin::FsRemove
+            | Builtin::FileLock => 5,
             _ => 1,
         }
     }
@@ -732,7 +749,7 @@ impl Builtin {
             // The handle's region and the buffer's.
             Builtin::FileWrite | Builtin::FilePwrite | Builtin::FilePread => 2,
             // The handle's region alone.
-            Builtin::FileSync | Builtin::FileTruncate | Builtin::FileSize => 1,
+            Builtin::FileSync | Builtin::FileTruncate | Builtin::FileSize | Builtin::FileLock => 1,
             // The handle's region, and for `conn_read`/`conn_write` the
             // buffer's own.
             Builtin::ConnRead | Builtin::ConnWrite => 2,
@@ -822,7 +839,9 @@ impl Builtin {
             | Builtin::OpenAppend
             | Builtin::OpenWrite
             | Builtin::OpenNew
-            | Builtin::OpenRw => (Vec::new(), Type::Unit),
+            | Builtin::OpenRw
+            | Builtin::FsRename
+            | Builtin::FsRemove => (Vec::new(), Type::Unit),
             // The handle is borrowed uniquely because the read moves the
             // descriptor's offset, and the buffer uniquely because the read
             // writes into it -- the same pair `fs_read` takes, with the
@@ -894,7 +913,7 @@ impl Builtin {
                 ],
                 named(PRELUDE_READ),
             ),
-            Builtin::FileSync | Builtin::FileSize => (
+            Builtin::FileSync | Builtin::FileSize | Builtin::FileLock => (
                 vec![Type::Ref {
                     unique: true,
                     region: Region::Param(0),
@@ -1200,7 +1219,8 @@ impl Builtin {
             Builtin::FileWrite
             | Builtin::FilePwrite
             | Builtin::FileSync
-            | Builtin::FileTruncate => Effects::plain(["file_write"]),
+            | Builtin::FileTruncate
+            | Builtin::FileLock => Effects::plain(["file_write"]),
             // `docs/native-sockets.md` §3: path-free labels named after the
             // handle and the direction; `tcp_listen`'s row comes from the
             // bound at the call site.
