@@ -536,10 +536,19 @@ fn only_honest_transports_are_used() {
     let work = scratch("vcs-origin-transports");
     let cache = work.join("cache");
     let marker = work.join("ran");
-    // A listener standing in for a cleartext server: a connection to it is the failure.
+    // A listener standing in for a cleartext server: a connection to it is the
+    // failure. It hangs up at once, so a git that does connect fails rather
+    // than waiting for an answer.
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port");
-    listener.set_nonblocking(true).unwrap();
     let port = listener.local_addr().unwrap().port();
+    let connected = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let seen = connected.clone();
+    std::thread::spawn(move || {
+        while let Ok((conn, _)) = listener.accept() {
+            seen.store(true, std::sync::atomic::Ordering::SeqCst);
+            drop(conn);
+        }
+    });
     for url in
         [format!("ext::sh -c 'touch {}'", marker.display()), format!("http://127.0.0.1:{port}/r")]
     {
@@ -559,5 +568,8 @@ fn only_honest_transports_are_used() {
         assert!(!out.status.success(), "`{url}` should be refused");
     }
     assert!(!marker.exists(), "an `ext::` url ran its command");
-    assert!(listener.accept().is_err(), "git connected over cleartext http");
+    assert!(
+        !connected.load(std::sync::atomic::Ordering::SeqCst),
+        "git connected over cleartext http"
+    );
 }
