@@ -111,7 +111,16 @@ fn add_refuses_what_it_should_and_leaves_the_file_as_it_was() {
     );
 
     // A nonsense name, a path that is not there, and both of --rev and --ref.
-    assert!(!run(&dir, &cache, &[&"add", &"a b", &repo, &"--rev", &rev]).status.success());
+    let named = run(
+        &dir,
+        &cache,
+        &[&"add", &"a b", &repo, &"--rev", &rev, &"--path", &".lex-sys-vcs/libx.top"],
+    );
+    assert!(
+        !named.status.success() && stderr(&named).contains("is not a dependency name"),
+        "{}",
+        stderr(&named)
+    );
     let missing = run(&dir, &cache, &[&"add", &"libx", &repo, &"--rev", &rev, &"--path", &"nope"]);
     assert!(!missing.status.success());
     assert!(
