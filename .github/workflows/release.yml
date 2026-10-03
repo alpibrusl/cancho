@@ -40,6 +40,14 @@ jobs:
       - name: Build
         run: cargo build --release -p lex-sys
 
+      # The compiler's output is LLVM IR with opaque pointers, which clang 15 introduced; the 22.04 image's default is 14.
+      - name: A clang that can read it (22.04 only)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-15
+          echo "CLANG=clang-15" >> "$GITHUB_ENV"
+
       - name: Package
         run: scripts/package-release.sh ${{ matrix.target }} dist
 

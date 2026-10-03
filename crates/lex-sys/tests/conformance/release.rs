@@ -7,7 +7,24 @@ use super::*;
 use std::os::unix::fs::PermissionsExt;
 
 const REV: &str = "0123456789abcdef0123456789abcdef01234567";
-const TARGET_NAME: &str = "linux-x86_64";
+/// The target name `install.sh` computes for this machine, or `None` where it has no asset to look for.
+fn target_name() -> Option<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => Some("linux-x86_64"),
+        ("macos", "aarch64") => Some("darwin-aarch64"),
+        _ => None,
+    }
+}
+
+/// Return from a test on a machine `install.sh` has no asset for, saying so.
+macro_rules! supported {
+    () => {
+        if target_name().is_none() {
+            eprintln!("skipped: install.sh has no prebuilt target for this machine");
+            return;
+        }
+    };
+}
 
 fn script(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts").join(name)
@@ -27,7 +44,7 @@ fn version_line(rev: &str) -> String {
 
 fn package(bin: &Path, out: &Path) -> std::process::Output {
     Command::new(script("package-release.sh"))
-        .args(["linux-x86_64"])
+        .arg(target_name().unwrap())
         .arg(out)
         .env("LEX_SYS_BIN", bin)
         .output()
@@ -45,7 +62,7 @@ fn install(rev: &str, prefix: &Path, from: &Path) -> std::process::Output {
 }
 
 fn asset(rev: &str) -> String {
-    format!("lex-sys-{rev}-{TARGET_NAME}.tar.gz")
+    format!("lex-sys-{rev}-{}.tar.gz", target_name().unwrap())
 }
 
 fn sh(dir: &Path, command: &str) {
@@ -73,6 +90,7 @@ fn released(tag: &str) -> (PathBuf, PathBuf) {
 
 #[test]
 fn a_packaged_compiler_installs_and_reports_the_commit_it_was_asked_for() {
+    supported!();
     let (root, dist) = released("release-roundtrip");
     let name = asset(REV);
     assert!(
@@ -93,6 +111,7 @@ fn a_packaged_compiler_installs_and_reports_the_commit_it_was_asked_for() {
 
 #[test]
 fn a_binary_that_is_not_a_clean_commit_is_not_packaged() {
+    supported!();
     for version in [
         format!("lex-sys 0.0.0 (rev {REV}-dirty, host fake)"),
         "lex-sys 0.0.0 (rev unknown, host fake)".to_owned(),
@@ -109,6 +128,7 @@ fn a_binary_that_is_not_a_clean_commit_is_not_packaged() {
 
 #[test]
 fn packaging_twice_gives_the_same_bytes() {
+    supported!();
     let tar = Command::new("tar").arg("--version").output().unwrap();
     if !String::from_utf8_lossy(&tar.stdout).contains("GNU tar") {
         eprintln!("skipped: reproducible archives need GNU tar (docs/package-system.md §9)");
@@ -126,6 +146,7 @@ fn packaging_twice_gives_the_same_bytes() {
 
 #[test]
 fn a_tarball_that_does_not_match_its_sha256_is_not_installed() {
+    supported!();
     let (root, dist) = released("release-tampered");
     let name = asset(REV);
     let mut bytes = std::fs::read(dist.join(&name)).unwrap();
@@ -140,6 +161,7 @@ fn a_tarball_that_does_not_match_its_sha256_is_not_installed() {
 
 #[test]
 fn a_binary_that_reports_another_commit_is_not_installed() {
+    supported!();
     // A genuine asset under the name of a different commit: the hash is right, the compiler is not the one asked for.
     let (root, dist) = released("release-wrongrev");
     let other = "f".repeat(40);
@@ -147,10 +169,11 @@ fn a_binary_that_reports_another_commit_is_not_installed() {
     sh(
         &dist,
         &format!(
-            "mkdir x && tar -xzf {from} -C x && mv x/lex-sys-{REV}-{TARGET_NAME} x/lex-sys-{other}-{TARGET_NAME}"
+            "mkdir x && tar -xzf {from} -C x && mv x/lex-sys-{REV}-{t} x/lex-sys-{other}-{t}",
+            t = target_name().unwrap()
         ),
     );
-    sh(&dist, &format!("tar -czf {to} -C x lex-sys-{other}-{TARGET_NAME}"));
+    sh(&dist, &format!("tar -czf {to} -C x lex-sys-{other}-{}", target_name().unwrap()));
     sh(
         &dist,
         &format!("shasum -a 256 {to} > {to}.sha256 2>/dev/null || sha256sum {to} > {to}.sha256"),
@@ -164,6 +187,7 @@ fn a_binary_that_reports_another_commit_is_not_installed() {
 
 #[test]
 fn install_refuses_what_is_not_a_full_commit_and_what_is_not_there() {
+    supported!();
     let (root, dist) = released("release-refusals");
     let prefix = root.join("prefix");
     // Forty characters that are not hex digits: the right length is not enough, and `..` must not reach a URL.

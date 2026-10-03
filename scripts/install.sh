@@ -16,7 +16,8 @@
 # Anything else is refused: a compiler that is not the pinned one is worse than none.
 set -eu
 
-rev=${1:?usage: install.sh <commit> [prefix]}
+rev=${1:-}
+[ -n "$rev" ] || { echo "usage: install.sh <commit> [prefix]" >&2; exit 2; }
 prefix=${2:-$HOME/.local}
 case $rev in
   *[!0-9a-f]*|'') echo "not a full commit hash: $rev" >&2; exit 2 ;;
@@ -51,4 +52,10 @@ mkdir -p "$prefix/bin"
 cp "$work/$name/bin/lex-sys" "$prefix/bin/lex-sys.new"
 mv "$prefix/bin/lex-sys.new" "$prefix/bin/lex-sys"
 echo "installed lex-sys $rev to $prefix/bin/lex-sys"
-command -v clang >/dev/null || echo "note: lex-sys needs clang (and cc) on PATH at build time" >&2
+# The LLVM backend emits opaque pointers (`ptr`), which clang 15 introduced; older ones refuse its output.
+if command -v clang >/dev/null; then
+  major=$(clang --version | sed -n 's/.*clang version \([0-9]*\).*/\1/p' | head -n 1)
+  case $major in ''|*[!0-9]*) ;; *) [ "$major" -ge 15 ] || echo "note: clang $major is too old for lex-sys (it needs 15 or newer; set CLANG to another)" >&2 ;; esac
+else
+  echo "note: lex-sys needs clang 15 or newer (and cc) on PATH at build time" >&2
+fi
