@@ -21,10 +21,10 @@ use lex_sys_id::identify;
 use lex_sys_ir::{Effects, Func};
 use lex_sys_vcs::{
     Blobs, Lock, LockEntry, Manifest, ManifestEntry, OpLog, Operation, OperationKind,
-    OperationRecord, Requirement, SigId, load_requirements, save_requirements,
+    OperationRecord, Origin, Requirement, SigId, load_requirements, save_requirements,
 };
 
-use crate::{Failure, environment, refused, usage};
+use crate::{Failure, environment, refused, usage, vcs_dir, vcs_origin};
 
 /// Parse several already-in-memory named texts as one program, the same
 /// way [`crate::parse_program`] merges real files. `vcs publish`'s own
@@ -100,6 +100,9 @@ struct VcsInvocation {
     /// `--std`: the package may import the library (`docs/package-system.md`
     /// §7). Only `publish` reads it.
     with_std: bool,
+    /// `--dir <dir>`: publish every file of a directory (§7.4). Only
+    /// `publish` reads it.
+    dir: Option<PathBuf>,
 }
 
 fn parse_vcs_args(args: &[String]) -> Result<VcsInvocation, Failure> {
@@ -107,12 +110,17 @@ fn parse_vcs_args(args: &[String]) -> Result<VcsInvocation, Failure> {
     let mut inputs = Vec::new();
     let mut requires = Vec::new();
     let mut with_std = false;
+    let mut dir = None;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--store" => {
                 let value = it.next().ok_or_else(|| usage("`--store` needs a path"))?;
                 store = PathBuf::from(value);
+            }
+            "--dir" => {
+                let value = it.next().ok_or_else(|| usage("`--dir` needs a directory"))?;
+                dir = Some(PathBuf::from(value));
             }
             "--requires" => {
                 let value = it
@@ -127,7 +135,7 @@ fn parse_vcs_args(args: &[String]) -> Result<VcsInvocation, Failure> {
             other => inputs.push(PathBuf::from(other)),
         }
     }
-    Ok(VcsInvocation { store, inputs, requires, with_std })
+    Ok(VcsInvocation { store, inputs, requires, with_std, dir })
 }
 
 /// The declared row, formatted exactly the way `lex-sys authority` already
@@ -148,14 +156,28 @@ fn find_func<'a>(funcs: &'a [Func], module: &str, name: &str) -> Option<&'a Func
     funcs.iter().find(|f| f.name == name && f.module == module)
 }
 
-/// `--requires <lock-file>:<dep-store>`, split on the first `:` -- a
+/// `--requires <lock-file>[:<dep-store>]`, split on the first `:` -- a
 /// path never contains one on the two targets this project builds for
 /// (`docs/reach.md`'s own platform list), so there is no ambiguity to
-/// guard against here the way a Windows drive letter would force.
-fn split_requires(pair: &str) -> Result<(&str, &str), Failure> {
-    pair.split_once(':').ok_or_else(|| {
-        usage(format!("`--requires {pair}` needs `<lock-file>:<dep-store>`, separated by `:`"))
-    })
+/// guard against here the way a Windows drive letter would force. The
+/// store may be left out when the lock says where it is (§7.3).
+fn split_requires(pair: &str) -> (&str, Option<&str>) {
+    match pair.split_once(':') {
+        Some((lock, store)) => (lock, Some(store)),
+        None => (pair, None),
+    }
+}
+
+/// The directory of the store `lock` pins: the one named, else the one its
+/// origin points at (§7.3), fetched into the cache if it is not there.
+fn store_of(lock: &Lock, explicit: Option<&Path>) -> Result<PathBuf, Failure> {
+    match (explicit, lock.origin()) {
+        (Some(store), _) => Ok(store.to_path_buf()),
+        (None, Some(origin)) => vcs_origin::ensure(origin).map_err(environment),
+        (None, None) => {
+            Err(usage("this lock has no origin, so the store must be named: add `--store <dir>`"))
+        }
+    }
 }
 
 /// A lexical relative path from `base` (a directory) to `target` --
@@ -201,7 +223,16 @@ fn relative_from(base: &Path, target: &Path) -> PathBuf {
 }
 
 fn cmd_publish(args: &[String]) -> Result<ExitCode, Failure> {
-    let VcsInvocation { store, inputs, requires, with_std } = parse_vcs_args(args)?;
+    let VcsInvocation { store, inputs, requires, with_std, dir } = parse_vcs_args(args)?;
+    if let Some(dir) = dir {
+        if !inputs.is_empty() || !requires.is_empty() {
+            return Err(usage(
+                "`--dir` publishes a whole directory and works out each file's `--requires` \
+                 from its imports; it cannot be combined with input files or `--requires`",
+            ));
+        }
+        return vcs_dir::publish_dir(&dir, &store, with_std);
+    }
     if inputs.is_empty() {
         return Err(usage("no input file given"));
     }
@@ -217,9 +248,29 @@ fn cmd_publish(args: &[String]) -> Result<ExitCode, Failure> {
         ));
     }
 
-    let source = std::fs::read_to_string(&inputs[0])
-        .map_err(|e| environment(format!("cannot read `{}`: {e}", inputs[0].display())))?;
-    let file_name = inputs[0].to_string_lossy().into_owned();
+    let mut deps = Vec::with_capacity(requires.len());
+    for pair in &requires {
+        let (lock_path, dep_store) = split_requires(pair);
+        let lock = Lock::load(Path::new(lock_path))
+            .map_err(|e| environment(format!("cannot read lock file at `{lock_path}`: {e}")))?;
+        let dep_store = store_of(&lock, dep_store.map(Path::new))?;
+        deps.push((lock, dep_store));
+    }
+    publish_one(&store, &inputs[0], deps, with_std)
+}
+
+/// Publish one file into `store`, against the stores it requires (each a
+/// lock and the directory of the store the lock pins). The body of
+/// `vcs publish <file>`, and what `--dir` calls once per file (§7.4).
+pub(crate) fn publish_one(
+    store: &Path,
+    input: &Path,
+    deps: Vec<(Lock, PathBuf)>,
+    with_std: bool,
+) -> Result<ExitCode, Failure> {
+    let source = std::fs::read_to_string(input)
+        .map_err(|e| environment(format!("cannot read `{}`: {e}", input.display())))?;
+    let file_name = input.to_string_lossy().into_owned();
 
     // Not purely structural after all -- found here, not assumed:
     // `lex-sys-id`'s own `qualified_name` contributes a *resolved*
@@ -245,19 +296,23 @@ fn cmd_publish(args: &[String]) -> Result<ExitCode, Failure> {
         identify(&own_ast).functions.iter().map(|f| (f.module.clone(), f.name.clone())).collect();
     let own_uses_std = imports_std(&own_ast);
 
-    let mut requirements = Vec::with_capacity(requires.len());
+    let mut requirements = Vec::with_capacity(deps.len());
     let mut dependency_context: BTreeMap<String, String> = BTreeMap::new();
     let mut visiting = Vec::new();
     let mut pinned = BTreeMap::new();
-    for pair in &requires {
-        let (lock_path, dep_store) = split_requires(pair)?;
-        let lock = Lock::load(Path::new(lock_path))
-            .map_err(|e| environment(format!("cannot read lock file at `{lock_path}`: {e}")))?;
-        let closure = resolve_closure(&lock, Path::new(dep_store), &mut visiting, &mut pinned)
+    for (lock, dep_store) in deps {
+        let closure = resolve_closure(&lock, &dep_store, &mut visiting, &mut pinned)
             .map_err(|problems| refused(problems.join("\n\n")))?;
         dependency_context.extend(closure);
-        let stored_store = relative_from(&store, Path::new(dep_store));
-        requirements.push(Requirement { store: stored_store.to_string_lossy().into_owned(), lock });
+        // A lock with an origin is read through the origin (§7.3), so the
+        // cache directory it was found in -- different on every machine --
+        // is not recorded.
+        let stored_store = if lock.origin().is_some() {
+            String::new()
+        } else {
+            relative_from(store, &dep_store).to_string_lossy().into_owned()
+        };
+        requirements.push(Requirement { store: stored_store, lock });
     }
 
     let mut named = vec![(file_name.clone(), source.clone())];
@@ -290,11 +345,11 @@ fn cmd_publish(args: &[String]) -> Result<ExitCode, Failure> {
     })?;
     let identities = identify(&merged_ast);
 
-    let op_log = OpLog::open(&store)
+    let op_log = OpLog::open(store)
         .map_err(|e| environment(format!("cannot open store at `{}`: {e}", store.display())))?;
-    let blobs = Blobs::open(&store)
+    let blobs = Blobs::open(store)
         .map_err(|e| environment(format!("cannot open store at `{}`: {e}", store.display())))?;
-    let mut manifest = Manifest::load(&store)
+    let mut manifest = Manifest::load(store)
         .map_err(|e| environment(format!("cannot read manifest at `{}`: {e}", store.display())))?;
 
     // Stored once per publish, addressed by its own content — `vcs
@@ -343,17 +398,29 @@ fn cmd_publish(args: &[String]) -> Result<ExitCode, Failure> {
         // lowering pass computed.
         let effects = match find_func(&program.funcs, &func.module, &func.name) {
             Some(ir_func) => effect_strings(&ir_func.effects),
-            None => program
+            None => match program
                 .externs
                 .iter()
                 .find(|e| e.name == func.name && module_path(&merged_ast, e.module) == func.module)
-                .map(|e| effect_strings(&e.effects))
-                .ok_or_else(|| {
-                    refused(format!(
-                        "internal: `{}` has an identity but no lowered function or extern",
+            {
+                Some(e) => effect_strings(&e.effects),
+                // A `static` has two identities and no body to lower
+                // (`compile-time-data.md` §2): it is evaluated at compile
+                // time and cannot call out, so its row is empty
+                // (`package-system.md` §7.4).
+                None if program.statics.iter().any(|st| {
+                    st.name == func.name || st.name.rsplit('.').next() == Some(func.name.as_str())
+                }) =>
+                {
+                    BTreeSet::new()
+                }
+                None => {
+                    return Err(refused(format!(
+                        "internal: `{}` has an identity but no lowered function, extern or static",
                         func.name
-                    ))
-                })?,
+                    )));
+                }
+            },
         };
 
         // `check_candidate` re-parses and re-lowers independently of the
@@ -394,13 +461,13 @@ fn cmd_publish(args: &[String]) -> Result<ExitCode, Failure> {
     }
 
     manifest
-        .save(&store)
+        .save(store)
         .map_err(|e| environment(format!("cannot write manifest at `{}`: {e}", store.display())))?;
 
     // Whole-store, last-publish-wins metadata (§4.6's own note: not
     // diffed or versioned per declaration, consistent with every
     // package published here so far having exactly one publish, ever).
-    save_requirements(&store, &requirements).map_err(|e| {
+    save_requirements(store, &requirements).map_err(|e| {
         environment(format!("cannot write requirements at `{}`: {e}", store.display()))
     })?;
 
@@ -661,7 +728,14 @@ fn resolve_own_requirements(
         // against whatever cwd this process happens to have, which is
         // not necessarily the one `--requires` was given relative to
         // at publish time.
-        let dep_store = store.join(&req.store);
+        //
+        // A requirement whose lock says where its store is (§7.3) is read
+        // from there instead: a package in another repository has no path
+        // that is meaningful inside this one.
+        let dep_store = match req.lock.origin() {
+            Some(origin) => vcs_origin::ensure(origin).map_err(|e| vec![e])?,
+            None => store.join(&req.store),
+        };
         let deeper = resolve_closure(&req.lock, &dep_store, visiting, pinned)?;
         context.extend(deeper);
     }
@@ -701,7 +775,18 @@ fn cmd_resolve(args: &[String]) -> Result<ExitCode, Failure> {
             }
         }
     }
-    let store = store.ok_or_else(|| usage("`vcs resolve` needs a store directory"))?;
+    // With `--lock` and an origin in it, the store need not be named (§7.3).
+    let lock = match &lock_path {
+        Some(path) => Some(Lock::load(path).map_err(|e| {
+            environment(format!("cannot read lock file at `{}`: {e}", path.display()))
+        })?),
+        None => None,
+    };
+    let store = match (store, &lock) {
+        (Some(store), _) => store,
+        (None, Some(lock)) => store_of(lock, None)?,
+        (None, None) => return Err(usage("`vcs resolve` needs a store directory")),
+    };
 
     let manifest = Manifest::load(&store)
         .map_err(|e| environment(format!("cannot read manifest at `{}`: {e}", store.display())))?;
@@ -717,14 +802,12 @@ fn cmd_resolve(args: &[String]) -> Result<ExitCode, Failure> {
     let selected: Vec<(SigId, ManifestEntry)> = match &lock_path {
         None => manifest.entries().map(|(sig_id, entry)| (sig_id.clone(), entry.clone())).collect(),
         Some(lock_path) => {
-            let lock = Lock::load(lock_path).map_err(|e| {
-                environment(format!("cannot read lock file at `{}`: {e}", lock_path.display()))
-            })?;
+            let lock = lock.as_ref().expect("a lock path was given, so it was loaded above");
             if lock.is_empty() {
                 println!("nothing locked at `{}`; nothing to resolve", lock_path.display());
                 return Ok(ExitCode::SUCCESS);
             }
-            select_locked(&lock, &manifest, &store)
+            select_locked(lock, &manifest, &store)
                 .map_err(|missing| refused(missing.join("\n\n")))?
         }
     };
@@ -807,7 +890,6 @@ fn cmd_fetch(args: &[String]) -> Result<ExitCode, Failure> {
         }
     }
     let lock_path = lock_path.ok_or_else(|| usage("`vcs fetch` needs `--lock <file>`"))?;
-    let store = store.ok_or_else(|| usage("`vcs fetch` needs `--store <dependency-store>`"))?;
     let out = out.ok_or_else(|| usage("`vcs fetch` needs `-o <dir>`"))?;
 
     let lock = Lock::load(&lock_path).map_err(|e| {
@@ -817,6 +899,9 @@ fn cmd_fetch(args: &[String]) -> Result<ExitCode, Failure> {
         println!("nothing locked at `{}`; nothing to fetch", lock_path.display());
         return Ok(ExitCode::SUCCESS);
     }
+    // `--store` wins when given (working on a dependency from a local
+    // checkout); otherwise the lock's origin says where to go (§7.3).
+    let store = store_of(&lock, store.as_deref())?;
     let manifest = Manifest::load(&store)
         .map_err(|e| environment(format!("cannot read manifest at `{}`: {e}", store.display())))?;
     let blobs = Blobs::open(&store)
@@ -868,35 +953,102 @@ fn cmd_lock(args: &[String]) -> Result<ExitCode, Failure> {
     let mut store: Option<PathBuf> = None;
     let mut out: Option<PathBuf> = None;
     let mut names: Vec<String> = Vec::new();
+    let mut git: Option<String> = None;
+    let mut rev: Option<String> = None;
+    let mut git_ref: Option<String> = None;
+    let mut path: Option<String> = None;
+    let mut all = false;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
+        let mut value = |what: &str| -> Result<String, Failure> {
+            it.next().cloned().ok_or_else(|| usage(format!("`{what}` needs a value")))
+        };
         match arg.as_str() {
-            "--store" => {
-                let value = it.next().ok_or_else(|| usage("`--store` needs a path"))?;
-                store = Some(PathBuf::from(value));
-            }
-            "-o" => {
-                let value = it.next().ok_or_else(|| usage("`-o` needs a path"))?;
-                out = Some(PathBuf::from(value));
-            }
+            "--store" => store = Some(PathBuf::from(value("--store")?)),
+            "-o" => out = Some(PathBuf::from(value("-o")?)),
+            "--git" => git = Some(value("--git")?),
+            "--rev" => rev = Some(value("--rev")?),
+            "--ref" => git_ref = Some(value("--ref")?),
+            "--path" => path = Some(value("--path")?),
+            "--all" => all = true,
             other if other.starts_with('-') => {
                 return Err(usage(format!("unknown option `{other}`")));
             }
             other => names.push(other.to_owned()),
         }
     }
-    let store = store.ok_or_else(|| usage("`vcs lock` needs `--store <dependency-store>`"))?;
     let out = out.ok_or_else(|| usage("`vcs lock` needs `-o <lockfile>`"))?;
-    if names.is_empty() {
-        return Err(usage("`vcs lock` needs at least one declaration name"));
+    if names.is_empty() && !all {
+        return Err(usage("`vcs lock` needs at least one declaration name, or `--all`"));
     }
+    if all && !names.is_empty() {
+        return Err(usage("`--all` pins every declaration; it cannot be combined with names"));
+    }
+
+    // Where the store is: a directory the caller has, or a commit of a
+    // repository the cache fetches (§7.3). A lock holds a commit hash and
+    // never a name, so `--ref` is resolved once, here, and the hash written.
+    let origin = match (&git, &store) {
+        (Some(_), Some(_)) => {
+            return Err(usage("`--git` and `--store` both say where the store is; give one"));
+        }
+        (None, None) => return Err(usage("`vcs lock` needs `--store <dir>` or `--git <url>`")),
+        (None, Some(_)) => {
+            if rev.is_some() || git_ref.is_some() || path.is_some() {
+                return Err(usage("`--rev`, `--ref` and `--path` go with `--git`"));
+            }
+            None
+        }
+        (Some(url), None) => {
+            let rev = match (rev, git_ref) {
+                (Some(_), Some(_)) => return Err(usage("give `--rev` or `--ref`, not both")),
+                (Some(rev), None) => rev,
+                (None, Some(name)) => {
+                    let hash = vcs_origin::resolve_ref(url, &name).map_err(environment)?;
+                    println!("{name} is {hash}");
+                    hash
+                }
+                (None, None) => {
+                    return Err(usage("`--git` needs `--rev <hash>` or `--ref <name>`"));
+                }
+            };
+            Some(Origin {
+                git: url.clone(),
+                rev,
+                path: path.unwrap_or_else(|| DEFAULT_STORE.to_owned()),
+            })
+        }
+    };
+    let store = match &origin {
+        Some(origin) => vcs_origin::ensure(origin).map_err(environment)?,
+        None => store.expect("checked above: either a store or an origin"),
+    };
 
     let manifest = Manifest::load(&store)
         .map_err(|e| environment(format!("cannot read manifest at `{}`: {e}", store.display())))?;
     let mut lock = Lock::load(&out)
         .map_err(|e| environment(format!("cannot read lock file at `{}`: {e}", out.display())))?;
+    // A lock addresses one store: pins into one would mean nothing in another.
+    if !lock.is_empty() && lock.origin() != origin.as_ref() {
+        return Err(refused(format!(
+            "`{}` already pins a different store; delete it to lock a new one, or pick another \
+             `-o`",
+            out.display()
+        )));
+    }
+    lock.set_origin(origin).map_err(refused)?;
 
-    for name in &names {
+    let wanted: Vec<String> = if all {
+        let mut every: Vec<String> = manifest.entries().map(|(_, e)| e.name.clone()).collect();
+        every.sort();
+        every
+    } else {
+        names
+    };
+    if wanted.is_empty() {
+        return Err(refused(format!("nothing is published at `{}`", store.display())));
+    }
+    for name in &wanted {
         let matches: Vec<(&SigId, &ManifestEntry)> =
             manifest.entries().filter(|(_, entry)| &entry.name == name).collect();
         match matches.as_slice() {

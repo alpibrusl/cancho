@@ -33,12 +33,69 @@ pub struct LockEntry {
     pub source_hash: String,
 }
 
+/// Where the store a [`Lock`] pins lives, when it is not a directory the
+/// caller already has (`docs/package-system.md` §7.3).
+///
+/// A lock addresses exactly one store, so one origin per lock. `rev` is a
+/// full commit hash and never a name: a branch or tag moves, and a lock
+/// that followed one would be the automatic substitution §4.5 exists to
+/// rule out. Nothing here is trusted for *content* -- every pin also
+/// carries the hash of its source, and `vcs fetch` re-checks that -- the
+/// commit only decides which directory to look in.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Origin {
+    /// A git URL or local path, as `git fetch` accepts it.
+    pub git: String,
+    /// The commit: 40 lowercase hex digits (SHA-1) or 64 (SHA-256).
+    pub rev: String,
+    /// The store's directory inside the repository.
+    #[serde(default = "default_origin_path")]
+    pub path: String,
+}
+
+fn default_origin_path() -> String {
+    ".lex-sys-vcs".to_owned()
+}
+
+impl Origin {
+    /// Refuse an origin that is not a pin: a ref instead of a hash, a path
+    /// that leaves the repository, or a URL that git would read as an option.
+    pub fn validate(&self) -> Result<(), String> {
+        let hex = |s: &str| s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+        if !(self.rev.len() == 40 || self.rev.len() == 64) || !hex(&self.rev) {
+            return Err(format!(
+                "origin `rev` must be a full commit hash (40 or 64 lowercase hex digits), found `{}`; \
+                 a branch or tag name moves, so a lock never holds one",
+                self.rev
+            ));
+        }
+        if self.git.is_empty() || self.git.starts_with('-') || self.git.starts_with("ext::") {
+            return Err(format!("origin `git` is not a repository location: `{}`", self.git));
+        }
+        let path = Path::new(&self.path);
+        let bad = self.path.is_empty()
+            || path.is_absolute()
+            || path.components().any(|c| !matches!(c, std::path::Component::Normal(_)));
+        if bad {
+            return Err(format!(
+                "origin `path` must be a relative path inside the repository, found `{}`",
+                self.path
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// `name -> LockEntry`, one consumer's own record of which dependency it
 /// meant when it wrote `import <name>;` — not a store-wide concept, and
 /// not shared between programs the way a store is shared between
 /// consumers.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Lock {
+    /// Where the store is, when it is somewhere else (§7.3). Absent for a
+    /// lock written against a local directory, as every lock was before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    origin: Option<Origin>,
     entries: BTreeMap<String, LockEntry>,
 }
 
@@ -50,6 +107,8 @@ pub enum LockError {
     /// corruption or a hand-edited file, the same failure mode
     /// `ManifestError::Malformed` names for a manifest.
     Malformed(serde_json::Error),
+    /// The file parsed, but its `origin` is not a pin ([`Origin::validate`]).
+    BadOrigin(String),
 }
 
 impl From<io::Error> for LockError {
@@ -63,6 +122,7 @@ impl std::fmt::Display for LockError {
         match self {
             LockError::Io(e) => write!(f, "{e}"),
             LockError::Malformed(e) => write!(f, "malformed lock file: {e}"),
+            LockError::BadOrigin(why) => write!(f, "bad origin in lock file: {why}"),
         }
     }
 }
@@ -80,7 +140,25 @@ impl Lock {
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Self::default()),
             Err(e) => return Err(e.into()),
         };
-        serde_json::from_slice(&bytes).map_err(LockError::Malformed)
+        let lock: Self = serde_json::from_slice(&bytes).map_err(LockError::Malformed)?;
+        if let Some(origin) = &lock.origin {
+            origin.validate().map_err(LockError::BadOrigin)?;
+        }
+        Ok(lock)
+    }
+
+    /// Where this lock's store lives, if it says.
+    pub fn origin(&self) -> Option<&Origin> {
+        self.origin.as_ref()
+    }
+
+    /// Record where the store lives, refusing anything that is not a pin.
+    pub fn set_origin(&mut self, origin: Option<Origin>) -> Result<(), String> {
+        if let Some(o) = &origin {
+            o.validate()?;
+        }
+        self.origin = origin;
+        Ok(())
     }
 
     /// Persist this lock to `path`. Atomic via a same-directory temp file
@@ -118,5 +196,54 @@ impl Lock {
 
     pub fn len(&self) -> usize {
         self.entries.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn origin(rev: &str, path: &str) -> Origin {
+        Origin { git: "https://example.com/r".into(), rev: rev.into(), path: path.into() }
+    }
+
+    const SHA1: &str = "c0c3852541e927c3e893331207f1a0aaf184bc2e";
+
+    #[test]
+    fn an_origin_is_a_full_commit_hash_and_a_path_inside_the_repository() {
+        assert!(origin(SHA1, ".lex-sys-vcs/log").validate().is_ok());
+        assert!(origin(&"a".repeat(64), "s").validate().is_ok());
+        for rev in
+            ["main", "v1.0", "c0c3852", &SHA1.to_uppercase(), &SHA1[..39], &"g".repeat(40), ""]
+        {
+            assert!(origin(rev, "s").validate().is_err(), "`{rev}` is not a pin");
+        }
+        for path in ["", "/abs", "../up", "a/../b", "./x", "a//b/.."] {
+            assert!(origin(SHA1, path).validate().is_err(), "`{path}` leaves the repository");
+        }
+        for url in ["", "-oProxyCommand=x", "ext::sh -c x"] {
+            let o = Origin { git: url.into(), rev: SHA1.into(), path: "s".into() };
+            assert!(o.validate().is_err(), "`{url}` is not a repository location");
+        }
+    }
+
+    #[test]
+    fn a_lock_without_an_origin_loads_and_saves_as_before_and_one_with_it_round_trips() {
+        let dir = std::env::temp_dir().join(format!("lex-sys-lock-origin-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let path = dir.join("l.lock");
+        let mut lock = Lock::default();
+        lock.save(&path).unwrap();
+        assert!(!fs::read_to_string(&path).unwrap().contains("origin"), "no origin, no field");
+        assert!(Lock::load(&path).unwrap().origin().is_none());
+
+        lock.set_origin(Some(origin(SHA1, "s"))).unwrap();
+        lock.save(&path).unwrap();
+        assert_eq!(Lock::load(&path).unwrap().origin(), Some(&origin(SHA1, "s")));
+
+        assert!(lock.set_origin(Some(origin("main", "s"))).is_err());
+        fs::write(&path, fs::read_to_string(&path).unwrap().replace(SHA1, "main")).unwrap();
+        assert!(matches!(Lock::load(&path), Err(LockError::BadOrigin(_))));
+        let _ = fs::remove_dir_all(&dir);
     }
 }

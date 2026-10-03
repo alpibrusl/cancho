@@ -775,3 +775,197 @@ file as `<source_hash>.ls` and two fetches of the same content
 overwrite the same path rather than writing two different ones.
 `examples/README.md` and the conformance test harness
 (`fetch_net_dependencies`) both moved to that shape.
+
+## 7. Packages across repositories
+
+> **Status: design, written before the code. Steps 1 and 2 below are what
+> the PR carrying this section builds; everything after them is named and
+> not built.**
+
+### 7.1 What asked for it
+
+Sections 4 to 6 built a package system that works inside one checkout:
+`vcs fetch` takes `--store <dir>`, a directory on the same disk, and the
+only example of a package used from another program is `examples/api`
+consuming `packages/http-server` from the *same repository*. The first
+programs written outside this repository did not use it. `lexsys-hooks`
+(a webhook service, four sibling repositories) builds like this:
+
+```sh
+git clone lex-sys; git clone lexsys-log; git clone lexsys-hooks
+(cd lex-sys && git checkout $LEX_SYS_REV && cargo build --release)    # the compiler
+(cd lexsys-log && git checkout $LOG_REV)                              # a library
+scripts/build.sh   # names every file of http-server and of the log by relative path
+```
+
+Two SHAs in CI, three clones, a file list written by hand, and no check
+that what was cloned is what the author tested except the SHA. That is
+exactly the ritual a lock file exists to remove, and `lexsys-web`,
+`lexsys-pg` and `lexsys-cache` each repeat part of it (`lexsys-web` needs
+`lexsys-schema` and `http-server`). The two-asker bar of `CONTRIBUTING.md`
+is cleared by a count, not an argument.
+
+Trying to use the existing machinery for `lexsys-log` found three things,
+each reproduced rather than assumed:
+
+1. **A lock says what, not where.** `Lock` holds `name -> (sig_id,
+   stage_id, source_hash)`; `vcs fetch` takes a local directory. The only
+   way to get the store is to clone its repository by hand.
+2. **`lexsys-log` cannot be published.** `vcs publish crc.ls` fails with
+   ``internal: `crc_table` has an identity but no lowered function or
+   extern``. `lex-sys-id::identify` gives a `static` two identities (its
+   type and its body, `compile-time-data.md` §2) and `cmd_publish` reads a
+   declaration's effects from a lowered function or an extern, which a
+   `static` is neither. This is the same shape as the `extern fn` gap §6
+   records for `net.sockets`, one declaration kind further along.
+3. **One file per store.** `lexsys-log` is four modules (`crc`, `record`,
+   `segment`, `log`), each importing the one before. Published one file at
+   a time that is four `vcs publish` runs in dependency order, each
+   `--requires` taking a lock file for the one before; correct, and a ritual
+   nobody will perform by hand on every commit.
+
+### 7.2 What `lex-lang` already learned about this
+
+`lex pkg` is a working package manager that fetches from git and from a
+hosted registry, and it has paid for lessons this design would otherwise
+repeat. Read from `crates/lex-syntax/src/workspace.rs`,
+`crates/lex-syntax/src/lock.rs` and `crates/lex-cli/src/pkg.rs`:
+
+| `lex-lang` | What happened | What this design does with it |
+|---|---|---|
+| A git dependency is `{ git, rev \| tag \| branch }` in `lex.toml`; the default is the branch head ("not reproducible — pin for releases") | A *moving* ref was cached under the package's name, so a checkout made once was read for months: a rename upstream was invisible and `lex check` reported `unknown_variant` against an interface that no longer existed (#1005) | A lock records a full commit hash and never a ref. A ref is resolved once, by the command that writes the lock, and the cache is keyed by the hash, so staleness cannot happen rather than being detected |
+| Resolving a moving ref ran `git ls-remote` once per import site | 13 `ls-remote`s of one repository for one small file, about two minutes (#1015); then a per-process answer cache, because CI running `lex check` per file went from 55 s to about 10 minutes | Nothing on the build path asks the network a question. `fetch` asks for a hash it already has, which is a directory lookup, and only goes to the network when the directory is missing |
+| `rev` could not be shallow-cloned: a full clone, then `checkout` | Cost grows with the dependency's history | `git fetch --depth 1 <url> <hash>` into a fresh repository (hosts that serve a commit by hash, which GitHub does), falling back to a full fetch only if that is refused |
+| Git dependencies carry **no lock entry**; "hosted verification resolves dependencies only through `lex.lock` pins into registry stores (it never fetches git)" (#944) | Two tiers: pinned-and-checkable (registry) and convenient-and-unpinned (git) | One tier. A pin is always a hash of source (`Lock`'s `source_hash`), so *the transport carries no trust* and git can be the transport: whatever git delivers is re-parsed, re-typechecked and re-hashed by `vcs fetch` exactly as a local store is |
+| `lex = "0.10.15"` as a toolchain floor in `[package]`, which nothing read until #803 | A dependency moved onto a newer stdlib, installed without complaint, and the mismatch surfaced as `unknown_field` errors naming a function nobody in the consuming repo had written; now `lex pkg install` refuses (`--ignore-lex-floor` to override) | **Not in this slice, and the reason it is the next one**: `hash-stability.md` is the same failure at a larger scale. Section 7.5 |
+| Prebuilt release tarballs with a `.sha256`, installed by `curl \| tar` in docs and CI | CI installs a pinned `lex` in seconds | Section 7.5; today a lex-sys consumer runs `cargo build --release` of the compiler in CI |
+| A hosted registry (archive download, immutable releases, signed contracts, `--trusted-keys`) | Real infrastructure, built after git | Out of scope, as §4.7 already argued: a registry would be a name-to-pin index in front of the same stores |
+| `import "pkg/module"` resolved by walking up to the nearest `lex.toml` | The compiler reads the manifest | **Deliberately not copied**: `modules.md` §4.2 and §6 above found that `import` needs no search path, and the compiler stays ignorant of where files came from |
+
+### 7.3 Step 1: an origin on the lock, and a fetch that can go and get it
+
+`Lock` gains one optional field, because a lock already addresses exactly
+one store (`vcs fetch --lock` takes one `--store`):
+
+```json
+{ "origin": { "git": "https://github.com/alpibrusl/lexsys-log",
+              "rev": "c0c3852541e927c3e893331207f1a0aaf184bc2e",
+              "path": ".lex-sys-vcs/log" },
+  "entries": { ... unchanged ... } }
+```
+
+* `rev` is a full commit hash (40 hex digits, or 64 for a SHA-256
+  repository) and nothing else. A branch or tag name is refused at the
+  point of writing and at the point of reading.
+* `path` is the store's directory inside the repository (default
+  `.lex-sys-vcs`).
+* An older lock without `origin` loads as before.
+
+**Commands.**
+
+* `vcs lock --git <url> --rev <hash> [--path <dir>] -o <file> (--all |
+  <name>...)` makes the store available (below), reads its manifest, and
+  writes the pins and the origin. `--ref <name>` in place of `--rev`
+  resolves the name once, through `git ls-remote`, prints the hash it
+  found, and writes the hash. `--all` pins every declaration of the store;
+  a library locked a name at a time is a list nobody will keep.
+* `vcs fetch --lock <file> -o <dir>` and `vcs resolve --lock <file>`: when
+  the lock has an origin and no `--store` is given, the store is the cached
+  checkout's `<path>`. `--store` still wins when given, for working on a
+  dependency from a local checkout.
+* **Closure.** A `Requirement` (§4.6) carries a `Lock`, so a package that
+  requires a package in *another repository* records that lock's origin,
+  and `resolve_own_requirements` uses the origin when there is one and the
+  relative `store` path otherwise. Same-repository requirements, which is
+  all of `packages/` and all of what step 2 publishes, keep working inside
+  the checkout unchanged.
+
+**The cache.** `$LEX_SYS_CACHE`, else `$XDG_CACHE_HOME/lex-sys`, else
+`$HOME/.cache/lex-sys`; a checkout lives at `git/<blake3(url)[..16]>/<rev>/`.
+It is created once, in a temporary directory beside its destination
+(`git init`; `git fetch --depth 1 <url> <rev>`; `git checkout --detach
+FETCH_HEAD`; `git rev-parse HEAD` must equal `rev`), and renamed into place,
+so a concurrent or interrupted fetch leaves nothing half-made and a
+directory that exists is complete. It is never updated: a different `rev`
+is a different directory. Nothing evicts it; `rm -r` does.
+
+**Why this is not "running the dependency's code"** (§4.3). `git` is run
+with `core.hooksPath` pointed at nothing, `GIT_TERMINAL_PROMPT=0`, and no
+submodule is initialised; the checkout is read, never built or executed.
+Whatever the transport delivers is then held to the same recheck as a
+local store: re-parsed, re-typechecked, and every identity recomputed
+against the manifest and the lock. A hostile mirror can refuse to serve;
+it cannot make `fetch` accept different source, because the pin is a hash
+of the source and the commit hash only decides *which directory to look
+in*.
+
+**What stays as it is.** No project file, no version string, no
+resolution of anything the lock does not name.
+
+### 7.4 Step 2: publishing a library
+
+1. **`static` is publishable.** A `static` has no effects (it is evaluated
+   at compile time and cannot call out), so `cmd_publish` gives it the
+   empty row instead of the internal error, and it is published and pinned
+   like any declaration. Private statics (`crc_table`) are published too,
+   as private functions already are; a consumer only ever names a public
+   one.
+2. **`vcs publish --dir <dir> --store <root>`** publishes every `.ls` file
+   of a directory, each into its own store `<root>/<module>`, in dependency
+   order. The order and the `--requires` are *derived*, not typed: each
+   file's module name and imports come from its parse, an import of another
+   file of the directory becomes a requirement on that file's store (a lock
+   of all its declarations, with a relative `store` path inside `<root>`),
+   an import of `std` needs `--std` as before, and any other import is
+   refused naming the file and the module. A cycle is refused.
+3. **Stores are regenerated, not appended to.** Publishing a changed
+   declaration into a store that already has it is refused today
+   (`vcs-publish.md` §5: incremental publish is not built), which would
+   make `--dir` unusable after the first edit. A directory publish removes
+   and rebuilds each module's store. This loses nothing a consumer holds:
+   its lock pins a commit of the repository, and the store *at that commit*
+   is what it fetches; the git history is the version history, which is
+   also what §4.1 said a version is (a label over hashes).
+4. **Deterministic.** Operations, manifests and blobs are content-addressed
+   and carry no times, so publishing the same directory twice writes the
+   same bytes; committing the store to the library's repository produces no
+   churn. (This is a claim and is a gate item below.)
+
+The store is committed to the library's repository, as `packages/*/
+.lex-sys-vcs` already is here. A CI check that the committed store matches
+`vcs publish --dir` of the source is natural and not part of this step.
+
+### 7.5 Not in this step, in the order I would take them
+
+3. **A project file** (`lex-sys.toml`: entry files, dependencies, the
+   compiler it was written for) read by `build`, `check` and `test`, so a
+   consumer's `scripts/build.sh` and its file list disappear, and a
+   module-level `lock` derived from the `import` lines.
+4. **A compiler pin that is checked.** `lex-lang`'s #803 is the argument:
+   a floor nobody read produced errors that named the wrong thing. For
+   lex-sys the needed fact is stronger than a floor, because
+   `hash-stability.md` measured that most of this repository's history does
+   not type-check under today's compiler: the project file records the
+   compiler's source revision, `lex-sys --version` reports its own, and
+   `build` refuses a mismatch with a message that says so. This needs
+   `lex-sys` to *know* its revision, which it does not today.
+5. **Prebuilt compiler releases**, so CI installs a pinned compiler in
+   seconds instead of running `cargo build --release` each time.
+6. **`update` shows the authority diff** (§4.4): what a bumped dependency
+   can newly do, from `lex-sys authority --output json` of both sides.
+
+### 7.6 The gate, fixed before the build
+
+Steps 1 and 2 are done when all of these hold, measured, on the
+`lexsys-hooks` / `lexsys-log` / `lex-sys` triple, and a gate that fails is
+reported as failed, not loosened:
+
+| | Claim | How it is checked |
+|---|---|---|
+| G1 | **`lexsys-hooks` builds from its own repository plus the compiler**: no `../lexsys-log`, no `../lex-sys` source tree for the packages | a clean directory containing a clone of `lexsys-hooks` and nothing else; `lex-sys vcs lock --git … --all`, `vcs fetch`, `build`; then `idempotency_test` and `chaos` pass on that binary |
+| G2 | **A tampered checkout is refused** | one byte changed in a cached source blob (and, separately, in the manifest) before `fetch`: nonzero exit, nothing written to `-o` |
+| G3 | **A cache hit needs no network and no `git`** | the second `fetch` run with `PATH` stripped of `git` succeeds |
+| G4 | **A pin is a hash** | `--rev main` is refused; a lock edited to hold a branch name is refused at load; moving a branch of the origin changes nothing |
+| G5 | **`lexsys-log` publishes, resolves and is deterministic** | `vcs publish --dir src` on all four modules succeeds including `static`; `vcs resolve` of the closure passes; publishing twice gives byte-identical trees; publishing after editing a function succeeds |
+| G6 | **Mutation survivors are classified**, as for hooks: remove each check (hash length, `rev-parse`, tamper recheck, atomic rename, origin-wins in closure) and the test that dies is named | a table in the section that records the result |
+| G7 | **Cost is reported, not gated**: cold fetch of `lexsys-log` and of `http-server`, cache-hit fetch, `publish --dir` time | numbers in this section |

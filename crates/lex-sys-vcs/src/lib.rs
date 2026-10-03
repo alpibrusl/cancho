@@ -42,7 +42,7 @@ pub use blobs::{BlobError, Blobs};
 pub use canonical::canonical_bytes;
 pub use ed25519_dalek::{SigningKey, VerifyingKey};
 pub use gate::{GateDiagnostic, check_candidate};
-pub use lock::{Lock, LockEntry, LockError};
+pub use lock::{Lock, LockEntry, LockError, Origin};
 pub use manifest::{Manifest, ManifestEntry, ManifestError};
 pub use op_log::{OpLog, OpLogError};
 pub use operation::{
