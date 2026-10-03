@@ -85,6 +85,14 @@ const ALLOWED: &[(&str, &str)] = &[
     // migrated onto `std.math` now; `append`/`put` is not yet, for the
     // same reason `nat_of`/`port_of` above is not.
     ("examples/lines.ls", "append"),
+    // `docs/websocket-spike.md` §10: the spike's answer builder is a
+    // third copy of the same byte-blit loop. `examples/ocpp_ws` is a
+    // multi-file `--std` build with no package dependency, and the
+    // spike is measured on what it carries itself; pulling
+    // `net.sockets` in for four lines would add a network package to a
+    // program whose point is its authority report. Same open question
+    // as `append`/`put` above.
+    ("examples/ocpp_ws/ocpp.ls", "put"),
     ("packages/net-sockets/sockets.ls", "put"),
 ];
 

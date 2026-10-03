@@ -239,7 +239,7 @@ documented anywhere —
 |---|---|---|
 | ~~`abs`~~ | `examples/rational.ls`, `std/math.ls` | **Migrated** — `rational.ls` now `import`s `std.math` and calls `math.abs`; its own copy is gone |
 | ~~`larger` / `max`~~ | `examples/tree.ls`, `std/math.ls` | **Migrated** — `tree.ls` now `import`s `std.math` and calls `math.max`; its own copy is gone |
-| `append` / `put` | `examples/lines.ls`, `packages/net-sockets/sockets.ls` | Yes — `net.sockets.put`, same byte-blit loop, different name |
+| `append` / `put` | `examples/lines.ls`, `packages/net-sockets/sockets.ls`, `examples/ocpp_ws/ocpp.ls` (the WebSocket spike's third copy, kept for the same reason) | Yes — `net.sockets.put`, same byte-blit loop, different name |
 
 — plus one the §3 hunt's own scope already should have caught and
 didn't, because it only hashed the four files each duplicate cluster
