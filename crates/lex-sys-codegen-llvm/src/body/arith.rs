@@ -89,6 +89,7 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::Accept
                     | Builtin::ConnNonblocking
                     | Builtin::ConnNodelay
+                    | Builtin::ConnConnectStatus
                     | Builtin::ListenerNonblocking
                     | Builtin::ConnClose
                     | Builtin::ListenerClose

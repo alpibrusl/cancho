@@ -360,6 +360,38 @@ impl<'a> FuncEmitter<'a> {
         Ok(vec![LValue::Reg(ok)])
     }
 
+    /// `conn_connect_status` (`docs/native-sockets.md` §10.6): `SO_ERROR` of the
+    /// connection, `0` once a non-blocking `connect` has succeeded, the `errno` it failed
+    /// with otherwise, or the `errno` of `getsockopt` itself if that fails.
+    pub(crate) fn connect_status(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        let os = self.os();
+        let fd = self.handle_fd(&args[0]);
+        let value = self.fresh();
+        self.hoist(format!("  {value} = alloca i32\n"));
+        let length = self.fresh();
+        self.hoist(format!("  {length} = alloca i32\n"));
+        self.out.push_str(&format!("  store i32 0, ptr {value}\n"));
+        self.out.push_str(&format!("  store i32 4, ptr {length}\n"));
+        let result = self.fresh();
+        self.out.push_str(&format!(
+            "  {result} = call i32 @getsockopt(i32 {fd}, i32 {}, i32 {}, ptr {value}, ptr {length})\n",
+            os.sol_socket as i32, os.so_error as i32
+        ));
+        let reason = self.errno();
+        let pending32 = self.fresh();
+        self.out.push_str(&format!("  {pending32} = load i32, ptr {value}\n"));
+        let pending = self.fresh();
+        self.out.push_str(&format!("  {pending} = sext i32 {pending32} to i64\n"));
+        let failed = self.fresh();
+        self.out.push_str(&format!("  {failed} = icmp slt i32 {result}, 0\n"));
+        let answer = self.fresh();
+        self.out.push_str(&format!(
+            "  {answer} = select i1 {failed}, i64 {}, i64 {pending}\n",
+            operand(&reason)
+        ));
+        Ok(vec![LValue::Reg(answer)])
+    }
+
     /// `conn_nodelay`: `TCP_NODELAY` on (`IPPROTO_TCP` is 6 and `TCP_NODELAY` is 1 on
     /// Linux and on Darwin). `0` on success, otherwise the `errno`.
     pub(crate) fn nodelay(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {

@@ -474,6 +474,25 @@ Section 5 chose a **monotonic** clock for timeouts and said why: a wall clock th
 
 Verified by `the_wall_clock_reads_unix_milliseconds`, which runs a program on both backends and requires the number it prints to lie between two readings of the host's clock taken either side of the run; changing either backend to read the monotonic clock makes it fail (checked on each). **Not verified:** Darwin, where `CLOCK_REALTIME` is 0 by the platform headers and not by a run.
 
+### 10.6 `tcp_connect_start`: what a delivery service measured
+
+`tcp_connect` waits until the kernel has an answer. For a server that dials other people (`lexsys-hooks` delivers webhooks) that is the whole service stopping for as long as one peer takes: a receiver whose accept queue is full makes the kernel drop the SYN, and the `connect` retries for minutes. Measured in `lexsys-hooks` (`docs/design.md` section 15), `POST /events` was held for **10 s or more** by one such endpoint, and for 255 ms a request by an endpoint that merely answered after 300 ms, because the attempt ran on the thread that serves ingest. The read side already had a remedy (a `Poller` and a deadline); the connect did not.
+
+Two builtins, both edition 5:
+
+```
+tcp_connect_start(net, host, port) -> Dialed       // [net_out(bound)], like tcp_connect
+conn_connect_status(&!Conn)        -> int          // [], 0 connected, or the errno
+```
+
+`tcp_connect_start` is `tcp_connect` with one change: the socket is made non-blocking **before** `connect`, and an answer of `EINPROGRESS` (115 on Linux, 36 on Darwin) is a success, not a failure. The `Conn` it answers is non-blocking and may not be connected yet: register it with a `Poller` for *writable* (`events` 2), and when the poller reports it, `conn_connect_status` reads `SO_ERROR`: `0` means connected, anything else is the `errno` the connection failed with (`111`, refused, for a closed port). It is the same authority as `tcp_connect` (`net_out("host:port")`, nothing foreign; checked by a conformance test), and the `Dialed` it answers has the same two leaves; a refusal that the kernel reports at once comes back as `Failed(errno)`, one it reports later comes through `conn_connect_status`.
+
+**Call `conn_connect_status` only after the poller has said writable (or hung up).** Before that `SO_ERROR` is `0` whether or not the connection is made, and the builtin has no way to say "not yet" without inventing a sentinel, which this document has argued against throughout. The protocol is the one every non-blocking `connect` has had since 4.2BSD, written as two typed calls.
+
+**A name is still resolved by a blocking call.** `getaddrinfo` has no non-blocking form in libc; `tcp_connect_start` calls it as `tcp_connect` does, so a *host name* can still stall the caller for as long as the resolver takes, and an **IP literal** cannot (it resolves without a lookup). A service that needs names without stalling needs a resolver of its own, which is not built.
+
+`std.conns.connect_status(table, slot)` is the same call for a connection held in a `Table`. Verified, on both backends: `a_started_connection_works_once_it_is_writable` (writable, status `0`, bytes both ways); `a_started_connection_to_a_closed_port_reports_the_errno` (a positive errno, from the call or from the status); `a_started_connection_does_not_wait_for_a_peer_that_never_answers` (the test fills a listener's accept queue until a connect no longer completes, then runs a program that starts a connection to it and must exit within seconds: a blocking `connect` would still be waiting); and the authority report. Six mutants (no `O_NONBLOCK` before `connect`, `EINPROGRESS` treated as a failure, the status always `0`, each on each backend) are all killed. **Not verified:** Darwin. Its `EINPROGRESS` (36), `SOL_SOCKET` (`0xffff`) and `SO_ERROR` (`0x1007`) are from the platform headers, not from a run.
+
 ## 11. `conn_nodelay`: what a proxy found it needed
 
 A connection pooler for PostgreSQL (`lexsys-pg`, `docs/pooler.md`) forwards what one peer sends to another. Its first slices ran with no way to set a socket

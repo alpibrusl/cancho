@@ -902,6 +902,257 @@ fn a_client_reports_its_host_and_no_ffi() {
     assert!(!json.contains("\"ffi\""), "no foreign code anywhere:\n{json}");
 }
 
+/// `tcp_connect_start` (`docs/native-sockets.md` §10.6): dial, watch the connection for
+/// *writable*, ask `conn_connect_status`, and only then use it.
+const DIAL_START: &str = r#"
+fn run(bound: Net("BOUND"), io: Io) -> [] int {
+    var status = 1;
+    borrow bound as &n in {
+        match tcp_connect_start(n, "127.0.0.1", PORT) {
+            Dialed::Ok(c) => {
+                var conn = c;
+                match poller_new() {
+                    Polling::Ok(p0) => {
+                        var poller = p0;
+                        borrow mut conn as &!ch in {
+                            borrow mut poller as &!ph in {
+                                poller_add_conn(ph, ch, 1, 2);
+                                region a {
+                                    var ev = alloc_slice[a](4, 0);
+                                    let ready = poller_wait(ph, ev, 5000);
+                                    if ready < 1 {
+                                        status = 3;
+                                    } else if conn_connect_status(ch) != 0 {
+                                        status = 4;
+                                    } else {
+                                        match conn_write(ch, "ping") {
+                                            Sent::Wrote(w) => {
+                                                poller_modify(ph, ch, 1, 1);
+                                                let again = poller_wait(ph, ev, 5000);
+                                                var buf = alloc_slice[a](16, byte_of(0));
+                                                match conn_read(ch, buf) {
+                                                    Received::Data(k) => {
+                                                        if again > 0 && k == 4 && int_of(buf[0]) == 80 { status = 0; }
+                                                    }
+                                                    Received::End => { status = 5; }
+                                                    Received::Again => { status = 6; }
+                                                    Received::Failed(e) => { status = 7; }
+                                                }
+                                            }
+                                            Sent::Again => { status = 8; }
+                                            Sent::Failed(e) => { status = 9; }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        poller_close(poller);
+                    }
+                    Polling::Failed(e) => { status = 2; }
+                }
+                conn_close(conn);
+            }
+            Dialed::Failed(e) => { status = 2; }
+        }
+    }
+    release(bound);
+    release(io);
+    return status;
+}
+"#;
+
+/// A connection started with `tcp_connect_start` is usable once the kernel says writable
+/// and `conn_connect_status` says `0`: it carries bytes both ways, on both backends.
+#[test]
+fn a_started_connection_works_once_it_is_writable() {
+    for backend in BACKENDS {
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = server.local_addr().unwrap().port();
+        let dir = scratch(&format!("sockets-start-{backend}"));
+        let exe = build(
+            &dir,
+            "start",
+            &dial_program(port, &format!("127.0.0.1:{port}"), DIAL_START),
+            backend,
+        );
+        let peer = std::thread::spawn(move || {
+            use std::io::Write as _;
+            let (mut stream, _) = server.accept().unwrap();
+            let mut request = [0u8; 4];
+            stream.read_exact(&mut request).unwrap();
+            stream.write_all(&request.to_ascii_uppercase()).unwrap();
+        });
+        let run = Command::new(&exe).output().expect("the program runs");
+        assert_eq!(
+            run.status.code(),
+            Some(0),
+            "{backend}: {}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        peer.join().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+const START_REFUSED: &str = r#"
+fn run(bound: Net("BOUND"), io: Io) -> [] int {
+    var status = 1;
+    borrow bound as &n in {
+        match tcp_connect_start(n, "127.0.0.1", PORT) {
+            // Refused at once is as good as refused later: a positive `errno` either way.
+            Dialed::Failed(e) => { if e > 0 { status = 0; } }
+            Dialed::Ok(c) => {
+                var conn = c;
+                match poller_new() {
+                    Polling::Ok(p0) => {
+                        var poller = p0;
+                        borrow mut conn as &!ch in {
+                            borrow mut poller as &!ph in {
+                                poller_add_conn(ph, ch, 1, 2);
+                                region a {
+                                    var ev = alloc_slice[a](4, 0);
+                                    let ready = poller_wait(ph, ev, 5000);
+                                    if ready > 0 && conn_connect_status(ch) > 0 { status = 0; }
+                                }
+                            }
+                        }
+                        poller_close(poller);
+                    }
+                    Polling::Failed(e) => { status = 2; }
+                }
+                conn_close(conn);
+            }
+        }
+    }
+    release(bound);
+    release(io);
+    return status;
+}
+"#;
+
+/// Nothing listening: the refusal arrives as a positive `errno`, from `tcp_connect_start`
+/// itself or from `conn_connect_status` after the poller reports the connection, and never
+/// as a connection that looks made.
+#[test]
+fn a_started_connection_to_a_closed_port_reports_the_errno() {
+    for backend in BACKENDS {
+        let port = free_port();
+        let dir = scratch(&format!("sockets-start-refused-{backend}"));
+        let exe = build(
+            &dir,
+            "refused",
+            &dial_program(port, &format!("127.0.0.1:{port}"), START_REFUSED),
+            backend,
+        );
+        let run = Command::new(&exe).output().expect("the program runs");
+        assert_eq!(run.status.code(), Some(0), "{backend}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+const START_FULL: &str = r#"
+fn run(bound: Net("BOUND"), io: Io) -> [] int {
+    var status = 1;
+    borrow bound as &n in {
+        match tcp_connect_start(n, "127.0.0.1", PORT) {
+            Dialed::Failed(e) => { status = 2; }
+            Dialed::Ok(c) => {
+                var conn = c;
+                match poller_new() {
+                    Polling::Ok(p0) => {
+                        var poller = p0;
+                        borrow mut conn as &!ch in {
+                            borrow mut poller as &!ph in {
+                                poller_add_conn(ph, ch, 1, 2);
+                                region a {
+                                    var ev = alloc_slice[a](4, 0);
+                                    // The handshake cannot finish, so a short wait reports nothing.
+                                    if poller_wait(ph, ev, 300) == 0 { status = 0; } else { status = 3; }
+                                }
+                            }
+                        }
+                        poller_close(poller);
+                    }
+                    Polling::Failed(e) => { status = 2; }
+                }
+                conn_close(conn);
+            }
+        }
+    }
+    release(bound);
+    release(io);
+    return status;
+}
+"#;
+
+/// The point of `tcp_connect_start`: against a listener whose accept queue is full -- the
+/// kernel drops the SYN and a blocking `connect` waits for as long as it retries -- it
+/// still answers at once, with a connection in progress. The program exits 0 within a few
+/// seconds; a blocking connect would not return in the minutes the kernel retries for.
+#[test]
+fn a_started_connection_does_not_wait_for_a_peer_that_never_answers() {
+    use std::net::{SocketAddr, TcpListener, TcpStream};
+    use std::time::{Duration, Instant};
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr: SocketAddr = listener.local_addr().unwrap();
+    // Fill the accept queue: connect, never accept, until a connect no longer completes.
+    let mut held = Vec::new();
+    loop {
+        match TcpStream::connect_timeout(&addr, Duration::from_millis(150)) {
+            Ok(stream) => held.push(stream),
+            Err(_) => break,
+        }
+        assert!(
+            held.len() < 20_000,
+            "the accept queue never filled; this kernel is not the one the test needs"
+        );
+    }
+    for backend in BACKENDS {
+        let dir = scratch(&format!("sockets-start-full-{backend}"));
+        let exe = build(
+            &dir,
+            "full",
+            &dial_program(addr.port(), &format!("127.0.0.1:{}", addr.port()), START_FULL),
+            backend,
+        );
+        let started = Instant::now();
+        let mut child = Command::new(&exe).spawn().expect("the program runs");
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            if started.elapsed() > Duration::from_secs(20) {
+                let _ = child.kill();
+                panic!("{backend}: still waiting for the connection after 20 s: it blocked");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert_eq!(status.code(), Some(0), "{backend}: code {:?}", status.code());
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{backend}: took {:?}",
+            started.elapsed()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    drop(held);
+}
+
+/// Starting a connection spends the same authority as making one: the report names the
+/// host and port, `net_out` and nothing foreign.
+#[test]
+fn a_started_connection_reports_the_same_authority() {
+    let json =
+        authority_json(&dial_program(9, "127.0.0.1:9", DIAL_START), "sockets-start-authority");
+    assert!(
+        json.contains(
+            "{ \"name\": \"net_out\", \"argument\": \"127.0.0.1:9\", \"bounded\": true }"
+        ),
+        "{json}"
+    );
+    assert!(!json.contains("\"ffi\""), "{json}");
+}
+
 const POLLER: &str = r#"
 fn run(bound: Net("PORT"), io: Io) -> [] int {
     var score = 0;

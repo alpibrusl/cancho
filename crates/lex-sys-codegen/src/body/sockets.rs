@@ -15,7 +15,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         )
     }
 
-    fn socket_os(&self) -> SocketOs {
+    pub(crate) fn socket_os(&self) -> SocketOs {
         SocketOs::for_darwin(self.is_darwin())
     }
 
@@ -43,7 +43,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     /// eight in `x0..x7` and the ninth -- the one `va_arg` reads -- in the
     /// first stack slot. Everywhere else a variadic and a fixed call agree.
     /// One signature per module either way, because the module refuses two.
-    fn fcntl(&mut self, fd: Value, command: i64, argument: Value) -> Value {
+    pub(crate) fn fcntl(&mut self, fd: Value, command: i64, argument: Value) -> Value {
         let apple_arm64 = self.is_darwin()
             && matches!(
                 self.module.isa().triple().architecture,
@@ -367,6 +367,40 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         let failed = self.builder.ins().icmp_imm(IntCC::SignedLessThan, result, 0);
         let zero = self.builder.ins().iconst(types::I64, 0);
         vec![self.builder.ins().select(failed, reason, zero)]
+    }
+
+    /// `conn_connect_status` (`docs/native-sockets.md` §10.6): `SO_ERROR` of the
+    /// connection, which is `0` once a non-blocking `connect` has succeeded and the
+    /// `errno` it failed with otherwise. `0`, or the `errno`, also if `getsockopt` itself fails.
+    pub(crate) fn connect_status(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let os = self.socket_os();
+        let fd = self.handle_fd(args[0]);
+        let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            8,
+            2,
+        ));
+        let value = self.builder.ins().stack_addr(pointer, slot, 0);
+        // The value starts as 0 and the length as 4 (a C `int`); both are 32-bit cells.
+        let zero = self.builder.ins().iconst(types::I32, 0);
+        self.builder.ins().store(MemFlags::trusted(), zero, value, 0);
+        let four = self.builder.ins().iconst(types::I32, 4);
+        self.builder.ins().store(MemFlags::trusted(), four, value, 4);
+        let len_addr = self.builder.ins().iadd_imm(value, 4);
+        let level = self.builder.ins().iconst(types::I32, os.sol_socket);
+        let name = self.builder.ins().iconst(types::I32, os.so_error);
+        let result = self.libc_call(
+            "getsockopt",
+            &[types::I32, types::I32, types::I32, pointer, pointer],
+            &[types::I32],
+            &[fd, level, name, value, len_addr],
+        );
+        let reason = self.errno();
+        let pending = self.builder.ins().load(types::I32, MemFlags::trusted(), value, 0);
+        let pending = self.builder.ins().uextend(types::I64, pending);
+        let failed = self.builder.ins().icmp_imm(IntCC::SignedLessThan, result, 0);
+        vec![self.builder.ins().select(failed, reason, pending)]
     }
 
     /// `conn_nodelay`: `TCP_NODELAY` on (`IPPROTO_TCP` is 6 and `TCP_NODELAY` is 1

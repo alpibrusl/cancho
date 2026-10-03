@@ -257,7 +257,7 @@ impl<'a> FuncEmitter<'a> {
     /// path all store into one `alloca i64` result cell rather than
     /// merging through a block parameter.
     pub(crate) fn connect(&mut self, bound: &str, args: &[Expr]) -> Result<Vec<LValue>, String> {
-        let (fd, _) = self.connect_raw(bound, args, false)?;
+        let (fd, _) = self.connect_raw(bound, args, false, false)?;
         Ok(vec![fd])
     }
 
@@ -272,6 +272,7 @@ impl<'a> FuncEmitter<'a> {
         bound: &str,
         args: &[Expr],
         connection: bool,
+        start: bool,
     ) -> Result<(LValue, LValue), String> {
         let name = self.expr(&args[1])?;
         let port = self.scalar(&args[2])?;
@@ -394,12 +395,48 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("  br label %{merge}\n"));
 
         self.out.push_str(&format!("{have_socket}:\n"));
+        if start {
+            // `tcp_connect_start` (`docs/native-sockets.md` §10.6): non-blocking *before*
+            // `connect`, so that it answers `EINPROGRESS` instead of waiting.
+            let os = self.os();
+            let flags = self.fresh();
+            self.out.push_str(&format!(
+                "  {flags} = call i32 (i32, i32, ...) @fcntl(i32 {fd}, i32 {})\n",
+                lex_sys_ir::F_GETFL
+            ));
+            let set = self.fresh();
+            self.out.push_str(&format!("  {set} = or i32 {flags}, {}\n", os.o_nonblock as i32));
+            let ignored = self.fresh();
+            self.out.push_str(&format!(
+                "  {ignored} = call i32 (i32, i32, ...) @fcntl(i32 {fd}, i32 {}, i32 {set})\n",
+                lex_sys_ir::F_SETFL
+            ));
+        }
         let connect_result = self.fresh();
         self.out.push_str(&format!(
             "  {connect_result} = call i32 @connect(i32 {fd}, ptr {addr}, i32 {addrlen})\n"
         ));
-        let ok = self.fresh();
+        let mut ok = self.fresh();
         self.out.push_str(&format!("  {ok} = icmp eq i32 {connect_result}, 0\n"));
+        if start {
+            // A connection still in progress is a success here: the caller watches it for
+            // *writable* and asks `conn_connect_status`. `errno` is read before anything else runs.
+            let os = self.os();
+            let reason = self.errno();
+            let in_progress = self.fresh();
+            self.out.push_str(&format!(
+                "  {in_progress} = icmp eq i64 {}, {}\n",
+                operand(&reason),
+                os.einprogress
+            ));
+            let negative = self.fresh();
+            self.out.push_str(&format!("  {negative} = icmp slt i32 {connect_result}, 0\n"));
+            let pending = self.fresh();
+            self.out.push_str(&format!("  {pending} = and i1 {in_progress}, {negative}\n"));
+            let either = self.fresh();
+            self.out.push_str(&format!("  {either} = or i1 {ok}, {pending}\n"));
+            ok = either;
+        }
         self.out.push_str(&format!("  br i1 {ok}, label %{connected}, label %{not_connected}\n"));
 
         self.out.push_str(&format!("{connected}:\n"));
@@ -435,8 +472,9 @@ impl<'a> FuncEmitter<'a> {
         &mut self,
         bound: &str,
         args: &[Expr],
+        start: bool,
     ) -> Result<Vec<LValue>, String> {
-        let (fd, reason) = self.connect_raw(bound, args, true)?;
+        let (fd, reason) = self.connect_raw(bound, args, true, start)?;
         let failed = self.fresh();
         self.out.push_str(&format!("  {failed} = icmp slt i64 {}, 0\n", operand(&fd)));
         let tag = self.fresh();
