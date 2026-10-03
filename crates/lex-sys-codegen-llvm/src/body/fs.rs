@@ -205,9 +205,17 @@ impl<'a> FuncEmitter<'a> {
     /// descriptor *kept* rather than spent on one transfer and closed.
     /// What comes back is `Opened`'s three leaves: the tag, `Ok`'s
     /// descriptor, `Failed`'s reason.
-    pub(crate) fn open_file(&mut self, prefix: &str, args: &[Expr]) -> Result<Vec<LValue>, String> {
+    pub(crate) fn open_file(
+        &mut self,
+        prefix: &str,
+        mode: lex_sys_ir::OpenMode,
+        args: &[Expr],
+    ) -> Result<Vec<LValue>, String> {
         let path = self.expr(&args[1])?;
         let path = self.checked_path(prefix, &path)?;
+        if mode != lex_sys_ir::OpenMode::Read {
+            return Ok(self.open_with_fopen(&path, mode));
+        }
 
         let fd32 = self.fresh();
         self.out.push_str(&format!("  {fd32} = call i32 @open(ptr {path}, i32 0)\n"));

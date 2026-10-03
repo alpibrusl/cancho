@@ -46,6 +46,7 @@ mod corpus;
 mod differential;
 mod docs;
 mod duplication;
+mod file_writes;
 mod filesystem;
 mod floats;
 mod formatting;

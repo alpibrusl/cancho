@@ -749,7 +749,20 @@ impl<'a> FnLowering<'a> {
                     return self.file_op(op, args, span);
                 }
                 if Builtin::from_name(text) == Some(Builtin::OpenRead) {
-                    return self.open_read(args, span);
+                    return self.open_file(Builtin::OpenRead, args, span);
+                }
+                // `docs/file-writes.md` section 3: edition 5. `resolved`
+                // rather than the name, like `connect` below, so an earlier
+                // file's own `extern fn open_new` still reaches its
+                // `Extern` arm.
+                if let Resolved::Builtin(
+                    op @ (Builtin::OpenAppend
+                    | Builtin::OpenWrite
+                    | Builtin::OpenNew
+                    | Builtin::OpenRw),
+                ) = resolved
+                {
+                    return self.open_file(op, args, span);
                 }
                 // `docs/heap.md` §3: all three depend on the type being
                 // boxed, which no fixed signature has a parameter to name.

@@ -385,7 +385,7 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
         // spent at `open`, so re-attaching it here would mean a handle that
         // could not be passed to a function that had not been told where it
         // came from.
-        PRELUDE_FILE => Effects::plain(["file_read"]),
+        PRELUDE_FILE => Effects::plain(["file_read", "file_write"]),
         // `docs/native-sockets.md` §3: the same rule for the socket handles
         // -- the port was spent at `tcp_listen`, so the handle's own
         // labels carry no argument.
@@ -413,6 +413,7 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
                 "heap",
                 "args",
                 "file_read",
+                "file_write",
                 "conn_accept",
                 "conn_read",
                 "conn_write",
@@ -458,7 +459,7 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
                 // label that follows it. A function handed only a `File`
                 // still declares `file_read`, which is the case the
                 // authority report is for.
-                all.union(&Effects::plain(["file_read"]));
+                all.union(&Effects::plain(["file_read", "file_write"]));
                 all
             }
             _ => Effects::pure(),
@@ -538,6 +539,7 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     let clock_field = symbol("clock");
     let split_clock = symbol("Split");
     let attached = symbol("Attached");
+    let done = symbol("Done");
     let again_arm = symbol("Again");
     let data_arm = symbol("Data");
     let wrote_arm = symbol("Wrote");
@@ -596,6 +598,7 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     let clock_def = unifier.declare("Clock");
     let split_clock_def = unifier.declare("Split");
     let attached_def = unifier.declare("Attached");
+    let done_def = unifier.declare("Done");
 
     vec![
         TypeDef {
@@ -1055,6 +1058,22 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
                 (ok_arm, vec![Type::Named(conn_def, Vec::new())]),
                 (failed_arm, vec![Type::Int]),
             ]),
+            span,
+            since: 5,
+        },
+        // `docs/file-writes.md` section 4: what `file_write`, `file_sync`,
+        // `file_truncate` and `file_size` answer. `Ok` carries the byte
+        // count, the size, or `0`; `Failed` carries the `errno`, which a
+        // sync needs to keep (section 5.1).
+        TypeDef {
+            name: done,
+            def: done_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: None,
+            kind: DefKind::Enum(vec![(ok_arm, vec![Type::Int]), (failed_arm, vec![Type::Int])]),
             span,
             since: 5,
         },

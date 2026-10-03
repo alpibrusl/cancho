@@ -161,9 +161,9 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                 let (write, prefix, args) = (*write, prefix.clone(), args.clone());
                 self.file_op(write, &prefix, &args)
             }
-            Expr::OpenFile { prefix, args } => {
-                let (prefix, args) = (prefix.clone(), args.clone());
-                self.open_file(&prefix, &args)
+            Expr::OpenFile { prefix, mode, args } => {
+                let (prefix, mode, args) = (prefix.clone(), *mode, args.clone());
+                self.open_file(&prefix, mode, &args)
             }
             Expr::Connect { bound, args } => {
                 let (bound, args) = (bound.clone(), args.clone());
@@ -569,9 +569,22 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     }
                     // Like the two above: the prefix decides the path check,
                     // so it travels in its own node.
-                    Callee::Builtin(Builtin::OpenRead) => {
-                        unreachable!("`open_read` is lowered as `Expr::OpenFile`")
+                    Callee::Builtin(
+                        Builtin::OpenRead
+                        | Builtin::OpenAppend
+                        | Builtin::OpenWrite
+                        | Builtin::OpenNew
+                        | Builtin::OpenRw,
+                    ) => {
+                        unreachable!("an `open_*` is lowered as `Expr::OpenFile`")
                     }
+                    // `docs/file-writes.md` section 4: one libc call each.
+                    Callee::Builtin(Builtin::FileWrite) => self.file_write(&args),
+                    Callee::Builtin(Builtin::FilePwrite) => self.file_pwrite(&args),
+                    Callee::Builtin(Builtin::FilePread) => self.file_pread(&args),
+                    Callee::Builtin(Builtin::FileSync) => self.file_sync(&args),
+                    Callee::Builtin(Builtin::FileTruncate) => self.file_truncate(&args),
+                    Callee::Builtin(Builtin::FileSize) => self.file_size(&args),
                     // Like the two above: the bound travels with its own
                     // node (`docs/net.md` §4.1).
                     Callee::Builtin(Builtin::Connect) => {

@@ -76,6 +76,7 @@
 - [Whether std needs a line reader](line-reading.md)
 - [Bulk I/O](bulk-io.md)
 - [File handles](file-handles.md)
+- [File writes](file-writes.md)
 - [std.crypto: SHA-256](crypto.md)
 - [std.crypto: SHA-512](sha512.md)
 - [std.ed25519](ed25519.md)

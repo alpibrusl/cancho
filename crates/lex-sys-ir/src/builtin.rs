@@ -228,6 +228,29 @@ pub enum Builtin {
     /// nothing new to enforce it. The `int` is the outcome of `close(2)`,
     /// which can fail even though nothing can be done about it.
     Close,
+    /// `open_append`, `open_write`, `open_new` and `open_rw`
+    /// (`docs/file-writes.md` section 3): `open_read`'s shape, one for each
+    /// way a log opens a file. Checked at the call site for the reason
+    /// `open_read` is: the prefix lives in the capability's type.
+    OpenAppend,
+    OpenWrite,
+    OpenNew,
+    OpenRw,
+    /// `file_write(&!File, &[byte]) -> [file_write] Done`: one `write(2)`,
+    /// which may take fewer bytes than asked (section 4.1).
+    FileWrite,
+    /// `file_pwrite(&!File, at, &[byte]) -> [file_write] Done`: `pwrite(2)`.
+    /// On a handle opened for append it still appends (section 4.2).
+    FilePwrite,
+    /// `file_pread(&!File, at, &![byte]) -> [file_read] Read`: `pread(2)`.
+    FilePread,
+    /// `file_sync(&!File) -> [file_write] Done`: `fsync(2)` (section 5).
+    FileSync,
+    /// `file_truncate(&!File, len) -> [file_write] Done`: `ftruncate(2)`.
+    FileTruncate,
+    /// `file_size(&!File) -> [file_read] Done`: the length, with the cursor
+    /// left where it was (section 4.3).
+    FileSize,
     /// `fs_write(fs, path, bytes) -> [fs_write(p)] int` — write a whole file.
     FsWrite,
     /// `box(h, value) -> [heap] Box[T]` — one value, one allocation.
@@ -468,6 +491,16 @@ impl Builtin {
         Builtin::OpenRead,
         Builtin::ReadFile,
         Builtin::Close,
+        Builtin::OpenAppend,
+        Builtin::OpenWrite,
+        Builtin::OpenNew,
+        Builtin::OpenRw,
+        Builtin::FileWrite,
+        Builtin::FilePwrite,
+        Builtin::FilePread,
+        Builtin::FileSync,
+        Builtin::FileTruncate,
+        Builtin::FileSize,
         Builtin::Box,
         Builtin::Unbox,
         Builtin::Contents,
@@ -532,6 +565,16 @@ impl Builtin {
             Builtin::OpenRead => "open_read",
             Builtin::ReadFile => "file_read",
             Builtin::Close => "file_close",
+            Builtin::OpenAppend => "open_append",
+            Builtin::OpenWrite => "open_write",
+            Builtin::OpenNew => "open_new",
+            Builtin::OpenRw => "open_rw",
+            Builtin::FileWrite => "file_write",
+            Builtin::FilePwrite => "file_pwrite",
+            Builtin::FilePread => "file_pread",
+            Builtin::FileSync => "file_sync",
+            Builtin::FileTruncate => "file_truncate",
+            Builtin::FileSize => "file_size",
             Builtin::FsWrite => "fs_write",
             Builtin::Box => "box",
             Builtin::Unbox => "unbox",
@@ -615,6 +658,19 @@ impl Builtin {
             | Builtin::ForkClock
             | Builtin::CopyWithin
             | Builtin::ListenerClose => 5,
+            // `docs/file-writes.md`: edition 5, for the same reason --
+            // `file_write` and `open_new` are names a program may already
+            // declare against libc.
+            Builtin::OpenAppend
+            | Builtin::OpenWrite
+            | Builtin::OpenNew
+            | Builtin::OpenRw
+            | Builtin::FileWrite
+            | Builtin::FilePwrite
+            | Builtin::FilePread
+            | Builtin::FileSync
+            | Builtin::FileTruncate
+            | Builtin::FileSize => 5,
             _ => 1,
         }
     }
@@ -673,6 +729,10 @@ impl Builtin {
             Builtin::Write | Builtin::WriteErr => 2,
             // Two: the borrowed handle and the buffer's own region.
             Builtin::ReadFile => 2,
+            // The handle's region and the buffer's.
+            Builtin::FileWrite | Builtin::FilePwrite | Builtin::FilePread => 2,
+            // The handle's region alone.
+            Builtin::FileSync | Builtin::FileTruncate | Builtin::FileSize => 1,
             // The handle's region, and for `conn_read`/`conn_write` the
             // buffer's own.
             Builtin::ConnRead | Builtin::ConnWrite => 2,
@@ -758,7 +818,11 @@ impl Builtin {
             Builtin::FsRead | Builtin::FsWrite => (Vec::new(), Type::Unit),
             // Checked at the call site, exactly as `fs_read` is: the prefix
             // is in the capability's type (`docs/file-handles.md` §2.1).
-            Builtin::OpenRead => (Vec::new(), Type::Unit),
+            Builtin::OpenRead
+            | Builtin::OpenAppend
+            | Builtin::OpenWrite
+            | Builtin::OpenNew
+            | Builtin::OpenRw => (Vec::new(), Type::Unit),
             // The handle is borrowed uniquely because the read moves the
             // descriptor's offset, and the buffer uniquely because the read
             // writes into it -- the same pair `fs_read` takes, with the
@@ -777,6 +841,77 @@ impl Builtin {
                     },
                 ],
                 named(PRELUDE_READ),
+            ),
+            // `docs/file-writes.md` section 4. The handle is borrowed
+            // uniquely (a write moves the cursor and a sync is an
+            // operation on it), the source buffer shared and the
+            // destination buffer unique, the pair `conn_write` and
+            // `file_read` take.
+            Builtin::FileWrite => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_FILE)),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                named(PRELUDE_DONE),
+            ),
+            Builtin::FilePwrite => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_FILE)),
+                    },
+                    Type::Int,
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                named(PRELUDE_DONE),
+            ),
+            Builtin::FilePread => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_FILE)),
+                    },
+                    Type::Int,
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                named(PRELUDE_READ),
+            ),
+            Builtin::FileSync | Builtin::FileSize => (
+                vec![Type::Ref {
+                    unique: true,
+                    region: Region::Param(0),
+                    inner: Box::new(named(PRELUDE_FILE)),
+                }],
+                named(PRELUDE_DONE),
+            ),
+            Builtin::FileTruncate => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_FILE)),
+                    },
+                    Type::Int,
+                ],
+                named(PRELUDE_DONE),
             ),
             // By value: `close` ends the handle, which is what `res` means.
             Builtin::Close => (vec![named(PRELUDE_FILE)], Type::Int),
@@ -1056,7 +1191,16 @@ impl Builtin {
             // the directory. `close` performs nothing for the same reason
             // `release` does not -- ending a capability is not using one --
             // even though this one ends with a syscall.
-            Builtin::ReadFile => Effects::plain(["file_read"]),
+            Builtin::ReadFile | Builtin::FilePread | Builtin::FileSize => {
+                Effects::plain(["file_read"])
+            }
+            // `docs/file-writes.md` section 4: the same path-free rule on
+            // the write side. A sync is `file_write`, the conservative
+            // label (section 5.2).
+            Builtin::FileWrite
+            | Builtin::FilePwrite
+            | Builtin::FileSync
+            | Builtin::FileTruncate => Effects::plain(["file_write"]),
             // `docs/native-sockets.md` §3: path-free labels named after the
             // handle and the direction; `tcp_listen`'s row comes from the
             // bound at the call site.
