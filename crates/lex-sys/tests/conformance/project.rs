@@ -67,7 +67,10 @@ fn add_then_build_makes_a_program_that_uses_the_dependency() {
         "the top and, through its requirement, the base"
     );
 
+    // `build` installs first: with the fetched files gone it still builds.
+    std::fs::remove_dir_all(dir.join("build/deps")).unwrap();
     ok(&run(&dir, &cache, &[&"build"]));
+    assert_eq!(files_in(&dir.join("build/deps")).len(), 2, "build brought the dependencies back");
     let exe = dir.join("build/app");
     let result = Command::new(&exe).output().expect("the program runs");
     assert_eq!(result.status.code(), Some(60), "twice(2) is pick(2) * 2");
@@ -186,38 +189,58 @@ fn a_store_with_nothing_in_it_is_not_a_dependency() {
 #[test]
 fn a_project_file_that_is_not_one_is_refused() {
     let (dir, _repo, cache, rev) = project("project-bad-files");
-    let cases: Vec<(&str, String)> = vec![
-        ("an unknown key", format!("{PROJECT}lex = \"0.1\"\n")),
+    // Each case, and the part of the message that says why: not only that something refused.
+    let cases: Vec<(&str, String, &str)> = vec![
+        ("an unknown key in a program", format!("{PROJECT}lex = \"0.1\"\n"), "unknown field `lex`"),
+        ("an unknown section", format!("{PROJECT}\n[extra]\nx = 1\n"), "unknown field `extra`"),
         (
             "an unknown key in a package",
             PROJECT.replacen("name = \"app\"", "name = \"app\"\nversion = \"1\"", 1),
+            "unknown field `version`",
         ),
         (
             "a dependency rev that is a name",
             format!("{PROJECT}[dependencies.x]\ngit = \"https://example.com/r\"\nrev = \"main\"\n"),
+            "[dependencies.x]",
         ),
         (
             "a dependency path that leaves the repository",
             format!(
                 "{PROJECT}[dependencies.x]\ngit = \"https://example.com/r\"\nrev = \"{rev}\"\npath = \"../x\"\n"
             ),
+            "[dependencies.x]",
         ),
         (
             "a lex-sys that is not a hash",
             PROJECT.replacen("name = \"app\"", "name = \"app\"\nlex-sys = \"f804ce7\"", 1),
+            "full commit hash",
         ),
         (
             "two programs of one name",
             format!("{PROJECT}[[bin]]\nname = \"app\"\nsources = [\"src\"]\n"),
+            "must be unique",
         ),
-        ("a program with no sources", PROJECT.replace("sources = [\"src\"]", "sources = []")),
-        ("a bad package name", PROJECT.replace("name = \"app\"\n\n", "name = \"a b\"\n\n")),
+        (
+            "a program with no sources",
+            PROJECT.replace("sources = [\"src\"]", "sources = []"),
+            "has no `sources`",
+        ),
+        (
+            "a bad package name",
+            PROJECT.replace("name = \"app\"\n\n", "name = \"a b\"\n\n"),
+            "package name",
+        ),
     ];
-    for (what, text) in cases {
+    for (what, text, why) in cases {
         std::fs::write(dir.join("lex-sys.toml"), &text).unwrap();
         for command in ["install", "build"] {
             let out = run(&dir, &cache, &[&command]);
             assert!(!out.status.success(), "{what}: `{command}` should refuse:\n{text}");
+            assert!(
+                stderr(&out).contains(why),
+                "{what}: `{command}` should say `{why}`: {}",
+                stderr(&out)
+            );
         }
     }
 }
