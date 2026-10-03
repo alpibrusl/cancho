@@ -31,6 +31,8 @@ struct Project {
     dependencies: BTreeMap<String, Dependency>,
     #[serde(default, rename = "bin")]
     bins: Vec<Bin>,
+    #[serde(default, rename = "test")]
+    tests: Vec<TestSet>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -63,6 +65,16 @@ struct Bin {
     #[serde(default)]
     std: bool,
     out: Option<String>,
+}
+
+/// A set of files `lex-sys test` runs together: the `test_*` functions of these files, against the project's dependencies.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TestSet {
+    name: String,
+    sources: Vec<String>,
+    #[serde(default)]
+    std: bool,
 }
 
 impl Dependency {
@@ -134,6 +146,23 @@ fn load(root: &Path) -> Result<Project, Failure> {
                 "`{}`: [[bin]] `{}` has no `sources`",
                 path.display(),
                 bin.name
+            )));
+        }
+    }
+    let mut seen = BTreeSet::new();
+    for set in &project.tests {
+        if !name_ok(&set.name) || !seen.insert(set.name.clone()) {
+            return Err(refused(format!(
+                "`{}`: [[test]] name `{}` must be unique, of letters, digits, `-`, `_` or `.`",
+                path.display(),
+                set.name
+            )));
+        }
+        if set.sources.is_empty() {
+            return Err(refused(format!(
+                "`{}`: [[test]] `{}` has no `sources`",
+                path.display(),
+                set.name
             )));
         }
     }
@@ -216,11 +245,20 @@ fn short(rev: &str) -> &str {
 /// Whether `lex-sys build <args>` is a project build: no files, only `--bin <name>` and `--ignore-compiler-rev`, and a
 /// project file to build.
 pub fn wants_project(args: &[String]) -> bool {
+    only_flags(args, "--bin")
+}
+
+/// The same for `lex-sys test`, whose one value flag is `--test <name>`.
+pub fn wants_project_test(args: &[String]) -> bool {
+    only_flags(args, "--test")
+}
+
+fn only_flags(args: &[String], value_flag: &str) -> bool {
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--ignore-compiler-rev" => {}
-            "--bin" => {
+            flag if flag == value_flag => {
                 it.next();
             }
             _ => return false,
@@ -274,7 +312,7 @@ pub fn cmd_build(args: &[String]) -> Result<ExitCode, Failure> {
     }
     let deps = install_all(&root, &project)?;
     for bin in project.bins.iter().filter(|b| only.as_ref().is_none_or(|n| n == &b.name)) {
-        let mut inputs = sources_of(&root, bin)?;
+        let mut inputs = sources_of(&root, &bin.name, &bin.sources)?;
         inputs.extend(deps.iter().cloned());
         let out = root.join(bin.out.clone().unwrap_or_else(|| format!("build/{}", bin.name)));
         if let Some(parent) = out.parent() {
@@ -288,9 +326,9 @@ pub fn cmd_build(args: &[String]) -> Result<ExitCode, Failure> {
 }
 
 /// The files of a `[[bin]]`: each `sources` entry that is a file, or every `.ls` directly in it if it is a directory.
-fn sources_of(root: &Path, bin: &Bin) -> Result<Vec<PathBuf>, Failure> {
+fn sources_of(root: &Path, name: &str, sources: &[String]) -> Result<Vec<PathBuf>, Failure> {
     let mut files = BTreeSet::new();
-    for entry in &bin.sources {
+    for entry in sources {
         let path = root.join(entry);
         if path.is_dir() {
             let found: Vec<PathBuf> = std::fs::read_dir(&path)
@@ -299,22 +337,61 @@ fn sources_of(root: &Path, bin: &Bin) -> Result<Vec<PathBuf>, Failure> {
                 .filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "ls"))
                 .collect();
             if found.is_empty() {
-                return Err(refused(format!(
-                    "[[bin]] `{}`: `{entry}` holds no `.ls` file",
-                    bin.name
-                )));
+                return Err(refused(format!("`{name}`: `{entry}` holds no `.ls` file")));
             }
             files.extend(found);
         } else if path.is_file() {
             files.insert(path);
         } else {
-            return Err(refused(format!(
-                "[[bin]] `{}`: `{entry}` is not a file or directory",
-                bin.name
-            )));
+            return Err(refused(format!("`{name}`: `{entry}` is not a file or directory")));
         }
     }
     Ok(files.into_iter().collect())
+}
+
+/// `lex-sys test` with no files: install, then run every `[[test]]` (`--test <name>` one), each against the project's
+/// dependencies. Every set runs even if an earlier one failed; the result is the first failure's exit code.
+pub fn cmd_test(args: &[String]) -> Result<ExitCode, Failure> {
+    let mut ignore = false;
+    let mut only: Option<String> = None;
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--ignore-compiler-rev" => ignore = true,
+            "--test" => {
+                only = Some(it.next().ok_or_else(|| usage("`--test` needs a name"))?.clone());
+            }
+            other => return Err(usage(format!("unexpected `{other}`"))),
+        }
+    }
+    let root = current_root()?;
+    let project = load(&root)?;
+    check_compiler(&project, ignore)?;
+    if project.tests.is_empty() {
+        return Err(refused(format!("`{FILE}` has no [[test]] to run")));
+    }
+    if let Some(name) = &only {
+        if !project.tests.iter().any(|t| &t.name == name) {
+            return Err(refused(format!("`{FILE}` has no [[test]] named `{name}`")));
+        }
+    }
+    let deps = install_all(&root, &project)?;
+    let mut first_failure: Option<ExitCode> = None;
+    for set in project.tests.iter().filter(|t| only.as_ref().is_none_or(|n| n == &t.name)) {
+        println!("== test {}", set.name);
+        let mut files = sources_of(&root, &set.name, &set.sources)?;
+        files.extend(deps.iter().cloned());
+        let mut forwarded: Vec<String> =
+            files.iter().map(|f| f.to_string_lossy().into_owned()).collect();
+        if set.std {
+            forwarded.push("--std".to_owned());
+        }
+        let code = crate::test_cli::cmd_test(&forwarded)?;
+        if code != ExitCode::SUCCESS && first_failure.is_none() {
+            first_failure = Some(code);
+        }
+    }
+    Ok(first_failure.unwrap_or(ExitCode::SUCCESS))
 }
 
 pub fn cmd_add(args: &[String]) -> Result<ExitCode, Failure> {

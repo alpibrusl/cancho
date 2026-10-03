@@ -376,3 +376,130 @@ fn without_a_project_file_there_is_nothing_to_install() {
     assert!(!out.status.success() && stderr(&out).contains("lex-sys.toml"), "{}", stderr(&out));
     let _ = (TOP, BASE);
 }
+
+const TEST_FILE: &str = "\
+module checks;
+
+import libx.top;
+
+pub fn test_twice_reads_the_table() -> [] int {
+    if top.twice(2) == 60 {
+        return 0;
+    }
+    return 1;
+}
+
+pub fn test_always_fails_when_asked() -> [] int {
+    return FAIL_WITH;
+}
+";
+
+/// A project with a dependency and a test file that uses it; `fail` is what the second test answers.
+fn project_with_tests(tag: &str, fail: i64) -> (PathBuf, PathBuf) {
+    let (dir, repo, cache, rev) = project(tag);
+    ok(&add_libx(&dir, &cache, &repo, &rev));
+    write(&dir.join("tests"), "checks.ls", &TEST_FILE.replace("FAIL_WITH", &fail.to_string()));
+    let toml = std::fs::read_to_string(dir.join("lex-sys.toml")).unwrap();
+    std::fs::write(
+        dir.join("lex-sys.toml"),
+        format!(
+            "{toml}\n[[test]]\nname = \"checks\"\nsources = [\"tests/checks.ls\"]\n\n\
+             [[test]]\nname = \"second\"\nsources = [\"tests/checks.ls\"]\n"
+        ),
+    )
+    .unwrap();
+    (dir, cache)
+}
+
+#[test]
+fn test_in_a_project_runs_every_set_against_the_dependencies() {
+    let (dir, cache) = project_with_tests("project-test-pass", 0);
+    // A set that needs the library, and a project whose fetched files are gone: `test` installs first.
+    write(
+        &dir.join("tests"),
+        "uses_std.ls",
+        "import std.math;\n\npub fn test_abs() -> [] int {\n    if math.abs(0 - 3) == 3 {\n        return 0;\n    }\n    return 1;\n}\n",
+    );
+    let toml = std::fs::read_to_string(dir.join("lex-sys.toml")).unwrap();
+    std::fs::write(
+        dir.join("lex-sys.toml"),
+        format!(
+            "{toml}\n[[test]]\nname = \"std\"\nsources = [\"tests/uses_std.ls\"]\nstd = true\n"
+        ),
+    )
+    .unwrap();
+    std::fs::remove_dir_all(dir.join("build/deps")).unwrap();
+    let out = run(&dir, &cache, &[&"test"]);
+    let stdout = ok(&out);
+    assert!(stdout.contains("== test std"), "{stdout}");
+    assert!(stdout.contains("== test checks") && stdout.contains("== test second"), "{stdout}");
+    assert!(
+        stdout.matches("test result: ok. 2 passed").count() == 2,
+        "both sets ran, both passed: {stdout}"
+    );
+}
+
+#[test]
+fn a_failing_set_does_not_stop_the_others_and_fails_the_run() {
+    let (dir, cache) = project_with_tests("project-test-fail", 1);
+    let out = run(&dir, &cache, &[&"test"]);
+    assert_eq!(out.status.code(), Some(4), "a failed test is exit 4: {}", stderr(&out));
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(stdout.contains("== test second"), "the second set still ran: {stdout}");
+    assert!(stdout.contains("test checks.test_always_fails_when_asked ... FAILED"), "{stdout}");
+}
+
+#[test]
+fn test_picks_one_set_and_refuses_an_unknown_one_or_none_at_all() {
+    let (dir, cache) = project_with_tests("project-test-pick", 0);
+    let stdout = ok(&run(&dir, &cache, &[&"test", &"--test", &"second"]));
+    assert!(stdout.contains("== test second") && !stdout.contains("== test checks"), "{stdout}");
+    let unknown = run(&dir, &cache, &[&"test", &"--test", &"nope"]);
+    assert!(!unknown.status.success() && stderr(&unknown).contains("no [[test]] named"));
+
+    let (bare, cache2, _rev) = {
+        let (d, _r, c, rev) = project("project-test-none");
+        (d, c, rev)
+    };
+    let none = run(&bare, &cache2, &[&"test"]);
+    assert!(
+        !none.status.success() && stderr(&none).contains("has no [[test]] to run"),
+        "{}",
+        stderr(&none)
+    );
+}
+
+#[test]
+fn test_with_files_is_still_the_test_runner_and_a_bad_test_set_is_refused() {
+    let (dir, cache) = project_with_tests("project-test-files", 0);
+    // Files named: the old command, not the project's sets.
+    let out = run(
+        &dir,
+        &cache,
+        &[&"test", &dir.join("tests/checks.ls"), &dir.join("build/deps").join("x.ls")],
+    );
+    assert!(!out.status.success(), "no such file");
+
+    let toml = std::fs::read_to_string(dir.join("lex-sys.toml")).unwrap();
+    for (what, text, why) in [
+        (
+            "duplicate set names",
+            format!("{toml}\n[[test]]\nname = \"checks\"\nsources = [\"tests\"]\n"),
+            "must be unique",
+        ),
+        (
+            "a set with no sources",
+            format!("{toml}\n[[test]]\nname = \"empty\"\nsources = []\n"),
+            "has no `sources`",
+        ),
+        (
+            "an unknown key",
+            format!("{toml}\n[[test]]\nname = \"x\"\nsources = [\"tests\"]\nlink = [\"m\"]\n"),
+            "unknown field `link`",
+        ),
+    ] {
+        std::fs::write(dir.join("lex-sys.toml"), &text).unwrap();
+        let out = run(&dir, &cache, &[&"test"]);
+        assert!(!out.status.success() && stderr(&out).contains(why), "{what}: {}", stderr(&out));
+    }
+}
