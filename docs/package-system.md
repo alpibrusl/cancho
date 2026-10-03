@@ -1078,3 +1078,37 @@ sources = ["tests/state_test.ls", "src/state.ls"]
 `lex-sys test` with no files installs, then runs every set (`--test <name>` one), each as the file-taking `lex-sys test` always was (`testing.md` §3), under a header `== test <name>`. A failing set does not stop the others; the exit code is the first failure's (4, a failed test). With files, `test` is the runner it was. A set has the same checks as a program: a unique name, at least one source, no unknown keys. 10 mutants of the new code, 10 killed; one survived until the test of "files still mean the old runner" was actually written (an edit to the test file had silently not applied after `cargo fmt` reflowed it, which is why the mutation run was done after, not before, claiming it).
 
 **Found along the way: the compiler needs more than libc.** `lex-sys build` is not a closed box: the LLVM backend emits IR and runs **`clang`** (the `CLANG` environment variable names another), then links with **`cc`** (`CC`). A released compiler binary (§7.5 step 5) therefore depends on a C toolchain being installed where it runs, and an image of the compiler for CI would be the place that bundles it. `ldd` on the compiler itself: libc and libgcc_s, 8.5 MB.
+
+## 9. Prebuilt compilers
+
+### 9.1 What asked for it
+
+A project pins the compiler by commit (§8.4), and every machine that builds it, a laptop, a CI job, an image, has so far built that commit from source: a Rust toolchain and about 1m23s of `cargo build --release` on the machine this was written on. `lexsys-hooks`' CI does it on every run. A release is the same compiler built once.
+
+### 9.2 What is built
+
+* `.github/workflows/release.yml`: builds `lex-sys` on `ubuntu-22.04` (`linux-x86_64`) and `macos-latest` (`darwin-aarch64`), packages it, installs the package with `scripts/install.sh` into a scratch prefix and **builds `hello.ls` with the installed binary**, and uploads the assets. It runs for pull requests that touch it, and on `workflow_dispatch`; only a dispatch with `publish: true` creates a release.
+* **The tag is the commit**: the full 40 hex digits, the string `lex-sys.toml` already holds. A version number would be one more name to map to the commit; nobody pins one. So from a pin an installer can build the URL of the asset without asking anything.
+* `scripts/package-release.sh <target> [dir]` writes `lex-sys-<commit>-<target>.tar.gz` (`bin/lex-sys`, `LICENSE`, `README.md`) and `…tar.gz.sha256`. The commit is **read from the binary** (`--version`), not from the checkout, and a binary that does not report a clean commit (`-dirty`, `unknown`, nothing) is not packaged: a release that is not the commit it is named for is the failure §8.4 exists to prevent. The archive is reproducible on GNU tar (sorted names, no owners, mtime 0).
+* `scripts/install.sh <commit> [prefix]` downloads the asset and its checksum, **refuses a checksum that does not match, unpacks, and refuses a binary that does not report the commit that was asked for**, then moves it into `<prefix>/bin`. Nothing is installed on a refusal. `LEX_SYS_RELEASES` points it at another place (a mirror, or a directory for a test). Exit codes: 2 for something that is not a full commit hash, 3 for a platform with no asset, 4 for a checksum or commit mismatch.
+
+### 9.3 What is, and is not, in the tarball
+
+The compiler is self-contained but for the two programs it runs: the standard library and the guidelines are compiled in (`include_str!`), and `ldd` shows `libc` and `libgcc_s` only. **It still needs `clang` (the LLVM backend, the default) and `cc` (the linker) at build time**, as the source build does; `install.sh` says so when `clang` is not on `PATH`. Not bundling them is deliberate: the toolchain is whatever the host's is, and the compiler's output is checked by running it.
+
+### 9.4 Why `ubuntu-22.04`
+
+A binary links against the glibc it was built with and needs that version or newer. Built on the machine this was written on (glibc 2.39), the compiler references symbols up to `GLIBC_2.39` (`objdump -T`), which would not start on Ubuntu 22.04 (2.35) or Debian 12 (2.36). Building on the oldest supported runner is the cheap fix; a static or `musl` build is the alternative, and is not tried.
+
+### 9.5 What is checked
+
+Six conformance tests (`release.rs`) run the scripts against a stand-in compiler (a shell script that prints a version line, so the result does not depend on whether the compiler under test was built from a clean tree): package then install, and the installed binary reports the commit; `-dirty`, `unknown` and a bare version are not packaged and nothing is written; packaging twice, a second apart, gives the same bytes; a tarball with a byte appended is not installed (exit 4, no prefix created); a genuine asset renamed to another commit is not installed (exit 4); and what is not a commit (`abc`, `main`, 41 digits, 40 non-hex characters, `../` repeated to 40, empty), an asset that does not exist and a checksum file that does not exist are each refused with nothing installed. Mutants of the scripts: of nine, six killed at once; the control no-op survived as it must; one non-hex check survived until the test passed forty characters that are not hex, and was then killed; one (`--sort=name`) survives and is believed unobservable here, since three files are listed in the same order by every filesystem tried, and the flag is kept for the ones that do not.
+
+On this machine, packaging the compiler built from a clean checkout of `main` gave a 2.8 MB tarball; `install.sh` from a `file://` directory installed it, and the installed binary built and ran `hello.ls`.
+
+### 9.6 Not verified
+
+**The workflow has not run on GitHub as of this writing**; it runs for the first time on the pull request that adds it, and the result belongs here when it is known. In particular the `macos-latest` leg (bsdtar has no `--sort`, `shasum` instead of `sha256sum`: both paths are written, neither was run), the `ubuntu-22.04` glibc claim of §9.4 (measured as a requirement, not as a binary that starts on 22.04), and `gh release create` are not tested. **No release has been published**, and none will be without being asked: a published release is an outward act, and a tag named for a commit stays.
+
+`lexsys-hooks`' CI would try the release asset first and build from source if it is absent; that is a change in that repository, after the first release exists.
+

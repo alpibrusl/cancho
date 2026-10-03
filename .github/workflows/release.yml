@@ -1,0 +1,82 @@
+name: release
+
+# A compiler release is a commit: the asset names carry the full hash, the same
+# string a project's `lex-sys.toml` pins (docs/package-system.md §9). The tag is
+# the hash too, not a version number, because that is what consumers name.
+on:
+  # The scripts and this file are tested where they change, on both targets.
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - "scripts/package-release.sh"
+      - "scripts/install.sh"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish a release tagged with this commit's full hash (otherwise build and smoke-test only)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest runner image that is still supported: a binary links
+          # against the glibc it was built with and runs on that or newer.
+          - os: ubuntu-22.04
+            target: linux-x86_64
+          - os: macos-latest
+            target: darwin-aarch64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: cargo build --release -p lex-sys
+
+      - name: Package
+        run: scripts/package-release.sh ${{ matrix.target }} dist
+
+      # What a consumer does, on the asset a consumer gets: install it by its
+      # hash, from a directory standing in for the release, and build with it.
+      - name: Smoke — install.sh from the packaged asset, then build hello
+        run: |
+          rev=$(git rev-parse HEAD)
+          LEX_SYS_RELEASES="file://$PWD/dist" scripts/install.sh "$rev" "$RUNNER_TEMP/prefix"
+          "$RUNNER_TEMP/prefix/bin/lex-sys" --version
+          "$RUNNER_TEMP/prefix/bin/lex-sys" build examples/hello.ls -o "$RUNNER_TEMP/hello"
+          test "$("$RUNNER_TEMP/hello")" = "Hello, world!"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lex-sys-${{ matrix.target }}
+          path: dist/*
+
+  publish:
+    # Only an explicit `publish` does; otherwise this builds and smoke-tests and stops.
+    if: inputs.publish
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -l dist
+          gh release create "$GITHUB_SHA" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "lex-sys $GITHUB_SHA" \
+            --notes "Prebuilt lex-sys for commit $GITHUB_SHA. Install with scripts/install.sh $GITHUB_SHA"

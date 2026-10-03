@@ -99,6 +99,15 @@ Green on **linux-x86_64** and **darwin-aarch64**. `--backend llvm` is the
 default codegen path (LLVM via `clang`, no new build dependency);
 `--backend cranelift` is faster to iterate on and used the same way.
 
+A project that pins a compiler (`lex-sys.toml`) can install the prebuilt one
+instead of building it, once a release exists for that commit:
+
+```sh
+scripts/install.sh <commit> [prefix]   # sha256 and the reported commit are both checked
+```
+
+It still needs `clang` and `cc` at build time (`docs/package-system.md` §9).
+
 ### The compiler's whole surface
 
 ```sh
