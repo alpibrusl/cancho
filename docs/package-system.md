@@ -778,9 +778,8 @@ overwrite the same path rather than writing two different ones.
 
 ## 7. Packages across repositories
 
-> **Status: design, written before the code. Steps 1 and 2 below are what
-> the PR carrying this section builds; everything after them is named and
-> not built.**
+> **Status: steps 1 and 2 are built, and §7.7 records what building them
+> showed. Everything from §7.5 on is named and not built.**
 
 ### 7.1 What asked for it
 
@@ -881,7 +880,7 @@ one store (`vcs fetch --lock` takes one `--store`):
   the checkout unchanged.
 
 **The cache.** `$LEX_SYS_CACHE`, else `$XDG_CACHE_HOME/lex-sys`, else
-`$HOME/.cache/lex-sys`; a checkout lives at `git/<blake3(url)[..16]>/<rev>/`.
+`$HOME/.cache/lex-sys`; a checkout lives at `git/<rev>/`. (The first draft of this section keyed it by the repository's location too, `git/<blake3(url)[..16]>/<rev>/`; building it found that wrong in the useful direction: a commit hash *is* its content, so two mirrors of one commit should share a directory, and where it came from decides nothing. Corrected in place.)
 It is created once, in a temporary directory beside its destination
 (`git init`; `git fetch --depth 1 <url> <rev>`; `git checkout --detach
 FETCH_HEAD`; `git rev-parse HEAD` must equal `rev`), and renamed into place,
@@ -890,8 +889,10 @@ directory that exists is complete. It is never updated: a different `rev`
 is a different directory. Nothing evicts it; `rm -r` does.
 
 **Why this is not "running the dependency's code"** (§4.3). `git` is run
-with `core.hooksPath` pointed at nothing, `GIT_TERMINAL_PROMPT=0`, and no
-submodule is initialised; the checkout is read, never built or executed.
+with `core.hooksPath` pointed at nothing, `GIT_TERMINAL_PROMPT=0`, only the
+`https`, `ssh`, `git` and `file` transports allowed (`ext::` and the other
+remote helpers run programs, and `http` is cleartext), and no submodule is
+initialised; the checkout is read, never built or executed.
 Whatever the transport delivers is then held to the same recheck as a
 local store: re-parsed, re-typechecked, and every identity recomputed
 against the manifest and the lock. A hostile mirror can refuse to serve;
@@ -969,3 +970,29 @@ reported as failed, not loosened:
 | G5 | **`lexsys-log` publishes, resolves and is deterministic** | `vcs publish --dir src` on all four modules succeeds including `static`; `vcs resolve` of the closure passes; publishing twice gives byte-identical trees; publishing after editing a function succeeds |
 | G6 | **Mutation survivors are classified**, as for hooks: remove each check (hash length, `rev-parse`, tamper recheck, atomic rename, origin-wins in closure) and the test that dies is named | a table in the section that records the result |
 | G7 | **Cost is reported, not gated**: cold fetch of `lexsys-log` and of `http-server`, cache-hit fetch, `publish --dir` time | numbers in this section |
+
+### 7.7 What building steps 1 and 2 showed
+
+**The gate (§7.6), as measured.**
+
+| | Result |
+|---|---|
+| G1 | **Met.** In a directory holding a clone of `lexsys-hooks` and the compiler binary, and nothing else: `vcs lock --git … --all` for `lexsys-log` (commit `f4bde04`) and for `http-server` (a commit of this repository), `vcs fetch` of both, `build`. `idempotency_test` (including the 65,536-key stage) and `chaos` (2,000 events, power cuts) pass on that binary. The binary is **not byte-identical** to the one `scripts/build.sh` makes from sibling checkouts; the fetched files are named by hash and so sorted differently, and I did not chase the difference further than that, so "same behaviour under these suites" is the claim, not "same bytes" |
+| G2 | **Met.** One byte changed in a cached source blob: `fetch` exits nonzero and writes nothing (`a_cached_checkout_that_was_changed_is_refused_and_nothing_is_written`) |
+| G3 | **Met.** The repository deleted and `git` taken off `PATH`, the second `fetch` succeeds from the cache (`a_second_fetch_is_served_from_the_cache_without_git`) |
+| G4 | **Met.** `--rev master` refused at the command and, in a hand-edited lock, at load; `--ref` resolved once and the hash written; a branch that moves afterwards changes nothing a lock pins |
+| G5 | **Met.** All four modules of `lexsys-log` publish, `crc`'s `static` included; `vcs resolve` passes for each; publishing twice gives a byte-identical tree, and publishing after editing a function succeeds |
+| G6 | **Met, with one unverified check**, below |
+| G7 | Reported: cold fetch of `lexsys-log` 0.55 s and of this repository's `http-server` 1.34 s (a depth-1 fetch by hash from GitHub through this environment's proxy, 8.3 MB of cache for both); the second fetch of each, from the cache, 0.06 s for both together; `vcs publish --dir` of the four modules 0.15 s; the whole closure of `log` verified in well under a second |
+
+**Mutants of the new code: twenty-one, twenty killed.** Killed (the test that died is in `vcs_remote.rs` unless noted): a `rev` that is not a full hash accepted (`lock.rs` unit test and `a_lock_holds_a_commit_and_never_a_name`); a `path` that leaves the repository accepted; an origin not validated on load; the checkout's `.git` kept; the checkout built in place instead of beside its destination (`a_fetch_that_fails_leaves_no_half_made_checkout`); the cache always refilled; an origin that beats an explicit `--store`; a requirement that ignores its lock's origin; a machine-specific path recorded in a requirement; modules published in alphabetical rather than dependency order; stores not cleared before a republish; a `static` refused; a program in the directory refused instead of skipped; no cycle detection; an unplaceable import accepted; `--ref` writing the name instead of the hash; a lock extended with a different store; every transport allowed; git hooks not disabled; `ext::` not refused by `validate`. Three of these **survived the first set of tests and each told something**: the machine-path check only looked for the cache's absolute path and the requirement held a relative path to it (the test now asserts the recorded store is empty); nothing exercised `vcs lock` on a lock that already pins another commit; and the hook and transport settings are invisible to any test that does not provide a hook or a cleartext server (a template directory with a `post-checkout` hook now proves the first; a listener that hangs up on connection proves the second). **Unverified: the `git rev-parse HEAD` comparison after the checkout.** It is a second line behind git's own object hashing and the full-length `rev` that `validate` demands, and I could not construct a repository in which the first fails and the second passes. It stays as defence in depth with no test.
+
+**Found along the way.**
+
+* **`vcs publish` could not publish a `static`.** §7.1 predicted this and it was the first thing to fail. A `static` is evaluated at compile time and cannot call out, so its effect row is empty; the fix is a third case beside the function and the extern the publish path already knew.
+* **A module's qualifier is its last name segment.** For `module libx.base;` the call is `base.pick(i)`, not `libx.base.pick(i)`. Not a bug, but the tests' first draft assumed the other, and a directory of modules whose last segments collide would have to be told apart by the author.
+* **A test hung instead of failing.** The cleartext-transport test first listened and checked afterwards; with the transport check removed, git connected, waited for an answer that never came, and the mutation run stalled for twenty minutes. The listener now hangs up at once.
+* **The cache holds trees, not repositories.** The `.git` directory is deleted once the commit is verified: nothing later can run `git` in it by accident, and it is smaller. The cost is that a checkout cannot be updated in place, which is the design.
+* **`--dir` skips a file with no `module` declaration** (a program such as `logtool.ls`) and says so. A library module that forgot its `module` line is skipped the same way, visibly.
+
+**Not built, as §7.5 says:** the project file, the compiler pin, prebuilt releases, and the authority diff on update. Also not built and noticed: a CI check in a library's repository that its committed `.lex-sys-vcs` matches `vcs publish --dir` of its source (needs this change in a pinned compiler first); a `git` that is not installed is an environment error with git's own message and no suggestion; an origin whose server serves only branches and tags falls back to a full fetch of them, which was written and is not tested.

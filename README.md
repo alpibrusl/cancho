@@ -114,11 +114,12 @@ lex-sys print <file.ls>               # the unit, rendered in canonical form
 lex-sys agent-guidelines              # AGENTS.md, from inside the binary
 lex-sys introspect [--output json]    # the full command tree, as data (docs/agent-cli.md)
 lex-sys skill [--output json] [<out-file>]  # a generated SKILL.md, agentskills.io
-lex-sys vcs publish [--store <dir>] [--std] <file.ls>  # log every declaration as an operation
+lex-sys vcs publish [--store <dir>] [--std] [--requires <lock>[:<dep-store>]]... <file.ls>  # log every declaration as an operation
+lex-sys vcs publish [--store <root>] [--std] --dir <dir>  # a library of several files, one store each, in dependency order
 lex-sys vcs log     [--store <dir>]            # what a store already has
-lex-sys vcs resolve [--lock <file>] <store-dir>  # re-check every pin under today's compiler
-lex-sys vcs lock --store <dir> -o <file> <name>...  # pin a name to a dependency's hash
-lex-sys vcs fetch --lock <file> --store <dir> -o <dir>  # verify a lock, write its sources to disk
+lex-sys vcs resolve [--lock <file>] [<store-dir>]  # re-check every pin under today's compiler
+lex-sys vcs lock (--store <dir> | --git <url> (--rev <hash> | --ref <name>) [--path <dir>]) -o <file> (--all | <name>...)  # pin names to a dependency's hash
+lex-sys vcs fetch --lock <file> [--store <dir>] -o <dir>  # verify a lock, write its sources to disk
 ```
 
 This block is checked against `--help` in both directions by a test
