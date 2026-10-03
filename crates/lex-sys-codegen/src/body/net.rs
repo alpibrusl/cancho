@@ -105,7 +105,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     /// `args` is the capability (zero-sized, stopping here), the name as
     /// `&r [byte]`, and the port as an `int`.
     pub(crate) fn connect(&mut self, bound: &str, args: &[Expr]) -> Vec<Value> {
-        let (fd, _) = self.connect_raw(bound, args, false);
+        let (fd, _) = self.connect_raw(bound, args, false, false);
         vec![fd]
     }
 
@@ -120,6 +120,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         bound: &str,
         args: &[Expr],
         connection: bool,
+        start: bool,
     ) -> (Value, Value) {
         let pointer = self.pointer;
         let name = self.expr(&args[1]);
@@ -248,6 +249,15 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
 
         self.builder.switch_to_block(have_socket);
         self.builder.seal_block(have_socket);
+        if start {
+            // `tcp_connect_start` (`docs/native-sockets.md` §10.6): non-blocking *before*
+            // `connect`, so that it answers `EINPROGRESS` instead of waiting.
+            let os = self.socket_os();
+            let none = self.builder.ins().iconst(types::I32, 0);
+            let flags = self.fcntl(fd, lex_sys_ir::F_GETFL, none);
+            let set = self.builder.ins().bor_imm(flags, os.o_nonblock);
+            self.fcntl(fd, lex_sys_ir::F_SETFL, set);
+        }
         let connect = self.libc_fn("connect", &[types::I32, pointer, types::I32], &[types::I32]);
         let connect = self.module.declare_func_in_func(connect, self.builder.func);
         let call = self.builder.ins().call(connect, &[fd, addr, addrlen]);
@@ -255,7 +265,17 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
 
         let connected = self.builder.create_block();
         let not_connected = self.builder.create_block();
-        let ok = self.builder.ins().icmp_imm(IntCC::Equal, result, 0);
+        let mut ok = self.builder.ins().icmp_imm(IntCC::Equal, result, 0);
+        if start {
+            // A connection still in progress is a success here: the caller watches it for
+            // *writable* and asks `conn_connect_status`. `errno` is read before anything else runs.
+            let os = self.socket_os();
+            let reason = self.errno();
+            let in_progress = self.builder.ins().icmp_imm(IntCC::Equal, reason, os.einprogress);
+            let negative = self.builder.ins().icmp_imm(IntCC::SignedLessThan, result, 0);
+            let pending = self.builder.ins().band(in_progress, negative);
+            ok = self.builder.ins().bor(ok, pending);
+        }
         self.builder.ins().brif(ok, connected, &[], not_connected, &[]);
 
         self.builder.switch_to_block(connected);
@@ -285,8 +305,8 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     /// `tcp_connect(net, host, port)` (`docs/native-sockets.md` §3):
     /// `connect`'s check and walk, answering `Dialed`'s three leaves --
     /// `Ok` 0 with the descriptor, `Failed` 1 with the reason.
-    pub(crate) fn tcp_connect(&mut self, bound: &str, args: &[Expr]) -> Vec<Value> {
-        let (fd, reason) = self.connect_raw(bound, args, true);
+    pub(crate) fn tcp_connect(&mut self, bound: &str, args: &[Expr], start: bool) -> Vec<Value> {
+        let (fd, reason) = self.connect_raw(bound, args, true, start);
         let failed = self.builder.ins().icmp_imm(IntCC::SignedLessThan, fd, 0);
         let one = self.builder.ins().iconst(types::I64, 1);
         let zero = self.builder.ins().iconst(types::I64, 0);

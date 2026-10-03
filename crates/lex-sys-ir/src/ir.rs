@@ -456,6 +456,9 @@ pub enum Expr {
     TcpConnect {
         bound: String,
         args: Vec<Expr>,
+        /// `tcp_connect_start`: the same walk with the socket made non-blocking first, so
+        /// that `connect` answers `EINPROGRESS` instead of waiting (`docs/native-sockets.md` §10.6).
+        start: bool,
     },
     /// A string literal's bytes (`docs/strings.md` §4). Lowered to a
     /// read-only data object plus the two leaves a slice is made of.

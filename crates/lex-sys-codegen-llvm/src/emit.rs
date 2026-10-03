@@ -314,6 +314,8 @@ pub(crate) fn emit_module(
     // already declares for Cranelift.
     declare_libc_unless_own(&mut text, "socket", "i32 @socket(i32, i32, i32)");
     declare_libc_unless_own(&mut text, "setsockopt", "i32 @setsockopt(i32, i32, i32, ptr, i32)");
+    // `conn_connect_status` (`docs/native-sockets.md` §10.6) reads `SO_ERROR`.
+    declare_libc_unless_own(&mut text, "getsockopt", "i32 @getsockopt(i32, i32, i32, ptr, ptr)");
     declare_libc_unless_own(&mut text, "bind", "i32 @bind(i32, ptr, i32)");
     declare_libc_unless_own(&mut text, "close", "i32 @close(i32)");
     // `connect` (§7.22, `docs/connect.md` §10): the last of `Net`'s four

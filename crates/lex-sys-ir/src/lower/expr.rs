@@ -805,7 +805,10 @@ impl<'a> FnLowering<'a> {
                     return self.tcp_listen(args, span);
                 }
                 if resolved == Resolved::Builtin(Builtin::TcpConnect) {
-                    return self.tcp_connect(args, span);
+                    return self.tcp_connect(args, span, false);
+                }
+                if resolved == Resolved::Builtin(Builtin::TcpConnectStart) {
+                    return self.tcp_connect(args, span, true);
                 }
                 // `docs/threads.md` §2: `T`/`R` are read off `payload`'s
                 // and `body`'s own types, which a fixed signature has no

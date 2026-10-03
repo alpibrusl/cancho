@@ -368,6 +368,13 @@ pub enum Builtin {
     /// `docs/native-sockets.md` §3, edition 5 only: `connect`, answering a
     /// `Conn` handle (or the reason) rather than a descriptor.
     TcpConnect,
+    /// `tcp_connect_start(net, host, port) -> [net_out(bound)] Dialed` --
+    /// `docs/native-sockets.md` §10.6, edition 5 only: `tcp_connect` that does
+    /// not wait. The `Conn` is non-blocking and the connection may still be in
+    /// progress: watch it for *writable* with a `Poller`, then ask
+    /// `conn_connect_status`. A name is still resolved by a blocking call; an IP
+    /// literal needs none.
+    TcpConnectStart,
     /// `poller_new() -> [] Polling` -- `docs/native-sockets.md` §4: an
     /// `epoll` (Linux) or `kqueue` (Darwin) set, empty. It needs no
     /// capability: a set watching nothing observes nothing.
@@ -422,6 +429,12 @@ pub enum Builtin {
     /// a request in several writes, waits on the other end's delayed acknowledgement
     /// (tens of milliseconds) without it (`docs/native-sockets.md` section 11).
     ConnNodelay,
+    /// `conn_connect_status(&!Conn) -> [] int` -- `docs/native-sockets.md` §10.6:
+    /// how a connection started with `tcp_connect_start` ended: `0` connected, or
+    /// the `errno` (`SO_ERROR`). Meaningful only once a `Poller` has reported the
+    /// connection writable (or hung up); before that it answers `0` whether or not
+    /// the connection is made.
+    ConnConnectStatus,
     /// `listener_nonblocking(&!Listener) -> [] int`.
     ListenerNonblocking,
     /// `conn_close(Conn) -> [] int`: consumes the handle.
@@ -530,6 +543,7 @@ impl Builtin {
         Builtin::Accept,
         Builtin::TcpListen,
         Builtin::TcpConnect,
+        Builtin::TcpConnectStart,
         Builtin::TcpAccept,
         Builtin::PollerNew,
         Builtin::PollerAddListener,
@@ -546,6 +560,7 @@ impl Builtin {
         Builtin::ConnWrite,
         Builtin::ConnNonblocking,
         Builtin::ConnNodelay,
+        Builtin::ConnConnectStatus,
         Builtin::ListenerNonblocking,
         Builtin::ConnClose,
         Builtin::ListenerClose,
@@ -609,6 +624,7 @@ impl Builtin {
             Builtin::Accept => "accept",
             Builtin::TcpListen => "tcp_listen",
             Builtin::TcpConnect => "tcp_connect",
+            Builtin::TcpConnectStart => "tcp_connect_start",
             Builtin::TcpAccept => "tcp_accept",
             Builtin::PollerNew => "poller_new",
             Builtin::PollerAddListener => "poller_add_listener",
@@ -625,6 +641,7 @@ impl Builtin {
             Builtin::ConnWrite => "conn_write",
             Builtin::ConnNonblocking => "conn_nonblocking",
             Builtin::ConnNodelay => "conn_nodelay",
+            Builtin::ConnConnectStatus => "conn_connect_status",
             Builtin::ListenerNonblocking => "listener_nonblocking",
             Builtin::ConnClose => "conn_close",
             Builtin::ListenerClose => "listener_close",
@@ -659,6 +676,7 @@ impl Builtin {
             // already declare against libc.
             Builtin::TcpListen
             | Builtin::TcpConnect
+            | Builtin::TcpConnectStart
             | Builtin::TcpAccept
             | Builtin::PollerNew
             | Builtin::PollerAddListener
@@ -675,6 +693,7 @@ impl Builtin {
             | Builtin::ConnWrite
             | Builtin::ConnNonblocking
             | Builtin::ConnNodelay
+            | Builtin::ConnConnectStatus
             | Builtin::ListenerNonblocking
             | Builtin::ConnClose
             | Builtin::ForkClock
@@ -770,6 +789,7 @@ impl Builtin {
             Builtin::TcpAccept
             | Builtin::ConnNonblocking
             | Builtin::ConnNodelay
+            | Builtin::ConnConnectStatus
             | Builtin::ListenerNonblocking
             | Builtin::ForkClock
             | Builtin::CopyWithin
@@ -1008,7 +1028,9 @@ impl Builtin {
             Builtin::Accept => (vec![Type::Int], Type::Int),
             // Checked at the call site, like `bind`: the port is spent
             // against the bound in the capability's type.
-            Builtin::TcpListen | Builtin::TcpConnect => (Vec::new(), Type::Unit),
+            Builtin::TcpListen | Builtin::TcpConnect | Builtin::TcpConnectStart => {
+                (Vec::new(), Type::Unit)
+            }
             Builtin::TcpAccept => (
                 vec![Type::Ref {
                     unique: true,
@@ -1150,7 +1172,7 @@ impl Builtin {
                 }],
                 named(PRELUDE_CLOCK),
             ),
-            Builtin::ConnNonblocking | Builtin::ConnNodelay => (
+            Builtin::ConnNonblocking | Builtin::ConnNodelay | Builtin::ConnConnectStatus => (
                 vec![Type::Ref {
                     unique: true,
                     region: Region::Param(0),

@@ -18,6 +18,10 @@ pub struct SocketOs {
     pub msg_nosignal: i64,
     pub o_nonblock: i64,
     pub eagain: i64,
+    /// `SO_ERROR`: the pending error of a socket, which is how a non-blocking `connect` says how it ended.
+    pub so_error: i64,
+    /// `EINPROGRESS`: what a non-blocking `connect` that has not finished answers.
+    pub einprogress: i64,
 }
 
 impl SocketOs {
@@ -29,6 +33,8 @@ impl SocketOs {
         msg_nosignal: 0x4000,
         o_nonblock: 0o4000,
         eagain: 11,
+        so_error: 4,
+        einprogress: 115,
     };
 
     pub const DARWIN: SocketOs = SocketOs {
@@ -39,6 +45,8 @@ impl SocketOs {
         msg_nosignal: 0,
         o_nonblock: 4,
         eagain: 35,
+        so_error: 0x1007,
+        einprogress: 36,
     };
 
     pub fn for_darwin(darwin: bool) -> SocketOs {

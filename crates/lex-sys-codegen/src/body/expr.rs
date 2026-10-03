@@ -183,9 +183,9 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                 let (bound, args) = (bound.clone(), args.clone());
                 self.tcp_listen(&bound, &args)
             }
-            Expr::TcpConnect { bound, args } => {
-                let (bound, args) = (bound.clone(), args.clone());
-                self.tcp_connect(&bound, &args)
+            Expr::TcpConnect { bound, args, start } => {
+                let (bound, args, start) = (bound.clone(), args.clone(), *start);
+                self.tcp_connect(&bound, &args, start)
             }
             Expr::FieldRef { base, def, args, index } => {
                 let address = self.scalar(base);
@@ -604,7 +604,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::TcpListen) => {
                         unreachable!("`tcp_listen` is lowered as `Expr::TcpListen`")
                     }
-                    Callee::Builtin(Builtin::TcpConnect) => {
+                    Callee::Builtin(Builtin::TcpConnect | Builtin::TcpConnectStart) => {
                         unreachable!("`tcp_connect` is lowered as `Expr::TcpConnect`")
                     }
                     // `docs/native-sockets.md` §3. A borrowed handle arrives
@@ -632,6 +632,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                         self.nonblocking(&args)
                     }
                     Callee::Builtin(Builtin::ConnNodelay) => self.nodelay(&args),
+                    Callee::Builtin(Builtin::ConnConnectStatus) => self.connect_status(&args),
                     Callee::Builtin(
                         Builtin::ConnClose | Builtin::ListenerClose | Builtin::PollerClose,
                     ) => {

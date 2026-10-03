@@ -300,9 +300,9 @@ impl<'a> FuncEmitter<'a> {
                 let (bound, args) = (bound.clone(), args.clone());
                 self.tcp_listen(&bound, &args)
             }
-            Expr::TcpConnect { bound, args } => {
-                let (bound, args) = (bound.clone(), args.clone());
-                self.tcp_connect(&bound, &args)
+            Expr::TcpConnect { bound, args, start } => {
+                let (bound, args, start) = (bound.clone(), args.clone(), *start);
+                self.tcp_connect(&bound, &args, start)
             }
             // `connect(net, name, port)` (§7.22, `docs/connect.md` §10):
             // the last of `Net`'s four builtins, mirroring
@@ -904,6 +904,10 @@ impl<'a> FuncEmitter<'a> {
             Callee::Builtin(Builtin::ConnNodelay) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.nodelay(&args)
+            }
+            Callee::Builtin(Builtin::ConnConnectStatus) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.connect_status(&args)
             }
             Callee::Builtin(Builtin::ConnClose | Builtin::ListenerClose | Builtin::PollerClose) => {
                 let fd64 = evaluated

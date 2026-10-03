@@ -169,12 +169,14 @@ impl<'a> FnLowering<'a> {
         &mut self,
         args: &[ExprId],
         span: Span,
+        start: bool,
     ) -> Result<(Expr, Type), Diagnostic> {
         let [capability, name, port] = args else {
             return Err(Diagnostic::new(
                 Rule::ArityMismatch,
                 format!(
-                    "`tcp_connect` takes 3 arguments -- the capability, the name and a port -- but {} were given",
+                    "`{}` takes 3 arguments -- the capability, the name and a port -- but {} were given",
+                    if start { "tcp_connect_start" } else { "tcp_connect" },
                     args.len()
                 ),
                 span,
@@ -203,7 +205,7 @@ impl<'a> FnLowering<'a> {
         }]));
 
         Ok((
-            Expr::TcpConnect { bound, args: vec![net_value, name_value, port_value] },
+            Expr::TcpConnect { bound, args: vec![net_value, name_value, port_value], start },
             Type::Named(self.prelude()[PRELUDE_DIALED], Vec::new()),
         ))
     }

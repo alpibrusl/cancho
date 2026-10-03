@@ -208,6 +208,35 @@ pub fn nodelay[&t](table: &!t Table, slot: int) -> [] int {
     }
 }
 
+// How the connection in `slot`, started with `tcp_connect_start`, ended: `0` connected, otherwise the `errno` it failed with
+// (`docs/native-sockets.md` §10.6). Ask only after the poller has reported the connection writable or hung up; before that the
+// answer is `0` whether or not the connection is made. `9` (`EBADF`) for a slot with nothing in it.
+pub fn connect_status[&t](table: &!t Table, slot: int) -> [] int {
+    let ticket = ticket_at(table, slot);
+    if ticket < 0 {
+        return 9;
+    }
+    match conn_attach(ticket) {
+        Attached::Ok(c) => {
+            var conn = c;
+            var answer = 9;
+            borrow mut conn as &!h in {
+                answer = conn_connect_status(h);
+            }
+            let back = conn_detach(conn);
+            if back < 0 {
+                release_slot(table, slot);
+            } else {
+                vec.set(table.tickets, slot, back);
+            }
+            return answer;
+        }
+        Attached::Failed(e) => {
+            return e;
+        }
+    }
+}
+
 // Watch the connection in `slot`, as `poller_add_conn` does: `events` is 1
 // for readable, 2 for writable, and what the poller reports back is `token`.
 pub fn watch[&t, &p](table: &!t Table, poller: &!p Poller, slot: int, token: int, events: int) -> [poll] int {
