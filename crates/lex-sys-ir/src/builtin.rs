@@ -381,6 +381,11 @@ pub enum Builtin {
     ConnWrite,
     /// `conn_nonblocking(&!Conn) -> [] int`: one way, explicit.
     ConnNonblocking,
+    /// `conn_nodelay(&!Conn) -> [] int`: `TCP_NODELAY` on, one way, explicit. `0`, or
+    /// the `errno`. A program that writes a message in more than one piece, or answers
+    /// a request in several writes, waits on the other end's delayed acknowledgement
+    /// (tens of milliseconds) without it (`docs/native-sockets.md` section 11).
+    ConnNodelay,
     /// `listener_nonblocking(&!Listener) -> [] int`.
     ListenerNonblocking,
     /// `conn_close(Conn) -> [] int`: consumes the handle.
@@ -490,6 +495,7 @@ impl Builtin {
         Builtin::ConnRead,
         Builtin::ConnWrite,
         Builtin::ConnNonblocking,
+        Builtin::ConnNodelay,
         Builtin::ListenerNonblocking,
         Builtin::ConnClose,
         Builtin::ListenerClose,
@@ -554,6 +560,7 @@ impl Builtin {
             Builtin::ConnRead => "conn_read",
             Builtin::ConnWrite => "conn_write",
             Builtin::ConnNonblocking => "conn_nonblocking",
+            Builtin::ConnNodelay => "conn_nodelay",
             Builtin::ListenerNonblocking => "listener_nonblocking",
             Builtin::ConnClose => "conn_close",
             Builtin::ListenerClose => "listener_close",
@@ -602,6 +609,7 @@ impl Builtin {
             | Builtin::ConnRead
             | Builtin::ConnWrite
             | Builtin::ConnNonblocking
+            | Builtin::ConnNodelay
             | Builtin::ListenerNonblocking
             | Builtin::ConnClose
             | Builtin::ForkClock
@@ -676,6 +684,7 @@ impl Builtin {
             | Builtin::PollerWait => 2,
             Builtin::TcpAccept
             | Builtin::ConnNonblocking
+            | Builtin::ConnNodelay
             | Builtin::ListenerNonblocking
             | Builtin::ForkClock
             | Builtin::CopyWithin
@@ -978,7 +987,7 @@ impl Builtin {
                 }],
                 named(PRELUDE_CLOCK),
             ),
-            Builtin::ConnNonblocking => (
+            Builtin::ConnNonblocking | Builtin::ConnNodelay => (
                 vec![Type::Ref {
                     unique: true,
                     region: Region::Param(0),

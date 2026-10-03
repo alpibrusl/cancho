@@ -609,6 +609,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::ConnNonblocking | Builtin::ListenerNonblocking) => {
                         self.nonblocking(&args)
                     }
+                    Callee::Builtin(Builtin::ConnNodelay) => self.nodelay(&args),
                     Callee::Builtin(
                         Builtin::ConnClose | Builtin::ListenerClose | Builtin::PollerClose,
                     ) => {

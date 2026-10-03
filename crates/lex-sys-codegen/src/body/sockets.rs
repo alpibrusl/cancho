@@ -369,6 +369,34 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         vec![self.builder.ins().select(failed, reason, zero)]
     }
 
+    /// `conn_nodelay`: `TCP_NODELAY` on (`IPPROTO_TCP` is 6 and `TCP_NODELAY` is 1
+    /// on Linux and on Darwin). `0`, or the `errno`.
+    pub(crate) fn nodelay(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let fd = self.handle_fd(args[0]);
+        let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            4,
+            2,
+        ));
+        let cell = self.builder.ins().stack_addr(pointer, slot, 0);
+        let one = self.builder.ins().iconst(types::I32, 1);
+        self.builder.ins().store(MemFlags::trusted(), one, cell, 0);
+        let level = self.builder.ins().iconst(types::I32, 6);
+        let name = self.builder.ins().iconst(types::I32, 1);
+        let len = self.builder.ins().iconst(types::I32, 4);
+        let result = self.libc_call(
+            "setsockopt",
+            &[types::I32, types::I32, types::I32, pointer, types::I32],
+            &[types::I32],
+            &[fd, level, name, cell, len],
+        );
+        let reason = self.errno();
+        let failed = self.builder.ins().icmp_imm(IntCC::SignedLessThan, result, 0);
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        vec![self.builder.ins().select(failed, reason, zero)]
+    }
+
     /// `clock_ms(&Clock)` (`docs/native-sockets.md` §5): `CLOCK_MONOTONIC`
     /// as milliseconds. The clock id is 1 on Linux and 6 on Darwin; both
     /// answer a `timespec` of two 64-bit fields.

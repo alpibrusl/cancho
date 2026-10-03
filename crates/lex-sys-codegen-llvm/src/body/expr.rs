@@ -860,6 +860,10 @@ impl<'a> FuncEmitter<'a> {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.nonblocking(&args)
             }
+            Callee::Builtin(Builtin::ConnNodelay) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.nodelay(&args)
+            }
             Callee::Builtin(Builtin::ConnClose | Builtin::ListenerClose | Builtin::PollerClose) => {
                 let fd64 = evaluated
                     .into_iter()
