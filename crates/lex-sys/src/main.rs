@@ -29,6 +29,8 @@ mod acli;
 mod fmt_cli;
 mod test_cli;
 mod vcs_cli;
+mod vcs_dir;
+mod vcs_origin;
 
 const USAGE: &str = "\
 lex-sys — the bootstrap compiler for the lex-sys systems dialect
@@ -46,11 +48,12 @@ usage:
     lex-sys agent-guidelines
     lex-sys introspect [--output json]
     lex-sys skill [--output json] [<out-file>]
-    lex-sys vcs publish [--store <dir>] [--std] [--requires <lock>:<dep-store>]... <file.ls>
+    lex-sys vcs publish [--store <dir>] [--std] [--requires <lock>[:<dep-store>]]... <file.ls>
+    lex-sys vcs publish [--store <root>] [--std] --dir <dir>
     lex-sys vcs log     [--store <dir>]
-    lex-sys vcs resolve [--lock <file>] <store-dir>
-    lex-sys vcs lock --store <dir> -o <file> <name>...
-    lex-sys vcs fetch --lock <file> --store <dir> -o <dir>
+    lex-sys vcs resolve [--lock <file>] [<store-dir>]
+    lex-sys vcs lock (--store <dir> | --git <url> (--rev <hash> | --ref <name>) [--path <dir>]) -o <file> (--all | <name>...)
+    lex-sys vcs fetch --lock <file> [--store <dir>] -o <dir>
     lex-sys --version
 
 options:

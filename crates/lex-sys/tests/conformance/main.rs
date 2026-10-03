@@ -65,6 +65,7 @@ mod sockets;
 mod testing;
 mod traps;
 mod vcs;
+mod vcs_remote;
 mod vcs_std;
 
 const BIN: &str = env!("CARGO_BIN_EXE_lex-sys");
