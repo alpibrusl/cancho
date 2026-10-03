@@ -466,6 +466,14 @@ by descriptor -- and it makes one open question of the performance half: whether
 the Linux `Poller` should be `poll(2)`-backed, which needs a registration table
 the runtime owns. Not decided here; the number is the reason to decide it.
 
+### 10.5 `clock_unix_ms`: what a webhook service found missing
+
+Section 5 chose a **monotonic** clock for timeouts and said why: a wall clock that jumps forward would close every connection at once. That choice left a program with no way to ask what *day* it is. `lexsys-hooks` (a webhook delivery service) signs each delivery with Standard Webhooks, whose `webhook-timestamp` header is integer **Unix seconds** and which a receiver checks against its own clock, so a message stamped with a monotonic reading (here, 425,112 ms since an arbitrary origin) is refused as more than fifty years old.
+
+`clock_unix_ms(&Clock) -> [clock] int` is the second builtin on the same capability: milliseconds since 1970-01-01 UTC, from `CLOCK_REALTIME` (id 0 on both Linux and Darwin), read the way `clock_ms` reads `CLOCK_MONOTONIC`. It reports the same `clock` label, so a program that stamps messages says so, and a program without a `Clock` cannot. **It is for stamping, never for timing**: it can step backwards when the host's clock is set, and a timeout or a retry schedule built on it can fire early, late or never. The doc comment on the builtin says so; nothing in the compiler can enforce it.
+
+Verified by `the_wall_clock_reads_unix_milliseconds`, which runs a program on both backends and requires the number it prints to lie between two readings of the host's clock taken either side of the run; changing either backend to read the monotonic clock makes it fail (checked on each). **Not verified:** Darwin, where `CLOCK_REALTIME` is 0 by the platform headers and not by a run.
+
 ## 11. `conn_nodelay`: what a proxy found it needed
 
 A connection pooler for PostgreSQL (`lexsys-pg`, `docs/pooler.md`) forwards what one peer sends to another. Its first slices ran with no way to set a socket

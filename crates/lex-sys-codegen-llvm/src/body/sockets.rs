@@ -383,11 +383,18 @@ impl<'a> FuncEmitter<'a> {
     }
 
     /// `clock_ms(&Clock)` (`docs/native-sockets.md` §5): `CLOCK_MONOTONIC`
-    /// as milliseconds (clock id 1 on Linux, 6 on Darwin).
-    pub(crate) fn clock_ms(&mut self) -> Result<Vec<LValue>, String> {
+    /// as milliseconds (clock id 1 on Linux, 6 on Darwin). With `wall`,
+    /// `CLOCK_REALTIME` (id 0 on both): `clock_unix_ms` (§10.5).
+    pub(crate) fn clock_ms(&mut self, wall: bool) -> Result<Vec<LValue>, String> {
         let ts = self.fresh();
         self.hoist(format!("  {ts} = alloca i8, i64 16\n"));
-        let id = if self.is_darwin() { 6 } else { 1 };
+        let id = if wall {
+            0
+        } else if self.is_darwin() {
+            6
+        } else {
+            1
+        };
         let ignored = self.fresh();
         self.out.push_str(&format!("  {ignored} = call i32 @clock_gettime(i32 {id}, ptr {ts})\n"));
         let seconds = self.load_field(&ts, 0, "i64");
