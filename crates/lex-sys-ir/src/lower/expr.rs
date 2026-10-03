@@ -764,6 +764,10 @@ impl<'a> FnLowering<'a> {
                 {
                     return self.open_file(op, args, span);
                 }
+                // `docs/file-writes.md` section 7: edition 5, resolved by edition.
+                if let Resolved::Builtin(op @ (Builtin::FsRename | Builtin::FsRemove)) = resolved {
+                    return self.path_op(op, args, span);
+                }
                 // `docs/heap.md` §3: all three depend on the type being
                 // boxed, which no fixed signature has a parameter to name.
                 if Builtin::from_name(text) == Some(Builtin::Box) {

@@ -4,7 +4,7 @@
 //! `fs.rs`.
 
 use crate::*;
-use lex_sys_ir::OpenMode;
+use lex_sys_ir::{OpenMode, PathOp};
 
 impl<'a> FuncEmitter<'a> {
     /// `Done`'s three leaves from a signed 64-bit result: negative is
@@ -192,5 +192,42 @@ impl<'a> FuncEmitter<'a> {
             operand(&answer[1])
         ));
         Ok(vec![LValue::Reg(tag), LValue::Reg(value), answer[2].clone()])
+    }
+
+    /// `fs_remove(fs, path)` and `fs_rename(fs, from, to)`
+    /// (`docs/file-writes.md` section 7): every path checked against the
+    /// prefix, then one `unlink(2)` or `rename(2)`.
+    pub(crate) fn path_op(
+        &mut self,
+        op: PathOp,
+        prefix: &str,
+        args: &[Expr],
+    ) -> Result<Vec<LValue>, String> {
+        let first = self.expr(&args[1])?;
+        let first = self.checked_path(prefix, &first)?;
+        let result = self.fresh();
+        match op {
+            PathOp::Remove => {
+                self.out.push_str(&format!("  {result} = call i32 @unlink(ptr {first})\n"));
+            }
+            PathOp::Rename => {
+                let second = self.expr(&args[2])?;
+                let second = self.checked_path(prefix, &second)?;
+                self.out.push_str(&format!(
+                    "  {result} = call i32 @rename(ptr {first}, ptr {second})\n"
+                ));
+            }
+        }
+        let result = self.widen(&result);
+        Ok(self.done(&result))
+    }
+
+    /// `file_lock(file)`: `flock(fd, LOCK_EX | LOCK_NB)`, which is 6 on both targets.
+    pub(crate) fn file_lock(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        let fd = self.handle_fd(&args[0]);
+        let result = self.fresh();
+        self.out.push_str(&format!("  {result} = call i32 @flock(i32 {fd}, i32 6)\n"));
+        let result = self.widen(&result);
+        Ok(self.done(&result))
     }
 }

@@ -327,6 +327,11 @@ impl<'a> FuncEmitter<'a> {
                 let (prefix, mode, args) = (prefix.clone(), *mode, args.clone());
                 self.open_file(&prefix, mode, &args)
             }
+            // `docs/file-writes.md` section 7.
+            Expr::PathOp { op, prefix, args } => {
+                let (op, prefix, args) = (*op, prefix.clone(), args.clone());
+                self.path_op(op, &prefix, &args)
+            }
             // `docs/function-values.md` §4.2: the target's own address,
             // taken rather than called. An LLVM global symbol is already
             // a usable `ptr` constant wherever one is expected -- the
@@ -772,7 +777,8 @@ impl<'a> FuncEmitter<'a> {
                 | Builtin::FilePread
                 | Builtin::FileSync
                 | Builtin::FileTruncate
-                | Builtin::FileSize),
+                | Builtin::FileSize
+                | Builtin::FileLock),
             ) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 let leaves = match op {
@@ -794,6 +800,7 @@ impl<'a> FuncEmitter<'a> {
                     Builtin::FilePread => self.file_pread(&args),
                     Builtin::FileSync => self.file_sync(&args),
                     Builtin::FileTruncate => self.file_truncate(&args),
+                    Builtin::FileLock => self.file_lock(&args),
                     _ => self.file_size(&args),
                 }
             }

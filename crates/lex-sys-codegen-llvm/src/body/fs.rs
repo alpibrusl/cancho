@@ -30,7 +30,7 @@ impl<'a> FuncEmitter<'a> {
     /// `lex-sys-codegen`'s own `checked_path` (`body/memory.rs`) line
     /// for line; the loop is built the same "no `phi`" way `connect`'s
     /// own `checked_host` already is.
-    fn checked_path(&mut self, prefix: &str, path: &[LValue]) -> Result<String, String> {
+    pub(crate) fn checked_path(&mut self, prefix: &str, path: &[LValue]) -> Result<String, String> {
         const PATH_MAX: i64 = 4096;
         let (source, length) = (operand(&path[0]), operand(&path[1]));
 

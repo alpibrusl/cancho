@@ -374,6 +374,9 @@ pub(crate) fn emit_module(
     declare_libc_unless_own(&mut text, "fsync", "i32 @fsync(i32)");
     declare_libc_unless_own(&mut text, "ftruncate", "i32 @ftruncate(i32, i64)");
     declare_libc_unless_own(&mut text, "lseek", "i64 @lseek(i32, i64, i32)");
+    declare_libc_unless_own(&mut text, "unlink", "i32 @unlink(ptr)");
+    declare_libc_unless_own(&mut text, "rename", "i32 @rename(ptr, ptr)");
+    declare_libc_unless_own(&mut text, "flock", "i32 @flock(i32, i32)");
     let errno_symbol = match triple.operating_system {
         target_lexicon::OperatingSystem::Darwin(_) => "__error",
         _ => "__errno_location",

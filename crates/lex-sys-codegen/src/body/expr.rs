@@ -165,6 +165,10 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                 let (prefix, mode, args) = (prefix.clone(), *mode, args.clone());
                 self.open_file(&prefix, mode, &args)
             }
+            Expr::PathOp { op, prefix, args } => {
+                let (op, prefix, args) = (*op, prefix.clone(), args.clone());
+                self.path_op(op, &prefix, &args)
+            }
             Expr::Connect { bound, args } => {
                 let (bound, args) = (bound.clone(), args.clone());
                 self.connect(&bound, &args)
@@ -585,6 +589,10 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::FileSync) => self.file_sync(&args),
                     Callee::Builtin(Builtin::FileTruncate) => self.file_truncate(&args),
                     Callee::Builtin(Builtin::FileSize) => self.file_size(&args),
+                    Callee::Builtin(Builtin::FileLock) => self.file_lock(&args),
+                    Callee::Builtin(Builtin::FsRename | Builtin::FsRemove) => {
+                        unreachable!("`fs_rename` and `fs_remove` are lowered as `Expr::PathOp`")
+                    }
                     // Like the two above: the bound travels with its own
                     // node (`docs/net.md` §4.1).
                     Callee::Builtin(Builtin::Connect) => {
