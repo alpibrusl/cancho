@@ -103,6 +103,32 @@ The cost of the alternative is the cost of the engine's authority report
 reading `ffi("libc")`. That is the reason, and it is the same reason as
 every earlier stage.
 
+### 2.1 Is this C?
+
+Two different questions are in that word, and the answer differs.
+
+* **For the program: no C at all.** A program that opens, appends, syncs and
+  renames through these builtins declares no `extern fn` and holds no
+  `Ffi("libc")`. Its authority report names the directory it touches and
+  nothing called `ffi`. This is what `native-sockets.md` §7 calls stage 1,
+  and it is what this document delivers for files.
+* **For the compiler: still libc, for now.** The backend implements each
+  builtin by calling libc, as `creat`, `open`, `read` and `close` already
+  do. Removing that is `native-sockets.md` §7's stage 2, a libc-free Linux
+  runtime issuing raw syscalls, and it is not started. Cranelift cannot emit
+  a raw `syscall` instruction, so it cannot be a part of this slice, and
+  `native-sockets.md` §7 is also explicit that macOS cannot leave libSystem
+  at all.
+
+The consequence for the design: **the choice in §3 (`fopen`) is
+backend-internal and is the stage-1 bridge.** No program can see it, in
+the same way no program sees that `fs_write` calls `creat`. When stage 2
+arrives on Linux, each builtin below becomes one fixed-arity kernel call
+(`openat`, `pwrite64`, `pread64`, `fsync`, `ftruncate`, `renameat`,
+`unlinkat`, `flock`), with the Linux flag constants in a table, no `FILE`
+object, and no variadic question. The API in §4 does not change when that
+happens, which is the property that justifies doing the API first.
+
 ---
 
 ## 3. Opening: three flags nobody has to know
@@ -395,19 +421,27 @@ sandbox).
 * **No `O_CLOEXEC`** (§3).
 * **No durability on a non-Linux target** (§6).
 
-## 9. Open questions
+## 9. Open questions, and where each stands
 
 1. **Is `Done` too ordinary a prelude name?** Zero declarations in this
    repository, but `file-handles.md` §4.2 priced exactly this mistake.
-   `Written`, `Fs` results and `FileResult` are the alternatives.
-2. **One `File` or a `WFile`?** §3.1 recommends one. The cost is that the
-   read/write mismatch is a runtime `EBADF`, not a type error.
-3. **`fopen` or per-target flag constants** for the opens (§3)? `fopen` is
-   the same on both backends; the table is the fallback.
-4. **Refuse or weaken `file_sync` off Linux** (§6)?
-5. **A `mode` argument now or later** (§8)?
+   *Proceeding with `Done`* unless a reviewer objects; `Written` is the
+   alternative and renaming before release is cheap.
+2. **One `File` or a `WFile`?** §3.1 recommends one; the cost is that a
+   read/write mismatch is a runtime `EBADF`, not a type error. *Proceeding
+   with one `File`.*
+3. **`fopen` or per-target flag constants** for the opens (§3)? **Settled:
+   `fopen` for now.** It is backend-internal and is replaced by raw
+   syscalls in stage 2 (§2.1).
+4. **Refuse or weaken `file_sync` off Linux** (§6)? *Proceeding with a
+   documented weaker meaning* (`fsync(2)`, no drive-cache flush on macOS):
+   refusing would stop every program that syncs from compiling on the
+   macOS CI target. `F_FULLFSYNC` is the follow-up, and a Mac is needed to
+   test it.
+5. **A `mode` argument now or later** (§8)? *Later.*
 6. **What does the authority report say for a read-opened handle that is
-   synced** (§5.2)? A test, not an argument, settles it.
+   synced** (§5.2)? A test, not an argument, settles it. It is written with
+   slice 1.
 
 ## 10. Slices, and how each is checked
 
