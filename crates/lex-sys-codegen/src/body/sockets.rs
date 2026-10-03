@@ -399,8 +399,10 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
 
     /// `clock_ms(&Clock)` (`docs/native-sockets.md` §5): `CLOCK_MONOTONIC`
     /// as milliseconds. The clock id is 1 on Linux and 6 on Darwin; both
-    /// answer a `timespec` of two 64-bit fields.
-    pub(crate) fn clock_ms(&mut self) -> Vec<Value> {
+    /// answer a `timespec` of two 64-bit fields. With `wall`, the same
+    /// reading of `CLOCK_REALTIME` (id 0 on both), which is
+    /// `clock_unix_ms` (§10.5).
+    pub(crate) fn clock_ms(&mut self, wall: bool) -> Vec<Value> {
         let pointer = self.pointer;
         let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
             StackSlotKind::ExplicitSlot,
@@ -408,7 +410,13 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
             3,
         ));
         let ts = self.builder.ins().stack_addr(pointer, slot, 0);
-        let monotonic = if self.is_darwin() { 6 } else { 1 };
+        let monotonic = if wall {
+            0
+        } else if self.is_darwin() {
+            6
+        } else {
+            1
+        };
         let id = self.builder.ins().iconst(types::I32, monotonic);
         self.libc_call("clock_gettime", &[types::I32, pointer], &[types::I32], &[id, ts]);
         let seconds = self.builder.ins().load(types::I64, MemFlags::trusted(), ts, 0);

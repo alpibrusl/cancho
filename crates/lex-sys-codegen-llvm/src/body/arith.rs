@@ -99,6 +99,7 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::PollerWait
                     | Builtin::PollerClose
                     | Builtin::ClockMs
+                    | Builtin::ClockUnixMs
                     | Builtin::CopyWithin
                     | Builtin::ConnDetach
                     | Builtin::Release,

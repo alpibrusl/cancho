@@ -392,6 +392,11 @@ pub enum Builtin {
     /// edition 5 only: monotonic milliseconds from an arbitrary origin, so
     /// an idle timeout survives the wall clock being set.
     ClockMs,
+    /// `clock_unix_ms(&Clock) -> [clock] int` -- `docs/native-sockets.md`
+    /// §10.5, edition 5 only: milliseconds since 1970-01-01 UTC, the
+    /// wall clock. It can jump backwards or forwards when the host's clock
+    /// is set, so it is for stamping messages and never for timeouts.
+    ClockUnixMs,
     /// `conn_detach(Conn) -> [] int` -- `docs/native-sockets.md` §10.3:
     /// turns a connection into an inert **ticket** (an integer) so it can
     /// sit in a `Vec`, which holds only copyable things. The `Conn` is
@@ -534,6 +539,7 @@ impl Builtin {
         Builtin::PollerWait,
         Builtin::PollerClose,
         Builtin::ClockMs,
+        Builtin::ClockUnixMs,
         Builtin::ConnDetach,
         Builtin::ConnAttach,
         Builtin::ConnRead,
@@ -612,6 +618,7 @@ impl Builtin {
             Builtin::PollerWait => "poller_wait",
             Builtin::PollerClose => "poller_close",
             Builtin::ClockMs => "clock_ms",
+            Builtin::ClockUnixMs => "clock_unix_ms",
             Builtin::ConnDetach => "conn_detach",
             Builtin::ConnAttach => "conn_attach",
             Builtin::ConnRead => "conn_read",
@@ -661,6 +668,7 @@ impl Builtin {
             | Builtin::PollerWait
             | Builtin::PollerClose
             | Builtin::ClockMs
+            | Builtin::ClockUnixMs
             | Builtin::ConnDetach
             | Builtin::ConnAttach
             | Builtin::ConnRead
@@ -765,7 +773,8 @@ impl Builtin {
             | Builtin::ListenerNonblocking
             | Builtin::ForkClock
             | Builtin::CopyWithin
-            | Builtin::ClockMs => 1,
+            | Builtin::ClockMs
+            | Builtin::ClockUnixMs => 1,
             _ => 0,
         }
     }
@@ -1112,7 +1121,7 @@ impl Builtin {
             Builtin::PollerClose => (vec![named(PRELUDE_POLLER)], Type::Int),
             Builtin::ConnDetach => (vec![named(PRELUDE_CONN)], Type::Int),
             Builtin::ConnAttach => (vec![Type::Int], named(PRELUDE_ATTACHED)),
-            Builtin::ClockMs => (
+            Builtin::ClockMs | Builtin::ClockUnixMs => (
                 vec![Type::Ref {
                     unique: false,
                     region: Region::Param(0),
@@ -1226,7 +1235,7 @@ impl Builtin {
             // bound at the call site.
             Builtin::TcpAccept => Effects::plain(["conn_accept"]),
             Builtin::ConnRead => Effects::plain(["conn_read"]),
-            Builtin::ClockMs => Effects::plain(["clock"]),
+            Builtin::ClockMs | Builtin::ClockUnixMs => Effects::plain(["clock"]),
             Builtin::PollerAddListener
             | Builtin::PollerAddConn
             | Builtin::PollerModify

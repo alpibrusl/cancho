@@ -1094,6 +1094,64 @@ fn a_program_that_reads_the_clock_reports_it() {
     assert!(json.contains("\"poll\""), "the poller is reported too:\n{json}");
 }
 
+const WALL_CLOCK: &str = r#"
+edition 5;
+import std.io;
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi); release(fs); release(heap); release(args); release(net);
+    borrow clock as &c in {
+        let wall = clock_unix_ms(c);
+        borrow mut io as &!i in {
+            io.print_int(i, wall);
+            io.newline(i);
+        }
+    }
+    release(clock);
+    release(io);
+    return 0;
+}
+"#;
+
+/// `clock_unix_ms` answers milliseconds since 1970-01-01 UTC: the number
+/// the program prints lies between two readings of the host's own clock
+/// taken either side of the run, on both backends. (The monotonic
+/// `clock_ms` could not: its origin is arbitrary.)
+#[test]
+fn the_wall_clock_reads_unix_milliseconds() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now_ms = || SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64;
+    for backend in BACKENDS {
+        let dir = scratch(&format!("sockets-wall-{backend}"));
+        let exe = build(&dir, "wall", WALL_CLOCK, backend);
+        let before = now_ms();
+        let run = Command::new(&exe).output().expect("the program runs");
+        let after = now_ms();
+        assert_eq!(run.status.code(), Some(0), "{backend}");
+        let printed: i64 = String::from_utf8_lossy(&run.stdout)
+            .trim()
+            .parse()
+            .unwrap_or_else(|_| panic!("{backend}: a number, got {:?}", run.stdout));
+        assert!(
+            before <= printed && printed <= after,
+            "{backend}: {printed} is not within [{before}, {after}]"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// The wall clock is the same capability as the monotonic one: it reports
+/// `clock`, so a program that stamps messages says so, and a program
+/// without a `Clock` cannot ask.
+#[test]
+fn reading_the_wall_clock_reports_clock() {
+    let json = authority_json(WALL_CLOCK, "sockets-wall-authority");
+    assert!(
+        json.contains("{ \"name\": \"clock\", \"argument\": null, \"bounded\": true }"),
+        "{json}"
+    );
+}
+
 const FORGED: &str = r#"
 edition 5;
 fn refused(ticket: int) -> [] int {
