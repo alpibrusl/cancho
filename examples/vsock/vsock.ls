@@ -52,16 +52,6 @@ import net.sockets;
 import net.connect;
 import agent.wire;
 
-// Little-endian, four bytes, host order -- what `svm_port`/`svm_cid` both
-// want.
-fn store_u32[&d](dst: &!d [byte], at: int, value: int) -> [] int {
-    dst[at] = byte_of(value & 0xff);
-    dst[at + 1] = byte_of(value >> 8 & 0xff);
-    dst[at + 2] = byte_of(value >> 16 & 0xff);
-    dst[at + 3] = byte_of(value >> 24 & 0xff);
-    return 0;
-}
-
 // A decimal, unsigned, up to 32 bits, or -1 -- `svm_cid`/`svm_port` are
 // both `u32`, wider than a TCP port's 16, so `examples/fetch/`'s own
 // `port_of` (five digits) is not wide enough to reuse here.
@@ -306,8 +296,9 @@ fn main(world: World) -> [] int {
                                 // (`svm_reserved1`) stay 0 -- `alloc_slice`'s own
                                 // fill value, and `AF_VSOCK` (40) fits one byte.
                                 addr[0] = byte_of(40);
-                                store_u32(addr, 4, port);
-                                store_u32(addr, 8, cid);
+                                // Little-endian, host order: what `svm_port`/`svm_cid` both want.
+                                bytes.store_le32(addr, 4, port);
+                                bytes.store_le32(addr, 8, cid);
 
                                 let fd = dial(f, addr);
                                 if fd < 0 {
