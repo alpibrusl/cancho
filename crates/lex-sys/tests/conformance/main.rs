@@ -56,6 +56,7 @@ mod filesystem;
 mod floats;
 mod foreign_authority;
 mod formatting;
+mod gcm;
 mod http;
 mod http_server;
 mod identity;

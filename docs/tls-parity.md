@@ -1,6 +1,6 @@
 # TLS parity with the OpenSSL backend: AES-GCM, P-256/P-384 key exchange, TLS 1.2
 
-> **Status: design (#207, PR 1 of 5).** Sub-issue 10 of the self-contained TLS 1.3 client (#197). The issue asked for a
+> **Status: design (#207, PR 1 of 5); PR 2, AES-GCM, built (§3.1.1).** Sub-issue 10 of the self-contained TLS 1.3 client (#197). The issue asked for a
 > measured number of receivers needing TLS 1.2 or AES-GCM before anything is built. That number cannot be measured here, and
 > the requirement replaces it: **the maintainer's requirement is that the pure client be equivalent to the OpenSSL backend**
 > it is to replace in `lexsys-hooks` (#210). The maintainer chose the scope below, "AEAD parity", over full parity with
@@ -63,8 +63,10 @@ gets a tag of its own.
 built without tables:
 - **AES-128 and AES-256** (FIPS 197), **bitsliced**: the S-box as a fixed boolean circuit over machine words (Boyar–Peralta's
   113 gates), with no table lookup and no branch or index that depends on the key or data. The key schedule is bitsliced too.
-- **GHASH** with a constant-time carry-less multiply: 64-bit operands split into masked quarters, as BearSSL's `ghash_ctmul64`
-  does, with no table indexed by the key-derived `H`.
+- **GHASH** with a constant-time carry-less multiply, with no table indexed by the key-derived `H`. *Corrected in PR 2:* this
+  said 64-bit operands, as BearSSL's `ghash_ctmul64` does. That needs the high half of a 64×64-bit product, and lex-sys's
+  `int` is a checked 64-bit signed integer, so a product over 2^63 traps. It is built as BearSSL's `ghash_ctmul32` instead:
+  32-bit operands split into masked quarters, every product of two quarters under 2^63 (§3.1.1).
 - **GCM** (NIST SP 800-38D) with a 96-bit nonce only, which is all TLS uses.
 - **In `std`**, beside `std.chacha20`: `std.aes` and `std.gcm`, each with a refusal tag for every rejected input.
 
@@ -77,6 +79,94 @@ built without tables:
 - the cost per byte, against ChaCha20-Poly1305's 135 MB/s (`docs/chacha20.md` §6).
 
 A bitsliced AES may be several times slower than ChaCha20 here. The cost is measured and written, not assumed.
+
+#### 3.1.1 Results (PR 2)
+
+**Built.** `std/aes.ls` is a port of BearSSL's `aes_ct` and `std/gcm.ls` of its `ghash_ctmul32` (Thomas Pornin, MIT licence,
+quoted in the files):
+- **Two blocks per pass.** They are encrypted as eight 32-bit words with the blocks' bits regrouped (`ortho`), and the S-box
+  is the 113-gate circuit run on all eight words.
+- **The key schedule runs that S-box on one word at a time.** It is built in place in the caller's `skey`.
+- **Counter mode encrypts two counter blocks per pass.**
+- **GHASH uses Karatsuba.** Each 128×128-bit product is nine 32×32-bit carry-less products, done on the words and on their bit
+  reversals.
+
+**What each module answers, and refuses:**
+- `std.gcm.seal` and `std.gcm.open` take and answer what `std.chacha20`'s do: the tag follows the ciphertext, and `open`
+  writes nothing on a mismatch.
+- A 192-bit key, or a nonce that is not 96 bits, is refused (`gcm-key-length`, `gcm-nonce-length`). TLS uses neither.
+- `std.aes` exposes the block and CTR functions with `_with` variants that take the caller's eight-word scratch.
+
+**Every call allocates once.** The first version gave each helper its own `region`. Nested three deep, they made glibc's
+`free` trim the heap and the next `malloc` regrow it: 8 `brk` system calls per `seal` (`strace -c`), and 23 µs for a 64-byte
+message. After the change, one region holds all of a call's scratch:
+- no `brk` per call;
+- 5.0 µs for the same 64-byte message.
+
+**Correctness, every case through `tests/programs/gcm_driver.ls`** (`crates/lex-sys/tests/conformance/gcm.rs`):
+
+| Evidence | Cases | Result |
+|---|---|---|
+| FIPS 197 C.1 and C.3, one block, both backends | 2 | equal |
+| NIST CAVP `gcmEncryptExtIV` and `gcmDecrypt`, 128- and 256-bit keys, 96-bit IVs and 128-bit tags (`tests/vectors/cavp/README.md`), both backends | 1,500, 387 of them `FAIL` | all equal; every `FAIL` refused without writing |
+| Wycheproof `aes_gcm_test.json` | 316 | 79 valid cases sealed and opened; 54 bad tags refused; 103 with a 192-bit key and 80 with another nonce size refused with their tags |
+| each bit of a 67-byte sealed message and its 20 bytes of associated data flipped | 696 | all refused, none writes |
+| every reachable refusal | 11 | each with its own tag |
+| `scripts/gcm_differential.py`, random cases against pyca/cryptography (OpenSSL 4.0.1) | 10,000 cases, 30,000 checks | 0 differences |
+
+**Mutants:** `scripts/gcm_mutants.py` runs 24 mutants across both files, and **24 are killed**. Each is one bug planted in
+the S-box, ShiftRows, MixColumns, the key schedule, `ortho`, the counter, the carry-less multiply, Karatsuba, the reduction,
+the lengths block, the order of the hashed data, J0, the zero padding, the tag compare, or the nonce check.
+
+**Timing.** There are two checks.
+
+*Branches.* `scripts/chacha20_branches.py` lists every conditional jump in the 26 functions that touch the key, the keystream
+or GHASH's state, on both backends' objects. Each jump either goes to a trap (a bounds or overflow check) or compares:
+- a constant;
+- a loop counter;
+- the counter block;
+- a length, as in GHASH's zero padding, where the register compared is `len(data)`.
+
+No index depends on the key or the data either.
+
+*Statistics.* `scripts/gcm_timing.py` runs a dudect-style Welch t-test (Reparaz et al., 2017) over
+`tests/programs/gcm_timing.ls`:
+- each call is timed with `rdtscp`, through a three-line C library linked with `-l tick`;
+- the inputs are 64-byte messages with 13 bytes of associated data;
+- |t| below 4.5 is no evidence of a leak.
+
+| Test | LLVM, 10^6 samples | Cranelift, 10^6 samples |
+|---|---|---|
+| seal: fixed key against random key | 2.24 | 1.15 |
+| seal: fixed message and associated data against random | 2.06 | 3.13 |
+| open: fixed sealed message against random (both refused) | 2.98 | 2.31 |
+| open: tag wrong in its first byte against its last | 2.31 | 2.38 |
+
+**The harness's first version found a false leak.** It decoded each case's hex just before timing it. On the Cranelift
+backend, that gave t = 31 and 43 for the data tests, and t = 174 for a loop of plain XORs timed the same way. The cause was
+the decoding, not the code under test: its branch on each hex digit is always predicted for an all-zero input and
+mispredicts for a random one, and the state that leaves behind reaches the next timed call. The harness now decodes every
+case before it times any.
+
+**Cost.** `tests/programs/gcm_bench.ls` seals one message repeatedly, as `aead_bench.ls` does for ChaCha20 (median of 5,
+one core of the same Xeon at 2.80 GHz). ChaCha20-Poly1305 was re-measured in the same session at 129 MB/s for 16 KiB,
+against `docs/chacha20.md` §6's 135 MB/s.
+
+| Message | AES-128-GCM, LLVM | AES-256-GCM, LLVM | AES-128-GCM, Cranelift | ChaCha20-Poly1305, LLVM | `openssl speed -evp aes-128-gcm` |
+|---|---|---|---|---|---|
+| 16,384 bytes | **32.6 MB/s** (502 µs) | 27.3 MB/s (600 µs) | 10.4 MB/s (1,569 µs) | 129 MB/s (127 µs) | 5,546 MB/s |
+| 1,024 bytes | 30.9 MB/s (33 µs) | 23.5 MB/s (44 µs) | 9.2 MB/s (111 µs) | 124 MB/s (8.3 µs) | 3,984 MB/s |
+| 64 bytes | 12.8 MB/s (5.0 µs) | 9.4 MB/s (6.8 µs) | 4.1 MB/s (16 µs) | 61 MB/s (1.0 µs) | 1,356 MB/s |
+
+**What the costs mean:**
+- **AES-GCM costs about 4 times ChaCha20-Poly1305 here.** A full 16 KiB TLS record takes half a millisecond to seal. A server
+  that picks an AES-GCM suite costs that much per record.
+- **OpenSSL is about 170 times faster.** It uses the AES-NI and PCLMULQDQ instructions, which lex-sys cannot emit.
+- **Most of the cost is instructions.** `valgrind --tool=callgrind` puts GHASH at 28% of a 16 KiB seal and the AES rounds at
+  most of the rest. GHASH keeps its 74 working words in a bounds-checked array. Holding them in locals is the first place to
+  look if the cost matters.
+- **The key is expanded, and H computed, on every call.** In a 64-byte seal they are 25% and 14% of the instructions
+  (callgrind, inclusive). Both depend only on the key, so PR 4 can keep them per connection if the record layer needs that.
 
 ### 3.2 P-256 and P-384 key exchange, constant-time (PR 3)
 

@@ -7,6 +7,7 @@ Apache License 2.0 in `LICENSE` beside them.
 | File | Cases | Run by |
 |---|---|---|
 | `chacha20_poly1305_test.json` | 325 | `conformance/aead.rs` (`docs/chacha20.md` §4) |
+| `aes_gcm_test.json` | 316 | `conformance/gcm.rs` (`docs/tls-parity.md` §3.1.1) |
 | `hmac_sha256_test.json` | 174 | `conformance/kdf.rs` (`docs/hkdf.md` §4) |
 | `hmac_sha384_test.json` | 174 | `conformance/kdf.rs` |
 | `hkdf_sha256_test.json` | 86 | `conformance/kdf.rs` |

@@ -33,3 +33,15 @@ SHA-512, 15 cases a section. Those sections are unchanged; the header
 comment is NIST's, other curves and hashes included.
 `crates/lex-sys/tests/conformance/ecdsa.rs` runs all 90 (`docs/ecdsa.md`
 §5.2).
+
+## AES-GCM
+
+`gcmEncryptExtIV128.rsp`, `gcmEncryptExtIV256.rsp`, `gcmDecrypt128.rsp`
+and `gcmDecrypt256.rsp` are NIST's GCM response files (CAVS 14.0, SP
+800-38D) from pyca/cryptography's `cryptography_vectors`
+(`ciphers/AES/GCM/`), cut to the sections with a 96-bit IV and a 128-bit
+tag, the only ones TLS uses: 25 sections of 15 cases a file. Those
+sections are unchanged, apart from CRLF line endings made LF; the header
+comment is NIST's. `crates/lex-sys/tests/conformance/gcm.rs` runs all
+1,500, 387 of them decryptions marked `FAIL` (`docs/tls-parity.md`
+§3.1.1).
