@@ -102,6 +102,7 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::PollerAddSignals
                     | Builtin::SignalsPending
                     | Builtin::SignalsClose
+                    | Builtin::DirClose
                     | Builtin::ClockMs
                     | Builtin::ClockUnixMs
                     | Builtin::CopyWithin

@@ -759,7 +759,8 @@ impl<'a> FnLowering<'a> {
                     op @ (Builtin::OpenAppend
                     | Builtin::OpenWrite
                     | Builtin::OpenNew
-                    | Builtin::OpenRw),
+                    | Builtin::OpenRw
+                    | Builtin::OpenDir),
                 ) = resolved
                 {
                     return self.open_file(op, args, span);

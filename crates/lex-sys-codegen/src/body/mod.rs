@@ -5,6 +5,7 @@
 use crate::*;
 
 mod control;
+mod dirs;
 mod expr;
 mod files;
 mod memory;

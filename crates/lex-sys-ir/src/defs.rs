@@ -289,6 +289,7 @@ pub(crate) fn is_capability(def: DefId) -> bool {
             // than conjuring authority because the number would be someone
             // else's open file.
             | PRELUDE_FILE
+            | PRELUDE_DIR
             | PRELUDE_LISTENER
             | PRELUDE_CONN
             | PRELUDE_POLLER
@@ -325,7 +326,12 @@ pub(crate) fn released_only(def: DefId) -> bool {
 pub(crate) fn closed_only(def: DefId) -> bool {
     matches!(
         def.0 as usize,
-        PRELUDE_FILE | PRELUDE_LISTENER | PRELUDE_CONN | PRELUDE_POLLER | PRELUDE_SIGNAL_WATCH
+        PRELUDE_FILE
+            | PRELUDE_DIR
+            | PRELUDE_LISTENER
+            | PRELUDE_CONN
+            | PRELUDE_POLLER
+            | PRELUDE_SIGNAL_WATCH
     )
 }
 
@@ -394,6 +400,9 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
         // could not be passed to a function that had not been told where it
         // came from.
         PRELUDE_FILE => Effects::plain(["file_read", "file_write"]),
+        // `docs/directory-handles.md` §2: the path was spent at `open_dir`,
+        // so the handle's label names none, as `file_read` names none.
+        PRELUDE_DIR => Effects::plain(["dir_read"]),
         // `docs/native-sockets.md` §3: the same rule for the socket handles
         // -- the port was spent at `tcp_listen`, so the handle's own
         // labels carry no argument.
@@ -440,6 +449,7 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
                 "args",
                 "file_read",
                 "file_write",
+                "dir_read",
                 "conn_accept",
                 "conn_read",
                 "conn_write",
@@ -487,6 +497,9 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
                 // still declares `file_read`, which is the case the
                 // authority report is for.
                 all.union(&Effects::plain(["file_read", "file_write"]));
+                // `docs/directory-handles.md` §2: the same for a directory
+                // handle, which only `open_dir` on an `Fs` makes.
+                all.union(&Effects::plain(["dir_read"]));
                 all
             }
             _ => Effects::pure(),
@@ -575,6 +588,10 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     let signal_watch = symbol("SignalWatch");
     let watching = symbol("Watching");
     let split_signals = symbol("Split");
+    // `docs/directory-handles.md`: edition 6's directory handle and what
+    // opening one answers.
+    let dir = symbol("Dir");
+    let dir_opened = symbol("DirOpened");
     let again_arm = symbol("Again");
     let data_arm = symbol("Data");
     let wrote_arm = symbol("Wrote");
@@ -639,6 +656,9 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     let split_signals_def = unifier.declare("Split");
     let signal_watch_def = unifier.declare("SignalWatch");
     let watching_def = unifier.declare("Watching");
+    // `PRELUDE_DIR` and `PRELUDE_DIR_OPENED`: edition 6, appended last.
+    let dir_def = unifier.declare("Dir");
+    let dir_opened_def = unifier.declare("DirOpened");
 
     vec![
         TypeDef {
@@ -1178,6 +1198,37 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
             declared_mode: None,
             kind: DefKind::Enum(vec![
                 (ok_arm, vec![Type::Named(signal_watch_def, Vec::new())]),
+                (failed_arm, vec![Type::Int]),
+            ]),
+            span,
+            since: 6,
+        },
+        // `docs/directory-handles.md` §2: a descriptor opened on a
+        // directory. `File`'s shape: a resource with no fields a program
+        // can name, closed only by `dir_close`.
+        TypeDef {
+            name: dir,
+            def: dir_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: Some(Mode::Res),
+            kind: DefKind::Struct(Vec::new()),
+            span,
+            since: 6,
+        },
+        // `open_dir` and `dir_enter`: `Opened`'s shape, for a directory.
+        TypeDef {
+            name: dir_opened,
+            def: dir_opened_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: None,
+            kind: DefKind::Enum(vec![
+                (ok_arm, vec![Type::Named(dir_def, Vec::new())]),
                 (failed_arm, vec![Type::Int]),
             ]),
             span,

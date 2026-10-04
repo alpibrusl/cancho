@@ -383,6 +383,9 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         // The capability is zero-sized and stops here; the path does not.
         let path = self.expr(&args[1]);
         let path = self.checked_path(prefix, &path);
+        if mode == lex_sys_ir::OpenMode::Directory {
+            return self.open_directory(path);
+        }
         if mode != lex_sys_ir::OpenMode::Read {
             return self.open_with_fopen(path, mode);
         }

@@ -384,7 +384,7 @@ lives; D16 decides what is fixed and what is routed round.
 | L3 | No file type, mode or mtime without opening (`fs_stat`) | A.2 | `list` entries, `stat` | compiler: builtin |
 | L4 | `std.crypto.sha256`/`sha512` trap past 65,527/65,519 bytes; no incremental API | A.6 | `hash`, `write` preconditions | `std` (or in-package first, AGENTS.md §7) |
 | L5 | `narrow` takes a literal; no generic over `Fs(p)`/`Net(b)` | A.1, A.9 | static extent for a general tool | by design (`linearity-and-effects.md` §7.4); D14 routes round it |
-| L6 | No symlink-aware open or `realpath` under `Fs`; symlinks escape a narrowed prefix | A.4 | symlink-safe `--root` | compiler: a no-follow open, if wanted |
+| L6 | No symlink-aware open or `realpath` under `Fs`; symlinks escape a narrowed prefix | A.4 | symlink-safe `--root` | compiler: a no-follow open, if wanted. **Reading built** (#227 slice 1): [`directory-handles.md`](directory-handles.md)'s `Dir` opens beneath a directory and follows no link; writing beneath one and the tools on top are its slices 2 and 3 |
 | L7 | Outside-prefix, `..`, relative and sibling paths trap (132) rather than answering an error | A.4 | an error value for confinement | in-tool validation (D9); by design |
 | L8 | No `std.regex` | A.3 | regex `seek` | `std` — large; D15 declines it |
 | L9 | TLS needs `Ffi` (`conn_raw_fd`, `examples/tls_client`) | `docs/native-sockets.md` §6 | an `https` `fetch` with a bounded row | out of scope (D15) |
