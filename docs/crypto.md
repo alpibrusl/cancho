@@ -55,6 +55,14 @@ and the masking is doing the wraparound instead. No `wrapping_add` is
 needed: the trap and the wraparound are solving two different problems
 here, and this one only has the second.
 
+> **Corrected by `docs/hkdf.md` §3.** The reasoning above holds: the
+> checked `+` never traps. But "never traps" still compiles to an
+> overflow test, and once HMAC and HKDF hash secret keys through this
+> function, that test is a branch computed from secret words. The
+> additions are now `wrapping_add` under the same mask, with the same
+> values and no test. `not32` below is now `x ^ 0xffffffff` for the
+> same reason: its subtraction was a checked one.
+
 The other consequence worth stating: `docs/bitwise.md` §2 makes `>>`
 **arithmetic** (sign-extending), which would be wrong for SHA-256's
 right shifts if they ever ran on a negative number. They never do —
@@ -98,6 +106,15 @@ least) 32 bytes; a shorter one traps on the ordinary bounds check
 every other out-of-range write in this language already gets, which is
 the correct, honest answer rather than a manual length precondition
 duplicating it.
+
+> **Corrected by `docs/hkdf.md` §2: `sha256` trapped on any message of
+> 65,536 bytes or more.** It copied the whole padded message into one
+> arena, and an arena is 64 KiB. Nothing here said so, and a reader of
+> this section would assume any length works. `sha256` is now
+> `sha256_init`/`sha256_update`/`sha256_final` over a 138-word state
+> that holds the buffer and the message schedule. The state is public,
+> for HMAC and for transcript hashes. It hashes any length and
+> allocates nothing in proportion to the message.
 
 The row is `[]`. Nothing here performs an effect — `region`/
 `alloc_slice` are not effects (`docs/linearity-and-effects.md` §7.3;

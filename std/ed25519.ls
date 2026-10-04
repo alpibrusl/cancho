@@ -790,12 +790,15 @@ pub fn sign[&seed, &msg, &o](seed: &seed [byte], msg: &msg [byte], o: &!o [byte]
         let pk = alloc_slice[r](32, byte_of(0));
         point_pack(point_a, pk);
 
-        let mlen = len(msg);
-        let buf1 = alloc_slice[r](32 + mlen, byte_of(0));
-        bn_copy_into(buf1[0..32], prefix);
-        bn_copy_into(buf1[32..32 + mlen], msg);
+        // `SHA-512(prefix || msg)` and, below, `SHA-512(R || A || msg)`,
+        // streamed rather than concatenated: a copy of `msg` in this
+        // arena trapped at 64 KiB (`docs/hkdf.md` §2).
+        let hst = alloc_slice[r](crypto.sha512_state_len(), 0);
+        crypto.sha512_init(hst);
+        crypto.sha512_update(hst, prefix);
+        crypto.sha512_update(hst, msg);
         let rhash = alloc_slice[r](64, byte_of(0));
-        crypto.sha512(buf1, rhash);
+        crypto.sha512_final(hst, rhash);
         let rscalar = alloc_slice[r](32, byte_of(0));
         bn_reduce_wide(rscalar, rhash, l_const);
 
@@ -804,12 +807,12 @@ pub fn sign[&seed, &msg, &o](seed: &seed [byte], msg: &msg [byte], o: &!o [byte]
         let r_enc = alloc_slice[r](32, byte_of(0));
         point_pack(point_r, r_enc);
 
-        let buf2 = alloc_slice[r](64 + mlen, byte_of(0));
-        bn_copy_into(buf2[0..32], r_enc);
-        bn_copy_into(buf2[32..64], pk);
-        bn_copy_into(buf2[64..64 + mlen], msg);
+        crypto.sha512_init(hst);
+        crypto.sha512_update(hst, r_enc);
+        crypto.sha512_update(hst, pk);
+        crypto.sha512_update(hst, msg);
         let khash = alloc_slice[r](64, byte_of(0));
-        crypto.sha512(buf2, khash);
+        crypto.sha512_final(hst, khash);
         let kscalar = alloc_slice[r](32, byte_of(0));
         bn_reduce_wide(kscalar, khash, l_const);
 
@@ -837,13 +840,13 @@ pub fn verify[&pk, &msg, &sig](pk: &pk [byte], msg: &msg [byte], sig: &sig [byte
             let point_a = alloc_slice[r](128, byte_of(0));
             let a_ok = point_unpack(pk, point_a);
             if a_ok == 1 {
-                let mlen = len(msg);
-                let buf2 = alloc_slice[r](64 + mlen, byte_of(0));
-                bn_copy_into(buf2[0..32], sig[0..32]);
-                bn_copy_into(buf2[32..64], pk);
-                bn_copy_into(buf2[64..64 + mlen], msg);
+                let hst = alloc_slice[r](crypto.sha512_state_len(), 0);
+                crypto.sha512_init(hst);
+                crypto.sha512_update(hst, sig[0..32]);
+                crypto.sha512_update(hst, pk);
+                crypto.sha512_update(hst, msg);
                 let khash = alloc_slice[r](64, byte_of(0));
-                crypto.sha512(buf2, khash);
+                crypto.sha512_final(hst, khash);
                 let kscalar = alloc_slice[r](32, byte_of(0));
                 bn_reduce_wide(kscalar, khash, l_const);
 
