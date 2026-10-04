@@ -511,7 +511,9 @@ pub enum Expr {
         value: Box<Expr>,
     },
     /// `box_slice(h, count, fill)` (`docs/boxed-slices.md` §3): one
-    /// `malloc`, then the fill written into every element.
+    /// `malloc`, then the fill written into every element -- or, when the
+    /// fill is a constant zero, one `calloc` and no loop
+    /// (`docs/zeroed-slices.md`, [`is_zero_fill`]).
     BoxedSlice {
         element: Type,
         count: Box<Expr>,
@@ -928,6 +930,23 @@ pub fn terminates(body: &[Stmt]) -> bool {
         // terminates when its body does. Unlike a `while`, there is no
         // question of whether it is entered.
         Some(Stmt::Borrow { body, .. } | Stmt::Region { body, .. }) => terminates(body),
+        _ => false,
+    }
+}
+
+/// Whether a `box_slice` fill is a constant whose every bit is zero: `0`,
+/// `false`, `0.0`, or `byte_of(0)`. Such a slice can be had from `calloc`
+/// without a fill loop -- the allocator hands back zeroed memory, and for
+/// a large one fresh pages the kernel zeroes only when they are first
+/// touched (`docs/zeroed-slices.md`). Anything else, including a `0`
+/// computed at run time, keeps the loop: this is a decision about the
+/// program's text, so both backends make it the same way.
+pub fn is_zero_fill(fill: &Expr) -> bool {
+    match fill {
+        Expr::Int(0) | Expr::Bool(false) | Expr::Float(0) => true,
+        Expr::Call { callee: Callee::Builtin(Builtin::ByteOf), args } => {
+            matches!(args.as_slice(), [Expr::Int(0)])
+        }
         _ => false,
     }
 }

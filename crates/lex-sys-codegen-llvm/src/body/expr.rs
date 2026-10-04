@@ -535,6 +535,9 @@ impl<'a> FuncEmitter<'a> {
                 ));
                 Ok(vec![LValue::Reg(result)])
             }
+            // `docs/checked-output.md`: the stream the arm above writes
+            // into, flushed and asked whether any of it failed.
+            Callee::Builtin(Builtin::FlushOut) => Ok(self.flush_out()),
             // `docs/arguments.md` §3: `argc`, exactly as `main` was
             // handed it and stashed into `@lexs_argc` before this
             // function's own body could run.

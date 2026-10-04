@@ -240,20 +240,32 @@ impl<'a> FuncEmitter<'a> {
         count: &Expr,
         fill: &Expr,
     ) -> Result<Vec<LValue>, String> {
+        let zeroed = lex_sys_ir::is_zero_fill(fill);
         let count = self.scalar(count)?;
         let values = self.expr(fill)?;
         let stride = self.stride_of(element)?;
         let bytes = self.slice_bytes(&count, stride)?;
 
         let start = self.fresh();
-        self.out.push_str(&format!("  {start} = call ptr @malloc(i64 {})\n", operand(&bytes)));
+        if zeroed {
+            // `docs/zeroed-slices.md`: a zero fill is `calloc`, and no loop
+            // -- `lex-sys-codegen`'s own `boxed_slice` makes the same choice.
+            self.out.push_str(&format!(
+                "  {start} = call ptr @calloc(i64 {}, i64 1)\n",
+                operand(&bytes)
+            ));
+        } else {
+            self.out.push_str(&format!("  {start} = call ptr @malloc(i64 {})\n", operand(&bytes)));
+        }
         let is_null = self.fresh();
         self.out.push_str(&format!("  {is_null} = icmp eq ptr {start}, null\n"));
         self.trap_if(&is_null)?;
 
         let kinds = leaves_of(element, self.program)?;
         let start = LValue::Reg(start);
-        self.fill_slice(&start, &count, stride, &kinds, &values)?;
+        if !zeroed {
+            self.fill_slice(&start, &count, stride, &kinds, &values)?;
+        }
         Ok(vec![start, count])
     }
 

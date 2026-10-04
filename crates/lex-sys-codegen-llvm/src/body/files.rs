@@ -18,6 +18,38 @@ impl<'a> FuncEmitter<'a> {
         vec![LValue::Reg(tag), LValue::Reg(result.to_owned()), reason]
     }
 
+    /// `flush_out(io)`: `fflush(stdout)`, then `ferror(stdout)`, as `Done`
+    /// (`docs/checked-output.md`). Mirrors `lex-sys-codegen`'s own
+    /// `flush_out`: the errno is read straight after `fflush`, and when only
+    /// the error indicator says a write failed the answer is `EIO` (5).
+    pub(crate) fn flush_out(&mut self) -> Vec<LValue> {
+        let symbol = match self.triple.operating_system {
+            target_lexicon::OperatingSystem::Darwin(_) => "__stdoutp",
+            _ => "stdout",
+        };
+        let stream = self.fresh();
+        self.out.push_str(&format!("  {stream} = load ptr, ptr @{symbol}\n"));
+        let flushed = self.fresh();
+        self.out.push_str(&format!("  {flushed} = call i32 @fflush(ptr {stream})\n"));
+        let reason = self.errno();
+        let indicator = self.fresh();
+        self.out.push_str(&format!("  {indicator} = call i32 @ferror(ptr {stream})\n"));
+        let flush_failed = self.fresh();
+        self.out.push_str(&format!("  {flush_failed} = icmp ne i32 {flushed}, 0\n"));
+        let earlier = self.fresh();
+        self.out.push_str(&format!("  {earlier} = icmp ne i32 {indicator}, 0\n"));
+        let failed = self.fresh();
+        self.out.push_str(&format!("  {failed} = or i1 {flush_failed}, {earlier}\n"));
+        let why = self.fresh();
+        self.out.push_str(&format!(
+            "  {why} = select i1 {flush_failed}, i64 {}, i64 5\n",
+            operand(&reason)
+        ));
+        let tag = self.fresh();
+        self.out.push_str(&format!("  {tag} = select i1 {failed}, i64 1, i64 0\n"));
+        vec![LValue::Reg(tag), LValue::Const(0), LValue::Reg(why)]
+    }
+
     fn widen(&mut self, narrow: &str) -> String {
         let wide = self.fresh();
         self.out.push_str(&format!("  {wide} = sext i32 {narrow} to i64\n"));
