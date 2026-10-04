@@ -53,7 +53,7 @@ fn every_hmac_hkdf_and_key_schedule_vector_passes_on_both_backends() {
         .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
         .map(|l| l.split(" | ").collect())
         .collect();
-    assert_eq!(rows.len(), 59, "RFC 4231, RFC 5869, pyca, RFC 8448, ACVP, OpenSSL");
+    assert_eq!(rows.len(), 62, "RFC 4231, RFC 5869, pyca, RFC 8448, ACVP, OpenSSL");
     let cases: Vec<String> = rows.iter().map(|r| r[1].to_string()).collect();
     for backend in ["cranelift", "llvm"] {
         let (dir, exe) = build_kdf_driver("vectors", backend);

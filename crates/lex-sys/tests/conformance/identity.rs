@@ -42,6 +42,7 @@ fn printing_preserves_every_identity_and_is_idempotent() {
         "packages/http-request",
         "packages/http-response",
         "packages/x509",
+        "packages/tls",
         // The benchmarks are code too, and the pairs are the place a
         // careless edit would land without anyone reading it.
         "benches",

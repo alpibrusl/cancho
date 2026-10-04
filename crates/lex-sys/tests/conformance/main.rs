@@ -70,6 +70,7 @@ mod release;
 mod rsa;
 mod sockets;
 mod testing;
+mod tls;
 mod traps;
 mod vcs;
 mod vcs_remote;
