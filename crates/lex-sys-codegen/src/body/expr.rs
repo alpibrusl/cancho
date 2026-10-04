@@ -773,6 +773,10 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                         let call = self.builder.ins().call(f, &[start, one, len, stream]);
                         vec![self.builder.inst_results(call)[0]]
                     }
+                    // `docs/checked-output.md`: the stream the two arms
+                    // above write into, flushed and asked whether any of it
+                    // failed.
+                    Callee::Builtin(Builtin::FlushOut) => self.flush_out(),
                     // Sign-extended, not zero-extended: `EOF` is `-1` and
                     // zero-extending would hand the program 4294967295,
                     // which is a byte-range check that silently never

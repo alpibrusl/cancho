@@ -374,6 +374,10 @@ pub(crate) fn emit_module(
     declare_libc_unless_own(&mut text, "pwrite", "i64 @pwrite(i32, ptr, i64, i64)");
     declare_libc_unless_own(&mut text, "pread", "i64 @pread(i32, ptr, i64, i64)");
     declare_libc_unless_own(&mut text, "fsync", "i32 @fsync(i32)");
+    // `flush_out` (`docs/checked-output.md`): the stream `fwrite` uses,
+    // flushed, then asked whether an earlier write failed.
+    declare_libc_unless_own(&mut text, "fflush", "i32 @fflush(ptr)");
+    declare_libc_unless_own(&mut text, "ferror", "i32 @ferror(ptr)");
     declare_libc_unless_own(&mut text, "ftruncate", "i32 @ftruncate(i32, i64)");
     declare_libc_unless_own(&mut text, "lseek", "i64 @lseek(i32, i64, i32)");
     declare_libc_unless_own(&mut text, "unlink", "i32 @unlink(ptr)");

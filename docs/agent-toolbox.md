@@ -379,7 +379,7 @@ lives; D16 decides what is fixed and what is routed round.
 
 | # | Gap | Reproducer | Blocks | Needs |
 |---|---|---|---|---|
-| L1 | A failed write to stdout is unobservable; `write_all` returns the requested length; a trap loses buffered output | A.7 | every tool's `ok` | compiler (`write_bytes` result, or a checked flush) |
+| L1 | A failed write to stdout is unobservable; `write_all` returns the requested length; a trap loses buffered output | A.7 | every tool's `ok` | compiler (`write_bytes` result, or a checked flush). **Closed by [`checked-output.md`](checked-output.md) (#215)**: `flush_out` reports a failed or earlier-failed write; a trap still loses the buffer |
 | L2 | No directory listing (`fs_list`) | A.2 | `list` (ls, find, tree) | compiler: builtin + edition |
 | L3 | No file type, mode or mtime without opening (`fs_stat`) | A.2 | `list` entries, `stat` | compiler: builtin |
 | L4 | `std.crypto.sha256`/`sha512` trap past 65,527/65,519 bytes; no incremental API | A.6 | `hash`, `write` preconditions | `std` (or in-package first, AGENTS.md §7) |
