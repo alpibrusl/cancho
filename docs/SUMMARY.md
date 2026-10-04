@@ -88,6 +88,7 @@
 - [X25519, and the field it shares with Ed25519](x25519.md)
 - [`packages/x509`: strict DER and X.509 certificates](x509.md)
 - [`std.bigmod` and `std.rsa`: RSA signature verification](rsa.md)
+- [`std.ecdsa`: ECDSA verification on P-256 and P-384](ecdsa.md)
 
 # Compile time and program identity
 

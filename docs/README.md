@@ -444,6 +444,7 @@ not repeated here; a doc's own header carries its own detail.
 | [`x25519.md`](x25519.md) | `std.x25519`, and `std.field25519`: one constant-time field for X25519 and Ed25519 | built; checked with Valgrind (ctgrind); not independently reviewed |
 | [`x509.md`](x509.md) | `packages/x509`: a strict DER reader and an X.509 v3 parser, the pure TLS client's certificates | built; not independently reviewed |
 | [`rsa.md`](rsa.md) | `std.bigmod` (Montgomery arithmetic to 4,096 bits) and `std.rsa` (PKCS#1 v1.5 and PSS verification) | built; not independently reviewed |
+| [`ecdsa.md`](ecdsa.md) | `std.ecdsa` (P-256 and P-384 verification, DER and raw signatures) on `std.bigmod`'s new register API | built; not independently reviewed |
 | [`self-hosting.md`](self-hosting.md) | Whether lex-sys could host its own toolchain | run; decided not yet — no asker |
 | [`agent-cli.md`](agent-cli.md) | `lex-sys introspect`/`skill`: the CLI surface as data, imported from `lex-lang`'s ACLI integration | built; found a false-familiarity bug in the process (`-o`/`-l`/`-L` would have rendered as `--o`/`--l`/`--L`) |
 | [`next-phase.md`](next-phase.md) | Replacing episodic duplication/staleness hunts with a mechanical check, argued from `MANIFESTO.md` and three of this session's own mistakes | §3's real instance (10 examples duplicating `std.io`) migrated, 7 of them (§3.1 has the three exceptions); §4's own standing check, the actual proposal, not built yet |
