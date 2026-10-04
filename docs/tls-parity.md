@@ -1,6 +1,6 @@
 # TLS parity with the OpenSSL backend: AES-GCM, P-256/P-384 key exchange, TLS 1.2
 
-> **Status: design (#207, PR 1 of 5); PR 2, AES-GCM, built (§3.1.1); PR 3, P-256 and P-384 key exchange, built (`docs/ecdh.md`).** Sub-issue 10 of the self-contained TLS 1.3 client (#197). The issue asked for a
+> **Status: built (#207, all five PRs): AES-GCM (§3.1.1), P-256 and P-384 key exchange (`docs/ecdh.md`), TLS 1.3's AES-GCM suites and HelloRetryRequest (§3.3.1), TLS 1.2 (§3.4.1).** Sub-issue 10 of the self-contained TLS 1.3 client (#197). The issue asked for a
 > measured number of receivers needing TLS 1.2 or AES-GCM before anything is built. That number cannot be measured here, and
 > the requirement replaces it: **the maintainer's requirement is that the pure client be equivalent to the OpenSSL backend**
 > it is to replace in `lexsys-hooks` (#210). The maintainer chose the scope below, "AEAD parity", over full parity with
@@ -47,7 +47,7 @@ of `openssl s_client` (OpenSSL 3.0.13), captured here, offers:
 | groups | X25519, P-256, P-384, one X25519 share, and HelloRetryRequest to P-256 or P-384 | X448, P-521, FFDHE (`tls-key-share`) |
 | TLS 1.2 signatures | `rsa_pkcs1_sha256/384/512`, `rsa_pss_rsae_sha256/384/512`, `ecdsa_secp256r1_sha256`, `ecdsa_secp384r1_sha384`, `ed25519` | SHA-1 and SHA-224 schemes (`tls-bad-certificate-verify` if a server uses one) |
 | renegotiation | the SCSV, so a server knows; a server's HelloRequest is refused | renegotiation |
-| extended master secret | **required** (the issue's rule) | a TLS 1.2 server without it (`tls-protocol-version`) |
+| extended master secret | **required** (the issue's rule) | a TLS 1.2 server without it (`tls-protocol-version`; *corrected in PR 5: `tls-extended-master-secret`, a tag of its own, as the next paragraph says*) |
 | resumption | none, as now | session tickets are not sent or used |
 
 **One deliberate difference from OpenSSL beyond the suites.** OpenSSL offers the extended master secret but does not require
@@ -331,8 +331,91 @@ nothing to replay. The gates are:
   - a HelloRequest;
   - CBC and static-RSA suites chosen;
   - an unoffered group;
-  - the explicit nonce reused;
+  - the explicit nonce reused; *(dropped in PR 5: a receiver reads the explicit nonce from each record and cannot tell a reused
+    one from a fresh one without keeping every nonce it has seen. RFC 5288 §3 puts uniqueness on the sender, and this client's
+    nonces are its sequence numbers. Nothing for a lying server to test.)*
 - the mutant and fuzz bars of #205: at least 15 mutants killed, and the driver fuzzed with no trap.
+
+#### 3.4.1 Results (PR 5)
+
+**Built:**
+- **`packages/tls/slot.ls` (`tls_slot`) is new.** It holds what both handshakes share: the states, the slot's layout, the
+  transcript, the record queue, alerts, the ECDH share, and the chain and signature checks. It was moved out of `client.ls`,
+  which would otherwise have passed 2,000 lines.
+- **`packages/tls/client12.ls` (`tls_client12`) is new: the TLS 1.2 handshake.**
+- **`record.ls`** gained:
+  - the six suites;
+  - TLS 1.2 records: the additional data carries the sequence number. AES-GCM's 8-byte explicit nonce is sent in each
+    record and is the sequence number, and ChaCha20's nonce is the IV XORed with the sequence number, as in 1.3;
+  - the PRF.
+- **`message.ls`:**
+  - the ClientHello offers TLS 1.2 beside 1.3, with the six suites, the renegotiation SCSV, `ec_point_formats`,
+    `extended_master_secret`, and `rsa_pkcs1_*` among the signature algorithms;
+  - a ServerHello with no `supported_versions` is read as TLS 1.2;
+  - new parsers for TLS 1.2's Certificate, ServerKeyExchange and CertificateRequest.
+- **A TLS 1.2 ServerKeyExchange may use RSASSA-PKCS1-v1_5,** and its ECDSA schemes name the hash, not the curve
+  (RFC 5246 §7.4.1.4.1). The leaf's key must be the suite's kind: ECDSA or Ed25519 for ECDHE_ECDSA, RSA for ECDHE_RSA.
+- **Two refusal tags are new:**
+  - `tls-extended-master-secret` (alert 40);
+  - `tls-renegotiation`, for a HelloRequest (alert 100).
+- **The TLS 1.2 ECDHE scalar** is drawn as a HelloRetryRequest's is (§3.3.1).
+
+**Evidence:**
+- **Six traces against `openssl s_server -tls1_2 -www` (OpenSSL 3.0.13),** one for each suite, recorded by
+  `scripts/tls_trace.py --openssl12`. They replay byte for byte on both backends, and in one-byte and coalesced splits.
+- **The lying server has a TLS 1.2 server** (`scripts/tls_liar.py`, `Server12`) with **22 cases**, so 63 in all:
+
+  | Server does | Tag | Alert |
+  |---|---|---|
+  | ECDHE-ECDSA with ChaCha20-Poly1305; with AES-256-GCM-SHA384; with a CertificateRequest (answered with an empty Certificate) under AES-128-GCM; with P-256 | `ok` | none |
+  | either downgrade sentinel; TLS 1.2 after a HelloRetryRequest | `tls-protocol-version` | 70 |
+  | no extended master secret | `tls-extended-master-secret` | 40 |
+  | a CBC suite; a static-RSA suite | `tls-no-shared-cipher` | 40 |
+  | a ServerHello echoing the client's session id; a renegotiated connection in `renegotiation_info` | `tls-decode-error` | 50 |
+  | a key_share in a TLS 1.2 ServerHello | `tls-unsupported-extension` | 110 |
+  | the key exchange signed by another key, or over the randoms in the wrong order; an RSA suite with an Ed25519 key | `tls-bad-certificate-verify` | 51 |
+  | a key exchange on X448 | `tls-key-share` | 47 |
+  | ServerHelloDone before ServerKeyExchange; a NewSessionTicket, never asked for | `tls-unexpected-message` | 10 |
+  | a wrong Finished | `tls-bad-finished` | 51, encrypted |
+  | a plaintext Finished after change_cipher_spec | `tls-bad-record-mac` | 20, encrypted |
+  | a HelloRequest | `tls-renegotiation` | 100, encrypted |
+
+- **The PRF and the extended master secret.** `scripts/tls12_prf_differential.py` runs 1,000 cases, each checked against
+  both OpenSSL's TLS1-PRF (`openssl kdf`) and RFC 5246's P_hash on Python's `hmac`. They include the extended master secret
+  (48 bytes over a session hash), the key block, and both Finished labels. There are **0 differences**, and 40 of the cases
+  are `tests/vectors/tls/prf12.txt`, run on both backends.
+- **Records.** `seal12` and `open12` match records built on pyca's AES-GCM and ChaCha20-Poly1305.
+- **Live** (`scripts/tls_live.py`), every connection `ok`:
+  - **`openssl s_server -tls1_2`** with each of the six suites, and with `-sigalgs RSA+SHA256` (a PKCS#1 v1.5 key exchange
+    signature). Each suite was also run by hand against X25519, P-256 and P-384: all 18 pass.
+  - **Python `ssl` capped at TLS 1.2,** with P-256, P-384, RSA-2048 and Ed25519 certificates.
+  - **tlslite-ng with TLS 1.2.**
+- **A fuzzer.** `scripts/tls_fuzz.py` mutates the server's bytes in the eleven recorded handshakes: bits flipped, bytes set,
+  the data cut, slices duplicated or dropped, bytes inserted, lengths changed. Over 20,000 connections the driver **never
+  trapped**. This is the "driver fuzzed with no trap" bar. The fuzzing over a million inputs is still #208's
+  (`docs/tls-pure.md` §9).
+- **Mutants:** `scripts/tls_mutants.py` has **59, all killed**. 22 are TLS 1.2's:
+  - the PRF's chaining and label;
+  - the extended master secret's label;
+  - the key block's order, and which key is whose;
+  - the explicit nonce sent, and the explicit nonce read;
+  - the additional data's sequence number and length;
+  - ChaCha20's 1.2 nonce;
+  - the extended master secret required;
+  - the session id echo;
+  - a key_share in a 1.2 ServerHello;
+  - the signed randoms;
+  - the suite's kind of key;
+  - both of Finished's checks;
+  - HelloRequest;
+  - the ClientKeyExchange's length;
+  - TLS 1.2 after a retry;
+  - the server's point kept.
+
+**Corrected in place:**
+- **§2's table gave the missing extended master secret `tls-protocol-version`.** The text after it promised a tag of its own,
+  which is what was built.
+- **§3.4's "the explicit nonce reused" case** is something a client cannot detect; the note there says why.
 
 ## 4. Files
 

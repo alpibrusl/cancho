@@ -23,6 +23,12 @@ ChaCha20-Poly1305, each with X25519 (the share the ClientHello sends) and with
 P-256 and P-384 (which the server asks for with a HelloRetryRequest), 16
 connections each. Every connection must end `ok`.
 
+Then TLS 1.2 (docs/tls-parity.md §3.4), 16 connections each, every one `ok`:
+`openssl s_server -tls1_2` with each of the six suites (ECDSA ones with a P-256
+certificate, RSA ones with RSA-2048), and with an RSA key made to sign the key
+exchange with RSASSA-PKCS1-v1_5 (`-sigalgs RSA+SHA256`); Python `ssl` with
+`maximum_version` TLS 1.2, each certificate type; tlslite-ng with TLS 1.2.
+
 Then two other implementations, P-256 and RSA-2048 certificates, both read
 sizes: `openssl s_server -HTTP` (OpenSSL's own TLS, not Python's use of it;
 it serves one connection at a time, so the others wait in its backlog), and
@@ -93,7 +99,7 @@ def body(n):
 
 
 class Server:
-    def __init__(self, cert_pem, key_pem, notify=True):
+    def __init__(self, cert_pem, key_pem, notify=True, tls12=False):
         self.notify = notify
         self.sent = []
         self.lock = threading.Lock()
@@ -102,7 +108,9 @@ class Server:
         open(cert, "wb").write(cert_pem)
         open(key, "wb").write(key_pem)
         self.ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        self.ctx.minimum_version = ssl.TLSVersion.TLSv1_3
+        self.ctx.minimum_version = ssl.TLSVersion.TLSv1_2 if tls12 else ssl.TLSVersion.TLSv1_3
+        if tls12:
+            self.ctx.maximum_version = ssl.TLSVersion.TLSv1_2
         self.ctx.load_cert_chain(cert, key)
         self.sock = socket.socket()
         self.sock.bind(("127.0.0.1", 0))
@@ -149,14 +157,14 @@ class OpenSSL:
     unless told otherwise. A group other than X25519 makes it answer the ClientHello's X25519 share
     with a HelloRetryRequest."""
 
-    def __init__(self, cert_pem, key_pem, conc, suite="TLS_CHACHA20_POLY1305_SHA256", group="X25519"):
+    def __init__(self, cert_pem, key_pem, conc, suite="TLS_CHACHA20_POLY1305_SHA256", group="X25519", tls12=None):
         self.dir = tempfile.TemporaryDirectory()
         open(f"{self.dir.name}/c.pem", "wb").write(cert_pem)
         open(f"{self.dir.name}/k.pem", "wb").write(key_pem)
         self.port = free_port()
         self.proc = subprocess.Popen(
             ["openssl", "s_server", "-accept", f"127.0.0.1:{self.port}", "-cert", "c.pem", "-key", "k.pem",
-             "-tls1_3", "-ciphersuites", suite, "-groups", group, "-HTTP",
+             *(["-tls1_3", "-ciphersuites", suite, "-groups", group] if tls12 is None else ["-tls1_2", "-cipher", tls12[0], *tls12[1:]]), "-HTTP",
              "-naccept", str(conc), "-quiet"],
             cwd=self.dir.name, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(100):
@@ -176,14 +184,14 @@ class OpenSSL:
 class TlsLite:
     """A threaded tlslite-ng server, TLS 1.3 with ChaCha20-Poly1305 and X25519 only."""
 
-    def __init__(self, cert_pem, key_pem):
+    def __init__(self, cert_pem, key_pem, tls12=False):
         from tlslite import HandshakeSettings, TLSConnection, X509CertChain
         from tlslite.utils.keyfactory import parsePEMKey
         self.chain = X509CertChain()
         self.chain.parsePemList(cert_pem.decode())
         self.key = parsePEMKey(key_pem.decode(), private=True)
         self.settings = HandshakeSettings()
-        self.settings.minVersion = self.settings.maxVersion = (3, 4)
+        self.settings.minVersion = self.settings.maxVersion = (3, 3) if tls12 else (3, 4)
         self.settings.cipherNames = ["chacha20-poly1305"]
         self.settings.eccCurves = ["x25519"]
         self.settings.keyShares = ["x25519"]
@@ -253,6 +261,35 @@ def main():
             if not fine:
                 bad += 1
                 print("\n".join(lines[:5]), file=sys.stderr)
+    certs = {kind: certificate(kind) for kind in ["p256", "rsa2048"]}
+    for cipher in ["ECDHE-ECDSA-AES128-GCM-SHA256", "ECDHE-ECDSA-AES256-GCM-SHA384", "ECDHE-ECDSA-CHACHA20-POLY1305",
+                   "ECDHE-RSA-AES128-GCM-SHA256", "ECDHE-RSA-AES256-GCM-SHA384", "ECDHE-RSA-CHACHA20-POLY1305", "PKCS1"]:
+        kind = "p256" if "ECDSA" in cipher else "rsa2048"
+        cert, key, ca = certs[kind]
+        tls12 = ["ECDHE-RSA-AES128-GCM-SHA256", "-sigalgs", "RSA+SHA256"] if cipher == "PKCS1" else [cipher]
+        server = OpenSSL(cert, key, 17, tls12=tls12)
+        code, lines = run(exe, server, ca, 16, 65536)
+        server.stop()
+        fine = code == 0 and same_bodies(lines, 16)
+        print(f"openssl s_server -tls1_2 {' '.join(tls12)}: {lines[-1] if lines else 'no output'}")
+        if not fine:
+            bad += 1
+            print("\n".join(lines[:5]), file=sys.stderr)
+    for kind in ["p256", "p384", "rsa2048", "ed25519"]:
+        cert, key, ca = certificate(kind)
+        server = Server(cert, key, tls12=True)
+        code, lines = run(exe, server, ca, 16, 65536)
+        rows = [l.split() for l in lines[:-1]]
+        fine = code == 0 and sorted(r[4] for r in rows if r[2] == "ok") == sorted(server.sent) and len(rows) == 16
+        print(f"Python ssl, TLS 1.2, {kind}: {lines[-1] if lines else 'no output'}")
+        bad += 0 if fine else 1
+    for kind in ["p256", "rsa2048"]:
+        cert, key, ca = certs[kind]
+        server = TlsLite(cert, key, tls12=True)
+        code, lines = run(exe, server, ca, 16, 65536)
+        fine = code == 0 and same_bodies(lines, 16)
+        print(f"tlslite-ng, TLS 1.2, {kind}: {lines[-1] if lines else 'no output'}")
+        bad += 0 if fine else 1
     for kind in ["p256", "rsa2048"]:
         cert, key, ca = certificate(kind)
         for chunk in [1, 65536]:

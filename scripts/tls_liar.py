@@ -447,7 +447,7 @@ CASES = []
 
 def case(name, tag, alert=None, encrypted=False):
     def register(fn):
-        CASES.append((name, tag, alert, encrypted, fn))
+        CASES.append((name, tag, alert, encrypted, fn, None))
         return fn
     return register
 
@@ -565,7 +565,7 @@ case("ALPN in EncryptedExtensions, never offered", "tls-unsupported-extension", 
     flight_case(lambda s: setattr(s, "ee_extensions", ext(16, u16(3) + b"\2h2"))))
 case("early_data in EncryptedExtensions, never offered", "tls-unsupported-extension", 110)(
     flight_case(lambda s: setattr(s, "ee_extensions", ext(42, b""))))
-case("TLS 1.2: no supported_versions", "tls-protocol-version", 70)(lambda s: hello(s, version_ext=b""))
+case("no supported_versions, with a TLS 1.3 suite", "tls-no-shared-cipher", 40)(lambda s: hello(s, version_ext=b""))
 case("supported_versions TLS 1.2", "tls-protocol-version", 70)(lambda s: hello(s, version_ext=ext(43, u16(0x0303))))
 case("the TLS 1.2 downgrade sentinel", "tls-protocol-version", 70)(
     lambda s: hello(s, random=bytes(24) + b"DOWNGRD\1"))
@@ -725,9 +725,258 @@ def stale_update(s):
     s.c.feed(s.write.seal(23, b"the old key"))
 
 
-def run_case(driver, name, tag, alert, encrypted, fn):
+# ---- TLS 1.2 (docs/tls-parity.md §3.4) ----
+
+# Each TLS 1.2 suite: its AEAD, key length, fixed IV length and hash.
+SUITES12 = {0xc02b: (AESGCM, 16, 4, hashlib.sha256), 0xc02c: (AESGCM, 32, 4, hashlib.sha384),
+            0xc02f: (AESGCM, 16, 4, hashlib.sha256), 0xc030: (AESGCM, 32, 4, hashlib.sha384),
+            0xcca8: (ChaCha20Poly1305, 32, 12, hashlib.sha256), 0xcca9: (ChaCha20Poly1305, 32, 12, hashlib.sha256)}
+
+
+def prf(secret, label, seed, n, h):
+    """RFC 5246 §5: P_hash(secret, label || seed)."""
+    seed = label + seed
+    out, a = b"", hmac.new(secret, seed, h).digest()
+    while len(out) < n:
+        out += hmac.new(secret, a + seed, h).digest()
+        a = hmac.new(secret, a, h).digest()
+    return out[:n]
+
+
+class Keys12:
+    """One direction's TLS 1.2 record protection (RFC 5288 §3, RFC 7905 §2)."""
+
+    def __init__(self, suite, key, iv):
+        self.aead, _, self.fixed, _ = SUITES12[suite]
+        self.key, self.iv, self.seq = key, iv, 0
+
+    def nonce(self, explicit):
+        if self.fixed == 12:
+            return bytes(a ^ b for a, b in zip(self.iv, self.seq.to_bytes(12, "big")))
+        return self.iv + explicit
+
+    def seal(self, kind, content, explicit=None):
+        ad = self.seq.to_bytes(8, "big") + bytes([kind, 3, 3]) + u16(len(content))
+        exp = b"" if self.fixed == 12 else (explicit if explicit is not None else self.seq.to_bytes(8, "big"))
+        body = exp + self.aead(self.key).encrypt(self.nonce(exp), content, ad)
+        self.seq += 1
+        return bytes([kind, 3, 3]) + u16(len(body)) + body
+
+    def open(self, record):
+        exp = b"" if self.fixed == 12 else record[5:13]
+        body = record[5 + len(exp):]
+        ad = self.seq.to_bytes(8, "big") + record[:3] + u16(len(body) - 16)
+        content = self.aead(self.key).decrypt(self.nonce(exp), body, ad)
+        self.seq += 1
+        return record[0], content
+
+
+class Server12(Server):
+    """A TLS 1.2 server: ServerHello, Certificate, ServerKeyExchange, ServerHelloDone,
+    then the client's key exchange, change_cipher_spec and Finished, and its own.
+    ECDHE-ECDSA with ChaCha20-Poly1305 and X25519 unless a case says otherwise; the
+    Ed25519 certificate signs the key exchange (RFC 8422 §5.4)."""
+
+    def __init__(self, conv):
+        super().__init__(conv)
+        self.suite = 0xcca9
+        self.ems = True
+        self.sh_random = None  # a case's random, else a fixed one
+        self.sh_sid = seeded("tls12 session")
+        self.sh_extra = b""
+        self.reneg = ext(0xFF01, b"\0")
+        self.ske_group = None
+        self.signed_randoms = None
+        self.request_cert = False
+
+    @property
+    def hash(self):
+        return SUITES12[self.suite][3] if self.suite in SUITES12 else hashlib.sha256
+
+    def server_hello12(self):
+        exts = self.reneg + (ext(23, b"") if self.ems else b"") + ext(11, b"\1\0") + self.sh_extra
+        self.server_random = self.sh_random or seeded("tls12 random")
+        body = (u16(0x0303) + self.server_random + bytes([len(self.sh_sid)]) + self.sh_sid + u16(self.suite) + b"\0"
+                + u16(len(exts)) + exts)
+        return message(2, body)
+
+    def certificate12(self):
+        entry = u24(len(self.cert_der)) + self.cert_der
+        return message(11, u24(len(entry)) + entry)
+
+    def key_exchange(self):
+        group = self.ske_group or self.group
+        point = self.public_share()
+        params = bytes([3]) + u16(group) + bytes([len(point)]) + point
+        randoms = self.signed_randoms or (self.client_random + self.server_random)
+        sig = self.cv_key.sign(randoms + params)
+        return message(12, params + u16(0x0807) + u16(len(sig)) + sig)
+
+    def start(self):
+        super().start()
+        self.client_random = self.transcript[6:38]
+
+    def server_random_for_test(self):
+        """Both randoms, in the wrong order: what a key exchange replayed from another
+        connection would be signed over."""
+        return (self.sh_random or seeded("tls12 random")) + self.client_random
+
+    def flight12(self, middle=b""):
+        """ServerHello to ServerHelloDone, in plaintext records; `middle` goes before
+        ServerHelloDone."""
+        msgs = [self.server_hello12(), self.certificate12(), self.key_exchange()]
+        if self.request_cert:
+            msgs.append(message(13, b"\1\x40" + u16(2) + u16(0x0807) + u16(0)))
+        msgs.append(middle + message(14, b""))
+        self.transcript += b"".join(msgs)
+        return b"".join(plain_record(22, m) for m in msgs)
+
+    def client_flight(self):
+        """The client's Certificate (if asked), ClientKeyExchange, change_cipher_spec and
+        Finished: the keys from them, and the Finished checked."""
+        recs = self.c.take()
+        h = self.hash
+        if self.request_cert:
+            cert = recs.pop(0)
+            assert cert == plain_record(22, message(11, u24(0))), "an empty Certificate"
+            self.transcript += cert[5:]
+        cke = recs[0]
+        assert cke[0] == 22 and cke[5] == 16, cke[:6].hex()
+        point = cke[10:]
+        assert cke[9] == len(point)
+        self.client_shares = {self.group: point}
+        self.transcript += cke[5:]
+        pms = self.shared_secret()
+        master = prf(pms, b"extended master secret", h(self.transcript).digest(), 48, h)
+        _, kl, il, _ = SUITES12[self.suite]
+        block = prf(master, b"key expansion", self.server_random + self.client_random, 2 * kl + 2 * il, h)
+        self.read = Keys12(self.suite, block[:kl], block[2 * kl:2 * kl + il])
+        self.write = Keys12(self.suite, block[kl:2 * kl], block[2 * kl + il:])
+        assert recs[1] == plain_record(20, b"\1"), "change_cipher_spec"
+        kind, fin = self.read.open(recs[2])
+        want = message(20, prf(master, b"client finished", h(self.transcript).digest(), 12, h))
+        assert (kind, fin) == (22, want), "the client's Finished"
+        self.transcript += fin
+        self.master = master
+        self.c.sent = b"".join(recs[3:])
+
+    def server_finish(self, bad=False):
+        h = self.hash
+        vd = prf(self.master, b"server finished", h(self.transcript).digest(), 12, h)
+        if bad:
+            vd = bytes([vd[0] ^ 1]) + vd[1:]
+        return plain_record(20, b"\1") + self.write.seal(22, message(20, vd))
+
+
+def honest12(setup=None):
+    def run(s):
+        s.start()
+        if setup:
+            setup(s)
+        s.c.feed(s.flight12())
+        s.client_flight()
+        s.c.feed(s.server_finish())
+        s.c.ask(f"W {REQUEST.hex()}")
+        (req,) = s.c.take()
+        assert s.read.open(req) == (23, REQUEST), "the request"
+        f = s.c.feed(s.write.seal(23, b"HTTP/1.0 200 OK\r\n\r\ntls 1.2") + s.write.seal(21, b"\1\0"))
+        assert f[2] == "4", f"closed: {f}"
+        assert s.c.received == b"HTTP/1.0 200 OK\r\n\r\ntls 1.2"
+    return run
+
+
+def case12(name, tag, alert=None, encrypted=False):
+    def register(fn):
+        CASES.append((name, tag, alert, encrypted, fn, Server12))
+        return fn
+    return register
+
+
+def hello12(**kw):
+    def run(s):
+        s.start()
+        for k, v in kw.items():
+            setattr(s, k, v)
+        s.c.feed(plain_record(22, s.server_hello12()))
+    return run
+
+
+def flight12_case(change, middle=b""):
+    def run(s):
+        s.start()
+        change(s)
+        s.c.feed(s.flight12(middle))
+    return run
+
+
+case12("TLS 1.2, honest: ECDHE-ECDSA-CHACHA20-POLY1305", "ok")(honest12())
+case12("TLS 1.2, honest: ECDHE-ECDSA-AES256-GCM-SHA384", "ok")(honest12(lambda s: setattr(s, "suite", 0xc02c)))
+case12("TLS 1.2, honest: a CertificateRequest, AES-128-GCM", "ok")(
+    honest12(lambda s: (setattr(s, "suite", 0xc02b), setattr(s, "request_cert", True))))
+case12("TLS 1.2, honest: P-256", "ok")(honest12(lambda s: setattr(s, "group", P256)))
+case12("TLS 1.2, the 1.2 downgrade sentinel", "tls-protocol-version", 70)(hello12(sh_random=bytes(24) + b"DOWNGRD\1"))
+case12("TLS 1.2, the 1.1 downgrade sentinel", "tls-protocol-version", 70)(hello12(sh_random=bytes(24) + b"DOWNGRD\0"))
+case12("TLS 1.2, no extended master secret", "tls-extended-master-secret", 40)(hello12(ems=False))
+case12("TLS 1.2, a CBC suite", "tls-no-shared-cipher", 40)(hello12(suite=0xC013))
+case12("TLS 1.2, a static-RSA suite", "tls-no-shared-cipher", 40)(hello12(suite=0x009C))
+case12("TLS 1.2, a ServerHello echoing the client's session id", "tls-decode-error", 50)(
+    lambda s: (s.start(), setattr(s, "sh_sid", s.sid), s.c.feed(plain_record(22, s.server_hello12()))))
+case12("TLS 1.2, a key_share in the ServerHello", "tls-unsupported-extension", 110)(
+    hello12(sh_extra=ext(51, u16(0x1D) + u16(32) + bytes(range(32)))))
+case12("TLS 1.2, a renegotiated connection in renegotiation_info", "tls-decode-error", 50)(
+    hello12(reneg=ext(0xFF01, b"\x0c" + bytes(12))))
+case12("TLS 1.2, the key exchange signed by another key", "tls-bad-certificate-verify", 51)(
+    flight12_case(lambda s: setattr(s, "cv_key", OTHER_KEY)))
+case12("TLS 1.2, the key exchange signed over the wrong randoms", "tls-bad-certificate-verify", 51)(
+    flight12_case(lambda s: setattr(s, "signed_randoms", s.server_random_for_test())))
+case12("TLS 1.2, an RSA suite with an Ed25519 key", "tls-bad-certificate-verify", 51)(
+    flight12_case(lambda s: setattr(s, "suite", 0xCCA8)))
+case12("TLS 1.2, a key exchange on X448, never offered", "tls-key-share", 47)(
+    flight12_case(lambda s: setattr(s, "ske_group", 0x1E)))
+case12("TLS 1.2, ServerHelloDone before ServerKeyExchange", "tls-unexpected-message", 10)(
+    lambda s: (s.start(), s.c.feed(plain_record(22, s.server_hello12()) + plain_record(22, s.certificate12())
+                                   + plain_record(22, message(14, b"")))))
+case12("TLS 1.2, a NewSessionTicket, never asked for", "tls-unexpected-message", 10)(
+    flight12_case(lambda s: None, middle=message(4, bytes(4) + u16(3) + b"abc")))
+
+
+@case12("TLS 1.2, a wrong Finished", "tls-bad-finished", 51, True)
+def wrong_finished12(s):
+    s.start()
+    s.c.feed(s.flight12())
+    s.client_flight()
+    s.c.feed(s.server_finish(bad=True))
+
+
+@case12("TLS 1.2, a plaintext Finished after change_cipher_spec", "tls-bad-record-mac", 20, True)
+def plain_after_ccs(s):
+    s.start()
+    s.c.feed(s.flight12())
+    s.client_flight()
+    s.c.feed(plain_record(20, b"\1") + plain_record(22, message(20, bytes(12))))
+
+
+@case12("TLS 1.2, a HelloRequest", "tls-renegotiation", 100, True)
+def hello_request(s):
+    s.start()
+    s.c.feed(s.flight12())
+    s.client_flight()
+    s.c.feed(s.server_finish())
+    s.c.feed(s.write.seal(22, message(0, b"")))
+
+
+@case12("TLS 1.2 after a HelloRetryRequest", "tls-protocol-version", 70)
+def tls12_after_retry(s):
+    s.start()
+    s.suite = 0x1303
+    Server.retry(s, P256)
+    s.suite = 0xCCA9
+    s.c.feed(plain_record(22, s.server_hello12()))
+
+
+def run_case(driver, name, tag, alert, encrypted, fn, server=None):
     conv = Conversation(driver)
-    s = Server(conv)
+    s = (server or Server)(conv)
     try:
         fn(s)
         last = conv.answers[-1].split(" ")
@@ -844,8 +1093,8 @@ def main():
     lines = ["# scripts/tls_liar.py: packages/tls against a server that lies, one case a connection.",
              "# `## <tag> <name>` starts a case; `=` lines are the client's answers."]
     bad = 0
-    for name, tag, alert, encrypted, fn in CASES:
-        ok, what, recorded = run_case(driver, name, tag, alert, encrypted, fn)
+    for name, tag, alert, encrypted, fn, server in CASES:
+        ok, what, recorded = run_case(driver, name, tag, alert, encrypted, fn, server)
         print(("" if ok else "FAILED ") + what)
         bad += not ok
         lines += [f"## {tag} {name}"] + recorded

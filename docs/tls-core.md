@@ -39,7 +39,9 @@ file:
 |---|---|---|
 | `packages/tls/record.ls` | `tls_record` | record framing, the per-direction AEAD key, IV and sequence number, the nonce (RFC 8446 §5.3), `TLSInnerPlaintext` padding |
 | `packages/tls/message.ls` | `tls_message` | ClientHello encoding, and parsing of ServerHello, EncryptedExtensions, Certificate, CertificateVerify, Finished, NewSessionTicket and KeyUpdate, each refusing with a tag |
-| `packages/tls/client.ls` | `tls_client` | the state machine (§4), the transcript, the key schedule's use of `std.hkdf`, signature checks |
+| `packages/tls/client.ls` | `tls_client` | the state machine (§4), the transcript, the key schedule's use of `std.hkdf`, signature checks. *Since #207: TLS 1.3's handshake and the interface; what both handshakes share moved to `slot.ls`* |
+| `packages/tls/slot.ls` | `tls_slot` | *#207:* the slot's layout, states, transcript, record queue, alerts, the ECDH share, chain and signature checks (`docs/tls-parity.md` §3.4.1) |
+| `packages/tls/client12.ls` | `tls_client12` | *#207:* the TLS 1.2 handshake (`docs/tls-parity.md` §3.4) |
 | `packages/tls/tls.ls` | `tls` | the engine: slots, `feed`/`take`/`send`/`recv`/`event` (PR 3) |
 
 The package imports `std`, so it is published with `--std` (`docs/package-system.md` §4.8). It requires `packages/x509`, which is

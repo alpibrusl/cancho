@@ -112,6 +112,25 @@ pub fn ed25519() -> [] int {
     return 0x0807;
 }
 
+// RSASSA-PKCS1-v1_5, for certificates, and a TLS 1.2 ServerKeyExchange.
+pub fn rsa_pkcs1_sha256() -> [] int {
+    return 0x0401;
+}
+
+pub fn rsa_pkcs1_sha384() -> [] int {
+    return 0x0501;
+}
+
+pub fn rsa_pkcs1_sha512() -> [] int {
+    return 0x0601;
+}
+
+// ECDSA with SHA-512: in TLS 1.2 the scheme names the hash, not the
+// curve, so a P-256 or P-384 key may sign with it.
+pub fn ecdsa_sha512() -> [] int {
+    return 0x0603;
+}
+
 // Big-endian integers of `n` bytes.
 fn put[&o](out: &!o [byte], at: int, v: int, n: int) -> [] int {
     var i = 0;
@@ -144,7 +163,7 @@ fn copy_to[&s, &o](src: &s [byte], out: &!o [byte], at: int) -> [] int {
 // The largest ClientHello this encodes: a 255-byte host name, a P-384
 // share, the longest cookie and the fixed extensions.
 pub fn max_client_hello() -> [] int {
-    return 640 + max_cookie();
+    return 704 + max_cookie();
 }
 
 // The ClientHello (`docs/tls-pure.md` §7.1, `docs/tls-parity.md` §3.3),
@@ -158,12 +177,20 @@ pub fn client_hello[&r, &s, &k, &c, &h, &o](random: &r [byte], session_id: &s [b
     at = copy_to(random, out, at);
     at = put(out, at, 32, 1);
     at = copy_to(session_id, out, at);
-    // The three TLS 1.3 suites, in OpenSSL's order, and the null
-    // compression method.
-    at = put(out, at, 6, 2);
+    // The three TLS 1.3 suites, then the six TLS 1.2 ones, in OpenSSL's
+    // order (`docs/tls-parity.md` §2), the renegotiation SCSV (RFC 5746
+    // §3.4), and the null compression method.
+    at = put(out, at, 20, 2);
     at = put(out, at, tls_record.suite_aes_256_gcm_sha384(), 2);
     at = put(out, at, tls_record.suite_chacha20_poly1305_sha256(), 2);
     at = put(out, at, tls_record.suite_aes_128_gcm_sha256(), 2);
+    at = put(out, at, tls_record.suite_ecdhe_ecdsa_aes_256_gcm_sha384(), 2);
+    at = put(out, at, tls_record.suite_ecdhe_rsa_aes_256_gcm_sha384(), 2);
+    at = put(out, at, tls_record.suite_ecdhe_ecdsa_chacha20_poly1305(), 2);
+    at = put(out, at, tls_record.suite_ecdhe_rsa_chacha20_poly1305(), 2);
+    at = put(out, at, tls_record.suite_ecdhe_ecdsa_aes_128_gcm_sha256(), 2);
+    at = put(out, at, tls_record.suite_ecdhe_rsa_aes_128_gcm_sha256(), 2);
+    at = put(out, at, 0x00ff, 2);
     at = put(out, at, 1, 1);
     at = put(out, at, 0, 1);
     let ext_len_at = at;
@@ -177,6 +204,14 @@ pub fn client_hello[&r, &s, &k, &c, &h, &o](random: &r [byte], session_id: &s [b
         at = put(out, at, len(host), 2);
         at = copy_to(host, out, at);
     }
+    // ec_point_formats: uncompressed (RFC 8422 §5.1.2), for TLS 1.2.
+    at = put(out, at, 11, 2);
+    at = put(out, at, 2, 2);
+    at = put(out, at, 1, 1);
+    at = put(out, at, 0, 1);
+    // extended_master_secret (RFC 7627), for TLS 1.2, where it is required.
+    at = put(out, at, 23, 2);
+    at = put(out, at, 0, 2);
     // supported_groups: x25519, secp256r1, secp384r1.
     at = put(out, at, 10, 2);
     at = put(out, at, 8, 2);
@@ -184,16 +219,21 @@ pub fn client_hello[&r, &s, &k, &c, &h, &o](random: &r [byte], session_id: &s [b
     at = put(out, at, group_x25519(), 2);
     at = put(out, at, group_p256(), 2);
     at = put(out, at, group_p384(), 2);
-    // signature_algorithms: the six of §3.1.
+    // signature_algorithms: the six of §3.1, and for a TLS 1.2
+    // ServerKeyExchange, rsa_pkcs1_sha256/384/512 (TLS 1.3 never accepts
+    // those, RFC 8446 §4.2.3).
     at = put(out, at, 13, 2);
-    at = put(out, at, 14, 2);
-    at = put(out, at, 12, 2);
+    at = put(out, at, 20, 2);
+    at = put(out, at, 18, 2);
     at = put(out, at, ecdsa_p256_sha256(), 2);
     at = put(out, at, ecdsa_p384_sha384(), 2);
     at = put(out, at, rsa_pss_sha256(), 2);
     at = put(out, at, rsa_pss_sha384(), 2);
     at = put(out, at, rsa_pss_sha512(), 2);
     at = put(out, at, ed25519(), 2);
+    at = put(out, at, rsa_pkcs1_sha256(), 2);
+    at = put(out, at, rsa_pkcs1_sha384(), 2);
+    at = put(out, at, rsa_pkcs1_sha512(), 2);
     // signature_algorithms_cert: those, and rsa_pkcs1_sha256/384/512.
     at = put(out, at, 50, 2);
     at = put(out, at, 20, 2);
@@ -204,14 +244,15 @@ pub fn client_hello[&r, &s, &k, &c, &h, &o](random: &r [byte], session_id: &s [b
     at = put(out, at, rsa_pss_sha384(), 2);
     at = put(out, at, rsa_pss_sha512(), 2);
     at = put(out, at, ed25519(), 2);
-    at = put(out, at, 0x0401, 2);
-    at = put(out, at, 0x0501, 2);
-    at = put(out, at, 0x0601, 2);
-    // supported_versions: TLS 1.3 only.
+    at = put(out, at, rsa_pkcs1_sha256(), 2);
+    at = put(out, at, rsa_pkcs1_sha384(), 2);
+    at = put(out, at, rsa_pkcs1_sha512(), 2);
+    // supported_versions: TLS 1.3, then 1.2.
     at = put(out, at, 43, 2);
-    at = put(out, at, 3, 2);
-    at = put(out, at, 2, 1);
+    at = put(out, at, 5, 2);
+    at = put(out, at, 4, 1);
     at = put(out, at, 0x0304, 2);
+    at = put(out, at, 0x0303, 2);
     // key_share: one share.
     at = put(out, at, 51, 2);
     at = put(out, at, len(share) + 6, 2);
@@ -278,15 +319,23 @@ pub fn sh_cookie_end() -> [] int {
     return 5;
 }
 
-pub fn sh_info_len() -> [] int {
+// The version chosen: 0x0304 (TLS 1.3, `supported_versions`), or 0x0303
+// (TLS 1.2, none).
+pub fn sh_version() -> [] int {
     return 6;
 }
 
+pub fn sh_info_len() -> [] int {
+    return 7;
+}
+
 // The ServerHello body `b`, against the session id the client sent: a
-// ServerHello, or a HelloRetryRequest (RFC 8446 §4.1.3, §4.1.4), told
-// apart by the random. Checks everything that needs no memory of the
-// connection; `tls_client` checks the rest (a second HelloRetryRequest,
-// the group a share is for, the suite against the retry's).
+// TLS 1.3 ServerHello, a HelloRetryRequest (RFC 8446 §4.1.3, §4.1.4),
+// told apart by the random, or a TLS 1.2 ServerHello, told apart by
+// having no `supported_versions` (RFC 5246 §7.4.1.3; `docs/tls-parity.md`
+// §3.4). Checks everything that needs no memory of the connection;
+// `tls_client` checks the rest (a second HelloRetryRequest, the group a
+// share is for, the suite against the retry's).
 pub fn server_hello[&b, &s, &i](b: &b [byte], session_id: &s [byte], info: &!i [int]) -> [] int {
     let n = len(b);
     if n < 2 + 32 + 1 {
@@ -300,25 +349,20 @@ pub fn server_hello[&b, &s, &i](b: &b [byte], session_id: &s [byte], info: &!i [
         k = k + 1;
     }
     let retry = k == 32;
-    // The downgrade sentinel "DOWNGRD" and 01 or 00 (§4.1.3).
+    // The downgrade sentinels "DOWNGRD" and 01 or 00 (RFC 8446 §4.1.3):
+    // refused in any ServerHello, as this client offered TLS 1.3.
     if !retry && get(b, 26, 4) == 0x444f574e && get(b, 30, 3) == 0x475244 && int_of(b[33]) <= 1 {
         return tls_record.protocol_version();
     }
     var at = 34;
     let sid = int_of(b[at]);
-    if sid != len(session_id) || at + 1 + sid + 3 > n {
+    if sid > 32 || at + 1 + sid + 3 > n {
         return tls_record.decode_error();
     }
-    var j = 0;
-    while j < sid {
-        if b[at + 1 + j] != session_id[j] {
-            return tls_record.decode_error();
-        }
-        j = j + 1;
-    }
+    let sid_at = at + 1;
     at = at + 1 + sid;
     let suite = get(b, at, 2);
-    if !tls_record.suite_known(suite) {
+    if !tls_record.suite_known(suite) && !tls_record.suite12_known(suite) {
         return tls_record.no_shared_cipher();
     }
     if int_of(b[at + 2]) != 0 {
@@ -338,6 +382,10 @@ pub fn server_hello[&b, &s, &i](b: &b [byte], session_id: &s [byte], info: &!i [
     var group = 0;
     var cookie = 0;
     var cookie_end = 0;
+    // TLS 1.2's: renegotiation_info, extended_master_secret, ec_point_formats.
+    var reneg = false;
+    var ems = false;
+    var formats = false;
     while at < ext_end {
         if at + 4 > ext_end {
             return tls_record.decode_error();
@@ -394,22 +442,95 @@ pub fn server_hello[&b, &s, &i](b: &b [byte], session_id: &s [byte], info: &!i [
             }
             cookie = body + 2;
             cookie_end = body + size;
+        } else if kind == 0xff01 && !retry {
+            // An empty renegotiated_connection: a first handshake.
+            if reneg || size != 1 || int_of(b[body]) != 0 {
+                return tls_record.decode_error();
+            }
+            reneg = true;
+        } else if kind == 23 && !retry {
+            if ems || size != 0 {
+                return tls_record.decode_error();
+            }
+            ems = true;
+        } else if kind == 11 && !retry {
+            // ec_point_formats: a list that includes uncompressed (0).
+            if formats || size < 2 || int_of(b[body]) + 1 != size {
+                return tls_record.decode_error();
+            }
+            var uncompressed = false;
+            var j = 1;
+            while j < size {
+                if int_of(b[body + j]) == 0 {
+                    uncompressed = true;
+                }
+                j = j + 1;
+            }
+            if !uncompressed {
+                return tls_record.decode_error();
+            }
+            formats = true;
         } else {
             return tls_record.unsupported_extension();
         }
         at = body + size;
     }
     if version == 0 {
-        // No supported_versions: a TLS 1.2 (or older) ServerHello.
-        return tls_record.protocol_version();
-    }
-    if retry {
-        // A retry that would change nothing in the ClientHello (§4.1.4).
-        if group == 0 && cookie == 0 {
-            return tls_record.hello_retry();
+        // TLS 1.2. A HelloRetryRequest exists only in 1.3.
+        if retry {
+            return tls_record.protocol_version();
         }
-    } else if group == 0 {
-        return tls_record.decode_error();
+        if !tls_record.suite12_known(suite) {
+            return tls_record.no_shared_cipher();
+        }
+        if group != 0 {
+            return tls_record.unsupported_extension();
+        }
+        // Resuming a session needs one; the client offered none, so the
+        // server echoing the random session id it sent is not a 1.2
+        // session it can have.
+        if sid == len(session_id) {
+            var same = true;
+            var j = 0;
+            while j < sid {
+                if b[sid_at + j] != session_id[j] {
+                    same = false;
+                }
+                j = j + 1;
+            }
+            if same {
+                return tls_record.decode_error();
+            }
+        }
+        if !ems {
+            return tls_record.extended_master_secret();
+        }
+    } else {
+        if !tls_record.suite_known(suite) {
+            return tls_record.no_shared_cipher();
+        }
+        if reneg || ems || formats {
+            // TLS 1.2's extensions in a TLS 1.3 ServerHello.
+            return tls_record.unsupported_extension();
+        }
+        if sid != len(session_id) {
+            return tls_record.decode_error();
+        }
+        var j = 0;
+        while j < sid {
+            if b[sid_at + j] != session_id[j] {
+                return tls_record.decode_error();
+            }
+            j = j + 1;
+        }
+        if retry {
+            // A retry that would change nothing in the ClientHello (§4.1.4).
+            if group == 0 && cookie == 0 {
+                return tls_record.hello_retry();
+            }
+        } else if group == 0 {
+            return tls_record.decode_error();
+        }
     }
     info[sh_share()] = share;
     info[sh_retry()] = 0;
@@ -420,6 +541,10 @@ pub fn server_hello[&b, &s, &i](b: &b [byte], session_id: &s [byte], info: &!i [
     info[sh_group()] = group;
     info[sh_cookie_start()] = cookie;
     info[sh_cookie_end()] = cookie_end;
+    info[sh_version()] = 0x0304;
+    if version == 0 {
+        info[sh_version()] = 0x0303;
+    }
     return 0;
 }
 
@@ -566,4 +691,136 @@ pub fn key_update[&b](b: &b [byte]) -> [] int {
         return tls_record.decode_error();
     }
     return int_of(b[0]);
+}
+
+// ---- TLS 1.2 (RFC 5246 §7.4, RFC 8422 §5.4; `docs/tls-parity.md` §3.4) ----
+
+pub fn type_hello_request() -> [] int {
+    return 0;
+}
+
+pub fn type_server_key_exchange() -> [] int {
+    return 12;
+}
+
+pub fn type_server_hello_done() -> [] int {
+    return 14;
+}
+
+pub fn type_client_key_exchange() -> [] int {
+    return 16;
+}
+
+// A TLS 1.2 Certificate: the chain, with no request context and no
+// per-certificate extensions. `info` as `certificate` fills it.
+pub fn certificate12[&b, &i](b: &b [byte], info: &!i [int]) -> [] int {
+    let n = len(b);
+    if n < 3 || 3 + get(b, 0, 3) != n {
+        return tls_record.decode_error();
+    }
+    var at = 3;
+    var count = 0;
+    while at < n {
+        if at + 3 > n {
+            return tls_record.decode_error();
+        }
+        let size = get(b, at, 3);
+        if size == 0 || at + 3 + size > n {
+            return tls_record.decode_error();
+        }
+        if count == max_certificates() {
+            return tls_record.x509_chain_too_large();
+        }
+        info[3 + 2 * count] = at + 3;
+        info[4 + 2 * count] = at + 3 + size;
+        count = count + 1;
+        at = at + 3 + size;
+    }
+    if count == 0 {
+        return tls_record.decode_error();
+    }
+    info[0] = info[3];
+    info[1] = info[4];
+    info[2] = count;
+    return 0;
+}
+
+// What `server_key_exchange` finds, as indices into its `info`: the
+// named group, the point's range, where the signed parameters end, the
+// signature scheme and the signature's range.
+pub fn ske_group() -> [] int {
+    return 0;
+}
+
+pub fn ske_point_start() -> [] int {
+    return 1;
+}
+
+pub fn ske_point_end() -> [] int {
+    return 2;
+}
+
+pub fn ske_params_end() -> [] int {
+    return 3;
+}
+
+pub fn ske_scheme() -> [] int {
+    return 4;
+}
+
+pub fn ske_sig_start() -> [] int {
+    return 5;
+}
+
+pub fn ske_info_len() -> [] int {
+    return 6;
+}
+
+// An ECDHE ServerKeyExchange: a named curve (curve type 3) the client
+// offered, its point at that curve's length, and a signature. The
+// signature ends the message.
+pub fn server_key_exchange[&b, &i](b: &b [byte], info: &!i [int]) -> [] int {
+    let n = len(b);
+    if n < 4 || int_of(b[0]) != 3 {
+        return tls_record.decode_error();
+    }
+    let group = get(b, 1, 2);
+    let size = int_of(b[3]);
+    let want = share_len(group);
+    if want == 0 {
+        return tls_record.key_share();
+    }
+    if size != want || 4 + size + 4 > n {
+        return tls_record.decode_error();
+    }
+    let params = 4 + size;
+    let sig = get(b, params + 2, 2);
+    if params + 4 + sig != n || sig == 0 {
+        return tls_record.decode_error();
+    }
+    info[ske_group()] = group;
+    info[ske_point_start()] = 4;
+    info[ske_point_end()] = params;
+    info[ske_params_end()] = params;
+    info[ske_scheme()] = get(b, params, 2);
+    info[ske_sig_start()] = params + 4;
+    return 0;
+}
+
+// A TLS 1.2 CertificateRequest, checked for shape: certificate types,
+// signature algorithms and authorities. Its content is not used.
+pub fn certificate_request12[&b](b: &b [byte]) -> [] int {
+    let n = len(b);
+    if n < 1 {
+        return tls_record.decode_error();
+    }
+    var at = 1 + int_of(b[0]);
+    if int_of(b[0]) == 0 || at + 2 > n {
+        return tls_record.decode_error();
+    }
+    at = at + 2 + get(b, at, 2);
+    if at + 2 > n || at + 2 + get(b, at, 2) != n {
+        return tls_record.decode_error();
+    }
+    return 0;
 }
