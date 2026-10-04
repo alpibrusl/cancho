@@ -9,6 +9,7 @@ mod conc;
 mod expr;
 mod memory;
 mod net;
+mod signals;
 mod stmt;
 
 /// A `static` as the checker knows it, before evaluation
@@ -396,11 +397,15 @@ impl<'a> FnLowering<'a> {
             ));
         };
         let which = def.0 as usize;
-        if which != PRELUDE_FFI && which != PRELUDE_FS && which != PRELUDE_NET {
+        if which != PRELUDE_FFI
+            && which != PRELUDE_FS
+            && which != PRELUDE_NET
+            && which != PRELUDE_SIGNALS
+        {
             return Err(Diagnostic::new(
                 Rule::CapabilityNotNarrowable,
                 format!(
-                    "`{}` carries no value to narrow; `Ffi`, `Fs` and `Net` are the capabilities that name one",
+                    "`{}` carries no value to narrow; `Ffi`, `Fs`, `Net` and `Signals` are the capabilities that name one",
                     self.unifier.display(&resolved)
                 ),
                 span,
@@ -413,6 +418,14 @@ impl<'a> FnLowering<'a> {
                 span,
             ));
         };
+        // `docs/signals.md` section 2.1: a set of signals narrows as a set --
+        // any order, each member claimable, strictly inside what is held --
+        // and the type it answers is the canonical spelling, so two programs
+        // that name one set have one type and one row.
+        if which == PRELUDE_SIGNALS {
+            let canonical = self.narrow_signals(current, &target, self.ast.expr_span(*literal))?;
+            return Ok((value, Type::Named(DefId(which as u32), vec![Type::Lit(canonical)])));
+        }
         if !target.starts_with(current.as_str()) {
             return Err(Diagnostic::new(
                 Rule::CapabilityNotNarrowable,

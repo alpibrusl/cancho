@@ -464,6 +464,22 @@ pub enum Builtin {
     ConnClose,
     /// `listener_close(Listener) -> [] int`.
     ListenerClose,
+    /// `signals_watch(&Signals("S")) -> [signals("S")] Watching` --
+    /// `docs/signals.md` section 2, edition 6 only: claim the signals `S` the
+    /// capability was narrowed to. Checked at the call site (`Expr::Call`
+    /// with the set's bits as a second argument) because its row is the set
+    /// in the capability's type, as `tcp_listen`'s is the bound's.
+    SignalsWatch,
+    /// `signals_pending(&!SignalWatch) -> [signals_read] int`: the bits of the
+    /// claimed signals that arrived since the previous call, cleared. Never
+    /// waits.
+    SignalsPending,
+    /// `poller_add_signals(&!Poller, &SignalWatch, token) -> [poll] int`:
+    /// watch a claim for readability. `0`, or the `errno`.
+    PollerAddSignals,
+    /// `signals_close(SignalWatch) -> [] int`: ends the claim and puts the
+    /// signals back to the default; consumes the handle.
+    SignalsClose,
     /// `null_ptr() -> [] c_ptr` — the one producer of a `c_ptr` that is
     /// not a foreign call's return, edition 3 only
     /// (`docs/opaque-pointers.md` §3).
@@ -590,6 +606,10 @@ impl Builtin {
         Builtin::ListenerNonblocking,
         Builtin::ConnClose,
         Builtin::ListenerClose,
+        Builtin::SignalsWatch,
+        Builtin::SignalsPending,
+        Builtin::PollerAddSignals,
+        Builtin::SignalsClose,
         Builtin::NullPtr,
         Builtin::Spawn,
         Builtin::Join,
@@ -674,6 +694,10 @@ impl Builtin {
             Builtin::ListenerNonblocking => "listener_nonblocking",
             Builtin::ConnClose => "conn_close",
             Builtin::ListenerClose => "listener_close",
+            Builtin::SignalsWatch => "signals_watch",
+            Builtin::SignalsPending => "signals_pending",
+            Builtin::PollerAddSignals => "poller_add_signals",
+            Builtin::SignalsClose => "signals_close",
             Builtin::NullPtr => "null_ptr",
             Builtin::Spawn => "spawn",
             Builtin::Join => "join",
@@ -733,6 +757,12 @@ impl Builtin {
             // `docs/checked-output.md`: a name a program may already have
             // declared for itself, so it is visible from edition 5 only.
             Builtin::FlushOut => 5,
+            // `docs/signals.md`: edition 6, for the same reason --
+            // `signals_watch` is a name a program may already declare.
+            Builtin::SignalsWatch
+            | Builtin::SignalsPending
+            | Builtin::PollerAddSignals
+            | Builtin::SignalsClose => 6,
             // `docs/file-writes.md`: edition 5, for the same reason --
             // `file_write` and `open_new` are names a program may already
             // declare against libc.
@@ -823,7 +853,9 @@ impl Builtin {
             | Builtin::PollerAddConn
             | Builtin::PollerModify
             | Builtin::PollerRemove
-            | Builtin::PollerWait => 2,
+            | Builtin::PollerWait
+            | Builtin::PollerAddSignals => 2,
+            Builtin::SignalsPending => 1,
             Builtin::TcpAccept
             | Builtin::ConnNonblocking
             | Builtin::ConnNodelay
@@ -1192,6 +1224,33 @@ impl Builtin {
                 Type::Int,
             ),
             Builtin::PollerClose => (vec![named(PRELUDE_POLLER)], Type::Int),
+            // Checked at the call site: the set is in the capability's type.
+            Builtin::SignalsWatch => (Vec::new(), Type::Unit),
+            Builtin::SignalsPending => (
+                vec![Type::Ref {
+                    unique: true,
+                    region: Region::Param(0),
+                    inner: Box::new(named(PRELUDE_SIGNAL_WATCH)),
+                }],
+                Type::Int,
+            ),
+            Builtin::PollerAddSignals => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_POLLER)),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(named(PRELUDE_SIGNAL_WATCH)),
+                    },
+                    Type::Int,
+                ],
+                Type::Int,
+            ),
+            Builtin::SignalsClose => (vec![named(PRELUDE_SIGNAL_WATCH)], Type::Int),
             Builtin::ConnDetach => (vec![named(PRELUDE_CONN)], Type::Int),
             Builtin::ConnAttach => (vec![Type::Int], named(PRELUDE_ATTACHED)),
             Builtin::ClockMs | Builtin::ClockUnixMs => (
@@ -1339,7 +1398,11 @@ impl Builtin {
             | Builtin::PollerAddConn
             | Builtin::PollerModify
             | Builtin::PollerRemove
-            | Builtin::PollerWait => Effects::plain(["poll"]),
+            | Builtin::PollerWait
+            | Builtin::PollerAddSignals => Effects::plain(["poll"]),
+            // `docs/signals.md` section 2.1: path-free, the set was spent at
+            // `signals_watch`. Closing performs nothing, as `conn_close` does not.
+            Builtin::SignalsPending => Effects::plain(["signals_read"]),
             Builtin::ConnWrite => Effects::plain(["conn_write"]),
             // Moving authority around is not an effect. Splitting a `World`
             // observes nothing outside the program and releasing a

@@ -435,6 +435,7 @@ const STD: &[(&str, &str)] = &[
     ("<std>/http.ls", include_str!("../../../std/http.ls")),
     ("<std>/route.ls", include_str!("../../../std/route.ls")),
     ("<std>/conns.ls", include_str!("../../../std/conns.ls")),
+    ("<std>/signals.ls", include_str!("../../../std/signals.ls")),
 ];
 
 /// What a command line asked for.
@@ -1172,6 +1173,7 @@ fn print_authority(inputs: &[PathBuf], with_std: bool, json: bool) -> Result<(),
             ),
             ("the heap", ["heap"].as_slice()),
             ("the command line", ["args"].as_slice()),
+            ("signals", ["signals", "signals_read"].as_slice()),
             ("foreign code", ["ffi"].as_slice()),
         ]
         .into_iter()

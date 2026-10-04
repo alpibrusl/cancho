@@ -1,4 +1,4 @@
-//~ ERROR unknown edition 6; the only editions today are 1, 2, 3, 4 and 5
+//~ ERROR unknown edition 7; the only editions today are 1, 2, 3, 4, 5 and 6
 //~ RULE unknown-edition
 
 // `docs/editions.md` §6.1, §7.
@@ -8,10 +8,10 @@
 // at all; edition 2 adds `Net`; edition 3 adds `c_ptr`/`null_ptr`
 // (`docs/opaque-pointers.md` §4); edition 4 adds `spawn`/`join`
 // (`docs/threads.md` §2); edition 5 adds the socket handles
-// (`docs/native-sockets.md` §3). There is nothing later than that yet
-// to opt into.
+// (`docs/native-sockets.md` §3); edition 6 adds the signal capability
+// (`docs/signals.md`). There is nothing later than that yet to opt into.
 
-edition 6;
+edition 7;
 
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args } = split(world);

@@ -10,6 +10,7 @@ mod files;
 mod memory;
 mod net;
 mod poller;
+mod signals;
 mod sockets;
 
 pub(crate) struct BodyEmitter<'a, 'f> {

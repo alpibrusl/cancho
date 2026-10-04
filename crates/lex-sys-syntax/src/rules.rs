@@ -75,6 +75,7 @@ pub enum Rule {
     RegionMismatch,
     RegionNotInScope,
     SharedReferenceWritten,
+    SignalNotClaimable,
     StaticItem,
     ThreadPayloadType,
     TypeArgsNotTaken,
@@ -89,7 +90,7 @@ pub enum Rule {
 
 impl Rule {
     /// Every rule, in tag order. The catalogue as data.
-    pub const ALL: [Rule; 55] = [
+    pub const ALL: [Rule; 56] = [
         Rule::AmbiguousType,
         Rule::ArityMismatch,
         Rule::AssignToImmutable,
@@ -135,6 +136,7 @@ impl Rule {
         Rule::RegionMismatch,
         Rule::RegionNotInScope,
         Rule::SharedReferenceWritten,
+        Rule::SignalNotClaimable,
         Rule::StaticItem,
         Rule::ThreadPayloadType,
         Rule::TypeArgsNotTaken,
@@ -195,6 +197,7 @@ impl Rule {
             Rule::RegionMismatch => "region-mismatch",
             Rule::RegionNotInScope => "region-not-in-scope",
             Rule::SharedReferenceWritten => "shared-reference-written",
+            Rule::SignalNotClaimable => "signal-not-claimable",
             Rule::StaticItem => "static-item",
             Rule::ThreadPayloadType => "thread-payload-type",
             Rule::TypeArgsNotTaken => "type-args-not-taken",
@@ -395,6 +398,12 @@ impl Rule {
                 "A shared reference `&` promises its referent will not change, so it cannot be \
                  written through or turned into a unique one."
             }
+            Rule::SignalNotClaimable => {
+                "A program may claim only the signals a request can be read from -- `HUP`, `INT`, \
+                 `QUIT`, `TERM`, `USR1`, `USR2`, `ALRM` and `WINCH` -- named without the `SIG` \
+                 prefix, comma-separated, each once; `KILL` and `STOP` cannot be caught and the \
+                 faults (`SEGV`, `ILL`, `BUS`, `FPE`) are not requests."
+            }
             Rule::StaticItem => {
                 "A `static` is compile-time data: a slice of scalars, evaluated during \
                  compilation, performing nothing and reading only `static`s declared before it."
@@ -419,7 +428,7 @@ impl Rule {
             }
             Rule::UnknownEdition => {
                 "A file's `edition N;` marker names one of the editions this compiler knows; a \
-                 file with no marker is edition 1, and there is nothing later than edition 5 to \
+                 file with no marker is edition 1, and there is nothing later than edition 6 to \
                  name yet."
             }
             Rule::UnknownEscape => {

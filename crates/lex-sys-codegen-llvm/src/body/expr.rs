@@ -250,6 +250,9 @@ impl<'a> FuncEmitter<'a> {
                 let failed = self.fresh();
                 self.out.push_str(&format!("  {failed} = icmp ne i32 {status}, 0\n"));
                 self.trap_if(&failed)?;
+                // The thread has ended: `signals_watch` may be granted again
+                // once the last one has (`docs/signals.md` section 3).
+                self.count_thread(-1);
                 match leaves_of(ret, self.program)?.as_slice() {
                     [] => Ok(Vec::new()),
                     // The same "load whatever kind the type says straight
@@ -458,6 +461,9 @@ impl<'a> FuncEmitter<'a> {
                 let failed = self.fresh();
                 self.out.push_str(&format!("  {failed} = icmp ne i32 {status}, 0\n"));
                 self.trap_if(&failed)?;
+                // A running thread forbids a new signal claim: it would not
+                // have the signals blocked (`docs/signals.md` section 3).
+                self.count_thread(1);
                 let thread_value = self.fresh();
                 self.out.push_str(&format!("  {thread_value} = load ptr, ptr {thread_slot}\n"));
                 Ok(vec![LValue::Reg(thread_value)])
@@ -888,6 +894,23 @@ impl<'a> FuncEmitter<'a> {
             Callee::Builtin(Builtin::PollerNew) => self.poller_new(),
             Callee::Builtin(Builtin::ClockMs) => self.clock_ms(false),
             Callee::Builtin(Builtin::ClockUnixMs) => self.clock_ms(true),
+            // `docs/signals.md` section 5: the claim.
+            Callee::Builtin(Builtin::SignalsWatch) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.signals_watch(&args)
+            }
+            Callee::Builtin(Builtin::SignalsPending) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.signals_pending(&args)
+            }
+            Callee::Builtin(Builtin::SignalsClose) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.signals_close(&args)
+            }
+            Callee::Builtin(Builtin::PollerAddSignals) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.poller_ctl(&args, true, false)
+            }
             Callee::Builtin(Builtin::ConnDetach) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.conn_detach(&args)

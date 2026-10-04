@@ -26,6 +26,7 @@
 - [The server loop as a package](http-server.md)
 - [Parallelism: threads and vectorization](parallelism.md)
 - [Native sockets](native-sockets.md)
+- [Signals](signals.md)
 - [A WebSocket spike](websocket-spike.md)
 - [Slicing](slicing.md)
 - [Tuples](tuples.md)

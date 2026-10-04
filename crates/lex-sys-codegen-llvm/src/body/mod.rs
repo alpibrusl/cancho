@@ -15,6 +15,7 @@ mod fs;
 mod memory;
 mod net;
 mod poller;
+mod signals;
 mod sockets;
 
 /// Where `hoist`ed allocas land: a line no instruction can be mistaken for.
