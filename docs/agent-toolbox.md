@@ -384,7 +384,7 @@ lives; D16 decides what is fixed and what is routed round.
 | L3 | No file type, mode or mtime without opening (`fs_stat`) | A.2 | `list` entries, `stat` | compiler: builtin |
 | L4 | `std.crypto.sha256`/`sha512` trap past 65,527/65,519 bytes; no incremental API | A.6 | `hash`, `write` preconditions | `std` (or in-package first, AGENTS.md §7) |
 | L5 | `narrow` takes a literal; no generic over `Fs(p)`/`Net(b)` | A.1, A.9 | static extent for a general tool | by design (`linearity-and-effects.md` §7.4); D14 routes round it |
-| L6 | No symlink-aware open or `realpath` under `Fs`; symlinks escape a narrowed prefix | A.4 | symlink-safe `--root` | compiler: a no-follow open, if wanted. **Built** (#227 slices 1 and 2): [`directory-handles.md`](directory-handles.md)'s `Dir` reads, creates, appends, renames, removes and syncs beneath a directory and follows no link; the tools on top are its slice 3 |
+| L6 | No symlink-aware open or `realpath` under `Fs`; symlinks escape a narrowed prefix | A.4 | symlink-safe `--root` | compiler: a no-follow open, if wanted. **Built** (#227 slices 1 and 2): [`directory-handles.md`](directory-handles.md)'s `Dir` reads, creates, appends, renames, removes and syncs beneath a directory and follows no link; the tools on top are its slice 3, built in alpibrusl/lexsys-tools#4 |
 | L7 | Outside-prefix, `..`, relative and sibling paths trap (132) rather than answering an error | A.4 | an error value for confinement | in-tool validation (D9); by design |
 | L8 | No `std.regex` | A.3 | regex `seek` | `std` — large; D15 declines it |
 | L9 | TLS needs `Ffi` (`conn_raw_fd`, `examples/tls_client`) | `docs/native-sockets.md` §6 | an `https` `fetch` with a bounded row | out of scope (D15) |
@@ -731,12 +731,16 @@ decision this document can make.
   prefix (`/rootevil` is not inside `/root`; `docs/filesystem.md` §1.1 is the
   same rule); collapse `.`, repeated `/`, and a trailing `/`. A path inside
   the root in a different spelling gets a `repair` (D6).
-* **Symlinks are not handled, and the contract says so.** There is no
-  `lstat`, `readlink` or no-follow open (L6) and the probe showed a link
-  inside a narrowed prefix reading a file outside it. `introspect` records
-  `confinement:"lexical"`; the tests assert the *known escape* (M8), so the
-  day a no-follow primitive lands the test flips and forces this section to
-  be rewritten.
+* **Symlinks are not followed below the root.** *(Rewritten when M8
+  flipped.)* This said there was no no-follow open (L6) and that the tests
+  asserted the known escape. #227 built directory handles
+  ([`directory-handles.md`](directory-handles.md)), and `lexsys-tools`
+  (alpibrusl/lexsys-tools#4) now opens `--root` with `open_dir` and every
+  path beneath it one component at a time with `O_NOFOLLOW`: a link
+  anywhere below the root is `path.symlink` (exit 4), and `introspect`
+  records `confinement:"beneath"`. The root's own spelling is the caller's
+  and may hold links. The writers work beneath the parent directory and
+  hold `dir_write`, no `fs_write`.
 * Where symlink safety matters, it is the **perimeter's** job (a mount
   namespace, a lex-os box), exactly as `docs/filesystem.md` §2.1 says.
 
@@ -875,7 +879,7 @@ than left to infer):
 |---|---|---|
 | **Path extent** | `narrow` takes a literal (L5); a path from `argv` is run time. The row says `fs_read("")` | D9's lexical `--root`; D14's variant build; the perimeter; D13's mediator |
 | **Host** (`fetch`) | the same, for `Net` | per-host variant (D14); lex-os egress |
-| **What a symlink reaches** | no no-follow primitive (L6) | the perimeter |
+| **What a symlink reaches** | *(Closed under `--root`.)* `Dir` opens beneath a directory following no link (L6, #227) | D9: `--root` opened beneath, links refused; without `--root`, the perimeter |
 | **What stdout carries** | a tool can print anything it read | lex-os's audit chain, not a type |
 | **Resource use** (memory, wall time, bytes) | heap and arena trap; no clock | D8's caps; lex-os `Budget` |
 | **Per-invocation behaviour** (dry-run vs apply) | the row is the program's | M7 (`strace`); the D10 split if wanted |
@@ -1076,8 +1080,9 @@ The policy:
   `d_name` offset differs by target (`docs/file-writes.md` §8): that is the
   design problem, not the builtin.
 * **L4 (incremental hash)**: in-package first, std second (above).
-* **L5, L6, L7**: by design or declined; D9 and D14 route round them and
-  the tests *pin the limit* (M8).
+* **L5, L7**: by design or declined; D9 and D14 route round them and
+  the tests *pin the limit* (M8). **L6** was built (#227) and M8 now
+  asserts the refusal rather than the escape.
 * **L8 (regex)**: declined. `seek` is literal; a person who wants regex uses
   `rg`, and the `seek` error for a metacharacter-looking pattern is a tag with
   a `none` repair, not a guess.
@@ -1186,7 +1191,7 @@ interleaved runs, minimum and median reported.
 | **M5** Differential vs GNU | agreement on the shared semantic subset | per tool, a normaliser reduces both outputs to a comparable datum: `seek` vs `grep -F -n -b`; `peek` vs `sed -n`/`wc`; `jsonq` vs `jq -c`; `hash` vs `sha256sum`/`sha512sum`; `write` end-state vs `cp`; `list` vs `find -printf '%P\t%y\t%s\n' \| LC_ALL=C sort`; `tally` vs `LC_ALL=C sort \| uniq -c \| sort -k1,1nr -k2`; `diff`: apply our hunks with `patch` and compare the *result* (not the text — minimal diffs are not unique) | 0 divergences over N seeded cases plus the hand-written edge corpus (CRLF, no trailing newline, NUL, long lines, invalid UTF-8, empty file). The precedent is `both_ports_match_gnu_on_every_spelling` (`docs/flags.md` §1.1) |
 | **M6** Authority | manifest equals the compiler's, within the ceiling | D12's three checks; the bridge totality check (every label the compiler can emit for these tools is in D13's table) | all three, for every tool; the label-mapping table is total |
 | **M7** Mutation behaviour | dry-run does not write; apply is idempotent; atomic; two writers race | run `--dry-run` under `strace -f -e trace=file,rename,write` and a before/after hash of the tree; every mutating case twice; 200 trials of two concurrent writers with the same `--if-sha256` | dry-run: 0 mutating syscalls, tree unchanged; second apply `changed:false`; race: exactly one success, never two |
-| **M8** Confinement | `--root` holds lexically, and the limit is pinned | `..`, absolute, `//`, `./`, trailing `/`, sibling prefix, empty, 4096+ bytes, Unicode; **plus a test that expects the documented symlink escape** | every case a tag, none a trap; the escape test passes now and **flips** when a no-follow primitive lands |
+| **M8** Confinement | `--root` holds, lexically and through links | `..`, absolute, `//`, `./`, trailing `/`, sibling prefix, empty, 4096+ bytes, Unicode, a link to a file and a link to a directory outside the root | every case a tag, none a trap; *(flipped, #227)* every tool refuses both links with `path.symlink` and leaves the outside untouched |
 | **M9** Performance and memory | startup, throughput, **memory flatness** | see below | no gate on speed vs GNU; a regression gate against the previous release's minimum; **memory flatness is a gate** |
 
 **Actionability, defined.** Fault-injection cases from M4 that produce an
