@@ -344,6 +344,7 @@ pub(crate) fn emit_module(
             );
             // `docs/signals.md` section 5: a signal is ignored, then watched with `EVFILT_SIGNAL`.
             declare_libc_unless_own(&mut text, "sigaction", "i32 @sigaction(i32, ptr, ptr)");
+            declare_libc_unless_own(&mut text, "raise", "i32 @raise(i32)");
         }
         _ => {
             // `docs/signals.md` section 5: block the set, read it from a `signalfd`.

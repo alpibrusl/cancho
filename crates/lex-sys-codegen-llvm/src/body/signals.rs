@@ -298,8 +298,17 @@ impl<'a> FuncEmitter<'a> {
     /// answer it as lex-sys bits. Never waits: the descriptor is non-blocking
     /// on Linux, and the `kevent` has a zero timeout on Darwin.
     pub(crate) fn signals_pending(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
-        let darwin = self.is_darwin();
         let fd = self.handle_fd(&args[0]);
+        let native = self.drain_native(&fd);
+        let bits = self.bits_from_native(&native);
+        Ok(vec![LValue::Reg(bits)])
+    }
+
+    /// Take what the kernel has queued on a claim's descriptor and answer it as
+    /// a kernel mask. Never waits. `signals_pending` and Darwin's
+    /// `signals_close` (which must not lose what was not read) share it.
+    fn drain_native(&mut self, fd: &str) -> String {
+        let darwin = self.is_darwin();
         let stride = if darwin { KEVENT_SIZE } else { SIGNALFD_RECORD };
         let buf = self.fresh();
         self.hoist(format!("  {buf} = alloca i8, i64 {}\n", stride * RECORDS));
@@ -380,8 +389,7 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("{done}:\n"));
         let native = self.fresh();
         self.out.push_str(&format!("  {native} = load i64, ptr {seen_cell}\n"));
-        let bits = self.bits_from_native(&native);
-        Ok(vec![LValue::Reg(bits)])
+        native
     }
 
     /// `signals_close(SignalWatch)`: end the claim. A signal still queued is
@@ -394,14 +402,30 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("  {fd} = trunc i64 {handle} to i32\n"));
         let native = self.fresh();
         self.out.push_str(&format!("  {native} = lshr i64 {handle}, 32\n"));
+        let mut unread = None;
         if self.is_darwin() {
+            // The claim ignored these signals, so one that arrived and was not
+            // read is in the `kqueue` and nowhere else: the kernel discarded
+            // it as ignored. Take it out first, restore the default, then
+            // raise it, so it is delivered with the default action as the
+            // queued signal is on Linux (`docs/signals.md` section 3).
+            let queued = self.drain_native(&fd);
             self.each_native_signal(&native, |this, number| this.set_disposition(number, 0));
+            unread = Some(queued);
         } else {
             let set = self.sigset_of(&native);
             self.sigmask(SIG_UNBLOCK, &set);
         }
         let answer = self.fresh();
         self.out.push_str(&format!("  {answer} = call i32 @close(i32 {fd})\n"));
+        if let Some(queued) = unread {
+            self.each_native_signal(&queued, |this, number| {
+                let number32 = this.fresh();
+                this.out.push_str(&format!("  {number32} = trunc i64 {number} to i32\n"));
+                let ignored = this.fresh();
+                this.out.push_str(&format!("  {ignored} = call i32 @raise(i32 {number32})\n"));
+            });
+        }
         let claimed = self.fresh();
         self.out.push_str(&format!("  {claimed} = load i64, ptr @{SIGNAL_STATE_GLOBAL}\n"));
         let kept = self.fresh();

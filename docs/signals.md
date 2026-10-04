@@ -122,7 +122,7 @@ The bitmask says "at least once since". A program that needs a count is not aski
 `SIGTERM` terminates the process. Two details are part of the contract:
 
 * A signal that arrived *between* the last `signals_pending` and the `signals_close` is not lost and is not swallowed: it is delivered when the claim ends, with the default action, which for `TERM`
-  and `INT` ends the process. That is the second signal arriving before the first was acted on, and "kills at once" is what it was asked to do. A program that wants to discard it calls
+  and `INT` ends the process. This holds on both kernels (on macOS by re-raising what the `kqueue` still held, section 5), except for a signal that was ignored on entry (next bullet). That is the second signal arriving before the first was acted on, and "kills at once" is what it was asked to do. A program that wants to discard it calls
   `signals_pending` last.
 * A signal the process inherited as *ignored* (`nohup` ignores `HUP`; a shell runs a background job with `INT` and `QUIT` ignored) is claimable on both kernels, and is read as any other.
   Afterwards it is **ignored again on Linux** (the claim never touched the disposition, only the mask) and **at the default on macOS** (the claim ignored it to watch it and cannot know what it
@@ -176,7 +176,10 @@ unless the process inherited `SIG_IGN`) and closes the descriptor. The dispositi
 **macOS** (**not run**, section 10): there is no `signalfd`. `kqueue` has `EVFILT_SIGNAL`, which reports a signal "even if it has been marked `SIG_IGN`", so the claim sets each signal to `SIG_IGN`
 (`signal(2)`), makes a `kqueue`, and registers one `EVFILT_SIGNAL` filter per signal (`EV_ADD | EV_CLEAR`). `signals_pending` is a zero-timeout `kevent` into an eight-event buffer, each event's
 `ident` being the signal. The `kqueue` descriptor is itself readable while it has events, so the `Poller`'s `kqueue` registers it with `EVFILT_READ` (`poller_add_signals` is the existing
-readable registration on that descriptor). `signals_close` sets each signal back to `SIG_DFL` and closes the `kqueue`. This path works in every thread, which Linux's does not; the live-thread
+readable registration on that descriptor). `signals_close` first takes out of the `kqueue` whatever was not read (a zero-timeout `kevent`, the same drain `signals_pending` does), sets each signal back to `SIG_DFL`, closes the `kqueue`, and then
+**`raise`s each signal that was unread**, so it is delivered with the default action. Without that step the signal is lost, and macOS CI found it: the kernel *discards* an ignored signal rather than leaving it
+pending (only the `kqueue` kept a record of it), so restoring the default found nothing to deliver and `closing_with_a_signal_unread_delivers_it_at_once` saw the program exit 0. On Linux the signal sits
+in the blocked mask and unblocking delivers it; on macOS it is re-raised, which has the same effect in the thread that closed. This path works in every thread, which Linux's does not; the live-thread
 rule applies on both so that a program means the same thing on each.
 
 **Not a handler.** Neither path installs a handler, so none of the three obstacles from `function-values.md` section 5 arises, and nothing runs in signal context: the program reads the
@@ -242,6 +245,9 @@ Beside them: 9 unit tests for the table and for `Label::covers` (`lex-sys-ir`), 
 `Signals` discharging nothing; a wrong `USR1` number; two signals sharing a bit) and 12 in **each backend** (the mask not blocked; the `signalfd` blocking; one record a read; no unblock on close; the claim kept
 after close; an overlapping claim and a running thread each ignored; the kernel's numbers not converted to bits; the bits of a poll not accumulated; `spawn` and `join` not counted; `poller_add_signals` doing
 something else). The first run of the mutants' targets also found the one test that depended on the environment (section 3, "ignored on entry").
+Two more cover the macOS re-raise, which the Linux suite cannot run: a unit test in each backend builds a claim for `x86_64`/`aarch64` Linux and `x86_64`/`aarch64` Darwin (Cranelift emits Mach-O for the
+host architecture; `clang -c` takes all four) and requires the Darwin module to call `sigaction`, `kqueue`, `kevent` and `raise` and the Linux one to call none of the four's Darwin calls but `signalfd` and
+`pthread_sigmask`; dropping the `raise` in either backend fails it. That is a check that the call is **emitted**, not that it works.
 
 **Strace** (`strace -f -e trace=signalfd4,rt_sigprocmask,rt_sigaction`, either backend): `rt_sigprocmask(SIG_BLOCK, [INT TERM])`, `signalfd4(-1, [INT TERM], 8, SFD_CLOEXEC|SFD_NONBLOCK)`, then `read(3, ..., 1024) = -1
 EAGAIN` per poll, and **no `rt_sigaction`**: no disposition is touched, no handler exists.
@@ -254,11 +260,12 @@ EAGAIN` per poll, and **no `rt_sigaction`**: no disposition is touched, no handl
 
 ## 10. What is not verified, and what building it found
 
-* **macOS is written and not run.** The `kqueue` path (`SIG_IGN` through `sigaction`, `EVFILT_SIGNAL` with `EV_ADD | EV_CLEAR`, a zero-timeout `kevent` to read, the `kqueue` descriptor registered in a
-  `Poller`'s `kqueue` with `EVFILT_READ`) compiles into the same functions behind the target test and is exercised by none of the tests above, which run on the Linux they were written on; CI's macOS job
-  runs the same suite. Three things in it are from the man page and the platform headers and not from a run: that a `kqueue` descriptor is readable in another `kqueue` while it holds events; that the
-  `struct sigaction` is `{handler: 8, mask: 4, flags: 4}` (16 bytes) on both Darwin architectures; and that `EVFILT_SIGNAL` reports a signal that is `SIG_IGN` (the man page says it does). If the first fails,
-  the fix is a self-pipe that `signals_pending` drains and `poller_add_signals` registers, which changes nothing a program sees.
+* **macOS is written, not run here.** CI's macOS arm64 job ran the suite on the first version of this branch: 19 of the 20 signal tests passed there, so the `kqueue` path works, and the 20th found the
+  unread-at-close loss fixed in section 5. The re-raise that fixes it has been built for Darwin (above) and not run. The `kqueue` path (`SIG_IGN` through `sigaction`, `EVFILT_SIGNAL` with `EV_ADD | EV_CLEAR`, a zero-timeout `kevent` to read, the `kqueue` descriptor registered in a
+  `Poller`'s `kqueue` with `EVFILT_READ`) compiles into the same functions behind the target test and is exercised by the same suite when it runs on a Mac. The three assumptions the first version made from the man
+  page and the headers (a `kqueue` readable in another `kqueue`; the 16-byte `struct sigaction`; `EVFILT_SIGNAL` reporting an ignored signal) held in that run. Still unrun: `raise` delivering to the closing thread
+  before `signals_close` returns (POSIX says `raise` returns after the handler, or the default action, has run), and an unread signal that was *also* ignored on entry, which on macOS is re-raised with the default
+  action although the process had ignored it (the claim cannot know what the disposition was).
 * **aarch64 Linux is not run.** The code is the same; `SFD_NONBLOCK | SFD_CLOEXEC` and the 128-byte `signalfd_siginfo` are the same on both Linux architectures.
 * **`Signals` and `SignalWatch` do not cross to a thread** as a `spawn` payload (`crosses_to_a_thread`, as `Conn` does not). Nothing asked, and the watch-before-spawn rule makes the natural program
   the one that reads signals on the thread that watched.

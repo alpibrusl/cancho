@@ -307,3 +307,49 @@ fn only_the_entry_point_is_global() {
         assert!(globals[0].ends_with("main"), "{triple}: {globals:?}");
     }
 }
+
+/// `docs/signals.md` section 5: a signal claim emits for both binary formats,
+/// and each format reaches for its own kernel's facility. This is the only
+/// check the Darwin path gets on a Linux host: the object is built and its
+/// imports read back, not run.
+#[test]
+fn a_signal_claim_emits_for_both_formats_with_each_kernels_calls() {
+    const CLAIM: &str = "edition 6;\n\
+         fn main(world: World) -> [] int {\n\
+             let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);\n\
+             release(io); release(ffi); release(fs); release(heap); release(args); release(net);\n\
+             release(clock);\n\
+             let claim = narrow(signals, \"TERM,USR1\");\n\
+             var status = 1;\n\
+             borrow claim as &s in {\n\
+                 match signals_watch(s) {\n\
+                     Watching::Ok(w) => {\n\
+                         var watch = w;\n\
+                         borrow mut watch as &!wh in { signals_pending(wh); }\n\
+                         status = signals_close(watch);\n\
+                     }\n\
+                     Watching::Failed(e) => { status = 2; }\n\
+                 }\n\
+             }\n\
+             release(claim);\n\
+             return status;\n\
+         }\n";
+    for (triple, prefix) in targets() {
+        let names = symbols_of(CLAIM, &triple);
+        let imports: Vec<&str> = names.iter().map(|(n, _, _)| n.as_str()).collect();
+        let has = |base: &str| imports.contains(&format!("{prefix}{base}").as_str());
+        if triple.contains("darwin") {
+            // Ignore, watch with `EVFILT_SIGNAL`, and re-raise what was not read at close.
+            for call in ["sigaction", "kqueue", "kevent", "raise", "close"] {
+                assert!(has(call), "{triple} should import `{call}`: {imports:?}");
+            }
+            assert!(!has("signalfd") && !has("pthread_sigmask"), "{triple}: {imports:?}");
+        } else {
+            for call in ["pthread_sigmask", "signalfd", "read", "close"] {
+                assert!(has(call), "{triple} should import `{call}`: {imports:?}");
+            }
+            // The Linux claim never raises and never touches a disposition.
+            assert!(!has("raise") && !has("sigaction"), "{triple}: {imports:?}");
+        }
+    }
+}

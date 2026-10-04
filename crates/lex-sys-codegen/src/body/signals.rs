@@ -285,9 +285,17 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     /// answer it as lex-sys bits. Never waits: the descriptor is non-blocking
     /// on Linux, and the `kevent` has a zero timeout on Darwin.
     pub(crate) fn signals_pending(&mut self, args: &[Value]) -> Vec<Value> {
+        let fd = self.handle_fd(args[0]);
+        let native = self.drain_native(fd);
+        vec![self.bits_from_native(native)]
+    }
+
+    /// Take what the kernel has queued on a claim's descriptor and answer it as
+    /// a kernel mask. Never waits. `signals_pending` and Darwin's
+    /// `signals_close` (which must not lose what was not read) share it.
+    fn drain_native(&mut self, fd: Value) -> Value {
         let pointer = self.pointer;
         let darwin = self.is_darwin();
-        let fd = self.handle_fd(args[0]);
         let stride = if darwin { KEVENT_SIZE } else { SIGNALFD_RECORD };
         let buf = self.scratch_bytes(stride * RECORDS);
         let count = if darwin {
@@ -357,8 +365,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
 
         self.builder.switch_to_block(done);
         self.builder.seal_block(done);
-        let native = self.builder.block_params(done)[0];
-        vec![self.bits_from_native(native)]
+        self.builder.block_params(done)[0]
     }
 
     /// `signals_close(SignalWatch)`: end the claim. A signal still queued is
@@ -369,13 +376,27 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         let handle = args[0];
         let fd = self.builder.ins().ireduce(types::I32, handle);
         let native = self.builder.ins().ushr_imm(handle, 32);
+        let mut unread = None;
         if self.is_darwin() {
+            // The claim ignored these signals, so one that arrived and was not
+            // read is in the `kqueue` and nowhere else: the kernel discarded
+            // it as ignored. Take it out first, restore the default, then
+            // raise it, so it is delivered with the default action as the
+            // queued signal is on Linux (`docs/signals.md` section 3).
+            let queued = self.drain_native(fd);
             self.each_native_signal(native, |this, n| this.set_disposition(n, 0));
+            unread = Some(queued);
         } else {
             let set = self.sigset_of(native);
             self.sigmask(SIG_UNBLOCK, set);
         }
         let answer = self.libc_call("close", &[types::I32], &[types::I32], &[fd]);
+        if let Some(queued) = unread {
+            self.each_native_signal(queued, |this, n| {
+                let number = this.builder.ins().ireduce(types::I32, n);
+                this.libc_call("raise", &[types::I32], &[types::I32], &[number]);
+            });
+        }
         let state = self.global(SIGNAL_STATE_GLOBAL);
         let claimed = self.builder.ins().load(types::I64, MemFlags::trusted(), state, 0);
         let rest = self.builder.ins().band_not(claimed, native);
