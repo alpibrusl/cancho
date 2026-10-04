@@ -697,8 +697,15 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     // sentinel is unpacked and the last.
                     Callee::Builtin(Builtin::ReadFile) => self.read_file(&args),
                     // `docs/directory-handles.md` §2.
-                    Callee::Builtin(Builtin::DirEnter) => self.dir_open(&args, true),
-                    Callee::Builtin(Builtin::DirOpenRead) => self.dir_open(&args, false),
+                    Callee::Builtin(
+                        op @ (Builtin::DirEnter
+                        | Builtin::DirOpenRead
+                        | Builtin::DirOpenNew
+                        | Builtin::DirOpenAppend),
+                    ) => self.dir_open(&args, *op),
+                    Callee::Builtin(Builtin::DirRename) => self.dir_rename(&args),
+                    Callee::Builtin(Builtin::DirRemove) => self.dir_remove(&args),
+                    Callee::Builtin(Builtin::DirSync) => self.dir_sync(&args),
                     Callee::Builtin(Builtin::DirClose) => self.dir_close(&args),
                     // `close(2)`. The handle is one leaf and it ends here.
                     Callee::Builtin(Builtin::Close) => {

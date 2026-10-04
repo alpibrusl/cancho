@@ -1,8 +1,9 @@
 # Directory handles: opening beneath a directory, following no links
 
-Status: **slice 1 built** (open a directory, step into a child directory, open a file in it, close), edition 6, both
-backends; Linux measured, Darwin's flags written and run only by CI. Slice 2 (create, rename and remove beneath a directory) and slice 3 (`lexsys-tools` on top) are below, not
-built. Issue #227, gap L6 of [`agent-toolbox.md`](agent-toolbox.md).
+Status: **slices 1 and 2 built**, edition 6, both backends: open a directory, step into a child directory, open a
+file in it for reading (slice 1, #250), and create, append to, rename, remove and sync beneath it (slice 2). Linux
+measured; Darwin's flags and Apple AArch64's variadic call are written and run only by CI. Slice 3 (`lexsys-tools`
+on top) is below, not built. Issue #227, gap L6 of [`agent-toolbox.md`](agent-toolbox.md).
 
 ## 1. Why
 
@@ -84,14 +85,52 @@ generators.
 
 ## 3. Slices
 
-1. **This one:** `Dir`, `DirOpened`, the four builtins above, `std.dirs.open_file`, on both backends.
-2. **Writing beneath a directory:** `dir_open_new` (`O_CREAT | O_EXCL | O_NOFOLLOW`), `dir_rename` (`renameat`) and
-   `dir_remove` (`unlinkat`), which is what `lexsys-tools`' atomic write needs. `openat` with `O_CREAT` reads its
-   variadic `mode`, so on Apple AArch64 the call is shaped the way `fcntl`'s already is (`native-sockets.md` §3).
+1. **Built (#250):** `Dir`, `DirOpened`, the four builtins above, `std.dirs.open_file` and `std.dirs.enter`, on both
+   backends.
+2. **Built: writing beneath a directory**, what `lexsys-tools`' atomic write (a temporary, `fsync`, rename over the
+   target, `fsync` the directory, a lock file appended to) needs, and nothing more. Five builtins, edition 6, each
+   name with §2's one-component check:
+
+   ```
+   dir_open_new(dir: &Dir, name: &[byte]) -> [dir_write] Opened      // openat(O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0644)
+   dir_open_append(dir: &Dir, name: &[byte]) -> [dir_write] Opened   // openat(O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW, 0644)
+   dir_rename(dir: &Dir, from: &[byte], to: &[byte]) -> [dir_write] Done   // renameat(dir, from, dir, to)
+   dir_remove(dir: &Dir, name: &[byte]) -> [dir_write] Done          // unlinkat(dir, name, 0)
+   dir_sync(dir: &Dir) -> [dir_write] Done                           // fsync(dir)
+   ```
+
+   * **`dir_write` is its own label**, discharged like `dir_read` by an owned `Fs` or `World`: a function that may
+     only read beneath a `Dir` says `[dir_read]` and is refused the moment it changes anything.
+   * **A link is never written through.** `O_EXCL` already refuses to create over any link, a dangling one included,
+     and `O_NOFOLLOW` refuses to append through one; `unlinkat` removes the link itself, never its target; `renameat`
+     replaces a link at `to` rather than following it. A rename is within one directory, which is what an atomic
+     replacement is.
+   * **`mode` is variadic.** `openat`'s `mode` is read only with `O_CREAT`, but these two pass it, and on Apple
+     AArch64 a variadic argument travels on the stack. The LLVM backend declares `openat` variadic and calls it as
+     one; Cranelift cannot declare a variadic callee, so on that target the call is shaped the way the callee reads it,
+     nine integer parameters with `mode` the ninth, as `fcntl`'s already is (`native-sockets.md` §3). Every `openat`
+     in a module goes through that one shape, slice 1's included, since a module holds one signature per symbol. The
+     flags for both slices are one table in `lex_sys_ir::open_flags`.
 3. **`lexsys-tools`:** every tool opens `--root` (or `.`) with `open_dir` and every path beneath it with `std.dirs`;
    its row says `dir_read` (and slice 2's label) instead of `fs_read("")`; M8's symlink test flips.
 
 ## 4. What it is checked by
+
+Slice 2:
+
+* `tests/conformance/directory_writes.rs`, on **both backends**, against a tree with a link to a file outside and a
+  dangling link whose target is outside: create once and then `EEXIST`; create through either link `EEXIST`, and
+  nothing appears outside; append twice reads back twice, append through either link `ELOOP`, and the outside file is
+  unchanged; rename within the directory, and `..`, an empty name and `../escaped` refused with `EINVAL` (nothing
+  escapes); remove a file, remove a link (the link goes and its target stays), a missing name `ENOENT`; sync `Ok`; a
+  created file is `0644`, which is the check that would catch a mis-shaped variadic call on Apple AArch64.
+* `tests/reject/dir_write_not_declared.ls`, and `dir_remove` in the accept fixture's owned-`Fs` function, so `dir_write`'s
+  discharge is checked.
+* **Mutants: 14, all killed.** On each backend: create without `O_EXCL`, append that follows links, append without
+  `O_APPEND`, create with mode 0, and a rename that checks its first name twice. In the IR: `World` or `Fs` not
+  discharging `dir_write`, the writes performing `dir_read` instead, and the writes at edition 5.
+
+Slice 1:
 
 * `tests/conformance/directory_handles.rs`, on **both backends**, judged from outside the program, against a tree the
   test builds: a file two directories down opens and reads back; a link to a file outside is refused (`ELOOP`); a

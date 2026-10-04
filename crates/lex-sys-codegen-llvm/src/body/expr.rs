@@ -895,9 +895,26 @@ impl<'a> FuncEmitter<'a> {
             Callee::Builtin(Builtin::ClockMs) => self.clock_ms(false),
             Callee::Builtin(Builtin::ClockUnixMs) => self.clock_ms(true),
             // `docs/directory-handles.md` §2.
-            Callee::Builtin(op @ (Builtin::DirEnter | Builtin::DirOpenRead)) => {
+            Callee::Builtin(
+                op @ (Builtin::DirEnter
+                | Builtin::DirOpenRead
+                | Builtin::DirOpenNew
+                | Builtin::DirOpenAppend),
+            ) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
-                self.dir_open(&args, *op == Builtin::DirEnter)
+                self.dir_open(&args, *op)
+            }
+            Callee::Builtin(Builtin::DirRename) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.dir_rename(&args)
+            }
+            Callee::Builtin(Builtin::DirRemove) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.dir_remove(&args)
+            }
+            Callee::Builtin(Builtin::DirSync) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.dir_sync(&args)
             }
             Callee::Builtin(Builtin::DirClose) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();

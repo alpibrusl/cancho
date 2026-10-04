@@ -1,24 +1,26 @@
-//! Directory handles (`docs/directory-handles.md`): `open_dir`'s open,
-//! `dir_enter`, `dir_open_read` and `dir_close`. Mirrors
-//! `lex-sys-codegen-llvm`'s own `body/dirs.rs`.
+//! Directory handles (`docs/directory-handles.md`): `open_dir`'s open, the
+//! steps beneath a directory (`dir_enter`, `dir_open_read`, `dir_open_new`,
+//! `dir_open_append`), the changes in one (`dir_rename`, `dir_remove`,
+//! `dir_sync`) and `dir_close`. Mirrors `lex-sys-codegen-llvm`'s own
+//! `body/dirs.rs`.
 //!
-//! A step beneath a directory is one `openat(dir, name, flags | O_NOFOLLOW)`
-//! on one path component. The component is checked here, before any call:
-//! empty, longer than `NAME_MAX`, `.`, `..`, or holding a `/` or a NUL is
+//! Every name is one path component, checked here before any call: empty,
+//! longer than `NAME_MAX`, `.`, `..`, or holding a `/` or a NUL is
 //! `Failed(EINVAL)`, because `O_NOFOLLOW` refuses a link and nothing else --
 //! `..` would walk out of the directory untouched (§1's probe).
 
 use crate::*;
+use cranelift_codegen::ir::Block;
 
 impl<'a, 'f> BodyEmitter<'a, 'f> {
-    /// `(O_DIRECTORY, O_NOFOLLOW)` for this target, from the one table both
-    /// backends share.
-    fn directory_flags(&self) -> (i64, i64) {
-        let aarch64 = matches!(
-            self.module.isa().triple().architecture,
-            target_lexicon::Architecture::Aarch64(_)
-        );
-        lex_sys_ir::directory_flags(self.is_darwin(), aarch64)
+    fn aarch64(&self) -> bool {
+        matches!(self.module.isa().triple().architecture, target_lexicon::Architecture::Aarch64(_))
+    }
+
+    /// The `open` flags for this target, from the one table both backends
+    /// share.
+    fn open_flags(&self) -> lex_sys_ir::OpenFlags {
+        lex_sys_ir::open_flags(self.is_darwin(), self.aarch64())
     }
 
     /// `open_dir`'s open: the path is already checked against the prefix and
@@ -27,7 +29,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     /// it is the anchor the caller chose. `DirOpened`'s three leaves.
     pub(crate) fn open_directory(&mut self, path: Value) -> Vec<Value> {
         let pointer = self.pointer;
-        let (directory, _) = self.directory_flags();
+        let directory = self.open_flags().directory;
         let flags = self.builder.ins().iconst(types::I32, directory);
         let fd = self.libc_call("open", &[pointer, types::I32], &[types::I32], &[path, flags]);
         let fd = self.builder.ins().sextend(types::I64, fd);
@@ -39,21 +41,15 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         vec![tag, fd, reason]
     }
 
-    /// `dir_enter(dir, name)` and `dir_open_read(dir, name)`: `args` is the
-    /// handle's address, then the name's pointer and length. Answers the
-    /// three leaves `DirOpened` and `Opened` share: the tag, the descriptor
-    /// and the reason.
-    pub(crate) fn dir_open(&mut self, args: &[Value], directory: bool) -> Vec<Value> {
+    /// Check one name and copy it, NUL-terminated, onto the stack. A name
+    /// that is not one component jumps to `refused`; otherwise the builder is
+    /// left in a fresh block and the copy's address comes back.
+    fn component(&mut self, name: Value, length: Value, refused: Block) -> Value {
         let pointer = self.pointer;
-        let (handle, name, length) = (args[0], args[1], args[2]);
-
-        let merge = self.builder.create_block();
-        self.builder.append_block_param(merge, types::I64);
-        self.builder.append_block_param(merge, types::I64);
-        let refused = self.builder.create_block();
         let body = self.builder.create_block();
+        let next = self.builder.create_block();
         let second = self.builder.create_block();
-        let call = self.builder.create_block();
+        let good = self.builder.create_block();
 
         // Empty or longer than `NAME_MAX`: refused before a byte is read.
         let empty = self.builder.ins().icmp_imm(IntCC::Equal, length, 0);
@@ -90,23 +86,19 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         bad = self.builder.ins().bor(bad, dot);
         let two_bytes = self.builder.ins().icmp_imm(IntCC::Equal, length, 2);
         let maybe_dotdot = self.builder.ins().band(two_bytes, first_dot);
-        let next = self.builder.create_block();
         self.builder.ins().brif(bad, refused, &[], next, &[]);
         self.builder.switch_to_block(next);
         self.builder.seal_block(next);
-        self.builder.ins().brif(maybe_dotdot, second, &[], call, &[]);
+        self.builder.ins().brif(maybe_dotdot, second, &[], good, &[]);
 
         self.builder.switch_to_block(second);
         self.builder.seal_block(second);
         let other = self.builder.ins().uload8(types::I64, MemFlags::trusted(), name, 1);
         let dotdot = self.builder.ins().icmp_imm(IntCC::Equal, other, i64::from(b'.'));
-        self.builder.ins().brif(dotdot, refused, &[], call, &[]);
+        self.builder.ins().brif(dotdot, refused, &[], good, &[]);
 
-        // The name, NUL-terminated on the stack, then one `openat`. Its
-        // variadic `mode` is read only with `O_CREAT`, which is not passed,
-        // so three fixed arguments are where the callee looks on every ABI.
-        self.builder.switch_to_block(call);
-        self.builder.seal_block(call);
+        self.builder.switch_to_block(good);
+        self.builder.seal_block(good);
         let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
             StackSlotKind::ExplicitSlot,
             (lex_sys_ir::NAME_MAX + 1) as u32,
@@ -117,20 +109,60 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         let end = self.builder.ins().iadd(copy, length);
         let terminator = self.builder.ins().iconst(types::I8, 0);
         self.builder.ins().store(MemFlags::trusted(), terminator, end, 0);
-        let fd = self.builder.ins().load(types::I64, MemFlags::trusted(), handle, 0);
-        let fd = self.builder.ins().ireduce(types::I32, fd);
-        let (o_directory, o_nofollow) = self.directory_flags();
-        let flags = if directory { o_directory | o_nofollow } else { o_nofollow };
+        copy
+    }
+
+    /// `openat(fd, path, flags, mode)`. `openat` is variadic and `mode` is
+    /// its variadic argument, read only with `O_CREAT`. On Apple AArch64 a
+    /// variadic argument is passed on the stack, so the call is shaped the way
+    /// the callee reads it, as `fcntl`'s is (`native-sockets.md` §3): nine
+    /// integer parameters, the ninth in the first stack slot. Everywhere else
+    /// a variadic and a fixed argument travel the same way. One signature per
+    /// module either way, so every `openat` here goes through this.
+    fn openat(&mut self, fd: Value, path: Value, flags: i64, mode: i64) -> Value {
+        let pointer = self.pointer;
         let flags = self.builder.ins().iconst(types::I32, flags);
-        let opened = self.libc_call(
-            "openat",
-            &[types::I32, pointer, types::I32],
-            &[types::I32],
-            &[fd, copy, flags],
-        );
+        if self.is_darwin() && self.aarch64() {
+            let filler = self.builder.ins().iconst(types::I64, 0);
+            let mode = self.builder.ins().iconst(types::I64, mode);
+            let mut params = vec![types::I32, pointer, types::I32];
+            params.extend([types::I64; 6]);
+            let mut args = vec![fd, path, flags];
+            args.extend([filler; 5]);
+            args.push(mode);
+            self.libc_call("openat", &params, &[types::I32], &args)
+        } else {
+            let mode = self.builder.ins().iconst(types::I32, mode);
+            self.libc_call(
+                "openat",
+                &[types::I32, pointer, types::I32, types::I32],
+                &[types::I32],
+                &[fd, path, flags, mode],
+            )
+        }
+    }
+
+    /// Check every name in `names` (pointer and length each), then run
+    /// `call` on their copies. `call` answers the raw result, negative for a
+    /// failure, and `errno` is read straight after it. The three leaves
+    /// `Opened`, `DirOpened` and `Done` share come back: the tag, the result
+    /// and the reason.
+    fn dir_call(
+        &mut self,
+        names: &[(Value, Value)],
+        call: impl FnOnce(&mut Self, &[Value]) -> Value,
+    ) -> Vec<Value> {
+        let merge = self.builder.create_block();
+        self.builder.append_block_param(merge, types::I64);
+        self.builder.append_block_param(merge, types::I64);
+        let refused = self.builder.create_block();
+
+        let copies: Vec<Value> =
+            names.iter().map(|&(name, length)| self.component(name, length, refused)).collect();
+        let result = call(self, &copies);
         let reason = self.errno();
-        let opened = self.builder.ins().sextend(types::I64, opened);
-        self.builder.ins().jump(merge, &[opened.into(), reason.into()]);
+        let result = self.builder.ins().sextend(types::I64, result);
+        self.builder.ins().jump(merge, &[result.into(), reason.into()]);
 
         self.builder.switch_to_block(refused);
         self.builder.seal_block(refused);
@@ -140,13 +172,83 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
 
         self.builder.switch_to_block(merge);
         self.builder.seal_block(merge);
-        let fd = self.builder.block_params(merge)[0];
+        let result = self.builder.block_params(merge)[0];
         let reason = self.builder.block_params(merge)[1];
-        let failed = self.builder.ins().icmp_imm(IntCC::SignedLessThan, fd, 0);
+        let failed = self.builder.ins().icmp_imm(IntCC::SignedLessThan, result, 0);
         let one = self.builder.ins().iconst(types::I64, 1);
         let zero = self.builder.ins().iconst(types::I64, 0);
         let tag = self.builder.ins().select(failed, one, zero);
-        vec![tag, fd, reason]
+        vec![tag, result, reason]
+    }
+
+    /// The descriptor behind a borrowed `Dir`: the handle arrives as its
+    /// address.
+    fn dir_fd(&mut self, handle: Value) -> Value {
+        let fd = self.builder.ins().load(types::I64, MemFlags::trusted(), handle, 0);
+        self.builder.ins().ireduce(types::I32, fd)
+    }
+
+    /// `dir_enter`, `dir_open_read`, `dir_open_new` and `dir_open_append`:
+    /// `args` is the handle's address, then the name's pointer and length.
+    pub(crate) fn dir_open(&mut self, args: &[Value], op: Builtin) -> Vec<Value> {
+        let f = self.open_flags();
+        let (flags, mode) = match op {
+            Builtin::DirEnter => (f.directory | f.nofollow, 0),
+            Builtin::DirOpenNew => {
+                (f.write_only | f.create | f.exclusive | f.nofollow, lex_sys_ir::CREATE_MODE)
+            }
+            Builtin::DirOpenAppend => {
+                (f.write_only | f.create | f.append | f.nofollow, lex_sys_ir::CREATE_MODE)
+            }
+            _ => (f.nofollow, 0),
+        };
+        let handle = args[0];
+        self.dir_call(&[(args[1], args[2])], |this, copies| {
+            let fd = this.dir_fd(handle);
+            this.openat(fd, copies[0], flags, mode)
+        })
+    }
+
+    /// `dir_rename(dir, from, to)`: `renameat` with both names in the one
+    /// directory.
+    pub(crate) fn dir_rename(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let handle = args[0];
+        self.dir_call(&[(args[1], args[2]), (args[3], args[4])], |this, copies| {
+            let fd = this.dir_fd(handle);
+            this.libc_call(
+                "renameat",
+                &[types::I32, pointer, types::I32, pointer],
+                &[types::I32],
+                &[fd, copies[0], fd, copies[1]],
+            )
+        })
+    }
+
+    /// `dir_remove(dir, name)`: `unlinkat(dir, name, 0)`, which removes a
+    /// link rather than what it points at.
+    pub(crate) fn dir_remove(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let handle = args[0];
+        self.dir_call(&[(args[1], args[2])], |this, copies| {
+            let fd = this.dir_fd(handle);
+            let no_flags = this.builder.ins().iconst(types::I32, 0);
+            this.libc_call(
+                "unlinkat",
+                &[types::I32, pointer, types::I32],
+                &[types::I32],
+                &[fd, copies[0], no_flags],
+            )
+        })
+    }
+
+    /// `dir_sync(dir)`: `fsync` on the directory, as `Done`.
+    pub(crate) fn dir_sync(&mut self, args: &[Value]) -> Vec<Value> {
+        let handle = args[0];
+        self.dir_call(&[], |this, _| {
+            let fd = this.dir_fd(handle);
+            this.libc_call("fsync", &[types::I32], &[types::I32], &[fd])
+        })
     }
 
     /// `dir_close(dir)`: `close(2)`, its answer widened. The handle is one
