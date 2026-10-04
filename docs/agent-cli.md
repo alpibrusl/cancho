@@ -23,7 +23,9 @@
 > to fix.** `lex-sys skill`'s generated text also carries a fixed
 > "Exit codes" / "Output format" section — acli 0.5's own template,
 > the same one `lex-lang` ships — that does not describe this binary:
-> lex-sys's real codes are 0/1/2/3, documented at the top of `main.rs`
+> lex-sys's real codes are 0/1/2/3 (and 4, for `lex-sys test` only:
+> a built program with a failing `test_*`; *corrected, the original
+> sentence left it out*), documented at the top of `main.rs`
 > and in `docs/agent-errors.md`, not ACLI's generic 0/2/3/5/8/9; and not
 > every command takes `--output json` (only `check` and `authority` do).
 > §3 is the mitigation taken — call it out in `AGENTS.md` and this

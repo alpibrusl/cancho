@@ -56,7 +56,7 @@ does not depend on this repository at all.
 | Join | State |
 |---|---|
 | lex-sys code in `lex-vcs` | Most of that crate is already language-agnostic; gated on a plateau in the effect vocabulary rather than on a feature — [`vcs.md`](vcs.md) |
-| lex-sys code under a lex-os grant | Not a compiler integration: `authority --output json` is already the interface a supervisor reads, and its filesystem dimension is already enforceable through it. `network` and `exec` are not, because both are libc — [`under-a-grant.md`](under-a-grant.md) |
+| lex-sys code under a lex-os grant | Not a compiler integration: `authority --output json` is already the interface a supervisor reads, and its filesystem dimension is already enforceable through it. `network` and `exec` are not, because both are libc — [`under-a-grant.md`](under-a-grant.md). *Corrected for `network` ([`agent-toolbox.md`](agent-toolbox.md) §2.5): a program built on the `Net` builtins reports `net_out("host:port")` and `bounded: true`, and only a program that reaches the network through `Ffi` is still opaque; `exec` is still libc. But "enforceable through it" does not yet hold for either dimension: `lex-os` reads Lex effect names, and fed a lex-sys label verbatim it derives `network: none` for a program that dials a host (measured), so the join needs a bridge that fails closed.* |
 
 ---
 
@@ -408,6 +408,7 @@ not repeated here; a doc's own header carries its own detail.
 | [`line-reading.md`](line-reading.md) | Whether `std` needs a line reader | measured — no; found and fixed a silent truncation bug |
 | [`agent-errors.md`](agent-errors.md) | Refusals a machine can read: stable rule tags, `check --output json` | settled and built |
 | [`agent-tools.md`](agent-tools.md) | A tool genuinely shaped for an agent's own loop | built (`examples/seek/`) |
+| [`agent-toolbox.md`](agent-toolbox.md) | Whether a *set* of unix-like tools in lex-sys, with a JSON contract, rule-tagged errors with repair hints and a compiler-derived authority, is worth building — and the protocol that would say so | design; the probes it rests on are run and recorded, nothing is built. Found: `Fs` extent cannot be static (`narrow` takes a literal), no directory listing or regex, `sha256` traps past 64 KiB, a failed `stdout` write is invisible, and lex-os reads a lex-sys `net_out` label as *no network*; corrects `bulk-io.md` §3.3 and `agent-tools.md` §1 |
 | [`aliasing.md`](aliasing.md) | Whether `&!` should mean Rust's `&mut` | measured — no |
 | [`check-cost.md`](check-cost.md) | The price of every check this language emits | measured — corrects `overflow-cost.md` and `gpu.md` |
 | [`poison.md`](poison.md) | A per-lane flag instead of a trap, on a vector ISA | measured — depends on the check |

@@ -36,6 +36,19 @@ different reason and none of them assembled into one program before now:
   pointing a tool at a file it has not read yet cannot know if a line is
   long, so a tool that gets quietly wrong past some size is worse than
   one that is slow past it.
+
+  > **Corrected ([`agent-toolbox.md`](agent-toolbox.md) §2.1, §2.3).**
+  > "No silent truncation" is true of what `seek` *reads* and false of
+  > what it *writes*. `seek gamma big.txt > /dev/full` exits `0`: `seek`
+  > never looks at `write_all`'s result, and the failed flush of the last
+  > buffer is invisible to any lex-sys program
+  > ([`bulk-io.md`](bulk-io.md) §3.3, corrected in the same change), so
+  > truncated output and success are indistinguishable to the caller.
+  > And `seek` holds the whole file in a heap buffer that doubles: peak
+  > resident memory was 8 MB for a 1 MiB file, 100 MB for exactly 64 MiB
+  > and 198 MB for a file 28 bytes longer (the doubling copies), 788 MB
+  > for 256 MiB. It is bounded by the file rather than by the line, which
+  > is the property `agent-toolbox.md` D8 asks of a streaming tool.
 * **No UB on adversarial input.** An agent frequently runs a tool over
   bytes it fetched from somewhere it does not control. `defined-
   behaviour.md` §2.1's guarantee already covers this for free; §4 below
