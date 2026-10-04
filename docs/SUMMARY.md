@@ -89,6 +89,7 @@
 - [`packages/x509`: strict DER and X.509 certificates](x509.md)
 - [`std.bigmod` and `std.rsa`: RSA signature verification](rsa.md)
 - [`std.ecdsa`: ECDSA verification on P-256 and P-384](ecdsa.md)
+- [`packages/tls`: the TLS 1.3 handshake and record layer](tls-core.md)
 
 # Compile time and program identity
 
