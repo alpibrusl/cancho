@@ -367,6 +367,8 @@ pub(crate) fn emit_module(
     declare_libc_unless_own(&mut text, "read", "i64 @read(i32, ptr, i64)");
     // `copy_within` (`docs/memory-moves.md`) and `copy_into` (`docs/bulk-copy.md`).
     declare_libc_unless_own(&mut text, "memmove", "ptr @memmove(ptr, ptr, i64)");
+    // `index_of_byte` (`docs/byte-search.md`).
+    declare_libc_unless_own(&mut text, "memchr", "ptr @memchr(ptr, i32, i64)");
     declare_libc_unless_own(&mut text, "write", "i64 @write(i32, ptr, i64)");
     // `docs/file-writes.md`: the write side of a file handle. `fopen`/`dup`/
     // `fclose` are the opens' bridge (section 3); none of these is variadic.

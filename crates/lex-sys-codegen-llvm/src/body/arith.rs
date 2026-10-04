@@ -103,6 +103,7 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::ClockUnixMs
                     | Builtin::CopyWithin
                     | Builtin::CopyInto
+                    | Builtin::IndexOfByte
                     | Builtin::ConnDetach
                     | Builtin::Release,
                 ) => Ok(LKind::I64),

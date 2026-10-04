@@ -60,6 +60,29 @@ impl<'a> FuncEmitter<'a> {
         Ok(vec![args[3].clone()])
     }
 
+    /// `index_of_byte(text, b)` (`docs/byte-search.md`): one `memchr`. `args` is the slice's pointer and length, then the
+    /// byte. Answers the offset of the first match, or -1 when `memchr` answers null.
+    pub(crate) fn index_of_byte(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        let (base, length, wanted) = (operand(&args[0]), operand(&args[1]), operand(&args[2]));
+        let widened = self.fresh();
+        self.out.push_str(&format!("  {widened} = zext i8 {wanted} to i32\n"));
+        let found = self.fresh();
+        self.out.push_str(&format!(
+            "  {found} = call ptr @memchr(ptr {base}, i32 {widened}, i64 {length})\n"
+        ));
+        let missing = self.fresh();
+        self.out.push_str(&format!("  {missing} = icmp eq ptr {found}, null\n"));
+        let at = self.fresh();
+        self.out.push_str(&format!("  {at} = ptrtoint ptr {found} to i64\n"));
+        let start = self.fresh();
+        self.out.push_str(&format!("  {start} = ptrtoint ptr {base} to i64\n"));
+        let offset = self.fresh();
+        self.out.push_str(&format!("  {offset} = sub i64 {at}, {start}\n"));
+        let answer = self.fresh();
+        self.out.push_str(&format!("  {answer} = select i1 {missing}, i64 -1, i64 {offset}\n"));
+        Ok(vec![LValue::Reg(answer)])
+    }
+
     pub(crate) fn region_stmt(&mut self, arena: u32, body: &[Stmt]) -> Result<bool, String> {
         let base = self.fresh();
         self.out.push_str(&format!("  {base} = call ptr @malloc(i64 {ARENA_CHUNK})\n"));
