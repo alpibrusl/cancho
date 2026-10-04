@@ -47,7 +47,8 @@ fn check[&d](dir: &d Dir) -> [dir_read] int {
     return bad;
 }
 
-// Owning an `Fs` discharges `dir_read` as it discharges `file_read`: the
+// Owning an `Fs` discharges `dir_read` and `dir_write` as it discharges
+// `file_read` and `file_write`: the
 // only way to hold a `Dir` is to have held the `Fs` that paid for it, so this
 // function's row is `[]`.
 fn owner(fs: Fs("/")) -> [] int {
@@ -63,6 +64,15 @@ fn owner(fs: Fs("/")) -> [] int {
                             bad = 128;
                         }
                         DirOpened::Failed(e) => {
+                        }
+                    }
+                    // `dir_write` too: refused before any call, so nothing
+                    // beneath `/` is touched.
+                    match dir_remove(r, "..") {
+                        Done::Ok(n) => {
+                            bad = 128;
+                        }
+                        Done::Failed(e) => {
                         }
                     }
                 }

@@ -402,7 +402,7 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
         PRELUDE_FILE => Effects::plain(["file_read", "file_write"]),
         // `docs/directory-handles.md` §2: the path was spent at `open_dir`,
         // so the handle's label names none, as `file_read` names none.
-        PRELUDE_DIR => Effects::plain(["dir_read"]),
+        PRELUDE_DIR => Effects::plain(["dir_read", "dir_write"]),
         // `docs/native-sockets.md` §3: the same rule for the socket handles
         // -- the port was spent at `tcp_listen`, so the handle's own
         // labels carry no argument.
@@ -450,6 +450,7 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
                 "file_read",
                 "file_write",
                 "dir_read",
+                "dir_write",
                 "conn_accept",
                 "conn_read",
                 "conn_write",
@@ -499,7 +500,7 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
                 all.union(&Effects::plain(["file_read", "file_write"]));
                 // `docs/directory-handles.md` §2: the same for a directory
                 // handle, which only `open_dir` on an `Fs` makes.
-                all.union(&Effects::plain(["dir_read"]));
+                all.union(&Effects::plain(["dir_read", "dir_write"]));
                 all
             }
             _ => Effects::pure(),

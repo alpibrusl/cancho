@@ -323,9 +323,12 @@ pub(crate) fn emit_module(
     declare_libc_unless_own(&mut text, "getsockopt", "i32 @getsockopt(i32, i32, i32, ptr, ptr)");
     declare_libc_unless_own(&mut text, "bind", "i32 @bind(i32, ptr, i32)");
     declare_libc_unless_own(&mut text, "close", "i32 @close(i32)");
-    // `dir_enter` and `dir_open_read` (`docs/directory-handles.md`): three
-    // fixed arguments, since `mode` is read only with `O_CREAT`.
-    declare_libc_unless_own(&mut text, "openat", "i32 @openat(i32, ptr, i32)");
+    // `docs/directory-handles.md`: `openat` is variadic (its `mode`, read
+    // with `O_CREAT`) and declared so, which puts `mode` wherever the target
+    // passes a variadic argument -- the stack on Apple AArch64.
+    declare_libc_unless_own(&mut text, "openat", "i32 @openat(i32, ptr, i32, ...)");
+    declare_libc_unless_own(&mut text, "renameat", "i32 @renameat(i32, ptr, i32, ptr)");
+    declare_libc_unless_own(&mut text, "unlinkat", "i32 @unlinkat(i32, ptr, i32)");
     // `connect` (§7.22, `docs/connect.md` §10): the last of `Net`'s four
     // builtins, needing `getaddrinfo`/`freeaddrinfo` (host resolution)
     // and `connect` itself alongside the `socket` already declared above.

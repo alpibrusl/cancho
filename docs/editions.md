@@ -301,8 +301,9 @@ edition-5 file's `split()` still answers seven.
 
 Edition 6 also has the **directory handle**
 ([`directory-handles.md`](directory-handles.md)): the types `Dir` and
-`DirOpened`, the builtins `open_dir`, `dir_enter`, `dir_open_read` and
-`dir_close`, and the label `dir_read`. Purely additive, like edition 5's
+`DirOpened`, the builtins `open_dir`, `dir_enter`, `dir_open_read`,
+`dir_close`, `dir_open_new`, `dir_open_append`, `dir_rename`, `dir_remove` and
+`dir_sync`, and the labels `dir_read` and `dir_write`. Purely additive, like edition 5's
 later slices: no edition-6 file in this repository declared any of the names.
 
 ---

@@ -1,28 +1,29 @@
-//! Directory handles (`docs/directory-handles.md`): `open_dir`'s open,
-//! `dir_enter`, `dir_open_read` and `dir_close`. Mirrors
-//! `lex-sys-codegen`'s own `body/dirs.rs`.
+//! Directory handles (`docs/directory-handles.md`): `open_dir`'s open, the
+//! steps beneath a directory (`dir_enter`, `dir_open_read`, `dir_open_new`,
+//! `dir_open_append`), the changes in one (`dir_rename`, `dir_remove`,
+//! `dir_sync`) and `dir_close`. Mirrors `lex-sys-codegen`'s own
+//! `body/dirs.rs`.
 //!
-//! A step beneath a directory is one `openat(dir, name, flags | O_NOFOLLOW)`
-//! on one path component, checked first: empty, longer than `NAME_MAX`, `.`,
-//! `..`, or holding a `/` or a NUL is `Failed(EINVAL)` with no call, because
-//! `O_NOFOLLOW` refuses a link and nothing else (§1's probe walked out of the
-//! directory with `..`).
+//! Every name is one path component, checked first: empty, longer than
+//! `NAME_MAX`, `.`, `..`, or holding a `/` or a NUL is `Failed(EINVAL)` with
+//! no call, because `O_NOFOLLOW` refuses a link and nothing else (§1's probe
+//! walked out of the directory with `..`).
 
 use crate::*;
 
 impl<'a> FuncEmitter<'a> {
-    /// `(O_DIRECTORY, O_NOFOLLOW)` for this target, from the one table both
-    /// backends share.
-    fn directory_flags(&self) -> (i64, i64) {
+    /// The `open` flags for this target, from the one table both backends
+    /// share.
+    fn open_flags(&self) -> lex_sys_ir::OpenFlags {
         let aarch64 = matches!(self.triple.architecture, target_lexicon::Architecture::Aarch64(_));
-        lex_sys_ir::directory_flags(self.is_darwin(), aarch64)
+        lex_sys_ir::open_flags(self.is_darwin(), aarch64)
     }
 
     /// `open_dir`'s open: `path` is already checked against the prefix and
     /// NUL-terminated. `open(path, O_RDONLY | O_DIRECTORY)`, two fixed
     /// arguments as `open_read`'s is. `DirOpened`'s three leaves.
     pub(crate) fn open_directory(&mut self, path: &str) -> Vec<LValue> {
-        let (directory, _) = self.directory_flags();
+        let directory = self.open_flags().directory;
         let fd32 = self.fresh();
         self.out.push_str(&format!("  {fd32} = call i32 @open(ptr {path}, i32 {directory})\n"));
         let fd = self.fresh();
@@ -35,34 +36,19 @@ impl<'a> FuncEmitter<'a> {
         vec![LValue::Reg(tag), LValue::Reg(fd), reason]
     }
 
-    /// `dir_enter(dir, name)` and `dir_open_read(dir, name)`: `args` is the
-    /// handle's address, then the name's pointer and length. The tag, the
-    /// descriptor and the reason -- the leaves `DirOpened` and `Opened` share.
-    pub(crate) fn dir_open(
-        &mut self,
-        args: &[LValue],
-        directory: bool,
-    ) -> Result<Vec<LValue>, String> {
-        if args.len() != 3 {
-            return Err(format!("a `dir_*` open needs 3 leaves but {} were given", args.len()));
-        }
-        let (handle, name, length) = (operand(&args[0]), operand(&args[1]), operand(&args[2]));
-        let fd_cell = self.fresh();
-        self.hoist(format!("  {fd_cell} = alloca i64\n"));
-        let reason_cell = self.fresh();
-        self.hoist(format!("  {reason_cell} = alloca i64\n"));
+    /// Check one name and copy it, NUL-terminated, onto the stack. A name
+    /// that is not one component branches to `refused`; otherwise emission
+    /// continues in a fresh block and the copy's register comes back.
+    fn component(&mut self, name: &str, length: &str, refused: &str) -> String {
         let copy = self.fresh();
         self.hoist(format!("  {copy} = alloca i8, i64 {}\n", lex_sys_ir::NAME_MAX + 1));
-
         let n = self.blocks;
         self.blocks += 1;
-        let (body, next, second, call, refused, merge) = (
-            format!("dirbody{n}"),
-            format!("dirnext{n}"),
-            format!("dirsecond{n}"),
-            format!("dircall{n}"),
-            format!("dirrefused{n}"),
-            format!("dirmerge{n}"),
+        let (body, next, second, good) = (
+            format!("namebody{n}"),
+            format!("namenext{n}"),
+            format!("namesecond{n}"),
+            format!("namegood{n}"),
         );
 
         // Empty or longer than `NAME_MAX`: refused before a byte is read.
@@ -106,7 +92,7 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("  {two_bytes} = icmp eq i64 {length}, 2\n"));
         let maybe = self.fresh();
         self.out.push_str(&format!("  {maybe} = and i1 {two_bytes}, {first_dot}\n"));
-        self.out.push_str(&format!("  br i1 {maybe}, label %{second}, label %{call}\n"));
+        self.out.push_str(&format!("  br i1 {maybe}, label %{second}, label %{good}\n"));
 
         self.out.push_str(&format!("{second}:\n"));
         let at = self.fresh();
@@ -115,11 +101,9 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("  {other} = load i8, ptr {at}\n"));
         let dotdot = self.fresh();
         self.out.push_str(&format!("  {dotdot} = icmp eq i8 {other}, 46\n"));
-        self.out.push_str(&format!("  br i1 {dotdot}, label %{refused}, label %{call}\n"));
+        self.out.push_str(&format!("  br i1 {dotdot}, label %{refused}, label %{good}\n"));
 
-        // The name, NUL-terminated on the stack, then one `openat` with its
-        // three fixed arguments: `mode` is read only with `O_CREAT`.
-        self.out.push_str(&format!("{call}:\n"));
+        self.out.push_str(&format!("{good}:\n"));
         let ignored = self.fresh();
         self.out.push_str(&format!(
             "  {ignored} = call ptr @memmove(ptr {copy}, ptr {name}, i64 {length})\n"
@@ -127,38 +111,144 @@ impl<'a> FuncEmitter<'a> {
         let end = self.fresh();
         self.out.push_str(&format!("  {end} = getelementptr i8, ptr {copy}, i64 {length}\n"));
         self.out.push_str(&format!("  store i8 0, ptr {end}\n"));
-        let fd64 = self.fresh();
-        self.out.push_str(&format!("  {fd64} = load i64, ptr {handle}\n"));
-        let fd = self.fresh();
-        self.out.push_str(&format!("  {fd} = trunc i64 {fd64} to i32\n"));
-        let (o_directory, o_nofollow) = self.directory_flags();
-        let flags = if directory { o_directory | o_nofollow } else { o_nofollow };
-        let opened = self.fresh();
-        self.out.push_str(&format!(
-            "  {opened} = call i32 @openat(i32 {fd}, ptr {copy}, i32 {flags})\n"
-        ));
+        copy
+    }
+
+    /// Check every name in `names` (pointer and length each), then emit
+    /// `call` on their copies; `call` answers an `i32` register, negative for
+    /// a failure, and `errno` is read straight after it. The three leaves
+    /// `Opened`, `DirOpened` and `Done` share come back.
+    fn dir_call(
+        &mut self,
+        names: &[(String, String)],
+        call: impl FnOnce(&mut Self, &[String]) -> String,
+    ) -> Vec<LValue> {
+        let result_cell = self.fresh();
+        self.hoist(format!("  {result_cell} = alloca i64\n"));
+        let reason_cell = self.fresh();
+        self.hoist(format!("  {reason_cell} = alloca i64\n"));
+        let n = self.blocks;
+        self.blocks += 1;
+        let (refused, merge) = (format!("dirrefused{n}"), format!("dirmerge{n}"));
+
+        let copies: Vec<String> =
+            names.iter().map(|(name, length)| self.component(name, length, &refused)).collect();
+        let result = call(self, &copies);
         let reason = self.errno();
         let wide = self.fresh();
-        self.out.push_str(&format!("  {wide} = sext i32 {opened} to i64\n"));
-        self.out.push_str(&format!("  store i64 {wide}, ptr {fd_cell}\n"));
+        self.out.push_str(&format!("  {wide} = sext i32 {result} to i64\n"));
+        self.out.push_str(&format!("  store i64 {wide}, ptr {result_cell}\n"));
         self.out.push_str(&format!("  store i64 {}, ptr {reason_cell}\n", operand(&reason)));
         self.out.push_str(&format!("  br label %{merge}\n"));
 
         self.out.push_str(&format!("{refused}:\n"));
-        self.out.push_str(&format!("  store i64 -1, ptr {fd_cell}\n"));
+        self.out.push_str(&format!("  store i64 -1, ptr {result_cell}\n"));
         self.out.push_str(&format!("  store i64 {}, ptr {reason_cell}\n", lex_sys_ir::EINVAL));
         self.out.push_str(&format!("  br label %{merge}\n"));
 
         self.out.push_str(&format!("{merge}:\n"));
-        let fd = self.fresh();
-        self.out.push_str(&format!("  {fd} = load i64, ptr {fd_cell}\n"));
+        let result = self.fresh();
+        self.out.push_str(&format!("  {result} = load i64, ptr {result_cell}\n"));
         let reason = self.fresh();
         self.out.push_str(&format!("  {reason} = load i64, ptr {reason_cell}\n"));
         let failed = self.fresh();
-        self.out.push_str(&format!("  {failed} = icmp slt i64 {fd}, 0\n"));
+        self.out.push_str(&format!("  {failed} = icmp slt i64 {result}, 0\n"));
         let tag = self.fresh();
         self.out.push_str(&format!("  {tag} = select i1 {failed}, i64 1, i64 0\n"));
-        Ok(vec![LValue::Reg(tag), LValue::Reg(fd), LValue::Reg(reason)])
+        vec![LValue::Reg(tag), LValue::Reg(result), LValue::Reg(reason)]
+    }
+
+    /// The descriptor behind a borrowed `Dir`: the handle arrives as its
+    /// address.
+    fn dir_fd(&mut self, handle: &str) -> String {
+        let fd64 = self.fresh();
+        self.out.push_str(&format!("  {fd64} = load i64, ptr {handle}\n"));
+        let fd = self.fresh();
+        self.out.push_str(&format!("  {fd} = trunc i64 {fd64} to i32\n"));
+        fd
+    }
+
+    /// `dir_enter`, `dir_open_read`, `dir_open_new` and `dir_open_append`:
+    /// `args` is the handle's address, then the name's pointer and length.
+    /// `openat` is declared variadic and called as one, so its `mode` reaches
+    /// the callee wherever the target passes a variadic argument.
+    pub(crate) fn dir_open(&mut self, args: &[LValue], op: Builtin) -> Result<Vec<LValue>, String> {
+        if args.len() != 3 {
+            return Err(format!("`{}` needs 3 leaves but {} were given", op.name(), args.len()));
+        }
+        let f = self.open_flags();
+        let (flags, mode) = match op {
+            Builtin::DirEnter => (f.directory | f.nofollow, 0),
+            Builtin::DirOpenNew => {
+                (f.write_only | f.create | f.exclusive | f.nofollow, lex_sys_ir::CREATE_MODE)
+            }
+            Builtin::DirOpenAppend => {
+                (f.write_only | f.create | f.append | f.nofollow, lex_sys_ir::CREATE_MODE)
+            }
+            _ => (f.nofollow, 0),
+        };
+        let handle = operand(&args[0]);
+        let name = (operand(&args[1]), operand(&args[2]));
+        Ok(self.dir_call(&[name], |this, copies| {
+            let fd = this.dir_fd(&handle);
+            let opened = this.fresh();
+            this.out.push_str(&format!(
+                "  {opened} = call i32 (i32, ptr, i32, ...) @openat(i32 {fd}, ptr {}, i32 {flags}, i32 {mode})\n",
+                copies[0]
+            ));
+            opened
+        }))
+    }
+
+    /// `dir_rename(dir, from, to)`: `renameat` with both names in the one
+    /// directory.
+    pub(crate) fn dir_rename(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        if args.len() != 5 {
+            return Err(format!("`dir_rename` needs 5 leaves but {} were given", args.len()));
+        }
+        let handle = operand(&args[0]);
+        let names =
+            [(operand(&args[1]), operand(&args[2])), (operand(&args[3]), operand(&args[4]))];
+        Ok(self.dir_call(&names, |this, copies| {
+            let fd = this.dir_fd(&handle);
+            let renamed = this.fresh();
+            this.out.push_str(&format!(
+                "  {renamed} = call i32 @renameat(i32 {fd}, ptr {}, i32 {fd}, ptr {})\n",
+                copies[0], copies[1]
+            ));
+            renamed
+        }))
+    }
+
+    /// `dir_remove(dir, name)`: `unlinkat(dir, name, 0)`, which removes a
+    /// link rather than what it points at.
+    pub(crate) fn dir_remove(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        if args.len() != 3 {
+            return Err(format!("`dir_remove` needs 3 leaves but {} were given", args.len()));
+        }
+        let handle = operand(&args[0]);
+        let name = (operand(&args[1]), operand(&args[2]));
+        Ok(self.dir_call(&[name], |this, copies| {
+            let fd = this.dir_fd(&handle);
+            let removed = this.fresh();
+            this.out.push_str(&format!(
+                "  {removed} = call i32 @unlinkat(i32 {fd}, ptr {}, i32 0)\n",
+                copies[0]
+            ));
+            removed
+        }))
+    }
+
+    /// `dir_sync(dir)`: `fsync` on the directory, as `Done`.
+    pub(crate) fn dir_sync(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        let handle =
+            args.first().map(operand).ok_or_else(|| "`dir_sync` needs its handle".to_owned())?;
+        Ok(self.dir_call(&[], |this, _| {
+            let fd = this.dir_fd(&handle);
+            let synced = this.fresh();
+            this.out.push_str(&format!("  {synced} = call i32 @fsync(i32 {fd})\n"));
+            synced
+        }))
     }
 
     /// `dir_close(dir)`: `close(2)`, its answer widened.
