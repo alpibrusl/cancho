@@ -438,7 +438,7 @@ Each sub-issue (#199 to #210) states its own gate as a command. This design adds
 2. **No capability in the pure backend.** `lex-sys authority` on a hooks build with the pure backend shows no `ffi(...)` and no
    foreign symbols. This is checked by a test, not asserted (#210).
 3. **No input reaches a trap.** It is fuzzed at the record, handshake, DER and chain levels (#208), as `dns.ls` was over a million
-   damaged answers (`docs/tls-nonblocking.md` §7).
+   damaged answers (`docs/tls-nonblocking.md` §7). *#208's plan for this, and for the rest of its bar: `docs/tls-assurance.md`.*
 
 ---
 
