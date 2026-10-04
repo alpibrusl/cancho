@@ -1,6 +1,6 @@
 # `packages/x509`: verifying a server's chain
 
-> **Status: design (#206, PR 1 of 3).** Sub-issue 9 of the self-contained TLS 1.3 client (#197). `docs/tls-pure.md` §5 already
+> **Status: the verifier built (#206, PR 2 of 3; results in §8). `packages/tls` uses it in PR 3.** Sub-issue 9 of the self-contained TLS 1.3 client (#197). `docs/tls-pure.md` §5 already
 > fixes the rules: the root store, the depth limit, the checks per certificate, the key sizes, name matching, and what is not
 > checked. Its §8 fixes the refusal tags. This document settles what those sections left open for the code:
 > - where the code goes, and its API;
@@ -44,7 +44,8 @@ x509_verify.verify(store, certs, ranges, host, now, max_intermediates) -> 0 | re
 - **`ranges` rather than a copy.** `packages/tls` already has the `Certificate` message in a slot, and
   `tls_message.certificate` already gives each certificate's range (`docs/tls-core.md` §9.1). The verifier reads them in place.
 - **`max_intermediates`** is 6 for TLS (`docs/tls-pure.md` §5.2: 8 certificates, leaf and root included). It is a parameter
-  because x509-limbo sets it per case (§6.1).
+  because x509-limbo sets it per case (§6.1). *As built (§8.3): it counts intermediates that are not self-issued, as RFC
+  5280 §6.1.4 and limbo's `max-chain-depth-1-self-issued` count them, and no path has more than 6 intermediates of any kind.*
 - **No capability.** The clock and the store are numbers and bytes the caller passes, as for the rest of the engine
   (`docs/tls-pure.md` §2.2).
 - **Working memory** is the verifier's own regions: up to 7 views of 40 words (`docs/x509.md` §2), a candidate list, and the
@@ -73,7 +74,11 @@ each of these (`pathological::*`, `rfc5280::*`).
   signatures: about 0.1 s at 1.5 ms each on LLVM for P-256 (`docs/ecdsa.md` §5.4), or 0.6 s at 9.9 ms for P-384 on Cranelift.
   Exhausting the budget is `x509-path-too-long`.
 - **Signatures are checked before anything else about a candidate.** A candidate whose key does not verify is not an issuer.
-  That is the only way to tell two certificates with the same subject apart.
+  *Corrected (§8.3): this said a signature is the only way to tell two certificates with the same subject apart. As built,
+  two cheaper facts come first, as OpenSSL's `X509_check_akid` and RFC 5280 §4.1.2.6 have them:*
+  - *a candidate whose subjectKeyIdentifier differs from the certificate's authorityKeyIdentifier keyIdentifier is not its
+    issuer, when both are present;*
+  - *a CA with an empty subject issues nothing.*
 
 ## 4. What each certificate is checked for
 
@@ -81,9 +86,16 @@ each of these (`pathological::*`, `rfc5280::*`).
 
 | Certificate | Signature | Validity | `cA` and `pathLen` | keyUsage | EKU | Name constraints |
 |---|---|---|---|---|---|---|
-| leaf | checked by its issuer's key | checked | not read, so `pathlen::validation-ignores-pathlen-in-leaf` holds | `digitalSignature` if present | `serverAuth` if present; `anyExtendedKeyUsage` alone is refused, as OpenSSL's server purpose does | subject to every issuer's |
+| leaf | checked by its issuer's key | checked | not read | `digitalSignature` if present; `keyCertSign` only with `cA` | `serverAuth` if present; `anyExtendedKeyUsage` alone is refused, as OpenSSL's server purpose does (measured, §8.2) | subject to every issuer's; its own refused unless it is a CA |
 | intermediate | checked | checked | `cA` true; `pathLen` against the intermediates below it, self-issued ones not counted (RFC 5280 §6.1.4) | `keyCertSign` if present | `serverAuth` if present (OpenSSL and webpki both refuse an intermediate whose EKU excludes it) | its own apply below it |
-| root | **not checked** (§5.1 of `tls-pure.md`) | **not checked** | `cA` true, except an X.509 v1 root, which has no extensions; `pathLen` as an intermediate's | `keyCertSign` if present | not read | its own apply below it |
+| root | **not checked** (§5.1 of `tls-pure.md`) | checked | `cA` true, except an X.509 v1 root, which has no extensions; `pathLen` as an intermediate's | `keyCertSign` if present | not read | its own apply below it |
+
+*Corrected (§8.3), two cells:*
+- *The leaf's pathLen cell said "not read, so `pathlen::validation-ignores-pathlen-in-leaf` holds". That case's leaf is a CA
+  whose keyUsage has no `digitalSignature`, so it is refused for that, as OpenSSL refuses it.*
+- *The root's validity cell said "not checked", following `docs/tls-pure.md` §5.1's claim that this is OpenSSL's default.
+  Measured, OpenSSL refuses an expired root (`rfc5280::validity::expired-root`, error 10 at the root's depth). The root's
+  dates are checked, and that claim is corrected where it was made.*
 
 - **Validity** is `notBefore <= now <= notAfter`, both inclusive (RFC 5280 §4.1.2.5), in whole seconds.
 - **Signature algorithms**, by the outer AlgorithmIdentifier, which `parse` already checks equals the inner one:
@@ -128,14 +140,17 @@ constraints. Among the 30,379 certificates of `limbo.json`, the constraint subtr
 - **`iPAddress` subtrees** are an address and a mask of the same length, 8 or 32 bytes. An address of the other family never
   matches. A mask that is not contiguous ones then zeros is unreadable (below).
 - **What is constrained.** Every `dNSName` and `iPAddress` in the SAN of every certificate below the constraining one. A
-  wildcard SAN `*.a.example` is checked as `a.example` against permitted subtrees, and as itself against excluded ones, as
-  webpki does. The subject's common name is never read (no CN fallback, `docs/tls-pure.md` §5.3), so it is never constrained.
+  wildcard SAN `*.a.example` is checked as `a.example` against permitted subtrees. *Corrected (§8.3): this said "and as
+  itself against excluded ones, as webpki does". As built, against an excluded subtree it is refused when either holds the
+  other: `a.example` inside the subtree, or the subtree (`x.a.example`) inside `a.example`, since the wildcard names it.* The subject's common name is never read (no CN fallback, `docs/tls-pure.md` §5.3), so it is never constrained.
 - **Permitted, then excluded.** A name of a type that has permitted subtrees must match one of them, and it must match none of
   the excluded subtrees.
 - **A subtree of any other type**, `rfc822Name`, `directoryName`, URI or `otherName`, is unreadable: the chain is refused with
   `x509-name-constraint`. This is RFC 5280 §4.2.1.10's rule for a critical extension the verifier cannot apply, and
   `docs/tls-pure.md` §8 already maps OpenSSL's 51 to 53 to that tag. It costs every x509-limbo case whose constraint has one
   of those types, and §6.1 counts them.
+- **Malformed constraints** are unreadable too: a nameConstraints with neither subtree list, an empty list (RFC 5280 says
+  `SIZE (1..MAX)`), a `minimum` or `maximum`, or the lists out of order. *(Added in PR 2, §8.3.)*
 - **Limits.** At most 1,024 subtrees in one certificate, and at most 2^20 name-against-subtree comparisons in one chain.
   `pathological::nc-dos-*` exist to find a verifier without that second limit. Over either is `x509-name-constraint`.
 
@@ -207,6 +222,125 @@ At least 12, each killed by §6.1 to §6.3:
 
 ## 7. Questions this does not settle
 
-- Whether byte-for-byte name comparison loses a real chain. x509-limbo has cases for it, and §6.1 will list them.
+- Whether byte-for-byte name comparison loses a real chain. x509-limbo has cases for it, and §6.1 will list them. *Answered
+  (§8.2): no limbo case and none of the 14 real chains is lost to it.*
 - Whether `*.co.uk`-style wildcards need a public-suffix list. That is `docs/tls-pure.md` §10's question 5; limbo's
-  `pedantic-public-suffix-wildcard` cases (3) will be listed as disagreements if they fail, not hidden.
+  `pedantic-public-suffix-wildcard` cases (3) will be listed as disagreements if they fail, not hidden. *Measured (§8.2): two
+  of the three are accepted here and by OpenSSL, and listed. The question stays a person's.*
+
+## 8. PR 2: the verifier (results)
+
+### 8.1 What was built
+
+| File | Lines | What |
+|---|---|---|
+| `packages/x509/names.ls` (`x509_names`) | 565 | the host as a DNS name or an IPv4 or IPv6 address; SAN matching; name constraints |
+| `packages/x509/verify.ls` (`x509_verify`) | 778 | `store_load`, `verify`, the refusal tags; path building, the checks of §4, the signatures |
+| `packages/x509/x509.ls` | 1,665 | four OIDs for RSASSA-PSS's parameters (SHA-256, -384, -512, MGF1), from `scripts/x509_oids.py` and checked against `openssl asn1parse`; `is_ip_literal`, moved here from `packages/tls/message.ls` so the two share one copy (`conformance/duplication.rs`) |
+| `tests/programs/x509_verify_driver.ls` | 203 | a store line and chain lines, from standard input |
+| `scripts/x509_limbo.py verify`, `x509_matrix.py`, `x509_online.py`, `x509_verify_mutants.py` | | §6's four gates |
+
+`conformance/x509_verify.rs` replays all three committed files (`tests/vectors/x509/verify/`), the matrix and the real chains on
+both backends, in 4 seconds. The verifier needs `--std` (`std.rsa`, `std.ecdsa`, `std.ed25519`, `std.crypto`, `std.bytes`).
+
+### 8.2 Evidence
+
+**x509-limbo** (`limbo.json` SHA-256 `611e337b…`, the file of `docs/x509.md` §5.3). All 9,802 cases in 26 s:
+- **9,743 pass.** Every BetterTLS case is among them: 8,707 expected failures refused and 865 expected successes accepted.
+  FAILURE cases are refused with these tags:
+
+  | Tag | Cases |
+  |---|---|
+  | `x509-name-constraint` | 5,364 |
+  | `x509-name-mismatch` | 2,814 |
+  | `der-tag` and `x509-name` (the SANs of `docs/x509.md` §5.3) | 552 |
+  | `x509-unknown-issuer` | 19 |
+  | `x509-path-too-long` | 13 |
+  | `x509-unsupported-algorithm` | 12 |
+  | `x509-expired`, `x509-not-yet-valid` | 14 |
+  | `x509-not-ca` | 10 |
+  | `x509-key-usage` | 8 |
+  | nine other tags | 14 |
+
+  limbo gives no machine-readable reason for a FAILURE, so "refused for the right reason" is read from the tag against the
+  case's name. The BetterTLS name-constraint cases are refused as `x509-name-constraint` or, where the leaf's own name is the
+  one outside the constraint, as `x509-name-mismatch`.
+- **20 not applicable:**
+  - revocation (10);
+  - a client certificate (5);
+  - ML-DSA or DSA expected to succeed (3);
+  - a case with no peer name (1);
+  - a `directoryName` constraint expected to succeed (1).
+- **39 disagreements, each read and checked against `openssl verify -purpose sslserver` (OpenSSL 3.0.13), with and without
+  `-x509_strict`.** `scripts/x509_limbo.py`'s `KNOWN` lists each one with its reason, and the script fails on any other:
+
+  | Disagreement | Cases | OpenSSL |
+  |---|---|---|
+  | a CA as the leaf, with no `digitalSignature` in its keyUsage, expected to succeed | 2 | refuses too (26) |
+  | a root whose AKI does not name itself, so OpenSSL does not take it as self-issued and finds no anchor | 5 | refuses, only for that |
+  | CA/Browser Forum or webpki rules beyond RFC 5280: CN contents, EKU presence, RSA sizes not a multiple of 8, a CA flag on a leaf | 16 | accepts |
+  | public-suffix wildcards (`docs/tls-pure.md` §10 question 5) | 2 | accepts |
+  | missing AKI or SKI, a non-critical basicConstraints on a root, an empty subject with a non-critical SAN | 6 | accepts; refuses with `-x509_strict` |
+  | others RFC 5280 or CABF state and OpenSSL does not check: non-critical name constraints or policy constraints, a leading period in a dNSName constraint, an underscore, serial zero, a malformed AIA, a critical SAN with a subject, a root's AKI without a keyIdentifier | 8 | accepts |
+
+  So every limbo case this verifier accepts and OpenSSL refuses is one of the 5 whose root is unusual, and in each of them the
+  leaf is signed by a root in the store.
+
+**The OpenSSL matrix** (`scripts/x509_matrix.py`, `tests/vectors/x509/verify/matrix.txt`). 33 cases, every one with its own tag,
+and no case OpenSSL refuses accepted:
+- the issue's rows: valid, expired, not yet valid, wrong host, self-signed, untrusted root, an intermediate that is not a CA,
+  `pathlen` exceeded, `*.com`, `a.*.b.com`, `*.a.b.com` against `a.b.com`;
+- §4's additions: an intermediate without `keyCertSign`, a leaf EKU of `clientAuth` only or `anyExtendedKeyUsage` only
+  (OpenSSL: 26), an RSA-1024 leaf, P-192, SHA-1, an unknown critical extension, an expired intermediate, constraints
+  excluding and permitting the host;
+- the signatures: P-256, RSA-4096 with SHA-512, Ed25519, RSA PKCS#1 v1.5 and RSA-PSS issuers, one bit of a signature changed;
+- names: a wildcard, IPv4 and IPv6 SANs, a host only in the CN.
+
+Four of them are refused here and accepted by OpenSSL's defaults: the CN-only host (no CN fallback, `docs/tls-pure.md` §5.3),
+RSA-1024, P-192 and SHA-1 (§4).
+
+**Saved real chains against the system roots** (`scripts/x509_online.py`). All 128 roots of the bundle load, none skipped. Each
+of the 14 chains is then checked six ways, 84 checks, all as wanted:
+- at its saved time;
+- at exactly the leaf's notAfter, and at exactly its notBefore (both `ok`: both are inclusive);
+- a second after (`x509-expired`) and a second before (`x509-not-yet-valid`);
+- under `<name>.invalid` (`x509-name-mismatch`).
+
+The bundle is committed as `tests/vectors/x509/verify/roots.pem` (Debian's ca-certificates 20260601~24.04.1), so the replay
+needs no system file.
+
+**22 mutants, 22 killed** (`scripts/x509_verify_mutants.py`, 3 minutes):
+- a skipped signature check, on an intermediate and on a root;
+- a wildcard crossing a dot; a wildcard on a one-label suffix;
+- notAfter and notBefore off by one;
+- a missed `cA`;
+- `pathLen` counting self-issued intermediates; `pathLen` not checked;
+- excluded and permitted subtrees ignored; a `dNSName` subtree as a plain suffix; an IP mask ignored;
+- the leaf's EKU, and its keyUsage, not checked; `keyCertSign` not required of an issuer;
+- the budget off (limbo's pathological chains then do not finish in 120 s);
+- a root's and an intermediate's dates not checked;
+- the host not matched;
+- RSA-1024 allowed;
+- the AKI not matched against the SKI.
+
+§6.4's partial-wildcard mutant (`f*.example.com`) cannot be written: a pattern with a `*` outside the left-most label never equals
+a host, which has no `*`, so removing the check changes nothing.
+
+**Cost.** The 14 real chains (two signatures each, RSA and ECDSA) against the 128-root store take 3.4 to 3.7 ms a chain on
+either backend, measured through the driver, so this includes its byte-by-byte reading of hex. Loading the store takes 8 ms.
+
+### 8.3 Found
+
+limbo found these before any of them reached `main`. Each is corrected where its claim was made:
+- **`docs/tls-pure.md` §5.1's claim that OpenSSL accepts an expired root was false.** It refuses one. The root's dates are now
+  checked. The claim is corrected there, and in its §10 question 4, and in §4 here.
+- **Issuer selection needed the AKI and SKI, and a non-empty CA subject** (§3), to agree with OpenSSL where a sent certificate
+  carries the issuer's name but not its key.
+- **`max_intermediates` must not count self-issued intermediates** (§2).
+- **Five RFC 5280 MUSTs** were added to the leaf and the constraints: keyCertSign only with `cA`, name constraints only in a CA,
+  neither list empty, no constraint with neither list (§4, §5.3).
+- **The wildcard rule against excluded subtrees** was written backwards in §5.3, and is corrected there.
+- Two test expectations were wrong, not the verifier:
+  - *docs.python.org* holds `*.python.org`, so `not-docs.python.org` does match it;
+  - a leaf signed by an impostor is `x509-unknown-issuer`, not `x509-bad-signature`, once the AKI is matched.
+

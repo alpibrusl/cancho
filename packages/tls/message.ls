@@ -1,5 +1,6 @@
 module tls_message;
 import tls_record;
+import x509;
 
 // `tls_message` -- the TLS 1.3 handshake messages a client sends and
 // reads (RFC 8446 §4; `docs/tls-core.md` §2). Encoding of ClientHello;
@@ -111,24 +112,6 @@ fn copy_to[&s, &o](src: &s [byte], out: &!o [byte], at: int) -> [] int {
     return at + len(src);
 }
 
-// Whether `host` is an IP literal, which gets no `server_name` (RFC 6066
-// §3): digits and dots only, or any colon.
-pub fn is_ip_literal[&h](host: &h [byte]) -> [] bool {
-    var digits_and_dots = true;
-    var i = 0;
-    while i < len(host) {
-        let c = int_of(host[i]);
-        if c == 58 {
-            return true;
-        }
-        if c != 46 && (c < 48 || c > 57) {
-            digits_and_dots = false;
-        }
-        i = i + 1;
-    }
-    return digits_and_dots;
-}
-
 // The largest ClientHello this encodes: a 255-byte host name and the
 // fixed extensions.
 pub fn max_client_hello() -> [] int {
@@ -152,7 +135,7 @@ pub fn client_hello[&r, &s, &k, &h, &o](random: &r [byte], session_id: &s [byte]
     at = put(out, at, 0, 1);
     let ext_len_at = at;
     at = at + 2;
-    if len(host) > 0 && !is_ip_literal(host) {
+    if len(host) > 0 && !x509.is_ip_literal(host) {
         // server_name: one host_name entry.
         at = put(out, at, 0, 2);
         at = put(out, at, len(host) + 5, 2);
