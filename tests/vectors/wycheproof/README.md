@@ -11,3 +11,5 @@ Apache License 2.0 in `LICENSE` beside them.
 | `hmac_sha384_test.json` | 174 | `conformance/kdf.rs` |
 | `hkdf_sha256_test.json` | 86 | `conformance/kdf.rs` |
 | `hkdf_sha384_test.json` | 83 | `conformance/kdf.rs` |
+| `x25519_test.json` | 518 | `conformance/x25519.rs` (`docs/x25519.md` §4.2) |
+| `ed25519_test.json` | 151 | `conformance/x25519.rs` |

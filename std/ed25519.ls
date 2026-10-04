@@ -1,5 +1,6 @@
 module std.ed25519;
 import std.crypto;
+import std.field25519;
 
 // Ed25519 (RFC 8032). `docs/ed25519.md` is the design; §6 is explicit
 // about what this module does not provide: constant-time execution.
@@ -141,7 +142,8 @@ fn bn_reduce_wide[&o, &x, &m](o: &!o [byte], x: &x [byte], m: &m [byte]) -> [] i
     // `o` is the running remainder, built up one bit at a time from
     // nothing -- zeroed here rather than left to the caller, because a
     // caller that reuses one scratch buffer across many calls (`bn_modpow`
-    // does, once per bit of the exponent) would otherwise start each
+    // did, once per bit of the exponent, before the field arithmetic
+    // moved to `std.field25519`) would otherwise start each
     // reduction from whatever the previous call left behind. Found by a
     // failing `3^1 mod 7` in this module's own tests: correct in
     // isolation, wrong the second time the same buffer was reused.
@@ -193,33 +195,6 @@ fn bn_submod[&o, &a, &b, &m](o: &!o [byte], a: &a [byte], b: &b [byte], m: &m [b
         bn_add_into(o, m);
     }
     bn_sub_into(o, b);
-    return 0;
-}
-
-// `o = base^exp mod m`, left-to-right square-and-multiply. `exp`'s width
-// decides the loop's own length, so the same function serves both the
-// field's `p - 2` inversion exponent and its `(p + 3) / 8` square-root
-// exponent without a second copy.
-fn bn_modpow[&o, &base, &exp, &m](o: &!o [byte], base: &base [byte], exp: &exp [byte], m: &m [byte]) -> [] int {
-    region r {
-        let result = alloc_slice[r](len(m), byte_of(0));
-        result[0] = byte_of(1);
-        let scratch = alloc_slice[r](len(m), byte_of(0));
-        var bit = len(exp) * 8 - 1;
-        while bit >= 0 {
-            bn_mulmod(scratch, result, result, m);
-            bn_copy_into(result, scratch);
-            let byte_idx = bit / 8;
-            let bit_idx = bit % 8;
-            let b = int_of(exp[byte_idx]) >> bit_idx & 1;
-            if b == 1 {
-                bn_mulmod(scratch, result, base, m);
-                bn_copy_into(result, scratch);
-            }
-            bit = bit - 1;
-        }
-        bn_copy_into(o, result);
-    }
     return 0;
 }
 
@@ -299,155 +274,50 @@ static l_const: [byte] {
     return k;
 }
 
-// the twisted Edwards curve parameter, -121665/121666 mod p.
-static d_const: [byte] {
-    let k = alloc_slice[static](32, byte_of(0));
-    k[0] = byte_of(0xa3);
-    k[1] = byte_of(0x78);
-    k[2] = byte_of(0x59);
-    k[3] = byte_of(0x13);
-    k[4] = byte_of(0xca);
-    k[5] = byte_of(0x4d);
-    k[6] = byte_of(0xeb);
-    k[7] = byte_of(0x75);
-    k[8] = byte_of(0xab);
-    k[9] = byte_of(0xd8);
-    k[10] = byte_of(0x41);
-    k[11] = byte_of(0x41);
-    k[12] = byte_of(0x4d);
-    k[13] = byte_of(0x0a);
-    k[14] = byte_of(0x70);
-    k[15] = byte_of(0x00);
-    k[16] = byte_of(0x98);
-    k[17] = byte_of(0xe8);
-    k[18] = byte_of(0x79);
-    k[19] = byte_of(0x77);
-    k[20] = byte_of(0x79);
-    k[21] = byte_of(0x40);
-    k[22] = byte_of(0xc7);
-    k[23] = byte_of(0x8c);
-    k[24] = byte_of(0x73);
-    k[25] = byte_of(0xfe);
-    k[26] = byte_of(0x6f);
-    k[27] = byte_of(0x2b);
-    k[28] = byte_of(0xee);
-    k[29] = byte_of(0x6c);
-    k[30] = byte_of(0x03);
-    k[31] = byte_of(0x52);
+// the twisted Edwards curve parameter, -121665/121666 mod p, as
+// `std.field25519` limbs (16 bits each, least significant first): the
+// same value the byte table here held before the field module, converted
+// by a script, not by hand (`docs/x25519.md` §2).
+static d_limbs: [int] {
+    let k = alloc_slice[static](16, 0);
+    k[0] = 0x78a3;
+    k[1] = 0x1359;
+    k[2] = 0x4dca;
+    k[3] = 0x75eb;
+    k[4] = 0xd8ab;
+    k[5] = 0x4141;
+    k[6] = 0x0a4d;
+    k[7] = 0x0070;
+    k[8] = 0xe898;
+    k[9] = 0x7779;
+    k[10] = 0x4079;
+    k[11] = 0x8cc7;
+    k[12] = 0xfe73;
+    k[13] = 0x2b6f;
+    k[14] = 0x6cee;
+    k[15] = 0x5203;
     return k;
 }
 
-// a square root of -1 mod p, needed by point decompression.
-static sqrt_m1_const: [byte] {
-    let k = alloc_slice[static](32, byte_of(0));
-    k[0] = byte_of(0xb0);
-    k[1] = byte_of(0xa0);
-    k[2] = byte_of(0x0e);
-    k[3] = byte_of(0x4a);
-    k[4] = byte_of(0x27);
-    k[5] = byte_of(0x1b);
-    k[6] = byte_of(0xee);
-    k[7] = byte_of(0xc4);
-    k[8] = byte_of(0x78);
-    k[9] = byte_of(0xe4);
-    k[10] = byte_of(0x2f);
-    k[11] = byte_of(0xad);
-    k[12] = byte_of(0x06);
-    k[13] = byte_of(0x18);
-    k[14] = byte_of(0x43);
-    k[15] = byte_of(0x2f);
-    k[16] = byte_of(0xa7);
-    k[17] = byte_of(0xd7);
-    k[18] = byte_of(0xfb);
-    k[19] = byte_of(0x3d);
-    k[20] = byte_of(0x99);
-    k[21] = byte_of(0x00);
-    k[22] = byte_of(0x4d);
-    k[23] = byte_of(0x2b);
-    k[24] = byte_of(0x0b);
-    k[25] = byte_of(0xdf);
-    k[26] = byte_of(0xc1);
-    k[27] = byte_of(0x4f);
-    k[28] = byte_of(0x80);
-    k[29] = byte_of(0x24);
-    k[30] = byte_of(0x83);
-    k[31] = byte_of(0x2b);
-    return k;
-}
-
-// p - 2, the exponent modular inversion uses (Fermat's little theorem).
-static exp_inv_const: [byte] {
-    let k = alloc_slice[static](32, byte_of(0));
-    k[0] = byte_of(0xeb);
-    k[1] = byte_of(0xff);
-    k[2] = byte_of(0xff);
-    k[3] = byte_of(0xff);
-    k[4] = byte_of(0xff);
-    k[5] = byte_of(0xff);
-    k[6] = byte_of(0xff);
-    k[7] = byte_of(0xff);
-    k[8] = byte_of(0xff);
-    k[9] = byte_of(0xff);
-    k[10] = byte_of(0xff);
-    k[11] = byte_of(0xff);
-    k[12] = byte_of(0xff);
-    k[13] = byte_of(0xff);
-    k[14] = byte_of(0xff);
-    k[15] = byte_of(0xff);
-    k[16] = byte_of(0xff);
-    k[17] = byte_of(0xff);
-    k[18] = byte_of(0xff);
-    k[19] = byte_of(0xff);
-    k[20] = byte_of(0xff);
-    k[21] = byte_of(0xff);
-    k[22] = byte_of(0xff);
-    k[23] = byte_of(0xff);
-    k[24] = byte_of(0xff);
-    k[25] = byte_of(0xff);
-    k[26] = byte_of(0xff);
-    k[27] = byte_of(0xff);
-    k[28] = byte_of(0xff);
-    k[29] = byte_of(0xff);
-    k[30] = byte_of(0xff);
-    k[31] = byte_of(0x7f);
-    return k;
-}
-
-// (p + 3) / 8, the exponent point decompression's square root uses.
-static exp_sqrt_const: [byte] {
-    let k = alloc_slice[static](32, byte_of(0));
-    k[0] = byte_of(0xfe);
-    k[1] = byte_of(0xff);
-    k[2] = byte_of(0xff);
-    k[3] = byte_of(0xff);
-    k[4] = byte_of(0xff);
-    k[5] = byte_of(0xff);
-    k[6] = byte_of(0xff);
-    k[7] = byte_of(0xff);
-    k[8] = byte_of(0xff);
-    k[9] = byte_of(0xff);
-    k[10] = byte_of(0xff);
-    k[11] = byte_of(0xff);
-    k[12] = byte_of(0xff);
-    k[13] = byte_of(0xff);
-    k[14] = byte_of(0xff);
-    k[15] = byte_of(0xff);
-    k[16] = byte_of(0xff);
-    k[17] = byte_of(0xff);
-    k[18] = byte_of(0xff);
-    k[19] = byte_of(0xff);
-    k[20] = byte_of(0xff);
-    k[21] = byte_of(0xff);
-    k[22] = byte_of(0xff);
-    k[23] = byte_of(0xff);
-    k[24] = byte_of(0xff);
-    k[25] = byte_of(0xff);
-    k[26] = byte_of(0xff);
-    k[27] = byte_of(0xff);
-    k[28] = byte_of(0xff);
-    k[29] = byte_of(0xff);
-    k[30] = byte_of(0xff);
-    k[31] = byte_of(0x0f);
+// a square root of -1 mod p, needed by point decompression, as limbs.
+static sqrt_m1_limbs: [int] {
+    let k = alloc_slice[static](16, 0);
+    k[0] = 0xa0b0;
+    k[1] = 0x4a0e;
+    k[2] = 0x1b27;
+    k[3] = 0xc4ee;
+    k[4] = 0xe478;
+    k[5] = 0xad2f;
+    k[6] = 0x1806;
+    k[7] = 0x2f43;
+    k[8] = 0xd7a7;
+    k[9] = 0x3dfb;
+    k[10] = 0x0099;
+    k[11] = 0x2b4d;
+    k[12] = 0xdf0b;
+    k[13] = 0x4fc1;
+    k[14] = 0x2480;
+    k[15] = 0x2b83;
     return k;
 }
 
@@ -489,49 +359,13 @@ static base_point_enc: [byte] {
     return k;
 }
 
-// ---- Field arithmetic over GF(p), p = 2^255 - 19 ----
-// Thin wrappers over the bignum toolkit above, fixed to `p_const`.
-
-fn gf_add[&o, &a, &b](o: &!o [byte], a: &a [byte], b: &b [byte]) -> [] int {
-    return bn_addmod(o, a, b, p_const);
-}
-
-fn gf_sub[&o, &a, &b](o: &!o [byte], a: &a [byte], b: &b [byte]) -> [] int {
-    return bn_submod(o, a, b, p_const);
-}
-
-fn gf_mul[&o, &a, &b](o: &!o [byte], a: &a [byte], b: &b [byte]) -> [] int {
-    return bn_mulmod(o, a, b, p_const);
-}
-
-// `a^(p-2) mod p == a^-1 mod p` by Fermat's little theorem, for any
-// nonzero `a`. Slower than a dedicated inversion algorithm and far
-// simpler to have gotten right, which is this module's own trade
-// throughout.
-fn gf_invert[&o, &a](o: &!o [byte], a: &a [byte]) -> [] int {
-    return bn_modpow(o, a, exp_inv_const, p_const);
-}
-
-// `a^((p+3)/8) mod p` -- point decompression's own square-root step
-// (§ below); a candidate square root, corrected against `sqrt_m1_const`
-// when it is the wrong one of the two square roots `p`'s residues have.
-fn gf_pow2523[&o, &a](o: &!o [byte], a: &a [byte]) -> [] int {
-    return bn_modpow(o, a, exp_sqrt_const, p_const);
-}
-
-// The low bit of a fully-reduced field element's canonical encoding --
-// point decompression's own parity check, and the sign bit a compressed
-// point's top byte carries.
-fn gf_is_odd[&a](a: &a [byte]) -> [] int {
-    return int_of(a[0]) & 1;
-}
-
 // ---- Points on the twisted Edwards curve, extended coordinates ----
 //
-// A point is one 128-byte buffer: X = buf[0..32], Y = buf[32..64],
-// Z = buf[64..96], T = buf[96..128] (the extended-coordinates identity
-// X*Y = T*Z, RFC 8032's own representation). One buffer rather than
-// four separate ones so a point is a single region parameter to pass
+// The field arithmetic is `std.field25519` (`docs/x25519.md` §2), which
+// X25519 shares: one copy. A point is one `[int]` of 64: X = p[0..16],
+// Y = p[16..32], Z = p[32..48], T = p[48..64], each a field element (the
+// extended-coordinates identity X*Y = T*Z, RFC 8032's own representation).
+// One slice rather than four, so a point is a single parameter to pass
 // around, not four kept in sync by hand.
 
 // The unified addition/doubling formula (works for `p == q` too, which
@@ -539,91 +373,103 @@ fn gf_is_odd[&a](a: &a [byte]) -> [] int {
 // separate doubling code path to keep in sync with it). Checked
 // independently in Python before any of this was written: repeated
 // doubling-and-adding of the base point by the group order returns the
-// identity.
-fn point_add[&p, &q, &o](p: &p [byte], q: &q [byte], o: &!o [byte]) -> [] int {
+// identity. `o` is written only at the end, after `p` and `q` are read.
+fn point_add[&p, &q, &o, &w](p: &p [int], q: &q [int], o: &!o [int], w: &!w [int]) -> [] int {
     region r {
-        let ta = alloc_slice[r](32, byte_of(0));
-        let tb = alloc_slice[r](32, byte_of(0));
-        let a = alloc_slice[r](32, byte_of(0));
-        let b = alloc_slice[r](32, byte_of(0));
-        let c = alloc_slice[r](32, byte_of(0));
-        let d = alloc_slice[r](32, byte_of(0));
-        let e = alloc_slice[r](32, byte_of(0));
-        let f = alloc_slice[r](32, byte_of(0));
-        let g = alloc_slice[r](32, byte_of(0));
-        let h = alloc_slice[r](32, byte_of(0));
+        let ta = alloc_slice[r](16, 0);
+        let tb = alloc_slice[r](16, 0);
+        let a = alloc_slice[r](16, 0);
+        let b = alloc_slice[r](16, 0);
+        let c = alloc_slice[r](16, 0);
+        let d = alloc_slice[r](16, 0);
+        let e = alloc_slice[r](16, 0);
+        let f = alloc_slice[r](16, 0);
+        let g = alloc_slice[r](16, 0);
+        let h = alloc_slice[r](16, 0);
 
-        gf_sub(ta, p[32..64], p[0..32]);
-        gf_sub(tb, q[32..64], q[0..32]);
-        gf_mul(a, ta, tb);
+        field25519.sub(ta, p[16..32], p[0..16]);
+        field25519.sub(tb, q[16..32], q[0..16]);
+        field25519.mul(a, ta, tb, w);
 
-        gf_add(ta, p[32..64], p[0..32]);
-        gf_add(tb, q[32..64], q[0..32]);
-        gf_mul(b, ta, tb);
+        field25519.add(ta, p[16..32], p[0..16]);
+        field25519.add(tb, q[16..32], q[0..16]);
+        field25519.mul(b, ta, tb, w);
 
-        gf_mul(ta, p[96..128], q[96..128]);
-        gf_mul(tb, ta, d_const);
-        gf_add(c, tb, tb);
+        field25519.mul(ta, p[48..64], q[48..64], w);
+        field25519.mul(tb, ta, d_limbs, w);
+        field25519.add(c, tb, tb);
 
-        gf_mul(ta, p[64..96], q[64..96]);
-        gf_add(d, ta, ta);
+        field25519.mul(ta, p[32..48], q[32..48], w);
+        field25519.add(d, ta, ta);
 
-        gf_sub(e, b, a);
-        gf_sub(f, d, c);
-        gf_add(g, d, c);
-        gf_add(h, b, a);
+        field25519.sub(e, b, a);
+        field25519.sub(f, d, c);
+        field25519.add(g, d, c);
+        field25519.add(h, b, a);
 
-        gf_mul(o[0..32], e, f);
-        gf_mul(o[32..64], g, h);
-        gf_mul(o[96..128], e, h);
-        gf_mul(o[64..96], f, g);
+        field25519.mul(o[0..16], e, f, w);
+        field25519.mul(o[16..32], g, h, w);
+        field25519.mul(o[48..64], e, h, w);
+        field25519.mul(o[32..48], f, g, w);
     }
     return 0;
 }
 
-fn point_copy[&p, &o](p: &p [byte], o: &!o [byte]) -> [] int {
-    bn_copy_into(o, p);
+fn point_copy[&p, &o](p: &p [int], o: &!o [int]) -> [] int {
+    var i = 0;
+    while i < 64 {
+        o[i] = p[i];
+        i = i + 1;
+    }
     return 0;
 }
 
 // The neutral element (0, 1, 1, 0) in extended coordinates.
-fn point_identity[&o](o: &!o [byte]) -> [] int {
+fn point_identity[&o](o: &!o [int]) -> [] int {
     var i = 0;
-    while i < 128 {
-        o[i] = byte_of(0);
+    while i < 64 {
+        o[i] = 0;
         i = i + 1;
     }
-    o[32] = byte_of(1);
-    o[64] = byte_of(1);
+    o[16] = 1;
+    o[32] = 1;
     return 0;
 }
 
-// `o = s * p`, double-and-add from the most significant bit of `s`
-// down. `s` is a 32-byte little-endian scalar; every bit is walked
-// (leading zero bits just double the identity, which is the identity),
-// the same "correct rather than fastest" trade `bn_modpow` already
-// makes.
-fn point_scalarmult[&o, &p, &s](o: &!o [byte], p: &p [byte], s: &s [byte]) -> [] int {
+// Swaps two points when `bit` is 1, with the same work either way.
+fn point_cswap[&p, &q](p: &!p [int], q: &!q [int], bit: int) -> [] int {
+    field25519.cswap(p[0..16], q[0..16], bit);
+    field25519.cswap(p[16..32], q[16..32], bit);
+    field25519.cswap(p[32..48], q[32..48], bit);
+    field25519.cswap(p[48..64], q[48..64], bit);
+    return 0;
+}
+
+// `o = s * p`, `s` a 32-byte little-endian scalar: a ladder over all 256
+// bits, TweetNaCl's `scalarmult`. Every bit does one addition and one
+// doubling, and the bit only decides a `point_cswap`, so the sequence of
+// operations does not depend on the scalar. It used to be double-and-add
+// with an `if` on each bit (`docs/ed25519.md` §6, `docs/x25519.md` §5).
+fn point_scalarmult[&o, &p, &s](o: &!o [int], p: &p [int], s: &s [byte]) -> [] int {
     region r {
-        let result = alloc_slice[r](128, byte_of(0));
-        point_identity(result);
-        let scratch = alloc_slice[r](128, byte_of(0));
-
-        var bit = len(s) * 8 - 1;
+        let acc = alloc_slice[r](64, 0);
+        let other = alloc_slice[r](64, 0);
+        let sum = alloc_slice[r](64, 0);
+        let w = alloc_slice[r](field25519.scratch_len(), 0);
+        point_identity(acc);
+        point_copy(p, other);
+        var bit = 255;
         while bit >= 0 {
-            point_add(result, result, scratch);
-            point_copy(scratch, result);
-
-            let byte_idx = bit / 8;
-            let bit_idx = bit % 8;
-            let bset = int_of(s[byte_idx]) >> bit_idx & 1;
-            if bset == 1 {
-                point_add(result, p, scratch);
-                point_copy(scratch, result);
-            }
+            let b = int_of(s[bit >> 3]) >> (bit & 7) & 1;
+            point_cswap(acc, other, b);
+            point_add(acc, other, sum, w);
+            point_copy(sum, other);
+            point_add(acc, acc, sum, w);
+            point_copy(sum, acc);
+            point_cswap(acc, other, b);
             bit = bit - 1;
         }
-        point_copy(result, o);
+        point_copy(acc, o);
     }
     return 0;
 }
@@ -632,9 +478,9 @@ fn point_scalarmult[&o, &p, &s](o: &!o [byte], p: &p [byte], s: &s [byte]) -> []
 // `base_point_enc` decompressed once. Kept as its own entry point
 // because every signing and verifying operation needs exactly this,
 // never an arbitrary second base.
-fn point_scalarmult_base[&o, &s](o: &!o [byte], s: &s [byte]) -> [] int {
+fn point_scalarmult_base[&o, &s](o: &!o [int], s: &s [byte]) -> [] int {
     region r {
-        let b = alloc_slice[r](128, byte_of(0));
+        let b = alloc_slice[r](64, 0);
         point_unpack(base_point_enc, b);
         point_scalarmult(o, b, s);
     }
@@ -643,18 +489,17 @@ fn point_scalarmult_base[&o, &s](o: &!o [byte], s: &s [byte]) -> [] int {
 
 // Compress an extended point to its 32-byte encoding: affine `y`, with
 // affine `x`'s low bit folded into the top bit of the last byte.
-fn point_pack[&p, &o](p: &p [byte], o: &!o [byte]) -> [] int {
+fn point_pack[&p, &o](p: &p [int], o: &!o [byte]) -> [] int {
     region r {
-        let zinv = alloc_slice[r](32, byte_of(0));
-        gf_invert(zinv, p[64..96]);
-        let x = alloc_slice[r](32, byte_of(0));
-        let y = alloc_slice[r](32, byte_of(0));
-        gf_mul(x, p[0..32], zinv);
-        gf_mul(y, p[32..64], zinv);
-        bn_copy_into(o, y);
-        if gf_is_odd(x) == 1 {
-            o[31] = byte_of(int_of(o[31]) | 0x80);
-        }
+        let w = alloc_slice[r](field25519.scratch_len(), 0);
+        let zinv = alloc_slice[r](16, 0);
+        field25519.invert(zinv, p[32..48], w);
+        let x = alloc_slice[r](16, 0);
+        let y = alloc_slice[r](16, 0);
+        field25519.mul(x, p[0..16], zinv, w);
+        field25519.mul(y, p[16..32], zinv, w);
+        field25519.pack(o, y, w);
+        o[31] = byte_of(int_of(o[31]) | field25519.parity(x, w) << 7);
     }
     return 0;
 }
@@ -663,61 +508,67 @@ fn point_pack[&p, &o](p: &p [byte], o: &!o [byte]) -> [] int {
 // success, `0` on a malformed encoding: a non-canonical `y` (`>= p`,
 // RFC 8032 §5.1.3's own rejection), or a `y` for which `x^2` has no
 // square root at all (the encoding does not name a point on the curve).
-fn point_unpack[&enc, &o](enc: &enc [byte], o: &!o [byte]) -> [] int {
+// The encoding is public (a key or a signature's `R`), so the branches
+// here are on public data.
+fn point_unpack[&enc, &o](enc: &enc [byte], o: &!o [int]) -> [] int {
     var ok = 0;
     region r {
-        let y = alloc_slice[r](32, byte_of(0));
-        bn_copy_into(y, enc);
-        let sign = int_of(y[31]) >> 7 & 1;
-        y[31] = byte_of(int_of(y[31]) & 0x7f);
+        let ybytes = alloc_slice[r](32, byte_of(0));
+        bn_copy_into(ybytes, enc);
+        let sign = int_of(ybytes[31]) >> 7 & 1;
+        ybytes[31] = byte_of(int_of(ybytes[31]) & 0x7f);
 
-        if bn_compare(y, p_const) < 0 {
-            let y2 = alloc_slice[r](32, byte_of(0));
-            gf_mul(y2, y, y);
-            let one = alloc_slice[r](32, byte_of(0));
-            one[0] = byte_of(1);
-            let num = alloc_slice[r](32, byte_of(0));
-            gf_sub(num, y2, one);
-            let dy2 = alloc_slice[r](32, byte_of(0));
-            gf_mul(dy2, d_const, y2);
-            let den = alloc_slice[r](32, byte_of(0));
-            gf_add(den, dy2, one);
-            let deninv = alloc_slice[r](32, byte_of(0));
-            gf_invert(deninv, den);
-            let x2 = alloc_slice[r](32, byte_of(0));
-            gf_mul(x2, num, deninv);
+        if bn_compare(ybytes, p_const) < 0 {
+            let w = alloc_slice[r](field25519.scratch_len(), 0);
+            let y = alloc_slice[r](16, 0);
+            field25519.unpack(y, ybytes);
+            let one = alloc_slice[r](16, 0);
+            field25519.set_small(one, 1);
+            let y2 = alloc_slice[r](16, 0);
+            field25519.square(y2, y, w);
+            let num = alloc_slice[r](16, 0);
+            field25519.sub(num, y2, one);
+            let den = alloc_slice[r](16, 0);
+            field25519.mul(den, d_limbs, y2, w);
+            field25519.add(den, den, one);
+            let deninv = alloc_slice[r](16, 0);
+            field25519.invert(deninv, den, w);
+            let x2 = alloc_slice[r](16, 0);
+            field25519.mul(x2, num, deninv, w);
 
-            let cand = alloc_slice[r](32, byte_of(0));
-            gf_pow2523(cand, x2);
-            let check = alloc_slice[r](32, byte_of(0));
-            gf_mul(check, cand, cand);
+            // A candidate root, x2^((p+3)/8) = x2^((p-5)/8) * x2.
+            let cand = alloc_slice[r](16, 0);
+            field25519.pow2523(cand, x2, w);
+            field25519.mul(cand, cand, x2, w);
+            let check = alloc_slice[r](16, 0);
+            field25519.square(check, cand, w);
 
             var have_root = 0;
-            if bn_compare(check, x2) == 0 {
+            if field25519.equal(check, x2, w) == 1 {
                 have_root = 1;
             } else {
-                let alt = alloc_slice[r](32, byte_of(0));
-                gf_mul(alt, cand, sqrt_m1_const);
-                gf_mul(check, alt, alt);
-                if bn_compare(check, x2) == 0 {
-                    bn_copy_into(cand, alt);
+                field25519.mul(cand, cand, sqrt_m1_limbs, w);
+                field25519.square(check, cand, w);
+                if field25519.equal(check, x2, w) == 1 {
                     have_root = 1;
                 }
             }
 
+            // RFC 8032 §5.1.3 step 4: x = 0 with the sign bit set is not
+            // an encoding of any point. Missed until Wycheproof's case 151
+            // was run (`docs/x25519.md` §4.2): -0 is 0, so it decoded.
+            let zero = alloc_slice[r](16, 0);
+            if have_root == 1 && sign == 1 && field25519.equal(cand, zero, w) == 1 {
+                have_root = 0;
+            }
             if have_root == 1 {
-                if gf_is_odd(cand) != sign {
-                    let negated = alloc_slice[r](32, byte_of(0));
-                    let zero = alloc_slice[r](32, byte_of(0));
-                    gf_sub(negated, zero, cand);
-                    bn_copy_into(cand, negated);
+                if field25519.parity(cand, w) != sign {
+                    field25519.sub(cand, zero, cand);
                 }
-                bn_copy_into(o[0..32], cand);
-                bn_copy_into(o[32..64], y);
-                let one2 = alloc_slice[r](32, byte_of(0));
-                one2[0] = byte_of(1);
-                bn_copy_into(o[64..96], one2);
-                gf_mul(o[96..128], cand, y);
+                field25519.copy(o[0..16], cand);
+                field25519.copy(o[16..32], y);
+                field25519.set_small(o[32..48], 1);
+                field25519.mul(o[48..64], cand, y, w);
                 ok = 1;
             }
         }
@@ -725,27 +576,23 @@ fn point_unpack[&enc, &o](enc: &enc [byte], o: &!o [byte]) -> [] int {
     return ok;
 }
 
-fn point_equal[&p, &q](p: &p [byte], q: &q [byte]) -> [] int {
+// Whether two extended points are the same point: X1/Z1 == X2/Z2 and
+// Y1/Z1 == Y2/Z2, compared as X1*Z2 == X2*Z1 and Y1*Z2 == Y2*Z1, which
+// needs no inversion.
+fn point_equal[&p, &q](p: &p [int], q: &q [int]) -> [] int {
+    var same = 0;
     region r {
-        let zp = alloc_slice[r](32, byte_of(0));
-        let zq = alloc_slice[r](32, byte_of(0));
-        gf_invert(zp, p[64..96]);
-        gf_invert(zq, q[64..96]);
-        let xp = alloc_slice[r](32, byte_of(0));
-        let xq = alloc_slice[r](32, byte_of(0));
-        let yp = alloc_slice[r](32, byte_of(0));
-        let yq = alloc_slice[r](32, byte_of(0));
-        gf_mul(xp, p[0..32], zp);
-        gf_mul(xq, q[0..32], zq);
-        gf_mul(yp, p[32..64], zp);
-        gf_mul(yq, q[32..64], zq);
-        if bn_compare(xp, xq) == 0 {
-            if bn_compare(yp, yq) == 0 {
-                return 1;
-            }
-        }
+        let w = alloc_slice[r](field25519.scratch_len(), 0);
+        let a = alloc_slice[r](16, 0);
+        let b = alloc_slice[r](16, 0);
+        field25519.mul(a, p[0..16], q[32..48], w);
+        field25519.mul(b, q[0..16], p[32..48], w);
+        let xs = field25519.equal(a, b, w);
+        field25519.mul(a, p[16..32], q[32..48], w);
+        field25519.mul(b, q[16..32], p[32..48], w);
+        same = xs & field25519.equal(a, b, w);
     }
-    return 0;
+    return same;
 }
 
 // RFC 8032 §5.1.5's clamp: clear the low three bits (a multiple of the
@@ -766,7 +613,7 @@ pub fn public_key_from_seed[&seed, &o](seed: &seed [byte], o: &!o [byte]) -> [] 
         let a = alloc_slice[r](32, byte_of(0));
         bn_copy_into(a, h[0..32]);
         clamp(a);
-        let point = alloc_slice[r](128, byte_of(0));
+        let point = alloc_slice[r](64, 0);
         point_scalarmult_base(point, a);
         point_pack(point, o);
     }
@@ -785,7 +632,7 @@ pub fn sign[&seed, &msg, &o](seed: &seed [byte], msg: &msg [byte], o: &!o [byte]
         let prefix = alloc_slice[r](32, byte_of(0));
         bn_copy_into(prefix, h[32..64]);
 
-        let point_a = alloc_slice[r](128, byte_of(0));
+        let point_a = alloc_slice[r](64, 0);
         point_scalarmult_base(point_a, a);
         let pk = alloc_slice[r](32, byte_of(0));
         point_pack(point_a, pk);
@@ -802,7 +649,7 @@ pub fn sign[&seed, &msg, &o](seed: &seed [byte], msg: &msg [byte], o: &!o [byte]
         let rscalar = alloc_slice[r](32, byte_of(0));
         bn_reduce_wide(rscalar, rhash, l_const);
 
-        let point_r = alloc_slice[r](128, byte_of(0));
+        let point_r = alloc_slice[r](64, 0);
         point_scalarmult_base(point_r, rscalar);
         let r_enc = alloc_slice[r](32, byte_of(0));
         point_pack(point_r, r_enc);
@@ -828,16 +675,21 @@ pub fn sign[&seed, &msg, &o](seed: &seed [byte], msg: &msg [byte], o: &!o [byte]
 }
 
 // `1` if `sig` (64 bytes) is a valid Ed25519 signature by `pk` (32
-// bytes) over `msg`, `0` otherwise -- a malformed `pk`, a non-canonical
-// `S` (RFC 8032 §5.1.7's own rejection), a malformed `R`, or the
-// signature equation itself not holding.
+// bytes) over `msg`, `0` otherwise -- a key or signature of the wrong
+// length, a malformed `pk`, a non-canonical `S` (RFC 8032 §5.1.7's own
+// rejection), a malformed `R`, or the signature equation itself not
+// holding. The lengths were not checked until Wycheproof's truncated
+// signatures were run (`docs/x25519.md` §4.2): a 63-byte one trapped.
 pub fn verify[&pk, &msg, &sig](pk: &pk [byte], msg: &msg [byte], sig: &sig [byte]) -> [] int {
+    if len(pk) != 32 || len(sig) != 64 {
+        return 0;
+    }
     var ok = 0;
     region r {
         let s = alloc_slice[r](32, byte_of(0));
         bn_copy_into(s, sig[32..64]);
         if bn_compare(s, l_const) < 0 {
-            let point_a = alloc_slice[r](128, byte_of(0));
+            let point_a = alloc_slice[r](64, 0);
             let a_ok = point_unpack(pk, point_a);
             if a_ok == 1 {
                 let hst = alloc_slice[r](crypto.sha512_state_len(), 0);
@@ -850,17 +702,18 @@ pub fn verify[&pk, &msg, &sig](pk: &pk [byte], msg: &msg [byte], sig: &sig [byte
                 let kscalar = alloc_slice[r](32, byte_of(0));
                 bn_reduce_wide(kscalar, khash, l_const);
 
-                let sb = alloc_slice[r](128, byte_of(0));
+                let sb = alloc_slice[r](64, 0);
                 point_scalarmult_base(sb, s);
 
-                let ka = alloc_slice[r](128, byte_of(0));
+                let ka = alloc_slice[r](64, 0);
                 point_scalarmult(ka, point_a, kscalar);
 
-                let point_r = alloc_slice[r](128, byte_of(0));
+                let point_r = alloc_slice[r](64, 0);
                 let r_ok = point_unpack(sig[0..32], point_r);
                 if r_ok == 1 {
-                    let rhs = alloc_slice[r](128, byte_of(0));
-                    point_add(point_r, ka, rhs);
+                    let rhs = alloc_slice[r](64, 0);
+                    let w = alloc_slice[r](field25519.scratch_len(), 0);
+                    point_add(point_r, ka, rhs, w);
                     if point_equal(sb, rhs) == 1 {
                         ok = 1;
                     }
