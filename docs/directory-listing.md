@@ -152,7 +152,7 @@ directory holds.
 * `tests/conformance/directory_listing.rs`, on **both backends**, against a tree the test builds and judged from
   outside the program (Rust's `read_dir` and `symlink_metadata`), names printed as hex so every byte survives:
   * a hostile directory: 100,000 plain files and a name with a newline, one that is not UTF-8 (`caf\xe9`, beside
-    `cafe`), a 255-byte name, a dangling link, a link to `..`, a FIFO and a subdirectory. `std.dirs.list` equals the
+    `cafe`; Linux only, since APFS refuses to create such a name with `EILSEQ`), a 255-byte name, a dangling link, a link to `..`, a FIFO and a subdirectory. `std.dirs.list` equals the
     entries sorted as bytes, with every kind equal to `lstat`'s; `dir_next` alone gives the same entries in the
     kernel's order, with `.` and `..` absent; the two backends agree byte for byte;
   * `dir_next` with a three-byte buffer on a longer name is `ENAMETOOLONG` and copies nothing; `std.dirs.list` with
