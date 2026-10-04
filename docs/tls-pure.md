@@ -214,8 +214,10 @@ compares a tag.
 - **What happens if it is unusable.** An unreadable or empty store stops the start, with the reason. It never falls back to an
   unverified client. That is #211's rule for OpenSSL (`docs/tls-nonblocking.md` §10.5).
 - **How roots are treated.** Their self-signatures are not checked. A root is trusted because the operator put it in the store,
-  not because it signed itself. A root is accepted as an anchor whatever its own validity dates, which matches OpenSSL's default
-  and is §10's question 4.
+  not because it signed itself. *Corrected (`docs/x509-verify.md` §8.3): this said a root is accepted as an anchor whatever its
+  own validity dates, "which matches OpenSSL's default". It does not: OpenSSL 3.0.13 refuses an expired root (x509-limbo's
+  `rfc5280::validity::expired-root`, error 10 at the root's depth). The verifier checks a root's dates as OpenSSL does. §10's
+  question 4 is answered by that.*
 
 ### 5.2 Building the chain
 
@@ -438,7 +440,8 @@ Each is a decision this design does not make by default, with the default it ass
    instead of attempting it? *Assumed: no; best effort, said so.*
 3. **Where the bignum and curves go.** `std` or a package (§1.2)? *Assumed: `std`, in their own files.*
 4. **Expired roots.** Accept an expired root as an anchor (OpenSSL's default) or refuse it? *Assumed: accept, matching OpenSSL, so
-   the two backends agree.*
+   the two backends agree.* *Corrected (`docs/x509-verify.md` §8.3): OpenSSL's default refuses an expired root, so matching it
+   means refusing, and the verifier does. The two backends agree, which was the point of the assumption.*
 5. **Public-suffix wildcards.** Is "two labels after the wildcard" enough, or does the package carry a public-suffix list (which
    then needs updating)? *Assumed: two labels; mis-issuance of `*.co.uk` is a CA failure the rest of the ecosystem polices.*
 6. **The 64 KiB handshake buffer per slot.** Keep it per slot (100 KiB a connection, §7.4), or share a pool across slots, which

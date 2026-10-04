@@ -1,0 +1,778 @@
+module x509_verify;
+import std.bytes;
+import std.crypto;
+import std.ecdsa;
+import std.ed25519;
+import std.rsa;
+import x509;
+import x509_names;
+
+// `x509_verify` -- a server's certificate chain against a root store,
+// a host name and a time (`docs/x509-verify.md`). Sub-issue 9 (#206) of
+// the self-contained TLS 1.3 client (#197). Not independently reviewed
+// (#209).
+//
+// The rules are `docs/tls-pure.md` §5; what that left open is decided
+// in `docs/x509-verify.md` §3 to §5. Revocation is not checked: a
+// revoked certificate that is otherwise valid is accepted
+// (`docs/tls-pure.md` §5.4).
+
+// ---- Refusals (`docs/tls-pure.md` §8) ----
+
+pub fn unknown_issuer() -> [] int {
+    return -30;
+}
+
+pub fn expired() -> [] int {
+    return -31;
+}
+
+pub fn not_yet_valid() -> [] int {
+    return -32;
+}
+
+pub fn bad_signature() -> [] int {
+    return -33;
+}
+
+pub fn name_mismatch() -> [] int {
+    return x509_names.name_mismatch();
+}
+
+pub fn not_ca() -> [] int {
+    return -35;
+}
+
+pub fn path_too_long() -> [] int {
+    return -36;
+}
+
+pub fn name_constraint() -> [] int {
+    return x509_names.name_constraint();
+}
+
+pub fn key_usage() -> [] int {
+    return -38;
+}
+
+pub fn unsupported_algorithm() -> [] int {
+    return -39;
+}
+
+pub fn key_size() -> [] int {
+    return -40;
+}
+
+// The stable name of a refusal: this module's, else `x509`'s.
+pub fn refusal_tag(code: int) -> [] &static [byte] {
+    if code == -30 {
+        return "x509-unknown-issuer";
+    }
+    if code == -31 {
+        return "x509-expired";
+    }
+    if code == -32 {
+        return "x509-not-yet-valid";
+    }
+    if code == -33 {
+        return "x509-bad-signature";
+    }
+    if code == -34 {
+        return "x509-name-mismatch";
+    }
+    if code == -35 {
+        return "x509-not-ca";
+    }
+    if code == -36 {
+        return "x509-path-too-long";
+    }
+    if code == -37 {
+        return "x509-name-constraint";
+    }
+    if code == -38 {
+        return "x509-key-usage";
+    }
+    if code == -39 {
+        return "x509-unsupported-algorithm";
+    }
+    if code == -40 {
+        return "x509-key-size";
+    }
+    return x509.refusal_tag(code);
+}
+
+// ---- Limits (`docs/x509-verify.md` §3) ----
+
+// Signature verifications one `verify` may make.
+pub fn max_signatures() -> [] int {
+    return 64;
+}
+
+// Certificates a server may send for one `verify`.
+pub fn max_sent() -> [] int {
+    return 128;
+}
+
+// The intermediates a TLS server's path may have: 8 certificates, leaf
+// and root included (`docs/tls-pure.md` §5.2).
+pub fn tls_max_intermediates() -> [] int {
+    return 6;
+}
+
+// The intermediates any path may have, self-issued ones included;
+// `verify`'s `max_intermediates` counts only the others, as RFC 5280
+// §6.1.4 counts them.
+fn max_path_intermediates() -> [] int {
+    return 6;
+}
+
+// ---- The store ----
+
+// One root in the store: a 3-byte length, the subject's offset and
+// length in the DER (2 bytes each), then the DER.
+fn entry_header() -> [] int {
+    return 7;
+}
+
+// The roots of the PEM bundle `pem`, appended to `store`. A block that
+// is not a certificate, or a certificate `x509.parse` refuses, is
+// skipped and counted (`docs/x509.md` §5.3: one bad root must not lose
+// the rest). `info[0]` gets the bytes of `store` used, `info[1]` the
+// blocks skipped. Answers the roots stored, or `x509-too-large` when
+// `store` is full.
+pub fn store_load[&p, &s, &i](pem: &p [byte], store: &!s [byte], info: &!i [int]) -> [] int {
+    var used = 0;
+    var count = 0;
+    var skipped = 0;
+    var code = 0;
+    region r {
+        let der = alloc_slice[r](x509.max_certificate(), byte_of(0));
+        let found = alloc_slice[r](2, 0);
+        let view = alloc_slice[r](x509.view_len(), 0);
+        var at = 0;
+        var going = true;
+        while going && code == 0 {
+            let f = x509.pem_next(pem, at, der, found);
+            if f == 1 {
+                going = false;
+            } else if f != 0 {
+                skipped = skipped + 1;
+                if found[1] <= at {
+                    going = false;
+                }
+                at = found[1];
+            } else {
+                at = found[1];
+                let n = found[0];
+                if x509.parse(der[0..n], view) != 0 {
+                    skipped = skipped + 1;
+                } else if used + entry_header() + n > len(store) {
+                    code = -16;
+                } else {
+                    let so = view[x509.subject_start()];
+                    let sl = view[x509.subject_end()] - so;
+                    store[used] = byte_of(n >> 16);
+                    store[used + 1] = byte_of(n >> 8 & 255);
+                    store[used + 2] = byte_of(n & 255);
+                    store[used + 3] = byte_of(so >> 8);
+                    store[used + 4] = byte_of(so & 255);
+                    store[used + 5] = byte_of(sl >> 8);
+                    store[used + 6] = byte_of(sl & 255);
+                    var k = 0;
+                    while k < n {
+                        store[used + entry_header() + k] = der[k];
+                        k = k + 1;
+                    }
+                    used = used + entry_header() + n;
+                    count = count + 1;
+                }
+            }
+        }
+    }
+    info[0] = used;
+    info[1] = skipped;
+    if code != 0 {
+        return code;
+    }
+    return count;
+}
+
+fn u16_at[&s](s: &s [byte], at: int) -> [] int {
+    return int_of(s[at]) * 256 + int_of(s[at + 1]);
+}
+
+fn u24_at[&s](s: &s [byte], at: int) -> [] int {
+    return int_of(s[at]) * 65536 + int_of(s[at + 1]) * 256 + int_of(s[at + 2]);
+}
+
+// ---- One certificate (`docs/x509-verify.md` §4) ----
+
+// Whether `iview`'s certificate can be the issuer of `view`'s, beyond
+// its name: a CA's subject is not empty (RFC 5280 §4.1.2.6), and when
+// the subject's authorityKeyIdentifier and the issuer's
+// subjectKeyIdentifier are both present they are equal, as OpenSSL's
+// `X509_check_akid` requires.
+fn may_issue[&d, &v, &e, &w](der: &d [byte], view: &v [int], issuer: &e [byte], iview: &w [int]) -> [] bool {
+    if iview[x509.subject_end()] - iview[x509.subject_start()] <= 2 {
+        return false;
+    }
+    let a = view[x509.aki_start()];
+    let ae = view[x509.aki_end()];
+    let k = iview[x509.ski_start()];
+    let ke = iview[x509.ski_end()];
+    if a == 0 && ae == 0 || k == 0 && ke == 0 {
+        return true;
+    }
+    return bytes.equal(der[a..ae], issuer[k..ke]);
+}
+
+// Whether the certificate's subject is its issuer, byte for byte.
+fn self_issued[&d, &v](der: &d [byte], view: &v [int]) -> [] bool {
+    return bytes.equal(der[view[x509.subject_start()]..view[x509.subject_end()]], der[view[x509.issuer_start()]..view[x509.issuer_end()]]);
+}
+
+fn time_ok[&v](view: &v [int], now: int) -> [] int {
+    if now < view[x509.not_before()] {
+        return not_yet_valid();
+    }
+    if now > view[x509.not_after()] {
+        return expired();
+    }
+    return 0;
+}
+
+// The RSA modulus's size in bits.
+fn modulus_bits[&d, &v](der: &d [byte], view: &v [int]) -> [] int {
+    var s = view[x509.rsa_modulus_start()];
+    let e = view[x509.rsa_modulus_end()];
+    while s < e && int_of(der[s]) == 0 {
+        s = s + 1;
+    }
+    if s == e {
+        return 0;
+    }
+    var top = int_of(der[s]);
+    var bits = 0;
+    while top > 0 {
+        bits = bits + 1;
+        top = top >> 1;
+    }
+    return 8 * (e - s - 1) + bits;
+}
+
+// The key: RSA of 2048 to 4096 bits, EC on P-256 or P-384, Ed25519.
+fn key_ok[&d, &v](der: &d [byte], view: &v [int]) -> [] int {
+    let alg = view[x509.key_algorithm()];
+    if alg == x509.oid_rsa_encryption() {
+        let bits = modulus_bits(der, view);
+        if bits < 2048 || bits > 4096 {
+            return key_size();
+        }
+        return 0;
+    }
+    if alg == x509.oid_ec_public_key() {
+        let curve = view[x509.key_curve()];
+        if curve == x509.oid_p256() || curve == x509.oid_p384() {
+            return 0;
+        }
+        return unsupported_algorithm();
+    }
+    if alg == x509.oid_ed25519() {
+        return 0;
+    }
+    return unsupported_algorithm();
+}
+
+fn oid_sha256() -> [] int {
+    return 15;
+}
+
+fn oid_sha384() -> [] int {
+    return 16;
+}
+
+fn oid_sha512() -> [] int {
+    return 17;
+}
+
+fn oid_mgf1() -> [] int {
+    return 18;
+}
+
+fn hash_len(oid: int) -> [] int {
+    if oid == oid_sha256() {
+        return 32;
+    }
+    if oid == oid_sha384() {
+        return 48;
+    }
+    if oid == oid_sha512() {
+        return 64;
+    }
+    return 0;
+}
+
+// A hash AlgorithmIdentifier at `der[at..end]` (parameters absent or
+// NULL): its length in bytes, or 0.
+fn hash_algorithm[&d, &t](der: &d [byte], at: int, end: int, t: &!t [int]) -> [] int {
+    if x509.tlv(der, at, end, t) != 0 || t[0] != 0x30 || t[2] != end {
+        return 0;
+    }
+    let se = t[2];
+    if x509.tlv(der, t[1], se, t) != 0 || t[0] != 0x06 {
+        return 0;
+    }
+    let h = hash_len(x509.oid_code(der, t[1], t[2]));
+    if t[2] != se && (se - t[2] != 2 || int_of(der[t[2]]) != 5 || int_of(der[t[2] + 1]) != 0) {
+        return 0;
+    }
+    return h;
+}
+
+// RSASSA-PSS parameters `der[s..e]` (RFC 4055 §3.1): a hash of SHA-256,
+// -384 or -512, MGF1 with the same hash, a salt the hash's length, the
+// trailer 1. The hash's length, or 0 for anything else.
+fn pss_params[&d](der: &d [byte], s: int, e: int) -> [] int {
+    var h = 0;
+    region r {
+        let t = alloc_slice[r](3, 0);
+        let u = alloc_slice[r](3, 0);
+        if x509.tlv(der, s, e, t) == 0 && t[0] == 0x30 && t[2] == e {
+            var p = t[1];
+            let se = t[2];
+            var hash = 0;
+            var mgf = 0;
+            var salt = -1;
+            var bad = false;
+            var last = 0;
+            while p < se && !bad {
+                if x509.tlv(der, p, se, t) != 0 || t[0] <= last {
+                    bad = true;
+                } else {
+                    last = t[0];
+                    let cs = t[1];
+                    let ce = t[2];
+                    p = ce;
+                    if last == 0xa0 {
+                        hash = hash_algorithm(der, cs, ce, u);
+                    } else if last == 0xa1 {
+                        // SEQUENCE { mgf1, hash AlgorithmIdentifier }
+                        if x509.tlv(der, cs, ce, u) != 0 || u[0] != 0x30 || u[2] != ce {
+                            bad = true;
+                        } else {
+                            let me = u[2];
+                            if x509.tlv(der, u[1], me, u) != 0 || u[0] != 0x06 || x509.oid_code(der, u[1], u[2]) != oid_mgf1() {
+                                bad = true;
+                            } else {
+                                mgf = hash_algorithm(der, u[2], me, u);
+                            }
+                        }
+                    } else if last == 0xa2 || last == 0xa3 {
+                        var v = -1;
+                        if x509.tlv(der, cs, ce, u) == 0 && u[0] == 0x02 && u[2] == ce && u[2] - u[1] == 1 {
+                            v = int_of(der[u[1]]);
+                        }
+                        if last == 0xa2 {
+                            salt = v;
+                        } else if v != 1 {
+                            bad = true;
+                        }
+                    } else {
+                        bad = true;
+                    }
+                }
+            }
+            if !bad && hash > 0 && mgf == hash && salt == hash {
+                h = hash;
+            }
+        }
+    }
+    return h;
+}
+
+fn digest_of[&m, &o](h: int, message: &m [byte], out: &!o [byte]) -> [] int {
+    if h == 32 {
+        crypto.sha256(message, out);
+    } else if h == 48 {
+        crypto.sha384(message, out);
+    } else {
+        crypto.sha512(message, out);
+    }
+    return 0;
+}
+
+// The subject's signature by the issuer's key. 0, or a refusal.
+fn signature_ok[&d, &v, &e, &w](der: &d [byte], view: &v [int], issuer: &e [byte], iview: &w [int]) -> [] int {
+    let k = key_ok(issuer, iview);
+    if k != 0 {
+        return k;
+    }
+    let alg = view[x509.signature_algorithm()];
+    let ps = view[x509.signature_params_start()];
+    let pe = view[x509.signature_params_end()];
+    let key_alg = iview[x509.key_algorithm()];
+    let tbs = der[view[x509.tbs_start()]..view[x509.tbs_end()]];
+    let sig = der[view[x509.signature_start()]..view[x509.signature_end()]];
+    let null_or_absent = pe == ps || pe - ps == 2 && int_of(der[ps]) == 5 && int_of(der[ps + 1]) == 0;
+    var h = 0;
+    var kind = 0;
+    if alg == 3 || alg == 4 || alg == 5 {
+        if !null_or_absent {
+            return unsupported_algorithm();
+        }
+        h = 32;
+        if alg == 4 {
+            h = 48;
+        } else if alg == 5 {
+            h = 64;
+        }
+        kind = 1;
+    } else if alg == 6 {
+        h = pss_params(der, ps, pe);
+        if h == 0 {
+            return unsupported_algorithm();
+        }
+        kind = 2;
+    } else if alg == 11 || alg == 12 || alg == 13 {
+        if pe != ps {
+            return unsupported_algorithm();
+        }
+        h = 32;
+        if alg == 12 {
+            h = 48;
+        } else if alg == 13 {
+            h = 64;
+        }
+        kind = 3;
+    } else if alg == 14 {
+        if pe != ps {
+            return unsupported_algorithm();
+        }
+        kind = 4;
+    } else {
+        return unsupported_algorithm();
+    }
+    var code = 0;
+    region r {
+        if kind == 1 || kind == 2 {
+            if key_alg != x509.oid_rsa_encryption() {
+                code = bad_signature();
+            } else {
+                let digest = alloc_slice[r](h, byte_of(0));
+                digest_of(h, tbs, digest);
+                let work = alloc_slice[r](rsa.work_len(), 0);
+                let n = issuer[iview[x509.rsa_modulus_start()]..iview[x509.rsa_modulus_end()]];
+                let e = issuer[iview[x509.rsa_exponent_start()]..iview[x509.rsa_exponent_end()]];
+                var v = 0;
+                if kind == 1 {
+                    v = rsa.pkcs1_verify(h, n, e, digest, sig, work);
+                } else {
+                    v = rsa.pss_verify(h, h, h, n, e, digest, sig, work);
+                }
+                if v == rsa.refused_modulus_size() || v == rsa.refused_even_modulus() {
+                    code = key_size();
+                } else if v != 0 {
+                    code = bad_signature();
+                }
+            }
+        } else if kind == 3 {
+            if key_alg != x509.oid_ec_public_key() {
+                code = bad_signature();
+            } else {
+                var curve = 384;
+                if iview[x509.key_curve()] == x509.oid_p256() {
+                    curve = 256;
+                }
+                let digest = alloc_slice[r](h, byte_of(0));
+                digest_of(h, tbs, digest);
+                let work = alloc_slice[r](ecdsa.work_len(), 0);
+                if ecdsa.verify_der(curve, digest, issuer[iview[x509.key_start()]..iview[x509.key_end()]], sig, work) != 0 {
+                    code = bad_signature();
+                }
+            }
+        } else if key_alg != x509.oid_ed25519() || ed25519.verify(issuer[iview[x509.key_start()]..iview[x509.key_end()]], tbs, sig) != 1 {
+            code = bad_signature();
+        }
+    }
+    return code;
+}
+
+// An issuer's own checks: `cA` (a v1 root has none and is accepted),
+// keyCertSign when keyUsage is present, its path length against the
+// `below` intermediates under it, and serverAuth when an intermediate
+// has an EKU.
+fn issuer_ok[&v](view: &v [int], below: int, root: bool) -> [] int {
+    if view[x509.is_ca()] != 1 && !(root && view[x509.version()] == 1) {
+        return not_ca();
+    }
+    let ku = view[x509.key_usage()];
+    if ku >= 0 && ku >> 5 & 1 == 0 {
+        return key_usage();
+    }
+    let pl = view[x509.path_len()];
+    if pl >= 0 && below > pl {
+        return path_too_long();
+    }
+    let eku = view[x509.ext_key_usage()];
+    if !root && eku >= 0 && eku & x509.eku_server_auth() == 0 {
+        return key_usage();
+    }
+    return 0;
+}
+
+// The leaf's own checks: its key, its time, digitalSignature when
+// keyUsage is present (and keyCertSign only with cA), serverAuth when
+// EKU is (`anyExtendedKeyUsage` alone is refused, as OpenSSL's server
+// purpose does), and no name constraints unless it is a CA.
+fn leaf_ok[&d, &v](der: &d [byte], view: &v [int], now: int) -> [] int {
+    var code = key_ok(der, view);
+    if code == 0 {
+        code = time_ok(view, now);
+    }
+    let ku = view[x509.key_usage()];
+    if code == 0 && ku >= 0 && ku & 1 == 0 {
+        code = key_usage();
+    }
+    // keyCertSign only with cA (RFC 5280 §4.2.1.3).
+    if code == 0 && ku >= 0 && ku >> 5 & 1 == 1 && view[x509.is_ca()] != 1 {
+        code = key_usage();
+    }
+    // Name constraints only in a CA (RFC 5280 §4.2.1.10).
+    if code == 0 && view[x509.is_ca()] != 1 && (view[x509.name_constraints_start()] != 0 || view[x509.name_constraints_end()] != 0) {
+        code = name_constraint();
+    }
+    let eku = view[x509.ext_key_usage()];
+    if code == 0 && eku >= 0 && eku & x509.eku_server_auth() == 0 {
+        code = key_usage();
+    }
+    return code;
+}
+
+// ---- Building a path (`docs/x509-verify.md` §3) ----
+
+// `st`: [0] signatures made, [1] the deepest failure's depth, [2] its
+// code, [3] name-constraint comparisons.
+fn record[&s](st: &!s [int], depth: int, code: int) -> [] int {
+    if depth >= st[1] {
+        st[1] = depth;
+        st[2] = code;
+    }
+    return code;
+}
+
+// The non-self-issued intermediates among path positions 1 to `depth`:
+// what a CA placed above position `depth` has below it.
+fn intermediates_below[&c, &r, &v, &p](certs: &c [byte], ranges: &r [int], views: &v [int], path: &p [int], depth: int) -> [] int {
+    var n = 0;
+    var k = 1;
+    while k <= depth {
+        let i = path[k];
+        let w = x509.view_len() * i;
+        if !self_issued(certs[ranges[2 * i]..ranges[2 * i + 1]], views[w..w + x509.view_len()]) {
+            n = n + 1;
+        }
+        k = k + 1;
+    }
+    return n;
+}
+
+// The issuer `ca`'s name constraints over path positions 0 to `depth`
+// (self-issued intermediates excepted, RFC 5280 §6.1.3).
+fn constrain[&a, &w, &c, &r, &v, &p, &s](ca: &a [byte], cview: &w [int], certs: &c [byte], ranges: &r [int], views: &v [int], path: &p [int], depth: int, st: &!s [int]) -> [] int {
+    let ns = cview[x509.name_constraints_start()];
+    let ne = cview[x509.name_constraints_end()];
+    if ns == 0 && ne == 0 {
+        return 0;
+    }
+    var code = 0;
+    var k = 0;
+    while k <= depth && code == 0 {
+        let i = path[k];
+        let w = x509.view_len() * i;
+        let der = certs[ranges[2 * i]..ranges[2 * i + 1]];
+        let view = views[w..w + x509.view_len()];
+        if k == 0 || !self_issued(der, view) {
+            code = x509_names.constraints_ok(ca, ns, ne, der, view[x509.san_start()], view[x509.san_end()], st[3..4]);
+        }
+        k = k + 1;
+    }
+    return code;
+}
+
+fn in_path[&p](path: &p [int], depth: int, i: int) -> [] bool {
+    var k = 0;
+    while k <= depth {
+        if path[k] == i {
+            return true;
+        }
+        k = k + 1;
+    }
+    return false;
+}
+
+// Extends the path whose last certificate is at position `depth`: a
+// root that signed it ends the path; else each sent certificate that
+// did, in turn. 0 when a path reaches a root, else the deepest
+// refusal.
+fn extend[&s, &c, &r, &v, &o, &p, &t](store: &s [byte], certs: &c [byte], ranges: &r [int], views: &v [int], ok: &o [int], path: &!p [int], depth: int, max_intermediates: int, now: int, st: &!t [int]) -> [] int {
+    let cur = path[depth];
+    let cw = x509.view_len() * cur;
+    let der = certs[ranges[2 * cur]..ranges[2 * cur + 1]];
+    let view = views[cw..cw + x509.view_len()];
+    let issuer = der[view[x509.issuer_start()]..view[x509.issuer_end()]];
+    let below = intermediates_below(certs, ranges, views, path, depth);
+    var tried = false;
+    var code = -1;
+    // The roots first.
+    region r {
+        let rview = alloc_slice[r](x509.view_len(), 0);
+        var at = 0;
+        while at + 7 <= len(store) && code != 0 {
+            let n = u24_at(store, at);
+            let so = u16_at(store, at + 3);
+            let sl = u16_at(store, at + 5);
+            let root = store[at + 7..at + 7 + n];
+            at = at + 7 + n;
+            if bytes.equal(root[so..so + sl], issuer) && x509.parse(root, rview) == 0 && may_issue(der, view, root, rview) {
+                tried = true;
+                if st[0] >= max_signatures() {
+                    code = record(st, depth + 1, path_too_long());
+                } else {
+                    st[0] = st[0] + 1;
+                    var c = signature_ok(der, view, root, rview);
+                    if c == 0 {
+                        c = time_ok(rview, now);
+                    }
+                    if c == 0 {
+                        c = issuer_ok(rview, below, true);
+                    }
+                    if c == 0 {
+                        c = constrain(root, rview, certs, ranges, views, path, depth, st);
+                    }
+                    if c == 0 {
+                        code = 0;
+                    } else {
+                        record(st, depth + 1, c);
+                    }
+                }
+            }
+        }
+    }
+    if code == 0 {
+        return 0;
+    }
+    // Then what the server sent.
+    var j = 1;
+    let n = len(ranges) / 2;
+    while j < n && code != 0 {
+        let jw = x509.view_len() * j;
+        let jder = certs[ranges[2 * j]..ranges[2 * j + 1]];
+        let jview = views[jw..jw + x509.view_len()];
+        if ok[j] == 1 && !in_path(path, depth, j) && bytes.equal(jder[jview[x509.subject_start()]..jview[x509.subject_end()]], issuer) && may_issue(der, view, jder, jview) {
+            tried = true;
+            var counted = below;
+            if !self_issued(jder, jview) {
+                counted = counted + 1;
+            }
+            if depth + 1 > max_path_intermediates() || counted > max_intermediates {
+                record(st, depth + 1, path_too_long());
+            } else if st[0] >= max_signatures() {
+                record(st, depth + 1, path_too_long());
+            } else {
+                st[0] = st[0] + 1;
+                var c = signature_ok(der, view, jder, jview);
+                if c == 0 {
+                    c = time_ok(jview, now);
+                }
+                if c == 0 {
+                    c = issuer_ok(jview, below, false);
+                }
+                if c == 0 {
+                    c = constrain(jder, jview, certs, ranges, views, path, depth, st);
+                }
+                if c == 0 {
+                    path[depth + 1] = j;
+                    c = extend(store, certs, ranges, views, ok, path, depth + 1, max_intermediates, now, st);
+                }
+                if c == 0 {
+                    code = 0;
+                } else {
+                    record(st, depth + 1, c);
+                }
+            }
+        }
+        j = j + 1;
+    }
+    if code == 0 {
+        return 0;
+    }
+    if !tried {
+        record(st, depth, unknown_issuer());
+    }
+    return st[2];
+}
+
+// ---- Verifying ----
+
+// The chain the server sent: `certs[ranges[2i]..ranges[2i + 1]]` is
+// certificate `i`, the leaf first. Verified against the roots of
+// `store` (`store_load`), the name `host` (a DNS name or an IP literal)
+// and `now` (seconds since 1970), with at most `max_intermediates`
+// between the leaf and a root. 0, or a refusal (`refusal_tag`).
+// Revocation is not checked.
+pub fn verify[&s, &c, &r, &h](store: &s [byte], certs: &c [byte], ranges: &r [int], host: &h [byte], now: int, max_intermediates: int) -> [] int {
+    let n = len(ranges) / 2;
+    if n < 1 {
+        return -10;
+    }
+    if n > max_sent() {
+        return -16;
+    }
+    var code = 0;
+    region a {
+        let name = alloc_slice[a](256, byte_of(0));
+        let hinfo = alloc_slice[a](2, 0);
+        if len(host) > 255 {
+            code = name_mismatch();
+        } else {
+            code = x509_names.host_parse(host, name, hinfo);
+        }
+        let views = alloc_slice[a](x509.view_len() * n, 0);
+        let ok = alloc_slice[a](n, 0);
+        var i = 0;
+        while i < n && code == 0 {
+            let s = ranges[2 * i];
+            let e = ranges[2 * i + 1];
+            if s < 0 || e < s || e > len(certs) {
+                code = -10;
+            } else {
+                let c = x509.parse(certs[s..e], views[x509.view_len() * i..x509.view_len() * (i + 1)]);
+                if c == 0 {
+                    ok[i] = 1;
+                } else if i == 0 {
+                    // The leaf must parse; an unusable intermediate is
+                    // only not a candidate.
+                    code = c;
+                }
+            }
+            i = i + 1;
+        }
+        if code == 0 {
+            code = leaf_ok(certs[ranges[0]..ranges[1]], views[0..x509.view_len()], now);
+        }
+        if code == 0 {
+            let path = alloc_slice[a](max_path_intermediates() + 2, 0);
+            let st = alloc_slice[a](4, 0);
+            st[1] = -1;
+            code = extend(store, certs, ranges, views, ok, path, 0, max_intermediates, now, st);
+        }
+        if code == 0 {
+            let leaf = certs[ranges[0]..ranges[1]];
+            let kind = hinfo[1];
+            if !x509_names.san_matches(leaf, views[x509.san_start()], views[x509.san_end()], name[0..hinfo[0]], kind) {
+                code = name_mismatch();
+            }
+        }
+    }
+    return code;
+}
