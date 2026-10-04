@@ -30,3 +30,10 @@ Apache License 2.0 in `LICENSE` beside them.
 | `rsa_signature_4096_sha256_test.json` | 258 | `conformance/rsa.rs` (`docs/rsa.md` §5.1) |
 | `rsa_signature_4096_sha384_test.json` | 259 | `conformance/rsa.rs` (`docs/rsa.md` §5.1) |
 | `rsa_signature_4096_sha512_test.json` | 259 | `conformance/rsa.rs` (`docs/rsa.md` §5.1) |
+| `ecdsa_secp256r1_sha256_test.json` | 484 | `conformance/ecdsa.rs` (`docs/ecdsa.md` §5.1) |
+| `ecdsa_secp256r1_sha256_p1363_test.json` | 262 | `conformance/ecdsa.rs` (`docs/ecdsa.md` §5.1) |
+| `ecdsa_secp256r1_sha512_test.json` | 554 | `conformance/ecdsa.rs` (`docs/ecdsa.md` §5.1) |
+| `ecdsa_secp384r1_sha384_test.json` | 504 | `conformance/ecdsa.rs` (`docs/ecdsa.md` §5.1) |
+| `ecdsa_secp384r1_sha384_p1363_test.json` | 280 | `conformance/ecdsa.rs` (`docs/ecdsa.md` §5.1) |
+| `ecdsa_secp384r1_sha256_test.json` | 472 | `conformance/ecdsa.rs` (`docs/ecdsa.md` §5.1) |
+| `ecdsa_secp384r1_sha512_test.json` | 542 | `conformance/ecdsa.rs` (`docs/ecdsa.md` §5.1) |
