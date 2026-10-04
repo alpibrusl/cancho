@@ -215,3 +215,11 @@ the bytes crossed the connection both ways intact. Repeated with
 `"cranelift too"`, same result. Neither is CI-gated (the status note
 above says why); both are hand-verified transcripts, recorded here
 rather than only run once and discarded.
+
+> **Corrected (`tls-nonblocking.md` §2): the example's handshake failures were read as successes.** `examples/tls_client/tls_client.ls`
+> declared `SSL_connect`, `SSL_write`, `SSL_read`, `SSL_set_fd` and `SSL_shutdown` as returning `int`, and a C `int` result is only
+> sign-extended if the declaration says `c_int`: a failing `SSL_connect` (-1) was read as 4294967295, `<= 0` was false, and the program
+> wrote to a session that never existed (`examples/tls_nb/gaps/g13_int_vs_c_int.ls`). The five are `c_int` now. Separately, run against
+> a server that accepts and closes, the example is still killed by `SIGPIPE`: OpenSSL's socket BIO answers the end of file with a fatal
+> alert written by `write(2)`. It is a one-connection demonstration and is left as it is; a service must use the memory-BIO transport of
+> `examples/tls_nb/` or ignore the signal.
