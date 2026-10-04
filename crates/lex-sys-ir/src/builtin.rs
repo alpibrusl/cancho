@@ -520,6 +520,10 @@ pub enum Builtin {
     /// `dir_list_close(DirList) -> [] int`: `closedir`'s answer; consumes
     /// the listing.
     DirListClose,
+    /// `dir_stat(&Dir, name) -> [dir_read] DirStat`: `fstatat` with
+    /// `AT_SYMLINK_NOFOLLOW` on one checked component -- a link is reported,
+    /// never followed (`docs/directory-listing.md` §3.2).
+    DirStat,
     /// `null_ptr() -> [] c_ptr` — the one producer of a `c_ptr` that is
     /// not a foreign call's return, edition 3 only
     /// (`docs/opaque-pointers.md` §3).
@@ -662,6 +666,7 @@ impl Builtin {
         Builtin::DirList,
         Builtin::DirNext,
         Builtin::DirListClose,
+        Builtin::DirStat,
         Builtin::NullPtr,
         Builtin::Spawn,
         Builtin::Join,
@@ -762,6 +767,7 @@ impl Builtin {
             Builtin::DirList => "dir_list",
             Builtin::DirNext => "dir_next",
             Builtin::DirListClose => "dir_list_close",
+            Builtin::DirStat => "dir_stat",
             Builtin::NullPtr => "null_ptr",
             Builtin::Spawn => "spawn",
             Builtin::Join => "join",
@@ -840,7 +846,8 @@ impl Builtin {
             | Builtin::DirSync
             | Builtin::DirList
             | Builtin::DirNext
-            | Builtin::DirListClose => 6,
+            | Builtin::DirListClose
+            | Builtin::DirStat => 6,
             // `docs/file-writes.md`: edition 5, for the same reason --
             // `file_write` and `open_new` are names a program may already
             // declare against libc.
@@ -947,6 +954,8 @@ impl Builtin {
             // buffer's.
             Builtin::DirList => 1,
             Builtin::DirNext => 2,
+            // The handle's region and the name's.
+            Builtin::DirStat => 2,
             Builtin::TcpAccept
             | Builtin::ConnNonblocking
             | Builtin::ConnNodelay
@@ -1437,6 +1446,22 @@ impl Builtin {
                 named(PRELUDE_LISTED),
             ),
             Builtin::DirListClose => (vec![named(PRELUDE_DIR_LIST)], Type::Int),
+            // §3.2: `dir_enter`'s shape, answering a status.
+            Builtin::DirStat => (
+                vec![
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_DIR)),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                named(PRELUDE_DIR_STAT),
+            ),
             Builtin::ConnDetach => (vec![named(PRELUDE_CONN)], Type::Int),
             Builtin::ConnAttach => (vec![Type::Int], named(PRELUDE_ATTACHED)),
             Builtin::ClockMs | Builtin::ClockUnixMs => (
@@ -1593,7 +1618,7 @@ impl Builtin {
             Builtin::DirEnter | Builtin::DirOpenRead => Effects::plain(["dir_read"]),
             // `docs/directory-listing.md` §3.3: listing is reading beneath the
             // directory, and closing a listing performs nothing.
-            Builtin::DirList | Builtin::DirNext => Effects::plain(["dir_read"]),
+            Builtin::DirList | Builtin::DirNext | Builtin::DirStat => Effects::plain(["dir_read"]),
             // §3: everything that changes what is beneath a directory.
             Builtin::DirOpenNew
             | Builtin::DirOpenAppend

@@ -770,6 +770,8 @@ pub const PRELUDE: &[&str] = &[
     "Listed",
     // `Listed`'s first arm.
     "Name",
+    // What `dir_stat` answers.
+    "DirStat",
 ];
 
 impl Ast {

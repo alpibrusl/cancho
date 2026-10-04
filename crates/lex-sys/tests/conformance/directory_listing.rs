@@ -12,8 +12,9 @@ const BACKENDS: [&str; 2] = ["cranelift", "llvm"];
 
 /// `argv[1]` is the directory, `argv[2]` the mode: `sorted` prints `std.dirs.list`'s answer, `raw` every
 /// `dir_next` answer in the kernel's order, `short` the first `dir_next` answer into a three-byte buffer,
-/// `cap` `std.dirs.list` with at most two names, and `twice` two listings of one `Dir` read in turns.
-/// Each name is a line `<hex> <kind>`; a failure is `err <errno>`.
+/// `cap` `std.dirs.list` with at most two names, `twice` two listings of one `Dir` read in turns, and
+/// `statall` `dir_stat` on every sorted name (`<hex> <kind> <size> <mtime>`) and then on five names that
+/// are not one component. Each name is a line `<hex> <kind>`; a failure is `err <errno>`.
 const PROBE: &str = r#"edition 6;
 
 import std.dirs;
@@ -171,6 +172,44 @@ fn sorted[&h, &i, &d](heap: &!h Heap, io: &!i Io, dir: &d Dir, most: int) -> [he
     return 0;
 }
 
+fn stat_one[&i, &d, &n](io: &!i Io, dir: &d Dir, name: &n [byte]) -> [io_write, dir_read] int {
+    match dir_stat(dir, name) {
+        DirStat::Ok(kind, size, mtime) => {
+            entry(io, name, kind);
+            write_bytes(io, "  ");
+            digits(io, size);
+            putchar(io, ' ');
+            digits(io, mtime);
+            putchar(io, 10);
+        }
+        DirStat::Failed(e) => {
+            failed(io, e);
+        }
+    }
+    return 0;
+}
+
+fn statuses[&h, &i, &d](heap: &!h Heap, io: &!i Io, dir: &d Dir) -> [heap, io_write, dir_read] int {
+    let names = dirs.list(heap, dir, 1000000);
+    borrow names as &n in {
+        var k = 0;
+        while k < dirs.count(n) {
+            stat_one(io, dir, dirs.name(n, k));
+            k = k + 1;
+        }
+    }
+    dirs.drop(heap, names);
+    stat_one(io, dir, "..");
+    stat_one(io, dir, ".");
+    stat_one(io, dir, "sub/x");
+    stat_one(io, dir, "");
+    region a {
+        let long = alloc_slice[a](256, byte_of('y'));
+        stat_one(io, dir, long);
+    }
+    return 0;
+}
+
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);
     release(ffi); release(net); release(clock); release(signals);
@@ -192,6 +231,8 @@ fn main(world: World) -> [] int {
                                     status = sorted(p, o, r, 2);
                                 } else if len(mode) == 5 && int_of(mode[0]) == 's' {
                                     status = raw(o, r, 3, 1);
+                                } else if len(mode) == 7 {
+                                    status = statuses(p, o, r);
                                 } else {
                                     status = twice(o, r);
                                 }
@@ -356,5 +397,39 @@ fn a_short_buffer_a_cap_and_two_listings_on_both_backends() {
             expected(&root).into_iter().flat_map(|l| [l.clone(), l]).collect();
         want.sort();
         assert_eq!(both, want, "`--backend {backend}`: two listings");
+    }
+}
+
+/// What `status` must print: every entry Rust sees, sorted as bytes, with `lstat`'s kind, size and
+/// whole-second modification time, then `EINVAL` five times.
+fn expected_status(dir: &Path) -> Vec<String> {
+    use std::os::unix::fs::MetadataExt;
+    let mut out: Vec<String> = expected(dir)
+        .into_iter()
+        .map(|line| {
+            let hex = line.split(' ').next().unwrap_or("").to_owned();
+            let bytes: Vec<u8> = (0..hex.len() / 2)
+                .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap_or(0))
+                .collect();
+            let meta = std::fs::symlink_metadata(dir.join(std::ffi::OsStr::from_bytes(&bytes)))
+                .expect("an entry");
+            format!("{line}\n  {} {}", meta.len(), meta.mtime())
+        })
+        .flat_map(|two| two.split('\n').map(str::to_owned).collect::<Vec<_>>())
+        .collect();
+    out.extend(std::iter::repeat_n("err 22".to_owned(), 5));
+    out
+}
+
+#[test]
+fn status_is_lstat_and_never_follows_a_link_on_both_backends() {
+    let scratch = scratch("directory-status");
+    let root = hostile(&scratch, 20);
+    std::fs::write(root.join("sized.txt"), "twelve bytes").expect("a writable scratch directory");
+    let want = expected_status(&root);
+    for backend in BACKENDS {
+        let exe = build(&scratch, backend);
+        // The FIFO is among the entries: a status that opened it would block here.
+        assert_eq!(probe(&exe, &root, "statall"), want, "`--backend {backend}`");
     }
 }

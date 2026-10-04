@@ -1,8 +1,8 @@
 # Directory listing and file status: reading a directory beneath a handle
 
-Status: **slice 1 built** (`dir_list`, `dir_next`, `dir_list_close`, `std.dirs.list`), edition 6, both backends;
-Linux measured, Darwin's `dirent` offsets written and run only by CI. Slice 2 (`dir_stat`) and slice 3 (the
-`lexsys-tools` `list` tool) are below, not built. Issue #222, gaps L2 (no listing) and L3 (no status without opening)
+Status: **slices 1 and 2 built** (`dir_list`, `dir_next`, `dir_list_close`, `std.dirs.list`; `dir_stat`), edition 6,
+both backends; Linux measured, Darwin's `dirent` offsets run by CI's hostile listing and its `stat` offsets by CI's
+status test. Slice 3 (the `lexsys-tools` `list` tool) is below, not built. Issue #222, gaps L2 (no listing) and L3 (no status without opening)
 of [`agent-toolbox.md`](agent-toolbox.md). The issue asks for `fs_list` and `fs_stat` on a path under `Fs`; this
 document puts the same capability on a `Dir` instead ([`directory-handles.md`](directory-handles.md), #227), §2 says
 why, and that change of shape was decided by a person on the design's PR (§7).
@@ -47,7 +47,7 @@ dir_list(dir: &Dir) -> [dir_read] Listing                  // Listing::Ok(DirLis
 dir_next(list: &!DirList, name: &![byte]) -> [dir_read] Listed
                                                            // Listed::Name(int, int) | Listed::End | Listed::Failed(int)
 dir_list_close(list: DirList) -> [] int
-dir_stat(dir: &Dir, name: &[byte]) -> [dir_read] Status    // Status::Ok(int, int, int) | Status::Failed(int)
+dir_stat(dir: &Dir, name: &[byte]) -> [dir_read] DirStat   // DirStat::Ok(int, int, int) | DirStat::Failed(int)
 ```
 
 ### 3.1 Listing
@@ -74,8 +74,9 @@ dir_stat(dir: &Dir, name: &[byte]) -> [dir_read] Status    // Status::Ok(int, in
 ### 3.2 Status
 
 **`dir_stat(dir, name)`** is `fstatat(fd, name, &st, AT_SYMLINK_NOFOLLOW)` on one checked component, answering
-`Status::Ok(kind, size, mtime)` (kind numbered as in §3.1, never `0`; size in bytes; modification time in whole
-seconds since the epoch) or `Status::Failed(errno)`. It **never follows a link**: a link answers kind `3` and the
+`DirStat::Ok(kind, size, mtime)` (kind numbered as in §3.1, never `0`; size in bytes; modification time in whole
+seconds since the epoch) or `DirStat::Failed(errno)`. *(Renamed while building: this said `Status`, a name too many programs declare
+for the prelude to take at an edition, as `editions.md` §7 found for `Conn`.)* It **never follows a link**: a link answers kind `3` and the
 link's own size, a dangling link included. Following one is `dir_enter` or `dir_open_read`, which refuse links
 anyway. Status is not opening: a FIFO answers kind `4` without the open that would block on it.
 
@@ -163,17 +164,20 @@ directory holds.
 * `tests/reject/`: an unclosed `DirList` (`linear-value-unconsumed`), one taken apart by a pattern
   (`linear-value-taken-apart`, naming `dir_list_close`), `dir_next` in a row that does not say `dir_read`
   (`effect-not-declared`), and `dir_list` at edition 5 (`not-a-function`).
-* Slice 2 adds: `dir_stat` on each hostile entry equal to `lstat`'s kind, size and `int(st_mtime)`; the dangling link
-  a link, not `ENOENT`; the FIFO answered without blocking; `..`, `.`, `a/b`, an empty name and a 256-byte name
-  `EINVAL` with no call.
+* Slice 2: `dir_stat` on every entry of a hostile directory (20 files plus the cases above and a 12-byte file) equal to
+  `lstat`'s kind, size and whole-second `mtime`, on both backends; the dangling link a link of 7 bytes, not `ENOENT`;
+  the FIFO answered without blocking; `..`, `.`, `sub/x`, an empty name and a 256-byte name `EINVAL` with no call.
+  The accept fixture checks `dir_stat` agrees with the listing on every kind of `/` the listing knew, and
+  `tests/reject/dir_stat_not_declared.ls` that a status performs `dir_read`.
 * **Mutants (slice 1): 19, all killed.** On each backend: `d_name` read one byte off; `d_type` read one byte off;
   `d_type` mapped wrong (a directory called a file); `.` and `..` both leaked; `..` alone leaked; the short-buffer check
   skipped. In `std.dirs`: unsorted, reversed, the cap ignored. In the IR: the steps performing nothing, the builtins at
   edition 5, a `DirList` that a pattern may take apart, and owning a `DirList` not discharging `dir_read`. The last
   survived the first run -- no fixture owned a listing outright -- and the accept fixture's `drain`, row `[]`, was added
   for it; the Cranelift `d_type` mutant first missed its target after `cargo fmt` rewrapped the line and was re-run.
-  Slice 2 adds `fstatat` without `AT_SYMLINK_NOFOLLOW`, `st_size` or `st_mtim` at the wrong offset, and `dir_stat`'s
-  name check skipped.
+* **Mutants (slice 2): 12, all killed.** On each backend: `fstatat` without `AT_SYMLINK_NOFOLLOW`; `st_mode`,
+  `st_size` or `st_mtim` read at the wrong offset; a link's mode mapped to a file. In the IR: `dir_stat` performing
+  nothing, and at edition 5. `dir_stat`'s name check is `dir_enter`'s own (`dir_call`), whose mutants #250 killed.
 
 ## 7. The decision, and what this does not do
 

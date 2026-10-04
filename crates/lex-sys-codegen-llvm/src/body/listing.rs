@@ -1,5 +1,5 @@
-//! Directory listing (`docs/directory-listing.md`): `dir_list`, `dir_next`
-//! and `dir_list_close`. Mirrors `lex-sys-codegen`'s own `body/listing.rs`.
+//! Directory listing (`docs/directory-listing.md`): `dir_list`, `dir_next`,
+//! `dir_list_close` and `dir_stat`. Mirrors `lex-sys-codegen`'s own `body/listing.rs`.
 //!
 //! A listing is libc's `DIR` stream on a descriptor of its own --
 //! `openat(dir, ".", O_RDONLY | O_DIRECTORY)`, not a `dup`, so two listings of
@@ -256,5 +256,82 @@ impl<'a> FuncEmitter<'a> {
         let wide = self.fresh();
         self.out.push_str(&format!("  {wide} = sext i32 {answer} to i64\n"));
         Ok(vec![LValue::Reg(wide)])
+    }
+
+    /// `dir_stat(dir, name)`: `args` is the handle's address, then the name's
+    /// pointer and length. The name has `dir_enter`'s check; then
+    /// `fstatat(fd, name, &st, AT_SYMLINK_NOFOLLOW)` into a stack buffer read at
+    /// the target's offsets (§3.4). `DirStat`'s five leaves: the tag, the kind,
+    /// the size, the modification time and the reason.
+    pub(crate) fn dir_stat(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        if args.len() != 3 {
+            return Err(format!("`dir_stat` needs 3 leaves but {} were given", args.len()));
+        }
+        let aarch64 = matches!(self.triple.architecture, target_lexicon::Architecture::Aarch64(_));
+        let layout = lex_sys_ir::stat_layout(self.is_darwin(), aarch64);
+        let buffer = self.fresh();
+        self.hoist(format!("  {buffer} = alloca [{} x i8], align 8\n", layout.size));
+        let handle = operand(&args[0]);
+        let name = (operand(&args[1]), operand(&args[2]));
+        let answer = self.dir_call(&[name], |this, copies| {
+            let fd = this.dir_fd(&handle);
+            let result = this.fresh();
+            this.out.push_str(&format!(
+                "  {result} = call i32 @fstatat(i32 {fd}, ptr {}, ptr {buffer}, i32 {})\n",
+                copies[0], layout.no_follow
+            ));
+            result
+        });
+        let (tag, reason) = (operand(&answer[0]), answer[2].clone());
+        // Read only on success; a failure's payload is zero.
+        let ok = self.fresh();
+        self.out.push_str(&format!("  {ok} = icmp eq i64 {tag}, 0\n"));
+        let field = |this: &mut Self, offset: i32, width: u8| -> String {
+            let at = this.fresh();
+            this.out.push_str(&format!("  {at} = getelementptr i8, ptr {buffer}, i64 {offset}\n"));
+            let raw = this.fresh();
+            let wide = this.fresh();
+            if width == 64 {
+                this.out.push_str(&format!("  {wide} = load i64, ptr {at}\n"));
+            } else {
+                this.out.push_str(&format!("  {raw} = load i{width}, ptr {at}\n"));
+                this.out.push_str(&format!("  {wide} = zext i{width} {raw} to i64\n"));
+            }
+            let chosen = this.fresh();
+            this.out.push_str(&format!("  {chosen} = select i1 {ok}, i64 {wide}, i64 0\n"));
+            chosen
+        };
+        let mode = field(self, layout.mode, layout.mode_bits);
+        let size = field(self, layout.st_size, 64);
+        let mtime = field(self, layout.mtime, 64);
+        let kind = self.kind_of_mode(&mode);
+        let kind_ok = self.fresh();
+        self.out.push_str(&format!("  {kind_ok} = select i1 {ok}, i64 {kind}, i64 0\n"));
+        Ok(vec![
+            LValue::Reg(tag),
+            LValue::Reg(kind_ok),
+            LValue::Reg(size),
+            LValue::Reg(mtime),
+            reason,
+        ])
+    }
+
+    /// `st_mode`'s type bits as the language numbers a kind (§3.2).
+    fn kind_of_mode(&mut self, mode: &str) -> String {
+        let bits = self.fresh();
+        self.out.push_str(&format!("  {bits} = and i64 {mode}, {}\n", lex_sys_ir::S_IFMT));
+        let mut kind = lex_sys_ir::KIND_OTHER.to_string();
+        for (ty, ours) in [
+            (lex_sys_ir::S_IFLNK, lex_sys_ir::KIND_LINK),
+            (lex_sys_ir::S_IFDIR, lex_sys_ir::KIND_DIRECTORY),
+            (lex_sys_ir::S_IFREG, lex_sys_ir::KIND_FILE),
+        ] {
+            let is = self.fresh();
+            self.out.push_str(&format!("  {is} = icmp eq i64 {bits}, {ty}\n"));
+            let chosen = self.fresh();
+            self.out.push_str(&format!("  {chosen} = select i1 {is}, i64 {ours}, i64 {kind}\n"));
+            kind = chosen;
+        }
+        kind
     }
 }

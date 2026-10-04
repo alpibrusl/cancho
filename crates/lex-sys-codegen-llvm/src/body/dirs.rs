@@ -118,7 +118,7 @@ impl<'a> FuncEmitter<'a> {
     /// `call` on their copies; `call` answers an `i32` register, negative for
     /// a failure, and `errno` is read straight after it. The three leaves
     /// `Opened`, `DirOpened` and `Done` share come back.
-    fn dir_call(
+    pub(crate) fn dir_call(
         &mut self,
         names: &[(String, String)],
         call: impl FnOnce(&mut Self, &[String]) -> String,

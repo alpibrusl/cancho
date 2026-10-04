@@ -306,8 +306,8 @@ Edition 6 also has the **directory handle**
 `dir_sync`, and the labels `dir_read` and `dir_write`. Purely additive, like edition 5's
 later slices: no edition-6 file in this repository declared any of the names. The same holds
 for **directory listing** ([`directory-listing.md`](directory-listing.md)): the
-types `DirList`, `Listing` and `Listed` and the builtins `dir_list`, `dir_next`
-and `dir_list_close`, under the existing `dir_read`.
+types `DirList`, `Listing`, `Listed` and `DirStat` and the builtins `dir_list`,
+`dir_next`, `dir_list_close` and `dir_stat`, under the existing `dir_read`.
 
 ---
 

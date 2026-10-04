@@ -1,5 +1,5 @@
-//! Directory listing (`docs/directory-listing.md`): `dir_list`, `dir_next`
-//! and `dir_list_close`. Mirrors `lex-sys-codegen-llvm`'s own
+//! Directory listing (`docs/directory-listing.md`): `dir_list`, `dir_next`,
+//! `dir_list_close` and `dir_stat`. Mirrors `lex-sys-codegen-llvm`'s own
 //! `body/listing.rs`.
 //!
 //! A listing is libc's `DIR` stream on a descriptor of its own --
@@ -210,5 +210,64 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         let pointer = self.pointer;
         let answer = self.libc_call("closedir", &[pointer], &[types::I32], &[args[0]]);
         vec![self.builder.ins().sextend(types::I64, answer)]
+    }
+
+    /// `dir_stat(dir, name)`: `args` is the handle's address, then the name's
+    /// pointer and length. The name has `dir_enter`'s check; then
+    /// `fstatat(fd, name, &st, AT_SYMLINK_NOFOLLOW)` into a stack slot read at
+    /// the target's offsets (§3.4). `DirStat`'s five leaves: the tag, the kind,
+    /// the size, the modification time and the reason.
+    pub(crate) fn dir_stat(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let layout = lex_sys_ir::stat_layout(self.is_darwin(), self.aarch64());
+        let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            layout.size,
+            3,
+        ));
+        let buffer = self.builder.ins().stack_addr(pointer, slot, 0);
+        let handle = args[0];
+        let answer = self.dir_call(&[(args[1], args[2])], |this, copies| {
+            let fd = this.dir_fd(handle);
+            let flag = this.builder.ins().iconst(types::I32, layout.no_follow);
+            this.libc_call(
+                "fstatat",
+                &[types::I32, pointer, pointer, types::I32],
+                &[types::I32],
+                &[fd, copies[0], buffer, flag],
+            )
+        });
+        let (tag, reason) = (answer[0], answer[2]);
+        // Read only on success; a failure's payload is zero.
+        let ok = self.builder.ins().icmp_imm(IntCC::Equal, tag, 0);
+        let mode = if layout.mode_bits == 16 {
+            self.builder.ins().uload16(types::I64, MemFlags::trusted(), buffer, layout.mode)
+        } else {
+            self.builder.ins().uload32(MemFlags::trusted(), buffer, layout.mode)
+        };
+        let size = self.builder.ins().load(types::I64, MemFlags::trusted(), buffer, layout.st_size);
+        let mtime = self.builder.ins().load(types::I64, MemFlags::trusted(), buffer, layout.mtime);
+        let kind = self.kind_of_mode(mode);
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        let kind = self.builder.ins().select(ok, kind, zero);
+        let size = self.builder.ins().select(ok, size, zero);
+        let mtime = self.builder.ins().select(ok, mtime, zero);
+        vec![tag, kind, size, mtime, reason]
+    }
+
+    /// `st_mode`'s type bits as the language numbers a kind (§3.2).
+    fn kind_of_mode(&mut self, mode: Value) -> Value {
+        let bits = self.builder.ins().band_imm(mode, lex_sys_ir::S_IFMT);
+        let mut kind = self.builder.ins().iconst(types::I64, lex_sys_ir::KIND_OTHER);
+        for (ty, ours) in [
+            (lex_sys_ir::S_IFLNK, lex_sys_ir::KIND_LINK),
+            (lex_sys_ir::S_IFDIR, lex_sys_ir::KIND_DIRECTORY),
+            (lex_sys_ir::S_IFREG, lex_sys_ir::KIND_FILE),
+        ] {
+            let is = self.builder.ins().icmp_imm(IntCC::Equal, bits, ty);
+            let value = self.builder.ins().iconst(types::I64, ours);
+            kind = self.builder.ins().select(is, value, kind);
+        }
+        kind
     }
 }
