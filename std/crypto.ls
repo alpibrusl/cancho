@@ -106,72 +106,190 @@ fn rotr32(x: int, n: int) -> [] int {
 }
 
 // The 32-bit bitwise complement of a value already confined to
-// `[0, 0xffffffff]`, built out of subtraction rather than `~` (which
-// flips all 64 bits, not 32) — a true identity on that range, not an
-// approximation (`docs/crypto.md` §2).
+// `[0, 0xffffffff]`: an XOR with the mask rather than `~` (which flips
+// all 64 bits, not 32). It was `0xffffffff - x`, the same value, but a
+// checked subtraction is an overflow test on a hashed key's words, and
+// an XOR is not (`docs/crypto.md` §2, `docs/hkdf.md` §3).
 fn not32(x: int) -> [] int {
-    return 0xffffffff - x;
+    return x ^ 0xffffffff;
 }
 
-// One 64-byte block, folded into `state` — eight running 32-bit words,
-// held as `int`s in `[0, 0xffffffff]`.
-fn compress[&st, &b](state: &!st [int], block: &b [byte]) -> [] int {
-    region a {
-        let w = alloc_slice[a](64, 0);
+// One 64-byte block, already loaded as sixteen words into the schedule
+// (`load256`), folded into `state`'s eight running 32-bit words, held as
+// `int`s in `[0, 0xffffffff]`. The schedule lives in the state
+// (`state[74..138]`), not in an arena of its own: an arena is a
+// `malloc`, and one per block was most of the cost of a short message
+// (`docs/hkdf.md` §6). The additions are `wrapping_add`
+// under the mask, not a checked `+`: none can overflow, and a checked
+// one would emit an overflow test on the words of a hashed key, which
+// `docs/hkdf.md` §3 does not want (`docs/crypto.md` §2 says what
+// changed).
+fn compress[&st](state: &!st [int]) -> [] int {
+    var t = 16;
+    while t < 64 {
+        let s0 = rotr32(state[74 + t - 15], 7) ^ rotr32(state[74 + t - 15], 18) ^ state[74 + t - 15] >> 3;
+        let s1 = rotr32(state[74 + t - 2], 17) ^ rotr32(state[74 + t - 2], 19) ^ state[74 + t - 2] >> 10;
+        state[74 + t] = mask32(wrapping_add(wrapping_add(state[74 + t - 16], s0), wrapping_add(state[74 + t - 7], s1)));
+        t = t + 1;
+    }
 
-        var t = 0;
-        while t < 16 {
-            let i = t * 4;
-            w[t] = int_of(block[i]) << 24 | int_of(block[i + 1]) << 16 | int_of(block[i + 2]) << 8 | int_of(block[i + 3]);
-            t = t + 1;
+    var wa = state[0];
+    var wb = state[1];
+    var wc = state[2];
+    var wd = state[3];
+    var we = state[4];
+    var wf = state[5];
+    var wg = state[6];
+    var wh = state[7];
+
+    t = 0;
+    while t < 64 {
+        let s1 = rotr32(we, 6) ^ rotr32(we, 11) ^ rotr32(we, 25);
+        let ch = we & wf ^ not32(we) & wg;
+        let temp1 = mask32(wrapping_add(wrapping_add(wrapping_add(wh, s1), wrapping_add(ch, sha256_k[t])), state[74 + t]));
+        let s0 = rotr32(wa, 2) ^ rotr32(wa, 13) ^ rotr32(wa, 22);
+        let maj = wa & wb ^ wa & wc ^ wb & wc;
+        let temp2 = mask32(wrapping_add(s0, maj));
+
+        wh = wg;
+        wg = wf;
+        wf = we;
+        we = mask32(wrapping_add(wd, temp1));
+        wd = wc;
+        wc = wb;
+        wb = wa;
+        wa = mask32(wrapping_add(temp1, temp2));
+
+        t = t + 1;
+    }
+
+    state[0] = mask32(wrapping_add(state[0], wa));
+    state[1] = mask32(wrapping_add(state[1], wb));
+    state[2] = mask32(wrapping_add(state[2], wc));
+    state[3] = mask32(wrapping_add(state[3], wd));
+    state[4] = mask32(wrapping_add(state[4], we));
+    state[5] = mask32(wrapping_add(state[5], wf));
+    state[6] = mask32(wrapping_add(state[6], wg));
+    state[7] = mask32(wrapping_add(state[7], wh));
+    return 0;
+}
+
+// The streaming interface (`docs/hkdf.md` §2). A state is a `[int]` of
+// `sha256_state_len()` words: the eight running words, the number of
+// bytes hashed so far, the number waiting in the buffer, the 64-byte
+// buffer itself (one byte per word), then the 64-word message schedule.
+// Nothing the size of the message is ever allocated, which is what lets
+// a message of any length be hashed: the one-shot `sha256` below used to
+// copy the whole padded message into one arena and trapped at 64 KiB
+// (`docs/crypto.md` §4). And nothing is allocated per call at all: the
+// buffer and the schedule are the caller's (`docs/hkdf.md` §6).
+pub fn sha256_state_len() -> [] int {
+    return 138;
+}
+
+pub fn sha256_init[&st](state: &!st [int]) -> [] int {
+    var i = 0;
+    while i < 8 {
+        state[i] = sha256_h0[i];
+        i = i + 1;
+    }
+    state[8] = 0;
+    state[9] = 0;
+    return 0;
+}
+
+// The sixteen big-endian words of `block` into the schedule.
+fn load256[&st, &b](state: &!st [int], block: &b [byte]) -> [] int {
+    var t = 0;
+    while t < 16 {
+        let i = t * 4;
+        state[74 + t] = int_of(block[i]) << 24 | int_of(block[i + 1]) << 16 | int_of(block[i + 2]) << 8 | int_of(block[i + 3]);
+        t = t + 1;
+    }
+    return 0;
+}
+
+// The same from the state's own buffer, which is full.
+fn load256_buffer[&st](state: &!st [int]) -> [] int {
+    var t = 0;
+    while t < 16 {
+        let i = 10 + t * 4;
+        state[74 + t] = state[i] << 24 | state[i + 1] << 16 | state[i + 2] << 8 | state[i + 3];
+        t = t + 1;
+    }
+    return 0;
+}
+
+// Feeds `data`. Whole blocks are compressed straight from `data`; only a
+// partial block is copied, into the state's buffer.
+pub fn sha256_update[&st, &d](state: &!st [int], data: &d [byte]) -> [] int {
+    let n = len(data);
+    state[8] = state[8] + n;
+    var have = state[9];
+    var at = 0;
+    if have > 0 {
+        while have < 64 && at < n {
+            state[10 + have] = int_of(data[at]);
+            have = have + 1;
+            at = at + 1;
         }
-
-        t = 16;
-        while t < 64 {
-            let s0 = rotr32(w[t - 15], 7) ^ rotr32(w[t - 15], 18) ^ w[t - 15] >> 3;
-            let s1 = rotr32(w[t - 2], 17) ^ rotr32(w[t - 2], 19) ^ w[t - 2] >> 10;
-            w[t] = mask32(w[t - 16] + s0 + w[t - 7] + s1);
-            t = t + 1;
+        if have == 64 {
+            load256_buffer(state);
+            compress(state);
+            have = 0;
         }
+    }
+    while at + 64 <= n {
+        load256(state, data[at..at + 64]);
+        compress(state);
+        at = at + 64;
+    }
+    while at < n {
+        state[10 + have] = int_of(data[at]);
+        have = have + 1;
+        at = at + 1;
+    }
+    state[9] = have;
+    return 0;
+}
 
-        var wa = state[0];
-        var wb = state[1];
-        var wc = state[2];
-        var wd = state[3];
-        var we = state[4];
-        var wf = state[5];
-        var wg = state[6];
-        var wh = state[7];
-
-        t = 0;
-        while t < 64 {
-            let s1 = rotr32(we, 6) ^ rotr32(we, 11) ^ rotr32(we, 25);
-            let ch = we & wf ^ not32(we) & wg;
-            let temp1 = mask32(wh + s1 + ch + sha256_k[t] + w[t]);
-            let s0 = rotr32(wa, 2) ^ rotr32(wa, 13) ^ rotr32(wa, 22);
-            let maj = wa & wb ^ wa & wc ^ wb & wc;
-            let temp2 = mask32(s0 + maj);
-
-            wh = wg;
-            wg = wf;
-            wf = we;
-            we = mask32(wd + temp1);
-            wd = wc;
-            wc = wb;
-            wb = wa;
-            wa = mask32(temp1 + temp2);
-
-            t = t + 1;
+// The padding (FIPS 180-4 §5.1.1) — `0x80`, zeros, the bit length in
+// the last eight bytes, one block more if there is no room — and the
+// digest, into `digest[0..32]`. The state is spent: `sha256_init` it
+// again to reuse it.
+pub fn sha256_final[&st, &o](state: &!st [int], digest: &!o [byte]) -> [] int {
+    var have = state[9];
+    state[10 + have] = 0x80;
+    have = have + 1;
+    if have > 56 {
+        while have < 64 {
+            state[10 + have] = 0;
+            have = have + 1;
         }
-
-        state[0] = mask32(state[0] + wa);
-        state[1] = mask32(state[1] + wb);
-        state[2] = mask32(state[2] + wc);
-        state[3] = mask32(state[3] + wd);
-        state[4] = mask32(state[4] + we);
-        state[5] = mask32(state[5] + wf);
-        state[6] = mask32(state[6] + wg);
-        state[7] = mask32(state[7] + wh);
+        load256_buffer(state);
+        compress(state);
+        have = 0;
+    }
+    while have < 56 {
+        state[10 + have] = 0;
+        have = have + 1;
+    }
+    let bit_len = state[8] * 8;
+    var k = 0;
+    while k < 8 {
+        state[66 + k] = bit_len >> (7 - k) * 8 & 0xff;
+        k = k + 1;
+    }
+    load256_buffer(state);
+    compress(state);
+    var w = 0;
+    while w < 8 {
+        let word = state[w];
+        digest[w * 4] = byte_of(word >> 24 & 0xff);
+        digest[w * 4 + 1] = byte_of(word >> 16 & 0xff);
+        digest[w * 4 + 2] = byte_of(word >> 8 & 0xff);
+        digest[w * 4 + 3] = byte_of(word & 0xff);
+        w = w + 1;
     }
     return 0;
 }
@@ -183,53 +301,10 @@ fn compress[&st, &b](state: &!st [int], block: &b [byte]) -> [] int {
 // check every other out-of-range write in this language already gets.
 pub fn sha256[&s, &o](message: &s [byte], digest: &!o [byte]) -> [] int {
     region st {
-        let state = alloc_slice[st](8, 0);
-        var i = 0;
-        while i < 8 {
-            state[i] = sha256_h0[i];
-            i = i + 1;
-        }
-
-        let total = len(message);
-        // 1 byte for 0x80, 8 for the big-endian bit length, rounded up
-        // to a multiple of 64 (FIPS 180-4 §5.1.1).
-        let padded_len = (total + 9 + 63) / 64 * 64;
-
-        region m {
-            let padded = alloc_slice[m](padded_len, byte_of(0));
-            var j = 0;
-            while j < total {
-                padded[j] = message[j];
-                j = j + 1;
-            }
-            padded[total] = byte_of(0x80);
-            // The zero bytes between the 0x80 marker and the length
-            // field are already there: `alloc_slice`'s own fill value.
-
-            let bit_len = total * 8;
-            var k = 0;
-            while k < 8 {
-                let shift = (7 - k) * 8;
-                padded[padded_len - 8 + k] = byte_of(bit_len >> shift & 0xff);
-                k = k + 1;
-            }
-
-            var block = 0;
-            while block < padded_len {
-                compress(state, padded[block..block + 64]);
-                block = block + 64;
-            }
-        }
-
-        var w = 0;
-        while w < 8 {
-            let word = state[w];
-            digest[w * 4] = byte_of(word >> 24 & 0xff);
-            digest[w * 4 + 1] = byte_of(word >> 16 & 0xff);
-            digest[w * 4 + 2] = byte_of(word >> 8 & 0xff);
-            digest[w * 4 + 3] = byte_of(word & 0xff);
-            w = w + 1;
-        }
+        let state = alloc_slice[st](138, 0);
+        sha256_init(state);
+        sha256_update(state, message);
+        sha256_final(state, digest);
     }
     return 0;
 }
@@ -370,8 +445,9 @@ fn rotr64(x: int, n: int) -> [] int {
     return lshr64(x, n) | x << 64 - n;
 }
 
-// One 128-byte block, folded into `state` — eight running 64-bit words.
-// Structurally `compress` again, at double the word width and eighty
+// One 128-byte block, already loaded into the schedule
+// (`state[138..218]`, by `load512`), folded into `state` — eight running
+// 64-bit words. Structurally `compress` again, at double the word width and eighty
 // rounds instead of sixty-four; the differences are the schedule and
 // round constants (`docs/sha512.md` §1) and that every addition is
 // `wrapping_add` rather than a checked `+` under a mask, since there is
@@ -379,130 +455,232 @@ fn rotr64(x: int, n: int) -> [] int {
 // `not64` mirroring `not32`, is the true 64-bit complement here — the
 // SHA-256 file needed `not32` only because `~` flips more bits than its
 // masked word has, and a full-width word has no such gap.
-fn compress512[&st, &b](state: &!st [int], block: &b [byte]) -> [] int {
-    region a {
-        let w = alloc_slice[a](80, 0);
+fn compress512[&st](state: &!st [int]) -> [] int {
+    var t = 16;
+    while t < 80 {
+        let s0 = rotr64(state[138 + t - 15], 1) ^ rotr64(state[138 + t - 15], 8) ^ lshr64(state[138 + t - 15], 7);
+        let s1 = rotr64(state[138 + t - 2], 19) ^ rotr64(state[138 + t - 2], 61) ^ lshr64(state[138 + t - 2], 6);
+        state[138 + t] = wrapping_add(wrapping_add(state[138 + t - 16], s0), wrapping_add(state[138 + t - 7], s1));
+        t = t + 1;
+    }
 
-        var t = 0;
-        while t < 16 {
-            let i = t * 8;
-            w[t] = int_of(block[i]) << 56 | int_of(block[i + 1]) << 48 | int_of(block[i + 2]) << 40 | int_of(block[i + 3]) << 32 | int_of(block[i + 4]) << 24 | int_of(block[i + 5]) << 16 | int_of(block[i + 6]) << 8 | int_of(block[i + 7]);
-            t = t + 1;
-        }
+    var wa = state[0];
+    var wb = state[1];
+    var wc = state[2];
+    var wd = state[3];
+    var we = state[4];
+    var wf = state[5];
+    var wg = state[6];
+    var wh = state[7];
 
-        t = 16;
-        while t < 80 {
-            let s0 = rotr64(w[t - 15], 1) ^ rotr64(w[t - 15], 8) ^ lshr64(w[t - 15], 7);
-            let s1 = rotr64(w[t - 2], 19) ^ rotr64(w[t - 2], 61) ^ lshr64(w[t - 2], 6);
-            w[t] = wrapping_add(wrapping_add(w[t - 16], s0), wrapping_add(w[t - 7], s1));
-            t = t + 1;
-        }
+    t = 0;
+    while t < 80 {
+        let s1 = rotr64(we, 14) ^ rotr64(we, 18) ^ rotr64(we, 41);
+        let ch = we & wf ^ ~we & wg;
+        let temp1 = wrapping_add(wrapping_add(wrapping_add(wh, s1), ch), wrapping_add(sha512_k[t], state[138 + t]));
+        let s0 = rotr64(wa, 28) ^ rotr64(wa, 34) ^ rotr64(wa, 39);
+        let maj = wa & wb ^ wa & wc ^ wb & wc;
+        let temp2 = wrapping_add(s0, maj);
 
-        var wa = state[0];
-        var wb = state[1];
-        var wc = state[2];
-        var wd = state[3];
-        var we = state[4];
-        var wf = state[5];
-        var wg = state[6];
-        var wh = state[7];
+        wh = wg;
+        wg = wf;
+        wf = we;
+        we = wrapping_add(wd, temp1);
+        wd = wc;
+        wc = wb;
+        wb = wa;
+        wa = wrapping_add(temp1, temp2);
 
-        t = 0;
-        while t < 80 {
-            let s1 = rotr64(we, 14) ^ rotr64(we, 18) ^ rotr64(we, 41);
-            let ch = we & wf ^ ~we & wg;
-            let temp1 = wrapping_add(wrapping_add(wrapping_add(wh, s1), ch), wrapping_add(sha512_k[t], w[t]));
-            let s0 = rotr64(wa, 28) ^ rotr64(wa, 34) ^ rotr64(wa, 39);
-            let maj = wa & wb ^ wa & wc ^ wb & wc;
-            let temp2 = wrapping_add(s0, maj);
+        t = t + 1;
+    }
 
-            wh = wg;
-            wg = wf;
-            wf = we;
-            we = wrapping_add(wd, temp1);
-            wd = wc;
-            wc = wb;
-            wb = wa;
-            wa = wrapping_add(temp1, temp2);
+    state[0] = wrapping_add(state[0], wa);
+    state[1] = wrapping_add(state[1], wb);
+    state[2] = wrapping_add(state[2], wc);
+    state[3] = wrapping_add(state[3], wd);
+    state[4] = wrapping_add(state[4], we);
+    state[5] = wrapping_add(state[5], wf);
+    state[6] = wrapping_add(state[6], wg);
+    state[7] = wrapping_add(state[7], wh);
+    return 0;
+}
 
-            t = t + 1;
-        }
+// SHA-384 (FIPS 180-4 §5.3.4, §6.5): SHA-512's compression with its own
+// eight initial words, the digest cut to the first six (`docs/hkdf.md`
+// §1). The same `compress512`, not a second copy.
+static sha384_h0: [int] {
+    let h = alloc_slice[static](8, 0);
+    h[0] = 0xcbbb9d5d << 32 | 0xc1059ed8;
+    h[1] = 0x629a292a << 32 | 0x367cd507;
+    h[2] = 0x9159015a << 32 | 0x3070dd17;
+    h[3] = 0x152fecd8 << 32 | 0xf70e5939;
+    h[4] = 0x67332667 << 32 | 0xffc00b31;
+    h[5] = 0x8eb44a87 << 32 | 0x68581511;
+    h[6] = 0xdb0c2e0d << 32 | 0x64f98fa7;
+    h[7] = 0x47b5481d << 32 | 0xbefa4fa4;
+    return h;
+}
 
-        state[0] = wrapping_add(state[0], wa);
-        state[1] = wrapping_add(state[1], wb);
-        state[2] = wrapping_add(state[2], wc);
-        state[3] = wrapping_add(state[3], wd);
-        state[4] = wrapping_add(state[4], we);
-        state[5] = wrapping_add(state[5], wf);
-        state[6] = wrapping_add(state[6], wg);
-        state[7] = wrapping_add(state[7], wh);
+// The SHA-512 and SHA-384 streaming state: the eight running words, the
+// bytes hashed so far, the number waiting, a 128-byte buffer and the
+// 80-word schedule, as `sha256_state_len` lays out SHA-256's.
+pub fn sha512_state_len() -> [] int {
+    return 218;
+}
+
+fn init512[&st, &h](state: &!st [int], h0: &h [int]) -> [] int {
+    var i = 0;
+    while i < 8 {
+        state[i] = h0[i];
+        i = i + 1;
+    }
+    state[8] = 0;
+    state[9] = 0;
+    return 0;
+}
+
+pub fn sha512_init[&st](state: &!st [int]) -> [] int {
+    return init512(state, sha512_h0);
+}
+
+pub fn sha384_init[&st](state: &!st [int]) -> [] int {
+    return init512(state, sha384_h0);
+}
+
+fn load512[&st, &b](state: &!st [int], block: &b [byte]) -> [] int {
+    var t = 0;
+    while t < 16 {
+        let i = t * 8;
+        state[138 + t] = int_of(block[i]) << 56 | int_of(block[i + 1]) << 48 | int_of(block[i + 2]) << 40 | int_of(block[i + 3]) << 32 | int_of(block[i + 4]) << 24 | int_of(block[i + 5]) << 16 | int_of(block[i + 6]) << 8 | int_of(block[i + 7]);
+        t = t + 1;
     }
     return 0;
 }
 
-// `message`, hashed into `digest` — a caller-provided, unique-referenced
-// output buffer of at least 64 bytes, the same shape `sha256` above
-// already uses. The 16-byte big-endian bit-length field (FIPS 180-4
-// §5.1.2) is wider than this language's `int`: only the low 8 bytes are
-// ever written, the top 8 stay at `alloc_slice`'s own zero fill, and
-// that is exact rather than truncated for every message this language
-// can even hold — `total * 8` is a checked multiply, so a message long
-// enough to need the other 8 bytes traps building the length field
-// rather than silently wrapping past it (`docs/sha512.md` §3).
+fn load512_buffer[&st](state: &!st [int]) -> [] int {
+    var t = 0;
+    while t < 16 {
+        let i = 10 + t * 8;
+        state[138 + t] = state[i] << 56 | state[i + 1] << 48 | state[i + 2] << 40 | state[i + 3] << 32 | state[i + 4] << 24 | state[i + 5] << 16 | state[i + 6] << 8 | state[i + 7];
+        t = t + 1;
+    }
+    return 0;
+}
+
+// Feeds `data` to a SHA-512 or SHA-384 state: which one is the state's
+// initial words, so one function serves both.
+pub fn sha512_update[&st, &d](state: &!st [int], data: &d [byte]) -> [] int {
+    let n = len(data);
+    state[8] = state[8] + n;
+    var have = state[9];
+    var at = 0;
+    if have > 0 {
+        while have < 128 && at < n {
+            state[10 + have] = int_of(data[at]);
+            have = have + 1;
+            at = at + 1;
+        }
+        if have == 128 {
+            load512_buffer(state);
+            compress512(state);
+            have = 0;
+        }
+    }
+    while at + 128 <= n {
+        load512(state, data[at..at + 128]);
+        compress512(state);
+        at = at + 128;
+    }
+    while at < n {
+        state[10 + have] = int_of(data[at]);
+        have = have + 1;
+        at = at + 1;
+    }
+    state[9] = have;
+    return 0;
+}
+
+pub fn sha384_update[&st, &d](state: &!st [int], data: &d [byte]) -> [] int {
+    return sha512_update(state, data);
+}
+
+// The 16-byte big-endian bit-length field (FIPS 180-4 §5.1.2) is wider
+// than this language's `int`: only the low 8 bytes are written, the top
+// 8 are zero, and that is exact for every message this language can
+// count — `total * 8` is a checked multiply, so a message long enough to
+// need the other 8 bytes traps building the field rather than silently
+// wrapping past it (`docs/sha512.md` §3). `words` is how many of the
+// eight running words make the digest: 8 for SHA-512, 6 for SHA-384.
+fn final512[&st, &o](state: &!st [int], digest: &!o [byte], words: int) -> [] int {
+    var have = state[9];
+    state[10 + have] = 0x80;
+    have = have + 1;
+    if have > 112 {
+        while have < 128 {
+            state[10 + have] = 0;
+            have = have + 1;
+        }
+        load512_buffer(state);
+        compress512(state);
+        have = 0;
+    }
+    while have < 120 {
+        state[10 + have] = 0;
+        have = have + 1;
+    }
+    let bit_len = state[8] * 8;
+    var k = 0;
+    while k < 8 {
+        state[130 + k] = bit_len >> (7 - k) * 8 & 0xff;
+        k = k + 1;
+    }
+    load512_buffer(state);
+    compress512(state);
+    var w = 0;
+    while w < words {
+        let word = state[w];
+        digest[w * 8] = byte_of(word >> 56 & 0xff);
+        digest[w * 8 + 1] = byte_of(word >> 48 & 0xff);
+        digest[w * 8 + 2] = byte_of(word >> 40 & 0xff);
+        digest[w * 8 + 3] = byte_of(word >> 32 & 0xff);
+        digest[w * 8 + 4] = byte_of(word >> 24 & 0xff);
+        digest[w * 8 + 5] = byte_of(word >> 16 & 0xff);
+        digest[w * 8 + 6] = byte_of(word >> 8 & 0xff);
+        digest[w * 8 + 7] = byte_of(word & 0xff);
+        w = w + 1;
+    }
+    return 0;
+}
+
+// The SHA-512 digest, into `digest[0..64]`. The state is spent.
+pub fn sha512_final[&st, &o](state: &!st [int], digest: &!o [byte]) -> [] int {
+    return final512(state, digest, 8);
+}
+
+// The SHA-384 digest, into `digest[0..48]`. The state is spent.
+pub fn sha384_final[&st, &o](state: &!st [int], digest: &!o [byte]) -> [] int {
+    return final512(state, digest, 6);
+}
+
+// `message`, hashed into `digest` (at least 64 bytes), the same shape
+// as `sha256`.
 pub fn sha512[&s, &o](message: &s [byte], digest: &!o [byte]) -> [] int {
     region st {
-        let state = alloc_slice[st](8, 0);
-        var i = 0;
-        while i < 8 {
-            state[i] = sha512_h0[i];
-            i = i + 1;
-        }
+        let state = alloc_slice[st](218, 0);
+        sha512_init(state);
+        sha512_update(state, message);
+        sha512_final(state, digest);
+    }
+    return 0;
+}
 
-        let total = len(message);
-        // 1 byte for 0x80, 16 for the big-endian bit length, rounded up
-        // to a multiple of 128 (FIPS 180-4 §5.1.2).
-        let padded_len = (total + 17 + 127) / 128 * 128;
-
-        region m {
-            let padded = alloc_slice[m](padded_len, byte_of(0));
-            var j = 0;
-            while j < total {
-                padded[j] = message[j];
-                j = j + 1;
-            }
-            padded[total] = byte_of(0x80);
-            // The zero bytes between the 0x80 marker and the length
-            // field are already there: `alloc_slice`'s own fill value.
-            // So are the length field's own top 8 bytes — see above.
-
-            let bit_len = total * 8;
-            var k = 0;
-            while k < 8 {
-                let shift = (7 - k) * 8;
-                padded[padded_len - 8 + k] = byte_of(bit_len >> shift & 0xff);
-                k = k + 1;
-            }
-
-            var block = 0;
-            while block < padded_len {
-                compress512(state, padded[block..block + 128]);
-                block = block + 128;
-            }
-        }
-
-        var w = 0;
-        while w < 8 {
-            let word = state[w];
-            digest[w * 8] = byte_of(word >> 56 & 0xff);
-            digest[w * 8 + 1] = byte_of(word >> 48 & 0xff);
-            digest[w * 8 + 2] = byte_of(word >> 40 & 0xff);
-            digest[w * 8 + 3] = byte_of(word >> 32 & 0xff);
-            digest[w * 8 + 4] = byte_of(word >> 24 & 0xff);
-            digest[w * 8 + 5] = byte_of(word >> 16 & 0xff);
-            digest[w * 8 + 6] = byte_of(word >> 8 & 0xff);
-            digest[w * 8 + 7] = byte_of(word & 0xff);
-            w = w + 1;
-        }
+// `message`, hashed with SHA-384 into `digest` (at least 48 bytes).
+pub fn sha384[&s, &o](message: &s [byte], digest: &!o [byte]) -> [] int {
+    region st {
+        let state = alloc_slice[st](218, 0);
+        sha384_init(state);
+        sha512_update(state, message);
+        sha384_final(state, digest);
     }
     return 0;
 }

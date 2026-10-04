@@ -56,6 +56,7 @@ mod http_server;
 mod identity;
 mod io;
 mod json;
+mod kdf;
 mod mathfn;
 mod memory;
 mod modules;

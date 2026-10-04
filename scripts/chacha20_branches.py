@@ -3,6 +3,7 @@
 
     lex-sys build --std tests/programs/aead_bench.ls --emit obj -o bench.o
     python3 scripts/chacha20_branches.py bench.o
+    python3 scripts/chacha20_branches.py kdf.o crypto.compress crypto.compress512   # docs/hkdf.md §3
 
 For each function that touches the key, the keystream or the Poly1305
 accumulator, lists every conditional jump with the instruction that sets its
@@ -10,7 +11,9 @@ flags, and fails if any jump goes somewhere other than a trap (`ud2`): a
 bounds or overflow check on public data is expected, any other conditional
 jump is not. Reading what each flag-setting instruction compares (a slice
 length, a constant index, a shift amount) is still the reader's job; the
-script prints them so it can be done. x86-64 only (objdump syntax).
+script prints them so it can be done. Function names after the object file
+(`module.function`) replace the default list, which is `std.chacha20`'s.
+x86-64 only (objdump syntax).
 """
 import collections
 import re
@@ -32,7 +35,7 @@ FUNCTIONS = [
 def main():
     obj = sys.argv[1]
     bad = 0
-    for f in FUNCTIONS:
+    for f in sys.argv[2:] or FUNCTIONS:
         text = subprocess.run(
             ["objdump", "-d", "--no-show-raw-insn", f"--disassemble=lexs_std.{f}", obj],
             capture_output=True, text=True, check=True,
