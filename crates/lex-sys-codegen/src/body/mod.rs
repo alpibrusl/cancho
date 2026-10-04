@@ -8,6 +8,7 @@ mod control;
 mod dirs;
 mod expr;
 mod files;
+mod listing;
 mod memory;
 mod net;
 mod poller;

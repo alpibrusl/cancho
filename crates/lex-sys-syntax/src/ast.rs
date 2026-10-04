@@ -763,6 +763,13 @@ pub const PRELUDE: &[&str] = &[
     // answers; edition 6 only.
     "Dir",
     "DirOpened",
+    // `docs/directory-listing.md`: a listing and what its verbs answer;
+    // edition 6 only.
+    "DirList",
+    "Listing",
+    "Listed",
+    // `Listed`'s first arm.
+    "Name",
 ];
 
 impl Ast {

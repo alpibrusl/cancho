@@ -13,7 +13,7 @@ use crate::*;
 use cranelift_codegen::ir::Block;
 
 impl<'a, 'f> BodyEmitter<'a, 'f> {
-    fn aarch64(&self) -> bool {
+    pub(crate) fn aarch64(&self) -> bool {
         matches!(self.module.isa().triple().architecture, target_lexicon::Architecture::Aarch64(_))
     }
 
@@ -119,7 +119,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     /// integer parameters, the ninth in the first stack slot. Everywhere else
     /// a variadic and a fixed argument travel the same way. One signature per
     /// module either way, so every `openat` here goes through this.
-    fn openat(&mut self, fd: Value, path: Value, flags: i64, mode: i64) -> Value {
+    pub(crate) fn openat(&mut self, fd: Value, path: Value, flags: i64, mode: i64) -> Value {
         let pointer = self.pointer;
         let flags = self.builder.ins().iconst(types::I32, flags);
         if self.is_darwin() && self.aarch64() {
@@ -183,7 +183,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
 
     /// The descriptor behind a borrowed `Dir`: the handle arrives as its
     /// address.
-    fn dir_fd(&mut self, handle: Value) -> Value {
+    pub(crate) fn dir_fd(&mut self, handle: Value) -> Value {
         let fd = self.builder.ins().load(types::I64, MemFlags::trusted(), handle, 0);
         self.builder.ins().ireduce(types::I32, fd)
     }

@@ -380,8 +380,8 @@ lives; D16 decides what is fixed and what is routed round.
 | # | Gap | Reproducer | Blocks | Needs |
 |---|---|---|---|---|
 | L1 | A failed write to stdout is unobservable; `write_all` returns the requested length; a trap loses buffered output | A.7 | every tool's `ok` | compiler (`write_bytes` result, or a checked flush). **Closed by [`checked-output.md`](checked-output.md) (#215)**: `flush_out` reports a failed or earlier-failed write; a trap still loses the buffer |
-| L2 | No directory listing (`fs_list`) | A.2 | `list` (ls, find, tree) | compiler: builtin + edition |
-| L3 | No file type, mode or mtime without opening (`fs_stat`) | A.2 | `list` entries, `stat` | compiler: builtin |
+| L2 | No directory listing (`fs_list`) | A.2 | `list` (ls, find, tree) | compiler: builtin + edition. **Designed** (#222): [`directory-listing.md`](directory-listing.md) proposes it on a `Dir` (`dir_list`, `dir_next`) rather than a path |
+| L3 | No file type, mode or mtime without opening (`fs_stat`) | A.2 | `list` entries, `stat` | compiler: builtin. **Designed** (#222): `dir_stat` on a `Dir`, never following a link ([`directory-listing.md`](directory-listing.md)) |
 | L4 | `std.crypto.sha256`/`sha512` trap past 65,527/65,519 bytes; no incremental API | A.6 | `hash`, `write` preconditions | `std` (or in-package first, AGENTS.md §7) |
 | L5 | `narrow` takes a literal; no generic over `Fs(p)`/`Net(b)` | A.1, A.9 | static extent for a general tool | by design (`linearity-and-effects.md` §7.4); D14 routes round it |
 | L6 | No symlink-aware open or `realpath` under `Fs`; symlinks escape a narrowed prefix | A.4 | symlink-safe `--root` | compiler: a no-follow open, if wanted. **Built** (#227 slices 1 and 2): [`directory-handles.md`](directory-handles.md)'s `Dir` reads, creates, appends, renames, removes and syncs beneath a directory and follows no link; the tools on top are its slice 3, built in alpibrusl/lexsys-tools#4 |

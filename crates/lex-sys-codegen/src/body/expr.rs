@@ -707,6 +707,10 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::DirRemove) => self.dir_remove(&args),
                     Callee::Builtin(Builtin::DirSync) => self.dir_sync(&args),
                     Callee::Builtin(Builtin::DirClose) => self.dir_close(&args),
+                    // `docs/directory-listing.md` §3.1.
+                    Callee::Builtin(Builtin::DirList) => self.dir_list(&args),
+                    Callee::Builtin(Builtin::DirNext) => self.dir_next(&args),
+                    Callee::Builtin(Builtin::DirListClose) => self.dir_list_close(&args),
                     // `close(2)`. The handle is one leaf and it ends here.
                     Callee::Builtin(Builtin::Close) => {
                         let close = self.libc_fn("close", &[types::I32], &[types::I32]);

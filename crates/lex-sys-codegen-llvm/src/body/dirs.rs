@@ -14,7 +14,7 @@ use crate::*;
 impl<'a> FuncEmitter<'a> {
     /// The `open` flags for this target, from the one table both backends
     /// share.
-    fn open_flags(&self) -> lex_sys_ir::OpenFlags {
+    pub(crate) fn open_flags(&self) -> lex_sys_ir::OpenFlags {
         let aarch64 = matches!(self.triple.architecture, target_lexicon::Architecture::Aarch64(_));
         lex_sys_ir::open_flags(self.is_darwin(), aarch64)
     }
@@ -160,7 +160,7 @@ impl<'a> FuncEmitter<'a> {
 
     /// The descriptor behind a borrowed `Dir`: the handle arrives as its
     /// address.
-    fn dir_fd(&mut self, handle: &str) -> String {
+    pub(crate) fn dir_fd(&mut self, handle: &str) -> String {
         let fd64 = self.fresh();
         self.out.push_str(&format!("  {fd64} = load i64, ptr {handle}\n"));
         let fd = self.fresh();
