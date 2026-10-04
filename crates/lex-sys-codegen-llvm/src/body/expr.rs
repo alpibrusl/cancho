@@ -894,6 +894,15 @@ impl<'a> FuncEmitter<'a> {
             Callee::Builtin(Builtin::PollerNew) => self.poller_new(),
             Callee::Builtin(Builtin::ClockMs) => self.clock_ms(false),
             Callee::Builtin(Builtin::ClockUnixMs) => self.clock_ms(true),
+            // `docs/directory-handles.md` §2.
+            Callee::Builtin(op @ (Builtin::DirEnter | Builtin::DirOpenRead)) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.dir_open(&args, *op == Builtin::DirEnter)
+            }
+            Callee::Builtin(Builtin::DirClose) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.dir_close(&args)
+            }
             // `docs/signals.md` section 5: the claim.
             Callee::Builtin(Builtin::SignalsWatch) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();

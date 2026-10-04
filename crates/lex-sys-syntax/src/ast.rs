@@ -759,6 +759,10 @@ pub const PRELUDE: &[&str] = &[
     "SignalWatch",
     "Watching",
     "signals",
+    // `docs/directory-handles.md`: a directory handle and what opening one
+    // answers; edition 6 only.
+    "Dir",
+    "DirOpened",
 ];
 
 impl Ast {

@@ -213,6 +213,9 @@ impl<'a> FuncEmitter<'a> {
     ) -> Result<Vec<LValue>, String> {
         let path = self.expr(&args[1])?;
         let path = self.checked_path(prefix, &path)?;
+        if mode == lex_sys_ir::OpenMode::Directory {
+            return Ok(self.open_directory(&path));
+        }
         if mode != lex_sys_ir::OpenMode::Read {
             return Ok(self.open_with_fopen(&path, mode));
         }

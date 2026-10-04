@@ -83,10 +83,15 @@ pub const PRELUDE_SPLIT_SIGNALS: usize = 28;
 pub const PRELUDE_SIGNAL_WATCH: usize = 29;
 pub const PRELUDE_WATCHING: usize = 30;
 
+/// `docs/directory-handles.md`, edition 6: a directory handle (`res`, one
+/// leaf, like `File`) and what opening one answers.
+pub const PRELUDE_DIR: usize = 31;
+pub const PRELUDE_DIR_OPENED: usize = 32;
+
 /// How many types the prelude declares. Written once, because a builtin's
 /// signature indexes this table and a stale slice is a panic rather than a
 /// diagnostic.
-pub const PRELUDE_COUNT: usize = 31;
+pub const PRELUDE_COUNT: usize = 33;
 
 /// Which path operation an [`Expr::PathOp`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,6 +116,9 @@ pub enum OpenMode {
     New,
     /// `open_rw`: an existing file, read and write, no truncation (`"r+b"`).
     ReadWrite,
+    /// `open_dir` (`docs/directory-handles.md`): `open(path, O_RDONLY |
+    /// O_DIRECTORY)`, answering a `DirOpened` rather than an `Opened`.
+    Directory,
 }
 
 impl OpenMode {
@@ -122,6 +130,9 @@ impl OpenMode {
             OpenMode::Write => "wb",
             OpenMode::New => "wbx",
             OpenMode::ReadWrite => "r+b",
+            // Never reaches `fopen`: both backends open a directory with
+            // `open` and its own flags. Read-only is the honest mode.
+            OpenMode::Directory => "rb",
         }
     }
 }
@@ -969,3 +980,23 @@ pub fn is_zero_fill(fill: &Expr) -> bool {
         _ => false,
     }
 }
+
+/// The two `open` flags a directory handle needs beyond `O_RDONLY` (which is
+/// zero everywhere), per target: `(O_DIRECTORY, O_NOFOLLOW)`
+/// (`docs/directory-handles.md` §2). Written once here so both backends
+/// spell them the same; the values are the kernels' own (Linux x86-64 and
+/// AArch64 differ, and Darwin differs from both).
+pub fn directory_flags(darwin: bool, aarch64: bool) -> (i64, i64) {
+    if darwin {
+        (0x0010_0000, 0x0100)
+    } else if aarch64 {
+        (0o40000, 0o100000)
+    } else {
+        (0o200000, 0o400000)
+    }
+}
+
+/// The longest name `dir_enter` and `dir_open_read` copy (`NAME_MAX`, 255 on
+/// Linux and Darwin); a longer one is `EINVAL` too, so the copy has a fixed
+/// size.
+pub const NAME_MAX: i64 = 255;

@@ -136,6 +136,7 @@ impl<'a> FnLowering<'a> {
             Builtin::OpenWrite => OpenMode::Write,
             Builtin::OpenNew => OpenMode::New,
             Builtin::OpenRw => OpenMode::ReadWrite,
+            Builtin::OpenDir => OpenMode::Directory,
             _ => OpenMode::Read,
         };
         let [capability, path] = args else {
@@ -160,8 +161,8 @@ impl<'a> FnLowering<'a> {
 
         // §4.1: the whole prefix is spent here. `read` performs a path-free
         // label afterwards precisely because this row named the directory.
-        let reads = matches!(mode, OpenMode::Read | OpenMode::ReadWrite);
-        let writes = !matches!(mode, OpenMode::Read);
+        let reads = matches!(mode, OpenMode::Read | OpenMode::ReadWrite | OpenMode::Directory);
+        let writes = !matches!(mode, OpenMode::Read | OpenMode::Directory);
         for (wanted, name) in [(reads, "fs_read"), (writes, "fs_write")] {
             if wanted {
                 self.performed.union(&Effects::new([Label {
@@ -171,9 +172,12 @@ impl<'a> FnLowering<'a> {
             }
         }
 
+        // `open_dir` answers a `DirOpened`, the same shape with a `Dir` in
+        // its `Ok` arm (`docs/directory-handles.md` §2).
+        let answer = if mode == OpenMode::Directory { PRELUDE_DIR_OPENED } else { PRELUDE_OPENED };
         Ok((
             Expr::OpenFile { prefix, mode, args: vec![fs_value, path_value] },
-            Type::Named(self.prelude()[PRELUDE_OPENED], Vec::new()),
+            Type::Named(self.prelude()[answer], Vec::new()),
         ))
     }
 

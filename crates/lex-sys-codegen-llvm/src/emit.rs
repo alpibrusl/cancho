@@ -179,6 +179,7 @@ fn leaves_into(ty: &Type, program: &Program, out: &mut Vec<LKind>) -> Result<(),
             if matches!(
                 def.0 as usize,
                 lex_sys_ir::PRELUDE_FILE
+                    | lex_sys_ir::PRELUDE_DIR
                     | lex_sys_ir::PRELUDE_LISTENER
                     | lex_sys_ir::PRELUDE_CONN
                     | lex_sys_ir::PRELUDE_POLLER
@@ -322,6 +323,9 @@ pub(crate) fn emit_module(
     declare_libc_unless_own(&mut text, "getsockopt", "i32 @getsockopt(i32, i32, i32, ptr, ptr)");
     declare_libc_unless_own(&mut text, "bind", "i32 @bind(i32, ptr, i32)");
     declare_libc_unless_own(&mut text, "close", "i32 @close(i32)");
+    // `dir_enter` and `dir_open_read` (`docs/directory-handles.md`): three
+    // fixed arguments, since `mode` is read only with `O_CREAT`.
+    declare_libc_unless_own(&mut text, "openat", "i32 @openat(i32, ptr, i32)");
     // `connect` (§7.22, `docs/connect.md` §10): the last of `Net`'s four
     // builtins, needing `getaddrinfo`/`freeaddrinfo` (host resolution)
     // and `connect` itself alongside the `socket` already declared above.

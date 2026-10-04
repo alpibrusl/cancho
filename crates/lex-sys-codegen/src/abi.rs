@@ -75,6 +75,7 @@ pub(crate) fn leaves_into(
             if matches!(
                 def.0 as usize,
                 lex_sys_ir::PRELUDE_FILE
+                    | lex_sys_ir::PRELUDE_DIR
                     | lex_sys_ir::PRELUDE_LISTENER
                     | lex_sys_ir::PRELUDE_CONN
                     | lex_sys_ir::PRELUDE_POLLER
