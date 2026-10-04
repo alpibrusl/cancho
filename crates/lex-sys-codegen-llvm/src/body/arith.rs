@@ -80,6 +80,7 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::WrappingAdd
                     | Builtin::WrappingSub
                     | Builtin::WrappingMul
+                    | Builtin::ValueBarrier
                     | Builtin::Close
                     | Builtin::ArgCount
                     | Builtin::IntOf

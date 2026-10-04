@@ -1,3 +1,4 @@
+edition 6;
 module std.bigmod;
 
 // `std.bigmod` -- unsigned integers modulo an odd `n` of up to 4,096
@@ -5,9 +6,12 @@ module std.bigmod;
 // pure TLS 1.3 client (#197), under `std.rsa`. Not independently
 // reviewed (#209).
 //
-// Public data only: nothing here is constant time, and it branches on
-// the exponent's bits (`docs/rsa.md` §1). Inputs and outputs are
-// big-endian bytes; leading zero bytes are allowed. All the working
+// `pow_mod` and `inverse` branch on the exponent's bits, which must be
+// public (`docs/rsa.md` §1). The register arithmetic -- `mul`, `add`,
+// `sub` and the reduction they share -- is constant time: since #207 it
+// carries `std.ecdh`'s secret scalar multiples (`docs/ecdh.md` §2).
+// Inputs and outputs are big-endian bytes; leading zero bytes are
+// allowed. All the working
 // numbers live in the caller's `work`, `work_len()` words, so nothing is
 // allocated from a size the input names.
 //
@@ -212,19 +216,44 @@ fn compare_n[&w](w: &w [int], x: int, k: int) -> [] int {
     return 0;
 }
 
-// x -= n, for x >= n; clears the limb at `x + k`.
+// x -= n, for x >= n; clears the limb at `x + k`. Branches on nothing
+// but `k`: the borrow is the sign of each limb's difference.
 fn subtract_n[&w](w: &!w [int], x: int, k: int) -> [] int {
     var under = 0;
     var i = 0;
     while i < k {
-        var d = w[x + i] - w[slot_n() + i] - under;
-        if d < 0 {
-            d = d + (1 << 30);
-            under = 1;
-        } else {
-            under = 0;
-        }
-        w[x + i] = d;
+        let d = w[x + i] - w[slot_n() + i] - under;
+        w[x + i] = d & mask();
+        under = d >> 63 & 1;
+        i = i + 1;
+    }
+    w[x + k] = w[x + k] - under;
+    return 0;
+}
+
+// x = x - n if x >= n, else x unchanged, for x (the `k` limbs at `x`
+// and the one at `x + k`) below 2n. Constant time (`docs/ecdh.md` §2):
+// the comparison is a borrow computed over every limb, and n is
+// subtracted under a mask rather than behind a branch.
+fn ct_reduce[&w](w: &!w [int], x: int, k: int) -> [] int {
+    var under = 0;
+    var i = 0;
+    while i < k {
+        let d = w[x + i] - w[slot_n() + i] - under;
+        under = d >> 63 & 1;
+        i = i + 1;
+    }
+    under = w[x + k] - under >> 63 & 1;
+    // -1 (all ones) when x >= n, 0 when x < n, through the barrier so
+    // the optimiser cannot make the subtraction below a branch on it
+    // (`docs/value-barrier.md`).
+    let m = value_barrier(under - 1);
+    under = 0;
+    i = 0;
+    while i < k {
+        let d = w[x + i] - (w[slot_n() + i] & m) - under;
+        w[x + i] = d & mask();
+        under = d >> 63 & 1;
         i = i + 1;
     }
     w[x + k] = w[x + k] - under;
@@ -271,10 +300,8 @@ fn mont_mul[&w](w: &!w [int], x: int, y: int, dst: int) -> [] int {
         w[t + k] = s >> 30;
         i = i + 1;
     }
-    // Below 2n: one subtraction at most.
-    if compare_n(w, t, k) >= 0 {
-        subtract_n(w, t, k);
-    }
+    // Below 2n: one subtraction at most, made or not without a branch.
+    ct_reduce(w, t, k);
     copy(w, t, dst, k);
     w[dst + k] = 0;
     return 0;
@@ -492,40 +519,33 @@ pub fn add[&w](w: &!w [int], a: int, b: int, dst: int) -> [] int {
         i = i + 1;
     }
     w[dst + k] = carry;
-    if compare_n(w, dst, k) >= 0 {
-        subtract_n(w, dst, k);
-    }
+    ct_reduce(w, dst, k);
     return 0;
 }
 
-// dst = a - b mod n.
+// dst = a - b mod n. Constant time: n is added back under a mask made
+// from the final borrow.
 pub fn sub[&w](w: &!w [int], a: int, b: int, dst: int) -> [] int {
     let k = w[0];
     var under = 0;
     var i = 0;
     while i < k {
-        var v = w[a + i] - w[b + i] - under;
-        if v < 0 {
-            v = v + (1 << 30);
-            under = 1;
-        } else {
-            under = 0;
-        }
-        w[dst + i] = v;
+        let v = w[a + i] - w[b + i] - under;
+        w[dst + i] = v & mask();
+        under = v >> 63 & 1;
         i = i + 1;
     }
     w[dst + k] = 0;
-    if under == 1 {
-        // Below zero: add n back; the carry out of the top limb is the
-        // borrow it cancels.
-        var carry = 0;
-        i = 0;
-        while i < k {
-            let v = w[dst + i] + w[slot_n() + i] + carry;
-            w[dst + i] = v & mask();
-            carry = v >> 30;
-            i = i + 1;
-        }
+    // Below zero: add n back; the carry out of the top limb is the
+    // borrow it cancels.
+    let m = value_barrier(0 - under);
+    var carry = 0;
+    i = 0;
+    while i < k {
+        let v = w[dst + i] + (w[slot_n() + i] & m) + carry;
+        w[dst + i] = v & mask();
+        carry = v >> 30;
+        i = i + 1;
     }
     return 0;
 }

@@ -54,6 +54,8 @@ wrapping would give a wrong answer silently.
 - **Leading zero bytes** in `n`, `e` and `a` are allowed, because DER INTEGERs carry one before a high bit.
 - **Method:** left-to-right square-and-multiply in Montgomery form, then one `mont_mul` by 1 to leave it.
 - **Not constant time** (§1): it branches on the exponent's bits, which are public.
+  *Since #207 (`docs/ecdh.md` §2):* the reduction under `mul`, `add` and `sub` is constant time, because `std.ecdh` multiplies
+  secret values with it. `pow_mod` still branches on the exponent.
 
 `work` is the caller's `[int]` of `work_len()` words. Nothing is allocated from a size the input names.
 

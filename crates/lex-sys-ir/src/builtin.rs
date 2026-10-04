@@ -144,6 +144,15 @@ pub enum Builtin {
     WrappingAdd,
     WrappingSub,
     WrappingMul,
+    /// `value_barrier(x: int) -> [] int` -- `x`, which the optimiser may
+    /// assume nothing about (`docs/value-barrier.md`, edition 6 only).
+    ///
+    /// Constant-time code selects under masks, and `clang -O2` can prove
+    /// a mask built from a sign bit is 0 or -1 and turn the `and` back
+    /// into a branch on the secret. A mask passed through this is just a
+    /// number to it. On LLVM it is an empty `asm` tying output to input;
+    /// on Cranelift, which makes no such branches, the identity.
+    ValueBarrier,
     /// `byte_of(n: int) -> [] byte` — narrow an integer to a byte, or trap.
     ///
     /// `docs/strings.md` §2: it traps outside 0..255 rather than
@@ -577,6 +586,7 @@ impl Builtin {
         Builtin::WrappingAdd,
         Builtin::WrappingSub,
         Builtin::WrappingMul,
+        Builtin::ValueBarrier,
         Builtin::Len,
         Builtin::ByteOf,
         Builtin::IntOf,
@@ -674,6 +684,7 @@ impl Builtin {
             Builtin::WrappingAdd => "wrapping_add",
             Builtin::WrappingSub => "wrapping_sub",
             Builtin::WrappingMul => "wrapping_mul",
+            Builtin::ValueBarrier => "value_barrier",
             Builtin::Len => "len",
             Builtin::ByteOf => "byte_of",
             Builtin::IntOf => "int_of",
@@ -806,6 +817,9 @@ impl Builtin {
             // `docs/checked-output.md`: a name a program may already have
             // declared for itself, so it is visible from edition 5 only.
             Builtin::FlushOut => 5,
+            // `docs/value-barrier.md` §3: edition 6, the latest, for the
+            // same reason -- a program may already declare the name.
+            Builtin::ValueBarrier => 6,
             // `docs/signals.md`: edition 6, for the same reason --
             // `signals_watch` is a name a program may already declare.
             Builtin::SignalsWatch
@@ -1009,6 +1023,7 @@ impl Builtin {
             Builtin::WrappingAdd | Builtin::WrappingSub | Builtin::WrappingMul => {
                 (vec![Type::Int, Type::Int], Type::Int)
             }
+            Builtin::ValueBarrier => (vec![Type::Int], Type::Int),
             Builtin::Len => (Vec::new(), Type::Int),
             // Both are checked at the call site: the prefix in the
             // capability's type is what decides the row, and a fixed

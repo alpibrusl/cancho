@@ -671,6 +671,21 @@ impl<'a> FuncEmitter<'a> {
             // pattern (`docs/floating-point.md` §4.1) -- the same
             // `select`-over-a-NaN-test `lex-sys-codegen`'s own `BitsOf`
             // already does.
+            // `docs/value-barrier.md` §3: an empty `asm` whose output is
+            // tied to its input. It emits no instruction, and LLVM knows
+            // nothing about its answer, so a mask passed through it stays
+            // an `and` rather than becoming a branch on the secret.
+            Callee::Builtin(Builtin::ValueBarrier) => {
+                let x = evaluated
+                    .into_iter()
+                    .flatten()
+                    .next()
+                    .ok_or_else(|| "`value_barrier` needs an int argument".to_owned())?;
+                let x_op = operand(&x);
+                let result = self.fresh();
+                self.out.push_str(&format!("  {result} = call i64 asm \"\", \"=r,0\"(i64 {x_op})\n"));
+                Ok(vec![LValue::Reg(result)])
+            }
             Callee::Builtin(Builtin::BitsOf) => {
                 let x = evaluated
                     .into_iter()

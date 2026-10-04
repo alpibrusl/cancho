@@ -1,0 +1,454 @@
+edition 6;
+module std.ecdh;
+import std.bigmod;
+import std.ecdsa;
+
+// `std.ecdh` -- elliptic-curve Diffie-Hellman on P-256 and P-384 (SEC 1
+// §3.3.1, NIST SP 800-56A §5.7.1.2; `docs/ecdh.md`), for TLS key
+// exchange (`docs/tls-parity.md` §3.2). Sub-issue 10 (#207) of the
+// self-contained TLS client (#197). Not independently reviewed (#209).
+//
+// The scalar is secret, so nothing here branches on it or indexes by
+// it:
+// - the field arithmetic is `std.bigmod`'s registers, whose reduction
+//   is constant time (`docs/ecdh.md` §2);
+// - points are projective (X : Y : Z) and added with Renes, Costello
+//   and Batina's complete formulas for a = -3 (https://eprint.iacr.org/
+//   2015/1060, algorithms 4 and 6), which have no special case: the
+//   point at infinity and a doubling go through the same operations;
+// - the scalar is taken four bits at a time, highest first: four
+//   doublings, then the addition of one of sixteen precomputed
+//   multiples, chosen by reading all sixteen under masks.
+// The peer's point is public, and is checked before it is used: on the
+// curve, coordinates below p, uncompressed. P-256 and P-384 have
+// cofactor 1, so a valid point and a scalar in [1, n) never give the
+// point at infinity.
+//
+// Every function answers 0 or a negative code whose name is
+// `refusal_tag(code)`.
+
+pub fn ok() -> [] int {
+    return 0;
+}
+
+pub fn refusal_tag(code: int) -> [] &static [byte] {
+    if code == 0 {
+        return "ok";
+    }
+    if code == -50 {
+        return "ecdh-curve";
+    }
+    if code == -51 {
+        return "ecdh-work-length";
+    }
+    if code == -52 {
+        return "ecdh-scalar-length";
+    }
+    if code == -53 {
+        return "ecdh-scalar-range";
+    }
+    if code == -54 {
+        return "ecdh-point-encoding";
+    }
+    if code == -55 {
+        return "ecdh-point-range";
+    }
+    if code == -56 {
+        return "ecdh-point-not-on-curve";
+    }
+    if code == -57 {
+        return "ecdh-output-length";
+    }
+    if code == -58 {
+        return "ecdh-result-infinity";
+    }
+    return "unknown";
+}
+
+// ---- Registers ----
+//
+// Points are three consecutive registers X, Y, Z, in Montgomery form.
+
+fn reg_b() -> [] int {
+    return bigmod.reg(0);
+}
+
+// Temporaries t0..t4 for `add_points` and `double_point`.
+fn t(i: int) -> [] int {
+    return bigmod.reg(1 + i);
+}
+
+// Where `add_points` and `double_point` build their result.
+fn pt_out() -> [] int {
+    return 6;
+}
+
+// The running sum.
+fn pt_acc() -> [] int {
+    return 9;
+}
+
+// The multiple chosen for this window.
+fn pt_sel() -> [] int {
+    return 12;
+}
+
+// Multiple i of the base point, 0 to 15.
+fn pt_table(i: int) -> [] int {
+    return 15 + 3 * i;
+}
+
+fn x_of(p: int) -> [] int {
+    return bigmod.reg(p);
+}
+
+fn y_of(p: int) -> [] int {
+    return bigmod.reg(p + 1);
+}
+
+fn z_of(p: int) -> [] int {
+    return bigmod.reg(p + 2);
+}
+
+// The words `work` must hold.
+pub fn work_len() -> [] int {
+    return bigmod.registers_len(63);
+}
+
+fn copy_point[&w](w: &!w [int], from: int, to: int) -> [] int {
+    bigmod.copy_reg(w, x_of(from), x_of(to));
+    bigmod.copy_reg(w, y_of(from), y_of(to));
+    bigmod.copy_reg(w, z_of(from), z_of(to));
+    return 0;
+}
+
+// d = p + q, complete (RCB algorithm 4, a = -3): right for every pair
+// of points, infinity and p = q included. `d` may be `p` or `q`.
+fn add_points[&w](w: &!w [int], p: int, q: int, d: int) -> [] int {
+    let x1 = x_of(p);
+    let y1 = y_of(p);
+    let z1 = z_of(p);
+    let x2 = x_of(q);
+    let y2 = y_of(q);
+    let z2 = z_of(q);
+    let x3 = x_of(pt_out());
+    let y3 = y_of(pt_out());
+    let z3 = z_of(pt_out());
+    let b = reg_b();
+    bigmod.mul(w, x1, x2, t(0));
+    bigmod.mul(w, y1, y2, t(1));
+    bigmod.mul(w, z1, z2, t(2));
+    bigmod.add(w, x1, y1, t(3));
+    bigmod.add(w, x2, y2, t(4));
+    bigmod.mul(w, t(3), t(4), t(3));
+    bigmod.add(w, t(0), t(1), t(4));
+    bigmod.sub(w, t(3), t(4), t(3));
+    bigmod.add(w, y1, z1, t(4));
+    bigmod.add(w, y2, z2, x3);
+    bigmod.mul(w, t(4), x3, t(4));
+    bigmod.add(w, t(1), t(2), x3);
+    bigmod.sub(w, t(4), x3, t(4));
+    bigmod.add(w, x1, z1, x3);
+    bigmod.add(w, x2, z2, y3);
+    bigmod.mul(w, x3, y3, x3);
+    bigmod.add(w, t(0), t(2), y3);
+    bigmod.sub(w, x3, y3, y3);
+    bigmod.mul(w, b, t(2), z3);
+    bigmod.sub(w, y3, z3, x3);
+    bigmod.add(w, x3, x3, z3);
+    bigmod.add(w, x3, z3, x3);
+    bigmod.sub(w, t(1), x3, z3);
+    bigmod.add(w, t(1), x3, x3);
+    bigmod.mul(w, b, y3, y3);
+    bigmod.add(w, t(2), t(2), t(1));
+    bigmod.add(w, t(1), t(2), t(2));
+    bigmod.sub(w, y3, t(2), y3);
+    bigmod.sub(w, y3, t(0), y3);
+    bigmod.add(w, y3, y3, t(1));
+    bigmod.add(w, t(1), y3, y3);
+    bigmod.add(w, t(0), t(0), t(1));
+    bigmod.add(w, t(1), t(0), t(0));
+    bigmod.sub(w, t(0), t(2), t(0));
+    bigmod.mul(w, t(4), y3, t(1));
+    bigmod.mul(w, t(0), y3, t(2));
+    bigmod.mul(w, x3, z3, y3);
+    bigmod.add(w, y3, t(2), y3);
+    bigmod.mul(w, t(3), x3, x3);
+    bigmod.sub(w, x3, t(1), x3);
+    bigmod.mul(w, t(4), z3, z3);
+    bigmod.mul(w, t(3), t(0), t(1));
+    bigmod.add(w, z3, t(1), z3);
+    return copy_point(w, pt_out(), d);
+}
+
+// d = 2p, complete (RCB algorithm 6, a = -3). `d` may be `p`.
+fn double_point[&w](w: &!w [int], p: int, d: int) -> [] int {
+    let x = x_of(p);
+    let y = y_of(p);
+    let z = z_of(p);
+    let x3 = x_of(pt_out());
+    let y3 = y_of(pt_out());
+    let z3 = z_of(pt_out());
+    let b = reg_b();
+    bigmod.mul(w, x, x, t(0));
+    bigmod.mul(w, y, y, t(1));
+    bigmod.mul(w, z, z, t(2));
+    bigmod.mul(w, x, y, t(3));
+    bigmod.add(w, t(3), t(3), t(3));
+    bigmod.mul(w, x, z, z3);
+    bigmod.add(w, z3, z3, z3);
+    bigmod.mul(w, b, t(2), y3);
+    bigmod.sub(w, y3, z3, y3);
+    bigmod.add(w, y3, y3, x3);
+    bigmod.add(w, x3, y3, y3);
+    bigmod.sub(w, t(1), y3, x3);
+    bigmod.add(w, t(1), y3, y3);
+    bigmod.mul(w, x3, y3, y3);
+    bigmod.mul(w, x3, t(3), x3);
+    bigmod.add(w, t(2), t(2), t(3));
+    bigmod.add(w, t(2), t(3), t(2));
+    bigmod.mul(w, b, z3, z3);
+    bigmod.sub(w, z3, t(2), z3);
+    bigmod.sub(w, z3, t(0), z3);
+    bigmod.add(w, z3, z3, t(3));
+    bigmod.add(w, z3, t(3), z3);
+    bigmod.add(w, t(0), t(0), t(3));
+    bigmod.add(w, t(3), t(0), t(0));
+    bigmod.sub(w, t(0), t(2), t(0));
+    bigmod.mul(w, t(0), z3, t(0));
+    bigmod.add(w, y3, t(0), y3);
+    bigmod.mul(w, y, z, t(0));
+    bigmod.add(w, t(0), t(0), t(0));
+    bigmod.mul(w, t(0), z3, z3);
+    bigmod.sub(w, x3, z3, x3);
+    bigmod.mul(w, t(0), t(1), z3);
+    bigmod.add(w, z3, z3, z3);
+    bigmod.add(w, z3, z3, z3);
+    return copy_point(w, pt_out(), d);
+}
+
+// -1 (all ones) when a = b, else 0, for 0 <= a, b < 2^62: no branch.
+fn eq_mask(a: int, b: int) -> [] int {
+    return (a ^ b) - 1 >> 63;
+}
+
+// The selected point = multiple `idx` of the table, reading every
+// multiple: which one is taken shows in no branch and no address.
+fn select[&w](w: &!w [int], idx: int) -> [] int {
+    // A point's three registers are consecutive.
+    let span = 3 * (bigmod.reg(1) - bigmod.reg(0));
+    let s = x_of(pt_sel());
+    var j = 0;
+    while j < span {
+        w[s + j] = 0;
+        j = j + 1;
+    }
+    var i = 0;
+    while i < 16 {
+        // Through the barrier, or `clang -O2` makes the `and` below a
+        // branch on whether this is the entry (`docs/value-barrier.md`).
+        let m = value_barrier(eq_mask(i, idx));
+        let from = x_of(pt_table(i));
+        j = 0;
+        while j < span {
+            w[s + j] = w[s + j] | w[from + j] & m;
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// The accumulator = scalar times the point in table slot 1 (`scalar`
+// big-endian, in [1, n)). Fills the rest of the table first.
+fn multiply[&s, &w](w: &!w [int], scalar: &s [byte]) -> [] int {
+    // Slot 0 is the point at infinity, (0 : 1 : 0).
+    bigmod.set_small(w, x_of(pt_table(0)), 0);
+    bigmod.set_small(w, y_of(pt_table(0)), 1);
+    bigmod.to_mont(w, y_of(pt_table(0)), y_of(pt_table(0)));
+    bigmod.set_small(w, z_of(pt_table(0)), 0);
+    var i = 2;
+    while i < 16 {
+        add_points(w, pt_table(i - 1), pt_table(1), pt_table(i));
+        i = i + 1;
+    }
+    copy_point(w, pt_table(0), pt_acc());
+    var at = 0;
+    while at < 2 * len(scalar) {
+        double_point(w, pt_acc(), pt_acc());
+        double_point(w, pt_acc(), pt_acc());
+        double_point(w, pt_acc(), pt_acc());
+        double_point(w, pt_acc(), pt_acc());
+        // Window `at`: the high four bits of byte at / 2, then the low.
+        let byte = int_of(scalar[at / 2]);
+        let shift = 4 - 4 * (at % 2);
+        select(w, byte >> shift & 15);
+        add_points(w, pt_acc(), pt_sel(), pt_acc());
+        at = at + 1;
+    }
+    return 0;
+}
+
+// 1 when big-endian `s` is in [1, n), else 0, `s` and `n` the same
+// length. Constant time: a borrow over every byte, and an OR of them.
+fn in_range[&s, &n](s: &s [byte], n: &n [byte]) -> [] int {
+    var under = 0;
+    var any = 0;
+    var i = len(s) - 1;
+    while i >= 0 {
+        let d = int_of(s[i]) - int_of(n[i]) - under;
+        under = d >> 63 & 1;
+        any = any | int_of(s[i]);
+        i = i - 1;
+    }
+    return under & (0 - any >> 63 & 1);
+}
+
+// Checks the curve, the work and the scalar, and makes `w` ready for
+// arithmetic modulo p with b in its register.
+fn prepare[&s, &w](curve: int, scalar: &s [byte], w: &!w [int]) -> [] int {
+    if curve != 256 && curve != 384 {
+        return -50;
+    }
+    if len(w) < work_len() {
+        return -51;
+    }
+    let size = curve / 8;
+    if len(scalar) != size {
+        return -52;
+    }
+    var code = 0;
+    region r {
+        let k = alloc_slice[r](size, byte_of(0));
+        ecdsa.curve_param(curve, 4, k);
+        if in_range(scalar, k) == 0 {
+            code = -53;
+        }
+        if code == 0 {
+            ecdsa.curve_param(curve, 0, k);
+            code = bigmod.setup(k, w);
+        }
+        if code == 0 {
+            ecdsa.curve_param(curve, 1, k);
+            bigmod.load_reg(k, w, reg_b());
+            bigmod.to_mont(w, reg_b(), reg_b());
+        }
+    }
+    return code;
+}
+
+// The point (x, y), big-endian, into table slot 1 in Montgomery form,
+// with Z = 1. -55 when a coordinate is not below p.
+fn load_point[&x, &y, &w](x: &x [byte], y: &y [byte], w: &!w [int]) -> [] int {
+    let p = pt_table(1);
+    if bigmod.load_reg(x, w, x_of(p)) != 0 || bigmod.load_reg(y, w, y_of(p)) != 0 {
+        return -55;
+    }
+    bigmod.to_mont(w, x_of(p), x_of(p));
+    bigmod.to_mont(w, y_of(p), y_of(p));
+    bigmod.set_small(w, z_of(p), 1);
+    bigmod.to_mont(w, z_of(p), z_of(p));
+    return 0;
+}
+
+// Whether the point in table slot 1 (Z = 1) is on the curve:
+// y^2 = x^3 - 3x + b.
+fn on_curve[&w](w: &!w [int]) -> [] bool {
+    let x = x_of(pt_table(1));
+    let y = y_of(pt_table(1));
+    bigmod.mul(w, y, y, t(0));
+    bigmod.mul(w, x, x, t(1));
+    bigmod.mul(w, t(1), x, t(1));
+    bigmod.add(w, x, x, t(2));
+    bigmod.add(w, t(2), x, t(2));
+    bigmod.sub(w, t(1), t(2), t(1));
+    bigmod.add(w, t(1), reg_b(), t(1));
+    return bigmod.equal(w, t(0), t(1));
+}
+
+// The accumulator's affine x (and y, when `out_y` is not empty) as
+// big-endian bytes. -58 at infinity, which a valid input never reaches.
+fn affine[&x, &y, &w](w: &!w [int], out_x: &!x [byte], out_y: &!y [byte]) -> [] int {
+    let a = pt_acc();
+    if bigmod.is_zero(w, z_of(a)) {
+        return -58;
+    }
+    bigmod.inverse(w, z_of(a), t(0));
+    bigmod.mul(w, x_of(a), t(0), t(1));
+    bigmod.from_mont(w, t(1), t(1));
+    bigmod.store_reg(w, t(1), out_x);
+    if len(out_y) > 0 {
+        bigmod.mul(w, y_of(a), t(0), t(1));
+        bigmod.from_mont(w, t(1), t(1));
+        bigmod.store_reg(w, t(1), out_y);
+    }
+    bigmod.set_small(w, t(1), 0);
+    return 0;
+}
+
+// The public key of `scalar`: scalar times the generator, into `out` as
+// an uncompressed point, 0x04 || x || y (1 + 2 * curve / 8 bytes).
+// `scalar` is curve / 8 bytes, big-endian, in [1, n); `work` holds
+// `work_len()` words.
+pub fn public_key[&s, &o, &w](curve: int, scalar: &s [byte], out: &!o [byte], work: &!w [int]) -> [] int {
+    var code = prepare(curve, scalar, work);
+    if code != 0 {
+        return code;
+    }
+    let size = curve / 8;
+    if len(out) != 1 + 2 * size {
+        return -57;
+    }
+    region r {
+        let gx = alloc_slice[r](size, byte_of(0));
+        let gy = alloc_slice[r](size, byte_of(0));
+        ecdsa.curve_param(curve, 2, gx);
+        ecdsa.curve_param(curve, 3, gy);
+        load_point(gx, gy, work);
+    }
+    multiply(work, scalar);
+    out[0] = byte_of(4);
+    code = affine(work, out[1..1 + size], out[1 + size..1 + 2 * size]);
+    wipe(work);
+    return code;
+}
+
+// The shared secret of `scalar` and the peer's public key `peer`: the x
+// coordinate of scalar times the peer's point, into `out` (curve / 8
+// bytes). `peer` must be an uncompressed point, 0x04 || x || y, on the
+// curve; `scalar` and `work` are as `public_key` takes them.
+pub fn shared[&s, &p, &o, &w](curve: int, scalar: &s [byte], peer: &p [byte], out: &!o [byte], work: &!w [int]) -> [] int {
+    var code = prepare(curve, scalar, work);
+    if code != 0 {
+        return code;
+    }
+    let size = curve / 8;
+    if len(out) != size {
+        return -57;
+    }
+    if len(peer) != 1 + 2 * size || int_of(peer[0]) != 4 {
+        return -54;
+    }
+    code = load_point(peer[1..1 + size], peer[1 + size..1 + 2 * size], work);
+    if code != 0 {
+        return code;
+    }
+    if !on_curve(work) {
+        return -56;
+    }
+    multiply(work, scalar);
+    code = affine(work, out, out[0..0]);
+    wipe(work);
+    return code;
+}
+
+// Zeroes every register: the table and the accumulator are multiples
+// of the point by parts of the scalar.
+fn wipe[&w](w: &!w [int]) -> [] int {
+    var i = bigmod.reg(0);
+    while i < work_len() {
+        w[i] = 0;
+        i = i + 1;
+    }
+    return 0;
+}

@@ -161,6 +161,13 @@ fn unhex[&h, &o](hex: &h [byte], out: &!o [byte]) -> [] int {
     return 0;
 }
 
+// Curve parameter `which` (0 p, 1 b, 2 G's x, 3 G's y, 4 n) of `curve`
+// (256 or 384) as big-endian bytes into `out`, the curve's size.
+// `std.ecdh` takes its constants from here.
+pub fn curve_param[&o](curve: int, which: int, out: &!o [byte]) -> [] int {
+    return unhex(constant(curve, which), out);
+}
+
 // ---- Registers ----
 //
 // Field registers (modulo p): points are three consecutive registers

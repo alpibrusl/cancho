@@ -50,6 +50,7 @@ mod directory_handles;
 mod directory_writes;
 mod docs;
 mod duplication;
+mod ecdh;
 mod ecdsa;
 mod file_writes;
 mod filesystem;
