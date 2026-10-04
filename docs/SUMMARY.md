@@ -46,6 +46,7 @@
 - [What a program can reach](reach.md)
 - [Opaque pointers and c_ptr](opaque-pointers.md)
 - [Linking beyond libc](foreign-linking.md)
+- [Non-blocking TLS](tls-nonblocking.md)
 - [Under a lex-os grant](under-a-grant.md)
 
 # Types and data

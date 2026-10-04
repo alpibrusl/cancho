@@ -237,6 +237,14 @@ descriptor stays owned by the `Conn`; the raw `int` is a loan and
 There is no inverse (`conn_from_fd`). That one *would* mint authority
 from a forgeable number, and nothing asks for it.
 
+> **Corrected (`tls-nonblocking.md` §3.2): a program without `Ffi` can read the number.** The sentence above ("a program without `Ffi`
+> cannot reach the hatch") is false of the number, if not of anything it could be used for: a ticket is `epoch << 32 | descriptor`
+> (§10.3) and `std.conns.Table.tickets` is a field of a `pub` struct, so `vec.get(table.tickets, slot) & 0xffffffff` is the descriptor,
+> with no capability (`examples/tls_nb/gaps/g5_table_ticket.ls`; `tls.fd_of`). Calling anything on it still needs `Ffi`, so nothing is
+> forged, but `Table`'s fields should not be readable. And `conn_raw_fd` is still not built: the TLS spike uses memory BIOs instead
+> (§3.2 there), partly because OpenSSL's own socket BIO writes with `write(2)` and a closed peer then kills the process with `SIGPIPE`,
+> which `conn_write`'s `MSG_NOSIGNAL` is built to prevent.
+
 ## 7. Where this sits: the four stages
 
 | | stage | removes | status |

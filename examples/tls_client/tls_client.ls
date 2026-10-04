@@ -49,18 +49,22 @@ extern fn SSL_CTX_new[&f](ffi: &f Ffi("libc"), method: c_ptr) -> [ffi("libc")] c
 
 extern fn SSL_new[&f](ffi: &f Ffi("libc"), ctx: c_ptr) -> [ffi("libc")] c_ptr;
 
-extern fn SSL_set_fd[&f](ffi: &f Ffi("libc"), ssl: c_ptr, fd: int) -> [ffi("libc")] int;
+// A C `int` result is declared `c_int`, which sign-extends it once at the boundary. Declared `int`, a failing `SSL_connect` (which
+// answers -1) was read as 4294967295, the `<= 0` test below was false, and the program went on to write its request to a session
+// that never existed. (Against a server that accepts and closes it is still killed by SIGPIPE, now by OpenSSL's own write of a fatal
+// alert; `docs/tls-nonblocking.md` section 2.) Found by `examples/tls_nb/gaps/g13_int_vs_c_int.ls`.
+extern fn SSL_set_fd[&f](ffi: &f Ffi("libc"), ssl: c_ptr, fd: int) -> [ffi("libc")] c_int;
 
-extern fn SSL_connect[&f](ffi: &f Ffi("libc"), ssl: c_ptr) -> [ffi("libc")] int;
+extern fn SSL_connect[&f](ffi: &f Ffi("libc"), ssl: c_ptr) -> [ffi("libc")] c_int;
 
 // `buf` crosses as a pointer and a length, exactly the way `write`/`read`
 // already do (`docs/strings.md` §6) -- `SSL_write`/`SSL_read`'s own `num`
 // parameter is that length, so it needs no separate `int` argument here.
-extern fn SSL_write[&f, &b](ffi: &f Ffi("libc"), ssl: c_ptr, buf: &b [byte]) -> [ffi("libc")] int;
+extern fn SSL_write[&f, &b](ffi: &f Ffi("libc"), ssl: c_ptr, buf: &b [byte]) -> [ffi("libc")] c_int;
 
-extern fn SSL_read[&f, &b](ffi: &f Ffi("libc"), ssl: c_ptr, buf: &!b [byte]) -> [ffi("libc")] int;
+extern fn SSL_read[&f, &b](ffi: &f Ffi("libc"), ssl: c_ptr, buf: &!b [byte]) -> [ffi("libc")] c_int;
 
-extern fn SSL_shutdown[&f](ffi: &f Ffi("libc"), ssl: c_ptr) -> [ffi("libc")] int;
+extern fn SSL_shutdown[&f](ffi: &f Ffi("libc"), ssl: c_ptr) -> [ffi("libc")] c_int;
 
 extern fn SSL_free[&f](ffi: &f Ffi("libc"), ssl: c_ptr) -> [ffi("libc")] int;
 

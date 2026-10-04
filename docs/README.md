@@ -385,6 +385,7 @@ not repeated here; a doc's own header carries its own detail.
 | [`reach.md`](reach.md) | What a program can reach, via a real REST endpoint | settled and built; corrected by `opaque-pointers.md` and `foreign-linking.md` |
 | [`opaque-pointers.md`](opaque-pointers.md) | `c_ptr`: one opaque foreign-pointer shape | settled and built (edition 3) |
 | [`foreign-linking.md`](foreign-linking.md) | `-l`/`-L`: linking beyond libc | settled and built — `examples/tls_client/`, a real handshake |
+| [`tls-nonblocking.md`](tls-nonblocking.md) | `https` for a service with one thread: a non-blocking OpenSSL client on the `Poller` (memory BIOs), certificate verification with every failure told apart, the authority it costs, a resolver that does not stop the loop and a pinned address, what `lexsys-hooks` would change, and 12 gaps with reproducers | spiked and measured (`examples/tls_nb/`): 64 handshakes on one thread, ~0.6 ms of CPU each (0.3 resumed), 26-48 KiB a connection; not built into any service; OpenSSL through FFI by decision, a pure lex-sys TLS is a research project |
 | [`overflow-cost.md`](overflow-cost.md) | What the overflow trap costs, measured | measured — corrects the README and `defined-behaviour.md` §2.1 |
 | [`bitwise.md`](bitwise.md) | `& \| ^ ~ << >>`, hex literals | settled and built |
 | [`porting.md`](porting.md) | Real programs ported and checked byte-for-byte: `base64`, `sort` | done twice |

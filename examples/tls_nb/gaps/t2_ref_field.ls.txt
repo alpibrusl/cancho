@@ -1,0 +1,15 @@
+// A struct cannot carry a borrowed capability: a type declaration takes no region parameter, so a field `&f Ffi(...)` has no `f` to name
+// (`region-mismatch`). A worker's job struct must OWN what it uses (t1), and cannot share the spawning thread's `Ffi` with it (t3 can,
+// because the shared reference is the whole payload).
+// (Kept as text, not `.ls`: `lex-sys fmt` cannot read it for the same reason, and the repository's formatting test walks every `.ls` under
+// `examples/`. `check_gaps.py` copies it to a `.ls` to run it.)
+edition 5;
+res struct Job[&f] {
+    ffi: &f Ffi("tls"),
+    n: int,
+}
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(net); release(clock);
+    return 0;
+}
