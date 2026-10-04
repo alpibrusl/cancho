@@ -13,3 +13,20 @@ Apache License 2.0 in `LICENSE` beside them.
 | `hkdf_sha384_test.json` | 83 | `conformance/kdf.rs` |
 | `x25519_test.json` | 518 | `conformance/x25519.rs` (`docs/x25519.md` §4.2) |
 | `ed25519_test.json` | 151 | `conformance/x25519.rs` |
+| `rsa_pss_2048_sha256_mgf1_0_test.json` | 103 | `conformance/rsa.rs` (`docs/rsa.md` §5.1) |
+| `rsa_pss_2048_sha256_mgf1_32_test.json` | 108 | `conformance/rsa.rs` (`docs/rsa.md` §5.1) |
+| `rsa_pss_2048_sha384_mgf1_48_test.json` | 141 | `conformance/rsa.rs` (`docs/rsa.md` §5.1) |
+| `rsa_pss_3072_sha256_mgf1_32_test.json` | 108 | `conformance/rsa.rs` (`docs/rsa.md` §5.1) |
+| `rsa_pss_4096_sha256_mgf1_32_test.json` | 108 | `conformance/rsa.rs` (`docs/rsa.md` §5.1) |
+| `rsa_pss_4096_sha384_mgf1_48_test.json` | 141 | `conformance/rsa.rs` (`docs/rsa.md` §5.1) |
+| `rsa_pss_4096_sha512_mgf1_64_test.json` | 179 | `conformance/rsa.rs` (`docs/rsa.md` §5.1) |
+| `rsa_pss_misc_test.json` | 150 | `conformance/rsa.rs` (`docs/rsa.md` §5.1) |
+| `rsa_signature_2048_sha256_test.json` | 259 | `conformance/rsa.rs` (`docs/rsa.md` §5.1) |
+| `rsa_signature_2048_sha384_test.json` | 258 | `conformance/rsa.rs` (`docs/rsa.md` §5.1) |
+| `rsa_signature_2048_sha512_test.json` | 259 | `conformance/rsa.rs` (`docs/rsa.md` §5.1) |
+| `rsa_signature_3072_sha256_test.json` | 259 | `conformance/rsa.rs` (`docs/rsa.md` §5.1) |
+| `rsa_signature_3072_sha384_test.json` | 259 | `conformance/rsa.rs` (`docs/rsa.md` §5.1) |
+| `rsa_signature_3072_sha512_test.json` | 260 | `conformance/rsa.rs` (`docs/rsa.md` §5.1) |
+| `rsa_signature_4096_sha256_test.json` | 258 | `conformance/rsa.rs` (`docs/rsa.md` §5.1) |
+| `rsa_signature_4096_sha384_test.json` | 259 | `conformance/rsa.rs` (`docs/rsa.md` §5.1) |
+| `rsa_signature_4096_sha512_test.json` | 259 | `conformance/rsa.rs` (`docs/rsa.md` §5.1) |
