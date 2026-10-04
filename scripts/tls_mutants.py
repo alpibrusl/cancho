@@ -69,7 +69,11 @@ MUTANTS = [
      "        bytes[b_hs() + k] = bytes[b_hs() + at + k];", "        bytes[b_hs() + k] = bytes[b_hs() + k];"),
     ("a warning-level alert ignored", "client.ls",
      "    ints[i_alert()] = what;\n", "    if level == 1 {\n        return 0;\n    }\n    ints[i_alert()] = what;\n"),
-    ("the pin not checked", "client.ls", "            } else if !pinned(pins, leaf) {", "            } else if false {"),
+    ("the chain not verified", "client.ls", "code = from_x509(x509_verify.verify(store, body, ranges, bytes[k_host()..k_host() + ints[i_host_len()]], ints[i_now()], x509_verify.tls_max_intermediates()));", "code = 0;"),
+    ("the time not given to the verifier", "client.ls", "ints[i_now()], x509_verify.tls_max_intermediates()", "0, x509_verify.tls_max_intermediates()"),
+    ("an unknown issuer reported as x509-decode", "client.ls",
+     "    if code == x509_verify.unknown_issuer() {\n        return tls_record.x509_unknown_issuer();",
+     "    if code == x509_verify.unknown_issuer() {\n        return tls_record.x509_decode();"),
     ("a message allowed to share a record with the next key", "client.ls",
      "(after == state_wait_extensions() || after == state_connected()) && at < ints[i_hs_fill()]",
      "(after == state_wait_extensions() || after == state_connected()) && at < 0"),
@@ -108,7 +112,8 @@ def cases():
 def build(lexsys, program, pkg, out, engine=False):
     files = [os.path.join(pkg, f) for f in (FILES if engine else FILES[:3])]
     r = subprocess.run([lexsys, "build", "--std", os.path.join(ROOT, "tests/programs", program), *files,
-                        os.path.join(ROOT, "packages/x509/x509.ls"), "-o", out], capture_output=True, text=True)
+                        *[os.path.join(ROOT, "packages/x509", f) for f in ["verify.ls", "names.ls", "x509.ls"]],
+                        "-o", out], capture_output=True, text=True)
     return r.returncode == 0, r.stderr
 
 

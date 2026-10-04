@@ -5,7 +5,7 @@ module tls;
 import std.chacha20;
 import tls_client;
 import tls_record;
-import x509;
+import x509_verify;
 
 // `tls` -- the engine: many TLS 1.3 client connections in slots, bytes in
 // and bytes out, no socket and no capability inside (`docs/tls-pure.md`
@@ -14,24 +14,26 @@ import x509;
 // `rtcp.Resolver` owns its lookups (`docs/tls-pure.md` §2.1). Not
 // independently reviewed (#209).
 //
-// Certificates are accepted only when pinned until #206 builds chains
-// (`docs/tls-core.md` §5): `trust` takes a PEM bundle, and a server's
-// leaf must be one of its certificates, byte for byte.
+// A server's chain is verified against the roots `trust` was given, the
+// host and the time `start` was given (`docs/x509-verify.md`).
+// Revocation is not checked: a revoked certificate that is otherwise
+// valid is accepted (`docs/tls-pure.md` §5.4).
 
 pub res struct Engine {
     ints: Box[[int]],
     bytes: Box[[byte]],
-    pins: Box[[byte]],
+    roots: Box[[byte]],
     meta: Box[[int]],
     drbg: Box[[byte]],
 }
 
-// The pins' room: 3-byte lengths, each followed by a certificate.
-fn pins_cap() -> [] int {
+// The roots' room, in `x509_verify.store_load`'s format: this machine's
+// 128-root bundle takes 138,350 bytes (`docs/x509-verify.md` §8.2).
+fn roots_cap() -> [] int {
     return 1048576;
 }
 
-// meta: [0] slots, [1] seeded, [2] bytes of pins, [3] pins, [4 + s] slot `s` in use.
+// meta: [0] slots, [1] seeded, [2] bytes of roots, [3] blocks skipped, [4 + s] slot `s` in use.
 fn m_slots() -> [] int {
     return 0;
 }
@@ -40,11 +42,11 @@ fn m_seeded() -> [] int {
     return 1;
 }
 
-fn m_pins_len() -> [] int {
+fn m_roots_len() -> [] int {
     return 2;
 }
 
-fn m_pins_count() -> [] int {
+fn m_skipped() -> [] int {
     return 3;
 }
 
@@ -57,7 +59,7 @@ pub fn open[&h](heap: &!h Heap, slots: int) -> [heap] Engine {
     if n < 1 {
         n = 1;
     }
-    var engine = Engine { ints: box_slice(heap, n * tls_client.ints_len(), 0), bytes: box_slice(heap, n * tls_client.bytes_len(), byte_of(0)), pins: box_slice(heap, pins_cap(), byte_of(0)), meta: box_slice(heap, 4 + n, 0), drbg: box_slice(heap, 32, byte_of(0)) };
+    var engine = Engine { ints: box_slice(heap, n * tls_client.ints_len(), 0), bytes: box_slice(heap, n * tls_client.bytes_len(), byte_of(0)), roots: box_slice(heap, roots_cap(), byte_of(0)), meta: box_slice(heap, 4 + n, 0), drbg: box_slice(heap, 32, byte_of(0)) };
     borrow mut engine as &!w in {
         contents(w.meta)[m_slots()] = n;
     }
@@ -81,10 +83,10 @@ pub fn close[&h](heap: &!h Heap, engine: Engine) -> [heap] int {
             i = i + 1;
         }
     }
-    let Engine { ints, bytes, pins, meta, drbg } = e;
+    let Engine { ints, bytes, roots, meta, drbg } = e;
     unbox_slice(heap, ints);
     unbox_slice(heap, bytes);
-    unbox_slice(heap, pins);
+    unbox_slice(heap, roots);
     unbox_slice(heap, meta);
     unbox_slice(heap, drbg);
     return 0;
@@ -94,54 +96,31 @@ pub fn slots[&e](engine: &e Engine) -> [] int {
     return contents(engine.meta)[m_slots()];
 }
 
-// The certificates of a PEM bundle become the pins. Answers how many, or
-// a refusal: `x509-decode` for a block that is not a certificate,
-// `x509-chain-too-large` when they do not fit.
+// The roots of a PEM bundle (the system's, or an operator's file) become
+// the trust store, replacing any before. A block that is not a
+// certificate this package reads is skipped, never fatal; `skipped`
+// says how many. Answers the roots stored, or `x509-chain-too-large`
+// when they do not fit. No root is a store that trusts nothing, which
+// the caller must not start with (`docs/tls-pure.md` §5.1).
 pub fn trust[&e, &p](engine: &!e Engine, pem: &p [byte]) -> [] int {
-    let pins = contents(engine.pins);
-    var used = 0;
     var count = 0;
-    var code = 0;
     region r {
-        let der = alloc_slice[r](x509.max_certificate(), byte_of(0));
         let info = alloc_slice[r](2, 0);
-        let view = alloc_slice[r](x509.view_len(), 0);
-        var at = 0;
-        var going = true;
-        while going && code == 0 {
-            let found = x509.pem_next(pem, at, der, info);
-            if found == 1 {
-                going = false;
-            } else if found != 0 {
-                code = tls_record.x509_decode();
-            } else {
-                let n = info[0];
-                if x509.parse(der[0..n], view) != 0 {
-                    code = tls_record.x509_decode();
-                } else if used + 3 + n > pins_cap() {
-                    code = tls_record.x509_chain_too_large();
-                } else {
-                    pins[used] = byte_of(n >> 16);
-                    pins[used + 1] = byte_of(n >> 8 & 255);
-                    pins[used + 2] = byte_of(n & 255);
-                    var k = 0;
-                    while k < n {
-                        pins[used + 3 + k] = der[k];
-                        k = k + 1;
-                    }
-                    used = used + 3 + n;
-                    count = count + 1;
-                    at = info[1];
-                }
-            }
+        count = x509_verify.store_load(pem, contents(engine.roots), info);
+        if count < 0 {
+            contents(engine.meta)[m_roots_len()] = 0;
+            count = tls_record.x509_chain_too_large();
+        } else {
+            contents(engine.meta)[m_roots_len()] = info[0];
         }
+        contents(engine.meta)[m_skipped()] = info[1];
     }
-    if code != 0 {
-        return code;
-    }
-    contents(engine.meta)[m_pins_len()] = used;
-    contents(engine.meta)[m_pins_count()] = count;
     return count;
+}
+
+// The blocks the last `trust` skipped.
+pub fn skipped[&e](engine: &e Engine) -> [] int {
+    return contents(engine.meta)[m_skipped()];
 }
 
 // 32 bytes of the caller's entropy key the DRBG (`docs/tls-pure.md` §6).
@@ -203,8 +182,8 @@ fn bytes_of(slot: int) -> [] int {
 }
 
 // Starts a connection in `slot` to the server named `host`. `now_unix_ms`
-// is for the certificate's validity, which #206 checks; until then it
-// is not used. 0, or a refusal.
+// (`clock_unix_ms`) is the time the server's certificates are checked
+// against. 0, or a refusal.
 pub fn start[&e, &h](engine: &!e Engine, slot: int, host: &h [byte], now_unix_ms: int) -> [] int {
     if !slot_ok(engine, slot) || contents(engine.meta)[m_busy(slot)] != 0 {
         return tls_record.bad_slot();
@@ -218,7 +197,7 @@ pub fn start[&e, &h](engine: &!e Engine, slot: int, host: &h [byte], now_unix_ms
         draw(engine, random);
         let i = ints_of(slot);
         let b = bytes_of(slot);
-        code = tls_client.start(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], host, random);
+        code = tls_client.start(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], host, random, now_unix_ms / 1000);
         var k = 0;
         while k < 96 {
             random[k] = byte_of(0);
@@ -236,8 +215,8 @@ pub fn feed[&e, &d](engine: &!e Engine, slot: int, data: &d [byte]) -> [] int {
     }
     let i = ints_of(slot);
     let b = bytes_of(slot);
-    let used = contents(engine.meta)[m_pins_len()];
-    return tls_client.feed(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], data, contents(engine.pins)[0..used]);
+    let used = contents(engine.meta)[m_roots_len()];
+    return tls_client.feed(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], data, contents(engine.roots)[0..used]);
 }
 
 // Bytes for the socket.

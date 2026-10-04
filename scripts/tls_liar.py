@@ -70,20 +70,39 @@ def seeded(name):
     return sha256(b"tls_liar " + name.encode())
 
 
-def certificate(seed_name):
+START = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
+END = START + datetime.timedelta(days=3650)
+NOW = 1780272000  # 2026-06-01: the time the driver is given, inside every certificate's validity
+
+
+def authority(seed_name):
+    """A CA with an Ed25519 key from a fixed seed: its key and certificate."""
+    key = ed25519.Ed25519PrivateKey.from_private_bytes(seeded(seed_name))
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, f"tls_liar {seed_name}")])
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+            .serial_number(1).not_valid_before(START).not_valid_after(END)
+            .add_extension(x509.BasicConstraints(ca=True, path_length=None), True)
+            .sign(key, None))
+    return key, cert
+
+
+def certificate(seed_name, ca):
+    """The server's Ed25519 key from a fixed seed, and its DER certificate from `ca`."""
     key = ed25519.Ed25519PrivateKey.from_private_bytes(seeded(seed_name))
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, HOST.decode())])
-    start = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
-    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
-            .serial_number(206).not_valid_before(start).not_valid_after(start + datetime.timedelta(days=3650))
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(ca[1].subject).public_key(key.public_key())
+            .serial_number(206).not_valid_before(START).not_valid_after(END)
             .add_extension(x509.SubjectAlternativeName([x509.DNSName(HOST.decode())]), False)
-            .sign(key, None))
+            .sign(ca[0], None))
     return key, cert.public_bytes(serialization.Encoding.DER)
 
 
-KEY, DER = certificate("server")
-OTHER_KEY, OTHER_DER = certificate("other")
-PINS = len(DER).to_bytes(3, "big") + DER
+CA = authority("ca")
+OTHER_CA = authority("other ca")
+KEY, DER = certificate("server", CA)
+OTHER_KEY, OTHER_DER = certificate("other", OTHER_CA)
+# The client's trust store: the one CA, as PEM.
+ROOTS = CA[1].public_bytes(serialization.Encoding.PEM)
 
 
 def expand_label(secret, label, context, n):
@@ -286,7 +305,7 @@ class Server:
         return message(20, mac)
 
     def start(self):
-        f = self.c.ask(f"C {HOST.hex()} {RANDOM.hex()} {PINS.hex()}")
+        f = self.c.ask(f"C {HOST.hex()} {RANDOM.hex()} {ROOTS.hex()} {NOW}")
         assert f[0] == "0", f
         (hello,) = self.c.take()
         msg, self.sid, self.client_share = parse_client_hello(hello)
@@ -531,7 +550,7 @@ def reordered(s):
 case("CertificateVerify signed with another key", "tls-bad-certificate-verify", 51)(
     flight_case(lambda s: setattr(s, "cv_key", OTHER_KEY)))
 case("a wrong Finished", "tls-bad-finished", 51)(flight_case(lambda s: setattr(s, "bad_finished", True)))
-case("an unpinned certificate", "x509-unknown-issuer", 48)(
+case("a certificate from an untrusted CA", "x509-unknown-issuer", 48)(
     flight_case(lambda s: (setattr(s, "cert_der", OTHER_DER), setattr(s, "cv_key", OTHER_KEY))))
 case("a fatal alert instead of ServerHello", "tls-alert")(
     lambda s: (s.start(), s.c.feed(plain_record(21, b"\2\x28"))))
@@ -650,7 +669,7 @@ def record_streams(tls_many, out, conc=64):
             threading.Thread(target=serve, args=(conn,), daemon=True).start()
 
     threading.Thread(target=accept, daemon=True).start()
-    pem = ("-----BEGIN CERTIFICATE-----\n" + __import__("base64").encodebytes(DER).decode() + "-----END CERTIFICATE-----\n").encode()
+    pem = ROOTS
     port = listener.getsockname()[1]
     run = subprocess.run([tls_many, "127.0.0.1", str(port), HOST.decode(), str(conc), "65536", SEED.hex()],
                          input=pem, capture_output=True, timeout=120)
@@ -667,10 +686,10 @@ def record_streams(tls_many, out, conc=64):
     head = ["# scripts/tls_liar.py --streams: the honest server's stream for each of tls_many's 64 ClientHellos",
             f"# with the seed {SEED.hex()}: ClientHello, the server's flight, its reply after the client's",
             "# Finished and request, and the response's length and SHA-256.",
-            f"# Pinned certificate: {DER.hex()}"]
+            f"# Root: {CA[1].public_bytes(serialization.Encoding.DER).hex()}"]
     open(out, "w").write("\n".join(head + sorted(rows)) + "\n")
     open(out.rsplit(".", 1)[0] + ".pem", "wb").write(pem)
-    print(f"{out}: {conc} streams; the certificate to pin beside it, .pem")
+    print(f"{out}: {conc} streams; the root to trust beside it, .pem")
 
 
 def main():

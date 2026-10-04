@@ -3,10 +3,10 @@ edition 5;
 // `docs/tls-core.md` §10: `conc` TLS 1.3 connections from `packages/tls`
 // on ONE thread, driven by the `Poller`, to one server.
 //
-//     tls_many <ip> <port> <host> <conc> <chunk> [<seed>]  < pins.pem
+//     tls_many <ip> <port> <host> <conc> <chunk> [<seed>]  < roots.pem
 //
-// Standard input is the PEM bundle the engine pins (`docs/tls-core.md`
-// §5). Each connection does a handshake, sends `GET / HTTP/1.0`, reads
+// Standard input is the PEM bundle of roots the engine trusts
+// (`docs/x509-verify.md`). Each connection does a handshake, sends `GET / HTTP/1.0`, reads
 // until the server's close_notify and closes. Each socket read is at most
 // `chunk` bytes, so `chunk` 1 feeds the engine one byte at a time
 // (fragmentation) and 65536 hands it everything a read gives
@@ -15,8 +15,9 @@ edition 5;
 //     <slot> <code> <tag> <bytes received> <SHA-256 of them>
 //
 // then `done ok=<n> failed=<n>`. A connection still unfinished after 30
-// seconds fails as `timeout`. The request is padded to 2^14 bytes, a
-// full record, so every slot's output buffer is used deep.
+// seconds fails as `timeout`. Certificates are checked against
+// `clock_unix_ms`. The request is padded to 2^14 bytes, a full record,
+// so every slot's output buffer is used deep.
 //
 // The engine's entropy is 32 bytes of /dev/urandom, or `seed`, 64 hex
 // digits, for tests only: with a fixed seed every key is predictable, and
@@ -355,7 +356,7 @@ fn drive[&h, &n, &k, &i, &q, &g, &e, &u](heap: &!h Heap, net: &n Net(""), clock:
                                     borrow mut poll as &!pr in {
                                         ready = poller_wait(pr, events, 200);
                                     }
-                                    let now = clock_ms(clock);
+                                    let now = clock_unix_ms(clock);
                                     var r = 0;
                                     while r < ready {
                                         let slot = events[2 * r];
@@ -408,7 +409,7 @@ fn main(world: World) -> [] int {
     borrow mut io as &!i in {
         borrow args as &g in {
             if arg_count(g) < 6 {
-                io.error_all(i, "usage: tls_many <ip> <port> <host> <conc> <chunk> < pins.pem\n");
+                io.error_all(i, "usage: tls_many <ip> <port> <host> <conc> <chunk> < roots.pem\n");
             } else {
                 let port = number(arg(g, 2));
                 let conc = number(arg(g, 4));
@@ -435,12 +436,12 @@ fn main(world: World) -> [] int {
                                 }
                             }
                             borrow mut engine as &!ew in {
-                                var pinned = 0;
+                                var roots = 0;
                                 borrow pem as &pb in {
-                                    pinned = tls.trust(ew, buffer.bytes(pb));
+                                    roots = tls.trust(ew, buffer.bytes(pb));
                                 }
-                                if pinned < 1 {
-                                    io.error_all(i, "tls_many: no certificate to pin on standard input\n");
+                                if roots < 1 {
+                                    io.error_all(i, "tls_many: no root certificate on standard input\n");
                                 } else {
                                     borrow net as &nn in {
                                         borrow clock as &cc in {

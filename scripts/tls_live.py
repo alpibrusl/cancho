@@ -6,13 +6,16 @@
 `tls_many` is `tests/programs/tls_many.ls` built with `packages/tls` and
 `packages/x509`. For each certificate key (P-256, P-384, RSA-2048, RSA-4096,
 Ed25519) a threaded Python `ssl` server (OpenSSL underneath) is started with a
-fresh self-signed certificate, TLS 1.3 only. It answers each request with a
+fresh certificate from a fresh P-256 CA, which is all tls_many trusts, TLS 1.3 only. It answers each request with a
 body of its own (64 KiB of seeded bytes plus the connection's number) and
 closes with close_notify. `tls_many` makes `conc` connections (default 64) at
 once, first reading one byte a socket read, then 65,536; every connection
 must end `ok`, with the SHA-256 of what the server sent. Then a server that
 closes WITHOUT close_notify: every connection must fail `tls-peer-closed`
-(a truncation the client must not take for the end, RFC 8446 §6.1).
+(a truncation the client must not take for the end, RFC 8446 §6.1). Then
+the same server under a host its certificate does not name, and with
+another CA's root as the store: every connection must fail
+`x509-name-mismatch`, then `x509-unknown-issuer`.
 
 Then two other implementations, P-256 and RSA-2048 certificates, both read
 sizes: `openssl s_server -HTTP` (OpenSSL's own TLS, not Python's use of it;
@@ -47,21 +50,36 @@ def certificate(kind):
         "rsa4096": lambda: rsa.generate_private_key(65537, 4096),
         "ed25519": ed25519.Ed25519PrivateKey.generate,
     }[kind]()
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, HOST)])
+    # A P-256 CA, made for the run, issues the server's certificate; the
+    # CA is what tls_many trusts.
+    ca_key = ec.generate_private_key(ec.SECP256R1())
+    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, f"tls_live {kind} CA")])
     now = datetime.datetime.now(datetime.timezone.utc)
+    ca = (
+        x509.CertificateBuilder()
+        .subject_name(ca_name)
+        .issuer_name(ca_name)
+        .public_key(ca_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(days=1))
+        .not_valid_after(now + datetime.timedelta(days=30))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), True)
+        .sign(ca_key, hashes.SHA256())
+    )
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, HOST)])
     cert = (
         x509.CertificateBuilder()
         .subject_name(name)
-        .issuer_name(name)
+        .issuer_name(ca_name)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - datetime.timedelta(days=1))
         .not_valid_after(now + datetime.timedelta(days=30))
         .add_extension(x509.SubjectAlternativeName([x509.DNSName(HOST)]), False)
-        .sign(key, None if kind == "ed25519" else hashes.SHA256())
+        .sign(ca_key, hashes.SHA256())
     )
     key_pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
-    return cert.public_bytes(serialization.Encoding.PEM), key_pem
+    return cert.public_bytes(serialization.Encoding.PEM), key_pem, ca.public_bytes(serialization.Encoding.PEM)
 
 
 def body(n):
@@ -191,10 +209,10 @@ def same_bodies(lines, conc):
     return len(rows) == conc and lines[-1] == f"done ok={conc} failed=0" and len({r[4] for r in rows}) == 1
 
 
-def run(exe, server, pins, conc, chunk):
+def run(exe, server, roots, conc, chunk, host=HOST):
     out = subprocess.run(
-        [exe, "127.0.0.1", str(server.port), HOST, str(conc), str(chunk)],
-        input=pins, capture_output=True, timeout=120,
+        [exe, "127.0.0.1", str(server.port), host, str(conc), str(chunk)],
+        input=roots, capture_output=True, timeout=120,
     )
     return out.returncode, out.stdout.decode().splitlines()
 
@@ -204,10 +222,10 @@ def main():
     conc = int(sys.argv[2]) if len(sys.argv) > 2 else 64
     bad = 0
     for kind in ["p256", "p384", "rsa2048", "rsa4096", "ed25519"]:
-        cert, key = certificate(kind)
+        cert, key, ca = certificate(kind)
         for chunk in [1, 65536]:
             server = Server(cert, key)
-            code, lines = run(exe, server, cert, conc, chunk)
+            code, lines = run(exe, server, ca, conc, chunk)
             rows = [l.split() for l in lines[:-1]]
             ok = [r for r in rows if r[2] == "ok"]
             hashes_seen = sorted(r[4] for r in ok)
@@ -217,11 +235,11 @@ def main():
                 bad += 1
                 print("\n".join(lines[:5]), file=sys.stderr)
     for kind in ["p256", "rsa2048"]:
-        cert, key = certificate(kind)
+        cert, key, ca = certificate(kind)
         for chunk in [1, 65536]:
             for name in ["openssl s_server", "tlslite-ng"]:
                 server = OpenSSL(cert, key, conc + 1) if name == "openssl s_server" else TlsLite(cert, key)
-                code, lines = run(exe, server, cert, conc, chunk)
+                code, lines = run(exe, server, ca, conc, chunk)
                 if name == "openssl s_server":
                     server.stop()
                 fine = code == 0 and same_bodies(lines, conc)
@@ -229,13 +247,24 @@ def main():
                 if not fine:
                     bad += 1
                     print("\n".join(lines[:5]), file=sys.stderr)
-    cert, key = certificate("p256")
+    cert, key, ca = certificate("p256")
     server = Server(cert, key, notify=False)
-    code, lines = run(exe, server, cert, conc, 65536)
+    code, lines = run(exe, server, ca, conc, 65536)
     tags = {l.split()[2] for l in lines[:-1]}
     fine = tags == {"tls-peer-closed"} and lines[-1] == f"done ok=0 failed={conc}"
     print(f"no close_notify: {lines[-1] if lines else 'no output'}, tags {sorted(tags)}")
     bad += 0 if fine else 1
+    # The chain itself refused: a host the certificate does not name, and
+    # roots from another CA.
+    _, _, other_ca = certificate("p384")  # another name too: "tls_live p384 CA"
+    for what, roots, host, want in [("another host", ca, "other.lex-sys.test", "x509-name-mismatch"),
+                                    ("another CA's root", other_ca, HOST, "x509-unknown-issuer")]:
+        server = Server(cert, key)
+        code, lines = run(exe, server, roots, conc, 65536, host)
+        tags = {l.split()[2] for l in lines[:-1]}
+        fine = tags == {want} and lines[-1] == f"done ok=0 failed={conc}"
+        print(f"{what}: {lines[-1] if lines else 'no output'}, tags {sorted(tags)}")
+        bad += 0 if fine else 1
     sys.exit(1 if bad else 0)
 
 

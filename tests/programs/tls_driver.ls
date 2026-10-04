@@ -7,8 +7,8 @@ edition 5;
 //
 //     S <key> <iv> <seq> <type> <plaintext>   tls_record.seal: `<code> <tag> <record>`
 //     O <key> <iv> <seq> <record>             tls_record.open: `<code> <tag> <type> <content>`
-//     C <host> <random> <pins>                tls_client.start (random: 96 bytes; pins: 3-byte lengths, each followed
-//                                             by a certificate)
+//     C <host> <random> <roots> <now>         tls_client.start (random: 96 bytes; roots: a PEM bundle, the trust
+//                                             store; now: seconds since 1970, for the certificates' validity)
 //     F <bytes>                               tls_client.feed, then everything `take` and `recv` give
 //     W <plaintext>                           tls_client.send
 //     Q                                       tls_client.finish
@@ -18,6 +18,7 @@ import std.buffer;
 import std.io;
 import tls_client;
 import tls_record;
+import x509_verify;
 
 fn nibble(c: int) -> [] int {
     if c >= 97 {
@@ -176,7 +177,7 @@ fn drain[&i, &n, &b, &o](io: &!i Io, ints: &!n [int], bytes: &!b [byte], out: &!
     return 0;
 }
 
-fn client_op[&i, &s, &n, &b, &o, &p](io: &!i Io, s: &s [byte], at: int, ints: &!n [int], bytes: &!b [byte], out: &!o [byte], pins: &!p [byte], pins_len: int) -> [io_write] int {
+fn client_op[&i, &s, &n, &b, &o, &p](io: &!i Io, s: &s [byte], at: int, ints: &!n [int], bytes: &!b [byte], out: &!o [byte], store: &!p [byte], store_len: int) -> [io_write] int {
     let op = int_of(s[at]);
     var f = at + 2;
     var code = 0;
@@ -187,7 +188,9 @@ fn client_op[&i, &s, &n, &b, &o, &p](io: &!i Io, s: &s [byte], at: int, ints: &!
             f = next_field(s, f);
             let random = alloc_slice[r](hex_len(s, f), byte_of(0));
             hex_into(s, f, random);
-            code = tls_client.start(ints, bytes, host, random);
+            // The roots were loaded by `run`; the time is the fourth field.
+            f = next_field(s, next_field(s, f));
+            code = tls_client.start(ints, bytes, host, random, number(s, f));
         }
     } else if op == 70 {
         let data = out[0..hex_len(s, f)];
@@ -204,7 +207,7 @@ fn client_op[&i, &s, &n, &b, &o, &p](io: &!i Io, s: &s [byte], at: int, ints: &!
                 k = k + 1;
             }
             while going {
-                let c = tls_client.feed(ints, bytes, held[consumed..len(held)], pins[0..pins_len]);
+                let c = tls_client.feed(ints, bytes, held[consumed..len(held)], store[0..store_len]);
                 if c < 0 {
                     code = c;
                     going = false;
@@ -269,13 +272,13 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
     var slot_bytes = box_slice(heap, tls_client.bytes_len(), byte_of(0));
     var slot_ints = box_slice(heap, tls_client.ints_len(), 0);
     var out = box_slice(heap, 131072, byte_of(0));
-    var pins = box_slice(heap, 131072, byte_of(0));
-    var pins_len = 0;
+    var store = box_slice(heap, 131072, byte_of(0));
+    var store_len = 0;
     borrow mut line as &!lw in {
         borrow mut slot_bytes as &!bw in {
             borrow mut slot_ints as &!iw in {
                 borrow mut out as &!ow in {
-                    borrow mut pins as &!pw in {
+                    borrow mut store as &!pw in {
                         let l = contents(lw);
                         var n = read_line(io, l);
                         while n >= 0 {
@@ -286,12 +289,21 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
                                     record_op(io, s, 0);
                                 } else {
                                     if op == 67 {
-                                        // The pins are the third field.
-                                        let p = contents(pw);
+                                        // The roots, a PEM bundle, are the third field: read
+                                        // into `out` and loaded into the store.
+                                        let o = contents(ow);
                                         let f = next_field(s, next_field(s, 2));
-                                        pins_len = hex_into(s, f, p);
+                                        let pn = hex_into(s, f, o);
+                                        region q {
+                                            let info = alloc_slice[q](2, 0);
+                                            let roots = x509_verify.store_load(o[0..pn], contents(pw), info);
+                                            store_len = info[0];
+                                            if roots < 0 {
+                                                store_len = 0;
+                                            }
+                                        }
                                     }
-                                    client_op(io, s, 0, contents(iw), contents(bw), contents(ow), contents(pw), pins_len);
+                                    client_op(io, s, 0, contents(iw), contents(bw), contents(ow), contents(pw), store_len);
                                 }
                             }
                             flush(io);
@@ -306,7 +318,7 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
     unbox_slice(heap, slot_bytes);
     unbox_slice(heap, slot_ints);
     unbox_slice(heap, out);
-    unbox_slice(heap, pins);
+    unbox_slice(heap, store);
     return 0;
 }
 

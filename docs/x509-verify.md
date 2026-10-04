@@ -1,6 +1,6 @@
 # `packages/x509`: verifying a server's chain
 
-> **Status: the verifier built (#206, PR 2 of 3; results in §8). `packages/tls` uses it in PR 3.** Sub-issue 9 of the self-contained TLS 1.3 client (#197). `docs/tls-pure.md` §5 already
+> **Status: built (#206, all three PRs): the verifier (§8), and `packages/tls` verifying with it (§9).** Sub-issue 9 of the self-contained TLS 1.3 client (#197). `docs/tls-pure.md` §5 already
 > fixes the rules: the root store, the depth limit, the checks per certificate, the key sizes, name matching, and what is not
 > checked. Its §8 fixes the refusal tags. This document settles what those sections left open for the code:
 > - where the code goes, and its API;
@@ -343,4 +343,63 @@ limbo found these before any of them reached `main`. Each is corrected where its
 - Two test expectations were wrong, not the verifier:
   - *docs.python.org* holds `*.python.org`, so `not-docs.python.org` does match it;
   - a leaf signed by an impostor is `x509-unknown-issuer`, not `x509-bad-signature`, once the AKI is matched.
+
+## 9. PR 3: `packages/tls` verifies with it (results)
+
+### 9.1 What changed
+
+- **`tls_client`.**
+  - `start` takes `now` (seconds), kept in the slot.
+  - `Certificate` is verified by `x509_verify.verify`, over the message's own ranges, against the store, the host `start` was
+    given and `now`. The leaf is still kept for `CertificateVerify`.
+  - The pin check is gone.
+- **`tls`.**
+  - `trust` is `x509_verify.store_load`: a root it cannot read is skipped and counted (`tls.skipped`), never fatal.
+  - `start` passes `now_unix_ms / 1000`.
+- **Tags and alerts.** `tls_record` gains the verifier's tags as codes -25 to -33. Each refusal sends the alert RFC 8446 §6.2
+  names:
+
+  | Refusal | Alert |
+  |---|---|
+  | `x509-unknown-issuer` | `unknown_ca` (48) |
+  | `x509-expired`, `x509-not-yet-valid` | `certificate_expired` (45) |
+  | `x509-key-usage`, `x509-critical-extension`, `x509-unsupported-algorithm`, `x509-key-size` | `unsupported_certificate` (43) |
+  | `x509-bad-signature`, `x509-name-mismatch`, `x509-not-ca`, `x509-path-too-long`, `x509-name-constraint`, `x509-chain-too-large`, `x509-decode` | `bad_certificate` (42) |
+- **`tests/programs/tls_driver.ls`.** `C` takes a PEM root bundle and a time instead of pins. `tls_many` checks against
+  `clock_unix_ms`. Its first version passed `clock_ms`, a monotonic clock, and every certificate was "not yet valid".
+- **Every recording was made again with a CA:**
+  - the tlslite-ng traces: an RSA-2048 CA for the RSA leaf, a P-256 CA for the ECDSA leaf;
+  - the lying server: an Ed25519 CA from a fixed seed, so its recording is still identical run to run;
+  - the 64 streams.
+
+  The replays are byte for byte as before. The test of a wrong root is now a root from another CA.
+
+### 9.2 Evidence
+
+- **`conformance/tls.rs`, all six tests:**
+  - both traces replayed byte for byte on both backends;
+  - any split of the server's bytes;
+  - a certificate from another CA refused as `x509-unknown-issuer`, with `unknown_ca`;
+  - the 15 ServerHellos;
+  - the 29 lying-server connections;
+  - 64 connections on one poller, one byte and 65,536 a read, and cut short.
+- **Live, 64 connections at once** (`scripts/tls_live.py`). Every server has a certificate from a CA made for the run, and the
+  CA is all `tls_many` trusts:
+  - Python `ssl` with P-256, P-384, RSA-2048, RSA-4096 and Ed25519 leaves, one byte and 65,536 a read: every connection `ok`;
+  - `openssl s_server` and tlslite-ng: every connection `ok`;
+  - no close_notify: every connection `tls-peer-closed`;
+  - a host the certificate does not name: every connection `x509-name-mismatch`;
+  - another CA's root: every connection `x509-unknown-issuer`.
+- **Mutants** (`scripts/tls_mutants.py`): **24 of 24 killed**. "The pin not checked" is replaced by three:
+  - the chain not verified;
+  - the time not given to the verifier;
+  - an unknown issuer reported as `x509-decode`.
+
+### 9.3 Found
+
+- **Two CAs with one name are one issuer, as far as a name goes.** The first re-recording gave both trace CAs the same subject
+  and no key identifiers. The "another CA" test then failed, correctly, as `x509-bad-signature` instead of
+  `x509-unknown-issuer`. Each test CA now has its own name. The verifier is unchanged: a same-named issuer whose key does not
+  verify is a bad signature, as OpenSSL says (error 7).
+- **`clock_ms` is not a time of day** (§9.1).
 

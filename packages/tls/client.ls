@@ -9,9 +9,10 @@ import std.x25519;
 import tls_message;
 import tls_record;
 import x509;
+import x509_verify;
 
 // `tls_client` -- one TLS 1.3 client connection: the state machine, the
-// transcript and key schedule, certificate pinning and signature checks,
+// transcript and key schedule, certificate verification and signature checks,
 // alerts, and application data (`docs/tls-core.md` §3 to §5). A
 // connection is two caller-owned slices, `ints` (`ints_len()` words) and
 // `bytes` (`bytes_len()` bytes), so an engine can keep many in two boxes
@@ -145,6 +146,12 @@ fn i_host_len() -> [] int {
 
 fn i_context_len() -> [] int {
     return 16;
+}
+
+// The time `start` was given, in seconds since 1970, for the
+// certificates' validity.
+fn i_now() -> [] int {
+    return 17;
 }
 
 fn i_transcript() -> [] int {
@@ -463,6 +470,15 @@ fn alert_for(code: int) -> [] int {
     if code == tls_record.x509_unknown_issuer() {
         return 48;
     }
+    if code == tls_record.x509_expired() || code == tls_record.x509_not_yet_valid() {
+        return 45;
+    }
+    if code == tls_record.x509_key_usage() || code == tls_record.x509_critical_extension() {
+        return 43;
+    }
+    if code == tls_record.x509_bad_signature() || code == tls_record.x509_name_mismatch() || code == tls_record.x509_not_ca() || code == tls_record.x509_path_too_long() || code == tls_record.x509_name_constraint() || code == tls_record.x509_chain_too_large() {
+        return 42;
+    }
     if code == tls_record.x509_decode() {
         return 42;
     }
@@ -505,9 +521,10 @@ fn forget[&b](bytes: &!b [byte]) -> [] int {
 
 // Starts the handshake: `host` (at most 255 bytes) is the server's name;
 // `random` is 96 bytes of the caller's entropy: the ClientHello random,
-// the legacy session id and the X25519 secret. The ClientHello is
-// queued for `take`.
-pub fn start[&i, &b, &h, &r](ints: &!i [int], bytes: &!b [byte], host: &h [byte], random: &r [byte]) -> [] int {
+// the legacy session id and the X25519 secret. `now` is the time in
+// seconds since 1970, against which the server's certificates are
+// checked. The ClientHello is queued for `take`.
+pub fn start[&i, &b, &h, &r](ints: &!i [int], bytes: &!b [byte], host: &h [byte], random: &r [byte], now: int) -> [] int {
     if len(ints) < ints_len() || len(bytes) < bytes_len() || len(random) != 96 || len(host) > 255 {
         return tls_record.bad_slot();
     }
@@ -522,6 +539,7 @@ pub fn start[&i, &b, &h, &r](ints: &!i [int], bytes: &!b [byte], host: &h [byte]
     copy_bytes(random[64..96], bytes[k_x25519()..k_x25519() + 32]);
     copy_bytes(host, bytes[k_host()..k_host() + len(host)]);
     ints[i_host_len()] = len(host);
+    ints[i_now()] = now;
     var code = 0;
     region r {
         let share = alloc_slice[r](32, byte_of(0));
@@ -583,42 +601,78 @@ fn on_server_hello[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message: &m [
     return code;
 }
 
-// Whether the leaf's DER equals one of the pinned certificates: `pins`
-// is a sequence of 3-byte lengths, each followed by a certificate
-// (`docs/tls-core.md` §5).
-fn pinned[&p, &l](pins: &p [byte], leaf: &l [byte]) -> [] bool {
-    var at = 0;
-    while at + 3 <= len(pins) {
-        let n = int_of(pins[at]) * 65536 + int_of(pins[at + 1]) * 256 + int_of(pins[at + 2]);
-        if at + 3 + n > len(pins) {
-            return false;
-        }
-        if n == len(leaf) {
-            var k = 0;
-            while k < n && pins[at + 3 + k] == leaf[k] {
-                k = k + 1;
-            }
-            if k == n {
-                return true;
-            }
-        }
-        at = at + 3 + n;
+// A refusal of `x509_verify` or `x509` as this package's code
+// (`docs/tls-pure.md` §8): a certificate that is not well-formed is
+// `x509-decode`, whatever the detail.
+fn from_x509(code: int) -> [] int {
+    if code == 0 {
+        return 0;
     }
-    return false;
+    if code == x509_verify.unknown_issuer() {
+        return tls_record.x509_unknown_issuer();
+    }
+    if code == x509_verify.expired() {
+        return tls_record.x509_expired();
+    }
+    if code == x509_verify.not_yet_valid() {
+        return tls_record.x509_not_yet_valid();
+    }
+    if code == x509_verify.bad_signature() {
+        return tls_record.x509_bad_signature();
+    }
+    if code == x509_verify.name_mismatch() {
+        return tls_record.x509_name_mismatch();
+    }
+    if code == x509_verify.not_ca() {
+        return tls_record.x509_not_ca();
+    }
+    if code == x509_verify.path_too_long() {
+        return tls_record.x509_path_too_long();
+    }
+    if code == x509_verify.name_constraint() {
+        return tls_record.x509_name_constraint();
+    }
+    if code == x509_verify.key_usage() {
+        return tls_record.x509_key_usage();
+    }
+    if code == x509_verify.unsupported_algorithm() {
+        return tls_record.x509_unsupported_algorithm();
+    }
+    if code == x509_verify.key_size() {
+        return tls_record.x509_key_size();
+    }
+    if code == -15 {
+        return tls_record.x509_critical_extension();
+    }
+    if code == -16 {
+        return tls_record.x509_chain_too_large();
+    }
+    return tls_record.x509_decode();
 }
 
-fn on_certificate[&i, &b, &m, &p](ints: &!i [int], bytes: &!b [byte], message: &m [byte], pins: &p [byte]) -> [] int {
+// Certificate: the chain against the store, the host and the time
+// (`docs/x509-verify.md`); the leaf is kept for CertificateVerify.
+fn on_certificate[&i, &b, &m, &p](ints: &!i [int], bytes: &!b [byte], message: &m [byte], store: &p [byte]) -> [] int {
     var code = 0;
     region r {
         let info = alloc_slice[r](3 + 2 * tls_message.max_certificates(), 0);
-        code = tls_message.certificate(message[4..len(message)], info);
+        let body = message[4..len(message)];
+        code = tls_message.certificate(body, info);
         if code == 0 {
-            let leaf = message[4 + info[0]..4 + info[1]];
+            let leaf = body[info[0]..info[1]];
+            let n = info[2];
+            let ranges = alloc_slice[r](2 * n, 0);
+            var k = 0;
+            while k < 2 * n {
+                ranges[k] = info[3 + k];
+                k = k + 1;
+            }
             if len(leaf) > leaf_cap() {
                 code = tls_record.x509_chain_too_large();
-            } else if !pinned(pins, leaf) {
-                code = tls_record.x509_unknown_issuer();
             } else {
+                code = from_x509(x509_verify.verify(store, body, ranges, bytes[k_host()..k_host() + ints[i_host_len()]], ints[i_now()], x509_verify.tls_max_intermediates()));
+            }
+            if code == 0 {
                 ints[i_leaf_len()] = copy_bytes(leaf, bytes[b_leaf()..b_leaf() + len(leaf)]);
                 transcript_add(ints, message);
             }
@@ -839,7 +893,7 @@ fn on_key_update[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message: &m [by
 }
 
 // One whole handshake message, header included, in the current state.
-fn on_message[&i, &b, &m, &p](ints: &!i [int], bytes: &!b [byte], message: &m [byte], pins: &p [byte]) -> [] int {
+fn on_message[&i, &b, &m, &p](ints: &!i [int], bytes: &!b [byte], message: &m [byte], store: &p [byte]) -> [] int {
     let kind = int_of(message[0]);
     let state = ints[i_state()];
     if state == state_wait_server_hello() && kind == tls_message.type_server_hello() {
@@ -871,7 +925,7 @@ fn on_message[&i, &b, &m, &p](ints: &!i [int], bytes: &!b [byte], message: &m [b
         return 0;
     }
     if state == state_wait_certificate() && kind == tls_message.type_certificate() {
-        return on_certificate(ints, bytes, message, pins);
+        return on_certificate(ints, bytes, message, store);
     }
     if state == state_wait_verify() && kind == tls_message.type_certificate_verify() {
         return on_certificate_verify(ints, bytes, message);
@@ -889,7 +943,7 @@ fn on_message[&i, &b, &m, &p](ints: &!i [int], bytes: &!b [byte], message: &m [b
 }
 
 // Appends handshake bytes and handles every whole message they finish.
-fn on_handshake_bytes[&i, &b, &c, &p](ints: &!i [int], bytes: &!b [byte], content: &c [byte], pins: &p [byte]) -> [] int {
+fn on_handshake_bytes[&i, &b, &c, &p](ints: &!i [int], bytes: &!b [byte], content: &c [byte], store: &p [byte]) -> [] int {
     let fill = ints[i_hs_fill()];
     if fill + len(content) > hs_cap() {
         return tls_record.record_overflow();
@@ -917,7 +971,7 @@ fn on_handshake_bytes[&i, &b, &c, &p](ints: &!i [int], bytes: &!b [byte], conten
                     let message = alloc_slice[r](4 + n, byte_of(0));
                     copy_bytes(bytes[p..p + 4 + n], message);
                     let before = ints[i_state()];
-                    code = on_message(ints, bytes, message, pins);
+                    code = on_message(ints, bytes, message, store);
                     at = at + 4 + n;
                     // A message must not share a record with the next key
                     // (RFC 8446 §5.1): after ServerHello and Finished, the
@@ -970,7 +1024,7 @@ fn on_alert[&i, &b, &c](ints: &!i [int], bytes: &!b [byte], content: &c [byte]) 
 }
 
 // One whole record from `bytes[b_in()..]`, `n` bytes long.
-fn on_record[&i, &b, &p](ints: &!i [int], bytes: &!b [byte], n: int, pins: &p [byte]) -> [] int {
+fn on_record[&i, &b, &p](ints: &!i [int], bytes: &!b [byte], n: int, store: &p [byte]) -> [] int {
     let kind = int_of(bytes[b_in()]);
     let body = n - 5;
     let state = ints[i_state()];
@@ -995,7 +1049,7 @@ fn on_record[&i, &b, &p](ints: &!i [int], bytes: &!b [byte], n: int, pins: &p [b
             let content = alloc_slice[r](body, byte_of(0));
             copy_bytes(bytes[b_in() + 5..b_in() + n], content);
             if kind == tls_record.type_handshake() {
-                plain = on_handshake_bytes(ints, bytes, content, pins);
+                plain = on_handshake_bytes(ints, bytes, content, store);
             } else {
                 plain = on_alert(ints, bytes, content);
             }
@@ -1025,7 +1079,7 @@ fn on_record[&i, &b, &p](ints: &!i [int], bytes: &!b [byte], n: int, pins: &p [b
             if size == 0 {
                 code = tls_record.unexpected_message();
             } else {
-                code = on_handshake_bytes(ints, bytes, content, pins);
+                code = on_handshake_bytes(ints, bytes, content, store);
             }
         } else if inner == tls_record.type_alert() {
             code = on_alert(ints, bytes, content);
@@ -1049,7 +1103,7 @@ fn on_record[&i, &b, &p](ints: &!i [int], bytes: &!b [byte], n: int, pins: &p [b
 // Bytes the socket gave. Answers how many were consumed (all of them,
 // unless output or received data must be taken first), or the
 // connection's failure.
-pub fn feed[&i, &b, &d, &p](ints: &!i [int], bytes: &!b [byte], data: &d [byte], pins: &p [byte]) -> [] int {
+pub fn feed[&i, &b, &d, &p](ints: &!i [int], bytes: &!b [byte], data: &d [byte], store: &p [byte]) -> [] int {
     var consumed = 0;
     var code = 0;
     while consumed < len(data) && code == 0 && ints[i_state()] != state_failed() && !has(ints, f_close_received()) {
@@ -1081,7 +1135,7 @@ pub fn feed[&i, &b, &d, &p](ints: &!i [int], bytes: &!b [byte], data: &d [byte],
             let total = 5 + int_of(bytes[b_in() + 3]) * 256 + int_of(bytes[b_in() + 4]);
             if ints[i_in_fill()] == total {
                 ints[i_in_fill()] = 0;
-                code = on_record(ints, bytes, total, pins);
+                code = on_record(ints, bytes, total, store);
             }
         }
     }
