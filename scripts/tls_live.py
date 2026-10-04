@@ -17,6 +17,12 @@ the same server under a host its certificate does not name, and with
 another CA's root as the store: every connection must fail
 `x509-name-mismatch`, then `x509-unknown-issuer`.
 
+Then every TLS 1.3 suite against every group `openssl s_server -HTTP` can be
+told to accept (docs/tls-parity.md §3.3): AES-128-GCM, AES-256-GCM and
+ChaCha20-Poly1305, each with X25519 (the share the ClientHello sends) and with
+P-256 and P-384 (which the server asks for with a HelloRetryRequest), 16
+connections each. Every connection must end `ok`.
+
 Then two other implementations, P-256 and RSA-2048 certificates, both read
 sizes: `openssl s_server -HTTP` (OpenSSL's own TLS, not Python's use of it;
 it serves one connection at a time, so the others wait in its backlog), and
@@ -139,16 +145,18 @@ def free_port():
 
 
 class OpenSSL:
-    """`openssl s_server -HTTP`, TLS 1.3 with ChaCha20-Poly1305 and X25519 only."""
+    """`openssl s_server -HTTP`, TLS 1.3 with one suite and one group: ChaCha20-Poly1305 and X25519
+    unless told otherwise. A group other than X25519 makes it answer the ClientHello's X25519 share
+    with a HelloRetryRequest."""
 
-    def __init__(self, cert_pem, key_pem, conc):
+    def __init__(self, cert_pem, key_pem, conc, suite="TLS_CHACHA20_POLY1305_SHA256", group="X25519"):
         self.dir = tempfile.TemporaryDirectory()
         open(f"{self.dir.name}/c.pem", "wb").write(cert_pem)
         open(f"{self.dir.name}/k.pem", "wb").write(key_pem)
         self.port = free_port()
         self.proc = subprocess.Popen(
             ["openssl", "s_server", "-accept", f"127.0.0.1:{self.port}", "-cert", "c.pem", "-key", "k.pem",
-             "-tls1_3", "-ciphersuites", "TLS_CHACHA20_POLY1305_SHA256", "-groups", "X25519", "-HTTP",
+             "-tls1_3", "-ciphersuites", suite, "-groups", group, "-HTTP",
              "-naccept", str(conc), "-quiet"],
             cwd=self.dir.name, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(100):
@@ -231,6 +239,17 @@ def main():
             hashes_seen = sorted(r[4] for r in ok)
             fine = code == 0 and len(ok) == conc and hashes_seen == sorted(server.sent) and lines[-1] == f"done ok={conc} failed=0"
             print(f"{kind} chunk {chunk}: {lines[-1] if lines else 'no output'}, bodies {'match' if fine else 'DIFFER'}")
+            if not fine:
+                bad += 1
+                print("\n".join(lines[:5]), file=sys.stderr)
+    cert, key, ca = certificate("p256")
+    for suite in ["TLS_AES_128_GCM_SHA256", "TLS_AES_256_GCM_SHA384", "TLS_CHACHA20_POLY1305_SHA256"]:
+        for group in ["X25519", "P-256", "P-384"]:
+            server = OpenSSL(cert, key, 17, suite, group)
+            code, lines = run(exe, server, ca, 16, 65536)
+            server.stop()
+            fine = code == 0 and same_bodies(lines, 16)
+            print(f"openssl s_server {suite} {group}: {lines[-1] if lines else 'no output'}")
             if not fine:
                 bad += 1
                 print("\n".join(lines[:5]), file=sys.stderr)

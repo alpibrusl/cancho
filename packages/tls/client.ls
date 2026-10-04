@@ -1,5 +1,6 @@
 module tls_client;
 import std.crypto;
+import std.ecdh;
 import std.ecdsa;
 import std.ed25519;
 import std.hkdf;
@@ -154,12 +155,34 @@ fn i_now() -> [] int {
     return 17;
 }
 
+// The negotiated suite (0 until ServerHello or a HelloRetryRequest
+// names one), and the group of the share the client sent last.
+fn i_suite() -> [] int {
+    return 18;
+}
+
+fn i_group() -> [] int {
+    return 19;
+}
+
+// Two running transcripts, SHA-256 and SHA-384, both fed until the suite
+// is known (RFC 8446 §4.4.1 lets a client keep both).
 fn i_transcript() -> [] int {
     return 20;
 }
 
-pub fn ints_len() -> [] int {
+fn i_transcript384() -> [] int {
     return i_transcript() + crypto.sha256_state_len();
+}
+
+// `std.ecdh`'s work, for a P-256 or P-384 share a HelloRetryRequest asks
+// for: more than a region holds, so it is part of the slot.
+fn i_ecdh_work() -> [] int {
+    return i_transcript384() + crypto.sha512_state_len();
+}
+
+pub fn ints_len() -> [] int {
+    return i_ecdh_work() + ecdh.work_len();
 }
 
 // Flags.
@@ -185,6 +208,11 @@ fn f_read_protected() -> [] int {
 
 fn f_write_protected() -> [] int {
     return 32;
+}
+
+// A HelloRetryRequest came: a second one is refused.
+fn f_retried() -> [] int {
+    return 64;
 }
 
 // ---- The byte slice ----
@@ -251,61 +279,67 @@ fn k_x25519() -> [] int {
     return b_keys();
 }
 
-fn k_read_key() -> [] int {
+// The P-256 or P-384 scalar, when a HelloRetryRequest asks for one.
+fn k_ecdh() -> [] int {
     return b_keys() + 32;
 }
 
-fn k_read_iv() -> [] int {
-    return b_keys() + 64;
-}
-
-fn k_write_key() -> [] int {
+// Keys of up to 32 bytes; secrets of up to 48 (SHA-384's).
+fn k_read_key() -> [] int {
     return b_keys() + 80;
 }
 
-fn k_write_iv() -> [] int {
+fn k_read_iv() -> [] int {
     return b_keys() + 112;
 }
 
+fn k_write_key() -> [] int {
+    return b_keys() + 124;
+}
+
+fn k_write_iv() -> [] int {
+    return b_keys() + 156;
+}
+
 fn k_client_hs() -> [] int {
-    return b_keys() + 128;
+    return b_keys() + 168;
 }
 
 fn k_server_hs() -> [] int {
-    return b_keys() + 160;
+    return b_keys() + 216;
 }
 
 fn k_client_ap() -> [] int {
-    return b_keys() + 192;
+    return b_keys() + 264;
 }
 
 fn k_server_ap() -> [] int {
-    return b_keys() + 224;
+    return b_keys() + 312;
 }
 
 fn k_master() -> [] int {
-    return b_keys() + 256;
+    return b_keys() + 360;
 }
 
 fn k_session_id() -> [] int {
-    return b_keys() + 288;
+    return b_keys() + 408;
 }
 
 fn k_random() -> [] int {
-    return b_keys() + 320;
+    return b_keys() + 440;
 }
 
 fn k_host() -> [] int {
-    return b_keys() + 352;
+    return b_keys() + 472;
 }
 
 // A CertificateRequest's context, echoed in the client's Certificate.
 fn k_context() -> [] int {
-    return b_keys() + 608;
+    return b_keys() + 728;
 }
 
 fn keys_len() -> [] int {
-    return 864;
+    return 984;
 }
 
 pub fn bytes_len() -> [] int {
@@ -341,41 +375,70 @@ fn set_flag[&i](ints: &!i [int], flag: int) -> [] int {
     return 0;
 }
 
-// The transcript hash so far, into `out` (32 bytes), leaving the
-// running state as it was.
+// The suite's hash length, 32 or 48 (32 before a suite is named).
+fn hash_len[&i](ints: &i [int]) -> [] int {
+    return tls_record.hash_len(ints[i_suite()]);
+}
+
+// The suite's AEAD key length, 16 or 32.
+fn key_len[&i](ints: &i [int]) -> [] int {
+    return tls_record.key_len(ints[i_suite()]);
+}
+
+// The transcript hash so far under the hash `len(out)` names (32 bytes
+// SHA-256, 48 SHA-384), leaving the running states as they were.
 fn transcript_hash[&i, &o](ints: &i [int], out: &!o [byte]) -> [] int {
     region r {
-        let copy = alloc_slice[r](crypto.sha256_state_len(), 0);
-        var k = 0;
-        while k < len(copy) {
-            copy[k] = ints[i_transcript() + k];
-            k = k + 1;
+        if len(out) == 48 {
+            let copy = alloc_slice[r](crypto.sha512_state_len(), 0);
+            var k = 0;
+            while k < len(copy) {
+                copy[k] = ints[i_transcript384() + k];
+                k = k + 1;
+            }
+            crypto.sha384_final(copy, out);
+        } else {
+            let copy = alloc_slice[r](crypto.sha256_state_len(), 0);
+            var k = 0;
+            while k < len(copy) {
+                copy[k] = ints[i_transcript() + k];
+                k = k + 1;
+            }
+            crypto.sha256_final(copy, out);
         }
-        crypto.sha256_final(copy, out);
     }
     return 0;
 }
 
 fn transcript_add[&i, &m](ints: &!i [int], message: &m [byte]) -> [] int {
+    crypto.sha384_update(ints[i_transcript384()..i_transcript384() + crypto.sha512_state_len()], message);
     return crypto.sha256_update(ints[i_transcript()..i_transcript() + crypto.sha256_state_len()], message);
 }
 
-// The traffic key and IV of `secret` into `key` (32 bytes) and `iv` (12).
+fn transcript_init[&i](ints: &!i [int]) -> [] int {
+    crypto.sha384_init(ints[i_transcript384()..i_transcript384() + crypto.sha512_state_len()]);
+    return crypto.sha256_init(ints[i_transcript()..i_transcript() + crypto.sha256_state_len()]);
+}
+
+// The traffic key and IV of `secret` (the suite's hash length) into
+// `key` (the suite's key length) and `iv` (12).
 fn traffic_keys[&s, &k, &v](secret: &s [byte], key: &!k [byte], iv: &!v [byte]) -> [] int {
-    hkdf.expand_label(32, secret, "key", "", key);
-    hkdf.expand_label(32, secret, "iv", "", iv);
+    hkdf.expand_label(len(secret), secret, "key", "", key);
+    hkdf.expand_label(len(secret), secret, "iv", "", iv);
     return 0;
 }
 
 fn set_read_keys[&i, &b](ints: &!i [int], bytes: &!b [byte], secret_at: int) -> [] int {
-    traffic_keys(bytes[secret_at..secret_at + 32], bytes[k_read_key()..k_read_key() + 32], bytes[k_read_iv()..k_read_iv() + 12]);
+    let h = hash_len(ints);
+    traffic_keys(bytes[secret_at..secret_at + h], bytes[k_read_key()..k_read_key() + key_len(ints)], bytes[k_read_iv()..k_read_iv() + 12]);
     ints[i_read_seq()] = 0;
     set_flag(ints, f_read_protected());
     return 0;
 }
 
 fn set_write_keys[&i, &b](ints: &!i [int], bytes: &!b [byte], secret_at: int) -> [] int {
-    traffic_keys(bytes[secret_at..secret_at + 32], bytes[k_write_key()..k_write_key() + 32], bytes[k_write_iv()..k_write_iv() + 12]);
+    let h = hash_len(ints);
+    traffic_keys(bytes[secret_at..secret_at + h], bytes[k_write_key()..k_write_key() + key_len(ints)], bytes[k_write_iv()..k_write_iv() + 12]);
     ints[i_write_seq()] = 0;
     set_flag(ints, f_write_protected());
     return 0;
@@ -429,7 +492,7 @@ fn queue_record[&i, &b, &c](ints: &!i [int], bytes: &!b [byte], kind: int, conte
     if out_free(ints) < len(content) + 22 {
         return tls_record.record_overflow();
     }
-    let n = tls_record.seal(bytes[k_write_key()..k_write_key() + 32], bytes[k_write_iv()..k_write_iv() + 12], ints[i_write_seq()], kind, content, bytes[at..at + len(content) + 22]);
+    let n = tls_record.seal(ints[i_suite()], bytes[k_write_key()..k_write_key() + key_len(ints)], bytes[k_write_iv()..k_write_iv() + 12], ints[i_write_seq()], kind, content, bytes[at..at + len(content) + 22]);
     if n < 0 {
         return n;
     }
@@ -449,10 +512,10 @@ fn alert_for(code: int) -> [] int {
     if code == tls_record.record_overflow() {
         return 22;
     }
-    if code == tls_record.no_shared_cipher() || code == tls_record.hello_retry() {
+    if code == tls_record.no_shared_cipher() {
         return 40;
     }
-    if code == tls_record.key_share() {
+    if code == tls_record.key_share() || code == tls_record.hello_retry() {
         return 47;
     }
     if code == tls_record.decode_error() {
@@ -533,71 +596,194 @@ pub fn start[&i, &b, &h, &r](ints: &!i [int], bytes: &!b [byte], host: &h [byte]
         ints[k] = 0;
         k = k + 1;
     }
-    crypto.sha256_init(ints[i_transcript()..i_transcript() + crypto.sha256_state_len()]);
+    transcript_init(ints);
     copy_bytes(random[0..32], bytes[k_random()..k_random() + 32]);
     copy_bytes(random[32..64], bytes[k_session_id()..k_session_id() + 32]);
     copy_bytes(random[64..96], bytes[k_x25519()..k_x25519() + 32]);
     copy_bytes(host, bytes[k_host()..k_host() + len(host)]);
     ints[i_host_len()] = len(host);
     ints[i_now()] = now;
+    ints[i_group()] = tls_message.group_x25519();
     var code = 0;
     region r {
         let share = alloc_slice[r](32, byte_of(0));
-        let hello = alloc_slice[r](tls_message.max_client_hello(), byte_of(0));
         x25519.public_key(bytes[k_x25519()..k_x25519() + 32], share);
-        let n = tls_message.client_hello(bytes[k_random()..k_random() + 32], bytes[k_session_id()..k_session_id() + 32], share, host, hello);
-        transcript_add(ints, hello[0..n]);
-        code = queue_record(ints, bytes, tls_record.type_handshake(), hello[0..n]);
+        code = send_client_hello(ints, bytes, share, share[0..0]);
     }
     ints[i_state()] = state_wait_server_hello();
     return code;
 }
 
+// A ClientHello with one share of `ints[i_group()]` and `cookie`, added
+// to the transcript and queued.
+fn send_client_hello[&i, &b, &s, &c](ints: &!i [int], bytes: &!b [byte], share: &s [byte], cookie: &c [byte]) -> [] int {
+    var code = 0;
+    region r {
+        let hello = alloc_slice[r](tls_message.max_client_hello(), byte_of(0));
+        let n = tls_message.client_hello(bytes[k_random()..k_random() + 32], bytes[k_session_id()..k_session_id() + 32], ints[i_group()], share, cookie, bytes[k_host()..k_host() + ints[i_host_len()]], hello);
+        transcript_add(ints, hello[0..n]);
+        code = queue_record(ints, bytes, tls_record.type_handshake(), hello[0..n]);
+    }
+    return code;
+}
+
 // ---- The handshake ----
 
-// ServerHello: the shared secret, then the handshake secrets and keys
-// (RFC 8446 §7.1).
+// The curve `std.ecdh` names a group by: 256, 384, or 0 for X25519.
+fn curve_of(group: int) -> [] int {
+    if group == tls_message.group_p256() {
+        return 256;
+    }
+    if group == tls_message.group_p384() {
+        return 384;
+    }
+    return 0;
+}
+
+// A P-256 or P-384 scalar and its public point, `share`, for the group
+// a HelloRetryRequest named. The scalar is drawn from the X25519 secret,
+// which this connection never otherwise uses once a retry has come:
+// HKDF-Expand-Label(x25519 secret, "ecdh scalar", [attempt]), retried
+// while it is not below n (`docs/tls-parity.md` §3.3). One attempt in
+// 2^32 fails for P-256, so sixteen in a row never do.
+fn new_ecdh_share[&i, &b, &s](ints: &!i [int], bytes: &!b [byte], curve: int, share: &!s [byte]) -> [] int {
+    let size = curve / 8;
+    var code = ecdh.refused_scalar_range();
+    var attempt = 0;
+    region r {
+        let context = alloc_slice[r](1, byte_of(0));
+        while code == ecdh.refused_scalar_range() && attempt < 16 {
+            context[0] = byte_of(attempt);
+            hkdf.expand_label(32, bytes[k_x25519()..k_x25519() + 32], "ecdh scalar", context, bytes[k_ecdh()..k_ecdh() + size]);
+            code = ecdh.public_key(curve, bytes[k_ecdh()..k_ecdh() + size], share, ints[i_ecdh_work()..i_ecdh_work() + ecdh.work_len()]);
+            attempt = attempt + 1;
+        }
+    }
+    if code != 0 {
+        return tls_record.no_entropy();
+    }
+    return 0;
+}
+
+// ServerHello, or a HelloRetryRequest: the shared secret, then the
+// handshake secrets and keys (RFC 8446 §7.1).
 fn on_server_hello[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message: &m [byte]) -> [] int {
     var code = 0;
     region r {
-        let info = alloc_slice[r](2, 0);
+        let info = alloc_slice[r](tls_message.sh_info_len(), 0);
         code = tls_message.server_hello(message[4..len(message)], bytes[k_session_id()..k_session_id() + 32], info);
-        if code == 0 {
-            transcript_add(ints, message);
-            let share = 4 + info[0];
-            let shared = alloc_slice[r](32, byte_of(0));
-            if x25519.scalarmult(bytes[k_x25519()..k_x25519() + 32], message[share..share + 32], shared) != 0 {
+        let suite = info[tls_message.sh_suite()];
+        let group = info[tls_message.sh_group()];
+        if code == 0 && has(ints, f_retried()) {
+            // After a retry: no second one, and the suite it named.
+            if info[tls_message.sh_retry()] == 1 {
+                code = tls_record.unexpected_message();
+            } else if suite != ints[i_suite()] {
+                code = tls_record.hello_retry();
+            }
+        }
+        if code == 0 && info[tls_message.sh_retry()] == 1 {
+            code = retry(ints, bytes, message, suite, group, info[tls_message.sh_cookie_start()], info[tls_message.sh_cookie_end()]);
+        } else if code == 0 {
+            if group != ints[i_group()] {
+                // A share for a group the client has no share of.
                 code = tls_record.key_share();
             }
             if code == 0 {
-                let zeros = alloc_slice[r](32, byte_of(0));
-                let early = alloc_slice[r](32, byte_of(0));
-                let derived = alloc_slice[r](32, byte_of(0));
-                let empty_hash = alloc_slice[r](32, byte_of(0));
-                let hs = alloc_slice[r](32, byte_of(0));
-                let th = alloc_slice[r](32, byte_of(0));
-                crypto.sha256(zeros[0..0], empty_hash);
-                hkdf.extract(32, zeros, zeros, early);
-                hkdf.derive_secret(32, early, "derived", empty_hash, derived);
-                hkdf.extract(32, derived, shared, hs);
-                transcript_hash(ints, th);
-                hkdf.derive_secret(32, hs, "c hs traffic", th, bytes[k_client_hs()..k_client_hs() + 32]);
-                hkdf.derive_secret(32, hs, "s hs traffic", th, bytes[k_server_hs()..k_server_hs() + 32]);
-                hkdf.derive_secret(32, hs, "derived", empty_hash, derived);
-                hkdf.extract(32, derived, zeros, bytes[k_master()..k_master() + 32]);
-                set_read_keys(ints, bytes, k_server_hs());
-                zero(shared);
-                zero(hs);
-                zero(early);
-                zero(derived);
-                // The X25519 secret has done its work.
-                zero(bytes[k_x25519()..k_x25519() + 32]);
+                ints[i_suite()] = suite;
+                transcript_add(ints, message);
+                code = handshake_secrets(ints, bytes, message[4 + info[tls_message.sh_share()]..4 + info[tls_message.sh_share()] + tls_message.share_len(group)]);
+            }
+            if code == 0 {
+                ints[i_state()] = state_wait_extensions();
             }
         }
     }
-    if code == 0 {
-        ints[i_state()] = state_wait_extensions();
+    return code;
+}
+
+// The HelloRetryRequest `message`, already parsed: `suite` and `group`
+// (0 for none), and the cookie's range in its body (0, 0 for none).
+fn retry[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message: &m [byte], suite: int, group: int, cookie_start: int, cookie_end: int) -> [] int {
+    set_flag(ints, f_retried());
+    ints[i_suite()] = suite;
+    let h = hash_len(ints);
+    var code = 0;
+    region r {
+        // message_hash: type 254, the hash's length, Hash(ClientHello1).
+        let synthetic = alloc_slice[r](4 + h, byte_of(0));
+        synthetic[0] = byte_of(254);
+        synthetic[3] = byte_of(h);
+        transcript_hash(ints, synthetic[4..4 + h]);
+        transcript_init(ints);
+        transcript_add(ints, synthetic);
+        transcript_add(ints, message);
+        let cookie = message[4 + cookie_start..4 + cookie_end];
+        if group == 0 {
+            // Only a cookie: the same X25519 share again.
+            let share = alloc_slice[r](32, byte_of(0));
+            x25519.public_key(bytes[k_x25519()..k_x25519() + 32], share);
+            code = send_client_hello(ints, bytes, share, cookie);
+        } else {
+            ints[i_group()] = group;
+            let share = alloc_slice[r](tls_message.share_len(group), byte_of(0));
+            code = new_ecdh_share(ints, bytes, curve_of(group), share);
+            if code == 0 {
+                code = send_client_hello(ints, bytes, share, cookie);
+            }
+        }
     }
+    return code;
+}
+
+// The shared secret from the server's `share`, then the handshake
+// secrets, the master secret and the read keys (RFC 8446 §7.1).
+fn handshake_secrets[&i, &b, &s](ints: &!i [int], bytes: &!b [byte], share: &s [byte]) -> [] int {
+    let h = hash_len(ints);
+    let curve = curve_of(ints[i_group()]);
+    var code = 0;
+    region r {
+        var size = 32;
+        if curve != 0 {
+            size = curve / 8;
+        }
+        let secret = alloc_slice[r](size, byte_of(0));
+        if curve == 0 {
+            if x25519.scalarmult(bytes[k_x25519()..k_x25519() + 32], share, secret) != 0 {
+                code = tls_record.key_share();
+            }
+        } else if ecdh.shared(curve, bytes[k_ecdh()..k_ecdh() + size], share, secret, ints[i_ecdh_work()..i_ecdh_work() + ecdh.work_len()]) != 0 {
+            code = tls_record.key_share();
+        }
+        if code == 0 {
+            let zeros = alloc_slice[r](h, byte_of(0));
+            let early = alloc_slice[r](h, byte_of(0));
+            let derived = alloc_slice[r](h, byte_of(0));
+            let empty_hash = alloc_slice[r](h, byte_of(0));
+            let hs = alloc_slice[r](h, byte_of(0));
+            let th = alloc_slice[r](h, byte_of(0));
+            if h == 48 {
+                crypto.sha384(zeros[0..0], empty_hash);
+            } else {
+                crypto.sha256(zeros[0..0], empty_hash);
+            }
+            hkdf.extract(h, zeros, zeros, early);
+            hkdf.derive_secret(h, early, "derived", empty_hash, derived);
+            hkdf.extract(h, derived, secret, hs);
+            transcript_hash(ints, th);
+            hkdf.derive_secret(h, hs, "c hs traffic", th, bytes[k_client_hs()..k_client_hs() + h]);
+            hkdf.derive_secret(h, hs, "s hs traffic", th, bytes[k_server_hs()..k_server_hs() + h]);
+            hkdf.derive_secret(h, hs, "derived", empty_hash, derived);
+            hkdf.extract(h, derived, zeros, bytes[k_master()..k_master() + h]);
+            set_read_keys(ints, bytes, k_server_hs());
+            zero(secret);
+            zero(hs);
+            zero(early);
+            zero(derived);
+        }
+    }
+    // The key exchange's secrets have done their work.
+    zero(bytes[k_x25519()..k_x25519() + 80]);
     return code;
 }
 
@@ -769,11 +955,12 @@ fn on_certificate_verify[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message
         code = tls_message.certificate_verify(message[4..len(message)], info);
         if code == 0 {
             // 64 spaces, the context string, a zero byte, the hash.
-            let content = alloc_slice[r](64 + 33 + 1 + 32, byte_of(32));
+            let h = hash_len(ints);
+            let content = alloc_slice[r](64 + 33 + 1 + h, byte_of(32));
             let label = "TLS 1.3, server CertificateVerify";
             copy_bytes(label, content[64..97]);
             content[97] = byte_of(0);
-            transcript_hash(ints, content[98..130]);
+            transcript_hash(ints, content[98..98 + h]);
             code = check_signature(bytes[b_leaf()..b_leaf() + ints[i_leaf_len()]], info[0], content, message[4 + info[1]..4 + info[2]]);
         }
         if code == 0 {
@@ -786,14 +973,16 @@ fn on_certificate_verify[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message
     return code;
 }
 
-// HMAC(finished_key(secret), transcript hash) into `out` (32 bytes).
+// HMAC(finished_key(secret), transcript hash) into `out`, under the
+// suite's hash (`len(secret)` and `len(out)` bytes).
 fn finished_mac[&i, &s, &o](ints: &i [int], secret: &s [byte], out: &!o [byte]) -> [] int {
+    let h = len(secret);
     region r {
-        let key = alloc_slice[r](32, byte_of(0));
-        let th = alloc_slice[r](32, byte_of(0));
-        hkdf.expand_label(32, secret, "finished", "", key);
+        let key = alloc_slice[r](h, byte_of(0));
+        let th = alloc_slice[r](h, byte_of(0));
+        hkdf.expand_label(h, secret, "finished", "", key);
         transcript_hash(ints, th);
-        hmac.sha256(key, th, out);
+        hmac.mac(h, key, th, out);
         zero(key);
     }
     return 0;
@@ -803,15 +992,16 @@ fn finished_mac[&i, &s, &o](ints: &i [int], secret: &s [byte], out: &!o [byte]) 
 // for middleboxes (RFC 8446 Appendix D.4), an empty Certificate if one
 // was requested, and Finished; then the application keys.
 fn on_finished[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message: &m [byte]) -> [] int {
-    var code = tls_message.finished(message[4..len(message)]);
+    let h = hash_len(ints);
+    var code = tls_message.finished(message[4..len(message)], h);
     region r {
-        let want = alloc_slice[r](32, byte_of(0));
+        let want = alloc_slice[r](h, byte_of(0));
         if code == 0 {
-            finished_mac(ints, bytes[k_server_hs()..k_server_hs() + 32], want);
+            finished_mac(ints, bytes[k_server_hs()..k_server_hs() + h], want);
             // Every byte is compared, whatever the earlier ones were.
             var diff = 0;
             var k = 0;
-            while k < 32 {
+            while k < h {
                 diff = diff | int_of(want[k]) ^ int_of(message[4 + k]);
                 k = k + 1;
             }
@@ -821,10 +1011,10 @@ fn on_finished[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message: &m [byte
         }
         if code == 0 {
             transcript_add(ints, message);
-            let th = alloc_slice[r](32, byte_of(0));
+            let th = alloc_slice[r](h, byte_of(0));
             transcript_hash(ints, th);
-            hkdf.derive_secret(32, bytes[k_master()..k_master() + 32], "c ap traffic", th, bytes[k_client_ap()..k_client_ap() + 32]);
-            hkdf.derive_secret(32, bytes[k_master()..k_master() + 32], "s ap traffic", th, bytes[k_server_ap()..k_server_ap() + 32]);
+            hkdf.derive_secret(h, bytes[k_master()..k_master() + h], "c ap traffic", th, bytes[k_client_ap()..k_client_ap() + h]);
+            hkdf.derive_secret(h, bytes[k_master()..k_master() + h], "s ap traffic", th, bytes[k_server_ap()..k_server_ap() + h]);
             let ccs = alloc_slice[r](1, byte_of(1));
             code = queue_record(ints, bytes, tls_record.type_change_cipher_spec(), ccs);
             set_write_keys(ints, bytes, k_client_hs());
@@ -840,10 +1030,10 @@ fn on_finished[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message: &m [byte
                 code = queue_record(ints, bytes, tls_record.type_handshake(), cert);
             }
             if code == 0 {
-                let fin = alloc_slice[r](36, byte_of(0));
+                let fin = alloc_slice[r](4 + h, byte_of(0));
                 fin[0] = byte_of(tls_message.type_finished());
-                fin[3] = byte_of(32);
-                finished_mac(ints, bytes[k_client_hs()..k_client_hs() + 32], fin[4..36]);
+                fin[3] = byte_of(h);
+                finished_mac(ints, bytes[k_client_hs()..k_client_hs() + h], fin[4..4 + h]);
                 transcript_add(ints, fin);
                 code = queue_record(ints, bytes, tls_record.type_handshake(), fin);
             }
@@ -852,8 +1042,8 @@ fn on_finished[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message: &m [byte
                 set_read_keys(ints, bytes, k_server_ap());
                 // The handshake secrets and the master secret have done
                 // their work; the application secrets stay for KeyUpdate.
-                zero(bytes[k_client_hs()..k_client_hs() + 64]);
-                zero(bytes[k_master()..k_master() + 32]);
+                zero(bytes[k_client_hs()..k_client_hs() + 96]);
+                zero(bytes[k_master()..k_master() + 48]);
                 ints[i_state()] = state_connected();
             }
         }
@@ -874,17 +1064,18 @@ fn on_key_update[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message: &m [by
     }
     var code = 0;
     region r {
-        let next = alloc_slice[r](32, byte_of(0));
-        hkdf.expand_label(32, bytes[k_server_ap()..k_server_ap() + 32], "traffic upd", "", next);
-        copy_bytes(next, bytes[k_server_ap()..k_server_ap() + 32]);
+        let h = hash_len(ints);
+        let next = alloc_slice[r](h, byte_of(0));
+        hkdf.expand_label(h, bytes[k_server_ap()..k_server_ap() + h], "traffic upd", "", next);
+        copy_bytes(next, bytes[k_server_ap()..k_server_ap() + h]);
         set_read_keys(ints, bytes, k_server_ap());
         if asked == 1 {
             let answer = alloc_slice[r](5, byte_of(0));
             answer[0] = byte_of(tls_message.type_key_update());
             answer[3] = byte_of(1);
             code = queue_record(ints, bytes, tls_record.type_handshake(), answer);
-            hkdf.expand_label(32, bytes[k_client_ap()..k_client_ap() + 32], "traffic upd", "", next);
-            copy_bytes(next, bytes[k_client_ap()..k_client_ap() + 32]);
+            hkdf.expand_label(h, bytes[k_client_ap()..k_client_ap() + h], "traffic upd", "", next);
+            copy_bytes(next, bytes[k_client_ap()..k_client_ap() + h]);
             set_write_keys(ints, bytes, k_client_ap());
         }
         zero(next);
@@ -1029,9 +1220,10 @@ fn on_record[&i, &b, &p](ints: &!i [int], bytes: &!b [byte], n: int, store: &p [
     let body = n - 5;
     let state = ints[i_state()];
     if kind == tls_record.type_change_cipher_spec() {
-        // One, exactly `01`, after ServerHello and before the server's
-        // Finished (RFC 8446 Appendix D.4).
-        if body != 1 || int_of(bytes[b_in() + 5]) != 1 || has(ints, f_ccs_seen()) || state < state_wait_extensions() || state > state_wait_finished() {
+        // One, exactly `01`, after ServerHello (or a HelloRetryRequest)
+        // and before the server's Finished (RFC 8446 Appendix D.4).
+        let early = state < state_wait_extensions() && !(state == state_wait_server_hello() && has(ints, f_retried()));
+        if body != 1 || int_of(bytes[b_in() + 5]) != 1 || has(ints, f_ccs_seen()) || early || state > state_wait_finished() {
             return tls_record.unexpected_message();
         }
         set_flag(ints, f_ccs_seen());
@@ -1064,7 +1256,7 @@ fn on_record[&i, &b, &p](ints: &!i [int], bytes: &!b [byte], n: int, store: &p [
     var size = 0;
     region q {
         let info = alloc_slice[q](2, 0);
-        code = tls_record.open(bytes[k_read_key()..k_read_key() + 32], bytes[k_read_iv()..k_read_iv() + 12], ints[i_read_seq()], bytes[b_in()..b_in() + n], bytes[b_plain()..b_plain() + plain_cap()], info);
+        code = tls_record.open(ints[i_suite()], bytes[k_read_key()..k_read_key() + key_len(ints)], bytes[k_read_iv()..k_read_iv() + 12], ints[i_read_seq()], bytes[b_in()..b_in() + n], bytes[b_plain()..b_plain() + plain_cap()], info);
         inner = info[0];
         size = info[1];
     }

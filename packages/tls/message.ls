@@ -49,13 +49,42 @@ pub fn type_key_update() -> [] int {
     return 24;
 }
 
-// TLS_CHACHA20_POLY1305_SHA256 and x25519, the only suite and group.
-pub fn chacha20_poly1305_sha256() -> [] int {
-    return 0x1303;
-}
-
+// The groups offered (`docs/tls-parity.md` §2): X25519, with a share in
+// the first ClientHello, and P-256 and P-384, which a server can ask
+// for with a HelloRetryRequest. The suites are `tls_record`'s.
 pub fn group_x25519() -> [] int {
     return 0x001d;
+}
+
+pub fn group_p256() -> [] int {
+    return 0x0017;
+}
+
+pub fn group_p384() -> [] int {
+    return 0x0018;
+}
+
+// The length of a share of `group`: X25519's 32 bytes, or an
+// uncompressed point (RFC 8446 §4.2.8.2). 0 for a group not offered.
+pub fn share_len(group: int) -> [] int {
+    if group == group_x25519() {
+        return 32;
+    }
+    if group == group_p256() {
+        return 65;
+    }
+    if group == group_p384() {
+        return 97;
+    }
+    return 0;
+}
+
+// The longest cookie a HelloRetryRequest may carry here. RFC 8446 allows
+// 2^16 - 1 bytes; a stateless server's cookie is a few hundred, and a
+// longer one is refused rather than grow every slot (`docs/tls-parity.md`
+// §3.3).
+pub fn max_cookie() -> [] int {
+    return 2048;
 }
 
 // The signature schemes of `docs/tls-pure.md` §3.1, as their codes.
@@ -112,25 +141,29 @@ fn copy_to[&s, &o](src: &s [byte], out: &!o [byte], at: int) -> [] int {
     return at + len(src);
 }
 
-// The largest ClientHello this encodes: a 255-byte host name and the
-// fixed extensions.
+// The largest ClientHello this encodes: a 255-byte host name, a P-384
+// share, the longest cookie and the fixed extensions.
 pub fn max_client_hello() -> [] int {
-    return 512;
+    return 640 + max_cookie();
 }
 
-// The ClientHello (`docs/tls-pure.md` §7.1), handshake header included,
-// into `out`. Answers its length. `random`, `session_id` and `share`
-// are 32 bytes each; `host` is at most 255 bytes, and an IP literal
-// sends no `server_name`.
-pub fn client_hello[&r, &s, &k, &h, &o](random: &r [byte], session_id: &s [byte], share: &k [byte], host: &h [byte], out: &!o [byte]) -> [] int {
+// The ClientHello (`docs/tls-pure.md` §7.1, `docs/tls-parity.md` §3.3),
+// handshake header included, into `out`. Answers its length. `random`
+// and `session_id` are 32 bytes each; `share` is one key share of
+// `group`; `cookie` is a HelloRetryRequest's cookie, echoed, or empty;
+// `host` is at most 255 bytes, and an IP literal sends no `server_name`.
+pub fn client_hello[&r, &s, &k, &c, &h, &o](random: &r [byte], session_id: &s [byte], group: int, share: &k [byte], cookie: &c [byte], host: &h [byte], out: &!o [byte]) -> [] int {
     var at = 4;
     at = put(out, at, 0x0303, 2);
     at = copy_to(random, out, at);
     at = put(out, at, 32, 1);
     at = copy_to(session_id, out, at);
-    // One cipher suite, and the null compression method.
-    at = put(out, at, 2, 2);
-    at = put(out, at, chacha20_poly1305_sha256(), 2);
+    // The three TLS 1.3 suites, in OpenSSL's order, and the null
+    // compression method.
+    at = put(out, at, 6, 2);
+    at = put(out, at, tls_record.suite_aes_256_gcm_sha384(), 2);
+    at = put(out, at, tls_record.suite_chacha20_poly1305_sha256(), 2);
+    at = put(out, at, tls_record.suite_aes_128_gcm_sha256(), 2);
     at = put(out, at, 1, 1);
     at = put(out, at, 0, 1);
     let ext_len_at = at;
@@ -144,11 +177,13 @@ pub fn client_hello[&r, &s, &k, &h, &o](random: &r [byte], session_id: &s [byte]
         at = put(out, at, len(host), 2);
         at = copy_to(host, out, at);
     }
-    // supported_groups: x25519.
+    // supported_groups: x25519, secp256r1, secp384r1.
     at = put(out, at, 10, 2);
-    at = put(out, at, 4, 2);
-    at = put(out, at, 2, 2);
+    at = put(out, at, 8, 2);
+    at = put(out, at, 6, 2);
     at = put(out, at, group_x25519(), 2);
+    at = put(out, at, group_p256(), 2);
+    at = put(out, at, group_p384(), 2);
     // signature_algorithms: the six of §3.1.
     at = put(out, at, 13, 2);
     at = put(out, at, 14, 2);
@@ -177,13 +212,20 @@ pub fn client_hello[&r, &s, &k, &h, &o](random: &r [byte], session_id: &s [byte]
     at = put(out, at, 3, 2);
     at = put(out, at, 2, 1);
     at = put(out, at, 0x0304, 2);
-    // key_share: one X25519 share.
+    // key_share: one share.
     at = put(out, at, 51, 2);
-    at = put(out, at, 38, 2);
-    at = put(out, at, 36, 2);
-    at = put(out, at, group_x25519(), 2);
-    at = put(out, at, 32, 2);
+    at = put(out, at, len(share) + 6, 2);
+    at = put(out, at, len(share) + 4, 2);
+    at = put(out, at, group, 2);
+    at = put(out, at, len(share), 2);
     at = copy_to(share, out, at);
+    if len(cookie) > 0 {
+        // cookie: the HelloRetryRequest's, unchanged (RFC 8446 §4.2.2).
+        at = put(out, at, 44, 2);
+        at = put(out, at, len(cookie) + 2, 2);
+        at = put(out, at, len(cookie), 2);
+        at = copy_to(cookie, out, at);
+    }
     put(out, ext_len_at, at - ext_len_at - 2, 2);
     put(out, 0, type_client_hello(), 1);
     put(out, 1, at - 4, 3);
@@ -208,8 +250,43 @@ fn hrr_random(i: int) -> [] int {
     return h * 16 + l;
 }
 
-// The ServerHello body `b`, against the session id the client sent.
-// `info[0]` gets where the server's 32-byte X25519 share starts.
+// What `server_hello` finds, as indices into its `info`.
+pub fn sh_share() -> [] int {
+    return 0;
+}
+
+// 1 for a HelloRetryRequest, else 0.
+pub fn sh_retry() -> [] int {
+    return 1;
+}
+
+pub fn sh_suite() -> [] int {
+    return 2;
+}
+
+// The share's group, or the group a HelloRetryRequest selects.
+pub fn sh_group() -> [] int {
+    return 3;
+}
+
+// A HelloRetryRequest's cookie: its range in the body, or 0 and 0.
+pub fn sh_cookie_start() -> [] int {
+    return 4;
+}
+
+pub fn sh_cookie_end() -> [] int {
+    return 5;
+}
+
+pub fn sh_info_len() -> [] int {
+    return 6;
+}
+
+// The ServerHello body `b`, against the session id the client sent: a
+// ServerHello, or a HelloRetryRequest (RFC 8446 §4.1.3, §4.1.4), told
+// apart by the random. Checks everything that needs no memory of the
+// connection; `tls_client` checks the rest (a second HelloRetryRequest,
+// the group a share is for, the suite against the retry's).
 pub fn server_hello[&b, &s, &i](b: &b [byte], session_id: &s [byte], info: &!i [int]) -> [] int {
     let n = len(b);
     if n < 2 + 32 + 1 {
@@ -218,16 +295,13 @@ pub fn server_hello[&b, &s, &i](b: &b [byte], session_id: &s [byte], info: &!i [
     if get(b, 0, 2) != 0x0303 {
         return tls_record.protocol_version();
     }
-    // A HelloRetryRequest is refused before anything else in it is read.
     var k = 0;
     while k < 32 && int_of(b[2 + k]) == hrr_random(k) {
         k = k + 1;
     }
-    if k == 32 {
-        return tls_record.hello_retry();
-    }
+    let retry = k == 32;
     // The downgrade sentinel "DOWNGRD" and 01 or 00 (§4.1.3).
-    if get(b, 26, 4) == 0x444f574e && get(b, 30, 3) == 0x475244 && int_of(b[33]) <= 1 {
+    if !retry && get(b, 26, 4) == 0x444f574e && get(b, 30, 3) == 0x475244 && int_of(b[33]) <= 1 {
         return tls_record.protocol_version();
     }
     var at = 34;
@@ -243,7 +317,8 @@ pub fn server_hello[&b, &s, &i](b: &b [byte], session_id: &s [byte], info: &!i [
         j = j + 1;
     }
     at = at + 1 + sid;
-    if get(b, at, 2) != chacha20_poly1305_sha256() {
+    let suite = get(b, at, 2);
+    if !tls_record.suite_known(suite) {
         return tls_record.no_shared_cipher();
     }
     if int_of(b[at + 2]) != 0 {
@@ -260,6 +335,9 @@ pub fn server_hello[&b, &s, &i](b: &b [byte], session_id: &s [byte], info: &!i [
     at = at + 2;
     var version = 0;
     var share = 0;
+    var group = 0;
+    var cookie = 0;
+    var cookie_end = 0;
     while at < ext_end {
         if at + 4 > ext_end {
             return tls_record.decode_error();
@@ -279,13 +357,43 @@ pub fn server_hello[&b, &s, &i](b: &b [byte], session_id: &s [byte], info: &!i [
             }
             version = 1;
         } else if kind == 51 {
-            if share != 0 {
+            if group != 0 {
                 return tls_record.decode_error();
             }
-            if size != 36 || get(b, body, 2) != group_x25519() || get(b, body + 2, 2) != 32 {
-                return tls_record.key_share();
+            if retry {
+                // A HelloRetryRequest names a group, with no share: one
+                // offered, and not X25519, whose share was sent.
+                if size != 2 {
+                    return tls_record.decode_error();
+                }
+                group = get(b, body, 2);
+                if group != group_p256() && group != group_p384() {
+                    return tls_record.key_share();
+                }
+            } else {
+                if size < 4 {
+                    return tls_record.decode_error();
+                }
+                group = get(b, body, 2);
+                let want = share_len(group);
+                if want == 0 || size != 4 + want || get(b, body + 2, 2) != want {
+                    return tls_record.key_share();
+                }
+                share = body + 4;
             }
-            share = body + 4;
+        } else if kind == 44 && retry {
+            if cookie != 0 {
+                return tls_record.decode_error();
+            }
+            let c = get(b, body, 2);
+            if size < 3 || c + 2 != size {
+                return tls_record.decode_error();
+            }
+            if c > max_cookie() {
+                return tls_record.hello_retry();
+            }
+            cookie = body + 2;
+            cookie_end = body + size;
         } else {
             return tls_record.unsupported_extension();
         }
@@ -295,10 +403,23 @@ pub fn server_hello[&b, &s, &i](b: &b [byte], session_id: &s [byte], info: &!i [
         // No supported_versions: a TLS 1.2 (or older) ServerHello.
         return tls_record.protocol_version();
     }
-    if share == 0 {
+    if retry {
+        // A retry that would change nothing in the ClientHello (§4.1.4).
+        if group == 0 && cookie == 0 {
+            return tls_record.hello_retry();
+        }
+    } else if group == 0 {
         return tls_record.decode_error();
     }
-    info[0] = share;
+    info[sh_share()] = share;
+    info[sh_retry()] = 0;
+    if retry {
+        info[sh_retry()] = 1;
+    }
+    info[sh_suite()] = suite;
+    info[sh_group()] = group;
+    info[sh_cookie_start()] = cookie;
+    info[sh_cookie_end()] = cookie_end;
     return 0;
 }
 
@@ -406,8 +527,9 @@ pub fn certificate_verify[&b, &i](b: &b [byte], info: &!i [int]) -> [] int {
     return 0;
 }
 
-pub fn finished[&b](b: &b [byte]) -> [] int {
-    if len(b) != 32 {
+// `hash_len`: the suite's, 32 or 48.
+pub fn finished[&b](b: &b [byte], hash_len: int) -> [] int {
+    if len(b) != hash_len {
         return tls_record.decode_error();
     }
     return 0;
