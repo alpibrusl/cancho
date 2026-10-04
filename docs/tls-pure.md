@@ -19,10 +19,10 @@
 |---|---|---|
 | ChaCha20-Poly1305 | `std/chacha20.ls` | built (#212) |
 | SHA-384, streaming SHA-2, HMAC, HKDF, Expand-Label | `std/crypto.ls`, `std/hmac.ls`, `std/hkdf.ls` | built (#229) |
-| X25519 | `std/x25519.ls`, sharing a field module with `std/ed25519.ls` | #200 |
-| a modular bignum, RSA verification | `std/` (own files) | #203 |
-| ECDSA P-256/P-384 verification | `std/` (own files) | #204 |
-| DER, X.509 parsing, chain building, name matching | **`packages/x509`** | #202, #206 |
+| X25519 | `std/x25519.ls`, sharing a field module with `std/ed25519.ls` | built (#231) |
+| a modular bignum, RSA verification | `std/bigmod.ls`, `std/rsa.ls` | built (#234) |
+| ECDSA P-256/P-384 verification | `std/ecdsa.ls`, on `std/bigmod.ls` | built (#239) |
+| DER, X.509 parsing, chain building, name matching | **`packages/x509`** | parsing built (#233); the rest #206 |
 | the handshake, the record layer, the key schedule | **`packages/tls`** | #205 |
 
 **Primitives with fixed test vectors stay in `std`. Protocol and policy go in packages.**

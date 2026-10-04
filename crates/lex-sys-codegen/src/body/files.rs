@@ -98,6 +98,31 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         vec![tag, result, reason]
     }
 
+    /// `flush_out(io)`: `fflush(stdout)`, then `ferror(stdout)`, as `Done`
+    /// (`docs/checked-output.md`). The errno is read straight after
+    /// `fflush`, before `ferror` can disturb it; when only the error
+    /// indicator says a write failed, the original errno is gone and the
+    /// answer is `EIO` (5).
+    pub(crate) fn flush_out(&mut self) -> Vec<Value> {
+        let pointer = self.pointer;
+        let stream = self.module.declare_data_in_func(self.console.stdout, self.builder.func);
+        let stream = self.builder.ins().global_value(pointer, stream);
+        // `stdout` is a `FILE *` variable: the symbol is its address.
+        let stream = self.builder.ins().load(pointer, MemFlags::trusted(), stream, 0);
+        let flushed = self.libc_call("fflush", &[pointer], &[types::I32], &[stream]);
+        let reason = self.errno();
+        let indicator = self.libc_call("ferror", &[pointer], &[types::I32], &[stream]);
+        let flush_failed = self.builder.ins().icmp_imm(IntCC::NotEqual, flushed, 0);
+        let earlier = self.builder.ins().icmp_imm(IntCC::NotEqual, indicator, 0);
+        let failed = self.builder.ins().bor(flush_failed, earlier);
+        let eio = self.builder.ins().iconst(types::I64, 5);
+        let reason = self.builder.ins().select(flush_failed, reason, eio);
+        let one = self.builder.ins().iconst(types::I64, 1);
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        let tag = self.builder.ins().select(failed, one, zero);
+        vec![tag, zero, reason]
+    }
+
     /// `Read`'s three leaves from the byte count a `read`-shaped call gave.
     fn read_answer(&mut self, moved: Value) -> Vec<Value> {
         let negative = self.builder.ins().icmp_imm(IntCC::SignedLessThan, moved, 0);

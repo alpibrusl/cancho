@@ -163,6 +163,15 @@ the harder one half-answered.
 > the same fact from the other side). Not fixed here: it is a language
 > gap, and `agent-toolbox.md` §2.1 carries the reproducer and the
 > slice that would close it.
+>
+> **Now observable ([`checked-output.md`](checked-output.md), #215).**
+> `flush_out(io)` (edition 5) flushes standard output and answers
+> `Done::Failed(errno)` when the flush fails or when any earlier write to
+> the stream failed (`ENOSPC` on `/dev/full`, `EBADF` on a closed
+> descriptor, `EIO` for a failure the buffer already discarded), on both
+> backends. `write_bytes` still answers the buffered count, and a program
+> that never calls `flush_out` still loses the result at exit; a trap
+> still loses the buffer.
 
 ---
 
