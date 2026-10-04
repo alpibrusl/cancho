@@ -365,7 +365,7 @@ pub(crate) fn emit_module(
     declare_libc_unless_own(&mut text, "creat", "i32 @creat(ptr, i32)");
     declare_libc_unless_own(&mut text, "open", "i32 @open(ptr, i32)");
     declare_libc_unless_own(&mut text, "read", "i64 @read(i32, ptr, i64)");
-    // `copy_within` (`docs/memory-moves.md`).
+    // `copy_within` (`docs/memory-moves.md`) and `copy_into` (`docs/bulk-copy.md`).
     declare_libc_unless_own(&mut text, "memmove", "ptr @memmove(ptr, ptr, i64)");
     declare_libc_unless_own(&mut text, "write", "i64 @write(i32, ptr, i64)");
     // `docs/file-writes.md`: the write side of a file handle. `fopen`/`dup`/

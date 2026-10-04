@@ -1236,6 +1236,13 @@ fn the_two_backends_agree_on_copy_within() {
     assert_backends_agree("backends-copy-within", "tests/accept/copy_within.ls", "");
 }
 
+/// `docs/bulk-copy.md`: `copy_into` between two slices and between overlapping views of one, in both directions, and
+/// `std.buffer` growing through it; on both backends.
+#[test]
+fn the_two_backends_agree_on_copy_into() {
+    assert_backends_agree("backends-copy-into", "tests/accept/copy_into.ls", "");
+}
+
 /// `join(a) + join(b)`: a join as an arithmetic operand, which the LLVM backend could not type.
 #[test]
 fn the_two_backends_agree_on_a_join_as_an_operand() {

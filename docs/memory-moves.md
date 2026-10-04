@@ -22,8 +22,9 @@ The sums `dst + n` and `src + n` are never formed, so a count near 2^63 cannot w
 nothing at the very end (`dst == len`, `n == 0`) is allowed. It has no effect row and needs no capability: it reads and writes only the slice it is given.
 
 It is a builtin and not a library loop because only the backend can emit a block move: Cranelift calls `memmove` (declared as any libc import is);
-LLVM declares and calls it, where clang turns it into the target's best move. It takes one slice, not two, because a unique reference and a shared one
-to the same bytes cannot both be held, which is exactly what a move inside a buffer needs.
+LLVM declares and calls it, where clang turns it into the target's best move. It takes one slice, not two, because the move is inside one buffer. *(Corrected: this said a unique reference and a shared one to
+the same bytes cannot both be held. They can: `copy_into(xs[2..8], xs[0..5])` passes the checker, a unique and a shared view of one
+region slice in one call, which is why [`bulk-copy.md`](bulk-copy.md)'s two-slice copy is a `memmove` too.)*
 
 ## 3. What it is checked by
 

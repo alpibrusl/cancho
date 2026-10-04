@@ -43,6 +43,23 @@ impl<'a> FuncEmitter<'a> {
         Ok(vec![LValue::Const(0)])
     }
 
+    /// `copy_into(dst, src)` (`docs/bulk-copy.md`): all of `src` to the front of `dst`, as one `memmove`. `args` is the
+    /// destination's pointer and length, then the source's. Traps unless `len(src) <= len(dst)`; answers `len(src)`.
+    ///
+    /// `memmove` and not `memcpy`, because the two slices may be views of one buffer.
+    pub(crate) fn copy_into(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        let (to, room) = (operand(&args[0]), operand(&args[1]));
+        let (from, count) = (operand(&args[2]), operand(&args[3]));
+        let past = self.fresh();
+        self.out.push_str(&format!("  {past} = icmp sgt i64 {count}, {room}\n"));
+        self.trap_if(&past)?;
+        let ignored = self.fresh();
+        self.out.push_str(&format!(
+            "  {ignored} = call ptr @memmove(ptr {to}, ptr {from}, i64 {count})\n"
+        ));
+        Ok(vec![args[3].clone()])
+    }
+
     pub(crate) fn region_stmt(&mut self, arena: u32, body: &[Stmt]) -> Result<bool, String> {
         let base = self.fresh();
         self.out.push_str(&format!("  {base} = call ptr @malloc(i64 {ARENA_CHUNK})\n"));
