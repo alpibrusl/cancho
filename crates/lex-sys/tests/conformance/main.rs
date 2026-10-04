@@ -42,6 +42,7 @@ mod arguments;
 mod authority;
 mod backends;
 mod benchmarks;
+mod checked_output;
 mod compile_time;
 mod corpus;
 mod differential;

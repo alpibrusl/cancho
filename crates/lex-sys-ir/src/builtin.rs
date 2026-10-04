@@ -46,6 +46,18 @@ pub enum Builtin {
     /// because it came first, not because two primitives were wanted, and
     /// a diagnostic is short: §3.2.
     WriteErr,
+    /// `flush_out[&i](io: &!i Io) -> [io_write] Done` -- flush standard
+    /// output and say whether everything written to it arrived
+    /// (`docs/checked-output.md`, edition 5).
+    ///
+    /// `write_bytes` answers what the stdio buffer took; the last buffer's
+    /// worth was written by libc at exit with the result ignored, so a
+    /// program writing to a full disk could not know (`docs/bulk-io.md`
+    /// §3.3, corrected). This is `fflush(stdout)` and then
+    /// `ferror(stdout)`: the second because `fflush` answers 0 for an empty
+    /// buffer even after an earlier write failed. Its label is `io_write`,
+    /// the label of what it completes.
+    FlushOut,
     /// `getchar[&i](io: &!i Io) -> [io_read] int` — libc's `getchar`, one
     /// byte in, behind the capability that authorises it.
     ///
@@ -494,6 +506,7 @@ impl Builtin {
         Builtin::PutChar,
         Builtin::Write,
         Builtin::WriteErr,
+        Builtin::FlushOut,
         Builtin::GetChar,
         Builtin::Split,
         Builtin::Release,
@@ -574,6 +587,7 @@ impl Builtin {
         match self {
             Builtin::PutChar => "putchar",
             Builtin::Write => "write_bytes",
+            Builtin::FlushOut => "flush_out",
             Builtin::WriteErr => "write_err",
             Builtin::GetChar => "getchar",
             Builtin::Split => "split",
@@ -699,6 +713,9 @@ impl Builtin {
             | Builtin::ForkClock
             | Builtin::CopyWithin
             | Builtin::ListenerClose => 5,
+            // `docs/checked-output.md`: a name a program may already have
+            // declared for itself, so it is visible from edition 5 only.
+            Builtin::FlushOut => 5,
             // `docs/file-writes.md`: edition 5, for the same reason --
             // `file_write` and `open_new` are names a program may already
             // declare against libc.
@@ -754,7 +771,7 @@ impl Builtin {
             // leaf-free, so it contributes no values either way, and
             // skipping it keeps the argument positions honest.
             Builtin::PutChar | Builtin::GetChar | Builtin::ArgCount | Builtin::Arg => 1,
-            Builtin::Write | Builtin::WriteErr => 1,
+            Builtin::Write | Builtin::WriteErr | Builtin::FlushOut => 1,
             _ => 0,
         }
     }
@@ -768,7 +785,11 @@ impl Builtin {
     /// from inside a `borrow` block, which is a confusing way to find out.
     pub fn regions(self) -> usize {
         match self {
-            Builtin::PutChar | Builtin::GetChar | Builtin::ArgCount | Builtin::Arg => 1,
+            Builtin::PutChar
+            | Builtin::GetChar
+            | Builtin::FlushOut
+            | Builtin::ArgCount
+            | Builtin::Arg => 1,
             // Two: the borrowed `Io` and the slice's own region.
             Builtin::Write | Builtin::WriteErr => 2,
             // Two: the borrowed handle and the buffer's own region.
@@ -840,6 +861,16 @@ impl Builtin {
                     },
                 ],
                 Type::Int,
+            ),
+            // The borrowed `Io` and nothing else; the answer is the write
+            // side's `Done`, so the errno survives (`docs/checked-output.md`).
+            Builtin::FlushOut => (
+                vec![Type::Ref {
+                    unique: true,
+                    region: Region::Param(0),
+                    inner: Box::new(named(PRELUDE_IO)),
+                }],
+                named(PRELUDE_DONE),
             ),
             // The mirror: the same borrowed `Io`, no character to take.
             Builtin::GetChar => (
@@ -1216,7 +1247,7 @@ impl Builtin {
     /// in an exact row (§7.3).
     pub fn effects(self) -> Effects {
         match self {
-            Builtin::PutChar | Builtin::Write => Effects::plain(["io_write"]),
+            Builtin::PutChar | Builtin::Write | Builtin::FlushOut => Effects::plain(["io_write"]),
             // Its own label rather than `io_write`, because the stream is
             // the unit a reader can act on: `1>` and `2>` are two
             // redirections (`docs/standard-error.md` §3.1).
