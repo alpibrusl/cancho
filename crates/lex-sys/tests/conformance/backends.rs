@@ -1236,6 +1236,23 @@ fn the_two_backends_agree_on_copy_within() {
     assert_backends_agree("backends-copy-within", "tests/accept/copy_within.ls", "");
 }
 
+/// `docs/byte-search.md`: `index_of_byte` at every position, at both extreme byte values, inside sub-slices, and `std.bytes`'
+/// `find` and `count_byte` built on it, each against a byte loop; on both backends.
+#[test]
+fn the_two_backends_agree_on_index_of_byte() {
+    assert_backends_agree("backends-index-of-byte", "tests/accept/index_of_byte.ls", "");
+}
+
+/// `docs/byte-search.md` §2: a program that declares `memchr` itself still builds, on both backends.
+#[test]
+fn the_two_backends_agree_beside_a_program_s_own_memchr() {
+    assert_backends_agree(
+        "backends-own-memchr",
+        "tests/accept/index_of_byte_beside_own_memchr.ls",
+        "",
+    );
+}
+
 /// `join(a) + join(b)`: a join as an arithmetic operand, which the LLVM backend could not type.
 #[test]
 fn the_two_backends_agree_on_a_join_as_an_operand() {

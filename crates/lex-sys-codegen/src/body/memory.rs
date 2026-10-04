@@ -32,6 +32,28 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         vec![self.builder.ins().iconst(types::I64, 0)]
     }
 
+    /// `index_of_byte(text, b)` (`docs/byte-search.md`): one `memchr`. `args` is the slice's pointer and length, then the
+    /// byte. Answers the offset of the first match, or -1 when `memchr` answers null. Nothing to check: `memchr` reads at
+    /// most `len` bytes from the slice's own start.
+    pub(crate) fn index_of_byte(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let (base, length, wanted) = (args[0], args[1], args[2]);
+        // Widened to a full register rather than C's `int`: the callee reads the low 32 bits either way, and this is the
+        // signature a program that declares `memchr` itself (`int` is 64 bits here) gives it, so the two declarations
+        // agree instead of the module refusing the second.
+        let wanted = self.builder.ins().uextend(types::I64, wanted);
+        let found = self.libc_call(
+            "memchr",
+            &[pointer, types::I64, pointer],
+            &[pointer],
+            &[base, wanted, length],
+        );
+        let offset = self.builder.ins().isub(found, base);
+        let missing = self.builder.ins().icmp_imm(IntCC::Equal, found, 0);
+        let none = self.builder.ins().iconst(types::I64, -1);
+        vec![self.builder.ins().select(missing, none, offset)]
+    }
+
     /// `borrow x as &r in { .. }` — give `x` a home in memory and point at it.
     ///
     /// A reference has to be an address, and until now nothing did: a slot

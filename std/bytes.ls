@@ -1,3 +1,4 @@
+edition 5;
 module std.bytes;
 
 // `std.bytes` — text, which here means bytes.
@@ -107,21 +108,30 @@ pub fn ends_with[&t, &p](text: &t [byte], suffix: &p [byte]) -> [] bool {
     return equal(text[len(text) - len(suffix)..len(text)], suffix);
 }
 
+// Where `needle` first occurs in `text`, or -1. An empty needle is at 0.
+//
+// `docs/byte-search.md`: the candidates are found by `index_of_byte` --
+// one `memchr` for the needle's first byte -- and only they are compared,
+// so text without that byte is skipped at `memchr`'s speed rather than
+// one comparison per position. A first byte that is common in the text
+// (a space) makes that one call per few bytes, which on LLVM is slower
+// than the plain loop clang vectorises; `byte-search.md` §3 measures it.
 pub fn find[&t, &n](text: &t [byte], needle: &n [byte]) -> [] int {
-    if len(needle) > len(text) {
-        return 0 - 1;
+    if len(needle) == 0 {
+        return 0;
     }
+    let first = needle[0];
     var at = 0;
     while at + len(needle) <= len(text) {
-        var i = 0;
-        var same = true;
-        while i < len(needle) && same {
-            if text[at + i] != needle[i] {
-                same = false;
-            }
-            i = i + 1;
+        // Only where the needle could still start: `last` is one past the
+        // final such position.
+        let last = len(text) - len(needle) + 1;
+        let skip = index_of_byte(text[at..last], first);
+        if skip < 0 {
+            return 0 - 1;
         }
-        if same {
+        at = at + skip;
+        if equal(text[at..at + len(needle)], needle) {
             return at;
         }
         at = at + 1;
@@ -138,14 +148,23 @@ pub fn find[&t, &n](text: &t [byte], needle: &n [byte]) -> [] int {
 // `examples/cut/` is why this exists: the number of fields in a line is
 // the number of delimiters plus one, and counting them was the first
 // thing that program wrote by hand.
+//
+// One `index_of_byte` per occurrence (`docs/byte-search.md`), not one
+// comparison per byte. A `b` outside 0..255 occurs nowhere.
 pub fn count_byte[&t](text: &t [byte], b: int) -> [] int {
+    if b < 0 || b > 255 {
+        return 0;
+    }
+    let wanted = byte_of(b);
     var n = 0;
     var at = 0;
     while at < len(text) {
-        if int_of(text[at]) == b {
-            n = n + 1;
+        let next = index_of_byte(text[at..len(text)], wanted);
+        if next < 0 {
+            return n;
         }
-        at = at + 1;
+        n = n + 1;
+        at = at + next + 1;
     }
     return n;
 }

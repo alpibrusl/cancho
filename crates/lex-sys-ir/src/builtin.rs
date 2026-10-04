@@ -93,6 +93,10 @@ pub enum Builtin {
     /// `src + n <= len(buf)` (the sums are not formed, so nothing can overflow). Answers 0. Pure and capability-free:
     /// it reads and writes only the slice it was given. Edition 5. `docs/memory-moves.md`.
     CopyWithin,
+    /// `index_of_byte(text: &t [byte], b: byte) -> int` — where `b` first occurs in `text`, or -1 if it does not, as
+    /// `memchr` answers. Pure and capability-free: it reads only the slice it was given. Edition 5.
+    /// `docs/byte-search.md`.
+    IndexOfByte,
     /// `fork_clock(c: &x Clock) -> Clock` — a second owned `Clock` from a
     /// shared borrow of the first (`docs/parallelism.md` §9).
     ///
@@ -501,6 +505,7 @@ impl Builtin {
         Builtin::ForkHeap,
         Builtin::ForkClock,
         Builtin::CopyWithin,
+        Builtin::IndexOfByte,
         Builtin::WrappingAdd,
         Builtin::WrappingSub,
         Builtin::WrappingMul,
@@ -582,6 +587,7 @@ impl Builtin {
             Builtin::ForkHeap => "fork_heap",
             Builtin::ForkClock => "fork_clock",
             Builtin::CopyWithin => "copy_within",
+            Builtin::IndexOfByte => "index_of_byte",
             Builtin::WrappingAdd => "wrapping_add",
             Builtin::WrappingSub => "wrapping_sub",
             Builtin::WrappingMul => "wrapping_mul",
@@ -698,6 +704,7 @@ impl Builtin {
             | Builtin::ConnClose
             | Builtin::ForkClock
             | Builtin::CopyWithin
+            | Builtin::IndexOfByte
             | Builtin::ListenerClose => 5,
             // `docs/file-writes.md`: edition 5, for the same reason --
             // `file_write` and `open_new` are names a program may already
@@ -793,6 +800,7 @@ impl Builtin {
             | Builtin::ListenerNonblocking
             | Builtin::ForkClock
             | Builtin::CopyWithin
+            | Builtin::IndexOfByte
             | Builtin::ClockMs
             | Builtin::ClockUnixMs => 1,
             _ => 0,
@@ -1161,6 +1169,17 @@ impl Builtin {
                     Type::Int,
                     Type::Int,
                     Type::Int,
+                ],
+                Type::Int,
+            ),
+            Builtin::IndexOfByte => (
+                vec![
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(0),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Byte,
                 ],
                 Type::Int,
             ),

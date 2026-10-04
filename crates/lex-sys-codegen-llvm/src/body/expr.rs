@@ -849,6 +849,17 @@ impl<'a> FuncEmitter<'a> {
                 }
                 self.copy_within(&args)
             }
+            // `docs/byte-search.md`: one `memchr`.
+            Callee::Builtin(Builtin::IndexOfByte) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                if args.len() != 3 {
+                    return Err(format!(
+                        "`index_of_byte` needs 3 leaves but {} were given",
+                        args.len()
+                    ));
+                }
+                self.index_of_byte(&args)
+            }
             Callee::Builtin(Builtin::ConnWrite) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 if args.len() != 3 {
