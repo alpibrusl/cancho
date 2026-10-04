@@ -304,7 +304,10 @@ Edition 6 also has the **directory handle**
 `DirOpened`, the builtins `open_dir`, `dir_enter`, `dir_open_read`,
 `dir_close`, `dir_open_new`, `dir_open_append`, `dir_rename`, `dir_remove` and
 `dir_sync`, and the labels `dir_read` and `dir_write`. Purely additive, like edition 5's
-later slices: no edition-6 file in this repository declared any of the names.
+later slices: no edition-6 file in this repository declared any of the names. The same holds
+for **directory listing** ([`directory-listing.md`](directory-listing.md)): the
+types `DirList`, `Listing`, `Listed` and `DirStat` and the builtins `dir_list`,
+`dir_next`, `dir_list_close` and `dir_stat`, under the existing `dir_read`.
 
 And it has **`value_barrier`** ([`value-barrier.md`](value-barrier.md)), a builtin for constant-time code. Purely additive in
 the same way: no edition-6 file declared the name. `std/bigmod.ls` and `std/ecdh.ls` are the first `std` modules to declare

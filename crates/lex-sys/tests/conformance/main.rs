@@ -47,6 +47,7 @@ mod compile_time;
 mod corpus;
 mod differential;
 mod directory_handles;
+mod directory_listing;
 mod directory_writes;
 mod docs;
 mod duplication;

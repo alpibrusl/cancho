@@ -290,6 +290,7 @@ pub(crate) fn is_capability(def: DefId) -> bool {
             // else's open file.
             | PRELUDE_FILE
             | PRELUDE_DIR
+            | PRELUDE_DIR_LIST
             | PRELUDE_LISTENER
             | PRELUDE_CONN
             | PRELUDE_POLLER
@@ -328,6 +329,7 @@ pub(crate) fn closed_only(def: DefId) -> bool {
         def.0 as usize,
         PRELUDE_FILE
             | PRELUDE_DIR
+            | PRELUDE_DIR_LIST
             | PRELUDE_LISTENER
             | PRELUDE_CONN
             | PRELUDE_POLLER
@@ -403,6 +405,9 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
         // `docs/directory-handles.md` §2: the path was spent at `open_dir`,
         // so the handle's label names none, as `file_read` names none.
         PRELUDE_DIR => Effects::plain(["dir_read", "dir_write"]),
+        // `docs/directory-listing.md` §3.3: a listing is reading beneath the
+        // directory it came from.
+        PRELUDE_DIR_LIST => Effects::plain(["dir_read"]),
         // `docs/native-sockets.md` §3: the same rule for the socket handles
         // -- the port was spent at `tcp_listen`, so the handle's own
         // labels carry no argument.
@@ -593,6 +598,14 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     // opening one answers.
     let dir = symbol("Dir");
     let dir_opened = symbol("DirOpened");
+    // `docs/directory-listing.md`: a listing in progress, what starting one
+    // answers, and what each step answers.
+    let dir_list = symbol("DirList");
+    let listing = symbol("Listing");
+    let listed = symbol("Listed");
+    let name_arm = symbol("Name");
+    // What `dir_stat` answers.
+    let dir_stat = symbol("DirStat");
     let again_arm = symbol("Again");
     let data_arm = symbol("Data");
     let wrote_arm = symbol("Wrote");
@@ -660,6 +673,12 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     // `PRELUDE_DIR` and `PRELUDE_DIR_OPENED`: edition 6, appended last.
     let dir_def = unifier.declare("Dir");
     let dir_opened_def = unifier.declare("DirOpened");
+    // `PRELUDE_DIR_LIST` .. `PRELUDE_LISTED`: edition 6, appended last.
+    let dir_list_def = unifier.declare("DirList");
+    let listing_def = unifier.declare("Listing");
+    let listed_def = unifier.declare("Listed");
+    // `PRELUDE_DIR_STAT`: edition 6, appended last.
+    let dir_stat_def = unifier.declare("DirStat");
 
     vec![
         TypeDef {
@@ -1230,6 +1249,74 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
             declared_mode: None,
             kind: DefKind::Enum(vec![
                 (ok_arm, vec![Type::Named(dir_def, Vec::new())]),
+                (failed_arm, vec![Type::Int]),
+            ]),
+            span,
+            since: 6,
+        },
+        // `docs/directory-listing.md` §3.1: a stream of a directory's names.
+        // `Dir`'s shape -- a resource with nothing a program can name,
+        // closed only by `dir_list_close`.
+        TypeDef {
+            name: dir_list,
+            def: dir_list_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: Some(Mode::Res),
+            kind: DefKind::Struct(Vec::new()),
+            span,
+            since: 6,
+        },
+        // What `dir_list` answers: `DirOpened`'s shape, for a listing.
+        TypeDef {
+            name: listing,
+            def: listing_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: None,
+            kind: DefKind::Enum(vec![
+                (ok_arm, vec![Type::Named(dir_list_def, Vec::new())]),
+                (failed_arm, vec![Type::Int]),
+            ]),
+            span,
+            since: 6,
+        },
+        // What `dir_next` answers: `Read`'s three outcomes, the first
+        // carrying the name's length (its bytes are in the caller's buffer)
+        // and its kind.
+        TypeDef {
+            name: listed,
+            def: listed_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: None,
+            kind: DefKind::Enum(vec![
+                (name_arm, vec![Type::Int, Type::Int]),
+                (end_arm, Vec::new()),
+                (failed_arm, vec![Type::Int]),
+            ]),
+            span,
+            since: 6,
+        },
+        // `docs/directory-listing.md` §3.2: what `dir_stat` answers -- the kind,
+        // the size in bytes and the modification time in whole seconds, or the
+        // `errno`.
+        TypeDef {
+            name: dir_stat,
+            def: dir_stat_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: None,
+            kind: DefKind::Enum(vec![
+                (ok_arm, vec![Type::Int, Type::Int, Type::Int]),
                 (failed_arm, vec![Type::Int]),
             ]),
             span,

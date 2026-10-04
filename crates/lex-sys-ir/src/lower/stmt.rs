@@ -310,6 +310,7 @@ impl<'a> FnLowering<'a> {
                 PRELUDE_POLLER => "poller_close",
                 PRELUDE_SIGNAL_WATCH => "signals_close",
                 PRELUDE_DIR => "dir_close",
+                PRELUDE_DIR_LIST => "dir_list_close",
                 _ => "file_close",
             };
             return Err(Diagnostic::new(
