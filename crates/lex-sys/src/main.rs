@@ -421,6 +421,7 @@ const STD: &[(&str, &str)] = &[
     ("<std>/flags.ls", include_str!("../../../std/flags.ls")),
     ("<std>/crypto.ls", include_str!("../../../std/crypto.ls")),
     ("<std>/ed25519.ls", include_str!("../../../std/ed25519.ls")),
+    ("<std>/chacha20.ls", include_str!("../../../std/chacha20.ls")),
     ("<std>/test.ls", include_str!("../../../std/test.ls")),
     ("<std>/json.ls", include_str!("../../../std/json.ls")),
     ("<std>/map.ls", include_str!("../../../std/map.ls")),

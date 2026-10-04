@@ -82,6 +82,7 @@
 - [std.crypto: SHA-256](crypto.md)
 - [std.crypto: SHA-512](sha512.md)
 - [std.ed25519](ed25519.md)
+- [std.chacha20: ChaCha20-Poly1305](chacha20.md)
 
 # Compile time and program identity
 

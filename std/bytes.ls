@@ -223,3 +223,15 @@ pub fn compare[&a, &b](a: &a [byte], b: &b [byte]) -> [] int {
     }
     return len(a) - len(b);
 }
+
+// The low 32 bits of `value`, little-endian, into `dst[at..at + 4]`.
+// `examples/vsock/` wrote `sockaddr_vm`'s fields this way and
+// `std.chacha20` writes its words this way; the duplication check
+// (`docs/next-phase.md` §4) found the two copies, and this is the one.
+pub fn store_le32[&d](dst: &!d [byte], at: int, value: int) -> [] int {
+    dst[at] = byte_of(value & 0xff);
+    dst[at + 1] = byte_of(value >> 8 & 0xff);
+    dst[at + 2] = byte_of(value >> 16 & 0xff);
+    dst[at + 3] = byte_of(value >> 24 & 0xff);
+    return 0;
+}
