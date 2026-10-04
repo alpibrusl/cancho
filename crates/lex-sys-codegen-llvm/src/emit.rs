@@ -306,6 +306,9 @@ pub(crate) fn emit_module(
     // `listen`/`accept` (`docs/net.md` §7.20, `docs/listen.md` §6):
     // neither takes a capability -- the port was already bound at
     // `bind`.
+    // `docs/zeroed-slices.md`: a `box_slice` filled with zero. Guarded like
+    // the rest: `calloc` is a name a program may declare for itself.
+    declare_libc_unless_own(&mut text, "calloc", "ptr @calloc(i64, i64)");
     declare_libc_unless_own(&mut text, "listen", "i32 @listen(i32, i32)");
     declare_libc_unless_own(&mut text, "accept", "i32 @accept(i32, ptr, ptr)");
     // `bind` (§7.21, `docs/listen.md` §6): `socket`+`setsockopt`+`bind`
