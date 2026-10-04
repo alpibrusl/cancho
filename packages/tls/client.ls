@@ -487,7 +487,18 @@ fn fail[&i, &b](ints: &!i [int], bytes: &!b [byte], code: int) -> [] int {
             queue_record(ints, bytes, tls_record.type_alert(), alert);
         }
     }
+    forget(bytes);
     return code;
+}
+
+// No key is used again: after a failure's alert is sealed, and once
+// close_notify has gone both ways. The secrets, keys and IVs, and the
+// last opened record, are overwritten (best effort, `docs/tls-core.md`
+// §8); received data waiting for `recv` stays.
+fn forget[&b](bytes: &!b [byte]) -> [] int {
+    zero(bytes[b_keys()..b_keys() + keys_len()]);
+    zero(bytes[b_plain()..b_plain() + plain_cap()]);
+    return 0;
 }
 
 // ---- Starting ----
@@ -938,6 +949,9 @@ fn on_alert[&i, &b, &c](ints: &!i [int], bytes: &!b [byte], content: &c [byte]) 
     let what = int_of(content[1]);
     if what == 0 {
         set_flag(ints, f_close_received());
+        if has(ints, f_close_sent()) {
+            forget(bytes);
+        }
         return 0;
     }
     if what == 90 {
@@ -1156,6 +1170,16 @@ pub fn recv[&i, &b, &o](ints: &!i [int], bytes: &b [byte], into: &!o [byte]) -> 
     return n;
 }
 
+// The socket ended. After the peer's close_notify that is the clean end;
+// before it, the data may have been cut short, and the connection fails
+// as `tls-peer-closed` (RFC 8446 §6.1).
+pub fn peer_eof[&i, &b](ints: &!i [int], bytes: &!b [byte]) -> [] int {
+    if has(ints, f_close_received()) || ints[i_state()] == state_failed() {
+        return 0;
+    }
+    return fail(ints, bytes, tls_record.peer_closed());
+}
+
 // Queues close_notify.
 pub fn finish[&i, &b](ints: &!i [int], bytes: &!b [byte]) -> [] int {
     if has(ints, f_close_sent()) || ints[i_state()] == state_failed() {
@@ -1166,6 +1190,9 @@ pub fn finish[&i, &b](ints: &!i [int], bytes: &!b [byte]) -> [] int {
         let alert = alloc_slice[r](2, byte_of(0));
         alert[0] = byte_of(1);
         queue_record(ints, bytes, tls_record.type_alert(), alert);
+    }
+    if has(ints, f_close_received()) {
+        forget(bytes);
     }
     return 0;
 }

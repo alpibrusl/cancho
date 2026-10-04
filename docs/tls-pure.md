@@ -92,6 +92,12 @@ tls.failure(engine, s) -> code;  tls.refusal_tag(code) -> name
 tls.drop(engine, s)                                      // the slot is free (keys overwritten as far as the language allows, §7.3)
 ```
 
+*As built (`docs/tls-core.md` §10.1), three differences:*
+- *`tls.trust(engine, pem_bundle) -> int` borrows the engine rather than moving it;*
+- *`tls.eof(engine, s)` tells the engine the socket ended: without a close_notify first, the connection fails
+  `tls-peer-closed`;*
+- *`tls.recv` answers `tls.would_block()` when nothing is waiting, as 0 already means close_notify.*
+
 - **No capability is taken.** Time is a number the caller passes (`now_unix_ms`, from `clock_unix_ms`). Entropy is bytes the
   caller passes. The root store is bytes the caller read. So the pure backend's authority row is empty, and #210's gate (the
   pure backend needs no `Ffi` at all) is a property of the signatures that the checker enforces (rows are exact in both directions:

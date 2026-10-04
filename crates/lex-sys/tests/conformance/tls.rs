@@ -1,8 +1,9 @@
 //! `packages/tls` with no network (`docs/tls-core.md` §6.1): two recorded
 //! handshakes against tlslite-ng replayed byte for byte on both backends,
 //! the same server bytes fed one byte at a time and all at once, a wrong
-//! pin, and a crafted ServerHello for each rule of RFC 8446 §4.1.3 the
-//! client enforces. All through `tests/programs/tls_driver.ls`.
+//! pin, a crafted ServerHello for each rule of RFC 8446 §4.1.3 the
+//! client enforces, and the 29 connections of `scripts/tls_liar.py`'s
+//! lying server (§6.3). All through `tests/programs/tls_driver.ls`.
 
 use super::json::feed;
 use super::*;
@@ -52,6 +53,27 @@ fn trace(name: &str) -> (Vec<String>, Vec<String>) {
     (asked, answered)
 }
 
+/// `liar.txt`'s cases: the tag each must end with, its name, its driver
+/// lines and the answers recorded for them.
+type Case = (String, String, Vec<String>, Vec<String>);
+
+fn liar_cases() -> Vec<Case> {
+    let text = std::fs::read_to_string(repo_root().join("tests/vectors/tls/liar.txt")).unwrap();
+    let mut cases: Vec<Case> = Vec::new();
+    for line in text.lines() {
+        if let Some(head) = line.strip_prefix("## ") {
+            let (tag, name) = head.split_once(' ').unwrap();
+            cases.push((tag.to_string(), name.to_string(), Vec::new(), Vec::new()));
+        } else if line.starts_with('#') {
+        } else if let Some(a) = line.strip_prefix("= ") {
+            cases.last_mut().unwrap().3.push(a.to_string());
+        } else {
+            cases.last_mut().unwrap().2.push(line.to_string());
+        }
+    }
+    cases
+}
+
 fn field(line: &str, n: usize) -> &str {
     line.split(' ').nth(n).unwrap_or("")
 }
@@ -75,6 +97,28 @@ fn both_recorded_handshakes_replay_byte_for_byte_on_both_backends() {
                 "4",
                 "{name}: the server's close_notify was seen"
             );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// Each lying server's connection replays byte for byte and ends with its
+/// tag; the honest ones end closed.
+#[test]
+fn every_lying_server_is_refused_with_its_own_tag_on_both_backends() {
+    let cases = liar_cases();
+    assert_eq!(cases.len(), 29);
+    for backend in ["cranelift", "llvm"] {
+        let (dir, exe) = build_tls_driver("liar", backend);
+        for (tag, name, asked, answered) in &cases {
+            assert_eq!(asked.len(), answered.len(), "{name}");
+            let got = run(&exe, asked);
+            for (n, (g, w)) in got.iter().zip(answered).enumerate() {
+                assert_eq!(g, w, "{name} line {n} on {backend}");
+            }
+            let last = got.last().unwrap();
+            assert_eq!(field(last, 1), tag, "{name}");
+            assert_eq!(field(last, 2), if tag == "ok" { "4" } else { "5" }, "{name}: {last}");
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -262,5 +306,144 @@ fn every_server_hello_rule_is_refused_with_its_own_tag() {
     let flipped: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
     let got = run(&exe, &[rsa[0].clone(), rsa[1].clone(), format!("F {flipped}")]);
     assert_eq!(field(&got[2], 1), "tls-bad-record-mac", "{}", got[2]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn unhex(s: &str) -> Vec<u8> {
+    (0..s.len()).step_by(2).map(|k| u8::from_str_radix(&s[k..k + 2], 16).unwrap()).collect()
+}
+
+/// One recorded stream: the ClientHello it answers, the server's flight,
+/// its reply, and the response's length and SHA-256 as `tls_many` prints
+/// them.
+struct Stream {
+    flight: Vec<u8>,
+    reply: Vec<u8>,
+    seen: String,
+}
+
+/// Reads one record's worth, or what is left at the end, into `got`.
+fn read_record(conn: &mut std::net::TcpStream, got: &mut Vec<u8>) -> Option<Vec<u8>> {
+    use std::io::Read;
+    loop {
+        if got.len() >= 5 {
+            let n = 5 + usize::from(got[3]) * 256 + usize::from(got[4]);
+            if got.len() >= n {
+                return Some(got.drain(..n).collect());
+            }
+        }
+        let mut buf = [0u8; 65536];
+        match conn.read(&mut buf) {
+            Ok(0) | Err(_) => return None,
+            Ok(k) => got.extend_from_slice(&buf[..k]),
+        }
+    }
+}
+
+/// The engine and the poller (`tls_many`), 64 connections at once on one
+/// thread, against `scripts/tls_liar.py`'s honest server replayed from
+/// `streams.txt`: the server's bytes for each ClientHello the fixed seed
+/// gives. Each socket read is one byte, then 65,536: every connection must
+/// end with close_notify and the response recorded for it. Then the same
+/// server cut short, its close_notify left out and the socket closed: the
+/// data may have been truncated, and every connection fails
+/// `tls-peer-closed` (RFC 8446 §6.1).
+#[test]
+fn sixty_four_connections_on_one_thread_fed_one_byte_and_in_bulk() {
+    use std::collections::HashMap;
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+    let text = std::fs::read_to_string(repo_root().join("tests/vectors/tls/streams.txt")).unwrap();
+    let seed = text.lines().find_map(|l| l.split("seed ").nth(1)).unwrap()[..64].to_string();
+    let mut streams = HashMap::new();
+    for line in text.lines().filter(|l| !l.starts_with('#')) {
+        let f: Vec<&str> = line.split(' ').collect();
+        let seen = format!("{} {}", f[3], f[4]);
+        streams.insert(unhex(f[0]), Stream { flight: unhex(f[1]), reply: unhex(f[2]), seen });
+    }
+    assert_eq!(streams.len(), 64);
+    let mut want: Vec<String> = streams.values().map(|s| s.seen.clone()).collect();
+    want.sort();
+    let streams = Arc::new(streams);
+    let dir = scratch("tls-many");
+    let exe = dir.join("tls_many");
+    let build = Command::new(BIN)
+        .args(["build", "--std", "--backend", "llvm"])
+        .arg(repo_root().join("tests/programs/tls_many.ls"))
+        .args(
+            ["tls.ls", "record.ls", "message.ls", "client.ls"]
+                .map(|f| repo_root().join("packages/tls").join(f)),
+        )
+        .arg(repo_root().join("packages/x509/x509.ls"))
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("the compiler runs");
+    assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+    let pem = std::fs::read(repo_root().join("tests/vectors/tls/streams.pem")).unwrap();
+    // close_notify's record: a 5-byte header, 2 bytes, the type, the tag.
+    let notify = 5 + 2 + 1 + 16;
+    for (chunk, cut) in [("1", false), ("65536", false), ("65536", true)] {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port().to_string();
+        let served = Arc::new(Mutex::new(0usize));
+        let (all, counter) = (Arc::clone(&streams), Arc::clone(&served));
+        let server = std::thread::spawn(move || {
+            let mut handlers = Vec::new();
+            for _ in 0..64 {
+                let (mut conn, _) = listener.accept().unwrap();
+                let (streams, counter) = (Arc::clone(&all), Arc::clone(&counter));
+                handlers.push(std::thread::spawn(move || {
+                    let mut got = Vec::new();
+                    let Some(hello) = read_record(&mut conn, &mut got) else { return };
+                    let Some(s) = streams.get(&hello) else { return };
+                    conn.write_all(&s.flight).unwrap();
+                    // The reply after the client's Finished and request.
+                    let mut encrypted = 0;
+                    while encrypted < 2 {
+                        let Some(r) = read_record(&mut conn, &mut got) else { return };
+                        encrypted += usize::from(r[0] == 23);
+                    }
+                    if cut {
+                        conn.write_all(&s.reply[..s.reply.len() - notify]).unwrap();
+                        let _ = conn.shutdown(std::net::Shutdown::Write);
+                    } else {
+                        conn.write_all(&s.reply).unwrap();
+                    }
+                    while read_record(&mut conn, &mut got).is_some() {}
+                    *counter.lock().unwrap() += 1;
+                }));
+            }
+            for h in handlers {
+                let _ = h.join();
+            }
+        });
+        let mut child = Command::new(&exe)
+            .args(["127.0.0.1", &port, "liar.lex-sys.test", "64", chunk, &seed])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(&pem).unwrap();
+        let out = child.wait_with_output().unwrap();
+        let lines: Vec<String> =
+            String::from_utf8_lossy(&out.stdout).lines().map(str::to_string).collect();
+        server.join().unwrap();
+        assert_eq!(
+            *served.lock().unwrap(),
+            64,
+            "chunk {chunk}: the server saw every connection end"
+        );
+        if cut {
+            assert_eq!(lines.last().map(String::as_str), Some("done ok=0 failed=64"), "{lines:?}");
+            assert!(lines[..64].iter().all(|l| field(l, 2) == "tls-peer-closed"), "{lines:?}");
+            continue;
+        }
+        assert_eq!(lines.last().map(String::as_str), Some("done ok=64 failed=0"), "{lines:?}");
+        let mut got: Vec<String> =
+            lines[..64].iter().map(|l| field(l, 3).to_string() + " " + field(l, 4)).collect();
+        got.sort();
+        assert_eq!(got, want, "chunk {chunk}: every response, once");
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
