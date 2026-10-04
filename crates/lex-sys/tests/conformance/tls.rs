@@ -1,8 +1,10 @@
-//! `packages/tls` with no network (`docs/tls-core.md` §6.1): two recorded
-//! handshakes against tlslite-ng replayed byte for byte on both backends,
+//! `packages/tls` with no network (`docs/tls-core.md` §6.1): five recorded
+//! handshakes against tlslite-ng (ChaCha20 with X25519, AES-256-GCM with
+//! X25519, and a HelloRetryRequest to P-256 and to P-384 under AES-GCM,
+//! `docs/tls-parity.md` §3.3) replayed byte for byte on both backends,
 //! the same server bytes fed one byte at a time and all at once, a wrong
 //! root, a crafted ServerHello for each rule of RFC 8446 §4.1.3 the
-//! client enforces, and the 29 connections of `scripts/tls_liar.py`'s
+//! client enforces, and the 41 connections of `scripts/tls_liar.py`'s
 //! lying server (§6.3). All through `tests/programs/tls_driver.ls`.
 
 use super::json::feed;
@@ -84,11 +86,21 @@ fn hex(s: &str) -> String {
     if s == "-" { String::new() } else { s.to_string() }
 }
 
+/// The recorded handshakes: `scripts/tls_trace.py`'s certificate, suite and
+/// group for each.
+const TRACES: [&str; 5] = [
+    "tlslite_rsa.txt",
+    "tlslite_ecdsa.txt",
+    "tlslite_aes256_x25519.txt",
+    "tlslite_aes128_p256.txt",
+    "tlslite_aes256_p384.txt",
+];
+
 #[test]
-fn both_recorded_handshakes_replay_byte_for_byte_on_both_backends() {
+fn every_recorded_handshake_replays_byte_for_byte_on_both_backends() {
     for backend in ["cranelift", "llvm"] {
         let (dir, exe) = build_tls_driver("replay", backend);
-        for name in ["tlslite_rsa.txt", "tlslite_ecdsa.txt"] {
+        for name in TRACES {
             let (asked, answered) = trace(name);
             let got = run(&exe, &asked);
             for (n, (g, w)) in got.iter().zip(&answered).enumerate() {
@@ -109,7 +121,7 @@ fn both_recorded_handshakes_replay_byte_for_byte_on_both_backends() {
 #[test]
 fn every_lying_server_is_refused_with_its_own_tag_on_both_backends() {
     let cases = liar_cases();
-    assert_eq!(cases.len(), 29);
+    assert_eq!(cases.len(), 41);
     for backend in ["cranelift", "llvm"] {
         let (dir, exe) = build_tls_driver("liar", backend);
         for (tag, name, asked, answered) in &cases {
@@ -133,7 +145,7 @@ fn every_lying_server_is_refused_with_its_own_tag_on_both_backends() {
 #[test]
 fn the_same_bytes_in_any_split_give_the_same_connection() {
     let (dir, exe) = build_tls_driver("splits", "llvm");
-    for name in ["tlslite_rsa.txt", "tlslite_ecdsa.txt"] {
+    for name in TRACES {
         let (asked, answered) = trace(name);
         let total = |answers: &[String], n: usize| {
             answers.iter().map(|a| hex(field(a, n))).collect::<String>()
@@ -222,7 +234,26 @@ fn every_server_hello_rule_is_refused_with_its_own_tag() {
     let downgrade = format!("{}444f574e47524401", "11".repeat(24));
     let cases: Vec<(&str, String, &str)> = vec![
         ("a valid one", hello("0303", &random, &sid, "1303", &good), "ok"),
-        ("HelloRetryRequest", hello("0303", hrr, &sid, "1303", &good), "tls-hello-retry"),
+        (
+            "a HelloRetryRequest for P-256",
+            hello("0303", hrr, &sid, "1301", &format!("{versions}003300020017")),
+            "ok",
+        ),
+        (
+            "a HelloRetryRequest with a share in it",
+            hello("0303", hrr, &sid, "1303", &good),
+            "tls-decode-error",
+        ),
+        (
+            "a HelloRetryRequest for X25519, already sent",
+            hello("0303", hrr, &sid, "1303", &format!("{versions}00330002001d")),
+            "tls-key-share",
+        ),
+        (
+            "a HelloRetryRequest that changes nothing",
+            hello("0303", hrr, &sid, "1303", versions),
+            "tls-hello-retry",
+        ),
         (
             "the downgrade sentinel",
             hello("0303", &downgrade, &sid, "1303", &good),
@@ -238,7 +269,13 @@ fn every_server_hello_rule_is_refused_with_its_own_tag() {
             hello("0303", &random, &sid, "1303", &format!("002b00020303{key_share}")),
             "tls-protocol-version",
         ),
-        ("AES-128-GCM chosen", hello("0303", &random, &sid, "1301", &good), "tls-no-shared-cipher"),
+        ("AES-128-GCM chosen", hello("0303", &random, &sid, "1301", &good), "ok"),
+        ("AES-256-GCM chosen", hello("0303", &random, &sid, "1302", &good), "ok"),
+        (
+            "TLS_AES_128_CCM_SHA256",
+            hello("0303", &random, &sid, "1304", &good),
+            "tls-no-shared-cipher",
+        ),
         (
             "ALPN, never offered",
             hello("0303", &random, &sid, "1303", &format!("{good}001000050003026832")),
@@ -255,7 +292,7 @@ fn every_server_hello_rule_is_refused_with_its_own_tag() {
             "tls-decode-error",
         ),
         (
-            "a P-256 share",
+            "a P-256 share, never sent",
             hello(
                 "0303",
                 &random,
@@ -456,4 +493,40 @@ fn sixty_four_connections_on_one_thread_fed_one_byte_and_in_bulk() {
         assert_eq!(got, want, "chunk {chunk}: every response, once");
     }
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// RFC 8448 §3's encrypted server flight (`tests/vectors/tls/rfc8448_record.txt`)
+/// opened by `tls_record.open` under TLS_AES_128_GCM_SHA256, on both backends:
+/// the content type is the inner plaintext's last byte, and the content
+/// everything before it. With one bit flipped, the record is refused. RFC
+/// 8448's whole handshake cannot be replayed (`docs/tls-core.md` §6.2), but
+/// its record protection can.
+#[test]
+fn rfc8448s_server_flight_opens_under_aes_128_gcm() {
+    let text =
+        std::fs::read_to_string(repo_root().join("tests/vectors/tls/rfc8448_record.txt")).unwrap();
+    let value = |name: &str| {
+        text.lines().find_map(|l| l.strip_prefix(&format!("{name} "))).unwrap().to_string()
+    };
+    let (key, iv, seq, record, inner) =
+        (value("key"), value("iv"), value("seq"), value("record"), value("inner"));
+    assert_eq!(record.len() / 2, 5 + 0x2a2);
+    assert!(inner.ends_with("16"), "a handshake record");
+    let content = &inner[..inner.len() - 2];
+    let mut flipped = unhex(&record);
+    flipped[100] ^= 4;
+    let flipped: String = flipped.iter().map(|b| format!("{b:02x}")).collect();
+    let lines = vec![
+        format!("O 1301 {key} {iv} {seq} {record}"),
+        format!("O 1301 {key} {iv} {seq} {flipped}"),
+        format!("O 1303 {key}{key} {iv} {seq} {record}"),
+    ];
+    for backend in ["cranelift", "llvm"] {
+        let (dir, exe) = build_tls_driver("rfc8448", backend);
+        let got = run(&exe, &lines);
+        assert_eq!(got[0], format!("0 ok 22 {content}"), "{backend}");
+        assert_eq!(field(&got[1], 1), "tls-bad-record-mac", "{backend}");
+        assert_eq!(field(&got[2], 1), "tls-bad-record-mac", "the other AEAD, {backend}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

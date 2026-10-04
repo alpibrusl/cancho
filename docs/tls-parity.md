@@ -200,11 +200,84 @@ document `bigmod` as variable-time, because it was only ever given public data.
 - **ServerHello's key share** may now be P-256 or P-384, as the HRR asked.
 
 **Gates:**
-- the existing tlslite-ng traces and lying server replay unchanged;
+- the existing tlslite-ng traces and lying server replay unchanged; *(corrected in PR 4: they cannot. The ClientHello now offers
+  three suites and three groups, so every recorded byte the client sends changed. They were re-recorded; §3.3.1)*
 - new traces recorded for each suite, and for an HRR to each group;
 - the lying server gains HRR cases: twice, an unoffered group, the group already sent, a changed suite;
 - live against `openssl s_server -ciphersuites` each suite and `-groups P-256` (forcing the HRR), Python `ssl` and tlslite-ng;
 - RFC 8448's key schedule rows extended to the AES-128-GCM record keys of its trace.
+
+#### 3.3.1 Results (PR 4)
+
+**Built:**
+- **`packages/tls/record.ls`** knows the three suites, their hash and key lengths, and seals and opens under the suite's AEAD:
+  `std.chacha20` or `std.gcm`.
+- **`message.ls`** offers the suites in OpenSSL's order (`1302`, `1303`, `1301`) and the groups X25519, P-256 and P-384, with one
+  X25519 share. Its ServerHello parser reads a HelloRetryRequest too: the group it names, and its cookie.
+- **`client.ls`** keeps both transcripts until a suite is named. It sizes every secret, the Finished MAC and the
+  CertificateVerify content by the suite's hash.
+- **On a HelloRetryRequest, `client.ls`:**
+  - restarts the transcript from `message_hash`;
+  - sends a second ClientHello with a P-256 or P-384 share, echoing the cookie;
+  - checks the second ServerHello against the retry: the same suite, a share of the group asked for, no second retry.
+- **A server's `change_cipher_spec`** is accepted after a HelloRetryRequest, as OpenSSL sends one there. There is still only
+  one per connection.
+
+**Decisions made here:**
+- **The P-256 or P-384 scalar is drawn from the X25519 secret,** as HKDF-Expand-Label(secret, "ecdh scalar", [attempt]).
+  It is redrawn while it is not below n, which fails once in 2^32 for P-256, up to sixteen times. Once a retry has come, that
+  X25519 secret is never used for anything else. So `start` still takes 96 bytes of entropy, and every caller and recording is
+  unchanged.
+- **A cookie is limited to 2,048 bytes** (RFC 8446 allows 65,535). A longer one is `tls-hello-retry`, so the ClientHello's buffer is
+  2,688 bytes and no slot grows by 64 KB for a cookie no server sends.
+- **The work for `std.ecdh` (77 KB) is part of the slot's `ints`,** because a region holds at most 64 KiB (`docs/ecdh.md` §1).
+- **`tls-hello-retry` now sends `illegal_parameter` (47),** not `handshake_failure` (40). It now means a retry the client
+  cannot follow, which RFC 8446 §4.1.4 answers with that alert.
+
+**Evidence:**
+- **Five tlslite-ng traces, replayed byte for byte on both backends** (`conformance/tls.rs`). Every one was re-recorded,
+  because the ClientHello changed:
+  - RSA and P-256 certificates under ChaCha20 with X25519, as before;
+  - AES-256-GCM-SHA384 with X25519;
+  - AES-128-GCM with a HelloRetryRequest to P-256;
+  - AES-256-GCM with a HelloRetryRequest to P-384.
+
+  The one-byte and coalesced splits run over all five.
+- **The lying server** (`scripts/tls_liar.py`) gained P-256 and P-384, AES-GCM and SHA-384, and a retry step. It has **41
+  cases**, up from 29: 14 new ones, replacing the two that refused AES-128-GCM and any HelloRetryRequest. Every case
+  ends with its tag and its alert:
+
+  | Server does | Tag | Alert |
+  |---|---|---|
+  | AES-256-GCM-SHA384; a retry to P-256 with a cookie and a `change_cipher_spec`, under AES-128-GCM; a retry to P-384 under AES-256-GCM, each through the honest case's whole connection (a 2^14 + 256 record, two KeyUpdates) | `ok` | none |
+  | TLS_AES_128_CCM_SHA256; a retry with it | `tls-no-shared-cipher` | 40 |
+  | a P-256 share never sent; a retry for X25519, whose share was sent; a retry for X448; after a retry to P-256, an X25519 share, or a point not on the curve | `tls-key-share` | 47 |
+  | a retry that changes nothing; a cookie over 2,048 bytes; after a retry, a ServerHello with another suite | `tls-hello-retry` | 47 |
+  | a second HelloRetryRequest | `tls-unexpected-message` | 10 |
+
+  The 64 streams `tls_many` replays were re-recorded too.
+- **The ServerHello rules test** (`conformance/tls.rs`) builds a HelloRetryRequest for P-256, one with a share in it, one for
+  X25519, and one that changes nothing. AES-128-GCM and AES-256-GCM are now accepted, and TLS_AES_128_CCM_SHA256 is refused.
+- **RFC 8448's AES-128-GCM record.** §3's protected server flight (EncryptedExtensions to Finished, 674 bytes) opens with
+  `tls_record.open` under `1301`, with RFC 8448's handshake key and IV, to the RFC's plaintext. With one bit flipped, or under
+  ChaCha20, it is refused (`tests/vectors/tls/rfc8448_record.txt`, from s2n-tls's transcription, as `kdf.txt`'s rows are).
+  That is the RFC 8448 gate this section set.
+- **`scripts/tls_record_differential.py`** now picks one of the three suites per record. Of 2,000 records sealed and 2,000
+  opened against pyca, **0 differ**.
+- **Live** (`scripts/tls_live.py`), every connection `ok`:
+  - **`openssl s_server` (OpenSSL 3.0.13)** with each of the three suites against each of X25519, P-256 and P-384, 16
+    connections each. P-256 and P-384 make it answer the X25519 share with a HelloRetryRequest.
+  - **Python `ssl`** with the five certificate types, 64 connections at both read sizes. The client now lists AES-256-GCM first,
+    as OpenSSL does, so these connections run AES-256-GCM-SHA384, not ChaCha20 as before.
+  - **`openssl s_server` and tlslite-ng** with their earlier settings, 64 connections at both read sizes.
+  - **The refusals** (a missing close_notify, another host, another CA's root) end with the same tags as before.
+- **Mutants:** `scripts/tls_mutants.py` has **38, all killed**.
+  - 15 are new: the SHA-384 transcript, each suite's hash, key length and AEAD, the Finished MAC's hash, `message_hash`, the
+    transcript restart, the cookie, a second retry, the retry's suite and group checks, a retry that changes nothing, the
+    `change_cipher_spec` after a retry, and the retry share's curve.
+  - **One was dropped as equivalent: the ServerHello's group compared with the share sent.** A share of another group always
+    has the wrong length for the key the client holds, so the key exchange refuses it with the same tag. The comparison is
+    defence in depth.
 
 **RFC 8448's trace is still not replayable byte for byte**, AES-GCM or not. Its ClientHello has an empty session id and offers
 groups and suites this client does not, so the server's flight answers a transcript this client never produces. #205's

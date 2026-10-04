@@ -6,8 +6,8 @@
 Each mutant is one of the package's files with one deliberate bug. The
 package is copied to a scratch directory, the mutant applied there, and
 `tests/programs/tls_driver.ls` built against it. It runs what
-`conformance/tls.rs` replays: the two tlslite-ng traces and the 29
-connections of `tests/vectors/tls/liar.txt`, each answer compared byte for
+`conformance/tls.rs` replays: the five tlslite-ng traces (two of them through a
+HelloRetryRequest) and the 41 connections of `tests/vectors/tls/liar.txt`, each answer compared byte for
 byte. A mutant of the engine (`tls.ls`) also builds
 `tests/programs/tls_many.ls` and serves it `tests/vectors/tls/streams.txt` from
 here, 64 connections at once: one byte a read, 65,536, and then with
@@ -48,8 +48,7 @@ MUTANTS = [
     ("the downgrade sentinel ignored", "message.ls",
      "int_of(b[33]) <= 1 {\n        return tls_record.protocol_version();",
      "int_of(b[33]) <= 1 && false {\n        return tls_record.protocol_version();"),
-    ("the HelloRetryRequest random ignored", "message.ls",
-     "    if k == 32 {\n        return tls_record.hello_retry();", "    if k == 33 {\n        return tls_record.hello_retry();"),
+    ("the HelloRetryRequest random ignored", "message.ls", "    let retry = k == 32;", "    let retry = k == 33;"),
     ("an unexpected extension accepted", "message.ls",
      "            seen_groups = true;\n        } else {\n            return tls_record.unsupported_extension();\n        }",
      "            seen_groups = true;\n        }"),
@@ -61,7 +60,7 @@ MUTANTS = [
     ("the content type taken from the outer header", "client.ls",
      "        inner = info[0];", "        inner = kind;"),
     ("the client's keys used for reading", "client.ls",
-     "                set_read_keys(ints, bytes, k_server_hs());", "                set_read_keys(ints, bytes, k_client_hs());"),
+     "            set_read_keys(ints, bytes, k_server_hs());", "            set_read_keys(ints, bytes, k_client_hs());"),
     ("a KeyUpdate not answered", "client.ls", "        if asked == 1 {", "        if asked == 2 {"),
     ("the CertificateVerify context string misspelled", "client.ls",
      'let label = "TLS 1.3, server CertificateVerify";', 'let label = "TLS 1.3, client CertificateVerify";'),
@@ -80,6 +79,38 @@ MUTANTS = [
     ("the engine's DRBG key not replaced", "tls.ls", "                key[i] = stream[i];\n", ""),
     ("the engine's slots overlapping", "tls.ls",
      "    return slot * tls_client.bytes_len();", "    return slot * (tls_client.bytes_len() / 2);"),
+    # ---- Suites and HelloRetryRequest (docs/tls-parity.md §3.3) ----
+    ("SHA-384's transcript never chosen", "client.ls", "        if len(out) == 48 {", "        if len(out) == 32 {"),
+    ("AES-256-GCM given SHA-256", "record.ls",
+     "    if suite == suite_aes_256_gcm_sha384() {\n        return 48;", "    if suite == suite_aes_256_gcm_sha384() {\n        return 32;"),
+    ("AES-128-GCM given a 32-byte key", "record.ls",
+     "    if suite == suite_aes_128_gcm_sha256() {\n        return 16;", "    if suite == suite_aes_128_gcm_sha256() {\n        return 32;"),
+    ("every suite sealed with ChaCha20", "record.ls",
+     "    if suite == suite_chacha20_poly1305_sha256() {\n        return chacha20.seal(", "    if true {\n        return chacha20.seal("),
+    ("the Finished MAC always SHA-256", "client.ls", "        hmac.mac(h, key, th, out);", "        hmac.mac(32, key, th, out);"),
+    ("message_hash with the wrong type", "client.ls", "        synthetic[0] = byte_of(254);", "        synthetic[0] = byte_of(253);"),
+    ("the transcript not restarted after a retry", "client.ls",
+     "        transcript_init(ints);\n        transcript_add(ints, synthetic);", "        transcript_add(ints, synthetic);"),
+    ("the cookie not echoed", "client.ls",
+     "        let cookie = message[4 + cookie_start..4 + cookie_end];", "        let cookie = message[4..4];"),
+    ("a second HelloRetryRequest accepted", "client.ls",
+     "            if info[tls_message.sh_retry()] == 1 {\n                code = tls_record.unexpected_message();",
+     "            if info[tls_message.sh_retry()] == 2 {\n                code = tls_record.unexpected_message();"),
+    ("the suite after a retry not compared", "client.ls",
+     "            } else if suite != ints[i_suite()] {", "            } else if false {"),
+    # Not here: the ServerHello's group not compared with the share sent. A share of
+    # another group always has the wrong length for the key held, so the key exchange
+    # refuses it with the same tag; the comparison is defence in depth, and that mutant
+    # is equivalent (docs/tls-parity.md §3.3.1).
+    ("a retry to X25519 accepted", "message.ls",
+     "                if group != group_p256() && group != group_p384() {", "                if group == 0 {"),
+    ("a retry that changes nothing accepted", "message.ls",
+     "        if group == 0 && cookie == 0 {", "        if group == 0 && cookie == 0 && false {"),
+    ("a change_cipher_spec after a retry refused", "client.ls",
+     "        let early = state < state_wait_extensions() && !(state == state_wait_server_hello() && has(ints, f_retried()));",
+     "        let early = state < state_wait_extensions();"),
+    ("the retry's share for the wrong curve", "client.ls",
+     "    if group == tls_message.group_p256() {\n        return 256;", "    if group == tls_message.group_p256() {\n        return 384;"),
     ("the end of the socket taken for close_notify", "client.ls",
      "    if has(ints, f_close_received()) || ints[i_state()] == state_failed() {\n        return 0;",
      "    if true {\n        return 0;"),
@@ -89,7 +120,8 @@ MUTANTS = [
 def cases():
     """Every connection `conformance/tls.rs` replays, as (name, lines, answers)."""
     out = []
-    for name in ["tlslite_rsa.txt", "tlslite_ecdsa.txt"]:
+    for name in ["tlslite_rsa.txt", "tlslite_ecdsa.txt", "tlslite_aes256_x25519.txt", "tlslite_aes128_p256.txt",
+                 "tlslite_aes256_p384.txt"]:
         asked, answered = [], []
         for line in open(os.path.join(ROOT, "tests/vectors/tls", name)):
             line = line.rstrip("\n")

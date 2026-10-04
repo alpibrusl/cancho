@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Records a TLS 1.3 handshake between `packages/tls` and tlslite-ng (docs/tls-core.md §6.1).
 
-    python3 scripts/tls_trace.py <driver> <rsa|ecdsa> <out.txt>
+    python3 scripts/tls_trace.py <driver> <rsa|ecdsa> <out.txt> [<suite> <group>]
 
 `driver` is `tests/programs/tls_driver.ls` built with `--std` and the package's
 files. A tlslite-ng 0.8.2 server (pure Python, an implementation independent of
 this one) runs in a thread on one end of a socket pair. It is restricted to
-TLS 1.3, ChaCha20-Poly1305 and X25519, and has a certificate made here, issued
+TLS 1.3, ChaCha20-Poly1305 and X25519 (or the tlslite-ng suite and group
+named, `aes128gcm`, `aes256gcm` or `chacha20-poly1305` and `x25519`,
+`secp256r1` or `secp384r1`: a group other than X25519 makes the server answer
+the client's X25519 share with a HelloRetryRequest, docs/tls-parity.md §3.3),
+and has a certificate made here, issued
 by a CA made here: an RSA-2048 leaf under an RSA-2048 CA (the server signs
 `CertificateVerify` with RSA-PSS), or a P-256 leaf under a P-256 CA. The CA is
 the client's whole trust store, and the clock is fixed at 2026-06-01, so the
@@ -64,6 +68,7 @@ def certificate(kind):
 
 def main():
     driver, kind, out = sys.argv[1], sys.argv[2], sys.argv[3]
+    suite, group = (sys.argv[4], sys.argv[5]) if len(sys.argv) > 5 else ("chacha20-poly1305", "x25519")
     ca, cert, key_pem = certificate(kind)
     roots = ca.public_bytes(serialization.Encoding.PEM)
     server_end, client_end = socket.socketpair()
@@ -73,9 +78,9 @@ def main():
         conn = TLSConnection(server_end)
         settings = HandshakeSettings()
         settings.minVersion = settings.maxVersion = (3, 4)
-        settings.cipherNames = ["chacha20-poly1305"]
-        settings.eccCurves = ["x25519"]
-        settings.keyShares = ["x25519"]
+        settings.cipherNames = [suite]
+        settings.eccCurves = [group]
+        settings.keyShares = [group]
         chain = X509CertChain()
         chain.parsePemList(cert.public_bytes(serialization.Encoding.PEM).decode())
         conn.handshakeServer(certChain=chain, privateKey=parsePEMKey(key_pem, private=True), settings=settings)
@@ -86,7 +91,7 @@ def main():
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()
     proc = subprocess.Popen([driver], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
-    lines = [f"# scripts/tls_trace.py {kind}: packages/tls against tlslite-ng 0.8.2. `=` lines are the client's answers.",
+    lines = [f"# scripts/tls_trace.py {kind} {suite} {group}: packages/tls against tlslite-ng 0.8.2. `=` lines are the client's answers.",
              f"# Root: {ca.public_bytes(serialization.Encoding.DER).hex()}"]
 
     def ask(line):

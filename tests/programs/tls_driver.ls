@@ -5,8 +5,10 @@ edition 5;
 // a harness can shuttle bytes between this client and a real server.
 // Byte strings are lowercase hex (`-` for empty).
 //
-//     S <key> <iv> <seq> <type> <plaintext>   tls_record.seal: `<code> <tag> <record>`
-//     O <key> <iv> <seq> <record>             tls_record.open: `<code> <tag> <type> <content>`
+//     S <suite> <key> <iv> <seq> <type> <plaintext>   tls_record.seal: `<code> <tag> <record>`
+//     O <suite> <key> <iv> <seq> <record>             tls_record.open: `<code> <tag> <type> <content>`
+//
+// (`suite` in hex: 1301, 1302 or 1303.)
 //     C <host> <random> <roots> <now>         tls_client.start (random: 96 bytes; roots: a PEM bundle, the trust
 //                                             store; now: seconds since 1970, for the certificates' validity)
 //     F <bytes>                               tls_client.feed, then everything `take` and `recv` give
@@ -96,6 +98,8 @@ fn tag_line[&i](io: &!i Io, code: int) -> [io_write] int {
 fn record_op[&i, &s](io: &!i Io, s: &s [byte], at: int) -> [io_write] int {
     let op = int_of(s[at]);
     var f = at + 2;
+    let suite = nibble(int_of(s[f])) * 4096 + nibble(int_of(s[f + 1])) * 256 + nibble(int_of(s[f + 2])) * 16 + nibble(int_of(s[f + 3]));
+    f = next_field(s, f);
     region r {
         let key = alloc_slice[r](hex_len(s, f), byte_of(0));
         hex_into(s, f, key);
@@ -111,7 +115,7 @@ fn record_op[&i, &s](io: &!i Io, s: &s [byte], at: int) -> [io_write] int {
             let text = alloc_slice[r](hex_len(s, f), byte_of(0));
             hex_into(s, f, text);
             let out = alloc_slice[r](len(text) + 22, byte_of(0));
-            let n = tls_record.seal(key, iv, seq, kind, text, out);
+            let n = tls_record.seal(suite, key, iv, seq, kind, text, out);
             if n > 0 {
                 tag_line(io, 0);
                 io.space(io);
@@ -129,7 +133,7 @@ fn record_op[&i, &s](io: &!i Io, s: &s [byte], at: int) -> [io_write] int {
             }
             let out = alloc_slice[r](room, byte_of(0));
             let info = alloc_slice[r](2, 0);
-            let code = tls_record.open(key, iv, seq, rec, out, info);
+            let code = tls_record.open(suite, key, iv, seq, rec, out, info);
             tag_line(io, code);
             if code == 0 {
                 io.space(io);

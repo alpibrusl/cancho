@@ -73,7 +73,8 @@ from the peer. The byte stride holds:
 
 Anything else in a state is `tls-unexpected-message` with an `unexpected_message` alert.
 - **HelloRetryRequest** is refused (`tls-hello-retry`, `docs/tls-pure.md` §3.3). The ServerHello random that marks one (RFC 8446
-  §4.1.3) is checked before anything else in the message.
+  §4.1.3) is checked before anything else in the message. *Changed by #207 (`docs/tls-parity.md` §3.3): one HelloRetryRequest
+  to P-256 or P-384 is followed; the random still tells it apart first.*
 - **A downgrade sentinel** in the last 8 bytes of the random is `tls-protocol-version`.
 - **`change_cipher_spec`**: one is accepted after ServerHello and before the server's Finished, and only if it is exactly `01`
   (Appendix D.4). *Corrected (§10.3): this said "before the first encrypted record". The code accepts one until the server's
@@ -160,7 +161,7 @@ in its own tag:
 | adds an extension the client did not offer (ALPN, `early_data`) | `tls-unsupported-extension` |
 | chooses TLS 1.2, or puts a downgrade sentinel in its random | `tls-protocol-version` |
 | chooses a cipher suite that was not offered | `tls-no-shared-cipher` |
-| sends HelloRetryRequest | `tls-hello-retry` |
+| sends HelloRetryRequest | `tls-hello-retry` (*since #207, followed when it asks for P-256 or P-384; the HRR cases are in `docs/tls-parity.md` §3.3.1*) |
 | sends an all-zero X25519 share | `tls-key-share` |
 | sends a record over 2^14 + 256 bytes | `tls-record-overflow` |
 | flips one bit in an encrypted record | `tls-bad-record-mac` |
@@ -318,8 +319,8 @@ All of it passes the gate, and the parts that need no Python run in `cargo test`
   | EncryptedExtensions before ServerHello; Certificate before EncryptedExtensions; Finished before CertificateVerify; application data in the flight; a NewSessionTicket in Finished's record | `tls-unexpected-message` | 10 |
   | ALPN, or `early_data`, in EncryptedExtensions | `tls-unsupported-extension` | 110 |
   | no `supported_versions`; `supported_versions` 1.2; the TLS 1.2 or TLS 1.1 downgrade sentinel | `tls-protocol-version` | 70 |
-  | AES-128-GCM | `tls-no-shared-cipher` | 40 |
-  | HelloRetryRequest | `tls-hello-retry` | 40 |
+  | AES-128-GCM (*since #207, TLS_AES_128_CCM_SHA256: AES-128-GCM is offered*) | `tls-no-shared-cipher` | 40 |
+  | HelloRetryRequest (*since #207, followed; the twelve cases that replace this row are in `docs/tls-parity.md` §3.3.1*) | `tls-hello-retry` | 40 |
   | an all-zero, or a low-order, X25519 share | `tls-key-share` | 47 |
   | an encrypted record over 2^14 + 256; an inner plaintext over 2^14; a Certificate over 64 KiB | `tls-record-overflow` | 22 |
   | one bit flipped; records out of order; data under the key a KeyUpdate replaced | `tls-bad-record-mac` | 20 |

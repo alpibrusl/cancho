@@ -133,8 +133,8 @@ tls.drop(engine, s)                                      // the slot is free (ke
 | | offered | refused, with a tag |
 |---|---|---|
 | protocol | TLS 1.3 only (`supported_versions` = `0x0304`) | a ServerHello for 1.2 or below; the downgrade sentinel in `ServerHello.random` (RFC 8446 §4.1.3) |
-| cipher suite | `TLS_CHACHA20_POLY1305_SHA256` only | any other |
-| key exchange | X25519 only, one key share | a HelloRetryRequest (§3.3) |
+| cipher suite | `TLS_CHACHA20_POLY1305_SHA256` only. *Since #207: all three TLS 1.3 suites (`docs/tls-parity.md` §3.3)* | any other |
+| key exchange | X25519 only, one key share. *Since #207: one X25519 share, and a HelloRetryRequest to P-256 or P-384 followed (`docs/tls-parity.md` §3.3)* | a HelloRetryRequest (§3.3) |
 | signatures in `CertificateVerify` | `ecdsa_secp256r1_sha256`, `ecdsa_secp384r1_sha384`, `rsa_pss_rsae_sha256/384/512`, `ed25519` | the rest |
 | signatures on certificates (`signature_algorithms_cert`) | the above, plus `rsa_pkcs1_sha256/384/512` (what most public CAs sign with) | SHA-1 anywhere in a chain that is verified |
 
@@ -159,6 +159,9 @@ measured.** #207 measures it before anything is built for it. The OpenSSL backen
 the meantime.
 
 ### 3.3 X25519 only, and HelloRetryRequest
+
+*Superseded (#207, `docs/tls-parity.md` §3.3): a HelloRetryRequest to P-256 or P-384 is followed, with `std.ecdh`
+(`docs/ecdh.md`). This section records the first decision.*
 
 A server that does not support X25519 answers the client's single key share with a HelloRetryRequest for another group,
 typically P-256. A P-256 key exchange handles a **secret** scalar, so it needs constant-time P-256 arithmetic. #204 builds only
@@ -382,8 +385,8 @@ history, as `lexsys-hooks` stores `attempts.status` today (`docs/tls-nonblocking
 | `tls-peer-closed` | the connection ended before the handshake did | retry |
 | `tls-alert` (detail: the alert number) | the server sent a fatal alert | read the alert: `handshake_failure` and `protocol_version` usually mean no shared suite or version |
 | `tls-protocol-version` | the server chose TLS 1.2 or below, or set a downgrade sentinel | the receiver needs TLS 1.3, or the OpenSSL backend |
-| `tls-no-shared-cipher` | the ServerHello names a suite that was not offered | the receiver lacks ChaCha20-Poly1305 (§3.2) |
-| `tls-hello-retry` | a HelloRetryRequest (§3.3) | the receiver lacks X25519 |
+| `tls-no-shared-cipher` | the ServerHello names a suite that was not offered | the receiver lacks ChaCha20-Poly1305 (§3.2). *Since #207: it lacks all three TLS 1.3 suites* |
+| `tls-hello-retry` | a HelloRetryRequest (§3.3). *Since #207: one the client cannot follow (it changes nothing, or its cookie is over 2,048 bytes), or a ServerHello after it with another suite* | the receiver lacks X25519. *Since #207: a broken peer, or a cookie the limit should allow* |
 | `tls-unexpected-message` | a message out of order | a broken or hostile peer |
 | `tls-decode-error` | a malformed message | the same |
 | `tls-unsupported-extension` | an extension that was not offered | the same |

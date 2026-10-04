@@ -1,9 +1,11 @@
 module tls_record;
 import std.chacha20;
+import std.gcm;
 
-// `tls_record` -- TLS 1.3 records: framing, ChaCha20-Poly1305 protection
-// with the per-record nonce, and `TLSInnerPlaintext` (RFC 8446 §5;
-// `docs/tls-core.md` §2). The lowest module of `packages/tls`, so every
+// `tls_record` -- TLS 1.3 records: framing, protection under the suite's
+// AEAD (ChaCha20-Poly1305, AES-128-GCM or AES-256-GCM) with the
+// per-record nonce, and `TLSInnerPlaintext` (RFC 8446 §5;
+// `docs/tls-core.md` §2, `docs/tls-parity.md` §3.3). The lowest module of `packages/tls`, so every
 // refusal code of the package is defined here, once. Not independently
 // reviewed (#209).
 //
@@ -288,6 +290,41 @@ pub fn record_length[&b](buf: &b [byte], at: int, end: int) -> [] int {
     return 5 + n;
 }
 
+// ---- Cipher suites (RFC 8446 §B.4) ----
+
+pub fn suite_aes_128_gcm_sha256() -> [] int {
+    return 0x1301;
+}
+
+pub fn suite_aes_256_gcm_sha384() -> [] int {
+    return 0x1302;
+}
+
+pub fn suite_chacha20_poly1305_sha256() -> [] int {
+    return 0x1303;
+}
+
+// Whether `suite` is one of the three, all of which this client offers.
+pub fn suite_known(suite: int) -> [] bool {
+    return suite == suite_aes_128_gcm_sha256() || suite == suite_aes_256_gcm_sha384() || suite == suite_chacha20_poly1305_sha256();
+}
+
+// The suite's hash length: 48 for SHA-384, else 32 (SHA-256).
+pub fn hash_len(suite: int) -> [] int {
+    if suite == suite_aes_256_gcm_sha384() {
+        return 48;
+    }
+    return 32;
+}
+
+// The suite's AEAD key length: 16 for AES-128-GCM, else 32.
+pub fn key_len(suite: int) -> [] int {
+    if suite == suite_aes_128_gcm_sha256() {
+        return 16;
+    }
+    return 32;
+}
+
 // ---- Protection (RFC 8446 §5.2, §5.3) ----
 
 // The per-record nonce: the 64-bit sequence number, left-padded to the
@@ -311,10 +348,27 @@ pub fn max_sequence() -> [] int {
     return 1 << 62;
 }
 
+// The suite's AEAD: `seal` and `open` of `std.chacha20` or `std.gcm`,
+// which take and answer the same things.
+fn aead_seal[&k, &n, &a, &p, &o](suite: int, key: &k [byte], nonce: &n [byte], aad: &a [byte], plaintext: &p [byte], out: &!o [byte]) -> [] int {
+    if suite == suite_chacha20_poly1305_sha256() {
+        return chacha20.seal(key, nonce, aad, plaintext, out);
+    }
+    return gcm.seal(key, nonce, aad, plaintext, out);
+}
+
+fn aead_open[&k, &n, &a, &s, &o](suite: int, key: &k [byte], nonce: &n [byte], aad: &a [byte], sealed: &s [byte], out: &!o [byte]) -> [] int {
+    if suite == suite_chacha20_poly1305_sha256() {
+        return chacha20.open(key, nonce, aad, sealed, out);
+    }
+    return gcm.open(key, nonce, aad, sealed, out);
+}
+
 // One protected record of `content_type` carrying `plaintext`, into
-// `out`: header, then ciphertext and tag. Answers its length, or a
-// refusal. `out` must hold `len(plaintext) + 22` bytes.
-pub fn seal[&k, &i, &p, &o](key: &k [byte], iv: &i [byte], seq: int, content_type: int, plaintext: &p [byte], out: &!o [byte]) -> [] int {
+// `out`: header, then ciphertext and tag, under `suite`'s AEAD with
+// `key` (`key_len(suite)` bytes). Answers its length, or a refusal.
+// `out` must hold `len(plaintext) + 22` bytes.
+pub fn seal[&k, &i, &p, &o](suite: int, key: &k [byte], iv: &i [byte], seq: int, content_type: int, plaintext: &p [byte], out: &!o [byte]) -> [] int {
     let n = len(plaintext);
     if n > max_plaintext() {
         return -9;
@@ -342,7 +396,7 @@ pub fn seal[&k, &i, &p, &o](key: &k [byte], iv: &i [byte], seq: int, content_typ
         }
         inner[n] = byte_of(content_type);
         nonce(iv, seq, iv_seq);
-        code = chacha20.seal(key, iv_seq, out[0..5], inner, out[5..5 + body]);
+        code = aead_seal(suite, key, iv_seq, out[0..5], inner, out[5..5 + body]);
         // The inner plaintext is the caller's data; it is not erased here,
         // as the caller still holds it.
     }
@@ -352,12 +406,12 @@ pub fn seal[&k, &i, &p, &o](key: &k [byte], iv: &i [byte], seq: int, content_typ
     return 5 + body;
 }
 
-// Opens the protected record `record` (header included) into `out`,
-// which must hold `len(record) - 21` bytes. `info[0]` gets the inner
+// Opens the protected record `record` (header included) under `suite`'s
+// AEAD into `out`, which must hold `len(record) - 21` bytes. `info[0]` gets the inner
 // content type and `info[1]` the content's length. 0, or -10 for a
 // record that does not authenticate, -9 for content over the limit,
 // -6 for an inner plaintext with no content type.
-pub fn open[&k, &i, &r, &o, &f](key: &k [byte], iv: &i [byte], seq: int, record: &r [byte], out: &!o [byte], info: &!f [int]) -> [] int {
+pub fn open[&k, &i, &r, &o, &f](suite: int, key: &k [byte], iv: &i [byte], seq: int, record: &r [byte], out: &!o [byte], info: &!f [int]) -> [] int {
     let body = len(record) - 5;
     if body < 17 {
         return -10;
@@ -379,7 +433,7 @@ pub fn open[&k, &i, &r, &o, &f](key: &k [byte], iv: &i [byte], seq: int, record:
     region s {
         let iv_seq = alloc_slice[s](12, byte_of(0));
         nonce(iv, seq, iv_seq);
-        code = chacha20.open(key, iv_seq, record[0..5], record[5..5 + body], out[0..text]);
+        code = aead_open(suite, key, iv_seq, record[0..5], record[5..5 + body], out[0..text]);
     }
     if code != 0 {
         return -10;

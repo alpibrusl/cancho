@@ -31,6 +31,11 @@ pub fn ok() -> [] int {
     return 0;
 }
 
+// A scalar not in [1, n): the caller draws another.
+pub fn refused_scalar_range() -> [] int {
+    return -53;
+}
+
 pub fn refusal_tag(code: int) -> [] &static [byte] {
     if code == 0 {
         return "ok";
@@ -315,7 +320,7 @@ fn prepare[&s, &w](curve: int, scalar: &s [byte], w: &!w [int]) -> [] int {
         let k = alloc_slice[r](size, byte_of(0));
         ecdsa.curve_param(curve, 4, k);
         if in_range(scalar, k) == 0 {
-            code = -53;
+            code = refused_scalar_range();
         }
         if code == 0 {
             ecdsa.curve_param(curve, 0, k);

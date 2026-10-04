@@ -6,8 +6,11 @@
 
 `driver` is `tests/programs/tls_driver.ls` built with `--std` and the package's
 files. The server is written here on pyca/cryptography's primitives (X25519,
-ChaCha20-Poly1305, Ed25519, HMAC-SHA-256), independently of the client; it
-knows only RFC 8446. Each case is one connection in which the server changes
+P-256 and P-384 ECDH, ChaCha20-Poly1305 and AES-GCM, Ed25519, HMAC-SHA-256 and
+-SHA-384), independently of the client; it knows only RFC 8446. It answers
+with ChaCha20-Poly1305 and X25519 unless a case says otherwise; a case can pick
+another suite, and a HelloRetryRequest to P-256 or P-384 first
+(docs/tls-parity.md §3.3). Each case is one connection in which the server changes
 one thing. Everything the server uses is fixed (its random, its X25519 key,
 an Ed25519 certificate from a fixed seed, deterministic signatures), and the
 driver's "randomness" is the bytes 00 to 5f, so a second recording is
@@ -52,8 +55,8 @@ import sys
 
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ed25519, x25519
-from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519, x25519
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM, ChaCha20Poly1305
 from cryptography.x509.oid import NameOID
 
 HOST = b"liar.lex-sys.test"
@@ -64,6 +67,13 @@ REQUEST = b"GET / HTTP/1.0\r\n\r\n"
 
 def sha256(b):
     return hashlib.sha256(b).digest()
+
+
+# Each suite: its AEAD, key length and hash (RFC 8446 §B.4).
+SUITES = {0x1301: (AESGCM, 16, hashlib.sha256), 0x1302: (AESGCM, 32, hashlib.sha384),
+          0x1303: (ChaCha20Poly1305, 32, hashlib.sha256)}
+X25519, P256, P384 = 0x1D, 0x17, 0x18
+CURVES = {P256: ec.SECP256R1(), P384: ec.SECP384R1()}
 
 
 def seeded(name):
@@ -105,18 +115,18 @@ OTHER_KEY, OTHER_DER = certificate("other", OTHER_CA)
 ROOTS = CA[1].public_bytes(serialization.Encoding.PEM)
 
 
-def expand_label(secret, label, context, n):
+def expand_label(secret, label, context, n, hash=hashlib.sha256):
     full = b"tls13 " + label
     info = n.to_bytes(2, "big") + bytes([len(full)]) + full + bytes([len(context)]) + context
     out, t, i = b"", b"", 1
     while len(out) < n:
-        t = hmac.new(secret, t + info + bytes([i]), hashlib.sha256).digest()
+        t = hmac.new(secret, t + info + bytes([i]), hash).digest()
         out, i = out + t, i + 1
     return out[:n]
 
 
-def derive(secret, label, transcript):
-    return expand_label(secret, label, sha256(transcript), 32)
+def derive(secret, label, transcript, hash=hashlib.sha256):
+    return expand_label(secret, label, hash(transcript).digest(), hash().digest_size, hash)
 
 
 def u16(n):
@@ -140,10 +150,11 @@ def plain_record(kind, content):
 
 
 class Keys:
-    def __init__(self, secret):
-        self.secret = secret
-        self.key = expand_label(secret, b"key", b"", 32)
-        self.iv = expand_label(secret, b"iv", b"", 12)
+    def __init__(self, secret, suite=0x1303):
+        self.secret, self.suite = secret, suite
+        self.aead, size, self.hash = SUITES[suite]
+        self.key = expand_label(secret, b"key", b"", size, self.hash)
+        self.iv = expand_label(secret, b"iv", b"", 12, self.hash)
         self.seq = 0
 
     def nonce(self):
@@ -152,18 +163,18 @@ class Keys:
     def seal(self, kind, content, pad=0):
         inner = content + bytes([kind]) + bytes(pad)
         header = bytes([23, 3, 3]) + u16(len(inner) + 16)
-        record = header + ChaCha20Poly1305(self.key).encrypt(self.nonce(), inner, header)
+        record = header + self.aead(self.key).encrypt(self.nonce(), inner, header)
         self.seq += 1
         return record
 
     def open(self, record):
-        inner = ChaCha20Poly1305(self.key).decrypt(self.nonce(), record[5:], record[:5])
+        inner = self.aead(self.key).decrypt(self.nonce(), record[5:], record[:5])
         self.seq += 1
         inner = inner.rstrip(b"\0")
         return inner[-1], inner[:-1]
 
     def next(self):
-        return Keys(expand_label(self.secret, b"traffic upd", b"", 32))
+        return Keys(expand_label(self.secret, b"traffic upd", b"", len(self.secret), self.hash), self.suite)
 
 
 def records(data):
@@ -245,7 +256,7 @@ def parse_client_hello(record):
     at += 1 + b[at]
     end = at + 2 + int.from_bytes(b[at:at + 2], "big")
     at += 2
-    share = None
+    shares, cookie = {}, None
     while at < end:
         kind, n = int.from_bytes(b[at:at + 2], "big"), int.from_bytes(b[at + 2:at + 4], "big")
         body = b[at + 4:at + 4 + n]
@@ -253,11 +264,12 @@ def parse_client_hello(record):
             s = 2
             while s < len(body):
                 group, m = int.from_bytes(body[s:s + 2], "big"), int.from_bytes(body[s + 2:s + 4], "big")
-                if group == 0x1D:
-                    share = body[s + 4:s + 4 + m]
+                shares[group] = body[s + 4:s + 4 + m]
                 s += 4 + m
+        if kind == 44:
+            cookie = body[2:]
         at += 4 + n
-    return msg, sid, share
+    return msg, sid, shares, cookie
 
 
 class Server:
@@ -269,6 +281,8 @@ class Server:
         self.x25519 = x25519.X25519PrivateKey.from_private_bytes(seeded("x25519"))
         self.random = seeded("random")
         self.suite = 0x1303
+        self.group = X25519  # the group of the share answered, after any retry
+        self.share_group = None  # the group the ServerHello's share claims, if a case lies about it
         self.version_ext = ext(43, u16(0x0304))
         self.share = None  # the server's public share, unless a case sets it
         self.extra_extensions = b""
@@ -279,9 +293,30 @@ class Server:
         self.filler = []  # more chain entries after the leaf, never parsed before #206
 
     # ---- the flight ----
+    @property
+    def hash(self):
+        return SUITES[self.suite][2]
+
+    def ecdh_key(self, group):
+        return ec.derive_private_key(int.from_bytes(seeded(f"ecdh {group}"), "big"), CURVES[group])
+
+    def public_share(self):
+        if self.group == X25519:
+            return self.x25519.public_key().public_bytes_raw()
+        return self.ecdh_key(self.group).public_key().public_bytes(
+            serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
+
+    def shared_secret(self):
+        peer = self.client_shares[self.group]
+        if self.group == X25519:
+            return self.x25519.exchange(x25519.X25519PublicKey.from_public_bytes(peer))
+        point = ec.EllipticCurvePublicKey.from_encoded_point(CURVES[self.group], peer)
+        return self.ecdh_key(self.group).exchange(ec.ECDH(), point)
+
     def server_hello(self, sid):
-        share = self.share if self.share is not None else self.x25519.public_key().public_bytes_raw()
-        exts = self.version_ext + ext(51, u16(0x1D) + u16(len(share)) + share) + self.extra_extensions
+        share = self.share if self.share is not None else self.public_share()
+        group = self.share_group or self.group
+        exts = self.version_ext + ext(51, u16(group) + u16(len(share)) + share) + self.extra_extensions
         body = u16(0x0303) + self.random + bytes([len(sid)]) + sid + u16(self.suite) + b"\0" + u16(len(exts)) + exts
         return message(2, body)
 
@@ -292,14 +327,41 @@ class Server:
         entries = b"".join(u24(len(c)) + c + u16(0) for c in [self.cert_der] + self.filler)
         return message(11, b"\0" + u24(len(entries)) + entries)
 
+    def hello_retry(self, sid, group=None, cookie=None, suite=None, extra=b""):
+        """A HelloRetryRequest naming `group` and carrying `cookie`, either or both."""
+        exts = self.version_ext
+        if group is not None:
+            exts += ext(51, u16(group))
+        if cookie is not None:
+            exts += ext(44, u16(len(cookie)) + cookie)
+        exts += extra
+        body = u16(0x0303) + HRR + bytes([len(sid)]) + sid + u16(suite or self.suite) + b"\0" + u16(len(exts)) + exts
+        return message(2, body)
+
+    def retry(self, group, cookie=None, ccs=False):
+        """A HelloRetryRequest for `group`, then the client's second ClientHello: the
+        transcript restarts from message_hash (RFC 8446 §4.4.1), and the cookie must
+        come back."""
+        hrr = self.hello_retry(self.sid, group, cookie)
+        self.c.feed(plain_record(22, hrr) + (plain_record(20, b"\1") if ccs else b""))
+        (hello,) = self.c.take()
+        msg, sid, self.client_shares, echoed = parse_client_hello(hello)
+        assert sid == self.sid, "the same session id"
+        assert echoed == cookie, f"the cookie echoed: {echoed!r}"
+        assert set(self.client_shares) == {group}, f"one share, of the group asked for: {sorted(self.client_shares)}"
+        first = self.hash(self.transcript).digest()
+        self.transcript = message(254, first) + hrr + msg
+        self.group = group
+        self.ccs_sent = ccs
+
     def certificate_verify(self, transcript):
-        content = b" " * 64 + b"TLS 1.3, server CertificateVerify\0" + sha256(transcript)
+        content = b" " * 64 + b"TLS 1.3, server CertificateVerify\0" + self.hash(transcript).digest()
         sig = self.cv_key.sign(content)
         return message(15, u16(0x0807) + u16(len(sig)) + sig)
 
     def finished(self, transcript):
-        key = expand_label(self.s_hs, b"finished", b"", 32)
-        mac = hmac.new(key, sha256(transcript), hashlib.sha256).digest()
+        key = expand_label(self.s_hs, b"finished", b"", len(self.s_hs), self.hash)
+        mac = hmac.new(key, self.hash(transcript).digest(), self.hash).digest()
         if self.bad_finished:
             mac = bytes([mac[0] ^ 1]) + mac[1:]
         return message(20, mac)
@@ -308,19 +370,22 @@ class Server:
         f = self.c.ask(f"C {HOST.hex()} {RANDOM.hex()} {ROOTS.hex()} {NOW}")
         assert f[0] == "0", f
         (hello,) = self.c.take()
-        msg, self.sid, self.client_share = parse_client_hello(hello)
+        msg, self.sid, self.client_shares, _ = parse_client_hello(hello)
         self.transcript = msg
+        self.ccs_sent = False
 
     def keys(self, sh):
         self.transcript += sh
-        shared = self.x25519.exchange(x25519.X25519PublicKey.from_public_bytes(self.client_share))
-        early = hmac.new(bytes(32), bytes(32), hashlib.sha256).digest()
-        hs = hmac.new(derive(early, b"derived", b""), shared, hashlib.sha256).digest()
-        self.c_hs = derive(hs, b"c hs traffic", self.transcript)
-        self.s_hs = derive(hs, b"s hs traffic", self.transcript)
-        self.master = hmac.new(derive(hs, b"derived", b""), bytes(32), hashlib.sha256).digest()
-        self.write = Keys(self.s_hs)
-        self.read = Keys(self.c_hs)
+        h = self.hash
+        n = h().digest_size
+        shared = self.shared_secret()
+        early = hmac.new(bytes(n), bytes(n), h).digest()
+        hs = hmac.new(derive(early, b"derived", b"", h), shared, h).digest()
+        self.c_hs = derive(hs, b"c hs traffic", self.transcript, h)
+        self.s_hs = derive(hs, b"s hs traffic", self.transcript, h)
+        self.master = hmac.new(derive(hs, b"derived", b"", h), bytes(n), h).digest()
+        self.write = Keys(self.s_hs, self.suite)
+        self.read = Keys(self.c_hs, self.suite)
 
     def flight_messages(self):
         """EncryptedExtensions to Finished, each added to the transcript."""
@@ -341,7 +406,7 @@ class Server:
         # Certificate in three records, or in as many as a long chain needs.
         k = max(3, -(-len(cert) // 16000))
         cuts = [len(cert) * i // k for i in range(k + 1)]
-        out = plain_record(22, sh) + plain_record(20, b"\1")
+        out = plain_record(22, sh) + (b"" if self.ccs_sent else plain_record(20, b"\1"))
         for i in range(k):
             piece = cert[cuts[i]:cuts[i + 1]]
             out += self.write.seal(22, ee + piece if i == 0 else piece, pad=7 if i == 1 else 0)
@@ -352,13 +417,14 @@ class Server:
         recs = self.c.take()
         assert recs[0] == plain_record(20, b"\1"), "a change_cipher_spec first"
         kind, fin = self.read.open(recs[1])
-        key = expand_label(self.c_hs, b"finished", b"", 32)
-        want = message(20, hmac.new(key, sha256(self.transcript), hashlib.sha256).digest())
+        h = self.hash
+        key = expand_label(self.c_hs, b"finished", b"", len(self.c_hs), h)
+        want = message(20, hmac.new(key, h(self.transcript).digest(), h).digest())
         assert (kind, fin) == (22, want), "the client's Finished"
         app_th = self.transcript
         self.transcript += fin
-        self.write = Keys(derive(self.master, b"s ap traffic", app_th))
-        self.read = Keys(derive(self.master, b"c ap traffic", app_th))
+        self.write = Keys(derive(self.master, b"s ap traffic", app_th, h), self.suite)
+        self.read = Keys(derive(self.master, b"c ap traffic", app_th, h), self.suite)
         # Anything after is for `expect_alert`.
         self.c.sent = b"".join(recs[2:])
 
@@ -389,6 +455,12 @@ def case(name, tag, alert=None, encrypted=False):
 @case("honest, in the hardest legal shape", "ok")
 def honest(s):
     s.start()
+    honest_after_hello(s)
+
+
+def honest_after_hello(s):
+    """The honest connection from the server's flight on, under whatever suite and
+    group the case set up."""
     s.c.feed(s.hello_and_flight())
     s.check_client_finished()
     ticket = message(4, (7200).to_bytes(4, "big") + bytes(4) + b"\1\0" + u16(3) + b"abc" + u16(0))
@@ -499,8 +571,79 @@ case("the TLS 1.2 downgrade sentinel", "tls-protocol-version", 70)(
     lambda s: hello(s, random=bytes(24) + b"DOWNGRD\1"))
 case("the TLS 1.1 downgrade sentinel", "tls-protocol-version", 70)(
     lambda s: hello(s, random=bytes(24) + b"DOWNGRD\0"))
-case("AES-128-GCM, not offered", "tls-no-shared-cipher", 40)(lambda s: hello(s, suite=0x1301))
-case("HelloRetryRequest", "tls-hello-retry", 40)(lambda s: hello(s, random=HRR))
+case("TLS_AES_128_CCM_SHA256, not offered", "tls-no-shared-cipher", 40)(lambda s: hello(s, suite=0x1304))
+case("a P-256 share, never sent", "tls-key-share", 47)(lambda s: hello(s, group=P256))
+
+
+# ---- Other suites, and HelloRetryRequest (docs/tls-parity.md §3.3) ----
+
+@case("honest, AES-256-GCM-SHA384", "ok")
+def honest_aes256(s):
+    s.start()
+    s.suite = 0x1302
+    honest_after_hello(s)
+
+
+@case("honest, a HelloRetryRequest to P-256 with a cookie and a change_cipher_spec, AES-128-GCM", "ok")
+def honest_retry_p256(s):
+    s.start()
+    s.suite = 0x1301
+    s.retry(P256, cookie=b"a stateless server's cookie " * 4, ccs=True)
+    honest_after_hello(s)
+
+
+@case("honest, a HelloRetryRequest to P-384, AES-256-GCM-SHA384", "ok")
+def honest_retry_p384(s):
+    s.start()
+    s.suite = 0x1302
+    s.retry(P384)
+    honest_after_hello(s)
+
+
+def retry_hello(group=None, cookie=None, suite=None):
+    def run(s):
+        s.start()
+        s.c.feed(plain_record(22, s.hello_retry(s.sid, group, cookie, suite)))
+    return run
+
+
+case("a HelloRetryRequest for X25519, whose share was sent", "tls-key-share", 47)(retry_hello(X25519))
+case("a HelloRetryRequest for X448, never offered", "tls-key-share", 47)(retry_hello(0x1E))
+case("a HelloRetryRequest that changes nothing", "tls-hello-retry", 47)(retry_hello())
+case("a HelloRetryRequest with a suite not offered", "tls-no-shared-cipher", 40)(retry_hello(P256, suite=0x1304))
+case("a HelloRetryRequest with a cookie over 2,048 bytes", "tls-hello-retry", 47)(retry_hello(P256, b"c" * 2049))
+
+
+@case("a second HelloRetryRequest", "tls-unexpected-message", 10)
+def second_retry(s):
+    s.start()
+    s.retry(P256)
+    s.c.feed(plain_record(22, s.hello_retry(s.sid, P384)))
+
+
+@case("after a retry, a ServerHello with another suite", "tls-hello-retry", 47)
+def retry_then_suite(s):
+    s.start()
+    s.suite = 0x1301
+    s.retry(P256)
+    s.suite = 0x1303
+    s.c.feed(plain_record(22, s.server_hello(s.sid)))
+
+
+@case("after a retry to P-256, a ServerHello with an X25519 share", "tls-key-share", 47)
+def retry_then_x25519(s):
+    s.start()
+    s.retry(P256)
+    s.group = X25519
+    s.c.feed(plain_record(22, s.server_hello(s.sid)))
+
+
+@case("after a retry to P-256, a point not on the curve", "tls-key-share", 47)
+def retry_then_off_curve(s):
+    s.start()
+    s.retry(P256)
+    s.share = b"\4" + bytes(64)
+    s.c.feed(plain_record(22, s.server_hello(s.sid)))
 case("an all-zero X25519 share", "tls-key-share", 47)(lambda s: hello(s, share=bytes(32)))
 case("a low-order X25519 share", "tls-key-share", 47)(lambda s: hello(s, share=b"\1" + bytes(31)))
 
@@ -616,8 +759,9 @@ def stream_for(hello):
     if sha256(hello)[0] % 8 == 0:
         # A chain of about 60 KB: the slot's reassembly buffer nearly full.
         s.filler = [hashlib.shake_256(hello + bytes([i])).digest(15000) for i in range(4)]
-    msg, s.sid, s.client_share = parse_client_hello(hello)
+    msg, s.sid, s.client_shares, _ = parse_client_hello(hello)
     s.transcript = msg
+    s.ccs_sent = False
     flight = s.hello_and_flight()
     # The application keys do not depend on the client's Finished.
     write = Keys(derive(s.master, b"s ap traffic", s.transcript))
