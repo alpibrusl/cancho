@@ -541,6 +541,10 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                         let canonical = self.builder.ins().iconst(types::I64, CANONICAL_NAN);
                         vec![self.builder.ins().select(nan, canonical, raw)]
                     }
+                    // `docs/value-barrier.md` §3: the identity. Cranelift
+                    // never turns a select or an `and` into a branch, so
+                    // there is nothing here for the barrier to stop.
+                    Callee::Builtin(Builtin::ValueBarrier) => vec![args[0]],
                     // `x != x`, which is true for NaN and nothing else.
                     // A riddle as an expression (§5), which is why it has
                     // a name.

@@ -161,6 +161,13 @@ fn unhex[&h, &o](hex: &h [byte], out: &!o [byte]) -> [] int {
     return 0;
 }
 
+// Curve parameter `which` (0 p, 1 b, 2 G's x, 3 G's y, 4 n) of `curve`
+// (256 or 384) as big-endian bytes into `out`, the curve's size.
+// `std.ecdh` takes its constants from here.
+pub fn curve_param[&o](curve: int, which: int, out: &!o [byte]) -> [] int {
+    return unhex(constant(curve, which), out);
+}
+
 // ---- Registers ----
 //
 // Field registers (modulo p): points are three consecutive registers
@@ -208,7 +215,9 @@ pub fn work_len() -> [] int {
     return bigmod.registers_len(26);
 }
 
-fn copy_point[&w](w: &!w [int], from: int, to: int) -> [] int {
+// The point at registers `from` (X, Y, Z) copied to `to`; `std.ecdh`
+// uses it too, with the same layout.
+pub fn copy_point[&w](w: &!w [int], from: int, to: int) -> [] int {
     bigmod.copy_reg(w, x_of(from), x_of(to));
     bigmod.copy_reg(w, y_of(from), y_of(to));
     bigmod.copy_reg(w, z_of(from), z_of(to));

@@ -309,6 +309,10 @@ for **directory listing** ([`directory-listing.md`](directory-listing.md)): the
 types `DirList`, `Listing`, `Listed` and `DirStat` and the builtins `dir_list`,
 `dir_next`, `dir_list_close` and `dir_stat`, under the existing `dir_read`.
 
+And it has **`value_barrier`** ([`value-barrier.md`](value-barrier.md)), a builtin for constant-time code. Purely additive in
+the same way: no edition-6 file declared the name. `std/bigmod.ls` and `std/ecdh.ls` are the first `std` modules to declare
+`edition 6;`, to use it.
+
 ---
 
 ## 8. What this does not do

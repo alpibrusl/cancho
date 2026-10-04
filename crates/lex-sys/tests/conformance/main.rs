@@ -51,6 +51,7 @@ mod directory_listing;
 mod directory_writes;
 mod docs;
 mod duplication;
+mod ecdh;
 mod ecdsa;
 mod file_writes;
 mod filesystem;

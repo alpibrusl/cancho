@@ -1,6 +1,6 @@
 # TLS parity with the OpenSSL backend: AES-GCM, P-256/P-384 key exchange, TLS 1.2
 
-> **Status: design (#207, PR 1 of 5); PR 2, AES-GCM, built (§3.1.1).** Sub-issue 10 of the self-contained TLS 1.3 client (#197). The issue asked for a
+> **Status: design (#207, PR 1 of 5); PR 2, AES-GCM, built (§3.1.1); PR 3, P-256 and P-384 key exchange, built (`docs/ecdh.md`).** Sub-issue 10 of the self-contained TLS 1.3 client (#197). The issue asked for a
 > measured number of receivers needing TLS 1.2 or AES-GCM before anything is built. That number cannot be measured here, and
 > the requirement replaces it: **the maintainer's requirement is that the pure client be equivalent to the OpenSSL backend**
 > it is to replace in `lexsys-hooks` (#210). The maintainer chose the scope below, "AEAD parity", over full parity with
@@ -169,6 +169,9 @@ against `docs/chacha20.md` §6's 135 MB/s.
   (callgrind, inclusive). Both depend only on the key, so PR 4 can keep them per connection if the record layer needs that.
 
 ### 3.2 P-256 and P-384 key exchange, constant-time (PR 3)
+
+*Built: `docs/ecdh.md` has the results. Building it found the LLVM backend turning constant-time masks into branches, and
+added `value_barrier` to the language (`docs/value-barrier.md`).*
 
 `std.ecdsa` verifies with public data, and is variable-time. Key exchange multiplies by a **secret** scalar. `std.ecdh` will:
 - use `std.bigmod`'s registers (`docs/ecdsa.md` §2), with field operations that do not branch on their values;

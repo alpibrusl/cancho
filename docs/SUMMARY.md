@@ -96,6 +96,8 @@
 - [`packages/tls`: the TLS 1.3 handshake and record layer](tls-core.md)
 - [`packages/x509`: verifying a server's chain](x509-verify.md)
 - [TLS parity with the OpenSSL backend](tls-parity.md)
+- [`std.ecdh`: P-256 and P-384 key exchange](ecdh.md)
+- [`value_barrier`: a value the optimiser cannot see through](value-barrier.md)
 
 # Compile time and program identity
 
