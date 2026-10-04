@@ -284,8 +284,14 @@ fn hostile(dir: &Path, count: usize) -> PathBuf {
     for i in 0..count {
         std::fs::write(root.join(format!("f{i:06}")), "").expect("a writable scratch directory");
     }
-    for name in [&b"new\nline"[..], b"caf\xe9", b"cafe", b"Z", b"-dash"] {
+    for name in [&b"new\nline"[..], b"cafe", b"Z", b"-dash"] {
         std::fs::write(root.join(std::ffi::OsStr::from_bytes(name)), "")
+            .expect("a writable scratch directory");
+    }
+    // A name that is not UTF-8. APFS refuses to create one (`EILSEQ`), so on macOS the case cannot be
+    // built and is not listed; everywhere else it is, beside `cafe`, which it must sort after.
+    if !cfg!(target_os = "macos") {
+        std::fs::write(root.join(std::ffi::OsStr::from_bytes(b"caf\xe9")), "")
             .expect("a writable scratch directory");
     }
     std::fs::write(root.join("x".repeat(255)), "").expect("a 255-byte name");
@@ -302,7 +308,8 @@ fn a_hostile_directory_lists_sorted_and_identically_on_both_backends() {
     let scratch = scratch("directory-listing");
     let root = hostile(&scratch, 100_000);
     let want = expected(&root);
-    assert_eq!(want.len(), 100_000 + 10, "the tree this test built");
+    let extra = if cfg!(target_os = "macos") { 9 } else { 10 };
+    assert_eq!(want.len(), 100_000 + extra, "the tree this test built");
     let mut seen = Vec::new();
     for backend in BACKENDS {
         let exe = build(&scratch, backend);
