@@ -1,6 +1,6 @@
 # `packages/tls`: the TLS 1.3 client handshake and record layer
 
-> **Status: design.** Sub-issue 8 (#205) of the self-contained TLS 1.3 client (#197). `docs/tls-pure.md` already fixes the API
+> **Status: PR 2 of 3 built (the protocol, offline); PR 3 (the engine and the network) next.** Sub-issue 8 (#205) of the self-contained TLS 1.3 client (#197). `docs/tls-pure.md` already fixes the API
 > (§2.2), the cipher policy (§3), the threat model (§4), the limits and messages (§7.1) and the refusal tags (§8). This document
 > settles what that left open for the code:
 > - how the work is split into PRs;
@@ -190,3 +190,64 @@ At least 15, each killed by §6:
 guarantees no erasure (`docs/tls-pure.md` §7.3): the optimiser may remove stores to memory that is not read again, and freed
 memory is not cleared. So this is best effort, and the package says so. Because the slot's boxes live as long as the engine,
 the zeroing stores are not to memory about to be freed. That is the case where an optimiser removes them most readily.
+
+## 9. PR 2: the protocol, offline (results)
+
+### 9.1 What was built
+
+| File | Lines | What |
+|---|---|---|
+| `packages/tls/record.ls` (`tls_record`) | 339 | framing, the nonce, `seal` and `open`, every refusal code of the package |
+| `packages/tls/message.ls` (`tls_message`) | 464 | ClientHello, and strict parsers for every server message |
+| `packages/tls/client.ls` (`tls_client`) | 1,224 | one connection: `start`, `feed`, `take`, `send`, `recv`, `finish`, `event`, `drop`; the state machine, transcript, key schedule, pins and signature checks |
+| `tests/programs/tls_driver.ls` | | the package driven one line at a time, so a harness can put a real server on the other end |
+
+**The slot is larger than `docs/tls-pure.md` §7.4 estimated:** 181,927 bytes and 158 words, about 179 KiB per connection, or
+11.2 MiB for 64. The estimate was about 100 KiB. The difference is buffers the estimate did not count:
+- room for three outgoing records;
+- separate buffers for one opened record, received application data, and the leaf certificate (kept from Certificate to
+  CertificateVerify).
+
+`docs/tls-pure.md` §7.4 is corrected to point here. Shrinking it is that document's question 6, and #208's to measure.
+
+### 9.2 Evidence
+
+- **The record layer against pyca/cryptography:** `scripts/tls_record_differential.py`. 2,000 records sealed and 2,000 opened
+  (with random padding, and one in three with a bit flipped), sequence numbers up to 2^62 - 1, contents up to 2^14 bytes:
+  **0 differences.**
+- **Two recorded handshakes against tlslite-ng 0.8.2** (`scripts/tls_trace.py`, `tests/vectors/tls/`): one with an RSA-2048
+  certificate (CertificateVerify by RSA-PSS), one with ECDSA P-256. In each recording, tlslite-ng accepted the client's
+  Finished, received `GET / HTTP/1.0` and answered, and the client decrypted the body and saw close_notify. `conformance/tls.rs`
+  replays both **byte for byte on both backends**.
+- **Fragmentation and coalescing.** The same server bytes fed one byte a line, and the whole handshake flight in one line, give
+  exactly the bytes the client sent and received before.
+- **A wrong pin** is refused (`x509-unknown-issuer`) with an `unknown_ca` alert.
+- **15 crafted ServerHellos and records**, each refused with its own tag and a fatal alert:
+  - HelloRetryRequest;
+  - the downgrade sentinel; a TLS 1.2 ServerHello; `supported_versions` 1.2;
+  - AES-128-GCM chosen; ALPN never offered; a duplicate extension; another session id;
+  - a P-256 share; an all-zero share; a byte after the extensions;
+  - a record over 2^14 + 256; an unknown content type; application data before the handshake.
+
+  Plus a bit flipped in the encrypted flight (`tls-bad-record-mac`). The case "a byte after the extensions" first passed, for
+  the wrong reason: the test appended the byte after the record, not inside the message.
+- **RFC 8448's key schedule** (§6.1): every value in s2n-tls's transcription reproduces in Python. The three application-stage
+  secrets that `docs/hkdf.md` had left out are now rows of `tests/vectors/kdf.txt` (62 rows), and that document is corrected in
+  place.
+
+**Tried by hand, not yet a gate.** The same driver, through a Python harness over TCP, completed a handshake and an HTTP request
+against:
+- `openssl s_server -tls1_3 -ciphersuites TLS_CHACHA20_POLY1305_SHA256 -groups X25519` (OpenSSL 3.0.13);
+- a Python `ssl` server.
+
+Each was run with P-256, P-384, RSA-2048 and RSA-4096 certificates, and OpenSSL's NewSessionTickets were parsed and dropped.
+PR 3 makes this a committed test, through the engine and a poller rather than a harness.
+
+### 9.3 Found
+
+- **The application secrets of RFC 8448** (§9.2): `docs/hkdf.md`'s open item is closed.
+- **The design's memory estimate** (§9.1).
+- **Two bugs caught reading the code before it ran:**
+  - after the handshake, the client erased the range from the client handshake secret to the master secret, which included the
+    application secrets that KeyUpdate needs;
+  - the client's Certificate message wrote its length into one byte, when the echoed context can make it 259.

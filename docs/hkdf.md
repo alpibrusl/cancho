@@ -183,7 +183,7 @@ equals OpenSSL's and verifies, and a tampered one does not.
 
 ### 4.2 HMAC, HKDF and the TLS 1.3 key schedule
 
-All 59 rows of `tests/vectors/kdf.txt` pass on **both backends**:
+All 62 rows of `tests/vectors/kdf.txt` pass on **both backends** (59 when this was written; #205 added RFC 8448's three application-stage secrets):
 
 - **RFC 4231**: HMAC-SHA256 and HMAC-SHA384, test cases 1–4, 6 and 7.
   Case 5, the truncated tag, is missing from the transcription used.
@@ -199,9 +199,15 @@ All 59 rows of `tests/vectors/kdf.txt` pass on **both backends**:
     Python's `hmac`/`hashlib` reproduces it from the trace's own inputs.
     The client and server application traffic secrets and the exporter
     secret did **not** reproduce from the transcript hash as written, so
-    one of the two was written wrong. They are left out rather than
-    "fixed" to match. #205 replays the whole trace byte for byte, and
-    will settle it.
+    one of the two was written wrong. They were left out rather than
+    "fixed" to match. **Settled since, in #205 (`docs/tls-core.md`
+    §6.1):** AWS s2n-tls transcribes RFC 8448 §3 in
+    `tests/unit/s2n_tls13_secrets_rfc8448_test.c`, with the transcript
+    hash through the server's Finished (`9608102a…`). The three secrets
+    reproduce from it in Python, and they are now rows of `kdf.txt`. So
+    was every other value in that file, from the X25519 keys onwards. The
+    values first remembered were not kept, so which of the two was
+    written wrong is not known.
   - *NIST ACVP's TLS-v1.3-KDF-RFC8446 case*, as Go's `crypto/tls`
     `TestACVPVectors` carries it. This is a PSK handshake, and it covers
     every secret from the early traffic secret to the resumption
@@ -323,8 +329,8 @@ reaches it.
 
 - **The hooks switch** (§7). It follows this change's merge, as its own
   PR on `lexsys-hooks`.
-- **RFC 8448's application traffic secrets** (§4.2). They are left out
-  until #205 replays the trace from its full text.
+- ~~**RFC 8448's application traffic secrets** (§4.2).~~ Added by #205
+  from s2n-tls's transcription of the RFC (§4.2).
 - **A statistical timing test.** That is #208.
 - **SHA-512 long messages from CAVP.** They are covered by SHA-384's
   file and the differential, not by NIST's own file (§4.1).

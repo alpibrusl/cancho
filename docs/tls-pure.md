@@ -350,7 +350,9 @@ memory that is about to be freed (`docs/chacha20.md` §3.2). `tls.drop` overwrit
 | keys, IVs, sequence numbers, the HMAC state for `Finished` (`hmac.state_len(32)` = 202 words), the X25519 secret | about 2,000 |
 | **total, during the handshake** | **about 100 KiB** |
 
-That is against 26 to 48 KiB for OpenSSL (`docs/tls-nonblocking.md` §8.3), so for 64 slots it is about 6.3 MiB. Shrinking the
+That is against 26 to 48 KiB for OpenSSL (`docs/tls-nonblocking.md` §8.3), so for 64 slots it is about 6.3 MiB. **As built
+(#205, `docs/tls-core.md` §9.1), a slot is about 179 KiB, or 11.2 MiB for 64**: the estimate left out room for three outgoing
+records and the separate buffers for an opened record, received data and the leaf certificate. Shrinking the
 reassembly buffer to the largest certificate message actually seen is §10's question 6. The number is a design estimate and
 #208 measures it.
 

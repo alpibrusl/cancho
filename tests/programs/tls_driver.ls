@@ -1,0 +1,328 @@
+edition 5;
+
+// `docs/tls-core.md` §6: `packages/tls` driven from standard input, one
+// line at a time, each answered and flushed before the next is read, so
+// a harness can shuttle bytes between this client and a real server.
+// Byte strings are lowercase hex (`-` for empty).
+//
+//     S <key> <iv> <seq> <type> <plaintext>   tls_record.seal: `<code> <tag> <record>`
+//     O <key> <iv> <seq> <record>             tls_record.open: `<code> <tag> <type> <content>`
+//     C <host> <random> <pins>                tls_client.start (random: 96 bytes; pins: 3-byte lengths, each followed
+//                                             by a certificate)
+//     F <bytes>                               tls_client.feed, then everything `take` and `recv` give
+//     W <plaintext>                           tls_client.send
+//     Q                                       tls_client.finish
+//
+// `C`, `F`, `W` and `Q` answer `<code> <tag> <event> <bytes for the socket> <application data received>`.
+import std.buffer;
+import std.io;
+import tls_client;
+import tls_record;
+
+fn nibble(c: int) -> [] int {
+    if c >= 97 {
+        return c - 87;
+    }
+    return c - 48;
+}
+
+fn field_end[&s](s: &s [byte], at: int) -> [] int {
+    var e = at;
+    while e < len(s) && int_of(s[e]) != 32 && int_of(s[e]) != 10 {
+        e = e + 1;
+    }
+    return e;
+}
+
+fn next_field[&s](s: &s [byte], at: int) -> [] int {
+    return field_end(s, at) + 1;
+}
+
+fn hex_len[&s](s: &s [byte], at: int) -> [] int {
+    if field_end(s, at) - at == 1 && int_of(s[at]) == 45 {
+        return 0;
+    }
+    return (field_end(s, at) - at) / 2;
+}
+
+fn hex_into[&s, &o](s: &s [byte], at: int, o: &!o [byte]) -> [] int {
+    let n = hex_len(s, at);
+    var i = 0;
+    while i < len(o) && i < n {
+        o[i] = byte_of(nibble(int_of(s[at + i * 2])) * 16 + nibble(int_of(s[at + i * 2 + 1])));
+        i = i + 1;
+    }
+    return n;
+}
+
+fn number[&s](s: &s [byte], at: int) -> [] int {
+    let e = field_end(s, at);
+    var n = 0;
+    var p = at;
+    while p < e {
+        n = n * 10 + int_of(s[p]) - 48;
+        p = p + 1;
+    }
+    return n;
+}
+
+fn print_hex[&i, &d](io: &!i Io, d: &d [byte]) -> [io_write] int {
+    let digits = "0123456789abcdef";
+    var n = 0;
+    while n < len(d) {
+        let b = int_of(d[n]);
+        io.write_all(io, digits[b >> 4..(b >> 4) + 1]);
+        io.write_all(io, digits[b & 15..(b & 15) + 1]);
+        n = n + 1;
+    }
+    if len(d) == 0 {
+        io.write_all(io, "-");
+    }
+    return 0;
+}
+
+fn tag_line[&i](io: &!i Io, code: int) -> [io_write] int {
+    io.print_int(io, code);
+    io.space(io);
+    if code > 0 || code == tls_client.would_block() {
+        io.write_all(io, "ok");
+    } else {
+        io.write_all(io, tls_record.refusal_tag(code));
+    }
+    return 0;
+}
+
+fn record_op[&i, &s](io: &!i Io, s: &s [byte], at: int) -> [io_write] int {
+    let op = int_of(s[at]);
+    var f = at + 2;
+    region r {
+        let key = alloc_slice[r](hex_len(s, f), byte_of(0));
+        hex_into(s, f, key);
+        f = next_field(s, f);
+        let iv = alloc_slice[r](hex_len(s, f), byte_of(0));
+        hex_into(s, f, iv);
+        f = next_field(s, f);
+        let seq = number(s, f);
+        f = next_field(s, f);
+        if op == 83 {
+            let kind = number(s, f);
+            f = next_field(s, f);
+            let text = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, text);
+            let out = alloc_slice[r](len(text) + 22, byte_of(0));
+            let n = tls_record.seal(key, iv, seq, kind, text, out);
+            if n > 0 {
+                tag_line(io, 0);
+                io.space(io);
+                print_hex(io, out[0..n]);
+            } else {
+                tag_line(io, n);
+                io.write_all(io, " -");
+            }
+        } else {
+            let rec = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, rec);
+            var room = len(rec) - 21;
+            if room < 0 {
+                room = 0;
+            }
+            let out = alloc_slice[r](room, byte_of(0));
+            let info = alloc_slice[r](2, 0);
+            let code = tls_record.open(key, iv, seq, rec, out, info);
+            tag_line(io, code);
+            if code == 0 {
+                io.space(io);
+                io.print_int(io, info[0]);
+                io.space(io);
+                print_hex(io, out[0..info[1]]);
+            } else {
+                io.write_all(io, " -");
+            }
+        }
+    }
+    io.newline(io);
+    return 0;
+}
+
+// Everything `take` has, then everything `recv` has.
+fn drain[&i, &n, &b, &o](io: &!i Io, ints: &!n [int], bytes: &!b [byte], out: &!o [byte]) -> [io_write] int {
+    // The event once the output is taken: what the connection waits for
+    // next.
+    io.space(io);
+    io.print_int(io, tls_client.event_after_take(ints));
+    io.space(io);
+    var any = false;
+    var n = tls_client.take(ints, bytes, out);
+    while n > 0 {
+        print_hex(io, out[0..n]);
+        any = true;
+        n = tls_client.take(ints, bytes, out);
+    }
+    if !any {
+        io.write_all(io, "-");
+    }
+    io.space(io);
+    any = false;
+    n = tls_client.recv(ints, bytes, out);
+    while n > 0 {
+        print_hex(io, out[0..n]);
+        any = true;
+        n = tls_client.recv(ints, bytes, out);
+    }
+    if !any {
+        io.write_all(io, "-");
+    }
+    io.newline(io);
+    return 0;
+}
+
+fn client_op[&i, &s, &n, &b, &o, &p](io: &!i Io, s: &s [byte], at: int, ints: &!n [int], bytes: &!b [byte], out: &!o [byte], pins: &!p [byte], pins_len: int) -> [io_write] int {
+    let op = int_of(s[at]);
+    var f = at + 2;
+    var code = 0;
+    if op == 67 {
+        region r {
+            let host = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, host);
+            f = next_field(s, f);
+            let random = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, random);
+            code = tls_client.start(ints, bytes, host, random);
+        }
+    } else if op == 70 {
+        let data = out[0..hex_len(s, f)];
+        hex_into(s, f, data);
+        var consumed = 0;
+        var going = true;
+        // `out` holds the input until it is consumed; what the client
+        // answers goes to the socket only after.
+        region r {
+            let held = alloc_slice[r](len(data), byte_of(0));
+            var k = 0;
+            while k < len(data) {
+                held[k] = data[k];
+                k = k + 1;
+            }
+            while going {
+                let c = tls_client.feed(ints, bytes, held[consumed..len(held)], pins[0..pins_len]);
+                if c < 0 {
+                    code = c;
+                    going = false;
+                } else {
+                    consumed = consumed + c;
+                    code = consumed;
+                    if consumed == len(held) {
+                        going = false;
+                    } else if c == 0 {
+                        // Output or received data must be taken first: the
+                        // harness reads both from this line, so the rest of
+                        // the input is reported as not consumed.
+                        going = false;
+                    }
+                }
+            }
+        }
+    } else if op == 87 {
+        region r {
+            let text = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, text);
+            code = tls_client.send(ints, bytes, text);
+        }
+    } else {
+        code = tls_client.finish(ints, bytes);
+    }
+    tag_line(io, code);
+    drain(io, ints, bytes, out);
+    return 0;
+}
+
+// One line of standard input into `line`; its length, or -1 at the end.
+fn read_line[&i, &l](io: &!i Io, line: &!l [byte]) -> [io_read] int {
+    var n = 0;
+    var c = getchar(io);
+    if c < 0 {
+        return -1;
+    }
+    while c >= 0 && c != 10 {
+        if n < len(line) {
+            line[n] = byte_of(c);
+        }
+        n = n + 1;
+        c = getchar(io);
+    }
+    return n;
+}
+
+fn flush[&i](io: &!i Io) -> [io_write] int {
+    match flush_out(io) {
+        Done::Ok(n) => {
+            return 0;
+        }
+        Done::Failed(e) => {
+            return e;
+        }
+    }
+}
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
+    var line = box_slice(heap, 262144, byte_of(0));
+    var slot_bytes = box_slice(heap, tls_client.bytes_len(), byte_of(0));
+    var slot_ints = box_slice(heap, tls_client.ints_len(), 0);
+    var out = box_slice(heap, 131072, byte_of(0));
+    var pins = box_slice(heap, 131072, byte_of(0));
+    var pins_len = 0;
+    borrow mut line as &!lw in {
+        borrow mut slot_bytes as &!bw in {
+            borrow mut slot_ints as &!iw in {
+                borrow mut out as &!ow in {
+                    borrow mut pins as &!pw in {
+                        let l = contents(lw);
+                        var n = read_line(io, l);
+                        while n >= 0 {
+                            if n > 0 && n <= len(l) {
+                                let s = l[0..n];
+                                let op = int_of(s[0]);
+                                if op == 83 || op == 79 {
+                                    record_op(io, s, 0);
+                                } else {
+                                    if op == 67 {
+                                        // The pins are the third field.
+                                        let p = contents(pw);
+                                        let f = next_field(s, next_field(s, 2));
+                                        pins_len = hex_into(s, f, p);
+                                    }
+                                    client_op(io, s, 0, contents(iw), contents(bw), contents(ow), contents(pw), pins_len);
+                                }
+                            }
+                            flush(io);
+                            n = read_line(io, l);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, line);
+    unbox_slice(heap, slot_bytes);
+    unbox_slice(heap, slot_ints);
+    unbox_slice(heap, out);
+    unbox_slice(heap, pins);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(args);
+    release(ffi);
+    release(fs);
+    release(net);
+    release(clock);
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            run(h, i);
+        }
+    }
+    release(heap);
+    release(io);
+    return 0;
+}
