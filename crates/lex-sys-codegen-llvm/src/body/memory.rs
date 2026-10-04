@@ -43,6 +43,23 @@ impl<'a> FuncEmitter<'a> {
         Ok(vec![LValue::Const(0)])
     }
 
+    /// `copy_into(dst, src)` (`docs/bulk-copy.md`): all of `src` to the front of `dst`, as one `memmove`. `args` is the
+    /// destination's pointer and length, then the source's. Traps unless `len(src) <= len(dst)`; answers `len(src)`.
+    ///
+    /// `memmove` and not `memcpy`, because the two slices may be views of one buffer.
+    pub(crate) fn copy_into(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        let (to, room) = (operand(&args[0]), operand(&args[1]));
+        let (from, count) = (operand(&args[2]), operand(&args[3]));
+        let past = self.fresh();
+        self.out.push_str(&format!("  {past} = icmp sgt i64 {count}, {room}\n"));
+        self.trap_if(&past)?;
+        let ignored = self.fresh();
+        self.out.push_str(&format!(
+            "  {ignored} = call ptr @memmove(ptr {to}, ptr {from}, i64 {count})\n"
+        ));
+        Ok(vec![args[3].clone()])
+    }
+
     /// `index_of_byte(text, b)` (`docs/byte-search.md`): one `memchr`. `args` is the slice's pointer and length, then the
     /// byte. Answers the offset of the first match, or -1 when `memchr` answers null.
     pub(crate) fn index_of_byte(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
@@ -246,20 +263,32 @@ impl<'a> FuncEmitter<'a> {
         count: &Expr,
         fill: &Expr,
     ) -> Result<Vec<LValue>, String> {
+        let zeroed = lex_sys_ir::is_zero_fill(fill);
         let count = self.scalar(count)?;
         let values = self.expr(fill)?;
         let stride = self.stride_of(element)?;
         let bytes = self.slice_bytes(&count, stride)?;
 
         let start = self.fresh();
-        self.out.push_str(&format!("  {start} = call ptr @malloc(i64 {})\n", operand(&bytes)));
+        if zeroed {
+            // `docs/zeroed-slices.md`: a zero fill is `calloc`, and no loop
+            // -- `lex-sys-codegen`'s own `boxed_slice` makes the same choice.
+            self.out.push_str(&format!(
+                "  {start} = call ptr @calloc(i64 {}, i64 1)\n",
+                operand(&bytes)
+            ));
+        } else {
+            self.out.push_str(&format!("  {start} = call ptr @malloc(i64 {})\n", operand(&bytes)));
+        }
         let is_null = self.fresh();
         self.out.push_str(&format!("  {is_null} = icmp eq ptr {start}, null\n"));
         self.trap_if(&is_null)?;
 
         let kinds = leaves_of(element, self.program)?;
         let start = LValue::Reg(start);
-        self.fill_slice(&start, &count, stride, &kinds, &values)?;
+        if !zeroed {
+            self.fill_slice(&start, &count, stride, &kinds, &values)?;
+        }
         Ok(vec![start, count])
     }
 

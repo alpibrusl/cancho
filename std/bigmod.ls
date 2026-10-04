@@ -338,13 +338,11 @@ fn r_squared[&w](w: &!w [int], bits: int) -> [] int {
     return 0;
 }
 
-// out = a^e mod n (`docs/rsa.md` §2.3). `out` is exactly as long as `n`.
-pub fn pow_mod[&n, &e, &a, &o, &w](n: &n [byte], e: &e [byte], a: &a [byte], out: &!o [byte], work: &!w [int]) -> [] int {
-    if len(work) < work_len() {
+// Checks `n` and makes `w` ready for arithmetic modulo it: the limb
+// count, n', n itself and R^2 mod n. 0, or -6, -2 or -1 as `pow_mod`.
+pub fn setup[&n, &w](n: &n [byte], w: &!w [int]) -> [] int {
+    if len(w) < work_len() {
         return -6;
-    }
-    if len(out) != len(n) {
-        return -5;
     }
     let bits = bit_length(n);
     if bits < 2 || bits > max_bits() {
@@ -353,30 +351,41 @@ pub fn pow_mod[&n, &e, &a, &o, &w](n: &n [byte], e: &e [byte], a: &a [byte], out
     if int_of(n[len(n) - 1]) & 1 == 0 {
         return -1;
     }
+    let k = (bits + 29) / 30;
+    w[0] = k;
+    load(n, w, slot_n(), k);
+    w[1] = neg_inverse(w[slot_n()]);
+    r_squared(w, bits);
+    return 0;
+}
+
+// out = a^e mod n (`docs/rsa.md` §2.3). `out` is exactly as long as `n`.
+pub fn pow_mod[&n, &e, &a, &o, &w](n: &n [byte], e: &e [byte], a: &a [byte], out: &!o [byte], work: &!w [int]) -> [] int {
+    if len(work) < work_len() {
+        return -6;
+    }
+    if len(out) != len(n) {
+        return -5;
+    }
+    let code = setup(n, work);
+    if code != 0 {
+        return code;
+    }
     if len(e) == 0 {
         return -4;
     }
-    let k = (bits + 29) / 30;
-    work[0] = k;
-    load(n, work, slot_n(), k);
+    let k = work[0];
     if load(a, work, slot_base(), k) != 0 || compare_n(work, slot_base(), k) >= 0 {
         return -3;
     }
-    work[1] = neg_inverse(work[slot_n()]);
     let eb = bit_length(e);
     let acc = slot_acc();
     if eb == 0 {
         // a^0 = 1, which is below n (n >= 3).
-        var i = 0;
-        while i < k + 2 {
-            work[acc + i] = 0;
-            i = i + 1;
-        }
-        work[acc] = 1;
+        set_small(work, acc, 1);
         store(work, acc, k, out);
         return 0;
     }
-    r_squared(work, bits);
     let base = slot_base();
     mont_mul(work, base, slot_r2(), base);
     copy(work, base, acc, k);
@@ -389,15 +398,209 @@ pub fn pow_mod[&n, &e, &a, &o, &w](n: &n [byte], e: &e [byte], a: &a [byte], out
         }
         b = b - 1;
     }
-    // Out of Montgomery form: multiply by 1.
-    let one = slot_two();
+    from_mont(work, acc, acc);
+    store(work, acc, k, out);
+    return 0;
+}
+
+// ---- Registers (`docs/ecdsa.md` §2) ----
+//
+// After `setup`, numbers modulo n live in registers: `reg(i)` is the
+// offset of register i in the same `w`, which must then hold
+// `registers_len(count)` words. Every value in a register is below n.
+// `mul` is Montgomery multiplication, so values are kept in Montgomery
+// form (`to_mont`) between `mul`s, and `add`, `sub`, `is_zero` and
+// `equal` are the same in either form.
+
+pub fn reg(i: int) -> [] int {
+    return slot(6 + i);
+}
+
+pub fn registers_len(count: int) -> [] int {
+    return slot(6 + count);
+}
+
+// Register `r` = big-endian `b`; -3 when `b` is not below n.
+pub fn load_reg[&b, &w](b: &b [byte], w: &!w [int], r: int) -> [] int {
+    let k = w[0];
+    if load(b, w, r, k) != 0 || compare_n(w, r, k) >= 0 {
+        return -3;
+    }
+    return 0;
+}
+
+// Register `r` = big-endian `b` mod n, for `b` below 2n (one
+// subtraction); -3 when it is not.
+pub fn load_reduced[&b, &w](b: &b [byte], w: &!w [int], r: int) -> [] int {
+    let k = w[0];
+    if load(b, w, r, k) != 0 {
+        return -3;
+    }
+    if compare_n(w, r, k) >= 0 {
+        subtract_n(w, r, k);
+    }
+    if compare_n(w, r, k) >= 0 {
+        return -3;
+    }
+    return 0;
+}
+
+// Register `r` as big-endian `out`, which must be wide enough.
+pub fn store_reg[&w, &o](w: &w [int], r: int, out: &!o [byte]) -> [] int {
+    return store(w, r, w[0], out);
+}
+
+// Register `r` = v, for 0 <= v < 2^30 and v < n.
+pub fn set_small[&w](w: &!w [int], r: int, v: int) -> [] int {
     var i = 0;
-    while i < k + 2 {
-        work[one + i] = 0;
+    while i < w[0] + 2 {
+        w[r + i] = 0;
         i = i + 1;
     }
-    work[one] = 1;
-    mont_mul(work, acc, one, acc);
-    store(work, acc, k, out);
+    w[r] = v;
+    return 0;
+}
+
+pub fn copy_reg[&w](w: &!w [int], from: int, to: int) -> [] int {
+    return copy(w, from, to, w[0]);
+}
+
+pub fn mul[&w](w: &!w [int], a: int, b: int, dst: int) -> [] int {
+    return mont_mul(w, a, b, dst);
+}
+
+pub fn to_mont[&w](w: &!w [int], a: int, dst: int) -> [] int {
+    return mont_mul(w, a, slot_r2(), dst);
+}
+
+// Out of Montgomery form: multiply by 1.
+pub fn from_mont[&w](w: &!w [int], a: int, dst: int) -> [] int {
+    let one = slot_two();
+    set_small(w, one, 1);
+    return mont_mul(w, a, one, dst);
+}
+
+// dst = a + b mod n.
+pub fn add[&w](w: &!w [int], a: int, b: int, dst: int) -> [] int {
+    let k = w[0];
+    var carry = 0;
+    var i = 0;
+    while i < k {
+        let v = w[a + i] + w[b + i] + carry;
+        w[dst + i] = v & mask();
+        carry = v >> 30;
+        i = i + 1;
+    }
+    w[dst + k] = carry;
+    if compare_n(w, dst, k) >= 0 {
+        subtract_n(w, dst, k);
+    }
+    return 0;
+}
+
+// dst = a - b mod n.
+pub fn sub[&w](w: &!w [int], a: int, b: int, dst: int) -> [] int {
+    let k = w[0];
+    var under = 0;
+    var i = 0;
+    while i < k {
+        var v = w[a + i] - w[b + i] - under;
+        if v < 0 {
+            v = v + (1 << 30);
+            under = 1;
+        } else {
+            under = 0;
+        }
+        w[dst + i] = v;
+        i = i + 1;
+    }
+    w[dst + k] = 0;
+    if under == 1 {
+        // Below zero: add n back; the carry out of the top limb is the
+        // borrow it cancels.
+        var carry = 0;
+        i = 0;
+        while i < k {
+            let v = w[dst + i] + w[slot_n() + i] + carry;
+            w[dst + i] = v & mask();
+            carry = v >> 30;
+            i = i + 1;
+        }
+    }
+    return 0;
+}
+
+pub fn is_zero[&w](w: &w [int], a: int) -> [] bool {
+    var i = 0;
+    while i < w[0] {
+        if w[a + i] != 0 {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+pub fn equal[&w](w: &w [int], a: int, b: int) -> [] bool {
+    var i = 0;
+    while i < w[0] {
+        if w[a + i] != w[b + i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Bit `i` of register `a` (as stored: in Montgomery form if it is).
+pub fn bit[&w](w: &w [int], a: int, i: int) -> [] int {
+    return w[a + i / 30] >> i % 30 & 1;
+}
+
+// The number of bits in n.
+pub fn modulus_bits[&w](w: &w [int]) -> [] int {
+    var i = w[0] - 1;
+    var top = w[slot_n() + i];
+    var bits = 0;
+    while top > 0 {
+        bits = bits + 1;
+        top = top >> 1;
+    }
+    return i * 30 + bits;
+}
+
+// dst = a^-1 mod n, by Fermat: a^(n-2). Only for a prime n and a != 0;
+// `a` and `dst` in Montgomery form, and `dst` may be `a`.
+pub fn inverse[&w](w: &!w [int], a: int, dst: int) -> [] int {
+    let k = w[0];
+    let base = slot_two();
+    let e = slot_acc();
+    copy(w, a, base, k);
+    // e = n - 2 (n is odd and at least 3, so no borrow leaves the top).
+    copy(w, slot_n(), e, k);
+    var i = 0;
+    var take = 2;
+    while take > 0 {
+        let v = w[e + i] - take;
+        if v < 0 {
+            w[e + i] = v + (1 << 30);
+            take = 1;
+        } else {
+            w[e + i] = v;
+            take = 0;
+        }
+        i = i + 1;
+    }
+    // dst = 1 in Montgomery form, then square-and-multiply.
+    set_small(w, dst, 1);
+    to_mont(w, dst, dst);
+    var b = modulus_bits(w) - 1;
+    while b >= 0 {
+        mont_mul(w, dst, dst, dst);
+        if bit(w, e, b) == 1 {
+            mont_mul(w, dst, base, dst);
+        }
+        b = b - 1;
+    }
     return 0;
 }

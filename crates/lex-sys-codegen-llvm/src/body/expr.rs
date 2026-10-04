@@ -535,6 +535,9 @@ impl<'a> FuncEmitter<'a> {
                 ));
                 Ok(vec![LValue::Reg(result)])
             }
+            // `docs/checked-output.md`: the stream the arm above writes
+            // into, flushed and asked whether any of it failed.
+            Callee::Builtin(Builtin::FlushOut) => Ok(self.flush_out()),
             // `docs/arguments.md` §3: `argc`, exactly as `main` was
             // handed it and stashed into `@lexs_argc` before this
             // function's own body could run.
@@ -848,6 +851,17 @@ impl<'a> FuncEmitter<'a> {
                     ));
                 }
                 self.copy_within(&args)
+            }
+            // `docs/bulk-copy.md`: one bounds check, then one `memmove` between two slices.
+            Callee::Builtin(Builtin::CopyInto) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                if args.len() != 4 {
+                    return Err(format!(
+                        "`copy_into` needs 4 leaves but {} were given",
+                        args.len()
+                    ));
+                }
+                self.copy_into(&args)
             }
             // `docs/byte-search.md`: one `memchr`.
             Callee::Builtin(Builtin::IndexOfByte) => {

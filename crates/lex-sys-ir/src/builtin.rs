@@ -46,6 +46,18 @@ pub enum Builtin {
     /// because it came first, not because two primitives were wanted, and
     /// a diagnostic is short: §3.2.
     WriteErr,
+    /// `flush_out[&i](io: &!i Io) -> [io_write] Done` -- flush standard
+    /// output and say whether everything written to it arrived
+    /// (`docs/checked-output.md`, edition 5).
+    ///
+    /// `write_bytes` answers what the stdio buffer took; the last buffer's
+    /// worth was written by libc at exit with the result ignored, so a
+    /// program writing to a full disk could not know (`docs/bulk-io.md`
+    /// §3.3, corrected). This is `fflush(stdout)` and then
+    /// `ferror(stdout)`: the second because `fflush` answers 0 for an empty
+    /// buffer even after an earlier write failed. Its label is `io_write`,
+    /// the label of what it completes.
+    FlushOut,
     /// `getchar[&i](io: &!i Io) -> [io_read] int` — libc's `getchar`, one
     /// byte in, behind the capability that authorises it.
     ///
@@ -93,6 +105,13 @@ pub enum Builtin {
     /// `src + n <= len(buf)` (the sums are not formed, so nothing can overflow). Answers 0. Pure and capability-free:
     /// it reads and writes only the slice it was given. Edition 5. `docs/memory-moves.md`.
     CopyWithin,
+    /// `copy_into(dst: &!d [byte], src: &s [byte]) -> int` — copy all of `src` to the front of `dst`, as `memmove` does,
+    /// and answer `len(src)`.
+    ///
+    /// Bounds-checked like indexing: it traps unless `len(src) <= len(dst)`. The two slices may be views of one buffer,
+    /// so the copy is defined for overlap. Pure and capability-free: it touches only the slices it was given. Edition 5.
+    /// `docs/bulk-copy.md`.
+    CopyInto,
     /// `index_of_byte(text: &t [byte], b: byte) -> int` — where `b` first occurs in `text`, or -1 if it does not, as
     /// `memchr` answers. Pure and capability-free: it reads only the slice it was given. Edition 5.
     /// `docs/byte-search.md`.
@@ -498,6 +517,7 @@ impl Builtin {
         Builtin::PutChar,
         Builtin::Write,
         Builtin::WriteErr,
+        Builtin::FlushOut,
         Builtin::GetChar,
         Builtin::Split,
         Builtin::Release,
@@ -505,6 +525,7 @@ impl Builtin {
         Builtin::ForkHeap,
         Builtin::ForkClock,
         Builtin::CopyWithin,
+        Builtin::CopyInto,
         Builtin::IndexOfByte,
         Builtin::WrappingAdd,
         Builtin::WrappingSub,
@@ -579,6 +600,7 @@ impl Builtin {
         match self {
             Builtin::PutChar => "putchar",
             Builtin::Write => "write_bytes",
+            Builtin::FlushOut => "flush_out",
             Builtin::WriteErr => "write_err",
             Builtin::GetChar => "getchar",
             Builtin::Split => "split",
@@ -587,6 +609,7 @@ impl Builtin {
             Builtin::ForkHeap => "fork_heap",
             Builtin::ForkClock => "fork_clock",
             Builtin::CopyWithin => "copy_within",
+            Builtin::CopyInto => "copy_into",
             Builtin::IndexOfByte => "index_of_byte",
             Builtin::WrappingAdd => "wrapping_add",
             Builtin::WrappingSub => "wrapping_sub",
@@ -704,8 +727,12 @@ impl Builtin {
             | Builtin::ConnClose
             | Builtin::ForkClock
             | Builtin::CopyWithin
+            | Builtin::CopyInto
             | Builtin::IndexOfByte
             | Builtin::ListenerClose => 5,
+            // `docs/checked-output.md`: a name a program may already have
+            // declared for itself, so it is visible from edition 5 only.
+            Builtin::FlushOut => 5,
             // `docs/file-writes.md`: edition 5, for the same reason --
             // `file_write` and `open_new` are names a program may already
             // declare against libc.
@@ -761,7 +788,7 @@ impl Builtin {
             // leaf-free, so it contributes no values either way, and
             // skipping it keeps the argument positions honest.
             Builtin::PutChar | Builtin::GetChar | Builtin::ArgCount | Builtin::Arg => 1,
-            Builtin::Write | Builtin::WriteErr => 1,
+            Builtin::Write | Builtin::WriteErr | Builtin::FlushOut => 1,
             _ => 0,
         }
     }
@@ -775,7 +802,11 @@ impl Builtin {
     /// from inside a `borrow` block, which is a confusing way to find out.
     pub fn regions(self) -> usize {
         match self {
-            Builtin::PutChar | Builtin::GetChar | Builtin::ArgCount | Builtin::Arg => 1,
+            Builtin::PutChar
+            | Builtin::GetChar
+            | Builtin::FlushOut
+            | Builtin::ArgCount
+            | Builtin::Arg => 1,
             // Two: the borrowed `Io` and the slice's own region.
             Builtin::Write | Builtin::WriteErr => 2,
             // Two: the borrowed handle and the buffer's own region.
@@ -803,6 +834,8 @@ impl Builtin {
             | Builtin::IndexOfByte
             | Builtin::ClockMs
             | Builtin::ClockUnixMs => 1,
+            // The destination's region and the source's.
+            Builtin::CopyInto => 2,
             _ => 0,
         }
     }
@@ -848,6 +881,16 @@ impl Builtin {
                     },
                 ],
                 Type::Int,
+            ),
+            // The borrowed `Io` and nothing else; the answer is the write
+            // side's `Done`, so the errno survives (`docs/checked-output.md`).
+            Builtin::FlushOut => (
+                vec![Type::Ref {
+                    unique: true,
+                    region: Region::Param(0),
+                    inner: Box::new(named(PRELUDE_IO)),
+                }],
+                named(PRELUDE_DONE),
             ),
             // The mirror: the same borrowed `Io`, no character to take.
             Builtin::GetChar => (
@@ -1172,6 +1215,21 @@ impl Builtin {
                 ],
                 Type::Int,
             ),
+            Builtin::CopyInto => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                Type::Int,
+            ),
             Builtin::IndexOfByte => (
                 vec![
                     Type::Ref {
@@ -1235,7 +1293,7 @@ impl Builtin {
     /// in an exact row (§7.3).
     pub fn effects(self) -> Effects {
         match self {
-            Builtin::PutChar | Builtin::Write => Effects::plain(["io_write"]),
+            Builtin::PutChar | Builtin::Write | Builtin::FlushOut => Effects::plain(["io_write"]),
             // Its own label rather than `io_write`, because the stream is
             // the unit a reader can act on: `1>` and `2>` are two
             // redirections (`docs/standard-error.md` §3.1).

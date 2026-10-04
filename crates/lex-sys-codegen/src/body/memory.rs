@@ -32,6 +32,19 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         vec![self.builder.ins().iconst(types::I64, 0)]
     }
 
+    /// `copy_into(dst, src)` (`docs/bulk-copy.md`): all of `src` to the front of `dst`, as one `memmove`. `args` is the
+    /// destination's pointer and length, then the source's. Traps unless `len(src) <= len(dst)`; answers `len(src)`.
+    ///
+    /// `memmove` and not `memcpy`, because the two slices may be views of one buffer.
+    pub(crate) fn copy_into(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let (to, room, from, count) = (args[0], args[1], args[2], args[3]);
+        let past = self.builder.ins().icmp(IntCC::SignedGreaterThan, count, room);
+        self.builder.ins().trapnz(past, TrapCode::HEAP_OUT_OF_BOUNDS);
+        self.libc_call("memmove", &[pointer, pointer, pointer], &[pointer], &[to, from, count]);
+        vec![count]
+    }
+
     /// `index_of_byte(text, b)` (`docs/byte-search.md`): one `memchr`. `args` is the slice's pointer and length, then the
     /// byte. Answers the offset of the first match, or -1 when `memchr` answers null. Nothing to check: `memchr` reads at
     /// most `len` bytes from the slice's own start.
@@ -553,20 +566,32 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     /// *and* a length, because nothing else knows how many elements there
     /// are (§2).
     pub(crate) fn boxed_slice(&mut self, element: &Type, count: &Expr, fill: &Expr) -> Vec<Value> {
+        let zeroed = lex_sys_ir::is_zero_fill(fill);
         let count = self.scalar(count);
         let values = self.expr(fill);
         let stride = self.stride(element);
         let bytes = self.slice_bytes(count, stride);
 
         let pointer = self.pointer;
-        let id = self.libc_fn("malloc", &[pointer], &[pointer]);
-        let f = self.module.declare_func_in_func(id, self.builder.func);
-        let call = self.builder.ins().call(f, &[bytes]);
-        let start = self.builder.inst_results(call)[0];
+        let start = if zeroed {
+            // `docs/zeroed-slices.md`: a zero fill is `calloc`, and no loop.
+            let one = self.builder.ins().iconst(pointer, 1);
+            let id = self.libc_fn("calloc", &[pointer, pointer], &[pointer]);
+            let f = self.module.declare_func_in_func(id, self.builder.func);
+            let call = self.builder.ins().call(f, &[bytes, one]);
+            self.builder.inst_results(call)[0]
+        } else {
+            let id = self.libc_fn("malloc", &[pointer], &[pointer]);
+            let f = self.module.declare_func_in_func(id, self.builder.func);
+            let call = self.builder.ins().call(f, &[bytes]);
+            self.builder.inst_results(call)[0]
+        };
         // Out of memory traps, exactly as `box` and an exhausted arena do.
         self.builder.ins().trapz(start, TrapCode::HEAP_OUT_OF_BOUNDS);
 
-        self.fill_slice(start, count, stride, &values);
+        if !zeroed {
+            self.fill_slice(start, count, stride, &values);
+        }
         vec![start, count]
     }
 

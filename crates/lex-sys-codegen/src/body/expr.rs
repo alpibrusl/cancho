@@ -615,6 +615,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::ConnWrite) => self.conn_write(&args),
                     // `docs/memory-moves.md`: a bounds-checked `memmove` inside one slice.
                     Callee::Builtin(Builtin::CopyWithin) => self.copy_within(&args),
+                    Callee::Builtin(Builtin::CopyInto) => self.copy_into(&args),
                     Callee::Builtin(Builtin::IndexOfByte) => self.index_of_byte(&args),
                     // `docs/native-sockets.md` §4: the poller.
                     Callee::Builtin(Builtin::PollerNew) => self.poller_new(),
@@ -774,6 +775,10 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                         let call = self.builder.ins().call(f, &[start, one, len, stream]);
                         vec![self.builder.inst_results(call)[0]]
                     }
+                    // `docs/checked-output.md`: the stream the two arms
+                    // above write into, flushed and asked whether any of it
+                    // failed.
+                    Callee::Builtin(Builtin::FlushOut) => self.flush_out(),
                     // Sign-extended, not zero-extended: `EOF` is `-1` and
                     // zero-extending would hand the program 4294967295,
                     // which is a byte-range check that silently never

@@ -306,6 +306,9 @@ pub(crate) fn emit_module(
     // `listen`/`accept` (`docs/net.md` §7.20, `docs/listen.md` §6):
     // neither takes a capability -- the port was already bound at
     // `bind`.
+    // `docs/zeroed-slices.md`: a `box_slice` filled with zero. Guarded like
+    // the rest: `calloc` is a name a program may declare for itself.
+    declare_libc_unless_own(&mut text, "calloc", "ptr @calloc(i64, i64)");
     declare_libc_unless_own(&mut text, "listen", "i32 @listen(i32, i32)");
     declare_libc_unless_own(&mut text, "accept", "i32 @accept(i32, ptr, ptr)");
     // `bind` (§7.21, `docs/listen.md` §6): `socket`+`setsockopt`+`bind`
@@ -362,7 +365,7 @@ pub(crate) fn emit_module(
     declare_libc_unless_own(&mut text, "creat", "i32 @creat(ptr, i32)");
     declare_libc_unless_own(&mut text, "open", "i32 @open(ptr, i32)");
     declare_libc_unless_own(&mut text, "read", "i64 @read(i32, ptr, i64)");
-    // `copy_within` (`docs/memory-moves.md`).
+    // `copy_within` (`docs/memory-moves.md`) and `copy_into` (`docs/bulk-copy.md`).
     declare_libc_unless_own(&mut text, "memmove", "ptr @memmove(ptr, ptr, i64)");
     // `index_of_byte` (`docs/byte-search.md`).
     declare_libc_unless_own(&mut text, "memchr", "ptr @memchr(ptr, i32, i64)");
@@ -376,6 +379,10 @@ pub(crate) fn emit_module(
     declare_libc_unless_own(&mut text, "pwrite", "i64 @pwrite(i32, ptr, i64, i64)");
     declare_libc_unless_own(&mut text, "pread", "i64 @pread(i32, ptr, i64, i64)");
     declare_libc_unless_own(&mut text, "fsync", "i32 @fsync(i32)");
+    // `flush_out` (`docs/checked-output.md`): the stream `fwrite` uses,
+    // flushed, then asked whether an earlier write failed.
+    declare_libc_unless_own(&mut text, "fflush", "i32 @fflush(ptr)");
+    declare_libc_unless_own(&mut text, "ferror", "i32 @ferror(ptr)");
     declare_libc_unless_own(&mut text, "ftruncate", "i32 @ftruncate(i32, i64)");
     declare_libc_unless_own(&mut text, "lseek", "i64 @lseek(i32, i64, i32)");
     declare_libc_unless_own(&mut text, "unlink", "i32 @unlink(ptr)");

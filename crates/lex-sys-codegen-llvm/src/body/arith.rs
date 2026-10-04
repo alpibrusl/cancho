@@ -102,6 +102,7 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::ClockMs
                     | Builtin::ClockUnixMs
                     | Builtin::CopyWithin
+                    | Builtin::CopyInto
                     | Builtin::IndexOfByte
                     | Builtin::ConnDetach
                     | Builtin::Release,
