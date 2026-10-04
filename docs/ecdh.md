@@ -83,14 +83,35 @@ masks now go through `value_barrier`, which the LLVM backend emits as an empty `
 - **The audit:** `scripts/chacha20_branches.py` over `bigmod.{mont_mul, ct_reduce, add, sub}` and
   `ecdh.{select, add_points, double_point, multiply}` finds every remaining conditional jump compares a loop counter or `k`.
   `mont_mul`'s one `js` tests the sign of `k`, the public limb count.
-- **The timing test**, 20,000 samples a test:
+- **The timing test**, 20,000 samples a test (max |t|):
 
 | Test | LLVM | Cranelift |
 |---|---|---|
-| P-256, scalar 1 against random | 1.92 | CL1 |
-| P-256, a fixed scalar against random | LL2 | CL2 |
-| P-384, scalar 1 against random | LL3 | CL3 |
-| P-384, a fixed scalar against random | LL4 | CL4 |
+| P-256, scalar 1 against random | 1.92 | 2.32 |
+| P-256, a fixed scalar against random | 2.49 | 1.37 |
+| P-384, scalar 1 against random | 3.04 | **11.04** |
+| P-384, a fixed scalar against random | 2.70 | 1.75 |
+
+**One test still fails: Cranelift, P-384, scalar 1.** A second run of 3,000 samples gave |t| = 6.2. Scalar 1 runs 0.3% faster
+there (100,000 cycles of 30.5 million), and a scalar under 2^32 shows the same direction more weakly (|t| = 2.8).
+
+**It is not a branch or a memory access:**
+- the audit of the Cranelift object finds only loop counters;
+- `valgrind --tool=callgrind` counts **172,602,288 instructions** for scalar 1 and for two random scalars, identical to the
+  instruction;
+- every index is a loop counter or a table position read for all sixteen entries.
+
+**What is left depends on the operands' values.** With scalar 1 the accumulator's X and Z stay zero for nearly the whole
+ladder, so most limbs multiplied and stored are zero. That is consistent with data-dependent power and so frequency
+(Hertzbleed, Wang et al., USENIX Security 2022): `rdtsc` counts at a constant rate, so a core that clocks higher on cheaper
+data finishes in fewer ticks. Cranelift's code spills more and runs 2.8 times as long, which would show it more. This is
+consistent with the evidence, not proven: the instruction count rules out the software explanations, and nothing here
+measures power.
+
+**What it means for TLS.** The client draws a fresh scalar for every connection (RFC 8446 §4.2.8) and uses it once. A
+statistical attack needs many timings of one scalar, and a peer gets one. It also needs inputs that keep the accumulator
+near zero, which a random scalar does not give. The default backend, LLVM, stays below 4.5 throughout. The result is
+reported, not excused: by this test's own threshold, Cranelift's P-384 ladder is not clean.
 
 ## 4. Correctness
 
@@ -131,7 +152,22 @@ them with a HelloRetryRequest. A generic Montgomery multiplication does not use 
 
 ## 6. What the change to `std.bigmod` cost
 
-BIGMOD_COST
+RSA and ECDSA verification use the same `mul`, `add` and `sub`, so the masked reductions cost them too. Measured with
+`scripts/rsa_bench.py` and `scripts/ecdsa_bench.py` on the LLVM backend, `main` before this PR against after:
+
+| Verification | before | after | |
+|---|---|---|---|
+| RSA-2048 PKCS#1 v1.5 | 352 µs | 374 µs | +6% |
+| RSA-2048 PSS | 363 µs | 384 µs | +6% |
+| RSA-4096 PKCS#1 v1.5 | 1,443 µs | 1,415 µs | −2% |
+| RSA-4096 PSS | 1,532 µs | 1,414 µs | −8% |
+| ECDSA P-256 | 1,541 µs | 1,705 µs | +11% |
+| ECDSA P-384 | 4,303 µs | 4,633 µs | +8% |
+
+RSA's changes are within the run-to-run variation of about 10% that `docs/rsa.md` §5.5 reports. RSA's time is in
+`mont_mul`'s inner loop, which did not change, so the extra pass of `ct_reduce` is small next to it. ECDSA does relatively
+more additions and subtractions, each now with a full pass, and pays about 10%. A TLS handshake verifies one or two
+signatures, so this is around 0.2 ms.
 
 ## 7. Not done here
 

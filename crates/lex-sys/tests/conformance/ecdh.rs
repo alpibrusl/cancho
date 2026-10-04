@@ -254,7 +254,7 @@ fn every_refusal_is_reached_with_its_own_tag() {
         (format!("S 256 {d} 00"), "ecdh-point-encoding"),
         (format!("S 256 {d} 05{g}"), "ecdh-point-encoding"),
         (format!("S 256 {d} 04{p}{}", &g[64..]), "ecdh-point-range"),
-        (format!("S 256 {d} 04{}{}", &g[..64], &p), "ecdh-point-range"),
+        (format!("S 256 {d} 04{}{}", &g[..64], p), "ecdh-point-range"),
         (format!("S 256 {d} 04{}{}", &g[..64], &g[..64]), "ecdh-point-not-on-curve"),
     ];
     let cases: Vec<String> = rows.iter().map(|r| r.0.clone()).collect();

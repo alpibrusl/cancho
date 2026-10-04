@@ -115,13 +115,6 @@ pub fn work_len() -> [] int {
     return bigmod.registers_len(63);
 }
 
-fn copy_point[&w](w: &!w [int], from: int, to: int) -> [] int {
-    bigmod.copy_reg(w, x_of(from), x_of(to));
-    bigmod.copy_reg(w, y_of(from), y_of(to));
-    bigmod.copy_reg(w, z_of(from), z_of(to));
-    return 0;
-}
-
 // d = p + q, complete (RCB algorithm 4, a = -3): right for every pair
 // of points, infinity and p = q included. `d` may be `p` or `q`.
 fn add_points[&w](w: &!w [int], p: int, q: int, d: int) -> [] int {
@@ -178,7 +171,7 @@ fn add_points[&w](w: &!w [int], p: int, q: int, d: int) -> [] int {
     bigmod.mul(w, t(4), z3, z3);
     bigmod.mul(w, t(3), t(0), t(1));
     bigmod.add(w, z3, t(1), z3);
-    return copy_point(w, pt_out(), d);
+    return ecdsa.copy_point(w, pt_out(), d);
 }
 
 // d = 2p, complete (RCB algorithm 6, a = -3). `d` may be `p`.
@@ -224,7 +217,7 @@ fn double_point[&w](w: &!w [int], p: int, d: int) -> [] int {
     bigmod.mul(w, t(0), t(1), z3);
     bigmod.add(w, z3, z3, z3);
     bigmod.add(w, z3, z3, z3);
-    return copy_point(w, pt_out(), d);
+    return ecdsa.copy_point(w, pt_out(), d);
 }
 
 // -1 (all ones) when a = b, else 0, for 0 <= a, b < 2^62: no branch.
@@ -272,7 +265,7 @@ fn multiply[&s, &w](w: &!w [int], scalar: &s [byte]) -> [] int {
         add_points(w, pt_table(i - 1), pt_table(1), pt_table(i));
         i = i + 1;
     }
-    copy_point(w, pt_table(0), pt_acc());
+    ecdsa.copy_point(w, pt_table(0), pt_acc());
     var at = 0;
     while at < 2 * len(scalar) {
         double_point(w, pt_acc(), pt_acc());

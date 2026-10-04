@@ -215,7 +215,9 @@ pub fn work_len() -> [] int {
     return bigmod.registers_len(26);
 }
 
-fn copy_point[&w](w: &!w [int], from: int, to: int) -> [] int {
+// The point at registers `from` (X, Y, Z) copied to `to`; `std.ecdh`
+// uses it too, with the same layout.
+pub fn copy_point[&w](w: &!w [int], from: int, to: int) -> [] int {
     bigmod.copy_reg(w, x_of(from), x_of(to));
     bigmod.copy_reg(w, y_of(from), y_of(to));
     bigmod.copy_reg(w, z_of(from), z_of(to));

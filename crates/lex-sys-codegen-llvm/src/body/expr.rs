@@ -683,7 +683,8 @@ impl<'a> FuncEmitter<'a> {
                     .ok_or_else(|| "`value_barrier` needs an int argument".to_owned())?;
                 let x_op = operand(&x);
                 let result = self.fresh();
-                self.out.push_str(&format!("  {result} = call i64 asm \"\", \"=r,0\"(i64 {x_op})\n"));
+                self.out
+                    .push_str(&format!("  {result} = call i64 asm \"\", \"=r,0\"(i64 {x_op})\n"));
                 Ok(vec![LValue::Reg(result)])
             }
             Callee::Builtin(Builtin::BitsOf) => {
