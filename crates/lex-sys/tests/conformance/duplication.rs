@@ -68,12 +68,11 @@ const ALLOWED: &[(&str, &str)] = &[
     // struct, same four operations, renamed rather than removed
     // (`new_buffer`/`empty` and its own `push`/`push_byte` fall below
     // this check's statement floor and never surface as a cluster, so
-    // they need no entry here).
+    // they need no entry here). `reserve` was a fifth entry until
+    // `std/buffer.ls`'s copy became one `copy_into` (`docs/bulk-copy.md`).
     ("examples/buffer/buffer.ls", "release_buffer"),
-    ("examples/buffer/buffer.ls", "reserve"),
     ("examples/buffer/buffer.ls", "push_byte"),
     ("std/buffer.ls", "drop"),
-    ("std/buffer.ls", "reserve"),
     ("std/buffer.ls", "push"),
     // Found building this check: alpha-equivalent under `lex-sys-id`
     // (`docs/canonical-ast.md`: "bodies hash up to alpha-equivalence")

@@ -709,6 +709,73 @@ fn assert_fails_the_same_way_every_other_trap_does() {
 }
 
 #[test]
+fn copy_into_traps_when_the_source_does_not_fit_on_both_backends() {
+    // `docs/bulk-copy.md` §2: one check, `len(src) <= len(dst)`. The destination is the 8-byte `xs` or a view of it and
+    // the source a view of the 8-byte `ys`; each call in `bad` must be killed by a signal, and each in `fine` (the calls
+    // at the edge) must not, so the check is not simply refusing everything.
+    let bad = [
+        ("one-too-many", "xs[0..4], ys[0..5]"),
+        ("into-nothing", "xs[8..8], ys[0..1]"),
+        ("longer", "xs[1..8], ys"),
+    ];
+    let fine = [
+        ("exactly-full", "xs, ys"),
+        ("nothing-into-nothing", "xs[8..8], ys[3..3]"),
+        ("short", "xs[7..8], ys[0..1]"),
+    ];
+    for backend in ["cranelift", "llvm"] {
+        for (name, arguments, should_trap) in
+            bad.iter().map(|(n, a)| (n, a, true)).chain(fine.iter().map(|(n, a)| (n, a, false)))
+        {
+            let dir = scratch(&format!("copy-into-{name}-{backend}"));
+            let source = dir.join("copy.ls");
+            std::fs::write(
+                &source,
+                format!(
+                    "edition 5;\n\
+                     fn main(world: World) -> [] int {{\n\
+                         let Split {{ io, ffi, fs, heap, args, net, clock }} = split(world);\n\
+                         release(args); release(heap); release(fs); release(ffi); release(io); release(net); release(clock);\n\
+                         var n = 0;\n\
+                         region a {{ let xs = alloc_slice[a](8, byte_of(7)); let ys = alloc_slice[a](8, byte_of(7)); n = copy_into({arguments}); n = int_of(xs[0]); }}\n\
+                         return n - 7;\n\
+                     }}\n"
+                ),
+            )
+            .expect("a writable fixture");
+            let exe = dir.join("copy");
+            let build = Command::new(BIN)
+                .args([
+                    "build".as_ref(),
+                    source.as_os_str(),
+                    "--backend".as_ref(),
+                    backend.as_ref(),
+                    "-o".as_ref(),
+                    exe.as_os_str(),
+                ])
+                .output()
+                .expect("the compiler runs");
+            assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+            let run = Command::new(&exe).output().expect("the compiled program runs");
+            if should_trap {
+                assert_eq!(
+                    run.status.code(),
+                    None,
+                    "`copy_into({arguments})` on {backend} should be killed by a signal"
+                );
+            } else {
+                assert_eq!(
+                    run.status.code(),
+                    Some(0),
+                    "`copy_into({arguments})` on {backend} should succeed"
+                );
+            }
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+}
+
+#[test]
 fn copy_within_traps_outside_the_slice_on_both_backends() {
     // `docs/memory-moves.md` §2: the same checks indexing makes, and the sums are never formed, so a count of 2^63 - 1
     // cannot wrap past the bound. Each call below must be killed by a signal; the last three are the calls at the edge

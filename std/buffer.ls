@@ -1,3 +1,4 @@
+edition 5;
 module std.buffer;
 
 // `std.buffer` — a growable byte buffer, and the library's one data
@@ -74,13 +75,8 @@ pub fn reserve[&h](heap: &!h Heap, b: Buffer, more: int) -> [heap] Buffer {
     let bigger = box_slice(heap, wanted, byte_of(0));
     borrow mut bigger as &!w in {
         borrow held as &r in {
-            let to = contents(w);
             let from = contents(r);
-            var i = 0;
-            while i < used {
-                to[i] = from[i];
-                i = i + 1;
-            }
+            copy_into(contents(w), from[0..used]);
         }
     }
     unbox_slice(heap, held);
@@ -97,20 +93,16 @@ pub fn push[&h](heap: &!h Heap, b: Buffer, value: byte) -> [heap] Buffer {
     return Buffer { held: held, used: used + 1 };
 }
 
-// Room is made once, then the bytes are stored in one pass: appending `n`
-// bytes is one `reserve` and `n` stores, not `n` of each (`push` checks the
-// capacity and rebuilds the buffer on every byte, which is the right cost for
-// one byte and the wrong one for a response body).
+// Room is made once, then the bytes are copied in one move: appending `n`
+// bytes is one `reserve` and one `copy_into`, not `n` of each (`push` checks
+// the capacity and rebuilds the buffer on every byte, which is the right cost
+// for one byte and the wrong one for a response body). `docs/bulk-copy.md`.
 pub fn append[&h, &r](heap: &!h Heap, b: Buffer, text: &r [byte]) -> [heap] Buffer {
     let room = reserve(heap, b, len(text));
     let Buffer { held, used } = room;
     borrow mut held as &!w in {
         let s = contents(w);
-        var i = 0;
-        while i < len(text) {
-            s[used + i] = text[i];
-            i = i + 1;
-        }
+        copy_into(s[used..len(s)], text);
     }
     return Buffer { held: held, used: used + len(text) };
 }
