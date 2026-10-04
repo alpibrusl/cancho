@@ -180,6 +180,7 @@ fn leaves_into(ty: &Type, program: &Program, out: &mut Vec<LKind>) -> Result<(),
                 def.0 as usize,
                 lex_sys_ir::PRELUDE_FILE
                     | lex_sys_ir::PRELUDE_DIR
+                    | lex_sys_ir::PRELUDE_DIR_LIST
                     | lex_sys_ir::PRELUDE_LISTENER
                     | lex_sys_ir::PRELUDE_CONN
                     | lex_sys_ir::PRELUDE_POLLER
@@ -327,6 +328,10 @@ pub(crate) fn emit_module(
     // with `O_CREAT`) and declared so, which puts `mode` wherever the target
     // passes a variadic argument -- the stack on Apple AArch64.
     declare_libc_unless_own(&mut text, "openat", "i32 @openat(i32, ptr, i32, ...)");
+    // `dir_list`, `dir_next`, `dir_list_close` (`docs/directory-listing.md`).
+    declare_libc_unless_own(&mut text, "fdopendir", "ptr @fdopendir(i32)");
+    declare_libc_unless_own(&mut text, "readdir", "ptr @readdir(ptr)");
+    declare_libc_unless_own(&mut text, "closedir", "i32 @closedir(ptr)");
     declare_libc_unless_own(&mut text, "renameat", "i32 @renameat(i32, ptr, i32, ptr)");
     declare_libc_unless_own(&mut text, "unlinkat", "i32 @unlinkat(i32, ptr, i32)");
     // `connect` (§7.22, `docs/connect.md` §10): the last of `Net`'s four

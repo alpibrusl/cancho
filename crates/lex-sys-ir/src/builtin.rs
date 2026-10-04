@@ -511,6 +511,15 @@ pub enum Builtin {
     /// `dir_sync(&Dir) -> [dir_write] Done`: `fsync` on the directory itself,
     /// so a rename in it is durable.
     DirSync,
+    /// `dir_list(&Dir) -> [dir_read] Listing`: a stream of the directory's
+    /// names, on a descriptor of its own (`docs/directory-listing.md` §3.1).
+    DirList,
+    /// `dir_next(&!DirList, &![byte]) -> [dir_read] Listed`: the next name,
+    /// copied into the buffer, with its kind; `.` and `..` never.
+    DirNext,
+    /// `dir_list_close(DirList) -> [] int`: `closedir`'s answer; consumes
+    /// the listing.
+    DirListClose,
     /// `null_ptr() -> [] c_ptr` — the one producer of a `c_ptr` that is
     /// not a foreign call's return, edition 3 only
     /// (`docs/opaque-pointers.md` §3).
@@ -650,6 +659,9 @@ impl Builtin {
         Builtin::DirRename,
         Builtin::DirRemove,
         Builtin::DirSync,
+        Builtin::DirList,
+        Builtin::DirNext,
+        Builtin::DirListClose,
         Builtin::NullPtr,
         Builtin::Spawn,
         Builtin::Join,
@@ -747,6 +759,9 @@ impl Builtin {
             Builtin::DirRename => "dir_rename",
             Builtin::DirRemove => "dir_remove",
             Builtin::DirSync => "dir_sync",
+            Builtin::DirList => "dir_list",
+            Builtin::DirNext => "dir_next",
+            Builtin::DirListClose => "dir_list_close",
             Builtin::NullPtr => "null_ptr",
             Builtin::Spawn => "spawn",
             Builtin::Join => "join",
@@ -822,7 +837,10 @@ impl Builtin {
             | Builtin::DirOpenAppend
             | Builtin::DirRename
             | Builtin::DirRemove
-            | Builtin::DirSync => 6,
+            | Builtin::DirSync
+            | Builtin::DirList
+            | Builtin::DirNext
+            | Builtin::DirListClose => 6,
             // `docs/file-writes.md`: edition 5, for the same reason --
             // `file_write` and `open_new` are names a program may already
             // declare against libc.
@@ -925,6 +943,10 @@ impl Builtin {
             // The handle's region and each name's.
             Builtin::DirRename => 3,
             Builtin::DirSync => 1,
+            // The handle's region; for `dir_next`, the listing's and the
+            // buffer's.
+            Builtin::DirList => 1,
+            Builtin::DirNext => 2,
             Builtin::TcpAccept
             | Builtin::ConnNonblocking
             | Builtin::ConnNodelay
@@ -1388,6 +1410,33 @@ impl Builtin {
                 }],
                 named(PRELUDE_DONE),
             ),
+            // `docs/directory-listing.md` §3.1. The directory is shared, as
+            // every step beneath it is; the listing is unique, because a
+            // step moves it, and so is the buffer the name is copied into.
+            Builtin::DirList => (
+                vec![Type::Ref {
+                    unique: false,
+                    region: Region::Param(0),
+                    inner: Box::new(named(PRELUDE_DIR)),
+                }],
+                named(PRELUDE_LISTING),
+            ),
+            Builtin::DirNext => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_DIR_LIST)),
+                    },
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                named(PRELUDE_LISTED),
+            ),
+            Builtin::DirListClose => (vec![named(PRELUDE_DIR_LIST)], Type::Int),
             Builtin::ConnDetach => (vec![named(PRELUDE_CONN)], Type::Int),
             Builtin::ConnAttach => (vec![Type::Int], named(PRELUDE_ATTACHED)),
             Builtin::ClockMs | Builtin::ClockUnixMs => (
@@ -1542,6 +1591,9 @@ impl Builtin {
             Builtin::SignalsPending => Effects::plain(["signals_read"]),
             // `docs/directory-handles.md` §2: the handle is the authority.
             Builtin::DirEnter | Builtin::DirOpenRead => Effects::plain(["dir_read"]),
+            // `docs/directory-listing.md` §3.3: listing is reading beneath the
+            // directory, and closing a listing performs nothing.
+            Builtin::DirList | Builtin::DirNext => Effects::plain(["dir_read"]),
             // §3: everything that changes what is beneath a directory.
             Builtin::DirOpenNew
             | Builtin::DirOpenAppend

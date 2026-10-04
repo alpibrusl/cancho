@@ -88,10 +88,16 @@ pub const PRELUDE_WATCHING: usize = 30;
 pub const PRELUDE_DIR: usize = 31;
 pub const PRELUDE_DIR_OPENED: usize = 32;
 
+/// `docs/directory-listing.md`, edition 6: a listing in progress (`res`, one
+/// leaf, the stream), what starting one answers, and what each step answers.
+pub const PRELUDE_DIR_LIST: usize = 33;
+pub const PRELUDE_LISTING: usize = 34;
+pub const PRELUDE_LISTED: usize = 35;
+
 /// How many types the prelude declares. Written once, because a builtin's
 /// signature indexes this table and a stale slice is a panic rather than a
 /// diagnostic.
-pub const PRELUDE_COUNT: usize = 33;
+pub const PRELUDE_COUNT: usize = 36;
 
 /// Which path operation an [`Expr::PathOp`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1035,3 +1041,40 @@ pub const CREATE_MODE: i64 = 0o644;
 /// Linux and Darwin); a longer one is `EINVAL` too, so the copy has a fixed
 /// size.
 pub const NAME_MAX: i64 = 255;
+
+/// Where `readdir`'s `struct dirent` keeps the two fields a listing reads
+/// (`docs/directory-listing.md` §3.4). Linux x86-64 measured with `offsetof`;
+/// Linux AArch64 has glibc's same generic layout; Darwin's is its 64-bit-inode
+/// `dirent` (`d_seekoff` and `d_namlen` push both two bytes on). `d_name` is
+/// NUL-terminated on every target, so its length is `strlen`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DirentLayout {
+    pub d_type: i32,
+    pub d_name: i32,
+}
+
+pub fn dirent_layout(darwin: bool) -> DirentLayout {
+    if darwin {
+        DirentLayout { d_type: 20, d_name: 21 }
+    } else {
+        DirentLayout { d_type: 18, d_name: 19 }
+    }
+}
+
+/// `ENAMETOOLONG`: what `dir_next` answers when the caller's buffer is
+/// shorter than the name.
+pub fn enametoolong(darwin: bool) -> i64 {
+    if darwin { 63 } else { 36 }
+}
+
+/// `d_type`'s values, the same on every target, and the language's own
+/// numbering of a kind (`docs/directory-listing.md` §3.1).
+pub const DT_DIR: i64 = 4;
+pub const DT_REG: i64 = 8;
+pub const DT_LNK: i64 = 10;
+pub const DT_UNKNOWN: i64 = 0;
+pub const KIND_UNKNOWN: i64 = 0;
+pub const KIND_FILE: i64 = 1;
+pub const KIND_DIRECTORY: i64 = 2;
+pub const KIND_LINK: i64 = 3;
+pub const KIND_OTHER: i64 = 4;

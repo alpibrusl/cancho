@@ -13,6 +13,7 @@ mod dirs;
 mod expr;
 mod files;
 mod fs;
+mod listing;
 mod memory;
 mod net;
 mod poller;

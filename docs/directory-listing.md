@@ -1,9 +1,11 @@
 # Directory listing and file status: reading a directory beneath a handle
 
-Status: **design, not built.** Issue #222, gaps L2 (no listing) and L3 (no status without opening) of
-[`agent-toolbox.md`](agent-toolbox.md). The issue asks for `fs_list` and `fs_stat` on a path under `Fs`; this
-document proposes the same capability on a `Dir` instead ([`directory-handles.md`](directory-handles.md), #227), and
-§2 says why. That change of shape is the decision this document asks a person to make (§7).
+Status: **slice 1 built** (`dir_list`, `dir_next`, `dir_list_close`, `std.dirs.list`), edition 6, both backends;
+Linux measured, Darwin's `dirent` offsets written and run only by CI. Slice 2 (`dir_stat`) and slice 3 (the
+`lexsys-tools` `list` tool) are below, not built. Issue #222, gaps L2 (no listing) and L3 (no status without opening)
+of [`agent-toolbox.md`](agent-toolbox.md). The issue asks for `fs_list` and `fs_stat` on a path under `Fs`; this
+document puts the same capability on a `Dir` instead ([`directory-handles.md`](directory-handles.md), #227), §2 says
+why, and that change of shape was decided by a person on the design's PR (§7).
 
 ## 1. Why
 
@@ -50,8 +52,11 @@ dir_stat(dir: &Dir, name: &[byte]) -> [dir_read] Status    // Status::Ok(int, in
 
 ### 3.1 Listing
 
-* **`dir_list`** starts a listing of `dir`: `fdopendir(dup(fd))`, so the stream owns its own descriptor and closing it
-  leaves `dir` open. `DirList` is a `res`: it must be closed (`dir_list_close`, `closedir`), like `Dir` and `File`.
+* **`dir_list`** starts a listing of `dir`: `fdopendir` on `openat(fd, ".", O_RDONLY | O_DIRECTORY)`, so the stream
+  owns a descriptor of its own and closing it leaves `dir` open. *(Corrected while building: this said `dup(fd)`. A
+  `dup` shares the file position, so two listings of one `Dir` read in turns would each see half the names; a second
+  open of `.` beneath the handle does not, and is still beneath it. The conformance test reads two listings in
+  turns.)* `DirList` is a `res`: it must be closed (`dir_list_close`, `closedir`), like `Dir` and `File`.
 * **`dir_next`** answers the next entry: `Listed::Name(n, kind)` with the name's `n` bytes copied into the front of
   `name`, `Listed::End`, or `Listed::Failed(errno)`. `.` and `..` are never answered. If `name` is shorter than the
   entry, nothing is copied and the answer is `Failed(ENAMETOOLONG)` (36 on Linux, 63 on macOS); a buffer of
@@ -131,28 +136,36 @@ Measured with a C probe on Linux 6.18, ext4, a directory of 100,000 empty files,
 
 | | per entry |
 |---|---|
-| `readdir` (through `fdopendir` on a `dup`) | 246–284 ns |
+| `readdir` (through `fdopendir`) | 246–284 ns |
 | plus `fstatat(…, AT_SYMLINK_NOFOLLOW)` on each | 1.73–1.86 µs more |
 
 So a listing that only needs names and kinds (all `ls` and most of `find`) costs a quarter of a microsecond an entry,
 and status is opt-in at seven times that. 100,000 entries list in 25 ms; with status, 200 ms.
 
+Built, the same directory through `dir_next` and written out a line a name: 29.9 ms on LLVM and 29.6 ms on Cranelift
+(minimum of five), about 300 ns an entry with the output. Peak resident set is the same at 1,000 entries and at
+100,000 (10.5 MB as Python's `RUSAGE_CHILDREN` reports it, the launcher included): one name buffer, whatever the
+directory holds.
+
 ## 6. What it is checked by
 
 * `tests/conformance/directory_listing.rs`, on **both backends**, against a tree the test builds and judged from
-  outside the program (Python's `os.listdir`, `os.lstat`):
-  * a hostile directory: 10^5 entries; a name with a newline; a name that is not UTF-8 (`caf\xe9`); a 255-byte name;
-    a dangling link; a link to `..`; a FIFO; a subdirectory. The listing is identical on both backends and equal to
-    `sorted(os.listdir(...))` compared as bytes, with `.` and `..` absent and every kind equal to `os.lstat`'s;
-  * `dir_stat` on each entry equals `os.lstat`'s kind, size and `int(st_mtime)`; on the dangling link it answers a link,
-    not `ENOENT`; on the FIFO it returns rather than blocks;
-  * `dir_next` with a short buffer is `ENAMETOOLONG` and copies nothing; `dir_stat` of `..`, `.`, `a/b`, an empty name
-    and a 256-byte name is `EINVAL` with no call;
-  * memory: listing the 10^5-entry directory through `dir_next` alone holds one name buffer (peak resident set
-    measured, flat against 10^3 entries).
-* `tests/accept/`: a listing that closes its `DirList`, and an `Fs`-owning function listing with row `[]`.
-* `tests/reject/`: an unclosed `DirList` (`linear-value-unconsumed`); one taken apart by a pattern; `dir_next` in a
-  row that does not say `dir_read` (`effect-not-declared`); `dir_list` at edition 5 (`not-a-function`).
+  outside the program (Rust's `read_dir` and `symlink_metadata`), names printed as hex so every byte survives:
+  * a hostile directory: 100,000 plain files and a name with a newline, one that is not UTF-8 (`caf\xe9`, beside
+    `cafe`), a 255-byte name, a dangling link, a link to `..`, a FIFO and a subdirectory. `std.dirs.list` equals the
+    entries sorted as bytes, with every kind equal to `lstat`'s; `dir_next` alone gives the same entries in the
+    kernel's order, with `.` and `..` absent; the two backends agree byte for byte;
+  * `dir_next` with a three-byte buffer on a longer name is `ENAMETOOLONG` and copies nothing; `std.dirs.list` with
+    `most` 2 keeps two and says `truncated`; two listings of one `Dir`, read in turns, each see every name;
+  * memory: §5's measurement (flat between 1,000 and 100,000 entries), not a test.
+* `tests/accept/directory_listing.ls`: `/` listed by `dir_next` and by `std.dirs.list`, the two counts equal, no `.`
+  or `..`, the sorted names strictly increasing; every `DirList` closed; an `Fs`-owning function listing with row `[]`.
+* `tests/reject/`: an unclosed `DirList` (`linear-value-unconsumed`), one taken apart by a pattern
+  (`linear-value-taken-apart`, naming `dir_list_close`), `dir_next` in a row that does not say `dir_read`
+  (`effect-not-declared`), and `dir_list` at edition 5 (`not-a-function`).
+* Slice 2 adds: `dir_stat` on each hostile entry equal to `lstat`'s kind, size and `int(st_mtime)`; the dangling link
+  a link, not `ENOENT`; the FIFO answered without blocking; `..`, `.`, `a/b`, an empty name and a 256-byte name
+  `EINVAL` with no call.
 * **Mutants**, on each backend: `d_name` read at the wrong offset for the target; `.` or `..` leaked; `d_type` mapped
   wrong; `fstatat` without `AT_SYMLINK_NOFOLLOW`; `st_size` or `st_mtim` at the wrong offset; the short-buffer check
   skipped; the name check on `dir_stat` skipped. In `std.dirs`: unsorted, or sorted as signed bytes. In the IR: the
@@ -160,8 +173,8 @@ and status is opt-in at seven times that. 100,000 entries list in 25 ms; with st
 
 ## 7. The decision, and what this does not do
 
-**Decision for a person.** The issue was written before `Dir` existed and asks for `fs_list`/`fs_stat` on paths. This
-document proposes the handle-based shape of §2 instead: same capability, one way to spend a path rather than two, and a
+**Decided: the handle shape.** The issue was written before `Dir` existed and asks for `fs_list`/`fs_stat` on paths.
+This document proposed the handle-based shape of §2 instead, and a person chose it on the design's PR: same capability, one way to spend a path rather than two, and a
 listing that cannot be turned into an escape. The "two askers" bar (`CONTRIBUTING.md`) is the issue's other open
 question; D16 already answered it (`list`, and `lexsys-log`'s segment discovery in `file-writes.md` §8), and
 this document assumes that answer.

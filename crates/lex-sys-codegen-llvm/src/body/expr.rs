@@ -920,6 +920,19 @@ impl<'a> FuncEmitter<'a> {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.dir_close(&args)
             }
+            // `docs/directory-listing.md` §3.1.
+            Callee::Builtin(Builtin::DirList) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.dir_list(&args)
+            }
+            Callee::Builtin(Builtin::DirNext) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.dir_next(&args)
+            }
+            Callee::Builtin(Builtin::DirListClose) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.dir_list_close(&args)
+            }
             // `docs/signals.md` section 5: the claim.
             Callee::Builtin(Builtin::SignalsWatch) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
