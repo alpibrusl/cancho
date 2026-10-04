@@ -93,11 +93,13 @@ pub const PRELUDE_DIR_OPENED: usize = 32;
 pub const PRELUDE_DIR_LIST: usize = 33;
 pub const PRELUDE_LISTING: usize = 34;
 pub const PRELUDE_LISTED: usize = 35;
+/// What `dir_stat` answers (`docs/directory-listing.md` §3.2).
+pub const PRELUDE_DIR_STAT: usize = 36;
 
 /// How many types the prelude declares. Written once, because a builtin's
 /// signature indexes this table and a stale slice is a panic rather than a
 /// diagnostic.
-pub const PRELUDE_COUNT: usize = 36;
+pub const PRELUDE_COUNT: usize = 37;
 
 /// Which path operation an [`Expr::PathOp`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1078,3 +1080,35 @@ pub const KIND_FILE: i64 = 1;
 pub const KIND_DIRECTORY: i64 = 2;
 pub const KIND_LINK: i64 = 3;
 pub const KIND_OTHER: i64 = 4;
+
+/// Where `struct stat` keeps what `dir_stat` reads (`docs/directory-listing.md`
+/// §3.4): its size (the stack slot `fstatat` fills), `st_mode` and how wide it
+/// is, `st_size`, and `st_mtim`'s seconds. Linux x86-64 measured with
+/// `offsetof`; Linux AArch64 is the generic layout; Darwin's is the 64-bit-inode
+/// `stat`, whose `st_mode` is 16 bits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StatLayout {
+    pub size: u32,
+    pub mode: i32,
+    pub mode_bits: u8,
+    pub st_size: i32,
+    pub mtime: i32,
+    /// `AT_SYMLINK_NOFOLLOW` for this target.
+    pub no_follow: i64,
+}
+
+pub fn stat_layout(darwin: bool, aarch64: bool) -> StatLayout {
+    if darwin {
+        StatLayout { size: 144, mode: 4, mode_bits: 16, st_size: 96, mtime: 48, no_follow: 0x20 }
+    } else if aarch64 {
+        StatLayout { size: 128, mode: 16, mode_bits: 32, st_size: 48, mtime: 88, no_follow: 0x100 }
+    } else {
+        StatLayout { size: 144, mode: 24, mode_bits: 32, st_size: 48, mtime: 88, no_follow: 0x100 }
+    }
+}
+
+/// `st_mode`'s file-type bits, the same on every target.
+pub const S_IFMT: i64 = 0o170000;
+pub const S_IFREG: i64 = 0o100000;
+pub const S_IFDIR: i64 = 0o040000;
+pub const S_IFLNK: i64 = 0o120000;

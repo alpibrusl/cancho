@@ -147,7 +147,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     /// failure, and `errno` is read straight after it. The three leaves
     /// `Opened`, `DirOpened` and `Done` share come back: the tag, the result
     /// and the reason.
-    fn dir_call(
+    pub(crate) fn dir_call(
         &mut self,
         names: &[(Value, Value)],
         call: impl FnOnce(&mut Self, &[Value]) -> Value,

@@ -4,7 +4,8 @@
 // directory. `/` is listed twice -- once a name at a time with `dir_next`,
 // once sorted with `std.dirs.list` -- and the two must agree on how many
 // names there are, with no `.` or `..` among them and the sorted ones in
-// bytewise order. Every `DirList` and every `Dir` is closed.
+// bytewise order; `dir_stat` agrees with the listing on every kind. Every
+// `DirList` and every `Dir` is closed.
 
 edition 6;
 
@@ -104,6 +105,22 @@ fn check[&h, &d](heap: &!h Heap, dir: &d Dir) -> [heap, dir_read] int {
         }
         if dirs.failed(n) != 0 || dirs.truncated(n) {
             bad = bad + 4;
+        }
+        // `dir_stat` agrees with the listing on every kind the listing knew,
+        // and never answers unknown.
+        var j = 0;
+        while j < dirs.count(n) {
+            match dir_stat(dir, dirs.name(n, j)) {
+                DirStat::Ok(found, size, mtime) => {
+                    let listed = dirs.kind(n, j);
+                    if found == dirs.kind_unknown() || listed != dirs.kind_unknown() && found != listed {
+                        bad = bad + 32;
+                    }
+                }
+                DirStat::Failed(e) => {
+                }
+            }
+            j = j + 1;
         }
     }
     dirs.drop(heap, names);

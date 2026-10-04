@@ -604,6 +604,8 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     let listing = symbol("Listing");
     let listed = symbol("Listed");
     let name_arm = symbol("Name");
+    // What `dir_stat` answers.
+    let dir_stat = symbol("DirStat");
     let again_arm = symbol("Again");
     let data_arm = symbol("Data");
     let wrote_arm = symbol("Wrote");
@@ -675,6 +677,8 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     let dir_list_def = unifier.declare("DirList");
     let listing_def = unifier.declare("Listing");
     let listed_def = unifier.declare("Listed");
+    // `PRELUDE_DIR_STAT`: edition 6, appended last.
+    let dir_stat_def = unifier.declare("DirStat");
 
     vec![
         TypeDef {
@@ -1295,6 +1299,24 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
             kind: DefKind::Enum(vec![
                 (name_arm, vec![Type::Int, Type::Int]),
                 (end_arm, Vec::new()),
+                (failed_arm, vec![Type::Int]),
+            ]),
+            span,
+            since: 6,
+        },
+        // `docs/directory-listing.md` §3.2: what `dir_stat` answers -- the kind,
+        // the size in bytes and the modification time in whole seconds, or the
+        // `errno`.
+        TypeDef {
+            name: dir_stat,
+            def: dir_stat_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: None,
+            kind: DefKind::Enum(vec![
+                (ok_arm, vec![Type::Int, Type::Int, Type::Int]),
                 (failed_arm, vec![Type::Int]),
             ]),
             span,
