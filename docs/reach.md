@@ -482,6 +482,11 @@ The row is a *grant* question and the symbol list is a *what will it
 actually do* question, and at the foreign boundary the second is the one
 with the answer.
 
+> **Built on (`foreign-authority.md`).** The symbol list is now `unbounded_by` in the report, each
+> symbol paired with the scope its declaration claims, and one program can hold several
+> libraries. `Ffi("libc")` and a foreign function with no capability at all both used to be
+> accepted; the second no longer is.
+
 That is a report and not a type, and it should stay a report until §5.1
 is answered. A row that said `net` today would be a row that could not be
 checked.

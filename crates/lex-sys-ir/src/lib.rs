@@ -39,6 +39,7 @@ use linear::{Event, Trace, mode_of};
 
 mod builtin;
 mod defs;
+mod foreign;
 mod function;
 mod ir;
 mod lower;
@@ -47,6 +48,7 @@ mod socket_os;
 
 pub use builtin::*;
 pub use defs::*;
+pub use foreign::*;
 use function::*;
 pub use ir::*;
 use lower::*;
@@ -335,6 +337,46 @@ fn lower_inner(ast: &Ast, rest: &mut Vec<Diagnostic>) -> Result<Program, Diagnos
             ));
         }
 
+        // `docs/foreign-authority.md` section 2: a foreign call is reached
+        // through **one** `Ffi`, the one naming the library the symbol lives
+        // in. A declaration with none was accepted until this was measured
+        // (`system` with no capability and the row `[]` ran a shell while the
+        // report said `bounded: true`), and one with two libraries would
+        // leave the report's `scope:symbol` pair saying less than the
+        // declaration did.
+        let scopes: Vec<&str> = params
+            .iter()
+            .filter_map(|param| match param {
+                Type::Ref { inner, .. } => match inner.as_ref() {
+                    Type::Named(def, args) if def.0 as usize == PRELUDE_FFI => match args.first() {
+                        Some(Type::Lit(scope)) => Some(scope.as_str()),
+                        _ => None,
+                    },
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        if scopes.len() != 1 {
+            return Err(Diagnostic::new(
+                Rule::ForeignDeclaration,
+                format!(
+                    "`{name}` borrows {} `Ffi` capabilities, and a foreign function borrows exactly one: the one that names the library it calls into, such as `ffi: &f Ffi(\"libc\")`",
+                    scopes.len()
+                ),
+                span,
+            ));
+        }
+        if scopes[0].contains(',') {
+            return Err(Diagnostic::new(
+                Rule::ForeignDeclaration,
+                format!(
+                    "`{name}` borrows `Ffi(\"{}\")`, which names several libraries; a symbol lives in one, so a declaration names that one and the caller lends it a capability over more",
+                    scopes[0]
+                ),
+                span,
+            ));
+        }
         externs.push(ExternFn {
             name: name.to_owned(),
             module,

@@ -21,12 +21,14 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
+use foreign_report::{Attribution, ForeignReach};
 use lex_sys_ir::TypeInfo;
 use lex_sys_syntax::{Ast, Rule, SourceFile, SourceMap};
 use lex_sys_types::{DefId, Type};
 
 mod acli;
 mod fmt_cli;
+mod foreign_report;
 mod project;
 mod test_cli;
 mod vcs_cli;
@@ -1065,7 +1067,7 @@ fn print_authority(inputs: &[PathBuf], with_std: bool, json: bool) -> Result<(),
     let mut kinds: Vec<&str> = performed.iter().map(|(name, _)| name.as_str()).collect();
     kinds.dedup();
 
-    let bounded = performed.iter().all(|(name, _)| bounds_its_domain(name));
+    let labels_bounded = performed.iter().all(|(name, _)| bounds_its_domain(name));
 
     // `docs/authority.md` §3: `Program::externs` lists every `extern fn`
     // declared in the compiled unit whether anything calls it or not,
@@ -1082,6 +1084,31 @@ fn print_authority(inputs: &[PathBuf], with_std: bool, json: bool) -> Result<(),
         .collect();
     symbols.sort_unstable();
     symbols.dedup();
+
+    // `docs/foreign-authority.md` section 5: the same reachable externs with
+    // the scope each declaration claims -- the library in the one `ffi` label
+    // of its row, which the checker requires it to have -- so the report
+    // can say exactly what its unboundedness is made of.
+    let reach: Vec<ForeignReach> = program
+        .externs
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| reachable.contains(&(*index as u32)))
+        .map(|(_, declared)| ForeignReach {
+            scope: declared
+                .effects
+                .labels()
+                .iter()
+                .find(|label| label.name == "ffi")
+                .and_then(|label| label.argument.clone())
+                .unwrap_or_default(),
+            symbol: declared.symbol.clone(),
+        })
+        .collect();
+    let ffi_performed = performed.iter().any(|(name, _)| name == "ffi");
+    let Attribution { bounded: foreign_bounded, unbounded_by } =
+        foreign_report::attribute(ffi_performed, &reach);
+    let bounded = labels_bounded && foreign_bounded;
 
     // The functions the checker can prove are pure (`docs/purity.md` §2).
     // Reported because it is a fact about the program that no other
@@ -1110,6 +1137,19 @@ fn print_authority(inputs: &[PathBuf], with_std: bool, json: bool) -> Result<(),
             // First on purpose: the one field a consumer that reads nothing
             // else should read (`docs/under-a-grant.md` §5.1).
             writeln!(out, "  \"bounded\": {bounded},")?;
+            // Second: what `bounded: false` is made of, exactly
+            // (`docs/foreign-authority.md` section 5). One pair a line, so
+            // a CI pin of the report shows an added symbol as one added line.
+            if unbounded_by.is_empty() {
+                writeln!(out, "  \"unbounded_by\": [],")?;
+            } else {
+                writeln!(out, "  \"unbounded_by\": [")?;
+                for (i, pair) in unbounded_by.iter().enumerate() {
+                    let comma = if i + 1 == unbounded_by.len() { "" } else { "," };
+                    writeln!(out, "    \"{}\"{comma}", escaped(pair))?;
+                }
+                writeln!(out, "  ],")?;
+            }
             writeln!(out, "  \"effects\": [{}],", quoted(&kinds))?;
             writeln!(out, "  \"labels\": [")?;
             for (i, (name, argument)) in performed.iter().enumerate() {
@@ -1142,9 +1182,13 @@ fn print_authority(inputs: &[PathBuf], with_std: bool, json: bool) -> Result<(),
     }
     let written = (|| -> io::Result<()> {
         if !bounded {
-            writeln!(out, "UNBOUNDED: this program calls foreign code, and a library is")?;
-            writeln!(out, "not an authority domain -- the labels below do not bound what")?;
-            writeln!(out, "it can reach. See docs/under-a-grant.md.")?;
+            writeln!(out, "UNBOUNDED: this program calls foreign code. The labels below bound it")?;
+            writeln!(
+                out,
+                "everywhere except through the symbols under \"unbounded by\", and what"
+            )?;
+            writeln!(out, "a symbol does is the linked library's, not the language's.")?;
+            writeln!(out, "See docs/foreign-authority.md.")?;
         }
         if labels.is_empty() {
             writeln!(out, "performs nothing")?;
@@ -1190,10 +1234,10 @@ fn print_authority(inputs: &[PathBuf], with_std: bool, json: bool) -> Result<(),
                 writeln!(out, "    {what}")?;
             }
         }
-        if !symbols.is_empty() {
-            writeln!(out, "foreign symbols")?;
-            for symbol in symbols {
-                writeln!(out, "    {symbol}")?;
+        if !unbounded_by.is_empty() {
+            writeln!(out, "unbounded by")?;
+            for pair in &unbounded_by {
+                writeln!(out, "    {pair}")?;
             }
         }
         if !pure.is_empty() {
