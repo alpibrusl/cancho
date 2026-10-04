@@ -27,6 +27,7 @@
 - [Parallelism: threads and vectorization](parallelism.md)
 - [Native sockets](native-sockets.md)
 - [Signals](signals.md)
+- [Foreign authority](foreign-authority.md)
 - [A WebSocket spike](websocket-spike.md)
 - [Slicing](slicing.md)
 - [Tuples](tuples.md)

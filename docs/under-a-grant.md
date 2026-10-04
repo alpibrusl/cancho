@@ -206,6 +206,9 @@ What this does and does not change:
   and the filesystem dimension is enforceable *more* precisely than the
   grant can express. What it cannot do, it cannot do for a reason that
   is written down.
+* **Superseded in part by [`foreign-authority.md`](foreign-authority.md).** `bounded: false` is now accompanied by `unbounded_by`, the exact `scope:symbol` pairs it is made of, so a
+  supervisor decides over symbols and a CI pin diffs an added one; `bounded` keeps the meaning given in §5.1. The "proof about names, heuristic about domains" of §3 stands unchanged: the
+  report still cannot say what a symbol does. That document also closes a hole this one missed: an `extern fn` with no `Ffi` at all was accepted and reported `bounded: true`.
 * **Not that `foreign_symbols` should go.** It is the best available
   signal and `reach.md` §5.2's first half stands. What changes is the
   sentence claiming it needs no trust.

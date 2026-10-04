@@ -281,6 +281,11 @@ that takes both an `Ffi("libc")` and an `Ffi("tls")` can never be called). OpenS
 needs. Two consequences: the packages that hard-code `Ffi("libc")` (`net.sockets`, `net.connect`) cannot be mixed with it (`lexsys-hooks`
 does not use them: its sockets are `Conn`s), and the name promises nothing about what a function holding it can call.
 
+> **Superseded in part by [`foreign-authority.md`](foreign-authority.md).** A scope is now a *set* of libraries (`Ffi("libc,libcrypto,libssl")`), each foreign function names its own
+> library, and a function is lent only the part it needs, so the spike's choice of one scope "by purpose" (and libc's `signal` filed under `"tls"`) is no longer forced; gap 10's first two halves are closed
+> (`g12` still shows two *separate* `narrow`s refused, which is intended). The report lists the 37 symbols as `tls:...` pairs; with per-library scopes it would list `libssl:`, `libcrypto:` and `libc:`.
+> The sentence "the name promises nothing about what a function holding it can call" stands: the scope is a claim, the symbol is the fact.
+
 **How a program like `lexsys-hooks` holds it narrowly.** Today `main` says `release(ffi)`. It would say `let tls = narrow(ffi, "tls")` and lend
 `&f Ffi("tls")` down the one chain that needs it: `main` -> `run` -> `delivery_turn` -> `start_attempts`/`start_one`/`start_replay` ->
 `attempt.begin`/`advance`/`finish`. Each function on the chain takes the capability and declares `ffi("tls")` in its row, and the checker holds

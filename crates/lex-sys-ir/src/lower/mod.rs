@@ -7,6 +7,7 @@ use crate::*;
 
 mod conc;
 mod expr;
+mod foreign;
 mod memory;
 mod net;
 mod signals;
@@ -426,6 +427,12 @@ impl<'a> FnLowering<'a> {
             let canonical = self.narrow_signals(current, &target, self.ast.expr_span(*literal))?;
             return Ok((value, Type::Named(DefId(which as u32), vec![Type::Lit(canonical)])));
         }
+        // `docs/foreign-authority.md` section 4: a set of libraries narrows as
+        // a set, the way signals do, and answers the canonical spelling.
+        if which == PRELUDE_FFI {
+            let canonical = self.narrow_ffi(current, &target, span)?;
+            return Ok((value, Type::Named(DefId(which as u32), vec![Type::Lit(canonical)])));
+        }
         if !target.starts_with(current.as_str()) {
             return Err(Diagnostic::new(
                 Rule::CapabilityNotNarrowable,
@@ -619,6 +626,13 @@ impl<'a> FnLowering<'a> {
                 ));
             }
             let (want_inner, got_inner) = (want_inner.clone(), got_inner.clone());
+            // `docs/foreign-authority.md` section 4: lending a capability over
+            // several libraries where one is wanted is attenuation, the one
+            // coercion between capability types. Only through a reference:
+            // an owned `Ffi` changes scope by `narrow`, which consumes it.
+            if self.ffi_scope_attenuates(&got_inner, &want_inner) {
+                return Ok(());
+            }
             return self.expect_exact(&want_inner, &got_inner, span);
         }
         self.expect_exact(&want, &got, span)

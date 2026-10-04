@@ -223,3 +223,8 @@ rather than only run once and discarded.
 > a server that accepts and closes, the example is still killed by `SIGPIPE`: OpenSSL's socket BIO answers the end of file with a fatal
 > alert written by `write(2)`. It is a one-connection demonstration and is left as it is; a service must use the memory-BIO transport of
 > `examples/tls_nb/` or ignore the signal.
+
+> **Corrected (`foreign-authority.md`): "the capability is the only way to reach the foreign call" was not enforced.** `extern fn system[&c](command: &c [byte]) -> [] c_int;`, with no `Ffi`
+> parameter and an empty row, was accepted, ran a shell on both backends, and left `lex-sys authority` saying `"bounded": true`. A foreign function now borrows exactly one `Ffi`, naming
+> one library (`foreign-declaration`). The same document makes the scope a set, so one program can hold `libc` and `libssl` together, and has the report list every reachable symbol as
+> `scope:symbol`. The `-l`/`-L` flags are the build's and do not appear in the report.

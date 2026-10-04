@@ -912,7 +912,18 @@ pub(crate) fn resolve_type_at(
                         span,
                     ));
                 }
-                (Type::Named(def.def, args.clone()), def.generics.len())
+                // `docs/foreign-authority.md` section 4: the scope an `Ffi` is
+                // written with is a set of libraries, and the type is its
+                // canonical spelling, so `Ffi("libssl,libc")` and
+                // `Ffi("libc,libssl")` are one type.
+                let mut args = args.clone();
+                if def.def.0 as usize == PRELUDE_FFI
+                    && let Some(Type::Lit(scope)) = args.first_mut()
+                {
+                    *scope = parse_scope(scope)
+                        .map_err(|why| Diagnostic::new(Rule::ForeignScope, why, span))?;
+                }
+                (Type::Named(def.def, args), def.generics.len())
             }
             None => {
                 return Err(Diagnostic::new(

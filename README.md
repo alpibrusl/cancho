@@ -157,7 +157,8 @@ never touches
 
 `--output json` gives the same report as data and **fails closed**: its
 first field is `"bounded"`, `false` for any program that reaches foreign
-code. Exit codes are semantic throughout: `0` success, `1` refused with
+code, and the second is `"unbounded_by"`: exactly which foreign symbols,
+as `scope:symbol` (`docs/foreign-authority.md`). Exit codes are semantic throughout: `0` success, `1` refused with
 a located diagnostic, `2` the command line was wrong, `3` the
 environment failed, and (`test` only) `4` a test failed.
 
