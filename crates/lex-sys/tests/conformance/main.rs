@@ -52,6 +52,7 @@ mod ecdsa;
 mod file_writes;
 mod filesystem;
 mod floats;
+mod foreign_authority;
 mod formatting;
 mod http;
 mod http_server;

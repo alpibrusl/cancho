@@ -29,7 +29,7 @@ lex-sys test tests/*.ls --std              # run every `fn test_*`; exit 4 if on
 
 `check` reports **every** independent refusal, not the first. On a
 failure, read the `rule` field rather than the sentence: it is a stable
-name, there are 56 of them, and `docs/agent-errors.md` is the contract.
+name, there are 57 of them, and `docs/agent-errors.md` is the contract.
 One of them, `internal`, is the compiler's own failure, not your
 program's (`docs/internal-errors.md`).
 
@@ -215,6 +215,39 @@ fn main(world: World) -> [] int {
     return status;
 }
 ```
+
+### 3.3 Foreign code: say which library, and read which symbols
+
+`Ffi` is the one capability whose label does not bound what it authorises, so a program that calls C reports `bounded: false`. What it reports *with* that is exact:
+`lex-sys authority` lists every foreign symbol the program can reach as `scope:symbol` (`unbounded_by`, one per line in `--output json`, so a CI pin diffs an added symbol as one added
+line). A foreign function borrows **exactly one** `Ffi`, naming **one** library (anything else is `foreign-declaration`: a declaration with no capability used to be accepted and
+reported `bounded: true`). A program that calls two libraries narrows to a **set**, written in any order and answered alphabetically, and lends each function only what it needs:
+
+```lex-sys
+edition 5;
+
+extern fn labs[&f](ffi: &f Ffi("libc"), n: int) -> [ffi("libc")] int;
+extern fn pthread_self[&f](ffi: &f Ffi("libpthread")) -> [ffi("libpthread")] int;
+
+fn magnitude[&f](ffi: &f Ffi("libc"), n: int) -> [ffi("libc")] int {
+    return labs(ffi, n);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(io); release(fs); release(heap); release(args); release(net); release(clock);
+    let native = narrow(ffi, "libpthread,libc");
+    var status = 1;
+    borrow native as &f in {
+        if magnitude(f, 0 - 7) == 7 && pthread_self(f) != 0 { status = 0; }
+    }
+    release(native);
+    return status;
+}
+```
+
+The library in `Ffi("...")` is a **claim** the declaration makes; the symbol is the fact. A set is not a text prefix (`Ffi("libc")` no longer narrows to `Ffi("libcrypto")`), and a
+malformed one is `foreign-scope` (`docs/foreign-authority.md`).
 
 ---
 

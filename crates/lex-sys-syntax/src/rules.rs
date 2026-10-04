@@ -43,6 +43,7 @@ pub enum Rule {
     FieldOrder,
     ForeignBoundaryType,
     ForeignDeclaration,
+    ForeignScope,
     InfiniteType,
     /// The compiler failed on a program it had accepted
     /// (`docs/internal-errors.md`). No fixture reaches it on purpose.
@@ -90,7 +91,7 @@ pub enum Rule {
 
 impl Rule {
     /// Every rule, in tag order. The catalogue as data.
-    pub const ALL: [Rule; 56] = [
+    pub const ALL: [Rule; 57] = [
         Rule::AmbiguousType,
         Rule::ArityMismatch,
         Rule::AssignToImmutable,
@@ -106,6 +107,7 @@ impl Rule {
         Rule::FieldOrder,
         Rule::ForeignBoundaryType,
         Rule::ForeignDeclaration,
+        Rule::ForeignScope,
         Rule::InfiniteType,
         Rule::Internal,
         Rule::LinearUseAfterMove,
@@ -167,6 +169,7 @@ impl Rule {
             Rule::FieldOrder => "field-order",
             Rule::ForeignBoundaryType => "foreign-boundary-type",
             Rule::ForeignDeclaration => "foreign-declaration",
+            Rule::ForeignScope => "foreign-scope",
             Rule::InfiniteType => "infinite-type",
             Rule::Internal => "internal",
             Rule::LinearUseAfterMove => "linear-use-after-move",
@@ -279,7 +282,12 @@ impl Rule {
             }
             Rule::ForeignDeclaration => {
                 "A foreign declaration names one library and one symbol, and that pairing is \
-                 unique in a program."
+                 unique in a program, and the function is reached only through the one `Ffi` \
+                 capability that names that library."
+            }
+            Rule::ForeignScope => {
+                "The scope of an `Ffi` is the set of libraries it names: letters, digits, `_`, \
+                 `.`, `+` and `-`, comma separated, each once, such as `\"libc,libssl\"`."
             }
             Rule::InfiniteType => {
                 "A type that contains itself has no finite size, so a `Box` has to sit somewhere on \

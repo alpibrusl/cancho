@@ -190,6 +190,10 @@ impl Label {
                 (Some(mine), Some(theirs)) if self.name == "signals" => {
                     signal_set_covers(mine, theirs)
                 }
+                // `docs/foreign-authority.md` section 4: the same for a set
+                // of libraries. `ffi("libc")` is a prefix of `ffi("libcrypto")`
+                // as text and covers nothing of it.
+                (Some(mine), Some(theirs)) if self.name == "ffi" => scope_covers(mine, theirs),
                 (Some(mine), Some(theirs)) => theirs.starts_with(mine.as_str()),
                 _ => false,
             }

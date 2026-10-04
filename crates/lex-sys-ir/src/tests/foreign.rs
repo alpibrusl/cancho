@@ -89,8 +89,8 @@ fn a_foreign_name_is_not_also_a_written_function() {
 
 #[test]
 fn narrowing_goes_one_way() {
-    // §7.4: prefix extension, and `libc` is a prefix of `libcrypto`, so
-    // the capability over `libcrypto` is the narrower of the two.
+    // §7.4: a scope is a set of libraries (`docs/foreign-authority.md`
+    // section 4), and `{libc}` is not a subset of `{libcrypto}`.
     let message = refused(
         "fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); \
              release(io); let crypto = narrow(ffi, \"libcrypto\"); \
@@ -195,4 +195,151 @@ fn walk(stmt: &Stmt, found: &mut u32) {
         }
         _ => {}
     }
+}
+
+// ---- `docs/foreign-authority.md`: the scope is a set of libraries ---------
+
+/// Two libraries in one program: `labs` is declared under `libc` and
+/// `pthread_self` under `libpthread`, and `main` holds both in one capability.
+const TWO: &str = "extern fn labs[&f](ffi: &f Ffi(\"libc\"), n: int) -> [ffi(\"libc\")] int; \
+     extern fn pthread_self[&f](ffi: &f Ffi(\"libpthread\")) -> [ffi(\"libpthread\")] int; ";
+
+fn two_libraries(extra_fns: &str, body: &str) -> String {
+    format!(
+        "{TWO}{extra_fns} fn main(world: World) -> [] int {{ \
+             let Split {{ io, ffi, fs, heap, args }} = split(world); release(args); release(heap); release(fs); release(io); \
+             let native = narrow(ffi, \"libpthread,libc\"); var n = 0; \
+             borrow native as &f in {{ {body} }} \
+             release(native); return n; }}"
+    )
+}
+
+#[test]
+fn one_capability_over_two_libraries_calls_into_both() {
+    let program = accepted(&two_libraries("", "n = labs(f, 0 - 7) + pthread_self(f);"));
+    let main = program.func(program.find("main").expect("main"));
+    let labels: Vec<String> = main.performs.labels().iter().map(|l| l.to_string()).collect();
+    assert_eq!(labels, ["ffi(\"libc\")", "ffi(\"libpthread\")"]);
+}
+
+#[test]
+fn a_helper_is_lent_the_part_of_the_capability_it_needs() {
+    let helper = "fn mag[&f](ffi: &f Ffi(\"libc\"), n: int) -> [ffi(\"libc\")] int { return labs(ffi, n); } ";
+    accepted(&two_libraries(helper, "n = mag(f, 0 - 7);"));
+}
+
+#[test]
+fn a_helper_cannot_be_lent_a_library_the_capability_lacks() {
+    let helper = "fn me[&f](ffi: &f Ffi(\"libm\")) -> [] int { return 0; } ";
+    let message = refused(&two_libraries(helper, "n = me(f);"));
+    assert!(message.contains("expected `\"libm\"`"), "{message}");
+}
+
+#[test]
+fn the_root_is_not_lent_without_narrowing() {
+    // The coercion is attenuation of a narrowed capability. The root covers
+    // every library, but a program says which it calls by narrowing.
+    let helper = "fn mag[&f](ffi: &f Ffi(\"libc\"), n: int) -> [ffi(\"libc\")] int { return labs(ffi, n); } ";
+    let message = refused(&format!(
+        "{TWO}{helper} fn main(world: World) -> [] int {{ \
+             let Split {{ io, ffi, fs, heap, args }} = split(world); release(args); release(heap); release(fs); release(io); \
+             var n = 0; borrow ffi as &f in {{ n = mag(f, 1); }} release(ffi); return n; }}"
+    ));
+    assert!(message.contains("expected `\"libc\"`, found `\"\"`"), "{message}");
+}
+
+#[test]
+fn an_owned_capability_does_not_attenuate_by_assignment() {
+    // Only a reference is lent narrower; an owned `Ffi` changes scope by
+    // `narrow`, which consumes it.
+    let message = refused(
+        "fn take(c: Ffi(\"libc\")) -> [] int { release(c); return 0; } \
+         fn main(world: World) -> [] int { \
+             let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(io); \
+             let both = narrow(ffi, \"libc,libm\"); return take(both); }",
+    );
+    assert!(message.contains("expected `\"libc\"`, found `\"libc,libm\"`"), "{message}");
+}
+
+#[test]
+fn a_scope_narrows_to_a_subset_in_any_spelling() {
+    accepted(
+        "fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(io); \
+             let both = narrow(ffi, \"libm,libc\"); let one = narrow(both, \"libc\"); release(one); return 0; }",
+    );
+}
+
+#[test]
+fn a_scope_does_not_narrow_to_a_library_it_lacks() {
+    let message = refused(
+        "fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(io); \
+             let one = narrow(ffi, \"libc\"); let other = narrow(one, \"libc,libm\"); release(other); return 0; }",
+    );
+    assert!(message.contains("never widened"), "{message}");
+}
+
+#[test]
+fn a_prefix_is_no_longer_a_narrowing() {
+    // `libcrypto` starts with `libc`, and used to count as narrower.
+    let message = refused(
+        "fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(io); \
+             let one = narrow(ffi, \"libc\"); let other = narrow(one, \"libcrypto\"); release(other); return 0; }",
+    );
+    assert!(message.contains("never widened"), "{message}");
+}
+
+#[test]
+fn a_malformed_scope_is_refused_where_it_is_written() {
+    for bad in ["libc,", "libc,libc", "lib c", ""] {
+        let rule = lower_src(&format!(
+            "fn main(world: World) -> [] int {{ let Split {{ io, ffi, fs, heap, args }} = split(world); release(args); release(heap); release(fs); release(io); \
+                 let one = narrow(ffi, \"{bad}\"); release(one); return 0; }}"
+        ))
+        .expect_err(bad)
+        .rule;
+        let want = if bad.is_empty() { "capability-not-narrowable" } else { "foreign-scope" };
+        assert_eq!(rule.tag(), want, "`{bad}`");
+    }
+}
+
+#[test]
+fn a_scope_in_a_type_is_canonical_and_checked() {
+    // Written unsorted, it is the same type the sorted `narrow` answers.
+    accepted(&two_libraries(
+        "fn both[&f](ffi: &f Ffi(\"libpthread,libc\")) -> [] int { return 0; } ",
+        "n = both(f);",
+    ));
+    let rule = lower_src(&two_libraries(
+        "fn bad[&f](ffi: &f Ffi(\"libc,,libm\")) -> [] int { return 0; } ",
+        "",
+    ))
+    .expect_err("a malformed scope in a type")
+    .rule;
+    assert_eq!(rule.tag(), "foreign-scope");
+}
+
+#[test]
+fn a_foreign_function_is_reached_through_one_capability() {
+    // Measured: `system` with no capability and the row `[]` ran a shell
+    // while the authority report said `bounded: true`.
+    let none = refused(&format!("extern fn system[&c](command: &c [byte]) -> [] int;{MAIN}"));
+    assert!(none.contains("borrows 0 `Ffi` capabilities"), "{none}");
+
+    let other_capability = refused(&format!(
+        "extern fn tick[&i](io: &!i Io) -> [err_write, io_read, io_write] int;{MAIN}"
+    ));
+    assert!(other_capability.contains("borrows 0 `Ffi` capabilities"), "{other_capability}");
+
+    let two = refused(&format!(
+        "extern fn f[&a, &b](x: &a Ffi(\"libc\"), y: &b Ffi(\"libm\")) -> [ffi(\"libc\"), ffi(\"libm\")] int;{MAIN}"
+    ));
+    assert!(two.contains("borrows 2 `Ffi` capabilities"), "{two}");
+}
+
+#[test]
+fn a_foreign_declaration_names_a_single_library() {
+    let message = refused(&format!(
+        "extern fn f[&a](x: &a Ffi(\"libc,libm\")) -> [ffi(\"libc,libm\")] int;{MAIN}"
+    ));
+    assert!(message.contains("names several libraries"), "{message}");
 }
