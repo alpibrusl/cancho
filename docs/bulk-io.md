@@ -143,6 +143,27 @@ Output has no such question: it wrote the bytes or the process is gone.
 So the two sides are not symmetric and pretending otherwise would ship
 the harder one half-answered.
 
+> **Corrected ([`agent-toolbox.md`](agent-toolbox.md) §2.1).** *"it wrote
+> the bytes or the process is gone"* is false for a stream that fails.
+> `write_bytes` is `fwrite` on the C `stdout` stream
+> (`crates/lex-sys-codegen-llvm/src/body/expr.rs`), which is buffered,
+> and the count it answers is what was handed to the buffer, not what
+> reached the file. Measured with the prebuilt compiler: a program that
+> writes `hello\n` through `io.write_all` is answered `6` and **exits
+> with its own status** when standard output is closed (`>&-`) and when
+> it is `/dev/full`, where `strace` shows the one `write` failing with
+> `ENOSPC` at exit and nothing looking at the result. (Once the stdio
+> buffer fills, a failing flush does surface, as a *short* count: 1,000
+> sixty-five-byte writes saw 15 short to `/dev/full`. So the failure is
+> detectable per call, except for the last buffer's worth.) So output *does*
+> have a failure outcome, it is unobservable from the program, and a
+> tool that reports success after a failed flush is the silent-wrong
+> answer this language exists to remove. The same buffer is why a `trap`
+> loses everything not yet flushed (`standard-error.md` §3.3 measures
+> the same fact from the other side). Not fixed here: it is a language
+> gap, and `agent-toolbox.md` §2.1 carries the reproducer and the
+> slice that would close it.
+
 ---
 
 ## 4. What it is worth

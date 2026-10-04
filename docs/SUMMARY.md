@@ -121,6 +121,7 @@
 
 - [Refusals a machine can read](agent-errors.md)
 - [A tool shaped for an agent](agent-tools.md)
+- [An agent toolbox](agent-toolbox.md)
 - [Fuzzing the compiler](fuzzing.md)
 - [The first page](first-page.md)
 
