@@ -65,6 +65,7 @@ mod ports;
 mod project;
 mod refusals;
 mod release;
+mod rsa;
 mod sockets;
 mod testing;
 mod traps;
