@@ -504,6 +504,10 @@ fn rows_stay_exact_per_library() {
 /// `flags`, `flags` in `mask`, `mask` in `buf`. Measured with `strace` as
 /// `statx(AT_FDCWD, "/etc/passwd", AT_STATX_SYNC_AS_STAT|0xc, 0, 0x4) =
 /// -1 EINVAL`. When a bare-pointer parameter exists this turns red.
+///
+/// Linux only: `statx` is a Linux call and macOS's libc has no such symbol
+/// (the program does not build there), so the reproducer cannot run on it.
+#[cfg(target_os = "linux")]
 #[test]
 fn a_path_cannot_be_passed_to_statx_as_c_has_it() {
     let dir = scratch("foreign-statx");
