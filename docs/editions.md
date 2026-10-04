@@ -304,7 +304,10 @@ Edition 6 also has the **directory handle**
 `DirOpened`, the builtins `open_dir`, `dir_enter`, `dir_open_read`,
 `dir_close`, `dir_open_new`, `dir_open_append`, `dir_rename`, `dir_remove` and
 `dir_sync`, and the labels `dir_read` and `dir_write`. Purely additive, like edition 5's
-later slices: no edition-6 file in this repository declared any of the names.
+later slices: no edition-6 file in this repository declared any of the names. The same holds
+for **directory listing** ([`directory-listing.md`](directory-listing.md)): the
+types `DirList`, `Listing` and `Listed` and the builtins `dir_list`, `dir_next`
+and `dir_list_close`, under the existing `dir_read`.
 
 ---
 

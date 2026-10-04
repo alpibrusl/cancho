@@ -166,10 +166,14 @@ directory holds.
 * Slice 2 adds: `dir_stat` on each hostile entry equal to `lstat`'s kind, size and `int(st_mtime)`; the dangling link
   a link, not `ENOENT`; the FIFO answered without blocking; `..`, `.`, `a/b`, an empty name and a 256-byte name
   `EINVAL` with no call.
-* **Mutants**, on each backend: `d_name` read at the wrong offset for the target; `.` or `..` leaked; `d_type` mapped
-  wrong; `fstatat` without `AT_SYMLINK_NOFOLLOW`; `st_size` or `st_mtim` at the wrong offset; the short-buffer check
-  skipped; the name check on `dir_stat` skipped. In `std.dirs`: unsorted, or sorted as signed bytes. In the IR: the
-  steps performing nothing, or at edition 5.
+* **Mutants (slice 1): 19, all killed.** On each backend: `d_name` read one byte off; `d_type` read one byte off;
+  `d_type` mapped wrong (a directory called a file); `.` and `..` both leaked; `..` alone leaked; the short-buffer check
+  skipped. In `std.dirs`: unsorted, reversed, the cap ignored. In the IR: the steps performing nothing, the builtins at
+  edition 5, a `DirList` that a pattern may take apart, and owning a `DirList` not discharging `dir_read`. The last
+  survived the first run -- no fixture owned a listing outright -- and the accept fixture's `drain`, row `[]`, was added
+  for it; the Cranelift `d_type` mutant first missed its target after `cargo fmt` rewrapped the line and was re-run.
+  Slice 2 adds `fstatat` without `AT_SYMLINK_NOFOLLOW`, `st_size` or `st_mtim` at the wrong offset, and `dir_stat`'s
+  name check skipped.
 
 ## 7. The decision, and what this does not do
 

@@ -49,6 +49,34 @@ fn counted[&d](dir: &d Dir) -> [dir_read] int {
     return count;
 }
 
+// Owning a listing outright discharges `dir_read`, as owning a `File`
+// discharges `file_read`: this row is `[]`. Answers how many names it read.
+fn drain(list: DirList) -> [] int {
+    var stream = list;
+    var count = 0;
+    region a {
+        let name = alloc_slice[a](255, byte_of(0));
+        var going = true;
+        while going {
+            borrow mut stream as &!s in {
+                match dir_next(s, name) {
+                    Listed::Name(n, kind) => {
+                        count = count + 1;
+                    }
+                    Listed::End => {
+                        going = false;
+                    }
+                    Listed::Failed(e) => {
+                        going = false;
+                    }
+                }
+            }
+        }
+    }
+    dir_list_close(stream);
+    return count;
+}
+
 // All of them, sorted: answers 0 when every check holds.
 fn check[&h, &d](heap: &!h Heap, dir: &d Dir) -> [heap, dir_read] int {
     var bad = 0;
@@ -56,6 +84,16 @@ fn check[&h, &d](heap: &!h Heap, dir: &d Dir) -> [heap, dir_read] int {
     borrow names as &n in {
         if dirs.count(n) != counted(dir) || dirs.count(n) == 0 {
             bad = bad + 1;
+        }
+        match dir_list(dir) {
+            Listing::Ok(l) => {
+                if drain(l) != dirs.count(n) {
+                    bad = bad + 16;
+                }
+            }
+            Listing::Failed(e) => {
+                bad = bad + 16;
+            }
         }
         var k = 1;
         while k < dirs.count(n) {
