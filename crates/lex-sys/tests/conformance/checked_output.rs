@@ -88,8 +88,23 @@ fn run(exe: &Path, arg: &str, redirect: &str) -> (i32, Vec<u8>) {
     (out.status.code().expect("an exit status, not a signal"), out.stdout)
 }
 
+/// Whether this machine has `/dev/full`. Linux does and macOS does not (there the shell's redirect
+/// itself fails, before the program runs). On Linux its absence is a failure, not a skip, so the
+/// `ENOSPC` cases can never quietly stop running where they can run; on macOS the closed descriptor
+/// below is the case that observes a failed write.
+fn has_full_device() -> bool {
+    let present = Path::new("/dev/full").exists();
+    if cfg!(target_os = "linux") {
+        assert!(present, "/dev/full is missing on Linux");
+    }
+    present
+}
+
 #[test]
 fn a_full_device_is_enospc_on_both_backends() {
+    if !has_full_device() {
+        return;
+    }
     for backend in BACKENDS {
         let dir = scratch(&format!("checked-output-full-{backend}"));
         let exe = build(&dir, backend);
@@ -113,7 +128,9 @@ fn an_earlier_failure_is_still_reported_and_keeps_being_reported() {
     for backend in BACKENDS {
         let dir = scratch(&format!("checked-output-earlier-{backend}"));
         let exe = build(&dir, backend);
-        assert_eq!(run(&exe, "big", "> /dev/full").0, 100 + 5, "{backend}: /dev/full");
+        if has_full_device() {
+            assert_eq!(run(&exe, "big", "> /dev/full").0, 100 + 5, "{backend}: /dev/full");
+        }
         assert_eq!(run(&exe, "big", ">&-").0, 100 + 5, "{backend}: closed");
     }
 }

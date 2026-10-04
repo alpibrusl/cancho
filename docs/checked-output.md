@@ -49,7 +49,10 @@ What a program does with it: write, and before exiting call `flush_out`; on `Fai
 
 ## 3. What it is checked by
 
-`tests/conformance/checked_output.rs`, on **both backends**, judged from outside the program:
+`tests/conformance/checked_output.rs`, on **both backends**, judged from outside the program. The `/dev/full` cases run where the
+device exists -- on Linux, where its absence fails the test rather than skipping it; macOS has none, so there the closed descriptor is
+the failed write that is observed (the first CI run of this slice failed on darwin for exactly that reason, in the shell's redirect,
+before the program ran):
 
 * to `/dev/full`: a program that writes six bytes and flushes is answered `Failed(28)` (`ENOSPC`);
 * to a closed standard output: `Failed(9)` (`EBADF`);
