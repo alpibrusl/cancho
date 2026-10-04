@@ -3,7 +3,7 @@
 Status: **slices 1 and 2 built**, edition 6, both backends: open a directory, step into a child directory, open a
 file in it for reading (slice 1, #250), and create, append to, rename, remove and sync beneath it (slice 2). Linux
 measured; Darwin's flags and Apple AArch64's variadic call are written and run only by CI. Slice 3 (`lexsys-tools`
-on top) is below, not built. Issue #227, gap L6 of [`agent-toolbox.md`](agent-toolbox.md).
+on top) is built there (alpibrusl/lexsys-tools#4); §3 corrects what it said the row would become. Issue #227, gap L6 of [`agent-toolbox.md`](agent-toolbox.md).
 
 ## 1. Why
 
@@ -111,8 +111,16 @@ generators.
      nine integer parameters with `mode` the ninth, as `fcntl`'s already is (`native-sockets.md` §3). Every `openat`
      in a module goes through that one shape, slice 1's included, since a module holds one signature per symbol. The
      flags for both slices are one table in `lex_sys_ir::open_flags`.
-3. **`lexsys-tools`:** every tool opens `--root` (or `.`) with `open_dir` and every path beneath it with `std.dirs`;
-   its row says `dir_read` (and slice 2's label) instead of `fs_read("")`; M8's symlink test flips.
+3. **Built in `lexsys-tools`** (alpibrusl/lexsys-tools#4): every tool opens `--root` with `open_dir` and every path
+   beneath it one component at a time (its `toolbox.place`, which is `std.dirs.open_file`'s walk plus one probe: when
+   `dir_enter` answers `ENOTDIR`, the component is opened once more with `dir_open_read`, so a link to a directory is
+   `ELOOP` on Linux too, not indistinguishable from a plain file). `write` and `replace` lock, create, rename, remove
+   and sync beneath the parent `Dir`; M8's symlink test flipped to a refusal, under a new rule `path.symlink`.
+   *(Corrected.)* This item said the row would say `dir_read` "instead of `fs_read("")`". It does not: `open_dir`
+   spends `fs_read(p)`, and a reader without `--root` still opens by path, so every tool keeps `fs_read("")` and
+   gains `dir_read`. What disappears is **`fs_write("")`**: the writers hold `dir_write` and no path write at all.
+   Without `--root` there is nothing to be beneath, and a reader opens the path as given; `.` was not opened as a
+   root, because a working directory the process may not read would have broken every relative open.
 
 ## 4. What it is checked by
 
