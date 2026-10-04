@@ -32,6 +32,19 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         vec![self.builder.ins().iconst(types::I64, 0)]
     }
 
+    /// `copy_into(dst, src)` (`docs/bulk-copy.md`): all of `src` to the front of `dst`, as one `memmove`. `args` is the
+    /// destination's pointer and length, then the source's. Traps unless `len(src) <= len(dst)`; answers `len(src)`.
+    ///
+    /// `memmove` and not `memcpy`, because the two slices may be views of one buffer.
+    pub(crate) fn copy_into(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let (to, room, from, count) = (args[0], args[1], args[2], args[3]);
+        let past = self.builder.ins().icmp(IntCC::SignedGreaterThan, count, room);
+        self.builder.ins().trapnz(past, TrapCode::HEAP_OUT_OF_BOUNDS);
+        self.libc_call("memmove", &[pointer, pointer, pointer], &[pointer], &[to, from, count]);
+        vec![count]
+    }
+
     /// `borrow x as &r in { .. }` — give `x` a home in memory and point at it.
     ///
     /// A reference has to be an address, and until now nothing did: a slot

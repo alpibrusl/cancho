@@ -849,6 +849,17 @@ impl<'a> FuncEmitter<'a> {
                 }
                 self.copy_within(&args)
             }
+            // `docs/bulk-copy.md`: one bounds check, then one `memmove` between two slices.
+            Callee::Builtin(Builtin::CopyInto) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                if args.len() != 4 {
+                    return Err(format!(
+                        "`copy_into` needs 4 leaves but {} were given",
+                        args.len()
+                    ));
+                }
+                self.copy_into(&args)
+            }
             Callee::Builtin(Builtin::ConnWrite) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 if args.len() != 3 {

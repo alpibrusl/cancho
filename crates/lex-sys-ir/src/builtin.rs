@@ -93,6 +93,13 @@ pub enum Builtin {
     /// `src + n <= len(buf)` (the sums are not formed, so nothing can overflow). Answers 0. Pure and capability-free:
     /// it reads and writes only the slice it was given. Edition 5. `docs/memory-moves.md`.
     CopyWithin,
+    /// `copy_into(dst: &!d [byte], src: &s [byte]) -> int` — copy all of `src` to the front of `dst`, as `memmove` does,
+    /// and answer `len(src)`.
+    ///
+    /// Bounds-checked like indexing: it traps unless `len(src) <= len(dst)`. The two slices may be views of one buffer,
+    /// so the copy is defined for overlap. Pure and capability-free: it touches only the slices it was given. Edition 5.
+    /// `docs/bulk-copy.md`.
+    CopyInto,
     /// `fork_clock(c: &x Clock) -> Clock` — a second owned `Clock` from a
     /// shared borrow of the first (`docs/parallelism.md` §9).
     ///
@@ -501,6 +508,7 @@ impl Builtin {
         Builtin::ForkHeap,
         Builtin::ForkClock,
         Builtin::CopyWithin,
+        Builtin::CopyInto,
         Builtin::WrappingAdd,
         Builtin::WrappingSub,
         Builtin::WrappingMul,
@@ -582,6 +590,7 @@ impl Builtin {
             Builtin::ForkHeap => "fork_heap",
             Builtin::ForkClock => "fork_clock",
             Builtin::CopyWithin => "copy_within",
+            Builtin::CopyInto => "copy_into",
             Builtin::WrappingAdd => "wrapping_add",
             Builtin::WrappingSub => "wrapping_sub",
             Builtin::WrappingMul => "wrapping_mul",
@@ -698,6 +707,7 @@ impl Builtin {
             | Builtin::ConnClose
             | Builtin::ForkClock
             | Builtin::CopyWithin
+            | Builtin::CopyInto
             | Builtin::ListenerClose => 5,
             // `docs/file-writes.md`: edition 5, for the same reason --
             // `file_write` and `open_new` are names a program may already
@@ -795,6 +805,8 @@ impl Builtin {
             | Builtin::CopyWithin
             | Builtin::ClockMs
             | Builtin::ClockUnixMs => 1,
+            // The destination's region and the source's.
+            Builtin::CopyInto => 2,
             _ => 0,
         }
     }
@@ -1161,6 +1173,21 @@ impl Builtin {
                     Type::Int,
                     Type::Int,
                     Type::Int,
+                ],
+                Type::Int,
+            ),
+            Builtin::CopyInto => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
                 ],
                 Type::Int,
             ),
