@@ -182,6 +182,7 @@ fn leaves_into(ty: &Type, program: &Program, out: &mut Vec<LKind>) -> Result<(),
                     | lex_sys_ir::PRELUDE_LISTENER
                     | lex_sys_ir::PRELUDE_CONN
                     | lex_sys_ir::PRELUDE_POLLER
+                    | lex_sys_ir::PRELUDE_SIGNAL_WATCH
             ) =>
         {
             out.push(LKind::I64);
@@ -341,8 +342,18 @@ pub(crate) fn emit_module(
                 "kevent",
                 "i32 @kevent(i32, ptr, i32, ptr, i32, ptr)",
             );
+            // `docs/signals.md` section 5: a signal is ignored, then watched with `EVFILT_SIGNAL`.
+            declare_libc_unless_own(&mut text, "sigaction", "i32 @sigaction(i32, ptr, ptr)");
+            declare_libc_unless_own(&mut text, "raise", "i32 @raise(i32)");
         }
         _ => {
+            // `docs/signals.md` section 5: block the set, read it from a `signalfd`.
+            declare_libc_unless_own(
+                &mut text,
+                "pthread_sigmask",
+                "i32 @pthread_sigmask(i32, ptr, ptr)",
+            );
+            declare_libc_unless_own(&mut text, "signalfd", "i32 @signalfd(i32, ptr, i32)");
             declare_libc_unless_own(&mut text, "epoll_create1", "i32 @epoll_create1(i32)");
             declare_libc_unless_own(&mut text, "epoll_ctl", "i32 @epoll_ctl(i32, i32, i32, ptr)");
             declare_libc_unless_own(&mut text, "epoll_wait", "i32 @epoll_wait(i32, ptr, i32, i32)");
@@ -498,6 +509,13 @@ pub(crate) fn emit_module(
         "@{} = internal global [{} x i32] zeroinitializer\n",
         lex_sys_ir::FD_EPOCH_GLOBAL,
         lex_sys_ir::FD_EPOCH_SLOTS
+    ));
+    // The signal claim's two words (`docs/signals.md` section 3): the native
+    // mask of every signal a live `SignalWatch` holds, then how many spawned
+    // threads have not been joined. Zero at start, in bss.
+    text.push_str(&format!(
+        "@{} = internal global [2 x i64] zeroinitializer\n",
+        lex_sys_ir::SIGNAL_STATE_GLOBAL
     ));
     text.push_str("@lexs_argc = internal global i64 0\n");
     text.push_str("@lexs_argv = internal global ptr null\n\n");

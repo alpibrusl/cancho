@@ -857,3 +857,58 @@ fn main(world: World) -> [] int {
         "a `byte` comparison should compare at `i8`, not be silently widened to `i64`"
     );
 }
+
+/// `docs/signals.md` section 5: a signal claim builds for both binary
+/// formats on both architectures that run macOS, through a real `clang`, and
+/// each kernel's module calls its own facility. Darwin is built and not run
+/// here: it is the only check that path gets on a Linux host.
+#[test]
+fn a_signal_claim_builds_for_every_target_with_each_kernels_calls() {
+    const CLAIM: &str = "edition 6;\n\
+         fn main(world: World) -> [] int {\n\
+             let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);\n\
+             release(io); release(ffi); release(fs); release(heap); release(args); release(net);\n\
+             release(clock);\n\
+             let claim = narrow(signals, \"TERM,USR1\");\n\
+             var status = 1;\n\
+             borrow claim as &s in {\n\
+                 match signals_watch(s) {\n\
+                     Watching::Ok(w) => {\n\
+                         var watch = w;\n\
+                         borrow mut watch as &!wh in { signals_pending(wh); }\n\
+                         status = signals_close(watch);\n\
+                     }\n\
+                     Watching::Failed(e) => { status = 2; }\n\
+                 }\n\
+             }\n\
+             release(claim);\n\
+             return status;\n\
+         }\n";
+    let ast = parse(CLAIM).expect("should parse");
+    let program = lex_sys_ir::lower(&ast).expect("should lower");
+    for triple in [
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-apple-darwin",
+        "aarch64-apple-darwin",
+    ] {
+        let triple: Triple = triple.parse().expect("a valid triple");
+        let text = emit::emit_module(&program, "main", &triple)
+            .unwrap_or_else(|(_, message)| panic!("{triple}: {message}"));
+        let calls = |name: &str| text.contains(&format!("call i32 @{name}("));
+        if triple.to_string().contains("darwin") {
+            for call in ["sigaction", "kqueue", "kevent", "raise", "close"] {
+                assert!(calls(call), "{triple} should call `{call}`");
+            }
+            assert!(!calls("signalfd") && !calls("pthread_sigmask"), "{triple}");
+        } else {
+            for call in ["pthread_sigmask", "signalfd", "close"] {
+                assert!(calls(call), "{triple} should call `{call}`");
+            }
+            assert!(!calls("raise") && !calls("sigaction"), "{triple}");
+        }
+        compile_object_for(&program, "main", triple.clone()).unwrap_or_else(|e| {
+            panic!("`clang` should accept the module for {triple}: {}", e.message)
+        });
+    }
+}

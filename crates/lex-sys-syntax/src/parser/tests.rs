@@ -656,14 +656,22 @@ fn edition_five_is_accepted() {
     assert_eq!(ast.edition_of(ItemId(item.unwrap() as u32)), 5);
 }
 
-/// There is nothing later than edition 5 to opt into yet
+/// Edition 6 is the signal capability (`docs/signals.md`).
+#[test]
+fn edition_six_is_accepted() {
+    let (ast, decl) = one_fn("edition 6;\nfn f() -> [] int { return 1; }");
+    let item = ast.items.iter().position(|i| matches!(i, Item::Fn(d) if d.name == decl.name));
+    assert_eq!(ast.edition_of(ItemId(item.unwrap() as u32)), 6);
+}
+
+/// There is nothing later than edition 6 to opt into yet
 /// (`docs/editions.md` §7), so any other number is refused rather than
 /// silently accepted.
 #[test]
 fn an_unknown_edition_is_refused() {
-    let err = parse("edition 6;\nfn f() -> [] int { return 1; }").unwrap_err();
+    let err = parse("edition 7;\nfn f() -> [] int { return 1; }").unwrap_err();
     assert_eq!(err.rule, Rule::UnknownEdition);
-    assert!(err.message.contains("unknown edition 6"), "{}", err.message);
+    assert!(err.message.contains("unknown edition 7"), "{}", err.message);
 }
 
 /// The marker comes before even `module` (§6.1) — checked once, ahead

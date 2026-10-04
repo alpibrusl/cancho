@@ -146,6 +146,9 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                 let status = self.builder.inst_results(call)[0];
                 let failed = self.builder.ins().icmp_imm(IntCC::NotEqual, status, 0);
                 self.builder.ins().trapnz(failed, TrapCode::HEAP_OUT_OF_BOUNDS);
+                // The thread has ended: `signals_watch` may be granted again
+                // once the last one has (`docs/signals.md` section 3).
+                self.count_thread(-1);
                 match leaves(ret, self.program, pointer).as_slice() {
                     [] => Vec::new(),
                     [kind] => {
@@ -453,6 +456,10 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                         // program pretends is a real thread.
                         let failed = self.builder.ins().icmp_imm(IntCC::NotEqual, status, 0);
                         self.builder.ins().trapnz(failed, TrapCode::HEAP_OUT_OF_BOUNDS);
+                        // A running thread forbids a new signal claim: it
+                        // would not have the signals blocked
+                        // (`docs/signals.md` section 3).
+                        self.count_thread(1);
                         vec![self.builder.ins().load(pointer, MemFlags::trusted(), thread_slot, 0)]
                     }
                     Callee::Fn(id) => {
@@ -621,6 +628,13 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::PollerNew) => self.poller_new(),
                     Callee::Builtin(Builtin::ClockMs) => self.clock_ms(false),
                     Callee::Builtin(Builtin::ClockUnixMs) => self.clock_ms(true),
+                    // `docs/signals.md` section 5: the claim.
+                    Callee::Builtin(Builtin::SignalsWatch) => self.signals_watch(&args),
+                    Callee::Builtin(Builtin::SignalsPending) => self.signals_pending(&args),
+                    Callee::Builtin(Builtin::SignalsClose) => self.signals_close(&args),
+                    Callee::Builtin(Builtin::PollerAddSignals) => {
+                        self.poller_ctl(&args, true, false)
+                    }
                     Callee::Builtin(Builtin::ConnDetach) => self.conn_detach(&args),
                     Callee::Builtin(Builtin::ConnAttach) => self.conn_attach(&args),
                     Callee::Builtin(Builtin::PollerAddListener) => {

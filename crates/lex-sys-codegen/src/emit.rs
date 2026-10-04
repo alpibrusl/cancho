@@ -289,6 +289,21 @@ impl<'a> Emitter<'a> {
                 .map_err(|e| CodegenError::plain(e.to_string()))?;
         }
 
+        // The signal claim's two words (`docs/signals.md` section 3): the
+        // native mask of every signal a live `SignalWatch` holds, then how
+        // many spawned threads have not been joined. Zero at start, in bss.
+        {
+            let id = self
+                .module
+                .declare_data(lex_sys_ir::SIGNAL_STATE_GLOBAL, Linkage::Local, true, false)
+                .map_err(|e| CodegenError::plain(e.to_string()))?;
+            let mut description = DataDescription::new();
+            description.define_zeroinit(16);
+            self.module
+                .define_data(id, &description)
+                .map_err(|e| CodegenError::plain(e.to_string()))?;
+        }
+
         ctx.clear();
         ctx.func.signature = sig;
         {

@@ -753,6 +753,12 @@ pub const PRELUDE: &[&str] = &[
     "Attached",
     // `docs/file-writes.md` section 4.
     "Done",
+    // `docs/signals.md`: the signal capability, its claim, the answer of
+    // claiming, and `Split`'s eighth field; edition 6 only.
+    "Signals",
+    "SignalWatch",
+    "Watching",
+    "signals",
 ];
 
 impl Ast {
