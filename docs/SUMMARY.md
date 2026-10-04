@@ -84,6 +84,7 @@
 - [std.ed25519](ed25519.md)
 - [std.chacha20: ChaCha20-Poly1305](chacha20.md)
 - [SHA-384, HMAC and HKDF](hkdf.md)
+- [A TLS 1.3 client with no C library](tls-pure.md)
 
 # Compile time and program identity
 

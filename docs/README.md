@@ -440,6 +440,7 @@ not repeated here; a doc's own header carries its own detail.
 | [`ed25519.md`](ed25519.md) | `std.ed25519`: sign and verify | built |
 | [`chacha20.md`](chacha20.md) | `std.chacha20`: ChaCha20, Poly1305 and the AEAD (RFC 8439), for the pure TLS client | built; not independently reviewed |
 | [`hkdf.md`](hkdf.md) | SHA-384, `std.hmac` and `std.hkdf` for the TLS 1.3 key schedule; the 64 KiB trap every `std` hash had | built; not independently reviewed |
+| [`tls-pure.md`](tls-pure.md) | The TLS 1.3 client with no C library: where the code lives, the sans-io API both backends share, cipher policy, threat model, trust, refusal tags, open questions | design; nothing of the protocol built |
 | [`self-hosting.md`](self-hosting.md) | Whether lex-sys could host its own toolchain | run; decided not yet — no asker |
 | [`agent-cli.md`](agent-cli.md) | `lex-sys introspect`/`skill`: the CLI surface as data, imported from `lex-lang`'s ACLI integration | built; found a false-familiarity bug in the process (`-o`/`-l`/`-L` would have rendered as `--o`/`--l`/`--L`) |
 | [`next-phase.md`](next-phase.md) | Replacing episodic duplication/staleness hunts with a mechanical check, argued from `MANIFESTO.md` and three of this session's own mistakes | §3's real instance (10 examples duplicating `std.io`) migrated, 7 of them (§3.1 has the three exceptions); §4's own standing check, the actual proposal, not built yet |
