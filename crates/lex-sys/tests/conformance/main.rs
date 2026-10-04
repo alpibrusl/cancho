@@ -48,6 +48,7 @@ mod corpus;
 mod differential;
 mod docs;
 mod duplication;
+mod ecdsa;
 mod file_writes;
 mod filesystem;
 mod floats;
@@ -66,12 +67,15 @@ mod ports;
 mod project;
 mod refusals;
 mod release;
+mod rsa;
 mod sockets;
 mod testing;
 mod traps;
 mod vcs;
 mod vcs_remote;
 mod vcs_std;
+mod x25519;
+mod x509;
 
 const BIN: &str = env!("CARGO_BIN_EXE_lex-sys");
 
