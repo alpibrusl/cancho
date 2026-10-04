@@ -96,7 +96,7 @@ Eight signals are claimable. Each has a bit in the `int` that `signals_pending` 
 | `ALRM` | 64 | 14 | 14 | an `alarm` the program set through `Ffi` |
 | `WINCH` | 128 | 28 | 28 | the terminal changed size |
 
-`std.signals` names the bits (`signals.term()`, `signals.int()`, ...) and has `signals.has(mask, bit)`, so a program says `has(mask, signals.term())` and never `mask & 8`.
+`std.signals` names the bits (`signals.sigterm()`, `signals.sigint()`, ...) and has `signals.has(mask, bits)`, so a program says `signals.has(mask, signals.sigterm())` and never `mask & 8` (section 6).
 
 **Every other signal is refused at compile time with the rule `signal-not-claimable`**, in `narrow`, with a sentence that says which of three reasons applies:
 
@@ -124,15 +124,19 @@ The bitmask says "at least once since". A program that needs a count is not aski
 * A signal that arrived *between* the last `signals_pending` and the `signals_close` is not lost and is not swallowed: it is delivered when the claim ends, with the default action, which for `TERM`
   and `INT` ends the process. That is the second signal arriving before the first was acted on, and "kills at once" is what it was asked to do. A program that wants to discard it calls
   `signals_pending` last.
-* A signal whose disposition the process inherited as *ignored* (`nohup` ignores `HUP`) is claimable, and is back to the default, not to ignored, afterwards on macOS, and back to ignored on Linux
-  (section 5). The difference is observable only for a signal that was ignored before the claim.
+* A signal the process inherited as *ignored* (`nohup` ignores `HUP`; a shell runs a background job with `INT` and `QUIT` ignored) is claimable on both kernels, and is read as any other.
+  Afterwards it is **ignored again on Linux** (the claim never touched the disposition, only the mask) and **at the default on macOS** (the claim ignored it to watch it and cannot know what it
+  was). The difference is observable only for a signal that was ignored before the claim. The conformance suite found this the way it would be found in use: the tests were first run as
+  a background job, `INT` was ignored, and "the next `INT` kills at once" did not.
 
 **One claim at a time per signal.** Signals are process-wide, so two `SignalWatch`es over one signal would race to read it. A `signals_watch` over a signal another live `SignalWatch` already holds answers
-`Failed(EBUSY)` (16 on both kernels). Disjoint sets coexist. Closing frees the signals.
+`Failed(EBUSY)` (16 on both kernels), and closing the first frees it. `narrow` consumes the capability, so a program holds one set and the only way to reach the refusal is to borrow it twice;
+a library handed `&Signals("INT,TERM")` that claims it while the program's own claim is live gets `EBUSY` rather than a stolen signal. (Disjoint claims would coexist; nothing can make two disjoint
+capabilities yet, because there is no `fork_signals`, and nothing has asked for one.)
 
 **Threads.** Signals are process-wide and a signal mask is per thread. The rule has to hold identically on both kernels, so it is the strict one:
 
-* a `signals_watch` while **any spawned thread is still running** answers `Failed(EBUSY)`; watch first, then `spawn`;
+* a `signals_watch` while **any spawned thread has not been joined** answers `Failed(EBUSY)`; watch first, then `spawn`;
 * a thread spawned afterwards inherits the mask (Linux) or the process-wide disposition (macOS), so the signal cannot be taken by a thread that did not ask for it;
 * `signals_pending` and `signals_close` may be called from any thread. On Linux `signals_close` unblocks the signals in the calling thread, so it should be the thread that watched (the main
   thread; the others keep them blocked until they end, which is invisible, since the signal is delivered to a thread that does not block it).
@@ -152,8 +156,8 @@ a ready socket does. Closing the `SignalWatch` removes it from the `Poller` (the
 | `signals_watch` on the unnarrowed root | `capability-misused` | `signals_watch` |
 | a `SignalWatch` not closed, used after `signals_close`, or taken apart | `linear-value-unconsumed`, `linear-use-after-move`, `linear-value-taken-apart` | the linearity pass |
 | an undeclared `signals("INT")` or `signals_read` | `effect-not-declared` | the row |
-| `signals_*` named in a file below edition 6 | `unknown-name` | name resolution |
-| a seven-field `Split` pattern at edition 6 | `pattern-shape` | the destructuring |
+| `signals_*` called in a file below edition 6 | `not-a-function` (a type: `unknown-name`) | name resolution |
+| a seven-field `Split` pattern at edition 6 | `arity-mismatch` | the destructuring |
 
 `Failed(errno)` is the *runtime's* refusal: `EBUSY` (a live thread, or a signal another claim holds), or the kernel's own (`EMFILE` when `signalfd` or `kqueue` cannot make a descriptor).
 A failed `signals_watch` has changed nothing: it does not leave signals blocked.
@@ -180,14 +184,18 @@ signal as data, in its own loop, in the order it chooses.
 
 ## 6. `std.signals`
 
-A module of the eight bits as functions and one predicate, because a literal like `8` for `TERM` is a number a reader must look up:
+A module of the eight bits as functions and two predicates, because a literal like `8` for `TERM` is a number a reader must look up:
 
 ```
-signals.hup()  signals.int()  signals.quit()  signals.term()
-signals.usr1() signals.usr2() signals.alrm()  signals.winch()
-signals.has(mask, bit) -> bool          // mask & bit != 0
-signals.stop() -> int                   // INT | TERM | QUIT: the signals that mean "stop"
+signals.sighup()  signals.sigint()  signals.sigquit()  signals.sigterm()
+signals.sigusr1() signals.sigusr2() signals.sigalrm()  signals.sigwinch()
+signals.stop_signals() -> int           // INT | QUIT | TERM: the signals that mean "stop"
+signals.has(mask, bits) -> bool         // every bit of `bits` is in `mask`
+signals.any(mask, bits) -> bool         // some bit of `bits` is in `mask`
 ```
+
+The names carry the `sig` prefix because `int` is a type name and `signals.int()` does not read; they are not `stop()` because of the gap in section 10 (a local called `stop`, the
+natural name for the claim, hides `signals.stop`). It imports as `import std.signals as sg;` where a local is called `signals`, which `split` makes it.
 
 ## 7. What the hooks service changes
 
@@ -198,8 +206,8 @@ signals.stop() -> int                   // INT | TERM | QUIT: the signals that m
 ## 8. Where this deviates from the sockets precedent, and why
 
 * **Edition 6, not edition 5.** Slice 4 of `native-sockets.md` added `clock` to edition 5's `Split` because no edition-5 file destructured it yet (`native-sockets.md` section 10.2: "there were
-  none outside this document's own tests, which is the argument for adding it now rather than later"). That argument has expired: today 61 files in this repository (`examples/api`,
-  `examples/ocpp_ws`, `examples/tls_nb`, `tests/programs`, `packages/http-server`, ...) and every downstream service destructure seven fields, and `editions.md` section 5 is explicit that a field
+  none outside this document's own tests, which is the argument for adding it now rather than later"). That argument has expired: today 48 `.ls` files in this repository (`examples/api`,
+  `examples/ocpp_ws`, `examples/tls_nb`, `tests/accept`, `tests/reject`, `tests/programs`, ...), the programs embedded in three conformance modules, and every downstream service destructure seven fields, and `editions.md` section 5 is explicit that a field
   on `Split` is the *additive* kind of change, absorbed by an edition. So `Split` becomes a fourth declaration of one name (`PRELUDE_SPLIT_SIGNALS`), an edition-5 file's `split()` still answers
   seven fields, and `edition 6;` is edition 5 plus signals. No file moves.
 * **A capability and a handle, not one type.** The suggested `signals_pending(&Signals)` would make the capability carry state (a descriptor), which `Net` and `Clock` do not: they
@@ -209,8 +217,69 @@ signals.stop() -> int                   // INT | TERM | QUIT: the signals that m
 
 ## 9. What it is checked by
 
-(Filled in with the measurements; see the final section of this document as built.)
+`crates/lex-sys/tests/conformance/signals.rs` builds real programs on **both backends** and signals the real process with `kill(2)`; the programs speak on standard error and are driven by standard
+input, so a signal sent before a `p` is queued before the poll that must see it. Twenty tests:
 
-## 10. What is not verified
+| claim | test |
+|---|---|
+| each of the eight is delivered once: sent, polled, polled again (empty); the process lives for all eight | `each_claimed_signal_is_delivered_exactly_once` |
+| several signals between two polls are all reported; the same one three times is one bit; all eight together are `255` | `signals_between_polls_are_all_reported_and_a_repeat_is_one` |
+| a claim takes only what it names: claiming `TERM`, a `USR1` still ends the process | `a_signal_that_was_not_claimed_still_takes_its_default_action` |
+| a `poller_wait` with a 20 s timeout returns on the signal: token `7`, readable, then `signals_pending`, then not ready again | `a_signal_wakes_a_poller_wait_at_once` |
+| "a second signal kills at once": read, close, signal again, and the process dies *of the signal* | `closing_the_claim_makes_the_next_signal_kill_at_once` |
+| close with the signal unread delivers it; close after the read does not; both with the status of the process | `closing_with_a_signal_unread_delivers_it_at_once`, `closing_after_the_read_leaves_nothing_to_deliver` |
+| a signal ignored on entry (`trap '' USR2` in the parent shell) is claimable, and is ignored again on Linux | `a_signal_ignored_on_entry_can_be_claimed` |
+| a thread spawned after the claim does not take the signal; a claim while one runs is `EBUSY`, and granted after the `join`; an overlapping claim is `EBUSY` until the first is closed | `a_thread_spawned_after_the_claim_does_not_take_the_signal`, `a_claim_is_refused_while_a_thread_runs_and_granted_after_the_join`, `a_signal_another_claim_holds_is_refused_until_it_is_closed` |
+| every unclaimable signal (23 names, three reasons), malformed sets, widening, the unnarrowed root, a non-`Signals`, linearity, rows exact both ways, owned capabilities discharge, edition 6 only | `every_unclaimable_signal_is_refused_with_its_rule` and five more |
+| the authority report names the set, is `bounded`, has no `ffi`; "never touches" says `signals` when nothing is claimed | `the_authority_report_names_the_set_and_is_bounded`, `the_text_report_says_what_is_claimed_and_what_is_not` |
+| `std.signals` | `std_signals_names_the_bits` |
 
-(Filled in with the measurements.)
+Beside them: 9 unit tests for the table and for `Label::covers` (`lex-sys-ir`), `tests/reject/signal_not_claimable.ls` (the rule has its fixture, `every_rule_has_a_fixture`),
+`tests/accept/signals_claim.ls`, and AGENTS.md section 3.2, whose block the suite compiles.
+
+**Mutants.** 37 deliberate breakages of the new code, each run against the signals tests and each **killed**: 13 in the checker and the table (the subset check skipped; `SEGV` not a fault; set cover as a text prefix, in
+`covers` and in the set test; a reversed canonical order; the row not performed; `signals_close` at edition 5; `narrow` skipping the set check; the root allowed to claim; an owned claim and an owned
+`Signals` discharging nothing; a wrong `USR1` number; two signals sharing a bit) and 12 in **each backend** (the mask not blocked; the `signalfd` blocking; one record a read; no unblock on close; the claim kept
+after close; an overlapping claim and a running thread each ignored; the kernel's numbers not converted to bits; the bits of a poll not accumulated; `spawn` and `join` not counted; `poller_add_signals` doing
+something else). The first run of the mutants' targets also found the one test that depended on the environment (section 3, "ignored on entry").
+
+**Strace** (`strace -f -e trace=signalfd4,rt_sigprocmask,rt_sigaction`, either backend): `rt_sigprocmask(SIG_BLOCK, [INT TERM])`, `signalfd4(-1, [INT TERM], 8, SFD_CLOEXEC|SFD_NONBLOCK)`, then `read(3, ..., 1024) = -1
+EAGAIN` per poll, and **no `rt_sigaction`**: no disposition is touched, no handler exists.
+
+**Latency.** Six runs of the wake test (three per backend): the `poller_wait` returned `124`, `180`, `234`, `263`, `292` and `496` microseconds after the `kill`, having waited `300` ms of a `20000` ms timeout.
+`ops.ls`'s polling noticed a stop at the loop's next wake-up, up to 50 ms later.
+
+**Size.** 1,404 lines added to the compiler across 24 files (the table 164, the checker 127 in `lower/signals.rs` and 110 in `defs.rs`, 385 in Cranelift, 416 in LLVM; 14 lines changed), 1,368 lines of tests
+(1,218 of them conformance), 62 of `std`, 18 of fixtures, and this document.
+
+## 10. What is not verified, and what building it found
+
+* **macOS is written and not run.** The `kqueue` path (`SIG_IGN` through `sigaction`, `EVFILT_SIGNAL` with `EV_ADD | EV_CLEAR`, a zero-timeout `kevent` to read, the `kqueue` descriptor registered in a
+  `Poller`'s `kqueue` with `EVFILT_READ`) compiles into the same functions behind the target test and is exercised by none of the tests above, which run on the Linux they were written on; CI's macOS job
+  runs the same suite. Three things in it are from the man page and the platform headers and not from a run: that a `kqueue` descriptor is readable in another `kqueue` while it holds events; that the
+  `struct sigaction` is `{handler: 8, mask: 4, flags: 4}` (16 bytes) on both Darwin architectures; and that `EVFILT_SIGNAL` reports a signal that is `SIG_IGN` (the man page says it does). If the first fails,
+  the fix is a self-pipe that `signals_pending` drains and `poller_add_signals` registers, which changes nothing a program sees.
+* **aarch64 Linux is not run.** The code is the same; `SFD_NONBLOCK | SFD_CLOEXEC` and the 128-byte `signalfd_siginfo` are the same on both Linux architectures.
+* **`Signals` and `SignalWatch` do not cross to a thread** as a `spawn` payload (`crosses_to_a_thread`, as `Conn` does not). Nothing asked, and the watch-before-spawn rule makes the natural program
+  the one that reads signals on the thread that watched.
+* **A signal's count is not available**, by design (section 3): a standard signal has one pending instance.
+* **Adopting it in `lexsys-hooks`** is that repository's change (section 7); this one does not touch it.
+
+**A gap found, not caused, and not worked around:** a local binding hides a *qualified* function of the same name. The claim's natural name is `stop`; `std.signals` first had a `stop()` and
+`sg.stop()` was refused:
+
+```
+import std.math;
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args);
+    let min = 3;
+    return math.min(1, 2) + min;     // error: `min` is a local binding, not a function
+}
+```
+
+Qualification should have been enough to say which `min` is meant. It is the same for any `std` function and any local, so this is `std.math` and not signals. The function here was renamed
+`stop_signals` to avoid it, which is a workaround for this one name and not a fix.
+
+**Corrected in this document while building it:** the first draft said a disjoint claim "coexists" with another and tested for it. It cannot be written yet (section 3); the draft's `Failed(EBUSY)` for a
+second claim is the whole of what a program can reach. The first draft also said a seven-field `Split` pattern is `pattern-shape`; it is `arity-mismatch`.
