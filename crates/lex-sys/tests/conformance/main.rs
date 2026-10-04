@@ -46,6 +46,8 @@ mod checked_output;
 mod compile_time;
 mod corpus;
 mod differential;
+mod directory_handles;
+mod directory_writes;
 mod docs;
 mod duplication;
 mod ecdsa;

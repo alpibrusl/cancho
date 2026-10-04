@@ -83,10 +83,15 @@ pub const PRELUDE_SPLIT_SIGNALS: usize = 28;
 pub const PRELUDE_SIGNAL_WATCH: usize = 29;
 pub const PRELUDE_WATCHING: usize = 30;
 
+/// `docs/directory-handles.md`, edition 6: a directory handle (`res`, one
+/// leaf, like `File`) and what opening one answers.
+pub const PRELUDE_DIR: usize = 31;
+pub const PRELUDE_DIR_OPENED: usize = 32;
+
 /// How many types the prelude declares. Written once, because a builtin's
 /// signature indexes this table and a stale slice is a panic rather than a
 /// diagnostic.
-pub const PRELUDE_COUNT: usize = 31;
+pub const PRELUDE_COUNT: usize = 33;
 
 /// Which path operation an [`Expr::PathOp`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,6 +116,9 @@ pub enum OpenMode {
     New,
     /// `open_rw`: an existing file, read and write, no truncation (`"r+b"`).
     ReadWrite,
+    /// `open_dir` (`docs/directory-handles.md`): `open(path, O_RDONLY |
+    /// O_DIRECTORY)`, answering a `DirOpened` rather than an `Opened`.
+    Directory,
 }
 
 impl OpenMode {
@@ -122,6 +130,9 @@ impl OpenMode {
             OpenMode::Write => "wb",
             OpenMode::New => "wbx",
             OpenMode::ReadWrite => "r+b",
+            // Never reaches `fopen`: both backends open a directory with
+            // `open` and its own flags. Read-only is the honest mode.
+            OpenMode::Directory => "rb",
         }
     }
 }
@@ -969,3 +980,58 @@ pub fn is_zero_fill(fill: &Expr) -> bool {
         _ => false,
     }
 }
+
+/// The `open` flags a directory handle's builtins pass, per target
+/// (`docs/directory-handles.md` §2 and §3). `O_RDONLY` is zero everywhere.
+/// Written once here so both backends spell them the same; the values are
+/// the kernels' own, and Linux x86-64 and AArch64 differ only in the first
+/// two.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OpenFlags {
+    pub directory: i64,
+    pub nofollow: i64,
+    pub write_only: i64,
+    pub create: i64,
+    pub exclusive: i64,
+    pub append: i64,
+}
+
+pub fn open_flags(darwin: bool, aarch64: bool) -> OpenFlags {
+    if darwin {
+        OpenFlags {
+            directory: 0x0010_0000,
+            nofollow: 0x0100,
+            write_only: 1,
+            create: 0x0200,
+            exclusive: 0x0800,
+            append: 0x0008,
+        }
+    } else if aarch64 {
+        OpenFlags {
+            directory: 0o40000,
+            nofollow: 0o100000,
+            write_only: 1,
+            create: 0o100,
+            exclusive: 0o200,
+            append: 0o2000,
+        }
+    } else {
+        OpenFlags {
+            directory: 0o200000,
+            nofollow: 0o400000,
+            write_only: 1,
+            create: 0o100,
+            exclusive: 0o200,
+            append: 0o2000,
+        }
+    }
+}
+
+/// The mode a file created beneath a directory gets: `0644`, as `creat` and
+/// `fopen` give everywhere else in this compiler.
+pub const CREATE_MODE: i64 = 0o644;
+
+/// The longest name `dir_enter` and `dir_open_read` copy (`NAME_MAX`, 255 on
+/// Linux and Darwin); a longer one is `EINVAL` too, so the copy has a fixed
+/// size.
+pub const NAME_MAX: i64 = 255;

@@ -480,6 +480,37 @@ pub enum Builtin {
     /// `signals_close(SignalWatch) -> [] int`: ends the claim and puts the
     /// signals back to the default; consumes the handle.
     SignalsClose,
+    /// `open_dir(&Fs(p), path) -> [fs_read(p)] DirOpened`: a directory handle,
+    /// the anchor everything after it is opened beneath. Lowered as
+    /// `Expr::OpenFile` with `OpenMode::Directory`, so the prefix check is
+    /// `open_read`'s. Edition 6. `docs/directory-handles.md`.
+    OpenDir,
+    /// `dir_enter(&Dir, name) -> [dir_read] DirOpened`: one child directory,
+    /// `openat(dir, name, O_DIRECTORY | O_NOFOLLOW)`. `name` is one component:
+    /// empty, `.`, `..`, a `/` or a NUL is `Failed(EINVAL)` with no call.
+    DirEnter,
+    /// `dir_open_read(&Dir, name) -> [dir_read] Opened`: one child file for
+    /// reading, `openat(dir, name, O_NOFOLLOW)`, with `dir_enter`'s check.
+    DirOpenRead,
+    /// `dir_close(Dir) -> [] int`: `close`'s answer; consumes the handle.
+    DirClose,
+    /// `dir_open_new(&Dir, name) -> [dir_write] Opened`: create one child file
+    /// that must not exist, `openat(O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW,
+    /// 0644)`. `dir_enter`'s check on `name`. `docs/directory-handles.md` §3.
+    DirOpenNew,
+    /// `dir_open_append(&Dir, name) -> [dir_write] Opened`: one child file
+    /// for appending, created if missing, `openat(O_WRONLY | O_CREAT |
+    /// O_APPEND | O_NOFOLLOW, 0644)`.
+    DirOpenAppend,
+    /// `dir_rename(&Dir, from, to) -> [dir_write] Done`: `renameat` with both
+    /// names in the one directory; each name has `dir_enter`'s check.
+    DirRename,
+    /// `dir_remove(&Dir, name) -> [dir_write] Done`: `unlinkat(dir, name, 0)`.
+    /// A link is removed, never followed.
+    DirRemove,
+    /// `dir_sync(&Dir) -> [dir_write] Done`: `fsync` on the directory itself,
+    /// so a rename in it is durable.
+    DirSync,
     /// `null_ptr() -> [] c_ptr` — the one producer of a `c_ptr` that is
     /// not a foreign call's return, edition 3 only
     /// (`docs/opaque-pointers.md` §3).
@@ -610,6 +641,15 @@ impl Builtin {
         Builtin::SignalsPending,
         Builtin::PollerAddSignals,
         Builtin::SignalsClose,
+        Builtin::OpenDir,
+        Builtin::DirEnter,
+        Builtin::DirOpenRead,
+        Builtin::DirClose,
+        Builtin::DirOpenNew,
+        Builtin::DirOpenAppend,
+        Builtin::DirRename,
+        Builtin::DirRemove,
+        Builtin::DirSync,
         Builtin::NullPtr,
         Builtin::Spawn,
         Builtin::Join,
@@ -698,6 +738,15 @@ impl Builtin {
             Builtin::SignalsPending => "signals_pending",
             Builtin::PollerAddSignals => "poller_add_signals",
             Builtin::SignalsClose => "signals_close",
+            Builtin::OpenDir => "open_dir",
+            Builtin::DirEnter => "dir_enter",
+            Builtin::DirOpenRead => "dir_open_read",
+            Builtin::DirClose => "dir_close",
+            Builtin::DirOpenNew => "dir_open_new",
+            Builtin::DirOpenAppend => "dir_open_append",
+            Builtin::DirRename => "dir_rename",
+            Builtin::DirRemove => "dir_remove",
+            Builtin::DirSync => "dir_sync",
             Builtin::NullPtr => "null_ptr",
             Builtin::Spawn => "spawn",
             Builtin::Join => "join",
@@ -763,6 +812,17 @@ impl Builtin {
             | Builtin::SignalsPending
             | Builtin::PollerAddSignals
             | Builtin::SignalsClose => 6,
+            // `docs/directory-handles.md`: edition 6 -- `open_dir` and the
+            // `dir_*` names are ones a program may already declare.
+            Builtin::OpenDir
+            | Builtin::DirEnter
+            | Builtin::DirOpenRead
+            | Builtin::DirClose
+            | Builtin::DirOpenNew
+            | Builtin::DirOpenAppend
+            | Builtin::DirRename
+            | Builtin::DirRemove
+            | Builtin::DirSync => 6,
             // `docs/file-writes.md`: edition 5, for the same reason --
             // `file_write` and `open_new` are names a program may already
             // declare against libc.
@@ -856,6 +916,15 @@ impl Builtin {
             | Builtin::PollerWait
             | Builtin::PollerAddSignals => 2,
             Builtin::SignalsPending => 1,
+            // The handle's region and the name's.
+            Builtin::DirEnter
+            | Builtin::DirOpenRead
+            | Builtin::DirOpenNew
+            | Builtin::DirOpenAppend => 2,
+            Builtin::DirRemove => 2,
+            // The handle's region and each name's.
+            Builtin::DirRename => 3,
+            Builtin::DirSync => 1,
             Builtin::TcpAccept
             | Builtin::ConnNonblocking
             | Builtin::ConnNodelay
@@ -953,7 +1022,8 @@ impl Builtin {
             | Builtin::OpenNew
             | Builtin::OpenRw
             | Builtin::FsRename
-            | Builtin::FsRemove => (Vec::new(), Type::Unit),
+            | Builtin::FsRemove
+            | Builtin::OpenDir => (Vec::new(), Type::Unit),
             // The handle is borrowed uniquely because the read moves the
             // descriptor's offset, and the buffer uniquely because the read
             // writes into it -- the same pair `fs_read` takes, with the
@@ -1251,6 +1321,73 @@ impl Builtin {
                 Type::Int,
             ),
             Builtin::SignalsClose => (vec![named(PRELUDE_SIGNAL_WATCH)], Type::Int),
+            Builtin::DirEnter | Builtin::DirOpenRead => (
+                vec![
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_DIR)),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                if self == Builtin::DirEnter {
+                    named(PRELUDE_DIR_OPENED)
+                } else {
+                    named(PRELUDE_OPENED)
+                },
+            ),
+            Builtin::DirClose => (vec![named(PRELUDE_DIR)], Type::Int),
+            Builtin::DirOpenNew | Builtin::DirOpenAppend | Builtin::DirRemove => (
+                vec![
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_DIR)),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                if self == Builtin::DirRemove {
+                    named(PRELUDE_DONE)
+                } else {
+                    named(PRELUDE_OPENED)
+                },
+            ),
+            Builtin::DirRename => (
+                vec![
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_DIR)),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(2),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                named(PRELUDE_DONE),
+            ),
+            Builtin::DirSync => (
+                vec![Type::Ref {
+                    unique: false,
+                    region: Region::Param(0),
+                    inner: Box::new(named(PRELUDE_DIR)),
+                }],
+                named(PRELUDE_DONE),
+            ),
             Builtin::ConnDetach => (vec![named(PRELUDE_CONN)], Type::Int),
             Builtin::ConnAttach => (vec![Type::Int], named(PRELUDE_ATTACHED)),
             Builtin::ClockMs | Builtin::ClockUnixMs => (
@@ -1403,6 +1540,14 @@ impl Builtin {
             // `docs/signals.md` section 2.1: path-free, the set was spent at
             // `signals_watch`. Closing performs nothing, as `conn_close` does not.
             Builtin::SignalsPending => Effects::plain(["signals_read"]),
+            // `docs/directory-handles.md` §2: the handle is the authority.
+            Builtin::DirEnter | Builtin::DirOpenRead => Effects::plain(["dir_read"]),
+            // §3: everything that changes what is beneath a directory.
+            Builtin::DirOpenNew
+            | Builtin::DirOpenAppend
+            | Builtin::DirRename
+            | Builtin::DirRemove
+            | Builtin::DirSync => Effects::plain(["dir_write"]),
             Builtin::ConnWrite => Effects::plain(["conn_write"]),
             // Moving authority around is not an effect. Splitting a `World`
             // observes nothing outside the program and releasing a

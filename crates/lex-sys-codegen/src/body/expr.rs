@@ -585,7 +585,8 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                         | Builtin::OpenAppend
                         | Builtin::OpenWrite
                         | Builtin::OpenNew
-                        | Builtin::OpenRw,
+                        | Builtin::OpenRw
+                        | Builtin::OpenDir,
                     ) => {
                         unreachable!("an `open_*` is lowered as `Expr::OpenFile`")
                     }
@@ -695,6 +696,17 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     // constructors for, so this is the one place the
                     // sentinel is unpacked and the last.
                     Callee::Builtin(Builtin::ReadFile) => self.read_file(&args),
+                    // `docs/directory-handles.md` §2.
+                    Callee::Builtin(
+                        op @ (Builtin::DirEnter
+                        | Builtin::DirOpenRead
+                        | Builtin::DirOpenNew
+                        | Builtin::DirOpenAppend),
+                    ) => self.dir_open(&args, *op),
+                    Callee::Builtin(Builtin::DirRename) => self.dir_rename(&args),
+                    Callee::Builtin(Builtin::DirRemove) => self.dir_remove(&args),
+                    Callee::Builtin(Builtin::DirSync) => self.dir_sync(&args),
+                    Callee::Builtin(Builtin::DirClose) => self.dir_close(&args),
                     // `close(2)`. The handle is one leaf and it ends here.
                     Callee::Builtin(Builtin::Close) => {
                         let close = self.libc_fn("close", &[types::I32], &[types::I32]);
