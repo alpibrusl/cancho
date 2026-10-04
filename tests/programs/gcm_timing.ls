@@ -1,0 +1,153 @@
+// `docs/tls-parity.md` §3.1: the timing of `std.gcm`, for the
+// dudect-style test `scripts/gcm_timing.py` runs.
+//
+// Standard input is one header line, `<op> <key> <nonce> <aad> <data>`:
+// `S` (seal) or `O` (open) and the four lengths in bytes, in decimal.
+// Then records in lowercase hex, each key, nonce, aad and data at
+// those lengths, back to back, with no separator.
+//
+// Everything is read and decoded before anything is timed, so what
+// runs just before each call is the same whatever its input. Each call's time is
+// read with the `tick` library's `lexsys_tick` (a cycle counter), so
+// this program is built with `-l tick -L <dir>`; the times are printed,
+// one a line, once every call has run.
+import std.buffer;
+import std.gcm;
+import std.io;
+
+extern fn lexsys_tick[&f](ffi: &f Ffi("tick")) -> [ffi("tick")] int;
+
+fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap, io_read] buffer.Buffer {
+    var out = text;
+    var c = getchar(io);
+    while c >= 0 {
+        out = buffer.push(heap, out, byte_of(c));
+        c = getchar(io);
+    }
+    return out;
+}
+
+// The decimal number at `at`, and where it ends.
+fn number_end[&s](s: &s [byte], at: int) -> [] int {
+    var e = at;
+    while e < len(s) && int_of(s[e]) >= 48 && int_of(s[e]) <= 57 {
+        e = e + 1;
+    }
+    return e;
+}
+
+fn number[&s](s: &s [byte], at: int) -> [] int {
+    var n = 0;
+    var i = at;
+    while i < number_end(s, at) {
+        n = n * 10 + int_of(s[i]) - 48;
+        i = i + 1;
+    }
+    return n;
+}
+
+fn nibble(c: int) -> [] int {
+    if c >= 97 {
+        return c - 87;
+    }
+    return c - 48;
+}
+
+// Decodes the records into `all`, then times every call into `times`.
+fn time_into[&f, &s, &a, &t](ffi: &f Ffi("tick"), s: &s [byte], start: int, op: int, k: int, n: int, a: int, d: int, all: &!a [byte], times: &!t [int]) -> [ffi("tick")] int {
+    let rec = k + n + a + d;
+    var j = 0;
+    while j < len(all) {
+        all[j] = byte_of(nibble(int_of(s[start + 2 * j])) * 16 + nibble(int_of(s[start + 2 * j + 1])));
+        j = j + 1;
+    }
+    region r {
+        var room = d + 16;
+        if op != 83 {
+            room = d - 16;
+        }
+        let out = alloc_slice[r](room, byte_of(0));
+        var i = 0;
+        while i < len(times) {
+            let at = i * rec;
+            let key = all[at..at + k];
+            let nonce = all[at + k..at + k + n];
+            let aad = all[at + k + n..at + k + n + a];
+            let data = all[at + k + n + a..at + rec];
+            if op == 83 {
+                let t0 = lexsys_tick(ffi);
+                gcm.seal(key, nonce, aad, data, out);
+                times[i] = lexsys_tick(ffi) - t0;
+            } else {
+                let t0 = lexsys_tick(ffi);
+                gcm.open(key, nonce, aad, data, out);
+                times[i] = lexsys_tick(ffi) - t0;
+            }
+            i = i + 1;
+        }
+    }
+    return 0;
+}
+
+fn time_all[&h, &i, &f, &s](heap: &!h Heap, io: &!i Io, ffi: &f Ffi("tick"), s: &s [byte]) -> [heap, io_write, ffi("tick")] int {
+    let op = int_of(s[0]);
+    let f1 = 2;
+    let f2 = number_end(s, f1) + 1;
+    let f3 = number_end(s, f2) + 1;
+    let f4 = number_end(s, f3) + 1;
+    let k = number(s, f1);
+    let n = number(s, f2);
+    let a = number(s, f3);
+    let d = number(s, f4);
+    let start = number_end(s, f4) + 1;
+    let rec = k + n + a + d;
+    let count = (len(s) - start) / (2 * rec);
+    // On the heap: a region holds at most one 64 KiB chunk.
+    let all = box_slice(heap, count * rec, byte_of(0));
+    let times = box_slice(heap, count, 0);
+    borrow mut all as &!x in {
+        borrow mut times as &!y in {
+            time_into(ffi, s, start, op, k, n, a, d, contents(x), contents(y));
+        }
+    }
+    borrow times as &y in {
+        let t = contents(y);
+        var i = 0;
+        while i < len(t) {
+            io.print_int(io, t[i]);
+            io.newline(io);
+            i = i + 1;
+        }
+    }
+    unbox_slice(heap, all);
+    unbox_slice(heap, times);
+    return 0;
+}
+
+fn run[&h, &i, &f](heap: &!h Heap, io: &!i Io, ffi: &f Ffi("tick")) -> [heap, io_read, io_write, ffi("tick")] int {
+    var text = buffer.empty(heap, 1 << 20);
+    text = read_stdin(heap, io, text);
+    borrow text as &b in {
+        time_all(heap, io, ffi, buffer.bytes(b));
+    }
+    buffer.drop(heap, text);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(args);
+    release(fs);
+    let tick = narrow(ffi, "tick");
+    borrow tick as &f in {
+        borrow mut heap as &!h in {
+            borrow mut io as &!i in {
+                run(h, i, f);
+            }
+        }
+    }
+    release(tick);
+    release(heap);
+    release(io);
+    return 0;
+}
