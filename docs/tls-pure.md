@@ -140,6 +140,10 @@ tls.drop(engine, s)                                      // the slot is free (ke
 
 ### 3.2 Why ChaCha20 only, and what it costs
 
+*Superseded (#207, `docs/tls-parity.md`): the maintainer requires parity with the OpenSSL backend, so AES-GCM (constant-time),
+P-256/P-384 key exchange with HelloRetryRequest, and TLS 1.2 with ECDHE and AEAD suites are added. §3.2 to §3.4 record the
+first decision.*
+
 AES-GCM is what most servers prefer, and every server that speaks TLS 1.3 must implement `TLS_AES_128_GCM_SHA256`
 (RFC 8446 §9.1). But constant-time AES and GHASH in software are slow:
 
