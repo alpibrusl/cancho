@@ -86,6 +86,7 @@
 - [SHA-384, HMAC and HKDF](hkdf.md)
 - [A TLS 1.3 client with no C library](tls-pure.md)
 - [X25519, and the field it shares with Ed25519](x25519.md)
+- [`packages/x509`: strict DER and X.509 certificates](x509.md)
 
 # Compile time and program identity
 

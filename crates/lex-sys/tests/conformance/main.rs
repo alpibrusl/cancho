@@ -72,6 +72,7 @@ mod vcs;
 mod vcs_remote;
 mod vcs_std;
 mod x25519;
+mod x509;
 
 const BIN: &str = env!("CARGO_BIN_EXE_lex-sys");
 
