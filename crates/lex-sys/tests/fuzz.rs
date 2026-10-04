@@ -38,6 +38,7 @@ const STD: &[&str] = &[
     include_str!("../../../std/fmt.ls"),
     include_str!("../../../std/utf8.ls"),
     include_str!("../../../std/flags.ls"),
+    include_str!("../../../std/signals.ls"),
 ];
 
 /// xorshift64*: small, fast, and the same on every platform.

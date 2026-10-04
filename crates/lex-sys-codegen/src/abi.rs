@@ -78,6 +78,7 @@ pub(crate) fn leaves_into(
                     | lex_sys_ir::PRELUDE_LISTENER
                     | lex_sys_ir::PRELUDE_CONN
                     | lex_sys_ir::PRELUDE_POLLER
+                    | lex_sys_ir::PRELUDE_SIGNAL_WATCH
             ) =>
         {
             out.push(types::I64);

@@ -285,6 +285,20 @@ was refused even at an edition that cannot name them. The check now asks
 the file's edition, which `Conn` -- a name a great many programs want --
 would otherwise have broken (`tests/accept/socket_names_are_edition_five.ls`).
 
+**Edition 6 is edition 5 plus the signal capability**
+([`signals.md`](signals.md)): the types `Signals`, `SignalWatch` and
+`Watching`, the builtins `signals_watch`, `signals_pending`,
+`poller_add_signals` and `signals_close`, the labels `signals("...")` and
+`signals_read`, and **an eighth field on `Split`**. That last is the
+additive change this document's §5 names, and it is why this is an edition
+and not a fifth slice of edition 5: slice 4 of
+[`native-sockets.md`](native-sockets.md) added `clock` to edition 5's
+`Split` because no edition-5 file destructured it yet, and that argument
+expired when 48 `.ls` files in this repository (and the programs embedded
+in three conformance modules, and every service built on them) came to
+write the seven fields. `Split` is now four declarations of one name; an
+edition-5 file's `split()` still answers seven.
+
 ---
 
 ## 8. What this does not do

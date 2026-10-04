@@ -74,10 +74,19 @@ pub const PRELUDE_ATTACHED: usize = 25;
 /// (`docs/file-writes.md` section 4). Edition 5.
 pub const PRELUDE_DONE: usize = 26;
 
+/// `docs/signals.md` section 2, edition 6: the signal capability (leaf-free,
+/// like `Io`, indexed by the set it was narrowed to as `Net` is by a bound),
+/// the `Split` that carries it as its eighth field, the claim (`res`, one
+/// leaf) and what claiming answers.
+pub const PRELUDE_SIGNALS: usize = 27;
+pub const PRELUDE_SPLIT_SIGNALS: usize = 28;
+pub const PRELUDE_SIGNAL_WATCH: usize = 29;
+pub const PRELUDE_WATCHING: usize = 30;
+
 /// How many types the prelude declares. Written once, because a builtin's
 /// signature indexes this table and a stale slice is a panic rather than a
 /// diagnostic.
-pub const PRELUDE_COUNT: usize = 27;
+pub const PRELUDE_COUNT: usize = 31;
 
 /// Which path operation an [`Expr::PathOp`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -175,6 +184,12 @@ impl Label {
         self.name == other.name
             && match (&self.argument, &other.argument) {
                 (None, None) => true,
+                // `docs/signals.md` section 2.1: a set of signals is a set,
+                // not a prefix. `signals("INT")` is a prefix of
+                // `signals("INT,TERM")` as text and covers nothing of it.
+                (Some(mine), Some(theirs)) if self.name == "signals" => {
+                    signal_set_covers(mine, theirs)
+                }
                 (Some(mine), Some(theirs)) => theirs.starts_with(mine.as_str()),
                 _ => false,
             }

@@ -42,6 +42,7 @@ mod defs;
 mod function;
 mod ir;
 mod lower;
+mod signals;
 mod socket_os;
 
 pub use builtin::*;
@@ -49,6 +50,7 @@ pub use defs::*;
 use function::*;
 pub use ir::*;
 use lower::*;
+pub use signals::*;
 pub use socket_os::*;
 
 /// Resolve and check an AST, producing IR a backend can lower without failing.

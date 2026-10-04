@@ -146,7 +146,7 @@ that. Against `conn_write` it does not.
 has gone must answer `Failed(EPIPE)`, never kill the process.
 `MSG_NOSIGNAL` on Linux and `SO_NOSIGPIPE` on macOS do it per socket,
 with no process-wide signal disposition — so `signal(SIGPIPE, SIG_IGN)`,
-an `extern` and a magic number in the server today, disappears.
+an `extern` and a magic number in the server today, disappears. (The signals a program *wants* to see, `SIGTERM` and `SIGINT`, are [`signals.md`](signals.md): a capability and a handle the `Poller` can wait on, edition 6.)
 
 **`conn_nonblocking` is explicit and one-way.** A `Conn` is blocking
 when it arrives, which is what `examples/serve` and `collect` want;

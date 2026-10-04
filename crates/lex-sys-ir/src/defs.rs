@@ -246,6 +246,7 @@ pub fn leaf_free(ty: &Type) -> bool {
             | PRELUDE_ARGS
             | PRELUDE_NET
             | PRELUDE_CLOCK
+            | PRELUDE_SIGNALS
     ))
 }
 
@@ -278,7 +279,10 @@ pub(crate) fn is_capability(def: DefId) -> bool {
             | PRELUDE_SPLIT
             | PRELUDE_SPLIT_NET
             | PRELUDE_SPLIT_CLOCK
+            | PRELUDE_SPLIT_SIGNALS
             | PRELUDE_CLOCK
+            | PRELUDE_SIGNALS
+            | PRELUDE_SIGNAL_WATCH
             | PRELUDE_NET
             // §8.2 again, and more sharply: a program that could write
             // `File { }` would be conjuring a descriptor, which is worse
@@ -308,6 +312,7 @@ pub(crate) fn released_only(def: DefId) -> bool {
             | PRELUDE_ARGS
             | PRELUDE_NET
             | PRELUDE_CLOCK
+            | PRELUDE_SIGNALS
     )
 }
 
@@ -318,7 +323,10 @@ pub(crate) fn released_only(def: DefId) -> bool {
 /// Destructuring a `File` would drop it without calling `close`, which is
 /// a leak the kernel keeps rather than one the allocator does.
 pub(crate) fn closed_only(def: DefId) -> bool {
-    matches!(def.0 as usize, PRELUDE_FILE | PRELUDE_LISTENER | PRELUDE_CONN | PRELUDE_POLLER)
+    matches!(
+        def.0 as usize,
+        PRELUDE_FILE | PRELUDE_LISTENER | PRELUDE_CONN | PRELUDE_POLLER | PRELUDE_SIGNAL_WATCH
+    )
 }
 
 /// Is this a type whose only consumer is `unbox` (`docs/heap.md` §3)?
@@ -397,6 +405,24 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
         // `docs/native-sockets.md` §5: reading the time is an effect, and
         // owning the clock discharges it.
         PRELUDE_CLOCK => Effects::plain(["clock"]),
+        // `docs/signals.md` section 2.1: a claim spent its set where it was
+        // minted, so the handle's own label carries no argument, as a
+        // `Conn`'s do not.
+        PRELUDE_SIGNAL_WATCH => Effects::plain(["signals_read"]),
+        // Owning a `Signals("S")` discharges claiming `S` and reading what
+        // it claimed; the root `Signals("")` covers every set (`Label::covers`
+        // reads a set as a set).
+        PRELUDE_SIGNALS => match args.first() {
+            Some(Type::Lit(set)) => {
+                let mut all = Effects::new([Label {
+                    name: "signals".to_owned(),
+                    argument: Some(set.clone()),
+                }]);
+                all.union(&Effects::plain(["signals_read"]));
+                all
+            }
+            _ => Effects::pure(),
+        },
         // `docs/arguments.md` §2: one plain label. There is one command
         // line and no part of it to name, so nothing to narrow.
         PRELUDE_ARGS => Effects::plain(["args"]),
@@ -419,6 +445,7 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
                 "conn_write",
                 "poll",
                 "clock",
+                "signals_read",
             ]);
             // `docs/net.md` §4.1, edition 2 only: `net_out` and `net_in`
             // are two more labels the root discharges the unnarrowed way
@@ -426,7 +453,7 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
             // file's `World` discharges them just the same -- they are
             // simply labels no edition-1 body can ever perform, since it
             // has no way to name `Net` at all.
-            for name in ["ffi", "fs_read", "fs_write", "net_out", "net_in"] {
+            for name in ["ffi", "fs_read", "fs_write", "net_out", "net_in", "signals"] {
                 all.union(&Effects::new([Label {
                     name: name.to_owned(),
                     argument: Some(FFI_ROOT.to_owned()),
@@ -540,6 +567,14 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     let split_clock = symbol("Split");
     let attached = symbol("Attached");
     let done = symbol("Done");
+    // `docs/signals.md`: edition 6's capability, its claim, the answer of
+    // claiming, and the `Split` that carries the capability as its eighth
+    // field.
+    let signals = symbol("Signals");
+    let signals_field = symbol("signals");
+    let signal_watch = symbol("SignalWatch");
+    let watching = symbol("Watching");
+    let split_signals = symbol("Split");
     let again_arm = symbol("Again");
     let data_arm = symbol("Data");
     let wrote_arm = symbol("Wrote");
@@ -599,6 +634,11 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     let split_clock_def = unifier.declare("Split");
     let attached_def = unifier.declare("Attached");
     let done_def = unifier.declare("Done");
+    // `PRELUDE_SIGNALS` .. `PRELUDE_WATCHING`: edition 6, a fourth `Split`.
+    let signals_def = unifier.declare("Signals");
+    let split_signals_def = unifier.declare("Split");
+    let signal_watch_def = unifier.declare("SignalWatch");
+    let watching_def = unifier.declare("Watching");
 
     vec![
         TypeDef {
@@ -1076,6 +1116,72 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
             kind: DefKind::Enum(vec![(ok_arm, vec![Type::Int]), (failed_arm, vec![Type::Int])]),
             span,
             since: 5,
+        },
+        // `docs/signals.md` section 2: the signal capability. Authority with
+        // nothing behind it, so zero-sized like `Net`, and indexed by a
+        // literal like `Net` is: the set it was narrowed to.
+        TypeDef {
+            name: signals,
+            def: signals_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: vec![prefix],
+            bounds: Vec::new(),
+            declared_mode: Some(Mode::Res),
+            kind: DefKind::Struct(Vec::new()),
+            span,
+            since: 6,
+        },
+        // Edition 6's `Split`: edition 5's seven fields and `signals`.
+        TypeDef {
+            name: split_signals,
+            def: split_signals_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: None,
+            kind: DefKind::Struct(vec![
+                (io_field, Type::Named(io_def, Vec::new())),
+                (ffi_field, Type::Named(ffi_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+                (fs_field, Type::Named(fs_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+                (heap_field, Type::Named(heap_def, Vec::new())),
+                (args_field, Type::Named(args_def, Vec::new())),
+                (net_field, Type::Named(net_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+                (clock_field, Type::Named(clock_def, Vec::new())),
+                (signals_field, Type::Named(signals_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+            ]),
+            span,
+            since: 6,
+        },
+        // The claim: `res`, one descriptor leaf, no fields -- a `Conn`'s shape.
+        TypeDef {
+            name: signal_watch,
+            def: signal_watch_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: Some(Mode::Res),
+            kind: DefKind::Struct(Vec::new()),
+            span,
+            since: 6,
+        },
+        // `signals_watch`: `Polling`'s shape, for a claim.
+        TypeDef {
+            name: watching,
+            def: watching_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: None,
+            kind: DefKind::Enum(vec![
+                (ok_arm, vec![Type::Named(signal_watch_def, Vec::new())]),
+                (failed_arm, vec![Type::Int]),
+            ]),
+            span,
+            since: 6,
         },
     ]
 }

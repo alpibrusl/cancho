@@ -29,7 +29,7 @@ lex-sys test tests/*.ls --std              # run every `fn test_*`; exit 4 if on
 
 `check` reports **every** independent refusal, not the first. On a
 failure, read the `rule` field rather than the sentence: it is a stable
-name, there are 53 of them, and `docs/agent-errors.md` is the contract.
+name, there are 56 of them, and `docs/agent-errors.md` is the contract.
 One of them, `internal`, is the compiler's own failure, not your
 program's (`docs/internal-errors.md`).
 
@@ -172,6 +172,49 @@ a lie.
 
 Labels: `io_read`, `io_write`, `err_write`, `fs_read(p)`, `fs_write(p)`,
 `heap`, `args`, `ffi(lib)`.
+
+### 3.2 Knowing you were asked to stop is a capability, not `Ffi("libc")`
+
+`edition 6;` adds `Signals`, the eighth field of `Split`. Narrow it to the
+signals you claim, and the row says which: `signals("INT,TERM")`, which
+`lex-sys authority` prints and which keeps the report bounded (the
+`sigblock`/`signal` workaround through `Ffi("libc")` made it `UNBOUNDED`).
+`signals_pending` answers a bitmask of what arrived since the last call and
+never waits; `poller_add_signals` makes the claim something a `Poller`
+wakes for; `signals_close` ends it, and after it the next signal ends the
+process, which is "a second signal kills at once". Claim before the first
+`spawn` (`docs/signals.md`).
+
+```lex-sys
+edition 6;
+import std.signals as sg;
+
+fn stopped[&w](watch: &!w SignalWatch) -> [signals_read] bool {
+    return sg.any(signals_pending(watch), sg.stop_signals());
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args);
+    release(net); release(clock);
+    let claim = narrow(signals, "INT,TERM");
+    var status = 1;
+    borrow claim as &s in {
+        match signals_watch(s) {
+            Watching::Ok(w) => {
+                var watch = w;
+                borrow mut watch as &!wh in {
+                    if !stopped(wh) { status = 0; }
+                }
+                signals_close(watch);
+            }
+            Watching::Failed(e) => { status = 2; }
+        }
+    }
+    release(claim);
+    return status;
+}
+```
 
 ---
 
