@@ -28,6 +28,7 @@
 - [Native sockets](native-sockets.md)
 - [Signals](signals.md)
 - [Directory handles](directory-handles.md)
+- [Directory listing](directory-listing.md)
 - [Foreign authority](foreign-authority.md)
 - [A WebSocket spike](websocket-spike.md)
 - [Slicing](slicing.md)
