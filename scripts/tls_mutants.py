@@ -7,7 +7,8 @@ Each mutant is one of the package's files with one deliberate bug. The
 package is copied to a scratch directory, the mutant applied there, and
 `tests/programs/tls_driver.ls` built against it. It runs what
 `conformance/tls.rs` replays: the five tlslite-ng traces (two of them through a
-HelloRetryRequest) and the 41 connections of `tests/vectors/tls/liar.txt`, each answer compared byte for
+HelloRetryRequest), the six TLS 1.2 traces against OpenSSL, and the 63
+connections of `tests/vectors/tls/liar.txt`, each answer compared byte for
 byte. A mutant of the engine (`tls.ls`) also builds
 `tests/programs/tls_many.ls` and serves it `tests/vectors/tls/streams.txt` from
 here, 64 connections at once: one byte a read, 65,536, and then with
@@ -25,7 +26,7 @@ import tempfile
 import threading
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FILES = ["record.ls", "message.ls", "client.ls", "tls.ls"]
+FILES = ["record.ls", "message.ls", "slot.ls", "client12.ls", "client.ls", "tls.ls"]
 
 # (name, file, the text replaced, its replacement). Each `old` must occur exactly once in its file.
 MUTANTS = [
@@ -33,16 +34,17 @@ MUTANTS = [
      "            if diff != 0 {\n                code = tls_record.bad_finished();",
      "            if diff != diff {\n                code = tls_record.bad_finished();"),
     ("the transcript missing EncryptedExtensions", "client.ls",
-     "        if code == 0 {\n            transcript_add(ints, message);\n            ints[i_state()] = state_wait_certificate();",
-     "        if code == 0 {\n            ints[i_state()] = state_wait_certificate();"),
+     "            tls_slot.transcript_add(ints, message);\n            ints[tls_slot.i_state()] = tls_slot.state_wait_certificate();",
+     "            ints[tls_slot.i_state()] = tls_slot.state_wait_certificate();"),
     ("the ClientHello hashed with its record header", "client.ls",
-     "        transcript_add(ints, hello[0..n]);\n        code = queue_record(ints, bytes, tls_record.type_handshake(), hello[0..n]);",
-     "        code = queue_record(ints, bytes, tls_record.type_handshake(), hello[0..n]);\n"
-     "        transcript_add(ints, bytes[b_out()..b_out() + 5 + n]);"),
+     "        tls_slot.transcript_add(ints, hello[0..n]);\n        code = tls_slot.queue_record(ints, bytes, tls_record.type_handshake(), hello[0..n]);",
+     "        code = tls_slot.queue_record(ints, bytes, tls_record.type_handshake(), hello[0..n]);\n"
+     "        tls_slot.transcript_add(ints, bytes[tls_slot.b_out()..tls_slot.b_out() + 5 + n]);"),
     ("the read sequence number not incremented", "client.ls",
-     "    ints[i_read_seq()] = ints[i_read_seq()] + 1;", "    ints[i_read_seq()] = ints[i_read_seq()] + 0;"),
-    ("the write sequence number not incremented", "client.ls",
-     "    ints[i_write_seq()] = ints[i_write_seq()] + 1;", "    ints[i_write_seq()] = ints[i_write_seq()] + 0;"),
+     "    ints[tls_slot.i_read_seq()] = ints[tls_slot.i_read_seq()] + 1;", "    ints[tls_slot.i_read_seq()] = ints[tls_slot.i_read_seq()] + 0;"),
+    ("the write sequence number not incremented", "slot.ls",
+     "    ints[i_write_seq()] = ints[i_write_seq()] + 1;\n    ints[i_out_end()] = ints[i_out_end()] + n;",
+     "    ints[i_write_seq()] = ints[i_write_seq()] + 0;\n    ints[i_out_end()] = ints[i_out_end()] + n;"),
     ("the nonce built without the sequence", "record.ls",
      "            s = seq >> 8 * (11 - k) & 255;", "            s = 0;"),
     ("the downgrade sentinel ignored", "message.ls",
@@ -60,44 +62,46 @@ MUTANTS = [
     ("the content type taken from the outer header", "client.ls",
      "        inner = info[0];", "        inner = kind;"),
     ("the client's keys used for reading", "client.ls",
-     "            set_read_keys(ints, bytes, k_server_hs());", "            set_read_keys(ints, bytes, k_client_hs());"),
+     "            tls_slot.set_read_keys(ints, bytes, tls_slot.k_server_hs());", "            tls_slot.set_read_keys(ints, bytes, tls_slot.k_client_hs());"),
     ("a KeyUpdate not answered", "client.ls", "        if asked == 1 {", "        if asked == 2 {"),
     ("the CertificateVerify context string misspelled", "client.ls",
      'let label = "TLS 1.3, server CertificateVerify";', 'let label = "TLS 1.3, client CertificateVerify";'),
     ("a partial message not moved to the front", "client.ls",
-     "        bytes[b_hs() + k] = bytes[b_hs() + at + k];", "        bytes[b_hs() + k] = bytes[b_hs() + k];"),
+     "        bytes[tls_slot.b_hs() + k] = bytes[tls_slot.b_hs() + at + k];", "        bytes[tls_slot.b_hs() + k] = bytes[tls_slot.b_hs() + k];"),
     ("a warning-level alert ignored", "client.ls",
-     "    ints[i_alert()] = what;\n", "    if level == 1 {\n        return 0;\n    }\n    ints[i_alert()] = what;\n"),
-    ("the chain not verified", "client.ls", "code = from_x509(x509_verify.verify(store, body, ranges, bytes[k_host()..k_host() + ints[i_host_len()]], ints[i_now()], x509_verify.tls_max_intermediates()));", "code = 0;"),
-    ("the time not given to the verifier", "client.ls", "ints[i_now()], x509_verify.tls_max_intermediates()", "0, x509_verify.tls_max_intermediates()"),
-    ("an unknown issuer reported as x509-decode", "client.ls",
+     "    ints[tls_slot.i_alert()] = what;\n", "    if level == 1 {\n        return 0;\n    }\n    ints[tls_slot.i_alert()] = what;\n"),
+    ("the chain not verified", "slot.ls", "code = from_x509(x509_verify.verify(store, body, ranges, bytes[k_host()..k_host() + ints[i_host_len()]], ints[i_now()], x509_verify.tls_max_intermediates()));", "code = 0;"),
+    ("the time not given to the verifier", "slot.ls", "ints[i_now()], x509_verify.tls_max_intermediates()", "0, x509_verify.tls_max_intermediates()"),
+    ("an unknown issuer reported as x509-decode", "slot.ls",
      "    if code == x509_verify.unknown_issuer() {\n        return tls_record.x509_unknown_issuer();",
      "    if code == x509_verify.unknown_issuer() {\n        return tls_record.x509_decode();"),
     ("a message allowed to share a record with the next key", "client.ls",
-     "(after == state_wait_extensions() || after == state_connected()) && at < ints[i_hs_fill()]",
-     "(after == state_wait_extensions() || after == state_connected()) && at < 0"),
+     "(after == tls_slot.state_wait_extensions() || after == tls_slot.state_connected()) && at < ints[tls_slot.i_hs_fill()]",
+     "(after == tls_slot.state_wait_extensions() || after == tls_slot.state_connected()) && at < 0"),
     ("the engine's DRBG key not replaced", "tls.ls", "                key[i] = stream[i];\n", ""),
     ("the engine's slots overlapping", "tls.ls",
      "    return slot * tls_client.bytes_len();", "    return slot * (tls_client.bytes_len() / 2);"),
     # ---- Suites and HelloRetryRequest (docs/tls-parity.md §3.3) ----
-    ("SHA-384's transcript never chosen", "client.ls", "        if len(out) == 48 {", "        if len(out) == 32 {"),
+    ("SHA-384's transcript never chosen", "slot.ls", "        if len(out) == 48 {", "        if len(out) == 32 {"),
     ("AES-256-GCM given SHA-256", "record.ls",
-     "    if suite == suite_aes_256_gcm_sha384() {\n        return 48;", "    if suite == suite_aes_256_gcm_sha384() {\n        return 32;"),
+     "    if suite == suite_aes_256_gcm_sha384() || suite == 0xc02c || suite == 0xc030 {\n        return 48;",
+     "    if suite == suite_aes_256_gcm_sha384() || suite == 0xc02c || suite == 0xc030 {\n        return 32;"),
     ("AES-128-GCM given a 32-byte key", "record.ls",
-     "    if suite == suite_aes_128_gcm_sha256() {\n        return 16;", "    if suite == suite_aes_128_gcm_sha256() {\n        return 32;"),
+     "    if suite == suite_aes_128_gcm_sha256() || suite == 0xc02b || suite == 0xc02f {\n        return 16;",
+     "    if suite == suite_aes_128_gcm_sha256() || suite == 0xc02b || suite == 0xc02f {\n        return 32;"),
     ("every suite sealed with ChaCha20", "record.ls",
-     "    if suite == suite_chacha20_poly1305_sha256() {\n        return chacha20.seal(", "    if true {\n        return chacha20.seal("),
+     "    if chacha(suite) {\n        return chacha20.seal(", "    if true {\n        return chacha20.seal("),
     ("the Finished MAC always SHA-256", "client.ls", "        hmac.mac(h, key, th, out);", "        hmac.mac(32, key, th, out);"),
     ("message_hash with the wrong type", "client.ls", "        synthetic[0] = byte_of(254);", "        synthetic[0] = byte_of(253);"),
     ("the transcript not restarted after a retry", "client.ls",
-     "        transcript_init(ints);\n        transcript_add(ints, synthetic);", "        transcript_add(ints, synthetic);"),
+     "        tls_slot.transcript_init(ints);\n        tls_slot.transcript_add(ints, synthetic);", "        tls_slot.transcript_add(ints, synthetic);"),
     ("the cookie not echoed", "client.ls",
      "        let cookie = message[4 + cookie_start..4 + cookie_end];", "        let cookie = message[4..4];"),
     ("a second HelloRetryRequest accepted", "client.ls",
      "            if info[tls_message.sh_retry()] == 1 {\n                code = tls_record.unexpected_message();",
      "            if info[tls_message.sh_retry()] == 2 {\n                code = tls_record.unexpected_message();"),
     ("the suite after a retry not compared", "client.ls",
-     "            } else if suite != ints[i_suite()] {", "            } else if false {"),
+     "            } else if suite != ints[tls_slot.i_suite()] {", "            } else if false {"),
     # Not here: the ServerHello's group not compared with the share sent. A share of
     # another group always has the wrong length for the key held, so the key exchange
     # refuses it with the same tag; the comparison is defence in depth, and that mutant
@@ -105,23 +109,68 @@ MUTANTS = [
     ("a retry to X25519 accepted", "message.ls",
      "                if group != group_p256() && group != group_p384() {", "                if group == 0 {"),
     ("a retry that changes nothing accepted", "message.ls",
-     "        if group == 0 && cookie == 0 {", "        if group == 0 && cookie == 0 && false {"),
+     "            if group == 0 && cookie == 0 {", "            if group == 0 && cookie == 0 && false {"),
     ("a change_cipher_spec after a retry refused", "client.ls",
-     "        let early = state < state_wait_extensions() && !(state == state_wait_server_hello() && has(ints, f_retried()));",
-     "        let early = state < state_wait_extensions();"),
-    ("the retry's share for the wrong curve", "client.ls",
+     "        let early = state < tls_slot.state_wait_extensions() && !(state == tls_slot.state_wait_server_hello() && tls_slot.has(ints, tls_slot.f_retried()));",
+     "        let early = state < tls_slot.state_wait_extensions();"),
+    ("the retry's share for the wrong curve", "slot.ls",
      "    if group == tls_message.group_p256() {\n        return 256;", "    if group == tls_message.group_p256() {\n        return 384;"),
     ("the end of the socket taken for close_notify", "client.ls",
-     "    if has(ints, f_close_received()) || ints[i_state()] == state_failed() {\n        return 0;",
+     "    if tls_slot.has(ints, tls_slot.f_close_received()) || ints[tls_slot.i_state()] == tls_slot.state_failed() {\n        return 0;",
      "    if true {\n        return 0;"),
+    # ---- TLS 1.2 (docs/tls-parity.md §3.4) ----
+    ("the PRF's A(i) not chained", "record.ls",
+     "            hmac.init(hash_len, st, secret);\n            hmac.update(hash_len, st, a);\n            hmac.final(hash_len, st, a);",
+     "            hmac.init(hash_len, st, secret);\n            hmac.final(hash_len, st, a);"),
+    ("the PRF's label left out of A(1)", "record.ls",
+     "        hmac.update(hash_len, st, label);\n        hmac.update(hash_len, st, seed);\n        hmac.final(hash_len, st, a);",
+     "        hmac.update(hash_len, st, seed);\n        hmac.final(hash_len, st, a);"),
+    ("the master secret without the extension's label", "client12.ls", '"extended master secret"', '"master secret"'),
+    ("the key block's randoms in the wrong order", "client12.ls",
+     "        tls_slot.copy_bytes(bytes[tls_slot.k_server_random()..tls_slot.k_server_random() + 32], seed[0..32]);\n        tls_slot.copy_bytes(bytes[tls_slot.k_random()..tls_slot.k_random() + 32], seed[32..64]);",
+     "        tls_slot.copy_bytes(bytes[tls_slot.k_server_random()..tls_slot.k_server_random() + 32], seed[32..64]);\n        tls_slot.copy_bytes(bytes[tls_slot.k_random()..tls_slot.k_random() + 32], seed[0..32]);"),
+    ("the client writing with the server's key", "client12.ls",
+     "        tls_slot.copy_bytes(block[0..kl], bytes[tls_slot.k_write_key()..tls_slot.k_write_key() + kl]);",
+     "        tls_slot.copy_bytes(block[kl..2 * kl], bytes[tls_slot.k_write_key()..tls_slot.k_write_key() + kl]);"),
+    ("AES-GCM's explicit nonce not read from the record", "record.ls",
+     "        out[k] = explicit[k - 4];", "        out[k] = byte_of(0);"),
+    ("the explicit nonce sent as zeros", "record.ls",
+     "            out[5 + k] = byte_of(seq >> 8 * (7 - k) & 255);", "            out[5 + k] = byte_of(0);"),
+    ("the additional data without the sequence number", "record.ls",
+     "        out[k] = byte_of(seq >> 8 * (7 - k) & 255);\n        k = k + 1;\n    }\n    out[8]",
+     "        out[k] = byte_of(0);\n        k = k + 1;\n    }\n    out[8]"),
+    ("the additional data with the ciphertext's length", "record.ls",
+     "        aad12(seq, content_type, n, ad);\n        code = aead_open(", "        aad12(seq, content_type, body, ad);\n        code = aead_open("),
+    ("TLS 1.2 ChaCha20's nonce built as AES-GCM's", "record.ls",
+     "    if chacha(suite) {\n        return nonce(iv, seq, out);", "    if false {\n        return nonce(iv, seq, out);"),
+    ("the extended master secret not required", "message.ls",
+     "        if !ems {\n            return tls_record.extended_master_secret();", "        if false {\n            return tls_record.extended_master_secret();"),
+    ("a TLS 1.2 ServerHello echoing the session id accepted", "message.ls",
+     "            if same {\n                return tls_record.decode_error();", "            if same && false {\n                return tls_record.decode_error();"),
+    ("a key_share in a TLS 1.2 ServerHello accepted", "message.ls",
+     "        if group != 0 {\n            return tls_record.unsupported_extension();", "        if false {\n            return tls_record.unsupported_extension();"),
+    ("the key exchange's randoms not signed", "client12.ls",
+     "            tls_slot.copy_bytes(bytes[tls_slot.k_random()..tls_slot.k_random() + 32], content[0..32]);\n", ""),
+    ("the suite's kind of key not checked", "client12.ls",
+     "            if tls_record.suite12_ecdsa(ints[tls_slot.i_suite()]) == rsa_key {", "            if false {"),
+    ("the server's Finished computed as the client's", "client12.ls",
+     'verify_data(ints, bytes, "server finished", want);', 'verify_data(ints, bytes, "client finished", want);'),
+    ("the server's Finished not compared", "client12.ls",
+     "    if diff != 0 {\n        return tls_record.bad_finished();", "    if diff != diff {\n        return tls_record.bad_finished();"),
+    ("a HelloRequest accepted", "client12.ls", "        return tls_record.renegotiation();", "        return 0;"),
+    ("the ClientKeyExchange's point length one short", "client12.ls", "            cke[4] = byte_of(size);", "            cke[4] = byte_of(size - 1);"),
+    ("TLS 1.2 after a HelloRetryRequest accepted", "client.ls",
+     "        if code == 0 && tls12 && tls_slot.has(ints, tls_slot.f_retried()) {", "        if code == 0 && tls12 && false {"),
+    ("the server's key exchange point never kept", "client12.ls",
+     "            tls_slot.copy_bytes(point, bytes[tls_slot.k_peer()..tls_slot.k_peer() + len(point)]);\n", ""),
 ]
 
 
 def cases():
     """Every connection `conformance/tls.rs` replays, as (name, lines, answers)."""
     out = []
-    for name in ["tlslite_rsa.txt", "tlslite_ecdsa.txt", "tlslite_aes256_x25519.txt", "tlslite_aes128_p256.txt",
-                 "tlslite_aes256_p384.txt"]:
+    names = sorted(os.listdir(os.path.join(ROOT, "tests/vectors/tls")))
+    for name in [n for n in names if n.startswith("tlslite_") or n.startswith("openssl12_")]:
         asked, answered = [], []
         for line in open(os.path.join(ROOT, "tests/vectors/tls", name)):
             line = line.rstrip("\n")
@@ -142,7 +191,7 @@ def cases():
 
 
 def build(lexsys, program, pkg, out, engine=False):
-    files = [os.path.join(pkg, f) for f in (FILES if engine else FILES[:3])]
+    files = [os.path.join(pkg, f) for f in (FILES if engine else FILES[:5])]
     r = subprocess.run([lexsys, "build", "--std", os.path.join(ROOT, "tests/programs", program), *files,
                         *[os.path.join(ROOT, "packages/x509", f) for f in ["verify.ls", "names.ls", "x509.ls"]],
                         "-o", out], capture_output=True, text=True)

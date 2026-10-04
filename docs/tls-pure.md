@@ -173,6 +173,9 @@ deferred with #207's measurement.
 
 ### 3.4 What a TLS 1.2 fallback would add (#207)
 
+*Superseded (#207, `docs/tls-parity.md` §3.4): TLS 1.2 is built, with ECDHE, AES-GCM and ChaCha20-Poly1305 and the extended
+master secret required. This section records the first decision.*
+
 It would add the TLS 1.2 handshake (a second state machine), the PRF, the extended master secret (required), both downgrade
 sentinels, and ECDHE on X25519 with ChaCha20-Poly1305 only. It would not add RSA key exchange, CBC or renegotiation. It is
 justified only by a measured number of receivers that need it (#207's gate). It is not part of this design.
@@ -393,6 +396,8 @@ history, as `lexsys-hooks` stores `attempts.status` today (`docs/tls-nonblocking
 | `tls-record-overflow` | a record or a handshake message over its limit (§7.1) | the same |
 | `tls-bad-record-mac` | an AEAD tag did not verify | the path is corrupting or tampering; retry |
 | `tls-key-share` | an X25519 share that gives the all-zero secret | a hostile peer |
+| `tls-extended-master-secret` | *#207:* a TLS 1.2 server without the extended master secret (RFC 7627) | the receiver's TLS 1.2 is old; it needs TLS 1.3, or the OpenSSL backend |
+| `tls-renegotiation` | *#207:* a TLS 1.2 HelloRequest | the receiver renegotiates; none is done |
 | `tls-bad-certificate-verify` | the server's signature over the transcript does not verify | a hostile peer, or the wrong key |
 | `tls-bad-finished` | the server's `Finished` does not verify | the same |
 | `tls-too-many-messages` | the KeyUpdate or warning-alert limits (§7.1) | the same |

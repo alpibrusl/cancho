@@ -7,6 +7,9 @@ edition 5;
 //
 //     S <suite> <key> <iv> <seq> <type> <plaintext>   tls_record.seal: `<code> <tag> <record>`
 //     O <suite> <key> <iv> <seq> <record>             tls_record.open: `<code> <tag> <type> <content>`
+//     T <suite> <key> <iv> <seq> <type> <plaintext>   tls_record.seal12 (TLS 1.2), answered as `S`
+//     U <suite> <key> <iv> <seq> <record>             tls_record.open12 (TLS 1.2), answered as `O`
+//     P <hash length> <secret> <label> <seed> <n>     tls_record.prf: `<code> <tag> <n bytes>`
 //
 // (`suite` in hex: 1301, 1302 or 1303.)
 //     C <host> <random> <roots> <now>         tls_client.start (random: 96 bytes; roots: a PEM bundle, the trust
@@ -109,13 +112,18 @@ fn record_op[&i, &s](io: &!i Io, s: &s [byte], at: int) -> [io_write] int {
         f = next_field(s, f);
         let seq = number(s, f);
         f = next_field(s, f);
-        if op == 83 {
+        if op == 83 || op == 84 {
             let kind = number(s, f);
             f = next_field(s, f);
             let text = alloc_slice[r](hex_len(s, f), byte_of(0));
             hex_into(s, f, text);
-            let out = alloc_slice[r](len(text) + 22, byte_of(0));
-            let n = tls_record.seal(suite, key, iv, seq, kind, text, out);
+            let out = alloc_slice[r](len(text) + 29, byte_of(0));
+            var n = 0;
+            if op == 83 {
+                n = tls_record.seal(suite, key, iv, seq, kind, text, out);
+            } else {
+                n = tls_record.seal12(suite, key, iv, seq, kind, text, out);
+            }
             if n > 0 {
                 tag_line(io, 0);
                 io.space(io);
@@ -133,7 +141,12 @@ fn record_op[&i, &s](io: &!i Io, s: &s [byte], at: int) -> [io_write] int {
             }
             let out = alloc_slice[r](room, byte_of(0));
             let info = alloc_slice[r](2, 0);
-            let code = tls_record.open(suite, key, iv, seq, rec, out, info);
+            var code = 0;
+            if op == 79 {
+                code = tls_record.open(suite, key, iv, seq, rec, out, info);
+            } else {
+                code = tls_record.open12(suite, key, iv, seq, rec, out, info);
+            }
             tag_line(io, code);
             if code == 0 {
                 io.space(io);
@@ -144,6 +157,30 @@ fn record_op[&i, &s](io: &!i Io, s: &s [byte], at: int) -> [io_write] int {
                 io.write_all(io, " -");
             }
         }
+    }
+    io.newline(io);
+    return 0;
+}
+
+// `P <hash length> <secret> <label> <seed> <n>`: the TLS 1.2 PRF.
+fn prf_op[&i, &s](io: &!i Io, s: &s [byte], at: int) -> [io_write] int {
+    var f = at + 2;
+    let h = number(s, f);
+    f = next_field(s, f);
+    region r {
+        let secret = alloc_slice[r](hex_len(s, f), byte_of(0));
+        hex_into(s, f, secret);
+        f = next_field(s, f);
+        let label = alloc_slice[r](hex_len(s, f), byte_of(0));
+        hex_into(s, f, label);
+        f = next_field(s, f);
+        let seed = alloc_slice[r](hex_len(s, f), byte_of(0));
+        hex_into(s, f, seed);
+        f = next_field(s, f);
+        let out = alloc_slice[r](number(s, f), byte_of(0));
+        tag_line(io, tls_record.prf(h, secret, label, seed, out));
+        io.space(io);
+        print_hex(io, out);
     }
     io.newline(io);
     return 0;
@@ -289,8 +326,10 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
                             if n > 0 && n <= len(l) {
                                 let s = l[0..n];
                                 let op = int_of(s[0]);
-                                if op == 83 || op == 79 {
+                                if op == 83 || op == 79 || op == 84 || op == 85 {
                                     record_op(io, s, 0);
+                                } else if op == 80 {
+                                    prf_op(io, s, 0);
                                 } else {
                                     if op == 67 {
                                         // The roots, a PEM bundle, are the third field: read

@@ -1,10 +1,12 @@
-//! `packages/tls` with no network (`docs/tls-core.md` §6.1): five recorded
-//! handshakes against tlslite-ng (ChaCha20 with X25519, AES-256-GCM with
-//! X25519, and a HelloRetryRequest to P-256 and to P-384 under AES-GCM,
-//! `docs/tls-parity.md` §3.3) replayed byte for byte on both backends,
+//! `packages/tls` with no network (`docs/tls-core.md` §6.1): eleven recorded
+//! handshakes replayed byte for byte on both backends -- five TLS 1.3
+//! against tlslite-ng (ChaCha20 with X25519, AES-256-GCM with X25519, and a
+//! HelloRetryRequest to P-256 and to P-384 under AES-GCM,
+//! `docs/tls-parity.md` §3.3) and six TLS 1.2 against `openssl s_server`,
+//! one a suite (§3.4) -- the TLS 1.2 PRF against its definition,
 //! the same server bytes fed one byte at a time and all at once, a wrong
 //! root, a crafted ServerHello for each rule of RFC 8446 §4.1.3 the
-//! client enforces, and the 41 connections of `scripts/tls_liar.py`'s
+//! client enforces, and the 63 connections of `scripts/tls_liar.py`'s
 //! lying server (§6.3). All through `tests/programs/tls_driver.ls`.
 
 use super::json::feed;
@@ -17,7 +19,7 @@ fn build_tls_driver(test: &str, backend: &str) -> (PathBuf, PathBuf) {
         .args(["build", "--std", "--backend", backend])
         .arg(repo_root().join("tests/programs/tls_driver.ls"))
         .args(
-            ["record.ls", "message.ls", "client.ls"]
+            ["record.ls", "message.ls", "slot.ls", "client12.ls", "client.ls"]
                 .map(|f| repo_root().join("packages/tls").join(f)),
         )
         .args(
@@ -87,13 +89,20 @@ fn hex(s: &str) -> String {
 }
 
 /// The recorded handshakes: `scripts/tls_trace.py`'s certificate, suite and
-/// group for each.
-const TRACES: [&str; 5] = [
+/// group for each, against tlslite-ng (TLS 1.3) and `openssl s_server
+/// -tls1_2` (`docs/tls-parity.md` §3.4).
+const TRACES: [&str; 11] = [
     "tlslite_rsa.txt",
     "tlslite_ecdsa.txt",
     "tlslite_aes256_x25519.txt",
     "tlslite_aes128_p256.txt",
     "tlslite_aes256_p384.txt",
+    "openssl12_ecdhe_ecdsa_aes128_gcm_sha256.txt",
+    "openssl12_ecdhe_ecdsa_aes256_gcm_sha384.txt",
+    "openssl12_ecdhe_ecdsa_chacha20_poly1305.txt",
+    "openssl12_ecdhe_rsa_aes128_gcm_sha256.txt",
+    "openssl12_ecdhe_rsa_aes256_gcm_sha384.txt",
+    "openssl12_ecdhe_rsa_chacha20_poly1305.txt",
 ];
 
 #[test]
@@ -106,11 +115,7 @@ fn every_recorded_handshake_replays_byte_for_byte_on_both_backends() {
             for (n, (g, w)) in got.iter().zip(&answered).enumerate() {
                 assert_eq!(g, w, "{name} line {n} on {backend}");
             }
-            assert_eq!(
-                field(answered.last().unwrap(), 2),
-                "4",
-                "{name}: the server's close_notify was seen"
-            );
+            assert_eq!(field(answered.last().unwrap(), 2), "4", "{name}: closed");
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -121,7 +126,7 @@ fn every_recorded_handshake_replays_byte_for_byte_on_both_backends() {
 #[test]
 fn every_lying_server_is_refused_with_its_own_tag_on_both_backends() {
     let cases = liar_cases();
-    assert_eq!(cases.len(), 41);
+    assert_eq!(cases.len(), 63);
     for backend in ["cranelift", "llvm"] {
         let (dir, exe) = build_tls_driver("liar", backend);
         for (tag, name, asked, answered) in &cases {
@@ -260,9 +265,19 @@ fn every_server_hello_rule_is_refused_with_its_own_tag() {
             "tls-protocol-version",
         ),
         (
-            "TLS 1.2: no supported_versions",
+            "no supported_versions (TLS 1.2), with a TLS 1.3 suite",
             hello("0303", &random, &sid, "1303", &key_share),
-            "tls-protocol-version",
+            "tls-no-shared-cipher",
+        ),
+        (
+            "TLS 1.2 with no extended master secret",
+            hello("0303", &random, &"aa".repeat(32), "c02f", "ff01000100"),
+            "tls-extended-master-secret",
+        ),
+        (
+            "TLS 1.2, valid",
+            hello("0303", &random, &"aa".repeat(32), "c02f", "ff0100010000170000"),
+            "ok",
         ),
         (
             "supported_versions 1.2",
@@ -416,7 +431,7 @@ fn sixty_four_connections_on_one_thread_fed_one_byte_and_in_bulk() {
         .args(["build", "--std", "--backend", "llvm"])
         .arg(repo_root().join("tests/programs/tls_many.ls"))
         .args(
-            ["tls.ls", "record.ls", "message.ls", "client.ls"]
+            ["tls.ls", "record.ls", "message.ls", "slot.ls", "client12.ls", "client.ls"]
                 .map(|f| repo_root().join("packages/tls").join(f)),
         )
         .args(
@@ -527,6 +542,32 @@ fn rfc8448s_server_flight_opens_under_aes_128_gcm() {
         assert_eq!(got[0], format!("0 ok 22 {content}"), "{backend}");
         assert_eq!(field(&got[1], 1), "tls-bad-record-mac", "{backend}");
         assert_eq!(field(&got[2], 1), "tls-bad-record-mac", "the other AEAD, {backend}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// The TLS 1.2 PRF (`tls_record.prf`, RFC 5246 §5) and the extended master
+/// secret (RFC 7627 §4) against `tests/vectors/tls/prf12.txt`, whose rows
+/// `scripts/tls12_prf_differential.py` printed from OpenSSL's TLS1-PRF and
+/// checked against Python's `hmac`, on both backends.
+#[test]
+fn the_tls12_prf_matches_openssl_on_both_backends() {
+    let text = std::fs::read_to_string(repo_root().join("tests/vectors/tls/prf12.txt")).unwrap();
+    let rows: Vec<(String, String)> = text
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .map(|l| {
+            let (case, want) = l.split_once(" | ").unwrap();
+            (case.to_string(), want.to_string())
+        })
+        .collect();
+    assert_eq!(rows.len(), 40);
+    let cases: Vec<String> = rows.iter().map(|r| r.0.clone()).collect();
+    for backend in ["cranelift", "llvm"] {
+        let (dir, exe) = build_tls_driver("prf", backend);
+        for ((case, want), got) in rows.iter().zip(run(&exe, &cases)) {
+            assert_eq!(got, format!("0 ok {want}"), "{case} on {backend}");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
