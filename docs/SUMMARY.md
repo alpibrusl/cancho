@@ -91,6 +91,7 @@
 - [`std.bigmod` and `std.rsa`: RSA signature verification](rsa.md)
 - [`std.ecdsa`: ECDSA verification on P-256 and P-384](ecdsa.md)
 - [`packages/tls`: the TLS 1.3 handshake and record layer](tls-core.md)
+- [`packages/x509`: verifying a server's chain](x509-verify.md)
 
 # Compile time and program identity
 
