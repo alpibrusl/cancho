@@ -91,6 +91,10 @@ client that trusts anyone. So until #206 the trust store is used **as a set of p
 A pinned leaf needs no chain and no name check: the operator named that exact certificate. This is enough for every test in
 §6, which use certificates made for them. #206 replaces the pin check with real chain validation, behind the same call.
 
+*Ended (#206, `docs/x509-verify.md` §9): `tls.trust` now loads roots, and `Certificate` is verified against them, the host and
+the time `start` was given. The pins are gone. The tests of §9 and §10 were re-recorded with a CA for each server; their text
+below describes them as they were built.*
+
 ## 6. Evidence
 
 ### 6.1 The byte-for-byte gate, and why it is not RFC 8448's trace

@@ -6,10 +6,13 @@
 `driver` is `tests/programs/tls_driver.ls` built with `--std` and the package's
 files. A tlslite-ng 0.8.2 server (pure Python, an implementation independent of
 this one) runs in a thread on one end of a socket pair. It is restricted to
-TLS 1.3, ChaCha20-Poly1305 and X25519, and has a certificate made here: RSA-2048
-(the server signs `CertificateVerify` with RSA-PSS) or ECDSA P-256. The driver
-is the client, with fixed "randomness" (the bytes 00 to 5f), so everything it
-sends is a function of what it receives.
+TLS 1.3, ChaCha20-Poly1305 and X25519, and has a certificate made here, issued
+by a CA made here: an RSA-2048 leaf under an RSA-2048 CA (the server signs
+`CertificateVerify` with RSA-PSS), or a P-256 leaf under a P-256 CA. The CA is
+the client's whole trust store, and the clock is fixed at 2026-06-01, so the
+chain is verified (`docs/x509-verify.md`). The driver is the client, with
+fixed "randomness" (the bytes 00 to 5f), so everything it sends is a
+function of what it receives.
 
 The client does the handshake, sends `GET / HTTP/1.0`, reads the answer, and
 sees the server's close_notify. The file holds every line given to the driver
@@ -34,24 +37,35 @@ from tlslite.utils.keyfactory import parsePEMKey
 BODY = b"HTTP/1.0 200 OK\r\nContent-Length: 13\r\n\r\nhello, lexsys"
 
 
+NOW = 1780272000  # 2026-06-01, inside both certificates' validity
+
+
 def certificate(kind):
-    key = rsa.generate_private_key(65537, 2048) if kind == "rsa" else ec.generate_private_key(ec.SECP256R1())
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
+    """A CA and a leaf for `localhost` it issued, both of `kind`."""
+    def new_key():
+        return rsa.generate_private_key(65537, 2048) if kind == "rsa" else ec.generate_private_key(ec.SECP256R1())
     start = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
-    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
-            .serial_number(205).not_valid_before(start).not_valid_after(start + datetime.timedelta(days=3650))
+    end = start + datetime.timedelta(days=3650)
+    ca_key, key = new_key(), new_key()
+    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, f"tls_trace {kind} CA")])
+    ca = (x509.CertificateBuilder().subject_name(ca_name).issuer_name(ca_name).public_key(ca_key.public_key())
+          .serial_number(1).not_valid_before(start).not_valid_after(end)
+          .add_extension(x509.BasicConstraints(ca=True, path_length=None), True)
+          .sign(ca_key, hashes.SHA256()))
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(ca_name).public_key(key.public_key())
+            .serial_number(205).not_valid_before(start).not_valid_after(end)
             .add_extension(x509.SubjectAlternativeName([x509.DNSName("localhost")]), False)
-            .sign(key, hashes.SHA256()))
+            .sign(ca_key, hashes.SHA256()))
     key_pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
                                 serialization.NoEncryption()).decode()
-    return cert, key_pem
+    return ca, cert, key_pem
 
 
 def main():
     driver, kind, out = sys.argv[1], sys.argv[2], sys.argv[3]
-    cert, key_pem = certificate(kind)
-    der = cert.public_bytes(serialization.Encoding.DER)
-    pins = len(der).to_bytes(3, "big") + der
+    ca, cert, key_pem = certificate(kind)
+    roots = ca.public_bytes(serialization.Encoding.PEM)
     server_end, client_end = socket.socketpair()
     seen = {}
 
@@ -73,7 +87,7 @@ def main():
     thread.start()
     proc = subprocess.Popen([driver], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
     lines = [f"# scripts/tls_trace.py {kind}: packages/tls against tlslite-ng 0.8.2. `=` lines are the client's answers.",
-             f"# Pinned certificate: {der.hex()}"]
+             f"# Root: {ca.public_bytes(serialization.Encoding.DER).hex()}"]
 
     def ask(line):
         proc.stdin.write(line + "\n")
@@ -85,7 +99,7 @@ def main():
             client_end.sendall(bytes.fromhex(fields[3]))
         return fields
 
-    ask(f"C {b'localhost'.hex()} {bytes(range(96)).hex()} {pins.hex()}")
+    ask(f"C {b'localhost'.hex()} {bytes(range(96)).hex()} {roots.hex()} {NOW}")
     client_end.settimeout(10)
     received = b""
     requested = False

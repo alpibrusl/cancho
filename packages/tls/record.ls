@@ -97,6 +97,42 @@ pub fn x509_chain_too_large() -> [] int {
     return -24;
 }
 
+pub fn x509_expired() -> [] int {
+    return -25;
+}
+
+pub fn x509_not_yet_valid() -> [] int {
+    return -26;
+}
+
+pub fn x509_bad_signature() -> [] int {
+    return -27;
+}
+
+pub fn x509_name_mismatch() -> [] int {
+    return -28;
+}
+
+pub fn x509_not_ca() -> [] int {
+    return -29;
+}
+
+pub fn x509_path_too_long() -> [] int {
+    return -30;
+}
+
+pub fn x509_name_constraint() -> [] int {
+    return -31;
+}
+
+pub fn x509_key_usage() -> [] int {
+    return -32;
+}
+
+pub fn x509_critical_extension() -> [] int {
+    return -33;
+}
+
 pub fn refusal_tag(code: int) -> [] &static [byte] {
     if code == 0 {
         return "ok";
@@ -163,6 +199,33 @@ pub fn refusal_tag(code: int) -> [] &static [byte] {
     }
     if code == -24 {
         return "x509-chain-too-large";
+    }
+    if code == -25 {
+        return "x509-expired";
+    }
+    if code == -26 {
+        return "x509-not-yet-valid";
+    }
+    if code == -27 {
+        return "x509-bad-signature";
+    }
+    if code == -28 {
+        return "x509-name-mismatch";
+    }
+    if code == -29 {
+        return "x509-not-ca";
+    }
+    if code == -30 {
+        return "x509-path-too-long";
+    }
+    if code == -31 {
+        return "x509-name-constraint";
+    }
+    if code == -32 {
+        return "x509-key-usage";
+    }
+    if code == -33 {
+        return "x509-critical-extension";
     }
     return "unknown";
 }

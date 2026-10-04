@@ -1,7 +1,7 @@
 //! `packages/tls` with no network (`docs/tls-core.md` §6.1): two recorded
 //! handshakes against tlslite-ng replayed byte for byte on both backends,
 //! the same server bytes fed one byte at a time and all at once, a wrong
-//! pin, a crafted ServerHello for each rule of RFC 8446 §4.1.3 the
+//! root, a crafted ServerHello for each rule of RFC 8446 §4.1.3 the
 //! client enforces, and the 29 connections of `scripts/tls_liar.py`'s
 //! lying server (§6.3). All through `tests/programs/tls_driver.ls`.
 
@@ -18,7 +18,9 @@ fn build_tls_driver(test: &str, backend: &str) -> (PathBuf, PathBuf) {
             ["record.ls", "message.ls", "client.ls"]
                 .map(|f| repo_root().join("packages/tls").join(f)),
         )
-        .arg(repo_root().join("packages/x509/x509.ls"))
+        .args(
+            ["verify.ls", "names.ls", "x509.ls"].map(|f| repo_root().join("packages/x509").join(f)),
+        )
         .arg("-o")
         .arg(&exe)
         .output()
@@ -165,14 +167,20 @@ fn the_same_bytes_in_any_split_give_the_same_connection() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A server whose certificate is not the pinned one is refused, with the
-/// unknown_ca alert, before anything else of its flight is read.
+/// A server whose certificate another CA issued is refused, with the
+/// unknown_ca alert, before anything else of its flight is read: the RSA
+/// trace's server against the ECDSA trace's root.
 #[test]
-fn an_unpinned_certificate_is_refused() {
+fn a_certificate_from_another_ca_is_refused() {
     let (asked, _) = trace("tlslite_rsa.txt");
     let (other, _) = trace("tlslite_ecdsa.txt");
-    let other_pins = field(&other[0], 3);
-    let mut lines = vec![format!("C {} {} {other_pins}", field(&asked[0], 1), field(&asked[0], 2))];
+    let other_root = field(&other[0], 3);
+    let mut lines = vec![format!(
+        "C {} {} {other_root} {}",
+        field(&asked[0], 1),
+        field(&asked[0], 2),
+        field(&asked[0], 4)
+    )];
     lines.extend(asked[1..3].iter().cloned());
     let (dir, exe) = build_tls_driver("pin", "cranelift");
     let got = run(&exe, &lines);
@@ -374,7 +382,9 @@ fn sixty_four_connections_on_one_thread_fed_one_byte_and_in_bulk() {
             ["tls.ls", "record.ls", "message.ls", "client.ls"]
                 .map(|f| repo_root().join("packages/tls").join(f)),
         )
-        .arg(repo_root().join("packages/x509/x509.ls"))
+        .args(
+            ["verify.ls", "names.ls", "x509.ls"].map(|f| repo_root().join("packages/x509").join(f)),
+        )
         .arg("-o")
         .arg(&exe)
         .output()
