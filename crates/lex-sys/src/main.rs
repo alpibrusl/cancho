@@ -1223,6 +1223,9 @@ fn print_authority(inputs: &[PathBuf], with_std: bool, json: bool) -> Result<(),
             ("the heap", ["heap"].as_slice()),
             ("the command line", ["args"].as_slice()),
             ("signals", ["signals", "signals_read"].as_slice()),
+            // `docs/processes.md` §2: starting a program, and what a parent
+            // does with the children it started.
+            ("other programs", ["exec", "child_signal", "pipe_read", "pipe_write"].as_slice()),
             ("foreign code", ["ffi"].as_slice()),
         ]
         .into_iter()

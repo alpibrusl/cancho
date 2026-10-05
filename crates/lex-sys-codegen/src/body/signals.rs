@@ -88,7 +88,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         set
     }
 
-    fn scratch_bytes(&mut self, size: i64) -> Value {
+    pub(crate) fn scratch_bytes(&mut self, size: i64) -> Value {
         let pointer = self.pointer;
         let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
             StackSlotKind::ExplicitSlot,
@@ -212,6 +212,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
             self.each_native_signal(native, |this, n| this.set_disposition(n, 1));
             let kq = self.libc_call("kqueue", &[], &[types::I32], &[]);
             let reason = self.errno();
+            self.close_on_exec(kq);
             let failed = self.builder.ins().icmp_imm(IntCC::SignedLessThan, kq, 0);
             self.builder.ins().brif(failed, bad, &[], ok, &[]);
             (kq, reason, None)

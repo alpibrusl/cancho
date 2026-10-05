@@ -102,6 +102,10 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::ListenerNonblocking
                     | Builtin::ConnClose
                     | Builtin::ListenerClose
+                    | Builtin::PipeNonblocking
+                    | Builtin::PipeClose
+                    | Builtin::ChildEndClose
+                    | Builtin::ChildKill
                     | Builtin::PollerAddListener
                     | Builtin::PollerAddConn
                     | Builtin::PollerModify

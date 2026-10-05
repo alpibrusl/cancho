@@ -110,8 +110,7 @@ impl<'a> FuncEmitter<'a> {
             self.store_byte(&addr, offset, "0");
         }
 
-        let fd = self.fresh();
-        self.out.push_str(&format!("  {fd} = call i32 @socket(i32 2, i32 1, i32 0)\n"));
+        let fd = self.tcp_socket();
 
         let result_cell = self.fresh();
         self.hoist(format!("  {result_cell} = alloca i64\n"));
@@ -223,17 +222,7 @@ impl<'a> FuncEmitter<'a> {
 
         // Inside the bound, the bytes have to match -- a plain prefix,
         // with no separator to land on (`docs/net.md` §4).
-        let inside = self.fresh();
-        self.out.push_str(&format!("  {inside} = icmp ult i64 {i}, {}\n", bound.len()));
-        let want_at = self.fresh();
-        self.out.push_str(&format!("  {want_at} = getelementptr i8, ptr {expected}, i64 {i}\n"));
-        let want = self.fresh();
-        self.out.push_str(&format!("  {want} = load i8, ptr {want_at}\n"));
-        let differs = self.fresh();
-        self.out.push_str(&format!("  {differs} = icmp ne i8 {byte}, {want}\n"));
-        let escaped = self.fresh();
-        self.out.push_str(&format!("  {escaped} = and i1 {inside}, {differs}\n"));
-        self.trap_if(&escaped)?;
+        self.check_against(&expected, bound.len(), &i, &byte)?;
 
         let next = self.fresh();
         self.out.push_str(&format!("  {next} = add i64 {i}, 1\n"));
@@ -379,8 +368,7 @@ impl<'a> FuncEmitter<'a> {
         self.store_byte(&addr, 2, &high8);
         self.store_byte(&addr, 3, &low8);
 
-        let fd = self.fresh();
-        self.out.push_str(&format!("  {fd} = call i32 @socket(i32 2, i32 1, i32 0)\n"));
+        let fd = self.tcp_socket();
         let bad_socket = self.fresh();
         self.out.push_str(&format!("  {bad_socket} = icmp slt i32 {fd}, 0\n"));
         self.out

@@ -51,7 +51,9 @@ impl<'a> FuncEmitter<'a> {
     pub(crate) fn dir_list(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
         let handle =
             args.first().map(operand).ok_or_else(|| "`dir_list` needs its handle".to_owned())?;
-        let directory = self.open_flags().directory;
+        let flags = self.open_flags();
+        // Close-on-exec, as every descriptor a builtin opens (`docs/processes.md` §4.5).
+        let directory = flags.directory | flags.cloexec;
         let cells = self.cells(3);
         let dot = self.fresh();
         self.hoist(format!("  {dot} = alloca [2 x i8]\n"));

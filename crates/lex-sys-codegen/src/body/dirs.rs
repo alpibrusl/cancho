@@ -19,19 +19,18 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
 
     /// The `open` flags for this target, from the one table both backends
     /// share.
-    fn open_flags(&self) -> lex_sys_ir::OpenFlags {
+    pub(crate) fn open_flags(&self) -> lex_sys_ir::OpenFlags {
         lex_sys_ir::open_flags(self.is_darwin(), self.aarch64())
     }
 
     /// `open_dir`'s open: the path is already checked against the prefix and
-    /// NUL-terminated. `open(path, O_RDONLY | O_DIRECTORY)`, two fixed
-    /// arguments as `open_read`'s is; links in this path are followed, since
+    /// NUL-terminated. `openat(AT_FDCWD, path, O_RDONLY | O_DIRECTORY |
+    /// O_CLOEXEC)`, as `open_read`'s is; links in this path are followed, since
     /// it is the anchor the caller chose. `DirOpened`'s three leaves.
     pub(crate) fn open_directory(&mut self, path: Value) -> Vec<Value> {
-        let pointer = self.pointer;
-        let directory = self.open_flags().directory;
-        let flags = self.builder.ins().iconst(types::I32, directory);
-        let fd = self.libc_call("open", &[pointer, types::I32], &[types::I32], &[path, flags]);
+        let flags = self.open_flags();
+        let cwd = self.builder.ins().iconst(types::I32, flags.at_fdcwd);
+        let fd = self.openat(cwd, path, flags.directory | flags.cloexec, 0);
         let fd = self.builder.ins().sextend(types::I64, fd);
         let failed = self.builder.ins().icmp_imm(IntCC::SignedLessThan, fd, 0);
         let one = self.builder.ins().iconst(types::I64, 1);
@@ -202,6 +201,8 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
             }
             _ => (f.nofollow, 0),
         };
+        // Every descriptor a builtin opens is close-on-exec (`docs/processes.md` §4.5).
+        let flags = flags | f.cloexec;
         let handle = args[0];
         self.dir_call(&[(args[1], args[2])], |this, copies| {
             let fd = this.dir_fd(handle);

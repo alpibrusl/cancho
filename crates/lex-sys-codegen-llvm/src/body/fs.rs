@@ -22,6 +22,43 @@ impl<'a> FuncEmitter<'a> {
         LValue::Reg(value)
     }
 
+    /// Trap when byte `i` of a path or a host differs from byte `i` of the
+    /// `length`-byte bound at `expected`, while `i` is inside the bound.
+    ///
+    /// The bound's byte is read at `i` only while `i` is inside it, and at 0
+    /// otherwise. Reading it at every `i` read past the end of its global, and
+    /// LLVM folds that load to `poison`: `false && poison` is still `poison`,
+    /// and a branch on `poison` is undefined behaviour, so `-O2` deleted every
+    /// path through a short operation under a narrowed capability -- a
+    /// `fs_read("/tmp/q/f")` on `Fs("/tmp")` trapped (`docs/filesystem.md`
+    /// §4). An empty bound contains everything, and its global has no byte
+    /// to read at all, so there is nothing to compare.
+    pub(crate) fn check_against(
+        &mut self,
+        expected: &str,
+        length: usize,
+        i: &str,
+        byte: &str,
+    ) -> Result<(), String> {
+        if length == 0 {
+            return Ok(());
+        }
+        let inside = self.fresh();
+        self.out.push_str(&format!("  {inside} = icmp ult i64 {i}, {length}\n"));
+        let index = self.fresh();
+        self.out.push_str(&format!("  {index} = select i1 {inside}, i64 {i}, i64 0\n"));
+        let want_at = self.fresh();
+        self.out
+            .push_str(&format!("  {want_at} = getelementptr i8, ptr {expected}, i64 {index}\n"));
+        let want = self.fresh();
+        self.out.push_str(&format!("  {want} = load i8, ptr {want_at}\n"));
+        let differs = self.fresh();
+        self.out.push_str(&format!("  {differs} = icmp ne i8 {byte}, {want}\n"));
+        let escaped = self.fresh();
+        self.out.push_str(&format!("  {escaped} = and i1 {inside}, {differs}\n"));
+        self.trap_if(&escaped)
+    }
+
     /// The longest path a file operation will build, including the NUL
     /// -- copied onto the stack to terminate it for C, since a slice
     /// carries no terminator of its own (`docs/strings.md` §6). A
@@ -93,17 +130,7 @@ impl<'a> FuncEmitter<'a> {
         // Inside the prefix, the bytes have to match. A path outside
         // what the capability granted is a broken promise, so it traps
         // rather than returning `-1`.
-        let inside = self.fresh();
-        self.out.push_str(&format!("  {inside} = icmp ult i64 {i}, {}\n", prefix.len()));
-        let want_at = self.fresh();
-        self.out.push_str(&format!("  {want_at} = getelementptr i8, ptr {expected}, i64 {i}\n"));
-        let want = self.fresh();
-        self.out.push_str(&format!("  {want} = load i8, ptr {want_at}\n"));
-        let differs = self.fresh();
-        self.out.push_str(&format!("  {differs} = icmp ne i8 {byte}, {want}\n"));
-        let escaped = self.fresh();
-        self.out.push_str(&format!("  {escaped} = and i1 {inside}, {differs}\n"));
-        self.trap_if(&escaped)?;
+        self.check_against(&expected, prefix.len(), &i, &byte)?;
 
         let next = self.fresh();
         self.out.push_str(&format!("  {next} = add i64 {i}, 1\n"));
@@ -140,15 +167,13 @@ impl<'a> FuncEmitter<'a> {
         Ok(buffer)
     }
 
-    /// `fs_read`/`fs_write` (`docs/filesystem.md` §3). Neither call is
-    /// `open(path, flags, mode)`: `open` is variadic, and on Apple
-    /// ARM64 a variadic argument is passed on the stack while a fixed
-    /// one is passed in a register, so a fixed three-argument
-    /// declaration would put `mode` where the callee never looks. So:
-    /// `creat(path, mode)` to write, `open(path, O_RDONLY)` to read,
-    /// both non-variadic, the same choice
-    /// `lex-sys-codegen`'s own `file_op` already made and
-    /// `docs/filesystem.md` §2.2 explains.
+    /// `fs_read`/`fs_write` (`docs/filesystem.md` §3). Both open with
+    /// `openat(AT_FDCWD, path, flags, mode)` and `O_CLOEXEC`
+    /// (`docs/processes.md` §4.5): `O_WRONLY|O_CREAT|O_TRUNC` and `0644`
+    /// to write, which is what `creat` was, and `O_RDONLY` to read.
+    /// `openat` is declared variadic and called as one, so `mode` reaches
+    /// the callee on Apple ARM64 too, where a variadic argument is passed
+    /// on the stack (`docs/filesystem.md` §2.2).
     pub(crate) fn file_op(
         &mut self,
         write: bool,
@@ -159,12 +184,13 @@ impl<'a> FuncEmitter<'a> {
         let bytes = self.expr(&args[2])?;
         let path = self.checked_path(prefix, &path)?;
 
-        let fd = self.fresh();
-        if write {
-            self.out.push_str(&format!("  {fd} = call i32 @creat(ptr {path}, i32 420)\n"));
+        let f = self.open_flags();
+        let (flags, mode) = if write {
+            (f.write_only | f.create | f.truncate | f.cloexec, lex_sys_ir::CREATE_MODE)
         } else {
-            self.out.push_str(&format!("  {fd} = call i32 @open(ptr {path}, i32 0)\n"));
-        }
+            (f.cloexec, 0)
+        };
+        let fd = self.open_at_cwd(&path, flags, mode);
 
         let result_cell = self.fresh();
         self.hoist(format!("  {result_cell} = alloca i64\n"));
@@ -201,7 +227,7 @@ impl<'a> FuncEmitter<'a> {
 
     /// `open_read(fs, path)` (`docs/file-handles.md` §2.1): the first
     /// half of [`Self::file_op`] and then it stops -- the same prefix
-    /// check, the same non-variadic `open(path, O_RDONLY)`, and the
+    /// check, the same `openat(AT_FDCWD, path, O_RDONLY|O_CLOEXEC)`, and the
     /// descriptor *kept* rather than spent on one transfer and closed.
     /// What comes back is `Opened`'s three leaves: the tag, `Ok`'s
     /// descriptor, `Failed`'s reason.
@@ -220,8 +246,8 @@ impl<'a> FuncEmitter<'a> {
             return Ok(self.open_with_fopen(&path, mode));
         }
 
-        let fd32 = self.fresh();
-        self.out.push_str(&format!("  {fd32} = call i32 @open(ptr {path}, i32 0)\n"));
+        let cloexec = self.open_flags().cloexec;
+        let fd32 = self.open_at_cwd(&path, cloexec, 0);
         let fd = self.fresh();
         self.out.push_str(&format!("  {fd} = sext i32 {fd32} to i64\n"));
 

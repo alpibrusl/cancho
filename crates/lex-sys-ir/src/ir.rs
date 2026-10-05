@@ -96,10 +96,25 @@ pub const PRELUDE_LISTED: usize = 35;
 /// What `dir_stat` answers (`docs/directory-listing.md` §3.2).
 pub const PRELUDE_DIR_STAT: usize = 36;
 
+/// `docs/processes.md` §3.1, edition 7: the capability to start a program
+/// (leaf-free, indexed by a path prefix as `Fs` is), the `Split` that carries
+/// it as its ninth field, a started child (`res`, one leaf: the pid), the
+/// parent's and the child's ends of a channel (`res`, one descriptor each),
+/// what one of the child's streams is, and what the verbs answer.
+pub const PRELUDE_EXEC: usize = 37;
+pub const PRELUDE_SPLIT_EXEC: usize = 38;
+pub const PRELUDE_CHILD: usize = 39;
+pub const PRELUDE_PIPE: usize = 40;
+pub const PRELUDE_CHILD_END: usize = 41;
+pub const PRELUDE_STDIO: usize = 42;
+pub const PRELUDE_PIPED: usize = 43;
+pub const PRELUDE_SPAWNED: usize = 44;
+pub const PRELUDE_EXITED: usize = 45;
+
 /// How many types the prelude declares. Written once, because a builtin's
 /// signature indexes this table and a stale slice is a panic rather than a
 /// diagnostic.
-pub const PRELUDE_COUNT: usize = 37;
+pub const PRELUDE_COUNT: usize = 46;
 
 /// Which path operation an [`Expr::PathOp`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -445,6 +460,16 @@ pub enum Expr {
     OpenFile {
         prefix: String,
         mode: OpenMode,
+        args: Vec<Expr>,
+    },
+    /// `exec_spawn(exec, path, args, env, stdin, stdout, stderr)`
+    /// (`docs/processes.md` §3.2). Its own node for the reason
+    /// [`Expr::OpenFile`] is one: the prefix travels with it, because the
+    /// backend checks the path against it and the type it came from is gone
+    /// by then. `args` is the capability (zero-sized) and the six arguments
+    /// after it. What comes back is a `Spawned`, tagged.
+    ExecSpawn {
+        prefix: String,
         args: Vec<Expr>,
     },
     /// `fs_rename(fs, from, to)` and `fs_remove(fs, path)`
@@ -991,11 +1016,16 @@ pub fn is_zero_fill(fill: &Expr) -> bool {
     }
 }
 
-/// The `open` flags a directory handle's builtins pass, per target
+/// The `open` flags the file and directory builtins pass, per target
 /// (`docs/directory-handles.md` §2 and §3). `O_RDONLY` is zero everywhere.
 /// Written once here so both backends spell them the same; the values are
 /// the kernels' own, and Linux x86-64 and AArch64 differ only in the first
 /// two.
+///
+/// `cloexec` is on every open (`docs/processes.md` §4.5): no descriptor a
+/// builtin opens crosses an `exec`. Every open is an `openat`, from
+/// `at_fdcwd` when it names a path rather than a name beneath a `Dir`, so
+/// the flag is set by the call that makes the descriptor, never after it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OpenFlags {
     pub directory: i64,
@@ -1004,6 +1034,10 @@ pub struct OpenFlags {
     pub create: i64,
     pub exclusive: i64,
     pub append: i64,
+    pub truncate: i64,
+    pub cloexec: i64,
+    /// `AT_FDCWD`: `openat`'s "relative to the working directory".
+    pub at_fdcwd: i64,
 }
 
 pub fn open_flags(darwin: bool, aarch64: bool) -> OpenFlags {
@@ -1015,6 +1049,9 @@ pub fn open_flags(darwin: bool, aarch64: bool) -> OpenFlags {
             create: 0x0200,
             exclusive: 0x0800,
             append: 0x0008,
+            truncate: 0x0400,
+            cloexec: 0x0100_0000,
+            at_fdcwd: -2,
         }
     } else if aarch64 {
         OpenFlags {
@@ -1024,6 +1061,9 @@ pub fn open_flags(darwin: bool, aarch64: bool) -> OpenFlags {
             create: 0o100,
             exclusive: 0o200,
             append: 0o2000,
+            truncate: 0o1000,
+            cloexec: 0o2000000,
+            at_fdcwd: -100,
         }
     } else {
         OpenFlags {
@@ -1033,6 +1073,9 @@ pub fn open_flags(darwin: bool, aarch64: bool) -> OpenFlags {
             create: 0o100,
             exclusive: 0o200,
             append: 0o2000,
+            truncate: 0o1000,
+            cloexec: 0o2000000,
+            at_fdcwd: -100,
         }
     }
 }

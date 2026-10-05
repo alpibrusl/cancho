@@ -9,7 +9,7 @@ use lex_sys_ir::{OpenMode, PathOp};
 impl<'a, 'f> BodyEmitter<'a, 'f> {
     /// A NUL-terminated copy of `text` on the stack, for a C call that wants a
     /// string. A slice literal carries no terminator.
-    fn c_string(&mut self, text: &str) -> Value {
+    pub(crate) fn c_string(&mut self, text: &str) -> Value {
         let pointer = self.pointer;
         let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
             StackSlotKind::ExplicitSlot,
@@ -61,9 +61,11 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         self.builder.switch_to_block(opened);
         self.builder.seal_block(opened);
         let fd = self.libc_call("fileno", &[pointer], &[types::I32], &[fp]);
-        let copy = self.libc_call("dup", &[types::I32], &[types::I32], &[fd]);
-        // `dup` can fail (the process is out of descriptors); read `errno`
-        // before `fclose` can change it.
+        // A duplicate that is close-on-exec from the start (`docs/processes.md`
+        // §4.5), `F_DUPFD_CLOEXEC` from 0. The duplicate can fail (the process
+        // is out of descriptors); read `errno` before `fclose` can change it.
+        let lowest = self.builder.ins().iconst(types::I32, 0);
+        let copy = self.fcntl(fd, self.socket_os().f_dupfd_cloexec, lowest);
         let reason = self.errno();
         self.libc_call("fclose", &[pointer], &[types::I32], &[fp]);
         let copy = self.builder.ins().sextend(types::I64, copy);

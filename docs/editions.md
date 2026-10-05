@@ -320,6 +320,16 @@ And it has **`f32`** ([`f32.md`](f32.md)): the type, the `f32` literal suffix, a
 seventh, as `value_barrier` did. An earlier file still owns every one of those names
 (`tests/accept/f32_names_are_edition_five.ls`).
 
+**Edition 7 is edition 6 plus the capability to start a program**
+([`processes.md`](processes.md)): the types `Exec`, `Child`, `Pipe`, `ChildEnd`,
+`Stdio`, `Piped`, `Spawned` and `Exited`, the builtins `pipe_open`, `exec_spawn`,
+`child_wait`, `child_kill`, `pipe_read`, `pipe_write`, `pipe_nonblocking`,
+`pipe_close` and `child_end_close`, the labels `exec("...")`, `child_signal`,
+`pipe_read` and `pipe_write`, and **a ninth field on `Split`**, `exec`. The ninth
+field is why this is an edition and not a later slice of edition 6, for the reason
+the eighth was: edition-6 files already destructure eight fields. `Split` is now five
+declarations of one name; an edition-6 file's `split()` still answers eight.
+
 ---
 
 ## 8. What this does not do

@@ -247,6 +247,7 @@ pub fn leaf_free(ty: &Type) -> bool {
             | PRELUDE_NET
             | PRELUDE_CLOCK
             | PRELUDE_SIGNALS
+            | PRELUDE_EXEC
     ))
 }
 
@@ -280,6 +281,11 @@ pub(crate) fn is_capability(def: DefId) -> bool {
             | PRELUDE_SPLIT_NET
             | PRELUDE_SPLIT_CLOCK
             | PRELUDE_SPLIT_SIGNALS
+            | PRELUDE_SPLIT_EXEC
+            | PRELUDE_EXEC
+            | PRELUDE_CHILD
+            | PRELUDE_PIPE
+            | PRELUDE_CHILD_END
             | PRELUDE_CLOCK
             | PRELUDE_SIGNALS
             | PRELUDE_SIGNAL_WATCH
@@ -315,6 +321,7 @@ pub(crate) fn released_only(def: DefId) -> bool {
             | PRELUDE_NET
             | PRELUDE_CLOCK
             | PRELUDE_SIGNALS
+            | PRELUDE_EXEC
     )
 }
 
@@ -334,6 +341,12 @@ pub(crate) fn closed_only(def: DefId) -> bool {
             | PRELUDE_CONN
             | PRELUDE_POLLER
             | PRELUDE_SIGNAL_WATCH
+            // `docs/processes.md` §4.7: a child is ended by `child_wait`, a
+            // channel's end by `pipe_close`, and the child's end by
+            // `exec_spawn` or `child_end_close` -- never by a pattern.
+            | PRELUDE_CHILD
+            | PRELUDE_PIPE
+            | PRELUDE_CHILD_END
     )
 }
 
@@ -423,6 +436,23 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
         // minted, so the handle's own label carries no argument, as a
         // `Conn`'s do not.
         PRELUDE_SIGNAL_WATCH => Effects::plain(["signals_read"]),
+        // `docs/processes.md` §3.2: the program was named where the child was
+        // started, so a child's and a channel's labels carry no argument.
+        PRELUDE_CHILD => Effects::plain(["child_signal"]),
+        PRELUDE_PIPE => Effects::plain(["pipe_read", "pipe_write"]),
+        // Owning an `Exec(p)` discharges starting what lies under `p`, and
+        // signalling a child it started: a `Child` comes from nowhere else.
+        PRELUDE_EXEC => match args.first() {
+            Some(Type::Lit(prefix)) => {
+                let mut all = Effects::new([Label {
+                    name: "exec".to_owned(),
+                    argument: Some(prefix.clone()),
+                }]);
+                all.union(&Effects::plain(["child_signal"]));
+                all
+            }
+            _ => Effects::pure(),
+        },
         // Owning a `Signals("S")` discharges claiming `S` and reading what
         // it claimed; the root `Signals("")` covers every set (`Label::covers`
         // reads a set as a set).
@@ -462,6 +492,9 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
                 "poll",
                 "clock",
                 "signals_read",
+                "child_signal",
+                "pipe_read",
+                "pipe_write",
             ]);
             // `docs/net.md` §4.1, edition 2 only: `net_out` and `net_in`
             // are two more labels the root discharges the unnarrowed way
@@ -469,7 +502,7 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
             // file's `World` discharges them just the same -- they are
             // simply labels no edition-1 body can ever perform, since it
             // has no way to name `Net` at all.
-            for name in ["ffi", "fs_read", "fs_write", "net_out", "net_in", "signals"] {
+            for name in ["ffi", "fs_read", "fs_write", "net_out", "net_in", "signals", "exec"] {
                 all.union(&Effects::new([Label {
                     name: name.to_owned(),
                     argument: Some(FFI_ROOT.to_owned()),
@@ -606,6 +639,24 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     let name_arm = symbol("Name");
     // What `dir_stat` answers.
     let dir_stat = symbol("DirStat");
+    // `docs/processes.md` §3: edition 7's capability, the `Split` that
+    // carries it as its ninth field, the child and the two ends of a channel,
+    // what a child's stream is, and what the verbs answer.
+    let exec = symbol("Exec");
+    let exec_field = symbol("exec");
+    let split_exec = symbol("Split");
+    let child = symbol("Child");
+    let pipe = symbol("Pipe");
+    let child_end = symbol("ChildEnd");
+    let stdio = symbol("Stdio");
+    let piped = symbol("Piped");
+    let spawned = symbol("Spawned");
+    let exited = symbol("Exited");
+    let null_arm = symbol("Null");
+    let pipe_arm = symbol("Pipe");
+    let file_arm = symbol("File");
+    let code_arm = symbol("Code");
+    let signaled_arm = symbol("Signaled");
     let again_arm = symbol("Again");
     let data_arm = symbol("Data");
     let wrote_arm = symbol("Wrote");
@@ -679,6 +730,16 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     let listed_def = unifier.declare("Listed");
     // `PRELUDE_DIR_STAT`: edition 6, appended last.
     let dir_stat_def = unifier.declare("DirStat");
+    // `PRELUDE_EXEC` .. `PRELUDE_EXITED`: edition 7, a fifth `Split`.
+    let exec_def = unifier.declare("Exec");
+    let split_exec_def = unifier.declare("Split");
+    let child_def = unifier.declare("Child");
+    let pipe_def = unifier.declare("Pipe");
+    let child_end_def = unifier.declare("ChildEnd");
+    let stdio_def = unifier.declare("Stdio");
+    let piped_def = unifier.declare("Piped");
+    let spawned_def = unifier.declare("Spawned");
+    let exited_def = unifier.declare("Exited");
 
     vec![
         TypeDef {
@@ -1322,7 +1383,114 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
             span,
             since: 6,
         },
+        // `docs/processes.md` §3.1: the capability to start a program. Leaf-free
+        // like `Fs`, and indexed by a path prefix the way `Fs` is.
+        resource(exec, exec_def, vec![prefix], span, 7),
+        // Edition 7's `Split`: edition 6's eight fields and `exec`.
+        TypeDef {
+            name: split_exec,
+            def: split_exec_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: None,
+            kind: DefKind::Struct(vec![
+                (io_field, Type::Named(io_def, Vec::new())),
+                (ffi_field, Type::Named(ffi_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+                (fs_field, Type::Named(fs_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+                (heap_field, Type::Named(heap_def, Vec::new())),
+                (args_field, Type::Named(args_def, Vec::new())),
+                (net_field, Type::Named(net_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+                (clock_field, Type::Named(clock_def, Vec::new())),
+                (signals_field, Type::Named(signals_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+                (exec_field, Type::Named(exec_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+            ]),
+            span,
+            since: 7,
+        },
+        // A started process not yet reaped (one leaf, the pid); a channel's
+        // end the parent holds and the one it hands the child (one
+        // descriptor each). Resources with nothing a program can name.
+        resource(child, child_def, Vec::new(), span, 7),
+        resource(pipe, pipe_def, Vec::new(), span, 7),
+        resource(child_end, child_end_def, Vec::new(), span, 7),
+        // What one of the child's three streams is (§4.4).
+        prelude_enum(
+            stdio,
+            stdio_def,
+            vec![
+                (null_arm, Vec::new()),
+                (pipe_arm, vec![Type::Named(child_end_def, Vec::new())]),
+                (file_arm, vec![Type::Named(file_def, Vec::new())]),
+            ],
+            span,
+        ),
+        // What `pipe_open` answers: both ends, or the `errno`.
+        prelude_enum(
+            piped,
+            piped_def,
+            vec![
+                (
+                    ok_arm,
+                    vec![Type::Named(pipe_def, Vec::new()), Type::Named(child_end_def, Vec::new())],
+                ),
+                (failed_arm, vec![Type::Int]),
+            ],
+            span,
+        ),
+        // What `exec_spawn` answers.
+        prelude_enum(
+            spawned,
+            spawned_def,
+            vec![(ok_arm, vec![Type::Named(child_def, Vec::new())]), (failed_arm, vec![Type::Int])],
+            span,
+        ),
+        // What `child_wait` answers (§4.7).
+        prelude_enum(
+            exited,
+            exited_def,
+            vec![
+                (code_arm, vec![Type::Int]),
+                (signaled_arm, vec![Type::Int]),
+                (failed_arm, vec![Type::Int]),
+            ],
+            span,
+        ),
     ]
+}
+
+/// A prelude resource with no fields a program can name, at an edition: a
+/// capability or a handle (`docs/processes.md` §3.1).
+fn resource(name: Symbol, def: DefId, generics: Vec<Symbol>, span: Span, since: u32) -> TypeDef {
+    TypeDef {
+        name,
+        def,
+        module: PRELUDE_MODULE,
+        public: true,
+        generics,
+        bounds: Vec::new(),
+        declared_mode: Some(Mode::Res),
+        kind: DefKind::Struct(Vec::new()),
+        span,
+        since,
+    }
+}
+
+/// An edition-7 prelude enum (`docs/processes.md` §3.1).
+fn prelude_enum(name: Symbol, def: DefId, arms: Vec<(Symbol, Vec<Type>)>, span: Span) -> TypeDef {
+    TypeDef {
+        name,
+        def,
+        module: PRELUDE_MODULE,
+        public: true,
+        generics: Vec::new(),
+        bounds: Vec::new(),
+        declared_mode: None,
+        kind: DefKind::Enum(arms),
+        span,
+        since: 7,
+    }
 }
 
 /// The first private type this one mentions, if any (`docs/modules.md`

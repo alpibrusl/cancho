@@ -7,7 +7,7 @@ Each mutant is one of the package's files with one deliberate bug. The
 package is copied to a scratch directory, the mutant applied there, and
 `tests/programs/tls_driver.ls` built against it. It runs what
 `conformance/tls.rs` replays: the five tlslite-ng traces (two of them through a
-HelloRetryRequest), the six TLS 1.2 traces against OpenSSL, and the 63
+HelloRetryRequest), the six TLS 1.2 traces against OpenSSL, and the 66
 connections of `tests/vectors/tls/liar.txt`, each answer compared byte for
 byte. A mutant of the engine (`tls.ls`) also builds
 `tests/programs/tls_many.ls` and serves it `tests/vectors/tls/streams.txt` from
@@ -48,8 +48,12 @@ MUTANTS = [
     ("the nonce built without the sequence", "record.ls",
      "            s = seq >> 8 * (11 - k) & 255;", "            s = 0;"),
     ("the downgrade sentinel ignored", "message.ls",
-     "int_of(b[33]) <= 1 {\n        return tls_record.protocol_version();",
-     "int_of(b[33]) <= 1 && false {\n        return tls_record.protocol_version();"),
+     "int_of(b[33]) <= 1 {\n            return tls_record.protocol_version();",
+     "int_of(b[33]) <= 1 && false {\n            return tls_record.protocol_version();"),
+    ("server_name allowed in a TLS 1.3 ServerHello", "message.ls",
+     "if reneg || ems || formats || sni {", "if reneg || ems || formats {"),
+    ("server_name allowed twice in a TLS 1.2 ServerHello", "message.ls",
+     "            if sni || size != 0 {", "            if size != 0 {"),
     ("the HelloRetryRequest random ignored", "message.ls", "    let retry = k == 32;", "    let retry = k == 33;"),
     ("an unexpected extension accepted", "message.ls",
      "            seen_groups = true;\n        } else {\n            return tls_record.unsupported_extension();\n        }",

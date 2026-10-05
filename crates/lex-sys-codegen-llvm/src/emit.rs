@@ -199,6 +199,10 @@ fn leaves_into(ty: &Type, program: &Program, out: &mut Vec<LKind>) -> Result<(),
                     | lex_sys_ir::PRELUDE_CONN
                     | lex_sys_ir::PRELUDE_POLLER
                     | lex_sys_ir::PRELUDE_SIGNAL_WATCH
+                    // `docs/processes.md` §3.1: a pid, and two descriptors.
+                    | lex_sys_ir::PRELUDE_CHILD
+                    | lex_sys_ir::PRELUDE_PIPE
+                    | lex_sys_ir::PRELUDE_CHILD_END
             ) =>
         {
             out.push(LKind::I64);
@@ -329,6 +333,41 @@ pub(crate) fn emit_module(
     declare_libc_unless_own(&mut text, "calloc", "ptr @calloc(i64, i64)");
     declare_libc_unless_own(&mut text, "listen", "i32 @listen(i32, i32)");
     declare_libc_unless_own(&mut text, "accept", "i32 @accept(i32, ptr, ptr)");
+    // Linux's close-on-exec accept (`docs/processes.md` §4.5); Darwin has
+    // none and never calls it.
+    declare_libc_unless_own(&mut text, "accept4", "i32 @accept4(i32, ptr, ptr, i32)");
+    // `docs/processes.md` §6: a channel, the spawn and what it is configured
+    // with, and the two verbs on a child. None of these is variadic.
+    declare_libc_unless_own(&mut text, "socketpair", "i32 @socketpair(i32, i32, i32, ptr)");
+    for (symbol, signature) in [
+        ("posix_spawn", "i32 @posix_spawn(ptr, ptr, ptr, ptr, ptr, ptr)"),
+        ("posix_spawn_file_actions_init", "i32 @posix_spawn_file_actions_init(ptr)"),
+        ("posix_spawn_file_actions_destroy", "i32 @posix_spawn_file_actions_destroy(ptr)"),
+        (
+            "posix_spawn_file_actions_addopen",
+            "i32 @posix_spawn_file_actions_addopen(ptr, i32, ptr, i32, i32)",
+        ),
+        (
+            "posix_spawn_file_actions_adddup2",
+            "i32 @posix_spawn_file_actions_adddup2(ptr, i32, i32)",
+        ),
+        ("posix_spawnattr_init", "i32 @posix_spawnattr_init(ptr)"),
+        ("posix_spawnattr_destroy", "i32 @posix_spawnattr_destroy(ptr)"),
+        ("posix_spawnattr_setflags", "i32 @posix_spawnattr_setflags(ptr, i16)"),
+        ("posix_spawnattr_setsigmask", "i32 @posix_spawnattr_setsigmask(ptr, ptr)"),
+        ("posix_spawnattr_setsigdefault", "i32 @posix_spawnattr_setsigdefault(ptr, ptr)"),
+        (
+            "posix_spawn_file_actions_addclosefrom_np",
+            "i32 @posix_spawn_file_actions_addclosefrom_np(ptr, i32)",
+        ),
+        ("sigemptyset", "i32 @sigemptyset(ptr)"),
+        ("sigfillset", "i32 @sigfillset(ptr)"),
+        ("waitpid", "i32 @waitpid(i32, ptr, i32)"),
+        ("kill", "i32 @kill(i32, i32)"),
+        ("strncmp", "i32 @strncmp(ptr, ptr, i64)"),
+    ] {
+        declare_libc_unless_own(&mut text, symbol, signature);
+    }
     // `bind` (§7.21, `docs/listen.md` §6): `socket`+`setsockopt`+`bind`
     // folded into one call, the same libc surface `examples/serve/
     // serve.ls` reaches by hand and `lex-sys-codegen`'s own `body/net.rs`
@@ -394,26 +433,23 @@ pub(crate) fn emit_module(
     text.push('\n');
 
     // `Fs` (§7.24, `docs/filesystem.md` §3-4, `docs/file-handles.md`):
-    // `fs_read`/`fs_write` (`creat`/`open` then `read`/`write` then
-    // `close`), `open_read` (`open`, descriptor kept), `file_read`
+    // `fs_read`/`fs_write` (`openat` then `read`/`write` then `close`),
+    // `open_read` (`openat`, descriptor kept), `file_read`
     // (`read`) and `file_close` (`close`, already declared above for
     // `bind`'s own use). `errno`'s accessor is a *function* in every
     // modern libc -- `__errno_location` on glibc, `__error` on Darwin --
     // both answering a pointer to a thread-local `int`, the same split
     // `lex-sys-codegen`'s own `errno` already makes.
-    declare_libc_unless_own(&mut text, "creat", "i32 @creat(ptr, i32)");
-    declare_libc_unless_own(&mut text, "open", "i32 @open(ptr, i32)");
     declare_libc_unless_own(&mut text, "read", "i64 @read(i32, ptr, i64)");
     // `copy_within` (`docs/memory-moves.md`) and `copy_into` (`docs/bulk-copy.md`).
     declare_libc_unless_own(&mut text, "memmove", "ptr @memmove(ptr, ptr, i64)");
     // `index_of_byte` (`docs/byte-search.md`).
     declare_libc_unless_own(&mut text, "memchr", "ptr @memchr(ptr, i32, i64)");
     declare_libc_unless_own(&mut text, "write", "i64 @write(i32, ptr, i64)");
-    // `docs/file-writes.md`: the write side of a file handle. `fopen`/`dup`/
-    // `fclose` are the opens' bridge (section 3); none of these is variadic.
+    // `docs/file-writes.md`: the write side of a file handle. `fopen`/
+    // `fcntl(F_DUPFD_CLOEXEC)`/`fclose` are the opens' bridge (section 3).
     declare_libc_unless_own(&mut text, "fopen", "ptr @fopen(ptr, ptr)");
     declare_libc_unless_own(&mut text, "fileno", "i32 @fileno(ptr)");
-    declare_libc_unless_own(&mut text, "dup", "i32 @dup(i32)");
     declare_libc_unless_own(&mut text, "fclose", "i32 @fclose(ptr)");
     declare_libc_unless_own(&mut text, "pwrite", "i64 @pwrite(i32, ptr, i64, i64)");
     declare_libc_unless_own(&mut text, "pread", "i64 @pread(i32, ptr, i64, i64)");

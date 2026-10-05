@@ -5,7 +5,7 @@
 
 use super::net::port_bound_of;
 use crate::*;
-use lex_sys_ir::{EINVAL, F_GETFL, F_SETFL, SocketOs};
+use lex_sys_ir::{EINVAL, F_GETFL, F_SETFD, F_SETFL, FD_CLOEXEC, SocketOs};
 
 impl<'a, 'f> BodyEmitter<'a, 'f> {
     pub(crate) fn is_darwin(&self) -> bool {
@@ -65,6 +65,71 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                 &[types::I32, types::I32, types::I32],
                 &[types::I32],
                 &[fd, command, argument],
+            )
+        }
+    }
+
+    /// Set `FD_CLOEXEC` on `fd` when it is a descriptor, for a platform that
+    /// cannot ask for it in the call that made it (Darwin's `socket` and
+    /// `accept`). A failed call is left alone, so the `errno` its caller reads
+    /// next is still the call's own (`docs/processes.md` §4.5).
+    pub(crate) fn close_on_exec(&mut self, fd: Value) {
+        let set = self.builder.create_block();
+        let done = self.builder.create_block();
+        let opened = self.builder.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, fd, 0);
+        self.builder.ins().brif(opened, set, &[], done, &[]);
+        self.builder.switch_to_block(set);
+        self.builder.seal_block(set);
+        let flag = self.builder.ins().iconst(types::I32, FD_CLOEXEC);
+        self.fcntl(fd, F_SETFD, flag);
+        self.builder.ins().jump(done, &[]);
+        self.builder.switch_to_block(done);
+        self.builder.seal_block(done);
+    }
+
+    /// `socket(AF_INET, SOCK_STREAM, 0)`, close-on-exec: `SOCK_CLOEXEC` in
+    /// the type on Linux, so no other thread's `exec` can see it open
+    /// without the flag; `fcntl` straight after on Darwin, which has no such
+    /// flag.
+    pub(crate) fn tcp_socket(&mut self) -> Value {
+        let os = self.socket_os();
+        let domain = self.builder.ins().iconst(types::I32, 2);
+        let kind = self.builder.ins().iconst(types::I32, 1 | os.sock_cloexec);
+        let proto = self.builder.ins().iconst(types::I32, 0);
+        let fd = self.libc_call(
+            "socket",
+            &[types::I32, types::I32, types::I32],
+            &[types::I32],
+            &[domain, kind, proto],
+        );
+        if self.is_darwin() {
+            self.close_on_exec(fd);
+        }
+        fd
+    }
+
+    /// `accept(fd, NULL, NULL)`, close-on-exec: `accept4` with
+    /// `SOCK_CLOEXEC` on Linux, `accept` and `fcntl` on Darwin.
+    pub(crate) fn accept_cloexec(&mut self, listener: Value) -> Value {
+        let pointer = self.pointer;
+        let null = self.builder.ins().iconst(pointer, 0);
+        if self.is_darwin() {
+            let fd = self.libc_call(
+                "accept",
+                &[types::I32, pointer, pointer],
+                &[types::I32],
+                &[listener, null, null],
+            );
+            self.close_on_exec(fd);
+            fd
+        } else {
+            let cloexec = self.socket_os().sock_cloexec;
+            let flags = self.builder.ins().iconst(types::I32, cloexec);
+            self.libc_call(
+                "accept4",
+                &[types::I32, pointer, pointer, types::I32],
+                &[types::I32],
+                &[listener, null, null, flags],
             )
         }
     }
@@ -142,15 +207,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
             self.builder.ins().store(MemFlags::trusted(), zero8, addr, i);
         }
 
-        let domain = self.builder.ins().iconst(types::I32, 2);
-        let kind = self.builder.ins().iconst(types::I32, 1);
-        let proto = self.builder.ins().iconst(types::I32, 0);
-        let fd = self.libc_call(
-            "socket",
-            &[types::I32, types::I32, types::I32],
-            &[types::I32],
-            &[domain, kind, proto],
-        );
+        let fd = self.tcp_socket();
 
         // merge(descriptor, errno)
         let merge = self.builder.create_block();
@@ -238,16 +295,9 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     /// `Failed` 2. A connection arrives blocking and with `SIGPIPE`
     /// suppressed on both kernels (see the LLVM backend's own).
     pub(crate) fn tcp_accept(&mut self, args: &[Value]) -> Vec<Value> {
-        let pointer = self.pointer;
         let os = self.socket_os();
         let listener = self.handle_fd(args[0]);
-        let null = self.builder.ins().iconst(pointer, 0);
-        let conn = self.libc_call(
-            "accept",
-            &[types::I32, pointer, pointer],
-            &[types::I32],
-            &[listener, null, null],
-        );
+        let conn = self.accept_cloexec(listener);
         let reason = self.errno();
 
         if self.is_darwin() {

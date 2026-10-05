@@ -59,6 +59,11 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
             self.libc_call("epoll_create1", &[types::I32], &[types::I32], &[flags])
         };
         let reason = self.errno();
+        // `kqueue` has no flag for it; `epoll_create1` was asked
+        // (`docs/processes.md` §4.5).
+        if self.is_darwin() {
+            self.close_on_exec(fd);
+        }
         let fd64 = self.builder.ins().sextend(types::I64, fd);
         let failed = self.builder.ins().icmp_imm(IntCC::SignedLessThan, fd, 0);
         let one = self.builder.ins().iconst(types::I64, 1);

@@ -190,6 +190,28 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     /// NUL-terminated — C wants a terminator and a slice does not carry one
     /// (`docs/strings.md` §6). A longer path traps rather than being cut
     /// short, because a silently truncated path names a different file.
+    /// Trap when byte `i` of a path or a host differs from byte `i` of the
+    /// `length`-byte bound at `expected`, while `i` is inside the bound.
+    ///
+    /// The bound's byte is read at `i` only while `i` is inside it, and at 0
+    /// otherwise: reading it at every `i` read past the end of its data, which
+    /// the LLVM backend's twin of this check showed is not a harmless habit
+    /// (there it was `poison`, and `-O2` deleted the path). An empty bound
+    /// contains everything and has no byte to read.
+    pub(crate) fn check_against(&mut self, expected: Value, length: usize, i: Value, byte: Value) {
+        if length == 0 {
+            return;
+        }
+        let inside = self.builder.ins().icmp_imm(IntCC::UnsignedLessThan, i, length as i64);
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        let index = self.builder.ins().select(inside, i, zero);
+        let want_at = self.builder.ins().iadd(expected, index);
+        let want = self.builder.ins().load(types::I8, MemFlags::trusted(), want_at, 0);
+        let differs = self.builder.ins().icmp(IntCC::NotEqual, byte, want);
+        let escaped = self.builder.ins().band(inside, differs);
+        self.builder.ins().trapnz(escaped, TrapCode::HEAP_OUT_OF_BOUNDS);
+    }
+
     pub(crate) fn checked_path(&mut self, prefix: &str, path: &[Value]) -> Value {
         const PATH_MAX: i64 = 4096;
         let pointer = self.pointer;
@@ -257,12 +279,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         // Inside the prefix, the bytes have to match. A path outside what
         // the capability granted is a broken promise, so it traps rather
         // than returning -1.
-        let inside = self.builder.ins().icmp_imm(IntCC::UnsignedLessThan, i, prefix.len() as i64);
-        let want_at = self.builder.ins().iadd(expected, i);
-        let want = self.builder.ins().load(types::I8, MemFlags::trusted(), want_at, 0);
-        let differs = self.builder.ins().icmp(IntCC::NotEqual, byte, want);
-        let escaped = self.builder.ins().band(inside, differs);
-        self.builder.ins().trapnz(escaped, TrapCode::HEAP_OUT_OF_BOUNDS);
+        self.check_against(expected, prefix.len(), i, byte);
 
         let next = self.builder.ins().iadd_imm(i, 1);
         self.builder.def_var(cursor, next);
@@ -303,36 +320,20 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         let bytes = self.expr(&args[2]);
         let path = self.checked_path(prefix, &path);
 
-        // **Neither call here is `open(path, flags, mode)`**, and that is
-        // deliberate. `open` is variadic — `int open(const char *, int, ...)`
-        // — and on Apple ARM64 a variadic argument is passed on the *stack*
-        // while a fixed one is passed in a register. Declaring it with three
-        // fixed arguments puts `mode` in a register the callee never reads,
-        // so the file is created with whatever was on the stack: the write
-        // succeeds, the permissions are junk, and reading the file back
-        // fails. Linux x86-64 hides this, because there varargs and fixed
-        // arguments share the same registers.
-        //
-        // So: `creat(path, mode)` for writing, which is exactly
-        // `open(path, O_WRONLY|O_CREAT|O_TRUNC, mode)` and is *not*
-        // variadic — it also deletes the platform-dependent flag constants,
-        // which were the other thing here a portable language should not be
-        // guessing at. And `open(path, O_RDONLY)` for reading, declared with
-        // two arguments: that is the non-variadic prefix, so no argument of
-        // ours lands anywhere the callee is not looking, and `O_RDONLY` is
-        // zero on both platforms.
+        // Both are `openat(AT_FDCWD, path, flags, mode)` with `O_CLOEXEC`
+        // (`docs/processes.md` §4.5). `openat` is variadic -- `mode` is its
+        // variadic argument -- and `Self::openat` shapes the call the way the
+        // callee reads it on Apple ARM64, where a variadic argument goes on
+        // the stack (`docs/filesystem.md` §2.2 is the bug that taught this).
+        // Writing is `O_WRONLY|O_CREAT|O_TRUNC` with `0644`, which is what
+        // `creat` was; reading is `O_RDONLY`, which is zero.
+        let flags = self.open_flags();
+        let cwd = self.builder.ins().iconst(types::I32, flags.at_fdcwd);
         let fd = if write {
-            let creat = self.libc_fn("creat", &[pointer, types::I32], &[types::I32]);
-            let creat = self.module.declare_func_in_func(creat, self.builder.func);
-            let mode = self.builder.ins().iconst(types::I32, 0o644);
-            let call = self.builder.ins().call(creat, &[path, mode]);
-            self.builder.inst_results(call)[0]
+            let mode = flags.write_only | flags.create | flags.truncate | flags.cloexec;
+            self.openat(cwd, path, mode, lex_sys_ir::CREATE_MODE)
         } else {
-            let open = self.libc_fn("open", &[pointer, types::I32], &[types::I32]);
-            let open = self.module.declare_func_in_func(open, self.builder.func);
-            let read_only = self.builder.ins().iconst(types::I32, 0);
-            let call = self.builder.ins().call(open, &[path, read_only]);
-            self.builder.inst_results(call)[0]
+            self.openat(cwd, path, flags.cloexec, 0)
         };
 
         // A missing file is an ordinary outcome, not a broken promise, so
@@ -370,7 +371,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     /// `open_read(fs, path)` — `docs/file-handles.md` §2.1.
     ///
     /// The first half of [`Self::file_op`] and then it stops: the same
-    /// prefix check, the same non-variadic `open(path, O_RDONLY)`, and the
+    /// prefix check, the same `openat(AT_FDCWD, path, O_RDONLY|O_CLOEXEC)`, and the
     /// descriptor *kept* rather than spent on one transfer and closed. What
     /// comes back is an `Opened`, which is a tag and one payload leaf.
     pub(crate) fn open_file(
@@ -379,7 +380,6 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         mode: lex_sys_ir::OpenMode,
         args: &[Expr],
     ) -> Vec<Value> {
-        let pointer = self.pointer;
         // The capability is zero-sized and stops here; the path does not.
         let path = self.expr(&args[1]);
         let path = self.checked_path(prefix, &path);
@@ -390,11 +390,10 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
             return self.open_with_fopen(path, mode);
         }
 
-        let open = self.libc_fn("open", &[pointer, types::I32], &[types::I32]);
-        let open = self.module.declare_func_in_func(open, self.builder.func);
-        let read_only = self.builder.ins().iconst(types::I32, 0);
-        let call = self.builder.ins().call(open, &[path, read_only]);
-        let fd = self.builder.inst_results(call)[0];
+        // `O_RDONLY | O_CLOEXEC` from the working directory, as `file_op`'s.
+        let flags = self.open_flags();
+        let cwd = self.builder.ins().iconst(types::I32, flags.at_fdcwd);
+        let fd = self.openat(cwd, path, flags.cloexec, 0);
         let fd = self.builder.ins().sextend(types::I64, fd);
 
         // Tag 0 is `Ok(File)` and tag 1 is `Failed(int)`, which is

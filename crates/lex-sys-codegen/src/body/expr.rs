@@ -175,6 +175,10 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                 let (op, prefix, args) = (*op, prefix.clone(), args.clone());
                 self.path_op(op, &prefix, &args)
             }
+            Expr::ExecSpawn { prefix, args } => {
+                let (prefix, args) = (prefix.clone(), args.clone());
+                self.exec_spawn(&prefix, &args)
+            }
             Expr::Connect { bound, args } => {
                 let (bound, args) = (bound.clone(), args.clone());
                 self.connect(&bound, &args)
@@ -686,6 +690,17 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::TcpAccept) => self.tcp_accept(&args),
                     Callee::Builtin(Builtin::ConnRead) => self.conn_read(&args),
                     Callee::Builtin(Builtin::ConnWrite) => self.conn_write(&args),
+                    // `docs/processes.md`: a channel is a socket pair, so its
+                    // verbs are the socket handles' (§4.4).
+                    Callee::Builtin(Builtin::PipeRead) => self.conn_read(&args),
+                    Callee::Builtin(Builtin::PipeWrite) => self.conn_write(&args),
+                    Callee::Builtin(Builtin::PipeNonblocking) => self.nonblocking(&args),
+                    Callee::Builtin(Builtin::PipeOpen) => self.pipe_open(),
+                    Callee::Builtin(Builtin::ChildWait) => self.child_wait(&args),
+                    Callee::Builtin(Builtin::ChildKill) => self.child_kill(&args),
+                    Callee::Builtin(Builtin::ExecSpawn) => {
+                        unreachable!("`exec_spawn` is lowered as `Expr::ExecSpawn`")
+                    }
                     // `docs/memory-moves.md`: a bounds-checked `memmove` inside one slice.
                     Callee::Builtin(Builtin::CopyWithin) => self.copy_within(&args),
                     Callee::Builtin(Builtin::CopyInto) => self.copy_into(&args),
@@ -716,7 +731,11 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::ConnNodelay) => self.nodelay(&args),
                     Callee::Builtin(Builtin::ConnConnectStatus) => self.connect_status(&args),
                     Callee::Builtin(
-                        Builtin::ConnClose | Builtin::ListenerClose | Builtin::PollerClose,
+                        Builtin::ConnClose
+                        | Builtin::ListenerClose
+                        | Builtin::PollerClose
+                        | Builtin::PipeClose
+                        | Builtin::ChildEndClose,
                     ) => {
                         let close = self.libc_fn("close", &[types::I32], &[types::I32]);
                         let close = self.module.declare_func_in_func(close, self.builder.func);
@@ -744,15 +763,11 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     }
                     // The peer address is ignored -- `NULL, NULL` -- the
                     // same as `examples/serve/`'s own hand-written call.
+                    // Close-on-exec, as every descriptor a builtin makes
+                    // (`docs/processes.md` §4.5).
                     Callee::Builtin(Builtin::Accept) => {
-                        let pointer = self.pointer;
-                        let accept =
-                            self.libc_fn("accept", &[types::I32, pointer, pointer], &[types::I32]);
-                        let accept = self.module.declare_func_in_func(accept, self.builder.func);
                         let fd = self.builder.ins().ireduce(types::I32, args[0]);
-                        let null = self.builder.ins().iconst(pointer, 0);
-                        let call = self.builder.ins().call(accept, &[fd, null, null]);
-                        let answer = self.builder.inst_results(call)[0];
+                        let answer = self.accept_cloexec(fd);
                         vec![self.builder.ins().sextend(types::I64, answer)]
                     }
                     // `docs/file-handles.md` §3. `read(2)` answers a count,

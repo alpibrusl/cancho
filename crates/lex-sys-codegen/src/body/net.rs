@@ -79,12 +79,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         // Inside the bound, the bytes have to match -- a plain prefix, with
         // no separator to land on (`docs/net.md` §4, `lower/mod.rs`'s
         // `narrow`).
-        let inside = self.builder.ins().icmp_imm(IntCC::UnsignedLessThan, i, bound.len() as i64);
-        let want_at = self.builder.ins().iadd(expected, i);
-        let want = self.builder.ins().load(types::I8, MemFlags::trusted(), want_at, 0);
-        let differs = self.builder.ins().icmp(IntCC::NotEqual, byte, want);
-        let escaped = self.builder.ins().band(inside, differs);
-        self.builder.ins().trapnz(escaped, TrapCode::HEAP_OUT_OF_BOUNDS);
+        self.check_against(expected, bound.len(), i, byte);
 
         let next = self.builder.ins().iadd_imm(i, 1);
         self.builder.def_var(cursor, next);
@@ -227,13 +222,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         self.builder.ins().store(MemFlags::trusted(), high, addr, 2);
         self.builder.ins().store(MemFlags::trusted(), low, addr, 3);
 
-        let socket = self.libc_fn("socket", &[types::I32, types::I32, types::I32], &[types::I32]);
-        let socket = self.module.declare_func_in_func(socket, self.builder.func);
-        let domain = self.builder.ins().iconst(types::I32, 2);
-        let kind = self.builder.ins().iconst(types::I32, 1);
-        let proto = self.builder.ins().iconst(types::I32, 0);
-        let call = self.builder.ins().call(socket, &[domain, kind, proto]);
-        let fd = self.builder.inst_results(call)[0];
+        let fd = self.tcp_socket();
 
         let no_socket = self.builder.create_block();
         let have_socket = self.builder.create_block();
@@ -355,13 +344,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
             self.builder.ins().store(MemFlags::trusted(), zero8, addr, i);
         }
 
-        let socket = self.libc_fn("socket", &[types::I32, types::I32, types::I32], &[types::I32]);
-        let socket = self.module.declare_func_in_func(socket, self.builder.func);
-        let domain = self.builder.ins().iconst(types::I32, 2);
-        let kind = self.builder.ins().iconst(types::I32, 1);
-        let proto = self.builder.ins().iconst(types::I32, 0);
-        let call = self.builder.ins().call(socket, &[domain, kind, proto]);
-        let fd = self.builder.inst_results(call)[0];
+        let fd = self.tcp_socket();
         let minus_one = self.builder.ins().iconst(types::I64, -1);
 
         let no_socket = self.builder.create_block();
