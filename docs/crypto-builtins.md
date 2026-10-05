@@ -57,7 +57,7 @@ aarch64 file for the host and said nothing about x86, which is why §2 names the
 **This CPU has them:** `hw.optional.arm.FEAT_AES`, `FEAT_PMULL` and `FEAT_DIT` all read 1 on the M4 Max of
 `docs/tls-assurance.md` §6.1.
 
-**Not measured:** how fast the hardware path would be in lex-sys. §8 sets that as a gate for PR 3, not a claim.
+**Not measured:** how fast the hardware path would be in lex-sys. §8 sets that as a gate for the `std` PR, not a claim.
 
 ## 3. The builtins
 
@@ -94,9 +94,11 @@ padding and length block as it does now.
 **Key expansion stays in software.** x86 has `AESKEYGENASSIST` and aarch64 has nothing equivalent, so one portable key
 schedule (the existing bitsliced `SubWord`) is used on both paths. It runs once per key, and §6 moves it to once per connection.
 
-**What a wrong argument does.** A slice of the wrong length, or `rounds` other than 10, 12 or 14, answers a negative code, as
-`std.gcm.seal` already answers `refused_key_length`, with a rule tag; it never reaches an instruction. No input reaches a
-panic (CLAUDE.md). Whether a code or a trap is right here is the first question for the PR that builds it (§9).
+**What a wrong argument does.** A slice of the wrong length, or `rounds` other than 10, 12 or 14, **traps**, as an
+out-of-bounds index does; it never reaches an instruction. No *input* may reach that trap (CLAUDE.md), and none can: the
+lengths are fixed by the suite, not read from the network, and `std.gcm` already refuses a bad key or nonce length with its
+rule tag (`refused_key_length`) before it would call the builtin. The trap is for a caller's bug, which the fuzz harnesses
+(`docs/tls-assurance.md` §3) would report as a crash.
 
 ## 4. How the LLVM backend lowers them
 
@@ -125,13 +127,23 @@ No instruction exists (§2), so:
   software result (an interpreter for the same function in the backend's runtime), so a program is never wrong, only slow. That
   keeps the two backends agreeing, the rule `docs/tls-pure.md` §9 gate 1 states.
 
+**A TLS build should use LLVM.** That is already the default backend. Cranelift's AES-GCM is also the one place its timing test failed
+with Arm's data-independent-timing bit set (`docs/tls-assurance.md` §6.1).
+
 **What this does not fix:** Cranelift's AES-GCM is slower than LLVM's (12.1 against 7.1 µs for a 64-byte seal on the M4, 3.1 times
 at 16 KiB on the Xeon), and its data tests failed their timing test on the M4
 (`docs/tls-assurance.md` §6.1). The hardware path does not reach Cranelift, so that result stands.
 
-## 6. The code that uses them
+## 6. The code that uses them, and what goes first
 
-`std.aes` and `std.gcm` change in three ways, in this order of risk:
+Two changes need no builtin and come first, each its own PR, because each helps the software path that Cranelift and a CPU
+without the instructions will keep running, and because the builtins' gain should be measured against that improved baseline:
+- **Arm's data-independent-timing bit.** Setting `PSTATE.DIT` in the runtime's start-up is a few lines. On the M4 it removed
+  the ECDH timing failure on LLVM (|t| 16.19 to 1.84 and 10.40 to 2.15) and most of AES-GCM's on Cranelift
+  (`docs/tls-assurance.md` §6.1). What it costs in speed is not measured here, and the DIT PR measures it.
+- **Per-key work once per connection** (step 1 below).
+
+`std.aes` and `std.gcm` then change in three ways, in this order of risk:
 1. **Per-key work once per connection.** The key schedule, and `H = AES(0)`, are 25% and 14% of a 64-byte seal today
    (`docs/tls-parity.md` §3.1). They depend only on the key, so the record layer keeps them. This helps the software path too,
    and is a change of its own.
@@ -145,10 +157,11 @@ at 16 KiB on the Xeon), and its data tests failed their timing test on the M4
   and the vectors `std.gcm` already has.
 - **A differential:** the hardware path against the software path over random keys, blocks and lengths, which is a test
   neither backend alone can give.
-- **Forcing the software path** on a machine that has the instructions, so CI covers both. A caller cannot do this today, so
-  the PR adds an environment variable read only in a test build, or a second entry point, and says which.
+- **Forcing the software path** on a machine that has the instructions, so CI covers both: `std.aes` and `std.gcm` keep their
+  software functions public, and the differential calls each path directly. There is no switch, because a switch that changes
+  the path at run time could ship in a release by accident.
 - **Both CI runners:** linux-x86_64 and darwin-aarch64 run the hardware path. A runner without the instructions would show up as
-  `hw_aes_gcm()` answering `false`. A test asserts `true` on the two CI runners, once PR 2 has measured that they answer it, so a
+  `hw_aes_gcm()` answering `false`. A test asserts `true` on the two CI runners, once the builtins PR has measured that they answer it, so a
   silent fallback cannot hide.
 - **The timing test, rerun** (`scripts/gcm_timing.py`), on both paths. The hardware instructions are specified as
   data-independent, but this CPU's own result (`docs/tls-assurance.md` §6.1) is the reminder that the specification and the
@@ -159,7 +172,7 @@ at 16 KiB on the Xeon), and its data tests failed their timing test on the M4
 
 ## 8. Gates
 
-The numbers PR 3 must show, each with its command, and an honest "not met" if it is not:
+The numbers the `std` PR must show, each with its command, and an honest "not met" if it is not:
 - **Speed:** the 16 KiB and 64-byte rows of §1, on the same two machines as `tls-parity.md` §3.1 and
   `tls-assurance.md` §6.1. No target is claimed here. The measurement decides how far `tls-parity.md` §3.1's "OpenSSL is about
   170 times faster" is corrected, in place.
@@ -168,19 +181,31 @@ The numbers PR 3 must show, each with its command, and an honest "not met" if it
 - **The gate:** `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --workspace`, and no source
   file over 2,000 lines.
 
-## 9. Open questions, for a person
+## 9. Open questions, and the answers proposed
 
-1. **Return a code or trap on a bad length?** `value_barrier` cannot fail; these can. *Assumed: a negative code with a rule tag,
-   as `std.gcm` does.*
-2. **Is a builtin that reads the CPU `[]`?** It has no effect a program can observe, and its answer is the same for the life of
-   the process. *Assumed: yes, as `value_barrier` is. If not, it needs a capability, and the pure backend's empty row is lost.*
-3. **A vector type instead?** It would also serve ChaCha20, and it is the larger design. *Assumed: no, not here.*
-4. **Does a Cranelift-only user accept the software speed?** *Assumed: yes. LLVM is the default backend.*
-5. **Where the tests force the software path** (§7). *Assumed: an environment variable read in a test build only.*
+Each is a decision for a person. The answer given is the one this PR proposes, with its reason; a reviewer who disagrees changes
+the answer here before anything is built.
+
+1. **A bad length: a trap or a return code?** *A trap.* No attacker's bytes reach it (§3), the key length is refused earlier with
+   a rule tag, and a return code would add a check that can only fail on a programming error.
+2. **Is a builtin that reads the CPU `[]`?** *Yes, as `value_barrier` is.* Its answer is the same for the life of the process
+   and nothing a program does can observe the read. A capability would cost the pure backend its empty row (#210's gate) for
+   nothing. The builtins PR must confirm that the backend already links the libc calls aarch64 needs (`getauxval`, `sysctlbyname`);
+   x86-64's `cpuid` needs none.
+3. **A vector type instead?** *Not now.* The block builtins go straight at the AES gap with a small, testable change. A vector
+   type is the answer if ChaCha20's 17-times gap starts to matter, and it is a larger design of its own: the checker, both
+   backends, and how a vector meets checked arithmetic.
+4. **Does a Cranelift-only user accept the software speed?** *Yes, and a TLS build should use LLVM* (§5), the default.
+5. **How the tests force the software path.** *They do not switch it: both paths stay public and are called directly* (§7).
+   This replaces the first draft's environment variable read in a test build.
+
+**Order proposed** (§6): this design merged with these answers, then Arm's DIT bit, then per-key caching, then the builtins and
+the LLVM lowering, then the `std` change and the speed measurement against OpenSSL.
 
 ## 10. Not done here
 
-- **Any code.** This document is the design; the builtins, the lowering and the `std` change are three PRs after it.
+- **Any code.** This document is the design. After it come four PRs, in §9's order: Arm's DIT bit, per-key caching, the builtins
+  with their lowering, and the `std` change.
 - **ChaCha20 SIMD** (`docs/chacha20.md` §6).
 - **AES-CBC, AES-CCM or any mode but GCM.** The block builtin would serve them; nothing here uses it.
 - **SHA instructions** (`SHA256H`, `SHA256RNDS2`). The same shape. Whether they matter has not been measured.
