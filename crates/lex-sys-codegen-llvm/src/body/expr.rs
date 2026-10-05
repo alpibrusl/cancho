@@ -335,6 +335,11 @@ impl<'a> FuncEmitter<'a> {
                 let (op, prefix, args) = (*op, prefix.clone(), args.clone());
                 self.path_op(op, &prefix, &args)
             }
+            // `docs/processes.md` §3.2.
+            Expr::ExecSpawn { prefix, args } => {
+                let (prefix, args) = (prefix.clone(), args.clone());
+                self.exec_spawn(&prefix, &args)
+            }
             // `docs/function-values.md` §4.2: the target's own address,
             // taken rather than called. An LLVM global symbol is already
             // a usable `ptr` constant wherever one is expected -- the
@@ -895,7 +900,9 @@ impl<'a> FuncEmitter<'a> {
                 }
                 self.index_of_byte(&args)
             }
-            Callee::Builtin(Builtin::ConnWrite) => {
+            // `docs/processes.md`: a channel is a socket pair, so its verbs
+            // are the socket handles' (§4.4).
+            Callee::Builtin(Builtin::ConnWrite | Builtin::PipeWrite) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 if args.len() != 3 {
                     return Err(format!(
@@ -904,6 +911,28 @@ impl<'a> FuncEmitter<'a> {
                     ));
                 }
                 self.conn_write(&args)
+            }
+            Callee::Builtin(Builtin::PipeRead) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                if args.len() != 3 {
+                    return Err(format!(
+                        "`pipe_read` needs 3 leaves but {} were given",
+                        args.len()
+                    ));
+                }
+                self.conn_read(&args)
+            }
+            Callee::Builtin(Builtin::PipeOpen) => self.pipe_open(),
+            Callee::Builtin(Builtin::ChildWait) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.child_wait(&args)
+            }
+            Callee::Builtin(Builtin::ChildKill) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.child_kill(&args)
+            }
+            Callee::Builtin(Builtin::ExecSpawn) => {
+                Err("`exec_spawn` is lowered as `Expr::ExecSpawn`".to_owned())
             }
             // `docs/native-sockets.md` §4: the poller.
             Callee::Builtin(Builtin::PollerNew) => self.poller_new(),
@@ -1003,7 +1032,9 @@ impl<'a> FuncEmitter<'a> {
                 }
                 self.poller_wait(&args)
             }
-            Callee::Builtin(Builtin::ConnNonblocking | Builtin::ListenerNonblocking) => {
+            Callee::Builtin(
+                Builtin::ConnNonblocking | Builtin::ListenerNonblocking | Builtin::PipeNonblocking,
+            ) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.nonblocking(&args)
             }
@@ -1015,7 +1046,13 @@ impl<'a> FuncEmitter<'a> {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.connect_status(&args)
             }
-            Callee::Builtin(Builtin::ConnClose | Builtin::ListenerClose | Builtin::PollerClose) => {
+            Callee::Builtin(
+                Builtin::ConnClose
+                | Builtin::ListenerClose
+                | Builtin::PollerClose
+                | Builtin::PipeClose
+                | Builtin::ChildEndClose,
+            ) => {
                 let fd64 = evaluated
                     .into_iter()
                     .flatten()

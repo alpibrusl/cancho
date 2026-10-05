@@ -96,10 +96,25 @@ pub const PRELUDE_LISTED: usize = 35;
 /// What `dir_stat` answers (`docs/directory-listing.md` §3.2).
 pub const PRELUDE_DIR_STAT: usize = 36;
 
+/// `docs/processes.md` §3.1, edition 7: the capability to start a program
+/// (leaf-free, indexed by a path prefix as `Fs` is), the `Split` that carries
+/// it as its ninth field, a started child (`res`, one leaf: the pid), the
+/// parent's and the child's ends of a channel (`res`, one descriptor each),
+/// what one of the child's streams is, and what the verbs answer.
+pub const PRELUDE_EXEC: usize = 37;
+pub const PRELUDE_SPLIT_EXEC: usize = 38;
+pub const PRELUDE_CHILD: usize = 39;
+pub const PRELUDE_PIPE: usize = 40;
+pub const PRELUDE_CHILD_END: usize = 41;
+pub const PRELUDE_STDIO: usize = 42;
+pub const PRELUDE_PIPED: usize = 43;
+pub const PRELUDE_SPAWNED: usize = 44;
+pub const PRELUDE_EXITED: usize = 45;
+
 /// How many types the prelude declares. Written once, because a builtin's
 /// signature indexes this table and a stale slice is a panic rather than a
 /// diagnostic.
-pub const PRELUDE_COUNT: usize = 37;
+pub const PRELUDE_COUNT: usize = 46;
 
 /// Which path operation an [`Expr::PathOp`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -445,6 +460,16 @@ pub enum Expr {
     OpenFile {
         prefix: String,
         mode: OpenMode,
+        args: Vec<Expr>,
+    },
+    /// `exec_spawn(exec, path, args, env, stdin, stdout, stderr)`
+    /// (`docs/processes.md` §3.2). Its own node for the reason
+    /// [`Expr::OpenFile`] is one: the prefix travels with it, because the
+    /// backend checks the path against it and the type it came from is gone
+    /// by then. `args` is the capability (zero-sized) and the six arguments
+    /// after it. What comes back is a `Spawned`, tagged.
+    ExecSpawn {
+        prefix: String,
         args: Vec<Expr>,
     },
     /// `fs_rename(fs, from, to)` and `fs_remove(fs, path)`

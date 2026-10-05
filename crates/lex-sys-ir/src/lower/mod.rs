@@ -10,6 +10,7 @@ mod expr;
 mod foreign;
 mod memory;
 mod net;
+mod process;
 mod signals;
 mod stmt;
 
@@ -402,11 +403,12 @@ impl<'a> FnLowering<'a> {
             && which != PRELUDE_FS
             && which != PRELUDE_NET
             && which != PRELUDE_SIGNALS
+            && which != PRELUDE_EXEC
         {
             return Err(Diagnostic::new(
                 Rule::CapabilityNotNarrowable,
                 format!(
-                    "`{}` carries no value to narrow; `Ffi`, `Fs`, `Net` and `Signals` are the capabilities that name one",
+                    "`{}` carries no value to narrow; `Ffi`, `Fs`, `Net`, `Signals` and `Exec` are the capabilities that name one",
                     self.unifier.display(&resolved)
                 ),
                 span,
@@ -449,7 +451,8 @@ impl<'a> FnLowering<'a> {
         // neither does `Net`: `docs/net.md` §4 bounds a `net_out` label by
         // plain textual prefix on `"host:port"`, the same way an `egress`
         // entry does, with no boundary character of its own.
-        if which == PRELUDE_FS && !extends_path(current, &target) {
+        // `docs/processes.md` §4.1: `Exec`'s prefix is a path, with `Fs`'s rule.
+        if (which == PRELUDE_FS || which == PRELUDE_EXEC) && !extends_path(current, &target) {
             return Err(Diagnostic::new(
                 Rule::CapabilityNotNarrowable,
                 format!(

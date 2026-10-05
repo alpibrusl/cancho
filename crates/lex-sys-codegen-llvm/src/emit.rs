@@ -185,6 +185,10 @@ fn leaves_into(ty: &Type, program: &Program, out: &mut Vec<LKind>) -> Result<(),
                     | lex_sys_ir::PRELUDE_CONN
                     | lex_sys_ir::PRELUDE_POLLER
                     | lex_sys_ir::PRELUDE_SIGNAL_WATCH
+                    // `docs/processes.md` §3.1: a pid, and two descriptors.
+                    | lex_sys_ir::PRELUDE_CHILD
+                    | lex_sys_ir::PRELUDE_PIPE
+                    | lex_sys_ir::PRELUDE_CHILD_END
             ) =>
         {
             out.push(LKind::I64);
@@ -317,6 +321,34 @@ pub(crate) fn emit_module(
     // Linux's close-on-exec accept (`docs/processes.md` §4.5); Darwin has
     // none and never calls it.
     declare_libc_unless_own(&mut text, "accept4", "i32 @accept4(i32, ptr, ptr, i32)");
+    // `docs/processes.md` §6: a channel, the spawn and what it is configured
+    // with, and the two verbs on a child. None of these is variadic.
+    declare_libc_unless_own(&mut text, "socketpair", "i32 @socketpair(i32, i32, i32, ptr)");
+    for (symbol, signature) in [
+        ("posix_spawn", "i32 @posix_spawn(ptr, ptr, ptr, ptr, ptr, ptr)"),
+        ("posix_spawn_file_actions_init", "i32 @posix_spawn_file_actions_init(ptr)"),
+        ("posix_spawn_file_actions_destroy", "i32 @posix_spawn_file_actions_destroy(ptr)"),
+        (
+            "posix_spawn_file_actions_addopen",
+            "i32 @posix_spawn_file_actions_addopen(ptr, i32, ptr, i32, i32)",
+        ),
+        (
+            "posix_spawn_file_actions_adddup2",
+            "i32 @posix_spawn_file_actions_adddup2(ptr, i32, i32)",
+        ),
+        ("posix_spawnattr_init", "i32 @posix_spawnattr_init(ptr)"),
+        ("posix_spawnattr_destroy", "i32 @posix_spawnattr_destroy(ptr)"),
+        ("posix_spawnattr_setflags", "i32 @posix_spawnattr_setflags(ptr, i16)"),
+        ("posix_spawnattr_setsigmask", "i32 @posix_spawnattr_setsigmask(ptr, ptr)"),
+        ("posix_spawnattr_setsigdefault", "i32 @posix_spawnattr_setsigdefault(ptr, ptr)"),
+        ("sigemptyset", "i32 @sigemptyset(ptr)"),
+        ("sigfillset", "i32 @sigfillset(ptr)"),
+        ("waitpid", "i32 @waitpid(i32, ptr, i32)"),
+        ("kill", "i32 @kill(i32, i32)"),
+        ("strncmp", "i32 @strncmp(ptr, ptr, i64)"),
+    ] {
+        declare_libc_unless_own(&mut text, symbol, signature);
+    }
     // `bind` (§7.21, `docs/listen.md` §6): `socket`+`setsockopt`+`bind`
     // folded into one call, the same libc surface `examples/serve/
     // serve.ls` reaches by hand and `lex-sys-codegen`'s own `body/net.rs`

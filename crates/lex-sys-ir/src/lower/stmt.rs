@@ -311,13 +311,20 @@ impl<'a> FnLowering<'a> {
                 PRELUDE_SIGNAL_WATCH => "signals_close",
                 PRELUDE_DIR => "dir_close",
                 PRELUDE_DIR_LIST => "dir_list_close",
+                PRELUDE_PIPE => "pipe_close",
+                PRELUDE_CHILD_END => "exec_spawn` or `child_end_close",
+                PRELUDE_CHILD => "child_wait",
                 _ => "file_close",
+            };
+            // `docs/processes.md` §4.7: a child is a process, not a descriptor.
+            let owns = if def_id.0 as usize == PRELUDE_CHILD {
+                "a process that has not been reaped"
+            } else {
+                "an open descriptor"
             };
             return Err(Diagnostic::new(
                 Rule::LinearValueTakenApart,
-                format!(
-                    "`{text}` owns an open descriptor and is ended by `{closer}`, not by being taken apart"
-                ),
+                format!("`{text}` owns {owns} and is ended by `{closer}`, not by being taken apart"),
                 span,
             ));
         }

@@ -808,6 +808,9 @@ impl<'a> FnLowering<'a> {
                 if resolved == Resolved::Builtin(Builtin::SignalsWatch) {
                     return self.signals_watch(args, span);
                 }
+                if resolved == Resolved::Builtin(Builtin::ExecSpawn) {
+                    return self.exec_spawn(args, span);
+                }
                 if resolved == Resolved::Builtin(Builtin::TcpConnect) {
                     return self.tcp_connect(args, span, false);
                 }

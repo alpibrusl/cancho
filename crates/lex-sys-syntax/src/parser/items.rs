@@ -35,13 +35,15 @@ impl<'a> Parser<'a> {
             // plus `spawn`/`join` (`docs/threads.md` §2); edition 5 is
             // edition 4 plus the socket handles
             // (`docs/native-sockets.md` §3); edition 6 is edition 5 plus
-            // the signal capability (`docs/signals.md`). Nothing later
-            // than that exists to opt into yet.
-            if !(1..=6).contains(&value) {
+            // the signal capability (`docs/signals.md`); edition 7 is
+            // edition 6 plus the capability to start a program
+            // (`docs/processes.md`). Nothing later than that exists to opt
+            // into yet.
+            if !(1..=7).contains(&value) {
                 return Err(Diagnostic::new(
                     Rule::UnknownEdition,
                     format!(
-                        "unknown edition {value}; the only editions today are 1, 2, 3, 4, 5 and 6"
+                        "unknown edition {value}; the only editions today are 1, 2, 3, 4, 5, 6 and 7"
                     ),
                     keyword.span.to(tok.span),
                 ));

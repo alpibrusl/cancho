@@ -12,6 +12,7 @@ mod listing;
 mod memory;
 mod net;
 mod poller;
+mod process;
 mod signals;
 mod sockets;
 
