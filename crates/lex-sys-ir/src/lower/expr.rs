@@ -678,7 +678,11 @@ impl<'a> FnLowering<'a> {
             }
             AstExpr::Call { callee, qualifier, args } => {
                 let text = self.ast.name_of(*callee);
-                if let Some(binding) = self.lookup(*callee) {
+                // `docs/modules.md` §4.3: only an unqualified name can be
+                // a local. `m.f(...)` is `f` in `m`, whatever this body
+                // has bound to `f` -- the rule `lex-sys-id` already hashes by.
+                let local = if qualifier.is_none() { self.lookup(*callee) } else { None };
+                if let Some(binding) = local {
                     let (slot, ty) = (binding.slot, binding.ty.clone());
                     // `docs/function-values.md` §4.2: a local binding
                     // may now be called, but only if its type is a
