@@ -85,7 +85,7 @@ to AFL++.
 | `fuzz_chain` | a server's certificate list, as TLS 1.3 sends it | `x509_verify`, through the chain builder, against a fixed trust store, host name and time: path building, name matching, constraints, signatures |
 | `fuzz_messages` | a byte choosing the message type, then a handshake message's body | every parser in `message.ls` for what a server sends, TLS 1.3 and 1.2 |
 | `fuzz_client` | the server's bytes, cut into `feed` calls at lengths the input names | the whole client from `start`: record framing, the ServerHello, HelloRetryRequest, and every refusal before the first encrypted record |
-| `fuzz_flight` | the server's handshake messages in **plaintext**, after a fixed ServerHello | the whole client past the AEAD: the harness plays the server, holds the server's X25519 key, derives the handshake keys and seals each message before `feed`. So EncryptedExtensions, Certificate, CertificateVerify, Finished, the post-handshake messages, and the TLS 1.2 flight (Certificate, ServerKeyExchange, ServerHelloDone, Finished) are fuzzed through the real record layer |
+| `fuzz_flight` | the server's handshake messages in **plaintext**, after a fixed ServerHello | the whole client past the AEAD: the harness plays the server, holds the server's X25519 key, derives the handshake keys and seals each message before `feed`. So EncryptedExtensions, Certificate, CertificateVerify, Finished, the post-handshake messages, and the TLS 1.2 flight (Certificate, ServerKeyExchange, ServerHelloDone, Finished) are fuzzed through the real record layer. *Corrected (PR 2): TLS 1.3 only. A TLS 1.2 server sends Certificate, ServerKeyExchange and ServerHelloDone in the clear, so `fuzz_client` reaches them from the recorded TLS 1.2 handshakes. And the harness holds no key: it reads the client's current read key, IV and sequence number from its slot before sealing each record, which follows every KeyUpdate with no key schedule of its own* |
 
 **`fuzz_flight` is the structure-aware one.** Without it a mutation of an encrypted record fails its tag, and nothing past
 the record layer is reached. The server side's key derivation uses the package's own key schedule (`tls_record`, `std.hkdf`).
@@ -105,7 +105,7 @@ Measured for 60 seconds each, one core, fork-server mode:
 | a prototype of `fuzz_der` | 5,518 | 411 of 843 |
 
 At those rates, four cores give about 8,000 to 22,000 executions a second, so **100 million executions take 1.3 to 3.6 hours**.
-That is at least 100 million in total, split so each harness gets at least 10 million. The rest goes to `fuzz_flight` and
+That is at least 100 million in total, split so each harness gets at least 10 million. *Corrected (PR 2): the full handshakes run at 135 to 197 executions a second (§3.6), so 10 million for `fuzz_client` and `fuzz_flight` would take about 15 hours a core. The split follows the rates instead.* The rest goes to `fuzz_flight` and
 `fuzz_chain`, which reach the most code. PR 2 reports, per harness:
 - the executions;
 - the hours;
@@ -122,7 +122,7 @@ It also gives the command that reproduces the run. AFL++'s persistent mode would
   certificates.
 - **What is committed:** after the run, `afl-cmin` minimises the queue, and that goes in under `tests/vectors/fuzz/<harness>/`.
 
-**The conformance test** (`crates/lex-sys/tests/conformance/fuzz.rs`) builds every harness on both backends and runs every
+**The conformance test** (`crates/lex-sys/tests/conformance/tls_fuzz.rs`; *corrected (PR 2): first named `fuzz.rs` here*) builds every harness on both backends and runs every
 committed input, so the corpus is a regression test from then on.
 
 **A crash** is any input that ends the process by a signal: a trap is lex-sys's bounds or overflow check, and `ud2` is
@@ -134,6 +134,52 @@ committed input, so the corpus is a regression test from then on.
 
 PR 2 lists each with its cause and fix. A **hang** (AFL++'s default limit, 1 s) is treated the same way: a server's bytes
 must not make the client loop.
+
+### 3.6 The campaign (PR 2)
+
+**The machine:** a 6-core Ubuntu 24.04 VM (colima, Apple Virtualization.framework) on the Apple M4 Max of §6.1, linux-aarch64,
+with AFL++ 4.09c, whose `afl-clang-fast` is on clang 17, from `apt-get install afl++`. One core a harness, five at once, seeded from
+`scripts/fuzz_corpus.py` and the corpus §3.5 committed after the first campaign below. The command:
+
+```
+cargo build --release -p lex-sys
+python3 scripts/fuzz_afl.py <work> der:14400 messages:14400 chain:10800 client:10800 flight:10800
+python3 scripts/fuzz_afl.py <work> --report
+python3 scripts/fuzz_afl.py <work> --minimize
+```
+
+| Harness | Executions | Hours | Per second | Edges | Crashes | Hangs |
+|---|---|---|---|---|---|---|
+| `fuzz_der` | 75,747,286 | 4.00 | 5,260 | 434 of 853 | 0 | 0 |
+| `fuzz_messages` | 71,991,797 | 4.00 | 4,999 | 199 of 469 | 0 | 0 |
+| `fuzz_chain` | 22,958,418 | 3.00 | 2,126 | 781 of 4,358 | 0 | 0 |
+| `fuzz_client` | 3,468,601 | 3.00 | 321 | 1,767 of 7,998 | 0 | 0 |
+| `fuzz_flight` | 2,058,320 | 3.00 | 191 | 1,419 of 8,047 | 0 | 0 |
+| **total** | **176,224,422** | 17 core-hours | | | **0** | **0** |
+
+**No crash and no hang, so there is no fix to list.** This run alone is past #208's 100 million.
+
+**The first campaign** ran on the 4-core Xeon of §2 and was stopped after 1.07 hours, when its container was reclaimed:
+
+| Harness | Executions | Per second | Crashes | Hangs |
+|---|---|---|---|---|
+| `fuzz_messages` | 16,309,924 | 4,240 | 0 | 0 |
+| `fuzz_chain` | 3,259,293 | 847 | 0 | 0 |
+| `fuzz_client` | 758,408 | 197 | 0 | 0 |
+| `fuzz_flight` | 519,727 | 135 | 0 | 0 |
+| **total** | **20,847,352** | | **0** | **0** |
+
+That makes 197,071,774 executions across both, on two machines, and on code before and after #270's two fixes to
+`message.ls`. This one ran on the code as merged.
+
+**What the edges say, and do not.** `fuzz_der` reaches about half of its harness's instrumented edges, and `fuzz_client` and
+`fuzz_flight` about a fifth. Each counts every instrumented edge in the program, the harness's own and code no fuzzed input can reach, so
+the fractions are not coverage of the parsers. **Edges were still being found late:** the last new one came at 1.4 hours
+(`fuzz_der`), 2.6 (`fuzz_chain`), 2.6 (`fuzz_flight`), 2.7 (`fuzz_client`) and 3.0 (`fuzz_messages`, of 4). A longer run
+might find more. The rates make `fuzz_client` and `fuzz_flight`, at a few million executions each, the least explored.
+
+**The corpus.** `--minimize` keeps 1,387 inputs, 1.7 MB: `der` 236, `chain` 236, `messages` 112, `client` 395 and `flight`
+408. It replaces the first campaign's 1,089. `conformance/tls_fuzz.rs` replays every one on both backends.
 
 ## 4. Differential testing
 
@@ -271,6 +317,85 @@ inputs than the two classes, or one on another CPU. The ECDH result on Cranelift
 consistent with data-dependent power, `docs/ecdh.md` §3) is the reminder: cycle counts measure the machine as well as the code.
 PR 4 says this beside the table.
 
+### 6.1 Results (PR 4)
+
+**The machine.** An Apple M4 Max, 16 cores, 64 GiB, macOS 26.2, natively (darwin-aarch64). It has no `rdtscp`, so `tick` reads
+the generic timer, `cntvct_el0` (the variant in `scripts/gcm_timing.py`'s docstring). `cntfrq_el0` gives 1 GHz and 0.5 s of
+`usleep` counted 502,518,167 ticks, so one tick is a nanosecond, not a cycle. **It was not idle**, which is what §6 asks. A
+Linux VM holding about twenty idle service containers, Ollama and an iOS simulator were running, and the one-minute load
+average was 2.0 to 2.4 of 16 cores throughout. Noise from them widens the variances, which makes a leak harder to see, not
+easier.
+
+**The commands**, each program built with `lex-sys build --std --backend B tests/programs/<x>_timing.ls -l tick -L <dir>`:
+
+```
+python3 scripts/x25519_timing.py <exe> 20000
+python3 scripts/gcm_timing.py <exe> 20000 --chacha20
+python3 scripts/gcm_timing.py <exe> 20000
+python3 scripts/ecdh_timing.py <exe> 20000
+```
+
+20,000 samples a test, max |t| over dudect's crops, the median in nanoseconds. Three tests fail. The "DIT" column is the same
+test with Arm's data-independent-timing bit (`PSTATE.DIT`) set by a constructor in `libtick.a`, run once for the failures and
+for LLVM's AES-GCM:
+
+| Test | LLVM | Cranelift | With DIT |
+|---|---|---|---|
+| X25519, a fixed scalar against random (0.55 ms; 1.32 ms) | 1.31 | 2.50 | |
+| X25519, a sparse scalar against random | 1.16 | 1.02 | |
+| ChaCha20-Poly1305 seal, key (1.5 µs; 3.0 µs) | 0.91 | 2.11 | |
+| ChaCha20-Poly1305 seal, data | 2.75 | 1.17 | |
+| ChaCha20-Poly1305 open, data | 1.65 | 2.71 | |
+| ChaCha20-Poly1305 open, tag | 1.50 | 2.39 | |
+| AES-128-GCM seal, key (7.1 µs; 12.1 µs) | 2.26 | 1.67 | LLVM 1.81, Cranelift 1.29 |
+| AES-128-GCM seal, data | 2.21 | **10.73**, again 2.93 | LLVM 2.80, Cranelift 4.46 |
+| AES-128-GCM open, data | 1.95 | **34.39**, again **17.54** | LLVM 1.54, Cranelift **5.62** |
+| AES-128-GCM open, tag | 1.64 | 2.30 | LLVM 1.67, Cranelift 2.78 |
+| P-256, scalar 1 against random (0.71 ms; 2.67 ms) | **16.19** | **8.25** | LLVM 1.84 |
+| P-256, a fixed scalar against random | 2.39 | 2.05 | LLVM 2.68 |
+| P-384, scalar 1 against random (1.89 ms; 6.56 ms) | **10.40** | **5.84** | LLVM 2.15 |
+| P-384, a fixed scalar against random | 2.40 | 1.43 | LLVM 2.50 |
+
+**What passes.** Both of #208's new names, X25519's ladder and ChaCha20-Poly1305, pass on both backends, the tag comparison
+included. So does every fixed-key or fixed-scalar test.
+
+**What fails, and what it is not.** On this CPU, with DIT clear, three tests fail:
+- **ECDH with scalar 1**, on both backends. On the Xeon only Cranelift's P-384 failed (`docs/ecdh.md` §3).
+- **AES-GCM's data tests on Cranelift.** On the Xeon they passed at 10^6 samples (`docs/tls-parity.md` §3.1).
+
+The evidence says the cause is below the instruction stream, not a branch or a secret index:
+- **The instruction counts are equal.** Under `valgrind --tool=callgrind --toggle-collect=lexs_std.gcm.open`, on
+  linux-aarch64, 200 calls of `gcm.open` on the all-zero input and 200 on random inputs execute **25,392,417** instructions
+  each on Cranelift, and **6,937,292** each on LLVM. `docs/ecdh.md` §3 found the same equality for the ladder.
+- **DIT removes most of it.** With DIT set, LLVM's scalar-1 tests fall from 16.19 and 10.40 to 1.84 and 2.15, both passes.
+  Cranelift's AES-GCM open-data test falls from 34.39 and 17.54 to 5.62, still a fail, and its seal-data test to 4.46, just
+  under.
+
+Arm's DIT is the CPU's promise that certain instructions take a time independent of their data. That it moves the result this
+much says the M4 runs some instructions faster on these operands (mostly zero limbs and words) when DIT is clear. What it does
+not say is which instructions, or what remains in Cranelift's AES-GCM with DIT set. Cranelift's code keeps more in memory
+(`docs/tls-parity.md` §3.1: GHASH's words in a bounds-checked array), so a data-dependent effect in the load and store path is
+one candidate, and nothing here tests it.
+
+**What it means.**
+- **For ECDH**, what `docs/ecdh.md` §3 says for TLS holds: the client uses a fresh scalar once, and the leak needs a scalar
+  that keeps the accumulator at zero, which a random one does not.
+- **For AES-GCM**, the secret classes are a record's plaintext (seal) and ciphertext (open). The ciphertext is not secret.
+  The plaintext is, and on Cranelift, without DIT, an all-zero 64-byte record and a random one are not equally fast at
+  |t| = 10.7 in one run of two.
+- **Neither backend sets DIT.** Doing so, in the runtime's start-up or around the AEAD and ladder, is the fix these numbers
+  point to, and it is not in this PR. LLVM is the default backend. Cranelift's AES-GCM data tests fail on this machine even
+  with DIT set.
+
+**What a pass cannot show:**
+- a leak smaller than the test resolves at 20,000 samples;
+- a leak under inputs other than the two classes;
+- a leak on another CPU. This table is one M4 Max, and the Xeon's tables in `docs/ecdh.md` and `docs/tls-parity.md` disagree
+  with it in both directions.
+
+The counter also measures the machine. A constant-rate counter turns a faster clock or a faster instruction on cheap operands
+into fewer ticks, whatever the code does.
+
 ## 7. Resource bounds
 
 **What is claimed, and how it is measured.** The client is bytes in and bytes out (`docs/tls-pure.md` §2). Its memory is a
@@ -286,17 +411,63 @@ fixed slot, and nothing is allocated per connection (`docs/tls-core.md` §3). So
   - the largest legal Certificate message, 64 KiB, the reassembly limit (`docs/tls-pure.md` §7.1);
   - a chain at the depth limit (8), with RSA-4096 signatures throughout, the most expensive verification allowed;
   - certificates at the 16 KiB size limit;
-  - warning alerts and KeyUpdates sent without end, until the client's limits (§7.1) refuse them;
+  - warning alerts and KeyUpdates sent without end, until the client's limits (`docs/tls-pure.md` §7.1) refuse them;
   - one byte a record, and one byte a `feed`.
 
   The CPU time per connection is reported for each. The bound stated is the largest measured, with the input that gives it.
+
+### 7.1 Results (PR 4)
+
+`python3 scripts/tls_hostile.py <driver> <tls_many>`, then the same with `--massif` (valgrind 3.22), on linux-aarch64: Ubuntu
+24.04 in a 6-core Linux VM on the M4 Max of §6.1, the fuzzing campaign of §3.6 running on five of its cores. Both programs are
+built on the LLVM backend with the file lists of `conformance/tls.rs`. Every case ended as the script requires it to.
+
+| Case | Outcome | CPU s | Peak resident KiB | Mapped KiB (massif) |
+|---|---|---|---|---|
+| an honest handshake | ok | 0.007 | 1,536 | 6,140 |
+| the same, one byte a `feed` | ok | 0.008 | 1,416 | 6,140 |
+| 32 KeyUpdates, then a 33rd | `tls-too-many-messages` | 0.008 | 1,432 | 6,140 |
+| 16 `user_canceled` warnings, then a 17th | `tls-too-many-messages` | 0.007 | 1,436 | 6,140 |
+| 10,000 NewSessionTickets | ok | **0.055** | 1,436 | 6,140 |
+| a Certificate message of 64 KiB | ok | 0.008 | **1,812** | 6,140 |
+| a chain at the depth limit, RSA-4096 throughout | ok | 0.011 | 1,544 | 6,140 |
+| a server that sends nothing, 31 s | `timeout` | 0.003 | 2,000 | |
+| a server that never reads, 31 s | `timeout` | 0.003 | 1,996 | |
+
+The CPU and resident columns are from the run without valgrind. The stalls run on `tls_many`, a different program, so their
+resident set is not comparable with the rows above them.
+
+**The bounds, the largest measured:**
+- **Memory: 6,140 KiB mapped, the whole process, in every case.** What a hostile server sends does not change what a
+  connection maps. The peak resident set is at most 1,812 KiB, for the 64 KiB Certificate, 276 KiB above the honest
+  handshake. That difference is the driver's own: it holds each `feed`'s hex line on its heap before decoding it. The
+  mapped peak, which counts that heap, does not move.
+- **CPU: 0.055 s for one connection, the 10,000 NewSessionTickets**, about 5 µs a ticket. The two cases refused at a
+  limit cost 0.007 and 0.008 s, as the honest handshake does.
+- **A stalled server costs 0.003 s of CPU over 31 s.** The client does no work until it is fed. The connection ends at the
+  caller's deadline, `tls_many`'s 30 s.
+
+*Corrected (PR 4): an earlier run, in PR 2's session on the x86-64 machine of §2, gave 6,460 KiB mapped in every case and 0.01
+to 0.14 CPU seconds a connection, with each stall about 0.006 s of CPU over 30 s. The numbers above are this machine's. The
+claim they support, that a connection's memory is the same whatever the server sends, holds on both.*
+
+**Two things the measurement found:**
+- **The test driver trapped on a `feed` over 64 KiB.** The 64 KiB Certificate made `tests/programs/tls_driver.ls` trap, on
+  its own region allocation: one allocation over 64 KiB in a region traps by design. The client was not at fault. The
+  driver now keeps its input on the heap.
+- **The client accepts filler certificate entries that are not on the chain's path.** The 64 KiB case is the leaf and seven
+  entries of zero bytes, which are not DER. The verifier parses every entry, refuses the connection if the leaf does not
+  parse, and leaves any other entry that does not parse out of path building (`packages/x509/verify.ls`, `x509_verify`).
+  RFC 8446 §4.4.2 allows a server to send certificates the path does not use. The cost of the junk is bounded by the
+  64 KiB handshake limit and the eight-entry limit, and the table measures that cost.
 
 ## 8. The CI job
 
 A job `tls-assurance`, Linux only:
 1. `apt-get install afl++ nginx gnutls-bin`, and the other §2 packages whose servers the matrix uses;
 2. build the harnesses instrumented, and run each for its share of 10 minutes from the committed corpus, failing on any crash
-   or hang;
+   or hang. The share is 2 minutes each, all five at once (`fuzz_afl.py ... der:120 chain:120 messages:120 client:120
+   flight:120`), so the job spends 2 minutes of wall time on it;
 3. the interop matrix, against local servers only;
 4. the differential set.
 

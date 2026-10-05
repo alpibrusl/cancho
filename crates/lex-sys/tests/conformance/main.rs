@@ -82,6 +82,7 @@ mod signals;
 mod sockets;
 mod testing;
 mod tls;
+mod tls_fuzz;
 mod traps;
 mod vcs;
 mod vcs_remote;

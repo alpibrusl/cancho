@@ -218,7 +218,7 @@ fn drain[&i, &n, &b, &o](io: &!i Io, ints: &!n [int], bytes: &!b [byte], out: &!
     return 0;
 }
 
-fn client_op[&i, &s, &n, &b, &o, &p](io: &!i Io, s: &s [byte], at: int, ints: &!n [int], bytes: &!b [byte], out: &!o [byte], store: &!p [byte], store_len: int) -> [io_write] int {
+fn client_op[&i, &s, &n, &b, &o, &p, &e](io: &!i Io, s: &s [byte], at: int, ints: &!n [int], bytes: &!b [byte], out: &!o [byte], store: &!p [byte], store_len: int, held: &!e [byte]) -> [io_write] int {
     let op = int_of(s[at]);
     var f = at + 2;
     var code = 0;
@@ -238,31 +238,30 @@ fn client_op[&i, &s, &n, &b, &o, &p](io: &!i Io, s: &s [byte], at: int, ints: &!
         hex_into(s, f, data);
         var consumed = 0;
         var going = true;
-        // `out` holds the input until it is consumed; what the client
-        // answers goes to the socket only after.
-        region r {
-            let held = alloc_slice[r](len(data), byte_of(0));
-            var k = 0;
-            while k < len(data) {
-                held[k] = data[k];
-                k = k + 1;
-            }
-            while going {
-                let c = tls_client.feed(ints, bytes, held[consumed..len(held)], store[0..store_len]);
-                if c < 0 {
-                    code = c;
+        // The input moves to `held` (on the heap, as it may be over a
+        // region's 64 KiB: #208 found a 64 KiB Certificate trapped here),
+        // since `out` is where the client's answer goes.
+        var k = 0;
+        while k < len(data) {
+            held[k] = data[k];
+            k = k + 1;
+        }
+        let input = held[0..len(data)];
+        while going {
+            let c = tls_client.feed(ints, bytes, input[consumed..len(input)], store[0..store_len]);
+            if c < 0 {
+                code = c;
+                going = false;
+            } else {
+                consumed = consumed + c;
+                code = consumed;
+                if consumed == len(input) {
                     going = false;
-                } else {
-                    consumed = consumed + c;
-                    code = consumed;
-                    if consumed == len(held) {
-                        going = false;
-                    } else if c == 0 {
-                        // Output or received data must be taken first: the
-                        // harness reads both from this line, so the rest of
-                        // the input is reported as not consumed.
-                        going = false;
-                    }
+                } else if c == 0 {
+                    // Output or received data must be taken first: the
+                    // harness reads both from this line, so the rest of
+                    // the input is reported as not consumed.
+                    going = false;
                 }
             }
         }
@@ -314,43 +313,46 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
     var slot_ints = box_slice(heap, tls_client.ints_len(), 0);
     var out = box_slice(heap, 131072, byte_of(0));
     var store = box_slice(heap, 131072, byte_of(0));
+    var held = box_slice(heap, 131072, byte_of(0));
     var store_len = 0;
     borrow mut line as &!lw in {
         borrow mut slot_bytes as &!bw in {
             borrow mut slot_ints as &!iw in {
                 borrow mut out as &!ow in {
                     borrow mut store as &!pw in {
-                        let l = contents(lw);
-                        var n = read_line(io, l);
-                        while n >= 0 {
-                            if n > 0 && n <= len(l) {
-                                let s = l[0..n];
-                                let op = int_of(s[0]);
-                                if op == 83 || op == 79 || op == 84 || op == 85 {
-                                    record_op(io, s, 0);
-                                } else if op == 80 {
-                                    prf_op(io, s, 0);
-                                } else {
-                                    if op == 67 {
-                                        // The roots, a PEM bundle, are the third field: read
-                                        // into `out` and loaded into the store.
-                                        let o = contents(ow);
-                                        let f = next_field(s, next_field(s, 2));
-                                        let pn = hex_into(s, f, o);
-                                        region q {
-                                            let info = alloc_slice[q](2, 0);
-                                            let roots = x509_verify.store_load(o[0..pn], contents(pw), info);
-                                            store_len = info[0];
-                                            if roots < 0 {
-                                                store_len = 0;
+                        borrow mut held as &!ew in {
+                            let l = contents(lw);
+                            var n = read_line(io, l);
+                            while n >= 0 {
+                                if n > 0 && n <= len(l) {
+                                    let s = l[0..n];
+                                    let op = int_of(s[0]);
+                                    if op == 83 || op == 79 || op == 84 || op == 85 {
+                                        record_op(io, s, 0);
+                                    } else if op == 80 {
+                                        prf_op(io, s, 0);
+                                    } else {
+                                        if op == 67 {
+                                            // The roots, a PEM bundle, are the third field: read
+                                            // into `out` and loaded into the store.
+                                            let o = contents(ow);
+                                            let f = next_field(s, next_field(s, 2));
+                                            let pn = hex_into(s, f, o);
+                                            region q {
+                                                let info = alloc_slice[q](2, 0);
+                                                let roots = x509_verify.store_load(o[0..pn], contents(pw), info);
+                                                store_len = info[0];
+                                                if roots < 0 {
+                                                    store_len = 0;
+                                                }
                                             }
                                         }
+                                        client_op(io, s, 0, contents(iw), contents(bw), contents(ow), contents(pw), store_len, contents(ew));
                                     }
-                                    client_op(io, s, 0, contents(iw), contents(bw), contents(ow), contents(pw), store_len);
                                 }
+                                flush(io);
+                                n = read_line(io, l);
                             }
-                            flush(io);
-                            n = read_line(io, l);
                         }
                     }
                 }
@@ -362,6 +364,7 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
     unbox_slice(heap, slot_ints);
     unbox_slice(heap, out);
     unbox_slice(heap, store);
+    unbox_slice(heap, held);
     return 0;
 }
 
