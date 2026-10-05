@@ -318,6 +318,82 @@ impl<'a> FuncEmitter<'a> {
         ])
     }
 
+    /// `dir_mode(dir, name)` (§3.5): `dir_stat`'s check and `fstatat`, and
+    /// `Done`'s three leaves with the permission bits (`st_mode & 0o7777`) on
+    /// success. `dir_call`'s answer is already `Done`'s shape; only its value
+    /// is replaced.
+    pub(crate) fn dir_mode(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        if args.len() != 3 {
+            return Err(format!("`dir_mode` needs 3 leaves but {} were given", args.len()));
+        }
+        let aarch64 = matches!(self.triple.architecture, target_lexicon::Architecture::Aarch64(_));
+        let layout = lex_sys_ir::stat_layout(self.is_darwin(), aarch64);
+        let buffer = self.fresh();
+        self.hoist(format!("  {buffer} = alloca [{} x i8], align 8\n", layout.size));
+        let handle = operand(&args[0]);
+        let name = (operand(&args[1]), operand(&args[2]));
+        let answer = self.dir_call(&[name], |this, copies| {
+            let fd = this.dir_fd(&handle);
+            let result = this.fresh();
+            this.out.push_str(&format!(
+                "  {result} = call i32 @fstatat(i32 {fd}, ptr {}, ptr {buffer}, i32 {})\n",
+                copies[0], layout.no_follow
+            ));
+            result
+        });
+        let bits = self.permission_bits(&answer[0], &buffer, layout);
+        Ok(vec![answer[0].clone(), LValue::Reg(bits), answer[2].clone()])
+    }
+
+    /// `dir_own_mode(dir)` (§3.5): `fstat` on the handle's descriptor, so the
+    /// directory's own bits need no search permission on it and no name.
+    pub(crate) fn dir_own_mode(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        if args.len() != 1 {
+            return Err(format!("`dir_own_mode` needs 1 leaf but {} were given", args.len()));
+        }
+        let aarch64 = matches!(self.triple.architecture, target_lexicon::Architecture::Aarch64(_));
+        let layout = lex_sys_ir::stat_layout(self.is_darwin(), aarch64);
+        let buffer = self.fresh();
+        self.hoist(format!("  {buffer} = alloca [{} x i8], align 8\n", layout.size));
+        let fd = self.dir_fd(&operand(&args[0]));
+        let result = self.fresh();
+        self.out.push_str(&format!("  {result} = call i32 @fstat(i32 {fd}, ptr {buffer})\n"));
+        let reason = self.errno();
+        let wide = self.fresh();
+        self.out.push_str(&format!("  {wide} = sext i32 {result} to i64\n"));
+        let failed = self.fresh();
+        self.out.push_str(&format!("  {failed} = icmp slt i64 {wide}, 0\n"));
+        let tag = self.fresh();
+        self.out.push_str(&format!("  {tag} = select i1 {failed}, i64 1, i64 0\n"));
+        let tag = LValue::Reg(tag);
+        let bits = self.permission_bits(&tag, &buffer, layout);
+        Ok(vec![tag, LValue::Reg(bits), reason])
+    }
+
+    /// `st_mode & 0o7777` read from `buffer` at the target's offset, or `0`
+    /// when `tag` says the call failed (the buffer is not read then).
+    fn permission_bits(
+        &mut self,
+        tag: &LValue,
+        buffer: &str,
+        layout: lex_sys_ir::StatLayout,
+    ) -> String {
+        let ok = self.fresh();
+        self.out.push_str(&format!("  {ok} = icmp eq i64 {}, 0\n", operand(tag)));
+        let at = self.fresh();
+        self.out
+            .push_str(&format!("  {at} = getelementptr i8, ptr {buffer}, i64 {}\n", layout.mode));
+        let raw = self.fresh();
+        self.out.push_str(&format!("  {raw} = load i{}, ptr {at}\n", layout.mode_bits));
+        let wide = self.fresh();
+        self.out.push_str(&format!("  {wide} = zext i{} {raw} to i64\n", layout.mode_bits));
+        let bits = self.fresh();
+        self.out.push_str(&format!("  {bits} = and i64 {wide}, {}\n", lex_sys_ir::PERMISSION_BITS));
+        let chosen = self.fresh();
+        self.out.push_str(&format!("  {chosen} = select i1 {ok}, i64 {bits}, i64 0\n"));
+        chosen
+    }
+
     /// `st_mode`'s type bits as the language numbers a kind (§3.2).
     fn kind_of_mode(&mut self, mode: &str) -> String {
         let bits = self.fresh();

@@ -1,6 +1,7 @@
 # Directory listing and file status: reading a directory beneath a handle
 
 Status: **slices 1 and 2 built** (`dir_list`, `dir_next`, `dir_list_close`, `std.dirs.list`; `dir_stat`), edition 6,
+and **§3.5 built** (`dir_mode`, `dir_own_mode`, edition 7, issue #243),
 both backends; Linux measured, Darwin's `dirent` offsets run by CI's hostile listing and its `stat` offsets by CI's
 status test. Slice 3 (the `lexsys-tools` `list` tool) is below, not built. Issue #222, gaps L2 (no listing) and L3 (no status without opening)
 of [`agent-toolbox.md`](agent-toolbox.md). The issue asks for `fs_list` and `fs_stat` on a path under `Fs`; this
@@ -113,6 +114,37 @@ CI job, as slice 1's flags were not.
 The `stat` buffer is a stack slot of 144 bytes in the function that calls, read at the table's offsets; nothing in
 the language sees `struct stat`.
 
+### 3.5 Permission bits (#243)
+
+```
+dir_mode(dir: &Dir, name: &[byte]) -> [dir_read] Done      // Done::Ok(bits) | Done::Failed(int)
+dir_own_mode(dir: &Dir) -> [dir_read] Done
+```
+
+The asker is lexsys-hooks: its production profile refuses to start when its data directory or a log in it can be read
+or written by the group or by others, and lex-sys could not say a file's mode, so the service called libc's `statx`
+through `Ffi("libc")` and its authority report was `bounded: false` for that alone. #243 asked for a path-based
+`fs_stat`; §2's reasons put status on a handle, so the bits are two more steps beneath a `Dir`.
+
+* **`dir_mode(dir, name)`** is `dir_stat`'s call: the same one-component check (`EINVAL`, no call), `fstatat` with
+  `AT_SYMLINK_NOFOLLOW`, and it answers `st_mode & 0o7777`: the nine read/write/execute bits, set-user-id (`0o4000`),
+  set-group-id (`0o2000`) and sticky (`0o1000`). A link answers its own bits, never its target's.
+* **`dir_own_mode(dir)`** is `fstat` on the handle's descriptor: the directory that was opened, which no name beneath
+  it can reach (`.` is refused). `fstat` needs no search permission on the directory and no path.
+* **The answer is `Done`**, the prelude's integer-or-`errno` (`file-writes.md` §4), rather than a fourth field on
+  `DirStat`: `DirStat::Ok(kind, size, mtime)` is matched by `lexsys-tools`' `list`, and a field added to a variant would
+  break every match on it. Owner and group stay out, as §7 says, until a program asks.
+* **Edition 7**, which is still being built ([`processes.md`](processes.md) slices 3 and 4): `dir_mode` is a name a
+  program may already declare, so an edition-6 file does not see it (`tests/reject/dir_mode_is_edition_seven.ls`).
+* **The offsets are §3.4's**: `st_mode`, 32 bits on Linux and 16 on Darwin, read only when the call succeeded; a
+  failure's value is `0`. The permission bits are the same on every target.
+* **Labels**: both perform `dir_read`, as `dir_stat` does (`tests/reject/dir_mode_not_declared.ls`).
+
+Checked by `tests/conformance/directory_modes.rs`, on both backends: a directory made `0o710` and, beneath it, files
+`0o600`, `0o644`, `0o400`, `0o4755` and `0o000`, directories `0o750` and `0o1777`, a link, a missing name (`ENOENT`)
+and two names that are not one component (`EINVAL`), each printed by the probe and compared with what Rust's
+`symlink_metadata` reports.
+
 ## 4. `std.dirs`: the sorted listing and the walk
 
 The builtins answer one name at a time in the kernel's order; `std.dirs` turns that into what a tool wants:
@@ -194,7 +226,8 @@ this document assumes that answer.
 
 * **No following stat.** `dir_stat` never follows a link; a tool that wants the target opens it with
   `dir_enter`/`dir_open_read`, which refuse links, or does not follow at all.
-* **No sub-second times, no owner, no mode bits.** `list` needs kind, size and a time; `ls -l`'s permissions and owner
-  have no asker. Nanoseconds are an added field when one appears.
+* **No sub-second times, no owner.** `list` needs kind, size and a time; `ls -l`'s owner has no asker. Nanoseconds are
+  an added field when one appears. *(Corrected: this also said "no mode bits"; lexsys-hooks asked, and §3.5 answers
+  them with `dir_mode` and `dir_own_mode`.)*
 * **No `rewinddir`, no `telldir`.** A listing is read once; a second pass opens a second `DirList`.
 * **No recursive walk in `std`** (§4).
