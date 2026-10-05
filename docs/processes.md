@@ -1,6 +1,6 @@
 # Processes: running a program, with an authority that says which
 
-> **Status: slices 0 and 1 built (§4.5, §8); slices 2 to 4 designed, not built.**
+> **Status: slices 0 to 2 built (§4.5, §4.8, §8); slices 3 and 4 designed, not built.**
 > Written before the code, the way
 > [`filesystem.md`](filesystem.md), [`net.md`](net.md) and
 > [`signals.md`](signals.md) were. When building it disagrees with this
@@ -393,6 +393,37 @@ the `Clock`), and, for #237, fake peers on `Conn`s in the same loop.
 After `poller_wait` reports the child, `child_wait` answers without
 blocking.
 
+**Built (slice 2), and what building it settled.**
+
+* *The `pidfd` lives in the `Child`.* `epoll` watches a descriptor and a pid
+  is not one, so `exec_spawn` opens the `pidfd` itself, straight after the
+  spawn and before anything can reap the child (an unreaped pid is still its
+  own, §4.7). A `Child` is still one word: the pid in the low 32 bits and
+  the `pidfd` in the high 32, and `child_wait` closes it as it reaps. The
+  alternative, opening it when `poller_add_child` is called, leaves a
+  descriptor with no owner: the `Poller` cannot know which to close, and the
+  `Child` is consumed by `child_wait` before the `Poller` is. A `pidfd` per
+  live child is the price; it is one descriptor, and the same one `child_wait`
+  gives back (`reaping_a_child_gives_back_its_pidfd`).
+* *`pidfd_open` goes through `syscall`.* `glibc` has a wrapper only from
+  2.36, and the number, 434, is the same on both Linux architectures.
+* *A refusal is the `errno`, carried.* If `pidfd_open` is refused (a kernel
+  before 5.3, or a policy that forbids the call), the high half holds the
+  `errno` negated and `poller_add_child` answers it: `ENOSYS`, not `EBADF`
+  for a descriptor the program never held. `EMFILE` is not among the
+  reachable ones: the descriptor a child's end held is closed before the
+  `pidfd` is asked for, so one is always free. The test installs a `seccomp`
+  filter answering `pidfd_open` with `ENOSYS` to reach the path.
+* *A channel is watched as a `Conn` is.* `poller_add_pipe` is
+  `poller_add_conn` for a `Pipe`: a channel is a socket pair, so there is
+  nothing more to it. There is no `poller_remove` for either: closing the
+  descriptor (`pipe_close`, `child_wait`) takes it out of the set.
+* *Darwin reports an exit once.* `EVFILT_PROC` with `NOTE_EXIT` is
+  registered `EV_ONESHOT`, and `poller_wait` reads it as readable. The `pidfd`
+  of Linux stays readable until the child is reaped (level-triggered, as the
+  rest of the poller is); on macOS the report comes once, which is all a
+  program that calls `child_wait` on it needs.
+
 ### 4.9 Threads
 
 `posix_spawn` is safe from any thread, and nothing here is process-wide
@@ -448,7 +479,7 @@ does ([`net.md`](net.md) §4.1).
 |---|---|---|
 | **0** | Close-on-exec on every descriptor the backends open (§4.5), with a conformance test that asks a child what it inherited. **Built** | every edition (a tightening) |
 | **1** | `Exec`, the `exec`, `child_signal`, `pipe_read`, `pipe_write` labels, `Split`'s ninth field, `pipe_open`, `exec_spawn`, `child_wait`, `child_kill`, the `Pipe` operations; both backends, both targets. **Built** (§8) | 7 |
-| **2** | `poller_add_pipe`, `poller_add_child` | 7 |
+| **2** | `poller_add_pipe`, `poller_add_child`. **Built** (§4.8, §8) | 7 |
 | **3** | `std.process`: `Args` (the `\0` builder) and `run(heap, exec, path, args, input, most, timeout)`, a bounded capture with a deadline, built on slices 1 and 2 | 7 |
 | **4** | lexsys-tools#10: the MCP server, as a lex-sys program holding `Exec` narrowed to the tools' directory and nothing that writes | — |
 
