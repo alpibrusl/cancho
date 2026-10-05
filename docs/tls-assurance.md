@@ -35,11 +35,11 @@ On the session machine: 4 cores, 15 GiB, Ubuntu 24.04, x86-64.
 | nginx | 1.24.0 | `apt-get install nginx` |
 | GnuTLS (`gnutls-serv`) | 3.8.3 | `apt-get install gnutls-bin` |
 | Go `crypto/tls` | Go 1.24.7 | present |
-| rustls | 0.23, from crates.io | `cargo`, through the proxy |
-| wolfSSL | 5.6.6 | `apt-get install libwolfssl-dev`, a server built against it |
-| mbedTLS | 2.28.8 | the same. 2.28 has no TLS 1.3 server, so it is a TLS 1.2 row only |
-| Botan | 2.19 | `apt-get install botan` (its `tls_server` command) |
-| BoringSSL | Android's build | `apt-get install android-boringssl`, if it ships the `bssl` tool; PR 3 says whether it did |
+| rustls | 0.23.45, from crates.io, on `ring` | `cargo`, through the proxy (`scripts/interop/rustls_server`, its own workspace) |
+| wolfSSL | 5.6.6 | `apt-get install libwolfssl-dev`, a server built against it (`scripts/interop/wolfssl_server.c`) |
+| mbedTLS | 2.28.8 | the same (`scripts/interop/mbedtls_server.c`). 2.28 has no TLS 1.3 server, so it is a TLS 1.2 row only |
+| Botan | 2.19 | `apt-get install botan` (its `tls_server` command). *Corrected (PR 3): that command has no mode that answers and closes; `scripts/interop/botan_server.cpp` is a server on `libbotan-2-dev` instead* |
+| BoringSSL | Android's build, 14.0.0+r11 | *PR 3: it ships `bssl-tool`, whose server binds only IPv6, which this container lacks; `scripts/interop/boringssl_server.c` is a server on `android-libboringssl-dev` instead* |
 
 "Installable offline", in #208's words, is read as "installable on a machine with the distribution's and crates.io's
 mirrors". The CI job (§8) installs the same packages, on `ubuntu-latest`.
@@ -154,6 +154,54 @@ host). The outcomes compared are accept or refuse, and for a refusal, the alert 
 
 A disagreement on accept or refuse is a bug in one of them. PR 3 fixes it here, or says why OpenSSL is the one that is wrong.
 
+### 4.1 Results (PR 3)
+
+**The same handshakes:** `python3 scripts/tls_differential.py --handshakes <tls_many>`, **21 rows, 21 agree.**
+- **The rows:** `openssl s_server` with each TLS 1.3 suite, a HelloRetryRequest to P-256 and to P-384, an RSA-2048
+  certificate, and each of the six TLS 1.2 suites; rustls with each TLS 1.3 suite and each TLS 1.2 suite.
+- **What was compared:** the version, suite and group, a HelloRetryRequest's group, and TLS 1.2's ServerKeyExchange curve
+  and signature scheme. They were the same for both clients in every row, and both completed every handshake.
+- **What a signature scheme showed:** rustls signs TLS 1.2's key exchange with `rsa_pss_rsae_sha512` (0806), and OpenSSL
+  with `rsa_pss_rsae_sha256` (0804). Each server picked the same scheme for both clients.
+
+**The lying server:** `python3 scripts/tls_differential.py`, the 66 connections of `scripts/tls_liar.py` (63 before
+this PR) against `openssl s_client`, offering what `packages/tls` offers.
+
+| Outcome | Cases |
+|---|---|
+| the same: accepted, or refused with the same alert | 44 |
+| both refuse, with different alerts | 16 |
+| they differ on accept or refuse, on purpose (below) | 6 |
+| they differ otherwise | **0** |
+
+The alerts differ where RFC 8446 §6.2 leaves the choice open. Mostly OpenSSL sends `illegal_parameter` (47) where this
+client names the fault: `protocol_version`, `handshake_failure`, `decode_error` or `unsupported_extension`. For an all-zero
+or low-order X25519 share, OpenSSL sends `internal_error` (80).
+
+**The six differences on purpose.** `scripts/tls_differential.py` names each in `EXPECTED`, so a seventh, or one of these
+going away, fails the run.
+
+| Case | `packages/tls` | OpenSSL | Why |
+|---|---|---|---|
+| a HelloRetryRequest cookie of 2,049 bytes | refused | accepted | the slot keeps at most 2,048 (`docs/tls-parity.md` §3.3) |
+| a Certificate message over 64 KiB | refused | accepted | the slot's handshake buffer is 64 KiB (`docs/tls-pure.md` §7.4); OpenSSL's default is 100 KiB (`SSL_MAX_CERT_LIST_DEFAULT`) |
+| `DOWNGRD\x00` in a TLS 1.2 ServerHello | refused | accepted | RFC 8446 §4.1.3: a client that offered TLS 1.3 MUST refuse either sentinel there. OpenSSL refuses `DOWNGRD\x01` and takes `\x00` |
+| TLS 1.2 without the extended master secret | refused | accepted | required, by #207's decision |
+| a TLS 1.2 ServerHello echoing the client's session id | refused | accepted | RFC 5246 §7.4.1.3: an echoed id resumes that session, and the client offered none |
+| a TLS 1.2 HelloRequest | refused | renegotiates | no renegotiation, by #207's decision |
+
+**Found, and fixed here.** OpenSSL accepted a TLS 1.3 ServerHello whose random ends in a downgrade sentinel, and this client
+refused it. RFC 8446 §4.1.3 has the check only in a ServerHello for TLS 1.2 or below. `docs/tls-parity.md` §3.4 said so too,
+but the code checked every ServerHello. It now checks as the RFC says, and the two cases are honest connections.
+
+**Two legal differences the harness absorbs**, so that the liar's script, written for this client, can run against OpenSSL:
+- **A KeyUpdate that asks for an answer.** This client answers at once. OpenSSL answers with its next write, which RFC 8446
+  §4.6.3 allows. A case that completed its handshake with no alert is counted as accepted, with the step where OpenSSL left
+  the script printed beside it.
+- **The middlebox change_cipher_spec.** After a HelloRetryRequest, OpenSSL sends it before its second ClientHello, as
+  Appendix D.4 allows. This client sends it before its Finished. The harness moves it to where the script expects it, in
+  TLS 1.3 only.
+
 ## 5. The interop matrix
 
 Each server from §2:
@@ -164,6 +212,43 @@ Each server from §2:
 The client fetches a body of known length and checks it byte for byte. A row that cannot run (a server without Ed25519, mbedTLS
 without TLS 1.3) is listed with the reason, not dropped. The existing `scripts/tls_live.py` covers OpenSSL, Python `ssl` and
 tlslite-ng. PR 3 extends it, or adds `scripts/tls_interop.py` beside it, for the rest.
+
+### 5.1 Results (PR 3)
+
+`python3 scripts/tls_interop.py <tls_many>` (86 seconds here, the servers built from source included), and
+`scripts/tls_live.py` for OpenSSL's `s_server`, Python `ssl` and tlslite-ng as before. Each row is 8 concurrent connections,
+reading one byte at a time and then 65,536.
+
+**126 rows, 126 ok:**
+
+| Server | Version | TLS 1.3 rows | TLS 1.2 rows | Not run, and why |
+|---|---|---|---|---|
+| Go `crypto/tls` | 1.24.7 | 5 | 11 | TLS 1.3 suites cannot be chosen in Go |
+| rustls | 0.23.45 | 8 | 11 | |
+| nginx, on OpenSSL 3.0.13 | 1.24.0 | 8 | 11 | |
+| GnuTLS `gnutls-serv` | 3.8.3 | 8 | 11 | |
+| wolfSSL | 5.6.6 | 7 | 10 | Ed25519: this build has none |
+| BoringSSL (Android's) | 14.0.0+r11 | 5 | 11 | TLS 1.3 suites cannot be chosen in BoringSSL |
+| mbedTLS | 2.28.8 | none | 10 | TLS 1.3, which 2.28 has no server for; Ed25519 |
+| Botan | 2.19.3 | none | 10 | TLS 1.3, which Botan 2 lacks; Ed25519, which its TLS 1.2 does not serve (`openssl s_client` gets `handshake_failure` from it too) |
+
+The rows are:
+- every certificate type the server can use (P-256, P-384, RSA-2048, RSA-4096, Ed25519) with its default suite;
+- every TLS 1.3 suite it can be told to use;
+- every TLS 1.2 suite, ECDSA with P-256 and RSA with RSA-2048.
+
+**Found, and fixed here: nginx's TLS 1.2.** Every TLS 1.2 connection to nginx was refused, `tls-unsupported-extension`.
+nginx answers a ClientHello that names a host with an empty `server_name` in its ServerHello, as RFC 6066 §3 says a
+server "SHALL" when it used the name. The TLS 1.2 ServerHello parser accepted only `renegotiation_info`,
+`extended_master_secret` and `ec_point_formats`, the three `openssl s_server` sends. It now accepts one empty
+`server_name`, in TLS 1.2 only: TLS 1.3 sends it in EncryptedExtensions, which already accepted it.
+
+The new rules have their own tests:
+- three crafted ServerHellos in `conformance/tls.rs`;
+- three lying-server cases;
+- two mutants, both killed. `scripts/tls_mutants.py` now has 61 of 61 killed.
+
+**Not available:** none of the servers §2 names is missing. BoringSSL and Botan needed servers of their own (§2).
 
 ## 6. Timing
 

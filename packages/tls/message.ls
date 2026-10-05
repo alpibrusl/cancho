@@ -349,11 +349,6 @@ pub fn server_hello[&b, &s, &i](b: &b [byte], session_id: &s [byte], info: &!i [
         k = k + 1;
     }
     let retry = k == 32;
-    // The downgrade sentinels "DOWNGRD" and 01 or 00 (RFC 8446 §4.1.3):
-    // refused in any ServerHello, as this client offered TLS 1.3.
-    if !retry && get(b, 26, 4) == 0x444f574e && get(b, 30, 3) == 0x475244 && int_of(b[33]) <= 1 {
-        return tls_record.protocol_version();
-    }
     var at = 34;
     let sid = int_of(b[at]);
     if sid > 32 || at + 1 + sid + 3 > n {
@@ -382,7 +377,11 @@ pub fn server_hello[&b, &s, &i](b: &b [byte], session_id: &s [byte], info: &!i [
     var group = 0;
     var cookie = 0;
     var cookie_end = 0;
-    // TLS 1.2's: renegotiation_info, extended_master_secret, ec_point_formats.
+    // TLS 1.2's: renegotiation_info, extended_master_secret, ec_point_formats,
+    // and server_name, empty, which a server that used the name sends
+    // (RFC 6066 §3; nginx does). TLS 1.3 sends that one in
+    // EncryptedExtensions instead.
+    var sni = false;
     var reneg = false;
     var ems = false;
     var formats = false;
@@ -448,6 +447,11 @@ pub fn server_hello[&b, &s, &i](b: &b [byte], session_id: &s [byte], info: &!i [
                 return tls_record.decode_error();
             }
             reneg = true;
+        } else if kind == 0 && !retry {
+            if sni || size != 0 {
+                return tls_record.decode_error();
+            }
+            sni = true;
         } else if kind == 23 && !retry {
             if ems || size != 0 {
                 return tls_record.decode_error();
@@ -480,6 +484,14 @@ pub fn server_hello[&b, &s, &i](b: &b [byte], session_id: &s [byte], info: &!i [
         if retry {
             return tls_record.protocol_version();
         }
+        // The downgrade sentinels, "DOWNGRD" and 01 or 00 (RFC 8446 §4.1.3):
+        // a client that offered TLS 1.3 MUST refuse either in a ServerHello
+        // for TLS 1.2 or below. In a TLS 1.3 ServerHello they are random
+        // bytes like any others, as OpenSSL takes them
+        // (`docs/tls-assurance.md` §4).
+        if get(b, 26, 4) == 0x444f574e && get(b, 30, 3) == 0x475244 && int_of(b[33]) <= 1 {
+            return tls_record.protocol_version();
+        }
         if !tls_record.suite12_known(suite) {
             return tls_record.no_shared_cipher();
         }
@@ -509,7 +521,7 @@ pub fn server_hello[&b, &s, &i](b: &b [byte], session_id: &s [byte], info: &!i [
         if !tls_record.suite_known(suite) {
             return tls_record.no_shared_cipher();
         }
-        if reneg || ems || formats {
+        if reneg || ems || formats || sni {
             // TLS 1.2's extensions in a TLS 1.3 ServerHello.
             return tls_record.unsupported_extension();
         }

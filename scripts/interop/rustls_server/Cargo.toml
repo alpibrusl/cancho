@@ -1,0 +1,12 @@
+# A rustls server for scripts/tls_interop.py (docs/tls-assurance.md §5).
+# Its own workspace: it is a test peer, not part of the compiler's.
+[package]
+name = "rustls_server"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+
+[workspace]

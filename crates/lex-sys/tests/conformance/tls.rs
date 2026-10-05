@@ -6,7 +6,7 @@
 //! one a suite (§3.4) -- the TLS 1.2 PRF against its definition,
 //! the same server bytes fed one byte at a time and all at once, a wrong
 //! root, a crafted ServerHello for each rule of RFC 8446 §4.1.3 the
-//! client enforces, and the 63 connections of `scripts/tls_liar.py`'s
+//! client enforces, and the 66 connections of `scripts/tls_liar.py`'s
 //! lying server (§6.3). All through `tests/programs/tls_driver.ls`.
 
 use super::json::feed;
@@ -126,7 +126,7 @@ fn every_recorded_handshake_replays_byte_for_byte_on_both_backends() {
 #[test]
 fn every_lying_server_is_refused_with_its_own_tag_on_both_backends() {
     let cases = liar_cases();
-    assert_eq!(cases.len(), 63);
+    assert_eq!(cases.len(), 66);
     for backend in ["cranelift", "llvm"] {
         let (dir, exe) = build_tls_driver("liar", backend);
         for (tag, name, asked, answered) in &cases {
@@ -260,8 +260,34 @@ fn every_server_hello_rule_is_refused_with_its_own_tag() {
             "tls-hello-retry",
         ),
         (
-            "the downgrade sentinel",
+            "the downgrade sentinel in a TLS 1.3 ServerHello: random bytes (RFC 8446 §4.1.3)",
             hello("0303", &downgrade, &sid, "1303", &good),
+            "ok",
+        ),
+        (
+            "server_name acknowledged, empty, in a TLS 1.2 ServerHello (RFC 6066 §3; nginx sends it)",
+            hello("0303", &random, &"aa".repeat(32), "c02f", "ff010001000017000000000000"),
+            "ok",
+        ),
+        (
+            "server_name in a TLS 1.3 ServerHello: its place is EncryptedExtensions",
+            hello("0303", &random, &sid, "1303", &format!("{good}00000000")),
+            "tls-unsupported-extension",
+        ),
+        (
+            "server_name twice in a TLS 1.2 ServerHello",
+            hello(
+                "0303",
+                &random,
+                &"aa".repeat(32),
+                "c02f",
+                "ff0100010000170000000000000000000000",
+            ),
+            "tls-decode-error",
+        ),
+        (
+            "the downgrade sentinel in a TLS 1.2 ServerHello",
+            hello("0303", &downgrade, &"aa".repeat(32), "c02f", "ff0100010000170000"),
             "tls-protocol-version",
         ),
         (
