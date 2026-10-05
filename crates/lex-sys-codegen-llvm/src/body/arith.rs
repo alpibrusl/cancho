@@ -71,7 +71,9 @@ impl<'a> FuncEmitter<'a> {
                 Callee::Builtin(Builtin::FloatOf | Builtin::Sqrt | Builtin::FloatOf32) => {
                     Ok(LKind::F64)
                 }
-                Callee::Builtin(Builtin::F32Of | Builtin::F32OfBits) => Ok(LKind::F32),
+                Callee::Builtin(
+                    Builtin::F32Of | Builtin::F32OfBits | Builtin::Sqrt32 | Builtin::F32OfInt,
+                ) => Ok(LKind::F32),
                 // Every builtin below has one fixed, scalar return type
                 // (`Builtin::signature`'s own match, `lex-sys-ir::
                 // builtin.rs`) -- not a capability, not a type the call
@@ -91,6 +93,7 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::Truncate
                     | Builtin::BitsOf
                     | Builtin::BitsOf32
+                    | Builtin::IntOfF32
                     | Builtin::Listen
                     | Builtin::Accept
                     | Builtin::ConnNonblocking

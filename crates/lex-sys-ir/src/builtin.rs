@@ -215,6 +215,18 @@ pub enum Builtin {
     /// left for when something needs it; `lexsys-gpu` and the gate in
     /// `docs/f32.md` §5 both do.
     F32OfBits,
+    /// `sqrt32(x: f32) -> [] f32` -- the correctly rounded square root, one
+    /// instruction (`docs/f32.md` §2, `docs/float-math.md` §3). Named as
+    /// `bits_of32` is: the width is part of the name because `sqrt` is
+    /// `float -> float` and a builtin has one signature.
+    Sqrt32,
+    /// `f32_of_int(n: int) -> [] f32` -- the nearest `f32`, ties to even;
+    /// every `int` is in range, so nothing traps (`docs/f32.md` §2).
+    F32OfInt,
+    /// `int_of_f32(x: f32) -> [] int` -- toward zero, trapping on NaN,
+    /// infinity and any magnitude at or beyond `2^63`: `truncate`'s rule
+    /// at the narrower width (`docs/floating-point.md` §4).
+    IntOfF32,
     /// `is_nan(x: float) -> [] bool` (§5).
     ///
     /// Exists because NaN breaks comparison — `x == x` is false for it —
@@ -634,6 +646,9 @@ impl Builtin {
         Builtin::FloatOf32,
         Builtin::BitsOf32,
         Builtin::F32OfBits,
+        Builtin::Sqrt32,
+        Builtin::F32OfInt,
+        Builtin::IntOfF32,
         Builtin::FsRead,
         Builtin::FsWrite,
         Builtin::OpenRead,
@@ -740,6 +755,9 @@ impl Builtin {
             Builtin::FloatOf32 => "float_of32",
             Builtin::BitsOf32 => "bits_of32",
             Builtin::F32OfBits => "f32_of_bits",
+            Builtin::Sqrt32 => "sqrt32",
+            Builtin::F32OfInt => "f32_of_int",
+            Builtin::IntOfF32 => "int_of_f32",
             Builtin::FsRead => "fs_read",
             Builtin::OpenRead => "open_read",
             Builtin::ReadFile => "file_read",
@@ -874,7 +892,13 @@ impl Builtin {
             // `docs/f32.md` §6: edition 6, the latest, like `value_barrier`
             // -- a program may already declare `f32_of`. None in this
             // repository does (counted there), so no edition 7 is made.
-            Builtin::F32Of | Builtin::FloatOf32 | Builtin::BitsOf32 | Builtin::F32OfBits => 6,
+            Builtin::F32Of
+            | Builtin::FloatOf32
+            | Builtin::BitsOf32
+            | Builtin::F32OfBits
+            | Builtin::Sqrt32
+            | Builtin::F32OfInt
+            | Builtin::IntOfF32 => 6,
             // `docs/signals.md`: edition 6, for the same reason --
             // `signals_watch` is a name a program may already declare.
             Builtin::SignalsWatch
@@ -1242,6 +1266,9 @@ impl Builtin {
             Builtin::FloatOf32 => (vec![Type::F32], Type::Float),
             Builtin::BitsOf32 => (vec![Type::F32], Type::Int),
             Builtin::F32OfBits => (vec![Type::Int], Type::F32),
+            Builtin::Sqrt32 => (vec![Type::F32], Type::F32),
+            Builtin::F32OfInt => (vec![Type::Int], Type::F32),
+            Builtin::IntOfF32 => (vec![Type::F32], Type::Int),
             // Both are checked at the call site rather than here, because a
             // fixed signature cannot say what they need. `release` ends any
             // capability, and there is more than one kind; `narrow` has an

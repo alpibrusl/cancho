@@ -520,8 +520,18 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     // precisely those, and `fcvt_to_sint_sat` saturates.
                     // Saturating is the silently wrong answer here, so the
                     // trapping one is the one that belongs.
+                    //
+                    // But `fcvt_to_sint` accepts exactly `-2^63`, which is a
+                    // representable `i64`, and §4 says "any magnitude at or
+                    // beyond `2^63`": found by `int_of_f32`'s test
+                    // (`docs/f32.md` §5.2), the LLVM backend already
+                    // refused it, so the lower bound is checked here too.
                     Callee::Builtin(Builtin::Truncate) => {
-                        vec![self.builder.ins().fcvt_to_sint(types::I64, args[0])]
+                        let x = args[0];
+                        let low = self.builder.ins().f64const(-9_223_372_036_854_775_808.0);
+                        let too_low = self.builder.ins().fcmp(FloatCC::LessThanOrEqual, x, low);
+                        self.builder.ins().trapnz(too_low, TrapCode::INTEGER_OVERFLOW);
+                        vec![self.builder.ins().fcvt_to_sint(types::I64, x)]
                     }
                     // A reinterpretation, so `bitcast` and no arithmetic
                     // (`docs/float-printing.md` §2). The bits are the
@@ -568,6 +578,29 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::F32OfBits) => {
                         let low = self.builder.ins().ireduce(types::I32, args[0]);
                         vec![self.builder.ins().bitcast(types::F32, MemFlags::new(), low)]
+                    }
+                    // `docs/f32.md` §2: `sqrt` at binary32 -- `sqrtss` or
+                    // `fsqrt s`, one instruction, correctly rounded.
+                    Callee::Builtin(Builtin::Sqrt32) => {
+                        vec![self.builder.ins().sqrt(args[0])]
+                    }
+                    // `FloatOf`'s rule at binary32: round to nearest even,
+                    // no check, every `int` has a nearest `f32`. Converted
+                    // directly from the integer, not through binary64
+                    // (which would round twice).
+                    Callee::Builtin(Builtin::F32OfInt) => {
+                        vec![self.builder.ins().fcvt_from_sint(types::F32, args[0])]
+                    }
+                    // `Truncate`'s rule (`floating-point.md` §4) at the
+                    // narrower width: toward zero, a trap on NaN, infinity
+                    // and magnitude at or past `2^63`.
+                    // `-2^63` is checked explicitly, as for `Truncate`.
+                    Callee::Builtin(Builtin::IntOfF32) => {
+                        let x = args[0];
+                        let low = self.builder.ins().f32const(-9_223_372_036_854_775_808.0_f32);
+                        let too_low = self.builder.ins().fcmp(FloatCC::LessThanOrEqual, x, low);
+                        self.builder.ins().trapnz(too_low, TrapCode::INTEGER_OVERFLOW);
+                        vec![self.builder.ins().fcvt_to_sint(types::I64, x)]
                     }
                     // `docs/value-barrier.md` §3: the identity. Cranelift
                     // never turns a select or an `and` into a branch, so

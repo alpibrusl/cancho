@@ -27,6 +27,17 @@
 //~ STDOUT from-bits 1065353216
 //~ STDOUT low-32-bits-only 1065353216
 //~ STDOUT nan-is-canonical 2143289344
+//~ STDOUT sqrt-two 1068827891
+//~ STDOUT sqrt-minus-one 2143289344
+//~ STDOUT sqrt-minus-zero 2147483648
+//~ STDOUT sqrt-nine 1077936128
+//~ STDOUT int-tie-down 1266679808
+//~ STDOUT int-tie-up 1266679810
+//~ STDOUT int-rounded-once 1518338049
+//~ STDOUT int-rounded-twice 1518338048
+//~ STDOUT int-min 3741319168
+//~ STDOUT toward-zero -2
+//~ STDOUT ten-billion 10000000000
 //~ STDOUT field 1080033280
 //~ STDOUT slice 1089470464 1077936128
 //~ STDOUT ordering 1 0 1
@@ -122,6 +133,23 @@ fn main(world: World) -> [] int {
         label(i, "from-bits", bits_of32(f32_of_bits(1065353216)));
         label(i, "low-32-bits-only", bits_of32(f32_of_bits(4294967296 + 1065353216)));
         label(i, "nan-is-canonical", bits_of32(f32_of_bits(4290772992 + 1)));
+        // `docs/f32.md` §2: `sqrt32` is one correctly rounded instruction;
+        // `f32_of_int` rounds once, from the integer. 2^24 + 1 is a tie and
+        // goes down to the even mantissa, 2^24 + 3 a tie that goes up; and
+        // 2^54 + 2^30 + 1 is just above a tie, so it rounds up when rounded
+        // once and, through binary64 (which drops the 1), to 2^54 when
+        // rounded twice.
+        label(i, "sqrt-two", bits_of32(sqrt32(2.0f32)));
+        label(i, "sqrt-minus-one", bits_of32(sqrt32(-1.0f32)));
+        label(i, "sqrt-minus-zero", bits_of32(sqrt32(-0.0f32)));
+        label(i, "sqrt-nine", bits_of32(sqrt32(9.0f32)));
+        label(i, "int-tie-down", bits_of32(f32_of_int(16777217)));
+        label(i, "int-tie-up", bits_of32(f32_of_int(16777219)));
+        label(i, "int-rounded-once", bits_of32(f32_of_int(18014398509481984 + 1073741824 + 1)));
+        label(i, "int-rounded-twice", bits_of32(f32_of(float_of(18014398509481984 + 1073741824 + 1))));
+        label(i, "int-min", bits_of32(f32_of_int(-9223372036854775807 - 1)));
+        label(i, "toward-zero", int_of_f32(-2.7f32));
+        label(i, "ten-billion", int_of_f32(1e10f32));
         let p = scale(Pair { a: 1.5f32, b: 2.0f32 }, 2.0f32);
         label(i, "field", bits_of32(p.a + 0.5f32));
         region r {

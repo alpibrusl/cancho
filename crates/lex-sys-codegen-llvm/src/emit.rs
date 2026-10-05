@@ -297,6 +297,7 @@ pub(crate) fn emit_module(
     // IEEE-754, which is why this is the one arithmetic builtin that is
     // an intrinsic rather than an instruction sequence.
     text.push_str("declare double @llvm.sqrt.f64(double)\n");
+    text.push_str("declare float @llvm.sqrt.f32(float)\n");
 
     // Every libc symbol from here down is one a program predating `Net`/
     // `Fs` (`examples/serve/`, `examples/vsock/`, and siblings) may

@@ -310,6 +310,7 @@ fn f32_lowers_on_every_target() {
                 if total(xs) < 1.0f32 || xs[0] == xs[1] || xs[0] != xs[1] { answer = 1; } \
                 answer = answer + bits_of32(f32_of(float_of32(xs[1]))) - bits_of32(xs[1]); \
                 answer = answer + bits_of32(f32_of_bits(1065353216)) - 1065353216; \
+                answer = answer + int_of_f32(sqrt32(f32_of_int(16))) - 4; \
             } \
             return answer - 1; \
         }";

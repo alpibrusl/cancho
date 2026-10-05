@@ -1,8 +1,7 @@
 //~ ERROR expected `int`, found `f32`
 //~ RULE type-mismatch
 
-// `docs/f32.md` §2: `%` on `f32` is refused because `float` has none
-// (`remainder_on_a_float.ls`).
+// `docs/f32.md` §2: `f32_of_int` takes an `int`; an `f32` is already one.
 
 edition 6;
 
@@ -16,6 +15,6 @@ fn main(world: World) -> [] int {
     release(net);
     release(clock);
     release(signals);
-    let x = 5.5f32 % 2.0f32;
+    let r = f32_of_int(4.0f32);
     return 0;
 }

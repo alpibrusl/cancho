@@ -288,6 +288,32 @@ fn the_f32_conversions_are_spelled_and_total() {
 }
 
 #[test]
+fn the_f32_square_root_and_int_conversions_are_spelled() {
+    let at = |ret: &str, body: &str| format!("edition 6; fn f() -> [] {ret} {{ return {body}; }}");
+    assert_eq!(main_fn(&at("f32", "sqrt32(2.0f32)")).ret, Type::F32);
+    assert_eq!(main_fn(&at("f32", "f32_of_int(7)")).ret, Type::F32);
+    assert_eq!(main_fn(&at("int", "int_of_f32(7.5f32)")).ret, Type::Int);
+    // Each takes exactly the type it names, and none is overloaded: `sqrt`
+    // is `float -> float`, `float_of` `int -> float`, `truncate`
+    // `float -> int`.
+    assert!(error(&at("f32", "sqrt32(2.0)")).contains("expected `f32`, found `float`"));
+    assert!(error(&at("float", "sqrt(2.0f32)")).contains("expected `float`, found `f32`"));
+    assert!(error(&at("f32", "f32_of_int(7.0)")).contains("expected `int`, found `float`"));
+    assert!(error(&at("f32", "f32_of_int(7.0f32)")).contains("expected `int`, found `f32`"));
+    assert!(error(&at("int", "int_of_f32(7.5)")).contains("expected `f32`, found `float`"));
+    assert!(error(&at("int", "truncate(7.5f32)")).contains("expected `float`, found `f32`"));
+    // `%` has no `f32` meaning because `float` has none.
+    assert!(error(&at("f32", "5.5f32 % 2.0f32")).contains("expected `int`, found `f32`"));
+    // Edition 6, like the four before them: below it the names are the
+    // file's own.
+    assert!(error("edition 5; fn f() -> [] f32 { return sqrt32(2.0f32); }").contains("`f32`"));
+    assert!(
+        lower_src("edition 5; fn sqrt32(a: int) -> [] int { return a; } fn f() -> [] int { return sqrt32(4); }")
+            .is_ok()
+    );
+}
+
+#[test]
 fn f32_is_edition_six() {
     // `docs/f32.md` §6: the type, the literal and the four builtins are
     // visible from edition 6, so an earlier file may use every one of those

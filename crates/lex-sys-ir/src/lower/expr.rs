@@ -575,7 +575,7 @@ impl<'a> FnLowering<'a> {
                     // `+ - * /` are `int`, `float` or `f32` -- never mixed,
                     // because `expect_type` above has already refused two
                     // different operand types (`docs/f32.md` §2); `%` is
-                    // `int` only (`f32`'s is F2).
+                    // `int` only (`f32` has none either, `docs/f32.md` §2).
                     // There is no `frem` primitive worth the name -- C's
                     // `fmod` is a library call with its own rounding
                     // story -- so it belongs in `std.math` when floats
