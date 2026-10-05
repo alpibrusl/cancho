@@ -249,6 +249,9 @@ fn pick[&x, &g](exec: &x Exec("/bin"), g: &g Args) -> [exec("/bin"), args] int {
     if c == 'y' { return spawn_one(exec, "/bin/sh", "-c\0exit 0\0", "DYLD_INSERT_LIBRARIES=/tmp/x\0"); }
     if c == 'a' { return spawn_one(exec, "/bin/sh", "-c\0exit 0", ""); }
     if c == 'e' { return spawn_one(exec, "/bin/sh", "-c\0exit 0\0", "A=1"); }
+    if c == 'n' {
+        return spawn_one(exec, "/bin/sh", "-c\0/bin/echo out || exit 9; /bin/echo err >&2 || exit 8\0", "");
+    }
     return 50;
 }
 
@@ -302,9 +305,26 @@ fn probe_built() -> &'static [(&'static str, PathBuf)] {
 /// Run the probe on one case, on both backends, and require the two answers to
 /// be the same; answer it.
 fn probe(case: [&str; 5]) -> String {
+    probe_holding(false, case)
+}
+
+/// `probe`, started -- when `inherited` -- holding descriptor 9 open without
+/// close-on-exec, as a program started by a careless parent would: only
+/// `closefrom` (Linux) or `POSIX_SPAWN_CLOEXEC_DEFAULT` (macOS) keeps it from
+/// the child (§4.5).
+fn probe_holding(inherited: bool, case: [&str; 5]) -> String {
     let mut answers = Vec::new();
     for (backend, exe) in probe_built() {
-        let run = Command::new(exe).args(case).output().expect("the probe runs");
+        let run = if inherited {
+            Command::new("/bin/sh")
+                .args(["-c", "exec 9</dev/null; exec \"$0\" \"$@\""])
+                .arg(exe)
+                .args(case)
+                .output()
+        } else {
+            Command::new(exe).args(case).output()
+        };
+        let run = run.expect("the probe runs");
         assert_eq!(run.status.code(), Some(0), "`{backend}`: the probe itself should not fail");
         answers.push(String::from_utf8_lossy(&run.stdout).into_owned());
     }
@@ -331,12 +351,13 @@ fn a_child_reads_what_the_parent_writes() {
     assert_eq!(probe(["/bin/cat", "-", "-", "fed through", "plain"]), "fed through== code 0\n");
 }
 
-/// §4.5: holding eight more descriptors of its own, the parent starts a child
-/// that holds its three streams and nothing else -- `3`, when it is listed, is
-/// the one `ls` opens to read `/dev/fd`.
+/// §4.5: holding eight more descriptors of its own, and one it inherited
+/// without close-on-exec, the parent starts a child that holds its three
+/// streams and nothing else -- `3`, when it is listed, is the one `ls` opens to
+/// read `/dev/fd`.
 #[test]
 fn a_child_holds_exactly_its_three_streams() {
-    let printed = probe(["/bin/sh", "-c|ls /dev/fd", "-", "-", "many"]);
+    let printed = probe_holding(true, ["/bin/sh", "-c|ls /dev/fd", "-", "-", "many"]);
     let seen: Vec<u32> = printed.split_whitespace().filter_map(|w| w.parse().ok()).collect();
     assert!(seen.starts_with(&[0, 1, 2]), "the child should hold its streams: {printed}");
     assert!(
@@ -376,16 +397,25 @@ fn writing_to_a_child_that_has_ended_is_epipe_not_a_signal() {
 
 /// §4.1 to §4.3: a path outside the bound, `..`, a sibling of the bound, a
 /// loader variable and a list that does not end in `\\0` each trap -- and an
-/// ordinary call under the bound does not.
+/// ordinary call under the bound does not. A trap is `SIGILL` or `SIGTRAP`
+/// (`brk` on aarch64); a crash, such as reading past an unterminated list, is
+/// not one. §4.4: a child writes to `Stdio::Null` as to any stream.
 #[test]
 fn every_refused_spawn_traps_on_both_backends() {
+    use std::os::unix::process::ExitStatusExt;
     let (dir, built) = build_both("process-traps", TRAPS);
     for (backend, exe) in &built {
         let ok = Command::new(exe).arg("ok").output().expect("the program runs");
         assert_eq!(ok.status.code(), Some(0), "`{backend}`: an ordinary spawn under `/bin`");
+        let null = Command::new(exe).arg("null").output().expect("the program runs");
+        assert_eq!(null.status.code(), Some(0), "`{backend}`: a child writing to `Stdio::Null`");
         for mode in ["usr", "dotdot", "sibling", "ld", "yld", "args", "env"] {
             let run = Command::new(exe).arg(mode).output().expect("the program runs");
-            assert_eq!(run.status.code(), None, "`{backend}`: `{mode}` should trap, not exit");
+            assert!(
+                matches!(run.status.signal(), Some(4 | 5)),
+                "`{backend}`: `{mode}` should trap, not {:?}",
+                run.status
+            );
         }
     }
     let _ = std::fs::remove_dir_all(&dir);
