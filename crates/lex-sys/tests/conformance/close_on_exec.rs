@@ -6,10 +6,13 @@
 //! opened beneath it, a listing, a listener, both ends of a connection, the
 //! edition-2 `bind`, `connect` and `accept` descriptors, a `Poller` and a
 //! signal claim -- and then asks a child what it inherited: `system("ls
-//! /dev/fd")` forks and execs `/bin/sh`, which runs `ls`. The child must see
-//! its three standard streams and the one descriptor `ls` opens to read the
-//! directory, and nothing of the parent's. Measured before the change: the
-//! child saw twelve of the parent's descriptors. Both backends.
+//! /dev/fd")` forks and execs `/bin/sh`, which runs `ls`. It asks twice: once
+//! before opening anything and once holding everything, and the two answers
+//! must be the same. Comparing with the first answer rather than with
+//! `0 1 2` is what makes this hold anywhere: a CI runner hands every process
+//! descriptors of its own (macOS's did, at 131 and up), and those pass
+//! through untouched, as they should. Measured before the change: the second
+//! answer had twelve more descriptors than the first. Both backends.
 //!
 //! `system` is reached through `Ffi("libc")`, which is the point: until
 //! `Exec` exists, a foreign `exec` is the only way a lex-sys program starts
@@ -33,7 +36,7 @@ extern fn system[&f, &c](ffi: &f Ffi("libc"), command: &c [byte]) -> [ffi("libc"
 // inherited: `ls /dev/fd` from `system`, which forks and execs `/bin/sh`.
 fn show[&f](ffi: &f Ffi("libc")) -> [ffi("libc")] int {{
     region a {{
-        let text = "ls /dev/fd";
+        let text = "ls /dev/fd; echo end";
         let command = alloc_slice[a](len(text) + 1, byte_of(0));
         var i = 0;
         while i < len(text) {{
@@ -50,6 +53,9 @@ fn main(world: World) -> [] int {{
     release(io); release(heap); release(args); release(clock);
     let usr1 = narrow(signals, "USR1");
     let libc = narrow(ffi, "libc");
+    borrow libc as &x in {{
+        show(x);
+    }}
     var held = 0;
     borrow fs as &f in {{
         borrow net as &n in {{
@@ -186,17 +192,25 @@ fn no_descriptor_a_builtin_opens_crosses_an_exec() {
             "`{backend}`: the program should hold {HELD} descriptors when the child runs"
         );
         let listed = String::from_utf8_lossy(&run.stdout);
-        let mut seen: Vec<u32> =
-            listed.split_whitespace().filter_map(|word| word.parse().ok()).collect();
-        seen.sort_unstable();
+        let answers: Vec<Vec<u32>> = listed
+            .split("end")
+            .map(|part| {
+                let mut seen: Vec<u32> =
+                    part.split_whitespace().filter_map(|word| word.parse().ok()).collect();
+                seen.sort_unstable();
+                seen
+            })
+            .collect();
+        assert_eq!(answers.len(), 3, "`{backend}`: the child should answer twice:\n{listed}");
+        let (before, holding) = (&answers[0], &answers[1]);
         assert!(
-            seen.starts_with(&[0, 1, 2]),
-            "`{backend}`: the child should see its standard streams, and saw {seen:?}"
+            before.starts_with(&[0, 1, 2]),
+            "`{backend}`: the child should see its standard streams, and saw {before:?}"
         );
-        assert!(
-            seen.len() <= 4,
-            "`{backend}`: the child inherited the parent's descriptors: it saw {seen:?}, where its \
-             own are 0, 1, 2 and the one `ls` reads the directory with"
+        assert_eq!(
+            holding, before,
+            "`{backend}`: holding {HELD} descriptors, the child saw {holding:?}; before opening \
+             any it saw {before:?}, so the difference crossed the exec"
         );
     }
     let _ = std::fs::remove_dir_all(&dir);

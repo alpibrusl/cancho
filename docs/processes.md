@@ -313,11 +313,13 @@ child through `Ffi`, which is the leak this closes. `file-writes.md`'s
 > asked to close every descriptor but the three it is given
 > (`POSIX_SPAWN_CLOEXEC_DEFAULT`).
 >
-> **Checked by** `close_on_exec.rs`: a program holds one of everything a
-> builtin opens (fourteen descriptors) and runs `system("ls /dev/fd")`
-> through `Ffi`. Before the change the child listed twelve of the parent's
-> descriptors, on both backends. After it, it lists `0 1 2 3`, the fourth
-> being the one `ls` reads `/dev/fd` with. `fs_read` and `fs_write` close
+> **Checked by** `close_on_exec.rs`: a program runs `system("ls /dev/fd")`
+> through `Ffi` once before opening anything and once holding one of
+> everything a builtin opens (fourteen descriptors), and the two listings
+> must be equal. Before the change the second had twelve more, on both
+> backends. Equal rather than `0 1 2`, because macOS CI found the first
+> version of the test wrong: the runner hands every process descriptors of
+> its own (131 and up), and those pass through a program untouched. `fs_read` and `fs_write` close
 > their descriptor before returning, so no child can be shown one, and the
 > test cannot tell those two from before.
 >
