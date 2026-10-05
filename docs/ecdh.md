@@ -113,6 +113,10 @@ statistical attack needs many timings of one scalar, and a peer gets one. It als
 near zero, which a random scalar does not give. The default backend, LLVM, stays below 4.5 throughout. The result is
 reported, not excused: by this test's own threshold, Cranelift's P-384 ladder is not clean.
 
+*Corrected (#208, `docs/tls-assurance.md` §6.1): on the Xeon. On an Apple M4 Max, scalar 1 fails on both backends,
+LLVM's P-256 at |t| = 16.19, and with Arm's data-independent-timing bit set LLVM's falls to 1.84 (P-256) and 2.15 (P-384).
+That is the CPU's data-dependent timing, which neither backend asks the CPU to turn off.*
+
 ## 4. Correctness
 
 Every case runs through `tests/programs/ecdh_driver.ls` (`crates/lex-sys/tests/conformance/ecdh.rs`):

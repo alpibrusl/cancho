@@ -11,6 +11,11 @@
     #include <x86intrin.h>
     long lexsys_tick(void) { unsigned aux; return (long)__rdtscp(&aux); }
 
+or on aarch64, the generic timer, whose rate `cntfrq_el0` gives (1 GHz,
+measured, on an Apple M4 Max under macOS 26):
+
+    long lexsys_tick(void) { long v; __asm__ volatile("isb\n\tmrs %0, cntvct_el0" : "=r"(v)); return v; }
+
 Every input is generated and read before anything is timed: decoding
 input just before a timed call, with branches on what it decodes, was
 found to give a large t for a loop of plain XORs on the Cranelift
