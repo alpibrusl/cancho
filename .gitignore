@@ -28,3 +28,8 @@ Cargo.lock.bak
 # Python bytecode from the measurement scripts
 __pycache__/
 *.pyc
+
+# Core dumps: the trap tests end programs by signal, and a Linux whose
+# core_pattern is `core` writes one into the test's working directory
+core
+core.[0-9]*

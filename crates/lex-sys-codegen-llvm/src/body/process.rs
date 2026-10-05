@@ -6,8 +6,8 @@
 
 use crate::*;
 use lex_sys_ir::{
-    AF_UNIX, EINVAL, Expr, F_SETFD, FD_CLOEXEC, O_RDWR, SIGSET_BYTES, SOCK_STREAM,
-    SPAWN_OBJECT_BYTES, sendable_signals, spawn_flags,
+    AF_UNIX, CHILD_PIDFD_SHIFT, EINVAL, Expr, F_SETFD, FD_CLOEXEC, O_RDWR, SIGSET_BYTES,
+    SOCK_STREAM, SPAWN_OBJECT_BYTES, SYS_PIDFD_OPEN, sendable_signals, spawn_flags,
 };
 
 impl<'a> FuncEmitter<'a> {
@@ -181,8 +181,7 @@ impl<'a> FuncEmitter<'a> {
 
         let child = self.fresh();
         self.out.push_str(&format!("  {child} = load i32, ptr {pid}\n"));
-        let child64 = self.fresh();
-        self.out.push_str(&format!("  {child64} = sext i32 {child} to i64\n"));
+        let child64 = self.child_word(&child);
         let reason = self.fresh();
         self.out.push_str(&format!("  {reason} = sext i32 {error} to i64\n"));
         let failed = self.fresh();
@@ -190,6 +189,40 @@ impl<'a> FuncEmitter<'a> {
         let tag = self.fresh();
         self.out.push_str(&format!("  {tag} = select i1 {failed}, i64 1, i64 0\n"));
         Ok(vec![LValue::Reg(tag), LValue::Reg(child64), LValue::Reg(reason)])
+    }
+
+    /// A `Child`'s one word from its pid (§4.8): on Linux the pid with a
+    /// `pidfd` for it in the high half, opened here -- the child has not been
+    /// reaped, so the pid is still its own -- and on Darwin the pid alone.
+    fn child_word(&mut self, pid: &str) -> String {
+        let low = self.fresh();
+        self.out.push_str(&format!("  {low} = zext i32 {pid} to i64\n"));
+        if self.is_darwin() {
+            return low;
+        }
+        let pid64 = self.fresh();
+        self.out.push_str(&format!("  {pid64} = sext i32 {pid} to i64\n"));
+        let opened = self.fresh();
+        self.out.push_str(&format!(
+            "  {opened} = call i64 (i64, ...) @syscall(i64 {SYS_PIDFD_OPEN}, i64 {pid64}, i64 0)\n"
+        ));
+        let reason = self.errno();
+        let refused = self.fresh();
+        self.out.push_str(&format!("  {refused} = icmp slt i64 {opened}, 0\n"));
+        let negated = self.fresh();
+        self.out.push_str(&format!("  {negated} = sub i64 0, {}\n", operand(&reason)));
+        let chosen = self.fresh();
+        self.out
+            .push_str(&format!("  {chosen} = select i1 {refused}, i64 {negated}, i64 {opened}\n"));
+        let narrow = self.fresh();
+        self.out.push_str(&format!("  {narrow} = trunc i64 {chosen} to i32\n"));
+        let wide = self.fresh();
+        self.out.push_str(&format!("  {wide} = zext i32 {narrow} to i64\n"));
+        let high = self.fresh();
+        self.out.push_str(&format!("  {high} = shl i64 {wide}, {CHILD_PIDFD_SHIFT}\n"));
+        let word = self.fresh();
+        self.out.push_str(&format!("  {word} = or i64 {low}, {high}\n"));
+        word
     }
 
     /// The descriptor a `Stdio` that is not `Null` holds: the child's end for
@@ -434,6 +467,19 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("  {ended} = select i1 {exited}, i64 0, i64 1\n"));
         let tag = self.fresh();
         self.out.push_str(&format!("  {tag} = select i1 {failed}, i64 2, i64 {ended}\n"));
+        // The `pidfd` has done its work once the child is reaped (§4.8); the
+        // negated `errno` that stands in for a refused one is an `EBADF` that
+        // harms nothing.
+        if !self.is_darwin() {
+            let high = self.fresh();
+            self.out.push_str(&format!(
+                "  {high} = lshr i64 {}, {CHILD_PIDFD_SHIFT}\n",
+                operand(pid64)
+            ));
+            let pidfd = self.fresh();
+            self.out.push_str(&format!("  {pidfd} = trunc i64 {high} to i32\n"));
+            self.out.push_str(&format!("  call i32 @close(i32 {pidfd})\n"));
+        }
         Ok(vec![LValue::Reg(tag), LValue::Reg(code), LValue::Reg(bit), LValue::Reg(reason)])
     }
 

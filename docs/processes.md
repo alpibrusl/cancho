@@ -1,6 +1,6 @@
 # Processes: running a program, with an authority that says which
 
-> **Status: slices 0 and 1 built (§4.5, §8); slices 2 to 4 designed, not built.**
+> **Status: slices 0 to 2 built (§4.5, §4.8, §8); slices 3 and 4 designed, not built.**
 > Written before the code, the way
 > [`filesystem.md`](filesystem.md), [`net.md`](net.md) and
 > [`signals.md`](signals.md) were. When building it disagrees with this
@@ -393,6 +393,59 @@ the `Clock`), and, for #237, fake peers on `Conn`s in the same loop.
 After `poller_wait` reports the child, `child_wait` answers without
 blocking.
 
+**Built (slice 2), and what building it settled.**
+
+* *The `pidfd` lives in the `Child`.* `epoll` watches a descriptor and a pid
+  is not one, so `exec_spawn` opens the `pidfd` itself, straight after the
+  spawn and before anything can reap the child (an unreaped pid is still its
+  own, §4.7). A `Child` is still one word: the pid in the low 32 bits and
+  the `pidfd` in the high 32, and `child_wait` closes it as it reaps. The
+  alternative, opening it when `poller_add_child` is called, leaves a
+  descriptor with no owner: the `Poller` cannot know which to close, and the
+  `Child` is consumed by `child_wait` before the `Poller` is. A `pidfd` per
+  live child is the price; it is one descriptor, and the same one `child_wait`
+  gives back (`reaping_a_child_gives_back_its_pidfd`).
+* *`pidfd_open` goes through `syscall`.* `glibc` has a wrapper only from
+  2.36, and the number, 434, is the same on both Linux architectures.
+* *A refusal is the `errno`, carried.* If `pidfd_open` is refused (a kernel
+  before 5.3, or a policy that forbids the call), the high half holds the
+  `errno` negated and `poller_add_child` answers it: `ENOSYS`, not `EBADF`
+  for a descriptor the program never held. ~~`EMFILE` is not among the
+  reachable ones: the descriptor a child's end held is closed before the
+  `pidfd` is asked for, so one is always free.~~ **Corrected (#275):**
+  `EMFILE` is reachable. A spawn frees a descriptor only when it hands one
+  over (a `Pipe` end, a `File`); a `Null` stream is opened in the child, so a
+  spawn whose three streams are `Null`, with every descriptor in use, leaves
+  none for the `pidfd`. Measured under a limit of 8 with 4 to 7 held: `24`;
+  under 9: `0` (`a_child_with_no_descriptor_to_spare_says_emfile`). The child
+  is still started and reaped; only watching it is refused. A test installs
+  a `seccomp` filter answering `pidfd_open` with `ENOSYS` to reach the
+  other path.
+* *A channel is watched as a `Conn` is.* `poller_add_pipe` is
+  `poller_add_conn` for a `Pipe`: a channel is a socket pair, so there is
+  nothing more to it. There is no `poller_remove` for either: closing the
+  descriptor (`pipe_close`, `child_wait`) takes it out of the set.
+* *macOS does not take a zombie.* `kevent` with `EVFILT_PROC`/`NOTE_EXIT` on
+  a child that has already exited and not been reaped answers `ESRCH` (3),
+  where a `pidfd` is simply readable. Measured on the first macOS CI run of
+  slice 2, and in C on macOS 26.2: 200 children of 200, each confirmed a
+  zombie with `waitid(WNOWAIT)` first. A `Child` nobody has reaped still owns
+  its pid (§4.7), so `ESRCH` can only mean it has exited, and
+  `poller_add_child` says so the way `kqueue` says anything is ready for the
+  asking: an `EVFILT_USER` event, `EV_ADD | EV_ONESHOT` with `NOTE_TRIGGER`,
+  **in one change**, carrying the token. `poller_wait` reads it as readable,
+  as it does the `EVFILT_PROC` one.
+  **Corrected (#275):** the first fix sent two changes, an add carrying the
+  token and then a trigger, and the second change's `udata` (`0`) replaced the
+  first's: the event was reported with token `0` (the second macOS CI run;
+  reproduced in C). A later change to a knote rewrites its `udata`, so the
+  add and the trigger are one change.
+* *Darwin reports an exit once.* `EVFILT_PROC` with `NOTE_EXIT` is
+  registered `EV_ONESHOT`, and `poller_wait` reads it as readable. The `pidfd`
+  of Linux stays readable until the child is reaped (level-triggered, as the
+  rest of the poller is); on macOS the report comes once, which is all a
+  program that calls `child_wait` on it needs.
+
 ### 4.9 Threads
 
 `posix_spawn` is safe from any thread, and nothing here is process-wide
@@ -448,7 +501,7 @@ does ([`net.md`](net.md) §4.1).
 |---|---|---|
 | **0** | Close-on-exec on every descriptor the backends open (§4.5), with a conformance test that asks a child what it inherited. **Built** | every edition (a tightening) |
 | **1** | `Exec`, the `exec`, `child_signal`, `pipe_read`, `pipe_write` labels, `Split`'s ninth field, `pipe_open`, `exec_spawn`, `child_wait`, `child_kill`, the `Pipe` operations; both backends, both targets. **Built** (§8) | 7 |
-| **2** | `poller_add_pipe`, `poller_add_child` | 7 |
+| **2** | `poller_add_pipe`, `poller_add_child`. **Built** (§4.8, §8) | 7 |
 | **3** | `std.process`: `Args` (the `\0` builder) and `run(heap, exec, path, args, input, most, timeout)`, a bounded capture with a deadline, built on slices 1 and 2 | 7 |
 | **4** | lexsys-tools#10: the MCP server, as a lex-sys program holding `Exec` narrowed to the tools' directory and nothing that writes | — |
 
@@ -525,10 +578,58 @@ slice 2's, and is checked there.
   byte past the bound for every index of the path, and the optimiser used
   that poison to delete the path. It was fixed for `Fs` and `Net` as well,
   in #273, which this slice carries (`filesystem.md` §4).
-* **Not yet run:** the Darwin paths, that is `POSIX_SPAWN_CLOEXEC_DEFAULT`,
-  `SO_NOSIGPIPE` on the socket pair, and Darwin's signal numbers. The same
-  tests run on the macOS CI runner, and its first run is their first
-  measurement.
+* **Measured on macOS (slice 1).** The first macOS CI run of slice 1 (#274)
+  passed `CLOEXEC_DEFAULT`, `SO_NOSIGPIPE` on the socket pair and Darwin's
+  signal numbers. It failed one test, and the test was wrong: `ls /dev/fd`
+  lists five entries there to Linux's four, and the status line after the
+  listing, `== code 0`, had been read as a descriptor.
+
+### Slice 2
+
+* **Conformance tests** (`processes.rs`, the waiter), each on both backends,
+  the two to print the same:
+  * a channel and a child watched together: while the child sleeps nothing is
+    reported, then its output arrives, the channel ends, and the child's exit
+    is reported;
+  * a child that ended *before* it was registered is still reported;
+  * `poller_wait`'s deadline passes with the child running, a kill follows,
+    and the exit is reported;
+  * sixty children come and go under a limit of 24 descriptors and the next
+    is still watchable: reaping gives the `pidfd` back;
+  * a kernel that refuses `pidfd_open` (a `seccomp` filter answering `ENOSYS`,
+    installed before the waiter starts) is told so by `poller_add_child`,
+    and the child is still reaped.
+* **Refusals:** `poller_add_child_is_edition_seven` (`not-a-function`) and
+  `poller_add_child_effect_undeclared` (`effect-not-declared`).
+* **Emission, from any host:** Linux asks for `syscall` (the `pidfd`),
+  `epoll_ctl` and `closefrom`, Darwin for `kevent` and none of the three; all
+  four triples are accepted by `clang`, and Cranelift builds the Mach-O object.
+* **Mutants.** Thirteen, one site each, run against the process tests with
+  a limit of five minutes (`scripts/process_mutants.py`; Linux, aarch64,
+  kernel 6.8, where every one but the dispatch is on the path taken): the
+  `pidfd` not closed, `pidfd_open` asked for pid 1, the refusal's `errno` not
+  negated, the `pidfd` watched for `EPOLLOUT`, a missing `pidfd` not checked,
+  and `poller_add_pipe` taking the modify path, each on both backends; and
+  the `pidfd` read from the `Child`'s low half (Cranelift). **All 13 are
+  killed.** Seven fail a test: the two closes leave the sixty-child test
+  without a descriptor, and the refusal's `errno` and the missing check are
+  caught by both the `seccomp` test and the `EMFILE` one. Six are killed by
+  a hang, which a mutant that watches the wrong thing can only be: pid 1's
+  `pidfd`, the pid taken as a descriptor, `EPOLLOUT` on a `pidfd`, and a
+  channel never added (`EPOLL_CTL_MOD` answers `ENOENT`) are never reported,
+  and the waiter waits.
+  The first two had been run in an earlier session and killed; that run was
+  stopped there, and its script was not kept. This one is in the repository
+  and runs all thirteen.
+* **Measured on macOS (slice 2).** The first macOS CI run passed the tests
+  of live children (output and exit; a deadline, then a kill) and failed the
+  two that register a child that had already ended, with `ESRCH` (§4.8). The
+  second run, with a fix sending two changes, reported that child with token
+  `0` (§4.8 says why). With one change, all the process tests pass on macOS
+  26.2 (arm64), and the four poller tests passed 40 runs of 40 there.
+* **`EMFILE`** (§4.8): `a_child_with_no_descriptor_to_spare_says_emfile`
+  reaches it on Linux and checks that Darwin, which watches the pid, needs no
+  descriptor.
 
 ## 9. Open
 

@@ -912,3 +912,96 @@ fn a_signal_claim_builds_for_every_target_with_each_kernels_calls() {
         });
     }
 }
+
+/// `docs/processes.md` §4.5 and §4.8, from any host: starting a program and
+/// watching it ask Linux for `closefrom` and a `pidfd`, and Darwin for
+/// neither -- `POSIX_SPAWN_CLOEXEC_DEFAULT` and `kevent` instead.
+#[test]
+fn a_child_is_started_and_watched_the_way_each_platform_does() {
+    const WATCH: &str = r#"edition 7;
+fn go[&x](exec: &x Exec("/bin")) -> [exec("/bin"), poll] int {
+    match poller_new() {
+        Polling::Ok(p) => {
+            var poller = p;
+            match pipe_open() {
+                Piped::Ok(mine, theirs) => {
+                    var m = mine;
+                    match exec_spawn(exec, "/bin/true", "", "", Stdio::Null, Stdio::Pipe(theirs), Stdio::Null) {
+                        Spawned::Ok(c) => {
+                            var child = c;
+                            borrow mut poller as &!ph in {
+                                borrow mut m as &!pp in {
+                                    borrow child as &ch in {
+                                        poller_add_pipe(ph, pp, 1, 1);
+                                        poller_add_child(ph, ch, 2);
+                                    }
+                                }
+                            }
+                            match child_wait(child) {
+                                Exited::Code(n) => { }
+                                Exited::Signaled(s) => { }
+                                Exited::Failed(e) => { }
+                            }
+                        }
+                        Spawned::Failed(e) => { }
+                    }
+                    pipe_close(m);
+                }
+                Piped::Failed(e) => { }
+            }
+            poller_close(poller);
+        }
+        Polling::Failed(e) => { }
+    }
+    return 0;
+}
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(net); release(clock); release(signals);
+    let bin = narrow(exec, "/bin");
+    var status = 0;
+    borrow bin as &x in { status = go(x); }
+    release(bin);
+    return status;
+}
+"#;
+    let ast = parse(WATCH).expect("should parse");
+    let program = lex_sys_ir::lower(&ast).expect("should lower");
+    for triple in [
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-apple-darwin",
+        "aarch64-apple-darwin",
+    ] {
+        let triple: Triple = triple.parse().expect("a valid triple");
+        let text = emit::emit_module(&program, "main", &triple)
+            .unwrap_or_else(|(_, message)| panic!("{triple}: {message}"));
+        // A `declare` is emitted for every libc function whatever the target
+        // uses; what a platform *does* is what it calls.
+        let calls = |name: &str| {
+            text.lines().any(|l| l.contains("call ") && l.contains(&format!("@{name}(")))
+        };
+        for call in ["posix_spawn", "waitpid", "socketpair", "close"] {
+            assert!(calls(call), "{triple} should call `{call}`");
+        }
+        if triple.to_string().contains("darwin") {
+            for call in ["kqueue", "kevent"] {
+                assert!(calls(call), "{triple} should call `{call}`");
+            }
+            assert!(
+                !calls("syscall")
+                    && !calls("epoll_ctl")
+                    && !calls("posix_spawn_file_actions_addclosefrom_np"),
+                "{triple}"
+            );
+        } else {
+            for call in ["syscall", "epoll_ctl", "posix_spawn_file_actions_addclosefrom_np"] {
+                assert!(calls(call), "{triple} should call `{call}`");
+            }
+            assert!(!calls("kevent") && !calls("kqueue"), "{triple}");
+        }
+        compile_object_for(&program, "main", triple.clone()).unwrap_or_else(|e| {
+            panic!("`clang` should accept the module for {triple}: {}", e.message)
+        });
+    }
+}

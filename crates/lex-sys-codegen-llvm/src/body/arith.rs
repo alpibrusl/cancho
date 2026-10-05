@@ -113,6 +113,8 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::PollerWait
                     | Builtin::PollerClose
                     | Builtin::PollerAddSignals
+                    | Builtin::PollerAddPipe
+                    | Builtin::PollerAddChild
                     | Builtin::SignalsPending
                     | Builtin::SignalsClose
                     | Builtin::DirClose
