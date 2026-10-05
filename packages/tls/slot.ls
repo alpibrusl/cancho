@@ -202,8 +202,53 @@ pub fn i_ecdh_work() -> [] int {
     return i_transcript384() + crypto.sha512_state_len();
 }
 
-pub fn ints_len() -> [] int {
+// Resumption (`docs/tls-resumption.md`). The ticket offered: its length
+// (0: none), its obfuscated age, and its hash's length (the suite's hash
+// must match it).
+pub fn i_offer_len() -> [] int {
     return i_ecdh_work() + ecdh.work_len();
+}
+
+pub fn i_offer_age() -> [] int {
+    return i_offer_len() + 1;
+}
+
+pub fn i_offer_hash() -> [] int {
+    return i_offer_len() + 2;
+}
+
+// When the identity this connection relies on was last verified by a full
+// handshake (seconds since 1970), and the leaf's notAfter. A resumed
+// connection inherits both from its ticket, so a chain of resumptions
+// never outlives the verification it started from.
+pub fn i_verified_at() -> [] int {
+    return i_offer_len() + 3;
+}
+
+pub fn i_not_after() -> [] int {
+    return i_offer_len() + 4;
+}
+
+// The newest NewSessionTicket kept: its length (0: none), lifetime in
+// seconds, ticket_age_add, and its PSK's hash length.
+pub fn i_ticket_len() -> [] int {
+    return i_offer_len() + 5;
+}
+
+pub fn i_ticket_lifetime() -> [] int {
+    return i_offer_len() + 6;
+}
+
+pub fn i_ticket_age_add() -> [] int {
+    return i_offer_len() + 7;
+}
+
+pub fn i_ticket_hash() -> [] int {
+    return i_offer_len() + 8;
+}
+
+pub fn ints_len() -> [] int {
+    return i_offer_len() + 9;
 }
 
 // Flags.
@@ -239,6 +284,15 @@ pub fn f_retried() -> [] int {
 // The server chose TLS 1.2.
 pub fn f_tls12() -> [] int {
     return 128;
+}
+
+// A ticket is offered in the ClientHello, and the server accepted it.
+pub fn f_psk_offered() -> [] int {
+    return 256;
+}
+
+pub fn f_resumed() -> [] int {
+    return 512;
 }
 
 // ---- The byte slice ----
@@ -374,12 +428,49 @@ pub fn k_peer() -> [] int {
     return b_keys() + 1016;
 }
 
+// RFC 8446 §7.1's resumption_master_secret, and the PSK of the ticket
+// offered.
+pub fn k_res_master() -> [] int {
+    return b_keys() + 1120;
+}
+
+pub fn k_offer_psk() -> [] int {
+    return b_keys() + 1168;
+}
+
 pub fn keys_len() -> [] int {
-    return 1120;
+    return 1216;
+}
+
+// The largest ticket kept (`docs/tls-resumption.md` §4): a larger one is
+// not stored, and the connection is not resumable.
+pub fn ticket_cap() -> [] int {
+    return 2048;
+}
+
+// The ticket offered, and the newest received with its PSK. Outside the
+// keys, which `forget` overwrites when close_notify has gone both ways:
+// a ticket is saved after the connection ends.
+pub fn b_offer() -> [] int {
+    return b_keys() + keys_len();
+}
+
+pub fn b_ticket() -> [] int {
+    return b_offer() + ticket_cap();
+}
+
+pub fn k_ticket_psk() -> [] int {
+    return b_ticket() + ticket_cap();
+}
+
+// The host name the ticket is for, kept beside it: the copy at `k_host`
+// is among the keys `forget` overwrites.
+pub fn b_ticket_host() -> [] int {
+    return k_ticket_psk() + 48;
 }
 
 pub fn bytes_len() -> [] int {
-    return b_keys() + keys_len();
+    return b_ticket_host() + 256;
 }
 
 // ---- Helpers ----
@@ -408,6 +499,13 @@ pub fn has[&i](ints: &i [int], flag: int) -> [] bool {
 
 pub fn set_flag[&i](ints: &!i [int], flag: int) -> [] int {
     ints[i_flags()] = ints[i_flags()] | flag;
+    return 0;
+}
+
+pub fn clear_flag[&i](ints: &!i [int], flag: int) -> [] int {
+    if has(ints, flag) {
+        ints[i_flags()] = ints[i_flags()] - flag;
+    }
     return 0;
 }
 
@@ -440,6 +538,35 @@ pub fn transcript_hash[&i, &o](ints: &i [int], out: &!o [byte]) -> [] int {
                 copy[k] = ints[i_transcript() + k];
                 k = k + 1;
             }
+            crypto.sha256_final(copy, out);
+        }
+    }
+    return 0;
+}
+
+// The hash of the transcript so far followed by `extra`, under the hash
+// `len(out)` names, leaving the running states as they were: a PSK binder
+// is over the transcript and a ClientHello truncated before its binders
+// (RFC 8446 §4.2.11.2), which the transcript never holds.
+pub fn transcript_hash_with[&i, &e, &o](ints: &i [int], extra: &e [byte], out: &!o [byte]) -> [] int {
+    region r {
+        if len(out) == 48 {
+            let copy = alloc_slice[r](crypto.sha512_state_len(), 0);
+            var k = 0;
+            while k < len(copy) {
+                copy[k] = ints[i_transcript384() + k];
+                k = k + 1;
+            }
+            crypto.sha384_update(copy, extra);
+            crypto.sha384_final(copy, out);
+        } else {
+            let copy = alloc_slice[r](crypto.sha256_state_len(), 0);
+            var k = 0;
+            while k < len(copy) {
+                copy[k] = ints[i_transcript() + k];
+                k = k + 1;
+            }
+            crypto.sha256_update(copy, extra);
             crypto.sha256_final(copy, out);
         }
     }
@@ -563,7 +690,7 @@ pub fn alert_for(code: int) -> [] int {
     if code == tls_record.renegotiation() {
         return 100;
     }
-    if code == tls_record.key_share() || code == tls_record.hello_retry() {
+    if code == tls_record.key_share() || code == tls_record.hello_retry() || code == tls_record.illegal_psk() {
         return 47;
     }
     if code == tls_record.decode_error() {
@@ -736,6 +863,12 @@ pub fn verify_chain[&i, &b, &m, &f, &p](ints: &!i [int], bytes: &!b [byte], body
         }
         if code == 0 {
             ints[i_leaf_len()] = copy_bytes(leaf, bytes[b_leaf()..b_leaf() + len(leaf)]);
+            // A ticket from this connection is not used after the leaf
+            // expires (`docs/tls-resumption.md` §3, rule 3).
+            let view = alloc_slice[r](x509.view_len(), 0);
+            if x509.parse(leaf, view) == 0 {
+                ints[i_not_after()] = view[x509.not_after()];
+            }
         }
     }
     return code;

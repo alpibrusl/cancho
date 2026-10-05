@@ -161,9 +161,23 @@ fn copy_to[&s, &o](src: &s [byte], out: &!o [byte], at: int) -> [] int {
 }
 
 // The largest ClientHello this encodes: a 255-byte host name, a P-384
-// share, the longest cookie and the fixed extensions.
+// share, the longest cookie, the fixed extensions, and a ticket of
+// `max_ticket()` bytes with a SHA-384 binder.
 pub fn max_client_hello() -> [] int {
-    return 704 + max_cookie();
+    return 704 + max_cookie() + 6 + 4 + 2 + 2 + max_ticket() + 4 + 2 + 1 + 48;
+}
+
+// The largest ticket offered or kept (`tls_slot.ticket_cap()`).
+pub fn max_ticket() -> [] int {
+    return 2048;
+}
+
+// The bytes after a ClientHello's binder starts: what a binder for a hash
+// of `hash_len` bytes leaves out of the truncated ClientHello it is over
+// (RFC 8446 §4.2.11.2): the binders' list length, the binder's length and
+// the binder.
+pub fn binders_len(hash_len: int) -> [] int {
+    return 2 + 1 + hash_len;
 }
 
 // The ClientHello (`docs/tls-pure.md` §7.1, `docs/tls-parity.md` §3.3),
@@ -171,7 +185,13 @@ pub fn max_client_hello() -> [] int {
 // and `session_id` are 32 bytes each; `share` is one key share of
 // `group`; `cookie` is a HelloRetryRequest's cookie, echoed, or empty;
 // `host` is at most 255 bytes, and an IP literal sends no `server_name`.
-pub fn client_hello[&r, &s, &k, &c, &h, &o](random: &r [byte], session_id: &s [byte], group: int, share: &k [byte], cookie: &c [byte], host: &h [byte], out: &!o [byte]) -> [] int {
+// `ticket`, if not empty, is offered as a PSK with (EC)DHE
+// (`docs/tls-resumption.md` §5): `psk_key_exchange_modes` with
+// `psk_dhe_ke` only, and `pre_shared_key` last, its one identity with
+// `age` as its obfuscated_ticket_age and a binder of `hash_len` zero
+// bytes, which the caller computes over the truncated ClientHello and
+// writes in its place (the last `hash_len` bytes).
+pub fn client_hello[&r, &s, &k, &c, &h, &t, &o](random: &r [byte], session_id: &s [byte], group: int, share: &k [byte], cookie: &c [byte], host: &h [byte], ticket: &t [byte], age: int, hash_len: int, out: &!o [byte]) -> [] int {
     var at = 4;
     at = put(out, at, 0x0303, 2);
     at = copy_to(random, out, at);
@@ -267,6 +287,28 @@ pub fn client_hello[&r, &s, &k, &c, &h, &o](random: &r [byte], session_id: &s [b
         at = put(out, at, len(cookie), 2);
         at = copy_to(cookie, out, at);
     }
+    if len(ticket) > 0 {
+        // psk_key_exchange_modes: psk_dhe_ke (1) only.
+        at = put(out, at, 45, 2);
+        at = put(out, at, 2, 2);
+        at = put(out, at, 1, 1);
+        at = put(out, at, 1, 1);
+        // pre_shared_key, last (RFC 8446 §4.2.11): one identity, one binder.
+        at = put(out, at, 41, 2);
+        at = put(out, at, 2 + 2 + len(ticket) + 4 + binders_len(hash_len), 2);
+        at = put(out, at, 2 + len(ticket) + 4, 2);
+        at = put(out, at, len(ticket), 2);
+        at = copy_to(ticket, out, at);
+        at = put(out, at, age & 0xffffffff, 4);
+        at = put(out, at, 1 + hash_len, 2);
+        at = put(out, at, hash_len, 1);
+        var z = 0;
+        while z < hash_len {
+            out[at + z] = byte_of(0);
+            z = z + 1;
+        }
+        at = at + hash_len;
+    }
     put(out, ext_len_at, at - ext_len_at - 2, 2);
     put(out, 0, type_client_hello(), 1);
     put(out, 1, at - 4, 3);
@@ -325,8 +367,14 @@ pub fn sh_version() -> [] int {
     return 6;
 }
 
-pub fn sh_info_len() -> [] int {
+// 1 if the server accepted the ticket offered (`pre_shared_key`,
+// selected_identity 0), else 0.
+pub fn sh_psk() -> [] int {
     return 7;
+}
+
+pub fn sh_info_len() -> [] int {
+    return 8;
 }
 
 // The ServerHello body `b`, against the session id the client sent: a
@@ -377,6 +425,7 @@ pub fn server_hello[&b, &s, &i](b: &b [byte], session_id: &s [byte], info: &!i [
     var group = 0;
     var cookie = 0;
     var cookie_end = 0;
+    var psk = false;
     // TLS 1.2's: renegotiation_info, extended_master_secret, ec_point_formats,
     // and server_name, empty, which a server that used the name sends
     // (RFC 6066 §3; nginx does). TLS 1.3 sends that one in
@@ -441,6 +490,17 @@ pub fn server_hello[&b, &s, &i](b: &b [byte], session_id: &s [byte], info: &!i [
             }
             cookie = body + 2;
             cookie_end = body + size;
+        } else if kind == 41 && !retry {
+            // pre_shared_key: the identity the server selected, which must
+            // be the one offered (RFC 8446 §4.2.11). Whether one was
+            // offered at all is `tls_client`'s to check.
+            if psk || size != 2 {
+                return tls_record.decode_error();
+            }
+            if get(b, body, 2) != 0 {
+                return tls_record.illegal_psk();
+            }
+            psk = true;
         } else if kind == 0xff01 && !retry {
             // An empty renegotiated_connection: a first handshake.
             if reneg || size != 1 || int_of(b[body]) != 0 {
@@ -495,7 +555,7 @@ pub fn server_hello[&b, &s, &i](b: &b [byte], session_id: &s [byte], info: &!i [
         if !tls_record.suite12_known(suite) {
             return tls_record.no_shared_cipher();
         }
-        if group != 0 {
+        if group != 0 || psk {
             return tls_record.unsupported_extension();
         }
         // Resuming a session needs one; the client offered none, so the
@@ -540,6 +600,9 @@ pub fn server_hello[&b, &s, &i](b: &b [byte], session_id: &s [byte], info: &!i [
             if group == 0 && cookie == 0 {
                 return tls_record.hello_retry();
             }
+        } else if group == 0 && psk {
+            // A resumption with no key share is psk_ke, which was not offered.
+            return tls_record.key_share();
         } else if group == 0 {
             return tls_record.decode_error();
         }
@@ -553,6 +616,10 @@ pub fn server_hello[&b, &s, &i](b: &b [byte], session_id: &s [byte], info: &!i [
     info[sh_group()] = group;
     info[sh_cookie_start()] = cookie;
     info[sh_cookie_end()] = cookie_end;
+    info[sh_psk()] = 0;
+    if psk {
+        info[sh_psk()] = 1;
+    }
     info[sh_version()] = 0x0304;
     if version == 0 {
         info[sh_version()] = 0x0303;
@@ -674,14 +741,50 @@ pub fn finished[&b](b: &b [byte], hash_len: int) -> [] int {
 
 // ---- After the handshake (§4.6) ----
 
-// A NewSessionTicket is checked for shape and dropped (no resumption).
-pub fn new_session_ticket[&b](b: &b [byte]) -> [] int {
+// What `new_session_ticket` finds, as indices into its `info`.
+pub fn nst_lifetime() -> [] int {
+    return 0;
+}
+
+pub fn nst_age_add() -> [] int {
+    return 1;
+}
+
+// The nonce's and the ticket's ranges in the body.
+pub fn nst_nonce_start() -> [] int {
+    return 2;
+}
+
+pub fn nst_nonce_end() -> [] int {
+    return 3;
+}
+
+pub fn nst_ticket_start() -> [] int {
+    return 4;
+}
+
+pub fn nst_ticket_end() -> [] int {
+    return 5;
+}
+
+pub fn nst_info_len() -> [] int {
+    return 6;
+}
+
+// A NewSessionTicket (RFC 8446 §4.6.1): its fields into `info`. Its
+// extensions (early_data is the only one defined) are checked for shape
+// and not used: this client sends no early data.
+pub fn new_session_ticket[&b, &i](b: &b [byte], info: &!i [int]) -> [] int {
     let n = len(b);
     if n < 9 {
         return tls_record.decode_error();
     }
+    info[nst_lifetime()] = get(b, 0, 4);
+    info[nst_age_add()] = get(b, 4, 4);
     var at = 8;
+    info[nst_nonce_start()] = at + 1;
     at = at + 1 + int_of(b[at]);
+    info[nst_nonce_end()] = at;
     if at + 2 > n {
         return tls_record.decode_error();
     }
@@ -689,7 +792,9 @@ pub fn new_session_ticket[&b](b: &b [byte]) -> [] int {
     if ticket == 0 {
         return tls_record.decode_error();
     }
+    info[nst_ticket_start()] = at + 2;
     at = at + 2 + ticket;
+    info[nst_ticket_end()] = at;
     if at + 2 > n || at + 2 + get(b, at, 2) != n {
         return tls_record.decode_error();
     }

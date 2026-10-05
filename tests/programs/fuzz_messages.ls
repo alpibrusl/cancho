@@ -22,6 +22,8 @@ fn info_len(which: int) -> [] int {
         return 3 + 2 * tls_message.max_certificates();
     } else if which == 3 {
         return 3;
+    } else if which == 6 {
+        return tls_message.nst_info_len();
     } else if which == 9 {
         return tls_message.ske_info_len();
     }
@@ -42,7 +44,7 @@ fn parse[&b, &r, &f](which: int, b: &b [byte], random: &r [byte], info: &!f [int
     } else if which == 5 {
         return tls_message.finished(b, 48);
     } else if which == 6 {
-        return tls_message.new_session_ticket(b);
+        return tls_message.new_session_ticket(b, info);
     } else if which == 7 {
         return tls_message.key_update(b);
     } else if which == 8 {

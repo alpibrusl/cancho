@@ -3,7 +3,7 @@ edition 5;
 // `docs/tls-core.md` §10: `conc` TLS 1.3 connections from `packages/tls`
 // on ONE thread, driven by the `Poller`, to one server.
 //
-//     tls_many <ip> <port> <host> <conc> <chunk> [<seed>]  < roots.pem
+//     tls_many <ip> <port> <host> <conc> <chunk> [<seed> | resume]  < roots.pem
 //
 // Standard input is the PEM bundle of roots the engine trusts
 // (`docs/x509-verify.md`). Each connection does a handshake, sends `GET / HTTP/1.0`, reads
@@ -18,6 +18,10 @@ edition 5;
 // seconds fails as `timeout`. Certificates are checked against
 // `clock_unix_ms`. The request is padded to 2^14 bytes, a full record,
 // so every slot's output buffer is used deep.
+//
+// With `resume`, a second round follows the first: each connection offers a
+// ticket the first round saved (`tls.save`, `tls.start_with`;
+// `docs/tls-resumption.md`), and each line ends with `resumed` or `full`.
 //
 // The engine's entropy is 32 bytes of /dev/urandom, or `seed`, 64 hex
 // digits, for tests only: with a fixed seed every key is predictable, and
@@ -147,13 +151,13 @@ fn drain[&e, &s, &a](engine: &!e tls.Engine, st: &!s [int], app: &!a [byte], slo
 }
 
 // One slot after the poller reported it: answers 1 when it finished.
-fn advance[&e, &t, &p, &s, &q, &a, &i, &r, &h](engine: &!e tls.Engine, tab: &!t conns.Table, poller: &!p Poller, st: &!s [int], pend: &!q [byte], app: &!a [byte], input: &!i [byte], req: &r [byte], host: &h [byte], slot: int, chunk: int, now: int) -> [conn_read, conn_write, poll] int {
+fn advance[&e, &t, &p, &s, &q, &a, &i, &r, &h](engine: &!e tls.Engine, tab: &!t conns.Table, poller: &!p Poller, st: &!s [int], pend: &!q [byte], app: &!a [byte], input: &!i [byte], req: &r [byte], host: &h [byte], slot: int, chunk: int, now: int, handle: int) -> [conn_read, conn_write, poll] int {
     let b = slot * stride();
     if st[b] == connecting() {
         if conns.connect_status(tab, slot) != 0 {
             return end_slot(tab, st, slot, r_socket());
         }
-        let code = tls.start(engine, slot, host, now);
+        let code = tls.start_with(engine, slot, host, now, handle);
         if code != 0 {
             return end_slot(tab, st, slot, code);
         }
@@ -227,7 +231,7 @@ fn advance[&e, &t, &p, &s, &q, &a, &i, &r, &h](engine: &!e tls.Engine, tab: &!t 
     return 0;
 }
 
-fn report[&i, &e, &s](io: &!i Io, engine: &e tls.Engine, st: &!s [int], conc: int) -> [io_write] int {
+fn report[&i, &e, &s](io: &!i Io, engine: &e tls.Engine, st: &!s [int], conc: int, show_resumed: bool) -> [io_write] int {
     var ok = 0;
     var failed = 0;
     region r {
@@ -246,6 +250,13 @@ fn report[&i, &e, &s](io: &!i Io, engine: &e tls.Engine, st: &!s [int], conc: in
             io.space(io);
             crypto.sha256_final(st[b + 8..b + stride()], digest);
             print_hex(io, digest);
+            if show_resumed {
+                if tls.resumed(engine, slot) {
+                    io.write_all(io, " resumed");
+                } else {
+                    io.write_all(io, " full");
+                }
+            }
             io.newline(io);
             if code == 0 {
                 ok = ok + 1;
@@ -273,7 +284,7 @@ fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap,
     return out;
 }
 
-fn drive[&h, &n, &k, &i, &q, &g, &e, &u](heap: &!h Heap, net: &n Net(""), clock: &k Clock, io: &!i Io, ip: &q [byte], host: &g [byte], engine: &!e tls.Engine, entropy: &u [byte], port: int, conc: int, chunk: int) -> [heap, net_out(""), conn_read, conn_write, poll, clock, io_write] int {
+fn drive[&h, &n, &k, &i, &q, &g, &e, &u](heap: &!h Heap, net: &n Net(""), clock: &k Clock, io: &!i Io, ip: &q [byte], host: &g [byte], engine: &!e tls.Engine, entropy: &u [byte], port: int, conc: int, chunk: int, rounds: int) -> [heap, net_out(""), conn_read, conn_write, poll, clock, io_write] int {
     tls.seed(engine, entropy);
     match poller_new() {
         Polling::Failed(e) => {
@@ -320,7 +331,26 @@ fn drive[&h, &n, &k, &i, &q, &g, &e, &u](heap: &!h Heap, net: &n Net(""), clock:
                                 req[at - 3] = byte_of(10);
                                 req[at - 2] = byte_of(13);
                                 req[at - 1] = byte_of(10);
+                                let handles = alloc_slice[a](conc, 0);
                                 let events = alloc_slice[a](2 * conc + 2, 0);
+                                var round = 0;
+                                while round < rounds {
+                                if round > 0 {
+                                    // Each connection's ticket is kept, its slot freed, and the
+                                    // next round starts from nothing but the tickets.
+                                    var k = 0;
+                                    while k < conc {
+                                        handles[k] = tls.save(engine, k);
+                                        tls.drop(engine, k);
+                                        k = k + 1;
+                                    }
+                                    k = 0;
+                                    while k < stride() * conc {
+                                        st[k] = 0;
+                                        k = k + 1;
+                                    }
+                                    io.write_all(io, "round 2\n");
+                                }
                                 // Dial every connection; each is watched for writable under its slot.
                                 var s = 0;
                                 while s < conc {
@@ -364,7 +394,7 @@ fn drive[&h, &n, &k, &i, &q, &g, &e, &u](heap: &!h Heap, net: &n Net(""), clock:
                                             var done = 0;
                                             borrow mut table as &!tw in {
                                                 borrow mut poll as &!pr in {
-                                                    done = advance(engine, tw, pr, st, contents(pw), contents(aw), contents(iw), req[0..at], host, slot, chunk, now);
+                                                    done = advance(engine, tw, pr, st, contents(pw), contents(aw), contents(iw), req[0..at], host, slot, chunk, now, handles[slot]);
                                                 }
                                             }
                                             live = live - done;
@@ -381,7 +411,9 @@ fn drive[&h, &n, &k, &i, &q, &g, &e, &u](heap: &!h Heap, net: &n Net(""), clock:
                                     }
                                     s = s + 1;
                                 }
-                                failed = report(io, engine, st, conc);
+                                failed = failed + report(io, engine, st, conc, rounds > 1);
+                                round = round + 1;
+                                }
                             }
                         }
                     }
@@ -423,6 +455,10 @@ fn main(world: World) -> [] int {
                         var engine = tls.open(h, conc);
                         region r {
                             let entropy = alloc_slice[r](32, byte_of(0));
+                            var rounds = 1;
+                            if arg_count(g) >= 7 && len(arg(g, 6)) == 6 {
+                                rounds = 2;
+                            }
                             if arg_count(g) >= 7 && len(arg(g, 6)) == 64 {
                                 let seed = arg(g, 6);
                                 var k = 0;
@@ -445,7 +481,7 @@ fn main(world: World) -> [] int {
                                 } else {
                                     borrow net as &nn in {
                                         borrow clock as &cc in {
-                                            status = drive(h, nn, cc, i, arg(g, 1), arg(g, 3), ew, entropy, port, conc, chunk);
+                                            status = drive(h, nn, cc, i, arg(g, 1), arg(g, 3), ew, entropy, port, conc, chunk, rounds);
                                         }
                                     }
                                 }

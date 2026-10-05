@@ -55,7 +55,21 @@ pub fn event_failed() -> [] int {
 // seconds since 1970, against which the server's certificates are
 // checked. The ClientHello is queued for `take`.
 pub fn start[&i, &b, &h, &r](ints: &!i [int], bytes: &!b [byte], host: &h [byte], random: &r [byte], now: int) -> [] int {
+    return start_psk(ints, bytes, host, random, now, host[0..0], host[0..0], 0, 0, 0);
+}
+
+// `start`, offering `ticket` for resumption (`docs/tls-resumption.md`):
+// `psk` is its PSK (32 or 48 bytes, the hash it was made under), `age` its
+// obfuscated_ticket_age, and `verified_at` and `not_after` what the
+// connection that issued it knew of the server's identity, which a
+// resumed connection inherits. An empty `ticket` is `start`. Whether the
+// ticket may be offered at all (`docs/tls-resumption.md` §3) is the
+// engine's to decide; this only sends it.
+pub fn start_psk[&i, &b, &h, &r, &t, &k](ints: &!i [int], bytes: &!b [byte], host: &h [byte], random: &r [byte], now: int, ticket: &t [byte], psk: &k [byte], age: int, verified_at: int, not_after: int) -> [] int {
     if len(ints) < tls_slot.ints_len() || len(bytes) < tls_slot.bytes_len() || len(random) != 96 || len(host) > 255 {
+        return tls_record.bad_slot();
+    }
+    if len(ticket) > tls_slot.ticket_cap() || len(ticket) > 0 && len(psk) != 32 && len(psk) != 48 {
         return tls_record.bad_slot();
     }
     var k = 0;
@@ -71,6 +85,16 @@ pub fn start[&i, &b, &h, &r](ints: &!i [int], bytes: &!b [byte], host: &h [byte]
     ints[tls_slot.i_host_len()] = len(host);
     ints[tls_slot.i_now()] = now;
     ints[tls_slot.i_group()] = tls_message.group_x25519();
+    if len(ticket) > 0 {
+        tls_slot.copy_bytes(ticket, bytes[tls_slot.b_offer()..tls_slot.b_offer() + len(ticket)]);
+        tls_slot.copy_bytes(psk, bytes[tls_slot.k_offer_psk()..tls_slot.k_offer_psk() + len(psk)]);
+        ints[tls_slot.i_offer_len()] = len(ticket);
+        ints[tls_slot.i_offer_age()] = age;
+        ints[tls_slot.i_offer_hash()] = len(psk);
+        ints[tls_slot.i_verified_at()] = verified_at;
+        ints[tls_slot.i_not_after()] = not_after;
+        tls_slot.set_flag(ints, tls_slot.f_psk_offered());
+    }
     var code = 0;
     region r {
         let share = alloc_slice[r](32, byte_of(0));
@@ -87,11 +111,64 @@ fn send_client_hello[&i, &b, &s, &c](ints: &!i [int], bytes: &!b [byte], share: 
     var code = 0;
     region r {
         let hello = alloc_slice[r](tls_message.max_client_hello(), byte_of(0));
-        let n = tls_message.client_hello(bytes[tls_slot.k_random()..tls_slot.k_random() + 32], bytes[tls_slot.k_session_id()..tls_slot.k_session_id() + 32], ints[tls_slot.i_group()], share, cookie, bytes[tls_slot.k_host()..tls_slot.k_host() + ints[tls_slot.i_host_len()]], hello);
+        var tn = 0;
+        var h = 32;
+        if tls_slot.has(ints, tls_slot.f_psk_offered()) {
+            tn = ints[tls_slot.i_offer_len()];
+            h = ints[tls_slot.i_offer_hash()];
+        }
+        let n = tls_message.client_hello(bytes[tls_slot.k_random()..tls_slot.k_random() + 32], bytes[tls_slot.k_session_id()..tls_slot.k_session_id() + 32], ints[tls_slot.i_group()], share, cookie, bytes[tls_slot.k_host()..tls_slot.k_host() + ints[tls_slot.i_host_len()]], bytes[tls_slot.b_offer()..tls_slot.b_offer() + tn], ints[tls_slot.i_offer_age()], h, hello);
+        if tn > 0 {
+            binder(ints, bytes, hello[0..n]);
+        }
         tls_slot.transcript_add(ints, hello[0..n]);
         code = tls_slot.queue_record(ints, bytes, tls_record.type_handshake(), hello[0..n]);
     }
     return code;
+}
+
+// The binder of the ticket offered, written into the last bytes of
+// `hello` (RFC 8446 §4.2.11.2): HMAC under the binder key's finished key,
+// over the transcript so far and `hello` truncated before its binders.
+fn binder[&i, &b, &o](ints: &i [int], bytes: &b [byte], hello: &!o [byte]) -> [] int {
+    let h = ints[tls_slot.i_offer_hash()];
+    let n = len(hello);
+    region r {
+        let early = alloc_slice[r](h, byte_of(0));
+        let binder_key = alloc_slice[r](h, byte_of(0));
+        let finished_key = alloc_slice[r](h, byte_of(0));
+        let th = alloc_slice[r](h, byte_of(0));
+        early_secret(h, bytes[tls_slot.k_offer_psk()..tls_slot.k_offer_psk() + h], early);
+        let empty_hash = alloc_slice[r](h, byte_of(0));
+        hash_of_nothing(empty_hash);
+        hkdf.derive_secret(h, early, "res binder", empty_hash, binder_key);
+        hkdf.expand_label(h, binder_key, "finished", "", finished_key);
+        tls_slot.transcript_hash_with(ints, hello[0..n - tls_message.binders_len(h)], th);
+        hmac.mac(h, finished_key, th, hello[n - h..n]);
+        tls_slot.zero(early);
+        tls_slot.zero(binder_key);
+        tls_slot.zero(finished_key);
+    }
+    return 0;
+}
+
+// HKDF-Extract(0, `psk`): RFC 8446 §7.1's Early Secret, with zeros for no PSK.
+fn early_secret[&k, &o](h: int, psk: &k [byte], out: &!o [byte]) -> [] int {
+    region r {
+        let zeros = alloc_slice[r](h, byte_of(0));
+        hkdf.extract(h, zeros, psk, out);
+    }
+    return 0;
+}
+
+// The hash of no bytes, under the hash `len(out)` names.
+fn hash_of_nothing[&o](out: &!o [byte]) -> [] int {
+    if len(out) == 48 {
+        crypto.sha384("", out);
+    } else {
+        crypto.sha256("", out);
+    }
+    return 0;
 }
 
 // ---- The handshake ----
@@ -128,6 +205,15 @@ fn on_server_hello[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message: &m [
                 // A share for a group the client has no share of.
                 code = tls_record.key_share();
             }
+            if code == 0 && info[tls_message.sh_psk()] == 1 {
+                // A resumption: the ticket was offered, and the suite
+                // hashes as its PSK was made (RFC 8446 §4.2.11).
+                if !tls_slot.has(ints, tls_slot.f_psk_offered()) || tls_record.hash_len(suite) != ints[tls_slot.i_offer_hash()] {
+                    code = tls_record.illegal_psk();
+                } else {
+                    tls_slot.set_flag(ints, tls_slot.f_resumed());
+                }
+            }
             if code == 0 {
                 ints[tls_slot.i_suite()] = suite;
                 tls_slot.transcript_add(ints, message);
@@ -146,6 +232,11 @@ fn on_server_hello[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message: &m [
 fn retry[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message: &m [byte], suite: int, group: int, cookie_start: int, cookie_end: int) -> [] int {
     tls_slot.set_flag(ints, tls_slot.f_retried());
     ints[tls_slot.i_suite()] = suite;
+    if tls_slot.has(ints, tls_slot.f_psk_offered()) && tls_record.hash_len(suite) != ints[tls_slot.i_offer_hash()] {
+        // The suite the retry names cannot use the ticket: the second
+        // ClientHello offers none (RFC 8446 §4.1.4), and the handshake is full.
+        tls_slot.clear_flag(ints, tls_slot.f_psk_offered());
+    }
     let h = tls_slot.hash_len(ints);
     var code = 0;
     region r {
@@ -206,7 +297,11 @@ fn handshake_secrets[&i, &b, &s](ints: &!i [int], bytes: &!b [byte], share: &s [
             } else {
                 crypto.sha256(zeros[0..0], empty_hash);
             }
-            hkdf.extract(h, zeros, zeros, early);
+            if tls_slot.has(ints, tls_slot.f_resumed()) {
+                early_secret(h, bytes[tls_slot.k_offer_psk()..tls_slot.k_offer_psk() + h], early);
+            } else {
+                hkdf.extract(h, zeros, zeros, early);
+            }
             hkdf.derive_secret(h, early, "derived", empty_hash, derived);
             hkdf.extract(h, derived, secret, hs);
             tls_slot.transcript_hash(ints, th);
@@ -337,6 +432,14 @@ fn on_finished[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message: &m [byte
                 finished_mac(ints, bytes[tls_slot.k_client_hs()..tls_slot.k_client_hs() + h], fin[4..4 + h]);
                 tls_slot.transcript_add(ints, fin);
                 code = tls_slot.queue_record(ints, bytes, tls_record.type_handshake(), fin);
+                // The resumption master secret, over the transcript through
+                // the client's Finished (RFC 8446 §7.1), for the tickets to come.
+                let th2 = alloc_slice[r](h, byte_of(0));
+                tls_slot.transcript_hash(ints, th2);
+                hkdf.derive_secret(h, bytes[tls_slot.k_master()..tls_slot.k_master() + h], "res master", th2, bytes[tls_slot.k_res_master()..tls_slot.k_res_master() + h]);
+                if !tls_slot.has(ints, tls_slot.f_resumed()) {
+                    ints[tls_slot.i_verified_at()] = ints[tls_slot.i_now()];
+                }
             }
             if code == 0 {
                 tls_slot.set_write_keys(ints, bytes, tls_slot.k_client_ap());
@@ -347,6 +450,38 @@ fn on_finished[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message: &m [byte
                 tls_slot.zero(bytes[tls_slot.k_master()..tls_slot.k_master() + 48]);
                 ints[tls_slot.i_state()] = tls_slot.state_connected();
             }
+        }
+    }
+    return code;
+}
+
+// A NewSessionTicket: kept as the connection's newest, with its PSK
+// (RFC 8446 §4.6.1), or dropped if it is not one to keep: a lifetime of
+// 0, or a ticket larger than `tls_slot.ticket_cap()`. Either way the
+// connection goes on. A lifetime over the 7 days servers may use is
+// capped at 7 days.
+fn on_ticket[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message: &m [byte]) -> [] int {
+    var code = 0;
+    region r {
+        let info = alloc_slice[r](tls_message.nst_info_len(), 0);
+        let body = message[4..len(message)];
+        code = tls_message.new_session_ticket(body, info);
+        let ts = info[tls_message.nst_ticket_start()];
+        let te = info[tls_message.nst_ticket_end()];
+        var lifetime = info[tls_message.nst_lifetime()];
+        if lifetime > 604800 {
+            lifetime = 604800;
+        }
+        if code == 0 && lifetime > 0 && te - ts <= tls_slot.ticket_cap() {
+            let h = tls_slot.hash_len(ints);
+            tls_slot.copy_bytes(body[ts..te], bytes[tls_slot.b_ticket()..tls_slot.b_ticket() + te - ts]);
+            hkdf.expand_label(h, bytes[tls_slot.k_res_master()..tls_slot.k_res_master() + h], "resumption", body[info[tls_message.nst_nonce_start()]..info[tls_message.nst_nonce_end()]], bytes[tls_slot.k_ticket_psk()..tls_slot.k_ticket_psk() + h]);
+            let hn = ints[tls_slot.i_host_len()];
+            tls_slot.copy_bytes(bytes[tls_slot.k_host()..tls_slot.k_host() + hn], bytes[tls_slot.b_ticket_host()..tls_slot.b_ticket_host() + hn]);
+            ints[tls_slot.i_ticket_len()] = te - ts;
+            ints[tls_slot.i_ticket_lifetime()] = lifetime;
+            ints[tls_slot.i_ticket_age_add()] = info[tls_message.nst_age_add()];
+            ints[tls_slot.i_ticket_hash()] = h;
         }
     }
     return code;
@@ -399,6 +534,11 @@ fn on_message[&i, &b, &m, &p](ints: &!i [int], bytes: &!b [byte], message: &m [b
         if code == 0 {
             tls_slot.transcript_add(ints, message);
             ints[tls_slot.i_state()] = tls_slot.state_wait_certificate();
+            if tls_slot.has(ints, tls_slot.f_resumed()) {
+                // No Certificate, CertificateRequest or CertificateVerify in
+                // a resumption: anything but Finished is out of order.
+                ints[tls_slot.i_state()] = tls_slot.state_wait_finished();
+            }
         }
         return code;
     }
@@ -429,7 +569,7 @@ fn on_message[&i, &b, &m, &p](ints: &!i [int], bytes: &!b [byte], message: &m [b
         return on_finished(ints, bytes, message);
     }
     if state == tls_slot.state_connected() && kind == tls_message.type_new_session_ticket() {
-        return tls_message.new_session_ticket(message[4..len(message)]);
+        return on_ticket(ints, bytes, message);
     }
     if state == tls_slot.state_connected() && kind == tls_message.type_key_update() {
         return on_key_update(ints, bytes, message);
@@ -795,6 +935,11 @@ pub fn failure[&i](ints: &i [int]) -> [] int {
 }
 
 // The alert the peer sent, when `failure` is `tls-alert`.
+// Whether the connection resumed a session (known once established).
+pub fn resumed[&i](ints: &i [int]) -> [] bool {
+    return tls_slot.has(ints, tls_slot.f_resumed());
+}
+
 pub fn alert_received[&i](ints: &i [int]) -> [] int {
     return ints[tls_slot.i_alert()];
 }
@@ -805,6 +950,7 @@ pub fn drop[&i, &b](ints: &!i [int], bytes: &!b [byte]) -> [] int {
     tls_slot.zero(bytes[tls_slot.b_keys()..tls_slot.b_keys() + tls_slot.keys_len()]);
     tls_slot.zero(bytes[tls_slot.b_plain()..tls_slot.b_plain() + tls_slot.plain_cap()]);
     tls_slot.zero(bytes[tls_slot.b_recv()..tls_slot.b_recv() + tls_slot.recv_cap()]);
+    tls_slot.zero(bytes[tls_slot.b_offer()..tls_slot.bytes_len()]);
     var k = 0;
     while k < tls_slot.ints_len() {
         ints[k] = 0;

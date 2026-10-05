@@ -147,6 +147,13 @@ pub fn x509_critical_extension() -> [] int {
     return -33;
 }
 
+// A server's `pre_shared_key` the client cannot accept: one it did not
+// offer, an identity other than the one it offered, or a suite whose hash
+// is not the ticket's (`docs/tls-resumption.md` §5).
+pub fn illegal_psk() -> [] int {
+    return -34;
+}
+
 pub fn refusal_tag(code: int) -> [] &static [byte] {
     if code == 0 {
         return "ok";
@@ -246,6 +253,9 @@ pub fn refusal_tag(code: int) -> [] &static [byte] {
     }
     if code == -33 {
         return "x509-critical-extension";
+    }
+    if code == -34 {
+        return "tls-illegal-psk";
     }
     return "unknown";
 }
