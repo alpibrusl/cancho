@@ -1,6 +1,6 @@
 # Processes: running a program, with an authority that says which
 
-> **Status: slice 0 built (§4.5); slices 1 to 4 designed, not built.**
+> **Status: slices 0 and 1 built (§4.5, §8); slices 2 to 4 designed, not built.**
 > Written before the code, the way
 > [`filesystem.md`](filesystem.md), [`net.md`](net.md) and
 > [`signals.md`](signals.md) were. When building it disagrees with this
@@ -313,6 +313,17 @@ child through `Ffi`, which is the leak this closes. `file-writes.md`'s
 > asked to close every descriptor but the three it is given
 > (`POSIX_SPAWN_CLOEXEC_DEFAULT`).
 >
+> **Built (slice 1), and stronger than this section first said.** A child
+> started with `exec_spawn` holds exactly its three streams on both kernels,
+> whatever the parent holds: macOS with `POSIX_SPAWN_CLOEXEC_DEFAULT`, Linux
+> with `posix_spawn_file_actions_addclosefrom_np(3)` (glibc 2.34 and later)
+> after the three `dup2`s. Close-on-exec alone could not promise that:
+> it covers what a lex-sys program opens, and a descriptor the program
+> *inherited* without the flag (a CI runner hands every process several,
+> measured in slice 0's test) would have passed straight through to a child.
+> So both windows above are closed for every child `exec_spawn` starts; they
+> remain only for a foreign `exec`.
+>
 > **Checked by** `close_on_exec.rs`: a program runs `system("ls /dev/fd")`
 > through `Ffi` once before opening anything and once holding one of
 > everything a builtin opens (fourteen descriptors), and the two listings
@@ -424,7 +435,7 @@ does ([`net.md`](net.md) §4.1).
 |---|---|---|
 | a channel | `socketpair(AF_UNIX, SOCK_STREAM \| SOCK_CLOEXEC)` | `socketpair` then `fcntl(FD_CLOEXEC)` and `SO_NOSIGPIPE` |
 | the child's 0, 1, 2 | `posix_spawn_file_actions_adddup2`, `_addopen("/dev/null")` | the same |
-| everything else closed | close-on-exec everywhere (slice 0) | the same, and `POSIX_SPAWN_CLOEXEC_DEFAULT` for the window slice 0 leaves on Darwin (§4.5) |
+| everything else closed | `posix_spawn_file_actions_addclosefrom_np(3)` (glibc 2.34), over close-on-exec everywhere (slice 0) | `POSIX_SPAWN_CLOEXEC_DEFAULT`, over the same (§4.5) |
 | signals | `POSIX_SPAWN_SETSIGMASK`, `POSIX_SPAWN_SETSIGDEF` | the same |
 | exit readiness | `pidfd_open` (via `syscall`, since glibc only wraps it from 2.36) | `kqueue` `EVFILT_PROC`, `NOTE_EXIT` |
 | reap | `waitpid(pid, &status, 0)` | the same |
@@ -436,7 +447,7 @@ does ([`net.md`](net.md) §4.1).
 | Slice | What | Edition |
 |---|---|---|
 | **0** | Close-on-exec on every descriptor the backends open (§4.5), with a conformance test that asks a child what it inherited. **Built** | every edition (a tightening) |
-| **1** | `Exec`, the `exec`, `child_signal`, `pipe_read`, `pipe_write` labels, `Split`'s ninth field, `pipe_open`, `exec_spawn`, `child_wait`, `child_kill`, the `Pipe` operations; both backends, both targets | 7 |
+| **1** | `Exec`, the `exec`, `child_signal`, `pipe_read`, `pipe_write` labels, `Split`'s ninth field, `pipe_open`, `exec_spawn`, `child_wait`, `child_kill`, the `Pipe` operations; both backends, both targets. **Built** (§8) | 7 |
 | **2** | `poller_add_pipe`, `poller_add_child` | 7 |
 | **3** | `std.process`: `Args` (the `\0` builder) and `run(heap, exec, path, args, input, most, timeout)`, a bounded capture with a deadline, built on slices 1 and 2 | 7 |
 | **4** | lexsys-tools#10: the MCP server, as a lex-sys program holding `Exec` narrowed to the tools' directory and nothing that writes | — |
