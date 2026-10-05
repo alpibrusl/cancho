@@ -10,7 +10,7 @@
 //! * `{:?}` differential over 10^6 random patterns and the special ones;
 //! * `{:.N}` differential, including exact ties;
 //! * `parse` differential over 10^6 random decimal strings and a list of hard cases, among
-//!   them exact halfway points between neighbouring `f32`s at up to 112 digits.
+//!   them exact halfway points between neighbouring `f32`s at up to 113 digits.
 
 use std::io::Write;
 use std::path::Path;

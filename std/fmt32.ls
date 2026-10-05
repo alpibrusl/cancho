@@ -39,7 +39,7 @@ module std.fmt32;
 // binary64. Reading a decimal as a `float` and narrowing rounds twice, and is
 // wrong when the first rounding lands exactly on a binary32 midpoint that the
 // decimal was not on. The digits are held exactly (up to 160 of them, then a
-// sticky bit: no binary32 midpoint has more than 112 significant digits, so
+// sticky bit: no binary32 midpoint has more than 113 significant digits, so
 // nothing past 160 can matter except as "more than"), scaled by integer
 // arithmetic until the quotient has 26 or 27 bits, and rounded once with
 // the remainder as the sticky bit. A fast path takes the common case:
@@ -50,6 +50,7 @@ module std.fmt32;
 // binary32 midpoint, which is detected and sent to the exact path.
 
 import std.bignum;
+import std.fmt;
 
 static pow5_inv_split: [int] {
     let t = alloc_slice[static](32, 0);
@@ -353,21 +354,6 @@ fn digit_count(value: int) -> [] int {
 // Writing bytes
 // ---------------------------------------------------------------------
 
-// Copy `text` in at `at`, answering where the next byte goes, or -1 if it
-// does not fit. Every writer here threads that -1 rather than trapping:
-// a short buffer is the caller's business.
-fn put[&o, &t](out: &!o [byte], at: int, text: &t [byte]) -> [] int {
-    if at < 0 || at + len(text) > len(out) {
-        return 0 - 1;
-    }
-    var i = 0;
-    while i < len(text) {
-        out[at + i] = text[i];
-        i = i + 1;
-    }
-    return at + len(text);
-}
-
 fn put_byte[&o](out: &!o [byte], at: int, value: int) -> [] int {
     if at < 0 || at >= len(out) {
         return 0 - 1;
@@ -433,23 +419,23 @@ fn debug_high() -> [] int {
 // with at least one digit after the point (`0.5`, `16384.0`, `0.0001`),
 // exponential outside that (`1e-5`, `1.5e16`, `3.4028235e38`), and `NaN`,
 // `inf`, `-inf`, `0.0` and `-0.0`. Answers how many bytes it wrote, or -1
-// if `out` is too short; 24 bytes are always enough (the longest, measured
+// if `out` is too short; 19 bytes are always enough (the longest, measured
 // over every `f32`, is in `docs/f32.md` §5.3).
 pub fn f32_into[&o](out: &!o [byte], x: f32) -> [] int {
     let bits = bits_of32(x);
     let magnitude = bits & 2147483647;
     if magnitude > 2139095040 {
-        return put(out, 0, "NaN");
+        return fmt.put(out, 0, "NaN");
     }
     var at = 0;
     if bits >> 31 == 1 {
         at = put_byte(out, 0, 45);
     }
     if magnitude == 2139095040 {
-        return put(out, at, "inf");
+        return fmt.put(out, at, "inf");
     }
     if magnitude == 0 {
-        return put(out, at, "0.0");
+        return fmt.put(out, at, "0.0");
     }
     let (d, e) = shortest(magnitude);
     let n = digit_count(d);
@@ -473,7 +459,7 @@ pub fn f32_into[&o](out: &!o [byte], x: f32) -> [] int {
     }
     if k <= 0 {
         // `0.000ddd`
-        at = put(out, at, "0.");
+        at = fmt.put(out, at, "0.");
         at = put_run(out, at, 48, 0 - k);
         return put_digits(out, at, d, n);
     }
@@ -492,7 +478,7 @@ pub fn f32_into[&o](out: &!o [byte], x: f32) -> [] int {
     // `ddd000.0`
     at = put_digits(out, at, d, n);
     at = put_run(out, at, 48, k - n);
-    return put(out, at, ".0");
+    return fmt.put(out, at, ".0");
 }
 
 // ---------------------------------------------------------------------
@@ -580,14 +566,14 @@ pub fn f32_fixed_into[&o](out: &!o [byte], x: f32, prec: int) -> [] int {
     let bits = bits_of32(x);
     let magnitude = bits & 2147483647;
     if magnitude > 2139095040 {
-        return put(out, 0, "NaN");
+        return fmt.put(out, 0, "NaN");
     }
     var at = 0;
     if bits >> 31 == 1 {
         at = put_byte(out, 0, 45);
     }
     if magnitude == 2139095040 {
-        return put(out, at, "inf");
+        return fmt.put(out, at, "inf");
     }
 
     let ieee_e = magnitude >> 23;
@@ -780,17 +766,6 @@ fn big_bits[&a](a: &a [int]) -> [] int {
     return 0;
 }
 
-fn big_zero[&a](a: &a [int]) -> [] bool {
-    var i = 0;
-    while i < len(a) {
-        if a[i] != 0 {
-            return false;
-        }
-        i = i + 1;
-    }
-    return true;
-}
-
 // `a = a >> 1`.
 fn big_shift_right_one[&a](a: &!a [int]) -> [] int {
     var i = 0;
@@ -799,22 +774,6 @@ fn big_shift_right_one[&a](a: &!a [int]) -> [] int {
         i = i + 1;
     }
     a[len(a) - 1] = a[len(a) - 1] >> 1;
-    return 0;
-}
-
-// `a = a * 10^p`.
-fn big_mul_pow10[&a](a: &!a [int], p: int) -> [] int {
-    var left = p;
-    while left >= 9 {
-        bignum.mul_small(a, 1000000000);
-        left = left - 9;
-    }
-    var small = 1;
-    while left > 0 {
-        small = small * 10;
-        left = left - 1;
-    }
-    bignum.mul_small(a, small);
     return 0;
 }
 
@@ -866,8 +825,8 @@ fn exact_bits[&w](wl: &w [int], decimals: int, q: int, sticky: bool) -> [] int {
             i = i + 1;
         }
         d[0] = 1;
-        big_mul_pow10(n, raised);
-        big_mul_pow10(d, p);
+        bignum.mul_pow10(n, raised);
+        bignum.mul_pow10(d, p);
         let bn = big_bits(n);
         let bd = big_bits(d);
         // Scale by 2^s so that the quotient has 26 or 27 bits.
@@ -890,7 +849,7 @@ fn exact_bits[&w](wl: &w [int], decimals: int, q: int, sticky: bool) -> [] int {
             bit = bit - 1;
         }
         // The value is `(quotient + remainder / d) * 2^-s`.
-        let more = sticky || !big_zero(n);
+        let more = sticky || !bignum.is_zero(n);
         let top = bit_length_of(quotient) - 1;
         // Bits to drop to reach 24 bits (a normal) or the unit 2^-149 (a
         // subnormal), whichever drops more.
