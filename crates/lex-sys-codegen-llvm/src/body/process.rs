@@ -71,7 +71,11 @@ impl<'a> FuncEmitter<'a> {
     /// `exec_spawn(exec, path, args, env, stdin, stdout, stderr)` (§4.1 to
     /// §4.6). `Spawned`'s three leaves: the tag (`Ok` 0, `Failed` 1), the pid,
     /// the reason.
-    pub(crate) fn exec_spawn(&mut self, prefix: &str, args: &[Expr]) -> Result<Vec<LValue>, String> {
+    pub(crate) fn exec_spawn(
+        &mut self,
+        prefix: &str,
+        args: &[Expr],
+    ) -> Result<Vec<LValue>, String> {
         // The capability is zero-sized and stops here.
         let path = self.expr(&args[1])?;
         let arguments = self.expr(&args[2])?;
@@ -117,6 +121,17 @@ impl<'a> FuncEmitter<'a> {
             self.out.push_str(&format!("{next}:\n"));
         }
 
+        // §4.5: and nothing else. Close-on-exec covers what this program
+        // opened; this covers what it inherited without the flag, so the child
+        // holds exactly the three streams. Darwin does the same with
+        // `POSIX_SPAWN_CLOEXEC_DEFAULT` (`spawn_flags`); glibc has
+        // `addclosefrom_np` from 2.34.
+        if !self.is_darwin() {
+            self.out.push_str(&format!(
+                "  call i32 @posix_spawn_file_actions_addclosefrom_np(ptr {actions}, i32 3)\n"
+            ));
+        }
+
         // §4.6: an empty mask, and every signal at its default.
         let attributes = self.cell(SPAWN_OBJECT_BYTES);
         self.out.push_str(&format!("  call i32 @posix_spawnattr_init(ptr {attributes})\n"));
@@ -142,7 +157,8 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!(
             "  {error} = call i32 @posix_spawn(ptr {pid}, ptr {program}, ptr {actions}, ptr {attributes}, ptr {argv}, ptr {envp})\n"
         ));
-        self.out.push_str(&format!("  call i32 @posix_spawn_file_actions_destroy(ptr {actions})\n"));
+        self.out
+            .push_str(&format!("  call i32 @posix_spawn_file_actions_destroy(ptr {actions})\n"));
         self.out.push_str(&format!("  call i32 @posix_spawnattr_destroy(ptr {attributes})\n"));
         self.out.push_str(&format!("  call void @free(ptr {argv})\n"));
         self.out.push_str(&format!("  call void @free(ptr {envp})\n"));

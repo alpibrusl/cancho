@@ -114,6 +114,21 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
             self.builder.seal_block(next);
         }
 
+        // §4.5: and nothing else. Close-on-exec covers what this program
+        // opened; this covers what it inherited without the flag, so the child
+        // holds exactly the three streams. Darwin does the same with
+        // `POSIX_SPAWN_CLOEXEC_DEFAULT` (`spawn_flags`); glibc has
+        // `addclosefrom_np` from 2.34.
+        if !self.is_darwin() {
+            let lowest = self.builder.ins().iconst(types::I32, 3);
+            self.libc_call(
+                "posix_spawn_file_actions_addclosefrom_np",
+                &[pointer, types::I32],
+                &[types::I32],
+                &[actions, lowest],
+            );
+        }
+
         // §4.6: an empty mask, and every signal at its default.
         let attributes = self.scratch_bytes(SPAWN_OBJECT_BYTES);
         self.libc_call("posix_spawnattr_init", &[pointer], &[types::I32], &[attributes]);
@@ -426,7 +441,8 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         self.builder.switch_to_block(send);
         self.builder.seal_block(send);
         let signal = self.builder.ins().ireduce(types::I32, native);
-        let result = self.libc_call("kill", &[types::I32, types::I32], &[types::I32], &[pid, signal]);
+        let result =
+            self.libc_call("kill", &[types::I32, types::I32], &[types::I32], &[pid, signal]);
         let reason = self.errno();
         let failed = self.builder.ins().icmp_imm(IntCC::SignedLessThan, result, 0);
         let zero = self.builder.ins().iconst(types::I64, 0);

@@ -324,7 +324,9 @@ impl<'a> FnLowering<'a> {
             };
             return Err(Diagnostic::new(
                 Rule::LinearValueTakenApart,
-                format!("`{text}` owns {owns} and is ended by `{closer}`, not by being taken apart"),
+                format!(
+                    "`{text}` owns {owns} and is ended by `{closer}`, not by being taken apart"
+                ),
                 span,
             ));
         }
