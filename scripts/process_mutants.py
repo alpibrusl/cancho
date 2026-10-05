@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
-"""Mutation check of processes slice 2, the poller (docs/processes.md §4.8, §8).
+"""Mutation check of processes slices 2 and 3 (docs/processes.md §4.8, §7.1, §8).
 
-    python3 scripts/process_mutants.py [name-substring ...]
+    python3 scripts/process_mutants.py [--capture] [name-substring ...]
+
+Without `--capture`, the poller (slice 2) against the process tests; with it,
+`std/process.ls` (slice 3) against the capture tests.
 
 Each mutant is one backend source file with one deliberate bug, at one site.
 It is run against `cargo test --test conformance -- processes::` with a limit
@@ -77,6 +80,46 @@ MUTANTS = [
      "self.poller_ctl(&args, false, true)\n            }\n            Callee::Builtin(Builtin::PollerAddChild)"),
 ]
 
+PROCESS = "std/process.ls"
+
+# Slice 3: each choice §7.1 makes, undone.
+CAPTURE = [
+    ("the input written blocking", PROCESS,
+     "                                pipe_nonblocking(wp);\n",
+     ""),
+    ("no drain after the exit", PROCESS,
+     "                        if gone && state == running() {\n                            // Everything",
+     "                        if gone && state == 99 {\n                            // Everything"),
+    ("the deadline taken per wait", PROCESS,
+     "let left = deadline - clock_ms(clock);",
+     "let left = timeout + 0 * clock_ms(clock);"),
+    ("the bound off by one", PROCESS,
+     "if n > room {",
+     "if n >= room {"),
+    ("no kill on the deadline", PROCESS,
+     "    if state != exited() {\n",
+     "    if state != exited() && state != timed_out() {\n"),
+    ("no kill past the bound", PROCESS,
+     "    if state != exited() {\n",
+     "    if state != exited() && state != too_much() {\n"),
+    ("no kill when it cannot be watched", PROCESS,
+     "    if state != exited() {\n",
+     "    if state != exited() && state != failed() {\n"),
+    ("the input end never closed", PROCESS,
+     "                        if input_done {\n                            shut(writer);",
+     "                        if input_done && false {\n                            shut(writer);"),
+    ("the end of the output not acted on", PROCESS,
+     "                                                if found == read_end() {\n                                                    output_done = true;",
+     "                                                if found == read_end() {\n                                                    output_done = false;"),
+    ("a failed write not ending the input", PROCESS,
+     "                                                Sent::Failed(e) => {\n                                                    input_done = true;",
+     "                                                Sent::Failed(e) => {\n                                                    input_done = false;"),
+    ("a NUL let through", PROCESS,
+     "        if one[i] == byte_of(0) {",
+     "        if one[i] == byte_of(0) && false {"),
+]
+
+FILTER = "processes::"
 ORIGINALS = {}
 
 
@@ -102,7 +145,7 @@ def run_tests():
     """`(passed, seconds, tail)`; a run past the limit has its group killed."""
     start = time.time()
     proc = subprocess.Popen(
-        ["cargo", "test", "--test", "conformance", "--", "processes::"],
+        ["cargo", "test", "--test", "conformance", "--", FILTER],
         cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
     try:
         out, _ = proc.communicate(timeout=LIMIT)
@@ -118,8 +161,13 @@ def run_tests():
 def main():
     signal.signal(signal.SIGINT, on_signal)
     signal.signal(signal.SIGTERM, on_signal)
+    global FILTER
     wanted = sys.argv[1:]
-    chosen = [m for m in MUTANTS if not wanted or any(w in m[0] for w in wanted)]
+    mutants = MUTANTS
+    if "--capture" in wanted:
+        wanted.remove("--capture")
+        mutants, FILTER = CAPTURE, "capture::"
+    chosen = [m for m in mutants if not wanted or any(w in m[0] for w in wanted)]
 
     passed, seconds, tail = run_tests()
     print(f"unmutated: {'pass' if passed else 'FAIL'} ({seconds:.0f}s) {tail}", flush=True)

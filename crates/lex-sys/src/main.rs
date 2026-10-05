@@ -443,6 +443,7 @@ const STD: &[(&str, &str)] = &[
     ("<std>/conns.ls", include_str!("../../../std/conns.ls")),
     ("<std>/signals.ls", include_str!("../../../std/signals.ls")),
     ("<std>/dirs.ls", include_str!("../../../std/dirs.ls")),
+    ("<std>/process.ls", include_str!("../../../std/process.ls")),
 ];
 
 /// What a command line asked for.

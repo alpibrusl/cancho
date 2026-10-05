@@ -43,6 +43,7 @@ mod authority;
 mod backends;
 mod benchmarks;
 mod binary32;
+mod capture;
 mod checked_output;
 mod close_on_exec;
 mod compile_time;
