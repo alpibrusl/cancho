@@ -1,4 +1,4 @@
-//~ ERROR `byte` has no arithmetic (`int` and `float` do)
+//~ ERROR `byte` has no arithmetic (`int`, `float` and `f32` do)
 //~ RULE operator-type-mismatch
 
 // `docs/strings.md` §2: a `byte` is *storage*, not arithmetic.

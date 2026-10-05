@@ -526,7 +526,7 @@ impl Printer<'_> {
     fn dotted(&self, base: ExprId) -> String {
         let text = self.expr_at(base, POSTFIX);
         match self.ast.expr(base) {
-            Expr::Int(_) | Expr::Float(_) => format!("({text})"),
+            Expr::Int(_) | Expr::Float(_) | Expr::F32(_) => format!("({text})"),
             _ => text,
         }
     }
@@ -537,6 +537,7 @@ impl Printer<'_> {
             Expr::Bool(value) => value.to_string(),
             Expr::Str(text) => format!("\"{}\"", escape(text)),
             Expr::Float(bits) => float_literal(*bits),
+            Expr::F32(bits) => f32_literal(*bits),
             Expr::Name(name) => self.name(*name).to_owned(),
             Expr::StructLit { name, qualifier, fields } => {
                 let head = self.qualified(*qualifier, *name);
@@ -606,9 +607,15 @@ impl Printer<'_> {
                 // whose operand is a literal has to keep the two apart, or
                 // `-(5)` would print as `-5` and come back as a different
                 // tree. Whitespace will not do it: the parser sees tokens.
+                //
+                // A floating literal is the same case (`-1.5` is one
+                // literal): `docs/f32.md` §2 found that `-(1.5)` printed as
+                // `-1.5` for `float` too, and came back as a literal.
                 let inner = self.expr_at(*operand, UNARY);
                 let text = match (op, self.ast.expr(*operand)) {
-                    (UnOp::Neg, Expr::Int(_)) => format!("-({inner})"),
+                    (UnOp::Neg, Expr::Int(_) | Expr::Float(_) | Expr::F32(_)) => {
+                        format!("-({inner})")
+                    }
                     _ => format!("{symbol}{inner}"),
                 };
                 parenthesise(text, level, UNARY)
@@ -683,6 +690,15 @@ fn operator(op: BinOp) -> &'static str {
 
 fn parenthesise(text: String, context: u8, own: u8) -> String {
     if own < context { format!("({text})") } else { text }
+}
+
+/// Render an `f32` literal, the same way.
+fn f32_literal(bits: u32) -> String {
+    // `Display` for `f32` is the shortest decimal that reads back to the
+    // same binary32, and never uses an exponent, so the suffix and a
+    // point are all a literal needs (`docs/f32.md` §2).
+    let rendered = format!("{}", f32::from_bits(bits));
+    if rendered.contains('.') { format!("{rendered}f32") } else { format!("{rendered}.0f32") }
 }
 
 /// Render a float literal so it parses back to the same bits.
@@ -778,6 +794,50 @@ mod tests {
 
     fn printed_expr(expr: &str) -> String {
         let text = round_trip(&in_fn(expr));
+        let line = text.lines().nth(1).expect("the body").trim().to_owned();
+        line.trim_start_matches("return ").trim_end_matches(';').to_owned()
+    }
+
+    /// `docs/f32.md` §2: an `f32` literal prints as the shortest decimal
+    /// that reads back to the same binary32, with its suffix, and the
+    /// printed text parses to the same tree. A literal read as a `float`
+    /// would not: `0.1f32` is not `0.1`.
+    #[test]
+    fn an_f32_literal_round_trips() {
+        for literal in [
+            "0.5f32",
+            "0.1f32",
+            "-0.0f32",
+            "1e3f32",
+            "1_000.25f32",
+            "3.4028235e38f32",
+            "1e-45f32",
+            "16777216.0f32",
+            "1.0000000596046447753906251f32",
+        ] {
+            let text = round_trip(&format!("fn f() -> [] f32 {{ return {literal}; }}"));
+            let value: f32 = literal
+                .trim_end_matches("f32")
+                .replace('_', "")
+                .parse()
+                .expect("a literal the host reads");
+            // The printed digits are the host's own shortest form, which
+            // is what the printer promises: parse them as the host does.
+            let printed = text.lines().nth(1).expect("the body").trim();
+            let body = printed.trim_start_matches("return ").trim_end_matches(';');
+            let digits = body.strip_suffix("f32").expect("a suffix");
+            assert_eq!(digits.parse::<f32>().expect("digits"), value, "{literal} -> {body}");
+        }
+        // A negative literal is one literal, as a negative `float` is, and
+        // negating a literal is not one.
+        assert!(printed_expr_f32("-1.5f32").starts_with("-1.5"));
+        assert_eq!(printed_expr_f32("-(1.5f32)"), "-(1.5f32)");
+        // The same fix for `float`, which had the bug first.
+        round_trip("fn f() -> [] float { return -(1.5); }");
+    }
+
+    fn printed_expr_f32(expr: &str) -> String {
+        let text = round_trip(&format!("fn f() -> [] f32 {{ return {expr}; }}"));
         let line = text.lines().nth(1).expect("the body").trim().to_owned();
         line.trim_start_matches("return ").trim_end_matches(';').to_owned()
     }

@@ -1,4 +1,4 @@
-//~ ERROR `c_ptr` has no arithmetic (`int` and `float` do)
+//~ ERROR `c_ptr` has no arithmetic (`int`, `float` and `f32` do)
 //~ RULE operator-type-mismatch
 
 // `docs/opaque-pointers.md` §3: `c_ptr` is comparable for equality and

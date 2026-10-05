@@ -171,6 +171,12 @@ Neither module is a general-purpose facility and neither pretends to be:
 type. §4's "no allocation-free string formatting" still stands for
 everything else.
 
+**`std.fmt32`** is the same idea for `f32` (edition 6; [`f32.md`](f32.md) §5.3):
+`fmt32.f32_into(out, x)` is Rust's `{:?}`, `fmt32.f32_fixed_into(out, x, prec)`
+is `{:.N}` with exact ties to even, and `fmt32.f32_of_text(text)` reads a
+decimal to the nearest `f32` in one rounding. Each answers a byte count or -1
+(or `(false, _)`), and none traps.
+
 ---
 
 ## 4. What is deliberately not in it

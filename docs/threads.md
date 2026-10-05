@@ -246,6 +246,7 @@ What this buys, precisely:
   a real, narrow check and a fixture the day `Rc` (or an atomic variant
   of it) exists — not before, and not a hatch this document opens in
   the meantime.
+- **A wider payload is [`thread-payloads.md`](thread-payloads.md)**, which also records why a unique *slice* cannot simply be allowed (§3 there).
 - **No shared *mutable* state.** `&!r T` crossing means the unique
   reference moved, not that two threads can now both mutate the same
   memory. A `Mutex`-shaped capability — lock, get a unique reference

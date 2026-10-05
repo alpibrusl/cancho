@@ -9,6 +9,7 @@ impl<'a> FuncEmitter<'a> {
     pub(crate) fn scalar_kind(&self, expr: &Expr) -> Result<LKind, String> {
         match expr {
             Expr::Float(_) => Ok(LKind::F64),
+            Expr::F32(_) => Ok(LKind::F32),
             Expr::Int(_) => Ok(LKind::I64),
             Expr::Bool(_) => Ok(LKind::I8),
             Expr::Load(slot) => self
@@ -67,7 +68,12 @@ impl<'a> FuncEmitter<'a> {
                 .next()
                 .ok_or_else(|| "a zero-leaf join result has no scalar kind".to_owned()),
             Expr::Call { callee, .. } => match callee {
-                Callee::Builtin(Builtin::FloatOf | Builtin::Sqrt) => Ok(LKind::F64),
+                Callee::Builtin(Builtin::FloatOf | Builtin::Sqrt | Builtin::FloatOf32) => {
+                    Ok(LKind::F64)
+                }
+                Callee::Builtin(
+                    Builtin::F32Of | Builtin::F32OfBits | Builtin::Sqrt32 | Builtin::F32OfInt,
+                ) => Ok(LKind::F32),
                 // Every builtin below has one fixed, scalar return type
                 // (`Builtin::signature`'s own match, `lex-sys-ir::
                 // builtin.rs`) -- not a capability, not a type the call
@@ -86,6 +92,8 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::IntOf
                     | Builtin::Truncate
                     | Builtin::BitsOf
+                    | Builtin::BitsOf32
+                    | Builtin::IntOfF32
                     | Builtin::Listen
                     | Builtin::Accept
                     | Builtin::ConnNonblocking
@@ -163,8 +171,8 @@ impl<'a> FuncEmitter<'a> {
         let lhs_kind = self.scalar_kind(lhs)?;
         let a = self.scalar(lhs)?;
         let b = self.scalar(rhs)?;
-        if lhs_kind == LKind::F64 {
-            return self.float_binop(op, a, b);
+        if matches!(lhs_kind, LKind::F64 | LKind::F32) {
+            return self.float_binop(op, lhs_kind, a, b);
         }
         match op {
             BinOp::Add => self.checked_arith("sadd", a, b),
@@ -194,6 +202,7 @@ impl<'a> FuncEmitter<'a> {
     pub(crate) fn float_binop(
         &mut self,
         op: BinOp,
+        kind: LKind,
         a: LValue,
         b: LValue,
     ) -> Result<Vec<LValue>, String> {
@@ -203,20 +212,21 @@ impl<'a> FuncEmitter<'a> {
             BinOp::Mul => "fmul",
             BinOp::Div => "fdiv",
             BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
-                return Ok(vec![self.float_compare(op, a, b)]);
+                return Ok(vec![self.float_compare(op, kind, a, b)]);
             }
             other => unreachable!("the checker refuses `{other:?}` on `float`"),
         };
         let result = self.fresh();
         self.out.push_str(&format!(
-            "  {result} = {instr} double {}, {}\n",
+            "  {result} = {instr} {} {}, {}\n",
+            kind.llvm(),
             operand(&a),
             operand(&b)
         ));
         Ok(vec![LValue::Reg(result)])
     }
 
-    pub(crate) fn float_compare(&mut self, op: BinOp, a: LValue, b: LValue) -> LValue {
+    pub(crate) fn float_compare(&mut self, op: BinOp, kind: LKind, a: LValue, b: LValue) -> LValue {
         let cc = match op {
             BinOp::Eq => "oeq",
             BinOp::Ne => "une",
@@ -228,7 +238,8 @@ impl<'a> FuncEmitter<'a> {
         };
         let cmp = self.fresh();
         self.out.push_str(&format!(
-            "  {cmp} = fcmp {cc} double {}, {}\n",
+            "  {cmp} = fcmp {cc} {} {}, {}\n",
+            kind.llvm(),
             operand(&a),
             operand(&b)
         ));

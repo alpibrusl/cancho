@@ -53,6 +53,8 @@ pub(crate) fn leaves_into(
         // `docs/floating-point.md` §1: binary64, which is `F64` and
         // nothing else. A `float` is one leaf, like an `int`.
         Type::Float => out.push(types::F64),
+        // `docs/f32.md` §2: binary32, which is `F32`. One leaf.
+        Type::F32 => out.push(types::F32),
         // A byte and a bool are both one byte wide. That they share a
         // machine type is not an invitation to mix them: the checker keeps
         // them apart, and `byte` has no arithmetic to mix *with*.
@@ -237,6 +239,10 @@ pub(crate) const ARENA_CHUNK: i64 = 64 * 1024;
 /// "QNaN floating-point indefinite"), which is the one reason `bits_of`
 /// needs this at all.
 pub(crate) const CANONICAL_NAN: i64 = 0x7ff8_0000_0000_0000;
+
+/// The same for `bits_of32` (`docs/f32.md` §2): binary32's positive quiet
+/// NaN. x86-64 generates it with the sign set, as for binary64.
+pub(crate) const CANONICAL_NAN_32: i64 = 0x7fc0_0000;
 
 /// Every lex-sys function is emitted under this prefix, so a program may define
 /// a function called `write` or `exit` without colliding with libc.

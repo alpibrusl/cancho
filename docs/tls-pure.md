@@ -438,7 +438,10 @@ Each sub-issue (#199 to #210) states its own gate as a command. This design adds
 2. **No capability in the pure backend.** `lex-sys authority` on a hooks build with the pure backend shows no `ffi(...)` and no
    foreign symbols. This is checked by a test, not asserted (#210).
 3. **No input reaches a trap.** It is fuzzed at the record, handshake, DER and chain levels (#208), as `dns.ls` was over a million
-   damaged answers (`docs/tls-nonblocking.md` §7). *#208's plan for this, and for the rest of its bar: `docs/tls-assurance.md`.*
+   damaged answers (`docs/tls-nonblocking.md` §7). *#208's plan and results, for this and for the rest of its bar, are in `docs/tls-assurance.md`. Fuzzing is in §3.6 (no crash
+   and no hang). The differential and interop matrices are in §4.1 and §5.1. Timing is in §6.1: X25519 and ChaCha20-Poly1305 pass
+   on both backends, and three tests fail on an Apple M4 with its data-independent-timing bit clear. Resource bounds are in
+   §7.1.*
 
 ---
 

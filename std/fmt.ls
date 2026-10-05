@@ -363,7 +363,7 @@ fn put_short[&o](out: &!o [byte], at: int, m: int, k: int) -> [] int {
 // Copy `text` in at `at`, answering where the next byte goes, or -1 if
 // it does not fit. Every writer here threads that -1 rather than
 // trapping, because a short buffer is the caller's business.
-fn put[&o, &t](out: &!o [byte], at: int, text: &t [byte]) -> [] int {
+pub fn put[&o, &t](out: &!o [byte], at: int, text: &t [byte]) -> [] int {
     if at < 0 || at + len(text) > len(out) {
         return 0 - 1;
     }

@@ -1590,7 +1590,10 @@ pub(crate) fn collect_types(ast: &Ast, unifier: &mut Unifier) -> Result<Vec<Type
         // `Conn` is edition 5's, and an edition-1 file that declares its own
         // `Conn` is not redeclaring anything it can name.
         let edition = ast.edition_of(item_id);
+        // `f32` is a type from edition 6 (`docs/f32.md` §6), so only a file
+        // at that edition is redeclaring anything by declaring one.
         if matches!(name, "int" | "bool")
+            || (name == "f32" && edition >= 6)
             || defs[..predeclared].iter().any(|d| d.name == name_sym && d.since <= edition)
         {
             return Err(Diagnostic::new(

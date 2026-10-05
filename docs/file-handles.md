@@ -386,6 +386,8 @@ handle that can be read to the end and closed is what `examples/sort/`
 is waiting on, and every other verb can arrive when a program asks for
 it — which is how `vec.set`, `vec.swap` and the bit operators arrived.
 
+*(Asked, since: `lexsys-gpu` reads regions of multi-gigabyte weight files. Design in [`large-files.md`](large-files.md): `file_size` and a positioned `file_read_at`, with mapping decided by measurement.)*
+
 Not a change to `fs_read`. Whole-file reading is the right call for a
 file whose size you know and `manifests/`-shaped work keeps using it.
 This is the API for a file whose size you do not know, which is the case

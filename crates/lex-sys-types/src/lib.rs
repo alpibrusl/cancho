@@ -92,6 +92,12 @@ pub enum Type {
     /// is — a second width would drag a second set of conversion rules
     /// behind it, which `defined-behaviour.md` §8 still defers.
     Float,
+    /// IEEE-754 binary32, round to nearest even (`docs/f32.md`).
+    ///
+    /// A second width, with **no implicit conversion to or from `float`
+    /// in either direction**: `f32_of` and `float_of32` are the only
+    /// crossings, so the one rule is written where a reader can see it.
+    F32,
     /// The type of an expression that yields nothing, such as a call used as a
     /// statement. Not writable in source.
     Unit,
@@ -511,6 +517,7 @@ impl Unifier {
             Type::Byte => "byte".to_owned(),
             Type::Bool => "bool".to_owned(),
             Type::Float => "float".to_owned(),
+            Type::F32 => "f32".to_owned(),
             Type::Unit => "()".to_owned(),
             Type::CPtr => "c_ptr".to_owned(),
             Type::Param(i) => {

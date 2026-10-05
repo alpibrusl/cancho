@@ -375,8 +375,8 @@ fn main(world: World) -> [] int {
 ## 7. Use the library
 
 `std.bytes`, `std.io`, `std.math`, `std.buffer`, `std.option`,
-`std.result`, `std.list`, `std.vec`, `std.fmt`, `std.bignum`,
-`std.utf8`, `std.flags`, `std.crypto`, `std.ed25519`, `std.json`,
+`std.result`, `std.list`, `std.vec`, `std.fmt`, `std.fmt32` (`f32` text,
+edition 6), `std.bignum`, `std.utf8`, `std.flags`, `std.crypto`, `std.ed25519`, `std.json`,
 `std.map`, `std.http`, `std.route`, `std.test`. Pass `--std` and write the `import` — there is no prelude.
 
 `std.json` parses into a **tape** you provide (`docs/json.md`) rather than
