@@ -626,6 +626,8 @@ pub enum Expr {
     },
     /// A floating-point constant, as bits (`docs/floating-point.md` §1).
     Float(u64),
+    /// A binary32 constant, as bits (`docs/f32.md` §2).
+    F32(u32),
     Neg(Box<Expr>),
     Not(Box<Expr>),
     /// `~a` (`docs/bitwise.md` §1). Its own node rather than
@@ -981,7 +983,7 @@ pub fn terminates(body: &[Stmt]) -> bool {
 /// program's text, so both backends make it the same way.
 pub fn is_zero_fill(fill: &Expr) -> bool {
     match fill {
-        Expr::Int(0) | Expr::Bool(false) | Expr::Float(0) => true,
+        Expr::Int(0) | Expr::Bool(false) | Expr::Float(0) | Expr::F32(0) => true,
         Expr::Call { callee: Callee::Builtin(Builtin::ByteOf), args } => {
             matches!(args.as_slice(), [Expr::Int(0)])
         }

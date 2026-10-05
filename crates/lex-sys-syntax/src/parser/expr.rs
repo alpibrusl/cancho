@@ -92,8 +92,8 @@ impl<'a> Parser<'a> {
             // be able to say directly (`docs/floating-point.md` §1).
             if self.peek().kind == TokenKind::Float {
                 let tok = self.bump();
-                let bits = self.float_value(tok, true)?;
-                return Ok(self.ast.push_expr(Expr::Float(bits), minus.span.to(tok.span)));
+                let literal = self.float_literal(tok, true)?;
+                return Ok(self.ast.push_expr(literal, minus.span.to(tok.span)));
             }
             let operand = self.unary()?;
             let span = minus.span.to(self.ast.expr_span(operand));
@@ -185,8 +185,8 @@ impl<'a> Parser<'a> {
             }
             TokenKind::Float => {
                 self.bump();
-                let bits = self.float_value(tok, false)?;
-                Ok(self.ast.push_expr(Expr::Float(bits), tok.span))
+                let literal = self.float_literal(tok, false)?;
+                Ok(self.ast.push_expr(literal, tok.span))
             }
             TokenKind::Str => {
                 let text = self.string_literal()?;
@@ -355,6 +355,34 @@ impl<'a> Parser<'a> {
                 format!("expected an expression, found {}", other.describe()),
             )),
         }
+    }
+
+    /// A floating-point literal: `float` as written, or `f32` when it
+    /// carries the suffix (`docs/f32.md` §2).
+    ///
+    /// An `f32` literal is read by `f32::from_str`, which is correctly
+    /// rounded **once**, from the decimal. Reading it as a `float` and
+    /// narrowing would round twice, and a decimal near a tie of
+    /// binary32 could land one unit away. A literal too large for `f32`
+    /// is refused, as a `float` one is, and not quietly infinity;
+    /// infinity is `f32_of_bits(0x7f800000)`.
+    pub(crate) fn float_literal(&self, tok: Token, negated: bool) -> Result<Expr, Diagnostic> {
+        let text = self.text(tok);
+        let Some(digits) = text.strip_suffix("f32") else {
+            return Ok(Expr::Float(self.float_value(tok, negated)?));
+        };
+        let digits: String = digits.chars().filter(|c| *c != '_').collect();
+        let value: f32 = digits.parse().map_err(|_| {
+            Diagnostic::new(Rule::LiteralForm, "not a floating-point literal", tok.span)
+        })?;
+        if !value.is_finite() {
+            return Err(Diagnostic::new(
+                Rule::LiteralOutOfRange,
+                "floating-point literal does not fit in `f32` (IEEE-754 binary32)",
+                tok.span,
+            ));
+        }
+        Ok(Expr::F32(if negated { (-value).to_bits() } else { value.to_bits() }))
     }
 
     /// A floating-point literal's bits.

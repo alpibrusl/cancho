@@ -39,6 +39,10 @@ pub(crate) const ARENA_CHUNK: i64 = 64 * 1024;
 /// answer depend on where the program ran.
 pub(crate) const CANONICAL_NAN: i64 = 0x7ff8_0000_0000_0000;
 
+/// `bits_of32`'s canonical NaN, matching `lex-sys-codegen`'s own
+/// `abi::CANONICAL_NAN_32` (`docs/f32.md` §2).
+pub(crate) const CANONICAL_NAN_32: i64 = 0x7fc0_0000;
+
 /// `2^63` as a `float`, both signs -- `truncate`'s own trap bound
 /// (`docs/floating-point.md` §4: "any magnitude at or beyond `2^63`",
 /// which includes exactly `-2^63` even though it is a representable
@@ -71,6 +75,8 @@ pub(crate) enum LKind {
     I8,
     Ptr,
     F64,
+    /// `docs/f32.md`'s `f32` -- binary32, one leaf.
+    F32,
 }
 
 impl LKind {
@@ -80,6 +86,7 @@ impl LKind {
             LKind::I8 => "i8",
             LKind::Ptr => "ptr",
             LKind::F64 => "double",
+            LKind::F32 => "float",
         }
     }
 
@@ -91,7 +98,7 @@ impl LKind {
             // pattern, so it round-trips through decimal with nothing
             // lost, unlike every other float constant here (`FConst`
             // below).
-            LKind::F64 => "0.0",
+            LKind::F64 | LKind::F32 => "0.0",
         }
     }
 }
@@ -109,6 +116,11 @@ pub(crate) enum LValue {
     /// emits is the bit pattern the parser read, not whatever a decimal
     /// round-trip through `f64`'s `Display` happens to preserve.
     FConst(u64),
+    /// An `f32` constant, as its binary32 bits (`docs/f32.md` §2).
+    /// LLVM's hex syntax for a `float` constant is the *double* with the
+    /// same value, which every binary32 is exactly, so this prints
+    /// `f32 -> f64` bits and nothing is rounded.
+    F32Const(u32),
     Reg(String),
 }
 
@@ -116,6 +128,7 @@ pub(crate) fn operand(v: &LValue) -> String {
     match v {
         LValue::Const(n) => n.to_string(),
         LValue::FConst(bits) => format!("0x{bits:016X}"),
+        LValue::F32Const(bits) => format!("0x{:016X}", f64::from(f32::from_bits(*bits)).to_bits()),
         LValue::Reg(name) => name.clone(),
     }
 }
@@ -156,6 +169,7 @@ fn leaves_into(ty: &Type, program: &Program, out: &mut Vec<LKind>) -> Result<(),
         Type::Fn(..) => out.push(LKind::Ptr),
         Type::Byte | Type::Bool => out.push(LKind::I8),
         Type::Float => out.push(LKind::F64),
+        Type::F32 => out.push(LKind::F32),
         Type::Ref { inner, .. } => {
             out.push(LKind::Ptr);
             if matches!(inner.as_ref(), Type::Slice(_)) {

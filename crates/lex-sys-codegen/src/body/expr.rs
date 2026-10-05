@@ -24,6 +24,9 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
             Expr::Float(bits) => {
                 vec![self.builder.ins().f64const(f64::from_bits(*bits))]
             }
+            Expr::F32(bits) => {
+                vec![self.builder.ins().f32const(f32::from_bits(*bits))]
+            }
             Expr::Bool(v) => vec![self.builder.ins().iconst(types::I8, i64::from(*v))],
             Expr::Load(slot) => {
                 let base = self.slot_base[slot.0 as usize];
@@ -295,7 +298,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                 // sign bit and is total, including on NaN and on zero,
                 // where it is what produces `-0.0`
                 // (`docs/floating-point.md` §2).
-                if self.builder.func.dfg.value_type(v) == types::F64 {
+                if matches!(self.builder.func.dfg.value_type(v), types::F64 | types::F32) {
                     return vec![self.builder.ins().fneg(v)];
                 }
                 let zero = self.builder.ins().iconst(types::I64, 0);
@@ -540,6 +543,31 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                         let nan = self.builder.ins().fcmp(FloatCC::Unordered, x, x);
                         let canonical = self.builder.ins().iconst(types::I64, CANONICAL_NAN);
                         vec![self.builder.ins().select(nan, canonical, raw)]
+                    }
+                    // `docs/f32.md` §2: `fdemote` is IEEE conversion to the
+                    // narrower format under round-to-nearest-even, and an
+                    // overflow is infinity, never a trap. `fpromote` is
+                    // exact.
+                    Callee::Builtin(Builtin::F32Of) => {
+                        vec![self.builder.ins().fdemote(types::F32, args[0])]
+                    }
+                    Callee::Builtin(Builtin::FloatOf32) => {
+                        vec![self.builder.ins().fpromote(types::F64, args[0])]
+                    }
+                    // As `BitsOf`, at 32 bits: a `bitcast`, with every NaN
+                    // answering one pattern, then zero-extended so the
+                    // answer is the unsigned 32-bit value.
+                    Callee::Builtin(Builtin::BitsOf32) => {
+                        let x = args[0];
+                        let raw = self.builder.ins().bitcast(types::I32, MemFlags::new(), x);
+                        let nan = self.builder.ins().fcmp(FloatCC::Unordered, x, x);
+                        let canonical = self.builder.ins().iconst(types::I32, CANONICAL_NAN_32);
+                        let bits = self.builder.ins().select(nan, canonical, raw);
+                        vec![self.builder.ins().uextend(types::I64, bits)]
+                    }
+                    Callee::Builtin(Builtin::F32OfBits) => {
+                        let low = self.builder.ins().ireduce(types::I32, args[0]);
+                        vec![self.builder.ins().bitcast(types::F32, MemFlags::new(), low)]
                     }
                     // `docs/value-barrier.md` §3: the identity. Cranelift
                     // never turns a select or an `and` into a branch, so
@@ -941,7 +969,9 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         // `docs/floating-point.md` §2: IEEE-754 binary64, which is a
         // different instruction for every operator. The checker has
         // already agreed the two sides, so one of them decides.
-        if self.builder.func.dfg.value_type(a) == types::F64 {
+        // `docs/f32.md` §2: the same instructions at binary32 width. The
+        // operands' own type picks the width, so no operator knows one.
+        if matches!(self.builder.func.dfg.value_type(a), types::F64 | types::F32) {
             return self.float_binary(op, a, b);
         }
         let cc = match op {

@@ -212,6 +212,10 @@ pub enum Expr {
     /// and `-0.0` compare equal and behave differently, so they are two
     /// literals and hash as two.
     Float(u64),
+    /// A binary32 literal, `0.5f32` (`docs/f32.md` §2), stored as its
+    /// bits for the reason `Float` is. The width is written on the
+    /// literal and never inferred from context (`docs/f32.md` §4).
+    F32(u32),
     Bool(bool),
     /// A string literal, which exists only to be *read by the checker*.
     ///

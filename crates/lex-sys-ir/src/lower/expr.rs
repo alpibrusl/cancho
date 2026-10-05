@@ -16,6 +16,20 @@ impl<'a> FnLowering<'a> {
         Ok(match self.ast.expr(id) {
             AstExpr::Int(v) => (Expr::Int(*v), Type::Int),
             AstExpr::Float(bits) => (Expr::Float(*bits), Type::Float),
+            // The suffix is edition 6's, where the type is visible
+            // (`docs/f32.md` §6). Refused here and not in the parser, which
+            // does not know the edition and which `print` -- that prints no
+            // edition marker -- must be able to reparse.
+            AstExpr::F32(bits) => {
+                if self.edition < 6 {
+                    return Err(Diagnostic::new(
+                        Rule::LiteralForm,
+                        "an `f32` literal needs `edition 6;` or later",
+                        span,
+                    ));
+                }
+                (Expr::F32(*bits), Type::F32)
+            }
             // A literal the checker reads and the program never holds.
             // `docs/strings.md` §4: the bytes go in the object file and the
             // slice points at them, so the region is `static` -- it outlives
@@ -503,11 +517,14 @@ impl<'a> FnLowering<'a> {
                 let (inner, found) = self.expr(*operand)?;
                 match op {
                     ast::UnOp::Neg => {
-                        if !matches!(self.unifier.resolve(&found), Type::Int | Type::Float) {
+                        if !matches!(
+                            self.unifier.resolve(&found),
+                            Type::Int | Type::Float | Type::F32
+                        ) {
                             return Err(Diagnostic::new(
                                 Rule::OperatorTypeMismatch,
                                 format!(
-                                    "`{}` cannot be negated (`int` and `float` can)",
+                                    "`{}` cannot be negated (`int`, `float` and `f32` can)",
                                     self.unifier.display(&found)
                                 ),
                                 operand_span,
@@ -555,17 +572,20 @@ impl<'a> FnLowering<'a> {
                 self.expect_type(&lt, &rt, rhs_span)?;
                 let operand = self.unifier.resolve(&lt);
                 match op {
-                    // `+ - * /` are `int` or `float`; `%` is `int` only.
+                    // `+ - * /` are `int`, `float` or `f32` -- never mixed,
+                    // because `expect_type` above has already refused two
+                    // different operand types (`docs/f32.md` §2); `%` is
+                    // `int` only (`f32`'s is F2).
                     // There is no `frem` primitive worth the name -- C's
                     // `fmod` is a library call with its own rounding
                     // story -- so it belongs in `std.math` when floats
                     // get one (`docs/floating-point.md` §7).
                     BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
-                        if !matches!(operand, Type::Int | Type::Float) {
+                        if !matches!(operand, Type::Int | Type::Float | Type::F32) {
                             return Err(Diagnostic::new(
                                 Rule::OperatorTypeMismatch,
                                 format!(
-                                    "`{}` has no arithmetic (`int` and `float` do)",
+                                    "`{}` has no arithmetic (`int`, `float` and `f32` do)",
                                     self.unifier.display(&operand)
                                 ),
                                 lhs_span,
@@ -583,11 +603,11 @@ impl<'a> FnLowering<'a> {
                     // trichotomy fails. That is inherited rather than
                     // chosen, and `is_nan` exists so it is checkable.
                     BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
-                        if !matches!(operand, Type::Int | Type::Float) {
+                        if !matches!(operand, Type::Int | Type::Float | Type::F32) {
                             return Err(Diagnostic::new(
                                 Rule::OperatorTypeMismatch,
                                 format!(
-                                    "`{}` has no ordering (`int` and `float` do)",
+                                    "`{}` has no ordering (`int`, `float` and `f32` do)",
                                     self.unifier.display(&operand)
                                 ),
                                 lhs_span,
@@ -620,12 +640,17 @@ impl<'a> FnLowering<'a> {
                     BinOp::Eq | BinOp::Ne => {
                         if !matches!(
                             operand,
-                            Type::Int | Type::Bool | Type::Byte | Type::Float | Type::CPtr
+                            Type::Int
+                                | Type::Bool
+                                | Type::Byte
+                                | Type::Float
+                                | Type::F32
+                                | Type::CPtr
                         ) {
                             return Err(Diagnostic::new(
                                 Rule::OperatorTypeMismatch,
                                 format!(
-                                    "`{}` cannot be compared with `==` (`int`, `byte`, `bool`, `float` and `c_ptr` can)",
+                                    "`{}` cannot be compared with `==` (`int`, `byte`, `bool`, `float`, `f32` and `c_ptr` can)",
                                     self.unifier.display(&operand)
                                 ),
                                 lhs_span,

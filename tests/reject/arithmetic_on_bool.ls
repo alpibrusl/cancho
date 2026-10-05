@@ -1,4 +1,4 @@
-//~ ERROR `bool` has no arithmetic (`int` and `float` do)
+//~ ERROR `bool` has no arithmetic (`int`, `float` and `f32` do)
 //~ RULE operator-type-mismatch
 
 fn main() -> [] int {

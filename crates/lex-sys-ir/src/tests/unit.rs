@@ -245,6 +245,82 @@ fn float_arithmetic_is_ieee754() {
 }
 
 #[test]
+fn f32_is_arithmetic_and_is_never_mixed() {
+    // `docs/f32.md` §2: the same operators as `float`, at binary32, and no
+    // implicit conversion in either direction -- not to `float`, not to
+    // `int`, whichever side the other operand is on.
+    let at = |body: &str| format!("edition 6; fn f() -> [] f32 {{ {body} }}");
+    assert_eq!(main_fn(&at("return 1.5f32 + 2.0f32 * 3.0f32 - 4.0f32 / 5.0f32;")).ret, Type::F32);
+    assert_eq!(main_fn(&at("return -1.5f32;")).ret, Type::F32);
+    let x = "let x: f32 = 1.5f32; ";
+    assert_eq!(
+        main_fn(&format!("edition 6; fn f() -> [] bool {{ {x} return x < 2.0f32 && x != x; }}"))
+            .ret,
+        Type::Bool
+    );
+    assert!(error(&at("return 1.5f32 + 2.0;")).contains("expected `f32`, found `float`"));
+    assert!(error(&at("return 2.0 + 1.5f32;")).contains("expected `float`, found `f32`"));
+    assert!(error(&at("return 1.5f32 + 2;")).contains("expected `f32`, found `int`"));
+    assert!(error(&at("return 1.5f32 % 2.0f32;")).contains("expected `int`, found `f32`"));
+    assert!(error("edition 6; fn f() -> [] f32 { return 1.5; }").contains("expected `f32`"));
+    assert!(error("edition 6; fn f() -> [] float { return 1.5f32; }").contains("expected `float`"));
+    // A comparison across widths is refused for the same reason.
+    assert!(
+        error("edition 6; fn f() -> [] bool { return 1.5f32 < 2.0; }")
+            .contains("expected `f32`, found `float`")
+    );
+}
+
+#[test]
+fn the_f32_conversions_are_spelled_and_total() {
+    let at = |ret: &str, body: &str| format!("edition 6; fn f() -> [] {ret} {{ return {body}; }}");
+    assert_eq!(main_fn(&at("f32", "f32_of(1.5)")).ret, Type::F32);
+    assert_eq!(main_fn(&at("float", "float_of32(1.5f32)")).ret, Type::Float);
+    assert_eq!(main_fn(&at("int", "bits_of32(1.5f32)")).ret, Type::Int);
+    assert_eq!(main_fn(&at("f32", "f32_of_bits(1065353216)")).ret, Type::F32);
+    // Each takes exactly the type it names.
+    assert!(error(&at("f32", "f32_of(1.5f32)")).contains("expected `float`, found `f32`"));
+    assert!(error(&at("float", "float_of32(1.5)")).contains("expected `f32`, found `float`"));
+    assert!(error(&at("int", "bits_of32(1.5)")).contains("expected `f32`, found `float`"));
+    assert!(error(&at("f32", "f32_of_bits(1.5f32)")).contains("expected `int`, found `f32`"));
+    // `float_of` is still `int -> float`: it was not overloaded.
+    assert!(error(&at("float", "float_of(1.5f32)")).contains("expected `int`, found `f32`"));
+}
+
+#[test]
+fn f32_is_edition_six() {
+    // `docs/f32.md` §6: the type, the literal and the four builtins are
+    // visible from edition 6, so an earlier file may use every one of those
+    // names for itself and refuses the literal.
+    assert!(error("fn f() -> [] f32 { return f32_of(1.5); }").contains("`f32`"));
+    assert!(
+        error("edition 5; fn f() -> [] int { let x = 1.5f32; return 0; }").contains("edition 6")
+    );
+    assert!(
+        lower_src("edition 5; struct f32 { a: int } fn f32_of(a: int) -> [] int { return a; }")
+            .is_ok()
+    );
+    assert!(
+        error("edition 6; struct f32 { a: int }")
+            .contains("built-in type and cannot be redeclared")
+    );
+}
+
+#[test]
+fn an_f32_literal_is_not_folded() {
+    // There is no `f32` folder (`docs/f32.md` §5): a literal stays a
+    // literal and an operation on two stays an operation, for the backend
+    // to do in binary32 rather than for this crate to do in `f32` of the
+    // host. That is the gate's premise as well: nothing it measures was
+    // computed at compile time.
+    let f = main_fn("edition 6; fn f() -> [] f32 { return 0.1f32 + 0.2f32; }");
+    let Stmt::Return(Expr::Bin { lhs, rhs, .. }) = &f.body[0] else {
+        panic!("the addition survives: {:?}", f.body)
+    };
+    assert_eq!((&**lhs, &**rhs), (&Expr::F32(0.1f32.to_bits()), &Expr::F32(0.2f32.to_bits())));
+}
+
+#[test]
 fn a_comparison_yields_a_bool() {
     let f = main_fn("fn f() -> [] bool { return 1 < 2; }");
     assert_eq!(f.ret, Type::Bool);

@@ -11,6 +11,7 @@ impl<'a> FuncEmitter<'a> {
             // §1: stored as bits already, so this is the one literal
             // here with no decimal round-trip to get wrong.
             Expr::Float(bits) => Ok(vec![LValue::FConst(*bits)]),
+            Expr::F32(bits) => Ok(vec![LValue::F32Const(*bits)]),
             Expr::Load(slot) => {
                 let kinds = self.slot_kinds[slot.0 as usize].clone();
                 let mut out = Vec::with_capacity(kinds.len());
@@ -283,9 +284,14 @@ impl<'a> FuncEmitter<'a> {
             // `int`'s is.
             Expr::Neg(inner) => {
                 let v = self.scalar(inner)?;
-                if self.scalar_kind(inner)? == LKind::F64 {
+                let kind = self.scalar_kind(inner)?;
+                if matches!(kind, LKind::F64 | LKind::F32) {
                     let result = self.fresh();
-                    self.out.push_str(&format!("  {result} = fneg double {}\n", operand(&v)));
+                    self.out.push_str(&format!(
+                        "  {result} = fneg {} {}\n",
+                        kind.llvm(),
+                        operand(&v)
+                    ));
                     return Ok(vec![LValue::Reg(result)]);
                 }
                 self.checked_arith("ssub", LValue::Const(0), v)
@@ -685,6 +691,64 @@ impl<'a> FuncEmitter<'a> {
                 let result = self.fresh();
                 self.out
                     .push_str(&format!("  {result} = call i64 asm \"\", \"=r,0\"(i64 {x_op})\n"));
+                Ok(vec![LValue::Reg(result)])
+            }
+            // `docs/f32.md` §2: `fptrunc` is IEEE conversion to the
+            // narrower format under the default rounding mode
+            // (round-to-nearest-even), an overflow is infinity, and
+            // `fpext` is exact -- the counterparts of Cranelift's
+            // `fdemote` and `fpromote`.
+            Callee::Builtin(Builtin::F32Of) => {
+                let x = evaluated
+                    .into_iter()
+                    .flatten()
+                    .next()
+                    .ok_or_else(|| "`f32_of` needs a float argument".to_owned())?;
+                let result = self.fresh();
+                self.out
+                    .push_str(&format!("  {result} = fptrunc double {} to float\n", operand(&x)));
+                Ok(vec![LValue::Reg(result)])
+            }
+            Callee::Builtin(Builtin::FloatOf32) => {
+                let x = evaluated
+                    .into_iter()
+                    .flatten()
+                    .next()
+                    .ok_or_else(|| "`float_of32` needs an f32 argument".to_owned())?;
+                let result = self.fresh();
+                self.out.push_str(&format!("  {result} = fpext float {} to double\n", operand(&x)));
+                Ok(vec![LValue::Reg(result)])
+            }
+            // As `BitsOf`, at 32 bits, zero-extended.
+            Callee::Builtin(Builtin::BitsOf32) => {
+                let x = evaluated
+                    .into_iter()
+                    .flatten()
+                    .next()
+                    .ok_or_else(|| "`bits_of32` needs an f32 argument".to_owned())?;
+                let x_op = operand(&x);
+                let raw = self.fresh();
+                self.out.push_str(&format!("  {raw} = bitcast float {x_op} to i32\n"));
+                let is_nan = self.fresh();
+                self.out.push_str(&format!("  {is_nan} = fcmp uno float {x_op}, {x_op}\n"));
+                let bits = self.fresh();
+                self.out.push_str(&format!(
+                    "  {bits} = select i1 {is_nan}, i32 {CANONICAL_NAN_32}, i32 {raw}\n"
+                ));
+                let result = self.fresh();
+                self.out.push_str(&format!("  {result} = zext i32 {bits} to i64\n"));
+                Ok(vec![LValue::Reg(result)])
+            }
+            Callee::Builtin(Builtin::F32OfBits) => {
+                let n = evaluated
+                    .into_iter()
+                    .flatten()
+                    .next()
+                    .ok_or_else(|| "`f32_of_bits` needs an int argument".to_owned())?;
+                let low = self.fresh();
+                self.out.push_str(&format!("  {low} = trunc i64 {} to i32\n", operand(&n)));
+                let result = self.fresh();
+                self.out.push_str(&format!("  {result} = bitcast i32 {low} to float\n"));
                 Ok(vec![LValue::Reg(result)])
             }
             Callee::Builtin(Builtin::BitsOf) => {

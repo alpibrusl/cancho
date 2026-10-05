@@ -657,6 +657,8 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     pub(crate) fn stride(&self, element: &Type) -> i64 {
         match element {
             Type::Byte => 1,
+            // `docs/f32.md` §2, as `layout::stride_of`.
+            Type::F32 => 4,
             other => {
                 i64::from(leaf_count(other, self.program, self.pointer))
                     * i64::from(RETURN_SLOT_STRIDE)

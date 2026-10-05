@@ -60,7 +60,12 @@ pub(crate) fn settle_types(stmts: &mut [Stmt], unifier: &Unifier) {
 
 pub(crate) fn settle_expr(expr: &mut Expr, unifier: &Unifier) {
     match expr {
-        Expr::Int(_) | Expr::Float(_) | Expr::Bool(_) | Expr::Load(_) | Expr::Static(_) => {}
+        Expr::Int(_)
+        | Expr::Float(_)
+        | Expr::F32(_)
+        | Expr::Bool(_)
+        | Expr::Load(_)
+        | Expr::Static(_) => {}
         Expr::Neg(inner) | Expr::Not(inner) | Expr::BitNot(inner) => settle_expr(inner, unifier),
         Expr::Bin { lhs, rhs, .. } => {
             settle_expr(lhs, unifier);
@@ -848,6 +853,10 @@ pub(crate) fn resolve_type_at(
         "int" => (Type::Int, 0),
         "byte" => (Type::Byte, 0),
         "float" => (Type::Float, 0),
+        // `docs/f32.md` §6: visible from edition 6, the latest, so an
+        // earlier file that declares its own `f32` is not redeclaring
+        // anything it can name.
+        "f32" if edition >= 6 => (Type::F32, 0),
         "bool" => (Type::Bool, 0),
         other => match lookup(defs) {
             Some(index) => {
