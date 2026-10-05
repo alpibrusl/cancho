@@ -567,11 +567,25 @@ case("early_data in EncryptedExtensions, never offered", "tls-unsupported-extens
     flight_case(lambda s: setattr(s, "ee_extensions", ext(42, b""))))
 case("no supported_versions, with a TLS 1.3 suite", "tls-no-shared-cipher", 40)(lambda s: hello(s, version_ext=b""))
 case("supported_versions TLS 1.2", "tls-protocol-version", 70)(lambda s: hello(s, version_ext=ext(43, u16(0x0303))))
-case("the TLS 1.2 downgrade sentinel", "tls-protocol-version", 70)(
-    lambda s: hello(s, random=bytes(24) + b"DOWNGRD\1"))
-case("the TLS 1.1 downgrade sentinel", "tls-protocol-version", 70)(
-    lambda s: hello(s, random=bytes(24) + b"DOWNGRD\0"))
+
+
+def sentinel_in_tls13(tail):
+    """A TLS 1.3 ServerHello whose random ends in a downgrade sentinel: RFC
+    8446 §4.1.3 has the client check for one only in a ServerHello for TLS
+    1.2 or below, so here it is random bytes, and the connection goes on
+    (docs/tls-assurance.md §4: OpenSSL takes it too)."""
+    def run(s):
+        s.start()
+        s.random = bytes(24) + tail
+        honest_after_hello(s)
+    return run
+
+
+case("the TLS 1.2 downgrade sentinel in a TLS 1.3 ServerHello", "ok")(sentinel_in_tls13(b"DOWNGRD\1"))
+case("the TLS 1.1 downgrade sentinel in a TLS 1.3 ServerHello", "ok")(sentinel_in_tls13(b"DOWNGRD\0"))
 case("TLS_AES_128_CCM_SHA256, not offered", "tls-no-shared-cipher", 40)(lambda s: hello(s, suite=0x1304))
+case("server_name in a TLS 1.3 ServerHello, not EncryptedExtensions", "tls-unsupported-extension", 110)(
+    lambda s: hello(s, extra_extensions=ext(0, b"")))
 case("a P-256 share, never sent", "tls-key-share", 47)(lambda s: hello(s, group=P256))
 
 
@@ -914,6 +928,10 @@ case12("TLS 1.2, honest: ECDHE-ECDSA-AES256-GCM-SHA384", "ok")(honest12(lambda s
 case12("TLS 1.2, honest: a CertificateRequest, AES-128-GCM", "ok")(
     honest12(lambda s: (setattr(s, "suite", 0xc02b), setattr(s, "request_cert", True))))
 case12("TLS 1.2, honest: P-256", "ok")(honest12(lambda s: setattr(s, "group", P256)))
+# RFC 6066 §3: a server that used the name sends server_name back, empty;
+# nginx does (docs/tls-assurance.md §5).
+case12("TLS 1.2, honest: server_name acknowledged", "ok")(honest12(lambda s: setattr(s, "sh_extra", ext(0, b""))))
+case12("TLS 1.2, server_name twice", "tls-decode-error", 50)(hello12(sh_extra=ext(0, b"") + ext(0, b"")))
 case12("TLS 1.2, the 1.2 downgrade sentinel", "tls-protocol-version", 70)(hello12(sh_random=bytes(24) + b"DOWNGRD\1"))
 case12("TLS 1.2, the 1.1 downgrade sentinel", "tls-protocol-version", 70)(hello12(sh_random=bytes(24) + b"DOWNGRD\0"))
 case12("TLS 1.2, no extended master secret", "tls-extended-master-secret", 40)(hello12(ems=False))

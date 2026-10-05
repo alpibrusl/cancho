@@ -77,7 +77,7 @@ Anything else in a state is `tls-unexpected-message` with an `unexpected_message
 - **HelloRetryRequest** is refused (`tls-hello-retry`, `docs/tls-pure.md` §3.3). The ServerHello random that marks one (RFC 8446
   §4.1.3) is checked before anything else in the message. *Changed by #207 (`docs/tls-parity.md` §3.3): one HelloRetryRequest
   to P-256 or P-384 is followed; the random still tells it apart first.*
-- **A downgrade sentinel** in the last 8 bytes of the random is `tls-protocol-version`.
+- **A downgrade sentinel** in the last 8 bytes of the random is `tls-protocol-version`. *Corrected (#208, `docs/tls-assurance.md` §4): only in a ServerHello for TLS 1.2 or below, as RFC 8446 §4.1.3 says. In a TLS 1.3 ServerHello the sentinels are random bytes, and OpenSSL takes them; the client refused them, which the differential test against `openssl s_client` found.*
 - **`change_cipher_spec`**: one is accepted after ServerHello and before the server's Finished, and only if it is exactly `01`
   (Appendix D.4). *Corrected (§10.3): this said "before the first encrypted record". The code accepts one until the server's
   Finished, which is what Appendix D.4 asks of a receiver.*
@@ -161,7 +161,7 @@ in its own tag:
 |---|---|
 | sends EncryptedExtensions before ServerHello, or Finished before CertificateVerify | `tls-unexpected-message` |
 | adds an extension the client did not offer (ALPN, `early_data`) | `tls-unsupported-extension` |
-| chooses TLS 1.2, or puts a downgrade sentinel in its random | `tls-protocol-version` |
+| chooses TLS 1.2, or puts a downgrade sentinel in its random (*since #208, in a TLS 1.2 ServerHello only, §4 above*) | `tls-protocol-version` |
 | chooses a cipher suite that was not offered | `tls-no-shared-cipher` |
 | sends HelloRetryRequest | `tls-hello-retry` (*since #207, followed when it asks for P-256 or P-384; the HRR cases are in `docs/tls-parity.md` §3.3.1*) |
 | sends an all-zero X25519 share | `tls-key-share` |
@@ -235,7 +235,7 @@ the zeroing stores are not to memory about to be freed. That is the case where a
 - **A wrong pin** is refused (`x509-unknown-issuer`) with an `unknown_ca` alert.
 - **15 crafted ServerHellos and records**, each refused with its own tag and a fatal alert:
   - HelloRetryRequest;
-  - the downgrade sentinel; a TLS 1.2 ServerHello; `supported_versions` 1.2;
+  - the downgrade sentinel (*since #208 accepted in a TLS 1.3 ServerHello, and refused in a TLS 1.2 one*); a TLS 1.2 ServerHello; `supported_versions` 1.2;
   - AES-128-GCM chosen; ALPN never offered; a duplicate extension; another session id;
   - a P-256 share; an all-zero share; a byte after the extensions;
   - a record over 2^14 + 256; an unknown content type; application data before the handshake.
@@ -320,7 +320,7 @@ All of it passes the gate, and the parts that need no Python run in `cargo test`
   |---|---|---|
   | EncryptedExtensions before ServerHello; Certificate before EncryptedExtensions; Finished before CertificateVerify; application data in the flight; a NewSessionTicket in Finished's record | `tls-unexpected-message` | 10 |
   | ALPN, or `early_data`, in EncryptedExtensions | `tls-unsupported-extension` | 110 |
-  | no `supported_versions`; `supported_versions` 1.2; the TLS 1.2 or TLS 1.1 downgrade sentinel | `tls-protocol-version` | 70 |
+  | no `supported_versions`; `supported_versions` 1.2; the TLS 1.2 or TLS 1.1 downgrade sentinel (*since #208, both accepted in a TLS 1.3 ServerHello: the two cases are now honest connections, `docs/tls-assurance.md` §4*) | `tls-protocol-version` | 70 |
   | AES-128-GCM (*since #207, TLS_AES_128_CCM_SHA256: AES-128-GCM is offered*) | `tls-no-shared-cipher` | 40 |
   | HelloRetryRequest (*since #207, followed; the twelve cases that replace this row are in `docs/tls-parity.md` §3.3.1*) | `tls-hello-retry` | 40 |
   | an all-zero, or a low-order, X25519 share | `tls-key-share` | 47 |

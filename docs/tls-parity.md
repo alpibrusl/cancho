@@ -292,8 +292,12 @@ engine:
 - **The downgrade sentinels:**
   - a TLS 1.2 ServerHello whose random ends `DOWNGRD\x01` is refused, since this client offered 1.3 (RFC 8446 §4.1.3);
   - one ending `DOWNGRD\x00` is refused too.
+  - *#208: the code refused them in a TLS 1.3 ServerHello as well, which this never said; corrected to match it (`docs/tls-assurance.md` §4).*
 - **The flight:**
-  - ServerHello;
+  - ServerHello, whose extensions may be `renegotiation_info` (empty), `extended_master_secret` and `ec_point_formats`.
+    *Corrected (#208, `docs/tls-assurance.md` §5): and `server_name`, empty, which RFC 6066 §3 has a server send when
+    it used the name. This list left it out, and the client refused every TLS 1.2 handshake with nginx
+    (`tls-unsupported-extension`); the interop matrix found it;*
   - Certificate (verified as in 1.3);
   - ServerKeyExchange, whose ECDHE parameters are signed with the leaf's key over both randoms;
   - ServerHelloDone;
