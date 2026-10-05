@@ -223,7 +223,7 @@ What it found that §1 to §7 did not know:
 - **A compiler bug**, in the LLVM backend: any `fs_read(...)` used directly as an operand fails to generate code (it builds on Cranelift, and binding the result first
   works on both). Reported as its own task.
 
-**Results**, the commands and the machine in hooks' `docs/pure-tls.md`: the `https` tests, 94 checks on each build, **93 the same and 1 different on purpose** (`SSL_CERT_FILE`); fifteen
+**Results**, the commands and the machine in hooks' `docs/pure-tls.md`: the `https` tests, 97 checks on each build, **96 the same and 1 different on purpose** (`SSL_CERT_FILE`); 17 mutants of the adapter, 14 killed and 3 argued; fifteen
 more harnesses with exit 0 on both; the authority report **34 foreign symbols to 2** (`libc:prctl`, `libc:statx`), none added; a full handshake costs **4 to 7 times** the CPU of
 OpenSSL's (about 340 `https` deliveries a second a core against 1,430 to 2,500, on that machine) and a connection holds about twice the memory (106 KiB against 58 KiB a held
 handshake). §6's expectation, that the pure backend is several times slower per handshake, held. **Not measured:** RSA chains, and the latency the 2.8 ms handshakes add to other
