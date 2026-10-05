@@ -324,7 +324,7 @@ seventh, as `value_barrier` did. An earlier file still owns every one of those n
 ([`processes.md`](processes.md)): the types `Exec`, `Child`, `Pipe`, `ChildEnd`,
 `Stdio`, `Piped`, `Spawned` and `Exited`, the builtins `pipe_open`, `exec_spawn`,
 `child_wait`, `child_kill`, `pipe_read`, `pipe_write`, `pipe_nonblocking`,
-`pipe_close` and `child_end_close`, the labels `exec("...")`, `child_signal`,
+`pipe_close`, `child_end_close`, `poller_add_pipe` and `poller_add_child`, the labels `exec("...")`, `child_signal`,
 `pipe_read` and `pipe_write`, and **a ninth field on `Split`**, `exec`. The ninth
 field is why this is an edition and not a later slice of edition 6, for the reason
 the eighth was: edition-6 files already destructure eight fields. `Split` is now five

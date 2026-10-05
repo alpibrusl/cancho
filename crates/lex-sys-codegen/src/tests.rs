@@ -460,3 +460,81 @@ fn every_word_global_is_aligned_to_a_word() {
         assert_eq!(seen, expected, "{triple}: every word global should be defined and checked");
     }
 }
+
+/// `docs/processes.md` §4.5 and §4.8, from any host: starting a program and
+/// watching it ask Linux for `closefrom` and a `pidfd`, and Darwin for
+/// neither -- `POSIX_SPAWN_CLOEXEC_DEFAULT` and `kevent` instead.
+#[test]
+fn a_child_is_started_and_watched_the_way_each_platform_does() {
+    const WATCH: &str = r#"edition 7;
+fn go[&x](exec: &x Exec("/bin")) -> [exec("/bin"), poll] int {
+    match poller_new() {
+        Polling::Ok(p) => {
+            var poller = p;
+            match pipe_open() {
+                Piped::Ok(mine, theirs) => {
+                    var m = mine;
+                    match exec_spawn(exec, "/bin/true", "", "", Stdio::Null, Stdio::Pipe(theirs), Stdio::Null) {
+                        Spawned::Ok(c) => {
+                            var child = c;
+                            borrow mut poller as &!ph in {
+                                borrow mut m as &!pp in {
+                                    borrow child as &ch in {
+                                        poller_add_pipe(ph, pp, 1, 1);
+                                        poller_add_child(ph, ch, 2);
+                                    }
+                                }
+                            }
+                            match child_wait(child) {
+                                Exited::Code(n) => { }
+                                Exited::Signaled(s) => { }
+                                Exited::Failed(e) => { }
+                            }
+                        }
+                        Spawned::Failed(e) => { }
+                    }
+                    pipe_close(m);
+                }
+                Piped::Failed(e) => { }
+            }
+            poller_close(poller);
+        }
+        Polling::Failed(e) => { }
+    }
+    return 0;
+}
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(net); release(clock); release(signals);
+    let bin = narrow(exec, "/bin");
+    var status = 0;
+    borrow bin as &x in { status = go(x); }
+    release(bin);
+    return status;
+}
+"#;
+    for (triple, prefix) in targets() {
+        let names = symbols_of(WATCH, &triple);
+        let imports: Vec<&str> = names.iter().map(|(n, _, _)| n.as_str()).collect();
+        let has = |base: &str| imports.contains(&format!("{prefix}{base}").as_str());
+        for call in ["posix_spawn", "waitpid", "socketpair", "close"] {
+            assert!(has(call), "{triple} should import `{call}`: {imports:?}");
+        }
+        if triple.contains("darwin") {
+            for call in ["kqueue", "kevent"] {
+                assert!(has(call), "{triple} should import `{call}`: {imports:?}");
+            }
+            assert!(
+                !has("syscall")
+                    && !has("epoll_ctl")
+                    && !has("posix_spawn_file_actions_addclosefrom_np"),
+                "{triple}: {imports:?}"
+            );
+        } else {
+            for call in ["syscall", "epoll_ctl", "posix_spawn_file_actions_addclosefrom_np"] {
+                assert!(has(call), "{triple} should import `{call}`: {imports:?}");
+            }
+            assert!(!has("kevent") && !has("kqueue"), "{triple}: {imports:?}");
+        }
+    }
+}

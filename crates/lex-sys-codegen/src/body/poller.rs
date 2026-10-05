@@ -4,6 +4,7 @@
 //! account; both are level-triggered.
 
 use crate::*;
+use lex_sys_ir::{CHILD_PIDFD_SHIFT, ESRCH};
 
 const READABLE: i64 = 1;
 const WRITABLE: i64 = 2;
@@ -20,6 +21,12 @@ const EPOLL_CLOEXEC: i64 = 0x80000;
 
 const EVFILT_READ: i64 = -1;
 const EVFILT_WRITE: i64 = -2;
+const EVFILT_PROC: i64 = -5;
+const EVFILT_USER: i64 = -10;
+const EV_ONESHOT: i64 = 0x0010;
+/// `0x8000_0000`, written as the signed 32-bit value `iconst.i32` takes.
+const NOTE_EXIT: i64 = -0x8000_0000;
+const NOTE_TRIGGER: i64 = 0x0100_0000;
 const EV_ADD: i64 = 0x0001;
 const EV_DELETE: i64 = 0x0002;
 const EV_ERROR: i64 = 0x4000;
@@ -166,6 +173,100 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         vec![self.builder.ins().select(failed, reason, zero)]
     }
 
+    /// `poller_add_child(&!Poller, &Child, token)` (`docs/processes.md` §4.8):
+    /// the child's exit, as readable. Linux watches the `pidfd` the `Child`
+    /// carries; Darwin asks `kqueue` for `NOTE_EXIT` on the pid, which it
+    /// reports once. `0`, or the `errno`.
+    pub(crate) fn poller_add_child(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let poller = self.handle_fd(args[0]);
+        let word = self.builder.ins().load(types::I64, MemFlags::trusted(), args[1], 0);
+        let token = args[2];
+        let zero = self.builder.ins().iconst(types::I64, 0);
+
+        if self.is_darwin() {
+            let pid = self.builder.ins().ireduce(types::I32, word);
+            let pid64 = self.builder.ins().sextend(types::I64, pid);
+            let kev = self.scratch(KEVENT_SIZE);
+            self.builder.ins().store(unaligned(), pid64, kev, 0);
+            let filter = self.builder.ins().iconst(types::I16, EVFILT_PROC);
+            self.builder.ins().store(unaligned(), filter, kev, 8);
+            let flags = self.builder.ins().iconst(types::I16, EV_ADD | EV_ONESHOT);
+            self.builder.ins().store(unaligned(), flags, kev, 10);
+            let exit = self.builder.ins().iconst(types::I32, NOTE_EXIT);
+            self.builder.ins().store(unaligned(), exit, kev, 12);
+            self.builder.ins().store(unaligned(), zero, kev, 16);
+            self.builder.ins().store(unaligned(), token, kev, 24);
+            let one = self.builder.ins().iconst(types::I32, 1);
+            let zero32 = self.builder.ins().iconst(types::I32, 0);
+            let none = self.builder.ins().iconst(pointer, 0);
+            let result = self.libc_call(
+                "kevent",
+                &[types::I32, pointer, types::I32, pointer, types::I32, pointer],
+                &[types::I32],
+                &[poller, kev, one, none, zero32, none],
+            );
+            let reason = self.errno();
+            let failed = self.builder.ins().icmp_imm(IntCC::SignedLessThan, result, 0);
+            let answer = self.builder.ins().select(failed, reason, zero);
+
+            // `ESRCH`: the child has already exited, and `kqueue` will not watch
+            // a zombie. The exit has happened, so the poller is told so at once:
+            // an `EVFILT_USER` event, triggered as it is added, carries the
+            // token, and `poller_wait` reads it as readable (§4.8).
+            let trigger = self.builder.create_block();
+            let merge = self.builder.create_block();
+            self.builder.append_block_param(merge, types::I64);
+            let gone = self.builder.ins().icmp_imm(IntCC::Equal, answer, ESRCH);
+            self.builder.ins().brif(gone, trigger, &[], merge, &[answer.into()]);
+
+            self.builder.switch_to_block(trigger);
+            self.builder.seal_block(trigger);
+            let filter = self.builder.ins().iconst(types::I16, EVFILT_USER);
+            self.builder.ins().store(unaligned(), filter, kev, 8);
+            let trigger_now = self.builder.ins().iconst(types::I32, NOTE_TRIGGER);
+            self.builder.ins().store(unaligned(), trigger_now, kev, 12);
+            let result = self.libc_call(
+                "kevent",
+                &[types::I32, pointer, types::I32, pointer, types::I32, pointer],
+                &[types::I32],
+                &[poller, kev, one, none, zero32, none],
+            );
+            let reason = self.errno();
+            let failed = self.builder.ins().icmp_imm(IntCC::SignedLessThan, result, 0);
+            let triggered = self.builder.ins().select(failed, reason, zero);
+            self.builder.ins().jump(merge, &[triggered.into()]);
+
+            self.builder.switch_to_block(merge);
+            self.builder.seal_block(merge);
+            return vec![self.builder.block_params(merge)[0]];
+        }
+
+        let high = self.builder.ins().ushr_imm(word, CHILD_PIDFD_SHIFT);
+        let pidfd = self.builder.ins().ireduce(types::I32, high);
+        let (size, data_at) = self.epoll_layout();
+        let ev = self.scratch(size);
+        let mask = self.builder.ins().iconst(types::I32, EPOLLIN);
+        self.builder.ins().store(unaligned(), mask, ev, 0);
+        self.builder.ins().store(unaligned(), token, ev, data_at as i32);
+        let op = self.builder.ins().iconst(types::I32, EPOLL_CTL_ADD);
+        let result = self.libc_call(
+            "epoll_ctl",
+            &[types::I32, types::I32, types::I32, pointer],
+            &[types::I32],
+            &[poller, op, pidfd, ev],
+        );
+        let reason = self.errno();
+        let failed = self.builder.ins().icmp_imm(IntCC::SignedLessThan, result, 0);
+        let answer = self.builder.ins().select(failed, reason, zero);
+        // No `pidfd`: the `Child` carries why, the `errno` negated
+        // (`ENOSYS` before Linux 5.3, `EMFILE` with no descriptor to spare).
+        let given = self.builder.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, pidfd, 0);
+        let pidfd64 = self.builder.ins().sextend(types::I64, pidfd);
+        let why = self.builder.ins().ineg(pidfd64);
+        vec![self.builder.ins().select(given, answer, why)]
+    }
+
     /// `poller_remove(&!Poller, &Conn)`.
     pub(crate) fn poller_remove(&mut self, args: &[Value]) -> Vec<Value> {
         let pointer = self.pointer;
@@ -287,7 +388,13 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
             let filter = self.builder.ins().load(types::I16, unaligned(), entry, 8);
             let flags = self.builder.ins().load(types::I16, unaligned(), entry, 10);
             let token = self.builder.ins().load(types::I64, unaligned(), entry, 24);
-            let is_read = self.builder.ins().icmp_imm(IntCC::Equal, filter, EVFILT_READ);
+            let reading = self.builder.ins().icmp_imm(IntCC::Equal, filter, EVFILT_READ);
+            // A child's exit is read as a signal's arrival is: readable. One
+            // that had exited before it was added arrives as `EVFILT_USER`.
+            let exited = self.builder.ins().icmp_imm(IntCC::Equal, filter, EVFILT_PROC);
+            let is_read = self.builder.ins().bor(reading, exited);
+            let had_exited = self.builder.ins().icmp_imm(IntCC::Equal, filter, EVFILT_USER);
+            let is_read = self.builder.ins().bor(is_read, had_exited);
             let is_write = self.builder.ins().icmp_imm(IntCC::Equal, filter, EVFILT_WRITE);
             let error_bits = self.builder.ins().band_imm(flags, EV_ERROR);
             let errored = self.builder.ins().icmp_imm(IntCC::NotEqual, error_bits, 0);
