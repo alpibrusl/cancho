@@ -19,13 +19,26 @@ impl<'a> FuncEmitter<'a> {
         lex_sys_ir::open_flags(self.is_darwin(), aarch64)
     }
 
+    /// `openat(AT_FDCWD, path, flags, mode)`, the one way a path (rather
+    /// than a name beneath a `Dir`) is opened: declared variadic and called
+    /// as one, so `mode` reaches the callee wherever the target passes a
+    /// variadic argument. `flags` carries `O_CLOEXEC` (`docs/processes.md`
+    /// §4.5). Answers the `i32` result.
+    pub(crate) fn open_at_cwd(&mut self, path: &str, flags: i64, mode: i64) -> String {
+        let cwd = self.open_flags().at_fdcwd;
+        let fd = self.fresh();
+        self.out.push_str(&format!(
+            "  {fd} = call i32 (i32, ptr, i32, ...) @openat(i32 {cwd}, ptr {path}, i32 {flags}, i32 {mode})\n"
+        ));
+        fd
+    }
+
     /// `open_dir`'s open: `path` is already checked against the prefix and
-    /// NUL-terminated. `open(path, O_RDONLY | O_DIRECTORY)`, two fixed
-    /// arguments as `open_read`'s is. `DirOpened`'s three leaves.
+    /// NUL-terminated. `openat(AT_FDCWD, path, O_RDONLY | O_DIRECTORY |
+    /// O_CLOEXEC)`, as `open_read`'s is. `DirOpened`'s three leaves.
     pub(crate) fn open_directory(&mut self, path: &str) -> Vec<LValue> {
-        let directory = self.open_flags().directory;
-        let fd32 = self.fresh();
-        self.out.push_str(&format!("  {fd32} = call i32 @open(ptr {path}, i32 {directory})\n"));
+        let f = self.open_flags();
+        let fd32 = self.open_at_cwd(path, f.directory | f.cloexec, 0);
         let fd = self.fresh();
         self.out.push_str(&format!("  {fd} = sext i32 {fd32} to i64\n"));
         let failed = self.fresh();
@@ -187,6 +200,8 @@ impl<'a> FuncEmitter<'a> {
             }
             _ => (f.nofollow, 0),
         };
+        // Every descriptor a builtin opens is close-on-exec (`docs/processes.md` §4.5).
+        let flags = flags | f.cloexec;
         let handle = operand(&args[0]);
         let name = (operand(&args[1]), operand(&args[2]));
         Ok(self.dir_call(&[name], |this, copies| {

@@ -212,6 +212,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
             self.each_native_signal(native, |this, n| this.set_disposition(n, 1));
             let kq = self.libc_call("kqueue", &[], &[types::I32], &[]);
             let reason = self.errno();
+            self.close_on_exec(kq);
             let failed = self.builder.ins().icmp_imm(IntCC::SignedLessThan, kq, 0);
             self.builder.ins().brif(failed, bad, &[], ok, &[]);
             (kq, reason, None)

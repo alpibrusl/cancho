@@ -69,6 +69,11 @@ impl<'a> FuncEmitter<'a> {
             self.out.push_str(&format!("  {fd} = call i32 @epoll_create1(i32 {EPOLL_CLOEXEC})\n"));
         }
         let reason = self.errno();
+        // `kqueue` has no flag for it; `epoll_create1` was asked
+        // (`docs/processes.md` §4.5).
+        if self.is_darwin() {
+            self.close_on_exec(&fd);
+        }
         let fd64 = self.fresh();
         self.out.push_str(&format!("  {fd64} = sext i32 {fd} to i64\n"));
         let failed = self.fresh();

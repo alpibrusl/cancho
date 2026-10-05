@@ -22,6 +22,12 @@ pub struct SocketOs {
     pub so_error: i64,
     /// `EINPROGRESS`: what a non-blocking `connect` that has not finished answers.
     pub einprogress: i64,
+    /// `SOCK_CLOEXEC`, or'd into `socket`'s type and passed to `accept4`,
+    /// where the platform has it (Linux); 0 on Darwin, which has neither and
+    /// sets `FD_CLOEXEC` with `fcntl` straight after (`docs/processes.md` §4.5).
+    pub sock_cloexec: i64,
+    /// `F_DUPFD_CLOEXEC`: a duplicate that is close-on-exec from the start.
+    pub f_dupfd_cloexec: i64,
 }
 
 impl SocketOs {
@@ -35,6 +41,8 @@ impl SocketOs {
         eagain: 11,
         so_error: 4,
         einprogress: 115,
+        sock_cloexec: 0x80000,
+        f_dupfd_cloexec: 1030,
     };
 
     pub const DARWIN: SocketOs = SocketOs {
@@ -47,6 +55,8 @@ impl SocketOs {
         eagain: 35,
         so_error: 0x1007,
         einprogress: 36,
+        sock_cloexec: 0,
+        f_dupfd_cloexec: 67,
     };
 
     pub fn for_darwin(darwin: bool) -> SocketOs {
@@ -59,6 +69,9 @@ pub const EINVAL: i64 = 22;
 /// `fcntl` commands, the same on both.
 pub const F_GETFL: i64 = 3;
 pub const F_SETFL: i64 = 4;
+pub const F_SETFD: i64 = 2;
+/// The one descriptor flag, the same on both.
+pub const FD_CLOEXEC: i64 = 1;
 
 /// How many descriptors a ticket can name (`conn_detach`): the epoch table
 /// has one 32-bit counter per descriptor below this.

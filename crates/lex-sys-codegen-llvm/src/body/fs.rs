@@ -140,15 +140,13 @@ impl<'a> FuncEmitter<'a> {
         Ok(buffer)
     }
 
-    /// `fs_read`/`fs_write` (`docs/filesystem.md` §3). Neither call is
-    /// `open(path, flags, mode)`: `open` is variadic, and on Apple
-    /// ARM64 a variadic argument is passed on the stack while a fixed
-    /// one is passed in a register, so a fixed three-argument
-    /// declaration would put `mode` where the callee never looks. So:
-    /// `creat(path, mode)` to write, `open(path, O_RDONLY)` to read,
-    /// both non-variadic, the same choice
-    /// `lex-sys-codegen`'s own `file_op` already made and
-    /// `docs/filesystem.md` §2.2 explains.
+    /// `fs_read`/`fs_write` (`docs/filesystem.md` §3). Both open with
+    /// `openat(AT_FDCWD, path, flags, mode)` and `O_CLOEXEC`
+    /// (`docs/processes.md` §4.5): `O_WRONLY|O_CREAT|O_TRUNC` and `0644`
+    /// to write, which is what `creat` was, and `O_RDONLY` to read.
+    /// `openat` is declared variadic and called as one, so `mode` reaches
+    /// the callee on Apple ARM64 too, where a variadic argument is passed
+    /// on the stack (`docs/filesystem.md` §2.2).
     pub(crate) fn file_op(
         &mut self,
         write: bool,
@@ -159,12 +157,13 @@ impl<'a> FuncEmitter<'a> {
         let bytes = self.expr(&args[2])?;
         let path = self.checked_path(prefix, &path)?;
 
-        let fd = self.fresh();
-        if write {
-            self.out.push_str(&format!("  {fd} = call i32 @creat(ptr {path}, i32 420)\n"));
+        let f = self.open_flags();
+        let (flags, mode) = if write {
+            (f.write_only | f.create | f.truncate | f.cloexec, lex_sys_ir::CREATE_MODE)
         } else {
-            self.out.push_str(&format!("  {fd} = call i32 @open(ptr {path}, i32 0)\n"));
-        }
+            (f.cloexec, 0)
+        };
+        let fd = self.open_at_cwd(&path, flags, mode);
 
         let result_cell = self.fresh();
         self.hoist(format!("  {result_cell} = alloca i64\n"));
@@ -201,7 +200,7 @@ impl<'a> FuncEmitter<'a> {
 
     /// `open_read(fs, path)` (`docs/file-handles.md` §2.1): the first
     /// half of [`Self::file_op`] and then it stops -- the same prefix
-    /// check, the same non-variadic `open(path, O_RDONLY)`, and the
+    /// check, the same `openat(AT_FDCWD, path, O_RDONLY|O_CLOEXEC)`, and the
     /// descriptor *kept* rather than spent on one transfer and closed.
     /// What comes back is `Opened`'s three leaves: the tag, `Ok`'s
     /// descriptor, `Failed`'s reason.
@@ -220,8 +219,8 @@ impl<'a> FuncEmitter<'a> {
             return Ok(self.open_with_fopen(&path, mode));
         }
 
-        let fd32 = self.fresh();
-        self.out.push_str(&format!("  {fd32} = call i32 @open(ptr {path}, i32 0)\n"));
+        let cloexec = self.open_flags().cloexec;
+        let fd32 = self.open_at_cwd(&path, cloexec, 0);
         let fd = self.fresh();
         self.out.push_str(&format!("  {fd} = sext i32 {fd32} to i64\n"));
 

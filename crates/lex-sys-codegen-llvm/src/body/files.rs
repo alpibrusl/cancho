@@ -98,8 +98,12 @@ impl<'a> FuncEmitter<'a> {
         let fd = self.fresh();
         self.out.push_str(&format!("  {fd} = call i32 @fileno(ptr {fp})\n"));
         let copy = self.fresh();
-        self.out.push_str(&format!("  {copy} = call i32 @dup(i32 {fd})\n"));
-        // `dup` can fail; read `errno` before `fclose` can change it.
+        // A duplicate that is close-on-exec from the start (`docs/processes.md`
+        // §4.5). It can fail; read `errno` before `fclose` can change it.
+        let command = self.os().f_dupfd_cloexec;
+        self.out.push_str(&format!(
+            "  {copy} = call i32 (i32, i32, ...) @fcntl(i32 {fd}, i32 {command}, i32 0)\n"
+        ));
         let reason = self.errno();
         self.out.push_str(&format!("  call i32 @fclose(ptr {fp})\n"));
         let copy = self.widen(&copy);

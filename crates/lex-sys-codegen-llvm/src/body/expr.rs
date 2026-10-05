@@ -772,10 +772,9 @@ impl<'a> FuncEmitter<'a> {
                     .ok_or_else(|| "`accept` needs an fd argument".to_owned())?;
                 let fd32 = self.fresh();
                 self.out.push_str(&format!("  {fd32} = trunc i64 {} to i32\n", operand(&fd)));
-                let result = self.fresh();
-                self.out.push_str(&format!(
-                    "  {result} = call i32 @accept(i32 {fd32}, ptr null, ptr null)\n"
-                ));
+                // Close-on-exec, as every descriptor a builtin makes
+                // (`docs/processes.md` §4.5).
+                let result = self.accept_cloexec(&fd32);
                 let widened = self.fresh();
                 self.out.push_str(&format!("  {widened} = sext i32 {result} to i64\n"));
                 Ok(vec![LValue::Reg(widened)])
