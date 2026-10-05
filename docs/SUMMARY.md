@@ -99,6 +99,7 @@
 - [TLS parity with the OpenSSL backend](tls-parity.md)
 - [`std.ecdh`: P-256 and P-384 key exchange](ecdh.md)
 - [`value_barrier`: a value the optimiser cannot see through](value-barrier.md)
+- [Hardware AES and carry-less multiply](crypto-builtins.md)
 
 # Compile time and program identity
 
