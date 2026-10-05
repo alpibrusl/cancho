@@ -54,6 +54,7 @@ mod docs;
 mod duplication;
 mod ecdh;
 mod ecdsa;
+mod f32_text;
 mod file_writes;
 mod filesystem;
 mod floats;
