@@ -762,6 +762,47 @@ fn connecting_outside_the_granted_host_traps() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A host longer than the bound, inside it, is let through to the connect on
+/// both backends -- the same out-of-bounds read of the bound that
+/// `filesystem.rs`'s `a_short_path_under_a_narrowed_prefix_is_read_on_both_backends`
+/// pins for paths. Before it was fixed, the LLVM backend answered garbage
+/// here (48, measured) where Cranelift answered the refused connection.
+#[test]
+fn a_host_inside_a_shorter_bound_is_dialled_on_both_backends() {
+    let dir = scratch("net-short-bound");
+    let source = dir.join("short_bound.ls");
+    std::fs::write(
+        &source,
+        "edition 2;\n\
+         fn main(world: World) -> [] int {\n\
+             let Split { io, ffi, fs, heap, args, net } = split(world);\n\
+             release(args); release(heap); release(ffi); release(fs); release(io);\n\
+             let bound = narrow(net, \"127.0.0\");\n\
+             var fd = 0;\n\
+             borrow bound as &n in {\n\
+                 fd = connect(n, \"127.0.0.1\", 1);\n\
+             }\n\
+             release(bound);\n\
+             if fd < 0 { return 7; }\n\
+             return 8;\n\
+         }\n",
+    )
+    .expect("a writable fixture");
+    for backend in ["cranelift", "llvm"] {
+        let exe = dir.join(format!("short_bound-{backend}"));
+        let build = Command::new(BIN)
+            .args(["build".as_ref(), source.as_os_str(), "--backend".as_ref(), backend.as_ref()])
+            .args(["-o".as_ref(), exe.as_os_str()])
+            .output()
+            .expect("the compiler runs");
+        assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+        let run = Command::new(&exe).output().expect("the compiled program runs");
+        // Nothing listens on port 1, so the connection is refused: `-1`.
+        assert_eq!(run.status.code(), Some(7), "`{backend}`: the host is inside the bound");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// §10.1: the bound's port half is checked too, exactly, not as a prefix
 /// -- `"127.0.0.1:1"` authorises port 1 and no other.
 #[test]

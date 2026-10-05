@@ -79,12 +79,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         // Inside the bound, the bytes have to match -- a plain prefix, with
         // no separator to land on (`docs/net.md` §4, `lower/mod.rs`'s
         // `narrow`).
-        let inside = self.builder.ins().icmp_imm(IntCC::UnsignedLessThan, i, bound.len() as i64);
-        let want_at = self.builder.ins().iadd(expected, i);
-        let want = self.builder.ins().load(types::I8, MemFlags::trusted(), want_at, 0);
-        let differs = self.builder.ins().icmp(IntCC::NotEqual, byte, want);
-        let escaped = self.builder.ins().band(inside, differs);
-        self.builder.ins().trapnz(escaped, TrapCode::HEAP_OUT_OF_BOUNDS);
+        self.check_against(expected, bound.len(), i, byte);
 
         let next = self.builder.ins().iadd_imm(i, 1);
         self.builder.def_var(cursor, next);
