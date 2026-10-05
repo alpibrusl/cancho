@@ -1,6 +1,6 @@
 # The pure TLS backend in `lexsys-hooks`: the design (#210)
 
-> **Status: design (#210, PR 1).** #210 makes `packages/tls` selectable in `lexsys-hooks`, runs the whole `https` delivery
+> **Status: design (#210, PR 1), since built in `lexsys-hooks` (§9).** #210 makes `packages/tls` selectable in `lexsys-hooks`, runs the whole `https` delivery
 > suite on both backends, and measures. Reading both sides to write this found that two sentences of `docs/tls-pure.md` are
 > false, so the work is bigger than "switch by dependency". This document corrects them, says what has to be built, and lists
 > the decisions taken (§7). Its claims are from reading the two code bases and from the trials named; where a later PR finds
@@ -99,6 +99,7 @@ exact sequence, and whether the store lays out as `lexsys-hooks`'s `[dependencie
 PR, and a store committed to this repository is that PR's first commit.
 
 **The two builds** are two `[[bin]]` entries in hooks' `lex-sys.toml`: `hooks` (OpenSSL, the default) and `hooks-pure`.
+*Corrected (§9): two projects, not two bins. A project's libraries are built into every program of it, so `tls` as a dependency collides with hooks' own OpenSSL module, which is also called `tls`, and the pure build needs a newer compiler than the default's pin. It is `pure/lex-sys.toml`, beside the unchanged `lex-sys.toml`.*
 
 **How the pure build's sources are made** is the decision of §7. The recommendation is that `src/tls.ls`'s OpenSSL module and
 a new `src/tls_pure.ls` both declare `module tls`, each in its own source list, and the files of §2.2 are **transformed
@@ -185,6 +186,8 @@ Settled by a person (#210, PR 1 review), with the reasons. Each can be reopened 
    visible. *Reopened if* §6 shows the pure handshake several times slower: that is the evidence a resumption design needs.
 3. **The trust store (§2.5): `SSL_CERT_DIR` is not honoured, and nothing falls back silently.** The pure backend reads
    `tls-ca-file` if given, otherwise `SSL_CERT_FILE`, otherwise a bundle from a short list of standard paths
+   *(Corrected (§9): `SSL_CERT_FILE` is not honoured either. lex-sys reads no environment variable without a foreign call, so the pure build, which holds none for TLS,
+   cannot. It reads `tls-ca-file`, else the first of four usual bundle paths, and a deployment that sets either variable names the file with `tls-ca-file`.)*
    (`/etc/ssl/certs/ca-certificates.crt` on Debian and Ubuntu). **If none loads it refuses to start, status 21, as an unreadable
    `tls-ca-file` already does**, and that includes a deployment that sets only `SSL_CERT_DIR`: a trust store other than the one
    an operator configured is worse than an error. The build PR checks two numbers: the engine's roots capacity (1,048,576
@@ -201,3 +204,27 @@ Settled by a person (#210, PR 1 review), with the reasons. Each can be reopened 
   the PRs after this one.
 - **Making the pure backend the default.** That is #209's, and a person's.
 - **Revocation, client certificates, IPv6**: hooks has none today, and this changes none of them.
+
+## 9. What was built, and what building it corrected
+
+Built in `lexsys-hooks` (`pure/`, `scripts/make_pure.py`; its own `docs/pure-tls.md` is the record of the results). #283 published the two packages as stores first.
+What it found that §1 to §7 did not know:
+
+- **The pure build is a project of its own, not a second `[[bin]]`** (§3, corrected above). Found by trying: with `tls` among the one project's dependencies,
+  the default build failed on `function open is defined twice`.
+- **The transform is a list of exact-match replacements, each with the number of places it must find**, not patterns: 11 functions' parameters and rows, the calls of the
+  module, the creation and closing of the engine in `main`, the trust store. The engine takes the `Ffi`'s place in the same parameter position, so most call sites change in
+  one word. It keeps line numbers (a compiler error in the generated source is at the line of the real one: it was how three problems were found), and fails, saying which
+  change, if the source is not what the list expects.
+- **The adapter needs two things `src/tls.ls` never had**: the connection's slot (the engine's slots are numbered, OpenSSL's state is the caller's integers) and the time
+  (certificates' dates). `attempt.advance` takes the time; `open` and `drop` take the slot, which their callers already hold.
+- **The events log holds the file-system capability**, so `main` reaches the trust store through `evlog.lend`, not a borrow of its own.
+- **lex-sys has no environment access** (§7, decision 3, corrected).
+- **A compiler bug**, in the LLVM backend: any `fs_read(...)` used directly as an operand fails to generate code (it builds on Cranelift, and binding the result first
+  works on both). Reported as its own task.
+
+**Results**, the commands and the machine in hooks' `docs/pure-tls.md`: the `https` tests, 94 checks on each build, **93 the same and 1 different on purpose** (`SSL_CERT_FILE`); fifteen
+more harnesses with exit 0 on both; the authority report **34 foreign symbols to 2** (`libc:prctl`, `libc:statx`), none added; a full handshake costs **4 to 7 times** the CPU of
+OpenSSL's (about 340 `https` deliveries a second a core against 1,430 to 2,500, on that machine) and a connection holds about twice the memory (106 KiB against 58 KiB a held
+handshake). §6's expectation, that the pure backend is several times slower per handshake, held. **Not measured:** RSA chains, and the latency the 2.8 ms handshakes add to other
+requests (the service is one thread).
