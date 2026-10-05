@@ -94,15 +94,44 @@ document, with the label `fs_map(p)` so that the authority report distinguishes 
 
 | step | what | gate |
 |---|---|---|
-| L0 | **measure first**: the largest `box_slice` the heap allows, and what a 4 GiB and a 40 GiB request do (refusal with a rule, not an out-of-memory kill) | recorded in this document; if the answer is a trap, that is a finding to fix before any file verb |
+| L0 | **measured, §5.1**: the largest `box_slice` the heap gives, and what a request that cannot be met does | done: the answer is a silent `SIGILL`, which makes a fallible allocation a prerequisite (§6) |
 | L1 | `file_size`, `file_read_at`, both backends; `open_read` unchanged | an 8 GiB sparse file: size is exact, a read at 6 GiB returns the bytes written there, a read past the end returns `0`, a negative offset returns the error, none traps (and a mutant that `lseek`s instead is caught by a two-handle interleaving test) |
 | L2 | `lexsys-gpu` reads a GGUF-shaped fixture tensor by tensor | memory high-water mark is the largest tensor plus the program's own, measured, against the file's size |
 | L3 | the question of §3: time `lexsys-gpu` loading with `file_read_at` against the same loop over a mapped file from C | the copy is, or is not, more than 10% of load time. Only "is" opens the mapping design |
+
+### 5.1 L0, measured
+
+One machine, so the *thresholds* are this machine's and only the *behaviour* is general: Linux 6.18 (Firecracker), 15 GiB of RAM, no swap,
+`vm.overcommit_memory = 0` (heuristic), the Cranelift backend, `box_slice(heap, n, byte_of(0))` (so `calloc`, `zeroed-slices.md`), `calloc` observed with an
+`LD_PRELOAD` that logs any request of 256 MiB or more.
+
+| request (zero-filled bytes) | what `calloc` did | what the program did |
+|---|---|---|
+| 1 GiB, touched one byte per 4 KiB page | returned | ran; peak resident 1,025 MiB (what was touched), 4.1 s |
+| 4 GiB, the same | returned | ran; peak resident 4,097 MiB, 12.5 s |
+| 4 GiB, non-zero fill, every byte written | `malloc`, returned | ran; peak resident 4,097 MiB, 5.5 s |
+| 16 GiB (more than the 15 GiB of RAM) | **returned `NULL`** | **killed by `SIGILL` in 0.01 s: no message, no rule tag, exit status 132** |
+| 1 PiB (2^50) | returned `NULL` | the same `SIGILL` |
+
+**What this says.**
+
+* A request the kernel will not grant is a **trap**, as `zeroed-slices.md` §2 says ("a null answer traps as `malloc`'s does") and as `boxed-slices.md` says of
+  every allocation. That is a *consistent* rule, and for a weight loader it is the wrong one: a runtime that wants to *try* 40 GiB and fall back to reading
+  tensors on demand cannot, because the first refusal ends the process with nothing to tell the user what was asked for. **A fallible allocation (§6) is a
+  prerequisite of any loader that sizes itself to the machine**, and it needs no new capability: `Heap` already authorises it.
+* Large untouched zero-filled slices cost nothing resident, as `zeroed-slices.md` §1 measured, so a runtime may `box_slice` a whole tensor table lazily; the
+  cost is paid at first touch (about 3 to 4 s per GiB here, which is this VM's page-fault cost and not the language's).
+* **The method needed a correction.** The first probes read a value back and reported success for every size up to 2^63 - 1 bytes, because the compiler
+  removed the allocation altogether (no `calloc` call was made, which the `LD_PRELOAD` showed) when its only observers were a store and a load. A probe has to
+  keep the memory live (a loop over it, or a size the compiler cannot see). The same removal means a program whose slice is never really used does not
+  exercise the refusal at all, so a test of §6's fallible allocation must make the memory observable too. One size, `2^63 - 1`, with a touching loop, made
+  no `calloc` call and ran for ten minutes instead of trapping; it was **not** run down here and is recorded as unexplained, not as a bug.
 
 ## 6. Open
 
 | Question | Why it waits |
 |---|---|
+| **A fallible allocation** (`try_box_slice(heap, n, fill)` answering a value the program can test, or a `Result`-shaped `Opened` of its own) | **new, from L0 (§5.1).** Today a refused allocation is a `SIGILL` with no message. It is the prerequisite for a loader that sizes itself to the machine and falls back to `file_read_at`; it wants its own short design (what it returns without `Result`, which is `std`: `file-handles.md` §4 hit that wall) |
 | Whether `fs_read` should be redefined over `file_read_at` | it is the same verb at offset 0 with a size; do it only if the duplicated code is the cost |
 | Direct I/O and alignment | `[byte]` has no alignment guarantee a `O_DIRECT` read needs; `layout.md` and `zeroed-slices.md` are where it would start |
 | A hint verb (`file_advise`) | a kernel read-ahead hint is cheap and pure; nothing has measured the need |
