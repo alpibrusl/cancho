@@ -81,9 +81,11 @@ fn rows(text: &str) -> (Vec<Row>, Vec<[u64; 5]>) {
 
 const OPS: [&str; 10] = ["+", "-", "*", "/", "==", "!=", "<", "<=", ">", ">="];
 
-fn gate(backend: &str) -> String {
+// `who` names the calling test: tests run in parallel, and two of them building into
+// one scratch directory overwrote each other's executable.
+fn gate(who: &str, backend: &str) -> String {
     let n = pairs();
-    let (dir, exe) = build_gate(&format!("f32-gate-{backend}"), backend);
+    let (dir, exe) = build_gate(&format!("f32-gate-{who}-{backend}"), backend);
     let started = Instant::now();
     let out = Command::new(&exe).arg(n.to_string()).output().expect("the gate runs");
     let elapsed = started.elapsed();
@@ -149,12 +151,12 @@ fn gate(backend: &str) -> String {
 
 #[test]
 fn f32_operations_match_binary64_on_cranelift() {
-    gate("cranelift");
+    gate("alone", "cranelift");
 }
 
 #[test]
 fn f32_operations_match_binary64_on_llvm() {
-    gate("llvm");
+    gate("alone", "llvm");
 }
 
 /// Both backends count the same, which they would not if one rounded a
@@ -162,7 +164,7 @@ fn f32_operations_match_binary64_on_llvm() {
 /// own oracle.
 #[test]
 fn the_gate_reports_the_same_on_both_backends() {
-    assert_eq!(gate("cranelift"), gate("llvm"));
+    assert_eq!(gate("both", "cranelift"), gate("both", "llvm"));
 }
 
 fn build_and_run(tag: &str, relative: &str, backend: &str) -> std::process::Output {
