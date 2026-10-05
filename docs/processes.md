@@ -604,13 +604,23 @@ slice 2's, and is checked there.
 * **Emission, from any host:** Linux asks for `syscall` (the `pidfd`),
   `epoll_ctl` and `closefrom`, Darwin for `kevent` and none of the three; all
   four triples are accepted by `clang`, and Cranelift builds the Mach-O object.
-* **Mutants.** Thirteen were chosen (the `pidfd` not closed, the wrong pid
-  asked for, the shift, the refusal's `errno`, the wrong event mask, the
-  missing-`pidfd` check, `poller_add_pipe` taking the wrong path; each on both
-  backends where it applies). **The run was stopped after two**, both killed
-  (`pidfd` not closed; wrong pid, by a hang), **at the request of the
-  session; the other eleven have not been run.** The script is
-  `mutants_poll.py` in the session's notes; the list is above.
+* **Mutants.** Thirteen, one site each, run against the process tests with
+  a limit of five minutes (`scripts/process_mutants.py`; Linux, aarch64,
+  kernel 6.8, where every one but the dispatch is on the path taken): the
+  `pidfd` not closed, `pidfd_open` asked for pid 1, the refusal's `errno` not
+  negated, the `pidfd` watched for `EPOLLOUT`, a missing `pidfd` not checked,
+  and `poller_add_pipe` taking the modify path, each on both backends; and
+  the `pidfd` read from the `Child`'s low half (Cranelift). **All 13 are
+  killed.** Seven fail a test: the two closes leave the sixty-child test
+  without a descriptor, and the refusal's `errno` and the missing check are
+  caught by both the `seccomp` test and the `EMFILE` one. Six are killed by
+  a hang, which a mutant that watches the wrong thing can only be: pid 1's
+  `pidfd`, the pid taken as a descriptor, `EPOLLOUT` on a `pidfd`, and a
+  channel never added (`EPOLL_CTL_MOD` answers `ENOENT`) are never reported,
+  and the waiter waits.
+  The first two had been run in an earlier session and killed; that run was
+  stopped there, and its script was not kept. This one is in the repository
+  and runs all thirteen.
 * **Measured on macOS (slice 2).** The first macOS CI run passed the tests
   of live children (output and exit; a deadline, then a kill) and failed the
   two that register a child that had already ended, with `ESRCH` (§4.8). The
