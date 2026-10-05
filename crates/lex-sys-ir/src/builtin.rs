@@ -567,6 +567,15 @@ pub enum Builtin {
     /// `AT_SYMLINK_NOFOLLOW` on one checked component -- a link is reported,
     /// never followed (`docs/directory-listing.md` §3.2).
     DirStat,
+    /// `dir_mode(&Dir, name) -> [dir_read] Done`: the permission bits
+    /// (`st_mode & 0o7777`) of one checked component, by `fstatat` with
+    /// `AT_SYMLINK_NOFOLLOW` as `dir_stat` (`docs/directory-listing.md`
+    /// §3.5), edition 7.
+    DirMode,
+    /// `dir_own_mode(&Dir) -> [dir_read] Done`: the permission bits of the
+    /// opened directory itself, by `fstat` on its descriptor (§3.5),
+    /// edition 7.
+    DirOwnMode,
     /// `pipe_open() -> [] Piped` -- `docs/processes.md` §3.2, edition 7: a
     /// channel's two ends, the parent's and the one a child is handed. An
     /// unnamed channel inside this process reaches nothing, so no capability.
@@ -753,6 +762,8 @@ impl Builtin {
         Builtin::DirNext,
         Builtin::DirListClose,
         Builtin::DirStat,
+        Builtin::DirMode,
+        Builtin::DirOwnMode,
         Builtin::PipeOpen,
         Builtin::ExecSpawn,
         Builtin::ChildWait,
@@ -873,6 +884,8 @@ impl Builtin {
             Builtin::DirNext => "dir_next",
             Builtin::DirListClose => "dir_list_close",
             Builtin::DirStat => "dir_stat",
+            Builtin::DirMode => "dir_mode",
+            Builtin::DirOwnMode => "dir_own_mode",
             Builtin::PipeOpen => "pipe_open",
             Builtin::ExecSpawn => "exec_spawn",
             Builtin::ChildWait => "child_wait",
@@ -990,6 +1003,10 @@ impl Builtin {
             | Builtin::ChildEndClose
             | Builtin::PollerAddPipe
             | Builtin::PollerAddChild => 7,
+            // `docs/directory-listing.md` §3.5: edition 7, which is still
+            // being built -- `dir_mode` is a name a program may already
+            // declare.
+            Builtin::DirMode | Builtin::DirOwnMode => 7,
             // `docs/file-writes.md`: edition 5, for the same reason --
             // `file_write` and `open_new` are names a program may already
             // declare against libc.
@@ -1098,6 +1115,9 @@ impl Builtin {
             Builtin::DirNext => 2,
             // The handle's region and the name's.
             Builtin::DirStat => 2,
+            Builtin::DirMode => 2,
+            // The handle's region.
+            Builtin::DirOwnMode => 1,
             // The handle's region, and for a read or a write the buffer's.
             Builtin::PipeRead | Builtin::PipeWrite => 2,
             Builtin::ChildKill | Builtin::PipeNonblocking => 1,
@@ -1617,6 +1637,30 @@ impl Builtin {
                 ],
                 named(PRELUDE_DIR_STAT),
             ),
+            // §3.5: `dir_stat`'s shape, answering the bits as `Done`.
+            Builtin::DirMode => (
+                vec![
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_DIR)),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                named(PRELUDE_DONE),
+            ),
+            Builtin::DirOwnMode => (
+                vec![Type::Ref {
+                    unique: false,
+                    region: Region::Param(0),
+                    inner: Box::new(named(PRELUDE_DIR)),
+                }],
+                named(PRELUDE_DONE),
+            ),
             Builtin::ConnDetach => (vec![named(PRELUDE_CONN)], Type::Int),
             Builtin::ConnAttach => (vec![Type::Int], named(PRELUDE_ATTACHED)),
             Builtin::ClockMs | Builtin::ClockUnixMs => (
@@ -1839,6 +1883,8 @@ impl Builtin {
             // `docs/directory-listing.md` §3.3: listing is reading beneath the
             // directory, and closing a listing performs nothing.
             Builtin::DirList | Builtin::DirNext | Builtin::DirStat => Effects::plain(["dir_read"]),
+            // §3.5: a status, so a read beneath the directory, as `dir_stat`.
+            Builtin::DirMode | Builtin::DirOwnMode => Effects::plain(["dir_read"]),
             // §3: everything that changes what is beneath a directory.
             Builtin::DirOpenNew
             | Builtin::DirOpenAppend

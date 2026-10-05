@@ -51,6 +51,7 @@ mod corpus;
 mod differential;
 mod directory_handles;
 mod directory_listing;
+mod directory_modes;
 mod directory_writes;
 mod docs;
 mod duplication;

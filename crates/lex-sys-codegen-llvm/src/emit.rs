@@ -388,6 +388,8 @@ pub(crate) fn emit_module(
     declare_libc_unless_own(&mut text, "readdir", "ptr @readdir(ptr)");
     declare_libc_unless_own(&mut text, "closedir", "i32 @closedir(ptr)");
     declare_libc_unless_own(&mut text, "fstatat", "i32 @fstatat(i32, ptr, ptr, i32)");
+    // `dir_own_mode` (`docs/directory-listing.md` §3.5).
+    declare_libc_unless_own(&mut text, "fstat", "i32 @fstat(i32, ptr)");
     declare_libc_unless_own(&mut text, "renameat", "i32 @renameat(i32, ptr, i32, ptr)");
     declare_libc_unless_own(&mut text, "unlinkat", "i32 @unlinkat(i32, ptr, i32)");
     // `connect` (§7.22, `docs/connect.md` §10): the last of `Net`'s four
