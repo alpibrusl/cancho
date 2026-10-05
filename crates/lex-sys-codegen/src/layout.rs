@@ -53,6 +53,11 @@ pub(crate) fn stride_of(element: &Type, program: &Program, pointer: types::Type)
         // `strings.md` §3: the one size in the language that is not a
         // multiple of 8, so that a string is something C could read.
         Type::Byte => 1,
+        // `docs/f32.md` §2: the second size that is not 8, and for the
+        // same reason as `byte`: a `[f32]` is something a GPU buffer or a
+        // GGUF tensor can be. Only in a slice; a struct's leaves stay at
+        // 8 (§5, deferred with `layout.md` §2's packing).
+        Type::F32 => 4,
         other => leaf_count(other, program, pointer) * RETURN_SLOT_STRIDE as u32,
     }
 }

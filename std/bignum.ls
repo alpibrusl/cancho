@@ -143,3 +143,31 @@ pub fn copy[&d, &a](into: &!d [int], a: &a [int]) -> [] int {
     }
     return 0;
 }
+
+// Is every limb zero?
+pub fn is_zero[&a](a: &a [int]) -> [] bool {
+    var i = 0;
+    while i < len(a) {
+        if a[i] != 0 {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `a = a * 10^k`, nine digits at a time: a limb times 10^9 is under 2^62.
+pub fn mul_pow10[&a](a: &!a [int], k: int) -> [] int {
+    var left = k;
+    while left >= 9 {
+        mul_small(a, 1000000000);
+        left = left - 9;
+    }
+    var scale = 1;
+    while left > 0 {
+        scale = scale * 10;
+        left = left - 1;
+    }
+    mul_small(a, scale);
+    return 0;
+}

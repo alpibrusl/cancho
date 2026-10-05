@@ -536,6 +536,10 @@ fn truncate_traps_where_c_is_undefined() {
         // `2^63` is about 9.223e18, so this is inside and that is not.
         ("9.0e18", false),
         ("1.0e19", true),
+        // Exactly `-2^63` is a representable `int` and is still refused:
+        // "any magnitude at or beyond `2^63`". Cranelift accepted it
+        // (found by `int_of_f32`'s test), LLVM never did.
+        ("-9223372036854775808.0", true),
         ("0.0", false),
         ("-2.7", false),
     ];

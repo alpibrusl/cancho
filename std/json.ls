@@ -866,17 +866,6 @@ fn halve[&a](a: &!a [int]) -> [] int {
     return 0;
 }
 
-fn is_zero[&a](a: &a [int]) -> [] bool {
-    var i = 0;
-    while i < len(a) {
-        if a[i] != 0 {
-            return false;
-        }
-        i = i + 1;
-    }
-    return true;
-}
-
 // How many bits the number takes: 0 for zero.
 fn bit_length[&a](a: &a [int]) -> [] int {
     var i = len(a) - 1;
@@ -893,22 +882,6 @@ fn bit_length[&a](a: &a [int]) -> [] int {
         bits = bits + 1;
     }
     return 32 * i + bits;
-}
-
-// `a = a * 10^k`, nine digits at a time: a limb times 10^9 is under 2^62.
-fn mul_pow10[&a](a: &!a [int], k: int) -> [] int {
-    var left = k;
-    while left >= 9 {
-        bignum.mul_small(a, 1000000000);
-        left = left - 9;
-    }
-    var scale = 1;
-    while left > 0 {
-        scale = scale * 10;
-        left = left - 1;
-    }
-    bignum.mul_small(a, scale);
-    return 0;
 }
 
 // Scan the decimal text `src[start..end]` (a number node's text, already
@@ -963,7 +936,7 @@ fn scan_decimal[&s, &b, &o](src: &s [byte], start: int, end: int, cap: int, big:
                     chunk = chunk * 10 + d;
                     in_chunk = in_chunk + 1;
                     if in_chunk == 9 {
-                        mul_pow10(big, 9);
+                        bignum.mul_pow10(big, 9);
                         add_small(big, chunk);
                         chunk = 0;
                         in_chunk = 0;
@@ -982,7 +955,7 @@ fn scan_decimal[&s, &b, &o](src: &s [byte], start: int, end: int, cap: int, big:
         p = p + 1;
     }
     if len(big) > 0 && in_chunk > 0 {
-        mul_pow10(big, in_chunk);
+        bignum.mul_pow10(big, in_chunk);
         add_small(big, chunk);
     }
     // The exponent, saturated: past 100,000 the value is 0 or infinity
@@ -1088,11 +1061,11 @@ fn slow_decimal[&s](src: &s [byte], start: int, end: int, digits: int, scale: in
             }
             // value = n * 10^e10 = N / Q.
             if e10 > 0 {
-                mul_pow10(n, e10);
+                bignum.mul_pow10(n, e10);
             }
             bignum.set(q, 1);
             if e10 < 0 {
-                mul_pow10(q, 0 - e10);
+                bignum.mul_pow10(q, 0 - e10);
             }
             // Scale one side by a power of two so that N / Q lies in
             // (2^55, 2^57): the quotient then has 56 or 57 bits, two or three
@@ -1117,7 +1090,7 @@ fn slow_decimal[&s](src: &s [byte], start: int, end: int, digits: int, scale: in
                 halve(q);
                 k = k - 1;
             }
-            let inexact = !is_zero(n);
+            let inexact = !bignum.is_zero(n);
             let bits = bit_length_of(quotient);
             let top = bits - 1 + e_q;
             if top > 1023 {

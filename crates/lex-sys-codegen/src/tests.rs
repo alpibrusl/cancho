@@ -287,6 +287,56 @@ fn a_slice_lowers_on_every_target() {
     }
 }
 
+/// `docs/f32.md` §2: `f32` lowers on every target, as a program that
+/// touches every part of it -- a literal, each operator, a comparison, the
+/// four conversions, a struct field, a parameter, a return, and a slice,
+/// whose stride is the one address arithmetic that is not a leaf's eight.
+#[test]
+fn f32_lowers_on_every_target() {
+    const F32: &str = "\
+        edition 6; \
+        struct Pair { a: f32, b: f32 } \
+        fn mix(p: Pair, k: f32) -> [] f32 { return -(p.a * k + p.b / k - 1.5f32); } \
+        fn total[&r](xs: &r [f32]) -> [] f32 { \
+            var sum = 0.0f32; var i = 0; \
+            while i < len(xs) { sum = sum + xs[i]; i = i + 1; } \
+            return sum; \
+        } \
+        fn main() -> [] int { \
+            var answer = 0; \
+            region a { \
+                let xs = alloc_slice[a](4, 0.5f32); \
+                xs[2] = mix(Pair { a: 1.0f32, b: 2.0f32 }, 4.0f32); \
+                if total(xs) < 1.0f32 || xs[0] == xs[1] || xs[0] != xs[1] { answer = 1; } \
+                answer = answer + bits_of32(f32_of(float_of32(xs[1]))) - bits_of32(xs[1]); \
+                answer = answer + bits_of32(f32_of_bits(1065353216)) - 1065353216; \
+                answer = answer + int_of_f32(sqrt32(f32_of_int(16))) - 4; \
+            } \
+            return answer - 1; \
+        }";
+    for (triple, _) in targets() {
+        let ast = parse(F32).expect("should parse");
+        let program = lower(&ast).expect("should lower");
+        let triple: Triple = triple.parse().expect("a valid triple");
+        compile_object_for(&program, "main", triple.clone())
+            .unwrap_or_else(|e| panic!("`{triple}` should emit: {e}"));
+    }
+}
+
+/// An `f32` is four bytes in a slice (`docs/f32.md` §2) and one eight-byte
+/// leaf in a struct: the layout report's `stride` is the former, and what
+/// the backend multiplies an index by is the same number.
+#[test]
+fn an_f32_slice_is_four_bytes_an_element() {
+    let ast = parse("edition 6; fn main() -> [] int { return 0; }").expect("should parse");
+    let program = lower(&ast).expect("should lower");
+    let triple = host_triple();
+    let layout = layout_of(&Type::F32, &program, &triple);
+    assert_eq!((layout.leaves, layout.stride, layout.packed), (1, 4, 4));
+    let float = layout_of(&Type::Float, &program, &triple);
+    assert_eq!(float.stride, 8, "`float` is untouched");
+}
+
 #[test]
 fn only_the_entry_point_is_global() {
     for (triple, _) in targets() {

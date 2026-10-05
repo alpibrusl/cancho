@@ -416,6 +416,9 @@ impl<'a> FuncEmitter<'a> {
     pub(crate) fn stride_of(&self, element: &Type) -> Result<i64, String> {
         if matches!(element, Type::Byte) {
             Ok(1)
+        } else if matches!(element, Type::F32) {
+            // `docs/f32.md` §2, matching `lex-sys-codegen`'s own.
+            Ok(4)
         } else {
             Ok(leaves_of(element, self.program)?.len() as i64 * 8)
         }

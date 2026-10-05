@@ -420,11 +420,27 @@ pub fn tokenize_with_comments(text: &str) -> Result<(Vec<Token>, Vec<Span>), Dia
                     }
                 }
             }
+            // `docs/f32.md` §2: a float-shaped literal may carry the one
+            // suffix `f32`, which makes it a binary32 literal. The suffix
+            // stays inside the token, so the parser reads the width off
+            // the text and no new token kind exists. An integer-shaped
+            // literal takes none (`2f32` is refused below): `float`
+            // needs a point or an exponent, and so does `f32`.
+            if float
+                && bytes[i..].starts_with(b"f32")
+                && !bytes.get(i + 3).is_some_and(|b| is_ident_continue(*b))
+            {
+                i += 3;
+            }
             // A literal may not run straight into a name: `1x` is a typo, not `1 x`.
             if i < bytes.len() && is_ident_continue(bytes[i]) {
                 return Err(Diagnostic::new(
                     Rule::UnexpectedCharacter,
-                    "unexpected character in an integer literal",
+                    if float {
+                        "unexpected character in a floating-point literal; the only suffix is `f32`"
+                    } else {
+                        "unexpected character in an integer literal"
+                    },
                     Span::new(i as u32, i as u32 + 1),
                 ));
             }
@@ -556,6 +572,29 @@ mod tests {
 
     fn kinds(src: &str) -> Vec<TokenKind> {
         tokenize(src).unwrap().into_iter().map(|t| t.kind).collect()
+    }
+
+    /// `docs/f32.md` §2: a float-shaped literal may end in `f32`, and the
+    /// suffix is part of the one token. Nothing else may follow a number.
+    #[test]
+    fn a_float_literal_may_carry_the_f32_suffix() {
+        for text in ["0.5f32", "1e3f32", "1.5e-3f32", "1_0.2_5f32"] {
+            let tokens = tokenize(text).unwrap();
+            assert_eq!(tokens.len(), 2, "{text}");
+            assert_eq!(
+                (tokens[0].kind, tokens[0].span.end as usize),
+                (TokenKind::Float, text.len())
+            );
+        }
+        // An integer-shaped one may not, a hexadecimal `0x1f32` is just
+        // digits, and no other suffix exists.
+        assert!(tokenize("2f32").is_err());
+        assert_eq!(kinds("0x1f32"), vec![TokenKind::Int, TokenKind::Eof]);
+        assert!(tokenize("1.5f64").is_err());
+        assert!(tokenize("1.5f32x").is_err());
+        assert!(tokenize("1.5f3").is_err());
+        // A suffix is not a name that follows: `1.5 f32` is two tokens.
+        assert_eq!(kinds("1.5 f32"), vec![TokenKind::Float, TokenKind::Ident, TokenKind::Eof]);
     }
 
     #[test]

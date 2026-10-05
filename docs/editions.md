@@ -313,6 +313,13 @@ And it has **`value_barrier`** ([`value-barrier.md`](value-barrier.md)), a built
 the same way: no edition-6 file declared the name. `std/bigmod.ls` and `std/ecdh.ls` are the first `std` modules to declare
 `edition 6;`, to use it.
 
+And it has **`f32`** ([`f32.md`](f32.md)): the type, the `f32` literal suffix, and the builtins `f32_of`,
+`float_of32`, `bits_of32` and `f32_of_bits`. Purely additive, and counted first as `file-handles.md`
+§4.2 asks: `f32` or any of the four names appears in **0 of the 547** `.ls` files under `tests/`,
+`examples/`, `std/`, `packages/` and `benches/`, so it joined edition 6 rather than opening a
+seventh, as `value_barrier` did. An earlier file still owns every one of those names
+(`tests/accept/f32_names_are_edition_five.ls`).
+
 **Edition 7 is edition 6 plus the capability to start a program**
 ([`processes.md`](processes.md)): the types `Exec`, `Child`, `Pipe`, `ChildEnd`,
 `Stdio`, `Piped`, `Spawned` and `Exited`, the builtins `pipe_open`, `exec_spawn`,

@@ -193,6 +193,40 @@ pub enum Builtin {
     /// is the argument: a correct shortest-round-trip printer, written in
     /// lex-sys, rather than a hole in the standard library.
     BitsOf,
+    /// `f32_of(x: float) -> [] f32` — the nearest `f32` to a `float`,
+    /// ties to even, an overflow giving infinity (`docs/f32.md` §2).
+    ///
+    /// A rounding, and named for being one: it is the one crossing from
+    /// `float` to `f32`, written where a reader can see it. Never traps.
+    F32Of,
+    /// `float_of32(x: f32) -> [] float` — exact, every binary32 value is
+    /// a binary64 value (`docs/f32.md` §2).
+    ///
+    /// Not `float_of`: that name is `int -> float` and a builtin has one
+    /// signature, so the width is part of the name, as in `bits_of32`.
+    FloatOf32,
+    /// `bits_of32(x: f32) -> [] int` — the 32 bits of binary32, zero
+    /// extended (`docs/f32.md` §2). A reinterpretation like `bits_of`,
+    /// and like it every NaN answers one pattern, `0x7fc00000`, so the
+    /// answer does not depend on which target generated the NaN.
+    BitsOf32,
+    /// `f32_of_bits(n: int) -> [] f32` — the `f32` whose bits are the low
+    /// 32 of `n` (`docs/f32.md` §2). The inverse `float-printing.md` §8
+    /// left for when something needs it; `lexsys-gpu` and the gate in
+    /// `docs/f32.md` §5 both do.
+    F32OfBits,
+    /// `sqrt32(x: f32) -> [] f32` -- the correctly rounded square root, one
+    /// instruction (`docs/f32.md` §2, `docs/float-math.md` §3). Named as
+    /// `bits_of32` is: the width is part of the name because `sqrt` is
+    /// `float -> float` and a builtin has one signature.
+    Sqrt32,
+    /// `f32_of_int(n: int) -> [] f32` -- the nearest `f32`, ties to even;
+    /// every `int` is in range, so nothing traps (`docs/f32.md` §2).
+    F32OfInt,
+    /// `int_of_f32(x: f32) -> [] int` -- toward zero, trapping on NaN,
+    /// infinity and any magnitude at or beyond `2^63`: `truncate`'s rule
+    /// at the narrower width (`docs/floating-point.md` §4).
+    IntOfF32,
     /// `is_nan(x: float) -> [] bool` (§5).
     ///
     /// Exists because NaN breaks comparison — `x == x` is false for it —
@@ -633,6 +667,13 @@ impl Builtin {
         Builtin::IsNan,
         Builtin::Sqrt,
         Builtin::BitsOf,
+        Builtin::F32Of,
+        Builtin::FloatOf32,
+        Builtin::BitsOf32,
+        Builtin::F32OfBits,
+        Builtin::Sqrt32,
+        Builtin::F32OfInt,
+        Builtin::IntOfF32,
         Builtin::FsRead,
         Builtin::FsWrite,
         Builtin::OpenRead,
@@ -744,6 +785,13 @@ impl Builtin {
             Builtin::IsNan => "is_nan",
             Builtin::Sqrt => "sqrt",
             Builtin::BitsOf => "bits_of",
+            Builtin::F32Of => "f32_of",
+            Builtin::FloatOf32 => "float_of32",
+            Builtin::BitsOf32 => "bits_of32",
+            Builtin::F32OfBits => "f32_of_bits",
+            Builtin::Sqrt32 => "sqrt32",
+            Builtin::F32OfInt => "f32_of_int",
+            Builtin::IntOfF32 => "int_of_f32",
             Builtin::FsRead => "fs_read",
             Builtin::OpenRead => "open_read",
             Builtin::ReadFile => "file_read",
@@ -884,6 +932,16 @@ impl Builtin {
             // `docs/value-barrier.md` §3: edition 6, the latest, for the
             // same reason -- a program may already declare the name.
             Builtin::ValueBarrier => 6,
+            // `docs/f32.md` §6: edition 6, the latest, like `value_barrier`
+            // -- a program may already declare `f32_of`. None in this
+            // repository does (counted there), so no edition 7 is made.
+            Builtin::F32Of
+            | Builtin::FloatOf32
+            | Builtin::BitsOf32
+            | Builtin::F32OfBits
+            | Builtin::Sqrt32
+            | Builtin::F32OfInt
+            | Builtin::IntOfF32 => 6,
             // `docs/signals.md`: edition 6, for the same reason --
             // `signals_watch` is a name a program may already declare.
             Builtin::SignalsWatch
@@ -1261,6 +1319,13 @@ impl Builtin {
             // it reaches no library (`docs/float-math.md` §3).
             Builtin::Sqrt => (vec![Type::Float], Type::Float),
             Builtin::BitsOf => (vec![Type::Float], Type::Int),
+            Builtin::F32Of => (vec![Type::Float], Type::F32),
+            Builtin::FloatOf32 => (vec![Type::F32], Type::Float),
+            Builtin::BitsOf32 => (vec![Type::F32], Type::Int),
+            Builtin::F32OfBits => (vec![Type::Int], Type::F32),
+            Builtin::Sqrt32 => (vec![Type::F32], Type::F32),
+            Builtin::F32OfInt => (vec![Type::Int], Type::F32),
+            Builtin::IntOfF32 => (vec![Type::F32], Type::Int),
             // Both are checked at the call site rather than here, because a
             // fixed signature cannot say what they need. `release` ends any
             // capability, and there is more than one kind; `narrow` has an

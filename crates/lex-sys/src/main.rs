@@ -419,6 +419,7 @@ const STD: &[(&str, &str)] = &[
     ("<std>/vec.ls", include_str!("../../../std/vec.ls")),
     ("<std>/bignum.ls", include_str!("../../../std/bignum.ls")),
     ("<std>/fmt.ls", include_str!("../../../std/fmt.ls")),
+    ("<std>/fmt32.ls", include_str!("../../../std/fmt32.ls")),
     ("<std>/utf8.ls", include_str!("../../../std/utf8.ls")),
     ("<std>/flags.ls", include_str!("../../../std/flags.ls")),
     ("<std>/crypto.ls", include_str!("../../../std/crypto.ls")),
