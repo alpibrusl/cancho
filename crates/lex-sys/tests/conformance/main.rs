@@ -71,6 +71,7 @@ mod memory;
 mod modules;
 mod net;
 mod ports;
+mod processes;
 mod project;
 mod refusals;
 mod release;

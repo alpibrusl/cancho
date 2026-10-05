@@ -533,6 +533,31 @@ pub enum Builtin {
     /// `AT_SYMLINK_NOFOLLOW` on one checked component -- a link is reported,
     /// never followed (`docs/directory-listing.md` §3.2).
     DirStat,
+    /// `pipe_open() -> [] Piped` -- `docs/processes.md` §3.2, edition 7: a
+    /// channel's two ends, the parent's and the one a child is handed. An
+    /// unnamed channel inside this process reaches nothing, so no capability.
+    PipeOpen,
+    /// `exec_spawn(&Exec(p), path, args, env, stdin, stdout, stderr) ->
+    /// [exec(p)] Spawned`: start the program at `path` under `p`. Lowered as
+    /// `Expr::ExecSpawn`, so the prefix travels with it, as `open_read`'s does.
+    ExecSpawn,
+    /// `child_wait(Child) -> [] Exited`: wait for the child to end and reap it;
+    /// the only consumer of a `Child` (§4.7).
+    ChildWait,
+    /// `child_kill(&Child, signal) -> [child_signal] int`: one of
+    /// `std.signals`' bits, or `KILL` (256). `0`, or the `errno`.
+    ChildKill,
+    /// `pipe_read(&!Pipe, &![byte]) -> [pipe_read] Received`.
+    PipeRead,
+    /// `pipe_write(&!Pipe, &[byte]) -> [pipe_write] Sent`: never raises `SIGPIPE`.
+    PipeWrite,
+    /// `pipe_nonblocking(&!Pipe) -> [] int`: one way, explicit.
+    PipeNonblocking,
+    /// `pipe_close(Pipe) -> [] int`: consumes the parent's end.
+    PipeClose,
+    /// `child_end_close(ChildEnd) -> [] int`: consumes a child's end that was
+    /// never handed to a child.
+    ChildEndClose,
     /// `null_ptr() -> [] c_ptr` — the one producer of a `c_ptr` that is
     /// not a foreign call's return, edition 3 only
     /// (`docs/opaque-pointers.md` §3).
@@ -677,6 +702,15 @@ impl Builtin {
         Builtin::DirNext,
         Builtin::DirListClose,
         Builtin::DirStat,
+        Builtin::PipeOpen,
+        Builtin::ExecSpawn,
+        Builtin::ChildWait,
+        Builtin::ChildKill,
+        Builtin::PipeRead,
+        Builtin::PipeWrite,
+        Builtin::PipeNonblocking,
+        Builtin::PipeClose,
+        Builtin::ChildEndClose,
         Builtin::NullPtr,
         Builtin::Spawn,
         Builtin::Join,
@@ -779,6 +813,15 @@ impl Builtin {
             Builtin::DirNext => "dir_next",
             Builtin::DirListClose => "dir_list_close",
             Builtin::DirStat => "dir_stat",
+            Builtin::PipeOpen => "pipe_open",
+            Builtin::ExecSpawn => "exec_spawn",
+            Builtin::ChildWait => "child_wait",
+            Builtin::ChildKill => "child_kill",
+            Builtin::PipeRead => "pipe_read",
+            Builtin::PipeWrite => "pipe_write",
+            Builtin::PipeNonblocking => "pipe_nonblocking",
+            Builtin::PipeClose => "pipe_close",
+            Builtin::ChildEndClose => "child_end_close",
             Builtin::NullPtr => "null_ptr",
             Builtin::Spawn => "spawn",
             Builtin::Join => "join",
@@ -862,6 +905,17 @@ impl Builtin {
             | Builtin::DirNext
             | Builtin::DirListClose
             | Builtin::DirStat => 6,
+            // `docs/processes.md`: edition 7 -- `pipe_open` and `child_wait`
+            // are names a program may already declare.
+            Builtin::PipeOpen
+            | Builtin::ExecSpawn
+            | Builtin::ChildWait
+            | Builtin::ChildKill
+            | Builtin::PipeRead
+            | Builtin::PipeWrite
+            | Builtin::PipeNonblocking
+            | Builtin::PipeClose
+            | Builtin::ChildEndClose => 7,
             // `docs/file-writes.md`: edition 5, for the same reason --
             // `file_write` and `open_new` are names a program may already
             // declare against libc.
@@ -970,6 +1024,9 @@ impl Builtin {
             Builtin::DirNext => 2,
             // The handle's region and the name's.
             Builtin::DirStat => 2,
+            // The handle's region, and for a read or a write the buffer's.
+            Builtin::PipeRead | Builtin::PipeWrite => 2,
+            Builtin::ChildKill | Builtin::PipeNonblocking => 1,
             Builtin::TcpAccept
             | Builtin::ConnNonblocking
             | Builtin::ConnNodelay
@@ -1552,6 +1609,48 @@ impl Builtin {
             ),
             // By value: `close` ends the handle.
             Builtin::ConnClose => (vec![named(PRELUDE_CONN)], Type::Int),
+            // `docs/processes.md` §3.2.
+            Builtin::PipeOpen => (Vec::new(), named(PRELUDE_PIPED)),
+            // Checked at the call site: the prefix is in the capability's type.
+            Builtin::ExecSpawn => (Vec::new(), Type::Unit),
+            // By value: waiting ends the child.
+            Builtin::ChildWait => (vec![named(PRELUDE_CHILD)], named(PRELUDE_EXITED)),
+            Builtin::ChildKill => (
+                vec![
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_CHILD)),
+                    },
+                    Type::Int,
+                ],
+                Type::Int,
+            ),
+            Builtin::PipeRead | Builtin::PipeWrite => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_PIPE)),
+                    },
+                    Type::Ref {
+                        unique: self == Builtin::PipeRead,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                named(if self == Builtin::PipeRead { PRELUDE_RECEIVED } else { PRELUDE_SENT }),
+            ),
+            Builtin::PipeNonblocking => (
+                vec![Type::Ref {
+                    unique: true,
+                    region: Region::Param(0),
+                    inner: Box::new(named(PRELUDE_PIPE)),
+                }],
+                Type::Int,
+            ),
+            Builtin::PipeClose => (vec![named(PRELUDE_PIPE)], Type::Int),
+            Builtin::ChildEndClose => (vec![named(PRELUDE_CHILD_END)], Type::Int),
             Builtin::ListenerClose => (vec![named(PRELUDE_LISTENER)], Type::Int),
             // No capability, no data in, one opaque handle out
             // (`docs/opaque-pointers.md` §3) -- a fixed signature like
@@ -1641,6 +1740,13 @@ impl Builtin {
             | Builtin::DirRemove
             | Builtin::DirSync => Effects::plain(["dir_write"]),
             Builtin::ConnWrite => Effects::plain(["conn_write"]),
+            // `docs/processes.md` §3.2: path-free, the program was named at
+            // `exec_spawn`. Waiting and closing perform nothing, as
+            // `conn_close` does not; `exec_spawn`'s row comes from the prefix
+            // at the call site.
+            Builtin::ChildKill => Effects::plain(["child_signal"]),
+            Builtin::PipeRead => Effects::plain(["pipe_read"]),
+            Builtin::PipeWrite => Effects::plain(["pipe_write"]),
             // Moving authority around is not an effect. Splitting a `World`
             // observes nothing outside the program and releasing a
             // capability only ends one; what a capability *authorises* is

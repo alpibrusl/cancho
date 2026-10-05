@@ -81,6 +81,10 @@ pub(crate) fn leaves_into(
                     | lex_sys_ir::PRELUDE_CONN
                     | lex_sys_ir::PRELUDE_POLLER
                     | lex_sys_ir::PRELUDE_SIGNAL_WATCH
+                    // `docs/processes.md` §3.1: a pid, and two descriptors.
+                    | lex_sys_ir::PRELUDE_CHILD
+                    | lex_sys_ir::PRELUDE_PIPE
+                    | lex_sys_ir::PRELUDE_CHILD_END
             ) =>
         {
             out.push(types::I64);

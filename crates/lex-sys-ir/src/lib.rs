@@ -43,6 +43,7 @@ mod foreign;
 mod function;
 mod ir;
 mod lower;
+mod process;
 mod signals;
 mod socket_os;
 
@@ -52,6 +53,7 @@ pub use foreign::*;
 use function::*;
 pub use ir::*;
 use lower::*;
+pub use process::*;
 pub use signals::*;
 pub use socket_os::*;
 

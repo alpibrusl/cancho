@@ -29,7 +29,9 @@ impl<'a> FnLowering<'a> {
         let (value, found) = self.expr(*world)?;
         let expected = Type::Named(self.prelude()[PRELUDE_WORLD], Vec::new());
         self.expect_type(&expected, &found, world_span)?;
-        let split_index = if self.edition >= 6 {
+        let split_index = if self.edition >= 7 {
+            PRELUDE_SPLIT_EXEC
+        } else if self.edition >= 6 {
             PRELUDE_SPLIT_SIGNALS
         } else if self.edition >= 5 {
             PRELUDE_SPLIT_CLOCK

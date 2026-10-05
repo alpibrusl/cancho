@@ -201,6 +201,7 @@ fn one_libc_symbol_is_named_exactly() {
          \x20   the heap\n\
          \x20   the command line\n\
          \x20   signals\n\
+         \x20   other programs\n\
          unbounded by\n\
          \x20   libc:getpid\n"
     );

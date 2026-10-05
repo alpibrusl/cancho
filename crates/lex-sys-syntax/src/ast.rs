@@ -759,6 +759,21 @@ pub const PRELUDE: &[&str] = &[
     "SignalWatch",
     "Watching",
     "signals",
+    // `docs/processes.md` §3.1: the capability to start a program, its
+    // `Split` field, the child and the channel's two ends, a child's stream,
+    // what the verbs answer, and the arms only these use; edition 7 only.
+    "Exec",
+    "exec",
+    "Child",
+    "Pipe",
+    "ChildEnd",
+    "Stdio",
+    "Piped",
+    "Spawned",
+    "Exited",
+    "Null",
+    "Code",
+    "Signaled",
     // `docs/directory-handles.md`: a directory handle and what opening one
     // answers; edition 6 only.
     "Dir",
