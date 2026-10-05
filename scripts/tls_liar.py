@@ -1065,10 +1065,11 @@ def issue(s, ticket=TICKET, nonce=b"\7", lifetime=7200, age_add=0x01020304):
     return psk
 
 
-def first_connection(s, **ticket):
-    """A full handshake, a ticket, and the client's account of it: the PSK it derived must be this
-    server's."""
+def first_connection(s, suite=0x1303, **ticket):
+    """A full handshake under `suite`, a ticket, and the client's account of it: the PSK it derived
+    must be this server's."""
     s.start()
+    s.suite = suite
     s.c.feed(s.hello_and_flight())
     s.check_client_finished()
     psk = issue(s, **ticket)
@@ -1122,6 +1123,18 @@ def resumption(s):
     resumed_to_the_end(r)
     f = r.c.ask("K")
     assert f[5] == "1", f"resumed: {f}"
+
+
+@case("resumption under AES-256-GCM-SHA384: a 48-byte PSK, the binder under SHA-384", "ok")
+def resumption_sha384(s):
+    psk = first_connection(s, suite=0x1302)
+    assert len(psk) == 48, "a SHA-384 PSK"
+    r = resume(s, psk)
+    check_binder(r.transcript, psk)
+    r.suite = 0x1302
+    r.c.feed(resumed_flight(r))
+    resumed_to_the_end(r)
+    assert r.c.ask("K")[5] == "1", "resumed"
 
 
 @case("resumption after a HelloRetryRequest to P-256: the second ClientHello's binder over message_hash and the retry", "ok")

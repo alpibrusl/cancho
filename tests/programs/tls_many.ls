@@ -42,6 +42,22 @@ fn number[&s](s: &s [byte]) -> [] int {
     return n;
 }
 
+// The argument `resume`.
+fn is_resume[&s](s: &s [byte]) -> [] bool {
+    let word = "resume";
+    if len(s) != len(word) {
+        return false;
+    }
+    var k = 0;
+    while k < len(word) {
+        if s[k] != word[k] {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
 fn digit(c: int) -> [] int {
     if c >= 97 {
         return c - 87;
@@ -335,84 +351,84 @@ fn drive[&h, &n, &k, &i, &q, &g, &e, &u](heap: &!h Heap, net: &n Net(""), clock:
                                 let events = alloc_slice[a](2 * conc + 2, 0);
                                 var round = 0;
                                 while round < rounds {
-                                if round > 0 {
-                                    // Each connection's ticket is kept, its slot freed, and the
-                                    // next round starts from nothing but the tickets.
-                                    var k = 0;
-                                    while k < conc {
-                                        handles[k] = tls.save(engine, k);
-                                        tls.drop(engine, k);
-                                        k = k + 1;
-                                    }
-                                    k = 0;
-                                    while k < stride() * conc {
-                                        st[k] = 0;
-                                        k = k + 1;
-                                    }
-                                    io.write_all(io, "round 2\n");
-                                }
-                                // Dial every connection; each is watched for writable under its slot.
-                                var s = 0;
-                                while s < conc {
-                                    match tcp_connect_start(net, ip, port) {
-                                        Dialed::Failed(err) => {
-                                            st[s * stride()] = finished();
-                                            st[s * stride() + 3] = r_socket();
+                                    if round > 0 {
+                                        // Each connection's ticket is kept, its slot freed, and the
+                                        // next round starts from nothing but the tickets.
+                                        var k = 0;
+                                        while k < conc {
+                                            handles[k] = tls.save(engine, k);
+                                            tls.drop(engine, k);
+                                            k = k + 1;
                                         }
-                                        Dialed::Ok(c) => {
-                                            let (grown, slot) = conns.put(heap, table, c);
-                                            table = grown;
-                                            borrow mut table as &!tw in {
-                                                borrow mut poll as &!pr in {
-                                                    conns.watch(tw, pr, slot, slot, 2);
-                                                }
+                                        k = 0;
+                                        while k < stride() * conc {
+                                            st[k] = 0;
+                                            k = k + 1;
+                                        }
+                                        io.write_all(io, "round 2\n");
+                                    }
+                                    // Dial every connection; each is watched for writable under its slot.
+                                    var s = 0;
+                                    while s < conc {
+                                        match tcp_connect_start(net, ip, port) {
+                                            Dialed::Failed(err) => {
+                                                st[s * stride()] = finished();
+                                                st[s * stride() + 3] = r_socket();
                                             }
-                                            st[slot * stride()] = connecting();
-                                        }
-                                    }
-                                    s = s + 1;
-                                }
-                                let deadline = clock_ms(clock) + 30000;
-                                var live = 0;
-                                s = 0;
-                                while s < conc {
-                                    if st[s * stride()] != finished() {
-                                        live = live + 1;
-                                    }
-                                    s = s + 1;
-                                }
-                                while live > 0 && clock_ms(clock) < deadline {
-                                    var ready = 0;
-                                    borrow mut poll as &!pr in {
-                                        ready = poller_wait(pr, events, 200);
-                                    }
-                                    let now = clock_unix_ms(clock);
-                                    var r = 0;
-                                    while r < ready {
-                                        let slot = events[2 * r];
-                                        if slot >= 0 && slot < conc && st[slot * stride()] != finished() {
-                                            var done = 0;
-                                            borrow mut table as &!tw in {
-                                                borrow mut poll as &!pr in {
-                                                    done = advance(engine, tw, pr, st, contents(pw), contents(aw), contents(iw), req[0..at], host, slot, chunk, now, handles[slot]);
+                                            Dialed::Ok(c) => {
+                                                let (grown, slot) = conns.put(heap, table, c);
+                                                table = grown;
+                                                borrow mut table as &!tw in {
+                                                    borrow mut poll as &!pr in {
+                                                        conns.watch(tw, pr, slot, slot, 2);
+                                                    }
                                                 }
+                                                st[slot * stride()] = connecting();
                                             }
-                                            live = live - done;
                                         }
-                                        r = r + 1;
+                                        s = s + 1;
                                     }
-                                }
-                                s = 0;
-                                while s < conc {
-                                    if st[s * stride()] != finished() {
-                                        borrow mut table as &!tw in {
-                                            end_slot(tw, st, s, r_timeout());
+                                    let deadline = clock_ms(clock) + 30000;
+                                    var live = 0;
+                                    s = 0;
+                                    while s < conc {
+                                        if st[s * stride()] != finished() {
+                                            live = live + 1;
+                                        }
+                                        s = s + 1;
+                                    }
+                                    while live > 0 && clock_ms(clock) < deadline {
+                                        var ready = 0;
+                                        borrow mut poll as &!pr in {
+                                            ready = poller_wait(pr, events, 200);
+                                        }
+                                        let now = clock_unix_ms(clock);
+                                        var r = 0;
+                                        while r < ready {
+                                            let slot = events[2 * r];
+                                            if slot >= 0 && slot < conc && st[slot * stride()] != finished() {
+                                                var done = 0;
+                                                borrow mut table as &!tw in {
+                                                    borrow mut poll as &!pr in {
+                                                        done = advance(engine, tw, pr, st, contents(pw), contents(aw), contents(iw), req[0..at], host, slot, chunk, now, handles[slot]);
+                                                    }
+                                                }
+                                                live = live - done;
+                                            }
+                                            r = r + 1;
                                         }
                                     }
-                                    s = s + 1;
-                                }
-                                failed = failed + report(io, engine, st, conc, rounds > 1);
-                                round = round + 1;
+                                    s = 0;
+                                    while s < conc {
+                                        if st[s * stride()] != finished() {
+                                            borrow mut table as &!tw in {
+                                                end_slot(tw, st, s, r_timeout());
+                                            }
+                                        }
+                                        s = s + 1;
+                                    }
+                                    failed = failed + report(io, engine, st, conc, rounds > 1);
+                                    round = round + 1;
                                 }
                             }
                         }
@@ -456,7 +472,7 @@ fn main(world: World) -> [] int {
                         region r {
                             let entropy = alloc_slice[r](32, byte_of(0));
                             var rounds = 1;
-                            if arg_count(g) >= 7 && len(arg(g, 6)) == 6 {
+                            if arg_count(g) >= 7 && is_resume(arg(g, 6)) {
                                 rounds = 2;
                             }
                             if arg_count(g) >= 7 && len(arg(g, 6)) == 64 {

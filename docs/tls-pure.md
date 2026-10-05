@@ -336,7 +336,8 @@ fork. The package README must say that a forking program reseeds in each child.
 - **CertificateRequest.** It is answered with an empty `Certificate`, since there are no client certificates (§4.1), and the
   server decides.
 - **After the handshake:**
-  - `NewSessionTicket` is parsed and dropped (no resumption, §7.2);
+  - `NewSessionTicket` is parsed and dropped (no resumption, §7.2); *since #286's build
+    (`docs/tls-resumption.md`): kept, the newest one, for the engine to save;*
   - a received `KeyUpdate` is applied, and answered when `update_requested`. The client never initiates one. Alternative: refuse
     `KeyUpdate`, which would break long connections to servers that rotate keys; the cost of supporting it is one more key
     derivation;
@@ -349,7 +350,9 @@ fork. The package README must say that a forking program reseeds in each child.
 
 - **Session resumption and 0-RTT.** These are a separate decision (#197's non-goals). The OpenSSL spike measured resumption
   halving the handshake CPU (`docs/tls-nonblocking.md` §8.5), and that saving is given up here until it is designed with its
-  hazard: a resumed session skips verification, as §10.4 there says.
+  hazard: a resumed session skips verification, as §10.4 there says. *Since #286: TLS 1.3 resumption with (EC)DHE is designed
+  and built, with eight rules for that hazard (`docs/tls-resumption.md`). 0-RTT, PSK-only resumption and TLS 1.2 resumption
+  stay out, refused by that design, not deferred.*
 - **Client certificates. Post-handshake authentication**, which is refused if requested, because it is not offered.
 
 ### 7.3 Secrets in memory
@@ -370,7 +373,9 @@ memory that is about to be freed (`docs/chacha20.md` §3.2). `tls.drop` overwrit
 
 That is against 26 to 48 KiB for OpenSSL (`docs/tls-nonblocking.md` §8.3), so for 64 slots it is about 6.3 MiB. **As built
 (#205, `docs/tls-core.md` §9.1), a slot is about 179 KiB, or 11.2 MiB for 64**: the estimate left out room for three outgoing
-records and the separate buffers for an opened record, received data and the leaf certificate. Shrinking the
+records and the separate buffers for an opened record, received data and the leaf certificate. *Resumption (#286,
+`docs/tls-resumption.md` §4) adds 4,496 bytes a slot (a ticket offered, the newest received with its PSK and host name, and two
+secrets), and the engine's ticket table 2,440 bytes a ticket.* Shrinking the
 reassembly buffer to the largest certificate message actually seen is §10's question 6. The number is a design estimate and
 #208 measures it.
 
@@ -401,6 +406,7 @@ history, as `lexsys-hooks` stores `attempts.status` today (`docs/tls-nonblocking
 | `tls-bad-certificate-verify` | the server's signature over the transcript does not verify | a hostile peer, or the wrong key |
 | `tls-bad-finished` | the server's `Finished` does not verify | the same |
 | `tls-too-many-messages` | the KeyUpdate or warning-alert limits (§7.1) | the same |
+| `tls-illegal-psk` | *#286:* a `pre_shared_key` in a ServerHello that names an identity other than the one offered, answers a ClientHello that offered none, or comes with a suite whose hash is not the ticket's (`docs/tls-resumption.md` §5) | a broken or hostile peer |
 | `tls-no-entropy` | the engine was never seeded | a program bug: seed it in `main` |
 | `tls-slot` | a slot number out of range, or a slot already in use | a program bug |
 

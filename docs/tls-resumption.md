@@ -1,6 +1,9 @@
 # TLS 1.3 session resumption for `packages/tls`: the design
 
-> **Status: design, not built.** #210 measured the pure client's full handshake at about 2.8 ms of CPU in `lexsys-hooks`, 4 to 7
+> **Status: built (#286), its results in §11.** Designed as below, then built; what building it found is §11, and the
+> sections it corrected say so in place.
+>
+> **The design, as first written:** #210 measured the pure client's full handshake at about 2.8 ms of CPU in `lexsys-hooks`, 4 to 7
 > times OpenSSL's, with no resumption (`docs/tls-hooks.md` §9). `docs/tls-pure.md` §7.2 left resumption out "until it is designed with
 > its hazard: a resumed session skips verification". This is that design. Its claims are measured on the machine named, or say they
 > are arithmetic from measured parts; where a later PR finds one false, that PR corrects it here, in place.
@@ -56,7 +59,9 @@ connection that *was* verified. So a ticket is a stored verdict, and every way t
 3. **Bound to the certificate's life.** A ticket records the leaf's `notAfter`, and is not offered after it, even if the server's
    `ticket_lifetime` says it may be. A full handshake would refuse an expired leaf, and a resumption must not accept one.
 4. **Bounded in time.** The shortest of the server's `ticket_lifetime`, RFC 8446's 7-day ceiling (§4.6.1), and the caller's own
-   limit (§4, `max_age_s`), which defaults to **1 hour**. *Why 1 hour: a certificate revoked is still trusted by every ticket issued
+   limit (§4, `max_age_s`), which defaults to **1 hour**. *As built, the caller's limit is counted from the full handshake that
+   verified the server, not from the ticket: a resumed connection inherits that time, so a chain of resumptions, each issuing a
+   new ticket, never outlives the verification it started from (§11).* *Why 1 hour: a certificate revoked is still trusted by every ticket issued
    before; there is no revocation checking at all (`docs/tls-pure.md`), and the window should be short.*
 5. **Used once.** A ticket is removed when it is offered. RFC 8446 Appendix C.4 says clients SHOULD NOT reuse a ticket, so a
    passive observer cannot link connections. A server that sends several tickets lets the client keep a few (§4).
@@ -80,6 +85,9 @@ tls.forget(engine, handle)                   // the endpoint changed, or the cal
 tls.resumed(engine, slot) -> bool            // known once established
 tls.set_ticket_max_age(engine, seconds)      // §3 rule 4; default 3,600
 ```
+
+*As built (§11), two more:* `tls.set_resumption(engine, on)`, without which no ClientHello says the client can resume, and
+`tls.open_with_tickets(heap, slots, tickets)`, for a table of a size other than `slots`.
 
 - **Storage is the engine's, bounded:** a ticket table of `slots` entries (64 for hooks), each up to **2,048 bytes of ticket**
   plus the PSK and §3's fields. A ticket over 2,048 bytes is not stored (the connection is fine; it is not resumable), so a
@@ -162,3 +170,55 @@ The build PR shows, each with its command:
 - **Keeping connections open in hooks** (option D): the bigger saving, and hooks' design to make.
 - **Making X25519 faster:** the 1.14 ms that resumption keeps. That is arithmetic work in `std.x25519` and `std.field25519`, and is
   measured there.
+
+## 11. What building it found, and the results
+
+**Built:**
+- `packages/tls`: the ClientHello's `psk_key_exchange_modes` and `pre_shared_key` with its binder, the ServerHello's `pre_shared_key`
+  (`tls-illegal-psk`, new), a resumed handshake with no Certificate, the resumption master secret, and NewSessionTicket kept with
+  its PSK (`message.ls`, `client.ls`, `slot.ls`).
+- The engine's ticket table with generation-tagged handles and §3's rules (`tls.ls`).
+- Tests: ten lying-server cases (`scripts/tls_liar.py`, now 77), twelve cases of the engine's rules (`scripts/tls_tickets.py`,
+  replayed by `conformance/tls.rs` through `tests/programs/tls_tickets.ls`), a resumption row per TLS 1.3 server in
+  `scripts/tls_interop.py`, a ticket offered by `fuzz_client` on inputs of odd length, and mutants.
+
+**What it found, and corrected here:**
+- **A server need not send a ticket to a client that does not say it can resume.** The first ClientHello, with no ticket yet,
+  sent no `psk_key_exchange_modes`. OpenSSL, nginx, GnuTLS and wolfSSL sent tickets anyway, and resumed. **Go's and rustls's servers
+  sent none**, as RFC 8446 §4.2.9 allows, so their resumption rows completed and resumed 0 of 8. Fixed with
+  `tls.set_resumption(engine, true)`: every ClientHello then advertises `psk_dhe_ke`. It is off by default, so a client that never
+  saves a ticket claims nothing it does not do, and every recording from before (the eleven traces, the 66 lying-server
+  connections, the 64 streams) replays byte for byte as it did.
+- **A ticket must carry its own host name.** The first version compared the stored ticket's name against the slot's copy of the
+  host, which `close_notify` in both directions overwrites with the other secrets. Every ticket saved after a clean close then
+  failed rule 1, and the engine fell back to a full handshake, silently. OpenSSL's `s_server -tlsextdebug` showed no
+  `pre_shared_key` on the wire. The name is now kept beside the ticket.
+- **Rule 4 is counted from the verification** (§3, corrected in place).
+- **A ticket's "received" time is the start of the connection that got it**: the engine has no clock between `start` and `save`.
+  So its age is overstated by the handshake's duration, which servers tolerate (RFC 8446 §4.2.11.1 leaves the window to them).
+- **A lifetime over 7 days is capped, not refused** (§7's liar case keeps it for 604,800 seconds).
+
+**Results:**
+- **Interop** (`scripts/tls_interop.py`, a Linux VM on an Apple M4 Max): the resumption row resumes 8 of 8 on Go `crypto/tls`,
+  rustls, wolfSSL, nginx and GnuTLS, and `tls_many resume` resumes 4 of 4 against `openssl s_server`. BoringSSL's server would
+  not link on that VM (aarch64); CI runs its row on x86-64.
+- **The binder and every secret are checked by servers that are not this code.** OpenSSL refuses a resumption whose binder is
+  wrong, and the lying server (Python on RFC 8446 alone) checks the binder, after a HelloRetryRequest too, and asserts that the PSK
+  the client derived from each ticket is its own.
+- **The rules:** twelve cases, each deciding from the ClientHello's bytes alone whether the ticket was offered, including the
+  obfuscated age.
+- **Mutants:** MUTANTS_RESULT
+- **Cost, measured** (the VM of §1; `tls_many`, 64 connections, against `openssl s_server -tls1_3 -www`, which chose
+  `TLS_AES_256_GCM_SHA384`; the client's CPU over one round, two rounds resumed, and two rounds against `-num_tickets 0`;
+  median of 5):
+
+  | | the client's CPU a connection |
+  |---|---|
+  | a full handshake | **3.26 ms** |
+  | a resumed one | **1.63 ms** |
+
+  **The saving is 1.63 ms, which is §1's two ECDSA verifications (2 × 0.817 ms) to the hundredth.** The rest of each connection is
+  the same in both: X25519, and `tls_many`'s request of one full 16 KiB record and the page back, under software AES-GCM
+  (`docs/tls-parity.md` §3.1). That is why the resumed connection costs 1.63 ms and not §2's 1.2: §2 counted the handshake
+  alone. *A first run against `-no_ticket` gave a full handshake of 2.14 ms: OpenSSL's TLS 1.3 server still resumed 43 of 64
+  through its session cache with tickets "off", so that baseline was not full handshakes. `-num_tickets 0` is.*

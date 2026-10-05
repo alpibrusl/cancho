@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Mutation check of `packages/tls` (docs/tls-core.md §7, §10).
 
-    python3 scripts/tls_mutants.py <lex-sys binary>
+    python3 scripts/tls_mutants.py <lex-sys binary> [--only <text in a mutant's name>]
 
 Each mutant is one of the package's files with one deliberate bug. The
 package is copied to a scratch directory, the mutant applied there, and
 `tests/programs/tls_driver.ls` built against it. It runs what
 `conformance/tls.rs` replays: the five tlslite-ng traces (two of them through a
-HelloRetryRequest), the six TLS 1.2 traces against OpenSSL, and the 77
+HelloRetryRequest), the six TLS 1.2 traces against OpenSSL, and the 78
 connections of `tests/vectors/tls/liar.txt`, each answer compared byte for
 byte, and the engine's rules for offering a ticket
 (`tests/vectors/tls/tickets.txt`, through `tests/programs/tls_tickets.ls`).
@@ -263,6 +263,17 @@ def cases():
     return out
 
 
+# Mutants that change no behaviour the client can reach, each with the argument. Such a mutant must survive;
+# one that is killed was not equivalent, and the run fails.
+EQUIVALENT = {
+    "a pre_shared_key accepted when none was offered":
+        "a ClientHello that offered no ticket leaves the slot's ticket hash length at 0, which no suite's hash "
+        "equals, so the hash check that follows refuses the same ServerHello with the same tag; a retry that "
+        "drops the offer keeps the old hash, but only because the retry's suite hashes otherwise, and the "
+        "ServerHello after a retry must keep its suite",
+}
+
+
 def ticket_cases():
     """`tests/vectors/tls/tickets.txt`'s cases, as (name, lines, answers)."""
     out = []
@@ -406,6 +417,8 @@ def evidence(lexsys, pkg, work, engine):
 
 def main():
     lexsys = sys.argv[1]
+    # `--only <text>`: just the mutants whose name contains it (the unmutated package still runs first).
+    only = sys.argv[sys.argv.index("--only") + 1] if "--only" in sys.argv else None
     work = tempfile.mkdtemp(prefix="tls-mutants-")
     pkg = os.path.join(work, "tls")
     src = os.path.join(ROOT, "packages/tls")
@@ -416,19 +429,27 @@ def main():
         sys.exit(1)
     print("unmutated: passes")
     survived = 0
-    for name, file, old, new in MUTANTS:
+    run = [m for m in MUTANTS if only is None or only in m[0]]
+    for name, file, old, new in run:
         text = open(os.path.join(src, file)).read()
         assert text.count(old) == 1, f"{name}: the text occurs {text.count(old)} times"
         open(os.path.join(pkg, file), "w").write(text.replace(old, new))
         found = evidence(lexsys, pkg, work, file == "tls.ls" or "end of the socket" in name)
         shutil.copy(os.path.join(src, file), os.path.join(pkg, file))
-        if found is None or found.startswith("BUILD"):
+        if name in EQUIVALENT:
+            if found is None:
+                print(f"equivalent {name}: {EQUIVALENT[name]}")
+            else:
+                survived += 1
+                print(f"KILLED, so not equivalent: {name}: {found}")
+        elif found is None or found.startswith("BUILD"):
             survived += 1
             print(f"SURVIVED {name}" + (f": {found}" if found else ""))
         else:
             print(f"killed   {name}: {found}")
     shutil.rmtree(work, ignore_errors=True)
-    print(f"{len(MUTANTS) - survived} of {len(MUTANTS)} mutants killed")
+    equivalent = sum(1 for m in run if m[0] in EQUIVALENT)
+    print(f"{len(run) - survived - equivalent} of {len(run)} mutants killed, {equivalent} equivalent (argued in EQUIVALENT)")
     sys.exit(1 if survived else 0)
 
 

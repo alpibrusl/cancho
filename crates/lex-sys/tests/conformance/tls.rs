@@ -6,7 +6,7 @@
 //! one a suite (§3.4) -- the TLS 1.2 PRF against its definition,
 //! the same server bytes fed one byte at a time and all at once, a wrong
 //! root, a crafted ServerHello for each rule of RFC 8446 §4.1.3 the
-//! client enforces, and the 77 connections of `scripts/tls_liar.py`'s
+//! client enforces, and the 78 connections of `scripts/tls_liar.py`'s
 //! lying server (§6.3), resumption's among them. All through
 //! `tests/programs/tls_driver.ls`; and the engine's rules for offering a
 //! saved ticket (`docs/tls-resumption.md` §3), through
@@ -181,7 +181,7 @@ fn every_recorded_handshake_replays_byte_for_byte_on_both_backends() {
 #[test]
 fn every_lying_server_is_refused_with_its_own_tag_on_both_backends() {
     let cases = liar_cases();
-    assert_eq!(cases.len(), 77);
+    assert_eq!(cases.len(), 78);
     for backend in ["cranelift", "llvm"] {
         let (dir, exe) = build_tls_driver("liar", backend);
         for (tag, name, asked, answered) in &cases {
