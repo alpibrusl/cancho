@@ -307,6 +307,7 @@ one, rather than a real program in the existing corpus.
 | `tests/accept/defunctionalized_stream.ls` | §3: an enum and a `match` write what a function value would, today, with no new feature |
 | `tests/reject/defunctionalized_row_is_the_union.ls` | §3: the cost, since a caller of the enum version cannot declare less than the union of the arms' rows (`effect-not-declared`) |
 | `tests/accept/function_value.ls` | §4.2, built: a captureless, region-polymorphic, effectful function taken as a value, called through it twice (`val`, no move), on both backends |
+| `tests/accept/function_value_operand.ls` | A call through a value is an expression like any other: as either side of an operator, in a comparison, and on `float`. The LLVM backend refused it as an `internal` error (no `CallIndirect` arm in `scalar_kind`) until it was found; both backends agree now |
 | `tests/reject/function_as_value.ls` | §4.2's own condition: a **generic** function has no address until its type arguments are known, so it cannot be a value (`no-function-values`) |
 | `tests/reject/function_value_wrong_arity.ls` / `function_value_wrong_type.ls` | A call through a value is checked against the value's own type exactly as a named call is |
 | `tests/reject/function_value_row_undeclared.ls` | The row travels with the type and is checked against the *caller's* row the same way a named call's is (`effect-not-declared`) |

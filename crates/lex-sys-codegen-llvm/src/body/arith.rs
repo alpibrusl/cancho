@@ -67,6 +67,13 @@ impl<'a> FuncEmitter<'a> {
                 .into_iter()
                 .next()
                 .ok_or_else(|| "a zero-leaf join result has no scalar kind".to_owned()),
+            // `docs/function-values.md` §4.2: a call through a function
+            // value carries its callee's return type, so `f(1, 9) - 9`
+            // has a kind the same way a named call's does.
+            Expr::CallIndirect { ret, .. } => leaves_of(ret, self.program)?
+                .into_iter()
+                .next()
+                .ok_or_else(|| "a zero-leaf return has no scalar kind".to_owned()),
             Expr::Call { callee, .. } => match callee {
                 Callee::Builtin(Builtin::FloatOf | Builtin::Sqrt | Builtin::FloatOf32) => {
                     Ok(LKind::F64)
