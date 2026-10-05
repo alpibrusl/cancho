@@ -32,7 +32,10 @@ const EPOLL_CLOEXEC: i64 = 0x80000;
 const EVFILT_READ: i64 = -1;
 const EVFILT_WRITE: i64 = -2;
 const EVFILT_PROC: i64 = -5;
+const EVFILT_USER: i64 = -10;
 const EV_ONESHOT: i64 = 0x0010;
+const NOTE_TRIGGER: i64 = 0x0100_0000;
+const ESRCH: i64 = 3;
 const NOTE_EXIT: i64 = 0x8000_0000;
 const EV_ADD: i64 = 0x0001;
 const EV_DELETE: i64 = 0x0002;
@@ -218,11 +221,52 @@ impl<'a> FuncEmitter<'a> {
             let reason = self.errno();
             let failed = self.fresh();
             self.out.push_str(&format!("  {failed} = icmp slt i32 {result}, 0\n"));
-            let answer = self.fresh();
+
+            // `ESRCH`: the process is gone, and a child nobody has reaped is gone
+            // only by having exited (macOS does not take `NOTE_EXIT` for a
+            // zombie). Say so the way `kqueue` says anything is ready for the
+            // asking: a user event, added and triggered at once, reported with
+            // the same token. With no `ESRCH` the two changes are none.
+            let gone = self.fresh();
+            self.out.push_str(&format!("  {gone} = icmp eq i64 {}, {ESRCH}\n", operand(&reason)));
+            let exited = self.fresh();
+            self.out.push_str(&format!("  {exited} = and i1 {failed}, {gone}\n"));
+            let pair = self.fresh();
+            self.hoist(format!("  {pair} = alloca i8, i64 {}\n", 2 * KEVENT_SIZE));
+            self.store_unaligned(&pair, 0, "i64", &pid64);
+            self.store_unaligned(&pair, 8, "i16", &EVFILT_USER.to_string());
+            self.store_unaligned(&pair, 10, "i16", &(EV_ADD | EV_ONESHOT).to_string());
+            self.store_unaligned(&pair, 12, "i32", "0");
+            self.store_unaligned(&pair, 16, "i64", "0");
+            self.store_unaligned(&pair, 24, "i64", &token);
+            self.store_unaligned(&pair, KEVENT_SIZE, "i64", &pid64);
+            self.store_unaligned(&pair, KEVENT_SIZE + 8, "i16", &EVFILT_USER.to_string());
+            self.store_unaligned(&pair, KEVENT_SIZE + 10, "i16", "0");
+            self.store_unaligned(&pair, KEVENT_SIZE + 12, "i32", &NOTE_TRIGGER.to_string());
+            self.store_unaligned(&pair, KEVENT_SIZE + 16, "i64", "0");
+            self.store_unaligned(&pair, KEVENT_SIZE + 24, "i64", "0");
+            let changes = self.fresh();
+            self.out.push_str(&format!("  {changes} = select i1 {exited}, i32 2, i32 0\n"));
+            let again = self.fresh();
             self.out.push_str(&format!(
-                "  {answer} = select i1 {failed}, i64 {}, i64 0\n",
+                "  {again} = call i32 @kevent(i32 {poller}, ptr {pair}, i32 {changes}, ptr null, i32 0, ptr null)\n"
+            ));
+            let again_reason = self.errno();
+            let again_failed = self.fresh();
+            self.out.push_str(&format!("  {again_failed} = icmp slt i32 {again}, 0\n"));
+            let after_user = self.fresh();
+            self.out.push_str(&format!(
+                "  {after_user} = select i1 {again_failed}, i64 {}, i64 0\n",
+                operand(&again_reason)
+            ));
+            let first_failed = self.fresh();
+            self.out.push_str(&format!(
+                "  {first_failed} = select i1 {exited}, i64 {after_user}, i64 {}\n",
                 operand(&reason)
             ));
+            let answer = self.fresh();
+            self.out
+                .push_str(&format!("  {answer} = select i1 {failed}, i64 {first_failed}, i64 0\n"));
             return Ok(vec![LValue::Reg(answer)]);
         }
 
@@ -404,8 +448,12 @@ impl<'a> FuncEmitter<'a> {
             // A child's exit is read as a signal's arrival is: readable.
             let exited = self.fresh();
             self.out.push_str(&format!("  {exited} = icmp eq i16 {filter}, {EVFILT_PROC}\n"));
+            let told = self.fresh();
+            self.out.push_str(&format!("  {told} = icmp eq i16 {filter}, {EVFILT_USER}\n"));
+            let either = self.fresh();
+            self.out.push_str(&format!("  {either} = or i1 {exited}, {told}\n"));
             let is_read = self.fresh();
-            self.out.push_str(&format!("  {is_read} = or i1 {reading}, {exited}\n"));
+            self.out.push_str(&format!("  {is_read} = or i1 {reading}, {either}\n"));
             let is_write = self.fresh();
             self.out.push_str(&format!("  {is_write} = icmp eq i16 {filter}, {EVFILT_WRITE}\n"));
             let errored_bits = self.fresh();

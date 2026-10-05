@@ -418,6 +418,14 @@ blocking.
   `poller_add_conn` for a `Pipe`: a channel is a socket pair, so there is
   nothing more to it. There is no `poller_remove` for either: closing the
   descriptor (`pipe_close`, `child_wait`) takes it out of the set.
+* *macOS does not take a zombie.* Measured on the first macOS CI run of
+  slice 2: `kevent` with `EVFILT_PROC`/`NOTE_EXIT` on a child that has already
+  exited and not been reaped answers `ESRCH` (3), where a `pidfd` is simply
+  readable. A `Child` nobody has reaped can only be gone by having exited, so
+  `poller_add_child` takes `ESRCH` as the exit and says it the way `kqueue`
+  says anything is ready for the asking: an `EVFILT_USER` event, added and
+  triggered in the same call, reported with the same token. `poller_wait`
+  reads it as readable like the `EVFILT_PROC` one.
 * *Darwin reports an exit once.* `EVFILT_PROC` with `NOTE_EXIT` is
   registered `EV_ONESHOT`, and `poller_wait` reads it as readable. The `pidfd`
   of Linux stays readable until the child is reaped (level-triggered, as the
@@ -589,10 +597,10 @@ slice 2's, and is checked there.
   (`pidfd` not closed; wrong pid, by a hang), **at the request of the
   session; the other eleven have not been run.** The script is
   `mutants_poll.py` in the session's notes; the list is above.
-* **Not yet run:** the Darwin half of slice 2, `EVFILT_PROC` with
-  `NOTE_EXIT` and its mapping to readable in `poller_wait`. Whether `kqueue`
-  accepts the registration of a child that is already a zombie (the second
-  conformance test) is the case to watch.
+* **Measured on macOS (slice 2).** The first macOS CI run passed the tests
+  of live children (output and exit; a deadline, then a kill) and failed the
+  two that register a child that had already ended, with `ESRCH` (§4.8). The
+  fix is that section's; the next macOS run is its measurement.
 
 ## 9. Open
 
