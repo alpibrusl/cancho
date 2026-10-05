@@ -19,32 +19,55 @@ fn run[&x, &i](exec: &x Exec("/bin"), io: &!i Io) -> [exec("/bin"), pipe_read, i
                         while going {
                             borrow mut reader as &!r in {
                                 match pipe_read(r, buf) {
-                                    Received::Data(n) => { write_bytes(io, buf[0..n]); }
-                                    Received::End => { going = false; }
-                                    Received::Again => { }
-                                    Received::Failed(e) => { going = false; }
+                                    Received::Data(n) => {
+                                        write_bytes(io, buf[0..n]);
+                                    }
+                                    Received::End => {
+                                        going = false;
+                                    }
+                                    Received::Again => {
+                                    }
+                                    Received::Failed(e) => {
+                                        going = false;
+                                    }
                                 }
                             }
                         }
                     }
                     match child_wait(c) {
-                        Exited::Code(n) => { status = n; }
-                        Exited::Signaled(s) => { status = 200 + s; }
-                        Exited::Failed(e) => { status = 150; }
+                        Exited::Code(n) => {
+                            status = n;
+                        }
+                        Exited::Signaled(s) => {
+                            status = 200 + s;
+                        }
+                        Exited::Failed(e) => {
+                            status = 150;
+                        }
                     }
                 }
-                Spawned::Failed(e) => { status = e; }
+                Spawned::Failed(e) => {
+                    status = e;
+                }
             }
             pipe_close(reader);
         }
-        Piped::Failed(e) => { status = 99; }
+        Piped::Failed(e) => {
+            status = 99;
+        }
     }
     return status;
 }
 
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
-    release(ffi); release(fs); release(heap); release(args); release(net); release(clock); release(signals);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
     let bin = narrow(exec, "/bin");
     var status = 0;
     var console = io;
@@ -53,6 +76,7 @@ fn main(world: World) -> [] int {
             status = run(b, i);
         }
     }
-    release(bin); release(console);
+    release(bin);
+    release(console);
     return status;
 }

@@ -454,24 +454,81 @@ does ([`net.md`](net.md) §4.1).
 
 ## 8. What it is checked by
 
+What follows is slice 1 as built and measured; the poller (§4.8) is
+slice 2's, and is checked there.
+
 * **Refusals** (`tests/reject/`), each with its rule tag:
-  `exec_without_capability`, `exec_widened` (`Exec("/a/b")` cannot become
-  `Exec("/a")`), `exec_sibling_prefix` (`/opt/x` cannot become
-  `/opt/xevil`), `exec_effect_undeclared`, `child_unwaited` (a `Child`
-  nothing consumes), `child_end_kept` (a `ChildEnd` nothing consumes),
-  `exec_is_edition_seven`.
-* **Conformance tests over real processes**, on both backends:
-  the child's argument list and environment are exactly what was passed;
-  the child's open descriptors are exactly 0, 1 and 2 even when the parent
-  holds a `File`, a `Dir` and a `Listener`; a path outside the prefix
-  traps, as does `..` and an `LD_PRELOAD` entry; a missing program is
-  `Failed(ENOENT)` and leaks nothing; a child killed with `KILL` is
-  `Signaled`; a parent that claimed `TERM` starts a child that `TERM`
-  ends; writing to a child that exited is `Sent::Failed(EPIPE)` and the
-  parent lives; a child's exit wakes `poller_wait`; the authority report
-  of an `Exec`-narrowed program says `exec("prefix")` and is bounded.
-* **Mutants** of each check named above, killed by the suite, as the
-  directory-handle slices were.
+  `exec_without_capability` (`capability-misused`), `exec_widened`
+  (`Exec("/a/b")` cannot become `Exec("/a")`) and `exec_sibling_prefix`
+  (`/opt/x` cannot become `/opt/xevil`) (`capability-not-narrowable`),
+  `exec_effect_undeclared` (`effect-not-declared`), `child_unwaited` and
+  `child_end_kept` (`linear-value-unconsumed`), `child_taken_apart`
+  (`linear-value-taken-apart`), `exec_is_edition_seven` (`unknown-name`).
+  One accepted program, `tests/accept/process_spawn.ls`, prints what
+  `/bin/echo` wrote down a channel.
+* **Conformance tests over real processes**
+  (`tests/conformance/processes.rs`). Each case runs on both backends, and
+  the two must print the same:
+  * the child's argument list (an empty argument, a space inside one) and
+    environment are exactly what was passed, and none of the test's own
+    environment arrives;
+  * a channel carries the parent's bytes to `cat` and back;
+  * the child holds 0, 1 and 2 and nothing else, while the parent holds
+    eight more channel descriptors of its own and one it inherited
+    *without* close-on-exec;
+  * `KILL` by its bit is `Signaled(256)`;
+  * `TERM` ends a child although the parent holds `TERM` claimed;
+  * a bit naming no signal is `EINVAL`;
+  * a missing program is `Spawned::Failed(ENOENT)`, and `exit 3` is
+    `Code(3)`;
+  * writing to a reaped child is `Sent::Failed(EPIPE)`, and the parent
+    lives;
+  * a child writes to `Stdio::Null` stdout and stderr as to any stream;
+  * a path outside the bound, `..`, a sibling of the bound, `LD_PRELOAD`,
+    `DYLD_INSERT_LIBRARIES`, and an argument or environment list not
+    ending in `\0` each *trap*: `SIGILL` or `SIGTRAP`, not merely a death
+    by signal;
+  * the authority report says `exec("/bin")` and is bounded.
+* **Mutants.** 22 of them, eleven a backend, each run against the process
+  tests:
+  * the path check, the loader refusal, the unterminated-list trap,
+    `closefrom`, the signal mask and default flags, the parent's close of
+    the ends it gave, the exit-code decode, the kill bit, `Null` opened
+    read-only, and `argv[0]`: all 20 are killed. The two closes are
+    killed by a hang: a parent still holding the child's end of its output
+    never sees that output end.
+  * The signal decode masked with `0x3f` instead of `0x7f` survives, and
+    is equivalent: the two masks differ only for signal numbers from 64,
+    and no signal a child can be ended by is numbered that high on either
+    target.
+
+  The first run left four survivors. Each had the same cause: the tests
+  did not look at the thing the check changes.
+  * Without its trap, an unterminated list makes `memchr` find nothing,
+    and the walk past the end crashes. The test asked only that the
+    program die by a signal, so it now asks for the trap's signal.
+  * Without `closefrom`, nothing changed, because slice 0 had already made
+    every descriptor the parent opens close-on-exec. Only a descriptor
+    inherited without close-on-exec tells them apart, so the test now
+    starts the probe holding one.
+  * `Null` opened read-only went unnoticed until a child wrote to it.
+
+  The equivalent mutant was killed on one backend in each of two runs.
+  That led to a flaky case: "writing to a child that has ended" took the
+  end of the child's output as proof that its input was closed too. Linux
+  releases a dying process's descriptors through deferred work, in no
+  promised order, and about 1 run in 10 wrote to a channel the child still
+  held. The case now reaps the child before it writes, since reaping comes
+  after every descriptor is released. It passed 60 runs in a row.
+* **The bound check under `-O2`.** The first `Exec` program built with the
+  LLVM backend exited through the wrong arm: `checked_path` loaded a
+  byte past the bound for every index of the path, and the optimiser used
+  that poison to delete the path. It was fixed for `Fs` and `Net` as well,
+  in #273, which this slice carries (`filesystem.md` §4).
+* **Not yet run:** the Darwin paths, that is `POSIX_SPAWN_CLOEXEC_DEFAULT`,
+  `SO_NOSIGPIPE` on the socket pair, and Darwin's signal numbers. The same
+  tests run on the macOS CI runner, and its first run is their first
+  measurement.
 
 ## 9. Open
 
