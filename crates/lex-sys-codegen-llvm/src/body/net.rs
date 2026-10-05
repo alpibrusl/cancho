@@ -222,17 +222,7 @@ impl<'a> FuncEmitter<'a> {
 
         // Inside the bound, the bytes have to match -- a plain prefix,
         // with no separator to land on (`docs/net.md` §4).
-        let inside = self.fresh();
-        self.out.push_str(&format!("  {inside} = icmp ult i64 {i}, {}\n", bound.len()));
-        let want_at = self.fresh();
-        self.out.push_str(&format!("  {want_at} = getelementptr i8, ptr {expected}, i64 {i}\n"));
-        let want = self.fresh();
-        self.out.push_str(&format!("  {want} = load i8, ptr {want_at}\n"));
-        let differs = self.fresh();
-        self.out.push_str(&format!("  {differs} = icmp ne i8 {byte}, {want}\n"));
-        let escaped = self.fresh();
-        self.out.push_str(&format!("  {escaped} = and i1 {inside}, {differs}\n"));
-        self.trap_if(&escaped)?;
+        self.check_against(&expected, bound.len(), &i, &byte)?;
 
         let next = self.fresh();
         self.out.push_str(&format!("  {next} = add i64 {i}, 1\n"));

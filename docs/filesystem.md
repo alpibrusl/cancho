@@ -199,6 +199,22 @@ missing file: it is a program doing something its type said it would not.
 That is the same distinction `defined-behaviour.md` draws everywhere —
 `-1` for an outcome, a trap for a broken promise.
 
+> **Corrected: the check was undefined behaviour in the LLVM backend.**
+> Both backends compared byte `i` of the path with byte `i` of the prefix
+> for every `i` in the path, reading the prefix's data past its end once the
+> path was longer. Cranelift read whatever lay next to it, which was harmless
+> by luck. LLVM folds a load past the end of a global to `poison`, and the
+> mask that was meant to discard it does not: `false && poison` is still
+> `poison`, and a branch on it is undefined behaviour. At `-O2`, where the
+> check's loop is unrolled for a short path, the optimiser therefore deleted
+> every path through the call: `fs_read("/tmp/q/f")` on `Fs("/tmp")` trapped
+> with `SIGILL` (measured: paths of 11 bytes and fewer, not 15 and more).
+> `connect`'s host check had the same shape and answered garbage (48 for a
+> `connect` that should have been refused). The prefix's byte is now read at
+> `i` only while `i` is inside it, and an empty prefix is not read at all;
+> `a_short_path_under_a_narrowed_prefix_is_read_on_both_backends` and
+> `a_host_inside_a_shorter_bound_is_dialled_on_both_backends` pin both.
+
 ### 4.1 `..` is refused rather than normalised
 
 A prefix check on bytes is defeated by `/tmp/../etc/passwd`. There are two
