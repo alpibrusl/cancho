@@ -69,6 +69,9 @@ jobs:
             packages/tls/{tls,record,message,slot,client12,client}.ls packages/x509/{verify,names,x509}.ls \
             -o "$RUNNER_TEMP/tls_many"
 
+      - name: The committed package stores are current (docs/package-system.md §7.4)
+        run: python3 scripts/publish_packages.py --check
+
       - name: Interop matrix (docs/tls-assurance.md §5)
         run: python3 scripts/tls_interop.py "$RUNNER_TEMP/tls_many"
 
