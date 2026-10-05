@@ -936,6 +936,24 @@ The store is committed to the library's repository, as `packages/*/
 .lex-sys-vcs` already is here. A CI check that the committed store matches
 `vcs publish --dir` of the source is natural and not part of this step.
 
+**A package that imports another package (#210).** `packages/tls` imports `packages/x509`, which `--dir` cannot publish:
+it "cannot be combined with input files or `--requires`", and works out requirements only among the files of its own
+directory. **Measured**, on this compiler:
+- `vcs publish --dir packages/x509` works, and `packages/tls` is refused for its `import x509_verify`.
+- Publishing one file at a time works, each module into its own store with `--requires <lock>:<store>` for every module it
+  imports, in dependency order. `scripts/publish_packages.py` reads the order and the requirements from each file's `module`
+  and `import` lines, so none is typed, and writes `packages/<package>/.lex-sys-vcs/<module>`. A store records its
+  requirements as paths relative to itself, so the layout is part of the result. 9 modules (`x509`, `x509_names`,
+  `x509_verify`, `tls_record`, `tls_message`, `tls_slot`, `tls_client12`, `tls_client`, `tls`), 2.6 MB.
+- **It is deterministic:** `--check` publishes a copy of the sources into a scratch tree and compares every file of every
+  store with the committed one. It passes, and it fails (exit 1) on a source that changed without its store. CI runs it in the
+  `tls-assurance` job. This is the CI check §7.4 named as "natural and not part of this step".
+- **A consumer takes one dependency.** A scratch project with `[dependencies.tls] ... path =
+  "packages/tls/.lex-sys-vcs/tls"` pinned to a revision: `lex-sys install` fetched **nine files**, the three `x509` and six
+  `tls` modules, through the recorded requirements. It built, linked and ran a program that opens and closes an engine. The
+  authority report of that program, with the dependency, is `heap` and `io_write`, `bounded`, and no `unbounded_by`: a
+  consumer of the pure TLS package gains no foreign authority.
+
 ### 7.5 Not in this step, in the order I would take them
 
 3. **A project file** (`lex-sys.toml`: entry files, dependencies, the
