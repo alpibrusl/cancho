@@ -484,6 +484,46 @@ fn halfway_cases(rng: &mut Rng, n: usize) -> Vec<String> {
     out
 }
 
+/// `digits` plus one in the last place (carrying), as `(digits, point)`.
+fn bump(digits: &[u8], point: i32) -> (Vec<u8>, i32) {
+    let mut out = digits.to_vec();
+    let mut i = out.len();
+    while i > 0 {
+        i -= 1;
+        if out[i] == 9 {
+            out[i] = 0;
+        } else {
+            out[i] += 1;
+            return (out, point);
+        }
+    }
+    out.insert(0, 1);
+    (out, point + 1)
+}
+
+/// Short decimals next to a midpoint: its digits cut to 14..=17 and rounded down or up. They
+/// have few enough digits for the reader's fast path (`w` under 2^53, `q` within 22), which
+/// reads them as a `float` first, and are within a binary64 half unit of the midpoint, so
+/// that path is where a double rounding would be, if there is one. The exponents are those
+/// whose `q` is in range.
+fn near_midpoint_cases(rng: &mut Rng, n: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    for _ in 0..n {
+        let ieee_e = 100 + rng.below(90) as i32;
+        let frac = rng.next() & 0x7f_ffff;
+        let (digits, point) = exact_decimal(2 * (frac | 1 << 23) + 1, ieee_e - 150 - 1);
+        for keep in 14..=17 {
+            if digits.len() > keep {
+                let down = &digits[..keep];
+                out.push(text_of(down, point));
+                let (up, up_point) = bump(down, point);
+                out.push(text_of(&up, up_point));
+            }
+        }
+    }
+    out
+}
+
 /// A random decimal: 1..=40 digits, a point in a random place or none, an exponent that is
 /// small, large, or absent, sometimes leading zeros or trailing ones.
 fn random_text(rng: &mut Rng) -> String {
@@ -686,6 +726,7 @@ fn parse_gate(backend: &str, n: u64) {
     let mut inputs = hard_cases();
     let hard = inputs.len();
     inputs.extend(halfway_cases(&mut rng, (n / 100).clamp(200, 5_000) as usize));
+    inputs.extend(near_midpoint_cases(&mut rng, (n / 20).clamp(500, 50_000) as usize));
     let halfway = inputs.len() - hard;
     // Whole numbers of every exponent, as a reader of `{:?}` output sees them.
     for _ in 0..n / 20 {
