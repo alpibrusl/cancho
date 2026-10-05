@@ -37,7 +37,7 @@ wants to, and `main`'s own row is `[]` even though it prints, because it
 *owns* the capability rather than borrowing one. Run it:
 
 ```sh
-cargo run -p lex-sys -- run examples/tour.ls
+cargo run -p lex-sys -- run examples/tour.ls --std
 ```
 
 ## What's deliberately not here
@@ -61,7 +61,7 @@ resolve end to end (`lex-sys vcs publish`/`lock`/`fetch`,
 `docs/package-system.md`) — `packages/net-sockets/`,
 `packages/net-connect/`, `packages/agent-wire/`, `packages/
 http-request/`, and `packages/http-response/` are five real published
-packages, and `examples/fetch/fetch.ls` depends on two of them at once,
+packages (`packages/` also holds `http-server`, `tls` and `x509`), and `examples/fetch/fetch.ls` depends on two of them at once,
 composed with no new tooling. **A dependency's own dependencies resolve
 too now**
 (`docs/package-system.md` §4.6): `packages/http-request/` itself needs
