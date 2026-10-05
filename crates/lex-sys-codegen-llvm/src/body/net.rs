@@ -110,8 +110,7 @@ impl<'a> FuncEmitter<'a> {
             self.store_byte(&addr, offset, "0");
         }
 
-        let fd = self.fresh();
-        self.out.push_str(&format!("  {fd} = call i32 @socket(i32 2, i32 1, i32 0)\n"));
+        let fd = self.tcp_socket();
 
         let result_cell = self.fresh();
         self.hoist(format!("  {result_cell} = alloca i64\n"));
@@ -379,8 +378,7 @@ impl<'a> FuncEmitter<'a> {
         self.store_byte(&addr, 2, &high8);
         self.store_byte(&addr, 3, &low8);
 
-        let fd = self.fresh();
-        self.out.push_str(&format!("  {fd} = call i32 @socket(i32 2, i32 1, i32 0)\n"));
+        let fd = self.tcp_socket();
         let bad_socket = self.fresh();
         self.out.push_str(&format!("  {bad_socket} = icmp slt i32 {fd}, 0\n"));
         self.out

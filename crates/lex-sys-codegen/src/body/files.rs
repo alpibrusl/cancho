@@ -61,9 +61,11 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         self.builder.switch_to_block(opened);
         self.builder.seal_block(opened);
         let fd = self.libc_call("fileno", &[pointer], &[types::I32], &[fp]);
-        let copy = self.libc_call("dup", &[types::I32], &[types::I32], &[fd]);
-        // `dup` can fail (the process is out of descriptors); read `errno`
-        // before `fclose` can change it.
+        // A duplicate that is close-on-exec from the start (`docs/processes.md`
+        // §4.5), `F_DUPFD_CLOEXEC` from 0. The duplicate can fail (the process
+        // is out of descriptors); read `errno` before `fclose` can change it.
+        let lowest = self.builder.ins().iconst(types::I32, 0);
+        let copy = self.fcntl(fd, self.socket_os().f_dupfd_cloexec, lowest);
         let reason = self.errno();
         self.libc_call("fclose", &[pointer], &[types::I32], &[fp]);
         let copy = self.builder.ins().sextend(types::I64, copy);

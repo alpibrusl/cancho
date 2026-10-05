@@ -989,11 +989,16 @@ pub fn is_zero_fill(fill: &Expr) -> bool {
     }
 }
 
-/// The `open` flags a directory handle's builtins pass, per target
+/// The `open` flags the file and directory builtins pass, per target
 /// (`docs/directory-handles.md` §2 and §3). `O_RDONLY` is zero everywhere.
 /// Written once here so both backends spell them the same; the values are
 /// the kernels' own, and Linux x86-64 and AArch64 differ only in the first
 /// two.
+///
+/// `cloexec` is on every open (`docs/processes.md` §4.5): no descriptor a
+/// builtin opens crosses an `exec`. Every open is an `openat`, from
+/// `at_fdcwd` when it names a path rather than a name beneath a `Dir`, so
+/// the flag is set by the call that makes the descriptor, never after it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OpenFlags {
     pub directory: i64,
@@ -1002,6 +1007,10 @@ pub struct OpenFlags {
     pub create: i64,
     pub exclusive: i64,
     pub append: i64,
+    pub truncate: i64,
+    pub cloexec: i64,
+    /// `AT_FDCWD`: `openat`'s "relative to the working directory".
+    pub at_fdcwd: i64,
 }
 
 pub fn open_flags(darwin: bool, aarch64: bool) -> OpenFlags {
@@ -1013,6 +1022,9 @@ pub fn open_flags(darwin: bool, aarch64: bool) -> OpenFlags {
             create: 0x0200,
             exclusive: 0x0800,
             append: 0x0008,
+            truncate: 0x0400,
+            cloexec: 0x0100_0000,
+            at_fdcwd: -2,
         }
     } else if aarch64 {
         OpenFlags {
@@ -1022,6 +1034,9 @@ pub fn open_flags(darwin: bool, aarch64: bool) -> OpenFlags {
             create: 0o100,
             exclusive: 0o200,
             append: 0o2000,
+            truncate: 0o1000,
+            cloexec: 0o2000000,
+            at_fdcwd: -100,
         }
     } else {
         OpenFlags {
@@ -1031,6 +1046,9 @@ pub fn open_flags(darwin: bool, aarch64: bool) -> OpenFlags {
             create: 0o100,
             exclusive: 0o200,
             append: 0o2000,
+            truncate: 0o1000,
+            cloexec: 0o2000000,
+            at_fdcwd: -100,
         }
     }
 }

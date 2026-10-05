@@ -127,6 +127,19 @@ signatures do not express the difference. A conformance test checks the
 mode of a file a program wrote, from outside the program, rather than
 inferring it from a read that happens to succeed.
 
+> **Corrected ([`processes.md`](processes.md) §4.5).** The rule was
+> overtaken twice, and both opens have changed. `fcntl` and then `openat`
+> ([`directory-handles.md`](directory-handles.md)) needed variadic calls,
+> and the backends learned to make them correctly: LLVM declares the
+> callee variadic, and Cranelift shapes the call on Apple ARM64 the way the
+> callee reads it, with the variadic argument in the first stack slot. Then
+> every descriptor a builtin opens had to be close-on-exec, which `creat`
+> cannot ask for. So both opens are now `openat(AT_FDCWD, path, flags,
+> mode)` with `O_CLOEXEC`: `O_WRONLY|O_CREAT|O_TRUNC` and `0644` to write,
+> `O_RDONLY` to read. The per-target flag values live once, in
+> `lex_sys_ir::open_flags`. The mode test above still holds, and still
+> checks the variadic `mode` from outside the program.
+
 ---
 
 ## 3. Two operations, whole-file

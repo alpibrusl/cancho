@@ -30,7 +30,9 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     /// leaves: the tag, the stream and the reason.
     pub(crate) fn dir_list(&mut self, args: &[Value]) -> Vec<Value> {
         let pointer = self.pointer;
-        let directory = lex_sys_ir::open_flags(self.is_darwin(), self.aarch64()).directory;
+        let flags = self.open_flags();
+        // Close-on-exec, as every descriptor a builtin opens (`docs/processes.md` §4.5).
+        let directory = flags.directory | flags.cloexec;
 
         // `"."`, NUL-terminated, on the stack.
         let slot = self.builder.create_sized_stack_slot(StackSlotData::new(

@@ -180,7 +180,12 @@ accepts a `write`. Three facts follow, and one of them is a limit:
 * **No `O_CLOEXEC`.** The descriptor is inherited across `exec` (measured:
   `FD_CLOEXEC` clear). lex-sys has no `exec` builtin, so this matters only
   to a program that reaches `fork`/`exec` through `Ffi`, and it is the
-  same as `open_read` today.
+  same as `open_read` today. **Corrected ([`processes.md`](processes.md)
+  §4.5):** the duplicate taken from `fopen`'s descriptor is now
+  `fcntl(F_DUPFD_CLOEXEC)` rather than `dup`, so it is close-on-exec from
+  the start, as every descriptor a builtin opens now is. `fopen`'s own
+  descriptor lives only until the `fclose` straight after, and is not
+  close-on-exec in that window.
 * **Per-target flag constants are avoided entirely**, which is what the
   rule from `filesystem.md` §2.2 asked for: *the backend does not call
   variadic C functions*, and here it need not guess a flag either.
@@ -431,7 +436,7 @@ sandbox).
   written this way is readable under a lax umask. A `mode` parameter is
   cheap to add (`creat` takes one) and is held back only so slice 1 is one
   decision smaller.
-* **No `O_CLOEXEC`** (§3).
+* ~~**No `O_CLOEXEC`** (§3).~~ Closed by [`processes.md`](processes.md) §4.5.
 * **No durability on a non-Linux target** (§6).
 
 ## 9. Open questions, and where each stands

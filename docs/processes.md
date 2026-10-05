@@ -1,6 +1,7 @@
 # Processes: running a program, with an authority that says which
 
-> **Status: design, not built.** Written before the code, the way
+> **Status: slice 0 built (§4.5); slices 1 to 4 designed, not built.**
+> Written before the code, the way
 > [`filesystem.md`](filesystem.md), [`net.md`](net.md) and
 > [`signals.md`](signals.md) were. When building it disagrees with this
 > document, this document is corrected in place.
@@ -287,6 +288,48 @@ tightening rather than an edition matter ([`editions.md`](editions.md)
 child through `Ffi`, which is the leak this closes. `file-writes.md`'s
 "No `O_CLOEXEC`" note is corrected by the same change.
 
+> **Built (slice 0).** What each builtin's descriptor now comes from:
+>
+> | builtins | Linux | Darwin |
+> |---|---|---|
+> | `fs_read`, `fs_write`, `open_read`, `open_dir` | `openat(AT_FDCWD, path, ... \| O_CLOEXEC)` | the same |
+> | `dir_enter`, `dir_open_*`, `dir_list` | `openat(dir, name, ... \| O_CLOEXEC)` | the same |
+> | `open_write`, `open_append`, `open_new`, `open_rw` | `fcntl(F_DUPFD_CLOEXEC)` of `fopen`'s descriptor | the same |
+> | `tcp_listen`, `tcp_connect`, `bind`, `connect` | `socket(..., SOCK_STREAM \| SOCK_CLOEXEC, ...)` | `socket`, then `fcntl(F_SETFD, FD_CLOEXEC)` |
+> | `tcp_accept`, `accept` | `accept4(..., SOCK_CLOEXEC)` | `accept`, then `fcntl` |
+> | `poller_new`, `signals_watch` | `epoll_create1(EPOLL_CLOEXEC)`, `signalfd(SFD_CLOEXEC)`, as before | `kqueue`, then `fcntl` |
+>
+> `creat`, `open` and `dup` are no longer called. The flag values live once,
+> in `lex_sys_ir::open_flags` and `SocketOs`.
+>
+> **Two windows remain, and both are stated rather than closed.** Where
+> Darwin has no flag, `fcntl` follows the call that made the descriptor,
+> so an `exec` on another thread between the two would still inherit it;
+> and `fopen`'s own descriptor is not close-on-exec for the instant before
+> its `fclose`, on both targets. Neither is reachable from a lex-sys
+> program until slice 1 (only a foreign `exec` can start a process, and a
+> lex-sys program has one thread per `spawn` it wrote), and slice 1 closes
+> the first one for spawns it makes itself: `posix_spawn` on Darwin can be
+> asked to close every descriptor but the three it is given
+> (`POSIX_SPAWN_CLOEXEC_DEFAULT`).
+>
+> **Checked by** `close_on_exec.rs`: a program runs `system("ls /dev/fd")`
+> through `Ffi` once before opening anything and once holding one of
+> everything a builtin opens (fourteen descriptors), and the two listings
+> must be equal. Before the change the second had twelve more, on both
+> backends. Equal rather than `0 1 2`, because macOS CI found the first
+> version of the test wrong: the runner hands every process descriptors of
+> its own (131 and up), and those pass through a program untouched. `fs_read` and `fs_write` close
+> their descriptor before returning, so no child can be shown one, and the
+> test cannot tell those two from before.
+>
+> **Mutants:** each site reverted alone, in each backend, 14 in all; 12
+> are killed. The two that survive are `dir_list`'s `O_CLOEXEC`, and they
+> are equivalent on Linux: glibc's `fdopendir` sets `FD_CLOEXEC` on the
+> descriptor it is given (measured: `F_GETFD` answers 0 before it and 1
+> after). The flag stays, because it closes the moment between `openat` and
+> `fdopendir` and does not rest on what one libc does.
+
 ### 4.6 Signals start at their defaults
 
 A program that claimed `TERM` holds it blocked on Linux and ignored on
@@ -381,7 +424,7 @@ does ([`net.md`](net.md) §4.1).
 |---|---|---|
 | a channel | `socketpair(AF_UNIX, SOCK_STREAM \| SOCK_CLOEXEC)` | `socketpair` then `fcntl(FD_CLOEXEC)` and `SO_NOSIGPIPE` |
 | the child's 0, 1, 2 | `posix_spawn_file_actions_adddup2`, `_addopen("/dev/null")` | the same |
-| everything else closed | close-on-exec everywhere (slice 0) | the same |
+| everything else closed | close-on-exec everywhere (slice 0) | the same, and `POSIX_SPAWN_CLOEXEC_DEFAULT` for the window slice 0 leaves on Darwin (§4.5) |
 | signals | `POSIX_SPAWN_SETSIGMASK`, `POSIX_SPAWN_SETSIGDEF` | the same |
 | exit readiness | `pidfd_open` (via `syscall`, since glibc only wraps it from 2.36) | `kqueue` `EVFILT_PROC`, `NOTE_EXIT` |
 | reap | `waitpid(pid, &status, 0)` | the same |
@@ -392,7 +435,7 @@ does ([`net.md`](net.md) §4.1).
 
 | Slice | What | Edition |
 |---|---|---|
-| **0** | Close-on-exec on every descriptor the backends open (§4.5), with a conformance test that reads `FD_CLOEXEC` from outside the program | every edition (a tightening) |
+| **0** | Close-on-exec on every descriptor the backends open (§4.5), with a conformance test that asks a child what it inherited. **Built** | every edition (a tightening) |
 | **1** | `Exec`, the `exec`, `child_signal`, `pipe_read`, `pipe_write` labels, `Split`'s ninth field, `pipe_open`, `exec_spawn`, `child_wait`, `child_kill`, the `Pipe` operations; both backends, both targets | 7 |
 | **2** | `poller_add_pipe`, `poller_add_child` | 7 |
 | **3** | `std.process`: `Args` (the `\0` builder) and `run(heap, exec, path, args, input, most, timeout)`, a bounded capture with a deadline, built on slices 1 and 2 | 7 |

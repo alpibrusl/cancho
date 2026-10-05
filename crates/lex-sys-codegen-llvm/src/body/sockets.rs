@@ -10,7 +10,7 @@
 use super::net::port_bound_of;
 use crate::*;
 
-use lex_sys_ir::{EINVAL, F_GETFL, F_SETFL, SocketOs as Os};
+use lex_sys_ir::{EINVAL, F_GETFL, F_SETFD, F_SETFL, FD_CLOEXEC, SocketOs as Os};
 
 impl<'a> FuncEmitter<'a> {
     pub(crate) fn os(&self) -> Os {
@@ -29,6 +29,59 @@ impl<'a> FuncEmitter<'a> {
         let fd = self.fresh();
         self.out.push_str(&format!("  {fd} = trunc i64 {fd64} to i32\n"));
         fd
+    }
+
+    /// Set `FD_CLOEXEC` on `fd` when it is a descriptor, for a platform that
+    /// cannot ask for it in the call that made it (Darwin's `socket`,
+    /// `accept` and `kqueue`). A failed call is left alone, so a caller that
+    /// reads `errno` afterwards still reads the call's own
+    /// (`docs/processes.md` §4.5).
+    pub(crate) fn close_on_exec(&mut self, fd: &str) {
+        let n = self.blocks;
+        self.blocks += 1;
+        let (set, done) = (format!("cloexec{n}"), format!("cloexecdone{n}"));
+        let opened = self.fresh();
+        self.out.push_str(&format!("  {opened} = icmp sge i32 {fd}, 0\n"));
+        self.out.push_str(&format!("  br i1 {opened}, label %{set}, label %{done}\n"));
+        self.out.push_str(&format!("{set}:\n"));
+        let ignored = self.fresh();
+        self.out.push_str(&format!(
+            "  {ignored} = call i32 (i32, i32, ...) @fcntl(i32 {fd}, i32 {F_SETFD}, i32 {FD_CLOEXEC})\n"
+        ));
+        self.out.push_str(&format!("  br label %{done}\n"));
+        self.out.push_str(&format!("{done}:\n"));
+    }
+
+    /// `socket(AF_INET, SOCK_STREAM, 0)`, close-on-exec: `SOCK_CLOEXEC` in
+    /// the type on Linux, so no other thread's `exec` can see it open
+    /// without the flag; `fcntl` straight after on Darwin, which has no such
+    /// flag.
+    pub(crate) fn tcp_socket(&mut self) -> String {
+        let kind = 1 | self.os().sock_cloexec;
+        let fd = self.fresh();
+        self.out.push_str(&format!("  {fd} = call i32 @socket(i32 2, i32 {kind}, i32 0)\n"));
+        if self.is_darwin() {
+            self.close_on_exec(&fd);
+        }
+        fd
+    }
+
+    /// `accept(fd, NULL, NULL)`, close-on-exec: `accept4` with
+    /// `SOCK_CLOEXEC` on Linux, `accept` and `fcntl` on Darwin.
+    pub(crate) fn accept_cloexec(&mut self, listener: &str) -> String {
+        let conn = self.fresh();
+        if self.is_darwin() {
+            self.out.push_str(&format!(
+                "  {conn} = call i32 @accept(i32 {listener}, ptr null, ptr null)\n"
+            ));
+            self.close_on_exec(&conn);
+        } else {
+            let flags = self.os().sock_cloexec;
+            self.out.push_str(&format!(
+                "  {conn} = call i32 @accept4(i32 {listener}, ptr null, ptr null, i32 {flags})\n"
+            ));
+        }
+        conn
     }
 
     /// Darwin has no `MSG_NOSIGNAL`: a socket opts out of `SIGPIPE` for
@@ -97,8 +150,7 @@ impl<'a> FuncEmitter<'a> {
         self.hoist(format!("  {err_cell} = alloca i64\n"));
         self.out.push_str(&format!("  store i64 0, ptr {err_cell}\n"));
 
-        let fd = self.fresh();
-        self.out.push_str(&format!("  {fd} = call i32 @socket(i32 2, i32 1, i32 0)\n"));
+        let fd = self.tcp_socket();
         let bad_socket = self.fresh();
         self.out.push_str(&format!("  {bad_socket} = icmp slt i32 {fd}, 0\n"));
         let n = self.blocks;
@@ -194,10 +246,7 @@ impl<'a> FuncEmitter<'a> {
     pub(crate) fn tcp_accept(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
         let os = self.os();
         let listener = self.handle_fd(&args[0]);
-        let conn = self.fresh();
-        self.out.push_str(&format!(
-            "  {conn} = call i32 @accept(i32 {listener}, ptr null, ptr null)\n"
-        ));
+        let conn = self.accept_cloexec(&listener);
         let conn64 = self.fresh();
         self.out.push_str(&format!("  {conn64} = sext i32 {conn} to i64\n"));
         let reason = self.errno();

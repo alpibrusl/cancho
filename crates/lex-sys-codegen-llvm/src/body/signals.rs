@@ -222,6 +222,7 @@ impl<'a> FuncEmitter<'a> {
             let kq = self.fresh();
             self.out.push_str(&format!("  {kq} = call i32 @kqueue()\n"));
             let reason = self.errno();
+            self.close_on_exec(&kq);
             let failed = self.fresh();
             self.out.push_str(&format!("  {failed} = icmp slt i32 {kq}, 0\n"));
             self.out.push_str(&format!("  br i1 {failed}, label %{bad}, label %{ok}\n"));

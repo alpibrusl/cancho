@@ -227,13 +227,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         self.builder.ins().store(MemFlags::trusted(), high, addr, 2);
         self.builder.ins().store(MemFlags::trusted(), low, addr, 3);
 
-        let socket = self.libc_fn("socket", &[types::I32, types::I32, types::I32], &[types::I32]);
-        let socket = self.module.declare_func_in_func(socket, self.builder.func);
-        let domain = self.builder.ins().iconst(types::I32, 2);
-        let kind = self.builder.ins().iconst(types::I32, 1);
-        let proto = self.builder.ins().iconst(types::I32, 0);
-        let call = self.builder.ins().call(socket, &[domain, kind, proto]);
-        let fd = self.builder.inst_results(call)[0];
+        let fd = self.tcp_socket();
 
         let no_socket = self.builder.create_block();
         let have_socket = self.builder.create_block();
@@ -355,13 +349,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
             self.builder.ins().store(MemFlags::trusted(), zero8, addr, i);
         }
 
-        let socket = self.libc_fn("socket", &[types::I32, types::I32, types::I32], &[types::I32]);
-        let socket = self.module.declare_func_in_func(socket, self.builder.func);
-        let domain = self.builder.ins().iconst(types::I32, 2);
-        let kind = self.builder.ins().iconst(types::I32, 1);
-        let proto = self.builder.ins().iconst(types::I32, 0);
-        let call = self.builder.ins().call(socket, &[domain, kind, proto]);
-        let fd = self.builder.inst_results(call)[0];
+        let fd = self.tcp_socket();
         let minus_one = self.builder.ins().iconst(types::I64, -1);
 
         let no_socket = self.builder.create_block();

@@ -314,6 +314,9 @@ pub(crate) fn emit_module(
     declare_libc_unless_own(&mut text, "calloc", "ptr @calloc(i64, i64)");
     declare_libc_unless_own(&mut text, "listen", "i32 @listen(i32, i32)");
     declare_libc_unless_own(&mut text, "accept", "i32 @accept(i32, ptr, ptr)");
+    // Linux's close-on-exec accept (`docs/processes.md` §4.5); Darwin has
+    // none and never calls it.
+    declare_libc_unless_own(&mut text, "accept4", "i32 @accept4(i32, ptr, ptr, i32)");
     // `bind` (§7.21, `docs/listen.md` §6): `socket`+`setsockopt`+`bind`
     // folded into one call, the same libc surface `examples/serve/
     // serve.ls` reaches by hand and `lex-sys-codegen`'s own `body/net.rs`
@@ -379,26 +382,23 @@ pub(crate) fn emit_module(
     text.push('\n');
 
     // `Fs` (§7.24, `docs/filesystem.md` §3-4, `docs/file-handles.md`):
-    // `fs_read`/`fs_write` (`creat`/`open` then `read`/`write` then
-    // `close`), `open_read` (`open`, descriptor kept), `file_read`
+    // `fs_read`/`fs_write` (`openat` then `read`/`write` then `close`),
+    // `open_read` (`openat`, descriptor kept), `file_read`
     // (`read`) and `file_close` (`close`, already declared above for
     // `bind`'s own use). `errno`'s accessor is a *function* in every
     // modern libc -- `__errno_location` on glibc, `__error` on Darwin --
     // both answering a pointer to a thread-local `int`, the same split
     // `lex-sys-codegen`'s own `errno` already makes.
-    declare_libc_unless_own(&mut text, "creat", "i32 @creat(ptr, i32)");
-    declare_libc_unless_own(&mut text, "open", "i32 @open(ptr, i32)");
     declare_libc_unless_own(&mut text, "read", "i64 @read(i32, ptr, i64)");
     // `copy_within` (`docs/memory-moves.md`) and `copy_into` (`docs/bulk-copy.md`).
     declare_libc_unless_own(&mut text, "memmove", "ptr @memmove(ptr, ptr, i64)");
     // `index_of_byte` (`docs/byte-search.md`).
     declare_libc_unless_own(&mut text, "memchr", "ptr @memchr(ptr, i32, i64)");
     declare_libc_unless_own(&mut text, "write", "i64 @write(i32, ptr, i64)");
-    // `docs/file-writes.md`: the write side of a file handle. `fopen`/`dup`/
-    // `fclose` are the opens' bridge (section 3); none of these is variadic.
+    // `docs/file-writes.md`: the write side of a file handle. `fopen`/
+    // `fcntl(F_DUPFD_CLOEXEC)`/`fclose` are the opens' bridge (section 3).
     declare_libc_unless_own(&mut text, "fopen", "ptr @fopen(ptr, ptr)");
     declare_libc_unless_own(&mut text, "fileno", "i32 @fileno(ptr)");
-    declare_libc_unless_own(&mut text, "dup", "i32 @dup(i32)");
     declare_libc_unless_own(&mut text, "fclose", "i32 @fclose(ptr)");
     declare_libc_unless_own(&mut text, "pwrite", "i64 @pwrite(i32, ptr, i64, i64)");
     declare_libc_unless_own(&mut text, "pread", "i64 @pread(i32, ptr, i64, i64)");
