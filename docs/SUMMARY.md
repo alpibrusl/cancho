@@ -102,6 +102,7 @@
 - [TLS parity with the OpenSSL backend](tls-parity.md)
 - [`std.ecdh`: P-256 and P-384 key exchange](ecdh.md)
 - [`value_barrier`: a value the optimiser cannot see through](value-barrier.md)
+- [The pure TLS backend in `lexsys-hooks`](tls-hooks.md)
 - [TLS 1.3 session resumption](tls-resumption.md)
 
 # Compile time and program identity

@@ -63,7 +63,11 @@ files, so that a later move is mechanical.
 The OpenSSL backend already chose **memory BIOs** over a descriptor (`docs/tls-nonblocking.md` §3.2, decision D1). Its program
 reads and writes the socket and hands OpenSSL bytes. That *is* a sans-io interface: OpenSSL's `BIO_write(rbio)` is "bytes in",
 and `BIO_read(wbio)` is "bytes out". So one interface fits both backends with no adapter, and a consumer (hooks' `attempt.ls`)
-switches backend by dependency, not by code (#210's gate).
+switches backend by dependency, not by code (#210's gate). *Corrected (#210, `docs/tls-hooks.md` §2.1 and §2.2): the byte
+movement is the same, the interfaces are not. Hooks' `tls.ls` owns the socket I/O and a connection's state is the caller's
+integers, where this engine owns its slots, so hooks needs an adapter module. And hooks' functions carry `Ffi` rows that one
+source cannot also carry without them (`docs/effect-polymorphism.md`), so a pure build cannot share `attempt.ls` and
+`hooks.ls` unchanged.*
 
 The second constraint is how `lexsys-hooks` holds connections. It keeps 64 attempts as **slots**: integer arrays indexed by slot,
 the `Conn`s in a `std.conns.Table`, one `Poller` (`docs/tls-nonblocking.md` §4.2 and §10.3, read from `src/attempt.ls`). A
@@ -442,7 +446,9 @@ Each sub-issue (#199 to #210) states its own gate as a command. This design adds
 1. **The two backends agree.** For the certificate matrix of `docs/tls-nonblocking.md` §5, both backends give the same tag, plus
    #206's wildcard and constraint rows (#210).
 2. **No capability in the pure backend.** `lex-sys authority` on a hooks build with the pure backend shows no `ffi(...)` and no
-   foreign symbols. This is checked by a test, not asserted (#210).
+   foreign symbols. This is checked by a test, not asserted (#210). *Corrected (#210, `docs/tls-hooks.md` §2.4): hooks as a whole
+   also holds `libc` (`statx`, `prctl`: the modes of the data directory), so "none at all" cannot hold for it. The check is no
+   `libssl` and no `libcrypto` scope, none of the 32 symbols, and the `libc` entries unchanged.*
 3. **No input reaches a trap.** It is fuzzed at the record, handshake, DER and chain levels (#208), as `dns.ls` was over a million
    damaged answers (`docs/tls-nonblocking.md` §7). *#208's plan and results, for this and for the rest of its bar, are in `docs/tls-assurance.md`. Fuzzing is in §3.6 (no crash
    and no hang). The differential and interop matrices are in §4.1 and §5.1. Timing is in §6.1: X25519 and ChaCha20-Poly1305 pass
