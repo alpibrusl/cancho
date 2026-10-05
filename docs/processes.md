@@ -153,7 +153,7 @@ fn call[&h, &x, &q](heap: &!h Heap, exec: &x Exec("/opt/lexsys-tools/bin"), requ
             match pipe_open() {
                 Piped::Failed(e) => { pipe_close(to_child); child_end_close(child_in); }
                 Piped::Ok(from_child, child_out) => {
-                    // `\0`-separated (§4.2); a real caller builds this with `std.process.Args`.
+                    // `\0`-separated (§4.2); a real caller builds this with `std.process.Argv` (§7.1).
                     let args = "--root\0/work\0--create\0--stdin\0notes.txt\0";
                     match exec_spawn(exec, "/opt/lexsys-tools/bin/write", args, "",
                                      Stdio::Pipe(child_in), Stdio::Pipe(child_out), Stdio::Null) {
@@ -176,9 +176,12 @@ fn call[&h, &x, &q](heap: &!h Heap, exec: &x Exec("/opt/lexsys-tools/bin"), requ
 }
 ```
 
-`std.process` (§7, slice 3) wraps this into `run(heap, exec, path, args,
+~~`std.process` (§7, slice 3) wraps this into `run(heap, exec, path, args,
 input, most, timeout)`, which is what the MCP server and a test actually
-call.
+call~~. **Corrected (#275):** `run` cannot take an `Exec` narrowed
+by its caller (§7.1), so the spawn stays here and `std.process.capture`
+does the rest: the input written while the output is read, a bound, a
+deadline, and the reap.
 
 ---
 
@@ -216,7 +219,7 @@ lacks: a slice of slices would need a region per element. An argument
 cannot contain `\0` in any encoding a process can receive, so the
 separator excludes nothing. A malformed list (not empty, and not ending
 in `\0`) is a trap, like an out-of-range index: it is a program bug, not
-a kernel outcome. `std.process.Args` builds one in a buffer.
+a kernel outcome. `std.process.Argv` builds one in a buffer (§7.1).
 
 ### 4.3 The environment is exactly what is passed
 
@@ -428,7 +431,7 @@ blocking.
 * *macOS does not take a zombie.* `kevent` with `EVFILT_PROC`/`NOTE_EXIT` on
   a child that has already exited and not been reaped answers `ESRCH` (3),
   where a `pidfd` is simply readable. Measured on the first macOS CI run of
-  slice 2, and in C on macOS 26.2: 200 children of 200, each confirmed a
+  slice 2, and in C on macOS 26.2 (`scripts/kqueue_zombie.c`): 200 children of 200, each confirmed a
   zombie with `waitid(WNOWAIT)` first. A `Child` nobody has reaped still owns
   its pid (§4.7), so `ESRCH` can only mean it has exited, and
   `poller_add_child` says so the way `kqueue` says anything is ready for the
@@ -460,7 +463,7 @@ thread can be waited for by another, since the `Child` moves.
 |---|---|
 | `fork` and `exec` as builtins | `fork` copies the parent's heap and every thread's locks into a child that runs one thread, and everything between `fork` and `exec` must be async-signal-safe. A language whose backend calls `malloc` cannot promise that. `posix_spawn` is the operation both askers mean, and it does the descriptor and signal setup (§4.4 to §4.6) in the kernel's own order |
 | Keep it `Ffi("libc")` | The status quo. `reach.md` §5 and `under-a-grant.md` §4 are the argument: `Ffi` is the one capability whose label does not bound what it authorises |
-| One run-to-completion builtin (`exec_run(..., input, output) -> code`) | Serves the MCP server and not #237, which must kill a child at a moment it chooses and serve sockets meanwhile. It is the right *library* function, and `std.process.run` is it (slice 3), built on the handles |
+| One run-to-completion builtin (`exec_run(..., input, output) -> code`) | Serves the MCP server and not #237, which must kill a child at a moment it chooses and serve sockets meanwhile. It is the right *library* function, and `std.process.capture` is it (slice 3, §7.1: the spawn stays with the caller), built on the handles |
 | A list of programs as the bound (`Exec("seek,write")`) | `Signals` uses a set because signals are a closed list. Programs are files, and the natural unit a deployment grants is a directory (`/opt/lexsys-tools/bin`). A prefix that is exactly one file already expresses "this one program" |
 | The child's ends as `File` | A `File` is a regular file: no `Again`, no readiness, and a write to a closed pipe raises `SIGPIPE`. A child's stream is a peer, and lex-sys already has a handle for a peer's byte stream. `Stdio::File` keeps redirecting to a real file |
 | The parent's ends as `Conn` | The same machinery, but `conn_read` in a row would read as *network*. A distinct `Pipe` keeps the row honest about what the program talks to, at the cost of four small builtins over one backend path |
@@ -502,8 +505,150 @@ does ([`net.md`](net.md) §4.1).
 | **0** | Close-on-exec on every descriptor the backends open (§4.5), with a conformance test that asks a child what it inherited. **Built** | every edition (a tightening) |
 | **1** | `Exec`, the `exec`, `child_signal`, `pipe_read`, `pipe_write` labels, `Split`'s ninth field, `pipe_open`, `exec_spawn`, `child_wait`, `child_kill`, the `Pipe` operations; both backends, both targets. **Built** (§8) | 7 |
 | **2** | `poller_add_pipe`, `poller_add_child`. **Built** (§4.8, §8) | 7 |
-| **3** | `std.process`: `Args` (the `\0` builder) and `run(heap, exec, path, args, input, most, timeout)`, a bounded capture with a deadline, built on slices 1 and 2 | 7 |
+| **3** | `std.process`: ~~`Args` (the `\0` builder) and `run(heap, exec, path, args, input, most, timeout)`~~ `Argv` (the `\0` builder), `channels`, and `capture(heap, clock, child, to_child, from_child, input, most, timeout)`, a bounded capture with a deadline, built on slices 1 and 2. **Corrected (#275):** neither name nor signature could be built; §7.1. **Built** (§8) | 7 |
 | **4** | lexsys-tools#10: the MCP server, as a lex-sys program holding `Exec` narrowed to the tools' directory and nothing that writes | — |
+
+### 7.1 Slice 3: `std.process`
+
+**Two of §7's promises could not be built, measured with the compiler of
+slice 2.**
+
+* *`run` cannot take the `Exec`.* A function's parameter names one prefix,
+  and nothing is polymorphic over it (effect-polymorphism.md). A library
+  `run` would have to take `&Exec("")`, and a program holding
+  `Exec("/usr/bin")` cannot pass it: `expected "", found "/usr/bin"`. The
+  MCP server's whole point (§3.3) is holding `Exec` narrowed to the tools'
+  directory, so a `run` it can call does not exist. **The spawn stays with
+  the caller**, under the caller's own `Exec`, which is where the report
+  should see it, and the library does everything after it.
+* *`Args` is taken, and so is `arg`.* `` `Args` is a built-in type and cannot be
+  redeclared``: it is the argument capability every `Split` holds. The
+  builder is `Argv`, and adding to it is `add`, since `arg` is the builtin
+  that reads one argument.
+
+**The surface.**
+
+```lex-sys
+pub res struct Argv { .. }                       // a `\0`-separated list, in a buffer.Buffer
+pub fn argv[&h](heap: &!h Heap, capacity: int) -> [heap] Argv
+pub fn add[&h, &s](heap: &!h Heap, list: Argv, one: &s [byte]) -> [heap] (Argv, int)
+pub fn list[&a](list: &a Argv) -> [] &a [byte]  // what `exec_spawn` takes
+pub fn drop[&h](heap: &!h Heap, list: Argv) -> [heap] int
+
+pub enum Channels { Ok(Pipe, ChildEnd, Pipe, ChildEnd), Failed(int) }
+pub fn channels() -> [] Channels                 // to the child, from the child
+pub fn close(to_child: Pipe, from_child: Pipe) -> [] int
+
+pub enum Ran { Code(int), Signaled(int), TimedOut, TooMuch, Failed(int) }
+pub fn capture[&h, &c, &i](heap: &!h Heap, clock: &c Clock, child: Child,
+        to_child: Pipe, from_child: Pipe, input: &i [byte], most: int, timeout: int)
+    -> [heap, clock, poll] (buffer.Buffer, Ran)
+```
+
+The MCP server's call (§3.3), with it:
+
+```lex-sys
+match process.channels() {
+    Channels::Failed(e) => { ... }
+    Channels::Ok(to_child, child_in, from_child, child_out) => {
+        match exec_spawn(exec, path, process.list(argv), "",
+                         Stdio::Pipe(child_in), Stdio::Pipe(child_out), Stdio::Null) {
+            Spawned::Failed(e) => { process.close(to_child, from_child); ... }
+            Spawned::Ok(child) => {
+                let (answer, ran) = process.capture(heap, clock, child, to_child, from_child,
+                                                    request, 1048576, 10000);
+                ...
+            }
+        }
+    }
+}
+```
+
+`capture`'s row is `[heap, clock, poll]`: owning the `Child` and both
+`Pipe`s discharges `child_signal`, `pipe_read` and `pipe_write` (§3.2;
+checked: a function that owns them and kills, reads and closes declares
+none of the three), and rows are exact, so `poll` is there because
+`poller_wait` is. Nothing in `std.process` names `exec`: a program's report
+says `exec("p")` exactly where it spawns.
+
+**What `capture` does,** and the measurement behind each choice
+(`scripts/process_run_measure.py`, run on each kernel). All of it
+on one `Poller`: the output channel (readable, token 1), the input channel
+(writable, token 2, until the input is written) and the child (token 3).
+
+* *Input and output are interleaved, never write-all-then-read.* A channel
+  holds **8,192 bytes on macOS 26.2 and 180,224 on Linux 6.8** before
+  `EAGAIN` (an `AF_UNIX` socket pair, default buffers). Writing all the
+  input before reading any output, to `cat`, finishes at 16 KiB and
+  deadlocks at 32 KiB on macOS, and at 256 KiB and 512 KiB on Linux: the
+  child blocks writing output nobody reads, and the parent blocks writing
+  input nobody reads. A loop that passed every Linux test would deadlock on
+  macOS at a size no Linux test tried, so both channels are non-blocking and
+  both are on the poller from the start. The input end is closed once the
+  input is written (the child's end of file), at once for empty input, and
+  as soon as a write answers `Failed` (a child that stopped reading is not an
+  error; its exit status says what it thought).
+* *The child's exit ends the capture; the end of the stream does not.* Once
+  the poller reports the child, the output is read until `Again` or `End`,
+  and the capture stops. A write to a socket has reached the reader's queue
+  when it returns, so everything the child wrote is there when it exits:
+  for a child writing 1 byte, 64 KiB and 1 MiB and exiting, the bytes
+  captured this way were all of them in **600 runs of 600 on each kernel**
+  (and the end of the stream had already arrived in every one). Waiting for
+  the end instead would wait for any process that inherited the end:
+  `sh -c 'sleep 2 & echo hi'` exits at once and its output ends **2.0 s**
+  later, on both. A grandchild's output after the child has exited is not
+  the child's, and is not captured.
+* *A deadline is a `Clock`, not a timeout per wait.* `poller_wait`'s timeout
+  restarts at every wake, so `capture` reads `clock_ms` once at the start
+  and waits each time for what is left. When nothing is left, the child is
+  killed (`KILL`, which cannot be caught or blocked), reaped, and the answer
+  is `TimedOut` with what was captured so far.
+* *`most` is a bound on what is kept, and exceeding it ends the child.* The
+  buffer never grows past `most` bytes. The first byte beyond it kills the
+  child, which is reaped, and the answer is `TooMuch` with the first `most`
+  bytes. An output bound that kept reading and discarded would still let a
+  child run unbounded in time; with a deadline that is bounded too, but a
+  tool that is producing more than its caller will read has already failed.
+* *Every path reaps.* `child_wait` is the only way out of `capture` that
+  ends the `Child`, so linearity says this. `Code(n)` and `Signaled(bit)`
+  are `Exited`'s; `TimedOut` and `TooMuch` say why `capture` killed it, rather
+  than a `Signaled(256)` that could have come from anywhere.
+* *A child the poller cannot watch is killed, not waited on blind.* If
+  `poller_new` or `poller_add_child` fails (`EMFILE` §4.8, `ENOSYS` on Linux
+  before 5.3), there is no way to wait for the child and the deadline at
+  once, and a blocking `child_wait` could outlast any deadline. The child is
+  killed and reaped and the answer is `Failed(errno)`. A Linux before 5.3
+  therefore cannot `capture`; it can still use the handles.
+* *Standard error is the caller's.* `capture` reads one stream: the MCP
+  server returns a tool's standard output unchanged with its exit code
+  (lexsys-tools#10), and #237 drives its children through the handles. A
+  caller passes `Stdio::Null` or a `File` for the third stream.
+
+**`add` refuses an argument containing a `\0`, as an outcome, not a trap.**
+Such an argument would arrive as two, and the second could be anything,
+`--root` included. `exec_spawn` traps on an unterminated list because that
+is the program's own mistake (§4.2); an argument is data, and the MCP
+server's arguments come from a model. So `add` answers `22` (`EINVAL`) and
+adds nothing, `0` when it adds, and the caller decides.
+
+**Not in slice 3:** an environment (the MCP server passes none, and #237
+builds its own list with `Argv` and calls `exec_spawn` itself); capturing
+standard error; a `capture` for a child started with `Stdio::Null` input
+(open `channels` and pass empty input; it costs one socket pair).
+
+**How it was planned to be checked** (§8 has what was built and found;
+both backends, both targets): `cat` fed and read 1 MiB, past both kernels'
+deadlock sizes; `most` exceeded is `TooMuch` with exactly `most` bytes and
+the child reaped; `sleep 30` with a deadline of 200 ms is `TimedOut` within
+the deadline and a margin; `sleep 2 & echo hi` answers `hi` well before 2
+s; a child that never reads its input still exits `Code(0)`; an argument
+with a `\0` is refused and nothing is spawned with it; a caller whose row
+leaves out `clock` is refused (`effect-not-declared`; a test, since reject
+fixtures are checked without `--std`). Mutants, as for the
+slices before: the interleaving (write all, then read), the drain after the
+exit, the deadline taken per wait, the bound off by one, and the kill on
+each path.
 
 ## 8. What it is checked by
 
@@ -630,6 +775,59 @@ slice 2's, and is checked there.
 * **`EMFILE`** (§4.8): `a_child_with_no_descriptor_to_spare_says_emfile`
   reaches it on Linux and checks that Darwin, which watches the pid, needs no
   descriptor.
+
+### Slice 3
+
+* **`std/process.ls`** (`docs/standard-library.md`): `Argv`, `add`, `list`,
+  `count`, `drop`; `Channels`, `channels`, `close`; `Ran` and `capture`, as
+  §7.1 gives them. `capture`'s row is `[heap, clock, poll]`, as §7.1 said:
+  it calls `drain`, which declares `pipe_read`, and owning the `Pipe`
+  discharges it.
+* **Conformance tests** (`tests/conformance/capture.rs`, one driver,
+  `tests/programs/process_capture.ls`, both backends printing the same):
+  * 1 MiB through `cat`, every byte back in order (1,048,576 bytes, 5 to 8
+    ms on macOS, where 32 KiB written first deadlocks);
+  * exactly `most` bytes is `Code(0)`; one more is `TooMuch` with `most`
+    kept, and a child that lingers after its output is killed, not waited
+    for;
+  * `sleep 30` under a 200 ms deadline is `TimedOut` (203 ms on macOS);
+  * `sleep 2 & echo hi` gives `hi` in 4 ms, not 2 s;
+  * a child that reads none of 1 MiB of input exits with its own status;
+  * a child that closes both streams and sleeps for a second costs the
+    capture no processor time (about 0 ms by `wait4`, against a bound of
+    400 ms): an ended channel or a gone reader is closed, not spun on;
+  * with `pidfd_open` refused (Linux, the `seccomp` stand-in of slice 2),
+    `capture` answers `Failed(38)` and kills `sleep 30` rather than wait
+    for it;
+  * `add` refuses an entry containing a `\0` with `22`, the list runs
+    without it;
+  * a caller whose row leaves out `clock` is refused, `effect-not-declared`.
+* **Mutants.** Eleven (`scripts/process_mutants.py --capture`, Linux
+  aarch64): the input written blocking, no drain after the exit, the
+  deadline taken per wait, the bound off by one, no kill on each of the
+  three paths that need one, the input end never closed, an ended output
+  not closed, a failed write not ending the input, and a `\0` let through.
+  **The first run killed 7 and left 4**, and each survivor was a test that
+  did not look at what the choice changes:
+  * *No kill past the bound* survived because closing the output ends a
+    child that is still writing (`SIGPIPE`). The child now lingers after its
+    output, and only the kill ends it in time.
+  * *No kill when it cannot be watched* survived because nothing reached
+    that path, and descriptor limits cannot: the most `capture` holds at
+    once (four, in `channels`) comes before the poller. The `seccomp` filter
+    reaches it, so the test is Linux's.
+  * *An ended output not closed* and *a failed write not ending the input*
+    each leave a channel that is always ready on the poller, and the loop
+    spins until the child exits: the right answer, at the cost of a
+    processor. Only the processor time shows it, so a test now measures it.
+
+  With the four sharper tests, **11 of 11 are killed**.
+* **Found while building it.** `arg` is a builtin as well as `Args` a type,
+  so the builder's operation is `add` (§7.1). And a qualified call is
+  resolved against local bindings: with `let max = 3;` in scope,
+  `math.max(max, 2)` is refused as "`max` is a local binding". That is the
+  compiler's, not this slice's, and is reported separately; `std.process`'s
+  driver names its local otherwise.
 
 ## 9. Open
 

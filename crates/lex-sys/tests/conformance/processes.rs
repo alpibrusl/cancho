@@ -721,14 +721,11 @@ fn a_child_with_no_descriptor_to_spare_says_emfile() {
     }
 }
 
-/// §4.8: a program whose kernel will not give the child a `pidfd` is told why
-/// when it asks to watch the child -- the `errno`, here `ENOSYS` (38) as on a
-/// Linux before 5.3 -- and the child is still started and reaped. A `seccomp` filter
-/// answering `pidfd_open` with `ENOSYS`, installed before the waiter starts,
-/// is how a kernel that lacks it is stood in for.
+/// A kernel without `pidfd_open` (before Linux 5.3), stood in for: a
+/// `seccomp` filter answering it with `ENOSYS`, installed in `command`'s
+/// process before it starts. Also used by `capture.rs`.
 #[cfg(target_os = "linux")]
-#[test]
-fn a_child_without_a_pidfd_says_why_it_cannot_be_watched() {
+pub(super) fn without_pidfd_open(command: &mut Command) {
     use std::os::unix::process::CommandExt;
     #[repr(C)]
     struct Filter {
@@ -766,26 +763,35 @@ fn a_child_without_a_pidfd_says_why_it_cannot_be_watched() {
     unsafe impl Sync for Shared {}
     static PROGRAM: Shared = Shared(Program { length: 4, filter: FILTER.as_ptr() });
 
+    // SAFETY: `prctl` is async-signal-safe and allocates nothing, which is
+    // what `pre_exec` requires of the closure it runs between `fork` and
+    // `exec`; the filter is the `static` above.
+    unsafe {
+        command.pre_exec(|| {
+            let program = std::ptr::addr_of!(PROGRAM.0) as u64;
+            if prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == 0
+                && prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, program, 0, 0) == 0
+            {
+                Ok(())
+            } else {
+                Err(std::io::Error::last_os_error())
+            }
+        });
+    }
+}
+
+/// §4.8: a program whose kernel will not give the child a `pidfd` is told why
+/// when it asks to watch the child -- the `errno`, here `ENOSYS` (38) as on a
+/// Linux before 5.3 -- and the child is still started and reaped
+/// (`without_pidfd_open` stands in for that kernel).
+#[cfg(target_os = "linux")]
+#[test]
+fn a_child_without_a_pidfd_says_why_it_cannot_be_watched() {
     for (backend, exe) in waiter_built() {
         let mut command = Command::new(exe);
         command.args(["e", "-c|exit 5"]);
-        // SAFETY: `prctl` is async-signal-safe and allocates nothing, which is
-        // what `pre_exec` requires of the closure it runs between `fork` and
-        // `exec`; the filter is the `static` above.
-        let run = unsafe {
-            command.pre_exec(|| {
-                let program = std::ptr::addr_of!(PROGRAM.0) as u64;
-                if prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == 0
-                    && prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, program, 0, 0) == 0
-                {
-                    Ok(())
-                } else {
-                    Err(std::io::Error::last_os_error())
-                }
-            })
-        }
-        .output()
-        .expect("the waiter runs");
+        without_pidfd_open(&mut command);
+        let run = command.output().expect("the waiter runs");
         assert_eq!(
             String::from_utf8_lossy(&run.stdout),
             "add child 38\n== code 5\n",
