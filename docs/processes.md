@@ -410,22 +410,36 @@ blocking.
 * *A refusal is the `errno`, carried.* If `pidfd_open` is refused (a kernel
   before 5.3, or a policy that forbids the call), the high half holds the
   `errno` negated and `poller_add_child` answers it: `ENOSYS`, not `EBADF`
-  for a descriptor the program never held. `EMFILE` is not among the
+  for a descriptor the program never held. ~~`EMFILE` is not among the
   reachable ones: the descriptor a child's end held is closed before the
-  `pidfd` is asked for, so one is always free. The test installs a `seccomp`
-  filter answering `pidfd_open` with `ENOSYS` to reach the path.
+  `pidfd` is asked for, so one is always free.~~ **Corrected (#275):**
+  `EMFILE` is reachable. A spawn frees a descriptor only when it hands one
+  over (a `Pipe` end, a `File`); a `Null` stream is opened in the child, so a
+  spawn whose three streams are `Null`, with every descriptor in use, leaves
+  none for the `pidfd`. Measured under a limit of 8 with 4 to 7 held: `24`;
+  under 9: `0` (`a_child_with_no_descriptor_to_spare_says_emfile`). The child
+  is still started and reaped; only watching it is refused. A test installs
+  a `seccomp` filter answering `pidfd_open` with `ENOSYS` to reach the
+  other path.
 * *A channel is watched as a `Conn` is.* `poller_add_pipe` is
   `poller_add_conn` for a `Pipe`: a channel is a socket pair, so there is
   nothing more to it. There is no `poller_remove` for either: closing the
   descriptor (`pipe_close`, `child_wait`) takes it out of the set.
-* *macOS does not take a zombie.* Measured on the first macOS CI run of
-  slice 2: `kevent` with `EVFILT_PROC`/`NOTE_EXIT` on a child that has already
-  exited and not been reaped answers `ESRCH` (3), where a `pidfd` is simply
-  readable. A `Child` nobody has reaped can only be gone by having exited, so
-  `poller_add_child` takes `ESRCH` as the exit and says it the way `kqueue`
-  says anything is ready for the asking: an `EVFILT_USER` event, added and
-  triggered in the same call, reported with the same token. `poller_wait`
-  reads it as readable like the `EVFILT_PROC` one.
+* *macOS does not take a zombie.* `kevent` with `EVFILT_PROC`/`NOTE_EXIT` on
+  a child that has already exited and not been reaped answers `ESRCH` (3),
+  where a `pidfd` is simply readable. Measured on the first macOS CI run of
+  slice 2, and in C on macOS 26.2: 200 children of 200, each confirmed a
+  zombie with `waitid(WNOWAIT)` first. A `Child` nobody has reaped still owns
+  its pid (§4.7), so `ESRCH` can only mean it has exited, and
+  `poller_add_child` says so the way `kqueue` says anything is ready for the
+  asking: an `EVFILT_USER` event, `EV_ADD | EV_ONESHOT` with `NOTE_TRIGGER`,
+  **in one change**, carrying the token. `poller_wait` reads it as readable,
+  as it does the `EVFILT_PROC` one.
+  **Corrected (#275):** the first fix sent two changes, an add carrying the
+  token and then a trigger, and the second change's `udata` (`0`) replaced the
+  first's: the event was reported with token `0` (the second macOS CI run;
+  reproduced in C). A later change to a knote rewrites its `udata`, so the
+  add and the trigger are one change.
 * *Darwin reports an exit once.* `EVFILT_PROC` with `NOTE_EXIT` is
   registered `EV_ONESHOT`, and `poller_wait` reads it as readable. The `pidfd`
   of Linux stays readable until the child is reaped (level-triggered, as the
@@ -600,7 +614,12 @@ slice 2's, and is checked there.
 * **Measured on macOS (slice 2).** The first macOS CI run passed the tests
   of live children (output and exit; a deadline, then a kill) and failed the
   two that register a child that had already ended, with `ESRCH` (§4.8). The
-  fix is that section's; the next macOS run is its measurement.
+  second run, with a fix sending two changes, reported that child with token
+  `0` (§4.8 says why). With one change, all the process tests pass on macOS
+  26.2 (arm64), and the four poller tests passed 40 runs of 40 there.
+* **`EMFILE`** (§4.8): `a_child_with_no_descriptor_to_spare_says_emfile`
+  reaches it on Linux and checks that Darwin, which watches the pid, needs no
+  descriptor.
 
 ## 9. Open
 

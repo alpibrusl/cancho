@@ -50,3 +50,10 @@ pub const SYS_PIDFD_OPEN: i64 = 434;
 /// which `poller_add_child` answers. On Darwin the high half is `0` and
 /// unused. The one that reaps it, `child_wait`, closes the `pidfd`.
 pub const CHILD_PIDFD_SHIFT: i64 = 32;
+
+/// `ESRCH`, the same on Linux and Darwin. Darwin's `kqueue` answers it when
+/// asked for `NOTE_EXIT` on a process that has already exited and is a zombie
+/// (measured: every time, macOS 26.2); for a `Child`, which is unreaped and so
+/// still owns its pid (§4.7), it can mean nothing else
+/// (`docs/processes.md` §4.8).
+pub const ESRCH: i64 = 3;

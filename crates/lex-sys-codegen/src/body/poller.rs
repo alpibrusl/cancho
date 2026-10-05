@@ -4,7 +4,7 @@
 //! account; both are level-triggered.
 
 use crate::*;
-use lex_sys_ir::CHILD_PIDFD_SHIFT;
+use lex_sys_ir::{CHILD_PIDFD_SHIFT, ESRCH};
 
 const READABLE: i64 = 1;
 const WRITABLE: i64 = 2;
@@ -24,10 +24,9 @@ const EVFILT_WRITE: i64 = -2;
 const EVFILT_PROC: i64 = -5;
 const EVFILT_USER: i64 = -10;
 const EV_ONESHOT: i64 = 0x0010;
-const NOTE_TRIGGER: i64 = 0x0100_0000;
-const ESRCH: i64 = 3;
 /// `0x8000_0000`, written as the signed 32-bit value `iconst.i32` takes.
 const NOTE_EXIT: i64 = -0x8000_0000;
+const NOTE_TRIGGER: i64 = 0x0100_0000;
 const EV_ADD: i64 = 0x0001;
 const EV_DELETE: i64 = 0x0002;
 const EV_ERROR: i64 = 0x4000;
@@ -209,44 +208,38 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
             );
             let reason = self.errno();
             let failed = self.builder.ins().icmp_imm(IntCC::SignedLessThan, result, 0);
+            let answer = self.builder.ins().select(failed, reason, zero);
 
-            // `ESRCH`: the process is gone, and a child nobody has reaped is gone
-            // only by having exited (macOS does not take `NOTE_EXIT` for a
-            // zombie). Say so the way `kqueue` says anything is ready for the
-            // asking: a user event, added and triggered at once, reported with
-            // the same token. With no `ESRCH` the two changes are none.
-            let gone = self.builder.ins().icmp_imm(IntCC::Equal, reason, ESRCH);
-            let exited = self.builder.ins().band(failed, gone);
-            let pair = self.scratch(2 * KEVENT_SIZE);
-            let user = self.builder.ins().iconst(types::I16, EVFILT_USER);
-            let add = self.builder.ins().iconst(types::I16, EV_ADD | EV_ONESHOT);
-            let off = self.builder.ins().iconst(types::I16, 0);
-            let trigger = self.builder.ins().iconst(types::I32, NOTE_TRIGGER);
-            self.builder.ins().store(unaligned(), pid64, pair, 0);
-            self.builder.ins().store(unaligned(), user, pair, 8);
-            self.builder.ins().store(unaligned(), add, pair, 10);
-            self.builder.ins().store(unaligned(), zero32, pair, 12);
-            self.builder.ins().store(unaligned(), zero, pair, 16);
-            self.builder.ins().store(unaligned(), token, pair, 24);
-            self.builder.ins().store(unaligned(), pid64, pair, KEVENT_SIZE as i32);
-            self.builder.ins().store(unaligned(), user, pair, (KEVENT_SIZE + 8) as i32);
-            self.builder.ins().store(unaligned(), off, pair, (KEVENT_SIZE + 10) as i32);
-            self.builder.ins().store(unaligned(), trigger, pair, (KEVENT_SIZE + 12) as i32);
-            self.builder.ins().store(unaligned(), zero, pair, (KEVENT_SIZE + 16) as i32);
-            self.builder.ins().store(unaligned(), zero, pair, (KEVENT_SIZE + 24) as i32);
-            let two = self.builder.ins().iconst(types::I32, 2);
-            let changes = self.builder.ins().select(exited, two, zero32);
-            let again = self.libc_call(
+            // `ESRCH`: the child has already exited, and `kqueue` will not watch
+            // a zombie. The exit has happened, so the poller is told so at once:
+            // an `EVFILT_USER` event, triggered as it is added, carries the
+            // token, and `poller_wait` reads it as readable (§4.8).
+            let trigger = self.builder.create_block();
+            let merge = self.builder.create_block();
+            self.builder.append_block_param(merge, types::I64);
+            let gone = self.builder.ins().icmp_imm(IntCC::Equal, answer, ESRCH);
+            self.builder.ins().brif(gone, trigger, &[], merge, &[answer.into()]);
+
+            self.builder.switch_to_block(trigger);
+            self.builder.seal_block(trigger);
+            let filter = self.builder.ins().iconst(types::I16, EVFILT_USER);
+            self.builder.ins().store(unaligned(), filter, kev, 8);
+            let trigger_now = self.builder.ins().iconst(types::I32, NOTE_TRIGGER);
+            self.builder.ins().store(unaligned(), trigger_now, kev, 12);
+            let result = self.libc_call(
                 "kevent",
                 &[types::I32, pointer, types::I32, pointer, types::I32, pointer],
                 &[types::I32],
-                &[poller, pair, changes, none, zero32, none],
+                &[poller, kev, one, none, zero32, none],
             );
-            let again_reason = self.errno();
-            let again_failed = self.builder.ins().icmp_imm(IntCC::SignedLessThan, again, 0);
-            let after_user = self.builder.ins().select(again_failed, again_reason, zero);
-            let first_failed = self.builder.ins().select(exited, after_user, reason);
-            return vec![self.builder.ins().select(failed, first_failed, zero)];
+            let reason = self.errno();
+            let failed = self.builder.ins().icmp_imm(IntCC::SignedLessThan, result, 0);
+            let triggered = self.builder.ins().select(failed, reason, zero);
+            self.builder.ins().jump(merge, &[triggered.into()]);
+
+            self.builder.switch_to_block(merge);
+            self.builder.seal_block(merge);
+            return vec![self.builder.block_params(merge)[0]];
         }
 
         let high = self.builder.ins().ushr_imm(word, CHILD_PIDFD_SHIFT);
@@ -396,11 +389,12 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
             let flags = self.builder.ins().load(types::I16, unaligned(), entry, 10);
             let token = self.builder.ins().load(types::I64, unaligned(), entry, 24);
             let reading = self.builder.ins().icmp_imm(IntCC::Equal, filter, EVFILT_READ);
-            // A child's exit is read as a signal's arrival is: readable.
+            // A child's exit is read as a signal's arrival is: readable. One
+            // that had exited before it was added arrives as `EVFILT_USER`.
             let exited = self.builder.ins().icmp_imm(IntCC::Equal, filter, EVFILT_PROC);
-            let told = self.builder.ins().icmp_imm(IntCC::Equal, filter, EVFILT_USER);
-            let exited = self.builder.ins().bor(exited, told);
             let is_read = self.builder.ins().bor(reading, exited);
+            let had_exited = self.builder.ins().icmp_imm(IntCC::Equal, filter, EVFILT_USER);
+            let is_read = self.builder.ins().bor(is_read, had_exited);
             let is_write = self.builder.ins().icmp_imm(IntCC::Equal, filter, EVFILT_WRITE);
             let error_bits = self.builder.ins().band_imm(flags, EV_ERROR);
             let errored = self.builder.ins().icmp_imm(IntCC::NotEqual, error_bits, 0);

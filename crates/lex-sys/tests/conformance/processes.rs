@@ -299,6 +299,31 @@ fn churn[&x, &i](exec: &x Exec(""), io: &!i Io, n: int) -> [exec(""), io_write] 
     return 0;
 }
 
+// The poller takes the last free descriptor; a child whose three streams are
+// `Null` gives none back to the parent, so nothing is left for its `pidfd`.
+fn full[&x, &i](exec: &x Exec(""), io: &!i Io) -> [exec(""), io_write, poll] int {
+    match poller_new() {
+        Polling::Failed(e) => { say(io, "== poller ", e); }
+        Polling::Ok(p) => {
+            var poller = p;
+            match exec_spawn(exec, "/bin/sh", "-c\0exit 5\0", "", Stdio::Null, Stdio::Null, Stdio::Null) {
+                Spawned::Failed(e) => { say(io, "== spawn ", e); }
+                Spawned::Ok(c) => {
+                    var child = c;
+                    borrow mut poller as &!ph in {
+                        borrow child as &ch in {
+                            say(io, "add child ", poller_add_child(ph, ch, 2));
+                        }
+                    }
+                    reaped(io, child);
+                }
+            }
+            poller_close(poller);
+        }
+    }
+    return 0;
+}
+
 fn watch[&x, &i, &g](exec: &x Exec(""), io: &!i Io, g: &g Args, mode: int)
     -> [exec(""), io_write, args, child_signal, poll, pipe_read] int {
     region a {
@@ -412,7 +437,11 @@ fn main(world: World) -> [] int {
                     churn(x, i, 60);
                     mode = 'b';
                 }
-                watch(x, i, g, mode);
+                if mode == 'f' {
+                    full(x, i);
+                } else {
+                    watch(x, i, g, mode);
+                }
             }
         }
     }
@@ -667,11 +696,34 @@ fn reaping_a_child_gives_back_its_pidfd() {
     }
 }
 
+/// §4.8: `EMFILE` reaches the `pidfd` when the spawn gave no descriptor back --
+/// every stream `Null` -- and none was free. Under a limit of 8 the shell holds
+/// 4 to 7, the poller takes 3, and Linux has nothing left for `pidfd_open`; the
+/// child is still started and reaped. Darwin watches the pid and needs no
+/// descriptor.
+#[test]
+fn a_child_with_no_descriptor_to_spare_says_emfile() {
+    let expected = if cfg!(target_os = "linux") { "add child 24\n" } else { "add child 0\n" };
+    for (backend, exe) in waiter_built() {
+        let run = Command::new("/bin/sh")
+            .args([
+                "-c",
+                "ulimit -n 8; exec 4</dev/null 5</dev/null 6</dev/null 7</dev/null; exec \"$0\" f",
+            ])
+            .arg(exe)
+            .output()
+            .expect("the waiter runs");
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout),
+            format!("{expected}== code 5\n"),
+            "`{backend}`"
+        );
+    }
+}
+
 /// §4.8: a program whose kernel will not give the child a `pidfd` is told why
 /// when it asks to watch the child -- the `errno`, here `ENOSYS` (38) as on a
-/// Linux before 5.3 -- and the child is still started and reaped. Not reachable
-/// with a descriptor limit: the descriptor the child's end held is closed
-/// before the `pidfd` is asked for, so one is always free. A `seccomp` filter
+/// Linux before 5.3 -- and the child is still started and reaped. A `seccomp` filter
 /// answering `pidfd_open` with `ENOSYS`, installed before the waiter starts,
 /// is how a kernel that lacks it is stood in for.
 #[cfg(target_os = "linux")]
