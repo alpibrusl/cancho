@@ -373,3 +373,69 @@ asks for either today. Revisit both together — the trampoline is one
 piece of infrastructure whether the payload that needs it is `Rc`-shaped
 or any other multi-field struct — the day a concrete asker exists,
 rather than on a schedule.
+
+## 6. aarch64 Linux: the thread counter has to be aligned
+
+`spawn` and `join` move a counter of unjoined threads up and down
+atomically (`docs/signals.md` section 3: a claim is refused while one
+runs). It is the second word of `lexs_signal_state`, and it is the
+only atomic in the compiler's output. On aarch64 an atomic is an
+exclusive pair (`ldaxr`/`stlxr`), and an exclusive access to an address
+that is not a multiple of its size faults with `SIGBUS` regardless of
+the alignment-check bit that lets ordinary loads through.
+
+**Measured** on Debian trixie aarch64 (colima, kernel 6.8, rustc
+1.98.1, clang 19.1.7), on `origin/main` at 906ad24:
+
+* `tests/accept/spawn_join.ls` built with `--backend cranelift` exits
+  135 (`SIGBUS`) and prints nothing; with `--backend llvm` it prints
+  `42` and exits 0. The fault is at the `ldaxr` of `count_thread`, on
+  address `0x…60049`.
+* `nm -n` on the Cranelift binary: glibc's `crtstuff.o` puts a one-byte
+  `completed.0` at the start of `.bss` (`0x20030`), and the compiler's
+  four zeroed objects follow it with no padding: `lexs_argc` at
+  `0x20031`, `lexs_argv` at `0x20039`, `lexs_fd_epoch` at `0x20041`,
+  `lexs_signal_state` at `0x60041`. `.bss` itself is aligned `2**0`.
+  Cranelift's `DataDescription` defaults to an alignment of one, and
+  `lex-sys-codegen` never set one.
+* The same compiler on macOS arm64 emits the same `ldaxr`/`stlxr` loop,
+  and the program prints `42`: `ld64` starts `__bss` on a page and puts
+  nothing of its own ahead of these objects, so they land on
+  `0x100008000`, `…8008`, `…8010` and `…48010`. Aligned by luck, not by
+  request.
+* The LLVM backend was never affected: it declares the same object as
+  `internal global [2 x i64]`, which has `i64`'s alignment by type.
+* x86-64 Linux has the same `completed.0` in front, so the counter is
+  misaligned there too (inferred from the same `crtstuff` and the same
+  unaligned `.bss`; not re-measured on an x86 host). `lock xadd` accepts
+  an unaligned operand, so the bug is only latent there.
+
+So this was not the LLVM backend's thread entry, the ABI, clang 19 or
+`pthread` linking. Fourteen of the fifteen conformance failures reported
+on aarch64 Linux (`backends::…spawn_*`, `…fork_*`,
+`…a_join_as_an_operand`, `spawn_and_join_run_concurrently_not_sequentially`,
+and the two `signals::` thread tests) are this one fault: each runs a
+Cranelift binary that spawns, and `assert_backends_agree` puts LLVM's
+`42` on the left and the crashed Cranelift run's empty output on the
+right. All fourteen fail before the change and pass after it, on the
+same container.
+
+The fifteenth, `differential::the_folder_agrees_with_the_backend`, is a
+different thing and passes on the unchanged compiler. The reproduction
+ran under `sh -c 'ulimit -c 0 && …'`, and `dash`'s `ulimit` lowers the
+hard limit too (`ulimit -Hc` reads `0`). The test's `pre_exec` then asks
+for `RLIMIT_CORE = 1` (`differential.md` §3.2), which needs raising the
+hard limit, and gets `EPERM`, so `spawn` fails with "Operation not
+permitted" before the program runs. It passes with the hard limit left
+alone or with `ulimit -Sc 0`. The harness now leaves a hard limit of
+zero as it is, because skipping the dump is only a saving.
+
+**The rule:** every data object the Cranelift backend defines states
+its alignment. Word data (the zeroed globals, and a `static` whose
+elements are 8-byte leaves) is aligned to 8, which is the size of a
+leaf (`layout.md` §1) and what LLVM already gives the same objects.
+Byte data (string literals, a `static` of `byte`) stays at 1, so
+nothing grows. `lex-sys-codegen`'s
+`every_word_global_is_aligned_to_a_word` reads the alignment back out
+of both the ELF and the Mach-O object, so the check runs on every host
+CI has, including the two where the misalignment never faults.
