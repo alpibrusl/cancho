@@ -207,7 +207,18 @@ The build PR shows, each with its command:
   the client derived from each ticket is its own.
 - **The rules:** twelve cases, each deciding from the ClientHello's bytes alone whether the ticket was offered, including the
   obfuscated age.
-- **Mutants:** MUTANTS_RESULT
+- **Mutants** (`scripts/tls_mutants.py`, now 88): **87 killed, 1 equivalent, argued in its `EQUIVALENT`** (a `pre_shared_key`
+  accepted when none was offered: the slot's ticket hash length is then 0, so the hash check refuses the same ServerHello with the
+  same tag). Writing them found two gaps, closed here: no case resumed under SHA-384 (now one does), and the other host name in the
+  rule cases was a different length, so the length check alone refused it (now it is the same length). The runner now replays the
+  rule cases for every mutant, and a mutant listed as equivalent must survive or the run fails.
+- **Fuzzing:** `fuzz_client` offers a fixed ticket on inputs of odd length, and the ticket parser is `fuzz_messages`'s case 6. 20
+  minutes each of `fuzz_client`, `fuzz_messages` and `fuzz_flight` from the committed corpus: 8,459,281 executions, no crash and no
+  hang; `fuzz_client` reached 1,824 edges, against 1,767 before.
+- **In `lexsys-hooks`** (its `docs/pure-tls.md`): a resumed delivery costs about 1.35 ms of the service's CPU against 3.0 ms for a
+  full one. Under a burst to one endpoint fewer deliveries resume than with OpenSSL (401 of 600, against all of them), because a
+  ticket is used once (rule 5) and hooks keeps one per endpoint, where OpenSSL reuses one session for every concurrent connection.
+  §9's question 2 is where that is decided.
 - **Cost, measured** (the VM of §1; `tls_many`, 64 connections, against `openssl s_server -tls1_3 -www`, which chose
   `TLS_AES_256_GCM_SHA384`; the client's CPU over one round, two rounds resumed, and two rounds against `-num_tickets 0`;
   median of 5):
