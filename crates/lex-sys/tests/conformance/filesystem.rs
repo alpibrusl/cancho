@@ -302,3 +302,50 @@ fn main(world: World) -> [] int {
     );
     assert!(!by_path.contains("file_read"), "the path program never opens a handle:\n{by_path}");
 }
+
+/// A short path under a narrowed prefix is read, on both backends. The path
+/// check used to read the prefix's byte at every index of the path, past the
+/// end of the prefix's global; LLVM folds that load to `poison`, `false &&
+/// poison` is still `poison`, and a branch on it is undefined behaviour, so at
+/// `-O2` the LLVM backend deleted the read and trapped instead. Only a path
+/// short enough for the check's loop to be unrolled showed it (measured: 11
+/// bytes and fewer here, 15 and more not), so the path here is that short.
+#[test]
+fn a_short_path_under_a_narrowed_prefix_is_read_on_both_backends() {
+    let dir = scratch("fs-short-path");
+    let path = format!("/tmp/lx{:04}", std::process::id() % 10000);
+    std::fs::write(&path, b"abc").expect("a short fixture file");
+    let source = dir.join("short.ls");
+    std::fs::write(
+        &source,
+        format!(
+            "fn main(world: World) -> [] int {{\n\
+                 let Split {{ io, ffi, fs, heap, args }} = split(world); release(args); release(heap); release(ffi); release(io);\n\
+                 let tmp = narrow(fs, \"/tmp\");\n\
+                 var read = 0;\n\
+                 region a {{\n\
+                     let buffer = alloc_slice[a](16, byte_of(0));\n\
+                     borrow tmp as &f in {{\n\
+                         read = fs_read(f, \"{path}\", buffer);\n\
+                     }}\n\
+                 }}\n\
+                 release(tmp);\n\
+                 return read;\n\
+             }}\n"
+        ),
+    )
+    .expect("a writable fixture");
+    for backend in ["cranelift", "llvm"] {
+        let exe = dir.join(format!("short-{backend}"));
+        let build = Command::new(BIN)
+            .args(["build".as_ref(), source.as_os_str(), "--backend".as_ref(), backend.as_ref()])
+            .args(["-o".as_ref(), exe.as_os_str()])
+            .output()
+            .expect("the compiler runs");
+        assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+        let run = Command::new(&exe).output().expect("the compiled program runs");
+        assert_eq!(run.status.code(), Some(3), "`{backend}`: the three bytes should be read");
+    }
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_dir_all(&dir);
+}

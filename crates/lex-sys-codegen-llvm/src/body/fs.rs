@@ -22,6 +22,43 @@ impl<'a> FuncEmitter<'a> {
         LValue::Reg(value)
     }
 
+    /// Trap when byte `i` of a path or a host differs from byte `i` of the
+    /// `length`-byte bound at `expected`, while `i` is inside the bound.
+    ///
+    /// The bound's byte is read at `i` only while `i` is inside it, and at 0
+    /// otherwise. Reading it at every `i` read past the end of its global, and
+    /// LLVM folds that load to `poison`: `false && poison` is still `poison`,
+    /// and a branch on `poison` is undefined behaviour, so `-O2` deleted every
+    /// path through a short operation under a narrowed capability -- a
+    /// `fs_read("/tmp/q/f")` on `Fs("/tmp")` trapped (`docs/filesystem.md`
+    /// §4). An empty bound contains everything, and its global has no byte
+    /// to read at all, so there is nothing to compare.
+    pub(crate) fn check_against(
+        &mut self,
+        expected: &str,
+        length: usize,
+        i: &str,
+        byte: &str,
+    ) -> Result<(), String> {
+        if length == 0 {
+            return Ok(());
+        }
+        let inside = self.fresh();
+        self.out.push_str(&format!("  {inside} = icmp ult i64 {i}, {length}\n"));
+        let index = self.fresh();
+        self.out.push_str(&format!("  {index} = select i1 {inside}, i64 {i}, i64 0\n"));
+        let want_at = self.fresh();
+        self.out
+            .push_str(&format!("  {want_at} = getelementptr i8, ptr {expected}, i64 {index}\n"));
+        let want = self.fresh();
+        self.out.push_str(&format!("  {want} = load i8, ptr {want_at}\n"));
+        let differs = self.fresh();
+        self.out.push_str(&format!("  {differs} = icmp ne i8 {byte}, {want}\n"));
+        let escaped = self.fresh();
+        self.out.push_str(&format!("  {escaped} = and i1 {inside}, {differs}\n"));
+        self.trap_if(&escaped)
+    }
+
     /// The longest path a file operation will build, including the NUL
     /// -- copied onto the stack to terminate it for C, since a slice
     /// carries no terminator of its own (`docs/strings.md` §6). A
@@ -93,17 +130,7 @@ impl<'a> FuncEmitter<'a> {
         // Inside the prefix, the bytes have to match. A path outside
         // what the capability granted is a broken promise, so it traps
         // rather than returning `-1`.
-        let inside = self.fresh();
-        self.out.push_str(&format!("  {inside} = icmp ult i64 {i}, {}\n", prefix.len()));
-        let want_at = self.fresh();
-        self.out.push_str(&format!("  {want_at} = getelementptr i8, ptr {expected}, i64 {i}\n"));
-        let want = self.fresh();
-        self.out.push_str(&format!("  {want} = load i8, ptr {want_at}\n"));
-        let differs = self.fresh();
-        self.out.push_str(&format!("  {differs} = icmp ne i8 {byte}, {want}\n"));
-        let escaped = self.fresh();
-        self.out.push_str(&format!("  {escaped} = and i1 {inside}, {differs}\n"));
-        self.trap_if(&escaped)?;
+        self.check_against(&expected, prefix.len(), &i, &byte)?;
 
         let next = self.fresh();
         self.out.push_str(&format!("  {next} = add i64 {i}, 1\n"));
