@@ -251,9 +251,7 @@ fn a_qualified_call_is_not_shadowed_by_a_local() {
          fn main(world: World) -> [] int {\n\
              release(world);\n\
              let min = most;\n\
-             let from_lib = lib.min(1, 9);\n\
-             let from_local = min(1, 9);\n\
-             return from_lib + from_local - 10;\n\
+             return lib.min(1, 9) + min(1, 9) - 10;\n\
          }\n",
     );
 }
