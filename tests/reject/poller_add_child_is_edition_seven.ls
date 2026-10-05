@@ -1,5 +1,5 @@
 //~ ERROR `poller_add_child` is not a function in this program
-//~ RULE unknown-name
+//~ RULE not-a-function
 
 // `docs/processes.md` §4.8: watching a child is edition 7, so an edition-6
 // file cannot call it -- `poller_add_child` is a name such a file may declare.

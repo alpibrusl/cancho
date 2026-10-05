@@ -556,10 +556,43 @@ slice 2's, and is checked there.
   byte past the bound for every index of the path, and the optimiser used
   that poison to delete the path. It was fixed for `Fs` and `Net` as well,
   in #273, which this slice carries (`filesystem.md` §4).
-* **Not yet run:** the Darwin paths, that is `POSIX_SPAWN_CLOEXEC_DEFAULT`,
-  `SO_NOSIGPIPE` on the socket pair, and Darwin's signal numbers. The same
-  tests run on the macOS CI runner, and its first run is their first
-  measurement.
+* **Measured on macOS (slice 1).** The first macOS CI run of slice 1 (#274)
+  passed `CLOEXEC_DEFAULT`, `SO_NOSIGPIPE` on the socket pair and Darwin's
+  signal numbers. It failed one test, and the test was wrong: `ls /dev/fd`
+  lists five entries there to Linux's four, and the status line after the
+  listing, `== code 0`, had been read as a descriptor.
+
+### Slice 2
+
+* **Conformance tests** (`processes.rs`, the waiter), each on both backends,
+  the two to print the same:
+  * a channel and a child watched together: while the child sleeps nothing is
+    reported, then its output arrives, the channel ends, and the child's exit
+    is reported;
+  * a child that ended *before* it was registered is still reported;
+  * `poller_wait`'s deadline passes with the child running, a kill follows,
+    and the exit is reported;
+  * sixty children come and go under a limit of 24 descriptors and the next
+    is still watchable: reaping gives the `pidfd` back;
+  * a kernel that refuses `pidfd_open` (a `seccomp` filter answering `ENOSYS`,
+    installed before the waiter starts) is told so by `poller_add_child`,
+    and the child is still reaped.
+* **Refusals:** `poller_add_child_is_edition_seven` (`not-a-function`) and
+  `poller_add_child_effect_undeclared` (`effect-not-declared`).
+* **Emission, from any host:** Linux asks for `syscall` (the `pidfd`),
+  `epoll_ctl` and `closefrom`, Darwin for `kevent` and none of the three; all
+  four triples are accepted by `clang`, and Cranelift builds the Mach-O object.
+* **Mutants.** Thirteen were chosen (the `pidfd` not closed, the wrong pid
+  asked for, the shift, the refusal's `errno`, the wrong event mask, the
+  missing-`pidfd` check, `poller_add_pipe` taking the wrong path; each on both
+  backends where it applies). **The run was stopped after two**, both killed
+  (`pidfd` not closed; wrong pid, by a hang), **at the request of the
+  session; the other eleven have not been run.** The script is
+  `mutants_poll.py` in the session's notes; the list is above.
+* **Not yet run:** the Darwin half of slice 2, `EVFILT_PROC` with
+  `NOTE_EXIT` and its mapping to readable in `poller_wait`. Whether `kqueue`
+  accepts the registration of a child that is already a zombie (the second
+  conformance test) is the case to watch.
 
 ## 9. Open
 
