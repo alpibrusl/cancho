@@ -994,6 +994,16 @@ impl<'a> FuncEmitter<'a> {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.signals_close(&args)
             }
+            // `docs/processes.md` §4.8: a channel is watched as a `Conn` is,
+            // and a child by its exit.
+            Callee::Builtin(Builtin::PollerAddPipe) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.poller_ctl(&args, false, false)
+            }
+            Callee::Builtin(Builtin::PollerAddChild) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.poller_add_child(&args)
+            }
             Callee::Builtin(Builtin::PollerAddSignals) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.poller_ctl(&args, true, false)

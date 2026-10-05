@@ -37,3 +37,16 @@ pub fn sendable_signals(darwin: bool) -> Vec<(i64, i64)> {
     all.push((KILL_BIT, SIGKILL));
     all
 }
+
+/// `pidfd_open`'s system call number, the same on every Linux architecture
+/// the backends target (it is in the generic table, after `clone3`). `glibc`
+/// gained a wrapper for it only in 2.36, so the call goes through `syscall`
+/// (`docs/processes.md` §4.8).
+pub const SYS_PIDFD_OPEN: i64 = 434;
+
+/// A `Child` is one word: the pid in the low 32 bits and, on Linux, its
+/// `pidfd` in the high 32 -- or, when `pidfd_open` was refused, the `errno`
+/// negated (`ENOSYS` before Linux 5.3, `EMFILE` with no descriptor to spare),
+/// which `poller_add_child` answers. On Darwin the high half is `0` and
+/// unused. The one that reaps it, `child_wait`, closes the `pidfd`.
+pub const CHILD_PIDFD_SHIFT: i64 = 32;

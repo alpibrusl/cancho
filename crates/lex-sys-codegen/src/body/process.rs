@@ -5,8 +5,8 @@
 
 use crate::*;
 use lex_sys_ir::{
-    AF_UNIX, Expr, F_SETFD, FD_CLOEXEC, O_RDWR, SIGSET_BYTES, SOCK_STREAM, SPAWN_OBJECT_BYTES,
-    sendable_signals, spawn_flags,
+    AF_UNIX, CHILD_PIDFD_SHIFT, Expr, F_SETFD, FD_CLOEXEC, O_RDWR, SIGSET_BYTES, SOCK_STREAM,
+    SPAWN_OBJECT_BYTES, SYS_PIDFD_OPEN, sendable_signals, spawn_flags,
 };
 
 impl<'a, 'f> BodyEmitter<'a, 'f> {
@@ -192,13 +192,40 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         }
 
         let child = self.builder.ins().load(types::I32, MemFlags::trusted(), pid, 0);
-        let child = self.builder.ins().sextend(types::I64, child);
+        let child = self.child_word(child);
         let reason = self.builder.ins().sextend(types::I64, error);
         let failed = self.builder.ins().icmp_imm(IntCC::NotEqual, error, 0);
         let one = self.builder.ins().iconst(types::I64, 1);
         let zero = self.builder.ins().iconst(types::I64, 0);
         let tag = self.builder.ins().select(failed, one, zero);
         vec![tag, child, reason]
+    }
+
+    /// A `Child`'s one word from its pid (§4.8): on Linux the pid with a
+    /// `pidfd` for it in the high half, opened here -- the child has not been
+    /// reaped, so the pid is still its own -- and on Darwin the pid alone.
+    fn child_word(&mut self, pid: Value) -> Value {
+        let low = self.builder.ins().uextend(types::I64, pid);
+        if self.is_darwin() {
+            return low;
+        }
+        let number = self.builder.ins().iconst(types::I64, SYS_PIDFD_OPEN);
+        let pid64 = self.builder.ins().sextend(types::I64, pid);
+        let flags = self.builder.ins().iconst(types::I64, 0);
+        let opened = self.libc_call(
+            "syscall",
+            &[types::I64, types::I64, types::I64],
+            &[types::I64],
+            &[number, pid64, flags],
+        );
+        let reason = self.errno();
+        let refused = self.builder.ins().icmp_imm(IntCC::SignedLessThan, opened, 0);
+        let negated = self.builder.ins().ineg(reason);
+        let opened = self.builder.ins().select(refused, negated, opened);
+        let opened = self.builder.ins().ireduce(types::I32, opened);
+        let opened = self.builder.ins().uextend(types::I64, opened);
+        let high = self.builder.ins().ishl_imm(opened, CHILD_PIDFD_SHIFT);
+        self.builder.ins().bor(low, high)
     }
 
     /// A `\0`-separated list as a `NULL`-terminated array of pointers into
@@ -405,6 +432,14 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         let two = self.builder.ins().iconst(types::I64, 2);
         let ended = self.builder.ins().select(exited, zero, one);
         let tag = self.builder.ins().select(failed, two, ended);
+        // The `pidfd` has done its work once the child is reaped (§4.8); the
+        // negated `errno` that stands in for a refused one is an `EBADF` that
+        // harms nothing.
+        if !self.is_darwin() {
+            let high = self.builder.ins().ushr_imm(args[0], CHILD_PIDFD_SHIFT);
+            let pidfd = self.builder.ins().ireduce(types::I32, high);
+            self.libc_call("close", &[types::I32], &[types::I32], &[pidfd]);
+        }
         vec![tag, code, bit, reason]
     }
 

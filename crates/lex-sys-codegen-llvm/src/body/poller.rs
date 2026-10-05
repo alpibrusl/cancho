@@ -8,6 +8,7 @@
 //! (32) -- are written and read here and never seen by a program.
 
 use crate::*;
+use lex_sys_ir::CHILD_PIDFD_SHIFT;
 
 /// Events a program names: readable and writable.
 const READABLE: i64 = 1;
@@ -30,6 +31,9 @@ const EPOLL_CLOEXEC: i64 = 0x80000;
 /// `kevent` filters and flags.
 const EVFILT_READ: i64 = -1;
 const EVFILT_WRITE: i64 = -2;
+const EVFILT_PROC: i64 = -5;
+const EV_ONESHOT: i64 = 0x0010;
+const NOTE_EXIT: i64 = 0x8000_0000;
 const EV_ADD: i64 = 0x0001;
 const EV_DELETE: i64 = 0x0002;
 const EV_ERROR: i64 = 0x4000;
@@ -184,6 +188,78 @@ impl<'a> FuncEmitter<'a> {
         Ok(vec![LValue::Reg(answer)])
     }
 
+    /// `poller_add_child(&!Poller, &Child, token)` (`docs/processes.md` §4.8):
+    /// the child's exit, as readable. Linux watches the `pidfd` the `Child`
+    /// carries; Darwin asks `kqueue` for `NOTE_EXIT` on the pid, which it
+    /// reports once. `0`, or the `errno`.
+    pub(crate) fn poller_add_child(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        let poller = self.handle_fd(&args[0]);
+        let word = self.fresh();
+        self.out.push_str(&format!("  {word} = load i64, ptr {}\n", operand(&args[1])));
+        let token = operand(&args[2]);
+
+        if self.is_darwin() {
+            let pid = self.fresh();
+            self.out.push_str(&format!("  {pid} = trunc i64 {word} to i32\n"));
+            let pid64 = self.fresh();
+            self.out.push_str(&format!("  {pid64} = sext i32 {pid} to i64\n"));
+            let kev = self.fresh();
+            self.hoist(format!("  {kev} = alloca i8, i64 {KEVENT_SIZE}\n"));
+            self.store_unaligned(&kev, 0, "i64", &pid64);
+            self.store_unaligned(&kev, 8, "i16", &EVFILT_PROC.to_string());
+            self.store_unaligned(&kev, 10, "i16", &(EV_ADD | EV_ONESHOT).to_string());
+            self.store_unaligned(&kev, 12, "i32", &(NOTE_EXIT as i32).to_string());
+            self.store_unaligned(&kev, 16, "i64", "0");
+            self.store_unaligned(&kev, 24, "i64", &token);
+            let result = self.fresh();
+            self.out.push_str(&format!(
+                "  {result} = call i32 @kevent(i32 {poller}, ptr {kev}, i32 1, ptr null, i32 0, ptr null)\n"
+            ));
+            let reason = self.errno();
+            let failed = self.fresh();
+            self.out.push_str(&format!("  {failed} = icmp slt i32 {result}, 0\n"));
+            let answer = self.fresh();
+            self.out.push_str(&format!(
+                "  {answer} = select i1 {failed}, i64 {}, i64 0\n",
+                operand(&reason)
+            ));
+            return Ok(vec![LValue::Reg(answer)]);
+        }
+
+        let high = self.fresh();
+        self.out.push_str(&format!("  {high} = lshr i64 {word}, {CHILD_PIDFD_SHIFT}\n"));
+        let pidfd = self.fresh();
+        self.out.push_str(&format!("  {pidfd} = trunc i64 {high} to i32\n"));
+        let (size, data_at) = self.epoll_layout();
+        let ev = self.fresh();
+        self.hoist(format!("  {ev} = alloca i8, i64 {size}\n"));
+        self.store_unaligned(&ev, 0, "i32", &EPOLLIN.to_string());
+        self.store_unaligned(&ev, data_at, "i64", &token);
+        let result = self.fresh();
+        self.out.push_str(&format!(
+            "  {result} = call i32 @epoll_ctl(i32 {poller}, i32 {EPOLL_CTL_ADD}, i32 {pidfd}, ptr {ev})\n"
+        ));
+        let reason = self.errno();
+        let failed = self.fresh();
+        self.out.push_str(&format!("  {failed} = icmp slt i32 {result}, 0\n"));
+        let answer = self.fresh();
+        self.out.push_str(&format!(
+            "  {answer} = select i1 {failed}, i64 {}, i64 0\n",
+            operand(&reason)
+        ));
+        // No `pidfd`: the `Child` carries why, the `errno` negated
+        // (`ENOSYS` before Linux 5.3, `EMFILE` with no descriptor to spare).
+        let given = self.fresh();
+        self.out.push_str(&format!("  {given} = icmp sge i32 {pidfd}, 0\n"));
+        let pidfd64 = self.fresh();
+        self.out.push_str(&format!("  {pidfd64} = sext i32 {pidfd} to i64\n"));
+        let why = self.fresh();
+        self.out.push_str(&format!("  {why} = sub i64 0, {pidfd64}\n"));
+        let chosen = self.fresh();
+        self.out.push_str(&format!("  {chosen} = select i1 {given}, i64 {answer}, i64 {why}\n"));
+        Ok(vec![LValue::Reg(chosen)])
+    }
+
     /// `poller_remove(&!Poller, &Conn)`: `0`, or the `errno` (Linux; on
     /// Darwin deleting what is not there is not an error).
     pub(crate) fn poller_remove(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
@@ -323,8 +399,13 @@ impl<'a> FuncEmitter<'a> {
             let filter = self.load_unaligned(&entry, 8, "i16");
             let flags = self.load_unaligned(&entry, 10, "i16");
             let token = self.load_unaligned(&entry, 24, "i64");
+            let reading = self.fresh();
+            self.out.push_str(&format!("  {reading} = icmp eq i16 {filter}, {EVFILT_READ}\n"));
+            // A child's exit is read as a signal's arrival is: readable.
+            let exited = self.fresh();
+            self.out.push_str(&format!("  {exited} = icmp eq i16 {filter}, {EVFILT_PROC}\n"));
             let is_read = self.fresh();
-            self.out.push_str(&format!("  {is_read} = icmp eq i16 {filter}, {EVFILT_READ}\n"));
+            self.out.push_str(&format!("  {is_read} = or i1 {reading}, {exited}\n"));
             let is_write = self.fresh();
             self.out.push_str(&format!("  {is_write} = icmp eq i16 {filter}, {EVFILT_WRITE}\n"));
             let errored_bits = self.fresh();

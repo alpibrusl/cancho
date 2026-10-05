@@ -223,6 +223,204 @@ fn main(world: World) -> [] int {
 }
 "##;
 
+/// The waiter: one child under `/bin/sh -c`, watched through a `Poller`
+/// (`docs/processes.md` §4.8). argv: a mode, and the shell's arguments
+/// (`-c|script`).
+///   `a`: the pipe and the child are both registered; says what `poller_wait`
+///        reported while the child slept, then loops until the pipe ended and
+///        the child's exit was reported.
+///   `b`: the child has already ended when it is registered.
+///   `c`: the child outlives a deadline, is killed, and its exit is reported.
+///   `d`: sixty children are started and reaped first, then `b`.
+///   `e`: only the registration of the child is attempted, and its answer said.
+const WAITER: &str = r##"edition 7;
+
+fn digits[&i](io: &!i Io, n: int) -> [io_write] int {
+    if n < 0 {
+        putchar(io, '-');
+        return digits(io, 0 - n);
+    }
+    if n >= 10 {
+        digits(io, n / 10);
+    }
+    putchar(io, '0' + n % 10);
+    return 0;
+}
+
+fn say[&i, &t](io: &!i Io, text: &t [byte], n: int) -> [io_write] int {
+    write_bytes(io, text);
+    digits(io, n);
+    putchar(io, 10);
+    return 0;
+}
+
+fn list[&s, &o](from: &s [byte], into: &!o [byte]) -> [] int {
+    var i = 0;
+    while i < len(from) {
+        if from[i] == byte_of('|') {
+            into[i] = byte_of(0);
+        } else {
+            into[i] = from[i];
+        }
+        i = i + 1;
+    }
+    into[i] = byte_of(0);
+    return i + 1;
+}
+
+fn reaped[&i](io: &!i Io, child: Child) -> [io_write] int {
+    match child_wait(child) {
+        Exited::Code(n) => { say(io, "== code ", n); }
+        Exited::Signaled(s) => { say(io, "== signal ", s); }
+        Exited::Failed(e) => { say(io, "== failed ", e); }
+    }
+    return 0;
+}
+
+// Start and reap `n` children that hold nothing: a program that leaked a
+// descriptor for each would have none left.
+fn churn[&x, &i](exec: &x Exec(""), io: &!i Io, n: int) -> [exec(""), io_write] int {
+    var k = 0;
+    var ok = 0;
+    while k < n {
+        match exec_spawn(exec, "/bin/sh", "-c\0exit 0\0", "", Stdio::Null, Stdio::Null, Stdio::Null) {
+            Spawned::Ok(c) => {
+                match child_wait(c) {
+                    Exited::Code(z) => { if z == 0 { ok = ok + 1; } }
+                    Exited::Signaled(s) => { }
+                    Exited::Failed(e) => { }
+                }
+            }
+            Spawned::Failed(e) => { }
+        }
+        k = k + 1;
+    }
+    say(io, "churned ", ok);
+    return 0;
+}
+
+fn watch[&x, &i, &g](exec: &x Exec(""), io: &!i Io, g: &g Args, mode: int)
+    -> [exec(""), io_write, args, child_signal, poll, pipe_read] int {
+    region a {
+        let argv = alloc_slice[a](len(arg(g, 2)) + 1, byte_of(0));
+        let na = list(arg(g, 2), argv);
+        let buf = alloc_slice[a](64, byte_of(0));
+        var ev = alloc_slice[a](8, 0);
+        // The poller first, so a tight descriptor limit is the `pidfd`'s to hit.
+        match poller_new() {
+            Polling::Failed(e) => { say(io, "== poller ", e); }
+            Polling::Ok(p) => {
+                var poller = p;
+                match pipe_open() {
+                    Piped::Failed(e) => { say(io, "== pipe ", e); poller_close(poller); }
+                    Piped::Ok(out, out_end) => {
+                        match exec_spawn(exec, "/bin/sh", argv[0..na], "", Stdio::Null, Stdio::Pipe(out_end), Stdio::Null) {
+                            Spawned::Failed(e) => { say(io, "== spawn ", e); pipe_close(out); poller_close(poller); }
+                            Spawned::Ok(c) => {
+                                var child = c;
+                                var mine = out;
+                                borrow mut poller as &!ph in {
+                                    borrow mut mine as &!pp in {
+                                        borrow child as &ch in {
+                                            if mode == 'a' {
+                                                pipe_nonblocking(pp);
+                                                say(io, "add pipe ", poller_add_pipe(ph, pp, 1, 1));
+                                                say(io, "add child ", poller_add_child(ph, ch, 2));
+                                                say(io, "idle ", poller_wait(ph, ev, 150));
+                                                var bytes = 0;
+                                                var ended = false;
+                                                var gone = false;
+                                                var going = true;
+                                                while going {
+                                                    let n = poller_wait(ph, ev, 10000);
+                                                    if n <= 0 {
+                                                        say(io, "== timeout ", n);
+                                                        going = false;
+                                                    }
+                                                    var k = 0;
+                                                    while k < n {
+                                                        let token = ev[2 * k];
+                                                        if token == 1 {
+                                                            var more = true;
+                                                            while more {
+                                                                match pipe_read(pp, buf) {
+                                                                    Received::Data(m) => { bytes = bytes + m; }
+                                                                    Received::End => { ended = true; more = false; }
+                                                                    Received::Again => { more = false; }
+                                                                    Received::Failed(e) => { ended = true; more = false; }
+                                                                }
+                                                            }
+                                                        }
+                                                        if token == 2 {
+                                                            gone = true;
+                                                        }
+                                                        k = k + 1;
+                                                    }
+                                                    if ended && gone {
+                                                        going = false;
+                                                    }
+                                                }
+                                                say(io, "bytes ", bytes);
+                                                if ended { say(io, "pipe ended ", 1); }
+                                                if gone { say(io, "child reported ", 1); }
+                                            }
+                                            if mode == 'b' {
+                                                say(io, "nap ", poller_wait(ph, ev, 300));
+                                                say(io, "add child ", poller_add_child(ph, ch, 2));
+                                                let n = poller_wait(ph, ev, 5000);
+                                                say(io, "woke ", n);
+                                                say(io, "token ", ev[0]);
+                                                say(io, "events ", ev[1]);
+                                            }
+                                            if mode == 'e' {
+                                                say(io, "add child ", poller_add_child(ph, ch, 2));
+                                            }
+                                            if mode == 'c' {
+                                                say(io, "add child ", poller_add_child(ph, ch, 2));
+                                                say(io, "early ", poller_wait(ph, ev, 150));
+                                                say(io, "kill ", child_kill(ch, 256));
+                                                let n = poller_wait(ph, ev, 5000);
+                                                say(io, "woke ", n);
+                                                say(io, "token ", ev[0]);
+                                                say(io, "events ", ev[1]);
+                                            }
+                                        }
+                                    }
+                                }
+                                reaped(io, child);
+                                pipe_close(mine);
+                                poller_close(poller);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi); release(fs); release(heap); release(net); release(clock); release(signals);
+    var console = io;
+    borrow exec as &x in {
+        borrow mut console as &!i in {
+            borrow args as &g in {
+                var mode = int_of(arg(g, 1)[0]);
+                if mode == 'd' {
+                    churn(x, i, 60);
+                    mode = 'b';
+                }
+                watch(x, i, g, mode);
+            }
+        }
+    }
+    release(exec); release(console); release(args);
+    return 0;
+}
+"##;
+
 const TRAPS: &str = r##"edition 7;
 
 // argv[1] picks one call; every refusal must trap (§4.1 to §4.3), and `ok`
@@ -398,6 +596,150 @@ fn writing_to_a_child_that_has_ended_is_epipe_not_a_signal() {
         probe(["/usr/bin/true", "-", "-", "never read", "late"]),
         "== code 0\n== write 32\n"
     );
+}
+
+/// The waiter built once, as the probe is.
+fn waiter_built() -> &'static [(&'static str, PathBuf)] {
+    static BUILT: std::sync::OnceLock<Vec<(&'static str, PathBuf)>> = std::sync::OnceLock::new();
+    BUILT.get_or_init(|| build_both("process-waiter", WAITER).1)
+}
+
+/// Run the waiter on both backends; they must agree.
+fn waiter(mode: &str, script: &str) -> String {
+    let mut answers = Vec::new();
+    for (backend, exe) in waiter_built() {
+        let run = Command::new(exe).args([mode, &format!("-c|{script}")]).output();
+        let run = run.expect("the waiter runs");
+        assert_eq!(run.status.code(), Some(0), "`{backend}`: the waiter itself should not fail");
+        answers.push(String::from_utf8_lossy(&run.stdout).into_owned());
+    }
+    assert_eq!(answers[0], answers[1], "the two backends disagree on {mode} {script}");
+    answers.remove(0)
+}
+
+/// §4.8: a channel and a child watched together. While the child sleeps
+/// nothing is reported; then its output arrives, the channel ends, and the
+/// child's exit is reported, after which `child_wait` does not block.
+#[test]
+fn a_poller_reports_a_childs_output_and_its_exit() {
+    let printed = waiter("a", "sleep 1; echo hi");
+    assert_eq!(
+        printed,
+        "add pipe 0\nadd child 0\nidle 0\nbytes 3\npipe ended 1\nchild reported 1\n== code 0\n"
+    );
+}
+
+/// §4.8: a child that ended before it was registered is reported at once --
+/// a `pidfd` stays readable; macOS is asked for the exit of a process that is
+/// already a zombie.
+#[test]
+fn a_child_that_has_already_ended_is_still_reported() {
+    let printed = waiter("b", "exit 7");
+    assert_eq!(printed, "nap 0\nadd child 0\nwoke 1\ntoken 2\nevents 1\n== code 7\n");
+}
+
+/// §4.8: `poller_wait`'s deadline passes with the child still running; a kill
+/// then ends it, and the exit is reported.
+#[test]
+fn a_deadline_passes_and_a_kill_is_reported() {
+    let printed = waiter("c", "sleep 30");
+    assert_eq!(printed, "add child 0\nearly 0\nkill 0\nwoke 1\ntoken 2\nevents 1\n== signal 256\n");
+}
+
+/// §4.8: the `pidfd` a child carries is closed when it is reaped. Under a
+/// limit of 24 descriptors, sixty children come and go and the next is still
+/// watchable; one `pidfd` leaked per child would leave none to watch it with,
+/// and `poller_add_child` would answer `EMFILE` (24).
+#[test]
+fn reaping_a_child_gives_back_its_pidfd() {
+    for (backend, exe) in waiter_built() {
+        let run = Command::new("/bin/sh")
+            .args(["-c", "ulimit -n 24; exec \"$0\" \"$@\""])
+            .arg(exe)
+            .args(["d", "-c|exit 0"])
+            .output()
+            .expect("the waiter runs");
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout),
+            "churned 60\nnap 0\nadd child 0\nwoke 1\ntoken 2\nevents 1\n== code 0\n",
+            "`{backend}`"
+        );
+    }
+}
+
+/// §4.8: a program whose kernel will not give the child a `pidfd` is told why
+/// when it asks to watch the child -- the `errno`, here `ENOSYS` (38) as on a
+/// Linux before 5.3 -- and the child is still started and reaped. Not reachable
+/// with a descriptor limit: the descriptor the child's end held is closed
+/// before the `pidfd` is asked for, so one is always free. A `seccomp` filter
+/// answering `pidfd_open` with `ENOSYS`, installed before the waiter starts,
+/// is how a kernel that lacks it is stood in for.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_child_without_a_pidfd_says_why_it_cannot_be_watched() {
+    use std::os::unix::process::CommandExt;
+    #[repr(C)]
+    struct Filter {
+        code: u16,
+        jump_true: u8,
+        jump_false: u8,
+        k: u32,
+    }
+    #[repr(C)]
+    struct Program {
+        length: u16,
+        filter: *const Filter,
+    }
+    unsafe extern "C" {
+        fn prctl(option: i32, a2: u64, a3: u64, a4: u64, a5: u64) -> i32;
+    }
+    const PR_SET_NO_NEW_PRIVS: i32 = 38;
+    const PR_SET_SECCOMP: i32 = 22;
+    const SECCOMP_MODE_FILTER: u64 = 2;
+    // Load the system call number; if it is `pidfd_open`, fail with `ENOSYS`,
+    // otherwise allow it.
+    const BPF_LD_W_ABS: u16 = 0x20;
+    const BPF_JEQ_K: u16 = 0x15;
+    const BPF_RET_K: u16 = 0x06;
+    const SECCOMP_RET_ERRNO: u32 = 0x0005_0000;
+    const SECCOMP_RET_ALLOW: u32 = 0x7fff_0000;
+    static FILTER: [Filter; 4] = [
+        Filter { code: BPF_LD_W_ABS, jump_true: 0, jump_false: 0, k: 0 },
+        Filter { code: BPF_JEQ_K, jump_true: 0, jump_false: 1, k: 434 },
+        Filter { code: BPF_RET_K, jump_true: 0, jump_false: 0, k: SECCOMP_RET_ERRNO | 38 },
+        Filter { code: BPF_RET_K, jump_true: 0, jump_false: 0, k: SECCOMP_RET_ALLOW },
+    ];
+    struct Shared(Program);
+    // SAFETY: the program points at a `static` that is never written.
+    unsafe impl Sync for Shared {}
+    static PROGRAM: Shared = Shared(Program { length: 4, filter: FILTER.as_ptr() });
+
+    for (backend, exe) in waiter_built() {
+        let mut command = Command::new(exe);
+        command.args(["e", "-c|exit 5"]);
+        // SAFETY: `prctl` is async-signal-safe and allocates nothing, which is
+        // what `pre_exec` requires of the closure it runs between `fork` and
+        // `exec`; the filter is the `static` above.
+        let run = unsafe {
+            command.pre_exec(|| {
+                let program = std::ptr::addr_of!(PROGRAM.0) as u64;
+                if prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == 0
+                    && prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, program, 0, 0) == 0
+                {
+                    Ok(())
+                } else {
+                    Err(std::io::Error::last_os_error())
+                }
+            })
+        }
+        .output()
+        .expect("the waiter runs");
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout),
+            "add child 38\n== code 5\n",
+            "`{backend}`"
+        );
+    }
 }
 
 /// §4.1 to §4.3: a path outside the bound, `..`, a sibling of the bound, a

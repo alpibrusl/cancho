@@ -558,6 +558,16 @@ pub enum Builtin {
     /// `child_end_close(ChildEnd) -> [] int`: consumes a child's end that was
     /// never handed to a child.
     ChildEndClose,
+    /// `poller_add_pipe(&!Poller, &Pipe, token, events) -> [poll] int` --
+    /// `docs/processes.md` §4.8, edition 7: watch a channel's parent end as
+    /// `poller_add_conn` watches a `Conn`. `0`, or the `errno`.
+    PollerAddPipe,
+    /// `poller_add_child(&!Poller, &Child, token) -> [poll] int` -- §4.8,
+    /// edition 7: report the child's exit as readable. After `poller_wait`
+    /// names the token, `child_wait` answers without blocking. `0`, or the
+    /// `errno` -- `ENOSYS` where the kernel gave the child no `pidfd`, `EMFILE`
+    /// where the program had no descriptor to spare for it.
+    PollerAddChild,
     /// `null_ptr() -> [] c_ptr` — the one producer of a `c_ptr` that is
     /// not a foreign call's return, edition 3 only
     /// (`docs/opaque-pointers.md` §3).
@@ -711,6 +721,8 @@ impl Builtin {
         Builtin::PipeNonblocking,
         Builtin::PipeClose,
         Builtin::ChildEndClose,
+        Builtin::PollerAddPipe,
+        Builtin::PollerAddChild,
         Builtin::NullPtr,
         Builtin::Spawn,
         Builtin::Join,
@@ -822,6 +834,8 @@ impl Builtin {
             Builtin::PipeNonblocking => "pipe_nonblocking",
             Builtin::PipeClose => "pipe_close",
             Builtin::ChildEndClose => "child_end_close",
+            Builtin::PollerAddPipe => "poller_add_pipe",
+            Builtin::PollerAddChild => "poller_add_child",
             Builtin::NullPtr => "null_ptr",
             Builtin::Spawn => "spawn",
             Builtin::Join => "join",
@@ -915,7 +929,9 @@ impl Builtin {
             | Builtin::PipeWrite
             | Builtin::PipeNonblocking
             | Builtin::PipeClose
-            | Builtin::ChildEndClose => 7,
+            | Builtin::ChildEndClose
+            | Builtin::PollerAddPipe
+            | Builtin::PollerAddChild => 7,
             // `docs/file-writes.md`: edition 5, for the same reason --
             // `file_write` and `open_new` are names a program may already
             // declare against libc.
@@ -1027,6 +1043,8 @@ impl Builtin {
             // The handle's region, and for a read or a write the buffer's.
             Builtin::PipeRead | Builtin::PipeWrite => 2,
             Builtin::ChildKill | Builtin::PipeNonblocking => 1,
+            // The poller's region and the handle's.
+            Builtin::PollerAddPipe | Builtin::PollerAddChild => 2,
             Builtin::TcpAccept
             | Builtin::ConnNonblocking
             | Builtin::ConnNodelay
@@ -1651,6 +1669,27 @@ impl Builtin {
             ),
             Builtin::PipeClose => (vec![named(PRELUDE_PIPE)], Type::Int),
             Builtin::ChildEndClose => (vec![named(PRELUDE_CHILD_END)], Type::Int),
+            Builtin::PollerAddPipe | Builtin::PollerAddChild => {
+                let handle =
+                    if self == Builtin::PollerAddPipe { PRELUDE_PIPE } else { PRELUDE_CHILD };
+                let mut params = vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_POLLER)),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(named(handle)),
+                    },
+                    Type::Int,
+                ];
+                if self == Builtin::PollerAddPipe {
+                    params.push(Type::Int);
+                }
+                (params, Type::Int)
+            }
             Builtin::ListenerClose => (vec![named(PRELUDE_LISTENER)], Type::Int),
             // No capability, no data in, one opaque handle out
             // (`docs/opaque-pointers.md` §3) -- a fixed signature like
@@ -1724,6 +1763,8 @@ impl Builtin {
             | Builtin::PollerModify
             | Builtin::PollerRemove
             | Builtin::PollerWait
+            | Builtin::PollerAddPipe
+            | Builtin::PollerAddChild
             | Builtin::PollerAddSignals => Effects::plain(["poll"]),
             // `docs/signals.md` section 2.1: path-free, the set was spent at
             // `signals_watch`. Closing performs nothing, as `conn_close` does not.

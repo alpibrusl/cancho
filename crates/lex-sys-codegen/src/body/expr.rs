@@ -661,6 +661,10 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                         self.poller_ctl(&args, true, false)
                     }
                     Callee::Builtin(Builtin::PollerAddConn) => self.poller_ctl(&args, false, false),
+                    // `docs/processes.md` §4.8: a channel is watched as a `Conn`
+                    // is, and a child by its exit.
+                    Callee::Builtin(Builtin::PollerAddPipe) => self.poller_ctl(&args, false, false),
+                    Callee::Builtin(Builtin::PollerAddChild) => self.poller_add_child(&args),
                     Callee::Builtin(Builtin::PollerModify) => self.poller_ctl(&args, false, true),
                     Callee::Builtin(Builtin::PollerRemove) => self.poller_remove(&args),
                     Callee::Builtin(Builtin::PollerWait) => self.poller_wait(&args),

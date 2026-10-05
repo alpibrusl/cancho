@@ -348,6 +348,7 @@ pub(crate) fn emit_module(
         ("sigemptyset", "i32 @sigemptyset(ptr)"),
         ("sigfillset", "i32 @sigfillset(ptr)"),
         ("waitpid", "i32 @waitpid(i32, ptr, i32)"),
+        ("syscall", "i64 @syscall(i64, ...)"),
         ("kill", "i32 @kill(i32, i32)"),
         ("strncmp", "i32 @strncmp(ptr, ptr, i64)"),
     ] {
