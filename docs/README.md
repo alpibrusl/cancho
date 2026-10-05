@@ -401,7 +401,7 @@ not repeated here; a doc's own header carries its own detail.
 | [`purity.md`](purity.md) | The checked purity proof C can only promise and Rust can't state | measured and unspent |
 | [`floating-point.md`](floating-point.md) | `float`, IEEE-754 binary64 | settled and built |
 | [`float-printing.md`](float-printing.md) | Shortest round-trip decimal printing | settled and built |
-| [`f32.md`](f32.md) | `f32`, IEEE-754 binary32, asked by `lexsys-gpu`: the type, the `f32` suffix, `f32_of`/`float_of32`/`bits_of32`/`f32_of_bits`, and the bit-for-bit gate against binary64 | F1 built (edition 6); F2 `sqrt`/`%`/`int`, F3 printing and F4 `lexsys-gpu` not |
+| [`f32.md`](f32.md) | `f32`, IEEE-754 binary32, asked by `lexsys-gpu`: the type, the `f32` suffix, `f32_of`/`float_of32`/`bits_of32`/`f32_of_bits`, the bit-for-bit gate against binary64, `sqrt32` and the `int` conversions, and `std.fmt32` (Rust's `{:?}` and `{:.N}` and a decimal read straight to the nearest `f32`, every 2³² pattern checked) | F1, F2 and F3 built (edition 6); F4 `lexsys-gpu` not |
 | [`compile-time.md`](compile-time.md) | Constant folding and pure-call evaluation | settled and built |
 | [`compile-time-data.md`](compile-time-data.md) | `static` items evaluated during compilation | settled and built |
 | [`layout.md`](layout.md) | What every leaf costs; packing and transposing | measured, deferred with a trigger (`lex-sys layout`) |

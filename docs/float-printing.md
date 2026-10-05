@@ -287,8 +287,9 @@ lines, and would not compile otherwise.
 | Question | Why it waits |
 |---|---|
 | Positional notation | §1.1. `0.1` as `0.1` rather than `1e-1` needs a switch-over rule, which is a formatting policy and not a digit question. It is a layer on top of this one, and cheap once wanted |
-| Reading a float from bytes | The inverse. `std.fmt` writes; nothing parses. It needs the same bignum and the opposite loop, and no program has asked yet |
-| A width or a precision | `{:.3}` — round to a stated number of digits rather than the shortest. Different algorithm (the stopping rule goes away), same machinery |
+| Reading a float from bytes | The inverse. `std.fmt` writes; nothing parses a `float`. It needs the same bignum and the opposite loop, and no program has asked yet. (`f32` has it: `std.fmt32.f32_of_text`, correctly rounded straight to binary32; [`f32.md`](f32.md) §5.3) |
+| A width or a precision | `{:.3}` — round to a stated number of digits rather than the shortest. Different algorithm (the stopping rule goes away), same machinery. (Built for `f32` as `std.fmt32.f32_fixed_into`, exact ties to even; [`f32.md`](f32.md) §5.3) |
+| Positional notation for `f32` | Built in `std.fmt32.f32_into` as Rust's `{:?}` (positional from `1e-4` to below `1e16`); `float_into` is unchanged |
 | `float_of_bits` | The inverse of `bits_of`, which would let a test feed exact bit patterns without going through a literal. Not needed while `{:e}` round-trips |
 
 ---
