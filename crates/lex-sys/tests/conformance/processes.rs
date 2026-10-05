@@ -356,12 +356,14 @@ fn a_child_reads_what_the_parent_writes() {
 
 /// §4.5: holding eight more descriptors of its own, and one it inherited
 /// without close-on-exec, the parent starts a child that holds its three
-/// streams and nothing else -- `3`, when it is listed, is the one `ls` opens to
-/// read `/dev/fd`.
+/// streams and nothing else. `ls` opens a descriptor of its own to read
+/// `/dev/fd`, so `3` is listed, and on macOS (observed on CI) `4` too; a leaked one of the parent's would be 5 or higher.
 #[test]
 fn a_child_holds_exactly_its_three_streams() {
     let printed = probe_holding(true, ["/bin/sh", "-c|ls /dev/fd", "-", "-", "many"]);
-    let seen: Vec<u32> = printed.split_whitespace().filter_map(|w| w.parse().ok()).collect();
+    // Only `ls`'s own lines: the status line after them ends in a number too.
+    let listing = printed.split("== ").next().unwrap_or("");
+    let seen: Vec<u32> = listing.split_whitespace().filter_map(|w| w.parse().ok()).collect();
     assert!(seen.starts_with(&[0, 1, 2]), "the child should hold its streams: {printed}");
     assert!(
         seen.iter().all(|&fd| fd <= 4) && seen.len() <= 5,
