@@ -320,6 +320,13 @@ child through `Ffi`, which is the leak this closes. `file-writes.md`'s
 > being the one `ls` reads `/dev/fd` with. `fs_read` and `fs_write` close
 > their descriptor before returning, so no child can be shown one, and the
 > test cannot tell those two from before.
+>
+> **Mutants:** each site reverted alone, in each backend, 14 in all; 12
+> are killed. The two that survive are `dir_list`'s `O_CLOEXEC`, and they
+> are equivalent on Linux: glibc's `fdopendir` sets `FD_CLOEXEC` on the
+> descriptor it is given (measured: `F_GETFD` answers 0 before it and 1
+> after). The flag stays, because it closes the moment between `openat` and
+> `fdopendir` and does not rest on what one libc does.
 
 ### 4.6 Signals start at their defaults
 
