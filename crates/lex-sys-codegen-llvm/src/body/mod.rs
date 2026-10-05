@@ -322,6 +322,15 @@ impl<'a> FuncEmitter<'a> {
                 }
                 Stmt::Return(expr) => {
                     let values = self.expr(expr)?;
+                    // Leave every arena this `return` jumps out of,
+                    // innermost first, as `lex-sys-codegen`'s own
+                    // `emit_return` does (lex-sys#252: without this a
+                    // region left by `return` kept its chunk for good, one
+                    // 64 KiB `malloc` per call). The value is already in
+                    // registers, and §6's occurs-check keeps it from
+                    // pointing into an arena, so nothing reads what is
+                    // freed here.
+                    self.release_arenas();
                     match values.as_slice() {
                         [] => self.out.push_str("  ret void\n"),
                         [value] => {

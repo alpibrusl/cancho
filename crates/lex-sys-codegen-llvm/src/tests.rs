@@ -1005,3 +1005,121 @@ fn main(world: World) -> [] int {
         });
     }
 }
+
+/// lex-sys#252: a `region` left by `return` gives its chunk back, as one
+/// left by falling out of its last statement does. This backend used to
+/// emit the `ret` with no `free`, so a function that returned from inside a
+/// region kept one 64 KiB chunk per call for good (lexsys-hooks lost about
+/// 1 GB in 100,000 deliveries). `lex-sys-codegen`'s `emit_return` frees
+/// every open arena; this checks the LLVM backend does the same, in the
+/// IR, and that the value is read before its arena is freed.
+const RETURN_FROM_REGION: &str = "\
+fn copy[&o, &v](out: &!o [byte], at: int, value: &v [byte]) -> [] int {
+    var i = 0;
+    while i < len(value) {
+        out[at + i] = value[i];
+        i = i + 1;
+    }
+    return at + len(value);
+}
+
+fn left_by_return[&o](out: &!o [byte], n: int) -> [] int {
+    region a {
+        let value = alloc_slice[a](40, byte_of(0));
+        value[0] = byte_of(n & 127);
+        return copy(out, 0, value) + int_of(value[0]);
+    }
+}
+
+fn nested(n: int) -> [] int {
+    region a {
+        let x = alloc_slice[a](4, 0);
+        x[0] = n;
+        region b {
+            let y = alloc_slice[b](4, 0);
+            y[0] = x[0] * 2;
+            if y[0] > 10 {
+                return y[0];
+            }
+        }
+        return x[0];
+    }
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(args); release(fs); release(ffi); release(io); release(heap);
+    var total = 0;
+    region outer {
+        let buf = alloc_slice[outer](64, byte_of(0));
+        var i = 0;
+        while i < 100000 {
+            total = total + left_by_return(buf, i) + nested(i & 15);
+            i = i + 1;
+        }
+    }
+    return total & 127;
+}
+";
+
+/// The body of the function whose symbol contains `name`, from its
+/// `define` line to its closing brace.
+fn function_text<'t>(module: &'t str, name: &str) -> &'t str {
+    let mut at = 0;
+    let start = module
+        .lines()
+        .find_map(|line| {
+            let here = at;
+            at += line.len() + 1;
+            (line.starts_with("define ") && line.contains(&format!("{name}("))).then_some(here)
+        })
+        .unwrap_or_else(|| panic!("no function `{name}` in the module"));
+    let end = module[start..].find("\n}\n").expect("the function ends") + start;
+    &module[start..end]
+}
+
+#[test]
+fn a_region_left_by_return_frees_its_chunk_before_the_ret() {
+    let ast = parse(RETURN_FROM_REGION).expect("should parse");
+    let program = lex_sys_ir::lower(&ast).expect("should lower");
+    let triple: Triple = "x86_64-unknown-linux-gnu".parse().expect("a valid triple");
+    let module = emit::emit_module(&program, "main", &triple)
+        .unwrap_or_else(|(_, message)| panic!("{message}"));
+    let count = |text: &str, what: &str| text.lines().filter(|l| l.contains(what)).count();
+    // Every `ret` in a function that returns from inside a region comes
+    // straight after a `free` of an arena's chunk.
+    for name in ["left_by_return", "nested"] {
+        let text = function_text(&module, name);
+        let lines: Vec<&str> = text.lines().map(str::trim).collect();
+        for (at, line) in lines.iter().enumerate() {
+            if line.starts_with("ret ") {
+                assert!(
+                    lines[..at].last().is_some_and(|l| l.starts_with("call void @free(")),
+                    "`{name}`: a `ret` with no `free` just before it:\n{text}"
+                );
+            }
+        }
+    }
+    // `left_by_return`: one chunk, one `return`, one `free`.
+    let one = function_text(&module, "left_by_return");
+    assert_eq!(count(one, "call ptr @malloc("), 1, "{one}");
+    assert_eq!(count(one, "call void @free("), 1, "{one}");
+    // `nested`: the inner `return` frees both chunks, the inner region's
+    // fall-out frees its own, the outer `return` the outer one: four.
+    let two = function_text(&module, "nested");
+    assert_eq!(count(two, "call ptr @malloc("), 2, "{two}");
+    assert_eq!(count(two, "call void @free("), 4, "{two}");
+}
+
+#[test]
+fn a_value_returned_from_a_region_is_read_before_the_region_is_freed() {
+    let object = compiled(RETURN_FROM_REGION, "main");
+    let output = run(&object, "return-from-region");
+    // left_by_return(i) = 40 + (i & 127); nested(k) = 2k if 2k > 10 else k.
+    let mut total: i64 = 0;
+    for i in 0..100_000_i64 {
+        let k = i & 15;
+        total += 40 + (i & 127) + if 2 * k > 10 { 2 * k } else { k };
+    }
+    assert_eq!(output.status.code(), Some((total & 127) as i32), "{output:?}");
+}

@@ -815,6 +815,19 @@ the same 64 KiB constant, unmodified from `lex-sys-codegen`'s
 allocation against this exact number, so a mismatched chunk would trap
 where the Cranelift build does not, or the reverse.
 
+"One `free` out" was true of a region left by falling out of its last
+statement and of nothing else: a `return` from inside one emitted its
+`ret` with no `free`, so the chunk was kept for good, one 64 KiB `malloc`
+per call (lex-sys#252). `lex-sys-codegen`'s `emit_return` had always freed
+every arena open at the `return`, innermost first; the `Stmt::Return` arm
+here now does the same (`release_arenas`), after the returned value is in
+registers. lexsys-hooks found it as about 11 KB kept per delivery attempt
+(2 MB to 1,075 MB resident over 100,000 deliveries), and worked around it
+by never returning from inside a region. A function that writes and reads
+its region at indices the optimiser cannot fold, called 100,000 times,
+peaked at 3.3 GB resident before and 1.4 MB after (macOS, arm64);
+`a_region_left_by_return_frees_its_chunk_before_the_ret` checks the IR.
+
 Building `sieve`/`scan` against this found two smaller gaps actually
 sitting in front of them, not named until tried: `byte_of` (narrow-or-
 trap, `docs/strings.md` §2 — one unsigned comparison and a `trunc`, the
