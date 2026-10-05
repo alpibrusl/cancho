@@ -3,7 +3,7 @@
 > **Status: design (#210, PR 1).** #210 makes `packages/tls` selectable in `lexsys-hooks`, runs the whole `https` delivery
 > suite on both backends, and measures. Reading both sides to write this found that two sentences of `docs/tls-pure.md` are
 > false, so the work is bigger than "switch by dependency". This document corrects them, says what has to be built, and lists
-> what a person has to decide. Its claims are from reading the two code bases and from the trials named; where a later PR finds
+> the decisions taken (§7). Its claims are from reading the two code bases and from the trials named; where a later PR finds
 > one false, that PR corrects it here, in place.
 
 ---
@@ -165,24 +165,35 @@ whole handshake has not been measured. The expectation is that the pure backend 
 is a hypothesis for the PR to confirm or correct, and what it means at hooks' rates (about 970 `https` deliveries a second a
 core with full handshakes) is §1's last bullet.
 
-## 7. Open questions, for a person
+## 7. Decisions
 
-1. **How the pure build's sources are made** (§2.2, §3). *Recommended: a mechanical transform, run by the build, the result not
-   committed.* The alternatives:
-   - **Duplicate the 11 functions.** Simple, and 1,508 lines of `run` are in the way, so a copy of `hooks.ls` in a second
-     source tree would drift from the first within a week.
-   - **Refactor first.** Split the loop so that the `Ffi` row sits in a few small functions per backend. The right end state,
-     in a 5,357-line file other work is changing at the same time (`lexsys-hooks` has uncommitted work on `feat/dbname`), and a
-     large change before any measurement.
-   - **Do not ship a second binary:** keep one source, add the engine to the call chain beside `ffi`, and thread both. Hooks
-     would then carry `Ffi("libssl")` in the pure build, which defeats the authority gate.
-2. **Resumption.** *Assumed: the pure backend reports full handshakes only, and `sessions_test.py` runs on OpenSSL only* (§2.3).
-   Resumption in `packages/tls` is a separate decision (`docs/tls-pure.md` §7.2), with the hazard that a resumed session skips
-   verification.
-3. **`SSL_CERT_DIR`.** *Assumed: not honoured by the pure backend, and the documentation says so* (§2.5).
-4. **What "equal outcomes" means where the two differ on purpose** (§2.5). *Assumed: each such case states its expected outcome
-   per backend.*
-5. **The authority gate.** *Assumed: §2.4's reading, no `libssl` or `libcrypto`, and the `libc` entries unchanged.*
+Settled by a person (#210, PR 1 review), with the reasons. Each can be reopened by the evidence named.
+
+1. **How the pure build's sources are made (§2.2, §3): a mechanical transform, run by the build, the result not committed.**
+   The alternatives were to duplicate the 11 functions (a copy of `run`, 1,508 lines, would drift) or to refactor the loop first
+   (a large change to a 5,357-line file other work is changing, before anything is measured). Three safeguards are part of the
+   decision:
+   - the transform **fails unless it finds exactly the 11 functions it expects**, so a changed `hooks.ls` cannot be half
+     transformed without anyone noticing;
+   - it **preserves line numbers**, so a compiler error in the generated source points at the real line;
+   - the build checks the result: it compiles, and the pure build's authority report has no `libssl` or `libcrypto`.
+
+   *Reopened if* the transform proves too brittle to keep: the refactor is then worth its cost, with measurements behind it.
+2. **Resumption: the pure backend does full handshakes only, and it is not part of #210** (§2.3). `sessions_test.py` runs on
+   OpenSSL only. Resumption in `packages/tls` skips certificate verification on the resumed path, so it is a design of its own.
+   The cost comparison is a full handshake against a full handshake, with OpenSSL's resumed cost as an extra row so the loss is
+   visible. *Reopened if* §6 shows the pure handshake several times slower: that is the evidence a resumption design needs.
+3. **The trust store (§2.5): `SSL_CERT_DIR` is not honoured, and nothing falls back silently.** The pure backend reads
+   `tls-ca-file` if given, otherwise `SSL_CERT_FILE`, otherwise a bundle from a short list of standard paths
+   (`/etc/ssl/certs/ca-certificates.crt` on Debian and Ubuntu). **If none loads it refuses to start, status 21, as an unreadable
+   `tls-ca-file` already does**, and that includes a deployment that sets only `SSL_CERT_DIR`: a trust store other than the one
+   an operator configured is worse than an error. The build PR checks two numbers: the engine's roots capacity (1,048,576
+   bytes) against a real bundle (138,350 bytes for 128 roots, measured on another machine), and that a bundle over the capacity
+   is refused, not truncated.
+4. **Where the two backends differ on purpose (§2.5), each such case states its expected outcome per backend** and is a pass
+   when it gets it.
+5. **The authority gate is §2.4's reading:** no `libssl` and no `libcrypto` scope, none of the 32 symbols, the `libc` entries
+   unchanged.
 
 ## 8. Not done here
 
