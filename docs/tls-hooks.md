@@ -207,7 +207,7 @@ Settled by a person (#210, PR 1 review), with the reasons. Each can be reopened 
 
 ## 9. What was built, and what building it corrected
 
-Built in `lexsys-hooks` (`pure/`, `scripts/make_pure.py`; its own `docs/pure-tls.md` is the record of the results). #283 published the two packages as stores first.
+Built in `lexsys-hooks` ([alpibrusl/lexsys-hooks#42](https://github.com/alpibrusl/lexsys-hooks/pull/42): `pure/`, `scripts/make_pure.py`; its own `docs/pure-tls.md` is the record of the results). #283 published the two packages as stores first.
 What it found that §1 to §7 did not know:
 
 - **The pure build is a project of its own, not a second `[[bin]]`** (§3, corrected above). Found by trying: with `tls` among the one project's dependencies,
