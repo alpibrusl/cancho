@@ -506,7 +506,7 @@ does ([`net.md`](net.md) §4.1).
 | **1** | `Exec`, the `exec`, `child_signal`, `pipe_read`, `pipe_write` labels, `Split`'s ninth field, `pipe_open`, `exec_spawn`, `child_wait`, `child_kill`, the `Pipe` operations; both backends, both targets. **Built** (§8) | 7 |
 | **2** | `poller_add_pipe`, `poller_add_child`. **Built** (§4.8, §8) | 7 |
 | **3** | `std.process`: ~~`Args` (the `\0` builder) and `run(heap, exec, path, args, input, most, timeout)`~~ `Argv` (the `\0` builder), `channels`, and `capture(heap, clock, child, to_child, from_child, input, most, timeout)`, a bounded capture with a deadline, built on slices 1 and 2. **Corrected (#275):** neither name nor signature could be built; §7.1. **Built** (§8) | 7 |
-| **4** | lexsys-tools#10: the MCP server, as a lex-sys program holding `Exec` narrowed to the tools' directory and nothing that writes | — |
+| **4** | lexsys-tools#10: the MCP server, as a lex-sys program holding `Exec` narrowed to the tools' directory ~~and nothing that writes~~ and no `Fs`, `Net` or `Ffi`. **Built** (lexsys-tools#17, §8) | 7 |
 
 ### 7.1 Slice 3: `std.process`
 
@@ -828,6 +828,29 @@ slice 2's, and is checked there.
   `math.max(max, 2)` is refused as "`max` is a local binding". That is the
   compiler's, not this slice's, and is reported separately; `std.process`'s
   driver names its local otherwise.
+
+### Slice 4
+
+Built in lexsys-tools (#17); its design and measurements are that
+repository's `docs/mcp.md`. What it says about this document's work:
+
+* **The design held.** The server calls `std.process.capture` once per tool
+  call and nothing else of slices 1 to 3 beyond `exec_spawn`, which it
+  makes under its own `Exec("<bin>")`, as §7.1 decided. Its derived
+  authority is bounded: `exec("<bin>")`, `child_signal`, `pipe_read`,
+  `pipe_write`, `poll`, `clock`, the console and `args`, and no `Fs`, `Net`
+  or `Ffi`. The row's ~~"nothing that writes"~~ is corrected above: the server
+  writes its answers to standard output, and writes no file.
+* **The bound is a literal at build time.** `narrow` takes one, so the
+  server's source names `/opt/lexsys-tools/bin` and a build script bakes
+  another directory in, as lexsys-tools' D14 variant bakes `--root` -- the
+  open question of §9's "a bound chosen at deployment", met for `Exec`.
+* **A missing flush is invisible to batch tests.** A stdio server's answers
+  sit in libc's buffer until `flush_out`; tests that send every request and
+  close the input see them at exit anyway. Only a client that waits for each
+  answer with its input open catches it, so the server's tests include one.
+* **The qualified-call shadowing** (`let name = ...; tools.name(k)` is refused)
+  was met twice more there; it is reported against the compiler.
 
 ## 9. Open
 
