@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""A dudect-style timing test of `std.gcm` (docs/tls-parity.md §3.1).
+"""A dudect-style timing test of `std.gcm` (docs/tls-parity.md §3.1), and with
+`--chacha20` of `std.chacha20`'s AEAD (docs/tls-assurance.md §6).
 
     cc -O2 -c tick.c -o tick.o && ar rcs libtick.a tick.o   # tick.c below
     lex-sys build --std [--backend B] tests/programs/gcm_timing.ls -l tick -L . -o timing
-    python3 scripts/gcm_timing.py ./timing [<samples per test>]
+    python3 scripts/gcm_timing.py ./timing [<samples per test>] [--chacha20]
 
 `tick.c` is the cycle counter the program reads:
 
@@ -74,21 +75,26 @@ def run(exe, op, records):
 
 
 def main():
-    exe = sys.argv[1]
-    n = int(sys.argv[2]) if len(sys.argv) > 2 else 100000
+    chacha = "--chacha20" in sys.argv
+    args = [a for a in sys.argv[1:] if a != "--chacha20"]
+    exe = args[0]
+    n = int(args[1]) if len(args) > 1 else 100000
+    # ChaCha20-Poly1305's ops are the lowercase ones, and its key is 32 bytes.
+    klen = 32 if chacha else 16
+    seal, open_ = ("s", "o") if chacha else ("S", "O")
     rng = random.Random(197)
     zero = bytes(SIZE)
-    key = rng.randbytes(16)
+    key = rng.randbytes(klen)
     nonce = rng.randbytes(12)
     ct = rng.randbytes(SIZE)
     tests = {
-        "seal, key": ("S", lambda: (bytes(16), nonce, bytes(AAD), zero),
-                      lambda: (rng.randbytes(16), nonce, bytes(AAD), zero)),
-        "seal, data": ("S", lambda: (key, nonce, bytes(AAD), zero),
+        "seal, key": (seal, lambda: (bytes(klen), nonce, bytes(AAD), zero),
+                      lambda: (rng.randbytes(klen), nonce, bytes(AAD), zero)),
+        "seal, data": (seal, lambda: (key, nonce, bytes(AAD), zero),
                        lambda: (key, nonce, rng.randbytes(AAD), rng.randbytes(SIZE))),
-        "open, data": ("O", lambda: (key, nonce, bytes(AAD), bytes(SIZE + 16)),
+        "open, data": (open_, lambda: (key, nonce, bytes(AAD), bytes(SIZE + 16)),
                        lambda: (key, nonce, rng.randbytes(AAD), rng.randbytes(SIZE + 16))),
-        "open, tag": ("O", lambda: (key, nonce, bytes(AAD), ct + bytes([1]) + bytes(15)),
+        "open, tag": (open_, lambda: (key, nonce, bytes(AAD), ct + bytes([1]) + bytes(15)),
                       lambda: (key, nonce, bytes(AAD), ct + bytes(15) + bytes([1]))),
     }
 

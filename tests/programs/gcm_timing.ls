@@ -1,8 +1,10 @@
-// `docs/tls-parity.md` §3.1: the timing of `std.gcm`, for the
+// `docs/tls-parity.md` §3.1: the timing of `std.gcm`, and since #208
+// (`docs/tls-assurance.md` §6) of `std.chacha20`'s AEAD, for the
 // dudect-style test `scripts/gcm_timing.py` runs.
 //
 // Standard input is one header line, `<op> <key> <nonce> <aad> <data>`:
-// `S` (seal) or `O` (open) and the four lengths in bytes, in decimal.
+// `S` (seal) or `O` (open) under AES-GCM, `s` or `o` under
+// ChaCha20-Poly1305, and the four lengths in bytes, in decimal.
 // Then records in lowercase hex, each key, nonce, aad and data at
 // those lengths, back to back, with no separator.
 //
@@ -12,6 +14,7 @@
 // this program is built with `-l tick -L <dir>`; the times are printed,
 // one a line, once every call has run.
 import std.buffer;
+import std.chacha20;
 import std.gcm;
 import std.io;
 
@@ -63,7 +66,7 @@ fn time_into[&f, &s, &a, &t](ffi: &f Ffi("tick"), s: &s [byte], start: int, op: 
     }
     region r {
         var room = d + 16;
-        if op != 83 {
+        if op != 83 && op != 115 {
             room = d - 16;
         }
         let out = alloc_slice[r](room, byte_of(0));
@@ -77,6 +80,14 @@ fn time_into[&f, &s, &a, &t](ffi: &f Ffi("tick"), s: &s [byte], start: int, op: 
             if op == 83 {
                 let t0 = lexsys_tick(ffi);
                 gcm.seal(key, nonce, aad, data, out);
+                times[i] = lexsys_tick(ffi) - t0;
+            } else if op == 115 {
+                let t0 = lexsys_tick(ffi);
+                chacha20.seal(key, nonce, aad, data, out);
+                times[i] = lexsys_tick(ffi) - t0;
+            } else if op == 111 {
+                let t0 = lexsys_tick(ffi);
+                chacha20.open(key, nonce, aad, data, out);
                 times[i] = lexsys_tick(ffi) - t0;
             } else {
                 let t0 = lexsys_tick(ffi);
