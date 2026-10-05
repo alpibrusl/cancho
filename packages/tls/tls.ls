@@ -228,7 +228,7 @@ pub fn start[&e, &h](engine: &!e Engine, slot: int, host: &h [byte], now_unix_ms
         draw(engine, random);
         let i = ints_of(slot);
         let b = bytes_of(slot);
-        code = tls_client.start(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], host, random, now_unix_ms / 1000);
+        code = tls_client.start_psk(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], host, random, now_unix_ms / 1000, host[0..0], host[0..0], 0, 0, 0, contents(engine.tmeta)[t_resume()] == 1);
         var k = 0;
         while k < 96 {
             random[k] = byte_of(0);
@@ -372,7 +372,8 @@ fn e_host() -> [] int {
 
 // `tmeta`: [0] entries, [1] trust generation, [2] the longest a
 // verification is relied on, in seconds, [3] the next entry a full table
-// replaces; then each entry's fields.
+// replaces, [4] 1 if `set_resumption` turned resumption on; then each
+// entry's fields.
 fn t_capacity() -> [] int {
     return 0;
 }
@@ -389,8 +390,12 @@ fn t_hand() -> [] int {
     return 3;
 }
 
-fn t_entries() -> [] int {
+fn t_resume() -> [] int {
     return 4;
+}
+
+fn t_entries() -> [] int {
+    return 5;
 }
 
 // An entry's fields: generation, in use, ticket length, hash length, host
@@ -425,6 +430,19 @@ fn wipe[&e](engine: &!e Engine, e: int) -> [] int {
     while f < t_fields() {
         contents(engine.tmeta)[tf(e, f)] = 0;
         f = f + 1;
+    }
+    return 0;
+}
+
+// Whether this engine's connections say they can resume
+// (`psk_key_exchange_modes`): off unless turned on. A server may withhold
+// tickets from a client that does not say it (RFC 8446 §4.2.9), so a
+// caller that will `save` turns it on; one that never will leaves it off,
+// and claims nothing it does not do.
+pub fn set_resumption[&e](engine: &!e Engine, on: bool) -> [] int {
+    contents(engine.tmeta)[t_resume()] = 0;
+    if on {
+        contents(engine.tmeta)[t_resume()] = 1;
     }
     return 0;
 }
@@ -560,7 +578,7 @@ pub fn start_with[&e, &h](engine: &!e Engine, slot: int, host: &h [byte], now_un
         draw(engine, random);
         let i = ints_of(slot);
         let b = bytes_of(slot);
-        code = tls_client.start_psk(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], host, random, now_unix_ms / 1000, contents(engine.tickets)[at..at + n], contents(engine.tickets)[at + e_psk()..at + e_psk() + h], age, verified_at, not_after);
+        code = tls_client.start_psk(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], host, random, now_unix_ms / 1000, contents(engine.tickets)[at..at + n], contents(engine.tickets)[at + e_psk()..at + e_psk() + h], age, verified_at, not_after, true);
         tls_slot.zero(random);
     }
     wipe(engine, e);

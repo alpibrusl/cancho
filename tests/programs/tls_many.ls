@@ -476,6 +476,9 @@ fn main(world: World) -> [] int {
                                 borrow pem as &pb in {
                                     roots = tls.trust(ew, buffer.bytes(pb));
                                 }
+                                if rounds > 1 {
+                                    tls.set_resumption(ew, true);
+                                }
                                 if roots < 1 {
                                     io.error_all(i, "tls_many: no root certificate on standard input\n");
                                 } else {

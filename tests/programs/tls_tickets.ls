@@ -3,7 +3,7 @@ edition 5;
 // `docs/tls-resumption.md` §3 and §4: the engine's rules for offering a
 // saved ticket, driven from standard input one line at a time, as
 // `tls_driver.ls` drives one connection. One slot, room for two tickets,
-// and the entropy fixed (the bytes 00 to 1f), so a conversation replays
+// resumption on (`tls.set_resumption`), and the entropy fixed (the bytes 00 to 1f), so a conversation replays
 // byte for byte. Byte strings are lowercase hex (`-` for empty).
 //
 //     T <roots>                    tls.trust (a PEM bundle)
@@ -217,6 +217,7 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
     var out = box_slice(heap, 131072, byte_of(0));
     var engine = tls.open_with_tickets(heap, 1, 2);
     borrow mut engine as &!ew in {
+        tls.set_resumption(ew, true);
         region r {
             let entropy = alloc_slice[r](32, byte_of(0));
             var k = 0;

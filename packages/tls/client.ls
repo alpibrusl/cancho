@@ -55,7 +55,7 @@ pub fn event_failed() -> [] int {
 // seconds since 1970, against which the server's certificates are
 // checked. The ClientHello is queued for `take`.
 pub fn start[&i, &b, &h, &r](ints: &!i [int], bytes: &!b [byte], host: &h [byte], random: &r [byte], now: int) -> [] int {
-    return start_psk(ints, bytes, host, random, now, host[0..0], host[0..0], 0, 0, 0);
+    return start_psk(ints, bytes, host, random, now, host[0..0], host[0..0], 0, 0, 0, false);
 }
 
 // `start`, offering `ticket` for resumption (`docs/tls-resumption.md`):
@@ -64,8 +64,10 @@ pub fn start[&i, &b, &h, &r](ints: &!i [int], bytes: &!b [byte], host: &h [byte]
 // connection that issued it knew of the server's identity, which a
 // resumed connection inherits. An empty `ticket` is `start`. Whether the
 // ticket may be offered at all (`docs/tls-resumption.md` §3) is the
-// engine's to decide; this only sends it.
-pub fn start_psk[&i, &b, &h, &r, &t, &k](ints: &!i [int], bytes: &!b [byte], host: &h [byte], random: &r [byte], now: int, ticket: &t [byte], psk: &k [byte], age: int, verified_at: int, not_after: int) -> [] int {
+// engine's to decide; this only sends it. `advertise` says in the
+// ClientHello that the client can resume, so a server may send it tickets
+// (implied by a ticket offered).
+pub fn start_psk[&i, &b, &h, &r, &t, &k](ints: &!i [int], bytes: &!b [byte], host: &h [byte], random: &r [byte], now: int, ticket: &t [byte], psk: &k [byte], age: int, verified_at: int, not_after: int, advertise: bool) -> [] int {
     if len(ints) < tls_slot.ints_len() || len(bytes) < tls_slot.bytes_len() || len(random) != 96 || len(host) > 255 {
         return tls_record.bad_slot();
     }
@@ -85,6 +87,9 @@ pub fn start_psk[&i, &b, &h, &r, &t, &k](ints: &!i [int], bytes: &!b [byte], hos
     ints[tls_slot.i_host_len()] = len(host);
     ints[tls_slot.i_now()] = now;
     ints[tls_slot.i_group()] = tls_message.group_x25519();
+    if advertise {
+        tls_slot.set_flag(ints, tls_slot.f_advertise());
+    }
     if len(ticket) > 0 {
         tls_slot.copy_bytes(ticket, bytes[tls_slot.b_offer()..tls_slot.b_offer() + len(ticket)]);
         tls_slot.copy_bytes(psk, bytes[tls_slot.k_offer_psk()..tls_slot.k_offer_psk() + len(psk)]);
@@ -117,7 +122,7 @@ fn send_client_hello[&i, &b, &s, &c](ints: &!i [int], bytes: &!b [byte], share: 
             tn = ints[tls_slot.i_offer_len()];
             h = ints[tls_slot.i_offer_hash()];
         }
-        let n = tls_message.client_hello(bytes[tls_slot.k_random()..tls_slot.k_random() + 32], bytes[tls_slot.k_session_id()..tls_slot.k_session_id() + 32], ints[tls_slot.i_group()], share, cookie, bytes[tls_slot.k_host()..tls_slot.k_host() + ints[tls_slot.i_host_len()]], bytes[tls_slot.b_offer()..tls_slot.b_offer() + tn], ints[tls_slot.i_offer_age()], h, hello);
+        let n = tls_message.client_hello(bytes[tls_slot.k_random()..tls_slot.k_random() + 32], bytes[tls_slot.k_session_id()..tls_slot.k_session_id() + 32], ints[tls_slot.i_group()], share, cookie, bytes[tls_slot.k_host()..tls_slot.k_host() + ints[tls_slot.i_host_len()]], tls_slot.has(ints, tls_slot.f_advertise()), bytes[tls_slot.b_offer()..tls_slot.b_offer() + tn], ints[tls_slot.i_offer_age()], h, hello);
         if tn > 0 {
             binder(ints, bytes, hello[0..n]);
         }

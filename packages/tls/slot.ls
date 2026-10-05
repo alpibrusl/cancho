@@ -295,6 +295,13 @@ pub fn f_resumed() -> [] int {
     return 512;
 }
 
+// The ClientHello says the client can resume (`psk_key_exchange_modes`),
+// so a server may send tickets: RFC 8446 §4.2.9 lets a server withhold
+// them from a client that does not (Go's and rustls's do).
+pub fn f_advertise() -> [] int {
+    return 1024;
+}
+
 // ---- The byte slice ----
 
 // One incoming record, header included.

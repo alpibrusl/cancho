@@ -943,6 +943,8 @@ case12("TLS 1.2, a ServerHello echoing the client's session id", "tls-decode-err
     lambda s: (s.start(), setattr(s, "sh_sid", s.sid), s.c.feed(plain_record(22, s.server_hello12()))))
 case12("TLS 1.2, a key_share in the ServerHello", "tls-unsupported-extension", 110)(
     hello12(sh_extra=ext(51, u16(0x1D) + u16(32) + bytes(range(32)))))
+case12("TLS 1.2, a pre_shared_key in the ServerHello (a TLS 1.3 resumption's)", "tls-unsupported-extension", 110)(
+    hello12(sh_extra=ext(41, u16(0))))
 case12("TLS 1.2, a renegotiated connection in renegotiation_info", "tls-decode-error", 50)(
     hello12(reneg=ext(0xFF01, b"\x0c" + bytes(12))))
 case12("TLS 1.2, the key exchange signed by another key", "tls-bad-certificate-verify", 51)(

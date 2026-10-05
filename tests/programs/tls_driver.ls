@@ -258,7 +258,7 @@ fn client_op[&i, &s, &n, &b, &o, &p, &e](io: &!i Io, s: &s [byte], at: int, ints
             f = next_field(s, f);
             let verified_at = number(s, f);
             f = next_field(s, f);
-            code = tls_client.start_psk(ints, bytes, host, random, now, ticket, psk, age, verified_at, number(s, f));
+            code = tls_client.start_psk(ints, bytes, host, random, now, ticket, psk, age, verified_at, number(s, f), true);
         }
     } else if op == 75 {
         io.write_all(io, "0 ok ");

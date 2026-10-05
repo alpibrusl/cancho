@@ -185,13 +185,14 @@ pub fn binders_len(hash_len: int) -> [] int {
 // and `session_id` are 32 bytes each; `share` is one key share of
 // `group`; `cookie` is a HelloRetryRequest's cookie, echoed, or empty;
 // `host` is at most 255 bytes, and an IP literal sends no `server_name`.
-// `ticket`, if not empty, is offered as a PSK with (EC)DHE
-// (`docs/tls-resumption.md` §5): `psk_key_exchange_modes` with
-// `psk_dhe_ke` only, and `pre_shared_key` last, its one identity with
+// `modes` sends `psk_key_exchange_modes` with `psk_dhe_ke` only, which a
+// server needs to see before it sends tickets (RFC 8446 §4.2.9). `ticket`,
+// if not empty, is offered as a PSK with (EC)DHE, and `modes` is implied
+// (`docs/tls-resumption.md` §5): `pre_shared_key` last, its one identity with
 // `age` as its obfuscated_ticket_age and a binder of `hash_len` zero
 // bytes, which the caller computes over the truncated ClientHello and
 // writes in its place (the last `hash_len` bytes).
-pub fn client_hello[&r, &s, &k, &c, &h, &t, &o](random: &r [byte], session_id: &s [byte], group: int, share: &k [byte], cookie: &c [byte], host: &h [byte], ticket: &t [byte], age: int, hash_len: int, out: &!o [byte]) -> [] int {
+pub fn client_hello[&r, &s, &k, &c, &h, &t, &o](random: &r [byte], session_id: &s [byte], group: int, share: &k [byte], cookie: &c [byte], host: &h [byte], modes: bool, ticket: &t [byte], age: int, hash_len: int, out: &!o [byte]) -> [] int {
     var at = 4;
     at = put(out, at, 0x0303, 2);
     at = copy_to(random, out, at);
@@ -287,12 +288,14 @@ pub fn client_hello[&r, &s, &k, &c, &h, &t, &o](random: &r [byte], session_id: &
         at = put(out, at, len(cookie), 2);
         at = copy_to(cookie, out, at);
     }
-    if len(ticket) > 0 {
+    if modes || len(ticket) > 0 {
         // psk_key_exchange_modes: psk_dhe_ke (1) only.
         at = put(out, at, 45, 2);
         at = put(out, at, 2, 2);
         at = put(out, at, 1, 1);
         at = put(out, at, 1, 1);
+    }
+    if len(ticket) > 0 {
         // pre_shared_key, last (RFC 8446 §4.2.11): one identity, one binder.
         at = put(out, at, 41, 2);
         at = put(out, at, 2 + 2 + len(ticket) + 4 + binders_len(hash_len), 2);

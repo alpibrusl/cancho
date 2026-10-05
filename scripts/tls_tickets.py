@@ -4,14 +4,17 @@
     python3 scripts/tls_tickets.py <tickets> <out.txt>
 
 `tickets` is `tests/programs/tls_tickets.ls` built with `--std`, `packages/tls/tls.ls` and the package's
-files: the engine, one slot and room for two tickets, entropy fixed. Each case first loads the liar's one root. The server is `scripts/tls_liar.py`'s
+files: the engine, one slot and room for two tickets, resumption on, entropy fixed. Every full handshake's
+ClientHello must advertise psk_dhe_ke: a server may withhold tickets from one that does not (RFC 8446 §4.2.9). Each case first loads the liar's one root. The server is `scripts/tls_liar.py`'s
 honest TLS 1.3 server, written on pyca/cryptography and RFC 8446 alone; it issues a ticket after a full
 handshake, and checks the binder of any ticket offered back. Each case is one engine process, and decides
 from the ClientHello alone whether the engine offered the ticket: a rule that should keep a ticket back is
 broken exactly when `pre_shared_key` is on the wire.
 
 The cases:
-- offered for the same host in time, and the server resumes (no Certificate), checked through `tls.resumed`;
+- offered for the same host in time, with the obfuscated age RFC 8446 §4.2.11.1 asks for (the milliseconds
+  since the ticket was received plus its ticket_age_add), and the server resumes (no Certificate), checked
+  through `tls.resumed`;
 - not offered for another host name, and the ticket is spent by that refusal;
 - not offered after `tls.trust` is called again;
 - not offered after the leaf's notAfter (a leaf valid for an hour, the maximum age raised past it), and
@@ -37,7 +40,9 @@ from cryptography import x509  # noqa: E402
 from cryptography.hazmat.primitives import serialization  # noqa: E402
 from cryptography.x509.oid import NameOID  # noqa: E402
 
-OTHER_HOST = b"other.lex-sys.test"
+# The same length as HOST, so that only comparing its bytes tells them apart.
+OTHER_HOST = b"lier.lex-sys.test"
+assert len(OTHER_HOST) == len(L.HOST)
 
 
 def short_lived():
@@ -51,6 +56,24 @@ def short_lived():
     return cert.public_bytes(serialization.Encoding.DER)
 
 
+def modes_of(msg):
+    """The psk_key_exchange_modes of the ClientHello `msg`, or None."""
+    b = msg[4:]
+    at = 2 + 32
+    at += 1 + b[at]
+    at += 2 + int.from_bytes(b[at:at + 2], "big")
+    at += 1 + b[at]
+    end = at + 2 + int.from_bytes(b[at:at + 2], "big")
+    at += 2
+    while at < end:
+        kind, n = int.from_bytes(b[at:at + 2], "big"), int.from_bytes(b[at + 2:at + 4], "big")
+        if kind == 45:
+            body = b[at + 4:at + 4 + n]
+            return list(body[1:1 + body[0]])
+        at += 4 + n
+    return None
+
+
 class Engine(L.Server):
     """The liar's honest server, for a connection the engine starts with `C`."""
 
@@ -61,6 +84,7 @@ class Engine(L.Server):
         msg, self.sid, self.client_shares, _ = L.parse_client_hello(hello)
         self.transcript = msg
         self.ccs_sent = False
+        self.modes = modes_of(msg)
         return L.psk_offer(msg)
 
 
@@ -70,6 +94,7 @@ def full(c, now=L.NOW, cert_der=None, lifetime=7200):
     if cert_der is not None:
         s.cert_der = cert_der
     assert s.begin(now) is None, "nothing offered with handle 0"
+    assert s.modes == [1], f"psk_dhe_ke advertised, so a server may send tickets (RFC 8446 §4.2.9): {s.modes}"
     s.c.feed(s.hello_and_flight())
     s.check_client_finished()
     psk = L.issue(s, lifetime=lifetime)
@@ -86,7 +111,8 @@ def full(c, now=L.NOW, cert_der=None, lifetime=7200):
 def offered(c, now, handle, host=L.HOST):
     """A start with `handle`: the server, and whether the ticket was on the wire."""
     r = Engine(c)
-    return r, r.begin(now, handle, host) is not None
+    r.offer = r.begin(now, handle, host)
+    return r, r.offer is not None
 
 
 CASES = []
@@ -104,6 +130,7 @@ def same_host(c):
     h, psk = full(c)
     r, on = offered(c, L.NOW + 60, h)
     assert on, "offered"
+    assert r.offer[1] == (60000 + 0x01020304) % 2**32, f"the obfuscated age: {r.offer[1]}"
     L.check_binder(r.transcript, psk)
     r.psk = psk
     r.c.feed(L.resumed_flight(r))
