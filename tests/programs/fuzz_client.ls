@@ -1,0 +1,94 @@
+edition 5;
+
+// `docs/tls-assurance.md` §3.3: the whole client from `start`, fed the
+// server's bytes from standard input. The input is a run of chunks, each
+// a 2-byte big-endian length and that many bytes (a short last chunk is
+// what is left), and each chunk is one `feed`: so where the network cuts
+// the stream is the fuzzer's choice too. After each, everything `take`
+// and `recv` have is taken, as a caller would. At the end, a request is
+// sent if the connection got that far, then the peer's end of stream and
+// `finish`. The host, randomness, time and roots are `fuzz_fixture`'s.
+import fuzz_common;
+import fuzz_fixture;
+import std.io;
+import tls_client;
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read] int {
+    var input = box_slice(heap, 262144, byte_of(0));
+    var slot_bytes = box_slice(heap, tls_client.bytes_len(), byte_of(0));
+    var slot_ints = box_slice(heap, tls_client.ints_len(), 0);
+    var out = box_slice(heap, 65536, byte_of(0));
+    var store = box_slice(heap, 131072, byte_of(0));
+    var random = box_slice(heap, 96, byte_of(0));
+    borrow mut input as &!d in {
+        borrow mut slot_bytes as &!b in {
+            borrow mut slot_ints as &!n in {
+                borrow mut out as &!o in {
+                    borrow mut store as &!s in {
+                        borrow mut random as &!r in {
+                            let used = fuzz_common.load_store(contents(s));
+                            fuzz_common.load_random(contents(r));
+                            let total = fuzz_common.read_all(io, contents(d));
+                            let s0 = contents(s)[0..used];
+                            let ints = contents(n);
+                            let bytes = contents(b);
+                            var code = tls_client.start(ints, bytes, fuzz_fixture.host(), contents(r), fuzz_fixture.now());
+                            fuzz_common.drain(ints, bytes, contents(o));
+                            var at = 0;
+                            while code >= 0 && at < total {
+                                var size = total - at;
+                                var from = at;
+                                if at + 2 <= total {
+                                    let named = int_of(contents(d)[at]) * 256 + int_of(contents(d)[at + 1]);
+                                    from = at + 2;
+                                    size = total - from;
+                                    if named < size {
+                                        size = named;
+                                    }
+                                }
+                                code = fuzz_common.feed_all(ints, bytes, contents(d)[from..from + size], contents(o), s0);
+                                at = from + size;
+                                if size == 0 {
+                                    at = at + 1;
+                                }
+                            }
+                            if tls_client.event(ints) == tls_client.event_established() {
+                                tls_client.send(ints, bytes, "GET / HTTP/1.0\r\n\r\n");
+                                fuzz_common.drain(ints, bytes, contents(o));
+                            }
+                            tls_client.peer_eof(ints, bytes);
+                            fuzz_common.drain(ints, bytes, contents(o));
+                            tls_client.finish(ints, bytes);
+                            fuzz_common.drain(ints, bytes, contents(o));
+                            tls_client.drop(ints, bytes);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, input);
+    unbox_slice(heap, slot_bytes);
+    unbox_slice(heap, slot_ints);
+    unbox_slice(heap, out);
+    unbox_slice(heap, store);
+    unbox_slice(heap, random);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(args);
+    release(ffi);
+    release(fs);
+    release(net);
+    release(clock);
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            run(h, i);
+        }
+    }
+    release(heap);
+    release(io);
+    return 0;
+}

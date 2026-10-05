@@ -85,7 +85,7 @@ to AFL++.
 | `fuzz_chain` | a server's certificate list, as TLS 1.3 sends it | `x509_verify`, through the chain builder, against a fixed trust store, host name and time: path building, name matching, constraints, signatures |
 | `fuzz_messages` | a byte choosing the message type, then a handshake message's body | every parser in `message.ls` for what a server sends, TLS 1.3 and 1.2 |
 | `fuzz_client` | the server's bytes, cut into `feed` calls at lengths the input names | the whole client from `start`: record framing, the ServerHello, HelloRetryRequest, and every refusal before the first encrypted record |
-| `fuzz_flight` | the server's handshake messages in **plaintext**, after a fixed ServerHello | the whole client past the AEAD: the harness plays the server, holds the server's X25519 key, derives the handshake keys and seals each message before `feed`. So EncryptedExtensions, Certificate, CertificateVerify, Finished, the post-handshake messages, and the TLS 1.2 flight (Certificate, ServerKeyExchange, ServerHelloDone, Finished) are fuzzed through the real record layer |
+| `fuzz_flight` | the server's handshake messages in **plaintext**, after a fixed ServerHello | the whole client past the AEAD: the harness plays the server, holds the server's X25519 key, derives the handshake keys and seals each message before `feed`. So EncryptedExtensions, Certificate, CertificateVerify, Finished, the post-handshake messages, and the TLS 1.2 flight (Certificate, ServerKeyExchange, ServerHelloDone, Finished) are fuzzed through the real record layer. *Corrected (PR 2): TLS 1.3 only. A TLS 1.2 server sends Certificate, ServerKeyExchange and ServerHelloDone in the clear, so `fuzz_client` reaches them from the recorded TLS 1.2 handshakes. And the harness holds no key: it reads the client's current read key, IV and sequence number from its slot before sealing each record, which follows every KeyUpdate with no key schedule of its own* |
 
 **`fuzz_flight` is the structure-aware one.** Without it a mutation of an encrypted record fails its tag, and nothing past
 the record layer is reached. The server side's key derivation uses the package's own key schedule (`tls_record`, `std.hkdf`).
@@ -105,7 +105,7 @@ Measured for 60 seconds each, one core, fork-server mode:
 | a prototype of `fuzz_der` | 5,518 | 411 of 843 |
 
 At those rates, four cores give about 8,000 to 22,000 executions a second, so **100 million executions take 1.3 to 3.6 hours**.
-That is at least 100 million in total, split so each harness gets at least 10 million. The rest goes to `fuzz_flight` and
+That is at least 100 million in total, split so each harness gets at least 10 million. *Corrected (PR 2): the full handshakes run at 135 to 197 executions a second (§3.6), so 10 million for `fuzz_client` and `fuzz_flight` would take about 15 hours a core. The split follows the rates instead.* The rest goes to `fuzz_flight` and
 `fuzz_chain`, which reach the most code. PR 2 reports, per harness:
 - the executions;
 - the hours;
@@ -134,6 +134,27 @@ committed input, so the corpus is a regression test from then on.
 
 PR 2 lists each with its cause and fix. A **hang** (AFL++'s default limit, 1 s) is treated the same way: a server's bytes
 must not make the client loop.
+
+### 3.6 The campaign so far (PR 2, not finished)
+
+`python3 scripts/fuzz_afl.py <work> client:21600 flight:21600 chain:21600 messages:10800`, then `der:10800`, on the 4-core
+Xeon of §2, from the seeds of `scripts/fuzz_corpus.py`. The container was reclaimed after 1.07 hours, which stopped it:
+
+| Harness | Executions | Per second | Edges | Crashes | Hangs |
+|---|---|---|---|---|---|
+| `fuzz_messages` | 16,309,924 | 4,240 | 190 of 463 | 0 | 0 |
+| `fuzz_chain` | 3,259,293 | 847 | 771 of 4,316 | 0 | 0 |
+| `fuzz_client` | 758,408 | 197 | 1,704 of 7,936 | 0 | 0 |
+| `fuzz_flight` | 519,727 | 135 | 1,406 of 7,985 | 0 | 0 |
+| `fuzz_der` | not run | | | | |
+| **total** | **20,847,352** | | | **0** | **0** |
+
+**Still to do:**
+- About 80 million more executions, most of them `fuzz_der` and `fuzz_messages` at their thousands a second.
+- `tests/vectors/fuzz/` holds the queues above, minimised by `afl-cmin` (1,089 inputs). `fuzz_der`'s is its minimised
+  seeds. A resumed run seeds from them.
+- This campaign ran on the client before #270's two fixes to `message.ls`. The corpus replays on the fixed code in
+  `conformance/tls_fuzz.rs`.
 
 ## 4. Differential testing
 
