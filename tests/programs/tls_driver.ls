@@ -17,12 +17,17 @@ edition 5;
 //     F <bytes>                               tls_client.feed, then everything `take` and `recv` give
 //     W <plaintext>                           tls_client.send
 //     Q                                       tls_client.finish
+//     R <host> <random> <roots> <now> <ticket> <psk> <age> <verified at> <not after>
+//                                             tls_client.start_psk: `C`, offering a ticket (`docs/tls-resumption.md`)
+//     K                                       what resumption knows: `0 ok <event> - - <resumed 0|1> <ticket kept>
+//                                             <its PSK> <lifetime> <ticket_age_add>` (`-` and 0 when none was kept)
 //
 // `C`, `F`, `W` and `Q` answer `<code> <tag> <event> <bytes for the socket> <application data received>`.
 import std.buffer;
 import std.io;
 import tls_client;
 import tls_record;
+import tls_slot;
 import x509_verify;
 
 fn nibble(c: int) -> [] int {
@@ -233,6 +238,51 @@ fn client_op[&i, &s, &n, &b, &o, &p, &e](io: &!i Io, s: &s [byte], at: int, ints
             f = next_field(s, next_field(s, f));
             code = tls_client.start(ints, bytes, host, random, number(s, f));
         }
+    } else if op == 82 {
+        region r {
+            let host = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, host);
+            f = next_field(s, f);
+            let random = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, random);
+            f = next_field(s, next_field(s, f));
+            let now = number(s, f);
+            f = next_field(s, f);
+            let ticket = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, ticket);
+            f = next_field(s, f);
+            let psk = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, psk);
+            f = next_field(s, f);
+            let age = number(s, f);
+            f = next_field(s, f);
+            let verified_at = number(s, f);
+            f = next_field(s, f);
+            code = tls_client.start_psk(ints, bytes, host, random, now, ticket, psk, age, verified_at, number(s, f));
+        }
+    } else if op == 75 {
+        io.write_all(io, "0 ok ");
+        io.print_int(io, tls_client.event_after_take(ints));
+        io.write_all(io, " - - ");
+        if tls_client.resumed(ints) {
+            io.write_all(io, "1 ");
+        } else {
+            io.write_all(io, "0 ");
+        }
+        let n = ints[tls_slot.i_ticket_len()];
+        if n == 0 {
+            io.write_all(io, "- - 0 0");
+        } else {
+            print_hex(io, bytes[tls_slot.b_ticket()..tls_slot.b_ticket() + n]);
+            io.space(io);
+            print_hex(io, bytes[tls_slot.k_ticket_psk()..tls_slot.k_ticket_psk() + ints[tls_slot.i_ticket_hash()]]);
+            io.space(io);
+            io.print_int(io, ints[tls_slot.i_ticket_lifetime()]);
+            io.space(io);
+            io.print_int(io, ints[tls_slot.i_ticket_age_add()]);
+        }
+        io.newline(io);
+        return 0;
     } else if op == 70 {
         let data = out[0..hex_len(s, f)];
         hex_into(s, f, data);
@@ -332,7 +382,7 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
                                     } else if op == 80 {
                                         prf_op(io, s, 0);
                                     } else {
-                                        if op == 67 {
+                                        if op == 67 || op == 82 {
                                             // The roots, a PEM bundle, are the third field: read
                                             // into `out` and loaded into the store.
                                             let o = contents(ow);
