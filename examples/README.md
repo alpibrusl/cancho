@@ -10,7 +10,7 @@ that imports none of the library emits a byte-identical object either
 way ([`standard-library.md`](../docs/standard-library.md) §5.2).
 
 ```sh
-cargo run -p lex-sys -- run examples/tour.ls
+cargo run -p lex-sys -- run examples/tour.ls --std
 ```
 
 | Example | What it is |
@@ -38,7 +38,7 @@ cargo run -p lex-sys -- run examples/tour.ls
 `tour.ls` is the shortest honest answer to "what can this language do".
 
 ```sh
-cargo run -p lex-sys -- run examples/tour.ls
+cargo run -p lex-sys -- run examples/tour.ls --std
 # M0: 7 5 3 1
 # M1 bool: 1010010
 # M1 struct: (3, 4) -> 25
