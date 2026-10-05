@@ -145,16 +145,19 @@ fn run[&x, &i, &g, &s](exec: &x Exec(""), io: &!i Io, g: &g Args, signals: &s Si
                                             // bad: not a signal's bit.
                                             borrow child as &ch in { say(io, "== kill ", child_kill(ch, 3)); }
                                         }
-                                        // late: the child has ended (its output is drained) before
-                                        // anything is written to it; the write answers `EPIPE`.
+                                        // late: the child is reaped before anything is written to
+                                        // it; the write answers `EPIPE`. Reaped, not only drained:
+                                        // the end of its output says its standard output is closed,
+                                        // and Linux may close its standard input after that.
                                         if len(mode) == 4 && mode[0] == byte_of('l') {
                                             drain(io, out);
+                                            ended(io, child);
                                             feed(io, writer, text, feed_it);
                                         } else {
                                             feed(io, writer, text, feed_it);
                                             drain(io, out);
+                                            ended(io, child);
                                         }
-                                        ended(io, child);
                                     }
                                 }
                                 signals_close(w);
@@ -391,7 +394,7 @@ fn a_missing_program_is_failed_and_an_exit_code_is_reported() {
 fn writing_to_a_child_that_has_ended_is_epipe_not_a_signal() {
     assert_eq!(
         probe(["/usr/bin/true", "-", "-", "never read", "late"]),
-        "== write 32\n== code 0\n"
+        "== code 0\n== write 32\n"
     );
 }
 
