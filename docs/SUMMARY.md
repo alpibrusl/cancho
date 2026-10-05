@@ -29,6 +29,7 @@
 - [Signals](signals.md)
 - [Directory handles](directory-handles.md)
 - [Directory listing](directory-listing.md)
+- [Processes](processes.md)
 - [Foreign authority](foreign-authority.md)
 - [A WebSocket spike](websocket-spike.md)
 - [Slicing](slicing.md)
