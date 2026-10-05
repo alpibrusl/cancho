@@ -404,6 +404,63 @@ fn a_signal_claim_emits_for_both_formats_with_each_kernels_calls() {
     }
 }
 
+/// `docs/threads.md` section 6: every word-sized data object is aligned to
+/// a word, in the object and therefore after the link. The thread counter
+/// is an atomic, and aarch64's exclusive load faults on an unaligned word;
+/// glibc's one-byte `completed.0` in front of `.bss` is what made the
+/// unrequested alignment of one show. Byte data is not asked to grow.
+#[test]
+fn every_word_global_is_aligned_to_a_word() {
+    use object::ObjectSection;
+    const SPAWNS: &str = "edition 4;\n\
+         static odd: [byte] { let b = alloc_slice[static](3, byte_of(1)); return b; }\n\
+         static table: [int] { let t = alloc_slice[static](3, 1); return t; }\n\
+         fn worker(x: int) -> [] int { return x * 2; }\n\
+         fn main(world: World) -> [conc] int {\n\
+             release(world);\n\
+             let w = worker;\n\
+             let h = spawn(21, w);\n\
+             return join(h) - 42 + len(table) - len(odd) + len(\"x\") - 1;\n\
+         }\n";
+    let program = lower(&parse(SPAWNS).expect("should parse")).expect("should lower");
+    let words = [
+        crate::abi::ARGC_GLOBAL.to_owned(),
+        crate::abi::ARGV_GLOBAL.to_owned(),
+        lex_sys_ir::FD_EPOCH_GLOBAL.to_owned(),
+        lex_sys_ir::SIGNAL_STATE_GLOBAL.to_owned(),
+        format!("{PREFIX}static_table"),
+    ];
+    for (triple, prefix) in targets() {
+        let bytes = compile_object_for(&program, "main", triple.parse().expect("a valid triple"))
+            .expect("should compile");
+        let file = object::File::parse(&*bytes).expect("a readable object file");
+        let mut seen = Vec::new();
+        for symbol in file.symbols() {
+            let Some(name) = symbol.name().ok().and_then(|n| n.strip_prefix(prefix)) else {
+                continue;
+            };
+            if !words.iter().any(|w| w == name) {
+                continue;
+            }
+            let section = symbol
+                .section_index()
+                .and_then(|i| file.section_by_index(i).ok())
+                .expect("a defined data object has a section");
+            assert!(
+                section.align() >= 8,
+                "{triple}: `{name}`'s section is aligned {}",
+                section.align()
+            );
+            assert_eq!(symbol.address() % 8, 0, "{triple}: `{name}` is at {:#x}", symbol.address());
+            seen.push(name.to_owned());
+        }
+        seen.sort();
+        let mut expected = words.to_vec();
+        expected.sort();
+        assert_eq!(seen, expected, "{triple}: every word global should be defined and checked");
+    }
+}
+
 /// `docs/processes.md` §4.5 and §4.8, from any host: starting a program and
 /// watching it ask Linux for `closefrom` and a `pidfd`, and Darwin for
 /// neither -- `POSIX_SPAWN_CLOEXEC_DEFAULT` and `kevent` instead.

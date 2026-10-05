@@ -156,6 +156,12 @@ fn b2i(b: bool) -> [] int { if b { return 1; } return 0; }
 /// Making the binary unreadable does not work there, because systemd also
 /// sets `fs.suid_dumpable = 2`, which dumps non-dumpable processes too.
 /// The trap is unchanged; only the dump goes.
+///
+/// A shell's `ulimit -c 0` sets the *hard* limit to zero as well, and an
+/// unprivileged process cannot raise it back to 1: `setrlimit` says
+/// `EPERM` and the child never runs (`threads.md` section 6, measured on
+/// aarch64 Linux). The dump is only a cost, so a hard limit of zero is
+/// left alone rather than failing the run.
 #[cfg(target_os = "linux")]
 fn without_a_core_dump(command: &mut Command) -> &mut Command {
     use std::os::unix::process::CommandExt;
@@ -165,14 +171,20 @@ fn without_a_core_dump(command: &mut Command) -> &mut Command {
         maximum: u64,
     }
     unsafe extern "C" {
+        fn getrlimit(resource: i32, limit: *mut Rlimit) -> i32;
         fn setrlimit(resource: i32, limit: *const Rlimit) -> i32;
     }
     const RLIMIT_CORE: i32 = 4;
-    // SAFETY: `setrlimit` is async-signal-safe, touches nothing but the
-    // child's own limits, and allocates nothing, which is what `pre_exec`
-    // requires of the closure it runs between `fork` and `exec`.
+    // SAFETY: `getrlimit` and `setrlimit` are async-signal-safe, touch
+    // nothing but the child's own limits, and allocate nothing, which is
+    // what `pre_exec` requires of the closure it runs between `fork` and
+    // `exec`.
     unsafe {
         command.pre_exec(|| {
+            let mut now = Rlimit { current: 0, maximum: 0 };
+            if getrlimit(RLIMIT_CORE, &mut now) == 0 && now.maximum == 0 {
+                return Ok(());
+            }
             let one = Rlimit { current: 1, maximum: 1 };
             if setrlimit(RLIMIT_CORE, &one) == 0 {
                 Ok(())

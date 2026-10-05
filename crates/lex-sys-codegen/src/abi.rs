@@ -248,6 +248,13 @@ pub(crate) const CANONICAL_NAN_32: i64 = 0x7fc0_0000;
 /// a function called `write` or `exit` without colliding with libc.
 pub(crate) const PREFIX: &str = "lexs_";
 
+/// The alignment every word-sized data object asks for (`docs/threads.md`
+/// section 6). Cranelift's own default is one, which put the thread
+/// counter on an odd address behind glibc's one-byte `completed.0`, and
+/// aarch64's exclusive load faults on that. Eight is a leaf (`docs/layout.md`
+/// section 1), and what the LLVM backend's typed globals already get.
+pub(crate) const WORD_ALIGN: u64 = 8;
+
 /// Where `main` stashes what the runtime handed it
 /// (`docs/arguments.md` §3).
 ///
