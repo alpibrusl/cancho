@@ -392,6 +392,24 @@ not say is which instructions, or what remains in Cranelift's AES-GCM with DIT s
 (`docs/tls-parity.md` §3.1: GHASH's words in a bounds-checked array), so a data-dependent effect in the load and store path is
 one candidate, and nothing here tests it.
 
+**Since `docs/crypto-builtins.md`'s first PR, a program the LLVM backend builds for aarch64 Linux or Darwin sets DIT itself**,
+first thing in `main`, when the operating system says the CPU has it (`crates/lex-sys-codegen-llvm/src/dit.rs`). Only `main`'s
+thread: measured with a C probe, a thread a Linux process makes inherits the bit and one a Darwin process makes starts with it
+clear, and hooks makes none. Cranelift has no inline assembly to set it with, so its rows above stand. Re-run on the same M4
+(LLVM, 20,000 samples, max |t|, the medians in timer ticks; the machine loaded, load average 3.4 to 4.8), the same compiler
+with and without this change:
+
+| Test | Without DIT | With DIT (now the default) | Median, with against without |
+|---|---|---|---|
+| X25519, fixed / sparse scalar | 1.86 / 1.14 | 2.81 / 1.77 | +3.6% / +2.7% |
+| ChaCha20-Poly1305 seal key, seal data, open data, open tag | 2.27, 1.89, 1.88, 2.46 | 1.27, 2.01, 2.76, 1.84 | +5.5%, +5.5%, +3.3%, +3.3% |
+| AES-128-GCM seal key, seal data, open data, open tag | 1.76, 3.15, 1.90, 1.89 | 2.19, 2.25, 1.82, 1.81 | +5.8%, +4.6%, +4.7%, +5.0% |
+| P-256 scalar 1 / fixed | **9.11** / 1.55 | 2.11 / 1.63 | −4.7% / −6.7% |
+| P-384 scalar 1 / fixed | 4.33 / 2.15 | 2.03 / 1.88 | −2.4% / +3.3% |
+
+So the one LLVM failure this run reproduced (P-256 with scalar 1) passes with DIT, as in the table above, and the cost is a
+few per cent on the symmetric ciphers. The ECDH medians moving both ways is within this loaded machine's noise.
+
 **What it means.**
 - **For ECDH**, what `docs/ecdh.md` §3 says for TLS holds: the client uses a fresh scalar once, and the leak needs a scalar
   that keeps the accumulator at zero, which a random one does not.

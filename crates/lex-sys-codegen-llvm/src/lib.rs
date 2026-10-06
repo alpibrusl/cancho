@@ -269,6 +269,7 @@ use lex_sys_types::{DefId, Type};
 use target_lexicon::Triple;
 
 mod body;
+mod dit;
 mod emit;
 mod wasi_console;
 mod wasi_entry;
