@@ -381,6 +381,10 @@ pub(crate) fn emit_module(
         ("posix_spawnattr_setsigmask", "i32 @posix_spawnattr_setsigmask(ptr, ptr)"),
         ("posix_spawnattr_setsigdefault", "i32 @posix_spawnattr_setsigdefault(ptr, ptr)"),
         (
+            "posix_spawn_file_actions_addfchdir_np",
+            "i32 @posix_spawn_file_actions_addfchdir_np(ptr, i32)",
+        ),
+        (
             "posix_spawn_file_actions_addclosefrom_np",
             "i32 @posix_spawn_file_actions_addclosefrom_np(ptr, i32)",
         ),

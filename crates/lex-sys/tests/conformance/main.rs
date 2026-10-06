@@ -81,6 +81,7 @@ mod project;
 mod refusals;
 mod release;
 mod rsa;
+mod selfhost;
 mod signals;
 mod sockets;
 mod testing;

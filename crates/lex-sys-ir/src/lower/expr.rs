@@ -838,7 +838,10 @@ impl<'a> FnLowering<'a> {
                     return self.signals_watch(args, span);
                 }
                 if resolved == Resolved::Builtin(Builtin::ExecSpawn) {
-                    return self.exec_spawn(args, span);
+                    return self.exec_spawn(args, span, false);
+                }
+                if resolved == Resolved::Builtin(Builtin::ExecSpawnIn) {
+                    return self.exec_spawn(args, span, true);
                 }
                 if resolved == Resolved::Builtin(Builtin::TcpConnect) {
                     return self.tcp_connect(args, span, false);

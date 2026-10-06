@@ -487,9 +487,12 @@ pub enum Expr {
     /// [`Expr::OpenFile`] is one: the prefix travels with it, because the
     /// backend checks the path against it and the type it came from is gone
     /// by then. `args` is the capability (zero-sized) and the six arguments
-    /// after it. What comes back is a `Spawned`, tagged.
+    /// after it. What comes back is a `Spawned`, tagged. `in_dir` is
+    /// `exec_spawn_in` (§4.10): `args[1]` is then a borrowed `Dir`, the
+    /// directory the child starts in, and the path follows it.
     ExecSpawn {
         prefix: String,
+        in_dir: bool,
         args: Vec<Expr>,
     },
     /// `fs_rename(fs, from, to)` and `fs_remove(fs, path)`

@@ -112,10 +112,23 @@ fn a_child_that_cannot_be_watched_is_killed_not_waited_on() {
 /// a capture that kept either on its poller would spend that second on the
 /// processor. Measured by `wait4`'s account of the driver's own time.
 #[test]
+fn a_quiet_child_is_waited_for_not_spun_on() {
+    quiet_child_costs_little("quiet", "code 0\nkept 0\nsum 0\n");
+}
+
+/// §7.2: the same with the errors channel. The child closes all three of its
+/// streams and sleeps, and ends of all three channels are reported readable
+/// for ever unless each is closed: `capture_both` that forgot the errors
+/// would spin on that one.
+#[test]
+fn a_quiet_childs_errors_are_waited_for_not_spun_on() {
+    quiet_child_costs_little("r", "code 0\nout kept 0\nout sum 0\nerr kept 0\nerr sum 0\n");
+}
+
 // The driver is reaped by `wait4`, which clippy cannot see: `Child::wait` would
 // reap it without the account this test is for.
 #[allow(clippy::zombie_processes)]
-fn a_quiet_child_is_waited_for_not_spun_on() {
+fn quiet_child_costs_little(mode: &str, answer: &str) {
     #[repr(C)]
     struct Usage {
         // Two `struct timeval`s, user then system, then fields not read.
@@ -127,7 +140,7 @@ fn a_quiet_child_is_waited_for_not_spun_on() {
     }
     for (backend, exe) in driver_built() {
         let mut child = Command::new(exe)
-            .arg("quiet")
+            .arg(mode)
             .stdout(std::process::Stdio::piped())
             .spawn()
             .expect("the driver runs");
@@ -146,7 +159,7 @@ fn a_quiet_child_is_waited_for_not_spun_on() {
         let cpu_ms = (micros(usage.times[0], usage.times[1])
             + micros(usage.times[2], usage.times[3]))
             / 1000;
-        assert!(printed.starts_with("code 0\nkept 0\nsum 0\n"), "`{backend}`: {printed}");
+        assert!(printed.starts_with(answer), "`{backend}`: {printed}");
         assert!(cpu_ms < 400, "`{backend}`: a one-second wait took {cpu_ms} ms of processor time");
     }
 }
@@ -219,4 +232,93 @@ fn main(world: World) -> [] int {
     assert!(body.contains("\"rule\": \"effect-not-declared\""), "{body}");
     assert!(body.contains("performs `clock`"), "{body}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// §7.2: `capture_both` gives every channel back when the deadline ends it.
+/// Under a limit of 40 descriptors sixty captures come and go, each with three
+/// channels; the errors end that was not closed would leak one per capture, and
+/// `channels_with_errors` would answer `EMFILE` (24) well before the sixtieth.
+#[test]
+fn a_capture_that_times_out_gives_back_all_three_channels() {
+    for (backend, exe) in driver_built() {
+        let run = Command::new("/bin/sh")
+            .args(["-c", "ulimit -n 40; exec \"$0\" \"$@\""])
+            .arg(exe)
+            .arg("l")
+            .output()
+            .expect("the driver runs");
+        let text = String::from_utf8_lossy(&run.stdout);
+        assert!(text.starts_with("timed out 60\n"), "`{backend}`: {text}");
+    }
+}
+
+/// The driver's checksum (`sum` in `process_capture.ls`) of `bytes`.
+fn checksum(bytes: &[u8]) -> i64 {
+    bytes.iter().fold(0, |s, &b| (s * 31 + i64::from(b)) % 1_000_000_007)
+}
+
+/// §7.2: the two channels are kept apart, each with its own bytes, and the
+/// child's exit status is the answer.
+#[test]
+fn standard_error_is_captured_beside_standard_output() {
+    let (printed, _) = case("x");
+    assert_eq!(
+        printed,
+        format!(
+            "code 3\nout kept 4\nout sum {}\nerr kept 4\nerr sum {}\n",
+            checksum(b"out\n"),
+            checksum(b"err\n")
+        )
+    );
+}
+
+/// §7.2: a megabyte of errors before any output. A channel holds 8,192 bytes on
+/// macOS and 180,224 on Linux, so a capture that read the output to its end
+/// before the errors would leave the child blocked on the errors for ever;
+/// both are on the poller, and every byte of both comes back.
+#[test]
+fn a_flood_of_errors_does_not_stall_the_output() {
+    let (printed, ms) = case("y");
+    assert_eq!(
+        printed,
+        format!(
+            "code 0\nout kept 4\nout sum {}\nerr kept 1048576\nerr sum 0\n",
+            checksum(b"out\n")
+        )
+    );
+    assert!(ms < 5000, "the capture waited on the child: {ms} ms");
+}
+
+/// §7.2: `most_errors` is the errors' own bound. Errors past it end the child
+/// (`sleep 30` follows them, so only the kill ends it) and exactly the bound is
+/// kept; and the bounds are separate: four bytes of output under a bound of
+/// four is no overrun, and four of errors under three is.
+#[test]
+fn errors_past_their_bound_end_the_child() {
+    let (printed, ms) = case("z");
+    assert_eq!(printed, "too much\nout kept 0\nout sum 0\nerr kept 1000\nerr sum 0\n");
+    assert!(ms < 5000, "the child outlived the bound: {ms} ms");
+    assert_eq!(
+        case("w").0,
+        format!(
+            "too much\nout kept 4\nout sum {}\nerr kept 3\nerr sum {}\n",
+            checksum(b"out\n"),
+            checksum(b"err")
+        )
+    );
+}
+
+/// §7.2: a deadline that passes returns what both channels held by then.
+#[test]
+fn a_deadline_returns_both_channels_so_far() {
+    let (printed, ms) = case("v");
+    assert_eq!(
+        printed,
+        format!(
+            "timed out\nout kept 2\nout sum {}\nerr kept 2\nerr sum {}\n",
+            checksum(b"a\n"),
+            checksum(b"b\n")
+        )
+    );
+    assert!((300..5000).contains(&ms), "300 ms asked for, {ms} taken");
 }

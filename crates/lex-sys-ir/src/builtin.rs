@@ -591,6 +591,11 @@ pub enum Builtin {
     /// [exec(p)] Spawned`: start the program at `path` under `p`. Lowered as
     /// `Expr::ExecSpawn`, so the prefix travels with it, as `open_read`'s does.
     ExecSpawn,
+    /// `exec_spawn_in(&Exec(p), &Dir, path, args, env, stdin, stdout, stderr)
+    /// -> [exec(p)] Spawned`: `exec_spawn` whose child starts in the directory
+    /// the `Dir` holds (`docs/processes.md` §4.10). Lowered as
+    /// `Expr::ExecSpawn { in_dir: true, .. }`.
+    ExecSpawnIn,
     /// `child_wait(Child) -> [] Exited`: wait for the child to end and reap it;
     /// the only consumer of a `Child` (§4.7).
     ChildWait,
@@ -774,6 +779,7 @@ impl Builtin {
         Builtin::DirOwnMode,
         Builtin::PipeOpen,
         Builtin::ExecSpawn,
+        Builtin::ExecSpawnIn,
         Builtin::ChildWait,
         Builtin::ChildKill,
         Builtin::PipeRead,
@@ -897,6 +903,7 @@ impl Builtin {
             Builtin::DirOwnMode => "dir_own_mode",
             Builtin::PipeOpen => "pipe_open",
             Builtin::ExecSpawn => "exec_spawn",
+            Builtin::ExecSpawnIn => "exec_spawn_in",
             Builtin::ChildWait => "child_wait",
             Builtin::ChildKill => "child_kill",
             Builtin::PipeRead => "pipe_read",
@@ -1003,6 +1010,7 @@ impl Builtin {
             // are names a program may already declare.
             Builtin::PipeOpen
             | Builtin::ExecSpawn
+            | Builtin::ExecSpawnIn
             | Builtin::ChildWait
             | Builtin::ChildKill
             | Builtin::PipeRead
@@ -1751,7 +1759,7 @@ impl Builtin {
             // `docs/processes.md` §3.2.
             Builtin::PipeOpen => (Vec::new(), named(PRELUDE_PIPED)),
             // Checked at the call site: the prefix is in the capability's type.
-            Builtin::ExecSpawn => (Vec::new(), Type::Unit),
+            Builtin::ExecSpawn | Builtin::ExecSpawnIn => (Vec::new(), Type::Unit),
             // By value: waiting ends the child.
             Builtin::ChildWait => (vec![named(PRELUDE_CHILD)], named(PRELUDE_EXITED)),
             Builtin::ChildKill => (

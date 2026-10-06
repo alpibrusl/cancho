@@ -55,15 +55,18 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     }
 
     /// `exec_spawn(exec, path, args, env, stdin, stdout, stderr)` (§4.1 to
-    /// §4.6). `Spawned`'s three leaves: the tag (`Ok` 0, `Failed` 1), the pid,
-    /// the reason.
-    pub(crate) fn exec_spawn(&mut self, prefix: &str, args: &[Expr]) -> Vec<Value> {
+    /// §4.6), and with `in_dir` `exec_spawn_in(exec, dir, path, ...)` (§4.10).
+    /// `Spawned`'s three leaves: the tag (`Ok` 0, `Failed` 1), the pid, the
+    /// reason.
+    pub(crate) fn exec_spawn(&mut self, prefix: &str, in_dir: bool, args: &[Expr]) -> Vec<Value> {
         let pointer = self.pointer;
         // The capability is zero-sized and stops here.
-        let path = self.expr(&args[1]);
-        let arguments = self.expr(&args[2]);
-        let environment = self.expr(&args[3]);
-        let streams: Vec<Vec<Value>> = args[4..7].iter().map(|s| self.expr(s)).collect();
+        let at = 1 + usize::from(in_dir);
+        let dir = in_dir.then(|| self.expr(&args[1]));
+        let path = self.expr(&args[at]);
+        let arguments = self.expr(&args[at + 1]);
+        let environment = self.expr(&args[at + 2]);
+        let streams: Vec<Vec<Value>> = args[at + 3..at + 6].iter().map(|s| self.expr(s)).collect();
 
         // §4.1: under the prefix, no `..`; a broken promise traps.
         let program = self.checked_path(prefix, &path);
@@ -112,6 +115,22 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
 
             self.builder.switch_to_block(next);
             self.builder.seal_block(next);
+        }
+
+        // §4.10: the child's working directory, by descriptor, ahead of the
+        // `closefrom` below: that closes the `Dir`'s descriptor, and a
+        // `chdir` after it is `EBADF` (measured). The `Dir` stays the
+        // parent's. A refusal here is the allocator's alone -- the descriptor
+        // is a live `Dir`'s -- and traps as `malloc`'s does.
+        if let Some(dir) = &dir {
+            let fd = self.dir_fd(dir[0]);
+            let refused = self.libc_call(
+                "posix_spawn_file_actions_addfchdir_np",
+                &[pointer, types::I32],
+                &[types::I32],
+                &[actions, fd],
+            );
+            self.builder.ins().trapnz(refused, TrapCode::HEAP_OUT_OF_BOUNDS);
         }
 
         // §4.5: and nothing else. Close-on-exec covers what this program
