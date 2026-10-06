@@ -53,7 +53,7 @@ impl<'a> FuncEmitter<'a> {
             args.first().map(operand).ok_or_else(|| "`dir_list` needs its handle".to_owned())?;
         let flags = self.open_flags();
         // Close-on-exec, as every descriptor a builtin opens (`docs/processes.md` §4.5).
-        let directory = flags.directory | flags.cloexec;
+        let directory = flags.read_only | flags.directory | flags.cloexec;
         let cells = self.cells(3);
         let dot = self.fresh();
         self.hoist(format!("  {dot} = alloca [2 x i8]\n"));
@@ -115,7 +115,7 @@ impl<'a> FuncEmitter<'a> {
             return Err(format!("`dir_next` needs 3 leaves but {} were given", args.len()));
         }
         let (handle, buffer, room) = (operand(&args[0]), operand(&args[1]), operand(&args[2]));
-        let layout = lex_sys_ir::dirent_layout(self.is_darwin());
+        let layout = lex_sys_ir::dirent_layout_for(self.file_os());
         let cells = self.cells(4);
         let n = self.blocks;
         self.blocks += 1;
@@ -203,7 +203,7 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("  br i1 {long}, label %{short}, label %{copy}\n"));
 
         self.out.push_str(&format!("{short}:\n"));
-        let too_long = lex_sys_ir::enametoolong(self.is_darwin()).to_string();
+        let too_long = lex_sys_ir::enametoolong_for(self.file_os()).to_string();
         self.store_all(&cells, &["2", "0", "0", &too_long]);
         self.out.push_str(&format!("  br label %{merge}\n"));
 
@@ -232,11 +232,12 @@ impl<'a> FuncEmitter<'a> {
     /// `d_type` as the language numbers a kind (§3.1).
     fn kind_of(&mut self, raw: &str) -> String {
         let mut kind = lex_sys_ir::KIND_OTHER.to_string();
+        let types = lex_sys_ir::dirent_types(self.file_os());
         for (dt, ours) in [
-            (lex_sys_ir::DT_UNKNOWN, lex_sys_ir::KIND_UNKNOWN),
-            (lex_sys_ir::DT_LNK, lex_sys_ir::KIND_LINK),
-            (lex_sys_ir::DT_DIR, lex_sys_ir::KIND_DIRECTORY),
-            (lex_sys_ir::DT_REG, lex_sys_ir::KIND_FILE),
+            (types.unknown, lex_sys_ir::KIND_UNKNOWN),
+            (types.link, lex_sys_ir::KIND_LINK),
+            (types.dir, lex_sys_ir::KIND_DIRECTORY),
+            (types.reg, lex_sys_ir::KIND_FILE),
         ] {
             let is = self.fresh();
             self.out.push_str(&format!("  {is} = icmp eq i64 {raw}, {dt}\n"));
@@ -270,7 +271,7 @@ impl<'a> FuncEmitter<'a> {
             return Err(format!("`dir_stat` needs 3 leaves but {} were given", args.len()));
         }
         let aarch64 = matches!(self.triple.architecture, target_lexicon::Architecture::Aarch64(_));
-        let layout = lex_sys_ir::stat_layout(self.is_darwin(), aarch64);
+        let layout = lex_sys_ir::stat_layout_for(self.file_os(), aarch64);
         let buffer = self.fresh();
         self.hoist(format!("  {buffer} = alloca [{} x i8], align 8\n", layout.size));
         let handle = operand(&args[0]);
@@ -327,7 +328,7 @@ impl<'a> FuncEmitter<'a> {
             return Err(format!("`dir_mode` needs 3 leaves but {} were given", args.len()));
         }
         let aarch64 = matches!(self.triple.architecture, target_lexicon::Architecture::Aarch64(_));
-        let layout = lex_sys_ir::stat_layout(self.is_darwin(), aarch64);
+        let layout = lex_sys_ir::stat_layout_for(self.file_os(), aarch64);
         let buffer = self.fresh();
         self.hoist(format!("  {buffer} = alloca [{} x i8], align 8\n", layout.size));
         let handle = operand(&args[0]);
@@ -352,7 +353,7 @@ impl<'a> FuncEmitter<'a> {
             return Err(format!("`dir_own_mode` needs 1 leaf but {} were given", args.len()));
         }
         let aarch64 = matches!(self.triple.architecture, target_lexicon::Architecture::Aarch64(_));
-        let layout = lex_sys_ir::stat_layout(self.is_darwin(), aarch64);
+        let layout = lex_sys_ir::stat_layout_for(self.file_os(), aarch64);
         let buffer = self.fresh();
         self.hoist(format!("  {buffer} = alloca [{} x i8], align 8\n", layout.size));
         let fd = self.dir_fd(&operand(&args[0]));

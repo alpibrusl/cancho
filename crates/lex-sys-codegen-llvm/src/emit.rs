@@ -262,6 +262,26 @@ pub(crate) fn emit_module(
     entry: &str,
     triple: &Triple,
 ) -> Result<String, (Option<usize>, String)> {
+    // The tables in `lex_sys_ir` (open flags, `stat`, `dirent`, errno) know
+    // three operating systems. Say so here, once, rather than let a fourth
+    // fall through to the Linux numbers: `x86_64-unknown-freebsd` would
+    // otherwise build, and be wrong in a way no linker notices.
+    {
+        use target_lexicon::OperatingSystem as Os;
+        if !matches!(
+            triple.operating_system,
+            Os::Linux | Os::Darwin(_) | Os::Wasi | Os::WasiP1 | Os::WasiP2
+        ) {
+            return Err((
+                None,
+                format!(
+                    "the LLVM backend has constant tables for Linux, Darwin and WASI only, not \
+                     `{}` (docs/wasm.md)",
+                    triple.operating_system
+                ),
+            ));
+        }
+    }
     let mut text = String::new();
     text.push_str(&format!("target triple = \"{triple}\"\n\n"));
     text.push_str("declare i32 @putchar(i32)\n");

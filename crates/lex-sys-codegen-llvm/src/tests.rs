@@ -1178,3 +1178,20 @@ fn wasm32_traps_with_unreachable() {
     assert!(text.contains("asm sideeffect \"unreachable\""), "{text}");
     assert!(!text.contains("ud2"), "no x86 trap in a wasm module");
 }
+
+/// The constant tables know Linux, Darwin and WASI. A fourth operating system
+/// used to take the Linux numbers without a word; now it is refused where the
+/// module is emitted.
+#[test]
+fn an_operating_system_without_tables_is_refused_not_given_linuxs() {
+    let ast = parse(&program_returning("x")).expect("should parse");
+    let program = lex_sys_ir::lower(&ast).expect("should lower");
+    let freebsd: Triple = "x86_64-unknown-freebsd".parse().expect("a valid triple");
+    let (_, message) = emit::emit_module(&program, "main", &freebsd).expect_err("no tables");
+    assert!(message.contains("freebsd"), "{message}");
+    for known in ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin", "wasm32-wasip1"] {
+        let triple: Triple = known.parse().expect("a valid triple");
+        emit::emit_module(&program, "main", &triple)
+            .unwrap_or_else(|(_, m)| panic!("{known}: {m}"));
+    }
+}

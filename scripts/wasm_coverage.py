@@ -63,6 +63,6 @@ def main():
             reasons.setdefault(why, []).append(path)
         for why, paths in sorted(reasons.items(), key=lambda kv: -len(kv[1])):
             print(f"\n[{name}] {len(paths)}x {why}")
-            for p in paths[:4]: print("   ", p)
+            for p in paths: print("   ", p)
 if __name__ == "__main__":
     main()

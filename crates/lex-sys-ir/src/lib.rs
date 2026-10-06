@@ -802,6 +802,11 @@ fn lower_inner(ast: &Ast, rest: &mut Vec<Diagnostic>) -> Result<Program, Diagnos
 #[path = "tests/unit.rs"]
 mod tests;
 
+/// Per-target file constants, WASI's against wasi-libc's headers.
+#[cfg(test)]
+#[path = "tests/os_tables.rs"]
+mod os_table_tests;
+
 /// Effect rows: `docs/linearity-and-effects.md` §7.
 #[cfg(test)]
 #[path = "tests/effect.rs"]

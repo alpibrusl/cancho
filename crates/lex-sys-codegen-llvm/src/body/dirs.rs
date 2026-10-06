@@ -16,7 +16,7 @@ impl<'a> FuncEmitter<'a> {
     /// share.
     pub(crate) fn open_flags(&self) -> lex_sys_ir::OpenFlags {
         let aarch64 = matches!(self.triple.architecture, target_lexicon::Architecture::Aarch64(_));
-        lex_sys_ir::open_flags(self.is_darwin(), aarch64)
+        lex_sys_ir::open_flags_for(self.file_os(), aarch64)
     }
 
     /// `openat(AT_FDCWD, path, flags, mode)`, the one way a path (rather
@@ -38,7 +38,7 @@ impl<'a> FuncEmitter<'a> {
     /// O_CLOEXEC)`, as `open_read`'s is. `DirOpened`'s three leaves.
     pub(crate) fn open_directory(&mut self, path: &str) -> Vec<LValue> {
         let f = self.open_flags();
-        let fd32 = self.open_at_cwd(path, f.directory | f.cloexec, 0);
+        let fd32 = self.open_at_cwd(path, f.read_only | f.directory | f.cloexec, 0);
         let fd = self.fresh();
         self.out.push_str(&format!("  {fd} = sext i32 {fd32} to i64\n"));
         let failed = self.fresh();
@@ -191,14 +191,14 @@ impl<'a> FuncEmitter<'a> {
         }
         let f = self.open_flags();
         let (flags, mode) = match op {
-            Builtin::DirEnter => (f.directory | f.nofollow, 0),
+            Builtin::DirEnter => (f.read_only | f.directory | f.nofollow, 0),
             Builtin::DirOpenNew => {
                 (f.write_only | f.create | f.exclusive | f.nofollow, lex_sys_ir::CREATE_MODE)
             }
             Builtin::DirOpenAppend => {
                 (f.write_only | f.create | f.append | f.nofollow, lex_sys_ir::CREATE_MODE)
             }
-            _ => (f.nofollow, 0),
+            _ => (f.read_only | f.nofollow, 0),
         };
         // Every descriptor a builtin opens is close-on-exec (`docs/processes.md` §4.5).
         let flags = flags | f.cloexec;
