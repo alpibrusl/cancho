@@ -182,3 +182,94 @@ the *lex-sys compiler itself* inside a sealed box (rather than just
 lex-sys *programs*) becomes something that box's own trust model
 needs. Nothing in this document's findings would need to change before
 that day; only the "no asker yet" line would.
+
+---
+
+## 6. The staged port (epic #295)
+
+§5 decided to stay on Rust and nothing below reopens it. What §3 and §4 could not
+give was a *measured* size, so the question "how big is a compiler in this
+language" has been run one stage at a time, the Rust compiler the oracle at every
+stage and any stage free to stop the effort by failing. This section records what
+the stages found, in place, the way this document corrects its own claims.
+
+| Stage | Written in lex-sys | Oracle | Result |
+|---|---|---|---|
+| 1. Lexer | `examples/selfhost/lexcore.ls` (a module) and `lexer.ls` | `examples/dump_tokens.rs` in `lex-sys-syntax` | Same token stream and the same refusals on every program in the repository (614 files) |
+| 2. Parser | `examples/selfhost/parser.ls` | `examples/dump_ast.rs` in `lex-sys-syntax` | Same syntax tree, node for node and span for span, or the same refusal (rule and span), on the same 614 files, **including its own source**, and on a fuzz corpus (below) of 52,272 cases, 51,911 of them comparable and all identical, 29,097 of those refusals |
+| 3. Checker | not started | `lex-sys check --output json` | |
+| 4. Backend | not started | | |
+
+**The method.** A port that builds no tree has nothing to compare, and one that does
+needs a printer, which is another port. So the parser writes the tree the Rust parser
+would have built as a *postfix listing*, one node per line, children before their
+parent, at the moment the Rust parser pushes the node into its arena, and says how
+many children it takes. `dump_ast.rs` writes the same listing from the Rust AST. Each
+node carries its span, so the comparison covers every position the parser records;
+every refusal is one line, `ERR rule start end`. `examples/selfhost/diff.sh` compares
+the two over files, `fuzz.py` over the files plus hostile edge cases (the limits of
+`int` and of `float` and `f32`, escapes, the order of `module`, `import` and items) and
+mutants (a token dropped, duplicated, replaced or swapped, the file cut short, a byte
+range deleted), and `tests/conformance/selfhost.rs` runs both ports over the
+repository's programs on every CI run.
+
+**Size.** `parser.ls` is 1,970 lines (1,760 that are not comment or blank) for the
+Rust parser's 1,507 (1,225): 1.3 to 1.4 times. `lexcore.ls` is 963 lines (897) for the
+Rust lexer's 633, with its generated tables. Counted with `grep -v '^\s*//'` and
+without blank lines; both ports are written one statement to a line, as `lex-sys fmt`
+leaves them. The port parses its own 59 KB in 6 ms.
+
+**What it found.**
+
+* **The lexer had drifted, silently.** Between the spike and this stage the Rust lexer
+  gained the `f32` suffix on float literals (`docs/f32.md`), and the port, which had no
+  test, would have refused every such literal. It has one now (`selfhost.rs`), which
+  is the first thing the oracle approach is *for*: a port that is not run against its
+  oracle in CI is a port of whatever the oracle was.
+* **No integer constants.** A token has to be stored as an integer, so the lexer
+  grew a generated `code` function (one arm per token kind) and the parser compares
+  with `look(st, 0, lc.Tok::Comma)`, which runs that match on every test. A table of
+  named integers is the one thing the port wanted from the language here.
+* **No error propagation, so a refusal is sticky.** The first refusal is recorded in
+  the state and every later call does nothing; `kind` answers end of file once the parser
+  has failed, so every list loop ends. That works, and it has one failure mode `?`
+  does not: *every* function has to be total on the state a refusal leaves behind.
+  The fuzzer found the one place it was not (`edition )`: the number was parsed after
+  the refusal, as if it were a number, and the arithmetic trapped). Fixed, with the
+  fuzz seeds that found it kept.
+* **Checked arithmetic shaped one function.** An integer literal is read as a magnitude
+  that must fit in 64 signed bits; summing it positively overflows at exactly the
+  boundary the check is for, so it is accumulated as a negative number (which holds one
+  more value) and each step is checked before it is taken. The boundary cases
+  (`9223372036854775807`, `...808`, `-...808`, the hexadecimal ones) are in the corpus.
+* **Row exactness was a help.** `declaration_params` first declared `io_write`
+  without writing anything, and the checker refused it: the parse is pure and the
+  printing is a separate walk over its tokens, which is the structure the listing
+  needed anyway (the `[...]` of a declaration interleaves two lists the Rust AST keeps
+  apart).
+* **Smaller:** `region` is a keyword, so no local can carry the name most parsers
+  give it; the state is one slice of integers because that was the cautious choice,
+  and a `&!p` reference to a struct with field assignment does work (checked while
+  writing this), which would read better for the scalar slots.
+
+**What it does not show.**
+
+* No tree is built. A listing proves the grammar, the precedence, the spans and the
+  refusals; it does not prove that recursive `Box` trees of this size work (§4 showed
+  they work, at a small one). Stage 3 needs trees and will say.
+* Float *values* are not computed: the listing has a float literal's span and whether
+  it is an `f32`, not its bits. Whether a literal rounds to infinity is checked, exactly,
+  by comparing its digits with those of 2^1024 − 2^970 (2^128 − 2^103 for `f32`); the
+  conversion itself is `std.json`'s `to_float`, which is there to be reused.
+* One file at a time. The Rust parser's `parse_into` (many files, a base offset on every
+  span) is not ported.
+* Inputs that are not UTF-8. The oracle takes a `&str`, so it decodes lossily and reports
+  spans in the decoded text; the port reads bytes. The two cannot be compared and the
+  harnesses skip those inputs (361 of the 52,272 fuzz cases).
+* Names are printed from their spans, not interned, so symbol ids are not compared.
+
+**Where it stands.** Stages 1 and 2 are done and nothing in them blocks stage 3, the
+checker (`lex-sys-ir`, 12 thousand lines), which is the real test: it is the first
+stage with enough shape (resolution, linearity, regions, effect rows) to tell whether
+the language is comfortable writing its own compiler. §5's decision does not change.
+
