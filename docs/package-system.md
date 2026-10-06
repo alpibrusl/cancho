@@ -813,7 +813,7 @@ each reproduced rather than assumed:
 2. **`lexsys-log` cannot be published.** `vcs publish crc.ls` fails with
    ``internal: `crc_table` has an identity but no lowered function or
    extern``. `lex-sys-id::identify` gives a `static` two identities (its
-   type and its body, `compile-time-data.md` §2) and `cmd_publish` reads a
+   name and type, and its body, `compile-time-data.md` §2) and `cmd_publish` reads a
    declaration's effects from a lowered function or an extern, which a
    `static` is neither. This is the same shape as the `extern fn` gap §6
    records for `net.sockets`, one declaration kind further along.
