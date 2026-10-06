@@ -39,6 +39,7 @@
 - [Function values](function-values.md)
 - [Threads: spawn and join](threads.md)
 - [Threads that carry more than one value](thread-payloads.md)
+- [Atomics and a channel](atomics.md)
 - [Effect polymorphism](effect-polymorphism.md)
 
 # Capabilities, effects and authority
