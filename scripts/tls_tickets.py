@@ -15,6 +15,7 @@ The cases:
 - offered for the same host in time, with the obfuscated age RFC 8446 §4.2.11.1 asks for (the milliseconds
   since the ticket was received plus its ticket_age_add), and the server resumes (no Certificate), checked
   through `tls.resumed`;
+- the age counted in milliseconds, not from a whole second (wolfSSL refuses an age more than 1 s high);
 - not offered for another host name, and the ticket is spent by that refusal;
 - not offered after `tls.trust` is called again;
 - not offered after the leaf's notAfter (a leaf valid for an hour, the maximum age raised past it), and
@@ -77,8 +78,9 @@ def modes_of(msg):
 class Engine(L.Server):
     """The liar's honest server, for a connection the engine starts with `C`."""
 
-    def begin(self, now, handle=0, host=L.HOST):
-        f = self.c.ask(f"C {host.hex()} {now} {handle}")
+    def begin(self, now, handle=0, host=L.HOST, ms=0):
+        """A start at `now` seconds and `ms` milliseconds."""
+        f = self.c.ask(f"C {host.hex()} {now * 1000 + ms} {handle}")
         assert f[0] == "0", f
         (hello,) = self.c.take()
         msg, self.sid, self.client_shares, _ = L.parse_client_hello(hello)
@@ -88,12 +90,12 @@ class Engine(L.Server):
         return L.psk_offer(msg)
 
 
-def full(c, now=L.NOW, cert_der=None, lifetime=7200):
+def full(c, now=L.NOW, cert_der=None, lifetime=7200, ms=0):
     """A full handshake at `now`, a ticket, close_notify both ways, then `tls.save`: the handle and the PSK."""
     s = Engine(c)
     if cert_der is not None:
         s.cert_der = cert_der
-    assert s.begin(now) is None, "nothing offered with handle 0"
+    assert s.begin(now, ms=ms) is None, "nothing offered with handle 0"
     assert s.modes == [1], f"psk_dhe_ke advertised, so a server may send tickets (RFC 8446 §4.2.9): {s.modes}"
     s.c.feed(s.hello_and_flight())
     s.check_client_finished()
@@ -108,10 +110,10 @@ def full(c, now=L.NOW, cert_der=None, lifetime=7200):
     return handle, psk
 
 
-def offered(c, now, handle, host=L.HOST):
+def offered(c, now, handle, host=L.HOST, ms=0):
     """A start with `handle`: the server, and whether the ticket was on the wire."""
     r = Engine(c)
-    r.offer = r.begin(now, handle, host)
+    r.offer = r.begin(now, handle, host, ms)
     return r, r.offer is not None
 
 
@@ -136,6 +138,14 @@ def same_host(c):
     r.c.feed(L.resumed_flight(r))
     L.resumed_to_the_end(r)
     assert c.ask("K")[0] == "1", "resumed"
+
+
+@case("the age in milliseconds: a ticket saved 999 ms into a second, offered 60 s later, is 60,000 ms old")
+def age_in_milliseconds(c):
+    h, _ = full(c, ms=999)
+    r, on = offered(c, L.NOW + 60, h, ms=999)
+    assert on, "offered"
+    assert r.offer[1] == (60000 + 0x01020304) % 2**32, f"the obfuscated age: {r.offer[1]}"
 
 
 @case("another host name: not offered, and the ticket is spent")

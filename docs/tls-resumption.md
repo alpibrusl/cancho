@@ -199,6 +199,10 @@ The build PR shows, each with its command:
 - **Rule 4 is counted from the verification** (§3, corrected in place).
 - **A ticket's "received" time is the start of the connection that got it**: the engine has no clock between `start` and `save`.
   So its age is overstated by the handshake's duration, which servers tolerate (RFC 8446 §4.2.11.1 leaves the window to them).
+  *Corrected:* that start was first kept in whole seconds, which overstated the age by up to another 999 ms. wolfSSL 5.6.6
+  refuses a ticket whose age is more than 1,000 ms above its own count (`internal.c`, "Allow +/- 1000 milliseconds on ticket
+  age"; below it allows 11 s) and answers with a full handshake. With eight handshakes at once on a busy CI runner, its resume
+  row once resumed 6 of 8. The start is now kept in milliseconds.
 - **A lifetime over 7 days is capped, not refused** (§7's liar case keeps it for 604,800 seconds).
 
 **Results:**
@@ -208,9 +212,10 @@ The build PR shows, each with its command:
 - **The binder and every secret are checked by servers that are not this code.** OpenSSL refuses a resumption whose binder is
   wrong, and the lying server (Python on RFC 8446 alone) checks the binder, after a HelloRetryRequest too, and asserts that the PSK
   the client derived from each ticket is its own.
-- **The rules:** twelve cases, each deciding from the ClientHello's bytes alone whether the ticket was offered, including the
-  obfuscated age.
-- **Mutants** (`scripts/tls_mutants.py`, now 88): **88 killed.** *Corrected:* this said 87 killed and 1 equivalent (a
+- **The rules:** thirteen cases, each deciding from the ClientHello's bytes alone whether the ticket was offered, including the
+  obfuscated age. The thirteenth, added after wolfSSL's resume row failed once in CI (above), saves a ticket 999 ms into a
+  second and checks its age 60 s later is 60,000 ms. The code that kept whole seconds fails it with 60,999.
+- **Mutants** (`scripts/tls_mutants.py`, now 89): **89 killed**, the 89th a ticket age counted from a whole second. *Corrected:* this said 87 killed and 1 equivalent (a
   `pre_shared_key` accepted when none was offered, refused by the hash check with the same tag). Since the unoffered case has
   its own alert (above), that mutant changes the tag and is killed. Writing them found two gaps, closed here: no case resumed under SHA-384 (now one does), and the other host name in the
   rule cases was a different length, so the length check alone refused it (now it is the same length). The runner now replays the

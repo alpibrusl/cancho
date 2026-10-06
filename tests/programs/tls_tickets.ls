@@ -7,7 +7,7 @@ edition 5;
 // byte for byte. Byte strings are lowercase hex (`-` for empty).
 //
 //     T <roots>                    tls.trust (a PEM bundle)
-//     C <host> <now> <handle>      tls.drop, then tls.start_with (now: seconds since 1970; handle 0: none)
+//     C <host> <now> <handle>      tls.drop, then tls.start_with (now: milliseconds since 1970; handle 0: none)
 //     F <bytes>                    tls.feed, then everything `take` and `recv` give
 //     W <plaintext>                tls.send
 //     Q                            tls.finish
@@ -135,7 +135,7 @@ fn op[&i, &e, &s, &o](io: &!i Io, engine: &!e tls.Engine, s: &s [byte], out: &!o
             let g = next_field(s, f);
             let now = number(s, g);
             tls.drop(engine, 0);
-            code = tls.start_with(engine, 0, host, now * 1000, number(s, next_field(s, g)));
+            code = tls.start_with(engine, 0, host, now, number(s, next_field(s, g)));
         }
     } else if kind == 70 {
         let n = hex_into(s, f, out);

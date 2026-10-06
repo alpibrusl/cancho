@@ -38,7 +38,8 @@ fn roots_cap() -> [] int {
     return 1048576;
 }
 
-// meta: [0] slots, [1] seeded, [2] bytes of roots, [3] blocks skipped, [4 + s] slot `s` in use.
+// meta: [0] slots, [1] seeded, [2] bytes of roots, [3] blocks skipped, [4 + s] slot `s` in use,
+// [4 + slots + s] when slot `s`'s connection started (Unix milliseconds).
 fn m_slots() -> [] int {
     return 0;
 }
@@ -59,6 +60,10 @@ fn m_busy(slot: int) -> [] int {
     return 4 + slot;
 }
 
+fn m_started[&e](engine: &e Engine, slot: int) -> [] int {
+    return 4 + contents(engine.meta)[m_slots()] + slot;
+}
+
 pub fn open[&h](heap: &!h Heap, slots: int) -> [heap] Engine {
     return open_with_tickets(heap, slots, slots);
 }
@@ -77,7 +82,7 @@ pub fn open_with_tickets[&h](heap: &!h Heap, slots: int, tickets: int) -> [heap]
     if t > 65534 {
         t = 65534;
     }
-    var engine = Engine { ints: box_slice(heap, n * tls_client.ints_len(), 0), bytes: box_slice(heap, n * tls_client.bytes_len(), byte_of(0)), roots: box_slice(heap, roots_cap(), byte_of(0)), meta: box_slice(heap, 4 + n, 0), drbg: box_slice(heap, 32, byte_of(0)), tickets: box_slice(heap, t * entry_bytes(), byte_of(0)), tmeta: box_slice(heap, t_entries() + t * t_fields(), 0) };
+    var engine = Engine { ints: box_slice(heap, n * tls_client.ints_len(), 0), bytes: box_slice(heap, n * tls_client.bytes_len(), byte_of(0)), roots: box_slice(heap, roots_cap(), byte_of(0)), meta: box_slice(heap, 4 + 2 * n, 0), drbg: box_slice(heap, 32, byte_of(0)), tickets: box_slice(heap, t * entry_bytes(), byte_of(0)), tmeta: box_slice(heap, t_entries() + t * t_fields(), 0) };
     borrow mut engine as &!w in {
         contents(w.meta)[m_slots()] = n;
         contents(w.tmeta)[t_capacity()] = t;
@@ -229,6 +234,7 @@ pub fn start[&e, &h](engine: &!e Engine, slot: int, host: &h [byte], now_unix_ms
         let i = ints_of(slot);
         let b = bytes_of(slot);
         code = tls_client.start_psk(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], host, random, now_unix_ms / 1000, host[0..0], host[0..0], 0, 0, 0, contents(engine.tmeta)[t_resume()] == 1);
+        contents(engine.meta)[m_started(engine, slot)] = now_unix_ms;
         var k = 0;
         while k < 96 {
             random[k] = byte_of(0);
@@ -399,7 +405,8 @@ fn t_entries() -> [] int {
 }
 
 // An entry's fields: generation, in use, ticket length, hash length, host
-// length, when received (seconds), lifetime (seconds), ticket_age_add,
+// length, when received (Unix milliseconds: when its connection started,
+// so an age is never short), lifetime (seconds), ticket_age_add,
 // verified at, the leaf's notAfter, the trust generation it was saved under.
 fn t_fields() -> [] int {
     return 11;
@@ -505,7 +512,7 @@ pub fn save[&e](engine: &!e Engine, slot: int) -> [] int {
     contents(engine.tmeta)[tf(e, 2)] = n;
     contents(engine.tmeta)[tf(e, 3)] = h;
     contents(engine.tmeta)[tf(e, 4)] = host_len;
-    contents(engine.tmeta)[tf(e, 5)] = contents(engine.ints)[i + tls_slot.i_now()];
+    contents(engine.tmeta)[tf(e, 5)] = contents(engine.meta)[m_started(engine, slot)];
     contents(engine.tmeta)[tf(e, 6)] = contents(engine.ints)[i + tls_slot.i_ticket_lifetime()];
     contents(engine.tmeta)[tf(e, 7)] = contents(engine.ints)[i + tls_slot.i_ticket_age_add()];
     contents(engine.tmeta)[tf(e, 8)] = contents(engine.ints)[i + tls_slot.i_verified_at()];
@@ -527,9 +534,9 @@ pub fn forget[&e](engine: &!e Engine, handle: int) -> [] int {
     return 0;
 }
 
-// Whether entry `e` may be offered for `host` at `now_s`
+// Whether entry `e` may be offered for `host` at `now_ms`
 // (`docs/tls-resumption.md` §3, rules 1 to 4).
-fn may_offer[&e, &h](engine: &e Engine, e: int, host: &h [byte], now_s: int) -> [] bool {
+fn may_offer[&e, &h](engine: &e Engine, e: int, host: &h [byte], now_ms: int) -> [] bool {
     let at = e * entry_bytes();
     if contents(engine.tmeta)[tf(e, 4)] != len(host) || contents(engine.tmeta)[tf(e, 10)] != contents(engine.tmeta)[t_trust()] {
         return false;
@@ -543,7 +550,8 @@ fn may_offer[&e, &h](engine: &e Engine, e: int, host: &h [byte], now_s: int) -> 
         k = k + 1;
     }
     let received = contents(engine.tmeta)[tf(e, 5)];
-    return same && now_s <= contents(engine.tmeta)[tf(e, 9)] && now_s < contents(engine.tmeta)[tf(e, 8)] + contents(engine.tmeta)[t_max_age()] && now_s < received + contents(engine.tmeta)[tf(e, 6)] && now_s >= received;
+    let now_s = now_ms / 1000;
+    return same && now_s <= contents(engine.tmeta)[tf(e, 9)] && now_s < contents(engine.tmeta)[tf(e, 8)] + contents(engine.tmeta)[t_max_age()] && now_ms < received + contents(engine.tmeta)[tf(e, 6)] * 1000 && now_ms >= received;
 }
 
 // `start`, offering the ticket `handle` names if the rules of
@@ -556,7 +564,7 @@ pub fn start_with[&e, &h](engine: &!e Engine, slot: int, host: &h [byte], now_un
     if e < 0 {
         return start(engine, slot, host, now_unix_ms);
     }
-    if !may_offer(engine, e, host, now_unix_ms / 1000) {
+    if !may_offer(engine, e, host, now_unix_ms) {
         wipe(engine, e);
         return start(engine, slot, host, now_unix_ms);
     }
@@ -569,7 +577,9 @@ pub fn start_with[&e, &h](engine: &!e Engine, slot: int, host: &h [byte], now_un
     let at = e * entry_bytes();
     let n = contents(engine.tmeta)[tf(e, 2)];
     let h = contents(engine.tmeta)[tf(e, 3)];
-    let age = now_unix_ms - contents(engine.tmeta)[tf(e, 5)] * 1000 + contents(engine.tmeta)[tf(e, 7)];
+    // RFC 8446 §4.2.11.1: milliseconds since the ticket was received,
+    // plus ticket_age_add.
+    let age = now_unix_ms - contents(engine.tmeta)[tf(e, 5)] + contents(engine.tmeta)[tf(e, 7)];
     let verified_at = contents(engine.tmeta)[tf(e, 8)];
     let not_after = contents(engine.tmeta)[tf(e, 9)];
     var code = 0;
@@ -582,6 +592,7 @@ pub fn start_with[&e, &h](engine: &!e Engine, slot: int, host: &h [byte], now_un
         tls_slot.zero(random);
     }
     wipe(engine, e);
+    contents(engine.meta)[m_started(engine, slot)] = now_unix_ms;
     contents(engine.meta)[m_busy(slot)] = 1;
     return code;
 }

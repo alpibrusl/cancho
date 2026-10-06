@@ -220,9 +220,12 @@ MUTANTS = [
     ("the ticket offered past the maximum age", "tls.ls",
      " && now_s < contents(engine.tmeta)[tf(e, 8)] + contents(engine.tmeta)[t_max_age()]", ""),
     ("the ticket offered past its lifetime", "tls.ls",
-     " && now_s < received + contents(engine.tmeta)[tf(e, 6)]", ""),
+     " && now_ms < received + contents(engine.tmeta)[tf(e, 6)] * 1000", ""),
     ("the ticket offered with the clock before it was received", "tls.ls",
-     " && now_s >= received;", ";"),
+     " && now_ms >= received;", ";"),
+    ("a ticket's age counted from a whole second", "tls.ls",
+     "    let age = now_unix_ms - contents(engine.tmeta)[tf(e, 5)] + ",
+     "    let age = now_unix_ms - contents(engine.tmeta)[tf(e, 5)] / 1000 * 1000 + "),
     ("the ticket offered twice", "tls.ls",
      "        tls_slot.zero(random);\n    }\n    wipe(engine, e);", "        tls_slot.zero(random);\n    }"),
     ("a forgotten ticket kept", "tls.ls",
@@ -235,7 +238,7 @@ MUTANTS = [
     ("resumption never advertised by the engine", "tls.ls",
      "0, 0, 0, contents(engine.tmeta)[t_resume()] == 1);", "0, 0, 0, false);"),
     ("the obfuscated age without ticket_age_add", "tls.ls",
-     " * 1000 + contents(engine.tmeta)[tf(e, 7)];", " * 1000;"),
+     "contents(engine.tmeta)[tf(e, 5)] + contents(engine.tmeta)[tf(e, 7)];", "contents(engine.tmeta)[tf(e, 5)];"),
 ]
 
 

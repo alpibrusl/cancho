@@ -101,7 +101,7 @@ fn the_engine_offers_a_ticket_only_where_the_rules_allow_on_both_backends() {
             cases.last_mut().unwrap().1.push(line.to_string());
         }
     }
-    assert_eq!(cases.len(), 12);
+    assert_eq!(cases.len(), 13);
     for backend in ["cranelift", "llvm"] {
         let (dir, exe) = build_tls_tickets(backend);
         for (name, asked, answered) in &cases {
