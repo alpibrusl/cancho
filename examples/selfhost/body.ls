@@ -34,6 +34,7 @@ import selfhost.ast;
 import selfhost.kinds;
 import selfhost.rules;
 import selfhost.pass1;
+import selfhost.types;
 
 // What an expression came to: its type, and whether it is a known integer (a literal, or a
 // literal operation that folded) and which.
@@ -110,12 +111,54 @@ fn scalar[&s](st: &!s [int], ty: int) -> [] int {
     return 0;
 }
 
-// `expect_type`: the same scalar, or `type-mismatch` at `span`.
-fn expect[&s](st: &!s [int], expected: int, found: int, from: int, to: int) -> [] int {
-    if expected != found {
-        ast.fail(st, rules.r_type_mismatch(), from, to);
+// The type of the resolved type node `ty`, written in a declaration whose `[...]` starts at `dp`,
+// or 0 if it is one this slice does not handle: a scalar, or a reference to a scalar or to a slice
+// of one. `fresh` is -1 when the declaration is the function being checked, whose region
+// parameters are what the regions are; for a callee it is the first of the variables made for
+// its region parameters, which stand in for them at this call.
+fn lower_type[&s, &x](st: &!s [int], text: &x [byte], ty: int, dp: int, fresh: int) -> [] int {
+    if ast.is_kind(st, ty, kinds.NK::TName) {
+        return scalar(st, ty);
     }
-    return 0;
+    if !ast.is_kind(st, ty, kinds.NK::TRef) {
+        return 0;
+    }
+    let reg = ast.get(st, ty, 5);
+    var area = types.static_region();
+    if !pass1.is_word(st, text, reg, "static") {
+        area = pass1.param_index(st, text, dp, true, reg);
+        if fresh >= 0 {
+            area = fresh + area;
+        }
+    }
+    let inner = ast.get(st, ty, 6);
+    var referent = 0;
+    if ast.is_kind(st, inner, kinds.NK::TSlice) {
+        let element = scalar(st, ast.get(st, inner, 6));
+        if element != 0 {
+            referent = types.make_slice(st, element);
+        }
+    } else {
+        referent = scalar(st, inner);
+    }
+    if referent == 0 {
+        return 0;
+    }
+    return types.make_ref(st, ast.get(st, ty, 4) != 0, area, referent);
+}
+
+// `expect_type`: `found` is usable where `expected` is wanted, or a refusal at the span.
+fn expect[&s, &x](st: &!s [int], text: &x [byte], expected: int, found: int, from: int, to: int) -> [] int {
+    return types.expect_type(st, text, expected, found, from, to);
+}
+
+// The element type of a reference to a slice, or `not-a-slice` at the span.
+fn element[&s](st: &!s [int], ty: int, from: int, to: int) -> [] int {
+    let e = types.element_of(st, ty);
+    if e == 0 {
+        ast.fail(st, rules.r_not_a_slice(), from, to);
+    }
+    return e;
 }
 
 // ------------------------------------------------------ integer folding ---
@@ -265,8 +308,18 @@ fn expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     if ast.is_kind(st, id, kinds.NK::EBool) {
         return plain(5);
     }
+    if ast.is_kind(st, id, kinds.NK::EStr) {
+        // A literal is a shared slice of bytes in the `static` region.
+        return plain(types.make_ref(st, false, types.static_region(), types.make_slice(st, 2)));
+    }
     if ast.is_kind(st, id, kinds.NK::EName) {
         return name_expr(st, text, id);
+    }
+    if ast.is_kind(st, id, kinds.NK::EIndex) {
+        return index_expr(st, text, id);
+    }
+    if ast.is_kind(st, id, kinds.NK::ESlice) {
+        return subslice_expr(st, text, id);
     }
     if ast.is_kind(st, id, kinds.NK::EUnary) {
         return unary_expr(st, text, id);
@@ -317,15 +370,23 @@ fn unary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     let to = ast.nend(st, id);
     let op = ast.get(st, id, 4);
     let operand_id = ast.get(st, id, 5);
-    if op == 3 {
-        return skip(st, from, to);
-    }
     let operand = expr(st, text, operand_id);
     if !ast.ok(st) {
         return nothing();
     }
     let of = ast.nstart(st, operand_id);
     let ot = ast.nend(st, operand_id);
+    if op == 3 {
+        // `*r`: what a reference points at, copied. A slice is not a value to copy.
+        if !types.is_ref(st, operand.ty) {
+            ast.fail(st, rules.r_not_a_reference(), of, ot);
+            return nothing();
+        }
+        if types.is_slice(st, types.ref_inner(st, operand.ty)) {
+            return skip(st, from, to);
+        }
+        return plain(types.ref_inner(st, operand.ty));
+    }
     if op == 0 {
         if operand.ty != 1 && operand.ty != 3 && operand.ty != 4 {
             ast.fail(st, rules.r_operator_type_mismatch(), of, ot);
@@ -341,10 +402,10 @@ fn unary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         return plain(operand.ty);
     }
     if op == 1 {
-        expect(st, 5, operand.ty, of, ot);
+        expect(st, text, 5, operand.ty, of, ot);
         return plain(5);
     }
-    expect(st, 1, operand.ty, of, ot);
+    expect(st, text, 1, operand.ty, of, ot);
     if operand.known {
         return constant(~operand.value);
     }
@@ -368,7 +429,7 @@ fn binary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         return nothing();
     }
     // Both sides agree first, then the operator says what it accepts.
-    expect(st, l.ty, r.ty, ast.nstart(st, rhs_id), ast.nend(st, rhs_id));
+    expect(st, text, l.ty, r.ty, ast.nstart(st, rhs_id), ast.nend(st, rhs_id));
     if !ast.ok(st) {
         return nothing();
     }
@@ -381,13 +442,20 @@ fn binary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         }
     }
     if op == 17 || op >= 8 && op <= 12 {
-        expect(st, 1, operand, lf, lt);
+        expect(st, text, 1, operand, lf, lt);
     }
     if op == 0 || op == 1 {
-        expect(st, 5, operand, lf, lt);
+        expect(st, text, 5, operand, lf, lt);
     }
     if op >= 4 && op <= 7 {
         if !arithmetic {
+            ast.fail(st, rules.r_operator_type_mismatch(), lf, lt);
+            return nothing();
+        }
+    }
+    // `==` and `!=` compare two scalars, and nothing else.
+    if op == 2 || op == 3 {
+        if operand < 1 || operand > 5 {
             ast.fail(st, rules.r_operator_type_mismatch(), lf, lt);
             return nothing();
         }
@@ -413,6 +481,74 @@ fn binary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     return plain(result);
 }
 
+// `s[i]`: one element of a slice. The base is checked first, then the index.
+fn index_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
+    let base = ast.get(st, id, 4);
+    let index = ast.get(st, id, 5);
+    let b = expr(st, text, base);
+    if !ast.ok(st) {
+        return nothing();
+    }
+    let e = element(st, b.ty, ast.nstart(st, base), ast.nend(st, base));
+    if !ast.ok(st) {
+        return nothing();
+    }
+    let i = expr(st, text, index);
+    if ast.ok(st) {
+        expect(st, text, 1, i.ty, ast.nstart(st, index), ast.nend(st, index));
+    }
+    return plain(e);
+}
+
+// `s[a..b]`: a shorter run of the same slice, in the same region and as unique or shared.
+fn subslice_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
+    let base = ast.get(st, id, 4);
+    let start = ast.get(st, id, 5);
+    let end = ast.get(st, id, 6);
+    let b = expr(st, text, base);
+    if !ast.ok(st) {
+        return nothing();
+    }
+    let e = element(st, b.ty, ast.nstart(st, base), ast.nend(st, base));
+    if !ast.ok(st) {
+        return nothing();
+    }
+    let a = expr(st, text, start);
+    if ast.ok(st) {
+        expect(st, text, 1, a.ty, ast.nstart(st, start), ast.nend(st, start));
+    }
+    if !ast.ok(st) {
+        return nothing();
+    }
+    let z = expr(st, text, end);
+    if ast.ok(st) {
+        expect(st, text, 1, z.ty, ast.nstart(st, end), ast.nend(st, end));
+    }
+    if !ast.ok(st) {
+        return nothing();
+    }
+    return plain(types.make_ref(st, types.ref_unique(st, b.ty), types.ref_region(st, b.ty), types.make_slice(st, e)));
+}
+
+// `len(s)`: how many elements a slice has.
+fn len_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
+    let from = ast.nstart(st, id);
+    let to = ast.nend(st, id);
+    if ast.get(st, id, 7) != 1 {
+        ast.fail(st, rules.r_arity_mismatch(), from, to);
+        return nothing();
+    }
+    let arg = ast.get(st, id, 6);
+    let a = expr(st, text, arg);
+    if ast.ok(st) {
+        element(st, a.ty, ast.nstart(st, arg), ast.nend(st, arg));
+    }
+    if !ast.ok(st) {
+        return nothing();
+    }
+    return plain(1);
+}
+
 fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
@@ -432,6 +568,10 @@ fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     if target < 0 {
         ast.fail(st, rules.r_module_not_imported(), from, to);
         return nothing();
+    }
+    // `len` is a builtin of every edition, and is checked before anything else is looked up.
+    if pass1.is_word(st, text, callee, "len") {
+        return len_expr(st, text, id);
     }
     // A builtin the file's edition can name comes first, then a foreign function: not checked.
     if pass1.builtin_name(st, text, callee, st[23]) {
@@ -460,9 +600,20 @@ fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         ast.fail(st, rules.r_not_public(), from, to);
         return nothing();
     }
-    // A callee that is generic, takes regions, declares effects, or is not scalar throughout.
-    if !plain_function(st, found) {
+    // A callee that is generic, declares effects, or has a type this slice does not handle.
+    if !plain_function(st, text, found) {
         return skip(st, from, to);
+    }
+    // Each region parameter of the callee is a variable here, which the arguments solve.
+    let callee_dp = ast.get(st, found, 6);
+    var fresh = 0 - 1;
+    var made = 0;
+    while made < pass1.count_params(st, callee_dp, true) {
+        let r = types.fresh_region(st);
+        if made == 0 {
+            fresh = r;
+        }
+        made = made + 1;
     }
     if ast.get(st, found, 8) != nargs {
         ast.fail(st, rules.r_arity_mismatch(), from, to);
@@ -473,34 +624,46 @@ fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     while param >= 0 && ast.ok(st) {
         let a = expr(st, text, arg);
         if ast.ok(st) {
-            expect(st, scalar(st, ast.get(st, param, 5)), a.ty, ast.nstart(st, arg), ast.nend(st, arg));
+            expect(st, text, lower_type(st, text, ast.get(st, param, 5), callee_dp, fresh), a.ty, ast.nstart(st, arg), ast.nend(st, arg));
         }
         param = ast.next(st, param);
         arg = ast.next(st, arg);
     }
+    // What the callee's `where` clauses demand of the regions the arguments solved.
+    var k = 0;
+    while ast.ok(st) && pass1.nth_outlive(st, callee_dp, k) >= 0 {
+        let inner = pass1.nth_outlive(st, callee_dp, k);
+        let got_inner = types.resolve_region(st, fresh + pass1.param_index(st, text, callee_dp, true, inner));
+        let got_outer = types.resolve_region(st, fresh + pass1.param_index(st, text, callee_dp, true, inner + 2));
+        if !types.outlives(st, text, got_outer, got_inner) {
+            ast.fail(st, rules.r_reference_escapes_region(), from, to);
+        }
+        k = k + 1;
+    }
     if !ast.ok(st) {
         return nothing();
     }
-    return plain(scalar(st, ast.get(st, found, 10)));
+    return plain(lower_type(st, text, ast.get(st, found, 10), callee_dp, fresh));
 }
 
-// A function with no type or region parameters, an empty row, and only scalar parameters and
-// result: the functions this slice checks, and the callees it can call.
-fn plain_function[&s](st: &!s [int], fn_item: int) -> [] bool {
-    if ast.get(st, fn_item, 6) >= 0 {
+// A function with no type parameters, an empty row, and only types this slice handles: the
+// functions this slice checks, and the callees it can call. Regions are fine.
+fn plain_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [] bool {
+    let dp = ast.get(st, fn_item, 6);
+    if pass1.count_params(st, dp, false) > 0 {
         return false;
     }
-    if pass1.is_code(st, ast.get(st, fn_item, 9) + 1, lc.Tok::RBracket) == false {
+    if !pass1.is_code(st, ast.get(st, fn_item, 9) + 1, lc.Tok::RBracket) {
         return false;
     }
     var param = ast.get(st, fn_item, 7);
     while param >= 0 {
-        if scalar(st, ast.get(st, param, 5)) == 0 {
+        if lower_type(st, text, ast.get(st, param, 5), dp, 0 - 1) == 0 {
             return false;
         }
         param = ast.next(st, param);
     }
-    return scalar(st, ast.get(st, fn_item, 10)) != 0;
+    return lower_type(st, text, ast.get(st, fn_item, 10), dp, 0 - 1) != 0;
 }
 
 // ----------------------------------------------------------- statements ---
@@ -549,7 +712,7 @@ fn block[&s, &x](st: &!s [int], text: &x [byte], head: int, n: int, ret: int) ->
 fn condition[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] int {
     let found = expr(st, text, id);
     if ast.ok(st) {
-        expect(st, 5, found.ty, ast.nstart(st, id), ast.nend(st, id));
+        expect(st, text, 5, found.ty, ast.nstart(st, id), ast.nend(st, id));
     }
     return 0;
 }
@@ -566,16 +729,16 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
         var declared = found.ty;
         let written = ast.get(st, id, 6);
         if written >= 0 {
-            pass1.resolve(st, text, written, st[22], st[23], 0 - 1, true, false);
+            pass1.resolve(st, text, written, st[22], st[23], st[28], true, false);
             if !ast.ok(st) {
                 return 0;
             }
-            declared = scalar(st, written);
+            declared = lower_type(st, text, written, st[28], 0 - 1);
             if declared == 0 {
                 skip(st, from, to);
                 return 0;
             }
-            expect(st, declared, found.ty, ast.nstart(st, value), ast.nend(st, value));
+            expect(st, text, declared, found.ty, ast.nstart(st, value), ast.nend(st, value));
         }
         if ast.ok(st) {
             bind(st, ast.get(st, id, 5), declared, ast.get(st, id, 4) != 0);
@@ -589,6 +752,55 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
             return 0;
         }
         let place = ast.get(st, id, 4);
+        if ast.is_kind(st, place, kinds.NK::EUnary) && ast.get(st, place, 4) == 3 {
+            // `*r = v`: through a unique reference to a scalar.
+            let operand = ast.get(st, place, 5);
+            let o = expr(st, text, operand);
+            if !ast.ok(st) {
+                return 0;
+            }
+            if !types.is_ref(st, o.ty) {
+                ast.fail(st, rules.r_not_a_reference(), ast.nstart(st, operand), ast.nend(st, operand));
+                return 0;
+            }
+            if !types.ref_unique(st, o.ty) {
+                ast.fail(st, rules.r_shared_reference_written(), ast.nstart(st, operand), ast.nend(st, operand));
+                return 0;
+            }
+            let referent = types.ref_inner(st, o.ty);
+            if types.is_slice(st, referent) {
+                skip(st, from, to);
+                return 0;
+            }
+            expect(st, text, referent, found.ty, ast.nstart(st, value), ast.nend(st, value));
+            return 0;
+        }
+        if ast.is_kind(st, place, kinds.NK::EIndex) {
+            // `s[i] = v`: an element of a unique slice.
+            let base = ast.get(st, place, 4);
+            let index = ast.get(st, place, 5);
+            let b = expr(st, text, base);
+            if !ast.ok(st) {
+                return 0;
+            }
+            if types.is_ref(st, b.ty) && !types.ref_unique(st, b.ty) {
+                ast.fail(st, rules.r_shared_reference_written(), ast.nstart(st, base), ast.nend(st, base));
+                return 0;
+            }
+            let e = element(st, b.ty, ast.nstart(st, base), ast.nend(st, base));
+            if !ast.ok(st) {
+                return 0;
+            }
+            let i = expr(st, text, index);
+            if !ast.ok(st) {
+                return 0;
+            }
+            expect(st, text, 1, i.ty, ast.nstart(st, index), ast.nend(st, index));
+            if ast.ok(st) {
+                expect(st, text, e, found.ty, ast.nstart(st, value), ast.nend(st, value));
+            }
+            return 0;
+        }
         if !ast.is_kind(st, place, kinds.NK::EName) {
             skip(st, from, to);
             return 0;
@@ -602,7 +814,7 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
             ast.fail(st, rules.r_assign_to_immutable(), from, to);
             return 0;
         }
-        expect(st, binding_type(st, i), found.ty, ast.nstart(st, value), ast.nend(st, value));
+        expect(st, text, binding_type(st, i), found.ty, ast.nstart(st, value), ast.nend(st, value));
         return 0;
     }
     if ast.is_kind(st, id, kinds.NK::SExpr) {
@@ -630,7 +842,7 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
         let value = ast.get(st, id, 4);
         let found = expr(st, text, value);
         if ast.ok(st) {
-            expect(st, ret, found.ty, ast.nstart(st, value), ast.nend(st, value));
+            expect(st, text, ret, found.ty, ast.nstart(st, value), ast.nend(st, value));
         }
         return 0;
     }
@@ -649,16 +861,18 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
     st[23] = ast.get(st, fn_item, 14);
     let from = ast.nstart(st, fn_item);
     let to = ast.nend(st, fn_item);
-    if ast.get(st, fn_item, 6) >= 0 || !all_scalar(st, fn_item) {
+    st[28] = ast.get(st, fn_item, 6);
+    types.reset(st);
+    if !plain_function_type(st, text, fn_item) {
         ast.fail(st, rules.r_skip(), from, to);
         return 2;
     }
     var param = ast.get(st, fn_item, 7);
     while param >= 0 {
-        bind(st, ast.get(st, param, 4), scalar(st, ast.get(st, param, 5)), false);
+        bind(st, ast.get(st, param, 4), lower_type(st, text, ast.get(st, param, 5), st[28], 0 - 1), false);
         param = ast.next(st, param);
     }
-    let ret = scalar(st, ast.get(st, fn_item, 10));
+    let ret = lower_type(st, text, ast.get(st, fn_item, 10), st[28], 0 - 1);
     block(st, text, ast.get(st, fn_item, 11), ast.get(st, fn_item, 12), ret);
     if ast.ok(st) {
         // The row is exact: nothing here performs anything, so a declared label is decoration.
@@ -678,13 +892,19 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
     return 1;
 }
 
-fn all_scalar[&s](st: &!s [int], fn_item: int) -> [] bool {
+// A function this slice checks: no type parameters, and parameters and result of types it handles.
+// Its row need not be empty here: a declared label is decoration and refused after the body.
+fn plain_function_type[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [] bool {
+    let dp = ast.get(st, fn_item, 6);
+    if pass1.count_params(st, dp, false) > 0 {
+        return false;
+    }
     var param = ast.get(st, fn_item, 7);
     while param >= 0 {
-        if scalar(st, ast.get(st, param, 5)) == 0 {
+        if lower_type(st, text, ast.get(st, param, 5), dp, 0 - 1) == 0 {
             return false;
         }
         param = ast.next(st, param);
     }
-    return scalar(st, ast.get(st, fn_item, 10)) != 0;
+    return lower_type(st, text, ast.get(st, fn_item, 10), dp, 0 - 1) != 0;
 }

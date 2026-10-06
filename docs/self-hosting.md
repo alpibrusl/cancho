@@ -200,7 +200,8 @@ the stages found, in place, the way this document corrects its own claims.
 | 3a. The tree | `examples/selfhost/ast.ls` (a module, the parser) and `parser.ls` (a walk that prints the tree) | the same `dump_ast.rs` | The parser **builds the tree** in flat tables and the listing is produced by walking it; the same 621 programs and 52,314 fuzz cases (6 seeds), all comparable ones identical, 29,055 of them refusals |
 | 3b. Declarations (the first half of the checker, complete) | `examples/selfhost/pass1.ls`, `foreign.ls` and `checker.ls`, over a generated `tables.ls`; programs of several files | `check_declarations` (`lex-sys-ir`), the first half of the Rust checker | Same answer, `OK` or the first refusal's rule and span, on every program of the repository alone (633) and with the whole standard library parsed with them (633, 464 of them `OK`), on 169 targeted cases, and on 62,892 fuzz cases (51,534 alone, 11,358 with the library): 62,434 identical, 37,967 of them refusals, none different; 458 are not UTF-8; nothing is skipped |
 | 3c. Bodies, function by function (scalar functions so far) | `examples/selfhost/body.ls` (and `bodies.ls`) | `check_bodies` (`lex-sys-ir`), the Rust checker's body check, answered per function | **First slice.** The port answers `OK`, a refusal, or `SKIP` for each function; every function it answers is the Rust answer: 644 repository programs alone (278 `OK` bodies and 11 refusals among those it answers; 898 function answers skipped), the library's 789 functions with one program (271 `OK`, 518 skipped), 304 targeted cases, and 57,579 fuzz cases (51,588 alone, 5,991 with the library): 57,166 identical, none different; 413 are not UTF-8 |
-| 3d. The rest of the bodies: references, structs, enums, `match`, generics, builtins, linearity, effects, regions | not started | `check_bodies` | |
+| 3d. References and slices of scalars | `examples/selfhost/types.ls` and `body.ls` | `check_bodies` | **Second slice.** Every function the port answers is the Rust answer: 644 repository programs, the library's 789 functions with one program (**437 verified `OK`, 55%**, from 34%), 408 targeted cases (104 for references, regions and slices), and 39,826 fuzz cases (35,352 alone, 4,474 with the library): 39,547 identical, none different; 279 are not UTF-8 |
+| 3e. The rest of the bodies: structs, enums, `match`, `borrow` blocks, generics, builtins, then linearity, effects | not started | `check_bodies` | |
 | 4. Backend | not started | | |
 
 **The method.** A port that builds no tree has nothing to compare, and one that does
@@ -352,6 +353,35 @@ cannot be told from a function it does not handle yet. So the comparison cannot 
 becomes *more* cautious, only one that becomes wrong. `fuzz.py --bodies` and `bodies_diff.py` are the
 harnesses, and `selfhost.rs` runs it in CI over the corpus, the edge cases, and a sample with the
 library.
+
+**Stage 3d: references and slices of scalars.** `types.ls` is the type machinery a reference needs:
+a table of types in the state (a scalar is just a small integer, so it costs nothing), regions as
+integers (a parameter of the function, `static`, or a variable a call makes), `Unifier::unify` and
+`unify_regions`, `outlives` (reflexive and transitive over the declaration's `where` clauses, with
+`static` outliving everything), and `expect_type` with its two coercions: a reference whose region
+outlives the expected one, and a unique reference where a shared one is wanted, never the
+reverse, the referent invariant. A call instantiates the callee's region parameters as fresh
+variables that its arguments solve, then checks the callee's `where` clauses against what they
+solved to (an unsolved variable outlives nothing but itself). Order matters and is the Rust one: a
+reference is unified by uniqueness first, then region, then referent, which decides whether a
+mistake is a `type-mismatch` or a `region-mismatch`.
+
+On top of it `body.ls` gains `*r`, `*r = v`, `s[i]`, `s[i] = v`, `s[a..b]`, `len(s)`, string
+literals (a shared slice of bytes in `static`), `let` with a reference type, and calls whose
+parameters and results are references. A reference is `val` whatever it points at, so nothing here
+is a resource and the linearity half of the checker cannot refuse any of it; that is what made
+this a slice the port could take without the `borrow` blocks, which are where `borrow-conflict`
+lives. What it still skips: references to anything but a scalar or a slice of one, `borrow` and
+`region` blocks, `*s` of a slice, and writing through a slice reference.
+
+Result: with references the port verifies **437 of the library's 789 function bodies (55%)**, up
+from 271 (34%), every one the Rust answer, and 375 `OK` bodies among the repository's own programs,
+up from 278.
+
+The mutation test of `types.ls` (54 operator swaps) killed 40 on the first corpus of 458 targeted
+body cases (after region-variable, `where`-closure and coercion cases were added; 33 before); the 14
+that survive are guards the other conditions already make redundant (`&&` on kinds that are
+checked again below, the bounds of a table index, the fuel of a closure that cannot cycle).
 
 **Size.** `parser.ls` is 1,970 lines (1,760 that are not comment or blank) for the
 Rust parser's 1,507 (1,225): 1.3 to 1.4 times. `lexcore.ls` is 963 lines (897) for the
