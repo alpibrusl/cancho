@@ -1101,6 +1101,14 @@ impl<'a> FuncEmitter<'a> {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.dir_stat(&args)
             }
+            Callee::Builtin(Builtin::DirMode) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.dir_mode(&args)
+            }
+            Callee::Builtin(Builtin::DirOwnMode) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.dir_own_mode(&args)
+            }
             // `docs/signals.md` section 5: the claim.
             Callee::Builtin(Builtin::SignalsWatch) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();

@@ -1152,6 +1152,11 @@ pub fn stat_layout(darwin: bool, aarch64: bool) -> StatLayout {
     }
 }
 
+/// `st_mode`'s permission bits (set-user-id, set-group-id, sticky, and the
+/// nine read/write/execute bits), what `dir_mode` answers
+/// (`docs/directory-listing.md` §3.5). The same on every target.
+pub const PERMISSION_BITS: i64 = 0o7777;
+
 /// `st_mode`'s file-type bits, the same on every target.
 pub const S_IFMT: i64 = 0o170000;
 pub const S_IFREG: i64 = 0o100000;
