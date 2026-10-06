@@ -382,6 +382,37 @@ pub fn extends_path(prefix: &str, target: &str) -> bool {
         || target.as_bytes()[prefix.len()] == b'/'
 }
 
+/// The plain labels owning a `World` discharges: the ones with no argument to
+/// narrow. Named so that something that has to account for *every* label -- the
+/// WASI import table (`wasi_imports.rs`) -- reads the same list the checker does
+/// rather than a copy that can drift.
+pub const WORLD_PLAIN_LABELS: &[&str] = &[
+    "io_read",
+    "io_write",
+    "err_write",
+    "heap",
+    "args",
+    "file_read",
+    "file_write",
+    "dir_read",
+    "dir_write",
+    "conn_accept",
+    "conn_read",
+    "conn_write",
+    "poll",
+    "clock",
+    "signals_read",
+    "child_signal",
+    "pipe_read",
+    "pipe_write",
+];
+
+/// The labels the root `World` discharges the *unnarrowed* way (`FFI_ROOT`): each
+/// is a label that names what it covers (a path prefix, a library, a host, a
+/// signal set, a program).
+pub const WORLD_ROOT_LABELS: &[&str] =
+    &["ffi", "fs_read", "fs_write", "net_out", "net_in", "signals", "exec"];
+
 /// What owning a value of this type authorises outright (§8.2).
 ///
 /// Owning `Io` discharges `io_read`, `io_write` and `err_write`. Owning `World`
@@ -476,35 +507,16 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
         // declaring `[]` is not a gap in the row — it is the parameter list
         // saying something stronger.
         PRELUDE_WORLD => {
-            let mut all = Effects::plain([
-                "io_read",
-                "io_write",
-                "err_write",
-                "heap",
-                "args",
-                "file_read",
-                "file_write",
-                "dir_read",
-                "dir_write",
-                "conn_accept",
-                "conn_read",
-                "conn_write",
-                "poll",
-                "clock",
-                "signals_read",
-                "child_signal",
-                "pipe_read",
-                "pipe_write",
-            ]);
+            let mut all = Effects::plain(WORLD_PLAIN_LABELS.iter().copied());
             // `docs/net.md` §4.1, edition 2 only: `net_out` and `net_in`
             // are two more labels the root discharges the unnarrowed way
             // `ffi` and `fs_read`/`fs_write` already do. An edition-1
             // file's `World` discharges them just the same -- they are
             // simply labels no edition-1 body can ever perform, since it
             // has no way to name `Net` at all.
-            for name in ["ffi", "fs_read", "fs_write", "net_out", "net_in", "signals", "exec"] {
+            for name in WORLD_ROOT_LABELS {
                 all.union(&Effects::new([Label {
-                    name: name.to_owned(),
+                    name: (*name).to_owned(),
                     argument: Some(FFI_ROOT.to_owned()),
                 }]));
             }

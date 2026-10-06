@@ -116,7 +116,7 @@ lex-sys check <file.ls>... [--std] [--output json] [--backend cranelift|llvm]   
 lex-sys run   <file.ls>... [--std] [--backend cranelift|llvm] [-l <name>]... [-L <path>]...   # build, run, exit with the program's status
 lex-sys test  <file.ls>... [--std] [--backend cranelift|llvm]   # run every `fn test_*`, one process each; exit 4 if one failed
 lex-sys ids   <file.ls>... [--std]    # each declaration's content hash
-lex-sys authority <file.ls>... [--std] [--output json]  # what it can reach
+lex-sys authority <file.ls>... [--std] [--output json] [--target <triple>]  # what it can reach
 lex-sys layout    <file.ls>... [--std]  # what every leaf costs, and what packing would save
 lex-sys fmt   <file.ls|dir>... [--check]   # canonical layout, comments kept; --check exits 1 if anything would change
 lex-sys print <file.ls>               # the unit, rendered in canonical form

@@ -46,7 +46,7 @@ usage:
     lex-sys test  <file.ls>... [--std] [--backend cranelift|llvm] [-l <name>]... [-L <path>]...
     lex-sys fmt   <file.ls|dir>... [--check]
     lex-sys ids   <file.ls>... [--std]
-    lex-sys authority <file.ls>... [--std] [--output json]
+    lex-sys authority <file.ls>... [--std] [--output json] [--target <triple>]
     lex-sys layout    <file.ls>... [--std]
     lex-sys print <file.ls>
     lex-sys agent-guidelines
@@ -360,8 +360,9 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
             Ok(ExitCode::SUCCESS)
         }
         "authority" => {
-            let Invocation { inputs, with_std, json, .. } = parse_args(&args[1..], false, false)?;
-            print_authority(&inputs, with_std, json)?;
+            let Invocation { inputs, with_std, json, target, .. } =
+                parse_args(&args[1..], false, false)?;
+            print_authority(&inputs, with_std, json, target.as_ref())?;
             Ok(ExitCode::SUCCESS)
         }
         "layout" => {
@@ -697,19 +698,23 @@ fn compile_to_ir(inputs: &[PathBuf], with_std: bool) -> Result<lex_sys_ir::Progr
     }
 }
 
+/// Is this one of WASI's operating systems (`wasm32-wasip1`, `-wasip2`, `-wasi`)?
+fn is_wasi(triple: &Triple) -> bool {
+    matches!(
+        triple.operating_system,
+        target_lexicon::OperatingSystem::Wasi
+            | target_lexicon::OperatingSystem::WasiP1
+            | target_lexicon::OperatingSystem::WasiP2
+    )
+}
+
 /// The refusals a target adds before any code is generated: what the program
 /// reaches that the target cannot do (`lex_sys_ir::unsupported_on_target`).
 /// Empty for the host and for anything but WASI, whose gaps are the only ones
 /// this knows (`docs/wasm.md`).
 fn target_refusals(program: &lex_sys_ir::Program, target: Option<&Triple>) -> Vec<Refusal> {
     let Some(triple) = target else { return Vec::new() };
-    let wasi = matches!(
-        triple.operating_system,
-        target_lexicon::OperatingSystem::Wasi
-            | target_lexicon::OperatingSystem::WasiP1
-            | target_lexicon::OperatingSystem::WasiP2
-    );
-    if !wasi {
+    if !is_wasi(triple) {
         return Vec::new();
     }
     lex_sys_ir::unsupported_on_target(program, lex_sys_ir::Os::Wasi, &triple.to_string())
@@ -1146,7 +1151,12 @@ fn bounds_its_domain(label: &str) -> bool {
     label != "ffi"
 }
 
-fn print_authority(inputs: &[PathBuf], with_std: bool, json: bool) -> Result<(), Failure> {
+fn print_authority(
+    inputs: &[PathBuf],
+    with_std: bool,
+    json: bool,
+    target: Option<&Triple>,
+) -> Result<(), Failure> {
     let program = compile_to_ir(inputs, with_std)?;
 
     // Every distinct label the reachable set performs, with the value it
@@ -1239,6 +1249,12 @@ fn print_authority(inputs: &[PathBuf], with_std: bool, json: bool) -> Result<(),
         program.funcs.iter().map(|f| f.folded).sum::<usize>() + program.folded_late;
     let folded_calls = program.folded_calls;
 
+    // `--target wasm32-wasip1` (`docs/wasm.md`, W2b): what the row licenses a WASI
+    // module built from this program to import. The host's report is unchanged.
+    let wasi = target
+        .filter(|triple| is_wasi(triple))
+        .map(|triple| (triple.to_string(), lex_sys_ir::wasi_imports(kinds.iter().copied())));
+
     let stdout = io::stdout();
     let mut out = stdout.lock();
     if json {
@@ -1280,7 +1296,25 @@ fn print_authority(inputs: &[PathBuf], with_std: bool, json: bool) -> Result<(),
             writeln!(out, "  \"pure\": [{}],", quoted(&pure))?;
             writeln!(out, "  \"folded_operators\": {folded_operators},")?;
             writeln!(out, "  \"folded_calls\": {folded_calls},")?;
-            writeln!(out, "  \"functions\": {total}")?;
+            match &wasi {
+                None => writeln!(out, "  \"functions\": {total}")?,
+                Some((triple, imports)) => {
+                    writeln!(out, "  \"functions\": {total},")?;
+                    writeln!(out, "  \"wasi\": {{")?;
+                    writeln!(out, "    \"target\": \"{}\",", escaped(triple))?;
+                    writeln!(out, "    \"startup\": [{}],", quoted(&imports.startup))?;
+                    writeln!(out, "    \"required\": [{}],", quoted(&imports.required))?;
+                    writeln!(out, "    \"allowed\": [{}],", quoted(&imports.allowed))?;
+                    let refused: Vec<&str> = imports.refused.iter().map(String::as_str).collect();
+                    let unbounded: Vec<&str> =
+                        imports.unbounded.iter().map(String::as_str).collect();
+                    let unknown: Vec<&str> = imports.unknown.iter().map(String::as_str).collect();
+                    writeln!(out, "    \"refused\": [{}],", quoted(&refused))?;
+                    writeln!(out, "    \"unbounded\": [{}],", quoted(&unbounded))?;
+                    writeln!(out, "    \"unknown\": [{}]", quoted(&unknown))?;
+                    writeln!(out, "  }}")?;
+                }
+            }
             writeln!(out, "}}")?;
             out.flush()
         })();
@@ -1366,6 +1400,32 @@ fn print_authority(inputs: &[PathBuf], with_std: bool, json: bool) -> Result<(),
             }
             if folded_calls > 0 {
                 writeln!(out, "    {folded_calls} calls")?;
+            }
+        }
+        if let Some((triple, imports)) = &wasi {
+            writeln!(out, "a {triple} module built from this program")?;
+            writeln!(out, "    always imports   {}", imports.startup.join(" "))?;
+            let line = |names: &[&str]| {
+                if names.is_empty() { "nothing more".to_owned() } else { names.join(" ") }
+            };
+            writeln!(out, "    must also import {}", line(&imports.required))?;
+            writeln!(out, "    may also import  {}", line(&imports.allowed))?;
+            if !imports.refused.is_empty() {
+                writeln!(
+                    out,
+                    "    REFUSED on this target: {} (`check --target` refuses the program)",
+                    imports.refused.join(" ")
+                )?;
+            }
+            if !imports.unbounded.is_empty() {
+                writeln!(
+                    out,
+                    "    UNBOUNDED by {}: what foreign code imports is the library's, not the row's",
+                    imports.unbounded.join(" ")
+                )?;
+            }
+            if !imports.unknown.is_empty() {
+                writeln!(out, "    not in the table: {}", imports.unknown.join(" "))?;
             }
         }
         out.flush()

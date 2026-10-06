@@ -99,3 +99,69 @@ fn build_refuses_too_not_only_check() {
     let said = String::from_utf8_lossy(&out.stderr);
     assert!(said.contains("threads do not exist on `wasm32-wasip1`"), "{said}");
 }
+
+/// W2b (`docs/wasm.md`): `authority --target wasm32-wasip1` says what the row licenses
+/// a WASI module to import. Text only, so CI runs it; that the *numbers* are what real
+/// modules import is `scripts/wasm_authority_check.py` (110 of 110 on this commit).
+#[test]
+fn authority_reports_what_a_wasi_module_may_import() {
+    let authority = |program: &str, extra: &[&str]| -> String {
+        let out = Command::new(BIN)
+            .args(["authority", "--std"])
+            .args(extra)
+            .arg(repo_root().join(program))
+            .output()
+            .expect("the compiler runs");
+        assert!(out.status.success(), "{program}: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+
+    // A console filter's row is `[heap, io_read, io_write]`, and licenses exactly the two
+    // calls the console is written against (W2a) beyond the startup three.
+    let json = authority(
+        "tests/programs/json_roundtrip.ls",
+        &["--target", "wasm32-wasip1", "--output", "json"],
+    );
+    for line in [
+        "\"target\": \"wasm32-wasip1\"",
+        "\"startup\": [\"args_get\", \"args_sizes_get\", \"proc_exit\"]",
+        "\"required\": [\"fd_read\", \"fd_write\"]",
+        "\"allowed\": [\"fd_read\", \"fd_write\"]",
+        "\"refused\": []",
+        "\"unbounded\": []",
+        "\"unknown\": []",
+    ] {
+        assert!(json.contains(line), "missing `{line}` in:\n{json}");
+    }
+
+    // A label is coarser than a builtin: a program that opens files may use more than it
+    // must, and the report says both.
+    let files = authority(
+        "tests/accept/file_roundtrip.ls",
+        &["--target", "wasm32-wasip1", "--output", "json"],
+    );
+    assert!(files.contains("\"path_open\""), "{files}");
+    assert!(files.contains("\"path_rename\""), "allowed, though this program never renames");
+    let required = files.lines().find(|l| l.contains("\"required\"")).expect("a required line");
+    assert!(!required.contains("path_rename"), "{required}");
+
+    // A program the target cannot do is reported as such, beside the program being refused.
+    let refused =
+        authority("tests/accept/spawn_join.ls", &["--target", "wasm32-wasip1", "--output", "json"]);
+    assert!(refused.contains("\"refused\": [\"conc\"]"), "{refused}");
+
+    // The host's report is not touched: no `wasi` key without a target.
+    let host = authority("tests/programs/json_roundtrip.ls", &["--output", "json"]);
+    assert!(!host.contains("\"wasi\""), "{host}");
+    // `functions` is still the last key, with no trailing comma (the count is the std's to
+    // change, so only its shape is pinned).
+    let mut tail = host.trim_end().lines().rev();
+    assert_eq!(tail.next(), Some("}"), "{host}");
+    let last = tail.next().expect("a last key");
+    assert!(last.starts_with("  \"functions\": ") && !last.ends_with(','), "{last}");
+
+    // And the prose says it too.
+    let text = authority("tests/programs/json_roundtrip.ls", &["--target", "wasm32-wasip1"]);
+    assert!(text.contains("a wasm32-wasip1 module built from this program"), "{text}");
+    assert!(text.contains("must also import fd_read fd_write"), "{text}");
+}

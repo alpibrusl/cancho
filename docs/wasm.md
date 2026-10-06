@@ -11,7 +11,7 @@ wasm build gives **both** -- the static row from `lex-sys authority`, and a
 module whose import section the runtime enforces -- and makes `row ⊆ imports`
 a mechanical check. Defence in depth without a Firecracker VM per unit.
 
-Status: **W0 through W0.4, the errno decision, W1 and W2a (the console without libc stdio) are built** (§W0 results). W1 onward is the plan below.
+Status: **W0 through W0.5, the errno decision, W1, W2a (the console without libc stdio) and W2b (the table and the check) are built** (§W0 results). W1 onward is the plan below.
 
 ---
 
@@ -365,13 +365,95 @@ and keeps answering it.
 
 ---
 
+## W2b results: what the row licenses
+
+`lex-sys-ir/src/wasi_imports.rs` is the table that bridges the two halves of the
+authority fact: the **row** (what the checker says a program does) and the **import
+section** (what the runtime is asked to grant the module, and enforces). For each effect
+label, the WASI preview 1 functions a module built from a program that performs it may
+import. Every program also imports the startup three (`args_get`, `args_sizes_get`,
+`proc_exit`).
+
+Two sets per label, because a label is coarser than a builtin (`dir_write` covers
+create, append, rename, remove and sync; a program with it may use one of them):
+
+- **`allowed`**: every function any builtin under the label can bring in. A module that
+  imports something no label in its row allows has been granted a capability its own row
+  does not account for. This is the half that matters, and the one a check must never
+  let slip.
+- **`required`**: what *every* builtin under the label imports (the intersection). Rows
+  are exact in both directions, so a label in a row is performed by something; a module
+  missing a required import has a row claiming more than the program does.
+
+`lex-sys authority --target wasm32-wasip1` reports them (and `--output json` carries a
+`wasi` object: `startup`, `required`, `allowed`, `refused`, `unbounded`, `unknown`); the
+host's report is unchanged. For the JSON filter: required and allowed are both
+`fd_read`, `fd_write`, which is exactly what its module imports.
+
+**Where the numbers come from.** They are measured, not read off libc, and each row's
+comment says by what: the console programs (`wasm_console_check.py`), one probe per file
+builtin, the directory write driver and the accept fixtures (`wasm_file_check.py
+--imports`), and a clock probe. The rows for the whole label set are checked in CI for
+what CI can see: every label the checker can produce (`WORLD_PLAIN_LABELS` and
+`WORLD_ROOT_LABELS`, now exported from one place, plus `conc`) is classified exactly once
+as supported, refused or unbounded; `required` is inside `allowed`; no row names a
+function WASI preview 1 does not have; and no builtin the target supports carries a label
+the table refuses.
+
+### The check
+
+`scripts/wasm_authority_check.py` builds every program for `wasm32-wasip1`, reads its
+import section, and requires `startup ∪ required ⊆ imports ⊆ startup ∪ allowed`.
+
+| | |
+|---|---|
+| programs | 149 (`tests/accept` and `tests/programs`) |
+| **ok** | **110**, every one inside its row's licence |
+| **FAIL** | **0** |
+| refused by the target (a label WASI cannot do) | 16 |
+| did not build | 8: the four `extern fn` signature fixtures, three timing drivers whose foreign calls do not link, and `listen_accept_bad_fd` (refused by the target's builtin walk; see below) |
+| could not be checked alone | 15: multi-file TLS drivers and a fuzz fixture with no `main` |
+
+**It can fail.** Run against the module W1 built, when the console went through libc stdio,
+the same predicate reports `clock_time_get`, `fd_close`, `fd_fdstat_get` and `fd_seek` as
+imports no label allows, and nothing else. That is the finding W1 made by hand, now a
+check.
+
+### What this does not establish
+
+- **The report is only as complete as the labels.** `authority` derives from effect rows,
+  and a builtin that carries no label contributes nothing to it: `listen(999, 16)` in an
+  edition 2 file reports *no labels at all*. For WASI those are all in the refused
+  families, and `check --target` refuses them by walking **builtins**, not labels, so a
+  program using one is refused regardless. The check found no *supported* builtin that
+  imports without a label, across these 110 programs; that is as strong as the programs.
+- **`ffi` is unbounded.** What foreign code imports is the library's, not the row's, so
+  for such a program only the half that does not depend on it (the required imports)
+  is checked.
+- **The directory rows are measured on three programs** (the directory write driver, and
+  the `directory_handles` and `directory_listing` fixtures); a builtin none of them
+  reaches could add an import. The check is the safety net: it would fail on it.
+
+### Known differences found on the way
+
+`scripts/wasm_file_check.py` parts two and three run the directory drivers
+(`directory_writes.rs`, `directory_modes.rs`) over a tree, native against wasm. Of 18
+directory write cases, **17 are identical**, errnos included. The one difference is
+`dir_sync`, which is `fsync` on a directory descriptor: natively `ok 0`, on WASI `err 9`
+(`EBADF`) under wasmtime 49, which does not let a directory descriptor be synced. A
+durability call that fails with its errno is the honest answer, so it stays a runtime
+failure and is printed every run as a known difference. The permissions probe printed `0`
+for every file on WASI, which is why those builtins are refused (W0.6).
+
+---
+
 ## Milestones
 
 | Milestone | What | Acceptance |
 |---|---|---|
 | **W0** -- spike | `--target wasm32-wasip1`, `examples/hello.ls` runs in wasmtime | **Done**: one example prints the right bytes; conformance map above |
 | **W1** -- a real command | A stdin→stdout JSON filter on `std.json` | **Done**: byte-identical to native over 1,585 documents; the import list is measured, and is wider than the row (§W1 results) |
-| **W2** -- the authority check (**W2a, the console without libc stdio, is done**; the table and the check are next) | `lex-sys authority --target wasm32-wasip1` cross-checked against the module | A test that fails if the module imports anything the row does not explain, **and** if a label has no import (the rows are exact both ways); JSON report carries the import list |
+| **W2** -- the authority check (**W2a and W2b are done**: the console without libc stdio, the label-to-imports table, `authority --target`, and the cross-check) | `lex-sys authority --target wasm32-wasip1` cross-checked against the module | A test that fails if the module imports anything the row does not explain, **and** if a label has no import (the rows are exact both ways); JSON report carries the import list |
 | **W3** -- a pure library | `packages/x509` verify as a **reactor** module (exports, no `main`) | Import section is empty beyond memory; results identical to native on the x509 conformance fixtures; overhead measured |
 | **W4** -- components | `wasip2`, one WIT `resource` mapped to a `res` handle | `wasi:filesystem` descriptor as a linear handle, `own`/`borrow` ↔ `res`/`borrow`; then `examples/serve` as `wasi:http` |
 

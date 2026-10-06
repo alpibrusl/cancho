@@ -48,6 +48,7 @@ mod process;
 mod signals;
 mod socket_os;
 mod target;
+mod wasi_imports;
 
 pub use builtin::*;
 pub use defs::*;
@@ -60,6 +61,7 @@ pub use process::*;
 pub use signals::*;
 pub use socket_os::*;
 pub use target::*;
+pub use wasi_imports::*;
 
 /// Resolve and check an AST, producing IR a backend can lower without failing.
 pub fn lower(ast: &Ast) -> Result<Program, Diagnostic> {
