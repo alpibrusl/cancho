@@ -82,7 +82,11 @@ so the test would be a branch on secret data, never taken but present.
 The final reduction (`poly_finish`) computes `g = h + 5 - 2^130`. It
 takes `keep = g4 >> 63`, which is all ones when `g` is negative (that
 is, when `h < p`), and selects `h & keep | g & ~keep`. There is no `if`
-on the accumulator.
+on the accumulator. *Corrected (review finding B-1, #209): the mask is
+now `value_barrier(g4 >> 63)`, under `edition 6;`. `x >> 63` is exactly
+the spelling LLVM proves to be 0 or -1 and turns back into a `select`
+(`docs/value-barrier.md` §2), and the rule that every secret mask passes
+through the barrier where it is made (§4 there) postdates this module.*
 
 ---
 
@@ -111,6 +115,30 @@ function uses a table indexed by data. Command:
 ```sh
 lex-sys build --std tests/programs/aead_bench.ls --emit obj -o bench.o
 python3 scripts/chacha20_branches.py bench.o     # 0 conditional jumps that are not traps
+```
+
+*Corrected (review findings B-1 and B-6, #209).* "Every function that
+touches secret words" was wider than the check: the eight functions above
+are where the secret arithmetic is, but `block_into`, `xor`, `poly_init`,
+`poly_padded`, `poly1305`, `aead_tag`, `seal` and `open` also hold the
+key, the keystream or `r`, and were not disassembled. The script now
+lists them too (`LOOPS`). They cannot meet the rule above, since they loop
+over a message on purpose, so their conditional jumps other than traps
+are printed for the reader and not counted. Read on LLVM, x86-64 (the
+object built for `x86_64-unknown-linux-gnu` from `aead_driver.ls`, which
+unlike `aead_bench.ls` calls `poly1305` and `open`): 37 such jumps, each
+after a compare of a key, nonce, message or output length with a
+constant or another length, a loop counter, an overflow check on index
+arithmetic jumped over (`jno`), a pointer difference (`xor`'s
+vectorised loop checks whether input and output overlap), or, once in
+`open`, the result of the 16-byte tag comparison (`diff != 0`, public).
+None reads a secret byte. And with the barrier, `poly_finish` compiles
+to no `cmov` at all: the select is the `&`, `|` and `~` written in the
+source. The command is now:
+
+```sh
+lex-sys build --std tests/programs/aead_driver.ls --emit obj -o aead.o
+python3 scripts/chacha20_branches.py aead.o      # 0 conditional jumps that are not traps
 ```
 
 **What is not claimed:** constant time beyond that. No statistical

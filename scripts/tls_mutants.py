@@ -7,7 +7,7 @@ Each mutant is one of the package's files with one deliberate bug. The
 package is copied to a scratch directory, the mutant applied there, and
 `tests/programs/tls_driver.ls` built against it. It runs what
 `conformance/tls.rs` replays: the five tlslite-ng traces (two of them through a
-HelloRetryRequest), the six TLS 1.2 traces against OpenSSL, and the 78
+HelloRetryRequest), the six TLS 1.2 traces against OpenSSL, and the 84
 connections of `tests/vectors/tls/liar.txt`, each answer compared byte for
 byte, and the engine's rules for offering a ticket
 (`tests/vectors/tls/tickets.txt`, through `tests/programs/tls_tickets.ls`).
@@ -82,8 +82,8 @@ MUTANTS = [
      "    if code == x509_verify.unknown_issuer() {\n        return tls_record.x509_unknown_issuer();",
      "    if code == x509_verify.unknown_issuer() {\n        return tls_record.x509_decode();"),
     ("a message allowed to share a record with the next key", "client.ls",
-     "(after == tls_slot.state_wait_extensions() || after == tls_slot.state_connected()) && at < ints[tls_slot.i_hs_fill()]",
-     "(after == tls_slot.state_wait_extensions() || after == tls_slot.state_connected()) && at < 0"),
+     "    if code == 0 && new_key && at < ints[tls_slot.i_hs_fill()] {",
+     "    if code == 0 && new_key && at < 0 {"),
     ("the engine's DRBG key not replaced", "tls.ls", "                key[i] = stream[i];\n", ""),
     ("the engine's slots overlapping", "tls.ls",
      "    return slot * tls_client.bytes_len();", "    return slot * (tls_client.bytes_len() / 2);"),
@@ -257,6 +257,16 @@ MUTANTS = [
      "0, 0, 0, contents(engine.tmeta)[t_resume()] == 1);", "0, 0, 0, false);"),
     ("the obfuscated age without ticket_age_add", "tls.ls",
      "contents(engine.tmeta)[tf(e, 5)] + contents(engine.tmeta)[tf(e, 7)];", "contents(engine.tmeta)[tf(e, 5)];"),
+    # ---- Review findings (#209) ----
+    ("a TLS 1.2 record's header version not checked (review E-1)", "record.ls",
+     "    if int_of(record[1]) != 3 || int_of(record[2]) != 3 {\n        return protocol_version();",
+     "    if false {\n        return protocol_version();"),
+    ("send admitting 22 bytes over the content whatever the suite (review E-2)", "client.ls",
+     "    let overhead = tls_slot.record_overhead(ints);", "    let overhead = 22;"),
+    ("send keeping no room for close_notify (review E-4)", "client.ls",
+     "if tls_slot.out_free(ints) < n + overhead + 2 + overhead {", "if tls_slot.out_free(ints) < n + overhead {"),
+    ("a KeyUpdate allowed to share a record with the next message (review E-8)", "client.ls",
+     " || int_of(message[0]) == tls_message.type_key_update();", ";"),
 ]
 
 

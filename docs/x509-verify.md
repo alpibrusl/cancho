@@ -68,7 +68,10 @@ each of these (`pathological::*`, `rfc5280::*`).
   reduces to for every name in a real chain. A pair of names that differ only in case is "no issuer", and `x509-unknown-issuer`
   says so.
 - **No certificate twice in one path.** That refuses a loop instead of following it (`docs/tls-pure.md` §5.2), and it covers
-  `pathological::intermediate-cycle-*`.
+  `pathological::intermediate-cycle-*`. *Corrected (review finding D-2, #209): "twice" is by position in what the server sent,
+  not by content (`verify.ls`, `in_path`). The same self-issued CA certificate sent at two positions can stand twice in one
+  path. That is no loop: each hop still costs a signature of the 64-signature budget below and one of the depth slots, so the
+  search stays bounded, and the second copy adds no authority the first did not have.*
 - **A budget.** At most 64 signature verifications per `verify`. x509-limbo's `pathological-chain-*` cases send 100
   intermediates with the same subject. Without a budget, backtracking over them is exponential. With one, the worst case is 64
   signatures: about 0.1 s at 1.5 ms each on LLVM for P-256 (`docs/ecdsa.md` §5.4), or 0.6 s at 9.9 ms for P-384 on Cranelift.
@@ -131,7 +134,10 @@ lowercased ASCII, with at most one trailing dot removed.
 `docs/tls-pure.md` §5.3 holds without change. The SAN only; an IP host matches only an `iPAddress` entry, byte for byte, and a
 DNS host only a `dNSName` entry. A wildcard is the whole left-most label, needs two labels after it, and matches exactly one
 label. A dNSName entry that is not a valid name (empty labels, a `*` anywhere else) matches nothing; it does not refuse the
-certificate.
+certificate. *Corrected (review finding D-5, #209): it does not when no CA above it has nameConstraints. Under a constrained CA
+every dNSName of the SAN is constrained (§5.3), and one that is not a valid name cannot be placed inside or outside a subtree,
+so it refuses the chain as `x509-name-constraint` (`names.ls`, `constraints_ok`): a leaf naming `example.com` and
+`example.com.` under a constrained intermediate is refused. That is the safe side; webpki skips such an entry instead.*
 
 ### 5.3 Name constraints
 
@@ -142,7 +148,11 @@ constraints. Among the 30,379 certificates of `limbo.json`, the constraint subtr
 - **`dNSName` subtrees.** A name matches a subtree when it equals it, or ends with `.` followed by it, compared without case. A
   subtree with a leading dot (`.example.com`) matches only proper subdomains. An empty subtree matches every name.
 - **`iPAddress` subtrees** are an address and a mask of the same length, 8 or 32 bytes. An address of the other family never
-  matches. A mask that is not contiguous ones then zeros is unreadable (below).
+  matches. A mask that is not contiguous ones then zeros is unreadable (below). *Corrected (review finding D-3, #209): only
+  when it is read, which is when a certificate below carries an `iPAddress` of the subtree's family (`names.ls`, `subtrees`).
+  The pass that reads the constraints once with no name checks a subtree's length, not its mask, so a CA with such a mask is
+  accepted above a chain with no address of that family. Whenever the constraint would apply, it is refused: no name escapes
+  it.*
 - **What is constrained.** Every `dNSName` and `iPAddress` in the SAN of every certificate below the constraining one. A
   wildcard SAN `*.a.example` is checked as `a.example` against permitted subtrees. *Corrected (§8.3): this said "and as
   itself against excluded ones, as webpki does". As built, against an excluded subtree it is refused when either holds the

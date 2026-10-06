@@ -895,6 +895,13 @@ class Server12(Server):
             vd = bytes([vd[0] ^ 1]) + vd[1:]
         return plain_record(20, b"\1") + self.write.seal(22, message(20, vd))
 
+    def check_request(self):
+        """The client's request, under its application key: sent, so the client took the server's
+        Finished."""
+        self.c.ask(f"W {REQUEST.hex()}")
+        (req,) = self.c.take()
+        assert self.read.open(req) == (23, REQUEST), "the request"
+
 
 def honest12(setup=None):
     def run(s):
@@ -904,9 +911,7 @@ def honest12(setup=None):
         s.c.feed(s.flight12())
         s.client_flight()
         s.c.feed(s.server_finish())
-        s.c.ask(f"W {REQUEST.hex()}")
-        (req,) = s.c.take()
-        assert s.read.open(req) == (23, REQUEST), "the request"
+        s.check_request()
         f = s.c.feed(s.write.seal(23, b"HTTP/1.0 200 OK\r\n\r\ntls 1.2") + s.write.seal(21, b"\1\0"))
         assert f[2] == "4", f"closed: {f}"
         assert s.c.received == b"HTTP/1.0 200 OK\r\n\r\ntls 1.2"
@@ -1246,6 +1251,73 @@ def tickets_not_kept(s):
     f = s.c.feed(s.write.seal(21, b"\1\0"))
     assert f[2] == "4", f"closed: {f}"
     f = s.c.ask("K")
+
+
+# ---- Review findings (#209) ----
+
+@case12("TLS 1.2, a protected record whose header says 03 01", "tls-protocol-version", 70, True)
+def record_version12(s):
+    """The header's version is in the additional data (RFC 5246 §6.2.3.3), which the client builds
+    as 03 03: a record sealed so and relabelled 03 01 on the path is refused (review finding E-1)."""
+    s.start()
+    s.c.feed(s.flight12())
+    s.client_flight()
+    s.c.feed(s.server_finish())
+    record = bytearray(s.write.seal(23, b"relabelled"))
+    record[2] = 1
+    s.c.feed(bytes(record))
+
+
+def fill_then_finish(s, room, overhead, first, second):
+    """Two records queued and not taken, leaving `room` bytes; a record adds `overhead` to its content. A third of 2^14 does not fit, and one
+    that fits but leaves no room for a close_notify after it is not taken either (review finding E-2:
+    `send` admitted 22 bytes over the content, and TLS 1.2 AES-GCM needs 29, as `queue_record`
+    asked of every protected record; the record then failed the connection). Then `finish` queues
+    close_notify, and the connection is closed only once it has (finding E-4: it was marked closed
+    whether or not the alert fitted)."""
+    assert s.c.ask(f"N {first.hex()}")[:2] == [str(len(first)), "ok"], "the first record queued"
+    assert s.c.ask(f"N {second.hex()}")[:2] == [str(len(second)), "ok"], "the second record queued"
+    # The second fits with `overhead` to spare, and a close_notify's 2 + `overhead` do not.
+    for n in (16384, room - overhead - 21):
+        f = s.c.ask(f"N {bytes(n).hex()}")
+        assert f[:2] == ["0", "ok"], f"{n} bytes not taken, nothing failed: {f[:3]}"
+    f = s.c.ask("Q")
+    assert f[:3] == ["0", "ok", "4"], f"closed once taken: {f[:3]}"
+    assert [s.read.open(r) for r in s.c.take()] == [(23, first), (23, second), (21, b"\1\0")], "the records sent"
+
+
+@case12("TLS 1.2, AES-128-GCM, the output queue filled: send answers 0, finish still queues close_notify", "ok")
+def queue_full12(s):
+    s.start()
+    s.suite = 0xc02b
+    s.c.feed(s.flight12())
+    s.client_flight()
+    s.c.feed(s.server_finish())
+    s.check_request()
+    # 3 * (2^14 + 22) bytes of queue, less two records of 29 bytes over their content: 16,410 left.
+    fill_then_finish(s, 16410, 29, bytes(i % 251 for i in range(16384)), bytes(i % 241 for i in range(16366)))
+    f = s.c.feed(s.write.seal(21, b"\1\0"))
+    assert f[2] == "4", f"closed: {f}"
+
+
+@case("the output queue filled: send answers 0, finish still queues close_notify", "ok")
+def queue_full_finish(s):
+    s.start()
+    s.c.feed(s.hello_and_flight())
+    s.check_client_finished()
+    data = bytes(i % 251 for i in range(16384))
+    fill_then_finish(s, 16406, 22, data, data)
+
+
+@case("a KeyUpdate and a NewSessionTicket in one record", "tls-unexpected-message", 10, True)
+def key_update_then_more(s):
+    """A KeyUpdate changes the server's key for the records after it, so the record must end with it
+    (RFC 8446 §5.1; review finding E-8)."""
+    s.start()
+    s.c.feed(s.hello_and_flight())
+    s.check_client_finished()
+    ticket = message(4, (7200).to_bytes(4, "big") + bytes(4) + b"\1\0" + u16(3) + b"abc" + u16(0))
+    s.c.feed(s.write.seal(22, message(24, b"\0") + ticket))
 
 
 def run_case(driver, name, tag, alert, encrypted, fn, server=None):

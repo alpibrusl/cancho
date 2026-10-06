@@ -242,7 +242,9 @@ compares a tag.
   - depth at most 8 certificates, leaf included;
   - the `Certificate` message at most 64 KiB (§7.1);
   - each certificate at most 16 KiB;
-  - no certificate used twice in a path, so a loop is refused, not followed.
+  - no certificate used twice in a path, so a loop is refused, not followed. *Corrected (review finding D-2, #209): no position
+    in the `Certificate` message used twice; two copies of one certificate can both stand in a path, bounded by the signature
+    budget and the depth (`docs/x509-verify.md` §3).*
 - **Per certificate in the path:**
   - the signature, with the issuer's key;
   - the validity: `notBefore <= now <= notAfter`, both inclusive (RFC 5280 §4.1.2.5);

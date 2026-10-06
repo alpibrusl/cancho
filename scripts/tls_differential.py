@@ -19,7 +19,7 @@ scheme is encrypted, so it is not compared.)
 
 **The lying server**, the default:
 
-`scripts/tls_liar.py` holds 80 connections, each a server that changes one
+`scripts/tls_liar.py` holds 84 connections, each a server that changes one
 thing, and what `packages/tls` must do with each: accept, or refuse with a
 tag and the alert RFC 8446 §6.2 names. Its expectations were written from the
 RFC. This runs the same cases, the same server code unchanged, against
@@ -242,7 +242,7 @@ class SClient:
             return self._resume()
         if op == "K":
             return self._kept()
-        if op == "W":
+        if op in ("W", "N"):  # `N` is `W` that leaves the output queued; OpenSSL has no such queue
             data = bytes.fromhex(line.split()[1])
             try:
                 self.proc.stdin.write(data)
@@ -338,9 +338,11 @@ def alert_in(server, recs):
     return None
 
 
-def completed(cls):
-    """`cls.check_client_finished`, noting on the server that it passed."""
-    check = cls.check_client_finished
+def completed(cls, step):
+    """`cls.<step>`, noting on the server that it passed: TLS 1.3's check of the client's Finished,
+    which the client sends once it took the server's, or TLS 1.2's of its request, which it sends
+    once it took the server's Finished (its own came first)."""
+    check = getattr(cls, step)
 
     def wrapped(self, *a, **k):
         out = check(self, *a, **k)
@@ -349,9 +351,8 @@ def completed(cls):
     return wrapped
 
 
-for _cls in (tls_liar.Server, tls_liar.Server12):
-    if "check_client_finished" in _cls.__dict__:
-        _cls.check_client_finished = completed(_cls)
+for _cls, _step in ((tls_liar.Server, "check_client_finished"), (tls_liar.Server12, "check_request")):
+    setattr(_cls, _step, completed(_cls, _step))
 
 
 def openssl_outcome(name, fn, server_class):

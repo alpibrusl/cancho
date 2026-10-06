@@ -1,3 +1,4 @@
+edition 6;
 module std.chacha20;
 import std.bytes;
 
@@ -350,8 +351,11 @@ fn poly_finish[&s, &k, &o](st: &!s [int], key: &k [byte], tag: &!o [byte]) -> []
     g3 = g3 & 0x3ffffff;
     let g4 = wrapping_sub(wrapping_add(h4, c), 0x4000000);
 
-    // All ones when `g4 < 0` (keep `h`), zero otherwise (take `g`).
-    let keep = g4 >> 63;
+    // All ones when `g4 < 0` (keep `h`), zero otherwise (take `g`). The
+    // mask is secret, so it passes through `value_barrier` where it is
+    // made (`docs/value-barrier.md` §4; review finding B-1, #209): LLVM
+    // can prove `x >> 63` is 0 or -1 and turn the select into a branch.
+    let keep = value_barrier(g4 >> 63);
     let take = ~keep;
     h0 = h0 & keep | g0 & take;
     h1 = h1 & keep | g1 & take;

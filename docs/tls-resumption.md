@@ -111,7 +111,10 @@ tls.set_ticket_max_age(engine, seconds)      // §3 rule 4; default 3,600
   Certificate or CertificateVerify, with the PSK in the key schedule (`early_secret` from the PSK, not zeros). Without it, the full
   handshake, verified.
 - **HelloRetryRequest with a PSK:** the second ClientHello recomputes the binder over the new transcript (§4.2.11.2), and the
-  ticket age is recomputed.
+  ticket age is recomputed. *Corrected (review finding E-6, #209): the age is not recomputed. The second ClientHello sends the
+  `obfuscated_ticket_age` computed at `start_psk` again (`client.ls`, `send_client_hello`), since the engine is given no clock
+  between the two flights. So it is understated by the HelloRetryRequest's round trip, within the tolerance RFC 8446 §4.2.11.1
+  leaves to the server, as the first connection's duration overstates it (§11). Only the binder is recomputed.*
 
 **Refusals, each with its tag** (CLAUDE.md), all `tls-` and all a failed connection:
 - the ServerHello selects an identity other than 0 (`tls-illegal-psk`, a new tag);
