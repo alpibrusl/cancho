@@ -1,0 +1,62 @@
+// docs/atomics.md section 2: a data race the checker ACCEPTS today. `&!r` is `val`, so `let a = r; let b = r;`
+// is two copies of one pointer (aliasing.md route 2), and `spawn` takes one pointer-width reference per thread
+// (threads.md section 3 claims the aliasing rule forbids a second writer; it does not). Two threads each add 1 to
+// one counter 200,000,000 times without synchronisation. Prints `E` if no update was lost (the answer is
+// 400,000,000) and `L` if some were. Measured: `L` on every run, both backends, arm64 macOS and x86-64 Linux.
+// The control (join the first thread before spawning the second) prints `E`.
+//
+// Run: lex-sys run benches/atomics/race.ls --backend cranelift     (and --backend llvm)
+
+edition 6;
+
+struct Counter {
+    n: int,
+}
+
+fn work[&r](c: &!r Counter) -> [] int {
+    var i = 0;
+    while i < 200000000 {
+        c.n = c.n + 1;
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn run[&i](io: &!i Io) -> [io_write, conc] int {
+    var c = Counter { n: 0 };
+    borrow mut c as &!r in {
+        let a = r;
+        let b = r;
+        let fa = work;
+        let fb = work;
+        let ta = spawn(a, fa);
+        let tb = spawn(b, fb);
+        let x = join(ta);
+        let y = join(tb);
+    }
+    if c.n == 400000000 {
+        putchar(io, 69);
+    } else {
+        putchar(io, 76);
+    }
+    putchar(io, 10);
+    return c.n;
+}
+
+fn main(world: World) -> [conc] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    var i0 = io;
+    var code = 0;
+    borrow mut i0 as &!i in {
+        code = run(i);
+    }
+    release(i0);
+    return 0;
+}

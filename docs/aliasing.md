@@ -249,6 +249,11 @@ In the order that would make it worth reopening:
 | **Parallel lanes** | Threads, or the GPU of `gpu.md` §4 | The *correctness* argument, which today is nil: on one thread, two aliasing writes are defined and ordered. Two lanes writing through aliasing references is the race a checker should catch, and that is when this stops being about speed |
 | **Provenance in signatures** | Lifetimes, in some form the non-goals can live with | Route 3, and with it the word "unique" |
 
+> **Update: threads exist, and the second condition is met.** `spawn` (#128) lets two threads hold copies of one
+> `&!`; the checker accepts it and the writes race. Measured in `atomics.md` §2 (`benches/atomics/race.ls`: two
+> threads, one counter, updates lost on every run on both backends). The correctness argument below is no longer
+> nil. Nothing here changed: routes 2 and 3 are still open.
+
 The first two are conditions, not work items. If both arrive, the third
 is a milestone with a design document of its own, and this one is its
 §1.
