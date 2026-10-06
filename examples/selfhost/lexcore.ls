@@ -680,10 +680,10 @@ fn string_lit[&r](text: &r [byte], start: int) -> [] Step {
             return Step::Fail(literal_form(), start, i);
         }
         if at(text, i) == '\\' {
-            // A backslash as the very last byte leaves the loop with `i`
-            // still short of the end: see the report on this port.
+            // A backslash with nothing after it is the file ending inside the
+            // literal (#294).
             if i + 1 >= n {
-                return Step::Token(Tok::Str, start, i + 1);
+                return Step::Fail(literal_form(), start, n);
             }
             if !escape_ok(at(text, i + 1), '"') {
                 return Step::Fail(unknown_escape(), i, char_end(text, i + 1));
