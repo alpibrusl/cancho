@@ -973,6 +973,50 @@ fn binding_the_wrong_port_traps() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `connect` and `bind` are operands like any `int` call, on both backends.
+/// The LLVM backend refused `connect(..) < 0` and `bind(..) + 1` as "failed to
+/// generate code" (its scalar-kind inference had no arm for either node), the
+/// same gap `filesystem.rs`'s `a_file_op_is_an_operand_on_both_backends` pins
+/// for `fs_read`/`fs_write`. The dialled port is free, so the connection is
+/// refused; the bound one is free, so the bind succeeds.
+#[test]
+fn connect_and_bind_are_operands_on_both_backends() {
+    let dir = scratch("net-operand");
+    let source = dir.join("operand.ls");
+    std::fs::write(
+        &source,
+        format!(
+            "edition 2;\n\
+             fn main(world: World) -> [] int {{\n\
+                 let Split {{ io, ffi, fs, heap, args, net }} = split(world);\n\
+                 release(args); release(heap); release(ffi); release(fs); release(io);\n\
+                 var score = 0;\n\
+                 borrow net as &n in {{\n\
+                     if connect(n, \"127.0.0.1\", {refused}) < 0 {{ score = score + 1; }}\n\
+                     if bind(n, {free}) + 1 > 0 {{ score = score + 2; }}\n\
+                 }}\n\
+                 release(net);\n\
+                 return score;\n\
+             }}\n",
+            refused = free_port(),
+            free = free_port(),
+        ),
+    )
+    .expect("a writable fixture");
+    for backend in ["cranelift", "llvm"] {
+        let exe = dir.join(format!("operand-{backend}"));
+        let build = Command::new(BIN)
+            .args(["build".as_ref(), source.as_os_str(), "--backend".as_ref(), backend.as_ref()])
+            .args(["-o".as_ref(), exe.as_os_str()])
+            .output()
+            .expect("the compiler runs");
+        assert!(build.status.success(), "`{backend}`: {}", String::from_utf8_lossy(&build.stderr));
+        let run = Command::new(&exe).output().expect("the compiled program runs");
+        assert_eq!(run.status.code(), Some(3), "`{backend}`: both comparisons should hold");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 // ---------------------------------------------------------------------
 // `examples/agent_guest/` and `examples/agent_supervisor/` -- the
 // guest/supervisor exchange over plain HTTP (`docs/net.md` §5's #125

@@ -61,6 +61,14 @@ impl<'a> FuncEmitter<'a> {
             // `Expr::UnboxedSlice` arms are `unreachable!()` inside
             // `call()` for the same reason) -- both always answer `int`.
             Expr::Len(_) | Expr::UnboxedSlice { .. } => Ok(LKind::I64),
+            // `fs_read`/`fs_write`, `connect` and `bind` are their own
+            // nodes too (the prefix or bound travels with them), and
+            // `lower/memory.rs`/`lower/net.rs` type all four `int` -- so
+            // `fs_read(fs, p, buf) == 32` is an operand like any call. The
+            // other capability nodes (`OpenFile`, `PathOp`, `ExecSpawn`,
+            // `TcpListen`, `TcpConnect`) answer tagged enums, which no
+            // operator takes.
+            Expr::FileOp { .. } | Expr::Connect { .. } | Expr::Bind { .. } => Ok(LKind::I64),
             // `join(t)` is its own node too: its kind is the thread's result
             // type, which is how `join(a) + join(b)` can be an operand.
             Expr::Joined { ret, .. } => leaves_of(ret, self.program)?
@@ -132,6 +140,7 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::CopyInto
                     | Builtin::IndexOfByte
                     | Builtin::ConnDetach
+                    | Builtin::Trap
                     | Builtin::Release,
                 ) => Ok(LKind::I64),
                 Callee::Builtin(Builtin::IsNan | Builtin::ByteOf) => Ok(LKind::I8),
