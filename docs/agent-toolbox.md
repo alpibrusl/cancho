@@ -114,10 +114,15 @@ disagree (§2.5).
 * **Not a sandbox.** `docs/filesystem.md` §2.1 says `Fs` "is not a
   sandbox, and this document will not pretend otherwise"; that stands.
   Containment against a hostile caller is lex-os's job.
-* **Not faster than the incumbents.** Appendix B measures `seek` at roughly
-  3 to 5 times slower than GNU `grep` on one input (and slower still than
-  `rg`). Performance is reported (§7.1, M9) and gated only against
-  pathologies, never against GNU.
+* **Not a speed claim.** Appendix B's first probe measured `seek` at roughly
+  3 to 5 times slower than GNU `grep` on one input; that was the probe, and the
+  built tools have since closed it: `lexsys-tools`' README (64 MiB through a
+  pipe, minimum of 7 interleaved rounds, Linux x86-64) has `seek` at 0.49 s
+  against `grep -F -n -b` at 0.51 s and `rg` at 0.39 s, and several tools ahead
+  of their incumbents, with `hash` the one behind (0.52 s against `sha256sum`'s
+  0.17 s, which is OpenSSL's assembly). Performance is still reported (§7.1,
+  M9) and gated only against pathologies, never against GNU: the claim of these
+  tools is the envelope, not the speed.
 * **No process spawning, no network by default, no delete.** The language
   has no `exec` builtin, so `find -exec` and `xargs` are not a thing the
   toolbox can be tempted into. No tool deletes (D15): that is what
@@ -988,7 +993,7 @@ honest one.
 
 | # | Tool | Verdict | Gain over the incumbent | Expected row | Needs |
 |---|---|---|---|---|---|
-| 1 | **`seek`** (literal search) | **Build, exemplar (S1)** | tagged errors; stable bytes; `{"b64"}` for binary; per-file results with `end` record; **no `fs_write`, `net`, `ffi` provable**. *Not* speed (roughly 3–5× slower than `grep`, Appendix B) or regex | `args`, `file_read`, `fs_read("")`, `heap`, `io_write` (+`io_read` only if stdin is accepted; +`err_write`) | L1 (for a trustworthy `ok`); D8 rewrite |
+| 1 | **`seek`** (literal search) | **Build, exemplar (S1)** | tagged errors; stable bytes; `{"b64"}` for binary; per-file results with `end` record; **no `fs_write`, `net`, `ffi` provable**. *Not* speed as the claim (the first probe was 3–5× slower than `grep`, Appendix B; the built tool is level with it, `lexsys-tools`' README) or regex | `args`, `file_read`, `fs_read("")`, `heap`, `io_write` (+`io_read` only if stdin is accepted; +`err_write`) | L1 (for a trustworthy `ok`); D8 rewrite |
 | 2 | **`write` / `replace`** (atomic, precondition, dry-run) | **Build, mutating exemplar (S1)** | **the one place no incumbent has an equivalent**: `sed -i`/`tee`/`>` are blind; precondition hash, atomic rename, tagged conflicts, idempotence, `--dry-run`. Authority: `fs_write` + `file_write`, no `net` | `args`, `heap`, `file_read`, `fs_read("")`, `file_write`, `fs_write("")`, `io_read` (content on stdin) | L4 for hashes over 64 KiB (see below); L1 |
 | 3 | **`peek`** (range read: head/tail/`sed -n`/`cat -n`/`wc`) | **Build (B1)** | line numbers and offsets, binary detection, a `next` cursor, size, one call instead of `wc -l; sed -n a,bp`; it is the agent's most frequent operation | as `seek` | D8 |
 | 4 | **`jsonq`** (path query, JSON Pointer, RFC 6901) | **Build, small, and refuse to grow (B1)** | strict RFC 8259 + UTF-8 validation (`docs/json.md` §3), depth cap, error *position* as data, authority is `heap` + read-only | `args`, `heap`, `io_read`/`fs_read("")`, `io_write` | L13 (24× memory) |
