@@ -96,6 +96,13 @@ one counter and nothing more, and it is the reason a second asker cannot be sati
 
 ## 2. The hole: nothing stops two threads writing one value
 
+> **Closed for `spawn` since this was written** (`aliasing.md` §6.1). `spawn` lends the `&!` it is given until
+> `join`, so the program below is refused (`tests/reject/spawn_two_copies_of_unique.ls`); the join-first control is
+> accepted (`tests/accept/spawn_unique_join_first.ls`). `benches/atomics/race.ls` and `sb.ls` no longer compile: they
+> are kept as the record of what was measured. Everything below describes the checker *before* that change, and
+> stands as the measurement. It also means §7.1's plain-access litmus test (`sb.ls`) cannot be rerun without a
+> reference the checker still lets two threads share (§1.3's atomics are exactly that, once they exist).
+
 `threads.md` §3 argues that no new soundness rule is needed because "the aliasing rule ... forbids a second writer
 while a reference is live ... and a spawned thread joined before its region closes is just a second writer the
 checker already refuses to admit exists". `aliasing.md` says the rule is not that: `&!` is **a lock on the binding**,
@@ -642,7 +649,7 @@ exists, the rows version has no safe design, and the aggregate version is what t
 | Does a per-thread `region` work inside a spawned thread? | `parallelism.md` §8.1 says the arena is private; **no fixture** |
 | `pthread_create`'s cost | Not recorded anywhere here; it decides the chunk size of §9.2's shared-nothing fallback |
 | Is `Atomic`'s extra indirection (§3.2) ever worth removing? | Only a program that measures it can say; A is the answer if so |
-| Should the aliasing hole of §2 be closed for `spawn` first? | Separate design. Atomics are unaffected, but every *non*-atomic use of threads depends on it |
+| Should the aliasing hole of §2 be closed for `spawn` first? | **Done**, `aliasing.md` §6.1. Atomics were unaffected by it |
 | Is x86 SC-store cost (6 ns, §4.1) ever on a program's critical path? | Unmeasured outside the C microbenchmark; the trigger for weaker orderings |
 | Could the work counter be a `Clock`-style capability, so a program must be *granted* shared state? | Considered and not taken (§5.1: the reference is the authority); revisit if `lex-os` wants to deny it |
 

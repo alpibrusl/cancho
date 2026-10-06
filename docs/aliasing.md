@@ -250,9 +250,50 @@ In the order that would make it worth reopening:
 | **Provenance in signatures** | Lifetimes, in some form the non-goals can live with | Route 3, and with it the word "unique" |
 
 > **Update: threads exist, and the second condition is met.** `spawn` (#128) lets two threads hold copies of one
-> `&!`; the checker accepts it and the writes race. Measured in `atomics.md` §2 (`benches/atomics/race.ls`: two
-> threads, one counter, updates lost on every run on both backends). The correctness argument below is no longer
-> nil. Nothing here changed: routes 2 and 3 are still open.
+> `&!`; the checker accepted it and the writes raced. Measured in `atomics.md` §2 (`benches/atomics/race.ls`: two
+> threads, one counter, updates lost on every run on both backends). The correctness argument is no longer
+> nil. **§6.1 closes it for `spawn`, and only for `spawn`**: routes 2 and 3 are still open everywhere else.
+
+### 6.1 What `spawn` does about it
+
+Making `&!` linear everywhere (route 2's move rule plus implicit reborrow) is the general fix, and §4.2 says what it
+costs: 1,943 read sites become reborrows that end at a scope the checker never asks about. A thread needs much less.
+It needs the one fact route 2 lacked at one call: *this reference has been given away and is not back yet.*
+
+`spawn` with a `&!` payload now **lends** the reference to the thread, and `join` ends the loan
+(`linear.rs`: `Lease`, `Alias`, `Bind`, `Join`; `lower/conc.rs`). Concretely:
+
+* every `&!` binding has a **root** -- itself, or, when it was initialised or assigned from names that are `&!`
+  references (`let a = r`, `let h = head(r)`), the roots of those. That is the provenance route 2 and the one-call
+  form of route 3 need, kept as a set of slots rather than as a borrow checker;
+* `spawn(p, f)` records a lease on `p`'s roots. Spawning a second payload with a root already leased, or **reading
+  any `&!` with a leased root** (a copy, a field write through it, a call passing it) is `borrow-conflict` until the
+  handle's `join`. The spawning thread is a second writer too;
+* the lease ends at `join(h)` where `h` is the binding that took the handle, or at `join(spawn(..))`. A branch must
+  agree on whether it is held, and a loop must leave it as it found it;
+* a handle passed on any other way (to a function that joins it, into a tuple) keeps its lease for the rest of the
+  borrow. That **refuses** a program that would have been fine rather than admitting one that races. (`tests/reject/spawn_unique_loop_lease_survives.ls`, `spawn_unique_branches_disagree.ls`.)
+
+What it does not close, stated so it is not read as more:
+
+* **a `&!` parameter handed in twice** (`f(s, s)`, route 1) -- two parameters are two roots here. `f` can spawn both;
+* **a `&!` fetched out of a slice of references** -- `alloc_slice[r](4, s)`'s four aliases of one object (§3, route 2's
+  slice case), `spawn(many[0], f)` and `spawn(many[1], f)`. The payload reads `many`, a slice, not a `&!`, so no root
+  is found and no lease is taken. A call that is *passed* the reference (`head(r)`) is followed, because the `&!` is
+  read as a name;
+* **disjoint writes through two `&!` slices of one buffer** (`thread-payloads.md` T-P3). Not refused or admitted by
+  this; a slice payload is still one leaf too wide;
+* the object under `borrow shared` is `&`, which nothing writes through, and is unaffected.
+
+**Cost, measured:** across the repository `cargo test --workspace` and the 82-program corpus of §2, the only programs
+this refused were `benches/atomics/race.ls` and `benches/atomics/sb.ls`, the two that exist to demonstrate the hole.
+They no longer compile and are kept, with their measurements, as the record. No `tests/accept/` fixture, example or
+package spawned a `&!` twice.
+
+**Edition and hash.** It is a soundness tightening, which `editions.md`'s opening says should stay a refusal and not
+become an edition: a program it refuses was already racing, so there is no old edition worth preserving. The refusal
+is raised by the linearity replay from events lowering already walks; the IR it emits is the same, so no content hash
+changes (`identity.rs` is unaffected, and the reject fixtures are the only new files).
 
 The first two are conditions, not work items. If both arrive, the third
 is a milestone with a design document of its own, and this one is its

@@ -14,7 +14,9 @@
 > single-threaded rule.** It forbids a second writer while a reference
 > is live, full stop, and a spawned thread joined before its region
 > closes is just a second writer the checker already refuses to admit
-> exists.
+> exists. *(That was not true when this was written: see the correction
+> in §3. It is true now, because `spawn` lends the `&!` it is given
+> until the handle is joined -- `aliasing.md` §6.1.)*
 >
 > **What is built, and what is deliberately narrower than §2's own
 > illustrative signature:** `spawn`'s `payload` and `body`'s return type
@@ -173,16 +175,19 @@ conditions apply to it. What replaces them:
 
 ## 3. Why this needs no new soundness rule, only a new obligation
 
-> **Corrected (`atomics.md` §2, measured): the argument below is true of a *moved* unique reference and false of
-> `&!` in general, and the claim that the checker "already refuses to admit" a second writer is wrong.** `&!r T` is
+> **Corrected twice. First (`atomics.md` §2, measured): the argument below was true of a *moved* unique reference and
+> false of `&!` in general, and the claim that the checker "already refuses to admit" a second writer was wrong. Then
+> closed (`aliasing.md` §6.1): a `&!` given to `spawn` is now lent to that thread until its handle is joined, and a
+> second spawn of a copy of it, or any use of it by the spawning thread meanwhile, is refused
+> (`tests/reject/spawn_two_copies_of_unique.ls`, `spawn_same_unique_twice.ls`, `spawn_unique_used_while_lent.ls`;
+> `tests/accept/spawn_unique_join_first.ls` is the control that stays accepted). The paragraph below is what was
+> measured before that change.** `&!r T` is
 > `val` (`aliasing.md` §1): `let a = r; let b = r;` is two copies of one pointer, and `spawn(a, ..)` and
 > `spawn(b, ..)` each take one. That compiles on both backends and loses updates: two threads adding 1 to one
 > counter 200,000,000 times each ended short of 400,000,000 on every run, on arm64 macOS and x86-64 Linux
 > (`benches/atomics/race.ls`; the control that joins the first thread before spawning the second is exact). So a
 > *data race on an ordinary value is expressible today*; what is sound is a shared `&` (nothing writes through it)
-> and a `&!` that is the only copy. The one-reference-per-thread tests in §5 do not exercise the copy. Closing it
-> for `spawn` is a separate design (provenance, or refusing a copied `&!` at the call); `atomics.md` does not
-> depend on it.
+> and a `&!` that is the only copy. The one-reference-per-thread tests in §5 do not exercise the copy.
 
 The question `function-values.md` §4.1 raised about closures — "a
 captured capability is authority no parameter names" — does not apply
@@ -261,8 +266,8 @@ What this buys, precisely:
 - **No shared *mutable* state.** (Designed for one word at a time in
   [`atomics.md`](atomics.md).) `&!r T` crossing means the unique
   reference moved, not that two threads can now both mutate the same
-  memory -- though, per the correction in §3, nothing stops a copied
-  `&!` from doing exactly that. A `Mutex`-shaped capability — lock, get a unique reference
+  memory -- and, per the correction in §3, a copied `&!` is refused at
+  the second `spawn`, so it cannot do exactly that either. A `Mutex`-shaped capability — lock, get a unique reference
   scoped to the lock, unlock — is a real, separate design, parallel
   to how `Fs(prefix)` turned "files" into a capability rather than a
   raw handle (`filesystem.md`). Not proposed here.
