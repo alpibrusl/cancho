@@ -622,7 +622,18 @@ pub(crate) fn emit_module(
     if ret.len() > 1 {
         return Err((None, "the entry point's return type has more than one leaf".to_owned()));
     }
-    text.push_str("define i32 @main(i32 %argc, ptr %argv) {\n");
+    // A C compiler targeting WebAssembly renames `main(argc, argv)` to
+    // `__main_argc_argv`, because the wasm ABI cannot give one name two
+    // signatures; wasi-libc's `__main_void` calls that name and traps on
+    // the weak undefined symbol if it is missing. We write the IR by hand,
+    // so we write the renamed symbol too (`docs/wasm.md`).
+    let main_symbol = match triple.architecture {
+        target_lexicon::Architecture::Wasm32 | target_lexicon::Architecture::Wasm64 => {
+            "__main_argc_argv"
+        }
+        _ => "main",
+    };
+    text.push_str(&format!("define i32 @{main_symbol}(i32 %argc, ptr %argv) {{\n"));
     text.push_str("entry:\n");
     // `docs/arguments.md` §3: written exactly once, before any lex-sys
     // code runs, and never again -- `lex-sys-codegen`'s own `emit_c_main`
@@ -644,5 +655,121 @@ pub(crate) fn emit_module(
     }
     text.push_str("}\n");
 
+    if triple.architecture == target_lexicon::Architecture::Wasm32 {
+        text = wasm32_size_t_shims(&text);
+    }
     Ok(text)
+}
+
+/// One libc function whose C signature mentions `size_t`/`ssize_t`.
+///
+/// `kind` names a parameter or result: `ptr`, `i32`, `i64` (a fixed-width
+/// integer, e.g. WASI's 64-bit `off_t`), `size` (`size_t`) or `ssize`.
+struct SizeTFn {
+    name: &'static str,
+    ret: &'static str,
+    params: &'static [&'static str],
+}
+
+/// Every libc function this backend calls with a `size_t` in it
+/// (`docs/wasm.md` §W0). `lex-sys`'s `int` is `i64` everywhere, but C's
+/// `size_t` is 4 bytes on `wasm32`, and `wasm-ld` treats a call whose type
+/// disagrees with the definition as a *warning* that swaps in a trap, so the
+/// program links and then dies at the first `malloc`.
+const SIZE_T_FNS: &[SizeTFn] = &[
+    SizeTFn { name: "malloc", ret: "ptr", params: &["size"] },
+    SizeTFn { name: "calloc", ret: "ptr", params: &["size", "size"] },
+    SizeTFn { name: "memchr", ret: "ptr", params: &["ptr", "i32", "size"] },
+    SizeTFn { name: "memmove", ret: "ptr", params: &["ptr", "ptr", "size"] },
+    SizeTFn { name: "strlen", ret: "size", params: &["ptr"] },
+    SizeTFn { name: "strncmp", ret: "i32", params: &["ptr", "ptr", "size"] },
+    SizeTFn { name: "fwrite", ret: "size", params: &["ptr", "size", "size", "ptr"] },
+    SizeTFn { name: "read", ret: "ssize", params: &["i32", "ptr", "size"] },
+    SizeTFn { name: "write", ret: "ssize", params: &["i32", "ptr", "size"] },
+    SizeTFn { name: "pread", ret: "ssize", params: &["i32", "ptr", "size", "i64"] },
+    SizeTFn { name: "pwrite", ret: "ssize", params: &["i32", "ptr", "size", "i64"] },
+];
+
+/// Declare each [`SIZE_T_FNS`] entry the module uses with its real 32-bit
+/// signature, and route the module's calls through a wrapper that takes the
+/// `i64` the rest of this backend passes.
+///
+/// A size above `u32::MAX` is clamped to it rather than truncated: the
+/// allocation then fails (and traps, as an out-of-memory `malloc` does on
+/// every target) instead of quietly asking for a few bytes. A result is
+/// widened back, signed for `ssize_t` so `-1` stays `-1`.
+///
+/// This is a post-pass over the emitted text, a W0 scaffold: threading the
+/// target's `size_t` through the ~25 call sites is the permanent fix, and
+/// `--fatal-warnings` at link time is what keeps a missed one loud.
+fn wasm32_size_t_shims(text: &str) -> String {
+    fn widen(kind: &str) -> &str {
+        if kind == "size" || kind == "ssize" { "i64" } else { kind }
+    }
+    fn narrow(kind: &str) -> &str {
+        if kind == "size" || kind == "ssize" { "i32" } else { kind }
+    }
+    let mut text = text.to_owned();
+    for f in SIZE_T_FNS {
+        let c_signature = format!(
+            "{} @{}({})",
+            widen(f.ret),
+            f.name,
+            f.params.iter().map(|k| widen(k)).collect::<Vec<_>>().join(", ")
+        );
+        let declare = format!("declare {c_signature}\n");
+        if !text.contains(&declare) {
+            continue;
+        }
+        let wrapper = format!("lexsys_wasm32_{}", f.name);
+        // Calls first, so the wrapper's own call to the real symbol is not renamed.
+        let call = format!("@{}(", f.name);
+        text = text
+            .lines()
+            .map(|line| {
+                if line.trim_start().starts_with("declare ") {
+                    line.to_owned()
+                } else {
+                    line.replace(&call, &format!("@{wrapper}("))
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        let mut body = String::new();
+        let mut args = Vec::new();
+        for (i, kind) in f.params.iter().enumerate() {
+            if *kind == "size" {
+                body.push_str(&format!(
+                    "  %big{i} = icmp ugt i64 %a{i}, 4294967295\n  %lo{i} = trunc i64 %a{i} to i32\n  \
+                     %n{i} = select i1 %big{i}, i32 -1, i32 %lo{i}\n"
+                ));
+                args.push(format!("i32 %n{i}"));
+            } else {
+                args.push(format!("{kind} %a{i}"));
+            }
+        }
+        let params: Vec<String> =
+            f.params.iter().enumerate().map(|(i, k)| format!("{} %a{i}", widen(k))).collect();
+        let real = format!("{} @{}({})", narrow(f.ret), f.name, args.join(", "));
+        body.push_str(&format!("  %r = call {real}\n"));
+        let result = match f.ret {
+            "size" => "  %w = zext i32 %r to i64\n  ret i64 %w\n".to_owned(),
+            "ssize" => "  %w = sext i32 %r to i64\n  ret i64 %w\n".to_owned(),
+            other => format!("  ret {other} %r\n"),
+        };
+        let real_declare = format!(
+            "declare {} @{}({})\n",
+            narrow(f.ret),
+            f.name,
+            f.params.iter().map(|k| narrow(k)).collect::<Vec<_>>().join(", ")
+        );
+        let define = format!(
+            "define internal {} @{wrapper}({}) {{\n{body}{result}}}\n",
+            widen(f.ret),
+            params.join(", ")
+        );
+        text = text.replacen(&declare, &format!("{real_declare}{define}"), 1);
+    }
+    text
 }

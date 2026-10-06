@@ -319,7 +319,15 @@ pub fn cmd_build(args: &[String]) -> Result<ExitCode, Failure> {
             std::fs::create_dir_all(parent)
                 .map_err(|e| environment(format!("cannot create `{}`: {e}", parent.display())))?;
         }
-        crate::build(&inputs, &out, Emit::Exe, bin.std, Backend::Llvm, &[], &[])?;
+        crate::build(
+            &inputs,
+            &out,
+            Emit::Exe,
+            bin.std,
+            crate::Codegen { backend: Backend::Llvm, target: None },
+            &[],
+            &[],
+        )?;
         println!("built {}", out.display());
     }
     Ok(ExitCode::SUCCESS)

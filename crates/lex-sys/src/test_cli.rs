@@ -260,8 +260,13 @@ fn describe(status: &std::process::ExitStatus) -> String {
 }
 
 pub fn cmd_test(args: &[String]) -> Result<ExitCode, Failure> {
-    let crate::Invocation { inputs, with_std, backend, link_libs, link_paths, .. } =
+    let crate::Invocation { inputs, with_std, backend, target, link_libs, link_paths, .. } =
         parse_args(args, false, true)?;
+    if target.is_some() {
+        // `test` runs each program on this host; a foreign target is not wired up
+        // (`docs/wasm.md`), and ignoring the flag would test the wrong build.
+        return Err(crate::usage("`test` does not take `--target` yet"));
+    }
 
     let tests = discover(&inputs)?;
     if tests.is_empty() {
@@ -297,7 +302,15 @@ fn run_all(
     let mut program: Vec<PathBuf> = inputs.to_vec();
     program.push(main_path);
     let exe = dir.join("runner");
-    build(&program, &exe, Emit::Exe, with_std, backend, link_libs, link_paths)?;
+    build(
+        &program,
+        &exe,
+        Emit::Exe,
+        with_std,
+        crate::Codegen { backend, target: None },
+        link_libs,
+        link_paths,
+    )?;
 
     println!("running {} test{}", tests.len(), if tests.len() == 1 { "" } else { "s" });
     let mut failures: Vec<(String, String, Vec<u8>, Vec<u8>)> = Vec::new();

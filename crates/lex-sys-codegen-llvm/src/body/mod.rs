@@ -113,6 +113,10 @@ impl<'a> FuncEmitter<'a> {
         match self.triple.architecture {
             target_lexicon::Architecture::X86_64 => Ok("ud2"),
             target_lexicon::Architecture::Aarch64(_) => Ok("udf #0xc11f"),
+            // WebAssembly's own trap: the engine stops the instance and the
+            // host reports it (`docs/wasm.md`; wasmtime exits 134, not a
+            // signal), so the exit code differs from native's `SIGILL`.
+            target_lexicon::Architecture::Wasm32 => Ok("unreachable"),
             other => Err(format!(
                 "the LLVM backend's checked arithmetic has no measured trap instruction for \
                  `{other}` -- only x86-64 and aarch64 are measured (docs/llvm-backend.md §3.2, §3.3)"
