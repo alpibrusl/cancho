@@ -23,6 +23,9 @@ impl<'a> FuncEmitter<'a> {
     /// `flush_out`: the errno is read straight after `fflush`, and when only
     /// the error indicator says a write failed the answer is `EIO` (5).
     pub(crate) fn flush_out(&mut self) -> Vec<LValue> {
+        if crate::wasi_console::applies(self.triple) {
+            return self.flush_out_wasi();
+        }
         let symbol = match self.triple.operating_system {
             target_lexicon::OperatingSystem::Darwin(_) => "__stdoutp",
             _ => "stdout",
@@ -45,6 +48,31 @@ impl<'a> FuncEmitter<'a> {
             "  {why} = select i1 {flush_failed}, i64 {}, i64 5\n",
             operand(&reason)
         ));
+        let tag = self.fresh();
+        self.out.push_str(&format!("  {tag} = select i1 {failed}, i64 1, i64 0\n"));
+        vec![LValue::Reg(tag), LValue::Const(0), LValue::Reg(why)]
+    }
+
+    /// `flush_out` on WASI, against the console's own buffer instead of `stdout`'s
+    /// (`wasi_console`): the same three answers. A failed flush reports its errno,
+    /// translated to the language's numbering; an earlier failed write that a later
+    /// flush did not see is `EIO` (5), as `ferror` alone is on a native target.
+    fn flush_out_wasi(&mut self) -> Vec<LValue> {
+        let rc = self.fresh();
+        self.out.push_str(&format!("  {rc} = call i32 @lexsys_console_flush()\n"));
+        let indicator = self.fresh();
+        self.out.push_str(&format!("  {indicator} = load i32, ptr @lexsys_out_err\n"));
+        let translated = self.fresh();
+        self.out.push_str(&format!("  {translated} = call i32 @lexsys_wasi_errno(i32 {rc})\n"));
+        let reason = self.widen(&translated);
+        let flush_failed = self.fresh();
+        self.out.push_str(&format!("  {flush_failed} = icmp ne i32 {rc}, 0\n"));
+        let earlier = self.fresh();
+        self.out.push_str(&format!("  {earlier} = icmp ne i32 {indicator}, 0\n"));
+        let failed = self.fresh();
+        self.out.push_str(&format!("  {failed} = or i1 {flush_failed}, {earlier}\n"));
+        let why = self.fresh();
+        self.out.push_str(&format!("  {why} = select i1 {flush_failed}, i64 {reason}, i64 5\n"));
         let tag = self.fresh();
         self.out.push_str(&format!("  {tag} = select i1 {failed}, i64 1, i64 0\n"));
         vec![LValue::Reg(tag), LValue::Const(0), LValue::Reg(why)]

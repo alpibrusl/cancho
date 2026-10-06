@@ -1408,3 +1408,89 @@ fn every_sized_libc_call_on_wasm32_passes_a_32_bit_size() {
         assert!(seen.contains(func), "the fixtures never reached `{func}`: {seen:?}");
     }
 }
+
+/// `docs/wasm.md`, W2: on wasm32 the console is `fd_write` and `fd_read` and
+/// nothing else. libc's stdio imported `fd_fdstat_get`, `fd_seek`, `fd_close` and
+/// `clock_time_get` for a program that only printed, so a row of `[io_write]` came
+/// with a clock; no `putchar`, `getchar`, `fwrite`, `fflush` or `ferror` call may
+/// survive in a module for this target. Text only, so CI runs it.
+#[test]
+fn a_wasm32_console_never_calls_libc_stdio() {
+    const CONSOLE: &str = "edition 5;\n\
+         fn main(world: World) -> [] int {\n\
+             let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n\
+             release(ffi); release(fs); release(heap); release(args); release(net);\n\
+             release(clock);\n\
+             var c = 0;\n\
+             borrow mut io as &!i in {\n\
+                 c = getchar(i);\n\
+                 putchar(i, c);\n\
+                 write_bytes(i, \"hi\");\n\
+                 write_err(i, \"e\");\n\
+                 flush_out(i);\n\
+             }\n\
+             release(io);\n\
+             return 0;\n\
+         }\n";
+    let ast = parse(CONSOLE).expect("should parse");
+    let program = lex_sys_ir::lower(&ast).expect("should lower");
+    let wasm: Triple = "wasm32-wasip1".parse().expect("a valid triple");
+    let text = emit::emit_module(&program, "main", &wasm).expect("wasm32 should emit");
+
+    let code = || text.lines().filter(|l| !l.trim_start().starts_with("declare "));
+    for libc in ["putchar", "getchar", "fwrite", "fflush", "ferror"] {
+        assert!(
+            !code().any(|l| l.contains(&format!("@{libc}("))),
+            "a wasm32 module calls libc's `{libc}`: it would import stdio's fd_fdstat_get, \
+             fd_seek, fd_close and clock_time_get"
+        );
+    }
+    // The header still declares libc's `stdout` and `stderr` (unreferenced, so they
+    // import nothing); what must not exist is a use of either.
+    assert!(
+        !code().any(|l| {
+            !l.contains("external global") && (l.contains("@stdout") || l.contains("@stderr"))
+        }),
+        "a wasm32 module reaches libc's `stdout`/`stderr`"
+    );
+    for ours in [
+        "call i32 @lexsys_getchar(",
+        "call i32 @lexsys_putchar(",
+        "@lexsys_stdout_write(",
+        "@lexsys_stderr_write(",
+        "call i32 @lexsys_console_flush(",
+    ] {
+        assert!(text.contains(ours), "missing `{ours}`");
+    }
+    assert!(text.contains(r#""wasm-import-name"="fd_write""#));
+    assert!(text.contains(r#""wasm-import-name"="fd_read""#));
+    // Exactly two WASI imports, and neither is a libc wrapper.
+    assert_eq!(text.matches("\"wasm-import-name\"").count(), 2, "{text}");
+
+    // `main` flushes what it buffered before it returns, as libc does, so the
+    // bytes are not lost: the entry calls the flush and then returns the status.
+    let entry_of = |module: &str| -> String {
+        let from = module.find("define i32 @__main_argc_argv(").expect("the entry");
+        let body = &module[from..];
+        body[..body.find("\n}\n").expect("the entry ends")].to_owned()
+    };
+    let entry = entry_of(&text);
+    let flush = entry.find("call i32 @lexsys_console_flush()").expect("the exit flush");
+    assert!(flush < entry.find("ret i32 %status").expect("the return"));
+
+    // A module that never writes has no flush at exit, or every pure program would
+    // import `fd_write`.
+    let pure = parse("fn main(world: World) -> [] int { release(world); return 0; }\n")
+        .expect("should parse");
+    let pure = lex_sys_ir::lower(&pure).expect("should lower");
+    let pure = emit::emit_module(&pure, "main", &wasm).expect("wasm32 should emit");
+    let pure_entry = entry_of(&pure);
+    assert!(!pure_entry.contains("lexsys_console_flush"), "{pure_entry}");
+
+    // The host keeps libc's stdio, and none of this.
+    let host: Triple = "x86_64-unknown-linux-gnu".parse().expect("a valid triple");
+    let native = emit::emit_module(&program, "main", &host).expect("native should emit");
+    assert!(native.contains("call i32 @putchar("), "{native}");
+    assert!(native.contains("call i32 @getchar("));
+    assert!(!native.contains("lexsys_console") && !native.contains("lexsys_putchar"));
+}
