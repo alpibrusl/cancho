@@ -9,6 +9,7 @@
 //     C <key> <iv> <counter> <input>      aes.ctr32
 //     S <key> <nonce> <aad> <plaintext>   gcm.seal
 //     O <key> <nonce> <aad> <sealed>      gcm.open
+//     U <key> <nonce> <aad> <plaintext>   gcm.seal_with a context never prepared
 //
 // and one line out per case: `<code> <tag> <output in hex>`. `open`'s
 // output starts filled with `0xaa`, so a refusal that wrote anything
@@ -156,6 +157,11 @@ fn one[&i, &s](io: &!i Io, s: &s [byte], at: int) -> [io_write] int {
                 if op == 83 {
                     let out = alloc_slice[r](len(data) + 16, byte_of(0));
                     let code = gcm.seal(key, second, aad, data, out);
+                    report(io, code, gcm.refusal_tag(code), out);
+                } else if op == 85 {
+                    let out = alloc_slice[r](len(data) + 16, byte_of(0));
+                    let ctx = alloc_slice[r](gcm.context_len(), 0);
+                    let code = gcm.seal_with(ctx, second, aad, data, out);
                     report(io, code, gcm.refusal_tag(code), out);
                 } else {
                     var room = len(data) - 16;

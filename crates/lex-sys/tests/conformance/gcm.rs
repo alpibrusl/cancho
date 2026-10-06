@@ -252,6 +252,8 @@ fn every_refusal_is_reached_with_its_own_tag() {
         (format!("E {} {}", hex(&[7u8; 24]), hex(&[0u8; 16])), "aes-key-length"),
         (format!("S {} {nonce} - 00", hex(&[7u8; 31])), "gcm-key-length"),
         (format!("O {} {nonce} - {}", hex(&[7u8; 0]), hex(&[0u8; 20])), "gcm-key-length"),
+        // A context `gcm.prepare` never filled is refused as a key.
+        (format!("U {key} {nonce} - 00"), "gcm-key-length"),
         (format!("S {key} {} - 00", hex(&[9u8; 16])), "gcm-nonce-length"),
         (format!("O {key} {} - {}", hex(&[9u8; 8]), hex(&[0u8; 20])), "gcm-nonce-length"),
         (format!("O {key} {} - {}", hex(&[9u8; 8]), hex(&[0u8; 3])), "gcm-nonce-length"),

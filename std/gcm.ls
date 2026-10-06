@@ -259,6 +259,10 @@ fn lengths_ok[&k, &n](key: &k [byte], nonce: &n [byte], text: int) -> [] int {
     if aes.rounds(len(key)) == 0 {
         return refused_key_length();
     }
+    return shape_ok(nonce, text);
+}
+
+fn shape_ok[&n](nonce: &n [byte], text: int) -> [] int {
     if len(nonce) != 12 {
         return refused_nonce_length();
     }
@@ -268,20 +272,81 @@ fn lengths_ok[&k, &n](key: &k [byte], nonce: &n [byte], text: int) -> [] int {
     return ok();
 }
 
+// ---- A prepared key (`docs/crypto-builtins.md` §6, step 2) ----
+//
+// What depends only on the key: the round count, the expanded key and
+// GHASH's H = AES(K, 0) (its words and their bit-reversals). A caller
+// that seals or opens many messages under one key, as a TLS record
+// layer does, prepares it once: the expansion and H were 25% and 14% of
+// a 64-byte seal (`docs/tls-parity.md` §3.1).
+//
+//     [0] rounds   [1 .. 1 + aes.skey_len()] the expanded key
+//     then H's four words, then their bit-reversals.
+fn c_skey() -> [] int {
+    return 1;
+}
+
+fn c_h() -> [] int {
+    return 1 + aes.skey_len();
+}
+
+pub fn context_len() -> [] int {
+    return c_h() + 8;
+}
+
+// Prepares `key` (16 or 32 bytes) into `ctx` (at least `context_len()`
+// words): `ok()`, or `refused_key_length()`.
+pub fn prepare[&k, &c](key: &k [byte], ctx: &!c [int]) -> [] int {
+    if aes.rounds(len(key)) == 0 || len(ctx) < context_len() {
+        return refused_key_length();
+    }
+    region t {
+        let q = alloc_slice[t](aes.scratch_len(), 0);
+        let zeros = alloc_slice[t](16, byte_of(0));
+        let blk = alloc_slice[t](16, byte_of(0));
+        let nr = aes.expand(key, ctx[c_skey()..c_h()]);
+        ctx[0] = nr;
+        aes.encrypt_block_with(nr, ctx[c_skey()..c_h()], zeros, blk, q);
+        var i = 0;
+        while i < 4 {
+            ctx[c_h() + 3 - i] = be32(blk, 4 * i);
+            i = i + 1;
+        }
+        i = 0;
+        while i < 4 {
+            ctx[c_h() + 4 + i] = rev32(ctx[c_h() + i]);
+            blk[4 * i] = byte_of(0);
+            blk[4 * i + 1] = byte_of(0);
+            blk[4 * i + 2] = byte_of(0);
+            blk[4 * i + 3] = byte_of(0);
+            i = i + 1;
+        }
+    }
+    return ok();
+}
+
+// Overwrites a prepared key.
+pub fn forget[&c](ctx: &!c [int]) -> [] int {
+    bignum.zero(ctx);
+    return 0;
+}
+
+// Whether `ctx` holds a prepared key.
+fn prepared[&c](ctx: &c [int]) -> [] bool {
+    return len(ctx) >= context_len() && (ctx[0] == 10 || ctx[0] == 14);
+}
+
 // The tag of `ciphertext` and `aad` under the nonce: GHASH over both
 // and their lengths, XORed with the encryption of J0 = nonce || 1. Its
-// scratch is the caller's: `q` for `std.aes`, `w` (`WORDS()`), and two
-// 16-byte blocks `zeros` (all zero) and `blk`. Leaves `w` and `blk` zero.
-fn tag_of[&s, &n, &a, &c, &o, &q, &w, &z, &b](nr: int, skey: &s [int], nonce: &n [byte], aad: &a [byte], ciphertext: &c [byte], tag: &!o [byte], q: &!q [int], w: &!w [int], zeros: &z [byte], blk: &!b [byte]) -> [] int {
-    aes.encrypt_block_with(nr, skey, zeros, blk, q);
+// scratch is the caller's: `q` for `std.aes`, `w` (`WORDS()`), and a
+// 16-byte block `blk`. Leaves `w` and `blk` zero.
+fn tag_of[&s, &n, &a, &c, &o, &q, &w, &b](ctx: &s [int], nonce: &n [byte], aad: &a [byte], ciphertext: &c [byte], tag: &!o [byte], q: &!q [int], w: &!w [int], blk: &!b [byte]) -> [] int {
+    let nr = ctx[0];
+    let skey = ctx[c_skey()..c_h()];
     var i = 0;
     while i < 4 {
-        w[HW() + 3 - i] = be32(blk, 4 * i);
-        i = i + 1;
-    }
-    i = 0;
-    while i < 4 {
-        w[HWR() + i] = rev32(w[HW() + i]);
+        w[HW() + i] = ctx[c_h() + i];
+        w[HWR() + i] = ctx[c_h() + 4 + i];
         w[Y() + i] = 0;
         i = i + 1;
     }
@@ -319,8 +384,27 @@ fn tag_of[&s, &n, &a, &c, &o, &q, &w, &z, &b](nr: int, skey: &s [int], nonce: &n
 // is 16 or 32 bytes, `nonce` 12. A (key, nonce) pair must never seal two
 // messages: the nonce is the caller's to make unique.
 pub fn seal[&k, &n, &a, &p, &o](key: &k [byte], nonce: &n [byte], aad: &a [byte], plaintext: &p [byte], out: &!o [byte]) -> [] int {
+    let checked = lengths_ok(key, nonce, len(plaintext));
+    if checked != 0 {
+        return checked;
+    }
+    var code = 0;
+    region t {
+        let ctx = alloc_slice[t](context_len(), 0);
+        prepare(key, ctx);
+        code = seal_with(ctx, nonce, aad, plaintext, out);
+        forget(ctx);
+    }
+    return code;
+}
+
+// `seal` under a key `prepare` made.
+pub fn seal_with[&c, &n, &a, &p, &o](ctx: &c [int], nonce: &n [byte], aad: &a [byte], plaintext: &p [byte], out: &!o [byte]) -> [] int {
+    if !prepared(ctx) {
+        return refused_key_length();
+    }
     let text = len(plaintext);
-    let checked = lengths_ok(key, nonce, text);
+    let checked = shape_ok(nonce, text);
     if checked != 0 {
         return checked;
     }
@@ -329,15 +413,11 @@ pub fn seal[&k, &n, &a, &p, &o](key: &k [byte], nonce: &n [byte], aad: &a [byte]
     }
     // One region, so one allocation, for all of the call's scratch.
     region t {
-        let skey = alloc_slice[t](aes.skey_len(), 0);
         let q = alloc_slice[t](aes.scratch_len(), 0);
         let w = alloc_slice[t](WORDS(), 0);
-        let zeros = alloc_slice[t](16, byte_of(0));
         let blk = alloc_slice[t](16, byte_of(0));
-        let nr = aes.expand(key, skey);
-        aes.ctr32_with(nr, skey, nonce, 2, plaintext, out[0..text], q);
-        tag_of(nr, skey, nonce, aad, out[0..text], out[text..text + 16], q, w, zeros, blk);
-        bignum.zero(skey);
+        aes.ctr32_with(ctx[0], ctx[c_skey()..c_h()], nonce, 2, plaintext, out[0..text], q);
+        tag_of(ctx, nonce, aad, out[0..text], out[text..text + 16], q, w, blk);
     }
     return ok();
 }
@@ -347,15 +427,38 @@ pub fn seal[&k, &n, &a, &p, &o](key: &k [byte], nonce: &n [byte], aad: &a [byte]
 // checked first, over every byte, and on a mismatch `out` is not
 // written at all.
 pub fn open[&k, &n, &a, &s, &o](key: &k [byte], nonce: &n [byte], aad: &a [byte], sealed: &s [byte], out: &!o [byte]) -> [] int {
+    var text = len(sealed) - 16;
+    if text < 0 {
+        text = 0;
+    }
+    let checked = lengths_ok(key, nonce, text);
+    if checked != 0 {
+        return checked;
+    }
+    var code = 0;
+    region t {
+        let ctx = alloc_slice[t](context_len(), 0);
+        prepare(key, ctx);
+        code = open_with(ctx, nonce, aad, sealed, out);
+        forget(ctx);
+    }
+    return code;
+}
+
+// `open` under a key `prepare` made.
+pub fn open_with[&c, &n, &a, &s, &o](ctx: &c [int], nonce: &n [byte], aad: &a [byte], sealed: &s [byte], out: &!o [byte]) -> [] int {
+    if !prepared(ctx) {
+        return refused_key_length();
+    }
     if len(sealed) < 16 {
-        let shape = lengths_ok(key, nonce, 0);
+        let shape = shape_ok(nonce, 0);
         if shape != 0 {
             return shape;
         }
         return refused_too_short();
     }
     let text = len(sealed) - 16;
-    let checked = lengths_ok(key, nonce, text);
+    let checked = shape_ok(nonce, text);
     if checked != 0 {
         return checked;
     }
@@ -364,14 +467,11 @@ pub fn open[&k, &n, &a, &s, &o](key: &k [byte], nonce: &n [byte], aad: &a [byte]
     }
     var diff = 0;
     region t {
-        let skey = alloc_slice[t](aes.skey_len(), 0);
         let q = alloc_slice[t](aes.scratch_len(), 0);
         let w = alloc_slice[t](WORDS(), 0);
-        let zeros = alloc_slice[t](16, byte_of(0));
         let blk = alloc_slice[t](16, byte_of(0));
         let want = alloc_slice[t](16, byte_of(0));
-        let nr = aes.expand(key, skey);
-        tag_of(nr, skey, nonce, aad, sealed[0..text], want, q, w, zeros, blk);
+        tag_of(ctx, nonce, aad, sealed[0..text], want, q, w, blk);
         // Every byte is compared whatever the earlier ones were.
         var i = 0;
         while i < 16 {
@@ -380,9 +480,8 @@ pub fn open[&k, &n, &a, &s, &o](key: &k [byte], nonce: &n [byte], aad: &a [byte]
             i = i + 1;
         }
         if diff == 0 {
-            aes.ctr32_with(nr, skey, nonce, 2, sealed[0..text], out, q);
+            aes.ctr32_with(ctx[0], ctx[c_skey()..c_h()], nonce, 2, sealed[0..text], out, q);
         }
-        bignum.zero(skey);
     }
     if diff != 0 {
         return refused_tag_mismatch();

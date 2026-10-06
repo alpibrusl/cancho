@@ -51,7 +51,7 @@ fn record[&n, &b, &p, &o](ints: &n [int], bytes: &b [byte], kind: int, plaintext
     }
     let key = bytes[tls_slot.k_read_key()..tls_slot.k_read_key() + tls_slot.key_len(ints)];
     let iv = bytes[tls_slot.k_read_iv()..tls_slot.k_read_iv() + 12];
-    let made = tls_record.seal(suite, key, iv, ints[tls_slot.i_read_seq()], kind, plaintext, out);
+    let made = tls_record.seal(suite, key, tls_slot.read_aead(ints), iv, ints[tls_slot.i_read_seq()], kind, plaintext, out);
     if made < 0 {
         return 0;
     }

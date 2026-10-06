@@ -116,6 +116,9 @@ fn record_op[&i, &s](io: &!i Io, s: &s [byte], at: int) -> [io_write] int {
         f = next_field(s, f);
         let iv = alloc_slice[r](hex_len(s, f), byte_of(0));
         hex_into(s, f, iv);
+        // The key prepared once, as the record layer prepares it.
+        let ctx = alloc_slice[r](tls_record.context_len(), 0);
+        tls_record.prepare(suite, key, ctx);
         f = next_field(s, f);
         let seq = number(s, f);
         f = next_field(s, f);
@@ -127,9 +130,9 @@ fn record_op[&i, &s](io: &!i Io, s: &s [byte], at: int) -> [io_write] int {
             let out = alloc_slice[r](len(text) + 29, byte_of(0));
             var n = 0;
             if op == 83 {
-                n = tls_record.seal(suite, key, iv, seq, kind, text, out);
+                n = tls_record.seal(suite, key, ctx, iv, seq, kind, text, out);
             } else {
-                n = tls_record.seal12(suite, key, iv, seq, kind, text, out);
+                n = tls_record.seal12(suite, key, ctx, iv, seq, kind, text, out);
             }
             if n > 0 {
                 tag_line(io, 0);
@@ -150,9 +153,9 @@ fn record_op[&i, &s](io: &!i Io, s: &s [byte], at: int) -> [io_write] int {
             let info = alloc_slice[r](2, 0);
             var code = 0;
             if op == 79 {
-                code = tls_record.open(suite, key, iv, seq, rec, out, info);
+                code = tls_record.open(suite, key, ctx, iv, seq, rec, out, info);
             } else {
-                code = tls_record.open12(suite, key, iv, seq, rec, out, info);
+                code = tls_record.open12(suite, key, ctx, iv, seq, rec, out, info);
             }
             tag_line(io, code);
             if code == 0 {
