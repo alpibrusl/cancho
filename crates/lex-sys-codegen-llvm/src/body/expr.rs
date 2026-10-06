@@ -342,9 +342,9 @@ impl<'a> FuncEmitter<'a> {
                 self.path_op(op, &prefix, &args)
             }
             // `docs/processes.md` §3.2.
-            Expr::ExecSpawn { prefix, args } => {
-                let (prefix, args) = (prefix.clone(), args.clone());
-                self.exec_spawn(&prefix, &args)
+            Expr::ExecSpawn { prefix, in_dir, args } => {
+                let (prefix, in_dir, args) = (prefix.clone(), *in_dir, args.clone());
+                self.exec_spawn(&prefix, in_dir, &args)
             }
             // `docs/function-values.md` §4.2: the target's own address,
             // taken rather than called. An LLVM global symbol is already
@@ -1051,7 +1051,7 @@ impl<'a> FuncEmitter<'a> {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.child_kill(&args)
             }
-            Callee::Builtin(Builtin::ExecSpawn) => {
+            Callee::Builtin(Builtin::ExecSpawn | Builtin::ExecSpawnIn) => {
                 Err("`exec_spawn` is lowered as `Expr::ExecSpawn`".to_owned())
             }
             // `docs/native-sockets.md` §4: the poller.

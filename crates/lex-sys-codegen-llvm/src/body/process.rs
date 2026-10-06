@@ -69,19 +69,23 @@ impl<'a> FuncEmitter<'a> {
     }
 
     /// `exec_spawn(exec, path, args, env, stdin, stdout, stderr)` (§4.1 to
-    /// §4.6). `Spawned`'s three leaves: the tag (`Ok` 0, `Failed` 1), the pid,
-    /// the reason.
+    /// §4.6), and with `in_dir` `exec_spawn_in(exec, dir, path, ...)` (§4.10).
+    /// `Spawned`'s three leaves: the tag (`Ok` 0, `Failed` 1), the pid, the
+    /// reason.
     pub(crate) fn exec_spawn(
         &mut self,
         prefix: &str,
+        in_dir: bool,
         args: &[Expr],
     ) -> Result<Vec<LValue>, String> {
         // The capability is zero-sized and stops here.
-        let path = self.expr(&args[1])?;
-        let arguments = self.expr(&args[2])?;
-        let environment = self.expr(&args[3])?;
+        let at = 1 + usize::from(in_dir);
+        let dir = if in_dir { Some(self.expr(&args[1])?) } else { None };
+        let path = self.expr(&args[at])?;
+        let arguments = self.expr(&args[at + 1])?;
+        let environment = self.expr(&args[at + 2])?;
         let mut streams = Vec::new();
-        for stream in &args[4..7] {
+        for stream in &args[at + 3..at + 6] {
             let leaves = self.expr(stream)?;
             if leaves.len() != 3 {
                 return Err(format!("a `Stdio` needs 3 leaves but {} were given", leaves.len()));
@@ -119,6 +123,22 @@ impl<'a> FuncEmitter<'a> {
             ));
             self.out.push_str(&format!("  br label %{next}\n"));
             self.out.push_str(&format!("{next}:\n"));
+        }
+
+        // §4.10: the child's working directory, by descriptor, ahead of the
+        // `closefrom` below: that closes the `Dir`'s descriptor, and a
+        // `chdir` after it is `EBADF` (measured). The `Dir` stays the
+        // parent's. A refusal here is the allocator's alone -- the descriptor
+        // is a live `Dir`'s -- and traps as `malloc`'s does.
+        if let Some(dir) = &dir {
+            let fd = self.dir_fd(&operand(&dir[0]));
+            let refused = self.fresh();
+            self.out.push_str(&format!(
+                "  {refused} = call i32 @posix_spawn_file_actions_addfchdir_np(ptr {actions}, i32 {fd})\n"
+            ));
+            let failed = self.fresh();
+            self.out.push_str(&format!("  {failed} = icmp ne i32 {refused}, 0\n"));
+            self.trap_if(&failed)?;
         }
 
         // §4.5: and nothing else. Close-on-exec covers what this program

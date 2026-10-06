@@ -3,8 +3,9 @@
 
     python3 scripts/process_mutants.py [--capture] [name-substring ...]
 
-Without `--capture`, the poller (slice 2) against the process tests; with it,
-`std/process.ls` (slice 3) against the capture tests.
+Without `--capture`, the poller (slice 2) and the spawn's working directory
+(§4.10) against the process tests; with it, `std/process.ls` (slice 3, and
+`capture_both`, §7.2) against the capture tests.
 
 Each mutant is one backend source file with one deliberate bug, at one site.
 It is run against `cargo test --test conformance -- processes::` with a limit
@@ -37,7 +38,7 @@ LL_EXPR = "crates/lex-sys-codegen-llvm/src/body/expr.rs"
 
 # (name, file, the text replaced, its replacement). Each `old` occurs exactly
 # once in its file. The two already run (cl `pidfd` not closed, cl wrong pid,
-# both killed) are kept so the list is the whole set of thirteen.
+# both killed) are kept so the list is the whole set of thirteen, then §4.10's.
 MUTANTS = [
     ("cl: the pidfd not closed", CL_PROCESS,
      'self.libc_call("close", &[types::I32], &[types::I32], &[pidfd]);\n        }\n        vec![tag, code, bit, reason]',
@@ -80,6 +81,86 @@ MUTANTS = [
      "self.poller_ctl(&args, false, true)\n            }\n            Callee::Builtin(Builtin::PollerAddChild)"),
 ]
 
+# §4.10: the spawn's working directory, each choice undone. `cl` and `ll` are
+# the two backends; the swap is ordering the file actions, which only a
+# `closefrom` makes observable, so it is on the Linux path.
+CL_CHDIR = """        if let Some(dir) = &dir {
+            let fd = self.dir_fd(dir[0]);
+            let refused = self.libc_call(
+                "posix_spawn_file_actions_addfchdir_np",
+                &[pointer, types::I32],
+                &[types::I32],
+                &[actions, fd],
+            );
+            self.builder.ins().trapnz(refused, TrapCode::HEAP_OUT_OF_BOUNDS);
+        }
+
+"""
+CLOSEFROM_WHY = """        // §4.5: and nothing else. Close-on-exec covers what this program
+        // opened; this covers what it inherited without the flag, so the child
+        // holds exactly the three streams. Darwin does the same with
+        // `POSIX_SPAWN_CLOEXEC_DEFAULT` (`spawn_flags`); glibc has
+        // `addclosefrom_np` from 2.34.
+"""
+CL_CLOSEFROM = """        if !self.is_darwin() {
+            let lowest = self.builder.ins().iconst(types::I32, 3);
+            self.libc_call(
+                "posix_spawn_file_actions_addclosefrom_np",
+                &[pointer, types::I32],
+                &[types::I32],
+                &[actions, lowest],
+            );
+        }
+"""
+LL_CHDIR = """        if let Some(dir) = &dir {
+            let fd = self.dir_fd(&operand(&dir[0]));
+            let refused = self.fresh();
+            self.out.push_str(&format!(
+                "  {refused} = call i32 @posix_spawn_file_actions_addfchdir_np(ptr {actions}, i32 {fd})\\n"
+            ));
+            let failed = self.fresh();
+            self.out.push_str(&format!("  {failed} = icmp ne i32 {refused}, 0\\n"));
+            self.trap_if(&failed)?;
+        }
+
+"""
+LL_CLOSEFROM = """        if !self.is_darwin() {
+            self.out.push_str(&format!(
+                "  call i32 @posix_spawn_file_actions_addclosefrom_np(ptr {actions}, i32 3)\\n"
+            ));
+        }
+"""
+
+CWD = [
+    ("cl: no chdir action", CL_PROCESS,
+     "        if let Some(dir) = &dir {\n            let fd = self.dir_fd(dir[0]);",
+     "        if let (Some(dir), true) = (&dir, false) {\n            let fd = self.dir_fd(dir[0]);"),
+    ("ll: no chdir action", LL_PROCESS,
+     "        if let Some(dir) = &dir {\n            let fd = self.dir_fd(&operand(&dir[0]));",
+     "        if let (Some(dir), true) = (&dir, false) {\n            let fd = self.dir_fd(&operand(&dir[0]));"),
+    ("cl: the chdir after the closefrom", CL_PROCESS,
+     CL_CHDIR + CLOSEFROM_WHY + CL_CLOSEFROM, CLOSEFROM_WHY + CL_CLOSEFROM + CL_CHDIR),
+    ("ll: the chdir after the closefrom", LL_PROCESS,
+     LL_CHDIR + CLOSEFROM_WHY + LL_CLOSEFROM, CLOSEFROM_WHY + LL_CLOSEFROM + LL_CHDIR),
+    ("cl: the chdir to descriptor 0", CL_PROCESS,
+     "            let fd = self.dir_fd(dir[0]);\n            let refused",
+     "            let fd = self.builder.ins().iconst(types::I32, 0);\n            let refused"),
+    ("ll: the chdir to descriptor 0", LL_PROCESS,
+     "            let fd = self.dir_fd(&operand(&dir[0]));\n            let refused",
+     "            let fd = \"0\".to_owned();\n            let refused"),
+    ("cl: the Dir closed after the spawn", CL_PROCESS,
+     "        self.free(argv);\n        self.free(envp);\n",
+     "        self.free(argv);\n        self.free(envp);\n        if let Some(dir) = &dir {\n            let fd = self.dir_fd(dir[0]);\n            self.libc_call(\"close\", &[types::I32], &[types::I32], &[fd]);\n        }\n"),
+    ("ll: the Dir closed after the spawn", LL_PROCESS,
+     '        self.out.push_str(&format!("  call void @free(ptr {envp})\\n"));\n',
+     '        self.out.push_str(&format!("  call void @free(ptr {envp})\\n"));\n        if let Some(dir) = &dir {\n            let fd = self.dir_fd(&operand(&dir[0]));\n            self.out.push_str(&format!("  call i32 @close(i32 {fd})\\n"));\n        }\n'),
+    ("cl: exec_spawn_in drops the Dir argument's place", CL_PROCESS,
+     "let at = 1 + usize::from(in_dir);\n        let dir = in_dir.then(|| self.expr(&args[1]));",
+     "let at = 1 + usize::from(in_dir);\n        let dir = in_dir.then(|| self.expr(&args[2]));"),
+]
+
+MUTANTS = MUTANTS + CWD
+
 PROCESS = "std/process.ls"
 
 # Slice 3: each choice §7.1 makes, undone.
@@ -117,6 +198,34 @@ CAPTURE = [
     ("a NUL let through", PROCESS,
      "        if one[i] == byte_of(0) {",
      "        if one[i] == byte_of(0) && false {"),
+]
+
+# §7.2: `capture_both`, each choice undone. Not here, and why: a mutant that
+# skips the errors' drain after the exit survives (measured: 4 s, tests pass).
+# The drain is redundant by construction, on the output's as on the errors':
+# the poller is level-triggered and a child's last write precedes its exit, so
+# a channel still holding bytes is in the very batch that reports the exit, and
+# the event loop has read it by then (§7.2). The "no drain after the exit"
+# mutant above undoes the flow, not the drain.
+CAPTURE = CAPTURE + [
+    ("the errors never read", PROCESS,
+     "                            if token == errors_token() {",
+     "                            if token == errors_token() && false {"),
+    ("the errors registered under the output's token", PROCESS,
+     "                            let added = poller_add_pipe(ph, rp, errors_token(), 1);",
+     "                            let added = poller_add_pipe(ph, rp, output_token(), 1);"),
+    ("the errors bounded by the output's bound", PROCESS,
+     "                                                let (kept, found) = drain(heap, rp, contents(sb), err, most_errors);\n                                                err = kept;\n                                                if found == read_too_much() {\n                                                    state = too_much();\n                                                }\n                                                if found == read_end() {",
+     "                                                let (kept, found) = drain(heap, rp, contents(sb), err, most);\n                                                err = kept;\n                                                if found == read_too_much() {\n                                                    state = too_much();\n                                                }\n                                                if found == read_end() {"),
+    ("the errors overrun not ending the child", PROCESS,
+     "                                                    state = too_much();\n                                                }\n                                                if found == read_end() {\n                                                    errors_done = true;",
+     "                                                    state = running();\n                                                }\n                                                if found == read_end() {\n                                                    errors_done = true;"),
+    ("the end of the errors not acted on", PROCESS,
+     "                                                    errors_done = true;",
+     "                                                    errors_done = false;"),
+    ("the errors end left open at the finish", PROCESS,
+     "    shut(reader);\n    shut(errors);\n    if state != exited() {",
+     "    shut(reader);\n    if state != exited() {"),
 ]
 
 FILTER = "processes::"

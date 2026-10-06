@@ -475,6 +475,7 @@ fn pick[&x, &g](exec: &x Exec("/bin"), g: &g Args) -> [exec("/bin"), args] int {
     if c == 'u' { return spawn_one(exec, "/usr/bin/true", "", ""); }
     if c == 'd' { return spawn_one(exec, "/bin/../usr/bin/true", "", ""); }
     if c == 's' { return spawn_one(exec, "/binx/true", "", ""); }
+    if c == 'r' { return spawn_one(exec, "true", "", ""); }
     if c == 'l' { return spawn_one(exec, "/bin/sh", "-c\0exit 0\0", "A=1\0LD_PRELOAD=/tmp/x.so\0"); }
     if c == 'y' { return spawn_one(exec, "/bin/sh", "-c\0exit 0\0", "DYLD_INSERT_LIBRARIES=/tmp/x\0"); }
     if c == 'a' { return spawn_one(exec, "/bin/sh", "-c\0exit 0", ""); }
@@ -801,7 +802,7 @@ fn a_child_without_a_pidfd_says_why_it_cannot_be_watched() {
 }
 
 /// §4.1 to §4.3: a path outside the bound, `..`, a sibling of the bound, a
-/// loader variable and a list that does not end in `\\0` each trap -- and an
+/// relative path (which is outside any bound but `""`, §4.1), a loader variable and a list that does not end in `\\0` each trap -- and an
 /// ordinary call under the bound does not. A trap is `SIGILL` or `SIGTRAP`
 /// (`brk` on aarch64); a crash, such as reading past an unterminated list, is
 /// not one. §4.4: a child writes to `Stdio::Null` as to any stream.
@@ -814,7 +815,7 @@ fn every_refused_spawn_traps_on_both_backends() {
         assert_eq!(ok.status.code(), Some(0), "`{backend}`: an ordinary spawn under `/bin`");
         let null = Command::new(exe).arg("null").output().expect("the program runs");
         assert_eq!(null.status.code(), Some(0), "`{backend}`: a child writing to `Stdio::Null`");
-        for mode in ["usr", "dotdot", "sibling", "ld", "yld", "args", "env"] {
+        for mode in ["usr", "dotdot", "sibling", "relative", "ld", "yld", "args", "env"] {
             let run = Command::new(exe).arg(mode).output().expect("the program runs");
             assert!(
                 matches!(run.status.signal(), Some(4 | 5)),
@@ -837,4 +838,139 @@ fn the_authority_report_names_the_programs_a_program_may_start() {
     assert!(report.contains("exec(\"/bin\")"), "{report}");
     assert!(!report.contains("UNBOUNDED"), "{report}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---- §4.10: the working directory ----
+
+/// The `exec_spawn_in` driver (`tests/programs/process_cwd.ls`), built once
+/// with each backend, as the probe is.
+fn cwd_built() -> &'static [(&'static str, PathBuf)] {
+    static BUILT: std::sync::OnceLock<Vec<(&'static str, PathBuf)>> = std::sync::OnceLock::new();
+    BUILT.get_or_init(|| {
+        let source = std::fs::read_to_string(repo_root().join("tests/programs/process_cwd.ls"))
+            .expect("the driver is in the repository");
+        build_both("process-cwd", &source).1
+    })
+}
+
+/// A tree for the driver: `<root>/work` holding an executable script `tool`,
+/// and `<root>/elsewhere`, the directory the driver itself starts in. Answers
+/// the canonical `work` and `elsewhere` (macOS's `/var` is `/private/var`).
+fn cwd_tree(tag: &str) -> (PathBuf, PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let root = scratch(tag);
+    let work = root.join("work");
+    let elsewhere = root.join("elsewhere");
+    std::fs::create_dir_all(&work).expect("a directory");
+    std::fs::create_dir_all(&elsewhere).expect("a directory");
+    let tool = work.join("tool");
+    std::fs::write(&tool, "#!/bin/sh\npwd\n").expect("a script");
+    std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).expect("executable");
+    (
+        std::fs::canonicalize(&work).expect("a path"),
+        std::fs::canonicalize(&elsewhere).expect("a path"),
+    )
+}
+
+/// Run the driver on one case on both backends, started in `from`, and
+/// require the two answers to be the same.
+fn cwd_case(
+    from: &std::path::Path,
+    dir: &std::path::Path,
+    program: &str,
+    arg: &str,
+    mode: &str,
+) -> String {
+    let mut answers = Vec::new();
+    for (backend, exe) in cwd_built() {
+        let run = Command::new(exe)
+            .current_dir(from)
+            .arg(dir)
+            .args([program, arg, mode])
+            .output()
+            .expect("the driver runs");
+        assert_eq!(run.status.code(), Some(0), "`{backend}`: the driver itself should not fail");
+        answers.push(String::from_utf8_lossy(&run.stdout).into_owned());
+    }
+    assert_eq!(answers[0], answers[1], "the two backends disagree on {program} {mode}");
+    answers.remove(0)
+}
+
+/// §4.10: a child started with a `Dir` runs in it, and one started without
+/// runs where its parent does. The `Dir` is not what the parent is in: the
+/// driver starts in a different directory, and the spawn does not move it
+/// (the `b` leg starts a second, plain child afterwards).
+#[test]
+fn a_child_starts_in_the_directory_it_is_given() {
+    let (work, elsewhere) = cwd_tree("process-cwd-where");
+    let w = work.display();
+    let e = elsewhere.display();
+    assert_eq!(
+        cwd_case(&elsewhere, &work, "/bin/pwd", "-", "d"),
+        format!("{w}\n== code 0\n== dirclose 0\n")
+    );
+    assert_eq!(
+        cwd_case(&elsewhere, &work, "/bin/pwd", "-", "n"),
+        format!("{e}\n== code 0\n== dirclose 0\n")
+    );
+    // §4.10: the `Dir` was lent: it closes afterwards, and the parent has not moved.
+    assert_eq!(
+        cwd_case(&elsewhere, &work, "/bin/pwd", "-", "b"),
+        format!("{w}\n== code 0\n{e}\n== code 0\n== dirclose 0\n")
+    );
+}
+
+/// §4.1, §4.10: a program path that is relative is the child's working
+/// directory's: `./tool` is found beneath the `Dir`, and without one it is
+/// looked for where the parent is and is `ENOENT` (2).
+#[test]
+fn a_relative_program_is_found_beneath_the_directory() {
+    let (work, elsewhere) = cwd_tree("process-cwd-relative");
+    assert_eq!(
+        cwd_case(&elsewhere, &work, "./tool", "-", "d"),
+        format!("{}\n== code 0\n== dirclose 0\n", work.display())
+    );
+    assert_eq!(cwd_case(&elsewhere, &work, "./tool", "-", "n"), "== spawn 2\n== dirclose 0\n");
+}
+
+/// §4.5, §4.10: the `Dir`'s own descriptor does not reach the child: the
+/// descriptors `ls` lists are the same with a `Dir` and without one (`ls`
+/// holds one of its own, and on macOS two, as `a_child_holds_exactly_its_three_streams`
+/// found), and none is the `Dir`'s.
+#[test]
+fn the_directory_is_not_a_descriptor_the_child_holds() {
+    let (work, elsewhere) = cwd_tree("process-cwd-descriptors");
+    let listing = if cfg!(target_os = "macos") { "/dev/fd" } else { "/proc/self/fd" };
+    let with = cwd_case(&elsewhere, &work, "/bin/ls", listing, "d");
+    let without = cwd_case(&elsewhere, &work, "/bin/ls", listing, "n");
+    assert_eq!(with, without, "a descriptor crossed with the directory");
+}
+
+/// §4.10: a directory that does not open is `open_dir`'s outcome, and no
+/// spawn happens.
+#[test]
+fn a_directory_that_is_not_there_starts_nothing() {
+    let (_, elsewhere) = cwd_tree("process-cwd-missing");
+    let nothing = elsewhere.join("nothing");
+    assert_eq!(cwd_case(&elsewhere, &nothing, "/bin/pwd", "-", "d"), "== opendir 2\n");
+}
+
+/// §4.10: a directory that opens for reading but has no search permission
+/// cannot be a working directory: the spawn is an outcome, `EACCES` (13), and
+/// nothing leaks (the driver closes its end and the `Dir`, and ends cleanly).
+/// Not run as root, which searches anything.
+#[test]
+fn a_directory_that_cannot_be_searched_fails_the_spawn() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = Command::new("id").arg("-u").output().expect("id runs");
+    if String::from_utf8_lossy(&root.stdout).trim() == "0" {
+        return;
+    }
+    let (work, elsewhere) = cwd_tree("process-cwd-search");
+    let closed = work.join("closed");
+    std::fs::create_dir(&closed).expect("a directory");
+    std::fs::set_permissions(&closed, std::fs::Permissions::from_mode(0o444))
+        .expect("readable only");
+    assert_eq!(cwd_case(&elsewhere, &closed, "/bin/pwd", "-", "d"), "== spawn 13\n== dirclose 0\n");
+    std::fs::set_permissions(&closed, std::fs::Permissions::from_mode(0o755)).expect("searchable");
 }
