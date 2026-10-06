@@ -36,6 +36,14 @@ PROGRAMS = {
     "stderr": (HEAD + "    release(ffi); release(fs); release(heap); release(args);\n"
                "    borrow mut io as &!i in { write_err(i, \"e\"); }\n    release(io);\n    return 0;\n}\n",
                {"fd_write"}),
+    # `clock_ms` and `clock_unix_ms` (edition 6, which splits `clock` off the world).
+    "clock": ("edition 6;\nfn main(world: World) -> [] int {\n"
+              "    let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);\n"
+              "    release(io); release(ffi); release(fs); release(heap); release(args); release(net);\n"
+              "    release(signals);\n    var code = 0;\n"
+              "    borrow clock as &c in { code = clock_ms(c) * 0 + clock_unix_ms(c) * 0; }\n"
+              "    release(clock);\n    return code;\n}\n",
+              {"clock_time_get"}),
     "read": (HEAD + "    release(ffi); release(fs); release(heap); release(args);\n    var c = 0;\n"
              "    borrow mut io as &!i in { c = getchar(i); }\n    release(io);\n    return c * 0;\n}\n",
              {"fd_read"}),
