@@ -1,0 +1,42 @@
+//~ ERROR no-replace renames do not exist on `wasm32-wasip1`
+//~ RULE unsupported-on-target
+//~ TARGET wasm32-wasip1
+
+// `dir_rename_new` is fine for the host and refused for WebAssembly. WASI preview 1's
+// `path_rename` replaces an existing destination and has no no-replace flag, so the only
+// thing a WASI build could do is look and then rename, the window the builtin exists to
+// close (`docs/directory-handles.md` section 3, slice 4). `dir_rename` is still supported.
+//
+// The same file passes `lex-sys check` with no `--target`.
+
+edition 7;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(io);
+    release(ffi);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    var code = 0;
+    borrow fs as &f in {
+        match open_dir(f, "/tmp") {
+            DirOpened::Ok(opened) => {
+                var dir = opened;
+                borrow dir as &r in {
+                    match dir_rename_new(r, "tmp", "final") {
+                        Done::Ok(bits) => { code = bits; }
+                        Done::Failed(e) => { code = e; }
+                    }
+                }
+                dir_close(dir);
+            }
+            DirOpened::Failed(e) => { code = e; }
+        }
+    }
+    release(fs);
+    return code;
+}

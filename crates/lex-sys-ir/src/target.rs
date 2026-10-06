@@ -38,6 +38,7 @@ pub enum Gap {
     Processes,
     Locks,
     Permissions,
+    NoReplaceRename,
 }
 
 impl Gap {
@@ -50,6 +51,7 @@ impl Gap {
             Gap::Processes => "processes and pipes",
             Gap::Locks => "file locks",
             Gap::Permissions => "permission bits",
+            Gap::NoReplaceRename => "no-replace renames",
         }
     }
 
@@ -66,6 +68,10 @@ impl Gap {
             Gap::Permissions => {
                 "WASI's stat has no permission bits (wasi-libc's `st_mode` carries the file type \
                  and nothing else), so `dir_mode` would answer 0 for every file"
+            }
+            Gap::NoReplaceRename => {
+                "WASI's `path_rename` replaces an existing destination and has no no-replace flag, \
+                 so `dir_rename_new` could only look and then rename, the window it exists to close"
             }
         }
     }
@@ -110,6 +116,7 @@ pub fn wasi_gap(builtin: Builtin) -> Option<Gap> {
         B::SignalsWatch | B::SignalsPending | B::SignalsClose => Some(Gap::Signals),
         B::FileLock => Some(Gap::Locks),
         B::DirMode | B::DirOwnMode => Some(Gap::Permissions),
+        B::DirRenameNew => Some(Gap::NoReplaceRename),
         B::ExecSpawn
         | B::ChildEndClose
         | B::ChildKill
