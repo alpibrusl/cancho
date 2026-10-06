@@ -13,7 +13,7 @@ a token duplicated, dropped or replaced by another one, the file cut short. The 
 are where the refusals are: each one is a program broken in a place the Rust parser has
 to name, and the port has to name the same one.
 """
-import argparse, concurrent.futures, glob, os, random, re, subprocess, sys, tempfile
+import argparse, collections, concurrent.futures, glob, os, random, re, subprocess, sys, tempfile
 
 TOKEN = re.compile(rb"[A-Za-z_][A-Za-z_0-9]*|\d[\w.]*|'(?:\\.|[^'\\])'|\"(?:\\.|[^\"\\])*\"|::|->|=>|\.\.|<=|>=|==|!=|&&|\|\||<<|>>|\S")
 
@@ -145,6 +145,127 @@ EDGE = {
 }
 
 
+def fnmain(body):
+    return f"fn main(world: World) -> [] int {{ {body} return 0; }}"
+
+
+CHECK_EDGE = {
+    "ok": fnmain(""),
+    "dup_struct": "struct A { a: int }\nstruct A { b: int }\n" + fnmain(""),
+    "dup_struct_enum": "struct A { a: int }\nenum A { X }\n" + fnmain(""),
+    "dup_in_module": "module m;\nstruct A { a: int }\nstruct A { b: int }",
+    "redeclare_int": "struct int { a: int }",
+    "redeclare_bool": "enum bool { A }",
+    "redeclare_prelude": "struct World { a: int }",
+    "redeclare_prelude_late": "edition 1;\nstruct Conn { a: int }\n" + fnmain(""),
+    "redeclare_prelude_ed5": "edition 5;\nstruct Conn { a: int }\n" + fnmain(""),
+    "redeclare_f32_ed6": "edition 6;\nstruct f32 { a: int }",
+    "redeclare_f32_ed5": "edition 5;\nstruct f32 { a: int }",
+    "generic_int": "struct S[int] { a: int }",
+    "generic_dup": "struct S[T, T] { a: T }",
+    "generic_ok": "struct S[T, U] { a: T, b: U }\n" + fnmain(""),
+    "field_dup": "struct S { a: int, a: bool }",
+    "field_unknown": "struct S { a: Nope }",
+    "field_arity": "struct S { a: Box }",
+    "field_arity2": "struct P[T] { a: T }\nstruct S { a: P[int, int] }",
+    "field_arity0": "struct S { a: int[int] }",
+    "field_param_args": "struct S[T] { a: T[int] }",
+    "field_unsized": "struct S { a: [int] }",
+    "field_ref_unscoped": "struct S { a: &r int }",
+    "field_ref_static": "struct S { a: &static [byte] }",
+    "field_ref_static_unique": "struct S { a: &!static [byte] }",
+    "field_tuple_one": "struct S { a: (int) }",
+    "field_tuple_empty": "struct S { a: () }",
+    "field_tuple_trailing": "struct S { a: (int,) }",
+    "field_fn": "struct S { a: fn(int) -> [] int }",
+    "field_fn_bad": "struct S { a: fn(Nope) -> [] int }",
+    "field_qualified": "struct S { a: x.T }",
+    "field_qualified_import": "module m;\nimport m as x;\nstruct T { a: int }\nstruct S { a: x.T }",
+    "field_qualified_private": "module m;\nimport m as x;\nstruct T { a: int }\nstruct S { a: x.T }",
+    "field_box_slice": "struct S { a: Box[[int]] }",
+    "field_vec_slice": "struct P[T] { a: T }\nstruct S { a: P[[int]] }",
+    "enum_empty": "enum E { }",
+    "enum_dup_variant": "enum E { A, A }",
+    "enum_payload_bad": "enum E { A(Nope) }",
+    "enum_payload_arity": "enum E { A(Box, int) }",
+    "infinite_self": "struct S { a: S }",
+    "infinite_enum": "enum E { A(E) }",
+    "infinite_mutual": "struct A { b: B }\nstruct B { a: A }",
+    "infinite_box": "struct S { a: Box[S] }\n" + fnmain(""),
+    "infinite_tuple": "struct S { a: (int, S) }",
+    "infinite_generic": "struct W[T] { a: T }\nstruct S { a: W[S] }",
+    "infinite_ref": "struct S[&r] { a: int }",
+    "val_decl": "val struct S { a: int }",
+    "res_decl": "res struct S { a: int }",
+    "bound_val": "struct S[T: val] { a: T }\nstruct U { a: S[int] }",
+    "bound_val_res": "struct S[T: val] { a: T }\nstruct U { a: S[Box[int]] }",
+    "extern_decl": "extern fn g(x: int) -> [] int;",
+    "static_ok": "static t: [int] { return 1; }\n" + fnmain(""),
+    "static_dup": "static t: [int] { return 1; }\nstatic t: [int] { return 2; }",
+    "static_fn_clash": "static t: [int] { return 1; }\nfn t() -> [] int { return 1; }",
+    "static_fn_clash_before": "fn t() -> [] int { return 1; }\nstatic t: [int] { return 1; }",
+    "static_scalar": "static t: int { return 1; }",
+    "static_f32": "static t: [f32] { return 1; }",
+    "static_struct": "static t: [S] { return 1; }\nstruct S { a: int }",
+    "static_unknown": "static t: [Nope] { return 1; }",
+    "static_ref": "static t: &static [int] { return 1; }",
+    "static_bool_float_byte": "static a: [bool] { return 1; }\nstatic b: [float] { return 1; }\nstatic c: [byte] { return 1; }",
+    "fn_dup": "fn f() -> [] int { return 1; }\nfn f() -> [] int { return 2; }",
+    "fn_dup_module": "module m;\nfn f() -> [] int { return 1; }\nfn f() -> [] int { return 2; }",
+    "fn_builtin": "fn getchar() -> [] int { return 1; }",
+    "fn_builtin_edition": "edition 1;\nfn connect() -> [] int { return 1; }",
+    "fn_builtin_edition2": "edition 2;\nfn connect() -> [] int { return 1; }",
+    "fn_generic_int": "fn f[int]() -> [] int { return 1; }",
+    "fn_generic_dup": "fn f[T, T]() -> [] int { return 1; }",
+    "fn_region_dup": "fn f[&r, &r]() -> [] int { return 1; }",
+    "fn_region_generic": "fn f[T, &T]() -> [] int { return 1; }",
+    "fn_region_static": "fn f[&static]() -> [] int { return 1; }",
+    "fn_where_ok": "fn f[&a, &b where a <= b](x: &a int, y: &b int) -> [] int { return 1; }\n" + fnmain(""),
+    "fn_where_missing": "fn f[&a where a <= b]() -> [] int { return 1; }",
+    "fn_where_missing_inner": "fn f[&b where a <= b]() -> [] int { return 1; }",
+    "fn_where_generic": "fn f[T, &a where a <= T]() -> [] int { return 1; }",
+    "fn_param_dup": "fn f(a: int, a: int) -> [] int { return 1; }",
+    "fn_param_dup_late": "fn f(a: int, b: Nope, a: int) -> [] int { return 1; }",
+    "fn_param_unknown": "fn f(a: Nope) -> [] int { return 1; }",
+    "fn_ret_unknown": "fn f() -> [] Nope { return 1; }",
+    "fn_param_unscoped_region": "fn f(a: &r int) -> [] int { return 1; }",
+    "fn_param_scoped_region": "fn f[&r](a: &r int) -> [] int { return 1; }\n" + fnmain(""),
+    "fn_param_unsized": "fn f(a: [int]) -> [] int { return 1; }",
+    "fn_param_slice_ref": "fn f[&r](a: &r [int], b: &!r [int]) -> [] int { return 1; }\n" + fnmain(""),
+    "fn_param_generic_args": "fn f[T](a: T[int]) -> [] int { return 1; }",
+    "fn_pub_private": "struct S { a: int }\npub fn f(a: S) -> [] int { return 1; }",
+    "fn_pub_private_ret": "struct S { a: int }\npub fn f() -> [] S { return S { a: 1 }; }",
+    "fn_pub_private_nested": "struct S { a: int }\npub fn f(a: Box[S]) -> [] int { return 1; }",
+    "fn_pub_private_ref": "struct S { a: int }\npub fn f[&r](a: &r S) -> [] int { return 1; }",
+    "fn_pub_private_tuple": "struct S { a: int }\npub fn f(a: (int, S)) -> [] int { return 1; }",
+    "fn_pub_private_fn": "struct S { a: int }\npub fn f(a: fn(S) -> [] int) -> [] int { return 1; }",
+    "fn_pub_public": "pub struct S { a: int }\npub fn f(a: S) -> [] int { return 1; }\n" + fnmain(""),
+    "fn_private_private": "struct S { a: int }\nfn f(a: S) -> [] int { return 1; }\n" + fnmain(""),
+    "import_unknown": "import nothing.here;\n" + fnmain(""),
+    "import_self": "module a.b;\nimport a.b;\n" + fnmain(""),
+    "import_self_alias": "module a.b;\nimport a.b as x;\nstruct T { a: int }\nstruct S { a: x.T }",
+    "import_dup_alias": "module a.b;\nimport a.b;\nimport a.b as b;",
+    "import_dup_alias2": "module a.b;\nimport a.b as x;\nimport a.b as x;",
+    "import_root_self": "import a;",
+    "import_late": "fn f() -> [] int { return 1; }\nimport zzz;",
+    "std_import": "import std.io;\n" + fnmain(""),
+    "prelude_names": "fn f(a: World, b: Io, c: Heap, d: Box[int], e: Split, f: Args, g: Fs) -> [] int { return 1; }",
+    "prelude_ed2": "edition 2;\nfn f(a: Net) -> [] int { return 1; }",
+    "prelude_ed1": "edition 1;\nfn f(a: Net) -> [] int { return 1; }",
+    "prelude_ed7": "edition 7;\nfn f(a: Exec, b: Child) -> [] int { return 1; }",
+    "prelude_split_ed": "edition 2;\nfn f(a: Split) -> [] int { return 1; }",
+    "ffi_type": "fn f(a: &r Ffi(\"libc\")) -> [] int { return 1; }",
+    "type_order_late": "struct A { b: B }\nstruct B { a: int }\n" + fnmain(""),
+    "first_error_wins": "struct A { a: Nope }\nstruct A { b: int }",
+    "first_error_wins2": "struct A { b: int }\nstruct A { b: int }\nstruct C { a: Nope }",
+    "member_before_infinite": "struct A { a: A, b: Nope }",
+    "float_types": "struct S { a: float, b: byte, c: bool, d: int }\n" + fnmain(""),
+    "f32_ed5": "edition 5;\nstruct S { a: f32 }",
+    "f32_ed6": "edition 6;\nstruct S { a: f32 }\n" + fnmain(""),
+    "byte_redeclared": "struct byte { a: int }\nstruct S { a: byte }\n" + fnmain(""),
+}
+
+
 def build_corpus(paths):
     files = []
     for p in paths:
@@ -192,13 +313,20 @@ def main():
     ap.add_argument("--count", type=int, default=3000)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--keep", help="write each differing input into this directory")
+    ap.add_argument("--checker", action="store_true",
+                    help="compare check.ls with check_declarations: the pass-1 edge cases, and a SKIP answer is not compared")
     args = ap.parse_args()
 
     paths = args.files or sorted(glob.glob("**/*.ls", recursive=True))
     paths = [p for p in paths if "/target/" not in p and not p.startswith("target/")]
     corpus = build_corpus(paths)
+    if args.checker:
+        # A program that imports `std` stops at its first import (the port reads one file, and `std`
+        # is a set of others), so its mutants never reach the checks this is for.
+        corpus = [(p, d) for p, d in corpus if b"import std" not in d]
     rng = random.Random(args.seed)
-    cases = [(f"edge:{k}", v if isinstance(v, bytes) else v.encode()) for k, v in EDGE.items()]
+    edge = CHECK_EDGE if args.checker else EDGE
+    cases = [(f"edge:{k}", v if isinstance(v, bytes) else v.encode()) for k, v in edge.items()]
     cases += [(f"file:{p}", d) for p, d in corpus]
     for _ in range(args.count):
         p, d = corpus[rng.randrange(len(corpus))]
@@ -216,7 +344,8 @@ def main():
         a, b = run([args.oracle], data), run([args.port], data)
         return name, data, a, b
 
-    same = refused = bad = skipped = 0
+    same = refused = bad = skipped = skipped_port = 0
+    by_rule = collections.Counter()
     shown = 0
     if args.keep:
         os.makedirs(args.keep, exist_ok=True)
@@ -225,9 +354,13 @@ def main():
             if a is None:
                 skipped += 1
                 continue
+            if args.checker and b[1].strip() == b"SKIP":
+                skipped_port += 1
+                continue
             if a[1] == b[1]:
                 same += 1
                 refused += a[1].startswith(b"ERR ")
+                by_rule[a[1].split()[1].decode() if a[1].startswith(b"ERR ") else "OK"] += 1
                 continue
             bad += 1
             if args.keep:
@@ -240,8 +373,10 @@ def main():
                 print(f"\nDIFFERENT {name} ({len(data)} bytes) at output line {at}\n"
                       f"  oracle: {la[at] if at < len(la) else '<end>'!r}\n"
                       f"  port:   {lb[at] if at < len(lb) else '<end>'!r}\n  stderr: {b[2][:200]!r}")
+    if args.checker:
+        print("identical by answer:", dict(by_rule.most_common()))
     print(f"cases: {len(cases)}  identical: {same} (of which refusals: {refused})  different: {bad}  "
-          f"not comparable (invalid UTF-8): {skipped}")
+          f"not comparable (invalid UTF-8): {skipped}  not ported (SKIP): {skipped_port}")
     sys.exit(1 if bad else 0)
 
 

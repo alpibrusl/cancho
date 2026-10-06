@@ -117,7 +117,20 @@ pub fn lower_all(ast: &Ast) -> Result<Program, Vec<Diagnostic>> {
     }
 }
 
-fn lower_inner(ast: &Ast, rest: &mut Vec<Diagnostic>) -> Result<Program, Diagnostic> {
+/// Everything pass 0 of the checker collects before any body is read: the types, the foreign
+/// declarations, the statics and the signatures.
+struct Declarations {
+    unifier: Unifier,
+    defs: Vec<TypeDef>,
+    externs: Vec<ExternFn>,
+    statics: Vec<StaticDef>,
+    static_items: Vec<usize>,
+    signatures: Vec<Signature>,
+}
+
+/// Imports, type declarations, foreign declarations, statics and signatures, in that order,
+/// stopping at the first refusal (see [`lower_all`]). No body is read.
+fn collect_declarations(ast: &Ast) -> Result<Declarations, Diagnostic> {
     check_imports(ast)?;
     let mut unifier = Unifier::new();
     let defs = collect_types(ast, &mut unifier)?;
@@ -603,6 +616,24 @@ fn lower_inner(ast: &Ast, rest: &mut Vec<Diagnostic>) -> Result<Program, Diagnos
         });
     }
 
+    Ok(Declarations { unifier, defs, externs, statics, static_items, signatures })
+}
+
+/// Only the declarations of a program: whether its imports, types, foreign declarations,
+/// statics and signatures are well formed, and the first refusal if not.
+///
+/// This is the boundary between the checker's two halves, and exists so that the staged port
+/// of the checker into lex-sys (`docs/self-hosting.md` section 6) has an oracle for the half
+/// it has reached: [`lower`] stops at the first refusal here, so the first refusal of
+/// `check_declarations` is the first refusal of `lower` whenever it is one of these.
+pub fn check_declarations(ast: &Ast) -> Result<(), Diagnostic> {
+    collect_declarations(ast).map(|_| ())
+}
+
+fn lower_inner(ast: &Ast, rest: &mut Vec<Diagnostic>) -> Result<Program, Diagnostic> {
+    let Declarations { mut unifier, defs, externs, statics, static_items, signatures } =
+        collect_declarations(ast)?;
+
     // Pass 1: check **every** function, once.
     //
     // Checking is total and emission is not, which is the split that lets
@@ -872,6 +903,11 @@ mod foreign_tests;
 #[cfg(test)]
 #[path = "tests/linearity.rs"]
 mod linearity_tests;
+
+/// The tables the staged port of the checker carries: `docs/self-hosting.md` section 6.
+#[cfg(test)]
+#[path = "tests/selfhost_tables.rs"]
+mod selfhost_table_tests;
 
 /// Compile-time folding's own recursion guard: `docs/fuzzing.md` §4.5.
 #[cfg(test)]

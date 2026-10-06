@@ -198,7 +198,8 @@ the stages found, in place, the way this document corrects its own claims.
 | 1. Lexer | `examples/selfhost/lexcore.ls` (a module) and `lexer.ls` | `examples/dump_tokens.rs` in `lex-sys-syntax` | Same token stream and the same refusals on every program in the repository (614 files) |
 | 2. Parser | `examples/selfhost/parser.ls` | `examples/dump_ast.rs` in `lex-sys-syntax` | Same syntax tree, node for node and span for span, or the same refusal (rule and span), on the same 614 files, **including its own source**, and on a fuzz corpus (below) of 52,272 cases, 51,911 of them comparable and all identical, 29,097 of those refusals |
 | 3a. The tree | `examples/selfhost/ast.ls` (a module, the parser) and `parser.ls` (a walk that prints the tree) | the same `dump_ast.rs` | The parser **builds the tree** in flat tables and the listing is produced by walking it; the same 621 programs and 52,314 fuzz cases (6 seeds), all comparable ones identical, 29,055 of them refusals |
-| 3b. Resolution and the rest of the checker | not started | `lex-sys check --output json` | |
+| 3b. Declarations (pass 1 of the checker) | `examples/selfhost/pass1.ls` and `check.ls`, over a generated `tables.ls` | `check_declarations` (`lex-sys-ir`), the first half of the Rust checker | Same answer, `OK` or the first refusal's rule and span, on the 593 programs of the repository it compares and on 51,150 fuzz cases (6 seeds): 49,256 identical, 29,910 of them refusals, none different; 32 programs and 1,437 fuzz cases are `SKIP` (below) |
+| 3c. Bodies: scopes, types, linearity, effects | not started | `lex-sys check --output json` | |
 | 4. Backend | not started | | |
 
 **The method.** A port that builds no tree has nothing to compare, and one that does
@@ -232,6 +233,49 @@ The cost of the walk: `ast.ls` (1,921 lines, 1,678 not comment or blank) and `pa
 (847, 761) are 2,768 lines against stage 2's single 1,970; parsing and walking its own 80 KB
 takes 0.24 s (stage 2 took 6 ms for its own 59 KB), with a 13 MB table to fill first; where
 the time goes was not measured.
+
+**Stage 3b: the declarations.** The Rust checker is one long function, and its first half,
+`collect_declarations`, reads no body: imports, type declarations, foreign declarations,
+statics and function signatures, in that order, stopping at the first refusal. That half is now a
+function of its own (`lex_sys_ir::check_declarations`, a pure extraction; `lower` calls it), and
+it is the oracle: the port's first refusal must be the Rust checker's, rule and span, which
+makes the *order* of the checks part of what is compared. `pass1.ls` ports, in that order:
+imports (`check_imports`), type names (built-in and duplicate), members (duplicate fields and
+variants, `enum` with no variants), the finite-size check (`reaches`, with `Box` the finite way
+back), statics, and signatures (built-ins, duplicates, generic and region names, `where`
+clauses, duplicate parameters, `pub` signatures naming private types), and under all of it
+`resolve_type`: modules, qualifiers, arity, type parameters, scalars, regions, `[T]`'s size,
+tuples, `pub`. A type is resolved in place: each `TName` node of the tree is annotated with
+what it names, which is what the tree is for.
+
+Two things make a partial port honest. **`SKIP` at the point of divergence.** A construct
+whose checks are not ported (an `extern fn`; a `val` declaration; naming a type with a `val`
+bound at an argument that is not a plain scalar; `Ffi` with a library) ends the check with
+the answer `SKIP` *where the Rust checker would have reached it*, so a refusal found before it
+still counts and anything after it does not; and a skipped file is counted, by what the oracle
+said, not hidden: 32 of the repository's 625 programs and about 3% of the fuzz cases. **Generated
+tables.** The prelude's 46 types (name, arity, edition, whether another module may name it,
+which parameters are `val`-bounded) and the 118 builtins' names and editions are data the port
+cannot read from Rust, so `tables.ls` is generated, and a `lex-sys-ir` test fails when it is
+not what `prelude_types` and `Builtin::ALL` say (`UPDATE_SELFHOST_TABLES=1 cargo test -p
+lex-sys-ir selfhost_tables` rewrites it).
+
+What it found: the oracle caught an off-by-one in the import span in the first run, and
+nothing else differed in 51,150 cases; the same two keywords as before (`module`, `region`)
+cost a compile cycle each as the names of locals; and `lex-sys fmt` refuses `import m.ast as
+ast`, an alias equal to the last segment, which the file then spells without the `as`.
+`pass1.ls` is 920 lines (788 not comment or blank); the Rust it ports is spread over
+`defs.rs`, `function.rs` and `lib.rs`, 942 non-comment lines in the ranges that hold it, about a
+quarter of which (foreign declarations, modes) is not ported, so the ratio is nearer 1.2 than
+0.8. That split is an estimate, not a count.
+
+What it does not show, and the next slices: **the corpus is mostly out of reach.** The port
+reads one file and `std` is a set of others, so 217 of the repository's programs stop at their
+`import std...` in both checkers, and the OK answers (328) and the refusals that are not that
+(about 50) are what exercises the checks; parsing several files (the Rust `parse_into`) is the
+step that makes the accept corpus count. Also not ported: foreign declarations (the boundary,
+authority and symbol checks), modes (`mode_of`, `val`), and then the bodies, which are the
+other half of the checker.
 
 **Size.** `parser.ls` is 1,970 lines (1,760 that are not comment or blank) for the
 Rust parser's 1,507 (1,225): 1.3 to 1.4 times. `lexcore.ls` is 963 lines (897) for the
@@ -289,7 +333,7 @@ leaves them. The port parses its own 59 KB in 6 ms.
   harnesses skip those inputs (361 of the 52,272 fuzz cases).
 * Names are printed from their spans, not interned, so symbol ids are not compared.
 
-**Where it stands.** Stages 1, 2 and 3a are done and nothing in them blocks the rest of
+**Where it stands.** Stages 1, 2, 3a and 3b are done as far as stated and nothing in them blocks the rest of
 stage 3, the checker (`lex-sys-ir`, 12 thousand lines), which is the real test: it is the first
 stage with enough shape (resolution, linearity, regions, effect rows) to tell whether
 the language is comfortable writing its own compiler. §5's decision does not change.

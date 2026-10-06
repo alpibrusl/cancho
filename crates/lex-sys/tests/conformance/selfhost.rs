@@ -20,6 +20,9 @@ use super::*;
 #[path = "../../../lex-sys-syntax/examples/dump_ast.rs"]
 mod ast_oracle;
 #[allow(dead_code)]
+#[path = "../../../lex-sys-ir/examples/check_declarations.rs"]
+mod declarations_oracle;
+#[allow(dead_code)]
 #[path = "../../../lex-sys-syntax/examples/dump_tokens.rs"]
 mod token_oracle;
 
@@ -83,6 +86,124 @@ const EDGE: &[&str] = &[
     "fn f() -> [] int { return g(1, 2",
 ];
 
+/// Programs for the declarations half of the checker (`examples/selfhost/check.ls`): each
+/// breaks, or keeps, one rule of `collect_declarations`, in the order that function checks them.
+const CHECK_EDGE: &[&str] = &[
+    "fn main(world: World) -> [] int {  return 0; }",
+    "struct A { a: int }\nstruct A { b: int }\nfn main(world: World) -> [] int {  return 0; }",
+    "struct A { a: int }\nenum A { X }\nfn main(world: World) -> [] int {  return 0; }",
+    "module m;\nstruct A { a: int }\nstruct A { b: int }",
+    "struct int { a: int }",
+    "enum bool { A }",
+    "struct World { a: int }",
+    "edition 1;\nstruct Conn { a: int }\nfn main(world: World) -> [] int {  return 0; }",
+    "edition 5;\nstruct Conn { a: int }\nfn main(world: World) -> [] int {  return 0; }",
+    "edition 6;\nstruct f32 { a: int }",
+    "edition 5;\nstruct f32 { a: int }",
+    "struct S[int] { a: int }",
+    "struct S[T, T] { a: T }",
+    "struct S[T, U] { a: T, b: U }\nfn main(world: World) -> [] int {  return 0; }",
+    "struct S { a: int, a: bool }",
+    "struct S { a: Nope }",
+    "struct S { a: Box }",
+    "struct P[T] { a: T }\nstruct S { a: P[int, int] }",
+    "struct S { a: int[int] }",
+    "struct S[T] { a: T[int] }",
+    "struct S { a: [int] }",
+    "struct S { a: &r int }",
+    "struct S { a: &static [byte] }",
+    "struct S { a: &!static [byte] }",
+    "struct S { a: (int) }",
+    "struct S { a: () }",
+    "struct S { a: (int,) }",
+    "struct S { a: fn(int) -> [] int }",
+    "struct S { a: fn(Nope) -> [] int }",
+    "struct S { a: x.T }",
+    "module m;\nimport m as x;\nstruct T { a: int }\nstruct S { a: x.T }",
+    "module m;\nimport m as x;\nstruct T { a: int }\nstruct S { a: x.T }",
+    "struct S { a: Box[[int]] }",
+    "struct P[T] { a: T }\nstruct S { a: P[[int]] }",
+    "enum E { }",
+    "enum E { A, A }",
+    "enum E { A(Nope) }",
+    "enum E { A(Box, int) }",
+    "struct S { a: S }",
+    "enum E { A(E) }",
+    "struct A { b: B }\nstruct B { a: A }",
+    "struct S { a: Box[S] }\nfn main(world: World) -> [] int {  return 0; }",
+    "struct S { a: (int, S) }",
+    "struct W[T] { a: T }\nstruct S { a: W[S] }",
+    "struct S[&r] { a: int }",
+    "val struct S { a: int }",
+    "res struct S { a: int }",
+    "struct S[T: val] { a: T }\nstruct U { a: S[int] }",
+    "struct S[T: val] { a: T }\nstruct U { a: S[Box[int]] }",
+    "extern fn g(x: int) -> [] int;",
+    "static t: [int] { return 1; }\nfn main(world: World) -> [] int {  return 0; }",
+    "static t: [int] { return 1; }\nstatic t: [int] { return 2; }",
+    "static t: [int] { return 1; }\nfn t() -> [] int { return 1; }",
+    "fn t() -> [] int { return 1; }\nstatic t: [int] { return 1; }",
+    "static t: int { return 1; }",
+    "static t: [f32] { return 1; }",
+    "static t: [S] { return 1; }\nstruct S { a: int }",
+    "static t: [Nope] { return 1; }",
+    "static t: &static [int] { return 1; }",
+    "static a: [bool] { return 1; }\nstatic b: [float] { return 1; }\nstatic c: [byte] { return 1; }",
+    "fn f() -> [] int { return 1; }\nfn f() -> [] int { return 2; }",
+    "module m;\nfn f() -> [] int { return 1; }\nfn f() -> [] int { return 2; }",
+    "fn getchar() -> [] int { return 1; }",
+    "edition 1;\nfn connect() -> [] int { return 1; }",
+    "edition 2;\nfn connect() -> [] int { return 1; }",
+    "fn f[int]() -> [] int { return 1; }",
+    "fn f[T, T]() -> [] int { return 1; }",
+    "fn f[&r, &r]() -> [] int { return 1; }",
+    "fn f[T, &T]() -> [] int { return 1; }",
+    "fn f[&static]() -> [] int { return 1; }",
+    "fn f[&a, &b where a <= b](x: &a int, y: &b int) -> [] int { return 1; }\nfn main(world: World) -> [] int {  return 0; }",
+    "fn f[&a where a <= b]() -> [] int { return 1; }",
+    "fn f[&b where a <= b]() -> [] int { return 1; }",
+    "fn f[T, &a where a <= T]() -> [] int { return 1; }",
+    "fn f(a: int, a: int) -> [] int { return 1; }",
+    "fn f(a: int, b: Nope, a: int) -> [] int { return 1; }",
+    "fn f(a: Nope) -> [] int { return 1; }",
+    "fn f() -> [] Nope { return 1; }",
+    "fn f(a: &r int) -> [] int { return 1; }",
+    "fn f[&r](a: &r int) -> [] int { return 1; }\nfn main(world: World) -> [] int {  return 0; }",
+    "fn f(a: [int]) -> [] int { return 1; }",
+    "fn f[&r](a: &r [int], b: &!r [int]) -> [] int { return 1; }\nfn main(world: World) -> [] int {  return 0; }",
+    "fn f[T](a: T[int]) -> [] int { return 1; }",
+    "struct S { a: int }\npub fn f(a: S) -> [] int { return 1; }",
+    "struct S { a: int }\npub fn f() -> [] S { return S { a: 1 }; }",
+    "struct S { a: int }\npub fn f(a: Box[S]) -> [] int { return 1; }",
+    "struct S { a: int }\npub fn f[&r](a: &r S) -> [] int { return 1; }",
+    "struct S { a: int }\npub fn f(a: (int, S)) -> [] int { return 1; }",
+    "struct S { a: int }\npub fn f(a: fn(S) -> [] int) -> [] int { return 1; }",
+    "pub struct S { a: int }\npub fn f(a: S) -> [] int { return 1; }\nfn main(world: World) -> [] int {  return 0; }",
+    "struct S { a: int }\nfn f(a: S) -> [] int { return 1; }\nfn main(world: World) -> [] int {  return 0; }",
+    "import nothing.here;\nfn main(world: World) -> [] int {  return 0; }",
+    "module a.b;\nimport a.b;\nfn main(world: World) -> [] int {  return 0; }",
+    "module a.b;\nimport a.b as x;\nstruct T { a: int }\nstruct S { a: x.T }",
+    "module a.b;\nimport a.b;\nimport a.b as b;",
+    "module a.b;\nimport a.b as x;\nimport a.b as x;",
+    "import a;",
+    "fn f() -> [] int { return 1; }\nimport zzz;",
+    "import std.io;\nfn main(world: World) -> [] int {  return 0; }",
+    "fn f(a: World, b: Io, c: Heap, d: Box[int], e: Split, f: Args, g: Fs) -> [] int { return 1; }",
+    "edition 2;\nfn f(a: Net) -> [] int { return 1; }",
+    "edition 1;\nfn f(a: Net) -> [] int { return 1; }",
+    "edition 7;\nfn f(a: Exec, b: Child) -> [] int { return 1; }",
+    "edition 2;\nfn f(a: Split) -> [] int { return 1; }",
+    "fn f(a: &r Ffi(\"libc\")) -> [] int { return 1; }",
+    "struct A { b: B }\nstruct B { a: int }\nfn main(world: World) -> [] int {  return 0; }",
+    "struct A { a: Nope }\nstruct A { b: int }",
+    "struct A { b: int }\nstruct A { b: int }\nstruct C { a: Nope }",
+    "struct A { a: A, b: Nope }",
+    "struct S { a: float, b: byte, c: bool, d: int }\nfn main(world: World) -> [] int {  return 0; }",
+    "edition 5;\nstruct S { a: f32 }",
+    "edition 6;\nstruct S { a: f32 }\nfn main(world: World) -> [] int {  return 0; }",
+    "struct byte { a: int }\nstruct S { a: byte }\nfn main(world: World) -> [] int {  return 0; }",
+];
+
 fn sources() -> Vec<(String, String)> {
     let root = repo_root();
     let mut files = Vec::new();
@@ -101,6 +222,21 @@ fn sources() -> Vec<(String, String)> {
     out.extend(EDGE.iter().map(|s| (format!("edge case {s:.40?}"), (*s).to_owned())));
     assert!(out.len() > 500, "the corpus walk found only {} files", out.len());
     out
+}
+
+/// The files of `parser.ls` and `check.ls`: the root, which says what to print, and the modules
+/// the two share.
+fn with_front_end(root: &'static str) -> Vec<&'static str> {
+    vec![
+        root,
+        "driver.ls",
+        "listing.ls",
+        "pass1.ls",
+        "ast.ls",
+        "kinds.ls",
+        "lexcore.ls",
+        "tables.ls",
+    ]
 }
 
 fn build(tag: &str, files: &[&str]) -> PathBuf {
@@ -159,6 +295,41 @@ fn agree(tag: &str, files: &[&str], oracle: fn(&str) -> String) {
     let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
 }
 
+/// The checker port against `check_declarations`. A port answer of `SKIP` says the declarations
+/// use something whose checks are not ported, and is not compared; everything else must be
+/// the oracle's answer, byte for byte, and enough of the corpus must be compared that the test
+/// cannot pass by skipping.
+#[test]
+fn the_checker_in_lex_sys_agrees_with_the_rust_declarations_check() {
+    let exe = build("check", &with_front_end("check.ls"));
+    let mut corpus = sources();
+    corpus.extend(CHECK_EDGE.iter().map(|s| (format!("check case {s:.40?}"), (*s).to_owned())));
+    let (mut compared, mut skipped, mut refusals) = (0, 0, 0);
+    let mut different = Vec::new();
+    for (name, text) in &corpus {
+        let ours = answer(&exe, text);
+        if ours == "SKIP\n" {
+            skipped += 1;
+            continue;
+        }
+        compared += 1;
+        let theirs = declarations_oracle::listing(text);
+        refusals += usize::from(theirs.starts_with("ERR"));
+        if ours != theirs {
+            different.push(format!("{name}: port {ours:?}, rust {theirs:?}"));
+        }
+    }
+    assert!(
+        different.is_empty(),
+        "`check.ls` and `check_declarations` disagree about {} of {compared} programs:\n{}",
+        different.len(),
+        different.join("\n")
+    );
+    assert!(compared > 500 && refusals > 100, "compared {compared}, of which {refusals} refusals");
+    assert!(skipped * 10 < compared, "{skipped} programs skipped of {}", corpus.len());
+    let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
+}
+
 #[test]
 fn the_lexer_in_lex_sys_agrees_with_the_rust_lexer() {
     agree("lexer", &["lexer.ls", "lexcore.ls"], token_oracle::listing);
@@ -166,5 +337,5 @@ fn the_lexer_in_lex_sys_agrees_with_the_rust_lexer() {
 
 #[test]
 fn the_parser_in_lex_sys_agrees_with_the_rust_parser() {
-    agree("parser", &["parser.ls", "ast.ls", "lexcore.ls"], ast_oracle::listing);
+    agree("parser", &with_front_end("parser.ls"), ast_oracle::listing);
 }
