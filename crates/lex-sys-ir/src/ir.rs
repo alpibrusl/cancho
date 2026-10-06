@@ -1164,7 +1164,9 @@ pub fn enametoolong_for(os: Os) -> i64 {
     match os {
         Os::Darwin => 63,
         Os::Linux => 36,
-        Os::Wasi => 37,
+        // The language's number, not WASI's own 37: `errno` is translated on
+        // WASI (`errno.rs`), so this is what a failing call would have said.
+        Os::Wasi => 36,
     }
 }
 

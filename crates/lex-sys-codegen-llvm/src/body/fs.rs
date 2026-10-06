@@ -15,8 +15,19 @@ impl<'a> FuncEmitter<'a> {
         };
         let addr = self.fresh();
         self.out.push_str(&format!("  {addr} = call ptr @{symbol}()\n"));
-        let value32 = self.fresh();
-        self.out.push_str(&format!("  {value32} = load i32, ptr {addr}\n"));
+        let raw32 = self.fresh();
+        self.out.push_str(&format!("  {raw32} = load i32, ptr {addr}\n"));
+        // WASI's `errno` numbers are unrelated to Linux's; a program sees one
+        // numbering, so they are translated here, the one place a failure's
+        // `errno` is read (`lex_sys_ir::WASI_ERRNO_TO_LINUX`, `docs/wasm.md`).
+        let value32 = if self.file_os() == lex_sys_ir::Os::Wasi {
+            let translated = self.fresh();
+            self.out
+                .push_str(&format!("  {translated} = call i32 @lexsys_wasi_errno(i32 {raw32})\n"));
+            translated
+        } else {
+            raw32
+        };
         let value = self.fresh();
         self.out.push_str(&format!("  {value} = sext i32 {value32} to i64\n"));
         LValue::Reg(value)

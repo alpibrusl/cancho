@@ -1195,3 +1195,34 @@ fn an_operating_system_without_tables_is_refused_not_given_linuxs() {
             .unwrap_or_else(|(_, m)| panic!("{known}: {m}"));
     }
 }
+
+/// `docs/wasm.md`: a failure's `errno` is translated on WASI and only there.
+#[test]
+fn errno_is_translated_on_wasi_and_only_there() {
+    const SOURCE: &str = "edition 6;\n\
+         fn main(world: World) -> [] int {\n\
+             let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);\n\
+             release(io); release(ffi); release(heap); release(args);\n\
+             release(net); release(clock); release(signals);\n\
+             let root = narrow(fs, \"/\");\n\
+             var status = 0;\n\
+             borrow root as &f in {\n\
+                 match open_dir(f, \"/nonexistent\") {\n\
+                     DirOpened::Ok(d) => { dir_close(d); }\n\
+                     DirOpened::Failed(e) => { status = e; }\n\
+                 }\n\
+             }\n\
+             release(root);\n\
+             return status;\n\
+         }\n";
+    let ast = parse(SOURCE).expect("should parse");
+    let program = lex_sys_ir::lower(&ast).expect("should lower");
+    let wasm: Triple = "wasm32-wasip1".parse().expect("a valid triple");
+    let text = emit::emit_module(&program, "main", &wasm).expect("wasm32 should emit");
+    assert!(text.contains("define internal i32 @lexsys_wasi_errno("), "{text}");
+    assert!(text.contains("i32 44, label %to2"), "ENOENT is 44 on WASI, 2 in the language");
+    assert!(text.contains("call i32 @lexsys_wasi_errno("), "errno is read through it");
+    let host: Triple = "x86_64-unknown-linux-gnu".parse().expect("a valid triple");
+    let native = emit::emit_module(&program, "main", &host).expect("native should emit");
+    assert!(!native.contains("lexsys_wasi_errno"), "no translation off WASI");
+}
