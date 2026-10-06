@@ -236,7 +236,12 @@ pub fn tokenize_with_comments(text: &str) -> Result<(Vec<Token>, Vec<Span>), Dia
                     ));
                 }
                 if bytes[i] == b'\\' {
-                    let Some(escape) = bytes.get(i + 1) else { break };
+                    // A backslash with nothing after it is the file ending in the
+                    // middle of the literal, like running off the end (#294).
+                    let Some(escape) = bytes.get(i + 1) else {
+                        i = bytes.len();
+                        break;
+                    };
                     if !matches!(escape, b'n' | b'r' | b't' | b'\\' | b'"' | b'0') {
                         let end = next_char_boundary(text, i + 1);
                         return Err(Diagnostic::new(
@@ -646,6 +651,16 @@ mod tests {
     fn an_unterminated_string_is_refused_rather_than_running_to_the_end() {
         assert!(tokenize("\"libc").is_err());
         assert!(tokenize("\"lib\nc\"").is_err());
+    }
+
+    /// #294: a lone backslash as the last byte used to leave the loop one short of the
+    /// end, so the literal was accepted as a token and the parser blamed something else.
+    #[test]
+    fn a_string_ending_in_a_lone_backslash_is_unterminated() {
+        let err = tokenize("\"abc\\").unwrap_err();
+        assert_eq!(err.rule, Rule::LiteralForm);
+        assert_eq!((err.span.start, err.span.end), (0, 5));
+        assert!(tokenize("\"abc\\\"").is_err(), "an escaped quote does not close it");
     }
 
     #[test]
