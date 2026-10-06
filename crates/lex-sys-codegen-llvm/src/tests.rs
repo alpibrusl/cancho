@@ -1494,3 +1494,47 @@ fn a_wasm32_console_never_calls_libc_stdio() {
     assert!(native.contains("call i32 @getchar("));
     assert!(!native.contains("lexsys_console") && !native.contains("lexsys_putchar"));
 }
+
+/// W0.5 (`docs/wasm.md`): on WASI a file is opened for writing with `openat` and the
+/// mode's flags, not through `fopen` and a `dup` of its descriptor. WASI has no
+/// `dup`: `fcntl(F_DUPFD_CLOEXEC)` answered `EINVAL`, so `open_write`, `open_append`,
+/// `open_new` and `open_rw` all failed on a program that worked natively, and
+/// `fopen` brought stdio's imports along. No accept fixture reached them.
+#[test]
+fn a_wasi_file_is_opened_for_writing_with_openat_not_fopen() {
+    const WRITE: &str = "edition 6;\n\
+         fn main(world: World) -> [] int {\n\
+             let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);\n\
+             release(io); release(ffi); release(heap); release(args); release(net);\n\
+             release(clock); release(signals);\n\
+             let d = narrow(fs, \"/tmp\");\n\
+             var code = 0;\n\
+             borrow d as &f in {\n\
+                 match open_write(f, \"/tmp/x\") {\n\
+                     Opened::Failed(e) => { code = e; }\n\
+                     Opened::Ok(o) => { var file = o; file_close(file); }\n\
+                 }\n\
+             }\n\
+             release(d);\n\
+             return code;\n\
+         }\n";
+    let ast = parse(WRITE).expect("should parse");
+    let program = lex_sys_ir::lower(&ast).expect("should lower");
+    let wasm: Triple = "wasm32-wasip1".parse().expect("a valid triple");
+    let text = emit::emit_module(&program, "main", &wasm).expect("wasm32 should emit");
+    let calls = |module: &str, name: &str| {
+        module
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("declare "))
+            .any(|l| l.contains(&format!("@{name}(")))
+    };
+    assert!(!calls(&text, "fopen"), "a WASI module opens files through fopen");
+    assert!(!calls(&text, "fcntl"), "a WASI module duplicates a descriptor with fcntl");
+    assert!(calls(&text, "openat"), "{text}");
+    // O_WRONLY | O_CREAT | O_TRUNC, as WASI numbers them.
+    assert!(text.contains(&(0x1000_0000_i64 | 0x1000 | 0x8000).to_string()), "{text}");
+
+    let host: Triple = "x86_64-unknown-linux-gnu".parse().expect("a valid triple");
+    let native = emit::emit_module(&program, "main", &host).expect("native should emit");
+    assert!(calls(&native, "fopen"), "the host keeps its fopen bridge");
+}

@@ -139,6 +139,27 @@ W0.3 took the four `__multi3` link errors to passes.
   A second test breaks the algorithm on purpose and requires the harness to
   notice, because a differential test that cannot fail proves nothing. Cost is
   unmeasured; W3's overhead table is where it gets measured.
+- **W0.5: the write-mode file openers.** `open_write`, `open_append`, `open_new`,
+  `open_rw`, and everything built on a handle from them (`file_write`, `file_sync`,
+  `file_truncate`, `file_pwrite`), **failed on WASI with `EINVAL`** on programs that
+  worked natively, and no accept fixture reached them, so the map never saw it. They
+  opened through `fopen` and then took the descriptor with
+  `fcntl(F_DUPFD_CLOEXEC)`, a duplicate; WASI has no `dup`, and `fcntl` answered
+  `EINVAL` (the constant used was Linux's `1030`). `fopen` also brought stdio's
+  imports along. On WASI they now open with `openat` and the flags the mode's `fopen`
+  string means (`OpenMode::open_flags`: `wb` is write-only, create, truncate; `ab`
+  write-only, create, append; `wbx` write-only, create, exclusive; `r+b` read-write).
+  That needed one more entry in the flags table, **`read_write`**, because WASI's
+  `O_RDWR` is `O_RDONLY | O_WRONLY` (`0x14000000`), not 2. Native keeps its `fopen`
+  bridge.
+  `scripts/wasm_file_check.py` is the check that found it: one tiny program per
+  builtin the fixtures miss (the four openers, `file_size`, `file_sync`,
+  `file_truncate`, `file_pread`, `file_pwrite`, `fs_read`, `fs_write`, `fs_remove`,
+  `fs_rename`), built native and for wasm32, run with the file absent and present,
+  and required to exit the same and leave the same files: **26 of 26 agree**,
+  `open_new` on an existing file answering 117 and `open_rw` on a missing one 102 on
+  both, which is the errno translation working. With the fix stashed the script
+  reports the openers `DIFFERENT (wasm=122)`, so it can fail.
 - **An operating system with no tables is refused**, in `emit_module`,
   instead of taking the Linux numbers. (`x86_64-unknown-freebsd` used to
   build.) The per-site `_ => linux` arms that remain are behind that guard.
