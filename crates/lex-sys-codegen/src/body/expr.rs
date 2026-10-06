@@ -788,6 +788,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                         | Builtin::DirOpenAppend),
                     ) => self.dir_open(&args, *op),
                     Callee::Builtin(Builtin::DirRename) => self.dir_rename(&args),
+                    Callee::Builtin(Builtin::DirRenameNew) => self.dir_rename_new(&args),
                     Callee::Builtin(Builtin::DirRemove) => self.dir_remove(&args),
                     Callee::Builtin(Builtin::DirSync) => self.dir_sync(&args),
                     Callee::Builtin(Builtin::DirClose) => self.dir_close(&args),

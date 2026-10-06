@@ -1,6 +1,6 @@
 # Directory handles: opening beneath a directory, following no links
 
-Status: **slices 1 and 2 built**, edition 6, both backends: open a directory, step into a child directory, open a
+Status: **slices 1, 2 and 4 built** (4 is edition 7), both backends: open a directory, step into a child directory, open a
 file in it for reading (slice 1, #250), and create, append to, rename, remove and sync beneath it (slice 2). Linux
 measured; Darwin's flags and Apple AArch64's variadic call are written and run only by CI. Slice 3 (`lexsys-tools`
 on top) is built there (alpibrusl/lexsys-tools#4); §3 corrects what it said the row would become. Issue #227, gap L6 of [`agent-toolbox.md`](agent-toolbox.md).
@@ -121,8 +121,63 @@ generators.
    gains `dir_read`. What disappears is **`fs_write("")`**: the writers hold `dir_write` and no path write at all.
    Without `--root` there is nothing to be beneath, and a reader opens the path as given; `.` was not opened as a
    root, because a working directory the process may not read would have broken every relative open.
+4. **Built: a rename that never replaces a name** (§5). `dir_rename` is `renameat`, and POSIX `renameat` silently
+   replaces an existing destination. A tool that promises never to replace a name (`lexsys-tools`' `move`) could only
+   look first and rename second, under a lock only its own processes take, and the look-then-rename window is real:
+   in `lexsys-tools`' `scripts/move_race.py`, a process that takes no lock and creates the destination at a random
+   moment during the move lost its file in 55 of 20,000 trials (0.28%), and in 100 of 100 when the rename was delayed
+   30 ms. One builtin, **edition 7**, additive (`editions.md` §5: `dir_rename_new` is a name a program may already
+   declare, so older editions do not have it):
+
+   ```
+   dir_rename_new(dir: &Dir, from: &[byte], to: &[byte]) -> [dir_write] Done
+       // Linux: renameat2(dir, from, dir, to, RENAME_NOREPLACE)    macOS: renameatx_np(dir, from, dir, to, RENAME_EXCL)
+   ```
+
+   * **`to` exists: `Failed(EEXIST)` (17, on both targets)**, whatever it is -- a file, a directory (an empty one
+     too, which `renameat` replaces), a link, a dangling link -- and its bytes, its inode and the source are
+     untouched. The check and the rename are one call in the kernel, so there is no window to race.
+   * **A filesystem that cannot do it is `Failed(ENOTSUP)`, never a replacing rename.** The builtin makes one call
+     and has no fallback. Linux answers `EINVAL` for a flag the filesystem does not implement, and `EINVAL` is also
+     what a name that is not one component gets (§2, no call made), so the two would be the same value to a program.
+     The builtin therefore answers a kernel `EINVAL` as **`EOPNOTSUPP` (95) on Linux**; macOS answers **`ENOTSUP`
+     (45)** itself. The name check's own `EINVAL` is not mapped. A program reads the pair as: `EEXIST` -- the name is
+     taken; `EOPNOTSUPP`/`ENOTSUP` -- this filesystem cannot promise it, decide what to do; `EINVAL` -- the names
+     were wrong. The kernel checks that the destination exists before it looks at the flag, so a *taken* name is
+     `EEXIST` even on a filesystem without the flag, and only a free name there is `ENOTSUP`.
+   * Names are §2's one component, each; `dir_write`; every other answer is `renameat`'s (`ENOENT` for a missing
+     source, even onto a taken name).
+   * **Requirements.** Linux kernel 3.15 and glibc 2.28 (`renameat2` has no wrapper before that; not measured against another libc). macOS 10.12 (`renameatx_np`). A libc without the symbol fails at link time, not at run time, so a
+     program cannot silently get the replacing behaviour.
 
 ## 4. What it is checked by
+
+Slice 4 (`tests/conformance/directory_rename_new.rs`, **both backends**, the same expectations):
+
+* A table against a tree the test builds: a free name moves, byte for byte and inode for inode; a taken name is
+  `EEXIST` with its bytes and inode and the source untouched; a link or a dangling link at the destination is
+  `EEXIST`, the link stays and nothing is written outside; an existing directory (empty too) is `EEXIST`; a missing
+  source is `ENOENT`, even onto a taken name; `..`, an empty name, `a/b`, `.` and `../escaped` are `EINVAL` with no
+  call.
+* **A race.** The program renames 300 pairs `s<i>` to `d<i>` while a thread of the test creates `d<i>`, exclusively,
+  with a head start of a few trials on two of every three (the third is an uncontested control). Exactly one side
+  may win a name: rename `ok` means the rival's create was refused and the file holds the source's bytes; `EEXIST`
+  means the rival's create succeeded, the file holds the rival's bytes and the source is still there. A replacing
+  rename answers `ok` *and* lets the rival's create succeed, which the test names as the lost file. Measured here,
+  of 300 trials: on macOS (APFS) the rival won 152 to 162; on Linux (aarch64; overlayfs, NFS v3, ntfs-3g) it won
+  between 17 and 136, depending on the filesystem and the backend. Both sides won some in every run, and the test
+  fails if the rival never wins one.
+* **A filesystem without the flag**, when `LEX_SYS_RENAME_UNSUPPORTED_DIR` names a directory on one. CI's
+  filesystems all support the flag, so without the variable that test prints that it has nothing to run on and
+  passes **vacuously**; it was run, with the answers in §5, on NFS v3 and ntfs-3g (Linux) and ExFAT (macOS), both
+  backends: `ENOTSUP` for a free name, `EEXIST` for a taken one, nothing moved.
+* `tests/reject/dir_rename_new_is_edition_seven.ls` (`not-a-function` at edition 6) and
+  `dir_rename_new_not_declared.ls` (`effect-not-declared`: `[dir_read]` is not `dir_write`).
+* **Mutants: 10, all killed.** Flag 0 (a plain rename) in the shared table, and on each backend alone; the exchange
+  flag in place of no-replace; the second name unchecked, on each backend; the builtin at edition 6; the builtin
+  performing `dir_read`; and, on each backend alone, the kernel's `EINVAL` left unmapped, which only the Linux run
+  on NFS v3 kills (`err 22` where `err 95` is expected). The first six were each killed by the table and by the race
+  independently.
 
 Slice 2:
 
@@ -158,3 +213,38 @@ Slice 1:
   In `std.dirs`: a walk that hands the rest of the path to one `dir_open_read` instead of recursing. Two survived the
   first run -- `Fs` not discharging `dir_read`, and the steps performing nothing -- and the accept function and the
   `dir_read_not_declared` fixture above were added for them.
+
+## 5. Slice 4 measured: which filesystems can refuse to replace
+
+`scripts/rename_noreplace_probe.c` makes one call per case in a directory on the filesystem under test:
+`renameat2(RENAME_NOREPLACE)` (the raw syscall) or `renameatx_np(RENAME_EXCL)` onto a **free** name, then onto a
+**taken** one (does it answer `EEXIST`, do the destination's bytes survive, does the source stay), then a plain
+`renameat` onto the taken name for contrast. `scripts/rename_noreplace_matrix.sh` and
+`scripts/rename_noreplace_matrix2.sh` build the Linux filesystems (loop images, an NFS server on loopback, ntfs-3g).
+
+| filesystem | free destination | taken destination | plain `renameat` over a taken one |
+|---|---|---|---|
+| Linux 6.8 (aarch64, glibc 2.39): tmpfs | moved | `EEXIST`, bytes kept | **replaced** |
+| overlayfs (the container root) | moved | `EEXIST`, bytes kept | **replaced** |
+| ext4, XFS, Btrfs, vfat (loop mounts) | moved | `EEXIST`, bytes kept | **replaced** |
+| NFS v3 and v4.2 (client and server on this kernel) | **`EINVAL`** | `EEXIST`, bytes kept | **replaced** |
+| ntfs-3g (FUSE) | **`EINVAL`** | `EEXIST`, bytes kept | **replaced** |
+| macOS 26.2: APFS, HFS+, FAT32 (disk images) | moved | `EEXIST`, bytes kept | **replaced** |
+| macOS 26.2: ExFAT (disk image) | **`ENOTSUP` (45)** | `EEXIST`, bytes kept | **replaced** |
+
+Not measured: exFAT and f2fs on Linux (the mount failed in the container), a nested overlayfs (same), kernels other
+than 6.8, SMB/CIFS, 9p, virtiofs, Linux on x86-64 (the syscall is the same, the table is one architecture's), and a
+macOS that is not 26.2. For a filesystem not in the table the contract is the builtin's, not a measurement: it makes
+one call, and whatever that answers is `EEXIST`, success, or an error a program can see; it is never a replace.
+
+What the table says that the design leans on:
+
+* **The kernel refuses a taken name before it looks at the flag.** NFS, ntfs-3g and ExFAT answer `EEXIST` for a taken
+  destination and only a free one is unsupported, so the answer to "may I take this name" on such a filesystem is
+  still the correct `EEXIST` for the case that matters, and `ENOTSUP` only says the move cannot be made atomically.
+* **macOS differs from `renameat` only in that.** It follows no link at the last component either way (a link at the
+  destination is a taken name, as on Linux; the conformance test checks both), the names are the same one component, and the unsupported
+  answer is `ENOTSUP` natively where Linux says `EINVAL`. The CI runner's filesystem is APFS, which supports it; the
+  test above runs on it on every CI run.
+* **`EINVAL` is ambiguous on Linux**, which is why the builtin maps it (§3, slice 4). Measured on NFS v3 and
+  ntfs-3g through the compiler, both backends: `err 95` for the free name, `err 17` for the taken one.

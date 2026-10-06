@@ -136,6 +136,18 @@ impl<'a> FuncEmitter<'a> {
         names: &[(String, String)],
         call: impl FnOnce(&mut Self, &[String]) -> String,
     ) -> Vec<LValue> {
+        self.dir_call_mapping(names, None, call)
+    }
+
+    /// `dir_call`, and when `unsupported` is given, a kernel `EINVAL` from
+    /// `call` is answered as that value instead. The name check's own
+    /// `EINVAL` is not mapped, so the two stay apart.
+    pub(crate) fn dir_call_mapping(
+        &mut self,
+        names: &[(String, String)],
+        unsupported: Option<i64>,
+        call: impl FnOnce(&mut Self, &[String]) -> String,
+    ) -> Vec<LValue> {
         let result_cell = self.fresh();
         self.hoist(format!("  {result_cell} = alloca i64\n"));
         let reason_cell = self.fresh();
@@ -147,7 +159,21 @@ impl<'a> FuncEmitter<'a> {
         let copies: Vec<String> =
             names.iter().map(|(name, length)| self.component(name, length, &refused)).collect();
         let result = call(self, &copies);
-        let reason = self.errno();
+        let mut reason = self.errno();
+        if let Some(unsupported) = unsupported {
+            let invalid = self.fresh();
+            self.out.push_str(&format!(
+                "  {invalid} = icmp eq i64 {}, {}\n",
+                operand(&reason),
+                lex_sys_ir::EINVAL
+            ));
+            let mapped = self.fresh();
+            self.out.push_str(&format!(
+                "  {mapped} = select i1 {invalid}, i64 {unsupported}, i64 {}\n",
+                operand(&reason)
+            ));
+            reason = LValue::Reg(mapped);
+        }
         let wide = self.fresh();
         self.out.push_str(&format!("  {wide} = sext i32 {result} to i64\n"));
         self.out.push_str(&format!("  store i64 {wide}, ptr {result_cell}\n"));
@@ -229,6 +255,31 @@ impl<'a> FuncEmitter<'a> {
             let renamed = this.fresh();
             this.out.push_str(&format!(
                 "  {renamed} = call i32 @renameat(i32 {fd}, ptr {}, i32 {fd}, ptr {})\n",
+                copies[0], copies[1]
+            ));
+            renamed
+        }))
+    }
+
+    /// `dir_rename_new(dir, from, to)`: the rename that refuses to replace.
+    /// Linux `renameat2(RENAME_NOREPLACE)`, Darwin `renameatx_np(RENAME_EXCL)`;
+    /// a filesystem without it is `rename_unsupported`, never a plain rename
+    /// (`docs/directory-handles.md` §3, slice 4).
+    pub(crate) fn dir_rename_new(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        if args.len() != 5 {
+            return Err(format!("`dir_rename_new` needs 5 leaves but {} were given", args.len()));
+        }
+        let handle = operand(&args[0]);
+        let names =
+            [(operand(&args[1]), operand(&args[2])), (operand(&args[3]), operand(&args[4]))];
+        let darwin = self.is_darwin();
+        let symbol = if darwin { "renameatx_np" } else { "renameat2" };
+        let flag = lex_sys_ir::rename_no_replace(darwin);
+        Ok(self.dir_call_mapping(&names, Some(lex_sys_ir::rename_unsupported(darwin)), |this, copies| {
+            let fd = this.dir_fd(&handle);
+            let renamed = this.fresh();
+            this.out.push_str(&format!(
+                "  {renamed} = call i32 @{symbol}(i32 {fd}, ptr {}, i32 {fd}, ptr {}, i32 {flag})\n",
                 copies[0], copies[1]
             ));
             renamed

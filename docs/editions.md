@@ -330,6 +330,11 @@ field is why this is an edition and not a later slice of edition 6, for the reas
 the eighth was: edition-6 files already destructure eight fields. `Split` is now five
 declarations of one name; an edition-6 file's `split()` still answers eight.
 
+Edition 7 also has **`dir_rename_new`** ([`directory-handles.md`](directory-handles.md) §3, slice 4), the rename
+that never replaces a name, and `dir_mode` and `dir_own_mode` ([`directory-listing.md`](directory-listing.md) §3.5).
+Each is a builtin under an existing label and a name an older file may already declare, so it is absent before
+edition 7 (`tests/reject/dir_rename_new_is_edition_seven.ls`) and nothing else about edition 6 changes.
+
 ---
 
 ## 8. What this does not do

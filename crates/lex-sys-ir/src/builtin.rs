@@ -548,6 +548,13 @@ pub enum Builtin {
     /// `dir_rename(&Dir, from, to) -> [dir_write] Done`: `renameat` with both
     /// names in the one directory; each name has `dir_enter`'s check.
     DirRename,
+    /// `dir_rename_new(&Dir, from, to) -> [dir_write] Done`: `dir_rename`
+    /// that never replaces a name -- `renameat2(RENAME_NOREPLACE)` on Linux,
+    /// `renameatx_np(RENAME_EXCL)` on Darwin -- so an existing `to` is
+    /// `Failed(EEXIST)` and its bytes are untouched. A filesystem that cannot
+    /// do it is `Failed(ENOTSUP)`, never a replacing rename
+    /// (`docs/directory-handles.md` §3, slice 4). Edition 7.
+    DirRenameNew,
     /// `dir_remove(&Dir, name) -> [dir_write] Done`: `unlinkat(dir, name, 0)`.
     /// A link is removed, never followed.
     DirRemove,
@@ -756,6 +763,7 @@ impl Builtin {
         Builtin::DirOpenNew,
         Builtin::DirOpenAppend,
         Builtin::DirRename,
+        Builtin::DirRenameNew,
         Builtin::DirRemove,
         Builtin::DirSync,
         Builtin::DirList,
@@ -878,6 +886,7 @@ impl Builtin {
             Builtin::DirOpenNew => "dir_open_new",
             Builtin::DirOpenAppend => "dir_open_append",
             Builtin::DirRename => "dir_rename",
+            Builtin::DirRenameNew => "dir_rename_new",
             Builtin::DirRemove => "dir_remove",
             Builtin::DirSync => "dir_sync",
             Builtin::DirList => "dir_list",
@@ -1007,6 +1016,9 @@ impl Builtin {
             // being built -- `dir_mode` is a name a program may already
             // declare.
             Builtin::DirMode | Builtin::DirOwnMode => 7,
+            // `docs/directory-handles.md` §3, slice 4: edition 7 as well --
+            // `dir_rename_new` is a name a program may already declare.
+            Builtin::DirRenameNew => 7,
             // `docs/file-writes.md`: edition 5, for the same reason --
             // `file_write` and `open_new` are names a program may already
             // declare against libc.
@@ -1107,7 +1119,7 @@ impl Builtin {
             | Builtin::DirOpenAppend => 2,
             Builtin::DirRemove => 2,
             // The handle's region and each name's.
-            Builtin::DirRename => 3,
+            Builtin::DirRename | Builtin::DirRenameNew => 3,
             Builtin::DirSync => 1,
             // The handle's region; for `dir_next`, the listing's and the
             // buffer's.
@@ -1566,7 +1578,7 @@ impl Builtin {
                     named(PRELUDE_OPENED)
                 },
             ),
-            Builtin::DirRename => (
+            Builtin::DirRename | Builtin::DirRenameNew => (
                 vec![
                     Type::Ref {
                         unique: false,
@@ -1889,6 +1901,7 @@ impl Builtin {
             Builtin::DirOpenNew
             | Builtin::DirOpenAppend
             | Builtin::DirRename
+            | Builtin::DirRenameNew
             | Builtin::DirRemove
             | Builtin::DirSync => Effects::plain(["dir_write"]),
             Builtin::ConnWrite => Effects::plain(["conn_write"]),

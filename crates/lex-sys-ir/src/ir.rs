@@ -1260,6 +1260,21 @@ pub fn stat_layout_for(os: Os, aarch64: bool) -> StatLayout {
     }
 }
 
+/// What `dir_rename_new` answers when the filesystem cannot refuse to
+/// replace: `EOPNOTSUPP` on Linux, `ENOTSUP` on Darwin. The kernel says
+/// `EINVAL` for an unknown flag, and `EINVAL` is also what a name that is not
+/// one component gets, so it is mapped here to a value a program can tell
+/// apart (`docs/directory-handles.md` §3, slice 4).
+pub fn rename_unsupported(darwin: bool) -> i64 {
+    if darwin { 45 } else { 95 }
+}
+
+/// `renameatx_np`'s `RENAME_EXCL` and Linux's `RENAME_NOREPLACE`, the flag
+/// each target's no-replace rename takes.
+pub fn rename_no_replace(darwin: bool) -> i64 {
+    if darwin { 0x4 } else { 0x1 }
+}
+
 /// `st_mode`'s permission bits (set-user-id, set-group-id, sticky, and the
 /// nine read/write/execute bits), what `dir_mode` answers
 /// (`docs/directory-listing.md` §3.5). The same on every target.
