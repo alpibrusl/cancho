@@ -118,6 +118,7 @@ pub fn wasi_gap(builtin: Builtin) -> Option<Gap> {
         B::DirMode | B::DirOwnMode => Some(Gap::Permissions),
         B::DirRenameNew => Some(Gap::NoReplaceRename),
         B::ExecSpawn
+        | B::ExecSpawnIn
         | B::ChildEndClose
         | B::ChildKill
         | B::ChildWait

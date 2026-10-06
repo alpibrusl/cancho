@@ -114,8 +114,8 @@ W0.3 took the four `__multi3` link errors to passes.
   refuses at the function that reaches the builtin, once per (function,
   family), naming the first builtin found:
   `` `main` uses `spawn`, and threads do not exist on `wasm32-wasip1` ``.
-  Five families (seven since W0.6, below), from `wasi_gap`, an exhaustive `match` over all 119 builtins
-  (47 refused, 72 supported; a new builtin is a compile error until someone
+  Five families (seven since W0.6, below), from `wasi_gap`, an exhaustive `match` over all 120 builtins
+  (48 refused, 72 supported; a new builtin is a compile error until someone
   says which side it is on): **threads** (`spawn`, `join`, `fork_*`),
   **sockets** (`connect`, `bind`, `listen`, `tcp_*`, `conn_*`), **the poller**
   (`poller_*`; `poll_oneoff` is the eventual mapping), **signals**, and
@@ -180,7 +180,8 @@ W0.3 took the four `__multi3` link errors to passes.
   replaces an existing destination and has no no-replace flag, so a WASI build could only look and then
   rename, which is the window the builtin exists to close. Not measured under a runtime. A refusal is the safe
   direction; `dir_rename` stays supported. `tests/reject/dir_rename_new_on_wasi.ls` is the fixture. The 46
-  refused of W0.6 are 47 with it (`os_tables.rs` pins the count).
+  refused of W0.6 are 48 with it and `exec_spawn_in` (#292, which merged without a row in `wasi_gap`, so `main` did
+  not compile until this change placed it with `exec_spawn`); `os_tables.rs` pins the count.
 - `run` uses `WASMTIME` (default `wasmtime`) and passes `WASMTIME_FLAGS`
   (e.g. `--dir=.`). A WASI module gets **no** directory unless one is
   granted, so the grant is spelled where it is made.
