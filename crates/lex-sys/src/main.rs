@@ -697,6 +697,27 @@ fn compile_to_ir(inputs: &[PathBuf], with_std: bool) -> Result<lex_sys_ir::Progr
     }
 }
 
+/// The refusals a target adds before any code is generated: what the program
+/// reaches that the target cannot do (`lex_sys_ir::unsupported_on_target`).
+/// Empty for the host and for anything but WASI, whose gaps are the only ones
+/// this knows (`docs/wasm.md`).
+fn target_refusals(program: &lex_sys_ir::Program, target: Option<&Triple>) -> Vec<Refusal> {
+    let Some(triple) = target else { return Vec::new() };
+    let wasi = matches!(
+        triple.operating_system,
+        target_lexicon::OperatingSystem::Wasi
+            | target_lexicon::OperatingSystem::WasiP1
+            | target_lexicon::OperatingSystem::WasiP2
+    );
+    if !wasi {
+        return Vec::new();
+    }
+    lex_sys_ir::unsupported_on_target(program, lex_sys_ir::Os::Wasi, &triple.to_string())
+        .into_iter()
+        .map(|d| Refusal { rule: d.rule, message: d.message, span: Some(d.span) })
+        .collect()
+}
+
 /// `check`: type-check a program and say what is wrong with it.
 ///
 /// The prose is what it always was — `docs/agent-errors.md` §6 keeps
@@ -718,6 +739,11 @@ fn check_program(
     // `build` can generate code for. Before, `check` stopped after
     // lowering and answered an empty list for a program `build` refused.
     let refusals = match compile_reporting(inputs, with_std) {
+        // What the target cannot do is answered first and without a code
+        // generator, so it needs no wasm toolchain and says where it is.
+        Ok((program, _)) if !target_refusals(&program, target).is_empty() => {
+            target_refusals(&program, target)
+        }
         Ok((program, _)) => match backend(&program, inputs, backend_kind, target) {
             Ok(_) => Vec::new(),
             Err(BackendFailure::Refusals(refusals)) => refusals,
@@ -1393,6 +1419,14 @@ fn build(
 ) -> Result<(), Failure> {
     let Codegen { backend: backend_kind, target } = codegen;
     let program = compile_to_ir(inputs, with_std)?;
+    let gaps = target_refusals(&program, target);
+    if !gaps.is_empty() {
+        let text: Vec<String> = match parse_program(inputs, with_std) {
+            Ok((_, map)) => gaps.iter().map(|r| r.render(&map)).collect(),
+            Err(_) => gaps.iter().map(|r| r.message.clone()).collect(),
+        };
+        return Err(refused(text.join("\n\n")));
+    }
     // A compiler bug in the backend is a refusal with rule `internal`,
     // exit 1, located at the function (`docs/internal-errors.md` §2).
     // Since `--backend llvm` became the default, a *host* missing

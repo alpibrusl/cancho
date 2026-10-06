@@ -108,7 +108,13 @@ fn refused_programs_are_refused_with_the_stated_reason() {
         let expected = directives(&source, "ERROR");
         assert!(!expected.is_empty(), "`{name}` declares no expected error");
 
-        let output = Command::new(BIN).arg("check").arg(&path).output().expect("the compiler runs");
+        let target = target_args(&path);
+        let output = Command::new(BIN)
+            .arg("check")
+            .arg(&path)
+            .args(&target)
+            .output()
+            .expect("the compiler runs");
 
         assert_eq!(
             output.status.code(),
@@ -143,6 +149,7 @@ fn refused_programs_are_refused_with_the_stated_reason() {
             .arg("check")
             .arg(&path)
             .args(["--output", "json"])
+            .args(&target)
             .output()
             .expect("the compiler runs");
         let body = String::from_utf8_lossy(&json.stdout);

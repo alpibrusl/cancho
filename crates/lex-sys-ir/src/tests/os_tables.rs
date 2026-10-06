@@ -105,3 +105,42 @@ fn the_errnos_a_program_compares_against_mean_the_same_thing_on_wasi() {
     assert_eq!(linux_errno_from_wasi(9999), 9999, "an unknown number is not invented");
     assert_eq!(enametoolong_for(Os::Wasi), linux_errno_from_wasi(37));
 }
+
+#[test]
+fn only_wasi_refuses_anything_and_what_it_refuses_is_a_gap() {
+    use crate::{Builtin, Gap, unsupported_on_target, wasi_gap};
+    let program = super::tests::lower_src(
+        "edition 4;\n\
+         fn worker(x: int) -> [] int { return x * 2; }\n\
+         fn main(world: World) -> [conc] int {\n\
+             let Split { io, ffi, fs, heap, args, net } = split(world);\n\
+             release(io); release(ffi); release(fs); release(heap); release(args); release(net);\n\
+             let w = worker;\n\
+             let h = spawn(21, w);\n\
+             return join(h) - 42;\n\
+         }\n",
+    )
+    .expect("a program that spawns");
+    for os in [Os::Linux, Os::Darwin] {
+        assert!(unsupported_on_target(&program, os, "host").is_empty(), "{os:?}");
+    }
+    let refusals = unsupported_on_target(&program, Os::Wasi, "wasm32-wasip1");
+    assert_eq!(refusals.len(), 1, "one function, one family, one sentence: {refusals:?}");
+    assert_eq!(refusals[0].rule, lex_sys_syntax::Rule::UnsupportedOnTarget);
+    assert!(refusals[0].message.contains("`main` uses `spawn`"), "{}", refusals[0].message);
+
+    // The families, by builtin, and the two lines that must not move.
+    assert_eq!(wasi_gap(Builtin::Spawn), Some(Gap::Threads));
+    assert_eq!(wasi_gap(Builtin::TcpConnect), Some(Gap::Sockets));
+    assert_eq!(wasi_gap(Builtin::PollerWait), Some(Gap::Polling));
+    assert_eq!(wasi_gap(Builtin::SignalsWatch), Some(Gap::Signals));
+    assert_eq!(wasi_gap(Builtin::ExecSpawn), Some(Gap::Processes));
+    for supported in [Builtin::PutChar, Builtin::GetChar, Builtin::ReadFile, Builtin::ClockMs] {
+        assert_eq!(wasi_gap(supported), None, "{}", supported.name());
+    }
+    assert_eq!(
+        Builtin::ALL.iter().filter(|b| wasi_gap(**b).is_some()).count(),
+        43,
+        "the refused set moved: update docs/wasm.md with it"
+    );
+}

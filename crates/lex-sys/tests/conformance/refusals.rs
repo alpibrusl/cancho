@@ -58,12 +58,18 @@ fn every_independent_refusal_is_reported() {
 fn the_prose_is_unchanged_by_the_json() {
     for path in fixtures("reject") {
         let name = path.file_stem().unwrap().to_string_lossy().into_owned();
-        let prose = Command::new(BIN).arg("check").arg(&path).output().expect("the compiler runs");
+        let prose = Command::new(BIN)
+            .arg("check")
+            .arg(&path)
+            .args(target_args(&path))
+            .output()
+            .expect("the compiler runs");
         let prose = String::from_utf8_lossy(&prose.stderr).into_owned();
         let json = Command::new(BIN)
             .arg("check")
             .arg(&path)
             .args(["--output", "json"])
+            .args(target_args(&path))
             .output()
             .expect("the compiler runs");
         let body = String::from_utf8_lossy(&json.stdout);
@@ -98,6 +104,7 @@ fn every_refusal_is_valid_json_with_a_position() {
             .arg("check")
             .arg(&path)
             .args(["--output", "json"])
+            .args(target_args(&path))
             .output()
             .expect("the compiler runs");
         let body = String::from_utf8_lossy(&out.stdout);

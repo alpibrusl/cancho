@@ -52,3 +52,50 @@ fn a_target_is_in_the_usage_text() {
         assert!(line.contains("--target <triple>"), "`{command}`: {line}");
     }
 }
+
+/// W0.2 (`docs/wasm.md`): what WASI preview 1 cannot do is refused, with the
+/// rule `unsupported-on-target`, at the function that reaches it, before any
+/// code is generated -- so this needs no wasm toolchain.
+///
+/// Each of these is a real accept fixture, so the same program is fine for the
+/// host: the refusal is a property of the target.
+#[test]
+fn what_wasi_cannot_do_is_a_located_refusal_not_a_trap_or_a_link_error() {
+    for (fixture, function, builtin, noun) in [
+        ("spawn_join", "main", "spawn", "threads"),
+        ("fork_heap_workers", "pair", "fork_heap", "threads"),
+        ("connect_a_refused_address", "probe", "connect", "sockets"),
+        ("signals_claim", "main", "signals_watch", "signals"),
+        ("process_spawn", "run", "pipe_open", "processes and pipes"),
+    ] {
+        let path = repo_root().join(format!("tests/accept/{fixture}.ls"));
+
+        let host = Command::new(BIN).arg("check").arg(&path).arg("--std").output().unwrap();
+        assert!(host.status.success(), "{fixture} should check for the host");
+
+        let wasm = Command::new(BIN)
+            .args(["check", "--std", "--output", "json", "--target", "wasm32-wasip1"])
+            .arg(&path)
+            .output()
+            .expect("the compiler runs");
+        assert_eq!(wasm.status.code(), Some(1), "{fixture}");
+        let body = String::from_utf8_lossy(&wasm.stdout);
+        assert!(body.contains("\"rule\": \"unsupported-on-target\""), "{fixture}: {body}");
+        assert!(body.contains(&format!("`{function}` uses `{builtin}`")), "{fixture}: {body}");
+        assert!(body.contains(&format!("{noun} do not exist on `wasm32-wasip1`")), "{body}");
+        assert!(body.contains("\"line\""), "{fixture}: a refusal is located: {body}");
+    }
+}
+
+#[test]
+fn build_refuses_too_not_only_check() {
+    let out = Command::new(BIN)
+        .args(["build", "--std", "--target", "wasm32-wasip1", "-o"])
+        .arg(scratch("wasm-refused").join("out"))
+        .arg(repo_root().join("tests/accept/spawn_join.ls"))
+        .output()
+        .expect("the compiler runs");
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert!(said.contains("threads do not exist on `wasm32-wasip1`"), "{said}");
+}

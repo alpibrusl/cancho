@@ -29,7 +29,7 @@ lex-sys test tests/*.ls --std              # run every `fn test_*`; exit 4 if on
 
 `check` reports **every** independent refusal, not the first. On a
 failure, read the `rule` field rather than the sentence: it is a stable
-name, there are 57 of them, and `docs/agent-errors.md` is the contract.
+name, there are 58 of them, and `docs/agent-errors.md` is the contract.
 One of them, `internal`, is the compiler's own failure, not your
 program's (`docs/internal-errors.md`).
 

@@ -11,7 +11,7 @@ wasm build gives **both** -- the static row from `lex-sys authority`, and a
 module whose import section the runtime enforces -- and makes `row ⊆ imports`
 a mechanical check. Defence in depth without a Firecracker VM per unit.
 
-Status: **W0, W0.1 and the errno decision are built** (§W0 results). W1 onward is the plan below.
+Status: **W0, W0.1, the errno decision and W0.2 are built** (§W0 results). W1 onward is the plan below.
 
 ---
 
@@ -26,13 +26,13 @@ capability; that grant is the harness's, not the compiler's:
 | | count | meaning |
 |---|---|---|
 | **pass** | 79 | built, ran, stdout and exit code match the fixture's `//~` annotations |
-| **refused** | 15 | the toolchain declined; see below. Today these are *link* errors, not located refusals |
-| **wrong** | 10 | built and ran and disagreed with the annotations. Each is a bug or a missing target arm |
+| **refused** | 24 | 16 are located `unsupported-on-target` refusals from the compiler (W0.2); 8 are still the toolchain's own message |
+| **wrong** | 1 | built and ran and disagreed with the annotations: a program's own `memchr`, below |
 | trap | 0 | no accept fixture expects a trap |
 
 The first run was 35 / 9 / 60. One cause, `size_t`, was behind 38 of the 60;
-the OS-constant tables (W0.1) took 73 to 78 and cleared `slicing`, and the errno
-translation took it to 79.
+the OS-constant tables (W0.1) took 73 to 78 and cleared `slicing`, the errno
+translation took it to 79, and W0.2 turned nine thread traps into located refusals.
 
 ### What W0 changed
 
@@ -62,7 +62,7 @@ translation took it to 79.
 - **`wasm-ld --fatal-warnings`.** Because of the above, the linker is run
   with it, so every remaining mismatch is a build failure naming the symbol
   (`function signature mismatch: write`) instead of a trap at run time.
-  Two of the 15 refusals are this working.
+  Two of the refusals in the first map were this working.
 - **W0.1: a `Wasi` arm for the file and directory constants.**
   `lex_sys_ir::Os { Linux, Darwin, Wasi }` and `open_flags_for`,
   `dirent_layout_for`, `dirent_types`, `enametoolong_for`, `stat_layout_for`
@@ -95,6 +95,23 @@ translation took it to 79.
   translated**: its raw `errno` still reaches a program, which is why
   `enametoolong` has a per-OS answer. That inconsistency is older than WASI and
   is not changed here; if it should be, the same mechanism applies.
+- **W0.2: what WASI cannot do is a located refusal.** A new rule,
+  `unsupported-on-target` (the 58th), and `lex_sys_ir::unsupported_on_target`,
+  a pass over `Program::funcs` -- which *is* the reachable set -- run by `check`
+  and `build` before any code is generated, so it needs no wasm toolchain. It
+  refuses at the function that reaches the builtin, once per (function,
+  family), naming the first builtin found:
+  `` `main` uses `spawn`, and threads do not exist on `wasm32-wasip1` ``.
+  Five families, from `wasi_gap`, an exhaustive `match` over all 118 builtins
+  (43 refused, 75 supported; a new builtin is a compile error until someone
+  says which side it is on): **threads** (`spawn`, `join`, `fork_*`),
+  **sockets** (`connect`, `bind`, `listen`, `tcp_*`, `conn_*`), **the poller**
+  (`poller_*`; `poll_oneoff` is the eventual mapping), **signals**, and
+  **processes and pipes**. Reject fixtures can now name a target
+  (`//~ TARGET wasm32-wasip1`); `tests/reject/spawn_on_wasi.ls` is the first.
+  What it does not cover: an `extern fn` names a C symbol, and whether that
+  symbol exists on the target is the linker's to say, which is the one place a
+  target gap is still a link error (the four `extern fn` rows below).
 - **An operating system with no tables is refused**, in `emit_module`,
   instead of taking the Linux numbers. (`x86_64-unknown-freebsd` used to
   build.) The per-site `_ => linux` arms that remain are behind that guard.
@@ -106,26 +123,26 @@ Environment: `CLANG` (a clang with the wasm32 target, e.g. Homebrew's `llvm`;
 Apple's has none), `WASM_LD`, `WASI_SYSROOT` (a wasi-libc sysroot holding
 `lib/wasm32-wasip1/crt1-command.o`), and `wasmtime`.
 
-### The 15 refused
+### The 24 refused
 
-| cause | fixtures | what it is |
+| cause | fixtures | kind |
 |---|---|---|
-| `__multi3` undefined | `borrowed_fields`, `collections`, `f32_text`, `math_floats` | checked 64-bit multiply lowers to a libcall on wasm32; needs the target's compiler-rt builtins (`libclang_rt.builtins-wasm32.a`), which this sysroot does not carry. **Not installed here**; installing `wasi-runtimes` (or wasi-sdk) is the likely fix, or an inline checked multiply |
-| sockets | `connect_a_refused_address`, `listen_accept_bad_fd`, `spawn_owned_net`, `process_spawn` (`recv`) | no `wasip1` sockets (§Builtin coverage); a located refusal is the intended end state |
-| `extern fn` signature | `foreign_narrow_return` (`access`), `bytes_to_c` (`write`), `opaque_pointer` (`fdopen`), `spawn_parallel_sleep` (`usleep`), `foreign_two_libraries` and `spawn_thread_ids` (`pthread_self`) | a program's own `extern fn` declares C's `int`/`long` as `i64`; wasi-libc's is `i32` (or the function does not exist). The declaration is a claim about a native ABI |
-| `pthread_sigmask` | `signals_claim` | signals: refuse |
+| threads | `fork_clock_workers`, `fork_heap_workers`, `spawn_heap_in_struct`, `spawn_join`, `spawn_join_operands`, `spawn_owned_clock`, `spawn_owned_file`, `spawn_owned_io`, `spawn_owned_net`, `spawn_parallel_sleep`, `spawn_struct_ref`, `spawn_thread_ids` | **located** (W0.2) |
+| sockets | `connect_a_refused_address`, `listen_accept_bad_fd` | **located** (W0.2) |
+| processes and pipes | `process_spawn` | **located** (W0.2) |
+| signals | `signals_claim` | **located** (W0.2) |
+| `__multi3` undefined | `borrowed_fields`, `collections`, `f32_text`, `math_floats` | toolchain. Checked 64-bit multiply lowers to a libcall on wasm32 and the sysroot has no compiler-rt builtins (`libclang_rt.builtins-wasm32.a`). Not installed here; `wasi-runtimes` or wasi-sdk is the likely fix, or an inline checked multiply (W0.3) |
+| `extern fn` signature | `foreign_narrow_return` (`access`), `bytes_to_c` (`write`), `opaque_pointer` (`fdopen`), `foreign_two_libraries` (`pthread_self`) | toolchain. A program's own `extern fn` declares C's `int`/`long` as `i64`; wasi-libc's is `i32` (or the function does not exist). The declaration is a claim about a native ABI, and only the linker can say |
 
-### The 10 wrong
+### The 1 wrong
 
-| fixtures | likely cause |
+| fixture | likely cause |
 |---|---|
-| `fork_clock_workers`, `fork_heap_workers`, `spawn_heap_in_struct`, `spawn_join`, `spawn_join_operands`, `spawn_owned_clock`, `spawn_owned_file`, `spawn_owned_io`, `spawn_struct_ref` | threads (`pthread_*`): trap at run time. Must become located refusals |
 | `index_of_byte_beside_own_memchr` | a program that defines its own function named `memchr` replaces wasi-libc's, whose internals call it with a 32-bit `size_t`. Real on any target, but only visible once the widths differ |
 
-Cleared since the first map: the file and directory fixtures (all but
-`spawn_owned_file`, which is a thread test), `slicing` (its exit 1 was the same
-read-only flag), and `directory_handles` (its `e != 2` was the errno numbering,
-now translated).
+Cleared since the first map: the file and directory fixtures, `slicing` (its exit 1 was the
+read-only flag), `directory_handles` (the errno numbering), and the nine thread fixtures,
+which are now located refusals rather than run-time traps.
 
 ### Findings that change the plan
 
@@ -137,11 +154,11 @@ now translated).
    Linux, Darwin or WASI. Still open: the `is_darwin()` sites for sockets,
    signals, the poller and processes, which on WASI still read Linux numbers
    until W0.2 turns them into refusals.
-2. **A link error is not a refusal.** 9 of the 15 above are messages from
-   `wasm-ld`, not located errors. `check --target` should reject a builtin
-   with no WASI meaning at lowering time, with its source location, before a
-   linker is involved. That is the table in §Builtin coverage, and it should
-   be data a test checks, not prose.
+2. **A link error is not a refusal.** *Fixed for builtins (W0.2):*
+   `check --target` rejects a builtin with no WASI meaning with its function's
+   source location and a rule tag, before a linker is involved, and the table
+   is code a test checks (`wasi_gap`, exhaustive). Still link errors: `extern
+   fn` signatures and `__multi3`, 8 fixtures.
 3. **`--fatal-warnings` is the cheapest safety net on the table**, and
    worth keeping even after the `size_t` fix: it is what stops a *future*
    libc call with a hardcoded width from shipping as a trap.
@@ -286,8 +303,9 @@ sockets, threads and signals rows).
 | `extern fn` to arbitrary C | link-time only | link-time only | Only libraries compiled to wasm; `Ffi("libc")` means wasi-libc, whose `int`/`size_t` are 32-bit |
 
 Every **no** is a located refusal on that target -- the same discipline
-`--backend` gaps already follow -- never a link error or a crash. **W0 does not
-meet this yet** (finding 2).
+`--backend` gaps already follow -- never a link error or a crash. **Met for
+builtins since W0.2**; an `extern fn` the target lacks is still the linker's to
+report.
 
 ---
 
