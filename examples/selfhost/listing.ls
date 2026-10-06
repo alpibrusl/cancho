@@ -130,13 +130,12 @@ pub fn wmodule[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], m: int) -
     if m == 0 {
         return w(io, "-");
     }
-    var at = st[10];
-    wname(io, st, text, at);
+    let first = ast.module_first(st, m);
+    wname(io, st, text, first);
     var n = 1;
-    while n < st[11] {
+    while n < ast.module_len(st, m) {
         w(io, ".");
-        wname(io, st, text, at + 2);
-        at = at + 2;
+        wname(io, st, text, first + 2 * n);
         n = n + 1;
     }
     return 0;
@@ -762,12 +761,11 @@ pub fn dump_item[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], id: int
 // The imports, which the Rust AST keeps apart from the items, module by module.
 pub fn dump_imports[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte]) -> [io_write] int {
     var m = 0;
-    while m < 2 {
+    while m < st[11] {
         var n = 0;
         while n < st[12] {
-            let record = st[16 + 3 * st[8] + n];
-            if record % 2 == m {
-                let keyword = record / 2;
+            if ast.import_module(st, n) == m {
+                let keyword = ast.import_keyword(st, n);
                 w(io, "M.Import ");
                 wmodule(io, st, text, m);
                 w(io, " ");
