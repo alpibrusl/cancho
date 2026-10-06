@@ -105,6 +105,7 @@
 - [`value_barrier`: a value the optimiser cannot see through](value-barrier.md)
 - [The pure TLS backend in `lexsys-hooks`](tls-hooks.md)
 - [TLS 1.3 session resumption](tls-resumption.md)
+- [Hardware AES and carry-less multiply](crypto-builtins.md)
 
 # Compile time and program identity
 
