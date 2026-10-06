@@ -516,6 +516,12 @@ pub(crate) fn emit_module(
     // own `pthread_t *thread` and `pthread_join`'s own `void **retval`
     // are the same `ptr` a step further, pointing at one.
     declare_libc_unless_own(&mut text, "pthread_create", "i32 @pthread_create(ptr, ptr, ptr, ptr)");
+    // Arm's data-independent-timing bit (`crate::dit`): the OS is asked
+    // whether the CPU has it.
+    if crate::dit::applies(triple) {
+        let (symbol, signature) = crate::dit::libc_declaration(triple);
+        declare_libc_unless_own(&mut text, symbol, signature);
+    }
     declare_libc_unless_own(&mut text, "pthread_join", "i32 @pthread_join(ptr, ptr)");
 
     // `extern fn` (§7.23, §8.4): an import under the symbol the
@@ -678,6 +684,10 @@ pub(crate) fn emit_module(
     text.push_str("  %argc64 = sext i32 %argc to i64\n");
     text.push_str("  store i64 %argc64, ptr @lexs_argc\n");
     text.push_str("  store ptr %argv, ptr @lexs_argv\n");
+    // `crate::dit`: before any lex-sys code, on aarch64 Linux and Darwin.
+    if crate::dit::applies(triple) {
+        text.push_str("  call void @lexsys_set_dit()\n");
+    }
     match ret.first() {
         Some(LKind::I64) => {
             text.push_str(&format!("  %r = call i64 @lexs_{}()\n", entry_func.symbol()));
@@ -697,6 +707,9 @@ pub(crate) fn emit_module(
         }
     }
     text.push_str("}\n");
+    if crate::dit::applies(triple) {
+        text.push_str(&crate::dit::definition(triple));
+    }
 
     if triple.architecture == target_lexicon::Architecture::Wasm32 {
         text.push_str(&smul_overflow_definition());

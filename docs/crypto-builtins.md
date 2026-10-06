@@ -142,6 +142,11 @@ without the instructions will keep running, and because the builtins' gain shoul
 - **Arm's data-independent-timing bit.** Setting `PSTATE.DIT` in the runtime's start-up is a few lines. On the M4 it removed
   the ECDH timing failure on LLVM (|t| 16.19 to 1.84 and 10.40 to 2.15) and most of AES-GCM's on Cranelift
   (`docs/tls-assurance.md` §6.1). What it costs in speed is not measured here, and the DIT PR measures it.
+  *Done (the first PR after this design): the LLVM backend's `main` sets it on aarch64 Linux and Darwin when the OS reports
+  FEAT_DIT (`crates/lex-sys-codegen-llvm/src/dit.rs`). Measured: P-256 with scalar 1 fails without it (|t| 9.11) and passes
+  with it (2.11); the symmetric ciphers cost 3 to 6% more (`docs/tls-assurance.md` §6.1). Two things this paragraph did not
+  know: a Darwin thread starts with DIT clear, so only `main`'s thread has it there (a Linux thread inherits it), and
+  Cranelift has no inline assembly, so its programs do not set it.*
 - **Per-key work once per connection** (step 1 below).
 
 `std.aes` and `std.gcm` then change in three ways, in this order of risk:
