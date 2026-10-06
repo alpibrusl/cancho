@@ -265,13 +265,14 @@ not establish.
 
 ```sh
 cargo build -p lex-sys-syntax --example dump_tokens --example dump_ast
-cargo run -p lex-sys -- build examples/selfhost/parser.ls examples/selfhost/ast.ls examples/selfhost/lexcore.ls --std -o /tmp/parser
+cargo run -p lex-sys -- build examples/selfhost/parser.ls $(for m in driver listing pass1 ast kinds lexcore tables; do echo examples/selfhost/$m.ls; done) --std -o /tmp/parser
 sh examples/selfhost/diff.sh target/debug/examples/dump_ast /tmp/parser examples/hello.ls tests/accept/*.ls
 # identical: 105  different: 0
 ```
 
 `lexcore.ls` is the lex-sys tokeniser, `lexer.ls` prints its tokens, `ast.ls` parses them into a
-syntax tree and `parser.ls` prints the tree, all in lex-sys, as stages 1 and 2 of the staged port in
+syntax tree, `parser.ls` prints the tree and `check.ls` runs the first half of the checker
+(`pass1.ls`) over it, all in lex-sys, as stages 1 and 2 of the staged port in
 `docs/self-hosting.md` §6. Each reads a source file on standard input and prints what
 the Rust front end makes of it (`dump_tokens.rs`, `dump_ast.rs` in `lex-sys-syntax`
 are the oracles), so the check is `diff`. `fuzz.py` adds hostile edge cases and

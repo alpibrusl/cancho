@@ -36,6 +36,7 @@ module selfhost.ast;
 //   would have. Every function has to be total on the state a refusal leaves.
 
 import selfhost.lexcore as lc;
+import selfhost.kinds;
 
 // A list under construction: its first node, its last, and how many.
 pub struct Ls {
@@ -87,195 +88,6 @@ pub fn layout[&s](st: &!s [int], n: int) -> [] int {
 
 // ----------------------------------------------------------- the nodes ---
 
-pub enum NK {
-    TName,
-    TRef,
-    TSlice,
-    TTuple,
-    TLit,
-    TFn,
-    EInt,
-    EFloat,
-    EBool,
-    EStr,
-    EName,
-    EStructLit,
-    FieldInit,
-    EField,
-    ETuple,
-    ETupleField,
-    EVariant,
-    EUnary,
-    EBinary,
-    ECall,
-    EIndex,
-    ESlice,
-    EAlloc,
-    EAllocSlice,
-    SLet,
-    SAssign,
-    SDestructure,
-    SDestructureTuple,
-    SBorrow,
-    SRegion,
-    SExpr,
-    SIf,
-    SWhile,
-    SMatch,
-    Arm,
-    SReturn,
-    SDefer,
-    Param,
-    Field,
-    Variant,
-    IFn,
-    IExtern,
-    IStruct,
-    IEnum,
-    IStatic,
-}
-
-// The kind's position in `NK`, which is how a record stores it.
-pub fn kcode(k: NK) -> [] int {
-    match k {
-        NK::TName => {
-            return 0;
-        }
-        NK::TRef => {
-            return 1;
-        }
-        NK::TSlice => {
-            return 2;
-        }
-        NK::TTuple => {
-            return 3;
-        }
-        NK::TLit => {
-            return 4;
-        }
-        NK::TFn => {
-            return 5;
-        }
-        NK::EInt => {
-            return 6;
-        }
-        NK::EFloat => {
-            return 7;
-        }
-        NK::EBool => {
-            return 8;
-        }
-        NK::EStr => {
-            return 9;
-        }
-        NK::EName => {
-            return 10;
-        }
-        NK::EStructLit => {
-            return 11;
-        }
-        NK::FieldInit => {
-            return 12;
-        }
-        NK::EField => {
-            return 13;
-        }
-        NK::ETuple => {
-            return 14;
-        }
-        NK::ETupleField => {
-            return 15;
-        }
-        NK::EVariant => {
-            return 16;
-        }
-        NK::EUnary => {
-            return 17;
-        }
-        NK::EBinary => {
-            return 18;
-        }
-        NK::ECall => {
-            return 19;
-        }
-        NK::EIndex => {
-            return 20;
-        }
-        NK::ESlice => {
-            return 21;
-        }
-        NK::EAlloc => {
-            return 22;
-        }
-        NK::EAllocSlice => {
-            return 23;
-        }
-        NK::SLet => {
-            return 24;
-        }
-        NK::SAssign => {
-            return 25;
-        }
-        NK::SDestructure => {
-            return 26;
-        }
-        NK::SDestructureTuple => {
-            return 27;
-        }
-        NK::SBorrow => {
-            return 28;
-        }
-        NK::SRegion => {
-            return 29;
-        }
-        NK::SExpr => {
-            return 30;
-        }
-        NK::SIf => {
-            return 31;
-        }
-        NK::SWhile => {
-            return 32;
-        }
-        NK::SMatch => {
-            return 33;
-        }
-        NK::Arm => {
-            return 34;
-        }
-        NK::SReturn => {
-            return 35;
-        }
-        NK::SDefer => {
-            return 36;
-        }
-        NK::Param => {
-            return 37;
-        }
-        NK::Field => {
-            return 38;
-        }
-        NK::Variant => {
-            return 39;
-        }
-        NK::IFn => {
-            return 40;
-        }
-        NK::IExtern => {
-            return 41;
-        }
-        NK::IStruct => {
-            return 42;
-        }
-        NK::IEnum => {
-            return 43;
-        }
-        NK::IStatic => {
-            return 44;
-        }
-    }
-}
-
 // Slot `slot` of node `id`; 0 for no node (-1), which is what a node that was never made
 // answers after a refusal.
 pub fn get[&s](st: &!s [int], id: int, slot: int) -> [] int {
@@ -292,8 +104,8 @@ pub fn put[&s](st: &!s [int], id: int, slot: int, value: int) -> [] int {
     return value;
 }
 
-pub fn is_kind[&s](st: &!s [int], id: int, k: NK) -> [] bool {
-    return id >= 0 && get(st, id, 0) == kcode(k);
+pub fn is_kind[&s](st: &!s [int], id: int, k: kinds.NK) -> [] bool {
+    return id >= 0 && get(st, id, 0) == kinds.kcode(k);
 }
 
 pub fn nstart[&s](st: &!s [int], id: int) -> [] int {
@@ -310,14 +122,14 @@ pub fn next[&s](st: &!s [int], id: int) -> [] int {
 
 // A new node of kind `k` spanning `from..to`, every other slot -1. After a refusal there
 // are no more nodes: the tree is void and the answer is -1.
-pub fn mk[&s](st: &!s [int], k: NK, from: int, to: int) -> [] int {
+pub fn mk[&s](st: &!s [int], k: kinds.NK, from: int, to: int) -> [] int {
     if st[2] != 0 {
         return 0 - 1;
     }
     let id = st[13];
     st[13] = id + 1;
     let at = st[14] + 16 * id;
-    st[at] = kcode(k);
+    st[at] = kinds.kcode(k);
     st[at + 1] = from;
     st[at + 2] = to;
     var slot = 3;
@@ -396,6 +208,54 @@ pub fn r_unknown_name() -> [] int {
     return 11;
 }
 
+pub fn r_duplicate_declaration() -> [] int {
+    return 12;
+}
+
+pub fn r_builtin_redeclared() -> [] int {
+    return 13;
+}
+
+pub fn r_module_not_imported() -> [] int {
+    return 14;
+}
+
+pub fn r_type_args_not_taken() -> [] int {
+    return 15;
+}
+
+pub fn r_arity_mismatch() -> [] int {
+    return 16;
+}
+
+pub fn r_region_not_in_scope() -> [] int {
+    return 17;
+}
+
+pub fn r_unsized_type() -> [] int {
+    return 18;
+}
+
+pub fn r_static_item() -> [] int {
+    return 19;
+}
+
+pub fn r_not_public() -> [] int {
+    return 20;
+}
+
+pub fn r_infinite_type() -> [] int {
+    return 21;
+}
+
+pub fn r_enum_has_no_variants() -> [] int {
+    return 22;
+}
+
+pub fn r_skip() -> [] int {
+    return 99;
+}
+
 pub fn rule_tag(r: int) -> [] &static [byte] {
     if r < 3 {
         return lc.rule_name(r);
@@ -423,6 +283,42 @@ pub fn rule_tag(r: int) -> [] &static [byte] {
     }
     if r == 10 {
         return "mode-bound-violated";
+    }
+    if r == 12 {
+        return "duplicate-declaration";
+    }
+    if r == 13 {
+        return "builtin-redeclared";
+    }
+    if r == 14 {
+        return "module-not-imported";
+    }
+    if r == 15 {
+        return "type-args-not-taken";
+    }
+    if r == 16 {
+        return "arity-mismatch";
+    }
+    if r == 17 {
+        return "region-not-in-scope";
+    }
+    if r == 18 {
+        return "unsized-type";
+    }
+    if r == 19 {
+        return "static-item";
+    }
+    if r == 20 {
+        return "not-public";
+    }
+    if r == 21 {
+        return "infinite-type";
+    }
+    if r == 22 {
+        return "enum-has-no-variants";
+    }
+    if r == 99 {
+        return "SKIP";
     }
     return "unknown-name";
 }
@@ -638,7 +534,7 @@ pub fn type_expr[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         let unique = eat(st, lc.Tok::Bang);
         let reg = ident(st);
         let inner = type_expr(st, text);
-        let id = mk(st, NK::TRef, begin, nend(st, inner));
+        let id = mk(st, kinds.NK::TRef, begin, nend(st, inner));
         put(st, id, 4, flag(unique));
         put(st, id, 5, reg);
         put(st, id, 6, inner);
@@ -651,7 +547,7 @@ pub fn type_expr[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         expect(st, lc.Tok::Arrow);
         let row = effect_row(st, text);
         let ret = type_expr(st, text);
-        let id = mk(st, NK::TFn, begin, nend(st, ret));
+        let id = mk(st, kinds.NK::TFn, begin, nend(st, ret));
         put(st, id, 4, row);
         put(st, id, 5, params.head);
         put(st, id, 6, params.n);
@@ -661,7 +557,7 @@ pub fn type_expr[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     if eat(st, lc.Tok::LParen) {
         let parts = type_list(st, text, lc.Tok::RParen);
         let close = expect(st, lc.Tok::RParen);
-        let id = mk(st, NK::TTuple, begin, tend(st, close));
+        let id = mk(st, kinds.NK::TTuple, begin, tend(st, close));
         put(st, id, 6, parts.head);
         put(st, id, 7, parts.n);
         return id;
@@ -669,7 +565,7 @@ pub fn type_expr[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     if eat(st, lc.Tok::LBracket) {
         let inner = type_expr(st, text);
         let close = expect(st, lc.Tok::RBracket);
-        let id = mk(st, NK::TSlice, begin, tend(st, close));
+        let id = mk(st, kinds.NK::TSlice, begin, tend(st, close));
         put(st, id, 6, inner);
         return id;
     }
@@ -683,9 +579,9 @@ pub fn type_expr[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     if eat(st, lc.Tok::LParen) {
         let lit_tok = expect(st, lc.Tok::Str);
         let close = expect(st, lc.Tok::RParen);
-        let lit = mk(st, NK::TLit, begin, tend(st, close));
+        let lit = mk(st, kinds.NK::TLit, begin, tend(st, close));
         put(st, lit, 4, lit_tok);
-        let id = mk(st, NK::TName, begin, tend(st, close));
+        let id = mk(st, kinds.NK::TName, begin, tend(st, close));
         put(st, id, 4, qualifier);
         put(st, id, 5, name);
         put(st, id, 6, lit);
@@ -699,7 +595,7 @@ pub fn type_expr[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         let close = expect(st, lc.Tok::RBracket);
         end = tend(st, close);
     }
-    let id = mk(st, NK::TName, begin, end);
+    let id = mk(st, kinds.NK::TName, begin, end);
     put(st, id, 4, qualifier);
     put(st, id, 5, name);
     put(st, id, 6, args.head);
@@ -973,7 +869,7 @@ pub fn binary_level[&s, &x](st: &!s [int], text: &x [byte], level: int) -> [] in
         } else {
             bump(st);
             let rhs = binary_level(st, text, level + 1);
-            let id = mk(st, NK::EBinary, nstart(st, lhs), nend(st, rhs));
+            let id = mk(st, kinds.NK::EBinary, nstart(st, lhs), nend(st, rhs));
             put(st, id, 4, op);
             put(st, id, 5, lhs);
             put(st, id, 6, rhs);
@@ -984,7 +880,7 @@ pub fn binary_level[&s, &x](st: &!s [int], text: &x [byte], level: int) -> [] in
 }
 
 pub fn unary_node[&s](st: &!s [int], op: int, from: int, operand: int) -> [] int {
-    let id = mk(st, NK::EUnary, from, nend(st, operand));
+    let id = mk(st, kinds.NK::EUnary, from, nend(st, operand));
     put(st, id, 4, op);
     put(st, id, 5, operand);
     return id;
@@ -1008,7 +904,7 @@ pub fn unary[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         if look(st, 0, lc.Tok::Int) {
             let tok = bump(st);
             let value = int_value(st, text, tok, true);
-            let id = mk(st, NK::EInt, tstart(st, minus), tend(st, tok));
+            let id = mk(st, kinds.NK::EInt, tstart(st, minus), tend(st, tok));
             put(st, id, 4, value);
             return id;
         }
@@ -1032,7 +928,7 @@ pub fn float_node[&s, &x](st: &!s [int], text: &x [byte], tok: int, from: int) -
     } else if float_overflows(st, text, tok, false) {
         fail(st, 0, tstart(st, tok), tend(st, tok));
     }
-    let id = mk(st, NK::EFloat, from, tend(st, tok));
+    let id = mk(st, kinds.NK::EFloat, from, tend(st, tok));
     put(st, id, 4, flag(single));
     return id;
 }
@@ -1050,13 +946,13 @@ pub fn postfix[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
                 if value > 4294967295 || value < 0 {
                     fail(st, 0, tstart(st, tok), tend(st, tok));
                 }
-                let id = mk(st, NK::ETupleField, nstart(st, base), tend(st, tok));
+                let id = mk(st, kinds.NK::ETupleField, nstart(st, base), tend(st, tok));
                 put(st, id, 4, base);
                 put(st, id, 5, value);
                 base = id;
             } else {
                 let name = ident(st);
-                let id = mk(st, NK::EField, nstart(st, base), tend(st, tok));
+                let id = mk(st, kinds.NK::EField, nstart(st, base), tend(st, tok));
                 put(st, id, 4, base);
                 put(st, id, 5, name);
                 base = id;
@@ -1072,13 +968,13 @@ pub fn postfix[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
             close_brackets(st, outer);
             let close = expect(st, lc.Tok::RBracket);
             if second >= 0 {
-                let id = mk(st, NK::ESlice, nstart(st, base), tend(st, close));
+                let id = mk(st, kinds.NK::ESlice, nstart(st, base), tend(st, close));
                 put(st, id, 4, base);
                 put(st, id, 5, first);
                 put(st, id, 6, second);
                 base = id;
             } else {
-                let id = mk(st, NK::EIndex, nstart(st, base), tend(st, close));
+                let id = mk(st, kinds.NK::EIndex, nstart(st, base), tend(st, close));
                 put(st, id, 4, base);
                 put(st, id, 5, first);
                 base = id;
@@ -1109,7 +1005,7 @@ pub fn primary[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     if look(st, 0, lc.Tok::Int) {
         bump(st);
         let value = int_value(st, text, t, false);
-        let id = mk(st, NK::EInt, begin, tend(st, t));
+        let id = mk(st, kinds.NK::EInt, begin, tend(st, t));
         put(st, id, 4, value);
         return id;
     }
@@ -1119,13 +1015,13 @@ pub fn primary[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     }
     if look(st, 0, lc.Tok::Str) {
         bump(st);
-        let id = mk(st, NK::EStr, begin, tend(st, t));
+        let id = mk(st, kinds.NK::EStr, begin, tend(st, t));
         put(st, id, 4, t);
         return id;
     }
     if look(st, 0, lc.Tok::True) || look(st, 0, lc.Tok::False) {
         bump(st);
-        let id = mk(st, NK::EBool, begin, tend(st, t));
+        let id = mk(st, kinds.NK::EBool, begin, tend(st, t));
         put(st, id, 4, flag(lc.code(lc.Tok::True) == code_at(st, t)));
         return id;
     }
@@ -1141,7 +1037,7 @@ pub fn primary[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         let fill = expr(st, text);
         close_brackets(st, outer);
         let close = expect(st, lc.Tok::RParen);
-        let id = mk(st, NK::EAllocSlice, begin, tend(st, close));
+        let id = mk(st, kinds.NK::EAllocSlice, begin, tend(st, close));
         put(st, id, 4, reg);
         put(st, id, 5, count);
         put(st, id, 6, fill);
@@ -1157,7 +1053,7 @@ pub fn primary[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         let value = expr(st, text);
         close_brackets(st, outer);
         let close = expect(st, lc.Tok::RParen);
-        let id = mk(st, NK::EAlloc, begin, tend(st, close));
+        let id = mk(st, kinds.NK::EAlloc, begin, tend(st, close));
         put(st, id, 4, reg);
         put(st, id, 5, value);
         return id;
@@ -1183,7 +1079,7 @@ pub fn primary[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
             go = eat(st, lc.Tok::Comma);
         }
         let close = expect(st, lc.Tok::RParen);
-        let id = mk(st, NK::ETuple, begin, tend(st, close));
+        let id = mk(st, kinds.NK::ETuple, begin, tend(st, close));
         put(st, id, 4, parts.head);
         put(st, id, 5, parts.n);
         return id;
@@ -1216,7 +1112,7 @@ pub fn name_expr[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
             let close = expect(st, lc.Tok::RParen);
             end = tend(st, close);
         }
-        let id = mk(st, NK::EVariant, begin, end);
+        let id = mk(st, kinds.NK::EVariant, begin, end);
         put(st, id, 4, qualifier);
         put(st, id, 5, name);
         put(st, id, 6, variant);
@@ -1228,7 +1124,7 @@ pub fn name_expr[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         bump(st);
         let list = args(st, text);
         let close = expect(st, lc.Tok::RParen);
-        let id = mk(st, NK::ECall, begin, tend(st, close));
+        let id = mk(st, kinds.NK::ECall, begin, tend(st, close));
         put(st, id, 4, qualifier);
         put(st, id, 5, name);
         put(st, id, 6, list.head);
@@ -1244,7 +1140,7 @@ pub fn name_expr[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
             let field = ident(st);
             expect(st, lc.Tok::Colon);
             let value = expr(st, text);
-            let init = mk(st, NK::FieldInit, tstart(st, field), nend(st, value));
+            let init = mk(st, kinds.NK::FieldInit, tstart(st, field), nend(st, value));
             put(st, init, 4, field);
             put(st, init, 5, value);
             fields = push(st, fields, init);
@@ -1252,7 +1148,7 @@ pub fn name_expr[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         }
         close_brackets(st, outer);
         let close = expect(st, lc.Tok::RBrace);
-        let id = mk(st, NK::EStructLit, begin, tend(st, close));
+        let id = mk(st, kinds.NK::EStructLit, begin, tend(st, close));
         put(st, id, 4, qualifier);
         put(st, id, 5, name);
         put(st, id, 6, fields.head);
@@ -1263,7 +1159,7 @@ pub fn name_expr[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         fail(st, r_unknown_name(), tstart(st, st[0]), tend(st, st[0]));
         return 0 - 1;
     }
-    let id = mk(st, NK::EName, begin, tend(st, t));
+    let id = mk(st, kinds.NK::EName, begin, tend(st, t));
     put(st, id, 4, name);
     return id;
 }
@@ -1300,7 +1196,7 @@ pub fn block[&s, &x](st: &!s [int], text: &x [byte]) -> [] Bk {
 }
 
 // `kw expr ;`, for `return` and `defer`.
-pub fn keyword_stmt[&s, &x](st: &!s [int], text: &x [byte], k: NK) -> [] int {
+pub fn keyword_stmt[&s, &x](st: &!s [int], text: &x [byte], k: kinds.NK) -> [] int {
     let kw = bump(st);
     let value = expr(st, text);
     let end = expect(st, lc.Tok::Semi);
@@ -1314,10 +1210,10 @@ pub fn stmt[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         return let_stmt(st, text);
     }
     if look(st, 0, lc.Tok::Return) {
-        return keyword_stmt(st, text, NK::SReturn);
+        return keyword_stmt(st, text, kinds.NK::SReturn);
     }
     if look(st, 0, lc.Tok::Defer) {
-        return keyword_stmt(st, text, NK::SDefer);
+        return keyword_stmt(st, text, kinds.NK::SDefer);
     }
     if look(st, 0, lc.Tok::If) {
         return if_stmt(st, text);
@@ -1326,7 +1222,7 @@ pub fn stmt[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         let kw = bump(st);
         let cond = condition(st, text);
         let body = block(st, text);
-        let id = mk(st, NK::SWhile, tstart(st, kw), body.end);
+        let id = mk(st, kinds.NK::SWhile, tstart(st, kw), body.end);
         put(st, id, 4, cond);
         put(st, id, 5, body.list.head);
         put(st, id, 6, body.list.n);
@@ -1342,7 +1238,7 @@ pub fn stmt[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         let kw = bump(st);
         let reg = ident(st);
         let body = block(st, text);
-        let id = mk(st, NK::SRegion, tstart(st, kw), body.end);
+        let id = mk(st, kinds.NK::SRegion, tstart(st, kw), body.end);
         put(st, id, 4, reg);
         put(st, id, 5, body.list.head);
         put(st, id, 6, body.list.n);
@@ -1352,13 +1248,13 @@ pub fn stmt[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     if eat(st, lc.Tok::Eq) {
         let value = expr(st, text);
         let end = expect(st, lc.Tok::Semi);
-        let id = mk(st, NK::SAssign, nstart(st, first), tend(st, end));
+        let id = mk(st, kinds.NK::SAssign, nstart(st, first), tend(st, end));
         put(st, id, 4, first);
         put(st, id, 5, value);
         return id;
     }
     let end = expect(st, lc.Tok::Semi);
-    let id = mk(st, NK::SExpr, nstart(st, first), tend(st, end));
+    let id = mk(st, kinds.NK::SExpr, nstart(st, first), tend(st, end));
     put(st, id, 4, first);
     return id;
 }
@@ -1388,7 +1284,7 @@ pub fn let_stmt[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         expect(st, lc.Tok::Eq);
         let value = expr(st, text);
         let end = expect(st, lc.Tok::Semi);
-        let id = mk(st, NK::SDestructureTuple, tstart(st, kw), tend(st, end));
+        let id = mk(st, kinds.NK::SDestructureTuple, tstart(st, kw), tend(st, end));
         put(st, id, 4, open);
         put(st, id, 5, value);
         return id;
@@ -1417,7 +1313,7 @@ pub fn let_stmt[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         expect(st, lc.Tok::Eq);
         let value = expr(st, text);
         let end = expect(st, lc.Tok::Semi);
-        let id = mk(st, NK::SDestructure, tstart(st, kw), tend(st, end));
+        let id = mk(st, kinds.NK::SDestructure, tstart(st, kw), tend(st, end));
         put(st, id, 4, pattern_qualifier);
         put(st, id, 5, name);
         put(st, id, 6, open);
@@ -1432,7 +1328,7 @@ pub fn let_stmt[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     expect(st, lc.Tok::Eq);
     let value = expr(st, text);
     let end = expect(st, lc.Tok::Semi);
-    let id = mk(st, NK::SLet, tstart(st, kw), tend(st, end));
+    let id = mk(st, kinds.NK::SLet, tstart(st, kw), tend(st, end));
     put(st, id, 4, flag(mutable));
     put(st, id, 5, name);
     put(st, id, 6, ty);
@@ -1469,7 +1365,7 @@ pub fn if_stmt[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
             else_count = other.list.n;
         }
     }
-    let id = mk(st, NK::SIf, tstart(st, kw), end);
+    let id = mk(st, kinds.NK::SIf, tstart(st, kw), end);
     put(st, id, 4, cond);
     put(st, id, 5, then.list.head);
     put(st, id, 6, then.list.n);
@@ -1517,7 +1413,7 @@ pub fn match_stmt[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
             let first = pattern(st, text);
             expect(st, lc.Tok::FatArrow);
             let body = block(st, text);
-            let arm = mk(st, NK::Arm, tstart(st, first), body.end);
+            let arm = mk(st, kinds.NK::Arm, tstart(st, first), body.end);
             put(st, arm, 4, first);
             put(st, arm, 5, body.list.head);
             put(st, arm, 6, body.list.n);
@@ -1526,7 +1422,7 @@ pub fn match_stmt[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         }
     }
     let close = expect(st, lc.Tok::RBrace);
-    let id = mk(st, NK::SMatch, tstart(st, kw), tend(st, close));
+    let id = mk(st, kinds.NK::SMatch, tstart(st, kw), tend(st, close));
     put(st, id, 4, scrutinee);
     put(st, id, 5, arms.head);
     put(st, id, 6, arms.n);
@@ -1546,7 +1442,7 @@ pub fn borrow_stmt[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     let reg = ident(st);
     expect(st, lc.Tok::In);
     let body = block(st, text);
-    let id = mk(st, NK::SBorrow, tstart(st, kw), body.end);
+    let id = mk(st, kinds.NK::SBorrow, tstart(st, kw), body.end);
     put(st, id, 4, value);
     put(st, id, 5, flag(unique));
     put(st, id, 6, reg);
@@ -1629,7 +1525,7 @@ pub fn param_list[&s, &x](st: &!s [int], text: &x [byte]) -> [] Ls {
         let name = ident(st);
         expect(st, lc.Tok::Colon);
         let ty = type_expr(st, text);
-        let id = mk(st, NK::Param, tstart(st, name), nend(st, ty));
+        let id = mk(st, kinds.NK::Param, tstart(st, name), nend(st, ty));
         put(st, id, 4, name);
         put(st, id, 5, ty);
         list = push(st, list, id);
@@ -1654,7 +1550,7 @@ pub fn fn_decl[&s, &x](st: &!s [int], text: &x [byte], public: bool) -> [] int {
     let row = effect_row(st, text);
     let ret = type_expr(st, text);
     let body = block(st, text);
-    let id = mk(st, NK::IFn, tstart(st, start), body.end);
+    let id = mk(st, kinds.NK::IFn, tstart(st, start), body.end);
     put(st, id, 4, name);
     put(st, id, 5, flag(public));
     put(st, id, 6, dp.start);
@@ -1673,7 +1569,7 @@ pub fn static_decl[&s, &x](st: &!s [int], text: &x [byte], public: bool) -> [] i
     expect(st, lc.Tok::Colon);
     let ty = type_expr(st, text);
     let body = block(st, text);
-    let id = mk(st, NK::IStatic, tstart(st, start), body.end);
+    let id = mk(st, kinds.NK::IStatic, tstart(st, start), body.end);
     put(st, id, 4, name);
     put(st, id, 5, flag(public));
     put(st, id, 6, ty);
@@ -1695,7 +1591,7 @@ pub fn extern_decl[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     let row = effect_row(st, text);
     let ret = type_expr(st, text);
     let end = expect(st, lc.Tok::Semi);
-    let id = mk(st, NK::IExtern, tstart(st, start), tend(st, end));
+    let id = mk(st, kinds.NK::IExtern, tstart(st, start), tend(st, end));
     put(st, id, 4, name);
     put(st, id, 6, dp.start);
     put(st, id, 7, params.head);
@@ -1732,14 +1628,14 @@ pub fn struct_decl[&s, &x](st: &!s [int], text: &x [byte], mode: int, mode_tok: 
         let field = ident(st);
         expect(st, lc.Tok::Colon);
         let ty = type_expr(st, text);
-        let f = mk(st, NK::Field, tstart(st, field), nend(st, ty));
+        let f = mk(st, kinds.NK::Field, tstart(st, field), nend(st, ty));
         put(st, f, 4, field);
         put(st, f, 5, ty);
         fields = push(st, fields, f);
         go = eat(st, lc.Tok::Comma);
     }
     let end = expect(st, lc.Tok::RBrace);
-    let id = mk(st, NK::IStruct, start, tend(st, end));
+    let id = mk(st, kinds.NK::IStruct, start, tend(st, end));
     put(st, id, 4, name);
     put(st, id, 5, flag(public));
     put(st, id, 6, mode);
@@ -1766,7 +1662,7 @@ pub fn enum_decl[&s, &x](st: &!s [int], text: &x [byte], mode: int, mode_tok: in
             payload = type_list(st, text, lc.Tok::RParen);
             expect(st, lc.Tok::RParen);
         }
-        let v = mk(st, NK::Variant, tstart(st, variant), tend(st, variant));
+        let v = mk(st, kinds.NK::Variant, tstart(st, variant), tend(st, variant));
         put(st, v, 4, variant);
         put(st, v, 5, payload.head);
         put(st, v, 6, payload.n);
@@ -1774,7 +1670,7 @@ pub fn enum_decl[&s, &x](st: &!s [int], text: &x [byte], mode: int, mode_tok: in
         go = eat(st, lc.Tok::Comma);
     }
     let end = expect(st, lc.Tok::RBrace);
-    let id = mk(st, NK::IEnum, start, tend(st, end));
+    let id = mk(st, kinds.NK::IEnum, start, tend(st, end));
     put(st, id, 4, name);
     put(st, id, 5, flag(public));
     put(st, id, 6, mode);
