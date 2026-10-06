@@ -1,7 +1,8 @@
 # Hardware AES and carry-less multiply: two builtins, and a way to ask whether the CPU has them
 
-> **Status: design, decided; not built.** §9's five answers were accepted as proposed (2026-10-06), and the four PRs of §10
-> follow in that order. `docs/tls-parity.md` §3.1 measured AES-GCM at about 170 times slower than OpenSSL's, and said the gap
+> **Status: design, decided; the DIT bit and the builtins built.** §9's five answers were accepted as proposed (2026-10-06),
+> and the four PRs of §10 follow in that order: the DIT bit (§6) and the builtins with their LLVM lowering (§3 to §5, as built
+> below) are done; per-key caching and the `std` change are next. `docs/tls-parity.md` §3.1 measured AES-GCM at about 170 times slower than OpenSSL's, and said the gap
 > is the instructions lex-sys cannot emit. This document says what it would take to emit them, what is measured so far, and
 > what is not. Where a later PR finds a claim here false, that PR corrects it here, in place.
 
@@ -71,7 +72,7 @@ product are 128 bits. Two ways round that were considered:
 | A vector type (`v128`) with `aes_round`, `clmul` | a language change: the checker, both backends, arithmetic rules, and how a vector meets checked arithmetic | the general answer, and the one ChaCha20's SIMD would need. Its own design, later |
 
 The builtins, as `edition N;` (the latest, 6 today, as `value_barrier` was: `docs/editions.md` §5, a name a program could
-already declare):
+already declare). *As built: edition 7, the latest by then.*
 
 ```lex-sys
 hw_aes_gcm() -> [] bool
@@ -112,13 +113,21 @@ intrinsics instead, which LLVM can schedule:
 - **aarch64 `aes_encrypt_block`** loops `aese` then `aesmc` for all but the last round, then `aese` and an XOR with the final
   key. **x86-64** loops `aesenc` and ends with `aesenclast`. Both are checked against FIPS-197's vectors (§7).
 - **`ghash_update`** is four carry-less multiplies a block and a reduction by the GCM polynomial, on both targets. The
-  aarch64 form byte-reverses with `rev64` and `ext`; the x86-64 form with `pshufb`.
+  aarch64 form byte-reverses with `rev64` and `ext`; the x86-64 form with `pshufb`. *As built
+  (`crates/lex-sys-codegen-llvm/src/crypto.rs`): the instruction is used only for the four 64-by-64-bit products; the bit
+  order (each byte's bits reversed, into the polynomial's natural order) and the reduction (the high half folded twice by
+  `x^7 + x^2 + x + 1`) are LLVM `i128` and `i256` arithmetic, every shift by a constant. Simpler to check than a hand-scheduled
+  register version, and it leaves the choice of instructions to LLVM. Its speed is the `std` PR's measurement.*
 - **`hw_aes_gcm()`:**
   - x86-64: `cpuid` leaf 1, `ecx` bits 25 (AES), 1 (PCLMULQDQ) and 9 (SSSE3), by inline assembly, as `value_barrier` is.
   - aarch64 Linux: `getauxval(AT_HWCAP)`, bits `HWCAP_AES` and `HWCAP_PMULL`.
   - aarch64 macOS: `sysctlbyname("hw.optional.arm.FEAT_AES")` and `FEAT_PMULL`.
   - the last two are libc calls. Whether the backend already links them, and whether a builtin that calls libc is still `[]`,
-    are not checked here, and §9 asks the second.
+    are not checked here, and §9 asks the second. *Checked when built: the DIT start-up (§6) already declares `getauxval` and
+    `sysctlbyname` on those targets, and every program links libc; §9 answered the second yes. The answer is cached in a
+    module global, read and written with monotonic atomics.*
+- *As built, the length checks are at the call site, with the backend's own trap instruction, and the out-of-line functions
+  are defined only in a module that calls them.*
 
 ## 5. The Cranelift backend
 
@@ -126,7 +135,12 @@ No instruction exists (§2), so:
 - **`hw_aes_gcm()` answers `false`.** `std.aes` and `std.gcm` then take the software path, which is today's code, unchanged.
 - **`aes_encrypt_block` and `ghash_update` are never reached by a correct program on Cranelift.** If one is, they answer the
   software result (an interpreter for the same function in the backend's runtime), so a program is never wrong, only slow. That
-  keeps the two backends agreeing, the rule `docs/tls-pure.md` §9 gate 1 states.
+  keeps the two backends agreeing, the rule `docs/tls-pure.md` §9 gate 1 states. *Corrected when built: they trap instead, as
+  `trap()` does (and so does the LLVM backend on a target without the instructions, WebAssembly). The software result would
+  have been AES and GHASH written a third time, in the backend, for code no correct program reaches: `std.aes` and `std.gcm`
+  call the builtins only after `hw_aes_gcm()` answered true, which on Cranelift it never does. The two backends still agree
+  on every program that asks first, and the differential of §7 compares the hardware path with the software one inside one
+  LLVM program, where both run.*
 
 **A TLS build should use LLVM.** That is already the default backend. Cranelift's AES-GCM is also the one place its timing test failed
 with Arm's data-independent-timing bit set (`docs/tls-assurance.md` §6.1).
@@ -186,6 +200,18 @@ The numbers the `std` PR must show, each with its command, and an honest "not me
 - **No new capability:** `lex-sys authority` on the pure backend shows no `ffi(...)`, as #210 requires.
 - **The gate:** `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --workspace`, and no source
   file over 2,000 lines.
+
+### 7.1 Results (the builtins PR)
+
+`crates/lex-sys/tests/conformance/crypto_builtins.rs`, through `tests/programs/crypto_builtins_driver.ls`:
+- **Known answers:** FIPS 197 Appendix C.1 and C.3, and NIST's GCM test case 2 assembled from the two builtins (`H`,
+  `AES(K, J0)` and the tag each the standard's value).
+- **A differential:** 600 random AES blocks (AES-128, -192 and -256) and 600 random GHASH runs of 1 to 12 blocks against plain
+  reference implementations written from FIPS 197 and SP 800-38D in the test. Before it, by hand: 603 cases against Python
+  (`cryptography` for AES, SP 800-38D's algorithm for GHASH) on an Apple M4 and on aarch64 Linux, all equal.
+- **`hw_aes_gcm()` is true** on the suite's hosts with LLVM, asserted, and **false on Cranelift**, where a block builtin traps.
+- **A wrong length or round count traps** before any instruction runs, and writes nothing.
+- **x86-64** is checked by CI's linux-x86_64 runner, which runs the same test; it was not run by hand.
 
 ## 9. Open questions, and the answers proposed
 

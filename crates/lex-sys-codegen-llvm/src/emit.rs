@@ -710,6 +710,9 @@ pub(crate) fn emit_module(
     if crate::dit::applies(triple) {
         text.push_str(&crate::dit::definition(triple));
     }
+    // `docs/crypto-builtins.md` §4: only the functions this module calls.
+    let crypto = crate::crypto::definitions(triple, &text);
+    text.push_str(&crypto);
 
     if triple.architecture == target_lexicon::Architecture::Wasm32 {
         text.push_str(&smul_overflow_definition());

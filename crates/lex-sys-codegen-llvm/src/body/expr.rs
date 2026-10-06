@@ -1041,6 +1041,17 @@ impl<'a> FuncEmitter<'a> {
                 }
                 self.copy_into(&args)
             }
+            // `docs/crypto-builtins.md` §4: calls of `crate::crypto`'s
+            // functions, after the length checks (`body/crypto.rs`).
+            Callee::Builtin(Builtin::HwAesGcm) => self.hw_aes_gcm(),
+            Callee::Builtin(Builtin::AesEncryptBlock) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.aes_encrypt_block(&args)
+            }
+            Callee::Builtin(Builtin::GhashUpdate) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.ghash_update(&args)
+            }
             // `docs/byte-search.md`: one `memchr`.
             Callee::Builtin(Builtin::IndexOfByte) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();

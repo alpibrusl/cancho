@@ -139,11 +139,15 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::CopyWithin
                     | Builtin::CopyInto
                     | Builtin::IndexOfByte
+                    | Builtin::AesEncryptBlock
+                    | Builtin::GhashUpdate
                     | Builtin::ConnDetach
                     | Builtin::Trap
                     | Builtin::Release,
                 ) => Ok(LKind::I64),
-                Callee::Builtin(Builtin::IsNan | Builtin::ByteOf) => Ok(LKind::I8),
+                Callee::Builtin(Builtin::IsNan | Builtin::ByteOf | Builtin::HwAesGcm) => {
+                    Ok(LKind::I8)
+                }
                 // `docs/opaque-pointers.md` §3: the one builtin whose
                 // fixed return is `c_ptr` rather than a scalar the
                 // arms above already cover.
