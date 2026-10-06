@@ -780,7 +780,7 @@ paths: there is no `getcwd`.
 * **Reversibility is declared** per tool for lex-os: read-only tools
   `reversible-cheap`, `write`/`replace` `irreversible-bounded` ("write a
   file", the example in `lex-os-manifest`), and **no tool is
-  `irreversible-consequential`** (D15: no delete).
+  `irreversible-consequential`** (D15: no delete; `move --remove` is a rename to a tombstone).
 
 **The honest limit, and the alternative it raises.** `--dry-run` is not
 visible in the row: a `write` run with `--dry-run` and one without both report
@@ -1007,6 +1007,17 @@ be easy, and it is deliberately absent: a delete is lex-os's
 from the grant entirely" (`manifests/src/commands.lex`), and a toolbox that
 shipped one would be handing the supervisor the one command it is built to
 refuse. (`write` replaces atomically and removes only its own temporary file.)
+
+**Amended: a tombstone is a rename, not a delete.** `lexsys-tools`' `move
+--remove --if-sha256 HEX PATH` (lexsys-tools#25) takes a file away by renaming
+it to `.NAME.removed-<first 8 hex of HEX>` in the same directory. D15's reason
+stands: the content is kept, nothing in the toolbox purges it, and renaming it
+back undoes the removal, so the tool is `irreversible-bounded` like `write`,
+not the `irreversible-consequential` class. It needs the hash (a file is
+removed only as the caller read it), refuses an existing tombstone
+(`conflict.exists`), and a retry that had landed is `changed: false`.
+Tombstones accumulate, and clearing them is a person's job with a shell. There
+is still no purge, and no tool that unlinks.
 
 That is **eight tools plus a deferred ninth**, under D1's ten. **Six are
 buildable now** (`seek`, `write`, `peek`, `jsonq`, `tally`, and `hash` with a
