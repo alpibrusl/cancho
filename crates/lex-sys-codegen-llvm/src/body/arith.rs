@@ -275,8 +275,17 @@ impl<'a> FuncEmitter<'a> {
         b: LValue,
     ) -> Result<Vec<LValue>, String> {
         let pair = self.fresh();
+        // On wasm32 LLVM lowers a 64-bit `smul.with.overflow` to a 128-bit
+        // multiply libcall, `__multi3`, which a WASI sysroot does not carry
+        // (`docs/wasm.md`, W0.3). The module defines its own instead.
+        let callee =
+            if op == "smul" && self.triple.architecture == target_lexicon::Architecture::Wasm32 {
+                "lexsys_smul_overflow".to_owned()
+            } else {
+                format!("llvm.{op}.with.overflow.i64")
+            };
         self.out.push_str(&format!(
-            "  {pair} = call {{i64, i1}} @llvm.{op}.with.overflow.i64(i64 {}, i64 {})\n",
+            "  {pair} = call {{i64, i1}} @{callee}(i64 {}, i64 {})\n",
             operand(&a),
             operand(&b)
         ));
