@@ -39,6 +39,7 @@ use linear::{Event, Trace, mode_of};
 
 mod builtin;
 mod defs;
+mod errno;
 mod foreign;
 mod function;
 mod ir;
@@ -49,6 +50,7 @@ mod socket_os;
 
 pub use builtin::*;
 pub use defs::*;
+pub use errno::*;
 pub use foreign::*;
 use function::*;
 pub use ir::*;

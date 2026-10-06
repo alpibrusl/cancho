@@ -8,8 +8,8 @@
 //! values are not shared.
 
 use crate::{
-    DirentTypes, Os, dirent_layout_for, dirent_types, enametoolong_for, open_flags, open_flags_for,
-    stat_layout, stat_layout_for,
+    DirentTypes, Os, WASI_ERRNO_TO_LINUX, dirent_layout_for, dirent_types, enametoolong_for,
+    linux_errno_from_wasi, open_flags, open_flags_for, stat_layout, stat_layout_for,
 };
 
 #[test]
@@ -68,5 +68,40 @@ fn wasi_dirent_and_its_type_numbers() {
     );
     assert_eq!(dirent_types(Os::Linux), dirent_types(Os::Darwin));
     assert_eq!(dirent_types(Os::Linux), DirentTypes { unknown: 0, link: 10, dir: 4, reg: 8 });
-    assert_eq!(enametoolong_for(Os::Wasi), 37);
+    assert_eq!(enametoolong_for(Os::Wasi), enametoolong_for(Os::Linux), "WASI errno is translated");
+}
+
+#[test]
+fn every_wasi_errno_is_translated_to_a_distinct_linux_one() {
+    assert_eq!(WASI_ERRNO_TO_LINUX.len(), 76, "wasi-libc's __errno_values.h defines 76");
+    let mut wasi: Vec<i64> = WASI_ERRNO_TO_LINUX.iter().map(|r| r.1).collect();
+    wasi.sort_unstable();
+    wasi.dedup();
+    assert_eq!(wasi.len(), 76, "a WASI number appears once");
+    assert!(WASI_ERRNO_TO_LINUX.iter().all(|r| r.2 > 0), "nothing maps to 'no error'");
+    // Two WASI names may share a Linux number only where Linux has one errno for
+    // both: ENOTCAPABLE has no Linux errno and is EPERM, so EPERM and ENOTCAPABLE
+    // meet there, and nothing else does.
+    let mut linux: Vec<(i64, &str)> = WASI_ERRNO_TO_LINUX.iter().map(|r| (r.2, r.0)).collect();
+    linux.sort_unstable();
+    let shared: Vec<&str> = linux.windows(2).filter(|w| w[0].0 == w[1].0).map(|w| w[1].1).collect();
+    assert_eq!(shared.len(), 1, "{shared:?}");
+}
+
+#[test]
+fn the_errnos_a_program_compares_against_mean_the_same_thing_on_wasi() {
+    for (name, wasi, linux) in [
+        ("ENOENT", 44, 2),
+        ("EINVAL", 28, 22),
+        ("EEXIST", 20, 17),
+        ("EACCES", 2, 13),
+        ("ENAMETOOLONG", 37, 36),
+        ("ENOTDIR", 54, 20),
+        ("EBADF", 8, 9),
+    ] {
+        assert_eq!(linux_errno_from_wasi(wasi), linux, "{name}");
+    }
+    assert_eq!(linux_errno_from_wasi(0), 0, "no error stays no error");
+    assert_eq!(linux_errno_from_wasi(9999), 9999, "an unknown number is not invented");
+    assert_eq!(enametoolong_for(Os::Wasi), linux_errno_from_wasi(37));
 }

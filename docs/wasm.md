@@ -11,7 +11,7 @@ wasm build gives **both** -- the static row from `lex-sys authority`, and a
 module whose import section the runtime enforces -- and makes `row ⊆ imports`
 a mechanical check. Defence in depth without a Firecracker VM per unit.
 
-Status: **W0 and W0.1 are built** (§W0 results). W1 onward is the plan below.
+Status: **W0, W0.1 and the errno decision are built** (§W0 results). W1 onward is the plan below.
 
 ---
 
@@ -25,13 +25,14 @@ capability; that grant is the harness's, not the compiler's:
 
 | | count | meaning |
 |---|---|---|
-| **pass** | 78 | built, ran, stdout and exit code match the fixture's `//~` annotations |
+| **pass** | 79 | built, ran, stdout and exit code match the fixture's `//~` annotations |
 | **refused** | 15 | the toolchain declined; see below. Today these are *link* errors, not located refusals |
-| **wrong** | 11 | built and ran and disagreed with the annotations. Each is a bug or a missing target arm |
+| **wrong** | 10 | built and ran and disagreed with the annotations. Each is a bug or a missing target arm |
 | trap | 0 | no accept fixture expects a trap |
 
 The first run was 35 / 9 / 60. One cause, `size_t`, was behind 38 of the 60;
-the OS-constant tables (W0.1) took 73 to 78 and cleared `slicing`.
+the OS-constant tables (W0.1) took 73 to 78 and cleared `slicing`, and the errno
+translation took it to 79.
 
 ### What W0 changed
 
@@ -79,6 +80,21 @@ the OS-constant tables (W0.1) took 73 to 78 and cleared `slicing`.
   `AT_SYMLINK_NOFOLLOW` is `0x1`, `struct dirent` is `{ino_t; u8 d_type;
   char d_name[]}` (`d_type` at 8, `d_name` at 9), `ENAMETOOLONG` is 37, and
   `struct stat` happens to have Linux x86-64's offsets.
+- **`errno` is translated on WASI** to the language's numbering, which is
+  Linux's. A program that compares a failure's `errno` (`e == 2` for a missing
+  file) now means the same thing on every target it is built for. The table is
+  `lex_sys_ir::WASI_ERRNO_TO_LINUX`, all 76 of wasi-libc's `E*`, applied by a
+  generated `@lexsys_wasi_errno` at the one place the backend reads `errno`
+  (zero stays zero; a number WASI does not define passes through). Why this
+  over per-target accessors: the language already fixes some of its own error
+  numbers at Linux's (`std.dirs.einval()` is 22), so a program on WASI
+  otherwise saw two numberings at once, and translating needs no change to any
+  program. Two judgment calls, written in `errno.rs`: `ENOTSUP` is Linux's
+  `EOPNOTSUPP` (95), and `ENOTCAPABLE`, which Linux has no errno for, is `EPERM`.
+  `enametoolong_for(Wasi)` therefore answers 36, not WASI's 37. **Darwin is not
+  translated**: its raw `errno` still reaches a program, which is why
+  `enametoolong` has a per-OS answer. That inconsistency is older than WASI and
+  is not changed here; if it should be, the same mechanism applies.
 - **An operating system with no tables is refused**, in `emit_module`,
   instead of taking the Linux numbers. (`x86_64-unknown-freebsd` used to
   build.) The per-site `_ => linux` arms that remain are behind that guard.
@@ -99,17 +115,17 @@ Apple's has none), `WASM_LD`, `WASI_SYSROOT` (a wasi-libc sysroot holding
 | `extern fn` signature | `foreign_narrow_return` (`access`), `bytes_to_c` (`write`), `opaque_pointer` (`fdopen`), `spawn_parallel_sleep` (`usleep`), `foreign_two_libraries` and `spawn_thread_ids` (`pthread_self`) | a program's own `extern fn` declares C's `int`/`long` as `i64`; wasi-libc's is `i32` (or the function does not exist). The declaration is a claim about a native ABI |
 | `pthread_sigmask` | `signals_claim` | signals: refuse |
 
-### The 11 wrong
+### The 10 wrong
 
 | fixtures | likely cause |
 |---|---|
 | `fork_clock_workers`, `fork_heap_workers`, `spawn_heap_in_struct`, `spawn_join`, `spawn_join_operands`, `spawn_owned_clock`, `spawn_owned_file`, `spawn_owned_io`, `spawn_struct_ref` | threads (`pthread_*`): trap at run time. Must become located refusals |
 | `index_of_byte_beside_own_memchr` | a program that defines its own function named `memchr` replaces wasi-libc's, whose internals call it with a 32-bit `size_t`. Real on any target, but only visible once the widths differ |
-| `directory_handles` | **errno numbering.** The fixture checks `e != 2` for a missing path (`ENOENT`); WASI's `ENOENT` is 44. The language hands a program the platform's raw `errno` for a real failure, but the constants it defines itself (`std.dirs.einval()` is 22) are Linux's, so on WASI the two disagree. Either translate WASI's errno to one numbering at the boundary or give every errno a per-target accessor (as `enametoolong` has); not decided |
 
-Cleared since the first map: the six file and directory fixtures (all but the
-errno one above, and `spawn_owned_file`, which is a thread test), and
-`slicing`, whose exit 1 was the same read-only flag.
+Cleared since the first map: the file and directory fixtures (all but
+`spawn_owned_file`, which is a thread test), `slicing` (its exit 1 was the same
+read-only flag), and `directory_handles` (its `e != 2` was the errno numbering,
+now translated).
 
 ### Findings that change the plan
 
@@ -129,7 +145,7 @@ errno one above, and `spawn_owned_file`, which is a thread test), and
 3. **`--fatal-warnings` is the cheapest safety net on the table**, and
    worth keeping even after the `size_t` fix: it is what stops a *future*
    libc call with a hardcoded width from shipping as a trap.
-4. **The language has no portable errno.** See `directory_handles` above.
+4. **The language had no portable errno**, and now has one on WASI: see "`errno` is translated" above. Darwin remains raw.
 5. The roadmap's slice-length offset (`i64 8`, `expr.rs`) was **not** what
    broke first; `size_t` was. It is still untested because no fixture has
    exercised it separately yet. W1's corpus should.
@@ -258,7 +274,7 @@ sockets, threads and signals rows).
 | Area | wasip1 | wasip2 | Note |
 |---|---|---|---|
 | Console (`io_read`/`io_write`) | yes | yes | |
-| Files, directories, `openat`, `pread`/`pwrite` | yes | yes | Preopens replace absolute paths; `Fs` path prefix ↔ preopen. Constants differ (`open` flags, `stat`, `dirent`) and are tabled in `lex_sys_ir::Os`; errno numbering is open |
+| Files, directories, `openat`, `pread`/`pwrite` | yes | yes | Preopens replace absolute paths; `Fs` path prefix ↔ preopen. Constants differ (`open` flags, `stat`, `dirent`) and are tabled in `lex_sys_ir::Os`; `errno` is translated to the language's numbering |
 | Heap, arenas | yes | yes | wasi-libc `malloc`; `size_t` is 32-bit |
 | Clock | yes | yes | |
 | `flock`, `fsync`, `rename` | partial | partial | Check per call |

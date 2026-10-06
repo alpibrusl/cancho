@@ -491,6 +491,14 @@ pub(crate) fn emit_module(
         _ => "__errno_location",
     };
     text.push_str(&format!("declare ptr @{errno_symbol}()\n\n"));
+    if matches!(
+        triple.operating_system,
+        target_lexicon::OperatingSystem::Wasi
+            | target_lexicon::OperatingSystem::WasiP1
+            | target_lexicon::OperatingSystem::WasiP2
+    ) {
+        text.push_str(&wasi_errno_translation());
+    }
 
     // `docs/threads.md` §2: `spawn`/`join`, real `pthread_create`/
     // `pthread_join`. `pthread_t` is opaque on both this project's
@@ -791,5 +799,28 @@ fn wasm32_size_t_shims(text: &str) -> String {
         );
         text = text.replacen(&declare, &format!("{real_declare}{define}"), 1);
     }
+    text
+}
+
+/// `@lexsys_wasi_errno`: WASI's `errno` to the language's numbering
+/// (`lex_sys_ir::WASI_ERRNO_TO_LINUX`, `docs/wasm.md`). A `switch` over every
+/// number WASI defines; zero and anything else pass through, so "no error"
+/// stays "no error".
+fn wasi_errno_translation() -> String {
+    let mut text = String::from("define internal i32 @lexsys_wasi_errno(i32 %e) {\n");
+    text.push_str("entry:\n  switch i32 %e, label %other [\n");
+    for &(_, wasi, linux) in lex_sys_ir::WASI_ERRNO_TO_LINUX {
+        if wasi != linux {
+            text.push_str(&format!("    i32 {wasi}, label %to{linux}\n"));
+        }
+    }
+    text.push_str("  ]\n");
+    let mut seen = std::collections::BTreeSet::new();
+    for &(_, wasi, linux) in lex_sys_ir::WASI_ERRNO_TO_LINUX {
+        if wasi != linux && seen.insert(linux) {
+            text.push_str(&format!("to{linux}:\n  ret i32 {linux}\n"));
+        }
+    }
+    text.push_str("other:\n  ret i32 %e\n}\n\n");
     text
 }
