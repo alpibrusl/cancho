@@ -8,7 +8,7 @@ module selfhost.driver;
 // program's `main` says which it wants:
 //
 //     mode 0   the syntax tree as a listing (`listing.ls`)
-//     mode 1   the checker's answer (`pass1.ls`): `OK`, `SKIP`, or the first refusal
+//     mode 1   the checker's answer (`checker.ls`): `OK`, or the first refusal
 //
 // One file is the whole of standard input. Several files are a stream, each as a line
 // `FILE <length>` and then that many bytes, in the order the compiler parses them (the files
@@ -20,12 +20,13 @@ import std.io as console;
 import std.buffer;
 import selfhost.lexcore as lc;
 import selfhost.ast;
+import selfhost.rules;
 import selfhost.listing;
-import selfhost.pass1;
+import selfhost.checker;
 
 fn refusal[&i, &s](io: &!i Io, st: &!s [int]) -> [io_write] int {
     console.write_all(io, "ERR ");
-    console.write_all(io, ast.rule_tag(st[3]));
+    console.write_all(io, rules.rule_tag(st[3]));
     console.space(io);
     console.print_nat(io, st[4]);
     console.space(io);
@@ -42,13 +43,8 @@ fn answer[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], mode: int) -> 
         listing.dump(io, st, text);
         return 0;
     }
-    if pass1.check(st, text) == 0 {
+    if checker.check(st, text) == 0 {
         console.write_all(io, "OK");
-        console.newline(io);
-        return 0;
-    }
-    if st[3] == ast.r_skip() {
-        console.write_all(io, "SKIP");
         console.newline(io);
         return 0;
     }

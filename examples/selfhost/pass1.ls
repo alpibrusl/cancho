@@ -9,12 +9,8 @@ module selfhost.pass1;
 //
 // The oracle is `lex_sys_ir::check_declarations`, which is that half and nothing else, so the
 // first refusal of this port must be the first refusal of the Rust checker, rule and span.
-// What the port does not do yet is *refused by saying so*: a construct whose checks are not
-// ported ends the check with a refusal whose rule is `SKIP` (`r_skip`), at the point the Rust
-// checker would have reached it, so an error found before it still counts and anything after
-// it does not. What skips:
-//
-// * an `extern fn` (the foreign boundary, authority and symbol checks).
+// `foreign.ls` is the foreign declarations, which run between the types and the statics, and
+// `checker.ls` is the order.
 //
 // A type is resolved *in place*: each `TName` node gets what it names in slots 8..10 (8 the
 // class: 0 a scalar, 1 a type parameter, 2 a prelude type, 3 a type the file declares; 9 the
@@ -25,6 +21,7 @@ module selfhost.pass1;
 
 import selfhost.lexcore as lc;
 import selfhost.ast;
+import selfhost.rules;
 import selfhost.kinds;
 import selfhost.tables;
 
@@ -34,11 +31,11 @@ pub fn user_base() -> [] int {
 
 // --------------------------------------------------------------- tokens ---
 
-fn is_word[&s, &x](st: &!s [int], text: &x [byte], tok: int, spelled: &static [byte]) -> [] bool {
+pub fn is_word[&s, &x](st: &!s [int], text: &x [byte], tok: int, spelled: &static [byte]) -> [] bool {
     return lc.spells(text, ast.tstart(st, tok), ast.tend(st, tok), spelled);
 }
 
-fn is_code[&s](st: &!s [int], tok: int, t: lc.Tok) -> [] bool {
+pub fn is_code[&s](st: &!s [int], tok: int, t: lc.Tok) -> [] bool {
     return ast.code_at(st, tok) == lc.code(t);
 }
 
@@ -98,7 +95,7 @@ fn imported_module[&s, &x](st: &!s [int], text: &x [byte], keyword: int) -> [] i
 }
 
 // Every import names a module the program declares, and no two bind the same qualifier.
-fn check_imports[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
+pub fn check_imports[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     var m = 0;
     while m < st[11] && ast.ok(st) {
         var n = 0;
@@ -108,13 +105,13 @@ fn check_imports[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
                 let from = ast.tstart(st, keyword);
                 let to = ast.tend(st, import_end(st, keyword));
                 if imported_module(st, text, keyword) < 0 {
-                    ast.fail(st, ast.r_unknown_name(), from, to);
+                    ast.fail(st, rules.r_unknown_name(), from, to);
                 } else {
                     var j = 0;
                     while j < n && ast.ok(st) {
                         if ast.import_module(st, j) == m {
                             if ast.same(st, text, import_alias(st, ast.import_keyword(st, j)), import_alias(st, keyword)) {
-                                ast.fail(st, ast.r_duplicate_declaration(), from, to);
+                                ast.fail(st, rules.r_duplicate_declaration(), from, to);
                             }
                         }
                         j = j + 1;
@@ -239,12 +236,12 @@ fn check_generic_names[&s, &x](st: &!s [int], text: &x [byte], dp: int, from: in
     while ast.ok(st) && nth_param(st, dp, false, k) >= 0 {
         let name = nth_param(st, dp, false, k);
         if is_word(st, text, name, "int") || is_word(st, text, name, "bool") {
-            ast.fail(st, ast.r_builtin_redeclared(), from, to);
+            ast.fail(st, rules.r_builtin_redeclared(), from, to);
         }
         var j = 0;
         while j < k {
             if ast.same(st, text, nth_param(st, dp, false, j), name) {
-                ast.fail(st, ast.r_duplicate_declaration(), from, to);
+                ast.fail(st, rules.r_duplicate_declaration(), from, to);
             }
             j = j + 1;
         }
@@ -255,22 +252,22 @@ fn check_generic_names[&s, &x](st: &!s [int], text: &x [byte], dp: int, from: in
 
 // A declaration's region parameters are distinct, are not also type parameters, and are not
 // `static`.
-fn check_region_names[&s, &x](st: &!s [int], text: &x [byte], dp: int, from: int, to: int) -> [] int {
+pub fn check_region_names[&s, &x](st: &!s [int], text: &x [byte], dp: int, from: int, to: int) -> [] int {
     var k = 0;
     while ast.ok(st) && nth_param(st, dp, true, k) >= 0 {
         let name = nth_param(st, dp, true, k);
         var j = 0;
         while j < k {
             if ast.same(st, text, nth_param(st, dp, true, j), name) {
-                ast.fail(st, ast.r_duplicate_declaration(), from, to);
+                ast.fail(st, rules.r_duplicate_declaration(), from, to);
             }
             j = j + 1;
         }
         if param_index(st, text, dp, false, name) >= 0 {
-            ast.fail(st, ast.r_region_mismatch(), from, to);
+            ast.fail(st, rules.r_region_mismatch(), from, to);
         }
         if is_word(st, text, name, "static") {
-            ast.fail(st, ast.r_static_item(), from, to);
+            ast.fail(st, rules.r_static_item(), from, to);
         }
         k = k + 1;
     }
@@ -513,7 +510,7 @@ fn scope_valid[&s, &x](st: &!s [int], text: &x [byte], lit: int) -> [] bool {
 // Resolve the type node `id`, written in a file at `edition` inside `module`, in the scope of
 // the declaration whose `[...]` starts at token `scope` (-1 for none): its type parameters, and
 // its region parameters if `regions_ok`. `unsized_ok`: a `[T]` may stand here.
-fn resolve[&s, &x](st: &!s [int], text: &x [byte], id: int, unit_of: int, edition: int, scope: int, regions_ok: bool, unsized_ok: bool) -> [] int {
+pub fn resolve[&s, &x](st: &!s [int], text: &x [byte], id: int, unit_of: int, edition: int, scope: int, regions_ok: bool, unsized_ok: bool) -> [] int {
     if !ast.ok(st) || id < 0 {
         return 0;
     }
@@ -523,13 +520,13 @@ fn resolve[&s, &x](st: &!s [int], text: &x [byte], id: int, unit_of: int, editio
         let reg = ast.get(st, id, 5);
         if is_word(st, text, reg, "static") {
             if ast.get(st, id, 4) != 0 {
-                ast.fail(st, ast.r_static_item(), from, to);
+                ast.fail(st, rules.r_static_item(), from, to);
                 return 0;
             }
             return resolve(st, text, ast.get(st, id, 6), unit_of, edition, scope, regions_ok, true);
         }
         if !regions_ok || param_index(st, text, scope, true, reg) < 0 {
-            ast.fail(st, ast.r_region_not_in_scope(), from, to);
+            ast.fail(st, rules.r_region_not_in_scope(), from, to);
             return 0;
         }
         return resolve(st, text, ast.get(st, id, 6), unit_of, edition, scope, regions_ok, true);
@@ -539,14 +536,14 @@ fn resolve[&s, &x](st: &!s [int], text: &x [byte], id: int, unit_of: int, editio
     }
     if ast.is_kind(st, id, kinds.NK::TSlice) {
         if !unsized_ok {
-            ast.fail(st, ast.r_unsized_type(), from, to);
+            ast.fail(st, rules.r_unsized_type(), from, to);
             return 0;
         }
         return resolve(st, text, ast.get(st, id, 6), unit_of, edition, scope, regions_ok, false);
     }
     if ast.is_kind(st, id, kinds.NK::TTuple) {
         if ast.get(st, id, 7) < 2 {
-            ast.fail(st, ast.r_pattern_shape(), from, to);
+            ast.fail(st, rules.r_pattern_shape(), from, to);
             return 0;
         }
         return resolve_list(st, text, ast.get(st, id, 6), ast.get(st, id, 7), unit_of, edition, scope, regions_ok, false);
@@ -608,7 +605,7 @@ fn resolve_name[&s, &x](st: &!s [int], text: &x [byte], id: int, unit_of: int, e
     let nargs = ast.get(st, id, 7);
     let target = resolve_module(st, text, unit_of, qualifier);
     if target < 0 {
-        ast.fail(st, ast.r_module_not_imported(), from, to);
+        ast.fail(st, rules.r_module_not_imported(), from, to);
         return 0;
     }
     let found = lookup(st, text, name, target, edition);
@@ -620,7 +617,7 @@ fn resolve_name[&s, &x](st: &!s [int], text: &x [byte], id: int, unit_of: int, e
     let g = param_index(st, text, scope, false, name);
     if g >= 0 {
         if nargs > 0 {
-            ast.fail(st, ast.r_type_args_not_taken(), from, to);
+            ast.fail(st, rules.r_type_args_not_taken(), from, to);
             return 0;
         }
         return annotate(st, id, 1, g, 0);
@@ -628,17 +625,17 @@ fn resolve_name[&s, &x](st: &!s [int], text: &x [byte], id: int, unit_of: int, e
     let scalar = scalar_of(st, text, name, edition);
     if scalar > 0 {
         if nargs != 0 {
-            ast.fail(st, ast.r_arity_mismatch(), from, to);
+            ast.fail(st, rules.r_arity_mismatch(), from, to);
             return 0;
         }
         return annotate(st, id, 0, 0, scalar);
     }
     if found < 0 {
-        ast.fail(st, ast.r_unknown_name(), from, to);
+        ast.fail(st, rules.r_unknown_name(), from, to);
         return 0;
     }
     if target != unit_of && !def_public(st, found) {
-        ast.fail(st, ast.r_not_public(), from, to);
+        ast.fail(st, rules.r_not_public(), from, to);
         return 0;
     }
     // `docs/mode-polymorphism.md` section 3: a parameter bounded `val` takes no `res` argument.
@@ -646,7 +643,7 @@ fn resolve_name[&s, &x](st: &!s [int], text: &x [byte], id: int, unit_of: int, e
     var i = 0;
     while i < nargs {
         if def_bound_val(st, found, i) && is_res(st, mode_bits(st, arg, 0), scope) {
-            ast.fail(st, ast.r_mode_bound_violated(), from, to);
+            ast.fail(st, rules.r_mode_bound_violated(), from, to);
             return 0;
         }
         arg = ast.next(st, arg);
@@ -655,12 +652,12 @@ fn resolve_name[&s, &x](st: &!s [int], text: &x [byte], id: int, unit_of: int, e
     // The scope an `Ffi` is narrowed to has to be well formed.
     if found == tables.prelude_ffi() && nargs >= 1 && ast.is_kind(st, ast.get(st, id, 6), kinds.NK::TLit) {
         if !scope_valid(st, text, ast.get(st, ast.get(st, id, 6), 4)) {
-            ast.fail(st, ast.r_foreign_scope(), from, to);
+            ast.fail(st, rules.r_foreign_scope(), from, to);
             return 0;
         }
     }
     if nargs != def_arity(st, found) {
-        ast.fail(st, ast.r_arity_mismatch(), from, to);
+        ast.fail(st, rules.r_arity_mismatch(), from, to);
         return 0;
     }
     if found >= user_base() {
@@ -758,7 +755,7 @@ fn reaches[&s](st: &!s [int], item: int, target: int, stamp: int) -> [] bool {
     return false;
 }
 
-fn collect_types[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
+pub fn collect_types[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     // The names, so a member may mention a type declared later in the file.
     var it = st[15];
     while it >= 0 && ast.ok(st) {
@@ -769,12 +766,12 @@ fn collect_types[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
             let unit_of = ast.get(st, it, 13);
             let edition = ast.get(st, it, 14);
             if builtin_type(st, text, name, edition) {
-                ast.fail(st, ast.r_builtin_redeclared(), from, to);
+                ast.fail(st, rules.r_builtin_redeclared(), from, to);
             }
             var other = st[15];
             while other != it && ast.ok(st) {
                 if is_type_item(st, other) && ast.get(st, other, 13) == unit_of && ast.same(st, text, ast.get(st, other, 4), name) {
-                    ast.fail(st, ast.r_duplicate_declaration(), from, to);
+                    ast.fail(st, rules.r_duplicate_declaration(), from, to);
                 }
                 other = ast.next(st, other);
             }
@@ -800,7 +797,7 @@ fn collect_types[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         if is_type_item(st, it) {
             stamp = stamp + 1;
             if reaches(st, it, it, stamp) {
-                ast.fail(st, ast.r_infinite_type(), ast.nstart(st, it), ast.nend(st, it));
+                ast.fail(st, rules.r_infinite_type(), ast.nstart(st, it), ast.nend(st, it));
             }
         }
         it = ast.next(st, it);
@@ -810,7 +807,7 @@ fn collect_types[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     it = st[15];
     while it >= 0 && ast.ok(st) {
         if is_type_item(st, it) && ast.get(st, it, 6) == 1 && val_holds_res(st, it) {
-            ast.fail(st, ast.r_mode_bound_violated(), ast.nstart(st, it), ast.nend(st, it));
+            ast.fail(st, rules.r_mode_bound_violated(), ast.nstart(st, it), ast.nend(st, it));
         }
         it = ast.next(st, it);
     }
@@ -847,7 +844,7 @@ fn collect_fields[&s, &x](st: &!s [int], text: &x [byte], it: int) -> [] int {
         var other = ast.get(st, it, 8);
         while other != field {
             if ast.same(st, text, ast.get(st, other, 4), ast.get(st, field, 4)) {
-                ast.fail(st, ast.r_duplicate_declaration(), from, to);
+                ast.fail(st, rules.r_duplicate_declaration(), from, to);
             }
             other = ast.next(st, other);
         }
@@ -862,7 +859,7 @@ fn collect_variants[&s, &x](st: &!s [int], text: &x [byte], it: int) -> [] int {
     let from = ast.nstart(st, it);
     let to = ast.nend(st, it);
     if ast.get(st, it, 8) < 0 {
-        ast.fail(st, ast.r_enum_has_no_variants(), from, to);
+        ast.fail(st, rules.r_enum_has_no_variants(), from, to);
         return 0;
     }
     var variant = ast.get(st, it, 8);
@@ -870,7 +867,7 @@ fn collect_variants[&s, &x](st: &!s [int], text: &x [byte], it: int) -> [] int {
         var other = ast.get(st, it, 8);
         while other != variant {
             if ast.same(st, text, ast.get(st, other, 4), ast.get(st, variant, 4)) {
-                ast.fail(st, ast.r_duplicate_declaration(), from, to);
+                ast.fail(st, rules.r_duplicate_declaration(), from, to);
             }
             other = ast.next(st, other);
         }
@@ -883,19 +880,7 @@ fn collect_variants[&s, &x](st: &!s [int], text: &x [byte], it: int) -> [] int {
 
 // ----------------------------------------------------- statics, signatures ---
 
-// A foreign declaration: its checks are not ported.
-fn check_externs[&s](st: &!s [int]) -> [] int {
-    var it = st[15];
-    while it >= 0 && ast.ok(st) {
-        if ast.is_kind(st, it, kinds.NK::IExtern) {
-            ast.fail(st, ast.r_skip(), ast.nstart(st, it), ast.nend(st, it));
-        }
-        it = ast.next(st, it);
-    }
-    return 0;
-}
-
-fn check_statics[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
+pub fn check_statics[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     var it = st[15];
     while it >= 0 && ast.ok(st) {
         if ast.is_kind(st, it, kinds.NK::IStatic) {
@@ -906,7 +891,7 @@ fn check_statics[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
             var other = st[15];
             while other != it && ast.ok(st) {
                 if ast.is_kind(st, other, kinds.NK::IStatic) && ast.get(st, other, 13) == unit_of && ast.same(st, text, ast.get(st, other, 4), name) {
-                    ast.fail(st, ast.r_duplicate_declaration(), from, to);
+                    ast.fail(st, rules.r_duplicate_declaration(), from, to);
                 }
                 other = ast.next(st, other);
             }
@@ -914,7 +899,7 @@ fn check_statics[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
             while other >= 0 && ast.ok(st) {
                 if ast.is_kind(st, other, kinds.NK::IFn) || ast.is_kind(st, other, kinds.NK::IExtern) {
                     if ast.get(st, other, 13) == unit_of && ast.same(st, text, ast.get(st, other, 4), name) {
-                        ast.fail(st, ast.r_duplicate_declaration(), from, to);
+                        ast.fail(st, rules.r_duplicate_declaration(), from, to);
                     }
                 }
                 other = ast.next(st, other);
@@ -922,7 +907,7 @@ fn check_statics[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
             let ty = ast.get(st, it, 6);
             resolve(st, text, ty, unit_of, ast.get(st, it, 14), 0 - 1, false, true);
             if ast.ok(st) && !static_slice(st, ty) {
-                ast.fail(st, ast.r_static_item(), from, to);
+                ast.fail(st, rules.r_static_item(), from, to);
             }
         }
         it = ast.next(st, it);
@@ -978,7 +963,7 @@ fn private_in_list[&s](st: &!s [int], head: int, n: int, unit_of: int) -> [] boo
 }
 
 // Is the name at `tok` a builtin a file at `edition` can see?
-fn builtin_name[&s, &x](st: &!s [int], text: &x [byte], tok: int, edition: int) -> [] bool {
+pub fn builtin_name[&s, &x](st: &!s [int], text: &x [byte], tok: int, edition: int) -> [] bool {
     var b = 0;
     while b < tables.builtin_count() {
         if lc.spells(text, ast.tstart(st, tok), ast.tend(st, tok), tables.builtin_name(b)) && tables.builtin_since(b) <= edition {
@@ -989,7 +974,7 @@ fn builtin_name[&s, &x](st: &!s [int], text: &x [byte], tok: int, edition: int) 
     return false;
 }
 
-fn check_signatures[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
+pub fn check_signatures[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     var it = st[15];
     while it >= 0 && ast.ok(st) {
         if ast.is_kind(st, it, kinds.NK::IFn) {
@@ -1008,13 +993,21 @@ fn check_signature[&s, &x](st: &!s [int], text: &x [byte], it: int) -> [] int {
     let edition = ast.get(st, it, 14);
     let dp = ast.get(st, it, 6);
     if builtin_name(st, text, name, edition) {
-        ast.fail(st, ast.r_builtin_redeclared(), from, to);
+        ast.fail(st, rules.r_builtin_redeclared(), from, to);
         return 0;
     }
     var other = st[15];
     while other != it && ast.ok(st) {
         if ast.is_kind(st, other, kinds.NK::IFn) && ast.get(st, other, 13) == unit_of && ast.same(st, text, ast.get(st, other, 4), name) {
-            ast.fail(st, ast.r_duplicate_declaration(), from, to);
+            ast.fail(st, rules.r_duplicate_declaration(), from, to);
+        }
+        other = ast.next(st, other);
+    }
+    // A foreign declaration and a written function are two answers to one call.
+    other = st[15];
+    while other >= 0 && ast.ok(st) {
+        if ast.is_kind(st, other, kinds.NK::IExtern) && ast.get(st, other, 13) == unit_of && ast.same(st, text, ast.get(st, other, 4), name) {
+            ast.fail(st, rules.r_foreign_declaration(), from, to);
         }
         other = ast.next(st, other);
     }
@@ -1025,7 +1018,7 @@ fn check_signature[&s, &x](st: &!s [int], text: &x [byte], it: int) -> [] int {
     while ast.ok(st) && nth_outlive(st, dp, k) >= 0 {
         let inner = nth_outlive(st, dp, k);
         if param_index(st, text, dp, true, inner) < 0 || param_index(st, text, dp, true, inner + 2) < 0 {
-            ast.fail(st, ast.r_region_mismatch(), from, to);
+            ast.fail(st, rules.r_region_mismatch(), from, to);
         }
         k = k + 1;
     }
@@ -1034,7 +1027,7 @@ fn check_signature[&s, &x](st: &!s [int], text: &x [byte], it: int) -> [] int {
         var earlier = ast.get(st, it, 7);
         while earlier != param {
             if ast.same(st, text, ast.get(st, earlier, 4), ast.get(st, param, 4)) {
-                ast.fail(st, ast.r_duplicate_declaration(), from, to);
+                ast.fail(st, rules.r_duplicate_declaration(), from, to);
             }
             earlier = ast.next(st, earlier);
         }
@@ -1052,30 +1045,8 @@ fn check_signature[&s, &x](st: &!s [int], text: &x [byte], it: int) -> [] int {
             p = ast.next(st, p);
         }
         if hidden || private_in(st, ast.get(st, it, 10), unit_of) {
-            ast.fail(st, ast.r_not_public(), from, to);
+            ast.fail(st, rules.r_not_public(), from, to);
         }
     }
     return 0;
-}
-
-// The checks, in the order the Rust checker makes them. 0 if the declarations are well
-// formed, else the refusal is in the state (`st[2..6]`): a rule, or `SKIP`.
-pub fn check[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
-    check_imports(st, text);
-    if ast.ok(st) {
-        collect_types(st, text);
-    }
-    if ast.ok(st) {
-        check_externs(st);
-    }
-    if ast.ok(st) {
-        check_statics(st, text);
-    }
-    if ast.ok(st) {
-        check_signatures(st, text);
-    }
-    if ast.ok(st) {
-        return 0;
-    }
-    return 1;
 }
