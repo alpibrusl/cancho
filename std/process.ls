@@ -88,6 +88,36 @@ pub fn channels() -> [] Channels {
     }
 }
 
+// The three channels a child captured with its standard error needs
+// (`capture_both`, §7.2): the parent's end and the child's end of its input,
+// of its output, then of its errors.
+pub enum ChannelsWithErrors {
+    Ok(Pipe, ChildEnd, Pipe, ChildEnd, Pipe, ChildEnd),
+    Failed(int),
+}
+
+pub fn channels_with_errors() -> [] ChannelsWithErrors {
+    match channels() {
+        Channels::Failed(e) => {
+            return ChannelsWithErrors::Failed(e);
+        }
+        Channels::Ok(to_child, child_in, from_child, child_out) => {
+            match pipe_open() {
+                Piped::Failed(e) => {
+                    pipe_close(to_child);
+                    child_end_close(child_in);
+                    pipe_close(from_child);
+                    child_end_close(child_out);
+                    return ChannelsWithErrors::Failed(e);
+                }
+                Piped::Ok(from_errors, child_errors) => {
+                    return ChannelsWithErrors::Ok(to_child, child_in, from_child, child_out, from_errors, child_errors);
+                }
+            }
+        }
+    }
+}
+
 // The parent's two ends, when the spawn they were opened for failed (its
 // child's ends went with the spawn either way, §4.1).
 pub fn close(to_child: Pipe, from_child: Pipe) -> [] int {
@@ -119,6 +149,10 @@ fn input_token() -> [] int {
 
 fn child_token() -> [] int {
     return 3;
+}
+
+fn errors_token() -> [] int {
+    return 4;
 }
 
 // What one pass over the output found.
@@ -213,10 +247,29 @@ fn failed() -> [] int {
 // stream: what it wrote is in the channel when it exits, and the end can be
 // held off for ever by a process it left behind.
 pub fn capture[&h, &c, &i](heap: &!h Heap, clock: &c Clock, child: Child, to_child: Pipe, from_child: Pipe, input: &i [byte], most: int, timeout: int) -> [heap, clock, poll] (buffer.Buffer, Ran) {
+    let (out, none, ran) = gather(heap, clock, child, to_child, from_child, option.Option::None, input, most, 0, timeout);
+    buffer.drop(heap, none);
+    return (out, ran);
+}
+
+// `capture`, and the child's standard error beside its standard output
+// (§7.2): the third channel is read on the same poller as the other two, into
+// a buffer of its own, and `most_errors` bounds that buffer as `most` bounds
+// the output. Either one exceeded ends the child, `TooMuch`. Both buffers come
+// back on every path, the one that overran holding exactly its bound.
+pub fn capture_both[&h, &c, &i](heap: &!h Heap, clock: &c Clock, child: Child, to_child: Pipe, from_child: Pipe, from_errors: Pipe, input: &i [byte], most: int, most_errors: int, timeout: int) -> [heap, clock, poll] (buffer.Buffer, buffer.Buffer, Ran) {
+    return gather(heap, clock, child, to_child, from_child, option.Option::Some(from_errors), input, most, most_errors, timeout);
+}
+
+// The loop both are: `errors_in` is `None` for `capture`, whose child's
+// standard error is not ours to read.
+fn gather[&h, &c, &i](heap: &!h Heap, clock: &c Clock, child: Child, to_child: Pipe, from_child: Pipe, errors_in: option.Option[Pipe], input: &i [byte], most: int, most_errors: int, timeout: int) -> [heap, clock, poll] (buffer.Buffer, buffer.Buffer, Ran) {
     let deadline = clock_ms(clock) + timeout;
     var out = buffer.empty(heap, 4096);
+    var err = buffer.empty(heap, 256);
     var writer = option.Option::Some(to_child);
     var reader = option.Option::Some(from_child);
+    var errors = errors_in;
     var state = running();
     var why = 0;
 
@@ -243,6 +296,20 @@ pub fn capture[&h, &c, &i](heap: &!h Heap, clock: &c Clock, child: Child, to_chi
                         option.Option::Some(rp) => {
                             pipe_nonblocking(rp);
                             let added = poller_add_pipe(ph, rp, output_token(), 1);
+                            if added != 0 && state == running() {
+                                state = failed();
+                                why = added;
+                            }
+                        }
+                        option.Option::None => {
+                        }
+                    }
+                }
+                borrow mut errors as &!r in {
+                    match r {
+                        option.Option::Some(rp) => {
+                            pipe_nonblocking(rp);
+                            let added = poller_add_pipe(ph, rp, errors_token(), 1);
                             if added != 0 && state == running() {
                                 state = failed();
                                 why = added;
@@ -289,6 +356,7 @@ pub fn capture[&h, &c, &i](heap: &!h Heap, clock: &c Clock, child: Child, to_chi
                         var gone = false;
                         var input_done = false;
                         var output_done = false;
+                        var errors_done = false;
                         while k < n && state == running() {
                             var token = 0;
                             borrow events as &e in {
@@ -309,6 +377,26 @@ pub fn capture[&h, &c, &i](heap: &!h Heap, clock: &c Clock, child: Child, to_chi
                                                 }
                                                 if found == read_end() {
                                                     output_done = true;
+                                                }
+                                            }
+                                        }
+                                        option.Option::None => {
+                                        }
+                                    }
+                                }
+                            }
+                            if token == errors_token() {
+                                borrow mut errors as &!r in {
+                                    match r {
+                                        option.Option::Some(rp) => {
+                                            borrow mut scratch_box as &!sb in {
+                                                let (kept, found) = drain(heap, rp, contents(sb), err, most_errors);
+                                                err = kept;
+                                                if found == read_too_much() {
+                                                    state = too_much();
+                                                }
+                                                if found == read_end() {
+                                                    errors_done = true;
                                                 }
                                             }
                                         }
@@ -352,6 +440,10 @@ pub fn capture[&h, &c, &i](heap: &!h Heap, clock: &c Clock, child: Child, to_chi
                             shut(reader);
                             reader = option.Option::None;
                         }
+                        if errors_done {
+                            shut(errors);
+                            errors = option.Option::None;
+                        }
                         if gone && state == running() {
                             // Everything the child wrote is in the channel now.
                             borrow mut reader as &!r in {
@@ -360,6 +452,21 @@ pub fn capture[&h, &c, &i](heap: &!h Heap, clock: &c Clock, child: Child, to_chi
                                         borrow mut scratch_box as &!sb in {
                                             let (kept, found) = drain(heap, rp, contents(sb), out, most);
                                             out = kept;
+                                            if found == read_too_much() {
+                                                state = too_much();
+                                            }
+                                        }
+                                    }
+                                    option.Option::None => {
+                                    }
+                                }
+                            }
+                            borrow mut errors as &!r in {
+                                match r {
+                                    option.Option::Some(rp) => {
+                                        borrow mut scratch_box as &!sb in {
+                                            let (kept, found) = drain(heap, rp, contents(sb), err, most_errors);
+                                            err = kept;
                                             if found == read_too_much() {
                                                 state = too_much();
                                             }
@@ -384,6 +491,7 @@ pub fn capture[&h, &c, &i](heap: &!h Heap, clock: &c Clock, child: Child, to_chi
 
     shut(writer);
     shut(reader);
+    shut(errors);
     if state != exited() {
         borrow child as &ch in {
             child_kill(ch, 256);
@@ -410,5 +518,5 @@ pub fn capture[&h, &c, &i](heap: &!h Heap, clock: &c Clock, child: Child, to_chi
     if state == failed() {
         ran = Ran::Failed(why);
     }
-    return (out, ran);
+    return (out, err, ran);
 }

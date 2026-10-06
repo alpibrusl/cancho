@@ -1,27 +1,40 @@
-//! `exec_spawn` (`docs/processes.md` §3.2): the one process builtin whose row
-//! is read off a type.
+//! `exec_spawn` and `exec_spawn_in` (`docs/processes.md` §3.2, §4.10): the
+//! process builtins whose row is read off a type.
 
 use crate::*;
 
 impl<'a> FnLowering<'a> {
     /// `exec_spawn(&Exec(p), path, args, env, stdin, stdout, stderr)` -- start
-    /// the program at `path`. Checked here rather than through a written
+    /// the program at `path`; `exec_spawn_in` (`in_dir`) takes a borrowed `Dir`
+    /// after the capability, the directory the child starts in (§4.10). Checked here rather than through a written
     /// signature because the row it performs is the prefix the capability was
     /// narrowed to, exactly the reason [`Self::open_file`] is checked here.
     pub(crate) fn exec_spawn(
         &mut self,
         args: &[ExprId],
         span: Span,
+        in_dir: bool,
     ) -> Result<(Expr, Type), Diagnostic> {
-        let [capability, path, arguments, environment, stdin, stdout, stderr] = args else {
-            return Err(Diagnostic::new(
+        let (name, wanted) = if in_dir { ("exec_spawn_in", 8) } else { ("exec_spawn", 7) };
+        let arity = || {
+            Diagnostic::new(
                 Rule::ArityMismatch,
                 format!(
-                    "`exec_spawn` takes 7 arguments -- the borrowed capability, the path, the arguments, the environment and the three streams -- but {} were given",
+                    "`{name}` takes {wanted} arguments -- the borrowed capability, {}the path, the arguments, the environment and the three streams -- but {} were given",
+                    if in_dir { "the borrowed `Dir` to start in, " } else { "" },
                     args.len()
                 ),
                 span,
-            ));
+            )
+        };
+        if args.len() != wanted {
+            return Err(arity());
+        }
+        let capability = &args[0];
+        let [path, arguments, environment, stdin, stdout, stderr] =
+            &args[1 + usize::from(in_dir)..]
+        else {
+            return Err(arity());
         };
         let capability_span = self.ast.expr_span(*capability);
         let (value, found) = self.expr(*capability)?;
@@ -50,6 +63,19 @@ impl<'a> FnLowering<'a> {
         // The path, the arguments and the environment: three byte slices,
         // read and never written.
         let mut lowered = vec![value];
+        // §4.10: the directory the child starts in is borrowed, shared, and
+        // only read: its descriptor is named to the kernel, never closed.
+        if in_dir {
+            let wanted = Type::Ref {
+                unique: false,
+                region: self.unifier.fresh_region(),
+                inner: Box::new(Type::Named(self.prelude()[PRELUDE_DIR], Vec::new())),
+            };
+            let dir_span = self.ast.expr_span(args[1]);
+            let (dir_value, dir_ty) = self.expr(args[1])?;
+            self.expect_type(&wanted, &dir_ty, dir_span)?;
+            lowered.push(dir_value);
+        }
         for bytes in [path, arguments, environment] {
             let wanted = Type::Ref {
                 unique: false,
@@ -76,7 +102,7 @@ impl<'a> FnLowering<'a> {
             argument: Some(prefix.clone()),
         }]));
         Ok((
-            Expr::ExecSpawn { prefix, args: lowered },
+            Expr::ExecSpawn { prefix, in_dir, args: lowered },
             Type::Named(self.prelude()[PRELUDE_SPAWNED], Vec::new()),
         ))
     }
