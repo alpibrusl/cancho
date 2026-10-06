@@ -11,7 +11,7 @@ wasm build gives **both** -- the static row from `lex-sys authority`, and a
 module whose import section the runtime enforces -- and makes `row ⊆ imports`
 a mechanical check. Defence in depth without a Firecracker VM per unit.
 
-Status: **W0 through W0.4, and the errno decision, are built** (§W0 results). W1 onward is the plan below.
+Status: **W0 through W0.4, the errno decision and W1 are built** (§W0 results). W1 onward is the plan below.
 
 ---
 
@@ -195,12 +195,84 @@ which are now located refusals rather than run-time traps.
 
 ---
 
+## W1 results
+
+`tests/programs/json_roundtrip.ls` -- parse standard input with `std.json`, write it
+back, or print `E <code> <position>` if the document is refused -- built for the
+host and for `wasm32-wasip1` and fed the same documents by
+`scripts/wasm_json_differential.py`. It is a real program (128 lines) that exercises
+the heap, arenas, boxed slices and bytes, which is where a pointer-width bug would
+show, and `std.json`'s float parser and printer, where a numeric one would.
+
+| | |
+|---|---|
+| documents | **1,585**: ten valid seeds, 600 mutations of them (a byte replaced, inserted, removed, swapped, or the document truncated), and 975 numbers (every exponent, 17-digit and 20-digit decimals, and the halfway cases between adjacent doubles that a floating-point shortcut gets wrong) |
+| accepted, byte-identical | 1,102 |
+| refused, byte-identical | 483 (the error code and position included) |
+| **different** | **0** |
+
+Not done: the determinism check *across two hosts* (this is one machine), and the
+traps (a trap on wasm is exit 134, measured at W0).
+
+### The import list is not the one the roadmap expected
+
+The roadmap said a console filter would import exactly `fd_read`, `fd_write` and
+`proc_exit`. It imports nine. Measured per effect, with one tiny program for each
+(`wasm-ld --why-extract` says which libc object pulls in which):
+
+| a program that | imports |
+|---|---|
+| does nothing, or uses the heap, or reads `args` | `args_get`, `args_sizes_get`, `proc_exit` |
+| writes the console (`[io_write]`) | those, plus `fd_write`, `fd_fdstat_get`, `fd_seek`, `fd_close`, `clock_time_get` |
+| reads the console (`[io_read]`) | those, plus `fd_read`, `fd_seek`, `fd_close`, `clock_time_get` |
+
+- **The heap costs nothing**: `malloc` grows linear memory with `memory.grow`, which
+  is an instruction, not an import.
+- **`args_get` and `args_sizes_get` are imported by every program**, even one that
+  released its `args` capability, because `main(argc, argv)` is the entry and
+  wasi-libc's `__main_void` fetches them before calling it.
+- **Four imports come from stdio, not from anything the program does.**
+  `fd_fdstat_get` is `isatty` on stdout, `fd_seek` is `__stdio_seek`, `fd_close` is
+  `__stdio_close`, and `clock_time_get` is `clock_gettime` called from a futex
+  timeout in stdio's locking. The backend writes the console with `putchar`,
+  `getchar` and `fwrite`, so a program that merely prints brings all four.
+
+### What that means for W2
+
+`clock_time_get` is the one that matters. A program whose row is `[io_write]` has
+**no `clock` label**, yet its import section hands the runtime a clock to grant it.
+The module is not more capable in practice (only libc's locking calls it), but the
+point of the exercise is that **the import section and the row agree**, and here
+they cannot while the console goes through libc stdio: `row == imports` is false
+for every program that prints.
+
+Two ways out, and W2 has to pick one:
+
+1. **Map each `io_*` label to its measured import set** and accept that `io_write`
+   also licenses `clock_time_get`. Cheap, and the table is data a test checks. The
+   cost is the over-grant: the check would pass a module that really did read the
+   clock, because the label that "explains" it is `io_write`.
+2. **Do not use libc stdio on wasm**: declare `fd_write` and `fd_read` directly
+   (`wasm-import-module` / `wasm-import-name` attributes on the IR declarations) and
+   give the module its own console buffer, flushed when full, at `flush_out` and at
+   exit, which is what libc does to a pipe anyway. Then the imports are exactly
+   `fd_write` for `io_write`, `fd_read` for `io_read`, and nothing else, and the
+   equality check is honest. The cost is owning a buffer and its flush-at-exit.
+
+**Recommendation: 2.** The whole value of the target is that the import section is
+the enforced half of the same fact the row states; an over-grant the check blesses
+by construction defeats that. The `args` pair remains (it is startup, not stdio),
+documented as the unlabelled baseline with `proc_exit`, until a custom entry point
+that reads `args` only when asked is worth writing.
+
+---
+
 ## Milestones
 
 | Milestone | What | Acceptance |
 |---|---|---|
 | **W0** -- spike | `--target wasm32-wasip1`, `examples/hello.ls` runs in wasmtime | **Done**: one example prints the right bytes; conformance map above |
-| **W1** -- a real command | A stdin→stdout JSON filter on `std.json` | Imports are a **documented, measured baseline** plus `fd_read`/`fd_write`/`proc_exit` (see below); byte-identical output vs. the native build over a fixture corpus |
+| **W1** -- a real command | A stdin→stdout JSON filter on `std.json` | **Done**: byte-identical to native over 1,585 documents; the import list is measured, and is wider than the row (§W1 results) |
 | **W2** -- the authority check | `lex-sys authority --target wasm32-wasip1` cross-checked against the module | A test that fails if the module imports anything the row does not explain, **and** if a label has no import (the rows are exact both ways); JSON report carries the import list |
 | **W3** -- a pure library | `packages/x509` verify as a **reactor** module (exports, no `main`) | Import section is empty beyond memory; results identical to native on the x509 conformance fixtures; overhead measured |
 | **W4** -- components | `wasip2`, one WIT `resource` mapped to a `res` handle | `wasi:filesystem` descriptor as a linear handle, `own`/`borrow` ↔ `res`/`borrow`; then `examples/serve` as `wasi:http` |
