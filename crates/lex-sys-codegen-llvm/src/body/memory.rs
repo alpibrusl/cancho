@@ -111,9 +111,9 @@ impl<'a> FuncEmitter<'a> {
 
         let terminated = self.stmts(body)?;
 
-        // Skipped when the body returned: the `Stmt::Return` arm above
-        // this arena's `free` would need has already run, and there is
-        // no block left here to put a second call in.
+        // Skipped when the body returned: the `Stmt::Return` arm released
+        // this arena on the way out (`release_arenas`), and there is no
+        // block left here to put a second call in.
         if !terminated {
             let held = self.fresh();
             self.out.push_str(&format!("  {held} = load ptr, ptr {base_cell}\n"));
@@ -121,6 +121,17 @@ impl<'a> FuncEmitter<'a> {
         }
         self.arenas[arena as usize] = None;
         Ok(terminated)
+    }
+
+    /// `free` the chunk of every arena open at this point, innermost
+    /// (highest-numbered) first: what a `return` does before its `ret`.
+    pub(crate) fn release_arenas(&mut self) {
+        for index in (0..self.arenas.len()).rev() {
+            let Some((base_cell, _)) = self.arenas[index].clone() else { continue };
+            let held = self.fresh();
+            self.out.push_str(&format!("  {held} = load ptr, ptr {base_cell}\n"));
+            self.out.push_str(&format!("  call void @free(ptr {held})\n"));
+        }
     }
 
     /// Take `bytes` from an arena, trapping if the chunk cannot spare
