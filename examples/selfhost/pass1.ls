@@ -127,7 +127,7 @@ pub fn check_imports[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
 
 // The module a qualifier written in `unit_of` means: `unit_of` itself if there is no
 // qualifier, the module an import in `unit_of` binds it to, else -1.
-fn resolve_module[&s, &x](st: &!s [int], text: &x [byte], unit_of: int, qualifier: int) -> [] int {
+pub fn resolve_module[&s, &x](st: &!s [int], text: &x [byte], unit_of: int, qualifier: int) -> [] int {
     if qualifier < 0 {
         return unit_of;
     }
@@ -958,6 +958,18 @@ fn private_in_list[&s](st: &!s [int], head: int, n: int, unit_of: int) -> [] boo
         }
         at = ast.next(st, at);
         left = left - 1;
+    }
+    return false;
+}
+
+// Is the name at `tok` a builtin of any edition?
+pub fn builtin_named[&s, &x](st: &!s [int], text: &x [byte], tok: int) -> [] bool {
+    var b = 0;
+    while b < tables.builtin_count() {
+        if lc.spells(text, ast.tstart(st, tok), ast.tend(st, tok), tables.builtin_name(b)) {
+            return true;
+        }
+        b = b + 1;
     }
     return false;
 }

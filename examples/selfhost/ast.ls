@@ -82,13 +82,16 @@ pub struct Dp {
 //                   text and how long it is
 //  19 import_base   where the import list starts: one slot an import, the `import` token's
 //                   index times 65536 plus the module it was written in
+//  20 binding_base  where the stack of local bindings starts: three slots a binding, the token
+//                   of its name, its type and 1 if it is mutable (`body.ls`)
+//  21 bindings      how many bindings are live
 //  24 ...           three slots a token: its `lexcore.code`, start and end
 //  then             the imports, the modules, the files and the nodes
 
 // What `st` must hold for a program of `tokens` tokens in `files` files: every node takes at
 // least a token, so the number of tokens bounds the number of nodes.
 pub fn size_for(tokens: int, files: int) -> [] int {
-    return 24 + 4 * tokens + 2 * (files + 2) + 2 * files + 16 * (tokens + 16);
+    return 24 + 4 * tokens + 2 * (files + 2) + 2 * files + 16 * (tokens + 16) + 3 * (tokens + 16);
 }
 
 pub fn layout[&s](st: &!s [int], tokens: int, files: int) -> [] int {
@@ -97,6 +100,8 @@ pub fn layout[&s](st: &!s [int], tokens: int, files: int) -> [] int {
     st[18] = st[16] + 2 * (files + 2);
     st[14] = st[18] + 2 * files;
     st[17] = files;
+    st[20] = st[14] + 16 * (tokens + 16);
+    st[21] = 0;
     st[13] = 0;
     st[15] = 0 - 1;
     st[10] = 0 - 1;

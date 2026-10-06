@@ -1,7 +1,7 @@
 module selfhost.rules;
 
 // rules.ls -- the rules a refusal can carry, as the integers the parser and the checker store, and
-// the tags the Rust `Rule::tag` spells them with. 0 to 2 are the lexer's (`lexcore.rule_name`).
+// the tags the Rust `Rule::tag` spells them with. 0 to 2 are the lexer's (`lexcore.rule_name`); 99 is not a rule but the answer `SKIP`, for a function whose body uses something the port does not check yet.
 
 import selfhost.lexcore as lc;
 
@@ -97,6 +97,42 @@ pub fn r_effect_not_declared() -> [] int {
     return 25;
 }
 
+pub fn r_effect_declared_not_performed() -> [] int {
+    return 26;
+}
+
+pub fn r_operator_type_mismatch() -> [] int {
+    return 27;
+}
+
+pub fn r_constant_traps() -> [] int {
+    return 28;
+}
+
+pub fn r_assign_to_immutable() -> [] int {
+    return 29;
+}
+
+pub fn r_unreachable_statement() -> [] int {
+    return 30;
+}
+
+pub fn r_missing_return() -> [] int {
+    return 31;
+}
+
+pub fn r_not_a_function() -> [] int {
+    return 32;
+}
+
+pub fn r_skip() -> [] int {
+    return 99;
+}
+
+pub fn r_literal_form() -> [] int {
+    return 0;
+}
+
 pub fn rule_tag(r: int) -> [] &static [byte] {
     if r < 3 {
         return lc.rule_name(r);
@@ -166,6 +202,30 @@ pub fn rule_tag(r: int) -> [] &static [byte] {
     }
     if r == 25 {
         return "effect-not-declared";
+    }
+    if r == 26 {
+        return "effect-declared-not-performed";
+    }
+    if r == 27 {
+        return "operator-type-mismatch";
+    }
+    if r == 28 {
+        return "constant-traps";
+    }
+    if r == 29 {
+        return "assign-to-immutable";
+    }
+    if r == 30 {
+        return "unreachable-statement";
+    }
+    if r == 31 {
+        return "missing-return";
+    }
+    if r == 32 {
+        return "not-a-function";
+    }
+    if r == 99 {
+        return "SKIP";
     }
     return "unknown-name";
 }

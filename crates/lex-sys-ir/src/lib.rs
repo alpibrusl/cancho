@@ -118,6 +118,72 @@ pub fn lower_all(ast: &Ast) -> Result<Program, Vec<Diagnostic>> {
     }
 }
 
+/// The check of every function body, once each, in signature order: the first half of the work
+/// of `lower` after the declarations, and nothing of the second (no copy is emitted).
+///
+/// A body is checked against other functions' *signatures* and never their bodies, so each
+/// answer is its own: a function's refusal says nothing about the next one. A generic function
+/// is checked with its parameters rigid.
+fn body_results(
+    ast: &Ast,
+    defs: &[TypeDef],
+    signatures: &[Signature],
+    statics: &[StaticDef],
+    externs: &[ExternFn],
+    unifier: &mut Unifier,
+) -> Vec<Result<(), Diagnostic>> {
+    let mut results = Vec::new();
+    for (index, signature) in signatures.iter().enumerate() {
+        let rigid: Vec<Type> = (0..signature.generics.len() as u32).map(Type::Param).collect();
+        let mut checking = Mono::new(false);
+        results.push(
+            lower_function(
+                ast,
+                defs,
+                signatures,
+                statics,
+                externs,
+                unifier,
+                index,
+                &rigid,
+                &mut checking,
+            )
+            .map(|_| ()),
+        );
+    }
+    results
+}
+
+/// What the checker made of one function's body.
+pub struct BodyCheck {
+    /// The function's own span, which is how its answer is found again.
+    pub span: Span,
+    /// Its first refusal, if it has one.
+    pub refusal: Option<Diagnostic>,
+}
+
+/// The declarations of a program, and then each function's body on its own: the first refusal of
+/// the declarations if they are not well formed, else one [`BodyCheck`] for each function in
+/// signature order (the order its `fn` items are in).
+///
+/// The oracle for the part of the staged port of the checker into lex-sys that reads bodies
+/// (`docs/self-hosting.md` section 6): [`lower`] reports the first function that is refused, which
+/// is the first of these, and what the port can say about each function it can say whether or
+/// not it can say it about the next.
+pub fn check_bodies(ast: &Ast) -> Result<Vec<BodyCheck>, Diagnostic> {
+    let Declarations { mut unifier, defs, externs, statics, signatures, .. } =
+        collect_declarations(ast)?;
+    let results = body_results(ast, &defs, &signatures, &statics, &externs, &mut unifier);
+    Ok(signatures
+        .iter()
+        .zip(results)
+        .map(|(signature, result)| BodyCheck {
+            span: ast.item_span(ast::ItemId(signature.item as u32)),
+            refusal: result.err(),
+        })
+        .collect())
+}
+
 /// Everything pass 0 of the checker collects before any body is read: the types, the foreign
 /// declarations, the statics and the signatures.
 struct Declarations {
@@ -650,24 +716,11 @@ fn lower_inner(ast: &Ast, rest: &mut Vec<Diagnostic>) -> Result<Program, Diagnos
     // (`docs/agent-errors.md` §4): these bodies are independent of each
     // other, so stopping at the first costs a reader nothing and costs a
     // program one compile per error.
-    let mut refused: Vec<Diagnostic> = Vec::new();
-    for (index, signature) in signatures.iter().enumerate() {
-        let rigid: Vec<Type> = (0..signature.generics.len() as u32).map(Type::Param).collect();
-        let mut checking = Mono::new(false);
-        if let Err(error) = lower_function(
-            ast,
-            &defs,
-            &signatures,
-            &statics,
-            &externs,
-            &mut unifier,
-            index,
-            &rigid,
-            &mut checking,
-        ) {
-            refused.push(error);
-        }
-    }
+    let mut refused: Vec<Diagnostic> =
+        body_results(ast, &defs, &signatures, &statics, &externs, &mut unifier)
+            .into_iter()
+            .filter_map(Result::err)
+            .collect();
     if !refused.is_empty() {
         let first = refused.remove(0);
         *rest = refused;
