@@ -198,7 +198,7 @@ the stages found, in place, the way this document corrects its own claims.
 | 1. Lexer | `examples/selfhost/lexcore.ls` (a module) and `lexer.ls` | `examples/dump_tokens.rs` in `lex-sys-syntax` | Same token stream and the same refusals on every program in the repository (614 files) |
 | 2. Parser | `examples/selfhost/parser.ls` | `examples/dump_ast.rs` in `lex-sys-syntax` | Same syntax tree, node for node and span for span, or the same refusal (rule and span), on the same 614 files, **including its own source**, and on a fuzz corpus (below) of 52,272 cases, 51,911 of them comparable and all identical, 29,097 of those refusals |
 | 3a. The tree | `examples/selfhost/ast.ls` (a module, the parser) and `parser.ls` (a walk that prints the tree) | the same `dump_ast.rs` | The parser **builds the tree** in flat tables and the listing is produced by walking it; the same 621 programs and 52,314 fuzz cases (6 seeds), all comparable ones identical, 29,055 of them refusals |
-| 3b. Declarations (pass 1 of the checker) | `examples/selfhost/pass1.ls` and `check.ls`, over a generated `tables.ls`; programs of several files | `check_declarations` (`lex-sys-ir`), the first half of the Rust checker | Same answer, `OK` or the first refusal's rule and span, on the repository's programs alone (603 compared) and with the whole standard library parsed with them (591 compared, 433 of them `OK`), and on 77,042 fuzz cases (51,180 alone, 25,862 with the library): 74,895 identical, 46,124 of them refusals, none different; 1,574 are `SKIP` and 573 are not UTF-8, and only an `extern fn` is `SKIP` (below) |
+| 3b. Declarations (the first half of the checker, complete) | `examples/selfhost/pass1.ls`, `foreign.ls` and `checker.ls`, over a generated `tables.ls`; programs of several files | `check_declarations` (`lex-sys-ir`), the first half of the Rust checker | Same answer, `OK` or the first refusal's rule and span, on every program of the repository alone (633) and with the whole standard library parsed with them (633, 464 of them `OK`), on 169 targeted cases, and on 62,892 fuzz cases (51,534 alone, 11,358 with the library): 62,434 identical, 37,967 of them refusals, none different; 458 are not UTF-8; nothing is skipped |
 | 3c. Bodies: scopes, types, linearity, effects | not started | `lex-sys check --output json` | |
 | 4. Backend | not started | | |
 
@@ -248,12 +248,13 @@ clauses, duplicate parameters, `pub` signatures naming private types), and under
 tuples, `pub`. A type is resolved in place: each `TName` node of the tree is annotated with
 what it names, which is what the tree is for.
 
-Two things make a partial port honest. **`SKIP` at the point of divergence.** A construct
-whose checks are not ported (at first an `extern fn`, a `val` declaration, a `val`-bounded
-parameter at an argument that was not a plain scalar, and `Ffi` with a library; now only an
-`extern fn`) ends the check with the answer `SKIP` *where the Rust checker would have reached
-it*, so a refusal found before it still counts and anything after it does not; and a skipped
-file is counted, by what the oracle said, not hidden. **Generated
+Two things make a partial port honest. **`SKIP` at the point of divergence.** While the port was
+partial, a construct whose checks were not ported (an `extern fn`, a `val` declaration, a
+`val`-bounded parameter at an argument that was not a plain scalar, `Ffi` with a library)
+ended the check with the answer `SKIP` *where the Rust checker would have reached it*, so a
+refusal found before it still counted and anything after it did not, and a skipped file was
+counted, by what the oracle said, not hidden. Each slice removed some; the last removed the
+answer, and the harnesses now fail on anything but the oracle's. **Generated
 tables.** The prelude's 46 types (name, arity, edition, whether another module may name it,
 which parameters are `val`-bounded) and the 118 builtins' names and editions are data the port
 cannot read from Rust, so `tables.ls` is generated, and a `lex-sys-ir` test fails when it is
@@ -283,16 +284,31 @@ whatever they are" and a bit for each parameter that makes it so, so nothing is 
 the prelude's bits are generated from `mode_of` itself (probing each parameter with a `res` type,
 which is exact because a mode is a disjunction over members), and a type the file declares
 has the bits of the members resolved so far, as the Rust checker, which fills members in as it
-goes, sees them. `Ffi`'s scope (`parse_scope`) is ported with it. What `SKIP`s now is only an
-`extern fn`.
+goes, sees them. `Ffi`'s scope (`parse_scope`) is ported with it. Only an `extern fn` still
+ended a check in `SKIP`, which is the next paragraph.
 
-What it does not show, and the next slices: foreign declarations (the boundary, authority and
-symbol checks) are the only part of the declarations not ported; then the bodies, which are the
-other half of the checker and most of its size. The library is parsed in name order and not the
-compiler's, which cannot change an answer about the program's file because the library has no
-refusal of its own and the program's items come first. A type that contains itself met first by
-a mode check makes the Rust checker recurse without end (the program is refused anyway, after
-the stack overflows); the port answers `res` past a depth of 64 instead, and no case reached it.
+**Foreign declarations.** The last part of the declarations, `foreign.ls`, ports the loop that
+handles every `extern fn`: the name is not a builtin's nor a symbol another declaration binds,
+every parameter and the result resolve (`c_ptr`, and `c_int` for a result, are names only a
+foreign signature has), what crosses is what C can name (an `int`, a `bool`, an opaque pointer, a
+borrowed capability, a borrowed `[byte]`), an `Ffi` is narrowed to a library and not to nothing,
+exactly one `Ffi` is borrowed, and the row is the *same set* as what the borrowed capabilities
+discharge. What a capability discharges is data and is generated into `tables.ls` from
+`discharged_by` (each label plain, narrowed to the literal the type is written with, or to the
+empty string), the way the prelude's modes are. The comparison is by equality of strings as
+written, with one subtlety it found a way to be wrong about and did not: the Rust checker
+canonicalises an `Ffi`'s library set (sorted, once each) in the type but compares the row's
+`ffi("...")` as written, so `ffi("libssl,libc")` is not `ffi("libc,libssl")`, and the port
+reproduces that. The rules moved to `rules.ls` and the order of the checks to `checker.ls`,
+to keep `ast.ls` under the file budget.
+
+What it does not show, and the next slice: the declarations half of the checker is
+complete; the bodies are not started, and they are most of it. The library is parsed in
+name order and not the compiler's, which cannot change an answer about the program's file
+because the library has no refusal of its own and the program's items come first. A type that
+contains itself met first by a mode check makes the Rust checker recurse without end (the
+program is refused anyway, after the stack overflows); the port answers `res` past a depth
+of 64 instead, and no case reached it.
 
 **Size.** `parser.ls` is 1,970 lines (1,760 that are not comment or blank) for the
 Rust parser's 1,507 (1,225): 1.3 to 1.4 times. `lexcore.ls` is 963 lines (897) for the

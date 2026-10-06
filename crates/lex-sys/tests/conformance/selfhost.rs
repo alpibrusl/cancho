@@ -138,7 +138,63 @@ const CHECK_EDGE: &[&str] = &[
     "res struct S { a: int }",
     "struct S[T: val] { a: T }\nstruct U { a: S[int] }",
     "struct S[T: val] { a: T }\nstruct U { a: S[Box[int]] }",
-    "extern fn g(x: int) -> [] int;",
+    "extern fn g[&f, &r, &i, &h](x: int) -> [] int;",
+    "extern fn getpid[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;\nfn main(world: World) -> [] int {  return 0; }",
+    "extern fn getchar[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;",
+    "edition 1;\nextern fn connect[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;\nextern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;",
+    "module a;\nextern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;\nmodule b;\nextern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;",
+    "extern fn g[&r, &r](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;",
+    "extern fn g[&static](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), x: Nope) -> [ffi(\"libc\")] int;",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] Nope;",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), x: float) -> [ffi(\"libc\")] int;",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), x: byte) -> [ffi(\"libc\")] int;",
+    "struct S { a: int }\nextern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), x: S) -> [ffi(\"libc\")] int;",
+    "extern fn g[&f, &r](ffi: &f Ffi(\"libc\"), x: &r int) -> [ffi(\"libc\")] int;",
+    "extern fn g[&f, &r](ffi: &f Ffi(\"libc\"), x: &r [int]) -> [ffi(\"libc\")] int;",
+    "extern fn g[&f, &r](ffi: &f Ffi(\"libc\"), x: &r [byte]) -> [ffi(\"libc\")] int;\nfn main(world: World) -> [] int {  return 0; }",
+    "extern fn g[&f, &r](ffi: &f Ffi(\"libc\"), x: &!r [byte]) -> [ffi(\"libc\")] int;\nfn main(world: World) -> [] int {  return 0; }",
+    "extern fn g[&f, &r, &i, &h](ffi: Ffi(\"libc\")) -> [ffi(\"libc\")] int;",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), p: c_ptr) -> [ffi(\"libc\")] int;\nfn main(world: World) -> [] int {  return 0; }",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), p: c_int) -> [ffi(\"libc\")] int;",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] c_int;\nfn main(world: World) -> [] int {  return 0; }",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] c_ptr;\nfn main(world: World) -> [] int {  return 0; }",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] bool;\nfn main(world: World) -> [] int {  return 0; }",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] float;",
+    "struct S { a: int }\nextern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] S;",
+    "extern fn g[&f, &r](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] &r [byte];",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] c_ptr[int];",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"\")) -> [ffi(\"\")] int;",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"lib c\")) -> [ffi(\"libc\")] int;",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc,libc\")) -> [ffi(\"libc\")] int;",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [] int;",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\"), io_write] int;",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libm\")] int;",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi] int;",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\"), ffi(\"libc\")] int;\nfn main(world: World) -> [] int {  return 0; }",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc,libm\")) -> [ffi(\"libc,libm\")] int;",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libm,libc\")) -> [ffi(\"libc,libm\")] int;",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc,libm\")) -> [ffi(\"libm,libc\")] int;",
+    "extern fn g[&f, &r, &i, &h](x: int) -> [] int;",
+    "extern fn g[&f, &g](a: &f Ffi(\"libc\"), b: &g Ffi(\"libm\")) -> [ffi(\"libc\"), ffi(\"libm\")] int;",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), io: &!i Io) -> [ffi(\"libc\"), io_read, io_write, err_write] int;\nfn main(world: World) -> [] int {  return 0; }",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), io: &!i Io) -> [ffi(\"libc\"), io_write] int;",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), h: &!h Heap) -> [ffi(\"libc\"), heap] int;\nfn main(world: World) -> [] int {  return 0; }",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), a: &r Args) -> [ffi(\"libc\"), args] int;\nfn main(world: World) -> [] int {  return 0; }",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), fs: &r Fs(\"/tmp\")) -> [ffi(\"libc\"), fs_read(\"/tmp\"), fs_write(\"/tmp\"), file_read, file_write, dir_read, dir_write] int;\nfn main(world: World) -> [] int {  return 0; }",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), fs: &r Fs(\"/tmp\")) -> [ffi(\"libc\"), fs_read(\"/tmp\")] int;",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), fs: &r Fs(\"/tmp\")) -> [ffi(\"libc\"), fs_read(\"/var\"), fs_write(\"/tmp\"), file_read, file_write, dir_read, dir_write] int;",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), fs: &r Fs(\"a\\\\b\")) -> [ffi(\"libc\"), fs_read(\"a\\\\b\"), fs_write(\"a\\\\b\"), file_read, file_write, dir_read, dir_write] int;\nfn main(world: World) -> [] int {  return 0; }",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), w: &r World) -> [ffi(\"libc\")] int;",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), f: &r File) -> [ffi(\"libc\"), file_read, file_write] int;\nfn main(world: World) -> [] int {  return 0; }",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), fs: &r Fs) -> [ffi(\"libc\")] int;",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;\nfn g() -> [] int { return 1; }",
+    "fn g() -> [] int { return 1; }\nextern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;",
+    "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;\nstatic g: [int] { return 1; }",
+    "extern fn g[&f, &r, &i, &h](x: Nope) -> [] int;\nstruct S { a: Nope }",
+    "struct S { a: Nope }\nextern fn g[&f, &r, &i, &h](x: Nope) -> [] int;",
     "static t: [int] { return 1; }\nfn main(world: World) -> [] int {  return 0; }",
     "static t: [int] { return 1; }\nstatic t: [int] { return 2; }",
     "static t: [int] { return 1; }\nfn t() -> [] int { return 1; }",
@@ -231,9 +287,12 @@ fn with_front_end(root: &'static str) -> Vec<&'static str> {
         root,
         "driver.ls",
         "listing.ls",
+        "checker.ls",
+        "foreign.ls",
         "pass1.ls",
         "ast.ls",
         "kinds.ls",
+        "rules.ls",
         "lexcore.ls",
         "tables.ls",
     ]
@@ -330,10 +389,8 @@ fn in_parallel<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec
     })
 }
 
-/// The checker port against `check_declarations`. A port answer of `SKIP` says the declarations
-/// use something whose checks are not ported, and is not compared; everything else must be
-/// the oracle's answer, byte for byte, and enough of the corpus must be compared that the test
-/// cannot pass by skipping.
+/// The checker port against `check_declarations`: every answer must be the oracle's, byte for
+/// byte.
 ///
 /// Twice: each program alone, which is how it stops at its first `import std...`, and with the
 /// library, which is what `lex-sys check --std` does and what makes the program's own
@@ -353,14 +410,9 @@ fn the_checker_in_lex_sys_agrees_with_the_rust_declarations_check() {
         .collect();
 
     let mut compared = 0;
-    let mut skipped = 0;
     let mut refusals = 0;
     let mut different = Vec::new();
     let mut judge = |what: &str, name: &str, ours: String, theirs: String| {
-        if ours == "SKIP\n" {
-            skipped += 1;
-            return;
-        }
         compared += 1;
         refusals += usize::from(theirs.starts_with("ERR"));
         if ours != theirs {
@@ -384,8 +436,7 @@ fn the_checker_in_lex_sys_agrees_with_the_rust_declarations_check() {
         different.len(),
         different.join("\n")
     );
-    assert!(compared > 700 && refusals > 150, "compared {compared}, of which {refusals} refusals");
-    assert!(skipped * 10 < compared, "{skipped} answers skipped of {}", compared + skipped);
+    assert!(compared > 700 && refusals > 200, "compared {compared}, of which {refusals} refusals");
     let _ = std::fs::remove_dir_all(alone.parent().expect("a scratch directory"));
     let _ = std::fs::remove_dir_all(with_std.parent().expect("a scratch directory"));
 }
@@ -416,6 +467,15 @@ const SEVERAL_FILES: &[&[&str]] = &[
     &["", "", ""],
     &["module m;", "", "struct S { a: Nope }"],
     &["struct S { a: T }", "struct T { a: S }"],
+    &[
+        "module a;\nextern fn g[&f](f: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;",
+        "module b;\nextern fn g[&f](f: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;",
+    ],
+    &["extern fn g[&f](f: &f Ffi(\"libc\")) -> [] int;", "fn f() -> [] int { return 1; }"],
+    &[
+        "fn g() -> [] int { return 1; }",
+        "extern fn g[&f](f: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;",
+    ],
 ];
 
 #[test]
@@ -434,15 +494,12 @@ fn the_ports_read_several_files_as_the_compiler_does() {
             "the listing of {:?}",
             files.iter().take(3).collect::<Vec<_>>()
         );
-        let ours = answer(&checker, &input);
-        if ours != "SKIP\n" {
-            assert_eq!(
-                ours,
-                declarations_oracle::listing_files(files),
-                "the check of {:?}",
-                files.iter().take(3).collect::<Vec<_>>()
-            );
-        }
+        assert_eq!(
+            answer(&checker, &input),
+            declarations_oracle::listing_files(files),
+            "the check of {:?}",
+            files.iter().take(3).collect::<Vec<_>>()
+        );
     }
     let _ = std::fs::remove_dir_all(parser.parent().expect("a scratch directory"));
     let _ = std::fs::remove_dir_all(checker.parent().expect("a scratch directory"));

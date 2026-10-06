@@ -286,6 +286,114 @@ static prelude_res_bits: [int] {
     return t;
 }
 
+fn prelude_label_chars() -> [] &static [byte] {
+    return "args child_signal clock conn_accept conn_read conn_write dir_read dir_write err_write exec= ffi= file_read file_write fs_read= fs_write= heap io_read io_write net_in= net_out= pipe_read pipe_write poll signals= signals_readerr_write io_read io_writeffi*dir_read dir_write file_read file_write fs_read* fs_write*heapargsfile_read file_writeconn_accept conn_read conn_write net_in* net_out* pollconn_acceptconn_read conn_writepollclocksignals* signals_readsignals_readdir_read dir_writedir_readchild_signal exec*child_signalpipe_read pipe_write";
+}
+
+static prelude_label_starts: [int] {
+    let t = alloc_slice[static](46, 0);
+    t[1] = 223;
+    t[2] = 249;
+    t[3] = 253;
+    t[4] = 311;
+    t[5] = 315;
+    t[6] = 315;
+    t[7] = 319;
+    t[8] = 319;
+    t[9] = 339;
+    t[10] = 339;
+    t[11] = 339;
+    t[12] = 393;
+    t[13] = 393;
+    t[14] = 393;
+    t[15] = 404;
+    t[16] = 424;
+    t[17] = 424;
+    t[18] = 424;
+    t[19] = 424;
+    t[20] = 424;
+    t[21] = 424;
+    t[22] = 428;
+    t[23] = 428;
+    t[24] = 433;
+    t[25] = 433;
+    t[26] = 433;
+    t[27] = 433;
+    t[28] = 454;
+    t[29] = 454;
+    t[30] = 466;
+    t[31] = 466;
+    t[32] = 484;
+    t[33] = 484;
+    t[34] = 492;
+    t[35] = 492;
+    t[36] = 492;
+    t[37] = 492;
+    t[38] = 510;
+    t[39] = 510;
+    t[40] = 522;
+    t[41] = 542;
+    t[42] = 542;
+    t[43] = 542;
+    t[44] = 542;
+    t[45] = 542;
+    return t;
+}
+
+static prelude_label_lens: [int] {
+    let t = alloc_slice[static](46, 0);
+    t[0] = 223;
+    t[1] = 26;
+    t[2] = 4;
+    t[3] = 58;
+    t[4] = 4;
+    t[6] = 4;
+    t[8] = 20;
+    t[11] = 54;
+    t[14] = 11;
+    t[15] = 20;
+    t[21] = 4;
+    t[23] = 5;
+    t[27] = 21;
+    t[29] = 12;
+    t[31] = 18;
+    t[33] = 8;
+    t[37] = 18;
+    t[39] = 12;
+    t[40] = 20;
+    return t;
+}
+
+static prelude_capabilities: [int] {
+    let t = alloc_slice[static](46, 0);
+    t[0] = 1;
+    t[1] = 1;
+    t[2] = 1;
+    t[3] = 1;
+    t[4] = 1;
+    t[6] = 1;
+    t[7] = 1;
+    t[8] = 1;
+    t[11] = 1;
+    t[12] = 1;
+    t[14] = 1;
+    t[15] = 1;
+    t[21] = 1;
+    t[23] = 1;
+    t[24] = 1;
+    t[27] = 1;
+    t[28] = 1;
+    t[29] = 1;
+    t[31] = 1;
+    t[33] = 1;
+    t[37] = 1;
+    t[38] = 1;
+    t[39] = 1;
+    t[40] = 1;
+    t[41] = 1;
+    return t;
+}
+
 static prelude_bounds: [int] {
     let t = alloc_slice[static](46, 0);
     return t;
@@ -310,6 +418,18 @@ pub fn prelude_public(i: int) -> [] bool {
 
 pub fn prelude_res(i: int) -> [] int {
     return prelude_res_bits[i];
+}
+
+// What owning the capability discharges: labels separated by spaces, each `name`, `name*`
+// (narrowed to the literal the type is written with) or `name=` (narrowed to the empty string).
+pub fn prelude_labels(i: int) -> [] &static [byte] {
+    let start = prelude_label_starts[i];
+    return prelude_label_chars()[start..start + prelude_label_lens[i]];
+}
+
+// Is it a capability, which a foreign function may borrow?
+pub fn prelude_capability(i: int) -> [] bool {
+    return prelude_capabilities[i] != 0;
 }
 
 // Bit i set: parameter i is bounded `val`.

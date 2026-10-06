@@ -86,7 +86,7 @@ EDGE = {
     "struct_region": "struct S[&r] { a: int }",
     "enum_region": "enum E[&r] { A }",
     "extern_generic": "extern fn g[T](x: T) -> [] int;",
-    "extern_ok": "extern fn g[&r](x: &r [byte], n: int) -> [ffi(\"libc\")] int;",
+    "extern_ok": "extern fn g[&f, &r](x: &r [byte], n: int) -> [ffi(\"libc\")] int;",
     "where_clause": "fn f[&a, &b where a <= b, b <= c](x: int) -> [] int { return 1; }",
     "where_bad": "fn f[&a where a < b](x: int) -> [] int { return 1; }",
     "generics_mixed": "fn f[T, &r, U: val, &q where r <= q](x: T) -> [] int { return 1; }",
@@ -199,7 +199,63 @@ CHECK_EDGE = {
     "res_decl": "res struct S { a: int }",
     "bound_val": "struct S[T: val] { a: T }\nstruct U { a: S[int] }",
     "bound_val_res": "struct S[T: val] { a: T }\nstruct U { a: S[Box[int]] }",
-    "extern_decl": "extern fn g(x: int) -> [] int;",
+    "extern_decl": "extern fn g[&f, &r, &i, &h](x: int) -> [] int;",
+    "extern_ok": "extern fn getpid[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;\n" + fnmain(""),
+    "extern_builtin": "extern fn getchar[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;",
+    "extern_builtin_edition": "edition 1;\nextern fn connect[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;",
+    "extern_dup": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;\nextern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;",
+    "extern_symbol_clash": "module a;\nextern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;",
+    "extern_symbol_clash_two_files": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;\nmodule b;\nextern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;",
+    "extern_region_dup": "extern fn g[&r, &r](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;",
+    "extern_region_static": "extern fn g[&static](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;",
+    "extern_param_unknown": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), x: Nope) -> [ffi(\"libc\")] int;",
+    "extern_ret_unknown": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] Nope;",
+    "extern_param_float": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), x: float) -> [ffi(\"libc\")] int;",
+    "extern_param_byte": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), x: byte) -> [ffi(\"libc\")] int;",
+    "extern_param_struct": "struct S { a: int }\nextern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), x: S) -> [ffi(\"libc\")] int;",
+    "extern_param_ref_int": "extern fn g[&f, &r](ffi: &f Ffi(\"libc\"), x: &r int) -> [ffi(\"libc\")] int;",
+    "extern_param_slice_int": "extern fn g[&f, &r](ffi: &f Ffi(\"libc\"), x: &r [int]) -> [ffi(\"libc\")] int;",
+    "extern_param_slice_byte": "extern fn g[&f, &r](ffi: &f Ffi(\"libc\"), x: &r [byte]) -> [ffi(\"libc\")] int;\n" + fnmain(""),
+    "extern_param_unique_slice": "extern fn g[&f, &r](ffi: &f Ffi(\"libc\"), x: &!r [byte]) -> [ffi(\"libc\")] int;\n" + fnmain(""),
+    "extern_param_ffi_by_value": "extern fn g[&f, &r, &i, &h](ffi: Ffi(\"libc\")) -> [ffi(\"libc\")] int;",
+    "extern_param_c_ptr": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), p: c_ptr) -> [ffi(\"libc\")] int;\n" + fnmain(""),
+    "extern_param_c_int": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), p: c_int) -> [ffi(\"libc\")] int;",
+    "extern_ret_c_int": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] c_int;\n" + fnmain(""),
+    "extern_ret_c_ptr": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] c_ptr;\n" + fnmain(""),
+    "extern_ret_bool": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] bool;\n" + fnmain(""),
+    "extern_ret_float": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] float;",
+    "extern_ret_struct": "struct S { a: int }\nextern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] S;",
+    "extern_ret_ref": "extern fn g[&f, &r](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] &r [byte];",
+    "extern_ret_c_ptr_args": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] c_ptr[int];",
+    "extern_ffi_root": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"\")) -> [ffi(\"\")] int;",
+    "extern_ffi_scope_bad": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"lib c\")) -> [ffi(\"libc\")] int;",
+    "extern_ffi_scope_dup": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc,libc\")) -> [ffi(\"libc\")] int;",
+    "extern_row_empty": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [] int;",
+    "extern_row_extra": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\"), io_write] int;",
+    "extern_row_wrong_lib": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libm\")] int;",
+    "extern_row_plain_ffi": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi] int;",
+    "extern_row_dup_label": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\"), ffi(\"libc\")] int;\n" + fnmain(""),
+    "extern_scope_two": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc,libm\")) -> [ffi(\"libc,libm\")] int;",
+    "extern_scope_two_unsorted": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libm,libc\")) -> [ffi(\"libc,libm\")] int;",
+    "extern_scope_two_unsorted_row": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc,libm\")) -> [ffi(\"libm,libc\")] int;",
+    "extern_no_ffi": "extern fn g[&f, &r, &i, &h](x: int) -> [] int;",
+    "extern_two_ffi": "extern fn g[&f, &g](a: &f Ffi(\"libc\"), b: &g Ffi(\"libm\")) -> [ffi(\"libc\"), ffi(\"libm\")] int;",
+    "extern_io": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), io: &!i Io) -> [ffi(\"libc\"), io_read, io_write, err_write] int;\n" + fnmain(""),
+    "extern_io_partial": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), io: &!i Io) -> [ffi(\"libc\"), io_write] int;",
+    "extern_heap": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), h: &!h Heap) -> [ffi(\"libc\"), heap] int;\n" + fnmain(""),
+    "extern_args": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), a: &r Args) -> [ffi(\"libc\"), args] int;\n" + fnmain(""),
+    "extern_fs": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), fs: &r Fs(\"/tmp\")) -> [ffi(\"libc\"), fs_read(\"/tmp\"), fs_write(\"/tmp\"), file_read, file_write, dir_read, dir_write] int;\n" + fnmain(""),
+    "extern_fs_partial": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), fs: &r Fs(\"/tmp\")) -> [ffi(\"libc\"), fs_read(\"/tmp\")] int;",
+    "extern_fs_other_prefix": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), fs: &r Fs(\"/tmp\")) -> [ffi(\"libc\"), fs_read(\"/var\"), fs_write(\"/tmp\"), file_read, file_write, dir_read, dir_write] int;",
+    "extern_fs_escape": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), fs: &r Fs(\"a\\\\b\")) -> [ffi(\"libc\"), fs_read(\"a\\\\b\"), fs_write(\"a\\\\b\"), file_read, file_write, dir_read, dir_write] int;\n" + fnmain(""),
+    "extern_world": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), w: &r World) -> [ffi(\"libc\")] int;",
+    "extern_file": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), f: &r File) -> [ffi(\"libc\"), file_read, file_write] int;\n" + fnmain(""),
+    "extern_fs_no_literal": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\"), fs: &r Fs) -> [ffi(\"libc\")] int;",
+    "extern_fn_clash": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;\nfn g() -> [] int { return 1; }",
+    "extern_fn_clash_before": "fn g() -> [] int { return 1; }\nextern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;",
+    "extern_static_clash": "extern fn g[&f, &r, &i, &h](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;\nstatic g: [int] { return 1; }",
+    "extern_first_error": "extern fn g[&f, &r, &i, &h](x: Nope) -> [] int;\nstruct S { a: Nope }",
+    "extern_after_type_error": "struct S { a: Nope }\nextern fn g[&f, &r, &i, &h](x: Nope) -> [] int;",
     "static_ok": "static t: [int] { return 1; }\n" + fnmain(""),
     "static_dup": "static t: [int] { return 1; }\nstatic t: [int] { return 2; }",
     "static_fn_clash": "static t: [int] { return 1; }\nfn t() -> [] int { return 1; }",
@@ -331,7 +387,7 @@ def main():
                     help="with --checker: parse each case with the standard library, as `check --std` does; the "
                     "oracle and the port are given a stream of files (see `driver.ls`), and the port is `check_files`")
     ap.add_argument("--checker", action="store_true",
-                    help="compare check.ls with check_declarations: the pass-1 edge cases, and a SKIP answer is not compared")
+                    help="compare check.ls with check_declarations, with the declarations edge cases")
     args = ap.parse_args()
 
     paths = args.files or sorted(glob.glob("**/*.ls", recursive=True))
@@ -365,7 +421,7 @@ def main():
             a, b = run([args.oracle], data), run([args.port], data)
         return name, data, a, b
 
-    same = refused = bad = skipped = skipped_port = 0
+    same = refused = bad = skipped = 0
     by_rule = collections.Counter()
     shown = 0
     if args.keep:
@@ -374,9 +430,6 @@ def main():
         for n, (name, data, a, b) in enumerate(pool.map(one, cases)):
             if a is None:
                 skipped += 1
-                continue
-            if args.checker and b[1].strip() == b"SKIP":
-                skipped_port += 1
                 continue
             if a[1] == b[1]:
                 same += 1
@@ -397,7 +450,7 @@ def main():
     if args.checker:
         print("identical by answer:", dict(by_rule.most_common()))
     print(f"cases: {len(cases)}  identical: {same} (of which refusals: {refused})  different: {bad}  "
-          f"not comparable (invalid UTF-8): {skipped}  not ported (SKIP): {skipped_port}")
+          f"not comparable (invalid UTF-8): {skipped}")
     sys.exit(1 if bad else 0)
 
 

@@ -37,6 +37,7 @@ module selfhost.ast;
 
 import selfhost.lexcore as lc;
 import selfhost.kinds;
+import selfhost.rules;
 
 // A list under construction: its first node, its last, and how many.
 pub struct Ls {
@@ -258,166 +259,6 @@ pub fn eof_code() -> [] int {
     return lc.code(lc.Tok::Eof);
 }
 
-// ---------------------------------------------------------------- rules ---
-
-pub fn r_type_mismatch() -> [] int {
-    return 3;
-}
-
-pub fn r_literal_out_of_range() -> [] int {
-    return 4;
-}
-
-pub fn r_unknown_edition() -> [] int {
-    return 5;
-}
-
-pub fn r_program_shape() -> [] int {
-    return 6;
-}
-
-pub fn r_pattern_shape() -> [] int {
-    return 7;
-}
-
-pub fn r_foreign_declaration() -> [] int {
-    return 8;
-}
-
-pub fn r_region_mismatch() -> [] int {
-    return 9;
-}
-
-pub fn r_mode_bound_violated() -> [] int {
-    return 10;
-}
-
-pub fn r_unknown_name() -> [] int {
-    return 11;
-}
-
-pub fn r_duplicate_declaration() -> [] int {
-    return 12;
-}
-
-pub fn r_builtin_redeclared() -> [] int {
-    return 13;
-}
-
-pub fn r_module_not_imported() -> [] int {
-    return 14;
-}
-
-pub fn r_type_args_not_taken() -> [] int {
-    return 15;
-}
-
-pub fn r_arity_mismatch() -> [] int {
-    return 16;
-}
-
-pub fn r_region_not_in_scope() -> [] int {
-    return 17;
-}
-
-pub fn r_unsized_type() -> [] int {
-    return 18;
-}
-
-pub fn r_static_item() -> [] int {
-    return 19;
-}
-
-pub fn r_not_public() -> [] int {
-    return 20;
-}
-
-pub fn r_infinite_type() -> [] int {
-    return 21;
-}
-
-pub fn r_enum_has_no_variants() -> [] int {
-    return 22;
-}
-
-pub fn r_skip() -> [] int {
-    return 99;
-}
-
-pub fn r_foreign_scope() -> [] int {
-    return 23;
-}
-
-pub fn rule_tag(r: int) -> [] &static [byte] {
-    if r < 3 {
-        return lc.rule_name(r);
-    }
-    if r == 3 {
-        return "type-mismatch";
-    }
-    if r == 4 {
-        return "literal-out-of-range";
-    }
-    if r == 5 {
-        return "unknown-edition";
-    }
-    if r == 6 {
-        return "program-shape";
-    }
-    if r == 7 {
-        return "pattern-shape";
-    }
-    if r == 8 {
-        return "foreign-declaration";
-    }
-    if r == 9 {
-        return "region-mismatch";
-    }
-    if r == 10 {
-        return "mode-bound-violated";
-    }
-    if r == 12 {
-        return "duplicate-declaration";
-    }
-    if r == 13 {
-        return "builtin-redeclared";
-    }
-    if r == 14 {
-        return "module-not-imported";
-    }
-    if r == 15 {
-        return "type-args-not-taken";
-    }
-    if r == 16 {
-        return "arity-mismatch";
-    }
-    if r == 17 {
-        return "region-not-in-scope";
-    }
-    if r == 18 {
-        return "unsized-type";
-    }
-    if r == 19 {
-        return "static-item";
-    }
-    if r == 20 {
-        return "not-public";
-    }
-    if r == 21 {
-        return "infinite-type";
-    }
-    if r == 22 {
-        return "enum-has-no-variants";
-    }
-    if r == 23 {
-        return "foreign-scope";
-    }
-    if r == 99 {
-        return "SKIP";
-    }
-    return "unknown-name";
-}
-
 // The first refusal is the one that counts.
 pub fn fail[&s](st: &!s [int], rule: int, from: int, to: int) -> [] int {
     if st[2] == 0 {
@@ -482,7 +323,7 @@ pub fn expect[&s](st: &!s [int], t: lc.Tok) -> [] int {
     if look(st, 0, t) {
         return bump(st);
     }
-    fail(st, r_type_mismatch(), tstart(st, st[0]), tend(st, st[0]));
+    fail(st, rules.r_type_mismatch(), tstart(st, st[0]), tend(st, st[0]));
     return st[0];
 }
 
@@ -580,7 +421,7 @@ pub fn int_value[&s, &x](st: &!s [int], text: &x [byte], i: int, negated: bool) 
         j = j + 1;
     }
     if bad {
-        fail(st, r_literal_out_of_range(), from, to);
+        fail(st, rules.r_literal_out_of_range(), from, to);
         return 0;
     }
     if negated {
@@ -1018,7 +859,7 @@ pub fn float_node[&s, &x](st: &!s [int], text: &x [byte], tok: int, from: int) -
     if lc.spells(text, tend(st, tok) - 3, tend(st, tok), "f32") {
         single = true;
         if float_overflows(st, text, tok, true) {
-            fail(st, r_literal_out_of_range(), tstart(st, tok), tend(st, tok));
+            fail(st, rules.r_literal_out_of_range(), tstart(st, tok), tend(st, tok));
         }
     } else if float_overflows(st, text, tok, false) {
         fail(st, 0, tstart(st, tok), tend(st, tok));
@@ -1179,7 +1020,7 @@ pub fn primary[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         put(st, id, 5, parts.n);
         return id;
     }
-    fail(st, r_type_mismatch(), begin, tend(st, t));
+    fail(st, rules.r_type_mismatch(), begin, tend(st, t));
     return 0 - 1;
 }
 
@@ -1251,7 +1092,7 @@ pub fn name_expr[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         return id;
     }
     if qualifier >= 0 {
-        fail(st, r_unknown_name(), tstart(st, st[0]), tend(st, st[0]));
+        fail(st, rules.r_unknown_name(), tstart(st, st[0]), tend(st, st[0]));
         return 0 - 1;
     }
     let id = mk(st, kinds.NK::EName, begin, tend(st, t));
@@ -1281,7 +1122,7 @@ pub fn block[&s, &x](st: &!s [int], text: &x [byte]) -> [] Bk {
     var list = empty_list();
     while more(st, lc.Tok::RBrace) {
         if look(st, 0, lc.Tok::Eof) {
-            fail(st, r_type_mismatch(), tstart(st, st[0]), tend(st, st[0]));
+            fail(st, rules.r_type_mismatch(), tstart(st, st[0]), tend(st, st[0]));
         } else {
             list = push(st, list, stmt(st, text));
         }
@@ -1355,7 +1196,7 @@ pub fn stmt[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
 }
 
 pub fn pattern_shape[&s](st: &!s [int]) -> [] int {
-    return fail(st, r_pattern_shape(), tstart(st, st[0]), tend(st, st[0]));
+    return fail(st, rules.r_pattern_shape(), tstart(st, st[0]), tend(st, st[0]));
 }
 
 pub fn let_stmt[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
@@ -1503,7 +1344,7 @@ pub fn match_stmt[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     var arms = empty_list();
     while more(st, lc.Tok::RBrace) {
         if look(st, 0, lc.Tok::Eof) {
-            fail(st, r_type_mismatch(), tstart(st, st[0]), tend(st, st[0]));
+            fail(st, rules.r_type_mismatch(), tstart(st, st[0]), tend(st, st[0]));
         } else {
             let first = pattern(st, text);
             expect(st, lc.Tok::FatArrow);
@@ -1570,9 +1411,9 @@ pub fn declaration_params[&s](st: &!s [int]) -> [] Dp {
                     bump(st);
                     bounds = bounds + 1;
                 } else if look(st, 0, lc.Tok::Res) {
-                    fail(st, r_mode_bound_violated(), tstart(st, st[0]), tend(st, st[0]));
+                    fail(st, rules.r_mode_bound_violated(), tstart(st, st[0]), tend(st, st[0]));
                 } else {
-                    fail(st, r_type_mismatch(), tstart(st, st[0]), tend(st, st[0]));
+                    fail(st, rules.r_type_mismatch(), tstart(st, st[0]), tend(st, st[0]));
                 }
             }
         }
@@ -1679,7 +1520,7 @@ pub fn extern_decl[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     let name = ident(st);
     let dp = declaration_params(st);
     if dp.generics > 0 {
-        fail(st, r_foreign_declaration(), tstart(st, st[0]), tend(st, st[0]));
+        fail(st, rules.r_foreign_declaration(), tstart(st, st[0]), tend(st, st[0]));
     }
     let params = param_list(st, text);
     expect(st, lc.Tok::Arrow);
@@ -1700,10 +1541,10 @@ pub fn extern_decl[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
 pub fn generic_params[&s](st: &!s [int], mode: int) -> [] Dp {
     let dp = declaration_params(st);
     if dp.regions > 0 {
-        fail(st, r_region_mismatch(), tstart(st, st[0]), tend(st, st[0]));
+        fail(st, rules.r_region_mismatch(), tstart(st, st[0]), tend(st, st[0]));
     }
     if mode == 1 && dp.bounds > 0 {
-        fail(st, r_mode_bound_violated(), tstart(st, st[0]), tend(st, st[0]));
+        fail(st, rules.r_mode_bound_violated(), tstart(st, st[0]), tend(st, st[0]));
     }
     return dp;
 }
@@ -1780,7 +1621,7 @@ pub fn unit[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         let keyword = bump(st);
         let tok = st[0];
         if !look(st, 0, lc.Tok::Int) {
-            fail(st, r_unknown_edition(), tstart(st, tok), tend(st, tok));
+            fail(st, rules.r_unknown_edition(), tstart(st, tok), tend(st, tok));
         }
         bump(st);
         var value = 0;
@@ -1789,7 +1630,7 @@ pub fn unit[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         }
         expect(st, lc.Tok::Semi);
         if ok(st) && (value < 1 || value > 7) {
-            fail(st, r_unknown_edition(), tstart(st, keyword), tend(st, tok));
+            fail(st, rules.r_unknown_edition(), tstart(st, keyword), tend(st, tok));
         }
         st[6] = value;
     }
@@ -1801,10 +1642,10 @@ pub fn unit[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         if look(st, 0, lc.Tok::Module) {
             let keyword = bump(st);
             if declared_module {
-                fail(st, r_program_shape(), tstart(st, keyword), tend(st, keyword));
+                fail(st, rules.r_program_shape(), tstart(st, keyword), tend(st, keyword));
             }
             if seen_item {
-                fail(st, r_program_shape(), tstart(st, keyword), tend(st, keyword));
+                fail(st, rules.r_program_shape(), tstart(st, keyword), tend(st, keyword));
             }
             let first = st[0];
             let n = module_path(st);
@@ -1848,10 +1689,10 @@ pub fn unit[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
                 } else if look(st, 0, lc.Tok::Enum) {
                     item = enum_decl(st, text, mode, keyword, public);
                 } else {
-                    fail(st, r_type_mismatch(), tstart(st, st[0]), tend(st, st[0]));
+                    fail(st, rules.r_type_mismatch(), tstart(st, st[0]), tend(st, st[0]));
                 }
             } else {
-                fail(st, r_type_mismatch(), tstart(st, st[0]), tend(st, st[0]));
+                fail(st, rules.r_type_mismatch(), tstart(st, st[0]), tend(st, st[0]));
             }
             items = push(st, items, item);
         }

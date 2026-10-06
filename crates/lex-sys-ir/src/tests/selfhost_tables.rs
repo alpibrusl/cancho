@@ -85,6 +85,47 @@ fn render() -> String {
         })
         .collect();
     table(&mut out, "prelude_res_bits", res_bits);
+    // What owning a capability discharges (`discharged_by`), as the labels it yields: `name` for a
+    // plain one, `name*` for one narrowed to the literal the type is written with (`Fs("/tmp")`
+    // yields `fs_read("/tmp")`), `name=` for one narrowed to the empty string (the root).
+    // `is_capability` is a flag per type: the foreign boundary lets a borrowed one cross.
+    let probe = "\u{1}";
+    let labels: Vec<String> = defs
+        .iter()
+        .map(|d| {
+            let args = vec![Type::Lit(probe.to_owned()); d.generics.len()];
+            let ty = Type::Named(d.def, args);
+            discharged_by(&defs, &ty)
+                .labels()
+                .iter()
+                .map(|l| match l.argument.as_deref() {
+                    None => l.name.clone(),
+                    Some(a) if a == probe => format!("{}*", l.name),
+                    Some("") => format!("{}=", l.name),
+                    Some(other) => panic!("`{}` is narrowed to `{other}`", l.name),
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect();
+    let mut label_chars = String::new();
+    let (mut label_starts, mut label_lens) = (Vec::new(), Vec::new());
+    for l in &labels {
+        label_starts.push(label_chars.len() as u64);
+        label_lens.push(l.len() as u64);
+        label_chars.push_str(l);
+    }
+    let _ = writeln!(
+        out,
+        "fn prelude_label_chars() -> [] &static [byte] {{\n    return \"{label_chars}\";\n}}\n"
+    );
+    table(&mut out, "prelude_label_starts", label_starts);
+    table(&mut out, "prelude_label_lens", label_lens);
+    table(
+        &mut out,
+        "prelude_capabilities",
+        defs.iter().map(|d| u64::from(is_capability(d.def))).collect(),
+    );
     table(
         &mut out,
         "prelude_bounds",
@@ -103,6 +144,12 @@ fn render() -> String {
          pub fn prelude_since(i: int) -> [] int {\n    return prelude_sinces[i];\n}\n\n\
          pub fn prelude_public(i: int) -> [] bool {\n    return prelude_publics[i] != 0;\n}\n\n\
          pub fn prelude_res(i: int) -> [] int {\n    return prelude_res_bits[i];\n}\n\n\
+         // What owning the capability discharges: labels separated by spaces, each `name`, `name*`\n\
+         // (narrowed to the literal the type is written with) or `name=` (narrowed to the empty string).\n\
+         pub fn prelude_labels(i: int) -> [] &static [byte] {\n    let start = prelude_label_starts[i];\n    \
+         return prelude_label_chars()[start..start + prelude_label_lens[i]];\n}\n\n\
+         // Is it a capability, which a foreign function may borrow?\n\
+         pub fn prelude_capability(i: int) -> [] bool {\n    return prelude_capabilities[i] != 0;\n}\n\n\
          // Bit i set: parameter i is bounded `val`.\n\
          pub fn prelude_bound(i: int) -> [] int {\n    return prelude_bounds[i];\n}\n\n",
     );
