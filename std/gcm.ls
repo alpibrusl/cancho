@@ -1,6 +1,8 @@
+edition 7;
 module std.gcm;
 import std.aes;
 import std.bignum;
+import std.bytes;
 
 // `std.gcm` -- AES-GCM (NIST SP 800-38D) with a 96-bit nonce, the only
 // form TLS uses (`docs/tls-parity.md` §3.1). Sub-issue 10 (#207) of the
@@ -294,40 +296,68 @@ pub fn context_len() -> [] int {
     return c_h() + 8;
 }
 
+// The hardware path's part of a prepared key (`docs/crypto-builtins.md`
+// §6, step 4), as bytes, which the builtins take: the round keys in
+// FIPS 197's form (up to 240 bytes), then H (16).
+pub fn hw_len() -> [] int {
+    return 256;
+}
+
+fn hw_h() -> [] int {
+    return 240;
+}
+
 // Prepares `key` (16 or 32 bytes) into `ctx` (at least `context_len()`
-// words): `ok()`, or `refused_key_length()`.
-pub fn prepare[&k, &c](key: &k [byte], ctx: &!c [int]) -> [] int {
-    if aes.rounds(len(key)) == 0 || len(ctx) < context_len() {
+// words) and `hw` (at least `hw_len()` bytes): `ok()`, or
+// `refused_key_length()`. `hw` is filled only where `hw_aes_gcm()` is
+// true; elsewhere it is zeroed and unused.
+pub fn prepare[&k, &c, &w](key: &k [byte], ctx: &!c [int], hw: &!w [byte]) -> [] int {
+    return prepare_parts(key, ctx, hw, true);
+}
+
+// `prepare`, making the software path's part only when `software`: the
+// one-shot `seal` and `open` need just the path they take.
+fn prepare_parts[&k, &c, &w](key: &k [byte], ctx: &!c [int], hw: &!w [byte], software: bool) -> [] int {
+    if aes.rounds(len(key)) == 0 || len(ctx) < context_len() || len(hw) < hw_len() {
         return refused_key_length();
     }
+    bytes.zero(hw);
+    let nr = aes.rounds(len(key));
+    ctx[0] = nr;
     region t {
-        let q = alloc_slice[t](aes.scratch_len(), 0);
         let zeros = alloc_slice[t](16, byte_of(0));
-        let blk = alloc_slice[t](16, byte_of(0));
-        let nr = aes.expand(key, ctx[c_skey()..c_h()]);
-        ctx[0] = nr;
-        aes.encrypt_block_with(nr, ctx[c_skey()..c_h()], zeros, blk, q);
-        var i = 0;
-        while i < 4 {
-            ctx[c_h() + 3 - i] = be32(blk, 4 * i);
-            i = i + 1;
+        if hw_aes_gcm() {
+            aes.round_keys(key, hw[0..hw_h()]);
+            aes_encrypt_block(hw[0..(nr + 1) * 16], nr, zeros, hw[hw_h()..hw_h() + 16]);
         }
-        i = 0;
-        while i < 4 {
-            ctx[c_h() + 4 + i] = rev32(ctx[c_h() + i]);
-            blk[4 * i] = byte_of(0);
-            blk[4 * i + 1] = byte_of(0);
-            blk[4 * i + 2] = byte_of(0);
-            blk[4 * i + 3] = byte_of(0);
-            i = i + 1;
+        if software {
+            let q = alloc_slice[t](aes.scratch_len(), 0);
+            let blk = alloc_slice[t](16, byte_of(0));
+            aes.expand(key, ctx[c_skey()..c_h()]);
+            aes.encrypt_block_with(nr, ctx[c_skey()..c_h()], zeros, blk, q);
+            var i = 0;
+            while i < 4 {
+                ctx[c_h() + 3 - i] = be32(blk, 4 * i);
+                i = i + 1;
+            }
+            i = 0;
+            while i < 4 {
+                ctx[c_h() + 4 + i] = rev32(ctx[c_h() + i]);
+                blk[4 * i] = byte_of(0);
+                blk[4 * i + 1] = byte_of(0);
+                blk[4 * i + 2] = byte_of(0);
+                blk[4 * i + 3] = byte_of(0);
+                i = i + 1;
+            }
         }
     }
     return ok();
 }
 
 // Overwrites a prepared key.
-pub fn forget[&c](ctx: &!c [int]) -> [] int {
+pub fn forget[&c, &w](ctx: &!c [int], hw: &!w [byte]) -> [] int {
     bignum.zero(ctx);
+    bytes.zero(hw);
     return 0;
 }
 
@@ -391,15 +421,28 @@ pub fn seal[&k, &n, &a, &p, &o](key: &k [byte], nonce: &n [byte], aad: &a [byte]
     var code = 0;
     region t {
         let ctx = alloc_slice[t](context_len(), 0);
-        prepare(key, ctx);
-        code = seal_with(ctx, nonce, aad, plaintext, out);
-        forget(ctx);
+        let hw = alloc_slice[t](hw_len(), byte_of(0));
+        prepare_parts(key, ctx, hw, !hw_aes_gcm());
+        code = seal_with(ctx, hw, nonce, aad, plaintext, out);
+        forget(ctx, hw);
     }
     return code;
 }
 
-// `seal` under a key `prepare` made.
-pub fn seal_with[&c, &n, &a, &p, &o](ctx: &c [int], nonce: &n [byte], aad: &a [byte], plaintext: &p [byte], out: &!o [byte]) -> [] int {
+// `seal` under a key `prepare` made: the hardware path where the CPU has
+// the instructions (`hw_aes_gcm()`), else the software one. Both give
+// the same bytes (`conformance/gcm.rs` checks it).
+pub fn seal_with[&c, &w, &n, &a, &p, &o](ctx: &c [int], hw: &w [byte], nonce: &n [byte], aad: &a [byte], plaintext: &p [byte], out: &!o [byte]) -> [] int {
+    if hw_aes_gcm() && len(hw) >= hw_len() {
+        return seal_hardware(ctx, hw, nonce, aad, plaintext, out);
+    }
+    return seal_software(ctx, nonce, aad, plaintext, out);
+}
+
+// `seal_with` on the software path whatever the CPU: what Cranelift and
+// a CPU without the instructions run, public so a test can compare it
+// with the hardware path on one that has them.
+pub fn seal_software[&c, &n, &a, &p, &o](ctx: &c [int], nonce: &n [byte], aad: &a [byte], plaintext: &p [byte], out: &!o [byte]) -> [] int {
     if !prepared(ctx) {
         return refused_key_length();
     }
@@ -438,15 +481,25 @@ pub fn open[&k, &n, &a, &s, &o](key: &k [byte], nonce: &n [byte], aad: &a [byte]
     var code = 0;
     region t {
         let ctx = alloc_slice[t](context_len(), 0);
-        prepare(key, ctx);
-        code = open_with(ctx, nonce, aad, sealed, out);
-        forget(ctx);
+        let hw = alloc_slice[t](hw_len(), byte_of(0));
+        prepare_parts(key, ctx, hw, !hw_aes_gcm());
+        code = open_with(ctx, hw, nonce, aad, sealed, out);
+        forget(ctx, hw);
     }
     return code;
 }
 
-// `open` under a key `prepare` made.
-pub fn open_with[&c, &n, &a, &s, &o](ctx: &c [int], nonce: &n [byte], aad: &a [byte], sealed: &s [byte], out: &!o [byte]) -> [] int {
+// `open` under a key `prepare` made: the hardware path or the software
+// one, as `seal_with`.
+pub fn open_with[&c, &w, &n, &a, &s, &o](ctx: &c [int], hw: &w [byte], nonce: &n [byte], aad: &a [byte], sealed: &s [byte], out: &!o [byte]) -> [] int {
+    if hw_aes_gcm() && len(hw) >= hw_len() {
+        return open_hardware(ctx, hw, nonce, aad, sealed, out);
+    }
+    return open_software(ctx, nonce, aad, sealed, out);
+}
+
+// `open_with` on the software path whatever the CPU.
+pub fn open_software[&c, &n, &a, &s, &o](ctx: &c [int], nonce: &n [byte], aad: &a [byte], sealed: &s [byte], out: &!o [byte]) -> [] int {
     if !prepared(ctx) {
         return refused_key_length();
     }
@@ -481,6 +534,158 @@ pub fn open_with[&c, &n, &a, &s, &o](ctx: &c [int], nonce: &n [byte], aad: &a [b
         }
         if diff == 0 {
             aes.ctr32_with(ctx[0], ctx[c_skey()..c_h()], nonce, 2, sealed[0..text], out, q);
+        }
+    }
+    if diff != 0 {
+        return refused_tag_mismatch();
+    }
+    return ok();
+}
+
+// ---- The hardware path (`docs/crypto-builtins.md` §6, step 4) ----
+//
+// The same checks and the same bytes as the software path, with the
+// block cipher and GHASH done by `aes_encrypt_block` and `ghash_update`.
+
+// CTR from `counter`: each 16-byte block of `input`, XORed with the
+// encryption of `nonce || counter` (big-endian), into `out`. The caller
+// has checked the lengths, so the counter does not wrap.
+fn ctr_hw[&k, &n, &i, &o, &b, &s](keys: &k [byte], nr: int, nonce: &n [byte], counter: int, input: &i [byte], out: &!o [byte], blk: &!b [byte], ks: &!s [byte]) -> [] int {
+    var j = 0;
+    while j < 12 {
+        blk[j] = nonce[j];
+        j = j + 1;
+    }
+    var c = counter;
+    var at = 0;
+    while at < len(input) {
+        put_be32(blk, 12, c);
+        aes_encrypt_block(keys, nr, blk, ks);
+        var k = 0;
+        while k < 16 && at + k < len(input) {
+            out[at + k] = byte_of(int_of(input[at + k]) ^ int_of(ks[k]));
+            k = k + 1;
+        }
+        at = at + 16;
+        c = c + 1;
+    }
+    var z = 0;
+    while z < 16 {
+        ks[z] = byte_of(0);
+        z = z + 1;
+    }
+    return 0;
+}
+
+// GHASH over `data`, its last partial block padded with zeros in `pad`.
+fn ghash_hw[&h, &y, &d, &p](h: &h [byte], y: &!y [byte], data: &d [byte], pad: &!p [byte]) -> [] int {
+    let full = len(data) / 16 * 16;
+    if full > 0 {
+        ghash_update(h, y, data[0..full]);
+    }
+    if full < len(data) {
+        var k = 0;
+        while k < 16 {
+            pad[k] = byte_of(0);
+            if full + k < len(data) {
+                pad[k] = data[full + k];
+            }
+            k = k + 1;
+        }
+        ghash_update(h, y, pad);
+    }
+    return 0;
+}
+
+// The tag, as `tag_of` makes it, on the hardware path. Its scratch is
+// the caller's, three 16-byte blocks: one region a call, since a region
+// is an allocation and on Darwin a slow one at this size.
+fn tag_hw[&k, &h, &n, &a, &c, &o, &y, &b, &s](keys: &k [byte], nr: int, h: &h [byte], nonce: &n [byte], aad: &a [byte], ciphertext: &c [byte], tag: &!o [byte], y: &!y [byte], blk: &!b [byte], ks: &!s [byte]) -> [] int {
+    var z = 0;
+    while z < 16 {
+        y[z] = byte_of(0);
+        z = z + 1;
+    }
+    ghash_hw(h, y, aad, blk);
+    ghash_hw(h, y, ciphertext, blk);
+    let abits = len(aad) * 8;
+    let cbits = len(ciphertext) * 8;
+    put_be32(blk, 0, abits >> 32);
+    put_be32(blk, 4, abits & 0xffffffff);
+    put_be32(blk, 8, cbits >> 32);
+    put_be32(blk, 12, cbits & 0xffffffff);
+    ghash_update(h, y, blk);
+    ctr_hw(keys, nr, nonce, 1, y, tag, blk, ks);
+    var k = 0;
+    while k < 16 {
+        y[k] = byte_of(0);
+        blk[k] = byte_of(0);
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn seal_hardware[&c, &w, &n, &a, &p, &o](ctx: &c [int], hw: &w [byte], nonce: &n [byte], aad: &a [byte], plaintext: &p [byte], out: &!o [byte]) -> [] int {
+    if !prepared(ctx) {
+        return refused_key_length();
+    }
+    let text = len(plaintext);
+    let checked = shape_ok(nonce, text);
+    if checked != 0 {
+        return checked;
+    }
+    if len(out) != text + 16 {
+        return refused_output_length();
+    }
+    let nr = ctx[0];
+    let keys = hw[0..(nr + 1) * 16];
+    region t {
+        let blk = alloc_slice[t](16, byte_of(0));
+        let ks = alloc_slice[t](16, byte_of(0));
+        let y = alloc_slice[t](16, byte_of(0));
+        ctr_hw(keys, nr, nonce, 2, plaintext, out[0..text], blk, ks);
+        tag_hw(keys, nr, hw[hw_h()..hw_h() + 16], nonce, aad, out[0..text], out[text..text + 16], y, blk, ks);
+    }
+    return ok();
+}
+
+fn open_hardware[&c, &w, &n, &a, &s, &o](ctx: &c [int], hw: &w [byte], nonce: &n [byte], aad: &a [byte], sealed: &s [byte], out: &!o [byte]) -> [] int {
+    if !prepared(ctx) {
+        return refused_key_length();
+    }
+    if len(sealed) < 16 {
+        let shape = shape_ok(nonce, 0);
+        if shape != 0 {
+            return shape;
+        }
+        return refused_too_short();
+    }
+    let text = len(sealed) - 16;
+    let checked = shape_ok(nonce, text);
+    if checked != 0 {
+        return checked;
+    }
+    if len(out) != text {
+        return refused_output_length();
+    }
+    let nr = ctx[0];
+    let keys = hw[0..(nr + 1) * 16];
+    var diff = 0;
+    region t {
+        let want = alloc_slice[t](16, byte_of(0));
+        let blk = alloc_slice[t](16, byte_of(0));
+        let ks = alloc_slice[t](16, byte_of(0));
+        let y = alloc_slice[t](16, byte_of(0));
+        tag_hw(keys, nr, hw[hw_h()..hw_h() + 16], nonce, aad, sealed[0..text], want, y, blk, ks);
+        // Every byte is compared whatever the earlier ones were.
+        var i = 0;
+        while i < 16 {
+            diff = diff | int_of(want[i]) ^ int_of(sealed[text + i]);
+            want[i] = byte_of(0);
+            i = i + 1;
+        }
+        if diff == 0 {
+            ctr_hw(keys, nr, nonce, 2, sealed[0..text], out, blk, ks);
         }
     }
     if diff != 0 {

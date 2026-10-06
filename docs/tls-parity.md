@@ -166,6 +166,11 @@ against `docs/chacha20.md` §6's 135 MB/s.
 - **AES-GCM costs about 4 times ChaCha20-Poly1305 here.** A full 16 KiB TLS record takes half a millisecond to seal. A server
   that picks an AES-GCM suite costs that much per record.
 - **OpenSSL is about 170 times faster.** It uses the AES-NI and PCLMULQDQ instructions, which lex-sys cannot emit.
+  *Corrected (`docs/crypto-builtins.md`, step 4): lex-sys now emits them, on LLVM, where the CPU has them. AES-128-GCM seal,
+  measured with `lex-sys`'s hardware path against OpenSSL on the same machine: on aarch64 Linux (the Apple M4's VM, OpenSSL
+  3.0.13) 557 against 4,007 MB/s at 64 bytes and 1,110 against 8,035 MB/s at 16 KiB, **7.2 times at both**; on the M4 under
+  macOS (OpenSSL 3.6.4) 99 against 611 MB/s and 1,050 against 10,497 MB/s, 6.2 and 10 times. Not measured on this section's
+  Xeon. The software path, still what Cranelift and a CPU without the instructions run, is the table above.*
 - **Most of the cost is instructions.** `valgrind --tool=callgrind` puts GHASH at 28% of a 16 KiB seal and the AES rounds at
   most of the rest. GHASH keeps its 74 working words in a bounds-checked array. Holding them in locals is the first place to
   look if the cost matters.

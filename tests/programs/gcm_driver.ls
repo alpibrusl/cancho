@@ -10,6 +10,8 @@
 //     S <key> <nonce> <aad> <plaintext>   gcm.seal
 //     O <key> <nonce> <aad> <sealed>      gcm.open
 //     U <key> <nonce> <aad> <plaintext>   gcm.seal_with a context never prepared
+//     s <key> <nonce> <aad> <plaintext>   gcm.seal_software (the software path whatever the CPU)
+//     o <key> <nonce> <aad> <sealed>      gcm.open_software
 //
 // and one line out per case: `<code> <tag> <output in hex>`. `open`'s
 // output starts filled with `0xaa`, so a refusal that wrote anything
@@ -161,7 +163,17 @@ fn one[&i, &s](io: &!i Io, s: &s [byte], at: int) -> [io_write] int {
                 } else if op == 85 {
                     let out = alloc_slice[r](len(data) + 16, byte_of(0));
                     let ctx = alloc_slice[r](gcm.context_len(), 0);
-                    let code = gcm.seal_with(ctx, second, aad, data, out);
+                    let hw = alloc_slice[r](gcm.hw_len(), byte_of(0));
+                    let code = gcm.seal_with(ctx, hw, second, aad, data, out);
+                    report(io, code, gcm.refusal_tag(code), out);
+                } else if op == 115 {
+                    let out = alloc_slice[r](len(data) + 16, byte_of(0));
+                    let ctx = alloc_slice[r](gcm.context_len(), 0);
+                    let hw = alloc_slice[r](gcm.hw_len(), byte_of(0));
+                    var code = gcm.prepare(key, ctx, hw);
+                    if code == 0 {
+                        code = gcm.seal_software(ctx, second, aad, data, out);
+                    }
                     report(io, code, gcm.refusal_tag(code), out);
                 } else {
                     var room = len(data) - 16;
@@ -169,7 +181,17 @@ fn one[&i, &s](io: &!i Io, s: &s [byte], at: int) -> [io_write] int {
                         room = 0;
                     }
                     let out = alloc_slice[r](room, byte_of(0xaa));
-                    let code = gcm.open(key, second, aad, data, out);
+                    var code = 0;
+                    if op == 111 {
+                        let ctx = alloc_slice[r](gcm.context_len(), 0);
+                        let hw = alloc_slice[r](gcm.hw_len(), byte_of(0));
+                        code = gcm.prepare(key, ctx, hw);
+                        if code == 0 {
+                            code = gcm.open_software(ctx, second, aad, data, out);
+                        }
+                    } else {
+                        code = gcm.open(key, second, aad, data, out);
+                    }
                     report(io, code, gcm.refusal_tag(code), out);
                 }
             }

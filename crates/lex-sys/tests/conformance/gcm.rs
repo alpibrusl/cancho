@@ -317,3 +317,57 @@ fn one_flipped_bit_anywhere_is_refused() {
     assert_eq!(answers.len(), 1 + 67 * 8 + 20 * 8);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `docs/crypto-builtins.md` §7: the hardware path (`S`, `O`, where the
+/// CPU has the instructions) and the software path (`s`, `o`, whatever
+/// it has) give the same bytes, over random keys, nonces, associated data
+/// and lengths across block boundaries, in one LLVM program. On the CI
+/// hosts the first is the hardware path (`crypto_builtins.rs` asserts
+/// `hw_aes_gcm()` there).
+#[test]
+fn the_hardware_and_software_paths_agree() {
+    let mut state = 0x2545_f491_4f6c_dd1du64;
+    let mut next = move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    let mut cases = Vec::new();
+    for k in 0..400u64 {
+        let key: Vec<u8> = (0..if k % 2 == 0 { 16 } else { 32 }).map(|_| next() as u8).collect();
+        let nonce: Vec<u8> = (0..12).map(|_| next() as u8).collect();
+        let aad: Vec<u8> = (0..next() % 41).map(|_| next() as u8).collect();
+        let text: Vec<u8> = (0..next() % 200).map(|_| next() as u8).collect();
+        let (key, nonce, aad, text) =
+            (hex(&key), hex(&nonce), or_dash(&hex(&aad)), or_dash(&hex(&text)));
+        cases.push(format!("S {key} {nonce} {aad} {text}"));
+        cases.push(format!("s {key} {nonce} {aad} {text}"));
+    }
+    let (dir, exe) = build_gcm_driver("paths", "llvm");
+    let sealed = run_cases(&exe, &cases);
+    let mut opens = Vec::new();
+    for (pair, case) in sealed.chunks(2).zip(cases.chunks(2)) {
+        assert_eq!(pair[0], pair[1], "{}", case[0]);
+        let (code, _, out) = answer(&pair[0]);
+        assert_eq!(code, 0, "{}", case[0]);
+        let f: Vec<&str> = case[0].split(' ').collect();
+        // Opened by each path, and once with the last byte of the tag
+        // changed, which both refuse.
+        for op in ["O", "o"] {
+            opens.push(format!("{op} {} {} {} {out}", f[1], f[2], f[3]));
+            let mut bad = unhex(&out);
+            let last = bad.len() - 1;
+            bad[last] ^= 1;
+            opens.push(format!("{op} {} {} {} {}", f[1], f[2], f[3], hex(&bad)));
+        }
+    }
+    let opened = run_cases(&exe, &opens);
+    for (quad, case) in opened.chunks(4).zip(cases.chunks(2)) {
+        assert_eq!(quad[0], quad[2], "{}", case[0]);
+        assert_eq!(quad[1], quad[3], "{}", case[0]);
+        assert_eq!(answer(&quad[0]).0, 0, "{}", case[0]);
+        assert_eq!(answer(&quad[1]).1, "aead-tag-mismatch", "{}", case[0]);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
