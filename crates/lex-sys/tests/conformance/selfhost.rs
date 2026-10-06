@@ -103,18 +103,19 @@ fn sources() -> Vec<(String, String)> {
     out
 }
 
-fn build(tag: &str, entry: &str) -> PathBuf {
+fn build(tag: &str, files: &[&str]) -> PathBuf {
     let dir = scratch(&format!("selfhost-{tag}"));
     let exe = dir.join(tag);
     let root = repo_root().join("examples/selfhost");
     let build = Command::new(BIN)
-        .args(["build".as_ref(), root.join(entry).as_os_str(), root.join("lexcore.ls").as_os_str()])
+        .arg("build")
+        .args(files.iter().map(|f| root.join(f)))
         .args(["--std".as_ref(), "-o".as_ref(), exe.as_os_str()])
         .output()
         .expect("the compiler runs");
     assert!(
         build.status.success(),
-        "`{entry}` should compile, but the compiler said:\n{}",
+        "`{files:?}` should compile, but the compiler said:\n{}",
         String::from_utf8_lossy(&build.stderr)
     );
     exe
@@ -139,8 +140,8 @@ fn answer(exe: &Path, text: &str) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
-fn agree(tag: &str, entry: &str, oracle: fn(&str) -> String) {
-    let exe = build(tag, entry);
+fn agree(tag: &str, files: &[&str], oracle: fn(&str) -> String) {
+    let exe = build(tag, files);
     let mut different = Vec::new();
     let corpus = sources();
     for (name, text) in &corpus {
@@ -150,7 +151,7 @@ fn agree(tag: &str, entry: &str, oracle: fn(&str) -> String) {
     }
     assert!(
         different.is_empty(),
-        "`{entry}` and the Rust front end disagree about {} of {} programs:\n{}",
+        "`{files:?}` and the Rust front end disagree about {} of {} programs:\n{}",
         different.len(),
         corpus.len(),
         different.join("\n")
@@ -160,10 +161,10 @@ fn agree(tag: &str, entry: &str, oracle: fn(&str) -> String) {
 
 #[test]
 fn the_lexer_in_lex_sys_agrees_with_the_rust_lexer() {
-    agree("lexer", "lexer.ls", token_oracle::listing);
+    agree("lexer", &["lexer.ls", "lexcore.ls"], token_oracle::listing);
 }
 
 #[test]
 fn the_parser_in_lex_sys_agrees_with_the_rust_parser() {
-    agree("parser", "parser.ls", ast_oracle::listing);
+    agree("parser", &["parser.ls", "ast.ls", "lexcore.ls"], ast_oracle::listing);
 }

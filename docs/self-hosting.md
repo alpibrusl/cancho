@@ -197,11 +197,12 @@ the stages found, in place, the way this document corrects its own claims.
 |---|---|---|---|
 | 1. Lexer | `examples/selfhost/lexcore.ls` (a module) and `lexer.ls` | `examples/dump_tokens.rs` in `lex-sys-syntax` | Same token stream and the same refusals on every program in the repository (614 files) |
 | 2. Parser | `examples/selfhost/parser.ls` | `examples/dump_ast.rs` in `lex-sys-syntax` | Same syntax tree, node for node and span for span, or the same refusal (rule and span), on the same 614 files, **including its own source**, and on a fuzz corpus (below) of 52,272 cases, 51,911 of them comparable and all identical, 29,097 of those refusals |
-| 3. Checker | not started | `lex-sys check --output json` | |
+| 3a. The tree | `examples/selfhost/ast.ls` (a module, the parser) and `parser.ls` (a walk that prints the tree) | the same `dump_ast.rs` | The parser **builds the tree** in flat tables and the listing is produced by walking it; the same 621 programs and 52,314 fuzz cases (6 seeds), all comparable ones identical, 29,055 of them refusals |
+| 3b. Resolution and the rest of the checker | not started | `lex-sys check --output json` | |
 | 4. Backend | not started | | |
 
 **The method.** A port that builds no tree has nothing to compare, and one that does
-needs a printer, which is another port. So the parser writes the tree the Rust parser
+needs a printer, which is another port. So stage 2's parser wrote the tree the Rust parser
 would have built as a *postfix listing*, one node per line, children before their
 parent, at the moment the Rust parser pushes the node into its arena, and says how
 many children it takes. `dump_ast.rs` writes the same listing from the Rust AST. Each
@@ -212,6 +213,25 @@ the two over files, `fuzz.py` over the files plus hostile edge cases (the limits
 mutants (a token dropped, duplicated, replaced or swapped, the file cut short, a byte
 range deleted), and `tests/conformance/selfhost.rs` runs both ports over the
 repository's programs on every CI run.
+
+**Stage 3a: the tree.** Stage 2 printed as it parsed; the checker needs something to walk,
+so `ast.ls` is the same parser building the Rust AST's own design: flat tables and
+indices, not owned children. A node is a record of 16 integers in one table (kind,
+span, the next node of its list, and what its kind keeps), a reference to a node is its
+index, a list is a chain (the parent holds the first child and the count). The whole
+front end, state, tokens and nodes, is **one allocation whose size follows from the
+length of the text** (every node and token takes a byte, so tokens bound nodes), 160
+bytes of state per byte of source. `parser.ls` is now only the walk that prints the tree
+in the listing's order, so a match with the oracle is a statement about the *tree*:
+the walk reads nothing the tree does not hold, except where the parser had already checked
+the tokens and the node keeps only where they start (an effect row, a declaration's
+`[T, &r where ...]`, a destructuring pattern, a match pattern). Everything stage 2
+was checked with passes unchanged, and the translation compiled and matched the Rust
+parser on all 621 programs the first time.
+The cost of the walk: `ast.ls` (1,921 lines, 1,678 not comment or blank) and `parser.ls`
+(847, 761) are 2,768 lines against stage 2's single 1,970; parsing and walking its own 80 KB
+takes 0.24 s (stage 2 took 6 ms for its own 59 KB), with a 13 MB table to fill first; where
+the time goes was not measured.
 
 **Size.** `parser.ls` is 1,970 lines (1,760 that are not comment or blank) for the
 Rust parser's 1,507 (1,225): 1.3 to 1.4 times. `lexcore.ls` is 963 lines (897) for the
@@ -254,9 +274,10 @@ leaves them. The port parses its own 59 KB in 6 ms.
 
 **What it does not show.**
 
-* No tree is built. A listing proves the grammar, the precedence, the spans and the
-  refusals; it does not prove that recursive `Box` trees of this size work (§4 showed
-  they work, at a small one). Stage 3 needs trees and will say.
+* The tree is flat tables, not recursive `Box` values, because that is the design of the
+  Rust AST being ported and what an arena-sized front end wants. Whether recursive boxed
+  trees at this size are comfortable is still unmeasured (§4 showed they work, at a small
+  one).
 * Float *values* are not computed: the listing has a float literal's span and whether
   it is an `f32`, not its bits. Whether a literal rounds to infinity is checked, exactly,
   by comparing its digits with those of 2^1024 − 2^970 (2^128 − 2^103 for `f32`); the
@@ -268,8 +289,8 @@ leaves them. The port parses its own 59 KB in 6 ms.
   harnesses skip those inputs (361 of the 52,272 fuzz cases).
 * Names are printed from their spans, not interned, so symbol ids are not compared.
 
-**Where it stands.** Stages 1 and 2 are done and nothing in them blocks stage 3, the
-checker (`lex-sys-ir`, 12 thousand lines), which is the real test: it is the first
+**Where it stands.** Stages 1, 2 and 3a are done and nothing in them blocks the rest of
+stage 3, the checker (`lex-sys-ir`, 12 thousand lines), which is the real test: it is the first
 stage with enough shape (resolution, linearity, regions, effect rows) to tell whether
 the language is comfortable writing its own compiler. §5's decision does not change.
 

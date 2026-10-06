@@ -3,11 +3,11 @@
 # (examples/selfhost/lexer.ls) or the parser (examples/selfhost/parser.ls).
 # usage: diff.sh ORACLE_BIN PORT_BIN file...
 #
-# The oracles are examples of lex-sys-syntax, and the ports are built with lexcore.ls:
+# The oracles are examples of lex-sys-syntax, and the ports are built with lexcore.ls (and the parser with ast.ls):
 #
 #   cargo build -p lex-sys-syntax --example dump_tokens --example dump_ast
 #   lex-sys build examples/selfhost/lexer.ls examples/selfhost/lexcore.ls --std -o lexer
-#   lex-sys build examples/selfhost/parser.ls examples/selfhost/lexcore.ls --std -o parser
+#   lex-sys build examples/selfhost/parser.ls examples/selfhost/ast.ls examples/selfhost/lexcore.ls --std -o parser
 #   diff.sh target/debug/examples/dump_tokens ./lexer $(find . -name '*.ls')
 #   diff.sh target/debug/examples/dump_ast ./parser $(find . -name '*.ls')
 #
