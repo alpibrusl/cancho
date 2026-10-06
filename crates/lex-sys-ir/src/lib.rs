@@ -38,6 +38,7 @@ pub use linear::Mode;
 use linear::{Event, Trace, mode_of};
 
 mod builtin;
+mod builtin_signature;
 mod defs;
 mod errno;
 mod foreign;

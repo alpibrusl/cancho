@@ -9,6 +9,7 @@ use crate::*;
 
 mod arith;
 mod control;
+mod crypto;
 mod dirs;
 mod expr;
 mod files;

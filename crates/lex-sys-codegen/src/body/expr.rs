@@ -610,6 +610,21 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     // never turns a select or an `and` into a branch, so
                     // there is nothing here for the barrier to stop.
                     Callee::Builtin(Builtin::ValueBarrier) => vec![args[0]],
+                    // `docs/crypto-builtins.md` §5: Cranelift emits none of
+                    // the AES or carry-less-multiply instructions, so the CPU
+                    // never has them here and the two block builtins, which a
+                    // program reaches only after `hw_aes_gcm()` answered true,
+                    // trap as `trap()` does.
+                    Callee::Builtin(Builtin::HwAesGcm) => {
+                        vec![self.builder.ins().iconst(types::I8, 0)]
+                    }
+                    Callee::Builtin(Builtin::AesEncryptBlock | Builtin::GhashUpdate) => {
+                        self.builder.ins().trap(TrapCode::unwrap_user(1));
+                        let dead = self.builder.create_block();
+                        self.builder.switch_to_block(dead);
+                        self.builder.seal_block(dead);
+                        vec![self.builder.ins().iconst(types::I64, 0)]
+                    }
                     // `x != x`, which is true for NaN and nothing else.
                     // A riddle as an expression (§5), which is why it has
                     // a name.

@@ -48,6 +48,7 @@ mod checked_output;
 mod close_on_exec;
 mod compile_time;
 mod corpus;
+mod crypto_builtins;
 mod differential;
 mod directory_handles;
 mod directory_listing;
