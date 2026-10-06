@@ -4,7 +4,7 @@
     python3 scripts/tls_tickets.py <tickets> <out.txt>
 
 `tickets` is `tests/programs/tls_tickets.ls` built with `--std`, `packages/tls/tls.ls` and the package's
-files: the engine, one slot and room for two tickets, resumption on, entropy fixed. Every full handshake's
+files: the engine, one slot and room for four tickets, resumption on, entropy fixed. Every full handshake's
 ClientHello must advertise psk_dhe_ke: a server may withhold tickets from one that does not (RFC 8446 §4.2.9). Each case first loads the liar's one root. The server is `scripts/tls_liar.py`'s
 honest TLS 1.3 server, written on pyca/cryptography and RFC 8446 alone; it issues a ticket after a full
 handshake, and checks the binder of any ticket offered back. Each case is one engine process, and decides
@@ -25,7 +25,11 @@ The cases:
 - not offered when the clock is before the ticket was received;
 - offered once: a second start with the same handle offers nothing;
 - not offered after `tls.forget`;
-- a full table (two tickets) replaces the oldest: its handle offers nothing, the newest's does.
+- a full table (four tickets) replaces the oldest: its handle offers nothing, the newest's does;
+- pools (docs/tls-resumption.md §12), each ticket with an identity of its own so the ClientHello says which
+  was offered: a pool of one by default; three in a pool, offered newest first, then none; a pool over its
+  size losing its oldest; `forget` emptying a pool; a refused ticket overwritten and an older good one
+  offered; a pool refilled after it was emptied; a handle never issued.
 
 The file holds each case's lines and answers; `crates/lex-sys/tests/conformance/tls.rs` replays them on both
 backends. Exit status 1 if any case fails.
@@ -90,8 +94,9 @@ class Engine(L.Server):
         return L.psk_offer(msg)
 
 
-def full(c, now=L.NOW, cert_der=None, lifetime=7200, ms=0):
-    """A full handshake at `now`, a ticket, close_notify both ways, then `tls.save`: the handle and the PSK."""
+def full(c, now=L.NOW, cert_der=None, lifetime=7200, ms=0, ticket=L.TICKET, pool=None):
+    """A full handshake at `now`, a ticket, close_notify both ways, then `tls.save` (or `tls.save_to(pool)`):
+    the handle and the PSK."""
     s = Engine(c)
     if cert_der is not None:
         s.cert_der = cert_der
@@ -99,12 +104,12 @@ def full(c, now=L.NOW, cert_der=None, lifetime=7200, ms=0):
     assert s.modes == [1], f"psk_dhe_ke advertised, so a server may send tickets (RFC 8446 §4.2.9): {s.modes}"
     s.c.feed(s.hello_and_flight())
     s.check_client_finished()
-    psk = L.issue(s, lifetime=lifetime)
+    psk = L.issue(s, ticket=ticket, lifetime=lifetime)
     s.c.feed(s.write.seal(21, b"\1\0"))
     s.c.ask("Q")
     (alert,) = s.c.take()
     assert s.read.open(alert) == (21, b"\1\0"), "the client's close_notify"
-    f = c.ask("V")
+    f = c.ask("V" if pool is None else f"S {pool}")
     handle = int(f[0])
     assert handle > 0, f"a handle: {f}"
     return handle, psk
@@ -216,13 +221,83 @@ def forgotten(c):
     assert not offered(c, L.NOW + 10, h)[1], "not offered"
 
 
-@case("a full table (two tickets) replaces the oldest")
+@case("a full table (four tickets) replaces the oldest")
 def table_full(c):
     first, _ = full(c)
-    full(c)
-    third, _ = full(c)
+    for _ in range(3):
+        full(c)
+    fifth, _ = full(c)
     assert not offered(c, L.NOW + 10, first)[1], "the oldest is gone"
-    assert offered(c, L.NOW + 11, third)[1], "the newest is offered"
+    assert offered(c, L.NOW + 11, fifth)[1], "the newest is offered"
+
+
+def which(c, now, pool):
+    """The identity of the ticket a start with `pool` offers, or None."""
+    r, on = offered(c, now, pool)
+    return r.offer[0] if on else None
+
+
+@case("a pool holds one ticket unless set: the newest replaces the one before")
+def pool_of_one(c):
+    p, _ = full(c, ticket=b"ticket one")
+    assert full(c, ticket=b"ticket two", pool=p)[0] == p, "the same pool"
+    assert which(c, L.NOW + 10, p) == b"ticket two", "the newest"
+    assert which(c, L.NOW + 11, p) is None, "and no other"
+
+
+@case("a pool of three: three connections resume, newest first, then none")
+def pool_of_three(c):
+    c.ask("P 3")
+    p, _ = full(c, ticket=b"ticket one")
+    full(c, ticket=b"ticket two", pool=p)
+    full(c, ticket=b"ticket three", pool=p)
+    got = [which(c, L.NOW + 10 + k, p) for k in range(4)]
+    assert got == [b"ticket three", b"ticket two", b"ticket one", None], got
+
+
+@case("a pool over its size loses its oldest")
+def pool_over_size(c):
+    c.ask("P 2")
+    p, _ = full(c, ticket=b"ticket one")
+    full(c, ticket=b"ticket two", pool=p)
+    full(c, ticket=b"ticket three", pool=p)
+    got = [which(c, L.NOW + 10 + k, p) for k in range(3)]
+    assert got == [b"ticket three", b"ticket two", None], got
+
+
+@case("forget empties a pool")
+def pool_forgotten(c):
+    c.ask("P 3")
+    p, _ = full(c, ticket=b"ticket one")
+    full(c, ticket=b"ticket two", pool=p)
+    c.ask(f"X {p}")
+    assert which(c, L.NOW + 10, p) is None, "nothing"
+
+
+@case("a pool's refused ticket is overwritten, and an older good one is offered")
+def pool_refused_newest(c):
+    c.ask("P 2")
+    p, _ = full(c, ticket=b"ticket one")
+    full(c, ticket=b"ticket two", pool=p, lifetime=100)
+    assert which(c, L.NOW + 150, p) == b"ticket one", "the newest is past its lifetime"
+    assert which(c, L.NOW + 151, p) is None, "and was overwritten"
+
+
+@case("a pool refilled after it was emptied")
+def pool_refilled(c):
+    p, _ = full(c, ticket=b"ticket one")
+    assert which(c, L.NOW + 10, p) == b"ticket one"
+    assert which(c, L.NOW + 11, p) is None, "empty"
+    assert full(c, ticket=b"ticket two", pool=p)[0] == p, "the same pool"
+    assert which(c, L.NOW + 12, p) == b"ticket two"
+
+
+@case("a handle never issued is a new pool, and names nothing")
+def pool_never_issued(c):
+    p, _ = full(c, pool=999)
+    assert p != 999, f"a new pool: {p}"
+    assert which(c, L.NOW + 10, 999) is None, "999 names nothing"
+    assert which(c, L.NOW + 11, p) == L.TICKET, "the new pool holds the ticket"
 
 
 def main():

@@ -2,7 +2,7 @@ edition 5;
 
 // `docs/tls-resumption.md` §3 and §4: the engine's rules for offering a
 // saved ticket, driven from standard input one line at a time, as
-// `tls_driver.ls` drives one connection. One slot, room for two tickets,
+// `tls_driver.ls` drives one connection. One slot, room for four tickets,
 // resumption on (`tls.set_resumption`), and the entropy fixed (the bytes 00 to 1f), so a conversation replays
 // byte for byte. Byte strings are lowercase hex (`-` for empty).
 //
@@ -12,6 +12,8 @@ edition 5;
 //     W <plaintext>                tls.send
 //     Q                            tls.finish
 //     V                            tls.save: the handle is the code
+//     S <pool>                     tls.save_to: the pool is the code
+//     P <n>                        tls.set_tickets_per_pool
 //     X <handle>                   tls.forget
 //     A <seconds>                  tls.set_ticket_max_age
 //     K                            whether the connection resumed: the code is 1 or 0
@@ -172,6 +174,10 @@ fn op[&i, &e, &s, &o](io: &!i Io, engine: &!e tls.Engine, s: &s [byte], out: &!o
         code = tls.finish(engine, 0);
     } else if kind == 86 {
         code = tls.save(engine, 0);
+    } else if kind == 83 {
+        code = tls.save_to(engine, 0, number(s, f));
+    } else if kind == 80 {
+        tls.set_tickets_per_pool(engine, number(s, f));
     } else if kind == 88 {
         tls.forget(engine, number(s, f));
     } else if kind == 65 {
@@ -215,7 +221,7 @@ fn flush[&i](io: &!i Io) -> [io_write] int {
 fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
     var line = box_slice(heap, 262144, byte_of(0));
     var out = box_slice(heap, 131072, byte_of(0));
-    var engine = tls.open_with_tickets(heap, 1, 2);
+    var engine = tls.open_with_tickets(heap, 1, 4);
     borrow mut engine as &!ew in {
         tls.set_resumption(ew, true);
         region r {

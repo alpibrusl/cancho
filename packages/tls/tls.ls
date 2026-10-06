@@ -68,8 +68,9 @@ pub fn open[&h](heap: &!h Heap, slots: int) -> [heap] Engine {
     return open_with_tickets(heap, slots, slots);
 }
 
-// `open`, with room for `tickets` saved tickets (`save`; at least 1, at
-// most 65,534). A save when the room is full replaces the oldest.
+// `open`, with room for `tickets` saved tickets (`save_to`; at least 1, at
+// most 65,534), shared by every pool. A save when the room is full
+// replaces the entry the clock hand points at.
 pub fn open_with_tickets[&h](heap: &!h Heap, slots: int, tickets: int) -> [heap] Engine {
     var n = slots;
     if n < 1 {
@@ -87,6 +88,8 @@ pub fn open_with_tickets[&h](heap: &!h Heap, slots: int, tickets: int) -> [heap]
         contents(w.meta)[m_slots()] = n;
         contents(w.tmeta)[t_capacity()] = t;
         contents(w.tmeta)[t_max_age()] = 3600;
+        contents(w.tmeta)[t_next_pool()] = 1;
+        contents(w.tmeta)[t_per_pool()] = 1;
     }
     return engine;
 }
@@ -378,8 +381,9 @@ fn e_host() -> [] int {
 
 // `tmeta`: [0] entries, [1] trust generation, [2] the longest a
 // verification is relied on, in seconds, [3] the next entry a full table
-// replaces, [4] 1 if `set_resumption` turned resumption on; then each
-// entry's fields.
+// replaces, [4] 1 if `set_resumption` turned resumption on, [5] the next
+// pool to issue, [6] the most tickets a pool holds, [7] the next save's
+// number; then each entry's fields.
 fn t_capacity() -> [] int {
     return 0;
 }
@@ -400,40 +404,45 @@ fn t_resume() -> [] int {
     return 4;
 }
 
-fn t_entries() -> [] int {
+fn t_next_pool() -> [] int {
     return 5;
 }
 
-// An entry's fields: generation, in use, ticket length, hash length, host
+fn t_per_pool() -> [] int {
+    return 6;
+}
+
+fn t_saves() -> [] int {
+    return 7;
+}
+
+fn t_entries() -> [] int {
+    return 8;
+}
+
+// An entry's fields: its pool, in use, ticket length, hash length, host
 // length, when received (Unix milliseconds: when its connection started,
 // so an age is never short), lifetime (seconds), ticket_age_add,
-// verified at, the leaf's notAfter, the trust generation it was saved under.
+// verified at, the leaf's notAfter, the trust generation it was saved
+// under, and the save's number (larger is newer).
 fn t_fields() -> [] int {
-    return 11;
+    return 12;
 }
 
 fn tf(e: int, field: int) -> [] int {
     return t_entries() + e * t_fields() + field;
 }
 
-// What a handle names: an entry in use under the same generation, or -1.
-fn entry_of[&e](engine: &e Engine, handle: int) -> [] int {
-    let e = handle % 65536 - 1;
-    if handle <= 0 || e < 0 || e >= contents(engine.tmeta)[t_capacity()] {
-        return 0 - 1;
-    }
-    if contents(engine.tmeta)[tf(e, 1)] != 1 || contents(engine.tmeta)[tf(e, 0)] != handle / 65536 {
-        return 0 - 1;
-    }
-    return e;
+// Whether entry `e` holds a ticket of `pool`.
+fn in_pool[&e](engine: &e Engine, e: int, pool: int) -> [] bool {
+    return contents(engine.tmeta)[tf(e, 1)] == 1 && contents(engine.tmeta)[tf(e, 0)] == pool;
 }
 
-// Overwrites entry `e` and frees it. Its generation stays, so a handle to
-// it is refused from now on.
+// Overwrites entry `e` and frees it.
 fn wipe[&e](engine: &!e Engine, e: int) -> [] int {
     let at = e * entry_bytes();
     tls_slot.zero(contents(engine.tickets)[at..at + entry_bytes()]);
-    var f = 1;
+    var f = 0;
     while f < t_fields() {
         contents(engine.tmeta)[tf(e, f)] = 0;
         f = f + 1;
@@ -462,11 +471,32 @@ pub fn set_ticket_max_age[&e](engine: &!e Engine, seconds: int) -> [] int {
     return 0;
 }
 
-// Keeps the newest ticket the connection in `slot` received, for a later
-// `start_with`: a handle (more than 0), or 0 when there is none to keep
-// (no ticket came, the connection failed, or it was TLS 1.2). A ticket is
-// saved once: a second `save` of the same connection answers 0.
+// The most tickets one pool holds (`docs/tls-resumption.md` §12; at
+// least 1, at most the table; 1 unless set). A save into a full pool
+// replaces its oldest.
+pub fn set_tickets_per_pool[&e](engine: &!e Engine, n: int) -> [] int {
+    var k = n;
+    if k < 1 {
+        k = 1;
+    }
+    if k > contents(engine.tmeta)[t_capacity()] {
+        k = contents(engine.tmeta)[t_capacity()];
+    }
+    contents(engine.tmeta)[t_per_pool()] = k;
+    return 0;
+}
+
+// `save_to` a new pool.
 pub fn save[&e](engine: &!e Engine, slot: int) -> [] int {
+    return save_to(engine, slot, 0);
+}
+
+// Keeps the newest ticket the connection in `slot` received in `pool`,
+// for a later `start_with`: the pool (more than 0), or 0 when there is
+// none to keep (no ticket came, the connection failed, or it was TLS
+// 1.2). A `pool` of 0, or one this engine never issued, is a new pool.
+// A ticket is saved once: a second save of the same connection answers 0.
+pub fn save_to[&e](engine: &!e Engine, slot: int, pool: int) -> [] int {
     if !slot_ok(engine, slot) || contents(engine.meta)[m_busy(slot)] == 0 {
         return 0;
     }
@@ -478,7 +508,16 @@ pub fn save[&e](engine: &!e Engine, slot: int) -> [] int {
     if n == 0 || state == tls_slot.state_failed() || flags & tls_slot.f_tls12() != 0 {
         return 0;
     }
+    var p = pool;
+    if p <= 0 || p >= contents(engine.tmeta)[t_next_pool()] {
+        p = contents(engine.tmeta)[t_next_pool()];
+        contents(engine.tmeta)[t_next_pool()] = p + 1;
+    }
     let cap = contents(engine.tmeta)[t_capacity()];
+    // A full pool loses its oldest.
+    while held(engine, p) >= contents(engine.tmeta)[t_per_pool()] {
+        wipe(engine, pick(engine, p, false));
+    }
     var e = 0;
     while e < cap && contents(engine.tmeta)[tf(e, 1)] == 1 {
         e = e + 1;
@@ -506,8 +545,7 @@ pub fn save[&e](engine: &!e Engine, slot: int) -> [] int {
         contents(engine.tickets)[at + e_host() + k] = contents(engine.bytes)[b + tls_slot.b_ticket_host() + k];
         k = k + 1;
     }
-    let gen = contents(engine.tmeta)[tf(e, 0)] + 1;
-    contents(engine.tmeta)[tf(e, 0)] = gen;
+    contents(engine.tmeta)[tf(e, 0)] = p;
     contents(engine.tmeta)[tf(e, 1)] = 1;
     contents(engine.tmeta)[tf(e, 2)] = n;
     contents(engine.tmeta)[tf(e, 3)] = h;
@@ -518,18 +556,51 @@ pub fn save[&e](engine: &!e Engine, slot: int) -> [] int {
     contents(engine.tmeta)[tf(e, 8)] = contents(engine.ints)[i + tls_slot.i_verified_at()];
     contents(engine.tmeta)[tf(e, 9)] = contents(engine.ints)[i + tls_slot.i_not_after()];
     contents(engine.tmeta)[tf(e, 10)] = contents(engine.tmeta)[t_trust()];
+    contents(engine.tmeta)[tf(e, 11)] = contents(engine.tmeta)[t_saves()];
+    contents(engine.tmeta)[t_saves()] = contents(engine.tmeta)[t_saves()] + 1;
     // Saved once: the slot's copy goes.
     contents(engine.ints)[i + tls_slot.i_ticket_len()] = 0;
     tls_slot.zero(contents(engine.bytes)[b + tls_slot.b_ticket()..b + tls_slot.b_ticket_host() + 256]);
-    return gen * 65536 + e + 1;
+    return p;
 }
 
-// Forgets a saved ticket, overwriting its secret. A handle already used,
-// forgotten or replaced is ignored.
-pub fn forget[&e](engine: &!e Engine, handle: int) -> [] int {
-    let e = entry_of(engine, handle);
-    if e >= 0 {
-        wipe(engine, e);
+// How many tickets `pool` holds.
+fn held[&e](engine: &e Engine, pool: int) -> [] int {
+    var n = 0;
+    var e = 0;
+    while e < contents(engine.tmeta)[t_capacity()] {
+        if in_pool(engine, e, pool) {
+            n = n + 1;
+        }
+        e = e + 1;
+    }
+    return n;
+}
+
+// The newest (or the oldest) entry of `pool`, or -1 if it holds none.
+fn pick[&e](engine: &e Engine, pool: int, newest: bool) -> [] int {
+    var found = 0 - 1;
+    var e = 0;
+    while e < contents(engine.tmeta)[t_capacity()] {
+        if in_pool(engine, e, pool) {
+            if found < 0 || contents(engine.tmeta)[tf(e, 11)] > contents(engine.tmeta)[tf(found, 11)] == newest {
+                found = e;
+            }
+        }
+        e = e + 1;
+    }
+    return found;
+}
+
+// Forgets every ticket of `pool`, overwriting their secrets. A pool that
+// holds none is ignored.
+pub fn forget[&e](engine: &!e Engine, pool: int) -> [] int {
+    var e = 0;
+    while e < contents(engine.tmeta)[t_capacity()] {
+        if pool > 0 && in_pool(engine, e, pool) {
+            wipe(engine, e);
+        }
+        e = e + 1;
     }
     return 0;
 }
@@ -554,18 +625,25 @@ fn may_offer[&e, &h](engine: &e Engine, e: int, host: &h [byte], now_ms: int) ->
     return same && now_s <= contents(engine.tmeta)[tf(e, 9)] && now_s < contents(engine.tmeta)[tf(e, 8)] + contents(engine.tmeta)[t_max_age()] && now_ms < received + contents(engine.tmeta)[tf(e, 6)] * 1000 && now_ms >= received;
 }
 
-// `start`, offering the ticket `handle` names if the rules of
-// `docs/tls-resumption.md` §3 allow it for `host` now; otherwise a full
-// handshake, as `start`. The ticket is used once: after this, `handle`
-// names nothing. `resumed` says, once established, whether the server
-// took it; a server that does not is a full handshake, verified.
-pub fn start_with[&e, &h](engine: &!e Engine, slot: int, host: &h [byte], now_unix_ms: int, handle: int) -> [] int {
-    let e = entry_of(engine, handle);
-    if e < 0 {
-        return start(engine, slot, host, now_unix_ms);
+// `start`, offering the newest ticket of `pool` that the rules of
+// `docs/tls-resumption.md` §3 allow for `host` now; otherwise a full
+// handshake, as `start`. The ticket is used once, and a ticket of the
+// pool the rules refuse is overwritten (§12). `resumed` says, once
+// established, whether the server took it; a server that does not is a
+// full handshake, verified.
+pub fn start_with[&e, &h](engine: &!e Engine, slot: int, host: &h [byte], now_unix_ms: int, pool: int) -> [] int {
+    var c = 0;
+    while c < contents(engine.tmeta)[t_capacity()] {
+        if pool > 0 && in_pool(engine, c, pool) && !may_offer(engine, c, host, now_unix_ms) {
+            wipe(engine, c);
+        }
+        c = c + 1;
     }
-    if !may_offer(engine, e, host, now_unix_ms) {
-        wipe(engine, e);
+    var e = 0 - 1;
+    if pool > 0 {
+        e = pick(engine, pool, true);
+    }
+    if e < 0 {
         return start(engine, slot, host, now_unix_ms);
     }
     if !slot_ok(engine, slot) || contents(engine.meta)[m_busy(slot)] != 0 {

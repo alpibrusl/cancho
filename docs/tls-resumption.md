@@ -1,7 +1,7 @@
 # TLS 1.3 session resumption for `packages/tls`: the design
 
 > **Status: built (#286), its results in §11.** Designed as below, then built; what building it found is §11, and the
-> sections it corrected say so in place.
+> sections it corrected say so in place. **Pools of tickets** (§12) answer §9's question 2 after hooks measured a burst.
 >
 > **The design, as first written:** #210 measured the pure client's full handshake at about 2.8 ms of CPU in `lexsys-hooks`, 4 to 7
 > times OpenSSL's, with no resumption (`docs/tls-hooks.md` §9). `docs/tls-pure.md` §7.2 left resumption out "until it is designed with
@@ -94,7 +94,8 @@ tls.set_ticket_max_age(engine, seconds)      // §3 rule 4; default 3,600
   server cannot make the engine grow. That is about 140 KiB for 64, beside the 11.2 MiB of slots (`docs/tls-pure.md` §7.4). *The
   2,048 is a guess at what real servers send; the build measures what each server of §5's matrix sends and corrects it here.*
 - **A handle is a generation-tagged index,** so a handle that was forgotten, or whose entry was reused, is refused (`0`), never
-  someone else's ticket.
+  someone else's ticket. *Changed by §12: a handle names a pool, a number the engine issues and never reuses, so a forgotten or
+  spent handle still names nothing of anyone else's.*
 - **`start` is unchanged.** `start_with` with handle 0 is `start`.
 
 ## 5. The protocol work in `packages/tls`
@@ -162,6 +163,9 @@ The build PR shows, each with its command:
    often for an endpoint delivered to rarely.
 2. **Several tickets per server.** *Proposed: keep only the newest.* RFC 8446 Appendix C.4's single use needs a new ticket per
    connection, and servers send one or two after each handshake, so the newest is always fresh for the next connection.
+   *Corrected, and decided: pools (§12).* The premise holds for one connection at a time, not for several at once: hooks runs up
+   to 8 deliveries to one endpoint together, they all start from the one saved ticket, and only the first may use it. A burst to
+   one endpoint resumed 401 of 600 deliveries (§11).
 3. **Option C (cache a verified chain) as well.** *Proposed: not now.* It saves 0.8 ms on connections A cannot resume, and it
    is a cache of a security verdict with its own rules (§3's rules 2 and 3 again). Decide after measuring how often A resumes.
 4. **Resumption on by default in hooks' pure build.** *Proposed: yes, as OpenSSL's is* (`tls-resume`, default on).
@@ -226,7 +230,7 @@ The build PR shows, each with its command:
 - **In `lexsys-hooks`** (its `docs/pure-tls.md`): a resumed delivery costs about 1.35 ms of the service's CPU against 3.0 ms for a
   full one. Under a burst to one endpoint fewer deliveries resume than with OpenSSL (401 of 600, against all of them), because a
   ticket is used once (rule 5) and hooks keeps one per endpoint, where OpenSSL reuses one session for every concurrent connection.
-  §9's question 2 is where that is decided.
+  §9's question 2 is where that is decided. *Decided: pools, §12.*
 - **Cost, measured** (the VM of §1; `tls_many`, 64 connections, against `openssl s_server -tls1_3 -www`, which chose
   `TLS_AES_256_GCM_SHA384`; the client's CPU over one round, two rounds resumed, and two rounds against `-num_tickets 0`;
   median of 5):
@@ -241,3 +245,42 @@ The build PR shows, each with its command:
   (`docs/tls-parity.md` §3.1). That is why the resumed connection costs 1.63 ms and not §2's 1.2: §2 counted the handshake
   alone. *A first run against `-no_ticket` gave a full handshake of 2.14 ms: OpenSSL's TLS 1.3 server still resumed 43 of 64
   through its session cache with tickets "off", so that baseline was not full handshakes. `-num_tickets 0` is.*
+
+## 12. Pools: several tickets for one server
+
+**The problem** (§9's question 2, §11's burst). A handle names one ticket, and a ticket is used once (rule 5). A caller that
+keeps one handle a server, as hooks keeps one an endpoint, resumes one connection of a burst: the others find the handle spent and
+make full handshakes. Every connection of the burst gets a ticket of its own, but each new one replaces the last.
+
+**The design: a handle names a pool.** The interface keeps its four calls and its integer:
+
+```
+tls.save_to(engine, slot, pool) -> pool | 0       // keep the slot's ticket in `pool` (0, or a handle never issued: a new pool)
+tls.save(engine, slot) -> pool | 0                // save_to(engine, slot, 0), as before
+tls.start_with(engine, slot, host, now_ms, pool)  // offer the newest ticket of the pool that §3's rules allow, used once
+tls.forget(engine, pool)                          // every ticket of the pool, overwritten
+tls.set_tickets_per_pool(engine, n)               // at most n tickets a pool; 1 unless set
+```
+
+- **A pool is a number the engine issues** (1, 2, 3, …, never reused), and each entry of the table records its pool. A handle
+  is no longer a generation-tagged index: a pool that was forgotten, or all of whose tickets were used or replaced, holds
+  nothing, so `start_with` makes a full handshake, never with another pool's ticket. `save_to` into such a pool fills it again,
+  which is what a caller holding one handle a server wants.
+- **`start_with` takes the newest ticket of the pool that passes §3's rules,** and overwrites it. A ticket of the pool that fails
+  a rule is overwritten too, as a refused handle's ticket was: none of the rules becomes true later except a clock that went
+  back (rule 4's `now >= received`), and a ticket from before a clock went back is not worth keeping.
+- **A pool holds at most `n` tickets** (`set_tickets_per_pool`): a save into a full pool overwrites its oldest. With `n` = 1, the
+  default, a pool is today's handle: the newest ticket replaces the one before. hooks sets 8, its cap on deliveries in flight to
+  one endpoint (its `docs/design.md`), so a burst of 8 can find 8 tickets.
+- **The table stays one table of `tickets` entries,** shared by every pool: a save into a full table overwrites the entry the clock
+  hand points at, as before. A pool cannot hold more than `n`, so one busy server takes at most `n` entries from the rest.
+- **Nothing in §3 changes.** Every rule is checked per ticket; a pool is only which tickets a handle may name. The host name
+  (rule 1) is still checked against the ticket, so a caller that files two servers under one pool offers neither the other's.
+- **Cost.** `start_with` and `save_to` walk the table (hooks: 1,024 entries of 12 integers), against a handshake's 1.6 ms.
+
+**How it is tested.** `tests/programs/tls_tickets.ls` gains `S <pool>` (`save_to`) and `P <n>` (`set_tickets_per_pool`), and
+`scripts/tls_tickets.py` cases for: a pool of three resuming three connections, newest first, then none; a pool over its size
+losing its oldest; `forget` emptying a pool; a pool's spent ticket beside a good one; a pool refilled after it was emptied; and a
+handle never issued. The liar's server issues each ticket with a different identity, so a case reads from the ClientHello which
+ticket was offered. Mutants for each of those decisions. In hooks: the burst of §11 again, against the 401 of 600.
+
