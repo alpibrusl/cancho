@@ -112,6 +112,12 @@ fn cmd_build() -> CommandInfo {
         "which backend generates code",
         Some(json!("llvm")),
     )
+    .add_option(
+        "target",
+        "string",
+        "generate code for this target triple (`--backend llvm` only; `wasm32-wasip1`, docs/wasm.md)",
+        None,
+    )
     .with_examples(vec![
         ("Build an executable", "lex-sys build hello.ls"),
         ("Build with the standard library available", "lex-sys build --std app.ls"),
@@ -140,6 +146,12 @@ fn cmd_check() -> CommandInfo {
         "which backend generates the code check discards",
         Some(json!("llvm")),
     )
+    .add_option(
+        "target",
+        "string",
+        "generate code for this target triple (`--backend llvm` only; `wasm32-wasip1`, docs/wasm.md)",
+        None,
+    )
     .with_examples(vec![
         ("Type-check a file", "lex-sys check hello.ls"),
         ("Every refusal as structured data", "lex-sys check --output json app.ls"),
@@ -165,6 +177,12 @@ fn cmd_run() -> CommandInfo {
         "enum[cranelift|llvm]",
         "which backend generates code",
         Some(json!("llvm")),
+    )
+    .add_option(
+        "target",
+        "string",
+        "generate code for this target triple (`--backend llvm` only; `wasm32-wasip1`, docs/wasm.md)",
+        None,
     )
     .with_examples(vec![("Run a program", "lex-sys run hello.ls")])
     .with_see_also(vec!["build", "check"])

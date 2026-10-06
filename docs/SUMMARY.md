@@ -128,6 +128,7 @@
 - [Poison instead of a trap](poison.md)
 - [What Cranelift can and cannot do](backend-limits.md)
 - [The LLVM backend](llvm-backend.md)
+- [WebAssembly target](wasm.md)
 - [Every emitted check, priced](emitted-checks.md)
 - [Whether lex-sys can run on a GPU](gpu.md)
 - [The constant folder against the backend](differential.md)

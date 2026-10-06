@@ -1123,3 +1123,58 @@ fn a_value_returned_from_a_region_is_read_before_the_region_is_freed() {
     }
     assert_eq!(output.status.code(), Some((total & 127) as i32), "{output:?}");
 }
+
+/// `docs/wasm.md`: what wasi-libc needs from the module the backend writes,
+/// checked on the text so it runs without a wasm toolchain.
+///
+/// Three things went wrong on the first `wasm32-wasip1` run, each silently:
+/// the entry was called `main` where wasi-libc calls `__main_argc_argv`; `malloc`
+/// was declared with an `i64` size where `size_t` is 4 bytes, which `wasm-ld`
+/// only warns about before swapping in a trap; and the trap was `ud2`.
+#[test]
+fn a_wasm32_module_has_the_shape_wasi_libc_needs() {
+    const SOURCE: &str = "fn main(world: World) -> [] int {\n\
+             let Split { io, ffi, fs, heap, args } = split(world);\n\
+             release(args); release(heap); release(fs); release(ffi); release(io);\n\
+             var n = 0;\n\
+             region a {\n\
+                 let s = alloc_slice[a](8, byte_of(1));\n\
+                 n = n + len(s);\n\
+             }\n\
+             return n;\n\
+         }\n";
+    let ast = parse(SOURCE).expect("should parse");
+    let program = lex_sys_ir::lower(&ast).expect("should lower");
+
+    let wasm: Triple = "wasm32-wasip1".parse().expect("a valid triple");
+    let text = emit::emit_module(&program, "main", &wasm).expect("wasm32 should emit");
+    assert!(text.contains("define i32 @__main_argc_argv("), "the entry symbol wasi-libc calls");
+    assert!(!text.contains("define i32 @main("), "no plain `main` on wasm");
+    assert!(text.contains("declare ptr @malloc(i32)"), "`malloc` with a 32-bit `size_t`");
+    assert!(!text.contains("declare ptr @malloc(i64)"), "no 64-bit `malloc`");
+    assert!(text.contains("@lexsys_wasm32_malloc("), "calls go through the clamping wrapper");
+    assert!(
+        !text
+            .lines()
+            .any(|l| l.contains("call ptr @malloc(") && !l.trim_start().starts_with("%r = call")),
+        "only the wrapper itself may call the real `malloc`"
+    );
+    assert!(text.contains("icmp ugt i64 %a0, 4294967295"), "a huge size is clamped, not truncated");
+
+    // The host's own module is untouched by any of this.
+    let host: Triple = "x86_64-unknown-linux-gnu".parse().expect("a valid triple");
+    let native = emit::emit_module(&program, "main", &host).expect("native should emit");
+    assert!(native.contains("define i32 @main("), "{native}");
+    assert!(native.contains("declare ptr @malloc(i64)"));
+    assert!(!native.contains("lexsys_wasm32_"), "no wasm shims on a native module");
+}
+
+#[test]
+fn wasm32_traps_with_unreachable() {
+    let ast = parse(&program_returning("x + 9223372036854775807")).expect("should parse");
+    let program = lex_sys_ir::lower(&ast).expect("should lower");
+    let wasm: Triple = "wasm32-wasip1".parse().expect("a valid triple");
+    let text = emit::emit_module(&program, "main", &wasm).expect("wasm32 should emit");
+    assert!(text.contains("asm sideeffect \"unreachable\""), "{text}");
+    assert!(!text.contains("ud2"), "no x86 trap in a wasm module");
+}

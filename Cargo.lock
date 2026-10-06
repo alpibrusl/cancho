@@ -643,6 +643,7 @@ dependencies = [
  "lex-sys-vcs",
  "serde",
  "serde_json",
+ "target-lexicon",
  "tempfile",
  "toml",
 ]
