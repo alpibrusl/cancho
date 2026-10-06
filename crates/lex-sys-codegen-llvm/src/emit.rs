@@ -685,6 +685,7 @@ pub(crate) fn emit_module(
 
     if triple.architecture == target_lexicon::Architecture::Wasm32 {
         text = wasm32_size_t_shims(&text);
+        text.push_str(&smul_overflow_definition());
     }
     Ok(text)
 }
@@ -823,4 +824,65 @@ fn wasi_errno_translation() -> String {
     }
     text.push_str("other:\n  ret i32 %e\n}\n\n");
     text
+}
+
+/// `@lexsys_smul_overflow`: a signed 64-bit multiply that reports overflow,
+/// with no libcall (`docs/wasm.md`, W0.3).
+///
+/// `llvm.smul.with.overflow.i64` is one `imul` and a flag on x86-64 and
+/// AArch64, but on `wasm32` LLVM expands it through a 128-bit multiply, a call
+/// to `__multi3` in compiler-rt's builtins, which the wasi-libc sysroot does not
+/// ship, so four accept fixtures failed to link. This is the same answer
+/// computed from 32-bit halves, so the module needs nothing from outside it.
+///
+/// On magnitudes `|a| * |b|`, as unsigned (`|INT_MIN|` is 2^63, which fits):
+/// split each into high and low 32 bits. If both highs are non-zero the product
+/// is at least 2^64. Otherwise one cross term is zero, the other is a single
+/// 32x32 product, and it must itself fit in 32 bits to be shifted up; the low
+/// product is added, and a carry out is overflow. What is left is a magnitude
+/// that must fit the signed range for its sign: at most 2^63 if negative, at
+/// most 2^63-1 if not. The result is that magnitude, negated if negative, and
+/// is only meaningful when there was no overflow (the intrinsic says the same).
+///
+/// Checked against the intrinsic itself over the edge values and two million
+/// random pairs by `the_inline_multiply_agrees_with_llvms_intrinsic`.
+pub(crate) fn smul_overflow_definition() -> String {
+    "define internal {i64, i1} @lexsys_smul_overflow(i64 %a, i64 %b) {
+entry:
+  %an = icmp slt i64 %a, 0
+  %bn = icmp slt i64 %b, 0
+  %neg = xor i1 %an, %bn
+  %na = sub i64 0, %a
+  %nb = sub i64 0, %b
+  %ua = select i1 %an, i64 %na, i64 %a
+  %ub = select i1 %bn, i64 %nb, i64 %b
+  %ah = lshr i64 %ua, 32
+  %al = and i64 %ua, 4294967295
+  %bh = lshr i64 %ub, 32
+  %bl = and i64 %ub, 4294967295
+  %ahz = icmp ne i64 %ah, 0
+  %bhz = icmp ne i64 %bh, 0
+  %both = and i1 %ahz, %bhz
+  %c1 = mul i64 %ah, %bl
+  %c2 = mul i64 %al, %bh
+  %cross = add i64 %c1, %c2
+  %crossbig = icmp ugt i64 %cross, 4294967295
+  %low = mul i64 %al, %bl
+  %up = shl i64 %cross, 32
+  %m = add i64 %low, %up
+  %carry = icmp ult i64 %m, %low
+  %limit = select i1 %neg, i64 9223372036854775808, i64 9223372036854775807
+  %toobig = icmp ugt i64 %m, %limit
+  %o1 = or i1 %both, %crossbig
+  %o2 = or i1 %o1, %carry
+  %ovf = or i1 %o2, %toobig
+  %nm = sub i64 0, %m
+  %r = select i1 %neg, i64 %nm, i64 %m
+  %p0 = insertvalue {i64, i1} undef, i64 %r, 0
+  %p1 = insertvalue {i64, i1} %p0, i1 %ovf, 1
+  ret {i64, i1} %p1
+}
+
+"
+    .to_owned()
 }

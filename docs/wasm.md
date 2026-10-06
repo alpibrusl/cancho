@@ -11,7 +11,7 @@ wasm build gives **both** -- the static row from `lex-sys authority`, and a
 module whose import section the runtime enforces -- and makes `row ⊆ imports`
 a mechanical check. Defence in depth without a Firecracker VM per unit.
 
-Status: **W0, W0.1, the errno decision and W0.2 are built** (§W0 results). W1 onward is the plan below.
+Status: **W0, W0.1, the errno decision, W0.2 and W0.3 are built** (§W0 results). W1 onward is the plan below.
 
 ---
 
@@ -25,14 +25,15 @@ capability; that grant is the harness's, not the compiler's:
 
 | | count | meaning |
 |---|---|---|
-| **pass** | 79 | built, ran, stdout and exit code match the fixture's `//~` annotations |
-| **refused** | 24 | 16 are located `unsupported-on-target` refusals from the compiler (W0.2); 8 are still the toolchain's own message |
+| **pass** | 83 | built, ran, stdout and exit code match the fixture's `//~` annotations |
+| **refused** | 20 | 16 are located `unsupported-on-target` refusals from the compiler (W0.2); 4 are still the toolchain's own message |
 | **wrong** | 1 | built and ran and disagreed with the annotations: a program's own `memchr`, below |
 | trap | 0 | no accept fixture expects a trap |
 
 The first run was 35 / 9 / 60. One cause, `size_t`, was behind 38 of the 60;
 the OS-constant tables (W0.1) took 73 to 78 and cleared `slicing`, the errno
-translation took it to 79, and W0.2 turned nine thread traps into located refusals.
+translation took it to 79, W0.2 turned nine thread traps into located refusals, and
+W0.3 took the four `__multi3` link errors to passes.
 
 ### What W0 changed
 
@@ -112,6 +113,22 @@ translation took it to 79, and W0.2 turned nine thread traps into located refusa
   What it does not cover: an `extern fn` names a C symbol, and whether that
   symbol exists on the target is the linker's to say, which is the one place a
   target gap is still a link error (the four `extern fn` rows below).
+- **W0.3: `__multi3` is gone.** On wasm32 LLVM lowers a 64-bit
+  `smul.with.overflow` through a 128-bit multiply, a call to `__multi3` in
+  compiler-rt's builtins, which the wasi-libc sysroot does not ship, so four
+  fixtures (`borrowed_fields`, `collections`, `f32_text`, `math_floats`) failed
+  to link. The alternative to an inline multiply was installing compiler-rt
+  builtins (`wasi-runtimes` or wasi-sdk); that would have made every user of the
+  target need one more package. Instead the module defines
+  `@lexsys_smul_overflow`, the same answer from 32-bit halves, used only on
+  wasm32 (`checked_arith`, the one place a checked multiply is emitted;
+  native output is unchanged). It is checked against LLVM's own intrinsic on the
+  host over the 400 pairs of twenty edge values (both extremes, the square root
+  of `i64::MAX` either side, 2^32 either side) and two million random pairs of
+  random magnitude: the overflow flag always, the value wherever it is defined.
+  A second test breaks the algorithm on purpose and requires the harness to
+  notice, because a differential test that cannot fail proves nothing. Cost is
+  unmeasured; W3's overhead table is where it gets measured.
 - **An operating system with no tables is refused**, in `emit_module`,
   instead of taking the Linux numbers. (`x86_64-unknown-freebsd` used to
   build.) The per-site `_ => linux` arms that remain are behind that guard.
@@ -123,7 +140,7 @@ Environment: `CLANG` (a clang with the wasm32 target, e.g. Homebrew's `llvm`;
 Apple's has none), `WASM_LD`, `WASI_SYSROOT` (a wasi-libc sysroot holding
 `lib/wasm32-wasip1/crt1-command.o`), and `wasmtime`.
 
-### The 24 refused
+### The 20 refused
 
 | cause | fixtures | kind |
 |---|---|---|
@@ -131,7 +148,6 @@ Apple's has none), `WASM_LD`, `WASI_SYSROOT` (a wasi-libc sysroot holding
 | sockets | `connect_a_refused_address`, `listen_accept_bad_fd` | **located** (W0.2) |
 | processes and pipes | `process_spawn` | **located** (W0.2) |
 | signals | `signals_claim` | **located** (W0.2) |
-| `__multi3` undefined | `borrowed_fields`, `collections`, `f32_text`, `math_floats` | toolchain. Checked 64-bit multiply lowers to a libcall on wasm32 and the sysroot has no compiler-rt builtins (`libclang_rt.builtins-wasm32.a`). Not installed here; `wasi-runtimes` or wasi-sdk is the likely fix, or an inline checked multiply (W0.3) |
 | `extern fn` signature | `foreign_narrow_return` (`access`), `bytes_to_c` (`write`), `opaque_pointer` (`fdopen`), `foreign_two_libraries` (`pthread_self`) | toolchain. A program's own `extern fn` declares C's `int`/`long` as `i64`; wasi-libc's is `i32` (or the function does not exist). The declaration is a claim about a native ABI, and only the linker can say |
 
 ### The 1 wrong
@@ -151,14 +167,14 @@ which are now located refusals rather than run-time traps.
    `hello` worked only because wasi-libc happens to export `stdout`, `stderr`
    and `__errno_location`. **Partly fixed:** the file and directory tables are
    an exhaustive `match` on `Os`, and `emit_module` refuses any OS that is not
-   Linux, Darwin or WASI. Still open: the `is_darwin()` sites for sockets,
-   signals, the poller and processes, which on WASI still read Linux numbers
-   until W0.2 turns them into refusals.
+   Linux, Darwin or WASI. The `is_darwin()` sites for sockets, signals,
+   the poller and processes still read Linux numbers on WASI, but W0.2 refuses
+   their builtins first, so nothing reaches them.
 2. **A link error is not a refusal.** *Fixed for builtins (W0.2):*
    `check --target` rejects a builtin with no WASI meaning with its function's
    source location and a rule tag, before a linker is involved, and the table
    is code a test checks (`wasi_gap`, exhaustive). Still link errors: `extern
-   fn` signatures and `__multi3`, 8 fixtures.
+   fn` signatures, 4 fixtures (`__multi3` was the other 4: W0.3).
 3. **`--fatal-warnings` is the cheapest safety net on the table**, and
    worth keeping even after the `size_t` fix: it is what stops a *future*
    libc call with a hardcoded width from shipping as a trap.

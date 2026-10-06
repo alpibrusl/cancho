@@ -1226,3 +1226,125 @@ fn errno_is_translated_on_wasi_and_only_there() {
     let native = emit::emit_module(&program, "main", &host).expect("native should emit");
     assert!(!native.contains("lexsys_wasi_errno"), "no translation off WASI");
 }
+
+/// A module that runs [`emit::smul_overflow_definition`] against LLVM's own
+/// `smul.with.overflow` on the host and answers whether they ever disagreed:
+/// the 400 pairs of twenty edge values (both extremes, the square root of
+/// `i64::MAX` either side, powers of two, 2^32 either side) and then random
+/// pairs whose magnitudes are themselves random, so every bit-width of
+/// operand is reached. They must agree on the overflow flag always, and on the
+/// value whenever there was no overflow (what the intrinsic leaves unspecified
+/// otherwise).
+fn smul_differential(definition: &str, tag: &str) -> std::process::Output {
+    let host = lex_sys_codegen::host_triple();
+    let module = format!(
+        r#"target triple = "{host}"
+
+{definition}
+declare {{i64, i1}} @llvm.smul.with.overflow.i64(i64, i64)
+
+@edges = internal constant [20 x i64] [i64 0, i64 1, i64 -1, i64 2, i64 -2, i64 3,
+  i64 9223372036854775807, i64 -9223372036854775808, i64 9223372036854775806,
+  i64 -9223372036854775807, i64 2147483648, i64 4294967296, i64 -4294967296,
+  i64 4611686018427387904, i64 -4611686018427387904, i64 4294967295,
+  i64 3037000499, i64 3037000500, i64 -3037000500, i64 -2147483648]
+
+define i32 @main(i32 %argc, ptr %argv) {{
+entry:
+  br label %loop
+loop:
+  %i = phi i64 [0, %entry], [%i1, %loop]
+  %sa = phi i64 [88172645463325252, %entry], [%sa2, %loop]
+  %sb = phi i64 [1181783497276652981, %entry], [%sb2, %loop]
+  %bad = phi i64 [0, %entry], [%bad1, %loop]
+  %a1 = shl i64 %sa, 13
+  %a2 = xor i64 %sa, %a1
+  %a3 = lshr i64 %a2, 7
+  %a4 = xor i64 %a2, %a3
+  %a5 = shl i64 %a4, 17
+  %sa2 = xor i64 %a4, %a5
+  %b1 = shl i64 %sb, 13
+  %b2 = xor i64 %sb, %b1
+  %b3 = lshr i64 %b2, 7
+  %b4 = xor i64 %b2, %b3
+  %b5 = shl i64 %b4, 17
+  %sb2 = xor i64 %b4, %b5
+  %sha = lshr i64 %sb2, 58
+  %shb = lshr i64 %sa2, 58
+  %ra = ashr i64 %sa2, %sha
+  %rb = ashr i64 %sb2, %shb
+  %ia0 = udiv i64 %i, 20
+  %ia = urem i64 %ia0, 20
+  %ib = urem i64 %i, 20
+  %pa = getelementptr i64, ptr @edges, i64 %ia
+  %pb = getelementptr i64, ptr @edges, i64 %ib
+  %ea = load i64, ptr %pa
+  %eb = load i64, ptr %pb
+  %edge = icmp ult i64 %i, 400
+  %a = select i1 %edge, i64 %ea, i64 %ra
+  %b = select i1 %edge, i64 %eb, i64 %rb
+  %want = call {{i64, i1}} @llvm.smul.with.overflow.i64(i64 %a, i64 %b)
+  %got = call {{i64, i1}} @lexsys_smul_overflow(i64 %a, i64 %b)
+  %wo = extractvalue {{i64, i1}} %want, 1
+  %go = extractvalue {{i64, i1}} %got, 1
+  %wv = extractvalue {{i64, i1}} %want, 0
+  %gv = extractvalue {{i64, i1}} %got, 0
+  %flag_diff = xor i1 %wo, %go
+  %val_diff0 = icmp ne i64 %wv, %gv
+  %nov = xor i1 %wo, true
+  %val_diff = and i1 %val_diff0, %nov
+  %diff = or i1 %flag_diff, %val_diff
+  %d64 = zext i1 %diff to i64
+  %bad1 = add i64 %bad, %d64
+  %i1 = add i64 %i, 1
+  %more = icmp ult i64 %i1, 2000000
+  br i1 %more, label %loop, label %done
+done:
+  %any = icmp ne i64 %bad1, 0
+  %r = zext i1 %any to i32
+  ret i32 %r
+}}
+"#
+    );
+    let object = run_clang(&module, &host).expect("clang should accept the differential module");
+    run(&object, tag)
+}
+
+/// W0.3: the multiply `wasm32` uses instead of `__multi3` is LLVM's own, bit
+/// for bit, where it is defined.
+#[test]
+fn the_inline_multiply_agrees_with_llvms_intrinsic() {
+    let out = smul_differential(&emit::smul_overflow_definition(), "smul-agrees");
+    assert_eq!(out.status.code(), Some(0), "the inline multiply disagreed with LLVM's: {out:?}");
+}
+
+/// The test above would pass if it could not fail, so break the algorithm and
+/// require that it does: the signed limit for a negative product is 2^63, not
+/// 2^63-1, and `INT_MIN * 1` is the pair that says so.
+#[test]
+fn the_differential_test_can_fail() {
+    let broken = emit::smul_overflow_definition().replace(
+        "select i1 %neg, i64 9223372036854775808, i64 9223372036854775807",
+        "select i1 %neg, i64 9223372036854775807, i64 9223372036854775807",
+    );
+    assert_ne!(broken, emit::smul_overflow_definition(), "the replacement did not apply");
+    let out = smul_differential(&broken, "smul-broken");
+    assert_eq!(out.status.code(), Some(1), "a wrong multiply went unnoticed: {out:?}");
+}
+
+/// A `wasm32` module uses it, and a native one never does.
+#[test]
+fn only_wasm32_swaps_the_multiply() {
+    let ast = parse(&program_returning("(4611686018427387904 + x) * 2")).expect("should parse");
+    let program = lex_sys_ir::lower(&ast).expect("should lower");
+    let wasm: Triple = "wasm32-wasip1".parse().expect("a valid triple");
+    let text = emit::emit_module(&program, "main", &wasm).expect("wasm32 should emit");
+    assert!(text.contains("call {i64, i1} @lexsys_smul_overflow("), "{text}");
+    assert!(text.contains("define internal {i64, i1} @lexsys_smul_overflow("));
+    assert!(!text.contains("call {i64, i1} @llvm.smul.with.overflow"), "no `__multi3` path left");
+    // Add and subtract are single instructions on wasm and keep the intrinsic.
+    let host: Triple = "x86_64-unknown-linux-gnu".parse().expect("a valid triple");
+    let native = emit::emit_module(&program, "main", &host).expect("native should emit");
+    assert!(native.contains("call {i64, i1} @llvm.smul.with.overflow"), "{native}");
+    assert!(!native.contains("lexsys_smul_overflow"), "no shim off wasm32");
+}
