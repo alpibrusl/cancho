@@ -8,8 +8,9 @@
 //! values are not shared.
 
 use crate::{
-    DirentTypes, Os, WASI_ERRNO_TO_LINUX, dirent_layout_for, dirent_types, enametoolong_for,
-    linux_errno_from_wasi, open_flags, open_flags_for, stat_layout, stat_layout_for,
+    DirentTypes, OpenMode, Os, WASI_ERRNO_TO_LINUX, dirent_layout_for, dirent_types,
+    enametoolong_for, linux_errno_from_wasi, open_flags, open_flags_for, stat_layout,
+    stat_layout_for,
 };
 
 #[test]
@@ -143,4 +144,27 @@ fn only_wasi_refuses_anything_and_what_it_refuses_is_a_gap() {
         43,
         "the refused set moved: update docs/wasm.md with it"
     );
+}
+
+#[test]
+fn an_open_mode_is_the_flags_its_fopen_string_means() {
+    // `wb`, `ab`, `wbx` and `r+b`, on a target where read-write is not 2: WASI's
+    // `O_RDWR` is `O_RDONLY | O_WRONLY`, so a backend that wrote `2` would ask for
+    // an access mode that does not exist there.
+    let w = open_flags_for(Os::Wasi, false);
+    assert_eq!(w.read_write, w.read_only | w.write_only, "O_RDWR on WASI");
+    assert_eq!(OpenMode::Write.open_flags(&w), w.write_only | w.create | w.truncate);
+    assert_eq!(OpenMode::Append.open_flags(&w), w.write_only | w.create | w.append);
+    assert_eq!(OpenMode::New.open_flags(&w), w.write_only | w.create | w.exclusive);
+    assert_eq!(OpenMode::ReadWrite.open_flags(&w), 0x1400_0000);
+    assert_eq!(OpenMode::Read.open_flags(&w), 0x0400_0000, "a read-only open asks for rights");
+
+    // Linux and Darwin: O_RDWR is 2, the others as ever, and `Read` stays zero.
+    for (os, aarch64) in [(Os::Linux, false), (Os::Linux, true), (Os::Darwin, false)] {
+        let f = open_flags_for(os, aarch64);
+        assert_eq!(f.read_write, 2, "{os:?}");
+        assert_eq!(OpenMode::ReadWrite.open_flags(&f), 2);
+        assert_eq!(OpenMode::Read.open_flags(&f), 0);
+        assert_eq!(OpenMode::Write.open_flags(&f), f.write_only | f.create | f.truncate);
+    }
 }

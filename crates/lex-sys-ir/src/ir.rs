@@ -158,6 +158,26 @@ impl OpenMode {
             OpenMode::Directory => "rb",
         }
     }
+
+    /// The `openat` flags that mean what [`fopen_mode`](Self::fopen_mode)'s string
+    /// means, for a target whose flags are `f`: `wb` is write-only, create,
+    /// truncate; `ab` is write-only, create, append; `wbx` is write-only, create,
+    /// exclusive; `r+b` is read-write and nothing else. (`cloexec` and the creation
+    /// mode are the caller's.)
+    ///
+    /// The WASI path opens a file this way rather than through `fopen` and a `dup`
+    /// of its descriptor: WASI has no `dup`, `fcntl(F_DUPFD_CLOEXEC)` answers
+    /// `EINVAL`, and `fopen` brings stdio's imports with it (`docs/wasm.md`).
+    pub fn open_flags(self, f: &OpenFlags) -> i64 {
+        match self {
+            OpenMode::Read => f.read_only,
+            OpenMode::Write => f.write_only | f.create | f.truncate,
+            OpenMode::Append => f.write_only | f.create | f.append,
+            OpenMode::New => f.write_only | f.create | f.exclusive,
+            OpenMode::ReadWrite => f.read_write,
+            OpenMode::Directory => f.read_only | f.directory,
+        }
+    }
 }
 
 /// The library an unnarrowed `Ffi` names: none of them yet.
@@ -1032,6 +1052,9 @@ pub fn is_zero_fill(fill: &Expr) -> bool {
 pub struct OpenFlags {
     /// `O_RDONLY`: zero except on WASI.
     pub read_only: i64,
+    /// `O_RDWR`: 2 on Linux and Darwin, but on WASI it is `O_RDONLY | O_WRONLY`
+    /// (`0x14000000`), because there neither access mode is zero.
+    pub read_write: i64,
     pub directory: i64,
     pub nofollow: i64,
     pub write_only: i64,
@@ -1067,6 +1090,7 @@ pub fn open_flags_for(os: Os, aarch64: bool) -> OpenFlags {
         // `AT_FDCWD` is -2, as on Darwin.
         return OpenFlags {
             read_only: 0x0400_0000,
+            read_write: 0x1400_0000,
             directory: 0x2000,
             nofollow: 0x0100_0000,
             write_only: 0x1000_0000,
@@ -1081,6 +1105,7 @@ pub fn open_flags_for(os: Os, aarch64: bool) -> OpenFlags {
     if os == Os::Darwin {
         OpenFlags {
             read_only: 0,
+            read_write: 2,
             directory: 0x0010_0000,
             nofollow: 0x0100,
             write_only: 1,
@@ -1094,6 +1119,7 @@ pub fn open_flags_for(os: Os, aarch64: bool) -> OpenFlags {
     } else if aarch64 {
         OpenFlags {
             read_only: 0,
+            read_write: 2,
             directory: 0o40000,
             nofollow: 0o100000,
             write_only: 1,
@@ -1107,6 +1133,7 @@ pub fn open_flags_for(os: Os, aarch64: bool) -> OpenFlags {
     } else {
         OpenFlags {
             read_only: 0,
+            read_write: 2,
             directory: 0o200000,
             nofollow: 0o400000,
             write_only: 1,

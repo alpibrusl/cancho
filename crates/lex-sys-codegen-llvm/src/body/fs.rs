@@ -256,6 +256,11 @@ impl<'a> FuncEmitter<'a> {
             return Ok(self.open_directory(&path));
         }
         if mode != lex_sys_ir::OpenMode::Read {
+            // WASI has no `dup`, which `fopen`'s bridge needs, so it opens with
+            // `openat` and the mode's own flags (`OpenMode::open_flags`).
+            if self.file_os() == lex_sys_ir::Os::Wasi {
+                return Ok(self.open_with_openat(&path, mode));
+            }
             return Ok(self.open_with_fopen(&path, mode));
         }
 

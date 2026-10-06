@@ -78,6 +78,23 @@ impl<'a> FuncEmitter<'a> {
         vec![LValue::Reg(tag), LValue::Const(0), LValue::Reg(why)]
     }
 
+    /// `open_with_fopen`'s answer for a target with no `dup` (WASI): the descriptor
+    /// straight from `openat(AT_FDCWD, path, flags, mode)`, the flags being what
+    /// the mode's `fopen` string means (`OpenMode::open_flags`), the same three
+    /// leaves. A file the call creates gets mode `0644`, as `fopen` gives it.
+    pub(crate) fn open_with_openat(&mut self, path: &str, mode: OpenMode) -> Vec<LValue> {
+        let f = self.open_flags();
+        let flags = mode.open_flags(&f) | f.cloexec;
+        let fd32 = self.open_at_cwd(path, flags, lex_sys_ir::CREATE_MODE);
+        let fd = self.widen(&fd32);
+        let failed = self.fresh();
+        self.out.push_str(&format!("  {failed} = icmp slt i64 {fd}, 0\n"));
+        let tag = self.fresh();
+        self.out.push_str(&format!("  {tag} = select i1 {failed}, i64 1, i64 0\n"));
+        let reason = self.errno();
+        vec![LValue::Reg(tag), LValue::Reg(fd), reason]
+    }
+
     fn widen(&mut self, narrow: &str) -> String {
         let wide = self.fresh();
         self.out.push_str(&format!("  {wide} = sext i32 {narrow} to i64\n"));
