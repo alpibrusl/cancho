@@ -220,12 +220,14 @@ impl<'a> FuncEmitter<'a> {
 
         self.out.push_str(&format!("{opened}:\n"));
         let name = if write { "write" } else { "read" };
-        let moved = self.fresh();
+        let st = self.size_ty();
+        let size = self.size_arg(&operand(&bytes[1]));
+        let raw = self.fresh();
         self.out.push_str(&format!(
-            "  {moved} = call i64 @{name}(i32 {fd}, ptr {}, i64 {})\n",
-            operand(&bytes[0]),
-            operand(&bytes[1])
+            "  {raw} = call {st} @{name}(i32 {fd}, ptr {}, {st} {size})\n",
+            operand(&bytes[0])
         ));
+        let moved = self.size_result(&raw, true);
         self.out.push_str(&format!("  call i32 @close(i32 {fd})\n"));
         self.out.push_str(&format!("  store i64 {moved}, ptr {result_cell}\n"));
         self.out.push_str(&format!("  br label %{merge}\n"));
@@ -281,12 +283,14 @@ impl<'a> FuncEmitter<'a> {
         let fd = self.fresh();
         self.out.push_str(&format!("  {fd} = trunc i64 {fd64} to i32\n"));
 
-        let moved = self.fresh();
+        let st = self.size_ty();
+        let want = self.size_arg(&operand(&args[2]));
+        let raw = self.fresh();
         self.out.push_str(&format!(
-            "  {moved} = call i64 @read(i32 {fd}, ptr {}, i64 {})\n",
-            operand(&args[1]),
-            operand(&args[2])
+            "  {raw} = call {st} @read(i32 {fd}, ptr {}, {st} {want})\n",
+            operand(&args[1])
         ));
+        let moved = self.size_result(&raw, true);
 
         let negative = self.fresh();
         self.out.push_str(&format!("  {negative} = icmp slt i64 {moved}, 0\n"));

@@ -11,7 +11,7 @@ wasm build gives **both** -- the static row from `lex-sys authority`, and a
 module whose import section the runtime enforces -- and makes `row ⊆ imports`
 a mechanical check. Defence in depth without a Firecracker VM per unit.
 
-Status: **W0, W0.1, the errno decision, W0.2 and W0.3 are built** (§W0 results). W1 onward is the plan below.
+Status: **W0 through W0.4, and the errno decision, are built** (§W0 results). W1 onward is the plan below.
 
 ---
 
@@ -51,16 +51,26 @@ W0.3 took the four `__multi3` link errors to passes.
   same, the number is not (§Risks).
 - **`size_t` is 4 bytes.** `lex-sys`'s `int` is `i64` everywhere, and the
   backend declared `malloc(i64)`, `fwrite(ptr, i64, i64, ptr)`, `read`,
-  `write`, `memchr`, ... (11 functions, ~25 call sites). `wasm-ld` treats a call
+  `write`, `memchr`, ... (11 functions, 23 call sites). `wasm-ld` treats a call
   whose type disagrees with the definition as a *warning* that swaps in a
   trap, so such a program **links and then dies at its first `malloc`**.
-  `wasm32_size_t_shims` (a post-pass over the emitted text) declares each with
-  its real signature and routes calls through a wrapper that clamps a size
-  above `u32::MAX` (so the allocation fails and traps, rather than silently
-  asking for a few bytes) and widens results back. **This is scaffolding**:
-  the permanent fix is threading the target's `size_t` through the call
-  sites.
-- **`wasm-ld --fatal-warnings`.** Because of the above, the linker is run
+  **Fixed at every call site (W0.4).** The first version was a post-pass over the
+  emitted text that declared each with its real signature behind a clamping
+  wrapper; it worked and was labelled scaffolding. It is gone. Now
+  `emit::size_ty(triple)` says `i32` on wasm32 and `i64` elsewhere, the module
+  header declares all eleven functions with it, and each of the 23 call sites
+  says so itself through `FuncEmitter::size_ty`, `size_arg` and `size_result`.
+  `size_arg` clamps a size above `u32::MAX` rather than truncating it (so an
+  allocation too large for the target fails and traps, instead of quietly asking
+  for a few bytes); `size_result` widens a `size_t` or `ssize_t` back to the
+  `i64` the rest of the backend works in, signed for the latter so `-1` stays
+  `-1`. Native output is unchanged. A test scans the emitted wasm32 module for
+  *every* sized libc call and fails on any `i64` (save `pread`/`pwrite`'s 64-bit
+  `off_t`), without a toolchain. It found a site the rewrite had missed on its
+  first run: one call in `fs.rs` builds its name dynamically (`@{name}(`), so a
+  search for `@write(` never saw it. The coverage map did not move: 83 pass, 20
+  refused, 1 wrong, the same fixtures.
+- **`wasm-ld --fatal-warnings`.** Because of the above, and kept now that every site is fixed, the linker is run
   with it, so every remaining mismatch is a build failure naming the symbol
   (`function signature mismatch: write`) instead of a trap at run time.
   Two of the refusals in the first map were this working.

@@ -284,6 +284,10 @@ pub(crate) fn emit_module(
     }
     let mut text = String::new();
     text.push_str(&format!("target triple = \"{triple}\"\n\n"));
+    // C's `size_t`: 4 bytes on wasm32, 8 everywhere else this backend targets.
+    // Every libc declaration below that takes or answers a size says `{st}`, and
+    // every call site uses `FuncEmitter::size_ty` for the same answer (`docs/wasm.md`).
+    let st = size_ty(triple);
     text.push_str("declare i32 @putchar(i32)\n");
     // `docs/standard-input.md` §3 (§7.9): the mirror. `int getchar(void)`
     // -- no parameter, and the same `i32` result sign-extended at the
@@ -296,7 +300,7 @@ pub(crate) fn emit_module(
     // pointer and the stream itself is one load away -- and the symbol
     // differs by platform, the same split `lex-sys-codegen`'s own
     // `emit.rs` already makes for it.
-    text.push_str("declare i64 @fwrite(ptr, i64, i64, ptr)\n");
+    text.push_str(&format!("declare {st} @fwrite(ptr, {st}, {st}, ptr)\n"));
     let (stdout_symbol, stderr_symbol) = match triple.operating_system {
         target_lexicon::OperatingSystem::Darwin(_) => ("__stdoutp", "__stderrp"),
         _ => ("stdout", "stderr"),
@@ -308,7 +312,7 @@ pub(crate) fn emit_module(
     // declares these the same way, on first use rather than unconditionally
     // there, but an unused `declare` here costs nothing, the same reasoning
     // `putchar`'s own unconditional declaration already relies on.
-    text.push_str("declare ptr @malloc(i64)\n");
+    text.push_str(&format!("declare ptr @malloc({st})\n"));
     text.push_str("declare void @free(ptr)\n");
     // Checked arithmetic (§5's second slice): the three overflow-reporting
     // intrinsics `Expr::Bin`'s `Add`/`Sub`/`Mul` arms call. Declared
@@ -350,7 +354,7 @@ pub(crate) fn emit_module(
     // `bind`.
     // `docs/zeroed-slices.md`: a `box_slice` filled with zero. Guarded like
     // the rest: `calloc` is a name a program may declare for itself.
-    declare_libc_unless_own(&mut text, "calloc", "ptr @calloc(i64, i64)");
+    declare_libc_unless_own(&mut text, "calloc", &format!("ptr @calloc({st}, {st})"));
     declare_libc_unless_own(&mut text, "listen", "i32 @listen(i32, i32)");
     declare_libc_unless_own(&mut text, "accept", "i32 @accept(i32, ptr, ptr)");
     // Linux's close-on-exec accept (`docs/processes.md` §4.5); Darwin has
@@ -385,7 +389,7 @@ pub(crate) fn emit_module(
         ("waitpid", "i32 @waitpid(i32, ptr, i32)"),
         ("syscall", "i64 @syscall(i64, ...)"),
         ("kill", "i32 @kill(i32, i32)"),
-        ("strncmp", "i32 @strncmp(ptr, ptr, i64)"),
+        ("strncmp", &format!("i32 @strncmp(ptr, ptr, {st})")),
     ] {
         declare_libc_unless_own(&mut text, symbol, signature);
     }
@@ -463,19 +467,19 @@ pub(crate) fn emit_module(
     // modern libc -- `__errno_location` on glibc, `__error` on Darwin --
     // both answering a pointer to a thread-local `int`, the same split
     // `lex-sys-codegen`'s own `errno` already makes.
-    declare_libc_unless_own(&mut text, "read", "i64 @read(i32, ptr, i64)");
+    declare_libc_unless_own(&mut text, "read", &format!("{st} @read(i32, ptr, {st})"));
     // `copy_within` (`docs/memory-moves.md`) and `copy_into` (`docs/bulk-copy.md`).
-    declare_libc_unless_own(&mut text, "memmove", "ptr @memmove(ptr, ptr, i64)");
+    declare_libc_unless_own(&mut text, "memmove", &format!("ptr @memmove(ptr, ptr, {st})"));
     // `index_of_byte` (`docs/byte-search.md`).
-    declare_libc_unless_own(&mut text, "memchr", "ptr @memchr(ptr, i32, i64)");
-    declare_libc_unless_own(&mut text, "write", "i64 @write(i32, ptr, i64)");
+    declare_libc_unless_own(&mut text, "memchr", &format!("ptr @memchr(ptr, i32, {st})"));
+    declare_libc_unless_own(&mut text, "write", &format!("{st} @write(i32, ptr, {st})"));
     // `docs/file-writes.md`: the write side of a file handle. `fopen`/
     // `fcntl(F_DUPFD_CLOEXEC)`/`fclose` are the opens' bridge (section 3).
     declare_libc_unless_own(&mut text, "fopen", "ptr @fopen(ptr, ptr)");
     declare_libc_unless_own(&mut text, "fileno", "i32 @fileno(ptr)");
     declare_libc_unless_own(&mut text, "fclose", "i32 @fclose(ptr)");
-    declare_libc_unless_own(&mut text, "pwrite", "i64 @pwrite(i32, ptr, i64, i64)");
-    declare_libc_unless_own(&mut text, "pread", "i64 @pread(i32, ptr, i64, i64)");
+    declare_libc_unless_own(&mut text, "pwrite", &format!("{st} @pwrite(i32, ptr, {st}, i64)"));
+    declare_libc_unless_own(&mut text, "pread", &format!("{st} @pread(i32, ptr, {st}, i64)"));
     declare_libc_unless_own(&mut text, "fsync", "i32 @fsync(i32)");
     // `flush_out` (`docs/checked-output.md`): the stream `fwrite` uses,
     // flushed, then asked whether an earlier write failed.
@@ -597,7 +601,7 @@ pub(crate) fn emit_module(
     // global` here instead of a `Linkage::Local` data object. `arg` reads
     // a NUL-terminated C string back from `argv`, so its length needs
     // libc's own `strlen` the way `docs/arguments.md` §3.2 describes.
-    text.push_str("declare i64 @strlen(ptr)\n");
+    text.push_str(&format!("declare {st} @strlen(ptr)\n"));
     // `conn_detach`/`conn_attach`'s epoch table (`docs/native-sockets.md`
     // §10.3): a counter per descriptor, in bss.
     text.push_str(&format!(
@@ -684,123 +688,21 @@ pub(crate) fn emit_module(
     text.push_str("}\n");
 
     if triple.architecture == target_lexicon::Architecture::Wasm32 {
-        text = wasm32_size_t_shims(&text);
         text.push_str(&smul_overflow_definition());
     }
     Ok(text)
 }
 
-/// One libc function whose C signature mentions `size_t`/`ssize_t`.
+/// C's `size_t` as an LLVM type for `triple`: `i32` on wasm32, `i64` otherwise.
 ///
-/// `kind` names a parameter or result: `ptr`, `i32`, `i64` (a fixed-width
-/// integer, e.g. WASI's 64-bit `off_t`), `size` (`size_t`) or `ssize`.
-struct SizeTFn {
-    name: &'static str,
-    ret: &'static str,
-    params: &'static [&'static str],
-}
-
-/// Every libc function this backend calls with a `size_t` in it
-/// (`docs/wasm.md` §W0). `lex-sys`'s `int` is `i64` everywhere, but C's
-/// `size_t` is 4 bytes on `wasm32`, and `wasm-ld` treats a call whose type
-/// disagrees with the definition as a *warning* that swaps in a trap, so the
-/// program links and then dies at the first `malloc`.
-const SIZE_T_FNS: &[SizeTFn] = &[
-    SizeTFn { name: "malloc", ret: "ptr", params: &["size"] },
-    SizeTFn { name: "calloc", ret: "ptr", params: &["size", "size"] },
-    SizeTFn { name: "memchr", ret: "ptr", params: &["ptr", "i32", "size"] },
-    SizeTFn { name: "memmove", ret: "ptr", params: &["ptr", "ptr", "size"] },
-    SizeTFn { name: "strlen", ret: "size", params: &["ptr"] },
-    SizeTFn { name: "strncmp", ret: "i32", params: &["ptr", "ptr", "size"] },
-    SizeTFn { name: "fwrite", ret: "size", params: &["ptr", "size", "size", "ptr"] },
-    SizeTFn { name: "read", ret: "ssize", params: &["i32", "ptr", "size"] },
-    SizeTFn { name: "write", ret: "ssize", params: &["i32", "ptr", "size"] },
-    SizeTFn { name: "pread", ret: "ssize", params: &["i32", "ptr", "size", "i64"] },
-    SizeTFn { name: "pwrite", ret: "ssize", params: &["i32", "ptr", "size", "i64"] },
-];
-
-/// Declare each [`SIZE_T_FNS`] entry the module uses with its real 32-bit
-/// signature, and route the module's calls through a wrapper that takes the
-/// `i64` the rest of this backend passes.
-///
-/// A size above `u32::MAX` is clamped to it rather than truncated: the
-/// allocation then fails (and traps, as an out-of-memory `malloc` does on
-/// every target) instead of quietly asking for a few bytes. A result is
-/// widened back, signed for `ssize_t` so `-1` stays `-1`.
-///
-/// This is a post-pass over the emitted text, a W0 scaffold: threading the
-/// target's `size_t` through the ~25 call sites is the permanent fix, and
-/// `--fatal-warnings` at link time is what keeps a missed one loud.
-fn wasm32_size_t_shims(text: &str) -> String {
-    fn widen(kind: &str) -> &str {
-        if kind == "size" || kind == "ssize" { "i64" } else { kind }
-    }
-    fn narrow(kind: &str) -> &str {
-        if kind == "size" || kind == "ssize" { "i32" } else { kind }
-    }
-    let mut text = text.to_owned();
-    for f in SIZE_T_FNS {
-        let c_signature = format!(
-            "{} @{}({})",
-            widen(f.ret),
-            f.name,
-            f.params.iter().map(|k| widen(k)).collect::<Vec<_>>().join(", ")
-        );
-        let declare = format!("declare {c_signature}\n");
-        if !text.contains(&declare) {
-            continue;
-        }
-        let wrapper = format!("lexsys_wasm32_{}", f.name);
-        // Calls first, so the wrapper's own call to the real symbol is not renamed.
-        let call = format!("@{}(", f.name);
-        text = text
-            .lines()
-            .map(|line| {
-                if line.trim_start().starts_with("declare ") {
-                    line.to_owned()
-                } else {
-                    line.replace(&call, &format!("@{wrapper}("))
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-            + "\n";
-        let mut body = String::new();
-        let mut args = Vec::new();
-        for (i, kind) in f.params.iter().enumerate() {
-            if *kind == "size" {
-                body.push_str(&format!(
-                    "  %big{i} = icmp ugt i64 %a{i}, 4294967295\n  %lo{i} = trunc i64 %a{i} to i32\n  \
-                     %n{i} = select i1 %big{i}, i32 -1, i32 %lo{i}\n"
-                ));
-                args.push(format!("i32 %n{i}"));
-            } else {
-                args.push(format!("{kind} %a{i}"));
-            }
-        }
-        let params: Vec<String> =
-            f.params.iter().enumerate().map(|(i, k)| format!("{} %a{i}", widen(k))).collect();
-        let real = format!("{} @{}({})", narrow(f.ret), f.name, args.join(", "));
-        body.push_str(&format!("  %r = call {real}\n"));
-        let result = match f.ret {
-            "size" => "  %w = zext i32 %r to i64\n  ret i64 %w\n".to_owned(),
-            "ssize" => "  %w = sext i32 %r to i64\n  ret i64 %w\n".to_owned(),
-            other => format!("  ret {other} %r\n"),
-        };
-        let real_declare = format!(
-            "declare {} @{}({})\n",
-            narrow(f.ret),
-            f.name,
-            f.params.iter().map(|k| narrow(k)).collect::<Vec<_>>().join(", ")
-        );
-        let define = format!(
-            "define internal {} @{wrapper}({}) {{\n{body}{result}}}\n",
-            widen(f.ret),
-            params.join(", ")
-        );
-        text = text.replacen(&declare, &format!("{real_declare}{define}"), 1);
-    }
-    text
+/// The one place the module header and the call sites (`FuncEmitter::size_ty`)
+/// agree on it. `wasm-ld` treats a call whose type disagrees with the
+/// definition as a *warning* that swaps in a trap, so a program with `malloc(i64)`
+/// on wasm32 links and then dies at its first allocation; the CLI links with
+/// `--fatal-warnings` so a site that forgot is a build failure that names the
+/// symbol, not a trap (`docs/wasm.md`).
+pub(crate) fn size_ty(triple: &Triple) -> &'static str {
+    if triple.architecture == target_lexicon::Architecture::Wasm32 { "i32" } else { "i64" }
 }
 
 /// `@lexsys_wasi_errno`: WASI's `errno` to the language's numbering
