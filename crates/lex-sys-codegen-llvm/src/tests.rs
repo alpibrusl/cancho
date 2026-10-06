@@ -1152,21 +1152,18 @@ fn a_wasm32_module_has_the_shape_wasi_libc_needs() {
     assert!(!text.contains("define i32 @main("), "no plain `main` on wasm");
     assert!(text.contains("declare ptr @malloc(i32)"), "`malloc` with a 32-bit `size_t`");
     assert!(!text.contains("declare ptr @malloc(i64)"), "no 64-bit `malloc`");
-    assert!(text.contains("@lexsys_wasm32_malloc("), "calls go through the clamping wrapper");
+    assert!(text.contains("call ptr @malloc(i32 "), "calls pass a 32-bit size");
     assert!(
-        !text
-            .lines()
-            .any(|l| l.contains("call ptr @malloc(") && !l.trim_start().starts_with("%r = call")),
-        "only the wrapper itself may call the real `malloc`"
+        text.contains("icmp ugt i64") && text.contains(", 4294967295"),
+        "a huge size is clamped to the target's maximum, not truncated"
     );
-    assert!(text.contains("icmp ugt i64 %a0, 4294967295"), "a huge size is clamped, not truncated");
 
     // The host's own module is untouched by any of this.
     let host: Triple = "x86_64-unknown-linux-gnu".parse().expect("a valid triple");
     let native = emit::emit_module(&program, "main", &host).expect("native should emit");
     assert!(native.contains("define i32 @main("), "{native}");
     assert!(native.contains("declare ptr @malloc(i64)"));
-    assert!(!native.contains("lexsys_wasm32_"), "no wasm shims on a native module");
+    assert!(!native.contains("4294967295"), "no clamp on a native module");
 }
 
 #[test]
@@ -1347,4 +1344,67 @@ fn only_wasm32_swaps_the_multiply() {
     let native = emit::emit_module(&program, "main", &host).expect("native should emit");
     assert!(native.contains("call {i64, i1} @llvm.smul.with.overflow"), "{native}");
     assert!(!native.contains("lexsys_smul_overflow"), "no shim off wasm32");
+}
+
+/// `docs/wasm.md`, W0.4: on wasm32 every libc function whose C signature has a
+/// `size_t` is declared with a 32-bit one *and called with one*, at every call
+/// site the backend has, not through a wrapper added afterwards.
+///
+/// `wasm-ld` only warns about a call whose type disagrees with its definition
+/// and swaps in a trap, so a missed site links and dies at run time (the CLI links
+/// with `--fatal-warnings`, which makes it a build failure instead). This is the
+/// same check one step earlier and with no toolchain: for each of these
+/// fixtures, no `@malloc`, `@memmove`, `@read`, ... line mentions an `i64` -- save
+/// `pread` and `pwrite`, whose offset is a 64-bit `off_t` on WASI and is the only
+/// one -- and the same fixtures on the host still pass 64-bit sizes.
+#[test]
+fn every_sized_libc_call_on_wasm32_passes_a_32_bit_size() {
+    const SIZED: [&str; 11] = [
+        "malloc", "calloc", "memchr", "memmove", "strlen", "strncmp", "fwrite", "read", "write",
+        "pread", "pwrite",
+    ];
+    let wasm: Triple = "wasm32-wasip1".parse().expect("a valid triple");
+    let host: Triple = "x86_64-unknown-linux-gnu".parse().expect("a valid triple");
+    let mut seen = std::collections::BTreeSet::new();
+    // `write_bytes` is `fwrite`; the fixtures below reach the rest. None imports
+    // `std`, which a bare `lower` has no copy of.
+    const BULK_WRITE: &str = "edition 5;\n\
+         fn main(world: World) -> [] int {\n\
+             let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n\
+             release(ffi); release(fs); release(heap); release(args); release(net);\n\
+             release(clock);\n\
+             borrow mut io as &!i in { write_bytes(i, \"hi\"); }\n\
+             release(io);\n\
+             return 0;\n\
+         }\n";
+    for (name, source) in [
+        ("copy_within", include_str!("../../../tests/accept/copy_within.ls")),
+        ("arguments", include_str!("../../../tests/accept/arguments.ls")),
+        ("file_roundtrip", include_str!("../../../tests/accept/file_roundtrip.ls")),
+        ("write_bytes", BULK_WRITE),
+    ] {
+        let ast = parse(source).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        let program = lex_sys_ir::lower(&ast).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        let text = emit::emit_module(&program, "main", &wasm).expect("wasm32 should emit");
+        for line in text.lines() {
+            for func in SIZED {
+                if !line.contains(&format!("@{func}(")) {
+                    continue;
+                }
+                let allowed = if func == "pread" || func == "pwrite" { 1 } else { 0 };
+                assert_eq!(
+                    line.matches("i64").count(),
+                    allowed,
+                    "{name}: `{func}` on wasm32 must pass a 32-bit `size_t`: {line}"
+                );
+                seen.insert(func);
+            }
+        }
+        // The host is not touched: its sizes are still 64-bit.
+        let native = emit::emit_module(&program, "main", &host).expect("native should emit");
+        assert!(native.contains("declare ptr @malloc(i64)"), "{name}");
+    }
+    for func in ["malloc", "memmove", "fwrite", "strlen", "read", "write"] {
+        assert!(seen.contains(func), "the fixtures never reached `{func}`: {seen:?}");
+    }
 }

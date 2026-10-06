@@ -141,38 +141,44 @@ impl<'a> FuncEmitter<'a> {
     /// address, then the slice's pointer and length.
     pub(crate) fn file_write(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
         let fd = self.handle_fd(&args[0]);
-        let moved = self.fresh();
+        let st = self.size_ty();
+        let size = self.size_arg(&operand(&args[2]));
+        let raw = self.fresh();
         self.out.push_str(&format!(
-            "  {moved} = call i64 @write(i32 {fd}, ptr {}, i64 {})\n",
-            operand(&args[1]),
-            operand(&args[2])
+            "  {raw} = call {st} @write(i32 {fd}, ptr {}, {st} {size})\n",
+            operand(&args[1])
         ));
+        let moved = self.size_result(&raw, true);
         Ok(self.done(&moved))
     }
 
     /// `file_pwrite(file, at, bytes)`: one `pwrite(2)`.
     pub(crate) fn file_pwrite(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
         let fd = self.handle_fd(&args[0]);
-        let moved = self.fresh();
+        let st = self.size_ty();
+        let size = self.size_arg(&operand(&args[3]));
+        let raw = self.fresh();
         self.out.push_str(&format!(
-            "  {moved} = call i64 @pwrite(i32 {fd}, ptr {}, i64 {}, i64 {})\n",
+            "  {raw} = call {st} @pwrite(i32 {fd}, ptr {}, {st} {size}, i64 {})\n",
             operand(&args[2]),
-            operand(&args[3]),
             operand(&args[1])
         ));
+        let moved = self.size_result(&raw, true);
         Ok(self.done(&moved))
     }
 
     /// `file_pread(file, at, into)`: one `pread(2)`, sorted into `Read`.
     pub(crate) fn file_pread(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
         let fd = self.handle_fd(&args[0]);
-        let moved = self.fresh();
+        let st = self.size_ty();
+        let size = self.size_arg(&operand(&args[3]));
+        let raw = self.fresh();
         self.out.push_str(&format!(
-            "  {moved} = call i64 @pread(i32 {fd}, ptr {}, i64 {}, i64 {})\n",
+            "  {raw} = call {st} @pread(i32 {fd}, ptr {}, {st} {size}, i64 {})\n",
             operand(&args[2]),
-            operand(&args[3]),
             operand(&args[1])
         ));
+        let moved = self.size_result(&raw, true);
         Ok(self.read_answer(&moved))
     }
 

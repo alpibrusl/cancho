@@ -544,12 +544,14 @@ impl<'a> FuncEmitter<'a> {
                 };
                 let stream = self.fresh();
                 self.out.push_str(&format!("  {stream} = load ptr, ptr @{symbol}\n"));
-                let result = self.fresh();
+                let st = self.size_ty();
+                let size = self.size_arg(&operand(len));
+                let raw = self.fresh();
                 self.out.push_str(&format!(
-                    "  {result} = call i64 @fwrite(ptr {}, i64 1, i64 {}, ptr {stream})\n",
-                    operand(start),
-                    operand(len)
+                    "  {raw} = call {st} @fwrite(ptr {}, {st} 1, {st} {size}, ptr {stream})\n",
+                    operand(start)
                 ));
+                let result = self.size_result(&raw, false);
                 Ok(vec![LValue::Reg(result)])
             }
             // `docs/checked-output.md`: the stream the arm above writes
@@ -592,8 +594,10 @@ impl<'a> FuncEmitter<'a> {
                 ));
                 let text = self.fresh();
                 self.out.push_str(&format!("  {text} = load ptr, ptr {slot}\n"));
-                let length = self.fresh();
-                self.out.push_str(&format!("  {length} = call i64 @strlen(ptr {text})\n"));
+                let st = self.size_ty();
+                let raw = self.fresh();
+                self.out.push_str(&format!("  {raw} = call {st} @strlen(ptr {text})\n"));
+                let length = self.size_result(&raw, false);
                 Ok(vec![LValue::Reg(text), LValue::Reg(length)])
             }
             // `int_of(b: byte) -> int` widens, always defined: every
