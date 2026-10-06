@@ -133,6 +133,22 @@ pub fn r_literal_form() -> [] int {
     return 0;
 }
 
+pub fn r_reference_escapes_region() -> [] int {
+    return 33;
+}
+
+pub fn r_not_a_reference() -> [] int {
+    return 34;
+}
+
+pub fn r_shared_reference_written() -> [] int {
+    return 35;
+}
+
+pub fn r_not_a_slice() -> [] int {
+    return 36;
+}
+
 pub fn rule_tag(r: int) -> [] &static [byte] {
     if r < 3 {
         return lc.rule_name(r);
@@ -226,6 +242,18 @@ pub fn rule_tag(r: int) -> [] &static [byte] {
     }
     if r == 99 {
         return "SKIP";
+    }
+    if r == 33 {
+        return "reference-escapes-region";
+    }
+    if r == 34 {
+        return "not-a-reference";
+    }
+    if r == 35 {
+        return "shared-reference-written";
+    }
+    if r == 36 {
+        return "not-a-slice";
     }
     return "unknown-name";
 }

@@ -185,7 +185,7 @@ fn nth_param[&s](st: &!s [int], dp: int, regions: bool, k: int) -> [] int {
     return 0 - 1;
 }
 
-fn count_params[&s](st: &!s [int], dp: int, regions: bool) -> [] int {
+pub fn count_params[&s](st: &!s [int], dp: int, regions: bool) -> [] int {
     var n = 0;
     while nth_param(st, dp, regions, n) >= 0 {
         n = n + 1;
@@ -200,7 +200,7 @@ fn param_bounded[&s](st: &!s [int], dp: int, k: int) -> [] bool {
 }
 
 // The position of the first parameter spelled like `tok`, or -1.
-fn param_index[&s, &x](st: &!s [int], text: &x [byte], dp: int, regions: bool, tok: int) -> [] int {
+pub fn param_index[&s, &x](st: &!s [int], text: &x [byte], dp: int, regions: bool, tok: int) -> [] int {
     var k = 0;
     while nth_param(st, dp, regions, k) >= 0 {
         if ast.same(st, text, nth_param(st, dp, regions, k), tok) {
@@ -212,7 +212,7 @@ fn param_index[&s, &x](st: &!s [int], text: &x [byte], dp: int, regions: bool, t
 }
 
 // The token of the inner region of the `k`th `where` pair, or -1; the outer is two on.
-fn nth_outlive[&s](st: &!s [int], dp: int, k: int) -> [] int {
+pub fn nth_outlive[&s](st: &!s [int], dp: int, k: int) -> [] int {
     if dp < 0 {
         return 0 - 1;
     }
