@@ -281,8 +281,8 @@ RESULT_OPENSSL_SPEED, with a fixed-base table and arithmetic specialised to P-25
   loaded a secret into a register before; ECDH never does. Hence `load_secret`.
 - **`std.ecdsa` cannot hold the signer**, against the design's wording (§1): the import would be a cycle.
 - **Two test gaps in the PEM reader** (§5.5).
-- **The design's branch had conflict markers in `docs/README.md`**, from a merge of `main` into it. Resolved here, keeping
-  every row.
+- **`docs/README.md` had conflict markers**, from a merge of `main` into the design's branch, merged with it (#335).
+  Resolved here, keeping every row.
 
 ## 9. Not done
 
