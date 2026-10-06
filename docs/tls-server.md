@@ -1,6 +1,6 @@
 # A TLS 1.3 server for `packages/tls`: the design
 
-> **Status: design, nothing built.** `packages/tls` is a client (`docs/tls-pure.md`). Two programs of the toolbox need the other
+> **Status: design, its open questions (§9) answered as proposed (2026-10-07); nothing built yet.** `packages/tls` is a client (`docs/tls-pure.md`). Two programs of the toolbox need the other
 > side: `lexsys-mqtt`, a broker whose clients connect on 8883, and `lexsys-gateway`, a reverse proxy that terminates HTTPS. Both
 > are at the design stage and both list TLS as out of scope because "it needs foreign code and would make the authority report
 > unbounded". A server in `packages/tls` removes that reason. This document is the design; its numbers are measured where it
@@ -228,6 +228,8 @@ significant; each identity holds its chain (a few KiB) and key in the engine.
    exponent, so it cannot take a private exponent as it is).
 
 ## 9. Open questions, for a person
+
+*Decided: all five as proposed (2026-10-07).*
 
 1. **TLS 1.2 for the broker.** Many embedded MQTT clients (older mbedTLS and wolfSSL builds on microcontrollers) speak TLS 1.2
    only. *Proposed: version 1 is 1.3 only; the broker's design counts the clients it must serve, and step 6 is built if any
