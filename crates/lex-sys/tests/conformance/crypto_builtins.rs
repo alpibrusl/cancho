@@ -10,8 +10,10 @@
 use super::json::feed;
 use super::*;
 
-fn build_driver(backend: &str) -> (PathBuf, PathBuf) {
-    let dir = scratch(&format!("crypto-builtins-{backend}"));
+/// Each test its own directory: tests run in parallel, and each removes
+/// its directory when done.
+fn build_driver(test: &str, backend: &str) -> (PathBuf, PathBuf) {
+    let dir = scratch(&format!("crypto-builtins-{test}-{backend}"));
     let exe = dir.join("driver");
     let build = Command::new(BIN)
         .args(["build", "--std", "--backend", backend])
@@ -150,7 +152,7 @@ fn ghash(h: &[u8], y: &[u8], data: &[u8]) -> Vec<u8> {
 /// cases of each against the references, on LLVM.
 #[test]
 fn the_hardware_builtins_agree_with_fips_nist_and_the_references_on_llvm() {
-    let (dir, exe) = build_driver("llvm");
+    let (dir, exe) = build_driver("agree", "llvm");
     let s = sbox();
     let mut lines = vec!["H".to_string()];
     let mut want = vec!["1".to_string()];
@@ -221,7 +223,7 @@ fn the_hardware_builtins_agree_with_fips_nist_and_the_references_on_llvm() {
 /// block builtin reached anyway traps (`docs/crypto-builtins.md` §5).
 #[test]
 fn on_cranelift_the_hardware_is_absent_and_a_block_builtin_traps() {
-    let (dir, exe) = build_driver("cranelift");
+    let (dir, exe) = build_driver("absent", "cranelift");
     let out = feed(&exe, b"H\n");
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "0");
     let block = format!("A 10 {} {}\n", "00".repeat(176), "00".repeat(16));
@@ -234,7 +236,7 @@ fn on_cranelift_the_hardware_is_absent_and_a_block_builtin_traps() {
 /// before any instruction runs (`docs/crypto-builtins.md` §3).
 #[test]
 fn a_wrong_length_or_round_count_traps_on_llvm() {
-    let (dir, exe) = build_driver("llvm");
+    let (dir, exe) = build_driver("traps", "llvm");
     for case in [
         format!("A 11 {} {}", "00".repeat(192), "00".repeat(16)),
         format!("A 10 {} {}", "00".repeat(160), "00".repeat(16)),
