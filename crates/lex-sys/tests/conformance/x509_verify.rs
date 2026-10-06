@@ -129,7 +129,7 @@ fn the_openssl_matrix_gets_each_tag_and_accepts_nothing_openssl_refused() {
                 assert_ne!(tag(answer), "ok", "{case}: OpenSSL refused it");
             }
         }
-        assert_eq!(answered.len(), 34);
+        assert_eq!(answered.len(), 36);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -23,8 +23,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MUTANTS = [
     ("n' not negated", "bigmod", "return (1 << 30) - inv & mask();", "return inv;"),
     ("too few Newton steps for n'", "bigmod", "    while i < 5 {\n        inv =", "    while i < 3 {\n        inv ="),
-    ("the final subtraction only on a carry", "bigmod", "    if compare_n(w, t, k) >= 0 {\n        subtract_n(w, t, k);\n    }\n    copy(w, t, dst, k);",
-     "    if w[t + k] != 0 {\n        subtract_n(w, t, k);\n    }\n    copy(w, t, dst, k);"),
+    # Re-anchored: #264 made the final subtraction `ct_reduce`'s masked one, and this mutant no longer applied.
+    ("the final subtraction only on a carry", "bigmod", "    let m = value_barrier(under - 1);", "    let m = value_barrier(0 - w[x + k]);"),
     ("the accumulator's carry limb dropped", "bigmod", "w[t + k] = s >> 30;", "w[t + k] = 0;"),
     # Offsets are p % 30 for p = 8j, always even: `off > 23` would be the same test, so the mutants drop offset 24.
     ("a byte across two limbs loaded short", "bigmod", "if off > 22 && high != 0 {", "if off > 24 && high != 0 {"),
@@ -33,15 +33,17 @@ MUTANTS = [
     ("the exponent's second bit skipped", "bigmod", "var b = eb - 2;", "var b = eb - 3;"),
     ("a = n accepted", "bigmod", "compare_n(work, slot_base(), k) >= 0", "compare_n(work, slot_base(), k) > 0"),
     ("an even modulus accepted", "bigmod", "    if int_of(n[len(n) - 1]) & 1 == 0 {\n        return -1;", "    if int_of(n[len(n) - 1]) & 1 == 2 {\n        return -1;"),
-    ("a^0 as 0", "bigmod", "        work[acc] = 1;", "        work[acc] = 0;"),
+    ("a^0 as 0", "bigmod", "        set_small(work, acc, 1);", "        set_small(work, acc, 0);"),
     ("the DigestInfo's OID arc fixed at SHA-256", "rsa", "out[at + 14] = byte_of((hash_len - 16) / 16);", "out[at + 14] = byte_of(1);"),
     ("one FF short", "rsa", "while i < t - 1 {", "while i < t - 2 {"),
     ("the block's last byte not compared", "rsa", "while i < len(n) && code == 0 {\n                if m[i] != want[i] {",
      "while i < len(n) - 1 && code == 0 {\n                if m[i] != want[i] {"),
-    ("an exponent as long as the modulus", "rsa", "ebits >= bits", "ebits > bits"),
+    # "An exponent as long as the modulus" (`ebits >= bits` to `ebits > bits`) was here. Since #317 caps the exponent at 64 bits
+    # and the modulus is at least 2,048, no exponent that check refuses reaches it: the mutant is equivalent, so it is gone.
+    ("an exponent over 64 bits (#317)", "rsa", " || ebits > max_exponent_bits() {", " {"),
     ("a short signature accepted", "rsa", "if len(sig) != (bits + 7) / 8 {", "if len(sig) > (bits + 7) / 8 {"),
     ("the PSS trailer misread", "rsa", "!= 0xbc {", "!= 0xbd {"),
-    ("the PSS top bits not checked", "rsa", "if code == 0 && int_of(m[at]) >> (8 - top) != 0 {", "if code == 0 && int_of(m[at]) >> (8 - top) > 255 {"),
+    ("the PSS top bits not checked", "rsa", "if code == 0 && int_of(m[at]) >> 8 - top != 0 {", "if code == 0 && int_of(m[at]) >> 8 - top > 255 {"),
     ("the PSS separator may be 0", "rsa", "if code == 0 && int_of(db[ps]) != 1 {", "if code == 0 && int_of(db[ps]) > 1 {"),
     ("MGF1's counter from 1", "rsa", "var counter = 0;", "var counter = 1;"),
     ("M' with 7 zero bytes", "rsa", "mp[8 + i] = digest[i];", "mp[7 + i] = digest[i];"),
@@ -106,6 +108,7 @@ def evidence():
     n, e = g["publicKey"]["modulus"], g["publicKey"]["publicExponent"]
     t = [t for t in g["tests"] if t["result"] == "valid"][0]
     add(f"P 32 {n} {n} {t['msg']} {t['sig']}", lambda a: "rsa-exponent" in a)
+    add(f"P 32 {n} 010000000000000001 {t['msg']} {t['sig']}", lambda a: "rsa-exponent" in a)
     add(f"P 32 {n} {e} {t['msg']} {t['sig'][2:]}", lambda a: "rsa-signature-length" in a)
     add(f"S 32 32 223 {n} {e} {t['msg']} {t['sig']}", lambda a: "rsa-pss-length" in a)
     return cases, checks

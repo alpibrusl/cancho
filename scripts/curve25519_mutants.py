@@ -23,7 +23,7 @@ MUTANTS = [
     ("field25519", "the carry's 2^256 = 38 fold as 37", "o[0] = wrapping_add(o[0], wrapping_mul(38, wrapping_sub(c, 1)));", "o[0] = wrapping_add(o[0], wrapping_mul(37, wrapping_sub(c, 1)));"),
     ("field25519", "the product's fold of the top limbs as 19", "        t[i] = wrapping_add(t[i], wrapping_mul(38, t[i + 16]));\n        i = i + 1;\n    }\n    i = 0;\n    while i < 16 {\n        o[i] = t[i];", "        t[i] = wrapping_add(t[i], wrapping_mul(19, t[i + 16]));\n        i = i + 1;\n    }\n    i = 0;\n    while i < 16 {\n        o[i] = t[i];"),
     ("field25519", "one carry after a product, not two", "        o[i] = t[i];\n        i = i + 1;\n    }\n    carry(o);\n    carry(o);", "        o[i] = t[i];\n        i = i + 1;\n    }\n    carry(o);"),
-    ("field25519", "cswap that swaps only fifteen limbs", "    let mask = wrapping_sub(0, bit);\n    var i = 0;\n    while i < 16 {\n        let x = mask", "    let mask = wrapping_sub(0, bit);\n    var i = 0;\n    while i < 15 {\n        let x = mask"),
+    ("field25519", "cswap that swaps only fifteen limbs", "    let mask = value_barrier(wrapping_sub(0, bit));\n    var i = 0;\n    while i < 16 {\n        let x = mask", "    let mask = value_barrier(wrapping_sub(0, bit));\n    var i = 0;\n    while i < 15 {\n        let x = mask"),
     ("field25519", "the inversion's exponent off (bit 3 skipped, not 4)", "        if bit != 2 && bit != 4 {", "        if bit != 2 && bit != 3 {"),
     ("field25519", "pack keeps h when h - p was the answer", "        cswap_at(t, 0, 16, 1 - under);", "        cswap_at(t, 0, 16, under);"),
     ("field25519", "pack does one trial subtraction, not two", "    while pass < 2 {", "    while pass < 1 {"),

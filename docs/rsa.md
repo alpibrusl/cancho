@@ -64,7 +64,12 @@ wrapping would give a wrong answer silently.
 ### 3.1 The key
 
 - **The modulus** must be odd and from 2,048 to 4,096 bits (`docs/tls-pure.md` §5.2).
-- **The exponent** must be odd and at least 3, and shorter than the modulus.
+- **The exponent** must be odd and at least 3, shorter than the modulus, and at most 64 bits. *The last added after review
+  finding C-1 (#317):* `pow_mod` does a multiplication or two a bit of `e`, and the server sends both the key and the chain, so
+  a 4,095-bit exponent made one RSA-4096 verification about 250 times 65537's, and the path builder tries up to 64. 64 bits is
+  OpenSSL's bound for moduli over 3,072 bits (`RSA_MAX_PUBEXP_BITS`); BoringSSL's is 33, and the Web PKI uses 65537.
+  Measured on an Apple M4 (LLVM, `tests/programs/rsa_driver.ls`'s `M`, a 4,096-bit modulus, best of 5): 0.79 ms with 65537,
+  3.15 ms with 2^64 − 1, 176 ms with 2^4095 − 1.
 - The modulus and exponent come in as big-endian bytes, as `packages/x509` locates them (`view[rsa_modulus_*]`).
 
 ### 3.2 RSASSA-PKCS1-v1_5: build the block and compare it
@@ -114,7 +119,7 @@ the padding accepts more than the signer meant. Each PSS step that can fail has 
 | -6 | `bigmod-work-length` | `work` shorter than `work_len()` |
 | -10 | `rsa-modulus-size` | the modulus outside 2,048 to 4,096 bits |
 | -11 | `rsa-even-modulus` | the modulus even |
-| -12 | `rsa-exponent` | `e` even, below 3, or not shorter than the modulus |
+| -12 | `rsa-exponent` | `e` even, below 3, not shorter than the modulus, or over 64 bits |
 | -13 | `rsa-hash` | a hash length other than 32, 48 or 64 |
 | -14 | `rsa-digest-length` | the digest not `hash_len` bytes |
 | -15 | `rsa-signature-length` | the signature not exactly `k` bytes |
