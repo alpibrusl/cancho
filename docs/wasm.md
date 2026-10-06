@@ -113,8 +113,8 @@ W0.3 took the four `__multi3` link errors to passes.
   refuses at the function that reaches the builtin, once per (function,
   family), naming the first builtin found:
   `` `main` uses `spawn`, and threads do not exist on `wasm32-wasip1` ``.
-  Five families, from `wasi_gap`, an exhaustive `match` over all 118 builtins
-  (43 refused, 75 supported; a new builtin is a compile error until someone
+  Five families (seven since W0.6, below), from `wasi_gap`, an exhaustive `match` over all 118 builtins
+  (46 refused, 72 supported; a new builtin is a compile error until someone
   says which side it is on): **threads** (`spawn`, `join`, `fork_*`),
   **sockets** (`connect`, `bind`, `listen`, `tcp_*`, `conn_*`), **the poller**
   (`poller_*`; `poll_oneoff` is the eventual mapping), **signals**, and
@@ -163,6 +163,17 @@ W0.3 took the four `__multi3` link errors to passes.
 - **An operating system with no tables is refused**, in `emit_module`,
   instead of taking the Linux numbers. (`x86_64-unknown-freebsd` used to
   build.) The per-site `_ => linux` arms that remain are behind that guard.
+- **W0.6: file locks and permission bits are refused.** Running the builtins no accept
+  fixture reaches (`scripts/wasm_file_check.py`) found two more places WASI differs, one
+  loud and one silent. **`file_lock`** is `flock`, which WASI does not have: an
+  `undefined symbol` from `wasm-ld`, not a located error. **`dir_mode` and
+  `dir_own_mode`** *build, run and answer 0 for every file*, as if nothing had any
+  permissions: WASI's stat has no mode bits, and wasi-libc's `st_mode` carries the file
+  type and nothing else (the probe printed `f600 0`, `f644 0`, `d1777 0`, against `600`,
+  `644`, `1777` natively). A wrong answer is worse than a refusal. Both are now in
+  `wasi_gap` (two new families, **file locks** and **permission bits**), so `check` and
+  `build` refuse them at the function, with the rule tag, before any code is generated:
+  46 builtins refused, 72 supported. `tests/reject/dir_mode_on_wasi.ls` is the fixture.
 - `run` uses `WASMTIME` (default `wasmtime`) and passes `WASMTIME_FLAGS`
   (e.g. `--dir=.`). A WASI module gets **no** directory unless one is
   granted, so the grant is spelled where it is made.
@@ -484,6 +495,8 @@ sockets, threads and signals rows).
 | epoll / kqueue | no | `poll` | Map the poller onto `poll_oneoff` / `wasi:io/poll` |
 | Processes (`posix_spawn`, `kill`) | **no** | **no** | Refuse; no WASI equivalent |
 | Signals | **no** | **no** | Refuse |
+| File locks (`flock`) | **no** | **no** | Refuse; an undefined symbol otherwise (W0.6) |
+| Permission bits (`dir_mode`, `dir_own_mode`) | **no** | **no** | Refuse; WASI's stat has none, so they would answer 0 (W0.6) |
 | Threads (`pthread_*`) | experimental | experimental | Refuse until wasi-threads settles |
 | `extern fn` to arbitrary C | link-time only | link-time only | Only libraries compiled to wasm; `Ffi("libc")` means wasi-libc, whose `int`/`size_t` are 32-bit |
 

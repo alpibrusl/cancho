@@ -136,12 +136,21 @@ fn only_wasi_refuses_anything_and_what_it_refuses_is_a_gap() {
     assert_eq!(wasi_gap(Builtin::PollerWait), Some(Gap::Polling));
     assert_eq!(wasi_gap(Builtin::SignalsWatch), Some(Gap::Signals));
     assert_eq!(wasi_gap(Builtin::ExecSpawn), Some(Gap::Processes));
+    // Found by running the builtins no accept fixture reaches: `file_lock` is an
+    // undefined `flock` at link time, and `dir_mode` / `dir_own_mode` *build and run*
+    // and answer 0 for every file, because WASI's stat has no permission bits.
+    assert_eq!(wasi_gap(Builtin::FileLock), Some(Gap::Locks));
+    assert_eq!(wasi_gap(Builtin::DirMode), Some(Gap::Permissions));
+    assert_eq!(wasi_gap(Builtin::DirOwnMode), Some(Gap::Permissions));
+    for supported in [Builtin::DirStat, Builtin::FileSync, Builtin::DirSync, Builtin::FsRead] {
+        assert_eq!(wasi_gap(supported), None, "{}", supported.name());
+    }
     for supported in [Builtin::PutChar, Builtin::GetChar, Builtin::ReadFile, Builtin::ClockMs] {
         assert_eq!(wasi_gap(supported), None, "{}", supported.name());
     }
     assert_eq!(
         Builtin::ALL.iter().filter(|b| wasi_gap(**b).is_some()).count(),
-        43,
+        46,
         "the refused set moved: update docs/wasm.md with it"
     );
 }

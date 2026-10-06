@@ -36,6 +36,8 @@ pub enum Gap {
     Polling,
     Signals,
     Processes,
+    Locks,
+    Permissions,
 }
 
 impl Gap {
@@ -46,6 +48,8 @@ impl Gap {
             Gap::Polling => "the poller",
             Gap::Signals => "signals",
             Gap::Processes => "processes and pipes",
+            Gap::Locks => "file locks",
+            Gap::Permissions => "permission bits",
         }
     }
 
@@ -58,6 +62,11 @@ impl Gap {
             }
             Gap::Signals => "WASI has no signals",
             Gap::Processes => "WASI has no processes and no `pipe`",
+            Gap::Locks => "WASI has no `flock`, so it is an undefined symbol at link time",
+            Gap::Permissions => {
+                "WASI's stat has no permission bits (wasi-libc's `st_mode` carries the file type \
+                 and nothing else), so `dir_mode` would answer 0 for every file"
+            }
         }
     }
 }
@@ -99,6 +108,8 @@ pub fn wasi_gap(builtin: Builtin) -> Option<Gap> {
         | B::PollerRemove
         | B::PollerWait => Some(Gap::Polling),
         B::SignalsWatch | B::SignalsPending | B::SignalsClose => Some(Gap::Signals),
+        B::FileLock => Some(Gap::Locks),
+        B::DirMode | B::DirOwnMode => Some(Gap::Permissions),
         B::ExecSpawn
         | B::ChildEndClose
         | B::ChildKill
@@ -147,7 +158,6 @@ pub fn wasi_gap(builtin: Builtin) -> Option<Gap> {
         | B::OpenRw
         | B::FsRename
         | B::FsRemove
-        | B::FileLock
         | B::FileWrite
         | B::FilePwrite
         | B::FilePread
@@ -179,8 +189,6 @@ pub fn wasi_gap(builtin: Builtin) -> Option<Gap> {
         | B::DirNext
         | B::DirListClose
         | B::DirStat
-        | B::DirMode
-        | B::DirOwnMode
         | B::NullPtr
         | B::Trap => None,
     }
