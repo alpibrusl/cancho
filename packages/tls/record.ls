@@ -154,6 +154,134 @@ pub fn illegal_psk() -> [] int {
     return -34;
 }
 
+// ---- The server's refusals (`docs/tls-server.md` §5.4) ----
+
+// A ClientHello that does not offer TLS 1.3 (`supported_versions` without 0x0304, or none), or
+// whose legacy_version is not 0x0303 (`docs/tls-server.md` §5.2).
+pub fn server_version() -> [] int {
+    return -40;
+}
+
+// No TLS 1.3 suite in common.
+pub fn server_suite() -> [] int {
+    return -41;
+}
+
+// No group in common: no share, and no supported group, of X25519, P-256 or P-384.
+pub fn server_group() -> [] int {
+    return -42;
+}
+
+// The ClientHello after a HelloRetryRequest has no share for the group it asked for, or
+// differs from the first in what RFC 8446 §4.1.2 does not let it change.
+pub fn server_retry_share() -> [] int {
+    return -43;
+}
+
+// `signature_algorithms` without `ecdsa_secp256r1_sha256`, the one scheme this server signs with.
+pub fn server_sigalg() -> [] int {
+    return -44;
+}
+
+// ALPN offered, and none of the protocols offered is one the server speaks (RFC 7301 §3.2).
+pub fn server_alpn() -> [] int {
+    return -45;
+}
+
+// A ClientHello that does not parse: a length that does not fit, an empty list.
+pub fn server_client_hello_format() -> [] int {
+    return -46;
+}
+
+// A ClientHello over 16 KiB (`docs/tls-server.md` §5.2).
+pub fn server_client_hello_length() -> [] int {
+    return -47;
+}
+
+// An extension twice in one ClientHello (RFC 8446 §4.2).
+pub fn server_extension_repeat() -> [] int {
+    return -48;
+}
+
+// More than 16 KiB of early data skipped (RFC 8446 §4.2.10; `docs/tls-server.md` §5.2).
+pub fn server_early_data_size() -> [] int {
+    return -49;
+}
+
+// The client's Finished does not verify.
+pub fn server_finished() -> [] int {
+    return -50;
+}
+
+// The signature made for CertificateVerify did not verify before it was sent (`docs/tls-server.md` §3.3).
+pub fn server_sign_check() -> [] int {
+    return -51;
+}
+
+// `add_identity`: a key, or a leaf certificate, that is not P-256.
+pub fn server_key_type() -> [] int {
+    return -52;
+}
+
+// `add_identity`: a key that is not an unencrypted PKCS#8 or SEC 1 PEM block this package reads.
+pub fn server_key_format() -> [] int {
+    return -53;
+}
+
+// `add_identity`: the key is not the leaf certificate's.
+pub fn server_key_mismatch() -> [] int {
+    return -54;
+}
+
+// `add_identity`: the leaf certificate has expired at the time given.
+pub fn server_cert_expired() -> [] int {
+    return -55;
+}
+
+// `add_identity`: the engine holds its 16 identities already.
+pub fn server_identities_full() -> [] int {
+    return -56;
+}
+
+// A call for the other role: `start` on a server engine, `serve` on a client one (`docs/tls-server.md` §5.1).
+pub fn role() -> [] int {
+    return -57;
+}
+
+// A TLS 1.3 ClientHello without `signature_algorithms`, `supported_groups` or `key_share`
+// (RFC 8446 §9.2).
+pub fn server_missing_extension() -> [] int {
+    return -58;
+}
+
+// A ClientHello value RFC 8446 forbids: a compression method other than null, `pre_shared_key`
+// not last, a share of the wrong length, two shares of one group, a share for a group not in
+// `supported_groups`, two host names.
+pub fn server_illegal_parameter() -> [] int {
+    return -59;
+}
+
+// `add_identity`: no certificate in the chain, a block that does not decode, a leaf that does not
+// parse, or a chain over `tls_identity.chain_cap()` bytes.
+pub fn server_chain() -> [] int {
+    return -60;
+}
+
+// `serve` on an engine with no identity, or `replace_identity` of one never added.
+pub fn server_no_identity() -> [] int {
+    return -61;
+}
+
+// `add_identity`: a name list over `tls_identity.names_cap()` bytes.
+pub fn server_names() -> [] int {
+    return -62;
+}
+
+// `set_alpn`: an empty protocol name, one over 255 bytes, or a list over `tls_identity.alpn_cap()`.
+pub fn server_alpn_list() -> [] int {
+    return -63;
+}
+
 pub fn refusal_tag(code: int) -> [] &static [byte] {
     if code == 0 {
         return "ok";
@@ -256,6 +384,78 @@ pub fn refusal_tag(code: int) -> [] &static [byte] {
     }
     if code == -34 {
         return "tls-illegal-psk";
+    }
+    if code == -40 {
+        return "tls-server-version";
+    }
+    if code == -41 {
+        return "tls-server-suite";
+    }
+    if code == -42 {
+        return "tls-server-group";
+    }
+    if code == -43 {
+        return "tls-server-retry-share";
+    }
+    if code == -44 {
+        return "tls-server-sigalg";
+    }
+    if code == -45 {
+        return "tls-server-alpn";
+    }
+    if code == -46 {
+        return "tls-server-client-hello-format";
+    }
+    if code == -47 {
+        return "tls-server-client-hello-length";
+    }
+    if code == -48 {
+        return "tls-server-extension-repeat";
+    }
+    if code == -49 {
+        return "tls-server-early-data-size";
+    }
+    if code == -50 {
+        return "tls-server-finished";
+    }
+    if code == -51 {
+        return "tls-server-sign-check";
+    }
+    if code == -52 {
+        return "tls-server-key-type";
+    }
+    if code == -53 {
+        return "tls-server-key-format";
+    }
+    if code == -54 {
+        return "tls-server-key-mismatch";
+    }
+    if code == -55 {
+        return "tls-server-cert-expired";
+    }
+    if code == -56 {
+        return "tls-server-identities-full";
+    }
+    if code == -57 {
+        return "tls-role";
+    }
+    if code == -58 {
+        return "tls-server-missing-extension";
+    }
+    if code == -59 {
+        return "tls-server-illegal-parameter";
+    }
+    if code == -60 {
+        return "tls-server-chain";
+    }
+    if code == -61 {
+        return "tls-server-no-identity";
+    }
+    if code == -62 {
+        return "tls-server-names";
+    }
+    if code == -63 {
+        return "tls-server-alpn-list";
     }
     return "unknown";
 }

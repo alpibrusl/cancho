@@ -80,6 +80,21 @@ pub fn state_wait_finished12() -> [] int {
     return 14;
 }
 
+// The server's states (`docs/tls-server.md` §5.2): waiting for the first
+// ClientHello, for the second after a HelloRetryRequest, and, its flight
+// queued, for the client's Finished. Then `state_connected`, as a client.
+pub fn state_wait_client_hello() -> [] int {
+    return 20;
+}
+
+pub fn state_wait_client_hello2() -> [] int {
+    return 21;
+}
+
+pub fn state_wait_client_finished() -> [] int {
+    return 22;
+}
+
 // `event`'s answers (`docs/tls-pure.md` §2.2).
 pub fn event_want_read() -> [] int {
     return 1;
@@ -259,8 +274,33 @@ pub fn i_write_aead() -> [] int {
     return i_read_aead() + tls_record.context_len();
 }
 
-pub fn ints_len() -> [] int {
+// A server's connection (`docs/tls-server.md` §5): the lengths of the
+// ALPN protocol chosen and of the name the client sent (`server_name`),
+// the identity chosen, and the bytes of early data skipped so far.
+pub fn i_alpn_len() -> [] int {
     return i_write_aead() + tls_record.context_len();
+}
+
+pub fn i_sni_len() -> [] int {
+    return i_alpn_len() + 1;
+}
+
+pub fn i_identity() -> [] int {
+    return i_alpn_len() + 2;
+}
+
+pub fn i_early_skipped() -> [] int {
+    return i_alpn_len() + 3;
+}
+
+// The length of the legacy session id the client sent, kept at
+// `k_session_id` and echoed.
+pub fn i_session_len() -> [] int {
+    return i_alpn_len() + 4;
+}
+
+pub fn ints_len() -> [] int {
+    return i_alpn_len() + 5;
 }
 
 pub fn read_aead[&i](ints: &i [int]) -> [] &i [int] {
@@ -335,6 +375,30 @@ pub fn f_resumed() -> [] int {
 // them from a client that does not (Go's and rustls's do).
 pub fn f_advertise() -> [] int {
     return 1024;
+}
+
+// A server's connection (`docs/tls-server.md` §5).
+pub fn f_server() -> [] int {
+    return 2048;
+}
+
+// The client offered early data, which is skipped (RFC 8446 §4.2.10):
+// records that do not open under the handshake key are dropped, up to
+// 16 KiB, until one does.
+pub fn f_early() -> [] int {
+    return 4096;
+}
+
+// The client's `server_name` chose the identity, so EncryptedExtensions
+// says so (RFC 6066 §3).
+pub fn f_sni_used() -> [] int {
+    return 8192;
+}
+
+// The server's one change_cipher_spec has been sent, after its first
+// ServerHello or HelloRetryRequest (RFC 8446 Appendix D.4).
+pub fn f_ccs_sent() -> [] int {
+    return 16384;
 }
 
 // ---- The byte slice ----
@@ -523,6 +587,23 @@ pub fn b_ticket_host() -> [] int {
 
 pub fn bytes_len() -> [] int {
     return b_ticket_host() + 256;
+}
+
+// A server's slot holds no tickets, so their room holds what `tls.alpn`
+// and `tls.server_name` answer (outside the keys, so they outlive
+// `forget`), and TLS 1.2's server random, which a server never receives,
+// the 32 bytes of the engine's randomness its signature is hedged with
+// (`docs/tls-server.md` §3.2).
+pub fn b_alpn() -> [] int {
+    return b_offer();
+}
+
+pub fn b_sni() -> [] int {
+    return b_ticket_host();
+}
+
+pub fn k_sign_extra() -> [] int {
+    return k_server_random();
 }
 
 // ---- Helpers ----
@@ -794,6 +875,36 @@ pub fn alert_for(code: int) -> [] int {
     }
     if code == tls_record.x509_unsupported_algorithm() || code == tls_record.x509_key_size() {
         return 43;
+    }
+    return server_alert(code);
+}
+
+// The alert each of the server's refusals sends (RFC 8446 §6.2,
+// `docs/tls-server.md` §5.4); internal_error for anything else.
+fn server_alert(code: int) -> [] int {
+    if code == tls_record.server_version() {
+        return 70;
+    }
+    if code == tls_record.server_suite() || code == tls_record.server_group() || code == tls_record.server_sigalg() {
+        return 40;
+    }
+    if code == tls_record.server_retry_share() || code == tls_record.server_illegal_parameter() || code == tls_record.server_extension_repeat() {
+        return 47;
+    }
+    if code == tls_record.server_alpn() {
+        return 120;
+    }
+    if code == tls_record.server_client_hello_format() || code == tls_record.server_client_hello_length() {
+        return 50;
+    }
+    if code == tls_record.server_early_data_size() {
+        return 10;
+    }
+    if code == tls_record.server_finished() {
+        return 51;
+    }
+    if code == tls_record.server_missing_extension() {
+        return 109;
     }
     return 80;
 }

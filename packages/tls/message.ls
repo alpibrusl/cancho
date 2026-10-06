@@ -321,7 +321,7 @@ pub fn client_hello[&r, &s, &k, &c, &h, &t, &o](random: &r [byte], session_id: &
 // ---- ServerHello (RFC 8446 §4.1.3) ----
 
 // SHA-256("HelloRetryRequest"), the random that marks a HelloRetryRequest.
-fn hrr_random(i: int) -> [] int {
+pub fn hrr_random(i: int) -> [] int {
     let hex = "cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c";
     let hi = int_of(hex[2 * i]);
     let lo = int_of(hex[2 * i + 1]);

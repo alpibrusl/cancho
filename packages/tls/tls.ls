@@ -4,8 +4,11 @@ module tls;
 
 import std.chacha20;
 import tls_client;
+import tls_identity;
 import tls_record;
+import tls_server;
 import tls_slot;
+import x509_key;
 import x509_verify;
 
 // `tls` -- the engine: many TLS 1.3 client connections in slots, bytes in
@@ -19,6 +22,13 @@ import x509_verify;
 // host and the time `start` was given (`docs/x509-verify.md`).
 // Revocation is not checked: a revoked certificate that is otherwise
 // valid is accepted (`docs/tls-pure.md` §5.4).
+//
+// An engine is all clients (`open`) or all servers (`open_server`,
+// `docs/tls-server.md` §5.1): a server engine holds identities, each a
+// chain and its P-256 key, and `serve`s connections; the calls that move
+// bytes are the same for both. A call for the other role is refused,
+// `tls-role`. The server, like the client, is not independently reviewed
+// (#209).
 
 pub res struct Engine {
     ints: Box[[int]],
@@ -30,6 +40,10 @@ pub res struct Engine {
     // ticket, PSK and host name, and in `tmeta` what the rules of §3 need.
     tickets: Box[[byte]],
     tmeta: Box[[int]],
+    // A server's identities and ALPN list (`tls_identity`), and in `srv`
+    // its role (1 for a server engine) and the work its key parser uses.
+    ids: Box[[byte]],
+    srv: Box[[int]],
 }
 
 // The roots' room, in `x509_verify.store_load`'s format: this machine's
@@ -72,6 +86,16 @@ pub fn open[&h](heap: &!h Heap, slots: int) -> [heap] Engine {
 // most 65,534), shared by every pool. A save when the room is full
 // replaces the entry the clock hand points at.
 pub fn open_with_tickets[&h](heap: &!h Heap, slots: int, tickets: int) -> [heap] Engine {
+    return build(heap, slots, tickets, false);
+}
+
+// An engine of `slots` server connections (`docs/tls-server.md` §5.1),
+// with no identity yet: `add_identity` gives it one before `serve`.
+pub fn open_server[&h](heap: &!h Heap, slots: int) -> [heap] Engine {
+    return build(heap, slots, 1, true);
+}
+
+fn build[&h](heap: &!h Heap, slots: int, tickets: int, server: bool) -> [heap] Engine {
     var n = slots;
     if n < 1 {
         n = 1;
@@ -83,8 +107,20 @@ pub fn open_with_tickets[&h](heap: &!h Heap, slots: int, tickets: int) -> [heap]
     if t > 65534 {
         t = 65534;
     }
-    var engine = Engine { ints: box_slice(heap, n * tls_client.ints_len(), 0), bytes: box_slice(heap, n * tls_client.bytes_len(), byte_of(0)), roots: box_slice(heap, roots_cap(), byte_of(0)), meta: box_slice(heap, 4 + 2 * n, 0), drbg: box_slice(heap, 32, byte_of(0)), tickets: box_slice(heap, t * entry_bytes(), byte_of(0)), tmeta: box_slice(heap, t_entries() + t * t_fields(), 0) };
+    // A client engine has no identities; a server engine no roots.
+    var ids_len = 0;
+    var srv_len = 1;
+    var roots_len = roots_cap();
+    if server {
+        ids_len = tls_identity.cfg_len();
+        srv_len = 1 + x509_key.work_len();
+        roots_len = 0;
+    }
+    var engine = Engine { ints: box_slice(heap, n * tls_client.ints_len(), 0), bytes: box_slice(heap, n * tls_client.bytes_len(), byte_of(0)), roots: box_slice(heap, roots_len, byte_of(0)), meta: box_slice(heap, 4 + 2 * n, 0), drbg: box_slice(heap, 32, byte_of(0)), tickets: box_slice(heap, t * entry_bytes(), byte_of(0)), tmeta: box_slice(heap, t_entries() + t * t_fields(), 0), ids: box_slice(heap, ids_len, byte_of(0)), srv: box_slice(heap, srv_len, 0) };
     borrow mut engine as &!w in {
+        if server {
+            contents(w.srv)[0] = 1;
+        }
         contents(w.meta)[m_slots()] = n;
         contents(w.tmeta)[t_capacity()] = t;
         contents(w.tmeta)[t_max_age()] = 3600;
@@ -118,7 +154,10 @@ pub fn close[&h](heap: &!h Heap, engine: Engine) -> [heap] int {
             t = t + 1;
         }
     }
-    let Engine { ints, bytes, roots, meta, drbg, tickets, tmeta } = e;
+    borrow mut e as &!w in {
+        tls_identity.wipe(contents(w.ids));
+    }
+    let Engine { ints, bytes, roots, meta, drbg, tickets, tmeta, ids, srv } = e;
     unbox_slice(heap, ints);
     unbox_slice(heap, bytes);
     unbox_slice(heap, roots);
@@ -126,7 +165,13 @@ pub fn close[&h](heap: &!h Heap, engine: Engine) -> [heap] int {
     unbox_slice(heap, drbg);
     unbox_slice(heap, tickets);
     unbox_slice(heap, tmeta);
+    unbox_slice(heap, ids);
+    unbox_slice(heap, srv);
     return 0;
+}
+
+fn is_server[&e](engine: &e Engine) -> [] bool {
+    return contents(engine.srv)[0] == 1;
 }
 
 pub fn slots[&e](engine: &e Engine) -> [] int {
@@ -140,6 +185,9 @@ pub fn slots[&e](engine: &e Engine) -> [] int {
 // when they do not fit. No root is a store that trusts nothing, which
 // the caller must not start with (`docs/tls-pure.md` §5.1).
 pub fn trust[&e, &p](engine: &!e Engine, pem: &p [byte]) -> [] int {
+    if is_server(engine) {
+        return tls_record.role();
+    }
     // A ticket saved before is not offered after this (`docs/tls-resumption.md` §3, rule 2).
     contents(engine.tmeta)[t_trust()] = contents(engine.tmeta)[t_trust()] + 1;
     var count = 0;
@@ -224,6 +272,9 @@ fn bytes_of(slot: int) -> [] int {
 // (`clock_unix_ms`) is the time the server's certificates are checked
 // against. 0, or a refusal.
 pub fn start[&e, &h](engine: &!e Engine, slot: int, host: &h [byte], now_unix_ms: int) -> [] int {
+    if is_server(engine) {
+        return tls_record.role();
+    }
     if !slot_ok(engine, slot) || contents(engine.meta)[m_busy(slot)] != 0 {
         return tls_record.bad_slot();
     }
@@ -255,6 +306,9 @@ pub fn feed[&e, &d](engine: &!e Engine, slot: int, data: &d [byte]) -> [] int {
     }
     let i = ints_of(slot);
     let b = bytes_of(slot);
+    if is_server(engine) {
+        return tls_server.feed(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], data, contents(engine.ids));
+    }
     let used = contents(engine.meta)[m_roots_len()];
     return tls_client.feed(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], data, contents(engine.roots)[0..used]);
 }
@@ -682,4 +736,147 @@ pub fn resumed[&e](engine: &e Engine, slot: int) -> [] bool {
     }
     let i = ints_of(slot);
     return tls_client.resumed(contents(engine.ints)[i..i + tls_client.ints_len()]);
+}
+
+// ---- The server (`docs/tls-server.md` §5.1) ----
+
+// The chain `chain_pem` (PEM certificates, leaf first) and its key
+// `key_pem` (unencrypted PKCS#8 `PRIVATE KEY` or SEC 1 `EC PRIVATE KEY`,
+// P-256 only), as an identity serving `names` (space-separated; `*.`
+// stands for one label, as a certificate's names do): the first added is
+// the default, for a ClientHello with no name or a name no identity has.
+// The key must be the leaf's and the leaf not expired at `now_unix_ms`
+// (§4); the chain is sent as given, not verified. Answers the identity's
+// number, or a refusal (`tls-server-key-type`, `-key-format`,
+// `-key-mismatch`, `-cert-expired`, `-chain`, `-names`,
+// `-identities-full`). The program reads the files; the engine never
+// does, and never gives the key back.
+pub fn add_identity[&e, &c, &k, &n](engine: &!e Engine, chain_pem: &c [byte], key_pem: &k [byte], names: &n [byte], now_unix_ms: int) -> [] int {
+    if !is_server(engine) {
+        return tls_record.role();
+    }
+    var id = 0;
+    while id < tls_identity.max_identities() && tls_identity.in_use(contents(engine.ids), id) {
+        id = id + 1;
+    }
+    if id == tls_identity.max_identities() {
+        return tls_record.server_identities_full();
+    }
+    let code = tls_identity.load(contents(engine.ids), id, chain_pem, key_pem, names, false, now_unix_ms / 1000, contents(engine.srv)[1..len(contents(engine.srv))]);
+    if code != 0 {
+        return code;
+    }
+    return id;
+}
+
+// A renewed chain and key for identity `id`, which keeps its names. A
+// connection whose ClientHello has been answered already used the old one;
+// every later one uses the new. Refused as `add_identity` is, and then the
+// identity is as it was; `tls-server-no-identity` for an `id` never added.
+pub fn replace_identity[&e, &c, &k](engine: &!e Engine, id: int, chain_pem: &c [byte], key_pem: &k [byte], now_unix_ms: int) -> [] int {
+    if !is_server(engine) {
+        return tls_record.role();
+    }
+    if !tls_identity.in_use(contents(engine.ids), id) {
+        return tls_record.server_no_identity();
+    }
+    return tls_identity.load(contents(engine.ids), id, chain_pem, key_pem, chain_pem[0..0], true, now_unix_ms / 1000, contents(engine.srv)[1..len(contents(engine.srv))]);
+}
+
+// The ALPN protocols the server speaks, space-separated, in its order of
+// preference ("h2 http/1.1"). A client that offers ALPN and none of these
+// is refused, `tls-server-alpn`; one that offers none is accepted, and
+// `alpn` answers nothing. Empty: ALPN is ignored.
+pub fn set_alpn[&e, &t](engine: &!e Engine, protocols: &t [byte]) -> [] int {
+    if !is_server(engine) {
+        return tls_record.role();
+    }
+    return tls_identity.set_alpn(contents(engine.ids), protocols);
+}
+
+// A new connection in `slot`, waiting for its ClientHello: the server's
+// `start`. (`docs/tls-server.md` §5.1 named it `accept`, which is a
+// builtin's name, so it cannot be a function's.) 0, or a refusal:
+// `tls-role`, `tls-slot`, `tls-no-entropy`, or `tls-server-no-identity`
+// when no identity was added.
+pub fn serve[&e](engine: &!e Engine, slot: int, now_unix_ms: int) -> [] int {
+    if !is_server(engine) {
+        return tls_record.role();
+    }
+    if !slot_ok(engine, slot) || contents(engine.meta)[m_busy(slot)] != 0 {
+        return tls_record.bad_slot();
+    }
+    if contents(engine.meta)[m_seeded()] != 1 {
+        return tls_record.no_entropy();
+    }
+    if tls_identity.count(contents(engine.ids)) == 0 {
+        return tls_record.server_no_identity();
+    }
+    var code = 0;
+    region r {
+        let random = alloc_slice[r](96, byte_of(0));
+        draw(engine, random);
+        let i = ints_of(slot);
+        let b = bytes_of(slot);
+        code = tls_server.start(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], random);
+        tls_slot.zero(random);
+    }
+    contents(engine.meta)[m_started(engine, slot)] = now_unix_ms;
+    contents(engine.meta)[m_busy(slot)] = 1;
+    return code;
+}
+
+// The host name the client sent in `server_name`, lowercased, into `out`:
+// its length (0 when it sent none), known once the ClientHello is
+// answered. `tls-role` on a client engine.
+pub fn server_name[&e, &o](engine: &e Engine, slot: int, out: &!o [byte]) -> [] int {
+    if !is_server(engine) {
+        return tls_record.role();
+    }
+    if !slot_ok(engine, slot) {
+        return tls_record.bad_slot();
+    }
+    let i = ints_of(slot);
+    let b = bytes_of(slot);
+    var n = contents(engine.ints)[i + tls_slot.i_sni_len()];
+    if n > len(out) {
+        n = len(out);
+    }
+    tls_slot.copy_bytes(contents(engine.bytes)[b + tls_slot.b_sni()..b + tls_slot.b_sni() + n], out[0..n]);
+    return n;
+}
+
+// The ALPN protocol chosen, into `out`: its length, 0 for none.
+pub fn alpn[&e, &o](engine: &e Engine, slot: int, out: &!o [byte]) -> [] int {
+    if !is_server(engine) {
+        return tls_record.role();
+    }
+    if !slot_ok(engine, slot) {
+        return tls_record.bad_slot();
+    }
+    let i = ints_of(slot);
+    let b = bytes_of(slot);
+    var n = contents(engine.ints)[i + tls_slot.i_alpn_len()];
+    if n > len(out) {
+        n = len(out);
+    }
+    tls_slot.copy_bytes(contents(engine.bytes)[b + tls_slot.b_alpn()..b + tls_slot.b_alpn() + n], out[0..n]);
+    return n;
+}
+
+// The connections accepted and not yet established, failed or closed:
+// each can still cost the server a signature (`docs/tls-server.md` §7).
+// A program bounds handshakes in progress, and started per second, with
+// it.
+pub fn handshakes_in_progress[&e](engine: &e Engine) -> [] int {
+    var n = 0;
+    var s = 0;
+    while s < contents(engine.meta)[m_slots()] {
+        let i = ints_of(s);
+        if contents(engine.meta)[m_busy(s)] != 0 && tls_server.in_handshake(contents(engine.ints)[i..i + tls_client.ints_len()]) {
+            n = n + 1;
+        }
+        s = s + 1;
+    }
+    return n;
 }
