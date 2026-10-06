@@ -55,35 +55,123 @@ pub struct Dp {
 
 // ------------------------------------------------------------ the state ---
 //
+// A program is a set of files (`docs/many-files.md`), parsed one after another into the same
+// tables, as the Rust `parse_into` does: the text is every file in turn with one byte
+// between them, so a span is an offset into the whole, and a file's tokens end with its own
+// end-of-file token.
+//
 //   0 pos           the index of the token the parser is looking at
 //   1 no_struct     1 while parsing an `if` or `while` condition
 //   2 failed        1 once a refusal has been recorded
 //   3 rule          the refusal's rule, 4 its start, 5 its end
-//   6 edition       this file's edition
-//   8 tokens        how many tokens there are, the end-of-file token included
-//   9 module        0 for the root, 1 for the module the file declares
-//  10 module_first  the index of the declared module path's first token
-//  11 module_count  and how many segments it has
+//   6 edition       the edition of the file being parsed
+//   7 last          the index of that file's end-of-file token
+//   8 tokens        how many tokens there are so far, the end-of-file tokens included
+//   9 module        the module the file being parsed is in (0 is the root)
+//  10 tail          the last item (a node), -1 if there is none
+//  11 modules       how many modules there are, the root included
 //  12 imports       how many imports are recorded
 //  13 nodes         how many nodes the table holds
 //  14 base          where the node table starts
-//  15 items         the first item (a node), -1 if the file has none
+//  15 items         the first item (a node), -1 if there is none
+//  16 module_base   where the module table starts: two slots a module, the index of its
+//                   path's first token (-1 for the root) and how many segments it has
+//  17 files         how many files the program has
+//  18 file_base     where the file table starts: two slots a file, where it starts in the
+//                   text and how long it is
+//  19 import_base   where the import list starts: one slot an import, the `import` token's
+//                   index times 65536 plus the module it was written in
+//  24 ...           three slots a token: its `lexcore.code`, start and end
+//  then             the imports, the modules, the files and the nodes
 
-// What `st` must hold for a text of `n` bytes: every node and token takes at least a
-// byte, so the number of tokens bounds the number of nodes.
-pub fn size_for(n: int) -> [] int {
-    return 16 + 20 * (n + 1);
+// What `st` must hold for a program of `tokens` tokens in `files` files: every node takes at
+// least a token, so the number of tokens bounds the number of nodes.
+pub fn size_for(tokens: int, files: int) -> [] int {
+    return 24 + 4 * tokens + 2 * (files + 2) + 2 * files + 16 * (tokens + 16);
 }
 
-pub fn layout[&s](st: &!s [int], n: int) -> [] int {
-    st[14] = 16 + 4 * (n + 1);
+pub fn layout[&s](st: &!s [int], tokens: int, files: int) -> [] int {
+    st[19] = 24 + 3 * tokens;
+    st[16] = 24 + 4 * tokens;
+    st[18] = st[16] + 2 * (files + 2);
+    st[14] = st[18] + 2 * files;
+    st[17] = files;
     st[13] = 0;
     st[15] = 0 - 1;
-    st[1] = 0;
-    st[6] = 1;
-    st[9] = 0;
+    st[10] = 0 - 1;
+    st[11] = 1;
+    st[st[16]] = 0 - 1;
+    st[st[16] + 1] = 0;
+    st[8] = 0;
     st[12] = 0;
     return 0;
+}
+
+// Where file `f` starts in the text, and how long it is.
+pub fn set_file[&s](st: &!s [int], f: int, base: int, length: int) -> [] int {
+    st[st[18] + 2 * f] = base;
+    st[st[18] + 2 * f + 1] = length;
+    return 0;
+}
+
+// The first token of module `m`'s path and how many segments it has.
+pub fn module_first[&s](st: &!s [int], m: int) -> [] int {
+    return st[st[16] + 2 * m];
+}
+
+pub fn module_len[&s](st: &!s [int], m: int) -> [] int {
+    return st[st[16] + 2 * m + 1];
+}
+
+// The import recorded as number `n`: its `import` token's index and the module it is in.
+pub fn import_keyword[&s](st: &!s [int], n: int) -> [] int {
+    return st[st[19] + n] / 65536;
+}
+
+pub fn import_module[&s](st: &!s [int], n: int) -> [] int {
+    return st[st[19] + n] % 65536;
+}
+
+// Do tokens `a` and `b` spell the same?
+pub fn same[&s, &x](st: &!s [int], text: &x [byte], a: int, b: int) -> [] bool {
+    let from = tstart(st, a);
+    let n = tend(st, a) - from;
+    if n != tend(st, b) - tstart(st, b) {
+        return false;
+    }
+    let other = tstart(st, b);
+    var k = 0;
+    while k < n {
+        if text[from + k] != text[other + k] {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+// The module whose path is the `n` segments from token `first`, added if it is new. A path
+// names one module however many files declare it.
+pub fn module_named[&s, &x](st: &!s [int], text: &x [byte], first: int, n: int) -> [] int {
+    var m = 1;
+    while m < st[11] {
+        if module_len(st, m) == n {
+            var k = 0;
+            var equal = true;
+            while k < n && equal {
+                equal = same(st, text, first + 2 * k, module_first(st, m) + 2 * k);
+                k = k + 1;
+            }
+            if equal {
+                return m;
+            }
+        }
+        m = m + 1;
+    }
+    st[st[16] + 2 * m] = first;
+    st[st[16] + 2 * m + 1] = n;
+    st[11] = m + 1;
+    return m;
 }
 
 // ----------------------------------------------------------- the nodes ---
@@ -256,6 +344,10 @@ pub fn r_skip() -> [] int {
     return 99;
 }
 
+pub fn r_foreign_scope() -> [] int {
+    return 23;
+}
+
 pub fn rule_tag(r: int) -> [] &static [byte] {
     if r < 3 {
         return lc.rule_name(r);
@@ -317,6 +409,9 @@ pub fn rule_tag(r: int) -> [] &static [byte] {
     if r == 22 {
         return "enum-has-no-variants";
     }
+    if r == 23 {
+        return "foreign-scope";
+    }
     if r == 99 {
         return "SKIP";
     }
@@ -337,16 +432,16 @@ pub fn fail[&s](st: &!s [int], rule: int, from: int, to: int) -> [] int {
 // ------------------------------------------------------- token plumbing ---
 
 pub fn tstart[&s](st: &!s [int], i: int) -> [] int {
-    return st[16 + 3 * i + 1];
+    return st[24 + 3 * i + 1];
 }
 
 pub fn tend[&s](st: &!s [int], i: int) -> [] int {
-    return st[16 + 3 * i + 2];
+    return st[24 + 3 * i + 2];
 }
 
 // The code of token `i`, whatever the parser's state.
 pub fn code_at[&s](st: &!s [int], i: int) -> [] int {
-    return st[16 + 3 * i];
+    return st[24 + 3 * i];
 }
 
 // The kind of the token `n` ahead, saturating at end of file. After a refusal
@@ -356,8 +451,8 @@ pub fn kind[&s](st: &!s [int], n: int) -> [] int {
         return eof_code();
     }
     var i = st[0] + n;
-    if i > st[8] - 1 {
-        i = st[8] - 1;
+    if i > st[7] {
+        i = st[7];
     }
     return code_at(st, i);
 }
@@ -1699,7 +1794,7 @@ pub fn unit[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         st[6] = value;
     }
 
-    var items = empty_list();
+    var items = Ls { head: st[15], tail: st[10], n: 0 };
     var declared_module = false;
     var seen_item = false;
     while ok(st) && !look(st, 0, lc.Tok::Eof) {
@@ -1714,9 +1809,9 @@ pub fn unit[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
             let first = st[0];
             let n = module_path(st);
             expect(st, lc.Tok::Semi);
-            st[9] = 1;
-            st[10] = first;
-            st[11] = n;
+            if ok(st) {
+                st[9] = module_named(st, text, first, n);
+            }
             declared_module = true;
         } else if look(st, 0, lc.Tok::Import) {
             let keyword = bump(st);
@@ -1725,7 +1820,7 @@ pub fn unit[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
                 ident(st);
             }
             expect(st, lc.Tok::Semi);
-            st[16 + 3 * st[8] + st[12]] = keyword * 2 + st[9];
+            st[st[19] + st[12]] = keyword * 65536 + st[9];
             st[12] = st[12] + 1;
             seen_item = true;
         } else {
@@ -1762,14 +1857,26 @@ pub fn unit[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         }
     }
     st[15] = items.head;
+    st[10] = items.tail;
     return items.n;
 }
 
-// Parse a whole file already turned into tokens. 0, or 1 if it was refused (see `st[2]`).
+// Parse every file of the program, one after another, into the same tables. 0, or 1 if the
+// program was refused (see `st[2]`).
 pub fn parse[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
-    tokenize(st, text);
-    if ok(st) {
-        unit(st, text);
+    var f = 0;
+    while f < st[17] && ok(st) {
+        let base = st[st[18] + 2 * f];
+        let first = st[8];
+        tokenize(st, text[base..base + st[st[18] + 2 * f + 1]], base);
+        if ok(st) {
+            st[0] = first;
+            st[7] = st[8] - 1;
+            st[6] = 1;
+            st[9] = 0;
+            unit(st, text);
+        }
+        f = f + 1;
     }
     if ok(st) {
         return 0;
@@ -1779,17 +1886,18 @@ pub fn parse[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
 
 // ------------------------------------------------------------ tokenizing ---
 
-// Turn `text` into tokens in `st`, or record the lexer's refusal.
-pub fn tokenize[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
+// Turn the file `text`, which starts at offset `base` of the program, into tokens at the end
+// of the table, or record the lexer's refusal. Spans are offsets into the whole program.
+pub fn tokenize[&s, &x](st: &!s [int], text: &x [byte], base: int) -> [] int {
     var pos = 0;
     var after_dot = false;
-    var n = 0;
+    var n = st[8];
     var done = false;
     while !done {
         if pos >= len(text) {
-            st[16 + 3 * n] = eof_code();
-            st[16 + 3 * n + 1] = len(text);
-            st[16 + 3 * n + 2] = len(text);
+            st[24 + 3 * n] = eof_code();
+            st[24 + 3 * n + 1] = base + len(text);
+            st[24 + 3 * n + 2] = base + len(text);
             n = n + 1;
             done = true;
         } else {
@@ -1798,15 +1906,15 @@ pub fn tokenize[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
                     pos = next;
                 }
                 lc.Step::Token(k, from, to) => {
-                    st[16 + 3 * n] = lc.code(k);
-                    st[16 + 3 * n + 1] = from;
-                    st[16 + 3 * n + 2] = to;
+                    st[24 + 3 * n] = lc.code(k);
+                    st[24 + 3 * n + 1] = base + from;
+                    st[24 + 3 * n + 2] = base + to;
                     n = n + 1;
                     after_dot = lc.is_dot(k);
                     pos = to;
                 }
                 lc.Step::Fail(rule, from, to) => {
-                    fail(st, rule, from, to);
+                    fail(st, rule, base + from, base + to);
                     done = true;
                 }
             }
@@ -1814,4 +1922,34 @@ pub fn tokenize[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     }
     st[8] = n;
     return 0;
+}
+
+// How many tokens the file `text` has, its end-of-file token included. A file the lexer refuses
+// has as many as it lexed before the refusal, which is all the parser will ask for.
+pub fn count_tokens[&x](text: &x [byte]) -> [] int {
+    var pos = 0;
+    var after_dot = false;
+    var n = 0;
+    var done = false;
+    while !done {
+        if pos >= len(text) {
+            n = n + 1;
+            done = true;
+        } else {
+            match lc.step(text, pos, after_dot) {
+                lc.Step::Skip(next) => {
+                    pos = next;
+                }
+                lc.Step::Token(k, from, to) => {
+                    n = n + 1;
+                    after_dot = lc.is_dot(k);
+                    pos = to;
+                }
+                lc.Step::Fail(rule, from, to) => {
+                    done = true;
+                }
+            }
+        }
+    }
+    return n;
 }

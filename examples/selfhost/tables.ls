@@ -242,6 +242,50 @@ static prelude_publics: [int] {
     return t;
 }
 
+static prelude_res_bits: [int] {
+    let t = alloc_slice[static](46, 0);
+    t[0] = 1;
+    t[1] = 1;
+    t[2] = 3;
+    t[3] = 3;
+    t[4] = 1;
+    t[5] = 3;
+    t[6] = 1;
+    t[7] = 1;
+    t[8] = 1;
+    t[9] = 1;
+    t[11] = 3;
+    t[12] = 1;
+    t[13] = 7;
+    t[14] = 1;
+    t[15] = 1;
+    t[16] = 1;
+    t[17] = 1;
+    t[20] = 1;
+    t[21] = 1;
+    t[22] = 1;
+    t[23] = 1;
+    t[24] = 1;
+    t[25] = 1;
+    t[27] = 3;
+    t[28] = 1;
+    t[29] = 1;
+    t[30] = 1;
+    t[31] = 1;
+    t[32] = 1;
+    t[33] = 1;
+    t[34] = 1;
+    t[37] = 3;
+    t[38] = 1;
+    t[39] = 1;
+    t[40] = 1;
+    t[41] = 1;
+    t[42] = 1;
+    t[43] = 1;
+    t[44] = 1;
+    return t;
+}
+
 static prelude_bounds: [int] {
     let t = alloc_slice[static](46, 0);
     return t;
@@ -262,6 +306,10 @@ pub fn prelude_since(i: int) -> [] int {
 
 pub fn prelude_public(i: int) -> [] bool {
     return prelude_publics[i] != 0;
+}
+
+pub fn prelude_res(i: int) -> [] int {
+    return prelude_res_bits[i];
 }
 
 // Bit i set: parameter i is bounded `val`.

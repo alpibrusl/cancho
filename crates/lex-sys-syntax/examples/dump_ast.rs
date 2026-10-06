@@ -21,8 +21,8 @@
 use std::io::Read;
 
 use lex_sys_syntax::ast::*;
-use lex_sys_syntax::parse;
 use lex_sys_syntax::span::Span;
+use lex_sys_syntax::{Ast, SourceMap, parse_into};
 
 struct Dump<'a> {
     ast: &'a Ast,
@@ -452,25 +452,57 @@ impl<'a> Dump<'a> {
     }
 }
 
-/// The listing for `source`, or the one refusal line. The conformance test
-/// (`crates/lex-sys/tests/conformance/selfhost.rs`) includes this file and calls this.
-pub fn listing(source: &str) -> String {
-    match parse(source) {
-        Ok(ast) => {
-            let mut dump = Dump { ast: &ast, out: String::new() };
-            for i in 0..ast.items.len() {
-                dump.item(ItemId(i as u32));
-            }
-            dump.imports();
-            dump.out
+/// The listing for a program of several files, parsed one after another into one AST as the
+/// compiler does (`parse_into`, each file at its own base offset in a `SourceMap`), or the one
+/// refusal line. The conformance test (`crates/lex-sys/tests/conformance/selfhost.rs`) includes
+/// this file and calls this.
+pub fn listing_files(files: &[String]) -> String {
+    let mut map = SourceMap::new();
+    let mut ast = Ast::new();
+    let bases: Vec<u32> = files.iter().map(|text| map.add("file", text.clone())).collect();
+    for (text, base) in files.iter().zip(bases) {
+        if let Err(d) = parse_into(&mut ast, text, base) {
+            return format!("ERR {} {} {}\n", d.rule.tag(), d.span.start, d.span.end);
         }
-        Err(d) => format!("ERR {} {} {}\n", d.rule.tag(), d.span.start, d.span.end),
     }
+    let mut dump = Dump { ast: &ast, out: String::new() };
+    for i in 0..ast.items.len() {
+        dump.item(ItemId(i as u32));
+    }
+    dump.imports();
+    dump.out
+}
+
+/// The listing for `source`, or the one refusal line.
+pub fn listing(source: &str) -> String {
+    listing_files(&[source.to_owned()])
+}
+
+/// Split a stream of files, each a line `FILE <length>` and then that many bytes, into the
+/// files. The programs of `examples/selfhost` read their input the same way.
+pub fn read_stream(bytes: &[u8]) -> Vec<String> {
+    let mut files = Vec::new();
+    let mut at = 0;
+    while bytes[at..].starts_with(b"FILE ") {
+        let line_end = at + bytes[at..].iter().position(|b| *b == b'\n').expect("a header line");
+        let length: usize = std::str::from_utf8(&bytes[at + 5..line_end])
+            .expect("a header")
+            .parse()
+            .expect("a length");
+        let text = &bytes[line_end + 1..line_end + 1 + length];
+        files.push(String::from_utf8_lossy(text).into_owned());
+        at = line_end + 1 + length;
+    }
+    files
 }
 
 #[allow(dead_code)]
 fn main() {
     let mut source = Vec::new();
     std::io::stdin().read_to_end(&mut source).expect("stdin");
-    print!("{}", listing(&String::from_utf8_lossy(&source)));
+    if std::env::args().any(|a| a == "--files") {
+        print!("{}", listing_files(&read_stream(&source)));
+    } else {
+        print!("{}", listing(&String::from_utf8_lossy(&source)));
+    }
 }

@@ -198,7 +198,7 @@ the stages found, in place, the way this document corrects its own claims.
 | 1. Lexer | `examples/selfhost/lexcore.ls` (a module) and `lexer.ls` | `examples/dump_tokens.rs` in `lex-sys-syntax` | Same token stream and the same refusals on every program in the repository (614 files) |
 | 2. Parser | `examples/selfhost/parser.ls` | `examples/dump_ast.rs` in `lex-sys-syntax` | Same syntax tree, node for node and span for span, or the same refusal (rule and span), on the same 614 files, **including its own source**, and on a fuzz corpus (below) of 52,272 cases, 51,911 of them comparable and all identical, 29,097 of those refusals |
 | 3a. The tree | `examples/selfhost/ast.ls` (a module, the parser) and `parser.ls` (a walk that prints the tree) | the same `dump_ast.rs` | The parser **builds the tree** in flat tables and the listing is produced by walking it; the same 621 programs and 52,314 fuzz cases (6 seeds), all comparable ones identical, 29,055 of them refusals |
-| 3b. Declarations (pass 1 of the checker) | `examples/selfhost/pass1.ls` and `check.ls`, over a generated `tables.ls` | `check_declarations` (`lex-sys-ir`), the first half of the Rust checker | Same answer, `OK` or the first refusal's rule and span, on the 593 programs of the repository it compares and on 51,150 fuzz cases (6 seeds): 49,256 identical, 29,910 of them refusals, none different; 32 programs and 1,437 fuzz cases are `SKIP` (below) |
+| 3b. Declarations (pass 1 of the checker) | `examples/selfhost/pass1.ls` and `check.ls`, over a generated `tables.ls`; programs of several files | `check_declarations` (`lex-sys-ir`), the first half of the Rust checker | Same answer, `OK` or the first refusal's rule and span, on the repository's programs alone (603 compared) and with the whole standard library parsed with them (591 compared, 433 of them `OK`), and on 77,042 fuzz cases (51,180 alone, 25,862 with the library): 74,895 identical, 46,124 of them refusals, none different; 1,574 are `SKIP` and 573 are not UTF-8, and only an `extern fn` is `SKIP` (below) |
 | 3c. Bodies: scopes, types, linearity, effects | not started | `lex-sys check --output json` | |
 | 4. Backend | not started | | |
 
@@ -249,15 +249,15 @@ tuples, `pub`. A type is resolved in place: each `TName` node of the tree is ann
 what it names, which is what the tree is for.
 
 Two things make a partial port honest. **`SKIP` at the point of divergence.** A construct
-whose checks are not ported (an `extern fn`; a `val` declaration; naming a type with a `val`
-bound at an argument that is not a plain scalar; `Ffi` with a library) ends the check with
-the answer `SKIP` *where the Rust checker would have reached it*, so a refusal found before it
-still counts and anything after it does not; and a skipped file is counted, by what the oracle
-said, not hidden: 32 of the repository's 625 programs and about 3% of the fuzz cases. **Generated
+whose checks are not ported (at first an `extern fn`, a `val` declaration, a `val`-bounded
+parameter at an argument that was not a plain scalar, and `Ffi` with a library; now only an
+`extern fn`) ends the check with the answer `SKIP` *where the Rust checker would have reached
+it*, so a refusal found before it still counts and anything after it does not; and a skipped
+file is counted, by what the oracle said, not hidden. **Generated
 tables.** The prelude's 46 types (name, arity, edition, whether another module may name it,
 which parameters are `val`-bounded) and the 118 builtins' names and editions are data the port
 cannot read from Rust, so `tables.ls` is generated, and a `lex-sys-ir` test fails when it is
-not what `prelude_types` and `Builtin::ALL` say (`UPDATE_SELFHOST_TABLES=1 cargo test -p
+not what `prelude_types`, `mode_of` and `Builtin::ALL` say (`UPDATE_SELFHOST_TABLES=1 cargo test -p
 lex-sys-ir selfhost_tables` rewrites it).
 
 What it found: the oracle caught an off-by-one in the import span in the first run, and
@@ -269,13 +269,30 @@ ast`, an alias equal to the last segment, which the file then spells without the
 quarter of which (foreign declarations, modes) is not ported, so the ratio is nearer 1.2 than
 0.8. That split is an estimate, not a count.
 
-What it does not show, and the next slices: **the corpus is mostly out of reach.** The port
-reads one file and `std` is a set of others, so 217 of the repository's programs stop at their
-`import std...` in both checkers, and the OK answers (328) and the refusals that are not that
-(about 50) are what exercises the checks; parsing several files (the Rust `parse_into`) is the
-step that makes the accept corpus count. Also not ported: foreign declarations (the boundary,
-authority and symbol checks), modes (`mode_of`, `val`), and then the bodies, which are the
-other half of the checker.
+**Several files, and modes.** The compiler parses a program as a set of files, the user's and then
+`std`'s, into one tree (`parse_into`, each file at its own base offset), so the port now does:
+`driver.ls` reads a stream of files on standard input (a line `FILE <length>` and that many bytes,
+each), lays them end to end with one byte between them as the Rust `SourceMap` does, and
+`ast.ls` tokenizes and parses them one after another into the same tables, with a module table
+(a path names one module however many files declare it) and an edition per file. Parsing
+`std` and a program together, 485 KB, gives the Rust parser's listing byte for byte, in 0.27 s.
+Checking with the library then exposed what the first slice had skipped: `std` names types with
+a `val` bound (`Option[T]`, `Map[V: val]`) at arguments that are not plain scalars, so **modes**
+are ported too. A type's mode is written as a function of its parameters, a bit for "`res`
+whatever they are" and a bit for each parameter that makes it so, so nothing is substituted;
+the prelude's bits are generated from `mode_of` itself (probing each parameter with a `res` type,
+which is exact because a mode is a disjunction over members), and a type the file declares
+has the bits of the members resolved so far, as the Rust checker, which fills members in as it
+goes, sees them. `Ffi`'s scope (`parse_scope`) is ported with it. What `SKIP`s now is only an
+`extern fn`.
+
+What it does not show, and the next slices: foreign declarations (the boundary, authority and
+symbol checks) are the only part of the declarations not ported; then the bodies, which are the
+other half of the checker and most of its size. The library is parsed in name order and not the
+compiler's, which cannot change an answer about the program's file because the library has no
+refusal of its own and the program's items come first. A type that contains itself met first by
+a mode check makes the Rust checker recurse without end (the program is refused anyway, after
+the stack overflows); the port answers `res` past a depth of 64 instead, and no case reached it.
 
 **Size.** `parser.ls` is 1,970 lines (1,760 that are not comment or blank) for the
 Rust parser's 1,507 (1,225): 1.3 to 1.4 times. `lexcore.ls` is 963 lines (897) for the

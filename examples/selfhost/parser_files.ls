@@ -1,0 +1,11 @@
+// parser_files.ls -- the parser's listing, for a program of several files: the program.
+//
+// The same as `parser.ls`, over a stream of files on standard input, each a line
+// `FILE <length>` and then that many bytes, parsed one after another into one tree as the Rust
+// `parse_into` does (`docs/many-files.md` section 2); see `driver.ls`.
+
+import selfhost.driver;
+
+fn main(world: World) -> [] int {
+    return driver.drive(world, 0, true);
+}

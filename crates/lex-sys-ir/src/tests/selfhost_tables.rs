@@ -61,6 +61,30 @@ fn render() -> String {
     table(&mut out, "prelude_arities", defs.iter().map(|d| d.generics.len() as u64).collect());
     table(&mut out, "prelude_sinces", defs.iter().map(|d| u64::from(d.since)).collect());
     table(&mut out, "prelude_publics", defs.iter().map(|d| u64::from(d.public)).collect());
+    // The mode of a prelude type as a function of its arguments (`mode_of`, `linear.rs`): bit 0 if it
+    // is `res` whatever they are, and bit 1 + i if it is `res` when argument i is. A mode is a
+    // disjunction over a type's members, so probing each argument alone with a `res` type says
+    // all of it.
+    let res_probe = Type::Named(DefId(PRELUDE_BOX as u32), vec![Type::Int]);
+    assert_eq!(mode_of(&defs, &unifier, &[], &res_probe), Mode::Res, "the probe is `res`");
+    let res_bits: Vec<u64> = defs
+        .iter()
+        .map(|d| {
+            let k = d.generics.len();
+            let at = |hole: Option<usize>| {
+                let args = (0..k)
+                    .map(|i| if hole == Some(i) { res_probe.clone() } else { Type::Int })
+                    .collect();
+                mode_of(&defs, &unifier, &[], &Type::Named(d.def, args)) == Mode::Res
+            };
+            let mut bits = u64::from(at(None));
+            for i in 0..k {
+                bits |= u64::from(at(Some(i))) << (1 + i);
+            }
+            bits
+        })
+        .collect();
+    table(&mut out, "prelude_res_bits", res_bits);
     table(
         &mut out,
         "prelude_bounds",
@@ -78,6 +102,7 @@ fn render() -> String {
          pub fn prelude_arity(i: int) -> [] int {\n    return prelude_arities[i];\n}\n\n\
          pub fn prelude_since(i: int) -> [] int {\n    return prelude_sinces[i];\n}\n\n\
          pub fn prelude_public(i: int) -> [] bool {\n    return prelude_publics[i] != 0;\n}\n\n\
+         pub fn prelude_res(i: int) -> [] int {\n    return prelude_res_bits[i];\n}\n\n\
          // Bit i set: parameter i is bounded `val`.\n\
          pub fn prelude_bound(i: int) -> [] int {\n    return prelude_bounds[i];\n}\n\n",
     );

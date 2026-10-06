@@ -295,29 +295,88 @@ fn agree(tag: &str, files: &[&str], oracle: fn(&str) -> String) {
     let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
 }
 
+/// A program of several files as the ports read it: each a line `FILE <length>` and then that many
+/// bytes (`examples/selfhost/driver.ls`).
+fn stream(files: &[String]) -> String {
+    files.iter().map(|f| format!("FILE {}\n{f}", f.len())).collect()
+}
+
+/// The program's file and then the standard library, as `lex-sys check --std` parses them. The
+/// library is every file of `std/` in name order; the compiler's own order differs, which cannot
+/// change an answer about the program's file because the library has no refusal of its own and
+/// the program's items come first.
+fn with_library(program: &str) -> Vec<String> {
+    let mut names: Vec<_> = std::fs::read_dir(repo_root().join("std"))
+        .expect("std/")
+        .map(|e| e.expect("an entry").path())
+        .filter(|p| p.extension().is_some_and(|e| e == "ls"))
+        .collect();
+    names.sort();
+    let mut files = vec![program.to_owned()];
+    files.extend(names.iter().map(|p| std::fs::read_to_string(p).expect("a library file")));
+    files
+}
+
+/// Run `f` over `items` on four threads: each answer takes a process and the library is half a
+/// megabyte.
+fn in_parallel<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let chunk = items.len().div_ceil(4).max(1);
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = items
+            .chunks(chunk)
+            .map(|part| scope.spawn(|| part.iter().map(&f).collect::<Vec<R>>()))
+            .collect();
+        handles.into_iter().flat_map(|h| h.join().expect("a worker finished")).collect()
+    })
+}
+
 /// The checker port against `check_declarations`. A port answer of `SKIP` says the declarations
 /// use something whose checks are not ported, and is not compared; everything else must be
 /// the oracle's answer, byte for byte, and enough of the corpus must be compared that the test
 /// cannot pass by skipping.
+///
+/// Twice: each program alone, which is how it stops at its first `import std...`, and with the
+/// library, which is what `lex-sys check --std` does and what makes the program's own
+/// declarations meet the library's. The second is a sample (every fourth program and every edge
+/// case), because each of its runs parses half a megabyte.
 #[test]
 fn the_checker_in_lex_sys_agrees_with_the_rust_declarations_check() {
-    let exe = build("check", &with_front_end("check.ls"));
+    let alone = build("check", &with_front_end("check.ls"));
+    let with_std = build("check_with_std", &with_front_end("check_files.ls"));
     let mut corpus = sources();
     corpus.extend(CHECK_EDGE.iter().map(|s| (format!("check case {s:.40?}"), (*s).to_owned())));
-    let (mut compared, mut skipped, mut refusals) = (0, 0, 0);
+    let sample: Vec<&(String, String)> = corpus
+        .iter()
+        .enumerate()
+        .filter(|(i, (name, _))| i % 4 == 0 || name.starts_with("check case"))
+        .map(|(_, c)| c)
+        .collect();
+
+    let mut compared = 0;
+    let mut skipped = 0;
+    let mut refusals = 0;
     let mut different = Vec::new();
-    for (name, text) in &corpus {
-        let ours = answer(&exe, text);
+    let mut judge = |what: &str, name: &str, ours: String, theirs: String| {
         if ours == "SKIP\n" {
             skipped += 1;
-            continue;
+            return;
         }
         compared += 1;
-        let theirs = declarations_oracle::listing(text);
         refusals += usize::from(theirs.starts_with("ERR"));
         if ours != theirs {
-            different.push(format!("{name}: port {ours:?}, rust {theirs:?}"));
+            different.push(format!("{what} {name}: port {ours:?}, rust {theirs:?}"));
         }
+    };
+    let alone_answers = in_parallel(&corpus, |(_, text)| answer(&alone, text));
+    for ((name, text), ours) in corpus.iter().zip(alone_answers) {
+        judge("alone", name, ours, declarations_oracle::listing(text));
+    }
+    let library_answers = in_parallel(&sample, |(_, text)| {
+        let files = with_library(text);
+        (answer(&with_std, &stream(&files)), declarations_oracle::listing_files(&files))
+    });
+    for ((name, _), (ours, theirs)) in sample.iter().zip(library_answers) {
+        judge("with std", name, ours, theirs);
     }
     assert!(
         different.is_empty(),
@@ -325,9 +384,68 @@ fn the_checker_in_lex_sys_agrees_with_the_rust_declarations_check() {
         different.len(),
         different.join("\n")
     );
-    assert!(compared > 500 && refusals > 100, "compared {compared}, of which {refusals} refusals");
-    assert!(skipped * 10 < compared, "{skipped} programs skipped of {}", corpus.len());
-    let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
+    assert!(compared > 700 && refusals > 150, "compared {compared}, of which {refusals} refusals");
+    assert!(skipped * 10 < compared, "{skipped} answers skipped of {}", compared + skipped);
+    let _ = std::fs::remove_dir_all(alone.parent().expect("a scratch directory"));
+    let _ = std::fs::remove_dir_all(with_std.parent().expect("a scratch directory"));
+}
+
+/// Programs of several files, which the corpus has none of: modules declared in more than one
+/// file, an edition per file, imports across files, and refusals in a later file.
+const SEVERAL_FILES: &[&[&str]] = &[
+    &["fn main(world: World) -> [] int { return 0; }", "fn helper() -> [] int { return 1; }"],
+    &[
+        "module a;\nimport a;\nfn f() -> [] int { return 1; }",
+        "module a;\nfn g() -> [] int { return 2; }",
+    ],
+    &["module a;\nstruct T { x: int }", "module a;\nstruct T { y: int }"],
+    &["module a;\nstruct T { x: int }", "module b;\nstruct T { y: int }"],
+    &["module a;\npub struct T { x: int }", "module b;\nimport a;\nstruct U { t: a.T }"],
+    &["module a;\nstruct T { x: int }", "module b;\nimport a;\nstruct U { t: a.T }"],
+    &["module a.b;\nstruct T { x: int }", "module a.b;\nimport a.b as q;\nstruct U { t: q.T }"],
+    &["edition 2;\nstruct S { n: Net }", "struct S { n: Net }"],
+    &["struct S { n: Net }", "edition 2;\nstruct S { n: Net }"],
+    &["edition 9;\n", "fn f() -> [] int { return 1; }"],
+    &["fn f() -> [] int { return 1; }", "edition 9;\n"],
+    &["fn f() -> [] int { return 1x; }", "fn g() -> [] int { return 1; }"],
+    &["fn f() -> [] int { return 1; }", "fn g() -> [] int { return 1x; }"],
+    &["fn f() -> [] int { return 1; }", "fn f() -> [] int { return 2; }"],
+    &["module m;\nfn f() -> [] int { return 1; }", "module m;\nfn f() -> [] int { return 2; }"],
+    &["import zzz;", "module zzz;"],
+    &["module zzz;", "import zzz;"],
+    &["", "", ""],
+    &["module m;", "", "struct S { a: Nope }"],
+    &["struct S { a: T }", "struct T { a: S }"],
+];
+
+#[test]
+fn the_ports_read_several_files_as_the_compiler_does() {
+    let parser = build("several_parser", &with_front_end("parser_files.ls"));
+    let checker = build("several_check", &with_front_end("check_files.ls"));
+    let mut cases: Vec<Vec<String>> =
+        SEVERAL_FILES.iter().map(|case| case.iter().map(|f| (*f).to_owned()).collect()).collect();
+    // The library alone, and a program with it: the tree of half a megabyte.
+    cases.push(with_library("fn main(world: World) -> [] int { return 0; }"));
+    for files in &cases {
+        let input = stream(files);
+        assert_eq!(
+            answer(&parser, &input),
+            ast_oracle::listing_files(files),
+            "the listing of {:?}",
+            files.iter().take(3).collect::<Vec<_>>()
+        );
+        let ours = answer(&checker, &input);
+        if ours != "SKIP\n" {
+            assert_eq!(
+                ours,
+                declarations_oracle::listing_files(files),
+                "the check of {:?}",
+                files.iter().take(3).collect::<Vec<_>>()
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(parser.parent().expect("a scratch directory"));
+    let _ = std::fs::remove_dir_all(checker.parent().expect("a scratch directory"));
 }
 
 #[test]

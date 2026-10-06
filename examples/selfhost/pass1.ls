@@ -14,11 +14,7 @@ module selfhost.pass1;
 // checker would have reached it, so an error found before it still counts and anything after
 // it does not. What skips:
 //
-// * an `extern fn` (the foreign boundary, authority and symbol checks),
-// * a `val` declaration (its members' modes are checked after the size check),
-// * naming a type with a `val` bound on a parameter at an argument that is not a plain
-//   scalar (what mode the argument has needs the modes of every type),
-// * naming `Ffi` with a library (what `parse_scope` refuses).
+// * an `extern fn` (the foreign boundary, authority and symbol checks).
 //
 // A type is resolved *in place*: each `TName` node gets what it names in slots 8..10 (8 the
 // class: 0 a scalar, 1 a type parameter, 2 a prelude type, 3 a type the file declares; 9 the
@@ -37,24 +33,6 @@ pub fn user_base() -> [] int {
 }
 
 // --------------------------------------------------------------- tokens ---
-
-// Do tokens `a` and `b` spell the same?
-fn same[&s, &x](st: &!s [int], text: &x [byte], a: int, b: int) -> [] bool {
-    let from = ast.tstart(st, a);
-    let n = ast.tend(st, a) - from;
-    if n != ast.tend(st, b) - ast.tstart(st, b) {
-        return false;
-    }
-    let other = ast.tstart(st, b);
-    var k = 0;
-    while k < n {
-        if text[from + k] != text[other + k] {
-            return false;
-        }
-        k = k + 1;
-    }
-    return true;
-}
 
 fn is_word[&s, &x](st: &!s [int], text: &x [byte], tok: int, spelled: &static [byte]) -> [] bool {
     return lc.spells(text, ast.tstart(st, tok), ast.tend(st, tok), spelled);
@@ -98,40 +76,44 @@ fn import_end[&s](st: &!s [int], keyword: int) -> [] int {
     return after;
 }
 
-// Does the import at token `keyword` name the module this file declares?
-fn names_the_module[&s, &x](st: &!s [int], text: &x [byte], keyword: int) -> [] bool {
-    if st[11] == 0 || path_len(st, keyword) != st[11] {
-        return false;
-    }
-    var k = 0;
-    while k < st[11] {
-        if !same(st, text, keyword + 1 + 2 * k, st[10] + 2 * k) {
-            return false;
+// The module the import at token `keyword` names: the one whose path is the import's, or -1 if
+// the program declares no such module.
+fn imported_module[&s, &x](st: &!s [int], text: &x [byte], keyword: int) -> [] int {
+    var m = 1;
+    while m < st[11] {
+        if ast.module_len(st, m) == path_len(st, keyword) {
+            var k = 0;
+            var equal = true;
+            while k < ast.module_len(st, m) && equal {
+                equal = ast.same(st, text, keyword + 1 + 2 * k, ast.module_first(st, m) + 2 * k);
+                k = k + 1;
+            }
+            if equal {
+                return m;
+            }
         }
-        k = k + 1;
+        m = m + 1;
     }
-    return true;
+    return 0 - 1;
 }
 
 // Every import names a module the program declares, and no two bind the same qualifier.
 fn check_imports[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     var m = 0;
-    while m < 2 && ast.ok(st) {
+    while m < st[11] && ast.ok(st) {
         var n = 0;
         while n < st[12] && ast.ok(st) {
-            let record = st[16 + 3 * st[8] + n];
-            if record % 2 == m {
-                let keyword = record / 2;
+            if ast.import_module(st, n) == m {
+                let keyword = ast.import_keyword(st, n);
                 let from = ast.tstart(st, keyword);
                 let to = ast.tend(st, import_end(st, keyword));
-                if !names_the_module(st, text, keyword) {
+                if imported_module(st, text, keyword) < 0 {
                     ast.fail(st, ast.r_unknown_name(), from, to);
                 } else {
                     var j = 0;
                     while j < n && ast.ok(st) {
-                        let earlier = st[16 + 3 * st[8] + j];
-                        if earlier % 2 == m {
-                            if same(st, text, import_alias(st, earlier / 2), import_alias(st, keyword)) {
+                        if ast.import_module(st, j) == m {
+                            if ast.same(st, text, import_alias(st, ast.import_keyword(st, j)), import_alias(st, keyword)) {
                                 ast.fail(st, ast.r_duplicate_declaration(), from, to);
                             }
                         }
@@ -146,22 +128,18 @@ fn check_imports[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     return 0;
 }
 
-// The module a qualifier written in `module` means: `module` itself if there is no
-// qualifier, the declared module if an import in `module` binds it, else -1.
+// The module a qualifier written in `unit_of` means: `unit_of` itself if there is no
+// qualifier, the module an import in `unit_of` binds it to, else -1.
 fn resolve_module[&s, &x](st: &!s [int], text: &x [byte], unit_of: int, qualifier: int) -> [] int {
     if qualifier < 0 {
         return unit_of;
     }
     var n = 0;
     while n < st[12] {
-        let record = st[16 + 3 * st[8] + n];
-        if record % 2 == unit_of {
-            let keyword = record / 2;
-            if same(st, text, import_alias(st, keyword), qualifier) {
-                if names_the_module(st, text, keyword) {
-                    return 1;
-                }
-                return 0 - 1;
+        if ast.import_module(st, n) == unit_of {
+            let keyword = ast.import_keyword(st, n);
+            if ast.same(st, text, import_alias(st, keyword), qualifier) {
+                return imported_module(st, text, keyword);
             }
         }
         n = n + 1;
@@ -228,7 +206,7 @@ fn param_bounded[&s](st: &!s [int], dp: int, k: int) -> [] bool {
 fn param_index[&s, &x](st: &!s [int], text: &x [byte], dp: int, regions: bool, tok: int) -> [] int {
     var k = 0;
     while nth_param(st, dp, regions, k) >= 0 {
-        if same(st, text, nth_param(st, dp, regions, k), tok) {
+        if ast.same(st, text, nth_param(st, dp, regions, k), tok) {
             return k;
         }
         k = k + 1;
@@ -265,7 +243,7 @@ fn check_generic_names[&s, &x](st: &!s [int], text: &x [byte], dp: int, from: in
         }
         var j = 0;
         while j < k {
-            if same(st, text, nth_param(st, dp, false, j), name) {
+            if ast.same(st, text, nth_param(st, dp, false, j), name) {
                 ast.fail(st, ast.r_duplicate_declaration(), from, to);
             }
             j = j + 1;
@@ -283,7 +261,7 @@ fn check_region_names[&s, &x](st: &!s [int], text: &x [byte], dp: int, from: int
         let name = nth_param(st, dp, true, k);
         var j = 0;
         while j < k {
-            if same(st, text, nth_param(st, dp, true, j), name) {
+            if ast.same(st, text, nth_param(st, dp, true, j), name) {
                 ast.fail(st, ast.r_duplicate_declaration(), from, to);
             }
             j = j + 1;
@@ -329,7 +307,7 @@ fn lookup[&s, &x](st: &!s [int], text: &x [byte], name: int, target: int, editio
     }
     var it = st[15];
     while it >= 0 {
-        if is_type_item(st, it) && ast.get(st, it, 13) == target && same(st, text, ast.get(st, it, 4), name) {
+        if is_type_item(st, it) && ast.get(st, it, 13) == target && ast.same(st, text, ast.get(st, it, 4), name) {
             if best < 0 || 1 >= since {
                 best = user_base() + it;
                 since = 1;
@@ -374,6 +352,160 @@ fn pow2(n: int) -> [] int {
         k = k + 1;
     }
     return v;
+}
+
+// ---------------------------------------------------------------- modes ---
+//
+// The mode of a type is `res` if it is declared `res` or any member is, else `val`; a reference,
+// a slice and a scalar are `val`, and a type parameter is `val` only if its declaration bounded
+// it so. Written as a *function of the parameters* it needs no substitution: a type's `bits`
+// say whether it is `res` whatever its parameters are (bit 0) and which parameters, if `res`,
+// make it so (bit 1 + j for parameter j of the enclosing declaration). Naming a definition
+// at arguments combines its bits with the arguments' own.
+
+fn bit_of(bits: int, k: int) -> [] bool {
+    return bits / pow2(k) % 2 == 1;
+}
+
+fn bits_or(a: int, b: int) -> [] int {
+    var out = 0;
+    var k = 0;
+    while k < 12 {
+        if bit_of(a, k) || bit_of(b, k) {
+            out = out + pow2(k);
+        }
+        k = k + 1;
+    }
+    return out;
+}
+
+// The bits of the type declared by `item`. Until its members are resolved (slot 12) it has
+// none, as in the Rust checker, which fills them in as it goes; a declared `res` is `res`
+// regardless.
+fn user_bits[&s](st: &!s [int], item: int, depth: int) -> [] int {
+    if ast.get(st, item, 6) == 2 {
+        return 1;
+    }
+    if ast.get(st, item, 12) != 1 {
+        return 0;
+    }
+    var out = 0;
+    var member = ast.get(st, item, 8);
+    while member >= 0 {
+        if ast.is_kind(st, item, kinds.NK::IStruct) {
+            out = bits_or(out, mode_bits(st, ast.get(st, member, 5), depth + 1));
+        } else {
+            var payload = ast.get(st, member, 5);
+            while payload >= 0 {
+                out = bits_or(out, mode_bits(st, payload, depth + 1));
+                payload = ast.next(st, payload);
+            }
+        }
+        member = ast.next(st, member);
+    }
+    return out;
+}
+
+// The bits of the resolved type `ty`. A type that contains itself is refused later; the Rust
+// checker recurses without end on one met first, and this answers `res` instead of looping.
+fn mode_bits[&s](st: &!s [int], ty: int, depth: int) -> [] int {
+    if depth > 64 {
+        return 1;
+    }
+    if ast.is_kind(st, ty, kinds.NK::TTuple) {
+        var out = 0;
+        var at = ast.get(st, ty, 6);
+        var left = ast.get(st, ty, 7);
+        while left > 0 {
+            out = bits_or(out, mode_bits(st, at, depth + 1));
+            at = ast.next(st, at);
+            left = left - 1;
+        }
+        return out;
+    }
+    if !ast.is_kind(st, ty, kinds.NK::TName) {
+        return 0;
+    }
+    let class = ast.get(st, ty, 8);
+    if class == 1 {
+        return pow2(1 + ast.get(st, ty, 9));
+    }
+    if class != 2 && class != 3 {
+        return 0;
+    }
+    var def = 0;
+    if class == 2 {
+        def = tables.prelude_res(ast.get(st, ty, 9));
+    } else {
+        def = user_bits(st, ast.get(st, ty, 9), depth);
+    }
+    var out = def % 2;
+    var arg = ast.get(st, ty, 6);
+    var i = 0;
+    while i < ast.get(st, ty, 7) {
+        if bit_of(def, 1 + i) {
+            out = bits_or(out, mode_bits(st, arg, depth + 1));
+        }
+        arg = ast.next(st, arg);
+        i = i + 1;
+    }
+    return out;
+}
+
+// Is a type with these bits `res`, written inside the declaration whose `[...]` starts at
+// `scope`? Its parameters are `res` unless bounded `val`.
+fn is_res[&s](st: &!s [int], bits: int, scope: int) -> [] bool {
+    if bit_of(bits, 0) {
+        return true;
+    }
+    var j = 0;
+    while j < 11 {
+        if bit_of(bits, 1 + j) && !param_bounded(st, scope, j) {
+            return true;
+        }
+        j = j + 1;
+    }
+    return false;
+}
+
+// Is the scope a type is narrowed to well formed (`parse_scope`): library names, each
+// letters, digits and `_.+-`, separated by commas, none empty and none twice?
+fn scope_valid[&s, &x](st: &!s [int], text: &x [byte], lit: int) -> [] bool {
+    let from = ast.tstart(st, lit) + 1;
+    let to = ast.tend(st, lit) - 1;
+    if from == to {
+        return true;
+    }
+    var name = from;
+    var at = from;
+    while at <= to {
+        var c = 0 - 1;
+        if at < to {
+            c = lc.at(text, at);
+        }
+        if at == to || c == ',' {
+            if at == name {
+                return false;
+            }
+            var other = from;
+            while other < name {
+                // The names before this one: each is compared whole.
+                var end = other;
+                while end < to && lc.at(text, end) != ',' {
+                    end = end + 1;
+                }
+                if end - other == at - name && lc.spells(text, other, end, text[name..at]) {
+                    return false;
+                }
+                other = end + 1;
+            }
+            name = at + 1;
+        } else if !(lc.is_digit(c) || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_' || c == '.' || c == '+' || c == '-') {
+            return false;
+        }
+        at = at + 1;
+    }
+    return true;
 }
 
 // -------------------------------------------------------- written types ---
@@ -509,20 +641,23 @@ fn resolve_name[&s, &x](st: &!s [int], text: &x [byte], id: int, unit_of: int, e
         ast.fail(st, ast.r_not_public(), from, to);
         return 0;
     }
-    // What mode an argument has needs the modes of every type: not ported, so say so.
+    // `docs/mode-polymorphism.md` section 3: a parameter bounded `val` takes no `res` argument.
     var arg = ast.get(st, id, 6);
     var i = 0;
     while i < nargs {
-        if def_bound_val(st, found, i) && !is_scalar_type(st, arg) {
-            ast.fail(st, ast.r_skip(), from, to);
+        if def_bound_val(st, found, i) && is_res(st, mode_bits(st, arg, 0), scope) {
+            ast.fail(st, ast.r_mode_bound_violated(), from, to);
             return 0;
         }
         arg = ast.next(st, arg);
         i = i + 1;
     }
+    // The scope an `Ffi` is narrowed to has to be well formed.
     if found == tables.prelude_ffi() && nargs >= 1 && ast.is_kind(st, ast.get(st, id, 6), kinds.NK::TLit) {
-        ast.fail(st, ast.r_skip(), from, to);
-        return 0;
+        if !scope_valid(st, text, ast.get(st, ast.get(st, id, 6), 4)) {
+            ast.fail(st, ast.r_foreign_scope(), from, to);
+            return 0;
+        }
     }
     if nargs != def_arity(st, found) {
         ast.fail(st, ast.r_arity_mismatch(), from, to);
@@ -638,7 +773,7 @@ fn collect_types[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
             }
             var other = st[15];
             while other != it && ast.ok(st) {
-                if is_type_item(st, other) && ast.get(st, other, 13) == unit_of && same(st, text, ast.get(st, other, 4), name) {
+                if is_type_item(st, other) && ast.get(st, other, 13) == unit_of && ast.same(st, text, ast.get(st, other, 4), name) {
                     ast.fail(st, ast.r_duplicate_declaration(), from, to);
                 }
                 other = ast.next(st, other);
@@ -670,15 +805,38 @@ fn collect_types[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         }
         it = ast.next(st, it);
     }
-    // A declared `val` promises something about every member: not ported.
+    // A declared `val` promises something about every member: none may be `res`, whatever the
+    // parameters are.
     it = st[15];
     while it >= 0 && ast.ok(st) {
-        if is_type_item(st, it) && ast.get(st, it, 6) == 1 {
-            ast.fail(st, ast.r_skip(), ast.nstart(st, it), ast.nend(st, it));
+        if is_type_item(st, it) && ast.get(st, it, 6) == 1 && val_holds_res(st, it) {
+            ast.fail(st, ast.r_mode_bound_violated(), ast.nstart(st, it), ast.nend(st, it));
         }
         it = ast.next(st, it);
     }
     return 0;
+}
+
+// Does the type declared by `item` hold a member that is `res` whatever its parameters are?
+fn val_holds_res[&s](st: &!s [int], item: int) -> [] bool {
+    var member = ast.get(st, item, 8);
+    while member >= 0 {
+        if ast.is_kind(st, item, kinds.NK::IStruct) {
+            if bit_of(mode_bits(st, ast.get(st, member, 5), 0), 0) {
+                return true;
+            }
+        } else {
+            var payload = ast.get(st, member, 5);
+            while payload >= 0 {
+                if bit_of(mode_bits(st, payload, 0), 0) {
+                    return true;
+                }
+                payload = ast.next(st, payload);
+            }
+        }
+        member = ast.next(st, member);
+    }
+    return false;
 }
 
 fn collect_fields[&s, &x](st: &!s [int], text: &x [byte], it: int) -> [] int {
@@ -688,7 +846,7 @@ fn collect_fields[&s, &x](st: &!s [int], text: &x [byte], it: int) -> [] int {
     while field >= 0 && ast.ok(st) {
         var other = ast.get(st, it, 8);
         while other != field {
-            if same(st, text, ast.get(st, other, 4), ast.get(st, field, 4)) {
+            if ast.same(st, text, ast.get(st, other, 4), ast.get(st, field, 4)) {
                 ast.fail(st, ast.r_duplicate_declaration(), from, to);
             }
             other = ast.next(st, other);
@@ -696,6 +854,7 @@ fn collect_fields[&s, &x](st: &!s [int], text: &x [byte], it: int) -> [] int {
         resolve(st, text, ast.get(st, field, 5), ast.get(st, it, 13), ast.get(st, it, 14), ast.get(st, it, 7), false, false);
         field = ast.next(st, field);
     }
+    ast.put(st, it, 12, 1);
     return 0;
 }
 
@@ -710,7 +869,7 @@ fn collect_variants[&s, &x](st: &!s [int], text: &x [byte], it: int) -> [] int {
     while variant >= 0 && ast.ok(st) {
         var other = ast.get(st, it, 8);
         while other != variant {
-            if same(st, text, ast.get(st, other, 4), ast.get(st, variant, 4)) {
+            if ast.same(st, text, ast.get(st, other, 4), ast.get(st, variant, 4)) {
                 ast.fail(st, ast.r_duplicate_declaration(), from, to);
             }
             other = ast.next(st, other);
@@ -718,6 +877,7 @@ fn collect_variants[&s, &x](st: &!s [int], text: &x [byte], it: int) -> [] int {
         resolve_list(st, text, ast.get(st, variant, 5), ast.get(st, variant, 6), ast.get(st, it, 13), ast.get(st, it, 14), ast.get(st, it, 7), false, false);
         variant = ast.next(st, variant);
     }
+    ast.put(st, it, 12, 1);
     return 0;
 }
 
@@ -745,7 +905,7 @@ fn check_statics[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
             let unit_of = ast.get(st, it, 13);
             var other = st[15];
             while other != it && ast.ok(st) {
-                if ast.is_kind(st, other, kinds.NK::IStatic) && ast.get(st, other, 13) == unit_of && same(st, text, ast.get(st, other, 4), name) {
+                if ast.is_kind(st, other, kinds.NK::IStatic) && ast.get(st, other, 13) == unit_of && ast.same(st, text, ast.get(st, other, 4), name) {
                     ast.fail(st, ast.r_duplicate_declaration(), from, to);
                 }
                 other = ast.next(st, other);
@@ -753,7 +913,7 @@ fn check_statics[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
             other = st[15];
             while other >= 0 && ast.ok(st) {
                 if ast.is_kind(st, other, kinds.NK::IFn) || ast.is_kind(st, other, kinds.NK::IExtern) {
-                    if ast.get(st, other, 13) == unit_of && same(st, text, ast.get(st, other, 4), name) {
+                    if ast.get(st, other, 13) == unit_of && ast.same(st, text, ast.get(st, other, 4), name) {
                         ast.fail(st, ast.r_duplicate_declaration(), from, to);
                     }
                 }
@@ -853,7 +1013,7 @@ fn check_signature[&s, &x](st: &!s [int], text: &x [byte], it: int) -> [] int {
     }
     var other = st[15];
     while other != it && ast.ok(st) {
-        if ast.is_kind(st, other, kinds.NK::IFn) && ast.get(st, other, 13) == unit_of && same(st, text, ast.get(st, other, 4), name) {
+        if ast.is_kind(st, other, kinds.NK::IFn) && ast.get(st, other, 13) == unit_of && ast.same(st, text, ast.get(st, other, 4), name) {
             ast.fail(st, ast.r_duplicate_declaration(), from, to);
         }
         other = ast.next(st, other);
@@ -873,7 +1033,7 @@ fn check_signature[&s, &x](st: &!s [int], text: &x [byte], it: int) -> [] int {
     while param >= 0 && ast.ok(st) {
         var earlier = ast.get(st, it, 7);
         while earlier != param {
-            if same(st, text, ast.get(st, earlier, 4), ast.get(st, param, 4)) {
+            if ast.same(st, text, ast.get(st, earlier, 4), ast.get(st, param, 4)) {
                 ast.fail(st, ast.r_duplicate_declaration(), from, to);
             }
             earlier = ast.next(st, earlier);

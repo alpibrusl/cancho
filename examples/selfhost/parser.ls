@@ -12,5 +12,5 @@
 import selfhost.driver;
 
 fn main(world: World) -> [] int {
-    return driver.drive(world, 0);
+    return driver.drive(world, 0, false);
 }

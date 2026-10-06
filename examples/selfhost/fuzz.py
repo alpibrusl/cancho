@@ -300,8 +300,22 @@ def mutate(data: bytes, rng: random.Random) -> bytes:
     return data[:a] + data[c:d] + data[b:c] + data[a:b] + data[d:]
 
 
+STD = None
+
+
+def with_library(data: bytes) -> bytes:
+    """The case's file and then every file of `std/`, as `FILE <length>` records."""
+    global STD
+    if STD is None:
+        STD = [open(f, "rb").read() for f in sorted(glob.glob("std/*.ls"))]
+    out = b""
+    for part in [data] + STD:
+        out += b"FILE %d\n" % len(part) + part
+    return out
+
+
 def run(cmd, data):
-    p = subprocess.run(cmd, input=data, capture_output=True, timeout=60)
+    p = subprocess.run(cmd, input=data, capture_output=True, timeout=120)
     return p.returncode, p.stdout, p.stderr
 
 
@@ -313,6 +327,9 @@ def main():
     ap.add_argument("--count", type=int, default=3000)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--keep", help="write each differing input into this directory")
+    ap.add_argument("--std", action="store_true",
+                    help="with --checker: parse each case with the standard library, as `check --std` does; the "
+                    "oracle and the port are given a stream of files (see `driver.ls`), and the port is `check_files`")
     ap.add_argument("--checker", action="store_true",
                     help="compare check.ls with check_declarations: the pass-1 edge cases, and a SKIP answer is not compared")
     args = ap.parse_args()
@@ -320,7 +337,7 @@ def main():
     paths = args.files or sorted(glob.glob("**/*.ls", recursive=True))
     paths = [p for p in paths if "/target/" not in p and not p.startswith("target/")]
     corpus = build_corpus(paths)
-    if args.checker:
+    if args.checker and not args.std:
         # A program that imports `std` stops at its first import (the port reads one file, and `std`
         # is a set of others), so its mutants never reach the checks this is for.
         corpus = [(p, d) for p, d in corpus if b"import std" not in d]
@@ -341,7 +358,11 @@ def main():
             # reports spans in the decoded text; the port works on the bytes. The two cannot
             # be compared, and they are the only cases that differ.
             return name, data, None, None
-        a, b = run([args.oracle], data), run([args.port], data)
+        if args.std:
+            payload = with_library(data)
+            a, b = run([args.oracle, "--files"], payload), run([args.port], payload)
+        else:
+            a, b = run([args.oracle], data), run([args.port], data)
         return name, data, a, b
 
     same = refused = bad = skipped = skipped_port = 0
