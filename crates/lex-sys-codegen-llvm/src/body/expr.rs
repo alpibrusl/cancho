@@ -504,7 +504,12 @@ impl<'a> FuncEmitter<'a> {
                 let narrowed = self.fresh();
                 self.out.push_str(&format!("  {narrowed} = trunc i64 {} to i32\n", operand(&c)));
                 let result = self.fresh();
-                self.out.push_str(&format!("  {result} = call i32 @putchar(i32 {narrowed})\n"));
+                let putchar = if crate::wasi_console::applies(self.triple) {
+                    "lexsys_putchar"
+                } else {
+                    "putchar"
+                };
+                self.out.push_str(&format!("  {result} = call i32 @{putchar}(i32 {narrowed})\n"));
                 let widened = self.fresh();
                 self.out.push_str(&format!("  {widened} = sext i32 {result} to i64\n"));
                 Ok(vec![LValue::Reg(widened)])
@@ -517,7 +522,12 @@ impl<'a> FuncEmitter<'a> {
             // never fires.
             Callee::Builtin(Builtin::GetChar) => {
                 let result = self.fresh();
-                self.out.push_str(&format!("  {result} = call i32 @getchar()\n"));
+                let getchar = if crate::wasi_console::applies(self.triple) {
+                    "lexsys_getchar"
+                } else {
+                    "getchar"
+                };
+                self.out.push_str(&format!("  {result} = call i32 @{getchar}()\n"));
                 let widened = self.fresh();
                 self.out.push_str(&format!("  {widened} = sext i32 {result} to i64\n"));
                 Ok(vec![LValue::Reg(widened)])
@@ -533,6 +543,24 @@ impl<'a> FuncEmitter<'a> {
                 let [start, len] = flat.as_slice() else {
                     return Err("`write_bytes`/`write_err` need a byte slice argument".to_owned());
                 };
+                if crate::wasi_console::applies(self.triple) {
+                    // The console without libc's stdio (`wasi_console`): the same
+                    // bytes, through `fd_write` alone.
+                    let write = if matches!(callee, Callee::Builtin(Builtin::WriteErr)) {
+                        "lexsys_stderr_write"
+                    } else {
+                        "lexsys_stdout_write"
+                    };
+                    let st = self.size_ty();
+                    let size = self.size_arg(&operand(len));
+                    let raw = self.fresh();
+                    self.out.push_str(&format!(
+                        "  {raw} = call {st} @{write}(ptr {}, {st} {size})\n",
+                        operand(start)
+                    ));
+                    let result = self.size_result(&raw, false);
+                    return Ok(vec![LValue::Reg(result)]);
+                }
                 let symbol = match (callee, self.triple.operating_system) {
                     (
                         Callee::Builtin(Builtin::WriteErr),

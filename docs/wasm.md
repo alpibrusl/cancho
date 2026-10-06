@@ -11,7 +11,7 @@ wasm build gives **both** -- the static row from `lex-sys authority`, and a
 module whose import section the runtime enforces -- and makes `row ⊆ imports`
 a mechanical check. Defence in depth without a Firecracker VM per unit.
 
-Status: **W0 through W0.4, the errno decision and W1 are built** (§W0 results). W1 onward is the plan below.
+Status: **W0 through W0.4, the errno decision, W1 and W2a (the console without libc stdio) are built** (§W0 results). W1 onward is the plan below.
 
 ---
 
@@ -259,11 +259,77 @@ Two ways out, and W2 has to pick one:
    `fd_write` for `io_write`, `fd_read` for `io_read`, and nothing else, and the
    equality check is honest. The cost is owning a buffer and its flush-at-exit.
 
-**Recommendation: 2.** The whole value of the target is that the import section is
+**Recommendation: 2, built as W2a below.** The whole value of the target is that the import section is
 the enforced half of the same fact the row states; an over-grant the check blesses
 by construction defeats that. The `args` pair remains (it is startup, not stdio),
 documented as the unlabelled baseline with `proc_exit`, until a custom entry point
 that reads `args` only when asked is worth writing.
+
+---
+
+## W2a results: the console without libc stdio
+
+`lex-sys-codegen-llvm/src/wasi_console.rs` is the console written against the two WASI
+calls it needs. On wasm32 `putchar`, `getchar`, `write_bytes`, `write_err` and `flush_out`
+no longer touch libc: the module declares `fd_write` and `fd_read` itself
+(`wasm-import-module` / `wasm-import-name` attributes on the IR declarations), keeps its
+own buffers, and `main` flushes stdout when it returns. Native output is unchanged.
+
+- **stdout** is buffered (4 KiB), flushed when it fills, on `flush_out`, and when `main`
+  returns, which is what libc does to a pipe, so the bytes and their order are the native
+  build's. A write that fails sets a sticky error, as the `FILE`'s indicator does, and
+  `flush_out` reports it: the failed flush's errno translated to the language's numbering,
+  or `EIO` (5) for an earlier failure a later flush did not see.
+- **stderr** is unbuffered. **stdin** is read 4 KiB at a time; end of input or a failed
+  read is `-1`.
+- Everything is `internal`, so a program that uses none of it carries none of it. The one
+  thing that is not free is the flush at exit, which is emitted **only for a module that
+  writes**: an unconditional one would make every pure program import `fd_write`.
+
+### Imports, before and after
+
+Measured by `scripts/wasm_console_check.py`, one tiny program per effect, with the import
+set required to be **exact**:
+
+| a program that | W1 (libc stdio) | now |
+|---|---|---|
+| does nothing, uses the heap, or reads `args` | `args_get`, `args_sizes_get`, `proc_exit` | the same |
+| writes stdout | + `fd_write`, `fd_fdstat_get`, `fd_seek`, `fd_close`, `clock_time_get` | + `fd_write` |
+| writes stderr | (as stdout) | + `fd_write` |
+| reads stdin | + `fd_read`, `fd_seek`, `fd_close`, `clock_time_get` | + `fd_read` |
+| reads and writes | | + `fd_read`, `fd_write` |
+
+`clock_time_get` is gone from every console program: a row of `[io_write]` no longer comes
+with a clock. The JSON filter went from nine imports to five.
+
+### Still correct
+
+The differential from W1, with large documents added so the buffer's spill and direct-write
+paths run (strings whose output lands either side of 4,096, 8,192 and 12,288 bytes, a
+6,000-element array, a 2,500-key object, a 400-deep nest): **1,617 documents, 1,131
+accepted and 484 refused byte-identical, 2 trapped on both builds, 0 different.** The two
+that trap are strings over 64 KiB, which exhaust the 64 KiB arena `json_roundtrip.ls` uses
+and trap natively too; the script counts a native SIGILL and a wasmtime trap (exit 134) as
+the same behaviour and requires both. The accept-fixture map did not move (83 / 20 / 1).
+
+`flush_out` is held to `checked_output.rs`'s own probe: a small and a 100,000-byte write to
+a live reader answer `Ok` and the bytes arrive, and a reader that has left answers `EIO`
+and keeps answering it.
+
+### What this does not establish
+
+- **`ENOSPC` and `EBADF`.** A Mac has no `/dev/full`, and a closed stdout (`>&-`) did **not**
+  make the write fail under wasmtime (the probe answered `Ok`); I did not establish why, so
+  the `EBADF` case is untested for the module. A Linux run, with `/dev/full`, is the way to
+  cover both.
+- **A reader that left is `EIO`, not `EPIPE`.** wasmtime answers a write to a pipe whose
+  reader left as "success, zero bytes written", and the console treats no progress as `EIO`.
+  A native run says `EPIPE` where `SIGPIPE` is ignored (`checked-output.md` §2). That is the
+  host's behaviour, and the console reports the honest thing it can.
+- **The `args` pair is still unlabelled startup.** `args_get` and `args_sizes_get` are
+  imported by every program, because wasi-libc's `__main_void` fetches them before calling
+  `main(argc, argv)`, so a program that released its `args` capability still imports them.
+  Removing them needs an entry point of our own that reads `args` only when asked: W2b.
 
 ---
 
@@ -273,7 +339,7 @@ that reads `args` only when asked is worth writing.
 |---|---|---|
 | **W0** -- spike | `--target wasm32-wasip1`, `examples/hello.ls` runs in wasmtime | **Done**: one example prints the right bytes; conformance map above |
 | **W1** -- a real command | A stdin→stdout JSON filter on `std.json` | **Done**: byte-identical to native over 1,585 documents; the import list is measured, and is wider than the row (§W1 results) |
-| **W2** -- the authority check | `lex-sys authority --target wasm32-wasip1` cross-checked against the module | A test that fails if the module imports anything the row does not explain, **and** if a label has no import (the rows are exact both ways); JSON report carries the import list |
+| **W2** -- the authority check (**W2a, the console without libc stdio, is done**; the table and the check are next) | `lex-sys authority --target wasm32-wasip1` cross-checked against the module | A test that fails if the module imports anything the row does not explain, **and** if a label has no import (the rows are exact both ways); JSON report carries the import list |
 | **W3** -- a pure library | `packages/x509` verify as a **reactor** module (exports, no `main`) | Import section is empty beyond memory; results identical to native on the x509 conformance fixtures; overhead measured |
 | **W4** -- components | `wasip2`, one WIT `resource` mapped to a `res` handle | `wasi:filesystem` descriptor as a linear handle, `own`/`borrow` ↔ `res`/`borrow`; then `examples/serve` as `wasi:http` |
 

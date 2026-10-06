@@ -677,6 +677,12 @@ pub(crate) fn emit_module(
         Some(LKind::I64) => {
             text.push_str(&format!("  %r = call i64 @lexs_{}()\n", entry_func.symbol()));
             text.push_str("  %status = trunc i64 %r to i32\n");
+            // What libc does when `main` returns: write out stdout's buffer. Only
+            // for a module that writes -- an unconditional flush would make every
+            // pure program import `fd_write` (`wasi_console`).
+            if crate::wasi_console::applies(triple) && crate::wasi_console::uses_console(&text) {
+                text.push_str("  %flushed = call i32 @lexsys_console_flush()\n");
+            }
             text.push_str("  ret i32 %status\n");
         }
         // `docs/agent-errors.md`'s own convention applied here too: a
@@ -689,6 +695,7 @@ pub(crate) fn emit_module(
 
     if triple.architecture == target_lexicon::Architecture::Wasm32 {
         text.push_str(&smul_overflow_definition());
+        text.push_str(&crate::wasi_console::definitions());
     }
     Ok(text)
 }

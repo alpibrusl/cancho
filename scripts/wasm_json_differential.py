@@ -18,7 +18,9 @@ Needs what `lex-sys --help` says `--target` needs (CLANG, WASI_SYSROOT, wasm-ld)
 and `wasmtime` on the path. CI has none of it, so this is not in CI.
 """
 import argparse, concurrent.futures, decimal, math, os, random, struct, subprocess, sys, tempfile
-from fractions import Fraction
+
+sys.path.insert(0, os.path.dirname(__file__))
+from wasm_imports import imports
 
 PROGRAM = "tests/programs/json_roundtrip.ls"
 
@@ -85,55 +87,29 @@ def numbers(rng: random.Random, n: int) -> list:
     return out
 
 
-def corpus(count: int, seed: int) -> list:
-    rng = random.Random(seed)
-    docs = [s.encode() for s in SEEDS]
-    docs += [mutate(SEEDS[rng.randrange(len(SEEDS))].encode(), rng) for _ in range(count)]
-    docs += [f"[{n}]".encode() for n in numbers(rng, max(count // 4, 10))]
+def big_documents() -> list:
+    """Documents whose *output* crosses the console buffer's 4 KiB boundaries
+    (the module buffers stdout in 4,096 bytes and reads stdin 4,096 at a time),
+    so the fill, spill and direct-write paths all run: strings whose length lands
+    either side of 4,096 and 8,192, a long array, a wide object, a deep nest."""
+    docs = []
+    for edge in (4096, 8192, 12288):
+        for delta in range(-4, 5):
+            docs.append(b'"' + b"a" * (edge + delta - 3) + b'"')
+    docs.append(b"[" + b",".join(str(i).encode() for i in range(6000)) + b"]")
+    docs.append(b"{" + b",".join(b'"k%d":%d' % (i, i * i) for i in range(2500)) + b"}")
+    docs.append(b'"' + b"\\u00e9\\n\\t" * 20000 + b'"')
+    docs.append(b"[" * 400 + b"1" + b"]" * 400)
+    docs.append(b'"' + "é日😀".encode() * 9000 + b'"')
     return docs
 
 
-def leb(data: bytes, at: int):
-    value = shift = 0
-    while True:
-        b = data[at]
-        at += 1
-        value |= (b & 0x7F) << shift
-        shift += 7
-        if not b & 0x80:
-            return value, at
-
-
-def imports(wasm: bytes) -> list:
-    """`module.name (kind)` for every entry of a wasm module's import section."""
-    assert wasm[:4] == b"\0asm", "not a wasm module"
-    at, out = 8, []
-    while at < len(wasm):
-        sec, at = wasm[at], at + 1
-        size, at = leb(wasm, at)
-        end = at + size
-        if sec == 2:
-            count, p = leb(wasm, at)
-            for _ in range(count):
-                n, p = leb(wasm, p); mod, p = wasm[p:p + n].decode(), p + n
-                n, p = leb(wasm, p); name, p = wasm[p:p + n].decode(), p + n
-                kind, p = wasm[p], p + 1
-                if kind == 0:
-                    _, p = leb(wasm, p)
-                elif kind == 1:
-                    p += 1
-                    flags, p = leb(wasm, p); _, p = leb(wasm, p)
-                    if flags & 1:
-                        _, p = leb(wasm, p)
-                elif kind == 2:
-                    flags, p = leb(wasm, p); _, p = leb(wasm, p)
-                    if flags & 1:
-                        _, p = leb(wasm, p)
-                elif kind == 3:
-                    p += 2
-                out.append(f"{mod}.{name} ({['func', 'table', 'memory', 'global'][kind]})")
-        at = end
-    return out
+def corpus(count: int, seed: int) -> list:
+    rng = random.Random(seed)
+    docs = [s.encode() for s in SEEDS] + big_documents()
+    docs += [mutate(SEEDS[rng.randrange(len(SEEDS))].encode(), rng) for _ in range(count)]
+    docs += [f"[{n}]".encode() for n in numbers(rng, max(count // 4, 10))]
+    return docs
 
 
 def run(cmd, doc: bytes):
@@ -166,11 +142,21 @@ def main():
         b = run([wasmtime, "run", wasm], doc)
         return doc, a, b
 
-    accepted = refused = 0
+    accepted = refused = trapped = 0
     bad = []
     with concurrent.futures.ThreadPoolExecutor(4) as pool:
         for doc, (rc_a, out_a, _), (rc_b, out_b, err_b) in pool.map(one, docs):
-            if (rc_a, out_a) != (rc_b, out_b):
+            # A trap is the same behaviour with a different number: the native
+            # build dies of SIGILL (a negative return code here) and wasmtime
+            # exits 134 after printing "wasm trap". Both must trap, with no output.
+            native_trap = rc_a == -4
+            wasm_trap = rc_b == 134 and b"wasm trap" in err_b
+            if native_trap or wasm_trap:
+                if native_trap and wasm_trap and out_a == out_b:
+                    trapped += 1
+                else:
+                    bad.append((doc, rc_a, out_a, rc_b, out_b, err_b))
+            elif (rc_a, out_a) != (rc_b, out_b):
                 bad.append((doc, rc_a, out_a, rc_b, out_b, err_b))
             elif out_a.startswith(b"E "):
                 refused += 1
@@ -178,7 +164,7 @@ def main():
                 accepted += 1
 
     print(f"documents: {len(docs)}  accepted (identical): {accepted}  refused (identical): {refused}  "
-          f"different: {len(bad)}")
+          f"trapped (both): {trapped}  different: {len(bad)}")
     print("imports of the wasm module:")
     for line in imports(open(wasm, "rb").read()):
         print("  ", line)
