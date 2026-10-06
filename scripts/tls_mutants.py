@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """Mutation check of `packages/tls` (docs/tls-core.md §7, §10).
 
-    python3 scripts/tls_mutants.py <lex-sys binary>
+    python3 scripts/tls_mutants.py <lex-sys binary> [--only <text in a mutant's name>]
 
 Each mutant is one of the package's files with one deliberate bug. The
 package is copied to a scratch directory, the mutant applied there, and
 `tests/programs/tls_driver.ls` built against it. It runs what
 `conformance/tls.rs` replays: the five tlslite-ng traces (two of them through a
-HelloRetryRequest), the six TLS 1.2 traces against OpenSSL, and the 66
+HelloRetryRequest), the six TLS 1.2 traces against OpenSSL, and the 78
 connections of `tests/vectors/tls/liar.txt`, each answer compared byte for
-byte. A mutant of the engine (`tls.ls`) also builds
+byte, and the engine's rules for offering a ticket
+(`tests/vectors/tls/tickets.txt`, through `tests/programs/tls_tickets.ls`).
+A mutant of the engine (`tls.ls`) also builds
 `tests/programs/tls_many.ls` and serves it `tests/vectors/tls/streams.txt` from
 here, 64 connections at once: one byte a read, 65,536, and then with
 close_notify cut off. A
@@ -86,7 +88,11 @@ MUTANTS = [
     ("the engine's slots overlapping", "tls.ls",
      "    return slot * tls_client.bytes_len();", "    return slot * (tls_client.bytes_len() / 2);"),
     # ---- Suites and HelloRetryRequest (docs/tls-parity.md §3.3) ----
-    ("SHA-384's transcript never chosen", "slot.ls", "        if len(out) == 48 {", "        if len(out) == 32 {"),
+    ("SHA-384's transcript never chosen", "slot.ls",
+     "        if len(out) == 48 {\n            let copy = alloc_slice[r](crypto.sha512_state_len(), 0);\n            var k = 0;\n            while k < len(copy) {\n                copy[k] = ints[i_transcript384() + k];\n                k = k + 1;\n            }\n            crypto.sha384_final(copy, out);",
+     "        if len(out) == 32 {\n            let copy = alloc_slice[r](crypto.sha512_state_len(), 0);\n            var k = 0;\n            while k < len(copy) {\n                copy[k] = ints[i_transcript384() + k];\n                k = k + 1;\n            }\n            crypto.sha384_final(copy, out);"),
+    ("SHA-384's binder transcript never chosen", "slot.ls",
+     "            crypto.sha384_update(copy, extra);", "            crypto.sha256_update(copy, extra);"),
     ("AES-256-GCM given SHA-256", "record.ls",
      "    if suite == suite_aes_256_gcm_sha384() || suite == 0xc02c || suite == 0xc030 {\n        return 48;",
      "    if suite == suite_aes_256_gcm_sha384() || suite == 0xc02c || suite == 0xc030 {\n        return 32;"),
@@ -152,7 +158,9 @@ MUTANTS = [
     ("a TLS 1.2 ServerHello echoing the session id accepted", "message.ls",
      "            if same {\n                return tls_record.decode_error();", "            if same && false {\n                return tls_record.decode_error();"),
     ("a key_share in a TLS 1.2 ServerHello accepted", "message.ls",
-     "        if group != 0 {\n            return tls_record.unsupported_extension();", "        if false {\n            return tls_record.unsupported_extension();"),
+     "        if group != 0 || psk {\n            return tls_record.unsupported_extension();", "        if psk {\n            return tls_record.unsupported_extension();"),
+    ("a pre_shared_key in a TLS 1.2 ServerHello accepted", "message.ls",
+     "        if group != 0 || psk {\n            return tls_record.unsupported_extension();", "        if group != 0 {\n            return tls_record.unsupported_extension();"),
     ("the key exchange's randoms not signed", "client12.ls",
      "            tls_slot.copy_bytes(bytes[tls_slot.k_random()..tls_slot.k_random() + 32], content[0..32]);\n", ""),
     ("the suite's kind of key not checked", "client12.ls",
@@ -167,6 +175,70 @@ MUTANTS = [
      "        if code == 0 && tls12 && tls_slot.has(ints, tls_slot.f_retried()) {", "        if code == 0 && tls12 && false {"),
     ("the server's key exchange point never kept", "client12.ls",
      "            tls_slot.copy_bytes(point, bytes[tls_slot.k_peer()..tls_slot.k_peer() + len(point)]);\n", ""),
+    # Resumption (docs/tls-resumption.md).
+    ("the binder over the whole ClientHello, not the truncated one", "client.ls",
+     "tls_slot.transcript_hash_with(ints, hello[0..n - tls_message.binders_len(h)], th);",
+     "tls_slot.transcript_hash_with(ints, hello[0..n], th);"),
+    ("the binder key under the external label", "client.ls",
+     'hkdf.derive_secret(h, early, "res binder", empty_hash, binder_key);',
+     'hkdf.derive_secret(h, early, "ext binder", empty_hash, binder_key);'),
+    ("a resumption's early secret from zeros, not the PSK", "client.ls",
+     "            if tls_slot.has(ints, tls_slot.f_resumed()) {\n                early_secret(",
+     "            if false {\n                early_secret("),
+    ("a pre_shared_key accepted when none was offered", "client.ls",
+     "if !tls_slot.has(ints, tls_slot.f_psk_offered()) {\n                    code = tls_record.unsupported_extension();",
+     "if false {\n                    code = tls_record.unsupported_extension();"),
+    ("a suite with another hash accepted for the ticket", "client.ls",
+     "} else if tls_record.hash_len(suite) != ints[tls_slot.i_offer_hash()] {\n                    code = tls_record.illegal_psk();",
+     "} else if false {\n                    code = tls_record.illegal_psk();"),
+    ("a resumption still waiting for a Certificate", "client.ls",
+     "            if tls_slot.has(ints, tls_slot.f_resumed()) {\n                // No Certificate",
+     "            if false {\n                // No Certificate"),
+    ("the resumption master secret under another label", "client.ls",
+     '"res master", th2,', '"res mastr", th2,'),
+    ("a ticket's PSK without its nonce", "client.ls",
+     '"resumption", body[info[tls_message.nst_nonce_start()]..info[tls_message.nst_nonce_end()]],',
+     '"resumption", "",'),
+    ("the ticket still offered after a retry to another hash", "client.ls",
+     "        tls_slot.clear_flag(ints, tls_slot.f_psk_offered());", ""),
+    ("a lifetime over 7 days kept as given", "client.ls",
+     "        if lifetime > 604800 {\n            lifetime = 604800;", "        if lifetime > 704800 {\n            lifetime = 604800;"),
+    ("a ticket over the room kept", "client.ls",
+     "te - ts <= tls_slot.ticket_cap()", "te - ts <= 4096"),
+    ("a selected identity other than 0 accepted", "message.ls",
+     "            if get(b, body, 2) != 0 {\n                return tls_record.illegal_psk();",
+     "            if false {\n                return tls_record.illegal_psk();"),
+    ("a resumption without a key share not refused as tls-key-share", "message.ls",
+     "        } else if group == 0 && psk {", "        } else if false {"),
+    ("the ticket offered to a name of the same length", "tls.ls",
+     "        if contents(engine.tickets)[at + e_host() + k] != host[k] {\n            same = false;",
+     "        if false {\n            same = false;"),
+    ("the ticket offered after the trust store changed", "tls.ls",
+     " || contents(engine.tmeta)[tf(e, 10)] != contents(engine.tmeta)[t_trust()] {", " {"),
+    ("the ticket offered after the leaf's notAfter", "tls.ls",
+     "same && now_s <= contents(engine.tmeta)[tf(e, 9)] && ", "same && "),
+    ("the ticket offered past the maximum age", "tls.ls",
+     " && now_s < contents(engine.tmeta)[tf(e, 8)] + contents(engine.tmeta)[t_max_age()]", ""),
+    ("the ticket offered past its lifetime", "tls.ls",
+     " && now_ms < received + contents(engine.tmeta)[tf(e, 6)] * 1000", ""),
+    ("the ticket offered with the clock before it was received", "tls.ls",
+     " && now_ms >= received;", ";"),
+    ("a ticket's age counted from a whole second", "tls.ls",
+     "    let age = now_unix_ms - contents(engine.tmeta)[tf(e, 5)] + ",
+     "    let age = now_unix_ms - contents(engine.tmeta)[tf(e, 5)] / 1000 * 1000 + "),
+    ("the ticket offered twice", "tls.ls",
+     "        tls_slot.zero(random);\n    }\n    wipe(engine, e);", "        tls_slot.zero(random);\n    }"),
+    ("a forgotten ticket kept", "tls.ls",
+     "    if e >= 0 {\n        wipe(engine, e);\n    }\n    return 0;\n}\n\n// Whether entry",
+     "    if e < 0 {\n        wipe(engine, e);\n    }\n    return 0;\n}\n\n// Whether entry"),
+    ("a handle's generation not checked", "tls.ls",
+     " || contents(engine.tmeta)[tf(e, 0)] != handle / 65536 {", " {"),
+    ("psk_key_exchange_modes sent only with a ticket, so no server need send one", "message.ls",
+     "    if modes || len(ticket) > 0 {", "    if len(ticket) > 0 {"),
+    ("resumption never advertised by the engine", "tls.ls",
+     "0, 0, 0, contents(engine.tmeta)[t_resume()] == 1);", "0, 0, 0, false);"),
+    ("the obfuscated age without ticket_age_add", "tls.ls",
+     "contents(engine.tmeta)[tf(e, 5)] + contents(engine.tmeta)[tf(e, 7)];", "contents(engine.tmeta)[tf(e, 5)];"),
 ]
 
 
@@ -184,6 +256,25 @@ def cases():
                 asked.append(line)
         out.append((name, asked, answered))
     for line in open(os.path.join(ROOT, "tests/vectors/tls/liar.txt")):
+        line = line.rstrip("\n")
+        if line.startswith("## "):
+            out.append((line[3:], [], []))
+        elif line.startswith("= "):
+            out[-1][2].append(line[2:])
+        elif not line.startswith("#"):
+            out[-1][1].append(line)
+    return out
+
+
+# Mutants that change no behaviour the client can reach, each with the argument. Such a mutant must survive;
+# one that is killed was not equivalent, and the run fails.
+EQUIVALENT = {}
+
+
+def ticket_cases():
+    """`tests/vectors/tls/tickets.txt`'s cases, as (name, lines, answers)."""
+    out = []
+    for line in open(os.path.join(ROOT, "tests/vectors/tls/tickets.txt")):
         line = line.rstrip("\n")
         if line.startswith("## "):
             out.append((line[3:], [], []))
@@ -305,6 +396,13 @@ def evidence(lexsys, pkg, work, engine):
     if not ok:
         return "BUILD " + err.strip().splitlines()[0]
     found = replay(driver, cases())
+    if found:
+        return found
+    tickets = os.path.join(work, "tickets")
+    ok, err = build(lexsys, "tls_tickets.ls", pkg, tickets, engine=True)
+    if not ok:
+        return "BUILD " + err.strip().splitlines()[0]
+    found = replay(tickets, ticket_cases())
     if found or not engine:
         return found
     many = os.path.join(work, "tls_many")
@@ -316,6 +414,8 @@ def evidence(lexsys, pkg, work, engine):
 
 def main():
     lexsys = sys.argv[1]
+    # `--only <text>`: just the mutants whose name contains it (the unmutated package still runs first).
+    only = sys.argv[sys.argv.index("--only") + 1] if "--only" in sys.argv else None
     work = tempfile.mkdtemp(prefix="tls-mutants-")
     pkg = os.path.join(work, "tls")
     src = os.path.join(ROOT, "packages/tls")
@@ -326,19 +426,27 @@ def main():
         sys.exit(1)
     print("unmutated: passes")
     survived = 0
-    for name, file, old, new in MUTANTS:
+    run = [m for m in MUTANTS if only is None or only in m[0]]
+    for name, file, old, new in run:
         text = open(os.path.join(src, file)).read()
         assert text.count(old) == 1, f"{name}: the text occurs {text.count(old)} times"
         open(os.path.join(pkg, file), "w").write(text.replace(old, new))
         found = evidence(lexsys, pkg, work, file == "tls.ls" or "end of the socket" in name)
         shutil.copy(os.path.join(src, file), os.path.join(pkg, file))
-        if found is None or found.startswith("BUILD"):
+        if name in EQUIVALENT:
+            if found is None:
+                print(f"equivalent {name}: {EQUIVALENT[name]}")
+            else:
+                survived += 1
+                print(f"KILLED, so not equivalent: {name}: {found}")
+        elif found is None or found.startswith("BUILD"):
             survived += 1
             print(f"SURVIVED {name}" + (f": {found}" if found else ""))
         else:
             print(f"killed   {name}: {found}")
     shutil.rmtree(work, ignore_errors=True)
-    print(f"{len(MUTANTS) - survived} of {len(MUTANTS)} mutants killed")
+    equivalent = sum(1 for m in run if m[0] in EQUIVALENT)
+    print(f"{len(run) - survived - equivalent} of {len(run)} mutants killed, {equivalent} equivalent (argued in EQUIVALENT)")
     sys.exit(1 if survived else 0)
 
 

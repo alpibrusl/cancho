@@ -248,6 +248,20 @@ but the code checked every ServerHello. It now checks as the RFC says, and the t
   Appendix D.4 allows. This client sends it before its Finished. The harness moves it to where the script expects it, in
   TLS 1.3 only.
 
+**Resumption (#286).** The liar now holds 78 cases, 12 of them about tickets and resumption (`docs/tls-resumption.md`).
+For those, the harness resumes OpenSSL for real: the first `s_client` saves the session from the liar's ticket
+(`-sess_out`), a second one offers it (`-sess_in`), and `openssl sess_id` reads back the ticket, PSK and lifetime the liar
+checks against its own. The liar checks OpenSSL's binder as it checks this client's. With OpenSSL 3.0.13:
+- **11 agree.** OpenSSL resumes, takes a declined ticket as a full handshake, and refuses identity 1, a suite of another
+  hash, and a Certificate after a resumed ServerHello, with the same alerts as this client.
+- **1 differs in the alert only.** A `pre_shared_key` without `key_share`: OpenSSL sends `missing_extension` (109), this
+  client `illegal_parameter` (47); RFC 8446 names no alert for this fault in a ServerHello.
+- **Found, and fixed here.** A `pre_shared_key` when no ticket was offered: OpenSSL sent `unsupported_extension` (110) and
+  this client `illegal_parameter` (47). RFC 8446 §4.2 requires `unsupported_extension` for an extension the client did
+  not send, so this client now sends it (`tls-unsupported-extension`), and the two agree.
+- **"tickets not kept"** is counted as accepted with a step printed: OpenSSL keeps a ticket of 3,000 bytes, which this
+  client does not (`docs/tls-resumption.md` §3), and that is a limit, not a protocol rule.
+
 ## 5. The interop matrix
 
 Each server from §2:

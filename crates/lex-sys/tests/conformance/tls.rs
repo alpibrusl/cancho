@@ -6,8 +6,11 @@
 //! one a suite (§3.4) -- the TLS 1.2 PRF against its definition,
 //! the same server bytes fed one byte at a time and all at once, a wrong
 //! root, a crafted ServerHello for each rule of RFC 8446 §4.1.3 the
-//! client enforces, and the 66 connections of `scripts/tls_liar.py`'s
-//! lying server (§6.3). All through `tests/programs/tls_driver.ls`.
+//! client enforces, and the 78 connections of `scripts/tls_liar.py`'s
+//! lying server (§6.3), resumption's among them. All through
+//! `tests/programs/tls_driver.ls`; and the engine's rules for offering a
+//! saved ticket (`docs/tls-resumption.md` §3), through
+//! `tests/programs/tls_tickets.ls`.
 
 use super::json::feed;
 use super::*;
@@ -57,6 +60,58 @@ fn trace(name: &str) -> (Vec<String>, Vec<String>) {
     }
     assert_eq!(asked.len(), answered.len());
     (asked, answered)
+}
+
+/// `tests/programs/tls_tickets.ls`: the engine, built with the whole package.
+fn build_tls_tickets(backend: &str) -> (PathBuf, PathBuf) {
+    let dir = scratch(&format!("tls-tickets-{backend}"));
+    let exe = dir.join("tickets");
+    let build = Command::new(BIN)
+        .args(["build", "--std", "--backend", backend])
+        .arg(repo_root().join("tests/programs/tls_tickets.ls"))
+        .args(
+            ["tls.ls", "record.ls", "message.ls", "slot.ls", "client12.ls", "client.ls"]
+                .map(|f| repo_root().join("packages/tls").join(f)),
+        )
+        .args(
+            ["verify.ls", "names.ls", "x509.ls"].map(|f| repo_root().join("packages/x509").join(f)),
+        )
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("the compiler runs");
+    assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+    (dir, exe)
+}
+
+/// Each of `scripts/tls_tickets.py`'s cases replays byte for byte: whether
+/// the engine puts a saved ticket on the wire is decided by the rules of
+/// `docs/tls-resumption.md` §3, and the ClientHello it sends is in the answers.
+#[test]
+fn the_engine_offers_a_ticket_only_where_the_rules_allow_on_both_backends() {
+    let text = std::fs::read_to_string(repo_root().join("tests/vectors/tls/tickets.txt")).unwrap();
+    let mut cases: Vec<(String, Vec<String>, Vec<String>)> = Vec::new();
+    for line in text.lines() {
+        if let Some(name) = line.strip_prefix("## ") {
+            cases.push((name.to_string(), Vec::new(), Vec::new()));
+        } else if line.starts_with('#') {
+        } else if let Some(a) = line.strip_prefix("= ") {
+            cases.last_mut().unwrap().2.push(a.to_string());
+        } else {
+            cases.last_mut().unwrap().1.push(line.to_string());
+        }
+    }
+    assert_eq!(cases.len(), 13);
+    for backend in ["cranelift", "llvm"] {
+        let (dir, exe) = build_tls_tickets(backend);
+        for (name, asked, answered) in &cases {
+            let got = run(&exe, asked);
+            for (n, (g, w)) in got.iter().zip(answered).enumerate() {
+                assert_eq!(g, w, "{name} line {n} on {backend}");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 /// `liar.txt`'s cases: the tag each must end with, its name, its driver
@@ -126,7 +181,7 @@ fn every_recorded_handshake_replays_byte_for_byte_on_both_backends() {
 #[test]
 fn every_lying_server_is_refused_with_its_own_tag_on_both_backends() {
     let cases = liar_cases();
-    assert_eq!(cases.len(), 66);
+    assert_eq!(cases.len(), 78);
     for backend in ["cranelift", "llvm"] {
         let (dir, exe) = build_tls_driver("liar", backend);
         for (tag, name, asked, answered) in &cases {
