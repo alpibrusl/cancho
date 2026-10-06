@@ -272,7 +272,7 @@ It needs the one fact route 2 lacked at one call: *this reference has been given
 * the lease ends at `join(h)` where `h` is the binding that took the handle, or at `join(spawn(..))`. A branch must
   agree on whether it is held, and a loop must leave it as it found it;
 * a handle passed on any other way (to a function that joins it, into a tuple) keeps its lease for the rest of the
-  borrow. That **refuses** a program that would have been fine rather than admitting one that races.
+  borrow. That **refuses** a program that would have been fine rather than admitting one that races. (`tests/reject/spawn_unique_loop_lease_survives.ls`, `spawn_unique_branches_disagree.ls`.)
 
 What it does not close, stated so it is not read as more:
 
