@@ -247,8 +247,36 @@ pub fn i_ticket_hash() -> [] int {
     return i_offer_len() + 8;
 }
 
-pub fn ints_len() -> [] int {
+// Each direction's key, prepared for its AEAD (`tls_record.prepare`):
+// made when the key is installed, used by every record, overwritten by
+// `forget` and `tls_client.drop`.
+pub fn i_read_aead() -> [] int {
     return i_offer_len() + 9;
+}
+
+pub fn i_write_aead() -> [] int {
+    return i_read_aead() + tls_record.context_len();
+}
+
+pub fn ints_len() -> [] int {
+    return i_write_aead() + tls_record.context_len();
+}
+
+pub fn read_aead[&i](ints: &i [int]) -> [] &i [int] {
+    return ints[i_read_aead()..i_read_aead() + tls_record.context_len()];
+}
+
+pub fn write_aead[&i](ints: &i [int]) -> [] &i [int] {
+    return ints[i_write_aead()..i_write_aead() + tls_record.context_len()];
+}
+
+// Prepares both directions' keys, as installed (TLS 1.2's key block).
+pub fn prepare_keys[&i, &b](ints: &!i [int], bytes: &b [byte]) -> [] int {
+    let suite = ints[i_suite()];
+    let n = key_len(ints);
+    tls_record.prepare(suite, bytes[k_read_key()..k_read_key() + n], ints[i_read_aead()..i_read_aead() + tls_record.context_len()]);
+    tls_record.prepare(suite, bytes[k_write_key()..k_write_key() + n], ints[i_write_aead()..i_write_aead() + tls_record.context_len()]);
+    return 0;
 }
 
 // Flags.
@@ -601,6 +629,7 @@ pub fn traffic_keys[&s, &k, &v](secret: &s [byte], key: &!k [byte], iv: &!v [byt
 pub fn set_read_keys[&i, &b](ints: &!i [int], bytes: &!b [byte], secret_at: int) -> [] int {
     let h = hash_len(ints);
     traffic_keys(bytes[secret_at..secret_at + h], bytes[k_read_key()..k_read_key() + key_len(ints)], bytes[k_read_iv()..k_read_iv() + 12]);
+    tls_record.prepare(ints[i_suite()], bytes[k_read_key()..k_read_key() + key_len(ints)], ints[i_read_aead()..i_read_aead() + tls_record.context_len()]);
     ints[i_read_seq()] = 0;
     set_flag(ints, f_read_protected());
     return 0;
@@ -609,6 +638,7 @@ pub fn set_read_keys[&i, &b](ints: &!i [int], bytes: &!b [byte], secret_at: int)
 pub fn set_write_keys[&i, &b](ints: &!i [int], bytes: &!b [byte], secret_at: int) -> [] int {
     let h = hash_len(ints);
     traffic_keys(bytes[secret_at..secret_at + h], bytes[k_write_key()..k_write_key() + key_len(ints)], bytes[k_write_iv()..k_write_iv() + 12]);
+    tls_record.prepare(ints[i_suite()], bytes[k_write_key()..k_write_key() + key_len(ints)], ints[i_write_aead()..i_write_aead() + tls_record.context_len()]);
     ints[i_write_seq()] = 0;
     set_flag(ints, f_write_protected());
     return 0;
@@ -676,7 +706,7 @@ pub fn queue_record[&i, &b, &c](ints: &!i [int], bytes: &!b [byte], kind: int, c
         return tls_record.record_overflow();
     }
     if has(ints, f_tls12()) {
-        let m = tls_record.seal12(ints[i_suite()], bytes[k_write_key()..k_write_key() + key_len(ints)], bytes[k_write_iv()..k_write_iv() + 12], ints[i_write_seq()], kind, content, bytes[at..at + len(content) + tls_record.overhead12(ints[i_suite()])]);
+        let m = tls_record.seal12(ints[i_suite()], bytes[k_write_key()..k_write_key() + key_len(ints)], write_aead(ints), bytes[k_write_iv()..k_write_iv() + 12], ints[i_write_seq()], kind, content, bytes[at..at + len(content) + tls_record.overhead12(ints[i_suite()])]);
         if m < 0 {
             return m;
         }
@@ -684,7 +714,7 @@ pub fn queue_record[&i, &b, &c](ints: &!i [int], bytes: &!b [byte], kind: int, c
         ints[i_out_end()] = ints[i_out_end()] + m;
         return 0;
     }
-    let n = tls_record.seal(ints[i_suite()], bytes[k_write_key()..k_write_key() + key_len(ints)], bytes[k_write_iv()..k_write_iv() + 12], ints[i_write_seq()], kind, content, bytes[at..at + len(content) + 22]);
+    let n = tls_record.seal(ints[i_suite()], bytes[k_write_key()..k_write_key() + key_len(ints)], write_aead(ints), bytes[k_write_iv()..k_write_iv() + 12], ints[i_write_seq()], kind, content, bytes[at..at + len(content) + 22]);
     if n < 0 {
         return n;
     }
@@ -761,7 +791,7 @@ pub fn fail[&i, &b](ints: &!i [int], bytes: &!b [byte], code: int) -> [] int {
             queue_record(ints, bytes, tls_record.type_alert(), alert);
         }
     }
-    forget(bytes);
+    forget(ints, bytes);
     return code;
 }
 
@@ -769,7 +799,13 @@ pub fn fail[&i, &b](ints: &!i [int], bytes: &!b [byte], code: int) -> [] int {
 // close_notify has gone both ways. The secrets, keys and IVs, and the
 // last opened record, are overwritten (best effort, `docs/tls-core.md`
 // §8); received data waiting for `recv` stays.
-pub fn forget[&b](bytes: &!b [byte]) -> [] int {
+pub fn forget[&i, &b](ints: &!i [int], bytes: &!b [byte]) -> [] int {
+    let c = tls_record.context_len();
+    var k = 0;
+    while k < 2 * c {
+        ints[i_read_aead() + k] = 0;
+        k = k + 1;
+    }
     zero(bytes[b_keys()..b_keys() + keys_len()]);
     zero(bytes[b_plain()..b_plain() + plain_cap()]);
     return 0;

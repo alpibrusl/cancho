@@ -658,7 +658,7 @@ fn on_alert[&i, &b, &c](ints: &!i [int], bytes: &!b [byte], content: &c [byte]) 
         }
         tls_slot.set_flag(ints, tls_slot.f_close_received());
         if tls_slot.has(ints, tls_slot.f_close_sent()) {
-            tls_slot.forget(bytes);
+            tls_slot.forget(ints, bytes);
         }
         return 0;
     }
@@ -729,9 +729,9 @@ fn on_record[&i, &b, &p](ints: &!i [int], bytes: &!b [byte], n: int, store: &p [
         if tls12 {
             // TLS 1.2: the type is the header's, and every record after
             // change_cipher_spec is an AEAD record.
-            code = tls_record.open12(ints[tls_slot.i_suite()], bytes[tls_slot.k_read_key()..tls_slot.k_read_key() + tls_slot.key_len(ints)], bytes[tls_slot.k_read_iv()..tls_slot.k_read_iv() + 12], ints[tls_slot.i_read_seq()], bytes[tls_slot.b_in()..tls_slot.b_in() + n], bytes[tls_slot.b_plain()..tls_slot.b_plain() + tls_slot.plain_cap()], info);
+            code = tls_record.open12(ints[tls_slot.i_suite()], bytes[tls_slot.k_read_key()..tls_slot.k_read_key() + tls_slot.key_len(ints)], tls_slot.read_aead(ints), bytes[tls_slot.k_read_iv()..tls_slot.k_read_iv() + 12], ints[tls_slot.i_read_seq()], bytes[tls_slot.b_in()..tls_slot.b_in() + n], bytes[tls_slot.b_plain()..tls_slot.b_plain() + tls_slot.plain_cap()], info);
         } else {
-            code = tls_record.open(ints[tls_slot.i_suite()], bytes[tls_slot.k_read_key()..tls_slot.k_read_key() + tls_slot.key_len(ints)], bytes[tls_slot.k_read_iv()..tls_slot.k_read_iv() + 12], ints[tls_slot.i_read_seq()], bytes[tls_slot.b_in()..tls_slot.b_in() + n], bytes[tls_slot.b_plain()..tls_slot.b_plain() + tls_slot.plain_cap()], info);
+            code = tls_record.open(ints[tls_slot.i_suite()], bytes[tls_slot.k_read_key()..tls_slot.k_read_key() + tls_slot.key_len(ints)], tls_slot.read_aead(ints), bytes[tls_slot.k_read_iv()..tls_slot.k_read_iv() + 12], ints[tls_slot.i_read_seq()], bytes[tls_slot.b_in()..tls_slot.b_in() + n], bytes[tls_slot.b_plain()..tls_slot.b_plain() + tls_slot.plain_cap()], info);
         }
         inner = info[0];
         size = info[1];
@@ -927,7 +927,7 @@ pub fn finish[&i, &b](ints: &!i [int], bytes: &!b [byte]) -> [] int {
     }
     tls_slot.set_flag(ints, tls_slot.f_close_sent());
     if tls_slot.has(ints, tls_slot.f_close_received()) {
-        tls_slot.forget(bytes);
+        tls_slot.forget(ints, bytes);
     }
     return 0;
 }

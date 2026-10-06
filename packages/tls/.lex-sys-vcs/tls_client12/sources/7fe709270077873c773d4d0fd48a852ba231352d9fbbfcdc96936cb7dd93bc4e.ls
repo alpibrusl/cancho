@@ -224,6 +224,7 @@ fn key_block[&i, &b](ints: &!i [int], bytes: &!b [byte]) -> [] int {
         tls_slot.copy_bytes(block[2 * kl + il..2 * kl + 2 * il], bytes[tls_slot.k_read_iv()..tls_slot.k_read_iv() + il]);
         tls_slot.zero(block);
     }
+    tls_slot.prepare_keys(ints, bytes);
     return 0;
 }
 

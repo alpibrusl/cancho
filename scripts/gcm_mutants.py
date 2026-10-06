@@ -38,11 +38,13 @@ MUTANTS = [
     ("gcm", "a term of the carry-less multiply dropped", "let z3 = (x0 * y3 ^ x1 * y2 ^ x2 * y1 ^ x3 * y0) & 0x88888888;", "let z3 = (x0 * y3 ^ x1 * y2 ^ x2 * y1) & 0x88888888;"),
     ("gcm", "the reduction's x^7 term wrong", "lw ^ lw >> 1 ^ lw >> 2 ^ lw >> 7", "lw ^ lw >> 1 ^ lw >> 2 ^ lw >> 6"),
     ("gcm", "a Karatsuba middle product left uncorrected", "w[c + 17] = w[c + 17] ^ w[c + 15] ^ w[c + 16];", "w[c + 17] = w[c + 17] ^ w[c + 15];"),
-    ("gcm", "H not bit-reversed for the reversed products", "w[HWR() + i] = rev32(w[HW() + i]);", "w[HWR() + i] = w[HW() + i];"),
+    ("gcm", "H not bit-reversed for the reversed products", "ctx[c_h() + 4 + i] = rev32(ctx[c_h() + i]);", "ctx[c_h() + 4 + i] = ctx[c_h() + i];"),
     ("gcm", "the ciphertext's length in bytes, not bits", "let cbits = len(ciphertext) * 8;", "let cbits = len(ciphertext);"),
     ("gcm", "the associated data and ciphertext hashed in the wrong order", "    ghash(w, aad);\n    ghash(w, ciphertext);", "    ghash(w, ciphertext);\n    ghash(w, aad);"),
     ("gcm", "the tag masked with counter 2, not J0", "aes.ctr32_with(nr, skey, nonce, 1, blk, tag, q);", "aes.ctr32_with(nr, skey, nonce, 2, blk, tag, q);"),
-    ("gcm", "encryption from counter 1", "aes.ctr32_with(nr, skey, nonce, 2, plaintext, out[0..text], q);", "aes.ctr32_with(nr, skey, nonce, 1, plaintext, out[0..text], q);"),
+    ("gcm", "encryption from counter 1", "aes.ctr32_with(ctx[0], ctx[c_skey()..c_h()], nonce, 2, plaintext, out[0..text], q);", "aes.ctr32_with(ctx[0], ctx[c_skey()..c_h()], nonce, 1, plaintext, out[0..text], q);"),
+    # The prepared key (`docs/crypto-builtins.md` §6, step 2).
+    ("gcm", "an unprepared context taken as prepared", "&& (ctx[0] == 10 || ctx[0] == 14)", "&& ctx[0] >= 0"),
     ("gcm", "the last partial block not padded with zeros", "        var b = 0;\n        if at + k < len(s) {", "        var b = 255;\n        if at + k < len(s) {"),
     ("gcm", "a one-byte-short tag compare", "while i < 16 {\n            diff", "while i < 15 {\n            diff"),
     ("gcm", "plaintext released on a bad tag", "        if diff == 0 {", "        if diff == diff {"),
@@ -112,6 +114,9 @@ def evidence():
     checks.append(lambda a: a.startswith("0 "))
     cases.append(f"S {key} {h(bytes(16))} - 00")
     checks.append(lambda a: a.startswith("-2 gcm-nonce-length"))
+    # A context `gcm.prepare` never filled is refused as a key (step 2's prepared key).
+    cases.append(f"U {key} {nonce} - 00")
+    checks.append(lambda a: a.startswith("-1 gcm-key-length"))
     # A CAVP case with a 51-byte message and 20 bytes of associated data,
     # each bit of its sealed message flipped in turn.
     c = [c for c in cavp("gcmEncryptExtIV256.rsp") if len(c["PT"]) == 102 and len(c["AAD"]) == 40][0]

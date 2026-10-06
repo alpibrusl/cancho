@@ -2,7 +2,7 @@
 
 > **Status: design, decided; the DIT bit and the builtins built.** §9's five answers were accepted as proposed (2026-10-06),
 > and the four PRs of §10 follow in that order: the DIT bit (§6) and the builtins with their LLVM lowering (§3 to §5, as built
-> below) are done; per-key caching and the `std` change are next. `docs/tls-parity.md` §3.1 measured AES-GCM at about 170 times slower than OpenSSL's, and said the gap
+> below) are done, and so is per-key caching (§6); the `std` change is next. `docs/tls-parity.md` §3.1 measured AES-GCM at about 170 times slower than OpenSSL's, and said the gap
 > is the instructions lex-sys cannot emit. This document says what it would take to emit them, what is measured so far, and
 > what is not. Where a later PR finds a claim here false, that PR corrects it here, in place.
 
@@ -166,7 +166,12 @@ without the instructions will keep running, and because the builtins' gain shoul
 `std.aes` and `std.gcm` then change in three ways, in this order of risk:
 1. **Per-key work once per connection.** The key schedule, and `H = AES(0)`, are 25% and 14% of a 64-byte seal today
    (`docs/tls-parity.md` §3.1). They depend only on the key, so the record layer keeps them. This helps the software path too,
-   and is a change of its own.
+   and is a change of its own. *Done: `std.gcm`'s `prepare`, `seal_with` and `open_with` (a context of `context_len()` words:
+   the rounds, the expanded key and H), with `seal` and `open` as prepare-then-use; the record layer prepares each
+   direction's key when it is installed (`tls_slot.i_read_aead`, `i_write_aead`) and `forget` and `drop` overwrite it.
+   Measured on the Apple M4 (LLVM, AES-128-GCM, best of three): a 64-byte seal **8.8 µs one-shot, 1.6 µs with the key
+   prepared**, 5.5 times faster, more than the shares above (taken on the Xeon) suggested; a 16 KiB seal 187 against 181 µs. The
+   lying server's 84 recordings replay byte for byte; 25 GCM mutants and the TLS mutants all killed.*
 2. **A branch on `hw_aes_gcm()`** at the top of `seal` and `open`. Both paths produce the same bytes, and a test says so.
 3. **The software path stays, whole.** It is what Cranelift runs, what a CPU without the instructions runs, and what the
    differential test checks the hardware path against.

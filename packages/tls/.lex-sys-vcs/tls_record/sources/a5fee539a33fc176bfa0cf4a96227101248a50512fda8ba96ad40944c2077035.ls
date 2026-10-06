@@ -425,27 +425,44 @@ pub fn max_sequence() -> [] int {
     return 1 << 62;
 }
 
-// The suite's AEAD: `seal` and `open` of `std.chacha20` or `std.gcm`,
-// which take and answer the same things.
-fn aead_seal[&k, &n, &a, &p, &o](suite: int, key: &k [byte], nonce: &n [byte], aad: &a [byte], plaintext: &p [byte], out: &!o [byte]) -> [] int {
+// A key's prepared form (`docs/crypto-builtins.md` §6, step 2): for an
+// AES-GCM suite, `std.gcm`'s context (the expanded key and GHASH's H),
+// made once when the key is installed rather than for every record;
+// ChaCha20-Poly1305 has nothing to prepare. `ctx` is `context_len()`
+// words.
+pub fn context_len() -> [] int {
+    return gcm.context_len();
+}
+
+pub fn prepare[&k, &c](suite: int, key: &k [byte], ctx: &!c [int]) -> [] int {
+    if chacha(suite) {
+        gcm.forget(ctx);
+        return 0;
+    }
+    return gcm.prepare(key, ctx);
+}
+
+// The suite's AEAD: `seal` and `open` of `std.chacha20`, or of `std.gcm`
+// under the prepared key `ctx`, which take and answer the same things.
+fn aead_seal[&k, &c, &n, &a, &p, &o](suite: int, key: &k [byte], ctx: &c [int], nonce: &n [byte], aad: &a [byte], plaintext: &p [byte], out: &!o [byte]) -> [] int {
     if chacha(suite) {
         return chacha20.seal(key, nonce, aad, plaintext, out);
     }
-    return gcm.seal(key, nonce, aad, plaintext, out);
+    return gcm.seal_with(ctx, nonce, aad, plaintext, out);
 }
 
-fn aead_open[&k, &n, &a, &s, &o](suite: int, key: &k [byte], nonce: &n [byte], aad: &a [byte], sealed: &s [byte], out: &!o [byte]) -> [] int {
+fn aead_open[&k, &c, &n, &a, &s, &o](suite: int, key: &k [byte], ctx: &c [int], nonce: &n [byte], aad: &a [byte], sealed: &s [byte], out: &!o [byte]) -> [] int {
     if chacha(suite) {
         return chacha20.open(key, nonce, aad, sealed, out);
     }
-    return gcm.open(key, nonce, aad, sealed, out);
+    return gcm.open_with(ctx, nonce, aad, sealed, out);
 }
 
 // One protected record of `content_type` carrying `plaintext`, into
 // `out`: header, then ciphertext and tag, under `suite`'s AEAD with
 // `key` (`key_len(suite)` bytes). Answers its length, or a refusal.
 // `out` must hold `len(plaintext) + 22` bytes.
-pub fn seal[&k, &i, &p, &o](suite: int, key: &k [byte], iv: &i [byte], seq: int, content_type: int, plaintext: &p [byte], out: &!o [byte]) -> [] int {
+pub fn seal[&k, &c, &i, &p, &o](suite: int, key: &k [byte], ctx: &c [int], iv: &i [byte], seq: int, content_type: int, plaintext: &p [byte], out: &!o [byte]) -> [] int {
     let n = len(plaintext);
     if n > max_plaintext() {
         return -9;
@@ -473,7 +490,7 @@ pub fn seal[&k, &i, &p, &o](suite: int, key: &k [byte], iv: &i [byte], seq: int,
         }
         inner[n] = byte_of(content_type);
         nonce(iv, seq, iv_seq);
-        code = aead_seal(suite, key, iv_seq, out[0..5], inner, out[5..5 + body]);
+        code = aead_seal(suite, key, ctx, iv_seq, out[0..5], inner, out[5..5 + body]);
         // The inner plaintext is the caller's data; it is not erased here,
         // as the caller still holds it.
     }
@@ -488,7 +505,7 @@ pub fn seal[&k, &i, &p, &o](suite: int, key: &k [byte], iv: &i [byte], seq: int,
 // content type and `info[1]` the content's length. 0, or -10 for a
 // record that does not authenticate, -9 for content over the limit,
 // -6 for an inner plaintext with no content type.
-pub fn open[&k, &i, &r, &o, &f](suite: int, key: &k [byte], iv: &i [byte], seq: int, record: &r [byte], out: &!o [byte], info: &!f [int]) -> [] int {
+pub fn open[&k, &c, &i, &r, &o, &f](suite: int, key: &k [byte], ctx: &c [int], iv: &i [byte], seq: int, record: &r [byte], out: &!o [byte], info: &!f [int]) -> [] int {
     let body = len(record) - 5;
     if body < 17 {
         return -10;
@@ -510,7 +527,7 @@ pub fn open[&k, &i, &r, &o, &f](suite: int, key: &k [byte], iv: &i [byte], seq: 
     region s {
         let iv_seq = alloc_slice[s](12, byte_of(0));
         nonce(iv, seq, iv_seq);
-        code = aead_open(suite, key, iv_seq, record[0..5], record[5..5 + body], out[0..text]);
+        code = aead_open(suite, key, ctx, iv_seq, record[0..5], record[5..5 + body], out[0..text]);
     }
     if code != 0 {
         return -10;
@@ -583,7 +600,7 @@ pub fn overhead12(suite: int) -> [] int {
 // `suite`, into `out` (`len(plaintext) + overhead12(suite)` bytes).
 // AES-GCM's explicit nonce is the sequence number, which never repeats
 // under one key. Answers the record's length, or a refusal.
-pub fn seal12[&k, &i, &p, &o](suite: int, key: &k [byte], iv: &i [byte], seq: int, content_type: int, plaintext: &p [byte], out: &!o [byte]) -> [] int {
+pub fn seal12[&k, &c, &i, &p, &o](suite: int, key: &k [byte], ctx: &c [int], iv: &i [byte], seq: int, content_type: int, plaintext: &p [byte], out: &!o [byte]) -> [] int {
     let n = len(plaintext);
     if n > max_plaintext() {
         return -9;
@@ -612,7 +629,7 @@ pub fn seal12[&k, &i, &p, &o](suite: int, key: &k [byte], iv: &i [byte], seq: in
         }
         nonce12(suite, iv, seq, out[5..5 + explicit], iv_seq);
         aad12(seq, content_type, n, ad);
-        code = aead_seal(suite, key, iv_seq, ad, plaintext, out[5 + explicit..5 + body]);
+        code = aead_seal(suite, key, ctx, iv_seq, ad, plaintext, out[5 + explicit..5 + body]);
     }
     if code != 0 {
         return -10;
@@ -625,7 +642,7 @@ pub fn seal12[&k, &i, &p, &o](suite: int, key: &k [byte], iv: &i [byte], seq: in
 // type, from the header, and `info[1]` the plaintext's length. 0, or -10
 // for a record that does not authenticate, -9 over the limit, -3 for a
 // header version other than `03 03`.
-pub fn open12[&k, &i, &r, &o, &f](suite: int, key: &k [byte], iv: &i [byte], seq: int, record: &r [byte], out: &!o [byte], info: &!f [int]) -> [] int {
+pub fn open12[&k, &c, &i, &r, &o, &f](suite: int, key: &k [byte], ctx: &c [int], iv: &i [byte], seq: int, record: &r [byte], out: &!o [byte], info: &!f [int]) -> [] int {
     let explicit = overhead12(suite) - 21;
     let body = len(record) - 5;
     if body < explicit + 16 {
@@ -658,7 +675,7 @@ pub fn open12[&k, &i, &r, &o, &f](suite: int, key: &k [byte], iv: &i [byte], seq
         let iv_seq = alloc_slice[s](12, byte_of(0));
         nonce12(suite, iv, seq, record[5..5 + explicit], iv_seq);
         aad12(seq, content_type, n, ad);
-        code = aead_open(suite, key, iv_seq, ad, record[5 + explicit..5 + body], out[0..n]);
+        code = aead_open(suite, key, ctx, iv_seq, ad, record[5 + explicit..5 + body], out[0..n]);
     }
     if code != 0 {
         return -10;
