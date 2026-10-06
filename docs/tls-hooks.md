@@ -1,6 +1,6 @@
-# The pure TLS backend in `lexsys-hooks`: the design (#210)
+# The pure TLS backend in `cancho-hooks`: the design (#210)
 
-> **Status: design (#210, PR 1), since built in `lexsys-hooks` (§9).** #210 makes `packages/tls` selectable in `lexsys-hooks`, runs the whole `https` delivery
+> **Status: design (#210, PR 1), since built in `cancho-hooks` (§9).** #210 makes `packages/tls` selectable in `cancho-hooks`, runs the whole `https` delivery
 > suite on both backends, and measures. Reading both sides to write this found that two sentences of `docs/tls-pure.md` are
 > false, so the work is bigger than "switch by dependency". This document corrects them, says what has to be built, and lists
 > the decisions taken (§7). Its claims are from reading the two code bases and from the trials named; where a later PR finds
@@ -12,7 +12,7 @@
 
 After #208, which closed the bar for the stack as one:
 1. **Selectable by dependency.** "The `packages/tls` API is the same as the OpenSSL backend's."
-2. **Every `https` delivery test of `lexsys-hooks`** passes with each backend (a valid chain, a wrong host, expired,
+2. **Every `https` delivery test of `cancho-hooks`** passes with each backend (a valid chain, a wrong host, expired,
    self-signed, a slow handshake, a server that closes mid-handshake, 64 concurrent deliveries), and **the outcomes are equal**
    (delivered, or failed with which tag).
 3. **Measured, side by side, on a quiet machine, with the command:** handshake CPU per connection, handshakes per second per
@@ -28,7 +28,7 @@ After #208, which closed the bar for the stack as one:
 `docs/tls-pure.md` §2.1 says "one interface fits both backends with no adapter", and a consumer "switches backend by
 dependency, not by code". The two are:
 
-| | hooks' `src/tls.ls` (OpenSSL) | `packages/tls` |
+| | hooks' `src/tls.cho` (OpenSSL) | `packages/tls` |
 |---|---|---|
 | Who owns a connection's state | the caller: `fields()` = 9 integers in the attempt array `at`, from index `b` | the engine: `tls.open(heap, slots)` is one value for the process, and a connection is a slot number in it |
 | Who does the socket I/O | the module: `handshake`, `write`, `read` and `shutdown` take the `conns.Table` and the `Poller`, and read and write the socket | the caller: `feed` takes bytes the socket gave, `take` gives bytes for it |
@@ -38,9 +38,9 @@ dependency, not by code". The two are:
 | Sessions | `save_session`, `free_session`, `open(..., session)` | none (§2.3) |
 | Buffers | the caller's `req` slice: `out_max()` = 20,480 bytes for ciphertext waiting for the kernel, `net_max()` = 4,096 for reads | the slot's own |
 
-So the pure backend needs **a module in hooks with `tls.ls`'s public functions, implemented over `packages/tls`**: it does
-what `tls.ls`'s private `flush` and `feed` do now (move bytes between the `Conn` and the engine), and maps `event` and
-`failure` onto `done`/`pending`/`failed` and `detail_of`. `attempt.ls`'s calls (`open`, `handshake`, `write`, `read`,
+So the pure backend needs **a module in hooks with `tls.cho`'s public functions, implemented over `packages/tls`**: it does
+what `tls.cho`'s private `flush` and `feed` do now (move bytes between the `Conn` and the engine), and maps `event` and
+`failure` onto `done`/`pending`/`failed` and `detail_of`. `attempt.cho`'s calls (`open`, `handshake`, `write`, `read`,
 `shutdown`, `want`, `watching`, `resumed`, `detail_of`, `stage_of`, `drop`) stay the same shape. It is a translation, not a
 rewrite, and `docs/tls-pure.md` §2.1's sentence is corrected below.
 
@@ -48,17 +48,17 @@ rewrite, and `docs/tls-pure.md` §2.1's sentence is corrected below.
 
 This is the finding that decides the build.
 
-- `attempt.ls` and `hooks.ls` thread `ffi: &f Ffi("libcrypto,libssl")` down to every call into `tls`. In the committed hooks,
-  **5 functions of `attempt.ls` and 6 of `hooks.ls` carry an `Ffi` row**: `attempt.advance` and its helpers, and in `hooks.ls`
+- `attempt.cho` and `hooks.cho` thread `ffi: &f Ffi("libcrypto,libssl")` down to every call into `tls`. In the committed hooks,
+  **5 functions of `attempt.cho` and 6 of `hooks.cho` carry an `Ffi` row**: `attempt.advance` and its helpers, and in `hooks.cho`
   `settle`, `conclude`, `sweep`, `delivery_turn`, `run` and `start_tls`. `run` is 1,508 lines.
 - A function's row is exact in both directions (`docs/linearity-and-effects.md`): it may not declare an effect it does not
   perform, and it must declare every one it does. So a function that takes an `Ffi("libssl")` and does not use it is not
   accepted as pure, and one that uses the engine instead has a different signature.
-- **lex-sys cannot abstract over this.** `docs/effect-polymorphism.md` is a documented no: a row is fixed at the declaration,
+- **cancho cannot abstract over this.** `docs/effect-polymorphism.md` is a documented no: a row is fixed at the declaration,
   and the language has no function values to be polymorphic over. `docs/package-system.md` has no feature flags and no linking
   options in `[[bin]]`.
 
-So **the two builds cannot share `attempt.ls` and `hooks.ls` as they stand**, and the pure one needs the engine passed where
+So **the two builds cannot share `attempt.cho` and `hooks.cho` as they stand**, and the pure one needs the engine passed where
 `ffi` goes. A pure `Engine` is one value for the process (`tls.open(heap, 64)` in `main`), threaded as a `&!` borrow beside
 `atab` and `poller`.
 
@@ -71,7 +71,7 @@ endpoint, resumes it (about a third less CPU per delivery, `docs/https.md`), cou
 ### 2.4 "No `Ffi` capability at all" cannot be met by hooks as a whole
 
 Hooks holds `ffi` for `libc` too: its pinned `docs/authority.json` lists `libc:statx` (the modes of the data directory,
-`src/perm.ls`) and `libc:prctl`, besides 32 symbols in `libssl` and `libcrypto`. So the property that can be checked, and the
+`src/perm.cho`) and `libc:prctl`, besides 32 symbols in `libssl` and `libcrypto`. So the property that can be checked, and the
 one that matters, is: **in the pure build, no `libssl` and no `libcrypto` scope, none of those 32 symbols, and no `ffi`
 reachable from the TLS path**. The `libc` entries stay, and equal the OpenSSL build's. `docs/tls-pure.md` §9's gate 2 ("shows
 no `ffi(...)` and no foreign symbols") is corrected below.
@@ -80,7 +80,7 @@ no `ffi(...)` and no foreign symbols") is corrected below.
 
 | | OpenSSL backend | pure backend | What it means for the tests |
 |---|---|---|---|
-| Trust store | the system's default locations, `SSL_CERT_FILE` and `SSL_CERT_DIR` honoured; or exactly `tls-ca-file` | the caller reads a PEM bundle (`tls.trust`): the same `tls-ca-file`, or a bundle file read from a list of known paths and `SSL_CERT_FILE` | `SSL_CERT_DIR` (a directory of hashed certificates) cannot be honoured, and the loss is documented. A bundle of 128 roots takes 138,350 bytes of the engine's 1,048,576 (`packages/tls/tls.ls`) |
+| Trust store | the system's default locations, `SSL_CERT_FILE` and `SSL_CERT_DIR` honoured; or exactly `tls-ca-file` | the caller reads a PEM bundle (`tls.trust`): the same `tls-ca-file`, or a bundle file read from a list of known paths and `SSL_CERT_FILE` | `SSL_CERT_DIR` (a directory of hashed certificates) cannot be honoured, and the loss is documented. A bundle of 128 roots takes 138,350 bytes of the engine's 1,048,576 (`packages/tls/tls.cho`) |
 | TLS 1.2 | the extended master secret optional | **required** (#207) | a receiver without it fails on the pure backend only: one of the six differences on purpose of `docs/tls-assurance.md` §4.1 |
 | Message size | a Certificate over 100 KiB refused | over 64 KiB refused | the same §4.1 list |
 | Memory | 26 to 48 KiB a connection (`docs/tls-nonblocking.md` §8.3) | **about 179 KiB a slot, 11.2 MiB for 64** as built (`docs/tls-pure.md` §7.4), plus the roots | measured in §6, not estimated |
@@ -91,18 +91,18 @@ refuse. A test that hits one of them is run on both, and its expected outcome is
 
 ## 3. The build
 
-**Packaging first.** Hooks takes a package through the project file as a `.lex-sys-vcs` store pinned by git revision
+**Packaging first.** Hooks takes a package through the project file as a `.cancho-vcs` store pinned by git revision
 (`[dependencies.server]` for `packages/http-server`). `packages/tls` and `packages/x509` have no such store. Tried here, on
-this machine's compiler: `lex-sys vcs publish --std --dir packages/x509` publishes its modules. `packages/tls` is refused
+this machine's compiler: `cancho vcs publish --std --dir packages/x509` publishes its modules. `packages/tls` is refused
 until x509 is required by lock (`--requires <lock>:<store>`, `docs/vcs-publish.md`), which is the flow the compiler names. The
-exact sequence, and whether the store lays out as `lexsys-hooks`'s `[dependencies.*]` expects, is the first step of the build
+exact sequence, and whether the store lays out as `cancho-hooks`'s `[dependencies.*]` expects, is the first step of the build
 PR, and a store committed to this repository is that PR's first commit.
 
-**The two builds** are two `[[bin]]` entries in hooks' `lex-sys.toml`: `hooks` (OpenSSL, the default) and `hooks-pure`.
-*Corrected (§9): two projects, not two bins. A project's libraries are built into every program of it, so `tls` as a dependency collides with hooks' own OpenSSL module, which is also called `tls`, and the pure build needs a newer compiler than the default's pin. It is `pure/lex-sys.toml`, beside the unchanged `lex-sys.toml`.*
+**The two builds** are two `[[bin]]` entries in hooks' `cancho.toml`: `hooks` (OpenSSL, the default) and `hooks-pure`.
+*Corrected (§9): two projects, not two bins. A project's libraries are built into every program of it, so `tls` as a dependency collides with hooks' own OpenSSL module, which is also called `tls`, and the pure build needs a newer compiler than the default's pin. It is `pure/cancho.toml`, beside the unchanged `cancho.toml`.*
 
-**How the pure build's sources are made** is the decision of §7. The recommendation is that `src/tls.ls`'s OpenSSL module and
-a new `src/tls_pure.ls` both declare `module tls`, each in its own source list, and the files of §2.2 are **transformed
+**How the pure build's sources are made** is the decision of §7. The recommendation is that `src/tls.cho`'s OpenSSL module and
+a new `src/tls_pure.cho` both declare `module tls`, each in its own source list, and the files of §2.2 are **transformed
 mechanically** for the pure build by one script, which is run by the build and is the only place the difference lives. The
 transform is:
 - `ffi: &f Ffi("libcrypto,libssl")` or `Ffi("libssl")` in a parameter list becomes `engine: &!e tls.Engine`, and `ffi` in a call
@@ -112,12 +112,12 @@ transform is:
   replaced by the pure module's own.
 
 The pure build's sources are not committed, so there is no copy to drift. The risk is the other one: a change to the shape of
-these functions in `hooks.ls` can defeat the transform. §5's checks catch that at build time, not in production: the transformed
+these functions in `hooks.cho` can defeat the transform. §5's checks catch that at build time, not in production: the transformed
 source must compile, and the pure build's authority report must have no `libssl` or `libcrypto`.
 
 ## 4. How a failure maps
 
-`attempt.ls`'s `handshake_code` turns `detail_of` into one of hooks' reasons (`cert_untrusted`, `cert_expired`,
+`attempt.cho`'s `handshake_code` turns `detail_of` into one of hooks' reasons (`cert_untrusted`, `cert_expired`,
 `cert_hostname`, `cert_invalid`, `tls_handshake`, `tls_timeout`, `tls_error`). The pure module sets `detail_of` to the number
 the **OpenSSL column of `docs/tls-pure.md` §8** gives for the refusal tag, so `handshake_code` is unchanged and a failed
 attempt's history means the same under either backend. A tag with no OpenSSL number (`x509-chain-too-large`) is set to a value
@@ -137,7 +137,7 @@ so each runs against `build/hooks` and `build/hooks-pure` unchanged.
 - **On both, beyond the nine groups:** `names_test.py` (no database) and `https_api_test.py` (with one). Whether `attempt_test.py`
   and `reason_test.py` touch TLS is read in the build PR before they are listed.
 - **On OpenSSL only, with the reason said:** `sessions_test.py` (no resumption, §2.3).
-- **Hooks' unit tests** (`lex-sys test`) and **its mutants** (`tests/mutants/https.py`: 49, 47 killed) are for the OpenSSL
+- **Hooks' unit tests** (`cancho test`) and **its mutants** (`tests/mutants/https.py`: 49, 47 killed) are for the OpenSSL
   module. The new module gets its own list, with every survivor argued, as hooks does.
 - **The authority check.** `scripts/check-authority.sh` runs for each bin and pins a file each. The pure build's file has no
   `libssl:` or `libcrypto:` line and no `ffi` label for those two, and `docs/authority.json`'s `libc:statx` and `libc:prctl`
@@ -174,7 +174,7 @@ Settled by a person (#210, PR 1 review), with the reasons. Each can be reopened 
    The alternatives were to duplicate the 11 functions (a copy of `run`, 1,508 lines, would drift) or to refactor the loop first
    (a large change to a 5,357-line file other work is changing, before anything is measured). Three safeguards are part of the
    decision:
-   - the transform **fails unless it finds exactly the 11 functions it expects**, so a changed `hooks.ls` cannot be half
+   - the transform **fails unless it finds exactly the 11 functions it expects**, so a changed `hooks.cho` cannot be half
      transformed without anyone noticing;
    - it **preserves line numbers**, so a compiler error in the generated source points at the real line;
    - the build checks the result: it compiles, and the pure build's authority report has no `libssl` or `libcrypto`.
@@ -186,7 +186,7 @@ Settled by a person (#210, PR 1 review), with the reasons. Each can be reopened 
    visible. *Reopened if* §6 shows the pure handshake several times slower: that is the evidence a resumption design needs.
 3. **The trust store (§2.5): `SSL_CERT_DIR` is not honoured, and nothing falls back silently.** The pure backend reads
    `tls-ca-file` if given, otherwise `SSL_CERT_FILE`, otherwise a bundle from a short list of standard paths
-   *(Corrected (§9): `SSL_CERT_FILE` is not honoured either. lex-sys reads no environment variable without a foreign call, so the pure build, which holds none for TLS,
+   *(Corrected (§9): `SSL_CERT_FILE` is not honoured either. cancho reads no environment variable without a foreign call, so the pure build, which holds none for TLS,
    cannot. It reads `tls-ca-file`, else the first of four usual bundle paths, and a deployment that sets either variable names the file with `tls-ca-file`.)*
    (`/etc/ssl/certs/ca-certificates.crt` on Debian and Ubuntu). **If none loads it refuses to start, status 21, as an unreadable
    `tls-ca-file` already does**, and that includes a deployment that sets only `SSL_CERT_DIR`: a trust store other than the one
@@ -207,7 +207,7 @@ Settled by a person (#210, PR 1 review), with the reasons. Each can be reopened 
 
 ## 9. What was built, and what building it corrected
 
-Built in `lexsys-hooks` ([alpibrusl/lexsys-hooks#42](https://github.com/alpibrusl/lexsys-hooks/pull/42): `pure/`, `scripts/make_pure.py`; its own `docs/pure-tls.md` is the record of the results). #283 published the two packages as stores first.
+Built in `cancho-hooks` ([alpibrusl/cancho-hooks#42](https://github.com/alpibrusl/cancho-hooks/pull/42): `pure/`, `scripts/make_pure.py`; its own `docs/pure-tls.md` is the record of the results). #283 published the two packages as stores first.
 What it found that §1 to §7 did not know:
 
 - **The pure build is a project of its own, not a second `[[bin]]`** (§3, corrected above). Found by trying: with `tls` among the one project's dependencies,
@@ -216,10 +216,10 @@ What it found that §1 to §7 did not know:
   module, the creation and closing of the engine in `main`, the trust store. The engine takes the `Ffi`'s place in the same parameter position, so most call sites change in
   one word. It keeps line numbers (a compiler error in the generated source is at the line of the real one: it was how three problems were found), and fails, saying which
   change, if the source is not what the list expects.
-- **The adapter needs two things `src/tls.ls` never had**: the connection's slot (the engine's slots are numbered, OpenSSL's state is the caller's integers) and the time
+- **The adapter needs two things `src/tls.cho` never had**: the connection's slot (the engine's slots are numbered, OpenSSL's state is the caller's integers) and the time
   (certificates' dates). `attempt.advance` takes the time; `open` and `drop` take the slot, which their callers already hold.
 - **The events log holds the file-system capability**, so `main` reaches the trust store through `evlog.lend`, not a borrow of its own.
-- **lex-sys has no environment access** (§7, decision 3, corrected).
+- **cancho has no environment access** (§7, decision 3, corrected).
 - **A compiler bug**, in the LLVM backend: any `fs_read(...)` used directly as an operand fails to generate code (it builds on Cranelift, and binding the result first
   works on both). Reported as its own task.
 

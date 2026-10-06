@@ -54,7 +54,7 @@ program's need. §2 is the argument.
 
 ## 2. A row cannot vary, and that is by construction
 
-`Signature.effects` in `crates/lex-sys-ir/src/defs.rs` carries its own
+`Signature.effects` in `crates/cancho-ir/src/defs.rs` carries its own
 reason:
 
 > *The declared effect row (§7.2): written at the boundary, never
@@ -65,7 +65,7 @@ and a caller reads it straight off the declaration —
 `Resolved::Fn(index) => f.signatures[index].effects.clone()`. Not off an
 instantiation. So for a row to vary, something a function is generic over
 would have to change which callee its body reaches. The two things a
-lex-sys function is generic over are:
+cancho function is generic over are:
 
 * **type parameters**, which monomorphisation substitutes into types.
   They do not select a name: a generic body calls the functions it names
@@ -80,7 +80,7 @@ a rule with a fixture:
 `f` is a function; M1 has no function values, so it can only be called
 ```
 
-(`Rule::NoFunctionValues`, `tests/reject/function_as_value.ls`.)
+(`Rule::NoFunctionValues`, `tests/reject/function_as_value.cho`.)
 
 So there is no expression in this language whose effect row depends on
 anything. A feature for writing down that dependence has nothing to write

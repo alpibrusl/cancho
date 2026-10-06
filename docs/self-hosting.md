@@ -12,9 +12,9 @@ question `bootstrap.md` deferred: is self-hosting worth planning next?
 
 **No — not yet, and not because anything found here is a hard
 blocker.** Every concrete thing checked came back feasible. What is
-missing is an asker (`AGENTS.md` §7): no lex-sys program needs to
+missing is an asker (`AGENTS.md` §7): no cancho program needs to
 compute a lex-lang `SigId`, and no consumer is waiting on a
-lex-sys-language compiler. This is the same discipline `docs/vcs.md`
+cancho-language compiler. This is the same discipline `docs/vcs.md`
 §8 already applied to whole-function merge and typed issues —
 *"has no asker in this repository yet... not started"* — applied here
 to a much larger piece of unrequested work.
@@ -23,21 +23,21 @@ to a much larger piece of unrequested work.
 
 ## 1. Two different questions this note does not conflate
 
-*"Self-host the toolchain"* and *"make `lex-sys-vcs`'s `OpId` match
+*"Self-host the toolchain"* and *"make `cancho-vcs`'s `OpId` match
 `lex-vcs`'s"* sound like the same idea and are not.
 
 `docs/vcs.md` §5 already answered the second one, on contact, while
-building `lex-sys-vcs`: **`OpId` is BLAKE3, not SHA-256**, deliberately
+building `cancho-vcs`: **`OpId` is BLAKE3, not SHA-256**, deliberately
 — *"matching `lex-vcs`'s algorithm would have meant a second hash
-dependency for no reason but appearance."* `lex-sys-vcs` hashes
-lex-sys programs; a lex-sys program and a Lex program are never the
+dependency for no reason but appearance."* `cancho-vcs` hashes
+cancho programs; a cancho program and a Lex program are never the
 same bytes, so there was never a reason for their content hashes to
 agree, and none was sought.
 
 What `bootstrap.md` actually asks is the first, larger question: could
-*lex-sys itself* — the language — eventually be the implementation
-language of its own compiler (today's `lex-sys-syntax`/`lex-sys-ir`/
-`lex-sys-codegen*`, ~29,400 lines of Rust, counted below), the way a
+*cancho itself* — the language — eventually be the implementation
+language of its own compiler (today's `cancho-syntax`/`cancho-ir`/
+`cancho-codegen*`, ~29,400 lines of Rust, counted below), the way a
 self-hosted compiler is normally understood. That is what the rest of
 this document measures.
 
@@ -47,7 +47,7 @@ this document measures.
 
 `ROADMAP.md`'s line says *"the existing ~136k-op corpus."* No such
 corpus is checked into any of the four repositories this session can
-reach — `lex-lang`, `lex-sys`, `lex-os`, `lex-gpu` — confirmed by
+reach — `lex-lang`, `cancho`, `lex-os`, `lex-gpu` — confirmed by
 searching each for an op-log store, not assumed from the absence of a
 memory of one. Whatever corpus that line originally meant lives
 outside this sandbox (a production op-log from real use, most likely),
@@ -61,7 +61,7 @@ seed testing the parser's own error path, not a program). The other 29
 parse into 168 real `Stage`s (`fn`/`type` declarations) through the
 real, unmodified `lex-syntax`/`lex-ast` pipeline.
 
-This changes what is actually testable. Diffing a lex-sys hash against
+This changes what is actually testable. Diffing a cancho hash against
 a lex-lang hash for the *same* corpus was never going to say anything
 — different languages, different ASTs, no reason to expect agreement.
 What is testable, and what the "byte-identical" phrasing in
@@ -117,11 +117,11 @@ result.
 Three more questions, each answered against this repository's own real
 code rather than guessed:
 
-**Does lex-sys support what a hand-written compiler needs structurally?**
+**Does cancho support what a hand-written compiler needs structurally?**
 Recursion — `fn fib(n: int) -> [] int { if n < 2 { return n; } return
 fib(n - 1) + fib(n - 2); }`, built and run in this sandbox, returns 55
 for `fib(10)`. Heap-allocated recursive data (an AST node needs a
-`Box`ed child) — already proven, not hypothetical: `examples/tree.ls`
+`Box`ed child) — already proven, not hypothetical: `examples/tree.cho`
 is a binary search tree, exactly this shape, already in the corpus
 `docs/README.md` calls *"why a language needs a heap at all."* Neither
 is a new risk.
@@ -131,13 +131,13 @@ are the compiler today, real line counts:
 
 | Crate | Lines |
 |---|---|
-| `lex-sys-syntax` | 5,318 |
-| `lex-sys-ir` | 12,282 |
-| `lex-sys-codegen` | 3,397 |
-| `lex-sys-codegen-llvm` | 4,615 |
-| `lex-sys-types` | 704 |
-| `lex-sys-id` | 1,909 |
-| `lex-sys` (CLI) | 1,143 |
+| `cancho-syntax` | 5,318 |
+| `cancho-ir` | 12,282 |
+| `cancho-codegen` | 3,397 |
+| `cancho-codegen-llvm` | 4,615 |
+| `cancho-types` | 704 |
+| `cancho-id` | 1,909 |
+| `cancho` (CLI) | 1,143 |
 | **Total** | **29,368** |
 
 That is the scale of a full port, not a slice — an order of magnitude
@@ -150,7 +150,7 @@ is not a soft one: Cranelift and LLVM are libraries with Rust (and C++)
 APIs — builder patterns, trait objects, complex owned types crossing
 by value — none of which a foreign call can cross today
 (`docs/reach.md` §3: *"a foreign result is `int`, `bool` or `()`"*).
-Reaching either from `.ls` directly is not a missing convenience, it is
+Reaching either from `.cho` directly is not a missing convenience, it is
 outside what `extern fn` can express at all. But `docs/reach.md` §3.4's
 own note that `fork` is already reachable through `Ffi("libc")` points
 at the actual escape hatch a self-hosted backend would take: emit
@@ -171,15 +171,15 @@ dependency that keeps v0 in Rust has a named way around it — shelling
 out to `as`/`ld` — that does not require reimplementing a code
 generator (§4). What is missing is scale (29,368 real lines, §4) and,
 more to the point, an asker: nothing in this repository today needs a
-lex-sys compiler written in lex-sys, and `AGENTS.md` §7's rule against
+cancho compiler written in cancho, and `AGENTS.md` §7's rule against
 building what nothing asks for applies at this size exactly as it does
 at `docs/vcs.md`'s smaller ones.
 
 **Decision: stay on Rust for the compiler. Revisit this document,
 rather than re-running the spike, the day a concrete asker exists** —
 most plausibly `lex-os`'s own port maturing to the point where running
-the *lex-sys compiler itself* inside a sealed box (rather than just
-lex-sys *programs*) becomes something that box's own trust model
+the *cancho compiler itself* inside a sealed box (rather than just
+cancho *programs*) becomes something that box's own trust model
 needs. Nothing in this document's findings would need to change before
 that day; only the "no asker yet" line would.
 
@@ -193,13 +193,13 @@ language" has been run one stage at a time, the Rust compiler the oracle at ever
 stage and any stage free to stop the effort by failing. This section records what
 the stages found, in place, the way this document corrects its own claims.
 
-| Stage | Written in lex-sys | Oracle | Result |
+| Stage | Written in cancho | Oracle | Result |
 |---|---|---|---|
-| 1. Lexer | `examples/selfhost/lexcore.ls` (a module) and `lexer.ls` | `examples/dump_tokens.rs` in `lex-sys-syntax` | Same token stream and the same refusals on every program in the repository (614 files) |
-| 2. Parser | `examples/selfhost/parser.ls` | `examples/dump_ast.rs` in `lex-sys-syntax` | Same syntax tree, node for node and span for span, or the same refusal (rule and span), on the same 614 files, **including its own source**, and on a fuzz corpus (below) of 52,272 cases, 51,911 of them comparable and all identical, 29,097 of those refusals |
-| 3a. The tree | `examples/selfhost/ast.ls` (a module, the parser) and `parser.ls` (a walk that prints the tree) | the same `dump_ast.rs` | The parser **builds the tree** in flat tables and the listing is produced by walking it; the same 621 programs and 52,314 fuzz cases (6 seeds), all comparable ones identical, 29,055 of them refusals |
-| 3b. Declarations (the first half of the checker, complete) | `examples/selfhost/pass1.ls`, `foreign.ls` and `checker.ls`, over a generated `tables.ls`; programs of several files | `check_declarations` (`lex-sys-ir`), the first half of the Rust checker | Same answer, `OK` or the first refusal's rule and span, on every program of the repository alone (633) and with the whole standard library parsed with them (633, 464 of them `OK`), on 169 targeted cases, and on 62,892 fuzz cases (51,534 alone, 11,358 with the library): 62,434 identical, 37,967 of them refusals, none different; 458 are not UTF-8; nothing is skipped |
-| 3c. Bodies: scopes, types, linearity, effects | not started | `lex-sys check --output json` | |
+| 1. Lexer | `examples/selfhost/lexcore.cho` (a module) and `lexer.cho` | `examples/dump_tokens.rs` in `cancho-syntax` | Same token stream and the same refusals on every program in the repository (614 files) |
+| 2. Parser | `examples/selfhost/parser.cho` | `examples/dump_ast.rs` in `cancho-syntax` | Same syntax tree, node for node and span for span, or the same refusal (rule and span), on the same 614 files, **including its own source**, and on a fuzz corpus (below) of 52,272 cases, 51,911 of them comparable and all identical, 29,097 of those refusals |
+| 3a. The tree | `examples/selfhost/ast.cho` (a module, the parser) and `parser.cho` (a walk that prints the tree) | the same `dump_ast.rs` | The parser **builds the tree** in flat tables and the listing is produced by walking it; the same 621 programs and 52,314 fuzz cases (6 seeds), all comparable ones identical, 29,055 of them refusals |
+| 3b. Declarations (the first half of the checker, complete) | `examples/selfhost/pass1.cho`, `foreign.cho` and `checker.cho`, over a generated `tables.cho`; programs of several files | `check_declarations` (`cancho-ir`), the first half of the Rust checker | Same answer, `OK` or the first refusal's rule and span, on every program of the repository alone (633) and with the whole standard library parsed with them (633, 464 of them `OK`), on 169 targeted cases, and on 62,892 fuzz cases (51,534 alone, 11,358 with the library): 62,434 identical, 37,967 of them refusals, none different; 458 are not UTF-8; nothing is skipped |
+| 3c. Bodies: scopes, types, linearity, effects | not started | `cancho check --output json` | |
 | 4. Backend | not started | | |
 
 **The method.** A port that builds no tree has nothing to compare, and one that does
@@ -216,20 +216,20 @@ range deleted), and `tests/conformance/selfhost.rs` runs both ports over the
 repository's programs on every CI run.
 
 **Stage 3a: the tree.** Stage 2 printed as it parsed; the checker needs something to walk,
-so `ast.ls` is the same parser building the Rust AST's own design: flat tables and
+so `ast.cho` is the same parser building the Rust AST's own design: flat tables and
 indices, not owned children. A node is a record of 16 integers in one table (kind,
 span, the next node of its list, and what its kind keeps), a reference to a node is its
 index, a list is a chain (the parent holds the first child and the count). The whole
 front end, state, tokens and nodes, is **one allocation whose size follows from the
 length of the text** (every node and token takes a byte, so tokens bound nodes), 160
-bytes of state per byte of source. `parser.ls` is now only the walk that prints the tree
+bytes of state per byte of source. `parser.cho` is now only the walk that prints the tree
 in the listing's order, so a match with the oracle is a statement about the *tree*:
 the walk reads nothing the tree does not hold, except where the parser had already checked
 the tokens and the node keeps only where they start (an effect row, a declaration's
 `[T, &r where ...]`, a destructuring pattern, a match pattern). Everything stage 2
 was checked with passes unchanged, and the translation compiled and matched the Rust
 parser on all 621 programs the first time.
-The cost of the walk: `ast.ls` (1,921 lines, 1,678 not comment or blank) and `parser.ls`
+The cost of the walk: `ast.cho` (1,921 lines, 1,678 not comment or blank) and `parser.cho`
 (847, 761) are 2,768 lines against stage 2's single 1,970; parsing and walking its own 80 KB
 takes 0.24 s (stage 2 took 6 ms for its own 59 KB), with a 13 MB table to fill first; where
 the time goes was not measured.
@@ -237,9 +237,9 @@ the time goes was not measured.
 **Stage 3b: the declarations.** The Rust checker is one long function, and its first half,
 `collect_declarations`, reads no body: imports, type declarations, foreign declarations,
 statics and function signatures, in that order, stopping at the first refusal. That half is now a
-function of its own (`lex_sys_ir::check_declarations`, a pure extraction; `lower` calls it), and
+function of its own (`cancho_ir::check_declarations`, a pure extraction; `lower` calls it), and
 it is the oracle: the port's first refusal must be the Rust checker's, rule and span, which
-makes the *order* of the checks part of what is compared. `pass1.ls` ports, in that order:
+makes the *order* of the checks part of what is compared. `pass1.cho` ports, in that order:
 imports (`check_imports`), type names (built-in and duplicate), members (duplicate fields and
 variants, `enum` with no variants), the finite-size check (`reaches`, with `Box` the finite way
 back), statics, and signatures (built-ins, duplicates, generic and region names, `where`
@@ -257,24 +257,24 @@ counted, by what the oracle said, not hidden. Each slice removed some; the last 
 answer, and the harnesses now fail on anything but the oracle's. **Generated
 tables.** The prelude's 46 types (name, arity, edition, whether another module may name it,
 which parameters are `val`-bounded) and the 118 builtins' names and editions are data the port
-cannot read from Rust, so `tables.ls` is generated, and a `lex-sys-ir` test fails when it is
+cannot read from Rust, so `tables.cho` is generated, and a `cancho-ir` test fails when it is
 not what `prelude_types`, `mode_of` and `Builtin::ALL` say (`UPDATE_SELFHOST_TABLES=1 cargo test -p
-lex-sys-ir selfhost_tables` rewrites it).
+cancho-ir selfhost_tables` rewrites it).
 
 What it found: the oracle caught an off-by-one in the import span in the first run, and
 nothing else differed in 51,150 cases; the same two keywords as before (`module`, `region`)
-cost a compile cycle each as the names of locals; and `lex-sys fmt` refuses `import m.ast as
+cost a compile cycle each as the names of locals; and `cancho fmt` refuses `import m.ast as
 ast`, an alias equal to the last segment, which the file then spells without the `as`.
-`pass1.ls` is 920 lines (788 not comment or blank); the Rust it ports is spread over
+`pass1.cho` is 920 lines (788 not comment or blank); the Rust it ports is spread over
 `defs.rs`, `function.rs` and `lib.rs`, 942 non-comment lines in the ranges that hold it, about a
 quarter of which (foreign declarations, modes) is not ported, so the ratio is nearer 1.2 than
 0.8. That split is an estimate, not a count.
 
 **Several files, and modes.** The compiler parses a program as a set of files, the user's and then
 `std`'s, into one tree (`parse_into`, each file at its own base offset), so the port now does:
-`driver.ls` reads a stream of files on standard input (a line `FILE <length>` and that many bytes,
+`driver.cho` reads a stream of files on standard input (a line `FILE <length>` and that many bytes,
 each), lays them end to end with one byte between them as the Rust `SourceMap` does, and
-`ast.ls` tokenizes and parses them one after another into the same tables, with a module table
+`ast.cho` tokenizes and parses them one after another into the same tables, with a module table
 (a path names one module however many files declare it) and an edition per file. Parsing
 `std` and a program together, 485 KB, gives the Rust parser's listing byte for byte, in 0.27 s.
 Checking with the library then exposed what the first slice had skipped: `std` names types with
@@ -287,20 +287,20 @@ has the bits of the members resolved so far, as the Rust checker, which fills me
 goes, sees them. `Ffi`'s scope (`parse_scope`) is ported with it. Only an `extern fn` still
 ended a check in `SKIP`, which is the next paragraph.
 
-**Foreign declarations.** The last part of the declarations, `foreign.ls`, ports the loop that
+**Foreign declarations.** The last part of the declarations, `foreign.cho`, ports the loop that
 handles every `extern fn`: the name is not a builtin's nor a symbol another declaration binds,
 every parameter and the result resolve (`c_ptr`, and `c_int` for a result, are names only a
 foreign signature has), what crosses is what C can name (an `int`, a `bool`, an opaque pointer, a
 borrowed capability, a borrowed `[byte]`), an `Ffi` is narrowed to a library and not to nothing,
 exactly one `Ffi` is borrowed, and the row is the *same set* as what the borrowed capabilities
-discharge. What a capability discharges is data and is generated into `tables.ls` from
+discharge. What a capability discharges is data and is generated into `tables.cho` from
 `discharged_by` (each label plain, narrowed to the literal the type is written with, or to the
 empty string), the way the prelude's modes are. The comparison is by equality of strings as
 written, with one subtlety it found a way to be wrong about and did not: the Rust checker
 canonicalises an `Ffi`'s library set (sorted, once each) in the type but compares the row's
 `ffi("...")` as written, so `ffi("libssl,libc")` is not `ffi("libc,libssl")`, and the port
-reproduces that. The rules moved to `rules.ls` and the order of the checks to `checker.ls`,
-to keep `ast.ls` under the file budget.
+reproduces that. The rules moved to `rules.cho` and the order of the checks to `checker.cho`,
+to keep `ast.cho` under the file budget.
 
 What it does not show, and the next slice: the declarations half of the checker is
 complete; the bodies are not started, and they are most of it. The library is parsed in
@@ -310,10 +310,10 @@ contains itself met first by a mode check makes the Rust checker recurse without
 program is refused anyway, after the stack overflows); the port answers `res` past a depth
 of 64 instead, and no case reached it.
 
-**Size.** `parser.ls` is 1,970 lines (1,760 that are not comment or blank) for the
-Rust parser's 1,507 (1,225): 1.3 to 1.4 times. `lexcore.ls` is 963 lines (897) for the
+**Size.** `parser.cho` is 1,970 lines (1,760 that are not comment or blank) for the
+Rust parser's 1,507 (1,225): 1.3 to 1.4 times. `lexcore.cho` is 963 lines (897) for the
 Rust lexer's 633, with its generated tables. Counted with `grep -v '^\s*//'` and
-without blank lines; both ports are written one statement to a line, as `lex-sys fmt`
+without blank lines; both ports are written one statement to a line, as `cancho fmt`
 leaves them. The port parses its own 59 KB in 6 ms.
 
 **What it found.**
@@ -367,7 +367,7 @@ leaves them. The port parses its own 59 KB in 6 ms.
 * Names are printed from their spans, not interned, so symbol ids are not compared.
 
 **Where it stands.** Stages 1, 2, 3a and 3b are done as far as stated and nothing in them blocks the rest of
-stage 3, the checker (`lex-sys-ir`, 12 thousand lines), which is the real test: it is the first
+stage 3, the checker (`cancho-ir`, 12 thousand lines), which is the real test: it is the first
 stage with enough shape (resolution, linearity, regions, effect rows) to tell whether
 the language is comfortable writing its own compiler. §5's decision does not change.
 

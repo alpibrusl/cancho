@@ -6,14 +6,14 @@
 > down the rule that made it cheap: *"a hexadecimal literal is a
 > **spelling, not a type**."* This document adds the third, for the same
 > reason and with the same consequence — and it exists because
-> `examples/wordcount.ls` was already writing the translation by hand, in
+> `examples/wordcount.cho` was already writing the translation by hand, in
 > a comment, three lines running.
 
 ---
 
 ## 1. What the corpus spells today
 
-Counted by reading every `.ls` file in `std/`, `examples/` and
+Counted by reading every `.cho` file in `std/`, `examples/` and
 `tests/accept/`: **121 places** write an ASCII character as a decimal
 number.
 
@@ -49,7 +49,7 @@ needle[1] = byte_of(104);                       // 'h'
 needle[2] = byte_of(101);                       // 'e'
 ```
 
-That is `examples/wordcount.ls`. A comment that restates the line above
+That is `examples/wordcount.cho`. A comment that restates the line above
 it is the clearest evidence a notation is missing: the information
 exists, the programmer typed it, and the compiler cannot see it. If the
 number and the comment ever disagree, nothing finds out.
@@ -62,7 +62,7 @@ Two of the 129 are not merely opaque.
 if len(flag) == 2 && int_of(flag[0]) == 45 && int_of(flag[1]) == 100 {
 ```
 
-That is `examples/base64/base64.ls` testing for `-d`. And:
+That is `examples/base64/base64.cho` testing for `-d`. And:
 
 ```
 return c == 32 || c == 9 || c == 10 || c == 13 || c == 11 || c == 12;
@@ -211,11 +211,11 @@ move no tag cannot demonstrate that a moved tag would be caught.
 
 | Fixture | Rule | § |
 |---|---|---|
-| `character_literal_empty.ls` | `''` holds no character | 3 |
-| `character_literal_two.ls` | `'ab'` is two, and a string is not a character | 3 |
-| `character_literal_not_ascii.ls` | `'é'` is two bytes and this literal is one | 3.1 |
-| `character_literal_unterminated.ls` | the quote is not closed | 3 |
-| `character_literal_bad_escape.ls` | `\q` is not one of the six | 3 |
+| `character_literal_empty.cho` | `''` holds no character | 3 |
+| `character_literal_two.cho` | `'ab'` is two, and a string is not a character | 3 |
+| `character_literal_not_ascii.cho` | `'é'` is two bytes and this literal is one | 3.1 |
+| `character_literal_unterminated.cho` | the quote is not closed | 3 |
+| `character_literal_bad_escape.cho` | `\q` is not one of the six | 3 |
 
 | Test | Shows | § |
 |---|---|---|
@@ -224,6 +224,6 @@ move no tag cannot demonstrate that a moved tag would be caught.
 
 | Accepting | Shows |
 |---|---|
-| `character_literals.ls` | the set, the six escapes, `'\''`, `'"'`, and arithmetic on one |
-| `std/bytes.ls` | §1.1's six alternatives, named |
+| `character_literals.cho` | the set, the six escapes, `'\''`, `'"'`, and arithmetic on one |
+| `std/bytes.cho` | §1.1's six alternatives, named |
 | `examples/base64/` | §1.1's `-d` |

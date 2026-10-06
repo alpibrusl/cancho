@@ -97,8 +97,8 @@ than a builtin means the *policy* — double each time? add a fixed
 amount? — belongs to the program that chose it rather than to the
 language.
 
-`examples/buffer/` is that library: `buffer.ls` holds a growable byte
-buffer built on these three operations, and `main.ls` uses it to build a
+`examples/buffer/` is that library: `buffer.cho` holds a growable byte
+buffer built on these three operations, and `main.cho` uses it to build a
 string whose length nothing knew in advance. It is about sixty lines, and
 it needed nothing this document did not add.
 
@@ -133,15 +133,15 @@ it needed nothing this document did not add.
 
 | Fixture | Rule | § |
 |---|---|---|
-| `boxed_slice_of_res.ls` | Ending a boxed slice runs nothing, so elements are `val` | 2.1 |
-| `boxed_slice_leaked.ls` | A boxed slice is `res`; the heap still cannot leak | 3 |
-| `unbox_a_boxed_slice_wrongly.ls` | `unbox` hands back a value; a slice has none to hand | 3 |
+| `boxed_slice_of_res.cho` | Ending a boxed slice runs nothing, so elements are `val` | 2.1 |
+| `boxed_slice_leaked.cho` | A boxed slice is `res`; the heap still cannot leak | 3 |
+| `unbox_a_boxed_slice_wrongly.cho` | `unbox` hands back a value; a slice has none to hand | 3 |
 
 And the accepting counterparts:
 
 | Fixture | Shows |
 |---|---|
-| `boxed_slice.ls` | Allocate, write through it, read it back, end it |
+| `boxed_slice.cho` | Allocate, write through it, read it back, end it |
 | A growable buffer | `examples/buffer/`, as §4 describes |
 
 Plus a conformance test: a negative count traps, and so does a count whose

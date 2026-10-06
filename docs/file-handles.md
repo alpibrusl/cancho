@@ -65,7 +65,7 @@ than §9.1 was making. The strong arguments are the next two.
 
 ### 1.1 The ceiling was 8 MiB, and the comment said 16
 
-`sort.ls` reads:
+`sort.cho` reads:
 
 > *"Eight doublings from 64 KiB reaches 16 MiB, which is where this
 > gives up rather than growing without bound."*
@@ -120,7 +120,7 @@ folding it into the **2** GNU uses for a file that is not there. So the
 two are distinguishable *to a script*.
 
 They were still not distinguishable to a **person**, because neither
-printed anything, and no amount of work inside `sort.ls` reached that:
+printed anything, and no amount of work inside `sort.cho` reached that:
 an exit status was the whole vocabulary this program had.
 
 That is the argument for handles. Not the 2.75×.
@@ -160,7 +160,7 @@ allocations; a linear value has to be consumed by name wherever it
 lives.
 
 **What `close` consumes: the handle, and the checker already enforces
-it.** That is what `res` means, and `sort.ls`'s five owned resources
+it.** That is what `res` means, and `sort.cho`'s five owned resources
 already demonstrate it at scale (`porting.md` §9.1: eight allocs, eight
 frees, nothing counting them at runtime).
 
@@ -191,12 +191,12 @@ file_close(file: File) -> [] int
 
 (`Fs(p)` is `filesystem.md` §3's own schema notation for "whatever
 prefix the capability carries", not literal source — real code spells a
-concrete one, as `sort.ls` does with `Fs("")`.)
+concrete one, as `sort.cho` does with `Fs("")`.)
 
 ### 2.1 That signature cannot be written, and the reason is structural
 
 `Result[T, E]` is `std.result` — a **library** type, declared in
-`std/result.ls` and reachable only with `--std`. A builtin's signature
+`std/result.cho` and reachable only with `--std`. A builtin's signature
 is fixed in the compiler, in terms of the prelude, and has to type-check
 in a program compiled without the standard library at all. So
 `open_read` cannot return a `Result`, and no amount of care with the
@@ -278,7 +278,7 @@ not repeat the mistake.
 ## 4. The question §3 did not ask: what the row says
 
 A program that reads `/var/log` today declares
-`[fs_read("/var/log")]`, and `lex-sys authority` prints that prefix.
+`[fs_read("/var/log")]`, and `cancho authority` prints that prefix.
 That precision is the thing `authority.md` exists to count.
 
 With a handle, where does the prefix go? Four answers, and none is free:
@@ -386,7 +386,7 @@ handle that can be read to the end and closed is what `examples/sort/`
 is waiting on, and every other verb can arrive when a program asks for
 it — which is how `vec.set`, `vec.swap` and the bit operators arrived.
 
-*(Asked, since: `lexsys-gpu` reads regions of multi-gigabyte weight files. Design in [`large-files.md`](large-files.md): `file_size` and a positioned `file_read_at`, with mapping decided by measurement.)*
+*(Asked, since: `cancho-gpu` reads regions of multi-gigabyte weight files. Design in [`large-files.md`](large-files.md): `file_size` and a positioned `file_read_at`, with mapping decided by measurement.)*
 
 Not a change to `fs_read`. Whole-file reading is the right call for a
 file whose size you know and `manifests/`-shaped work keeps using it.

@@ -1,10 +1,10 @@
 # Files larger than memory: `file_size`, `file_read_at`, and whether to map
 
-> **Status: design. Nothing is built, and no measurement here is of lex-sys yet.**
+> **Status: design. Nothing is built, and no measurement here is of cancho yet.**
 >
 > `file-handles.md` §5 stopped at a handle that is read to its end and closed: *"not seek,
 > not append, not truncate, not directories, not metadata … every other verb can arrive when a
-> program asks for it."* `lexsys-gpu` ([lex-sys#251](https://github.com/alpibrusl/lex-sys/issues/251),
+> program asks for it."* `cancho-gpu` ([cancho#251](https://github.com/alpibrusl/cancho/issues/251),
 > slice 9) is that program: an inference runtime opens model weights of several gigabytes, and
 > reads *part* of them, in an order the file does not dictate. `ds4`-class engines go further
 > and stream tensors from SSD during a forward pass.
@@ -39,7 +39,7 @@ file_read_at(f: &File, offset: int, into: &!r [byte]) -> [file_read] int // fill
   "forgot to seek back" errors. `seek` is *not* proposed.
 * **Same label, same authority.** Both perform `file_read` (`file-handles.md` §4.1): the path
   was spent at `open_read`, and the report of a program that switched from whole-file reads to
-  positioned ones does not widen. A reader of `lex-sys authority` sees no new row.
+  positioned ones does not widen. A reader of `cancho authority` sees no new row.
 * **Same refusal discipline.** An offset that is negative, or past the end, is a returned
   error, never a trap and never a short read dressed as success: the result is the count
   actually read, `0` exactly at the end, a negative code on error. A count that does not fill
@@ -78,7 +78,7 @@ same reason it is hard here.
   not where a streaming runtime's time goes. *That is a claim to test (§5, L3), not to assume.*
 
 **Recommendation:** build `file_size` and `file_read_at` first, and decide on mapping only
-with a measurement of what the copy costs in `lexsys-gpu`'s runtime. If the copy is not the
+with a measurement of what the copy costs in `cancho-gpu`'s runtime. If the copy is not the
 cost, the exception in (b) is not worth buying. If it is, (b) is the design, as its own
 document, with the label `fs_map(p)` so that the authority report distinguishes it.
 
@@ -96,8 +96,8 @@ document, with the label `fs_map(p)` so that the authority report distinguishes 
 |---|---|---|
 | L0 | **measured, §5.1**: the largest `box_slice` the heap gives, and what a request that cannot be met does | done: the answer is a silent `SIGILL`, which makes a fallible allocation a prerequisite (§6) |
 | L1 | `file_size`, `file_read_at`, both backends; `open_read` unchanged | an 8 GiB sparse file: size is exact, a read at 6 GiB returns the bytes written there, a read past the end returns `0`, a negative offset returns the error, none traps (and a mutant that `lseek`s instead is caught by a two-handle interleaving test) |
-| L2 | `lexsys-gpu` reads a GGUF-shaped fixture tensor by tensor | memory high-water mark is the largest tensor plus the program's own, measured, against the file's size |
-| L3 | the question of §3: time `lexsys-gpu` loading with `file_read_at` against the same loop over a mapped file from C | the copy is, or is not, more than 10% of load time. Only "is" opens the mapping design |
+| L2 | `cancho-gpu` reads a GGUF-shaped fixture tensor by tensor | memory high-water mark is the largest tensor plus the program's own, measured, against the file's size |
+| L3 | the question of §3: time `cancho-gpu` loading with `file_read_at` against the same loop over a mapped file from C | the copy is, or is not, more than 10% of load time. Only "is" opens the mapping design |
 
 ### 5.1 L0, measured
 

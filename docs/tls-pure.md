@@ -7,7 +7,7 @@
 > settled by default.
 >
 > **Nothing built from this design may be called production-ready before #209's independent review.** Until then
-> `lexsys-hooks` keeps the OpenSSL backend (`docs/tls-nonblocking.md`) as its default.
+> `cancho-hooks` keeps the OpenSSL backend (`docs/tls-nonblocking.md`) as its default.
 
 ---
 
@@ -17,11 +17,11 @@
 
 | What | Where | Status |
 |---|---|---|
-| ChaCha20-Poly1305 | `std/chacha20.ls` | built (#212) |
-| SHA-384, streaming SHA-2, HMAC, HKDF, Expand-Label | `std/crypto.ls`, `std/hmac.ls`, `std/hkdf.ls` | built (#229) |
-| X25519 | `std/x25519.ls`, sharing a field module with `std/ed25519.ls` | built (#231) |
-| a modular bignum, RSA verification | `std/bigmod.ls`, `std/rsa.ls` | built (#234) |
-| ECDSA P-256/P-384 verification | `std/ecdsa.ls`, on `std/bigmod.ls` | built (#239) |
+| ChaCha20-Poly1305 | `std/chacha20.cho` | built (#212) |
+| SHA-384, streaming SHA-2, HMAC, HKDF, Expand-Label | `std/crypto.cho`, `std/hmac.cho`, `std/hkdf.cho` | built (#229) |
+| X25519 | `std/x25519.cho`, sharing a field module with `std/ed25519.cho` | built (#231) |
+| a modular bignum, RSA verification | `std/bigmod.cho`, `std/rsa.cho` | built (#234) |
+| ECDSA P-256/P-384 verification | `std/ecdsa.cho`, on `std/bigmod.cho` | built (#239) |
 | DER, X.509 parsing, chain building, name matching | **`packages/x509`** | parsing built (#233); the rest #206 |
 | the handshake, the record layer, the key schedule | **`packages/tls`** | #205 |
 
@@ -31,10 +31,10 @@
 
 | | everything in `std` | **the split (chosen)** | everything in packages |
 |---|---|---|---|
-| how a change ships | a compiler release, since `std/` is compiled in (`STD` in `crates/lex-sys/src/main.rs`, one `include_str!` per file) | primitives with the compiler; protocol and policy on their own schedule | on their own schedule |
-| who must move a pin | every user of the change: `lexsys-hooks` pins one compiler commit (`lex-sys.toml`, `[package] lex-sys`), so a root-store or cipher-policy fix becomes a coordinated two-repo bump | a CVE fix in the handshake or in name matching is a package bump; a primitive fix is a compiler bump | a package bump |
-| test-vector and differential checks | in `cargo test`, offline (`crates/lex-sys/tests/conformance/aead.rs`, `kdf.rs`) | the same for primitives; packages carry their own harnesses (as `examples/tls_nb/test/` does) | each package must build its own harness |
-| what other programs get | everything | primitives anyone can use: `lexsys-hooks` already moved its HMAC to `std.hmac` (lexsys-hooks#23) | packages they must find and pin |
+| how a change ships | a compiler release, since `std/` is compiled in (`STD` in `crates/cancho/src/main.rs`, one `include_str!` per file) | primitives with the compiler; protocol and policy on their own schedule | on their own schedule |
+| who must move a pin | every user of the change: `cancho-hooks` pins one compiler commit (`cancho.toml`, `[package] cancho`), so a root-store or cipher-policy fix becomes a coordinated two-repo bump | a CVE fix in the handshake or in name matching is a package bump; a primitive fix is a compiler bump | a package bump |
+| test-vector and differential checks | in `cargo test`, offline (`crates/cancho/tests/conformance/aead.rs`, `kdf.rs`) | the same for primitives; packages carry their own harnesses (as `examples/tls_nb/test/` does) | each package must build its own harness |
+| what other programs get | everything | primitives anyone can use: `cancho-hooks` already moved its HMAC to `std.hmac` (cancho-hooks#23) | packages they must find and pin |
 | cost when unused | nothing (`std_declarations_cost_nothing_unless_called`, `docs/crypto.md` §6) | nothing | nothing |
 
 **The cost #197 named, written down.** Every primitive in `std` is a compiler change, and each fix to one needs a coordinated
@@ -45,13 +45,13 @@ compiler bump in every consumer. Two things make that cost acceptable for primit
 - Protocol policy changes often: cipher suites, root stores, name rules, CVE fixes. Its users need to take a fix without taking
   a compiler.
 
-**One cost was paid already, and it argues for the split.** The 64 KiB trap of `docs/hkdf.md` §2 was a bug in `std/crypto.ls`. It
-reached `lexsys-hooks` through its compiler pin, and its fix reached hooks the same way, with no change to hooks' own code. A
+**One cost was paid already, and it argues for the split.** The 64 KiB trap of `docs/hkdf.md` §2 was a bug in `std/crypto.cho`. It
+reached `cancho-hooks` through its compiler pin, and its fix reached hooks the same way, with no change to hooks' own code. A
 primitive in `std` is shared, and so is its fix.
 
 **What is *not* settled by this, and goes to §10:** whether the bignum and the curves (#203, #204) belong in `std` too. They will
 change while they are hardened, which is the argument for a package. They have fixed vectors, and RSA/ECDSA verification is useful
-outside TLS (`lexsys-hooks` verifies nothing today), which is the argument for `std`. This document assumes `std`, in their own
+outside TLS (`cancho-hooks` verifies nothing today), which is the argument for `std`. This document assumes `std`, in their own
 files, so that a later move is mechanical.
 
 ---
@@ -62,18 +62,18 @@ files, so that a later move is mechanical.
 
 The OpenSSL backend already chose **memory BIOs** over a descriptor (`docs/tls-nonblocking.md` §3.2, decision D1). Its program
 reads and writes the socket and hands OpenSSL bytes. That *is* a sans-io interface: OpenSSL's `BIO_write(rbio)` is "bytes in",
-and `BIO_read(wbio)` is "bytes out". So one interface fits both backends with no adapter, and a consumer (hooks' `attempt.ls`)
+and `BIO_read(wbio)` is "bytes out". So one interface fits both backends with no adapter, and a consumer (hooks' `attempt.cho`)
 switches backend by dependency, not by code (#210's gate). *Corrected (#210, `docs/tls-hooks.md` §2.1 and §2.2): the byte
-movement is the same, the interfaces are not. Hooks' `tls.ls` owns the socket I/O and a connection's state is the caller's
+movement is the same, the interfaces are not. Hooks' `tls.cho` owns the socket I/O and a connection's state is the caller's
 integers, where this engine owns its slots, so hooks needs an adapter module. And hooks' functions carry `Ffi` rows that one
-source cannot also carry without them (`docs/effect-polymorphism.md`), so a pure build cannot share `attempt.ls` and
-`hooks.ls` unchanged.*
+source cannot also carry without them (`docs/effect-polymorphism.md`), so a pure build cannot share `attempt.cho` and
+`hooks.cho` unchanged.*
 
-The second constraint is how `lexsys-hooks` holds connections. It keeps 64 attempts as **slots**: integer arrays indexed by slot,
-the `Conn`s in a `std.conns.Table`, one `Poller` (`docs/tls-nonblocking.md` §4.2 and §10.3, read from `src/attempt.ls`). A
+The second constraint is how `cancho-hooks` holds connections. It keeps 64 attempts as **slots**: integer arrays indexed by slot,
+the `Conn`s in a `std.conns.Table`, one `Poller` (`docs/tls-nonblocking.md` §4.2 and §10.3, read from `src/attempt.cho`). A
 connection cannot be its own linear value inside a container, because containers hold only copyable things
-(`examples/tls_nb/gaps/g10_thread_in_container.ls`, the same rule). So the engine owns its slots, as `rtcp.Resolver` does
-(`examples/tls_nb/rtcp.ls`).
+(`examples/tls_nb/gaps/g10_thread_in_container.cho`, the same rule). So the engine owns its slots, as `rtcp.Resolver` does
+(`examples/tls_nb/rtcp.cho`).
 
 ### 2.2 The interface
 
@@ -105,7 +105,7 @@ tls.drop(engine, s)                                      // the slot is free (ke
 - **No capability is taken.** Time is a number the caller passes (`now_unix_ms`, from `clock_unix_ms`). Entropy is bytes the
   caller passes. The root store is bytes the caller read. So the pure backend's authority row is empty, and #210's gate (the
   pure backend needs no `Ffi` at all) is a property of the signatures that the checker enforces (rows are exact in both directions:
-  `examples/tls_nb/gaps/a3_row_exact.ls`, `docs/tls-nonblocking.md` §6).
+  `examples/tls_nb/gaps/a3_row_exact.cho`, `docs/tls-nonblocking.md` §6).
 - **`event` is the only thing a poller loop needs.** It returns:
   - `want_write` when `take` has bytes;
   - `want_read` when the engine needs input;
@@ -113,7 +113,7 @@ tls.drop(engine, s)                                      // the slot is free (ke
   - `closed` after a `close_notify`;
   - `failed` with a code.
 
-  This is the `done | pending | failed` shape of `tls.handshake` in the spike (`examples/tls_nb/tls.ls`), with the direction
+  This is the `done | pending | failed` shape of `tls.handshake` in the spike (`examples/tls_nb/tls.cho`), with the direction
   made explicit.
 - **The OpenSSL backend fits it.** `feed` = `BIO_write(rbio)` and then `SSL_do_handshake` or `SSL_read`. `take` =
   `BIO_read(wbio)`. `send` = `SSL_write` with partial writes. `recv` = `SSL_read`. `failure` maps (stage, detail) of
@@ -126,7 +126,7 @@ tls.drop(engine, s)                                      // the slot is free (ke
 |---|---|
 | the engine owns the socket (`tls.connect(net, ...)`, as `SSL_set_fd` does) | it puts `Net` and the poller inside the package, it cannot be tested without a network, and it is the shape #211 measured and rejected for OpenSSL (`SIGPIPE`, §3.2 there) |
 | one value per connection, returned and threaded like `buffer.Buffer` | 64 of them cannot sit in a container (§2.1), and hooks would need 64 named locals |
-| callbacks (`on_read`, `on_write`) | a callback cannot capture the caller's state (`docs/function-values.md`), and a function value cannot be named across modules as `module.function` (`examples/tls_nb/gaps/g9_qualified_function_value.ls`) |
+| callbacks (`on_read`, `on_write`) | a callback cannot capture the caller's state (`docs/function-values.md`), and a function value cannot be named across modules as `module.function` (`examples/tls_nb/gaps/g9_qualified_function_value.cho`) |
 
 ---
 
@@ -224,7 +224,7 @@ compares a tag.
 
 - **Where it comes from.** It is the system PEM bundle (`/etc/ssl/certs/ca-certificates.crt` on Debian-family systems) or a file
   the operator names, read by the caller once at start and passed as bytes (§2.2). It is never embedded in a package.
-  `lexsys-hooks` would read it as it reads its endpoints file (`src/hooks.ls`, `read_endpoints_file`, `Fs("")`).
+  `cancho-hooks` would read it as it reads its endpoints file (`src/hooks.cho`, `read_endpoints_file`, `Fs("")`).
 - **What happens if it is unusable.** An unreadable or empty store stops the start, with the reason. It never falls back to an
   unverified client. That is #211's rule for OpenSSL (`docs/tls-nonblocking.md` §10.5).
 - **How roots are treated.** Their self-signatures are not checked. A root is trusted because the operator put it in the store,
@@ -289,12 +289,12 @@ The client needs entropy for two things:
 - its X25519 private key, 32 bytes per handshake, which is secret;
 - the `ClientHello` random and the legacy session id, 64 bytes per handshake, which are public but must not be predictable.
 
-**What exists.** There is no randomness builtin; `crates/lex-sys-ir/src/builtin.rs` lists none. Two things work already:
+**What exists.** There is no randomness builtin; `crates/cancho-ir/src/builtin.rs` lists none. Two things work already:
 
 - **`Fs` reading `/dev/urandom`.** Measured for this document: `fs_read(fs, "/dev/urandom", b)` on an `Fs("/dev/urandom")` fills
-  a 32-byte buffer and returns, and `lex-sys authority` reports `fs_read("/dev/urandom")` and nothing else.
-- **Precedent in hooks.** `lexsys-hooks` already reads its PostgreSQL SCRAM nonce this way, with its `Fs("")`
-  (`src/history.ls`, `fresh_nonce`).
+  a 32-byte buffer and returns, and `cancho authority` reports `fs_read("/dev/urandom")` and nothing else.
+- **Precedent in hooks.** `cancho-hooks` already reads its PostgreSQL SCRAM nonce this way, with its `Fs("")`
+  (`src/history.cho`, `fresh_nonce`).
 
 **Decision.** The caller seeds the engine once (`tls.seed`, 32 bytes from `/dev/urandom`). The engine draws everything else from
 a **fast-key-erasure DRBG**: ChaCha20 keystream under a 32-byte key, and the first 32 bytes of each draw replace the key, so a
@@ -309,7 +309,7 @@ no capability. If the engine was never seeded it refuses to start a connection (
 - **libc through `Ffi`.** This is `UNBOUNDED` in the authority report (`docs/tls-nonblocking.md` §6), which is what the pure
   backend exists to avoid.
 
-**Not handled:** a process that forks after seeding would share DRBG state between parent and child. `lexsys-hooks` does not
+**Not handled:** a process that forks after seeding would share DRBG state between parent and child. `cancho-hooks` does not
 fork. The package README must say that a forking program reseeds in each child.
 
 ---
@@ -392,7 +392,7 @@ reassembly buffer to the largest certificate message actually seen is §10's que
 ## 8. Refusal tags
 
 Each tag is one failure a caller can act on: retry, alert an operator, or fix a configuration. A tag is stored in the attempt's
-history, as `lexsys-hooks` stores `attempts.status` today (`docs/tls-nonblocking.md` §10.1).
+history, as `cancho-hooks` stores `attempts.status` today (`docs/tls-nonblocking.md` §10.1).
 
 **Protocol** (`packages/tls`):
 
@@ -449,11 +449,11 @@ Each sub-issue (#199 to #210) states its own gate as a command. This design adds
 
 1. **The two backends agree.** For the certificate matrix of `docs/tls-nonblocking.md` §5, both backends give the same tag, plus
    #206's wildcard and constraint rows (#210).
-2. **No capability in the pure backend.** `lex-sys authority` on a hooks build with the pure backend shows no `ffi(...)` and no
+2. **No capability in the pure backend.** `cancho authority` on a hooks build with the pure backend shows no `ffi(...)` and no
    foreign symbols. This is checked by a test, not asserted (#210). *Corrected (#210, `docs/tls-hooks.md` §2.4): hooks as a whole
    also holds `libc` (`statx`, `prctl`: the modes of the data directory), so "none at all" cannot hold for it. The check is no
    `libssl` and no `libcrypto` scope, none of the 32 symbols, and the `libc` entries unchanged.*
-3. **No input reaches a trap.** It is fuzzed at the record, handshake, DER and chain levels (#208), as `dns.ls` was over a million
+3. **No input reaches a trap.** It is fuzzed at the record, handshake, DER and chain levels (#208), as `dns.cho` was over a million
    damaged answers (`docs/tls-nonblocking.md` §7). *#208's plan and results, for this and for the rest of its bar, are in `docs/tls-assurance.md`. Fuzzing is in §3.6 (no crash
    and no hang). The differential and interop matrices are in §4.1 and §5.1. Timing is in §6.1: X25519 and ChaCha20-Poly1305 pass
    on both backends, and three tests fail on an Apple M4 with its data-independent-timing bit clear. Resource bounds are in

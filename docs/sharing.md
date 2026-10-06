@@ -181,7 +181,7 @@ its object file changing.
   monomorphised generics over a boxed slice work but the example is
   clearer without the extra parameter. Nothing stops a `Slab[T]`.
 * **No free list.** §3.1: `insert` scans. Making it O(1) is a policy the
-  library would choose, the way `buffer.ls` chose doubling.
+  library would choose, the way `buffer.cho` chose doubling.
 
 ---
 
@@ -201,9 +201,9 @@ its object file changing.
 
 | Fixture | Rule | § |
 |---|---|---|
-| `rc_clone_from_a_borrow.ls` | Nothing moves out of a reference | 2.1 |
-| `rc_cloned_twice.ls` | A `res` value is used exactly once | 2.1 |
-| `rc_declared_val.ls` | A `val` type may not hold a `res` | 2.1 |
+| `rc_clone_from_a_borrow.cho` | Nothing moves out of a reference | 2.1 |
+| `rc_cloned_twice.cho` | A `res` value is used exactly once | 2.1 |
+| `rc_declared_val.cho` | A `val` type may not hold a `res` | 2.1 |
 
 Three fixtures for one conclusion, which is unusual and deliberate: the
 claim in §2 is that `Rc` fails *whichever* way it is attempted, and one

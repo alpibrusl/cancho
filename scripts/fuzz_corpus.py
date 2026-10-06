@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The fuzzing harnesses' fixture and seeds (docs/tls-assurance.md §3).
 
-    python3 scripts/fuzz_corpus.py fixture          # writes tests/programs/fuzz_fixture.ls
+    python3 scripts/fuzz_corpus.py fixture          # writes tests/programs/fuzz_fixture.cho
     python3 scripts/fuzz_corpus.py seeds <dir>      # writes <dir>/<harness>/<seed>
 
 The fixture is what every harness holds fixed, because the client's caller
@@ -38,7 +38,7 @@ def server_bytes(path):
 
 
 def lit(text):
-    """A lex-sys string literal (docs/strings.md §4: six escapes)."""
+    """A cancho string literal (docs/strings.md §4: six escapes)."""
     out = []
     for ch in text:
         if ch == "\n":
@@ -105,7 +105,7 @@ def fixture():
         "}",
         "",
     ]
-    path = os.path.join(ROOT, "tests/programs/fuzz_fixture.ls")
+    path = os.path.join(ROOT, "tests/programs/fuzz_fixture.cho")
     with open(path, "w") as f:
         f.write("\n".join(out))
     print(f"wrote {path}: {len(roots)} roots")

@@ -1,4 +1,4 @@
-// spectral-norm — the same algorithm as spectral.ls, including its
+// spectral-norm — the same algorithm as spectral.cho, including its
 // hand-written Newton `sqrt` rather than libm's, so that the two
 // programs do the same arithmetic. `benchmarks-game.md` §3 records what
 // that costs and why it is the honest comparison.

@@ -83,13 +83,13 @@ dominance) and `nan_canonicalization`. There is no auto-vectoriser, and
 
 So SIMD in Cranelift is an **input language** — it is there because
 WebAssembly has `v128` — and a scalar loop stays scalar by design rather
-than by oversight. `gpu.md` §2.3 measured lex-sys emitting zero SIMD
+than by oversight. `gpu.md` §2.3 measured cancho emitting zero SIMD
 instructions and attributed the remaining 2.27× to Cranelift; this is
 why that attribution was right, and why it will not improve with a
 newer version.
 
 > **Scope (`parallelism.md` §3.1).** This section is about **Cranelift**. The default backend is LLVM, which has a
-> vectorizer and uses it on loops that cannot trap (`reduce_wrapping.ls`: 54 SIMD instructions, 64-67 ms against C's
+> vectorizer and uses it on loops that cannot trap (`reduce_wrapping.cho`: 54 SIMD instructions, 64-67 ms against C's
 > 66-69 ms). Its default target is the architecture's baseline (`clang -c -O2 -target`, no `-march`), which on x86-64
 > is SSE2: no 64-bit integer compare, which is why a vectorized max/min pass there is *slower* than the scalar loop.
 
@@ -106,7 +106,7 @@ opcode.is_call()        // purity.md's 158x
 opcode.can_trap()       // check-cost.md's 3.35x
 ```
 
-Asked directly, on the opcodes lex-sys actually emits:
+Asked directly, on the opcodes cancho actually emits:
 
 | opcode | `can_trap()` | `is_call()` |
 |---|---|---|

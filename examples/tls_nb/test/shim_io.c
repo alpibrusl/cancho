@@ -5,8 +5,8 @@
  *
  * `send` takes at most SHIM_SEND_MAX bytes of what it is given, `recv` returns at most SHIM_RECV_MAX, and every SHIM_EAGAIN_EVERY-th
  * call of either answers -1 with EAGAIN without touching the socket. Real sockets on loopback accept 60 KB in one call, so the branches
- * of `tls.ls` that handle a partial write, a write that waits, a record that arrives in pieces and a read that has nothing yet are
- * not reached by an ordinary run (`design.md` section 16 of lexsys-hooks says the same of its own partial-write branch).
+ * of `tls.cho` that handle a partial write, a write that waits, a record that arrives in pieces and a read that has nothing yet are
+ * not reached by an ordinary run (`design.md` section 16 of cancho-hooks says the same of its own partial-write branch).
  */
 #define _GNU_SOURCE
 #include <dlfcn.h>

@@ -2,7 +2,7 @@
 
 > **Status: measured, and the measurement decides it.**
 >
-> The question arrived as three: can lex-sys run on a GPU, how would a
+> The question arrived as three: can cancho run on a GPU, how would a
 > *native* one work, and should it be a separate language. The first two
 > are design; the third looked like taste until the numbers came in.
 >
@@ -32,8 +32,8 @@ about what the design would have to give up, priced.
 ## 2. What each guarantee costs a vectoriser
 
 The same reduction — sum a million-element buffer, 200 rounds — written
-four ways in C and twice in lex-sys, with the guards switched
-independently. `benches/reduce.c` and `benches/reduce_{checked,wrapping}.ls`,
+four ways in C and twice in cancho, with the guards switched
+independently. `benches/reduce.c` and `benches/reduce_{checked,wrapping}.cho`,
 which the conformance suite holds to the same answer.
 
 SIMD instructions counted in the emitted `run`, not inferred from the
@@ -45,8 +45,8 @@ clock. clang 18, `-O2`; minimum of nine runs:
 | clang, **bounds check only** | **10** | 61.4 ms | **1.01×** |
 | clang, overflow trap only | **0** | 88.9 ms | 1.46× |
 | clang, both | **0** | 91.1 ms | 1.50× |
-| lex-sys, wrapping (bounds only) | 0 | 137.6 ms | 2.27× |
-| lex-sys, checked (both) | 0 | 252.1 ms | 4.15× |
+| cancho, wrapping (bounds only) | 0 | 137.6 ms | 2.27× |
+| cancho, checked (both) | 0 | 252.1 ms | 4.15× |
 
 Three things fall out, and none of them was obvious beforehand.
 
@@ -85,13 +85,13 @@ across lanes.
 
 ### 2.3 Deleting the trap does **not** reach C
 
-This is the one that decides the third question. lex-sys without traps
+This is the one that decides the third question. cancho without traps
 is **2.27×** off vectorised C, and still emits **no SIMD at all** — it is
 1.55× slower than even *scalar* clang. The trap accounts for 1.83× of
-lex-sys's own cost (252.1 → 137.6); everything remaining is Cranelift.
+cancho's own cost (252.1 → 137.6); everything remaining is Cranelift.
 
 **So removing the trap is necessary and not sufficient.** A GPU-shaped
-lex-sys on the current backend would be scalar, which on a GPU is the
+cancho on the current backend would be scalar, which on a GPU is the
 same as not having one.
 
 > **And it will stay scalar** —
@@ -112,7 +112,7 @@ same as not having one.
 
 ---
 
-## 3. How a native GPU lex-sys would work
+## 3. How a native GPU cancho would work
 
 Worth writing down, because three of the pieces already exist and cost
 nothing to reuse.
@@ -131,7 +131,7 @@ check. Same rule, same checker, nothing new.
 
 **The device is a capability.** `Gpu(device)` beside `Fs(prefix)`,
 refinable by the existing `narrow`, with `gpu_launch(d)` and
-`gpu_copy(d)` as labels. `lex-sys authority` then names the device, and
+`gpu_copy(d)` as labels. `cancho authority` then names the device, and
 a program never handed one provably never launched.
 
 ---
@@ -142,7 +142,7 @@ a program never handed one provably never launched.
 |---|---|
 | **`&!` must mean unique** | Since measured, and it is **the expensive row** — [`aliasing.md`](aliasing.md). Not because it refuses working code (it refuses one fixture in 82 programs) but because one of the three aliasing routes, a reference returned from a call, closes only with provenance in signatures: lifetimes, and a borrow checker the non-goals exclude. GPU is what makes it mandatory rather than optional — on one thread two aliasing writes are defined and ordered, and two lanes writing through aliasing references is the race the checker should catch — so this row is where the GPU question stops being about speed |
 | **Recursion** | GPUs have no stack for it; `std.io.print_nat` is recursive. Kernels become a subset, and no row can say a function is in it |
-| **Barriers** | A barrier reached non-uniformly is undefined behaviour on real hardware — the one thing this family of languages refuses to have. Making that checkable is the research contribution, and lex-sys has nothing to donate to it |
+| **Barriers** | A barrier reached non-uniformly is undefined behaviour on real hardware — the one thing this family of languages refuses to have. Making that checkable is the research contribution, and cancho has nothing to donate to it |
 | **Two backends, forever** | Cranelift stays because it is the fast dev path |
 | **The trap model** | §5 |
 
@@ -186,25 +186,25 @@ nothing here can run a kernel yet.
 
 The case for independence is real: a language whose failure model is
 *trap* and one whose failure model is *poison* are two languages, not
-one with a flag. That is the same argument that justified lex-sys
+one with a flag. That is the same argument that justified cancho
 existing beside lex-lang — different layer, different job.
 
 But the measurement says the split buys nothing where it matters.
-Deleting the trap leaves lex-sys scalar; **the thing that actually buys
+Deleting the trap leaves cancho scalar; **the thing that actually buys
 GPU speed is LLVM, and LLVM is equally required whether the kernels are
-a lex-sys dialect or a separate language**. And the two genuinely novel
+a cancho dialect or a separate language**. And the two genuinely novel
 parts — checked barriers and poison-as-an-effect — are new work in
-either design, because lex-sys does not have them to inherit.
+either design, because cancho does not have them to inherit.
 
-What *is* worth saying about the shape: lex-sys is already six crates,
-so a sibling could depend on `lex-sys-syntax` and `lex-sys-types` and
+What *is* worth saying about the shape: cancho is already six crates,
+so a sibling could depend on `cancho-syntax` and `cancho-types` and
 own only the dialect, the lane checker and the backend. Roughly 80% of
 the front end shared and none of the back end. That is a much better
 arrangement than a fork, and `ROADMAP.md`'s risk register names the
 alternative: *"second-system trap — during a port every change lands
 twice."* A third repository makes it three.
 
-And the plainest argument: lex-sys's own README says **not a usable
+And the plainest argument: cancho's own README says **not a usable
 language yet**. A third sibling before the second is usable is a
 recognisable way for a project to end.
 
@@ -225,4 +225,4 @@ recognisable way for a project to end.
 | ~~Does poison cost less than trapping?~~ | **Answered, and it splits** — [`poison.md`](poison.md). On a wide vector ISA poison is a large win for every check whose condition is per-element: two become free and the worst drops from 3.28× to 1.33×. On the overflow check **carried by a reduction** it does not help and is worse, 1.37× → 1.73×, and four kernels show that is structural rather than a compiler limitation — "no partial sum overflowed" is a claim about one association order. On baseline x86-64 the whole win disappears: poison loses in eleven of twelve kernels |
 | Checked barriers | §4. A real research problem — roughly structured concurrency for lanes — and the part nobody else has done either |
 | ~~`overflow-cost.md` §3.2's generalisation~~ | **Answered** — [`check-cost.md`](check-cost.md). Six of the eight checks this language emits in a loop body take the SIMD count to zero, not one, and the axis is neither memory-safety nor arithmetic but whether the loop already proves the condition. §2.1 above is corrected in place: it measured the one check whose condition a loop always proves |
-| A host-side GPU probe through `Ffi` | The `reach.md` move: can a lex-sys program drive a GPU at all, with no new backend? It would answer a different question — reach, not speed — and would report `ffi("libcuda")` and nothing about the device, which is §5's narrowing gap in a third domain |
+| A host-side GPU probe through `Ffi` | The `reach.md` move: can a cancho program drive a GPU at all, with no new backend? It would answer a different question — reach, not speed — and would report `ffi("libcuda")` and nothing about the device, which is §5's narrowing gap in a third domain |

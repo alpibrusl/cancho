@@ -22,7 +22,7 @@
 #include <cstring>
 #include <string>
 
-static const std::string reply = "HTTP/1.0 200 OK\r\nContent-Length: 13\r\n\r\nhello, lexsys";
+static const std::string reply = "HTTP/1.0 200 OK\r\nContent-Length: 13\r\n\r\nhello, cancho";
 
 class Credentials : public Botan::Credentials_Manager {
   public:

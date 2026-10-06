@@ -1,7 +1,7 @@
 # `std.json`: parsing and writing JSON with nothing the caller did not hand it
 
-> **Status: built.** `std/json.ls`; tests `tests/lex/json_*_test.ls`
-> (29, run by `lex-sys test`), `conformance/json.rs`; drivers under
+> **Status: built.** `std/json.cho`; tests `tests/lex/json_*_test.cho`
+> (29, run by `cancho test`), `conformance/json.rs`; drivers under
 > `tests/programs/`. Strict RFC 8259; no tree, no allocation of its own.
 > §5 has the numbers, and §6 has the two compiler bugs it found.
 
@@ -111,7 +111,7 @@ needs hundreds), which is what took it from **18 µs to under 1 µs**.
 
 ## 5. Measured
 
-`tests/programs/json_bench.ls` and `json_write_bench.ls`; timing from
+`tests/programs/json_bench.cho` and `json_write_bench.cho`; timing from
 outside as the difference between one round and twenty-one, so the
 byte-at-a-time stdin read is left out. A 4-core sandbox; Python 3.11's C
 `json`, which **builds every Python object** where the tape builds none --

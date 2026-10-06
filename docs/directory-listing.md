@@ -3,7 +3,7 @@
 Status: **slices 1 and 2 built** (`dir_list`, `dir_next`, `dir_list_close`, `std.dirs.list`; `dir_stat`), edition 6,
 and **§3.5 built** (`dir_mode`, `dir_own_mode`, edition 7, issue #243),
 both backends; Linux measured, Darwin's `dirent` offsets run by CI's hostile listing and its `stat` offsets by CI's
-status test. Slice 3 (the `lexsys-tools` `list` tool) is below, not built. Issue #222, gaps L2 (no listing) and L3 (no status without opening)
+status test. Slice 3 (the `cancho-tools` `list` tool) is below, not built. Issue #222, gaps L2 (no listing) and L3 (no status without opening)
 of [`agent-toolbox.md`](agent-toolbox.md). The issue asks for `fs_list` and `fs_stat` on a path under `Fs`; this
 document puts the same capability on a `Dir` instead ([`directory-handles.md`](directory-handles.md), #227), §2 says
 why, and that change of shape was decided by a person on the design's PR (§7).
@@ -30,7 +30,7 @@ status belong there:
   next call, `dir_stat(dir, name)`, `dir_enter(dir, name)` or `dir_open_read(dir, name)`, can only reach a child. A
   path-based `fs_list` would hand back names a caller then glues onto a path string, which is the hole #227 closed.
 * **No new path label.** The row of a lister is `fs_read(p)` (spent by `open_dir`) and `dir_read` (§3.3), the labels
-  `lexsys-tools` already holds; a tool that lists gains no new kind of authority, and the report stays
+  `cancho-tools` already holds; a tool that lists gains no new kind of authority, and the report stays
   `bounded: true`.
 * **One check, written once.** `dir_stat`'s name is checked exactly as `dir_enter`'s is (one component, not `.` or
   `..`, no `/`, no NUL, at most `NAME_MAX`; otherwise `EINVAL` with no call). A path-based `fs_stat` would need the
@@ -104,7 +104,7 @@ probe (`offsetof` on glibc 2.x) and taken from the system headers for the others
 | `ENAMETOOLONG` | 36 | 36 | 63 |
 
 `DT_REG` 8, `DT_DIR` 4, `DT_LNK` 10 and `S_IFMT` `0o170000` with `S_IFREG` `0o100000`, `S_IFDIR` `0o40000`,
-`S_IFLNK` `0o120000` are the same on all three. The table is spelled once, in `lex_sys_ir` beside `open_flags`
+`S_IFLNK` `0o120000` are the same on all three. The table is spelled once, in `cancho_ir` beside `open_flags`
 (`directory-handles.md` §3), and both backends read it. `d_name` is NUL-terminated on every target, so the name's
 length is `strlen` from that offset, and `d_namlen` (Darwin only) is not needed. On Darwin AArch64, `readdir`,
 `fdopendir` and `fstatat` are the 64-bit-inode symbols under their plain names (the `$INODE64` suffixes are x86-64
@@ -121,8 +121,8 @@ dir_mode(dir: &Dir, name: &[byte]) -> [dir_read] Done      // Done::Ok(bits) | D
 dir_own_mode(dir: &Dir) -> [dir_read] Done
 ```
 
-The asker is lexsys-hooks: its production profile refuses to start when its data directory or a log in it can be read
-or written by the group or by others, and lex-sys could not say a file's mode, so the service called libc's `statx`
+The asker is cancho-hooks: its production profile refuses to start when its data directory or a log in it can be read
+or written by the group or by others, and cancho could not say a file's mode, so the service called libc's `statx`
 through `Ffi("libc")` and its authority report was `bounded: false` for that alone. #243 asked for a path-based
 `fs_stat`; §2's reasons put status on a handle, so the bits are two more steps beneath a `Dir`.
 
@@ -132,13 +132,13 @@ through `Ffi("libc")` and its authority report was `bounded: false` for that alo
 * **`dir_own_mode(dir)`** is `fstat` on the handle's descriptor: the directory that was opened, which no name beneath
   it can reach (`.` is refused). `fstat` needs no search permission on the directory and no path.
 * **The answer is `Done`**, the prelude's integer-or-`errno` (`file-writes.md` §4), rather than a fourth field on
-  `DirStat`: `DirStat::Ok(kind, size, mtime)` is matched by `lexsys-tools`' `list`, and a field added to a variant would
+  `DirStat`: `DirStat::Ok(kind, size, mtime)` is matched by `cancho-tools`' `list`, and a field added to a variant would
   break every match on it. Owner and group stay out, as §7 says, until a program asks.
 * **Edition 7**, which is still being built ([`processes.md`](processes.md) slices 3 and 4): `dir_mode` is a name a
-  program may already declare, so an edition-6 file does not see it (`tests/reject/dir_mode_is_edition_seven.ls`).
+  program may already declare, so an edition-6 file does not see it (`tests/reject/dir_mode_is_edition_seven.cho`).
 * **The offsets are §3.4's**: `st_mode`, 32 bits on Linux and 16 on Darwin, read only when the call succeeded; a
   failure's value is `0`. The permission bits are the same on every target.
-* **Labels**: both perform `dir_read`, as `dir_stat` does (`tests/reject/dir_mode_not_declared.ls`).
+* **Labels**: both perform `dir_read`, as `dir_stat` does (`tests/reject/dir_mode_not_declared.cho`).
 
 Checked by `tests/conformance/directory_modes.rs`, on both backends: a directory made `0o710` and, beneath it, files
 `0o600`, `0o644`, `0o400`, `0o4755` and `0o000`, directories `0o750` and `0o1777`, a link, a missing name (`ENOENT`)
@@ -191,7 +191,7 @@ directory holds.
   * `dir_next` with a three-byte buffer on a longer name is `ENAMETOOLONG` and copies nothing; `std.dirs.list` with
     `most` 2 keeps two and says `truncated`; two listings of one `Dir`, read in turns, each see every name;
   * memory: §5's measurement (flat between 1,000 and 100,000 entries), not a test.
-* `tests/accept/directory_listing.ls`: `/` listed by `dir_next` and by `std.dirs.list`, the two counts equal, no `.`
+* `tests/accept/directory_listing.cho`: `/` listed by `dir_next` and by `std.dirs.list`, the two counts equal, no `.`
   or `..`, the sorted names strictly increasing; every `DirList` closed; an `Fs`-owning function listing with row `[]`.
 * `tests/reject/`: an unclosed `DirList` (`linear-value-unconsumed`), one taken apart by a pattern
   (`linear-value-taken-apart`, naming `dir_list_close`), `dir_next` in a row that does not say `dir_read`
@@ -200,7 +200,7 @@ directory holds.
   `lstat`'s kind, size and whole-second `mtime`, on both backends; the dangling link a link of 7 bytes, not `ENOENT`;
   the FIFO answered without blocking; `..`, `.`, `sub/x`, an empty name and a 256-byte name `EINVAL` with no call.
   The accept fixture checks `dir_stat` agrees with the listing on every kind of `/` the listing knew, and
-  `tests/reject/dir_stat_not_declared.ls` that a status performs `dir_read`.
+  `tests/reject/dir_stat_not_declared.cho` that a status performs `dir_read`.
 * **Mutants (slice 1): 19, all killed.** On each backend: `d_name` read one byte off; `d_type` read one byte off;
   `d_type` mapped wrong (a directory called a file); `.` and `..` both leaked; `..` alone leaked; the short-buffer check
   skipped. In `std.dirs`: unsorted, reversed, the cap ignored. In the IR: the steps performing nothing, the builtins at
@@ -216,18 +216,18 @@ directory holds.
 **Decided: the handle shape.** The issue was written before `Dir` existed and asks for `fs_list`/`fs_stat` on paths.
 This document proposed the handle-based shape of §2 instead, and a person chose it on the design's PR: same capability, one way to spend a path rather than two, and a
 listing that cannot be turned into an escape. The "two askers" bar (`CONTRIBUTING.md`) is the issue's other open
-question; D16 already answered it (`list`, and `lexsys-log`'s segment discovery in `file-writes.md` §8), and
+question; D16 already answered it (`list`, and `cancho-log`'s segment discovery in `file-writes.md` §8), and
 this document assumes that answer.
 
 **Slices.** 1: `dir_list`, `dir_next`, `dir_list_close` and `std.dirs.list`, both backends. 2: `dir_stat`. 3:
-`lexsys-tools`' `list` tool and `seek` over a directory.
+`cancho-tools`' `list` tool and `seek` over a directory.
 
 **Not done:**
 
 * **No following stat.** `dir_stat` never follows a link; a tool that wants the target opens it with
   `dir_enter`/`dir_open_read`, which refuse links, or does not follow at all.
 * **No sub-second times, no owner.** `list` needs kind, size and a time; `ls -l`'s owner has no asker. Nanoseconds are
-  an added field when one appears. *(Corrected: this also said "no mode bits"; lexsys-hooks asked, and §3.5 answers
+  an added field when one appears. *(Corrected: this also said "no mode bits"; cancho-hooks asked, and §3.5 answers
   them with `dir_mode` and `dir_own_mode`.)*
 * **No `rewinddir`, no `telldir`.** A listing is read once; a second pass opens a second `DirList`.
 * **No recursive walk in `std`** (§4).

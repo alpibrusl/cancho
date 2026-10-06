@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Mutation check of `std/aes.ls` and `std/gcm.ls` (docs/tls-parity.md §3.1).
+"""Mutation check of `std/aes.cho` and `std/gcm.cho` (docs/tls-parity.md §3.1).
 
-    python3 scripts/gcm_mutants.py <lex-sys binary>
+    python3 scripts/gcm_mutants.py <cancho binary>
 
 Each mutant is one of the two files with one deliberate bug, both built as
-local modules `aes` and `gcm` beside a copy of `tests/programs/gcm_driver.ls`,
+local modules `aes` and `gcm` beside a copy of `tests/programs/gcm_driver.cho`,
 and run against the same evidence `conformance/gcm.rs` and
 `scripts/gcm_differential.py` use: FIPS 197's examples, NIST CAVP's 96-bit-IV
 cases, every Wycheproof case, the counter edges, a message with each bit
@@ -145,14 +145,14 @@ def evidence():
 
 def killed(compiler, aes_src, gcm_src, driver_src, work, cases, checks):
     files = {
-        "aes.ls": aes_src.replace("module std.aes;", "module aes;", 1),
-        "gcm.ls": gcm_src.replace("module std.gcm;", "module gcm;", 1).replace("import std.aes;", "import aes;", 1),
-        "driver.ls": driver_src.replace("import std.aes;", "import aes;", 1).replace("import std.gcm;", "import gcm;", 1),
+        "aes.cho": aes_src.replace("module std.aes;", "module aes;", 1),
+        "gcm.cho": gcm_src.replace("module std.gcm;", "module gcm;", 1).replace("import std.aes;", "import aes;", 1),
+        "driver.cho": driver_src.replace("import std.aes;", "import aes;", 1).replace("import std.gcm;", "import gcm;", 1),
     }
     for name, text in files.items():
         open(os.path.join(work, name), "w").write(text)
     exe = os.path.join(work, "driver")
-    build = subprocess.run([compiler, "build", "--std"] + [os.path.join(work, n) for n in ["driver.ls", "aes.ls", "gcm.ls"]] + ["-o", exe],
+    build = subprocess.run([compiler, "build", "--std"] + [os.path.join(work, n) for n in ["driver.cho", "aes.cho", "gcm.cho"]] + ["-o", exe],
                            capture_output=True, text=True)
     if build.returncode != 0:
         return None, build.stderr.strip().splitlines()[:3]
@@ -171,8 +171,8 @@ def killed(compiler, aes_src, gcm_src, driver_src, work, cases, checks):
 
 def main():
     compiler = os.path.abspath(sys.argv[1])
-    sources = {m: open(os.path.join(ROOT, f"std/{m}.ls")).read() for m in ("aes", "gcm")}
-    driver_src = open(os.path.join(ROOT, "tests/programs/gcm_driver.ls")).read()
+    sources = {m: open(os.path.join(ROOT, f"std/{m}.cho")).read() for m in ("aes", "gcm")}
+    driver_src = open(os.path.join(ROOT, "tests/programs/gcm_driver.cho")).read()
     cases, checks = evidence()
     failed = 0
     with tempfile.TemporaryDirectory() as work:

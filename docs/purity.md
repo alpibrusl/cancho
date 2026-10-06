@@ -2,7 +2,7 @@
 
 > **Status: measured, and unspent.**
 >
-> The question is whether there is anything lex-sys can do *better* than
+> The question is whether there is anything cancho can do *better* than
 > C and Rust, rather than 1.6× worse (`against-c-and-rust.md`). There is
 > exactly one candidate, it is structural rather than a matter of tuning,
 > and this document measures it.
@@ -26,7 +26,7 @@ What the other two have:
 
 | | Can it state purity? | Is it checked? |
 |---|---|---|
-| **lex-sys** | Yes — the row, on every function | **Yes**, by the type checker |
+| **cancho** | Yes — the row, on every function | **Yes**, by the type checker |
 | C | Yes — `__attribute__((const))` / `((pure))` | **No.** A wrong one miscompiles silently, with no diagnostic ever |
 | Rust | **No.** There is no purity attribute | — |
 
@@ -82,7 +82,7 @@ Every program in the repository, counted:
 76 pure of 217   (35%)
 ```
 
-Ranging from 0 of 2 in `hello.ls` to 15 of 26 in `rational.ls`. It is not
+Ranging from 0 of 2 in `hello.cho` to 15 of 26 in `rational.cho`. It is not
 a curiosity — it is a third of the code.
 
 ---
@@ -123,13 +123,13 @@ control flow cannot trap) and is filed in §6 rather than guessed at here.
 ```
 $ python3 scripts/three.py        # the `purity` group
 
-lex-sys  knows, cannot spend      0.2847s
+cancho  knows, cannot spend      0.2847s
 C        knows nothing            0.1852s
 Rust     cannot be told           0.1845s
 C        __attribute__((const))   0.0012s
 ```
 
-All four print the same checksum. lex-sys is 1.54× uninformed C, which is
+All four print the same checksum. cancho is 1.54× uninformed C, which is
 the backend gap `against-c-and-rust.md` already measured — and the 158×
 sits there unspent.
 
@@ -169,7 +169,7 @@ parameter check produce both facts with no analysis at all — the
 information a C compiler must infer, or a C programmer must promise, this
 language simply has.
 
-### 4.2 And there is no lex-sys program that can show it
+### 4.2 And there is no cancho program that can show it
 
 > **This document overstated its own conclusion on the first pass, and
 > the correction is the interesting part.**
@@ -179,10 +179,10 @@ has something to give an optimiser that the optimiser cannot get anywhere
 else."* True of the language. Not reachable by any program written in it
 today, for a reason that has nothing to do with purity:
 
-**lex-sys has no separate compilation.** A program is the set of files
+**cancho has no separate compilation.** A program is the set of files
 named on the command line, parsed into one AST (`many-files.md` §2).
 There are no libraries, no `import` of a compiled unit, no linking of two
-lex-sys objects. So there is no boundary for a purity fact to survive —
+cancho objects. So there is no boundary for a purity fact to survive —
 and §1's whole argument was about what survives a boundary.
 
 Give that whole program to LLVM and LLVM sees every body. Its
@@ -196,14 +196,14 @@ nothing:
   recursion, on large bodies, on anything reached indirectly. The row
   never gives up, because it was checked rather than inferred.
 - The row is available *before* codegen, to any consumer, including
-  tools. `lex-sys authority` prints it today and no optimiser is involved.
+  tools. `cancho authority` prints it today and no optimiser is involved.
 
 But the 158× in §4's table came from a benchmark built with a
 **deliberate** compilation boundary, in C, because that is the only way
-to show the effect at all. lex-sys cannot construct that program.
+to show the effect at all. cancho cannot construct that program.
 
 **So the honest conclusion is conditional**: the row is a real advantage
-over C and Rust *if* lex-sys ever gains separate compilation or a library
+over C and Rust *if* cancho ever gains separate compilation or a library
 model — which `many-files.md` §2.1 defers on purpose — and is mostly
 redundant with LLVM's own inference until then. That is a reason to file
 this and move on rather than to build on it, and `ROADMAP.md` says so.
@@ -212,7 +212,7 @@ this and move on rather than to build on it, and `ROADMAP.md` says so.
 
 ## 5. What this does not claim
 
-- **lex-sys is not faster than C or Rust today**, anywhere measured. It
+- **cancho is not faster than C or Rust today**, anywhere measured. It
   is 1.6× slower (`against-c-and-rust.md`), and the purity benchmark
   agrees at 1.54×.
 - **The 158× is one loop**, chosen to make the effect visible. A real
@@ -222,13 +222,13 @@ this and move on rather than to build on it, and `ROADMAP.md` says so.
   what survives a boundary LLVM will not cross: a large function, a
   separate compilation unit without LTO, recursion. Where inlining
   reaches, C and Rust already have this and pay nothing for it.
-- **And lex-sys has no such boundary** (§4.2). The measurement is real,
+- **And cancho has no such boundary** (§4.2). The measurement is real,
   the advantage is real, and no program in this language can exhibit it
   until the compilation model changes.
 - **§4.2 was right about reordering and wrong to generalise.**
   `compile-time.md` found an axis this document did not consider: the row
   also licenses **evaluation**, and evaluation needs no boundary at all —
-  only purity and constant arguments. `lex-sys` now folds a pure call on
+  only purity and constant arguments. `cancho` now folds a pure call on
   constants, on the strength of the same `is_pure` this document defines,
   and it does not need anything LLVM cannot see past. The band where it
   beats C is narrow (clang inlines and folds the easy shapes; it gives up
@@ -248,7 +248,7 @@ this and move on rather than to build on it, and `ROADMAP.md` says so.
 | An LLVM backend that reads it | §4.1. The row already produces `readnone`; this is the first argument for the backend that is about capability rather than speed |
 | ~~Nothing collects it~~ | **Partly false now.** `compile-time.md` collects it — not as an attribute for an optimiser, but as the gate on compile-time evaluation. 15 calls in this repository are evaluated on the strength of the row alone |
 | Purity in the hash | A function's row is already in its `SigId`, so purity is derivable from the hash without the body. Whether a *consumer* should be told is a question about what the content-addressed store promises |
-| `__attribute__((const))` emission | If lex-sys ever emits C rather than objects, the row could be written out as the attribute — where it would be, for once, a checked one |
+| `__attribute__((const))` emission | If cancho ever emits C rather than objects, the row could be written out as the attribute — where it would be, for once, a checked one |
 
 ---
 
@@ -261,5 +261,5 @@ this and move on rather than to build on it, and `ROADMAP.md` says so.
 
 | Program | Shows |
 |---|---|
-| `benches/three/purity.{ls,c,rs}` | §4: the same loop, and the fact only one of the three can state |
-| `lex-sys authority --output json` | `"pure"` — which functions the checker proved, and §2.1's count |
+| `benches/three/purity.{cho,c,rs}` | §4: the same loop, and the fact only one of the three can state |
+| `cancho authority --output json` | `"pure"` — which functions the checker proved, and §2.1's count |

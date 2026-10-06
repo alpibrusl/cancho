@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Mutation check of `std/chacha20.ls` (docs/chacha20.md §5).
+"""Mutation check of `std/chacha20.cho` (docs/chacha20.md §5).
 
-    python3 scripts/chacha20_mutants.py <lex-sys binary>
+    python3 scripts/chacha20_mutants.py <cancho binary>
 
-Each mutant is `std/chacha20.ls` with one deliberate bug, built as a local
-module `chacha20` beside a copy of `tests/programs/aead_driver.ls`, and run
+Each mutant is `std/chacha20.cho` with one deliberate bug, built as a local
+module `chacha20` beside a copy of `tests/programs/aead_driver.cho`, and run
 against the same evidence `conformance/aead.rs` and
 `scripts/aead_differential.py` use: the RFC 8439 table, every Wycheproof
 case, the one-bit flips of §2.8.2, the refusal edges, and 2,000 random cases
@@ -91,8 +91,8 @@ def evidence():
 
 
 def killed(compiler, source, driver_src, work, cases, checks):
-    mod = os.path.join(work, "chacha20.ls")
-    drv = os.path.join(work, "driver.ls")
+    mod = os.path.join(work, "chacha20.cho")
+    drv = os.path.join(work, "driver.cho")
     exe = os.path.join(work, "driver")
     open(mod, "w").write(source.replace("module std.chacha20;", "module chacha20;", 1))
     open(drv, "w").write(driver_src.replace("import std.chacha20;", "import chacha20;", 1))
@@ -114,8 +114,8 @@ def killed(compiler, source, driver_src, work, cases, checks):
 
 def main():
     compiler = os.path.abspath(sys.argv[1])
-    source = open(os.path.join(ROOT, "std/chacha20.ls")).read()
-    driver_src = open(os.path.join(ROOT, "tests/programs/aead_driver.ls")).read()
+    source = open(os.path.join(ROOT, "std/chacha20.cho")).read()
+    driver_src = open(os.path.join(ROOT, "tests/programs/aead_driver.cho")).read()
     cases, checks = evidence()
     failed = 0
     with tempfile.TemporaryDirectory() as work:

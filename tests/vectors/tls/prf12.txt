@@ -1,4 +1,4 @@
-# The TLS 1.2 PRF (RFC 5246 §5) and extended master secret (RFC 7627 §4): `tls_driver.ls`'s
+# The TLS 1.2 PRF (RFC 5246 §5) and extended master secret (RFC 7627 §4): `tls_driver.cho`'s
 # `P <hash length> <secret> <label> <seed> <n>` | the output. Printed by
 # `scripts/tls12_prf_differential.py --write` from OpenSSL's TLS1-PRF (`openssl kdf`), each row
 # also checked against P_hash on Python's hmac. Read by `conformance/tls.rs`.

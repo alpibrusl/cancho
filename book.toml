@@ -1,5 +1,5 @@
 [book]
-title = "lex-sys"
+title = "cancho"
 description = "A native systems language in which resource ownership and authority are part of the program's type-level contract."
 authors = ["alpibrusl"]
 src = "docs"
@@ -9,9 +9,9 @@ language = "en"
 build-dir = "book"
 
 [output.html]
-git-repository-url = "https://github.com/alpibrusl/lex-sys"
-edit-url-template = "https://github.com/alpibrusl/lex-sys/edit/main/{path}"
-site-url = "/lex-sys/"
+git-repository-url = "https://github.com/alpibrusl/cancho"
+edit-url-template = "https://github.com/alpibrusl/cancho/edit/main/{path}"
+site-url = "/cancho/"
 default-theme = "light"
 preferred-dark-theme = "navy"
 

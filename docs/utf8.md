@@ -1,10 +1,10 @@
 # UTF-8
 
-> **Status: settled and built.** `std/utf8.ls` implements §3; the rules
+> **Status: settled and built.** `std/utf8.cho` implements §3; the rules
 > below were written first and none of them moved on contact.
 >
 > `strings.md` §8 files UTF-8 decoding as *"library work over `[byte]`,
-> in lex-sys, once there is enough language to write it."* There is. Two
+> in cancho, once there is enough language to write it."* There is. Two
 > probes compiled on the first try and one matched GNU `wc -m` exactly,
 > so this document is not about what the language is missing.
 >
@@ -96,7 +96,7 @@ character, and that sequence encodes a value above U+10FFFF, which is
 not a character at all. It also answers `0` for every other malformed
 input, which is "unrepresentable, so absent" — a third position again.
 `benchmarks-game.md` §1 already had to pick rules rather than trust a
-reference; same shape, and worth noting because `wordcount.ls` is
+reference; same shape, and worth noting because `wordcount.cho` is
 checked against `wc` and **must not be checked against `wc -m`.**
 
 ---
@@ -196,6 +196,6 @@ a program asks. None has asked.
 |---|---|
 | Encoding — code point back to bytes | The mirror of §3 and genuinely easier: there is no invalid code point once §3.1 has refused the ones that are not scalar values. Left out so the two are not designed together, for `bulk-io.md` §3.3's reason |
 | Grapheme clusters | §4. A real table and a real specification, and nothing in this repo has needed one |
-| Whether `wordcount.ls` grows a `-m` | It is the obvious first consumer and the obvious first mistake: §2 says it must not be checked against `wc -m`, so it would need the fixture and the oracle this document used instead |
-| The rest of the library | §1: `split`, `trim`, `join`, ordering, case. Code with nothing left to decide, and `std/bytes.ls` is 125 lines today |
-| Ordering beyond byte order | `sort.ls` is `LC_ALL=C` on purpose and locale is excluded (`ROADMAP.md`). Code-point order and byte order **agree** for UTF-8 — verified over 4,006 scalar values, the boundary ones and random — so `bytes.compare` sorts text correctly without decoding it at all, and the decoder is not on the path a sort takes. Worth a fixture when there is a comparison to put one on |
+| Whether `wordcount.cho` grows a `-m` | It is the obvious first consumer and the obvious first mistake: §2 says it must not be checked against `wc -m`, so it would need the fixture and the oracle this document used instead |
+| The rest of the library | §1: `split`, `trim`, `join`, ordering, case. Code with nothing left to decide, and `std/bytes.cho` is 125 lines today |
+| Ordering beyond byte order | `sort.cho` is `LC_ALL=C` on purpose and locale is excluded (`ROADMAP.md`). Code-point order and byte order **agree** for UTF-8 — verified over 4,006 scalar values, the boundary ones and random — so `bytes.compare` sorts text correctly without decoding it at all, and the decoder is not on the path a sort takes. Worth a fixture when there is a comparison to put one on |

@@ -3,7 +3,7 @@
 
     python3 scripts/curve25519_differential.py <driver> [<x25519 count> [<ed25519 count>]]
 
-`driver` is `tests/programs/curve25519_driver.ls` built with `lex-sys build --std`. OpenSSL is reached through
+`driver` is `tests/programs/curve25519_driver.cho` built with `cancho build --std`. OpenSSL is reached through
 pyca/cryptography (`pip install cryptography`).
 
 X25519 (default 10,000): a random scalar and a random 32-byte u-coordinate (so the top bit is set half the time, and a

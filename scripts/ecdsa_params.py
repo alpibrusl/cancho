@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prints `std/ecdsa.ls`'s curve constants from OpenSSL (docs/ecdsa.md §2.1).
+"""Prints `std/ecdsa.cho`'s curve constants from OpenSSL (docs/ecdsa.md §2.1).
 
     python3 scripts/ecdsa_params.py
 

@@ -1,9 +1,9 @@
 # `std.http` and `std.route`: reading a request and choosing a handler
 
-> **Status: built.** `std/http.ls` (request parser, percent-decoding, query
-> lookup, response head) and `std/route.ls` (method + path to a route id);
-> tests `tests/lex/http_test.ls` (8) and `route_test.ls` (2), run by
-> `lex-sys test`; `conformance/http.rs`; drivers under `tests/programs/`.
+> **Status: built.** `std/http.cho` (request parser, percent-decoding, query
+> lookup, response head) and `std/route.cho` (method + path to a route id);
+> tests `tests/lex/http_test.cho` (8) and `route_test.cho` (2), run by
+> `cancho test`; `conformance/http.rs`; drivers under `tests/programs/`.
 > No sockets, no allocation of their own beyond the router's tables. §6 is
 > the evidence, §7 the numbers.
 

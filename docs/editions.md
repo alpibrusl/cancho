@@ -38,7 +38,7 @@
 
 The audit, L2:
 
-> **Language churn**: 71% of historical `.ls` revisions no longer check,
+> **Language churn**: 71% of historical `.cho` revisions no longer check,
 > and 42% of that comes from one label rename (`io` → `io_read`/`io_write`).
 > Introduce a **language edition marker** (`edition 0.1;` per file or per
 > program), and a **label-alias / deprecation path** so a rename is a
@@ -60,7 +60,7 @@ prerequisite for `Net`, not an afterthought to it.
 
 ## 2. The past, replayed
 
-`scripts/history.py` checks every distinct revision of every `.ls` file
+`scripts/history.py` checks every distinct revision of every `.cho` file
 under `std/` and `examples/` with today's compiler. A library file is
 checked beside today's other library files and a `main` that does
 nothing. An example in a directory is checked beside its siblings as
@@ -213,7 +213,7 @@ edition 2;
   in this file, and nothing else.
 - **A refining change ends support for every earlier edition.** Files
   in those editions are refused with the edition named and
-  `lex-sys migrate` as the fix. The supported window is therefore "since
+  `cancho migrate` as the fix. The supported window is therefore "since
   the last refining change", and it is visible in one table rather than
   implied by a pile of aliases.
 - **A tightening is not an edition matter.** It lands as a refusal in
@@ -238,7 +238,7 @@ only at an edition boundary, with a migration step to go with it.
 
 ### 6.5 The tool
 
-`lex-sys migrate` is designed here and not built. §4's two steps are
+`cancho migrate` is designed here and not built. §4's two steps are
 its first two. It is worth building when the first refining change is
 planned, and none is: `Net` is additive.
 
@@ -283,7 +283,7 @@ a *prelude* type used to be refused whatever the file's edition
 (`BuiltinRedeclared`), so a file that declared its own `Net` or `Thread`
 was refused even at an edition that cannot name them. The check now asks
 the file's edition, which `Conn` -- a name a great many programs want --
-would otherwise have broken (`tests/accept/socket_names_are_edition_five.ls`).
+would otherwise have broken (`tests/accept/socket_names_are_edition_five.cho`).
 
 **Edition 6 is edition 5 plus the signal capability**
 ([`signals.md`](signals.md)): the types `Signals`, `SignalWatch` and
@@ -294,7 +294,7 @@ additive change this document's §5 names, and it is why this is an edition
 and not a fifth slice of edition 5: slice 4 of
 [`native-sockets.md`](native-sockets.md) added `clock` to edition 5's
 `Split` because no edition-5 file destructured it yet, and that argument
-expired when 48 `.ls` files in this repository (and the programs embedded
+expired when 48 `.cho` files in this repository (and the programs embedded
 in three conformance modules, and every service built on them) came to
 write the seven fields. `Split` is now four declarations of one name; an
 edition-5 file's `split()` still answers seven.
@@ -310,15 +310,15 @@ types `DirList`, `Listing`, `Listed` and `DirStat` and the builtins `dir_list`,
 `dir_next`, `dir_list_close` and `dir_stat`, under the existing `dir_read`.
 
 And it has **`value_barrier`** ([`value-barrier.md`](value-barrier.md)), a builtin for constant-time code. Purely additive in
-the same way: no edition-6 file declared the name. `std/bigmod.ls` and `std/ecdh.ls` are the first `std` modules to declare
+the same way: no edition-6 file declared the name. `std/bigmod.cho` and `std/ecdh.cho` are the first `std` modules to declare
 `edition 6;`, to use it.
 
 And it has **`f32`** ([`f32.md`](f32.md)): the type, the `f32` literal suffix, and the builtins `f32_of`,
 `float_of32`, `bits_of32` and `f32_of_bits`. Purely additive, and counted first as `file-handles.md`
-§4.2 asks: `f32` or any of the four names appears in **0 of the 547** `.ls` files under `tests/`,
+§4.2 asks: `f32` or any of the four names appears in **0 of the 547** `.cho` files under `tests/`,
 `examples/`, `std/`, `packages/` and `benches/`, so it joined edition 6 rather than opening a
 seventh, as `value_barrier` did. An earlier file still owns every one of those names
-(`tests/accept/f32_names_are_edition_five.ls`).
+(`tests/accept/f32_names_are_edition_five.cho`).
 
 **Edition 7 is edition 6 plus the capability to start a program**
 ([`processes.md`](processes.md)): the types `Exec`, `Child`, `Pipe`, `ChildEnd`,

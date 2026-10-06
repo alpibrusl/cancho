@@ -14,8 +14,8 @@ of the suite still needs bare `alloc[a]`, `arg_count`, `Type::Float` or
 gap inventory; `wrapping_add`/`sub`/`mul` closed in §7.4, `region`/
 `alloc_slice`/`byte_of`/`Expr::Not` in §7.5, `box_slice`/`contents`/
 `unbox_slice` plus multi-leaf function returns in §7.7). Every
-`_checked.ls`/`_wrapping.ls` pair here communicates correctness through
-its exit code (`result - expected`, zero when right); `mandelbrot.ls`
+`_checked.cho`/`_wrapping.cho` pair here communicates correctness through
+its exit code (`result - expected`, zero when right); `mandelbrot.cho`
 also prints a checksum, which is compared as well as timed. The checked/
 wrapping pairs are also `docs/overflow-cost.md`'s own question --
 `scripts/bench.py` measures it under Cranelift; this is the first
@@ -28,7 +28,7 @@ deterministic workload -- the same method `bench.py` already uses.
 
 `--with-c` adds a third, three-way interleaved comparison against
 `benches/three/mandelbrot.c` -- the same kernel `docs/against-c-and-rust.md`
-already runs lex-sys/cranelift against C and Rust on, and the one §7's own
+already runs cancho/cranelift against C and Rust on, and the one §7's own
 falsifier ("if an LLVM backend lands and the gap stays at 1.6x, the claim
 was wrong") is about.
 
@@ -49,23 +49,23 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 # (label, source path relative to ROOT, expected stdout or None)
 PROGRAMS = [
-    ("sum_checked", "benches/sum_checked.ls", None),
-    ("sum_wrapping", "benches/sum_wrapping.ls", None),
-    ("fib_checked", "benches/fib_checked.ls", None),
-    ("fib_wrapping", "benches/fib_wrapping.ls", None),
-    ("sieve_checked", "benches/sieve_checked.ls", None),
-    ("sieve_wrapping", "benches/sieve_wrapping.ls", None),
-    ("reduce_checked", "benches/reduce_checked.ls", None),
-    ("reduce_wrapping", "benches/reduce_wrapping.ls", None),
-    ("scan_checked", "benches/scan_checked.ls", None),
-    ("scan_wrapping", "benches/scan_wrapping.ls", None),
-    ("mandelbrot", "benches/three/mandelbrot.ls", "39690297"),
+    ("sum_checked", "benches/sum_checked.cho", None),
+    ("sum_wrapping", "benches/sum_wrapping.cho", None),
+    ("fib_checked", "benches/fib_checked.cho", None),
+    ("fib_wrapping", "benches/fib_wrapping.cho", None),
+    ("sieve_checked", "benches/sieve_checked.cho", None),
+    ("sieve_wrapping", "benches/sieve_wrapping.cho", None),
+    ("reduce_checked", "benches/reduce_checked.cho", None),
+    ("reduce_wrapping", "benches/reduce_wrapping.cho", None),
+    ("scan_checked", "benches/scan_checked.cho", None),
+    ("scan_wrapping", "benches/scan_wrapping.cho", None),
+    ("mandelbrot", "benches/three/mandelbrot.cho", "39690297"),
 ]
 
 
 def compiler() -> pathlib.Path:
     for profile in ("release", "debug"):
-        exe = ROOT / "target" / profile / "lex-sys"
+        exe = ROOT / "target" / profile / "cancho"
         if exe.exists():
             return exe
     sys.exit("build the compiler first: cargo build --release")
@@ -134,7 +134,7 @@ def main() -> None:
     parser.add_argument("--cc", help="which C compiler to use with --with-c")
     args = parser.parse_args()
 
-    scratch = pathlib.Path(tempfile.mkdtemp(prefix="lex-sys-backend-compare-"))
+    scratch = pathlib.Path(tempfile.mkdtemp(prefix="cancho-backend-compare-"))
     try:
         print(
             f"{'program':<14} {'cranelift':>9} {'(spread)':>7} "

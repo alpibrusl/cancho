@@ -24,10 +24,10 @@ reading them:
 
 | | what it hand-rolls | why |
 |---|---|---|
-| `examples/newton.ls` | a square root by Newton's method, five steps | the program *is* the demonstration |
-| `benches/game/spectral.ls` | `sqrt_of`, twenty steps | spectral-norm needs one, and the source says so |
+| `examples/newton.cho` | a square root by Newton's method, five steps | the program *is* the demonstration |
+| `benches/game/spectral.cho` | `sqrt_of`, twenty steps | spectral-norm needs one, and the source says so |
 
-`spectral.ls` names the blocker in its own header: *"`sqrt` is written
+`spectral.cho` names the blocker in its own header: *"`sqrt` is written
 here because `floating-point.md` §7 leaves `std.math` over floats open —
 the capability question comes first."*
 
@@ -70,7 +70,7 @@ input anyone tried, and wrong on the dimension the test never varied.
 The benchmark's answer is right — `1.274219991` — because it never asks
 for a root outside a narrow band. The *function* is wrong.
 
-`newton.ls` is better and still not correct: five steps from a fixed
+`newton.cho` is better and still not correct: five steps from a fixed
 guess of 2.0 gives √2 to **1 ulp**. That is fine for what it
 demonstrates — it prints residuals and is about convergence — and it is
 not a square root anyone should call.
@@ -89,12 +89,12 @@ aarch64. Cranelift emits it directly. So:
 * It reaches **no library**, so there is no `Ffi` to gate, so
   arithmetic does not acquire a capability. The fear in §7's row was
   real and does not apply here.
-* Its row is `[]` and `lex-sys authority` reports nothing, which is
+* Its row is `[]` and `cancho authority` reports nothing, which is
   correct: a square root observes nothing outside the program.
 
 And the error analysis option is closed by §2 rather than by taste:
 **IEEE-754 requires `sqrt` to be correctly rounded**, the instruction
-is, and no sequence of `+`, `-`, `*` and `/` in lex-sys reliably is —
+is, and no sequence of `+`, `-`, `*` and `/` in cancho reliably is —
 which the 58.4% measures.
 
 ### 3.1 Which is why this one is a builtin and printing is not
@@ -104,7 +104,7 @@ and both calls are right for the same reason: **put it where it can be
 correct.**
 
 Printing a float is a *decision procedure* — Steele and White over exact
-integers — and lex-sys can express it, so `std.fmt.float_into` is
+integers — and cancho can express it, so `std.fmt.float_into` is
 library code and the compiler's whole contribution is `bits_of`, a
 bitcast (plus a select that gives every NaN one pattern,
 [`differential.md`](differential.md) §4). A correctly-rounded square root is *not* expressible here,
@@ -128,7 +128,7 @@ asked for one**, and §1's rule is the rule.
 > three share.
 
 **Not float `abs`, `min` or `max`.** One asker between them —
-`newton.ls`'s `magnitude` — and it has an alternative that works:
+`newton.cho`'s `magnitude` — and it has an alternative that works:
 `if x < 0.0 { return -x; }` is three lines and correct.
 
 That is the same test `line-reading.md` §4 used to *admit*
@@ -151,8 +151,8 @@ integer-only until something earns a place beside it.
 
 | | before | after |
 |---|---|---|
-| `benches/game/spectral.ls` | its own 20-step Newton, 58.4% not correctly rounded | `sqrt`, and the benchmark still answers `1.274219991` |
-| `examples/newton.ls` | keeps its Newton loop — **on purpose**, it is the demonstration | prints `sqrt`'s answer beside its own, so the program now shows what five steps are worth |
+| `benches/game/spectral.cho` | its own 20-step Newton, 58.4% not correctly rounded | `sqrt`, and the benchmark still answers `1.274219991` |
+| `examples/newton.cho` | keeps its Newton loop — **on purpose**, it is the demonstration | prints `sqrt`'s answer beside its own, so the program now shows what five steps are worth |
 
 `sqrt_agrees_with_the_hardware` checks the builtin against Rust's own
 `f64::sqrt` over the same 40,008 values, including the four exponents
@@ -183,17 +183,17 @@ where `sqrt_of` was off by 10⁴³ and more.
 > double-double product, within 1, 1 and 4 ulp of the C library.
 
 Three askers, the two-per-half bar §1 already used, each wanting more
-than one of the three: `examples/growth.ls` (continuous and discrete
+than one of the three: `examples/growth.cho` (continuous and discrete
 compound growth, plus a doubling time — `exp`, `pow` and `log` in one
-program), `examples/decay.ls` (a half-life table, computed the
+program), `examples/decay.cho` (a half-life table, computed the
 differential-equation way and the definitional way side by side — `exp`
-and `pow` again, cross-checked against each other), `examples/entropy.ls`
+and `pow` again, cross-checked against each other), `examples/entropy.cho`
 (Shannon entropy of standard input's byte distribution — `log`, the
 third caller). Between them: `log` three askers, `exp` and `pow` two
 each.
 
 **Library code with a stated accuracy**, exactly as §4 said it would be,
-in `std/math.ls`:
+in `std/math.cho`:
 
 * `exp(x)`: range reduction to `x = k*ln2 + r` with `|r| <= ln2/2` (`ln2`
   split into a high part and a low residual, the standard technique, so
@@ -216,7 +216,7 @@ have simplified something: `exp`'s own scaling still had to split its
 exponent in half before multiplying (below), where a direct `ldexp`
 would not have.
 
-**Measured, not asserted**: `crates/lex-sys/tests/conformance/floats.rs`
+**Measured, not asserted**: `crates/cancho/tests/conformance/floats.rs`
 checks all three against Rust's own `f64::exp`/`f64::ln`/`f64::powf`
 over roughly 4,500 generated values, plus specials, within **1e-9
 relative error** — two orders of magnitude looser than what was actually
@@ -269,7 +269,7 @@ because `if x < 0.0 { return -x; }` is three lines; that stays true, and
 it is also three lines every caller gets subtly wrong at `-0.0` and NaN,
 which is what a library function is for.
 
-All eight are library code in `std/math.ls`, not builtins — a few lines
+All eight are library code in `std/math.cho`, not builtins — a few lines
 of `float` and `truncate` arithmetic each, like `exp`/`log`/`pow`.
 
 * **`fabs`**: C's. `fabs(-0.0)` is `+0.0`, a NaN stays a NaN.
@@ -282,7 +282,7 @@ of `float` and `truncate` arithmetic each, like `exp`/`log`/`pow`.
   `truncate` away from its own trap near 2⁶³; NaN and the infinities come
   back unchanged. `round` is ties-away-from-zero, as C's; the one-line
   `floor(x + 0.5)` is wrong at `0.49999999999999994`, where the addition
-  itself rounds up to `1.0`, and `tests/accept/math_floats.ls` pins that
+  itself rounds up to `1.0`, and `tests/accept/math_floats.cho` pins that
   case. One difference from C: a zero result is `+0.0` where C's
   `floor(-0.0)` keeps the minus sign, which only `bits_of` can see.
 * **`sin`, `cos`**: fdlibm's two kernel polynomials on `[-π/4, π/4]`
@@ -293,11 +293,11 @@ of `float` and `truncate` arithmetic each, like `exp`/`log`/`pow`.
 
 **Measured against the C library**, not asserted. A foreign signature
 cannot carry a `float` (`opaque-pointers.md`), so libm cannot be called
-from a lex-sys program; the comparison is made from outside.
-`tests/programs/math_samples.ls` prints the bit pattern of a function's
+from a cancho program; the comparison is made from outside.
+`tests/programs/math_samples.cho` prints the bit pattern of a function's
 answers at a fixed sample, `conformance/mathfn.rs` replays the same
 arguments (a fixed linear-congruential sequence, every step exact or
-correctly rounded, so Rust and lex-sys compute the same argument bit for
+correctly rounded, so Rust and cancho compute the same argument bit for
 bit) and measures the distance from glibc's answer in units in the last
 place. The first measurement used 20,000 arguments per range; it is now
 the same harness as §9's, 10,000 per range, and the worst error is **1
@@ -370,8 +370,8 @@ compares `pow(7.0, 2.0)` to `49.0` would, because it was not 49.
 ### 9.2 Measured
 
 `conformance/mathfn.rs` replays a fixed sample (a linear-congruential
-sequence, exact at every step, so Rust and lex-sys agree on every
-argument bit for bit — `tests/programs/math_samples.ls` prints the
+sequence, exact at every step, so Rust and cancho agree on every
+argument bit for bit — `tests/programs/math_samples.cho` prints the
 answers' bit patterns, one process per function and range) and measures
 the distance from glibc's answer in ulps. 10,000 arguments per range,
 three to six ranges per function, chosen to include the places each is
@@ -407,7 +407,7 @@ because the reference is itself a library: another platform's rounds
 differently in the last place. `pow(1.7, x)` at `x = ±700` is the case
 the `y/3`-ulp rule is about, and 4 ulp is what it costs.
 
-`tests/accept/math_floats.ls` holds the claims that are not about ulps:
+`tests/accept/math_floats.cho` holds the claims that are not about ulps:
 exact powers, `log2` of a power of two, `log10` of a power of ten,
 specials (NaN, ±0, ±inf, the overflow and underflow edges) for every
 function, and the inverse pairs.
@@ -513,7 +513,7 @@ multiples of π/2 where reduction cancels the most.
 
 **The worst case.** `x = 6381956970095103 × 2⁷⁹⁷` is the double whose
 `cos` is closest to zero (`-4.687165924254627611…e-19`, 62 bits down). It
-is pinned in `tests/accept/math_floats.ls` against that literature value,
+is pinned in `tests/accept/math_floats.cho` against that literature value,
 to 3e-16 relative. The C library on the machine this was measured on (through
 Python's `math.cos`) answers `-4.68716592425462e-19` for it — **8 ulp off the true value, which
 this reduction gets to the digit**. It is in no sweep because a random

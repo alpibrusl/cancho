@@ -62,7 +62,7 @@ place for it rather than a consolation.
 If the declaration is in the body, a tool should read it:
 
 ```sh
-$ lex-sys authority examples/tally.ls --std
+$ cancho authority examples/tally.cho --std
 performs
     io_read
     io_write
@@ -87,7 +87,7 @@ some path, not one it might.
 ### 2.1 What building it found
 
 The first version unioned the **declared** rows, and it was wrong in
-exactly the way §1.1 predicts. `examples/lines.ls` reads `argv` in
+exactly the way §1.1 predicts. `examples/lines.cho` reads `argv` in
 `main`'s own body, `main` declares `[]`, and the report said *never
 touches the command line* about the repository's command-line tool.
 
@@ -108,12 +108,12 @@ creates another.
 ### 2.3 It shows narrowing
 
 ```
-examples/tour.ls     fs_read("/tmp")  fs_write("/tmp")
-examples/lines.ls    fs_read("")      fs_write("")
+examples/tour.cho     fs_read("/tmp")  fs_write("/tmp")
+examples/lines.cho    fs_read("")      fs_write("")
 ```
 
 Both touch the filesystem; only one is confined to a directory.
-`lines.ls` is unnarrowed for a reason it explains — a tool reading a
+`lines.cho` is unnarrowed for a reason it explains — a tool reading a
 path the *user* chose has no literal to narrow to — and the point here
 is that the difference is legible **from outside the program**, without
 opening either.
@@ -127,8 +127,8 @@ opening either.
 | `release(a, b, c)` | Would make the five lines two while keeping every name, so it loses nothing §1 defends. It is also a variadic form in a language with none, for a saving of three lines once per program |
 | ~~A machine-readable form~~ | **Done** — `--output json`, in the shape `lex-os-check`'s `CheckReport` already uses. `docs/budget.md` §5 is why it was the half actually wanted |
 | ~~What a foreign call can reach~~ | **Done** -- [`foreign-authority.md`](foreign-authority.md): `unbounded_by` names every reachable foreign symbol with the scope its declaration claims; `bounded` keeps its meaning |
-| Authority of a *library* | With no `main` there is no program, so there is no surface — only per-function rows, which `lex-sys ids` already lists |
-| ~~`foreign_symbols` is not reachability-pruned~~ | **Fixed.** Found building `examples/fetch/fetch.ls` (`docs/package-system.md` §6): `Program::funcs` is already the reachable set from `main` (§2 above, `lex-sys-ir`'s pass 2), but `Program::externs` was collected once, unconditionally, before that pass ran, and was never intersected with it. `lex-sys-ir::reachable_externs` (`fold::collect_extern_refs`, the same exhaustive-match shape `collect_static_refs` already used for `docs/crypto.md` §4's identical problem with `static`s) walks `Program::funcs` for every `Callee::Extern` a call site actually reaches; `main.rs`'s `print_authority` filters `program.externs` by it before building `foreign_symbols`. `Program::externs` itself is untouched — nothing renumbers it, so `Callee::Extern`'s index and every codegen backend are unaffected. `crates/lex-sys/tests/conformance/authority.rs`'s `foreign_symbols_names_only_what_the_program_calls` and `net.rs`'s `the_client_and_the_server_differ_only_in_their_symbols` both check it |
+| Authority of a *library* | With no `main` there is no program, so there is no surface — only per-function rows, which `cancho ids` already lists |
+| ~~`foreign_symbols` is not reachability-pruned~~ | **Fixed.** Found building `examples/fetch/fetch.cho` (`docs/package-system.md` §6): `Program::funcs` is already the reachable set from `main` (§2 above, `cancho-ir`'s pass 2), but `Program::externs` was collected once, unconditionally, before that pass ran, and was never intersected with it. `cancho-ir::reachable_externs` (`fold::collect_extern_refs`, the same exhaustive-match shape `collect_static_refs` already used for `docs/crypto.md` §4's identical problem with `static`s) walks `Program::funcs` for every `Callee::Extern` a call site actually reaches; `main.rs`'s `print_authority` filters `program.externs` by it before building `foreign_symbols`. `Program::externs` itself is untouched — nothing renumbers it, so `Callee::Extern`'s index and every codegen backend are unaffected. `crates/cancho/tests/conformance/authority.rs`'s `foreign_symbols_names_only_what_the_program_calls` and `net.rs`'s `the_client_and_the_server_differ_only_in_their_symbols` both check it |
 
 ---
 
@@ -137,5 +137,5 @@ opening either.
 | Test | Claim |
 |---|---|
 | `the_authority_report_names_what_a_program_performs` | §2, over three examples whose surfaces differ |
-| `the_authority_report_sees_what_main_does_itself` | §2.1 — the bug: `lines.ls` reads `argv` in `main` |
+| `the_authority_report_sees_what_main_does_itself` | §2.1 — the bug: `lines.cho` reads `argv` in `main` |
 | `an_unused_capability_never_appears` | §2.2, the negative half |

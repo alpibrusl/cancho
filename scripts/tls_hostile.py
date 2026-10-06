@@ -3,8 +3,8 @@
 
     python3 scripts/tls_hostile.py <driver> <tls_many> [--massif]
 
-`driver` is `tests/programs/tls_driver.ls` and `tls_many` is
-`tests/programs/tls_many.ls`, both built with the package's files.
+`driver` is `tests/programs/tls_driver.cho` and `tls_many` is
+`tests/programs/tls_many.cho`, both built with the package's files.
 
 Each case below is one connection from the driver to a server written on
 `scripts/tls_liar.py`'s, which does one hostile thing. The driver is its own

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verifications per second of `std.rsa` (docs/rsa.md §5.5).
 
-    lex-sys build --std [--backend llvm] tests/programs/rsa_driver.ls -o rsa_driver
+    cancho build --std [--backend llvm] tests/programs/rsa_driver.cho -o rsa_driver
     python3 scripts/rsa_bench.py rsa_driver
 
 For each of RSA-2048 and RSA-4096, PKCS#1 v1.5 and PSS (SHA-256, e = 65537),
@@ -32,7 +32,7 @@ def best(driver, line, rounds):
 
 def main():
     driver = sys.argv[1]
-    msg = b"lex-sys rsa bench"
+    msg = b"cancho rsa bench"
     for bits, rounds in ((2048, 2001), (4096, 501)):
         key = rsa.generate_private_key(65537, bits)
         pub = key.public_key().public_numbers()

@@ -1,6 +1,6 @@
 # RFC 8439 (ChaCha20 and Poly1305 for IETF Protocols) test vectors, one
-# per line: `<name> | <aead_driver.ls case> | <expected output in hex>`.
-# Read by `crates/lex-sys/tests/conformance/aead.rs`; `docs/chacha20.md` §4.
+# per line: `<name> | <aead_driver.cho case> | <expected output in hex>`.
+# Read by `crates/cancho/tests/conformance/aead.rs`; `docs/chacha20.md` §4.
 #
 # Where they came from (the RFC text itself is not reachable from the
 # machine this was written on): §2.3.2, §2.4.2, §2.5.2, §2.8.2, A.1 and

@@ -10,25 +10,25 @@ that imports none of the library emits a byte-identical object either
 way ([`standard-library.md`](../docs/standard-library.md) §5.2).
 
 ```sh
-cargo run -p lex-sys -- run examples/tour.ls --std
+cargo run -p cancho -- run examples/tour.cho --std
 ```
 
 | Example | What it is |
 |---|---|
-| [`hello.ls`](hello.ls) | The smallest program that says hello |
-| [`tour.ls`](tour.ls) | One section per feature, in the order the milestones added them |
-| [`pipeline.ls`](pipeline.ls) | M2 as *one* system rather than four features side by side |
-| [`tree.ls`](tree.ls) | A binary search tree — why a language needs a heap at all |
-| [`lines.ls`](lines.ls) | The M3 acceptance criterion: a real command-line tool |
-| [`tally.ls`](tally.ls) | `wc` over standard input |
-| [`wordcount.ls`](wordcount.ls) | `wc` over an embedded document, and the before-and-after for `std` |
-| [`rational.ls`](rational.ls) | 250 lines of exact rational arithmetic; the M1 language still compiling unchanged |
-| [`queue.ls`](queue.ls) | A work queue whose jobs **own** memory, held in a collection |
-| [`pipeline_checks.ls`](pipeline_checks.ls) | A fallible pipeline: four exits, one `defer` |
+| [`hello.cho`](hello.cho) | The smallest program that says hello |
+| [`tour.cho`](tour.cho) | One section per feature, in the order the milestones added them |
+| [`pipeline.cho`](pipeline.cho) | M2 as *one* system rather than four features side by side |
+| [`tree.cho`](tree.cho) | A binary search tree — why a language needs a heap at all |
+| [`lines.cho`](lines.cho) | The M3 acceptance criterion: a real command-line tool |
+| [`tally.cho`](tally.cho) | `wc` over standard input |
+| [`wordcount.cho`](wordcount.cho) | `wc` over an embedded document, and the before-and-after for `std` |
+| [`rational.cho`](rational.cho) | 250 lines of exact rational arithmetic; the M1 language still compiling unchanged |
+| [`queue.cho`](queue.cho) | A work queue whose jobs **own** memory, held in a collection |
+| [`pipeline_checks.cho`](pipeline_checks.cho) | A fallible pipeline: four exits, one `defer` |
 | [`buffer/`](buffer/) | A growable byte buffer, written as a library |
 | [`slab/`](slab/) | Shared ownership, as far as this language reaches |
 | [`modular/`](modular/) | Two modules and a root |
-| [`selfhost/`](selfhost/) | The lex-sys lexer and parser, written in lex-sys, checked against the Rust ones |
+| [`selfhost/`](selfhost/) | The cancho lexer and parser, written in cancho, checked against the Rust ones |
 | [`cut/`](cut/) | `cut -d -f`, ported to **ask** what a string library needs |
 | [`wordfreq/`](wordfreq/) | The capstone: three files, every capability doing real work |
 
@@ -36,10 +36,10 @@ cargo run -p lex-sys -- run examples/tour.ls --std
 
 ## The tour
 
-`tour.ls` is the shortest honest answer to "what can this language do".
+`tour.cho` is the shortest honest answer to "what can this language do".
 
 ```sh
-cargo run -p lex-sys -- run examples/tour.ls --std
+cargo run -p cancho -- run examples/tour.cho --std
 # M0: 7 5 3 1
 # M1 bool: 1010010
 # M1 struct: (3, 4) -> 25
@@ -63,10 +63,10 @@ cargo run -p lex-sys -- run examples/tour.ls --std
 
 ## Programs rather than a tour
 
-### `pipeline.ls` — the thesis in one program
+### `pipeline.cho` — the thesis in one program
 
 ```sh
-cargo run -p lex-sys -- run examples/pipeline.ls
+cargo run -p cancho -- run examples/pipeline.cho
 # jobs: 4 done, 2 cancelled
 # spent: 49 of 50
 # headroom: 1
@@ -80,10 +80,10 @@ arena; the overrun is computed by libc through a capability that names
 libc and nothing else; and printing needs the console capability `main`
 was handed. **Delete any one of those and it stops compiling.**
 
-### `tree.ls` — why a heap exists
+### `tree.cho` — why a heap exists
 
 ```sh
-cargo run -p lex-sys -- run examples/tree.ls
+cargo run -p cancho -- run examples/tree.cho
 # 1 3 4 5 7 8 9
 # sum 37 count 7 depth 3
 ```
@@ -96,10 +96,10 @@ There is **no `free` in the file**, and every node is freed. `unbox` is
 the only thing that ends a box, a box is `res`, and a node the program
 forgot would be a compile error rather than a leak found next month.
 
-### `lines.ls` — the M3 acceptance criterion
+### `lines.cho` — the M3 acceptance criterion
 
 ```sh
-cargo run -p lex-sys -- run examples/lines.ls
+cargo run -p cancho -- run examples/lines.cho
 # lines 6
 # errors 2
 # longest 15
@@ -124,11 +124,11 @@ paths without opening the body. A tool that *did* know its directory
 would narrow, and its row would say so instead. **The type tells the
 truth either way.**
 
-### `tally.ls` — `wc` over a pipe
+### `tally.cho` — `wc` over a pipe
 
 ```sh
 printf 'the quick brown fox\njumps over\nthe lazy dog\n' \
-    | cargo run -p lex-sys -- run examples/tally.ls
+    | cargo run -p cancho -- run examples/tally.cho
 #      3      9     44
 ```
 
@@ -137,10 +137,10 @@ signature that the function consumes the program's input as well as
 writing to the console, and a caller learns both without opening the
 body.
 
-### `wordcount.ls` — the before-and-after for `std`
+### `wordcount.cho` — the before-and-after for `std`
 
 ```sh
-cargo run -p lex-sys -- run examples/wordcount.ls --std
+cargo run -p cancho -- run examples/wordcount.cho --std
 ```
 
 It used to open with `space`, `newline`, `write_all`, `print_nat` and
@@ -153,10 +153,10 @@ space and newline; `tally` counted six bytes; neither knew the other
 disagreed. One definition, in one place, is most of what a standard
 library is for.
 
-### `queue.ls` — a collection of resources
+### `queue.cho` — a collection of resources
 
 ```sh
-cargo run -p lex-sys -- run examples/queue.ls --std
+cargo run -p cancho -- run examples/queue.cho --std
 # compile 7
 # link 4
 # test 4
@@ -171,10 +171,10 @@ what ending a `T` means; a job never finished does not compile; and the
 tally beside it is a `Vec[int]` rather than a list, because an array
 cannot hold a resource at all. [`collections.md`](../docs/collections.md).
 
-### `pipeline_checks.ls` — four exits, one `defer`
+### `pipeline_checks.cho` — four exits, one `defer`
 
 ```sh
-cargo run -p lex-sys -- run examples/pipeline_checks.ls --std
+cargo run -p cancho -- run examples/pipeline_checks.cho --std
 # ok: fine
 # empty
 # bad prefix
@@ -191,7 +191,7 @@ Both halves are checked rather than asserted: take the `defer` out and
 the function stops compiling at the first early return, and with it in,
 valgrind reports 4 allocs and 4 frees.
 
-### `rational.ls` — the M1 language, still standing
+### `rational.cho` — the M1 language, still standing
 
 250 lines of exact rational arithmetic, with a generic `Result[T]`
 threaded through every fallible operation. It predates M2 and stays that
@@ -199,7 +199,7 @@ way on purpose.
 
 ## Libraries
 
-### `newton.ls` — a method fixed point could not carry
+### `newton.cho` — a method fixed point could not carry
 
 Newton's method for √2, five steps, reporting the residual `|x² - 2|`
 after each.
@@ -216,7 +216,7 @@ reached the answer are different things, and this is where the
 difference becomes visible.
 
 Every number here is printed by `std.fmt.float_into` — the shortest
-decimal that reads back to the same bits, written in lex-sys rather than
+decimal that reads back to the same bits, written in cancho rather than
 in the compiler (`float-printing.md`). An earlier version of this file
 reported everything through `truncate` and a scale factor of 1e18,
 because printing a float was still open; the difference is visible in
@@ -264,17 +264,17 @@ not establish.
 ### `selfhost/` — the front end, written in itself
 
 ```sh
-cargo build -p lex-sys-syntax --example dump_tokens --example dump_ast
-cargo run -p lex-sys -- build examples/selfhost/parser.ls $(for m in driver listing pass1 ast kinds lexcore tables; do echo examples/selfhost/$m.ls; done) --std -o /tmp/parser
-sh examples/selfhost/diff.sh target/debug/examples/dump_ast /tmp/parser examples/hello.ls tests/accept/*.ls
+cargo build -p cancho-syntax --example dump_tokens --example dump_ast
+cargo run -p cancho -- build examples/selfhost/parser.cho $(for m in driver listing pass1 ast kinds lexcore tables; do echo examples/selfhost/$m.cho; done) --std -o /tmp/parser
+sh examples/selfhost/diff.sh target/debug/examples/dump_ast /tmp/parser examples/hello.cho tests/accept/*.cho
 # identical: 105  different: 0
 ```
 
-`lexcore.ls` is the lex-sys tokeniser, `lexer.ls` prints its tokens, `ast.ls` parses them into a
-syntax tree, `parser.ls` prints the tree and `check.ls` runs the first half of the checker
-(`pass1.ls`) over it, all in lex-sys, as stages 1 and 2 of the staged port in
+`lexcore.cho` is the cancho tokeniser, `lexer.cho` prints its tokens, `ast.cho` parses them into a
+syntax tree, `parser.cho` prints the tree and `check.cho` runs the first half of the checker
+(`pass1.cho`) over it, all in cancho, as stages 1 and 2 of the staged port in
 `docs/self-hosting.md` §6. Each reads a source file on standard input and prints what
-the Rust front end makes of it (`dump_tokens.rs`, `dump_ast.rs` in `lex-sys-syntax`
+the Rust front end makes of it (`dump_tokens.rs`, `dump_ast.rs` in `cancho-syntax`
 are the oracles), so the check is `diff`. `fuzz.py` adds hostile edge cases and
 mutants; `tests/conformance/selfhost.rs` runs both ports over every program in the
 repository in CI.
@@ -323,9 +323,9 @@ edges, which is §9.3.
 ### `serve/` — a REST endpoint over a real socket
 
 ```sh
-cargo run -p lex-sys -- vcs fetch --lock examples/serve/net.lock \
-    --store packages/net-sockets/.lex-sys-vcs -o /tmp/net-sockets
-cargo run -p lex-sys -- build --std examples/serve/serve.ls /tmp/net-sockets/*.ls -o serve
+cargo run -p cancho -- vcs fetch --lock examples/serve/net.lock \
+    --store packages/net-sockets/.cancho-vcs -o /tmp/net-sockets
+cargo run -p cancho -- build --std examples/serve/serve.cho /tmp/net-sockets/*.cho -o serve
 ./serve 8080
 ```
 
@@ -336,10 +336,10 @@ gets a 200, anything else gets a 404.
 
 Eight `extern fn` declarations against libc and nothing else, plus two
 byte-writing helpers — no longer written here, though: they moved to
-`packages/net-sockets/sockets.ls`, this repository's first real
-`lex-sys-vcs` package (`docs/package-system.md` §6), because
+`packages/net-sockets/sockets.cho`, this repository's first real
+`cancho-vcs` package (`docs/package-system.md` §6), because
 `results_stub/` below declared the exact same eight and two,
-independently. `serve.ls` locks the names it needs in `net.lock` and
+independently. `serve.cho` locks the names it needs in `net.lock` and
 `import`s the fetched result rather than duplicating them. No socket
 type, no `Net` capability, no HTTP module. The test suite makes the
 request from Rust over loopback, both routes, and checks that the
@@ -359,9 +359,9 @@ what this **cannot** reach and why it is one sentence rather than a list.
 ### `api/` — a JSON API server: keep-alive, routed, one thread
 
 ```sh
-cargo run -p lex-sys -- vcs fetch --lock examples/api/server.lock \
-    --store packages/http-server/.lex-sys-vcs -o /tmp/api-deps
-cargo run -p lex-sys -- build --std examples/api/api.ls /tmp/api-deps/*.ls -o api
+cargo run -p cancho -- vcs fetch --lock examples/api/server.lock \
+    --store packages/http-server/.cancho-vcs -o /tmp/api-deps
+cargo run -p cancho -- build --std examples/api/api.cho /tmp/api-deps/*.cho -o api
 ./api 8080                       # or: ./api 8080 reuseport 30   (share the port; 30 s without progress)
 curl localhost:8080/users/42     # {"id":42,"name":"user-42"}
 ```
@@ -370,7 +370,7 @@ curl localhost:8080/users/42     # {"id":42,"name":"user-42"}
 library pieces (`std.json`, `std.map`, `std.http`, `std.route`) were for. The
 loop itself is the `http.server` package (`packages/http-server/`,
 [`docs/http-server.md`](../docs/http-server.md)) -- the first package that
-imports `std` -- and `api.ls` is its routes, its handlers and a `main`. It
+imports `std` -- and `api.cho` is its routes, its handlers and a `main`. It
 keeps every connection open behind a `Poller` (`epoll` on Linux, `kqueue` on
 macOS) -- and holds no `Ffi` and declares no `extern fn`, which
 `docs/native-sockets.md` is the account of -- answers pipelined requests
@@ -390,12 +390,12 @@ bytes into answers), then `serve` (the loop and the dense connection array).
 ### `fetch/` — the other direction
 
 ```sh
-cargo run -p lex-sys -- vcs fetch --lock examples/fetch/connect.lock \
-    --store packages/net-connect/.lex-sys-vcs -o /tmp/fetch-deps
-cargo run -p lex-sys -- vcs fetch --lock examples/fetch/response.lock \
-    --store packages/http-response/.lex-sys-vcs -o /tmp/fetch-deps
-cargo run -p lex-sys -- build --std examples/fetch/fetch.ls \
-    /tmp/fetch-deps/*.ls -o fetch
+cargo run -p cancho -- vcs fetch --lock examples/fetch/connect.lock \
+    --store packages/net-connect/.cancho-vcs -o /tmp/fetch-deps
+cargo run -p cancho -- vcs fetch --lock examples/fetch/response.lock \
+    --store packages/http-response/.cancho-vcs -o /tmp/fetch-deps
+cargo run -p cancho -- build --std examples/fetch/fetch.cho \
+    /tmp/fetch-deps/*.cho -o fetch
 ./fetch 127.0.0.1 8080 /health
 ```
 
@@ -403,13 +403,13 @@ An HTTP client, and the first program here that connects. It sends
 `GET <path>` over HTTP/1.0 and streams the body to standard output:
 header bytes are held until the blank line, and every later byte is
 written straight through, so it needs no `Heap`. The test suite points
-it at `serve/`, so a lex-sys client fetches from a lex-sys server.
+it at `serve/`, so a cancho client fetches from a cancho server.
 
 The first program here with two real dependencies at once: `net.connect`
-(`packages/net-connect/connect.ls`) for `octets_of`/`port_of`/
+(`packages/net-connect/connect.cho`) for `octets_of`/`port_of`/
 `connect_to` -- everything needed to turn `argv` into a connected
 socket, generic to any outbound program -- and `http.response`
-(`packages/http-response/response.ls`) for `send_all`/`status_of`, the
+(`packages/http-response/response.cho`) for `send_all`/`status_of`, the
 HTTP-specific, client-side mirror of `http.request`
 (`docs/package-system.md` §6). Both now transitively require
 `net.sockets` too (for `socket`/`close`/`write` respectively), so both
@@ -428,12 +428,12 @@ pointer.
 ### `report/` — the second outbound program
 
 ```sh
-cargo run -p lex-sys -- vcs fetch --lock examples/report/connect.lock \
-    --store packages/net-connect/.lex-sys-vcs -o /tmp/report-deps
-cargo run -p lex-sys -- vcs fetch --lock examples/report/response.lock \
-    --store packages/http-response/.lex-sys-vcs -o /tmp/report-deps
-cargo run -p lex-sys -- build --std examples/report/report.ls \
-    /tmp/report-deps/*.ls -o report
+cargo run -p cancho -- vcs fetch --lock examples/report/connect.lock \
+    --store packages/net-connect/.cancho-vcs -o /tmp/report-deps
+cargo run -p cancho -- vcs fetch --lock examples/report/response.lock \
+    --store packages/http-response/.cancho-vcs -o /tmp/report-deps
+cargo run -p cancho -- build --std examples/report/report.cho \
+    /tmp/report-deps/*.cho -o report
 ./report 127.0.0.1 8080 /result "42"
 ```
 
@@ -461,20 +461,20 @@ bytes short. Both are `docs/connect.md` §8.
 ### `collect/` — the second inbound program
 
 ```sh
-cargo run -p lex-sys -- vcs fetch --lock examples/collect/request.lock \
-    --store packages/http-request/.lex-sys-vcs -o /tmp/http-request
-cargo run -p lex-sys -- build --std examples/collect/collect.ls /tmp/http-request/*.ls -o collect
+cargo run -p cancho -- vcs fetch --lock examples/collect/request.lock \
+    --store packages/http-request/.cancho-vcs -o /tmp/http-request
+cargo run -p cancho -- build --std examples/collect/collect.cho /tmp/http-request/*.cho -o collect
 ./collect 8080 3
 ```
 
-Locks and fetches `http.request` (`packages/http-request/request.ls`,
+Locks and fetches `http.request` (`packages/http-request/request.cho`,
 `docs/package-system.md` §4.6), the fourth real package and the first
 that itself depends on a package (`net.sockets`). One fetch is enough --
 a store is always exactly one file (`vcs publish` takes one input), so
 fetching any of `http.request`'s own declarations transitively writes
-the *whole* `net-sockets.ls` file too, closure-resolved and verified the
+the *whole* `net-sockets.cho` file too, closure-resolved and verified the
 same way a direct dependency's own file is; every direct `sockets.*`
-call `collect.ls` still makes resolves from that same fetched file, with
+call `collect.cho` still makes resolves from that same fetched file, with
 no separate `net.sockets` lock needed.
 
 `report/`'s inbound counterpart, and `docs/listen.md` is its report.
@@ -492,19 +492,19 @@ concurrently, on its own thread, is the fix.
 ### `vsock/` — the third outbound program, and the first slice of `lex-os`
 
 ```sh
-cargo run -p lex-sys -- vcs fetch --lock examples/vsock/net.lock \
-    --store packages/net-sockets/.lex-sys-vcs -o /tmp/vsock-deps
-cargo run -p lex-sys -- vcs fetch --lock examples/vsock/connect.lock \
-    --store packages/net-connect/.lex-sys-vcs -o /tmp/vsock-deps
-cargo run -p lex-sys -- vcs fetch --lock examples/vsock/wire.lock \
-    --store packages/agent-wire/.lex-sys-vcs -o /tmp/vsock-deps
-cargo run -p lex-sys -- build --std examples/vsock/vsock.ls \
-    /tmp/vsock-deps/*.ls -o vsock
+cargo run -p cancho -- vcs fetch --lock examples/vsock/net.lock \
+    --store packages/net-sockets/.cancho-vcs -o /tmp/vsock-deps
+cargo run -p cancho -- vcs fetch --lock examples/vsock/connect.lock \
+    --store packages/net-connect/.cancho-vcs -o /tmp/vsock-deps
+cargo run -p cancho -- vcs fetch --lock examples/vsock/wire.lock \
+    --store packages/agent-wire/.cancho-vcs -o /tmp/vsock-deps
+cargo run -p cancho -- build --std examples/vsock/vsock.cho \
+    /tmp/vsock-deps/*.cho -o vsock
 ./vsock <cid> <port>
 ```
 
 Locks and fetches `net.sockets`, `net.connect` and `agent.wire`
-(`packages/agent-wire/wire.ls`) into one shared directory, the same
+(`packages/agent-wire/wire.cho`) into one shared directory, the same
 `fetch/`'s and `report/`'s own sections use -- `net.connect` now
 transitively requires `net.sockets` too (`docs/package-system.md` §6),
 so a separate output directory per package would fetch `net.sockets`
@@ -529,22 +529,22 @@ honestly, in the program's own comments.
 ### `results_stub/` — a real lex-os component, not a stand-in
 
 ```sh
-cargo run -p lex-sys -- vcs fetch --lock examples/results_stub/net.lock \
-    --store packages/net-sockets/.lex-sys-vcs -o /tmp/net-sockets
-cargo run -p lex-sys -- build --std examples/results_stub/results_stub.ls /tmp/net-sockets/*.ls -o results_stub
+cargo run -p cancho -- vcs fetch --lock examples/results_stub/net.lock \
+    --store packages/net-sockets/.cancho-vcs -o /tmp/net-sockets
+cargo run -p cancho -- build --std examples/results_stub/results_stub.cho /tmp/net-sockets/*.cho -o results_stub
 ./results_stub --listen 127.0.0.1:8443
 ```
 
 Locks and fetches the same `net.sockets` package `serve/` does above --
 `serve/`'s own section says why it exists.
 
-`vsock/` and `agent_supervisor/`/`agent_guest/` are lex-sys *analogues*
+`vsock/` and `agent_supervisor/`/`agent_guest/` are cancho *analogues*
 of lex-os's own guest/supervisor exchange, checked against its wire
 format but not built from lex-os's own source. This one is a real
 lex-os component, ported: `lex-os/crates/results-stub`, the single
 allowed-egress target the demo's manifest narrows to
 (`lex-os` issue #10) — the epic issue's own long-unchecked box, "a
-lex-os component ported/written in lex-sys (first production use)."
+lex-os component ported/written in cancho (first production use)."
 
 Checked directly against the Rust original's behaviour, not just its
 intent: same HTTP/1.1 stub over a raw socket, same fixed `200`, same
@@ -552,10 +552,10 @@ per-request log line shape. Two places this port is honestly narrower,
 both because of what this language's foreign-call boundary can and
 cannot cross (`docs/reach.md` §3) rather than by oversight, and both
 recorded in the file's own header comment — no peer address (`accept`'s
-own two `NULL`s in `serve.ls` already made the identical call for the
+own two `NULL`s in `serve.cho` already made the identical call for the
 identical reason), and a request body beyond its 200-byte preview
 buffer is drained, not kept, since a whole unbounded body has nowhere
-to live in a 64 KiB arena. `crates/lex-sys/tests/conformance/
+to live in a 64 KiB arena. `crates/cancho/tests/conformance/
 backends.rs`'s `the_two_backends_answer_the_results_stub_port` builds
 it on both backends, sends it a real HTTP request over loopback, and
 checks the response and the log line both.
@@ -563,19 +563,19 @@ checks the response and the log line both.
 ### `agent_supervisor/` and `agent_guest/` — the same exchange, over HTTP
 
 ```sh
-cargo run -p lex-sys -- vcs fetch --lock examples/agent_supervisor/request.lock \
-    --store packages/http-request/.lex-sys-vcs -o /tmp/http-request
-cargo run -p lex-sys -- build --std examples/agent_supervisor/agent_supervisor.ls \
-    /tmp/http-request/*.ls -o agent_supervisor
+cargo run -p cancho -- vcs fetch --lock examples/agent_supervisor/request.lock \
+    --store packages/http-request/.cancho-vcs -o /tmp/http-request
+cargo run -p cancho -- build --std examples/agent_supervisor/agent_supervisor.cho \
+    /tmp/http-request/*.cho -o agent_supervisor
 
-cargo run -p lex-sys -- vcs fetch --lock examples/agent_guest/connect.lock \
-    --store packages/net-connect/.lex-sys-vcs -o /tmp/agent-guest-deps
-cargo run -p lex-sys -- vcs fetch --lock examples/agent_guest/response.lock \
-    --store packages/http-response/.lex-sys-vcs -o /tmp/agent-guest-deps
-cargo run -p lex-sys -- vcs fetch --lock examples/agent_guest/wire.lock \
-    --store packages/agent-wire/.lex-sys-vcs -o /tmp/agent-guest-deps
-cargo run -p lex-sys -- build --std examples/agent_guest/agent_guest.ls \
-    /tmp/agent-guest-deps/*.ls -o agent_guest
+cargo run -p cancho -- vcs fetch --lock examples/agent_guest/connect.lock \
+    --store packages/net-connect/.cancho-vcs -o /tmp/agent-guest-deps
+cargo run -p cancho -- vcs fetch --lock examples/agent_guest/response.lock \
+    --store packages/http-response/.cancho-vcs -o /tmp/agent-guest-deps
+cargo run -p cancho -- vcs fetch --lock examples/agent_guest/wire.lock \
+    --store packages/agent-wire/.cancho-vcs -o /tmp/agent-guest-deps
+cargo run -p cancho -- build --std examples/agent_guest/agent_guest.cho \
+    /tmp/agent-guest-deps/*.cho -o agent_guest
 
 ./agent_supervisor 8080 "write the report" 3 &
 ./agent_guest 127.0.0.1 8080
@@ -607,7 +607,7 @@ for byte against real `serde_json` output for exactly that shape.
 ### `buffer/` — growing, written out
 
 ```sh
-cargo run -p lex-sys -- run examples/buffer/main.ls examples/buffer/buffer.ls
+cargo run -p cancho -- run examples/buffer/main.cho examples/buffer/buffer.cho
 # counting: 1 4 9 16 25 36 49 64
 ```
 
@@ -623,7 +623,7 @@ one-byte buffer is three allocations, which is what valgrind reports.
 ### `slab/` — shared ownership, as far as it reaches
 
 ```sh
-cargo run -p lex-sys -- run examples/slab/main.ls examples/slab/slab.ls
+cargo run -p cancho -- run examples/slab/main.cho examples/slab/slab.cho
 # live handle:  7
 # after remove: missing
 # new handle:   9
@@ -647,8 +647,8 @@ rule was weakened, and the object file did not change.
 ### `modular/` — two modules and a root
 
 ```sh
-cargo run -p lex-sys -- run examples/modular/main.ls \
-    examples/modular/counts.ls examples/modular/text.ls
+cargo run -p cancho -- run examples/modular/main.cho \
+    examples/modular/counts.cho examples/modular/text.cho
 # seen 3, total 60
 # 60
 ```
@@ -663,8 +663,8 @@ promise.
 ### `wordfreq/` — the capstone
 
 ```sh
-cargo run -p lex-sys -- run examples/wordfreq/main.ls \
-    examples/wordfreq/text.ls examples/wordfreq/counts.ls
+cargo run -p cancho -- run examples/wordfreq/main.cho \
+    examples/wordfreq/text.cho examples/wordfreq/counts.cho
 # dog 1
 # lazy 1
 # over 1
@@ -675,8 +675,8 @@ cargo run -p lex-sys -- run examples/wordfreq/main.ls \
 # the 3
 ```
 
-Three files: `text.ls` holds byte helpers, `counts.ls` holds the tally,
-`main.ls` is the program. Every capability is in it doing real work —
+Three files: `text.cho` holds byte helpers, `counts.cho` holds the tally,
+`main.cho` is the program. Every capability is in it doing real work —
 arguments, file IO, the heap, matching through references, slices — and
 `bump` is worth reading in particular: it walks the tally through a
 *unique* reference and increments a count in place, which is what

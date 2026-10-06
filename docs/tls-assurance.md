@@ -49,18 +49,18 @@ mirrors". The CI job (§8) installs the same packages, on `ubuntu-latest`.
 ### 3.1 The fuzzer: AFL++, with no change to the compiler
 
 The LLVM backend compiles through `clang`, named by the `CLANG` environment variable, and links with `cc`, named by `CC`
-(`crates/lex-sys-codegen-llvm/src/lib.rs`, `crates/lex-sys/src/main.rs`). Setting both to `afl-clang-fast` instruments
-every edge of a lex-sys program. Measured on `examples/hello.ls`: the instrumented binary runs, and `afl-showmap` reports its
+(`crates/cancho-codegen-llvm/src/lib.rs`, `crates/cancho/src/main.rs`). Setting both to `afl-clang-fast` instruments
+every edge of a cancho program. Measured on `examples/hello.cho`: the instrumented binary runs, and `afl-showmap` reports its
 edges. Nothing in the compiler changes, and the code fuzzed is the code shipped: the same IR, through the same `-O2`.
 
-**libFuzzer was the alternative.** It needs a C entry point, `LLVMFuzzerTestOneInput`, that calls into the program. lex-sys
+**libFuzzer was the alternative.** It needs a C entry point, `LLVMFuzzerTestOneInput`, that calls into the program. cancho
 exports no symbol but `main`, so libFuzzer would need either a language change (exported functions) or a rewrite of the
 emitted module's `main`. AFL++ runs `main` unchanged in a fork server, reading each input from standard input. It is slower
 than an in-process loop. §3.4 measures how much.
 
 ### 3.2 What a harness may feed: only bytes an attacker controls
 
-**The first measurement was the wrong harness.** `tests/programs/tls_driver.ls`, the existing test driver, under AFL++ for 60
+**The first measurement was the wrong harness.** `tests/programs/tls_driver.cho`, the existing test driver, under AFL++ for 60
 seconds from one recorded handshake: 116,338 executions, 1,939 a second, and **107 inputs that trap**. Every one of them, sorted by
 the backtrace's top two frames under `gdb`:
 
@@ -76,14 +76,14 @@ into a parser of what a server sends, or into the chain builder as a server's ce
 
 ### 3.3 The harnesses
 
-Each is `tests/programs/fuzz_<name>.ls`. It reads one input on standard input, runs it, and exits 0, so any trap is a crash
+Each is `tests/programs/fuzz_<name>.cho`. It reads one input on standard input, runs it, and exits 0, so any trap is a crash
 to AFL++.
 
 | Harness | Input | What it reaches |
 |---|---|---|
 | `fuzz_der` | one certificate's DER | `x509.parse`: the DER reader and the certificate's fields |
 | `fuzz_chain` | a server's certificate list, as TLS 1.3 sends it | `x509_verify`, through the chain builder, against a fixed trust store, host name and time: path building, name matching, constraints, signatures |
-| `fuzz_messages` | a byte choosing the message type, then a handshake message's body | every parser in `message.ls` for what a server sends, TLS 1.3 and 1.2 |
+| `fuzz_messages` | a byte choosing the message type, then a handshake message's body | every parser in `message.cho` for what a server sends, TLS 1.3 and 1.2 |
 | `fuzz_client` | the server's bytes, cut into `feed` calls at lengths the input names | the whole client from `start`: record framing, the ServerHello, HelloRetryRequest, and every refusal before the first encrypted record |
 | `fuzz_flight` | the server's handshake messages in **plaintext**, after a fixed ServerHello | the whole client past the AEAD: the harness plays the server, holds the server's X25519 key, derives the handshake keys and seals each message before `feed`. So EncryptedExtensions, Certificate, CertificateVerify, Finished, the post-handshake messages, and the TLS 1.2 flight (Certificate, ServerKeyExchange, ServerHelloDone, Finished) are fuzzed through the real record layer. *Corrected (PR 2): TLS 1.3 only. A TLS 1.2 server sends Certificate, ServerKeyExchange and ServerHelloDone in the clear, so `fuzz_client` reaches them from the recorded TLS 1.2 handshakes. And the harness holds no key: it reads the client's current read key, IV and sequence number from its slot before sealing each record, which follows every KeyUpdate with no key schedule of its own* |
 
@@ -122,10 +122,10 @@ It also gives the command that reproduces the run. AFL++'s persistent mode would
   certificates.
 - **What is committed:** after the run, `afl-cmin` minimises the queue, and that goes in under `tests/vectors/fuzz/<harness>/`.
 
-**The conformance test** (`crates/lex-sys/tests/conformance/tls_fuzz.rs`; *corrected (PR 2): first named `fuzz.rs` here*) builds every harness on both backends and runs every
+**The conformance test** (`crates/cancho/tests/conformance/tls_fuzz.rs`; *corrected (PR 2): first named `fuzz.rs` here*) builds every harness on both backends and runs every
 committed input, so the corpus is a regression test from then on.
 
-**A crash** is any input that ends the process by a signal: a trap is lex-sys's bounds or overflow check, and `ud2` is
+**A crash** is any input that ends the process by a signal: a trap is cancho's bounds or overflow check, and `ud2` is
 `SIGILL`. Each one is:
 - minimised (`afl-tmin`);
 - located (`gdb`'s backtrace);
@@ -142,7 +142,7 @@ with AFL++ 4.09c, whose `afl-clang-fast` is on clang 17, from `apt-get install a
 `scripts/fuzz_corpus.py` and the corpus §3.5 committed after the first campaign below. The command:
 
 ```
-cargo build --release -p lex-sys
+cargo build --release -p cancho
 python3 scripts/fuzz_afl.py <work> der:14400 messages:14400 chain:10800 client:10800 flight:10800
 python3 scripts/fuzz_afl.py <work> --report
 python3 scripts/fuzz_afl.py <work> --minimize
@@ -170,7 +170,7 @@ python3 scripts/fuzz_afl.py <work> --minimize
 | **total** | **20,847,352** | | **0** | **0** |
 
 That makes 197,071,774 executions across both, on two machines, and on code before and after #270's two fixes to
-`message.ls`. This one ran on the code as merged.
+`message.cho`. This one ran on the code as merged.
 
 **What the edges say, and do not.** `fuzz_der` reaches about half of its harness's instrumented edges, and `fuzz_client` and
 `fuzz_flight` about a fifth. Each counts every instrumented edge in the program, the harness's own and code no fuzzed input can reach, so
@@ -341,7 +341,7 @@ Linux VM holding about twenty idle service containers, Ollama and an iOS simulat
 average was 2.0 to 2.4 of 16 cores throughout. Noise from them widens the variances, which makes a leak harder to see, not
 easier.
 
-**The commands**, each program built with `lex-sys build --std --backend B tests/programs/<x>_timing.ls -l tick -L <dir>`:
+**The commands**, each program built with `cancho build --std --backend B tests/programs/<x>_timing.cho -l tick -L <dir>`:
 
 ```
 python3 scripts/x25519_timing.py <exe> 20000
@@ -393,7 +393,7 @@ not say is which instructions, or what remains in Cranelift's AES-GCM with DIT s
 one candidate, and nothing here tests it.
 
 **Since `docs/crypto-builtins.md`'s first PR, a program the LLVM backend builds for aarch64 Linux or Darwin sets DIT itself**,
-first thing in `main`, when the operating system says the CPU has it (`crates/lex-sys-codegen-llvm/src/dit.rs`). Only `main`'s
+first thing in `main`, when the operating system says the CPU has it (`crates/cancho-codegen-llvm/src/dit.rs`). Only `main`'s
 thread: measured with a C probe, a thread a Linux process makes inherits the bit and one a Darwin process makes starts with it
 clear, and hooks makes none. Cranelift has no inline assembly to set it with, so its rows above stand. Re-run on the same M4
 (LLVM, 20,000 samples, max |t|, the medians in timer ticks; the machine loaded, load average 3.4 to 4.8), the same compiler
@@ -437,7 +437,7 @@ fixed slot, and nothing is allocated per connection (`docs/tls-core.md` §3). So
 - **Memory** is the slot's size, whatever the server sends. PR 4 measures it, not assumes it: the peak heap under `valgrind
   --tool=massif` and the peak resident set, for each hostile case below, against an ordinary handshake.
 - **Time without input is zero.** A stalled server, the zero window, costs nothing: the client does no work until it is fed,
-  and the deadline is the caller's (`lexsys-hooks` has one). The measurement is that `feed` of nothing returns at once, in
+  and the deadline is the caller's (`cancho-hooks` has one). The measurement is that `feed` of nothing returns at once, in
   every state.
 - **Time per byte fed** is bounded by the work the largest legal input causes. The cases, each against a server in
   `scripts/tls_hostile.py`:
@@ -485,12 +485,12 @@ to 0.14 CPU seconds a connection, with each stall about 0.006 s of CPU over 30 s
 claim they support, that a connection's memory is the same whatever the server sends, holds on both.*
 
 **Two things the measurement found:**
-- **The test driver trapped on a `feed` over 64 KiB.** The 64 KiB Certificate made `tests/programs/tls_driver.ls` trap, on
+- **The test driver trapped on a `feed` over 64 KiB.** The 64 KiB Certificate made `tests/programs/tls_driver.cho` trap, on
   its own region allocation: one allocation over 64 KiB in a region traps by design. The client was not at fault. The
   driver now keeps its input on the heap.
 - **The client accepts filler certificate entries that are not on the chain's path.** The 64 KiB case is the leaf and seven
   entries of zero bytes, which are not DER. The verifier parses every entry, refuses the connection if the leaf does not
-  parse, and leaves any other entry that does not parse out of path building (`packages/x509/verify.ls`, `x509_verify`).
+  parse, and leaves any other entry that does not parse out of path building (`packages/x509/verify.cho`, `x509_verify`).
   RFC 8446 §4.4.2 allows a server to send certificates the path does not use. The cost of the junk is bounded by the
   64 KiB handshake limit and the eight-entry limit, and the table measures that cost.
 

@@ -3,22 +3,22 @@
 #
 #   scripts/package-release.sh <target> [out-dir]
 #
-# Expects `cargo build --release -p lex-sys` to have been run from a checkout
-# (or LEX_SYS_BIN to name the binary).
+# Expects `cargo build --release -p cancho` to have been run from a checkout
+# (or CANCHO_BIN to name the binary).
 # Writes, into <out-dir> (default `dist`):
 #
-#   lex-sys-<commit>-<target>.tar.gz         bin/lex-sys, LICENSE, README.md
-#   lex-sys-<commit>-<target>.tar.gz.sha256  one line, `sha256sum` format
+#   cancho-<commit>-<target>.tar.gz         bin/cancho, LICENSE, README.md
+#   cancho-<commit>-<target>.tar.gz.sha256  one line, `sha256sum` format
 #
 # The name carries the **full commit**, the same string a project's
-# `lex-sys.toml` pins, so an installer can build the asset's name from the pin.
+# `cancho.toml` pins, so an installer can build the asset's name from the pin.
 set -euo pipefail
 
 target=${1:?usage: package-release.sh <target> [out-dir]}
 out=${2:-dist}
 root=$(cd "$(dirname "$0")/.." && pwd)
-bin=${LEX_SYS_BIN:-${CARGO_TARGET_DIR:-$root/target}/release/lex-sys}
-[ -x "$bin" ] || { echo "no $bin: run cargo build --release -p lex-sys first" >&2; exit 1; }
+bin=${CANCHO_BIN:-${CARGO_TARGET_DIR:-$root/target}/release/cancho}
+[ -x "$bin" ] || { echo "no $bin: run cargo build --release -p cancho first" >&2; exit 1; }
 
 # The binary says which commit it was built from; trust that, not the checkout.
 rev=$("$bin" --version | sed -n 's/.*(rev \([0-9a-f]\{40,64\}\),.*/\1/p')
@@ -27,11 +27,11 @@ if [ -z "$rev" ]; then
   exit 1
 fi
 
-name="lex-sys-$rev-$target"
+name="cancho-$rev-$target"
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
 mkdir -p "$stage/$name/bin" "$out"
-cp "$bin" "$stage/$name/bin/lex-sys"
+cp "$bin" "$stage/$name/bin/cancho"
 cp "$root/LICENSE" "$root/README.md" "$stage/$name/"
 
 # Reproducible archive on GNU tar (the Linux release build): sorted names, no

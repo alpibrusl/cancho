@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Mutation check of `std/field25519.ls`, `std/x25519.ls` and the ported `std/ed25519.ls` (docs/x25519.md §5).
+"""Mutation check of `std/field25519.cho`, `std/x25519.cho` and the ported `std/ed25519.cho` (docs/x25519.md §5).
 
-    python3 scripts/curve25519_mutants.py <lex-sys binary>
+    python3 scripts/curve25519_mutants.py <cancho binary>
 
 Each mutant is one of the three files with one deliberate bug. All three are built as local modules (`field25519`,
-`x25519`, `ed25519`) beside a copy of `tests/programs/curve25519_driver.ls`, and run against: the RFC 7748 table, every
-Wycheproof X25519 and Ed25519 case, `tests/accept/ed25519.ls`'s three OpenSSL keypairs (public key, signature, verify, a tampered
+`x25519`, `ed25519`) beside a copy of `tests/programs/curve25519_driver.cho`, and run against: the RFC 7748 table, every
+Wycheproof X25519 and Ed25519 case, `tests/accept/ed25519.cho`'s three OpenSSL keypairs (public key, signature, verify, a tampered
 signature refused), and 300 rounds of `scripts/curve25519_differential.py`. A mutant is killed when any of them
 disagrees or the driver traps. The unmutated files are run first and must pass. Exit status 1 if a mutant survives or
 fails to build.
@@ -65,8 +65,8 @@ def evidence():
         for t in g["tests"]:
             cases.append(f"V {g['publicKey']['pk']} {t['msg'] or '-'} {t['sig'] or '-'}")
             checks.append(lambda a, v=t["result"] == "valid": (a.split(" ")[0] == "1") == v)
-    # tests/accept/ed25519.ls: three OpenSSL keypairs, their signatures, verify and a tampered signature.
-    src = open(os.path.join(ROOT, "tests/accept/ed25519.ls")).read()
+    # tests/accept/ed25519.cho: three OpenSSL keypairs, their signatures, verify and a tampered signature.
+    src = open(os.path.join(ROOT, "tests/accept/ed25519.cho")).read()
     sigs = re.findall(r"//~ STDOUT ([0-9a-f]{128})", src)
     calls = re.findall(r'check_one\(i, "([0-9a-f]{64})", "([^"]*)"\);', src)
     assert len(sigs) == 3 and len(calls) == 3
@@ -81,10 +81,10 @@ def run(compiler, sources, driver_src, work, cases, checks):
     paths = []
     for name, text in sources.items():
         text = text.replace(f"module std.{name};", f"module {name};", 1).replace("import std.field25519;", "import field25519;")
-        path = os.path.join(work, f"{name}.ls")
+        path = os.path.join(work, f"{name}.cho")
         open(path, "w").write(text)
         paths.append(path)
-    drv = os.path.join(work, "driver.ls")
+    drv = os.path.join(work, "driver.cho")
     exe = os.path.join(work, "driver")
     text = driver_src.replace("import std.x25519;", "import x25519;").replace("import std.ed25519;", "import ed25519;")
     open(drv, "w").write(text)
@@ -107,8 +107,8 @@ def run(compiler, sources, driver_src, work, cases, checks):
 
 def main():
     compiler = os.path.abspath(sys.argv[1])
-    sources = {n: open(os.path.join(ROOT, f"std/{n}.ls")).read() for n in ("field25519", "x25519", "ed25519")}
-    driver_src = open(os.path.join(ROOT, "tests/programs/curve25519_driver.ls")).read()
+    sources = {n: open(os.path.join(ROOT, f"std/{n}.cho")).read() for n in ("field25519", "x25519", "ed25519")}
+    driver_src = open(os.path.join(ROOT, "tests/programs/curve25519_driver.cho")).read()
     cases, checks = evidence()
     failed = 0
     with tempfile.TemporaryDirectory() as work:

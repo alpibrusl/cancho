@@ -97,7 +97,7 @@ and a third failure mode, for two callers.
 So the parser answers one step at a time and the *program* says when it
 wants a value:
 
-```lex-sys
+```cancho
 pub enum Step {
     // A short flag's letter: `-d` gives 'd'.
     Short(int),
@@ -113,7 +113,7 @@ Driven by a `Cursor`, which is a `val` struct of three integers — the
 argument index, the offset inside a bundled run, and whether `--` has
 been seen — so it copies, needs no region and allocates nothing:
 
-```lex-sys
+```cancho
 var c = flags.start();
 borrow args as &g in {
     var going = true;
@@ -136,7 +136,7 @@ simpler than a reference that has to be borrowed through a `match`.
 
 **A value is asked for, never guessed:**
 
-```lex-sys
+```cancho
 let (after, value) = flags.value(g, c);
 ```
 
@@ -183,7 +183,7 @@ is what `cut` wants.
 |---|---|
 | `both_ports_match_gnu_on_every_spelling` | eighteen rows, stdout **and** exit status, including the three §4 keeps as divergences — asserted to still diverge, so a row that quietly starts agreeing is moved rather than forgotten |
 | `every_argument_shape` | §2's nine shapes, read back as themselves |
-| `tests/accept/flags.ls` | the fixture, which **is** the driver `every_argument_shape` runs: §2's table and the program that prints it are one file |
+| `tests/accept/flags.cho` | the fixture, which **is** the driver `every_argument_shape` runs: §2's table and the program that prints it are one file |
 
 ### 5.1 The expectation is written down, and GNU is a second opinion
 

@@ -1,6 +1,6 @@
-// The same algorithm as `mandelbrot.ls`, in Rust.
+// The same algorithm as `mandelbrot.cho`, in Rust.
 //
-// Built twice: `-C overflow-checks=on` matches lex-sys's semantics, and
+// Built twice: `-C overflow-checks=on` matches cancho's semantics, and
 // off is Rust's own release default, which wraps. The gap between those
 // two rows is the same gap `docs/overflow-cost.md` measured, paid by a
 // different compiler.

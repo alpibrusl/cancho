@@ -3,7 +3,7 @@
 
     python3 scripts/tls_fuzz.py <driver> [<runs>]
 
-`driver` is `tests/programs/tls_driver.ls` built with the package's files. Each
+`driver` is `tests/programs/tls_driver.cho` built with the package's files. Each
 run takes one of the recorded handshakes in `tests/vectors/tls/` (TLS 1.3
 against tlslite-ng, TLS 1.2 against OpenSSL), mutates the bytes the server sent
 in one of its `F` lines -- a bit flipped, bytes set at random, the data cut

@@ -11,8 +11,8 @@
 
 | File | What |
 |---|---|
-| `std/ecdsa.ls`, `module std.ecdsa` | `verify_der` and `verify_raw` on P-256 and P-384, over a digest of any length |
-| `std/bigmod.ls` | a register API beside `pow_mod`: `setup`, then `mul`, `add`, `sub`, `inverse`, `to_mont`, `from_mont` on numbers held in the caller's `work` (§2) |
+| `std/ecdsa.cho`, `module std.ecdsa` | `verify_der` and `verify_raw` on P-256 and P-384, over a digest of any length |
+| `std/bigmod.cho` | a register API beside `pow_mod`: `setup`, then `mul`, `add`, `sub`, `inverse`, `to_mont`, `from_mont` on numbers held in the caller's `work` (§2) |
 | `scripts/ecdsa_params.py` | prints the curve constants from `openssl ecparam -param_enc explicit`, after checking them (§2.1) |
 
 Verification only, on public data, so variable time is allowed (`docs/tls-pure.md` §4.2), and the code branches on the
@@ -104,7 +104,7 @@ minimal INTEGERs, nothing after the SEQUENCE. Both then run SEC 1 §4.1.4:
 - **Mutants:** a mutation run, as for RSA.
 - **Cost:** verifications per second per core.
 
-`tests/programs/ecdsa_driver.ls` runs all of it. `crates/lex-sys/tests/conformance/ecdsa.rs` has the vectors and refusals,
+`tests/programs/ecdsa_driver.cho` runs all of it. `crates/cancho/tests/conformance/ecdsa.rs` has the vectors and refusals,
 `scripts/ecdsa_differential.py` runs Python and OpenSSL, and `scripts/ecdsa_mutants.py` the mutants.
 
 ## 5. Results
@@ -150,7 +150,7 @@ Two file names tried, `ecdsa_secp256r1_sha256_bitflip_test.json` and its P-384 f
     messages, and the same with one bit of the DER flipped;
   - OpenSSL 3.0.13 accepted the 2,000 unflipped signatures and refused the 2,000 flipped ones;
   - **`std.ecdsa` gave the same answer all 4,000 times.**
-- **`python3 scripts/ecdsa_mutants.py target/release/lex-sys`: 21 mutants, 21 killed.** One of them,
+- **`python3 scripts/ecdsa_mutants.py target/release/cancho`: 21 mutants, 21 killed.** One of them,
   `load_reduced` not subtracting when its input equals `n` exactly, first survived. That run had every vector and 2,000
   register rounds, so two things were added:
   - a fixed case whose digest is exactly `n`, so `e = 0`. Its signature was made in Python with a key and nonce from

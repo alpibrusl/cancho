@@ -4,11 +4,11 @@ Status: **built**, edition 6 (written before the code, corrected where building 
 
 ## 1. Why
 
-A long-running program has to learn that it was asked to stop: `SIGTERM` from a supervisor, `SIGINT` from a terminal, `SIGHUP` to reload. lex-sys had no way to observe a
-signal (`std.test`'s issue, #237 part b). `lexsys-hooks` (a webhook delivery service) did it through `Ffi("libc")`, and `src/ops.ls` there says exactly what that cost:
+A long-running program has to learn that it was asked to stop: `SIGTERM` from a supervisor, `SIGINT` from a terminal, `SIGHUP` to reload. cancho had no way to observe a
+signal (`std.test`'s issue, #237 part b). `cancho-hooks` (a webhook delivery service) did it through `Ffi("libc")`, and `src/ops.cho` there says exactly what that cost:
 
 * **Four libc functions** (`sigblock`, `sigsetmask`, `sigpending`, `signal`), reached through `Ffi("libc")`, which `docs/reach.md` section 5 established means *every* authority. The service's
-  `lex-sys authority` report opens with `UNBOUNDED`, and it was bounded before the signal code was written.
+  `cancho authority` report opens with `UNBOUNDED`, and it was bounded before the signal code was written.
 * **No handler**. A callback must have an empty effect row (`docs/function-values.md` section 5), so a handler could set nothing and write nothing. The workaround blocks the signals and polls
   `sigpending` once a turn, so a stop is noticed at the loop's next wake-up (50 ms at most) rather than when it arrives.
 * **The mask layout and the numbers are the program's problem**: `16386` is the `sigblock` mask for `SIGINT | SIGTERM` on Linux, `sigpending` fills a 128-byte `sigset_t` the program indexes by hand,
@@ -40,7 +40,7 @@ Four prelude types and four builtins, all **edition 6**.
 `Signals("")` that `split` hands out can become any set of claimable signals; `Signals("INT,TERM")` can become `Signals("INT")` and never `Signals("HUP")`.
 `signals_watch` on the unnarrowed root is refused (`capability-misused`): a program must say which signals it claims, and "all of them" is not an answer the authority report could print.
 
-```lex-sys
+```cancho
 edition 6;
 
 // Know that we were asked to stop. The row names the set; the report is bounded.
@@ -73,7 +73,7 @@ fn main(world: World) -> [] int {
 ### 2.1 The set is a type, so the row is exact
 
 The set of signals lives in the capability's type, as `Net`'s bound does (`Net("8080")`), and `signals_watch` performs the label `signals("INT,TERM")` with exactly that argument.
-`lex-sys authority` prints it, so *which signals a program claims* is a fact the report states, and a program that never calls `narrow` on its `Signals` claims none.
+`cancho authority` prints it, so *which signals a program claims* is a fact the report states, and a program that never calls `narrow` on its `Signals` claims none.
 Owning a `Signals("S")` discharges `signals("S")` and `signals_read`; owning a `SignalWatch` discharges `signals_read`; a function handed a `&!SignalWatch` declares `[signals_read]`
 (the path was spent where the handle was minted, `docs/file-handles.md` section 4.1). A `World` discharges `signals("")`, the root, as it does `net_out("")`.
 
@@ -82,7 +82,7 @@ alphabetical order, no spaces**. `narrow` accepts any order and the type it answ
 
 ### 2.2 The claimable signals, and the bitmask
 
-Eight signals are claimable. Each has a bit in the `int` that `signals_pending` answers, **fixed by lex-sys and the same on every target**, because the signal numbers are not
+Eight signals are claimable. Each has a bit in the `int` that `signals_pending` answers, **fixed by cancho and the same on every target**, because the signal numbers are not
 (`SIGUSR1` is 10 on Linux and 30 on macOS):
 
 | name | bit | Linux | macOS | why it is claimable |
@@ -101,10 +101,10 @@ Eight signals are claimable. Each has a bit in the `int` that `signals_pending` 
 **Every other signal is refused at compile time with the rule `signal-not-claimable`**, in `narrow`, with a sentence that says which of three reasons applies:
 
 * *cannot be caught*: `KILL` and `STOP`. The kernel does not let a program have them.
-* *a fault, not a request*: `SEGV`, `ILL`, `BUS`, `FPE` (and `ABRT`, `TRAP`, `SYS`). Blocking one that a fault raised does not defer it, the kernel kills the process; lex-sys itself ends a trap
+* *a fault, not a request*: `SEGV`, `ILL`, `BUS`, `FPE` (and `ABRT`, `TRAP`, `SYS`). Blocking one that a fault raised does not defer it, the kernel kills the process; cancho itself ends a trap
   with `SIGILL` (`docs/defined-behaviour.md` section 1), so claiming it would make every checked-arithmetic failure *look like* something the program could handle and then kill it anyway.
 * *not claimable (yet)*: everything else (`PIPE`, `CHLD`, `CONT`, `TSTP`, `TTIN`, `TTOU`, `URG`, ...). `PIPE` is deliberately not one: `conn_write` already answers `Failed(EPIPE)` and never raises it
-  (`docs/native-sockets.md` section 3). `CHLD` is not, because lex-sys has no way to start a process (#237 part a), and on macOS this design would have to ignore it to see it, which turns on
+  (`docs/native-sockets.md` section 3). `CHLD` is not, because cancho has no way to start a process (#237 part a), and on macOS this design would have to ignore it to see it, which turns on
   automatic reaping. A new signal is one row of a table when a program asks (`CONTRIBUTING.md`: two askers).
 
 A malformed set (empty, a duplicate, a space, `SIGTERM` for `TERM`, lower case) is refused under the same rule.
@@ -164,7 +164,7 @@ A failed `signals_watch` has changed nothing: it does not leave signals blocked.
 
 ## 5. Underneath
 
-Both backends emit the same thing from the same table (`lex_sys_ir::signals`): the table says, for each target, which native number each claimable signal has and which edition-independent bit it
+Both backends emit the same thing from the same table (`cancho_ir::signals`): the table says, for each target, which native number each claimable signal has and which edition-independent bit it
 answers. The handle is one `i64`: the **native mask** of the signals it claims in the high 32 bits and the descriptor in the low 32, so `signals_close` knows what to release without a table, and
 `poller_add_signals` reads the descriptor exactly as it reads a `Conn`'s.
 
@@ -202,14 +202,14 @@ natural name for the claim, hides `signals.stop`). It imports as `import std.sig
 
 ## 7. What the hooks service changes
 
-`src/ops.ls`'s four `extern fn`s, `hold_signals`, `pending_signal` and `second_signal_kills` become: `narrow(signals, "INT,TERM")` once in `main`; `signals_watch` before the first `spawn`;
+`src/ops.cho`'s four `extern fn`s, `hold_signals`, `pending_signal` and `second_signal_kills` become: `narrow(signals, "INT,TERM")` once in `main`; `signals_watch` before the first `spawn`;
 `poller_add_signals` on the loop's `Poller` so the stop wakes `poller_wait`; `signals_pending` once per wake-up; `signals_close` on the first signal for "a second signal kills at once". The
 `Ffi("libc")` that remains in the service (if any) is whatever else it uses; this removes `ffi("libc")` for signals from its row, and adds `signals("INT,TERM")`.
 
 ## 8. Where this deviates from the sockets precedent, and why
 
 * **Edition 6, not edition 5.** Slice 4 of `native-sockets.md` added `clock` to edition 5's `Split` because no edition-5 file destructured it yet (`native-sockets.md` section 10.2: "there were
-  none outside this document's own tests, which is the argument for adding it now rather than later"). That argument has expired: today 48 `.ls` files in this repository (`examples/api`,
+  none outside this document's own tests, which is the argument for adding it now rather than later"). That argument has expired: today 48 `.cho` files in this repository (`examples/api`,
   `examples/ocpp_ws`, `examples/tls_nb`, `tests/accept`, `tests/reject`, `tests/programs`, ...), the programs embedded in three conformance modules, and every downstream service destructure seven fields, and `editions.md` section 5 is explicit that a field
   on `Split` is the *additive* kind of change, absorbed by an edition. So `Split` becomes a fourth declaration of one name (`PRELUDE_SPLIT_SIGNALS`), an edition-5 file's `split()` still answers
   seven fields, and `edition 6;` is edition 5 plus signals. No file moves.
@@ -220,7 +220,7 @@ natural name for the claim, hides `signals.stop`). It imports as `import std.sig
 
 ## 9. What it is checked by
 
-`crates/lex-sys/tests/conformance/signals.rs` builds real programs on **both backends** and signals the real process with `kill(2)`; the programs speak on standard error and are driven by standard
+`crates/cancho/tests/conformance/signals.rs` builds real programs on **both backends** and signals the real process with `kill(2)`; the programs speak on standard error and are driven by standard
 input, so a signal sent before a `p` is queued before the poll that must see it. Twenty tests:
 
 | claim | test |
@@ -237,8 +237,8 @@ input, so a signal sent before a `p` is queued before the poll that must see it.
 | the authority report names the set, is `bounded`, has no `ffi`; "never touches" says `signals` when nothing is claimed | `the_authority_report_names_the_set_and_is_bounded`, `the_text_report_says_what_is_claimed_and_what_is_not` |
 | `std.signals` | `std_signals_names_the_bits` |
 
-Beside them: 9 unit tests for the table and for `Label::covers` (`lex-sys-ir`), `tests/reject/signal_not_claimable.ls` (the rule has its fixture, `every_rule_has_a_fixture`),
-`tests/accept/signals_claim.ls`, and AGENTS.md section 3.2, whose block the suite compiles.
+Beside them: 9 unit tests for the table and for `Label::covers` (`cancho-ir`), `tests/reject/signal_not_claimable.cho` (the rule has its fixture, `every_rule_has_a_fixture`),
+`tests/accept/signals_claim.cho`, and AGENTS.md section 3.2, whose block the suite compiles.
 
 **Mutants.** 37 deliberate breakages of the new code, each run against the signals tests and each **killed**: 13 in the checker and the table (the subset check skipped; `SEGV` not a fault; set cover as a text prefix, in
 `covers` and in the set test; a reversed canonical order; the row not performed; `signals_close` at edition 5; `narrow` skipping the set check; the root allowed to claim; an owned claim and an owned
@@ -253,7 +253,7 @@ host architecture; `clang -c` takes all four) and requires the Darwin module to 
 EAGAIN` per poll, and **no `rt_sigaction`**: no disposition is touched, no handler exists.
 
 **Latency.** Six runs of the wake test (three per backend): the `poller_wait` returned `124`, `180`, `234`, `263`, `292` and `496` microseconds after the `kill`, having waited `300` ms of a `20000` ms timeout.
-`ops.ls`'s polling noticed a stop at the loop's next wake-up, up to 50 ms later.
+`ops.cho`'s polling noticed a stop at the loop's next wake-up, up to 50 ms later.
 
 **Size.** 1,404 lines added to the compiler across 24 files (the table 164, the checker 127 in `lower/signals.rs` and 110 in `defs.rs`, 385 in Cranelift, 416 in LLVM; 14 lines changed), 1,368 lines of tests
 (1,218 of them conformance), 62 of `std`, 18 of fixtures, and this document.
@@ -273,7 +273,7 @@ EAGAIN` per poll, and **no `rt_sigaction`**: no disposition is touched, no handl
 * **`Signals` and `SignalWatch` do not cross to a thread** as a `spawn` payload (`crosses_to_a_thread`, as `Conn` does not). Nothing asked, and the watch-before-spawn rule makes the natural program
   the one that reads signals on the thread that watched.
 * **A signal's count is not available**, by design (section 3): a standard signal has one pending instance.
-* **Adopting it in `lexsys-hooks`** is that repository's change (section 7); this one does not touch it.
+* **Adopting it in `cancho-hooks`** is that repository's change (section 7); this one does not touch it.
 
 **A gap found, not caused, and not worked around:** a local binding hides a *qualified* function of the same name. The claim's natural name is `stop`; `std.signals` first had a `stop()` and
 `sg.stop()` was refused:

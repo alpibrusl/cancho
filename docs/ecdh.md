@@ -12,10 +12,10 @@
 
 | File | What |
 |---|---|
-| `std/ecdh.ls`, `module std.ecdh` | `public_key(curve, scalar, out, work)` and `shared(curve, scalar, peer, out, work)` on P-256 and P-384 |
-| `std/bigmod.ls` | `mul`, `add` and `sub` now reduce without a branch (§2) |
+| `std/ecdh.cho`, `module std.ecdh` | `public_key(curve, scalar, out, work)` and `shared(curve, scalar, peer, out, work)` on P-256 and P-384 |
+| `std/bigmod.cho` | `mul`, `add` and `sub` now reduce without a branch (§2) |
 | `value_barrier`, edition 6 | a value the optimiser cannot reason about (`docs/value-barrier.md`) |
-| `std/ecdsa.ls` | `curve_param`, so the curve constants are written once |
+| `std/ecdsa.cho` | `curve_param`, so the curve constants are written once |
 
 **The API.**
 - **`public_key`** answers scalar × G as an uncompressed point, `04 || x || y`. That is the key share a ClientHello sends.
@@ -62,7 +62,7 @@ RSA and ECDSA verification run on the same code, and their tests pass unchanged 
 
 ## 3. What the timing test found
 
-`scripts/ecdh_timing.py` is `scripts/gcm_timing.py`'s dudect test over `ecdh.shared` (`tests/programs/ecdh_timing.ls`): a
+`scripts/ecdh_timing.py` is `scripts/gcm_timing.py`'s dudect test over `ecdh.shared` (`tests/programs/ecdh_timing.cho`): a
 fixed scalar against random ones, under one peer point.
 
 **The first run failed.** A scalar of 1 against random scalars gave |t| = 13.2 on P-256 and 9.5 on P-384. Scalar 1 ran 1.3%
@@ -119,7 +119,7 @@ That is the CPU's data-dependent timing, which neither backend asks the CPU to t
 
 ## 4. Correctness
 
-Every case runs through `tests/programs/ecdh_driver.ls` (`crates/lex-sys/tests/conformance/ecdh.rs`):
+Every case runs through `tests/programs/ecdh_driver.cho` (`crates/cancho/tests/conformance/ecdh.rs`):
 
 | Evidence | Cases | Result |
 |---|---|---|
@@ -132,9 +132,9 @@ Every case runs through `tests/programs/ecdh_driver.ls` (`crates/lex-sys/tests/c
 | `scripts/ecdh_differential.py` against pyca/cryptography (OpenSSL 4.0.1) | 1,000 key pairs a curve, 4,200 checks | 0 differences |
 
 **Mutants:** `scripts/ecdh_mutants.py` runs 16 mutants, and **16 are killed**.
-- **In `ecdh.ls`:** the addition and doubling formulas, the windows, the table, the select, the point at infinity, the curve
+- **In `ecdh.cho`:** the addition and doubling formulas, the windows, the table, the select, the point at infinity, the curve
   equation and the on-curve check, the scalar's range, the public key's y, and the point's first byte.
-- **In `bigmod.ls`:** the reduction's mask, its carry limb, and the add-back of a negative difference.
+- **In `bigmod.cho`:** the reduction's mask, its carry limb, and the add-back of a negative difference.
 
 **Two mutants first survived.** The carry-limb mutant survived the ECDH evidence and RSA's and ECDSA's tests too, because no
 modulus in any of them is a multiple of 30 bits long. That is what `bigmod_powers.txt` is for. The first-byte mutant

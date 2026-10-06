@@ -1,12 +1,12 @@
-/* The same algorithm as `mandelbrot.ls`, in C.
+/* The same algorithm as `mandelbrot.cho`, in C.
  *
- * CHECKED=1 traps on integer overflow the way lex-sys does, so the two
+ * CHECKED=1 traps on integer overflow the way cancho does, so the two
  * halves bracket what the guarantee costs a mature backend.
  *
  * Note what this file relies on that C does not promise: `>>` on a
  * negative signed value is *implementation-defined* in C, and this code
  * needs it to be arithmetic. gcc and clang both do that; the standard
- * does not say they must. lex-sys defines it (`docs/bitwise.md` §2). */
+ * does not say they must. cancho defines it (`docs/bitwise.md` §2). */
 #include <stdio.h>
 
 #define LIMIT (4 << 16)

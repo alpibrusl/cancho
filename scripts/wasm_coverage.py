@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """W0 coverage map (docs/wasm.md): run every accept fixture for wasm32-wasip1.
 
-For each `tests/accept/*.ls`, build and run it with `--target wasm32-wasip1` and
+For each `tests/accept/*.cho`, build and run it with `--target wasm32-wasip1` and
 compare against the fixture's own `//~ STDOUT` / `//~ EXIT` / `//~ STDIN`
 annotations. Each file lands in exactly one bucket:
 
@@ -12,8 +12,8 @@ annotations. Each file lands in exactly one bucket:
            (the good kind) or the toolchain's own message (the kind to eliminate)
   wrong    built and ran but disagreed with the annotations (a bug)
 
-usage: wasm_coverage.py LEX_SYS [files...]    (default: tests/accept/*.ls)
-Needs CLANG, WASI_SYSROOT and wasmtime on the path, as `lex-sys --help` says.
+usage: wasm_coverage.py CANCHO [files...]    (default: tests/accept/*.cho)
+Needs CLANG, WASI_SYSROOT and wasmtime on the path, as `cancho --help` says.
 """
 import concurrent.futures, glob, re, subprocess, sys
 
@@ -57,7 +57,7 @@ def run_one(args):
 
 def main():
     lex = sys.argv[1]
-    files = sys.argv[2:] or sorted(glob.glob("tests/accept/*.ls"))
+    files = sys.argv[2:] or sorted(glob.glob("tests/accept/*.cho"))
     buckets = {"pass": [], "trap": [], "refused": [], "wrong": []}
     with concurrent.futures.ThreadPoolExecutor(4) as pool:
         for path, bucket, why in pool.map(run_one, [(lex, f) for f in files]):

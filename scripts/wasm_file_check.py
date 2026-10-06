@@ -5,7 +5,7 @@ Part one: one tiny program per builtin the accept fixtures do not reach -- the w
 openers (`open_write`, `open_append`, `open_new`, `open_rw`), `file_size`,
 `file_sync`, `file_truncate`, `file_pread`, `file_pwrite`, `fs_read`, `fs_write`,
 `fs_remove`, `fs_rename` -- each built for the host and for wasm32, run twice
-(starting with `/tmp/lexsys-probe` absent, then present), and required to **exit
+(starting with `/tmp/cancho-probe` absent, then present), and required to **exit
 with the same status and leave the same files**.
 
 It found that the write-mode openers failed on WASI with `EINVAL`: they went through
@@ -19,19 +19,19 @@ tree, and requires the same output, status and tree on both builds.
 Part three runs `directory_modes.rs`'s probe (`dir_mode`, `dir_own_mode`) over a tree
 with the same names and permission bits, and compares what it prints.
 
-usage: wasm_file_check.py LEX_SYS [--imports]
+usage: wasm_file_check.py CANCHO [--imports]
 
 `--imports` also prints each probe's WASI imports (`proc_exit` aside), which is
 how `docs/wasm.md`'s label-to-imports table was measured.
 
-Needs what `lex-sys --help` says `--target` needs, and `wasmtime`. CI has neither.
+Needs what `cancho --help` says `--target` needs, and `wasmtime`. CI has neither.
 """
 import glob, os, re, shutil, subprocess, sys, tempfile
 
 sys.path.insert(0, os.path.dirname(__file__))
 
 EXIT = {"proc_exit"}  # only a program that can exit non-zero imports it; never compared
-PATH = "/tmp/lexsys-probe"
+PATH = "/tmp/cancho-probe"
 HEAD = '''edition 6;
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);
@@ -91,7 +91,7 @@ def snapshot():
     return {os.path.basename(f): open(f, "rb").read() for f in sorted(glob.glob(PATH + "*"))}
 
 
-TREE = "/tmp/lexsys-dir"
+TREE = "/tmp/cancho-dir"
 # (operation, names...). The driver prints `ok <n>` or `err <errno>`.
 # Differences that are the platform's, not the port's. Printed every run, as "known".
 KNOWN_DIR_DIFFERENCES = {
@@ -111,7 +111,7 @@ DIR_CASES = [
 def directory_driver():
     """The probe program `directory_writes.rs` runs on both native backends."""
     root = os.path.join(os.path.dirname(__file__), "..")
-    text = open(os.path.join(root, "crates/lex-sys/tests/conformance/directory_writes.rs")).read()
+    text = open(os.path.join(root, "crates/cancho/tests/conformance/directory_writes.rs")).read()
     m = re.search(r'const PROBE: &str = r#"(.*?)"#;', text, re.S)
     if not m:
         sys.exit("cannot find PROBE in directory_writes.rs")
@@ -135,12 +135,12 @@ def fresh_tree():
     open(os.path.join(TREE, "a"), "w").write("old")
 
 
-def directory_part(lex_sys, work, show_imports):
-    src = os.path.join(work, "dirdriver.ls")
+def directory_part(cancho, work, show_imports):
+    src = os.path.join(work, "dirdriver.cho")
     open(src, "w").write(directory_driver())
     native, wasm = os.path.join(work, "dirdriver"), os.path.join(work, "dirdriver.wasm")
     for out, extra in ((native, []), (wasm, ["--target", "wasm32-wasip1"])):
-        b = subprocess.run([lex_sys, "build", src, "--std", *extra, "-o", out], capture_output=True, text=True)
+        b = subprocess.run([cancho, "build", src, "--std", *extra, "-o", out], capture_output=True, text=True)
         if b.returncode:
             sys.exit(f"directory driver: build failed {extra or 'native'}:\n{b.stderr}")
     bad = []
@@ -170,12 +170,12 @@ def directory_part(lex_sys, work, show_imports):
     return bad
 
 
-MODES = "/tmp/lexsys-modes"
+MODES = "/tmp/cancho-modes"
 
 
 def modes_driver():
     root = os.path.join(os.path.dirname(__file__), "..")
-    text = open(os.path.join(root, "crates/lex-sys/tests/conformance/directory_modes.rs")).read()
+    text = open(os.path.join(root, "crates/cancho/tests/conformance/directory_modes.rs")).read()
     m = re.search(r'const PROBE: &str = r#"(.*?)"#;', text, re.S)
     if not m:
         sys.exit("cannot find PROBE in directory_modes.rs")
@@ -197,14 +197,14 @@ def build_modes_tree():
     os.chmod(MODES, 0o755)
 
 
-def modes_part(lex_sys, work, show_imports):
-    src = os.path.join(work, "modes.ls")
+def modes_part(cancho, work, show_imports):
+    src = os.path.join(work, "modes.cho")
     open(src, "w").write(modes_driver())
     native, wasm = os.path.join(work, "modes"), os.path.join(work, "modes.wasm")
-    b = subprocess.run([lex_sys, "build", src, "--std", "-o", native], capture_output=True, text=True)
+    b = subprocess.run([cancho, "build", src, "--std", "-o", native], capture_output=True, text=True)
     if b.returncode:
         sys.exit(f"modes driver: native build failed:\n{b.stderr}")
-    w = subprocess.run([lex_sys, "build", src, "--std", "--target", "wasm32-wasip1", "-o", wasm],
+    w = subprocess.run([cancho, "build", src, "--std", "--target", "wasm32-wasip1", "-o", wasm],
                        capture_output=True, text=True)
     if w.returncode and "permission bits do not exist" in w.stderr:
         # W0.6: WASI's stat has no permission bits, so `dir_mode` would answer 0 for every
@@ -234,15 +234,15 @@ def modes_part(lex_sys, work, show_imports):
 
 
 def main():
-    lex_sys, show_imports = sys.argv[1], "--imports" in sys.argv[2:]
+    cancho, show_imports = sys.argv[1], "--imports" in sys.argv[2:]
     work = tempfile.mkdtemp(prefix="wasm-file-")
     bad = []
     for name, body in PROBES.items():
-        src = os.path.join(work, name + ".ls")
+        src = os.path.join(work, name + ".cho")
         open(src, "w").write(HEAD % body)
         native, wasm = os.path.join(work, name), os.path.join(work, name + ".wasm")
         for out, extra in ((native, []), (wasm, ["--target", "wasm32-wasip1"])):
-            b = subprocess.run([lex_sys, "build", src, "--std", *extra, "-o", out], capture_output=True, text=True)
+            b = subprocess.run([cancho, "build", src, "--std", *extra, "-o", out], capture_output=True, text=True)
             if b.returncode:
                 sys.exit(f"{name}: build failed {extra or 'native'}:\n{b.stderr}")
         for initial in (None, "hello world"):
@@ -264,8 +264,8 @@ def main():
             extra = sorted(wasi_functions(open(wasm, "rb").read()) - EXIT)
             print(f"  {'':14} imports: {', '.join(extra) or '-'}")
     reset(None)
-    bad += directory_part(lex_sys, work, show_imports)
-    bad += modes_part(lex_sys, work, show_imports)
+    bad += directory_part(cancho, work, show_imports)
+    bad += modes_part(cancho, work, show_imports)
     if bad:
         sys.exit("\nFAILED:\n  " + "\n  ".join(bad))
     print("native and wasm agree on every probe")

@@ -3,7 +3,7 @@
 > **Status: built (#207, all five PRs): AES-GCM (§3.1.1), P-256 and P-384 key exchange (`docs/ecdh.md`), TLS 1.3's AES-GCM suites and HelloRetryRequest (§3.3.1), TLS 1.2 (§3.4.1).** Sub-issue 10 of the self-contained TLS 1.3 client (#197). The issue asked for a
 > measured number of receivers needing TLS 1.2 or AES-GCM before anything is built. That number cannot be measured here, and
 > the requirement replaces it: **the maintainer's requirement is that the pure client be equivalent to the OpenSSL backend**
-> it is to replace in `lexsys-hooks` (#210). The maintainer chose the scope below, "AEAD parity", over full parity with
+> it is to replace in `cancho-hooks` (#210). The maintainer chose the scope below, "AEAD parity", over full parity with
 > OpenSSL's defaults and over the issue as written. This document settles what that means and how it is built and tested.
 > It supersedes `docs/tls-pure.md` §3.2 to §3.4, which are marked so.
 
@@ -11,7 +11,7 @@
 
 ## 1. The decision, and the number the issue asked for
 
-**The number.** The issue's gate is "receivers needing 1.2 or AES-GCM, out of how many". For `lexsys-hooks` that means its
+**The number.** The issue's gate is "receivers needing 1.2 or AES-GCM, out of how many". For `cancho-hooks` that means its
 operators' receivers. Neither they nor the first backend's negotiation logs are reachable from this repository. Nor can public
 servers be surveyed from here: this container's outbound HTTPS goes through an intercepting proxy (`docs/x509-verify.md` §6.3),
 which would show its own TLS, not the server's. So **no number is given, and none is claimed.**
@@ -64,7 +64,7 @@ built without tables:
 - **AES-128 and AES-256** (FIPS 197), **bitsliced**: the S-box as a fixed boolean circuit over machine words (Boyar–Peralta's
   113 gates), with no table lookup and no branch or index that depends on the key or data. The key schedule is bitsliced too.
 - **GHASH** with a constant-time carry-less multiply, with no table indexed by the key-derived `H`. *Corrected in PR 2:* this
-  said 64-bit operands, as BearSSL's `ghash_ctmul64` does. That needs the high half of a 64×64-bit product, and lex-sys's
+  said 64-bit operands, as BearSSL's `ghash_ctmul64` does. That needs the high half of a 64×64-bit product, and cancho's
   `int` is a checked 64-bit signed integer, so a product over 2^63 traps. It is built as BearSSL's `ghash_ctmul32` instead:
   32-bit operands split into masked quarters, every product of two quarters under 2^63 (§3.1.1).
 - **GCM** (NIST SP 800-38D) with a 96-bit nonce only, which is all TLS uses.
@@ -82,7 +82,7 @@ A bitsliced AES may be several times slower than ChaCha20 here. The cost is meas
 
 #### 3.1.1 Results (PR 2)
 
-**Built.** `std/aes.ls` is a port of BearSSL's `aes_ct` and `std/gcm.ls` of its `ghash_ctmul32` (Thomas Pornin, MIT licence,
+**Built.** `std/aes.cho` is a port of BearSSL's `aes_ct` and `std/gcm.cho` of its `ghash_ctmul32` (Thomas Pornin, MIT licence,
 quoted in the files):
 - **Two blocks per pass.** They are encrypted as eight 32-bit words with the blocks' bits regrouped (`ortho`), and the S-box
   is the 113-gate circuit run on all eight words.
@@ -103,7 +103,7 @@ message. After the change, one region holds all of a call's scratch:
 - no `brk` per call;
 - 5.0 µs for the same 64-byte message.
 
-**Correctness, every case through `tests/programs/gcm_driver.ls`** (`crates/lex-sys/tests/conformance/gcm.rs`):
+**Correctness, every case through `tests/programs/gcm_driver.cho`** (`crates/cancho/tests/conformance/gcm.rs`):
 
 | Evidence | Cases | Result |
 |---|---|---|
@@ -130,7 +130,7 @@ or GHASH's state, on both backends' objects. Each jump either goes to a trap (a 
 No index depends on the key or the data either.
 
 *Statistics.* `scripts/gcm_timing.py` runs a dudect-style Welch t-test (Reparaz et al., 2017) over
-`tests/programs/gcm_timing.ls`:
+`tests/programs/gcm_timing.cho`:
 - each call is timed with `rdtscp`, through a three-line C library linked with `-l tick`;
 - the inputs are 64-byte messages with 13 bytes of associated data;
 - |t| below 4.5 is no evidence of a leak.
@@ -152,7 +152,7 @@ the decoding, not the code under test: its branch on each hex digit is always pr
 mispredicts for a random one, and the state that leaves behind reaches the next timed call. The harness now decodes every
 case before it times any.
 
-**Cost.** `tests/programs/gcm_bench.ls` seals one message repeatedly, as `aead_bench.ls` does for ChaCha20 (median of 5,
+**Cost.** `tests/programs/gcm_bench.cho` seals one message repeatedly, as `aead_bench.cho` does for ChaCha20 (median of 5,
 one core of the same Xeon at 2.80 GHz). ChaCha20-Poly1305 was re-measured in the same session at 129 MB/s for 16 KiB,
 against `docs/chacha20.md` §6's 135 MB/s.
 
@@ -165,9 +165,9 @@ against `docs/chacha20.md` §6's 135 MB/s.
 **What the costs mean:**
 - **AES-GCM costs about 4 times ChaCha20-Poly1305 here.** A full 16 KiB TLS record takes half a millisecond to seal. A server
   that picks an AES-GCM suite costs that much per record.
-- **OpenSSL is about 170 times faster.** It uses the AES-NI and PCLMULQDQ instructions, which lex-sys cannot emit.
-  *Corrected (`docs/crypto-builtins.md`, step 4): lex-sys now emits them, on LLVM, where the CPU has them. AES-128-GCM seal,
-  measured with `lex-sys`'s hardware path against OpenSSL on the same machine: on aarch64 Linux (the Apple M4's VM, OpenSSL
+- **OpenSSL is about 170 times faster.** It uses the AES-NI and PCLMULQDQ instructions, which cancho cannot emit.
+  *Corrected (`docs/crypto-builtins.md`, step 4): cancho now emits them, on LLVM, where the CPU has them. AES-128-GCM seal,
+  measured with `cancho`'s hardware path against OpenSSL on the same machine: on aarch64 Linux (the Apple M4's VM, OpenSSL
   3.0.13) 557 against 4,007 MB/s at 64 bytes and 1,110 against 8,035 MB/s at 16 KiB, **7.2 times at both**; on the M4 under
   macOS (OpenSSL 3.6.4) 99 against 611 MB/s and 1,050 against 10,497 MB/s, 6.2 and 10 times. Not measured on this section's
   Xeon. The software path, still what Cranelift and a CPU without the instructions run, is the table above.*
@@ -219,13 +219,13 @@ document `bigmod` as variable-time, because it was only ever given public data.
 #### 3.3.1 Results (PR 4)
 
 **Built:**
-- **`packages/tls/record.ls`** knows the three suites, their hash and key lengths, and seals and opens under the suite's AEAD:
+- **`packages/tls/record.cho`** knows the three suites, their hash and key lengths, and seals and opens under the suite's AEAD:
   `std.chacha20` or `std.gcm`.
-- **`message.ls`** offers the suites in OpenSSL's order (`1302`, `1303`, `1301`) and the groups X25519, P-256 and P-384, with one
+- **`message.cho`** offers the suites in OpenSSL's order (`1302`, `1303`, `1301`) and the groups X25519, P-256 and P-384, with one
   X25519 share. Its ServerHello parser reads a HelloRetryRequest too: the group it names, and its cookie.
-- **`client.ls`** keeps both transcripts until a suite is named. It sizes every secret, the Finished MAC and the
+- **`client.cho`** keeps both transcripts until a suite is named. It sizes every secret, the Finished MAC and the
   CertificateVerify content by the suite's hash.
-- **On a HelloRetryRequest, `client.ls`:**
+- **On a HelloRetryRequest, `client.cho`:**
   - restarts the transcript from `message_hash`;
   - sends a second ClientHello with a P-256 or P-384 share, echoing the cookie;
   - checks the second ServerHello against the retry: the same suite, a share of the group asked for, no second retry.
@@ -352,16 +352,16 @@ nothing to replay. The gates are:
 #### 3.4.1 Results (PR 5)
 
 **Built:**
-- **`packages/tls/slot.ls` (`tls_slot`) is new.** It holds what both handshakes share: the states, the slot's layout, the
-  transcript, the record queue, alerts, the ECDH share, and the chain and signature checks. It was moved out of `client.ls`,
+- **`packages/tls/slot.cho` (`tls_slot`) is new.** It holds what both handshakes share: the states, the slot's layout, the
+  transcript, the record queue, alerts, the ECDH share, and the chain and signature checks. It was moved out of `client.cho`,
   which would otherwise have passed 2,000 lines.
-- **`packages/tls/client12.ls` (`tls_client12`) is new: the TLS 1.2 handshake.**
-- **`record.ls`** gained:
+- **`packages/tls/client12.cho` (`tls_client12`) is new: the TLS 1.2 handshake.**
+- **`record.cho`** gained:
   - the six suites;
   - TLS 1.2 records: the additional data carries the sequence number. AES-GCM's 8-byte explicit nonce is sent in each
     record and is the sequence number, and ChaCha20's nonce is the IV XORed with the sequence number, as in 1.3;
   - the PRF.
-- **`message.ls`:**
+- **`message.cho`:**
   - the ClientHello offers TLS 1.2 beside 1.3, with the six suites, the renegotiation SCSV, `ec_point_formats`,
     `extended_master_secret`, and `rsa_pkcs1_*` among the signature algorithms;
   - a ServerHello with no `supported_versions` is read as TLS 1.2;
@@ -434,11 +434,11 @@ nothing to replay. The gates are:
 
 | File | PR | What |
 |---|---|---|
-| `std/aes.ls`, `std/gcm.ls` | 2 | bitsliced AES-128/256; GHASH and GCM |
-| `std/ecdh.ls`, and `std/bigmod.ls` where it branches on data | 3 | P-256 and P-384 key exchange |
-| `packages/tls/record.ls` | 4, 5 | the AEAD chosen by the suite; TLS 1.2's AES-GCM nonce |
-| `packages/tls/message.ls` | 4, 5 | the new ClientHello; HRR; TLS 1.2's messages |
-| `packages/tls/client.ls`, a new `packages/tls/client12.ls` | 4, 5 | the 1.3 changes; the 1.2 handshake in its own file, under 2,000 lines |
+| `std/aes.cho`, `std/gcm.cho` | 2 | bitsliced AES-128/256; GHASH and GCM |
+| `std/ecdh.cho`, and `std/bigmod.cho` where it branches on data | 3 | P-256 and P-384 key exchange |
+| `packages/tls/record.cho` | 4, 5 | the AEAD chosen by the suite; TLS 1.2's AES-GCM nonce |
+| `packages/tls/message.cho` | 4, 5 | the new ClientHello; HRR; TLS 1.2's messages |
+| `packages/tls/client.cho`, a new `packages/tls/client12.cho` | 4, 5 | the 1.3 changes; the 1.2 handshake in its own file, under 2,000 lines |
 
 ## 5. What stays different from OpenSSL, after all five PRs
 

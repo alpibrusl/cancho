@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Writes par1.ls, par2.ls and par4.ls: P threads, each summing its own 128 KB boxed slice 12,207 times (the
+"""Writes par1.cho, par2.cho and par4.cho: P threads, each summing its own 128 KB boxed slice 12,207 times (the
 cache-resident `reduce` of benches/, wrapping adds so LLVM vectorises it), each given its own struct by `&!`
-reference (`tests/accept/spawn_struct_ref.ls`). Total work is P times one thread's, so perfect scaling keeps the
+reference (`tests/accept/spawn_struct_ref.cho`). Total work is P times one thread's, so perfect scaling keeps the
 wall time constant.
 
     python3 benches/parallel/gen_threads.py /tmp/par
-    for p in 1 2 4; do lex-sys build --std --backend llvm /tmp/par/par$p.ls -o /tmp/par/par$p; done
+    for p in 1 2 4; do cancho build --std --backend llvm /tmp/par/par$p.cho -o /tmp/par/par$p; done
     for p in 1 2 4; do (time taskset -c 0-3 /tmp/par/par$p); done
 """
 import os
@@ -78,7 +78,7 @@ fn main(world: World) -> [conc] int {
         s += ind + "borrow mut w%d as &!k%d in {\n" % (i, i)
         ind += "    "
     for i in range(p):
-        s += ind + "let f%d = work;\n" % i          # one function value per spawn: see tests/accept/spawn_struct_ref.ls
+        s += ind + "let f%d = work;\n" % i          # one function value per spawn: see tests/accept/spawn_struct_ref.cho
     for i in range(p):
         s += ind + "let t%d = spawn(k%d, f%d);\n" % (i, i, i)
     for i in range(p):
@@ -99,5 +99,5 @@ fn main(world: World) -> [conc] int {
 out = sys.argv[1] if len(sys.argv) > 1 else "."
 os.makedirs(out, exist_ok=True)
 for p in (1, 2, 4):
-    with open(os.path.join(out, "par%d.ls" % p), "w") as f:
+    with open(os.path.join(out, "par%d.cho" % p), "w") as f:
         f.write(program(p))

@@ -1,0 +1,141 @@
+module http.request;
+
+// `http.request` -- the fourth real `cancho-vcs` package, and the
+// first that itself depends on another package.
+//
+// `examples/collect/collect.cho` and `examples/agent_supervisor/
+// agent_supervisor.cho` -- both already `import net.sockets` -- each
+// declared the same second pair of functions independently:
+// `content_length_of` and `read_request` (63 lines together), reading
+// one HTTP request in full, streamed to standard output rather than
+// materialised, by a `Content-Length` a `sockets.read` loop has to
+// find inside the header block first. The same "two real askers" bar
+// `net.sockets` itself cleared -- but extracting it needed a package
+// that could depend on a package, which is why it waited for
+// `docs/package-system.md` §4.6 rather than landing alongside
+// `agent.wire`.
+//
+// `import net.sockets` is real here, unlike every earlier package:
+// `sockets.read`/`sockets.put` are called, not merely available. This
+// is `net.sockets`'s first real consumer that is itself a published
+// store rather than a program (`vcs publish --requires
+// examples/http-request-net.lock:packages/net-sockets/.cancho-vcs`,
+// mechanically the same as any consumer's own `vcs lock` — see
+// `docs/package-system.md` §4.6).
+//
+// No `import std.bytes` or `import std.io`, for the same reason
+// `net.sockets`'s own `put`/`put_nat` and `agent.wire`'s own digit
+// check have none: `vcs publish` never makes `--std` available
+// (`cmd_publish` parses with `with_std: false` unconditionally). `find`
+// below inlines the one literal search `bytes.find` would otherwise
+// provide, `content_length_of`'s digit loop inlines what
+// `bytes.digit_of` would, and `read_request` calls the intrinsic
+// `write_bytes` directly rather than through `std.io`'s own thin
+// `write_all` wrapper around it.
+
+import net.sockets;
+
+// The index of the first occurrence of `needle` in `haystack`, or -1.
+// `needle` is always a literal this file wrote, so a naive scan (no
+// Boyer-Moore, no skip table) is the whole search either function
+// below ever needs.
+fn find[&h, &n](haystack: &h [byte], needle: &n [byte]) -> [] int {
+    let hn = len(haystack);
+    let nn = len(needle);
+    var i = 0;
+    while i + nn <= hn {
+        var matched = true;
+        var j = 0;
+        while j < nn {
+            if int_of(haystack[i + j]) != int_of(needle[j]) {
+                matched = false;
+            }
+            j = j + 1;
+        }
+        if matched {
+            return i;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// The value of `Content-Length:` inside a header block already known
+// to hold one, or 0 if there is none -- a request with a body always
+// declares one here, and one without a body is treated as empty
+// rather than refused.
+pub fn content_length_of[&h](head: &h [byte]) -> [] int {
+    let at = find(head, "Content-Length: ");
+    if at < 0 {
+        return 0;
+    }
+    var i = at + len("Content-Length: ");
+    var value = 0;
+    while i < len(head) {
+        let c = int_of(head[i]);
+        if c < '0' || c > '9' {
+            return value;
+        }
+        value = value * 10 + (c - '0');
+        i = i + 1;
+    }
+    return value;
+}
+
+// Read one request in full and write its body to standard output,
+// streamed rather than materialised. Answers `true` once a complete
+// header block was found and its body, if any, fully read; `false` for
+// a connection that closed before either.
+//
+// Holds header bytes in `head` until the blank line, then forwards
+// everything after it. A fixed byte count -- `Content-Length`, not
+// "until the peer closes" -- decides when this is done, since a client
+// on a real connection may keep it open past the body it sent.
+pub fn read_request[&f, &i](libc: &f Ffi("libc"), io: &!i Io, conn: int) -> [ffi("libc"), io_write] bool {
+    region scratch {
+        let head = alloc_slice[scratch](4096, byte_of(0));
+        let chunk = alloc_slice[scratch](4096, byte_of(0));
+        var held = 0;
+        var body_total = 0 - 1;
+        var body_seen = 0;
+        var done = false;
+        var going = true;
+        while going {
+            let got = sockets.read(libc, conn, chunk);
+            if got <= 0 {
+                going = false;
+            } else if body_total >= 0 {
+                write_bytes(io, chunk[0..got]);
+                body_seen = body_seen + got;
+                if body_seen >= body_total {
+                    done = true;
+                    going = false;
+                }
+            } else {
+                let before = held;
+                var take = got;
+                if take > len(head) - held {
+                    take = len(head) - held;
+                }
+                sockets.put(head, held, chunk[0..take]);
+                held = held + take;
+                let end = find(head[0..held], "\r\n\r\n");
+                if end >= 0 {
+                    body_total = content_length_of(head[0..held]);
+                    let from = end + 4 - before;
+                    if from < got {
+                        write_bytes(io, chunk[from..got]);
+                        body_seen = got - from;
+                    }
+                    if body_total == 0 || body_seen >= body_total {
+                        done = true;
+                        going = false;
+                    }
+                } else if held == len(head) {
+                    going = false;
+                }
+            }
+        }
+        return done;
+    }
+}

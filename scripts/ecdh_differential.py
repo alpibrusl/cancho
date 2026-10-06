@@ -3,7 +3,7 @@
 
     python3 scripts/ecdh_differential.py <driver> [<count per curve>]
 
-`driver` is `tests/programs/ecdh_driver.ls` built with `lex-sys build --std`.
+`driver` is `tests/programs/ecdh_driver.cho` built with `cancho build --std`.
 OpenSSL is reached through pyca/cryptography (`pip install cryptography`).
 
 For each curve, P-256 and P-384, and each of `count` (default 1,000) random

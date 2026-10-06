@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """How fast `std.ed25519` signs and verifies and `std.x25519` computes (docs/x25519.md §6).
 
-    lex-sys build --std tests/programs/ed25519_bench.ls -o ed25519_bench
+    cancho build --std tests/programs/ed25519_bench.cho -o ed25519_bench
     python3 scripts/curve25519_bench.py ./ed25519_bench <ed25519 rounds> <x25519 rounds>
 
 Each figure is the median of five runs of `rounds` operations, less the median of five runs of one, divided by `rounds - 1`.

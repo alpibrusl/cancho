@@ -5,8 +5,8 @@
  * arithmetic on them, which is the point: constant-time code may compute with secrets, never branch on them or index
  * by them.
  *
- * The lex-sys functions are called directly from the object `lex-sys build --emit obj` makes (a slice is a pointer and
- * an `i64` length, an `int` an `i64`; capabilities and regions are no argument at all: crates/lex-sys-codegen-llvm/src/
+ * The cancho functions are called directly from the object `cancho build --emit obj` makes (a slice is a pointer and
+ * an `i64` length, an `int` an `i64`; capabilities and regions are no argument at all: crates/cancho-codegen-llvm/src/
  * emit.rs, `leaves_into`). `scripts/curve25519_ctgrind.sh` builds and runs it.
  *
  *     ctgrind x25519 | ed25519-sign

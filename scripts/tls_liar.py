@@ -4,7 +4,7 @@
     python3 scripts/tls_liar.py <driver> <out.txt>
     python3 scripts/tls_liar.py --streams <tls_many> <out.txt>
 
-`driver` is `tests/programs/tls_driver.ls` built with `--std` and the package's
+`driver` is `tests/programs/tls_driver.cho` built with `--std` and the package's
 files. The server is written here on pyca/cryptography's primitives (X25519,
 P-256 and P-384 ECDH, ChaCha20-Poly1305 and AES-GCM, Ed25519, HMAC-SHA-256 and
 -SHA-384), independently of the client; it knows only RFC 8446. It answers
@@ -29,12 +29,12 @@ For the others, the client must end with the case's tag, failed (event 5),
 and must have sent the alert RFC 8446 §6.2 names: in plaintext during the
 server's flight (the client's write key changes only after the server's
 Finished, RFC 8446 Appendix A.1), under its application key after. The file holds each case's driver lines
-and answers; `crates/lex-sys/tests/conformance/tls.rs` replays every case and
+and answers; `crates/cancho/tests/conformance/tls.rs` replays every case and
 `scripts/tls_mutants.py` runs each mutant against them. Exit status 1 on any
 difference.
 
 With `--streams`, the honest server listens on a socket instead, and
-`tests/programs/tls_many.ls` (built with `packages/tls/tls.ls`) makes 64
+`tests/programs/tls_many.cho` (built with `packages/tls/tls.cho`) makes 64
 connections to it with the fixed seed 00 to 1f. Each connection's
 ClientHello depends only on the seed and on how many connections started
 before it, and everything the honest server sends depends only on the

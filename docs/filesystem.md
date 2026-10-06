@@ -8,7 +8,7 @@
 > are those two.
 >
 > This is the last mile to M3's acceptance criterion
-> ([#1](https://github.com/alpibrusl/lex-sys/issues/1)): a real CLI tool
+> ([#1](https://github.com/alpibrusl/cancho/issues/1)): a real CLI tool
 > doing file IO and parsing.
 
 ---
@@ -137,7 +137,7 @@ inferring it from a read that happens to succeed.
 > cannot ask for. So both opens are now `openat(AT_FDCWD, path, flags,
 > mode)` with `O_CLOEXEC`: `O_WRONLY|O_CREAT|O_TRUNC` and `0644` to write,
 > `O_RDONLY` to read. The per-target flag values live once, in
-> `lex_sys_ir::open_flags`. The mode test above still holds, and still
+> `cancho_ir::open_flags`. The mode test above still holds, and still
 > checks the variadic `mode` from outside the program.
 
 ---
@@ -235,12 +235,12 @@ own.
 
 ## 5. What this unblocks
 
-M3's acceptance criterion. [`examples/lines.ls`](../examples/lines.ls)
+M3's acceptance criterion. [`examples/lines.cho`](../examples/lines.cho)
 writes a log, reads it back off disk, counts and filters it, writes a
 report, and reads the report back to print it — four file operations, one
 capability narrowed once in `main`, and a row on every frame that carries
 it. The bytes come from disk; everything done to them is the slice
-machinery `wordcount.ls` already used.
+machinery `wordcount.cho` already used.
 
 There are no command-line arguments yet (§6), so the tool lays down its own
 input rather than being handed a path. That is the one place the example is
@@ -257,7 +257,7 @@ rather than a missing language one.
 | Path normalisation | A security function; needs symlinks decided too (§4.1) |
 | Command-line arguments | `main` takes a `World` and nothing else today; arguments are another thing the runtime hands over, and they need a capability question answered first |
 | Directory listing | Another operation, and a second shape of result |
-| `-1` versus a result type | `Result[T]` exists (`rational.ls` uses one). Whether the filesystem should return one is a library-shape question |
+| `-1` versus a result type | `Result[T]` exists (`rational.cho` uses one). Whether the filesystem should return one is a library-shape question |
 
 ---
 
@@ -265,17 +265,17 @@ rather than a missing language one.
 
 | Fixture | Rule | § |
 |---|---|---|
-| `fs_without_capability.ls` | Reading a file requires an `Fs` | 1 |
-| `fs_widened.ls` | `Fs("/tmp/a")` cannot become `Fs("/tmp")` | 1 |
-| `fs_sibling_prefix.ls` | `Fs("/tmp")` cannot become `Fs("/tmpevil")` | 1.1 |
-| `fs_effect_undeclared.ls` | A row must name the prefix it reads | 1 |
+| `fs_without_capability.cho` | Reading a file requires an `Fs` | 1 |
+| `fs_widened.cho` | `Fs("/tmp/a")` cannot become `Fs("/tmp")` | 1 |
+| `fs_sibling_prefix.cho` | `Fs("/tmp")` cannot become `Fs("/tmpevil")` | 1.1 |
+| `fs_effect_undeclared.cho` | A row must name the prefix it reads | 1 |
 
 And the accepting counterparts:
 
 | Fixture | Shows |
 |---|---|
-| `file_roundtrip.ls` | Write a file, read it back, compare the bytes |
-| `fs_narrowed.ls` | A capability narrowed once, threaded down, used at the bottom |
+| `file_roundtrip.cho` | Write a file, read it back, compare the bytes |
+| `fs_narrowed.cho` | A capability narrowed once, threaded down, used at the bottom |
 
 Plus four conformance tests, because these are runtime rules and a fixture
 that only *compiles* would not reach them:

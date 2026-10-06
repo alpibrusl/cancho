@@ -1,6 +1,6 @@
 # The CLI as data, not a doc that can drift
 
-> **Status: built.** `lex-sys introspect` and `lex-sys skill` register
+> **Status: built.** `cancho introspect` and `cancho skill` register
 > every subcommand once, in `src/acli.rs`, via the
 > [acli](https://github.com/alpibrusl/acli) SDK `lex-lang`'s
 > `crates/lex-cli/src/acli.rs` already uses — so an agent learns the
@@ -20,10 +20,10 @@
 > below in §2.
 >
 > **A second thing found, not fixed, because it isn't this repository's
-> to fix.** `lex-sys skill`'s generated text also carries a fixed
+> to fix.** `cancho skill`'s generated text also carries a fixed
 > "Exit codes" / "Output format" section — acli 0.5's own template,
 > the same one `lex-lang` ships — that does not describe this binary:
-> lex-sys's real codes are 0/1/2/3 (and 4, for `lex-sys test` only:
+> cancho's real codes are 0/1/2/3 (and 4, for `cancho test` only:
 > a built program with a failing `test_*`; *corrected, the original
 > sentence left it out*), documented at the top of `main.rs`
 > and in `docs/agent-errors.md`, not ACLI's generic 0/2/3/5/8/9; and not
@@ -37,8 +37,8 @@
 ## 1. What ships
 
 ```sh
-lex-sys introspect [--output json]        # full command tree, ACLI spec §1.2
-lex-sys skill [--output json] [<out-file>]  # markdown + YAML, agentskills.io
+cancho introspect [--output json]        # full command tree, ACLI spec §1.2
+cancho skill [--output json] [<out-file>]  # markdown + YAML, agentskills.io
 ```
 
 Both are generated from one `Vec<CommandInfo>` in `src/acli.rs` — the
@@ -52,11 +52,11 @@ comment on that decision explains.
 
 ## 2. The false-familiarity bug this found
 
-`crates/lex-sys/src/acli.rs`'s `CommandInfo::add_option` always renders
+`crates/cancho/src/acli.rs`'s `CommandInfo::add_option` always renders
 as `--{name}` in the generated skill text (`acli`'s own `skill.rs`
 template has no other form). `build` and `run` take `-o`, `-l`, and
 `-L` — single dash, checked directly in `parse_args`
-(`crates/lex-sys/src/main.rs`) — so the first draft of this registered
+(`crates/cancho/src/main.rs`) — so the first draft of this registered
 them as options and generated:
 
 ```
@@ -64,7 +64,7 @@ them as options and generated:
 ```
 
 An agent reading only the generated surface, with no other prior on
-this binary, would write `lex-sys build --o out app.ls` and be refused
+this binary, would write `cancho build --o out app.cho` and be refused
 with `unknown option --o`— the exact shape of harm §0 of this whole
 line of work (`docs/first-page.md`, the `false-familiarity` discussion
 that motivated it) was about: a surface that *looks* authoritative
@@ -73,9 +73,9 @@ teaching the wrong thing with full confidence.
 Fixed by registering `-o <path>`, `-l <name>`, `-L <path>` as
 *arguments* instead of options: `CommandInfo::add_argument` renders the
 name bare, with no assumed prefix, so the literal dash in the name is
-what an agent sees. Checked directly — `cargo run -p lex-sys -- skill`
+what an agent sees. Checked directly — `cargo run -p cancho -- skill`
 is grepped for a bare `` `-o <path>` `` line in
-`crates/lex-sys/tests/conformance/agent_cli.rs`'s
+`crates/cancho/tests/conformance/agent_cli.rs`'s
 `introspect_names_every_registered_command`, though the sharper check
 is just reading the output once, by hand, which is how this was found
 in the first place.
@@ -89,7 +89,7 @@ json|text|table`. Neither is a function of anything registered in
 `src/acli.rs` — there is no `SkillOptions` hook for it in this SDK
 version — so it cannot be made accurate from this repository without
 forking the dependency, which is out of scope for a project that only
-works on lex-sys.
+works on cancho.
 
 The mitigation is documentation, not code: `AGENTS.md` §0 and this
 document both say, in the same breath as recommending `skill`, that its
@@ -104,8 +104,8 @@ one.
 `introspect` and `version` (not `skill`) also refresh a `.cli/`
 folder — `commands.json`, a `README.md`, and one example script per
 command with examples — as a side effect, per ACLI spec §1.3.
-`lex-lang` commits this folder; lex-sys does not (`.gitignore`): unlike
-`lex-lang`'s ~50-command surface, lex-sys's nine commands are cheap
+`lex-lang` commits this folder; cancho does not (`.gitignore`): unlike
+`lex-lang`'s ~50-command surface, cancho's nine commands are cheap
 enough to regenerate on demand, and a checked-in copy is one more place
 the same staleness this document opened with could hide. `introspect`/
 `skill` themselves are the up-to-date surface.
@@ -116,8 +116,8 @@ the same staleness this document opened with could hide. `introspect`/
 
 | Question | Why it waits |
 |---|---|
-| Route `--version` through `acli::build_app().handle_version()` | `lex-lang` does; lex-sys's `--version` predates this slice and already has its own tested text (`lex-sys {version} (host {triple})`). Rewiring it for consistency alone would change committed-test-visible output for no behavior gain — left as is |
-| A golden snapshot of `lex-sys skill` (`lex-lang`'s `cli_skill_is_in_sync`) | `every_dispatched_command_is_documented` already catches a command going undocumented; a byte-for-byte snapshot catches wording drift too, at the cost of a fixture to update on every `CommandInfo` edit. Not yet worth it at nine commands |
+| Route `--version` through `acli::build_app().handle_version()` | `lex-lang` does; cancho's `--version` predates this slice and already has its own tested text (`cancho {version} (host {triple})`). Rewiring it for consistency alone would change committed-test-visible output for no behavior gain — left as is |
+| A golden snapshot of `cancho skill` (`lex-lang`'s `cli_skill_is_in_sync`) | `every_dispatched_command_is_documented` already catches a command going undocumented; a byte-for-byte snapshot catches wording drift too, at the cost of a fixture to update on every `CommandInfo` edit. Not yet worth it at nine commands |
 
 ---
 
@@ -125,5 +125,5 @@ the same staleness this document opened with could hide. `introspect`/
 
 | Test | Shows |
 |---|---|
-| `agent_cli::every_dispatched_command_is_documented` | every command `main.rs` dispatches is in both the `usage:` block and `lex-sys skill`'s command list — sourced from the dispatch table itself, not a curated second list |
-| `agent_cli::introspect_names_every_registered_command` | `lex-sys introspect --output json` parses as JSON and names every top-level command |
+| `agent_cli::every_dispatched_command_is_documented` | every command `main.rs` dispatches is in both the `usage:` block and `cancho skill`'s command list — sourced from the dispatch table itself, not a curated second list |
+| `agent_cli::introspect_names_every_registered_command` | `cancho introspect --output json` parses as JSON and names every top-level command |

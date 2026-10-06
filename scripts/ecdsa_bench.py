@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verifications per second of `std.ecdsa` (docs/ecdsa.md §5.4).
 
-    lex-sys build --std [--backend llvm] tests/programs/ecdsa_driver.ls -o ecdsa_driver
+    cancho build --std [--backend llvm] tests/programs/ecdsa_driver.cho -o ecdsa_driver
     python3 scripts/ecdsa_bench.py ecdsa_driver
 
 For P-256 with SHA-256 and P-384 with SHA-384, a DER signature is made with
@@ -31,7 +31,7 @@ def best(driver, line, rounds):
 
 def main():
     driver = sys.argv[1]
-    msg = b"lex-sys ecdsa bench"
+    msg = b"cancho ecdsa bench"
     for curve, cls, h, alg, rounds in ((256, ec.SECP256R1, 32, hashes.SHA256(), 1001), (384, ec.SECP384R1, 48, hashes.SHA384(), 501)):
         key = ec.generate_private_key(cls())
         point = key.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint).hex()

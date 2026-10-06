@@ -3,11 +3,11 @@
 > **Status: a documented no, with one function that was earned anyway.**
 >
 > `ROADMAP.md` carried a row asking for `std.lines`, on the grounds that
-> *"`examples/cut/` and `examples/tally.ls` both read `getchar` into a
+> *"`examples/cut/` and `examples/tally.cho` both read `getchar` into a
 > fixed buffer, and two programs hand-rolling the same loop is how the
 > last four library functions were found."*
 >
-> **`tally.ls` has no buffer.** It streams — one byte in, counters up,
+> **`tally.cho` has no buffer.** It streams — one byte in, counters up,
 > nothing kept. The row was written from a memory of what those programs
 > do rather than from reading them, and reading them says the bar this
 > repository sets was never met.
@@ -24,11 +24,11 @@ Five programs call `getchar`. What each does with it:
 
 | | reads | keeps |
 |---|---|---|
-| `tally.ls` | a byte at a time | **nothing** — counters only |
-| `wordcount.ls` | a byte at a time | nothing; its one `alloc_slice` is a needle |
-| `base64.ls` | a byte at a time | an *output* buffer, 4096, not input |
-| `sort.ls` | a byte at a time | **the whole input**, growing on the heap |
-| `cut.ls` | a byte at a time | **one line**, and it was the only one |
+| `tally.cho` | a byte at a time | **nothing** — counters only |
+| `wordcount.cho` | a byte at a time | nothing; its one `alloc_slice` is a needle |
+| `base64.cho` | a byte at a time | an *output* buffer, 4096, not input |
+| `sort.cho` | a byte at a time | **the whole input**, growing on the heap |
+| `cut.cho` | a byte at a time | **one line**, and it was the only one |
 
 So the shape `while c >= 0 { … c = getchar(io) }` is in five programs
 and means something different in every one. What is *not* in five
@@ -75,7 +75,7 @@ that is not a fact about this suite in particular.
 
 ## 3. The fix, and what it costs
 
-`cut` now grows on the heap, the way `sort.ls` already did. There is no
+`cut` now grows on the heap, the way `sort.cho` already did. There is no
 limit left to get wrong, and it matches GNU at every boundary above.
 
 Measured on 14.7 MB, 400,000 lines, median of seven:
@@ -92,7 +92,7 @@ input rather than on every input anyone happened to test.
 ### 3.1 It also costs authority, and that is the right way round
 
 `cut` released its `Heap` before; now it holds one. Its report gains
-`heap`, and `lex-sys authority` says so.
+`heap`, and `cancho authority` says so.
 
 `bulk-io.md` §3.2's rule is *a program must not look more powerful for
 having been written better*. This is that rule meeting its mirror image
@@ -126,8 +126,8 @@ The difference is that `read_line` had an alternative that worked, and
 
 ## 5. What would change the answer on `read_line`
 
-A second program that reads a line at a time. `wordcount.ls` and
-`tally.ls` will not become it — they stream on purpose, and a line
+A second program that reads a line at a time. `wordcount.cho` and
+`tally.cho` will not become it — they stream on purpose, and a line
 reader would make them slower and no clearer.
 
 The candidates are the ports not yet written: anything with records,

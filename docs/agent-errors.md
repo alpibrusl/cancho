@@ -4,7 +4,7 @@
 >
 > lex-lang's `docs/AGENT_GUIDELINES.md` is a contract with a *reader
 > that is a program*: `lex check --output json` answers a stable
-> `rule_tag`, and §4's rule is **repair, don't regenerate**. lex-sys has
+> `rule_tag`, and §4's rule is **repair, don't regenerate**. cancho has
 > none of that. It has 196 must-reject fixtures, each of which answers
 > a sentence written for a person.
 >
@@ -44,14 +44,14 @@ it has to special-case.
 ### 1.2 One error per invocation
 
 ```
-$ cat three.ls
+$ cat three.cho
 fn a() -> [] int { return true; }
 fn b() -> [] int { return oops; }
 fn c() -> [] bool { return 1; }
 fn main() -> [] int { return 0; }
 
-$ lex-sys check three.ls
-three.ls:1:27: error: expected `int`, found `bool`
+$ cancho check three.cho
+three.cho:1:27: error: expected `int`, found `bool`
 ```
 
 Three independent errors in three independent functions; one reported.
@@ -91,7 +91,7 @@ English.
 }
 ```
 
-and lex-sys has every ingredient: `Diagnostic { message, span }`, a
+and cancho has every ingredient: `Diagnostic { message, span }`, a
 `SourceMap` that resolves a span to `file:line:col`, and `--output json`
 already shipped on `authority`. What is missing is the tag and the
 plural.
@@ -106,9 +106,9 @@ hint recorded against an **op id**, consumed by `lex repair --apply`,
 and written back as a `RepairAttempt` attestation that
 `lex blame --with-evidence` can follow.
 
-lex-sys has no op log, no store and no attestation graph, and
+cancho has no op log, no store and no attestation graph, and
 `ROADMAP.md` keeps it that way — the content-addressed AST is here, the
-VCS built on it is lex-lang's. So **`lex-sys repair` is not the next
+VCS built on it is lex-lang's. So **`cancho repair` is not the next
 slice and may never be one.**
 
 ### 2.1 But the hint is not the attestation
@@ -153,7 +153,7 @@ compiler's own failures, not the program's: [`internal-errors.md`](internal-erro
 | 9 | `mode-bound-violated` |
 | 8 | `linear-use-after-move` |
 
-**52 against lex-lang's 16, and that is not bloat.** lex-sys checks four
+**52 against lex-lang's 16, and that is not bloat.** cancho checks four
 things lex-lang does not have: linearity, regions, capabilities as
 values, and defined-behaviour arithmetic. Those four account for
 `linear-*`, `reference-escapes-region`, `borrow-conflict`,
@@ -255,7 +255,7 @@ runs in.
 ## 5. The shape on the wire
 
 ```sh
-$ lex-sys check tests/reject/args_effect_undeclared.ls --output json
+$ cancho check tests/reject/args_effect_undeclared.cho --output json
 ```
 
 ```json
@@ -265,7 +265,7 @@ $ lex-sys check tests/reject/args_effect_undeclared.ls --output json
       "rule": "effect-not-declared",
       "message": "`verbose` performs `args`, which its row [] does not declare; narrow the body or widen the row",
       "explanation": "Every effect a function's body performs appears in its row, and a function performs what the capability it was lent authorises.",
-      "position": { "file": "tests/reject/args_effect_undeclared.ls", "line": 11, "column": 1 }
+      "position": { "file": "tests/reject/args_effect_undeclared.cho", "line": 11, "column": 1 }
     }
   ]
 }
@@ -342,8 +342,8 @@ That last is a property worth testing rather than intending, and
 
 | Question | Why it waits |
 |---|---|
-| A `fix` field, and a `lex-sys fix` verb | §5.1. The field was designed and cut: what would settle it is a transcript where an agent has the rule and still repairs the wrong thing. The verb is further out — applying a transform to source text is a different job from checking it, and there is no store here to record the attempt in |
-| `AGENTS.md` for lex-sys | lex-lang's contract says a downstream repo copies `AGENT_GUIDELINES.md` as `AGENTS.md`. lex-sys is not a Lex codebase — different language, different rules — so it needs its own, and it has **none**: an agent writing lex-sys today has 41 design documents and no entry point. Larger than this slice and the obvious one after it |
-| `lex-sys skill`, the CLI surface as data | lex-lang has `lex skill`; lex-os emits acli envelopes. This adds the third piece — machine-readable *errors* — and the surface is the piece still missing |
+| A `fix` field, and a `cancho fix` verb | §5.1. The field was designed and cut: what would settle it is a transcript where an agent has the rule and still repairs the wrong thing. The verb is further out — applying a transform to source text is a different job from checking it, and there is no store here to record the attempt in |
+| `AGENTS.md` for cancho | lex-lang's contract says a downstream repo copies `AGENT_GUIDELINES.md` as `AGENTS.md`. cancho is not a Lex codebase — different language, different rules — so it needs its own, and it has **none**: an agent writing cancho today has 41 design documents and no entry point. Larger than this slice and the obvious one after it |
+| `cancho skill`, the CLI surface as data | lex-lang has `lex skill`; lex-os emits acli envelopes. This adds the third piece — machine-readable *errors* — and the surface is the piece still missing |
 | Warnings | There are none. If one is ever added, §5's object needs a severity and every consumer needs to handle it; adding the field before the first warning would be designing for a language that does not exist |
 | Whether `build` and `run` answer JSON too | §5 is about `check`. `build` fails for reasons that are not the program's — a linker, a missing `cc` — which is exit 3's territory and a different vocabulary. *Narrowed (#78):* a backend failure used to be one of those exit-3 reasons, and it was the compiler's fault, not the environment's. It is now an `internal` refusal that `check` reports too ([`internal-errors.md`](internal-errors.md)), so what is left for `build` alone really is the environment |

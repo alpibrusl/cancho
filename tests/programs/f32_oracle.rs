@@ -11,7 +11,7 @@
 //     f32_oracle range <lo> <hi>           a digest of `{:?}` over lo..hi
 //
 // A digest is `<lines> <fnv-1a-64 as i64>` over every line, each followed by
-// `\n`, in order: the same two numbers `tests/programs/f32_exhaustive.ls`
+// `\n`, in order: the same two numbers `tests/programs/f32_exhaustive.cho`
 // prints. The sample set (also built there, identically) is, for each sign and
 // each exponent field 0..=255, the fractions `j * stride & 0x7fffff` for
 // `j < count`, then `BOUNDARY`; NaNs are skipped.

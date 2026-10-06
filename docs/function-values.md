@@ -33,7 +33,7 @@
 > **Function values do not force row variables, and they change no
 > existing row rule.** A captureless function value whose type carries a
 > fixed row is checked exactly as a named call is — confirmed, not just
-> designed: `tests/accept/function_value.ls` passes a region-polymorphic,
+> designed: `tests/accept/function_value.cho` passes a region-polymorphic,
 > effectful function as a value and the row is checked at the call
 > exactly like a named call's. What *would* change the row semantics is
 > abstracting over rows, and that is a separate feature that has already
@@ -71,7 +71,7 @@ which is kept. Six groups have the same shape but different callees:
 | Group | What it is |
 |---|---|
 | 6 `main`s | The `split`/`release` preamble, differing in the one function each calls |
-| 3 pairs across `tour.ls` and `match_a_reference.ls` | The same recursive walks, differing only in their **own** names |
+| 3 pairs across `tour.cho` and `match_a_reference.cho` | The same recursive walks, differing only in their **own** names |
 | `show` / `emit` | Two one-line printers in different files |
 | **`io.write_all` / `io.error_all`** | **The one real candidate** (§3) |
 
@@ -103,11 +103,11 @@ function values do not help it.
 
 ## 3. What the language writes instead, and what it costs
 
-lex-sys compiles whole programs. So the set of functions a value could
+cancho compiles whole programs. So the set of functions a value could
 name is always known, and an `enum` with one variant per function plus a
 `match` that calls one can always say the same thing. This is Reynolds'
 **defunctionalization**, and it needs nothing the language lacks.
-`tests/accept/defunctionalized_stream.ls` collapses `write_all` and
+`tests/accept/defunctionalized_stream.cho` collapses `write_all` and
 `error_all` that way:
 
 ```
@@ -124,7 +124,7 @@ fn write_to[&r, &i](io: &!i Io, which: Stream, s: &r [byte]) -> [io_write, err_w
 It compiles, runs and prints. **The cost is in the row.** `write_to`
 performs whatever any of its arms performs, so every caller has to
 declare both streams, including a caller that only ever passes `Out`.
-`tests/reject/defunctionalized_row_is_the_union.ls` is that caller with
+`tests/reject/defunctionalized_row_is_the_union.cho` is that caller with
 its row narrowed to `[io_write]`, and it is refused (`effect-not-declared`).
 The authority report of such a program says it writes standard error
 when it never does.
@@ -169,8 +169,8 @@ for them (§2), and the one thing they add over §4.2 is hidden authority.
 ### 4.2 Function values, built
 
 This was the audit's candidate, with its conditions made exact, and it
-is now exactly what is built — `Type::Fn` in `crates/lex-sys-types`,
-`Expr::FnValue`/`Expr::CallIndirect` in `crates/lex-sys-ir`, and
+is now exactly what is built — `Type::Fn` in `crates/cancho-types`,
+`Expr::FnValue`/`Expr::CallIndirect` in `crates/cancho-ir`, and
 codegen in both backends (Cranelift: `func_addr` and `call_indirect`;
 LLVM: a global symbol read directly as a `ptr` value, with the
 callee's signature spelled explicitly at the call since an opaque
@@ -238,9 +238,9 @@ reachable:
    [`reach.md`](reach.md) §3.1, which blocks TLS and libpq. `qsort` and
    `bsearch` compare `const void *` arguments, and `pthread_create`'s
    start routine takes and returns one.
-3. **The calling convention already matches.** Every lex-sys function
+3. **The calling convention already matches.** Every cancho function
    is emitted with the target's default convention
-   (`module.isa().default_call_conv()` in `lex-sys-codegen/src/emit.rs`),
+   (`module.isa().default_call_conv()` in `cancho-codegen/src/emit.rs`),
    which is the C ABI for scalar arguments.
 
 What is left is `atexit` (`void (*)(void)`) and `signal` (`void (*)(int)`).
@@ -286,12 +286,12 @@ one, rather than a real program in the existing corpus.
   §3's substitute would not be available and the arithmetic would be
   different.
 - **Not that abstracting over rows is settled.** §4.3 still holds:
-  function values alone recover none of `defunctionalized_stream.ls`'s
+  function values alone recover none of `defunctionalized_stream.cho`'s
   lost precision, because that needs a row-*polymorphic* higher-order
   function, and `effect-polymorphism.md` still answers that no.
 - **Not that `Rule::NoFunctionValues` is gone.** It now refuses exactly
   what §4.2's table always said a function value could not be: generic
-  (`tests/reject/function_as_value.ls`, updated to that case) or
+  (`tests/reject/function_as_value.cho`, updated to that case) or
   anything other than a named, top-level, captureless function
   (a builtin, an `extern fn`). The rule's message still names
   "M1", a milestone it has outlived, and this correction leaves that
@@ -304,12 +304,12 @@ one, rather than a real program in the existing corpus.
 
 | Fixture | What it pins |
 |---|---|
-| `tests/accept/defunctionalized_stream.ls` | §3: an enum and a `match` write what a function value would, today, with no new feature |
-| `tests/reject/defunctionalized_row_is_the_union.ls` | §3: the cost, since a caller of the enum version cannot declare less than the union of the arms' rows (`effect-not-declared`) |
-| `tests/accept/function_value.ls` | §4.2, built: a captureless, region-polymorphic, effectful function taken as a value, called through it twice (`val`, no move), on both backends |
-| `tests/accept/function_value_operand.ls` | A call through a value is an expression like any other: as either side of an operator, in a comparison, and on `float`. The LLVM backend refused it as an `internal` error (no `CallIndirect` arm in `scalar_kind`) until it was found; both backends agree now |
-| `tests/reject/function_as_value.ls` | §4.2's own condition: a **generic** function has no address until its type arguments are known, so it cannot be a value (`no-function-values`) |
-| `tests/reject/function_value_wrong_arity.ls` / `function_value_wrong_type.ls` | A call through a value is checked against the value's own type exactly as a named call is |
-| `tests/reject/function_value_row_undeclared.ls` | The row travels with the type and is checked against the *caller's* row the same way a named call's is (`effect-not-declared`) |
-| `tests/reject/function_value_compared.ls` | §4.2 gives a function value no identity to compare; `==`/`!=` stay exactly the scalar list they always were |
-| `tests/reject/call_a_local_binding.ls` | The mirror: a local binding whose type is *not* `fn(...)` still cannot be called (`not-a-function`) |
+| `tests/accept/defunctionalized_stream.cho` | §3: an enum and a `match` write what a function value would, today, with no new feature |
+| `tests/reject/defunctionalized_row_is_the_union.cho` | §3: the cost, since a caller of the enum version cannot declare less than the union of the arms' rows (`effect-not-declared`) |
+| `tests/accept/function_value.cho` | §4.2, built: a captureless, region-polymorphic, effectful function taken as a value, called through it twice (`val`, no move), on both backends |
+| `tests/accept/function_value_operand.cho` | A call through a value is an expression like any other: as either side of an operator, in a comparison, and on `float`. The LLVM backend refused it as an `internal` error (no `CallIndirect` arm in `scalar_kind`) until it was found; both backends agree now |
+| `tests/reject/function_as_value.cho` | §4.2's own condition: a **generic** function has no address until its type arguments are known, so it cannot be a value (`no-function-values`) |
+| `tests/reject/function_value_wrong_arity.cho` / `function_value_wrong_type.cho` | A call through a value is checked against the value's own type exactly as a named call is |
+| `tests/reject/function_value_row_undeclared.cho` | The row travels with the type and is checked against the *caller's* row the same way a named call's is (`effect-not-declared`) |
+| `tests/reject/function_value_compared.cho` | §4.2 gives a function value no identity to compare; `==`/`!=` stay exactly the scalar list they always were |
+| `tests/reject/call_a_local_binding.cho` | The mirror: a local binding whose type is *not* `fn(...)` still cannot be called (`not-a-function`) |

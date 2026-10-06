@@ -10,43 +10,43 @@ is now wrong): update the row and the document together.
 """
 import json, os, shutil, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
-LEXSYS = os.environ.get("LEXSYS", "/home/user/lex-sys/target/release/lex-sys")
+CANCHO = os.environ.get("CANCHO", "/home/user/cancho/target/release/cancho")
 WORK = os.environ.get("TLS_NB_WORK", "/tmp/tls_nb_work")
 
 ROWS = [
     # file, check, run exit (None: not run), output fragment
-    ("a1_ffi_scope.ls",                "accepted",                      None, None),
-    ("a2_scope_is_nominal.ls",         "accepted",                      0, None),
-    ("a3_row_exact.ls",                "refused:effect-not-declared",   None, None),
-    ("g1_cptr_param.ls",               "refused:unknown-name",          None, None),
-    ("g2_cptr_field.ls",               "refused:unknown-name",          None, None),
-    ("g3_cptr_array.ls",               "accepted",                      0, None),
-    ("g4_generic.ls",                  "accepted",                      0, None),
-    ("g5_table_ticket.ls",             "accepted",                      None, None),
-    ("g6_extern_free.ls",              "internal",                      None, None),
-    ("g7_two_strings.ls",              "accepted",                      139, None),
-    ("g8_c_string_result.ls",          "accepted",                      0, "there is no way to read it"),
-    ("g9_qualified_function_value.ls", "refused:unknown-name",          None, None),
-    ("g10_thread_in_container.ls",     "refused:mode-bound-violated",   None, None),
-    ("g11_connect_is_a_builtin.ls.txt","refused:foreign-declaration",   None, None),
-    ("g12_scopes_do_not_compose.ls",   "refused:linear-use-after-move", None, None),
-    ("g13_int_vs_c_int.ls",            "accepted",                      0, "4294967295\n-1\n"),
-    ("g14_out_params.ls",              "accepted",                      139, None),
-    ("g15_no_listener_port.ls",        "refused:not-a-function",        None, None),
-    ("g16_no_thread_poll.ls",          "refused:not-a-function",        None, None),
-    ("g17_conn_payload.ls",            "refused:thread-payload-type",   None, None),
-    ("t1_spawn_job.ls",                "accepted",                      0, None),
-    ("t2_ref_field.ls.txt",            "refused:region-mismatch",       None, None),
-    ("t3_shared_ffi_payload.ls",       "accepted",                      0, None),
+    ("a1_ffi_scope.cho",                "accepted",                      None, None),
+    ("a2_scope_is_nominal.cho",         "accepted",                      0, None),
+    ("a3_row_exact.cho",                "refused:effect-not-declared",   None, None),
+    ("g1_cptr_param.cho",               "refused:unknown-name",          None, None),
+    ("g2_cptr_field.cho",               "refused:unknown-name",          None, None),
+    ("g3_cptr_array.cho",               "accepted",                      0, None),
+    ("g4_generic.cho",                  "accepted",                      0, None),
+    ("g5_table_ticket.cho",             "accepted",                      None, None),
+    ("g6_extern_free.cho",              "internal",                      None, None),
+    ("g7_two_strings.cho",              "accepted",                      139, None),
+    ("g8_c_string_result.cho",          "accepted",                      0, "there is no way to read it"),
+    ("g9_qualified_function_value.cho", "refused:unknown-name",          None, None),
+    ("g10_thread_in_container.cho",     "refused:mode-bound-violated",   None, None),
+    ("g11_connect_is_a_builtin.cho.txt","refused:foreign-declaration",   None, None),
+    ("g12_scopes_do_not_compose.cho",   "refused:linear-use-after-move", None, None),
+    ("g13_int_vs_c_int.cho",            "accepted",                      0, "4294967295\n-1\n"),
+    ("g14_out_params.cho",              "accepted",                      139, None),
+    ("g15_no_listener_port.cho",        "refused:not-a-function",        None, None),
+    ("g16_no_thread_poll.cho",          "refused:not-a-function",        None, None),
+    ("g17_conn_payload.cho",            "refused:thread-payload-type",   None, None),
+    ("t1_spawn_job.cho",                "accepted",                      0, None),
+    ("t2_ref_field.cho.txt",            "refused:region-mismatch",       None, None),
+    ("t3_shared_ffi_payload.cho",       "accepted",                      0, None),
 ]
 
 def check(path, backend=None):
     if path.endswith(".txt"):
-        # A reproducer the formatter cannot read (the repository's own formatting test walks every `.ls` under `examples/`): kept as text.
+        # A reproducer the formatter cannot read (the repository's own formatting test walks every `.cho` under `examples/`): kept as text.
         copy = os.path.join(WORK, os.path.basename(path)[:-4])
         shutil.copyfile(path, copy)
         path = copy
-    cmd = [LEXSYS, "check", path, "--std", "--output", "json"] + (["--backend", backend] if backend else [])
+    cmd = [CANCHO, "check", path, "--std", "--output", "json"] + (["--backend", backend] if backend else [])
     p = subprocess.run(cmd, capture_output=True, text=True)
     refused = json.loads(p.stdout)["refused"]
     if not refused:
@@ -63,7 +63,7 @@ def main():
         detail = ""
         if ok and want_exit is not None:
             exe = os.path.join(WORK, "gap_" + name.split(".")[0])
-            b = subprocess.run([LEXSYS, "build", path, "--std", "-l", "ssl", "-l", "crypto", "-o", exe], capture_output=True, text=True)
+            b = subprocess.run([CANCHO, "build", path, "--std", "-l", "ssl", "-l", "crypto", "-o", exe], capture_output=True, text=True)
             if b.returncode != 0:
                 ok, detail = False, "did not build: " + b.stderr[:100]
             else:
@@ -71,7 +71,7 @@ def main():
                 code = r.returncode if r.returncode >= 0 else 128 + (-r.returncode)
                 ok = code == want_exit and (want_out is None or want_out in r.stdout)
                 detail = "exit %d" % code
-        if name == "g6_extern_free.ls" and ok:
+        if name == "g6_extern_free.cho" and ok:
             cl = check(path, "cranelift")
             ok = cl == "accepted"
             detail = "llvm: internal, cranelift: %s" % cl

@@ -72,7 +72,7 @@ A list is a chain of boxes, and `unbox` hands back **what the box held**.
 So taking a list apart *produces* its elements, one at a time, and a
 program that wants to end them has each one in its hand as it goes. The
 walk that reads the list is the walk that frees it, which
-`tests/accept/linked_list.ls` has said since M2 — what is new is only
+`tests/accept/linked_list.cho` has said since M2 — what is new is only
 that the list is now generic, so it says it for `List[Ticket]` too.
 
 One allocation per element is the price, and it is a real one. What it
@@ -133,7 +133,7 @@ declaration and wrong here, since unbounded is the **stronger** check.
 `Vec[Ticket]` is refused where the caller wrote `Vec[Ticket]`, naming the
 bound. That placement is the whole argument for having the bound at all.
 Without it the program would still be refused — a boxed slice holds `val`
-data only — but the refusal would land inside `std/vec.ls`, pointing at a
+data only — but the refusal would land inside `std/vec.cho`, pointing at a
 `box_slice` call the caller neither wrote nor can change. An error inside
 a library is the worst possible place for one.
 
@@ -158,7 +158,7 @@ then there would be no way to get a resource out of a list at all.
 So `list.drop` — which ends every element — is `[T: val]`, and over a
 resource the caller writes the drain itself. That is not a gap in the
 library so much as the language observing that **only the owner of a
-`Ticket` knows what ending one means**. `examples/queue.ls` is that
+`Ticket` knows what ending one means**. `examples/queue.cho` is that
 loop, eight lines long, and the job it forgets to finish is a compile
 error rather than a leak.
 
@@ -273,15 +273,15 @@ caller still owes.
 
 | Fixture | Rule | § |
 |---|---|---|
-| `generic_array_over_a_resource.ls` | The array is refused at the **definition**, since unbounded is checked as `res` | 2 |
-| `val_declaration_rebounds_its_parameter.ls` | A `val` aggregate already bounds its parameters | 3 |
-| `res_bound_on_a_type.ls` | There is no `[T: res]` on a type either | 3 |
-| `type_bound_violated.ls` | The bound is kept where the type argument is supplied | 3.2 |
+| `generic_array_over_a_resource.cho` | The array is refused at the **definition**, since unbounded is checked as `res` | 2 |
+| `val_declaration_rebounds_its_parameter.cho` | A `val` aggregate already bounds its parameters | 3 |
+| `res_bound_on_a_type.cho` | There is no `[T: res]` on a type either | 3 |
+| `type_bound_violated.cho` | The bound is kept where the type argument is supplied | 3.2 |
 
 | Accepting | Shows |
 |---|---|
-| `tests/accept/collections.ls` | `Option`, `Result` and `List` over a resource; `Vec` at a copyable element; and §4.2's `[T: val]` function naming a `val` aggregate |
-| `examples/queue.ls` | Jobs that own memory, held in a list, ended exactly once each — and the tally beside them in a `Vec[int]` |
+| `tests/accept/collections.cho` | `Option`, `Result` and `List` over a resource; `Vec` at a copyable element; and §4.2's `[T: val]` function naming a `val` aggregate |
+| `examples/queue.cho` | Jobs that own memory, held in a list, ended exactly once each — and the tally beside them in a `Vec[int]` |
 
 | Test | Claim |
 |---|---|

@@ -1,6 +1,6 @@
 # `http.server`: the server loop as a package
 
-> **Status: built (§7).** `examples/api/api.ls` carried the whole
+> **Status: built (§7).** `examples/api/api.cho` carried the whole
 > loop -- accept, read, parse, frame, pipeline, back-pressure, idle sweep --
 > with the application's routes inside it. A second server would copy 600
 > lines. This extracts the loop; `docs/server.md` stays the account of what the
@@ -9,7 +9,7 @@
 ## 1. What was asked
 
 Take the loop out of the example so a server is its routes and a `main`. It is
-the piece `lex-sys-web` would build on, and the first package that imports
+the piece `cancho-web` would build on, and the first package that imports
 `std` (`package-system.md` §4.8).
 
 ## 2. The obvious shape does not type-check
@@ -94,9 +94,9 @@ Streaming bodies, `Expect: 100-continue`, TLS and more than one core are
 
 ## 7. Built
 
-`packages/http-server/server.ls` (module `http.server`, published with `vcs
-publish --std` into `packages/http-server/.lex-sys-vcs`), and
-`examples/api/api.ls` rewritten onto it: the example is its routes, its
+`packages/http-server/server.cho` (module `http.server`, published with `vcs
+publish --std` into `packages/http-server/.cancho-vcs`), and
+`examples/api/api.cho` rewritten onto it: the example is its routes, its
 handlers and a 60-line `run` loop, and consumes the package through
 `examples/api/server.lock` like every other package consumer.
 
@@ -104,7 +104,7 @@ handlers and a 60-line `run` loop, and consumes the package through
 migrated server -- keep-alive, pipelining, split requests, slow readers,
 vanishing clients, chunked and oversized bodies, refusals, idle timeouts. The
 contract's one clause `api` does not follow (`next` until `-1` before the next
-`wait`) has its own test over `tests/programs/server_one_per_round.ls`: four
+`wait`) has its own test over `tests/programs/server_one_per_round.cho`: four
 connections, six pipelined requests each, one `next` per `wait`. It **found a
 bug the first time it ran**: the connection `next` was part-way through was
 finished (its input compacted) but never queued again, and no input would
@@ -119,7 +119,7 @@ alternated, server pinned to core 0, `kload` 2x16 connections on cores 2-3:
 
 | | requests a second (three 5 s rounds) |
 |---|---|
-| before (loop inside `api.ls`) | 71,446 70,979 73,180 / 73,926 70,432 71,683 |
+| before (loop inside `api.cho`) | 71,446 70,979 73,180 / 73,926 70,432 71,683 |
 | after (`http.server`) | 81,516 78,185 76,806 / 76,566 76,640 76,755 |
 
 It is not slower; it measured about 7% faster. Why was not investigated, and
@@ -143,7 +143,7 @@ the rest is reachable but not depended on.
 
 ## 8. Reply helpers added after a real service used it
 
-`lexsys-web`'s `examples/users` (a CRUD API over this package and `lexsys-schema`)
+`cancho-web`'s `examples/users` (a CRUD API over this package and `cancho-schema`)
 needed three things the package did not have, each now here:
 
 * **`reply_as(heap, out, status, content_type, body, keep, extra)`.** `reply`
@@ -165,8 +165,8 @@ re-pins it with the two new names.
 
 ## 9. What a page endpoint found in `std.buffer`
 
-`lexsys-web`'s `GET /users?limit=20` answered 40,000 requests a second against 99,900 for a
-hand-written C server (`lexsys-web/docs/benchmarks.md`), the widest gap of its four workloads.
+`cancho-web`'s `GET /users?limit=20` answered 40,000 requests a second against 99,900 for a
+hand-written C server (`cancho-web/docs/benchmarks.md`), the widest gap of its four workloads.
 Two causes, one in the application and one here, measured one after the other on the same
 machine in the same session (page of 20 users, 1.8 KB, server on core 0, `kload` on cores 2-3,
 three 5 s rounds each):
@@ -180,7 +180,7 @@ three 5 s rounds each):
 The first is the application's, not this repository's: it was validating text it had itself
 rendered. The second is `std.buffer.append`, which was `push` once per byte, and `push` checks the
 capacity and rebuilds the `Buffer` every time. Appending `n` bytes now makes room once and stores
-`n` times (`tests/lex/buffer_test.ls` checks it at every capacity boundary and fails under two
+`n` times (`tests/lex/buffer_test.cho` checks it at every capacity boundary and fails under two
 deliberate mutations). Cost per extra user in a page was about 0.36 microseconds, roughly 4 ns a
 byte, before the change, which is what two byte-at-a-time copies of a response (into the page, then
 into the reply) would cost; that reading was not profiled.
@@ -194,7 +194,7 @@ backend's to do; this change does not decide it.
 
 A request whose answer is not ready -- it waits on a database -- used to have one choice: block in
 `next`'s caller until the answer came, and stop every other connection. Two additions let the
-loop go on, and neither makes the server know what it is waiting on (`lexsys-pg/docs/nonblocking.md`
+loop go on, and neither makes the server know what it is waiting on (`cancho-pg/docs/nonblocking.md`
 is the first user).
 
 **`hold` and `answer`.** `hold(srv)` takes the request `next` handed over and answers a *ticket*
@@ -222,7 +222,7 @@ the application to read from the handle and answer tickets. The list is 64 pairs
 that is dropped, which is safe only for handles watched level-triggered (the poller reports them
 again next time), which `std.conns.watch` is.
 
-`tests/programs/server_hold.ls` is the application used in `conformance/http_server.rs`: it
+`tests/programs/server_hold.cho` is the application used in `conformance/http_server.rs`: it
 watches a connection to the test and answers one held request for every byte the test writes.
 
 | test | what it fixes |

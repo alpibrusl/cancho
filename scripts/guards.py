@@ -5,7 +5,7 @@
 rather than a branch. It measured the overflow check and wrote "the
 check"; `docs/gpu.md` §2.1 falsified half of that -- a bounds check is
 free -- and left the rest open. This runs the same experiment over every
-check lex-sys emits inside a loop body.
+check cancho emits inside a loop body.
 
 For each kernel in `benches/guards.c` it builds the program three ways —
 unchecked, trapping, and `gpu.md` §4.1's **poison**, where the condition

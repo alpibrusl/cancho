@@ -1,0 +1,34 @@
+{
+  "entries": {
+    "1d003d80c8269c93c25c285053e5318c14e47c23e17ed335435be3ee5cb63eb9": {
+      "name": "connect",
+      "stage_id": "1d003d80c8269c93c25c285053e5318c14e47c23e17ed335435be3ee5cb63eb9",
+      "source_hash": "a111ac6872d0c17c2af63bb8f2f81fe52e1c1fefea5301165e83b277d7ad6385",
+      "uses_std": false
+    },
+    "53622d2739f5e1c035146d129d1739ac7209aba43d562480f1a533fdb5a6073b": {
+      "name": "connect_to",
+      "stage_id": "2a20b3505c9cd3a45b1aa2564a42640734618cf8b40dd4dde3a6800562873f6c",
+      "source_hash": "a111ac6872d0c17c2af63bb8f2f81fe52e1c1fefea5301165e83b277d7ad6385",
+      "uses_std": false
+    },
+    "8fbf151d19cdd5b5cabe5c44e24db0a18e2b35ae98d5268f414d478a0da19944": {
+      "name": "octets_of",
+      "stage_id": "402c592100259d860fd654e1df27be6d5ed79b7303928a72b4406c654c821c90",
+      "source_hash": "a111ac6872d0c17c2af63bb8f2f81fe52e1c1fefea5301165e83b277d7ad6385",
+      "uses_std": false
+    },
+    "c94e0f98e0d1ee23ffbcfd639079c9e557a22128eb9e30360e01e1f2b9173548": {
+      "name": "address",
+      "stage_id": "ce2f3c0e79b9712664c96234727cdc25c53d113a97d66c7a4eda21115f82319a",
+      "source_hash": "a111ac6872d0c17c2af63bb8f2f81fe52e1c1fefea5301165e83b277d7ad6385",
+      "uses_std": false
+    },
+    "f803e76be9777be8fbf000c204ac0e03fed7db716a9e879bbfec8ee6f7e73756": {
+      "name": "port_of",
+      "stage_id": "c9cb95159cdc4479cc72db587f6479c09be4dd79e1f0416d00c0034be144ffa7",
+      "source_hash": "a111ac6872d0c17c2af63bb8f2f81fe52e1c1fefea5301165e83b277d7ad6385",
+      "uses_std": false
+    }
+  }
+}

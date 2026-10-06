@@ -1,0 +1,963 @@
+module selfhost.lexcore;
+
+// lexcore.cho -- the cancho tokeniser, written in cancho, as a module.
+//
+// A feasibility spike for `docs/self-hosting.md`, not a replacement for
+// `crates/cancho-syntax/src/lexer.rs`: a line-for-line port of that file,
+// so that any difference in behaviour is a finding about the language or
+// about the Rust lexer, and not about a redesign.
+//
+// `lexer.cho` prints its tokens (and is what `diff.sh` compares with the Rust
+// lexer); `parser.cho` parses them. Both link this file.
+//
+// Generated parts (the `Tok` enum, `name`, the keyword table and the
+// punctuation tables) were produced by a script from the Rust source's
+// tables and are kept as plain source on purpose.
+
+import std.buffer;
+
+pub enum Tok {
+    Ident,
+    Int,
+    Float,
+    Fn,
+    Let,
+    Var,
+    If,
+    Else,
+    While,
+    Return,
+    Defer,
+    True,
+    False,
+    Struct,
+    Enum,
+    Match,
+    Res,
+    Val,
+    Extern,
+    Module,
+    Import,
+    Pub,
+    Borrow,
+    Region,
+    As,
+    In,
+    Mut,
+    Where,
+    LParen,
+    RParen,
+    LBrace,
+    RBrace,
+    LBracket,
+    RBracket,
+    Comma,
+    Dot,
+    Semi,
+    Colon,
+    ColonColon,
+    DotDot,
+    Arrow,
+    FatArrow,
+    Underscore,
+    Eq,
+    EqEq,
+    BangEq,
+    Lt,
+    LtEq,
+    Gt,
+    GtEq,
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Percent,
+    Bang,
+    Str,
+    AmpAmp,
+    Amp,
+    PipePipe,
+    Pipe,
+    Caret,
+    Tilde,
+    LtLt,
+    GtGt,
+    Eof,
+}
+
+// One lexeme's worth of progress. `Skip` is whitespace or a comment: it moves
+// the cursor and produces nothing, as in the Rust lexer.
+pub enum Step {
+    Skip(int),
+    Token(Tok, int, int),
+    Fail(int, int, int),
+}
+
+// Rule tags, as the Rust `Rule::tag` spells them.
+fn literal_form() -> [] int {
+    return 0;
+}
+
+fn unknown_escape() -> [] int {
+    return 1;
+}
+
+fn unexpected_character() -> [] int {
+    return 2;
+}
+
+pub fn rule_name(r: int) -> [] &static [byte] {
+    if r == 0 {
+        return "literal-form";
+    }
+    if r == 1 {
+        return "unknown-escape";
+    }
+    return "unexpected-character";
+}
+
+// The variant's position in `Tok`: what `parser.cho` stores a token as, since a
+// slice holds integers and the language has no integer constants to compare with.
+pub fn code(t: Tok) -> [] int {
+    match t {
+        Tok::Ident => {
+            return 0;
+        }
+        Tok::Int => {
+            return 1;
+        }
+        Tok::Float => {
+            return 2;
+        }
+        Tok::Fn => {
+            return 3;
+        }
+        Tok::Let => {
+            return 4;
+        }
+        Tok::Var => {
+            return 5;
+        }
+        Tok::If => {
+            return 6;
+        }
+        Tok::Else => {
+            return 7;
+        }
+        Tok::While => {
+            return 8;
+        }
+        Tok::Return => {
+            return 9;
+        }
+        Tok::Defer => {
+            return 10;
+        }
+        Tok::True => {
+            return 11;
+        }
+        Tok::False => {
+            return 12;
+        }
+        Tok::Struct => {
+            return 13;
+        }
+        Tok::Enum => {
+            return 14;
+        }
+        Tok::Match => {
+            return 15;
+        }
+        Tok::Res => {
+            return 16;
+        }
+        Tok::Val => {
+            return 17;
+        }
+        Tok::Extern => {
+            return 18;
+        }
+        Tok::Module => {
+            return 19;
+        }
+        Tok::Import => {
+            return 20;
+        }
+        Tok::Pub => {
+            return 21;
+        }
+        Tok::Borrow => {
+            return 22;
+        }
+        Tok::Region => {
+            return 23;
+        }
+        Tok::As => {
+            return 24;
+        }
+        Tok::In => {
+            return 25;
+        }
+        Tok::Mut => {
+            return 26;
+        }
+        Tok::Where => {
+            return 27;
+        }
+        Tok::LParen => {
+            return 28;
+        }
+        Tok::RParen => {
+            return 29;
+        }
+        Tok::LBrace => {
+            return 30;
+        }
+        Tok::RBrace => {
+            return 31;
+        }
+        Tok::LBracket => {
+            return 32;
+        }
+        Tok::RBracket => {
+            return 33;
+        }
+        Tok::Comma => {
+            return 34;
+        }
+        Tok::Dot => {
+            return 35;
+        }
+        Tok::Semi => {
+            return 36;
+        }
+        Tok::Colon => {
+            return 37;
+        }
+        Tok::ColonColon => {
+            return 38;
+        }
+        Tok::DotDot => {
+            return 39;
+        }
+        Tok::Arrow => {
+            return 40;
+        }
+        Tok::FatArrow => {
+            return 41;
+        }
+        Tok::Underscore => {
+            return 42;
+        }
+        Tok::Eq => {
+            return 43;
+        }
+        Tok::EqEq => {
+            return 44;
+        }
+        Tok::BangEq => {
+            return 45;
+        }
+        Tok::Lt => {
+            return 46;
+        }
+        Tok::LtEq => {
+            return 47;
+        }
+        Tok::Gt => {
+            return 48;
+        }
+        Tok::GtEq => {
+            return 49;
+        }
+        Tok::Plus => {
+            return 50;
+        }
+        Tok::Minus => {
+            return 51;
+        }
+        Tok::Star => {
+            return 52;
+        }
+        Tok::Slash => {
+            return 53;
+        }
+        Tok::Percent => {
+            return 54;
+        }
+        Tok::Bang => {
+            return 55;
+        }
+        Tok::Str => {
+            return 56;
+        }
+        Tok::AmpAmp => {
+            return 57;
+        }
+        Tok::Amp => {
+            return 58;
+        }
+        Tok::PipePipe => {
+            return 59;
+        }
+        Tok::Pipe => {
+            return 60;
+        }
+        Tok::Caret => {
+            return 61;
+        }
+        Tok::Tilde => {
+            return 62;
+        }
+        Tok::LtLt => {
+            return 63;
+        }
+        Tok::GtGt => {
+            return 64;
+        }
+        Tok::Eof => {
+            return 65;
+        }
+    }
+}
+
+pub fn name(t: Tok) -> [] &static [byte] {
+    match t {
+        Tok::Ident => {
+            return "Ident";
+        }
+        Tok::Int => {
+            return "Int";
+        }
+        Tok::Float => {
+            return "Float";
+        }
+        Tok::Fn => {
+            return "Fn";
+        }
+        Tok::Let => {
+            return "Let";
+        }
+        Tok::Var => {
+            return "Var";
+        }
+        Tok::If => {
+            return "If";
+        }
+        Tok::Else => {
+            return "Else";
+        }
+        Tok::While => {
+            return "While";
+        }
+        Tok::Return => {
+            return "Return";
+        }
+        Tok::Defer => {
+            return "Defer";
+        }
+        Tok::True => {
+            return "True";
+        }
+        Tok::False => {
+            return "False";
+        }
+        Tok::Struct => {
+            return "Struct";
+        }
+        Tok::Enum => {
+            return "Enum";
+        }
+        Tok::Match => {
+            return "Match";
+        }
+        Tok::Res => {
+            return "Res";
+        }
+        Tok::Val => {
+            return "Val";
+        }
+        Tok::Extern => {
+            return "Extern";
+        }
+        Tok::Module => {
+            return "Module";
+        }
+        Tok::Import => {
+            return "Import";
+        }
+        Tok::Pub => {
+            return "Pub";
+        }
+        Tok::Borrow => {
+            return "Borrow";
+        }
+        Tok::Region => {
+            return "Region";
+        }
+        Tok::As => {
+            return "As";
+        }
+        Tok::In => {
+            return "In";
+        }
+        Tok::Mut => {
+            return "Mut";
+        }
+        Tok::Where => {
+            return "Where";
+        }
+        Tok::LParen => {
+            return "LParen";
+        }
+        Tok::RParen => {
+            return "RParen";
+        }
+        Tok::LBrace => {
+            return "LBrace";
+        }
+        Tok::RBrace => {
+            return "RBrace";
+        }
+        Tok::LBracket => {
+            return "LBracket";
+        }
+        Tok::RBracket => {
+            return "RBracket";
+        }
+        Tok::Comma => {
+            return "Comma";
+        }
+        Tok::Dot => {
+            return "Dot";
+        }
+        Tok::Semi => {
+            return "Semi";
+        }
+        Tok::Colon => {
+            return "Colon";
+        }
+        Tok::ColonColon => {
+            return "ColonColon";
+        }
+        Tok::DotDot => {
+            return "DotDot";
+        }
+        Tok::Arrow => {
+            return "Arrow";
+        }
+        Tok::FatArrow => {
+            return "FatArrow";
+        }
+        Tok::Underscore => {
+            return "Underscore";
+        }
+        Tok::Eq => {
+            return "Eq";
+        }
+        Tok::EqEq => {
+            return "EqEq";
+        }
+        Tok::BangEq => {
+            return "BangEq";
+        }
+        Tok::Lt => {
+            return "Lt";
+        }
+        Tok::LtEq => {
+            return "LtEq";
+        }
+        Tok::Gt => {
+            return "Gt";
+        }
+        Tok::GtEq => {
+            return "GtEq";
+        }
+        Tok::Plus => {
+            return "Plus";
+        }
+        Tok::Minus => {
+            return "Minus";
+        }
+        Tok::Star => {
+            return "Star";
+        }
+        Tok::Slash => {
+            return "Slash";
+        }
+        Tok::Percent => {
+            return "Percent";
+        }
+        Tok::Bang => {
+            return "Bang";
+        }
+        Tok::Str => {
+            return "Str";
+        }
+        Tok::AmpAmp => {
+            return "AmpAmp";
+        }
+        Tok::Amp => {
+            return "Amp";
+        }
+        Tok::PipePipe => {
+            return "PipePipe";
+        }
+        Tok::Pipe => {
+            return "Pipe";
+        }
+        Tok::Caret => {
+            return "Caret";
+        }
+        Tok::Tilde => {
+            return "Tilde";
+        }
+        Tok::LtLt => {
+            return "LtLt";
+        }
+        Tok::GtGt => {
+            return "GtGt";
+        }
+        Tok::Eof => {
+            return "Eof";
+        }
+    }
+}
+
+// ---------------------------------------------------------- characters ---
+
+// The byte at `i`, or -1 past the end. Everything below reads through this,
+// which is what lets a lookahead be written without a bounds check.
+pub fn at[&r](text: &r [byte], i: int) -> [] int {
+    if i < 0 {
+        return 0 - 1;
+    }
+    if i >= len(text) {
+        return 0 - 1;
+    }
+    return int_of(text[i]);
+}
+
+pub fn is_digit(c: int) -> [] bool {
+    return c >= '0' && c <= '9';
+}
+
+pub fn is_hex(c: int) -> [] bool {
+    return is_digit(c) || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F';
+}
+
+pub fn is_ident_start(c: int) -> [] bool {
+    return c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z';
+}
+
+pub fn is_ident_continue(c: int) -> [] bool {
+    return is_ident_start(c) || is_digit(c);
+}
+
+// `u8::is_ascii_whitespace`: space, \t, \n, form feed, \r. Not vertical tab.
+fn is_space(c: int) -> [] bool {
+    return c == ' ' || c == '\t' || c == '\n' || c == 12 || c == '\r';
+}
+
+// The end of the (possibly multi-byte) character that starts at `i`.
+fn char_end[&r](text: &r [byte], i: int) -> [] int {
+    var end = i + 1;
+    while end < len(text) && at(text, end) >= 128 && at(text, end) < 192 {
+        end = end + 1;
+    }
+    return end;
+}
+
+// Is `c` one of the six escapes? `quote` is the delimiter of the literal.
+fn escape_ok(c: int, quote: int) -> [] bool {
+    return c == 'n' || c == 'r' || c == 't' || c == '\\' || c == quote || c == '0';
+}
+
+// Does `text[from..to]` spell `word`?
+pub fn spells[&r, &w](text: &r [byte], from: int, to: int, word: &w [byte]) -> [] bool {
+    if to - from != len(word) {
+        return false;
+    }
+    var k = 0;
+    while k < len(word) {
+        if text[from + k] != word[k] {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+fn keyword[&r](text: &r [byte], from: int, to: int) -> [] Tok {
+    if spells(text, from, to, "fn") {
+        return Tok::Fn;
+    }
+    if spells(text, from, to, "let") {
+        return Tok::Let;
+    }
+    if spells(text, from, to, "var") {
+        return Tok::Var;
+    }
+    if spells(text, from, to, "if") {
+        return Tok::If;
+    }
+    if spells(text, from, to, "else") {
+        return Tok::Else;
+    }
+    if spells(text, from, to, "while") {
+        return Tok::While;
+    }
+    if spells(text, from, to, "return") {
+        return Tok::Return;
+    }
+    if spells(text, from, to, "defer") {
+        return Tok::Defer;
+    }
+    if spells(text, from, to, "true") {
+        return Tok::True;
+    }
+    if spells(text, from, to, "false") {
+        return Tok::False;
+    }
+    if spells(text, from, to, "struct") {
+        return Tok::Struct;
+    }
+    if spells(text, from, to, "enum") {
+        return Tok::Enum;
+    }
+    if spells(text, from, to, "match") {
+        return Tok::Match;
+    }
+    if spells(text, from, to, "res") {
+        return Tok::Res;
+    }
+    if spells(text, from, to, "extern") {
+        return Tok::Extern;
+    }
+    if spells(text, from, to, "module") {
+        return Tok::Module;
+    }
+    if spells(text, from, to, "import") {
+        return Tok::Import;
+    }
+    if spells(text, from, to, "pub") {
+        return Tok::Pub;
+    }
+    if spells(text, from, to, "val") {
+        return Tok::Val;
+    }
+    if spells(text, from, to, "borrow") {
+        return Tok::Borrow;
+    }
+    if spells(text, from, to, "region") {
+        return Tok::Region;
+    }
+    if spells(text, from, to, "as") {
+        return Tok::As;
+    }
+    if spells(text, from, to, "in") {
+        return Tok::In;
+    }
+    if spells(text, from, to, "mut") {
+        return Tok::Mut;
+    }
+    if spells(text, from, to, "where") {
+        return Tok::Where;
+    }
+    if spells(text, from, to, "_") {
+        return Tok::Underscore;
+    }
+    return Tok::Ident;
+}
+
+// ------------------------------------------------------------ literals ---
+
+fn string_lit[&r](text: &r [byte], start: int) -> [] Step {
+    let n = len(text);
+    var i = start + 1;
+    while i < n && at(text, i) != '"' {
+        if at(text, i) == '\n' {
+            return Step::Fail(literal_form(), start, i);
+        }
+        if at(text, i) == '\\' {
+            // A backslash with nothing after it is the file ending inside the
+            // literal (#294).
+            if i + 1 >= n {
+                return Step::Fail(literal_form(), start, n);
+            }
+            if !escape_ok(at(text, i + 1), '"') {
+                return Step::Fail(unknown_escape(), i, char_end(text, i + 1));
+            }
+            i = i + 2;
+        } else {
+            i = i + 1;
+        }
+    }
+    if i == n {
+        return Step::Fail(literal_form(), start, n);
+    }
+    return Step::Token(Tok::Str, start, i + 1);
+}
+
+fn char_lit[&r](text: &r [byte], start: int) -> [] Step {
+    let n = len(text);
+    var j = start + 1;
+    let c = at(text, j);
+    if c < 0 {
+        return Step::Fail(literal_form(), start, n);
+    }
+    if c == '\'' {
+        return Step::Fail(literal_form(), start, j + 1);
+    }
+    if c == '\n' {
+        return Step::Fail(literal_form(), start, j);
+    }
+    if c == '\\' {
+        let esc = at(text, j + 1);
+        if esc < 0 {
+            return Step::Fail(literal_form(), start, n);
+        }
+        if !escape_ok(esc, '\'') {
+            return Step::Fail(unknown_escape(), j, char_end(text, j + 1));
+        }
+        j = j + 2;
+    } else {
+        if c >= 128 {
+            return Step::Fail(literal_form(), start, char_end(text, j));
+        }
+        j = j + 1;
+    }
+    if at(text, j) == '\'' {
+        return Step::Token(Tok::Int, start, j + 1);
+    }
+    var scan = j;
+    while scan < n && at(text, scan) != '\n' && at(text, scan) != '\'' {
+        scan = scan + 1;
+    }
+    if at(text, scan) == '\'' {
+        return Step::Fail(literal_form(), start, scan + 1);
+    }
+    return Step::Fail(literal_form(), start, scan);
+}
+
+fn digits[&r](text: &r [byte], from: int) -> [] int {
+    var j = from;
+    while is_digit(at(text, j)) || at(text, j) == '_' {
+        j = j + 1;
+    }
+    return j;
+}
+
+fn number[&r](text: &r [byte], start: int, after_dot: bool) -> [] Step {
+    let hex = at(text, start) == '0' && at(text, start + 1) == 'x';
+    var j = start;
+    if hex {
+        j = start + 2;
+        if !is_hex(at(text, j)) {
+            return Step::Fail(literal_form(), start, j);
+        }
+        while is_hex(at(text, j)) || at(text, j) == '_' {
+            j = j + 1;
+        }
+    } else {
+        j = digits(text, start);
+    }
+    var float = false;
+    if !hex && !after_dot {
+        if at(text, j) == '.' && is_digit(at(text, j + 1)) {
+            float = true;
+            j = digits(text, j + 1);
+        }
+        if at(text, j) == 'e' || at(text, j) == 'E' {
+            var after = j + 1;
+            if at(text, after) == '+' || at(text, after) == '-' {
+                after = after + 1;
+            }
+            if is_digit(at(text, after)) {
+                float = true;
+                j = digits(text, after);
+            }
+        }
+    }
+    // `docs/f32.md` section 2: a float-shaped literal may carry the one suffix `f32`,
+    // inside the token.
+    if float && j + 3 <= len(text) && spells(text, j, j + 3, "f32") && !is_ident_continue(at(text, j + 3)) {
+        j = j + 3;
+    }
+    if is_ident_continue(at(text, j)) {
+        return Step::Fail(unexpected_character(), j, j + 1);
+    }
+    if float {
+        return Step::Token(Tok::Float, start, j);
+    }
+    return Step::Token(Tok::Int, start, j);
+}
+
+// --------------------------------------------------------- punctuation ---
+
+fn punct[&r](text: &r [byte], i: int) -> [] Step {
+    let b = at(text, i);
+    let nx = at(text, i + 1);
+    if b == '-' && nx == '>' {
+        return Step::Token(Tok::Arrow, i, i + 2);
+    }
+    if b == '&' && nx == '&' {
+        return Step::Token(Tok::AmpAmp, i, i + 2);
+    }
+    if b == '|' && nx == '|' {
+        return Step::Token(Tok::PipePipe, i, i + 2);
+    }
+    if b == '=' && nx == '=' {
+        return Step::Token(Tok::EqEq, i, i + 2);
+    }
+    if b == '=' && nx == '>' {
+        return Step::Token(Tok::FatArrow, i, i + 2);
+    }
+    if b == ':' && nx == ':' {
+        return Step::Token(Tok::ColonColon, i, i + 2);
+    }
+    if b == '.' && nx == '.' {
+        return Step::Token(Tok::DotDot, i, i + 2);
+    }
+    if b == '!' && nx == '=' {
+        return Step::Token(Tok::BangEq, i, i + 2);
+    }
+    if b == '<' && nx == '=' {
+        return Step::Token(Tok::LtEq, i, i + 2);
+    }
+    if b == '>' && nx == '=' {
+        return Step::Token(Tok::GtEq, i, i + 2);
+    }
+    if b == '<' && nx == '<' {
+        return Step::Token(Tok::LtLt, i, i + 2);
+    }
+    if b == '>' && nx == '>' {
+        return Step::Token(Tok::GtGt, i, i + 2);
+    }
+    if b == '(' {
+        return Step::Token(Tok::LParen, i, i + 1);
+    }
+    if b == ')' {
+        return Step::Token(Tok::RParen, i, i + 1);
+    }
+    if b == '{' {
+        return Step::Token(Tok::LBrace, i, i + 1);
+    }
+    if b == '}' {
+        return Step::Token(Tok::RBrace, i, i + 1);
+    }
+    if b == '[' {
+        return Step::Token(Tok::LBracket, i, i + 1);
+    }
+    if b == ']' {
+        return Step::Token(Tok::RBracket, i, i + 1);
+    }
+    if b == ',' {
+        return Step::Token(Tok::Comma, i, i + 1);
+    }
+    if b == '.' {
+        return Step::Token(Tok::Dot, i, i + 1);
+    }
+    if b == ';' {
+        return Step::Token(Tok::Semi, i, i + 1);
+    }
+    if b == ':' {
+        return Step::Token(Tok::Colon, i, i + 1);
+    }
+    if b == '=' {
+        return Step::Token(Tok::Eq, i, i + 1);
+    }
+    if b == '<' {
+        return Step::Token(Tok::Lt, i, i + 1);
+    }
+    if b == '>' {
+        return Step::Token(Tok::Gt, i, i + 1);
+    }
+    if b == '+' {
+        return Step::Token(Tok::Plus, i, i + 1);
+    }
+    if b == '-' {
+        return Step::Token(Tok::Minus, i, i + 1);
+    }
+    if b == '*' {
+        return Step::Token(Tok::Star, i, i + 1);
+    }
+    if b == '/' {
+        return Step::Token(Tok::Slash, i, i + 1);
+    }
+    if b == '%' {
+        return Step::Token(Tok::Percent, i, i + 1);
+    }
+    if b == '!' {
+        return Step::Token(Tok::Bang, i, i + 1);
+    }
+    if b == '|' {
+        return Step::Token(Tok::Pipe, i, i + 1);
+    }
+    if b == '^' {
+        return Step::Token(Tok::Caret, i, i + 1);
+    }
+    if b == '~' {
+        return Step::Token(Tok::Tilde, i, i + 1);
+    }
+    if b == '&' {
+        return Step::Token(Tok::Amp, i, i + 1);
+    }
+    return Step::Fail(unexpected_character(), i, char_end(text, i));
+}
+
+// ---------------------------------------------------------------- step ---
+
+// Advance past one thing: whitespace, a comment, or one token.
+pub fn step[&r](text: &r [byte], i: int, after_dot: bool) -> [] Step {
+    let b = at(text, i);
+    if is_space(b) {
+        return Step::Skip(i + 1);
+    }
+    if b == '/' && at(text, i + 1) == '/' {
+        var j = i;
+        while j < len(text) && at(text, j) != '\n' {
+            j = j + 1;
+        }
+        return Step::Skip(j);
+    }
+    if b == '"' {
+        return string_lit(text, i);
+    }
+    if b == '\'' {
+        return char_lit(text, i);
+    }
+    if is_digit(b) {
+        return number(text, i, after_dot);
+    }
+    if is_ident_start(b) {
+        var j = i;
+        while is_ident_continue(at(text, j)) {
+            j = j + 1;
+        }
+        return Step::Token(keyword(text, i, j), i, j);
+    }
+    return punct(text, i);
+}
+
+pub fn is_dot(t: Tok) -> [] bool {
+    match t {
+        Tok::Dot => {
+            return true;
+        }
+        _ => {
+            return false;
+        }
+    }
+}
+
+// Standard input, whole.
+pub fn slurp[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read] buffer.Buffer {
+    var out = buffer.empty(heap, 4096);
+    var c = getchar(io);
+    while c >= 0 {
+        out = buffer.push(heap, out, byte_of(c));
+        c = getchar(io);
+    }
+    return out;
+}

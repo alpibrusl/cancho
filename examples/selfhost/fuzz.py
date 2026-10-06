@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Hammer the parser port (`parser.ls`) against the Rust parser it was ported from.
+"""Hammer the parser port (`parser.cho`) against the Rust parser it was ported from.
 
     fuzz.py ORACLE PORT [--count N] [--seed S] [--keep DIR] [files...]
 
-ORACLE is `dump_ast` (`crates/lex-sys-syntax/examples/dump_ast.rs`), PORT is `parser.ls`
+ORACLE is `dump_ast` (`crates/cancho-syntax/examples/dump_ast.rs`), PORT is `parser.cho`
 built; both read a source file on standard input and must answer with the same bytes:
 the same listing, or the same `ERR rule start end`. The corpus is the files named (by
-default every `.ls` file under the repository), a set of hand-written edge cases for what
+default every `.cho` file under the repository), a set of hand-written edge cases for what
 the repository does not contain -- the limits of integers and floats, escapes, the order
 of module, import and item -- and `--count` mutants of the files: a byte range deleted,
 a token duplicated, dropped or replaced by another one, the file cut short. The mutants
@@ -363,7 +363,7 @@ def with_library(data: bytes) -> bytes:
     """The case's file and then every file of `std/`, as `FILE <length>` records."""
     global STD
     if STD is None:
-        STD = [open(f, "rb").read() for f in sorted(glob.glob("std/*.ls"))]
+        STD = [open(f, "rb").read() for f in sorted(glob.glob("std/*.cho"))]
     out = b""
     for part in [data] + STD:
         out += b"FILE %d\n" % len(part) + part
@@ -385,12 +385,12 @@ def main():
     ap.add_argument("--keep", help="write each differing input into this directory")
     ap.add_argument("--std", action="store_true",
                     help="with --checker: parse each case with the standard library, as `check --std` does; the "
-                    "oracle and the port are given a stream of files (see `driver.ls`), and the port is `check_files`")
+                    "oracle and the port are given a stream of files (see `driver.cho`), and the port is `check_files`")
     ap.add_argument("--checker", action="store_true",
-                    help="compare check.ls with check_declarations, with the declarations edge cases")
+                    help="compare check.cho with check_declarations, with the declarations edge cases")
     args = ap.parse_args()
 
-    paths = args.files or sorted(glob.glob("**/*.ls", recursive=True))
+    paths = args.files or sorted(glob.glob("**/*.cho", recursive=True))
     paths = [p for p in paths if "/target/" not in p and not p.startswith("target/")]
     corpus = build_corpus(paths)
     if args.checker and not args.std:
@@ -438,7 +438,7 @@ def main():
                 continue
             bad += 1
             if args.keep:
-                with open(os.path.join(args.keep, f"{n}.ls"), "wb") as f:
+                with open(os.path.join(args.keep, f"{n}.cho"), "wb") as f:
                     f.write(data)
             if shown < 6:
                 shown += 1

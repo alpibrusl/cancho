@@ -1,11 +1,11 @@
 # The canonical AST and per-unit identity
 
 > **Status: proposed.** Written alongside the first implementation of hashing
-> (M3, #1). The rules below are what `lex-sys-id` implements; the parts that
+> (M3, #1). The rules below are what `cancho-id` implements; the parts that
 > are *not yet contracts* are called out in §8, and nothing here is frozen
 > until that section is empty.
 
-lex-sys claims a "canonical, content-addressable AST, designed in from day one"
+cancho claims a "canonical, content-addressable AST, designed in from day one"
 (#1). M0 shaped the AST for it and M1 left that shape intact. This document is
 the other half: what exactly gets hashed, what two programs must agree on for
 their hashes to agree, and — the part that matters most — what a hash is
@@ -59,12 +59,12 @@ could be a hash of.
 
 ## 2a. The printer is the other direction
 
-`lex-sys print <file>` renders a parsed unit back to text. It is the
+`cancho print <file>` renders a parsed unit back to text. It is the
 AST→text half of the same pipeline: a store that addresses code by hash
 needs a way to show a declaration it fetched, and that rendering has to be
 canonical or the display would depend on who stored it.
 
-Two contracts, both enforced by a test that walks every `.ls` file in the
+Two contracts, both enforced by a test that walks every `.cho` file in the
 repository:
 
 * **Identity-preserving.** Parsing the output gives back the same `SigId`,
@@ -175,7 +175,7 @@ anyone expecting a hash of the source.
 The second is a real cost and is accepted deliberately: this is a hash of a
 *program*, not of a file. Anyone wanting the latter should hash the file.
 
-Parameter names are excluded from `SigId` for the same reason — lex-sys has no
+Parameter names are excluded from `SigId` for the same reason — cancho has no
 named arguments, so a caller cannot observe them. Generic parameter names are
 excluded and their *count* included, since `fn f[T](x: T)` and `fn f[U](x: U)`
 differ in no way a caller can see.
@@ -188,9 +188,9 @@ Every hash begins with a domain tag, so a signature's bytes can never be
 mistaken for a body's even if they coincide:
 
 ```
-lex-sys.sig.v1      a function signature
-lex-sys.body.v1     a function body
-lex-sys.type.v1     a struct or enum declaration
+cancho.sig.v1      a function signature
+cancho.body.v1     a function body
+cancho.type.v1     a struct or enum declaration
 ```
 
 The `v1` is not decoration. When a rule in this document changes, the version
@@ -215,7 +215,7 @@ are built now because:
   stable identities than to retrofit.
 - **The self-hosting spike depends on exactly this.** #1 proposes porting
   `lex-ast`/`lex-vcs` canonical forms and checking byte-identical
-  `OpId`/`SigId`/`StageId` against a 136k-op corpus. A lex-sys that cannot hash
+  `OpId`/`SigId`/`StageId` against a 136k-op corpus. A cancho that cannot hash
   its own AST cannot run that experiment.
 
 ---
@@ -232,7 +232,7 @@ empty.
   milestone from M2 on adds nodes.
 
   Until then the moves are at least **visible**:
-  `crates/lex-sys-id/tests/golden.rs` pins 35 fixtures, one per node family,
+  `crates/cancho-id/tests/golden.rs` pins 35 fixtures, one per node family,
   to the hashes they emit today. It is not a freeze and a failure is not a
   bug report — it asks which of two things happened, an intended encoding
   change or something reaching the hash that should not have, and says to
@@ -248,7 +248,7 @@ empty.
   > fourteen green commits are worth less than they look — the
   > measurement was installed after the movement stopped. What *has*
   > moved is the vocabulary a body is written in: across 67 commits,
-  > **71% of this repository's own `.ls` revisions no longer type-check**
+  > **71% of this repository's own `.cho` revisions no longer type-check**
   > under today's build, and one label rename (`io` into `io_read` and
   > `io_write`) accounts for 42% of that. The rate a hash-keyed tool
   > would experience is the second one.

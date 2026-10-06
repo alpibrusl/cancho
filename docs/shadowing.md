@@ -17,7 +17,7 @@
 > steps means `fresh`, `live`, `emptied`, `stale` — four names for one
 > slab — because `let slab = ...` twice in a block is refused.
 
-`examples/slab/main.ls` still reads that way after the tuple slice:
+`examples/slab/main.cho` still reads that way after the tuple slice:
 `fresh`, `filled`, `live`, `emptied`, `checked`, `refilled`, `reused`,
 `stale`. Eight names for one slab, none of which is a different thing
 from the last.
@@ -85,7 +85,7 @@ x = e;          // refused if `x` still holds a live `res` value
 let x = e;      // refused if `x` still holds a live `res` value
 ```
 
-`tests/reject/assign_over_live_res.ls` has existed since M2. One rule,
+`tests/reject/assign_over_live_res.cho` has existed since M2. One rule,
 two syntaxes, and the second one now says so.
 
 ### 3.1 `val` shadows freely
@@ -191,13 +191,13 @@ wrong.
 
 | Fixture | Rule | § |
 |---|---|---|
-| `shadow_over_live_res.ls` | A shadowed binding must be dead | 3.3 |
-| `shadow_over_live_res_destructured.ls` | The same, through a destructuring pattern | 3 |
-| `shadow_a_live_parameter.ls` | The same, and now reported at the `let` | 4.1 |
-| `binding_repeated_in_pattern.ls` *(exists)* | One pattern, one binding per name | 5 |
-| `assign_over_live_res.ls` *(exists)* | The same rule, the other syntax | 3 |
+| `shadow_over_live_res.cho` | A shadowed binding must be dead | 3.3 |
+| `shadow_over_live_res_destructured.cho` | The same, through a destructuring pattern | 3 |
+| `shadow_a_live_parameter.cho` | The same, and now reported at the `let` | 4.1 |
+| `binding_repeated_in_pattern.cho` *(exists)* | One pattern, one binding per name | 5 |
+| `assign_over_live_res.cho` *(exists)* | The same rule, the other syntax | 3 |
 
-One fixture was **removed**: `rebind_same_block.ls`, which was
+One fixture was **removed**: `rebind_same_block.cho`, which was
 
 ```
 let x = 1;
@@ -212,5 +212,5 @@ actually owed something.
 
 | Accepting | Shows |
 |---|---|
-| `shadowing.ls` | `val` shadowed freely, `res` shadowed after consumption, and an inner block shadowing an outer live binding |
+| `shadowing.cho` | `val` shadowed freely, `res` shadowed after consumption, and an inner block shadowing an outer live binding |
 | `examples/slab/` | Rewritten: one `slab` threaded through, rather than eight names for it |

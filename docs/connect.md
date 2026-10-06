@@ -7,10 +7,10 @@
 > next step was not to build `Net`, but to write a program that connects,
 > because that is the only way to find out what `connect` needs that the
 > design had not thought of. That program is
-> [`examples/fetch/`](../examples/fetch/fetch.ls): `curl -s` with one
+> [`examples/fetch/`](../examples/fetch/fetch.cho): `curl -s` with one
 > method and one protocol version, 335 lines, the same `extern fn`s
 > against libc that `examples/serve/` uses. The test suite points it at
-> `examples/serve/` itself, so a lex-sys client fetches from a lex-sys
+> `examples/serve/` itself, so a cancho client fetches from a cancho
 > server.
 >
 > It found four things `net.md` had not written down. Two of them change
@@ -35,7 +35,7 @@ language cannot hold what it returns. `fetch`'s whole "resolver" is
 
 `net.md` §6 left this open, with *"§5's program will say which"*
 (a builtin, or the perimeter). What the program says is sharper than
-either option: **a lex-sys program can only ever connect to an address,
+either option: **a cancho program can only ever connect to an address,
 and a `lex-os` grant only ever names hosts**:
 
 ```
@@ -56,7 +56,7 @@ the design question `net.md` must now answer:
 | The perimeter (`lex-os` already resolves egress to IP rules, its demo's second wall) | an address | the kernel's filter, which is outside the language entirely |
 
 > **Decided (#83): the builtin.** [`net.md`](net.md) §4.1 gives the
-> reasons. lex-sys has to be usable without `lex-os`, and only this
+> reasons. cancho has to be usable without `lex-os`, and only this
 > answer gives a standalone program names and a run-time check. `connect`
 > checks the name against its capability's bound, then resolves it.
 > Under `lex-os`, the firewall stays as an outer wall.
@@ -206,13 +206,13 @@ and a port.*
 
 | Test | What it pins | § |
 |---|---|---|
-| `a_lex_sys_client_fetches_from_a_lex_sys_server` | `fetch` against `examples/serve/`, both exchanges: the body, and exit 0 for 200 and 1 for 404 | — |
+| `a_cancho_client_fetches_from_a_cancho_server` | `fetch` against `examples/serve/`, both exchanges: the body, and exit 0 for 200 and 1 for 404 | — |
 | `fetch_speaks_http_1_0_and_streams_the_body` | the request byte for byte; a blank line split across two reads; a 100,000-byte body, 25 of the client's reads | 5 |
 | `fetch_refuses_a_name_it_cannot_resolve` | a name, three bad addresses and two bad ports are usage errors that say why | 1 |
 | `the_linux_address_layout_connects_on_both_targets` | Linux accepts `2, 0` and refuses `16, 2`; macOS accepts both. Each row is measured on its own CI runner. The first version asserted that macOS refuses `2, 0`, and CI refuted it | 3 |
 | `the_client_and_the_server_differ_only_in_their_symbols` | both reports are the same unbounded `ffi("libc")`; `connect` is in one symbol list and `bind`/`listen`/`accept` in the other | — |
 | `the_network_programs_are_counted` | inbound 1, outbound 2. It used to be `the_only_network_program_is_inbound`, written to fail the day the first outbound program arrived | 6 |
-| `a_lex_sys_agent_reports_to_a_lex_sys_server` | `report` against `examples/serve/`: a `POST` gets the same 404 `serve/` gives any unmatched route, over a real connection | 6 |
+| `a_cancho_agent_reports_to_a_cancho_server` | `report` against `examples/serve/`: a `POST` gets the same 404 `serve/` gives any unmatched route, over a real connection | 6 |
 | `report_sends_a_body_the_server_can_read_in_full` | the request byte for byte, including `Content-Length`, with a 100,000-byte body that takes the client more than one `write` | 6 |
 
 ## 8. What changed and what did not
@@ -413,7 +413,7 @@ than its first entry.
   rather than asking the resolver to look up `"http"` or `"https"`.
 - **The struct offsets above were asserted rather than measured, and
   CI found the one that was wrong within its first run** (§10.2's
-  correction). `tests/accept/connect_a_refused_address.ls` reads through
+  correction). `tests/accept/connect_a_refused_address.cho` reads through
   all of them via a real `connect` on every target this suite runs
   (`accepted_programs_build_and_run`), the same build-and-run-on-both-
   runners check §3's table formalised, without a table of its own —

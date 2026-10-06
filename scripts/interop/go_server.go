@@ -57,7 +57,7 @@ func main() {
 					break
 				}
 			}
-			c.Write([]byte("HTTP/1.0 200 OK\r\nContent-Length: 13\r\n\r\nhello, lexsys"))
+			c.Write([]byte("HTTP/1.0 200 OK\r\nContent-Length: 13\r\n\r\nhello, cancho"))
 		}(conn)
 	}
 }

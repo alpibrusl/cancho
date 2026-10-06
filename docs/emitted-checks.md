@@ -5,12 +5,12 @@
 > [`check-cost.md`](check-cost.md) is subtitled *"what **every** check
 > this language emits costs"*, and it priced eight of them. It measured
 > C. Each kernel in `benches/guards.c` carries a comment saying which
-> lex-sys check it stands for, and not one of those comments had been
-> checked against the machine code lex-sys actually produces —
+> cancho check it stands for, and not one of those comments had been
+> checked against the machine code cancho actually produces —
 > [`backend-limits.md`](backend-limits.md) audited what Cranelift *can
 > be asked for*, one level above this.
 >
-> So: `lex-sys build --emit obj`, `objdump -d`, one small function per
+> So: `cancho build --emit obj`, `objdump -d`, one small function per
 > check. Six of the eight proxies are exact. Two are not, one of them
 > the row that carries the document's headline. And on the way, two
 > claims about division turn out to be backwards and one compiler bug
@@ -140,7 +140,7 @@ converts.
 
 So the two are not the same guard. The C one does more work per element,
 and `check-cost.md`'s **3.35×** — *"the worst check in the language, and
-nothing had looked"* — is the cost of a guard lex-sys does not emit.
+nothing had looked"* — is the cost of a guard cancho does not emit.
 
 What survives, stated carefully: the number is an upper bound on this
 check's cost under a vectorising compiler, and the *direction* of §7's
@@ -219,7 +219,7 @@ Fixed by giving the folder the backend's rule: `a % -1` is 0.
 
 ## 5. What this does not say
 
-* **Not that `check-cost.md` should not have used C.** lex-sys cannot
+* **Not that `check-cost.md` should not have used C.** cancho cannot
   vectorise anything (`backend-limits.md` §4), so asking what a check
   costs a vectorising compiler *requires* a second compiler. The method
   is right; two of the sixteen lines were wrong.

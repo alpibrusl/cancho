@@ -7,7 +7,7 @@
 > ever added. Building it found that **every hash in `std` trapped on
 > a message of 64 KiB**, and so did `ed25519.sign`; §2 covers that, the
 > fix, and the two documents it corrects. §8 lists what is not done,
-> including the `lexsys-hooks` half of #201.
+> including the `cancho-hooks` half of #201.
 
 ---
 
@@ -15,9 +15,9 @@
 
 | What | Where | Why there |
 |---|---|---|
-| SHA-384, and the streaming SHA-256/384/512 | `std/crypto.ls` | SHA-384 *is* SHA-512's compression (FIPS 180-4 §6.5) with other initial words and a shorter digest. #201 asks for "reuse, no second copy", and `compress512` is private to this file, so SHA-384 goes beside it. It adds eight initial words and three short functions. |
-| HMAC | `std/hmac.ls`, `module std.hmac` | its own file, as #197 asks, so it can move to a package |
-| HKDF, Expand-Label, Derive-Secret | `std/hkdf.ls`, `module std.hkdf` | likewise |
+| SHA-384, and the streaming SHA-256/384/512 | `std/crypto.cho` | SHA-384 *is* SHA-512's compression (FIPS 180-4 §6.5) with other initial words and a shorter digest. #201 asks for "reuse, no second copy", and `compress512` is private to this file, so SHA-384 goes beside it. It adds eight initial words and three short functions. |
+| HMAC | `std/hmac.cho`, `module std.hmac` | its own file, as #197 asks, so it can move to a package |
+| HKDF, Expand-Label, Derive-Secret | `std/hkdf.cho`, `module std.hkdf` | likewise |
 
 The hash is named by its **digest length**: 32 means SHA-256 and 48
 means SHA-384. Anything else is refused with `hash-unsupported`. That
@@ -85,7 +85,7 @@ This corrects three claims made in place:
 - `docs/sha512.md` §3 said the length field is exact "for every message
   this language can hold". The length field was right; the message
   never reached it.
-- `lexsys-hooks` `src/sign.ls` boxes its `ipad || message` copy on the
+- `cancho-hooks` `src/sign.cho` boxes its `ipad || message` copy on the
   heap because "a payload can be 64 KiB and an arena is not". It then
   passes that copy to `crypto.sha256`, which copied it into an arena
   again. A delivery whose signed content is 65,536 bytes or more would
@@ -129,7 +129,7 @@ here too: no branch and no memory index may depend on a secret.
 - **The object code was read.** `scripts/chacha20_branches.py`, with
   function names, disassembles `compress`, `compress512`, `rotr32`,
   `rotr64`, `lshr64`, `low_mask64`, `mask32` and `not32` from the LLVM
-  build of `tests/programs/kdf_driver.ls`. Every conditional jump goes
+  build of `tests/programs/kdf_driver.cho`. Every conditional jump goes
   to a bounds trap, except six loop back-edges. Those compare the round
   counter with 64 or 80, or a byte offset with 512 or 640. There are
   also three compares of a shift amount with a constant (the
@@ -152,8 +152,8 @@ here too: no branch and no memory index may depend on a secret.
 
 ## 4. Checked, not assumed
 
-`tests/programs/kdf_driver.ls` drives every function from standard
-input. `crates/lex-sys/tests/conformance/kdf.rs` runs it in
+`tests/programs/kdf_driver.cho` drives every function from standard
+input. `crates/cancho/tests/conformance/kdf.rs` runs it in
 `cargo test`, offline.
 
 ### 4.1 SHA-2: NIST CAVP
@@ -178,7 +178,7 @@ files, the test also checks:
 - every length from 0 to 300 bytes, one-shot and streamed in pieces of
   1, 7, 63, 64, 65, 127, 128 and 129 bytes, all equal.
 
-`tests/accept/ed25519_long.ls` signs 70,000 bytes. The signature
+`tests/accept/ed25519_long.cho` signs 70,000 bytes. The signature
 equals OpenSSL's and verifies, and a tampered one does not.
 
 ### 4.2 HMAC, HKDF and the TLS 1.3 key schedule
@@ -270,9 +270,9 @@ differential rounds. **19 mutants, 19 killed**, in 23 seconds.
 
 | File | Mutants |
 |---|---|
-| `crypto.ls` | SHA-384 started from SHA-512's words; one wrong SHA-384 word; the SHA-256 length in bytes, not bits; the SHA-512 length field one byte early; the padding-room check off by one; a round adding `temp1` twice; a buffered SHA-512 byte dropped |
-| `hmac.ls` | the wrong inner pad; the wrong outer pad; a block-length key hashed first; SHA-384's block taken as 64 bytes; the inner digest left out of the outer hash |
-| `hkdf.ls` | the counter off by one; `T(i-1)` not chained; `255 * HashLen` allowed past; the label prefix misspelt; the output length's high byte dropped; a 250-byte label accepted; a transcript hash of any length accepted |
+| `crypto.cho` | SHA-384 started from SHA-512's words; one wrong SHA-384 word; the SHA-256 length in bytes, not bits; the SHA-512 length field one byte early; the padding-room check off by one; a round adding `temp1` twice; a buffered SHA-512 byte dropped |
+| `hmac.cho` | the wrong inner pad; the wrong outer pad; a block-length key hashed first; SHA-384's block taken as 64 bytes; the inner digest left out of the outer hash |
+| `hkdf.cho` | the counter off by one; `T(i-1)` not chained; `255 * HashLen` allowed past; the label prefix misspelt; the output length's high byte dropped; a 250-byte label accepted; a transcript hash of any length accepted |
 
 **What the run found:**
 
@@ -295,7 +295,7 @@ differential rounds. **19 mutants, 19 killed**, in 23 seconds.
 
 One core of an Intel Xeon at 2.80 GHz, LLVM backend, median of 5. The
 time is the difference between 1 call and many. "Before" is `main`'s
-`std/crypto.ls` from before this change, and hooks' `hmac_sha256` over
+`std/crypto.cho` from before this change, and hooks' `hmac_sha256` over
 it, built beside the new code in one program.
 
 | | 64 bytes | 1 KiB | 16 KiB |
@@ -312,14 +312,14 @@ microseconds. A webhook signature over a 1 KiB body costs about 10 µs.
 
 ---
 
-## 7. `lexsys-hooks`
+## 7. `cancho-hooks`
 
-#201 asks for `lexsys-hooks` to use this HMAC instead of its own
-(`src/sign.ls`), and for its `tests/sign_test.py` to still pass against
+#201 asks for `cancho-hooks` to use this HMAC instead of its own
+(`src/sign.cho`), and for its `tests/sign_test.py` to still pass against
 the reference Standard Webhooks library. That is a second repository,
-pinned to a compiler revision (`lex-sys.toml`), and the revision has
+pinned to a compiler revision (`cancho.toml`), and the revision has
 to contain `std.hmac`. So it lands after this change: a PR on
-`lexsys-hooks` that deletes `sign.hmac_sha256`, calls `hmac.sha256`,
+`cancho-hooks` that deletes `sign.hmac_sha256`, calls `hmac.sha256`,
 moves the pin, and records the 64 KiB trap of §2 with a test that
 reaches it.
 
@@ -328,7 +328,7 @@ reaches it.
 ## 8. Not done here
 
 - **The hooks switch** (§7). It follows this change's merge, as its own
-  PR on `lexsys-hooks`.
+  PR on `cancho-hooks`.
 - ~~**RFC 8448's application traffic secrets** (§4.2).~~ Added by #205
   from s2n-tls's transcription of the RFC (§4.2).
 - **A statistical timing test.** That is #208.

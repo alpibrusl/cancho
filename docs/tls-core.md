@@ -32,17 +32,17 @@
 
 ## 2. Files
 
-Every source file stays under 2,000 lines (`crates/lex-sys/tests/files.rs`), so the package is split by concern, one module per
+Every source file stays under 2,000 lines (`crates/cancho/tests/files.rs`), so the package is split by concern, one module per
 file:
 
 | File | Module | What |
 |---|---|---|
-| `packages/tls/record.ls` | `tls_record` | record framing, the per-direction AEAD key, IV and sequence number, the nonce (RFC 8446 §5.3), `TLSInnerPlaintext` padding |
-| `packages/tls/message.ls` | `tls_message` | ClientHello encoding, and parsing of ServerHello, EncryptedExtensions, Certificate, CertificateVerify, Finished, NewSessionTicket and KeyUpdate, each refusing with a tag |
-| `packages/tls/client.ls` | `tls_client` | the state machine (§4), the transcript, the key schedule's use of `std.hkdf`, signature checks. *Since #207: TLS 1.3's handshake and the interface; what both handshakes share moved to `slot.ls`* |
-| `packages/tls/slot.ls` | `tls_slot` | *#207:* the slot's layout, states, transcript, record queue, alerts, the ECDH share, chain and signature checks (`docs/tls-parity.md` §3.4.1) |
-| `packages/tls/client12.ls` | `tls_client12` | *#207:* the TLS 1.2 handshake (`docs/tls-parity.md` §3.4) |
-| `packages/tls/tls.ls` | `tls` | the engine: slots, `feed`/`take`/`send`/`recv`/`event` (PR 3) |
+| `packages/tls/record.cho` | `tls_record` | record framing, the per-direction AEAD key, IV and sequence number, the nonce (RFC 8446 §5.3), `TLSInnerPlaintext` padding |
+| `packages/tls/message.cho` | `tls_message` | ClientHello encoding, and parsing of ServerHello, EncryptedExtensions, Certificate, CertificateVerify, Finished, NewSessionTicket and KeyUpdate, each refusing with a tag |
+| `packages/tls/client.cho` | `tls_client` | the state machine (§4), the transcript, the key schedule's use of `std.hkdf`, signature checks. *Since #207: TLS 1.3's handshake and the interface; what both handshakes share moved to `slot.cho`* |
+| `packages/tls/slot.cho` | `tls_slot` | *#207:* the slot's layout, states, transcript, record queue, alerts, the ECDH share, chain and signature checks (`docs/tls-parity.md` §3.4.1) |
+| `packages/tls/client12.cho` | `tls_client12` | *#207:* the TLS 1.2 handshake (`docs/tls-parity.md` §3.4) |
+| `packages/tls/tls.cho` | `tls` | the engine: slots, `feed`/`take`/`send`/`recv`/`event` (PR 3) |
 
 The package imports `std`, so it is published with `--std` (`docs/package-system.md` §4.8). It requires `packages/x509`, which is
 published with it (`docs/x509.md` §1).
@@ -208,10 +208,10 @@ the zeroing stores are not to memory about to be freed. That is the case where a
 
 | File | Lines | What |
 |---|---|---|
-| `packages/tls/record.ls` (`tls_record`) | 339 | framing, the nonce, `seal` and `open`, every refusal code of the package |
-| `packages/tls/message.ls` (`tls_message`) | 464 | ClientHello, and strict parsers for every server message |
-| `packages/tls/client.ls` (`tls_client`) | 1,224 | one connection: `start`, `feed`, `take`, `send`, `recv`, `finish`, `event`, `drop`; the state machine, transcript, key schedule, pins and signature checks |
-| `tests/programs/tls_driver.ls` | | the package driven one line at a time, so a harness can put a real server on the other end |
+| `packages/tls/record.cho` (`tls_record`) | 339 | framing, the nonce, `seal` and `open`, every refusal code of the package |
+| `packages/tls/message.cho` (`tls_message`) | 464 | ClientHello, and strict parsers for every server message |
+| `packages/tls/client.cho` (`tls_client`) | 1,224 | one connection: `start`, `feed`, `take`, `send`, `recv`, `finish`, `event`, `drop`; the state machine, transcript, key schedule, pins and signature checks |
+| `tests/programs/tls_driver.cho` | | the package driven one line at a time, so a harness can put a real server on the other end |
 
 **The slot is larger than `docs/tls-pure.md` §7.4 estimated:** 181,927 bytes and 158 words, about 179 KiB per connection, or
 11.2 MiB for 64. The estimate was about 100 KiB. The difference is buffers the estimate did not count:
@@ -269,9 +269,9 @@ PR 3 makes this a committed test, through the engine and a poller rather than a 
 
 | File | Lines | What |
 |---|---|---|
-| `packages/tls/tls.ls` (`tls`) | 346 | the engine of `docs/tls-pure.md` §2.2: `open`, `trust`, `seed`, `start`, `feed`, `take`, `send`, `recv`, `eof`, `finish`, `event`, `failure`, `drop`, `close`; slots as strides of two boxes; the pins; a fast-key-erasure DRBG over `chacha20.block` |
-| `packages/tls/client.ls` | 1,234 | `peer_eof`, and the secrets overwritten when a connection ends (§8) |
-| `tests/programs/tls_many.ls` | 467 | up to 256 connections on one thread through the `Poller`: dial, handshake, a 2^14-byte request, read to close_notify; one line per connection with the response's length and SHA-256 |
+| `packages/tls/tls.cho` (`tls`) | 346 | the engine of `docs/tls-pure.md` §2.2: `open`, `trust`, `seed`, `start`, `feed`, `take`, `send`, `recv`, `eof`, `finish`, `event`, `failure`, `drop`, `close`; slots as strides of two boxes; the pins; a fast-key-erasure DRBG over `chacha20.block` |
+| `packages/tls/client.cho` | 1,234 | `peer_eof`, and the secrets overwritten when a connection ends (§8) |
+| `tests/programs/tls_many.cho` | 467 | up to 256 connections on one thread through the `Poller`: dial, handshake, a 2^14-byte request, read to close_notify; one line per connection with the response's length and SHA-256 |
 | `scripts/tls_live.py` | | Python `ssl`, `openssl s_server` and tlslite-ng servers on this machine, 64 connections at once |
 | `scripts/tls_liar.py` | | the lying server (§6.3) and the recorded streams for `cargo test` |
 | `scripts/tls_mutants.py` | | §7 |

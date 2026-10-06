@@ -17,7 +17,7 @@ $ ./wr > /dev/full   # strace: write(1, "hello\n", 6) = -1 ENOSPC, at exit; exit
 ```
 
 So a program could not learn that its output was lost, and a tool whose contract is "the output is complete or the exit code says
-otherwise" (`lexsys-tools`, D2) could not be written. Once the buffer fills, a failing flush does surface inside `fwrite` as a short
+otherwise" (`cancho-tools`, D2) could not be written. Once the buffer fills, a failing flush does surface inside `fwrite` as a short
 count, so a program that checks every count catches *most* failures; never the last buffer's worth.
 
 ## 2. The primitive
@@ -45,7 +45,7 @@ buffered, **and then `ferror(stdout)`**, because `fflush` alone does not remembe
   (`editions.md`).
 
 What a program does with it: write, and before exiting call `flush_out`; on `Failed`, exit non-zero and say so on standard error
-(unbuffered). `lexsys-tools` does this in `toolbox.out`.
+(unbuffered). `cancho-tools` does this in `toolbox.out`.
 
 ## 3. What it is checked by
 
@@ -65,7 +65,7 @@ before the program ran):
 ## 4. What it does not do
 
 * **A trap still loses the buffer.** A trap is one instruction (`testing.md` §2) and runs no flush; a tool that must not lose output
-  flushes before it can trap, or writes records small enough that losing the tail is detected by their absence (`lexsys-tools`' `end`
+  flushes before it can trap, or writes records small enough that losing the tail is detected by their absence (`cancho-tools`' `end`
   record). Flushing on trap would need a handler, which is a runtime this language does not have yet.
 * **The exit path is unchanged.** A program that returns without calling `flush_out` still has its last buffer flushed by libc with the
   result ignored, as before. Making a failed exit flush change the status would change every existing program's meaning silently; the

@@ -34,14 +34,14 @@ happened not to see that its mask comes from one bit: nothing in the source guar
 
 ## 2. Why the source cannot fix it
 
-LLVM sees every lex-sys function: the backend emits one module and runs `clang -O2` over it (`docs/llvm-backend.md`). Any
+LLVM sees every cancho function: the backend emits one module and runs `clang -O2` over it (`docs/llvm-backend.md`). Any
 arithmetic spelling of a mask (`0 - bit`, `x >> 63`, a multiply by a 0/1 value) is something InstCombine can prove is 0 or
 -1. So none survives. A value LLVM cannot reason about has to come from outside its reasoning: inline assembly, or a
 volatile access. The language has neither, so the fix is a builtin.
 
 ## 3. The builtin
 
-```lex-sys
+```cancho
 edition 6;
 
 value_barrier(x: int) -> [] int
@@ -57,8 +57,8 @@ value_barrier(x: int) -> [] int
 - **Cranelift:** the identity. Cranelift does not turn a `select` or an `and` into a branch, so it has nothing to stop.
 
 **Edition 6, the latest.** A new builtin is additive (`docs/editions.md` §5). `value_barrier` is a name a program could
-already declare, so it exists from the current edition on, as `flush_out` did in edition 5. `std/bigmod.ls` and
-`std/ecdh.ls` declare `edition 6;`.
+already declare, so it exists from the current edition on, as `flush_out` did in edition 5. `std/bigmod.cho` and
+`std/ecdh.cho` declare `edition 6;`.
 
 **Compile-time evaluation** (`docs/compile-time.md`) declines it, as it declines every builtin it does not know. A call
 with a constant argument therefore stays a call.

@@ -14,7 +14,7 @@
 #include <wolfssl/options.h>
 #include <wolfssl/ssl.h>
 
-static const char reply[] = "HTTP/1.0 200 OK\r\nContent-Length: 13\r\n\r\nhello, lexsys";
+static const char reply[] = "HTTP/1.0 200 OK\r\nContent-Length: 13\r\n\r\nhello, cancho";
 
 int main(int argc, char **argv) {
     if (argc < 5) {

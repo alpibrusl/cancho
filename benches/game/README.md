@@ -2,7 +2,7 @@
 
 Programs from the [Computer Language Benchmarks
 Game](https://benchmarksgame-team.pages.debian.net/benchmarksgame/),
-ported to lex-sys and to C. `docs/benchmarks-game.md` is what the
+ported to cancho and to C. `docs/benchmarks-game.md` is what the
 numbers mean.
 
 ## The rules
@@ -23,11 +23,11 @@ the Game's own maintainers caution against.
 
 | | what it stresses | measured (`--backend llvm`, the default since #127) |
 |---|---|---|
-| `fannkuch.ls` / `.c` | Integer arrays, branches | ~1.0× |
-| `spectral.ls` / `.c` | Float compute, a division in the inner loop | 1.27×–1.46× |
-| `binarytrees.ls` / `.c` | `malloc` and `free` | 1.20×–1.34× |
-| `fasta.ls` / `.c` | Bulk output vs. per-byte `putchar` | 0.89×–0.90× (faster than C) |
-| `revcomp.c` / `.ls` | `getchar`, one byte at a time, no bulk read | noisy here, ~1.0×–1.6× |
+| `fannkuch.cho` / `.c` | Integer arrays, branches | ~1.0× |
+| `spectral.cho` / `.c` | Float compute, a division in the inner loop | 1.27×–1.46× |
+| `binarytrees.cho` / `.c` | `malloc` and `free` | 1.20×–1.34× |
+| `fasta.cho` / `.c` | Bulk output vs. per-byte `putchar` | 0.89×–0.90× (faster than C) |
+| `revcomp.c` / `.cho` | `getchar`, one byte at a time, no bulk read | noisy here, ~1.0×–1.6× |
 
 `docs/benchmarks-game.md` §8 has the full numbers, the run-to-run
 spread, and why `fasta` moved less than a "faster backend" story alone

@@ -3,11 +3,11 @@
 > **Status: built (edition 3).** §3's proposal is implemented as
 > written: `Type::CPtr`, valid in both `extern fn` parameter and return
 > position, `val`, equality/nullness only, with `null_ptr()` as the one
-> non-foreign producer. `tests/accept/opaque_pointer.ls` exercises the
+> non-foreign producer. `tests/accept/opaque_pointer.cho` exercises the
 > full round trip — a foreign call returning a handle, the same handle
 > passed to a second foreign call, and a null comparison on a real
 > failure — through real libc (`fdopen`/`fclose`) on both backends
-> (`crates/lex-sys/tests/conformance/backends.rs`'s
+> (`crates/cancho/tests/conformance/backends.rs`'s
 > `the_two_backends_agree_on_an_opaque_pointer`); three `tests/reject/`
 > fixtures pin arithmetic, coercion, and the "not a general type" rule
 > §4 predicted. §5's TLS example was not built at the time: it needed
@@ -24,7 +24,7 @@
 > below), not anything wrong with the type this document proposed.
 >
 > `docs/reach.md` §3.1 named the rule this document has to satisfy — "a
-> value crosses into a lex-sys program only if the checker can say
+> value crosses into a cancho program only if the checker can say
 > where it came from" — and then listed everything that rule puts out
 > of reach: OpenSSL, libpq, libcurl, `FILE *`, `dlopen`. This is the
 > design for letting the first of those in, TLS specifically, without
@@ -87,7 +87,7 @@ struct-crossing story (§3.2 already has its own answer, unrelated).
 type that exists only to make one foreign crossing honest — but its
 mechanism is the opposite of what a handle needs. `c_int` is recognized
 by name at exactly one syntactic position (`extern fn`'s return type,
-`crates/lex-sys-ir/src/lib.rs`) and **collapses immediately to plain
+`crates/cancho-ir/src/lib.rs`) and **collapses immediately to plain
 `Type::Int`** for everything downstream: every assignment, comparison
 and arithmetic operation on a `c_int` result sees an ordinary 64-bit
 `int` from the very next line on. That collapse is exactly right for
@@ -107,7 +107,7 @@ time. What `c_ptr` does keep from `c_int`'s precedent: a foreign
 codebase (§3.4's whole point), and the same trust posture applies here
 — the declaration is checked for shape, never against the real header
 (`reach.md` §3.1.1: "the declaration is trusted — nothing checks a
-lex-sys signature against the C header").
+cancho signature against the C header").
 
 ## 3. The proposal
 
@@ -183,10 +183,10 @@ once — `SSL_set_fd` takes `SSL *` and an `int`, not two handles).
 (Sequencing for the implementation that follows this document — not
 itself part of the design decision.)
 
-- `crates/lex-sys-types`: a new `Type::CPtr` variant alongside `Int`,
+- `crates/cancho-types`: a new `Type::CPtr` variant alongside `Int`,
   `Byte`, `Bool`, ….
 - The resolver/name layer that recognizes `c_int` by string in
-  `crates/lex-sys-ir/src/lib.rs`'s extern-fn checking gains a sibling
+  `crates/cancho-ir/src/lib.rs`'s extern-fn checking gains a sibling
   branch for `c_ptr`, constructing `Type::CPtr` instead of collapsing
   to `Type::Int`, allowed in both the parameter and return position
   checks (currently `Type::Int | Type::Bool` for parameters,
@@ -199,12 +199,12 @@ itself part of the design decision.)
   equality/inequality arms and excludes it from every arithmetic and
   ordering arm.
 - Both backends' scalar-classification (`scalar_kind` in
-  `lex-sys-codegen-llvm`, and Cranelift's equivalent width lowering)
+  `cancho-codegen-llvm`, and Cranelift's equivalent width lowering)
   treat `Type::CPtr` as an i64-width scalar for register purposes —
   the same width `int` already gets, since the handle rides in a
   register exactly like an integer-shaped file descriptor does.
   `null_ptr()` lowers to a 64-bit zero constant on both backends.
-- Differential coverage: `crates/lex-sys/tests/conformance/backends.rs`
+- Differential coverage: `crates/cancho/tests/conformance/backends.rs`
   gets a case exercising a `c_ptr`-returning and `c_ptr`-consuming
   extern declaration on both backends, mirroring
   `the_two_backends_agree_on_a_narrow_foreign_return`'s existing
@@ -227,14 +227,14 @@ is building the thing and reporting what happened. The plan:
    environment has genuine OpenSSL 3.0.13, confirmed via
    `openssl version`), sends a request, and reads the response back
    through the existing `&r [byte]` byte-slice crossing.
-3. The test harness (`crates/lex-sys/tests/conformance/`, following the
+3. The test harness (`crates/cancho/tests/conformance/`, following the
    existing pattern for `examples/serve/`'s
-   `an_http_server_written_in_lex_sys_answers_a_real_request`) starts
+   `an_http_server_written_in_cancho_answers_a_real_request`) starts
    `openssl s_server` as a subprocess, runs the compiled example against
    it, and asserts the plaintext response bytes match — a real
    handshake and a real encrypted round trip, not a stub.
 4. Both backends run the same example through
-   `crates/lex-sys/tests/conformance/backends.rs`'s existing
+   `crates/cancho/tests/conformance/backends.rs`'s existing
    `--backend cranelift`/`--backend llvm` split, so `c_ptr` is proven on
    both, not just the default.
 
@@ -251,11 +251,11 @@ implementation time, not assumed here.
 independent of `c_ptr`.** Step 1 needs the final linking step to pull
 in `-lssl -lcrypto`; every example this project has ever built links
 only libc, which the compiler always links, so nothing in the current
-`lex-sys build` pipeline can express "also link this library" at all.
+`cancho build` pipeline can express "also link this library" at all.
 Adding that is a real, separate feature — a general "link an external
 library" story, not a `c_ptr` question — so §1's nine declarations were
 grounded against the real header and never compiled into a program.
-`tests/accept/opaque_pointer.ls` verifies the type feature itself
+`tests/accept/opaque_pointer.cho` verifies the type feature itself
 end-to-end against `fdopen`/`fclose` instead, real libc, no extra
 linking.
 

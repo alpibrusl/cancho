@@ -3,8 +3,8 @@
 
     python3 scripts/x509_check.py <driver> [<bundle.pem>]
 
-`driver` is `tests/programs/x509_driver.ls` built with `lex-sys build --std`
-together with `packages/x509/x509.ls`; the bundle defaults to the system's,
+`driver` is `tests/programs/x509_driver.cho` built with `cancho build --std`
+together with `packages/x509/x509.cho`; the bundle defaults to the system's,
 `/etc/ssl/certs/ca-certificates.crt`. Every certificate must be accepted
 (`0 ok`), and every field the driver prints must equal what pyca/cryptography
 (OpenSSL's and rust-asn1's parsers underneath) says it is. The two leniency

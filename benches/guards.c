@@ -154,7 +154,7 @@ long run(const long *v, const long *w, long n) {
 }
 
 #elif KERNEL == 2
-// A shift by an amount that comes out of memory. lex-sys emits one
+// A shift by an amount that comes out of memory. cancho emits one
 // unsigned comparison against 64 (`defined-behaviour.md` §3) -- a
 // constant amount folds it away, so a variable one is where it can cost
 // anything at all.
@@ -233,7 +233,7 @@ long run(const long *v, const long *w, long n) {
 // infinities and on anything outside the integer range
 // (`floating-point.md` §2).
 //
-// This kernel is **not** the guard lex-sys emits, and
+// This kernel is **not** the guard cancho emits, and
 // `docs/emitted-checks.md` §3 is the reading that says so: Cranelift
 // emits `cvttsd2si` and one `cmp $0x1`/`jno`, because the conversion
 // answers a sentinel that `rax - 1` overflows on and nothing else, while
@@ -380,7 +380,7 @@ long run(const long *v, const long *w, long n) {
 // on any of these instruction sets, so there is nothing for a guard to
 // cost.
 //
-// This comment used to say "lex-sys emits no comparison at all here: the
+// This comment used to say "cancho emits no comparison at all here: the
 // hardware faults on a zero divisor and on `LONG_MIN / -1`". It emits
 // one -- `test %rsi,%rsi` and a branch to its own `ud2`, so a zero
 // divisor is SIGILL rather than SIGFPE -- and `%` emits a different one

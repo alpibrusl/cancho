@@ -1,0 +1,61 @@
+// `http.response` -- the fifth real `cancho-vcs` package, and the
+// client-side mirror of `http.request` (`packages/http-request/
+// request.cho`): that one reads a request head server-side, this one
+// writes a request fully and reads a response's status line
+// client-side.
+//
+// `examples/fetch/fetch.cho`, `examples/report/report.cho` and
+// `examples/agent_guest/agent_guest.cho` each declared the same two
+// functions independently -- `send_all` and `status_of`, alongside the
+// four connection-setup functions that moved into `net.connect`
+// instead (`docs/package-system.md` §6): those are generic to any
+// outbound program, these two are HTTP-specific, so they split rather
+// than joining `net.connect` the same way `net.sockets`/`net.connect`
+// themselves split on inbound vs. outbound (`docs/net.md` §1).
+//
+// `import net.sockets` is real here, the same as `http.request`'s own:
+// `send_all` calls `sockets.write` in a retry loop, not merely has it
+// available (`vcs publish --requires <lock>:packages/net-sockets/
+// .cancho-vcs`, `docs/package-system.md` §4.6).
+//
+// No `import std.bytes`, for the same reason every package here has
+// none: `vcs publish` never makes `--std` available (`cmd_publish`
+// parses with `with_std: false` unconditionally). `status_of` below
+// inlines the seven-byte prefix check `std.bytes.starts_with` would
+// otherwise provide and the one-line digit check `std.bytes.digit_of`
+// would.
+
+module http.response;
+
+import net.sockets;
+
+// Write all of `data`, which one `write` on a socket does not promise.
+pub fn send_all[&f, &b](libc: &f Ffi("libc"), fd: int, data: &b [byte]) -> [ffi("libc")] bool {
+    var sent = 0;
+    while sent < len(data) {
+        let n = sockets.write(libc, fd, data[sent..len(data)]);
+        if n <= 0 {
+            return false;
+        }
+        sent = sent + n;
+    }
+    return true;
+}
+
+// The status code from `HTTP/1.x NNN ...`, or -1.
+pub fn status_of[&h](head: &h [byte]) -> [] int {
+    if len(head) < 12 || int_of(head[0]) != 'H' || int_of(head[1]) != 'T' || int_of(head[2]) != 'T' || int_of(head[3]) != 'P' || int_of(head[4]) != '/' || int_of(head[5]) != '1' || int_of(head[6]) != '.' || int_of(head[8]) != ' ' {
+        return 0 - 1;
+    }
+    var code = 0;
+    var i = 9;
+    while i < 12 {
+        let c = int_of(head[i]);
+        if c < '0' || c > '9' {
+            return 0 - 1;
+        }
+        code = code * 10 + (c - '0');
+        i = i + 1;
+    }
+    return code;
+}

@@ -8,7 +8,7 @@
 > it against a grant"*. No supervisor had ever been asked. This takes
 > `lex-os`'s real grant and tries to write the check.
 >
-> One of its three dimensions is enforceable and **lex-sys is finer than
+> One of its three dimensions is enforceable and **cancho is finer than
 > the grant asks**. Two are not enforceable at all. And the field
 > `reach.md` §5.2 offers as covering the difference is a proof about
 > *names* and a heuristic about *domains* — six lines defeat it.
@@ -24,7 +24,7 @@
 "egress": ["results.demo.internal:443"]
 ```
 
-Three dimensions and a host allowlist. A lex-sys authority report, for
+Three dimensions and a host allowlist. A cancho authority report, for
 `examples/cut/`:
 
 ```json
@@ -68,7 +68,7 @@ authority domain.
 
 What is new here is the consequence. Against a grant that says
 `network: None`, this report is not merely coarse. It is **unable to
-refuse**, and the only lex-sys program in this repository that touches
+refuse**, and the only cancho program in this repository that touches
 the network is the one it cannot refuse.
 
 ---
@@ -84,7 +84,7 @@ covers the difference, and says a supervisor reading `socket`, `bind`,
 
 The first half is right and the second half is not. Six lines:
 
-```lex-sys
+```cancho
 extern fn syscall[&f](ffi: &f Ffi("libc"), n: int, a: int, b: int, c: int)
     -> [ffi("libc")] int;
 ...
@@ -104,7 +104,7 @@ declaration, so `foreign_symbols` is exactly the set of foreign names
 reachable from `main`, and that is a proof in the same way the row is.
 The step that is not a proof is the *next* one — from a name to a
 domain. `socket` suggests a socket because C's authors named it that,
-and the declaration in a lex-sys program is written by the program's
+and the declaration in a cancho program is written by the program's
 author, who may choose `syscall`, or a wrapper, or a name from a library
 whose domains nobody has enumerated.
 
@@ -151,14 +151,14 @@ is a thing worth narrowing to"* — with the honest note that adding `Net`
 without taking sockets out of libc would produce a row that lies.
 
 That framing was right and is now incomplete. The row is the
-**prerequisite for lex-sys code running under a lex-os grant at all**,
+**prerequisite for cancho code running under a lex-os grant at all**,
 because two of that grant's three dimensions cannot be decided without
 it. It is not "the row should be finer". It is "the row cannot answer
 the question the runtime asks".
 
 The roadmap's `lex-os` join moves accordingly: it is not blocked on a
 compiler integration, and the supervisor does not need to embed the
-lex-sys front end — `authority --output json` is already the right
+cancho front end — `authority --output json` is already the right
 interface and `filesystem` already works through it. It is blocked on
 the **effect vocabulary**, which has one label where the grant has three
 dimensions.
@@ -221,8 +221,8 @@ What this does and does not change:
   it briefly was not: `Program::externs` lists every `extern fn` declared
   in the compiled unit, and until this was fixed that meant every one,
   not only the ones a reachable call site actually calls — surfaced once
-  a program (`examples/fetch/fetch.ls`) imported a package declaring more
-  than it calls. `lex-sys-ir::reachable_externs` closed it: the report is
+  a program (`examples/fetch/fetch.cho`) imported a package declaring more
+  than it calls. `cancho-ir::reachable_externs` closed it: the report is
   now exactly what `main` reaches, the same promise §3 above already made
   for effects.
 

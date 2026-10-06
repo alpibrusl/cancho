@@ -1,16 +1,16 @@
-# `lex-sys fmt`: one layout, with the comments put back
+# `cancho fmt`: one layout, with the comments put back
 
-> **Status: built.** `lex-sys fmt <file|dir>... [--check]`
-> (`crates/lex-sys-syntax/src/format.rs`, `crates/lex-sys/src/fmt_cli.rs`).
+> **Status: built.** `cancho fmt <file|dir>... [--check]`
+> (`crates/cancho-syntax/src/format.rs`, `crates/cancho/src/fmt_cli.rs`).
 > Applied to every tracked program, and held there by a test (§5).
 
 ## 1. What was missing
 
-`lex-sys print` renders one parsed file in canonical form, and says in
+`cancho print` renders one parsed file in canonical form, and says in
 its own header that it is not a formatter, because it cannot be: comments
 are discarded by the lexer, so that formatting can never change a content
 hash (`docs/canonical-ast.md` §3), and a printer built on the AST can
-only delete them. So an agent writing lex-sys had a canonical layout it
+only delete them. So an agent writing cancho had a canonical layout it
 could not use on a real file, and nothing to hold a codebase to one
 layout either — `cargo fmt --check` exists for the compiler's own Rust,
 and there was no counterpart for the programs written *in* this language.
@@ -79,14 +79,14 @@ the repository's own sources turned up four things the first version
 could not reproduce — `else if` (§3, which was a *printer* problem, not
 an aligner one), `pub extern fn`, a dropped `}` that looked exactly like
 a printed one (the drops are decided before the matches), and
-`std/ed25519.ls`'s `import` in the middle of the file, which is now at
+`std/ed25519.cho`'s `import` in the middle of the file, which is now at
 the top.
 
 Measured on the repository: of the 138 programs under `std/`,
 `examples/`, `packages/` and `tests/accept/`, all 138 format, 74 would
-change, and formatting all 74 leaves `lex-sys ids` unchanged for every
+change, and formatting all 74 leaves `cancho ids` unchanged for every
 one of the 80 `tests/accept` fixtures (a `SigId` and a `BodyId` per
-function — `lex-sys ids` before and after, byte for byte), and a second
+function — `cancho ids` before and after, byte for byte), and a second
 `fmt --check` over the result finds nothing to do.
 `formatting::every_tracked_program_formats` is that sweep as a test, and
 `formatting_never_panics_on_a_damaged_program` deletes each line of three

@@ -1,4 +1,4 @@
-/* The same picture in double precision -- the row lex-sys cannot fill.
+/* The same picture in double precision -- the row cancho cannot fill.
  *
  * Not a fair race against the fixed-point versions and not meant to be.
  * It is here to answer a different question: what does the *absence* of

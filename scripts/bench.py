@@ -2,8 +2,8 @@
 """Measure what the overflow trap costs, so the number is re-measured
 rather than quoted.
 
-Each benchmark in `benches/` is a pair: `<name>_checked.ls` uses `+`, `-`
-and `*`, which trap on overflow; `<name>_wrapping.ls` is the same program
+Each benchmark in `benches/` is a pair: `<name>_checked.cho` uses `+`, `-`
+and `*`, which trap on overflow; `<name>_wrapping.cho` is the same program
 with `wrapping_add`/`wrapping_sub`/`wrapping_mul`, which lower to a bare
 `iadd`/`isub`/`imul`. The difference between the two binaries is the cost
 of the guarantee and nothing else.
@@ -13,7 +13,7 @@ that thermal drift and scheduler noise land on both halves, and the
 reported figure is the minimum, which is the least noisy estimator for a
 deterministic workload.
 
-    python3 scripts/bench.py              # the lex-sys pairs
+    python3 scripts/bench.py              # the cancho pairs
     python3 scripts/bench.py --with-c     # and the C comparison, if a
                                           # compiler is on the path
     python3 scripts/bench.py --with-c --cc gcc
@@ -39,7 +39,7 @@ EXPECTED_EXIT = 0
 
 def compiler() -> pathlib.Path:
     for profile in ("release", "debug"):
-        exe = ROOT / "target" / profile / "lex-sys"
+        exe = ROOT / "target" / profile / "cancho"
         if exe.exists():
             return exe
     sys.exit("build the compiler first: cargo build --release")
@@ -85,14 +85,14 @@ def main() -> None:
     parser.add_argument("--cc", help="which C compiler to use with --with-c")
     args = parser.parse_args()
 
-    scratch = pathlib.Path(tempfile.mkdtemp(prefix="lex-sys-bench-"))
+    scratch = pathlib.Path(tempfile.mkdtemp(prefix="cancho-bench-"))
     try:
         print(f"{'benchmark':<10} {'checked':>9} {'wrapping':>11} {'difference':>10}")
         print("-" * 43)
         for name in BENCHES:
             pair = []
             for half in ("checked", "wrapping"):
-                source = ROOT / "benches" / f"{name}_{half}.ls"
+                source = ROOT / "benches" / f"{name}_{half}.cho"
                 target = scratch / f"{name}_{half}"
                 build(source, target)
                 pair.append(target)

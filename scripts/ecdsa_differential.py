@@ -4,7 +4,7 @@
     python3 scripts/ecdsa_differential.py <driver> registers [<count>]
     python3 scripts/ecdsa_differential.py <driver> openssl [<count per curve>]
 
-`driver` is `tests/programs/ecdsa_driver.ls` built with `lex-sys build --std`.
+`driver` is `tests/programs/ecdsa_driver.cho` built with `cancho build --std`.
 
 `registers` (default 100,000): `mul`, `add`, `sub`, `inverse` and
 `load_reduced` modulo P-256's and P-384's p and n against Python's integers.
