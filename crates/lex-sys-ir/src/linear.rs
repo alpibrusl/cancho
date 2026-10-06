@@ -153,6 +153,19 @@ pub(crate) enum Event {
     /// The block closed and the slot is owned again. §5: "a three-valued flag
     /// set at block entry and restored at block exit".
     Thaw { slot: Slot, unique: bool },
+    /// A `&!` reference was copied: `slot` now reaches whatever the `&!`
+    /// references among `from` reach (`docs/aliasing.md` §6.1). `from` is
+    /// every name read by the initialiser, and the replay keeps the ones that
+    /// are unique references -- the types are not settled here.
+    Alias { slot: Slot, from: Vec<Slot> },
+    /// A thread was given a `&!` copied from `from`. Until its handle is
+    /// joined, the object that reference reaches is lent to it.
+    Lease { from: Vec<Slot>, span: Span },
+    /// The most recent lease not yet held by a handle is held by `slot`.
+    Bind { slot: Slot },
+    /// A thread handle was joined, which ends the lease it held. `None` is a
+    /// `spawn` joined where it is made.
+    Join { handle: Option<Slot> },
     /// A block. Whatever it declared must be dead when it closes.
     Scope(Vec<Event>),
     /// `if`/`else`, a `match`'s arms, or the right-hand side of `&&`/`||`.
@@ -219,6 +232,19 @@ struct Check<'a> {
     /// three-valued flag, with the shared case counting because shared
     /// borrows nest and the innermost closing must not thaw the whole thing.
     borrowed: Vec<Borrow>,
+    /// For each slot, the slots whose `&!` it may be a copy of
+    /// (`docs/aliasing.md` §6.1). Empty means the slot is its own root.
+    roots: Vec<Vec<Slot>>,
+    /// The `&!` references currently lent to a running thread.
+    leases: Vec<Lease>,
+}
+
+/// One `&!` lent to a thread: the roots it reaches, and the handle that holds
+/// the lease once a binding has taken it.
+#[derive(Clone, PartialEq, Eq, Debug)]
+struct Lease {
+    roots: Vec<Slot>,
+    handle: Option<Slot>,
 }
 
 /// §5's three-valued flag: a binding is owned, frozen by some number of
@@ -246,6 +272,8 @@ pub(crate) fn check(
         names: vec![None; slots.len()],
         state: vec![State::Untracked; slots.len()],
         borrowed: vec![Borrow::Owned; slots.len()],
+        roots: vec![Vec::new(); slots.len()],
+        leases: Vec::new(),
     };
     check.run(events)?;
     Ok(())
@@ -254,6 +282,32 @@ pub(crate) fn check(
 impl Check<'_> {
     fn is_res(&self, slot: Slot) -> bool {
         mode_of(self.defs, self.unifier, self.bounds, &self.slots[slot.0 as usize]) == Mode::Res
+    }
+
+    fn is_unique_ref(&self, slot: Slot) -> bool {
+        matches!(self.unifier.resolve(&self.slots[slot.0 as usize]), Type::Ref { unique: true, .. })
+    }
+
+    /// The slots a `&!` held in `slot` may be a copy of, `slot` itself among
+    /// them unless it was copied from another.
+    fn roots_of(&self, slot: Slot) -> Vec<Slot> {
+        match &self.roots[slot.0 as usize] {
+            r if r.is_empty() => vec![slot],
+            r => r.clone(),
+        }
+    }
+
+    /// The roots of the `&!` references among `from`.
+    fn unique_roots(&self, from: &[Slot]) -> Vec<Slot> {
+        let mut roots = Vec::new();
+        for slot in from.iter().filter(|s| self.is_unique_ref(**s)) {
+            for root in self.roots_of(*slot) {
+                if !roots.contains(&root) {
+                    roots.push(root);
+                }
+            }
+        }
+        roots
     }
 
     fn name(&self, slot: Slot) -> String {
@@ -338,6 +392,47 @@ impl Check<'_> {
                         (Borrow::Frozen(n), false) if n > 1 => Borrow::Frozen(n - 1),
                         _ => Borrow::Owned,
                     };
+                }
+                Event::Alias { slot, from } => {
+                    if self.is_unique_ref(*slot) {
+                        let roots = self.unique_roots(from);
+                        let held = &mut self.roots[slot.0 as usize];
+                        for root in roots {
+                            if !held.contains(&root) {
+                                held.push(root);
+                            }
+                        }
+                    }
+                }
+                Event::Lease { from, span } => {
+                    let roots = self.unique_roots(from);
+                    if let Some(root) = self.leased(&roots) {
+                        return Err(self.lent(root, *span));
+                    }
+                    self.leases.push(Lease { roots, handle: None });
+                }
+                Event::Bind { slot } => {
+                    if let Some(lease) = self.leases.iter_mut().rev().find(|l| l.handle.is_none()) {
+                        lease.handle = Some(*slot);
+                    }
+                }
+                Event::Join { handle } => match handle {
+                    Some(slot) => self.leases.retain(|l| l.handle != Some(*slot)),
+                    None => {
+                        if let Some(at) = self.leases.iter().rposition(|l| l.handle.is_none()) {
+                            self.leases.remove(at);
+                        }
+                    }
+                },
+                // §6.1: a `&!` lent to a thread is that thread's alone until
+                // it is joined, so reading any copy of it here is the
+                // second writer `docs/threads.md` §3 promises is refused.
+                Event::Use { slot, span }
+                    if self.is_unique_ref(*slot)
+                        && self.leased(&self.roots_of(*slot)).is_some() =>
+                {
+                    let root = self.leased(&self.roots_of(*slot)).expect("just checked");
+                    return Err(self.lent(root, *span));
                 }
                 // §5 rule 2: a locked binding may not be *touched* — not
                 // read, not borrowed again, not moved. That is stronger than
@@ -478,8 +573,17 @@ impl Check<'_> {
                 Event::Branch { arms, span } => diverged = self.branch(arms, *span)?,
                 Event::Loop { body, span } => {
                     let before = self.state.clone();
+                    let leases_before = self.leases.clone();
                     let body_diverged = self.run(body)?;
                     self.forget_locals(&before);
+                    if !body_diverged && self.leases != leases_before {
+                        return Err(Diagnostic::new(
+                            Rule::BorrowConflict,
+                            "a thread spawned in this loop is still holding a `&!` when the next iteration starts; join it inside the loop".to_owned(),
+                            *span,
+                        ));
+                    }
+                    self.leases = leases_before;
                     if !body_diverged && self.state != before {
                         let slot = self.differing_slot(&before).expect("the states differ");
                         return Err(Diagnostic::new(
@@ -505,16 +609,25 @@ impl Check<'_> {
     /// point, so it does not vote.
     fn branch(&mut self, arms: &[Vec<Event>], span: Span) -> Result<bool, Diagnostic> {
         let before = self.state.clone();
-        let mut joined: Option<Vec<State>> = None;
+        let leases_before = self.leases.clone();
+        let mut joined: Option<(Vec<State>, Vec<Lease>)> = None;
         for arm in arms {
             self.state = before.clone();
+            self.leases = leases_before.clone();
             if self.run(arm)? {
                 continue;
             }
             self.forget_locals(&before);
             match &joined {
-                None => joined = Some(self.state.clone()),
-                Some(agreed) => {
+                None => joined = Some((self.state.clone(), self.leases.clone())),
+                Some((_, agreed_leases)) if *agreed_leases != self.leases => {
+                    return Err(Diagnostic::new(
+                        Rule::BorrowConflict,
+                        "the branches disagree about whether a thread still holds a `&!`: one joins it and another does not".to_owned(),
+                        span,
+                    ));
+                }
+                Some((agreed, _)) => {
                     if *agreed != self.state {
                         let slot = self
                             .differing_slot(agreed)
@@ -532,13 +645,15 @@ impl Check<'_> {
             }
         }
         match joined {
-            Some(agreed) => {
+            Some((agreed, leases)) => {
                 self.state = agreed;
+                self.leases = leases;
                 Ok(false)
             }
             // Every arm returned, so nothing reaches the merge point.
             None => {
                 self.state = before;
+                self.leases = leases_before;
                 Ok(true)
             }
         }
@@ -558,6 +673,22 @@ impl Check<'_> {
                 self.state[slot] = State::Untracked;
             }
         }
+    }
+
+    /// A root among `roots` that some running thread holds a `&!` to.
+    fn leased(&self, roots: &[Slot]) -> Option<Slot> {
+        roots.iter().copied().find(|r| self.leases.iter().any(|l| l.roots.contains(r)))
+    }
+
+    fn lent(&self, root: Slot, span: Span) -> Diagnostic {
+        Diagnostic::new(
+            Rule::BorrowConflict,
+            format!(
+                "the `&!` reference `{}` reaches is lent to a thread that has not been joined, so it cannot be used again here; a `&!` is the only way to write its object, and two threads writing through copies of it race. Join the first thread before using it again",
+                self.name(root)
+            ),
+            span,
+        )
     }
 
     fn live_slot(&self) -> Option<Slot> {

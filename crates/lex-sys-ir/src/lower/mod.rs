@@ -105,6 +105,14 @@ pub(crate) struct FnLowering<'a> {
     /// What the linearity checker replays once the types are settled
     /// (`linear.rs`). Recorded here because this is where the spans are.
     pub(crate) trace: Trace,
+    /// Every slot a name was read from since lowering started, in order. A
+    /// `let` and a `spawn` take the slice written by their own operand, which
+    /// is how the checker learns which `&!` a new binding or a thread payload
+    /// was copied from (`docs/aliasing.md` §6.1).
+    pub(crate) reads: Vec<Slot>,
+    /// A `spawn` that lent a `&!` has returned a handle no binding has taken
+    /// yet (`docs/aliasing.md` §6.1).
+    pub(crate) pending_lease: bool,
     /// The module this function is in, which is where an unqualified name
     /// resolves (`docs/modules.md` §4).
     pub(crate) module: u32,
@@ -141,6 +149,14 @@ impl<'a> FnLowering<'a> {
             span,
             shadows,
         });
+        if self.pending_lease {
+            let thread = self.prelude()[PRELUDE_THREAD];
+            if matches!(self.unifier.resolve(&self.slots[slot.0 as usize]), Type::Named(d, _) if d == thread)
+            {
+                self.pending_lease = false;
+                self.trace.emit(Event::Bind { slot });
+            }
+        }
         slot
     }
 

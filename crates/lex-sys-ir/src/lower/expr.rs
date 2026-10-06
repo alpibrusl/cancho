@@ -58,6 +58,7 @@ impl<'a> FnLowering<'a> {
                         // Slice 1 has no borrowing, so every read of a `res`
                         // binding is a move. §5 adds the other kind.
                         self.trace.emit(Event::Use { slot, span });
+                        self.reads.push(slot);
                         (Expr::Load(slot), ty)
                     }
                     // `docs/compile-time-data.md` §2: the name reads as a

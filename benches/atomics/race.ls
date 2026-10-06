@@ -1,3 +1,6 @@
+// NOTE: since `aliasing.md` section 6.1 this program is REFUSED (a `&!` given to `spawn` is lent until `join`), which
+// is the point of the fix. Kept as the record of the race that was measured; `tests/reject/spawn_two_copies_of_unique.ls`
+// is the live fixture. It is only parsed by the tests, never compiled.
 // docs/atomics.md section 2: a data race the checker ACCEPTS today. `&!r` is `val`, so `let a = r; let b = r;`
 // is two copies of one pointer (aliasing.md route 2), and `spawn` takes one pointer-width reference per thread
 // (threads.md section 3 claims the aliasing rule forbids a second writer; it does not). Two threads each add 1 to

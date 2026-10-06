@@ -245,6 +245,8 @@ pub(crate) fn lower_static(
         slot_origin: Vec::new(),
         ret: ret.clone(),
         trace: Trace::new(),
+        reads: Vec::new(),
+        pending_lease: false,
         module,
         edition: ast.edition_of(ast::ItemId(item as u32)),
         bounds: Vec::new(),
@@ -370,6 +372,8 @@ pub(crate) fn lower_function(
         slot_origin: Vec::new(),
         ret: ret.clone(),
         trace: Trace::new(),
+        reads: Vec::new(),
+        pending_lease: false,
         module: signature.module,
         edition: ast.edition_of(ast::ItemId(signature.item as u32)),
         // A copy being emitted has its parameters substituted away, so

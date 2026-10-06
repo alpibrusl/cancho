@@ -1,3 +1,6 @@
+// NOTE: since `aliasing.md` section 6.1 this program is REFUSED: it shares one struct between two threads through two
+// copies of one `&!`, which is exactly what the checker now stops. Kept as the record of what was measured; it is only
+// parsed by the tests, never compiled.
 // docs/atomics.md section 7.1: the store-buffering litmus test with PLAIN accesses, to show the gate's test has power.
 // Thread A: x[i] = 1; r1[i] = y[i].  Thread B: y[i] = 1; r2[i] = x[i].  Under sequential consistency r1 = r2 = 0 is
 // forbidden; with plain accesses it is allowed, and happens. The two threads share one struct through two copies
