@@ -13,7 +13,8 @@ any other conditional jump is not. Reading what each flag-setting instruction
 compares (a slice length, a constant index, a shift amount) is still the
 reader's job; the script prints them so it can be done. Function names after
 the object file (`module.function`) replace the default list, which is
-`std.chacha20`'s.
+`std.chacha20`'s; a name beginning `lexs_` is a full symbol, for a
+package's module (`lexs_x509_key.within`, docs/ecdsa-sign.md §6.2).
 
 The functions that only move secret words between those (`LOOPS`: they hold
 the key, the keystream or `r`, and loop over a message) are listed too, but
@@ -59,7 +60,7 @@ def main():
     for f in named or FUNCTIONS + LOOPS:
         strict = f not in LOOPS or bool(named)
         text = subprocess.run(
-            ["objdump", "-d", "--no-show-raw-insn", f"--disassemble=lexs_std.{f}", obj],
+            ["objdump", "-d", "--no-show-raw-insn", f"--disassemble={f if f.startswith('lexs_') else 'lexs_std.' + f}", obj],
             capture_output=True, text=True, check=True,
         ).stdout
         ins = []

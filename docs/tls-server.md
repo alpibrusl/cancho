@@ -1,6 +1,7 @@
 # A TLS 1.3 server for `packages/tls`: the design
 
-> **Status: design, its open questions (§9) answered as proposed (2026-10-07); nothing built yet.** `packages/tls` is a client (`docs/tls-pure.md`). Two programs of the toolbox need the other
+> **Status: design, its open questions (§9) answered as proposed (2026-10-07); step 1 built (`docs/ecdsa-sign.md`), the
+> server itself not yet.** `packages/tls` is a client (`docs/tls-pure.md`). Two programs of the toolbox need the other
 > side: `lexsys-mqtt`, a broker whose clients connect on 8883, and `lexsys-gateway`, a reverse proxy that terminates HTTPS. Both
 > are at the design stage and both list TLS as out of scope because "it needs foreign code and would make the authority report
 > unbounded". A server in `packages/tls` removes that reason. This document is the design; its numbers are measured where it
@@ -17,7 +18,7 @@ DRBG, and the key exchanges (`std.x25519`, `std.ecdh` on P-256 and P-384, both c
 
 | | the client today | a server needs |
 |---|---|---|
-| **a signature with a secret key** | verifies only | signs `CertificateVerify` in every full handshake. **No signing in `std` is constant time today**: `std.ecdsa` verifies only, `std.rsa` verifies only, and `std.ed25519.sign` branches on secret data (`docs/ed25519.md`, "Not constant-time"). This is the prerequisite, §3. |
+| **a signature with a secret key** | verifies only | signs `CertificateVerify` in every full handshake. **No signing in `std` is constant time today**: `std.ecdsa` verifies only, `std.rsa` verifies only, and `std.ed25519.sign` branches on secret data (`docs/ed25519.md`, "Not constant-time"). This is the prerequisite, §3. *Built since: `std.ecdsa_sign` (`docs/ecdsa-sign.md`).* |
 | **a private key** | none | read from a PEM file, held in the engine, never readable back (§4) |
 | **the handshake state machine** | ClientHello out, ServerHello in | ClientHello in, choose, ServerHello to Finished out, client Finished in (§5) |
 | **choices** | the server makes them | suite, group, HelloRetryRequest, certificate by SNI, ALPN (§5.2) |
@@ -80,6 +81,11 @@ The new code is a fixed-base multiplication (the existing variable-base one, giv
 optimisation) and a few register operations mod n. **What stays variable time is on public values only**: the r == 0 and
 s == 0 tests (probability about 2^-256), and the encoding of the signature.
 
+*Corrected (step 1): "a few register operations" left one out. `bigmod.load_reg`, the only way into a register, skips zero
+bytes and compares with n limb by limb, stopping at the first that differs: a branch on a private key or a nonce. ECDH never
+loads its scalar into a register, so nothing had needed more. `bigmod.load_secret` places bytes by position only
+(`docs/ecdsa-sign.md` §2.2).*
+
 ### 3.2 The nonce
 
 A biased or repeated nonce gives the key away. The nonce is **RFC 6979's deterministic nonce with added randomness** (§3.6
@@ -102,6 +108,11 @@ recover the key. §9's question 3 asks whether that cost stays.
   as there.
 - The value-barrier audit (`docs/value-barrier.md`) over the new functions.
 - Mutants over the new code (`scripts/mutate.py`), every one killed or argued equivalent.
+
+*Corrected (step 1): there is no `scripts/mutate.py`; each crypto module has its own mutants script, and the signer's is
+`scripts/ecdsa_sign_mutants.py`. OpenSSL verifying a signature does not show that its nonce is RFC 6979's, so the 10,000
+signatures are also compared byte for byte with RFC 6979 written in Python (`docs/ecdsa-sign.md` §5.2). Results:
+`docs/ecdsa-sign.md` §5 and §6.*
 
 ## 4. Keys and certificates
 
@@ -205,7 +216,8 @@ significant; each identity holds its chain (a few KiB) and key in the engine.
 
 ## 8. Steps, each its own PR with its gates
 
-1. **`std.ecdsa.sign` on P-256** (§3), the key parsers (§4), with the vectors, the 10,000 OpenSSL cross-checks, the timing
+1. **`std.ecdsa.sign` on P-256** (§3; *built as `std.ecdsa_sign`, since `std.ecdh` imports `std.ecdsa` and the signer needs
+   `std.ecdh`'s ladder: `docs/ecdsa-sign.md` §1*), the key parsers (§4), with the vectors, the 10,000 OpenSSL cross-checks, the timing
    test, the audit and the mutants. Gate: all pass; the timing test's |t| below 4.5.
 2. **The TLS 1.3 server** (§5), with:
    - interop: `openssl s_client`, curl, Go `crypto/tls`, wolfSSL's client, and mosquitto's clients (`mosquitto_pub` over 8883,

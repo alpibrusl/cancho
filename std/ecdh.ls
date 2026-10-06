@@ -302,6 +302,23 @@ fn in_range[&s, &n](s: &s [byte], n: &n [byte]) -> [] int {
     return under & (0 - any >> 63 & 1);
 }
 
+// Whether `scalar` (curve / 8 bytes, big-endian) is in [1, n) of
+// `curve` (256 or 384), in constant time. `std.ecdsa_sign` checks a
+// private key with it (`docs/ecdsa-sign.md` §2); only the answer is
+// public.
+pub fn scalar_ok[&s](curve: int, scalar: &s [byte]) -> [] bool {
+    if curve != 256 && curve != 384 || len(scalar) != curve / 8 {
+        return false;
+    }
+    var ok = 0;
+    region r {
+        let n = alloc_slice[r](curve / 8, byte_of(0));
+        ecdsa.curve_param(curve, 4, n);
+        ok = in_range(scalar, n);
+    }
+    return ok == 1;
+}
+
 // Checks the curve, the work and the scalar, and makes `w` ready for
 // arithmetic modulo p with b in its register.
 fn prepare[&s, &w](curve: int, scalar: &s [byte], w: &!w [int]) -> [] int {
