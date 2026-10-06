@@ -1206,7 +1206,7 @@ def resumption_other_hash(s):
     r.c.feed(plain_record(22, r.server_hello(r.sid)))
 
 
-@case("pre_shared_key in a ServerHello when no ticket was offered", "tls-illegal-psk", alert=47)
+@case("pre_shared_key in a ServerHello when no ticket was offered", "tls-unsupported-extension", alert=110)
 def psk_not_offered(s):
     s.start()
     s.extra_extensions = ext(41, u16(0))

@@ -114,7 +114,10 @@ tls.set_ticket_max_age(engine, seconds)      // §3 rule 4; default 3,600
 
 **Refusals, each with its tag** (CLAUDE.md), all `tls-` and all a failed connection:
 - the ServerHello selects an identity other than 0 (`tls-illegal-psk`, a new tag);
-- `pre_shared_key` in a ServerHello to a ClientHello that offered none, or with a suite whose hash is not the PSK's (`tls-illegal-psk`);
+- `pre_shared_key` in a ServerHello with a suite whose hash is not the PSK's (`tls-illegal-psk`);
+- `pre_shared_key` in a ServerHello to a ClientHello that offered none (`tls-unsupported-extension`, alert 110, as RFC 8446 §4.2
+  says for any extension the client did not send. *Corrected:* this said `tls-illegal-psk`, and the code sent
+  `illegal_parameter`, until the OpenSSL differential showed OpenSSL sending the RFC's alert);
 - a resumed ServerHello without `key_share` (`tls-key-share`: `psk_ke` was not offered);
 - a Certificate or CertificateRequest after a resumed ServerHello (`tls-unexpected-message`);
 - a NewSessionTicket that does not parse is still `tls-decode-error`, as now.
@@ -207,9 +210,9 @@ The build PR shows, each with its command:
   the client derived from each ticket is its own.
 - **The rules:** twelve cases, each deciding from the ClientHello's bytes alone whether the ticket was offered, including the
   obfuscated age.
-- **Mutants** (`scripts/tls_mutants.py`, now 88): **87 killed, 1 equivalent, argued in its `EQUIVALENT`** (a `pre_shared_key`
-  accepted when none was offered: the slot's ticket hash length is then 0, so the hash check refuses the same ServerHello with the
-  same tag). Writing them found two gaps, closed here: no case resumed under SHA-384 (now one does), and the other host name in the
+- **Mutants** (`scripts/tls_mutants.py`, now 88): **88 killed.** *Corrected:* this said 87 killed and 1 equivalent (a
+  `pre_shared_key` accepted when none was offered, refused by the hash check with the same tag). Since the unoffered case has
+  its own alert (above), that mutant changes the tag and is killed. Writing them found two gaps, closed here: no case resumed under SHA-384 (now one does), and the other host name in the
   rule cases was a different length, so the length check alone refused it (now it is the same length). The runner now replays the
   rule cases for every mutant, and a mutant listed as equivalent must survive or the run fails.
 - **Fuzzing:** `fuzz_client` offers a fixed ticket on inputs of odd length, and the ticket parser is `fuzz_messages`'s case 6. 20

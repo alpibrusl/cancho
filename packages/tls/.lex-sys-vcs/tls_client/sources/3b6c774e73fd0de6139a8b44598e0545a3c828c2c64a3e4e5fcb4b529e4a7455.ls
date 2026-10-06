@@ -211,9 +211,13 @@ fn on_server_hello[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message: &m [
                 code = tls_record.key_share();
             }
             if code == 0 && info[tls_message.sh_psk()] == 1 {
-                // A resumption: the ticket was offered, and the suite
-                // hashes as its PSK was made (RFC 8446 §4.2.11).
-                if !tls_slot.has(ints, tls_slot.f_psk_offered()) || tls_record.hash_len(suite) != ints[tls_slot.i_offer_hash()] {
+                // A resumption: the ticket was offered (RFC 8446 §4.2: an
+                // extension the client did not send is
+                // unsupported_extension), and the suite hashes as its PSK
+                // was made (§4.2.11).
+                if !tls_slot.has(ints, tls_slot.f_psk_offered()) {
+                    code = tls_record.unsupported_extension();
+                } else if tls_record.hash_len(suite) != ints[tls_slot.i_offer_hash()] {
                     code = tls_record.illegal_psk();
                 } else {
                     tls_slot.set_flag(ints, tls_slot.f_resumed());

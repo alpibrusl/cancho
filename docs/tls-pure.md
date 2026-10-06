@@ -410,7 +410,7 @@ history, as `lexsys-hooks` stores `attempts.status` today (`docs/tls-nonblocking
 | `tls-bad-certificate-verify` | the server's signature over the transcript does not verify | a hostile peer, or the wrong key |
 | `tls-bad-finished` | the server's `Finished` does not verify | the same |
 | `tls-too-many-messages` | the KeyUpdate or warning-alert limits (§7.1) | the same |
-| `tls-illegal-psk` | *#286:* a `pre_shared_key` in a ServerHello that names an identity other than the one offered, answers a ClientHello that offered none, or comes with a suite whose hash is not the ticket's (`docs/tls-resumption.md` §5) | a broken or hostile peer |
+| `tls-illegal-psk` | *#286:* a `pre_shared_key` in a ServerHello that names an identity other than the one offered, or comes with a suite whose hash is not the ticket's (one answering a ClientHello that offered none is `tls-unsupported-extension`, RFC 8446 §4.2) (`docs/tls-resumption.md` §5) | a broken or hostile peer |
 | `tls-no-entropy` | the engine was never seeded | a program bug: seed it in `main` |
 | `tls-slot` | a slot number out of range, or a slot already in use | a program bug |
 

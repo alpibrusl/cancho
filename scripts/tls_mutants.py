@@ -186,11 +186,11 @@ MUTANTS = [
      "            if tls_slot.has(ints, tls_slot.f_resumed()) {\n                early_secret(",
      "            if false {\n                early_secret("),
     ("a pre_shared_key accepted when none was offered", "client.ls",
-     "if !tls_slot.has(ints, tls_slot.f_psk_offered()) || tls_record.hash_len(suite)",
-     "if false || tls_record.hash_len(suite)"),
+     "if !tls_slot.has(ints, tls_slot.f_psk_offered()) {\n                    code = tls_record.unsupported_extension();",
+     "if false {\n                    code = tls_record.unsupported_extension();"),
     ("a suite with another hash accepted for the ticket", "client.ls",
-     "|| tls_record.hash_len(suite) != ints[tls_slot.i_offer_hash()] {\n                    code = tls_record.illegal_psk();",
-     "|| false {\n                    code = tls_record.illegal_psk();"),
+     "} else if tls_record.hash_len(suite) != ints[tls_slot.i_offer_hash()] {\n                    code = tls_record.illegal_psk();",
+     "} else if false {\n                    code = tls_record.illegal_psk();"),
     ("a resumption still waiting for a Certificate", "client.ls",
      "            if tls_slot.has(ints, tls_slot.f_resumed()) {\n                // No Certificate",
      "            if false {\n                // No Certificate"),
@@ -265,13 +265,7 @@ def cases():
 
 # Mutants that change no behaviour the client can reach, each with the argument. Such a mutant must survive;
 # one that is killed was not equivalent, and the run fails.
-EQUIVALENT = {
-    "a pre_shared_key accepted when none was offered":
-        "a ClientHello that offered no ticket leaves the slot's ticket hash length at 0, which no suite's hash "
-        "equals, so the hash check that follows refuses the same ServerHello with the same tag; a retry that "
-        "drops the offer keeps the old hash, but only because the retry's suite hashes otherwise, and the "
-        "ServerHello after a retry must keep its suite",
-}
+EQUIVALENT = {}
 
 
 def ticket_cases():
