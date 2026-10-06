@@ -333,6 +333,50 @@ pub fn expand[&k, &s](key: &k [byte], skey: &!s [int]) -> [] int {
     return nr;
 }
 
+// The expanded key in FIPS 197's own form, for the hardware path
+// (`docs/crypto-builtins.md` §3): `rounds + 1` round keys of 16 bytes
+// into `out` (at least that long), the words `expand` makes before it
+// bitslices them, each stored in byte order. The number of rounds, or
+// `refused_key_length()`. The same schedule as `expand`, so the same
+// constant-time `sub_word`; branches only on the key's length.
+pub fn round_keys[&k, &o](key: &k [byte], out: &!o [byte]) -> [] int {
+    let nr = rounds(len(key));
+    if nr == 0 || len(out) < (nr + 1) * 16 {
+        return refused_key_length();
+    }
+    let nk = len(key) / 4;
+    let nkf = (nr + 1) * 4;
+    var i = 0;
+    while i < 4 * nk {
+        out[i] = key[i];
+        i = i + 1;
+    }
+    var tmp = le32(key, 4 * (nk - 1));
+    var j = 0;
+    var k = 0;
+    i = nk;
+    while i < nkf {
+        if j == 0 {
+            tmp = m32(tmp << 24) | tmp >> 8;
+            tmp = sub_word(tmp) ^ rcon(k);
+        } else if nk > 6 && j == 4 {
+            tmp = sub_word(tmp);
+        }
+        tmp = tmp ^ le32(out, 4 * (i - nk));
+        out[4 * i] = byte_of(tmp & 0xff);
+        out[4 * i + 1] = byte_of(tmp >> 8 & 0xff);
+        out[4 * i + 2] = byte_of(tmp >> 16 & 0xff);
+        out[4 * i + 3] = byte_of(tmp >> 24 & 0xff);
+        j = j + 1;
+        if j == nk {
+            j = 0;
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    return nr;
+}
+
 fn add_round_key[&q, &s](q: &!q [int], skey: &s [int], at: int) -> [] int {
     var i = 0;
     while i < 8 {

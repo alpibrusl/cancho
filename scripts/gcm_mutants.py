@@ -28,7 +28,8 @@ MUTANTS = [
     ("aes", "ShiftRows moves one bit pair the wrong way", "(x & 0x00000300) << 6", "(x & 0x00000300) << 4"),
     ("aes", "MixColumns misses a term", "q[2] = q1 ^ r1 ^ r2 ^ rotr16(q2 ^ r2);", "q[2] = q1 ^ r2 ^ rotr16(q2 ^ r2);"),
     ("aes", "a wrong round constant", "        return 0x1b;", "        return 0x1c;"),
-    ("aes", "AES-256's extra SubWord skipped", "} else if nk > 6 && j == 4 {", "} else if nk > 8 && j == 4 {"),
+    ("aes", "AES-256's extra SubWord skipped", "} else if nk > 6 && j == 4 {\n            tmp = sub_word(tmp);\n        }\n        tmp = tmp ^ skey[", "} else if nk > 8 && j == 4 {\n            tmp = sub_word(tmp);\n        }\n        tmp = tmp ^ skey["),
+    ("aes", "round keys: AES-256's extra SubWord skipped", "} else if nk > 6 && j == 4 {\n            tmp = sub_word(tmp);\n        }\n        tmp = tmp ^ le32(out", "} else if nk > 8 && j == 4 {\n            tmp = sub_word(tmp);\n        }\n        tmp = tmp ^ le32(out"),
     ("aes", "the key's odd bits expanded the wrong way", "skey[2 * i + 1] = y | y >> 1;", "skey[2 * i + 1] = y | m32(y << 1);"),
     ("aes", "an ortho swap left out", "    swapn(q, 0x33333333, 0xcccccccc, 2, at + 5, at + 7);\n", ""),
     ("aes", "the counter advanced by one per pair", "        cc = cc + 2;", "        cc = cc + 1;"),
@@ -39,15 +40,22 @@ MUTANTS = [
     ("gcm", "the reduction's x^7 term wrong", "lw ^ lw >> 1 ^ lw >> 2 ^ lw >> 7", "lw ^ lw >> 1 ^ lw >> 2 ^ lw >> 6"),
     ("gcm", "a Karatsuba middle product left uncorrected", "w[c + 17] = w[c + 17] ^ w[c + 15] ^ w[c + 16];", "w[c + 17] = w[c + 17] ^ w[c + 15];"),
     ("gcm", "H not bit-reversed for the reversed products", "ctx[c_h() + 4 + i] = rev32(ctx[c_h() + i]);", "ctx[c_h() + 4 + i] = ctx[c_h() + i];"),
-    ("gcm", "the ciphertext's length in bytes, not bits", "let cbits = len(ciphertext) * 8;", "let cbits = len(ciphertext);"),
+    ("gcm", "the ciphertext's length in bytes, not bits", "    // The lengths block: both lengths in bits, 64 bits each.\n    let abits = len(aad) * 8;\n    let cbits = len(ciphertext) * 8;", "    // The lengths block: both lengths in bits, 64 bits each.\n    let abits = len(aad) * 8;\n    let cbits = len(ciphertext);"),
     ("gcm", "the associated data and ciphertext hashed in the wrong order", "    ghash(w, aad);\n    ghash(w, ciphertext);", "    ghash(w, ciphertext);\n    ghash(w, aad);"),
     ("gcm", "the tag masked with counter 2, not J0", "aes.ctr32_with(nr, skey, nonce, 1, blk, tag, q);", "aes.ctr32_with(nr, skey, nonce, 2, blk, tag, q);"),
     ("gcm", "encryption from counter 1", "aes.ctr32_with(ctx[0], ctx[c_skey()..c_h()], nonce, 2, plaintext, out[0..text], q);", "aes.ctr32_with(ctx[0], ctx[c_skey()..c_h()], nonce, 1, plaintext, out[0..text], q);"),
+    # The hardware path (`docs/crypto-builtins.md` §6, step 4): killed only where `hw_aes_gcm()` is true.
+    ("gcm", "hardware: encryption from counter 1", "ctr_hw(keys, nr, nonce, 2, plaintext, out[0..text], blk, ks);", "ctr_hw(keys, nr, nonce, 1, plaintext, out[0..text], blk, ks);"),
+    ("gcm", "hardware: the last partial block not padded with zeros", "            pad[k] = byte_of(0);\n", "            pad[k] = byte_of(1);\n"),
+    ("gcm", "hardware: the ciphertext's length in bytes", "    ghash_hw(h, y, ciphertext, blk);\n    let abits = len(aad) * 8;\n    let cbits = len(ciphertext) * 8;", "    ghash_hw(h, y, ciphertext, blk);\n    let abits = len(aad) * 8;\n    let cbits = len(ciphertext);"),
+    ("gcm", "hardware: decrypted before the tag is checked", "        if diff == 0 {\n            ctr_hw(", "        if true {\n            ctr_hw("),
+    ("gcm", "hardware: H not the encryption of zero", "aes_encrypt_block(hw[0..(nr + 1) * 16], nr, zeros, hw[hw_h()..hw_h() + 16]);", "aes.round_keys(key, hw[hw_h()..hw_h() + 16]);"),
     # The prepared key (`docs/crypto-builtins.md` §6, step 2).
     ("gcm", "an unprepared context taken as prepared", "&& (ctx[0] == 10 || ctx[0] == 14)", "&& ctx[0] >= 0"),
     ("gcm", "the last partial block not padded with zeros", "        var b = 0;\n        if at + k < len(s) {", "        var b = 255;\n        if at + k < len(s) {"),
-    ("gcm", "a one-byte-short tag compare", "while i < 16 {\n            diff", "while i < 15 {\n            diff"),
-    ("gcm", "plaintext released on a bad tag", "        if diff == 0 {", "        if diff == diff {"),
+    ("gcm", "a one-byte-short tag compare", "q, w, blk);\n        // Every byte is compared whatever the earlier ones were.\n        var i = 0;\n        while i < 16 {", "q, w, blk);\n        // Every byte is compared whatever the earlier ones were.\n        var i = 0;\n        while i < 15 {"),
+    ("gcm", "hardware: a one-byte-short tag compare", "y, blk, ks);\n        // Every byte is compared whatever the earlier ones were.\n        var i = 0;\n        while i < 16 {", "y, blk, ks);\n        // Every byte is compared whatever the earlier ones were.\n        var i = 0;\n        while i < 15 {"),
+    ("gcm", "plaintext released on a bad tag", "        if diff == 0 {\n            aes.ctr32_with(", "        if diff == diff {\n            aes.ctr32_with("),
     ("gcm", "a long nonce accepted", "if len(nonce) != 12 {", "if len(nonce) < 12 {"),
 ]
 
@@ -126,6 +134,12 @@ def evidence():
         b[bit // 8] ^= 1 << (bit % 8)
         cases.append(f"O {c['Key']} {c['IV']} {c['AAD']} {b.hex()}")
         checks.append(lambda a, n=len(s) - 16: a == f"-6 aead-tag-mismatch {'aa' * n}")
+    # Every seal and open again on the software path (`s`, `o`), so a machine whose CPU takes the hardware path for `S`
+    # and `O` still tests the software one (docs/crypto-builtins.md §7).
+    for case, check in list(zip(cases, checks)):
+        if case[:2] in ("S ", "O "):
+            cases.append(case[0].lower() + case[1:])
+            checks.append(check)
     return cases, checks
 
 

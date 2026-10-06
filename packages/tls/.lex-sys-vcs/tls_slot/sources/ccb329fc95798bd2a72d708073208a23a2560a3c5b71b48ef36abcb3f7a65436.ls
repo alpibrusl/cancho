@@ -1,4 +1,5 @@
 module tls_slot;
+import std.bytes;
 import std.crypto;
 import std.ecdh;
 import std.ecdsa;
@@ -271,11 +272,17 @@ pub fn write_aead[&i](ints: &i [int]) -> [] &i [int] {
 }
 
 // Prepares both directions' keys, as installed (TLS 1.2's key block).
-pub fn prepare_keys[&i, &b](ints: &!i [int], bytes: &b [byte]) -> [] int {
+pub fn prepare_keys[&i, &b](ints: &!i [int], bytes: &!b [byte]) -> [] int {
     let suite = ints[i_suite()];
     let n = key_len(ints);
-    tls_record.prepare(suite, bytes[k_read_key()..k_read_key() + n], ints[i_read_aead()..i_read_aead() + tls_record.context_len()]);
-    tls_record.prepare(suite, bytes[k_write_key()..k_write_key() + n], ints[i_write_aead()..i_write_aead() + tls_record.context_len()]);
+    region t {
+        let key = alloc_slice[t](n, byte_of(0));
+        copy_bytes(bytes[k_read_key()..k_read_key() + n], key);
+        tls_record.prepare(suite, key, ints[i_read_aead()..i_read_aead() + tls_record.context_len()], bytes[k_read_hw()..k_read_hw() + tls_record.hw_len()]);
+        copy_bytes(bytes[k_write_key()..k_write_key() + n], key);
+        tls_record.prepare(suite, key, ints[i_write_aead()..i_write_aead() + tls_record.context_len()], bytes[k_write_hw()..k_write_hw() + tls_record.hw_len()]);
+        zero(key);
+    }
     return 0;
 }
 
@@ -473,8 +480,18 @@ pub fn k_offer_psk() -> [] int {
     return b_keys() + 1168;
 }
 
+// Each direction's key prepared for the hardware path (`gcm.hw_len()`
+// bytes): in the keys, so `forget` and `drop` overwrite them.
+pub fn k_read_hw() -> [] int {
+    return b_keys() + 1216;
+}
+
+pub fn k_write_hw() -> [] int {
+    return b_keys() + 1472;
+}
+
 pub fn keys_len() -> [] int {
-    return 1216;
+    return 1728;
 }
 
 // The largest ticket kept (`docs/tls-resumption.md` §4): a larger one is
@@ -520,12 +537,7 @@ pub fn copy_bytes[&s, &o](src: &s [byte], out: &!o [byte]) -> [] int {
 }
 
 pub fn zero[&o](out: &!o [byte]) -> [] int {
-    var i = 0;
-    while i < len(out) {
-        out[i] = byte_of(0);
-        i = i + 1;
-    }
-    return 0;
+    return bytes.zero(out);
 }
 
 pub fn has[&i](ints: &i [int], flag: int) -> [] bool {
@@ -629,7 +641,12 @@ pub fn traffic_keys[&s, &k, &v](secret: &s [byte], key: &!k [byte], iv: &!v [byt
 pub fn set_read_keys[&i, &b](ints: &!i [int], bytes: &!b [byte], secret_at: int) -> [] int {
     let h = hash_len(ints);
     traffic_keys(bytes[secret_at..secret_at + h], bytes[k_read_key()..k_read_key() + key_len(ints)], bytes[k_read_iv()..k_read_iv() + 12]);
-    tls_record.prepare(ints[i_suite()], bytes[k_read_key()..k_read_key() + key_len(ints)], ints[i_read_aead()..i_read_aead() + tls_record.context_len()]);
+    region t {
+        let key = alloc_slice[t](key_len(ints), byte_of(0));
+        copy_bytes(bytes[k_read_key()..k_read_key() + key_len(ints)], key);
+        tls_record.prepare(ints[i_suite()], key, ints[i_read_aead()..i_read_aead() + tls_record.context_len()], bytes[k_read_hw()..k_read_hw() + tls_record.hw_len()]);
+        zero(key);
+    }
     ints[i_read_seq()] = 0;
     set_flag(ints, f_read_protected());
     return 0;
@@ -638,7 +655,12 @@ pub fn set_read_keys[&i, &b](ints: &!i [int], bytes: &!b [byte], secret_at: int)
 pub fn set_write_keys[&i, &b](ints: &!i [int], bytes: &!b [byte], secret_at: int) -> [] int {
     let h = hash_len(ints);
     traffic_keys(bytes[secret_at..secret_at + h], bytes[k_write_key()..k_write_key() + key_len(ints)], bytes[k_write_iv()..k_write_iv() + 12]);
-    tls_record.prepare(ints[i_suite()], bytes[k_write_key()..k_write_key() + key_len(ints)], ints[i_write_aead()..i_write_aead() + tls_record.context_len()]);
+    region t {
+        let key = alloc_slice[t](key_len(ints), byte_of(0));
+        copy_bytes(bytes[k_write_key()..k_write_key() + key_len(ints)], key);
+        tls_record.prepare(ints[i_suite()], key, ints[i_write_aead()..i_write_aead() + tls_record.context_len()], bytes[k_write_hw()..k_write_hw() + tls_record.hw_len()]);
+        zero(key);
+    }
     ints[i_write_seq()] = 0;
     set_flag(ints, f_write_protected());
     return 0;
@@ -706,7 +728,7 @@ pub fn queue_record[&i, &b, &c](ints: &!i [int], bytes: &!b [byte], kind: int, c
         return tls_record.record_overflow();
     }
     if has(ints, f_tls12()) {
-        let m = tls_record.seal12(ints[i_suite()], bytes[k_write_key()..k_write_key() + key_len(ints)], write_aead(ints), bytes[k_write_iv()..k_write_iv() + 12], ints[i_write_seq()], kind, content, bytes[at..at + len(content) + tls_record.overhead12(ints[i_suite()])]);
+        let m = tls_record.seal12(ints[i_suite()], bytes[k_write_key()..k_write_key() + key_len(ints)], write_aead(ints), bytes[k_write_hw()..k_write_hw() + tls_record.hw_len()], bytes[k_write_iv()..k_write_iv() + 12], ints[i_write_seq()], kind, content, bytes[at..at + len(content) + tls_record.overhead12(ints[i_suite()])]);
         if m < 0 {
             return m;
         }
@@ -714,7 +736,7 @@ pub fn queue_record[&i, &b, &c](ints: &!i [int], bytes: &!b [byte], kind: int, c
         ints[i_out_end()] = ints[i_out_end()] + m;
         return 0;
     }
-    let n = tls_record.seal(ints[i_suite()], bytes[k_write_key()..k_write_key() + key_len(ints)], write_aead(ints), bytes[k_write_iv()..k_write_iv() + 12], ints[i_write_seq()], kind, content, bytes[at..at + len(content) + 22]);
+    let n = tls_record.seal(ints[i_suite()], bytes[k_write_key()..k_write_key() + key_len(ints)], write_aead(ints), bytes[k_write_hw()..k_write_hw() + tls_record.hw_len()], bytes[k_write_iv()..k_write_iv() + 12], ints[i_write_seq()], kind, content, bytes[at..at + len(content) + 22]);
     if n < 0 {
         return n;
     }

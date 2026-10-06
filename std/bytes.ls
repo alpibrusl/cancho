@@ -254,3 +254,14 @@ pub fn store_le32[&d](dst: &!d [byte], at: int, value: int) -> [] int {
     dst[at + 3] = byte_of(value >> 24 & 0xff);
     return 0;
 }
+
+// Every byte of `out` set to 0: for overwriting a key or a secret when it
+// is no longer used (best effort, `docs/tls-core.md` §8).
+pub fn zero[&o](out: &!o [byte]) -> [] int {
+    var i = 0;
+    while i < len(out) {
+        out[i] = byte_of(0);
+        i = i + 1;
+    }
+    return 0;
+}

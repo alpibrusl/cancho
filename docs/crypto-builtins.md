@@ -2,7 +2,7 @@
 
 > **Status: design, decided; the DIT bit and the builtins built.** §9's five answers were accepted as proposed (2026-10-06),
 > and the four PRs of §10 follow in that order: the DIT bit (§6) and the builtins with their LLVM lowering (§3 to §5, as built
-> below) are done, and so is per-key caching (§6); the `std` change is next. `docs/tls-parity.md` §3.1 measured AES-GCM at about 170 times slower than OpenSSL's, and said the gap
+> below) are done, and so are per-key caching (§6) and the `std` change (§8.1). `docs/tls-parity.md` §3.1 measured AES-GCM at about 170 times slower than OpenSSL's, and said the gap
 > is the instructions lex-sys cannot emit. This document says what it would take to emit them, what is measured so far, and
 > what is not. Where a later PR finds a claim here false, that PR corrects it here, in place.
 
@@ -200,7 +200,37 @@ without the instructions will keep running, and because the builtins' gain shoul
 The numbers the `std` PR must show, each with its command, and an honest "not met" if it is not:
 - **Speed:** the 16 KiB and 64-byte rows of §1, on the same two machines as `tls-parity.md` §3.1 and
   `tls-assurance.md` §6.1. No target is claimed here. The measurement decides how far `tls-parity.md` §3.1's "OpenSSL is about
-  170 times faster" is corrected, in place.
+  170 times faster" is corrected, in place. *Met on the M4 and on aarch64 Linux; **not met on the Xeon**, which was not available
+  (§8.1).*
+
+### 8.1 Results (the `std` PR, step 4)
+
+`std.gcm`'s `seal_with` and `open_with` take the hardware path where `hw_aes_gcm()` is true (`seal_hardware`,
+`open_hardware`: CTR with `aes_encrypt_block`, GHASH with `ghash_update`, the padding and lengths block as before) and the
+software path otherwise; `seal_software` and `open_software` stay public. A prepared key gains its hardware part as bytes
+(`gcm.hw_len()`, 256: the round keys in FIPS 197's form from the new `aes.round_keys`, and H), which the record layer keeps
+in the slot's keys (`tls_slot.k_read_hw`, `k_write_hw`). The one-shot `seal` and `open` prepare only the path they take.
+
+**Speed**, AES-128-GCM seal with a prepared key (`tests/programs/gcm_speed.ls`, best of three; OpenSSL `speed -evp aes-128-gcm`):
+
+| Machine | Size | hardware path | software path | OpenSSL | OpenSSL against hardware |
+|---|---|---|---|---|---|
+| aarch64 Linux (the M4's VM, OpenSSL 3.0.13) | 64 B | 557 MB/s | 54 MB/s | 4,007 MB/s | 7.2 times |
+| | 16 KiB | 1,110 MB/s | 84 MB/s | 8,035 MB/s | 7.2 times |
+| Apple M4, macOS (OpenSSL 3.6.4) | 64 B | 99 MB/s | 39 MB/s | 611 MB/s | 6.2 times |
+| | 16 KiB | 1,050 MB/s | 91 MB/s | 10,497 MB/s | 10 times |
+
+At 16 KiB the hardware path is 11 to 13 times the software one. At 64 bytes Darwin is five times slower than Linux on the same
+CPU: a call allocates one region, which is a 64 KiB `malloc`, and Darwin's is slow at that size (three regions a call took 235
+ms per 200,000 seals, one takes 129). What remains of the gap to OpenSSL at 16 KiB is one call a block of each builtin, with its
+length checks, where OpenSSL interleaves several blocks in registers.
+
+**Correctness:** every GCM vector (FIPS 197, CAVP, Wycheproof, every refusal) runs on the hardware path on LLVM, and on the
+software path on Cranelift; `the_hardware_and_software_paths_agree` seals and opens 400 random messages on both paths in one
+program and compares every byte; the lying server's 84 recordings replay byte for byte. **Mutants:** 32 of 32 killed
+(`scripts/gcm_mutants.py`, which now runs every seal and open on both paths; six of them the hardware path's). **Timing:**
+`scripts/gcm_timing.py` on the hardware path on the M4, max |t| 1.46 to 3.65, all passes. **No new capability:** the builtins
+are `[]`.
 - **Correctness:** §7's known answers and differential, on both backends.
 - **No new capability:** `lex-sys authority` on the pure backend shows no `ffi(...)`, as #210 requires.
 - **The gate:** `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --workspace`, and no source
