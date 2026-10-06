@@ -117,16 +117,16 @@ fn authority_reports_what_a_wasi_module_may_import() {
     };
 
     // A console filter's row is `[heap, io_read, io_write]`, and licenses exactly the two
-    // calls the console is written against (W2a) beyond the startup three.
+    // calls the console is written against (W2a), and how to exit (`proc_exit`, allowed to
+    // every program and required of none).
     let json = authority(
         "tests/programs/json_roundtrip.ls",
         &["--target", "wasm32-wasip1", "--output", "json"],
     );
     for line in [
         "\"target\": \"wasm32-wasip1\"",
-        "\"startup\": [\"args_get\", \"args_sizes_get\", \"proc_exit\"]",
         "\"required\": [\"fd_read\", \"fd_write\"]",
-        "\"allowed\": [\"fd_read\", \"fd_write\"]",
+        "\"allowed\": [\"fd_read\", \"fd_write\", \"proc_exit\"]",
         "\"refused\": []",
         "\"unbounded\": []",
         "\"unknown\": []",
@@ -163,5 +163,5 @@ fn authority_reports_what_a_wasi_module_may_import() {
     // And the prose says it too.
     let text = authority("tests/programs/json_roundtrip.ls", &["--target", "wasm32-wasip1"]);
     assert!(text.contains("a wasm32-wasip1 module built from this program"), "{text}");
-    assert!(text.contains("must also import fd_read fd_write"), "{text}");
+    assert!(text.contains("must import fd_read fd_write"), "{text}");
 }

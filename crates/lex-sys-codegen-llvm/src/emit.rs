@@ -654,18 +654,19 @@ pub(crate) fn emit_module(
     if ret.len() > 1 {
         return Err((None, "the entry point's return type has more than one leaf".to_owned()));
     }
-    // A C compiler targeting WebAssembly renames `main(argc, argv)` to
-    // `__main_argc_argv`, because the wasm ABI cannot give one name two
-    // signatures; wasi-libc's `__main_void` calls that name and traps on
-    // the weak undefined symbol if it is missing. We write the IR by hand,
-    // so we write the renamed symbol too (`docs/wasm.md`).
-    let main_symbol = match triple.architecture {
-        target_lexicon::Architecture::Wasm32 | target_lexicon::Architecture::Wasm64 => {
-            "__main_argc_argv"
-        }
-        _ => "main",
+    // On WebAssembly the wrapper is not `main` at all: the module defines `_start`
+    // itself (`wasi_entry`) and calls this, so that the command line is fetched only
+    // by a program that reads it. (A C compiler would have renamed `main(argc, argv)`
+    // to `__main_argc_argv` for wasi-libc's `__main_void` to call; nothing here uses
+    // `__main_void`.)
+    let wasm = triple.architecture == target_lexicon::Architecture::Wasm32;
+    let uses_args = wasm && crate::wasi_entry::reads_args(&text);
+    let entry_header = if wasm {
+        "define internal i32 @lexsys_entry(i32 %argc, ptr %argv) {\n".to_owned()
+    } else {
+        "define i32 @main(i32 %argc, ptr %argv) {\n".to_owned()
     };
-    text.push_str(&format!("define i32 @{main_symbol}(i32 %argc, ptr %argv) {{\n"));
+    text.push_str(&entry_header);
     text.push_str("entry:\n");
     // `docs/arguments.md` §3: written exactly once, before any lex-sys
     // code runs, and never again -- `lex-sys-codegen`'s own `emit_c_main`
@@ -696,6 +697,7 @@ pub(crate) fn emit_module(
     if triple.architecture == target_lexicon::Architecture::Wasm32 {
         text.push_str(&smul_overflow_definition());
         text.push_str(&crate::wasi_console::definitions());
+        text.push_str(&crate::wasi_entry::definitions(uses_args));
     }
     Ok(text)
 }
