@@ -111,6 +111,7 @@ pub fn wasi_gap(builtin: Builtin) -> Option<Gap> {
         B::FileLock => Some(Gap::Locks),
         B::DirMode | B::DirOwnMode => Some(Gap::Permissions),
         B::ExecSpawn
+        | B::ExecSpawnIn
         | B::ChildEndClose
         | B::ChildKill
         | B::ChildWait
