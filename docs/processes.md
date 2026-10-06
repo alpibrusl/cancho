@@ -192,7 +192,7 @@ deadline, and the reap.
 
 * `path` is the program to run, **absolute or relative to the working
   directory, never looked up in `PATH`**. ~~Absolute or relative~~
-  **Corrected (the working-directory PR, §4.10):** a relative path is outside
+  **Corrected (#292, §4.10):** a relative path is outside
   every bound but `""`: it does not begin with the prefix, so under a narrowed
   `Exec` it traps like any path outside it (measured with `Exec("/bin")`,
   path `true`, run from `/bin`: `SIGILL`; `every_refused_spawn_traps_on_both_backends`
