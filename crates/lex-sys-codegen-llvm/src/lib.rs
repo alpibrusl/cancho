@@ -271,6 +271,7 @@ use target_lexicon::Triple;
 mod body;
 mod emit;
 mod wasi_console;
+mod wasi_entry;
 
 use body::*;
 use emit::*;

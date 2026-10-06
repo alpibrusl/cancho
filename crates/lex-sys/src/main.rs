@@ -1302,7 +1302,6 @@ fn print_authority(
                     writeln!(out, "  \"functions\": {total},")?;
                     writeln!(out, "  \"wasi\": {{")?;
                     writeln!(out, "    \"target\": \"{}\",", escaped(triple))?;
-                    writeln!(out, "    \"startup\": [{}],", quoted(&imports.startup))?;
                     writeln!(out, "    \"required\": [{}],", quoted(&imports.required))?;
                     writeln!(out, "    \"allowed\": [{}],", quoted(&imports.allowed))?;
                     let refused: Vec<&str> = imports.refused.iter().map(String::as_str).collect();
@@ -1404,12 +1403,11 @@ fn print_authority(
         }
         if let Some((triple, imports)) = &wasi {
             writeln!(out, "a {triple} module built from this program")?;
-            writeln!(out, "    always imports   {}", imports.startup.join(" "))?;
             let line = |names: &[&str]| {
-                if names.is_empty() { "nothing more".to_owned() } else { names.join(" ") }
+                if names.is_empty() { "nothing".to_owned() } else { names.join(" ") }
             };
-            writeln!(out, "    must also import {}", line(&imports.required))?;
-            writeln!(out, "    may also import  {}", line(&imports.allowed))?;
+            writeln!(out, "    must import {}", line(&imports.required))?;
+            writeln!(out, "    may import  {}", line(&imports.allowed))?;
             if !imports.refused.is_empty() {
                 writeln!(
                     out,
@@ -1532,7 +1530,9 @@ fn is_wasm(triple: &Triple) -> bool {
 
 /// Link a WebAssembly command with `wasm-ld` against a wasi-libc sysroot.
 ///
-/// No C compiler driver in the way: `crt1-command.o`, the object, `-lc`.
+/// No C compiler driver in the way: the object and `-lc`. **Not `crt1-command.o`**: the
+/// module defines `_start` itself (`wasi_entry`), so that the command line is fetched only
+/// by a program that reads it (`docs/wasm.md`, W2c).
 /// `WASI_SYSROOT` names the sysroot (the one that holds `lib/<triple>/`),
 /// `WASM_LD` the linker. A missing one is the environment's fault, exit 3,
 /// and the message says which variable to set.
@@ -1540,7 +1540,7 @@ fn link_wasm(object: &Path, output: &Path, triple: &Triple) -> Result<(), Failur
     let sysroot = std::env::var("WASI_SYSROOT").map_err(|_| {
         environment(format!(
             "`--target {triple}` needs `WASI_SYSROOT`, a wasi-libc sysroot (the directory that \
-             holds `lib/{triple}/crt1-command.o`)"
+             holds `lib/{triple}/libc.a`)"
         ))
     })?;
     let lib = Path::new(&sysroot).join("lib").join(triple.to_string());
@@ -1550,7 +1550,6 @@ fn link_wasm(object: &Path, output: &Path, triple: &Triple) -> Result<(), Failur
         // a warning that swaps in a trap: the program links and dies at run
         // time. Fatal, so it is a build failure here instead.
         .arg("--fatal-warnings")
-        .arg(lib.join("crt1-command.o"))
         .arg(object)
         .arg(format!("-L{}", lib.display()))
         .arg("-lc")

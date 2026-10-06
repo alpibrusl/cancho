@@ -21,7 +21,7 @@ with the same names and permission bits, and compares what it prints.
 
 usage: wasm_file_check.py LEX_SYS [--imports]
 
-`--imports` also prints each probe's WASI imports beyond the startup three, which is
+`--imports` also prints each probe's WASI imports (`proc_exit` aside), which is
 how `docs/wasm.md`'s label-to-imports table was measured.
 
 Needs what `lex-sys --help` says `--target` needs, and `wasmtime`. CI has neither.
@@ -30,7 +30,7 @@ import glob, os, re, shutil, subprocess, sys, tempfile
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-STARTUP = {"args_get", "args_sizes_get", "proc_exit"}
+EXIT = {"proc_exit"}  # only a program that can exit non-zero imports it; never compared
 PATH = "/tmp/lexsys-probe"
 HEAD = '''edition 6;
 fn main(world: World) -> [] int {
@@ -164,8 +164,8 @@ def directory_part(lex_sys, work, show_imports):
     if show_imports:
         from wasm_imports import wasi_functions
 
-        extra = sorted(wasi_functions(open(wasm, "rb").read()) - STARTUP)
-        print(f"  dir driver imports beyond startup: {', '.join(extra)}")
+        extra = sorted(wasi_functions(open(wasm, "rb").read()) - EXIT)
+        print(f"  dir driver imports: {', '.join(extra)}")
     shutil.rmtree(TREE, ignore_errors=True)
     return bad
 
@@ -227,8 +227,8 @@ def modes_part(lex_sys, work, show_imports):
     if show_imports:
         from wasm_imports import wasi_functions
 
-        extra = sorted(wasi_functions(open(wasm, "rb").read()) - STARTUP)
-        print(f"  modes driver imports beyond startup: {', '.join(extra)}")
+        extra = sorted(wasi_functions(open(wasm, "rb").read()) - EXIT)
+        print(f"  modes driver imports: {', '.join(extra)}")
     shutil.rmtree(MODES, ignore_errors=True)
     return bad
 
@@ -261,8 +261,8 @@ def main():
         if show_imports:
             from wasm_imports import wasi_functions  # the import-section parser
 
-            extra = sorted(wasi_functions(open(wasm, "rb").read()) - STARTUP)
-            print(f"  {'':14} imports beyond startup: {', '.join(extra) or '-'}")
+            extra = sorted(wasi_functions(open(wasm, "rb").read()) - EXIT)
+            print(f"  {'':14} imports: {', '.join(extra) or '-'}")
     reset(None)
     bad += directory_part(lex_sys, work, show_imports)
     bad += modes_part(lex_sys, work, show_imports)

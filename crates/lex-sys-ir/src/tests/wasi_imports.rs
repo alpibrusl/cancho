@@ -4,7 +4,7 @@
 //! that the *numbers* are right is `scripts/wasm_authority_check.py`'s job.
 
 use crate::{
-    Builtin, LABEL_IMPORTS, PREVIEW1_FUNCTIONS, REFUSED_LABELS, STARTUP, UNBOUNDED_LABELS,
+    Builtin, EXIT, LABEL_IMPORTS, PREVIEW1_FUNCTIONS, REFUSED_LABELS, UNBOUNDED_LABELS,
     every_label, label_imports, wasi_gap, wasi_imports,
 };
 
@@ -51,7 +51,7 @@ fn what_a_label_requires_is_inside_what_it_allows() {
 #[test]
 fn every_import_named_is_a_function_wasi_preview_1_has() {
     assert_eq!(PREVIEW1_FUNCTIONS.len(), 46);
-    for name in STARTUP.iter().chain(LABEL_IMPORTS.iter().flat_map(|r| r.allowed)) {
+    for name in EXIT.iter().chain(LABEL_IMPORTS.iter().flat_map(|r| r.allowed)) {
         assert!(PREVIEW1_FUNCTIONS.contains(name), "`{name}` is not a WASI preview 1 function");
     }
 }
@@ -74,26 +74,33 @@ fn the_table_is_sorted_and_has_no_duplicates() {
 #[test]
 fn a_row_adds_up_what_its_labels_license() {
     let got = wasi_imports(["heap", "io_read", "io_write", "err_write"]);
-    assert_eq!(got.startup, STARTUP);
     assert_eq!(got.required, ["fd_read", "fd_write"]);
-    assert_eq!(got.allowed, ["fd_read", "fd_write"]);
+    assert_eq!(got.allowed, ["fd_read", "fd_write", "proc_exit"], "proc_exit is always allowed");
     assert!(got.refused.is_empty() && got.unbounded.is_empty() && got.unknown.is_empty());
 
-    // A pure program licenses nothing beyond startup.
+    // A program with an empty row requires nothing, and may import only how it exits: its
+    // module's import section is empty.
     let pure = wasi_imports([]);
-    assert!(pure.required.is_empty() && pure.allowed.is_empty());
+    assert!(pure.required.is_empty());
+    assert_eq!(pure.allowed, EXIT);
+
+    // `args` is a label like any other now: the command line is fetched only for a program
+    // that reads it.
+    let args = wasi_imports(["args"]);
+    assert_eq!(args.required, ["args_get", "args_sizes_get"]);
 
     // A label is coarser than a builtin: `dir_write` allows rename and remove, and
     // requires none of them, because a program with that label may only create.
     let dirs = wasi_imports(["dir_write"]);
     assert!(dirs.allowed.contains(&"path_rename") && dirs.required.is_empty());
+    assert!(!dirs.required.contains(&"proc_exit"), "proc_exit is never required");
 
     // Refused and unbounded labels are reported, not silently licensed.
     let mixed = wasi_imports(["io_write", "conc", "net_out", "ffi", "no_such_label"]);
     assert_eq!(mixed.refused, ["conc", "net_out"]);
     assert_eq!(mixed.unbounded, ["ffi"]);
     assert_eq!(mixed.unknown, ["no_such_label"]);
-    assert_eq!(mixed.allowed, ["fd_write"]);
+    assert_eq!(mixed.allowed, ["fd_write", "proc_exit"]);
 }
 
 #[test]

@@ -11,7 +11,7 @@ wasm build gives **both** -- the static row from `lex-sys authority`, and a
 module whose import section the runtime enforces -- and makes `row ⊆ imports`
 a mechanical check. Defence in depth without a Firecracker VM per unit.
 
-Status: **W0 through W0.5, the errno decision, W1, W2a (the console without libc stdio) and W2b (the table and the check) are built** (§W0 results). W1 onward is the plan below.
+Status: **W0 through W0.5, the errno decision, W1, W2a (the console without libc stdio), W2b (the table and the check) and W2c (the command line) are built** (§W0 results). W1 onward is the plan below.
 
 ---
 
@@ -45,7 +45,8 @@ W0.3 took the four `__multi3` link errors to passes.
   `main(argc, argv)` because the wasm ABI cannot give one name two
   signatures; wasi-libc's `__main_void` calls that name. Our hand-written IR
   defined `main`, and the program trapped on a weak undefined symbol before
-  running a line.
+  running a line. (Superseded by W2c: the module now defines `_start` itself and
+  nothing calls `__main_void`.)
 - **Trap instruction.** `unreachable` on wasm32 (`trap_asm`). A trap is a
   wasmtime trap with **exit code 134**, not `SIGILL`/132: the behaviour is the
   same, the number is not (§Risks).
@@ -293,9 +294,9 @@ Two ways out, and W2 has to pick one:
 
 **Recommendation: 2, built as W2a below.** The whole value of the target is that the import section is
 the enforced half of the same fact the row states; an over-grant the check blesses
-by construction defeats that. The `args` pair remains (it is startup, not stdio),
-documented as the unlabelled baseline with `proc_exit`, until a custom entry point
-that reads `args` only when asked is worth writing.
+by construction defeats that. The `args` pair remained (it was startup, not stdio) until
+W2c, below, wrote an entry point of our own that fetches the command line only when a
+program reads it.
 
 ---
 
@@ -358,10 +359,10 @@ and keeps answering it.
   reader left as "success, zero bytes written", and the console treats no progress as `EIO`.
   A native run says `EPIPE` where `SIGPIPE` is ignored (`checked-output.md` §2). That is the
   host's behaviour, and the console reports the honest thing it can.
-- **The `args` pair is still unlabelled startup.** `args_get` and `args_sizes_get` are
+- **The `args` pair was still unlabelled startup.** `args_get` and `args_sizes_get` were
   imported by every program, because wasi-libc's `__main_void` fetches them before calling
-  `main(argc, argv)`, so a program that released its `args` capability still imports them.
-  Removing them needs an entry point of our own that reads `args` only when asked: W2b.
+  `main(argc, argv)`, so a program that released its `args` capability still imported them.
+  Fixed in W2c, below, with an entry point of our own.
 
 ---
 
@@ -371,8 +372,10 @@ and keeps answering it.
 authority fact: the **row** (what the checker says a program does) and the **import
 section** (what the runtime is asked to grant the module, and enforces). For each effect
 label, the WASI preview 1 functions a module built from a program that performs it may
-import. Every program also imports the startup three (`args_get`, `args_sizes_get`,
-`proc_exit`).
+import. A program with an empty row has an empty import section; the one exception is
+`proc_exit`, which every program is *allowed* and none is *required*, because a program
+leaves through it only if it can return a non-zero status (W2c made it so; until then
+every program also imported `args_get` and `args_sizes_get`).
 
 Two sets per label, because a label is coarser than a builtin (`dir_write` covers
 create, append, rename, remove and sync; a program with it may use one of them):
@@ -386,7 +389,7 @@ create, append, rename, remove and sync; a program with it may use one of them):
   missing a required import has a row claiming more than the program does.
 
 `lex-sys authority --target wasm32-wasip1` reports them (and `--output json` carries a
-`wasi` object: `startup`, `required`, `allowed`, `refused`, `unbounded`, `unknown`); the
+`wasi` object: `required`, `allowed`, `refused`, `unbounded`, `unknown`); the
 host's report is unchanged. For the JSON filter: required and allowed are both
 `fd_read`, `fd_write`, which is exactly what its module imports.
 
@@ -403,7 +406,8 @@ the table refuses.
 ### The check
 
 `scripts/wasm_authority_check.py` builds every program for `wasm32-wasip1`, reads its
-import section, and requires `startup ∪ required ⊆ imports ⊆ startup ∪ allowed`.
+import section, and requires `required ⊆ imports ⊆ allowed` (`allowed` always includes
+`proc_exit`).
 
 | | |
 |---|---|
@@ -447,13 +451,75 @@ for every file on WASI, which is why those builtins are refused (W0.6).
 
 ---
 
+## W2c results: the command line, fetched only when a program reads it
+
+wasi-libc's `crt1-command.o` defines `_start`, and `_start` calls `__main_void`, which fetches
+the command line with `args_sizes_get` and `args_get` **before every program**. So a program
+that released its `args` capability and never read an argument still imported both, and the
+runtime would have granted it the command line whatever its row said: the one place W2b's
+table had to write "startup" instead of a label.
+
+The module now defines `_start` itself (`lex-sys-codegen-llvm/src/wasi_entry.rs`) and the link
+no longer includes `crt1-command.o`. It does what crt1's did, minus the fetch: run the
+constructors (`__wasm_call_ctors`, where wasi-libc hangs its own set-up, preopens included),
+call the program, run the destructors, and leave through `_Exit` (`proc_exit`) on a non-zero
+status. The fetch is a small loader in the module, emitted **only for a program that loads
+`@lexs_argc` or `@lexs_argv`**, which is exactly a program with the `args` label in its row. A
+program that does not has no `args_get` in it to import.
+
+### What it measured
+
+| a program that | imports |
+|---|---|
+| reads nothing, prints nothing | **nothing at all** |
+| uses the heap | nothing |
+| writes stdout or stderr | `fd_write` |
+| reads stdin | `fd_read` |
+| reads the clock | `clock_time_get` |
+| reads its arguments | `args_get`, `args_sizes_get` |
+
+`proc_exit` is imported only by a program that can return a non-zero status: with `main`'s
+result a constant 0 the exit path is dead code and `_Exit` is never referenced, so the pure
+program's import section is empty. That is why the table lost its "startup" set. `proc_exit`
+is *allowed* for every program and *required* of none, and `args` is a label like any other:
+`args_get` and `args_sizes_get` are what it requires.
+
+### Still correct
+
+- **Behaviour:** `tests/accept/arguments.ls`, native against the module, over nine command
+  lines (none, one, many, non-ASCII, an empty argument, a 3,000-byte argument, spaces, dashes):
+  the same output and the same exit status in every case. An import list that is right says
+  nothing about whether the values are, so this is the part that could have broken.
+- **The accept map** is unchanged (83 / 20 / 1), file fixtures included, which is what shows
+  `__wasm_call_ctors` still does its job without crt1.
+- **The check** is unchanged: 149 programs, 110 ok, 0 FAIL, now against the stricter table in
+  which the command line is a label's and not the startup's. The file probes, the directory
+  driver and the console programs all agree, and the JSON differential has 0 differences.
+
+### CI
+
+`a_wasm32_module_fetches_the_command_line_only_if_the_program_reads_it` (text, no toolchain): `_start`
+is ours and has the ctors, entry, dtors and `_Exit` steps; a program that reads nothing carries
+no loader and no `args` import attribute; one that reads arguments carries both; the host's
+entry is still `main`.
+
+### What this does not establish
+
+- **`__wasm_call_dtors` is called, but nothing uses what it runs.** libc's `exit` handlers and
+  stdio cleanup are for streams the module no longer opens (W2a, W0.5); calling it keeps the
+  behaviour crt1 had.
+- **A second `_start` is not trapped.** crt1 guards a re-entry with a flag; this does not, since
+  a command is entered once.
+
+---
+
 ## Milestones
 
 | Milestone | What | Acceptance |
 |---|---|---|
 | **W0** -- spike | `--target wasm32-wasip1`, `examples/hello.ls` runs in wasmtime | **Done**: one example prints the right bytes; conformance map above |
 | **W1** -- a real command | A stdin→stdout JSON filter on `std.json` | **Done**: byte-identical to native over 1,585 documents; the import list is measured, and is wider than the row (§W1 results) |
-| **W2** -- the authority check (**W2a and W2b are done**: the console without libc stdio, the label-to-imports table, `authority --target`, and the cross-check) | `lex-sys authority --target wasm32-wasip1` cross-checked against the module | A test that fails if the module imports anything the row does not explain, **and** if a label has no import (the rows are exact both ways); JSON report carries the import list |
+| **W2** -- the authority check (**W2a, W2b and W2c are done**: the console without libc stdio, the label-to-imports table, `authority --target`, the cross-check, and a command line fetched only when read) | `lex-sys authority --target wasm32-wasip1` cross-checked against the module | A test that fails if the module imports anything the row does not explain, **and** if a label has no import (the rows are exact both ways); JSON report carries the import list |
 | **W3** -- a pure library | `packages/x509` verify as a **reactor** module (exports, no `main`) | Import section is empty beyond memory; results identical to native on the x509 conformance fixtures; overhead measured |
 | **W4** -- components | `wasip2`, one WIT `resource` mapped to a `res` handle | `wasi:filesystem` descriptor as a linear handle, `own`/`borrow` ↔ `res`/`borrow`; then `examples/serve` as `wasi:http` |
 

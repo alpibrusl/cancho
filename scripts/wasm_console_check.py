@@ -9,6 +9,11 @@ with the row `[io_write]` imported a clock. The console is now written against
 `checked_output.rs` probe (`flush_out`) against the module to check the buffer's
 behaviour, not just its imports.
 
+It also runs `tests/accept/arguments.ls` native and as a module over a spread of command
+lines (none, many, non-ASCII, an empty argument, a 3,000-byte one), because the module
+fetches the command line itself now, only for a program that reads it (W2c), and an import
+list that is right says nothing about whether the values are.
+
 usage: wasm_console_check.py LEX_SYS
 
 Needs what `lex-sys --help` says `--target` needs, and `wasmtime`. CI has neither.
@@ -18,18 +23,21 @@ import os, re, subprocess, sys, tempfile
 sys.path.insert(0, os.path.dirname(__file__))
 from wasm_imports import wasi_functions
 
-STARTUP = {"args_get", "args_sizes_get", "proc_exit"}
+# `proc_exit` is how a program leaves with a non-zero status; one that cannot never imports
+# it, so it is allowed and not compared.
+EXIT = {"proc_exit"}
 
 HEAD = ("fn main(world: World) -> [] int {\n"
         "    let Split { io, ffi, fs, heap, args } = split(world);\n")
 PROGRAMS = {
-    # name: (source, the WASI functions it must import beyond the startup three)
+    # name: (source, exactly the WASI functions it must import, `proc_exit` aside)
     "pure": ("fn main(world: World) -> [] int { release(world); return 0; }\n", set()),
     "heap": (HEAD + "    release(io); release(ffi); release(fs); release(args);\n    var n = 0;\n"
              "    borrow mut heap as &!h in { let b = box(h, 41); n = unbox(h, b) - 41; }\n"
              "    release(heap);\n    return n;\n}\n", set()),
     "args": (HEAD + "    release(io); release(ffi); release(fs); release(heap);\n    var n = 0;\n"
-             "    borrow args as &a in { n = arg_count(a) * 0; }\n    release(args);\n    return n;\n}\n", set()),
+             "    borrow args as &a in { n = arg_count(a) * 0; }\n    release(args);\n    return n;\n}\n",
+             {"args_get", "args_sizes_get"}),
     "write": (HEAD + "    release(ffi); release(fs); release(heap); release(args);\n"
               "    borrow mut io as &!i in { putchar(i, 72); }\n    release(io);\n    return 0;\n}\n",
               {"fd_write"}),
@@ -85,17 +93,42 @@ def run(module, args, reader_gone):
     return p.returncode, out
 
 
+ARG_CASES = [[], ["one"], ["one", "two"], ["h\u00e9llo", "w\u00f6rld", "\u65e5\u672c"], list("abcdefghij"),
+             [""], ["x" * 3000], ["a b", "c  d"], ["--flag", "-x", "=="]]
+
+
+def arguments_part(lex_sys, work):
+    """`arguments.ls` prints how many arguments it got and each one after the name, and
+    exits with the count: native against the module, on the same command lines."""
+    program = os.path.join(os.path.dirname(__file__), "..", "tests/accept/arguments.ls")
+    native, wasm = os.path.join(work, "arguments"), os.path.join(work, "arguments.wasm")
+    for out, extra in ((native, []), (wasm, ["--target", "wasm32-wasip1"])):
+        b = subprocess.run([lex_sys, "build", program, "--std", *extra, "-o", out], capture_output=True, text=True)
+        if b.returncode:
+            sys.exit(f"arguments.ls: build failed {extra or 'native'}:\n{b.stderr}")
+    bad = []
+    for args in ARG_CASES:
+        n = subprocess.run([native, *args], capture_output=True)
+        w = subprocess.run(["wasmtime", "run", wasm, *args], capture_output=True)
+        ok = (n.returncode, n.stdout) == (w.returncode, w.stdout)
+        print(f"  {len(args):2} args (status {w.returncode:2}, {len(w.stdout):4} bytes out): {'same' if ok else 'DIFFERENT'}")
+        if not ok:
+            bad.append(f"arguments {args!r}: native {n.returncode} {n.stdout[:60]!r}, wasm {w.returncode} {w.stdout[:60]!r}")
+    return bad
+
+
 def main():
     lex_sys = sys.argv[1]
     work = tempfile.mkdtemp(prefix="wasm-console-")
     failures = []
 
-    print("imports, per effect (the startup three are args_get, args_sizes_get, proc_exit):")
+    print("imports, per effect (proc_exit aside, which only a program that can exit non-zero has):")
     for name, (source, extra) in PROGRAMS.items():
         got = wasi_functions(open(build(lex_sys, source, os.path.join(work, name)), "rb").read())
-        want = STARTUP | extra
+        got -= EXIT
+        want = extra
         verdict = "ok" if got == want else "WRONG"
-        extra_found = ", ".join(sorted(got - STARTUP)) or "-"
+        extra_found = ", ".join(sorted(got)) or "-"
         print(f"  {name:6} {extra_found:26} {verdict}")
         if got != want:
             failures.append(f"{name}: imports {sorted(got)}, wanted {sorted(want)}")
@@ -117,6 +150,9 @@ def main():
         print(f"  {label}: status={status} bytes={len(out)} {'ok' if ok else 'WRONG'}")
         if not ok:
             failures.append(f"{label}: status {status} (want {want_status}), {len(out)} bytes")
+
+    print("arguments, native against the module (which fetches them itself):")
+    failures += arguments_part(lex_sys, work)
 
     if failures:
         sys.exit("\nFAILED:\n  " + "\n  ".join(failures))

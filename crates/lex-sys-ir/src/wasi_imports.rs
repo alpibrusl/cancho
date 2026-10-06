@@ -18,8 +18,11 @@
 //!   §7.3), which means a label in it is performed by something, so a module
 //!   missing a required import is a module whose row claims more than it does.
 //!
-//! Every program, whatever its row, also imports [`STARTUP`], the three functions
-//! `main`'s entry and its exit need (`docs/wasm.md`, W1).
+//! A program with an empty row has an **empty import section**: nothing is imported
+//! unless a label licenses it. The one exception is [`EXIT`], `proc_exit`, which is
+//! *allowed* for every program and *required* of none, because a program leaves through it
+//! only if it can return a non-zero status. (Until W2c every program also imported
+//! `args_get` and `args_sizes_get`, because the command line was fetched before `main`.)
 //!
 //! **Where the numbers come from.** They are measured, not read off libc: each row
 //! says by what. The rows measured by a single tiny program per builtin and by the
@@ -31,10 +34,18 @@
 
 use crate::{WORLD_PLAIN_LABELS, WORLD_ROOT_LABELS};
 
-/// The three imports of every command module: `args_get` and `args_sizes_get`
-/// (wasi-libc's `__main_void` fetches the arguments before calling `main(argc,
-/// argv)`, even for a program that released its `args` capability) and `proc_exit`.
-pub const STARTUP: &[&str] = &["args_get", "args_sizes_get", "proc_exit"];
+/// `proc_exit`: how a command leaves with a non-zero status. Allowed for every program,
+/// required of none: a program whose `main` cannot return anything but 0 never reaches
+/// the call, and its module does not import it (a program that reads nothing and prints
+/// nothing imports *nothing*).
+///
+/// Until W2c there were three of these. wasi-libc's `__main_void` fetched the command
+/// line, with `args_get` and `args_sizes_get`, before every `main`, so a program that
+/// released `args` and never read one still imported both and the runtime would have
+/// granted it the command line. The module's own `_start` (`wasi_entry`) fetches it only
+/// for a program that reads it, which is the `args` label, so those two are now that
+/// label's, like any other.
+pub const EXIT: &[&str] = &["proc_exit"];
 
 /// One label's row.
 pub struct LabelImports {
@@ -52,8 +63,13 @@ pub const LABEL_IMPORTS: &[LabelImports] = &[
     LabelImports { label: "err_write", required: &["fd_write"], allowed: &["fd_write"] },
     // The heap grows linear memory with `memory.grow`, an instruction, not an import.
     LabelImports { label: "heap", required: &[], allowed: &[] },
-    // `args_get` and `args_sizes_get` are in `STARTUP` for every program.
-    LabelImports { label: "args", required: &[], allowed: &[] },
+    // `arg_count` and `arg` read what the module's own `_start` fetched, with these two
+    // calls and only for a program that reads them (`wasm_console_check.py`, `args`).
+    LabelImports {
+        label: "args",
+        required: &["args_get", "args_sizes_get"],
+        allowed: &["args_get", "args_sizes_get"],
+    },
     // `clock_ms` and `clock_unix_ms`, one probe.
     LabelImports { label: "clock", required: &["clock_time_get"], allowed: &["clock_time_get"] },
     // `fs_read(p)`: `fs_read`, `open_read` and `open_dir` all open a path, which costs
@@ -174,11 +190,9 @@ pub const UNBOUNDED_LABELS: &[&str] = &["ffi"];
 /// What a row licenses a module to import.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct WasiImports {
-    /// Every module imports these.
-    pub startup: Vec<&'static str>,
-    /// What the row's labels require beyond startup. Sorted, deduplicated.
+    /// What the row's labels require. Sorted, deduplicated.
     pub required: Vec<&'static str>,
-    /// What the row's labels allow beyond startup. Sorted, deduplicated.
+    /// What the row's labels allow, and [`EXIT`]. Sorted, deduplicated.
     pub allowed: Vec<&'static str>,
     /// Labels in the row a WASI target cannot do; such a program is refused.
     pub refused: Vec<String>,
@@ -195,7 +209,7 @@ pub fn label_imports(label: &str) -> Option<&'static LabelImports> {
 
 /// What the labels of a row license a WASI module to import.
 pub fn wasi_imports<'a>(labels: impl IntoIterator<Item = &'a str>) -> WasiImports {
-    let mut out = WasiImports { startup: STARTUP.to_vec(), ..WasiImports::default() };
+    let mut out = WasiImports { allowed: EXIT.to_vec(), ..WasiImports::default() };
     for label in labels {
         if let Some(row) = label_imports(label) {
             out.required.extend(row.required);

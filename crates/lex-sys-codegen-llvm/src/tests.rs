@@ -1148,7 +1148,9 @@ fn a_wasm32_module_has_the_shape_wasi_libc_needs() {
 
     let wasm: Triple = "wasm32-wasip1".parse().expect("a valid triple");
     let text = emit::emit_module(&program, "main", &wasm).expect("wasm32 should emit");
-    assert!(text.contains("define i32 @__main_argc_argv("), "the entry symbol wasi-libc calls");
+    assert!(text.contains("define internal i32 @lexsys_entry("), "the wrapper `_start` calls");
+    assert!(text.contains("define void @_start()"), "the module defines its own `_start`");
+    assert!(!text.contains("__main_argc_argv"), "nothing calls wasi-libc's `__main_void` now");
     assert!(!text.contains("define i32 @main("), "no plain `main` on wasm");
     assert!(text.contains("declare ptr @malloc(i32)"), "`malloc` with a 32-bit `size_t`");
     assert!(!text.contains("declare ptr @malloc(i64)"), "no 64-bit `malloc`");
@@ -1470,7 +1472,7 @@ fn a_wasm32_console_never_calls_libc_stdio() {
     // `main` flushes what it buffered before it returns, as libc does, so the
     // bytes are not lost: the entry calls the flush and then returns the status.
     let entry_of = |module: &str| -> String {
-        let from = module.find("define i32 @__main_argc_argv(").expect("the entry");
+        let from = module.find("define internal i32 @lexsys_entry(").expect("the entry");
         let body = &module[from..];
         body[..body.find("\n}\n").expect("the entry ends")].to_owned()
     };
@@ -1537,4 +1539,55 @@ fn a_wasi_file_is_opened_for_writing_with_openat_not_fopen() {
     let host: Triple = "x86_64-unknown-linux-gnu".parse().expect("a valid triple");
     let native = emit::emit_module(&program, "main", &host).expect("native should emit");
     assert!(calls(&native, "fopen"), "the host keeps its fopen bridge");
+}
+
+/// W2c (`docs/wasm.md`): the module defines `_start` itself and fetches the command line only
+/// if the program reads it. wasi-libc's `__main_void` fetched it before every `main`, so a
+/// program that released `args` still imported `args_get` and `args_sizes_get` and the runtime
+/// would have granted it the command line. A program that reads nothing now has no such
+/// import in it to make. Text only, so CI runs it.
+#[test]
+fn a_wasm32_module_fetches_the_command_line_only_if_the_program_reads_it() {
+    const PURE: &str = "fn main(world: World) -> [] int { release(world); return 0; }\n";
+    const READS: &str = "fn main(world: World) -> [] int {\n\
+             let Split { io, ffi, fs, heap, args } = split(world);\n\
+             release(io); release(ffi); release(fs); release(heap);\n\
+             var n = 0;\n\
+             borrow args as &a in { n = arg_count(a); }\n\
+             release(args);\n\
+             return n;\n\
+         }\n";
+    let wasm: Triple = "wasm32-wasip1".parse().expect("a valid triple");
+    let emit_for = |source: &str, triple: &Triple| {
+        let ast = parse(source).expect("should parse");
+        let program = lex_sys_ir::lower(&ast).expect("should lower");
+        emit::emit_module(&program, "main", triple).expect("should emit")
+    };
+
+    let pure = emit_for(PURE, &wasm);
+    // The entry is ours, and does what crt1's did: constructors, main, destructors, and a
+    // non-zero status leaves through `_Exit` (`proc_exit`).
+    assert!(pure.contains("define void @_start()"), "{pure}");
+    for step in [
+        "call void @__wasm_call_ctors()",
+        "call i32 @lexsys_entry(",
+        "call void @__wasm_call_dtors()",
+        "call void @_Exit(i32 %status)",
+    ] {
+        assert!(pure.contains(step), "`_start` is missing `{step}`");
+    }
+    // ... and a program that never reads the command line carries nothing that could fetch it.
+    assert!(!pure.contains("lexsys_args_load"), "{pure}");
+    assert!(!pure.contains("args_sizes_get") && !pure.contains("\"args_get\""), "{pure}");
+
+    let reads = emit_for(READS, &wasm);
+    assert!(reads.contains("call void @lexsys_args_load(ptr %argc, ptr %argv)"), "{reads}");
+    assert!(reads.contains(r#""wasm-import-name"="args_sizes_get""#), "{reads}");
+    assert!(reads.contains(r#""wasm-import-name"="args_get""#), "{reads}");
+
+    // The host's entry is `main`, and none of this.
+    let host: Triple = "x86_64-unknown-linux-gnu".parse().expect("a valid triple");
+    let native = emit_for(READS, &host);
+    assert!(native.contains("define i32 @main(i32 %argc, ptr %argv)"), "{native}");
+    assert!(!native.contains("_start") && !native.contains("lexsys_args_load"), "{native}");
 }

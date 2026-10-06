@@ -2,11 +2,11 @@
 """W2b (docs/wasm.md): a wasm module imports what its program's row licenses.
 
 For every program that builds for `wasm32-wasip1`, this asks `lex-sys authority
---target wasm32-wasip1` what the row licenses (`required`, `allowed`, and the three
-startup imports every command has), builds the module, reads its import section, and
-requires
+--target wasm32-wasip1` what the row licenses (`required` and `allowed`, the latter
+always including `proc_exit`: how a program leaves with a non-zero status), builds the
+module, reads its import section, and requires
 
-    startup ∪ required  ⊆  imports  ⊆  startup ∪ allowed
+    required  ⊆  imports  ⊆  allowed
 
 The right half is the one that matters for authority: **an import no label in the row
 allows is a capability the runtime would be asked to grant that the program's own
@@ -49,9 +49,9 @@ def check(args):
     if b.returncode != 0:
         return name, "unbuilt", (b.stderr.strip().splitlines() or ["?"])[-1][:100]
     imports = wasi_functions(open(out, "rb").read())
-    startup, required, allowed = set(wasi["startup"]), set(wasi["required"]), set(wasi["allowed"])
-    unexplained = imports - startup - allowed
-    missing = (startup | required) - imports
+    required, allowed = set(wasi["required"]), set(wasi["allowed"])
+    unexplained = imports - allowed
+    missing = required - imports
     if wasi["unbounded"]:
         # `ffi`: which WASI functions foreign code reaches is the library's, so only the
         # half that does not depend on it can be checked.
