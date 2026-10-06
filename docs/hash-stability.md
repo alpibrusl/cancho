@@ -73,6 +73,31 @@ expect that to happen rather than not.
 > is still unmeasured: a change designed to move no tag cannot show that
 > a moved tag would be caught.
 
+> **A third observation, and the first that moved a hash (static
+> signatures).** A `static`'s `sig` hashed only its referent type, so two
+> `static`s of one type shared an identity and `vcs publish`, which keys its
+> manifest by `sig`, refused the second. The fix puts the **name** in the
+> `sig` (behind a new tag, `STATIC_DECL`, appended as `0x75`), as a
+> function's already was. Every `static`'s `sig` moved; no `body`, no
+> function, type or extern hash did, because a body refers to a `static`
+> by name and not by `sig`. What pinned them: one golden row
+> (`static-item`), and the committed `packages/x509` store, the only
+> `static` in `packages/` (`oid_table`), plus the `requires` locks of the
+> five dependent modules (`x509_names`, `x509_verify`, `tls_message`,
+> `tls_slot`, `tls_client12`); `scripts/publish_packages.py` regenerated
+> them and `--check` passes. Nothing else quoted a static's hash.
+> **Why not a narrower fix** (the publish layer keying a static by
+> `(name, sig)` and leaving identities alone): the manifest is keyed by
+> `sig` on purpose, a lock records `sig_id` as *the* identity a consumer
+> pins, and a `sig` that two declarations share would still be wrong for
+> every other reader of it (`resolve`, `fetch`, a future diff). The price of
+> the wide fix is one regenerated package store, paid once, in a
+> language that moves faster than this (§2); the price of the narrow one is
+> a non-identifying identity. Also closed: an unused `static` (one nothing
+> reachable reads, so `lex-sys-ir` drops it) failed to publish as
+> "internal: ... no lowered function, extern or static"; the publish layer
+> now asks the source.
+
 ---
 
 ## 2. The language rate: 71% of its own past is unreadable

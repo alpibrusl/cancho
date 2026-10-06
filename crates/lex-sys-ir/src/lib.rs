@@ -408,6 +408,26 @@ fn lower_inner(ast: &Ast, rest: &mut Vec<Diagnostic>) -> Result<Program, Diagnos
                 span,
             ));
         }
+        // A `static` and a function share a namespace: a name resolves to
+        // one declaration, and a package lock is keyed by name, so a
+        // `static p` beside a `fn p` would be two entries under one key.
+        let clashes = |other: &Item| match other {
+            Item::Fn(f) => f.name == decl.name,
+            Item::Extern(e) => e.name == decl.name,
+            _ => false,
+        };
+        if ast
+            .items
+            .iter()
+            .enumerate()
+            .any(|(i, other)| ast.module_of(ast::ItemId(i as u32)) == module && clashes(other))
+        {
+            return Err(Diagnostic::new(
+                Rule::DuplicateDeclaration,
+                format!("`static {name}` has the name of a function in the same module"),
+                span,
+            ));
+        }
         // The *referent*, so a bare `[int]` is what is written: a
         // `static` names what the data is, and the `&static` in front of
         // it is what every reader gets rather than what the author types

@@ -99,6 +99,16 @@ nothing by construction — every effect needs a capability, a capability
 is a parameter, and this has no parameters. The row is `[]` and saying so
 would be decoration (`linearity-and-effects.md` §7.3).
 
+**Identity.** A `static` has two identities like a function: a `sig` over
+its **name and referent type**, and a `body`. The name is in the `sig` for
+the reason a function's is: a `static` has no parameters, so its type alone
+is a shape that every `static` of that type shares, and `vcs publish` keys
+its manifest by `sig`. Until this was fixed, a module with two `[int]`
+tables could not be published (the second was "already published at a
+different body"). A `static` and a function of one name in one module are
+refused (`duplicate-declaration`), since a lock is keyed by name. See
+`hash-stability.md` §1 for the identities this moved.
+
 ### 2.1 `alloc_slice[static]` and where it is legal
 
 `static` has always been a region: it is what a string literal lives in,
