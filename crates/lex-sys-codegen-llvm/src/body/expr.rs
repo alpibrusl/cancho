@@ -11,6 +11,7 @@ impl<'a> FuncEmitter<'a> {
             // §1: stored as bits already, so this is the one literal
             // here with no decimal round-trip to get wrong.
             Expr::Float(bits) => Ok(vec![LValue::FConst(*bits)]),
+            Expr::F32(bits) => Ok(vec![LValue::F32Const(*bits)]),
             Expr::Load(slot) => {
                 let kinds = self.slot_kinds[slot.0 as usize].clone();
                 let mut out = Vec::with_capacity(kinds.len());
@@ -283,9 +284,14 @@ impl<'a> FuncEmitter<'a> {
             // `int`'s is.
             Expr::Neg(inner) => {
                 let v = self.scalar(inner)?;
-                if self.scalar_kind(inner)? == LKind::F64 {
+                let kind = self.scalar_kind(inner)?;
+                if matches!(kind, LKind::F64 | LKind::F32) {
                     let result = self.fresh();
-                    self.out.push_str(&format!("  {result} = fneg double {}\n", operand(&v)));
+                    self.out.push_str(&format!(
+                        "  {result} = fneg {} {}\n",
+                        kind.llvm(),
+                        operand(&v)
+                    ));
                     return Ok(vec![LValue::Reg(result)]);
                 }
                 self.checked_arith("ssub", LValue::Const(0), v)
@@ -334,6 +340,11 @@ impl<'a> FuncEmitter<'a> {
             Expr::PathOp { op, prefix, args } => {
                 let (op, prefix, args) = (*op, prefix.clone(), args.clone());
                 self.path_op(op, &prefix, &args)
+            }
+            // `docs/processes.md` §3.2.
+            Expr::ExecSpawn { prefix, in_dir, args } => {
+                let (prefix, in_dir, args) = (prefix.clone(), *in_dir, args.clone());
+                self.exec_spawn(&prefix, in_dir, &args)
             }
             // `docs/function-values.md` §4.2: the target's own address,
             // taken rather than called. An LLVM global symbol is already
@@ -493,7 +504,12 @@ impl<'a> FuncEmitter<'a> {
                 let narrowed = self.fresh();
                 self.out.push_str(&format!("  {narrowed} = trunc i64 {} to i32\n", operand(&c)));
                 let result = self.fresh();
-                self.out.push_str(&format!("  {result} = call i32 @putchar(i32 {narrowed})\n"));
+                let putchar = if crate::wasi_console::applies(self.triple) {
+                    "lexsys_putchar"
+                } else {
+                    "putchar"
+                };
+                self.out.push_str(&format!("  {result} = call i32 @{putchar}(i32 {narrowed})\n"));
                 let widened = self.fresh();
                 self.out.push_str(&format!("  {widened} = sext i32 {result} to i64\n"));
                 Ok(vec![LValue::Reg(widened)])
@@ -506,7 +522,12 @@ impl<'a> FuncEmitter<'a> {
             // never fires.
             Callee::Builtin(Builtin::GetChar) => {
                 let result = self.fresh();
-                self.out.push_str(&format!("  {result} = call i32 @getchar()\n"));
+                let getchar = if crate::wasi_console::applies(self.triple) {
+                    "lexsys_getchar"
+                } else {
+                    "getchar"
+                };
+                self.out.push_str(&format!("  {result} = call i32 @{getchar}()\n"));
                 let widened = self.fresh();
                 self.out.push_str(&format!("  {widened} = sext i32 {result} to i64\n"));
                 Ok(vec![LValue::Reg(widened)])
@@ -522,6 +543,24 @@ impl<'a> FuncEmitter<'a> {
                 let [start, len] = flat.as_slice() else {
                     return Err("`write_bytes`/`write_err` need a byte slice argument".to_owned());
                 };
+                if crate::wasi_console::applies(self.triple) {
+                    // The console without libc's stdio (`wasi_console`): the same
+                    // bytes, through `fd_write` alone.
+                    let write = if matches!(callee, Callee::Builtin(Builtin::WriteErr)) {
+                        "lexsys_stderr_write"
+                    } else {
+                        "lexsys_stdout_write"
+                    };
+                    let st = self.size_ty();
+                    let size = self.size_arg(&operand(len));
+                    let raw = self.fresh();
+                    self.out.push_str(&format!(
+                        "  {raw} = call {st} @{write}(ptr {}, {st} {size})\n",
+                        operand(start)
+                    ));
+                    let result = self.size_result(&raw, false);
+                    return Ok(vec![LValue::Reg(result)]);
+                }
                 let symbol = match (callee, self.triple.operating_system) {
                     (
                         Callee::Builtin(Builtin::WriteErr),
@@ -533,12 +572,14 @@ impl<'a> FuncEmitter<'a> {
                 };
                 let stream = self.fresh();
                 self.out.push_str(&format!("  {stream} = load ptr, ptr @{symbol}\n"));
-                let result = self.fresh();
+                let st = self.size_ty();
+                let size = self.size_arg(&operand(len));
+                let raw = self.fresh();
                 self.out.push_str(&format!(
-                    "  {result} = call i64 @fwrite(ptr {}, i64 1, i64 {}, ptr {stream})\n",
-                    operand(start),
-                    operand(len)
+                    "  {raw} = call {st} @fwrite(ptr {}, {st} 1, {st} {size}, ptr {stream})\n",
+                    operand(start)
                 ));
+                let result = self.size_result(&raw, false);
                 Ok(vec![LValue::Reg(result)])
             }
             // `docs/checked-output.md`: the stream the arm above writes
@@ -581,8 +622,10 @@ impl<'a> FuncEmitter<'a> {
                 ));
                 let text = self.fresh();
                 self.out.push_str(&format!("  {text} = load ptr, ptr {slot}\n"));
-                let length = self.fresh();
-                self.out.push_str(&format!("  {length} = call i64 @strlen(ptr {text})\n"));
+                let st = self.size_ty();
+                let raw = self.fresh();
+                self.out.push_str(&format!("  {raw} = call {st} @strlen(ptr {text})\n"));
+                let length = self.size_result(&raw, false);
                 Ok(vec![LValue::Reg(text), LValue::Reg(length)])
             }
             // `int_of(b: byte) -> int` widens, always defined: every
@@ -671,6 +714,62 @@ impl<'a> FuncEmitter<'a> {
             // pattern (`docs/floating-point.md` §4.1) -- the same
             // `select`-over-a-NaN-test `lex-sys-codegen`'s own `BitsOf`
             // already does.
+            // `docs/f32.md` §2: `sqrt` at binary32, one intrinsic, correctly
+            // rounded -- what Cranelift's bare `sqrt` is on an `F32`.
+            Callee::Builtin(Builtin::Sqrt32) => {
+                let x = evaluated
+                    .into_iter()
+                    .flatten()
+                    .next()
+                    .ok_or_else(|| "`sqrt32` needs an f32 argument".to_owned())?;
+                let result = self.fresh();
+                self.out.push_str(&format!(
+                    "  {result} = call float @llvm.sqrt.f32(float {})\n",
+                    operand(&x)
+                ));
+                Ok(vec![LValue::Reg(result)])
+            }
+            // `f32_of_int`: `sitofp i64 to float` rounds once, to nearest
+            // even, straight from the integer (not through `double`, which
+            // would round twice) -- Cranelift's `fcvt_from_sint` on F32.
+            Callee::Builtin(Builtin::F32OfInt) => {
+                let n = evaluated
+                    .into_iter()
+                    .flatten()
+                    .next()
+                    .ok_or_else(|| "`f32_of_int` needs an int argument".to_owned())?;
+                let result = self.fresh();
+                self.out.push_str(&format!("  {result} = sitofp i64 {} to float\n", operand(&n)));
+                Ok(vec![LValue::Reg(result)])
+            }
+            // `int_of_f32`: `truncate`'s three explicit checks at the
+            // narrower width (`fptosi` is poison on exactly those inputs),
+            // then `fptosi float to i64`. `2^63` is the same constant: it
+            // is a power of two, so exact in binary32.
+            Callee::Builtin(Builtin::IntOfF32) => {
+                let x = evaluated
+                    .into_iter()
+                    .flatten()
+                    .next()
+                    .ok_or_else(|| "`int_of_f32` needs an f32 argument".to_owned())?;
+                let x_op = operand(&x);
+                let is_nan = self.fresh();
+                self.out.push_str(&format!("  {is_nan} = fcmp uno float {x_op}, {x_op}\n"));
+                self.trap_if(&is_nan)?;
+                let too_high = self.fresh();
+                self.out.push_str(&format!(
+                    "  {too_high} = fcmp oge float {x_op}, {TRUNCATE_UPPER_BOUND}\n"
+                ));
+                self.trap_if(&too_high)?;
+                let too_low = self.fresh();
+                self.out.push_str(&format!(
+                    "  {too_low} = fcmp ole float {x_op}, {TRUNCATE_LOWER_BOUND}\n"
+                ));
+                self.trap_if(&too_low)?;
+                let result = self.fresh();
+                self.out.push_str(&format!("  {result} = fptosi float {x_op} to i64\n"));
+                Ok(vec![LValue::Reg(result)])
+            }
             // `docs/value-barrier.md` §3: an empty `asm` whose output is
             // tied to its input. It emits no instruction, and LLVM knows
             // nothing about its answer, so a mask passed through it stays
@@ -685,6 +784,64 @@ impl<'a> FuncEmitter<'a> {
                 let result = self.fresh();
                 self.out
                     .push_str(&format!("  {result} = call i64 asm \"\", \"=r,0\"(i64 {x_op})\n"));
+                Ok(vec![LValue::Reg(result)])
+            }
+            // `docs/f32.md` §2: `fptrunc` is IEEE conversion to the
+            // narrower format under the default rounding mode
+            // (round-to-nearest-even), an overflow is infinity, and
+            // `fpext` is exact -- the counterparts of Cranelift's
+            // `fdemote` and `fpromote`.
+            Callee::Builtin(Builtin::F32Of) => {
+                let x = evaluated
+                    .into_iter()
+                    .flatten()
+                    .next()
+                    .ok_or_else(|| "`f32_of` needs a float argument".to_owned())?;
+                let result = self.fresh();
+                self.out
+                    .push_str(&format!("  {result} = fptrunc double {} to float\n", operand(&x)));
+                Ok(vec![LValue::Reg(result)])
+            }
+            Callee::Builtin(Builtin::FloatOf32) => {
+                let x = evaluated
+                    .into_iter()
+                    .flatten()
+                    .next()
+                    .ok_or_else(|| "`float_of32` needs an f32 argument".to_owned())?;
+                let result = self.fresh();
+                self.out.push_str(&format!("  {result} = fpext float {} to double\n", operand(&x)));
+                Ok(vec![LValue::Reg(result)])
+            }
+            // As `BitsOf`, at 32 bits, zero-extended.
+            Callee::Builtin(Builtin::BitsOf32) => {
+                let x = evaluated
+                    .into_iter()
+                    .flatten()
+                    .next()
+                    .ok_or_else(|| "`bits_of32` needs an f32 argument".to_owned())?;
+                let x_op = operand(&x);
+                let raw = self.fresh();
+                self.out.push_str(&format!("  {raw} = bitcast float {x_op} to i32\n"));
+                let is_nan = self.fresh();
+                self.out.push_str(&format!("  {is_nan} = fcmp uno float {x_op}, {x_op}\n"));
+                let bits = self.fresh();
+                self.out.push_str(&format!(
+                    "  {bits} = select i1 {is_nan}, i32 {CANONICAL_NAN_32}, i32 {raw}\n"
+                ));
+                let result = self.fresh();
+                self.out.push_str(&format!("  {result} = zext i32 {bits} to i64\n"));
+                Ok(vec![LValue::Reg(result)])
+            }
+            Callee::Builtin(Builtin::F32OfBits) => {
+                let n = evaluated
+                    .into_iter()
+                    .flatten()
+                    .next()
+                    .ok_or_else(|| "`f32_of_bits` needs an int argument".to_owned())?;
+                let low = self.fresh();
+                self.out.push_str(&format!("  {low} = trunc i64 {} to i32\n", operand(&n)));
+                let result = self.fresh();
+                self.out.push_str(&format!("  {result} = bitcast i32 {low} to float\n"));
                 Ok(vec![LValue::Reg(result)])
             }
             Callee::Builtin(Builtin::BitsOf) => {
@@ -895,7 +1052,9 @@ impl<'a> FuncEmitter<'a> {
                 }
                 self.index_of_byte(&args)
             }
-            Callee::Builtin(Builtin::ConnWrite) => {
+            // `docs/processes.md`: a channel is a socket pair, so its verbs
+            // are the socket handles' (§4.4).
+            Callee::Builtin(Builtin::ConnWrite | Builtin::PipeWrite) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 if args.len() != 3 {
                     return Err(format!(
@@ -904,6 +1063,28 @@ impl<'a> FuncEmitter<'a> {
                     ));
                 }
                 self.conn_write(&args)
+            }
+            Callee::Builtin(Builtin::PipeRead) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                if args.len() != 3 {
+                    return Err(format!(
+                        "`pipe_read` needs 3 leaves but {} were given",
+                        args.len()
+                    ));
+                }
+                self.conn_read(&args)
+            }
+            Callee::Builtin(Builtin::PipeOpen) => self.pipe_open(),
+            Callee::Builtin(Builtin::ChildWait) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.child_wait(&args)
+            }
+            Callee::Builtin(Builtin::ChildKill) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.child_kill(&args)
+            }
+            Callee::Builtin(Builtin::ExecSpawn | Builtin::ExecSpawnIn) => {
+                Err("`exec_spawn` is lowered as `Expr::ExecSpawn`".to_owned())
             }
             // `docs/native-sockets.md` §4: the poller.
             Callee::Builtin(Builtin::PollerNew) => self.poller_new(),
@@ -952,6 +1133,14 @@ impl<'a> FuncEmitter<'a> {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.dir_stat(&args)
             }
+            Callee::Builtin(Builtin::DirMode) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.dir_mode(&args)
+            }
+            Callee::Builtin(Builtin::DirOwnMode) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.dir_own_mode(&args)
+            }
             // `docs/signals.md` section 5: the claim.
             Callee::Builtin(Builtin::SignalsWatch) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
@@ -964,6 +1153,16 @@ impl<'a> FuncEmitter<'a> {
             Callee::Builtin(Builtin::SignalsClose) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.signals_close(&args)
+            }
+            // `docs/processes.md` §4.8: a channel is watched as a `Conn` is,
+            // and a child by its exit.
+            Callee::Builtin(Builtin::PollerAddPipe) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.poller_ctl(&args, false, false)
+            }
+            Callee::Builtin(Builtin::PollerAddChild) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.poller_add_child(&args)
             }
             Callee::Builtin(Builtin::PollerAddSignals) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
@@ -1003,7 +1202,9 @@ impl<'a> FuncEmitter<'a> {
                 }
                 self.poller_wait(&args)
             }
-            Callee::Builtin(Builtin::ConnNonblocking | Builtin::ListenerNonblocking) => {
+            Callee::Builtin(
+                Builtin::ConnNonblocking | Builtin::ListenerNonblocking | Builtin::PipeNonblocking,
+            ) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.nonblocking(&args)
             }
@@ -1015,7 +1216,13 @@ impl<'a> FuncEmitter<'a> {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.connect_status(&args)
             }
-            Callee::Builtin(Builtin::ConnClose | Builtin::ListenerClose | Builtin::PollerClose) => {
+            Callee::Builtin(
+                Builtin::ConnClose
+                | Builtin::ListenerClose
+                | Builtin::PollerClose
+                | Builtin::PipeClose
+                | Builtin::ChildEndClose,
+            ) => {
                 let fd64 = evaluated
                     .into_iter()
                     .flatten()

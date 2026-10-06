@@ -23,6 +23,9 @@ impl<'a> FuncEmitter<'a> {
     /// `flush_out`: the errno is read straight after `fflush`, and when only
     /// the error indicator says a write failed the answer is `EIO` (5).
     pub(crate) fn flush_out(&mut self) -> Vec<LValue> {
+        if crate::wasi_console::applies(self.triple) {
+            return self.flush_out_wasi();
+        }
         let symbol = match self.triple.operating_system {
             target_lexicon::OperatingSystem::Darwin(_) => "__stdoutp",
             _ => "stdout",
@@ -48,6 +51,48 @@ impl<'a> FuncEmitter<'a> {
         let tag = self.fresh();
         self.out.push_str(&format!("  {tag} = select i1 {failed}, i64 1, i64 0\n"));
         vec![LValue::Reg(tag), LValue::Const(0), LValue::Reg(why)]
+    }
+
+    /// `flush_out` on WASI, against the console's own buffer instead of `stdout`'s
+    /// (`wasi_console`): the same three answers. A failed flush reports its errno,
+    /// translated to the language's numbering; an earlier failed write that a later
+    /// flush did not see is `EIO` (5), as `ferror` alone is on a native target.
+    fn flush_out_wasi(&mut self) -> Vec<LValue> {
+        let rc = self.fresh();
+        self.out.push_str(&format!("  {rc} = call i32 @lexsys_console_flush()\n"));
+        let indicator = self.fresh();
+        self.out.push_str(&format!("  {indicator} = load i32, ptr @lexsys_out_err\n"));
+        let translated = self.fresh();
+        self.out.push_str(&format!("  {translated} = call i32 @lexsys_wasi_errno(i32 {rc})\n"));
+        let reason = self.widen(&translated);
+        let flush_failed = self.fresh();
+        self.out.push_str(&format!("  {flush_failed} = icmp ne i32 {rc}, 0\n"));
+        let earlier = self.fresh();
+        self.out.push_str(&format!("  {earlier} = icmp ne i32 {indicator}, 0\n"));
+        let failed = self.fresh();
+        self.out.push_str(&format!("  {failed} = or i1 {flush_failed}, {earlier}\n"));
+        let why = self.fresh();
+        self.out.push_str(&format!("  {why} = select i1 {flush_failed}, i64 {reason}, i64 5\n"));
+        let tag = self.fresh();
+        self.out.push_str(&format!("  {tag} = select i1 {failed}, i64 1, i64 0\n"));
+        vec![LValue::Reg(tag), LValue::Const(0), LValue::Reg(why)]
+    }
+
+    /// `open_with_fopen`'s answer for a target with no `dup` (WASI): the descriptor
+    /// straight from `openat(AT_FDCWD, path, flags, mode)`, the flags being what
+    /// the mode's `fopen` string means (`OpenMode::open_flags`), the same three
+    /// leaves. A file the call creates gets mode `0644`, as `fopen` gives it.
+    pub(crate) fn open_with_openat(&mut self, path: &str, mode: OpenMode) -> Vec<LValue> {
+        let f = self.open_flags();
+        let flags = mode.open_flags(&f) | f.cloexec;
+        let fd32 = self.open_at_cwd(path, flags, lex_sys_ir::CREATE_MODE);
+        let fd = self.widen(&fd32);
+        let failed = self.fresh();
+        self.out.push_str(&format!("  {failed} = icmp slt i64 {fd}, 0\n"));
+        let tag = self.fresh();
+        self.out.push_str(&format!("  {tag} = select i1 {failed}, i64 1, i64 0\n"));
+        let reason = self.errno();
+        vec![LValue::Reg(tag), LValue::Reg(fd), reason]
     }
 
     fn widen(&mut self, narrow: &str) -> String {
@@ -141,38 +186,44 @@ impl<'a> FuncEmitter<'a> {
     /// address, then the slice's pointer and length.
     pub(crate) fn file_write(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
         let fd = self.handle_fd(&args[0]);
-        let moved = self.fresh();
+        let st = self.size_ty();
+        let size = self.size_arg(&operand(&args[2]));
+        let raw = self.fresh();
         self.out.push_str(&format!(
-            "  {moved} = call i64 @write(i32 {fd}, ptr {}, i64 {})\n",
-            operand(&args[1]),
-            operand(&args[2])
+            "  {raw} = call {st} @write(i32 {fd}, ptr {}, {st} {size})\n",
+            operand(&args[1])
         ));
+        let moved = self.size_result(&raw, true);
         Ok(self.done(&moved))
     }
 
     /// `file_pwrite(file, at, bytes)`: one `pwrite(2)`.
     pub(crate) fn file_pwrite(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
         let fd = self.handle_fd(&args[0]);
-        let moved = self.fresh();
+        let st = self.size_ty();
+        let size = self.size_arg(&operand(&args[3]));
+        let raw = self.fresh();
         self.out.push_str(&format!(
-            "  {moved} = call i64 @pwrite(i32 {fd}, ptr {}, i64 {}, i64 {})\n",
+            "  {raw} = call {st} @pwrite(i32 {fd}, ptr {}, {st} {size}, i64 {})\n",
             operand(&args[2]),
-            operand(&args[3]),
             operand(&args[1])
         ));
+        let moved = self.size_result(&raw, true);
         Ok(self.done(&moved))
     }
 
     /// `file_pread(file, at, into)`: one `pread(2)`, sorted into `Read`.
     pub(crate) fn file_pread(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
         let fd = self.handle_fd(&args[0]);
-        let moved = self.fresh();
+        let st = self.size_ty();
+        let size = self.size_arg(&operand(&args[3]));
+        let raw = self.fresh();
         self.out.push_str(&format!(
-            "  {moved} = call i64 @pread(i32 {fd}, ptr {}, i64 {}, i64 {})\n",
+            "  {raw} = call {st} @pread(i32 {fd}, ptr {}, {st} {size}, i64 {})\n",
             operand(&args[2]),
-            operand(&args[3]),
             operand(&args[1])
         ));
+        let moved = self.size_result(&raw, true);
         Ok(self.read_answer(&moved))
     }
 

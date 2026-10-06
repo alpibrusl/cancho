@@ -17,6 +17,7 @@ mod listing;
 mod memory;
 mod net;
 mod poller;
+mod process;
 mod signals;
 mod sockets;
 
@@ -112,6 +113,10 @@ impl<'a> FuncEmitter<'a> {
         match self.triple.architecture {
             target_lexicon::Architecture::X86_64 => Ok("ud2"),
             target_lexicon::Architecture::Aarch64(_) => Ok("udf #0xc11f"),
+            // WebAssembly's own trap: the engine stops the instance and the
+            // host reports it (`docs/wasm.md`; wasmtime exits 134, not a
+            // signal), so the exit code differs from native's `SIGILL`.
+            target_lexicon::Architecture::Wasm32 => Ok("unreachable"),
             other => Err(format!(
                 "the LLVM backend's checked arithmetic has no measured trap instruction for \
                  `{other}` -- only x86-64 and aarch64 are measured (docs/llvm-backend.md §3.2, §3.3)"
@@ -321,6 +326,15 @@ impl<'a> FuncEmitter<'a> {
                 }
                 Stmt::Return(expr) => {
                     let values = self.expr(expr)?;
+                    // Leave every arena this `return` jumps out of,
+                    // innermost first, as `lex-sys-codegen`'s own
+                    // `emit_return` does (lex-sys#252: without this a
+                    // region left by `return` kept its chunk for good, one
+                    // 64 KiB `malloc` per call). The value is already in
+                    // registers, and §6's occurs-check keeps it from
+                    // pointing into an arena, so nothing reads what is
+                    // freed here.
+                    self.release_arenas();
                     match values.as_slice() {
                         [] => self.out.push_str("  ret void\n"),
                         [value] => {

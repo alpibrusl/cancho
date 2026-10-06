@@ -88,7 +88,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         set
     }
 
-    fn scratch_bytes(&mut self, size: i64) -> Value {
+    pub(crate) fn scratch_bytes(&mut self, size: i64) -> Value {
         let pointer = self.pointer;
         let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
             StackSlotKind::ExplicitSlot,

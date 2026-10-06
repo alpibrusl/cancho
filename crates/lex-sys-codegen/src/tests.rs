@@ -287,6 +287,56 @@ fn a_slice_lowers_on_every_target() {
     }
 }
 
+/// `docs/f32.md` §2: `f32` lowers on every target, as a program that
+/// touches every part of it -- a literal, each operator, a comparison, the
+/// four conversions, a struct field, a parameter, a return, and a slice,
+/// whose stride is the one address arithmetic that is not a leaf's eight.
+#[test]
+fn f32_lowers_on_every_target() {
+    const F32: &str = "\
+        edition 6; \
+        struct Pair { a: f32, b: f32 } \
+        fn mix(p: Pair, k: f32) -> [] f32 { return -(p.a * k + p.b / k - 1.5f32); } \
+        fn total[&r](xs: &r [f32]) -> [] f32 { \
+            var sum = 0.0f32; var i = 0; \
+            while i < len(xs) { sum = sum + xs[i]; i = i + 1; } \
+            return sum; \
+        } \
+        fn main() -> [] int { \
+            var answer = 0; \
+            region a { \
+                let xs = alloc_slice[a](4, 0.5f32); \
+                xs[2] = mix(Pair { a: 1.0f32, b: 2.0f32 }, 4.0f32); \
+                if total(xs) < 1.0f32 || xs[0] == xs[1] || xs[0] != xs[1] { answer = 1; } \
+                answer = answer + bits_of32(f32_of(float_of32(xs[1]))) - bits_of32(xs[1]); \
+                answer = answer + bits_of32(f32_of_bits(1065353216)) - 1065353216; \
+                answer = answer + int_of_f32(sqrt32(f32_of_int(16))) - 4; \
+            } \
+            return answer - 1; \
+        }";
+    for (triple, _) in targets() {
+        let ast = parse(F32).expect("should parse");
+        let program = lower(&ast).expect("should lower");
+        let triple: Triple = triple.parse().expect("a valid triple");
+        compile_object_for(&program, "main", triple.clone())
+            .unwrap_or_else(|e| panic!("`{triple}` should emit: {e}"));
+    }
+}
+
+/// An `f32` is four bytes in a slice (`docs/f32.md` §2) and one eight-byte
+/// leaf in a struct: the layout report's `stride` is the former, and what
+/// the backend multiplies an index by is the same number.
+#[test]
+fn an_f32_slice_is_four_bytes_an_element() {
+    let ast = parse("edition 6; fn main() -> [] int { return 0; }").expect("should parse");
+    let program = lower(&ast).expect("should lower");
+    let triple = host_triple();
+    let layout = layout_of(&Type::F32, &program, &triple);
+    assert_eq!((layout.leaves, layout.stride, layout.packed), (1, 4, 4));
+    let float = layout_of(&Type::Float, &program, &triple);
+    assert_eq!(float.stride, 8, "`float` is untouched");
+}
+
 #[test]
 fn only_the_entry_point_is_global() {
     for (triple, _) in targets() {
@@ -350,6 +400,141 @@ fn a_signal_claim_emits_for_both_formats_with_each_kernels_calls() {
             }
             // The Linux claim never raises and never touches a disposition.
             assert!(!has("raise") && !has("sigaction"), "{triple}: {imports:?}");
+        }
+    }
+}
+
+/// `docs/threads.md` section 6: every word-sized data object is aligned to
+/// a word, in the object and therefore after the link. The thread counter
+/// is an atomic, and aarch64's exclusive load faults on an unaligned word;
+/// glibc's one-byte `completed.0` in front of `.bss` is what made the
+/// unrequested alignment of one show. Byte data is not asked to grow.
+#[test]
+fn every_word_global_is_aligned_to_a_word() {
+    use object::ObjectSection;
+    const SPAWNS: &str = "edition 4;\n\
+         static odd: [byte] { let b = alloc_slice[static](3, byte_of(1)); return b; }\n\
+         static table: [int] { let t = alloc_slice[static](3, 1); return t; }\n\
+         fn worker(x: int) -> [] int { return x * 2; }\n\
+         fn main(world: World) -> [conc] int {\n\
+             release(world);\n\
+             let w = worker;\n\
+             let h = spawn(21, w);\n\
+             return join(h) - 42 + len(table) - len(odd) + len(\"x\") - 1;\n\
+         }\n";
+    let program = lower(&parse(SPAWNS).expect("should parse")).expect("should lower");
+    let words = [
+        crate::abi::ARGC_GLOBAL.to_owned(),
+        crate::abi::ARGV_GLOBAL.to_owned(),
+        lex_sys_ir::FD_EPOCH_GLOBAL.to_owned(),
+        lex_sys_ir::SIGNAL_STATE_GLOBAL.to_owned(),
+        format!("{PREFIX}static_table"),
+    ];
+    for (triple, prefix) in targets() {
+        let bytes = compile_object_for(&program, "main", triple.parse().expect("a valid triple"))
+            .expect("should compile");
+        let file = object::File::parse(&*bytes).expect("a readable object file");
+        let mut seen = Vec::new();
+        for symbol in file.symbols() {
+            let Some(name) = symbol.name().ok().and_then(|n| n.strip_prefix(prefix)) else {
+                continue;
+            };
+            if !words.iter().any(|w| w == name) {
+                continue;
+            }
+            let section = symbol
+                .section_index()
+                .and_then(|i| file.section_by_index(i).ok())
+                .expect("a defined data object has a section");
+            assert!(
+                section.align() >= 8,
+                "{triple}: `{name}`'s section is aligned {}",
+                section.align()
+            );
+            assert_eq!(symbol.address() % 8, 0, "{triple}: `{name}` is at {:#x}", symbol.address());
+            seen.push(name.to_owned());
+        }
+        seen.sort();
+        let mut expected = words.to_vec();
+        expected.sort();
+        assert_eq!(seen, expected, "{triple}: every word global should be defined and checked");
+    }
+}
+
+/// `docs/processes.md` §4.5 and §4.8, from any host: starting a program and
+/// watching it ask Linux for `closefrom` and a `pidfd`, and Darwin for
+/// neither -- `POSIX_SPAWN_CLOEXEC_DEFAULT` and `kevent` instead.
+#[test]
+fn a_child_is_started_and_watched_the_way_each_platform_does() {
+    const WATCH: &str = r#"edition 7;
+fn go[&x](exec: &x Exec("/bin")) -> [exec("/bin"), poll] int {
+    match poller_new() {
+        Polling::Ok(p) => {
+            var poller = p;
+            match pipe_open() {
+                Piped::Ok(mine, theirs) => {
+                    var m = mine;
+                    match exec_spawn(exec, "/bin/true", "", "", Stdio::Null, Stdio::Pipe(theirs), Stdio::Null) {
+                        Spawned::Ok(c) => {
+                            var child = c;
+                            borrow mut poller as &!ph in {
+                                borrow mut m as &!pp in {
+                                    borrow child as &ch in {
+                                        poller_add_pipe(ph, pp, 1, 1);
+                                        poller_add_child(ph, ch, 2);
+                                    }
+                                }
+                            }
+                            match child_wait(child) {
+                                Exited::Code(n) => { }
+                                Exited::Signaled(s) => { }
+                                Exited::Failed(e) => { }
+                            }
+                        }
+                        Spawned::Failed(e) => { }
+                    }
+                    pipe_close(m);
+                }
+                Piped::Failed(e) => { }
+            }
+            poller_close(poller);
+        }
+        Polling::Failed(e) => { }
+    }
+    return 0;
+}
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(net); release(clock); release(signals);
+    let bin = narrow(exec, "/bin");
+    var status = 0;
+    borrow bin as &x in { status = go(x); }
+    release(bin);
+    return status;
+}
+"#;
+    for (triple, prefix) in targets() {
+        let names = symbols_of(WATCH, &triple);
+        let imports: Vec<&str> = names.iter().map(|(n, _, _)| n.as_str()).collect();
+        let has = |base: &str| imports.contains(&format!("{prefix}{base}").as_str());
+        for call in ["posix_spawn", "waitpid", "socketpair", "close"] {
+            assert!(has(call), "{triple} should import `{call}`: {imports:?}");
+        }
+        if triple.contains("darwin") {
+            for call in ["kqueue", "kevent"] {
+                assert!(has(call), "{triple} should import `{call}`: {imports:?}");
+            }
+            assert!(
+                !has("syscall")
+                    && !has("epoll_ctl")
+                    && !has("posix_spawn_file_actions_addclosefrom_np"),
+                "{triple}: {imports:?}"
+            );
+        } else {
+            for call in ["syscall", "epoll_ctl", "posix_spawn_file_actions_addclosefrom_np"] {
+                assert!(has(call), "{triple} should import `{call}`: {imports:?}");
+            }
+            assert!(!has("kevent") && !has("kqueue"), "{triple}: {imports:?}");
         }
     }
 }

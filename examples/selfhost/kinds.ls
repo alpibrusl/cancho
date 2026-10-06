@@ -1,0 +1,196 @@
+module selfhost.kinds;
+
+// kinds.ls -- the kinds of node in the syntax tree `ast.ls` builds, and their codes.
+//
+// A node's record stores its kind as the kind's position in `NK`, which is `kcode`: a slice
+// holds integers, and the language has no integer constants. Split out of `ast.ls` to keep
+// that file under the repository's line budget.
+
+pub enum NK {
+    TName,
+    TRef,
+    TSlice,
+    TTuple,
+    TLit,
+    TFn,
+    EInt,
+    EFloat,
+    EBool,
+    EStr,
+    EName,
+    EStructLit,
+    FieldInit,
+    EField,
+    ETuple,
+    ETupleField,
+    EVariant,
+    EUnary,
+    EBinary,
+    ECall,
+    EIndex,
+    ESlice,
+    EAlloc,
+    EAllocSlice,
+    SLet,
+    SAssign,
+    SDestructure,
+    SDestructureTuple,
+    SBorrow,
+    SRegion,
+    SExpr,
+    SIf,
+    SWhile,
+    SMatch,
+    Arm,
+    SReturn,
+    SDefer,
+    Param,
+    Field,
+    Variant,
+    IFn,
+    IExtern,
+    IStruct,
+    IEnum,
+    IStatic,
+}
+
+// The kind's position in `NK`, which is how a record stores it.
+pub fn kcode(k: NK) -> [] int {
+    match k {
+        NK::TName => {
+            return 0;
+        }
+        NK::TRef => {
+            return 1;
+        }
+        NK::TSlice => {
+            return 2;
+        }
+        NK::TTuple => {
+            return 3;
+        }
+        NK::TLit => {
+            return 4;
+        }
+        NK::TFn => {
+            return 5;
+        }
+        NK::EInt => {
+            return 6;
+        }
+        NK::EFloat => {
+            return 7;
+        }
+        NK::EBool => {
+            return 8;
+        }
+        NK::EStr => {
+            return 9;
+        }
+        NK::EName => {
+            return 10;
+        }
+        NK::EStructLit => {
+            return 11;
+        }
+        NK::FieldInit => {
+            return 12;
+        }
+        NK::EField => {
+            return 13;
+        }
+        NK::ETuple => {
+            return 14;
+        }
+        NK::ETupleField => {
+            return 15;
+        }
+        NK::EVariant => {
+            return 16;
+        }
+        NK::EUnary => {
+            return 17;
+        }
+        NK::EBinary => {
+            return 18;
+        }
+        NK::ECall => {
+            return 19;
+        }
+        NK::EIndex => {
+            return 20;
+        }
+        NK::ESlice => {
+            return 21;
+        }
+        NK::EAlloc => {
+            return 22;
+        }
+        NK::EAllocSlice => {
+            return 23;
+        }
+        NK::SLet => {
+            return 24;
+        }
+        NK::SAssign => {
+            return 25;
+        }
+        NK::SDestructure => {
+            return 26;
+        }
+        NK::SDestructureTuple => {
+            return 27;
+        }
+        NK::SBorrow => {
+            return 28;
+        }
+        NK::SRegion => {
+            return 29;
+        }
+        NK::SExpr => {
+            return 30;
+        }
+        NK::SIf => {
+            return 31;
+        }
+        NK::SWhile => {
+            return 32;
+        }
+        NK::SMatch => {
+            return 33;
+        }
+        NK::Arm => {
+            return 34;
+        }
+        NK::SReturn => {
+            return 35;
+        }
+        NK::SDefer => {
+            return 36;
+        }
+        NK::Param => {
+            return 37;
+        }
+        NK::Field => {
+            return 38;
+        }
+        NK::Variant => {
+            return 39;
+        }
+        NK::IFn => {
+            return 40;
+        }
+        NK::IExtern => {
+            return 41;
+        }
+        NK::IStruct => {
+            return 42;
+        }
+        NK::IEnum => {
+            return 43;
+        }
+        NK::IStatic => {
+            return 44;
+        }
+    }
+}

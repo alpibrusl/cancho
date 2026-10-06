@@ -63,7 +63,11 @@ files, so that a later move is mechanical.
 The OpenSSL backend already chose **memory BIOs** over a descriptor (`docs/tls-nonblocking.md` §3.2, decision D1). Its program
 reads and writes the socket and hands OpenSSL bytes. That *is* a sans-io interface: OpenSSL's `BIO_write(rbio)` is "bytes in",
 and `BIO_read(wbio)` is "bytes out". So one interface fits both backends with no adapter, and a consumer (hooks' `attempt.ls`)
-switches backend by dependency, not by code (#210's gate).
+switches backend by dependency, not by code (#210's gate). *Corrected (#210, `docs/tls-hooks.md` §2.1 and §2.2): the byte
+movement is the same, the interfaces are not. Hooks' `tls.ls` owns the socket I/O and a connection's state is the caller's
+integers, where this engine owns its slots, so hooks needs an adapter module. And hooks' functions carry `Ffi` rows that one
+source cannot also carry without them (`docs/effect-polymorphism.md`), so a pure build cannot share `attempt.ls` and
+`hooks.ls` unchanged.*
 
 The second constraint is how `lexsys-hooks` holds connections. It keeps 64 attempts as **slots**: integer arrays indexed by slot,
 the `Conn`s in a `std.conns.Table`, one `Poller` (`docs/tls-nonblocking.md` §4.2 and §10.3, read from `src/attempt.ls`). A
@@ -336,20 +340,25 @@ fork. The package README must say that a forking program reseeds in each child.
 - **CertificateRequest.** It is answered with an empty `Certificate`, since there are no client certificates (§4.1), and the
   server decides.
 - **After the handshake:**
-  - `NewSessionTicket` is parsed and dropped (no resumption, §7.2);
+  - `NewSessionTicket` is parsed and dropped (no resumption, §7.2); *since #286's build
+    (`docs/tls-resumption.md`): kept, the newest one, for the engine to save;*
   - a received `KeyUpdate` is applied, and answered when `update_requested`. The client never initiates one. Alternative: refuse
     `KeyUpdate`, which would break long connections to servers that rotate keys; the cost of supporting it is one more key
     derivation;
   - more than 32 KeyUpdates, or more than 16 warning alerts, on one connection is refused as a hostile peer
     (`tls-too-many-messages`).
 - **Alerts.** Every received alert ends the connection, except `close_notify`, which is a clean end, and `user_canceled`, which is
-  ignored until the following `close_notify`.
+  ignored until the following `close_notify`. *Corrected (review finding E-3, #209): a `close_notify` is a clean end only once
+  the handshake is done. Before that it may come in the clear, from anyone on the path, and nothing was authenticated to end, so
+  the connection fails with `tls-peer-closed`, as a socket closed mid-handshake does.*
 
 ### 7.2 Not built, and why
 
 - **Session resumption and 0-RTT.** These are a separate decision (#197's non-goals). The OpenSSL spike measured resumption
   halving the handshake CPU (`docs/tls-nonblocking.md` §8.5), and that saving is given up here until it is designed with its
-  hazard: a resumed session skips verification, as §10.4 there says.
+  hazard: a resumed session skips verification, as §10.4 there says. *Since #286: TLS 1.3 resumption with (EC)DHE is designed
+  and built, with eight rules for that hazard (`docs/tls-resumption.md`). 0-RTT, PSK-only resumption and TLS 1.2 resumption
+  stay out, refused by that design, not deferred.*
 - **Client certificates. Post-handshake authentication**, which is refused if requested, because it is not offered.
 
 ### 7.3 Secrets in memory
@@ -370,7 +379,9 @@ memory that is about to be freed (`docs/chacha20.md` §3.2). `tls.drop` overwrit
 
 That is against 26 to 48 KiB for OpenSSL (`docs/tls-nonblocking.md` §8.3), so for 64 slots it is about 6.3 MiB. **As built
 (#205, `docs/tls-core.md` §9.1), a slot is about 179 KiB, or 11.2 MiB for 64**: the estimate left out room for three outgoing
-records and the separate buffers for an opened record, received data and the leaf certificate. Shrinking the
+records and the separate buffers for an opened record, received data and the leaf certificate. *Resumption (#286,
+`docs/tls-resumption.md` §4) adds 4,496 bytes a slot (a ticket offered, the newest received with its PSK and host name, and two
+secrets), and the engine's ticket table 2,440 bytes a ticket.* Shrinking the
 reassembly buffer to the largest certificate message actually seen is §10's question 6. The number is a design estimate and
 #208 measures it.
 
@@ -401,6 +412,7 @@ history, as `lexsys-hooks` stores `attempts.status` today (`docs/tls-nonblocking
 | `tls-bad-certificate-verify` | the server's signature over the transcript does not verify | a hostile peer, or the wrong key |
 | `tls-bad-finished` | the server's `Finished` does not verify | the same |
 | `tls-too-many-messages` | the KeyUpdate or warning-alert limits (§7.1) | the same |
+| `tls-illegal-psk` | *#286:* a `pre_shared_key` in a ServerHello that names an identity other than the one offered, or comes with a suite whose hash is not the ticket's (one answering a ClientHello that offered none is `tls-unsupported-extension`, RFC 8446 §4.2) (`docs/tls-resumption.md` §5) | a broken or hostile peer |
 | `tls-no-entropy` | the engine was never seeded | a program bug: seed it in `main` |
 | `tls-slot` | a slot number out of range, or a slot already in use | a program bug |
 
@@ -436,9 +448,14 @@ Each sub-issue (#199 to #210) states its own gate as a command. This design adds
 1. **The two backends agree.** For the certificate matrix of `docs/tls-nonblocking.md` §5, both backends give the same tag, plus
    #206's wildcard and constraint rows (#210).
 2. **No capability in the pure backend.** `lex-sys authority` on a hooks build with the pure backend shows no `ffi(...)` and no
-   foreign symbols. This is checked by a test, not asserted (#210).
+   foreign symbols. This is checked by a test, not asserted (#210). *Corrected (#210, `docs/tls-hooks.md` §2.4): hooks as a whole
+   also holds `libc` (`statx`, `prctl`: the modes of the data directory), so "none at all" cannot hold for it. The check is no
+   `libssl` and no `libcrypto` scope, none of the 32 symbols, and the `libc` entries unchanged.*
 3. **No input reaches a trap.** It is fuzzed at the record, handshake, DER and chain levels (#208), as `dns.ls` was over a million
-   damaged answers (`docs/tls-nonblocking.md` §7). *#208's plan for this, and for the rest of its bar: `docs/tls-assurance.md`.*
+   damaged answers (`docs/tls-nonblocking.md` §7). *#208's plan and results, for this and for the rest of its bar, are in `docs/tls-assurance.md`. Fuzzing is in §3.6 (no crash
+   and no hang). The differential and interop matrices are in §4.1 and §5.1. Timing is in §6.1: X25519 and ChaCha20-Poly1305 pass
+   on both backends, and three tests fail on an Apple M4 with its data-independent-timing bit clear. Resource bounds are in
+   §7.1.*
 
 ---
 

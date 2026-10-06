@@ -228,6 +228,8 @@ fn every_rsa_refusal_is_reached_with_its_own_tag() {
         (format!("P 32 {n} 01 {msg} {sig}"), "rsa-exponent"),
         (format!("P 32 {n} 010000 {msg} {sig}"), "rsa-exponent"),
         (format!("P 32 {n} {n} {msg} {sig}"), "rsa-exponent"),
+        // Over 64 bits (#317): odd, 65 bits, and shorter than the modulus.
+        (format!("P 32 {n} 010000000000000001 {msg} {sig}"), "rsa-exponent"),
         (format!("P 20 {n} {e} {msg} {sig}"), "rsa-hash"),
         (format!("D 32 {n} {e} {} {sig}", "00".repeat(31)), "rsa-digest-length"),
         (format!("P 32 {n} {e} {msg} {}", &sig[2..]), "rsa-signature-length"),

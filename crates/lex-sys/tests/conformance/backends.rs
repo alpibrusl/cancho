@@ -1080,6 +1080,18 @@ fn the_two_backends_agree_on_a_function_value() {
     );
 }
 
+/// A call through a function value as an operand (`f(x) + 1`). LLVM's
+/// `scalar_kind` had no `CallIndirect` arm, so only the form that bound
+/// the result to a `let` first compiled there; Cranelift always did both.
+#[test]
+fn the_two_backends_agree_on_a_function_value_as_an_operand() {
+    assert_backends_agree(
+        "backends-function-value-operand",
+        "tests/accept/function_value_operand.ls",
+        "62\n",
+    );
+}
+
 /// `docs/threads.md` §2/§5 step 2: `spawn`/`join`, the single-leaf slice,
 /// checked on both backends. Cranelift passes `body`'s address and the
 /// payload straight to a `pthread_create` it declares on demand

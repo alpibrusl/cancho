@@ -211,6 +211,51 @@ fn a_match_names_an_enum_through_its_qualifier() {
     assert!(text.contains("`forms` is not an imported module here"), "{text}");
 }
 
+/// `docs/modules.md` §4.3: a qualified call resolves its name in the
+/// module and never against a local binding of the same name.
+///
+/// Found writing `std/process.ls`, where a local `list` made
+/// `process.list(lr)` a refusal (`not-a-function`). The worse half is
+/// the second program: a local *function value* of the right shape was
+/// called in the module function's place, and that compiled.
+#[test]
+fn a_qualified_call_is_not_shadowed_by_a_local() {
+    const LIB: &str = "module lib;\n\
+                       pub fn max(a: int, b: int) -> [] int { if a > b { return a; } return b; }\n\
+                       pub fn min(a: int, b: int) -> [] int { if a < b { return a; } return b; }\n";
+
+    let runs_to_zero = |tag: &str, main: &str| {
+        let (exe, build) = build_many(tag, &[("main.ls", main), ("lib.ls", LIB)]);
+        assert!(build.status.success(), "`{tag}`: {}", String::from_utf8_lossy(&build.stderr));
+        let run = Command::new(&exe).output().expect("the compiled program runs");
+        assert_eq!(run.status.code(), Some(0), "`{tag}` called the wrong function");
+    };
+
+    // A local that is not a function: was `not-a-function`.
+    runs_to_zero(
+        "modules-qualified-shadow-int",
+        "import lib;\n\
+         fn main(world: World) -> [] int {\n\
+             release(world);\n\
+             let max = 3;\n\
+             return lib.max(max, 2) - 3;\n\
+         }\n",
+    );
+
+    // A local that is a function value with `lib.min`'s signature: was
+    // called instead of `lib.min`, giving 9 rather than 1.
+    runs_to_zero(
+        "modules-qualified-shadow-fn",
+        "import lib;\n\
+         fn most(a: int, b: int) -> [] int { if a > b { return a; } return b; }\n\
+         fn main(world: World) -> [] int {\n\
+             release(world);\n\
+             let min = most;\n\
+             return lib.min(1, 9) + min(1, 9) - 10;\n\
+         }\n",
+    );
+}
+
 /// The standard library type-checks on its own, with no program
 /// (`docs/standard-library.md` §7).
 ///

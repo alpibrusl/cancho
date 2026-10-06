@@ -143,6 +143,14 @@ mod tag {
     /// (`docs/function-values.md` §4.2). Appended, not inserted, for the
     /// same reason every tag above it was.
     pub const TYPE_FN: u8 = 0x73;
+    /// A binary32 literal, encoded as its 32 bits (`docs/f32.md` §2).
+    /// Appended, so no existing hash moves; the *type* `f32` needs no
+    /// tag, because a type is hashed by its written name.
+    pub const F32: u8 = 0x74;
+    /// A `static`'s signature identity (`docs/compile-time-data.md` §2).
+    /// Appended, so no other hash moves; it leads the encoding so that no
+    /// function or foreign signature can hash to the same bytes.
+    pub const STATIC_DECL: u8 = 0x75;
 
     /// The tag for a declared mode. Written out rather than cast from the
     /// enum, so adding a mode cannot silently renumber the others.
@@ -404,8 +412,19 @@ fn dotted(ast: &Ast, module: u32) -> String {
     path.join(".")
 }
 
+/// A `static`'s signature identity: its name and its referent type.
+///
+/// The name is part of it, as a function's is (`hash_signature`). A
+/// `static` has no parameters, so its type alone is a *shape* shared by
+/// every static of that type, and `vcs publish` keys its manifest by this
+/// hash: two `[int]` tables in one module would be one entry and the second
+/// would be refused as a changed body. The name is what makes two
+/// declarations two identities; the module still is not in the hash
+/// (`docs/modules.md` §2).
 fn hash_static_type(ast: &Ast, decl: &StaticDecl, module: u32, type_ids: &Names) -> Hash {
     let mut encoder = Encoder::default();
+    encoder.tag(tag::STATIC_DECL);
+    encoder.str(ast.name_of(decl.name));
     encode_type(ast, &mut encoder, decl.ty, module, type_ids, &[], &[]);
     encoder.finish(DOMAIN_SIG)
 }
@@ -1011,6 +1030,9 @@ impl BodyHasher<'_> {
             }
             Expr::Float(bits) => {
                 self.encoder.tag(tag::FLOAT).i64(*bits as i64);
+            }
+            Expr::F32(bits) => {
+                self.encoder.tag(tag::F32).i64(i64::from(*bits));
             }
             Expr::Bool(value) => {
                 self.encoder.tag(tag::BOOL).bool(*value);
@@ -1847,6 +1869,28 @@ mod tests {
         assert_ne!(
             sig("fn f[&r](xs: &r [int]) -> [] int { return 0; }", "f"),
             sig("fn f[&r](xs: &r [bool]) -> [] int { return 0; }", "f")
+        );
+    }
+
+    /// `docs/f32.md` §2: an `f32` literal has a tag of its own, so that
+    /// `0.5f32` and `0.5` -- different programs -- are different bodies,
+    /// and so are two `f32` literals whose bits differ (`0.0f32` and
+    /// `-0.0f32` compare equal and behave differently). The tag is
+    /// appended, which is why no existing hash moved (`tests/golden.rs`).
+    #[test]
+    fn an_f32_literal_reaches_the_body_hash() {
+        let f32_body = |text: &str| body(&format!("fn f() -> [] f32 {{ return {text}; }}"), "f");
+        assert_ne!(f32_body("0.5f32"), f32_body("0.25f32"));
+        assert_ne!(f32_body("0.0f32"), f32_body("-0.0f32"));
+        assert_ne!(
+            body("fn f() -> [] f32 { return 0.5f32; }", "f"),
+            body("fn f() -> [] float { return 0.5; }", "f")
+        );
+        // And the type is hashed by its written name, so a signature that
+        // says `f32` is not one that says `float`.
+        assert_ne!(
+            sig("fn f(x: f32) -> [] int { return 0; }", "f"),
+            sig("fn f(x: float) -> [] int { return 0; }", "f")
         );
     }
 

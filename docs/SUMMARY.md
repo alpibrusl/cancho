@@ -38,6 +38,8 @@
 - [Mode polymorphism](mode-polymorphism.md)
 - [Function values](function-values.md)
 - [Threads: spawn and join](threads.md)
+- [Threads that carry more than one value](thread-payloads.md)
+- [Atomics and a channel](atomics.md)
 - [Effect polymorphism](effect-polymorphism.md)
 
 # Capabilities, effects and authority
@@ -57,6 +59,7 @@
 # Types and data
 
 - [Floating point](floating-point.md)
+- [`f32`, and the program that asked for it](f32.md)
 - [Character literals](character-literals.md)
 - [Bitwise operators](bitwise.md)
 - [Strings](strings.md)
@@ -83,6 +86,7 @@
 - [Whether std needs a line reader](line-reading.md)
 - [Bulk I/O](bulk-io.md)
 - [File handles](file-handles.md)
+- [Files larger than memory](large-files.md)
 - [File writes](file-writes.md)
 - [std.crypto: SHA-256](crypto.md)
 - [std.crypto: SHA-512](sha512.md)
@@ -99,6 +103,8 @@
 - [TLS parity with the OpenSSL backend](tls-parity.md)
 - [`std.ecdh`: P-256 and P-384 key exchange](ecdh.md)
 - [`value_barrier`: a value the optimiser cannot see through](value-barrier.md)
+- [The pure TLS backend in `lexsys-hooks`](tls-hooks.md)
+- [TLS 1.3 session resumption](tls-resumption.md)
 - [Hardware AES and carry-less multiply](crypto-builtins.md)
 
 # Compile time and program identity
@@ -125,6 +131,7 @@
 - [Poison instead of a trap](poison.md)
 - [What Cranelift can and cannot do](backend-limits.md)
 - [The LLVM backend](llvm-backend.md)
+- [WebAssembly target](wasm.md)
 - [Every emitted check, priced](emitted-checks.md)
 - [Whether lex-sys can run on a GPU](gpu.md)
 - [The constant folder against the backend](differential.md)

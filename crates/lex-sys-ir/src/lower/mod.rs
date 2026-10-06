@@ -10,6 +10,7 @@ mod expr;
 mod foreign;
 mod memory;
 mod net;
+mod process;
 mod signals;
 mod stmt;
 
@@ -104,6 +105,14 @@ pub(crate) struct FnLowering<'a> {
     /// What the linearity checker replays once the types are settled
     /// (`linear.rs`). Recorded here because this is where the spans are.
     pub(crate) trace: Trace,
+    /// Every slot a name was read from since lowering started, in order. A
+    /// `let` and a `spawn` take the slice written by their own operand, which
+    /// is how the checker learns which `&!` a new binding or a thread payload
+    /// was copied from (`docs/aliasing.md` §6.1).
+    pub(crate) reads: Vec<Slot>,
+    /// A `spawn` that lent a `&!` has returned a handle no binding has taken
+    /// yet (`docs/aliasing.md` §6.1).
+    pub(crate) pending_lease: bool,
     /// The module this function is in, which is where an unqualified name
     /// resolves (`docs/modules.md` §4).
     pub(crate) module: u32,
@@ -140,6 +149,14 @@ impl<'a> FnLowering<'a> {
             span,
             shadows,
         });
+        if self.pending_lease {
+            let thread = self.prelude()[PRELUDE_THREAD];
+            if matches!(self.unifier.resolve(&self.slots[slot.0 as usize]), Type::Named(d, _) if d == thread)
+            {
+                self.pending_lease = false;
+                self.trace.emit(Event::Bind { slot });
+            }
+        }
         slot
     }
 
@@ -402,11 +419,12 @@ impl<'a> FnLowering<'a> {
             && which != PRELUDE_FS
             && which != PRELUDE_NET
             && which != PRELUDE_SIGNALS
+            && which != PRELUDE_EXEC
         {
             return Err(Diagnostic::new(
                 Rule::CapabilityNotNarrowable,
                 format!(
-                    "`{}` carries no value to narrow; `Ffi`, `Fs`, `Net` and `Signals` are the capabilities that name one",
+                    "`{}` carries no value to narrow; `Ffi`, `Fs`, `Net`, `Signals` and `Exec` are the capabilities that name one",
                     self.unifier.display(&resolved)
                 ),
                 span,
@@ -449,7 +467,8 @@ impl<'a> FnLowering<'a> {
         // neither does `Net`: `docs/net.md` §4 bounds a `net_out` label by
         // plain textual prefix on `"host:port"`, the same way an `egress`
         // entry does, with no boundary character of its own.
-        if which == PRELUDE_FS && !extends_path(current, &target) {
+        // `docs/processes.md` §4.1: `Exec`'s prefix is a path, with `Fs`'s rule.
+        if (which == PRELUDE_FS || which == PRELUDE_EXEC) && !extends_path(current, &target) {
             return Err(Diagnostic::new(
                 Rule::CapabilityNotNarrowable,
                 format!(

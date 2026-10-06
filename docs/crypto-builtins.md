@@ -1,8 +1,9 @@
 # Hardware AES and carry-less multiply: two builtins, and a way to ask whether the CPU has them
 
-> **Status: design, not built.** `docs/tls-parity.md` §3.1 measured AES-GCM at about 170 times slower than OpenSSL's, and
-> said the gap is the instructions lex-sys cannot emit. This document says what it would take to emit them, what is
-> measured so far, and what is not. Where a later PR finds a claim here false, that PR corrects it here, in place.
+> **Status: design, decided; not built.** §9's five answers were accepted as proposed (2026-10-06), and the four PRs of §10
+> follow in that order. `docs/tls-parity.md` §3.1 measured AES-GCM at about 170 times slower than OpenSSL's, and said the gap
+> is the instructions lex-sys cannot emit. This document says what it would take to emit them, what is measured so far, and
+> what is not. Where a later PR finds a claim here false, that PR corrects it here, in place.
 
 ---
 
@@ -184,7 +185,7 @@ The numbers the `std` PR must show, each with its command, and an honest "not me
 ## 9. Open questions, and the answers proposed
 
 Each is a decision for a person. The answer given is the one this PR proposes, with its reason; a reviewer who disagrees changes
-the answer here before anything is built.
+the answer here before anything is built. *Decided: all five as proposed (2026-10-06).*
 
 1. **A bad length: a trap or a return code?** *A trap.* No attacker's bytes reach it (§3), the key length is refused earlier with
    a rule tag, and a return code would add a check that can only fail on a programming error.

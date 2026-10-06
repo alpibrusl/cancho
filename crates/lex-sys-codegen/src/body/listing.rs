@@ -257,6 +257,76 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         vec![tag, kind, size, mtime, reason]
     }
 
+    /// `dir_mode(dir, name)` (§3.5): `dir_stat`'s check and `fstatat`, and
+    /// `Done`'s three leaves with the permission bits (`st_mode & 0o7777`) on
+    /// success. `dir_call`'s answer is already `Done`'s shape; only its value
+    /// is replaced.
+    pub(crate) fn dir_mode(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let layout = lex_sys_ir::stat_layout(self.is_darwin(), self.aarch64());
+        let buffer = self.stat_buffer(layout);
+        let handle = args[0];
+        let answer = self.dir_call(&[(args[1], args[2])], |this, copies| {
+            let fd = this.dir_fd(handle);
+            let flag = this.builder.ins().iconst(types::I32, layout.no_follow);
+            this.libc_call(
+                "fstatat",
+                &[types::I32, pointer, pointer, types::I32],
+                &[types::I32],
+                &[fd, copies[0], buffer, flag],
+            )
+        });
+        let bits = self.permission_bits(answer[0], buffer, layout);
+        vec![answer[0], bits, answer[2]]
+    }
+
+    /// `dir_own_mode(dir)` (§3.5): `fstat` on the handle's descriptor, so the
+    /// directory's own bits need no search permission on it and no name.
+    pub(crate) fn dir_own_mode(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let layout = lex_sys_ir::stat_layout(self.is_darwin(), self.aarch64());
+        let buffer = self.stat_buffer(layout);
+        let fd = self.dir_fd(args[0]);
+        let result = self.libc_call("fstat", &[types::I32, pointer], &[types::I32], &[fd, buffer]);
+        let reason = self.errno();
+        let result = self.builder.ins().sextend(types::I64, result);
+        let failed = self.builder.ins().icmp_imm(IntCC::SignedLessThan, result, 0);
+        let one = self.builder.ins().iconst(types::I64, 1);
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        let tag = self.builder.ins().select(failed, one, zero);
+        let bits = self.permission_bits(tag, buffer, layout);
+        vec![tag, bits, reason]
+    }
+
+    /// A stack slot `struct stat` fits in, and its address.
+    fn stat_buffer(&mut self, layout: lex_sys_ir::StatLayout) -> Value {
+        let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            layout.size,
+            3,
+        ));
+        self.builder.ins().stack_addr(self.pointer, slot, 0)
+    }
+
+    /// `st_mode & 0o7777` read from `buffer` at the target's offset, or `0`
+    /// when `tag` says the call failed.
+    fn permission_bits(
+        &mut self,
+        tag: Value,
+        buffer: Value,
+        layout: lex_sys_ir::StatLayout,
+    ) -> Value {
+        let ok = self.builder.ins().icmp_imm(IntCC::Equal, tag, 0);
+        let mode = if layout.mode_bits == 16 {
+            self.builder.ins().uload16(types::I64, MemFlags::trusted(), buffer, layout.mode)
+        } else {
+            self.builder.ins().uload32(MemFlags::trusted(), buffer, layout.mode)
+        };
+        let bits = self.builder.ins().band_imm(mode, lex_sys_ir::PERMISSION_BITS);
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        self.builder.ins().select(ok, bits, zero)
+    }
+
     /// `st_mode`'s type bits as the language numbers a kind (§3.2).
     fn kind_of_mode(&mut self, mode: Value) -> Value {
         let bits = self.builder.ins().band_imm(mode, lex_sys_ir::S_IFMT);

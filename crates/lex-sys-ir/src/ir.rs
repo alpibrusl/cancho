@@ -96,10 +96,25 @@ pub const PRELUDE_LISTED: usize = 35;
 /// What `dir_stat` answers (`docs/directory-listing.md` §3.2).
 pub const PRELUDE_DIR_STAT: usize = 36;
 
+/// `docs/processes.md` §3.1, edition 7: the capability to start a program
+/// (leaf-free, indexed by a path prefix as `Fs` is), the `Split` that carries
+/// it as its ninth field, a started child (`res`, one leaf: the pid), the
+/// parent's and the child's ends of a channel (`res`, one descriptor each),
+/// what one of the child's streams is, and what the verbs answer.
+pub const PRELUDE_EXEC: usize = 37;
+pub const PRELUDE_SPLIT_EXEC: usize = 38;
+pub const PRELUDE_CHILD: usize = 39;
+pub const PRELUDE_PIPE: usize = 40;
+pub const PRELUDE_CHILD_END: usize = 41;
+pub const PRELUDE_STDIO: usize = 42;
+pub const PRELUDE_PIPED: usize = 43;
+pub const PRELUDE_SPAWNED: usize = 44;
+pub const PRELUDE_EXITED: usize = 45;
+
 /// How many types the prelude declares. Written once, because a builtin's
 /// signature indexes this table and a stale slice is a panic rather than a
 /// diagnostic.
-pub const PRELUDE_COUNT: usize = 37;
+pub const PRELUDE_COUNT: usize = 46;
 
 /// Which path operation an [`Expr::PathOp`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,6 +156,26 @@ impl OpenMode {
             // Never reaches `fopen`: both backends open a directory with
             // `open` and its own flags. Read-only is the honest mode.
             OpenMode::Directory => "rb",
+        }
+    }
+
+    /// The `openat` flags that mean what [`fopen_mode`](Self::fopen_mode)'s string
+    /// means, for a target whose flags are `f`: `wb` is write-only, create,
+    /// truncate; `ab` is write-only, create, append; `wbx` is write-only, create,
+    /// exclusive; `r+b` is read-write and nothing else. (`cloexec` and the creation
+    /// mode are the caller's.)
+    ///
+    /// The WASI path opens a file this way rather than through `fopen` and a `dup`
+    /// of its descriptor: WASI has no `dup`, `fcntl(F_DUPFD_CLOEXEC)` answers
+    /// `EINVAL`, and `fopen` brings stdio's imports with it (`docs/wasm.md`).
+    pub fn open_flags(self, f: &OpenFlags) -> i64 {
+        match self {
+            OpenMode::Read => f.read_only,
+            OpenMode::Write => f.write_only | f.create | f.truncate,
+            OpenMode::Append => f.write_only | f.create | f.append,
+            OpenMode::New => f.write_only | f.create | f.exclusive,
+            OpenMode::ReadWrite => f.read_write,
+            OpenMode::Directory => f.read_only | f.directory,
         }
     }
 }
@@ -447,6 +482,19 @@ pub enum Expr {
         mode: OpenMode,
         args: Vec<Expr>,
     },
+    /// `exec_spawn(exec, path, args, env, stdin, stdout, stderr)`
+    /// (`docs/processes.md` §3.2). Its own node for the reason
+    /// [`Expr::OpenFile`] is one: the prefix travels with it, because the
+    /// backend checks the path against it and the type it came from is gone
+    /// by then. `args` is the capability (zero-sized) and the six arguments
+    /// after it. What comes back is a `Spawned`, tagged. `in_dir` is
+    /// `exec_spawn_in` (§4.10): `args[1]` is then a borrowed `Dir`, the
+    /// directory the child starts in, and the path follows it.
+    ExecSpawn {
+        prefix: String,
+        in_dir: bool,
+        args: Vec<Expr>,
+    },
     /// `fs_rename(fs, from, to)` and `fs_remove(fs, path)`
     /// (`docs/file-writes.md` section 7). Its own node for the reason
     /// [`Expr::OpenFile`] is one: the prefix travels with it, because the
@@ -626,6 +674,8 @@ pub enum Expr {
     },
     /// A floating-point constant, as bits (`docs/floating-point.md` §1).
     Float(u64),
+    /// A binary32 constant, as bits (`docs/f32.md` §2).
+    F32(u32),
     Neg(Box<Expr>),
     Not(Box<Expr>),
     /// `~a` (`docs/bitwise.md` §1). Its own node rather than
@@ -981,7 +1031,7 @@ pub fn terminates(body: &[Stmt]) -> bool {
 /// program's text, so both backends make it the same way.
 pub fn is_zero_fill(fill: &Expr) -> bool {
     match fill {
-        Expr::Int(0) | Expr::Bool(false) | Expr::Float(0) => true,
+        Expr::Int(0) | Expr::Bool(false) | Expr::Float(0) | Expr::F32(0) => true,
         Expr::Call { callee: Callee::Builtin(Builtin::ByteOf), args } => {
             matches!(args.as_slice(), [Expr::Int(0)])
         }
@@ -990,10 +1040,12 @@ pub fn is_zero_fill(fill: &Expr) -> bool {
 }
 
 /// The `open` flags the file and directory builtins pass, per target
-/// (`docs/directory-handles.md` §2 and §3). `O_RDONLY` is zero everywhere.
-/// Written once here so both backends spell them the same; the values are
-/// the kernels' own, and Linux x86-64 and AArch64 differ only in the first
-/// two.
+/// (`docs/directory-handles.md` §2 and §3). `O_RDONLY` is zero on Linux and
+/// Darwin and **not on WASI**, where it is `0x04000000` and a zero access
+/// mode asks for no rights at all (`EINVAL`), so a read-only open ORs in
+/// `read_only`. Written once here so both backends spell them the same; the
+/// values are the kernels' own (WASI's are wasi-libc's), and Linux x86-64
+/// and AArch64 differ only in the first two.
 ///
 /// `cloexec` is on every open (`docs/processes.md` §4.5): no descriptor a
 /// builtin opens crosses an `exec`. Every open is an `openat`, from
@@ -1001,6 +1053,11 @@ pub fn is_zero_fill(fill: &Expr) -> bool {
 /// the flag is set by the call that makes the descriptor, never after it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OpenFlags {
+    /// `O_RDONLY`: zero except on WASI.
+    pub read_only: i64,
+    /// `O_RDWR`: 2 on Linux and Darwin, but on WASI it is `O_RDONLY | O_WRONLY`
+    /// (`0x14000000`), because there neither access mode is zero.
+    pub read_write: i64,
     pub directory: i64,
     pub nofollow: i64,
     pub write_only: i64,
@@ -1013,9 +1070,45 @@ pub struct OpenFlags {
     pub at_fdcwd: i64,
 }
 
+/// The operating system a target runs on, as far as the constants in this
+/// file are concerned. Three, and a `match` on it names all three, so a
+/// fourth is a compile error at every site that has to know.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Os {
+    Linux,
+    Darwin,
+    /// WASI preview 1 (`wasm32-wasip1`), through wasi-libc (`docs/wasm.md`).
+    Wasi,
+}
+
+/// [`open_flags_for`] for the two hosts Cranelift can target.
 pub fn open_flags(darwin: bool, aarch64: bool) -> OpenFlags {
-    if darwin {
+    open_flags_for(if darwin { Os::Darwin } else { Os::Linux }, aarch64)
+}
+
+pub fn open_flags_for(os: Os, aarch64: bool) -> OpenFlags {
+    if os == Os::Wasi {
+        // wasi-libc's `__header_fcntl.h`. `O_CLOEXEC` is 0 there: a WASI
+        // module cannot `exec`, so there is nothing for the flag to protect.
+        // `AT_FDCWD` is -2, as on Darwin.
+        return OpenFlags {
+            read_only: 0x0400_0000,
+            read_write: 0x1400_0000,
+            directory: 0x2000,
+            nofollow: 0x0100_0000,
+            write_only: 0x1000_0000,
+            create: 0x1000,
+            exclusive: 0x4000,
+            append: 0x0001,
+            truncate: 0x8000,
+            cloexec: 0,
+            at_fdcwd: -2,
+        };
+    }
+    if os == Os::Darwin {
         OpenFlags {
+            read_only: 0,
+            read_write: 2,
             directory: 0x0010_0000,
             nofollow: 0x0100,
             write_only: 1,
@@ -1028,6 +1121,8 @@ pub fn open_flags(darwin: bool, aarch64: bool) -> OpenFlags {
         }
     } else if aarch64 {
         OpenFlags {
+            read_only: 0,
+            read_write: 2,
             directory: 0o40000,
             nofollow: 0o100000,
             write_only: 1,
@@ -1040,6 +1135,8 @@ pub fn open_flags(darwin: bool, aarch64: bool) -> OpenFlags {
         }
     } else {
         OpenFlags {
+            read_only: 0,
+            read_write: 2,
             directory: 0o200000,
             nofollow: 0o400000,
             write_only: 1,
@@ -1074,25 +1171,61 @@ pub struct DirentLayout {
 }
 
 pub fn dirent_layout(darwin: bool) -> DirentLayout {
-    if darwin {
-        DirentLayout { d_type: 20, d_name: 21 }
-    } else {
-        DirentLayout { d_type: 18, d_name: 19 }
+    dirent_layout_for(if darwin { Os::Darwin } else { Os::Linux })
+}
+
+/// wasi-libc's `struct dirent` is `{ ino_t d_ino; unsigned char d_type;
+/// char d_name[]; }`, so `d_type` is at 8 and `d_name` at 9.
+pub fn dirent_layout_for(os: Os) -> DirentLayout {
+    match os {
+        Os::Darwin => DirentLayout { d_type: 20, d_name: 21 },
+        Os::Linux => DirentLayout { d_type: 18, d_name: 19 },
+        Os::Wasi => DirentLayout { d_type: 8, d_name: 9 },
     }
 }
 
 /// `ENAMETOOLONG`: what `dir_next` answers when the caller's buffer is
 /// shorter than the name.
 pub fn enametoolong(darwin: bool) -> i64 {
-    if darwin { 63 } else { 36 }
+    enametoolong_for(if darwin { Os::Darwin } else { Os::Linux })
 }
 
-/// `d_type`'s values, the same on every target, and the language's own
-/// numbering of a kind (`docs/directory-listing.md` §3.1).
+pub fn enametoolong_for(os: Os) -> i64 {
+    match os {
+        Os::Darwin => 63,
+        Os::Linux => 36,
+        // The language's number, not WASI's own 37: `errno` is translated on
+        // WASI (`errno.rs`), so this is what a failing call would have said.
+        Os::Wasi => 36,
+    }
+}
+
+/// `d_type`'s values on Linux and Darwin, and the language's own numbering
+/// of a kind (`docs/directory-listing.md` §3.1). **Not the same on every
+/// target**: WASI's are different numbers (`DT_DIR` is 3, `DT_REG` 4, `DT_LNK`
+/// 7), so a backend that can target it asks [`dirent_types`].
 pub const DT_DIR: i64 = 4;
 pub const DT_REG: i64 = 8;
 pub const DT_LNK: i64 = 10;
 pub const DT_UNKNOWN: i64 = 0;
+/// The four `d_type` values a listing translates, for one target.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DirentTypes {
+    pub unknown: i64,
+    pub link: i64,
+    pub dir: i64,
+    pub reg: i64,
+}
+
+pub fn dirent_types(os: Os) -> DirentTypes {
+    match os {
+        Os::Linux | Os::Darwin => {
+            DirentTypes { unknown: DT_UNKNOWN, link: DT_LNK, dir: DT_DIR, reg: DT_REG }
+        }
+        // wasi-libc's `__header_dirent.h`.
+        Os::Wasi => DirentTypes { unknown: 0, link: 7, dir: 3, reg: 4 },
+    }
+}
 pub const KIND_UNKNOWN: i64 = 0;
 pub const KIND_FILE: i64 = 1;
 pub const KIND_DIRECTORY: i64 = 2;
@@ -1116,14 +1249,53 @@ pub struct StatLayout {
 }
 
 pub fn stat_layout(darwin: bool, aarch64: bool) -> StatLayout {
-    if darwin {
-        StatLayout { size: 144, mode: 4, mode_bits: 16, st_size: 96, mtime: 48, no_follow: 0x20 }
-    } else if aarch64 {
-        StatLayout { size: 128, mode: 16, mode_bits: 32, st_size: 48, mtime: 88, no_follow: 0x100 }
-    } else {
-        StatLayout { size: 144, mode: 24, mode_bits: 32, st_size: 48, mtime: 88, no_follow: 0x100 }
+    stat_layout_for(if darwin { Os::Darwin } else { Os::Linux }, aarch64)
+}
+
+/// wasi-libc's `struct stat` (`__struct_stat.h`) has Linux x86-64's offsets
+/// -- `st_mode` at 24, `st_size` at 48, `st_mtim` at 88, 144 bytes -- but its
+/// own `AT_SYMLINK_NOFOLLOW`, `0x1`.
+pub fn stat_layout_for(os: Os, aarch64: bool) -> StatLayout {
+    match (os, aarch64) {
+        (Os::Darwin, _) => StatLayout {
+            size: 144,
+            mode: 4,
+            mode_bits: 16,
+            st_size: 96,
+            mtime: 48,
+            no_follow: 0x20,
+        },
+        (Os::Wasi, _) => StatLayout {
+            size: 144,
+            mode: 24,
+            mode_bits: 32,
+            st_size: 48,
+            mtime: 88,
+            no_follow: 0x1,
+        },
+        (Os::Linux, true) => StatLayout {
+            size: 128,
+            mode: 16,
+            mode_bits: 32,
+            st_size: 48,
+            mtime: 88,
+            no_follow: 0x100,
+        },
+        (Os::Linux, false) => StatLayout {
+            size: 144,
+            mode: 24,
+            mode_bits: 32,
+            st_size: 48,
+            mtime: 88,
+            no_follow: 0x100,
+        },
     }
 }
+
+/// `st_mode`'s permission bits (set-user-id, set-group-id, sticky, and the
+/// nine read/write/execute bits), what `dir_mode` answers
+/// (`docs/directory-listing.md` §3.5). The same on every target.
+pub const PERMISSION_BITS: i64 = 0o7777;
 
 /// `st_mode`'s file-type bits, the same on every target.
 pub const S_IFMT: i64 = 0o170000;

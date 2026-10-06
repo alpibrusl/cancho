@@ -136,6 +136,27 @@ resolving a name rather than an instruction to go and read something.
 Functions have been mutually visible since `many-files.md`; modules do
 not change that, they only decide what a name is spelled.
 
+### 4.3 A qualified name is never a local
+
+`m.f(...)` resolves `f` in the module `m` is bound to, and nowhere else:
+not against a local binding called `f`, and not in the current module
+(§8, "not a fallback"). Only an **unqualified** name can refer to a
+local, so a local may shadow `f` but never `m.f`.
+
+```
+import std.math;
+let max = 3;
+return math.max(max, 2);    // `std.math`'s `max`, called with the local
+```
+
+This was always what the identity hash did (`lex-sys-id`'s
+`qualified_name` consults locals only for an unqualified name, per §2).
+The checker disagreed until `std/process.ls` found it: it looked for a
+local before reading the qualifier, so a local `list` made
+`process.list(lr)` a `not-a-function` refusal, and a local *function
+value* with the right signature was called in the module function's
+place, compiled, and ran.
+
 ---
 
 ## 5. Visibility
@@ -211,6 +232,7 @@ written down.
 | A `pub` signature names usable types | `private_type_in_a_pub_signature` | 5 |
 | An import binds a qualifier, not a set of names | conformance | 4.1 |
 | A qualified name that is not there is an error, not a fallback | conformance | 4 |
+| A qualified call is never shadowed by a local, accepted: an `int` local and a function value | conformance, `a_qualified_call_is_not_shadowed_by_a_local` | 4.3 |
 
 | Accepting | Shows |
 |---|---|

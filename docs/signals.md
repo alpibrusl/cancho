@@ -266,7 +266,10 @@ EAGAIN` per poll, and **no `rt_sigaction`**: no disposition is touched, no handl
   page and the headers (a `kqueue` readable in another `kqueue`; the 16-byte `struct sigaction`; `EVFILT_SIGNAL` reporting an ignored signal) held in that run. Still unrun: `raise` delivering to the closing thread
   before `signals_close` returns (POSIX says `raise` returns after the handler, or the default action, has run), and an unread signal that was *also* ignored on entry, which on macOS is re-raised with the default
   action although the process had ignored it (the claim cannot know what the disposition was).
-* **aarch64 Linux is not run.** The code is the same; `SFD_NONBLOCK | SFD_CLOEXEC` and the 128-byte `signalfd_siginfo` are the same on both Linux architectures.
+* **aarch64 Linux** ~~is not run~~ **was run, and found a fault that is not in this section's code.** `SFD_NONBLOCK | SFD_CLOEXEC` and the 128-byte `signalfd_siginfo` are the same on both Linux
+  architectures, and the claim itself behaved. The two tests that also spawn
+  (`a_claim_is_refused_while_a_thread_runs_and_granted_after_the_join`, `a_thread_spawned_after_the_claim_does_not_take_the_signal`) died with `SIGBUS` on the
+  Cranelift backend: the thread counter in `lexs_signal_state` was emitted unaligned and aarch64's exclusive load refuses it. Fixed and measured in `threads.md` section 6.
 * **`Signals` and `SignalWatch` do not cross to a thread** as a `spawn` payload (`crosses_to_a_thread`, as `Conn` does not). Nothing asked, and the watch-before-spawn rule makes the natural program
   the one that reads signals on the thread that watched.
 * **A signal's count is not available**, by design (section 3): a standard signal has one pending instance.

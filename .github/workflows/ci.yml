@@ -48,8 +48,8 @@ jobs:
 
   # #208 (docs/tls-assurance.md §8): packages/tls against every other TLS
   # server the runner can install, and beside `openssl s_client` on the same
-  # handshakes and on the lying server's cases. Each fails on a row that does
-  # not.
+  # handshakes and on the lying server's cases, each failing on a row that
+  # does not; then AFL++ over every fuzzing harness, ten minutes in all.
   tls-assurance:
     name: tls-assurance
     runs-on: ubuntu-latest
@@ -60,7 +60,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y nginx gnutls-bin libwolfssl-dev libmbedtls-dev libbotan-2-dev \
-            android-libboringssl-dev python3-cryptography
+            android-libboringssl-dev python3-cryptography afl++
 
       - name: Compiler, and the many-connection client
         run: |
@@ -68,6 +68,9 @@ jobs:
           ./target/release/lex-sys build --std tests/programs/tls_many.ls \
             packages/tls/{tls,record,message,slot,client12,client}.ls packages/x509/{verify,names,x509}.ls \
             -o "$RUNNER_TEMP/tls_many"
+
+      - name: The committed package stores are current (docs/package-system.md §7.4)
+        run: python3 scripts/publish_packages.py --check
 
       - name: Interop matrix (docs/tls-assurance.md §5)
         run: python3 scripts/tls_interop.py "$RUNNER_TEMP/tls_many"
@@ -77,3 +80,6 @@ jobs:
 
       - name: Differential, the lying server (§4)
         run: python3 scripts/tls_differential.py
+
+      - name: Fuzz, two minutes a harness, failing on any crash or hang (§3)
+        run: python3 scripts/fuzz_afl.py "$RUNNER_TEMP/fuzz" der:120 chain:120 messages:120 client:120 flight:120

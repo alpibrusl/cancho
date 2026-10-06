@@ -190,6 +190,28 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     /// NUL-terminated — C wants a terminator and a slice does not carry one
     /// (`docs/strings.md` §6). A longer path traps rather than being cut
     /// short, because a silently truncated path names a different file.
+    /// Trap when byte `i` of a path or a host differs from byte `i` of the
+    /// `length`-byte bound at `expected`, while `i` is inside the bound.
+    ///
+    /// The bound's byte is read at `i` only while `i` is inside it, and at 0
+    /// otherwise: reading it at every `i` read past the end of its data, which
+    /// the LLVM backend's twin of this check showed is not a harmless habit
+    /// (there it was `poison`, and `-O2` deleted the path). An empty bound
+    /// contains everything and has no byte to read.
+    pub(crate) fn check_against(&mut self, expected: Value, length: usize, i: Value, byte: Value) {
+        if length == 0 {
+            return;
+        }
+        let inside = self.builder.ins().icmp_imm(IntCC::UnsignedLessThan, i, length as i64);
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        let index = self.builder.ins().select(inside, i, zero);
+        let want_at = self.builder.ins().iadd(expected, index);
+        let want = self.builder.ins().load(types::I8, MemFlags::trusted(), want_at, 0);
+        let differs = self.builder.ins().icmp(IntCC::NotEqual, byte, want);
+        let escaped = self.builder.ins().band(inside, differs);
+        self.builder.ins().trapnz(escaped, TrapCode::HEAP_OUT_OF_BOUNDS);
+    }
+
     pub(crate) fn checked_path(&mut self, prefix: &str, path: &[Value]) -> Value {
         const PATH_MAX: i64 = 4096;
         let pointer = self.pointer;
@@ -257,12 +279,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         // Inside the prefix, the bytes have to match. A path outside what
         // the capability granted is a broken promise, so it traps rather
         // than returning -1.
-        let inside = self.builder.ins().icmp_imm(IntCC::UnsignedLessThan, i, prefix.len() as i64);
-        let want_at = self.builder.ins().iadd(expected, i);
-        let want = self.builder.ins().load(types::I8, MemFlags::trusted(), want_at, 0);
-        let differs = self.builder.ins().icmp(IntCC::NotEqual, byte, want);
-        let escaped = self.builder.ins().band(inside, differs);
-        self.builder.ins().trapnz(escaped, TrapCode::HEAP_OUT_OF_BOUNDS);
+        self.check_against(expected, prefix.len(), i, byte);
 
         let next = self.builder.ins().iadd_imm(i, 1);
         self.builder.def_var(cursor, next);
@@ -639,6 +656,8 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     pub(crate) fn stride(&self, element: &Type) -> i64 {
         match element {
             Type::Byte => 1,
+            // `docs/f32.md` §2, as `layout::stride_of`.
+            Type::F32 => 4,
             other => {
                 i64::from(leaf_count(other, self.program, self.pointer))
                     * i64::from(RETURN_SLOT_STRIDE)

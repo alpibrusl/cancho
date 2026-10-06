@@ -60,7 +60,12 @@ pub(crate) fn settle_types(stmts: &mut [Stmt], unifier: &Unifier) {
 
 pub(crate) fn settle_expr(expr: &mut Expr, unifier: &Unifier) {
     match expr {
-        Expr::Int(_) | Expr::Float(_) | Expr::Bool(_) | Expr::Load(_) | Expr::Static(_) => {}
+        Expr::Int(_)
+        | Expr::Float(_)
+        | Expr::F32(_)
+        | Expr::Bool(_)
+        | Expr::Load(_)
+        | Expr::Static(_) => {}
         Expr::Neg(inner) | Expr::Not(inner) | Expr::BitNot(inner) => settle_expr(inner, unifier),
         Expr::Bin { lhs, rhs, .. } => {
             settle_expr(lhs, unifier);
@@ -118,6 +123,7 @@ pub(crate) fn settle_expr(expr: &mut Expr, unifier: &Unifier) {
         Expr::Bytes(_) => {}
         Expr::FileOp { args, .. }
         | Expr::OpenFile { args, .. }
+        | Expr::ExecSpawn { args, .. }
         | Expr::PathOp { args, .. }
         | Expr::Connect { args, .. }
         | Expr::Bind { args, .. }
@@ -239,6 +245,8 @@ pub(crate) fn lower_static(
         slot_origin: Vec::new(),
         ret: ret.clone(),
         trace: Trace::new(),
+        reads: Vec::new(),
+        pending_lease: false,
         module,
         edition: ast.edition_of(ast::ItemId(item as u32)),
         bounds: Vec::new(),
@@ -364,6 +372,8 @@ pub(crate) fn lower_function(
         slot_origin: Vec::new(),
         ret: ret.clone(),
         trace: Trace::new(),
+        reads: Vec::new(),
+        pending_lease: false,
         module: signature.module,
         edition: ast.edition_of(ast::ItemId(signature.item as u32)),
         // A copy being emitted has its parameters substituted away, so
@@ -848,6 +858,10 @@ pub(crate) fn resolve_type_at(
         "int" => (Type::Int, 0),
         "byte" => (Type::Byte, 0),
         "float" => (Type::Float, 0),
+        // `docs/f32.md` §6: visible from edition 6, the latest, so an
+        // earlier file that declares its own `f32` is not redeclaring
+        // anything it can name.
+        "f32" if edition >= 6 => (Type::F32, 0),
         "bool" => (Type::Bool, 0),
         other => match lookup(defs) {
             Some(index) => {

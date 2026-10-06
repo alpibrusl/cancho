@@ -37,7 +37,7 @@ wants to, and `main`'s own row is `[]` even though it prints, because it
 *owns* the capability rather than borrowing one. Run it:
 
 ```sh
-cargo run -p lex-sys -- run examples/tour.ls
+cargo run -p lex-sys -- run examples/tour.ls --std
 ```
 
 ## What's deliberately not here
@@ -61,7 +61,7 @@ resolve end to end (`lex-sys vcs publish`/`lock`/`fetch`,
 `docs/package-system.md`) — `packages/net-sockets/`,
 `packages/net-connect/`, `packages/agent-wire/`, `packages/
 http-request/`, and `packages/http-response/` are five real published
-packages, and `examples/fetch/fetch.ls` depends on two of them at once,
+packages (`packages/` also holds `http-server`, `tls` and `x509`), and `examples/fetch/fetch.ls` depends on two of them at once,
 composed with no new tooling. **A dependency's own dependencies resolve
 too now**
 (`docs/package-system.md` §4.6): `packages/http-request/` itself needs
@@ -116,7 +116,7 @@ lex-sys check <file.ls>... [--std] [--output json] [--backend cranelift|llvm]   
 lex-sys run   <file.ls>... [--std] [--backend cranelift|llvm] [-l <name>]... [-L <path>]...   # build, run, exit with the program's status
 lex-sys test  <file.ls>... [--std] [--backend cranelift|llvm]   # run every `fn test_*`, one process each; exit 4 if one failed
 lex-sys ids   <file.ls>... [--std]    # each declaration's content hash
-lex-sys authority <file.ls>... [--std] [--output json]  # what it can reach
+lex-sys authority <file.ls>... [--std] [--output json] [--target <triple>]  # what it can reach
 lex-sys layout    <file.ls>... [--std]  # what every leaf costs, and what packing would save
 lex-sys fmt   <file.ls|dir>... [--check]   # canonical layout, comments kept; --check exits 1 if anything would change
 lex-sys print <file.ls>               # the unit, rendered in canonical form

@@ -24,6 +24,9 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
             Expr::Float(bits) => {
                 vec![self.builder.ins().f64const(f64::from_bits(*bits))]
             }
+            Expr::F32(bits) => {
+                vec![self.builder.ins().f32const(f32::from_bits(*bits))]
+            }
             Expr::Bool(v) => vec![self.builder.ins().iconst(types::I8, i64::from(*v))],
             Expr::Load(slot) => {
                 let base = self.slot_base[slot.0 as usize];
@@ -172,6 +175,10 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                 let (op, prefix, args) = (*op, prefix.clone(), args.clone());
                 self.path_op(op, &prefix, &args)
             }
+            Expr::ExecSpawn { prefix, in_dir, args } => {
+                let (prefix, in_dir, args) = (prefix.clone(), *in_dir, args.clone());
+                self.exec_spawn(&prefix, in_dir, &args)
+            }
             Expr::Connect { bound, args } => {
                 let (bound, args) = (bound.clone(), args.clone());
                 self.connect(&bound, &args)
@@ -295,7 +302,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                 // sign bit and is total, including on NaN and on zero,
                 // where it is what produces `-0.0`
                 // (`docs/floating-point.md` §2).
-                if self.builder.func.dfg.value_type(v) == types::F64 {
+                if matches!(self.builder.func.dfg.value_type(v), types::F64 | types::F32) {
                     return vec![self.builder.ins().fneg(v)];
                 }
                 let zero = self.builder.ins().iconst(types::I64, 0);
@@ -517,8 +524,18 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     // precisely those, and `fcvt_to_sint_sat` saturates.
                     // Saturating is the silently wrong answer here, so the
                     // trapping one is the one that belongs.
+                    //
+                    // But `fcvt_to_sint` accepts exactly `-2^63`, which is a
+                    // representable `i64`, and §4 says "any magnitude at or
+                    // beyond `2^63`": found by `int_of_f32`'s test
+                    // (`docs/f32.md` §5.2), the LLVM backend already
+                    // refused it, so the lower bound is checked here too.
                     Callee::Builtin(Builtin::Truncate) => {
-                        vec![self.builder.ins().fcvt_to_sint(types::I64, args[0])]
+                        let x = args[0];
+                        let low = self.builder.ins().f64const(-9_223_372_036_854_775_808.0);
+                        let too_low = self.builder.ins().fcmp(FloatCC::LessThanOrEqual, x, low);
+                        self.builder.ins().trapnz(too_low, TrapCode::INTEGER_OVERFLOW);
+                        vec![self.builder.ins().fcvt_to_sint(types::I64, x)]
                     }
                     // A reinterpretation, so `bitcast` and no arithmetic
                     // (`docs/float-printing.md` §2). The bits are the
@@ -540,6 +557,54 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                         let nan = self.builder.ins().fcmp(FloatCC::Unordered, x, x);
                         let canonical = self.builder.ins().iconst(types::I64, CANONICAL_NAN);
                         vec![self.builder.ins().select(nan, canonical, raw)]
+                    }
+                    // `docs/f32.md` §2: `fdemote` is IEEE conversion to the
+                    // narrower format under round-to-nearest-even, and an
+                    // overflow is infinity, never a trap. `fpromote` is
+                    // exact.
+                    Callee::Builtin(Builtin::F32Of) => {
+                        vec![self.builder.ins().fdemote(types::F32, args[0])]
+                    }
+                    Callee::Builtin(Builtin::FloatOf32) => {
+                        vec![self.builder.ins().fpromote(types::F64, args[0])]
+                    }
+                    // As `BitsOf`, at 32 bits: a `bitcast`, with every NaN
+                    // answering one pattern, then zero-extended so the
+                    // answer is the unsigned 32-bit value.
+                    Callee::Builtin(Builtin::BitsOf32) => {
+                        let x = args[0];
+                        let raw = self.builder.ins().bitcast(types::I32, MemFlags::new(), x);
+                        let nan = self.builder.ins().fcmp(FloatCC::Unordered, x, x);
+                        let canonical = self.builder.ins().iconst(types::I32, CANONICAL_NAN_32);
+                        let bits = self.builder.ins().select(nan, canonical, raw);
+                        vec![self.builder.ins().uextend(types::I64, bits)]
+                    }
+                    Callee::Builtin(Builtin::F32OfBits) => {
+                        let low = self.builder.ins().ireduce(types::I32, args[0]);
+                        vec![self.builder.ins().bitcast(types::F32, MemFlags::new(), low)]
+                    }
+                    // `docs/f32.md` §2: `sqrt` at binary32 -- `sqrtss` or
+                    // `fsqrt s`, one instruction, correctly rounded.
+                    Callee::Builtin(Builtin::Sqrt32) => {
+                        vec![self.builder.ins().sqrt(args[0])]
+                    }
+                    // `FloatOf`'s rule at binary32: round to nearest even,
+                    // no check, every `int` has a nearest `f32`. Converted
+                    // directly from the integer, not through binary64
+                    // (which would round twice).
+                    Callee::Builtin(Builtin::F32OfInt) => {
+                        vec![self.builder.ins().fcvt_from_sint(types::F32, args[0])]
+                    }
+                    // `Truncate`'s rule (`floating-point.md` §4) at the
+                    // narrower width: toward zero, a trap on NaN, infinity
+                    // and magnitude at or past `2^63`.
+                    // `-2^63` is checked explicitly, as for `Truncate`.
+                    Callee::Builtin(Builtin::IntOfF32) => {
+                        let x = args[0];
+                        let low = self.builder.ins().f32const(-9_223_372_036_854_775_808.0_f32);
+                        let too_low = self.builder.ins().fcmp(FloatCC::LessThanOrEqual, x, low);
+                        self.builder.ins().trapnz(too_low, TrapCode::INTEGER_OVERFLOW);
+                        vec![self.builder.ins().fcvt_to_sint(types::I64, x)]
                     }
                     // `docs/value-barrier.md` §3: the identity. Cranelift
                     // never turns a select or an `and` into a branch, so
@@ -625,6 +690,17 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::TcpAccept) => self.tcp_accept(&args),
                     Callee::Builtin(Builtin::ConnRead) => self.conn_read(&args),
                     Callee::Builtin(Builtin::ConnWrite) => self.conn_write(&args),
+                    // `docs/processes.md`: a channel is a socket pair, so its
+                    // verbs are the socket handles' (§4.4).
+                    Callee::Builtin(Builtin::PipeRead) => self.conn_read(&args),
+                    Callee::Builtin(Builtin::PipeWrite) => self.conn_write(&args),
+                    Callee::Builtin(Builtin::PipeNonblocking) => self.nonblocking(&args),
+                    Callee::Builtin(Builtin::PipeOpen) => self.pipe_open(),
+                    Callee::Builtin(Builtin::ChildWait) => self.child_wait(&args),
+                    Callee::Builtin(Builtin::ChildKill) => self.child_kill(&args),
+                    Callee::Builtin(Builtin::ExecSpawn | Builtin::ExecSpawnIn) => {
+                        unreachable!("`exec_spawn` is lowered as `Expr::ExecSpawn`")
+                    }
                     // `docs/memory-moves.md`: a bounds-checked `memmove` inside one slice.
                     Callee::Builtin(Builtin::CopyWithin) => self.copy_within(&args),
                     Callee::Builtin(Builtin::CopyInto) => self.copy_into(&args),
@@ -646,6 +722,10 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                         self.poller_ctl(&args, true, false)
                     }
                     Callee::Builtin(Builtin::PollerAddConn) => self.poller_ctl(&args, false, false),
+                    // `docs/processes.md` §4.8: a channel is watched as a `Conn`
+                    // is, and a child by its exit.
+                    Callee::Builtin(Builtin::PollerAddPipe) => self.poller_ctl(&args, false, false),
+                    Callee::Builtin(Builtin::PollerAddChild) => self.poller_add_child(&args),
                     Callee::Builtin(Builtin::PollerModify) => self.poller_ctl(&args, false, true),
                     Callee::Builtin(Builtin::PollerRemove) => self.poller_remove(&args),
                     Callee::Builtin(Builtin::PollerWait) => self.poller_wait(&args),
@@ -655,7 +735,11 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::ConnNodelay) => self.nodelay(&args),
                     Callee::Builtin(Builtin::ConnConnectStatus) => self.connect_status(&args),
                     Callee::Builtin(
-                        Builtin::ConnClose | Builtin::ListenerClose | Builtin::PollerClose,
+                        Builtin::ConnClose
+                        | Builtin::ListenerClose
+                        | Builtin::PollerClose
+                        | Builtin::PipeClose
+                        | Builtin::ChildEndClose,
                     ) => {
                         let close = self.libc_fn("close", &[types::I32], &[types::I32]);
                         let close = self.module.declare_func_in_func(close, self.builder.func);
@@ -712,6 +796,8 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::DirNext) => self.dir_next(&args),
                     Callee::Builtin(Builtin::DirListClose) => self.dir_list_close(&args),
                     Callee::Builtin(Builtin::DirStat) => self.dir_stat(&args),
+                    Callee::Builtin(Builtin::DirMode) => self.dir_mode(&args),
+                    Callee::Builtin(Builtin::DirOwnMode) => self.dir_own_mode(&args),
                     // `close(2)`. The handle is one leaf and it ends here.
                     Callee::Builtin(Builtin::Close) => {
                         let close = self.libc_fn("close", &[types::I32], &[types::I32]);
@@ -937,7 +1023,9 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         // `docs/floating-point.md` §2: IEEE-754 binary64, which is a
         // different instruction for every operator. The checker has
         // already agreed the two sides, so one of them decides.
-        if self.builder.func.dfg.value_type(a) == types::F64 {
+        // `docs/f32.md` §2: the same instructions at binary32 width. The
+        // operands' own type picks the width, so no operator knows one.
+        if matches!(self.builder.func.dfg.value_type(a), types::F64 | types::F32) {
             return self.float_binary(op, a, b);
         }
         let cc = match op {

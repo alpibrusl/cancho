@@ -14,7 +14,9 @@
 > single-threaded rule.** It forbids a second writer while a reference
 > is live, full stop, and a spawned thread joined before its region
 > closes is just a second writer the checker already refuses to admit
-> exists.
+> exists. *(That was not true when this was written: see the correction
+> in §3. It is true now, because `spawn` lends the `&!` it is given
+> until the handle is joined -- `aliasing.md` §6.1.)*
 >
 > **What is built, and what is deliberately narrower than §2's own
 > illustrative signature:** `spawn`'s `payload` and `body`'s return type
@@ -173,6 +175,20 @@ conditions apply to it. What replaces them:
 
 ## 3. Why this needs no new soundness rule, only a new obligation
 
+> **Corrected twice. First (`atomics.md` §2, measured): the argument below was true of a *moved* unique reference and
+> false of `&!` in general, and the claim that the checker "already refuses to admit" a second writer was wrong. Then
+> closed (`aliasing.md` §6.1): a `&!` given to `spawn` is now lent to that thread until its handle is joined, and a
+> second spawn of a copy of it, or any use of it by the spawning thread meanwhile, is refused
+> (`tests/reject/spawn_two_copies_of_unique.ls`, `spawn_same_unique_twice.ls`, `spawn_unique_used_while_lent.ls`;
+> `tests/accept/spawn_unique_join_first.ls` is the control that stays accepted). The paragraph below is what was
+> measured before that change.** `&!r T` is
+> `val` (`aliasing.md` §1): `let a = r; let b = r;` is two copies of one pointer, and `spawn(a, ..)` and
+> `spawn(b, ..)` each take one. That compiles on both backends and loses updates: two threads adding 1 to one
+> counter 200,000,000 times each ended short of 400,000,000 on every run, on arm64 macOS and x86-64 Linux
+> (`benches/atomics/race.ls`; the control that joins the first thread before spawning the second is exact). So a
+> *data race on an ordinary value is expressible today*; what is sound is a shared `&` (nothing writes through it)
+> and a `&!` that is the only copy. The one-reference-per-thread tests in §5 do not exercise the copy.
+
 The question `function-values.md` §4.1 raised about closures — "a
 captured capability is authority no parameter names" — does not apply
 here, because `payload` *is* a parameter, of `spawn` itself, checked
@@ -246,9 +262,12 @@ What this buys, precisely:
   a real, narrow check and a fixture the day `Rc` (or an atomic variant
   of it) exists — not before, and not a hatch this document opens in
   the meantime.
-- **No shared *mutable* state.** `&!r T` crossing means the unique
+- **A wider payload is [`thread-payloads.md`](thread-payloads.md)**, which also records why a unique *slice* cannot simply be allowed (§3 there).
+- **No shared *mutable* state.** (Designed for one word at a time in
+  [`atomics.md`](atomics.md).) `&!r T` crossing means the unique
   reference moved, not that two threads can now both mutate the same
-  memory. A `Mutex`-shaped capability — lock, get a unique reference
+  memory -- and, per the correction in §3, a copied `&!` is refused at
+  the second `spawn`, so it cannot do exactly that either. A `Mutex`-shaped capability — lock, get a unique reference
   scoped to the lock, unlock — is a real, separate design, parallel
   to how `Fs(prefix)` turned "files" into a capability rather than a
   raw handle (`filesystem.md`). Not proposed here.
@@ -372,3 +391,69 @@ asks for either today. Revisit both together — the trampoline is one
 piece of infrastructure whether the payload that needs it is `Rc`-shaped
 or any other multi-field struct — the day a concrete asker exists,
 rather than on a schedule.
+
+## 6. aarch64 Linux: the thread counter has to be aligned
+
+`spawn` and `join` move a counter of unjoined threads up and down
+atomically (`docs/signals.md` section 3: a claim is refused while one
+runs). It is the second word of `lexs_signal_state`, and it is the
+only atomic in the compiler's output. On aarch64 an atomic is an
+exclusive pair (`ldaxr`/`stlxr`), and an exclusive access to an address
+that is not a multiple of its size faults with `SIGBUS` regardless of
+the alignment-check bit that lets ordinary loads through.
+
+**Measured** on Debian trixie aarch64 (colima, kernel 6.8, rustc
+1.98.1, clang 19.1.7), on `origin/main` at 906ad24:
+
+* `tests/accept/spawn_join.ls` built with `--backend cranelift` exits
+  135 (`SIGBUS`) and prints nothing; with `--backend llvm` it prints
+  `42` and exits 0. The fault is at the `ldaxr` of `count_thread`, on
+  address `0x…60049`.
+* `nm -n` on the Cranelift binary: glibc's `crtstuff.o` puts a one-byte
+  `completed.0` at the start of `.bss` (`0x20030`), and the compiler's
+  four zeroed objects follow it with no padding: `lexs_argc` at
+  `0x20031`, `lexs_argv` at `0x20039`, `lexs_fd_epoch` at `0x20041`,
+  `lexs_signal_state` at `0x60041`. `.bss` itself is aligned `2**0`.
+  Cranelift's `DataDescription` defaults to an alignment of one, and
+  `lex-sys-codegen` never set one.
+* The same compiler on macOS arm64 emits the same `ldaxr`/`stlxr` loop,
+  and the program prints `42`: `ld64` starts `__bss` on a page and puts
+  nothing of its own ahead of these objects, so they land on
+  `0x100008000`, `…8008`, `…8010` and `…48010`. Aligned by luck, not by
+  request.
+* The LLVM backend was never affected: it declares the same object as
+  `internal global [2 x i64]`, which has `i64`'s alignment by type.
+* x86-64 Linux has the same `completed.0` in front, so the counter is
+  misaligned there too (inferred from the same `crtstuff` and the same
+  unaligned `.bss`; not re-measured on an x86 host). `lock xadd` accepts
+  an unaligned operand, so the bug is only latent there.
+
+So this was not the LLVM backend's thread entry, the ABI, clang 19 or
+`pthread` linking. Fourteen of the fifteen conformance failures reported
+on aarch64 Linux (`backends::…spawn_*`, `…fork_*`,
+`…a_join_as_an_operand`, `spawn_and_join_run_concurrently_not_sequentially`,
+and the two `signals::` thread tests) are this one fault: each runs a
+Cranelift binary that spawns, and `assert_backends_agree` puts LLVM's
+`42` on the left and the crashed Cranelift run's empty output on the
+right. All fourteen fail before the change and pass after it, on the
+same container.
+
+The fifteenth, `differential::the_folder_agrees_with_the_backend`, is a
+different thing and passes on the unchanged compiler. The reproduction
+ran under `sh -c 'ulimit -c 0 && …'`, and `dash`'s `ulimit` lowers the
+hard limit too (`ulimit -Hc` reads `0`). The test's `pre_exec` then asks
+for `RLIMIT_CORE = 1` (`differential.md` §3.2), which needs raising the
+hard limit, and gets `EPERM`, so `spawn` fails with "Operation not
+permitted" before the program runs. It passes with the hard limit left
+alone or with `ulimit -Sc 0`. The harness now leaves a hard limit of
+zero as it is, because skipping the dump is only a saving.
+
+**The rule:** every data object the Cranelift backend defines states
+its alignment. Word data (the zeroed globals, and a `static` whose
+elements are 8-byte leaves) is aligned to 8, which is the size of a
+leaf (`layout.md` §1) and what LLVM already gives the same objects.
+Byte data (string literals, a `static` of `byte`) stays at 1, so
+nothing grows. `lex-sys-codegen`'s
+`every_word_global_is_aligned_to_a_word` reads the alignment back out
+of both the ELF and the Mach-O object, so the check runs on every host
+CI has, including the two where the misalignment never faults.

@@ -20,6 +20,7 @@
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
+use target_lexicon::Triple;
 
 use foreign_report::{Attribution, ForeignReach};
 use lex_sys_ir::TypeInfo;
@@ -39,13 +40,13 @@ const USAGE: &str = "\
 lex-sys — the bootstrap compiler for the lex-sys systems dialect
 
 usage:
-    lex-sys build <file.ls>... [-o <output>] [--emit exe|obj] [--std] [--backend cranelift|llvm] [-l <name>]... [-L <path>]...
-    lex-sys check <file.ls>... [--std] [--output json] [--backend cranelift|llvm]
-    lex-sys run   <file.ls>... [--std] [--backend cranelift|llvm] [-l <name>]... [-L <path>]...
+    lex-sys build <file.ls>... [-o <output>] [--emit exe|obj] [--std] [--backend cranelift|llvm] [--target <triple>] [-l <name>]... [-L <path>]...
+    lex-sys check <file.ls>... [--std] [--output json] [--backend cranelift|llvm] [--target <triple>]
+    lex-sys run   <file.ls>... [--std] [--backend cranelift|llvm] [--target <triple>] [-l <name>]... [-L <path>]...
     lex-sys test  <file.ls>... [--std] [--backend cranelift|llvm] [-l <name>]... [-L <path>]...
     lex-sys fmt   <file.ls|dir>... [--check]
     lex-sys ids   <file.ls>... [--std]
-    lex-sys authority <file.ls>... [--std] [--output json]
+    lex-sys authority <file.ls>... [--std] [--output json] [--target <triple>]
     lex-sys layout    <file.ls>... [--std]
     lex-sys print <file.ls>
     lex-sys agent-guidelines
@@ -74,6 +75,13 @@ options:
                     every program this repository tracks builds on it, and
                     anything outside that is refused with an ordinary located
                     error, not a crash. `cranelift` is unaffected either way.
+    --target <triple>
+                    generate code for another target (`--backend llvm` only;
+                    docs/wasm.md). Only `wasm32-wasip1` is built so far: it
+                    needs `CLANG` (a clang with the wasm32 target), `WASM_LD`,
+                    and `WASI_SYSROOT` (a wasi-libc sysroot); `run` uses
+                    `WASMTIME` and `WASMTIME_FLAGS` (e.g. `--dir=.`). A builtin
+                    with no WASI meaning is refused.
     -l <name>       link `lib<name>` at the final link step (`build`/`run`
                     only); repeatable, passed to `cc` unexamined
     -L <path>       add `<path>` to the linker's search path for the above;
@@ -230,6 +238,14 @@ enum Emit {
     Obj,
 }
 
+/// What `build` generates code with and for: the backend, and the target
+/// triple when it is not the host's (`docs/wasm.md`).
+#[derive(Clone, Copy)]
+struct Codegen<'a> {
+    backend: Backend,
+    target: Option<&'a Triple>,
+}
+
 /// Which backend generates code (`docs/llvm-backend.md` §4: purely
 /// additive, so `Cranelift` is every existing invocation's behaviour
 /// unchanged).
@@ -297,9 +313,9 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
             Ok(ExitCode::SUCCESS)
         }
         "check" => {
-            let Invocation { inputs, with_std, json, backend, .. } =
+            let Invocation { inputs, with_std, json, backend, target, .. } =
                 parse_args(&args[1..], false, false)?;
-            check_program(&inputs, with_std, json, backend)
+            check_program(&inputs, with_std, json, backend, target.as_ref())
         }
         // The one command that reads no program: it is a contract with
         // whoever is about to write one.
@@ -344,8 +360,9 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
             Ok(ExitCode::SUCCESS)
         }
         "authority" => {
-            let Invocation { inputs, with_std, json, .. } = parse_args(&args[1..], false, false)?;
-            print_authority(&inputs, with_std, json)?;
+            let Invocation { inputs, with_std, json, target, .. } =
+                parse_args(&args[1..], false, false)?;
+            print_authority(&inputs, with_std, json, target.as_ref())?;
             Ok(ExitCode::SUCCESS)
         }
         "layout" => {
@@ -359,27 +376,68 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
         "build" if project::wants_project(&args[1..]) => project::cmd_build(&args[1..]),
         "build" => {
             let Invocation {
-                inputs, output, emit, with_std, backend, link_libs, link_paths, ..
+                inputs,
+                output,
+                emit,
+                with_std,
+                backend,
+                target,
+                link_libs,
+                link_paths,
+                ..
             } = parse_args(&args[1..], true, true)?;
             let output = output.unwrap_or_else(|| default_output(&inputs[0], emit));
-            build(&inputs, &output, emit, with_std, backend, &link_libs, &link_paths)?;
+            build(
+                &inputs,
+                &output,
+                emit,
+                with_std,
+                Codegen { backend, target: target.as_ref() },
+                &link_libs,
+                &link_paths,
+            )?;
             Ok(ExitCode::SUCCESS)
         }
         "run" => {
-            let Invocation { inputs, with_std, backend, link_libs, link_paths, .. } =
+            let Invocation { inputs, with_std, backend, target, link_libs, link_paths, .. } =
                 parse_args(&args[1..], false, true)?;
             let dir = std::env::temp_dir().join(format!("lex-sys-run-{}", std::process::id()));
             std::fs::create_dir_all(&dir)
                 .map_err(|e| environment(format!("cannot create `{}`: {e}", dir.display())))?;
             let exe =
                 dir.join(default_output(&inputs[0], Emit::Exe).file_name().unwrap_or_default());
-            let result =
-                build(&inputs, &exe, Emit::Exe, with_std, backend, &link_libs, &link_paths)
-                    .and_then(|()| {
-                        Command::new(&exe).status().map_err(|e| {
-                            environment(format!("cannot run `{}`: {e}", exe.display()))
-                        })
-                    });
+            let result = build(
+                &inputs,
+                &exe,
+                Emit::Exe,
+                with_std,
+                Codegen { backend, target: target.as_ref() },
+                &link_libs,
+                &link_paths,
+            )
+            .and_then(|()| match target.as_ref() {
+                Some(triple) if is_wasm(triple) => {
+                    let runtime =
+                        std::env::var("WASMTIME").unwrap_or_else(|_| "wasmtime".to_owned());
+                    // A WASI module gets no directory unless it is handed one,
+                    // which is the point; `WASMTIME_FLAGS` (e.g. `--dir=.`) is
+                    // how a run grants one, so the grant is written where it
+                    // is made.
+                    let flags = std::env::var("WASMTIME_FLAGS").unwrap_or_default();
+                    Command::new(&runtime)
+                        .arg("run")
+                        .args(flags.split_whitespace())
+                        .arg(&exe)
+                        .status()
+                        .map_err(|e| environment(format!("cannot run `{runtime}`: {e}")))
+                }
+                Some(triple) => Err(environment(format!(
+                    "`run` cannot execute a `{triple}` program on this host; use `build`"
+                ))),
+                None => Command::new(&exe)
+                    .status()
+                    .map_err(|e| environment(format!("cannot run `{}`: {e}", exe.display()))),
+            });
             let _ = std::fs::remove_dir_all(&dir);
             let status = result?;
             Ok(ExitCode::from(status.code().unwrap_or(EXIT_ENVIRONMENT as i32) as u8))
@@ -419,6 +477,7 @@ const STD: &[(&str, &str)] = &[
     ("<std>/vec.ls", include_str!("../../../std/vec.ls")),
     ("<std>/bignum.ls", include_str!("../../../std/bignum.ls")),
     ("<std>/fmt.ls", include_str!("../../../std/fmt.ls")),
+    ("<std>/fmt32.ls", include_str!("../../../std/fmt32.ls")),
     ("<std>/utf8.ls", include_str!("../../../std/utf8.ls")),
     ("<std>/flags.ls", include_str!("../../../std/flags.ls")),
     ("<std>/crypto.ls", include_str!("../../../std/crypto.ls")),
@@ -442,6 +501,7 @@ const STD: &[(&str, &str)] = &[
     ("<std>/conns.ls", include_str!("../../../std/conns.ls")),
     ("<std>/signals.ls", include_str!("../../../std/signals.ls")),
     ("<std>/dirs.ls", include_str!("../../../std/dirs.ls")),
+    ("<std>/process.ls", include_str!("../../../std/process.ls")),
 ];
 
 /// What a command line asked for.
@@ -459,6 +519,8 @@ struct Invocation {
     json: bool,
     /// `--backend` (`docs/llvm-backend.md` §4).
     backend: Backend,
+    /// `--target` (`docs/wasm.md`): the triple to generate code for, if not the host's.
+    target: Option<Triple>,
     /// `-l <name>` (`docs/foreign-linking.md` §3): libraries to link
     /// beyond libc, in the order given, passed to `cc` unexamined.
     link_libs: Vec<String>,
@@ -478,6 +540,7 @@ fn parse_args(
     let mut with_std = false;
     let mut json = false;
     let mut backend = Backend::Llvm;
+    let mut target: Option<Triple> = None;
     let mut link_libs = Vec::new();
     let mut link_paths = Vec::new();
     let mut it = args.iter();
@@ -514,6 +577,14 @@ fn parse_args(
                     None => return Err(usage("`--backend` needs a name")),
                 };
             }
+            "--target" => {
+                let value = it.next().ok_or_else(|| usage("`--target` needs a triple"))?;
+                target = Some(
+                    value
+                        .parse::<Triple>()
+                        .map_err(|e| usage(format!("unknown target `{value}`: {e}")))?,
+                );
+            }
             "-l" if allow_link => {
                 let value = it.next().ok_or_else(|| usage("`-l` needs a library name"))?;
                 link_libs.push(value.clone());
@@ -534,7 +605,10 @@ fn parse_args(
     if inputs.is_empty() {
         return Err(usage("no input file given"));
     }
-    Ok(Invocation { inputs, output, emit, with_std, json, backend, link_libs, link_paths })
+    if target.is_some() && backend == Backend::Cranelift {
+        return Err(usage("`--target` needs `--backend llvm`: Cranelift emits for the host only"));
+    }
+    Ok(Invocation { inputs, output, emit, with_std, json, backend, target, link_libs, link_paths })
 }
 
 fn default_output(input: &Path, emit: Emit) -> PathBuf {
@@ -624,6 +698,31 @@ fn compile_to_ir(inputs: &[PathBuf], with_std: bool) -> Result<lex_sys_ir::Progr
     }
 }
 
+/// Is this one of WASI's operating systems (`wasm32-wasip1`, `-wasip2`, `-wasi`)?
+fn is_wasi(triple: &Triple) -> bool {
+    matches!(
+        triple.operating_system,
+        target_lexicon::OperatingSystem::Wasi
+            | target_lexicon::OperatingSystem::WasiP1
+            | target_lexicon::OperatingSystem::WasiP2
+    )
+}
+
+/// The refusals a target adds before any code is generated: what the program
+/// reaches that the target cannot do (`lex_sys_ir::unsupported_on_target`).
+/// Empty for the host and for anything but WASI, whose gaps are the only ones
+/// this knows (`docs/wasm.md`).
+fn target_refusals(program: &lex_sys_ir::Program, target: Option<&Triple>) -> Vec<Refusal> {
+    let Some(triple) = target else { return Vec::new() };
+    if !is_wasi(triple) {
+        return Vec::new();
+    }
+    lex_sys_ir::unsupported_on_target(program, lex_sys_ir::Os::Wasi, &triple.to_string())
+        .into_iter()
+        .map(|d| Refusal { rule: d.rule, message: d.message, span: Some(d.span) })
+        .collect()
+}
+
 /// `check`: type-check a program and say what is wrong with it.
 ///
 /// The prose is what it always was — `docs/agent-errors.md` §6 keeps
@@ -638,13 +737,19 @@ fn check_program(
     with_std: bool,
     json: bool,
     backend_kind: Backend,
+    target: Option<&Triple>,
 ) -> Result<ExitCode, Failure> {
     // `docs/internal-errors.md` §3: the backend runs here too, and its
     // object is thrown away, so a program `check` accepts is a program
     // `build` can generate code for. Before, `check` stopped after
     // lowering and answered an empty list for a program `build` refused.
     let refusals = match compile_reporting(inputs, with_std) {
-        Ok((program, _)) => match backend(&program, inputs, backend_kind) {
+        // What the target cannot do is answered first and without a code
+        // generator, so it needs no wasm toolchain and says where it is.
+        Ok((program, _)) if !target_refusals(&program, target).is_empty() => {
+            target_refusals(&program, target)
+        }
+        Ok((program, _)) => match backend(&program, inputs, backend_kind, target) {
             Ok(_) => Vec::new(),
             Err(BackendFailure::Refusals(refusals)) => refusals,
             Err(BackendFailure::Environment(message)) => return Err(environment(message)),
@@ -836,12 +941,18 @@ fn backend(
     program: &lex_sys_ir::Program,
     inputs: &[PathBuf],
     backend_kind: Backend,
+    target: Option<&Triple>,
 ) -> Result<Vec<u8>, BackendFailure> {
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
     let result = match backend_kind {
         Backend::Cranelift => lex_sys_codegen::compile_object(program, "main"),
-        Backend::Llvm => lex_sys_codegen_llvm::compile_object(program, "main"),
+        Backend::Llvm => match target {
+            Some(triple) => {
+                lex_sys_codegen_llvm::compile_object_for(program, "main", triple.clone())
+            }
+            None => lex_sys_codegen_llvm::compile_object(program, "main"),
+        },
     };
     std::panic::set_hook(hook);
     result.map_err(|e| {
@@ -1040,7 +1151,12 @@ fn bounds_its_domain(label: &str) -> bool {
     label != "ffi"
 }
 
-fn print_authority(inputs: &[PathBuf], with_std: bool, json: bool) -> Result<(), Failure> {
+fn print_authority(
+    inputs: &[PathBuf],
+    with_std: bool,
+    json: bool,
+    target: Option<&Triple>,
+) -> Result<(), Failure> {
     let program = compile_to_ir(inputs, with_std)?;
 
     // Every distinct label the reachable set performs, with the value it
@@ -1133,6 +1249,12 @@ fn print_authority(inputs: &[PathBuf], with_std: bool, json: bool) -> Result<(),
         program.funcs.iter().map(|f| f.folded).sum::<usize>() + program.folded_late;
     let folded_calls = program.folded_calls;
 
+    // `--target wasm32-wasip1` (`docs/wasm.md`, W2b): what the row licenses a WASI
+    // module built from this program to import. The host's report is unchanged.
+    let wasi = target
+        .filter(|triple| is_wasi(triple))
+        .map(|triple| (triple.to_string(), lex_sys_ir::wasi_imports(kinds.iter().copied())));
+
     let stdout = io::stdout();
     let mut out = stdout.lock();
     if json {
@@ -1174,7 +1296,24 @@ fn print_authority(inputs: &[PathBuf], with_std: bool, json: bool) -> Result<(),
             writeln!(out, "  \"pure\": [{}],", quoted(&pure))?;
             writeln!(out, "  \"folded_operators\": {folded_operators},")?;
             writeln!(out, "  \"folded_calls\": {folded_calls},")?;
-            writeln!(out, "  \"functions\": {total}")?;
+            match &wasi {
+                None => writeln!(out, "  \"functions\": {total}")?,
+                Some((triple, imports)) => {
+                    writeln!(out, "  \"functions\": {total},")?;
+                    writeln!(out, "  \"wasi\": {{")?;
+                    writeln!(out, "    \"target\": \"{}\",", escaped(triple))?;
+                    writeln!(out, "    \"required\": [{}],", quoted(&imports.required))?;
+                    writeln!(out, "    \"allowed\": [{}],", quoted(&imports.allowed))?;
+                    let refused: Vec<&str> = imports.refused.iter().map(String::as_str).collect();
+                    let unbounded: Vec<&str> =
+                        imports.unbounded.iter().map(String::as_str).collect();
+                    let unknown: Vec<&str> = imports.unknown.iter().map(String::as_str).collect();
+                    writeln!(out, "    \"refused\": [{}],", quoted(&refused))?;
+                    writeln!(out, "    \"unbounded\": [{}],", quoted(&unbounded))?;
+                    writeln!(out, "    \"unknown\": [{}]", quoted(&unknown))?;
+                    writeln!(out, "  }}")?;
+                }
+            }
             writeln!(out, "}}")?;
             out.flush()
         })();
@@ -1222,6 +1361,9 @@ fn print_authority(inputs: &[PathBuf], with_std: bool, json: bool) -> Result<(),
             ("the heap", ["heap"].as_slice()),
             ("the command line", ["args"].as_slice()),
             ("signals", ["signals", "signals_read"].as_slice()),
+            // `docs/processes.md` §2: starting a program, and what a parent
+            // does with the children it started.
+            ("other programs", ["exec", "child_signal", "pipe_read", "pipe_write"].as_slice()),
             ("foreign code", ["ffi"].as_slice()),
         ]
         .into_iter()
@@ -1257,6 +1399,31 @@ fn print_authority(inputs: &[PathBuf], with_std: bool, json: bool) -> Result<(),
             }
             if folded_calls > 0 {
                 writeln!(out, "    {folded_calls} calls")?;
+            }
+        }
+        if let Some((triple, imports)) = &wasi {
+            writeln!(out, "a {triple} module built from this program")?;
+            let line = |names: &[&str]| {
+                if names.is_empty() { "nothing".to_owned() } else { names.join(" ") }
+            };
+            writeln!(out, "    must import {}", line(&imports.required))?;
+            writeln!(out, "    may import  {}", line(&imports.allowed))?;
+            if !imports.refused.is_empty() {
+                writeln!(
+                    out,
+                    "    REFUSED on this target: {} (`check --target` refuses the program)",
+                    imports.refused.join(" ")
+                )?;
+            }
+            if !imports.unbounded.is_empty() {
+                writeln!(
+                    out,
+                    "    UNBOUNDED by {}: what foreign code imports is the library's, not the row's",
+                    imports.unbounded.join(" ")
+                )?;
+            }
+            if !imports.unknown.is_empty() {
+                writeln!(out, "    not in the table: {}", imports.unknown.join(" "))?;
             }
         }
         out.flush()
@@ -1304,26 +1471,36 @@ fn build(
     output: &Path,
     emit: Emit,
     with_std: bool,
-    backend_kind: Backend,
+    codegen: Codegen<'_>,
     link_libs: &[String],
     link_paths: &[String],
 ) -> Result<(), Failure> {
+    let Codegen { backend: backend_kind, target } = codegen;
     let program = compile_to_ir(inputs, with_std)?;
+    let gaps = target_refusals(&program, target);
+    if !gaps.is_empty() {
+        let text: Vec<String> = match parse_program(inputs, with_std) {
+            Ok((_, map)) => gaps.iter().map(|r| r.render(&map)).collect(),
+            Err(_) => gaps.iter().map(|r| r.message.clone()).collect(),
+        };
+        return Err(refused(text.join("\n\n")));
+    }
     // A compiler bug in the backend is a refusal with rule `internal`,
     // exit 1, located at the function (`docs/internal-errors.md` §2).
     // Since `--backend llvm` became the default, a *host* missing
     // `clang` is not that -- it is exit 3, the environment, same as any
     // other missing tool.
-    let object = backend(&program, inputs, backend_kind).map_err(|failure| match failure {
-        BackendFailure::Refusals(refusals) => {
-            let text: Vec<String> = match parse_program(inputs, with_std) {
-                Ok((_, map)) => refusals.iter().map(|r| r.render(&map)).collect(),
-                Err(_) => refusals.iter().map(|r| r.message.clone()).collect(),
-            };
-            refused(text.join("\n\n"))
-        }
-        BackendFailure::Environment(message) => environment(message),
-    })?;
+    let object =
+        backend(&program, inputs, backend_kind, target).map_err(|failure| match failure {
+            BackendFailure::Refusals(refusals) => {
+                let text: Vec<String> = match parse_program(inputs, with_std) {
+                    Ok((_, map)) => refusals.iter().map(|r| r.render(&map)).collect(),
+                    Err(_) => refusals.iter().map(|r| r.message.clone()).collect(),
+                };
+                refused(text.join("\n\n"))
+            }
+            BackendFailure::Environment(message) => environment(message),
+        })?;
 
     match emit {
         Emit::Obj => std::fs::write(output, &object)
@@ -1333,11 +1510,57 @@ fn build(
             std::fs::write(&object_path, &object).map_err(|e| {
                 environment(format!("cannot write `{}`: {e}", object_path.display()))
             })?;
-            let result = link(&object_path, output, link_libs, link_paths);
+            let result = match target {
+                Some(triple) if is_wasm(triple) => link_wasm(&object_path, output, triple),
+                _ => link(&object_path, output, link_libs, link_paths),
+            };
             let _ = std::fs::remove_file(&object_path);
             result
         }
     }
+}
+
+/// Is this triple one of WebAssembly's (`docs/wasm.md`)?
+fn is_wasm(triple: &Triple) -> bool {
+    matches!(
+        triple.architecture,
+        target_lexicon::Architecture::Wasm32 | target_lexicon::Architecture::Wasm64
+    )
+}
+
+/// Link a WebAssembly command with `wasm-ld` against a wasi-libc sysroot.
+///
+/// No C compiler driver in the way: the object and `-lc`. **Not `crt1-command.o`**: the
+/// module defines `_start` itself (`wasi_entry`), so that the command line is fetched only
+/// by a program that reads it (`docs/wasm.md`, W2c).
+/// `WASI_SYSROOT` names the sysroot (the one that holds `lib/<triple>/`),
+/// `WASM_LD` the linker. A missing one is the environment's fault, exit 3,
+/// and the message says which variable to set.
+fn link_wasm(object: &Path, output: &Path, triple: &Triple) -> Result<(), Failure> {
+    let sysroot = std::env::var("WASI_SYSROOT").map_err(|_| {
+        environment(format!(
+            "`--target {triple}` needs `WASI_SYSROOT`, a wasi-libc sysroot (the directory that \
+             holds `lib/{triple}/libc.a`)"
+        ))
+    })?;
+    let lib = Path::new(&sysroot).join("lib").join(triple.to_string());
+    let ld = std::env::var("WASM_LD").unwrap_or_else(|_| "wasm-ld".to_owned());
+    let status = Command::new(&ld)
+        // A call whose type disagrees with the definition is, to `wasm-ld`,
+        // a warning that swaps in a trap: the program links and dies at run
+        // time. Fatal, so it is a build failure here instead.
+        .arg("--fatal-warnings")
+        .arg(object)
+        .arg(format!("-L{}", lib.display()))
+        .arg("-lc")
+        .arg("-o")
+        .arg(output)
+        .status()
+        .map_err(|e| environment(format!("cannot run the linker `{ld}`: {e}")))?;
+    if !status.success() {
+        return Err(environment(format!("the linker `{ld}` failed with {status}")));
+    }
+    Ok(())
 }
 
 /// Link with the platform C toolchain.
@@ -1391,7 +1614,7 @@ mod tests {
 
     fn refusal_for(body: lex_sys_ir::Stmt) -> (Refusal, lex_sys_syntax::Span) {
         let (program, span) = broken(body);
-        let failure = backend(&program, &[PathBuf::from("seven.ls")], Backend::Cranelift)
+        let failure = backend(&program, &[PathBuf::from("seven.ls")], Backend::Cranelift, None)
             .expect_err("the backend should refuse");
         let BackendFailure::Refusals(mut refusals) = failure else {
             panic!("Cranelift has no environment failure mode; expected a refusal");

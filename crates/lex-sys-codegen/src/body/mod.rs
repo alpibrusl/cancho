@@ -12,6 +12,7 @@ mod listing;
 mod memory;
 mod net;
 mod poller;
+mod process;
 mod signals;
 mod sockets;
 
@@ -187,6 +188,8 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     pub(crate) fn zero(&mut self, leaf: types::Type) -> Value {
         if leaf == types::F64 {
             self.builder.ins().f64const(0.0)
+        } else if leaf == types::F32 {
+            self.builder.ins().f32const(0.0)
         } else {
             self.builder.ins().iconst(leaf, 0)
         }

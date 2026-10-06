@@ -39,6 +39,10 @@ pub(crate) const ARENA_CHUNK: i64 = 64 * 1024;
 /// answer depend on where the program ran.
 pub(crate) const CANONICAL_NAN: i64 = 0x7ff8_0000_0000_0000;
 
+/// `bits_of32`'s canonical NaN, matching `lex-sys-codegen`'s own
+/// `abi::CANONICAL_NAN_32` (`docs/f32.md` §2).
+pub(crate) const CANONICAL_NAN_32: i64 = 0x7fc0_0000;
+
 /// `2^63` as a `float`, both signs -- `truncate`'s own trap bound
 /// (`docs/floating-point.md` §4: "any magnitude at or beyond `2^63`",
 /// which includes exactly `-2^63` even though it is a representable
@@ -71,6 +75,8 @@ pub(crate) enum LKind {
     I8,
     Ptr,
     F64,
+    /// `docs/f32.md`'s `f32` -- binary32, one leaf.
+    F32,
 }
 
 impl LKind {
@@ -80,6 +86,7 @@ impl LKind {
             LKind::I8 => "i8",
             LKind::Ptr => "ptr",
             LKind::F64 => "double",
+            LKind::F32 => "float",
         }
     }
 
@@ -91,7 +98,7 @@ impl LKind {
             // pattern, so it round-trips through decimal with nothing
             // lost, unlike every other float constant here (`FConst`
             // below).
-            LKind::F64 => "0.0",
+            LKind::F64 | LKind::F32 => "0.0",
         }
     }
 }
@@ -109,6 +116,11 @@ pub(crate) enum LValue {
     /// emits is the bit pattern the parser read, not whatever a decimal
     /// round-trip through `f64`'s `Display` happens to preserve.
     FConst(u64),
+    /// An `f32` constant, as its binary32 bits (`docs/f32.md` §2).
+    /// LLVM's hex syntax for a `float` constant is the *double* with the
+    /// same value, which every binary32 is exactly, so this prints
+    /// `f32 -> f64` bits and nothing is rounded.
+    F32Const(u32),
     Reg(String),
 }
 
@@ -116,6 +128,7 @@ pub(crate) fn operand(v: &LValue) -> String {
     match v {
         LValue::Const(n) => n.to_string(),
         LValue::FConst(bits) => format!("0x{bits:016X}"),
+        LValue::F32Const(bits) => format!("0x{:016X}", f64::from(f32::from_bits(*bits)).to_bits()),
         LValue::Reg(name) => name.clone(),
     }
 }
@@ -156,6 +169,7 @@ fn leaves_into(ty: &Type, program: &Program, out: &mut Vec<LKind>) -> Result<(),
         Type::Fn(..) => out.push(LKind::Ptr),
         Type::Byte | Type::Bool => out.push(LKind::I8),
         Type::Float => out.push(LKind::F64),
+        Type::F32 => out.push(LKind::F32),
         Type::Ref { inner, .. } => {
             out.push(LKind::Ptr);
             if matches!(inner.as_ref(), Type::Slice(_)) {
@@ -185,6 +199,10 @@ fn leaves_into(ty: &Type, program: &Program, out: &mut Vec<LKind>) -> Result<(),
                     | lex_sys_ir::PRELUDE_CONN
                     | lex_sys_ir::PRELUDE_POLLER
                     | lex_sys_ir::PRELUDE_SIGNAL_WATCH
+                    // `docs/processes.md` §3.1: a pid, and two descriptors.
+                    | lex_sys_ir::PRELUDE_CHILD
+                    | lex_sys_ir::PRELUDE_PIPE
+                    | lex_sys_ir::PRELUDE_CHILD_END
             ) =>
         {
             out.push(LKind::I64);
@@ -244,8 +262,32 @@ pub(crate) fn emit_module(
     entry: &str,
     triple: &Triple,
 ) -> Result<String, (Option<usize>, String)> {
+    // The tables in `lex_sys_ir` (open flags, `stat`, `dirent`, errno) know
+    // three operating systems. Say so here, once, rather than let a fourth
+    // fall through to the Linux numbers: `x86_64-unknown-freebsd` would
+    // otherwise build, and be wrong in a way no linker notices.
+    {
+        use target_lexicon::OperatingSystem as Os;
+        if !matches!(
+            triple.operating_system,
+            Os::Linux | Os::Darwin(_) | Os::Wasi | Os::WasiP1 | Os::WasiP2
+        ) {
+            return Err((
+                None,
+                format!(
+                    "the LLVM backend has constant tables for Linux, Darwin and WASI only, not \
+                     `{}` (docs/wasm.md)",
+                    triple.operating_system
+                ),
+            ));
+        }
+    }
     let mut text = String::new();
     text.push_str(&format!("target triple = \"{triple}\"\n\n"));
+    // C's `size_t`: 4 bytes on wasm32, 8 everywhere else this backend targets.
+    // Every libc declaration below that takes or answers a size says `{st}`, and
+    // every call site uses `FuncEmitter::size_ty` for the same answer (`docs/wasm.md`).
+    let st = size_ty(triple);
     text.push_str("declare i32 @putchar(i32)\n");
     // `docs/standard-input.md` §3 (§7.9): the mirror. `int getchar(void)`
     // -- no parameter, and the same `i32` result sign-extended at the
@@ -258,7 +300,7 @@ pub(crate) fn emit_module(
     // pointer and the stream itself is one load away -- and the symbol
     // differs by platform, the same split `lex-sys-codegen`'s own
     // `emit.rs` already makes for it.
-    text.push_str("declare i64 @fwrite(ptr, i64, i64, ptr)\n");
+    text.push_str(&format!("declare {st} @fwrite(ptr, {st}, {st}, ptr)\n"));
     let (stdout_symbol, stderr_symbol) = match triple.operating_system {
         target_lexicon::OperatingSystem::Darwin(_) => ("__stdoutp", "__stderrp"),
         _ => ("stdout", "stderr"),
@@ -270,7 +312,7 @@ pub(crate) fn emit_module(
     // declares these the same way, on first use rather than unconditionally
     // there, but an unused `declare` here costs nothing, the same reasoning
     // `putchar`'s own unconditional declaration already relies on.
-    text.push_str("declare ptr @malloc(i64)\n");
+    text.push_str(&format!("declare ptr @malloc({st})\n"));
     text.push_str("declare void @free(ptr)\n");
     // Checked arithmetic (§5's second slice): the three overflow-reporting
     // intrinsics `Expr::Bin`'s `Add`/`Sub`/`Mul` arms call. Declared
@@ -283,6 +325,7 @@ pub(crate) fn emit_module(
     // IEEE-754, which is why this is the one arithmetic builtin that is
     // an intrinsic rather than an instruction sequence.
     text.push_str("declare double @llvm.sqrt.f64(double)\n");
+    text.push_str("declare float @llvm.sqrt.f32(float)\n");
 
     // Every libc symbol from here down is one a program predating `Net`/
     // `Fs` (`examples/serve/`, `examples/vsock/`, and siblings) may
@@ -311,12 +354,49 @@ pub(crate) fn emit_module(
     // `bind`.
     // `docs/zeroed-slices.md`: a `box_slice` filled with zero. Guarded like
     // the rest: `calloc` is a name a program may declare for itself.
-    declare_libc_unless_own(&mut text, "calloc", "ptr @calloc(i64, i64)");
+    declare_libc_unless_own(&mut text, "calloc", &format!("ptr @calloc({st}, {st})"));
     declare_libc_unless_own(&mut text, "listen", "i32 @listen(i32, i32)");
     declare_libc_unless_own(&mut text, "accept", "i32 @accept(i32, ptr, ptr)");
     // Linux's close-on-exec accept (`docs/processes.md` §4.5); Darwin has
     // none and never calls it.
     declare_libc_unless_own(&mut text, "accept4", "i32 @accept4(i32, ptr, ptr, i32)");
+    // `docs/processes.md` §6: a channel, the spawn and what it is configured
+    // with, and the two verbs on a child. None of these is variadic.
+    declare_libc_unless_own(&mut text, "socketpair", "i32 @socketpair(i32, i32, i32, ptr)");
+    for (symbol, signature) in [
+        ("posix_spawn", "i32 @posix_spawn(ptr, ptr, ptr, ptr, ptr, ptr)"),
+        ("posix_spawn_file_actions_init", "i32 @posix_spawn_file_actions_init(ptr)"),
+        ("posix_spawn_file_actions_destroy", "i32 @posix_spawn_file_actions_destroy(ptr)"),
+        (
+            "posix_spawn_file_actions_addopen",
+            "i32 @posix_spawn_file_actions_addopen(ptr, i32, ptr, i32, i32)",
+        ),
+        (
+            "posix_spawn_file_actions_adddup2",
+            "i32 @posix_spawn_file_actions_adddup2(ptr, i32, i32)",
+        ),
+        ("posix_spawnattr_init", "i32 @posix_spawnattr_init(ptr)"),
+        ("posix_spawnattr_destroy", "i32 @posix_spawnattr_destroy(ptr)"),
+        ("posix_spawnattr_setflags", "i32 @posix_spawnattr_setflags(ptr, i16)"),
+        ("posix_spawnattr_setsigmask", "i32 @posix_spawnattr_setsigmask(ptr, ptr)"),
+        ("posix_spawnattr_setsigdefault", "i32 @posix_spawnattr_setsigdefault(ptr, ptr)"),
+        (
+            "posix_spawn_file_actions_addfchdir_np",
+            "i32 @posix_spawn_file_actions_addfchdir_np(ptr, i32)",
+        ),
+        (
+            "posix_spawn_file_actions_addclosefrom_np",
+            "i32 @posix_spawn_file_actions_addclosefrom_np(ptr, i32)",
+        ),
+        ("sigemptyset", "i32 @sigemptyset(ptr)"),
+        ("sigfillset", "i32 @sigfillset(ptr)"),
+        ("waitpid", "i32 @waitpid(i32, ptr, i32)"),
+        ("syscall", "i64 @syscall(i64, ...)"),
+        ("kill", "i32 @kill(i32, i32)"),
+        ("strncmp", &format!("i32 @strncmp(ptr, ptr, {st})")),
+    ] {
+        declare_libc_unless_own(&mut text, symbol, signature);
+    }
     // `bind` (§7.21, `docs/listen.md` §6): `socket`+`setsockopt`+`bind`
     // folded into one call, the same libc surface `examples/serve/
     // serve.ls` reaches by hand and `lex-sys-codegen`'s own `body/net.rs`
@@ -336,6 +416,8 @@ pub(crate) fn emit_module(
     declare_libc_unless_own(&mut text, "readdir", "ptr @readdir(ptr)");
     declare_libc_unless_own(&mut text, "closedir", "i32 @closedir(ptr)");
     declare_libc_unless_own(&mut text, "fstatat", "i32 @fstatat(i32, ptr, ptr, i32)");
+    // `dir_own_mode` (`docs/directory-listing.md` §3.5).
+    declare_libc_unless_own(&mut text, "fstat", "i32 @fstat(i32, ptr)");
     declare_libc_unless_own(&mut text, "renameat", "i32 @renameat(i32, ptr, i32, ptr)");
     declare_libc_unless_own(&mut text, "unlinkat", "i32 @unlinkat(i32, ptr, i32)");
     // `connect` (§7.22, `docs/connect.md` §10): the last of `Net`'s four
@@ -389,19 +471,19 @@ pub(crate) fn emit_module(
     // modern libc -- `__errno_location` on glibc, `__error` on Darwin --
     // both answering a pointer to a thread-local `int`, the same split
     // `lex-sys-codegen`'s own `errno` already makes.
-    declare_libc_unless_own(&mut text, "read", "i64 @read(i32, ptr, i64)");
+    declare_libc_unless_own(&mut text, "read", &format!("{st} @read(i32, ptr, {st})"));
     // `copy_within` (`docs/memory-moves.md`) and `copy_into` (`docs/bulk-copy.md`).
-    declare_libc_unless_own(&mut text, "memmove", "ptr @memmove(ptr, ptr, i64)");
+    declare_libc_unless_own(&mut text, "memmove", &format!("ptr @memmove(ptr, ptr, {st})"));
     // `index_of_byte` (`docs/byte-search.md`).
-    declare_libc_unless_own(&mut text, "memchr", "ptr @memchr(ptr, i32, i64)");
-    declare_libc_unless_own(&mut text, "write", "i64 @write(i32, ptr, i64)");
+    declare_libc_unless_own(&mut text, "memchr", &format!("ptr @memchr(ptr, i32, {st})"));
+    declare_libc_unless_own(&mut text, "write", &format!("{st} @write(i32, ptr, {st})"));
     // `docs/file-writes.md`: the write side of a file handle. `fopen`/
     // `fcntl(F_DUPFD_CLOEXEC)`/`fclose` are the opens' bridge (section 3).
     declare_libc_unless_own(&mut text, "fopen", "ptr @fopen(ptr, ptr)");
     declare_libc_unless_own(&mut text, "fileno", "i32 @fileno(ptr)");
     declare_libc_unless_own(&mut text, "fclose", "i32 @fclose(ptr)");
-    declare_libc_unless_own(&mut text, "pwrite", "i64 @pwrite(i32, ptr, i64, i64)");
-    declare_libc_unless_own(&mut text, "pread", "i64 @pread(i32, ptr, i64, i64)");
+    declare_libc_unless_own(&mut text, "pwrite", &format!("{st} @pwrite(i32, ptr, {st}, i64)"));
+    declare_libc_unless_own(&mut text, "pread", &format!("{st} @pread(i32, ptr, {st}, i64)"));
     declare_libc_unless_own(&mut text, "fsync", "i32 @fsync(i32)");
     // `flush_out` (`docs/checked-output.md`): the stream `fwrite` uses,
     // flushed, then asked whether an earlier write failed.
@@ -417,6 +499,14 @@ pub(crate) fn emit_module(
         _ => "__errno_location",
     };
     text.push_str(&format!("declare ptr @{errno_symbol}()\n\n"));
+    if matches!(
+        triple.operating_system,
+        target_lexicon::OperatingSystem::Wasi
+            | target_lexicon::OperatingSystem::WasiP1
+            | target_lexicon::OperatingSystem::WasiP2
+    ) {
+        text.push_str(&wasi_errno_translation());
+    }
 
     // `docs/threads.md` §2: `spawn`/`join`, real `pthread_create`/
     // `pthread_join`. `pthread_t` is opaque on both this project's
@@ -515,7 +605,7 @@ pub(crate) fn emit_module(
     // global` here instead of a `Linkage::Local` data object. `arg` reads
     // a NUL-terminated C string back from `argv`, so its length needs
     // libc's own `strlen` the way `docs/arguments.md` §3.2 describes.
-    text.push_str("declare i64 @strlen(ptr)\n");
+    text.push_str(&format!("declare {st} @strlen(ptr)\n"));
     // `conn_detach`/`conn_attach`'s epoch table (`docs/native-sockets.md`
     // §10.3): a counter per descriptor, in bss.
     text.push_str(&format!(
@@ -568,7 +658,19 @@ pub(crate) fn emit_module(
     if ret.len() > 1 {
         return Err((None, "the entry point's return type has more than one leaf".to_owned()));
     }
-    text.push_str("define i32 @main(i32 %argc, ptr %argv) {\n");
+    // On WebAssembly the wrapper is not `main` at all: the module defines `_start`
+    // itself (`wasi_entry`) and calls this, so that the command line is fetched only
+    // by a program that reads it. (A C compiler would have renamed `main(argc, argv)`
+    // to `__main_argc_argv` for wasi-libc's `__main_void` to call; nothing here uses
+    // `__main_void`.)
+    let wasm = triple.architecture == target_lexicon::Architecture::Wasm32;
+    let uses_args = wasm && crate::wasi_entry::reads_args(&text);
+    let entry_header = if wasm {
+        "define internal i32 @lexsys_entry(i32 %argc, ptr %argv) {\n".to_owned()
+    } else {
+        "define i32 @main(i32 %argc, ptr %argv) {\n".to_owned()
+    };
+    text.push_str(&entry_header);
     text.push_str("entry:\n");
     // `docs/arguments.md` §3: written exactly once, before any lex-sys
     // code runs, and never again -- `lex-sys-codegen`'s own `emit_c_main`
@@ -580,6 +682,12 @@ pub(crate) fn emit_module(
         Some(LKind::I64) => {
             text.push_str(&format!("  %r = call i64 @lexs_{}()\n", entry_func.symbol()));
             text.push_str("  %status = trunc i64 %r to i32\n");
+            // What libc does when `main` returns: write out stdout's buffer. Only
+            // for a module that writes -- an unconditional flush would make every
+            // pure program import `fd_write` (`wasi_console`).
+            if crate::wasi_console::applies(triple) && crate::wasi_console::uses_console(&text) {
+                text.push_str("  %flushed = call i32 @lexsys_console_flush()\n");
+            }
             text.push_str("  ret i32 %status\n");
         }
         // `docs/agent-errors.md`'s own convention applied here too: a
@@ -590,5 +698,106 @@ pub(crate) fn emit_module(
     }
     text.push_str("}\n");
 
+    if triple.architecture == target_lexicon::Architecture::Wasm32 {
+        text.push_str(&smul_overflow_definition());
+        text.push_str(&crate::wasi_console::definitions());
+        text.push_str(&crate::wasi_entry::definitions(uses_args));
+    }
     Ok(text)
+}
+
+/// C's `size_t` as an LLVM type for `triple`: `i32` on wasm32, `i64` otherwise.
+///
+/// The one place the module header and the call sites (`FuncEmitter::size_ty`)
+/// agree on it. `wasm-ld` treats a call whose type disagrees with the
+/// definition as a *warning* that swaps in a trap, so a program with `malloc(i64)`
+/// on wasm32 links and then dies at its first allocation; the CLI links with
+/// `--fatal-warnings` so a site that forgot is a build failure that names the
+/// symbol, not a trap (`docs/wasm.md`).
+pub(crate) fn size_ty(triple: &Triple) -> &'static str {
+    if triple.architecture == target_lexicon::Architecture::Wasm32 { "i32" } else { "i64" }
+}
+
+/// `@lexsys_wasi_errno`: WASI's `errno` to the language's numbering
+/// (`lex_sys_ir::WASI_ERRNO_TO_LINUX`, `docs/wasm.md`). A `switch` over every
+/// number WASI defines; zero and anything else pass through, so "no error"
+/// stays "no error".
+fn wasi_errno_translation() -> String {
+    let mut text = String::from("define internal i32 @lexsys_wasi_errno(i32 %e) {\n");
+    text.push_str("entry:\n  switch i32 %e, label %other [\n");
+    for &(_, wasi, linux) in lex_sys_ir::WASI_ERRNO_TO_LINUX {
+        if wasi != linux {
+            text.push_str(&format!("    i32 {wasi}, label %to{linux}\n"));
+        }
+    }
+    text.push_str("  ]\n");
+    let mut seen = std::collections::BTreeSet::new();
+    for &(_, wasi, linux) in lex_sys_ir::WASI_ERRNO_TO_LINUX {
+        if wasi != linux && seen.insert(linux) {
+            text.push_str(&format!("to{linux}:\n  ret i32 {linux}\n"));
+        }
+    }
+    text.push_str("other:\n  ret i32 %e\n}\n\n");
+    text
+}
+
+/// `@lexsys_smul_overflow`: a signed 64-bit multiply that reports overflow,
+/// with no libcall (`docs/wasm.md`, W0.3).
+///
+/// `llvm.smul.with.overflow.i64` is one `imul` and a flag on x86-64 and
+/// AArch64, but on `wasm32` LLVM expands it through a 128-bit multiply, a call
+/// to `__multi3` in compiler-rt's builtins, which the wasi-libc sysroot does not
+/// ship, so four accept fixtures failed to link. This is the same answer
+/// computed from 32-bit halves, so the module needs nothing from outside it.
+///
+/// On magnitudes `|a| * |b|`, as unsigned (`|INT_MIN|` is 2^63, which fits):
+/// split each into high and low 32 bits. If both highs are non-zero the product
+/// is at least 2^64. Otherwise one cross term is zero, the other is a single
+/// 32x32 product, and it must itself fit in 32 bits to be shifted up; the low
+/// product is added, and a carry out is overflow. What is left is a magnitude
+/// that must fit the signed range for its sign: at most 2^63 if negative, at
+/// most 2^63-1 if not. The result is that magnitude, negated if negative, and
+/// is only meaningful when there was no overflow (the intrinsic says the same).
+///
+/// Checked against the intrinsic itself over the edge values and two million
+/// random pairs by `the_inline_multiply_agrees_with_llvms_intrinsic`.
+pub(crate) fn smul_overflow_definition() -> String {
+    "define internal {i64, i1} @lexsys_smul_overflow(i64 %a, i64 %b) {
+entry:
+  %an = icmp slt i64 %a, 0
+  %bn = icmp slt i64 %b, 0
+  %neg = xor i1 %an, %bn
+  %na = sub i64 0, %a
+  %nb = sub i64 0, %b
+  %ua = select i1 %an, i64 %na, i64 %a
+  %ub = select i1 %bn, i64 %nb, i64 %b
+  %ah = lshr i64 %ua, 32
+  %al = and i64 %ua, 4294967295
+  %bh = lshr i64 %ub, 32
+  %bl = and i64 %ub, 4294967295
+  %ahz = icmp ne i64 %ah, 0
+  %bhz = icmp ne i64 %bh, 0
+  %both = and i1 %ahz, %bhz
+  %c1 = mul i64 %ah, %bl
+  %c2 = mul i64 %al, %bh
+  %cross = add i64 %c1, %c2
+  %crossbig = icmp ugt i64 %cross, 4294967295
+  %low = mul i64 %al, %bl
+  %up = shl i64 %cross, 32
+  %m = add i64 %low, %up
+  %carry = icmp ult i64 %m, %low
+  %limit = select i1 %neg, i64 9223372036854775808, i64 9223372036854775807
+  %toobig = icmp ugt i64 %m, %limit
+  %o1 = or i1 %both, %crossbig
+  %o2 = or i1 %o1, %carry
+  %ovf = or i1 %o2, %toobig
+  %nm = sub i64 0, %m
+  %r = select i1 %neg, i64 %nm, i64 %m
+  %p0 = insertvalue {i64, i1} undef, i64 %r, 0
+  %p1 = insertvalue {i64, i1} %p0, i1 %ovf, 1
+  ret {i64, i1} %p1
+}
+
+"
+    .to_owned()
 }

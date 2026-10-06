@@ -873,3 +873,82 @@ fn two_paths_agreeing_on_the_same_pin_is_not_a_diamond() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+// ---- two statics of one type -------------------------------------------
+
+/// Four tables of one type and a function that reads two of them; the
+/// shape of a hash module's constants. `unread` is read by nothing, which
+/// the library's own export is allowed to be.
+const TABLES: &str = "\
+module tables;
+pub static p: [int] { let h = alloc_slice[static](2, 0); h[0] = 1; return h; }
+pub static q: [int] { let h = alloc_slice[static](2, 0); h[0] = 2; return h; }
+pub static unread: [int] { let h = alloc_slice[static](2, 0); h[0] = 3; return h; }
+pub fn sum() -> [] int { return p[0] + q[0]; }
+";
+
+#[test]
+fn two_statics_of_one_type_publish_resolve_fetch_and_republish_unchanged() {
+    let dir = scratch("vcs-two-statics");
+    let file = write_source(&dir, TABLES);
+    let store = dir.join("store");
+
+    // Before the name reached a static's `sig`, the second `[int]` was
+    // "already published at a different body".
+    let first = Command::new(BIN)
+        .args(["vcs", "publish", "--store"])
+        .arg(&store)
+        .arg(&file)
+        .output()
+        .expect("the compiler runs");
+    assert!(first.status.success(), "{}", String::from_utf8_lossy(&first.stderr));
+    let stdout = String::from_utf8_lossy(&first.stdout);
+    for name in ["p", "q", "unread", "sum"] {
+        assert!(stdout.contains(&format!("published {name}")), "{name}: {stdout}");
+    }
+
+    let again = Command::new(BIN)
+        .args(["vcs", "publish", "--store"])
+        .arg(&store)
+        .arg(&file)
+        .output()
+        .expect("the compiler runs");
+    assert!(again.status.success(), "{}", String::from_utf8_lossy(&again.stderr));
+    let again = String::from_utf8_lossy(&again.stdout);
+    assert!(again.contains("4 declaration(s) unchanged"), "{again}");
+    assert!(!again.contains("published "), "{again}");
+
+    let resolved = resolve(&store);
+    assert!(resolved.status.success(), "{}", String::from_utf8_lossy(&resolved.stderr));
+    assert!(String::from_utf8_lossy(&resolved.stdout).contains("4 declaration(s)"));
+
+    let lock_file = dir.join("lex-sys.lock");
+    assert!(lock(&store, &lock_file, &["p", "q", "unread", "sum"]).status.success());
+    let fetch_dir = dir.join("fetched");
+    let fetched = fetch(&lock_file, &store, &fetch_dir);
+    assert!(fetched.status.success(), "{}", String::from_utf8_lossy(&fetched.stderr));
+    let files: Vec<_> = std::fs::read_dir(&fetch_dir).expect("fetched").collect();
+    assert_eq!(files.len(), 1, "one source file holds all four");
+}
+
+#[test]
+fn a_static_and_a_function_of_one_name_are_refused_rather_than_published() {
+    let dir = scratch("vcs-static-fn-clash");
+    let file = write_source(
+        &dir,
+        "static p: [int] { let h = alloc_slice[static](2, 0); return h; }\n\
+         fn p() -> [] int { return 1; }\n",
+    );
+    let output = Command::new(BIN)
+        .args(["vcs", "publish", "--store"])
+        .arg(dir.join("store"))
+        .arg(&file)
+        .output()
+        .expect("the compiler runs");
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("has the name of a function"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

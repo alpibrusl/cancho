@@ -292,7 +292,7 @@ const GOLDEN: &[(&str, &str, &str)] = &[
     ),
     (
         "static-item",
-        "c85a3352f004fa6e116444903f278f08144c4e9a277b3473d5648f5d64e7e576",
+        "e11df6ea8b967fe73bc0910186a5252f88097e86a98ac601ce2224961425422e",
         "6b8702d8e58cf7bdba0a0bdf4645f8f22908ff9c6abf93a767ba2b1563dcab18",
     ),
 ];
@@ -411,4 +411,34 @@ fn the_fixtures_are_distinct() {
         }
         seen.push((pair, name));
     }
+}
+
+/// A `static`'s `sig` carries its name, as a function's does: two statics of
+/// one type are two identities. `vcs publish` keys its manifest by `sig`, and
+/// when the type was the whole of it the second `[int]` table of a module was
+/// refused as "already published at a different body".
+#[test]
+fn two_statics_of_one_type_have_two_signatures() {
+    let ast = parse(
+        "static p: [int] { let h = alloc_slice[static](2, 0); return h; }\n\
+         static q: [int] { let h = alloc_slice[static](2, 0); return h; }",
+    )
+    .expect("parses");
+    let ids = identify(&ast);
+    let (p, q) = (ids.function("p").expect("p"), ids.function("q").expect("q"));
+    assert_ne!(p.sig, q.sig, "the name is part of a static's signature");
+    // The body is the same text, and stays the same: a name is the
+    // declaration's, not the body's.
+    assert_eq!(p.body, q.body);
+}
+
+/// A static's `sig` cannot equal a function's or an extern's of the same
+/// name: the encodings start with different tags.
+#[test]
+fn a_static_signature_is_never_a_function_signature() {
+    let s = identify(
+        &parse("static t: [int] { let h = alloc_slice[static](2, 0); return h; }").unwrap(),
+    );
+    let f = identify(&parse("fn t() -> [] int { return 0; }").unwrap());
+    assert_ne!(s.function("t").unwrap().sig, f.function("t").unwrap().sig);
 }

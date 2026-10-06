@@ -193,6 +193,40 @@ pub enum Builtin {
     /// is the argument: a correct shortest-round-trip printer, written in
     /// lex-sys, rather than a hole in the standard library.
     BitsOf,
+    /// `f32_of(x: float) -> [] f32` — the nearest `f32` to a `float`,
+    /// ties to even, an overflow giving infinity (`docs/f32.md` §2).
+    ///
+    /// A rounding, and named for being one: it is the one crossing from
+    /// `float` to `f32`, written where a reader can see it. Never traps.
+    F32Of,
+    /// `float_of32(x: f32) -> [] float` — exact, every binary32 value is
+    /// a binary64 value (`docs/f32.md` §2).
+    ///
+    /// Not `float_of`: that name is `int -> float` and a builtin has one
+    /// signature, so the width is part of the name, as in `bits_of32`.
+    FloatOf32,
+    /// `bits_of32(x: f32) -> [] int` — the 32 bits of binary32, zero
+    /// extended (`docs/f32.md` §2). A reinterpretation like `bits_of`,
+    /// and like it every NaN answers one pattern, `0x7fc00000`, so the
+    /// answer does not depend on which target generated the NaN.
+    BitsOf32,
+    /// `f32_of_bits(n: int) -> [] f32` — the `f32` whose bits are the low
+    /// 32 of `n` (`docs/f32.md` §2). The inverse `float-printing.md` §8
+    /// left for when something needs it; `lexsys-gpu` and the gate in
+    /// `docs/f32.md` §5 both do.
+    F32OfBits,
+    /// `sqrt32(x: f32) -> [] f32` -- the correctly rounded square root, one
+    /// instruction (`docs/f32.md` §2, `docs/float-math.md` §3). Named as
+    /// `bits_of32` is: the width is part of the name because `sqrt` is
+    /// `float -> float` and a builtin has one signature.
+    Sqrt32,
+    /// `f32_of_int(n: int) -> [] f32` -- the nearest `f32`, ties to even;
+    /// every `int` is in range, so nothing traps (`docs/f32.md` §2).
+    F32OfInt,
+    /// `int_of_f32(x: f32) -> [] int` -- toward zero, trapping on NaN,
+    /// infinity and any magnitude at or beyond `2^63`: `truncate`'s rule
+    /// at the narrower width (`docs/floating-point.md` §4).
+    IntOfF32,
     /// `is_nan(x: float) -> [] bool` (§5).
     ///
     /// Exists because NaN breaks comparison — `x == x` is false for it —
@@ -533,6 +567,55 @@ pub enum Builtin {
     /// `AT_SYMLINK_NOFOLLOW` on one checked component -- a link is reported,
     /// never followed (`docs/directory-listing.md` §3.2).
     DirStat,
+    /// `dir_mode(&Dir, name) -> [dir_read] Done`: the permission bits
+    /// (`st_mode & 0o7777`) of one checked component, by `fstatat` with
+    /// `AT_SYMLINK_NOFOLLOW` as `dir_stat` (`docs/directory-listing.md`
+    /// §3.5), edition 7.
+    DirMode,
+    /// `dir_own_mode(&Dir) -> [dir_read] Done`: the permission bits of the
+    /// opened directory itself, by `fstat` on its descriptor (§3.5),
+    /// edition 7.
+    DirOwnMode,
+    /// `pipe_open() -> [] Piped` -- `docs/processes.md` §3.2, edition 7: a
+    /// channel's two ends, the parent's and the one a child is handed. An
+    /// unnamed channel inside this process reaches nothing, so no capability.
+    PipeOpen,
+    /// `exec_spawn(&Exec(p), path, args, env, stdin, stdout, stderr) ->
+    /// [exec(p)] Spawned`: start the program at `path` under `p`. Lowered as
+    /// `Expr::ExecSpawn`, so the prefix travels with it, as `open_read`'s does.
+    ExecSpawn,
+    /// `exec_spawn_in(&Exec(p), &Dir, path, args, env, stdin, stdout, stderr)
+    /// -> [exec(p)] Spawned`: `exec_spawn` whose child starts in the directory
+    /// the `Dir` holds (`docs/processes.md` §4.10). Lowered as
+    /// `Expr::ExecSpawn { in_dir: true, .. }`.
+    ExecSpawnIn,
+    /// `child_wait(Child) -> [] Exited`: wait for the child to end and reap it;
+    /// the only consumer of a `Child` (§4.7).
+    ChildWait,
+    /// `child_kill(&Child, signal) -> [child_signal] int`: one of
+    /// `std.signals`' bits, or `KILL` (256). `0`, or the `errno`.
+    ChildKill,
+    /// `pipe_read(&!Pipe, &![byte]) -> [pipe_read] Received`.
+    PipeRead,
+    /// `pipe_write(&!Pipe, &[byte]) -> [pipe_write] Sent`: never raises `SIGPIPE`.
+    PipeWrite,
+    /// `pipe_nonblocking(&!Pipe) -> [] int`: one way, explicit.
+    PipeNonblocking,
+    /// `pipe_close(Pipe) -> [] int`: consumes the parent's end.
+    PipeClose,
+    /// `child_end_close(ChildEnd) -> [] int`: consumes a child's end that was
+    /// never handed to a child.
+    ChildEndClose,
+    /// `poller_add_pipe(&!Poller, &Pipe, token, events) -> [poll] int` --
+    /// `docs/processes.md` §4.8, edition 7: watch a channel's parent end as
+    /// `poller_add_conn` watches a `Conn`. `0`, or the `errno`.
+    PollerAddPipe,
+    /// `poller_add_child(&!Poller, &Child, token) -> [poll] int` -- §4.8,
+    /// edition 7: report the child's exit as readable. After `poller_wait`
+    /// names the token, `child_wait` answers without blocking. `0`, or the
+    /// `errno` -- `ENOSYS` where the kernel gave the child no `pidfd`, `EMFILE`
+    /// where the program had no descriptor to spare for it.
+    PollerAddChild,
     /// `null_ptr() -> [] c_ptr` — the one producer of a `c_ptr` that is
     /// not a foreign call's return, edition 3 only
     /// (`docs/opaque-pointers.md` §3).
@@ -608,6 +691,13 @@ impl Builtin {
         Builtin::IsNan,
         Builtin::Sqrt,
         Builtin::BitsOf,
+        Builtin::F32Of,
+        Builtin::FloatOf32,
+        Builtin::BitsOf32,
+        Builtin::F32OfBits,
+        Builtin::Sqrt32,
+        Builtin::F32OfInt,
+        Builtin::IntOfF32,
         Builtin::FsRead,
         Builtin::FsWrite,
         Builtin::OpenRead,
@@ -677,6 +767,20 @@ impl Builtin {
         Builtin::DirNext,
         Builtin::DirListClose,
         Builtin::DirStat,
+        Builtin::DirMode,
+        Builtin::DirOwnMode,
+        Builtin::PipeOpen,
+        Builtin::ExecSpawn,
+        Builtin::ExecSpawnIn,
+        Builtin::ChildWait,
+        Builtin::ChildKill,
+        Builtin::PipeRead,
+        Builtin::PipeWrite,
+        Builtin::PipeNonblocking,
+        Builtin::PipeClose,
+        Builtin::ChildEndClose,
+        Builtin::PollerAddPipe,
+        Builtin::PollerAddChild,
         Builtin::NullPtr,
         Builtin::Spawn,
         Builtin::Join,
@@ -710,6 +814,13 @@ impl Builtin {
             Builtin::IsNan => "is_nan",
             Builtin::Sqrt => "sqrt",
             Builtin::BitsOf => "bits_of",
+            Builtin::F32Of => "f32_of",
+            Builtin::FloatOf32 => "float_of32",
+            Builtin::BitsOf32 => "bits_of32",
+            Builtin::F32OfBits => "f32_of_bits",
+            Builtin::Sqrt32 => "sqrt32",
+            Builtin::F32OfInt => "f32_of_int",
+            Builtin::IntOfF32 => "int_of_f32",
             Builtin::FsRead => "fs_read",
             Builtin::OpenRead => "open_read",
             Builtin::ReadFile => "file_read",
@@ -779,6 +890,20 @@ impl Builtin {
             Builtin::DirNext => "dir_next",
             Builtin::DirListClose => "dir_list_close",
             Builtin::DirStat => "dir_stat",
+            Builtin::DirMode => "dir_mode",
+            Builtin::DirOwnMode => "dir_own_mode",
+            Builtin::PipeOpen => "pipe_open",
+            Builtin::ExecSpawn => "exec_spawn",
+            Builtin::ExecSpawnIn => "exec_spawn_in",
+            Builtin::ChildWait => "child_wait",
+            Builtin::ChildKill => "child_kill",
+            Builtin::PipeRead => "pipe_read",
+            Builtin::PipeWrite => "pipe_write",
+            Builtin::PipeNonblocking => "pipe_nonblocking",
+            Builtin::PipeClose => "pipe_close",
+            Builtin::ChildEndClose => "child_end_close",
+            Builtin::PollerAddPipe => "poller_add_pipe",
+            Builtin::PollerAddChild => "poller_add_child",
             Builtin::NullPtr => "null_ptr",
             Builtin::Spawn => "spawn",
             Builtin::Join => "join",
@@ -841,6 +966,16 @@ impl Builtin {
             // `docs/value-barrier.md` §3: edition 6, the latest, for the
             // same reason -- a program may already declare the name.
             Builtin::ValueBarrier => 6,
+            // `docs/f32.md` §6: edition 6, the latest, like `value_barrier`
+            // -- a program may already declare `f32_of`. None in this
+            // repository does (counted there), so no edition 7 is made.
+            Builtin::F32Of
+            | Builtin::FloatOf32
+            | Builtin::BitsOf32
+            | Builtin::F32OfBits
+            | Builtin::Sqrt32
+            | Builtin::F32OfInt
+            | Builtin::IntOfF32 => 6,
             // `docs/signals.md`: edition 6, for the same reason --
             // `signals_watch` is a name a program may already declare.
             Builtin::SignalsWatch
@@ -862,6 +997,24 @@ impl Builtin {
             | Builtin::DirNext
             | Builtin::DirListClose
             | Builtin::DirStat => 6,
+            // `docs/processes.md`: edition 7 -- `pipe_open` and `child_wait`
+            // are names a program may already declare.
+            Builtin::PipeOpen
+            | Builtin::ExecSpawn
+            | Builtin::ExecSpawnIn
+            | Builtin::ChildWait
+            | Builtin::ChildKill
+            | Builtin::PipeRead
+            | Builtin::PipeWrite
+            | Builtin::PipeNonblocking
+            | Builtin::PipeClose
+            | Builtin::ChildEndClose
+            | Builtin::PollerAddPipe
+            | Builtin::PollerAddChild => 7,
+            // `docs/directory-listing.md` §3.5: edition 7, which is still
+            // being built -- `dir_mode` is a name a program may already
+            // declare.
+            Builtin::DirMode | Builtin::DirOwnMode => 7,
             // `docs/file-writes.md`: edition 5, for the same reason --
             // `file_write` and `open_new` are names a program may already
             // declare against libc.
@@ -970,6 +1123,14 @@ impl Builtin {
             Builtin::DirNext => 2,
             // The handle's region and the name's.
             Builtin::DirStat => 2,
+            Builtin::DirMode => 2,
+            // The handle's region.
+            Builtin::DirOwnMode => 1,
+            // The handle's region, and for a read or a write the buffer's.
+            Builtin::PipeRead | Builtin::PipeWrite => 2,
+            Builtin::ChildKill | Builtin::PipeNonblocking => 1,
+            // The poller's region and the handle's.
+            Builtin::PollerAddPipe | Builtin::PollerAddChild => 2,
             Builtin::TcpAccept
             | Builtin::ConnNonblocking
             | Builtin::ConnNodelay
@@ -1204,6 +1365,13 @@ impl Builtin {
             // it reaches no library (`docs/float-math.md` §3).
             Builtin::Sqrt => (vec![Type::Float], Type::Float),
             Builtin::BitsOf => (vec![Type::Float], Type::Int),
+            Builtin::F32Of => (vec![Type::Float], Type::F32),
+            Builtin::FloatOf32 => (vec![Type::F32], Type::Float),
+            Builtin::BitsOf32 => (vec![Type::F32], Type::Int),
+            Builtin::F32OfBits => (vec![Type::Int], Type::F32),
+            Builtin::Sqrt32 => (vec![Type::F32], Type::F32),
+            Builtin::F32OfInt => (vec![Type::Int], Type::F32),
+            Builtin::IntOfF32 => (vec![Type::F32], Type::Int),
             // Both are checked at the call site rather than here, because a
             // fixed signature cannot say what they need. `release` ends any
             // capability, and there is more than one kind; `narrow` has an
@@ -1477,6 +1645,30 @@ impl Builtin {
                 ],
                 named(PRELUDE_DIR_STAT),
             ),
+            // §3.5: `dir_stat`'s shape, answering the bits as `Done`.
+            Builtin::DirMode => (
+                vec![
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_DIR)),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                named(PRELUDE_DONE),
+            ),
+            Builtin::DirOwnMode => (
+                vec![Type::Ref {
+                    unique: false,
+                    region: Region::Param(0),
+                    inner: Box::new(named(PRELUDE_DIR)),
+                }],
+                named(PRELUDE_DONE),
+            ),
             Builtin::ConnDetach => (vec![named(PRELUDE_CONN)], Type::Int),
             Builtin::ConnAttach => (vec![Type::Int], named(PRELUDE_ATTACHED)),
             Builtin::ClockMs | Builtin::ClockUnixMs => (
@@ -1552,6 +1744,69 @@ impl Builtin {
             ),
             // By value: `close` ends the handle.
             Builtin::ConnClose => (vec![named(PRELUDE_CONN)], Type::Int),
+            // `docs/processes.md` §3.2.
+            Builtin::PipeOpen => (Vec::new(), named(PRELUDE_PIPED)),
+            // Checked at the call site: the prefix is in the capability's type.
+            Builtin::ExecSpawn | Builtin::ExecSpawnIn => (Vec::new(), Type::Unit),
+            // By value: waiting ends the child.
+            Builtin::ChildWait => (vec![named(PRELUDE_CHILD)], named(PRELUDE_EXITED)),
+            Builtin::ChildKill => (
+                vec![
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_CHILD)),
+                    },
+                    Type::Int,
+                ],
+                Type::Int,
+            ),
+            Builtin::PipeRead | Builtin::PipeWrite => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_PIPE)),
+                    },
+                    Type::Ref {
+                        unique: self == Builtin::PipeRead,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                named(if self == Builtin::PipeRead { PRELUDE_RECEIVED } else { PRELUDE_SENT }),
+            ),
+            Builtin::PipeNonblocking => (
+                vec![Type::Ref {
+                    unique: true,
+                    region: Region::Param(0),
+                    inner: Box::new(named(PRELUDE_PIPE)),
+                }],
+                Type::Int,
+            ),
+            Builtin::PipeClose => (vec![named(PRELUDE_PIPE)], Type::Int),
+            Builtin::ChildEndClose => (vec![named(PRELUDE_CHILD_END)], Type::Int),
+            Builtin::PollerAddPipe | Builtin::PollerAddChild => {
+                let handle =
+                    if self == Builtin::PollerAddPipe { PRELUDE_PIPE } else { PRELUDE_CHILD };
+                let mut params = vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_POLLER)),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(named(handle)),
+                    },
+                    Type::Int,
+                ];
+                if self == Builtin::PollerAddPipe {
+                    params.push(Type::Int);
+                }
+                (params, Type::Int)
+            }
             Builtin::ListenerClose => (vec![named(PRELUDE_LISTENER)], Type::Int),
             // No capability, no data in, one opaque handle out
             // (`docs/opaque-pointers.md` §3) -- a fixed signature like
@@ -1625,6 +1880,8 @@ impl Builtin {
             | Builtin::PollerModify
             | Builtin::PollerRemove
             | Builtin::PollerWait
+            | Builtin::PollerAddPipe
+            | Builtin::PollerAddChild
             | Builtin::PollerAddSignals => Effects::plain(["poll"]),
             // `docs/signals.md` section 2.1: path-free, the set was spent at
             // `signals_watch`. Closing performs nothing, as `conn_close` does not.
@@ -1634,6 +1891,8 @@ impl Builtin {
             // `docs/directory-listing.md` §3.3: listing is reading beneath the
             // directory, and closing a listing performs nothing.
             Builtin::DirList | Builtin::DirNext | Builtin::DirStat => Effects::plain(["dir_read"]),
+            // §3.5: a status, so a read beneath the directory, as `dir_stat`.
+            Builtin::DirMode | Builtin::DirOwnMode => Effects::plain(["dir_read"]),
             // §3: everything that changes what is beneath a directory.
             Builtin::DirOpenNew
             | Builtin::DirOpenAppend
@@ -1641,6 +1900,13 @@ impl Builtin {
             | Builtin::DirRemove
             | Builtin::DirSync => Effects::plain(["dir_write"]),
             Builtin::ConnWrite => Effects::plain(["conn_write"]),
+            // `docs/processes.md` §3.2: path-free, the program was named at
+            // `exec_spawn`. Waiting and closing perform nothing, as
+            // `conn_close` does not; `exec_spawn`'s row comes from the prefix
+            // at the call site.
+            Builtin::ChildKill => Effects::plain(["child_signal"]),
+            Builtin::PipeRead => Effects::plain(["pipe_read"]),
+            Builtin::PipeWrite => Effects::plain(["pipe_write"]),
             // Moving authority around is not an effect. Splitting a `World`
             // observes nothing outside the program and releasing a
             // capability only ends one; what a capability *authorises* is

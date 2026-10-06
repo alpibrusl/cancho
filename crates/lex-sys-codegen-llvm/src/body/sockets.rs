@@ -17,6 +17,19 @@ impl<'a> FuncEmitter<'a> {
         Os::for_darwin(self.is_darwin())
     }
 
+    /// Which operating system's file-and-directory constants this target
+    /// uses (`lex_sys_ir::Os`). `emit_module` refuses any operating system
+    /// that is not one of the three, so the fallback here is not a guess.
+    pub(crate) fn file_os(&self) -> lex_sys_ir::Os {
+        match self.triple.operating_system {
+            target_lexicon::OperatingSystem::Darwin(_) => lex_sys_ir::Os::Darwin,
+            target_lexicon::OperatingSystem::Wasi
+            | target_lexicon::OperatingSystem::WasiP1
+            | target_lexicon::OperatingSystem::WasiP2 => lex_sys_ir::Os::Wasi,
+            _ => lex_sys_ir::Os::Linux,
+        }
+    }
+
     pub(crate) fn is_darwin(&self) -> bool {
         matches!(self.triple.operating_system, target_lexicon::OperatingSystem::Darwin(_))
     }

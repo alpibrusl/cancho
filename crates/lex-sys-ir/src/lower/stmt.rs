@@ -163,7 +163,9 @@ impl<'a> FnLowering<'a> {
             AstStmt::Let { name, mutable, ty, value } => {
                 // The initialiser is resolved *before* the binding exists, so
                 // `let x = x;` reads the outer `x` or fails, and never itself.
+                let reads_from = self.reads.len();
                 let (value, found) = self.expr(*value)?;
+                let from = self.reads[reads_from..].to_vec();
                 let declared = match ty {
                     Some(written) => {
                         let declared = self.written_type(*written)?;
@@ -185,14 +187,24 @@ impl<'a> FnLowering<'a> {
                 // than about the source (`docs/shadowing.md` §4). `declare`
                 // records the link; the checker insists.
                 let slot = self.declare(*name, declared, *mutable, span);
+                if !from.is_empty() {
+                    self.trace.emit(Event::Alias { slot, from });
+                }
                 Stmt::Store { place: Place::Slot(slot), value }
             }
             AstStmt::Assign { place, value } => {
                 let value_span = self.ast.expr_span(*value);
+                let reads_from = self.reads.len();
                 let (value, found) = self.expr(*value)?;
+                let from = self.reads[reads_from..].to_vec();
                 // The place is resolved *after* the value, so `x = x + 1`
                 // reads `x` before the write is recorded.
                 let (place, declared) = self.place(*place, span)?;
+                if let Place::Slot(slot) = &place {
+                    if !from.is_empty() {
+                        self.trace.emit(Event::Alias { slot: *slot, from });
+                    }
+                }
                 self.expect_type(&declared, &found, value_span)?;
                 Stmt::Store { place, value }
             }
@@ -311,12 +323,21 @@ impl<'a> FnLowering<'a> {
                 PRELUDE_SIGNAL_WATCH => "signals_close",
                 PRELUDE_DIR => "dir_close",
                 PRELUDE_DIR_LIST => "dir_list_close",
+                PRELUDE_PIPE => "pipe_close",
+                PRELUDE_CHILD_END => "exec_spawn` or `child_end_close",
+                PRELUDE_CHILD => "child_wait",
                 _ => "file_close",
+            };
+            // `docs/processes.md` §4.7: a child is a process, not a descriptor.
+            let owns = if def_id.0 as usize == PRELUDE_CHILD {
+                "a process that has not been reaped"
+            } else {
+                "an open descriptor"
             };
             return Err(Diagnostic::new(
                 Rule::LinearValueTakenApart,
                 format!(
-                    "`{text}` owns an open descriptor and is ended by `{closer}`, not by being taken apart"
+                    "`{text}` owns {owns} and is ended by `{closer}`, not by being taken apart"
                 ),
                 span,
             ));

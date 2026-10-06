@@ -16,7 +16,7 @@ impl<'a> FuncEmitter<'a> {
     /// share.
     pub(crate) fn open_flags(&self) -> lex_sys_ir::OpenFlags {
         let aarch64 = matches!(self.triple.architecture, target_lexicon::Architecture::Aarch64(_));
-        lex_sys_ir::open_flags(self.is_darwin(), aarch64)
+        lex_sys_ir::open_flags_for(self.file_os(), aarch64)
     }
 
     /// `openat(AT_FDCWD, path, flags, mode)`, the one way a path (rather
@@ -38,7 +38,7 @@ impl<'a> FuncEmitter<'a> {
     /// O_CLOEXEC)`, as `open_read`'s is. `DirOpened`'s three leaves.
     pub(crate) fn open_directory(&mut self, path: &str) -> Vec<LValue> {
         let f = self.open_flags();
-        let fd32 = self.open_at_cwd(path, f.directory | f.cloexec, 0);
+        let fd32 = self.open_at_cwd(path, f.read_only | f.directory | f.cloexec, 0);
         let fd = self.fresh();
         self.out.push_str(&format!("  {fd} = sext i32 {fd32} to i64\n"));
         let failed = self.fresh();
@@ -76,14 +76,15 @@ impl<'a> FuncEmitter<'a> {
         // A `/` or a NUL anywhere, or `.`; `..` reads its second byte in a
         // block of its own, so a one-byte name is never read past.
         self.out.push_str(&format!("{body}:\n"));
+        let st = self.size_ty();
+        let size = self.size_arg(length);
         let slash = self.fresh();
         self.out
-            .push_str(&format!("  {slash} = call ptr @memchr(ptr {name}, i32 47, i64 {length})\n"));
+            .push_str(&format!("  {slash} = call ptr @memchr(ptr {name}, i32 47, {st} {size})\n"));
         let has_slash = self.fresh();
         self.out.push_str(&format!("  {has_slash} = icmp ne ptr {slash}, null\n"));
         let nul = self.fresh();
-        self.out
-            .push_str(&format!("  {nul} = call ptr @memchr(ptr {name}, i32 0, i64 {length})\n"));
+        self.out.push_str(&format!("  {nul} = call ptr @memchr(ptr {name}, i32 0, {st} {size})\n"));
         let has_nul = self.fresh();
         self.out.push_str(&format!("  {has_nul} = icmp ne ptr {nul}, null\n"));
         let first = self.fresh();
@@ -117,9 +118,11 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("  br i1 {dotdot}, label %{refused}, label %{good}\n"));
 
         self.out.push_str(&format!("{good}:\n"));
+        let st = self.size_ty();
+        let size = self.size_arg(length);
         let ignored = self.fresh();
         self.out.push_str(&format!(
-            "  {ignored} = call ptr @memmove(ptr {copy}, ptr {name}, i64 {length})\n"
+            "  {ignored} = call ptr @memmove(ptr {copy}, ptr {name}, {st} {size})\n"
         ));
         let end = self.fresh();
         self.out.push_str(&format!("  {end} = getelementptr i8, ptr {copy}, i64 {length}\n"));
@@ -191,14 +194,14 @@ impl<'a> FuncEmitter<'a> {
         }
         let f = self.open_flags();
         let (flags, mode) = match op {
-            Builtin::DirEnter => (f.directory | f.nofollow, 0),
+            Builtin::DirEnter => (f.read_only | f.directory | f.nofollow, 0),
             Builtin::DirOpenNew => {
                 (f.write_only | f.create | f.exclusive | f.nofollow, lex_sys_ir::CREATE_MODE)
             }
             Builtin::DirOpenAppend => {
                 (f.write_only | f.create | f.append | f.nofollow, lex_sys_ir::CREATE_MODE)
             }
-            _ => (f.nofollow, 0),
+            _ => (f.read_only | f.nofollow, 0),
         };
         // Every descriptor a builtin opens is close-on-exec (`docs/processes.md` §4.5).
         let flags = flags | f.cloexec;

@@ -39,21 +39,29 @@ use linear::{Event, Trace, mode_of};
 
 mod builtin;
 mod defs;
+mod errno;
 mod foreign;
 mod function;
 mod ir;
 mod lower;
+mod process;
 mod signals;
 mod socket_os;
+mod target;
+mod wasi_imports;
 
 pub use builtin::*;
 pub use defs::*;
+pub use errno::*;
 pub use foreign::*;
 use function::*;
 pub use ir::*;
 use lower::*;
+pub use process::*;
 pub use signals::*;
 pub use socket_os::*;
+pub use target::*;
+pub use wasi_imports::*;
 
 /// Resolve and check an AST, producing IR a backend can lower without failing.
 pub fn lower(ast: &Ast) -> Result<Program, Diagnostic> {
@@ -109,7 +117,20 @@ pub fn lower_all(ast: &Ast) -> Result<Program, Vec<Diagnostic>> {
     }
 }
 
-fn lower_inner(ast: &Ast, rest: &mut Vec<Diagnostic>) -> Result<Program, Diagnostic> {
+/// Everything pass 0 of the checker collects before any body is read: the types, the foreign
+/// declarations, the statics and the signatures.
+struct Declarations {
+    unifier: Unifier,
+    defs: Vec<TypeDef>,
+    externs: Vec<ExternFn>,
+    statics: Vec<StaticDef>,
+    static_items: Vec<usize>,
+    signatures: Vec<Signature>,
+}
+
+/// Imports, type declarations, foreign declarations, statics and signatures, in that order,
+/// stopping at the first refusal (see [`lower_all`]). No body is read.
+fn collect_declarations(ast: &Ast) -> Result<Declarations, Diagnostic> {
     check_imports(ast)?;
     let mut unifier = Unifier::new();
     let defs = collect_types(ast, &mut unifier)?;
@@ -406,6 +427,26 @@ fn lower_inner(ast: &Ast, rest: &mut Vec<Diagnostic>) -> Result<Program, Diagnos
                 span,
             ));
         }
+        // A `static` and a function share a namespace: a name resolves to
+        // one declaration, and a package lock is keyed by name, so a
+        // `static p` beside a `fn p` would be two entries under one key.
+        let clashes = |other: &Item| match other {
+            Item::Fn(f) => f.name == decl.name,
+            Item::Extern(e) => e.name == decl.name,
+            _ => false,
+        };
+        if ast
+            .items
+            .iter()
+            .enumerate()
+            .any(|(i, other)| ast.module_of(ast::ItemId(i as u32)) == module && clashes(other))
+        {
+            return Err(Diagnostic::new(
+                Rule::DuplicateDeclaration,
+                format!("`static {name}` has the name of a function in the same module"),
+                span,
+            ));
+        }
         // The *referent*, so a bare `[int]` is what is written: a
         // `static` names what the data is, and the `&static` in front of
         // it is what every reader gets rather than what the author types
@@ -574,6 +615,24 @@ fn lower_inner(ast: &Ast, rest: &mut Vec<Diagnostic>) -> Result<Program, Diagnos
             item: index,
         });
     }
+
+    Ok(Declarations { unifier, defs, externs, statics, static_items, signatures })
+}
+
+/// Only the declarations of a program: whether its imports, types, foreign declarations,
+/// statics and signatures are well formed, and the first refusal if not.
+///
+/// This is the boundary between the checker's two halves, and exists so that the staged port
+/// of the checker into lex-sys (`docs/self-hosting.md` section 6) has an oracle for the half
+/// it has reached: [`lower`] stops at the first refusal here, so the first refusal of
+/// `check_declarations` is the first refusal of `lower` whenever it is one of these.
+pub fn check_declarations(ast: &Ast) -> Result<(), Diagnostic> {
+    collect_declarations(ast).map(|_| ())
+}
+
+fn lower_inner(ast: &Ast, rest: &mut Vec<Diagnostic>) -> Result<Program, Diagnostic> {
+    let Declarations { mut unifier, defs, externs, statics, static_items, signatures } =
+        collect_declarations(ast)?;
 
     // Pass 1: check **every** function, once.
     //
@@ -800,6 +859,11 @@ fn lower_inner(ast: &Ast, rest: &mut Vec<Diagnostic>) -> Result<Program, Diagnos
 #[path = "tests/unit.rs"]
 mod tests;
 
+/// Per-target file constants, WASI's against wasi-libc's headers.
+#[cfg(test)]
+#[path = "tests/os_tables.rs"]
+mod os_table_tests;
+
 /// Effect rows: `docs/linearity-and-effects.md` §7.
 #[cfg(test)]
 #[path = "tests/effect.rs"]
@@ -839,6 +903,11 @@ mod foreign_tests;
 #[cfg(test)]
 #[path = "tests/linearity.rs"]
 mod linearity_tests;
+
+/// The tables the staged port of the checker carries: `docs/self-hosting.md` section 6.
+#[cfg(test)]
+#[path = "tests/selfhost_tables.rs"]
+mod selfhost_table_tests;
 
 /// Compile-time folding's own recursion guard: `docs/fuzzing.md` §4.5.
 #[cfg(test)]

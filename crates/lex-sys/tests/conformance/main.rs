@@ -42,6 +42,8 @@ mod arguments;
 mod authority;
 mod backends;
 mod benchmarks;
+mod binary32;
+mod capture;
 mod checked_output;
 mod close_on_exec;
 mod compile_time;
@@ -49,11 +51,13 @@ mod corpus;
 mod differential;
 mod directory_handles;
 mod directory_listing;
+mod directory_modes;
 mod directory_writes;
 mod docs;
 mod duplication;
 mod ecdh;
 mod ecdsa;
+mod f32_text;
 mod file_writes;
 mod filesystem;
 mod floats;
@@ -71,18 +75,22 @@ mod memory;
 mod modules;
 mod net;
 mod ports;
+mod processes;
 mod project;
 mod refusals;
 mod release;
 mod rsa;
+mod selfhost;
 mod signals;
 mod sockets;
 mod testing;
 mod tls;
+mod tls_fuzz;
 mod traps;
 mod vcs;
 mod vcs_remote;
 mod vcs_std;
+mod wasm_target;
 mod x25519;
 mod x509;
 mod x509_verify;
@@ -114,6 +122,19 @@ fn scratch(tag: &str) -> PathBuf {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("a writable temporary directory");
     dir
+}
+
+/// `//~ TARGET <triple>`: the flags that make `check` ask a fixture's question
+/// of the target it names (`docs/wasm.md`), for the fixtures whose refusal is a
+/// property of a target. Empty for every other fixture, so every harness that
+/// walks `tests/reject` passes this to `check` and none has to know why.
+fn target_args(path: &Path) -> Vec<String> {
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("//~ TARGET "))
+        .map(|triple| vec!["--target".to_owned(), triple.trim().to_owned()])
+        .unwrap_or_default()
 }
 
 fn fixtures(kind: &str) -> Vec<PathBuf> {

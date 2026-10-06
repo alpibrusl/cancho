@@ -1,4 +1,4 @@
-//~ ERROR unknown edition 7; the only editions today are 1, 2, 3, 4, 5 and 6
+//~ ERROR unknown edition 8; the only editions today are 1, 2, 3, 4, 5, 6 and 7
 //~ RULE unknown-edition
 
 // `docs/editions.md` §6.1, §7.
@@ -9,9 +9,10 @@
 // (`docs/opaque-pointers.md` §4); edition 4 adds `spawn`/`join`
 // (`docs/threads.md` §2); edition 5 adds the socket handles
 // (`docs/native-sockets.md` §3); edition 6 adds the signal capability
-// (`docs/signals.md`). There is nothing later than that yet to opt into.
+// (`docs/signals.md`); edition 7 adds the capability to start a program
+// (`docs/processes.md`). There is nothing later than that yet to opt into.
 
-edition 7;
+edition 8;
 
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args } = split(world);

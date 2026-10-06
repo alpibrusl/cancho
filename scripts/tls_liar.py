@@ -291,6 +291,8 @@ class Server:
         self.cv_key = KEY
         self.bad_finished = False
         self.filler = []  # more chain entries after the leaf, never parsed before #206
+        self.resumed = False  # a PSK handshake (docs/tls-resumption.md): its early secret is from `psk`
+        self.psk = None
 
     # ---- the flight ----
     @property
@@ -379,7 +381,7 @@ class Server:
         h = self.hash
         n = h().digest_size
         shared = self.shared_secret()
-        early = hmac.new(bytes(n), bytes(n), h).digest()
+        early = hmac.new(bytes(n), self.psk if self.resumed else bytes(n), h).digest()
         hs = hmac.new(derive(early, b"derived", b"", h), shared, h).digest()
         self.c_hs = derive(hs, b"c hs traffic", self.transcript, h)
         self.s_hs = derive(hs, b"s hs traffic", self.transcript, h)
@@ -711,6 +713,18 @@ case("a certificate from an untrusted CA", "x509-unknown-issuer", 48)(
     flight_case(lambda s: (setattr(s, "cert_der", OTHER_DER), setattr(s, "cv_key", OTHER_KEY))))
 case("a fatal alert instead of ServerHello", "tls-alert")(
     lambda s: (s.start(), s.c.feed(plain_record(21, b"\2\x28"))))
+# A close_notify before the handshake completes is not a clean close (review finding E-3): in the clear anyone on the
+# path can send it, and nothing was authenticated to end.
+case("a close_notify instead of ServerHello", "tls-peer-closed")(
+    lambda s: (s.start(), s.c.feed(plain_record(21, b"\1\0"))))
+
+
+@case("a close_notify in the encrypted flight, before Finished", "tls-peer-closed")
+def close_in_flight(s):
+    s.start()
+    sh = s.server_hello(s.sid)
+    s.keys(sh)
+    s.c.feed(plain_record(22, sh) + s.write.seal(21, b"\1\0"))
 
 
 @case("a warning-level alert in the flight", "tls-alert")
@@ -941,6 +955,8 @@ case12("TLS 1.2, a ServerHello echoing the client's session id", "tls-decode-err
     lambda s: (s.start(), setattr(s, "sh_sid", s.sid), s.c.feed(plain_record(22, s.server_hello12()))))
 case12("TLS 1.2, a key_share in the ServerHello", "tls-unsupported-extension", 110)(
     hello12(sh_extra=ext(51, u16(0x1D) + u16(32) + bytes(range(32)))))
+case12("TLS 1.2, a pre_shared_key in the ServerHello (a TLS 1.3 resumption's)", "tls-unsupported-extension", 110)(
+    hello12(sh_extra=ext(41, u16(0))))
 case12("TLS 1.2, a renegotiated connection in renegotiation_info", "tls-decode-error", 50)(
     hello12(reneg=ext(0xFF01, b"\x0c" + bytes(12))))
 case12("TLS 1.2, the key exchange signed by another key", "tls-bad-certificate-verify", 51)(
@@ -990,6 +1006,246 @@ def tls12_after_retry(s):
     Server.retry(s, P256)
     s.suite = 0xCCA9
     s.c.feed(plain_record(22, s.server_hello12()))
+
+
+# ---- Resumption (docs/tls-resumption.md) ----
+
+TICKET = b"liar ticket, opaque to the client"
+
+
+def psk_offer(msg):
+    """The PSK the ClientHello `msg` offers: (identity, obfuscated age, binder, where in `msg` its
+    binders start, the psk_key_exchange_modes), or None. pre_shared_key must be the last extension."""
+    b = msg[4:]
+    at = 2 + 32
+    at += 1 + b[at]
+    at += 2 + int.from_bytes(b[at:at + 2], "big")
+    at += 1 + b[at]
+    end = at + 2 + int.from_bytes(b[at:at + 2], "big")
+    at += 2
+    modes, found, last = None, None, None
+    while at < end:
+        kind, n = int.from_bytes(b[at:at + 2], "big"), int.from_bytes(b[at + 2:at + 4], "big")
+        body = b[at + 4:at + 4 + n]
+        last = kind
+        if kind == 45:
+            modes = list(body[1:1 + body[0]])
+        if kind == 41:
+            ids = int.from_bytes(body[0:2], "big")
+            idl = int.from_bytes(body[2:4], "big")
+            assert ids == 2 + idl + 4, "one identity"
+            identity = body[4:4 + idl]
+            age = int.from_bytes(body[4 + idl:8 + idl], "big")
+            binders = 2 + ids
+            assert int.from_bytes(body[binders:binders + 2], "big") == 1 + body[binders + 2], "one binder"
+            binder = body[binders + 3:binders + 3 + body[binders + 2]]
+            found = (identity, age, binder, 4 + at + 4 + binders)
+        at += 4 + n
+    if found is None:
+        return None
+    assert last == 41, "pre_shared_key is the last extension"
+    return found + (modes,)
+
+
+def psk_hash(psk):
+    return hashlib.sha384 if len(psk) == 48 else hashlib.sha256
+
+
+def check_binder(msg, psk, prefix=b""):
+    """The binder of the ClientHello `msg`, which follows `prefix` in the transcript, as RFC 8446
+    §4.2.11.2 computes it: the client's is checked against this server's."""
+    offer = psk_offer(msg)
+    assert offer is not None, "a PSK is offered"
+    identity, age, binder, binders_at, modes = offer
+    assert identity == TICKET, f"the ticket offered: {identity!r}"
+    assert modes == [1], f"psk_dhe_ke only: {modes}"
+    h = psk_hash(psk)
+    n = len(psk)
+    early = hmac.new(bytes(n), psk, h).digest()
+    finished_key = expand_label(derive(early, b"res binder", b"", h), b"finished", b"", n, h)
+    want = hmac.new(finished_key, h(prefix + msg[:binders_at]).digest(), h).digest()
+    assert binder == want, "the binder"
+
+
+def issue(s, ticket=TICKET, nonce=b"\7", lifetime=7200, age_add=0x01020304):
+    """A NewSessionTicket on the connection `s`, whose client Finished has been checked: its PSK, as
+    this server derives it (RFC 8446 §4.6.1, §7.1)."""
+    res = derive(s.master, b"res master", s.transcript, s.hash)
+    psk = expand_label(res, b"resumption", nonce, len(res), s.hash)
+    body = lifetime.to_bytes(4, "big") + age_add.to_bytes(4, "big") + bytes([len(nonce)]) + nonce + u16(len(ticket)) + ticket + u16(0)
+    s.c.feed(s.write.seal(22, message(4, body)))
+    return psk
+
+
+def first_connection(s, suite=0x1303, **ticket):
+    """A full handshake under `suite`, a ticket, and the client's account of it: the PSK it derived
+    must be this server's."""
+    s.start()
+    s.suite = suite
+    s.c.feed(s.hello_and_flight())
+    s.check_client_finished()
+    psk = issue(s, **ticket)
+    f = s.c.ask("K")
+    assert f[5] == "0", "the first connection is not a resumption"
+    assert (f[6], f[7]) == (TICKET.hex(), psk.hex()), f"the ticket and PSK the client kept: {f[6:8]}"
+    return psk
+
+
+def resume(s, psk, age=1500):
+    """A second connection, on the same driver, offering the ticket: a new Server for it."""
+    r = Server(s.c)
+    f = r.c.ask(f"R {HOST.hex()} {RANDOM.hex()} {ROOTS.hex()} {NOW} {TICKET.hex()} {psk.hex()} {age} {NOW} {NOW + 86400}")
+    assert f[0] == "0", f
+    (hello,) = r.c.take()
+    msg, r.sid, r.client_shares, _ = parse_client_hello(hello)
+    r.transcript = msg
+    r.ccs_sent = False
+    r.psk = psk
+    return r
+
+
+def resumed_flight(r, after_ee=b""):
+    """ServerHello accepting identity 0, then EncryptedExtensions and Finished: no Certificate."""
+    r.resumed = True
+    r.extra_extensions += ext(41, u16(0))
+    sh = r.server_hello(r.sid)
+    r.keys(sh)
+    ee = r.encrypted_extensions()
+    r.transcript += ee + after_ee
+    fin = r.finished(r.transcript)
+    r.transcript += fin
+    return plain_record(22, sh) + plain_record(20, b"\1") + r.write.seal(22, ee + after_ee + fin)
+
+
+def resumed_to_the_end(r):
+    r.check_client_finished()
+    r.c.ask(f"W {REQUEST.hex()}")
+    (req,) = r.c.take()
+    assert r.read.open(req) == (23, REQUEST), "the request, under the resumed keys"
+    f = r.c.feed(r.write.seal(23, b"resumed") + r.write.seal(21, b"\1\0"))
+    assert f[2] == "4", f"closed: {f}"
+
+
+@case("resumption: a ticket, then a second connection offering it, the binder checked; no Certificate", "ok")
+def resumption(s):
+    psk = first_connection(s)
+    r = resume(s, psk)
+    check_binder(r.transcript, psk)
+    r.c.feed(resumed_flight(r))
+    resumed_to_the_end(r)
+    f = r.c.ask("K")
+    assert f[5] == "1", f"resumed: {f}"
+
+
+@case("resumption under AES-256-GCM-SHA384: a 48-byte PSK, the binder under SHA-384", "ok")
+def resumption_sha384(s):
+    psk = first_connection(s, suite=0x1302)
+    assert len(psk) == 48, "a SHA-384 PSK"
+    r = resume(s, psk)
+    check_binder(r.transcript, psk)
+    r.suite = 0x1302
+    r.c.feed(resumed_flight(r))
+    resumed_to_the_end(r)
+    assert r.c.ask("K")[5] == "1", "resumed"
+
+
+@case("resumption after a HelloRetryRequest to P-256: the second ClientHello's binder over message_hash and the retry", "ok")
+def resumption_after_retry(s):
+    psk = first_connection(s)
+    r = resume(s, psk)
+    first = r.transcript
+    hrr = r.hello_retry(r.sid, P256)
+    r.c.feed(plain_record(22, hrr))
+    (hello,) = r.c.take()
+    msg, sid, r.client_shares, _ = parse_client_hello(hello)
+    prefix = message(254, r.hash(first).digest()) + hrr
+    check_binder(msg, psk, prefix)
+    r.transcript = prefix + msg
+    r.group = P256
+    r.c.feed(resumed_flight(r))
+    resumed_to_the_end(r)
+    assert r.c.ask("K")[5] == "1", "resumed"
+
+
+@case("resumption declined: the server answers a ticket with a full handshake, verified", "ok")
+def resumption_declined(s):
+    psk = first_connection(s)
+    r = resume(s, psk)
+    check_binder(r.transcript, psk)
+    r.c.feed(r.hello_and_flight())
+    resumed_to_the_end(r)
+    assert r.c.ask("K")[5] == "0", "not resumed"
+
+
+@case("a HelloRetryRequest to a suite with another hash: the second ClientHello offers no ticket", "ok")
+def resumption_retry_other_hash(s):
+    psk = first_connection(s)
+    r = resume(s, psk)
+    first = r.transcript
+    hrr = r.hello_retry(r.sid, P256, suite=0x1302)
+    r.c.feed(plain_record(22, hrr))
+    (hello,) = r.c.take()
+    msg, sid, r.client_shares, _ = parse_client_hello(hello)
+    assert psk_offer(msg) is None, "no ticket under SHA-384"
+    r.suite = 0x1302
+    r.transcript = message(254, hashlib.sha384(first).digest()) + hrr + msg
+    r.group = P256
+    r.c.feed(r.hello_and_flight())
+    resumed_to_the_end(r)
+    assert r.c.ask("K")[5] == "0", "not resumed"
+
+
+@case("resumption: the ServerHello selects identity 1, of the one offered", "tls-illegal-psk", alert=47)
+def resumption_identity_one(s):
+    r = resume(s, first_connection(s))
+    r.extra_extensions = ext(41, u16(1))
+    r.c.feed(plain_record(22, r.server_hello(r.sid)))
+
+
+@case("resumption: pre_shared_key and no key_share (psk_ke, which was not offered)", "tls-key-share", alert=47)
+def resumption_no_share(s):
+    r = resume(s, first_connection(s))
+    exts = r.version_ext + ext(41, u16(0))
+    body = u16(0x0303) + r.random + bytes([len(r.sid)]) + r.sid + u16(r.suite) + b"\0" + u16(len(exts)) + exts
+    r.c.feed(plain_record(22, message(2, body)))
+
+
+@case("resumption: a suite whose hash is not the ticket's", "tls-illegal-psk", alert=47)
+def resumption_other_hash(s):
+    r = resume(s, first_connection(s))
+    r.suite = 0x1302
+    r.extra_extensions = ext(41, u16(0))
+    r.c.feed(plain_record(22, r.server_hello(r.sid)))
+
+
+@case("pre_shared_key in a ServerHello when no ticket was offered", "tls-unsupported-extension", alert=110)
+def psk_not_offered(s):
+    s.start()
+    s.extra_extensions = ext(41, u16(0))
+    s.c.feed(plain_record(22, s.server_hello(s.sid)))
+
+
+@case("resumption: a Certificate after a resumed ServerHello", "tls-unexpected-message", alert=10)
+def resumption_with_certificate(s):
+    r = resume(s, first_connection(s))
+    r.c.feed(resumed_flight(r, after_ee=r.certificate()))
+
+
+@case("tickets not kept: 3,000 bytes, a lifetime of 0; one over 7 days kept for 7", "ok")
+def tickets_not_kept(s):
+    s.start()
+    s.c.feed(s.hello_and_flight())
+    s.check_client_finished()
+    issue(s, ticket=bytes(3000))
+    assert s.c.ask("K")[6] == "-", "a ticket over 2,048 bytes is not kept"
+    issue(s, lifetime=0)
+    assert s.c.ask("K")[6] == "-", "a lifetime of 0 is not kept"
+    issue(s, lifetime=700000)
+    f = s.c.ask("K")
+    assert f[6] == TICKET.hex() and f[8] == "604800", f"kept, for 7 days: {f[6:9]}"
+    f = s.c.feed(s.write.seal(21, b"\1\0"))
+    assert f[2] == "4", f"closed: {f}"
+    f = s.c.ask("K")
 
 
 def run_case(driver, name, tag, alert, encrypted, fn, server=None):

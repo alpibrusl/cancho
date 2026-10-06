@@ -762,6 +762,47 @@ fn connecting_outside_the_granted_host_traps() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A host longer than the bound, inside it, is let through to the connect on
+/// both backends -- the same out-of-bounds read of the bound that
+/// `filesystem.rs`'s `a_short_path_under_a_narrowed_prefix_is_read_on_both_backends`
+/// pins for paths. Before it was fixed, the LLVM backend answered garbage
+/// here (48, measured) where Cranelift answered the refused connection.
+#[test]
+fn a_host_inside_a_shorter_bound_is_dialled_on_both_backends() {
+    let dir = scratch("net-short-bound");
+    let source = dir.join("short_bound.ls");
+    std::fs::write(
+        &source,
+        "edition 2;\n\
+         fn main(world: World) -> [] int {\n\
+             let Split { io, ffi, fs, heap, args, net } = split(world);\n\
+             release(args); release(heap); release(ffi); release(fs); release(io);\n\
+             let bound = narrow(net, \"127.0.0\");\n\
+             var fd = 0;\n\
+             borrow bound as &n in {\n\
+                 fd = connect(n, \"127.0.0.1\", 1);\n\
+             }\n\
+             release(bound);\n\
+             if fd < 0 { return 7; }\n\
+             return 8;\n\
+         }\n",
+    )
+    .expect("a writable fixture");
+    for backend in ["cranelift", "llvm"] {
+        let exe = dir.join(format!("short_bound-{backend}"));
+        let build = Command::new(BIN)
+            .args(["build".as_ref(), source.as_os_str(), "--backend".as_ref(), backend.as_ref()])
+            .args(["-o".as_ref(), exe.as_os_str()])
+            .output()
+            .expect("the compiler runs");
+        assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+        let run = Command::new(&exe).output().expect("the compiled program runs");
+        // Nothing listens on port 1, so the connection is refused: `-1`.
+        assert_eq!(run.status.code(), Some(7), "`{backend}`: the host is inside the bound");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// §10.1: the bound's port half is checked too, exactly, not as a prefix
 /// -- `"127.0.0.1:1"` authorises port 1 and no other.
 #[test]
@@ -929,6 +970,50 @@ fn binding_the_wrong_port_traps() {
     assert!(!run.status.success(), "a port outside the bound should not succeed");
     assert_eq!(run.status.code(), None, "the process should be killed by a signal, not exit");
 
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `connect` and `bind` are operands like any `int` call, on both backends.
+/// The LLVM backend refused `connect(..) < 0` and `bind(..) + 1` as "failed to
+/// generate code" (its scalar-kind inference had no arm for either node), the
+/// same gap `filesystem.rs`'s `a_file_op_is_an_operand_on_both_backends` pins
+/// for `fs_read`/`fs_write`. The dialled port is free, so the connection is
+/// refused; the bound one is free, so the bind succeeds.
+#[test]
+fn connect_and_bind_are_operands_on_both_backends() {
+    let dir = scratch("net-operand");
+    let source = dir.join("operand.ls");
+    std::fs::write(
+        &source,
+        format!(
+            "edition 2;\n\
+             fn main(world: World) -> [] int {{\n\
+                 let Split {{ io, ffi, fs, heap, args, net }} = split(world);\n\
+                 release(args); release(heap); release(ffi); release(fs); release(io);\n\
+                 var score = 0;\n\
+                 borrow net as &n in {{\n\
+                     if connect(n, \"127.0.0.1\", {refused}) < 0 {{ score = score + 1; }}\n\
+                     if bind(n, {free}) + 1 > 0 {{ score = score + 2; }}\n\
+                 }}\n\
+                 release(net);\n\
+                 return score;\n\
+             }}\n",
+            refused = free_port(),
+            free = free_port(),
+        ),
+    )
+    .expect("a writable fixture");
+    for backend in ["cranelift", "llvm"] {
+        let exe = dir.join(format!("operand-{backend}"));
+        let build = Command::new(BIN)
+            .args(["build".as_ref(), source.as_os_str(), "--backend".as_ref(), backend.as_ref()])
+            .args(["-o".as_ref(), exe.as_os_str()])
+            .output()
+            .expect("the compiler runs");
+        assert!(build.status.success(), "`{backend}`: {}", String::from_utf8_lossy(&build.stderr));
+        let run = Command::new(&exe).output().expect("the compiled program runs");
+        assert_eq!(run.status.code(), Some(3), "`{backend}`: both comparisons should hold");
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 

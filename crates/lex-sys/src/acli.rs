@@ -112,6 +112,12 @@ fn cmd_build() -> CommandInfo {
         "which backend generates code",
         Some(json!("llvm")),
     )
+    .add_option(
+        "target",
+        "string",
+        "generate code for this target triple (`--backend llvm` only; `wasm32-wasip1`, docs/wasm.md)",
+        None,
+    )
     .with_examples(vec![
         ("Build an executable", "lex-sys build hello.ls"),
         ("Build with the standard library available", "lex-sys build --std app.ls"),
@@ -140,6 +146,12 @@ fn cmd_check() -> CommandInfo {
         "which backend generates the code check discards",
         Some(json!("llvm")),
     )
+    .add_option(
+        "target",
+        "string",
+        "generate code for this target triple (`--backend llvm` only; `wasm32-wasip1`, docs/wasm.md)",
+        None,
+    )
     .with_examples(vec![
         ("Type-check a file", "lex-sys check hello.ls"),
         ("Every refusal as structured data", "lex-sys check --output json app.ls"),
@@ -165,6 +177,12 @@ fn cmd_run() -> CommandInfo {
         "enum[cranelift|llvm]",
         "which backend generates code",
         Some(json!("llvm")),
+    )
+    .add_option(
+        "target",
+        "string",
+        "generate code for this target triple (`--backend llvm` only; `wasm32-wasip1`, docs/wasm.md)",
+        None,
     )
     .with_examples(vec![("Run a program", "lex-sys run hello.ls")])
     .with_see_also(vec!["build", "check"])
@@ -246,10 +264,20 @@ fn cmd_authority() -> CommandInfo {
     .add_argument("file", "string[]", "one or more .ls files", true)
     .add_option("std", "bool", "make the standard library's source available", None)
     .add_option("output", "enum[json]", "the report as data rather than prose", None)
-    .with_examples(vec![(
-        "What authority does this program need?",
-        "lex-sys authority --output json app.ls",
-    )])
+    .add_option(
+        "target",
+        "string",
+        "also report the WASI imports a module built for this target triple may make \
+         (`wasm32-wasip1`, docs/wasm.md)",
+        None,
+    )
+    .with_examples(vec![
+        ("What authority does this program need?", "lex-sys authority --output json app.ls"),
+        (
+            "And what may a WebAssembly build of it import?",
+            "lex-sys authority --target wasm32-wasip1 --output json app.ls",
+        ),
+    ])
     .with_see_also(vec!["check", "layout"])
 }
 

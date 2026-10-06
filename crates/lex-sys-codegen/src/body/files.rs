@@ -9,7 +9,7 @@ use lex_sys_ir::{OpenMode, PathOp};
 impl<'a, 'f> BodyEmitter<'a, 'f> {
     /// A NUL-terminated copy of `text` on the stack, for a C call that wants a
     /// string. A slice literal carries no terminator.
-    fn c_string(&mut self, text: &str) -> Value {
+    pub(crate) fn c_string(&mut self, text: &str) -> Value {
         let pointer = self.pointer;
         let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
             StackSlotKind::ExplicitSlot,

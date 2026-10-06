@@ -302,3 +302,104 @@ fn main(world: World) -> [] int {
     );
     assert!(!by_path.contains("file_read"), "the path program never opens a handle:\n{by_path}");
 }
+
+/// A short path under a narrowed prefix is read, on both backends. The path
+/// check used to read the prefix's byte at every index of the path, past the
+/// end of the prefix's global; LLVM folds that load to `poison`, `false &&
+/// poison` is still `poison`, and a branch on it is undefined behaviour, so at
+/// `-O2` the LLVM backend deleted the read and trapped instead. Only a path
+/// short enough for the check's loop to be unrolled showed it (measured: 11
+/// bytes and fewer here, 15 and more not), so the path here is that short.
+#[test]
+fn a_short_path_under_a_narrowed_prefix_is_read_on_both_backends() {
+    let dir = scratch("fs-short-path");
+    let path = format!("/tmp/lx{:04}", std::process::id() % 10000);
+    std::fs::write(&path, b"abc").expect("a short fixture file");
+    let source = dir.join("short.ls");
+    std::fs::write(
+        &source,
+        format!(
+            "fn main(world: World) -> [] int {{\n\
+                 let Split {{ io, ffi, fs, heap, args }} = split(world); release(args); release(heap); release(ffi); release(io);\n\
+                 let tmp = narrow(fs, \"/tmp\");\n\
+                 var read = 0;\n\
+                 region a {{\n\
+                     let buffer = alloc_slice[a](16, byte_of(0));\n\
+                     borrow tmp as &f in {{\n\
+                         read = fs_read(f, \"{path}\", buffer);\n\
+                     }}\n\
+                 }}\n\
+                 release(tmp);\n\
+                 return read;\n\
+             }}\n"
+        ),
+    )
+    .expect("a writable fixture");
+    for backend in ["cranelift", "llvm"] {
+        let exe = dir.join(format!("short-{backend}"));
+        let build = Command::new(BIN)
+            .args(["build".as_ref(), source.as_os_str(), "--backend".as_ref(), backend.as_ref()])
+            .args(["-o".as_ref(), exe.as_os_str()])
+            .output()
+            .expect("the compiler runs");
+        assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+        let run = Command::new(&exe).output().expect("the compiled program runs");
+        assert_eq!(run.status.code(), Some(3), "`{backend}`: the three bytes should be read");
+    }
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `fs_read`/`fs_write` are operands like any `int` call, on both backends:
+/// either side of a comparison, inside `&&`/`||`, and under arithmetic. The
+/// LLVM backend refused all of these as "failed to generate code" (its
+/// scalar-kind inference had no arm for the `FileOp` node), so only a result
+/// bound by `let` first could be compared. Cranelift was never affected.
+#[test]
+fn a_file_op_is_an_operand_on_both_backends() {
+    let dir = scratch("fs-operand");
+    let path = dir.join("written");
+    let path = path.to_str().expect("a UTF-8 scratch path");
+    let source = dir.join("operand.ls");
+    std::fs::write(
+        &source,
+        format!(
+            "edition 6;\n\
+             fn probe[&f, &b](fs: &f Fs(\"\"), buf: &!b [byte]) -> [fs_read(\"\"), fs_write(\"\")] int {{\n\
+                 var score = 0;\n\
+                 if fs_write(fs, \"{path}\", \"abc\") == 3 {{ score = score + 1; }}\n\
+                 if 0 < fs_read(fs, \"{path}\", buf) && fs_read(fs, \"{path}\", buf) - 3 == 0 {{ score = score + 2; }}\n\
+                 if fs_read(fs, \"/dev/urandom\", buf) == 32 || 1 == 2 {{ score = score + 4; }}\n\
+                 return score;\n\
+             }}\n\
+             fn main(world: World) -> [] int {{\n\
+                 let Split {{ io, ffi, fs, heap, args, net, clock, signals }} = split(world);\n\
+                 release(io); release(ffi); release(heap); release(args);\n\
+                 release(net); release(clock); release(signals);\n\
+                 var code = 0;\n\
+                 region r {{\n\
+                     let buf = alloc_slice[r](32, byte_of(0));\n\
+                     borrow fs as &f in {{\n\
+                         code = probe(f, buf);\n\
+                     }}\n\
+                 }}\n\
+                 release(fs);\n\
+                 return code;\n\
+             }}\n"
+        ),
+    )
+    .expect("a writable fixture");
+    for backend in ["cranelift", "llvm"] {
+        let _ = std::fs::remove_file(path);
+        let exe = dir.join(format!("operand-{backend}"));
+        let build = Command::new(BIN)
+            .args(["build".as_ref(), source.as_os_str(), "--backend".as_ref(), backend.as_ref()])
+            .args(["-o".as_ref(), exe.as_os_str()])
+            .output()
+            .expect("the compiler runs");
+        assert!(build.status.success(), "`{backend}`: {}", String::from_utf8_lossy(&build.stderr));
+        let run = Command::new(&exe).output().expect("the compiled program runs");
+        assert_eq!(run.status.code(), Some(7), "`{backend}`: every comparison should hold");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

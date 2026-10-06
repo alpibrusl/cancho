@@ -912,3 +912,682 @@ fn a_signal_claim_builds_for_every_target_with_each_kernels_calls() {
         });
     }
 }
+
+/// `docs/processes.md` §4.5 and §4.8, from any host: starting a program and
+/// watching it ask Linux for `closefrom` and a `pidfd`, and Darwin for
+/// neither -- `POSIX_SPAWN_CLOEXEC_DEFAULT` and `kevent` instead.
+#[test]
+fn a_child_is_started_and_watched_the_way_each_platform_does() {
+    const WATCH: &str = r#"edition 7;
+fn go[&x](exec: &x Exec("/bin")) -> [exec("/bin"), poll] int {
+    match poller_new() {
+        Polling::Ok(p) => {
+            var poller = p;
+            match pipe_open() {
+                Piped::Ok(mine, theirs) => {
+                    var m = mine;
+                    match exec_spawn(exec, "/bin/true", "", "", Stdio::Null, Stdio::Pipe(theirs), Stdio::Null) {
+                        Spawned::Ok(c) => {
+                            var child = c;
+                            borrow mut poller as &!ph in {
+                                borrow mut m as &!pp in {
+                                    borrow child as &ch in {
+                                        poller_add_pipe(ph, pp, 1, 1);
+                                        poller_add_child(ph, ch, 2);
+                                    }
+                                }
+                            }
+                            match child_wait(child) {
+                                Exited::Code(n) => { }
+                                Exited::Signaled(s) => { }
+                                Exited::Failed(e) => { }
+                            }
+                        }
+                        Spawned::Failed(e) => { }
+                    }
+                    pipe_close(m);
+                }
+                Piped::Failed(e) => { }
+            }
+            poller_close(poller);
+        }
+        Polling::Failed(e) => { }
+    }
+    return 0;
+}
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(net); release(clock); release(signals);
+    let bin = narrow(exec, "/bin");
+    var status = 0;
+    borrow bin as &x in { status = go(x); }
+    release(bin);
+    return status;
+}
+"#;
+    let ast = parse(WATCH).expect("should parse");
+    let program = lex_sys_ir::lower(&ast).expect("should lower");
+    for triple in [
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-apple-darwin",
+        "aarch64-apple-darwin",
+    ] {
+        let triple: Triple = triple.parse().expect("a valid triple");
+        let text = emit::emit_module(&program, "main", &triple)
+            .unwrap_or_else(|(_, message)| panic!("{triple}: {message}"));
+        // A `declare` is emitted for every libc function whatever the target
+        // uses; what a platform *does* is what it calls.
+        let calls = |name: &str| {
+            text.lines().any(|l| l.contains("call ") && l.contains(&format!("@{name}(")))
+        };
+        for call in ["posix_spawn", "waitpid", "socketpair", "close"] {
+            assert!(calls(call), "{triple} should call `{call}`");
+        }
+        if triple.to_string().contains("darwin") {
+            for call in ["kqueue", "kevent"] {
+                assert!(calls(call), "{triple} should call `{call}`");
+            }
+            assert!(
+                !calls("syscall")
+                    && !calls("epoll_ctl")
+                    && !calls("posix_spawn_file_actions_addclosefrom_np"),
+                "{triple}"
+            );
+        } else {
+            for call in ["syscall", "epoll_ctl", "posix_spawn_file_actions_addclosefrom_np"] {
+                assert!(calls(call), "{triple} should call `{call}`");
+            }
+            assert!(!calls("kevent") && !calls("kqueue"), "{triple}");
+        }
+        compile_object_for(&program, "main", triple.clone()).unwrap_or_else(|e| {
+            panic!("`clang` should accept the module for {triple}: {}", e.message)
+        });
+    }
+}
+
+/// lex-sys#252: a `region` left by `return` gives its chunk back, as one
+/// left by falling out of its last statement does. This backend used to
+/// emit the `ret` with no `free`, so a function that returned from inside a
+/// region kept one 64 KiB chunk per call for good (lexsys-hooks lost about
+/// 1 GB in 100,000 deliveries). `lex-sys-codegen`'s `emit_return` frees
+/// every open arena; this checks the LLVM backend does the same, in the
+/// IR, and that the value is read before its arena is freed.
+const RETURN_FROM_REGION: &str = "\
+fn copy[&o, &v](out: &!o [byte], at: int, value: &v [byte]) -> [] int {
+    var i = 0;
+    while i < len(value) {
+        out[at + i] = value[i];
+        i = i + 1;
+    }
+    return at + len(value);
+}
+
+fn left_by_return[&o](out: &!o [byte], n: int) -> [] int {
+    region a {
+        let value = alloc_slice[a](40, byte_of(0));
+        value[0] = byte_of(n & 127);
+        return copy(out, 0, value) + int_of(value[0]);
+    }
+}
+
+fn nested(n: int) -> [] int {
+    region a {
+        let x = alloc_slice[a](4, 0);
+        x[0] = n;
+        region b {
+            let y = alloc_slice[b](4, 0);
+            y[0] = x[0] * 2;
+            if y[0] > 10 {
+                return y[0];
+            }
+        }
+        return x[0];
+    }
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(args); release(fs); release(ffi); release(io); release(heap);
+    var total = 0;
+    region outer {
+        let buf = alloc_slice[outer](64, byte_of(0));
+        var i = 0;
+        while i < 100000 {
+            total = total + left_by_return(buf, i) + nested(i & 15);
+            i = i + 1;
+        }
+    }
+    return total & 127;
+}
+";
+
+/// The body of the function whose symbol contains `name`, from its
+/// `define` line to its closing brace.
+fn function_text<'t>(module: &'t str, name: &str) -> &'t str {
+    let mut at = 0;
+    let start = module
+        .lines()
+        .find_map(|line| {
+            let here = at;
+            at += line.len() + 1;
+            (line.starts_with("define ") && line.contains(&format!("{name}("))).then_some(here)
+        })
+        .unwrap_or_else(|| panic!("no function `{name}` in the module"));
+    let end = module[start..].find("\n}\n").expect("the function ends") + start;
+    &module[start..end]
+}
+
+#[test]
+fn a_region_left_by_return_frees_its_chunk_before_the_ret() {
+    let ast = parse(RETURN_FROM_REGION).expect("should parse");
+    let program = lex_sys_ir::lower(&ast).expect("should lower");
+    let triple: Triple = "x86_64-unknown-linux-gnu".parse().expect("a valid triple");
+    let module = emit::emit_module(&program, "main", &triple)
+        .unwrap_or_else(|(_, message)| panic!("{message}"));
+    let count = |text: &str, what: &str| text.lines().filter(|l| l.contains(what)).count();
+    // Every `ret` in a function that returns from inside a region comes
+    // straight after a `free` of an arena's chunk.
+    for name in ["left_by_return", "nested"] {
+        let text = function_text(&module, name);
+        let lines: Vec<&str> = text.lines().map(str::trim).collect();
+        for (at, line) in lines.iter().enumerate() {
+            if line.starts_with("ret ") {
+                assert!(
+                    lines[..at].last().is_some_and(|l| l.starts_with("call void @free(")),
+                    "`{name}`: a `ret` with no `free` just before it:\n{text}"
+                );
+            }
+        }
+    }
+    // `left_by_return`: one chunk, one `return`, one `free`.
+    let one = function_text(&module, "left_by_return");
+    assert_eq!(count(one, "call ptr @malloc("), 1, "{one}");
+    assert_eq!(count(one, "call void @free("), 1, "{one}");
+    // `nested`: the inner `return` frees both chunks, the inner region's
+    // fall-out frees its own, the outer `return` the outer one: four.
+    let two = function_text(&module, "nested");
+    assert_eq!(count(two, "call ptr @malloc("), 2, "{two}");
+    assert_eq!(count(two, "call void @free("), 4, "{two}");
+}
+
+#[test]
+fn a_value_returned_from_a_region_is_read_before_the_region_is_freed() {
+    let object = compiled(RETURN_FROM_REGION, "main");
+    let output = run(&object, "return-from-region");
+    // left_by_return(i) = 40 + (i & 127); nested(k) = 2k if 2k > 10 else k.
+    let mut total: i64 = 0;
+    for i in 0..100_000_i64 {
+        let k = i & 15;
+        total += 40 + (i & 127) + if 2 * k > 10 { 2 * k } else { k };
+    }
+    assert_eq!(output.status.code(), Some((total & 127) as i32), "{output:?}");
+}
+
+/// `docs/wasm.md`: what wasi-libc needs from the module the backend writes,
+/// checked on the text so it runs without a wasm toolchain.
+///
+/// Three things went wrong on the first `wasm32-wasip1` run, each silently:
+/// the entry was called `main` where wasi-libc calls `__main_argc_argv`; `malloc`
+/// was declared with an `i64` size where `size_t` is 4 bytes, which `wasm-ld`
+/// only warns about before swapping in a trap; and the trap was `ud2`.
+#[test]
+fn a_wasm32_module_has_the_shape_wasi_libc_needs() {
+    const SOURCE: &str = "fn main(world: World) -> [] int {\n\
+             let Split { io, ffi, fs, heap, args } = split(world);\n\
+             release(args); release(heap); release(fs); release(ffi); release(io);\n\
+             var n = 0;\n\
+             region a {\n\
+                 let s = alloc_slice[a](8, byte_of(1));\n\
+                 n = n + len(s);\n\
+             }\n\
+             return n;\n\
+         }\n";
+    let ast = parse(SOURCE).expect("should parse");
+    let program = lex_sys_ir::lower(&ast).expect("should lower");
+
+    let wasm: Triple = "wasm32-wasip1".parse().expect("a valid triple");
+    let text = emit::emit_module(&program, "main", &wasm).expect("wasm32 should emit");
+    assert!(text.contains("define internal i32 @lexsys_entry("), "the wrapper `_start` calls");
+    assert!(text.contains("define void @_start()"), "the module defines its own `_start`");
+    assert!(!text.contains("__main_argc_argv"), "nothing calls wasi-libc's `__main_void` now");
+    assert!(!text.contains("define i32 @main("), "no plain `main` on wasm");
+    assert!(text.contains("declare ptr @malloc(i32)"), "`malloc` with a 32-bit `size_t`");
+    assert!(!text.contains("declare ptr @malloc(i64)"), "no 64-bit `malloc`");
+    assert!(text.contains("call ptr @malloc(i32 "), "calls pass a 32-bit size");
+    assert!(
+        text.contains("icmp ugt i64") && text.contains(", 4294967295"),
+        "a huge size is clamped to the target's maximum, not truncated"
+    );
+
+    // The host's own module is untouched by any of this.
+    let host: Triple = "x86_64-unknown-linux-gnu".parse().expect("a valid triple");
+    let native = emit::emit_module(&program, "main", &host).expect("native should emit");
+    assert!(native.contains("define i32 @main("), "{native}");
+    assert!(native.contains("declare ptr @malloc(i64)"));
+    assert!(!native.contains("4294967295"), "no clamp on a native module");
+}
+
+#[test]
+fn wasm32_traps_with_unreachable() {
+    let ast = parse(&program_returning("x + 9223372036854775807")).expect("should parse");
+    let program = lex_sys_ir::lower(&ast).expect("should lower");
+    let wasm: Triple = "wasm32-wasip1".parse().expect("a valid triple");
+    let text = emit::emit_module(&program, "main", &wasm).expect("wasm32 should emit");
+    assert!(text.contains("asm sideeffect \"unreachable\""), "{text}");
+    assert!(!text.contains("ud2"), "no x86 trap in a wasm module");
+}
+
+/// The constant tables know Linux, Darwin and WASI. A fourth operating system
+/// used to take the Linux numbers without a word; now it is refused where the
+/// module is emitted.
+#[test]
+fn an_operating_system_without_tables_is_refused_not_given_linuxs() {
+    let ast = parse(&program_returning("x")).expect("should parse");
+    let program = lex_sys_ir::lower(&ast).expect("should lower");
+    let freebsd: Triple = "x86_64-unknown-freebsd".parse().expect("a valid triple");
+    let (_, message) = emit::emit_module(&program, "main", &freebsd).expect_err("no tables");
+    assert!(message.contains("freebsd"), "{message}");
+    for known in ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin", "wasm32-wasip1"] {
+        let triple: Triple = known.parse().expect("a valid triple");
+        emit::emit_module(&program, "main", &triple)
+            .unwrap_or_else(|(_, m)| panic!("{known}: {m}"));
+    }
+}
+
+/// `docs/wasm.md`: a failure's `errno` is translated on WASI and only there.
+#[test]
+fn errno_is_translated_on_wasi_and_only_there() {
+    const SOURCE: &str = "edition 6;\n\
+         fn main(world: World) -> [] int {\n\
+             let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);\n\
+             release(io); release(ffi); release(heap); release(args);\n\
+             release(net); release(clock); release(signals);\n\
+             let root = narrow(fs, \"/\");\n\
+             var status = 0;\n\
+             borrow root as &f in {\n\
+                 match open_dir(f, \"/nonexistent\") {\n\
+                     DirOpened::Ok(d) => { dir_close(d); }\n\
+                     DirOpened::Failed(e) => { status = e; }\n\
+                 }\n\
+             }\n\
+             release(root);\n\
+             return status;\n\
+         }\n";
+    let ast = parse(SOURCE).expect("should parse");
+    let program = lex_sys_ir::lower(&ast).expect("should lower");
+    let wasm: Triple = "wasm32-wasip1".parse().expect("a valid triple");
+    let text = emit::emit_module(&program, "main", &wasm).expect("wasm32 should emit");
+    assert!(text.contains("define internal i32 @lexsys_wasi_errno("), "{text}");
+    assert!(text.contains("i32 44, label %to2"), "ENOENT is 44 on WASI, 2 in the language");
+    assert!(text.contains("call i32 @lexsys_wasi_errno("), "errno is read through it");
+    let host: Triple = "x86_64-unknown-linux-gnu".parse().expect("a valid triple");
+    let native = emit::emit_module(&program, "main", &host).expect("native should emit");
+    assert!(!native.contains("lexsys_wasi_errno"), "no translation off WASI");
+}
+
+/// A module that runs [`emit::smul_overflow_definition`] against LLVM's own
+/// `smul.with.overflow` on the host and answers whether they ever disagreed:
+/// the 400 pairs of twenty edge values (both extremes, the square root of
+/// `i64::MAX` either side, powers of two, 2^32 either side) and then random
+/// pairs whose magnitudes are themselves random, so every bit-width of
+/// operand is reached. They must agree on the overflow flag always, and on the
+/// value whenever there was no overflow (what the intrinsic leaves unspecified
+/// otherwise).
+fn smul_differential(definition: &str, tag: &str) -> std::process::Output {
+    let host = lex_sys_codegen::host_triple();
+    let module = format!(
+        r#"target triple = "{host}"
+
+{definition}
+declare {{i64, i1}} @llvm.smul.with.overflow.i64(i64, i64)
+
+@edges = internal constant [20 x i64] [i64 0, i64 1, i64 -1, i64 2, i64 -2, i64 3,
+  i64 9223372036854775807, i64 -9223372036854775808, i64 9223372036854775806,
+  i64 -9223372036854775807, i64 2147483648, i64 4294967296, i64 -4294967296,
+  i64 4611686018427387904, i64 -4611686018427387904, i64 4294967295,
+  i64 3037000499, i64 3037000500, i64 -3037000500, i64 -2147483648]
+
+define i32 @main(i32 %argc, ptr %argv) {{
+entry:
+  br label %loop
+loop:
+  %i = phi i64 [0, %entry], [%i1, %loop]
+  %sa = phi i64 [88172645463325252, %entry], [%sa2, %loop]
+  %sb = phi i64 [1181783497276652981, %entry], [%sb2, %loop]
+  %bad = phi i64 [0, %entry], [%bad1, %loop]
+  %a1 = shl i64 %sa, 13
+  %a2 = xor i64 %sa, %a1
+  %a3 = lshr i64 %a2, 7
+  %a4 = xor i64 %a2, %a3
+  %a5 = shl i64 %a4, 17
+  %sa2 = xor i64 %a4, %a5
+  %b1 = shl i64 %sb, 13
+  %b2 = xor i64 %sb, %b1
+  %b3 = lshr i64 %b2, 7
+  %b4 = xor i64 %b2, %b3
+  %b5 = shl i64 %b4, 17
+  %sb2 = xor i64 %b4, %b5
+  %sha = lshr i64 %sb2, 58
+  %shb = lshr i64 %sa2, 58
+  %ra = ashr i64 %sa2, %sha
+  %rb = ashr i64 %sb2, %shb
+  %ia0 = udiv i64 %i, 20
+  %ia = urem i64 %ia0, 20
+  %ib = urem i64 %i, 20
+  %pa = getelementptr i64, ptr @edges, i64 %ia
+  %pb = getelementptr i64, ptr @edges, i64 %ib
+  %ea = load i64, ptr %pa
+  %eb = load i64, ptr %pb
+  %edge = icmp ult i64 %i, 400
+  %a = select i1 %edge, i64 %ea, i64 %ra
+  %b = select i1 %edge, i64 %eb, i64 %rb
+  %want = call {{i64, i1}} @llvm.smul.with.overflow.i64(i64 %a, i64 %b)
+  %got = call {{i64, i1}} @lexsys_smul_overflow(i64 %a, i64 %b)
+  %wo = extractvalue {{i64, i1}} %want, 1
+  %go = extractvalue {{i64, i1}} %got, 1
+  %wv = extractvalue {{i64, i1}} %want, 0
+  %gv = extractvalue {{i64, i1}} %got, 0
+  %flag_diff = xor i1 %wo, %go
+  %val_diff0 = icmp ne i64 %wv, %gv
+  %nov = xor i1 %wo, true
+  %val_diff = and i1 %val_diff0, %nov
+  %diff = or i1 %flag_diff, %val_diff
+  %d64 = zext i1 %diff to i64
+  %bad1 = add i64 %bad, %d64
+  %i1 = add i64 %i, 1
+  %more = icmp ult i64 %i1, 2000000
+  br i1 %more, label %loop, label %done
+done:
+  %any = icmp ne i64 %bad1, 0
+  %r = zext i1 %any to i32
+  ret i32 %r
+}}
+"#
+    );
+    let object = run_clang(&module, &host).expect("clang should accept the differential module");
+    run(&object, tag)
+}
+
+/// W0.3: the multiply `wasm32` uses instead of `__multi3` is LLVM's own, bit
+/// for bit, where it is defined.
+#[test]
+fn the_inline_multiply_agrees_with_llvms_intrinsic() {
+    let out = smul_differential(&emit::smul_overflow_definition(), "smul-agrees");
+    assert_eq!(out.status.code(), Some(0), "the inline multiply disagreed with LLVM's: {out:?}");
+}
+
+/// The test above would pass if it could not fail, so break the algorithm and
+/// require that it does: the signed limit for a negative product is 2^63, not
+/// 2^63-1, and `INT_MIN * 1` is the pair that says so.
+#[test]
+fn the_differential_test_can_fail() {
+    let broken = emit::smul_overflow_definition().replace(
+        "select i1 %neg, i64 9223372036854775808, i64 9223372036854775807",
+        "select i1 %neg, i64 9223372036854775807, i64 9223372036854775807",
+    );
+    assert_ne!(broken, emit::smul_overflow_definition(), "the replacement did not apply");
+    let out = smul_differential(&broken, "smul-broken");
+    assert_eq!(out.status.code(), Some(1), "a wrong multiply went unnoticed: {out:?}");
+}
+
+/// A `wasm32` module uses it, and a native one never does.
+#[test]
+fn only_wasm32_swaps_the_multiply() {
+    let ast = parse(&program_returning("(4611686018427387904 + x) * 2")).expect("should parse");
+    let program = lex_sys_ir::lower(&ast).expect("should lower");
+    let wasm: Triple = "wasm32-wasip1".parse().expect("a valid triple");
+    let text = emit::emit_module(&program, "main", &wasm).expect("wasm32 should emit");
+    assert!(text.contains("call {i64, i1} @lexsys_smul_overflow("), "{text}");
+    assert!(text.contains("define internal {i64, i1} @lexsys_smul_overflow("));
+    assert!(!text.contains("call {i64, i1} @llvm.smul.with.overflow"), "no `__multi3` path left");
+    // Add and subtract are single instructions on wasm and keep the intrinsic.
+    let host: Triple = "x86_64-unknown-linux-gnu".parse().expect("a valid triple");
+    let native = emit::emit_module(&program, "main", &host).expect("native should emit");
+    assert!(native.contains("call {i64, i1} @llvm.smul.with.overflow"), "{native}");
+    assert!(!native.contains("lexsys_smul_overflow"), "no shim off wasm32");
+}
+
+/// `docs/wasm.md`, W0.4: on wasm32 every libc function whose C signature has a
+/// `size_t` is declared with a 32-bit one *and called with one*, at every call
+/// site the backend has, not through a wrapper added afterwards.
+///
+/// `wasm-ld` only warns about a call whose type disagrees with its definition
+/// and swaps in a trap, so a missed site links and dies at run time (the CLI links
+/// with `--fatal-warnings`, which makes it a build failure instead). This is the
+/// same check one step earlier and with no toolchain: for each of these
+/// fixtures, no `@malloc`, `@memmove`, `@read`, ... line mentions an `i64` -- save
+/// `pread` and `pwrite`, whose offset is a 64-bit `off_t` on WASI and is the only
+/// one -- and the same fixtures on the host still pass 64-bit sizes.
+#[test]
+fn every_sized_libc_call_on_wasm32_passes_a_32_bit_size() {
+    const SIZED: [&str; 11] = [
+        "malloc", "calloc", "memchr", "memmove", "strlen", "strncmp", "fwrite", "read", "write",
+        "pread", "pwrite",
+    ];
+    let wasm: Triple = "wasm32-wasip1".parse().expect("a valid triple");
+    let host: Triple = "x86_64-unknown-linux-gnu".parse().expect("a valid triple");
+    let mut seen = std::collections::BTreeSet::new();
+    // `write_bytes` is `fwrite`; the fixtures below reach the rest. None imports
+    // `std`, which a bare `lower` has no copy of.
+    const BULK_WRITE: &str = "edition 5;\n\
+         fn main(world: World) -> [] int {\n\
+             let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n\
+             release(ffi); release(fs); release(heap); release(args); release(net);\n\
+             release(clock);\n\
+             borrow mut io as &!i in { write_bytes(i, \"hi\"); }\n\
+             release(io);\n\
+             return 0;\n\
+         }\n";
+    for (name, source) in [
+        ("copy_within", include_str!("../../../tests/accept/copy_within.ls")),
+        ("arguments", include_str!("../../../tests/accept/arguments.ls")),
+        ("file_roundtrip", include_str!("../../../tests/accept/file_roundtrip.ls")),
+        ("write_bytes", BULK_WRITE),
+    ] {
+        let ast = parse(source).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        let program = lex_sys_ir::lower(&ast).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        let text = emit::emit_module(&program, "main", &wasm).expect("wasm32 should emit");
+        for line in text.lines() {
+            for func in SIZED {
+                if !line.contains(&format!("@{func}(")) {
+                    continue;
+                }
+                let allowed = if func == "pread" || func == "pwrite" { 1 } else { 0 };
+                assert_eq!(
+                    line.matches("i64").count(),
+                    allowed,
+                    "{name}: `{func}` on wasm32 must pass a 32-bit `size_t`: {line}"
+                );
+                seen.insert(func);
+            }
+        }
+        // The host is not touched: its sizes are still 64-bit.
+        let native = emit::emit_module(&program, "main", &host).expect("native should emit");
+        assert!(native.contains("declare ptr @malloc(i64)"), "{name}");
+    }
+    for func in ["malloc", "memmove", "fwrite", "strlen", "read", "write"] {
+        assert!(seen.contains(func), "the fixtures never reached `{func}`: {seen:?}");
+    }
+}
+
+/// `docs/wasm.md`, W2: on wasm32 the console is `fd_write` and `fd_read` and
+/// nothing else. libc's stdio imported `fd_fdstat_get`, `fd_seek`, `fd_close` and
+/// `clock_time_get` for a program that only printed, so a row of `[io_write]` came
+/// with a clock; no `putchar`, `getchar`, `fwrite`, `fflush` or `ferror` call may
+/// survive in a module for this target. Text only, so CI runs it.
+#[test]
+fn a_wasm32_console_never_calls_libc_stdio() {
+    const CONSOLE: &str = "edition 5;\n\
+         fn main(world: World) -> [] int {\n\
+             let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n\
+             release(ffi); release(fs); release(heap); release(args); release(net);\n\
+             release(clock);\n\
+             var c = 0;\n\
+             borrow mut io as &!i in {\n\
+                 c = getchar(i);\n\
+                 putchar(i, c);\n\
+                 write_bytes(i, \"hi\");\n\
+                 write_err(i, \"e\");\n\
+                 flush_out(i);\n\
+             }\n\
+             release(io);\n\
+             return 0;\n\
+         }\n";
+    let ast = parse(CONSOLE).expect("should parse");
+    let program = lex_sys_ir::lower(&ast).expect("should lower");
+    let wasm: Triple = "wasm32-wasip1".parse().expect("a valid triple");
+    let text = emit::emit_module(&program, "main", &wasm).expect("wasm32 should emit");
+
+    let code = || text.lines().filter(|l| !l.trim_start().starts_with("declare "));
+    for libc in ["putchar", "getchar", "fwrite", "fflush", "ferror"] {
+        assert!(
+            !code().any(|l| l.contains(&format!("@{libc}("))),
+            "a wasm32 module calls libc's `{libc}`: it would import stdio's fd_fdstat_get, \
+             fd_seek, fd_close and clock_time_get"
+        );
+    }
+    // The header still declares libc's `stdout` and `stderr` (unreferenced, so they
+    // import nothing); what must not exist is a use of either.
+    assert!(
+        !code().any(|l| {
+            !l.contains("external global") && (l.contains("@stdout") || l.contains("@stderr"))
+        }),
+        "a wasm32 module reaches libc's `stdout`/`stderr`"
+    );
+    for ours in [
+        "call i32 @lexsys_getchar(",
+        "call i32 @lexsys_putchar(",
+        "@lexsys_stdout_write(",
+        "@lexsys_stderr_write(",
+        "call i32 @lexsys_console_flush(",
+    ] {
+        assert!(text.contains(ours), "missing `{ours}`");
+    }
+    assert!(text.contains(r#""wasm-import-name"="fd_write""#));
+    assert!(text.contains(r#""wasm-import-name"="fd_read""#));
+    // Exactly two WASI imports, and neither is a libc wrapper.
+    assert_eq!(text.matches("\"wasm-import-name\"").count(), 2, "{text}");
+
+    // `main` flushes what it buffered before it returns, as libc does, so the
+    // bytes are not lost: the entry calls the flush and then returns the status.
+    let entry_of = |module: &str| -> String {
+        let from = module.find("define internal i32 @lexsys_entry(").expect("the entry");
+        let body = &module[from..];
+        body[..body.find("\n}\n").expect("the entry ends")].to_owned()
+    };
+    let entry = entry_of(&text);
+    let flush = entry.find("call i32 @lexsys_console_flush()").expect("the exit flush");
+    assert!(flush < entry.find("ret i32 %status").expect("the return"));
+
+    // A module that never writes has no flush at exit, or every pure program would
+    // import `fd_write`.
+    let pure = parse("fn main(world: World) -> [] int { release(world); return 0; }\n")
+        .expect("should parse");
+    let pure = lex_sys_ir::lower(&pure).expect("should lower");
+    let pure = emit::emit_module(&pure, "main", &wasm).expect("wasm32 should emit");
+    let pure_entry = entry_of(&pure);
+    assert!(!pure_entry.contains("lexsys_console_flush"), "{pure_entry}");
+
+    // The host keeps libc's stdio, and none of this.
+    let host: Triple = "x86_64-unknown-linux-gnu".parse().expect("a valid triple");
+    let native = emit::emit_module(&program, "main", &host).expect("native should emit");
+    assert!(native.contains("call i32 @putchar("), "{native}");
+    assert!(native.contains("call i32 @getchar("));
+    assert!(!native.contains("lexsys_console") && !native.contains("lexsys_putchar"));
+}
+
+/// W0.5 (`docs/wasm.md`): on WASI a file is opened for writing with `openat` and the
+/// mode's flags, not through `fopen` and a `dup` of its descriptor. WASI has no
+/// `dup`: `fcntl(F_DUPFD_CLOEXEC)` answered `EINVAL`, so `open_write`, `open_append`,
+/// `open_new` and `open_rw` all failed on a program that worked natively, and
+/// `fopen` brought stdio's imports along. No accept fixture reached them.
+#[test]
+fn a_wasi_file_is_opened_for_writing_with_openat_not_fopen() {
+    const WRITE: &str = "edition 6;\n\
+         fn main(world: World) -> [] int {\n\
+             let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);\n\
+             release(io); release(ffi); release(heap); release(args); release(net);\n\
+             release(clock); release(signals);\n\
+             let d = narrow(fs, \"/tmp\");\n\
+             var code = 0;\n\
+             borrow d as &f in {\n\
+                 match open_write(f, \"/tmp/x\") {\n\
+                     Opened::Failed(e) => { code = e; }\n\
+                     Opened::Ok(o) => { var file = o; file_close(file); }\n\
+                 }\n\
+             }\n\
+             release(d);\n\
+             return code;\n\
+         }\n";
+    let ast = parse(WRITE).expect("should parse");
+    let program = lex_sys_ir::lower(&ast).expect("should lower");
+    let wasm: Triple = "wasm32-wasip1".parse().expect("a valid triple");
+    let text = emit::emit_module(&program, "main", &wasm).expect("wasm32 should emit");
+    let calls = |module: &str, name: &str| {
+        module
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("declare "))
+            .any(|l| l.contains(&format!("@{name}(")))
+    };
+    assert!(!calls(&text, "fopen"), "a WASI module opens files through fopen");
+    assert!(!calls(&text, "fcntl"), "a WASI module duplicates a descriptor with fcntl");
+    assert!(calls(&text, "openat"), "{text}");
+    // O_WRONLY | O_CREAT | O_TRUNC, as WASI numbers them.
+    assert!(text.contains(&(0x1000_0000_i64 | 0x1000 | 0x8000).to_string()), "{text}");
+
+    let host: Triple = "x86_64-unknown-linux-gnu".parse().expect("a valid triple");
+    let native = emit::emit_module(&program, "main", &host).expect("native should emit");
+    assert!(calls(&native, "fopen"), "the host keeps its fopen bridge");
+}
+
+/// W2c (`docs/wasm.md`): the module defines `_start` itself and fetches the command line only
+/// if the program reads it. wasi-libc's `__main_void` fetched it before every `main`, so a
+/// program that released `args` still imported `args_get` and `args_sizes_get` and the runtime
+/// would have granted it the command line. A program that reads nothing now has no such
+/// import in it to make. Text only, so CI runs it.
+#[test]
+fn a_wasm32_module_fetches_the_command_line_only_if_the_program_reads_it() {
+    const PURE: &str = "fn main(world: World) -> [] int { release(world); return 0; }\n";
+    const READS: &str = "fn main(world: World) -> [] int {\n\
+             let Split { io, ffi, fs, heap, args } = split(world);\n\
+             release(io); release(ffi); release(fs); release(heap);\n\
+             var n = 0;\n\
+             borrow args as &a in { n = arg_count(a); }\n\
+             release(args);\n\
+             return n;\n\
+         }\n";
+    let wasm: Triple = "wasm32-wasip1".parse().expect("a valid triple");
+    let emit_for = |source: &str, triple: &Triple| {
+        let ast = parse(source).expect("should parse");
+        let program = lex_sys_ir::lower(&ast).expect("should lower");
+        emit::emit_module(&program, "main", triple).expect("should emit")
+    };
+
+    let pure = emit_for(PURE, &wasm);
+    // The entry is ours, and does what crt1's did: constructors, main, destructors, and a
+    // non-zero status leaves through `_Exit` (`proc_exit`).
+    assert!(pure.contains("define void @_start()"), "{pure}");
+    for step in [
+        "call void @__wasm_call_ctors()",
+        "call i32 @lexsys_entry(",
+        "call void @__wasm_call_dtors()",
+        "call void @_Exit(i32 %status)",
+    ] {
+        assert!(pure.contains(step), "`_start` is missing `{step}`");
+    }
+    // ... and a program that never reads the command line carries nothing that could fetch it.
+    assert!(!pure.contains("lexsys_args_load"), "{pure}");
+    assert!(!pure.contains("args_sizes_get") && !pure.contains("\"args_get\""), "{pure}");
+
+    let reads = emit_for(READS, &wasm);
+    assert!(reads.contains("call void @lexsys_args_load(ptr %argc, ptr %argv)"), "{reads}");
+    assert!(reads.contains(r#""wasm-import-name"="args_sizes_get""#), "{reads}");
+    assert!(reads.contains(r#""wasm-import-name"="args_get""#), "{reads}");
+
+    // The host's entry is `main`, and none of this.
+    let host: Triple = "x86_64-unknown-linux-gnu".parse().expect("a valid triple");
+    let native = emit_for(READS, &host);
+    assert!(native.contains("define i32 @main(i32 %argc, ptr %argv)"), "{native}");
+    assert!(!native.contains("_start") && !native.contains("lexsys_args_load"), "{native}");
+}

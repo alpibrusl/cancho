@@ -474,7 +474,12 @@ pub(crate) fn collect_static_refs(e: &Expr, out: &mut std::collections::BTreeSet
         Expr::Static(index) => {
             out.insert(*index);
         }
-        Expr::Int(_) | Expr::Bool(_) | Expr::Float(_) | Expr::Load(_) | Expr::Bytes(_) => {}
+        Expr::Int(_)
+        | Expr::Bool(_)
+        | Expr::Float(_)
+        | Expr::F32(_)
+        | Expr::Load(_)
+        | Expr::Bytes(_) => {}
         Expr::FieldRef { base, .. }
         | Expr::FieldAddr { base, .. }
         | Expr::Field { base, .. }
@@ -518,6 +523,7 @@ pub(crate) fn collect_static_refs(e: &Expr, out: &mut std::collections::BTreeSet
         Expr::Call { args, .. }
         | Expr::FileOp { args, .. }
         | Expr::OpenFile { args, .. }
+        | Expr::ExecSpawn { args, .. }
         | Expr::PathOp { args, .. }
         | Expr::Connect { args, .. }
         | Expr::Bind { args, .. }
@@ -595,6 +601,7 @@ pub(crate) fn collect_extern_refs(e: &Expr, out: &mut std::collections::BTreeSet
         Expr::Int(_)
         | Expr::Bool(_)
         | Expr::Float(_)
+        | Expr::F32(_)
         | Expr::Load(_)
         | Expr::Bytes(_)
         | Expr::Static(_) => {}
@@ -640,6 +647,7 @@ pub(crate) fn collect_extern_refs(e: &Expr, out: &mut std::collections::BTreeSet
         }
         Expr::FileOp { args, .. }
         | Expr::OpenFile { args, .. }
+        | Expr::ExecSpawn { args, .. }
         | Expr::PathOp { args, .. }
         | Expr::Connect { args, .. }
         | Expr::Bind { args, .. }
@@ -703,7 +711,12 @@ pub(crate) fn remap_static_refs(e: &mut Expr, remap: &std::collections::BTreeMap
         Expr::Static(index) => {
             *index = remap[index];
         }
-        Expr::Int(_) | Expr::Bool(_) | Expr::Float(_) | Expr::Load(_) | Expr::Bytes(_) => {}
+        Expr::Int(_)
+        | Expr::Bool(_)
+        | Expr::Float(_)
+        | Expr::F32(_)
+        | Expr::Load(_)
+        | Expr::Bytes(_) => {}
         Expr::FieldRef { base, .. }
         | Expr::FieldAddr { base, .. }
         | Expr::Field { base, .. }
@@ -747,6 +760,7 @@ pub(crate) fn remap_static_refs(e: &mut Expr, remap: &std::collections::BTreeMap
         Expr::Call { args, .. }
         | Expr::FileOp { args, .. }
         | Expr::OpenFile { args, .. }
+        | Expr::ExecSpawn { args, .. }
         | Expr::PathOp { args, .. }
         | Expr::Connect { args, .. }
         | Expr::Bind { args, .. }

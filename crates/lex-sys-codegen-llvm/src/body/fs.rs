@@ -15,11 +15,59 @@ impl<'a> FuncEmitter<'a> {
         };
         let addr = self.fresh();
         self.out.push_str(&format!("  {addr} = call ptr @{symbol}()\n"));
-        let value32 = self.fresh();
-        self.out.push_str(&format!("  {value32} = load i32, ptr {addr}\n"));
+        let raw32 = self.fresh();
+        self.out.push_str(&format!("  {raw32} = load i32, ptr {addr}\n"));
+        // WASI's `errno` numbers are unrelated to Linux's; a program sees one
+        // numbering, so they are translated here, the one place a failure's
+        // `errno` is read (`lex_sys_ir::WASI_ERRNO_TO_LINUX`, `docs/wasm.md`).
+        let value32 = if self.file_os() == lex_sys_ir::Os::Wasi {
+            let translated = self.fresh();
+            self.out
+                .push_str(&format!("  {translated} = call i32 @lexsys_wasi_errno(i32 {raw32})\n"));
+            translated
+        } else {
+            raw32
+        };
         let value = self.fresh();
         self.out.push_str(&format!("  {value} = sext i32 {value32} to i64\n"));
         LValue::Reg(value)
+    }
+
+    /// Trap when byte `i` of a path or a host differs from byte `i` of the
+    /// `length`-byte bound at `expected`, while `i` is inside the bound.
+    ///
+    /// The bound's byte is read at `i` only while `i` is inside it, and at 0
+    /// otherwise. Reading it at every `i` read past the end of its global, and
+    /// LLVM folds that load to `poison`: `false && poison` is still `poison`,
+    /// and a branch on `poison` is undefined behaviour, so `-O2` deleted every
+    /// path through a short operation under a narrowed capability -- a
+    /// `fs_read("/tmp/q/f")` on `Fs("/tmp")` trapped (`docs/filesystem.md`
+    /// §4). An empty bound contains everything, and its global has no byte
+    /// to read at all, so there is nothing to compare.
+    pub(crate) fn check_against(
+        &mut self,
+        expected: &str,
+        length: usize,
+        i: &str,
+        byte: &str,
+    ) -> Result<(), String> {
+        if length == 0 {
+            return Ok(());
+        }
+        let inside = self.fresh();
+        self.out.push_str(&format!("  {inside} = icmp ult i64 {i}, {length}\n"));
+        let index = self.fresh();
+        self.out.push_str(&format!("  {index} = select i1 {inside}, i64 {i}, i64 0\n"));
+        let want_at = self.fresh();
+        self.out
+            .push_str(&format!("  {want_at} = getelementptr i8, ptr {expected}, i64 {index}\n"));
+        let want = self.fresh();
+        self.out.push_str(&format!("  {want} = load i8, ptr {want_at}\n"));
+        let differs = self.fresh();
+        self.out.push_str(&format!("  {differs} = icmp ne i8 {byte}, {want}\n"));
+        let escaped = self.fresh();
+        self.out.push_str(&format!("  {escaped} = and i1 {inside}, {differs}\n"));
+        self.trap_if(&escaped)
     }
 
     /// The longest path a file operation will build, including the NUL
@@ -93,17 +141,7 @@ impl<'a> FuncEmitter<'a> {
         // Inside the prefix, the bytes have to match. A path outside
         // what the capability granted is a broken promise, so it traps
         // rather than returning `-1`.
-        let inside = self.fresh();
-        self.out.push_str(&format!("  {inside} = icmp ult i64 {i}, {}\n", prefix.len()));
-        let want_at = self.fresh();
-        self.out.push_str(&format!("  {want_at} = getelementptr i8, ptr {expected}, i64 {i}\n"));
-        let want = self.fresh();
-        self.out.push_str(&format!("  {want} = load i8, ptr {want_at}\n"));
-        let differs = self.fresh();
-        self.out.push_str(&format!("  {differs} = icmp ne i8 {byte}, {want}\n"));
-        let escaped = self.fresh();
-        self.out.push_str(&format!("  {escaped} = and i1 {inside}, {differs}\n"));
-        self.trap_if(&escaped)?;
+        self.check_against(&expected, prefix.len(), &i, &byte)?;
 
         let next = self.fresh();
         self.out.push_str(&format!("  {next} = add i64 {i}, 1\n"));
@@ -161,7 +199,7 @@ impl<'a> FuncEmitter<'a> {
         let (flags, mode) = if write {
             (f.write_only | f.create | f.truncate | f.cloexec, lex_sys_ir::CREATE_MODE)
         } else {
-            (f.cloexec, 0)
+            (f.read_only | f.cloexec, 0)
         };
         let fd = self.open_at_cwd(&path, flags, mode);
 
@@ -182,12 +220,14 @@ impl<'a> FuncEmitter<'a> {
 
         self.out.push_str(&format!("{opened}:\n"));
         let name = if write { "write" } else { "read" };
-        let moved = self.fresh();
+        let st = self.size_ty();
+        let size = self.size_arg(&operand(&bytes[1]));
+        let raw = self.fresh();
         self.out.push_str(&format!(
-            "  {moved} = call i64 @{name}(i32 {fd}, ptr {}, i64 {})\n",
-            operand(&bytes[0]),
-            operand(&bytes[1])
+            "  {raw} = call {st} @{name}(i32 {fd}, ptr {}, {st} {size})\n",
+            operand(&bytes[0])
         ));
+        let moved = self.size_result(&raw, true);
         self.out.push_str(&format!("  call i32 @close(i32 {fd})\n"));
         self.out.push_str(&format!("  store i64 {moved}, ptr {result_cell}\n"));
         self.out.push_str(&format!("  br label %{merge}\n"));
@@ -216,11 +256,16 @@ impl<'a> FuncEmitter<'a> {
             return Ok(self.open_directory(&path));
         }
         if mode != lex_sys_ir::OpenMode::Read {
+            // WASI has no `dup`, which `fopen`'s bridge needs, so it opens with
+            // `openat` and the mode's own flags (`OpenMode::open_flags`).
+            if self.file_os() == lex_sys_ir::Os::Wasi {
+                return Ok(self.open_with_openat(&path, mode));
+            }
             return Ok(self.open_with_fopen(&path, mode));
         }
 
-        let cloexec = self.open_flags().cloexec;
-        let fd32 = self.open_at_cwd(&path, cloexec, 0);
+        let flags = self.open_flags();
+        let fd32 = self.open_at_cwd(&path, flags.read_only | flags.cloexec, 0);
         let fd = self.fresh();
         self.out.push_str(&format!("  {fd} = sext i32 {fd32} to i64\n"));
 
@@ -243,12 +288,14 @@ impl<'a> FuncEmitter<'a> {
         let fd = self.fresh();
         self.out.push_str(&format!("  {fd} = trunc i64 {fd64} to i32\n"));
 
-        let moved = self.fresh();
+        let st = self.size_ty();
+        let want = self.size_arg(&operand(&args[2]));
+        let raw = self.fresh();
         self.out.push_str(&format!(
-            "  {moved} = call i64 @read(i32 {fd}, ptr {}, i64 {})\n",
-            operand(&args[1]),
-            operand(&args[2])
+            "  {raw} = call {st} @read(i32 {fd}, ptr {}, {st} {want})\n",
+            operand(&args[1])
         ));
+        let moved = self.size_result(&raw, true);
 
         let negative = self.fresh();
         self.out.push_str(&format!("  {negative} = icmp slt i64 {moved}, 0\n"));

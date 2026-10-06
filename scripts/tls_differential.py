@@ -19,7 +19,7 @@ scheme is encrypted, so it is not compared.)
 
 **The lying server**, the default:
 
-`scripts/tls_liar.py` holds 66 connections, each a server that changes one
+`scripts/tls_liar.py` holds 80 connections, each a server that changes one
 thing, and what `packages/tls` must do with each: accept, or refuse with a
 tag and the alert RFC 8446 §6.2 names. Its expectations were written from the
 RFC. This runs the same cases, the same server code unchanged, against
@@ -27,7 +27,11 @@ OpenSSL's client instead, over a socket: `openssl s_client` with the liar's
 CA as its only root (`-verify_return_error`), its host name, and the time the
 liar's certificates are valid at (`-attime`). The client's request and its
 second write come in on `s_client`'s standard input, where the liar's script
-asks the driver to send them.
+asks the driver to send them. A resumption case's second connection (the
+driver's `R`) is a second `s_client` offering the session the first saved
+from the liar's ticket (`-sess_out`, then `-sess_in`), and the driver's `K`
+reads that session back (`openssl sess_id`): its ticket, PSK and lifetime,
+which the liar checks against its own.
 
 For each case, OpenSSL's outcome:
 - refused, alert N: OpenSSL sent a fatal alert (read in the clear, or opened
@@ -53,6 +57,7 @@ differ otherwise, and `STALE` when a difference `EXPECTED` names is gone.
 Exit status 1 on any `DIFFER` or `STALE`.
 """
 import os
+import re
 import select
 import socket
 import subprocess
@@ -98,6 +103,11 @@ EXPECTED = {
         "random, for middlebox compatibility); OpenSSL takes it as a new session",
     "TLS 1.2, a HelloRequest":
         "no renegotiation (#207); OpenSSL renegotiates",
+    "a close_notify instead of ServerHello":
+        "a close_notify before the handshake completes is not a clean close (review finding E-3, #209): it may be in the "
+        "clear, from anyone on the path; OpenSSL ends quietly, with no alert and no error of its own",
+    "a close_notify in the encrypted flight, before Finished":
+        "the same (review finding E-3): nothing authenticated has ended; OpenSSL ends quietly",
 }
 
 
@@ -122,13 +132,22 @@ class SClient:
         self.listener.listen(1)
         self.proc = None
         self.sock = None
+        # The session OpenSSL saves from each ticket (`-sess_out`), and the
+        # one a second connection offers (`-sess_in`).
+        self.session = os.path.join(self.dir.name, "session.pem")
+        self.offer = os.path.join(self.dir.name, "offer.pem")
+        self.psk_accepted = False
 
-    def _start(self):
+    def _start(self, resume=False):
         port = self.listener.getsockname()[1]
         host = tls_liar.HOST.decode()
+        sessions = ["-sess_out", self.session]
+        if resume:
+            sessions += ["-sess_in", self.offer]
         self.proc = subprocess.Popen(
             ["openssl", "s_client", "-connect", f"127.0.0.1:{port}", "-servername", host, "-CAfile", self.ca,
-             "-verify_return_error", "-verify_hostname", host, "-attime", str(tls_liar.NOW), "-quiet", *OFFER],
+             "-verify_return_error", "-verify_hostname", host, "-attime", str(tls_liar.NOW), "-quiet", *sessions,
+             *OFFER],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         threading.Thread(target=self._stdout, daemon=True).start()
         threading.Thread(target=self._stderr, daemon=True).start()
@@ -174,12 +193,55 @@ class SClient:
         self.answers.append(" ".join(f))
         return f
 
+    def _resume(self):
+        """`R`: the first connection ends, and a second offers the session
+        OpenSSL saved from its last ticket."""
+        self._drain()
+        self._end()
+        if os.path.exists(self.session):
+            os.replace(self.session, self.offer)
+        self.sent = b""
+        self.closed = False
+        self.ccs_given = False
+        self.psk_accepted = False
+        self._start(resume=True)
+        self._drain()
+        return self._answer(0)
+
+    def _kept(self):
+        """`K`: whether this connection resumed (its ServerHello selected the
+        PSK, and OpenSSL took it), and the ticket OpenSSL saved: its PSK
+        (`openssl sess_id` prints it as the Resumption PSK)
+        and lifetime. OpenSSL does not print ticket_age_add: 0."""
+        self._drain()
+        f = ["0", "ok", "4" if self.closed else "3", "-", "-", "1" if self.psk_accepted else "0"]
+        text = ""
+        if os.path.exists(self.session):
+            text = subprocess.run(["openssl", "sess_id", "-in", self.session, "-text", "-noout"],
+                                  capture_output=True, text=True).stdout
+        # The ticket is a hex dump: 16 bytes a line in its first 47 columns,
+        # then the same as text.
+        ticket = "".join("".join(re.findall(r"[0-9a-f]{2}", row[:47]))
+                         for row in re.findall(r"^\s*[0-9a-f]{4} - (.*)$", text, re.M))
+        psk = re.search(r"Resumption PSK: ([0-9A-F]+)", text)
+        lifetime = re.search(r"lifetime hint: (\d+)", text)
+        if not ticket or psk is None:
+            f += ["-", "-", "0", "0"]
+        else:
+            f += [ticket, psk.group(1).lower(), lifetime.group(1) if lifetime else "0", "0"]
+        self.answers.append(" ".join(f))
+        return f
+
     def ask(self, line):
         op = line[0]
         if op == "C":
             self._start()
             self._drain()
             return self._answer(0)
+        if op == "R":
+            return self._resume()
+        if op == "K":
+            return self._kept()
         if op == "W":
             data = bytes.fromhex(line.split()[1])
             try:
@@ -192,6 +254,8 @@ class SClient:
         raise ValueError(line)
 
     def feed(self, data):
+        if self.tls13 and psk_selected(data):
+            self.psk_accepted = True
         try:
             self.sock.sendall(data)
         except OSError:
@@ -216,7 +280,7 @@ class SClient:
             recs.insert(0, CCS)
         return recs
 
-    def close(self):
+    def _end(self):
         for f in (self.proc.stdin, self.sock):
             try:
                 f.close()
@@ -224,8 +288,32 @@ class SClient:
                 pass
         self.proc.kill()
         self.proc.wait()
+
+    def close(self):
+        self._end()
         self.listener.close()
         self.dir.cleanup()
+
+
+def psk_selected(data):
+    """Whether `data`, what the server sends, holds a ServerHello in the
+    clear with pre_shared_key (41): the server chose to resume. Whether
+    OpenSSL then took it is in its outcome."""
+    for rec in tls_liar.records(data):
+        if rec[:1] != b"\x16" or rec[5:6] != b"\x02":
+            continue
+        b = rec[9:]
+        at = 2 + 32
+        at += 1 + b[at]
+        at += 3
+        end = at + 2 + int.from_bytes(b[at:at + 2], "big")
+        at += 2
+        while at + 4 <= end:
+            kind, n = int.from_bytes(b[at:at + 2], "big"), int.from_bytes(b[at + 2:at + 4], "big")
+            if kind == 41:
+                return True
+            at += 4 + n
+    return False
 
 
 def alert_in(server, recs):

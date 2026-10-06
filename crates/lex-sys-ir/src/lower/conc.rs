@@ -80,8 +80,10 @@ impl<'a> FnLowering<'a> {
             ));
         };
         let payload_span = self.ast.expr_span(*payload);
+        let reads_from = self.reads.len();
         let (payload_value, payload_ty) = self.expr(*payload)?;
         let payload_ty = self.unifier.resolve(&payload_ty);
+        let payload_reads = self.reads[reads_from..].to_vec();
 
         let body_span = self.ast.expr_span(*body);
         let (body_value, body_ty) = self.expr(*body)?;
@@ -133,6 +135,15 @@ impl<'a> FnLowering<'a> {
             ));
         }
 
+        // `docs/aliasing.md` §6.1: a `&!` that crosses to a thread is lent
+        // to it until the handle is joined. Nothing else may touch the
+        // object it points at meanwhile, which includes a second thread
+        // given another copy of the same reference.
+        if matches!(payload_ty, Type::Ref { unique: true, .. }) && !payload_reads.is_empty() {
+            self.trace.emit(Event::Lease { from: payload_reads, span });
+            self.pending_lease = true;
+        }
+
         // `docs/threads.md` §2: the row this costs is `conc` -- real
         // concurrency entering the program's authority surface -- plus
         // whatever `body` itself performs, because `body` only ever
@@ -173,6 +184,24 @@ impl<'a> FnLowering<'a> {
         };
         let handle_span = self.ast.expr_span(*handle);
         let (handle_value, handle_ty) = self.expr(*handle)?;
+        // `docs/aliasing.md` §6.1: this is where a lease ends. Only the two
+        // shapes the checker can follow end one -- a handle named by a
+        // binding, and a `spawn` joined where it is made. A handle passed
+        // through anything else keeps its lease for the rest of the borrow,
+        // which refuses a program rather than admitting a race.
+        match self.ast.expr(*handle) {
+            AstExpr::Name(name) => {
+                if let Some(binding) = self.lookup(*name) {
+                    let slot = binding.slot;
+                    self.trace.emit(Event::Join { handle: Some(slot) });
+                }
+            }
+            AstExpr::Call { .. } if self.pending_lease => {
+                self.trace.emit(Event::Join { handle: None });
+            }
+            _ => {}
+        }
+        self.pending_lease = false;
         let resolved = self.unifier.resolve(&handle_ty);
         let Type::Named(def, type_args) = &resolved else {
             return Err(Diagnostic::new(

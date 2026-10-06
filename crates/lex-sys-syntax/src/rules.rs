@@ -87,11 +87,12 @@ pub enum Rule {
     UnknownName,
     UnreachableStatement,
     UnsizedType,
+    UnsupportedOnTarget,
 }
 
 impl Rule {
     /// Every rule, in tag order. The catalogue as data.
-    pub const ALL: [Rule; 57] = [
+    pub const ALL: [Rule; 58] = [
         Rule::AmbiguousType,
         Rule::ArityMismatch,
         Rule::AssignToImmutable,
@@ -149,6 +150,7 @@ impl Rule {
         Rule::UnknownName,
         Rule::UnreachableStatement,
         Rule::UnsizedType,
+        Rule::UnsupportedOnTarget,
     ];
 
     /// The stable kebab-case name. Never changes meaning once shipped.
@@ -211,6 +213,7 @@ impl Rule {
             Rule::UnknownName => "unknown-name",
             Rule::UnreachableStatement => "unreachable-statement",
             Rule::UnsizedType => "unsized-type",
+            Rule::UnsupportedOnTarget => "unsupported-on-target",
         }
     }
 
@@ -436,7 +439,7 @@ impl Rule {
             }
             Rule::UnknownEdition => {
                 "A file's `edition N;` marker names one of the editions this compiler knows; a \
-                 file with no marker is edition 1, and there is nothing later than edition 6 to \
+                 file with no marker is edition 1, and there is nothing later than edition 7 to \
                  name yet."
             }
             Rule::UnknownEscape => {
@@ -453,6 +456,11 @@ impl Rule {
             Rule::UnsizedType => {
                 "A slice type `[T]` has no size of its own, so it is used through a reference \
                  rather than as a value."
+            }
+            Rule::UnsupportedOnTarget => {
+                "The program reaches something this target cannot do -- threads, sockets, \
+                 signals or processes on WASI. Build for the host, or remove the call; \
+                 `docs/wasm.md` lists what each target supports."
             }
         }
     }

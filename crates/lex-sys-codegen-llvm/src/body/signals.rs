@@ -325,11 +325,13 @@ impl<'a> FuncEmitter<'a> {
             ));
             self.out.push_str(&format!("  {count} = sext i32 {got} to i64\n"));
         } else {
-            let got = self.fresh();
+            let st = self.size_ty();
+            let want = self.size_arg(&(stride * RECORDS).to_string());
+            let raw = self.fresh();
             self.out.push_str(&format!(
-                "  {got} = call i64 @read(i32 {fd}, ptr {buf}, i64 {})\n",
-                stride * RECORDS
+                "  {raw} = call {st} @read(i32 {fd}, ptr {buf}, {st} {want})\n"
             ));
+            let got = self.size_result(&raw, true);
             // `-1` (nothing queued: `EAGAIN`) divides to zero records.
             self.out.push_str(&format!("  {count} = sdiv i64 {got}, {SIGNALFD_RECORD}\n"));
         }

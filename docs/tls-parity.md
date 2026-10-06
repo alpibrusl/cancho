@@ -142,6 +142,10 @@ No index depends on the key or the data either.
 | open: fixed sealed message against random (both refused) | 2.98 | 2.31 |
 | open: tag wrong in its first byte against its last | 2.31 | 2.38 |
 
+*Corrected (#208, `docs/tls-assurance.md` §6.1): on the Xeon. On an Apple M4 Max at 20,000 samples, Cranelift's two data
+tests fail (|t| up to 34.39), with equal instruction counts for both classes, and its open-data test still fails with Arm's
+data-independent-timing bit set (5.62). LLVM passes there too.*
+
 **The harness's first version found a false leak.** It decoded each case's hex just before timing it. On the Cranelift
 backend, that gave t = 31 and 43 for the data tests, and t = 174 for a loop of plain XORs timed the same way. The cause was
 the decoding, not the code under test: its branch on each hex digit is always predicted for an all-zero input and

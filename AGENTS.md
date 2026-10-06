@@ -29,7 +29,7 @@ lex-sys test tests/*.ls --std              # run every `fn test_*`; exit 4 if on
 
 `check` reports **every** independent refusal, not the first. On a
 failure, read the `rule` field rather than the sentence: it is a stable
-name, there are 57 of them, and `docs/agent-errors.md` is the contract.
+name, there are 58 of them, and `docs/agent-errors.md` is the contract.
 One of them, `internal`, is the compiler's own failure, not your
 program's (`docs/internal-errors.md`).
 
@@ -375,8 +375,8 @@ fn main(world: World) -> [] int {
 ## 7. Use the library
 
 `std.bytes`, `std.io`, `std.math`, `std.buffer`, `std.option`,
-`std.result`, `std.list`, `std.vec`, `std.fmt`, `std.bignum`,
-`std.utf8`, `std.flags`, `std.crypto`, `std.ed25519`, `std.json`,
+`std.result`, `std.list`, `std.vec`, `std.fmt`, `std.fmt32` (`f32` text,
+edition 6), `std.bignum`, `std.utf8`, `std.flags`, `std.crypto`, `std.ed25519`, `std.json`,
 `std.map`, `std.http`, `std.route`, `std.test`. Pass `--std` and write the `import` — there is no prelude.
 
 `std.json` parses into a **tape** you provide (`docs/json.md`) rather than

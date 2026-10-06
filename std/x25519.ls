@@ -1,3 +1,4 @@
+edition 6;
 module std.x25519;
 import std.field25519;
 

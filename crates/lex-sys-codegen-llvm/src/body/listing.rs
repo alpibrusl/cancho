@@ -53,7 +53,7 @@ impl<'a> FuncEmitter<'a> {
             args.first().map(operand).ok_or_else(|| "`dir_list` needs its handle".to_owned())?;
         let flags = self.open_flags();
         // Close-on-exec, as every descriptor a builtin opens (`docs/processes.md` §4.5).
-        let directory = flags.directory | flags.cloexec;
+        let directory = flags.read_only | flags.directory | flags.cloexec;
         let cells = self.cells(3);
         let dot = self.fresh();
         self.hoist(format!("  {dot} = alloca [2 x i8]\n"));
@@ -115,7 +115,7 @@ impl<'a> FuncEmitter<'a> {
             return Err(format!("`dir_next` needs 3 leaves but {} were given", args.len()));
         }
         let (handle, buffer, room) = (operand(&args[0]), operand(&args[1]), operand(&args[2]));
-        let layout = lex_sys_ir::dirent_layout(self.is_darwin());
+        let layout = lex_sys_ir::dirent_layout_for(self.file_os());
         let cells = self.cells(4);
         let n = self.blocks;
         self.blocks += 1;
@@ -165,8 +165,10 @@ impl<'a> FuncEmitter<'a> {
             "  {name} = getelementptr i8, ptr {found}, i64 {}\n",
             layout.d_name
         ));
-        let length = self.fresh();
-        self.out.push_str(&format!("  {length} = call i64 @strlen(ptr {name})\n"));
+        let st = self.size_ty();
+        let raw = self.fresh();
+        self.out.push_str(&format!("  {raw} = call {st} @strlen(ptr {name})\n"));
+        let length = self.size_result(&raw, false);
         let first = self.fresh();
         self.out.push_str(&format!("  {first} = load i8, ptr {name}\n"));
         let first_dot = self.fresh();
@@ -203,14 +205,16 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("  br i1 {long}, label %{short}, label %{copy}\n"));
 
         self.out.push_str(&format!("{short}:\n"));
-        let too_long = lex_sys_ir::enametoolong(self.is_darwin()).to_string();
+        let too_long = lex_sys_ir::enametoolong_for(self.file_os()).to_string();
         self.store_all(&cells, &["2", "0", "0", &too_long]);
         self.out.push_str(&format!("  br label %{merge}\n"));
 
         self.out.push_str(&format!("{copy}:\n"));
+        let st = self.size_ty();
+        let size = self.size_arg(&length);
         let ignored = self.fresh();
         self.out.push_str(&format!(
-            "  {ignored} = call ptr @memmove(ptr {buffer}, ptr {name}, i64 {length})\n"
+            "  {ignored} = call ptr @memmove(ptr {buffer}, ptr {name}, {st} {size})\n"
         ));
         let type_at = self.fresh();
         self.out.push_str(&format!(
@@ -232,11 +236,12 @@ impl<'a> FuncEmitter<'a> {
     /// `d_type` as the language numbers a kind (§3.1).
     fn kind_of(&mut self, raw: &str) -> String {
         let mut kind = lex_sys_ir::KIND_OTHER.to_string();
+        let types = lex_sys_ir::dirent_types(self.file_os());
         for (dt, ours) in [
-            (lex_sys_ir::DT_UNKNOWN, lex_sys_ir::KIND_UNKNOWN),
-            (lex_sys_ir::DT_LNK, lex_sys_ir::KIND_LINK),
-            (lex_sys_ir::DT_DIR, lex_sys_ir::KIND_DIRECTORY),
-            (lex_sys_ir::DT_REG, lex_sys_ir::KIND_FILE),
+            (types.unknown, lex_sys_ir::KIND_UNKNOWN),
+            (types.link, lex_sys_ir::KIND_LINK),
+            (types.dir, lex_sys_ir::KIND_DIRECTORY),
+            (types.reg, lex_sys_ir::KIND_FILE),
         ] {
             let is = self.fresh();
             self.out.push_str(&format!("  {is} = icmp eq i64 {raw}, {dt}\n"));
@@ -270,7 +275,7 @@ impl<'a> FuncEmitter<'a> {
             return Err(format!("`dir_stat` needs 3 leaves but {} were given", args.len()));
         }
         let aarch64 = matches!(self.triple.architecture, target_lexicon::Architecture::Aarch64(_));
-        let layout = lex_sys_ir::stat_layout(self.is_darwin(), aarch64);
+        let layout = lex_sys_ir::stat_layout_for(self.file_os(), aarch64);
         let buffer = self.fresh();
         self.hoist(format!("  {buffer} = alloca [{} x i8], align 8\n", layout.size));
         let handle = operand(&args[0]);
@@ -316,6 +321,82 @@ impl<'a> FuncEmitter<'a> {
             LValue::Reg(mtime),
             reason,
         ])
+    }
+
+    /// `dir_mode(dir, name)` (§3.5): `dir_stat`'s check and `fstatat`, and
+    /// `Done`'s three leaves with the permission bits (`st_mode & 0o7777`) on
+    /// success. `dir_call`'s answer is already `Done`'s shape; only its value
+    /// is replaced.
+    pub(crate) fn dir_mode(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        if args.len() != 3 {
+            return Err(format!("`dir_mode` needs 3 leaves but {} were given", args.len()));
+        }
+        let aarch64 = matches!(self.triple.architecture, target_lexicon::Architecture::Aarch64(_));
+        let layout = lex_sys_ir::stat_layout_for(self.file_os(), aarch64);
+        let buffer = self.fresh();
+        self.hoist(format!("  {buffer} = alloca [{} x i8], align 8\n", layout.size));
+        let handle = operand(&args[0]);
+        let name = (operand(&args[1]), operand(&args[2]));
+        let answer = self.dir_call(&[name], |this, copies| {
+            let fd = this.dir_fd(&handle);
+            let result = this.fresh();
+            this.out.push_str(&format!(
+                "  {result} = call i32 @fstatat(i32 {fd}, ptr {}, ptr {buffer}, i32 {})\n",
+                copies[0], layout.no_follow
+            ));
+            result
+        });
+        let bits = self.permission_bits(&answer[0], &buffer, layout);
+        Ok(vec![answer[0].clone(), LValue::Reg(bits), answer[2].clone()])
+    }
+
+    /// `dir_own_mode(dir)` (§3.5): `fstat` on the handle's descriptor, so the
+    /// directory's own bits need no search permission on it and no name.
+    pub(crate) fn dir_own_mode(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        if args.len() != 1 {
+            return Err(format!("`dir_own_mode` needs 1 leaf but {} were given", args.len()));
+        }
+        let aarch64 = matches!(self.triple.architecture, target_lexicon::Architecture::Aarch64(_));
+        let layout = lex_sys_ir::stat_layout_for(self.file_os(), aarch64);
+        let buffer = self.fresh();
+        self.hoist(format!("  {buffer} = alloca [{} x i8], align 8\n", layout.size));
+        let fd = self.dir_fd(&operand(&args[0]));
+        let result = self.fresh();
+        self.out.push_str(&format!("  {result} = call i32 @fstat(i32 {fd}, ptr {buffer})\n"));
+        let reason = self.errno();
+        let wide = self.fresh();
+        self.out.push_str(&format!("  {wide} = sext i32 {result} to i64\n"));
+        let failed = self.fresh();
+        self.out.push_str(&format!("  {failed} = icmp slt i64 {wide}, 0\n"));
+        let tag = self.fresh();
+        self.out.push_str(&format!("  {tag} = select i1 {failed}, i64 1, i64 0\n"));
+        let tag = LValue::Reg(tag);
+        let bits = self.permission_bits(&tag, &buffer, layout);
+        Ok(vec![tag, LValue::Reg(bits), reason])
+    }
+
+    /// `st_mode & 0o7777` read from `buffer` at the target's offset, or `0`
+    /// when `tag` says the call failed (the buffer is not read then).
+    fn permission_bits(
+        &mut self,
+        tag: &LValue,
+        buffer: &str,
+        layout: lex_sys_ir::StatLayout,
+    ) -> String {
+        let ok = self.fresh();
+        self.out.push_str(&format!("  {ok} = icmp eq i64 {}, 0\n", operand(tag)));
+        let at = self.fresh();
+        self.out
+            .push_str(&format!("  {at} = getelementptr i8, ptr {buffer}, i64 {}\n", layout.mode));
+        let raw = self.fresh();
+        self.out.push_str(&format!("  {raw} = load i{}, ptr {at}\n", layout.mode_bits));
+        let wide = self.fresh();
+        self.out.push_str(&format!("  {wide} = zext i{} {raw} to i64\n", layout.mode_bits));
+        let bits = self.fresh();
+        self.out.push_str(&format!("  {bits} = and i64 {wide}, {}\n", lex_sys_ir::PERMISSION_BITS));
+        let chosen = self.fresh();
+        self.out.push_str(&format!("  {chosen} = select i1 {ok}, i64 {bits}, i64 0\n"));
+        chosen
     }
 
     /// `st_mode`'s type bits as the language numbers a kind (§3.2).

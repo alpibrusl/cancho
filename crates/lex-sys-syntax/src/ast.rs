@@ -212,6 +212,10 @@ pub enum Expr {
     /// and `-0.0` compare equal and behave differently, so they are two
     /// literals and hash as two.
     Float(u64),
+    /// A binary32 literal, `0.5f32` (`docs/f32.md` §2), stored as its
+    /// bits for the reason `Float` is. The width is written on the
+    /// literal and never inferred from context (`docs/f32.md` §4).
+    F32(u32),
     Bool(bool),
     /// A string literal, which exists only to be *read by the checker*.
     ///
@@ -759,6 +763,21 @@ pub const PRELUDE: &[&str] = &[
     "SignalWatch",
     "Watching",
     "signals",
+    // `docs/processes.md` §3.1: the capability to start a program, its
+    // `Split` field, the child and the channel's two ends, a child's stream,
+    // what the verbs answer, and the arms only these use; edition 7 only.
+    "Exec",
+    "exec",
+    "Child",
+    "Pipe",
+    "ChildEnd",
+    "Stdio",
+    "Piped",
+    "Spawned",
+    "Exited",
+    "Null",
+    "Code",
+    "Signaled",
     // `docs/directory-handles.md`: a directory handle and what opening one
     // answers; edition 6 only.
     "Dir",

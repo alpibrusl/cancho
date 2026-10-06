@@ -45,6 +45,9 @@ impl<'a> Emitter<'a> {
             }
             let mut description = DataDescription::new();
             description.define(bytes.into_boxed_slice());
+            if stride > 1 {
+                description.set_align(WORD_ALIGN);
+            }
             let name = format!("{PREFIX}static_{}", data.name);
             let id = self
                 .module
@@ -269,6 +272,7 @@ impl<'a> Emitter<'a> {
                 .map_err(|e| CodegenError::plain(e.to_string()))?;
             let mut description = DataDescription::new();
             description.define_zeroinit(RETURN_SLOT_STRIDE as usize);
+            description.set_align(WORD_ALIGN);
             self.module
                 .define_data(id, &description)
                 .map_err(|e| CodegenError::plain(e.to_string()))?;
@@ -284,6 +288,7 @@ impl<'a> Emitter<'a> {
                 .map_err(|e| CodegenError::plain(e.to_string()))?;
             let mut description = DataDescription::new();
             description.define_zeroinit(4 * lex_sys_ir::FD_EPOCH_SLOTS as usize);
+            description.set_align(WORD_ALIGN);
             self.module
                 .define_data(id, &description)
                 .map_err(|e| CodegenError::plain(e.to_string()))?;
@@ -299,6 +304,7 @@ impl<'a> Emitter<'a> {
                 .map_err(|e| CodegenError::plain(e.to_string()))?;
             let mut description = DataDescription::new();
             description.define_zeroinit(16);
+            description.set_align(WORD_ALIGN);
             self.module
                 .define_data(id, &description)
                 .map_err(|e| CodegenError::plain(e.to_string()))?;

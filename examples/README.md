@@ -10,7 +10,7 @@ that imports none of the library emits a byte-identical object either
 way ([`standard-library.md`](../docs/standard-library.md) §5.2).
 
 ```sh
-cargo run -p lex-sys -- run examples/tour.ls
+cargo run -p lex-sys -- run examples/tour.ls --std
 ```
 
 | Example | What it is |
@@ -28,6 +28,7 @@ cargo run -p lex-sys -- run examples/tour.ls
 | [`buffer/`](buffer/) | A growable byte buffer, written as a library |
 | [`slab/`](slab/) | Shared ownership, as far as this language reaches |
 | [`modular/`](modular/) | Two modules and a root |
+| [`selfhost/`](selfhost/) | The lex-sys lexer and parser, written in lex-sys, checked against the Rust ones |
 | [`cut/`](cut/) | `cut -d -f`, ported to **ask** what a string library needs |
 | [`wordfreq/`](wordfreq/) | The capstone: three files, every capability doing real work |
 
@@ -38,7 +39,7 @@ cargo run -p lex-sys -- run examples/tour.ls
 `tour.ls` is the shortest honest answer to "what can this language do".
 
 ```sh
-cargo run -p lex-sys -- run examples/tour.ls
+cargo run -p lex-sys -- run examples/tour.ls --std
 # M0: 7 5 3 1
 # M1 bool: 1010010
 # M1 struct: (3, 4) -> 25
@@ -259,6 +260,24 @@ had.
 
 `docs/porting.md` is the report, including §6 on what one small port does
 not establish.
+
+### `selfhost/` — the front end, written in itself
+
+```sh
+cargo build -p lex-sys-syntax --example dump_tokens --example dump_ast
+cargo run -p lex-sys -- build examples/selfhost/parser.ls $(for m in driver listing pass1 ast kinds lexcore tables; do echo examples/selfhost/$m.ls; done) --std -o /tmp/parser
+sh examples/selfhost/diff.sh target/debug/examples/dump_ast /tmp/parser examples/hello.ls tests/accept/*.ls
+# identical: 105  different: 0
+```
+
+`lexcore.ls` is the lex-sys tokeniser, `lexer.ls` prints its tokens, `ast.ls` parses them into a
+syntax tree, `parser.ls` prints the tree and `check.ls` runs the first half of the checker
+(`pass1.ls`) over it, all in lex-sys, as stages 1 and 2 of the staged port in
+`docs/self-hosting.md` §6. Each reads a source file on standard input and prints what
+the Rust front end makes of it (`dump_tokens.rs`, `dump_ast.rs` in `lex-sys-syntax`
+are the oracles), so the check is `diff`. `fuzz.py` adds hostile edge cases and
+mutants; `tests/conformance/selfhost.rs` runs both ports over every program in the
+repository in CI.
 
 ### `cut/` — the port written to find out what was missing
 

@@ -9,6 +9,7 @@ impl<'a> FuncEmitter<'a> {
     pub(crate) fn scalar_kind(&self, expr: &Expr) -> Result<LKind, String> {
         match expr {
             Expr::Float(_) => Ok(LKind::F64),
+            Expr::F32(_) => Ok(LKind::F32),
             Expr::Int(_) => Ok(LKind::I64),
             Expr::Bool(_) => Ok(LKind::I8),
             Expr::Load(slot) => self
@@ -60,14 +61,34 @@ impl<'a> FuncEmitter<'a> {
             // `Expr::UnboxedSlice` arms are `unreachable!()` inside
             // `call()` for the same reason) -- both always answer `int`.
             Expr::Len(_) | Expr::UnboxedSlice { .. } => Ok(LKind::I64),
+            // `fs_read`/`fs_write`, `connect` and `bind` are their own
+            // nodes too (the prefix or bound travels with them), and
+            // `lower/memory.rs`/`lower/net.rs` type all four `int` -- so
+            // `fs_read(fs, p, buf) == 32` is an operand like any call. The
+            // other capability nodes (`OpenFile`, `PathOp`, `ExecSpawn`,
+            // `TcpListen`, `TcpConnect`) answer tagged enums, which no
+            // operator takes.
+            Expr::FileOp { .. } | Expr::Connect { .. } | Expr::Bind { .. } => Ok(LKind::I64),
             // `join(t)` is its own node too: its kind is the thread's result
             // type, which is how `join(a) + join(b)` can be an operand.
             Expr::Joined { ret, .. } => leaves_of(ret, self.program)?
                 .into_iter()
                 .next()
                 .ok_or_else(|| "a zero-leaf join result has no scalar kind".to_owned()),
+            // `docs/function-values.md` §4.2: a call through a function
+            // value carries its callee's return type, so `f(1, 9) - 9`
+            // has a kind the same way a named call's does.
+            Expr::CallIndirect { ret, .. } => leaves_of(ret, self.program)?
+                .into_iter()
+                .next()
+                .ok_or_else(|| "a zero-leaf return has no scalar kind".to_owned()),
             Expr::Call { callee, .. } => match callee {
-                Callee::Builtin(Builtin::FloatOf | Builtin::Sqrt) => Ok(LKind::F64),
+                Callee::Builtin(Builtin::FloatOf | Builtin::Sqrt | Builtin::FloatOf32) => {
+                    Ok(LKind::F64)
+                }
+                Callee::Builtin(
+                    Builtin::F32Of | Builtin::F32OfBits | Builtin::Sqrt32 | Builtin::F32OfInt,
+                ) => Ok(LKind::F32),
                 // Every builtin below has one fixed, scalar return type
                 // (`Builtin::signature`'s own match, `lex-sys-ir::
                 // builtin.rs`) -- not a capability, not a type the call
@@ -86,6 +107,8 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::IntOf
                     | Builtin::Truncate
                     | Builtin::BitsOf
+                    | Builtin::BitsOf32
+                    | Builtin::IntOfF32
                     | Builtin::Listen
                     | Builtin::Accept
                     | Builtin::ConnNonblocking
@@ -94,6 +117,10 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::ListenerNonblocking
                     | Builtin::ConnClose
                     | Builtin::ListenerClose
+                    | Builtin::PipeNonblocking
+                    | Builtin::PipeClose
+                    | Builtin::ChildEndClose
+                    | Builtin::ChildKill
                     | Builtin::PollerAddListener
                     | Builtin::PollerAddConn
                     | Builtin::PollerModify
@@ -101,6 +128,8 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::PollerWait
                     | Builtin::PollerClose
                     | Builtin::PollerAddSignals
+                    | Builtin::PollerAddPipe
+                    | Builtin::PollerAddChild
                     | Builtin::SignalsPending
                     | Builtin::SignalsClose
                     | Builtin::DirClose
@@ -111,6 +140,7 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::CopyInto
                     | Builtin::IndexOfByte
                     | Builtin::ConnDetach
+                    | Builtin::Trap
                     | Builtin::Release,
                 ) => Ok(LKind::I64),
                 Callee::Builtin(Builtin::IsNan | Builtin::ByteOf) => Ok(LKind::I8),
@@ -157,8 +187,8 @@ impl<'a> FuncEmitter<'a> {
         let lhs_kind = self.scalar_kind(lhs)?;
         let a = self.scalar(lhs)?;
         let b = self.scalar(rhs)?;
-        if lhs_kind == LKind::F64 {
-            return self.float_binop(op, a, b);
+        if matches!(lhs_kind, LKind::F64 | LKind::F32) {
+            return self.float_binop(op, lhs_kind, a, b);
         }
         match op {
             BinOp::Add => self.checked_arith("sadd", a, b),
@@ -188,6 +218,7 @@ impl<'a> FuncEmitter<'a> {
     pub(crate) fn float_binop(
         &mut self,
         op: BinOp,
+        kind: LKind,
         a: LValue,
         b: LValue,
     ) -> Result<Vec<LValue>, String> {
@@ -197,20 +228,21 @@ impl<'a> FuncEmitter<'a> {
             BinOp::Mul => "fmul",
             BinOp::Div => "fdiv",
             BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
-                return Ok(vec![self.float_compare(op, a, b)]);
+                return Ok(vec![self.float_compare(op, kind, a, b)]);
             }
             other => unreachable!("the checker refuses `{other:?}` on `float`"),
         };
         let result = self.fresh();
         self.out.push_str(&format!(
-            "  {result} = {instr} double {}, {}\n",
+            "  {result} = {instr} {} {}, {}\n",
+            kind.llvm(),
             operand(&a),
             operand(&b)
         ));
         Ok(vec![LValue::Reg(result)])
     }
 
-    pub(crate) fn float_compare(&mut self, op: BinOp, a: LValue, b: LValue) -> LValue {
+    pub(crate) fn float_compare(&mut self, op: BinOp, kind: LKind, a: LValue, b: LValue) -> LValue {
         let cc = match op {
             BinOp::Eq => "oeq",
             BinOp::Ne => "une",
@@ -222,7 +254,8 @@ impl<'a> FuncEmitter<'a> {
         };
         let cmp = self.fresh();
         self.out.push_str(&format!(
-            "  {cmp} = fcmp {cc} double {}, {}\n",
+            "  {cmp} = fcmp {cc} {} {}, {}\n",
+            kind.llvm(),
             operand(&a),
             operand(&b)
         ));
@@ -242,8 +275,17 @@ impl<'a> FuncEmitter<'a> {
         b: LValue,
     ) -> Result<Vec<LValue>, String> {
         let pair = self.fresh();
+        // On wasm32 LLVM lowers a 64-bit `smul.with.overflow` to a 128-bit
+        // multiply libcall, `__multi3`, which a WASI sysroot does not carry
+        // (`docs/wasm.md`, W0.3). The module defines its own instead.
+        let callee =
+            if op == "smul" && self.triple.architecture == target_lexicon::Architecture::Wasm32 {
+                "lexsys_smul_overflow".to_owned()
+            } else {
+                format!("llvm.{op}.with.overflow.i64")
+            };
         self.out.push_str(&format!(
-            "  {pair} = call {{i64, i1}} @llvm.{op}.with.overflow.i64(i64 {}, i64 {})\n",
+            "  {pair} = call {{i64, i1}} @{callee}(i64 {}, i64 {})\n",
             operand(&a),
             operand(&b)
         ));
