@@ -188,7 +188,7 @@ impl<'a> FuncEmitter<'a> {
         let (flags, mode) = if write {
             (f.write_only | f.create | f.truncate | f.cloexec, lex_sys_ir::CREATE_MODE)
         } else {
-            (f.cloexec, 0)
+            (f.read_only | f.cloexec, 0)
         };
         let fd = self.open_at_cwd(&path, flags, mode);
 
@@ -246,8 +246,8 @@ impl<'a> FuncEmitter<'a> {
             return Ok(self.open_with_fopen(&path, mode));
         }
 
-        let cloexec = self.open_flags().cloexec;
-        let fd32 = self.open_at_cwd(&path, cloexec, 0);
+        let flags = self.open_flags();
+        let fd32 = self.open_at_cwd(&path, flags.read_only | flags.cloexec, 0);
         let fd = self.fresh();
         self.out.push_str(&format!("  {fd} = sext i32 {fd32} to i64\n"));
 

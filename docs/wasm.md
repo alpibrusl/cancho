@@ -11,7 +11,7 @@ wasm build gives **both** -- the static row from `lex-sys authority`, and a
 module whose import section the runtime enforces -- and makes `row ⊆ imports`
 a mechanical check. Defence in depth without a Firecracker VM per unit.
 
-Status: **W0 is built** (§W0 results). W1 onward is the plan below.
+Status: **W0 and W0.1 are built** (§W0 results). W1 onward is the plan below.
 
 ---
 
@@ -19,16 +19,19 @@ Status: **W0 is built** (§W0 results). W1 onward is the plan below.
 
 `lex-sys run examples/hello.ls --target wasm32-wasip1` prints `Hello, world!`
 under wasmtime, and `scripts/wasm_coverage.py` ran every `tests/accept`
-fixture for the target. This is the honest map (104 fixtures):
+fixture for the target. This is the honest map (104 fixtures), run with
+`WASMTIME_FLAGS=--dir=/` because several fixtures open `/` as their
+capability; that grant is the harness's, not the compiler's:
 
 | | count | meaning |
 |---|---|---|
-| **pass** | 73 | built, ran, stdout and exit code match the fixture's `//~` annotations |
+| **pass** | 78 | built, ran, stdout and exit code match the fixture's `//~` annotations |
 | **refused** | 15 | the toolchain declined; see below. Today these are *link* errors, not located refusals |
-| **wrong** | 16 | built and ran and disagreed with the annotations. Each is a bug or a missing target arm |
+| **wrong** | 11 | built and ran and disagreed with the annotations. Each is a bug or a missing target arm |
 | trap | 0 | no accept fixture expects a trap |
 
-The first run was 35 / 9 / 60. One cause, `size_t`, was behind 38 of the 60.
+The first run was 35 / 9 / 60. One cause, `size_t`, was behind 38 of the 60;
+the OS-constant tables (W0.1) took 73 to 78 and cleared `slicing`.
 
 ### What W0 changed
 
@@ -59,6 +62,26 @@ The first run was 35 / 9 / 60. One cause, `size_t`, was behind 38 of the 60.
   with it, so every remaining mismatch is a build failure naming the symbol
   (`function signature mismatch: write`) instead of a trap at run time.
   Two of the 15 refusals are this working.
+- **W0.1: a `Wasi` arm for the file and directory constants.**
+  `lex_sys_ir::Os { Linux, Darwin, Wasi }` and `open_flags_for`,
+  `dirent_layout_for`, `dirent_types`, `enametoolong_for`, `stat_layout_for`
+  (the `(darwin, aarch64)` helpers Cranelift calls are unchanged wrappers).
+  The values are wasi-libc's headers', pinned in `tests/os_tables.rs`, and two
+  of them contradicted what `ir.rs` said was true of every target, now
+  corrected in place:
+  - `O_RDONLY` is **not zero**: it is `0x04000000`, and an open with access
+    mode 0 asks for no rights and answers `EINVAL` (28). That is what the
+    six file fixtures were dying of. A read-only open now ORs in
+    `OpenFlags::read_only` (0 elsewhere).
+  - `d_type`'s values are **not shared**: WASI's `DT_DIR`, `DT_REG`, `DT_LNK`
+    are 3, 4, 7 (Linux and Darwin: 4, 8, 10).
+  Also: `O_CLOEXEC` is 0 (a module cannot `exec`), `AT_FDCWD` is -2,
+  `AT_SYMLINK_NOFOLLOW` is `0x1`, `struct dirent` is `{ino_t; u8 d_type;
+  char d_name[]}` (`d_type` at 8, `d_name` at 9), `ENAMETOOLONG` is 37, and
+  `struct stat` happens to have Linux x86-64's offsets.
+- **An operating system with no tables is refused**, in `emit_module`,
+  instead of taking the Linux numbers. (`x86_64-unknown-freebsd` used to
+  build.) The per-site `_ => linux` arms that remain are behind that guard.
 - `run` uses `WASMTIME` (default `wasmtime`) and passes `WASMTIME_FLAGS`
   (e.g. `--dir=.`). A WASI module gets **no** directory unless one is
   granted, so the grant is spelled where it is made.
@@ -76,22 +99,28 @@ Apple's has none), `WASM_LD`, `WASI_SYSROOT` (a wasi-libc sysroot holding
 | `extern fn` signature | `foreign_narrow_return` (`access`), `bytes_to_c` (`write`), `opaque_pointer` (`fdopen`), `spawn_parallel_sleep` (`usleep`), `foreign_two_libraries` and `spawn_thread_ids` (`pthread_self`) | a program's own `extern fn` declares C's `int`/`long` as `i64`; wasi-libc's is `i32` (or the function does not exist). The declaration is a claim about a native ABI |
 | `pthread_sigmask` | `signals_claim` | signals: refuse |
 
-### The 16 wrong
+### The 11 wrong
 
 | fixtures | likely cause |
 |---|---|
-| `file_roundtrip`, `file_handle`, `fs_narrowed`, `directory_handles`, `directory_listing`, `spawn_owned_file` | **OS-numbered constants.** The backend's `Os` arms know Linux and Darwin: `open` flags, `errno` values, `stat`/`dirent` layouts. WASI has its own (`ENOENT` is 44, `EINVAL` 28), which is why the exit codes above are 44, 28 and 72. This is roadmap item "OS match arms", and these six are its test. Also needs `--dir=/tmp` for the fixtures' absolute paths |
-| `fork_clock_workers`, `fork_heap_workers`, `spawn_heap_in_struct`, `spawn_join`, `spawn_owned_io` | threads (`pthread_*`): trap at run time. Must become located refusals |
+| `fork_clock_workers`, `fork_heap_workers`, `spawn_heap_in_struct`, `spawn_join`, `spawn_join_operands`, `spawn_owned_clock`, `spawn_owned_file`, `spawn_owned_io`, `spawn_struct_ref` | threads (`pthread_*`): trap at run time. Must become located refusals |
 | `index_of_byte_beside_own_memchr` | a program that defines its own function named `memchr` replaces wasi-libc's, whose internals call it with a 32-bit `size_t`. Real on any target, but only visible once the widths differ |
-| `slicing` | prints the right bytes and exits 1. **Not understood yet** |
+| `directory_handles` | **errno numbering.** The fixture checks `e != 2` for a missing path (`ENOENT`); WASI's `ENOENT` is 44. The language hands a program the platform's raw `errno` for a real failure, but the constants it defines itself (`std.dirs.einval()` is 22) are Linux's, so on WASI the two disagree. Either translate WASI's errno to one numbering at the boundary or give every errno a per-target accessor (as `enametoolong` has); not decided |
+
+Cleared since the first map: the six file and directory fixtures (all but the
+errno one above, and `spawn_owned_file`, which is a thread test), and
+`slicing`, whose exit 1 was the same read-only flag.
 
 ### Findings that change the plan
 
 1. **`_ =>` arms fall through silently.** Every OS `match` in the backend is
-   `Darwin(_) => ..., _ => linux`. A WASI target quietly takes the Linux arm.
-   `hello` works only because wasi-libc happens to export `stdout`, `stderr`
-   and `__errno_location`. The fix is explicit `Linux`/`Wasi` arms, with no
-   wildcard, so a new OS is a compile error.
+   `Darwin(_) => ..., _ => linux`. A WASI target quietly took the Linux arm.
+   `hello` worked only because wasi-libc happens to export `stdout`, `stderr`
+   and `__errno_location`. **Partly fixed:** the file and directory tables are
+   an exhaustive `match` on `Os`, and `emit_module` refuses any OS that is not
+   Linux, Darwin or WASI. Still open: the `is_darwin()` sites for sockets,
+   signals, the poller and processes, which on WASI still read Linux numbers
+   until W0.2 turns them into refusals.
 2. **A link error is not a refusal.** 9 of the 15 above are messages from
    `wasm-ld`, not located errors. `check --target` should reject a builtin
    with no WASI meaning at lowering time, with its source location, before a
@@ -100,7 +129,8 @@ Apple's has none), `WASM_LD`, `WASI_SYSROOT` (a wasi-libc sysroot holding
 3. **`--fatal-warnings` is the cheapest safety net on the table**, and
    worth keeping even after the `size_t` fix: it is what stops a *future*
    libc call with a hardcoded width from shipping as a trap.
-4. The roadmap's slice-length offset (`i64 8`, `expr.rs`) was **not** what
+4. **The language has no portable errno.** See `directory_handles` above.
+5. The roadmap's slice-length offset (`i64 8`, `expr.rs`) was **not** what
    broke first; `size_t` was. It is still untested because no fixture has
    exercised it separately yet. W1's corpus should.
 
@@ -138,7 +168,8 @@ which is cheaper.
    several libc names (`emit.rs`, `body/expr.rs`, `files.rs`, `fs.rs`,
    `net.rs`, `sockets.rs`). Add a `Wasi` arm to each, **make the match
    exhaustive**, and let any arm with no WASI meaning become a refusal.
-   *Not done.*
+   *Done for files and directories (W0.1); sockets, signals, the poller and
+   processes are W0.2.*
 3. **Pointer width.** `int` is `i64` and does not change; pointers and
    `size_t` become 4 bytes on `wasm32`. `size_t` is handled by the shim
    above. Still to audit: the slice length at `getelementptr i8, ptr …, i64 8`
@@ -151,7 +182,7 @@ which is cheaper.
    the CLI's `link_wasm` (the object comes from `clang`; the final link is
    the CLI's, not the backend's).
 5. **Coverage map.** Done once, above. Re-run with
-   `WASMTIME_FLAGS=--dir=/tmp python3 scripts/wasm_coverage.py <lex-sys>`.
+   `WASMTIME_FLAGS=--dir=/ python3 scripts/wasm_coverage.py <lex-sys>`.
 
 ## W1 -- a real command
 
@@ -227,7 +258,7 @@ sockets, threads and signals rows).
 | Area | wasip1 | wasip2 | Note |
 |---|---|---|---|
 | Console (`io_read`/`io_write`) | yes | yes | |
-| Files, directories, `openat`, `pread`/`pwrite` | yes | yes | Preopens replace absolute paths; `Fs` path prefix ↔ preopen. **Constants differ** (`open` flags, errno, `stat`) |
+| Files, directories, `openat`, `pread`/`pwrite` | yes | yes | Preopens replace absolute paths; `Fs` path prefix ↔ preopen. Constants differ (`open` flags, `stat`, `dirent`) and are tabled in `lex_sys_ir::Os`; errno numbering is open |
 | Heap, arenas | yes | yes | wasi-libc `malloc`; `size_t` is 32-bit |
 | Clock | yes | yes | |
 | `flock`, `fsync`, `rename` | partial | partial | Check per call |
