@@ -619,9 +619,12 @@ fn on_handshake_bytes[&i, &b, &c, &p](ints: &!i [int], bytes: &!b [byte], conten
                     at = at + 4 + n;
                     // A message must not share a record with the next key
                     // (RFC 8446 §5.1): after ServerHello and Finished, the
-                    // record must end with the message.
+                    // record must end with the message, and after a
+                    // KeyUpdate too, which changes the server's key but
+                    // not the state (review finding E-8, #209).
                     let after = ints[tls_slot.i_state()];
-                    if code == 0 && after != before && (after == tls_slot.state_wait_extensions() || after == tls_slot.state_connected()) && at < ints[tls_slot.i_hs_fill()] {
+                    let new_key = after != before && (after == tls_slot.state_wait_extensions() || after == tls_slot.state_connected()) || int_of(message[0]) == tls_message.type_key_update();
+                    if code == 0 && new_key && at < ints[tls_slot.i_hs_fill()] {
                         code = tls_record.unexpected_message();
                     }
                 }
@@ -851,7 +854,12 @@ pub fn send[&i, &b, &p](ints: &!i [int], bytes: &!b [byte], plaintext: &p [byte]
         n = tls_record.max_plaintext();
     }
     tls_slot.compact_out(ints, bytes);
-    if tls_slot.out_free(ints) < n + 22 {
+    // Room for this record as `queue_record` will seal it (TLS 1.2
+    // AES-GCM adds 29 bytes, not 22: review finding E-2, #209), and for
+    // a close_notify after it, so `finish` always has room for its alert
+    // (finding E-4).
+    let overhead = tls_slot.record_overhead(ints);
+    if tls_slot.out_free(ints) < n + overhead + 2 + overhead {
         return 0;
     }
     let code = tls_slot.queue_record(ints, bytes, tls_record.type_application_data(), plaintext[0..n]);
@@ -899,17 +907,25 @@ pub fn peer_eof[&i, &b](ints: &!i [int], bytes: &!b [byte]) -> [] int {
     return tls_slot.fail(ints, bytes, tls_record.peer_closed());
 }
 
-// Queues close_notify.
+// Queues close_notify: 0, or `would_block()` when the output queue has
+// no room for it, and then nothing changed: take, and call it again.
+// `send` keeps that room, so through this interface the queue is never
+// that full; the flag that makes `event` say closed is set only once the
+// alert is queued (review finding E-4, #209).
 pub fn finish[&i, &b](ints: &!i [int], bytes: &!b [byte]) -> [] int {
     if tls_slot.has(ints, tls_slot.f_close_sent()) || ints[tls_slot.i_state()] == tls_slot.state_failed() {
         return 0;
     }
-    tls_slot.set_flag(ints, tls_slot.f_close_sent());
+    var queued = 0;
     region r {
         let alert = alloc_slice[r](2, byte_of(0));
         alert[0] = byte_of(1);
-        tls_slot.queue_record(ints, bytes, tls_record.type_alert(), alert);
+        queued = tls_slot.queue_record(ints, bytes, tls_record.type_alert(), alert);
     }
+    if queued != 0 {
+        return would_block();
+    }
+    tls_slot.set_flag(ints, tls_slot.f_close_sent());
     if tls_slot.has(ints, tls_slot.f_close_received()) {
         tls_slot.forget(bytes);
     }

@@ -623,12 +623,20 @@ pub fn seal12[&k, &i, &p, &o](suite: int, key: &k [byte], iv: &i [byte], seq: in
 // Opens the TLS 1.2 record `record` (header included) under `suite`
 // into `out`, which must hold the plaintext. `info[0]` gets the content
 // type, from the header, and `info[1]` the plaintext's length. 0, or -10
-// for a record that does not authenticate, -9 over the limit.
+// for a record that does not authenticate, -9 over the limit, -3 for a
+// header version other than `03 03`.
 pub fn open12[&k, &i, &r, &o, &f](suite: int, key: &k [byte], iv: &i [byte], seq: int, record: &r [byte], out: &!o [byte], info: &!f [int]) -> [] int {
     let explicit = overhead12(suite) - 21;
     let body = len(record) - 5;
     if body < explicit + 16 {
         return -10;
+    }
+    // The additional data carries the header's version (RFC 5246
+    // §6.2.3.3), and `aad12` writes `03 03`: a header that says anything
+    // else is refused here, or its version would go unauthenticated
+    // (review finding E-1, #209).
+    if int_of(record[1]) != 3 || int_of(record[2]) != 3 {
+        return protocol_version();
     }
     if body > max_ciphertext() {
         return -9;

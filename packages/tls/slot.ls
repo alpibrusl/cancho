@@ -637,13 +637,26 @@ pub fn compact_out[&i, &b](ints: &!i [int], bytes: &!b [byte]) -> [] int {
     return 0;
 }
 
+// The bytes `queue_record` adds to a record's content: the header, and
+// once write keys are set the AEAD's tag, TLS 1.3's content type and
+// TLS 1.2 AES-GCM's explicit nonce.
+pub fn record_overhead[&i](ints: &i [int]) -> [] int {
+    if !has(ints, f_write_protected()) {
+        return 5;
+    }
+    if has(ints, f_tls12()) {
+        return tls_record.overhead12(ints[i_suite()]);
+    }
+    return 22;
+}
+
 // Queues `content` of `kind` as one record: protected when write keys
 // are set, plaintext before. 0, or a refusal when it does not fit.
 pub fn queue_record[&i, &b, &c](ints: &!i [int], bytes: &!b [byte], kind: int, content: &c [byte]) -> [] int {
     compact_out(ints, bytes);
     let at = b_out() + ints[i_out_end()];
     if !has(ints, f_write_protected()) {
-        if out_free(ints) < 5 + len(content) {
+        if out_free(ints) < len(content) + record_overhead(ints) {
             return tls_record.record_overflow();
         }
         bytes[at] = byte_of(kind);
@@ -659,7 +672,7 @@ pub fn queue_record[&i, &b, &c](ints: &!i [int], bytes: &!b [byte], kind: int, c
         ints[i_out_end()] = ints[i_out_end()] + 5 + len(content);
         return 0;
     }
-    if out_free(ints) < len(content) + 29 {
+    if out_free(ints) < len(content) + record_overhead(ints) {
         return tls_record.record_overflow();
     }
     if has(ints, f_tls12()) {

@@ -16,6 +16,8 @@ edition 5;
 //                                             store; now: seconds since 1970, for the certificates' validity)
 //     F <bytes>                               tls_client.feed, then everything `take` and `recv` give
 //     W <plaintext>                           tls_client.send
+//     N <plaintext>                           tls_client.send, and nothing taken: `<code> <tag> <event> - -`, so
+//                                             the output queue fills (review findings E-2 and E-4, #209)
 //     Q                                       tls_client.finish
 //     R <host> <random> <roots> <now> <ticket> <psk> <age> <verified at> <not after>
 //                                             tls_client.start_psk: `C`, offering a ticket (`docs/tls-resumption.md`)
@@ -315,6 +317,18 @@ fn client_op[&i, &s, &n, &b, &o, &p, &e](io: &!i Io, s: &s [byte], at: int, ints
                 }
             }
         }
+    } else if op == 78 {
+        region r {
+            let text = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, text);
+            code = tls_client.send(ints, bytes, text);
+        }
+        tag_line(io, code);
+        io.space(io);
+        io.print_int(io, tls_client.event(ints));
+        io.write_all(io, " - -");
+        io.newline(io);
+        return 0;
     } else if op == 87 {
         region r {
             let text = alloc_slice[r](hex_len(s, f), byte_of(0));

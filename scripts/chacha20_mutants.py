@@ -30,7 +30,7 @@ MUTANTS = [
     ("a skipped Poly1305 carry", "    d1 = wrapping_add(d1, c);\n", "    d1 = wrapping_add(d1, 0);\n"),
     ("r not clamped", "le32(key, 3) >> 2 & 0x3ffff03", "le32(key, 3) >> 2 & 0x3ffffff"),
     ("pad16 block without its 2^128 bit", "poly_block(st, scratch[0..16], 0x1000000)", "poly_block(st, scratch[0..16], 0)"),
-    ("never reduced below p", "let keep = g4 >> 63;", "let keep = 0;"),
+    ("never reduced below p", "let keep = value_barrier(g4 >> 63);", "let keep = 0;"),
     ("h - p computed as h + 5", "let g4 = wrapping_sub(wrapping_add(h4, c), 0x4000000);", "let g4 = wrapping_add(h4, c);"),
     ("the carry into the tag's second word dropped", "f = wrapping_add(wrapping_add(w1, le32(key, 20)), f >> 32);", "f = wrapping_add(w1, le32(key, 20));"),
     ("a one-byte-short tag compare", "while i < 16 {\n            diff", "while i < 15 {\n            diff"),
