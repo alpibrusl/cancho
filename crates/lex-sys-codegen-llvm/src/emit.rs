@@ -284,6 +284,10 @@ pub(crate) fn emit_module(
     }
     let mut text = String::new();
     text.push_str(&format!("target triple = \"{triple}\"\n\n"));
+    // C's `size_t`: 4 bytes on wasm32, 8 everywhere else this backend targets.
+    // Every libc declaration below that takes or answers a size says `{st}`, and
+    // every call site uses `FuncEmitter::size_ty` for the same answer (`docs/wasm.md`).
+    let st = size_ty(triple);
     text.push_str("declare i32 @putchar(i32)\n");
     // `docs/standard-input.md` §3 (§7.9): the mirror. `int getchar(void)`
     // -- no parameter, and the same `i32` result sign-extended at the
@@ -296,7 +300,7 @@ pub(crate) fn emit_module(
     // pointer and the stream itself is one load away -- and the symbol
     // differs by platform, the same split `lex-sys-codegen`'s own
     // `emit.rs` already makes for it.
-    text.push_str("declare i64 @fwrite(ptr, i64, i64, ptr)\n");
+    text.push_str(&format!("declare {st} @fwrite(ptr, {st}, {st}, ptr)\n"));
     let (stdout_symbol, stderr_symbol) = match triple.operating_system {
         target_lexicon::OperatingSystem::Darwin(_) => ("__stdoutp", "__stderrp"),
         _ => ("stdout", "stderr"),
@@ -308,7 +312,7 @@ pub(crate) fn emit_module(
     // declares these the same way, on first use rather than unconditionally
     // there, but an unused `declare` here costs nothing, the same reasoning
     // `putchar`'s own unconditional declaration already relies on.
-    text.push_str("declare ptr @malloc(i64)\n");
+    text.push_str(&format!("declare ptr @malloc({st})\n"));
     text.push_str("declare void @free(ptr)\n");
     // Checked arithmetic (§5's second slice): the three overflow-reporting
     // intrinsics `Expr::Bin`'s `Add`/`Sub`/`Mul` arms call. Declared
@@ -350,7 +354,7 @@ pub(crate) fn emit_module(
     // `bind`.
     // `docs/zeroed-slices.md`: a `box_slice` filled with zero. Guarded like
     // the rest: `calloc` is a name a program may declare for itself.
-    declare_libc_unless_own(&mut text, "calloc", "ptr @calloc(i64, i64)");
+    declare_libc_unless_own(&mut text, "calloc", &format!("ptr @calloc({st}, {st})"));
     declare_libc_unless_own(&mut text, "listen", "i32 @listen(i32, i32)");
     declare_libc_unless_own(&mut text, "accept", "i32 @accept(i32, ptr, ptr)");
     // Linux's close-on-exec accept (`docs/processes.md` §4.5); Darwin has
@@ -385,7 +389,7 @@ pub(crate) fn emit_module(
         ("waitpid", "i32 @waitpid(i32, ptr, i32)"),
         ("syscall", "i64 @syscall(i64, ...)"),
         ("kill", "i32 @kill(i32, i32)"),
-        ("strncmp", "i32 @strncmp(ptr, ptr, i64)"),
+        ("strncmp", &format!("i32 @strncmp(ptr, ptr, {st})")),
     ] {
         declare_libc_unless_own(&mut text, symbol, signature);
     }
@@ -471,19 +475,19 @@ pub(crate) fn emit_module(
     // modern libc -- `__errno_location` on glibc, `__error` on Darwin --
     // both answering a pointer to a thread-local `int`, the same split
     // `lex-sys-codegen`'s own `errno` already makes.
-    declare_libc_unless_own(&mut text, "read", "i64 @read(i32, ptr, i64)");
+    declare_libc_unless_own(&mut text, "read", &format!("{st} @read(i32, ptr, {st})"));
     // `copy_within` (`docs/memory-moves.md`) and `copy_into` (`docs/bulk-copy.md`).
-    declare_libc_unless_own(&mut text, "memmove", "ptr @memmove(ptr, ptr, i64)");
+    declare_libc_unless_own(&mut text, "memmove", &format!("ptr @memmove(ptr, ptr, {st})"));
     // `index_of_byte` (`docs/byte-search.md`).
-    declare_libc_unless_own(&mut text, "memchr", "ptr @memchr(ptr, i32, i64)");
-    declare_libc_unless_own(&mut text, "write", "i64 @write(i32, ptr, i64)");
+    declare_libc_unless_own(&mut text, "memchr", &format!("ptr @memchr(ptr, i32, {st})"));
+    declare_libc_unless_own(&mut text, "write", &format!("{st} @write(i32, ptr, {st})"));
     // `docs/file-writes.md`: the write side of a file handle. `fopen`/
     // `fcntl(F_DUPFD_CLOEXEC)`/`fclose` are the opens' bridge (section 3).
     declare_libc_unless_own(&mut text, "fopen", "ptr @fopen(ptr, ptr)");
     declare_libc_unless_own(&mut text, "fileno", "i32 @fileno(ptr)");
     declare_libc_unless_own(&mut text, "fclose", "i32 @fclose(ptr)");
-    declare_libc_unless_own(&mut text, "pwrite", "i64 @pwrite(i32, ptr, i64, i64)");
-    declare_libc_unless_own(&mut text, "pread", "i64 @pread(i32, ptr, i64, i64)");
+    declare_libc_unless_own(&mut text, "pwrite", &format!("{st} @pwrite(i32, ptr, {st}, i64)"));
+    declare_libc_unless_own(&mut text, "pread", &format!("{st} @pread(i32, ptr, {st}, i64)"));
     declare_libc_unless_own(&mut text, "fsync", "i32 @fsync(i32)");
     // `flush_out` (`docs/checked-output.md`): the stream `fwrite` uses,
     // flushed, then asked whether an earlier write failed.
@@ -499,6 +503,14 @@ pub(crate) fn emit_module(
         _ => "__errno_location",
     };
     text.push_str(&format!("declare ptr @{errno_symbol}()\n\n"));
+    if matches!(
+        triple.operating_system,
+        target_lexicon::OperatingSystem::Wasi
+            | target_lexicon::OperatingSystem::WasiP1
+            | target_lexicon::OperatingSystem::WasiP2
+    ) {
+        text.push_str(&wasi_errno_translation());
+    }
 
     // `docs/threads.md` §2: `spawn`/`join`, real `pthread_create`/
     // `pthread_join`. `pthread_t` is opaque on both this project's
@@ -597,7 +609,7 @@ pub(crate) fn emit_module(
     // global` here instead of a `Linkage::Local` data object. `arg` reads
     // a NUL-terminated C string back from `argv`, so its length needs
     // libc's own `strlen` the way `docs/arguments.md` §3.2 describes.
-    text.push_str("declare i64 @strlen(ptr)\n");
+    text.push_str(&format!("declare {st} @strlen(ptr)\n"));
     // `conn_detach`/`conn_attach`'s epoch table (`docs/native-sockets.md`
     // §10.3): a counter per descriptor, in bss.
     text.push_str(&format!(
@@ -650,18 +662,19 @@ pub(crate) fn emit_module(
     if ret.len() > 1 {
         return Err((None, "the entry point's return type has more than one leaf".to_owned()));
     }
-    // A C compiler targeting WebAssembly renames `main(argc, argv)` to
-    // `__main_argc_argv`, because the wasm ABI cannot give one name two
-    // signatures; wasi-libc's `__main_void` calls that name and traps on
-    // the weak undefined symbol if it is missing. We write the IR by hand,
-    // so we write the renamed symbol too (`docs/wasm.md`).
-    let main_symbol = match triple.architecture {
-        target_lexicon::Architecture::Wasm32 | target_lexicon::Architecture::Wasm64 => {
-            "__main_argc_argv"
-        }
-        _ => "main",
+    // On WebAssembly the wrapper is not `main` at all: the module defines `_start`
+    // itself (`wasi_entry`) and calls this, so that the command line is fetched only
+    // by a program that reads it. (A C compiler would have renamed `main(argc, argv)`
+    // to `__main_argc_argv` for wasi-libc's `__main_void` to call; nothing here uses
+    // `__main_void`.)
+    let wasm = triple.architecture == target_lexicon::Architecture::Wasm32;
+    let uses_args = wasm && crate::wasi_entry::reads_args(&text);
+    let entry_header = if wasm {
+        "define internal i32 @lexsys_entry(i32 %argc, ptr %argv) {\n".to_owned()
+    } else {
+        "define i32 @main(i32 %argc, ptr %argv) {\n".to_owned()
     };
-    text.push_str(&format!("define i32 @{main_symbol}(i32 %argc, ptr %argv) {{\n"));
+    text.push_str(&entry_header);
     text.push_str("entry:\n");
     // `docs/arguments.md` §3: written exactly once, before any lex-sys
     // code runs, and never again -- `lex-sys-codegen`'s own `emit_c_main`
@@ -673,6 +686,12 @@ pub(crate) fn emit_module(
         Some(LKind::I64) => {
             text.push_str(&format!("  %r = call i64 @lexs_{}()\n", entry_func.symbol()));
             text.push_str("  %status = trunc i64 %r to i32\n");
+            // What libc does when `main` returns: write out stdout's buffer. Only
+            // for a module that writes -- an unconditional flush would make every
+            // pure program import `fd_write` (`wasi_console`).
+            if crate::wasi_console::applies(triple) && crate::wasi_console::uses_console(&text) {
+                text.push_str("  %flushed = call i32 @lexsys_console_flush()\n");
+            }
             text.push_str("  ret i32 %status\n");
         }
         // `docs/agent-errors.md`'s own convention applied here too: a
@@ -684,120 +703,105 @@ pub(crate) fn emit_module(
     text.push_str("}\n");
 
     if triple.architecture == target_lexicon::Architecture::Wasm32 {
-        text = wasm32_size_t_shims(&text);
+        text.push_str(&smul_overflow_definition());
+        text.push_str(&crate::wasi_console::definitions());
+        text.push_str(&crate::wasi_entry::definitions(uses_args));
     }
     Ok(text)
 }
 
-/// One libc function whose C signature mentions `size_t`/`ssize_t`.
+/// C's `size_t` as an LLVM type for `triple`: `i32` on wasm32, `i64` otherwise.
 ///
-/// `kind` names a parameter or result: `ptr`, `i32`, `i64` (a fixed-width
-/// integer, e.g. WASI's 64-bit `off_t`), `size` (`size_t`) or `ssize`.
-struct SizeTFn {
-    name: &'static str,
-    ret: &'static str,
-    params: &'static [&'static str],
+/// The one place the module header and the call sites (`FuncEmitter::size_ty`)
+/// agree on it. `wasm-ld` treats a call whose type disagrees with the
+/// definition as a *warning* that swaps in a trap, so a program with `malloc(i64)`
+/// on wasm32 links and then dies at its first allocation; the CLI links with
+/// `--fatal-warnings` so a site that forgot is a build failure that names the
+/// symbol, not a trap (`docs/wasm.md`).
+pub(crate) fn size_ty(triple: &Triple) -> &'static str {
+    if triple.architecture == target_lexicon::Architecture::Wasm32 { "i32" } else { "i64" }
 }
 
-/// Every libc function this backend calls with a `size_t` in it
-/// (`docs/wasm.md` §W0). `lex-sys`'s `int` is `i64` everywhere, but C's
-/// `size_t` is 4 bytes on `wasm32`, and `wasm-ld` treats a call whose type
-/// disagrees with the definition as a *warning* that swaps in a trap, so the
-/// program links and then dies at the first `malloc`.
-const SIZE_T_FNS: &[SizeTFn] = &[
-    SizeTFn { name: "malloc", ret: "ptr", params: &["size"] },
-    SizeTFn { name: "calloc", ret: "ptr", params: &["size", "size"] },
-    SizeTFn { name: "memchr", ret: "ptr", params: &["ptr", "i32", "size"] },
-    SizeTFn { name: "memmove", ret: "ptr", params: &["ptr", "ptr", "size"] },
-    SizeTFn { name: "strlen", ret: "size", params: &["ptr"] },
-    SizeTFn { name: "strncmp", ret: "i32", params: &["ptr", "ptr", "size"] },
-    SizeTFn { name: "fwrite", ret: "size", params: &["ptr", "size", "size", "ptr"] },
-    SizeTFn { name: "read", ret: "ssize", params: &["i32", "ptr", "size"] },
-    SizeTFn { name: "write", ret: "ssize", params: &["i32", "ptr", "size"] },
-    SizeTFn { name: "pread", ret: "ssize", params: &["i32", "ptr", "size", "i64"] },
-    SizeTFn { name: "pwrite", ret: "ssize", params: &["i32", "ptr", "size", "i64"] },
-];
-
-/// Declare each [`SIZE_T_FNS`] entry the module uses with its real 32-bit
-/// signature, and route the module's calls through a wrapper that takes the
-/// `i64` the rest of this backend passes.
-///
-/// A size above `u32::MAX` is clamped to it rather than truncated: the
-/// allocation then fails (and traps, as an out-of-memory `malloc` does on
-/// every target) instead of quietly asking for a few bytes. A result is
-/// widened back, signed for `ssize_t` so `-1` stays `-1`.
-///
-/// This is a post-pass over the emitted text, a W0 scaffold: threading the
-/// target's `size_t` through the ~25 call sites is the permanent fix, and
-/// `--fatal-warnings` at link time is what keeps a missed one loud.
-fn wasm32_size_t_shims(text: &str) -> String {
-    fn widen(kind: &str) -> &str {
-        if kind == "size" || kind == "ssize" { "i64" } else { kind }
-    }
-    fn narrow(kind: &str) -> &str {
-        if kind == "size" || kind == "ssize" { "i32" } else { kind }
-    }
-    let mut text = text.to_owned();
-    for f in SIZE_T_FNS {
-        let c_signature = format!(
-            "{} @{}({})",
-            widen(f.ret),
-            f.name,
-            f.params.iter().map(|k| widen(k)).collect::<Vec<_>>().join(", ")
-        );
-        let declare = format!("declare {c_signature}\n");
-        if !text.contains(&declare) {
-            continue;
+/// `@lexsys_wasi_errno`: WASI's `errno` to the language's numbering
+/// (`lex_sys_ir::WASI_ERRNO_TO_LINUX`, `docs/wasm.md`). A `switch` over every
+/// number WASI defines; zero and anything else pass through, so "no error"
+/// stays "no error".
+fn wasi_errno_translation() -> String {
+    let mut text = String::from("define internal i32 @lexsys_wasi_errno(i32 %e) {\n");
+    text.push_str("entry:\n  switch i32 %e, label %other [\n");
+    for &(_, wasi, linux) in lex_sys_ir::WASI_ERRNO_TO_LINUX {
+        if wasi != linux {
+            text.push_str(&format!("    i32 {wasi}, label %to{linux}\n"));
         }
-        let wrapper = format!("lexsys_wasm32_{}", f.name);
-        // Calls first, so the wrapper's own call to the real symbol is not renamed.
-        let call = format!("@{}(", f.name);
-        text = text
-            .lines()
-            .map(|line| {
-                if line.trim_start().starts_with("declare ") {
-                    line.to_owned()
-                } else {
-                    line.replace(&call, &format!("@{wrapper}("))
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-            + "\n";
-        let mut body = String::new();
-        let mut args = Vec::new();
-        for (i, kind) in f.params.iter().enumerate() {
-            if *kind == "size" {
-                body.push_str(&format!(
-                    "  %big{i} = icmp ugt i64 %a{i}, 4294967295\n  %lo{i} = trunc i64 %a{i} to i32\n  \
-                     %n{i} = select i1 %big{i}, i32 -1, i32 %lo{i}\n"
-                ));
-                args.push(format!("i32 %n{i}"));
-            } else {
-                args.push(format!("{kind} %a{i}"));
-            }
-        }
-        let params: Vec<String> =
-            f.params.iter().enumerate().map(|(i, k)| format!("{} %a{i}", widen(k))).collect();
-        let real = format!("{} @{}({})", narrow(f.ret), f.name, args.join(", "));
-        body.push_str(&format!("  %r = call {real}\n"));
-        let result = match f.ret {
-            "size" => "  %w = zext i32 %r to i64\n  ret i64 %w\n".to_owned(),
-            "ssize" => "  %w = sext i32 %r to i64\n  ret i64 %w\n".to_owned(),
-            other => format!("  ret {other} %r\n"),
-        };
-        let real_declare = format!(
-            "declare {} @{}({})\n",
-            narrow(f.ret),
-            f.name,
-            f.params.iter().map(|k| narrow(k)).collect::<Vec<_>>().join(", ")
-        );
-        let define = format!(
-            "define internal {} @{wrapper}({}) {{\n{body}{result}}}\n",
-            widen(f.ret),
-            params.join(", ")
-        );
-        text = text.replacen(&declare, &format!("{real_declare}{define}"), 1);
     }
+    text.push_str("  ]\n");
+    let mut seen = std::collections::BTreeSet::new();
+    for &(_, wasi, linux) in lex_sys_ir::WASI_ERRNO_TO_LINUX {
+        if wasi != linux && seen.insert(linux) {
+            text.push_str(&format!("to{linux}:\n  ret i32 {linux}\n"));
+        }
+    }
+    text.push_str("other:\n  ret i32 %e\n}\n\n");
     text
+}
+
+/// `@lexsys_smul_overflow`: a signed 64-bit multiply that reports overflow,
+/// with no libcall (`docs/wasm.md`, W0.3).
+///
+/// `llvm.smul.with.overflow.i64` is one `imul` and a flag on x86-64 and
+/// AArch64, but on `wasm32` LLVM expands it through a 128-bit multiply, a call
+/// to `__multi3` in compiler-rt's builtins, which the wasi-libc sysroot does not
+/// ship, so four accept fixtures failed to link. This is the same answer
+/// computed from 32-bit halves, so the module needs nothing from outside it.
+///
+/// On magnitudes `|a| * |b|`, as unsigned (`|INT_MIN|` is 2^63, which fits):
+/// split each into high and low 32 bits. If both highs are non-zero the product
+/// is at least 2^64. Otherwise one cross term is zero, the other is a single
+/// 32x32 product, and it must itself fit in 32 bits to be shifted up; the low
+/// product is added, and a carry out is overflow. What is left is a magnitude
+/// that must fit the signed range for its sign: at most 2^63 if negative, at
+/// most 2^63-1 if not. The result is that magnitude, negated if negative, and
+/// is only meaningful when there was no overflow (the intrinsic says the same).
+///
+/// Checked against the intrinsic itself over the edge values and two million
+/// random pairs by `the_inline_multiply_agrees_with_llvms_intrinsic`.
+pub(crate) fn smul_overflow_definition() -> String {
+    "define internal {i64, i1} @lexsys_smul_overflow(i64 %a, i64 %b) {
+entry:
+  %an = icmp slt i64 %a, 0
+  %bn = icmp slt i64 %b, 0
+  %neg = xor i1 %an, %bn
+  %na = sub i64 0, %a
+  %nb = sub i64 0, %b
+  %ua = select i1 %an, i64 %na, i64 %a
+  %ub = select i1 %bn, i64 %nb, i64 %b
+  %ah = lshr i64 %ua, 32
+  %al = and i64 %ua, 4294967295
+  %bh = lshr i64 %ub, 32
+  %bl = and i64 %ub, 4294967295
+  %ahz = icmp ne i64 %ah, 0
+  %bhz = icmp ne i64 %bh, 0
+  %both = and i1 %ahz, %bhz
+  %c1 = mul i64 %ah, %bl
+  %c2 = mul i64 %al, %bh
+  %cross = add i64 %c1, %c2
+  %crossbig = icmp ugt i64 %cross, 4294967295
+  %low = mul i64 %al, %bl
+  %up = shl i64 %cross, 32
+  %m = add i64 %low, %up
+  %carry = icmp ult i64 %m, %low
+  %limit = select i1 %neg, i64 9223372036854775808, i64 9223372036854775807
+  %toobig = icmp ugt i64 %m, %limit
+  %o1 = or i1 %both, %crossbig
+  %o2 = or i1 %o1, %carry
+  %ovf = or i1 %o2, %toobig
+  %nm = sub i64 0, %m
+  %r = select i1 %neg, i64 %nm, i64 %m
+  %p0 = insertvalue {i64, i1} undef, i64 %r, 0
+  %p1 = insertvalue {i64, i1} %p0, i1 %ovf, 1
+  ret {i64, i1} %p1
+}
+
+"
+    .to_owned()
 }

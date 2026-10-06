@@ -147,6 +147,10 @@ mod tag {
     /// Appended, so no existing hash moves; the *type* `f32` needs no
     /// tag, because a type is hashed by its written name.
     pub const F32: u8 = 0x74;
+    /// A `static`'s signature identity (`docs/compile-time-data.md` §2).
+    /// Appended, so no other hash moves; it leads the encoding so that no
+    /// function or foreign signature can hash to the same bytes.
+    pub const STATIC_DECL: u8 = 0x75;
 
     /// The tag for a declared mode. Written out rather than cast from the
     /// enum, so adding a mode cannot silently renumber the others.
@@ -408,8 +412,19 @@ fn dotted(ast: &Ast, module: u32) -> String {
     path.join(".")
 }
 
+/// A `static`'s signature identity: its name and its referent type.
+///
+/// The name is part of it, as a function's is (`hash_signature`). A
+/// `static` has no parameters, so its type alone is a *shape* shared by
+/// every static of that type, and `vcs publish` keys its manifest by this
+/// hash: two `[int]` tables in one module would be one entry and the second
+/// would be refused as a changed body. The name is what makes two
+/// declarations two identities; the module still is not in the hash
+/// (`docs/modules.md` §2).
 fn hash_static_type(ast: &Ast, decl: &StaticDecl, module: u32, type_ids: &Names) -> Hash {
     let mut encoder = Encoder::default();
+    encoder.tag(tag::STATIC_DECL);
+    encoder.str(ast.name_of(decl.name));
     encode_type(ast, &mut encoder, decl.ty, module, type_ids, &[], &[]);
     encoder.finish(DOMAIN_SIG)
 }

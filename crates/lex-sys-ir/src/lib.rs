@@ -39,6 +39,7 @@ use linear::{Event, Trace, mode_of};
 
 mod builtin;
 mod defs;
+mod errno;
 mod foreign;
 mod function;
 mod ir;
@@ -46,9 +47,12 @@ mod lower;
 mod process;
 mod signals;
 mod socket_os;
+mod target;
+mod wasi_imports;
 
 pub use builtin::*;
 pub use defs::*;
+pub use errno::*;
 pub use foreign::*;
 use function::*;
 pub use ir::*;
@@ -56,6 +60,8 @@ use lower::*;
 pub use process::*;
 pub use signals::*;
 pub use socket_os::*;
+pub use target::*;
+pub use wasi_imports::*;
 
 /// Resolve and check an AST, producing IR a backend can lower without failing.
 pub fn lower(ast: &Ast) -> Result<Program, Diagnostic> {
@@ -405,6 +411,26 @@ fn lower_inner(ast: &Ast, rest: &mut Vec<Diagnostic>) -> Result<Program, Diagnos
             return Err(Diagnostic::new(
                 Rule::DuplicateDeclaration,
                 format!("`static {name}` is declared twice"),
+                span,
+            ));
+        }
+        // A `static` and a function share a namespace: a name resolves to
+        // one declaration, and a package lock is keyed by name, so a
+        // `static p` beside a `fn p` would be two entries under one key.
+        let clashes = |other: &Item| match other {
+            Item::Fn(f) => f.name == decl.name,
+            Item::Extern(e) => e.name == decl.name,
+            _ => false,
+        };
+        if ast
+            .items
+            .iter()
+            .enumerate()
+            .any(|(i, other)| ast.module_of(ast::ItemId(i as u32)) == module && clashes(other))
+        {
+            return Err(Diagnostic::new(
+                Rule::DuplicateDeclaration,
+                format!("`static {name}` has the name of a function in the same module"),
                 span,
             ));
         }

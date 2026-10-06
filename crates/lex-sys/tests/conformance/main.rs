@@ -124,6 +124,19 @@ fn scratch(tag: &str) -> PathBuf {
     dir
 }
 
+/// `//~ TARGET <triple>`: the flags that make `check` ask a fixture's question
+/// of the target it names (`docs/wasm.md`), for the fixtures whose refusal is a
+/// property of a target. Empty for every other fixture, so every harness that
+/// walks `tests/reject` passes this to `check` and none has to know why.
+fn target_args(path: &Path) -> Vec<String> {
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("//~ TARGET "))
+        .map(|triple| vec!["--target".to_owned(), triple.trim().to_owned()])
+        .unwrap_or_default()
+}
+
 fn fixtures(kind: &str) -> Vec<PathBuf> {
     let dir = repo_root().join("tests").join(kind);
     let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)

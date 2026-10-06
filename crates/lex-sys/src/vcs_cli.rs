@@ -62,6 +62,14 @@ fn module_path(ast: &lex_sys_syntax::Ast, module: u32) -> String {
     path.join(".")
 }
 
+/// Whether `module` declares a `static` called `name`.
+fn declares_static(ast: &lex_sys_syntax::Ast, module: &str, name: &str) -> bool {
+    (0..ast.items.len() as u32).map(lex_sys_syntax::ast::ItemId).any(|id| {
+        matches!(&ast.items[id.index()], lex_sys_syntax::ast::Item::Static(decl)
+            if ast.name_of(decl.name) == name && module_path(ast, ast.module_of(id)) == module)
+    })
+}
+
 /// The library as named texts, for a package that imports it. The same
 /// bytes `--std` hands `build`, so a store's identities and a consumer's
 /// agree on what `std.json` is.
@@ -408,12 +416,12 @@ pub(crate) fn publish_one(
                 // (`compile-time-data.md` §2): it is evaluated at compile
                 // time and cannot call out, so its row is empty
                 // (`package-system.md` §7.4).
-                None if program.statics.iter().any(|st| {
-                    st.name == func.name || st.name.rsplit('.').next() == Some(func.name.as_str())
-                }) =>
-                {
-                    BTreeSet::new()
-                }
+                //
+                // Asked of the source, not of `program.statics`: that
+                // list keeps only the statics something reachable reads
+                // (`lex-sys-ir`), so a table no function here uses -- a
+                // library's own export -- has an identity and no entry.
+                None if declares_static(&merged_ast, &func.module, &func.name) => BTreeSet::new(),
                 None => {
                     return Err(refused(format!(
                         "internal: `{}` has an identity but no lowered function, extern or static",

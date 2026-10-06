@@ -8,7 +8,8 @@ annotations. Each file lands in exactly one bucket:
   pass     built, ran, and matched
   trap     the fixture expects a native trap (exit >= 128) and wasmtime trapped
            (exit 134) -- the exit codes differ by design, the behaviour does not
-  refused  the compiler declined, with a located error (the table entry kind)
+  refused  declined: either a located `unsupported-on-target` from the compiler
+           (the good kind) or the toolchain's own message (the kind to eliminate)
   wrong    built and ran but disagreed with the annotations (a bug)
 
 usage: wasm_coverage.py LEX_SYS [files...]    (default: tests/accept/*.ls)
@@ -39,7 +40,13 @@ def run_one(args):
     out, err = p.stdout.decode(errors="replace"), p.stderr.decode(errors="replace")
     if p.returncode in (1, 3) and ("error:" in err) and not out:
         first = next((l for l in err.splitlines() if "error:" in l), err[:200])
-        return path, "refused", first.split("error:", 1)[1].strip()[:160]
+        reason = first.split("error:", 1)[1].strip()
+        # A located refusal from the compiler (W0.2), grouped by what it refuses;
+        # anything else is the toolchain's own message, which is the worse kind.
+        m = re.search(r"and ([a-z ]+?) do not exist on", reason)
+        if m:
+            return path, "refused", f"located (unsupported-on-target): {m.group(1)}"
+        return path, "refused", f"toolchain: {reason[:150]}"
     trapped = p.returncode == 134 and "unreachable" in err
     if want_exit >= 128 and trapped and out == want_out:
         return path, "trap", ""

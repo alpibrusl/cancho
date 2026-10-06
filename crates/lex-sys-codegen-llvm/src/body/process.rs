@@ -274,8 +274,10 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("  {slots} = add i64 {count}, {}\n", lead + 1));
         let bytes = self.fresh();
         self.out.push_str(&format!("  {bytes} = mul i64 {slots}, 8\n"));
+        let st = self.size_ty();
+        let size = self.size_arg(&bytes);
         let array = self.fresh();
-        self.out.push_str(&format!("  {array} = call ptr @malloc(i64 {bytes})\n"));
+        self.out.push_str(&format!("  {array} = call ptr @malloc({st} {size})\n"));
         let missing = self.fresh();
         self.out.push_str(&format!("  {missing} = icmp eq ptr {array}, null\n"));
         self.trap_if(&missing)?;
@@ -336,9 +338,10 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("  {to} = ptrtoint ptr {end} to i64\n"));
         let remaining = self.fresh();
         self.out.push_str(&format!("  {remaining} = sub i64 {to}, {from}\n"));
+        let st = self.size_ty();
+        let size = self.size_arg(&remaining);
         let found = self.fresh();
-        self.out
-            .push_str(&format!("  {found} = call ptr @memchr(ptr {at}, i32 0, i64 {remaining})\n"));
+        self.out.push_str(&format!("  {found} = call ptr @memchr(ptr {at}, i32 0, {st} {size})\n"));
         found
     }
 
@@ -386,9 +389,10 @@ impl<'a> FuncEmitter<'a> {
     fn refuse_loader_variable(&mut self, entry: &str) -> Result<(), String> {
         for name in ["LD_", "DYLD_"] {
             let wanted = operand(&self.bytes_lit(&format!("{name}\0"))[0]);
+            let st = self.size_ty();
             let order = self.fresh();
             self.out.push_str(&format!(
-                "  {order} = call i32 @strncmp(ptr {entry}, ptr {wanted}, i64 {})\n",
+                "  {order} = call i32 @strncmp(ptr {entry}, ptr {wanted}, {st} {})\n",
                 name.len()
             ));
             let same = self.fresh();

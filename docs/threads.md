@@ -173,6 +173,17 @@ conditions apply to it. What replaces them:
 
 ## 3. Why this needs no new soundness rule, only a new obligation
 
+> **Corrected (`atomics.md` §2, measured): the argument below is true of a *moved* unique reference and false of
+> `&!` in general, and the claim that the checker "already refuses to admit" a second writer is wrong.** `&!r T` is
+> `val` (`aliasing.md` §1): `let a = r; let b = r;` is two copies of one pointer, and `spawn(a, ..)` and
+> `spawn(b, ..)` each take one. That compiles on both backends and loses updates: two threads adding 1 to one
+> counter 200,000,000 times each ended short of 400,000,000 on every run, on arm64 macOS and x86-64 Linux
+> (`benches/atomics/race.ls`; the control that joins the first thread before spawning the second is exact). So a
+> *data race on an ordinary value is expressible today*; what is sound is a shared `&` (nothing writes through it)
+> and a `&!` that is the only copy. The one-reference-per-thread tests in §5 do not exercise the copy. Closing it
+> for `spawn` is a separate design (provenance, or refusing a copied `&!` at the call); `atomics.md` does not
+> depend on it.
+
 The question `function-values.md` §4.1 raised about closures — "a
 captured capability is authority no parameter names" — does not apply
 here, because `payload` *is* a parameter, of `spawn` itself, checked
@@ -247,9 +258,11 @@ What this buys, precisely:
   of it) exists — not before, and not a hatch this document opens in
   the meantime.
 - **A wider payload is [`thread-payloads.md`](thread-payloads.md)**, which also records why a unique *slice* cannot simply be allowed (§3 there).
-- **No shared *mutable* state.** `&!r T` crossing means the unique
+- **No shared *mutable* state.** (Designed for one word at a time in
+  [`atomics.md`](atomics.md).) `&!r T` crossing means the unique
   reference moved, not that two threads can now both mutate the same
-  memory. A `Mutex`-shaped capability — lock, get a unique reference
+  memory -- though, per the correction in §3, nothing stops a copied
+  `&!` from doing exactly that. A `Mutex`-shaped capability — lock, get a unique reference
   scoped to the lock, unlock — is a real, separate design, parallel
   to how `Fs(prefix)` turned "files" into a capability rather than a
   raw handle (`filesystem.md`). Not proposed here.

@@ -5,6 +5,45 @@
 use crate::*;
 
 impl<'a> FuncEmitter<'a> {
+    /// C's `size_t` on this target, as an LLVM type: `i64`, except 4 bytes on
+    /// wasm32 (`docs/wasm.md`). `lex-sys`'s own `int` is `i64` on every target;
+    /// this is the width libc's sizes and counts have to be passed in.
+    pub(crate) fn size_ty(&self) -> &'static str {
+        if self.triple.architecture == target_lexicon::Architecture::Wasm32 { "i32" } else { "i64" }
+    }
+
+    /// `value`, an `i64` operand, as a `size_t` argument for [`Self::size_ty`].
+    ///
+    /// Unchanged where `size_t` is 64 bits. On wasm32 a value above `u32::MAX` is
+    /// clamped to it rather than truncated, so a request too large for the target
+    /// asks for as much as it can hold and fails (an allocation traps, as any
+    /// out-of-memory `malloc` does) instead of quietly asking for a few bytes.
+    pub(crate) fn size_arg(&mut self, value: &str) -> String {
+        if self.size_ty() == "i64" {
+            return value.to_owned();
+        }
+        let big = self.fresh();
+        let low = self.fresh();
+        let clamped = self.fresh();
+        self.out.push_str(&format!(
+            "  {big} = icmp ugt i64 {value}, 4294967295\n  {low} = trunc i64 {value} to i32\n  \
+             {clamped} = select i1 {big}, i32 -1, i32 {low}\n"
+        ));
+        clamped
+    }
+
+    /// A `size_t` (or `ssize_t`, `signed`, so `-1` stays `-1`) result, widened
+    /// back to the `i64` the rest of the backend works in.
+    pub(crate) fn size_result(&mut self, raw: &str, signed: bool) -> String {
+        if self.size_ty() == "i64" {
+            return raw.to_owned();
+        }
+        let wide = self.fresh();
+        let op = if signed { "sext" } else { "zext" };
+        self.out.push_str(&format!("  {wide} = {op} i32 {raw} to i64\n"));
+        wide
+    }
+
     /// `copy_within(buf, dst, src, n)` (`docs/memory-moves.md`): `memmove` inside one slice, after the checks that indexing
     /// makes. `args` is the slice's pointer and length, then `dst`, `src` and `n`; it answers 0.
     ///
@@ -36,9 +75,11 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("  {to} = getelementptr i8, ptr {base}, i64 {dst}\n"));
         let from = self.fresh();
         self.out.push_str(&format!("  {from} = getelementptr i8, ptr {base}, i64 {src}\n"));
+        let st = self.size_ty();
+        let size = self.size_arg(&count);
         let ignored = self.fresh();
         self.out.push_str(&format!(
-            "  {ignored} = call ptr @memmove(ptr {to}, ptr {from}, i64 {count})\n"
+            "  {ignored} = call ptr @memmove(ptr {to}, ptr {from}, {st} {size})\n"
         ));
         Ok(vec![LValue::Const(0)])
     }
@@ -53,9 +94,11 @@ impl<'a> FuncEmitter<'a> {
         let past = self.fresh();
         self.out.push_str(&format!("  {past} = icmp sgt i64 {count}, {room}\n"));
         self.trap_if(&past)?;
+        let st = self.size_ty();
+        let size = self.size_arg(&count);
         let ignored = self.fresh();
         self.out.push_str(&format!(
-            "  {ignored} = call ptr @memmove(ptr {to}, ptr {from}, i64 {count})\n"
+            "  {ignored} = call ptr @memmove(ptr {to}, ptr {from}, {st} {size})\n"
         ));
         Ok(vec![args[3].clone()])
     }
@@ -66,9 +109,11 @@ impl<'a> FuncEmitter<'a> {
         let (base, length, wanted) = (operand(&args[0]), operand(&args[1]), operand(&args[2]));
         let widened = self.fresh();
         self.out.push_str(&format!("  {widened} = zext i8 {wanted} to i32\n"));
+        let st = self.size_ty();
+        let size = self.size_arg(&length);
         let found = self.fresh();
         self.out.push_str(&format!(
-            "  {found} = call ptr @memchr(ptr {base}, i32 {widened}, i64 {length})\n"
+            "  {found} = call ptr @memchr(ptr {base}, i32 {widened}, {st} {size})\n"
         ));
         let missing = self.fresh();
         self.out.push_str(&format!("  {missing} = icmp eq ptr {found}, null\n"));
@@ -84,8 +129,10 @@ impl<'a> FuncEmitter<'a> {
     }
 
     pub(crate) fn region_stmt(&mut self, arena: u32, body: &[Stmt]) -> Result<bool, String> {
+        let st = self.size_ty();
+        let chunk = self.size_arg(&ARENA_CHUNK.to_string());
         let base = self.fresh();
-        self.out.push_str(&format!("  {base} = call ptr @malloc(i64 {ARENA_CHUNK})\n"));
+        self.out.push_str(&format!("  {base} = call ptr @malloc({st} {chunk})\n"));
         // Out of memory is a trap, not a null pointer wandering into a
         // store -- the language has no undefined behaviour to fall back
         // on, the same reasoning `box`/`box_slice` already trap on here.
@@ -280,16 +327,15 @@ impl<'a> FuncEmitter<'a> {
         let stride = self.stride_of(element)?;
         let bytes = self.slice_bytes(&count, stride)?;
 
+        let st = self.size_ty();
+        let size = self.size_arg(&operand(&bytes));
         let start = self.fresh();
         if zeroed {
             // `docs/zeroed-slices.md`: a zero fill is `calloc`, and no loop
             // -- `lex-sys-codegen`'s own `boxed_slice` makes the same choice.
-            self.out.push_str(&format!(
-                "  {start} = call ptr @calloc(i64 {}, i64 1)\n",
-                operand(&bytes)
-            ));
+            self.out.push_str(&format!("  {start} = call ptr @calloc({st} {size}, {st} 1)\n"));
         } else {
-            self.out.push_str(&format!("  {start} = call ptr @malloc(i64 {})\n", operand(&bytes)));
+            self.out.push_str(&format!("  {start} = call ptr @malloc({st} {size})\n"));
         }
         let is_null = self.fresh();
         self.out.push_str(&format!("  {is_null} = icmp eq ptr {start}, null\n"));
@@ -336,8 +382,10 @@ impl<'a> FuncEmitter<'a> {
         let values = self.expr(value)?;
         let kinds = leaves_of(ty, self.program)?;
         let bytes = self.value_bytes(ty)?;
+        let st = self.size_ty();
+        let size = self.size_arg(&bytes.to_string());
         let at = self.fresh();
-        self.out.push_str(&format!("  {at} = call ptr @malloc(i64 {bytes})\n"));
+        self.out.push_str(&format!("  {at} = call ptr @malloc({st} {size})\n"));
         let is_null = self.fresh();
         self.out.push_str(&format!("  {is_null} = icmp eq ptr {at}, null\n"));
         self.trap_if(&is_null)?;

@@ -46,7 +46,7 @@ usage:
     lex-sys test  <file.ls>... [--std] [--backend cranelift|llvm] [-l <name>]... [-L <path>]...
     lex-sys fmt   <file.ls|dir>... [--check]
     lex-sys ids   <file.ls>... [--std]
-    lex-sys authority <file.ls>... [--std] [--output json]
+    lex-sys authority <file.ls>... [--std] [--output json] [--target <triple>]
     lex-sys layout    <file.ls>... [--std]
     lex-sys print <file.ls>
     lex-sys agent-guidelines
@@ -360,8 +360,9 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
             Ok(ExitCode::SUCCESS)
         }
         "authority" => {
-            let Invocation { inputs, with_std, json, .. } = parse_args(&args[1..], false, false)?;
-            print_authority(&inputs, with_std, json)?;
+            let Invocation { inputs, with_std, json, target, .. } =
+                parse_args(&args[1..], false, false)?;
+            print_authority(&inputs, with_std, json, target.as_ref())?;
             Ok(ExitCode::SUCCESS)
         }
         "layout" => {
@@ -697,6 +698,31 @@ fn compile_to_ir(inputs: &[PathBuf], with_std: bool) -> Result<lex_sys_ir::Progr
     }
 }
 
+/// Is this one of WASI's operating systems (`wasm32-wasip1`, `-wasip2`, `-wasi`)?
+fn is_wasi(triple: &Triple) -> bool {
+    matches!(
+        triple.operating_system,
+        target_lexicon::OperatingSystem::Wasi
+            | target_lexicon::OperatingSystem::WasiP1
+            | target_lexicon::OperatingSystem::WasiP2
+    )
+}
+
+/// The refusals a target adds before any code is generated: what the program
+/// reaches that the target cannot do (`lex_sys_ir::unsupported_on_target`).
+/// Empty for the host and for anything but WASI, whose gaps are the only ones
+/// this knows (`docs/wasm.md`).
+fn target_refusals(program: &lex_sys_ir::Program, target: Option<&Triple>) -> Vec<Refusal> {
+    let Some(triple) = target else { return Vec::new() };
+    if !is_wasi(triple) {
+        return Vec::new();
+    }
+    lex_sys_ir::unsupported_on_target(program, lex_sys_ir::Os::Wasi, &triple.to_string())
+        .into_iter()
+        .map(|d| Refusal { rule: d.rule, message: d.message, span: Some(d.span) })
+        .collect()
+}
+
 /// `check`: type-check a program and say what is wrong with it.
 ///
 /// The prose is what it always was — `docs/agent-errors.md` §6 keeps
@@ -718,6 +744,11 @@ fn check_program(
     // `build` can generate code for. Before, `check` stopped after
     // lowering and answered an empty list for a program `build` refused.
     let refusals = match compile_reporting(inputs, with_std) {
+        // What the target cannot do is answered first and without a code
+        // generator, so it needs no wasm toolchain and says where it is.
+        Ok((program, _)) if !target_refusals(&program, target).is_empty() => {
+            target_refusals(&program, target)
+        }
         Ok((program, _)) => match backend(&program, inputs, backend_kind, target) {
             Ok(_) => Vec::new(),
             Err(BackendFailure::Refusals(refusals)) => refusals,
@@ -1120,7 +1151,12 @@ fn bounds_its_domain(label: &str) -> bool {
     label != "ffi"
 }
 
-fn print_authority(inputs: &[PathBuf], with_std: bool, json: bool) -> Result<(), Failure> {
+fn print_authority(
+    inputs: &[PathBuf],
+    with_std: bool,
+    json: bool,
+    target: Option<&Triple>,
+) -> Result<(), Failure> {
     let program = compile_to_ir(inputs, with_std)?;
 
     // Every distinct label the reachable set performs, with the value it
@@ -1213,6 +1249,12 @@ fn print_authority(inputs: &[PathBuf], with_std: bool, json: bool) -> Result<(),
         program.funcs.iter().map(|f| f.folded).sum::<usize>() + program.folded_late;
     let folded_calls = program.folded_calls;
 
+    // `--target wasm32-wasip1` (`docs/wasm.md`, W2b): what the row licenses a WASI
+    // module built from this program to import. The host's report is unchanged.
+    let wasi = target
+        .filter(|triple| is_wasi(triple))
+        .map(|triple| (triple.to_string(), lex_sys_ir::wasi_imports(kinds.iter().copied())));
+
     let stdout = io::stdout();
     let mut out = stdout.lock();
     if json {
@@ -1254,7 +1296,24 @@ fn print_authority(inputs: &[PathBuf], with_std: bool, json: bool) -> Result<(),
             writeln!(out, "  \"pure\": [{}],", quoted(&pure))?;
             writeln!(out, "  \"folded_operators\": {folded_operators},")?;
             writeln!(out, "  \"folded_calls\": {folded_calls},")?;
-            writeln!(out, "  \"functions\": {total}")?;
+            match &wasi {
+                None => writeln!(out, "  \"functions\": {total}")?,
+                Some((triple, imports)) => {
+                    writeln!(out, "  \"functions\": {total},")?;
+                    writeln!(out, "  \"wasi\": {{")?;
+                    writeln!(out, "    \"target\": \"{}\",", escaped(triple))?;
+                    writeln!(out, "    \"required\": [{}],", quoted(&imports.required))?;
+                    writeln!(out, "    \"allowed\": [{}],", quoted(&imports.allowed))?;
+                    let refused: Vec<&str> = imports.refused.iter().map(String::as_str).collect();
+                    let unbounded: Vec<&str> =
+                        imports.unbounded.iter().map(String::as_str).collect();
+                    let unknown: Vec<&str> = imports.unknown.iter().map(String::as_str).collect();
+                    writeln!(out, "    \"refused\": [{}],", quoted(&refused))?;
+                    writeln!(out, "    \"unbounded\": [{}],", quoted(&unbounded))?;
+                    writeln!(out, "    \"unknown\": [{}]", quoted(&unknown))?;
+                    writeln!(out, "  }}")?;
+                }
+            }
             writeln!(out, "}}")?;
             out.flush()
         })();
@@ -1342,6 +1401,31 @@ fn print_authority(inputs: &[PathBuf], with_std: bool, json: bool) -> Result<(),
                 writeln!(out, "    {folded_calls} calls")?;
             }
         }
+        if let Some((triple, imports)) = &wasi {
+            writeln!(out, "a {triple} module built from this program")?;
+            let line = |names: &[&str]| {
+                if names.is_empty() { "nothing".to_owned() } else { names.join(" ") }
+            };
+            writeln!(out, "    must import {}", line(&imports.required))?;
+            writeln!(out, "    may import  {}", line(&imports.allowed))?;
+            if !imports.refused.is_empty() {
+                writeln!(
+                    out,
+                    "    REFUSED on this target: {} (`check --target` refuses the program)",
+                    imports.refused.join(" ")
+                )?;
+            }
+            if !imports.unbounded.is_empty() {
+                writeln!(
+                    out,
+                    "    UNBOUNDED by {}: what foreign code imports is the library's, not the row's",
+                    imports.unbounded.join(" ")
+                )?;
+            }
+            if !imports.unknown.is_empty() {
+                writeln!(out, "    not in the table: {}", imports.unknown.join(" "))?;
+            }
+        }
         out.flush()
     })();
 
@@ -1393,6 +1477,14 @@ fn build(
 ) -> Result<(), Failure> {
     let Codegen { backend: backend_kind, target } = codegen;
     let program = compile_to_ir(inputs, with_std)?;
+    let gaps = target_refusals(&program, target);
+    if !gaps.is_empty() {
+        let text: Vec<String> = match parse_program(inputs, with_std) {
+            Ok((_, map)) => gaps.iter().map(|r| r.render(&map)).collect(),
+            Err(_) => gaps.iter().map(|r| r.message.clone()).collect(),
+        };
+        return Err(refused(text.join("\n\n")));
+    }
     // A compiler bug in the backend is a refusal with rule `internal`,
     // exit 1, located at the function (`docs/internal-errors.md` §2).
     // Since `--backend llvm` became the default, a *host* missing
@@ -1438,7 +1530,9 @@ fn is_wasm(triple: &Triple) -> bool {
 
 /// Link a WebAssembly command with `wasm-ld` against a wasi-libc sysroot.
 ///
-/// No C compiler driver in the way: `crt1-command.o`, the object, `-lc`.
+/// No C compiler driver in the way: the object and `-lc`. **Not `crt1-command.o`**: the
+/// module defines `_start` itself (`wasi_entry`), so that the command line is fetched only
+/// by a program that reads it (`docs/wasm.md`, W2c).
 /// `WASI_SYSROOT` names the sysroot (the one that holds `lib/<triple>/`),
 /// `WASM_LD` the linker. A missing one is the environment's fault, exit 3,
 /// and the message says which variable to set.
@@ -1446,7 +1540,7 @@ fn link_wasm(object: &Path, output: &Path, triple: &Triple) -> Result<(), Failur
     let sysroot = std::env::var("WASI_SYSROOT").map_err(|_| {
         environment(format!(
             "`--target {triple}` needs `WASI_SYSROOT`, a wasi-libc sysroot (the directory that \
-             holds `lib/{triple}/crt1-command.o`)"
+             holds `lib/{triple}/libc.a`)"
         ))
     })?;
     let lib = Path::new(&sysroot).join("lib").join(triple.to_string());
@@ -1456,7 +1550,6 @@ fn link_wasm(object: &Path, output: &Path, triple: &Triple) -> Result<(), Failur
         // a warning that swaps in a trap: the program links and dies at run
         // time. Fatal, so it is a build failure here instead.
         .arg("--fatal-warnings")
-        .arg(lib.join("crt1-command.o"))
         .arg(object)
         .arg(format!("-L{}", lib.display()))
         .arg("-lc")

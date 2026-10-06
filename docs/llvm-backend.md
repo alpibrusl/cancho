@@ -19,6 +19,20 @@
 > §8 has the current gap to C, re-measured on this backend rather than
 > quoted from the Cranelift-era number above.
 >
+> **Corrected later: `Fs` and `Net` were built only as statements.**
+> `fs_read`, `fs_write`, `connect` and `bind` are each their own IR node
+> (`Expr::FileOp`, `Expr::Connect`, `Expr::Bind`), and `scalar_kind` had
+> no arm for any of them, so `if fs_read(fs, path, buf) == 32` or
+> `connect(n, host, port) < 0` failed with "the compiler failed to
+> generate code" here while Cranelift built and ran them; only a result
+> bound by `let` first could be compared. §7.22's "`Net` itself is fully
+> built" and §7.24's "`Fs`, closed" were true of the call and false of
+> its use as an operand. All four answer `int`, and now say so (`trap()`
+> gained the same arm); the other capability nodes answer tagged enums,
+> which no operator takes. Pinned on both backends by
+> `a_file_op_is_an_operand_on_both_backends` and
+> `connect_and_bind_are_operands_on_both_backends`.
+>
 > **Superseded status, kept for the history below:** "first five slices
 > built, and `examples/hello.ls` builds" (§5, `lex-sys-codegen-llvm`,
 > `--backend llvm`). §5 originally named
@@ -1557,7 +1571,8 @@ and this backend agree, `SIGILL` every time.
 
 **Still refused: `Ffi`/`extern fn`**, named since §7.19. `Net` itself is
 fully built on `--backend llvm` — `listen`, `accept`, `bind` and
-`connect` all lower — but a program that wants to `read`/`write` what it
+`connect` all lower (corrected later: `bind` and `connect` lowered only
+outside an operator; see the status note at the top) — but a program that wants to `read`/`write` what it
 accepted or connected to still needs `extern fn` for that, the same way
 `examples/serve/`/`examples/fetch/` do on Cranelift. Closing `Ffi`/
 `extern fn` is what would let a program like `examples/seek/`'s
@@ -1659,6 +1674,9 @@ today — not `Ffi`, which this document spent three slices calling the
 last gap before checking.
 
 ### 7.24 `Fs`, closed — and a comparison bug three slices had never reached
+
+(Corrected later: `fs_read`/`fs_write` closed as statements and `let`
+initialisers only, not as operands; see the status note at the top.)
 
 `checked_path` (mirroring `lex-sys-codegen`'s own function of the same
 name) is `checked_host`'s loop with two things added: a `/`-boundary

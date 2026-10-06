@@ -504,7 +504,12 @@ impl<'a> FuncEmitter<'a> {
                 let narrowed = self.fresh();
                 self.out.push_str(&format!("  {narrowed} = trunc i64 {} to i32\n", operand(&c)));
                 let result = self.fresh();
-                self.out.push_str(&format!("  {result} = call i32 @putchar(i32 {narrowed})\n"));
+                let putchar = if crate::wasi_console::applies(self.triple) {
+                    "lexsys_putchar"
+                } else {
+                    "putchar"
+                };
+                self.out.push_str(&format!("  {result} = call i32 @{putchar}(i32 {narrowed})\n"));
                 let widened = self.fresh();
                 self.out.push_str(&format!("  {widened} = sext i32 {result} to i64\n"));
                 Ok(vec![LValue::Reg(widened)])
@@ -517,7 +522,12 @@ impl<'a> FuncEmitter<'a> {
             // never fires.
             Callee::Builtin(Builtin::GetChar) => {
                 let result = self.fresh();
-                self.out.push_str(&format!("  {result} = call i32 @getchar()\n"));
+                let getchar = if crate::wasi_console::applies(self.triple) {
+                    "lexsys_getchar"
+                } else {
+                    "getchar"
+                };
+                self.out.push_str(&format!("  {result} = call i32 @{getchar}()\n"));
                 let widened = self.fresh();
                 self.out.push_str(&format!("  {widened} = sext i32 {result} to i64\n"));
                 Ok(vec![LValue::Reg(widened)])
@@ -533,6 +543,24 @@ impl<'a> FuncEmitter<'a> {
                 let [start, len] = flat.as_slice() else {
                     return Err("`write_bytes`/`write_err` need a byte slice argument".to_owned());
                 };
+                if crate::wasi_console::applies(self.triple) {
+                    // The console without libc's stdio (`wasi_console`): the same
+                    // bytes, through `fd_write` alone.
+                    let write = if matches!(callee, Callee::Builtin(Builtin::WriteErr)) {
+                        "lexsys_stderr_write"
+                    } else {
+                        "lexsys_stdout_write"
+                    };
+                    let st = self.size_ty();
+                    let size = self.size_arg(&operand(len));
+                    let raw = self.fresh();
+                    self.out.push_str(&format!(
+                        "  {raw} = call {st} @{write}(ptr {}, {st} {size})\n",
+                        operand(start)
+                    ));
+                    let result = self.size_result(&raw, false);
+                    return Ok(vec![LValue::Reg(result)]);
+                }
                 let symbol = match (callee, self.triple.operating_system) {
                     (
                         Callee::Builtin(Builtin::WriteErr),
@@ -544,12 +572,14 @@ impl<'a> FuncEmitter<'a> {
                 };
                 let stream = self.fresh();
                 self.out.push_str(&format!("  {stream} = load ptr, ptr @{symbol}\n"));
-                let result = self.fresh();
+                let st = self.size_ty();
+                let size = self.size_arg(&operand(len));
+                let raw = self.fresh();
                 self.out.push_str(&format!(
-                    "  {result} = call i64 @fwrite(ptr {}, i64 1, i64 {}, ptr {stream})\n",
-                    operand(start),
-                    operand(len)
+                    "  {raw} = call {st} @fwrite(ptr {}, {st} 1, {st} {size}, ptr {stream})\n",
+                    operand(start)
                 ));
+                let result = self.size_result(&raw, false);
                 Ok(vec![LValue::Reg(result)])
             }
             // `docs/checked-output.md`: the stream the arm above writes
@@ -592,8 +622,10 @@ impl<'a> FuncEmitter<'a> {
                 ));
                 let text = self.fresh();
                 self.out.push_str(&format!("  {text} = load ptr, ptr {slot}\n"));
-                let length = self.fresh();
-                self.out.push_str(&format!("  {length} = call i64 @strlen(ptr {text})\n"));
+                let st = self.size_ty();
+                let raw = self.fresh();
+                self.out.push_str(&format!("  {raw} = call {st} @strlen(ptr {text})\n"));
+                let length = self.size_result(&raw, false);
                 Ok(vec![LValue::Reg(text), LValue::Reg(length)])
             }
             // `int_of(b: byte) -> int` widens, always defined: every

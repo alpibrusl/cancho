@@ -39,6 +39,7 @@
 - [Function values](function-values.md)
 - [Threads: spawn and join](threads.md)
 - [Threads that carry more than one value](thread-payloads.md)
+- [Atomics and a channel](atomics.md)
 - [Effect polymorphism](effect-polymorphism.md)
 
 # Capabilities, effects and authority
@@ -103,6 +104,7 @@
 - [`std.ecdh`: P-256 and P-384 key exchange](ecdh.md)
 - [`value_barrier`: a value the optimiser cannot see through](value-barrier.md)
 - [The pure TLS backend in `lexsys-hooks`](tls-hooks.md)
+- [TLS 1.3 session resumption](tls-resumption.md)
 
 # Compile time and program identity
 

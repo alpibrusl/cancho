@@ -28,6 +28,11 @@ time and then 65,536 at a time; every connection must end `ok`, having read
 the whole response up to the server's close_notify. Each CA is made for the
 row and is all `tls_many` trusts. One line a row, `ok` or what failed, then
 a count. Exit status 1 if any row failed.
+
+Each server with TLS 1.3 has one more row, `resume` (docs/tls-resumption.md): `tls_many resume` makes its 8
+connections, keeps each one's ticket, and makes 8 more offering them. Every connection of both rounds must
+end `ok`, and every second-round connection must have resumed, unless `NO_RESUME` names the server with the
+reason it does not.
 """
 import os
 import shutil
@@ -215,9 +220,29 @@ def rows(name):
             out.append((cert, v, None))
         if v == "1.3" and name not in ("go", "botan", "boringssl"):
             out += [("p256", v, s) for s in SUITES13]
+        if v == "1.3":
+            out.append(("p256", v, "resume"))
         if v == "1.2":
             out += [("p256", v, s) for s in ECDSA12] + [("rsa2048", v, s) for s in RSA12]
     return out
+
+
+# Servers that complete both rounds but do not resume, and why.
+NO_RESUME = {}
+
+
+def resumption(exe, server, roots, name):
+    """`tls_many resume` against `server`: "ok", or what failed."""
+    out = subprocess.run([exe, "127.0.0.1", str(server.port), tls_live.HOST, "8", "65536", "resume"],
+                         input=roots, capture_output=True, timeout=120)
+    lines = out.stdout.decode().splitlines()
+    if lines.count("done ok=8 failed=0") != 2:
+        return f"exit {out.returncode}: {[l for l in lines if l.startswith('done')]}"
+    second = lines[lines.index("round 2") + 1:-1]
+    resumed = sum(1 for l in second if l.endswith(" resumed"))
+    if name in NO_RESUME:
+        return "ok" if resumed == 0 else f"resumed {resumed} of 8, where NO_RESUME says it does not"
+    return "ok" if resumed == 8 else f"resumed {resumed} of 8"
 
 
 def main():
@@ -243,7 +268,7 @@ def main():
             here = os.getcwd()
             os.chdir(work)
             try:
-                argv, env = argv_for(name, binary, port, version, suite)
+                argv, env = argv_for(name, binary, port, version, None if suite == "resume" else suite)
             finally:
                 os.chdir(here)
             label = f"{name:10} TLS {version} {cert:8} {suite or '*'}"
@@ -252,6 +277,17 @@ def main():
             except RuntimeError as e:
                 print(f"{label}: the server would not start ({e})")
                 failed += 1
+                continue
+            if suite == "resume":
+                try:
+                    verdict = resumption(exe, server, ca, name)
+                finally:
+                    server.stop()
+                if verdict == "ok":
+                    passed += 1
+                else:
+                    failed += 1
+                print(f"{label}: {verdict}")
                 continue
             results = []
             try:

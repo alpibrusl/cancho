@@ -165,8 +165,10 @@ impl<'a> FuncEmitter<'a> {
             "  {name} = getelementptr i8, ptr {found}, i64 {}\n",
             layout.d_name
         ));
-        let length = self.fresh();
-        self.out.push_str(&format!("  {length} = call i64 @strlen(ptr {name})\n"));
+        let st = self.size_ty();
+        let raw = self.fresh();
+        self.out.push_str(&format!("  {raw} = call {st} @strlen(ptr {name})\n"));
+        let length = self.size_result(&raw, false);
         let first = self.fresh();
         self.out.push_str(&format!("  {first} = load i8, ptr {name}\n"));
         let first_dot = self.fresh();
@@ -208,9 +210,11 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("  br label %{merge}\n"));
 
         self.out.push_str(&format!("{copy}:\n"));
+        let st = self.size_ty();
+        let size = self.size_arg(&length);
         let ignored = self.fresh();
         self.out.push_str(&format!(
-            "  {ignored} = call ptr @memmove(ptr {buffer}, ptr {name}, i64 {length})\n"
+            "  {ignored} = call ptr @memmove(ptr {buffer}, ptr {name}, {st} {size})\n"
         ));
         let type_at = self.fresh();
         self.out.push_str(&format!(

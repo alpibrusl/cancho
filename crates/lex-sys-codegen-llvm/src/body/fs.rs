@@ -15,8 +15,19 @@ impl<'a> FuncEmitter<'a> {
         };
         let addr = self.fresh();
         self.out.push_str(&format!("  {addr} = call ptr @{symbol}()\n"));
-        let value32 = self.fresh();
-        self.out.push_str(&format!("  {value32} = load i32, ptr {addr}\n"));
+        let raw32 = self.fresh();
+        self.out.push_str(&format!("  {raw32} = load i32, ptr {addr}\n"));
+        // WASI's `errno` numbers are unrelated to Linux's; a program sees one
+        // numbering, so they are translated here, the one place a failure's
+        // `errno` is read (`lex_sys_ir::WASI_ERRNO_TO_LINUX`, `docs/wasm.md`).
+        let value32 = if self.file_os() == lex_sys_ir::Os::Wasi {
+            let translated = self.fresh();
+            self.out
+                .push_str(&format!("  {translated} = call i32 @lexsys_wasi_errno(i32 {raw32})\n"));
+            translated
+        } else {
+            raw32
+        };
         let value = self.fresh();
         self.out.push_str(&format!("  {value} = sext i32 {value32} to i64\n"));
         LValue::Reg(value)
@@ -209,12 +220,14 @@ impl<'a> FuncEmitter<'a> {
 
         self.out.push_str(&format!("{opened}:\n"));
         let name = if write { "write" } else { "read" };
-        let moved = self.fresh();
+        let st = self.size_ty();
+        let size = self.size_arg(&operand(&bytes[1]));
+        let raw = self.fresh();
         self.out.push_str(&format!(
-            "  {moved} = call i64 @{name}(i32 {fd}, ptr {}, i64 {})\n",
-            operand(&bytes[0]),
-            operand(&bytes[1])
+            "  {raw} = call {st} @{name}(i32 {fd}, ptr {}, {st} {size})\n",
+            operand(&bytes[0])
         ));
+        let moved = self.size_result(&raw, true);
         self.out.push_str(&format!("  call i32 @close(i32 {fd})\n"));
         self.out.push_str(&format!("  store i64 {moved}, ptr {result_cell}\n"));
         self.out.push_str(&format!("  br label %{merge}\n"));
@@ -243,6 +256,11 @@ impl<'a> FuncEmitter<'a> {
             return Ok(self.open_directory(&path));
         }
         if mode != lex_sys_ir::OpenMode::Read {
+            // WASI has no `dup`, which `fopen`'s bridge needs, so it opens with
+            // `openat` and the mode's own flags (`OpenMode::open_flags`).
+            if self.file_os() == lex_sys_ir::Os::Wasi {
+                return Ok(self.open_with_openat(&path, mode));
+            }
             return Ok(self.open_with_fopen(&path, mode));
         }
 
@@ -270,12 +288,14 @@ impl<'a> FuncEmitter<'a> {
         let fd = self.fresh();
         self.out.push_str(&format!("  {fd} = trunc i64 {fd64} to i32\n"));
 
-        let moved = self.fresh();
+        let st = self.size_ty();
+        let want = self.size_arg(&operand(&args[2]));
+        let raw = self.fresh();
         self.out.push_str(&format!(
-            "  {moved} = call i64 @read(i32 {fd}, ptr {}, i64 {})\n",
-            operand(&args[1]),
-            operand(&args[2])
+            "  {raw} = call {st} @read(i32 {fd}, ptr {}, {st} {want})\n",
+            operand(&args[1])
         ));
+        let moved = self.size_result(&raw, true);
 
         let negative = self.fresh();
         self.out.push_str(&format!("  {negative} = icmp slt i64 {moved}, 0\n"));

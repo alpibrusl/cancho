@@ -8,6 +8,10 @@ edition 5;
 // and `recv` have is taken, as a caller would. At the end, a request is
 // sent if the connection got that far, then the peer's end of stream and
 // `finish`. The host, randomness, time and roots are `fuzz_fixture`'s.
+// An input of odd length starts the connection offering a fixed ticket
+// (`docs/tls-resumption.md`), so a ServerHello that accepts it, refuses it
+// or lies about it is reached too; one of even length offers none, as
+// before.
 import fuzz_common;
 import fuzz_fixture;
 import std.io;
@@ -32,7 +36,12 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read] int {
                             let s0 = contents(s)[0..used];
                             let ints = contents(n);
                             let bytes = contents(b);
-                            var code = tls_client.start(ints, bytes, fuzz_fixture.host(), contents(r), fuzz_fixture.now());
+                            var code = 0;
+                            if total % 2 == 1 {
+                                code = tls_client.start_psk(ints, bytes, fuzz_fixture.host(), contents(r), fuzz_fixture.now(), "fuzz_client's ticket", "0123456789abcdef0123456789abcdef", 1000, fuzz_fixture.now(), fuzz_fixture.now() + 86400, true);
+                            } else {
+                                code = tls_client.start(ints, bytes, fuzz_fixture.host(), contents(r), fuzz_fixture.now());
+                            }
                             fuzz_common.drain(ints, bytes, contents(o));
                             var at = 0;
                             while code >= 0 && at < total {
