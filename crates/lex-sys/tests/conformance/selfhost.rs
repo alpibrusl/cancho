@@ -20,6 +20,9 @@ use super::*;
 #[path = "../../../lex-sys-syntax/examples/dump_ast.rs"]
 mod ast_oracle;
 #[allow(dead_code)]
+#[path = "../../../lex-sys-ir/examples/check_bodies.rs"]
+mod bodies_oracle;
+#[allow(dead_code)]
 #[path = "../../../lex-sys-ir/examples/check_declarations.rs"]
 mod declarations_oracle;
 #[allow(dead_code)]
@@ -260,6 +263,315 @@ const CHECK_EDGE: &[&str] = &[
     "struct byte { a: int }\nstruct S { a: byte }\nfn main(world: World) -> [] int {  return 0; }",
 ];
 
+/// Programs whose functions are what the body checker handles so far, each breaking or keeping
+/// one rule of `lower_function`: types, constant folding, reachability, returns, calls, scopes.
+const BODY_EDGE: &[&str] = &[
+    "fn f() -> [] int { return 1; }",
+    "fn f() -> [] bool { return true; }",
+    "fn f() -> [] float { return 1.5; }",
+    "fn f() -> [] int { return true; }",
+    "fn f() -> [] int { return 1.5; }",
+    "fn f() -> [] float { return 1; }",
+    "fn f() -> [] int { let x = 1; }",
+    "fn f() -> [] int {  }",
+    "fn f() -> [] int { if true { return 1; } }",
+    "fn f() -> [] int { if true { return 1; } else { return 2; } }",
+    "fn f() -> [] int { if true { return 1; } else { let x = 1; } }",
+    "fn f() -> [] int { if true { return 1; } else { } }",
+    "fn f() -> [] int { if true { return 1; } else if false { return 2; } else { return 3; } }",
+    "fn f() -> [] int { if true { return 1; } else if false { return 2; } }",
+    "fn f() -> [] int { while true { return 1; } }",
+    "fn f() -> [] int { while true { } return 1; }",
+    "fn f() -> [] int { return 1; let x = 2; }",
+    "fn f() -> [] int { return 1; 2; }",
+    "fn f() -> [] int { if true { return 1; } else { return 2; } return 3; }",
+    "fn f() -> [] int { if true { return 1; let x = 1; } return 2; }",
+    "fn f() -> [] int { while true { return 1; return 2; } return 3; }",
+    "fn f() -> [] int { if true { return 1; } return 2; }",
+    "fn f() -> [] int { let x = 1; return x; }",
+    "fn f() -> [] int { let x: int = 1; return x; }",
+    "fn f() -> [] int { let x: bool = 1; return 1; }",
+    "fn f() -> [] int { let x: Nope = 1; return 1; }",
+    "fn f() -> [] int { let x: [int] = 1; return 1; }",
+    "struct S { a: int }\nfn f() -> [] int { let x: S = 1; return 1; }",
+    "fn f() -> [] int { let x = 1; let x = true; return 1; }",
+    "fn f() -> [] int { let x = 1; let x = true; if x { return 1; } return 2; }",
+    "fn f() -> [] int { let x = x; return 1; }",
+    "fn f() -> [] int { return y; let y = 1; }",
+    "fn f() -> [] int { if true { let y = 1; } return y; }",
+    "fn f() -> [] int { let y = 1; if true { let y = true; } return y; }",
+    "fn f() -> [] int { var x = 1; x = 2; return x; }",
+    "fn f() -> [] int { var x = 1; x = true; return x; }",
+    "fn f() -> [] int { let x = 1; x = 2; return x; }",
+    "fn f(x: int) -> [] int { x = 2; return x; }",
+    "fn f() -> [] int { y = 2; return 1; }",
+    "fn f() -> [] int { y = z; return 1; }",
+    "fn f() -> [] int { var x = 1; if true { x = 2; } return x; }",
+    "fn f() -> [] int { var x = 1; x.a = 2; return 1; }",
+    "fn f() -> [] int { var x = 1; *x = 2; return 1; }",
+    "fn f(a: int, b: int) -> [] int { return a + b; }",
+    "fn f(a: bool) -> [] int { if a { return 1; } return 2; }",
+    "fn f(a: int, b: float) -> [] int { return a + b; }",
+    "fn f(a: int) -> [] int { let a = true; if a { return 1; } return 2; }",
+    "fn f(a: byte) -> [] int { return 1; }",
+    "fn f(a: byte, b: byte) -> [] bool { return a == b; }",
+    "fn f(a: byte, b: byte) -> [] byte { return a + b; }",
+    "fn f(a: float, b: float) -> [] float { return a * b / a - b + a; }",
+    "fn f(a: float, b: float) -> [] float { return a % b; }",
+    "edition 5;\nfn f(a: f32, b: f32) -> [] f32 { return a + b; }",
+    "edition 6;\nfn f(a: f32, b: f32) -> [] f32 { return a + b; }",
+    "edition 5;\nfn f() -> [] f32 { return 1.5f32; }",
+    "edition 6;\nfn f() -> [] f32 { return 1.5f32; }",
+    "edition 6;\nfn f() -> [] f32 { return 1.5f32 + 1.5; }",
+    "edition 6;\nfn f() -> [] f32 { return -1.5f32; }",
+    "fn f() -> [] bool { return true + false; }",
+    "fn f() -> [] bool { return true < false; }",
+    "fn f() -> [] bool { return true == false; }",
+    "fn f() -> [] bool { return true && false; }",
+    "fn f() -> [] bool { return 1 && 2; }",
+    "fn f() -> [] bool { return 1 || true; }",
+    "fn f() -> [] bool { return !1; }",
+    "fn f() -> [] bool { return !true; }",
+    "fn f() -> [] int { return ~true; }",
+    "fn f() -> [] int { return ~5; }",
+    "fn f() -> [] bool { return -true; }",
+    "fn f(a: float) -> [] float { return -a; }",
+    "fn f(a: byte) -> [] byte { return -a; }",
+    "fn f() -> [] int { return 1 + 1.5; }",
+    "fn f() -> [] bool { return 1 < 1.5; }",
+    "fn f() -> [] float { return 1.5 % 2.5; }",
+    "fn f() -> [] bool { return true % false; }",
+    "fn f() -> [] float { return 1.5 << 2; }",
+    "fn f() -> [] bool { return true & false; }",
+    "fn f() -> [] int { return 5 & 3 | 4 ^ 1; }",
+    "fn f() -> [] bool { return 1 < 2 && 3 >= 2 || 1 == 1 && 2 != 3; }",
+    "fn f() -> [] int { return 1 < 2; }",
+    "fn f(a: byte) -> [] bool { return a == 1; }",
+    "fn f() -> [] int { return 1 + 2 * 3 - 4 / 2 % 3; }",
+    "fn f() -> [] int { return 9223372036854775807 + 1; }",
+    "fn f() -> [] int { return 9223372036854775807 + 0; }",
+    "fn f() -> [] int { return -9223372036854775807 - 2; }",
+    "fn f() -> [] int { return -9223372036854775807 - 1; }",
+    "fn f() -> [] int { return 9223372036854775807 * 2; }",
+    "fn f() -> [] int { return 3037000499 * 3037000499; }",
+    "fn f() -> [] int { return 3037000500 * 3037000500; }",
+    "fn f() -> [] int { return -3037000500 * 3037000500; }",
+    "fn f() -> [] int { return -3037000500 * -3037000500; }",
+    "fn f() -> [] int { return -9223372036854775808 * -1; }",
+    "fn f() -> [] int { return -1 * -9223372036854775808; }",
+    "fn f() -> [] int { return 1 / 0; }",
+    "fn f() -> [] int { return 1 % 0; }",
+    "fn f() -> [] int { return -9223372036854775808 / -1; }",
+    "fn f() -> [] int { return -9223372036854775808 % -1; }",
+    "fn f() -> [] int { return -7 / 2; }",
+    "fn f() -> [] int { return -7 % 2; }",
+    "fn f() -> [] int { return 1 << 64; }",
+    "fn f() -> [] int { return 1 << -1; }",
+    "fn f() -> [] int { return 1 << 63; }",
+    "fn f() -> [] int { return -1 >> 63; }",
+    "fn f() -> [] int { return 1 >> 64; }",
+    "fn f() -> [] int { return (1 + 2) * 9223372036854775807; }",
+    "fn f() -> [] int { return (9223372036854775807 - 1) + 2; }",
+    "fn f() -> [] int { return (1 << 62) + (1 << 62); }",
+    "fn f() -> [] int { return -(-9223372036854775808); }",
+    "fn f() -> [] int { return -(5); }",
+    "fn f() -> [] int { return ~(-1) + !false; }",
+    "fn f() -> [] int { let x = 9223372036854775807 + 1; return x; }",
+    "fn f() -> [] int { let x = 5; return x + 9223372036854775807; }",
+    "fn f() -> [] int { if false { return 1 / 0; } return 1; }",
+    "fn f() -> [] bool { return 1 / 0 == 1; }",
+    "fn g(a: int) -> [] int { return a; }\nfn f() -> [] int { return g(1 / 0); }",
+    "fn f() -> [] float { return 1.0 / 0.0; }",
+    "fn f() -> [] int { return 1 + 2 + 3 + 4 << 2; }",
+    "fn f() -> [] bool { return (1 < 2) == true; }",
+    "fn g(a: int, b: int) -> [] int { return a + b; }\nfn f() -> [] int { return g(1, 2); }",
+    "fn g(a: int, b: int) -> [] int { return a + b; }\nfn f() -> [] int { return g(1); }",
+    "fn g(a: int, b: int) -> [] int { return a + b; }\nfn f() -> [] int { return g(1, 2, 3); }",
+    "fn g(a: int, b: int) -> [] int { return a + b; }\nfn f() -> [] int { return g(1, true); }",
+    "fn g(a: int, b: int) -> [] int { return b; }\nfn f() -> [] int { return g(true, 1 / 0); }",
+    "fn g(a: int) -> [] bool { return true; }\nfn f() -> [] int { return g(1); }",
+    "fn f() -> [] int { return nothing(1); }",
+    "fn f() -> [] int { let g = 1; return g(1); }",
+    "fn f(a: int) -> [] int { return a(1); }",
+    "fn f() -> [] int { return len(1); }",
+    "fn f() -> [] int { return putchar(1); }",
+    "fn f(a: int) -> [] int { return f(a - 1); }",
+    "fn g() -> [] bool { return true; }\nfn f() -> [] int { if g() { return 1; } return 2; }",
+    "fn g() -> [] int { return 1; }\nfn f() -> [] int { if g() { return 1; } return 2; }",
+    "fn g() -> [] int { return 1; }\nfn f() -> [] int { g(); return 1; }",
+    "fn g(a: int) -> [] int { return 1; }\nfn f() -> [] int { g(true); return 1; }",
+    "fn f() -> [] int { return q.g(); }",
+    "module a.b;\nimport a.b as q;\nfn g() -> [] int { return 1; }\nfn f() -> [] int { return q.g(); }",
+    "fn g[T](a: T) -> [] T { return a; }\nfn f() -> [] int { return g(1); }",
+    "extern fn g[&f](f: &f Ffi(\"libc\"), a: int) -> [ffi(\"libc\")] int;\nfn f() -> [] int { return g(1); }",
+    "fn g() -> [io_write] int { return 1; }\nfn f() -> [] int { return g(); }",
+    "fn g(a: int) -> [] (int, int) { return (a, a); }\nfn f() -> [] int { return g(1); }",
+    "fn g() -> [] int { return 1; }\nfn f() -> [] int { let h = g; return 1; }",
+    "fn f() -> [] int { let h = len; return 1; }",
+    "static t: [int] { return 1; }\nfn f() -> [] int { return t; }",
+    "fn f() -> [] int { return nope; }",
+    "extern fn g[&f](f: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;\nfn f() -> [] int { return g; }",
+    "fn f() -> [] int { if 1 { return 1; } return 2; }",
+    "fn f() -> [] int { if 1.5 { return 1; } return 2; }",
+    "fn f() -> [] int { while 1 { } return 2; }",
+    "fn f() -> [] int { var i = 0; while i < 10 { i = i + 1; } return i; }",
+    "fn f() -> [] int { while true { return true; } return 1; }",
+    "fn f() -> [] int { if true { if false { return 1; } else { return 2; } } return 3; }",
+    "fn f() -> [io_write] int { return 1; }",
+    "fn f() -> [io_write] int {  }",
+    "fn f() -> [io_write] int { return true; }",
+    "fn f() -> [] int { 1 + 2; true; 1.5; return 1; }",
+    "fn f() -> [] int { 1 + true; return 1; }",
+    "fn f() -> [] int { nope; return 1; }",
+    "fn f() -> [] int { let s = \"x\"; return true; }",
+    "fn f() -> [] int { return true; let s = \"x\"; }",
+    "enum E { A }\nfn f() -> [] int { return 1; }",
+    "fn f(a: int) -> [] int { return *a; }",
+    "fn f() -> [] int { let s = \"hi\"; return 1; }",
+    "fn f() -> [] int { let t = (1, 2); return 1; }",
+    "fn g[T](a: T) -> [] int { return 1; }\nfn f() -> [] int { return 1; }",
+    "fn g[&r](a: &r int) -> [] int { return 1; }\nfn f() -> [] int { return 1; }",
+    "struct S { a: int }\nfn g(a: S) -> [] int { return 1; }\nfn f() -> [] int { return 1; }",
+    "fn g() -> [] int { return true; }\nfn f() -> [] int { return g(); }",
+    "fn g() -> [] int { return true; }\nfn f() -> [] int { return true; }",
+    "fn f(world: World) -> [] int { return 0; }",
+    "fn f() -> [] int { return 9223372036854775806 + 1; }",
+    "fn f() -> [] int { return -9223372036854775807 + -1; }",
+    "fn f() -> [] int { return -1 + -1; }",
+    "fn f() -> [] int { return 5 + -3; }",
+    "fn f() -> [] int { return -9223372036854775807 + -2; }",
+    "fn f() -> [] int { return 9223372036854775806 - -1; }",
+    "fn f() -> [] int { return 9223372036854775807 - -1; }",
+    "fn f() -> [] int { return 5 - 3; }",
+    "fn f() -> [] int { return -9223372036854775808 - 0; }",
+    "fn f() -> [] int { return 0 - 9223372036854775807; }",
+    "fn f() -> [] int { return -9223372036854775808 - 1; }",
+    "fn f() -> [] int { return 5 * -1; }",
+    "fn f() -> [] int { return -1 * 5; }",
+    "fn f() -> [] int { return 1 * -9223372036854775808; }",
+    "fn f() -> [] int { return -9223372036854775808 * 1; }",
+    "fn f() -> [] int { return 1317624576693539401 * 7; }",
+    "fn f() -> [] int { return 1317624576693539401 * 8; }",
+    "fn f() -> [] int { return 1317624576693539401 * -7; }",
+    "fn f() -> [] int { return 1317624576693539401 * -8; }",
+    "fn f() -> [] int { return 1152921504606846976 * -8; }",
+    "fn f() -> [] int { return -8 * 1152921504606846976; }",
+    "fn f() -> [] int { return -1317624576693539401 * 7; }",
+    "fn f() -> [] int { return -1317624576693539401 * 8; }",
+    "fn f() -> [] int { return -1317624576693539401 * -7; }",
+    "fn f() -> [] int { return -1317624576693539401 * -8; }",
+    "fn f() -> [] int { return -1152921504606846975 * -8; }",
+    "fn f() -> [] int { return -1152921504606846976 * -8; }",
+    "fn f() -> [] int { return -9223372036854775807 * -1; }",
+    "fn f() -> [] int { return -1 * -9223372036854775807; }",
+    "fn f() -> [] int { return 0 * 9223372036854775807; }",
+    "fn f() -> [] int { return 5 / -1; }",
+    "fn f() -> [] int { return -9223372036854775807 / -1; }",
+    "fn f() -> [] int { return 7 % -1; }",
+    "fn f() -> [] int { return (7 % 3) + 9223372036854775807; }",
+    "fn f() -> [] int { return (7 % -1) + 9223372036854775807; }",
+    "fn f() -> [] int { return -7 % 3; }",
+    "fn f() -> [] int { return 5 << 0; }",
+    "fn f() -> [] int { return 5 >> 0; }",
+    "fn f() -> [] int { return (1 << 2) + 9223372036854775803; }",
+    "fn f() -> [] int { return (1 << 2) + 9223372036854775804; }",
+    "fn f() -> [] int { return (-16 >> 2) + 9223372036854775800; }",
+    "fn f() -> [] int { return (6 & 3) + 9223372036854775805; }",
+    "fn f() -> [] int { return (6 & 3) + 9223372036854775806; }",
+    "fn f() -> [] int { return (6 | 3) + 9223372036854775800; }",
+    "fn f() -> [] int { return (6 | 3) + 9223372036854775801; }",
+    "fn f() -> [] int { return (6 ^ 3) + 9223372036854775802; }",
+    "fn f() -> [] int { return (6 ^ 3) + 9223372036854775803; }",
+    "fn f() -> [] int { return -(-5) + 9223372036854775807; }",
+    "fn f() -> [] int { return -(5) + 9223372036854775807; }",
+    "fn f() -> [] int { return ~5 + 9223372036854775807; }",
+    "fn f() -> [] int { return ~(-6) + 9223372036854775807; }",
+    "fn f(a: int, b: int) -> [] bool { return a || b; }",
+    "fn f(a: int, b: int) -> [] bool { return a && b; }",
+    "fn f(a: int, b: int) -> [] bool { return a == b; }",
+    "fn f(a: int, b: int) -> [] bool { return a != b; }",
+    "fn f(a: int, b: int) -> [] bool { return a < b; }",
+    "fn f(a: int, b: int) -> [] bool { return a <= b; }",
+    "fn f(a: int, b: int) -> [] bool { return a > b; }",
+    "fn f(a: int, b: int) -> [] bool { return a >= b; }",
+    "fn f(a: int, b: int) -> [] int { return a | b; }",
+    "fn f(a: int, b: int) -> [] int { return a ^ b; }",
+    "fn f(a: int, b: int) -> [] int { return a & b; }",
+    "fn f(a: int, b: int) -> [] int { return a << b; }",
+    "fn f(a: int, b: int) -> [] int { return a >> b; }",
+    "fn f(a: int, b: int) -> [] int { return a + b; }",
+    "fn f(a: int, b: int) -> [] int { return a - b; }",
+    "fn f(a: int, b: int) -> [] int { return a * b; }",
+    "fn f(a: int, b: int) -> [] int { return a / b; }",
+    "fn f(a: int, b: int) -> [] int { return a % b; }",
+    "fn f(a: bool, b: bool) -> [] bool { return a || b; }",
+    "fn f(a: bool, b: bool) -> [] bool { return a && b; }",
+    "fn f(a: bool, b: bool) -> [] bool { return a == b; }",
+    "fn f(a: bool, b: bool) -> [] bool { return a != b; }",
+    "fn f(a: bool, b: bool) -> [] bool { return a < b; }",
+    "fn f(a: bool, b: bool) -> [] bool { return a <= b; }",
+    "fn f(a: bool, b: bool) -> [] bool { return a > b; }",
+    "fn f(a: bool, b: bool) -> [] bool { return a >= b; }",
+    "fn f(a: bool, b: bool) -> [] bool { return a | b; }",
+    "fn f(a: bool, b: bool) -> [] bool { return a ^ b; }",
+    "fn f(a: bool, b: bool) -> [] bool { return a & b; }",
+    "fn f(a: bool, b: bool) -> [] bool { return a << b; }",
+    "fn f(a: bool, b: bool) -> [] bool { return a >> b; }",
+    "fn f(a: bool, b: bool) -> [] bool { return a + b; }",
+    "fn f(a: bool, b: bool) -> [] bool { return a - b; }",
+    "fn f(a: bool, b: bool) -> [] bool { return a * b; }",
+    "fn f(a: bool, b: bool) -> [] bool { return a / b; }",
+    "fn f(a: bool, b: bool) -> [] bool { return a % b; }",
+    "fn f(a: float, b: float) -> [] bool { return a || b; }",
+    "fn f(a: float, b: float) -> [] bool { return a && b; }",
+    "fn f(a: float, b: float) -> [] bool { return a == b; }",
+    "fn f(a: float, b: float) -> [] bool { return a != b; }",
+    "fn f(a: float, b: float) -> [] bool { return a < b; }",
+    "fn f(a: float, b: float) -> [] bool { return a <= b; }",
+    "fn f(a: float, b: float) -> [] bool { return a > b; }",
+    "fn f(a: float, b: float) -> [] bool { return a >= b; }",
+    "fn f(a: float, b: float) -> [] float { return a | b; }",
+    "fn f(a: float, b: float) -> [] float { return a ^ b; }",
+    "fn f(a: float, b: float) -> [] float { return a & b; }",
+    "fn f(a: float, b: float) -> [] float { return a << b; }",
+    "fn f(a: float, b: float) -> [] float { return a >> b; }",
+    "fn f(a: float, b: float) -> [] float { return a + b; }",
+    "fn f(a: float, b: float) -> [] float { return a - b; }",
+    "fn f(a: float, b: float) -> [] float { return a * b; }",
+    "fn f(a: float, b: float) -> [] float { return a / b; }",
+    "fn f(a: float, b: float) -> [] float { return a % b; }",
+    "fn f(a: byte, b: byte) -> [] bool { return a || b; }",
+    "fn f(a: byte, b: byte) -> [] bool { return a && b; }",
+    "fn f(a: byte, b: byte) -> [] bool { return a == b; }",
+    "fn f(a: byte, b: byte) -> [] bool { return a != b; }",
+    "fn f(a: byte, b: byte) -> [] bool { return a < b; }",
+    "fn f(a: byte, b: byte) -> [] bool { return a <= b; }",
+    "fn f(a: byte, b: byte) -> [] bool { return a > b; }",
+    "fn f(a: byte, b: byte) -> [] bool { return a >= b; }",
+    "fn f(a: byte, b: byte) -> [] byte { return a | b; }",
+    "fn f(a: byte, b: byte) -> [] byte { return a ^ b; }",
+    "fn f(a: byte, b: byte) -> [] byte { return a & b; }",
+    "fn f(a: byte, b: byte) -> [] byte { return a << b; }",
+    "fn f(a: byte, b: byte) -> [] byte { return a >> b; }",
+    "fn f(a: byte, b: byte) -> [] byte { return a + b; }",
+    "fn f(a: byte, b: byte) -> [] byte { return a - b; }",
+    "fn f(a: byte, b: byte) -> [] byte { return a * b; }",
+    "fn f(a: byte, b: byte) -> [] byte { return a / b; }",
+    "fn f(a: byte, b: byte) -> [] byte { return a % b; }",
+    "fn f(a: int) -> [] int { return -a; }",
+    "fn f(a: int) -> [] bool { return !a; }",
+    "fn f(a: int) -> [] int { return ~a; }",
+    "fn f(a: bool) -> [] bool { return -a; }",
+    "fn f(a: bool) -> [] bool { return !a; }",
+    "fn f(a: bool) -> [] int { return ~a; }",
+    "fn f(a: float) -> [] float { return -a; }",
+    "fn f(a: float) -> [] bool { return !a; }",
+    "fn f(a: float) -> [] int { return ~a; }",
+    "fn f(a: byte) -> [] byte { return -a; }",
+    "fn f(a: byte) -> [] bool { return !a; }",
+    "fn f(a: byte) -> [] int { return ~a; }",
+];
+
 fn sources() -> Vec<(String, String)> {
     let root = repo_root();
     let mut files = Vec::new();
@@ -288,6 +600,7 @@ fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "driver.ls",
         "listing.ls",
         "checker.ls",
+        "body.ls",
         "foreign.ls",
         "pass1.ls",
         "ast.ls",
@@ -473,15 +786,97 @@ const SEVERAL_FILES: &[&[&str]] = &[
     ],
     &["extern fn g[&f](f: &f Ffi(\"libc\")) -> [] int;", "fn f() -> [] int { return 1; }"],
     &[
+        "module a;\nfn g() -> [] int { return 1; }",
+        "module b;\nimport a;\nfn f() -> [] int { return a.g(); }",
+    ],
+    &[
+        "module a;\npub fn g() -> [] int { return 1; }",
+        "module b;\nimport a;\nfn f() -> [] int { return a.g(); }",
+    ],
+    &[
+        "module a;\npub fn g(x: int) -> [] int { return x; }",
+        "module b;\nimport a;\nfn f() -> [] int { return a.g(true); }",
+    ],
+    &["fn f() -> [] int { return g(); }", "fn g() -> [] int { return 1; }"],
+    &["fn f() -> [] int { return g(); }", "module m;\nfn g() -> [] int { return 1; }"],
+    &[
         "fn g() -> [] int { return 1; }",
         "extern fn g[&f](f: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;",
     ],
 ];
 
+/// Do two answers of the body checker agree? Line by line, where the port may answer `SKIP` for a
+/// function whose body it does not check yet: how many lines were compared and how many skipped.
+fn bodies_agree(ours: &str, theirs: &str) -> Result<(usize, usize), String> {
+    let (ours, theirs): (Vec<&str>, Vec<&str>) = (ours.lines().collect(), theirs.lines().collect());
+    if ours.len() != theirs.len() {
+        return Err(format!("{} lines, rust {}", ours.len(), theirs.len()));
+    }
+    let (mut compared, mut skipped) = (0, 0);
+    for (a, b) in ours.iter().zip(&theirs) {
+        if a.ends_with(" SKIP") {
+            skipped += 1;
+        } else if a == b {
+            compared += 1;
+        } else {
+            return Err(format!("port {a:?}, rust {b:?}"));
+        }
+    }
+    Ok((compared, skipped))
+}
+
+/// The body checker port against `check_bodies`, function by function: a function the port
+/// answers `SKIP` for is not compared, and enough must be that the test cannot pass by skipping.
+/// Alone, and with the library (a sample, and the library's own functions with each).
+#[test]
+fn the_body_checker_in_lex_sys_agrees_with_the_rust_one_per_function() {
+    let alone = build("bodies", &with_front_end("bodies.ls"));
+    let with_std = build("bodies_with_std", &with_front_end("bodies_files.ls"));
+    let mut corpus = sources();
+    corpus.extend(BODY_EDGE.iter().map(|s| (format!("body case {s:.40?}"), (*s).to_owned())));
+    let sample: Vec<&(String, String)> = corpus
+        .iter()
+        .enumerate()
+        .filter(|(i, (name, _))| i % 8 == 0 || name.starts_with("body case"))
+        .map(|(_, c)| c)
+        .collect();
+    let (mut compared, mut skipped) = (0, 0);
+    let mut different = Vec::new();
+    let mut judge =
+        |what: &str, name: &str, ours: String, theirs: String| match bodies_agree(&ours, &theirs) {
+            Ok((c, s)) => {
+                compared += c;
+                skipped += s;
+            }
+            Err(why) => different.push(format!("{what} {name}: {why}")),
+        };
+    let alone_answers = in_parallel(&corpus, |(_, text)| answer(&alone, text));
+    for ((name, text), ours) in corpus.iter().zip(alone_answers) {
+        judge("alone", name, ours, bodies_oracle::listing(text));
+    }
+    let library_answers = in_parallel(&sample, |(_, text)| {
+        let files = with_library(text);
+        (answer(&with_std, &stream(&files)), bodies_oracle::listing_files(&files))
+    });
+    for ((name, _), (ours, theirs)) in sample.iter().zip(library_answers) {
+        judge("with std", name, ours, theirs);
+    }
+    assert!(
+        different.is_empty(),
+        "`bodies.ls` and `check_bodies` disagree about {} programs:\n{}",
+        different.len(),
+        different.join("\n")
+    );
+    assert!(compared > 20_000, "compared {compared} lines, skipped {skipped}");
+    let _ = std::fs::remove_dir_all(alone.parent().expect("a scratch directory"));
+    let _ = std::fs::remove_dir_all(with_std.parent().expect("a scratch directory"));
+}
+
 #[test]
 fn the_ports_read_several_files_as_the_compiler_does() {
     let parser = build("several_parser", &with_front_end("parser_files.ls"));
     let checker = build("several_check", &with_front_end("check_files.ls"));
+    let bodies = build("several_bodies", &with_front_end("bodies_files.ls"));
     let mut cases: Vec<Vec<String>> =
         SEVERAL_FILES.iter().map(|case| case.iter().map(|f| (*f).to_owned()).collect()).collect();
     // The library alone, and a program with it: the tree of half a megabyte.
@@ -500,9 +895,16 @@ fn the_ports_read_several_files_as_the_compiler_does() {
             "the check of {:?}",
             files.iter().take(3).collect::<Vec<_>>()
         );
+        let theirs = bodies_oracle::listing_files(files);
+        assert!(
+            bodies_agree(&answer(&bodies, &input), &theirs).is_ok(),
+            "the bodies of {:?}",
+            files.iter().take(3).collect::<Vec<_>>()
+        );
     }
     let _ = std::fs::remove_dir_all(parser.parent().expect("a scratch directory"));
     let _ = std::fs::remove_dir_all(checker.parent().expect("a scratch directory"));
+    let _ = std::fs::remove_dir_all(bodies.parent().expect("a scratch directory"));
 }
 
 #[test]

@@ -199,7 +199,8 @@ the stages found, in place, the way this document corrects its own claims.
 | 2. Parser | `examples/selfhost/parser.ls` | `examples/dump_ast.rs` in `lex-sys-syntax` | Same syntax tree, node for node and span for span, or the same refusal (rule and span), on the same 614 files, **including its own source**, and on a fuzz corpus (below) of 52,272 cases, 51,911 of them comparable and all identical, 29,097 of those refusals |
 | 3a. The tree | `examples/selfhost/ast.ls` (a module, the parser) and `parser.ls` (a walk that prints the tree) | the same `dump_ast.rs` | The parser **builds the tree** in flat tables and the listing is produced by walking it; the same 621 programs and 52,314 fuzz cases (6 seeds), all comparable ones identical, 29,055 of them refusals |
 | 3b. Declarations (the first half of the checker, complete) | `examples/selfhost/pass1.ls`, `foreign.ls` and `checker.ls`, over a generated `tables.ls`; programs of several files | `check_declarations` (`lex-sys-ir`), the first half of the Rust checker | Same answer, `OK` or the first refusal's rule and span, on every program of the repository alone (633) and with the whole standard library parsed with them (633, 464 of them `OK`), on 169 targeted cases, and on 62,892 fuzz cases (51,534 alone, 11,358 with the library): 62,434 identical, 37,967 of them refusals, none different; 458 are not UTF-8; nothing is skipped |
-| 3c. Bodies: scopes, types, linearity, effects | not started | `lex-sys check --output json` | |
+| 3c. Bodies, function by function (scalar functions so far) | `examples/selfhost/body.ls` (and `bodies.ls`) | `check_bodies` (`lex-sys-ir`), the Rust checker's body check, answered per function | **First slice.** The port answers `OK`, a refusal, or `SKIP` for each function; every function it answers is the Rust answer: 644 repository programs alone (278 `OK` bodies and 11 refusals among those it answers; 898 function answers skipped), the library's 789 functions with one program (271 `OK`, 518 skipped), 304 targeted cases, and 57,579 fuzz cases (51,588 alone, 5,991 with the library): 57,166 identical, none different; 413 are not UTF-8 |
+| 3d. The rest of the bodies: references, structs, enums, `match`, generics, builtins, linearity, effects, regions | not started | `check_bodies` | |
 | 4. Backend | not started | | |
 
 **The method.** A port that builds no tree has nothing to compare, and one that does
@@ -309,6 +310,48 @@ because the library has no refusal of its own and the program's items come first
 contains itself met first by a mode check makes the Rust checker recurse without end (the
 program is refused anyway, after the stack overflows); the port answers `res` past a depth
 of 64 instead, and no case reached it.
+
+**Stage 3c: bodies, one function at a time.** The second half of the Rust checker reads function
+bodies, and a body is checked against other functions' *signatures* and never their bodies, so each
+function is a case of its own. `lex_sys_ir::check_bodies` (the loop `lower` already ran, extracted
+as `body_results`) answers per function, and the port answers per function: `OK`, the first
+refusal of the body, or `SKIP` where the body uses something it does not check yet. That makes a
+partial port useful at once: it can be exactly right about the functions it handles while it
+does not handle the next. `SKIP` is raised where the Rust checker would have met the construct, so a
+refusal found earlier in the function still counts.
+
+`body.ls` handles functions with no type or region parameters and only scalar parameters and
+result: `let` and `var`, assignment to a local, expression statements, `if`, `while`, `return`;
+integer, float, `f32` (edition 6) and `bool` literals, locals, the unary and binary operators,
+and calls to such functions (arity, argument types, locals that are not functions, module
+qualifiers, visibility). What the Rust checker does for them is more than types: a literal
+operation that can only trap is refused at compile time (`constant-traps`) and **folds through
+nested literals**, so `(1 + 2) * 9223372036854775807` is refused where the outer operation is
+met; `unreachable-statement` and `missing-return` are decided on the lowered statements; and an
+empty row is exact, so a declared label that nothing performs is refused. The order is
+the Rust checker's: the body, then the row, then the return. Integer arithmetic in lex-sys traps
+on overflow, so every folded operation is decided before it is taken (the boundary cases for
+`+ - *` are in `fuzz.py`).
+
+Results: nearly all of what the port can say is checked against the Rust answer and none
+differs. How much it can say is the number to watch: with the library, 271 of its 789 functions
+(34%) are verified `OK` and the rest are skipped, because the port has no references, structs,
+`match`, generics or builtins yet. Every program's `main` is skipped (a `World` is not a scalar),
+so no *program* is wholly verified yet.
+
+How strong the comparison is was measured, not assumed: a **mutation test** changes one comparison
+or arithmetic operator at a time in `body.ls` (144 mutants) and asks whether the comparison with
+the Rust checker notices. The first run caught 82; the survivors were boundaries the edge cases
+never reached (an overflow decided at exactly `int::MAX`, a product at exactly `-2^63`), and
+adding them took it to 101; an operator-by-operand-type matrix (every operator on `int`, `bool`,
+`float` and `byte`) took it to **105 of 144**. The 39 that survive were not each analysed. The ones
+looked at are of two kinds: *equivalent* (a loop over the node list that starts at the first
+item, `b > 0` against `b >= 0` where the zero case is decided earlier) and *hidden by `SKIP`*,
+which is a limit of the method: a mutant that makes the port skip a function it used to answer
+cannot be told from a function it does not handle yet. So the comparison cannot see a port that
+becomes *more* cautious, only one that becomes wrong. `fuzz.py --bodies` and `bodies_diff.py` are the
+harnesses, and `selfhost.rs` runs it in CI over the corpus, the edge cases, and a sample with the
+library.
 
 **Size.** `parser.ls` is 1,970 lines (1,760 that are not comment or blank) for the
 Rust parser's 1,507 (1,225): 1.3 to 1.4 times. `lexcore.ls` is 963 lines (897) for the

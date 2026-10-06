@@ -9,6 +9,8 @@ module selfhost.driver;
 //
 //     mode 0   the syntax tree as a listing (`listing.ls`)
 //     mode 1   the checker's answer (`checker.ls`): `OK`, or the first refusal
+//     mode 2   as mode 1 for the declarations, and then, if they are well formed, one line for
+//              each function: `fn <start> <end>` and `OK`, a refusal, or `SKIP` (`body.ls`)
 //
 // One file is the whole of standard input. Several files are a stream, each as a line
 // `FILE <length>` and then that many bytes, in the order the compiler parses them (the files
@@ -23,6 +25,8 @@ import selfhost.ast;
 import selfhost.rules;
 import selfhost.listing;
 import selfhost.checker;
+import selfhost.body;
+import selfhost.kinds;
 
 fn refusal[&i, &s](io: &!i Io, st: &!s [int]) -> [io_write] int {
     console.write_all(io, "ERR ");
@@ -35,6 +39,38 @@ fn refusal[&i, &s](io: &!i Io, st: &!s [int]) -> [io_write] int {
     return 1;
 }
 
+// One line a function: where it is, and what the checker makes of its body.
+fn bodies[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte]) -> [io_write] int {
+    var item = st[15];
+    while item >= 0 {
+        if ast.is_kind(st, item, kinds.NK::IFn) {
+            let from = ast.nstart(st, item);
+            let to = ast.nend(st, item);
+            let status = body.check_function(st, text, item);
+            console.write_all(io, "fn ");
+            console.print_nat(io, from);
+            console.space(io);
+            console.print_nat(io, to);
+            console.space(io);
+            if status == 0 {
+                console.write_all(io, "OK");
+            } else if status == 2 {
+                console.write_all(io, "SKIP");
+            } else {
+                console.write_all(io, "ERR ");
+                console.write_all(io, rules.rule_tag(st[3]));
+                console.space(io);
+                console.print_nat(io, st[4]);
+                console.space(io);
+                console.print_nat(io, st[5]);
+            }
+            console.newline(io);
+        }
+        item = ast.next(st, item);
+    }
+    return 0;
+}
+
 fn answer[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], mode: int) -> [io_write] int {
     if ast.parse(st, text) != 0 {
         return refusal(io, st);
@@ -44,9 +80,12 @@ fn answer[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], mode: int) -> 
         return 0;
     }
     if checker.check(st, text) == 0 {
-        console.write_all(io, "OK");
-        console.newline(io);
-        return 0;
+        if mode == 1 {
+            console.write_all(io, "OK");
+            console.newline(io);
+            return 0;
+        }
+        return bodies(io, st, text);
     }
     return refusal(io, st);
 }
