@@ -249,6 +249,8 @@ MUTANTS = [
      "    if p <= 0 || p >= contents(engine.tmeta)[t_next_pool()] {", "    if p <= 0 {"),
     ("every save a new pool", "tls.ls",
      "    if p <= 0 || p >= contents(engine.tmeta)[t_next_pool()] {", "    if true {"),
+    ("a close_notify before the handshake taken as a clean close (review E-3)", "client.ls",
+     "        if ints[tls_slot.i_state()] != tls_slot.state_connected() {\n            return tls_record.peer_closed();\n        }\n", ""),
     ("psk_key_exchange_modes sent only with a ticket, so no server need send one", "message.ls",
      "    if modes || len(ticket) > 0 {", "    if len(ticket) > 0 {"),
     ("resumption never advertised by the engine", "tls.ls",

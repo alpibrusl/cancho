@@ -459,7 +459,16 @@ fn subtrees[&c, &v, &f, &b](nc: &c [byte], s: int, e: int, tag: int, value: &v [
                     if tag == 0x82 {
                         found[0] = 1;
                         let sub = nc[g[1]..g[2]];
-                        if dns_within(value, sub) || wild_excluded && len(sub) > 0 && int_of(sub[0]) != 46 && dns_within(sub, value) {
+                        // A wildcard SAN (`value` is its base, `*.`
+                        // removed) is excluded when any name it can
+                        // match is: a subtree within its base, or, for a
+                        // subtree with a leading dot (proper subdomains
+                        // only), one whose base is the wildcard's own,
+                        // since `*.a.example` names only proper
+                        // subdomains of `a.example` (#318, RFC 5280
+                        // §4.2.1.10).
+                        let dotted = len(sub) > 0 && int_of(sub[0]) == 46;
+                        if dns_within(value, sub) || wild_excluded && len(sub) > 0 && !dotted && dns_within(sub, value) || wild_excluded && dotted && dns_within(value, sub[1..len(sub)]) {
                             found[1] = 1;
                         }
                     }

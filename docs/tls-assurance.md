@@ -224,8 +224,8 @@ The alerts differ where RFC 8446 §6.2 leaves the choice open. Mostly OpenSSL se
 client names the fault: `protocol_version`, `handshake_failure`, `decode_error` or `unsupported_extension`. For an all-zero
 or low-order X25519 share, OpenSSL sends `internal_error` (80).
 
-**The six differences on purpose.** `scripts/tls_differential.py` names each in `EXPECTED`, so a seventh, or one of these
-going away, fails the run.
+**The six differences on purpose** (*eight since review finding E-3: the last row*). `scripts/tls_differential.py` names each
+in `EXPECTED`, so one more, or one of these going away, fails the run.
 
 | Case | `packages/tls` | OpenSSL | Why |
 |---|---|---|---|
@@ -235,6 +235,7 @@ going away, fails the run.
 | TLS 1.2 without the extended master secret | refused | accepted | required, by #207's decision |
 | a TLS 1.2 ServerHello echoing the client's session id | refused | accepted | RFC 5246 §7.4.1.3: an echoed id resumes that session, and the client offered none |
 | a TLS 1.2 HelloRequest | refused | renegotiates | no renegotiation, by #207's decision |
+| *Added after review finding E-3 (#209):* a `close_notify` instead of ServerHello, or in the encrypted flight | refused, `tls-peer-closed` | ends quietly, no alert or error | before the handshake completes a `close_notify` may be forged, and nothing authenticated has ended |
 
 **Found, and fixed here.** OpenSSL accepted a TLS 1.3 ServerHello whose random ends in a downgrade sentinel, and this client
 refused it. RFC 8446 §4.1.3 has the check only in a ServerHello for TLS 1.2 or below. `docs/tls-parity.md` §3.4 said so too,

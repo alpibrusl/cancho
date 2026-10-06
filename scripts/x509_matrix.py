@@ -184,6 +184,16 @@ def build(m):
     leaf("a name constraint permitting the host", "leaf.example.com", "ok", issuer=(perm, pk2), chain=[perm])
     leaf("a name constraint permitting another name", "leaf.other.test", "x509-name-constraint", issuer=(perm, pk2), chain=[perm],
          ext=leaf_ext(san="DNS:leaf.other.test"))
+    # A wildcard under an excluded subtree with a leading dot (#318): `*.a.example` names only proper subdomains of
+    # `a.example`, all of which `.a.example` excludes; `.x.a.example` excludes none of the names it can match.
+    dk = m.key("prime256v1")
+    dotted = m.cert("Excluding Dotted", dk, (root, root_key), ca_ext(more="nameConstraints=critical,excluded;DNS:.a.example\n"))
+    leaf("a wildcard under a leading-dot excluded subtree", "x.a.example", "x509-name-constraint", issuer=(dotted, dk), chain=[dotted],
+         ext=leaf_ext(san="DNS:*.a.example"))
+    dk2 = m.key("prime256v1")
+    deeper = m.cert("Excluding Deeper", dk2, (root, root_key), ca_ext(more="nameConstraints=critical,excluded;DNS:.x.a.example\n"))
+    leaf("a wildcard above a leading-dot excluded subtree", "y.a.example", "ok", issuer=(deeper, dk2), chain=[deeper],
+         ext=leaf_ext(san="DNS:*.a.example"))
     # RSA intermediates: PKCS#1 v1.5 and PSS signatures.
     rk = m.key("rsa2048")
     rsa_ica = m.cert("RSA Intermediate", rk, (root, root_key), ca_ext())

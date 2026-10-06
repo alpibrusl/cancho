@@ -348,7 +348,9 @@ fork. The package README must say that a forking program reseeds in each child.
   - more than 32 KeyUpdates, or more than 16 warning alerts, on one connection is refused as a hostile peer
     (`tls-too-many-messages`).
 - **Alerts.** Every received alert ends the connection, except `close_notify`, which is a clean end, and `user_canceled`, which is
-  ignored until the following `close_notify`.
+  ignored until the following `close_notify`. *Corrected (review finding E-3, #209): a `close_notify` is a clean end only once
+  the handshake is done. Before that it may come in the clear, from anyone on the path, and nothing was authenticated to end, so
+  the connection fails with `tls-peer-closed`, as a socket closed mid-handshake does.*
 
 ### 7.2 Not built, and why
 

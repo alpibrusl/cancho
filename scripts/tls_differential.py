@@ -19,7 +19,7 @@ scheme is encrypted, so it is not compared.)
 
 **The lying server**, the default:
 
-`scripts/tls_liar.py` holds 78 connections, each a server that changes one
+`scripts/tls_liar.py` holds 80 connections, each a server that changes one
 thing, and what `packages/tls` must do with each: accept, or refuse with a
 tag and the alert RFC 8446 §6.2 names. Its expectations were written from the
 RFC. This runs the same cases, the same server code unchanged, against
@@ -103,6 +103,11 @@ EXPECTED = {
         "random, for middlebox compatibility); OpenSSL takes it as a new session",
     "TLS 1.2, a HelloRequest":
         "no renegotiation (#207); OpenSSL renegotiates",
+    "a close_notify instead of ServerHello":
+        "a close_notify before the handshake completes is not a clean close (review finding E-3, #209): it may be in the "
+        "clear, from anyone on the path; OpenSSL ends quietly, with no alert and no error of its own",
+    "a close_notify in the encrypted flight, before Finished":
+        "the same (review finding E-3): nothing authenticated has ended; OpenSSL ends quietly",
 }
 
 

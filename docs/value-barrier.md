@@ -75,7 +75,11 @@ The rule is enforced in two ways:
 - **Each module's timing test** checks that no class of inputs runs at a different speed.
 
 `std.x25519` and `std.field25519` are left as they are. Their audit is clean today, and moving them onto the barrier is a
-change of its own, with its own timing run (`docs/ecdh.md` §6).
+change of its own, with its own timing run (`docs/ecdh.md` §6). *Done after review finding A-1 (#316): both are edition 6, and
+`cswap` and `cswap_at` make their masks through `value_barrier`. After it, on LLVM: ctgrind 0 reports for X25519
+(`scripts/curve25519_ctgrind.sh`), no conditional jump but traps in `cswap`, `cswap_at`, `pack` or `scalarmult`
+(`scripts/chacha20_branches.py`), and the timing test of `docs/tls-assurance.md` §6 at max |t| 2.13 (a fixed scalar) and 2.68 (a
+sparse one), 20,000 samples each on the Apple M4 of that section, with the machine loaded (load average 6.7).*
 
 ## 5. Cost
 

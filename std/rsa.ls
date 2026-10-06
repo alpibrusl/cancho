@@ -29,6 +29,11 @@ pub fn refused_exponent() -> [] int {
     return -12;
 }
 
+// The longest public exponent verified, in bits (`docs/rsa.md` §3.1).
+pub fn max_exponent_bits() -> [] int {
+    return 64;
+}
+
 pub fn refused_hash() -> [] int {
     return -13;
 }
@@ -147,7 +152,12 @@ fn check[&n, &e, &d, &s](hash_len: int, n: &n [byte], e: &e [byte], digest: &d [
         return -11;
     }
     let ebits = bigmod.bit_length(e);
-    if ebits < 2 || int_of(e[len(e) - 1]) & 1 == 0 || ebits >= bits {
+    // At most 64 bits (#317): verification costs a multiplication or two
+    // a bit of `e`, and the server chooses both the key and the chain, so
+    // an unbounded exponent lets it choose the client's CPU time (a
+    // 4,095-bit one is about 250 times 65537's). OpenSSL's bound for
+    // large moduli; the Web PKI uses 65537.
+    if ebits < 2 || int_of(e[len(e) - 1]) & 1 == 0 || ebits >= bits || ebits > max_exponent_bits() {
         return -12;
     }
     if !hash_ok(hash_len) {

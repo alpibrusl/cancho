@@ -646,6 +646,13 @@ fn on_alert[&i, &b, &c](ints: &!i [int], bytes: &!b [byte], content: &c [byte]) 
     let level = int_of(content[0]);
     let what = int_of(content[1]);
     if what == 0 {
+        // A clean close only once established (review finding E-3,
+        // #209): before that an alert may be plaintext, which anyone on
+        // the path can send, and nothing was authenticated to end
+        // cleanly, so the connection fails as a peer that closed.
+        if ints[tls_slot.i_state()] != tls_slot.state_connected() {
+            return tls_record.peer_closed();
+        }
         tls_slot.set_flag(ints, tls_slot.f_close_received());
         if tls_slot.has(ints, tls_slot.f_close_sent()) {
             tls_slot.forget(bytes);

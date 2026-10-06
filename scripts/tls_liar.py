@@ -713,6 +713,18 @@ case("a certificate from an untrusted CA", "x509-unknown-issuer", 48)(
     flight_case(lambda s: (setattr(s, "cert_der", OTHER_DER), setattr(s, "cv_key", OTHER_KEY))))
 case("a fatal alert instead of ServerHello", "tls-alert")(
     lambda s: (s.start(), s.c.feed(plain_record(21, b"\2\x28"))))
+# A close_notify before the handshake completes is not a clean close (review finding E-3): in the clear anyone on the
+# path can send it, and nothing was authenticated to end.
+case("a close_notify instead of ServerHello", "tls-peer-closed")(
+    lambda s: (s.start(), s.c.feed(plain_record(21, b"\1\0"))))
+
+
+@case("a close_notify in the encrypted flight, before Finished", "tls-peer-closed")
+def close_in_flight(s):
+    s.start()
+    sh = s.server_hello(s.sid)
+    s.keys(sh)
+    s.c.feed(plain_record(22, sh) + s.write.seal(21, b"\1\0"))
 
 
 @case("a warning-level alert in the flight", "tls-alert")

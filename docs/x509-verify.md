@@ -72,6 +72,10 @@ each of these (`pathological::*`, `rfc5280::*`).
 - **A budget.** At most 64 signature verifications per `verify`. x509-limbo's `pathological-chain-*` cases send 100
   intermediates with the same subject. Without a budget, backtracking over them is exponential. With one, the worst case is 64
   signatures: about 0.1 s at 1.5 ms each on LLVM for P-256 (`docs/ecdsa.md` §5.4), or 0.6 s at 9.9 ms for P-384 on Cranelift.
+  *Corrected (review finding C-1, #317): that assumed an RSA key's exponent was 65537. The server chooses its keys, and
+  nothing bounded the exponent below the modulus; measured on an Apple M4 (LLVM), one RSA-4096 exponentiation took 0.79 ms
+  with 65537 and 176 ms with a 4,095-bit exponent, so 64 of them 11.3 s. `std.rsa` now refuses an exponent over 64 bits, whose
+  worst case measured 3.15 ms: 0.2 s for the budget.*
   Exhausting the budget is `x509-path-too-long`.
 - **Signatures are checked before anything else about a candidate.** A candidate whose key does not verify is not an issuer.
   *Corrected (§8.3): this said a signature is the only way to tell two certificates with the same subject apart. As built,
@@ -142,7 +146,12 @@ constraints. Among the 30,379 certificates of `limbo.json`, the constraint subtr
 - **What is constrained.** Every `dNSName` and `iPAddress` in the SAN of every certificate below the constraining one. A
   wildcard SAN `*.a.example` is checked as `a.example` against permitted subtrees. *Corrected (§8.3): this said "and as
   itself against excluded ones, as webpki does". As built, against an excluded subtree it is refused when either holds the
-  other: `a.example` inside the subtree, or the subtree (`x.a.example`) inside `a.example`, since the wildcard names it.* The subject's common name is never read (no CN fallback, `docs/tls-pure.md` §5.3), so it is never constrained.
+  other: `a.example` inside the subtree, or the subtree (`x.a.example`) inside `a.example`, since the wildcard names it.*
+  *Corrected again (review finding D-1, #318): that missed a subtree with a leading dot. `.a.example` holds only proper
+  subdomains of `a.example`, so neither held the other, and `*.a.example`, which names only such subdomains, passed an
+  exclusion of `.a.example`. A wildcard is now also refused by a dotted subtree whose base is its own, as OpenSSL refuses it;
+  `.x.a.example` still excludes none of the names `*.a.example` can match. Both are cases of the OpenSSL matrix (§6.2). Against a
+  permitted `.a.example`, `*.a.example` is still refused, which is the safe side of the same reading.* The subject's common name is never read (no CN fallback, `docs/tls-pure.md` §5.3), so it is never constrained.
 - **Permitted, then excluded.** A name of a type that has permitted subtrees must match one of them, and it must match none of
   the excluded subtrees.
 - **A subtree of any other type**, `rfc822Name`, `directoryName`, URI or `otherName`, is unreadable: the chain is refused with

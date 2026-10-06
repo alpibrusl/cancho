@@ -23,6 +23,8 @@ VEC = os.path.join(ROOT, "tests/vectors/x509/verify")
 
 # (name, file, the text replaced, its replacement). Each `old` occurs exactly once in its file.
 MUTANTS = [
+    ("a wildcard escaping a leading-dot excluded subtree (#318)", "names.ls",
+     " || wild_excluded && dotted && dns_within(value, sub[1..len(sub)]) {", " {"),
     ("an intermediate's signature not checked", "verify.ls",
      "var c = signature_ok(der, view, jder, jview);", "var c = 0;"),
     ("a root's signature not checked", "verify.ls",

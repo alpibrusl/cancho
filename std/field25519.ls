@@ -1,3 +1,4 @@
+edition 6;
 module std.field25519;
 
 // `std.field25519` — arithmetic modulo p = 2^255 - 19, the field under
@@ -123,9 +124,13 @@ pub fn square[&o, &a, &t](o: &!o [int], a: &a [int], t: &!t [int]) -> [] int {
 
 // Swaps `p` and `q` when `bit` is 1 and leaves them when it is 0, with
 // the same work either way: `mask` is all ones or all zeros, never a
-// branch (RFC 7748 §5's `cswap`).
+// branch (RFC 7748 §5's `cswap`). The mask passes through
+// `value_barrier` where it is made (`docs/value-barrier.md` §4): `bit` is
+// a bit of X25519's secret scalar, and without it LLVM may prove the
+// mask 0 or -1, fold the XOR into a select and hoist that as a branch
+// (#316).
 pub fn cswap[&p, &q](p: &!p [int], q: &!q [int], bit: int) -> [] int {
-    let mask = wrapping_sub(0, bit);
+    let mask = value_barrier(wrapping_sub(0, bit));
     var i = 0;
     while i < 16 {
         let x = mask & (p[i] ^ q[i]);
@@ -310,8 +315,10 @@ pub fn pack[&o, &a, &t](out: &!o [byte], a: &a [int], t: &!t [int]) -> [] int {
     return 0;
 }
 
+// `cswap` within one array: `pack`'s choice of the reduced value, which
+// depends on the secret it packs, so its mask is barriered too (#316).
 fn cswap_at[&t](t: &!t [int], x: int, y: int, bit: int) -> [] int {
-    let mask = wrapping_sub(0, bit);
+    let mask = value_barrier(wrapping_sub(0, bit));
     var i = 0;
     while i < 16 {
         let d = mask & (t[x + i] ^ t[y + i]);

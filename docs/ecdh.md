@@ -176,5 +176,6 @@ signatures, so this is around 0.2 ms.
 ## 7. Not done here
 
 - **`std.x25519` and `std.field25519` onto `value_barrier`.** Their audit is clean today only because LLVM happens not to see
-  through their masks (`docs/value-barrier.md` §4). Moving them is a change with its own timing run.
+  through their masks (`docs/value-barrier.md` §4). Moving them is a change with its own timing run. *Done (#316, review
+  finding A-1), with that run: `docs/value-barrier.md` §4.*
 - **The scalar's range check rejects instead of reducing.** A TLS client can simply draw again.
