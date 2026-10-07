@@ -402,6 +402,15 @@ pub fn failure[&e](engine: &e Engine, slot: int) -> [] int {
     return tls_client.failure(contents(engine.ints)[i..i + tls_client.ints_len()]);
 }
 
+// The alert the peer sent, when `failure` is `tls-alert`.
+pub fn alert_received[&e](engine: &e Engine, slot: int) -> [] int {
+    if !slot_ok(engine, slot) {
+        return 0;
+    }
+    let i = ints_of(slot);
+    return tls_client.alert_received(contents(engine.ints)[i..i + tls_client.ints_len()]);
+}
+
 pub fn refusal_tag(code: int) -> [] &static [byte] {
     return tls_record.refusal_tag(code);
 }
