@@ -245,6 +245,10 @@ fn message_of[&r](rule: &r [byte]) -> [] &static [byte] {
     if bytes.equal(rule, "body.chunk-extension") { return "bad chunk extension"; }
     if bytes.equal(rule, "body.trailer") { return "bad chunk trailer"; }
     if bytes.equal(rule, "body.trailer-too-large") { return "chunk trailers too large"; }
+    if bytes.equal(rule, "timeout.head") { return "request head timeout"; }
+    if bytes.equal(rule, "timeout.body") { return "request body timeout"; }
+    if bytes.equal(rule, "head.too-large") { return "request head too large"; }
+    if bytes.equal(rule, "head.malformed") { return ""; }
     return "expectation failed";
 }
 
@@ -311,8 +315,6 @@ fn refusals[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_write
     mid_body_both_ways(heap, srv, "5\rXhello", s400, "body.chunk-framing");
     mid_body_both_ways(heap, srv, "5\r\nhello\rX", s400, "body.chunk-framing");
     mid_body_both_ways(heap, srv, "0\r\n\rX", s400, "body.trailer");
-    mid_body_both_ways(heap, srv, "0\r\n:no-name\r\n\r\n", s400, "body.trailer");
-    mid_body_both_ways(heap, srv, "0\r\nNoColon\r\n\r\n", s400, "body.trailer");
     mid_body_both_ways(heap, srv, "0\r\nA: b\nC: d\r\n\r\n", s400, "body.trailer");
     mid_body_both_ways(heap, srv, "0\r\nA: b\0\r\n\r\n", s400, "body.trailer");
     mid_body_both_ways(heap, srv, "5;a\0b\r\nhello\r\n", s400, "body.chunk-extension");
@@ -330,6 +332,9 @@ fn refusals[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_write
     mid_body_both_ways(heap, srv, "65\r\n", "HTTP/1.1 413 ", "body.too-large");
     mid_body_both_ways(heap, srv, "28\r\n0123456789012345678901234567890123456789\r\n28\r\n0123456789012345678901234567890123456789\r\n28\r\n", "HTTP/1.1 413 ", "body.too-large");
     mid_body_both_ways(heap, srv, "ffffffff\r\n", "HTTP/1.1 413 ", "body.too-large");
+    // The refusals the server always had carry a rule too when `limits` is on.
+    refused_with(heap, srv, "NOT A REQUEST\r\n\r\n", "HTTP/1.1 400 ", "head.malformed");
+    refused_with(heap, srv, "GET /aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa HTTP/1.1\r\nHost: t\r\n", "HTTP/1.1 431 ", "head.too-large");
     // A length over the maximum is refused with the head, before any `100`.
     let k = server.attach(srv, 0);
     server.input(srv, k, "POST /p HTTP/1.1\r\nHost: t\r\nExpect: 100-continue\r\nContent-Length: 101\r\n\r\n", 0);
@@ -418,15 +423,15 @@ fn corpus(i: int) -> [] (&static [byte], &static [byte], &static [byte]) {
     if i == 34 { return ("5\r\nhello\n0\r\n\r\n", "", "body.chunk-framing"); }
     if i == 35 { return ("5;a\rb\r\nhello", "", "body.chunk-framing"); }
     if i == 36 { return ("5;a\0b\r\nhello\r\n0\r\n\r\n", "", "body.chunk-extension"); }
-    if i == 37 { return ("0\r\n \r\n\r\n", "", "body.trailer"); }
-    if i == 38 { return ("0\r\nT\r\n\r\n", "", "body.trailer"); }
-    if i == 39 { return ("0\r\nT : v\r\n\r\n", "", "body.trailer"); }
+    if i == 37 { return ("0\r\n \r\n\r\n", "", ""); }
+    if i == 38 { return ("0\r\nT\r\n\r\n", "", ""); }
+    if i == 39 { return ("0\r\nT : v\r\n\r\n", "", ""); }
     if i == 40 { return ("0\r\nT: v\nU: w\r\n\r\n", "", "body.trailer"); }
     if i == 41 { return ("0\r\nT: v\r\r\n", "", "body.trailer"); }
     if i == 42 { return ("0\r\n\r\r", "", "body.trailer"); }
     if i == 43 { return ("0\r\n\n", "", "body.trailer"); }
     if i == 44 { return ("0\r\nT: a\0b\r\n\r\n", "", "body.trailer"); }
-    if i == 45 { return ("0\r\n:v\r\n\r\n", "", "body.trailer"); }
+    if i == 45 { return ("0\r\n:v\r\n\r\n", "", ""); }
     if i == 46 { return ("65\r\n", "", "body.too-large"); }
     if i == 47 { return ("2\r\nab\r\n63\r\n", "", "body.too-large"); }
     if i == 48 { return ("1\r\na\r\n64\r\n", "", "body.too-large"); }
@@ -543,6 +548,7 @@ fn timed_out[&h, &s, &p, &r](heap: &!h Heap, srv: &!s server.Server, k: int, now
     borrow got as &g in {
         test.assert(bytes.starts_with(buffer.bytes(g), status));
         test.assert(bytes.find(buffer.bytes(g), rule) >= 0);
+        test.assert(bytes.find(buffer.bytes(g), message_of(rule)) >= 0);
         test.assert(bytes.find(buffer.bytes(g), "Connection: close") >= 0);
     }
     buffer.drop(heap, got);

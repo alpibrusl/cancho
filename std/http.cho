@@ -597,7 +597,8 @@ pub fn header[&s, &t, &n](src: &s [byte], table: &t [int], name: &n [byte]) -> [
 // Percent-encoding and the query string
 // ---------------------------------------------------------------------
 
-fn hex_value(c: int) -> [] int {
+// The value of a hex digit (either case), or -1.
+pub fn hex_value(c: int) -> [] int {
     if c >= 48 && c <= 57 {
         return c - 48;
     }

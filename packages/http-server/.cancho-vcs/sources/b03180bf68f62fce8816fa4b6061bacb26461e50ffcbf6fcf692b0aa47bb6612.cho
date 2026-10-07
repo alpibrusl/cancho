@@ -448,9 +448,10 @@ fn produce[&h, &t, &c](heap: &!h Heap, tab: &!t conns.Table, core: &!c Core, k: 
         if c > 0 {
             ready = 1;
         } else {
-            refuse = rule_status(0 - c);
-            message = rule_message(0 - c);
-            tag = rule_tag(0 - c);
+            let (status, text, rule_tag) = rule(0 - c);
+            refuse = status;
+            message = text;
+            tag = rule_tag;
         }
     } else if http.is_chunked(table) {
         let (took, decoded) = http.dechunk(view[n..filled], scratch);
@@ -459,13 +460,11 @@ fn produce[&h, &t, &c](heap: &!h Heap, tab: &!t conns.Table, core: &!c Core, k: 
             if used == 0 && filled >= size {
                 refuse = 413;
                 message = "request too large";
-                tag = "request.too-large";
             }
         } else if took < 0 {
             refuse = 400;
             if took == 0 - 4 {
                 refuse = 413;
-                tag = "request.too-large";
             }
             message = http.dechunk_message(took);
         } else {
@@ -484,7 +483,6 @@ fn produce[&h, &t, &c](heap: &!h Heap, tab: &!t conns.Table, core: &!c Core, k: 
         if n + body_length > size {
             refuse = 413;
             message = "request too large";
-            tag = "request.too-large";
         } else if used + n + body_length <= filled {
             st[p + 7] = n;
             st[p + 8] = body_length;
@@ -611,30 +609,6 @@ fn enqueue[&c](core: &!c Core, k: int) -> [] int {
         }
         core.nready = left;
         core.cursor = 0;
-        if left >= core.limit {
-            // Still full: a connection is queued twice (`hold` or `answer` ended its visit outside `next`, so the flag
-            // was cleared with its entry still waiting). Keep one entry each, and none for a slot not in use.
-            var i = 0;
-            while i < left {
-                st[stride() * queue[i] + 12] = 0;
-                i = i + 1;
-            }
-            var kept = 0;
-            i = 0;
-            while i < left {
-                let q = stride() * queue[i];
-                if st[q + 12] == 0 && st[q + 4] == 1 {
-                    st[q + 12] = 1;
-                    queue[kept] = queue[i];
-                    kept = kept + 1;
-                }
-                i = i + 1;
-            }
-            core.nready = kept;
-        }
-        if st[p + 12] == 1 {
-            return 0;
-        }
     }
     st[p + 12] = 1;
     queue[core.nready] = k;
@@ -746,28 +720,15 @@ fn sweep_idle[&t, &c](tab: &!t conns.Table, core: &!c Core, now: int) -> [] int 
 // Streaming bodies (`http-server.md` §12)
 // ---------------------------------------------------------------------
 
-// Flags, word 24 of a slot.
-fn f_keep() -> [] int { return 1; }
-
-fn f_expect() -> [] int { return 2; }
-
-fn f_started() -> [] int { return 4; }
-
-fn f_done() -> [] int { return 8; }
-
-fn f_touched() -> [] int { return 16; }
-
+// Flags, word 24 of a slot: 1 keep-alive, 2 `Expect: 100-continue` not answered, 4 the answer has begun, 8 the body has all arrived, 16 any of it has.
 fn has(flags: int, bit: int) -> [] bool {
     return flags / bit % 2 == 1;
 }
 
 fn set_flag[&s](st: &!s [int], p: int, bit: int) -> [] int {
-    if !has(st[p + 24], bit) { st[p + 24] = st[p + 24] + bit; }
-    return 0;
-}
-
-fn clear_flag[&s](st: &!s [int], p: int, bit: int) -> [] int {
-    if has(st[p + 24], bit) { st[p + 24] = st[p + 24] - bit; }
+    if !has(st[p + 24], bit) {
+        st[p + 24] = st[p + 24] + bit;
+    }
     return 0;
 }
 
@@ -775,177 +736,163 @@ fn clear_flag[&s](st: &!s [int], p: int, bit: int) -> [] int {
 fn clear_body[&c](core: &!c Core, k: int) -> [] int {
     let st = contents(core.state);
     var i = 16;
-    while i < stride() { st[stride() * k + i] = 0; i = i + 1; }
+    while i < stride() {
+        st[stride() * k + i] = 0;
+        i = i + 1;
+    }
     return 0;
 }
 
-// What a refusal is, by code: the status, the message the client reads, the rule tag it is sent in `X-Rule`
-// (§12.4). 1 to 10 are the streaming ones; 11 to 13 the three the socket and byte-fed servers always had.
-fn rule_status(code: int) -> [] int {
-    if code == 1 { return 413; }
-    if code == 6 || code == 11 { return 431; }
-    if code == 7 || code == 8 { return 408; }
-    if code == 9 { return 417; }
-    if code == 13 { return 413; }
-    return 400;
+// What a refusal is, by code: its status, the message the client reads, and the rule tag it is sent in `X-Rule` (§12.4), as records
+// `status|message|tag` of one string, `;` between. 1 to 9 are the streaming ones (10, the peer's end, has no answer); record 0 is "a bad
+// request" for any other. (The three refusals the server always had are made where they are found, `produce`; they carry a rule only here.)
+fn rule(code: int) -> [] (int, &static [byte], &static [byte]) {
+    var n = code;
+    if n < 0 || n > 9 {
+        n = 0;
+    }
+    let rec = bytes.field("400|bad request|head.malformed;413|request body too large|body.too-large;400|bad chunk size|body.chunk-size;400|bad chunk framing|body.chunk-framing;400|bad chunk extension|body.chunk-extension;400|bad chunk trailer|body.trailer;431|chunk trailers too large|body.trailer-too-large;408|request head timeout|timeout.head;408|request body timeout|timeout.body;417|expectation failed|expect.unsupported", 59, n + 1);
+    let status = (int_of(rec[0]) - 48) * 100 + (int_of(rec[1]) - 48) * 10 + int_of(rec[2]) - 48;
+    return (status, bytes.field(rec, 124, 2), bytes.field(rec, 124, 3));
 }
 
-fn rule_message(code: int) -> [] &static [byte] {
-    if code == 1 { return "request body too large"; }
-    if code == 2 { return "bad chunk size"; }
-    if code == 3 { return "bad chunk framing"; }
-    if code == 4 { return "bad chunk extension"; }
-    if code == 5 { return "bad chunk trailer"; }
-    if code == 6 { return "chunk trailers too large"; }
-    if code == 7 { return "request head timeout"; }
-    if code == 8 { return "request body timeout"; }
-    if code == 9 { return "expectation failed"; }
-    if code == 11 { return "request head too large"; }
-    if code == 13 { return "request too large"; }
-    return "bad request";
-}
-
-fn rule_tag(code: int) -> [] &static [byte] {
-    if code == 1 { return "body.too-large"; }
-    if code == 2 { return "body.chunk-size"; }
-    if code == 3 { return "body.chunk-framing"; }
-    if code == 4 { return "body.chunk-extension"; }
-    if code == 5 { return "body.trailer"; }
-    if code == 6 { return "body.trailer-too-large"; }
-    if code == 7 { return "timeout.head"; }
-    if code == 8 { return "timeout.body"; }
-    if code == 9 { return "expect.unsupported"; }
-    if code == 11 { return "head.too-large"; }
-    if code == 13 { return "request.too-large"; }
-    return "head.malformed";
-}
-
-// How many bytes connection `k` may read now: the free room in its buffer, and while a length body is
-// arriving no more than it still owes, so the bytes after it are never mixed into it. 0 once a refusal is
-// recorded. (It does not look at output waiting or at a closing connection: its callers do.)
+// How many bytes connection `k` may read now: its free room, and while a length body is arriving no more than the body
+// still owes (the bytes after it are never mixed into it); 0 once a refusal is recorded. Output waiting and a closing connection are its callers'.
 fn readable[&c](core: &c Core, k: int) -> [] int {
     let st = contents(core.state);
     let p = stride() * k;
-    if st[p + 25] != 0 { return 0; }
+    if st[p + 25] != 0 {
+        return 0;
+    }
     var free = core.size - st[p];
-    if st[p + 16] != 0 && !has(st[p + 24], f_done()) {
+    if st[p + 16] != 0 && !has(st[p + 24], 8) {
         // The bytes the application has taken are room again (`reclaim`).
         free = free + st[p + 21];
-        if st[p + 16] == 1 && st[p + 17] < free { return st[p + 17]; }
+        if st[p + 16] == 1 && st[p + 17] < free {
+            return st[p + 17];
+        }
     }
     return free;
 }
 
-fn hexv(c: int) -> [] int {
-    if c >= 48 && c <= 57 { return c - 48; }
-    if c >= 97 && c <= 102 { return c - 87; }
-    if c >= 65 && c <= 70 { return c - 55; }
-    return 0 - 1;
-}
-
-fn tchar(c: int) -> [] bool {
-    return c >= 48 && c <= 57 || c >= 65 && c <= 90 || c >= 97 && c <= 122 || c == 33 || c == 35 || c == 36 || c == 37 || c == 38 || c == 39 || c == 42 || c == 43 || c == 45 || c == 46 || c == 94 || c == 95 || c == 96 || c == 124 || c == 126;
-}
-
 fn eq_ci[&a, &l](a: &a [byte], lit: &l [byte]) -> [] bool {
-    if len(a) != len(lit) { return false; }
+    if len(a) != len(lit) {
+        return false;
+    }
     var i = 0;
     while i < len(a) {
-        if bytes.to_lower(int_of(a[i])) != int_of(lit[i]) { return false; }
+        if bytes.to_lower(int_of(a[i])) != int_of(lit[i]) {
+            return false;
+        }
         i = i + 1;
     }
     return true;
 }
 
-// The chunk machine's step for one byte that is not chunk data (§12.4). The states, in word 18:
-//     0 start of a size line, 1 in its digits, 2 in an extension, 3 after the CR of the size line,
-//     4 data (run by `chunk_run`), 5 after data, 6 after the CR that follows data,
-//     7 start of a trailer line (or the final CR), 8 in a trailer name, 9 in its value, 10 after its CR,
-//     11 after the final CR, 12 the end.
-// Answers 0, or the code of the refusal (`rule_*`).
+// The byte `c` must be `byte`, and the machine goes to state `next`; if it is not, the refusal `fail`. (A new size line starts with no digits.)
+fn want[&s](st: &!s [int], p: int, c: int, byte: int, next: int, fail: int) -> [] int {
+    if c != byte {
+        return fail;
+    }
+    st[p + 18] = next;
+    st[p + 20] = 0;
+    return 0;
+}
+
+// The chunk machine's step for one byte that is not chunk data (§12.4); the state is word 18: 0 start of a size line, 1 in its digits, 2 in an
+// extension, 3 after its CR, 4 data (`chunk_run`), 5 after data, 6 after the CR that follows data, 7 start of a trailer line (or the final CR),
+// 9 in a trailer line, 10 after its CR, 11 after the final CR, 12 the end. Answers 0, or the code of the refusal (`rule`).
 fn chunk_step[&s](st: &!s [int], p: int, c: int, maxb: int) -> [] int {
     let cs = st[p + 18];
     if cs >= 7 && cs <= 10 {
         st[p + 29] = st[p + 29] + 1;
-        if st[p + 29] > 4096 { return 6; }
+        if st[p + 29] > 4096 {
+            return 6;
+        }
     }
     if cs == 0 || cs == 1 {
-        let v = hexv(c);
+        let v = http.hex_value(c);
         if v >= 0 {
-            if st[p + 20] >= 8 { return 2; }
+            if st[p + 20] >= 8 {
+                return 2;
+            }
             st[p + 19] = st[p + 19] * 16 + v;
             st[p + 20] = st[p + 20] + 1;
             st[p + 18] = 1;
             return 0;
         }
-        if cs == 0 { return 2; }
+        if cs == 0 {
+            return 2;
+        }
         if c == 59 {
             st[p + 18] = 2;
             st[p + 20] = 0;
             return 0;
         }
-        if c == 13 { st[p + 18] = 3; return 0; }
+        if c == 13 {
+            st[p + 18] = 3;
+            return 0;
+        }
         return 3;
     }
     if cs == 2 {
-        if c == 13 { st[p + 18] = 3; return 0; }
+        if c == 13 {
+            st[p + 18] = 3;
+            return 0;
+        }
         st[p + 20] = st[p + 20] + 1;
-        if c < 32 && c != 9 || c == 127 || st[p + 20] > 256 { return 4; }
+        if c < 32 && c != 9 || c == 127 || st[p + 20] > 256 {
+            return 4;
+        }
         return 0;
     }
     if cs == 3 {
-        if c != 10 { return 3; }
-        if st[p + 19] == 0 { st[p + 18] = 7; return 0; }
-        if st[p + 23] + st[p + 19] > maxb { return 1; }
+        if c != 10 {
+            return 3;
+        }
+        if st[p + 19] == 0 {
+            st[p + 18] = 7;
+            return 0;
+        }
+        if st[p + 23] + st[p + 19] > maxb {
+            return 1;
+        }
         st[p + 18] = 4;
         return 0;
     }
     if cs == 5 {
-        if c != 13 { return 3; }
-        st[p + 18] = 6;
-        return 0;
+        return want(st, p, c, 13, 6, 3);
     }
     if cs == 6 {
-        if c != 10 { return 3; }
-        st[p + 18] = 0;
-        st[p + 19] = 0;
-        st[p + 20] = 0;
-        return 0;
+        return want(st, p, c, 10, 0, 3);
     }
-    if cs == 7 {
-        if c == 13 { st[p + 18] = 11; return 0; }
-        if !tchar(c) { return 5; }
-        st[p + 18] = 8;
-        return 0;
-    }
-    if cs == 8 {
-        if c == 58 { st[p + 18] = 9; return 0; }
-        if !tchar(c) { return 5; }
-        return 0;
-    }
-    if cs == 9 {
-        if c == 13 { st[p + 18] = 10; return 0; }
-        if c < 32 && c != 9 || c == 127 { return 5; }
+    if cs == 7 || cs == 9 {
+        // A trailer line: bytes with no control character (tab apart) up to a CR, or at the start of a line the final CR.
+        if c == 13 {
+            st[p + 18] = 11;
+            if cs == 9 {
+                st[p + 18] = 10;
+            }
+            return 0;
+        }
+        st[p + 18] = 9;
+        if c < 32 && c != 9 || c == 127 {
+            return 5;
+        }
         return 0;
     }
     if cs == 10 {
-        if c != 10 { return 5; }
-        st[p + 18] = 7;
-        return 0;
+        return want(st, p, c, 10, 7, 5);
     }
     if cs == 11 {
-        if c != 10 { return 5; }
-        st[p + 18] = 12;
-        return 0;
+        return want(st, p, c, 10, 12, 5);
     }
     return 3;
 }
 
-// Run the chunk machine over connection `k`'s buffer from `from` to the bytes it holds, in place: what is
-// data is moved down over the framing that carried it (the write position never passes the read position), so
-// the buffer holds the decoded bytes the application has not taken and, once the final CRLF is read, the bytes
-// that follow the body, moved down to meet them. The machine's state is in the slot's words, so a byte is
-// looked at once however the body is split. A refusal is recorded in word 25.
+// Run the chunk machine over connection `k`'s buffer from `from` to the bytes it holds, in place: data is moved down over the framing that
+// carried it (the write position never passes the read), so the buffer holds the decoded bytes not yet taken and, once the final CRLF is read,
+// the bytes after the body, moved down to meet them. The state is in the slot's words: a byte is looked at once however the body is split.
 fn chunk_run[&c](core: &!c Core, k: int, from: int) -> [] int {
     let st = contents(core.state);
     let bf = contents(core.bufs);
@@ -958,14 +905,21 @@ fn chunk_run[&c](core: &!c Core, k: int, from: int) -> [] int {
     while r < end && st[p + 18] != 12 && code == 0 {
         if st[p + 18] == 4 {
             var m = end - r;
-            if m > st[p + 19] { m = st[p + 19]; }
+            if m > st[p + 19] {
+                m = st[p + 19];
+            }
             var i = 0;
-            while i < m { bf[base + w + i] = bf[base + r + i]; i = i + 1; }
+            while i < m {
+                bf[base + w + i] = bf[base + r + i];
+                i = i + 1;
+            }
             r = r + m;
             w = w + m;
             st[p + 19] = st[p + 19] - m;
             st[p + 23] = st[p + 23] + m;
-            if st[p + 19] == 0 { st[p + 18] = 5; }
+            if st[p + 19] == 0 {
+                st[p + 18] = 5;
+            }
         } else {
             code = chunk_step(st, p, int_of(bf[base + r]), core.maxb);
             r = r + 1;
@@ -978,9 +932,12 @@ fn chunk_run[&c](core: &!c Core, k: int, from: int) -> [] int {
         return code;
     }
     if st[p + 18] == 12 {
-        set_flag(st, p, f_done());
+        set_flag(st, p, 8);
         var i = 0;
-        while r + i < end { bf[base + w + i] = bf[base + r + i]; i = i + 1; }
+        while r + i < end {
+            bf[base + w + i] = bf[base + r + i];
+            i = i + 1;
+        }
         st[p] = w + end - r;
     } else {
         st[p] = w;
@@ -993,7 +950,7 @@ fn chunk_run[&c](core: &!c Core, k: int, from: int) -> [] int {
 fn reclaim[&c](core: &!c Core, k: int) -> [] int {
     let st = contents(core.state);
     let p = stride() * k;
-    if st[p + 16] != 0 && !has(st[p + 24], f_done()) && st[p + 21] > 0 {
+    if st[p + 16] != 0 && !has(st[p + 24], 8) && st[p + 21] > 0 {
         let bf = contents(core.bufs);
         let base = k * core.size;
         var i = 0;
@@ -1012,19 +969,25 @@ fn reclaim[&c](core: &!c Core, k: int) -> [] int {
 fn ingest[&c](core: &!c Core, k: int, from: int) -> [] int {
     let st = contents(core.state);
     let p = stride() * k;
-    if st[p + 16] == 0 || has(st[p + 24], f_done()) || st[p + 25] != 0 { return 0; }
+    if st[p + 16] == 0 || has(st[p + 24], 8) || st[p + 25] != 0 {
+        return 0;
+    }
     st[p + 27] = core.now;
-    set_flag(st, p, f_touched());
+    set_flag(st, p, 16);
     if st[p + 16] == 2 {
         chunk_run(core, k, from);
-        if st[p + 25] != 0 { enqueue(core, k); }
+        if st[p + 25] != 0 {
+            enqueue(core, k);
+        }
         return 0;
     }
     let got = st[p] - from;
     st[p + 17] = st[p + 17] - got;
     st[p + 22] = st[p + 22] + got;
     st[p + 23] = st[p + 23] + got;
-    if st[p + 17] <= 0 { set_flag(st, p, f_done()); }
+    if st[p + 17] <= 0 {
+        set_flag(st, p, 8);
+    }
     return 0;
 }
 
@@ -1040,7 +1003,9 @@ fn classify[&c, &v](core: &!c Core, k: int, n: int, view: &v [byte]) -> [] int {
     var i = 0;
     while i < http.header_count(table) {
         if eq_ci(http.header_name(view, table, i), "expect") {
-            if eq_ci(http.header_value(view, table, i), "100-continue") { expect = 1; } else {
+            if eq_ci(http.header_value(view, table, i), "100-continue") {
+                expect = 1;
+            } else {
                 return 0 - 9;
             }
         }
@@ -1048,7 +1013,9 @@ fn classify[&c, &v](core: &!c Core, k: int, n: int, view: &v [byte]) -> [] int {
     }
     let chunked = http.is_chunked(table);
     var blen = 0;
-    if http.content_length(table) > 0 { blen = http.content_length(table); }
+    if http.content_length(table) > 0 {
+        blen = http.content_length(table);
+    }
     if !chunked && blen == 0 {
         // No body: the head is the whole request.
         st[p + 7] = n;
@@ -1057,20 +1024,28 @@ fn classify[&c, &v](core: &!c Core, k: int, n: int, view: &v [byte]) -> [] int {
         st[p + 10] = 0;
         return 1;
     }
-    if !chunked && blen > core.maxb { return 0 - 1; }
+    if !chunked && blen > core.maxb {
+        return 0 - 1;
+    }
     let have = st[p] - used - n;
     st[p + 21] = used + n;
     st[p + 22] = 0;
     st[p + 23] = 0;
-    if http.keeps_alive(table) { set_flag(st, p, f_keep()); }
+    if http.keeps_alive(table) {
+        set_flag(st, p, 1);
+    }
     if !chunked {
         var got = have;
-        if got > blen { got = blen; }
+        if got > blen {
+            got = blen;
+        }
         st[p + 16] = 1;
         st[p + 17] = blen - got;
         st[p + 22] = got;
         st[p + 23] = got;
-        if got == blen { set_flag(st, p, f_done()); }
+        if got == blen {
+            set_flag(st, p, 8);
+        }
     } else {
         st[p + 16] = 2;
         chunk_run(core, k, used + n);
@@ -1083,10 +1058,16 @@ fn classify[&c, &v](core: &!c Core, k: int, n: int, view: &v [byte]) -> [] int {
     st[p + 7] = n;
     st[p + 9] = st[p + 22];
     st[p + 10] = 0;
-    if has(st[p + 24], f_done()) { return 1; }
+    if has(st[p + 24], 8) {
+        return 1;
+    }
     st[p + 9] = 0;
-    if expect == 1 && http.version(table) == 11 { set_flag(st, p, f_expect()); }
-    if have > 0 { set_flag(st, p, f_touched()); }
+    if expect == 1 && http.version(table) == 11 {
+        set_flag(st, p, 2);
+    }
+    if have > 0 {
+        set_flag(st, p, 16);
+    }
     st[p + 27] = core.now;
     return 2;
 }
@@ -1113,7 +1094,9 @@ fn refuse_with[&h, &t, &c, &m, &g](heap: &!h Heap, tab: &!t conns.Table, core: &
         st[p + 2] = emit(tab, core.fed, k, core.chunk, buffer.bytes(ob), pd[k * core.osize..(k + 1) * core.osize], st[p + 2]);
     }
     buffer.drop(heap, o);
-    if st[p + 2] < 0 { st[p + 11] = 1; }
+    if st[p + 2] < 0 {
+        st[p + 11] = 1;
+    }
     st[p + 3] = 1;
     return 0;
 }
@@ -1124,15 +1107,18 @@ fn reject[&h, &t, &c](heap: &!h Heap, tab: &!t conns.Table, core: &!c Core, k: i
     let st = contents(core.state);
     let p = stride() * k;
     let code = st[p + 25];
-    let begun = has(st[p + 24], f_started());
+    let begun = has(st[p + 24], 4);
     st[p + 13] = 0;
     clear_body(core, k);
     if code == 10 || begun || st[p + 2] < 0 || st[p + 3] == 1 {
         // Nothing can be said (or the connection is ending with its answer): end it, but not over an answer on its way.
-        if st[p + 3] == 0 { st[p + 11] = 1; }
+        if st[p + 3] == 0 {
+            st[p + 11] = 1;
+        }
         return 0;
     }
-    return refuse_with(heap, tab, core, k, rule_status(code), rule_message(code), rule_tag(code));
+    let (status, message, tag) = rule(code);
+    return refuse_with(heap, tab, core, k, status, message, tag);
 }
 
 // A held request is over, answered or not (`deliver_to`): where the next request starts, and whether the
@@ -1141,8 +1127,12 @@ fn end_request[&c](core: &!c Core, k: int) -> [] int {
     let st = contents(core.state);
     let p = stride() * k;
     let flags = st[p + 24];
-    if !has(flags, f_keep()) { st[p + 3] = 1; }
-    if has(flags, f_done()) { st[p + 6] = st[p + 21] + st[p + 22]; } else if has(flags, f_expect()) && !has(flags, f_touched()) {
+    if !has(flags, 1) {
+        st[p + 3] = 1;
+    }
+    if has(flags, 8) {
+        st[p + 6] = st[p + 21] + st[p + 22];
+    } else if has(flags, 2) && !has(flags, 16) {
         st[p + 6] = st[p + 6] + st[p + 7];
     } else {
         st[p + 3] = 1;
@@ -1159,8 +1149,10 @@ fn release_head[&c](core: &!c Core, k: int) -> [] int {
     if st[p + 16] == 0 {
         st[p + 16] = 1;
         st[p + 21] = st[p + 6] + st[p + 7];
-        set_flag(st, p, f_done());
-        if http.keeps_alive(contents(core.parsed)) { set_flag(st, p, f_keep()); }
+        set_flag(st, p, 8);
+        if http.keeps_alive(contents(core.parsed)) {
+            set_flag(st, p, 1);
+        }
     }
     st[p + 6] = st[p + 6] + st[p + 7];
     st[p + 7] = 0;
@@ -1177,17 +1169,21 @@ fn record[&c](core: &!c Core, s: int, code: int) -> [] int {
 // The two timers (§12.8), at most every 50 ms: a head that has taken `head_ms` since it was first seen
 // incomplete, and a body the client has not added to for `body_ms` while the server has room to take it.
 fn sweep_timers[&t, &c](tab: &!t conns.Table, core: &!c Core) -> [] int {
-    if core.lim == 0 || core.now - core.last_tick < 50 { return 0; }
+    if core.lim == 0 || core.now - core.last_tick < 50 {
+        return 0;
+    }
     core.last_tick = core.now;
     let st = contents(core.state);
     var count = core.limit;
-    if core.fed == 0 { count = conns.slots(tab); }
+    if core.fed == 0 {
+        count = conns.slots(tab);
+    }
     var s = 0;
     while s < count {
         let p = stride() * s;
         if st[p + 4] == 1 && st[p + 25] == 0 && st[p + 3] == 0 && st[p + 2] == 0 {
             if st[p + 16] != 0 {
-                if !has(st[p + 24], f_done()) && !has(st[p + 24], f_expect()) && readable(core, s) > 0 && core.now - st[p + 27] > core.body_ms {
+                if !has(st[p + 24], 8) && !has(st[p + 24], 2) && readable(core, s) > 0 && core.now - st[p + 27] > core.body_ms {
                     record(core, s, 8);
                 }
             } else if st[p + 26] > 0 && st[p + 13] == 0 && core.now + 1 - st[p + 26] > core.head_ms {
@@ -1504,7 +1500,11 @@ fn answer_in[&t, &c, &a](tab: &!t conns.Table, core: &!c Core, ticket: int, byte
     }
     st[p + 13] = 0;
     let sent = deliver_to(tab, core, k, bytes);
+    // `finish` ends a visit and clears the flag that says an entry is queued; this is no visit, and an entry that `input` added while the request was held is
+    // still in the queue (a second one would fill it).
+    let queued = st[p + 12];
     finish(tab, core, k);
+    st[p + 12] = queued;
     if st[p + 4] == 1 && (st[p] > 0 || st[p + 15] == 1) && st[p + 2] == 0 && st[p + 3] == 0 && st[p + 11] == 0 {
         // More requests were already buffered behind it (or the peer has ended), and no
         // input will arrive to wake the connection for them.
@@ -1523,7 +1523,9 @@ fn answer_in[&t, &c, &a](tab: &!t conns.Table, core: &!c Core, ticket: int, byte
 // over `size` is `size`: the buffer holds no more), `head_ms` the deadline for a head and `body_ms` the longest wait for more of a body (§12.8).
 // 0, or -1 for a bound under 1. Takes effect for the heads parsed after it.
 pub fn limits[&s](srv: &!s Server, max_body: int, piece: int, head_ms: int, body_ms: int) -> [] int {
-    if max_body < 1 || piece < 1 || head_ms < 1 || body_ms < 1 { return 0 - 1; }
+    if max_body < 1 || piece < 1 || head_ms < 1 || body_ms < 1 {
+        return 0 - 1;
+    }
     srv.core.lim = 1;
     srv.core.maxb = max_body;
     srv.core.piece = piece;
@@ -1535,16 +1537,22 @@ pub fn limits[&s](srv: &!s Server, max_body: int, piece: int, head_ms: int, body
 // Does the request in hand have a body that is still arriving? Then `hold` it and read the body from the ticket.
 pub fn streaming[&s](srv: &s Server) -> [] bool {
     let k = srv.core.cur;
-    if k < 0 { return false; }
+    if k < 0 {
+        return false;
+    }
     let st = contents(srv.core.state);
-    return st[stride() * k + 16] != 0 && !has(st[stride() * k + 24], f_done());
+    return st[stride() * k + 16] != 0 && !has(st[stride() * k + 24], 8);
 }
 
 // The slot a ticket names while its request is held and not over, else -1.
 fn held_slot[&c](core: &c Core, ticket: int) -> [] int {
-    if ticket < 0 { return 0 - 1; }
+    if ticket < 0 {
+        return 0 - 1;
+    }
     let k = ticket % ticket_span();
-    if k >= core.limit { return 0 - 1; }
+    if k >= core.limit {
+        return 0 - 1;
+    }
     let st = contents(core.state);
     let p = stride() * k;
     if st[p + 4] != 1 || st[p + 13] != 1 || st[p + 14] != ticket / ticket_span() || st[p + 25] != 0 || st[p + 16] == 0 {
@@ -1557,21 +1565,24 @@ fn held_slot[&c](core: &c Core, ticket: int) -> [] int {
 // now (§12.5). 1 if sent, 0 if there was nothing to send (no `Expect`, already sent, or the answer has begun),
 // -1 if the ticket's request is over.
 pub fn proceed[&s](srv: &!s Server, ticket: int) -> [conn_write, poll] int {
-    return proceed_in(srv.tab, srv.core, ticket);
-}
-
-fn proceed_in[&t, &c](tab: &!t conns.Table, core: &!c Core, ticket: int) -> [conn_write, poll] int {
-    let k = held_slot(core, ticket);
-    if k < 0 { return 0 - 1; }
-    let st = contents(core.state);
+    let k = held_slot(srv.core, ticket);
+    if k < 0 {
+        return 0 - 1;
+    }
+    let st = contents(srv.core.state);
     let p = stride() * k;
-    if !has(st[p + 24], f_expect()) || has(st[p + 24], f_started()) { return 0; }
-    clear_flag(st, p, f_expect());
-    st[p + 27] = core.now;
-    let pd = contents(core.pends);
-    st[p + 2] = emit(tab, core.fed, k, core.chunk, "HTTP/1.1 100 Continue\r\n\r\n", pd[k * core.osize..(k + 1) * core.osize], st[p + 2]);
-    if st[p + 2] < 0 { shut(tab, core, k); return 0 - 1; }
-    settle(tab, core, k);
+    if !has(st[p + 24], 2) || has(st[p + 24], 4) {
+        return 0;
+    }
+    st[p + 24] = st[p + 24] - 2;
+    st[p + 27] = srv.core.now;
+    let pd = contents(srv.core.pends);
+    st[p + 2] = emit(srv.tab, srv.core.fed, k, srv.core.chunk, "HTTP/1.1 100 Continue\r\n\r\n", pd[k * srv.core.osize..(k + 1) * srv.core.osize], st[p + 2]);
+    if st[p + 2] < 0 {
+        shut(srv.tab, srv.core, k);
+        return 0 - 1;
+    }
+    settle(srv.tab, srv.core, k);
     return 1;
 }
 
@@ -1581,11 +1592,15 @@ pub fn body_part[&s](srv: &s Server, ticket: int) -> [] &s [byte] {
     let core = srv.core;
     let bf = contents(core.bufs);
     let k = held_slot(core, ticket);
-    if k < 0 { return bf[0..0]; }
+    if k < 0 {
+        return bf[0..0];
+    }
     let st = contents(core.state);
     let p = stride() * k;
     var n = st[p + 22];
-    if n > core.piece { n = core.piece; }
+    if n > core.piece {
+        n = core.piece;
+    }
     return bf[k * core.size + st[p + 21]..k * core.size + st[p + 21] + n];
 }
 
@@ -1594,12 +1609,18 @@ pub fn body_part[&s](srv: &s Server, ticket: int) -> [] &s [byte] {
 // past the piece or a request that is over.
 pub fn body_take[&s](srv: &!s Server, ticket: int, n: int) -> [poll] int {
     let k = held_slot(srv.core, ticket);
-    if k < 0 { return 0 - 1; }
+    if k < 0 {
+        return 0 - 1;
+    }
     let st = contents(srv.core.state);
     let p = stride() * k;
     var can = st[p + 22];
-    if can > srv.core.piece { can = srv.core.piece; }
-    if n < 0 || n > can { return 0 - 1; }
+    if can > srv.core.piece {
+        can = srv.core.piece;
+    }
+    if n < 0 || n > can {
+        return 0 - 1;
+    }
     st[p + 21] = st[p + 21] + n;
     st[p + 22] = st[p + 22] - n;
     st[p + 27] = srv.core.now;
@@ -1611,15 +1632,21 @@ pub fn body_take[&s](srv: &!s Server, ticket: int, n: int) -> [poll] int {
 // over: the server refused it, the connection went, or the ticket was answered.
 pub fn body_state[&s](srv: &s Server, ticket: int) -> [] int {
     let k = held_slot(srv.core, ticket);
-    if k < 0 { return 0 - 1; }
-    if has(contents(srv.core.state)[stride() * k + 24], f_done()) { return 1; }
+    if k < 0 {
+        return 0 - 1;
+    }
+    if has(contents(srv.core.state)[stride() * k + 24], 8) {
+        return 1;
+    }
     return 0;
 }
 
 // Body bytes received so far, decoded; -1 if the request is over.
 pub fn body_total[&s](srv: &s Server, ticket: int) -> [] int {
     let k = held_slot(srv.core, ticket);
-    if k < 0 { return 0 - 1; }
+    if k < 0 {
+        return 0 - 1;
+    }
     return contents(srv.core.state)[stride() * k + 23];
 }
 
@@ -1789,7 +1816,7 @@ pub fn end_input[&s](srv: &!s Server, k: int) -> [] int {
     }
     let st = contents(srv.core.state);
     st[stride() * k + 15] = 1;
-    if st[stride() * k + 16] != 0 && !has(st[stride() * k + 24], f_done()) {
+    if st[stride() * k + 16] != 0 && !has(st[stride() * k + 24], 8) {
         // The body will never be whole: its request is over, and there is nothing to answer (§12.9).
         st[stride() * k + 25] = 10;
     }
@@ -1957,7 +1984,7 @@ pub fn stream[&s, &a](srv: &!s Server, ticket: int, bytes: &a [byte]) -> [] int 
     }
     st[p + 2] = st[p + 2] + n;
     if n > 0 {
-        set_flag(st, p, f_started());
+        set_flag(st, p, 4);
     }
     return n;
 }

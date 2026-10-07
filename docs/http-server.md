@@ -621,7 +621,8 @@ buffer of its own. States: size (1 to 8 hex digits, leading zeros count), extens
   high byte, never a control character or a bare CR or LF (`body.chunk-extension`). `std.http.dechunk` refuses them; the gateway's `framing.chunk-extension` does too. This server does not, because
   the framing is its own and an extension that cannot be told apart from data is not a smuggling vector when it is parsed by the same machine that finds the end of the chunk; an application that wants them refused
   can refuse them in its own code (it sees none: they are ignored here). A switch for refusing them was not built; nothing has asked for one.
-* **Trailers are accepted, validated and discarded.** After the zero chunk: zero or more `name: value` lines (name of token characters, a value of tabs and visible bytes, CRLF), then a blank line.
+* **Trailers are accepted, checked for bytes that could confuse a parser, and discarded.** After the zero chunk: zero or more lines, each of bytes with no control character (a tab is allowed) up to a CRLF, then a blank line. Their `name: value` syntax is not checked, because nothing
+  reads them: what matters is that no bare LF, NUL or CR hides in one.
   At most 4,096 bytes of them, counted from the first byte of the first trailer line to the final CR (`body.trailer-too-large`, `431`); a malformed line is `body.trailer`. The application never sees them: a proxy re-frames the body it forwards, so a trailer is dropped as
   RFC 9110 §6.5.2 allows. `body_state` is 1 only after the blank line.
 * **Bounds.** `max_body` on the decoded total, checked when a chunk's size line is read (`size + total > max_body` refuses at once, before the chunk's bytes), so a hostile
@@ -636,7 +637,7 @@ buffer of its own. States: size (1 to 8 hex digits, leading zeros count), extens
 | `body.chunk-size` | 400 | a size line with no hex digit first, or more than 8 digits |
 | `body.chunk-framing` | 400 | anything but CRLF where CRLF belongs: a bare LF, a size line with something after its digits, data not followed by CRLF |
 | `body.chunk-extension` | 400 | an extension over 256 bytes, or with a control character |
-| `body.trailer` | 400 | a trailer line that is not `token: value` CRLF, or a final line that is not CRLF |
+| `body.trailer` | 400 | a control character (a tab apart) in a trailer line, a trailer line or the final line not ended by CRLF |
 | `body.trailer-too-large` | 431 | more than 4,096 bytes of trailers |
 | `timeout.head` | 408 | §12.8 |
 | `timeout.body` | 408 | §12.8 |
@@ -725,6 +726,34 @@ The socket path and the byte-fed path differ in where bytes cross a boundary (§
 
 `step` (socket) reads at most `readable` bytes and calls `ingest` on what it got; `input` (fed) takes at most `readable` and calls `ingest`. The duplication test would refuse a copy of either.
 
-### 12.12 Left open, to be filled in as built
+### 12.12 What building found, and what it corrected
 
-(Deviations from this design, corrections, and what building found go here, each marked *Corrected*. The tests, mutants and measurements go in §12.13 once they exist.)
+*Corrected* marks a sentence above that was changed in place. Each of these was found by a test, and the test is named.
+
+* **`enqueue` could write past the ready queue (a bug in §11's shared code, not in the new).** `answer` ended a held connection's turn with `finish`, which cleared its "queued" flag even when `input` had added an entry for it while it was held, so
+  the next `input` queued it a second time; a caller that feeds and answers without calling `next` between (the new tests do; a socket server's loop never) filled a queue of `max` entries with copies of one connection and the next store trapped. `answer` now keeps the flag.
+  (`test_a_length_body_larger_than_the_buffer_arrives_byte_for_byte`, 3 uploads on a server with `max` 2.)
+* **A request with no body, with `limits`, kept the previous request's head length** (`classify` returned before setting `state[7..10]`), so the connection's next request began at the wrong byte. (`test_requests_pipelined_behind_a_streamed_body_are_served_in_order`.)
+* **A socket server closed a connection whose buffer was "full" of bytes the application had already taken** (`step`'s `st[p] >= size` check ran before the room `body_take` gave back counted). It asks `readable` now, and `reclaim` moves what is left to the front only when a read needs the room.
+  *Corrected:* §12.6 said `body_take` frees the room; it makes it available, and the move happens at the next read. (`uploads_arrive_byte_for_byte_over_sockets...`, the first run.)
+* **`finish` moved a connection's buffer to the front without moving a streaming request's body start with it**, when the application left a streaming request in hand at the end of a round. (`test_a_streaming_request_left_in_hand_when_the_round_ends_keeps_its_body`.)
+* **The body timer ran while a client that had sent `Expect: 100-continue` was waiting for the application's decision, and did not restart when the application said `proceed`.** It does not run then, and restarts. *Corrected:* §12.8 now says so. (`test_a_stalled_body_times_out_but_a_slow_application_does_not`.)
+* **A refusal recorded by a timer or by `end_input` was sent by `next`, but `examples/https_hello`'s loop only moved a connection's answer to its TLS slot when input had arrived for it**, so a `408` sat in the server's output for ever. The loop's sweep pumps a connection that has something waiting (`server.pending`). (`scripts/https_hello_test.py halfbody`.)
+* **`examples/https_hello`'s `/echo` needed its body whole, and a body that arrives in two reads is now handed over streaming** (§12.3 says so; reading the existing `http` and `pipelined` cases, which send chunked bodies to `/echo` in several writes, showed the example would have refused them). The example holds such a request, leaves its body in the server's buffer and answers when the body has all come, or refuses it
+  with a 413 if the buffer fills first (`answer_whole` in `app.cho`): the recipe for an application that wants a bounded body whole. The other way, a server that waits for a body that fits, was considered and not built: it needs a "handed over late" state (the head stays valid while the body arrives) for little gain, since `size` is already the threshold between the two.
+* **`piece` is not clipped to `size`**: a larger one is the same, because the buffer holds no more. *Corrected* in §12.2. The clipping line was equivalent under every test.
+* **The timers' scan is at most every 50 ms**, so a timer fires up to 50 ms after it is due (`test_a_head_has_a_deadline_that_trickling_does_not_extend...` pins it). *Corrected:* §12.8 said "at most every 50 ms" already; the tests are what made the consequence a sentence.
+* **Not built:** a switch that refuses chunk extensions; draining or lingering on an early answer; a per-route `max_body` (the application answers `413` itself); a counter of discarded trailer lines (word 28 is spare).
+* **`packages/http-server/server.cho` is 1,990 lines of the 2,000 allowed**, in `cancho fmt`'s form (`formatting::the_repository_is_formatted` holds it to that). The streaming code is about 640 of them. To fit, the refusal table is one string (`rule`), trailer lines are checked for control bytes but not for `name: value`
+  syntax, and the chunk machine's fixed-byte states share one function (`want`); `std.http.hex_value` is now `pub` so the server does not carry a copy (the duplication check found it). The next addition to this file needs the package split into two modules (`Core` and the loop in one, the streaming in another importing it): a change to how
+  the package is published (its store is flat, and the locks of `examples/api` and `tests/programs` pin it), not to this one.
+* **Found in `examples/https_hello`, not fixed here:** a client that keeps sending bytes after the server has ended its connection makes the server reset a different, healthy connection (reproduced on `main` at #360: a `Connection: close` request, then bytes on the same socket, while another client is served). Its cause is not known; a task to find and fix it was filed. The new cases avoid triggering it (a stalled client stops sending when it is answered `408`).
+
+
+### 12.13 Tests, mutants and measurements
+
+@@TESTS@@
+
+### 12.14 What `cancho-gateway` still needs
+
+@@NEEDS@@

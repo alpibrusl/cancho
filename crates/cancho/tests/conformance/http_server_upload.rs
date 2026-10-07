@@ -250,7 +250,7 @@ fn a_refusal_before_the_body_sends_no_100_and_the_faults_are_refused_with_their_
     for (wire, rule) in [
         (&b"zz\r\n"[..], "body.chunk-size"),
         (&b"5\r\nhelloXX"[..], "body.chunk-framing"),
-        (&b"0\r\n:x\r\n\r\n"[..], "body.trailer"),
+        (&b"0\r\nT: v\nU\r\n\r\n"[..], "body.trailer"),
         (&b"fffffff\r\n"[..], "body.too-large"),
     ] {
         let mut f = server.client();
