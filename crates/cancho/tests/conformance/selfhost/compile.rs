@@ -33,7 +33,8 @@ fn built_by_rust(index: usize, program: &str) -> Ended {
     let dir = scratch(&format!("selfhost-compile-rust-{index}"));
     let source = dir.join("program.cho");
     let exe = dir.join("program");
-    let text = format!("{program}\nfn main(world: World) -> [] int {{ release(world); return run(); }}\n");
+    let text =
+        format!("{program}\nfn main(world: World) -> [] int {{ release(world); return run(); }}\n");
     std::fs::write(&source, text).expect("the scratch directory is writable");
     let build = Command::new(BIN)
         .arg("build")
@@ -183,6 +184,7 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
         results.len(),
         different.join("\n")
     );
+    eprintln!("{} programs built both ways, {trapped} of them trap", results.len());
     assert!(trapped >= 15, "{trapped} of the programs trap; the test is about them too");
     let _ = std::fs::remove_dir_all(compiler.parent().expect("a scratch directory"));
 }

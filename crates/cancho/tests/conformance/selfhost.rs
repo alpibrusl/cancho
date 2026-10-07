@@ -267,7 +267,6 @@ const CHECK_EDGE: &[&str] = &[
     "struct byte { a: int }\nstruct S { a: byte }\nfn main(world: World) -> [] int {  return 0; }",
 ];
 
-
 fn sources() -> Vec<(String, String)> {
     let root = repo_root();
     let mut files = Vec::new();
