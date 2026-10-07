@@ -657,56 +657,56 @@ fn main(world: World) -> [] int {
                     mode = mode_http();
                 }
                 borrow fs as &ff in {
-                borrow mut heap as &!h in {
-                    var engine = tls.open_server(h, conns_max());
-                    borrow mut engine as &!ew in {
-                        region r {
-                            let entropy = alloc_slice[r](32, byte_of(0));
-                            let seed = arg(g, 5);
-                            if len(seed) == 64 {
-                                var k = 0;
-                                while k < 32 {
-                                    entropy[k] = byte_of(digit(int_of(seed[2 * k])) * 16 + digit(int_of(seed[2 * k + 1])) & 255);
-                                    k = k + 1;
+                    borrow mut heap as &!h in {
+                        var engine = tls.open_server(h, conns_max());
+                        borrow mut engine as &!ew in {
+                            region r {
+                                let entropy = alloc_slice[r](32, byte_of(0));
+                                let seed = arg(g, 5);
+                                if len(seed) == 64 {
+                                    var k = 0;
+                                    while k < 32 {
+                                        entropy[k] = byte_of(digit(int_of(seed[2 * k])) * 16 + digit(int_of(seed[2 * k + 1])) & 255);
+                                        k = k + 1;
+                                    }
+                                } else {
+                                    fs_read(ff, "/dev/urandom", entropy);
                                 }
-                            } else {
-                                fs_read(ff, "/dev/urandom", entropy);
+                                tls.seed(ew, entropy);
+                                let protocols = alloc_slice[r](512, byte_of(0));
+                                if !is_word(arg(g, 3), "-") {
+                                    tls.set_alpn(ew, protocols[0..spaced(arg(g, 3), protocols)]);
+                                }
                             }
-                            tls.seed(ew, entropy);
-                            let protocols = alloc_slice[r](512, byte_of(0));
-                            if !is_word(arg(g, 3), "-") {
-                                tls.set_alpn(ew, protocols[0..spaced(arg(g, 3), protocols)]);
+                            var now = 0;
+                            borrow clock as &cc in {
+                                now = clock_unix_ms(cc);
                             }
-                        }
-                        var now = 0;
-                        borrow clock as &cc in {
-                            now = clock_unix_ms(cc);
-                        }
-                        if load(h, i, ff, g, ew, now) == 0 {
-                            borrow net as &nn in {
-                                match tcp_listen(nn, number(arg(g, 1)), 128, 0) {
-                                    Listening::Ok(l) => {
-                                        var listener = l;
-                                        borrow mut listener as &!lh in {
-                                            listener_nonblocking(lh);
-                                            io.write_all(i, "listening\n");
-                                            flush(i);
-                                            borrow clock as &cc in {
-                                                status = serve_loop(h, i, lh, cc, ew, mode, number(arg(g, 4)));
+                            if load(h, i, ff, g, ew, now) == 0 {
+                                borrow net as &nn in {
+                                    match tcp_listen(nn, number(arg(g, 1)), 128, 0) {
+                                        Listening::Ok(l) => {
+                                            var listener = l;
+                                            borrow mut listener as &!lh in {
+                                                listener_nonblocking(lh);
+                                                io.write_all(i, "listening\n");
+                                                flush(i);
+                                                borrow clock as &cc in {
+                                                    status = serve_loop(h, i, lh, cc, ew, mode, number(arg(g, 4)));
+                                                }
                                             }
+                                            listener_close(listener);
                                         }
-                                        listener_close(listener);
-                                    }
-                                    Listening::Failed(e) => {
-                                        io.error_all(i, "tls_serve: cannot listen\n");
-                                        status = 3;
+                                        Listening::Failed(e) => {
+                                            io.error_all(i, "tls_serve: cannot listen\n");
+                                            status = 3;
+                                        }
                                     }
                                 }
                             }
                         }
+                        tls.close(h, engine);
                     }
-                    tls.close(h, engine);
-                }
                 }
             }
         }
