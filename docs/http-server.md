@@ -91,6 +91,7 @@ The behaviour. Every test in `conformance/api.rs` runs against the migrated
 
 Streaming bodies, `Expect: 100-continue`, TLS and more than one core are
 `server.md` §6's list and remain the list. Handlers see a request whole.
+(*TLS: §11 says what stops it and proposes the change.*)
 
 ## 7. Built
 
@@ -256,3 +257,55 @@ buffers of 64 MiB (room for four connections, so a ready queue of four).
 One flake was found and fixed on the way: a release byte written before the server had registered
 the request it was meant for was read and lost, so the request was never released. The test
 application now keeps a byte as a credit until there is a held request to spend it on.
+
+
+## 11. Serving it over TLS
+
+`packages/tls` has a server since `tls-server.md` step 2, and `examples/tls_echo` (`tls-server.md` §11) is how a
+program puts the engine between a socket and its own loop: the socket's bytes go to `tls.feed`, the plaintext comes out
+of `tls.recv`, the answer goes into `tls.send`, and `tls.take` gives the bytes for the socket. **This package cannot be
+that loop's plaintext side today**, and the reason is precise: it never sees a connection's bytes except through a
+socket it holds itself.
+
+* `wait` owns the `Listener`'s readiness and `accept_all` calls `tcp_accept` and `conns.put`: every connection the
+  server knows is a `Conn` in its own `conns.Table`.
+* Input reaches a connection's buffer in one place, `step`, by `conns.read(tab, k, bufs[...])`. There is no other way
+  into `bufs`.
+* Output leaves in three: `emit` (the fast path: `conns.write` straight to the kernel, the rest queued), `step`'s write
+  of what was queued, and the refusals `produce` sends through `emit`. `deliver_to` (`respond`, `answer`) calls `emit`.
+* `shut` closes the `Conn`, and `settle` re-registers it with the server's poller.
+
+So a TLS terminator in front of it would have to give it a socket: the one way that works with no change is a
+loopback relay, the TLS side registered in the server's own poller (`poller`, `first_token`, §10) and connecting to
+the server's listener on 127.0.0.1 for each client. It doubles the sockets, copies every byte once more each way, adds
+`net_out` to the program's row, and gives the HTTP side 127.0.0.1 for every client. It is not built here, and it is
+not what the broker or the gateway should copy.
+
+**The smallest change: a server with no sockets.** The connection state, the parser, the framing, pipelining,
+back-pressure, `hold`/`answer` and the idle sweep are already independent of where bytes come from; only the five
+places above touch a socket. The proposal is a second way to open a `Server`, and four calls:
+
+```
+srv = server.open_bytes(heap, size, chunk, idle)   // no Poller, no Listener: the application owns the sockets
+k   = server.attach(heap, srv)                      // a connection: its slot, -1 when full (wait's accept, without the socket)
+n   = server.input(srv, k, plaintext)               // bytes into k's buffer (step's read): how many fit; 0 is back-pressure
+server.ready(heap, srv, clock)                      // wait without poller_wait: sweep idle, queue the connections with input
+//    next / head / parsed / body / respond / hold / answer: unchanged
+n   = server.output(srv, k, out)                    // what the server would have written: bytes for tls.send
+server.closing(srv, k) -> bool; server.detach(srv, k)   // shut: the application closes, after close_notify
+```
+
+In a server opened this way the `Core` carries a flag and no `Poller`; `emit` and `step` append to the connection's
+output buffer (`pends`, which is already there and already bounded) instead of calling `conns.write`, `output` drains
+it, `shut` frees the slot without a `Conn`, and `settle` does nothing. The application's loop is then
+`tls_echo`'s with its echo replaced: `tls.recv` into `server.input`, `server.ready`, `next` until -1 with the
+application's handlers, `server.output` into `tls.send`. The idle timeout stays the package's, the handshake bounds
+and the TLS timeouts stay the application's, which is the split `tls-server.md` §7 asks for.
+
+It is about a hundred lines in `server.cho`, a republished store, a second test program, and the 21 `api` tests run
+again on the socket path; it changes a published package's interface (four functions added, none changed). That is
+not small enough to be obviously right inside the PR that builds the example, so it is not made here: it is
+`cancho-gateway`'s to ask for, and the PR that makes it measures it against `examples/api`'s figures. Until then, a
+program that must answer HTTP over TLS parses with `std.http` on the plaintext itself, as `tests/programs/tls_serve.cho`'s
+`http` mode does, and gives up the pipelining and back-pressure this package would give it.
+

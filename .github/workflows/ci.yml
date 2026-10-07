@@ -101,3 +101,13 @@ jobs:
 
       - name: Fuzz the server, two minutes a harness (§10.5)
         run: python3 scripts/fuzz_afl.py "$RUNNER_TEMP/fuzz_server" hello:120 server:120
+
+      # docs/tls-server.md §11: the example the broker and the gateway copy, against `openssl s_client` and Python's
+      # `ssl` (echoes, 200 connections, reload, the handshake bounds, idle, stop), and its cost on x86-64.
+      - name: The TLS echo example (docs/tls-server.md §11)
+        run: |
+          ./target/release/cancho build --std examples/tls_echo/{tls_echo,echo,identity}.cho \
+            packages/tls/{tls,record,message,slot,client12,client,hello,identity,server}.cho \
+            packages/x509/{verify,names,x509,key}.cho \
+            -o "$RUNNER_TEMP/tls_echo"
+          python3 scripts/tls_echo_test.py "$RUNNER_TEMP/tls_echo" --cost 20

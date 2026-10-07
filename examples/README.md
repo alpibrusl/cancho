@@ -387,6 +387,31 @@ The sockets are the `net.sockets` package, as in `serve/`; `poll`, `signal`
 and `time` are declared in the file. Read `drain` first (one connection's
 bytes into answers), then `serve` (the loop and the dense connection array).
 
+### `tls_echo/` — a TLS 1.3 server to copy
+
+```sh
+cargo run -p cancho -- build --std examples/tls_echo/*.cho \
+    packages/tls/{tls,record,message,slot,client12,client,hello,identity,server}.cho \
+    packages/x509/{verify,names,x509,key}.cho -o tls_echo
+mkdir -p /tmp/certs && cp tests/vectors/tls/echo/first/* /tmp/certs/   # chain.pem, key.pem, names
+./tls_echo --port 8443 --dir /tmp/certs --alpn echo
+openssl s_client -connect localhost:8443 -servername echo.lex-sys.test \
+    -CAfile tests/vectors/tls/echo/ca.pem -alpn echo -quiet
+kill -HUP <pid>                                         # read the certificate again
+```
+
+The example `cancho-mqtt` and `cancho-gateway` copy
+([`docs/tls-server.md`](../docs/tls-server.md) §11): `packages/tls`'s engine
+between each socket and an echo, many connections on one thread and one
+`Poller`, and **no foreign code**, so its authority report is bounded. Read
+`echo.cho`'s header first: the phases a connection goes through, how the two
+handshake bounds (in progress, and started a second) delay a burst instead
+of refusing it, the timeouts, the log line per connection with the suite,
+group, SNI and ALPN. Then `identity.cho`, which is why the loop holds a
+directory handle and never the filesystem capability: the reload reads
+beneath one directory, following no link. `SIGHUP` reloads, `SIGTERM` sends
+close_notify to everyone and exits.
+
 ### `fetch/` — the other direction
 
 ```sh
