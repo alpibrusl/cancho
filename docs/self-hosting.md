@@ -209,7 +209,8 @@ the stages found, in place, the way this document corrects its own claims.
 | 3d. References and slices of scalars | `examples/selfhost/types.cho` and `body.cho` | `check_bodies` | **Second slice.** Every function the port answers is the Rust answer: 644 repository programs, the library's 789 functions with one program (**437 verified `OK`, 55%**, from 34%), 408 targeted cases (104 for references, regions and slices), and 39,826 fuzz cases (35,352 alone, 4,474 with the library): 39,547 identical, none different; 279 are not UTF-8 |
 | 3e-1. Structs of scalars | `body.cho` (types in `types.cho`) | `check_bodies` | **Third slice.** Every function the port answers is the Rust answer: 81 targeted cases for struct literals, field reads and writes (539 in all), 8,000 fuzz cases alone and 4,200 with the library, 1,165 library cases: none different |
 | 3e-2. Enums of scalars and `match` | `body.cho` | `check_bodies` | **Fourth slice.** Every function the port answers is the Rust answer: 85 targeted cases for enum values, `match` and its errors (624 in all, 5 cross-module in the several-files test), ~11,000 fuzz cases and 1,269 library cases: none different; the library's verified bodies are 461 of 814 (57%) |
-| 3e-3. The rest of the bodies: builtins, generics, tuples, `borrow` and `region` blocks, threads, then linearity, effects, regions | not started | `check_bodies` | |
+| 3e-3. Generic functions | `body.cho` (type variables and parameters in `types.cho`) | `check_bodies` | **Fifth slice.** Every function the port answers is the Rust answer: 88 targeted cases for type parameters, inference at a call and `ambiguous-type` (712 in all, 4 cross-module in the several-files test), 15,774 fuzz cases (11,220 alone, 4,554 with the library) and 1,359 library cases: none different; the library's verified bodies stay at 461 of 814 |
+| 3e-4. The rest of the bodies: generic types, `borrow` and `region` blocks, tuples, builtins, threads, then linearity, effects, regions | not started | `check_bodies` | |
 | 4. Backend | not started | | |
 
 **The method.** A port that builds no tree has nothing to compare, and one that does
@@ -413,6 +414,25 @@ write), and a `match` terminates when every arm does. Anything else about an enu
 `res` one, a payload that is not a scalar, a prelude type) is `SKIP`. The mutation test of
 `body.cho` kills 180 of 255; the survivors in the new code are node numbers that are never 0 and
 loop bounds the guards above them already settle.
+
+**Stage 3e-3: generic functions.** The type table gains a rigid type parameter (`Param`, by its
+position) and a type variable (`Var`, with its solution in an array beside the table, like the
+region variables). A call to a generic function makes a fresh variable for each type parameter of the
+callee, lowers the callee's declared types with the parameters as those variables, and unifies each
+argument with its parameter, binding variables as `Unifier::unify` does (an occurs check, and the
+result a `type-mismatch`, a `region-mismatch` or an `infinite-type`). Once the arguments have been
+unified every variable has to be solved: the first that is not is `ambiguous-type` at the call. The
+return type is then resolved all the way down, so no variable leaves the call, and nothing else in
+the checker needs to look through one. A function whose own type parameters are all `val`-bounded
+is checked with them as rigid types; one with an unbounded `T` is `SKIP`, because a value of `T` could
+be a resource and linearity is not checked yet. Generic structs and enums (a type applied to types)
+are the next slice. The library gains nothing (its generic functions mostly take a `Heap` or have an
+unbounded `T`), so the number of bodies verified stays at 461 of 814. The mutation test of
+`body.cho` kills 190 of 271, its survivors in the new code changing only whether a function is
+`SKIP` (which the comparison cannot see) or a loop bound the guards settle; that of
+`types.cho` kills 60 of 78 (40 of 54 before), the survivors in the new code being an occurs check no
+found type can reach, a variable compared with itself that a found type cannot be, and counters that
+stay distinct under the swap.
 
 The mutation test of `types.cho` (54 operator swaps) killed 40 on the first corpus of 458 targeted
 body cases (after region-variable, `where`-closure and coercion cases were added; 33 before); the 14
