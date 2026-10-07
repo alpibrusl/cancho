@@ -430,6 +430,26 @@ instead of sockets (`http-server.md` §11): keep-alive, pipelining, a request an
 `/big/<n>` answer streamed as the client takes it, and a client that stops reading stops being read, all in
 one thread. Same options, same bounds, same reload, same authority report as `tls_echo`. Read `loop.cho`'s header
 (where the bytes go and who waits for whom), then `app.cho` (what a request is turned into, and `hold` + `stream`).
+### `http_fetch_nb/` — many requests at once, on one thread
+
+```sh
+cargo run -p cancho -- build --std examples/http_fetch_nb/{fetch,fetch_io}.cho \
+    packages/http-client/{wire,client}.cho \
+    packages/tls/{tls,record,message,slot,client12,client,hello,identity,server}.cho \
+    packages/x509/{verify,names,x509,key}.cho -o http_fetch_nb
+./http_fetch_nb --repeat 100 http://127.0.0.1:8080/a http://127.0.0.1:8080/b
+./http_fetch_nb --resolve echo.lex-sys.test=127.0.0.1 --repeat 3 \
+    https://echo.lex-sys.test:8443/hello/world < tests/vectors/tls/echo/ca.pem
+```
+
+[`packages/http-client`](../docs/http-client.md) (a non-blocking HTTP/1.1 client with no socket in it) driven by a loop that owns the
+sockets, the TLS engine and the poller: each URL is a lane that is requested again when it is done, over a connection the pool keeps,
+so `--repeat 100` of two URLs is two connections. Plain TCP and TLS 1.3 (the chain and the **name** checked against the roots on
+standard input; nothing is built in), streamed request bodies (`--post N`, `--chunked-post N`, `--expect`), `HEAD`, the client's
+timers, and a replay of a request on a connection the upstream had closed (`--retry`). **A host is an IPv4 address or a name given
+to `--resolve`**: resolving is the caller's (`http-client.md` §3.8). Read `fetch_io.cho`'s header (where the bytes go and who waits
+for whom, the same rule `https_hello` states), then `fetch.cho` (what a caller does with the client's events).
+
 ### `fetch/` — the other direction
 
 ```sh

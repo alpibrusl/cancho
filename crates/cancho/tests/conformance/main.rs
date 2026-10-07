@@ -69,6 +69,8 @@ mod foreign_authority;
 mod formatting;
 mod gcm;
 mod http;
+mod http_client;
+mod http_fetch_nb;
 mod http_server;
 mod http_server_bytes;
 mod https_hello;

@@ -1,9 +1,9 @@
 # `http.client`: a non-blocking HTTP/1.1 client for a program with one poller
 
-> **Status: design, written before the code.** Everything in §2 was measured or read in this repository on the day of writing;
-> everything in §3 to §8 is a decision, and §9 states the gates the build has to pass **before** their numbers exist. The "as built"
-> section is added when the code lands, and any decision here that the build finds wrong is corrected in place, with the PR that
-> corrected it.
+> **Status: built.** The design was written, and committed, before the code (first commit of this PR); §2 was measured or read in this
+> repository on that day, §3 to §8 are the decisions, §9 the gates stated before their numbers existed, and **§10 is what was built, what
+> the build corrected in the sections above (each marked *corrected*), the numbers against the gates, and what the gateway still lacks**.
+> §11 is the open questions for a person, each with the answer this PR builds on.
 
 `docs/http-server.md` §11.8 lists what `cancho-gateway` (an HTTP/1.1 reverse proxy that terminates HTTPS) still lacks, in the order it
 will hit them. Item 4 is this one: *"Upstream connections in the same loop ... `packages/http-request` is blocking; a non-blocking
@@ -77,12 +77,16 @@ Read from `cancho-hooks` `docs/design.md` §53 and `cancho-gateway` `docs/pool.m
 `packages/http-request` is a blocking, server-side reader that depends on `net.sockets` (and so on `Ffi("libc")`), is consumed by two
 examples (`collect`, `agent_supervisor`) and is pinned by locks; its name suggests it is the client and it is not. The blocking
 `fetch`-style API **keeps working unchanged** and nothing here edits it. Putting a non-blocking client in the same module would bring
-`Ffi` into a report that is otherwise bounded; a new package has no `Ffi`, no socket and no capability in it at all (§3.2).
+`Ffi` into a report that is otherwise bounded; a new package has no `Ffi`, no socket and no capability in it but the `Heap` its buffers are allocated from (§3.2). *(Corrected: "no capability at all" as first written; `open` and `close` take the heap.)*
 
-The package has two modules, split by concern (and so that neither file nears 2,000 lines): `http_client_wire` (what is on the wire:
-validating and writing a request head, parsing a response head, the incremental chunk decoder; pure functions over slices and integer
-tables) and `http_client` (the table of connections, the state machines, the pool, the timers, the events). The store layout is
-`packages/tls`'s: one store per module under `packages/http-client/.cancho-vcs/`, published by `scripts/publish_packages.py`.
+The package has three modules, split by concern (and so that none nears 2,000 lines): `http_client_slot` (the names of the words of a
+connection's slot and the numbers they hold), `http_client_wire` (what is on the wire: validating and writing a request head, parsing a
+response head, the incremental chunk decoder; pure functions over slices and integer tables) and `http_client` (the table of connections,
+the state machines, the pool, the timers, the events). The store layout is `packages/tls`'s: one store per module under
+`packages/http-client/.cancho-vcs/`, published by `scripts/publish_packages.py`. *(Corrected: two modules in §3.1 as first written;
+`http_client` reached 1,988 lines and the slot layout moved out of it.)*
+
+---
 
 ### 3.2 D2: the shape: a table of `N` connections, bytes in and out, events returned
 
@@ -251,7 +255,7 @@ TLS needs is the caller's, in the order `https_hello` and `tls_many` do it:
 **The driver is built in this PR** (`examples/http_fetch_nb/fetch_io.cho`): poller, `std.conns`, the dial, the TLS pump and the client
 table in one loop, in the shape of `tls_many`'s `advance`/`flush`. It is an example module and not a package, for the reason
 `tls_echo/front.cho` is: the second program that needs it moves it. The package itself stays free of `Net`, `Poller` and
-`packages/tls`, so its authority report is empty and an existing store that imports it gains no `Ffi` and no `tls`.
+`packages/tls`, so its authority report is the heap and nothing else, and an existing store that imports it gains no `Ffi` and no `tls`.
 
 ### 3.8 D8: DNS is the caller's
 
@@ -269,7 +273,7 @@ example's `--resolve name=ip` is the caller-resolves case; `rtcp` is not wired i
 The client dials nothing: it never sees an address. A program that forwards a client-chosen destination (an open proxy, a webhook
 sender) must judge the address *before* it answers a `Connect` (`cancho-hooks` `design.md` §26, `examples/tls_nb/pin.cho`); the
 gateway has a fixed, compiled-in upstream set and its authority report says `net_out("")`. This package cannot widen what a program
-reaches, because it reaches nothing: **its authority report is empty** (`cancho authority`, §9).
+reaches, because it reaches nothing but its own heap: **its authority report is `heap`** (`cancho authority`, §9, pinned in `conformance/http_client.rs`).
 
 ### 3.10 D10: bounds
 
@@ -291,7 +295,7 @@ the gateway's names), and `client.*` (what happened to the connection: connect, 
 
 ## 4. The API
 
-(As designed; §10, "as built", corrects it where the build differs.)
+(As built, §10.2 lists the differences from the design.)
 
 ```
 pub res struct Client
@@ -299,23 +303,24 @@ pub struct Limits { connect_ms, head_ms, body_ms, total_ms, expect_ms, idle_ms, 
 pub enum Event { None, Connect(int), Continue(int), Head(int), Body(int), Done(int), Failed(int), Close(int) }
 
 open(heap, slots, in_size, out_size, limits) -> Client          // out-of-range numbers are clamped into range
-close(heap, client) -> int
-request(c, now_ms, key, method, target, host, extra, body, flags) -> int       // ticket >= 0, or -(refusal code)
-send_body(c, t, bytes, now_ms) -> int      end_body(c, t, now_ms) -> int      send_room(c, t) -> int
-poll(c, now_ms) -> Event                   tick(c, now_ms) -> int             next_deadline(c, now_ms) -> int
-connected(c, k, now_ms)   connect_failed(c, k, kind, now_ms)   take(c, k, out, now_ms) -> int   pending(c, k) -> int
-room(c, k) -> int         give(c, k, data, now_ms) -> int      eof(c, k, now_ms)   reset(c, k, now_ms)   detach(c, k) -> int
-key(c, k) -> int          close_reason(c, k) -> int            ticket_of(c, k) -> int       ticket_slot(t) -> int
-status(c, t) version(c, t) header_count(c, t) header_name(c, t, i) header_value(c, t, i) header(c, t, name) head(c, t)
-body_kind(c, t)  content_length(c, t)  body(c, t) -> &[byte]   avail(c, t)   consume(c, t, n, now_ms)
-request_complete(c, t)  reused(c, t)  attempts(c, t)  failure(c, t)  refusal_tag(code)
-abort(c, t, now_ms)     retire(c, key, now_ms)    idle(c)  active(c)  free_slots(c)
+close(heap, client) -> int                    default_limits() -> Limits
+request(c, now, key, method, target, host, extra, body, flags) -> int           // a ticket > 0, or 0 - code
+send_room(c, t) -> int      send_body(c, t, bytes, now) -> int      end_body(c, t, now) -> int
+poll(c, now) -> Event       tick(c, now) -> int                     next_deadline(c, now) -> int
+connected(c, k, now)  connect_failed(c, k, kind, now)  take(c, k, out, now) -> int  pending(c, k) -> int  room(c, k) -> int
+give(c, k, data, now) -> int   eof(c, k, now)   reset(c, k, now)   detach(c, k, now)
+key(c, k)  ticket_of(c, k)  close_reason(c, k)  close_reason_tag(r)  ticket_slot(t)
+status(c, t)  version(c, t)  body_kind(c, t)  content_length(c, t)  header_count(c, t)  head(c, t)  header_name(c, t, i)
+header_value(c, t, i)  header(c, t, name)  body(c, t) -> &[byte]  avail(c, t)  consume(c, t, n, now) -> int
+request_complete(c, t)  reused(c, t)  attempts(c, t)  continued_by_timeout(c, t)  failure(c, t)  refusal_tag(code)
+abort(c, t, now)  retire(c, key, now)  close_idle(c, now)  idle(c)  active(c)  free_slots(c)  slots(c)
+connects(c)  requests(c)  reuses(c)  retries(c)    body_none()  body_chunked()  flag_retry()  flag_expect()  flag_close()
+kind_connect()  kind_tls()  kind_resolve()
 ```
 
 **A turn of a caller's loop** is: read the clock; `poll` until `Event::None`, acting on each event; for every transport that is
 readable and has `room`, read and `give`; for every slot with `pending`, `take` and write (watch it for writable only while
-`pending` is not 0); `tick`; wait for the poller up to `next_deadline`. The example's `fetch_io.cho` is exactly that, and §9 measures
-a turn.
+`pending` is not 0); `tick`; wait for the poller up to `next_deadline`. The example's `fetch_io.cho` is exactly that.
 
 ---
 
@@ -340,21 +345,26 @@ the caller's loop would and plays the upstream by hand:
 * a seeded random run of tens of thousands of operations (any call, in any order, with any arguments, including stale tickets and
   slots out of range) that must never trap and never break a bound.
 
-TLS gets a test without a socket as well: a client `Engine` and a server `Engine` are connected back to back in memory and the
-HTTP client is run through them (`tests/programs/http_client_tls.cho`), which shows the plaintext boundary is where §3.7 puts it.
+TLS is tested through the driver, not on its own: the client and the repository's own server engine (`examples/https_hello`, on
+`packages/tls`'s server) meet in `conformance/http_fetch_nb.rs` and in the live `hello` case, and OpenSSL (Python's `ssl`) in the live
+`tls` case. *(Corrected: §5 first promised a test that connects a client `Engine` and a server `Engine` back to back in memory
+(`tests/programs/http_client_tls.cho`); it was not built, because the example's driver is what has a TLS boundary to test and it is
+covered against two different servers.)*
 
 ---
 
 ## 6. Rule tags
 
 `request.method`, `request.target`, `request.host`, `request.header`, `request.length`, `request.too-large`, `request.key`,
-`request.body-too-long`, `request.response-arrived` (`send_body` after an early final response), `client.full`; `response.status-line`,
-`response.version`, `response.status`, `response.upgrade`, `response.header`, `response.fold`, `response.length`, `response.two-lengths`,
-`response.transfer-encoding`, `response.head-too-large`, `response.chunk`, `response.trailers-too-large`,
-`response.too-many-informational`; `client.connect`, `client.tls`, `client.resolve`, `client.connect-timeout`, `client.head-timeout`,
-`client.body-timeout`, `client.total-timeout`, `client.closed-early` (the transport ended before any response byte), `client.truncated`
-(it ended inside a head or a body), `client.reset` (it failed), `client.aborted`. Close reasons (not failures) are numbers with names too:
-`done`, `connection-close`, `not-reusable`, `idle-expired`, `lifetime`, `retired`, `evicted`, `unsolicited`, `failed`, `retry`.
+`request.body-too-long`, `request.response-arrived` (`send_body` after an early final response), `request.no-body`, `request.ticket`,
+`client.full`; `response.status-line`, `response.version`, `response.status`, `response.upgrade`, `response.header`, `response.fold`,
+`response.length`, `response.two-lengths`, `response.transfer-encoding`, `response.head-too-large`, `response.chunk`,
+`response.trailers-too-large`, `response.too-many-informational`; `client.connect`, `client.tls`, `client.resolve`,
+`client.connect-timeout`, `client.head-timeout`, `client.body-timeout`, `client.total-timeout`, `client.closed-early` (the transport
+ended before any response byte), `client.truncated` (it ended inside a head or a body), `client.reset` (it failed), `client.aborted`
+(reserved: an `abort` reports nothing). Close reasons (not failures) are numbers with names too: `connection-close`, `not-reusable`,
+`idle-expired`, `lifetime`, `retired`, `evicted`, `unsolicited`, `peer-closed`, `failed`, `retry`, `aborted`, `max-requests`,
+`pool-full`.
 
 ---
 
@@ -386,10 +396,10 @@ the numbers go in §10 when they exist, and the prediction is corrected in place
 
 1. **Unit tests** of §5 pass on both backends; every refusal tag of §6 is reached by a test that names it.
 2. **Mutants** of the new code (`scripts/http_client_mutants.py`, as `http_server_bytes_mutants.py` does): each killed, or argued equivalent in the script; a survivor that is not equivalent gets a test.
-3. **Live**, over plain TCP and TLS 1.3, against Python's `http.server` (keep-alive, chunked, close-delimited, slow, early responses, `Expect`), `examples/https_hello` (this repository's own TLS server on `http.server`), and curl's or nginx's behaviour where available: `scripts/http_client_test.py`. Connections are **counted at the server**: 1,000 requests to one upstream make no more than `slots` connections plus the retries a test forced.
+3. **Live**, over plain TCP and TLS 1.3, against a Python server on raw sockets, so that every byte it sends is its own (keep-alive, chunked, close-delimited, slow, early responses, `Expect`, damaged responses), `examples/https_hello` (this repository's own TLS server on `http.server`), and nginx where it is installed (curl's test server was not used: nginx ends connections the way a real upstream does): `scripts/http_client_test.py`. Connections are **counted at the server**: 1,000 requests to one upstream make no more than `slots` connections plus the retries a test forced.
 4. **No input reaches a trap:** the random run, a hostile-upstream run (a million mutated responses through the parser, split at random), and `cancho check` of the package with the checker's own bounds.
 5. **Cost:** requests a second and CPU a request through the client against a local server, plain and TLS 1.3 keep-alive, on one core, with the figures that `http-server.md` §11.7 uses for its comparison.
-6. **Authority:** the package's own report is empty (no label); the example's report is pinned in `conformance/http_fetch_nb.rs` as `tls_echo`'s is.
+6. **Authority:** the package's own report is the heap and nothing else; the example's report is pinned in `conformance/http_fetch_nb.rs` as `tls_echo`'s is.
 7. `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --workspace`, and `scripts/publish_packages.py --check`; CI's `tls-assurance` job runs the live tests.
 
 ---
