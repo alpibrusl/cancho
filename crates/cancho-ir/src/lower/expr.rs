@@ -833,7 +833,10 @@ impl<'a> FnLowering<'a> {
                     return self.bind(args, span);
                 }
                 if resolved == Resolved::Builtin(Builtin::TcpListen) {
-                    return self.tcp_listen(args, span);
+                    return self.tcp_listen(args, span, false);
+                }
+                if resolved == Resolved::Builtin(Builtin::UdpBind) {
+                    return self.tcp_listen(args, span, true);
                 }
                 if resolved == Resolved::Builtin(Builtin::SignalsWatch) {
                     return self.signals_watch(args, span);

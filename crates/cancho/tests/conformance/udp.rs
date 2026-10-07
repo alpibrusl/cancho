@@ -1,7 +1,7 @@
 //! `docs/udp.md`: datagram sockets, over real sockets, on both backends. Every program is
 //! `edition 5;` and declares no `extern fn` and holds no `Ffi`.
 
-use super::sockets::{BACKENDS, build, dial_program};
+use super::sockets::{BACKENDS, build, dial_program, io_program, wait_for};
 use super::*;
 use std::net::UdpSocket;
 use std::time::Duration;
@@ -425,4 +425,478 @@ fn a_datagram_client_reports_its_host_and_no_ffi() {
     );
     assert!(json.contains("\"udp_send\"") && json.contains("\"udp_recv\""), "{json}");
     assert!(!json.contains("\"ffi\"") && !json.contains("\"net_in\""), "{json}");
+}
+
+// ---- The bound half (`docs/udp.md` §4) ------------------------------------------------------
+
+/// A client's view of a server: build `source` (a `run(bound, io)` program for `Net("PORT")`) on
+/// each backend, wait until it says `ready` on standard error, run `client(port)`, and require the
+/// server to exit `expect` within 20 seconds.
+fn serve(tag: &str, source: &str, expect: i32, client: impl Fn(u16)) {
+    for backend in BACKENDS {
+        let port = free_udp_port();
+        let dir = scratch(&format!("udp-serve-{tag}-{backend}"));
+        let exe = build(&dir, tag, &io_program(port, source), backend);
+        let mut child = Command::new(&exe).stderr(Stdio::piped()).spawn().expect("the server runs");
+        let mut lines = std::io::BufReader::new(child.stderr.take().unwrap());
+        wait_for(&mut lines, "ready");
+        client(port);
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        let code = loop {
+            if let Some(status) = child.try_wait().expect("a waitable child") {
+                break status.code();
+            }
+            if std::time::Instant::now() > deadline {
+                child.kill().expect("a killable child");
+                child.wait().expect("a reaped child");
+                panic!("{backend}/{tag}: still running after 20 seconds");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert_eq!(code, Some(expect), "{backend}/{tag}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+fn free_udp_port() -> u16 {
+    UdpSocket::bind("127.0.0.1:0").expect("a free loopback port").local_addr().unwrap().port()
+}
+
+/// Send `message` to `port` and read one datagram back.
+fn ask(port: u16, message: &[u8]) -> Vec<u8> {
+    let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    socket.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    socket.send_to(message, ("127.0.0.1", port)).unwrap();
+    let mut buf = [0u8; 64];
+    let (n, _) = socket.recv_from(&mut buf).unwrap();
+    buf[..n].to_vec()
+}
+
+/// A bound socket reads one datagram and answers its sender through the ticket.
+const SERVE_ECHO: &str = r#"
+fn run(bound: Net("PORT"), io: Io) -> [] int {
+    var status = 1;
+    borrow mut io as &!i in {
+        borrow bound as &n in {
+            match udp_bind(n, PORT, 0) {
+                UdpOpened::Ok(u) => {
+                    var sock = u;
+                    borrow mut sock as &!uh in {
+                        io.error_all(i, "ready\n");
+                        region a {
+                            var buf = alloc_slice[a](64, byte_of(0));
+                            var who = alloc_slice[a](1, 0);
+                            match udp_recv_from(uh, buf, who) {
+                                Datagram::Got(k) => {
+                                    match udp_send_to(uh, buf[0..k], who[0]) {
+                                        Sent::Wrote(w) => { if w == k { status = 0; } else { status = 5; } }
+                                        Sent::Again => { status = 6; }
+                                        Sent::Failed(e) => { status = 7; }
+                                    }
+                                }
+                                Datagram::Truncated(k) => { status = 3; }
+                                Datagram::Again => { status = 4; }
+                                Datagram::Failed(e) => { status = 8; }
+                            }
+                        }
+                    }
+                    udp_close(sock);
+                }
+                UdpOpened::Failed(e) => { status = 2; }
+            }
+        }
+    }
+    release(bound);
+    release(io);
+    return status;
+}
+"#;
+
+#[test]
+fn a_bound_socket_answers_the_sender_it_heard_from() {
+    serve("serve-echo", SERVE_ECHO, 0, |port| {
+        assert_eq!(ask(port, b"hello-udp"), b"hello-udp");
+    });
+}
+
+/// The ticket outlives the next receive: two senders are heard, then answered in the *opposite*
+/// order, and each gets its own answer.
+const SERVE_TWO: &str = r#"
+fn run(bound: Net("PORT"), io: Io) -> [] int {
+    var status = 1;
+    borrow mut io as &!i in {
+        borrow bound as &n in {
+            match udp_bind(n, PORT, 0) {
+                UdpOpened::Ok(u) => {
+                    var sock = u;
+                    borrow mut sock as &!uh in {
+                        io.error_all(i, "ready\n");
+                        region a {
+                            var buf = alloc_slice[a](64, byte_of(0));
+                            var first = alloc_slice[a](1, 0);
+                            var second = alloc_slice[a](1, 0);
+                            match udp_recv_from(uh, buf, first) {
+                                Datagram::Got(k) => {
+                                    match udp_recv_from(uh, buf, second) {
+                                        Datagram::Got(m) => {
+                                            var both = 0;
+                                            match udp_send_to(uh, "to-second", second[0]) {
+                                                Sent::Wrote(w) => { both = both + 1; }
+                                                Sent::Again => { }
+                                                Sent::Failed(e) => { }
+                                            }
+                                            match udp_send_to(uh, "to-first", first[0]) {
+                                                Sent::Wrote(w) => { both = both + 1; }
+                                                Sent::Again => { }
+                                                Sent::Failed(e) => { }
+                                            }
+                                            if both == 2 { status = 0; }
+                                        }
+                                        Datagram::Truncated(m) => { status = 3; }
+                                        Datagram::Again => { status = 4; }
+                                        Datagram::Failed(e) => { status = 8; }
+                                    }
+                                }
+                                Datagram::Truncated(k) => { status = 3; }
+                                Datagram::Again => { status = 4; }
+                                Datagram::Failed(e) => { status = 8; }
+                            }
+                        }
+                    }
+                    udp_close(sock);
+                }
+                UdpOpened::Failed(e) => { status = 2; }
+            }
+        }
+    }
+    release(bound);
+    release(io);
+    return status;
+}
+"#;
+
+#[test]
+fn a_reply_can_wait_for_a_later_receive_and_still_reach_its_sender() {
+    serve("serve-two", SERVE_TWO, 0, |port| {
+        let a = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let b = UdpSocket::bind("127.0.0.1:0").unwrap();
+        for socket in [&a, &b] {
+            socket.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        }
+        a.send_to(b"one", ("127.0.0.1", port)).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        b.send_to(b"two", ("127.0.0.1", port)).unwrap();
+        let mut buf = [0u8; 64];
+        let (n, _) = a.recv_from(&mut buf).unwrap();
+        assert_eq!(&buf[..n], b"to-first");
+        let (n, _) = b.recv_from(&mut buf).unwrap();
+        assert_eq!(&buf[..n], b"to-second");
+    });
+}
+
+/// One refused `udp_send_to`: `Failed(EBADF)` for `TICKET`, and nothing else.
+fn refused(ticket: &str) -> String {
+    format!(
+        "match udp_send_to(uh, \"bad\", {ticket}) {{\n\
+             Sent::Failed(e) => {{ if e == 9 {{ refused = refused + 1; }} }}\n\
+             Sent::Wrote(w) => {{ }}\n\
+             Sent::Again => {{ }}\n\
+         }}\n"
+    )
+}
+
+/// Forged tickets get nothing: one never issued, zero, negative, and the same slot a ring's length
+/// on. Only the real ticket sends, and the client sees exactly one datagram.
+fn forged_program() -> String {
+    let attempts: String = [
+        refused("who[0] + 1000"),
+        refused("0"),
+        refused("0 - 5"),
+        refused("who[0] + 65536"),
+        refused("who[0] - 65536"),
+    ]
+    .concat();
+    format!(
+        r#"
+fn run(bound: Net("PORT"), io: Io) -> [] int {{
+    var status = 1;
+    borrow mut io as &!i in {{
+        borrow bound as &n in {{
+            match udp_bind(n, PORT, 0) {{
+                UdpOpened::Ok(u) => {{
+                    var sock = u;
+                    borrow mut sock as &!uh in {{
+                        io.error_all(i, "ready\n");
+                        region a {{
+                            var buf = alloc_slice[a](64, byte_of(0));
+                            var who = alloc_slice[a](1, 0);
+                            match udp_recv_from(uh, buf, who) {{
+                                Datagram::Got(k) => {{
+                                    var refused = 0;
+                                    {attempts}
+                                    match udp_send_to(uh, "ok", who[0]) {{
+                                        Sent::Wrote(w) => {{ if refused == 5 && w == 2 {{ status = 0; }} else {{ status = 5; }} }}
+                                        Sent::Again => {{ status = 6; }}
+                                        Sent::Failed(e) => {{ status = 7; }}
+                                    }}
+                                }}
+                                Datagram::Truncated(k) => {{ status = 3; }}
+                                Datagram::Again => {{ status = 4; }}
+                                Datagram::Failed(e) => {{ status = 8; }}
+                            }}
+                        }}
+                    }}
+                    udp_close(sock);
+                }}
+                UdpOpened::Failed(e) => {{ status = 2; }}
+            }}
+        }}
+    }}
+    release(bound);
+    release(io);
+    return status;
+}}
+"#
+    )
+}
+
+#[test]
+fn a_forged_ticket_sends_nothing() {
+    serve("serve-forged", &forged_program(), 0, |port| {
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        socket.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        socket.send_to(b"hi", ("127.0.0.1", port)).unwrap();
+        let mut buf = [0u8; 64];
+        let (n, _) = socket.recv_from(&mut buf).unwrap();
+        assert_eq!(&buf[..n], b"ok");
+        // The five refused sends must not have sent anything: nothing else is waiting.
+        socket.set_read_timeout(Some(Duration::from_millis(300))).unwrap();
+        assert!(socket.recv_from(&mut buf).is_err(), "a forged ticket sent a datagram");
+    });
+}
+
+/// `main` for a program that holds the *whole* network (an unnarrowed `Net`), so it can bind two
+/// ports and dial itself.
+fn open_program(port: u16, other: u16, source: &str) -> String {
+    let main = r#"
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi); release(fs); release(heap); release(args); release(clock);
+    return run(net, io);
+}
+"#;
+    format!("edition 5;\nimport std.io;\n{source}\n{main}")
+        .replace("OTHER", &other.to_string())
+        .replace("PORT", &port.to_string())
+}
+
+fn serve_open(tag: &str, source: &str, expect: i32, client: impl Fn(u16)) {
+    for backend in BACKENDS {
+        let (port, other) = (free_udp_port(), free_udp_port());
+        let dir = scratch(&format!("udp-open-{tag}-{backend}"));
+        let exe = build(&dir, tag, &open_program(port, other, source), backend);
+        let mut child = Command::new(&exe).stderr(Stdio::piped()).spawn().expect("the server runs");
+        let mut lines = std::io::BufReader::new(child.stderr.take().unwrap());
+        wait_for(&mut lines, "ready");
+        client(port);
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        let code = loop {
+            if let Some(status) = child.try_wait().expect("a waitable child") {
+                break status.code();
+            }
+            if std::time::Instant::now() > deadline {
+                child.kill().expect("a killable child");
+                child.wait().expect("a reaped child");
+                panic!("{backend}/{tag}: still running after 60 seconds");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert_eq!(code, Some(expect), "{backend}/{tag}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// A ticket belongs to the socket that heard the sender: a second bound socket cannot use it.
+const WRONG_SOCKET: &str = r#"
+fn run(net: Net(""), io: Io) -> [] int {
+    var status = 1;
+    borrow mut io as &!i in {
+        borrow net as &n in {
+            match udp_bind(n, PORT, 0) {
+                UdpOpened::Ok(u) => {
+                    var sock = u;
+                    match udp_bind(n, OTHER, 0) {
+                        UdpOpened::Ok(v) => {
+                            var stranger = v;
+                            borrow mut sock as &!uh in {
+                                borrow mut stranger as &!sh in {
+                                    io.error_all(i, "ready\n");
+                                    region a {
+                                        var buf = alloc_slice[a](64, byte_of(0));
+                                        var who = alloc_slice[a](1, 0);
+                                        match udp_recv_from(uh, buf, who) {
+                                            Datagram::Got(k) => {
+                                                var wrong = 0;
+                                                match udp_send_to(sh, "bad", who[0]) {
+                                                    Sent::Failed(e) => { if e == 9 { wrong = 1; } }
+                                                    Sent::Wrote(w) => { }
+                                                    Sent::Again => { }
+                                                }
+                                                match udp_send_to(uh, "ok", who[0]) {
+                                                    Sent::Wrote(w) => { if wrong == 1 { status = 0; } else { status = 5; } }
+                                                    Sent::Again => { status = 6; }
+                                                    Sent::Failed(e) => { status = 7; }
+                                                }
+                                            }
+                                            Datagram::Truncated(k) => { status = 3; }
+                                            Datagram::Again => { status = 4; }
+                                            Datagram::Failed(e) => { status = 8; }
+                                        }
+                                    }
+                                }
+                            }
+                            udp_close(stranger);
+                        }
+                        UdpOpened::Failed(e) => { status = 9; }
+                    }
+                    udp_close(sock);
+                }
+                UdpOpened::Failed(e) => { status = 2; }
+            }
+        }
+    }
+    release(net);
+    release(io);
+    return status;
+}
+"#;
+
+#[test]
+fn a_ticket_is_refused_by_a_socket_that_did_not_hear_the_sender() {
+    serve_open("wrong-socket", WRONG_SOCKET, 0, |port| {
+        assert_eq!(ask(port, b"hi"), b"ok");
+    });
+}
+
+/// A ticket lasts the ring's length: after 65,536 more datagrams its entry belongs to a newer one,
+/// and the late reply is `Failed(EBADF)` rather than a datagram to whoever is there now. The
+/// program feeds itself the 65,536 through a connected socket, so no client can drop any.
+const STALE: &str = r#"
+fn run(net: Net(""), io: Io) -> [] int {
+    var status = 1;
+    borrow mut io as &!i in {
+        borrow net as &n in {
+            match udp_bind(n, PORT, 0) {
+                UdpOpened::Ok(u) => {
+                    var sock = u;
+                    borrow mut sock as &!uh in {
+                        io.error_all(i, "ready\n");
+                        region a {
+                            var buf = alloc_slice[a](64, byte_of(0));
+                            var who = alloc_slice[a](1, 0);
+                            match udp_recv_from(uh, buf, who) {
+                                Datagram::Got(k) => {
+                                    let first = who[0];
+                                    match udp_connect(n, "127.0.0.1", PORT) {
+                                        UdpOpened::Ok(c) => {
+                                            var feeder = c;
+                                            var count = 0;
+                                            var healthy = true;
+                                            borrow mut feeder as &!fh in {
+                                                while count < 65536 && healthy {
+                                                    match udp_send(fh, "x") {
+                                                        Sent::Wrote(w) => { }
+                                                        Sent::Again => { healthy = false; }
+                                                        Sent::Failed(e) => { healthy = false; }
+                                                    }
+                                                    match udp_recv_from(uh, buf, who) {
+                                                        Datagram::Got(m) => { }
+                                                        Datagram::Truncated(m) => { healthy = false; }
+                                                        Datagram::Again => { healthy = false; }
+                                                        Datagram::Failed(e) => { healthy = false; }
+                                                    }
+                                                    count = count + 1;
+                                                }
+                                            }
+                                            udp_close(feeder);
+                                            match udp_send_to(uh, "late", first) {
+                                                Sent::Failed(e) => { if e == 9 && healthy { status = 0; } else { status = 5; } }
+                                                Sent::Wrote(w) => { status = 6; }
+                                                Sent::Again => { status = 7; }
+                                            }
+                                        }
+                                        UdpOpened::Failed(e) => { status = 9; }
+                                    }
+                                }
+                                Datagram::Truncated(k) => { status = 3; }
+                                Datagram::Again => { status = 4; }
+                                Datagram::Failed(e) => { status = 8; }
+                            }
+                        }
+                    }
+                    udp_close(sock);
+                }
+                UdpOpened::Failed(e) => { status = 2; }
+            }
+        }
+    }
+    release(net);
+    release(io);
+    return status;
+}
+"#;
+
+#[test]
+fn a_ticket_older_than_the_ring_is_refused() {
+    serve_open("stale", STALE, 0, |port| {
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        socket.send_to(b"first", ("127.0.0.1", port)).unwrap();
+        // The late reply must not arrive.
+        socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let mut buf = [0u8; 64];
+        assert!(socket.recv_from(&mut buf).is_err(), "a stale ticket sent a datagram");
+    });
+}
+
+/// Binding a port outside the bound traps, as `tcp_listen`'s does.
+const BIND_OUTSIDE: &str = r#"
+fn run(bound: Net("PORT"), io: Io) -> [] int {
+    borrow bound as &n in {
+        match udp_bind(n, 1, 0) {
+            UdpOpened::Ok(u) => { udp_close(u); }
+            UdpOpened::Failed(e) => { }
+        }
+    }
+    release(bound);
+    release(io);
+    return 1;
+}
+"#;
+
+#[test]
+fn binding_outside_the_bound_traps() {
+    for backend in BACKENDS {
+        let port = free_udp_port();
+        let dir = scratch(&format!("udp-bind-outside-{backend}"));
+        let exe = build(&dir, "outside", &io_program(port, BIND_OUTSIDE), backend);
+        let run = Command::new(&exe).output().expect("the program runs");
+        assert_eq!(run.status.code(), None, "{backend}: killed by the trap");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// The report of a datagram server names the port it may bind, the two path-free labels, and no
+/// `net_out` (a bound socket reaches only those who wrote to it) and no `ffi`.
+#[test]
+fn a_datagram_server_reports_its_port_and_no_net_out() {
+    let json = authority_json(&io_program(9, SERVE_ECHO), "udp-server-authority");
+    assert!(
+        json.contains("{ \"name\": \"net_in\", \"argument\": \"9\", \"bounded\": true }"),
+        "the port survives the move to handles:\n{json}"
+    );
+    assert!(json.contains("\"udp_send\"") && json.contains("\"udp_recv\""), "{json}");
+    assert!(
+        !json.contains("\"net_out\"") && !json.contains("\"ffi\""),
+        "a bound socket needs no outbound authority:\n{json}"
+    );
 }
