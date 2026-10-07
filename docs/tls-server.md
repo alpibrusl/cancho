@@ -442,3 +442,63 @@ internal_error); a record of version 2.0 (protocol_version against none); a fata
 ClientHello (none here, unexpected_message there). **Found by it, and fixed:** this server refused a ClientHello whose
 legacy_version was 0x0301, as §5.2 said to; OpenSSL takes it, and RFC 8446 §4.2.1 forbids a server to negotiate with that
 field once `supported_versions` is there. §5.2 is corrected, and the case is an honest one.
+
+### 10.5 Fuzzing
+
+- **AFL++** (`scripts/fuzz_afl.py`, 4.09c in the image of §10.2, one core a harness), two new harnesses: `fuzz_hello`, a
+  ClientHello's body through `tls_hello.client_hello` and every choice made from it, and `fuzz_server`, the engine from
+  `serve` with a fixed identity, fed a client's bytes in chunks the input names (odd-length inputs without an ALPN list).
+  Seeded from the ClientHellos of §10.2's clients and Chromium (`tests/vectors/fuzz/server/`, `hello/`). Two runs, the second resuming the first's queue on the final code:
+
+  | Harness | Executions | Hours | Per second | Edges | Crashes | Hangs |
+  |---|---|---|---|---|---|---|
+  | `fuzz_hello` | 11,501,751 | 0.75 | 4,246 | 130 of 348 | 0 | 0 |
+  | `fuzz_server` | 1,391,722 | 1.25 | 309 | 1,283 of 11,069 | 0 | 0 |
+  | **total** | **12,893,473** | | | | **0** | **0** |
+
+  **No crash and no hang.** `fuzz_server` is slow because every input loads the identity and signs: 3 ms of each 3.2.
+  `--minimize` kept 74 and 131 inputs, committed with the six real ClientHellos beside them. CI's `tls-assurance` job
+  fuzzes both for two minutes on x86-64 (its first run: 352,994 and 18,029 executions, 0 crashes, 0 hangs).
+- **Mutation** (`scripts/tls_fuzz.py --server`): 20,000 of the lying client's honest connections, one line of the
+  client's bytes mutated in each (bits flipped, bytes set, cut short, slices duplicated or dropped, bytes inserted, a
+  length set), replayed: **0 traps**.
+- **The corpus is a regression test:** `conformance/tls_fuzz.rs` runs every committed input of both harnesses on both
+  backends.
+
+### 10.6 Mutants
+
+`python3 scripts/tls_server_mutants.py <lex-sys>`: **71 of 71 killed**, none argued equivalent. Each is one bug in
+`hello.ls`, `server.ls`, `identity.ls`, or the server's part of `tls.ls` and `slot.ls`, against the 110 recorded
+connections. Two survived a first run, and each got the case that kills it: a leaf of another curve was caught later
+anyway, by the key's match against the certificate (a P-384 leaf with a key that is not PEM now says `key-type`, not
+`key-format`), and `handshakes_in_progress` was never read mid-handshake. The client's `scripts/tls_mutants.py` still kills
+**103 of 103**, after two of its mutants' texts were brought up to date with `set_read_keys` and `set_write_keys` as the
+hardware AES change (#334) left them: on main the script stopped with "the text occurs 0 times".
+
+### 10.7 The existing suites
+
+Unchanged by this PR, run again: the client's 84 lying-server cases and 20 ticket cases re-recorded byte for byte identical;
+`scripts/tls_differential.py` 59 agree, 17 alert only, 8 as documented, 0 otherwise, and `--handshakes` 21 of 21;
+`scripts/x509_matrix.py` 35 cases, 0 wrong; `scripts/publish_packages.py --check` with the server's three modules
+published.
+
+### 10.8 Where this differs from the design
+
+- `tls.accept` is `tls.serve` (a builtin owns `accept`), §5.1.
+- `legacy_version` is not read, §5.2 (the differential found it).
+- Six refusal tags more than §5.4 named, and the "record-layer tags" are the client's, §5.4.
+- The record loop is the server's own, not the client's, §10.1.
+- `suite`, `group`, `retried` and `alert_received` added, for logs.
+- An identity's chain is at most 16 KiB, names 1 KiB, the ALPN list 512 bytes, §4.
+
+### 10.9 Not done, and not verified
+
+- **`tls-server-sign-check` is not reached by any input**: it needs the signer to fault. A mutant reaches its path.
+- **Firefox's and Chrome's own clients** were not run; a Chromium ClientHello was answered in the driver, not over a socket
+  to a completed handshake.
+- **x86-64**: the cost ran on linux-aarch64 only. CI's `tls-assurance` job (ubuntu-latest, x86-64) runs the interop
+  matrix (88 of 88 there too; its Go sends a second share, so its three `retry` rows are taken directly, which the
+  harness allows for Go alone), the differential (the same 59, 7 and 6) and two minutes of each fuzzer.
+- **Timing:** no new secret-dependent code here but the Finished comparison, which is the client's pattern; the signer's
+  timing is step 1's. No dudect test of the server's handshake as a whole.
+- **Not independently reviewed (#209)**, as the client; the broker and the gateway must say so in their READMEs.
