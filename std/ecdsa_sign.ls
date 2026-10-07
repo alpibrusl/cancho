@@ -1,0 +1,363 @@
+edition 6;
+module std.ecdsa_sign;
+import std.bigmod;
+import std.bignum;
+import std.bytes;
+import std.ecdh;
+import std.ecdsa;
+import std.hmac;
+
+// `std.ecdsa_sign` -- ECDSA signing on P-256 with SHA-256
+// (`ecdsa_secp256r1_sha256`), constant time in the private key and the
+// nonce (`docs/ecdsa-sign.md`; `docs/tls-server.md` §3). Step 1 of the
+// TLS server (`docs/tls-server.md` §8). Not independently reviewed
+// (#209).
+//
+// A module of its own, not part of `std.ecdsa`: it multiplies with
+// `std.ecdh`'s ladder, and `std.ecdh` imports `std.ecdsa` for the curve
+// constants, so `std.ecdsa` cannot import it back.
+//
+// Signing (SEC 1 §4.1.3):
+// - the nonce k is RFC 6979's (§3.2 there), HMAC-DRBG over SHA-256
+//   seeded with the key and the digest, with the caller's 32 bytes of
+//   randomness as §3.6's additional data;
+// - (x, _) = k·G by `std.ecdh.public_key`, the constant-time ladder;
+// - r = x mod n, s = k^-1 (e + r·d) mod n in `std.bigmod`'s registers,
+//   whose `mul`, `add` and reduction are masked, and whose `inverse` is
+//   Fermat's with the public exponent n - 2.
+// Nothing branches on d or k, or indexes by them. The branches left are
+// on public values: the lengths, the answers of the range checks (a
+// candidate k out of range is discarded, which says nothing of the k
+// that is kept), and r == 0 and s == 0, both public once the signature
+// is.
+//
+// Every function answers 0 or a negative code whose name is
+// `refusal_tag(code)`.
+
+pub fn ok() -> [] int {
+    return 0;
+}
+
+// The digest is not 32 bytes (SHA-256's).
+pub fn refused_digest_length() -> [] int {
+    return -70;
+}
+
+pub fn refused_key_length() -> [] int {
+    return -71;
+}
+
+// The private key is 0 or not below n.
+pub fn refused_key_range() -> [] int {
+    return -72;
+}
+
+// The added randomness is neither empty nor 32 bytes.
+pub fn refused_extra_length() -> [] int {
+    return -73;
+}
+
+pub fn refused_output_length() -> [] int {
+    return -74;
+}
+
+pub fn refused_work_length() -> [] int {
+    return -75;
+}
+
+// No nonce gave r and s both nonzero within `max_attempts()`: each
+// attempt fails with a probability near 2^-32, so no input reaches it.
+pub fn refused_nonce() -> [] int {
+    return -76;
+}
+
+// The signature did not verify under the public key it was checked
+// against (`docs/tls-server.md` §3.3): a fault, or the wrong key.
+pub fn refused_check() -> [] int {
+    return -77;
+}
+
+pub fn refusal_tag(code: int) -> [] &static [byte] {
+    if code == 0 {
+        return "ok";
+    }
+    if code == -70 {
+        return "ecdsa-sign-digest-length";
+    }
+    if code == -71 {
+        return "ecdsa-sign-key-length";
+    }
+    if code == -72 {
+        return "ecdsa-sign-key-range";
+    }
+    if code == -73 {
+        return "ecdsa-sign-extra-length";
+    }
+    if code == -74 {
+        return "ecdsa-sign-output-length";
+    }
+    if code == -75 {
+        return "ecdsa-sign-work-length";
+    }
+    if code == -76 {
+        return "ecdsa-sign-nonce";
+    }
+    if code == -77 {
+        return "ecdsa-sign-check";
+    }
+    return "unknown";
+}
+
+// The words `work` must hold: `std.ecdh`'s, the larger of the three.
+pub fn work_len() -> [] int {
+    return ecdh.work_len();
+}
+
+// The longest DER signature: SEQUENCE { INTEGER r, INTEGER s }, each up
+// to 33 bytes with a leading 00.
+pub fn der_max() -> [] int {
+    return 72;
+}
+
+fn max_attempts() -> [] int {
+    return 16;
+}
+
+fn copy32[&f, &t](from: &f [byte], to: &!t [byte]) -> [] int {
+    var i = 0;
+    while i < 32 {
+        to[i] = from[i];
+        i = i + 1;
+    }
+    return 0;
+}
+
+// ---- The nonce: RFC 6979 §3.2, with §3.6's additional data ----
+//
+// For P-256 with SHA-256, qlen = hlen = 256, so bits2int is the 32
+// bytes as they are, int2octets(x) is the key, and bits2octets(h1) is
+// the digest reduced mod n once.
+
+// K = HMAC_K(V || sep || key || h || extra), then V = HMAC_K(V): steps
+// d and e (sep 0) or f and g (sep 1).
+fn reseed[&st, &k, &v, &s, &d, &h, &e](st: &!st [int], kk: &!k [byte], v: &!v [byte], sep: &s [byte], key: &d [byte], h: &h [byte], extra: &e [byte]) -> [] int {
+    hmac.init(32, st, kk);
+    hmac.update(32, st, v);
+    hmac.update(32, st, sep);
+    hmac.update(32, st, key);
+    hmac.update(32, st, h);
+    hmac.update(32, st, extra);
+    hmac.final(32, st, kk);
+    hmac.init(32, st, kk);
+    hmac.update(32, st, v);
+    hmac.final(32, st, v);
+    return 0;
+}
+
+// Step h's retry: K = HMAC_K(V || 00), V = HMAC_K(V).
+fn rekey[&st, &k, &v, &s](st: &!st [int], kk: &!k [byte], v: &!v [byte], sep: &s [byte]) -> [] int {
+    hmac.init(32, st, kk);
+    hmac.update(32, st, v);
+    hmac.update(32, st, sep);
+    hmac.final(32, st, kk);
+    hmac.init(32, st, kk);
+    hmac.update(32, st, v);
+    hmac.final(32, st, v);
+    return 0;
+}
+
+// Step h's candidate: V = HMAC_K(V), and T = V.
+fn candidate[&st, &k, &v, &t](st: &!st [int], kk: &k [byte], v: &!v [byte], t: &!t [byte]) -> [] int {
+    hmac.init(32, st, kk);
+    hmac.update(32, st, v);
+    hmac.final(32, st, v);
+    return copy32(v, t);
+}
+
+// ---- s, modulo n ----
+
+// r = x mod n into sig[0..32] and s = k^-1 (e + r·d) mod n into
+// sig[32..64], with `w` set up modulo n. `refused_nonce()` when r or s
+// is zero, so the caller takes the next k.
+fn finish[&e, &d, &k, &x, &s, &w](e: &e [byte], key: &d [byte], k: &k [byte], x: &x [byte], sig: &!s [byte], w: &!w [int]) -> [] int {
+    let rr = bigmod.reg(0);
+    let dr = bigmod.reg(1);
+    let kr = bigmod.reg(2);
+    let er = bigmod.reg(3);
+    let sr = bigmod.reg(4);
+    // x < p < 2n: one subtraction reduces it. r is public.
+    bigmod.load_reduced(x, w, rr);
+    if bigmod.is_zero(w, rr) {
+        return refused_nonce();
+    }
+    bigmod.store_reg(w, rr, sig[0..32]);
+    bigmod.load_secret(key, w, dr);
+    bigmod.to_mont(w, dr, dr);
+    bigmod.load_secret(k, w, kr);
+    bigmod.to_mont(w, kr, kr);
+    bigmod.inverse(w, kr, kr);
+    // e is the digest already reduced mod n: public.
+    bigmod.load_reg(e, w, er);
+    bigmod.to_mont(w, er, er);
+    bigmod.to_mont(w, rr, rr);
+    bigmod.mul(w, rr, dr, sr);
+    bigmod.add(w, er, sr, sr);
+    bigmod.mul(w, kr, sr, sr);
+    bigmod.from_mont(w, sr, sr);
+    // s is public once it is sent; zero is not a signature.
+    if bigmod.is_zero(w, sr) {
+        return refused_nonce();
+    }
+    bigmod.store_reg(w, sr, sig[32..64]);
+    return 0;
+}
+
+fn check_lengths[&g, &d, &e, &s, &w](digest: &g [byte], key: &d [byte], extra: &e [byte], sig: &s [byte], work: &w [int]) -> [] int {
+    if len(digest) != 32 {
+        return refused_digest_length();
+    }
+    if len(key) != 32 {
+        return refused_key_length();
+    }
+    if len(extra) != 0 && len(extra) != 32 {
+        return refused_extra_length();
+    }
+    if len(sig) != 64 {
+        return refused_output_length();
+    }
+    if len(work) < work_len() {
+        return refused_work_length();
+    }
+    return 0;
+}
+
+// The signature of the SHA-256 `digest` under the P-256 private key
+// `key` (32 bytes, big-endian, in [1, n)), into `sig` as r || s (64
+// bytes, IEEE P1363; `to_der` makes the DER that TLS sends). `extra` is
+// RFC 6979 §3.6's added randomness, 32 bytes from the caller's DRBG, or
+// empty for the deterministic nonce of RFC 6979 §3.2. `work` holds
+// `work_len()` words, and is zeroed before the answer. On a refusal,
+// `sig` is zeroes.
+pub fn sign[&g, &d, &e, &s, &w](digest: &g [byte], key: &d [byte], extra: &e [byte], sig: &!s [byte], work: &!w [int]) -> [] int {
+    var code = check_lengths(digest, key, extra, sig, work);
+    if code != 0 {
+        return code;
+    }
+    if !ecdh.scalar_ok(256, key) {
+        return refused_key_range();
+    }
+    code = refused_nonce();
+    region r {
+        let n = alloc_slice[r](32, byte_of(0));
+        let h = alloc_slice[r](32, byte_of(0));
+        let kk = alloc_slice[r](32, byte_of(0));
+        let v = alloc_slice[r](32, byte_of(1));
+        let t = alloc_slice[r](32, byte_of(0));
+        let point = alloc_slice[r](65, byte_of(0));
+        let sep = alloc_slice[r](1, byte_of(0));
+        let st = alloc_slice[r](hmac.state_len(32), 0);
+        ecdsa.curve_param(256, 4, n);
+        // bits2octets(h1): the digest mod n. It is below 2^256 < 2n.
+        bigmod.setup(n, work);
+        bigmod.load_reduced(digest, work, bigmod.reg(0));
+        bigmod.store_reg(work, bigmod.reg(0), h);
+        reseed(st, kk, v, sep, key, h, extra);
+        sep[0] = byte_of(1);
+        reseed(st, kk, v, sep, key, h, extra);
+        sep[0] = byte_of(0);
+        var attempt = 0;
+        while attempt < max_attempts() && code == refused_nonce() {
+            candidate(st, kk, v, t);
+            // A candidate not in [1, n) is refused by the ladder's own
+            // constant-time range check, and the next one is drawn.
+            if ecdh.public_key(256, t, point, work) == 0 {
+                bigmod.setup(n, work);
+                code = finish(h, key, t, point[1..33], sig, work);
+            }
+            if code == refused_nonce() {
+                rekey(st, kk, v, sep);
+            }
+            attempt = attempt + 1;
+        }
+        // Best effort (`docs/hkdf.md` §3): the DRBG's state, the nonce
+        // and k·G's y are secret.
+        bytes.zero(kk);
+        bytes.zero(v);
+        bytes.zero(t);
+        bytes.zero(point);
+        bignum.zero(st);
+    }
+    bignum.zero(work);
+    if code != 0 {
+        bytes.zero(sig);
+    }
+    return code;
+}
+
+// `sign`, then the signature verified with `std.ecdsa.verify_raw` under
+// `point` (the key's public point, `04 || x || y`) before it is given
+// out (`docs/tls-server.md` §3.3). A fault during signing then hands
+// out nothing; so does a `point` that is not the key's. Refused with
+// `refused_check()`, and `sig` zeroed, when it does not verify.
+pub fn sign_checked[&g, &d, &q, &e, &s, &w](digest: &g [byte], key: &d [byte], point: &q [byte], extra: &e [byte], sig: &!s [byte], work: &!w [int]) -> [] int {
+    let code = sign(digest, key, extra, sig, work);
+    if code != 0 {
+        return code;
+    }
+    if ecdsa.verify_raw(256, digest, point, sig, work) != 0 {
+        bytes.zero(sig);
+        return refused_check();
+    }
+    return 0;
+}
+
+// ---- DER ----
+
+// The bytes of the minimal DER INTEGER for big-endian `v` (unsigned):
+// its leading zero bytes dropped, one 00 added before a top bit of 1.
+fn integer_len[&v](v: &v [byte]) -> [] int {
+    var i = 0;
+    while i < len(v) - 1 && int_of(v[i]) == 0 {
+        i = i + 1;
+    }
+    var n = len(v) - i;
+    if int_of(v[i]) >= 0x80 {
+        n = n + 1;
+    }
+    return n;
+}
+
+fn put_integer[&v, &o](v: &v [byte], out: &!o [byte], at: int) -> [] int {
+    let n = integer_len(v);
+    out[at] = byte_of(0x02);
+    out[at + 1] = byte_of(n);
+    var i = 0;
+    while i < n {
+        let from = len(v) - n + i;
+        if from < 0 {
+            out[at + 2 + i] = byte_of(0);
+        } else {
+            out[at + 2 + i] = v[from];
+        }
+        i = i + 1;
+    }
+    return at + 2 + n;
+}
+
+// `sig` (r || s, 64 bytes, as `sign` makes it) as DER, SEQUENCE {
+// INTEGER r, INTEGER s }, into the start of `out`: the length written,
+// or `refused_output_length()` when `sig` is not 64 bytes or `out` is
+// shorter than the encoding. Public data: no constant-time rule.
+pub fn to_der[&s, &o](sig: &s [byte], out: &!o [byte]) -> [] int {
+    if len(sig) != 64 {
+        return refused_output_length();
+    }
+    let body = 2 + integer_len(sig[0..32]) + 2 + integer_len(sig[32..64]);
+    if len(out) < 2 + body {
+        return refused_output_length();
+    }
+    out[0] = byte_of(0x30);
+    out[1] = byte_of(body);
+    let at = put_integer(sig[0..32], out, 2);
+    return put_integer(sig[32..64], out, at);
+}

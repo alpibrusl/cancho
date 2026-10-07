@@ -472,6 +472,40 @@ pub fn load_reduced[&b, &w](b: &b [byte], w: &!w [int], r: int) -> [] int {
     return 0;
 }
 
+// Register `r` = big-endian `b`, a secret, without a branch or an index
+// on its value (`docs/ecdsa-sign.md` §2): `load` skips zero bytes and
+// `compare_n` stops at the first limb that differs, so neither may see
+// a private key or a nonce. There is no range check: the caller has
+// made one in constant time (`std.ecdh.scalar_ok`). -3 when `b` has
+// more bits than the register's limbs, which is its length, public.
+pub fn load_secret[&b, &w](b: &b [byte], w: &!w [int], r: int) -> [] int {
+    let k = w[0];
+    if 8 * len(b) > 30 * k {
+        return -3;
+    }
+    var i = 0;
+    while i < k + 2 {
+        w[r + i] = 0;
+        i = i + 1;
+    }
+    // Bit positions only: which limb a byte lands in, and whether it
+    // straddles two, depend on where it is, not on what it is.
+    var p = 0;
+    var j = len(b) - 1;
+    while j >= 0 {
+        let v = int_of(b[j]);
+        let idx = p / 30;
+        let off = p % 30;
+        w[r + idx] = w[r + idx] | v << off & mask();
+        if off > 22 {
+            w[r + idx + 1] = w[r + idx + 1] | v >> 30 - off;
+        }
+        p = p + 8;
+        j = j - 1;
+    }
+    return 0;
+}
+
 // Register `r` as big-endian `out`, which must be wide enough.
 pub fn store_reg[&w, &o](w: &w [int], r: int, out: &!o [byte]) -> [] int {
     return store(w, r, w[0], out);
