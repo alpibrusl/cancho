@@ -134,3 +134,35 @@ fn the_openssl_matrix_gets_each_tag_and_accepts_nothing_openssl_refused() {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// A chain with no name (`docs/x509-verify.md` §10.4): `verify_chain` for
+/// `clientAuth` and `serverAuth` beside `openssl verify -purpose sslclient`
+/// and `sslserver`, each case with its tag and, when accepted, the subject
+/// and SAN entries read back; `verify` refusing every host that is no name;
+/// `verify_name` alone; purposes that are neither. None that OpenSSL refused
+/// is accepted, but the one disagreement listed (a root's EKU, which `verify`
+/// does not read). On both backends.
+#[test]
+fn chains_without_a_name_get_each_tag_and_accept_nothing_openssl_refused() {
+    for backend in ["cranelift", "llvm"] {
+        let (dir, exe) = build_verifier("chain", backend);
+        let answered = replay(&exe, "chain_matrix.txt");
+        let mut accepted = 0;
+        for (case, answer) in &answered[1..] {
+            let f: Vec<&str> = case.splitn(3, ' ').collect();
+            assert_eq!(tag(answer), f[0], "{case}");
+            if f[1] != "openssl=ok"
+                && f[1] != "openssl=-"
+                && !f[2].starts_with("known disagreement")
+            {
+                assert_ne!(tag(answer), "ok", "{case}: OpenSSL refused it");
+            }
+            if answer.starts_with("0 ok ") {
+                accepted += 1;
+            }
+        }
+        assert_eq!(answered.len(), 57);
+        assert_eq!(accepted, 17, "every accepted chain carries its subject and SANs");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

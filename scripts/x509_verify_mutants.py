@@ -8,7 +8,7 @@ is copied to a scratch directory, the mutant applied there, and
 `tests/programs/x509_verify_driver.cho` built against it. It replays what
 `conformance/x509_verify.rs` replays: the OpenSSL matrix, the 14 saved chains
 against the system roots, and the x509-limbo subset, each answer compared with
-the one recorded. A mutant is killed when any answer differs, the driver
+the one recorded, and the no-name matrix (`chain_matrix.txt`, §10.4). A mutant is killed when any answer differs, the driver
 traps, or a file takes over 120 seconds. The unmutated package is run first
 and must pass. Exit status 1 if a mutant survives or fails to build.
 """
@@ -52,21 +52,45 @@ MUTANTS = [
     ("an iPAddress mask ignored", "names.cho",
      "if int_of(ip[k]) & m != int_of(sub[k]) & m {", "if int_of(ip[k]) & 0 != int_of(sub[k]) & 0 {"),
     ("the leaf's EKU not checked", "verify.cho",
-     "if code == 0 && eku >= 0 && eku & x509.eku_server_auth() == 0 {", "if false {"),
+     "if code == 0 && eku >= 0 && eku & want == 0 {", "if false {"),
     ("the leaf's keyUsage not checked", "verify.cho", "if code == 0 && ku >= 0 && ku & 1 == 0 {", "if false {"),
     ("the budget off", "verify.cho", "pub fn max_signatures() -> [] int {\n    return 64;", "pub fn max_signatures() -> [] int {\n    return 1 << 40;"),
     ("a root's dates not checked", "verify.cho",
      "                    if c == 0 {\n                        c = time_ok(rview, now);\n                    }\n", ""),
-    ("the host not matched", "verify.cho", "if !x509_names.san_matches(", "if false && !x509_names.san_matches("),
+    ("the host not matched", "verify.cho", "if code == 0 && !x509_names.san_matches(", "if false && !x509_names.san_matches("),
     ("an RSA key of 1024 bits allowed", "verify.cho", "if bits < 2048 || bits > 4096 {", "if bits < 1024 || bits > 4096 {"),
     ("the AKI not matched against the SKI", "verify.cho",
      "    return bytes.equal(der[a..ae], issuer[k..ke]);\n}", "    return true;\n}"),
     ("an intermediate's dates not checked", "verify.cho",
      "                if c == 0 {\n                    c = time_ok(jview, now);\n                }\n", ""),
     ("keyCertSign not required of an issuer", "verify.cho", "if ku >= 0 && ku >> 5 & 1 == 0 {", "if false {"),
+    # A chain without a name (docs/x509-verify.md §10.4).
+    ("the purpose ignored at the leaf (serverAuth always)", "verify.cho",
+     "if code == 0 && eku >= 0 && eku & want == 0 {", "if code == 0 && eku >= 0 && eku & x509.eku_server_auth() == 0 {"),
+    ("the purpose ignored at an intermediate (serverAuth always)", "verify.cho",
+     "if !root && eku >= 0 && eku & want == 0 {", "if !root && eku >= 0 && eku & x509.eku_server_auth() == 0 {"),
+    ("the client purpose is the server's", "verify.cho",
+     "pub fn purpose_client_auth() -> [] int {\n    return x509.eku_client_auth();",
+     "pub fn purpose_client_auth() -> [] int {\n    return x509.eku_server_auth();"),
+    ("a purpose that is neither accepted", "verify.cho",
+     "if purpose != purpose_server_auth() && purpose != purpose_client_auth() {", "if false {"),
+    ("a root's EKU not read for client certificates", "verify.cho",
+     "if root && want == purpose_client_auth() && eku >= 0 && eku & want == 0 {", "if false {"),
+    ("the leaf's view not cleared on a refusal", "verify.cho", "                leaf[k] = 0;", "                leaf[k] = views[k];"),
+    ("san_next skipping the first entry", "verify.cho",
+     "    if p == 0 {\n        p = s;\n    }",
+     "    if p == 0 {\n        if x509.tlv(leaf_der, s, e, entry) != 0 {\n            return 0;\n        }\n        p = entry[2];\n    }"),
+    ("verify_name matching nothing", "verify.cho",
+     "if code == 0 && !x509_names.san_matches(leaf_der, s, e, name[0..hinfo[0]], hinfo[1]) {", "if code == 0 {"),
+    ("verify built on the client purpose", "verify.cho",
+     "code = chain(store, certs, ranges, now, max_intermediates, purpose_server_auth(), leaf);",
+     "code = chain(store, certs, ranges, now, max_intermediates, purpose_client_auth(), leaf);"),
+    ("verify not checking the host is readable first", "verify.cho",
+     "            code = x509_names.host_parse(host, name, hinfo);\n        }\n        let leaf",
+     "            code = 0;\n        }\n        let leaf"),
 ]
 
-FILES = ["matrix.txt", "online.txt", "limbo_subset.txt"]
+FILES = ["matrix.txt", "chain_matrix.txt", "online.txt", "limbo_subset.txt"]
 
 
 def recorded(name):
