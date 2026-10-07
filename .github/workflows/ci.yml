@@ -60,7 +60,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y nginx gnutls-bin libwolfssl-dev libmbedtls-dev libbotan-2-dev \
-            android-libboringssl-dev python3-cryptography afl++
+            android-libboringssl-dev python3-cryptography afl++ mosquitto-clients
 
       - name: Compiler, and the many-connection client
         run: |
@@ -84,3 +84,20 @@ jobs:
 
       - name: Fuzz, two minutes a harness, failing on any crash or hang (§3)
         run: python3 scripts/fuzz_afl.py "$RUNNER_TEMP/fuzz" der:120 chain:120 messages:120 client:120 flight:120
+
+      # docs/tls-server.md §10: the server against OpenSSL, curl, Go, wolfSSL and mosquitto, beside
+      # `openssl s_server` on the lying client's ClientHellos, and its two fuzzing harnesses.
+      - name: The server's interop matrix (docs/tls-server.md §10.2)
+        run: |
+          echo "127.0.0.1 srv.example other.example a.wild.example" | sudo tee -a /etc/hosts
+          ./target/release/lex-sys build --std tests/programs/tls_serve.ls \
+            packages/tls/{tls,record,message,slot,client12,client,hello,identity,server}.ls \
+            packages/x509/{verify,names,x509,key}.ls \
+            -o "$RUNNER_TEMP/tls_serve"
+          python3 scripts/tls_server_interop.py "$RUNNER_TEMP/tls_serve"
+
+      - name: The server's differential against openssl s_server (§10.3)
+        run: python3 scripts/tls_server_differential.py
+
+      - name: Fuzz the server, two minutes a harness (§10.5)
+        run: python3 scripts/fuzz_afl.py "$RUNNER_TEMP/fuzz_server" hello:120 server:120
