@@ -256,12 +256,35 @@ bottom of that range, and the check of §3.3 costs as much as the signature on t
 §9's question 3 has it; on the M4 it is about 0.8 ms, as estimated). OpenSSL 3.0.13 signs in 23 µs on the same i7
 (`openssl speed ecdsap256`, 44,132 a second), 65 times faster.*
 
-So about 250 full handshakes a second a core on the i7, by the arithmetic above. OpenSSL's P-256 signing is tens of microseconds with its NIST-prime
+**Measured (step 2), in place of the estimate.** `python3 scripts/tls_server_cost.py <tls_serve> 20`: the server
+(`tests/programs/tls_serve.ls`, LLVM backend, `echo` mode, one P-256 identity) under `openssl s_time -new`, full
+handshakes one after another for 20 seconds a row, the server process's CPU (user and system, `/proc/<pid>/stat`)
+divided by the handshakes `s_time` completed. **The machine:** Ubuntu 24.04, linux-aarch64, in Docker's 6-vCPU VM on the
+Apple M4 Max of `docs/tls-assurance.md` §6.1, the host busy with other builds (load average 4 to 5 of 6). Suite
+AES-128-GCM (the server's choice: the CPU has AES instructions). Two runs:
+
+| client's share | ms of server CPU a handshake | handshakes a second a core |
+|---|---|---|
+| X25519 | 3.86, 4.06 | 259, 246 |
+| P-256 | 3.44, 3.55 | 290, 282 |
+| P-384 | 6.09, 6.06 | 164, 165 |
+| P-521, then a HelloRetryRequest to P-256 | 3.65, 3.47 | 274, 288 |
+| *`openssl s_server` 3.0.13, X25519, the same client* | *0.20* | *4,975* |
+
+So **about 3.5 to 4 ms a handshake on X25519 or P-256, 6 ms on P-384**: inside the design's 3 to 5 ms for the first two,
+and above step 1's arithmetic for the M4 (2.8 ms), since the measured figure is the whole process (the socket, the
+poller, the transcript, HKDF and the records) and not the three operations alone. A HelloRetryRequest costs nothing
+measurable (one more message hashed). OpenSSL's server is **17 to 20 times** cheaper, at the bottom of the "10 to 50
+times" said here. Not measured: x86-64 (the i7 of `docs/ecdsa-sign.md` would be slower: its signature and check are 3 ms
+against the M4's 1.6), and the Cranelift backend.
+
+The paragraph that follows was the estimate's: about 250 full handshakes a second a core on the i7, by the arithmetic above. OpenSSL's P-256 signing is tens of microseconds with its NIST-prime
 arithmetic; this server's handshake is in the order of 10 to 50 times OpenSSL's. For the two programs that is acceptable:
 an MQTT client and an HTTP keep-alive connection handshake once and then stay. **What changes it** is in §8: session tickets
 (no signature on a resumed connection), a fixed-base table for k·G, and arithmetic specialised to the NIST primes
 (`docs/ecdsa.md` §5.4). Memory: a server slot is the client slot (about 179 KiB, `docs/tls-pure.md` §7.4) plus nothing
-significant; each identity holds its chain (a few KiB) and key in the engine.
+significant; each identity holds its chain (a few KiB) and key in the engine. *As built: five words a slot; 274 KiB of identities and 75 KiB
+of key-parsing work in a server engine (§10.1).*
 
 ## 7. Threat model, the server's side
 

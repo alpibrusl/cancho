@@ -176,7 +176,7 @@ def check(server, since, want_suite, want_group, retry, sni, alpn, tag="ok"):
         want.append(str(want_suite))
     else:
         want.append(f[6])
-    want += [str(want_group), "retried" if retry else "direct"]
+    want += [str(want_group), {True: "retried", False: "direct", None: f[8]}[retry]]
     got = [f[3], f[4], f[6], f[7], f[8]]
     return None if got == want else line
 
@@ -227,7 +227,10 @@ def go_row(srv, work, exe, group, retry, sni="srv.example", alpn="-", refuse=Non
         return bad if bad else (None if code != 0 else "the client did not fail")
     if code != 0 or not out.startswith("ok 304"):
         return f"go {code}: {out.strip()[-200:]}"
-    return check(srv, since, None, GROUPS[group], retry, sni, chosen)
+    # Go 1.22 sends a share of the first curve only, so a P-521 first makes the server ask; a newer Go may send a
+    # second share of its own choosing, and then the server takes it directly. Either is a pass, as long as the
+    # group is the one asked for.
+    return check(srv, since, None, GROUPS[group], None if retry else False, sni, chosen)
 
 
 def wolfssl_row(srv, work, exe, suite, group, retry, alpn="-"):
