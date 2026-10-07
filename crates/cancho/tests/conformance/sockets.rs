@@ -8,7 +8,7 @@ use std::net::{Shutdown, TcpStream};
 use std::time::{Duration, Instant};
 
 /// Build `source` with `backend`, returning the executable's path.
-fn build(dir: &Path, name: &str, source: &str, backend: &str) -> PathBuf {
+pub(super) fn build(dir: &Path, name: &str, source: &str, backend: &str) -> PathBuf {
     let file = dir.join(format!("{name}.cho"));
     std::fs::write(&file, source).expect("a writable fixture");
     let exe = dir.join(format!("{name}-{backend}"));
@@ -46,7 +46,7 @@ fn connect(port: u16) -> TcpStream {
     }
 }
 
-const BACKENDS: [&str; 2] = ["cranelift", "llvm"];
+pub(super) const BACKENDS: [&str; 2] = ["cranelift", "llvm"];
 
 /// The prologue every program here shares: split the world, keep the
 /// network, release the rest.
@@ -680,7 +680,7 @@ fn a_socket_program_reports_its_port_and_no_ffi() {
 /// Like [`io_program`], but the capability is narrowed to `bound` (a
 /// `host:port`) rather than to the port: `BOUND` and `PORT` are
 /// substituted, and `run` takes a `Net("BOUND")`.
-fn dial_program(port: u16, bound: &str, source: &str) -> String {
+pub(super) fn dial_program(port: u16, bound: &str, source: &str) -> String {
     let main = r#"
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args, net, clock } = split(world);

@@ -299,6 +299,7 @@ pub(crate) fn is_capability(def: DefId) -> bool {
             | PRELUDE_DIR_LIST
             | PRELUDE_LISTENER
             | PRELUDE_CONN
+            | PRELUDE_UDP
             | PRELUDE_POLLER
     )
 }
@@ -339,6 +340,7 @@ pub(crate) fn closed_only(def: DefId) -> bool {
             | PRELUDE_DIR_LIST
             | PRELUDE_LISTENER
             | PRELUDE_CONN
+            | PRELUDE_UDP
             | PRELUDE_POLLER
             | PRELUDE_SIGNAL_WATCH
             // `docs/processes.md` §4.7: a child is ended by `child_wait`, a
@@ -399,6 +401,8 @@ pub const WORLD_PLAIN_LABELS: &[&str] = &[
     "conn_accept",
     "conn_read",
     "conn_write",
+    "udp_recv",
+    "udp_send",
     "poll",
     "clock",
     "signals_read",
@@ -457,6 +461,9 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
         // labels carry no argument.
         PRELUDE_LISTENER => Effects::plain(["conn_accept"]),
         PRELUDE_CONN => Effects::plain(["conn_read", "conn_write"]),
+        // `docs/udp.md` §3: the peer was spent at `udp_connect`, so the
+        // handle's labels carry no argument, as a `Conn`'s do not.
+        PRELUDE_UDP => Effects::plain(["udp_recv", "udp_send"]),
         // `docs/native-sockets.md` §4: observing handles already held, so
         // one plain label with nothing to narrow.
         PRELUDE_POLLER => Effects::plain(["poll"]),
@@ -570,7 +577,14 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
                 // discharges them -- `Fs` and `file_read`, again. `poll`
                 // too: the only things a `Poller` can watch are the
                 // sockets a `Net` made.
-                all.union(&Effects::plain(["conn_accept", "conn_read", "conn_write", "poll"]));
+                all.union(&Effects::plain([
+                    "conn_accept",
+                    "conn_read",
+                    "conn_write",
+                    "udp_recv",
+                    "udp_send",
+                    "poll",
+                ]));
                 all
             }
             _ => Effects::pure(),
@@ -664,6 +678,11 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     let piped = symbol("Piped");
     let spawned = symbol("Spawned");
     let exited = symbol("Exited");
+    // `docs/udp.md` §3: edition 5's datagram socket and its answers.
+    let udp = symbol("Udp");
+    let udp_opened = symbol("UdpOpened");
+    let datagram = symbol("Datagram");
+    let truncated_arm = symbol("Truncated");
     let null_arm = symbol("Null");
     let pipe_arm = symbol("Pipe");
     let file_arm = symbol("File");
@@ -752,6 +771,10 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     let piped_def = unifier.declare("Piped");
     let spawned_def = unifier.declare("Spawned");
     let exited_def = unifier.declare("Exited");
+    // `PRELUDE_UDP` .. `PRELUDE_DATAGRAM`: edition 5, appended last.
+    let udp_def = unifier.declare("Udp");
+    let udp_opened_def = unifier.declare("UdpOpened");
+    let datagram_def = unifier.declare("Datagram");
 
     vec![
         TypeDef {
@@ -1469,7 +1492,43 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
             ],
             span,
         ),
+        // `docs/udp.md` §3: a datagram socket. `res`, one descriptor leaf,
+        // no fields -- a `Conn`'s shape, for a `Conn`'s reason.
+        resource(udp, udp_def, Vec::new(), span, 5),
+        // What `udp_connect` answers: `Dialed`'s shape. `Failed(-1)` is a name
+        // that did not resolve; any positive value is the kernel's `errno`.
+        edition_five_enum(
+            udp_opened,
+            udp_opened_def,
+            vec![(ok_arm, vec![Type::Named(udp_def, Vec::new())]), (failed_arm, vec![Type::Int])],
+            span,
+        ),
+        // What `udp_recv` answers: `Got(n)` where `n` may be 0 (an empty datagram
+        // is a datagram), `Truncated(n)` where the datagram was `n` bytes and the
+        // buffer held fewer, `Again` on a non-blocking socket with nothing waiting.
+        edition_five_enum(
+            datagram,
+            datagram_def,
+            vec![
+                (got_arm, vec![Type::Int]),
+                (truncated_arm, vec![Type::Int]),
+                (again_arm, Vec::new()),
+                (failed_arm, vec![Type::Int]),
+            ],
+            span,
+        ),
     ]
+}
+
+/// An edition-5 prelude enum (`docs/udp.md` §3): [`prelude_enum`] at the edition
+/// the socket handles arrived in.
+fn edition_five_enum(
+    name: Symbol,
+    def: DefId,
+    arms: Vec<(Symbol, Vec<Type>)>,
+    span: Span,
+) -> TypeDef {
+    TypeDef { since: 5, ..prelude_enum(name, def, arms, span) }
 }
 
 /// A prelude resource with no fields a program can name, at an edition: a

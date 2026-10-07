@@ -100,7 +100,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     /// `args` is the capability (zero-sized, stopping here), the name as
     /// `&r [byte]`, and the port as an `int`.
     pub(crate) fn connect(&mut self, bound: &str, args: &[Expr]) -> Vec<Value> {
-        let (fd, _) = self.connect_raw(bound, args, false, false);
+        let (fd, _) = self.connect_raw(bound, args, false, false, false);
         vec![fd]
     }
 
@@ -116,6 +116,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         args: &[Expr],
         connection: bool,
         start: bool,
+        datagram: bool,
     ) -> (Value, Value) {
         let pointer = self.pointer;
         let name = self.expr(&args[1]);
@@ -160,7 +161,9 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         let hints = self.builder.ins().stack_addr(pointer, hints_slot, 0);
         let zero32 = self.builder.ins().iconst(types::I32, 0);
         let af_inet = self.builder.ins().iconst(types::I32, 2);
-        let sock_stream = self.builder.ins().iconst(types::I32, 1);
+        // `udp_connect` asks for datagram addresses; the resolver gives the same
+        // `sockaddr_in` either way, but the hint is what keeps the walk honest.
+        let sock_stream = self.builder.ins().iconst(types::I32, if datagram { 2 } else { 1 });
         let null = self.builder.ins().iconst(pointer, 0);
         self.builder.ins().store(MemFlags::trusted(), zero32, hints, AI_FLAGS);
         self.builder.ins().store(MemFlags::trusted(), af_inet, hints, AI_FAMILY);
@@ -222,7 +225,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         self.builder.ins().store(MemFlags::trusted(), high, addr, 2);
         self.builder.ins().store(MemFlags::trusted(), low, addr, 3);
 
-        let fd = self.tcp_socket();
+        let fd = if datagram { self.udp_socket() } else { self.tcp_socket() };
 
         let no_socket = self.builder.create_block();
         let have_socket = self.builder.create_block();
@@ -294,8 +297,14 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     /// `tcp_connect(net, host, port)` (`docs/native-sockets.md` §3):
     /// `connect`'s check and walk, answering `Dialed`'s three leaves --
     /// `Ok` 0 with the descriptor, `Failed` 1 with the reason.
-    pub(crate) fn tcp_connect(&mut self, bound: &str, args: &[Expr], start: bool) -> Vec<Value> {
-        let (fd, reason) = self.connect_raw(bound, args, true, start);
+    pub(crate) fn tcp_connect(
+        &mut self,
+        bound: &str,
+        args: &[Expr],
+        start: bool,
+        datagram: bool,
+    ) -> Vec<Value> {
+        let (fd, reason) = self.connect_raw(bound, args, !datagram, start, datagram);
         let failed = self.builder.ins().icmp_imm(IntCC::SignedLessThan, fd, 0);
         let one = self.builder.ins().iconst(types::I64, 1);
         let zero = self.builder.ins().iconst(types::I64, 0);

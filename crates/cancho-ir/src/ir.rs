@@ -111,10 +111,17 @@ pub const PRELUDE_PIPED: usize = 43;
 pub const PRELUDE_SPAWNED: usize = 44;
 pub const PRELUDE_EXITED: usize = 45;
 
+/// `docs/udp.md` §3, edition 5: a datagram socket (`res`, one descriptor
+/// leaf, like `Conn`), what opening one answers, and what a receive answers.
+/// Appended last so no earlier index moves.
+pub const PRELUDE_UDP: usize = 46;
+pub const PRELUDE_UDP_OPENED: usize = 47;
+pub const PRELUDE_DATAGRAM: usize = 48;
+
 /// How many types the prelude declares. Written once, because a builtin's
 /// signature indexes this table and a stale slice is a panic rather than a
 /// diagnostic.
-pub const PRELUDE_COUNT: usize = 46;
+pub const PRELUDE_COUNT: usize = 49;
 
 /// Which path operation an [`Expr::PathOp`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -542,6 +549,9 @@ pub enum Expr {
     TcpConnect {
         bound: String,
         args: Vec<Expr>,
+        /// `udp_connect` (`docs/udp.md` §2): the same check and walk on a datagram socket,
+        /// answering a `UdpOpened`. Never combined with `start`.
+        datagram: bool,
         /// `tcp_connect_start`: the same walk with the socket made non-blocking first, so
         /// that `connect` answers `EINPROGRESS` instead of waiting (`docs/native-sockets.md` §10.6).
         start: bool,

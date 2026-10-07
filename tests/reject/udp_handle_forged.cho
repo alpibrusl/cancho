@@ -1,0 +1,21 @@
+//~ ERROR `Udp` is a capability and has no literal form
+//~ RULE capability-misused
+
+// `docs/udp.md` §3: a datagram socket is never a number a program can write.
+// `Udp { }` would be someone else's open socket, so it has no literal form,
+// the rule `Conn` and `File` already have.
+
+edition 5;
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(clock);
+    release(net);
+    let u = Udp { };
+    udp_close(u);
+    return 0;
+}

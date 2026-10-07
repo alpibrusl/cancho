@@ -28,6 +28,10 @@ pub struct SocketOs {
     pub sock_cloexec: i64,
     /// `F_DUPFD_CLOEXEC`: a duplicate that is close-on-exec from the start.
     pub f_dupfd_cloexec: i64,
+    /// `MSG_TRUNC` as a `recv` flag, which makes a datagram socket answer the datagram's
+    /// *real* length even when the buffer was shorter (Linux); 0 on Darwin, which has no such
+    /// flag on input, so a full buffer is the only sign (`docs/udp.md` §3).
+    pub msg_trunc: i64,
 }
 
 impl SocketOs {
@@ -43,6 +47,7 @@ impl SocketOs {
         einprogress: 115,
         sock_cloexec: 0x80000,
         f_dupfd_cloexec: 1030,
+        msg_trunc: 0x20,
     };
 
     pub const DARWIN: SocketOs = SocketOs {
@@ -57,6 +62,7 @@ impl SocketOs {
         einprogress: 36,
         sock_cloexec: 0,
         f_dupfd_cloexec: 67,
+        msg_trunc: 0,
     };
 
     pub fn for_darwin(darwin: bool) -> SocketOs {

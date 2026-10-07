@@ -708,6 +708,75 @@ impl Builtin {
                 (params, Type::Int)
             }
             Builtin::ListenerClose => (vec![named(PRELUDE_LISTENER)], Type::Int),
+            // `docs/udp.md` §3. `udp_connect` is checked at the call site, like
+            // `tcp_connect`: the bound is in the capability's type.
+            Builtin::UdpConnect => (Vec::new(), Type::Unit),
+            // The handle is unique -- a receive moves the socket -- and the
+            // buffer is written into.
+            Builtin::UdpRecv => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_UDP)),
+                    },
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                named(PRELUDE_DATAGRAM),
+            ),
+            Builtin::UdpSend => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_UDP)),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                named(PRELUDE_SENT),
+            ),
+            Builtin::UdpLocalPort => (
+                vec![Type::Ref {
+                    unique: false,
+                    region: Region::Param(0),
+                    inner: Box::new(named(PRELUDE_UDP)),
+                }],
+                Type::Int,
+            ),
+            Builtin::UdpNonblocking => (
+                vec![Type::Ref {
+                    unique: true,
+                    region: Region::Param(0),
+                    inner: Box::new(named(PRELUDE_UDP)),
+                }],
+                Type::Int,
+            ),
+            Builtin::UdpClose => (vec![named(PRELUDE_UDP)], Type::Int),
+            Builtin::PollerAddUdp => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_POLLER)),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(named(PRELUDE_UDP)),
+                    },
+                    Type::Int,
+                    Type::Int,
+                ],
+                Type::Int,
+            ),
             // No capability, no data in, one opaque handle out
             // (`docs/opaque-pointers.md` §3) -- a fixed signature like
             // `sqrt`'s, not a call-site check like `len`'s.

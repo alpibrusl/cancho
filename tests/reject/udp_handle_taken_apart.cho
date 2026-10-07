@@ -1,0 +1,23 @@
+//~ ERROR is ended by `udp_close`, not by being taken apart
+//~ RULE linear-value-taken-apart
+
+// `docs/udp.md` §3: a pattern that named the descriptor would be a way to
+// drop one without `udp_close`; the kernel keeps that leak.
+
+edition 5;
+fn take(u: Udp) -> [] int {
+    let Udp {  } = u;
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(clock);
+    release(net);
+    return 0;
+}

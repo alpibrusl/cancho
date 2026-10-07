@@ -26,6 +26,7 @@
 - [The server loop as a package](http-server.md)
 - [Parallelism: threads and vectorization](parallelism.md)
 - [Native sockets](native-sockets.md)
+- [UDP](udp.md)
 - [Signals](signals.md)
 - [Directory handles](directory-handles.md)
 - [Directory listing](directory-listing.md)

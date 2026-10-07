@@ -528,6 +528,25 @@ pub enum Builtin {
     ConnClose,
     /// `listener_close(Listener) -> [] int`.
     ListenerClose,
+    /// `udp_connect(net, host, port) -> [net_out(bound)] UdpOpened` --
+    /// `docs/udp.md` §2, edition 5 only: `tcp_connect`'s check and walk on a
+    /// `SOCK_DGRAM` socket, then `connect(2)`, so the kernel itself sends only to that
+    /// peer and drops datagrams from any other source.
+    UdpConnect,
+    /// `udp_recv(&!Udp, &![byte]) -> [udp_recv] Datagram`: one datagram, never a
+    /// prefix of one without saying so (`Truncated`).
+    UdpRecv,
+    /// `udp_send(&!Udp, &[byte]) -> [udp_send] Sent`: the whole datagram or nothing.
+    UdpSend,
+    /// `udp_local_port(&Udp) -> [] int`: the port the kernel chose, or `-errno`.
+    UdpLocalPort,
+    /// `udp_nonblocking(&!Udp) -> [] int`: one way, explicit.
+    UdpNonblocking,
+    /// `udp_close(Udp) -> [] int`: consumes the handle.
+    UdpClose,
+    /// `poller_add_udp(&!Poller, &Udp, token, events) -> [poll] int`: `events` as `poller_add_conn`'s.
+    /// There is no modify or remove: closing the socket removes it (`docs/udp.md` §3).
+    PollerAddUdp,
     /// `signals_watch(&Signals("S")) -> [signals("S")] Watching` --
     /// `docs/signals.md` section 2, edition 6 only: claim the signals `S` the
     /// capability was narrowed to. Checked at the call site (`Expr::Call`
@@ -781,6 +800,13 @@ impl Builtin {
         Builtin::ListenerNonblocking,
         Builtin::ConnClose,
         Builtin::ListenerClose,
+        Builtin::UdpConnect,
+        Builtin::UdpRecv,
+        Builtin::UdpSend,
+        Builtin::UdpLocalPort,
+        Builtin::UdpNonblocking,
+        Builtin::UdpClose,
+        Builtin::PollerAddUdp,
         Builtin::SignalsWatch,
         Builtin::SignalsPending,
         Builtin::PollerAddSignals,
@@ -908,6 +934,13 @@ impl Builtin {
             Builtin::ListenerNonblocking => "listener_nonblocking",
             Builtin::ConnClose => "conn_close",
             Builtin::ListenerClose => "listener_close",
+            Builtin::UdpConnect => "udp_connect",
+            Builtin::UdpRecv => "udp_recv",
+            Builtin::UdpSend => "udp_send",
+            Builtin::UdpLocalPort => "udp_local_port",
+            Builtin::UdpNonblocking => "udp_nonblocking",
+            Builtin::UdpClose => "udp_close",
+            Builtin::PollerAddUdp => "poller_add_udp",
             Builtin::SignalsWatch => "signals_watch",
             Builtin::SignalsPending => "signals_pending",
             Builtin::PollerAddSignals => "poller_add_signals",
@@ -995,7 +1028,15 @@ impl Builtin {
             | Builtin::CopyWithin
             | Builtin::CopyInto
             | Builtin::IndexOfByte
-            | Builtin::ListenerClose => 5,
+            | Builtin::ListenerClose
+            // `docs/udp.md` §3: edition 5, for the reason the TCP verbs are.
+            | Builtin::UdpConnect
+            | Builtin::UdpRecv
+            | Builtin::UdpSend
+            | Builtin::UdpLocalPort
+            | Builtin::UdpNonblocking
+            | Builtin::UdpClose
+            | Builtin::PollerAddUdp => 5,
             // `docs/checked-output.md`: a name a program may already have
             // declared for itself, so it is visible from edition 5 only.
             Builtin::FlushOut => 5,
@@ -1142,10 +1183,11 @@ impl Builtin {
             Builtin::FileSync | Builtin::FileTruncate | Builtin::FileSize | Builtin::FileLock => 1,
             // The handle's region, and for `conn_read`/`conn_write` the
             // buffer's own.
-            Builtin::ConnRead | Builtin::ConnWrite => 2,
+            Builtin::ConnRead | Builtin::ConnWrite | Builtin::UdpRecv | Builtin::UdpSend => 2,
             // The poller's region and the handle's (or the buffer's).
             Builtin::PollerAddListener
             | Builtin::PollerAddConn
+            | Builtin::PollerAddUdp
             | Builtin::PollerModify
             | Builtin::PollerRemove
             | Builtin::PollerWait
@@ -1179,6 +1221,8 @@ impl Builtin {
             | Builtin::ConnNodelay
             | Builtin::ConnConnectStatus
             | Builtin::ListenerNonblocking
+            | Builtin::UdpLocalPort
+            | Builtin::UdpNonblocking
             | Builtin::ForkClock
             | Builtin::CopyWithin
             | Builtin::IndexOfByte
@@ -1242,9 +1286,13 @@ impl Builtin {
             // bound at the call site.
             Builtin::TcpAccept => Effects::plain(["conn_accept"]),
             Builtin::ConnRead => Effects::plain(["conn_read"]),
+            // `docs/udp.md` §3: path-free, the peer was spent at `udp_connect`.
+            Builtin::UdpRecv => Effects::plain(["udp_recv"]),
+            Builtin::UdpSend => Effects::plain(["udp_send"]),
             Builtin::ClockMs | Builtin::ClockUnixMs => Effects::plain(["clock"]),
             Builtin::PollerAddListener
             | Builtin::PollerAddConn
+            | Builtin::PollerAddUdp
             | Builtin::PollerModify
             | Builtin::PollerRemove
             | Builtin::PollerWait

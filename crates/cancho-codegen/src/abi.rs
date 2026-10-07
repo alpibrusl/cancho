@@ -81,6 +81,7 @@ pub(crate) fn leaves_into(
                     | cancho_ir::PRELUDE_DIR_LIST
                     | cancho_ir::PRELUDE_LISTENER
                     | cancho_ir::PRELUDE_CONN
+                    | cancho_ir::PRELUDE_UDP
                     | cancho_ir::PRELUDE_POLLER
                     | cancho_ir::PRELUDE_SIGNAL_WATCH
                     // `docs/processes.md` §3.1: a pid, and two descriptors.

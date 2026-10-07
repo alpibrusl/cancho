@@ -70,7 +70,16 @@ impl<'a> FuncEmitter<'a> {
     /// without the flag; `fcntl` straight after on Darwin, which has no such
     /// flag.
     pub(crate) fn tcp_socket(&mut self) -> String {
-        let kind = 1 | self.os().sock_cloexec;
+        self.inet_socket(1)
+    }
+
+    /// `socket(AF_INET, SOCK_DGRAM, 0)`, close-on-exec the same way (`docs/udp.md` §3).
+    pub(crate) fn udp_socket(&mut self) -> String {
+        self.inet_socket(2)
+    }
+
+    fn inet_socket(&mut self, kind: i64) -> String {
+        let kind = kind | self.os().sock_cloexec;
         let fd = self.fresh();
         self.out.push_str(&format!("  {fd} = call i32 @socket(i32 2, i32 {kind}, i32 0)\n"));
         if self.is_darwin() {
@@ -362,6 +371,112 @@ impl<'a> FuncEmitter<'a> {
         self.out
             .push_str(&format!("  {tag} = select i1 {negative}, i64 {bad}, i64 {not_failed}\n"));
         Ok(vec![LValue::Reg(tag), LValue::Reg(moved), LValue::Reg(reason)])
+    }
+
+    /// `udp_recv(&!Udp, &![byte])` (`docs/udp.md` §3): `Datagram` is `Got` 0, `Truncated` 1,
+    /// `Again` 2, `Failed` 3, with leaves `[tag, got, truncated, errno]`. Mirrors
+    /// `cancho-codegen`'s own: an empty buffer is `Failed(EINVAL)` and never reaches the kernel;
+    /// Linux's `MSG_TRUNC` makes `recv` answer the real length, Darwin has no such flag and a
+    /// buffer filled exactly reads as `Truncated`.
+    pub(crate) fn udp_recv(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        let os = self.os();
+        let fd = self.handle_fd(&args[0]);
+
+        let moved_cell = self.fresh();
+        let reason_cell = self.fresh();
+        self.hoist(format!("  {moved_cell} = alloca i64\n"));
+        self.hoist(format!("  {reason_cell} = alloca i64\n"));
+        let no_room = self.fresh();
+        self.out.push_str(&format!("  {no_room} = icmp eq i64 {}, 0\n", operand(&args[2])));
+        let n = self.blocks;
+        self.blocks += 1;
+        let (refuse, receive, merge) =
+            (format!("nodgram{n}"), format!("dgram{n}"), format!("dgrammerge{n}"));
+        self.out.push_str(&format!("  br i1 {no_room}, label %{refuse}, label %{receive}\n"));
+
+        self.out.push_str(&format!("{refuse}:\n"));
+        self.out.push_str(&format!("  store i64 -1, ptr {moved_cell}\n"));
+        self.out.push_str(&format!("  store i64 {EINVAL}, ptr {reason_cell}\n"));
+        self.out.push_str(&format!("  br label %{merge}\n"));
+
+        self.out.push_str(&format!("{receive}:\n"));
+        let got = self.fresh();
+        self.out.push_str(&format!(
+            "  {got} = call i64 @recv(i32 {fd}, ptr {}, i64 {}, i32 {})\n",
+            operand(&args[1]),
+            operand(&args[2]),
+            os.msg_trunc
+        ));
+        let errno = self.errno();
+        self.out.push_str(&format!("  store i64 {got}, ptr {moved_cell}\n"));
+        self.out.push_str(&format!("  store i64 {}, ptr {reason_cell}\n", operand(&errno)));
+        self.out.push_str(&format!("  br label %{merge}\n"));
+
+        self.out.push_str(&format!("{merge}:\n"));
+        let moved = self.fresh();
+        self.out.push_str(&format!("  {moved} = load i64, ptr {moved_cell}\n"));
+        let reason = self.fresh();
+        self.out.push_str(&format!("  {reason} = load i64, ptr {reason_cell}\n"));
+
+        let negative = self.fresh();
+        self.out.push_str(&format!("  {negative} = icmp slt i64 {moved}, 0\n"));
+        let cut = self.fresh();
+        let compare = if self.is_darwin() { "sge" } else { "sgt" };
+        self.out
+            .push_str(&format!("  {cut} = icmp {compare} i64 {moved}, {}\n", operand(&args[2])));
+        let would_wait = self.fresh();
+        self.out.push_str(&format!("  {would_wait} = icmp eq i64 {reason}, {}\n", os.eagain));
+        let bad = self.fresh();
+        self.out.push_str(&format!("  {bad} = select i1 {would_wait}, i64 2, i64 3\n"));
+        let delivered = self.fresh();
+        self.out.push_str(&format!("  {delivered} = select i1 {cut}, i64 1, i64 0\n"));
+        let tag = self.fresh();
+        self.out.push_str(&format!("  {tag} = select i1 {negative}, i64 {bad}, i64 {delivered}\n"));
+        Ok(vec![
+            LValue::Reg(tag),
+            LValue::Reg(moved.clone()),
+            LValue::Reg(moved),
+            LValue::Reg(reason),
+        ])
+    }
+
+    /// `udp_local_port(&Udp)`: the port the kernel chose, from `getsockname`, or `-errno`.
+    pub(crate) fn udp_local_port(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        let fd = self.handle_fd(&args[0]);
+        let addr = self.fresh();
+        self.hoist(format!("  {addr} = alloca i8, i64 16\n"));
+        let len = self.fresh();
+        self.hoist(format!("  {len} = alloca i32\n"));
+        self.out.push_str(&format!("  store i32 16, ptr {len}\n"));
+        let result = self.fresh();
+        self.out.push_str(&format!(
+            "  {result} = call i32 @getsockname(i32 {fd}, ptr {addr}, ptr {len})\n"
+        ));
+        let reason = self.errno();
+        // Big-endian at bytes 2 and 3 of a `sockaddr_in`, on both kernels.
+        let high = self.load_field(&addr, 2, "i8");
+        let low = self.load_field(&addr, 3, "i8");
+        let high = {
+            let wide = self.fresh();
+            self.out.push_str(&format!("  {wide} = zext i8 {high} to i64\n"));
+            wide
+        };
+        let low = {
+            let wide = self.fresh();
+            self.out.push_str(&format!("  {wide} = zext i8 {low} to i64\n"));
+            wide
+        };
+        let shifted = self.fresh();
+        self.out.push_str(&format!("  {shifted} = shl i64 {high}, 8\n"));
+        let port = self.fresh();
+        self.out.push_str(&format!("  {port} = or i64 {shifted}, {low}\n"));
+        let failed = self.fresh();
+        self.out.push_str(&format!("  {failed} = icmp slt i32 {result}, 0\n"));
+        let negated = self.fresh();
+        self.out.push_str(&format!("  {negated} = sub i64 0, {}\n", operand(&reason)));
+        let answer = self.fresh();
+        self.out.push_str(&format!("  {answer} = select i1 {failed}, i64 {negated}, i64 {port}\n"));
+        Ok(vec![LValue::Reg(answer)])
     }
 
     /// `conn_write(&!Conn, &[byte])`: one `send(2)` that cannot raise

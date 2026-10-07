@@ -197,6 +197,7 @@ fn leaves_into(ty: &Type, program: &Program, out: &mut Vec<LKind>) -> Result<(),
                     | cancho_ir::PRELUDE_DIR_LIST
                     | cancho_ir::PRELUDE_LISTENER
                     | cancho_ir::PRELUDE_CONN
+                    | cancho_ir::PRELUDE_UDP
                     | cancho_ir::PRELUDE_POLLER
                     | cancho_ir::PRELUDE_SIGNAL_WATCH
                     // `docs/processes.md` §3.1: a pid, and two descriptors.
@@ -406,6 +407,8 @@ pub(crate) fn emit_module(
     // `conn_connect_status` (`docs/native-sockets.md` §10.6) reads `SO_ERROR`.
     declare_libc_unless_own(&mut text, "getsockopt", "i32 @getsockopt(i32, i32, i32, ptr, ptr)");
     declare_libc_unless_own(&mut text, "bind", "i32 @bind(i32, ptr, i32)");
+    // `udp_local_port` (`docs/udp.md` §3) reads the port the kernel chose.
+    declare_libc_unless_own(&mut text, "getsockname", "i32 @getsockname(i32, ptr, ptr)");
     declare_libc_unless_own(&mut text, "close", "i32 @close(i32)");
     // `docs/directory-handles.md`: `openat` is variadic (its `mode`, read
     // with `O_CREAT`) and declared so, which puts `mode` wherever the target

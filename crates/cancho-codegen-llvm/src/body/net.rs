@@ -246,7 +246,7 @@ impl<'a> FuncEmitter<'a> {
     /// path all store into one `alloca i64` result cell rather than
     /// merging through a block parameter.
     pub(crate) fn connect(&mut self, bound: &str, args: &[Expr]) -> Result<Vec<LValue>, String> {
-        let (fd, _) = self.connect_raw(bound, args, false, false)?;
+        let (fd, _) = self.connect_raw(bound, args, false, false, false)?;
         Ok(vec![fd])
     }
 
@@ -262,6 +262,7 @@ impl<'a> FuncEmitter<'a> {
         args: &[Expr],
         connection: bool,
         start: bool,
+        datagram: bool,
     ) -> Result<(LValue, LValue), String> {
         let name = self.expr(&args[1])?;
         let port = self.scalar(&args[2])?;
@@ -298,7 +299,7 @@ impl<'a> FuncEmitter<'a> {
         self.hoist(format!("  {hints} = alloca i8, i64 {ADDRINFO_SIZE}\n"));
         self.store_field(&hints, AI_FLAGS, "i32", "0");
         self.store_field(&hints, AI_FAMILY, "i32", "2");
-        self.store_field(&hints, AI_SOCKTYPE, "i32", "1");
+        self.store_field(&hints, AI_SOCKTYPE, "i32", if datagram { "2" } else { "1" });
         self.store_field(&hints, AI_PROTOCOL, "i32", "0");
         self.store_field(&hints, AI_ADDRLEN, "i32", "0");
         self.store_field(&hints, ai_addr, "ptr", "null");
@@ -368,7 +369,7 @@ impl<'a> FuncEmitter<'a> {
         self.store_byte(&addr, 2, &high8);
         self.store_byte(&addr, 3, &low8);
 
-        let fd = self.tcp_socket();
+        let fd = if datagram { self.udp_socket() } else { self.tcp_socket() };
         let bad_socket = self.fresh();
         self.out.push_str(&format!("  {bad_socket} = icmp slt i32 {fd}, 0\n"));
         self.out
@@ -461,8 +462,9 @@ impl<'a> FuncEmitter<'a> {
         bound: &str,
         args: &[Expr],
         start: bool,
+        datagram: bool,
     ) -> Result<Vec<LValue>, String> {
-        let (fd, reason) = self.connect_raw(bound, args, true, start)?;
+        let (fd, reason) = self.connect_raw(bound, args, !datagram, start, datagram)?;
         let failed = self.fresh();
         self.out.push_str(&format!("  {failed} = icmp slt i64 {}, 0\n", operand(&fd)));
         let tag = self.fresh();
