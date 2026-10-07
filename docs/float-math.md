@@ -207,8 +207,10 @@ in `std/math.cho`:
   caller wants it for; `x <= 0` gets its own cases, matching the two
   conventions C's `pow` already settled rather than reinventing them.
 
-None of the three needs `bits_of`'s missing other half — a builtin that
-builds a `float` back up from bits, which does not exist. Scaling by an
+None of the three needs `bits_of`'s other half — a builtin that builds
+a `float` back up from bits. (*Corrected:* it did not exist when this was
+written; `float_of_bits` is edition 7, [`floating-point.md`](floating-point.md)
+§4.1, and these routines still do not use it.) Scaling by an
 integer power of two is exact under ordinary multiplication as long as
 it does not overflow, so `pow2` gets there by squaring rather than by
 bit construction. The one place that bit missing, if it existed, would

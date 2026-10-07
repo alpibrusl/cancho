@@ -83,9 +83,9 @@ impl<'a> FuncEmitter<'a> {
                 .next()
                 .ok_or_else(|| "a zero-leaf return has no scalar kind".to_owned()),
             Expr::Call { callee, .. } => match callee {
-                Callee::Builtin(Builtin::FloatOf | Builtin::Sqrt | Builtin::FloatOf32) => {
-                    Ok(LKind::F64)
-                }
+                Callee::Builtin(
+                    Builtin::FloatOf | Builtin::FloatOfBits | Builtin::Sqrt | Builtin::FloatOf32,
+                ) => Ok(LKind::F64),
                 Callee::Builtin(
                     Builtin::F32Of | Builtin::F32OfBits | Builtin::Sqrt32 | Builtin::F32OfInt,
                 ) => Ok(LKind::F32),

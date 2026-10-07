@@ -265,6 +265,7 @@ impl Builtin {
             // it reaches no library (`docs/float-math.md` §3).
             Builtin::Sqrt => (vec![Type::Float], Type::Float),
             Builtin::BitsOf => (vec![Type::Float], Type::Int),
+            Builtin::FloatOfBits => (vec![Type::Int], Type::Float),
             Builtin::F32Of => (vec![Type::Float], Type::F32),
             Builtin::FloatOf32 => (vec![Type::F32], Type::Float),
             Builtin::BitsOf32 => (vec![Type::F32], Type::Int),
