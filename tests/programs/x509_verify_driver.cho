@@ -6,8 +6,17 @@
 //         `<roots> <skipped> <bytes used>`, or `<code> <tag>`
 //     V <now> <max intermediates> <host in hex, or -> <cert hex> ...
 //         the chain, leaf first, against the store; answers `<code> <tag>`
+//     C <now> <max intermediates> <purpose> <cert hex> ...
+//         `verify_chain`, no name (`docs/x509-verify.md` §10); answers
+//         `<code> <tag>`, and on 0 the leaf's subject in hex and its SAN
+//         entries through `san_next`, `<decimal tag>:<hex>` joined by commas
+//         (`-` for none); on a refusal, ` left-behind` if the leaf's view
+//         still holds a subject or a SAN
+//     N 0 0 <host in hex, or -> <leaf hex>
+//         `verify_name` alone, over the leaf's own view
 import std.buffer;
 import std.io;
+import x509;
 import x509_verify;
 
 fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap, io_read] buffer.Buffer {
@@ -68,8 +77,70 @@ fn tag_line[&i](io: &!i Io, code: int) -> [io_write] int {
     return 0;
 }
 
-// One `V` line, `s[at..e]` after the `V `.
-fn verify_line[&h, &i, &s, &t](heap: &!h Heap, io: &!i Io, s: &s [byte], at: int, e: int, store: &t [byte]) -> [heap, io_write] int {
+fn hex_out[&i, &b](io: &!i Io, b: &b [byte]) -> [io_write] int {
+    var k = 0;
+    while k < len(b) {
+        let hi = int_of(b[k]) >> 4;
+        let lo = int_of(b[k]) & 15;
+        var c = 48 + hi;
+        if hi > 9 {
+            c = 87 + hi;
+        }
+        putchar(io, c);
+        c = 48 + lo;
+        if lo > 9 {
+            c = 87 + lo;
+        }
+        putchar(io, c);
+        k = k + 1;
+    }
+    return 0;
+}
+
+// `verify_chain`'s answer, and on 0 what the program is given: the
+// subject and the SAN entries.
+fn chain_line[&i, &d, &v](io: &!i Io, code: int, leaf: &d [byte], view: &v [int]) -> [io_write] int {
+    io.print_int(io, code);
+    io.space(io);
+    io.write_all(io, x509_verify.refusal_tag(code));
+    if code == 0 {
+        io.space(io);
+        hex_out(io, leaf[view[x509.subject_start()]..view[x509.subject_end()]]);
+        io.space(io);
+        var any = false;
+        region r {
+            let entry = alloc_slice[r](3, 0);
+            var at = x509_verify.san_next(leaf, view, 0, entry);
+            while at != 0 {
+                if any {
+                    putchar(io, 44);
+                }
+                any = true;
+                io.print_int(io, entry[0]);
+                putchar(io, 58);
+                hex_out(io, leaf[entry[1]..entry[2]]);
+                at = x509_verify.san_next(leaf, view, at, entry);
+            }
+        }
+        if !any {
+            putchar(io, 45);
+        }
+    } else {
+        // A refusal must leave no identity behind (§10.3): anything
+        // still readable is printed, and the recorded answers have none.
+        region r {
+            let entry = alloc_slice[r](3, 0);
+            if view[x509.subject_end()] != 0 || x509_verify.san_next(leaf, view, 0, entry) != 0 {
+                io.write_all(io, " left-behind");
+            }
+        }
+    }
+    io.newline(io);
+    return 0;
+}
+
+// One `V`, `C` or `N` line (`mode`), `s[at..e]` after the letter.
+fn verify_line[&h, &i, &s, &t](heap: &!h Heap, io: &!i Io, mode: int, s: &s [byte], at: int, e: int, store: &t [byte]) -> [heap, io_write] int {
     var p = at;
     var f = field_end(s, p, e);
     let now = number(s, p, f);
@@ -96,7 +167,7 @@ fn verify_line[&h, &i, &s, &t](heap: &!h Heap, io: &!i Io, s: &s [byte], at: int
     var rb = ranges;
     var hb = host;
     borrow mut hb as &!hw in {
-        if !(host_end - host_at == 1 && int_of(s[host_at]) == 45) {
+        if mode != 67 && !(host_end - host_at == 1 && int_of(s[host_at]) == 45) {
             hn = unhex(s, host_at, host_end, contents(hw), 0);
         }
     }
@@ -121,11 +192,30 @@ fn verify_line[&h, &i, &s, &t](heap: &!h Heap, io: &!i Io, s: &s [byte], at: int
     borrow cb as &cr in {
         borrow rb as &rr in {
             borrow hb as &hr in {
-                code = x509_verify.verify(store, contents(cr), contents(rr), contents(hr)[0..hn], now, max);
+                if mode == 86 {
+                    code = x509_verify.verify(store, contents(cr), contents(rr), contents(hr)[0..hn], now, max);
+                    tag_line(io, code);
+                } else {
+                    region v {
+                        let view = alloc_slice[v](x509.view_len(), 0);
+                        let r = contents(rr);
+                        let leaf = contents(cr)[r[0]..r[1]];
+                        if mode == 67 {
+                            let purpose = number(s, host_at, host_end);
+                            code = x509_verify.verify_chain(store, contents(cr), r, now, max, purpose, view);
+                            chain_line(io, code, leaf, view);
+                        } else {
+                            code = x509.parse(leaf, view);
+                            if code == 0 {
+                                code = x509_verify.verify_name(leaf, view, contents(hr)[0..hn]);
+                            }
+                            tag_line(io, code);
+                        }
+                    }
+                }
             }
         }
     }
-    tag_line(io, code);
     unbox_slice(heap, cb);
     unbox_slice(heap, rb);
     unbox_slice(heap, hb);
@@ -174,9 +264,9 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
                     }
                 }
                 unbox_slice(heap, pb);
-            } else if e - at >= 2 && int_of(s[at]) == 86 {
+            } else if e - at >= 2 && (int_of(s[at]) == 86 || int_of(s[at]) == 67 || int_of(s[at]) == 78) {
                 borrow store as &sr in {
-                    verify_line(heap, io, s, at + 2, e, contents(sr)[0..store_used]);
+                    verify_line(heap, io, int_of(s[at]), s, at + 2, e, contents(sr)[0..store_used]);
                 }
             }
             at = e + 1;

@@ -10,7 +10,8 @@ import x509_names;
 // `x509_verify` -- a server's certificate chain against a root store,
 // a host name and a time (`docs/x509-verify.md`). Sub-issue 9 (#206) of
 // the self-contained TLS 1.3 client (#197). Not independently reviewed
-// (#209).
+// (#209). `verify_chain` checks a chain for a purpose with no name, for
+// `verify-ca` and client certificates (`docs/x509-verify.md` §10).
 //
 // The rules are `docs/tls-pure.md` §5; what that left open is decided
 // in `docs/x509-verify.md` §3 to §5. Revocation is not checked: a
@@ -63,6 +64,11 @@ pub fn key_size() -> [] int {
     return -40;
 }
 
+// A purpose `verify_chain` does not know (`docs/x509-verify.md` §10.1).
+pub fn bad_purpose() -> [] int {
+    return -41;
+}
+
 // The stable name of a refusal: this module's, else `x509`'s.
 pub fn refusal_tag(code: int) -> [] &static [byte] {
     if code == -30 {
@@ -98,7 +104,26 @@ pub fn refusal_tag(code: int) -> [] &static [byte] {
     if code == -40 {
         return "x509-key-size";
     }
+    if code == -41 {
+        return "x509-purpose";
+    }
     return x509.refusal_tag(code);
+}
+
+// ---- Purposes (`docs/x509-verify.md` §10.2) ----
+
+// A server's certificate: the TLS client, `verify-full`, `verify-ca`.
+// The leaf's and every intermediate's EKU, when present, must hold
+// serverAuth (OpenSSL's `sslserver`).
+pub fn purpose_server_auth() -> [] int {
+    return x509.eku_server_auth();
+}
+
+// A client's certificate, checked by a server. The leaf's and every
+// intermediate's EKU, when present, must hold clientAuth (OpenSSL's
+// `sslclient`).
+pub fn purpose_client_auth() -> [] int {
+    return x509.eku_client_auth();
 }
 
 // ---- Limits (`docs/x509-verify.md` §3) ----
@@ -499,9 +524,10 @@ fn signature_ok[&d, &v, &e, &w](der: &d [byte], view: &v [int], issuer: &e [byte
 
 // An issuer's own checks: `cA` (a v1 root has none and is accepted),
 // keyCertSign when keyUsage is present, its path length against the
-// `below` intermediates under it, and serverAuth when an intermediate
-// has an EKU.
-fn issuer_ok[&v](view: &v [int], below: int, root: bool) -> [] int {
+// `below` intermediates under it, and the purpose's EKU flag `want`
+// when an intermediate (or, for client certificates, a root) has an
+// EKU.
+fn issuer_ok[&v](view: &v [int], below: int, root: bool, want: int) -> [] int {
     if view[x509.is_ca()] != 1 && !(root && view[x509.version()] == 1) {
         return not_ca();
     }
@@ -514,17 +540,25 @@ fn issuer_ok[&v](view: &v [int], below: int, root: bool) -> [] int {
         return path_too_long();
     }
     let eku = view[x509.ext_key_usage()];
-    if !root && eku >= 0 && eku & x509.eku_server_auth() == 0 {
+    if !root && eku >= 0 && eku & want == 0 {
+        return key_usage();
+    }
+    // A root's EKU is read for client certificates only: OpenSSL's
+    // `sslclient` refuses a root whose EKU excludes clientAuth, and a
+    // server's purpose keeps §4's rule, "not read"
+    // (`docs/x509-verify.md` §10.2).
+    if root && want == purpose_client_auth() && eku >= 0 && eku & want == 0 {
         return key_usage();
     }
     return 0;
 }
 
 // The leaf's own checks: its key, its time, digitalSignature when
-// keyUsage is present (and keyCertSign only with cA), serverAuth when
-// EKU is (`anyExtendedKeyUsage` alone is refused, as OpenSSL's server
-// purpose does), and no name constraints unless it is a CA.
-fn leaf_ok[&d, &v](der: &d [byte], view: &v [int], now: int) -> [] int {
+// keyUsage is present (and keyCertSign only with cA), the purpose's EKU
+// flag `want` when EKU is (`anyExtendedKeyUsage` alone is refused, as
+// OpenSSL's `sslserver` and `sslclient` purposes do), and no name
+// constraints unless it is a CA.
+fn leaf_ok[&d, &v](der: &d [byte], view: &v [int], now: int, want: int) -> [] int {
     var code = key_ok(der, view);
     if code == 0 {
         code = time_ok(view, now);
@@ -542,7 +576,7 @@ fn leaf_ok[&d, &v](der: &d [byte], view: &v [int], now: int) -> [] int {
         code = name_constraint();
     }
     let eku = view[x509.ext_key_usage()];
-    if code == 0 && eku >= 0 && eku & x509.eku_server_auth() == 0 {
+    if code == 0 && eku >= 0 && eku & want == 0 {
         code = key_usage();
     }
     return code;
@@ -614,7 +648,7 @@ fn in_path[&p](path: &p [int], depth: int, i: int) -> [] bool {
 // root that signed it ends the path; else each sent certificate that
 // did, in turn. 0 when a path reaches a root, else the deepest
 // refusal.
-fn extend[&s, &c, &r, &v, &o, &p, &t](store: &s [byte], certs: &c [byte], ranges: &r [int], views: &v [int], ok: &o [int], path: &!p [int], depth: int, max_intermediates: int, now: int, st: &!t [int]) -> [] int {
+fn extend[&s, &c, &r, &v, &o, &p, &t](store: &s [byte], certs: &c [byte], ranges: &r [int], views: &v [int], ok: &o [int], path: &!p [int], depth: int, max_intermediates: int, now: int, want: int, st: &!t [int]) -> [] int {
     let cur = path[depth];
     let cw = x509.view_len() * cur;
     let der = certs[ranges[2 * cur]..ranges[2 * cur + 1]];
@@ -644,7 +678,7 @@ fn extend[&s, &c, &r, &v, &o, &p, &t](store: &s [byte], certs: &c [byte], ranges
                         c = time_ok(rview, now);
                     }
                     if c == 0 {
-                        c = issuer_ok(rview, below, true);
+                        c = issuer_ok(rview, below, true, want);
                     }
                     if c == 0 {
                         c = constrain(root, rview, certs, ranges, views, path, depth, st);
@@ -685,14 +719,14 @@ fn extend[&s, &c, &r, &v, &o, &p, &t](store: &s [byte], certs: &c [byte], ranges
                     c = time_ok(jview, now);
                 }
                 if c == 0 {
-                    c = issuer_ok(jview, below, false);
+                    c = issuer_ok(jview, below, false, want);
                 }
                 if c == 0 {
                     c = constrain(jder, jview, certs, ranges, views, path, depth, st);
                 }
                 if c == 0 {
                     path[depth + 1] = j;
-                    c = extend(store, certs, ranges, views, ok, path, depth + 1, max_intermediates, now, st);
+                    c = extend(store, certs, ranges, views, ok, path, depth + 1, max_intermediates, now, want, st);
                 }
                 if c == 0 {
                     code = 0;
@@ -714,29 +748,13 @@ fn extend[&s, &c, &r, &v, &o, &p, &t](store: &s [byte], certs: &c [byte], ranges
 
 // ---- Verifying ----
 
-// The chain the server sent: `certs[ranges[2i]..ranges[2i + 1]]` is
-// certificate `i`, the leaf first. Verified against the roots of
-// `store` (`store_load`), the name `host` (a DNS name or an IP literal)
-// and `now` (seconds since 1970), with at most `max_intermediates`
-// between the leaf and a root. 0, or a refusal (`refusal_tag`).
-// Revocation is not checked.
-pub fn verify[&s, &c, &r, &h](store: &s [byte], certs: &c [byte], ranges: &r [int], host: &h [byte], now: int, max_intermediates: int) -> [] int {
+// The chain, leaf first, for the purpose's EKU flag `want`: every
+// certificate parsed, the leaf's own checks, then a path to a root of
+// `store`. On 0, `leaf` holds the leaf's view; on a refusal, zeros.
+fn chain[&s, &c, &r, &l](store: &s [byte], certs: &c [byte], ranges: &r [int], now: int, max_intermediates: int, want: int, leaf: &!l [int]) -> [] int {
     let n = len(ranges) / 2;
-    if n < 1 {
-        return -10;
-    }
-    if n > max_sent() {
-        return -16;
-    }
     var code = 0;
     region a {
-        let name = alloc_slice[a](256, byte_of(0));
-        let hinfo = alloc_slice[a](2, 0);
-        if len(host) > 255 {
-            code = name_mismatch();
-        } else {
-            code = x509_names.host_parse(host, name, hinfo);
-        }
         let views = alloc_slice[a](x509.view_len() * n, 0);
         let ok = alloc_slice[a](n, 0);
         var i = 0;
@@ -758,20 +776,138 @@ pub fn verify[&s, &c, &r, &h](store: &s [byte], certs: &c [byte], ranges: &r [in
             i = i + 1;
         }
         if code == 0 {
-            code = leaf_ok(certs[ranges[0]..ranges[1]], views[0..x509.view_len()], now);
+            code = leaf_ok(certs[ranges[0]..ranges[1]], views[0..x509.view_len()], now, want);
         }
         if code == 0 {
             let path = alloc_slice[a](max_path_intermediates() + 2, 0);
             let st = alloc_slice[a](4, 0);
             st[1] = -1;
-            code = extend(store, certs, ranges, views, ok, path, 0, max_intermediates, now, st);
+            code = extend(store, certs, ranges, views, ok, path, 0, max_intermediates, now, want, st);
+        }
+        // A refusal leaves no identity behind (`docs/x509-verify.md`
+        // §10.3): a caller that ignores the answer reads no subject and
+        // no SAN.
+        var k = 0;
+        while k < x509.view_len() {
+            if code == 0 {
+                leaf[k] = views[k];
+            } else {
+                leaf[k] = 0;
+            }
+            k = k + 1;
+        }
+    }
+    return code;
+}
+
+// The chain the server sent: `certs[ranges[2i]..ranges[2i + 1]]` is
+// certificate `i`, the leaf first. Verified against the roots of
+// `store` (`store_load`), for `purpose` (`purpose_server_auth` or
+// `purpose_client_auth`), at `now` (seconds since 1970), with at most
+// `max_intermediates` between the leaf and a root. **No name is
+// checked**: 0 means a key some CA of `store` vouched for, for this
+// purpose, now -- not which server or client it is
+// (`docs/x509-verify.md` §10.3). `leaf` (`x509.view_len()` words) gets
+// the leaf's view on 0, for its subject and `san_next`, and zeros on a
+// refusal. 0, or a refusal (`refusal_tag`). Revocation is not checked.
+pub fn verify_chain[&s, &c, &r, &l](store: &s [byte], certs: &c [byte], ranges: &r [int], now: int, max_intermediates: int, purpose: int, leaf: &!l [int]) -> [] int {
+    if purpose != purpose_server_auth() && purpose != purpose_client_auth() {
+        return bad_purpose();
+    }
+    if len(leaf) < x509.view_len() {
+        return -10;
+    }
+    let n = len(ranges) / 2;
+    if n < 1 {
+        return -10;
+    }
+    if n > max_sent() {
+        return -16;
+    }
+    return chain(store, certs, ranges, now, max_intermediates, purpose, leaf);
+}
+
+// Whether `leaf_der`'s subjectAltName names `host`, a DNS name or an IP
+// literal: 0, or `name_mismatch()`. `leaf` is its view (`verify_chain`
+// fills one). The name check `verify` makes, as its own step.
+pub fn verify_name[&d, &v, &h](leaf_der: &d [byte], leaf: &v [int], host: &h [byte]) -> [] int {
+    if len(leaf) < x509.view_len() || len(host) > 255 {
+        return name_mismatch();
+    }
+    let s = leaf[x509.san_start()];
+    let e = leaf[x509.san_end()];
+    if s < 0 || e < s || e > len(leaf_der) {
+        return name_mismatch();
+    }
+    var code = 0;
+    region a {
+        let name = alloc_slice[a](256, byte_of(0));
+        let hinfo = alloc_slice[a](2, 0);
+        code = x509_names.host_parse(host, name, hinfo);
+        if code == 0 && !x509_names.san_matches(leaf_der, s, e, name[0..hinfo[0]], hinfo[1]) {
+            code = name_mismatch();
+        }
+    }
+    return code;
+}
+
+// The subjectAltName of `leaf_der` (view `leaf`), one GeneralName at a
+// time (`docs/x509-verify.md` §10.1): `at` 0 starts. `entry[0]` gets
+// the entry's tag (0x81 rfc822Name, 0x82 dNSName, 0x86 URI, 0x87
+// iPAddress, 0xa0 otherName, 0xa4 directoryName, ...), `entry[1]` and
+// `entry[2]` its content's range in `leaf_der`. Answers where the next
+// entry starts, to pass back as `at`, or 0 when there is none.
+pub fn san_next[&d, &v, &o](leaf_der: &d [byte], leaf: &v [int], at: int, entry: &!o [int]) -> [] int {
+    if len(leaf) < x509.view_len() || len(entry) < 3 {
+        return 0;
+    }
+    let s = leaf[x509.san_start()];
+    let e = leaf[x509.san_end()];
+    if s <= 0 || e <= s || e > len(leaf_der) {
+        return 0;
+    }
+    var p = at;
+    if p == 0 {
+        p = s;
+    }
+    if p < s || p >= e || x509.tlv(leaf_der, p, e, entry) != 0 {
+        return 0;
+    }
+    return entry[2];
+}
+
+// The chain the server sent: `certs[ranges[2i]..ranges[2i + 1]]` is
+// certificate `i`, the leaf first. Verified against the roots of
+// `store` (`store_load`), the name `host` (a DNS name or an IP literal)
+// and `now` (seconds since 1970), with at most `max_intermediates`
+// between the leaf and a root. 0, or a refusal (`refusal_tag`).
+// Revocation is not checked. It is `verify_chain` for
+// `purpose_server_auth()` then `verify_name`, with a host that cannot
+// be read refused first (`docs/x509-verify.md` §10.1): no host skips
+// the name.
+pub fn verify[&s, &c, &r, &h](store: &s [byte], certs: &c [byte], ranges: &r [int], host: &h [byte], now: int, max_intermediates: int) -> [] int {
+    let n = len(ranges) / 2;
+    if n < 1 {
+        return -10;
+    }
+    if n > max_sent() {
+        return -16;
+    }
+    var code = 0;
+    region a {
+        let name = alloc_slice[a](256, byte_of(0));
+        let hinfo = alloc_slice[a](2, 0);
+        if len(host) > 255 {
+            code = name_mismatch();
+        } else {
+            code = x509_names.host_parse(host, name, hinfo);
+        }
+        let leaf = alloc_slice[a](x509.view_len(), 0);
+        if code == 0 {
+            code = chain(store, certs, ranges, now, max_intermediates, purpose_server_auth(), leaf);
         }
         if code == 0 {
-            let leaf = certs[ranges[0]..ranges[1]];
-            let kind = hinfo[1];
-            if !x509_names.san_matches(leaf, views[x509.san_start()], views[x509.san_end()], name[0..hinfo[0]], kind) {
-                code = name_mismatch();
-            }
+            code = verify_name(certs[ranges[0]..ranges[1]], leaf, host);
         }
     }
     return code;

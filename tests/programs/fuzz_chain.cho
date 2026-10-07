@@ -4,12 +4,34 @@ edition 5;
 // Certificate message's body, from standard input. It is split as the
 // client splits it (`tls_message.certificate`) and verified as the client
 // verifies it (`tls_slot.verify_chain`), against `fuzz_fixture`'s roots,
-// host and time.
+// host and time. Then through `x509_verify.verify_chain` for both
+// purposes, with no name, and every SAN entry of the leaf's view walked
+// with `san_next` (`docs/x509-verify.md` §10.4).
 import fuzz_common;
 import fuzz_fixture;
 import std.io;
 import tls_message;
+import x509;
 import x509_verify;
+
+// `verify_chain` for `purpose`, then the leaf's SANs walked, as a
+// program given a client's certificate would.
+fn without_name[&s, &b, &r](store: &s [byte], body: &b [byte], ranges: &r [int], purpose: int) -> [] int {
+    var entries = 0;
+    region v {
+        let view = alloc_slice[v](x509.view_len(), 0);
+        let entry = alloc_slice[v](3, 0);
+        x509_verify.verify_chain(store, body, ranges, fuzz_fixture.now(), x509_verify.tls_max_intermediates(), purpose, view);
+        let leaf = body[ranges[0]..ranges[1]];
+        var at = x509_verify.san_next(leaf, view, 0, entry);
+        while at != 0 {
+            entries = entries + 1;
+            at = x509_verify.san_next(leaf, view, at, entry);
+        }
+        x509_verify.verify_name(leaf, view, fuzz_fixture.host());
+    }
+    return entries;
+}
 
 fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read] int {
     var input = box_slice(heap, 65536, byte_of(0));
@@ -31,6 +53,10 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read] int {
                             k = k + 1;
                         }
                         x509_verify.verify(contents(s)[0..used], body, ranges, fuzz_fixture.host(), fuzz_fixture.now(), x509_verify.tls_max_intermediates());
+                        if fi[2] > 0 {
+                            without_name(contents(s)[0..used], body, ranges, x509_verify.purpose_client_auth());
+                            without_name(contents(s)[0..used], body, ranges, x509_verify.purpose_server_auth());
+                        }
                     }
                 }
             }

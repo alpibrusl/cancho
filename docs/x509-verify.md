@@ -1,6 +1,7 @@
 # `packages/x509`: verifying a server's chain
 
-> **Status: built (#206, all three PRs): the verifier (§8), and `packages/tls` verifying with it (§9).** Sub-issue 9 of the self-contained TLS 1.3 client (#197). `docs/tls-pure.md` §5 already
+> **Status: built (#206, all three PRs): the verifier (§8), and `packages/tls` verifying with it (§9). §10, a chain
+> verified without a host name (for `verify-ca` and client certificates), is designed there and built in the same PR.** Sub-issue 9 of the self-contained TLS 1.3 client (#197). `docs/tls-pure.md` §5 already
 > fixes the rules: the root store, the depth limit, the checks per certificate, the key sizes, name matching, and what is not
 > checked. Its §8 fixes the refusal tags. This document settles what those sections left open for the code:
 > - where the code goes, and its API;
@@ -40,6 +41,9 @@ x509_verify.store_load(pem, store, info) -> roots | refusal   // info[0] bytes u
 // the leaf first. `host` is a DNS name or an IP literal. `now` is seconds since 1970.
 x509_verify.verify(store, certs, ranges, host, now, max_intermediates) -> 0 | refusal
 ```
+
+*§10 adds `verify_chain` (the chain for a purpose, with no name), `verify_name` (the name, as its own step), and
+`san_next`; `verify` is those two steps, with the same answers.*
 
 - **`ranges` rather than a copy.** `packages/tls` already has the `Certificate` message in a slot, and
   `tls_message.certificate` already gives each certificate's range (`docs/tls-core.md` §9.1). The verifier reads them in place.
@@ -422,3 +426,184 @@ limbo found these before any of them reached `main`. Each is corrected where its
   verify is a bad signature, as OpenSSL says (error 7).
 - **`clock_ms` is not a time of day** (§9.1).
 
+
+## 10. A chain without a name
+
+Two users need a chain checked with no host name:
+- **`sslmode=verify-ca`** in cancho-pg (its `docs/tls.md`, PR #14): the chain to a trusted CA, and no name. Its §3 found that
+  `verify` parses the host and matches it inside one function, and that the path builder, `extend`, is private, so only
+  `verify-full` could be offered.
+- **Client certificates**, step 4 of `docs/tls-server.md` §8: a server verifies a client's chain against a configured trust
+  store. There is no name to expect; the program is given the verified subject and SANs and decides what they may do.
+
+### 10.1 The API
+
+```
+// Which extendedKeyUsage the leaf and every intermediate must allow, when they carry one.
+x509_verify.purpose_server_auth() -> 1   // a server's certificate: the TLS client, verify-full, verify-ca
+x509_verify.purpose_client_auth() -> 2   // a client's certificate: a TLS server's step 4
+
+// The chain only: the path, every signature, every validity, cA and pathLen, keyUsage and EKU for `purpose`, name
+// constraints over every SAN. No name is read. `leaf` (x509.view_len() words) gets x509.parse's view of the leaf when the
+// answer is 0, and all zeros on a refusal.
+x509_verify.verify_chain(store, certs, ranges, now, max_intermediates, purpose, leaf) -> 0 | refusal
+
+// The name, as its own step: the leaf's subjectAltName against `host`. 0, or x509-name-mismatch.
+x509_verify.verify_name(leaf_der, leaf, host) -> 0 | refusal
+
+// Unchanged, and now those two steps: the host must be readable (else x509-name-mismatch, first, as before), then
+// verify_chain(purpose_server_auth()), then verify_name.
+x509_verify.verify(store, certs, ranges, host, now, max_intermediates) -> 0 | refusal
+
+// The verified leaf's subjectAltName, one GeneralName at a time: `at` 0 starts; answers where the next one starts, or 0
+// when there is none. entry[0] is the tag (0x81 rfc822Name, 0x82 dNSName, 0x86 URI, 0x87 iPAddress, 0xa0 otherName,
+// 0xa4 directoryName, ...), entry[1], entry[2] its content's [start, end) in `leaf_der`.
+x509_verify.san_next(leaf_der, leaf, at, entry) -> next | 0
+```
+
+The subject is `leaf_der[leaf[x509.subject_start()]..leaf[x509.subject_end()]]`, the Name's DER, as every other field of the
+view is read (`docs/x509.md` §2). A function that picks a common name out of it is left until a program asks
+(`CONTRIBUTING.md`: two askers); the broker of step 4 is the first candidate.
+
+- **One path builder.** `verify_chain` is the code `verify` ran up to the name: the same parse, `leaf_ok`, `extend`, budget and
+  refusal order. The purpose is passed down to the two places that read an EKU. `verify` keeps its signature, its refusal
+  tags and their order; the matrix, the real chains and the limbo subset replay unchanged (§10.5).
+- **A purpose that is neither** is refused, `x509-purpose` (-41), before anything is read. There is no default and no "any".
+- **`leaf` shorter than `x509.view_len()`** is `x509-structure`, as `x509.parse` answers for a short view.
+
+### 10.2 The purposes
+
+The two purposes differ only where an EKU is read; every other check of §4 is the same.
+
+| | `purpose_server_auth()` | `purpose_client_auth()` |
+|---|---|---|
+| the leaf's EKU, when present | must hold `serverAuth` | must hold `clientAuth` |
+| `anyExtendedKeyUsage` alone in the leaf | refused (§4) | refused, as OpenSSL's `sslclient` purpose does (measured, §10.5) |
+| an intermediate's EKU, when present | must hold `serverAuth` | must hold `clientAuth` |
+| the root's EKU | not read (§4) | must hold `clientAuth`, when present. *Corrected while building (§10.5): this cell said "not read". Measured, OpenSSL's `sslclient` refuses a root whose EKU excludes `clientAuth` (error 26 at the root's depth), and so does its `sslserver` for `serverAuth`. A client-certificate store is a file an operator writes for the purpose, so the stricter reading costs nothing there; for a server's purpose §4's rule stays, since `verify`'s answers do not change in this PR, and the difference is listed (§10.5)* |
+| the leaf's keyUsage, when present | `digitalSignature` | `digitalSignature`: a TLS 1.3 client signs CertificateVerify with it. OpenSSL's `sslclient` also accepts `keyAgreement` alone, which no TLS 1.3 client can use, so that is refused here and accepted there |
+| OpenSSL's equivalent | `openssl verify -purpose sslserver` | `openssl verify -purpose sslclient` |
+
+- **The TLS client and `verify-full`** use `verify`, so `serverAuth`, as today.
+- **`verify-ca` is `verify_chain` with `purpose_server_auth()`.** That is what libpq does: with `verify-ca` or `verify-full` it
+  sets `SSL_VERIFY_PEER` with the root file and no purpose or host of its own (`fe-secure-openssl.c`, PostgreSQL 16), so
+  OpenSSL's TLS client applies its default for a server's chain, the `ssl_server` purpose (`ssl_verify_cert_chain` in
+  `ssl/ssl_cert.c`, OpenSSL 3.0.13: `X509_STORE_CTX_set_default(ctx, s->server ? "ssl_client" : "ssl_server")`). The name is
+  libpq's own check, made only under `verify-full` (`pq_verify_peer_name_matches_certificate` returns at once for any other
+  mode, `fe-secure-common.c`). So `verify-ca` there requires `serverAuth` when an EKU is present, and every chain check; it
+  skips the name and nothing else. It is the same here.
+- **Step 4** uses `purpose_client_auth()`. The same `ssl_verify_cert_chain` line is why: an OpenSSL server (PostgreSQL's,
+  mosquitto's) checks a client's chain with the `ssl_client` purpose.
+
+### 10.3 The hazard, and how the API says it
+
+A chain verified with no name authenticates **"a key some CA in this store vouched for, for this purpose, today"**. It does not
+say *which* server or *which* client. Two consequences:
+
+- **The store decides everything.** Under `verify-ca` against the system bundle, anyone who can get a certificate for any
+  domain from any public CA passes, so `verify-ca` is only safe with a store holding a CA that issues only to the servers the
+  client means to reach: a private CA per database, which is libpq's own advice for `verify-ca`. For client certificates the
+  same holds more sharply: public CAs have issued certificates with both `serverAuth` and `clientAuth`, so a server that
+  trusted the system bundle for client certificates would admit the holder of any such web certificate. **A client-certificate
+  store is its own file, never the system roots.** That is for step 4 and for cancho-pg to enforce where they load the store;
+  `packages/x509` cannot tell a public CA from a private one.
+- **Authentication is not authorization.** After `verify_chain` answers 0 the program has an identity, the subject and the
+  SANs, that the CA put there. Deciding what that identity may do (which MQTT topics, which database role) is the program's,
+  and it must read the identity from the `leaf` view `verify_chain` filled, which is the certificate that was verified.
+
+How the API makes the choice explicit rather than easy to fall into:
+- **`verify` cannot be told to skip the name.** An empty host, `-`, `*` or anything else that is not a DNS name or an IP
+  literal is still `x509-name-mismatch` (§5.1), before the chain is read. There is no flag. Tested (§10.4).
+- **A chain without a name is a different function**, with a name that says what it checks, and it takes a purpose with no
+  default. A caller that wants the name must call `verify` (or `verify_name` after `verify_chain`): that is the only way the
+  TLS client verifies, and `packages/tls` is unchanged by this section. Offering `verify-ca` through `packages/tls` would be
+  its own named entry there, asked for by cancho-pg, not a flag on `start`.
+- **A refusal leaves no identity behind.** On a refusal `leaf` is all zeros: no subject range and no SAN, so a program that
+  forgets to look at the answer reads nothing, rather than a name from a certificate that failed.
+- **The CA's limits still apply.** Name constraints are checked over every SAN of the leaf in `verify_chain`, whether or not a
+  name is asked, so a CA constrained to `example.com` cannot vouch for a client whose SAN says `admin.other.test`.
+  A subject (a `directoryName`) is constrained only by a `directoryName` subtree, which this verifier refuses to read (§5.3),
+  so a CA with one is refused; a CA with only `dNSName` subtrees says nothing about the subject. A program that authorizes
+  by subject must trust each CA of its store for every subject, which is RFC 5280's reading.
+
+### 10.4 Tests
+
+- **Unchanged and passing:** `conformance/x509_verify.rs` (limbo subset, the 14 real chains, the 33-case matrix), the TLS
+  client's suites (`conformance/tls.rs`: the traces, the liar, the 64 streams; tickets; the differentials), the fuzz corpora,
+  and `publish_packages.py --check` with the stores republished.
+- **A second OpenSSL matrix, with no name** (`scripts/x509_matrix.py chain`, `tests/vectors/x509/verify/chain_matrix.txt`).
+  Each case runs `openssl verify -x509_strict -purpose sslclient` or `sslserver`, with no `-verify_hostname`, and the
+  driver's new `C` line (`verify_chain`). The tag must be the one expected, and no case OpenSSL refuses may be accepted:
+  - for both purposes: a valid chain; an expired leaf; an expired intermediate; an unknown CA; `pathlen` 0 exceeded; an
+    intermediate that is not a CA; a leaf with no SAN (accepted: there is no name to match); a bad signature;
+  - a client-auth-only leaf: accepted for `clientAuth`, `x509-key-usage` for `serverAuth`;
+  - a server-auth-only leaf: the reverse;
+  - a leaf with both, and a leaf with no EKU: accepted for both;
+  - `anyExtendedKeyUsage` alone: refused for both;
+  - an intermediate whose EKU is `serverAuth` only, under a `clientAuth` leaf: refused for `clientAuth`; and the reverse;
+  - a root whose EKU is `serverAuth` only, and one whose EKU is `clientAuth` only, for both purposes;
+  - a leaf whose keyUsage is `keyAgreement` only, for `clientAuth` (refused here, accepted by OpenSSL: §10.2);
+  - a constrained CA and a client leaf whose SAN is outside it: `x509-name-constraint` with no name asked;
+  - the leaf's view: each accepted case's answer carries the subject and the SAN entries read back through `san_next`,
+    compared with what the script put in the certificate.
+- **`verify` cannot skip the name:** the same valid chain through `V` with the host empty, `-`'s byte and `*`: each
+  `x509-name-mismatch`.
+- **`verify_name` on its own:** the right host, a wrong one, an IP, a leaf with no SAN.
+- **A purpose of 0 or 3:** `x509-purpose`.
+- **Mutants** over the new code (`scripts/x509_verify_mutants.py`, with `chain_matrix.txt` added to what it replays): the
+  purpose ignored at the leaf; ignored at an intermediate; the client purpose made the server's; an invalid purpose
+  accepted; a root's EKU not read for client certificates; the leaf view not cleared on a refusal (the driver prints
+  `left-behind` when a refused chain's view still holds a subject or a SAN); `san_next` skipping the first entry;
+  `verify_name` matching nothing; `verify` built on `purpose_client_auth()`; `verify` no longer refusing an unreadable host
+  before the chain.
+- **No trap:** `tests/programs/fuzz_chain.cho` also runs `verify_chain` for both purposes and walks `san_next` over every
+  corpus input, on both backends.
+
+### 10.5 Results
+
+**What was built.**
+
+| File | What |
+|---|---|
+| `packages/x509/verify.cho` (914 lines) | `purpose_server_auth`, `purpose_client_auth`, `verify_chain`, `verify_name`, `san_next`, the tag `x509-purpose` (-41); `verify` is now the host check, `chain` (the shared path) for `serverAuth`, and `verify_name`. `leaf_ok`, `issuer_ok` and `extend` take the purpose's EKU flag where they read an EKU |
+| `tests/programs/x509_verify_driver.cho` | `C` lines (`verify_chain`, then the subject and every SAN through `san_next`) and `N` lines (`verify_name` alone) |
+| `scripts/x509_matrix.py chain` | the no-name matrix of §10.4, against `openssl verify -x509_strict -purpose sslclient` / `sslserver` |
+| `tests/vectors/x509/verify/chain_matrix.txt` | its 56 cases, replayed by `conformance/x509_verify.rs` on both backends |
+| `tests/programs/fuzz_chain.cho` | also `verify_chain` for both purposes, `san_next` and `verify_name` over every input |
+
+**Evidence.**
+- **`verify` unchanged.** The 33-case matrix, the 14 real chains (84 checks) and the limbo subset (705 answers) replay
+  byte for byte through the new code, on both backends; so do `conformance/tls.rs` and the TLS fuzz corpora.
+  `publish_packages.py --check` passes with the stores republished.
+- **The no-name matrix**: 56 cases, each with its own tag; OpenSSL 3.6.4 (Homebrew) beside each of the 39 chain cases:
+  - accepted for both purposes: a leaf with both EKUs, with none, with no SAN (`device-17`, the subject only), a client leaf
+    under `pathlen:0`, a constrained CA with the SAN inside it, an RSA-2048 leaf; each answer carries the subject's DER and
+    the SAN entries, equal to what the script put in the certificate (`DNS`, `IP` and `email` entries read back in order);
+  - `x509-key-usage`: a client-auth-only leaf for `serverAuth` and a server-auth-only leaf for `clientAuth` (OpenSSL: 26),
+    `anyExtendedKeyUsage` alone (26), an intermediate whose EKU excludes the purpose (26), a root whose EKU excludes
+    `clientAuth` (26), an intermediate without keyCertSign (79), and a leaf with keyUsage `keyAgreement` only for
+    `clientAuth` (OpenSSL accepts it: refused here, §10.2);
+  - `x509-expired` (10) for a leaf and an intermediate, `x509-not-yet-valid` (9), `x509-unknown-issuer` for another CA's
+    chain (19) and a self-signed leaf (18), `x509-path-too-long` (25), `x509-not-ca` (79), `x509-name-constraint` for a
+    SAN outside a constrained CA with no name asked (47), `x509-bad-signature` (7);
+  - `verify` with an empty host, `-`, `*` or a space: `x509-name-mismatch`, and before an expired chain is read;
+  - `verify_name` alone: the leaf's name in any case with a trailing dot, an IP SAN, a wrong name, an IP the leaf does not
+    have, an empty host, a leaf with no SAN;
+  - purposes 0, 3, -1 and 4: `x509-purpose`.
+  
+  No chain OpenSSL refuses is accepted, but one, listed in the file as a known disagreement: **a root whose EKU is
+  `clientAuth` only, under `serverAuth`, is accepted by `verify` and `verify_chain` and refused by OpenSSL (26).** That is
+  §4's existing rule for a server's chain ("not read", as webpki has it), which this PR does not change because `verify`
+  must answer as before. Whether a server's purpose should read the root's EKU too is a question for a person. Measured:
+  4 of the 128 system roots (`roots.pem`) carry an EKU, and each is `serverAuth` alone, so reading it would refuse no chain to
+  a system root; it would make `verify-ca` and `verify-full` agree with libpq's OpenSSL on a private root restricted to
+  another purpose. (The same 4 roots would refuse every client certificate under `clientAuth`: one more reason a
+  client-certificate store is never the system bundle, §10.3.)
+- **Mutants: 33 of 33 killed** (the 22 of §8.2, with three texts moved to the new code, and 11 new).
+- **No trap:** 20,000 chains from the no-name matrix with random byte changes, through `C`, `N` and `V` lines, ended with no
+  trap (a scratch run, not committed); and the committed chain corpus, now through `verify_chain`, on both backends.
+
+**Not done here.** `packages/tls` does not offer `verify-ca`, and the server's step 4 is not built: each is its own change, in
+`packages/tls`, asked for by its program. x509-limbo's 10 `CLIENT` cases (§8.2's "a client certificate", 5 of them not
+revocation cases) could now run through `verify_chain`; that needs `limbo.json`, which is fetched rather than committed, and
+was not run for this PR.
