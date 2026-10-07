@@ -1,6 +1,6 @@
 # Narrowing one capability into several
 
-Status: **built (PR PRNUM); the `covers` fix of section 6 was built first (PR #359).** Found by the PostgreSQL TLS work (alpibrusl/cancho-pg#14, its `docs/tls.md` section 5 and
+Status: **built (PR #364); the `covers` fix of section 6 was built first (PR #359).** Found by the PostgreSQL TLS work (alpibrusl/cancho-pg#14, its `docs/tls.md` section 5 and
 section 11.3): a program that reads two unrelated files holds `Fs("")`, and its authority report says `fs_read("")`, which
 is every file. Every claim below about the compiler before this change was checked against the code or a probe at `c0ad830`;
 section 10 lists which, and what was not. Section 11 is what building it found, and corrects in place what it showed wrong.
@@ -146,7 +146,7 @@ which no other option that solves the problem does.
 and `crates/cancho-codegen-llvm/src/body/expr.rs`, the `Split | Narrow | ForkHeap | ForkClock` arm returns no values).
 A tuple of zero-sized capabilities has no leaves, and a tuple carrying an `Fs` already checks, builds and runs on both
 backends (probe: a function `fn pass(fs: Fs("/dev/urandom")) -> [] (Fs("/dev/urandom"), int)` destructured with
-`let (back, n) = pass(rng);`). *(Corrected in PR PRNUM, section 11: the `Narrow` arm is never reached, because the checker answers an `Expr::Tuple` rather than a call, and neither backend
+`let (back, n) = pass(rng);`). *(Corrected in PR #364, section 11: the `Narrow` arm is never reached, because the checker answers an `Expr::Tuple` rather than a call, and neither backend
 needed a change.)* The run-time path check is per operation and reads the prefix of the
 capability that operation borrowed (`Expr::FileOp`'s `prefix`, `checked_path` in both backends), so it does not change:
 each child is checked against its own literal. Probe at `c0ad830`: `fs_read` of `/etc/hosts` through `Fs("/dev/urandom")`
@@ -423,7 +423,7 @@ under WASI. cancho-pg and cancho-hooks were read, not built.
 
 ## 11. As built
 
-> Built in PR PRNUM, as section 5 recommends and section 9 decided (2026-10-07). Question 4 said to wait for the second asker; it was built ahead of
+> Built in PR #364, as section 5 recommends and section 9 decided (2026-10-07). Question 4 said to wait for the second asker; it was built ahead of
 > cancho-mqtt and cancho-gateway on the maintainer's instruction, with `examples/tls_echo_fixed` (section 11.1) as the in-repository program that
 > uses it.
 
