@@ -799,6 +799,18 @@ fn corpus() -> Vec<(String, String)> {
         "fe80::1",
         "64:ff9b::1.2.3.4",
         "1::2:0:0:3",
+        // A dotted quad is the last thing in an address; these are not addresses.
+        "1.2.3.4::",
+        "::1.2.3.4:1",
+        "1:2:3:1.2.3.4:5:6",
+        "1.2.3.4:1",
+        "::1.2.3.4:",
+        "1.2.3.4:5::6",
+        // A colon alone at either end.
+        ":1:2:3:4:5:6:7",
+        "1:2:3:4:5:6:7:",
+        ":",
+        ":1",
     ] {
         texts.push(s.to_owned());
     }
@@ -1091,6 +1103,18 @@ fn main(world: World) -> [] int {
         // Constructors mask: an octet is 8 bits, a port 16.
         test.assert(is_text(addr.v4(256 + 10, 0, 0, 1, 70000), buf, "10.0.0.1"));
         test.assert_eq(addr.port(addr.v4(1, 2, 3, 4, 65536 + 80)), 80);
+        // ...and the word is the 32-bit address, not what spilled over it.
+        test.assert_eq(addr.word(addr.v4(256 + 10, 0, 0, 1, 1), 3), 0x0a000001);
+        test.assert_eq(addr.word(addr.v4(10, 0, 0, 256 + 1, 1), 3), 0x0a000001);
+        test.assert_eq(addr.word(addr.v4(10, 0, 0, 1, 1), 0), 0);
+        // `from_parts` is the inverse of `family`, `word` and `port`, for both families and for
+        // the mapped range.
+        test.assert(addr.same(addr.from_parts(4, 0, 0, 0, 0x01020304, 9), addr.v4(1, 2, 3, 4, 9)));
+        test.assert_eq(addr.family(addr.from_parts(4, 0, 0, 0, 0x01020304, 9)), 4);
+        test.assert(addr.same(addr.from_parts(6, 0x20010db8, 1, 2, 3, 9), addr.v6(0x20010db8, 1, 2, 3, 9)));
+        test.assert_eq(addr.family(addr.from_parts(6, 0, 0, 0, 1, 9)), 6);
+        test.assert_eq(addr.family(addr.from_parts(6, 0, 0, 0xffff, 0x01020304, 9)), 4);
+        test.assert_eq(addr.port(addr.from_parts(6, 0, 0, 0, 1, 70000)), 70000 - 65536);
         // The mapped range is IPv4, whichever constructor made it, and nothing near it is.
         test.assert(addr.same(addr.v6(0, 0, 0xffff, 0x01020304, 9), addr.v4(1, 2, 3, 4, 9)));
         test.assert_eq(addr.family(addr.v6(0, 0, 0xffff, 0, 1)), 4);

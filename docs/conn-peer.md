@@ -222,8 +222,14 @@ three run in full, including a client from `127.0.0.2` that is not affected; on 
   spam by connections that end at once. The example keeps 1,024 keys per one-second window in the loop's global array
   (`front.cho`, `g_ak`); the state is shared by `https_hello`, which therefore accepts the same two flags (not tested there).
 
-**Mutants** (`scripts/conn_peer_mutants.py`; the compiler is rebuilt for each): see the PR for the count killed. A surviving mutant
-fails the script.
+**Mutants** (`scripts/conn_peer_mutants.py`; the compiler is rebuilt for each; 54 single edits to `std/addr.cho`, `std/conns.cho` and
+each backend's `conn_peer`, run against `conformance conn_peer`): **51 killed on macOS and the other 3 killed on Linux, 54 of 54**,
+and one equivalent mutant with its argument. The first run found five survivors, which is what the run is for: `from_parts` was
+untested (the example was its only user), `v4` did not mask its octets in the word (the text hid it, since it masks again), a dotted
+quad in the middle of an address was never in the corpus, and the errno `conns.peer` and each backend pass up was
+indistinguishable from `EINVAL` on macOS, which is what a reset connection answers there; the first three got tests and the errno
+three are killed on Linux by the `ENOTCONN` expectation (`LINUX_ONLY` in the script says so, and the script run in Docker kills
+them). The equivalent one is the check for a leading `:` in `parse`, which a few lines later is refused anyway as an empty group.
 
 **Measured**, on macOS 26 arm64 under load from other jobs, `examples/tls_echo` with `--per-address-rate 2` against six
 simultaneous clients: they complete in 2.02 s with the last having waited 1.99 s (3 windows of 2), and on Linux a client from

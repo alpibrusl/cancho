@@ -64,7 +64,6 @@ MUTANTS = [
     ("parse: a trailing single colon accepted", ADDR, "                    if end + 1 == len(s) {\n                        return Parsed::Bad;\n                    }\n                    i = end + 1;", "                    i = end + 1;\n                    if i == len(s) {\n                        more = false;\n                    }"),
     ("parse: a dotted quad that is not last accepted", ADDR, "if end != len(s) || count > 6 {", "if count > 6 {"),
     ("parse: groups after `::` put at the front", ADDR, "            if gap >= 0 && a >= gap {\n                at = a + 8 - count;", "            if gap >= 0 && a >= gap + 1 {\n                at = a + 8 - count;"),
-    ("parse: a bare colon at the start accepted", ADDR, "        } else if len(s) > 0 && int_of(s[0]) == ':' {\n            return Parsed::Bad;\n        }", "        }"),
     # ---- std.conns ----
     ("peer: a slot with nothing in it has a peer", CONNS, "    if ticket < 0 {\n        return Peered::Unavailable(9);\n    }\n    match conn_attach(ticket) {\n        Attached::Ok(c) => {\n            var conn = c;\n            var answer = Peered::Unavailable(9);", "    if ticket < 0 {\n        return Peered::Unavailable(0);\n    }\n    match conn_attach(ticket) {\n        Attached::Ok(c) => {\n            var conn = c;\n            var answer = Peered::Unavailable(9);"),
     ("peer: the connection not put back", CONNS, "                    answer = Peered::Unavailable(code);\n                }\n            }\n            let back = conn_detach(conn);\n            if back < 0 {\n                release_slot(table, slot);\n            } else {\n                vec.set(table.tickets, slot, back);\n            }", "                    answer = Peered::Unavailable(code);\n                }\n            }\n            let back = conn_detach(conn);\n            if back < 0 {\n                release_slot(table, slot);\n            }"),
@@ -91,7 +90,19 @@ MUTANTS = [
 ]
 
 # Mutants that cannot change anything a test can see, with the argument. They must survive.
-EQUIVALENT = []
+EQUIVALENT = [
+    ("parse: a bare colon at the start accepted", ADDR, "        } else if len(s) > 0 && int_of(s[0]) == ':' {\n            return Parsed::Bad;\n        }", "        }",
+     "the first token would then be empty (`end == i`) and refused a few lines later; the check says it in the place a reader looks, and removing it changes no answer"),
+]
+
+# Mutants that only a Linux kernel can kill: on macOS a reset connection's `getpeername` fails with
+# `EINVAL` (22), which is also the number these mutants answer instead of the real errno, so the
+# tests there cannot tell them from the original. On Linux the expected errno is `ENOTCONN` (107).
+LINUX_ONLY = {
+    "peer: the errno swallowed",
+    "cranelift: the failure's errno not answered",
+    "llvm: the failure's errno not answered",
+}
 
 
 def read(path):
@@ -119,7 +130,7 @@ def main():
         print("the unmutated tree does not pass:\n" + out[-3000:])
         return 2
     originals = {path: read(path) for path in {m[1] for m in MUTANTS + EQUIVALENT}}
-    survived, errors, killed = [], [], 0
+    survived, errors, killed, linux_only = [], [], 0, []
     equivalent_ok = True
     try:
         for expect_kill, group in ((True, MUTANTS), (False, EQUIVALENT)):
@@ -144,6 +155,9 @@ def main():
                 elif expect_kill and code != 0:
                     killed += 1
                     print(f"killed     {name}", flush=True)
+                elif expect_kill and name in LINUX_ONLY and sys.platform != "linux":
+                    linux_only.append(name)
+                    print(f"linux-only {name}: survives here, killed on Linux (see LINUX_ONLY)", flush=True)
                 elif expect_kill:
                     survived.append(name)
                     print(f"SURVIVED   {name}", flush=True)
@@ -156,7 +170,7 @@ def main():
         for path, text in originals.items():
             write(path, text)
     total = len([m for m in MUTANTS if not only or only in m[0]])
-    print(f"{killed} of {total} mutants killed; {len(survived)} survived; {len(errors)} errors")
+    print(f"{killed} of {total} mutants killed; {len(linux_only)} killed only on Linux; {len(survived)} survived; {len(errors)} errors")
     return 1 if survived or errors or not equivalent_ok else 0
 
 
