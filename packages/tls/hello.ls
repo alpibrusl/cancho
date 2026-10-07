@@ -308,7 +308,7 @@ fn u16_list_has[&b](b: &b [byte], at: int, size: int, prefix: int, want: int) ->
 // (`docs/tls-server.md` §5.4). The faults of form are found as the
 // message is read; the rules about what it offers, after, in a fixed
 // order, so a ClientHello with several faults is refused for the first
-// of: version, compression, a missing extension, a share outside
+// of: version (from `supported_versions` alone), compression, a missing extension, a share outside
 // `supported_groups`, suite, signature scheme, group.
 pub fn client_hello[&b, &i](b: &b [byte], info: &!i [int]) -> [] int {
     var k = 0;
@@ -320,7 +320,6 @@ pub fn client_hello[&b, &i](b: &b [byte], info: &!i [int]) -> [] int {
     if n < 2 + 32 + 1 {
         return tls_record.server_client_hello_format();
     }
-    let legacy = get(b, 0, 2);
     var at = 34;
     let sid = int_of(b[at]);
     if sid > 32 || at + 1 + sid + 2 > n {
@@ -445,7 +444,11 @@ pub fn client_hello[&b, &i](b: &b [byte], info: &!i [int]) -> [] int {
     if code != 0 {
         return code;
     }
-    if !versions || !tls13 || legacy != 0x0303 {
+    // legacy_version is not read: RFC 8446 §4.2.1 forbids a server to
+    // negotiate with it once `supported_versions` is there (the design's
+    // rule that it be 0x0303 was corrected by `openssl s_server`, which
+    // takes 0x0301; `docs/tls-server.md` §5.2).
+    if !versions || !tls13 {
         return tls_record.server_version();
     }
     if !null_only {

@@ -745,6 +745,14 @@ def honest_grease(c):
     c.honest()
 
 
+@case("honest: legacy_version 0x0301 beside supported_versions, not read (RFC 8446 §4.2.1)", "ok")
+def honest_legacy(c):
+    c.setup()
+    c.send_hello(c.client_hello(legacy=0x0301))
+    c.flight()
+    c.established()
+
+
 @case("honest: pre_shared_key last, ignored: a full handshake", "ok")
 def honest_psk_ignored(c):
     ident = u16(5) + b"ticks" + bytes(4)
@@ -843,8 +851,6 @@ def replace_refused(c):
 refused_hello("no supported_versions: a TLS 1.2 client", "tls-server-version", 70, versions=None)
 refused_hello("an empty supported_versions", "tls-server-client-hello-format", 50, versions=[])
 refused_hello("supported_versions without TLS 1.3", "tls-server-version", 70, versions=[0x0303, 0x0302])
-refused_hello("legacy_version 0x0301", "tls-server-version", 70,
-              hello=lambda c: c.client_hello(legacy=0x0301))
 refused_hello("no extensions at all", "tls-server-version", 70,
               hello=lambda c: message(1, u16(0x0303) + c.random + b"\0" + u16(2) + u16(0x1301) + b"\1\0"))
 refused_hello("compression methods deflate and null", "tls-server-illegal-parameter", 47,

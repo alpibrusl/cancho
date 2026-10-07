@@ -20,7 +20,7 @@ and hangs. `--minimize` replaces `tests/vectors/fuzz/<harness>/` with
 or a hang.
 
 Needs `afl++` (`apt-get install afl++`) and a release build of the compiler
-(`cargo build --release -p lex-sys`).
+(`cargo build --release -p lex-sys`), or `LEX_SYS` naming one.
 """
 import os
 import shutil
@@ -48,7 +48,7 @@ ENV = dict(os.environ, AFL_SKIP_CPUFREQ="1", AFL_NO_UI="1",
 
 
 def compiler():
-    exe = os.path.join(ROOT, "target/release/lex-sys")
+    exe = os.environ.get("LEX_SYS") or os.path.join(ROOT, "target/release/lex-sys")
     if not os.path.exists(exe):
         raise SystemExit("build the compiler first: cargo build --release -p lex-sys")
     return exe

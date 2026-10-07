@@ -156,8 +156,8 @@ pub fn illegal_psk() -> [] int {
 
 // ---- The server's refusals (`docs/tls-server.md` §5.4) ----
 
-// A ClientHello that does not offer TLS 1.3 (`supported_versions` without 0x0304, or none), or
-// whose legacy_version is not 0x0303 (`docs/tls-server.md` §5.2).
+// A ClientHello that does not offer TLS 1.3: `supported_versions` without 0x0304, or none
+// (`docs/tls-server.md` §5.2).
 pub fn server_version() -> [] int {
     return -40;
 }
