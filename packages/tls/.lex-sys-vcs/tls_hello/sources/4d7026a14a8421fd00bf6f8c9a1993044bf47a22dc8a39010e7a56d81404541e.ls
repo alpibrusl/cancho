@@ -1,0 +1,617 @@
+module tls_hello;
+import tls_message;
+import tls_record;
+
+// `tls_hello` -- the server's side of the handshake messages: the
+// ClientHello parsed with the rules a server owns, and the messages a
+// server sends, encoded (RFC 8446 §4; `docs/tls-server.md` §5.2). The
+// client's messages are `tls_message`'s. A parser reads only inside the
+// body it is given, and every length it reads is checked against what is
+// left before it is used. Not independently reviewed (#209).
+//
+// The ClientHello is the input every peer that reaches the port
+// controls, and nothing is allocated from a size it names: what the
+// parser finds goes into the caller's `info`, as offsets into the body.
+
+// ---- What `client_hello` finds, as indices into its `info` ----
+
+// The legacy session id's range in the body, echoed in ServerHello.
+pub fn ch_session_start() -> [] int {
+    return 0;
+}
+
+pub fn ch_session_len() -> [] int {
+    return 1;
+}
+
+// The TLS 1.3 suites offered, a mask of `suite_bit`.
+pub fn ch_suites() -> [] int {
+    return 2;
+}
+
+// The groups of this server in `supported_groups`, a mask of `group_bit`.
+pub fn ch_groups() -> [] int {
+    return 3;
+}
+
+// Where each share of this server's groups starts in the body (its key,
+// after the group and length), or 0 when none was sent.
+pub fn ch_share_x25519() -> [] int {
+    return 4;
+}
+
+pub fn ch_share_p256() -> [] int {
+    return 5;
+}
+
+pub fn ch_share_p384() -> [] int {
+    return 6;
+}
+
+// The host name of `server_name`: where it starts and its length (0: none,
+// or one over 255 bytes, which no identity can have).
+pub fn ch_sni_start() -> [] int {
+    return 7;
+}
+
+pub fn ch_sni_len() -> [] int {
+    return 8;
+}
+
+// ALPN's protocol_name_list, its range in the body (0 and 0: not offered).
+pub fn ch_alpn_start() -> [] int {
+    return 9;
+}
+
+pub fn ch_alpn_end() -> [] int {
+    return 10;
+}
+
+// 1 when `early_data` was offered.
+pub fn ch_early() -> [] int {
+    return 11;
+}
+
+pub fn ch_info_len() -> [] int {
+    return 12;
+}
+
+// The largest ClientHello a server reassembles (`docs/tls-server.md`
+// §5.2): an ML-KEM-768 hybrid share is 1,216 bytes, so a browser's is a
+// few KiB.
+pub fn max_client_hello() -> [] int {
+    return 16384;
+}
+
+// ---- Suites and groups, in this server's order (`docs/tls-server.md` §2.1) ----
+
+pub fn suite_bit(suite: int) -> [] int {
+    if suite == tls_record.suite_aes_128_gcm_sha256() {
+        return 1;
+    }
+    if suite == tls_record.suite_aes_256_gcm_sha384() {
+        return 2;
+    }
+    if suite == tls_record.suite_chacha20_poly1305_sha256() {
+        return 4;
+    }
+    return 0;
+}
+
+pub fn group_bit(group: int) -> [] int {
+    if group == tls_message.group_x25519() {
+        return 1;
+    }
+    if group == tls_message.group_p256() {
+        return 2;
+    }
+    if group == tls_message.group_p384() {
+        return 4;
+    }
+    return 0;
+}
+
+// The suite this server picks of those in `mask`: AES-128-GCM first where
+// the CPU has AES instructions (`gcm` true), else ChaCha20-Poly1305
+// first; AES-256-GCM last. 0 when none is offered.
+pub fn choose_suite(mask: int, gcm: bool) -> [] int {
+    let aes128 = tls_record.suite_aes_128_gcm_sha256();
+    let chacha = tls_record.suite_chacha20_poly1305_sha256();
+    if gcm && mask & 1 != 0 {
+        return aes128;
+    }
+    if mask & 4 != 0 {
+        return chacha;
+    }
+    if mask & 1 != 0 {
+        return aes128;
+    }
+    if mask & 2 != 0 {
+        return tls_record.suite_aes_256_gcm_sha384();
+    }
+    return 0;
+}
+
+// The first of X25519, P-256 and P-384 the client sent a share of, or 0.
+pub fn share_group[&i](info: &i [int]) -> [] int {
+    if info[ch_share_x25519()] != 0 {
+        return tls_message.group_x25519();
+    }
+    if info[ch_share_p256()] != 0 {
+        return tls_message.group_p256();
+    }
+    if info[ch_share_p384()] != 0 {
+        return tls_message.group_p384();
+    }
+    return 0;
+}
+
+// Where the share of `group` starts in the body, or 0.
+pub fn share_at[&i](info: &i [int], group: int) -> [] int {
+    if group == tls_message.group_x25519() {
+        return info[ch_share_x25519()];
+    }
+    if group == tls_message.group_p256() {
+        return info[ch_share_p256()];
+    }
+    if group == tls_message.group_p384() {
+        return info[ch_share_p384()];
+    }
+    return 0;
+}
+
+// The group a HelloRetryRequest asks for: the first of this server's in
+// `supported_groups`, or 0.
+pub fn retry_group[&i](info: &i [int]) -> [] int {
+    let mask = info[ch_groups()];
+    if mask & 1 != 0 {
+        return tls_message.group_x25519();
+    }
+    if mask & 2 != 0 {
+        return tls_message.group_p256();
+    }
+    if mask & 4 != 0 {
+        return tls_message.group_p384();
+    }
+    return 0;
+}
+
+// ---- Bytes ----
+
+fn get[&b](b: &b [byte], at: int, n: int) -> [] int {
+    var v = 0;
+    var i = 0;
+    while i < n {
+        v = v * 256 + int_of(b[at + i]);
+        i = i + 1;
+    }
+    return v;
+}
+
+fn put[&o](out: &!o [byte], at: int, v: int, n: int) -> [] int {
+    var i = 0;
+    while i < n {
+        out[at + i] = byte_of(v >> 8 * (n - 1 - i) & 255);
+        i = i + 1;
+    }
+    return at + n;
+}
+
+fn copy_to[&s, &o](src: &s [byte], out: &!o [byte], at: int) -> [] int {
+    var i = 0;
+    while i < len(src) {
+        out[at + i] = src[i];
+        i = i + 1;
+    }
+    return at + len(src);
+}
+
+// ---- The ClientHello (RFC 8446 §4.1.2) ----
+
+// `server_name` (RFC 6066 §3): one host_name at most; a name over 255
+// bytes is kept as none. Other name types are skipped.
+fn server_name[&b, &i](b: &b [byte], at: int, size: int, info: &!i [int]) -> [] int {
+    if size < 2 || get(b, at, 2) + 2 != size {
+        return tls_record.server_client_hello_format();
+    }
+    var p = at + 2;
+    let end = at + size;
+    var seen = false;
+    while p < end {
+        if p + 3 > end {
+            return tls_record.server_client_hello_format();
+        }
+        let kind = int_of(b[p]);
+        let n = get(b, p + 1, 2);
+        if n == 0 || p + 3 + n > end {
+            return tls_record.server_client_hello_format();
+        }
+        if kind == 0 {
+            if seen {
+                return tls_record.server_illegal_parameter();
+            }
+            seen = true;
+            if n <= 255 {
+                info[ch_sni_start()] = p + 3;
+                info[ch_sni_len()] = n;
+            }
+        }
+        p = p + 3 + n;
+    }
+    return 0;
+}
+
+// `key_share` (§4.2.8): each share of this server's groups is kept, at
+// its group's length; others (a hybrid, GREASE) are skipped. Two shares
+// of one group are refused, as §4.2.8 lets a server.
+fn key_share[&b, &i](b: &b [byte], at: int, size: int, info: &!i [int]) -> [] int {
+    if size < 2 || get(b, at, 2) + 2 != size {
+        return tls_record.server_client_hello_format();
+    }
+    var p = at + 2;
+    let end = at + size;
+    var seen = 0;
+    while p < end {
+        if p + 4 > end {
+            return tls_record.server_client_hello_format();
+        }
+        let group = get(b, p, 2);
+        let n = get(b, p + 2, 2);
+        if n == 0 || p + 4 + n > end {
+            return tls_record.server_client_hello_format();
+        }
+        let bit = group_bit(group);
+        if bit != 0 {
+            if seen & bit != 0 || n != tls_message.share_len(group) {
+                return tls_record.server_illegal_parameter();
+            }
+            seen = seen | bit;
+            if bit == 1 {
+                info[ch_share_x25519()] = p + 4;
+            } else if bit == 2 {
+                info[ch_share_p256()] = p + 4;
+            } else {
+                info[ch_share_p384()] = p + 4;
+            }
+        }
+        p = p + 4 + n;
+    }
+    return 0;
+}
+
+// Whether the extension at `at`, `size` bytes, is a list of 2-byte values
+// after a `prefix`-byte length that covers the rest of it: even, and not
+// empty.
+fn u16_list_ok[&b](b: &b [byte], at: int, size: int, prefix: int) -> [] bool {
+    if size < prefix + 2 {
+        return false;
+    }
+    let n = get(b, at, prefix);
+    return n + prefix == size && n % 2 == 0;
+}
+
+// Whether that list holds `want`.
+fn u16_list_has[&b](b: &b [byte], at: int, size: int, prefix: int, want: int) -> [] bool {
+    var p = at + prefix;
+    while p < at + size {
+        if get(b, p, 2) == want {
+            return true;
+        }
+        p = p + 2;
+    }
+    return false;
+}
+
+// The ClientHello body `b`, with the rules of `docs/tls-server.md` §5.2,
+// what it offers into `info` (`ch_info_len()` words). Answers 0, or the
+// refusal: `server_version` when it does not offer TLS 1.3, and so on
+// (`docs/tls-server.md` §5.4). The faults of form are found as the
+// message is read; the rules about what it offers, after, in a fixed
+// order, so a ClientHello with several faults is refused for the first
+// of: version (from `supported_versions` alone), compression, a missing extension, a share outside
+// `supported_groups`, suite, signature scheme, group.
+pub fn client_hello[&b, &i](b: &b [byte], info: &!i [int]) -> [] int {
+    var k = 0;
+    while k < ch_info_len() {
+        info[k] = 0;
+        k = k + 1;
+    }
+    let n = len(b);
+    if n < 2 + 32 + 1 {
+        return tls_record.server_client_hello_format();
+    }
+    var at = 34;
+    let sid = int_of(b[at]);
+    if sid > 32 || at + 1 + sid + 2 > n {
+        return tls_record.server_client_hello_format();
+    }
+    info[ch_session_start()] = at + 1;
+    info[ch_session_len()] = sid;
+    at = at + 1 + sid;
+    let suites_len = get(b, at, 2);
+    if suites_len < 2 || suites_len % 2 != 0 || at + 2 + suites_len + 1 > n {
+        return tls_record.server_client_hello_format();
+    }
+    var suites = 0;
+    var p = at + 2;
+    while p < at + 2 + suites_len {
+        suites = suites | suite_bit(get(b, p, 2));
+        p = p + 2;
+    }
+    at = at + 2 + suites_len;
+    let methods = int_of(b[at]);
+    if methods < 1 || at + 1 + methods > n {
+        return tls_record.server_client_hello_format();
+    }
+    let null_only = methods == 1 && int_of(b[at + 1]) == 0;
+    at = at + 1 + methods;
+    if at == n {
+        // No extensions at all: a client from before TLS 1.3.
+        return tls_record.server_version();
+    }
+    if at + 2 > n || at + 2 + get(b, at, 2) != n {
+        return tls_record.server_client_hello_format();
+    }
+    let ext_end = n;
+    at = at + 2;
+    var versions = false;
+    var tls13 = false;
+    var sigalgs = false;
+    var p256_sha256 = false;
+    var groups_seen = false;
+    var shares_seen = false;
+    var code = 0;
+    region r {
+        // One bit for each extension type seen (RFC 8446 §4.2: none twice).
+        let seen = alloc_slice[r](8192, byte_of(0));
+        while code == 0 && at < ext_end {
+            if at + 4 > ext_end {
+                code = tls_record.server_client_hello_format();
+            } else {
+                let kind = get(b, at, 2);
+                let size = get(b, at + 2, 2);
+                let body = at + 4;
+                if body + size > ext_end {
+                    code = tls_record.server_client_hello_format();
+                } else if int_of(seen[kind >> 3]) & 1 << (kind & 7) != 0 {
+                    code = tls_record.server_extension_repeat();
+                } else {
+                    seen[kind >> 3] = byte_of(int_of(seen[kind >> 3]) | 1 << (kind & 7));
+                    if kind == 0 {
+                        code = server_name(b, body, size, info);
+                    } else if kind == 10 {
+                        if !u16_list_ok(b, body, size, 2) {
+                            code = tls_record.server_client_hello_format();
+                        } else {
+                            groups_seen = true;
+                            var q = body + 2;
+                            while q < body + size {
+                                info[ch_groups()] = info[ch_groups()] | group_bit(get(b, q, 2));
+                                q = q + 2;
+                            }
+                        }
+                    } else if kind == 13 {
+                        if !u16_list_ok(b, body, size, 2) {
+                            code = tls_record.server_client_hello_format();
+                        } else {
+                            sigalgs = true;
+                            p256_sha256 = u16_list_has(b, body, size, 2, tls_message.ecdsa_p256_sha256());
+                        }
+                    } else if kind == 43 {
+                        if !u16_list_ok(b, body, size, 1) {
+                            code = tls_record.server_client_hello_format();
+                        } else {
+                            versions = true;
+                            tls13 = u16_list_has(b, body, size, 1, 0x0304);
+                        }
+                    } else if kind == 51 {
+                        shares_seen = true;
+                        code = key_share(b, body, size, info);
+                    } else if kind == 16 {
+                        // ALPN (RFC 7301 §3.1): a list of non-empty names.
+                        if size < 2 || get(b, body, 2) + 2 != size || size == 2 {
+                            code = tls_record.server_client_hello_format();
+                        } else {
+                            var q = body + 2;
+                            while code == 0 && q < body + size {
+                                let m = int_of(b[q]);
+                                if m == 0 || q + 1 + m > body + size {
+                                    code = tls_record.server_client_hello_format();
+                                }
+                                q = q + 1 + m;
+                            }
+                            info[ch_alpn_start()] = body + 2;
+                            info[ch_alpn_end()] = body + size;
+                        }
+                    } else if kind == 42 {
+                        // early_data, which a ClientHello sends empty.
+                        if size != 0 {
+                            code = tls_record.server_client_hello_format();
+                        }
+                        info[ch_early()] = 1;
+                    } else if kind == 41 {
+                        // pre_shared_key: last (§4.2.11), and otherwise
+                        // ignored: version 1 resumes nothing.
+                        if body + size != ext_end {
+                            code = tls_record.server_illegal_parameter();
+                        }
+                    }
+                    at = body + size;
+                }
+            }
+        }
+    }
+    if code != 0 {
+        return code;
+    }
+    // legacy_version is not read: RFC 8446 §4.2.1 forbids a server to
+    // negotiate with it once `supported_versions` is there (the design's
+    // rule that it be 0x0303 was corrected by `openssl s_server`, which
+    // takes 0x0301; `docs/tls-server.md` §5.2).
+    if !versions || !tls13 {
+        return tls_record.server_version();
+    }
+    if !null_only {
+        return tls_record.server_illegal_parameter();
+    }
+    if !sigalgs || !groups_seen || !shares_seen {
+        return tls_record.server_missing_extension();
+    }
+    // A share for a group the client does not list (§4.2.8).
+    var shared = 0;
+    if info[ch_share_x25519()] != 0 {
+        shared = shared | 1;
+    }
+    if info[ch_share_p256()] != 0 {
+        shared = shared | 2;
+    }
+    if info[ch_share_p384()] != 0 {
+        shared = shared | 4;
+    }
+    if shared & info[ch_groups()] != shared {
+        return tls_record.server_illegal_parameter();
+    }
+    info[ch_suites()] = suites;
+    if suites == 0 {
+        return tls_record.server_suite();
+    }
+    if !p256_sha256 {
+        return tls_record.server_sigalg();
+    }
+    if info[ch_groups()] == 0 {
+        return tls_record.server_group();
+    }
+    return 0;
+}
+
+// The first protocol of `ours` (protocol_name_list's content: each name
+// after its length byte) that `theirs` (the same) offers: its offset in
+// `ours`, or -1 when there is none.
+pub fn choose_alpn[&o, &t](ours: &o [byte], theirs: &t [byte]) -> [] int {
+    var p = 0;
+    while p < len(ours) {
+        let m = int_of(ours[p]);
+        var q = 0;
+        while q < len(theirs) {
+            let k = int_of(theirs[q]);
+            if k == m && q + 1 + k <= len(theirs) && p + 1 + m <= len(ours) {
+                var same = true;
+                var j = 0;
+                while j < m {
+                    if ours[p + 1 + j] != theirs[q + 1 + j] {
+                        same = false;
+                    }
+                    j = j + 1;
+                }
+                if same {
+                    return p;
+                }
+            }
+            q = q + 1 + k;
+        }
+        p = p + 1 + m;
+    }
+    return 0 - 1;
+}
+
+// ---- What the server sends ----
+
+// A ServerHello (§4.1.3), handshake header included: `random` and the
+// echoed `session_id`, `suite`, and the server's `share` of `group`.
+pub fn server_hello[&r, &s, &k, &o](random: &r [byte], session_id: &s [byte], suite: int, group: int, share: &k [byte], out: &!o [byte]) -> [] int {
+    var at = 4;
+    at = put(out, at, 0x0303, 2);
+    at = copy_to(random, out, at);
+    at = put(out, at, len(session_id), 1);
+    at = copy_to(session_id, out, at);
+    at = put(out, at, suite, 2);
+    at = put(out, at, 0, 1);
+    at = put(out, at, 6 + 8 + len(share), 2);
+    at = put(out, at, 43, 2);
+    at = put(out, at, 2, 2);
+    at = put(out, at, 0x0304, 2);
+    at = put(out, at, 51, 2);
+    at = put(out, at, 4 + len(share), 2);
+    at = put(out, at, group, 2);
+    at = put(out, at, len(share), 2);
+    at = copy_to(share, out, at);
+    put(out, 0, tls_message.type_server_hello(), 1);
+    put(out, 1, at - 4, 3);
+    return at;
+}
+
+// A HelloRetryRequest (§4.1.4): a ServerHello whose random is
+// SHA-256("HelloRetryRequest"), naming `suite` and the `group` the second
+// ClientHello must send a share of. No cookie: the server keeps its state
+// in the slot (`docs/tls-server.md` §2.1).
+pub fn hello_retry[&s, &o](session_id: &s [byte], suite: int, group: int, out: &!o [byte]) -> [] int {
+    var at = 4;
+    at = put(out, at, 0x0303, 2);
+    var k = 0;
+    while k < 32 {
+        out[at + k] = byte_of(tls_message.hrr_random(k));
+        k = k + 1;
+    }
+    at = at + 32;
+    at = put(out, at, len(session_id), 1);
+    at = copy_to(session_id, out, at);
+    at = put(out, at, suite, 2);
+    at = put(out, at, 0, 1);
+    at = put(out, at, 12, 2);
+    at = put(out, at, 43, 2);
+    at = put(out, at, 2, 2);
+    at = put(out, at, 0x0304, 2);
+    at = put(out, at, 51, 2);
+    at = put(out, at, 2, 2);
+    at = put(out, at, group, 2);
+    put(out, 0, tls_message.type_server_hello(), 1);
+    put(out, 1, at - 4, 3);
+    return at;
+}
+
+// EncryptedExtensions (§4.3.1): an empty `server_name` when the client's
+// chose the certificate (RFC 6066 §3), and the ALPN protocol chosen, if
+// any (RFC 7301 §3.1).
+pub fn encrypted_extensions[&a, &o](sni_used: bool, alpn: &a [byte], out: &!o [byte]) -> [] int {
+    var at = 6;
+    if sni_used {
+        at = put(out, at, 0, 2);
+        at = put(out, at, 0, 2);
+    }
+    if len(alpn) > 0 {
+        at = put(out, at, 16, 2);
+        at = put(out, at, 3 + len(alpn), 2);
+        at = put(out, at, 1 + len(alpn), 2);
+        at = put(out, at, len(alpn), 1);
+        at = copy_to(alpn, out, at);
+    }
+    put(out, 0, tls_message.type_encrypted_extensions(), 1);
+    put(out, 1, at - 4, 3);
+    put(out, 4, at - 6, 2);
+    return at;
+}
+
+// Certificate (§4.4.2): an empty request context and `list`, the
+// certificate_list as the identity holds it (each entry's DER after its
+// 3-byte length, then no extensions).
+pub fn certificate[&l, &o](list: &l [byte], out: &!o [byte]) -> [] int {
+    var at = 4;
+    at = put(out, at, 0, 1);
+    at = put(out, at, len(list), 3);
+    at = copy_to(list, out, at);
+    put(out, 0, tls_message.type_certificate(), 1);
+    put(out, 1, at - 4, 3);
+    return at;
+}
+
+// CertificateVerify (§4.4.3): `ecdsa_secp256r1_sha256` and the DER
+// signature.
+pub fn certificate_verify[&s, &o](sig: &s [byte], out: &!o [byte]) -> [] int {
+    var at = 4;
+    at = put(out, at, tls_message.ecdsa_p256_sha256(), 2);
+    at = put(out, at, len(sig), 2);
+    at = copy_to(sig, out, at);
+    put(out, 0, tls_message.type_certificate_verify(), 1);
+    put(out, 1, at - 4, 3);
+    return at;
+}
