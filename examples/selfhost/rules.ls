@@ -149,6 +149,18 @@ pub fn r_not_a_slice() -> [] int {
     return 36;
 }
 
+pub fn r_field_order() -> [] int {
+    return 37;
+}
+
+pub fn r_missing_field() -> [] int {
+    return 38;
+}
+
+pub fn r_not_a_struct() -> [] int {
+    return 39;
+}
+
 pub fn rule_tag(r: int) -> [] &static [byte] {
     if r < 3 {
         return lc.rule_name(r);
@@ -254,6 +266,15 @@ pub fn rule_tag(r: int) -> [] &static [byte] {
     }
     if r == 36 {
         return "not-a-slice";
+    }
+    if r == 37 {
+        return "field-order";
+    }
+    if r == 38 {
+        return "missing-field";
+    }
+    if r == 39 {
+        return "not-a-struct";
     }
     return "unknown-name";
 }
