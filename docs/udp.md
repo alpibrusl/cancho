@@ -233,5 +233,5 @@ tickets.
 
 **Not done.** The round-trip measurement against a C loop. A `std` table of `Udp` handles for a program that
 holds many upstream sockets (slice 4, when a program asks). The ring is a fixed size; a larger one is a
-constant in `socket_os.rs`. Darwin: this slice's tests will run on the `darwin-aarch64` CI job; until that
-result is in, nothing here is claimed for it.
+constant in `socket_os.rs`. Darwin: this slice's tests (the ring, the tickets, `udp_bind`) passed on the
+`darwin-aarch64` CI job of #358; that is the CI result, not a run on a Mac here.
