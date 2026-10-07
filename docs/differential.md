@@ -262,12 +262,13 @@ cmovp   CANONICAL_NAN, %rax
 
 Two reasons this is the right repair and not a documented exception:
 
-- **Nothing a program can do reaches a NaN's payload.** There is no
-  `float_of_bits` ([`floating-point.md`](floating-point.md) §4.1), so a
-  cancho program cannot construct a NaN with a chosen payload. It only
-  ever sees NaNs the hardware generated, and their bits are the
-  hardware's accident. Canonicalising throws away nothing the program
-  put there. The one exception is a NaN returned by foreign code, which
+- **Nothing a program can do reaches a NaN's payload by arithmetic.**
+  *(Corrected: `float_of_bits`, edition 7, can build a NaN with a chosen
+  payload -- [`floating-point.md`](floating-point.md) §4.1 -- and the
+  sentence before this one said no program could.)* A NaN is only ever
+  seen by `bits_of` as the one canonical pattern, so what is thrown away
+  is the hardware's accident and a payload a program built itself, which
+  it can never read back. The one exception is a NaN returned by foreign code, which
   sits behind `ffi` and is already reported as unbounded
   ([`under-a-grant.md`](under-a-grant.md) §5.1).
 - **`bits_of` is the only way to see a NaN's bits.** `==` and `<` are

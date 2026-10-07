@@ -214,6 +214,15 @@ pub enum Builtin {
     /// is the argument: a correct shortest-round-trip printer, written in
     /// cancho, rather than a hole in the standard library.
     BitsOf,
+    /// `float_of_bits(n: int) -> [] float` — the `float` whose 64 bits are
+    /// `n`: `bits_of`'s inverse, and as little a conversion as it is
+    /// (`docs/floating-point.md` §4.1). Pure and capability-free. Edition 7,
+    /// because a program may already declare the name.
+    ///
+    /// Every pattern is a value, a NaN's payload included; `bits_of` still
+    /// answers one pattern for every NaN, so the pair is an identity on
+    /// every non-NaN and on none of the NaN payloads.
+    FloatOfBits,
     /// `f32_of(x: float) -> [] f32` — the nearest `f32` to a `float`,
     /// ties to even, an overflow giving infinity (`docs/f32.md` §2).
     ///
@@ -741,6 +750,7 @@ impl Builtin {
         Builtin::IsNan,
         Builtin::Sqrt,
         Builtin::BitsOf,
+        Builtin::FloatOfBits,
         Builtin::F32Of,
         Builtin::FloatOf32,
         Builtin::BitsOf32,
@@ -875,6 +885,7 @@ impl Builtin {
             Builtin::IsNan => "is_nan",
             Builtin::Sqrt => "sqrt",
             Builtin::BitsOf => "bits_of",
+            Builtin::FloatOfBits => "float_of_bits",
             Builtin::F32Of => "f32_of",
             Builtin::FloatOf32 => "float_of32",
             Builtin::BitsOf32 => "bits_of32",
@@ -1099,6 +1110,10 @@ impl Builtin {
             // `value_barrier` was, since a program may already declare
             // these names.
             Builtin::HwAesGcm | Builtin::AesEncryptBlock | Builtin::GhashUpdate => 7,
+            // `docs/floating-point.md` §4.1: edition 7, the latest -- the
+            // first caller was a table reader that decoded doubles through
+            // `ldexp`; `float_of_bits` is a name a program may declare.
+            Builtin::FloatOfBits => 7,
             // `docs/file-writes.md`: edition 5, for the same reason --
             // `file_write` and `open_new` are names a program may already
             // declare against libc.

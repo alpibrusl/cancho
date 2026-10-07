@@ -156,6 +156,7 @@ pub fn wasi_gap(builtin: Builtin) -> Option<Gap> {
         | B::FloatOf
         | B::Truncate
         | B::BitsOf
+        | B::FloatOfBits
         | B::F32Of
         | B::FloatOf32
         | B::BitsOf32

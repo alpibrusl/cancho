@@ -63,6 +63,7 @@ mod ecdsa_sign;
 mod f32_text;
 mod file_writes;
 mod filesystem;
+mod float_text;
 mod floats;
 mod foreign_authority;
 mod formatting;

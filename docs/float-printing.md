@@ -192,12 +192,29 @@ So the rule is a **choice**, and the choice is observable:
 |---|---|
 | Rust's `{:e}` | `2.9802322387695313e-8` |
 | Python's `repr` | `2.9802322387695312e-8` |
-| cancho | `2.9802322387695313e-8` |
+| cancho | `2.9802322387695312e-8` (was `...313e-8` until the tie rule below) |
 
-cancho follows Steele and White — round the tie up — which is what Rust
-does. Python rounds the tie to the even digit. Over the 9000-value corpus
-in §5 the two disagree on **three** values, all of them exact ties, and
-every one of the six spellings round-trips.
+The first version of `float_into` followed Steele and White — round the
+tie up — which is what Rust does. Python rounds the tie to the even
+digit. Over the 9000-value corpus in §5 the two disagreed on **three**
+values, all of them exact ties, and every one of the six spellings
+round-trips.
+
+**That was a defect, not a choice, and it is fixed.** A table tool that
+wrote floats and was checked against Python found the same double
+printing as two different strings depending on which tool wrote it
+(`...86.125` is `...86.12` in Python's `repr` and was `...86.13` here),
+which is the one thing a *shortest* printer is for: one answer. The rule
+now is **the shortest decimal that reads back; among those the closest to
+the exact value; and an exact tie goes to the even last digit**. That is
+a definition with one answer for every double, and it is the rule of
+Ryu, of Python's `repr`, and of Java since 19. Only Rust's `{:e}` (and
+the first version here) differs, and only on exact ties: **1,543 of
+100,000 doubles of the check corpus (which is built to be tie-rich:
+`j / 2^k` with `j` odd and 17 or 18 digits ending in a 5) printed
+differently from Python before; 0 of 1,002,109 after.** In the test
+corpus of §5 it is the same three values: `2^-25` prints
+`2.9802322387695312e-8` now.
 
 This is worth a section rather than a footnote because it is the kind of
 thing a document usually asserts and nobody checks. Both rules were
@@ -233,6 +250,9 @@ thought of and fails on the 4000th random bit pattern. So it is checked
 against Rust's `{:e}` over a generated corpus, in
 `shortest_printing_agrees_with_an_oracle`.
 
+*(Since the tie rule of §3.4 changed, the oracle is `{:e}` or, where they differ, the exact tie rounded to the even digit,
+decided from the exact value: `is_rust_or_even_tie` in `float_text.rs`.)*
+
 The test has a pleasant property: **the expected output is the input**.
 `{:e}` is the shortest round-tripping form, and the lexer's
 `f64::from_str` is correctly rounded, so writing each value into the
@@ -253,6 +273,15 @@ The corpus is 9000 values:
 Plus `the_values_with_no_literal_are_spelled` for `inf`, `-inf`, `NaN`
 and `-0.0`, which have no literal syntax to generate and so are built
 from arithmetic inside the program.
+
+**At scale, against Python.** `scripts/float_differential.py` prints **1,002,109
+doubles** through `float_of_bits` and `float_into` (random bit patterns, every
+power of two, the edges, and 100,000 built to be exact ties: `j / 2^k` with `j`
+odd and an exact expansion of 17 or 18 digits ending in a 5) and compares the
+digits and the exponent with Python's `repr`, and that every string reads back to
+the same 64 bits: **0 differences**; before the tie rule changed, 1,543 of the
+first 100,000. `float_text.rs` does the same against Rust's `{:e}` for 220,000
+doubles, accepting only an exact tie rounded to the even digit.
 
 During development this corpus found two real defects: §3.3's missing
 inclusive boundary, and §3.4's tie rule. Both were one-line changes and
@@ -290,7 +319,7 @@ lines, and would not compile otherwise.
 | Reading a float from bytes | The inverse. `std.fmt` writes; nothing parses a `float`. It needs the same bignum and the opposite loop, and no program has asked yet. (`f32` has it: `std.fmt32.f32_of_text`, correctly rounded straight to binary32; [`f32.md`](f32.md) §5.3) |
 | A width or a precision | `{:.3}` — round to a stated number of digits rather than the shortest. Different algorithm (the stopping rule goes away), same machinery. (Built for `f32` as `std.fmt32.f32_fixed_into`, exact ties to even; [`f32.md`](f32.md) §5.3) |
 | Positional notation for `f32` | Built in `std.fmt32.f32_into` as Rust's `{:?}` (positional from `1e-4` to below `1e16`); `float_into` is unchanged |
-| `float_of_bits` | The inverse of `bits_of`, which would let a test feed exact bit patterns without going through a literal. Not needed while `{:e}` round-trips |
+| `float_of_bits` | Built (edition 7, [`floating-point.md`](floating-point.md) §4.1); it is how `scripts/float_differential.py` feeds a million exact bit patterns |
 
 ---
 

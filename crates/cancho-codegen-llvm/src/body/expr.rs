@@ -845,6 +845,16 @@ impl<'a> FuncEmitter<'a> {
                 self.out.push_str(&format!("  {result} = bitcast i32 {low} to float\n"));
                 Ok(vec![LValue::Reg(result)])
             }
+            Callee::Builtin(Builtin::FloatOfBits) => {
+                let n = evaluated
+                    .into_iter()
+                    .flatten()
+                    .next()
+                    .ok_or_else(|| "`float_of_bits` needs an int argument".to_owned())?;
+                let result = self.fresh();
+                self.out.push_str(&format!("  {result} = bitcast i64 {} to double\n", operand(&n)));
+                Ok(vec![LValue::Reg(result)])
+            }
             Callee::Builtin(Builtin::BitsOf) => {
                 let x = evaluated
                     .into_iter()
