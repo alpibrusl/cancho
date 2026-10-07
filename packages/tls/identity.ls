@@ -1,7 +1,9 @@
 edition 6;
 module tls_identity;
 import std.bytes;
+import tls_message;
 import tls_record;
+import tls_slot;
 import x509;
 import x509_key;
 import x509_names;
@@ -80,34 +82,6 @@ pub fn cfg_len() -> [] int {
     return ids_base() + max_identities() * stride();
 }
 
-fn get[&b](b: &b [byte], p: int, n: int) -> [] int {
-    var v = 0;
-    var i = 0;
-    while i < n {
-        v = v * 256 + int_of(b[p + i]);
-        i = i + 1;
-    }
-    return v;
-}
-
-fn put[&o](out: &!o [byte], p: int, v: int, n: int) -> [] int {
-    var i = 0;
-    while i < n {
-        out[p + i] = byte_of(v >> 8 * (n - 1 - i) & 255);
-        i = i + 1;
-    }
-    return p + n;
-}
-
-fn copy[&s, &o](src: &s [byte], out: &!o [byte]) -> [] int {
-    var i = 0;
-    while i < len(src) {
-        out[i] = src[i];
-        i = i + 1;
-    }
-    return len(src);
-}
-
 // ---- ALPN ----
 
 // The protocols, in the server's order of preference, from `text`:
@@ -134,16 +108,16 @@ pub fn set_alpn[&c, &t](cfg: &!c [byte], text: &t [byte]) -> [] int {
                     code = tls_record.server_alpn_list();
                 } else {
                     wire[n] = byte_of(e - p);
-                    copy(text[p..e], wire[n + 1..n + 1 + e - p]);
+                    tls_slot.copy_bytes(text[p..e], wire[n + 1..n + 1 + e - p]);
                     n = n + 1 + e - p;
                 }
             }
             p = e;
         }
         if code == 0 {
-            put(cfg, 0, n, 2);
+            tls_message.put(cfg, 0, n, 2);
             bytes.zero(cfg[2..2 + alpn_cap()]);
-            copy(wire[0..n], cfg[2..2 + n]);
+            tls_slot.copy_bytes(wire[0..n], cfg[2..2 + n]);
         }
     }
     return code;
@@ -151,7 +125,7 @@ pub fn set_alpn[&c, &t](cfg: &!c [byte], text: &t [byte]) -> [] int {
 
 // The ALPN list, in its wire form.
 pub fn alpn_list[&c](cfg: &c [byte]) -> [] &c [byte] {
-    return cfg[2..2 + get(cfg, 0, 2)];
+    return cfg[2..2 + tls_message.get(cfg, 0, 2)];
 }
 
 // ---- Identities ----
@@ -182,7 +156,7 @@ pub fn point[&c](cfg: &c [byte], id: int) -> [] &c [byte] {
 
 // The certificate_list Certificate sends.
 pub fn list[&c](cfg: &c [byte], id: int) -> [] &c [byte] {
-    let n = get(cfg, at(id) + o_list_len(), 3);
+    let n = tls_message.get(cfg, at(id) + o_list_len(), 3);
     return cfg[at(id) + o_list()..at(id) + o_list() + n];
 }
 
@@ -240,8 +214,8 @@ pub fn load[&c, &p, &k, &n, &w](cfg: &!c [byte], id: int, chain_pem: &p [byte], 
                         code = tls_record.server_cert_expired();
                     }
                 }
-                put(chain, n, info[0], 3);
-                copy(der[0..info[0]], chain[n + 3..n + 3 + info[0]]);
+                tls_message.put(chain, n, info[0], 3);
+                tls_slot.copy_bytes(der[0..info[0]], chain[n + 3..n + 3 + info[0]]);
                 n = n + 5 + info[0];
                 certs = certs + 1;
                 from = info[1];
@@ -254,7 +228,7 @@ pub fn load[&c, &p, &k, &n, &w](cfg: &!c [byte], id: int, chain_pem: &p [byte], 
             code = from_key(x509_key.parse_pem(key_pem, secret, pub_point, work));
         }
         if code == 0 {
-            let leaf_len = get(chain, 0, 3);
+            let leaf_len = tls_message.get(chain, 0, 3);
             let m = x509_key.matches_certificate(chain[3..3 + leaf_len], pub_point);
             if m == -92 {
                 code = tls_record.server_key_mismatch();
@@ -266,14 +240,14 @@ pub fn load[&c, &p, &k, &n, &w](cfg: &!c [byte], id: int, chain_pem: &p [byte], 
             let b = at(id);
             // The old key goes first (best effort, `docs/tls-pure.md` §7.3).
             bytes.zero(cfg[b + o_key()..b + o_key() + 32]);
-            copy(secret, cfg[b + o_key()..b + o_key() + 32]);
-            copy(pub_point, cfg[b + o_point()..b + o_point() + 65]);
+            tls_slot.copy_bytes(secret, cfg[b + o_key()..b + o_key() + 32]);
+            tls_slot.copy_bytes(pub_point, cfg[b + o_point()..b + o_point() + 65]);
             bytes.zero(cfg[b + o_list()..b + o_list() + chain_cap()]);
-            put(cfg, b + o_list_len(), n, 3);
-            copy(chain[0..n], cfg[b + o_list()..b + o_list() + n]);
+            tls_message.put(cfg, b + o_list_len(), n, 3);
+            tls_slot.copy_bytes(chain[0..n], cfg[b + o_list()..b + o_list() + n]);
             if !keep_names {
                 bytes.zero(cfg[b + o_names()..b + o_names() + names_cap()]);
-                put(cfg, b + o_names_len(), len(names), 2);
+                tls_message.put(cfg, b + o_names_len(), len(names), 2);
                 var i = 0;
                 while i < len(names) {
                     cfg[b + o_names() + i] = byte_of(bytes.to_lower(int_of(names[i])));
@@ -299,7 +273,7 @@ pub fn select[&c, &h](cfg: &c [byte], host: &h [byte]) -> [] int {
     while id < max_identities() {
         if in_use(cfg, id) {
             let b = at(id);
-            let names = cfg[b + o_names()..b + o_names() + get(cfg, b + o_names_len(), 2)];
+            let names = cfg[b + o_names()..b + o_names() + tls_message.get(cfg, b + o_names_len(), 2)];
             var p = 0;
             while p < len(names) {
                 while p < len(names) && int_of(names[p]) == 32 {

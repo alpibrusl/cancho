@@ -8,7 +8,8 @@
 `seconds` (default 20) a row, and the server's CPU time (user and system, from `/proc/<pid>/stat`) is divided by the
 handshakes it completed. Linux only. A row per group the client sends a share of (OpenSSL's `Groups`, through
 `OPENSSL_CONF`), and one where the share is P-521's, so a HelloRetryRequest to P-256 comes first. The suite is the
-server's choice: AES-128-GCM where the CPU has AES instructions.
+server's choice: AES-128-GCM where the CPU has AES instructions. A last row is `openssl s_server` with the same
+identity under the same client, for scale.
 """
 import os
 import re
@@ -48,6 +49,27 @@ def row(exe, work, groups, seconds):
         server.stop()
 
 
+def openssl_row(work, seconds):
+    port = interop.free_port()
+    proc = subprocess.Popen(["openssl", "s_server", "-accept", str(port), "-tls1_3", "-cert", "main.pem", "-key",
+                             "main.key", "-num_tickets", "0", "-quiet"], cwd=work, stdin=subprocess.PIPE,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        time.sleep(1)
+        conf = interop.openssl_conf(work, "TLS_AES_128_GCM_SHA256", "X25519")
+        before = cpu_seconds(proc.pid)
+        r = subprocess.run(["openssl", "s_time", "-connect", f"127.0.0.1:{port}", "-new", "-time", str(seconds),
+                            "-CAfile", "ca.pem"], cwd=work, env=dict(os.environ, OPENSSL_CONF=conf),
+                           capture_output=True, timeout=seconds + 60)
+        time.sleep(1)
+        after = cpu_seconds(proc.pid)
+        m = re.search(r"(\d+) connections in [\d.]+s", r.stdout.decode())
+        return int(m.group(1)) if m else 0, after - before
+    finally:
+        proc.kill()
+        proc.wait()
+
+
 def main():
     exe = os.path.abspath(sys.argv[1])
     seconds = int(sys.argv[2]) if len(sys.argv) > 2 else 20
@@ -61,6 +83,9 @@ def main():
         per = cpu / n * 1000 if n else float("nan")
         print(f"{name:28} {n:>10} {cpu:>12.2f} {per:>15.2f} {1000 / per if n else 0:>16.0f}"
               + ("" if n == lines else f"   ({lines - n} connections not completed)"))
+    n, cpu = openssl_row(work, seconds)
+    per = cpu / n * 1000 if n else float("nan")
+    print(f"{'openssl s_server, X25519':28} {n:>10} {cpu:>12.2f} {per:>15.2f} {1000 / per if n else 0:>16.0f}")
 
 
 if __name__ == "__main__":

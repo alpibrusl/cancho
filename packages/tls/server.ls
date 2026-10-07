@@ -1,11 +1,13 @@
 edition 7;
 module tls_server;
+import std.bytes as sb;
 import std.crypto;
 import std.ecdh;
 import std.ecdsa_sign;
 import std.hkdf;
 import std.hmac;
 import std.x25519;
+import tls_client;
 import tls_hello;
 import tls_identity;
 import tls_message;
@@ -54,21 +56,6 @@ pub fn in_handshake[&i](ints: &i [int]) -> [] bool {
 }
 
 // ---- The key schedule (RFC 8446 §7.1) ----
-
-// HMAC(finished_key(secret), transcript hash) into `out`, under the
-// suite's hash (`len(secret)` and `len(out)` bytes).
-fn finished_mac[&i, &s, &o](ints: &i [int], secret: &s [byte], out: &!o [byte]) -> [] int {
-    let h = len(secret);
-    region r {
-        let key = alloc_slice[r](h, byte_of(0));
-        let th = alloc_slice[r](h, byte_of(0));
-        hkdf.expand_label(h, secret, "finished", "", key);
-        tls_slot.transcript_hash(ints, th);
-        hmac.mac(h, key, th, out);
-        tls_slot.zero(key);
-    }
-    return 0;
-}
 
 // The handshake secrets from the (EC)DHE `secret`, over the transcript
 // through ServerHello, and the master secret. No PSK: the Early Secret is
@@ -151,27 +138,6 @@ fn certificate_verify[&i, &b, &c, &o](ints: &!i [int], bytes: &b [byte], cfg: &c
 
 // ---- The ClientHello (`docs/tls-server.md` §5.2) ----
 
-fn lower(c: int) -> [] int {
-    if c >= 65 && c <= 90 {
-        return c + 32;
-    }
-    return c;
-}
-
-fn same[&x, &y](a: &x [byte], b: &y [byte]) -> [] bool {
-    if len(a) != len(b) {
-        return false;
-    }
-    var k = 0;
-    while k < len(a) {
-        if a[k] != b[k] {
-            return false;
-        }
-        k = k + 1;
-    }
-    return true;
-}
-
 // Queues `content`, handshake messages, in records of at most 2^14 bytes.
 fn queue_handshake[&i, &b, &c](ints: &!i [int], bytes: &!b [byte], content: &c [byte]) -> [] int {
     var at = 0;
@@ -240,7 +206,7 @@ fn choose_identity[&i, &b, &m, &f, &c](ints: &!i [int], bytes: &!b [byte], body:
     let s = info[tls_hello.ch_sni_start()];
     var k = 0;
     while k < n {
-        bytes[tls_slot.b_sni() + k] = byte_of(lower(int_of(body[s + k])));
+        bytes[tls_slot.b_sni() + k] = byte_of(sb.to_lower(int_of(body[s + k])));
         k = k + 1;
     }
     ints[tls_slot.i_sni_len()] = n;
@@ -363,7 +329,7 @@ fn respond[&i, &b, &m, &f, &c](ints: &!i [int], bytes: &!b [byte], message: &m [
             let f = c + v;
             flight[f] = byte_of(tls_message.type_finished());
             flight[f + 3] = byte_of(h);
-            finished_mac(ints, bytes[tls_slot.k_server_hs()..tls_slot.k_server_hs() + h], flight[f + 4..f + 4 + h]);
+            tls_client.finished_mac(ints, bytes[tls_slot.k_server_hs()..tls_slot.k_server_hs() + h], flight[f + 4..f + 4 + h]);
             tls_slot.transcript_add(ints, flight[f..f + 4 + h]);
             code = queue_handshake(ints, bytes, flight[0..f + 4 + h]);
         }
@@ -401,7 +367,7 @@ fn on_client_hello[&i, &b, &m, &c](ints: &!i [int], bytes: &!b [byte], message: 
             // of the group it named, and no early data.
             let sid = info[tls_hello.ch_session_start()];
             let n = info[tls_hello.ch_session_len()];
-            if n != ints[tls_slot.i_session_len()] || !same(body[sid..sid + n], bytes[tls_slot.k_session_id()..tls_slot.k_session_id() + n]) {
+            if n != ints[tls_slot.i_session_len()] || !sb.equal(body[sid..sid + n], bytes[tls_slot.k_session_id()..tls_slot.k_session_id() + n]) {
                 code = tls_record.server_retry_share();
             } else if info[tls_hello.ch_suites()] & tls_hello.suite_bit(ints[tls_slot.i_suite()]) == 0 || info[tls_hello.ch_early()] != 0 {
                 code = tls_record.server_retry_share();
@@ -442,7 +408,7 @@ fn on_client_finished[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message: &
     region r {
         let want = alloc_slice[r](h, byte_of(0));
         if code == 0 {
-            finished_mac(ints, bytes[tls_slot.k_client_hs()..tls_slot.k_client_hs() + h], want);
+            tls_client.finished_mac(ints, bytes[tls_slot.k_client_hs()..tls_slot.k_client_hs() + h], want);
             // Every byte is compared, whatever the earlier ones were.
             var diff = 0;
             var k = 0;
@@ -576,38 +542,6 @@ fn on_handshake_bytes[&i, &b, &d, &c](ints: &!i [int], bytes: &!b [byte], conten
     return code;
 }
 
-// An alert, as the client reads one (`tls_client`): close_notify is a
-// clean end only once established.
-fn on_alert[&i, &b, &c](ints: &!i [int], bytes: &!b [byte], content: &c [byte]) -> [] int {
-    if len(content) != 2 {
-        return tls_record.decode_error();
-    }
-    let level = int_of(content[0]);
-    let what = int_of(content[1]);
-    if what == 0 {
-        if ints[tls_slot.i_state()] != tls_slot.state_connected() {
-            return tls_record.peer_closed();
-        }
-        tls_slot.set_flag(ints, tls_slot.f_close_received());
-        if tls_slot.has(ints, tls_slot.f_close_sent()) {
-            tls_slot.forget(ints, bytes);
-        }
-        return 0;
-    }
-    if what == 90 {
-        ints[tls_slot.i_warnings()] = ints[tls_slot.i_warnings()] + 1;
-        if ints[tls_slot.i_warnings()] > 16 {
-            return tls_record.too_many_messages();
-        }
-        return 0;
-    }
-    ints[tls_slot.i_alert()] = what;
-    if level != 1 && level != 2 {
-        return tls_record.decode_error();
-    }
-    return tls_record.alert_received();
-}
-
 // A record of early data, skipped (RFC 8446 §4.2.10): `body` bytes more,
 // at most 16 KiB in all.
 fn skip_early[&i](ints: &!i [int], body: int) -> [] int {
@@ -654,7 +588,7 @@ fn on_record[&i, &b, &c](ints: &!i [int], bytes: &!b [byte], n: int, cfg: &c [by
             } else {
                 // A client that refuses the server's flight before it has
                 // the handshake key alerts in plaintext.
-                plain = on_alert(ints, bytes, content);
+                plain = tls_client.on_alert(ints, bytes, content);
             }
         }
         return plain;
@@ -691,7 +625,7 @@ fn on_record[&i, &b, &c](ints: &!i [int], bytes: &!b [byte], n: int, cfg: &c [by
                 code = on_handshake_bytes(ints, bytes, content, cfg);
             }
         } else if inner == tls_record.type_alert() {
-            code = on_alert(ints, bytes, content);
+            code = tls_client.on_alert(ints, bytes, content);
         } else if inner == tls_record.type_application_data() {
             if state != tls_slot.state_connected() || ints[tls_slot.i_hs_fill()] != 0 {
                 code = tls_record.unexpected_message();
@@ -707,21 +641,6 @@ fn on_record[&i, &b, &c](ints: &!i [int], bytes: &!b [byte], n: int, cfg: &c [by
     return code;
 }
 
-fn compact_recv[&i, &b](ints: &!i [int], bytes: &!b [byte]) -> [] int {
-    let s = ints[tls_slot.i_recv_start()];
-    let e = ints[tls_slot.i_recv_end()];
-    if s > 0 {
-        var k = 0;
-        while k < e - s {
-            bytes[tls_slot.b_recv() + k] = bytes[tls_slot.b_recv() + s + k];
-            k = k + 1;
-        }
-        ints[tls_slot.i_recv_start()] = 0;
-        ints[tls_slot.i_recv_end()] = e - s;
-    }
-    return 0;
-}
-
 // ---- The interface ----
 
 // Bytes the socket gave, as `tls_client.feed`: how many were consumed
@@ -731,7 +650,7 @@ pub fn feed[&i, &b, &d, &c](ints: &!i [int], bytes: &!b [byte], data: &d [byte],
     var consumed = 0;
     var code = 0;
     while consumed < len(data) && code == 0 && ints[tls_slot.i_state()] != tls_slot.state_failed() && !tls_slot.has(ints, tls_slot.f_close_received()) {
-        compact_recv(ints, bytes);
+        tls_client.compact_recv(ints, bytes);
         if tls_slot.out_free(ints) < 1024 || tls_slot.recv_cap() - ints[tls_slot.i_recv_end()] < tls_record.max_plaintext() {
             return consumed;
         }

@@ -131,8 +131,8 @@ pub fn ecdsa_sha512() -> [] int {
     return 0x0603;
 }
 
-// Big-endian integers of `n` bytes.
-fn put[&o](out: &!o [byte], at: int, v: int, n: int) -> [] int {
+// Big-endian integers of `n` bytes (`tls_hello` and `tls_identity` use them too).
+pub fn put[&o](out: &!o [byte], at: int, v: int, n: int) -> [] int {
     var i = 0;
     while i < n {
         out[at + i] = byte_of(v >> 8 * (n - 1 - i) & 255);
@@ -141,7 +141,7 @@ fn put[&o](out: &!o [byte], at: int, v: int, n: int) -> [] int {
     return at + n;
 }
 
-fn get[&b](b: &b [byte], at: int, n: int) -> [] int {
+pub fn get[&b](b: &b [byte], at: int, n: int) -> [] int {
     var v = 0;
     var i = 0;
     while i < n {
@@ -151,7 +151,7 @@ fn get[&b](b: &b [byte], at: int, n: int) -> [] int {
     return v;
 }
 
-fn copy_to[&s, &o](src: &s [byte], out: &!o [byte], at: int) -> [] int {
+pub fn copy_to[&s, &o](src: &s [byte], out: &!o [byte], at: int) -> [] int {
     var i = 0;
     while i < len(src) {
         out[at + i] = src[i];

@@ -380,7 +380,7 @@ fn on_certificate_verify[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message
 
 // HMAC(finished_key(secret), transcript hash) into `out`, under the
 // suite's hash (`len(secret)` and `len(out)` bytes).
-fn finished_mac[&i, &s, &o](ints: &i [int], secret: &s [byte], out: &!o [byte]) -> [] int {
+pub fn finished_mac[&i, &s, &o](ints: &i [int], secret: &s [byte], out: &!o [byte]) -> [] int {
     let h = len(secret);
     region r {
         let key = alloc_slice[r](h, byte_of(0));
@@ -642,7 +642,7 @@ fn on_handshake_bytes[&i, &b, &c, &p](ints: &!i [int], bytes: &!b [byte], conten
     return code;
 }
 
-fn on_alert[&i, &b, &c](ints: &!i [int], bytes: &!b [byte], content: &c [byte]) -> [] int {
+pub fn on_alert[&i, &b, &c](ints: &!i [int], bytes: &!b [byte], content: &c [byte]) -> [] int {
     if len(content) != 2 {
         return tls_record.decode_error();
     }
@@ -816,7 +816,7 @@ pub fn feed[&i, &b, &d, &p](ints: &!i [int], bytes: &!b [byte], data: &d [byte],
     return consumed;
 }
 
-fn compact_recv[&i, &b](ints: &!i [int], bytes: &!b [byte]) -> [] int {
+pub fn compact_recv[&i, &b](ints: &!i [int], bytes: &!b [byte]) -> [] int {
     let s = ints[tls_slot.i_recv_start()];
     let e = ints[tls_slot.i_recv_end()];
     if s > 0 {

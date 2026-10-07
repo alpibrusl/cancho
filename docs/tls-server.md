@@ -340,10 +340,11 @@ section that said so is corrected in place, marked "corrected (step 2)" or "as b
 **Reused unchanged:** the record layer and its AEADs, `tls_slot`'s transcript, keys, record queue, `fail` and `forget`, the
 ECDH share a HelloRetryRequest needs (`new_ecdh_share`: the P-256 or P-384 scalar comes from the X25519 secret by HKDF, as for
 the client), and `tls_client`'s `take`, `send`, `recv`, `finish`, `event`, `peer_eof` and `drop`, which serve a server slot as
-they are. `client.ls` is not touched, so its 88 mutants' texts still match.
+they are, and its `finished_mac`, `on_alert` and `compact_recv`, made public for the server. `client.ls` changes in nothing
+else, so its mutants' texts still match.
 
-**What is not shared, and why.** The record loop (`feed`, `on_record`, the handshake reassembly, the alert reader) is the
-server's own, about 250 lines the shape of the client's. The client's loop calls the client's message handler, and lex-sys
+**What is not shared, and why.** The record loop (`feed`, `on_record`, the handshake reassembly) is the server's own,
+about 200 lines the shape of the client's. The client's loop calls the client's message handler, and lex-sys
 has no function values (`docs/function-values.md`), so sharing it would mean `tls_client` importing `tls_server`, and every
 client build (`tls_driver`, hooks) taking the server and `x509_key` with it. The server's loop also differs where it must:
 early data, a plaintext alert after the flight, one `change_cipher_spec` between the ClientHello and the Finished, and the
@@ -360,3 +361,61 @@ for 16, and 75 KiB of work for the key parser (`std.ecdh`'s), and gives up the c
 nothing (`open` allocates neither).
 
 **Editions.** `server.ls` is edition 7, for `hw_aes_gcm()`; `identity.ls` edition 6, as `x509_key` is.
+
+### 10.2 Interop
+
+`python3 scripts/tls_server_interop.py <tls_serve>`, in the image `scripts/interop/server.Dockerfile` describes (Ubuntu 24.04
+on linux-aarch64, in Docker on the M4 Max of `docs/tls-assurance.md` §6.1), `tests/programs/tls_serve.ls` built with the
+LLVM backend. Each row is one connection: the client verifies the chain and the name against the row's CA, its data comes
+back, and the server's own line for the connection says the suite, group, name and protocol the row asked for, and
+whether a HelloRetryRequest came first. For a `retry` row the client's only share is P-521's, with the group after it in
+`supported_groups`. curl and mosquitto have no option for TLS 1.3's groups or suites; they were set through an
+`OPENSSL_CONF`. **88 rows, 88 ok:**
+
+| Client | Version | Rows | What |
+|---|---|---|---|
+| `openssl s_client` | OpenSSL 3.0.13 | 23 | 3 suites × 3 groups, each direct and after a HelloRetryRequest; SNI choosing the second identity, a wildcard name, no SNI (the default); ALPN `http/1.1` agreed; ALPN `h3` alone refused, `no_application_protocol` |
+| curl | 8.5.0, on OpenSSL 3.0.13 | 18 | 3 × 3 × 2, an HTTP request to the server's `http` mode |
+| Go `crypto/tls` | 1.22.2 | 9 | 3 groups × 2 (Go does not let a client choose TLS 1.3's suites: the server's, AES-128-GCM); SNI; ALPN `h2,mqtt` agreed on `mqtt`, the server's order; ALPN `h3` refused |
+| wolfSSL | 5.6.6 | 19 | 3 × 3 × 2 (`scripts/interop/wolfssl_client.c`), ALPN `mqtt` |
+| mosquitto | 2.0.18 | 19 | 3 × 3 × 2, each row `mosquitto_sub` receiving the server's message and `mosquitto_pub` publishing one the server prints, against `tls_serve`'s `mqtt` mode; ALPN `mqtt` |
+
+**Not run:** Firefox and Chrome (no browser in the image). A Chromium ClientHello was caught instead (the Claude desktop
+app's built-in browser, a Chromium, sent to a listener on this machine) and answered by the server in the driver: it chose
+AES-128-GCM, X25519 over the X25519MLKEM768 hybrid, and `h2`. It is in the fuzzing corpus (§10.5).
+
+### 10.3 The lying client
+
+`python3 scripts/tls_liar_client.py <server driver> tests/vectors/tls/liar_client.txt`: **110 connections**, each a client
+that changes one thing, recorded and replayed byte for byte on both backends by `conformance/tls_server.rs` (and the honest
+ones again with the client's bytes fed one byte a line). The client is pyca/cryptography's primitives and RFC 8446, written
+apart from the server; it checks every byte the server sends, the CertificateVerify signature under the leaf's key
+included. 29 end `ok`: 26 honest connections (every suite and group, a HelloRetryRequest to each group, SNI by name, by wildcard, unknown and
+absent, ALPN in the server's order and ignored without a list, early data skipped before and after a HelloRetryRequest
+and at exactly 16 KiB, a ClientHello in one-byte records and one of exactly 16 KiB, a KeyUpdate answered, close_notify both
+ways, legacy_version 0x0301, GREASE, a hybrid share, `pre_shared_key` ignored), the server's suite order with and without AES
+instructions, and an identity replaced and a replacement refused. The other 81 each end with their tag and, for a connection, the alert §5.4 names, in the clear or under the key the server then holds. **Every
+tag of §5.4 is reached but `tls-server-sign-check`,** which needs the signer to fault; its path is shown by the mutant
+that checks the signature under another identity's point (§10.6), which every honest connection kills.
+
+### 10.4 The differential against `openssl s_server`
+
+`python3 scripts/tls_server_differential.py`: the lying client's connections decided on a ClientHello (72 of the 110: the
+client's bytes there do not depend on the server's) sent as recorded to `openssl s_server` 3.0.13 with the same identity,
+groups, suites and ALPN list, and the outcomes compared. **59 agree, 7 differ in the alert only, 6 differ as `EXPECTED`
+says, 0 otherwise.**
+
+| Case | `packages/tls` | OpenSSL | Why |
+|---|---|---|---|
+| a host name of 300 bytes | accepted, the default identity | unrecognized_name | RFC 6066 §3 allows either; this server never tells names apart (§7) |
+| an unknown extension twice | illegal_parameter | accepted | RFC 8446 §4.2: no extension twice; OpenSSL checks only those it knows |
+| two X25519 shares | illegal_parameter | accepted | RFC 8446 §4.2.8 lets a server refuse it |
+| a ClientHello over 16 KiB (two cases) | decode_error | waits, or accepts | this server's limit (§5.2); OpenSSL's is larger |
+| a second ClientHello with another session id | illegal_parameter | accepted | RFC 8446 §4.1.2 lets a server check it |
+
+The alerts that differ: an empty `supported_versions` and an odd `cipher_suites` length (decode_error here, protocol_version
+there); two host names (illegal_parameter against decode_error); a low-order X25519 share (illegal_parameter against
+internal_error); a record of version 2.0 (protocol_version against none); a fatal alert or close_notify instead of a
+ClientHello (none here, unexpected_message there). **Found by it, and fixed:** this server refused a ClientHello whose
+legacy_version was 0x0301, as §5.2 said to; OpenSSL takes it, and RFC 8446 §4.2.1 forbids a server to negotiate with that
+field once `supported_versions` is there. §5.2 is corrected, and the case is an honest one.

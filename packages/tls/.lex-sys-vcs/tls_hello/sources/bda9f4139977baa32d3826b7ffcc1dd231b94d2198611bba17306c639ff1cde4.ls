@@ -176,42 +176,12 @@ pub fn retry_group[&i](info: &i [int]) -> [] int {
     return 0;
 }
 
-// ---- Bytes ----
-
-fn get[&b](b: &b [byte], at: int, n: int) -> [] int {
-    var v = 0;
-    var i = 0;
-    while i < n {
-        v = v * 256 + int_of(b[at + i]);
-        i = i + 1;
-    }
-    return v;
-}
-
-fn put[&o](out: &!o [byte], at: int, v: int, n: int) -> [] int {
-    var i = 0;
-    while i < n {
-        out[at + i] = byte_of(v >> 8 * (n - 1 - i) & 255);
-        i = i + 1;
-    }
-    return at + n;
-}
-
-fn copy_to[&s, &o](src: &s [byte], out: &!o [byte], at: int) -> [] int {
-    var i = 0;
-    while i < len(src) {
-        out[at + i] = src[i];
-        i = i + 1;
-    }
-    return at + len(src);
-}
-
 // ---- The ClientHello (RFC 8446 §4.1.2) ----
 
 // `server_name` (RFC 6066 §3): one host_name at most; a name over 255
 // bytes is kept as none. Other name types are skipped.
 fn server_name[&b, &i](b: &b [byte], at: int, size: int, info: &!i [int]) -> [] int {
-    if size < 2 || get(b, at, 2) + 2 != size {
+    if size < 2 || tls_message.get(b, at, 2) + 2 != size {
         return tls_record.server_client_hello_format();
     }
     var p = at + 2;
@@ -222,7 +192,7 @@ fn server_name[&b, &i](b: &b [byte], at: int, size: int, info: &!i [int]) -> [] 
             return tls_record.server_client_hello_format();
         }
         let kind = int_of(b[p]);
-        let n = get(b, p + 1, 2);
+        let n = tls_message.get(b, p + 1, 2);
         if n == 0 || p + 3 + n > end {
             return tls_record.server_client_hello_format();
         }
@@ -245,7 +215,7 @@ fn server_name[&b, &i](b: &b [byte], at: int, size: int, info: &!i [int]) -> [] 
 // its group's length; others (a hybrid, GREASE) are skipped. Two shares
 // of one group are refused, as §4.2.8 lets a server.
 fn key_share[&b, &i](b: &b [byte], at: int, size: int, info: &!i [int]) -> [] int {
-    if size < 2 || get(b, at, 2) + 2 != size {
+    if size < 2 || tls_message.get(b, at, 2) + 2 != size {
         return tls_record.server_client_hello_format();
     }
     var p = at + 2;
@@ -255,8 +225,8 @@ fn key_share[&b, &i](b: &b [byte], at: int, size: int, info: &!i [int]) -> [] in
         if p + 4 > end {
             return tls_record.server_client_hello_format();
         }
-        let group = get(b, p, 2);
-        let n = get(b, p + 2, 2);
+        let group = tls_message.get(b, p, 2);
+        let n = tls_message.get(b, p + 2, 2);
         if n == 0 || p + 4 + n > end {
             return tls_record.server_client_hello_format();
         }
@@ -286,7 +256,7 @@ fn u16_list_ok[&b](b: &b [byte], at: int, size: int, prefix: int) -> [] bool {
     if size < prefix + 2 {
         return false;
     }
-    let n = get(b, at, prefix);
+    let n = tls_message.get(b, at, prefix);
     return n + prefix == size && n % 2 == 0;
 }
 
@@ -294,7 +264,7 @@ fn u16_list_ok[&b](b: &b [byte], at: int, size: int, prefix: int) -> [] bool {
 fn u16_list_has[&b](b: &b [byte], at: int, size: int, prefix: int, want: int) -> [] bool {
     var p = at + prefix;
     while p < at + size {
-        if get(b, p, 2) == want {
+        if tls_message.get(b, p, 2) == want {
             return true;
         }
         p = p + 2;
@@ -328,14 +298,14 @@ pub fn client_hello[&b, &i](b: &b [byte], info: &!i [int]) -> [] int {
     info[ch_session_start()] = at + 1;
     info[ch_session_len()] = sid;
     at = at + 1 + sid;
-    let suites_len = get(b, at, 2);
+    let suites_len = tls_message.get(b, at, 2);
     if suites_len < 2 || suites_len % 2 != 0 || at + 2 + suites_len + 1 > n {
         return tls_record.server_client_hello_format();
     }
     var suites = 0;
     var p = at + 2;
     while p < at + 2 + suites_len {
-        suites = suites | suite_bit(get(b, p, 2));
+        suites = suites | suite_bit(tls_message.get(b, p, 2));
         p = p + 2;
     }
     at = at + 2 + suites_len;
@@ -349,7 +319,7 @@ pub fn client_hello[&b, &i](b: &b [byte], info: &!i [int]) -> [] int {
         // No extensions at all: a client from before TLS 1.3.
         return tls_record.server_version();
     }
-    if at + 2 > n || at + 2 + get(b, at, 2) != n {
+    if at + 2 > n || at + 2 + tls_message.get(b, at, 2) != n {
         return tls_record.server_client_hello_format();
     }
     let ext_end = n;
@@ -368,8 +338,8 @@ pub fn client_hello[&b, &i](b: &b [byte], info: &!i [int]) -> [] int {
             if at + 4 > ext_end {
                 code = tls_record.server_client_hello_format();
             } else {
-                let kind = get(b, at, 2);
-                let size = get(b, at + 2, 2);
+                let kind = tls_message.get(b, at, 2);
+                let size = tls_message.get(b, at + 2, 2);
                 let body = at + 4;
                 if body + size > ext_end {
                     code = tls_record.server_client_hello_format();
@@ -386,7 +356,7 @@ pub fn client_hello[&b, &i](b: &b [byte], info: &!i [int]) -> [] int {
                             groups_seen = true;
                             var q = body + 2;
                             while q < body + size {
-                                info[ch_groups()] = info[ch_groups()] | group_bit(get(b, q, 2));
+                                info[ch_groups()] = info[ch_groups()] | group_bit(tls_message.get(b, q, 2));
                                 q = q + 2;
                             }
                         }
@@ -409,7 +379,7 @@ pub fn client_hello[&b, &i](b: &b [byte], info: &!i [int]) -> [] int {
                         code = key_share(b, body, size, info);
                     } else if kind == 16 {
                         // ALPN (RFC 7301 §3.1): a list of non-empty names.
-                        if size < 2 || get(b, body, 2) + 2 != size || size == 2 {
+                        if size < 2 || tls_message.get(b, body, 2) + 2 != size || size == 2 {
                             code = tls_record.server_client_hello_format();
                         } else {
                             var q = body + 2;
@@ -520,23 +490,23 @@ pub fn choose_alpn[&o, &t](ours: &o [byte], theirs: &t [byte]) -> [] int {
 // echoed `session_id`, `suite`, and the server's `share` of `group`.
 pub fn server_hello[&r, &s, &k, &o](random: &r [byte], session_id: &s [byte], suite: int, group: int, share: &k [byte], out: &!o [byte]) -> [] int {
     var at = 4;
-    at = put(out, at, 0x0303, 2);
-    at = copy_to(random, out, at);
-    at = put(out, at, len(session_id), 1);
-    at = copy_to(session_id, out, at);
-    at = put(out, at, suite, 2);
-    at = put(out, at, 0, 1);
-    at = put(out, at, 6 + 8 + len(share), 2);
-    at = put(out, at, 43, 2);
-    at = put(out, at, 2, 2);
-    at = put(out, at, 0x0304, 2);
-    at = put(out, at, 51, 2);
-    at = put(out, at, 4 + len(share), 2);
-    at = put(out, at, group, 2);
-    at = put(out, at, len(share), 2);
-    at = copy_to(share, out, at);
-    put(out, 0, tls_message.type_server_hello(), 1);
-    put(out, 1, at - 4, 3);
+    at = tls_message.put(out, at, 0x0303, 2);
+    at = tls_message.copy_to(random, out, at);
+    at = tls_message.put(out, at, len(session_id), 1);
+    at = tls_message.copy_to(session_id, out, at);
+    at = tls_message.put(out, at, suite, 2);
+    at = tls_message.put(out, at, 0, 1);
+    at = tls_message.put(out, at, 6 + 8 + len(share), 2);
+    at = tls_message.put(out, at, 43, 2);
+    at = tls_message.put(out, at, 2, 2);
+    at = tls_message.put(out, at, 0x0304, 2);
+    at = tls_message.put(out, at, 51, 2);
+    at = tls_message.put(out, at, 4 + len(share), 2);
+    at = tls_message.put(out, at, group, 2);
+    at = tls_message.put(out, at, len(share), 2);
+    at = tls_message.copy_to(share, out, at);
+    tls_message.put(out, 0, tls_message.type_server_hello(), 1);
+    tls_message.put(out, 1, at - 4, 3);
     return at;
 }
 
@@ -546,26 +516,26 @@ pub fn server_hello[&r, &s, &k, &o](random: &r [byte], session_id: &s [byte], su
 // in the slot (`docs/tls-server.md` §2.1).
 pub fn hello_retry[&s, &o](session_id: &s [byte], suite: int, group: int, out: &!o [byte]) -> [] int {
     var at = 4;
-    at = put(out, at, 0x0303, 2);
+    at = tls_message.put(out, at, 0x0303, 2);
     var k = 0;
     while k < 32 {
         out[at + k] = byte_of(tls_message.hrr_random(k));
         k = k + 1;
     }
     at = at + 32;
-    at = put(out, at, len(session_id), 1);
-    at = copy_to(session_id, out, at);
-    at = put(out, at, suite, 2);
-    at = put(out, at, 0, 1);
-    at = put(out, at, 12, 2);
-    at = put(out, at, 43, 2);
-    at = put(out, at, 2, 2);
-    at = put(out, at, 0x0304, 2);
-    at = put(out, at, 51, 2);
-    at = put(out, at, 2, 2);
-    at = put(out, at, group, 2);
-    put(out, 0, tls_message.type_server_hello(), 1);
-    put(out, 1, at - 4, 3);
+    at = tls_message.put(out, at, len(session_id), 1);
+    at = tls_message.copy_to(session_id, out, at);
+    at = tls_message.put(out, at, suite, 2);
+    at = tls_message.put(out, at, 0, 1);
+    at = tls_message.put(out, at, 12, 2);
+    at = tls_message.put(out, at, 43, 2);
+    at = tls_message.put(out, at, 2, 2);
+    at = tls_message.put(out, at, 0x0304, 2);
+    at = tls_message.put(out, at, 51, 2);
+    at = tls_message.put(out, at, 2, 2);
+    at = tls_message.put(out, at, group, 2);
+    tls_message.put(out, 0, tls_message.type_server_hello(), 1);
+    tls_message.put(out, 1, at - 4, 3);
     return at;
 }
 
@@ -575,19 +545,19 @@ pub fn hello_retry[&s, &o](session_id: &s [byte], suite: int, group: int, out: &
 pub fn encrypted_extensions[&a, &o](sni_used: bool, alpn: &a [byte], out: &!o [byte]) -> [] int {
     var at = 6;
     if sni_used {
-        at = put(out, at, 0, 2);
-        at = put(out, at, 0, 2);
+        at = tls_message.put(out, at, 0, 2);
+        at = tls_message.put(out, at, 0, 2);
     }
     if len(alpn) > 0 {
-        at = put(out, at, 16, 2);
-        at = put(out, at, 3 + len(alpn), 2);
-        at = put(out, at, 1 + len(alpn), 2);
-        at = put(out, at, len(alpn), 1);
-        at = copy_to(alpn, out, at);
+        at = tls_message.put(out, at, 16, 2);
+        at = tls_message.put(out, at, 3 + len(alpn), 2);
+        at = tls_message.put(out, at, 1 + len(alpn), 2);
+        at = tls_message.put(out, at, len(alpn), 1);
+        at = tls_message.copy_to(alpn, out, at);
     }
-    put(out, 0, tls_message.type_encrypted_extensions(), 1);
-    put(out, 1, at - 4, 3);
-    put(out, 4, at - 6, 2);
+    tls_message.put(out, 0, tls_message.type_encrypted_extensions(), 1);
+    tls_message.put(out, 1, at - 4, 3);
+    tls_message.put(out, 4, at - 6, 2);
     return at;
 }
 
@@ -596,11 +566,11 @@ pub fn encrypted_extensions[&a, &o](sni_used: bool, alpn: &a [byte], out: &!o [b
 // 3-byte length, then no extensions).
 pub fn certificate[&l, &o](list: &l [byte], out: &!o [byte]) -> [] int {
     var at = 4;
-    at = put(out, at, 0, 1);
-    at = put(out, at, len(list), 3);
-    at = copy_to(list, out, at);
-    put(out, 0, tls_message.type_certificate(), 1);
-    put(out, 1, at - 4, 3);
+    at = tls_message.put(out, at, 0, 1);
+    at = tls_message.put(out, at, len(list), 3);
+    at = tls_message.copy_to(list, out, at);
+    tls_message.put(out, 0, tls_message.type_certificate(), 1);
+    tls_message.put(out, 1, at - 4, 3);
     return at;
 }
 
@@ -608,10 +578,10 @@ pub fn certificate[&l, &o](list: &l [byte], out: &!o [byte]) -> [] int {
 // signature.
 pub fn certificate_verify[&s, &o](sig: &s [byte], out: &!o [byte]) -> [] int {
     var at = 4;
-    at = put(out, at, tls_message.ecdsa_p256_sha256(), 2);
-    at = put(out, at, len(sig), 2);
-    at = copy_to(sig, out, at);
-    put(out, 0, tls_message.type_certificate_verify(), 1);
-    put(out, 1, at - 4, 3);
+    at = tls_message.put(out, at, tls_message.ecdsa_p256_sha256(), 2);
+    at = tls_message.put(out, at, len(sig), 2);
+    at = tls_message.copy_to(sig, out, at);
+    tls_message.put(out, 0, tls_message.type_certificate_verify(), 1);
+    tls_message.put(out, 1, at - 4, 3);
     return at;
 }
