@@ -466,19 +466,22 @@ program would move them: link-time selection of the module that holds `run` woul
 through `benches/server/tload.c`, the same loop over TLS 1.3 against `https_hello` (`GET /hello/42`, a 99-byte answer with its head: a different route, so the application's own work is not the same, and small beside what TLS adds).
 The server is pinned to one core and the load to two others. The script also reads the server's CPU time from `/proc` and divides it by the requests.
 
-**Measured on** Docker Desktop's Linux VM on an Apple M4 Max (aarch64 Linux 6.8, 6 vCPUs of a machine with other containers running, OpenSSL 3.0.13 as the client; the compiler is the LLVM backend's). That is not
-the x86-64 CI runner and not a quiet machine, so the rates moved by up to 1.5 times between two runs of the same command, and the CPU a request, which a busy machine disturbs less, is the figure to read:
+**Measured on** two machines, both with the LLVM backend and OpenSSL 3.0.13 as the client: the x86-64 CI runner (a shared virtual machine, as `tls-server.md` §11.4's 5.5 ms a handshake was), whose three rounds agree to 0.5%; and Docker Desktop's Linux VM on an Apple M4 Max (aarch64 Linux 6.8, 6 vCPUs, other containers running), which is not a quiet machine: its rates moved by up to 1.5 times between two runs of the same command, so there the CPU a request is the figure to read:
 
 | | requests a second, three rounds | the server's CPU a request |
 |---|---|---|
+| **x86-64, CI's `ubuntu-latest` runner** (the PR's first green run), 5 s rounds | | |
+| plain, `examples/api` | 178,451 179,056 178,473 | 5.59 microseconds |
+| TLS 1.3, `https_hello` | 42,614 42,313 42,086 | 23.40 microseconds |
+| **aarch64, Docker Desktop's Linux VM on an Apple M4 Max** | | |
 | plain, `examples/api` | 345,024 317,966 253,457 (10 s rounds); 406,611 260,736 262,227 (5 s rounds, an earlier run) | 2.68 microseconds |
 | TLS 1.3, `https_hello` | 97,548 74,635 84,708 (10 s rounds); 84,732 133,024 133,420 (5 s rounds, an earlier run) | 9.77 microseconds |
 
-So over TLS this server costs about **3.6 times the CPU a request** of the plain one, and serves **three to four times fewer requests a second** from one core: roughly 75,000 to 130,000 a second of 99-byte
-answers on this machine, against 250,000 to 400,000. About 7 microseconds a request is what the TLS path adds: a record decrypted, a record encrypted, the engine's and the loop's copies, and the loop pumping a connection twice a request (§11.6).
+So over TLS this server costs **3.6 times (aarch64) to 4.2 times (x86-64) the CPU a request** of the plain one, and serves as many times fewer requests a second from one core: **about 42,000 a second of 99-byte
+answers on the CI's x86-64 core, against 178,000 plain**, and 75,000 to 130,000 against 250,000 to 400,000 on the aarch64 VM. The 7 microseconds (aarch64) or 18 (x86-64) a request that TLS adds is a record decrypted, a record encrypted, the engine's and the loop's copies, and the loop pumping a connection twice a request (§11.6).
 **It was not profiled** and that is the next place to look if the figure matters: the stages copy a request's bytes several times each way (the socket into `inq`, `tls.recv` into `rcv`, `input` into the server's buffer; an answer into `pends`, `output` into `app`, `tls.take` into `pend`) and `server.output`
-moves what is left of an answer to the front of its buffer on every call. A body streamed with `/big/<n>` ran at 104 MB a second on this machine (245 MB a second on the Mac itself, outside Docker), checked byte for byte.
-Not measured: x86-64 (CI prints the figure on its first green run, and it is added to this table then), more than 32 connections, handshakes (`tls-server.md` §11.4's 3.0 ms on the M4 and 5.5 ms on CI's x86-64 are unchanged).
+moves what is left of an answer to the front of its buffer on every call. A body streamed with `/big/<n>` ran at 83 MB a second on CI's x86-64, 104 MB a second on the aarch64 VM and 245 MB a second on the Mac itself, outside Docker, each checked byte for byte.
+Not measured: more than 32 connections, handshakes (`tls-server.md` §11.4's 3.0 ms on the M4 and 5.5 ms on CI's x86-64 are unchanged).
 
 ### 11.8 What `cancho-gateway` needs next
 
