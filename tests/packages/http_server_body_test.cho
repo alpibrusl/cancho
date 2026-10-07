@@ -1,0 +1,512 @@
+import std.buffer;
+import std.bytes;
+import std.http;
+import std.test;
+import body_support as bs;
+import http.server;
+
+// `http.server`'s streaming request bodies (`docs/http-server.md` §12), part one: framing. On a byte-fed server, so no socket: a length
+// body and a chunked one (with extensions and trailers) larger than the buffer, arriving byte for byte, a request cut at every byte, requests
+// pipelined behind a streamed body, and a request that fits handed over whole as before. Part two is `http_server_body_flow_test.cho`
+// (`Expect`, every refusal, the timers, back-pressure, early answers, random operations). Run with the package's source and
+// `body_support.cho` beside it (`conformance/http_server_body.rs`).
+
+fn length_bodies[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_write, poll] int {
+    let k = server.attach(srv, 0);
+    test.assert_eq(server.limits(srv, 100000, 64, 5000, 5000), 0);
+    // Sizes around the buffer (256) and the piece (64), fed and pulled in every combination of steps.
+    var si = 0;
+    while si < 9 {
+        var st = 0;
+        while st < 5 {
+            var tk = 0;
+            while tk < 3 {
+                let n = bs.size_case(si);
+                let body = bs.make_body(heap, n, si + st + tk);
+                borrow body as &bb in {
+                    bs.one_upload(heap, srv, k, bs.head_cl(heap, n, ""), buffer.bytes(bb), buffer.bytes(bb), bs.step_case(st), bs.take_case(tk));
+                }
+                buffer.drop(heap, body);
+                bs.expect_answer(heap, bs.drain(heap, srv, k, 0), n);
+                tk = tk + 1;
+            }
+            st = st + 1;
+        }
+        si = si + 1;
+    }
+    return 0;
+}
+fn test_a_length_body_larger_than_the_buffer_arrives_byte_for_byte[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {
+    match server.open_bytes(heap, 256, 4096, 30, 2) {
+        server.Opening::Ok(s) => {
+            var srv = s;
+            borrow mut srv as &!sw in {
+                length_bodies(heap, sw);
+            }
+            server.close(heap, srv);
+        }
+        server.Opening::Failed(e) => {
+            test.assert(false);
+        }
+    }
+    return 0;
+}
+// ---------------------------------------------------------------------
+// A chunked body, with extensions and trailers
+// ---------------------------------------------------------------------
+
+fn body_case(i: int) -> [] int {
+    if i == 0 {
+        return 1;
+    }
+    if i == 1 {
+        return 100;
+    }
+    if i == 2 {
+        return 1000;
+    }
+    return 5000;
+}
+fn chunk_case(i: int) -> [] int {
+    if i == 0 {
+        return 1;
+    }
+    if i == 1 {
+        return 7;
+    }
+    if i == 2 {
+        return 64;
+    }
+    return 1000;
+}
+fn ext_case(i: int) -> [] &static [byte] {
+    if i % 2 == 1 {
+        return ";x=1;name=\"a b\"";
+    }
+    return "";
+}
+fn trailer_case(i: int) -> [] &static [byte] {
+    if i / 2 == 1 {
+        return "X-T: 1\r\nY-U: two words\r\n";
+    }
+    return "";
+}
+fn chunked_bodies[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_write, poll] int {
+    let k = server.attach(srv, 0);
+    test.assert_eq(server.limits(srv, 100000, 100, 5000, 5000), 0);
+    var bi = 0;
+    while bi < 4 {
+        var ci = 0;
+        while ci < 4 {
+            var v = 0;
+            while v < 4 {
+                var st = 0;
+                while st < 3 {
+                    var tk = 0;
+                    while tk < 2 {
+                        let n = body_case(bi);
+                        let body = bs.make_body(heap, n, bi * 5 + ci + v);
+                        borrow body as &bb in {
+                            let w = bs.wire(heap, buffer.bytes(bb), chunk_case(ci), ext_case(v), trailer_case(v));
+                            borrow w as &wb in {
+                                bs.one_upload(heap, srv, k, bs.head_chunked(heap, ""), buffer.bytes(bb), buffer.bytes(wb), bs.step_case(st * 2), bs.take_case(tk * 2));
+                            }
+                            buffer.drop(heap, w);
+                        }
+                        buffer.drop(heap, body);
+                        bs.expect_answer(heap, bs.drain(heap, srv, k, 0), n);
+                        tk = tk + 1;
+                    }
+                    st = st + 1;
+                }
+                v = v + 1;
+            }
+            ci = ci + 1;
+        }
+        bi = bi + 1;
+    }
+    return 0;
+}
+fn test_a_chunked_body_with_extensions_and_trailers_arrives_byte_for_byte[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {
+    match server.open_bytes(heap, 256, 4096, 30, 2) {
+        server.Opening::Ok(s) => {
+            var srv = s;
+            borrow mut srv as &!sw in {
+                chunked_bodies(heap, sw);
+            }
+            server.close(heap, srv);
+        }
+        server.Opening::Failed(e) => {
+            test.assert(false);
+        }
+    }
+    return 0;
+}
+// `req` fed to `k` in two inputs cut at `cut` (the second one in as many goes as the room needs), the application
+// taking a turn after each: the body that comes out is `body`, and the request is answered once.
+fn split_once[&h, &s, &r, &b](heap: &!h Heap, srv: &!s server.Server, k: int, req: &r [byte], cut: int, body: &b [byte]) -> [heap, conn_write, poll] int {
+    let apb = box_slice(heap, 2, 0);
+    var sink = buffer.empty(heap, 32);
+    borrow mut apb as &!aw in {
+        let ap = contents(aw);
+        ap[0] = 0 - 1;
+        test.assert_eq(server.input(srv, k, req[0..cut], 0), cut);
+        sink = bs.turn(heap, srv, ap, sink, 0);
+        var at = cut;
+        var stuck = 0;
+        while at < len(req) && stuck < 3 {
+            let took = server.input(srv, k, req[at..len(req)], 0);
+            at = at + took;
+            sink = bs.turn(heap, srv, ap, sink, 0);
+            if took == 0 {
+                stuck = stuck + 1;
+            }
+        }
+        test.assert_eq(at, len(req));
+        sink = bs.turn(heap, srv, ap, sink, 0);
+        if ap[0] >= 0 {
+            bs.check_streamed(heap, srv, ap[0], sink, body);
+            test.assert(bs.answer_with(heap, srv, ap[0], len(body)) > 0);
+        } else {
+            test.assert_eq(ap[1], 1);
+            borrow sink as &sk in {
+                test.assert(bs.same(buffer.bytes(sk), body));
+            }
+            buffer.drop(heap, sink);
+        }
+    }
+    unbox_slice(heap, apb);
+    bs.expect_answer(heap, bs.drain(heap, srv, k, 0), len(body));
+    return 0;
+}
+// The request of case `which` for `body` (40 bytes): a length with the head and body together, chunked with an extension and a
+// trailer, chunked in one chunk.
+fn request_case[&h, &b](heap: &!h Heap, which: int, body: &b [byte]) -> [heap] buffer.Buffer {
+    if which == 0 {
+        return buffer.append(heap, bs.head_cl(heap, len(body), ""), body);
+    }
+    if which == 1 {
+        return bs.join(heap, bs.head_chunked(heap, ""), bs.wire(heap, body, 13, ";e=1", "T: v\r\n"));
+    }
+    return bs.join(heap, bs.head_chunked(heap, ""), bs.wire(heap, body, 40, "", ""));
+}
+fn splits[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_write, poll] int {
+    let k = server.attach(srv, 0);
+    test.assert_eq(server.limits(srv, 100000, 100, 5000, 5000), 0);
+    var which = 0;
+    while which < 3 {
+        let body = bs.make_body(heap, 40, which);
+        borrow body as &bb in {
+            let req = request_case(heap, which, buffer.bytes(bb));
+            borrow req as &rb in {
+                var cut = 0;
+                while cut <= len(buffer.bytes(rb)) {
+                    split_once(heap, srv, k, buffer.bytes(rb), cut, buffer.bytes(bb));
+                    cut = cut + 1;
+                }
+            }
+            buffer.drop(heap, req);
+        }
+        buffer.drop(heap, body);
+        which = which + 1;
+    }
+    return 0;
+}
+fn test_a_request_cut_at_every_byte_gives_the_same_body_and_one_answer[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {
+    match server.open_bytes(heap, 256, 4096, 30, 2) {
+        server.Opening::Ok(s) => {
+            var srv = s;
+            borrow mut srv as &!sw in {
+                splits(heap, sw);
+            }
+            server.close(heap, srv);
+        }
+        server.Opening::Failed(e) => {
+            test.assert(false);
+        }
+    }
+    return 0;
+}
+// `all` (a streamed upload and requests pipelined behind it) fed `step` bytes at a time to `k`, the application taking a
+// turn after each input and answering a streamed request once all of its body is taken. The bodies that came out are
+// `want_sink` and the answers `want_out`, in order.
+fn pipeline_run[&h, &s, &a, &w, &o](heap: &!h Heap, srv: &!s server.Server, k: int, all: &a [byte], step: int, want_sink: &w [byte], want_out: &o [byte]) -> [heap, conn_write, poll] int {
+    let apb = box_slice(heap, 2, 0);
+    var sink = buffer.empty(heap, 32);
+    var out = buffer.empty(heap, 32);
+    var at = 0;
+    var rounds = 0;
+    var outn = 0;
+    borrow mut apb as &!aw in {
+        let ap = contents(aw);
+        ap[0] = 0 - 1;
+        while rounds < 100000 && !(at == len(all) && outn >= len(want_out)) {
+            if at < len(all) {
+                at = at + server.input(srv, k, all[at..bs.min_of(at + step, len(all))], 0);
+            }
+            sink = bs.turn(heap, srv, ap, sink, 0);
+            if ap[0] >= 0 && server.body_state(srv, ap[0]) == 1 && len(server.body_part(srv, ap[0])) == 0 {
+                bs.answer_with(heap, srv, ap[0], server.body_total(srv, ap[0]));
+                ap[0] = 0 - 1;
+            }
+            ap[1] = 0;
+            let got = bs.drain(heap, srv, k, 0);
+            borrow got as &gb in {
+                out = buffer.append(heap, out, buffer.bytes(gb));
+                outn = outn + len(buffer.bytes(gb));
+            }
+            buffer.drop(heap, got);
+            rounds = rounds + 1;
+        }
+    }
+    unbox_slice(heap, apb);
+    borrow sink as &sk in {
+        test.assert(bs.same(buffer.bytes(sk), want_sink));
+    }
+    borrow out as &ob in {
+        test.assert(bs.same(buffer.bytes(ob), want_out));
+    }
+    buffer.drop(heap, sink);
+    buffer.drop(heap, out);
+    test.assert(!server.closing(srv, k));
+    test.assert_eq(server.pending(srv, k), 0);
+    return 0;
+}
+// A streamed upload of `n` bytes (a length, or chunked) then `GET /a` and a `POST /b` with 5 bytes, all in one buffer.
+fn pipelined_input[&h, &b](heap: &!h Heap, chunked: bool, body: &b [byte]) -> [heap] buffer.Buffer {
+    var req = buffer.append(heap, bs.head_cl(heap, len(body), ""), body);
+    if chunked {
+        buffer.drop(heap, req);
+        req = bs.join(heap, bs.head_chunked(heap, ""), bs.wire(heap, body, 50, "", "T: 1\r\n"));
+    }
+    req = buffer.append(heap, req, "GET /a HTTP/1.1\r\nHost: t\r\n\r\n");
+    return buffer.append(heap, req, "POST /b HTTP/1.1\r\nHost: t\r\nContent-Length: 5\r\n\r\nhello");
+}
+fn pipelining[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_write, poll] int {
+    let k = server.attach(srv, 0);
+    test.assert_eq(server.limits(srv, 100000, 64, 5000, 5000), 0);
+    var chunked = 0;
+    while chunked < 2 {
+        var st = 0;
+        while st < 5 {
+            let body = bs.make_body(heap, 700, chunked + st);
+            var want = buffer.empty(heap, 1);
+            borrow body as &bb in {
+                want = buffer.append(heap, want, buffer.bytes(bb));
+            }
+            want = buffer.append(heap, want, "hello");
+            let answers = bs.join(heap, bs.answer_of(heap, 700), bs.join(heap, bs.answer_of(heap, 0), bs.answer_of(heap, 5)));
+            borrow body as &bb in {
+                let all = pipelined_input(heap, chunked == 1, buffer.bytes(bb));
+                borrow all as &ab in {
+                    borrow want as &wb in {
+                        borrow answers as &nb in {
+                            pipeline_run(heap, srv, k, buffer.bytes(ab), bs.step_case(st), buffer.bytes(wb), buffer.bytes(nb));
+                        }
+                    }
+                }
+                buffer.drop(heap, all);
+            }
+            buffer.drop(heap, want);
+            buffer.drop(heap, answers);
+            buffer.drop(heap, body);
+            st = st + 1;
+        }
+        chunked = chunked + 1;
+    }
+    return 0;
+}
+fn test_requests_pipelined_behind_a_streamed_body_are_served_in_order[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {
+    match server.open_bytes(heap, 256, 4096, 30, 2) {
+        server.Opening::Ok(s) => {
+            var srv = s;
+            borrow mut srv as &!sw in {
+                pipelining(heap, sw);
+            }
+            server.close(heap, srv);
+        }
+        server.Opening::Failed(e) => {
+            test.assert(false);
+        }
+    }
+    return 0;
+}
+// ---------------------------------------------------------------------
+// A request that fits is handed over whole, as before
+// ---------------------------------------------------------------------
+
+// `text` in one input, `next`, and the application of `http_server_bytes_test`'s kind: answer with the body's length. Answers the
+// bytes the server sent, whether `streaming` said so, and the body as `body` showed it.
+fn whole_once[&h, &s, &t](heap: &!h Heap, srv: &!s server.Server, text: &t [byte]) -> [heap, conn_write, poll] (buffer.Buffer, bool, buffer.Buffer) {
+    let k = server.attach(srv, 0);
+    test.assert_eq(server.input(srv, k, text, 0), len(text));
+    server.ready(srv, 0);
+    test.assert(server.next(heap, srv) >= 0);
+    let streamed = server.streaming(srv);
+    var seen = buffer.empty(heap, 16);
+    seen = buffer.append(heap, seen, server.body(srv));
+    bs.respond_with(heap, srv, len(server.body(srv)));
+    var sent = bs.drain(heap, srv, k, 0);
+    if server.closing(srv, k) {
+        sent = buffer.append(heap, sent, "|closing");
+    }
+    server.detach(srv, k);
+    return (sent, streamed, seen);
+}
+// The same request to a server without `limits` and to one with: the same bytes come out, and what the application saw is `body`.
+fn same_either_way[&h, &t, &b](heap: &!h Heap, text: &t [byte], body: &b [byte]) -> [heap, conn_write, poll] int {
+    var plain = buffer.empty(heap, 1);
+    var limited = buffer.empty(heap, 1);
+    match server.open_bytes(heap, 512, 4096, 30, 2) {
+        server.Opening::Ok(s) => {
+            var srv = s;
+            borrow mut srv as &!sw in {
+                let (sent, streamed, seen) = whole_once(heap, sw, text);
+                test.assert(!streamed);
+                borrow seen as &sn in {
+                    test.assert(bs.same(buffer.bytes(sn), body));
+                }
+                buffer.drop(heap, seen);
+                buffer.drop(heap, plain);
+                plain = sent;
+            }
+            server.close(heap, srv);
+        }
+        server.Opening::Failed(e) => {
+            test.assert(false);
+        }
+    }
+    match server.open_bytes(heap, 512, 4096, 30, 2) {
+        server.Opening::Ok(s) => {
+            var srv = s;
+            borrow mut srv as &!sw in {
+                test.assert_eq(server.limits(sw, 10000, 100, 1000, 1000), 0);
+                let (sent, streamed, seen) = whole_once(heap, sw, text);
+                test.assert(!streamed);
+                borrow seen as &sn in {
+                    test.assert(bs.same(buffer.bytes(sn), body));
+                }
+                buffer.drop(heap, seen);
+                buffer.drop(heap, limited);
+                limited = sent;
+            }
+            server.close(heap, srv);
+        }
+        server.Opening::Failed(e) => {
+            test.assert(false);
+        }
+    }
+    borrow plain as &pb in {
+        borrow limited as &lb in {
+            test.assert(bs.same(buffer.bytes(pb), buffer.bytes(lb)));
+            test.assert(len(buffer.bytes(lb)) > 0);
+        }
+    }
+    buffer.drop(heap, plain);
+    buffer.drop(heap, limited);
+    return 0;
+}
+fn test_a_request_that_fits_is_answered_with_the_same_bytes_with_or_without_limits[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {
+    same_either_way(heap, "GET /a HTTP/1.1\r\nHost: t\r\n\r\n", "");
+    same_either_way(heap, "POST /p HTTP/1.1\r\nHost: t\r\nContent-Length: 5\r\n\r\nhello", "hello");
+    same_either_way(heap, "POST /p HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nhel\r\n2\r\nlo\r\n0\r\n\r\n", "hello");
+    same_either_way(heap, "POST /p HTTP/1.0\r\nContent-Length: 2\r\n\r\nhi", "hi");
+    same_either_way(heap, "POST /p HTTP/1.1\r\nHost: t\r\nConnection: close\r\nContent-Length: 1\r\n\r\nx", "x");
+    return 0;
+}
+// A chunked body with an extension and a trailer: a server without `limits` refuses it (`std.http.dechunk` does), one with
+// decodes it, in place and whole, even when more requests follow in the same input.
+fn test_a_whole_chunked_body_with_extensions_and_trailers_is_decoded_when_limits_are_on[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {
+    let text = "POST /p HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\n\r\n3;a=b\r\nhel\r\n2\r\nlo\r\n0;z\r\nT: 1\r\nU: 2\r\n\r\nGET /next HTTP/1.1\r\nHost: t\r\n\r\n";
+    match server.open_bytes(heap, 512, 4096, 30, 2) {
+        server.Opening::Ok(s) => {
+            var srv = s;
+            borrow mut srv as &!sw in {
+                let k = server.attach(sw, 0);
+                server.input(sw, k, text, 0);
+                server.ready(sw, 0);
+                test.assert_eq(server.next(heap, sw), 0 - 1);
+                bs.expect_has(heap, bs.drain(heap, sw, k, 0), "HTTP/1.1 400 ", "chunk extensions and trailers are not supported");
+            }
+            server.close(heap, srv);
+        }
+        server.Opening::Failed(e) => {
+            test.assert(false);
+        }
+    }
+    match server.open_bytes(heap, 512, 4096, 30, 2) {
+        server.Opening::Ok(s) => {
+            var srv = s;
+            borrow mut srv as &!sw in {
+                test.assert_eq(server.limits(sw, 10000, 100, 1000, 1000), 0);
+                let k = server.attach(sw, 0);
+                server.input(sw, k, text, 0);
+                server.ready(sw, 0);
+                test.assert(server.next(heap, sw) >= 0);
+                test.assert(!server.streaming(sw));
+                test.assert(bs.same(server.body(sw), "hello"));
+                test.assert(bs.same(http.path(server.head(sw), server.parsed(sw)), "/p"));
+                bs.respond_with(heap, sw, 5);
+                bs.expect_answer(heap, bs.drain(heap, sw, k, 0), 5);
+                // The request pipelined behind it, which the in-place decoding moved down to follow the body.
+                server.ready(sw, 0);
+                test.assert(server.next(heap, sw) >= 0);
+                test.assert(bs.same(http.path(server.head(sw), server.parsed(sw)), "/next"));
+                bs.respond_with(heap, sw, 0);
+                bs.expect_answer(heap, bs.drain(heap, sw, k, 0), 0);
+            }
+            server.close(heap, srv);
+        }
+        server.Opening::Failed(e) => {
+            test.assert(false);
+        }
+    }
+    return 0;
+}
+// A whole request that is held can still be read from its ticket, and a request with no body reads as an empty one that has all arrived.
+fn held_whole[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_write, poll] int {
+    let k = server.attach(srv, 0);
+    test.assert_eq(server.limits(srv, 10000, 4, 1000, 1000), 0);
+    server.input(srv, k, "POST /w HTTP/1.1\r\nHost: t\r\nContent-Length: 10\r\n\r\n0123456789GET /g HTTP/1.1\r\nHost: t\r\n\r\n", 0);
+    server.ready(srv, 0);
+    test.assert(server.next(heap, srv) >= 0);
+    test.assert(!server.streaming(srv));
+    let t = server.hold(srv);
+    test.assert_eq(server.body_state(srv, t), 1);
+    test.assert_eq(server.body_total(srv, t), 10);
+    // Pieces are at most `piece` (4) bytes.
+    test.assert(bs.same(server.body_part(srv, t), "0123"));
+    test.assert_eq(server.body_take(srv, t, 5), 0 - 1);
+    test.assert_eq(server.body_take(srv, t, 4), 4);
+    test.assert(bs.same(server.body_part(srv, t), "4567"));
+    test.assert_eq(server.body_take(srv, t, 4), 4);
+    test.assert(bs.same(server.body_part(srv, t), "89"));
+    // Nothing behind it is given out while it is held; answered, the one behind comes.
+    test.assert_eq(server.next(heap, srv), 0 - 1);
+    test.assert(bs.answer_with(heap, srv, t, 10) > 0);
+    bs.expect_answer(heap, bs.drain(heap, srv, k, 0), 10);
+    server.ready(srv, 0);
+    test.assert(server.next(heap, srv) >= 0);
+    let g = server.hold(srv);
+    test.assert_eq(server.body_state(srv, g), 1);
+    test.assert_eq(len(server.body_part(srv, g)), 0);
+    test.assert_eq(server.body_total(srv, g), 0);
+    test.assert(bs.answer_with(heap, srv, g, 0) > 0);
+    bs.expect_answer(heap, bs.drain(heap, srv, k, 0), 0);
+    return 0;
+}
+fn test_a_whole_request_held_is_read_from_its_ticket[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {
+    match server.open_bytes(heap, 512, 4096, 30, 2) {
+        server.Opening::Ok(s) => {
+            var srv = s;
+            borrow mut srv as &!sw in {
+                held_whole(heap, sw);
+            }
+            server.close(heap, srv);
+        }
+        server.Opening::Failed(e) => {
+            test.assert(false);
+        }
+    }
+    return 0;
+}
