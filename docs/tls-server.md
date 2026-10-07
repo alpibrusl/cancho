@@ -1,7 +1,7 @@
 # A TLS 1.3 server for `packages/tls`: the design
 
-> **Status: design, its open questions (§9) answered as proposed (2026-10-07); step 1 built (`docs/ecdsa-sign.md`), the
-> server itself not yet.** `packages/tls` is a client (`docs/tls-pure.md`). Two programs of the toolbox need the other
+> **Status: steps 1 and 2 built: the signer (`docs/ecdsa-sign.md`) and the TLS 1.3 server (§10, as built); its open
+> questions (§9) answered as proposed (2026-10-07). Not independently reviewed (#209).** `packages/tls` is a client (`docs/tls-pure.md`). Two programs of the toolbox need the other
 > side: `lexsys-mqtt`, a broker whose clients connect on 8883, and `lexsys-gateway`, a reverse proxy that terminates HTTPS. Both
 > are at the design stage and both list TLS as out of scope because "it needs foreign code and would make the authority report
 > unbounded". A server in `packages/tls` removes that reason. This document is the design; its numbers are measured where it
@@ -47,7 +47,9 @@ DRBG, and the key exchanges (`std.x25519`, `std.ecdh` on P-256 and P-384, both c
   ALPN with no protocol in the list is refused with `no_application_protocol` (RFC 7301 §3.2, `tls-server-alpn`); a client that
   offers none is accepted and the program sees none.
 - **Middlebox compatibility** (RFC 8446 Appendix D.4): the legacy session id is echoed and a `change_cipher_spec` record is sent
-  after the ServerHello, as OpenSSL does, so a client in compatibility mode is not surprised.
+  after the ServerHello, as OpenSSL does, so a client in compatibility mode is not surprised. *As built: once, after the first
+  ServerHello or HelloRetryRequest the server sends (so after a HelloRetryRequest, not again before the ServerHello), and
+  whatever the session id; every TLS 1.3 client must drop one (RFC 8446 §5).*
 
 ### 2.2 Not in version 1, and why
 
@@ -127,6 +129,10 @@ signatures are also compared byte for byte with RFC 6979 written in Python (`doc
 - **The chain is not verified by the server.** It is sent as given; a chain that clients refuse is the operator's to fix.
   The engine checks only that the leaf parses, that its key is P-256, and that it is not expired at the time the identity is
   added (`tls-server-cert-expired`), so a stale file fails at start, not at the first client.
+- *As built, the room (`packages/tls/identity.ls`): a chain of at most 16 KiB as Certificate sends it (each certificate's DER
+  and 5 bytes), names of at most 1 KiB, an ALPN list of at most 512 bytes; over them, `tls-server-chain`, `tls-server-names`
+  and `tls-server-alpn-list`. A chain block that does not decode, or no certificate at all, is `tls-server-chain` too. 16
+  identities take 274 KiB of the engine, allocated by `open_server` only.*
 
 ## 5. The interface and the protocol
 
@@ -140,7 +146,7 @@ tls.seed(srv, entropy)                     // 32 bytes, as for the client
 id  = tls.add_identity(srv, chain_pem, key_pem, names, now_unix_ms)   // names: "a.example b.example *.example"
 tls.replace_identity(srv, id, chain_pem, key_pem, now_unix_ms)
 tls.set_alpn(srv, "http/1.1")              // a list, in the server's order of preference
-tls.accept(srv, slot, now_unix_ms)         // a new connection in `slot`
+tls.serve(srv, slot, now_unix_ms)          // a new connection in `slot` (*as built: not `accept`, below*)
 ... tls.feed / take / send / recv / event / finish / eof / drop, as for a client ...
 tls.server_name(srv, slot, out)            // the SNI the client sent, once established
 tls.alpn(srv, slot, out)                   // the protocol chosen
@@ -150,15 +156,41 @@ A separate `Server` type was considered, with the shared calls duplicated; one `
 byte-moving calls and the existing tests of them. An engine is all clients or all servers: `accept` on a client engine and
 `start` on a server engine are refused (`tls-role`).
 
+*Corrected (step 2): `accept` is a builtin's name (`tcp_accept`'s family: `accept` itself, edition 2), and a function may not
+take one, so the call is `tls.serve`. `tls-role` also refuses `trust` on a server engine and `add_identity`, `replace_identity`,
+`set_alpn`, `server_name` and `alpn` on a client one. `server_name` and `alpn` answer once the ClientHello is answered, not only
+once established. Added, for a program's log and the interop matrix: `tls.suite`, `tls.group` and `tls.retried` (what the
+connection negotiated), and `tls.alert_received` (the alert the peer sent, when `failure` is `tls-alert`), on either role.*
+
 ### 5.2 The handshake
 
 1. **ClientHello**, reassembled up to 16 KiB (an ML-KEM-768 share alone is 1,184 bytes, so a browser's ClientHello is a few KiB; step 2 records
-   the largest of the interop clients),
-   parsed with the bounds `tls_message` already applies to server messages, plus the rules the server owns: `legacy_version`
-   0x0303; `0x0304` in `supported_versions`; compression `null` only; `signature_algorithms` including
+   the largest of the interop clients; *measured: Chromium's, 1,818 bytes with its X25519MLKEM768 share; of the command-line
+   clients curl's, 512; OpenSSL and mosquitto 308, wolfSSL 395, Go 240, §10.4*),
+   parsed with the bounds `tls_message` already applies to server messages, plus the rules the server owns: ~~`legacy_version`
+   0x0303~~ (*corrected: RFC 8446 §4.2.1 says a server MUST NOT negotiate with `legacy_version` once `supported_versions` is
+   there, and `openssl s_server` takes 0x0301; it is not read*); `0x0304` in `supported_versions`; compression `null` only; `signature_algorithms` including
    `ecdsa_secp256r1_sha256`; no extension twice; `pre_shared_key` last if present (and ignored in version 1, with
    `psk_key_exchange_modes`); `early_data` ignored, so its data is skipped as RFC 8446 §4.2.10 allows for a server that rejects
    it, up to 16 KiB, then refused. Each refusal is an alert and a tag (§5.4).
+
+   *As built, the rules the list left out:* `signature_algorithms`, `supported_groups` and `key_share` all present
+   (`tls-server-missing-extension`, RFC 8446 §9.2); a share of this server's groups at its group's length, at most one a group,
+   and only for a group in `supported_groups`, and one `host_name` in `server_name` (`tls-server-illegal-parameter`, which
+   also takes a compression method other than null and `pre_shared_key` not last); an ALPN list of non-empty names. A share
+   of a group the server does not have (an X25519MLKEM768 hybrid, GREASE) is skipped, as is any extension it does not use. A
+   `server_name` over 255 bytes is kept as none, so the default identity answers it. The rules about what is offered are
+   checked after the whole message is read, in a fixed order: version, compression, a missing extension, a share outside
+   `supported_groups`, suite, signature scheme, group. *The second ClientHello*, after a HelloRetryRequest, must keep the
+   session id, still offer the suite the retry named, send a share of the group it named, and not offer early data
+   (`tls-server-retry-share`; RFC 8446 §4.1.2 lets a server check this). *Records:* one `change_cipher_spec` of `01` is
+   dropped after the first ClientHello and before the client's Finished (Appendix D.4), and any other is
+   `tls-unexpected-message`; a ClientHello, a Finished or a KeyUpdate must end its record (§5.1), checked before the message
+   is handled, so nothing is sent for one that does not; a plaintext alert is read after the server's flight, since a client
+   that refuses the flight before it has the handshake key alerts in the clear. *Early data* is skipped as RFC 8446 §4.2.10
+   says for a server that rejects it: after the flight, every record that does not open under the client's handshake key
+   is dropped until one opens, and before a second ClientHello every `application_data` record is; at most 16 KiB of
+   ciphertext in all, then `tls-server-early-data-size`.
 2. **Choose**: suite, group (or HelloRetryRequest, then back to 1 once), identity by SNI, ALPN.
 3. **ServerHello**, `change_cipher_spec`, then under the handshake keys **EncryptedExtensions** (ALPN, `server_name` empty if it
    was used), **Certificate**, **CertificateVerify** (§3), **Finished**, all in one flight from `take`.
@@ -179,6 +211,33 @@ Each refusal sends the alert RFC 8446 names and has a tag beginning `tls-server-
 `retry-share`, `sigalg`, `alpn`, `client-hello-format`, `client-hello-length`, `extension-repeat`, `early-data-size`,
 `finished`, `sign-check`, `key-type`, `key-format`, `key-mismatch`, `cert-expired`, `identities-full`, and `tls-role`. The
 existing record-layer tags (`tls-record-*`) apply unchanged.
+
+*As built (`packages/tls/record.ls`, `slot.ls`): six more, for refusals the list had no tag for, and the alerts. The
+"record-layer tags" are the client's (`tls-unexpected-message`, `tls-record-overflow`, `tls-bad-record-mac`,
+`tls-decode-error`, `tls-protocol-version`, `tls-key-share`, `tls-too-many-messages`, `tls-alert`, `tls-peer-closed`);
+there is no `tls-record-*`.*
+
+| tag | alert | when |
+|---|---|---|
+| `tls-server-version` | protocol_version (70) | no `supported_versions`, or one without 0x0304, or no extensions at all |
+| `tls-server-suite` | handshake_failure (40) | no TLS 1.3 suite |
+| `tls-server-group` | handshake_failure (40) | no share and no supported group of X25519, P-256 or P-384 |
+| `tls-server-sigalg` | handshake_failure (40) | no `ecdsa_secp256r1_sha256` |
+| `tls-server-retry-share` | illegal_parameter (47) | the second ClientHello changed what it may not, or has no share of the group asked for |
+| `tls-server-extension-repeat` | illegal_parameter (47) | an extension twice |
+| `tls-server-illegal-parameter` | illegal_parameter (47) | *added:* a value RFC 8446 forbids (§5.2 above) |
+| `tls-server-missing-extension` | missing_extension (109) | *added:* no `signature_algorithms`, `supported_groups` or `key_share` |
+| `tls-server-alpn` | no_application_protocol (120) | ALPN offered, none in common |
+| `tls-server-client-hello-format` | decode_error (50) | a ClientHello that does not parse |
+| `tls-server-client-hello-length` | decode_error (50) | a ClientHello over 16 KiB |
+| `tls-server-early-data-size` | unexpected_message (10) | over 16 KiB of early data |
+| `tls-server-finished` | decrypt_error (51) | the client's Finished |
+| `tls-server-sign-check` | internal_error (80) | the signature did not verify before it was sent |
+| `tls-server-key-type`, `-key-format`, `-key-mismatch`, `-cert-expired`, `-identities-full` | none: `add_identity`'s answer | §4 |
+| `tls-server-chain`, `-names` | none: `add_identity`'s answer | *added:* §4, as built |
+| `tls-server-alpn-list` | none: `set_alpn`'s answer | *added:* a name over 255 bytes, or a list over 512 |
+| `tls-server-no-identity` | none: `serve`'s or `replace_identity`'s answer | *added:* no identity added, or none of that number |
+| `tls-role` | none | a call for the other role (§5.1) |
 
 ## 6. Cost
 
@@ -218,7 +277,9 @@ significant; each identity holds its chain (a few KiB) and key in the engine.
   apart, and the name is compared as bytes after lower-casing ASCII, as `packages/x509/names.ls` does for the client.
 - **Parsing.** The ClientHello is now the input every peer controls. It goes to the fuzz harness (`scripts/tls_fuzz.py`) and
   the AFL setup (`scripts/fuzz_afl.py`) with a corpus of real ClientHellos (OpenSSL, Go, curl, Firefox, Chrome, mosquitto),
-  and the gate is no panic and no trap.
+  and the gate is no panic and no trap. *As built (§10.5): `scripts/tls_fuzz.py --server` mutates the lying client's honest
+  connections; AFL++ runs two harnesses, `fuzz_hello` (the parser) and `fuzz_server` (the engine from `serve`), from the
+  ClientHellos of OpenSSL, curl, Go, wolfSSL, mosquitto and Chromium. Firefox's is not in it: no Firefox could be run here.*
 
 ## 8. Steps, each its own PR with its gates
 
