@@ -1,0 +1,525 @@
+edition 6;
+module https_loop;
+
+// `https_hello`'s loop: `tls_echo`'s (`examples/tls_echo/echo.cho`) with the echo taken
+// out and `packages/http-server` put in its place, fed bytes (`docs/http-server.md` §11).
+// One thread, one `Poller`, every connection in a slot of `std.conns` and the same slot of
+// the TLS engine. The bounds, the log, the reload and the stop are `tls_front`'s, and are
+// `docs/tls-server.md` §7's, unchanged; what this file adds is what happens to the
+// plaintext of an established connection:
+//
+//     socket -> tls.feed -> tls.recv -> rcv -> server.input
+//     server.output -> app -> tls.send -> tls.take -> socket
+//
+// and who is waited on. The server never sees a socket, the engine never sees a request,
+// and the application (`app.cho`) never sees either: it answers what `server.next` gives.
+//
+// **Back-pressure** has one rule here and it is the same one at every stage: a stage reads
+// only when the stage after it has emptied. The socket is read when the engine has room
+// for ciphertext; the engine's plaintext is received only as far as `server.room` allows,
+// which is nothing while the connection has answers waiting to be taken; answers are taken
+// only when `tls.send` took the last piece. A client that does not read its answers
+// therefore stops the server reading its requests, and the most it can make the server hold
+// is the engine's slot, this slot's four 16 KiB buffers and the server's input and output
+// buffers: about 150 KiB, whatever it does. A request whose answer is not ready (`hold`)
+// with a full input buffer is not read from either: its socket is not watched at all until
+// the loop has answered it (`want` 0 below), because a watched socket with unread bytes
+// would wake the poller on every turn.
+//
+// **Time** is the loop's: it reads the clock once per turn and gives it to the server in
+// every call that moves a byte or asks it to look at the connections (`server.ready`). The
+// server's idle limit is the loop's own plus two seconds, so the loop's sweep, which also
+// moves the connection through close_notify, is the one that normally acts.
+
+import std.buffer;
+import std.conns;
+import std.io;
+import std.route;
+import std.signals as sg;
+import hello_app;
+import http.server;
+import tls_front as front;
+import tls;
+
+// The plaintext received and not yet given to the server, per slot.
+fn rcv_cap() -> [] int {
+    return 16384;
+}
+
+// What `http.server` is opened with: each request, head and body, may be 16 KiB, and each
+// connection may have 64 KiB of answer waiting.
+fn request_cap() -> [] int {
+    return 16384;
+}
+
+fn answer_cap() -> [] int {
+    return 65536;
+}
+
+// How many requests one turn answers per round, and how many rounds: past that the loop
+// goes back to the poller (with no wait if work is left) so one busy client does not
+// starve the rest.
+fn per_round() -> [] int {
+    return 64;
+}
+
+fn rounds() -> [] int {
+    return 16;
+}
+
+// Ends the connection in `slot`: the HTTP connection it was attached to is detached (what it
+// had held is forgotten), then it is logged, its keys are forgotten and the socket is
+// closed (`tls_front.end_slot`).
+fn drop_slot[&i, &e, &t, &s, &v, &a](io: &!i Io, engine: &!e tls.Engine, tab: &!t conns.Table, st: &!s [int], srv: &!v server.Server, ap: &!a [int], slot: int, reason: int, now: int) -> [io_write] int {
+    let h = st[slot * front.stride() + front.s_hslot()] - 1;
+    if h >= 0 {
+        server.detach(srv, h);
+        hello_app.unlink(ap, h);
+    }
+    return front.end_slot(io, engine, tab, st, slot, reason, now);
+}
+
+// Everything that can be done for the connection in `slot` now, without waiting: write,
+// answer, feed, read, until none of them moves (`tls_echo`'s `pump`, with the HTTP server
+// where the echo was). Answers 1 if the connection ended.
+fn pump[&i, &e, &t, &p, &s, &q, &n, &a, &r, &v, &x](io: &!i Io, engine: &!e tls.Engine, tab: &!t conns.Table, poller: &!p Poller, st: &!s [int], pend: &!q [byte], inq: &!n [byte], app: &!a [byte], rcv: &!r [byte], srv: &!v server.Server, ap: &!x [int], slot: int, now: int) -> [conn_read, conn_write, poll, io_write] int {
+    let b = slot * front.stride();
+    let ib = slot * front.inq_cap();
+    let ab = slot * front.app_cap();
+    let rb = slot * rcv_cap();
+    var going = true;
+    var blocked = false;
+    while going {
+        going = false;
+        let w = front.flush_slot(engine, tab, st, pend, slot);
+        if w < 0 {
+            return drop_slot(io, engine, tab, st, srv, ap, slot, front.r_socket(), now);
+        }
+        blocked = w == 1;
+        if !blocked {
+            let ev = tls.event(engine, slot);
+            if ev == tls.event_failed() {
+                return drop_slot(io, engine, tab, st, srv, ap, slot, tls.failure(engine, slot), now);
+            }
+            if ev == tls.event_closed() && st[b + front.s_phase()] == front.phase_closing() {
+                return drop_slot(io, engine, tab, st, srv, ap, slot, st[b + front.s_reason()], now);
+            }
+            if ev == tls.event_closed() && st[b + front.s_phase()] == front.phase_handshake() {
+                tls.finish(engine, slot);
+                st[b + front.s_phase()] = front.phase_closing();
+                st[b + front.s_since()] = now;
+                going = true;
+            }
+            if ev == tls.event_established() && st[b + front.s_phase()] == front.phase_handshake() {
+                front.log_established(io, engine, st, slot, now);
+                st[b + front.s_phase()] = front.phase_established();
+                st[b + front.s_active()] = now;
+                // The server has as many connections as the engine has slots, so this
+                // cannot be refused; if it ever is, the connection ends rather than waits.
+                let h = server.attach(srv, now);
+                if h < 0 {
+                    return drop_slot(io, engine, tab, st, srv, ap, slot, front.r_socket(), now);
+                }
+                st[b + front.s_hslot()] = h + 1;
+                hello_app.link(ap, h, slot);
+            }
+        }
+        if !blocked && st[b + front.s_phase()] == front.phase_established() {
+            let h = st[b + front.s_hslot()] - 1;
+            // Answers out: what the server has waiting goes to the engine, a piece at a time.
+            if st[b + front.s_as()] < st[b + front.s_ae()] {
+                let k = tls.send(engine, slot, app[ab + st[b + front.s_as()]..ab + st[b + front.s_ae()]]);
+                if k > 0 {
+                    st[b + front.s_as()] = st[b + front.s_as()] + k;
+                    st[b + front.s_active()] = now;
+                    going = true;
+                } else if k < 0 {
+                    return drop_slot(io, engine, tab, st, srv, ap, slot, k, now);
+                }
+            }
+            if st[b + front.s_as()] == st[b + front.s_ae()] {
+                st[b + front.s_as()] = 0;
+                st[b + front.s_ae()] = 0;
+                let n = server.output(srv, h, app[ab..ab + front.app_cap()], now);
+                if n > 0 {
+                    st[b + front.s_ae()] = n;
+                    going = true;
+                } else if server.closing(srv, h) {
+                    // The server is done with it (`Connection: close`, a refusal, the
+                    // peer's end and everything answered) and all it had has gone to the
+                    // engine: close_notify, and the connection is over once it is written.
+                    tls.finish(engine, slot);
+                    st[b + front.s_phase()] = front.phase_closing();
+                    st[b + front.s_since()] = now;
+                    going = true;
+                }
+            }
+            // Requests in: what was received goes to the server as far as it has room, and
+            // more is received only as far as it has room.
+            if st[b + front.s_phase()] == front.phase_established() {
+                if st[b + front.s_rs()] < st[b + front.s_re()] {
+                    let n = server.input(srv, h, rcv[rb + st[b + front.s_rs()]..rb + st[b + front.s_re()]], now);
+                    if n > 0 {
+                        st[b + front.s_rs()] = st[b + front.s_rs()] + n;
+                        going = true;
+                        // `server.next` has to see it, and what it makes of it -- an answer, a
+                        // refusal, the end of a connection -- has to come back through here.
+                        hello_app.touch(ap, h);
+                    }
+                }
+                if st[b + front.s_rs()] == st[b + front.s_re()] {
+                    st[b + front.s_rs()] = 0;
+                    st[b + front.s_re()] = 0;
+                    var room = server.room(srv, h);
+                    if room > rcv_cap() {
+                        room = rcv_cap();
+                    }
+                    if room > 0 && st[b + front.s_peer_closed()] == 0 {
+                        let got = tls.recv(engine, slot, rcv[rb..rb + room]);
+                        if got > 0 {
+                            st[b + front.s_re()] = got;
+                            st[b + front.s_in()] = st[b + front.s_in()] + got;
+                            st[b + front.s_active()] = now;
+                            going = true;
+                        } else if got == 0 {
+                            // The peer's close_notify: what it sent is still answered
+                            // (`end_input`), and the connection ends when that has gone.
+                            st[b + front.s_peer_closed()] = 1;
+                            server.end_input(srv, h);
+                            hello_app.touch(ap, h);
+                            going = true;
+                        } else if got != tls.would_block() {
+                            return drop_slot(io, engine, tab, st, srv, ap, slot, got, now);
+                        }
+                    }
+                }
+            }
+        }
+        if !blocked && st[b + front.s_is()] < st[b + front.s_ie()] {
+            let c = tls.feed(engine, slot, inq[ib + st[b + front.s_is()]..ib + st[b + front.s_ie()]]);
+            if c > 0 {
+                st[b + front.s_is()] = st[b + front.s_is()] + c;
+                going = true;
+            } else if c < 0 {
+                // Failed: its alert, if any, is written on the next turn.
+                st[b + front.s_is()] = st[b + front.s_ie()];
+                going = true;
+            }
+        }
+        if st[b + front.s_is()] == st[b + front.s_ie()] {
+            st[b + front.s_is()] = 0;
+            st[b + front.s_ie()] = 0;
+        }
+        // The socket is read only once nothing else moved this turn, so what the last
+        // bytes did is seen before an end of file that came with them, and only when the
+        // plaintext side has emptied and the server could take a request.
+        var plaintext_free = true;
+        if st[b + front.s_phase()] == front.phase_established() {
+            plaintext_free = st[b + front.s_re()] == 0 && (server.room(srv, st[b + front.s_hslot()] - 1) > 0 || st[b + front.s_peer_closed()] == 1);
+        }
+        let idle_buffers = st[b + front.s_ie()] == 0 && st[b + front.s_ae()] == 0 && st[b + front.s_ps()] == st[b + front.s_pe()];
+        if !going && !blocked && idle_buffers && plaintext_free && st[b + front.s_eof()] == 0 && st[b + front.s_phase()] != front.phase_closing() {
+            match conns.read(tab, slot, inq[ib..ib + front.inq_cap()]) {
+                Received::Data(k) => {
+                    st[b + front.s_ie()] = k;
+                    st[b + front.s_active()] = now;
+                    going = true;
+                }
+                Received::End => {
+                    st[b + front.s_eof()] = 1;
+                    tls.eof(engine, slot);
+                    going = true;
+                }
+                Received::Again => {
+                }
+                Received::Failed(e) => {
+                    return drop_slot(io, engine, tab, st, srv, ap, slot, front.r_socket(), now);
+                }
+            }
+        }
+    }
+    // What to be woken for: room to write if the socket is full; nothing if the only thing
+    // that could be read has nowhere to go (the server will not take a byte until the loop
+    // has answered or its output has gone: the loop pumps the slot when it does); input
+    // otherwise.
+    var want = 1;
+    if blocked {
+        want = 2;
+    } else if st[b + front.s_phase()] == front.phase_established() && st[b + front.s_re()] != 0 {
+        want = 0;
+    } else if st[b + front.s_phase()] == front.phase_established() && st[b + front.s_peer_closed()] == 0 && server.room(srv, st[b + front.s_hslot()] - 1) == 0 {
+        want = 0;
+    }
+    if want != st[b + front.s_watch()] {
+        conns.rewatch(tab, poller, slot, slot + 1, want);
+        st[b + front.s_watch()] = want;
+    }
+    return 0;
+}
+
+// Sends close_notify on an established connection, for `reason`.
+fn close_with[&i, &e, &t, &p, &s, &q, &n, &a, &r, &v, &x](io: &!i Io, engine: &!e tls.Engine, tab: &!t conns.Table, poller: &!p Poller, st: &!s [int], pend: &!q [byte], inq: &!n [byte], app: &!a [byte], rcv: &!r [byte], srv: &!v server.Server, ap: &!x [int], slot: int, reason: int, now: int) -> [conn_read, conn_write, poll, io_write] int {
+    let b = slot * front.stride();
+    tls.finish(engine, slot);
+    st[b + front.s_phase()] = front.phase_closing();
+    st[b + front.s_since()] = now;
+    st[b + front.s_reason()] = reason;
+    return pump(io, engine, tab, poller, st, pend, inq, app, rcv, srv, ap, slot, now);
+}
+
+fn sweep[&i, &e, &t, &p, &s, &q, &n, &a, &r, &v, &x, &c](io: &!i Io, engine: &!e tls.Engine, tab: &!t conns.Table, poller: &!p Poller, st: &!s [int], pend: &!q [byte], inq: &!n [byte], app: &!a [byte], rcv: &!r [byte], srv: &!v server.Server, ap: &!x [int], cfg: &c [int], now: int) -> [conn_read, conn_write, poll, io_write] int {
+    var slot = 0;
+    while slot < cfg[front.c_conns()] {
+        let b = slot * front.stride();
+        let phase = st[b + front.s_phase()];
+        let held = now - st[b + front.s_since()];
+        if phase == front.phase_queued() && held > cfg[front.c_hs_timeout()] {
+            front.end_slot(io, engine, tab, st, slot, front.r_queue_timeout(), now);
+        } else if phase == front.phase_handshake() && held > cfg[front.c_hs_timeout()] {
+            front.end_slot(io, engine, tab, st, slot, front.r_handshake_timeout(), now);
+        } else if phase == front.phase_established() && now - st[b + front.s_active()] > cfg[front.c_idle()] {
+            close_with(io, engine, tab, poller, st, pend, inq, app, rcv, srv, ap, slot, front.r_idle(), now);
+        } else if phase == front.phase_established() && server.closing(srv, st[b + front.s_hslot()] - 1) {
+            // The server ended it (its own idle limit, an answer it could not hold).
+            close_with(io, engine, tab, poller, st, pend, inq, app, rcv, srv, ap, slot, front.r_idle(), now);
+        } else if phase == front.phase_closing() && held > cfg[front.c_hs_timeout()] {
+            // Our close_notify was never taken: the peer is not reading.
+            drop_slot(io, engine, tab, st, srv, ap, slot, st[b + front.s_reason()], now);
+        }
+        slot = slot + 1;
+    }
+    return 0;
+}
+
+// A stop: queued and handshaking connections are closed, established ones are sent
+// close_notify.
+fn stop_all[&i, &e, &t, &p, &s, &q, &n, &a, &r, &v, &x, &c](io: &!i Io, engine: &!e tls.Engine, tab: &!t conns.Table, poller: &!p Poller, st: &!s [int], pend: &!q [byte], inq: &!n [byte], app: &!a [byte], rcv: &!r [byte], srv: &!v server.Server, ap: &!x [int], cfg: &c [int], now: int) -> [conn_read, conn_write, poll, io_write] int {
+    var slot = 0;
+    while slot < cfg[front.c_conns()] {
+        let phase = st[slot * front.stride() + front.s_phase()];
+        if phase == front.phase_queued() || phase == front.phase_handshake() {
+            front.end_slot(io, engine, tab, st, slot, front.r_shutdown(), now);
+        } else if phase == front.phase_established() {
+            close_with(io, engine, tab, poller, st, pend, inq, app, rcv, srv, ap, slot, front.r_shutdown(), now);
+        }
+        slot = slot + 1;
+    }
+    return 0;
+}
+
+// Moves the bytes of every connection the application answered, fed or was told about
+// (input that arrived, a peer's end) to and from its TLS slot. Answers how many it moved.
+fn flush_touched[&i, &e, &t, &p, &s, &q, &n, &a, &r, &v, &x](io: &!i Io, engine: &!e tls.Engine, tab: &!t conns.Table, poller: &!p Poller, st: &!s [int], pend: &!q [byte], inq: &!n [byte], app: &!a [byte], rcv: &!r [byte], srv: &!v server.Server, ap: &!x [int], max: int, now: int) -> [conn_read, conn_write, poll, io_write] int {
+    var hs = 0;
+    var moved = 0;
+    while hello_app.touched(ap) > 0 && hs < max {
+        if hello_app.take_touched(ap, hs) {
+            let slot = hello_app.slot_of(ap, hs);
+            if slot >= 0 {
+                pump(io, engine, tab, poller, st, pend, inq, app, rcv, srv, ap, slot, now);
+                moved = moved + 1;
+            }
+        }
+        hs = hs + 1;
+    }
+    return moved;
+}
+
+// Serves until stopped. `subs`/`sublens` name each identity's subdirectory beneath `dir`,
+// for a reload. 0, 4 if there is no poller, or 8 if the HTTP server could not be opened.
+pub fn run[&h, &i, &l, &k, &e, &d, &w, &u, &n, &c](heap: &!h Heap, io: &!i Io, listener: &!l Listener, clock: &k Clock, engine: &!e tls.Engine, dir: &d Dir, watch: &!w SignalWatch, subs: &u [byte], sublens: &n [int], cfg: &c [int]) -> [heap, conn_accept, conn_read, conn_write, poll, clock, signals_read, dir_read, file_read, io_write] int {
+    let max = cfg[front.c_conns()];
+    let sig_token = max + 1;
+    match poller_new() {
+        Polling::Failed(e) => {
+            return 4;
+        }
+        Polling::Ok(pl) => {
+            match server.open_bytes(heap, request_cap(), answer_cap(), cfg[front.c_idle()] / 1000 + 2, max) {
+                server.Opening::Failed(e) => {
+                    poller_close(pl);
+                    return 8;
+                }
+                server.Opening::Ok(hs) => {
+                    var poll = pl;
+                    var srv = hs;
+                    borrow mut poll as &!pw in {
+                        poller_add_listener(pw, listener, 0);
+                        poller_add_signals(pw, watch, sig_token);
+                    }
+                    var table = conns.empty(heap, max);
+                    let router = hello_app.routes(heap);
+                    let stb = box_slice(heap, front.stride() * max, 0);
+                    let glb = box_slice(heap, front.gl_len(), 0);
+                    let qb = box_slice(heap, max, 0);
+                    let apb = box_slice(heap, hello_app.table_len(max), 0);
+                    var most = 0;
+                    borrow router as &mr in {
+                        most = route.most_params(mr);
+                    }
+                    let prb = box_slice(heap, 2 * most + 2, 0);
+                    let bgb = box_slice(heap, 1, 0);
+                    let pendb = box_slice(heap, front.pend_cap() * max, byte_of(0));
+                    let inqb = box_slice(heap, front.inq_cap() * max, byte_of(0));
+                    let appb = box_slice(heap, front.app_cap() * max, byte_of(0));
+                    var scratch = buffer.empty(heap, 512);
+                    let rcvb = box_slice(heap, rcv_cap() * max, byte_of(0));
+                    let chb = box_slice(heap, 16384, byte_of(0));
+                    let evb = box_slice(heap, 2 * max + 8, 0);
+                    borrow mut stb as &!sw in {
+                        borrow mut glb as &!gw in {
+                            borrow mut qb as &!qw in {
+                                borrow mut apb as &!xw in {
+                                    borrow mut prb as &!rw in {
+                                        borrow mut bgb as &!bw in {
+                                            borrow mut pendb as &!pdw in {
+                                                borrow mut inqb as &!iw in {
+                                                    borrow mut appb as &!aw in {
+                                                        borrow mut rcvb as &!vw in {
+                                                            borrow mut chb as &!cw in {
+                                                                borrow mut evb as &!ew in {
+                                                                    borrow router as &rt in {
+                                                                        let st = contents(sw);
+                                                                        let gl = contents(gw);
+                                                                        let queue = contents(qw);
+                                                                        let ap = contents(xw);
+                                                                        let events = contents(ew);
+                                                                        hello_app.table_init(ap, max);
+                                                                        var now = clock_ms(clock);
+                                                                        gl[front.g_window()] = now;
+                                                                        gl[front.g_last_sweep()] = now;
+                                                                        gl[front.g_next_id()] = 1;
+                                                                        var running = true;
+                                                                        var busy = false;
+                                                                        while running {
+                                                                            var wait = front.timeout_of(gl, cfg, now);
+                                                                            if busy {
+                                                                                wait = 0;
+                                                                            }
+                                                                            var ready = 0;
+                                                                            borrow mut poll as &!pw in {
+                                                                                ready = poller_wait(pw, events, wait);
+                                                                            }
+                                                                            now = clock_ms(clock);
+                                                                            let now_unix = clock_unix_ms(clock);
+                                                                            var j = 0;
+                                                                            while j < ready {
+                                                                                let token = events[2 * j];
+                                                                                if token == 0 {
+                                                                                    table = front.accept_all(heap, io, table, listener, st, gl, queue, cfg, now);
+                                                                                } else if token == sig_token {
+                                                                                    let mask = signals_pending(watch);
+                                                                                    if sg.has(mask, sg.sighup()) {
+                                                                                        front.reload(heap, io, dir, engine, subs, sublens, cfg[front.c_identities()], now_unix);
+                                                                                    }
+                                                                                    if sg.any(mask, sg.stop_signals()) && gl[front.g_stopping()] == 0 {
+                                                                                        gl[front.g_stopping()] = 1;
+                                                                                        gl[front.g_stop_at()] = now;
+                                                                                        io.write_all(io, "stopping\n");
+                                                                                        front.flush(io);
+                                                                                        borrow mut table as &!tw in {
+                                                                                            borrow mut poll as &!pw in {
+                                                                                                borrow mut srv as &!sv in {
+                                                                                                    stop_all(io, engine, tw, pw, st, contents(pdw), contents(iw), contents(aw), contents(vw), sv, ap, cfg, now);
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                    }
+                                                                                } else {
+                                                                                    let slot = token - 1;
+                                                                                    if slot >= 0 && slot < max && st[slot * front.stride() + front.s_phase()] >= front.phase_handshake() {
+                                                                                        borrow mut table as &!tw in {
+                                                                                            borrow mut poll as &!pw in {
+                                                                                                borrow mut srv as &!sv in {
+                                                                                                    pump(io, engine, tw, pw, st, contents(pdw), contents(iw), contents(aw), contents(vw), sv, ap, slot, now);
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                                j = j + 1;
+                                                                            }
+                                                                            // The application: answer what the server has in hand,
+                                                                            // give the streams what room there is, move what that
+                                                                            // made to the engine, and go again while it moves.
+                                                                            var round = 0;
+                                                                            var moved = true;
+                                                                            while moved && round < rounds() {
+                                                                                var answered = 0;
+                                                                                var given = 0;
+                                                                                var pumped = 0;
+                                                                                borrow mut srv as &!sv in {
+                                                                                    server.ready(sv, now);
+                                                                                    let (spare, count) = hello_app.handle(heap, sv, rt, contents(rw), scratch, ap, contents(bw), per_round());
+                                                                                    scratch = spare;
+                                                                                    answered = count;
+                                                                                    given = hello_app.feed_streams(sv, ap, contents(cw));
+                                                                                    borrow mut table as &!tw in {
+                                                                                        borrow mut poll as &!pw in {
+                                                                                            pumped = flush_touched(io, engine, tw, pw, st, contents(pdw), contents(iw), contents(aw), contents(vw), sv, ap, max, now);
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                                moved = answered > 0 || given > 0 || pumped > 0;
+                                                                                round = round + 1;
+                                                                            }
+                                                                            busy = moved;
+                                                                            borrow mut table as &!tw in {
+                                                                                borrow mut poll as &!pw in {
+                                                                                    borrow mut srv as &!sv in {
+                                                                                        if now - gl[front.g_last_sweep()] >= 100 {
+                                                                                            gl[front.g_last_sweep()] = now;
+                                                                                            sweep(io, engine, tw, pw, st, contents(pdw), contents(iw), contents(aw), contents(vw), sv, ap, cfg, now);
+                                                                                        }
+                                                                                    }
+                                                                                    if gl[front.g_stopping()] == 0 {
+                                                                                        front.admit(io, engine, tw, pw, st, gl, queue, cfg, now, now_unix);
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                            if gl[front.g_stopping()] == 1 {
+                                                                                var live = 0;
+                                                                                borrow table as &tt in {
+                                                                                    live = conns.live(tt);
+                                                                                }
+                                                                                if live == 0 || now - gl[front.g_stop_at()] > front.drain_ms() {
+                                                                                    running = false;
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    buffer.drop(heap, scratch);
+                    unbox_slice(heap, stb);
+                    unbox_slice(heap, glb);
+                    unbox_slice(heap, qb);
+                    unbox_slice(heap, apb);
+                    unbox_slice(heap, prb);
+                    unbox_slice(heap, bgb);
+                    unbox_slice(heap, pendb);
+                    unbox_slice(heap, inqb);
+                    unbox_slice(heap, appb);
+                    unbox_slice(heap, rcvb);
+                    unbox_slice(heap, chb);
+                    unbox_slice(heap, evb);
+                    route.drop(heap, router);
+                    server.close(heap, srv);
+                    conns.drop(heap, table);
+                    poller_close(poll);
+                    return 0;
+                }
+            }
+        }
+    }
+}

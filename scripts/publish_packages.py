@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish `packages/x509` and `packages/tls` as `.cancho-vcs` stores (docs/tls-hooks.md §3).
+"""Publish `packages/x509`, `packages/tls` and `packages/http-server` as `.cancho-vcs` stores (docs/tls-hooks.md §3).
 
     python3 scripts/publish_packages.py            # rebuild the committed stores
     python3 scripts/publish_packages.py --check    # fail if they are not what a fresh publish gives
@@ -14,6 +14,10 @@ requirements as paths relative to itself, so the layout above is part of the res
 store with the committed one. Publishing is deterministic (`docs/package-system.md` §7.4), so any difference is a
 source that changed without its store.
 
+`packages/http-server` is one module in one file and its store is `packages/http-server/.cancho-vcs` itself (the
+layout `examples/api/server.lock` and the locks of `tests/programs` pin), so it is published, and checked, on its
+own (`docs/http-server.md` §11.7).
+
 The compiler is `target/release/cancho`, or `CANCHO`.
 """
 import filecmp
@@ -26,6 +30,7 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PACKAGES = ["x509", "tls"]
+FLAT = ["http-server"]
 STORE = ".cancho-vcs"
 
 
@@ -99,6 +104,20 @@ def publish(tree):
             print(f"{pkg}/{m}: {r.stdout.count('published ')} declarations")
 
 
+def publish_flat(tree):
+    """Each of `FLAT`: its one `.cho` published, with `--std`, into the package's own store."""
+    exe = compiler()
+    for pkg in FLAT:
+        d = os.path.join(tree, "packages", pkg)
+        shutil.rmtree(os.path.join(d, STORE), ignore_errors=True)
+        sources = [os.path.join(d, n) for n in sorted(os.listdir(d)) if n.endswith(".cho")]
+        r = subprocess.run([exe, "vcs", "publish", "--store", os.path.join(d, STORE), "--std"] + sources,
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        if r.returncode != 0:
+            raise SystemExit(f"publishing {pkg} failed:\n{r.stdout}")
+        print(f"{pkg}: {r.stdout.count('published ')} declarations")
+
+
 def differences(a, b):
     """Paths (relative) that differ between two trees, or are in one only."""
     out = []
@@ -113,14 +132,19 @@ def differences(a, b):
 def main():
     if "--check" not in sys.argv[1:]:
         publish(ROOT)
+        publish_flat(ROOT)
         return
     with tempfile.TemporaryDirectory() as scratch:
         for pkg in PACKAGES:
             shutil.copytree(os.path.join(ROOT, "packages", pkg), os.path.join(scratch, "packages", pkg),
                             ignore=shutil.ignore_patterns(STORE))
+        for pkg in FLAT:
+            shutil.copytree(os.path.join(ROOT, "packages", pkg), os.path.join(scratch, "packages", pkg),
+                            ignore=shutil.ignore_patterns(STORE))
         publish(scratch)
+        publish_flat(scratch)
         bad = []
-        for pkg in PACKAGES:
+        for pkg in PACKAGES + FLAT:
             committed = os.path.join(ROOT, "packages", pkg, STORE)
             fresh = os.path.join(scratch, "packages", pkg, STORE)
             if not os.path.isdir(committed):
