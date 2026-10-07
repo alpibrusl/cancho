@@ -1,0 +1,26 @@
+//~ ERROR performs `fs_read("/tmpevil")`, which its row
+//~ RULE effect-not-declared
+
+// `docs/filesystem.md` §1.1, in the row rather than in `narrow`: owning an
+// `Fs("/tmp")` discharges what lies *inside* `/tmp`, and `/tmpevil` is the
+// directory next door. `Label::covers` compared the two by byte prefix, so
+// `owner` below declared `[]` for a body that reads `/tmpevil` and was
+// accepted -- an inexact row (§7.3). It is refused on `owner`'s row now.
+// (`docs/narrowing-into-several.md` §6.)
+//
+// No `main` can hand `owner` two unrelated `Fs` capabilities today, since
+// `narrow` consumes; the check is on the function, whoever calls it.
+
+fn evil[&e, &o](x: &e Fs("/tmpevil"), out: &!o [byte]) -> [fs_read("/tmpevil")] int {
+    return fs_read(x, "/tmpevil/a", out);
+}
+
+fn owner[&e, &o](mine: Fs("/tmp"), x: &e Fs("/tmpevil"), out: &!o [byte]) -> [] int {
+    release(mine);
+    return evil(x, out);
+}
+
+fn main(world: World) -> [] int {
+    release(world);
+    return 0;
+}

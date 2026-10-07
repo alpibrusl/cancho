@@ -1,0 +1,1273 @@
+import std.buffer;
+import std.bytes;
+import std.http;
+import std.test;
+import http.server;
+
+// `http.server`'s byte-fed mode (`docs/http-server.md` §11): a server with no sockets, fed
+// by the test, which is what a TLS terminator in front of it does. Run with the package's
+// own source beside this file (`cancho test --std packages/http-server/server.cho <this>`,
+// `conformance/http_server_bytes.rs`).
+
+// Answers every request in hand with `<method> <path> <body length>:<body>` as text/plain,
+// keep-alive following the request. How many it answered.
+fn serve_all[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_write, poll] int {
+    var answered = 0;
+    var out = buffer.empty(heap, 256);
+    while server.next(heap, srv) >= 0 {
+        var text = buffer.empty(heap, 64);
+        let head = server.head(srv);
+        let table = server.parsed(srv);
+        text = buffer.append(heap, text, http.method(head, table));
+        text = buffer.append(heap, text, " ");
+        text = buffer.append(heap, text, http.path(head, table));
+        text = buffer.append(heap, text, " ");
+        text = buffer.push_nat(heap, text, len(server.body(srv)));
+        text = buffer.append(heap, text, ":");
+        text = buffer.append(heap, text, server.body(srv));
+        borrow text as &tb in {
+            out = server.reply_as(heap, out, 200, "text/plain", buffer.bytes(tb), http.keeps_alive(table), "");
+        }
+        buffer.drop(heap, text);
+        borrow out as &ob in {
+            server.respond(srv, buffer.bytes(ob));
+        }
+        borrow mut out as &!ow in {
+            buffer.clear(ow);
+        }
+        answered = answered + 1;
+    }
+    buffer.drop(heap, out);
+    return answered;
+}
+
+// Everything connection `k` has waiting, taken 7 bytes at a time (so `output` is shown to
+// compact what it leaves).
+fn take_all[&h, &s](heap: &!h Heap, srv: &!s server.Server, k: int, now_ms: int) -> [heap] buffer.Buffer {
+    var got = buffer.empty(heap, 64);
+    region r {
+        let piece = alloc_slice[r](7, byte_of(0));
+        var n = server.output(srv, k, piece, now_ms);
+        while n > 0 {
+            got = buffer.append(heap, got, piece[0..n]);
+            n = server.output(srv, k, piece, now_ms);
+        }
+    }
+    return got;
+}
+
+// `text` into `k`, `step` bytes at a time, running the application after each piece. The
+// number of requests answered.
+fn feed[&h, &s, &t](heap: &!h Heap, srv: &!s server.Server, k: int, text: &t [byte], step: int, now_ms: int) -> [heap, conn_write, poll] int {
+    var answered = 0;
+    var at = 0;
+    while at < len(text) {
+        var to = at + step;
+        if to > len(text) {
+            to = len(text);
+        }
+        let took = server.input(srv, k, text[at..to], now_ms);
+        test.assert_eq(took, to - at);
+        at = to;
+        server.ready(srv, now_ms);
+        answered = answered + serve_all(heap, srv);
+    }
+    return answered;
+}
+
+// What `reply_as` makes of a text/plain answer: what the application above sends.
+fn reply_of[&h, &b](heap: &!h Heap, body: &b [byte], keep: bool) -> [heap] buffer.Buffer {
+    return server.reply_as(heap, buffer.empty(heap, 128), 200, "text/plain", body, keep, "");
+}
+
+// `got` is exactly the answer `reply_of` makes for `body`.
+fn assert_answer[&h, &b](heap: &!h Heap, got: buffer.Buffer, body: &b [byte], keep: bool) -> [heap] int {
+    let want = reply_of(heap, body, keep);
+    borrow got as &g in {
+        borrow want as &w in {
+            test.assert(bytes.equal(buffer.bytes(g), buffer.bytes(w)));
+        }
+    }
+    buffer.drop(heap, got);
+    buffer.drop(heap, want);
+    return 0;
+}
+
+// `got` starts with `prefix` and has `needle` somewhere in it.
+fn assert_refusal[&h, &p, &n](heap: &!h Heap, got: buffer.Buffer, prefix: &p [byte], needle: &n [byte]) -> [heap] int {
+    borrow got as &g in {
+        test.assert(bytes.starts_with(buffer.bytes(g), prefix));
+        test.assert(bytes.find(buffer.bytes(g), needle) >= 0);
+        test.assert(bytes.find(buffer.bytes(g), "Connection: close") >= 0);
+    }
+    buffer.drop(heap, got);
+    return 0;
+}
+
+// The application's loop until nothing more moves: answer what is in hand, take what was
+// answered. Everything that came out.
+fn pump_all[&h, &s](heap: &!h Heap, srv: &!s server.Server, k: int, now_ms: int) -> [heap, conn_write, poll] buffer.Buffer {
+    var all = buffer.empty(heap, 64);
+    var moving = true;
+    while moving {
+        server.ready(srv, now_ms);
+        let n = serve_all(heap, srv);
+        let got = take_all(heap, srv, k, now_ms);
+        var taken = 0;
+        borrow got as &gb in {
+            taken = len(buffer.bytes(gb));
+            all = buffer.append(heap, all, buffer.bytes(gb));
+        }
+        buffer.drop(heap, got);
+        moving = n > 0 || taken > 0;
+    }
+    return all;
+}
+
+// ---------------------------------------------------------------------
+// Framing
+// ---------------------------------------------------------------------
+
+fn framing[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_write, poll] int {
+    let k = server.attach(srv, 0);
+    test.assert_eq(k, 0);
+    // A request with no body, whole.
+    test.assert_eq(feed(heap, srv, k, "GET /a HTTP/1.1\r\nHost: t\r\n\r\n", 1000, 0), 1);
+    assert_answer(heap, take_all(heap, srv, k, 0), "GET /a 0:", true);
+    // A Content-Length body.
+    test.assert_eq(feed(heap, srv, k, "POST /p HTTP/1.1\r\nHost: t\r\nContent-Length: 5\r\n\r\nhello", 1000, 0), 1);
+    assert_answer(heap, take_all(heap, srv, k, 0), "POST /p 5:hello", true);
+    // A chunked one, decoded: the application cannot tell.
+    test.assert_eq(feed(heap, srv, k, "POST /c HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n", 1000, 0), 1);
+    assert_answer(heap, take_all(heap, srv, k, 0), "POST /c 11:hello world", true);
+    // A body that has not all come is waited for, not answered short.
+    test.assert_eq(feed(heap, srv, k, "POST /w HTTP/1.1\r\nHost: t\r\nContent-Length: 10\r\n\r\n01234", 1000, 0), 0);
+    test.assert_eq(pending_of(srv, k), 0);
+    test.assert_eq(feed(heap, srv, k, "56789", 1000, 0), 1);
+    assert_answer(heap, take_all(heap, srv, k, 0), "POST /w 10:0123456789", true);
+    // `Connection: close` is answered as such and ends the connection once it is sent.
+    test.assert_eq(feed(heap, srv, k, "GET /z HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n", 1000, 0), 1);
+    test.assert(!server.closing(srv, k));
+    assert_answer(heap, take_all(heap, srv, k, 0), "GET /z 0:", false);
+    test.assert(server.closing(srv, k));
+    test.assert_eq(server.input(srv, k, "GET / HTTP/1.1\r\n\r\n", 0), 0 - 1);
+    test.assert_eq(server.detach(srv, k), 0);
+    test.assert_eq(server.connections(srv), 0);
+    return 0;
+}
+
+fn pending_of[&s](srv: &!s server.Server, k: int) -> [] int {
+    return server.pending(srv, k);
+}
+
+fn test_every_framing_is_answered_on_a_byte_fed_connection[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {
+    match server.open_bytes(heap, 1024, 4096, 30, 4) {
+        server.Opening::Ok(s) => {
+            var srv = s;
+            borrow mut srv as &!sw in {
+                framing(heap, sw);
+            }
+            server.close(heap, srv);
+        }
+        server.Opening::Failed(e) => {
+            test.assert(false);
+        }
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------
+// Pipelining and a request split every way
+// ---------------------------------------------------------------------
+
+fn pipelined[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_write, poll] int {
+    let k = server.attach(srv, 0);
+    // Three requests in one input, a fourth cut short. One is answered, and nothing more is
+    // given out while its answer is waiting to be sent (the same back-pressure a socket
+    // has), so what comes out is the three, in order, as `output` makes room.
+    let text = "GET /1 HTTP/1.1\r\nHost: t\r\n\r\nPOST /2 HTTP/1.1\r\nHost: t\r\nContent-Length: 2\r\n\r\nab";
+    test.assert_eq(server.input(srv, k, text, 0), len(text));
+    let more = "GET /3 HTTP/1.1\r\nHost: t\r\n\r\nGET /4 HTT";
+    test.assert_eq(server.input(srv, k, more, 0), len(more));
+    server.ready(srv, 0);
+    test.assert_eq(serve_all(heap, srv), 1);
+    test.assert(pending_of(srv, k) > 0);
+    test.assert_eq(room_of(srv, k), 0);
+    // No input while an answer waits: the bytes stay with the caller.
+    test.assert_eq(server.input(srv, k, "x", 0), 0);
+    let out = pump_all(heap, srv, k, 0);
+    borrow out as &ob in {
+        let all = buffer.bytes(ob);
+        test.assert(bytes.starts_with(all, "HTTP/1.1 200 OK"));
+        // In the order they were sent, each answer whole before the next begins.
+        let a = bytes.find(all, "GET /1 0:HTTP/1.1 200 OK");
+        let b = bytes.find(all, "POST /2 2:abHTTP/1.1 200 OK");
+        let c = bytes.find(all, "GET /3 0:");
+        test.assert(a > 0 && b > a && c > b);
+        test.assert(bytes.find(all, "GET /4") < 0);
+    }
+    buffer.drop(heap, out);
+    // The fourth completes later, in the one piece the first cut left.
+    let tail = "P/1.1\r\nHost: t\r\n\r\n";
+    test.assert_eq(server.input(srv, k, tail, 0), len(tail));
+    assert_answer(heap, pump_all(heap, srv, k, 0), "GET /4 0:", true);
+    return 0;
+}
+
+fn room_of[&s](srv: &!s server.Server, k: int) -> [] int {
+    return server.room(srv, k);
+}
+
+fn test_pipelined_requests_are_answered_in_order_one_answer_at_a_time[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {
+    match server.open_bytes(heap, 1024, 4096, 30, 4) {
+        server.Opening::Ok(s) => {
+            var srv = s;
+            borrow mut srv as &!sw in {
+                pipelined(heap, sw);
+            }
+            server.close(heap, srv);
+        }
+        server.Opening::Failed(e) => {
+            test.assert(false);
+        }
+    }
+    return 0;
+}
+
+// One byte at a time, a request is answered once, after its last byte and not before, for
+// every way a request can be framed.
+fn byte_by_byte[&h, &s, &t](heap: &!h Heap, srv: &!s server.Server, k: int, text: &t [byte], body: &t [byte]) -> [heap, conn_write, poll] int {
+    test.assert_eq(feed(heap, srv, k, text[0..len(text) - 1], 1, 0), 0);
+    test.assert_eq(pending_of(srv, k), 0);
+    test.assert_eq(feed(heap, srv, k, text[len(text) - 1..len(text)], 1, 0), 1);
+    assert_answer(heap, take_all(heap, srv, k, 0), body, true);
+    return 0;
+}
+
+fn test_a_request_fed_one_byte_at_a_time_is_answered_once_complete[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {
+    match server.open_bytes(heap, 1024, 4096, 30, 2) {
+        server.Opening::Ok(s) => {
+            var srv = s;
+            borrow mut srv as &!sw in {
+                let k = server.attach(sw, 0);
+                byte_by_byte(heap, sw, k, "GET /bytes?a=1 HTTP/1.1\r\nHost: t\r\nAccept: */*\r\n\r\n", "GET /bytes 0:");
+                byte_by_byte(heap, sw, k, "POST /len HTTP/1.1\r\nHost: t\r\nContent-Length: 4\r\n\r\nabcd", "POST /len 4:abcd");
+                byte_by_byte(heap, sw, k, "POST /chunks HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n", "POST /chunks 5:abcde");
+            }
+            server.close(heap, srv);
+        }
+        server.Opening::Failed(e) => {
+            test.assert(false);
+        }
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------
+// Refusals
+// ---------------------------------------------------------------------
+
+fn refused[&h, &s, &t, &p, &n](heap: &!h Heap, srv: &!s server.Server, text: &t [byte], prefix: &p [byte], needle: &n [byte]) -> [heap, conn_write, poll] int {
+    let k = server.attach(srv, 0);
+    test.assert(k >= 0);
+    let took = server.input(srv, k, text, 0);
+    test.assert(took > 0);
+    server.ready(srv, 0);
+    test.assert_eq(serve_all(heap, srv), 0);
+    test.assert(pending_of(srv, k) > 0);
+    // The refusal is sent, then the connection ends: after a malformed request there is no
+    // saying where the next starts.
+    test.assert(!server.closing(srv, k));
+    assert_refusal(heap, take_all(heap, srv, k, 0), prefix, needle);
+    test.assert(server.closing(srv, k));
+    test.assert_eq(server.input(srv, k, "GET / HTTP/1.1\r\n\r\n", 0), 0 - 1);
+    test.assert_eq(server.detach(srv, k), 0);
+    return 0;
+}
+
+fn test_what_cannot_be_served_is_refused_with_its_status_and_ends_the_connection[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {
+    match server.open_bytes(heap, 128, 4096, 30, 2) {
+        server.Opening::Ok(s) => {
+            var srv = s;
+            borrow mut srv as &!sw in {
+                // A head that fills the buffer and still is not whole.
+                refused(heap, sw, "GET /aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa HTTP/1.1\r\nHost: t\r\n", "HTTP/1.1 431 ", "request head too large");
+                // A body that could never fit.
+                refused(heap, sw, "POST /x HTTP/1.1\r\nHost: t\r\nContent-Length: 1000\r\n\r\n", "HTTP/1.1 413 ", "request too large");
+                // A chunked one that outgrows the buffer.
+                refused(heap, sw, "POST /x HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\n\r\nff\r\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "HTTP/1.1 413 ", "request too large");
+                // Not a request at all, and a header the parser refuses.
+                refused(heap, sw, "NOT A REQUEST\r\n\r\n", "HTTP/1.1 400 ", "error");
+                refused(heap, sw, "GET / HTTP/1.1\r\nBad Header\r\n\r\n", "HTTP/1.1 400 ", "error");
+                // Two lengths that disagree: ambiguous framing is refused, not guessed at.
+                refused(heap, sw, "POST / HTTP/1.1\r\nContent-Length: 3\r\nContent-Length: 4\r\n\r\nabcd", "HTTP/1.1 400 ", "error");
+                // The slots are free again, and a new connection in one is served normally.
+                test.assert_eq(server.connections(sw), 0);
+                let k = server.attach(sw, 0);
+                test.assert_eq(feed(heap, sw, k, "GET /ok HTTP/1.1\r\nHost: t\r\n\r\n", 1000, 0), 1);
+                assert_answer(heap, take_all(heap, sw, k, 0), "GET /ok 0:", true);
+            }
+            server.close(heap, srv);
+        }
+        server.Opening::Failed(e) => {
+            test.assert(false);
+        }
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------
+// A half-close
+// ---------------------------------------------------------------------
+
+fn half_closes[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_write, poll] int {
+    // The peer sends a request, then its end: the request is still answered, and then the
+    // connection ends -- not before its answer has been taken.
+    var k = server.attach(srv, 0);
+    let two = "GET /1 HTTP/1.1\r\nHost: t\r\n\r\nGET /2 HTTP/1.1\r\nHost: t\r\n\r\n";
+    test.assert_eq(server.input(srv, k, two, 0), len(two));
+    test.assert_eq(server.end_input(srv, k), 0);
+    // No more input is taken after the end.
+    test.assert_eq(server.input(srv, k, "GET /3", 0), 0);
+    test.assert_eq(server.room(srv, k), 0);
+    var seen = 0;
+    var all = buffer.empty(heap, 64);
+    var moving = true;
+    while moving {
+        server.ready(srv, 0);
+        seen = seen + serve_all(heap, srv);
+        let got = take_all(heap, srv, k, 0);
+        var taken = 0;
+        borrow got as &gb in {
+            taken = len(buffer.bytes(gb));
+            all = buffer.append(heap, all, buffer.bytes(gb));
+        }
+        buffer.drop(heap, got);
+        moving = taken > 0 || seen < 2;
+        if taken == 0 && seen < 2 {
+            moving = false;
+        }
+    }
+    test.assert_eq(seen, 2);
+    borrow all as &ab in {
+        test.assert(bytes.find(buffer.bytes(ab), "GET /1 0:") > 0);
+        test.assert(bytes.find(buffer.bytes(ab), "GET /2 0:") > 0);
+    }
+    buffer.drop(heap, all);
+    // Everything was answered and sent: the connection has ended.
+    server.ready(srv, 0);
+    serve_all(heap, srv);
+    test.assert(server.closing(srv, k));
+    server.detach(srv, k);
+
+    // An end with nothing sent: it ends at once.
+    k = server.attach(srv, 0);
+    server.end_input(srv, k);
+    server.ready(srv, 0);
+    serve_all(heap, srv);
+    test.assert(server.closing(srv, k));
+    server.detach(srv, k);
+
+    // An end in the middle of a request: nothing is answered, and it ends.
+    k = server.attach(srv, 0);
+    server.input(srv, k, "POST /half HTTP/1.1\r\nHost: t\r\nContent-Length: 10\r\n\r\n01234", 0);
+    server.end_input(srv, k);
+    server.ready(srv, 0);
+    test.assert_eq(serve_all(heap, srv), 0);
+    test.assert(server.closing(srv, k));
+    test.assert_eq(pending_of(srv, k), 0);
+    server.detach(srv, k);
+
+    // An end while an answer is waiting: the connection waits for the answer to be taken.
+    k = server.attach(srv, 0);
+    server.input(srv, k, "GET /last HTTP/1.1\r\nHost: t\r\n\r\n", 0);
+    server.ready(srv, 0);
+    test.assert_eq(serve_all(heap, srv), 1);
+    server.end_input(srv, k);
+    server.ready(srv, 0);
+    serve_all(heap, srv);
+    test.assert(!server.closing(srv, k));
+    test.assert(pending_of(srv, k) > 0);
+    assert_answer(heap, pump_all(heap, srv, k, 0), "GET /last 0:", true);
+    server.ready(srv, 0);
+    serve_all(heap, srv);
+    test.assert(server.closing(srv, k));
+    test.assert_eq(server.detach(srv, k), 0);
+    test.assert_eq(server.connections(srv), 0);
+    return 0;
+}
+
+fn test_a_half_close_answers_what_was_sent_and_then_ends[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {
+    match server.open_bytes(heap, 1024, 4096, 30, 2) {
+        server.Opening::Ok(s) => {
+            var srv = s;
+            borrow mut srv as &!sw in {
+                half_closes(heap, sw);
+            }
+            server.close(heap, srv);
+        }
+        server.Opening::Failed(e) => {
+            test.assert(false);
+        }
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------
+// Back-pressure and the bound on what is buffered
+// ---------------------------------------------------------------------
+
+// An answer of `n` bytes of body to the request in hand.
+fn answer_n[&h, &s](heap: &!h Heap, srv: &!s server.Server, n: int) -> [heap, conn_write] int {
+    let body = box_slice(heap, n, byte_of('x'));
+    var sent = 0;
+    borrow body as &bb in {
+        let out = server.reply_as(heap, buffer.empty(heap, 64), 200, "text/plain", contents(bb), true, "");
+        borrow out as &ob in {
+            sent = server.respond(srv, buffer.bytes(ob));
+        }
+        buffer.drop(heap, out);
+    }
+    unbox_slice(heap, body);
+    return sent;
+}
+
+fn backpressure[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_write, poll] int {
+    let k = server.attach(srv, 0);
+    test.assert_eq(server.room(srv, k), 1024);
+    test.assert_eq(server.space(srv, k), 600);
+    // Twenty pipelined requests, a client that takes nothing: what is held is the input
+    // buffer and one answer's worth of output, and no more.
+    var i = 0;
+    var all = buffer.empty(heap, 64);
+    while i < 20 {
+        all = buffer.append(heap, all, "GET /pipelined HTTP/1.1\r\nHost: t\r\n\r\n");
+        i = i + 1;
+    }
+    var took = 0;
+    borrow all as &ab in {
+        took = server.input(srv, k, buffer.bytes(ab), 0);
+    }
+    buffer.drop(heap, all);
+    test.assert(took > 0 && took <= 1024);
+    server.ready(srv, 0);
+    test.assert_eq(serve_all(heap, srv), 1);
+    test.assert(pending_of(srv, k) > 0 && pending_of(srv, k) <= 600);
+    test.assert_eq(pending_of(srv, k) + server.space(srv, k), 600);
+    // While it waits nothing more is read or answered, however often the loop turns.
+    var round = 0;
+    while round < 5 {
+        server.ready(srv, 0);
+        test.assert_eq(serve_all(heap, srv), 0);
+        test.assert_eq(server.input(srv, k, "GET / HTTP/1.1\r\n\r\n", 0), 0);
+        round = round + 1;
+    }
+    // Taking part of it makes progress without freeing the connection...
+    region r {
+        let piece = alloc_slice[r](10, byte_of(0));
+        test.assert_eq(server.output(srv, k, piece, 0), 10);
+        test.assert_eq(server.room(srv, k), 0);
+    }
+    // ...and taking the rest lets the next request be answered.
+    let first = take_all(heap, srv, k, 0);
+    buffer.drop(heap, first);
+    test.assert(server.room(srv, k) >= 0);
+    server.ready(srv, 0);
+    test.assert_eq(serve_all(heap, srv), 1);
+    let rest = pump_all(heap, srv, k, 0);
+    buffer.drop(heap, rest);
+    test.assert_eq(pending_of(srv, k), 0);
+    return 0;
+}
+
+fn test_a_client_that_takes_nothing_holds_one_answer_and_is_not_read[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {
+    match server.open_bytes(heap, 1024, 600, 30, 2) {
+        server.Opening::Ok(s) => {
+            var srv = s;
+            borrow mut srv as &!sw in {
+                backpressure(heap, sw);
+            }
+            server.close(heap, srv);
+        }
+        server.Opening::Failed(e) => {
+            test.assert(false);
+        }
+    }
+    return 0;
+}
+
+fn too_big[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_write, poll] int {
+    let k = server.attach(srv, 0);
+    server.input(srv, k, "GET /big HTTP/1.1\r\nHost: t\r\n\r\n", 0);
+    server.ready(srv, 0);
+    test.assert(server.next(heap, srv) >= 0);
+    // An answer larger than the room for it is refused whole -- nothing is half sent -- and
+    // the connection is abandoned, as a client that does not read is.
+    test.assert_eq(answer_n(heap, srv, 700), 0 - 1);
+    test.assert_eq(server.next(heap, srv), 0 - 1);
+    test.assert(server.closing(srv, k));
+    test.assert_eq(pending_of(srv, k), 0);
+    server.detach(srv, k);
+    // One byte over is refused as well.
+    let i = server.attach(srv, 0);
+    server.input(srv, i, "GET /big HTTP/1.1\r\nHost: t\r\n\r\n", 0);
+    server.ready(srv, 0);
+    test.assert(server.next(heap, srv) >= 0);
+    test.assert_eq(answer_n(heap, srv, 600 - 90 + 1), 0 - 1);
+    test.assert_eq(server.next(heap, srv), 0 - 1);
+    test.assert(server.closing(srv, i));
+    server.detach(srv, i);
+    // One that fits exactly is sent.
+    let j = server.attach(srv, 0);
+    server.input(srv, j, "GET /big HTTP/1.1\r\nHost: t\r\n\r\n", 0);
+    server.ready(srv, 0);
+    test.assert(server.next(heap, srv) >= 0);
+    let head = 600 - 90;
+    test.assert_eq(answer_n(heap, srv, head), 600);
+    test.assert_eq(server.space(srv, j), 600 - pending_of(srv, j));
+    server.detach(srv, j);
+    return 0;
+}
+
+fn test_an_answer_over_the_output_room_is_refused_and_abandons_the_connection[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {
+    match server.open_bytes(heap, 1024, 600, 30, 2) {
+        server.Opening::Ok(s) => {
+            var srv = s;
+            borrow mut srv as &!sw in {
+                too_big(heap, sw);
+            }
+            server.close(heap, srv);
+        }
+        server.Opening::Failed(e) => {
+            test.assert(false);
+        }
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------
+// Time: the caller's clock
+// ---------------------------------------------------------------------
+
+fn timing[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_write, poll] int {
+    // Idle is 30 seconds. The clock is the caller's, in milliseconds, and is only ever read
+    // from the arguments.
+    let a = server.attach(srv, 1000);
+    let b = server.attach(srv, 1000);
+    server.ready(srv, 20000);
+    test.assert(!server.closing(srv, a));
+    // The boundary: 30 seconds after the last progress is not yet more than 30.
+    server.ready(srv, 31000);
+    test.assert(!server.closing(srv, b));
+    // Progress is bytes in or bytes out: `a` is spoken to at 25 s, `b` is not.
+    server.input(srv, a, "GET /alive HTTP/1.1\r\nHost: t\r\n\r\n", 25000);
+    server.ready(srv, 25000);
+    test.assert_eq(serve_all(heap, srv), 1);
+    // `a` has an answer waiting that nobody takes; `b` has nothing at all.
+    server.ready(srv, 32000);
+    test.assert(!server.closing(srv, a));
+    test.assert(server.closing(srv, b));
+    // 55 s is more than 30 after 25: `a` was not taken from either.
+    server.ready(srv, 56000);
+    test.assert(server.closing(srv, a));
+    test.assert_eq(pending_of(srv, a), 0);
+    // The ended ones still count until they are detached, and `detach` frees them.
+    test.assert_eq(server.connections(srv), 2);
+    server.detach(srv, a);
+    server.detach(srv, b);
+    test.assert_eq(server.connections(srv), 0);
+
+    // A connection that takes its answer in time is not idle: every taken byte is progress.
+    let c = server.attach(srv, 100000);
+    server.input(srv, c, "GET /slow HTTP/1.1\r\nHost: t\r\n\r\n", 100000);
+    server.ready(srv, 100000);
+    serve_all(heap, srv);
+    region r {
+        let piece = alloc_slice[r](1, byte_of(0));
+        var now = 100000;
+        var n = 1;
+        while n > 0 {
+            now = now + 20000;
+            server.ready(srv, now);
+            test.assert(!server.closing(srv, c));
+            n = server.output(srv, c, piece, now);
+        }
+    }
+    // The whole answer, a byte every 20 s, was taken without the connection ending.
+    test.assert_eq(pending_of(srv, c), 0);
+    server.detach(srv, c);
+
+    // A byte taken is progress *as of when it was taken*, and no later: 30 s after it, with nothing
+    // since, the connection ends.
+    let d = server.attach(srv, 200000);
+    server.input(srv, d, "GET /last HTTP/1.1\r\nHost: t\r\n\r\n", 200000);
+    server.ready(srv, 200000);
+    serve_all(heap, srv);
+    region q {
+        let one = alloc_slice[q](1, byte_of(0));
+        test.assert_eq(server.output(srv, d, one, 205000), 1);
+    }
+    server.ready(srv, 234000);
+    test.assert(!server.closing(srv, d));
+    server.ready(srv, 236000);
+    test.assert(server.closing(srv, d));
+    return 0;
+}
+
+fn test_idle_is_the_callers_clock_and_progress_is_bytes_in_or_out[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {
+    match server.open_bytes(heap, 1024, 4096, 30, 3) {
+        server.Opening::Ok(s) => {
+            var srv = s;
+            borrow mut srv as &!sw in {
+                timing(heap, sw);
+            }
+            server.close(heap, srv);
+        }
+        server.Opening::Failed(e) => {
+            test.assert(false);
+        }
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------
+// Connections: slots, tickets, queue
+// ---------------------------------------------------------------------
+
+fn slots[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_write, poll] int {
+    test.assert_eq(server.attach(srv, 0), 0);
+    test.assert_eq(server.attach(srv, 0), 1);
+    // Full: no more.
+    test.assert_eq(server.attach(srv, 0), 0 - 1);
+    test.assert_eq(server.connections(srv), 2);
+    // Two connections are two streams: a request half in each is answered to its own.
+    test.assert_eq(server.input(srv, 0, "GET /zero HTTP/1.1\r\nHo", 0), 22);
+    test.assert_eq(server.input(srv, 1, "GET /one HTTP/1.1\r\nHo", 0), 21);
+    server.ready(srv, 0);
+    test.assert_eq(serve_all(heap, srv), 0);
+    test.assert_eq(server.input(srv, 1, "st: t\r\n\r\n", 0), 9);
+    test.assert_eq(server.input(srv, 0, "st: t\r\n\r\n", 0), 9);
+    server.ready(srv, 0);
+    test.assert_eq(serve_all(heap, srv), 2);
+    assert_answer(heap, take_all(heap, srv, 0, 0), "GET /zero 0:", true);
+    assert_answer(heap, take_all(heap, srv, 1, 0), "GET /one 0:", true);
+
+    // Slot 1 freed alone while 0 is held: the next connection takes 1, not the occupied 0.
+    test.assert_eq(server.detach(srv, 1), 0);
+    test.assert_eq(server.attach(srv, 0), 1);
+    // A slot freed is taken again, and holds nothing of the one before.
+    test.assert_eq(server.detach(srv, 0), 0);
+    test.assert_eq(server.detach(srv, 0), 0 - 1);
+    test.assert_eq(server.connections(srv), 1);
+    test.assert_eq(server.input(srv, 0, "x", 0), 0 - 1);
+    test.assert_eq(server.attach(srv, 0), 0);
+    test.assert_eq(server.room(srv, 0), 1024);
+    test.assert_eq(feed(heap, srv, 0, "GET /again HTTP/1.1\r\nHost: t\r\n\r\n", 1000, 0), 1);
+    assert_answer(heap, take_all(heap, srv, 0, 0), "GET /again 0:", true);
+    server.detach(srv, 0);
+    server.detach(srv, 1);
+    return 0;
+}
+
+// A connection detached while its request is in hand: the answer for it goes nowhere (-1), and the
+// one queued behind it is not lost behind the entry that was removed.
+fn detach_in_hand[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_write, poll] int {
+    let a = server.attach(srv, 0);
+    let b = server.attach(srv, 0);
+    server.input(srv, a, "GET /a HTTP/1.1\r\nHost: t\r\n\r\n", 0);
+    server.input(srv, b, "GET /b HTTP/1.1\r\nHost: t\r\n\r\n", 0);
+    server.ready(srv, 0);
+    test.assert_eq(server.next(heap, srv), a);
+    test.assert_eq(server.detach(srv, a), 0);
+    test.assert_eq(server.respond(srv, "x"), 0 - 1);
+    test.assert_eq(server.next(heap, srv), b);
+    test.assert(bytes.equal(http.path(server.head(srv), server.parsed(srv)), "/b"));
+    test.assert(server.respond(srv, "ok") > 0);
+    test.assert_eq(server.next(heap, srv), 0 - 1);
+    return 0;
+}
+
+fn test_detaching_the_connection_in_hand_loses_neither_its_answer_nor_the_next_request[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {
+    match server.open_bytes(heap, 1024, 4096, 30, 2) {
+        server.Opening::Ok(s) => {
+            var srv = s;
+            borrow mut srv as &!sw in {
+                detach_in_hand(heap, sw);
+            }
+            server.close(heap, srv);
+        }
+        server.Opening::Failed(e) => {
+            test.assert(false);
+        }
+    }
+    return 0;
+}
+
+fn test_slots_are_bounded_independent_and_reusable[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {
+    match server.open_bytes(heap, 1024, 4096, 30, 2) {
+        server.Opening::Ok(s) => {
+            var srv = s;
+            borrow mut srv as &!sw in {
+                slots(heap, sw);
+            }
+            server.close(heap, srv);
+        }
+        server.Opening::Failed(e) => {
+            test.assert(false);
+        }
+    }
+    return 0;
+}
+
+fn held[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_write, poll] int {
+    var k = server.attach(srv, 0);
+    let two = "GET /slow HTTP/1.1\r\nHost: t\r\n\r\nGET /next HTTP/1.1\r\nHost: t\r\n\r\n";
+    server.input(srv, k, two, 0);
+    server.ready(srv, 0);
+    test.assert(server.next(heap, srv) >= 0);
+    let ticket = server.hold(srv);
+    test.assert(ticket >= 0);
+    test.assert_eq(server.ticket_slot(ticket), k);
+    // Held: the next request waits behind it, and the idle timeout spares it.
+    test.assert_eq(server.next(heap, srv), 0 - 1);
+    server.ready(srv, 500000);
+    test.assert(!server.closing(srv, k));
+    // The answer is given in parts, as the room allows: a head, then a body larger than the
+    // room, which is taken as it is offered. 2,000 bytes of 'z' behind a head.
+    let body = box_slice(heap, 2000, byte_of('z'));
+    var head = http.respond_head(heap, buffer.empty(heap, 128), 200, "text/plain", 2000, true);
+    var sent = 0;
+    var got = buffer.empty(heap, 64);
+    borrow head as &hb in {
+        test.assert_eq(server.stream(srv, ticket, buffer.bytes(hb)), len(buffer.bytes(hb)));
+    }
+    var turns = 0;
+    borrow body as &bb in {
+        while sent < 2000 {
+            let n = server.stream(srv, ticket, contents(bb)[sent..2000]);
+            test.assert(n >= 0);
+            sent = sent + n;
+            // Never more than the room.
+            test.assert(pending_of(srv, k) <= 512);
+            let taken = take_all(heap, srv, k, 1000 * turns);
+            borrow taken as &tb in {
+                got = buffer.append(heap, got, buffer.bytes(tb));
+            }
+            buffer.drop(heap, taken);
+            turns = turns + 1;
+            test.assert(turns < 100);
+        }
+    }
+    test.assert(turns > 3);
+    // While streaming, the request behind it was not given out.
+    server.ready(srv, 600000);
+    test.assert_eq(server.next(heap, srv), 0 - 1);
+    test.assert_eq(server.answer(srv, ticket, ""), 0);
+    // A ticket answers once.
+    test.assert_eq(server.answer(srv, ticket, "again"), 0 - 1);
+    test.assert_eq(server.stream(srv, ticket, "more"), 0 - 1);
+    borrow got as &gb in {
+        let all = buffer.bytes(gb);
+        test.assert(bytes.starts_with(all, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2000\r\n"));
+        test.assert_eq(len(all), 2000 + bytes.find(all, "\r\n\r\n") + 4);
+        test.assert_eq(bytes.count_byte(all, 'z'), 2000);
+    }
+    buffer.drop(heap, got);
+    buffer.drop(heap, head);
+    unbox_slice(heap, body);
+    // And now what was behind it is served.
+    server.ready(srv, 600000);
+    test.assert_eq(serve_all(heap, srv), 1);
+    assert_answer(heap, take_all(heap, srv, k, 600000), "GET /next 0:", true);
+
+    // A held request whose connection goes is forgotten, and its ticket stays dead when
+    // the slot is taken again.
+    server.input(srv, k, "GET /gone HTTP/1.1\r\nHost: t\r\n\r\n", 600000);
+    server.ready(srv, 600000);
+    test.assert(server.next(heap, srv) >= 0);
+    let old = server.hold(srv);
+    test.assert_eq(server.detach(srv, k), 0);
+    test.assert_eq(server.answer(srv, old, "x"), 0 - 1);
+    k = server.attach(srv, 600000);
+    server.input(srv, k, "GET /new HTTP/1.1\r\nHost: t\r\n\r\n", 600000);
+    server.ready(srv, 600000);
+    test.assert(server.next(heap, srv) >= 0);
+    let fresh = server.hold(srv);
+    test.assert(fresh != old);
+    test.assert_eq(server.ticket_slot(fresh), server.ticket_slot(old));
+    test.assert_eq(server.answer(srv, old, "x"), 0 - 1);
+    test.assert_eq(server.stream(srv, old, "x"), 0 - 1);
+    test.assert_eq(pending_of(srv, k), 0);
+    test.assert(server.answer(srv, fresh, "ok") >= 0);
+    return 0;
+}
+
+fn test_a_held_request_streams_its_answer_and_a_ticket_never_outlives_its_connection[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {
+    match server.open_bytes(heap, 1024, 512, 30, 1) {
+        server.Opening::Ok(s) => {
+            var srv = s;
+            borrow mut srv as &!sw in {
+                held(heap, sw);
+            }
+            server.close(heap, srv);
+        }
+        server.Opening::Failed(e) => {
+            test.assert(false);
+        }
+    }
+    return 0;
+}
+
+// A stalled stream: a held request with an answer waiting that is not being taken is a
+// client that is not reading, and is not spared by the idle timeout.
+fn stalled_stream[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_write, poll] int {
+    let k = server.attach(srv, 0);
+    server.input(srv, k, "GET /s HTTP/1.1\r\nHost: t\r\n\r\n", 0);
+    server.ready(srv, 0);
+    test.assert(server.next(heap, srv) >= 0);
+    let ticket = server.hold(srv);
+    test.assert_eq(server.stream(srv, ticket, "HTTP/1.1 200 OK\r\n"), 17);
+    server.ready(srv, 10000);
+    test.assert(!server.closing(srv, k));
+    server.ready(srv, 31000);
+    test.assert(server.closing(srv, k));
+    test.assert_eq(server.stream(srv, ticket, "more"), 0 - 1);
+    return 0;
+}
+
+fn test_a_stream_nobody_takes_is_ended_by_the_idle_timeout[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {
+    match server.open_bytes(heap, 1024, 512, 30, 2) {
+        server.Opening::Ok(s) => {
+            var srv = s;
+            borrow mut srv as &!sw in {
+                stalled_stream(heap, sw);
+            }
+            server.close(heap, srv);
+        }
+        server.Opening::Failed(e) => {
+            test.assert(false);
+        }
+    }
+    return 0;
+}
+
+// The queue holds `limit` entries, and a connection visited and fed again before the round
+// is over is queued a second time; a slot freed while queued is not queued twice by the
+// connection that takes it.
+fn queue[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_write, poll] int {
+    let a = server.attach(srv, 0);
+    let b = server.attach(srv, 0);
+    var round = 0;
+    while round < 6 {
+        server.input(srv, a, "GET /a HTTP/1.1\r\nHost: t\r\n\r\n", 0);
+        server.input(srv, b, "GET /b HTTP/1.1\r\nHost: t\r\n\r\n", 0);
+        test.assert_eq(serve_all(heap, srv), 2);
+        assert_answer(heap, take_all(heap, srv, a, 0), "GET /a 0:", true);
+        assert_answer(heap, take_all(heap, srv, b, 0), "GET /b 0:", true);
+        round = round + 1;
+    }
+    server.input(srv, a, "GET /a HTTP/1.1\r\nHost: t\r\n\r\n", 0);
+    test.assert_eq(server.detach(srv, a), 0);
+    let c = server.attach(srv, 0);
+    test.assert_eq(c, a);
+    server.input(srv, c, "GET /c HTTP/1.1\r\nHost: t\r\n\r\n", 0);
+    test.assert_eq(server.ready(srv, 0), 1);
+    test.assert_eq(serve_all(heap, srv), 1);
+    assert_answer(heap, take_all(heap, srv, c, 0), "GET /c 0:", true);
+    return 0;
+}
+
+fn test_the_ready_queue_never_overflows_and_never_holds_a_slot_twice[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {
+    match server.open_bytes(heap, 1024, 4096, 30, 2) {
+        server.Opening::Ok(s) => {
+            var srv = s;
+            borrow mut srv as &!sw in {
+                queue(heap, sw);
+            }
+            server.close(heap, srv);
+        }
+        server.Opening::Failed(e) => {
+            test.assert(false);
+        }
+    }
+    return 0;
+}
+
+fn bad_slot(i: int) -> [] int {
+    if i == 0 {
+        return 0 - 1;
+    }
+    if i == 1 {
+        return 1;
+    }
+    if i == 2 {
+        return 2;
+    }
+    if i == 3 {
+        return 77;
+    }
+    if i == 4 {
+        return 1000000000;
+    }
+    return 0 - 1000000000;
+}
+
+// Every call that takes a connection takes a bad one without a trap.
+fn bad_arguments[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_write, poll] int {
+    var i = 0;
+    while i < 6 {
+        let k = bad_slot(i);
+        test.assert_eq(server.input(srv, k, "x", 0), 0 - 1);
+        test.assert_eq(server.end_input(srv, k), 0 - 1);
+        test.assert_eq(server.detach(srv, k), 0 - 1);
+        test.assert_eq(server.room(srv, k), 0);
+        test.assert_eq(server.pending(srv, k), 0);
+        test.assert_eq(server.space(srv, k), 0);
+        test.assert(!server.closing(srv, k));
+        region r {
+            let piece = alloc_slice[r](4, byte_of(0));
+            test.assert_eq(server.output(srv, k, piece, 0), 0);
+        }
+        test.assert_eq(server.answer(srv, k, "x"), 0 - 1);
+        test.assert_eq(server.stream(srv, k, "x"), 0 - 1);
+        i = i + 1;
+    }
+    // Nothing is in hand, nothing held.
+    test.assert_eq(server.next(heap, srv), 0 - 1);
+    test.assert_eq(server.hold(srv), 0 - 1);
+    test.assert_eq(server.respond(srv, "x"), 0 - 1);
+    // A connection never fed: empty `input` is 0, an `output` with nothing waiting is 0.
+    let k = server.attach(srv, 0);
+    test.assert_eq(server.input(srv, k, "", 0), 0);
+    region r {
+        let none = alloc_slice[r](0, byte_of(0));
+        test.assert_eq(server.output(srv, k, none, 0), 0);
+    }
+    // A zero-length answer to nothing in hand is -1, and the server still serves.
+    test.assert_eq(feed(heap, srv, k, "GET /fine HTTP/1.1\r\nHost: t\r\n\r\n", 1000, 0), 1);
+    assert_answer(heap, take_all(heap, srv, k, 0), "GET /fine 0:", true);
+    return 0;
+}
+
+fn test_a_bad_slot_or_ticket_is_a_refusal_not_a_trap[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {
+    match server.open_bytes(heap, 1024, 4096, 30, 1) {
+        server.Opening::Ok(s) => {
+            var srv = s;
+            borrow mut srv as &!sw in {
+                bad_arguments(heap, sw);
+            }
+            server.close(heap, srv);
+        }
+        server.Opening::Failed(e) => {
+            test.assert(false);
+        }
+    }
+    return 0;
+}
+
+fn test_open_bytes_refuses_sizes_it_cannot_serve[&h](heap: &!h Heap) -> [heap] int {
+    // (An input buffer of nothing, output room under 512, no connections.)
+    match server.open_bytes(heap, 0, 4096, 30, 4) {
+        server.Opening::Ok(s) => {
+            server.close(heap, s);
+            test.assert(false);
+        }
+        server.Opening::Failed(e) => {
+            test.assert_eq(e, 22);
+        }
+    }
+    match server.open_bytes(heap, 1024, 511, 30, 4) {
+        server.Opening::Ok(s) => {
+            server.close(heap, s);
+            test.assert(false);
+        }
+        server.Opening::Failed(e) => {
+            test.assert_eq(e, 22);
+        }
+    }
+    match server.open_bytes(heap, 1024, 4096, 30, 0) {
+        server.Opening::Ok(s) => {
+            server.close(heap, s);
+            test.assert(false);
+        }
+        server.Opening::Failed(e) => {
+            test.assert_eq(e, 22);
+        }
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------
+// The peer's end, with a request held, and an answer that is no bytes
+// ---------------------------------------------------------------------
+
+fn ended_while_held[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_write, poll] int {
+    let k = server.attach(srv, 0);
+    server.input(srv, k, "GET /held HTTP/1.1\r\nHost: t\r\n\r\n", 0);
+    server.ready(srv, 0);
+    test.assert(server.next(heap, srv) >= 0);
+    let ticket = server.hold(srv);
+    test.assert(ticket >= 0);
+    // The peer ends while its request is held: nothing may end the connection until it is answered.
+    server.end_input(srv, k);
+    server.ready(srv, 0);
+    test.assert_eq(server.next(heap, srv), 0 - 1);
+    test.assert(!server.closing(srv, k));
+    // An answer that takes bytes: sent, then the connection ends.
+    test.assert(server.answer(srv, ticket, "HTTP/1.1 204 No Content\r\n\r\n") > 0);
+    test.assert(!server.closing(srv, k));
+    let got = take_all(heap, srv, k, 0);
+    buffer.drop(heap, got);
+    server.ready(srv, 0);
+    server.next(heap, srv);
+    test.assert(server.closing(srv, k));
+    server.detach(srv, k);
+
+    // The same with an answer of no bytes at all (a stream whose last byte was already taken):
+    // `answer` itself has to see to the end.
+    let j = server.attach(srv, 0);
+    server.input(srv, j, "GET /held HTTP/1.1\r\nHost: t\r\n\r\n", 0);
+    server.ready(srv, 0);
+    test.assert(server.next(heap, srv) >= 0);
+    let again = server.hold(srv);
+    server.end_input(srv, j);
+    server.ready(srv, 0);
+    test.assert_eq(server.next(heap, srv), 0 - 1);
+    test.assert(!server.closing(srv, j));
+    test.assert_eq(server.answer(srv, again, ""), 0);
+    server.ready(srv, 0);
+    server.next(heap, srv);
+    test.assert(server.closing(srv, j));
+    server.detach(srv, j);
+    return 0;
+}
+
+fn test_a_peer_that_ends_while_its_request_is_held_is_answered_and_then_ended[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {
+    match server.open_bytes(heap, 1024, 4096, 30, 2) {
+        server.Opening::Ok(s) => {
+            var srv = s;
+            borrow mut srv as &!sw in {
+                ended_while_held(heap, sw);
+            }
+            server.close(heap, srv);
+        }
+        server.Opening::Failed(e) => {
+            test.assert(false);
+        }
+    }
+    return 0;
+}
+
+// An answer of no bytes leaves nothing waiting, so nothing wakes the connection for what is
+// behind it: the next `ready` has to.
+fn empty_answers[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_write, poll] int {
+    let k = server.attach(srv, 0);
+    let two = "GET /one HTTP/1.1\r\nHost: t\r\n\r\nGET /two HTTP/1.1\r\nHost: t\r\n\r\n";
+    server.input(srv, k, two, 0);
+    server.ready(srv, 0);
+    test.assert(server.next(heap, srv) >= 0);
+    test.assert_eq(server.respond(srv, ""), 0);
+    // `next` is not called again this round. The second request is not lost.
+    server.ready(srv, 0);
+    test.assert(server.next(heap, srv) >= 0);
+    test.assert(bytes.equal(http.path(server.head(srv), server.parsed(srv)), "/two"));
+    test.assert_eq(server.respond(srv, ""), 0);
+    server.ready(srv, 0);
+    test.assert_eq(server.next(heap, srv), 0 - 1);
+    // And an ended peer whose last answer was no bytes ends.
+    server.input(srv, k, "GET /three HTTP/1.1\r\nHost: t\r\n\r\n", 0);
+    server.end_input(srv, k);
+    server.ready(srv, 0);
+    test.assert(server.next(heap, srv) >= 0);
+    test.assert_eq(server.respond(srv, ""), 0);
+    server.ready(srv, 0);
+    test.assert_eq(server.next(heap, srv), 0 - 1);
+    test.assert(server.closing(srv, k));
+    return 0;
+}
+
+fn test_an_answer_of_no_bytes_does_not_lose_what_is_behind_it_or_the_peers_end[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {
+    match server.open_bytes(heap, 1024, 4096, 30, 2) {
+        server.Opening::Ok(s) => {
+            var srv = s;
+            borrow mut srv as &!sw in {
+                empty_answers(heap, sw);
+            }
+            server.close(heap, srv);
+        }
+        server.Opening::Failed(e) => {
+            test.assert(false);
+        }
+    }
+    return 0;
+}
+
+// `ready` is where a connection `next` left part-way through its visit is finished: what was answered
+// is dropped from its buffer and the room it held is given back.
+fn compaction[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_write, poll] int {
+    let k = server.attach(srv, 0);
+    let first = "GET /a HTTP/1.1\r\nHost: t\r\nX-Pad: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n\r\n";
+    test.assert_eq(server.input(srv, k, first, 0), len(first));
+    server.ready(srv, 0);
+    test.assert(server.next(heap, srv) >= 0);
+    test.assert(server.respond(srv, "ok") > 0);
+    let sent = take_all(heap, srv, k, 0);
+    buffer.drop(heap, sent);
+    // `next` is not called again, so the connection is still part-way through its visit: what it
+    // answered is still in the buffer.
+    test.assert_eq(server.room(srv, k), 128 - len(first));
+    server.ready(srv, 0);
+    test.assert_eq(server.room(srv, k), 128);
+    // And a request as large as the buffer now fits and is answered.
+    let second = "GET /b HTTP/1.1\r\nHost: t\r\nX-Pad: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n\r\n";
+    test.assert_eq(server.input(srv, k, second, 0), len(second));
+    server.ready(srv, 0);
+    test.assert_eq(serve_all(heap, srv), 1);
+    return 0;
+}
+
+fn test_ready_gives_back_the_room_a_visit_left_behind[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {
+    match server.open_bytes(heap, 128, 4096, 30, 1) {
+        server.Opening::Ok(s) => {
+            var srv = s;
+            borrow mut srv as &!sw in {
+                compaction(heap, sw);
+            }
+            server.close(heap, srv);
+        }
+        server.Opening::Failed(e) => {
+            test.assert(false);
+        }
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------
+// No input reaches a trap
+// ---------------------------------------------------------------------
+
+fn fragment(i: int) -> [] &static [byte] {
+    if i == 0 {
+        return "GET /a HTTP/1.1\r\nHost: t\r\n\r\n";
+    }
+    if i == 1 {
+        return "POST /b HTTP/1.1\r\nHost: t\r\nContent-Length: 4\r\n\r\nabcd";
+    }
+    if i == 2 {
+        return "POST /c HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\n";
+    }
+    if i == 3 {
+        return "GET /d HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n";
+    }
+    if i == 4 {
+        return "POST /e HTTP/1.1\r\nContent-Length: 99999\r\n\r\n";
+    }
+    if i == 5 {
+        return "POST /f HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n";
+    }
+    if i == 6 {
+        return "\r\n\r\n\r\n";
+    }
+    if i == 7 {
+        return "GET / HTTP/1.1\r\nHost: t\r\nX: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n\r\n";
+    }
+    if i == 8 {
+        return "GET /g HTTP/1.0\r\n\r\n";
+    }
+    if i == 9 {
+        return "\0\0\0 \t:\r\n";
+    }
+    return "G";
+}
+
+// What a connection's bounds are, checked after every operation.
+fn invariants[&s](srv: &!s server.Server) -> [] int {
+    var k = 0 - 1;
+    while k < 5 {
+        test.assert(server.pending(srv, k) >= 0 && server.pending(srv, k) <= 600);
+        test.assert(server.room(srv, k) >= 0 && server.room(srv, k) <= 256);
+        test.assert(server.space(srv, k) >= 0 && server.space(srv, k) <= 600);
+        test.assert(server.pending(srv, k) + server.space(srv, k) == 600 || server.space(srv, k) == 0);
+        k = k + 1;
+    }
+    test.assert(server.connections(srv) >= 0 && server.connections(srv) <= 3);
+    return 0;
+}
+
+fn random_operations[&h, &s](heap: &!h Heap, srv: &!s server.Server, seed: int) -> [heap, conn_write, poll] int {
+    var r = seed;
+    var now = 0;
+    var ticket = 0 - 1;
+    var steps = 0;
+    while steps < 3000 {
+        r = (r * 1103515245 + 12345) % 2147483648;
+        let op = r / 65536 % 14;
+        let slot = r / 4096 % 5 - 1;
+        let frag = fragment(r / 256 % 11);
+        let cut = r / 16 % (len(frag) + 1);
+        if op == 0 {
+            server.attach(srv, now);
+        } else if op >= 1 && op <= 4 {
+            if r / 8 % 2 == 0 {
+                server.input(srv, slot, frag[0..cut], now);
+            } else {
+                server.input(srv, slot, frag[cut..len(frag)], now);
+            }
+        } else if op == 5 {
+            server.end_input(srv, slot);
+        } else if op == 6 {
+            server.ready(srv, now);
+        } else if op == 7 || op == 8 {
+            server.ready(srv, now);
+            var more = true;
+            while more {
+                let hs = server.next(heap, srv);
+                if hs < 0 {
+                    more = false;
+                } else if r / 32 % 4 == 0 {
+                    ticket = server.hold(srv);
+                    more = false;
+                } else {
+                    answer_n(heap, srv, r / 64 % 700);
+                    r = (r * 1103515245 + 12345) % 2147483648;
+                }
+            }
+        } else if op == 9 || op == 10 {
+            region a {
+                let piece = alloc_slice[a](1 + r / 128 % 80, byte_of(0));
+                server.output(srv, slot, piece, now);
+            }
+        } else if op == 11 {
+            server.detach(srv, slot);
+        } else if op == 12 {
+            now = now + r / 1024 % 6000;
+        } else if r / 8 % 2 == 0 {
+            server.stream(srv, ticket, frag[0..cut]);
+        } else {
+            server.answer(srv, ticket, frag[0..cut]);
+        }
+        invariants(srv);
+        steps = steps + 1;
+    }
+    return 0;
+}
+
+fn test_random_operations_never_trap_or_break_a_bound[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {
+    var seed = 1;
+    while seed < 9 {
+        match server.open_bytes(heap, 256, 600, 5, 3) {
+            server.Opening::Ok(s) => {
+                var srv = s;
+                borrow mut srv as &!sw in {
+                    random_operations(heap, sw, seed * 7919);
+                }
+                server.close(heap, srv);
+            }
+            server.Opening::Failed(e) => {
+                test.assert(false);
+            }
+        }
+        seed = seed + 1;
+    }
+    return 0;
+}

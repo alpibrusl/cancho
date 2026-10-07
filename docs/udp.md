@@ -1,6 +1,6 @@
 # UDP: datagram sockets without `Ffi("libc")`
 
-> **Status: design settled; slice 2 (the connected half) built, §9; the bound half (`udp_bind`, peer tickets) not built.** Issue [#355](https://github.com/alpibrusl/cancho/issues/355).
+> **Status: built, both halves (§9 and §10); the round-trip measurement against C is not done.** Issue [#355](https://github.com/alpibrusl/cancho/issues/355).
 > The asker is [cancho-dns#18](https://github.com/alpibrusl/cancho-dns/issues/18), a forwarding and caching
 > DNS resolver. [`native-sockets.md`](native-sockets.md) §9 recorded "UDP and Unix sockets: no asker" and kept
 > `Conn` free of a transport name in case one came; this is that second transport. Everything here is
@@ -65,10 +65,10 @@ datagram or the call fails, because a datagram is never partial, and `Again` is 
 | builtin | signature | row |
 |---|---|---|
 | `udp_connect` | `(net, host, port) -> UdpOpened` | `net_out(bound)` |
-| `udp_bind` | `(net, port) -> UdpOpened` | `net_in(bound)` |
+| `udp_bind` | `(net, port, flags) -> UdpOpened` | `net_in(bound)` (`flags` bit 1 is `SO_REUSEPORT`, as `tcp_listen`'s) |
 | `udp_recv` | `(&!Udp, &![byte]) -> Datagram` | `udp_recv` |
 | `udp_send` | `(&!Udp, &[byte]) -> Sent` | `udp_send` |
-| `udp_peer` | `(&!Udp) -> int` | `[]` (§4) |
+| `udp_recv_from` | `(&!Udp, &![byte], &![int]) -> Datagram` | `udp_recv` (§4) |
 | `udp_send_to` | `(&!Udp, &[byte], int) -> Sent` | `udp_send` (§4) |
 | `udp_local_port` | `(&Udp) -> int` | `[]` (§5) |
 | `udp_nonblocking` | `(&!Udp) -> int` | `[]` |
@@ -91,11 +91,15 @@ A server replies to the client that wrote to it, often after waiting for somethi
 cache miss only after its upstream does). So the sender's address must outlive the next `udp_recv`. It cannot
 be a number the program can write, or `udp_send_to(u, bytes, 0x7f000001_0035)` would be a free `sendto`.
 
-`udp_recv` on a **bound** socket records the sender in a **runtime ring** of 65,536 entries (a `sockaddr_in`
-and a sequence number each, about 1.5 MiB of bss, one global in each backend, like `conn_detach`'s epochs in
-`native-sockets.md` §10.3). `udp_peer(&!Udp)` answers a ticket for the sender of the **last datagram this
-socket received**: `sequence << 16 | slot`. `udp_send_to` accepts a ticket only if the slot still holds that
-sequence **and** was recorded by this socket's descriptor, so:
+`udp_recv_from` (a bound socket's receive; `udp_recv` stays the connected socket's and records nothing) writes
+the sender into a **runtime ring** of 65,536 entries (a `sockaddr_in`, the ticket it was issued under and the
+descriptor that heard it: 32 bytes each, 2 MiB of bss, one global in each backend, like `conn_detach`'s epochs in
+`native-sockets.md` §10.3), and writes a **ticket** for it into the first cell of an `int` slice the caller
+passes. (The first draft of this section had a separate `udp_peer(&!Udp)` that answered the last sender; an
+out-parameter needs no per-socket state and cannot return another datagram's ticket, so it is gone.) A ticket
+is the running count of datagrams received, so the entry it names is `ticket mod 65,536`. `udp_send_to` accepts a
+ticket only if it is positive, the entry still holds that very ticket, **and** the entry was recorded by this
+socket's descriptor, so:
 
 - a number the program invented is refused (`Failed(EBADF)`), as `conn_attach(1)` is;
 - a ticket from another socket is refused, so the reach of a bound socket stays "those who wrote to it";
@@ -148,7 +152,7 @@ document's, and it is stated here so the two designs do not each assume the othe
 1. **This document.**
 2. **The connected half**: `Udp`, `UdpOpened`, `Datagram`, `udp_connect`, `udp_send`, `udp_recv`,
    `udp_nonblocking`, `udp_close`, `udp_local_port`, `poller_add_udp`; tests and mutants.
-3. **The bound half**: `udp_bind`, the peer ring, `udp_peer`, `udp_send_to`; the forgery tests.
+3. **The bound half**: `udp_bind`, the peer ring, `udp_recv_from`, `udp_send_to`; the forgery tests (§10).
 4. **`std.conns`-style table** for `Udp` tickets, if a program asks (a resolver holding many upstream sockets
    will); decided by the programs, not here.
 
@@ -191,7 +195,43 @@ seconds).
 `docs/wasm.md`), the checker's label count (26 to 28: `udp_recv`, `udp_send`), and the type and builtin counts in
 `docs/self-hosting.md`. The datagram builtins are refused on WASI as sockets are.
 
-**Not done.** `udp_bind`, the peer ring, `udp_peer` and `udp_send_to` (§4, slice 3), so a server cannot yet
-receive from strangers. The round-trip measurement against a C loop (§7 item 5): no number is claimed. Darwin: the
-`Truncated` rule (a buffer filled exactly reads as truncated, with the buffer's length), `getsockname` and the
-`kqueue` registration of a datagram socket are from platform headers, not from a run.
+**Not done in slice 2.** The bound half (§10). The round-trip measurement against a C loop (§7 item 5): no
+number is claimed. **Darwin:** the nine tests above passed in CI on the `darwin-aarch64` runner (the `Truncated`
+rule, `getsockname` and the `kqueue` registration included); that is the CI result, not a run on a Mac here.
+
+## 10. What slice 3 built, and what is not done
+
+Built, edition 5, both backends: `udp_bind(net, port, flags)`, `udp_recv_from` and `udp_send_to`, and the peer
+ring behind them. `udp_bind` is `tcp_listen`'s node (`Expr::TcpListen` with a `datagram` flag, and a backlog of
+0 the lowering supplies), so the port check against the `Net`'s bound, `SO_REUSEADDR`, `SO_REUSEPORT` and the
+`net_in(bound)` row are the same code; it simply does not call `listen`. The ring is one zeroed global,
+`lexs_udp_peers`, in each backend.
+
+**The decision that held.** A bound socket has no free destination: `udp_send_to` takes a ticket and nothing
+else. A program holding only `net_in("PORT")` has no `net_out` in its report (checked), and cannot name a host
+that has not written to it.
+
+**Checked**, on both backends: a server answering the sender it heard from; two senders answered in the
+*opposite* order of arrival, each getting its own reply (the ticket outlives the next receive); five forged
+tickets refused with `Failed(EBADF)` and nothing sent, the client then seeing exactly the one real reply (a
+ticket never issued, `0`, negative, and the same slot one ring's length ahead and behind); a ticket from a
+different bound socket refused; a ticket older than the ring refused (the program feeds itself 65,536 datagrams
+through a connected socket, so no client can drop any, then replies late); an empty ticket slice as
+`Failed(EINVAL)` and a receive that delivered nothing leaving the cell untouched; `udp_bind` outside the bound
+trapping; and the authority report (`net_in` with the port, `udp_send` and `udp_recv`, no `net_out`, no `ffi`).
+One more reject fixture, `udp_send_to_not_declared`.
+
+**Mutants**, all killed on each backend that has the code: the owner check dropped; the ticket not compared; the
+ticket compared only modulo the ring (killed by the ticket one ring ahead); `listen` called on a datagram
+socket.
+
+**The limit, as designed.** A reply held across more than 65,536 other received datagrams is refused. At 30,000
+datagrams a second that is about two seconds, which is longer than a resolver waits for an upstream but not by
+an order of magnitude; a program that holds replies longer must answer or drop them sooner. Only
+`udp_recv_from` fills the ring, so a forwarder's connected sockets (`udp_recv`) do not age its clients'
+tickets.
+
+**Not done.** The round-trip measurement against a C loop. A `std` table of `Udp` handles for a program that
+holds many upstream sockets (slice 4, when a program asks). The ring is a fixed size; a larger one is a
+constant in `socket_os.rs`. Darwin: this slice's tests (the ring, the tickets, `udp_bind`) passed on the
+`darwin-aarch64` CI job of #358; that is the CI result, not a run on a Mac here.

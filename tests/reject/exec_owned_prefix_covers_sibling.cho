@@ -1,0 +1,30 @@
+//~ ERROR performs `exec("/binevil")`, which its row
+//~ RULE effect-not-declared
+
+// The same bug for `Exec` (`docs/processes.md` §4.1 gave it `Fs`'s rule):
+// owning `Exec("/bin")` does not cover starting what lies under
+// `/binevil`, which shares four bytes with it and is another directory.
+
+edition 7;
+fn start[&x](exec: &x Exec("/binevil")) -> [exec("/binevil")] int {
+    match exec_spawn(exec, "/binevil/true", "", "", Stdio::Null, Stdio::Null, Stdio::Null) {
+        Spawned::Ok(child) => {
+            match child_wait(child) {
+                Exited::Code(n) => { return n; }
+                Exited::Signaled(s) => { return 1; }
+                Exited::Failed(e) => { return 1; }
+            }
+        }
+        Spawned::Failed(e) => { return e; }
+    }
+}
+
+fn owner[&x](mine: Exec("/bin"), other: &x Exec("/binevil")) -> [] int {
+    release(mine);
+    return start(other);
+}
+
+fn main(world: World) -> [] int {
+    release(world);
+    return 0;
+}

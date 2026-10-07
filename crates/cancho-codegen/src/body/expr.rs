@@ -189,9 +189,9 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
             }
             // `docs/native-sockets.md` §3: `bind`'s node with a handle for
             // an answer.
-            Expr::TcpListen { bound, args } => {
-                let (bound, args) = (bound.clone(), args.clone());
-                self.tcp_listen(&bound, &args)
+            Expr::TcpListen { bound, args, datagram } => {
+                let (bound, args, datagram) = (bound.clone(), args.clone(), *datagram);
+                self.tcp_listen(&bound, &args, datagram)
             }
             Expr::TcpConnect { bound, args, start, datagram } => {
                 let (bound, args, start, datagram) =
@@ -711,7 +711,12 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::UdpConnect) => {
                         unreachable!("`udp_connect` is lowered as `Expr::TcpConnect`")
                     }
+                    Callee::Builtin(Builtin::UdpBind) => {
+                        unreachable!("`udp_bind` is lowered as `Expr::TcpListen`")
+                    }
                     Callee::Builtin(Builtin::UdpSend) => self.conn_write(&args),
+                    Callee::Builtin(Builtin::UdpRecvFrom) => self.udp_recv_from(&args),
+                    Callee::Builtin(Builtin::UdpSendTo) => self.udp_send_to(&args),
                     Callee::Builtin(Builtin::UdpRecv) => self.udp_recv(&args),
                     Callee::Builtin(Builtin::UdpLocalPort) => self.udp_local_port(&args),
                     Callee::Builtin(Builtin::UdpNonblocking) => self.nonblocking(&args),

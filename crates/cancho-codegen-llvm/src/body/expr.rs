@@ -305,9 +305,9 @@ impl<'a> FuncEmitter<'a> {
             }
             // `tcp_listen` (`docs/native-sockets.md` §3): `bind`'s node with
             // a handle for an answer.
-            Expr::TcpListen { bound, args } => {
-                let (bound, args) = (bound.clone(), args.clone());
-                self.tcp_listen(&bound, &args)
+            Expr::TcpListen { bound, args, datagram } => {
+                let (bound, args, datagram) = (bound.clone(), args.clone(), *datagram);
+                self.tcp_listen(&bound, &args, datagram)
             }
             Expr::TcpConnect { bound, args, start, datagram } => {
                 let (bound, args, start, datagram) =
@@ -1090,6 +1090,26 @@ impl<'a> FuncEmitter<'a> {
                     return Err(format!("`udp_recv` needs 3 leaves but {} were given", args.len()));
                 }
                 self.udp_recv(&args)
+            }
+            Callee::Builtin(Builtin::UdpRecvFrom) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                if args.len() != 5 {
+                    return Err(format!(
+                        "`udp_recv_from` needs 5 leaves but {} were given",
+                        args.len()
+                    ));
+                }
+                self.udp_recv_from(&args)
+            }
+            Callee::Builtin(Builtin::UdpSendTo) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                if args.len() != 4 {
+                    return Err(format!(
+                        "`udp_send_to` needs 4 leaves but {} were given",
+                        args.len()
+                    ));
+                }
+                self.udp_send_to(&args)
             }
             Callee::Builtin(Builtin::UdpLocalPort) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();

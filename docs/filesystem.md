@@ -56,6 +56,21 @@ twice, because the two halves are known at different times: `narrow`
 checks it at compile time against the literal, and the operations check it
 at run time against the path (§4).
 
+**The effect row uses the same rule.** Owning an `Fs("/tmp")` discharges
+`fs_read`/`fs_write` labels *inside* `/tmp`, and `Label::covers` decides
+that with `extends_path`, the function `narrow` calls: `/tmp` covers
+`/tmp`, `/tmp/x` and `/tmp/x/y`, a trailing slash (`/tmp/`) covers what is
+beneath it and not `/tmp` itself, the empty path covers every path, and
+`/tmpevil` is covered by none of them. `Exec`'s `exec(p)` label follows the
+same rule (`processes.md` §4.1). `.` and `..` are not interpreted: the
+label is its literal's text, as for `narrow`, and `..` is refused when a
+path reaches an operation (§4). Until the correcting change `covers`
+compared these by byte prefix, so a function owning `Fs("/tmp")` could
+declare `[]` for a body that read `/tmpevil`: an inexact row
+(`narrowing-into-several.md` §6; no accepted program relied on it).
+`net_out`/`net_in` keep a plain text prefix on their `"host:port"` bound, as
+`narrow` does for a `Net` (`net.md` §4).
+
 ---
 
 ## 2. Why the operations are builtins and not `extern fn`
@@ -269,6 +284,8 @@ rather than a missing language one.
 | `fs_widened.cho` | `Fs("/tmp/a")` cannot become `Fs("/tmp")` | 1 |
 | `fs_sibling_prefix.cho` | `Fs("/tmp")` cannot become `Fs("/tmpevil")` | 1.1 |
 | `fs_effect_undeclared.cho` | A row must name the prefix it reads | 1 |
+| `fs_owned_prefix_covers_sibling.cho` | Owning `Fs("/tmp")` does not cover `fs_read("/tmpevil")` in a row | 1.1 |
+| `exec_owned_prefix_covers_sibling.cho` | The same for `Exec("/bin")` and `exec("/binevil")` | 1.1 |
 
 And the accepting counterparts:
 

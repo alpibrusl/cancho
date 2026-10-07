@@ -145,3 +145,5 @@ baseline behind the requests-a-second figures in
 [`docs/server.md`](../docs/server.md) §5. `bench.sh` says how to run them.
 
 `benches/server/cepoll.c` is `cpoll.c` with `epoll(7)` in place of `poll(2)` -- the control that separated what the kernel costs from what `examples/api` does (`docs/server.md` §8). Build: `gcc -O2 -o cepoll cepoll.c`.
+
+`benches/server/tload.c` is `kload.c` over TLS 1.3 (OpenSSL): the same closed loop, every connection handshaken first and the chain checked. It is the load behind the TLS figure in [`docs/http-server.md`](../docs/http-server.md) §11.7, run by `python3 scripts/https_hello_test.py <https_hello> --cost <seconds> --kload ... --tload ... --plain ...`. Build: `gcc -O2 -o tload tload.c -lssl -lcrypto -lpthread`.

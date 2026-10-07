@@ -481,6 +481,9 @@ pub(crate) fn emit_module(
     declare_libc_unless_own(&mut text, "clock_gettime", "i32 @clock_gettime(i32, ptr)");
     declare_libc_unless_own(&mut text, "recv", "i64 @recv(i32, ptr, i64, i32)");
     declare_libc_unless_own(&mut text, "send", "i64 @send(i32, ptr, i64, i32)");
+    // `udp_recv_from` and `udp_send_to` (`docs/udp.md` §4).
+    declare_libc_unless_own(&mut text, "recvfrom", "i64 @recvfrom(i32, ptr, i64, i32, ptr, ptr)");
+    declare_libc_unless_own(&mut text, "sendto", "i64 @sendto(i32, ptr, i64, i32, ptr, i32)");
     declare_libc_unless_own(&mut text, "fcntl", "i32 @fcntl(i32, i32, ...)");
     text.push('\n');
 
@@ -639,6 +642,13 @@ pub(crate) fn emit_module(
         "@{} = internal global [{} x i32] zeroinitializer\n",
         cancho_ir::FD_EPOCH_GLOBAL,
         cancho_ir::FD_EPOCH_SLOTS
+    ));
+    // The peer ring (`docs/udp.md` §4): the senders `udp_recv_from` remembers,
+    // then the count of tickets issued. Zero at start, in bss.
+    text.push_str(&format!(
+        "@{} = internal global [{} x i8] zeroinitializer, align 8\n",
+        cancho_ir::UDP_PEER_GLOBAL,
+        cancho_ir::UDP_PEER_BYTES
     ));
     // The signal claim's two words (`docs/signals.md` section 3): the native
     // mask of every signal a live `SignalWatch` holds, then how many spawned

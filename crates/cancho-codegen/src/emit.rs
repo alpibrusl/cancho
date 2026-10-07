@@ -302,6 +302,22 @@ impl<'a> Emitter<'a> {
                 .map_err(|e| CodegenError::plain(e.to_string()))?;
         }
 
+        // `udp_recv_from`/`udp_send_to`'s peer ring (`docs/udp.md` §4): the
+        // senders the program may still reply to, and how many tickets have
+        // been issued. Zero at start, in bss.
+        {
+            let id = self
+                .module
+                .declare_data(cancho_ir::UDP_PEER_GLOBAL, Linkage::Local, true, false)
+                .map_err(|e| CodegenError::plain(e.to_string()))?;
+            let mut description = DataDescription::new();
+            description.define_zeroinit(cancho_ir::UDP_PEER_BYTES);
+            description.set_align(WORD_ALIGN);
+            self.module
+                .define_data(id, &description)
+                .map_err(|e| CodegenError::plain(e.to_string()))?;
+        }
+
         // The signal claim's two words (`docs/signals.md` section 3): the
         // native mask of every signal a live `SignalWatch` holds, then how
         // many spawned threads have not been joined. Zero at start, in bss.

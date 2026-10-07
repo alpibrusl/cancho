@@ -132,23 +132,41 @@ impl<'a> FnLowering<'a> {
         &mut self,
         args: &[ExprId],
         span: Span,
+        datagram: bool,
     ) -> Result<(Expr, Type), Diagnostic> {
-        let [capability, port, backlog, flags] = args else {
-            return Err(Diagnostic::new(
-                Rule::ArityMismatch,
-                format!(
-                    "`tcp_listen` takes 4 arguments -- the capability, a port, a backlog and flags -- but {} were given",
-                    args.len()
-                ),
-                span,
-            ));
+        // `udp_bind(net, port, flags)` has no backlog: the node gets the 0 `tcp_listen` would
+        // have been given, so one walk serves both.
+        let (capability, port, backlog, flags) = match (datagram, args) {
+            (false, [capability, port, backlog, flags]) => (capability, port, Some(backlog), flags),
+            (true, [capability, port, flags]) => (capability, port, None, flags),
+            _ => {
+                return Err(Diagnostic::new(
+                    Rule::ArityMismatch,
+                    if datagram {
+                        format!(
+                            "`udp_bind` takes 3 arguments -- the capability, a port and flags -- but {} were given",
+                            args.len()
+                        )
+                    } else {
+                        format!(
+                            "`tcp_listen` takes 4 arguments -- the capability, a port, a backlog and flags -- but {} were given",
+                            args.len()
+                        )
+                    },
+                    span,
+                ));
+            }
         };
         let capability_span = self.ast.expr_span(*capability);
         let (net_value, net_ty) = self.expr(*capability)?;
         let bound = self.granted_net_bound(&net_ty, capability_span)?;
 
         let mut lowered = vec![net_value];
-        for arg in [port, backlog, flags] {
+        for arg in [Some(port), backlog, Some(flags)] {
+            let Some(arg) = arg else {
+                lowered.push(Expr::Int(0));
+                continue;
+            };
             let arg_span = self.ast.expr_span(*arg);
             let (value, found) = self.expr(*arg)?;
             self.expect_type(&Type::Int, &found, arg_span)?;
@@ -161,8 +179,11 @@ impl<'a> FnLowering<'a> {
         }]));
 
         Ok((
-            Expr::TcpListen { bound, args: lowered },
-            Type::Named(self.prelude()[PRELUDE_LISTENING], Vec::new()),
+            Expr::TcpListen { bound, args: lowered, datagram },
+            Type::Named(
+                self.prelude()[if datagram { PRELUDE_UDP_OPENED } else { PRELUDE_LISTENING }],
+                Vec::new(),
+            ),
         ))
     }
 

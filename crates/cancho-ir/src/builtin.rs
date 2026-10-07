@@ -564,6 +564,19 @@ pub enum Builtin {
     UdpNonblocking,
     /// `udp_close(Udp) -> [] int`: consumes the handle.
     UdpClose,
+    /// `udp_bind(net, port, flags) -> [net_in(bound)] UdpOpened` -- `docs/udp.md` §2, edition 5
+    /// only: `tcp_listen` for datagrams (`socket`, `SO_REUSEADDR`, `bind`; no `listen`). Checked
+    /// at the call site, like [`Builtin::TcpListen`]. `flags` bit 1 is `SO_REUSEPORT`.
+    UdpBind,
+    /// `udp_recv_from(&!Udp, &![byte], &![int]) -> [udp_recv] Datagram` -- `docs/udp.md` §4:
+    /// `udp_recv` that also records the sender in the runtime's peer ring and writes a **ticket**
+    /// for it into the first cell of the `int` slice. A ticket is the only way to name a
+    /// destination for [`Builtin::UdpSendTo`]; an empty slice is `Failed(EINVAL)`.
+    UdpRecvFrom,
+    /// `udp_send_to(&!Udp, &[byte], int) -> [udp_send] Sent` -- `docs/udp.md` §4: send one datagram
+    /// to the sender a ticket names. A ticket that was never issued, was issued to another socket,
+    /// or is older than the ring (65,536 datagrams) is `Failed(EBADF)`.
+    UdpSendTo,
     /// `poller_add_udp(&!Poller, &Udp, token, events) -> [poll] int`: `events` as `poller_add_conn`'s.
     /// There is no modify or remove: closing the socket removes it (`docs/udp.md` §3).
     PollerAddUdp,
@@ -822,6 +835,9 @@ impl Builtin {
         Builtin::ConnClose,
         Builtin::ListenerClose,
         Builtin::UdpConnect,
+        Builtin::UdpBind,
+        Builtin::UdpRecvFrom,
+        Builtin::UdpSendTo,
         Builtin::UdpRecv,
         Builtin::UdpSend,
         Builtin::UdpLocalPort,
@@ -957,6 +973,9 @@ impl Builtin {
             Builtin::ConnClose => "conn_close",
             Builtin::ListenerClose => "listener_close",
             Builtin::UdpConnect => "udp_connect",
+            Builtin::UdpBind => "udp_bind",
+            Builtin::UdpRecvFrom => "udp_recv_from",
+            Builtin::UdpSendTo => "udp_send_to",
             Builtin::UdpRecv => "udp_recv",
             Builtin::UdpSend => "udp_send",
             Builtin::UdpLocalPort => "udp_local_port",
@@ -1053,6 +1072,9 @@ impl Builtin {
             | Builtin::ListenerClose
             // `docs/udp.md` §3: edition 5, for the reason the TCP verbs are.
             | Builtin::UdpConnect
+            | Builtin::UdpBind
+            | Builtin::UdpRecvFrom
+            | Builtin::UdpSendTo
             | Builtin::UdpRecv
             | Builtin::UdpSend
             | Builtin::UdpLocalPort
@@ -1208,7 +1230,13 @@ impl Builtin {
             Builtin::FileSync | Builtin::FileTruncate | Builtin::FileSize | Builtin::FileLock => 1,
             // The handle's region, and for `conn_read`/`conn_write` the
             // buffer's own.
-            Builtin::ConnRead | Builtin::ConnWrite | Builtin::UdpRecv | Builtin::UdpSend => 2,
+            Builtin::ConnRead
+            | Builtin::ConnWrite
+            | Builtin::UdpRecv
+            | Builtin::UdpSend
+            | Builtin::UdpSendTo => 2,
+            // The handle's region, the buffer's, and the ticket cell's.
+            Builtin::UdpRecvFrom => 3,
             // The poller's region and the handle's (or the buffer's).
             Builtin::PollerAddListener
             | Builtin::PollerAddConn
@@ -1312,8 +1340,8 @@ impl Builtin {
             Builtin::TcpAccept => Effects::plain(["conn_accept"]),
             Builtin::ConnRead => Effects::plain(["conn_read"]),
             // `docs/udp.md` §3: path-free, the peer was spent at `udp_connect`.
-            Builtin::UdpRecv => Effects::plain(["udp_recv"]),
-            Builtin::UdpSend => Effects::plain(["udp_send"]),
+            Builtin::UdpRecv | Builtin::UdpRecvFrom => Effects::plain(["udp_recv"]),
+            Builtin::UdpSend | Builtin::UdpSendTo => Effects::plain(["udp_send"]),
             Builtin::ClockMs | Builtin::ClockUnixMs => Effects::plain(["clock"]),
             Builtin::PollerAddListener
             | Builtin::PollerAddConn

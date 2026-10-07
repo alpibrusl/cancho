@@ -11,7 +11,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 fn example_files() -> Vec<PathBuf> {
-    let mut files: Vec<PathBuf> = ["tls_echo.cho", "echo.cho", "identity.cho"]
+    let mut files: Vec<PathBuf> = ["tls_echo.cho", "echo.cho", "front.cho", "identity.cho"]
         .iter()
         .map(|f| repo_root().join("examples/tls_echo").join(f))
         .collect();
@@ -63,13 +63,13 @@ fn the_example_reports_a_bounded_authority_and_no_foreign_code() {
 }
 
 /// `tls_echo`'s output, line by line as it is written.
-struct Log {
-    lines: Mutex<Vec<String>>,
-    more: Condvar,
+pub(super) struct Log {
+    pub(super) lines: Mutex<Vec<String>>,
+    pub(super) more: Condvar,
 }
 
 impl Log {
-    fn wait(&self, what: &str, count: usize) -> Vec<String> {
+    pub(super) fn wait(&self, what: &str, count: usize) -> Vec<String> {
         let mut lines = self.lines.lock().unwrap();
         let end = std::time::Instant::now() + Duration::from_secs(30);
         loop {
@@ -86,7 +86,7 @@ impl Log {
 
 /// The server, killed if the test fails before it stops it: an orphan would
 /// hold the test's standard error open, and the run with it.
-struct Running(std::process::Child);
+pub(super) struct Running(pub(super) std::process::Child);
 
 impl Drop for Running {
     fn drop(&mut self) {
@@ -95,7 +95,7 @@ impl Drop for Running {
     }
 }
 
-fn build(dir: &Path, name: &str, files: &[PathBuf]) -> PathBuf {
+pub(super) fn build(dir: &Path, name: &str, files: &[PathBuf]) -> PathBuf {
     let exe = dir.join(name);
     let out = Command::new(BIN)
         .args(["build", "--std", "--backend", "llvm"])
@@ -108,14 +108,14 @@ fn build(dir: &Path, name: &str, files: &[PathBuf]) -> PathBuf {
     exe
 }
 
-fn install(identity: &str, into: &Path, files: &[&str]) {
+pub(super) fn install(identity: &str, into: &Path, files: &[&str]) {
     let from = repo_root().join("tests/vectors/tls/echo").join(identity);
     for f in files {
         std::fs::copy(from.join(f), into.join(f)).unwrap();
     }
 }
 
-fn signal(pid: u32, name: &str) {
+pub(super) fn signal(pid: u32, name: &str) {
     let ok = Command::new("kill").args([&format!("-{name}"), &pid.to_string()]).status().unwrap();
     assert!(ok.success(), "kill -{name}");
 }
