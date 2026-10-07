@@ -329,8 +329,8 @@ of key-parsing work in a server engine (§10.1).*
    Gate: every case passes; the cost measured and written here.
 3. **An example** that the two programs can copy: `examples/tls_echo` (a server over `std.conns` and a poller), and a section
    in `docs/http-server.md` on serving `packages/http-server` over TLS. *Built (§11): the example, its tests and its cost;
-   `http.server` cannot take bytes that did not come from its own sockets, and `docs/http-server.md` §11 proposes the
-   change, not made.*
+   `http.server` could not take bytes that did not come from its own sockets; *corrected: it can now* (`docs/http-server.md`
+   §11, a byte-fed mode), and `examples/https_hello` is the HTTPS server built on it.*
 4. **Client certificates**: CertificateRequest, the client's chain verified against a configured trust store with no host
    name, the verified subject and SANs given to the program. §9's question 2 decides whether it moves before step 3.
 5. **Session tickets**: stateless, sealed with a ticket key from the DRBG, rotated, `psk_dhe_ke` only (a fresh key exchange
@@ -520,12 +520,14 @@ published.
 
 ### 11.1 What was built
 
-`examples/tls_echo/`, three files, edition 6, no foreign code:
+`examples/tls_echo/`, four files, edition 6, no foreign code (*corrected, `http-server.md` §11: it was three; `examples/https_hello` needed the same
+pieces, so what was in `echo.cho` and `tls_echo.cho` and has nothing to do with an echo moved, unchanged, to `front.cho`*):
 
 | File | Module | What |
 |---|---|---|
-| `tls_echo.cho` | (root) | the command line (`std.flags`), the two reads that need a path, the engine, the identities, the listener, the signals |
-| `echo.cho` | `echo_loop` | the loop: one `Poller`, `std.conns`, each connection in the same slot of the table and of the engine; admission (the bounds), the timeouts, the echo with back-pressure, reload and stop, the log |
+| `tls_echo.cho` | (root) | `main`: the engine, the identities, the listener, the signals, and the loop; `usage` |
+| `front.cho` | `tls_front` | what any program that terminates TLS here has: the options and their parsing (`std.flags`), the per-slot state, the log, admission (the bounds), accepting, writing the engine's bytes, ending a connection, reload |
+| `echo.cho` | `echo_loop` | the loop: one `Poller`, `std.conns`, each connection in the same slot of the table and of the engine; the echo with back-pressure (`pump`), the timeouts, the stop |
 | `identity.cho` | `echo_identity` | an identity's `chain.pem`, `key.pem` and `names` read beneath the directory handle and given to `add_identity` or `replace_identity`; the key's buffer overwritten after |
 
 ```
@@ -661,8 +663,8 @@ i7 against 0.82 on the M4, and as much again for the check). It is why the rate'
 
 ### 11.5 Not done, and not verified
 
-- **`http.server` over TLS** is not built: it reads and writes its own sockets (`docs/http-server.md` §11, which
-  proposes the change).
+- **`http.server` over TLS**: *built after this section* (`docs/http-server.md` §11): the package has a byte-fed mode and
+  `examples/https_hello` is this example with it where the echo is.
 - **More than one core.** One thread, as the design's programs are today; a second core is a second process on the
   same port, which `tcp_listen`'s `SO_REUSEPORT` flag allows, not tried.
 - **A flood from many addresses** was not run; the bounds are per process, not per peer. A per-address bound is the

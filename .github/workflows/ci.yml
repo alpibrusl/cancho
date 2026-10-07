@@ -60,7 +60,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y nginx gnutls-bin libwolfssl-dev libmbedtls-dev libbotan-2-dev \
-            android-libboringssl-dev python3-cryptography afl++ mosquitto-clients
+            android-libboringssl-dev python3-cryptography afl++ mosquitto-clients libssl-dev curl
 
       - name: Compiler, and the many-connection client
         run: |
@@ -106,8 +106,28 @@ jobs:
       # `ssl` (echoes, 200 connections, reload, the handshake bounds, idle, stop), and its cost on x86-64.
       - name: The TLS echo example (docs/tls-server.md §11)
         run: |
-          ./target/release/cancho build --std examples/tls_echo/{tls_echo,echo,identity}.cho \
+          ./target/release/cancho build --std examples/tls_echo/{tls_echo,echo,front,identity}.cho \
             packages/tls/{tls,record,message,slot,client12,client,hello,identity,server}.cho \
             packages/x509/{verify,names,x509,key}.cho \
             -o "$RUNNER_TEMP/tls_echo"
           python3 scripts/tls_echo_test.py "$RUNNER_TEMP/tls_echo" --cost 20
+
+      # docs/http-server.md §11: the byte-fed `http.server` behind the TLS engine, against curl, `openssl s_client` and
+      # Python's `ssl`/`http.client` (keep-alive, pipelining, 200 connections, a streamed 64 MiB body, a client that stops
+      # reading, reload, the bounds), and its cost over TLS against the plain server, one core each.
+      - name: The HTTPS example (docs/http-server.md §11)
+        run: |
+          ./target/release/cancho build --std examples/https_hello/{hello,loop,app}.cho \
+            examples/tls_echo/{front,identity}.cho packages/http-server/server.cho \
+            packages/tls/{tls,record,message,slot,client12,client,hello,identity,server}.cho \
+            packages/x509/{verify,names,x509,key}.cho \
+            -o "$RUNNER_TEMP/https_hello"
+          python3 scripts/https_hello_test.py "$RUNNER_TEMP/https_hello"
+          gcc -O2 -o "$RUNNER_TEMP/kload" benches/server/kload.c -lpthread
+          gcc -O2 -o "$RUNNER_TEMP/tload" benches/server/tload.c -lssl -lcrypto -lpthread
+          ./target/release/cancho build --std examples/api/api.cho packages/http-server/server.cho -o "$RUNNER_TEMP/api"
+          python3 scripts/https_hello_test.py "$RUNNER_TEMP/https_hello" --cost 5 \
+            --kload "$RUNNER_TEMP/kload" --tload "$RUNNER_TEMP/tload" --plain "$RUNNER_TEMP/api"
+
+      - name: The byte-fed mode's mutants (docs/http-server.md §11.5)
+        run: python3 scripts/http_server_bytes_mutants.py ./target/release/cancho

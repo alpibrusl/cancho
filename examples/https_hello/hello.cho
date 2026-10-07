@@ -1,45 +1,30 @@
 edition 6;
 
-// `tls_echo` -- a TLS 1.3 echo server: the example `docs/tls-server.md` §8,
-// step 3, gives the broker and the gateway to copy. Non-blocking, one
-// thread, one `Poller`, many connections at once over `std.conns`, with
-// `packages/tls`'s engine between each socket and the echo. No foreign
-// code: the authority report is bounded.
+// `https_hello` -- an HTTPS/1.1 server: `tls_echo`'s loop (`examples/tls_echo`) with
+// `packages/http-server`, byte-fed (`docs/http-server.md` §11), where the echo was. TLS 1.3
+// from `packages/tls`, one thread, one `Poller`, up to `--connections` clients at once, each
+// with keep-alive and pipelining; no foreign code, so the authority report is bounded
+// (the same labels as `tls_echo`'s, pinned in `conformance/https_hello.rs`).
 //
-//     tls_echo --port <n> --dir <directory> [--identity <subdirectory>]...
-//              [--alpn <p1,p2,...>] [--connections <n>] [--handshakes <n>]
-//              [--rate <per second>] [--handshake-timeout <ms>] [--idle <ms>]
+//     https_hello --port <n> --dir <directory> [--identity <subdirectory>]...
+//                 [--alpn <p1,p2,...>] [--connections <n>] [--handshakes <n>]
+//                 [--rate <per second>] [--handshake-timeout <ms>] [--idle <ms>]
 //
-// `--dir` holds the certificates: `chain.pem` (PEM, leaf first), `key.pem`
-// (P-256, PKCS#8 or SEC 1, unencrypted) and `names` (the host names it
-// serves), or, with `--identity`, one subdirectory each holding the three,
-// up to 16, the first the default for an unknown or absent name
-// (`examples/tls_echo/identity.cho` says why the directory is opened once
-// and read through the handle). The engine's entropy is 32 bytes of
-// `/dev/urandom`.
-//
-// The defaults: no ALPN; 256 connections; 32 handshakes in progress and
-// 100 started a second (a full handshake measured 3.0 ms of this server's
-// CPU on an Apple M4 and 5.5 ms on CI's x86-64, `docs/tls-server.md`
-// §11.4, so 100 a second is a third to a half of the one core it runs on;
-// set it from the machine's own figure);
-// 10,000 ms to finish a handshake; 60,000 ms idle.
-//
-// `SIGHUP` reads every identity again (`tls.replace_identity`); `SIGINT`
-// or `SIGTERM` stops it cleanly. What it prints, and how the bounds work,
-// is `examples/tls_echo/front.cho`'s header. Exit status: 0 stopped by a
-// signal, 2 a usage error, 3 the port cannot be listened on, 4 no poller,
-// 5 the directory cannot be opened, 6 an identity refused, 7 the
-// signals cannot be claimed.
+// The options, the certificates (`--dir`, `--identity`), the bounds, `SIGHUP` and
+// `SIGINT`/`SIGTERM`, the log, and the exit statuses are `examples/tls_echo/tls_echo.cho`'s,
+// word for word, with one more status: 8, the HTTP server could not be opened. The routes
+// are `app.cho`'s header; the loop, and what happens to a connection's plaintext, is
+// `loop.cho`'s. The three files beside `packages/` it is built from are this directory,
+// `examples/tls_echo/front.cho` and `examples/tls_echo/identity.cho`.
 
 import std.bytes;
 import std.io;
-import echo_loop;
+import https_loop;
 import tls_front as front;
 import tls;
 
 fn usage[&i](io: &!i Io) -> [err_write] int {
-    io.error_all(io, "usage: tls_echo --port <n> --dir <directory> [--identity <subdirectory>]... [--alpn <p1,p2>]\n");
+    io.error_all(io, "usage: https_hello --port <n> --dir <directory> [--identity <subdirectory>]... [--alpn <p1,p2>]\n");
     io.error_all(io, "                [--connections <n>] [--handshakes <n>] [--rate <n>] [--handshake-timeout <ms>] [--idle <ms>]\n");
     return 2;
 }
@@ -52,7 +37,7 @@ fn serve[&h, &i, &n, &k, &s, &d, &u, &l, &c, &r, &a](heap: &!h Heap, io: &!i Io,
     borrow mut engine as &!ew in {
         tls.seed(ew, entropy);
         if len(alpn) > 0 && tls.set_alpn(ew, alpn) != 0 {
-            io.error_all(io, "tls_echo: --alpn refused, tls-server-alpn-list\n");
+            io.error_all(io, "https_hello: --alpn refused, tls-server-alpn-list\n");
             status = 2;
         }
         if status == 0 {
@@ -72,12 +57,12 @@ fn serve[&h, &i, &n, &k, &s, &d, &u, &l, &c, &r, &a](heap: &!h Heap, io: &!i Io,
                                 io.newline(io);
                                 front.flush(io);
                                 borrow mut watch as &!wh in {
-                                    status = echo_loop.run(heap, io, lh, clock, ew, dir, wh, subs, sublens, cfg);
+                                    status = https_loop.run(heap, io, lh, clock, ew, dir, wh, subs, sublens, cfg);
                                 }
                                 signals_close(watch);
                             }
                             Watching::Failed(e) => {
-                                io.error_all(io, "tls_echo: cannot claim HUP, INT and TERM\n");
+                                io.error_all(io, "https_hello: cannot claim HUP, INT and TERM\n");
                                 status = 7;
                             }
                         }
@@ -85,7 +70,7 @@ fn serve[&h, &i, &n, &k, &s, &d, &u, &l, &c, &r, &a](heap: &!h Heap, io: &!i Io,
                     listener_close(listener);
                 }
                 Listening::Failed(e) => {
-                    io.error_all(io, "tls_echo: cannot listen\n");
+                    io.error_all(io, "https_hello: cannot listen\n");
                     status = 3;
                 }
             }
@@ -136,7 +121,7 @@ fn main(world: World) -> [] int {
                                 var opened = DirOpened::Failed(2);
                                 borrow fs as &ff in {
                                     if fs_read(ff, "/dev/urandom", entropy) != 32 {
-                                        io.error_all(i, "tls_echo: cannot read 32 bytes of /dev/urandom\n");
+                                        io.error_all(i, "https_hello: cannot read 32 bytes of /dev/urandom\n");
                                         status = 5;
                                     }
                                     match opened {
@@ -165,7 +150,7 @@ fn main(world: World) -> [] int {
                                         dir_close(dir);
                                     }
                                     DirOpened::Failed(e) => {
-                                        io.error_all(i, "tls_echo: cannot open the directory --dir names\n");
+                                        io.error_all(i, "https_hello: cannot open the directory --dir names\n");
                                         status = 5;
                                     }
                                 }
