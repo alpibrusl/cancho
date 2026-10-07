@@ -1,9 +1,9 @@
 # Narrowing one capability into several
 
-Status: **design, not built; the `covers` fix of section 6 is built (PR #359).** Found by the PostgreSQL TLS work (alpibrusl/cancho-pg#14, its `docs/tls.md` section 5 and
+Status: **built (PR PRNUM); the `covers` fix of section 6 was built first (PR #359).** Found by the PostgreSQL TLS work (alpibrusl/cancho-pg#14, its `docs/tls.md` section 5 and
 section 11.3): a program that reads two unrelated files holds `Fs("")`, and its authority report says `fs_read("")`, which
-is every file. Every claim below about the compiler today was checked against the code or a probe at `c0ad830`;
-section 10 lists which, and what was not.
+is every file. Every claim below about the compiler before this change was checked against the code or a probe at `c0ad830`;
+section 10 lists which, and what was not. Section 11 is what building it found, and corrects in place what it showed wrong.
 
 ## 1. The problem, as a program and its report
 
@@ -146,8 +146,8 @@ which no other option that solves the problem does.
 and `crates/cancho-codegen-llvm/src/body/expr.rs`, the `Split | Narrow | ForkHeap | ForkClock` arm returns no values).
 A tuple of zero-sized capabilities has no leaves, and a tuple carrying an `Fs` already checks, builds and runs on both
 backends (probe: a function `fn pass(fs: Fs("/dev/urandom")) -> [] (Fs("/dev/urandom"), int)` destructured with
-`let (back, n) = pass(rng);`). Whether the existing arm needs no change for an n-tuple result is the first thing to
-confirm when building; it is not measured here. The run-time path check is per operation and reads the prefix of the
+`let (back, n) = pass(rng);`). *(Corrected in PR PRNUM, section 11: the `Narrow` arm is never reached, because the checker answers an `Expr::Tuple` rather than a call, and neither backend
+needed a change.)* The run-time path check is per operation and reads the prefix of the
 capability that operation borrowed (`Expr::FileOp`'s `prefix`, `checked_path` in both backends), so it does not change:
 each child is checked against its own literal. Probe at `c0ad830`: `fs_read` of `/etc/hosts` through `Fs("/dev/urandom")`
 traps (SIGILL, exit 132).
@@ -418,5 +418,68 @@ Probed with `cancho` built from `c0ad830` (macOS, AArch64):
 * a tuple carrying an `Fs` checks, builds and runs on both backends;
 * `fs_read` outside the narrowed prefix traps.
 
-Not verified: that the backends need no change for an n-tuple answer from `narrow` (section 4.1), and anything on Linux or
+Not verified at that commit: that the backends need no change for an n-tuple answer from `narrow` (section 4.1; measured when it was built, section 11), and anything on Linux or
 under WASI. cancho-pg and cancho-hooks were read, not built.
+
+## 11. As built
+
+> Built in PR PRNUM, as section 5 recommends and section 9 decided (2026-10-07). Question 4 said to wait for the second asker; it was built ahead of
+> cancho-mqtt and cancho-gateway on the maintainer's instruction, with `examples/tls_echo_fixed` (section 11.1) as the in-repository program that
+> uses it.
+
+**The rule as implemented** (`crates/cancho-ir/src/lower/narrow.rs`, called from `FnLowering::narrow`):
+
+1. `narrow(cap, lit)` is today's form, byte for byte the same code path. `narrow(cap)` and `narrow()` are `arity-mismatch` ("takes a capability and one or more literals").
+2. With two or more literals: every argument after the first must be a string literal (`capability-not-narrowable` otherwise, at the offending argument). A borrowed `cap`, a type
+   that is not a capability, and one that carries no value (`Heap`, `Io`, ...) are refused with the single form's messages.
+3. The capability must be `Fs` or `Exec`. On `Ffi` and `Signals` the refusal names the set form (`narrow(ffi, "libc,libm")`, `narrow(signals, "TERM,INT")`); on `Net` it says it is
+   not supported. All `capability-not-narrowable`, all before any other check of the literals.
+4. Each literal passes the single form's three checks in one shared function (`check_narrowing`): it starts with the capability's path, it extends it at a `/` (`extends_path`), and it
+   is not equal to it.
+5. Then the literals are compared pairwise, in the order written, and the first pair that is equal, or in which one `extends_path` the other, is refused
+   `capability-not-narrowable` at the later literal, naming both. A literal ending in `/` therefore contains everything below it.
+6. The answer is `Type::Tuple` of the capability's type narrowed to each literal, in the order written. `cap` is lowered once, as an owned use, so it is consumed.
+
+Nothing else changed in the checker: no new rule tag, no new builtin, no new label, no new capability. `Label::covers` was already path-aware (PR #359).
+
+**No edition.** `docs/editions.md` section 5 sorts changes into additive (a new name, field or label, which an older edition must not see), refining and tightening, and section 6.4 closes
+the vocabulary of an edition against new labels, builtins and capabilities. This adds none of those. `narrow` is an existing name in every edition; the forms it now accepts
+(three or more arguments) were refused `arity-mismatch` before, so no program that compiled changes meaning, no name a program declares can collide with it, and a file in any edition
+reads exactly as before. The multi-literal `Exec` form is reachable only from edition 7, where `Exec` is nameable, by the same rule that already gates the single form.
+
+**The backends needed no change.** The checker answers `Expr::Tuple { parts }` with the lowered capability as the first part and an empty tuple for each further child, so
+the tuple has the right number of zero-sized components and no leaf. Both backends already lower `Expr::Tuple` by concatenating its parts' leaves, and a capability has none;
+the `Builtin::Narrow` arm is not reached at all (the single form returns the capability expression itself and always did). Measured by running the fixtures on Cranelift and LLVM
+(`conformance/narrow_many.rs`: two and three children, the order, the run-time confinement, the tuple passed whole and stored in a struct, `Exec`). The unmeasured part:
+WASI (`docs/wasm.md`) was not run; a capability is zero-sized there too.
+
+**What building found.**
+
+* A capability inside a tuple or a struct *parameter* is not "owned" in the sense that discharges a label: `fn whole(p: (Fs("/a"), Fs("/b")), ...)` must declare `fs_read("/a")` and
+  `fs_read("/b")` even though it releases both, where a function taking `Fs("/a")` directly declares `[]`. That is how rows treat any aggregate, not something this adds, and it is the
+  conservative direction; section 4.1's helper (two borrowed parameters) is unaffected. `tests/accept/narrow_three_paths_forms.cho` writes it.
+* `open_dir(fs, path)` takes its path at run time and traps outside the capability's prefix as every file operation does, so a program that narrows to a *directory* and opens that same
+  literal is exactly confined (section 11.1, and `conformance/narrow_many.rs`'s TLS-setup case, which also checks `open_dir` of `/dev` through the directory's child traps).
+* `/tmp` and `/tmpevil` are unrelated by `extends_path`, so `narrow(fs, "/tmp", "/tmpevil")` is accepted and each child is confined to its own tree; `narrow(fs, "/tmp", "/tmp/a")` is
+  nested and refused.
+
+**Mutants** (each turned a test red): skipping the per-literal check; skipping the pairwise check for nesting and, separately, for equality; answering the parent's path for the
+children; answering the children in the wrong order. Allowing the multi-literal form on `Ffi` is killed by `tests/reject/narrow_many_on_ffi.cho` (see the PR for the run).
+Reverting `Label::covers` to the byte prefix was already pinned by `label_covers.rs` (PR #359).
+
+**The self-hosted checker (epic #295).** `examples/selfhost/` ports declarations and bodies for scalars, references and slices, and a call to a builtin is `SKIP` in `body.cho`. It does not
+port `narrow`, so it does not need the multi-argument branch now and is unchanged; `tables.cho` is unchanged (no name or edition was added) and its drift test passes. Stage 3e, when it
+ports `narrow`, will need the branch described in section 7: the per-literal check, the pairwise check (quadratic in a handful), the tuple answer.
+
+### 11.1 The payoff: `examples/tls_echo_fixed`
+
+`examples/tls_echo` reads its entropy from `/dev/urandom` and its certificates from a directory the operator names with `--dir`, so its `main` holds `Fs("")` and the pinned report says
+`fs_read("")` (`conformance/tls_echo.rs`). `examples/tls_echo_fixed/tls_echo_fixed.cho` is the same server with the directory fixed at build time as a literal, `/etc/cancho/tls_echo`
+(section 9, question 5's convention): `main` is `let (urandom, certs) = narrow(fs, "/dev/urandom", "/etc/cancho/tls_echo");` and the pinned report has `fs_read("/dev/urandom")` and
+`fs_read("/etc/cancho/tls_echo")` where it had `fs_read("")`, and every other label the same (`conformance/tls_echo_fixed.rs`). The server body (`serve`) moved, unchanged, from
+`tls_echo.cho` to `echo.cho` so that the two share it (the duplication test refuses a copy); `front.cho` gained `parse_flags`, `parse` without the `--dir` requirement, and `parse` is
+`parse_flags` plus that requirement, so `tls_echo` and `https_hello` behave as before.
+
+**What it costs.** The directory is part of the build: to serve certificates from elsewhere, edit the literal and rebuild (a deployment that wants `/etc/cancho/<name>` per instance builds
+one binary per name). `--dir` is refused (usage error 2) because the program holds no more of the filesystem than the literal; `--identity <subdirectory>` still names a
+subdirectory *beneath* it at run time, through the directory handle. Nothing else about the server changes.

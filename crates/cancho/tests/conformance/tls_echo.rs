@@ -24,7 +24,9 @@ fn example_files() -> Vec<PathBuf> {
 /// foreign code (`bounded`), the files read through a directory handle
 /// (`dir_read`, `file_read`) after one path each at start (`fs_read("")`:
 /// the operator names the directory, so there is no literal to narrow to,
-/// `docs/agent-toolbox.md` §2.2), and the three signals it claims.
+/// `docs/agent-toolbox.md` §2.2; `examples/tls_echo_fixed` fixes the directory
+/// and reports two literal paths instead, `tls_echo_fixed.rs`), and the three
+/// signals it claims.
 #[test]
 fn the_example_reports_a_bounded_authority_and_no_foreign_code() {
     let out = Command::new(BIN)
@@ -125,7 +127,7 @@ pub(super) fn signal(pid: u32, name: &str) {
 /// server's close_notify, which the echo sends once `--idle` passes with
 /// nothing more. Every connection must end `ok` with all 16,384 bytes back,
 /// the same for every one.
-fn clients(exe: &Path, port: u16, conc: usize) {
+pub(super) fn clients(exe: &Path, port: u16, conc: usize) {
     let ca = std::fs::read(repo_root().join("tests/vectors/tls/echo/ca.pem")).unwrap();
     let mut child = Command::new(exe)
         .args(["127.0.0.1", &port.to_string(), "echo.lex-sys.test", &conc.to_string(), "65536"])

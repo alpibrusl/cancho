@@ -1,0 +1,13 @@
+//~ ERROR are nested
+//~ RULE capability-not-narrowable
+
+// A literal that ends in `/` contains everything below it, so it nests the second.
+// (`docs/narrowing-into-several.md` section 5.)
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io); release(ffi); release(heap); release(args);
+    let (a, b) = narrow(fs, "/etc/", "/etc/ssl");
+    release(a); release(b);
+    return 0;
+}

@@ -249,6 +249,43 @@ fn main(world: World) -> [] int {
 The library in `Ffi("...")` is a **claim** the declaration makes; the symbol is the fact. A set is not a text prefix (`Ffi("libc")` no longer narrows to `Ffi("libcrypto")`), and a
 malformed one is `foreign-scope` (`docs/foreign-authority.md`).
 
+### 3.4 Two paths: narrow into several
+
+A program that reads two unrelated files (entropy from `/dev/urandom` and a certificate directory) cannot hold one `Fs` for both without holding `Fs("")`, and then its report says
+`fs_read("")`, which is every file. `narrow` takes one literal or several. With several it consumes the `Fs` (or `Exec`) and answers a **tuple**, one capability narrowed to each literal,
+in the order written; each helper then borrows the one it needs and declares one label:
+
+```cancho
+fn entropy[&f, &o](fs: &f Fs("/dev/urandom"), out: &!o [byte]) -> [fs_read("/dev/urandom")] int {
+    return fs_read(fs, "/dev/urandom", out);
+}
+
+fn trust[&f, &o](fs: &f Fs("/etc/ssl/certs/ca-certificates.crt"), out: &!o [byte]) -> [fs_read("/etc/ssl/certs/ca-certificates.crt")] int {
+    return fs_read(fs, "/etc/ssl/certs/ca-certificates.crt", out);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io); release(ffi); release(heap); release(args);
+    let (rng, ca) = narrow(fs, "/dev/urandom", "/etc/ssl/certs/ca-certificates.crt");
+    var got = 0;
+    region r {
+        let seed = alloc_slice[r](32, byte_of(0));
+        let pem = alloc_slice[r](4096, byte_of(0));
+        borrow rng as &x in { got = got + entropy(x, seed); }
+        borrow ca as &y in { got = got + trust(y, pem); }
+    }
+    release(rng);
+    release(ca);
+    return 0;
+}
+```
+
+The report names those two paths and nothing under the filesystem else. The literals must be **unrelated**: two equal, or one inside another, is `capability-not-narrowable` (the inner
+one grants nothing the outer does not), as is a literal that does not extend the capability's own path. A path chosen at run time cannot be a literal; the narrowest form for it is a
+fixed *directory* and a run-time name beneath it (`examples/tls_echo_fixed`). `Ffi` and `Signals` narrow to a *set* in one capability (`narrow(ffi, "libc,libm")`), and more than one
+literal on them, or on `Net`, is refused. [`docs/narrowing-into-several.md`](docs/narrowing-into-several.md) has the rule and its limits.
+
 ---
 
 ## 4. A reference may not outlive its region
