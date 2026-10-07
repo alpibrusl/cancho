@@ -438,15 +438,15 @@ pub fn prelude_bound(i: int) -> [] int {
 }
 
 pub fn builtin_count() -> [] int {
-    return 122;
+    return 123;
 }
 
 fn builtin_chars() -> [] &static [byte] {
-    return "putcharwrite_byteswrite_errflush_outgetcharsplitreleasenarrowfork_heapfork_clockcopy_withincopy_intoindex_of_bytewrapping_addwrapping_subwrapping_mulvalue_barrierhw_aes_gcmaes_encrypt_blockghash_updatelenbyte_ofint_offloat_oftruncateis_nansqrtbits_off32_offloat_of32bits_of32f32_of_bitssqrt32f32_of_intint_of_f32fs_readfs_writeopen_readfile_readfile_closeopen_appendopen_writeopen_newopen_rwfile_writefile_pwritefile_preadfile_syncfile_truncatefile_sizefs_renamefs_removefile_lockboxunboxcontentsarg_countargbox_sliceunbox_sliceconnectbindlistenaccepttcp_listentcp_connecttcp_connect_starttcp_acceptpoller_newpoller_add_listenerpoller_add_connpoller_modifypoller_removepoller_waitpoller_closeclock_msclock_unix_msconn_detachconn_attachconn_readconn_writeconn_nonblockingconn_nodelayconn_connect_statuslistener_nonblockingconn_closelistener_closesignals_watchsignals_pendingpoller_add_signalssignals_closeopen_dirdir_enterdir_open_readdir_closedir_open_newdir_open_appenddir_renamedir_removedir_syncdir_listdir_nextdir_list_closedir_statdir_modedir_own_modepipe_openexec_spawnexec_spawn_inchild_waitchild_killpipe_readpipe_writepipe_nonblockingpipe_closechild_end_closepoller_add_pipepoller_add_childnull_ptrspawnjointrap";
+    return "putcharwrite_byteswrite_errflush_outgetcharsplitreleasenarrowfork_heapfork_clockcopy_withincopy_intoindex_of_bytewrapping_addwrapping_subwrapping_mulvalue_barrierhw_aes_gcmaes_encrypt_blockghash_updatelenbyte_ofint_offloat_oftruncateis_nansqrtbits_off32_offloat_of32bits_of32f32_of_bitssqrt32f32_of_intint_of_f32fs_readfs_writeopen_readfile_readfile_closeopen_appendopen_writeopen_newopen_rwfile_writefile_pwritefile_preadfile_syncfile_truncatefile_sizefs_renamefs_removefile_lockboxunboxcontentsarg_countargbox_sliceunbox_sliceconnectbindlistenaccepttcp_listentcp_connecttcp_connect_starttcp_acceptpoller_newpoller_add_listenerpoller_add_connpoller_modifypoller_removepoller_waitpoller_closeclock_msclock_unix_msconn_detachconn_attachconn_readconn_writeconn_nonblockingconn_nodelayconn_connect_statuslistener_nonblockingconn_closelistener_closesignals_watchsignals_pendingpoller_add_signalssignals_closeopen_dirdir_enterdir_open_readdir_closedir_open_newdir_open_appenddir_renamedir_rename_newdir_removedir_syncdir_listdir_nextdir_list_closedir_statdir_modedir_own_modepipe_openexec_spawnexec_spawn_inchild_waitchild_killpipe_readpipe_writepipe_nonblockingpipe_closechild_end_closepoller_add_pipepoller_add_childnull_ptrspawnjointrap";
 }
 
 static builtin_starts: [int] {
-    let t = alloc_slice[static](122, 0);
+    let t = alloc_slice[static](123, 0);
     t[1] = 7;
     t[2] = 18;
     t[3] = 27;
@@ -545,34 +545,35 @@ static builtin_starts: [int] {
     t[96] = 955;
     t[97] = 970;
     t[98] = 980;
-    t[99] = 990;
-    t[100] = 998;
-    t[101] = 1006;
-    t[102] = 1014;
+    t[99] = 994;
+    t[100] = 1004;
+    t[101] = 1012;
+    t[102] = 1020;
     t[103] = 1028;
-    t[104] = 1036;
-    t[105] = 1044;
-    t[106] = 1056;
-    t[107] = 1065;
-    t[108] = 1075;
-    t[109] = 1088;
-    t[110] = 1098;
-    t[111] = 1108;
-    t[112] = 1117;
-    t[113] = 1127;
-    t[114] = 1143;
-    t[115] = 1153;
-    t[116] = 1168;
-    t[117] = 1183;
-    t[118] = 1199;
-    t[119] = 1207;
-    t[120] = 1212;
-    t[121] = 1216;
+    t[104] = 1042;
+    t[105] = 1050;
+    t[106] = 1058;
+    t[107] = 1070;
+    t[108] = 1079;
+    t[109] = 1089;
+    t[110] = 1102;
+    t[111] = 1112;
+    t[112] = 1122;
+    t[113] = 1131;
+    t[114] = 1141;
+    t[115] = 1157;
+    t[116] = 1167;
+    t[117] = 1182;
+    t[118] = 1197;
+    t[119] = 1213;
+    t[120] = 1221;
+    t[121] = 1226;
+    t[122] = 1230;
     return t;
 }
 
 static builtin_lens: [int] {
-    let t = alloc_slice[static](122, 0);
+    let t = alloc_slice[static](123, 0);
     t[0] = 7;
     t[1] = 11;
     t[2] = 9;
@@ -671,35 +672,36 @@ static builtin_lens: [int] {
     t[95] = 12;
     t[96] = 15;
     t[97] = 10;
-    t[98] = 10;
-    t[99] = 8;
+    t[98] = 14;
+    t[99] = 10;
     t[100] = 8;
     t[101] = 8;
-    t[102] = 14;
-    t[103] = 8;
+    t[102] = 8;
+    t[103] = 14;
     t[104] = 8;
-    t[105] = 12;
-    t[106] = 9;
-    t[107] = 10;
-    t[108] = 13;
-    t[109] = 10;
+    t[105] = 8;
+    t[106] = 12;
+    t[107] = 9;
+    t[108] = 10;
+    t[109] = 13;
     t[110] = 10;
-    t[111] = 9;
-    t[112] = 10;
-    t[113] = 16;
-    t[114] = 10;
-    t[115] = 15;
+    t[111] = 10;
+    t[112] = 9;
+    t[113] = 10;
+    t[114] = 16;
+    t[115] = 10;
     t[116] = 15;
-    t[117] = 16;
-    t[118] = 8;
-    t[119] = 5;
-    t[120] = 4;
+    t[117] = 15;
+    t[118] = 16;
+    t[119] = 8;
+    t[120] = 5;
     t[121] = 4;
+    t[122] = 4;
     return t;
 }
 
 static builtin_sinces: [int] {
-    let t = alloc_slice[static](122, 0);
+    let t = alloc_slice[static](123, 0);
     t[0] = 1;
     t[1] = 1;
     t[2] = 1;
@@ -798,13 +800,13 @@ static builtin_sinces: [int] {
     t[95] = 6;
     t[96] = 6;
     t[97] = 6;
-    t[98] = 6;
+    t[98] = 7;
     t[99] = 6;
     t[100] = 6;
     t[101] = 6;
     t[102] = 6;
     t[103] = 6;
-    t[104] = 7;
+    t[104] = 6;
     t[105] = 7;
     t[106] = 7;
     t[107] = 7;
@@ -818,10 +820,11 @@ static builtin_sinces: [int] {
     t[115] = 7;
     t[116] = 7;
     t[117] = 7;
-    t[118] = 3;
-    t[119] = 4;
+    t[118] = 7;
+    t[119] = 3;
     t[120] = 4;
-    t[121] = 1;
+    t[121] = 4;
+    t[122] = 1;
     return t;
 }
 
