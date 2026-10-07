@@ -39,7 +39,7 @@ chunk and traps when full, so buffers are heap boxes sized when the program star
 | `examples/fetch` | a blocking `GET`, the reference for "a cancho client", libc sockets | one request at a time; it waits |
 | `std.http` | a strict **request** parser into an integer table (`parse`), `dechunk` (a whole chunked body in one call), response *writers* | no response parser; `dechunk` needs the whole body in memory, so it cannot stream |
 | `std.conns` | `Table` of connections by slot, `read`/`write`/`watch`/`connect_status`, `nonblocking`, `nodelay`; with `tcp_connect_start` a **non-blocking connect to an IP literal** (a name stalls the loop: `native-sockets.md` §10.6) | |
-| `packages/tls` | a client `Engine`: `start`, `feed`/`take`/`send`/`recv` (bytes in, bytes out, no socket inside), the chain verified against roots the caller gave, the name and the time given at `start`; tickets for resumption | one engine is all clients or all servers; one slot is **269 KiB** (measured: `tls_client.ints_len()` is 10,241 words and `bytes_len()` 187,191 bytes), so 64 TLS connections are 17 MB |
+| `packages/tls` | a client `Engine`: `start`, `feed`/`take`/`send`/`recv` (bytes in, bytes out, no socket inside), the chain verified against roots the caller gave, the name and the time given at `start`; tickets for resumption | one engine is all clients or all servers; one slot is **269,119 bytes** (measured: `tls_client.ints_len()` is 10,241 words, 81,928 bytes, and `bytes_len()` 187,191 bytes), so 64 TLS connections are 17 MB |
 | `packages/http-server` byte-fed mode | the shape to mirror: `attach`/`input`/`output`/`room`/`closing`/`detach`, the clock an argument, every buffer fixed at `open_bytes` | |
 | `examples/tls_nb/rtcp.cho` | `rtcp.Resolver`: DNS over TCP as a state machine on the caller's poller (a lookup does not stop the loop: a 2 ms gap against 302 ms for `getaddrinfo`, `tls-nonblocking.md` §7) | it is an example file (with `dns.cho`), not a package, and it is `Net("")`-only |
 | `tests/programs/tls_many.cho` | a client of `packages/tls` on one poller: connect, handshake, request, read to close_notify | one request per connection |
@@ -250,7 +250,7 @@ TLS needs is the caller's, in the order `https_hello` and `tls_many` do it:
    `tls.recv` plaintext goes to `give`. A failed handshake is `connect_failed(c, k, kind_tls(), now)` (`client.tls`; the engine's own
    refusal tag, `tls.refusal_tag(tls.failure(engine, k))`, is the caller's to log).
 4. A connection that the client says to `Close` gets `tls.finish` (close_notify) and then the socket's close and `tls.drop`.
-   An idle pooled TLS connection costs its 269 KiB engine slot, so `slots` bounds TLS memory directly: 16 TLS connections are 4.3 MB.
+   An idle pooled TLS connection costs its 269,119-byte engine slot, so `slots` bounds TLS memory directly: 16 TLS connections are 4.3 MB.
 
 **The driver is built in this PR** (`examples/http_fetch_nb/fetch_io.cho`): poller, `std.conns`, the dial, the TLS pump and the client
 table in one loop, in the shape of `tls_many`'s `advance`/`flush`. It is an example module and not a package, for the reason
@@ -371,11 +371,13 @@ ended before any response byte), `client.truncated` (it ended inside a head or a
 ## 7. Cost, stated as a prediction to be checked
 
 `http-server.md` §11.7 measured the server side: 5.6 µs of CPU a request plain (`examples/api`) and 23.4 µs over TLS 1.3 on CI's
-x86-64 core. The client does the mirror work: one parse of a response head (about the same bytes as a request head), a copy in, a
-copy out. **Prediction: the client alone, against a local server, is the same order, 5 to 15 µs a request plain, and a TLS keep-alive
-request is that plus the record work (about 18 µs on the x86-64 core, §11.7's difference), so 25 to 40 µs.** §9 states the gate;
-the numbers go in §10 when they exist, and the prediction is corrected in place if it is wrong. `cancho-hooks` §53.1's arithmetic
-(a kept TLS delivery 30 to 40 µs) is the same figure.
+x86-64 core, 2.7 µs and 9.8 µs on the aarch64 VM. The client does the mirror work: one parse of a response head (about the same bytes as
+a request head), a copy in, a copy out. **Prediction: the client alone, against a local server, is the same order, 5 to 15 µs a request
+plain, and a TLS keep-alive request is that plus the record work (about 18 µs on the x86-64 core, §11.7's difference), so 25 to 40 µs.**
+§9 states the gate; the numbers are in §10.5. `cancho-hooks` §53.1's arithmetic (a kept TLS delivery 30 to 40 µs) is the same figure.
+*(Corrected: the prediction was high. Measured on the aarch64 VM, the client costs 2.9 µs a request plain and 7.5 µs over TLS, and 5 to 6
+and 11 on the Mac; §10.5 has the x86-64 figures from CI. The estimate added the server's TLS surcharge to a client that does less than
+the server: it has no routing, no answer to build and, in `fetch_io`, no JSON.)*
 
 ---
 
@@ -406,7 +408,177 @@ the numbers go in §10 when they exist, and the prediction is corrected in place
 
 ## 10. As built
 
-*(Added when the code lands, with the corrections to the sections above, each marked in place.)*
+Built in this PR; the sections above are corrected in place where the build differed, each marked *corrected*.
+
+### 10.1 What is in the repository
+
+| | |
+|---|---|
+| `packages/http-client/` | three modules, published as stores by `scripts/publish_packages.py` like `packages/tls`: `http_client_slot` (285 lines: the names of the words of a slot and the numbers they hold), `http_client_wire` (1,105: validating and writing a request head, the response head parser, the incremental chunk decoder) and `http_client` (1,711: the table, the state machine, the pool, the timers, the events). `http_client` was 1,988 lines before the slot layout moved out of it |
+| `examples/http_fetch_nb/` | `fetch_io.cho` (the driver of §3.7: sockets, TLS engine, poller; the one place that owns them) and `fetch.cho` (a program that fetches N URLs at once with it, with the options the live tests need) |
+| `tests/packages/http_client_*.cho` | 118 `cancho test` tests in seven files, run on both backends by `conformance/http_client.rs` |
+| `tests/programs/http_client_{bytes,fuzz,bench}.cho` | the package with no I/O (its authority pinned), a million damaged responses through it, and its cost with nothing around it |
+| `scripts/http_client_{upstream,test,mutants}.py` | the servers the live tests use, the 17 live cases and the cost, and 517 mutants |
+| `crates/cancho/tests/conformance/http_{client,fetch_nb}.rs` | the unit tests on both backends and the package's authority; the example built and run against a server written in the test and against `examples/https_hello`, and its authority pinned |
+| CI | the `tls-assurance` job builds the example and runs the live tests, the fuzz, the bench, the cost and the mutants (`ci.yml`) |
+
+### 10.2 The API as built, against the design
+
+The calls of §4 exist with these differences *(corrected)*:
+
+* `poll(c, now)`, `detach(c, k, now)`, `consume(c, t, n, now)`, `send_body`, `end_body`, `connected`, `connect_failed`, `eof`, `reset`,
+  `abort`, `retire`, `tick`, `take` and `give` take the caller's clock. `next_deadline(c, now)` answers the milliseconds to the next timer,
+  0 if one is due, -1 if there is none.
+* Added: `close_idle(c, now)` (every idle connection is told to close: the program is ending), `ticket_of(c, k)`, `close_reason_tag`, the
+  counters `connects`, `requests`, `reuses`, `retries`, `continued_by_timeout`, and `default_limits()`. `Limits` is a struct literal (cancho
+  cannot assign one field of a value), so a caller writes all nine fields.
+* `request` answers `0 - code`; `client.full` is `-10`. A request is refused whole: nothing about the client changes on a refusal.
+* `Event::Done` comes **after** the last byte of the body was consumed (§3.4), and a response complete but unconsumed holds its slot.
+* A **free slot with an event the caller has not seen is not given to a new request** (`free_slot` and `pooled` need `events == 0`): a
+  caller that detaches a slot before it polled the `Failed` for it would otherwise lose that failure. A request that takes such a slot
+  once it is seen is not queued twice (a full queue of N events would otherwise overwrite its oldest).
+* A **closing slot takes what it is given and keeps none of it** (`give` answers the length): a caller's loop that reads once more after
+  it learned the transport was closing neither loops nor feeds a dead request. A free or dialling slot answers -1.
+
+### 10.3 Decisions the build added
+
+* **A body that runs to the end of a TLS connection needs close_notify.** The driver reports a TLS connection whose socket ended without it as
+  `reset` (`client.reset`), not `eof`: RFC 8446 §6.1 says the data may have been cut, and for a body with no length the end of the
+  connection is the only thing that says it is whole. A body with a length or chunked is whole without it, and the connection is just not kept.
+  `scripts/http_client_upstream.py` ends its TLS connections properly (`unwrap`) except on `/closeabrupt`, which the live test uses.
+* **`idle_per_key` bounds the pool, and it is the first thing a benchmark trips over.** Thirty-two lanes on one upstream with the default of 8
+  idle connections made 12,957 connections for 81,536 requests (the 24 that did not fit were closed at each `Done` and dialled again), and
+  24 of them failed with `client.connect` (the kernel ran out of ports to hand out). The cost rows pass `--pool 32`.
+* **The driver must not spin.** The first `fetch_io.step` treated "bytes waiting for the socket" as work to do, so an upload to a peer that
+  reads nothing used 0.55 s of CPU in 3 s asking the kernel again and again. A pump now says whether it moved anything, a blocked socket is
+  the poller's to wake, and `nospin` in the live tests fails the old loop (0.35 s) and passes the new (0.00 s).
+* **A write that fails does not lose the response.** A server that answers `413` as soon as it has the head and closes with the upload unread
+  resets the connection while the client is still writing; its answer is in the client's receive buffer. The driver marks the write side dead,
+  drops the request and goes on reading (`earlyrst` in the live tests; the loop that reset at the first failed write lost the answer in one run
+  of three). RFC 9112 §9.6 is why a *server* should not do this; a client should survive one that does.
+* **The driver watches an idle connection for readable** and gives what arrives to `give`, so a server that closes a pooled connection is noticed
+  when it happens (`Close`, reason `peer-closed`), not when the next request finds it dead. The retry of §3.5 is for the race that remains.
+* **Bytes behind a complete response are noted, not kept:** if they arrive in the same read they are swallowed and the connection is closed, not
+  pooled. A server that sends a second response nobody asked for is not believed.
+
+### 10.4 Tests, against the gates of §9
+
+1. **118 unit tests**, on both backends, the number pinned in `conformance/http_client.rs`: every framing (length, chunked with an extension and
+   a trailer, until close, none for `HEAD`/`204`/`304`, `HTTP/1.0`, interim responses) **fed in pieces of 1, 2, 3, 5, 7 and the whole**; a body of
+   60,000 bytes through a 2,048-byte buffer in either framing to a consumer that takes 100 bytes a turn; 55 refused responses (each fed at three
+   piece sizes) and 18 refused chunk framings (at every piece size) with their tags; 34 refused requests; the one retry (allowed or not, on an end
+   or a reset, with a body, past the buffer, after a response byte, on a timeout, on a fresh connection); the pool (reuse, the newest, the oldest
+   evicted, `idle_per_key`, `retire`, expiry by idle time, life and request count, to the millisecond); every timer at the millisecond it fires and
+   the one before, and the caller's slowness not charged; `Expect` released by a `100`, by the wait and by a final response; an early response; a
+   stale ticket and every wrong handle; and 16 seeds of 4,000 random operations of every call that must not trap or break a bound. Every tag of §6
+   that a request or a response can reach is reached by a test that names it.
+2. **Mutants: 461 of 517 killed, 56 argued equivalent, none survives** (`scripts/http_client_mutants.py`, which breaks `wire.cho` and `client.cho` one
+   site at a time and runs the tests, as `http_server_bytes_mutants.py` does). The first run killed 356, left 153 alive and had 8 whose text no longer
+   matched. What the survivors showed was in the tests, not the package: a harness whose byte assertions carried the label 0 and so could not
+   fail (**every `assert_bytes` was inert**; found because `read_body: a body until close counts nothing` survived), a pool test that ended every
+   connection with an `eof` and so could not see one pooled that should not be, an `open` test whose failure the next part overwrote, and the
+   places the tests walked past: the boundary of every limit, every name the client owns, a header ending in a bare CR, `PUT` and `PATCH` with a
+   body of 0, a hex size in lower case, a chunk size past 2^50, the trailer bound to the byte, the Expect clock starting at the last byte of the
+   head, a replayed request not complete until it is sent again, a slot freed with events waiting being queued twice, a short final head
+   behind interim ones that arrived with the end of the last of them. Each got a test. The 56 equivalents are each argued in the script (a check
+   that another makes redundant, a state no caller can reach, a change only in how much is scanned); the one a test cannot show is `open`'s
+   1 GiB budget, which was run once by hand.
+3. **Live, over plain TCP and TLS 1.3** (`scripts/http_client_test.py`, 17 cases, all passing on macOS and on Linux aarch64 in Docker with nginx
+   installed): the framings at sizes from 0 to past the input buffer, alone and 40 at once; 1,000 requests over four URLs that make four
+   connections, **counted at the server**; 40 URLs through 16 slots; three upstreams through two slots (an idle connection closed for another
+   upstream, and the slot dialling again); 50 MB byte for byte; uploads of 0 bytes to 5 MB with a length and chunked, hashed at the server;
+   `Expect: 100-continue` answered, waited out and refused; a 413 read while 5 MB were being sent, and after a reset; the retry (2 connections and
+   3 requests with `--retry`, `client.closed-early` without); ten kinds of refused response, each with its tag; timeouts; a name the certificate
+   does not carry and roots that are not its CA (`client.tls`); `examples/https_hello` (300 requests on 3 TLS connections, 3 handshakes, each
+   ended with close_notify); nginx ending connections with `Connection: close` after 5 requests; a blocked upload that must not spin; and a
+   server that damages every response (flipped bytes, cuts, junk, in pieces of 1 to 100,000 bytes) to 640 connections: the client lives and every
+   lane ends.
+4. **No input reaches a trap:** `tests/programs/http_client_fuzz.cho` feeds **a million damaged responses** through the whole client (0.4 s on the Mac),
+   in pieces of one to forty bytes and consuming the body 7 bytes at a time so the buffers shift constantly: 330,281 end in `Done`, 669,719 in `Failed`
+   with a tag, none is stuck, none traps (the same counts on macOS and on Linux, which is the point of a generator with a seed).
+5. **Cost** is §10.5.
+6. **Authority:** the package with a program that makes a request and reads a response reports `heap` and `io_write` (the program printing)
+   and nothing else, `bounded`, no foreign code (`the_package_reaches_the_heap_and_nothing_else`); the example reports `args`, `clock`,
+   `conn_read`, `conn_write`, `err_write`, `fs_read("/dev/urandom")`, `heap`, `io_read`, `io_write`, `net_out("")` and `poll`, bounded, no
+   foreign code, pinned in `conformance/http_fetch_nb.rs` like the TLS echo's.
+7. **The gate:** `cargo fmt --all --check` and `cargo clippy --all-targets -- -D warnings` clean; `cargo test --workspace --no-fail-fast` on macOS
+   (arm64) and on Linux (aarch64, in Docker: x86-64 is CI's) with the two tests that need a git checkout failing in a worktree and everything
+   else passing; `scripts/publish_packages.py --check` clean.
+
+### 10.5 Cost
+
+`scripts/http_client_test.py --cost 5 --pin --server <examples/api> --https-hello <https_hello>`: 32 lanes on 32 connections, one request out on each,
+closed loop, the **client** on one core and the **server** on another (`taskset`), three runs of about five seconds; the client's CPU a request is
+its `getrusage` divided by the requests, the median of the three. Plain is `GET /users/42` against `examples/api` (a 26-byte JSON answer);
+TLS 1.3 is `GET /hello/42` against `examples/https_hello` (99 bytes with its head). `--quiet`, so nothing is printed or hashed.
+
+| | requests a second, three runs | the client's CPU a request |
+|---|---|---|
+| **aarch64 Linux** (Docker Desktop's VM on an Apple M4 Max, 6 vCPUs, other containers running; cores pinned) | | |
+| plain, keep-alive | 324,772 313,368 303,421 | **2.91 µs** |
+| plain, a connection for each request (`--close`) | 29,158 49,934 50,588 | 13.09 µs |
+| TLS 1.3, keep-alive | 123,094 119,944 125,213 | **7.48 µs** |
+| TLS 1.3, a handshake for each request (`--close`) | 101 101 101 | **3,226 µs** |
+| **macOS, M4 Max, unpinned**, with a load average of 15 to 30 from other jobs | | |
+| plain, keep-alive | 145,015 170,287 157,179 | 5.68 µs |
+| plain, a connection for each request | 22,266 30,336 29,094 | 20.16 µs |
+| TLS 1.3, keep-alive | 87,379 85,616 81,705 | 10.70 µs |
+| TLS 1.3, a handshake for each request | 97 97 97 | 3,069 µs |
+@@X86@@
+
+So **a client core serves about 300,000 plain keep-alive requests a second and about 120,000 over TLS 1.3** on the aarch64 VM, against the server's
+2.7 µs and 9.8 µs a request (`http-server.md` §11.7, same VM): the client costs about as much as the server it talks to, which is what a mirror
+should. What TLS adds to a kept request is **4.6 µs** (the records), and a *new* TLS connection costs **3.2 ms** of the client's CPU, 430 times a kept
+request: the pool is the feature, and `idle_per_key` the setting that decides whether it works (§10.3). The VM is not quiet (the same command measured 150,918 / 139,480 /
+156,006 plain and 61,494 / 53,419 / 57,126 over TLS with the host busier, 3.42 and 8.15 µs): the CPU a request is the figure to read, and it moved
+by up to 18% where the rates moved by a factor of two.
+
+**The state machine alone** (`tests/programs/http_client_bench.cho`: `slots` requests in flight on one upstream, each answered with a canned
+response fed in one piece, the body consumed, the next request made on the pooled connection; no socket, no TLS, 400,000 requests):
+
+| slots | 8 | 64 | 256 | 1,024 (macOS) |
+|---|---|---|---|---|
+| per request | 0.23 µs (93 ms) | 0.29 µs (114 ms) | 0.50 µs (201 ms) | 1.23 µs (491 ms) |
+
+(a 4,000-byte body instead of 26: 0.34 µs at 8 slots). So of the 2.9 µs a request costs in the loop, **0.25 µs is the client**; the rest is
+`read`, `write` and `epoll`. The growth with slots is the O(slots) scans of the pool (`pooled`, `free_slot`, `oldest_idle`) and of `tick` and
+`next_deadline`, in the bench's transport loop as well: about 1 µs at 1,024 slots.
+
+### 10.6 Memory a connection costs
+
+Fixed when the client and the driver are opened; nothing is allocated per request or per connection.
+
+| | bytes a connection |
+|---|---|
+| the client's slot | `in_size + out_size` + 48 words of state + 272 words of parse table + 1 word of queue = **84,488** with the example's 65,536 and 16,384 |
+| the driver's buffers (`fetch_io`) | 32,768 read + 16,640 plaintext received + 16,384 request + 32,768 write + 20 words = **98,720** |
+| the TLS engine's slot, an `https` upstream only | **269,119** |
+
+So a plain connection is **183,208 bytes** (179 KiB) and a TLS one **452,327** (442 KiB): 64 TLS connections are 28.9 MB, 17.2 MB of which is
+the engine. The live `big` case moves 50 MB through a client of 8 slots in 2 to 3 MB of resident memory on macOS (19 to 20 MB on Linux, which
+counts the program's pages differently).
+
+### 10.7 What `cancho-gateway` still needs
+
+In the order it will hit them, on top of `http-server.md` §11.8:
+
+1. **The server's streamed request body** (the other half of piping an upload: this client's `send_room` is the back-pressure to read the
+   client's socket by).
+2. **A chunk writer on the way out**, for a response of unknown length to a client that speaks 1.1 (`http-server.md` §11.8 item 2). The client
+   dechunks; the server side must frame.
+3. **Upgrade and `CONNECT`.** A `101` is refused (`response.upgrade`). A tunnel needs the client to hand over the slot and the bytes already
+   buffered behind the head; `avail` has them, the hand-over is not built.
+4. **Resolving names** without stopping the loop: `rtcp.Resolver` becomes a package and a driver module uses it from its `Connect` handler;
+   until then the gateway resolves at start and calls `retire(key)` when an address changes.
+5. **The driver as a package** (§11 question 5): `fetch_io.cho` is the loop of `https_hello` turned to the client's side; the gateway is the
+   second asker for it.
+6. **A per-request timeout** (§11 question 6) and the gateway's `total_timeout` per route: one `Client` per timeout class today.
+7. **TLS session resumption to upstreams.** `tls.save`/`start_with` exist and the driver does not use them: a full handshake is 3.2 ms of the
+   client's CPU (§10.5), paid once per connection, not per request. A gateway with many upstreams and short-lived connections would want it.
+8. **The pool's scans are O(slots)**: about 1 µs a request at 1,024 slots (§10.5). A free list and a per-key list are the change, and nothing asks yet.
+9. **Access logging of the upstream leg** (address, reused, attempts): `reused(c,t)` and `attempts(c,t)` are there; the address is the driver's.
+10. **A write that fails mid-body with no answer** surfaces as `client.reset`, after the response was looked for and not found; the gateway answers
+    its client `502` for it, as it does for `client.closed-early`, and retries nothing it has sent a body for.
 
 ---
 
@@ -431,3 +603,8 @@ Each has the answer this PR proposes and builds on; none blocks.
    costs only the buffers.
 7. **Is `request` returning `client.full` acceptable, or should the client queue?** *Proposed:* return it; a queue is a policy
    with its own bound, the caller already has one (`cancho-gateway` queues clients in its own table).
+8. **A body that runs to the end of a TLS connection with no close_notify is `client.reset`** (§10.3). *Proposed:* yes, as RFC 8446 §6.1 says, and
+   the driver is where it is decided (`eof` or `reset`), so an upstream that never sends close_notify gets a flag in the driver, not a change in
+   the package. No server met in the live tests does that except the one built to.
+9. **`idle_per_key` is 8 unless set.** *Proposed:* keep, and have the gateway set it per upstream from the concurrency it allows; a benchmark that does
+   not (§10.3) measures the pool churning, not the client.

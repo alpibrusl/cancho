@@ -11,7 +11,7 @@ edition 5;
 //     --post N         POST N bytes (a pattern) as a body     --chunked-post N  the same, `Transfer-Encoding: chunked`
 //     --expect         `Expect: 100-continue` with the body    --head          HEAD instead of GET
 //     --connect-ms N, --head-ms N, --body-ms N: the client's timers (5000, 30000, 30000)     --quiet   only failures and the summary
-//     --pool N         idle connections kept for one upstream (8)
+//     --pool N         idle connections kept for one upstream (8)      --close   `Connection: close` on every request: a connection for each
 //
 // A URL is `http://host[:port]/path` or `https://host[:port]/path`. **A host is an IPv4 literal or a name given to `--resolve`**:
 // resolving is the caller's, and this program is the caller (`docs/http-client.md` §3.8). For `https` the PEM bundle of roots on
@@ -127,7 +127,7 @@ fn value_option[&s](a: &s [byte]) -> [] int {
 
 // `cfg`: 0 slots, 1 requests per URL, 2 seconds to run, 3 retry allowed, 4 the first URL's argument, 5 how many URLs, 6 how many
 // `--resolve`, 7 whether any URL is `https`, 8 a body: 0 none, 1 with a length, 2 chunked, 9 its size, 10 `Expect`, 11 `HEAD`,
-// 12 quiet, 13 14 15 the connect, head and body timers (0: the default), 16 idle connections kept for one upstream (0: 8). Answers "", or the reason the command line is refused.
+// 12 quiet, 13 14 15 the connect, head and body timers (0: the default), 16 idle connections kept for one upstream (0: 8), 17 `Connection: close` on every request. Answers "", or the reason the command line is refused.
 fn parse_options[&g, &c, &r](args: &g Args, cfg: &!c [int], resolves: &!r [int]) -> [args] &static [byte] {
     cfg[0] = 8;
     cfg[1] = 1;
@@ -148,6 +148,9 @@ fn parse_options[&g, &c, &r](args: &g Args, cfg: &!c [int], resolves: &!r [int])
             at = at + 1;
         } else if same(a, "--quiet") {
             cfg[12] = 1;
+            at = at + 1;
+        } else if same(a, "--close") {
+            cfg[17] = 1;
             at = at + 1;
         } else if slot >= 0 {
             if at + 1 >= arg_count(args) {
@@ -383,6 +386,9 @@ fn start_requests[&g, &c, &l, &s, &i, &x](args: &g Args, cw: &!c hc.Client, ln: 
     if cfg[3] == 1 {
         flags = hc.flag_retry();
     }
+    if cfg[17] == 1 {
+        flags = flags + hc.flag_close();
+    }
     var body = hc.body_none();
     if cfg[8] == 1 {
         body = cfg[9];
@@ -417,7 +423,9 @@ fn start_requests[&g, &c, &l, &s, &i, &x](args: &g Args, cw: &!c hc.Client, ln: 
                 ln[b + 13] = 0;
                 ln[b + 14] = 0;
                 ln[b + 15] = 0;
-                crypto.sha256_init(sha_of(sha, l));
+                if cfg[12] == 0 {
+                    crypto.sha256_init(sha_of(sha, l));
+                }
             } else if t != 0 - wire_full() {
                 say_failure(io, l, 0 - t);
                 ln[b + 11] = 2;
@@ -532,7 +540,10 @@ fn run[&h, &n, &k, &i, &g, &x, &c, &l, &s, &q](heap: &!h Heap, net: &n Net(""), 
                     let l = lane_of(ln, lanes, t);
                     let n = hc.avail(cw, t);
                     if l >= 0 {
-                        crypto.sha256_update(sha_of(sha, l), hc.body(cw, t));
+                        // The hash is of what is printed: with --quiet nothing is, and the client's own cost is not hidden behind SHA-256.
+                        if cfg[12] == 0 {
+                            crypto.sha256_update(sha_of(sha, l), hc.body(cw, t));
+                        }
                         ln[l * lane_stride() + 13] = ln[l * lane_stride() + 13] + n;
                     }
                     hc.consume(cw, t, n, now);
@@ -649,7 +660,7 @@ fn all_secure[&g, &x](args: &g Args, cfg: &x [int]) -> [args] bool {
 fn go[&h, &n, &k, &i, &g, &u](heap: &!h Heap, net: &n Net(""), clock: &k Clock, io: &!i Io, args: &g Args, entropy: &u [byte]) -> [heap, args, net_out(""), conn_read, conn_write, poll, clock, io_write, io_read, err_write] int {
     var status = 2;
     region a {
-        let cfg = alloc_slice[a](20, 0);
+        let cfg = alloc_slice[a](24, 0);
         let resolves = alloc_slice[a](16, 0);
         let msg = parse_options(args, cfg, resolves);
         if len(msg) > 0 {

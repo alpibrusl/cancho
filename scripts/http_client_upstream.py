@@ -29,6 +29,7 @@ It is what the client (`packages/http-client`, `docs/http-client.md`) is tested 
     POST /early413         answers 413 at once without reading the body, reads a little, ends
     POST /continue         `Expect: 100-continue` is answered `100`, the body read, `/sink`'s answer
     POST /nocontinue       the same, but no `100`: the client sends its body after its wait
+    POST /early413rst      the same, and then closed at once with the upload unread: a reset reaches the client while it is writing
     POST /reject-expect    417 at once, no `100`, the body not read
     POST /stalled-reader   reads nothing of the body and answers nothing
 """
@@ -36,6 +37,7 @@ import hashlib
 import os
 import socket
 import ssl
+import struct
 import sys
 import threading
 import time
@@ -294,11 +296,26 @@ class Upstream:
         send = conn.sendall
         if what == "early413":
             send(self.head(413, "Payload Too Large", [("Content-Length", 4), ("Connection", "close")]) + b"big!")
-            conn.settimeout(2)
+            # A server that closes with the upload unread sends a reset that can destroy its own answer (RFC 9112 9.6): it ends its
+            # side, reads what the client is still sending until the client stops or two seconds have gone, and only then closes.
             try:
-                conn.recv(65536)
+                conn.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass
+            conn.settimeout(2)
+            end = time.monotonic() + 2
+            try:
+                while time.monotonic() < end and conn.recv(1 << 20):
+                    pass
             except (socket.timeout, TimeoutError, OSError):
                 pass
+            return buf, False
+        if what == "early413rst":
+            # The answer, and then the connection closed at once with the upload unread: a reset reaches the client while it is still
+            # writing, and its answer is already in its receive buffer.
+            conn.recv(65536)
+            send(self.head(413, "Payload Too Large", [("Content-Length", 4), ("Connection", "close")]) + b"big!")
+            conn.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
             return buf, False
         if what == "stalled-reader":
             # Reads nothing of the body, and answers nothing: a peer whose receive window fills.

@@ -13,7 +13,7 @@ or what failed:
                 HEAD) at sizes from 0 past the client's input buffer: status, byte count and SHA-256 of the body, on one connection
                 each and all at once
     keepalive   1,000 requests over four URLs make four connections, counted at the server
-    concurrent  40 URLs through 16 slots: all complete, at most 16 connections
+    concurrent  40 URLs through 16 slots (and a pool of 16): all complete, at most 16 connections
     evict       3 upstreams through 2 slots, 60 requests: idle connections are closed for other upstreams, every dial counted at a server
     big         a 50 MB body, byte for byte, in a few MB of memory
     nospin      an upload to a peer that reads nothing, and a request that is never answered: the client waits for the poller,
@@ -21,6 +21,7 @@ or what failed:
     upload      POST bodies of 0 bytes to 5 MB, with a length and chunked, answered with the server's count and hash of what it got
     expect      `Expect: 100-continue`: answered with a 100 (prompt), not answered (after the client's wait), refused with a 417
     early       a 413 sent while 5 MB are still being uploaded: read, the connection not reused
+    earlyrst    the same answer, and the connection then closed at once with the upload unread: a reset while the client is still writing
     retry       a server that ends a connection as the next request arrives: the request is replayed once with --retry and fails
                 with `client.closed-early` without it
     refused     ten kinds of response that must be refused, each with its tag
@@ -180,7 +181,7 @@ def case_keepalive(exe, _hello):
 
 def case_concurrent(exe, _hello):
     srv = up.Upstream()
-    run = plain(exe, srv, ["/slow/200?ms=2&s=20"] * 40, "--slots", 16)
+    run = plain(exe, srv, ["/slow/200?ms=2&s=20"] * 40, "--slots", 16, "--pool", 16)
     conns, _ = srv.counts()
     bad = expect_bodies(run, [(200, up.pattern(200))] * 40)
     if bad:
@@ -273,6 +274,17 @@ def case_early(exe, _hello):
     if conns != 2 or run.summary["reuses"] != 0:
         return f"the connection of an early response was reused: {conns} connections, {run.summary}"
     return f"ok (413 read while 5 MB were being sent, twice, 2 connections, {run.elapsed:.2f} s)"
+
+
+def case_earlyrst(exe, _hello):
+    srv = up.Upstream()
+    # The server answers and closes with most of the upload unread: the client's write fails with a reset, and the answer is in
+    # its receive buffer, to be read before the connection is called lost.
+    for size in (5_000_000, 50_000_000):
+        run = plain(exe, srv, ["/early413rst"], "--post", size)
+        if run.status != 0 or [(r[1], r[2], r[3]) for r in run.responses] != [(413, 4, sha(b"big!"))]:
+            return f"{size}: {run!r}"
+    return "ok (the 413 read after a write failed with a reset, for 5 MB and 50 MB uploads)"
 
 
 def case_retry(exe, _hello):
@@ -454,6 +466,9 @@ def case_nginx(exe, _hello):
     os.makedirs(os.path.join(work, "www"))
     data = up.pattern(300000)
     open(os.path.join(work, "www", "file"), "wb").write(data)
+    # nginx run as root drops to another user for its workers: the files must be readable by it.
+    for path in (work, os.path.join(work, "www"), os.path.join(work, "www", "file")):
+        os.chmod(path, 0o755)
     s = socket.socket()
     s.bind(("127.0.0.1", 0))
     port = s.getsockname()[1]
@@ -572,23 +587,23 @@ def case_hostile(exe, _hello):
 
 
 CASES = {"framing": case_framing, "keepalive": case_keepalive, "concurrent": case_concurrent, "evict": case_evict, "big": case_big,
-         "upload": case_upload, "nospin": case_nospin, "expect": case_expect, "early": case_early, "retry": case_retry, "refused": case_refused,
+         "upload": case_upload, "nospin": case_nospin, "expect": case_expect, "early": case_early, "earlyrst": case_earlyrst, "retry": case_retry, "refused": case_refused,
          "timeouts": case_timeouts, "tls": case_tls, "hello": case_hello, "nginx": case_nginx, "hostile": case_hostile}
 
 
 # ---- cost ----
 
-def cost(exe, label, urls, seconds, stdin=None, resolve=(), lanes=32):
+def cost(exe, label, urls, seconds, stdin=None, resolve=(), lanes=32, extra=(), first=500):
     """Requests a second and the client's CPU a request, closed loop: `lanes` lanes on as many connections, one request out each.
     A short run finds the rate; three runs of about `seconds` each are reported, and the middle CPU figure."""
     def args(repeat):
-        return list(resolve) + ["--repeat", repeat, "--slots", lanes, "--pool", lanes, "--quiet", "--timeout", 600] + urls
+        return list(resolve) + list(extra) + ["--repeat", repeat, "--slots", lanes, "--pool", lanes, "--quiet", "--timeout", 600] + urls
 
-    calibrate = Fetch(exe, args(500), stdin=stdin)
+    calibrate = Fetch(exe, args(first), stdin=stdin)
     if calibrate.status != 0:
         return f"{label}: {calibrate!r}"
     rate = calibrate.summary["ok"] / max(calibrate.elapsed, 0.01)
-    repeat = max(500, int(rate * seconds) // lanes)
+    repeat = max(first, int(rate * seconds) // lanes)
     out = []
     for _ in range(3):
         run = Fetch(exe, args(repeat), stdin=stdin, timeout=900)
@@ -654,6 +669,7 @@ def cost_main(exe, hello, server, seconds):
         time.sleep(0.5)
         try:
             rows.append(cost(exe, "plain, keep-alive", [f"http://127.0.0.1:{port}/users/42"] * 32, seconds))
+            rows.append(cost(exe, "plain, a new connection for each request", [f"http://127.0.0.1:{port}/users/42"] * 32, seconds, extra=["--close"], first=10))
         finally:
             proc.terminate()
     if hello:
@@ -661,6 +677,8 @@ def cost_main(exe, hello, server, seconds):
         try:
             rows.append(cost(exe, "TLS 1.3, keep-alive", [f"https://{NAME}:{srv.port}/hello/42"] * 32, seconds,
                              stdin=open(CA, "rb").read(), resolve=["--resolve", f"{NAME}=127.0.0.1"]))
+            rows.append(cost(exe, "TLS 1.3, a new connection (a handshake) for each request", [f"https://{NAME}:{srv.port}/hello/42"] * 32, seconds,
+                             stdin=open(CA, "rb").read(), resolve=["--resolve", f"{NAME}=127.0.0.1"], extra=["--close"], first=10))
         finally:
             srv.stop()
     for r in rows:

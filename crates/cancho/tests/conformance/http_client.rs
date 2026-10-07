@@ -7,7 +7,7 @@
 use super::*;
 
 /// How many `fn test_*` the files hold: a test deleted or renamed away is a red build here, not a quiet pass of fewer.
-const TESTS: usize = 111;
+const TESTS: usize = 118;
 
 const TEST_FILES: [&str; 7] = [
     "http_client_harness.cho",
