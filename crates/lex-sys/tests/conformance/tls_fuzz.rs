@@ -3,7 +3,8 @@
 //! AFL++'s minimised queue from the campaign §3.4 reports, run through its
 //! harness (`tests/programs/fuzz_<harness>.ls`) on both backends. Each must
 //! exit 0: a trap ends the process with a signal, which is the failure the
-//! fuzzer looked for. AFL++ instrumented only the LLVM backend's code, so
+//! fuzzer looked for (`hello` and `server` are the TLS server's,
+//! `docs/tls-server.md` §7). AFL++ instrumented only the LLVM backend's code, so
 //! the Cranelift run is the one place its code meets these inputs.
 
 use super::json::feed;
@@ -21,6 +22,26 @@ const PACKAGES: [&str; 8] = [
 ];
 
 fn replay(harness: &str) {
+    let mut files: Vec<PathBuf> =
+        ["tests/programs/fuzz_common.ls", "tests/programs/fuzz_fixture.ls"]
+            .iter()
+            .chain(PACKAGES.iter())
+            .map(|f| repo_root().join(f))
+            .collect();
+    if harness == "hello" {
+        files = [
+            "packages/tls/record.ls",
+            "packages/tls/message.ls",
+            "packages/tls/hello.ls",
+            "packages/x509/x509.ls",
+        ]
+        .iter()
+        .map(|f| repo_root().join(f))
+        .collect();
+    } else if harness == "server" {
+        files = vec![repo_root().join("tests/programs/fuzz_server_fixture.ls")];
+        files.extend(super::tls_server::package_files());
+    }
     let dir = repo_root().join("tests/vectors/fuzz").join(harness);
     let mut inputs: Vec<PathBuf> = std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
@@ -34,9 +55,7 @@ fn replay(harness: &str) {
         let build = Command::new(BIN)
             .args(["build", "--std", "--backend", backend])
             .arg(repo_root().join(format!("tests/programs/fuzz_{harness}.ls")))
-            .arg(repo_root().join("tests/programs/fuzz_common.ls"))
-            .arg(repo_root().join("tests/programs/fuzz_fixture.ls"))
-            .args(PACKAGES.map(|f| repo_root().join(f)))
+            .args(&files)
             .arg("-o")
             .arg(&exe)
             .output()
@@ -78,4 +97,17 @@ fn client_corpus_never_traps() {
 #[test]
 fn flight_corpus_never_traps() {
     replay("flight");
+}
+
+/// The server's ClientHello parser (`docs/tls-server.md` §7), from real
+/// ClientHellos and what AFL++ made of them.
+#[test]
+fn hello_corpus_never_traps() {
+    replay("hello");
+}
+
+/// The whole server from `serve`, fed a client's bytes.
+#[test]
+fn server_corpus_never_traps() {
+    replay("server");
 }
