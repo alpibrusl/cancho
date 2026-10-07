@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/assets/cancho-logo-256.png" alt="cancho" width="200"></p>
+
 # cancho
 
 A **native systems language in which resource ownership and authority are
