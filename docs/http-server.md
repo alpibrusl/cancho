@@ -752,8 +752,61 @@ The socket path and the byte-fed path differ in where bytes cross a boundary (§
 
 ### 12.13 Tests, mutants and measurements
 
-@@TESTS@@
+**Without a socket** (`tests/packages/http_server_body_test.cho` and `http_server_body_flow_test.cho`, with their helpers in `body_support.cho`; `cancho test` on both backends through `conformance/http_server_body.rs`): 22 tests.
+
+| test | what it fixes |
+|---|---|
+| a length body larger than the buffer | sizes around the buffer (256) and the piece (64) up to 5,000 bytes, fed 1, 7, 64, 100 and 4,096 bytes at a time and pulled 1, 13 and 64 at a time: every byte, `body_total`, the answer, the connection serves after |
+| a chunked body with extensions and trailers | 4 body sizes x 4 chunk sizes x extension/trailer combinations x 3 feed steps x 2 pull sizes (384 uploads), byte for byte |
+| a request cut at every byte | a length request, a chunked one with an extension and a trailer and a chunked one in one chunk, cut at every point of the request: the same body and one answer, whole or streamed |
+| requests pipelined behind a streamed body | a 700-byte body (length and chunked) then `GET` and `POST`, fed 1 to 4,096 bytes at a time: bodies and answers in order |
+| a request that fits | answered with the same bytes with or without `limits` (five requests, HTTP/1.0 and `Connection: close` among them); a whole chunked body with an extension and a trailer is decoded (a server without `limits` refuses it) with the next request moved down behind it; a whole request held is read from its ticket |
+| `Expect` | `100` sent once and only when the application proceeds; a refusal before the body sends no `100` and keeps the connection (and closes it once the client has started sending, or sent some of the body with the head); a refusal in hand without `hold`; `417` for four kinds of unsupported expectation; the token is case-insensitive |
+| every fault | 18 chunked wires, a length over the maximum, a whole body over it, a head too large and a malformed one, each fed one byte at a time and at once, refused with its status, message and rule, the request over from the instant it is read, the ticket refused before and after the refusal is sent |
+| the chunk machine against a corpus | 50 wires, accepted (with the body they decode to) or refused (with the rule), at two feed steps; the bounds on both sides of the line (extension 256 and 257 bytes, trailers 4,096 and 4,097, a body of exactly 100) |
+| the timers | the head deadline (the boundary millisecond, a trickle, a scan within 50 ms of the last, a keep-alive connection that is not timed, the clock of the answer being taken); the body stall (the boundary, a body that has all arrived, a client told to wait, a full buffer nobody takes, an answer waiting, an answer begun) |
+| back-pressure | a piece not taken stops the reading; the room returns exactly as bytes are taken; an answer waiting stops it however much room there is |
+| answering early | all arrived (kept, the rest dropped, what follows served), part of a length or chunked body (closes), in hand, streamed both ways |
+| the peer's end | mid-body (the request is over, nothing answered, what waits is dropped), an answer on its way is not, in hand |
+| tickets | two uploads at once, stale generations, bad tickets, detach |
+| a streaming request left in hand | the round ends with it unanswered and unheld: its body is where it was |
+| no `limits` | nothing changes: the 413, `Expect` ignored, no `X-Rule`; the new calls refuse |
+| random | 8 seeds: 40 requests (none, length, chunked) split and consumed at random, byte for byte; 8 seeds x 3,000 random operations with hostile fragments and bad tickets must not trap or break a bound |
+
+**With sockets** (`tests/programs/server_upload.cho` and `conformance/http_server_upload.rs`, in `cargo test`): 6 tests that build a server program from the package's source and talk to it over loopback: uploads of a length and chunked body with `100 Continue`, pipelining, keep-alive and four uploads at once; a refusal before the body, every fault by its rule,
+`417`, an early answer; a client that stalls in a head or a body, and the others served; back-pressure (a slow application: the client's writes block, the test asserts under 64 MiB of 256 were taken) and clients that leave; a server that visits connections late, so a fault `wait` found waits through turns in which the client sends more; and a connection that reads while its neighbour's buffer holds untaken bytes.
+
+**Against real clients** (`scripts/https_hello_test.py`, CI's `tls-assurance` job; 18 of 18 on linux-aarch64 in Docker, curl 8.5 on OpenSSL 3.0.13), four new cases over TLS 1.3:
+
+| case | result |
+|---|---|
+| `upload` | `POST /upload` of 0, 1, 2, 16,383 to 65,537 bytes, 1, 16, 128 MiB and **1 GiB**, each with a length and chunked: byte count and SHA-256 equal to what was sent, 2,338 MiB hashed at 142 MiB/s with both ends hashing; the server's RSS 1,944 -> 2,060 KB over all of it; chunks of 1 to 1,000,003 bytes with extensions and trailers; an upload, a request and an upload pipelined in one write |
+| `expect` | the `100` came 44 ms into an upload that was waiting for it; `/upload/refuse` answered `413` with no `100` and the connection served after; `417`; `--max-body` refusing a length by its head and a chunked body while it was sent; `curl -X POST -T file -H 'Expect: 100-continue' --expect100-timeout 10` uploaded 900,000 bytes in 0.06 s, and the same to `/upload/refuse` uploaded **0 bytes** (`%{size_upload}`); `openssl s_client` uploaded 300,000 |
+| `halfbody` | half a head, half a length body, half a chunked body and a head a byte at a time: `408` with the rule at 1.05 to 1.11 s for `--read-timeout 1000`; 27 requests beside them, the slowest 41 ms; a steady upload that took 3 s was not timed out |
+| `mangled` | 1,500 connections each with a mangled upload (flipped bytes, cuts, bad chunk sizes, long extensions and trailers, lengths that lie, `Expect` heads): the server alive after every one, RSS 1,792 -> 2,932 KB, and a good upload still hashes |
+
+macOS (aarch64, curl on SecureTransport so the curl part is skipped, and says so): the same cases, uploads to 128 MiB at 98 MiB/s. CI's x86-64 run: @@CI@@
+
+**Mutants.** `scripts/http_server_body_mutants.py` (CI runs it): **232 single-edit mutations of the new code and of the shared lines that now call it, 215 killed and 17 argued equivalent in the script, none surviving.** The first run killed 155 of 230 (12 `old` texts did not match, the rest survived); the third left 22 survivors, 19 of which are argued equivalent in the script and 3 needed tests (the clock that `output` keeps, a ticket asked after the refusal is queued
+and before it is sent, the message of every refusal); between them the tests added for survivors were the timer boundaries, a body that has all arrived or a client told to wait not being timed, `Expect` untouched or touched by bytes that came with the head, a request in hand looked at twice, and the corpus's bare LF where a CR belongs. The mutants are compared as tokens, so `cancho fmt`'s layout does not matter. 9 more are of the lines only the socket path runs (`python3 scripts/http_server_body_mutants.py ... --socket`, by hand: each builds the server program): the first run killed 7 of 9, the two survivors needed a server that visits connections late and a slow
+neighbour, and **9 of 9 are killed**. The byte-fed mode's own 90 (`http_server_bytes_mutants.py`) still give 79 killed and 11 argued equivalent, as §11.5 says.
+
+**Cost.** The socket path with no `limits` is the same: examples/api, `kload`, one core, three 5 s rounds, the CPU a request read from `/proc` (Docker Desktop's Linux VM on an Apple M4 Max with other containers running, so the rates moved by 1.5x between rounds and the CPU is the figure to read): **3.01 and 3.24 microseconds before, 3.10 and 3.17 after.** `https_hello` over TLS (`tload`), which now calls
+`limits` and so classifies every request: before 11.17, 9.16, 11.76 and 9.02 microseconds in four alternated runs (mean 10.3), the same example with the `limits` call taken out 10.52, 10.72, 10.07 and 10.32 (10.4), after 10.17, 9.85, 9.43 and 7.87 (9.3): no difference this machine can see. The memory a connection can make the server hold is as §11.4: `size + out` and 32 words (it was 16), whatever the body.
+Upload throughput is above (142 MiB/s on that VM with SHA-256 at both ends; 98 MiB/s on the Mac).
+
 
 ### 12.14 What `cancho-gateway` still needs
 
-@@NEEDS@@
+What the gateway can build on now, and what it still lacks, in the order it will hit them (§11.8 has the rest, unchanged except where marked):
+
+1. **The proxy loop over a ticket.** `limits`, then for a request `streaming` reports: `hold`, read the head and copy what the upstream needs before `hold` (it lets go of the head), `proceed` when the upstream has accepted (or the route's policy has), and each turn `body_part` -> write to the upstream as far as it takes -> `body_take` what it took. An upstream that takes nothing is a client that is not read: it needs no code. `body_state` 1 and an empty
+   `body_part` is the end; -1 means stop and drop the upstream. A chunked upstream request is framed by the gateway from the pieces (the server discards extensions and trailers). `examples/https_hello/app.cho`'s `feed_uploads` is the loop with a hash where the upstream write goes.
+2. **Per-route bounds.** `max_body` is the server's one number. A route's own is the application's: answer `413` from the head (before any `100`) or after counting. There is no per-route `head_ms` or `body_ms`.
+3. **A request's total deadline** is still the application's (§12.8): `body_ms` stops a client that goes quiet, not one that sends a byte every `body_ms - 1` ms.
+4. **No lingering close, no drain** (§12.9): a request answered while its body is in flight closes the connection once the answer is sent; the client may see a reset before it has read it. A gateway that wants to keep the connection after refusing a body in flight takes the pieces and drops them before answering, up to its own bound.
+5. **No readiness list.** The application asks each ticket it holds (`body_state`/`body_part`) in the loop that already gives streams their room; with thousands of idle uploads that is thousands of calls a turn, each a few loads. A "tickets with news" list like `foreign` would be the change; nothing has asked.
+6. **Chunked responses, the peer's address, upstream connections in the same loop, `Upgrade`, ALPN, more than 1,024 connections, the second set of effect names**: §11.8's items 2, 3, 4, 5, 7, 8 and 9, unchanged. `packages/http-request` is being made non-blocking by another change.
+7. **`packages/http-server/server.cho` has 10 lines left** (§12.12). The next thing added to it splits the package.
+8. **`examples/https_hello` has a bug that predates this change** (a client that keeps sending after its connection was ended resets another connection, §12.12) which a gateway on the same loop would inherit: filed.
+
