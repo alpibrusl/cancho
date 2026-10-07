@@ -711,7 +711,45 @@ impl Builtin {
             Builtin::ListenerClose => (vec![named(PRELUDE_LISTENER)], Type::Int),
             // `docs/udp.md` §3. `udp_connect` is checked at the call site, like
             // `tcp_connect`: the bound is in the capability's type.
-            Builtin::UdpConnect => (Vec::new(), Type::Unit),
+            Builtin::UdpConnect | Builtin::UdpBind => (Vec::new(), Type::Unit),
+            // A receive that also writes the sender's ticket into the first cell of an `int`
+            // slice (`docs/udp.md` §4).
+            Builtin::UdpRecvFrom => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_UDP)),
+                    },
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(2),
+                        inner: Box::new(Type::Slice(Box::new(Type::Int))),
+                    },
+                ],
+                named(PRELUDE_DATAGRAM),
+            ),
+            Builtin::UdpSendTo => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_UDP)),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Int,
+                ],
+                named(PRELUDE_SENT),
+            ),
             // The handle is unique -- a receive moves the socket -- and the
             // buffer is written into.
             Builtin::UdpRecv => (

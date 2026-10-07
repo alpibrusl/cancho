@@ -427,6 +427,7 @@ fn every_word_global_is_aligned_to_a_word() {
         crate::abi::ARGC_GLOBAL.to_owned(),
         crate::abi::ARGV_GLOBAL.to_owned(),
         cancho_ir::FD_EPOCH_GLOBAL.to_owned(),
+        cancho_ir::UDP_PEER_GLOBAL.to_owned(),
         cancho_ir::SIGNAL_STATE_GLOBAL.to_owned(),
         format!("{PREFIX}static_table"),
     ];

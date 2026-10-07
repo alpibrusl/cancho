@@ -1,425 +1,18 @@
 edition 6;
 module echo_loop;
 
-// `tls_echo`'s loop: one thread, one `Poller`, every connection in a slot
-// of `std.conns` and the same slot of the TLS engine (`docs/tls-server.md`
-// §8, step 3). The engine moves bytes; this file owns the sockets, the
-// clock, the bounds and the log.
-//
-// A connection goes through five phases, in `st[slot * stride()]`:
-//
-//     1 queued       accepted, waiting for its turn to start a handshake;
-//                    not watched, so its ClientHello waits in the kernel
-//     2 handshake    `tls.serve` called: it can cost the server a signature
-//     3 established  echoing
-//     4 closing      our close_notify queued, the rest being written
-//
-// **The bounds** (`docs/tls-server.md` §7, CPU exhaustion). A handshake
-// costs this server about 4 ms of CPU (§6), and any peer can start one, so
-// two numbers bound it: handshakes in progress (`tls.handshakes_in_progress`,
-// the engine's count of slots served and not yet established, failed or
-// closed) and handshakes started in each second. A connection over either
-// is **delayed, not refused**: it stays queued, its bytes unread, and
-// starts when both allow, oldest first. What is refused is a connection
-// over the table (`--connections`): it is accepted and closed at once,
-// before it costs anything but the accept. A queued or handshaking
-// connection has `--handshake-timeout` to finish (each phase its own), so
-// a peer that connects and sends nothing holds a handshake place for that
-// long and no longer; an established one is closed with close_notify after
-// `--idle` without a byte either way.
-//
-// **Reload** is `SIGHUP`: every identity is read again from its directory
-// and given to `tls.replace_identity`; a connection whose ClientHello was
-// answered keeps the certificate it was sent, and every later one gets the
-// new. A refused replacement (an expired chain, a key that is not the
-// leaf's) leaves the old identity serving, and says so. **Stop** is `INT`
-// or `TERM`: no more connections; queued and handshaking ones are closed,
-// established ones are sent close_notify, and the loop ends once those are
-// written or after two seconds.
-//
-// Lines it prints, each flushed as it is written:
-//
-//     listening <port>
-//     conn <n> established suite=<name> group=<name> sni=<name|-> alpn=<protocol|-> hrr=<yes|no> waited=<ms> handshake=<ms>
-//     conn <n> closed <why> in=<bytes> ms=<since accepted>
-//     refused <n> full
-//     reload <identity> ok | reload <identity> refused <tag> | reload <identity> unreadable <file> errno=<n>
-//     stopping
-//
-// `<why>` is `ok` (close_notify both ways), `idle`, `shutdown`,
-// `handshake-timeout`, `queue-timeout`, `socket` (the socket failed), or
-// the engine's refusal tag (`tls-peer-closed`, `tls-alert-<n>`, a
-// `tls-server-*` tag, ...).
+// `tls_echo`'s loop: `tls_front`'s (`examples/tls_echo/front.cho`: the phases, the
+// handshake bounds, the reload, the stop and the log, all described there) with the
+// echo as what happens to an established connection's plaintext. `pump` is the
+// connection's turn: write what the engine has, echo what was received, feed what the
+// socket gave, read the socket. `examples/https_hello/loop.cho` is the same `pump` with
+// `packages/http-server` where the echo is.
 
 import std.conns;
 import std.io;
 import std.signals as sg;
-import echo_identity;
+import tls_front as front;
 import tls;
-
-// ---- Configuration: `cfg`, filled by `main` ----
-
-pub fn c_conns() -> [] int {
-    return 0;
-}
-
-pub fn c_handshakes() -> [] int {
-    return 1;
-}
-
-pub fn c_rate() -> [] int {
-    return 2;
-}
-
-pub fn c_hs_timeout() -> [] int {
-    return 3;
-}
-
-pub fn c_idle() -> [] int {
-    return 4;
-}
-
-pub fn c_identities() -> [] int {
-    return 5;
-}
-
-pub fn cfg_len() -> [] int {
-    return 8;
-}
-
-// The room for an identity's subdirectory name, in `subs`.
-pub fn sub_cap() -> [] int {
-    return 256;
-}
-
-// ---- Per slot, in `st` ----
-
-fn stride() -> [] int {
-    return 16;
-}
-
-fn s_phase() -> [] int {
-    return 0;
-}
-
-// When the phase began (monotonic ms).
-fn s_since() -> [] int {
-    return 1;
-}
-
-// The last byte either way (monotonic ms), for `--idle`.
-fn s_active() -> [] int {
-    return 2;
-}
-
-// Bytes for the socket, `pend[ps..pe]`; bytes from it not yet fed,
-// `inq[is..ie]`; plaintext not yet echoed, `app[as..ae]`.
-fn s_ps() -> [] int {
-    return 3;
-}
-
-fn s_pe() -> [] int {
-    return 4;
-}
-
-fn s_is() -> [] int {
-    return 5;
-}
-
-fn s_ie() -> [] int {
-    return 6;
-}
-
-fn s_as() -> [] int {
-    return 7;
-}
-
-fn s_ae() -> [] int {
-    return 8;
-}
-
-fn s_in() -> [] int {
-    return 9;
-}
-
-fn s_id() -> [] int {
-    return 10;
-}
-
-// 1 once the socket's read side ended.
-fn s_eof() -> [] int {
-    return 11;
-}
-
-// What it is watched for: 0 not registered, 1 read, 2 write.
-fn s_watch() -> [] int {
-    return 12;
-}
-
-fn s_accepted() -> [] int {
-    return 13;
-}
-
-fn s_waited() -> [] int {
-    return 14;
-}
-
-// Why it is closing (phase 4).
-fn s_reason() -> [] int {
-    return 15;
-}
-
-fn phase_free() -> [] int {
-    return 0;
-}
-
-fn phase_queued() -> [] int {
-    return 1;
-}
-
-fn phase_handshake() -> [] int {
-    return 2;
-}
-
-fn phase_established() -> [] int {
-    return 3;
-}
-
-fn phase_closing() -> [] int {
-    return 4;
-}
-
-// ---- The loop's own, in `gl` ----
-
-fn g_qhead() -> [] int {
-    return 0;
-}
-
-fn g_qlen() -> [] int {
-    return 1;
-}
-
-// The rate's window: when it began, and handshakes started in it.
-fn g_window() -> [] int {
-    return 2;
-}
-
-fn g_started() -> [] int {
-    return 3;
-}
-
-fn g_next_id() -> [] int {
-    return 4;
-}
-
-fn g_stopping() -> [] int {
-    return 5;
-}
-
-fn g_stop_at() -> [] int {
-    return 6;
-}
-
-fn g_last_sweep() -> [] int {
-    return 7;
-}
-
-fn gl_len() -> [] int {
-    return 8;
-}
-
-// Each slot's buffers.
-fn pend_cap() -> [] int {
-    return 16384;
-}
-
-fn inq_cap() -> [] int {
-    return 16384;
-}
-
-fn app_cap() -> [] int {
-    return 16384;
-}
-
-// How long a stop waits for close_notify to be written.
-fn drain_ms() -> [] int {
-    return 2000;
-}
-
-// Why a connection ended, when it is not the engine's refusal.
-fn r_socket() -> [] int {
-    return 0 - 1001;
-}
-
-fn r_idle() -> [] int {
-    return 0 - 1002;
-}
-
-fn r_handshake_timeout() -> [] int {
-    return 0 - 1003;
-}
-
-fn r_queue_timeout() -> [] int {
-    return 0 - 1004;
-}
-
-fn r_shutdown() -> [] int {
-    return 0 - 1005;
-}
-
-// ---- The log ----
-
-pub fn flush[&i](io: &!i Io) -> [io_write] int {
-    match flush_out(io) {
-        Done::Ok(n) => {
-            return 0;
-        }
-        Done::Failed(e) => {
-            return e;
-        }
-    }
-}
-
-fn suite_name(code: int) -> [] &static [byte] {
-    if code == 0x1301 {
-        return "TLS_AES_128_GCM_SHA256";
-    }
-    if code == 0x1302 {
-        return "TLS_AES_256_GCM_SHA384";
-    }
-    if code == 0x1303 {
-        return "TLS_CHACHA20_POLY1305_SHA256";
-    }
-    return "-";
-}
-
-fn group_name(code: int) -> [] &static [byte] {
-    if code == 0x001d {
-        return "x25519";
-    }
-    if code == 0x0017 {
-        return "secp256r1";
-    }
-    if code == 0x0018 {
-        return "secp384r1";
-    }
-    return "-";
-}
-
-fn print_text[&i, &d](io: &!i Io, d: &d [byte]) -> [io_write] int {
-    if len(d) == 0 {
-        io.write_all(io, "-");
-    } else {
-        io.write_all(io, d);
-    }
-    return 0;
-}
-
-fn why[&i, &e](io: &!i Io, engine: &e tls.Engine, slot: int, reason: int) -> [io_write] int {
-    if reason == r_socket() {
-        io.write_all(io, "socket");
-    } else if reason == r_idle() {
-        io.write_all(io, "idle");
-    } else if reason == r_handshake_timeout() {
-        io.write_all(io, "handshake-timeout");
-    } else if reason == r_queue_timeout() {
-        io.write_all(io, "queue-timeout");
-    } else if reason == r_shutdown() {
-        io.write_all(io, "shutdown");
-    } else {
-        io.write_all(io, tls.refusal_tag(reason));
-        if reason == 0 - 2 {
-            io.write_all(io, "-");
-            io.print_int(io, tls.alert_received(engine, slot));
-        }
-    }
-    return 0;
-}
-
-fn log_established[&i, &e, &s](io: &!i Io, engine: &e tls.Engine, st: &s [int], slot: int, now: int) -> [io_write] int {
-    let b = slot * stride();
-    io.write_all(io, "conn ");
-    io.print_int(io, st[b + s_id()]);
-    io.write_all(io, " established suite=");
-    io.write_all(io, suite_name(tls.suite(engine, slot)));
-    io.write_all(io, " group=");
-    io.write_all(io, group_name(tls.group(engine, slot)));
-    region r {
-        let text = alloc_slice[r](256, byte_of(0));
-        io.write_all(io, " sni=");
-        print_text(io, text[0..tls.server_name(engine, slot, text)]);
-        io.write_all(io, " alpn=");
-        print_text(io, text[0..tls.alpn(engine, slot, text)]);
-    }
-    if tls.retried(engine, slot) {
-        io.write_all(io, " hrr=yes");
-    } else {
-        io.write_all(io, " hrr=no");
-    }
-    io.write_all(io, " waited=");
-    io.print_int(io, st[b + s_waited()]);
-    io.write_all(io, " handshake=");
-    io.print_int(io, now - st[b + s_since()]);
-    io.newline(io);
-    flush(io);
-    return 0;
-}
-
-// Ends the connection in `slot`: logs it, forgets its keys, closes the
-// socket and frees the slot. Answers 1, for the caller's count.
-fn end_slot[&i, &e, &t, &s](io: &!i Io, engine: &!e tls.Engine, tab: &!t conns.Table, st: &!s [int], slot: int, reason: int, now: int) -> [io_write] int {
-    let b = slot * stride();
-    io.write_all(io, "conn ");
-    io.print_int(io, st[b + s_id()]);
-    io.write_all(io, " closed ");
-    why(io, engine, slot, reason);
-    io.write_all(io, " in=");
-    io.print_int(io, st[b + s_in()]);
-    io.write_all(io, " ms=");
-    io.print_int(io, now - st[b + s_accepted()]);
-    io.newline(io);
-    flush(io);
-    if st[b + s_phase()] >= phase_handshake() {
-        tls.drop(engine, slot);
-    }
-    var k = 0;
-    while k < stride() {
-        st[b + k] = 0;
-        k = k + 1;
-    }
-    conns.close(tab, slot);
-    return 1;
-}
-
-// ---- One connection's bytes ----
-
-// Writes what the engine has for the socket. 0 when all of it went (or
-// there was none), 1 when the socket is full, -1 when it failed.
-fn flush_slot[&e, &t, &s, &p](engine: &!e tls.Engine, tab: &!t conns.Table, st: &!s [int], pend: &!p [byte], slot: int) -> [conn_write] int {
-    let b = slot * stride();
-    let base = slot * pend_cap();
-    while true {
-        if st[b + s_ps()] == st[b + s_pe()] {
-            st[b + s_ps()] = 0;
-            st[b + s_pe()] = tls.take(engine, slot, pend[base..base + pend_cap()]);
-            if st[b + s_pe()] == 0 {
-                return 0;
-            }
-        }
-        match conns.write(tab, slot, pend[base + st[b + s_ps()]..base + st[b + s_pe()]]) {
-            Sent::Wrote(k) => {
-                st[b + s_ps()] = st[b + s_ps()] + k;
-            }
-            Sent::Again => {
-                return 1;
-            }
-            Sent::Failed(e) => {
-                return 0 - 1;
-            }
-        }
-    }
-    return 0;
-}
 
 // Everything that can be done for the connection in `slot` now, without
 // waiting: write, echo, feed, read, until none of them moves. Reads only
@@ -428,108 +21,108 @@ fn flush_slot[&e, &t, &s, &p](engine: &!e tls.Engine, tab: &!t conns.Table, st: 
 // buffers are the most it can make the server hold. Answers 1 if the
 // connection ended.
 fn pump[&i, &e, &t, &p, &s, &q, &n, &a](io: &!i Io, engine: &!e tls.Engine, tab: &!t conns.Table, poller: &!p Poller, st: &!s [int], pend: &!q [byte], inq: &!n [byte], app: &!a [byte], slot: int, now: int) -> [conn_read, conn_write, poll, io_write] int {
-    let b = slot * stride();
-    let ib = slot * inq_cap();
-    let ab = slot * app_cap();
+    let b = slot * front.stride();
+    let ib = slot * front.inq_cap();
+    let ab = slot * front.app_cap();
     var going = true;
     var blocked = false;
     while going {
         going = false;
-        let w = flush_slot(engine, tab, st, pend, slot);
+        let w = front.flush_slot(engine, tab, st, pend, slot);
         if w < 0 {
-            return end_slot(io, engine, tab, st, slot, r_socket(), now);
+            return front.end_slot(io, engine, tab, st, slot, front.r_socket(), now);
         }
         blocked = w == 1;
         if !blocked {
             let ev = tls.event(engine, slot);
             if ev == tls.event_failed() {
-                return end_slot(io, engine, tab, st, slot, tls.failure(engine, slot), now);
+                return front.end_slot(io, engine, tab, st, slot, tls.failure(engine, slot), now);
             }
             // `closed` is said as soon as the peer's close_notify is read,
             // before ours is queued: an established connection first echoes
             // what came before it (`recv` answers 0 after it, below), and the
             // connection ends once our close_notify is written too.
-            if ev == tls.event_closed() && st[b + s_phase()] == phase_closing() {
-                return end_slot(io, engine, tab, st, slot, st[b + s_reason()], now);
+            if ev == tls.event_closed() && st[b + front.s_phase()] == front.phase_closing() {
+                return front.end_slot(io, engine, tab, st, slot, st[b + front.s_reason()], now);
             }
-            if ev == tls.event_closed() && st[b + s_phase()] == phase_handshake() {
+            if ev == tls.event_closed() && st[b + front.s_phase()] == front.phase_handshake() {
                 tls.finish(engine, slot);
-                st[b + s_phase()] = phase_closing();
-                st[b + s_since()] = now;
+                st[b + front.s_phase()] = front.phase_closing();
+                st[b + front.s_since()] = now;
                 going = true;
             }
-            if ev == tls.event_established() && st[b + s_phase()] == phase_handshake() {
-                log_established(io, engine, st, slot, now);
-                st[b + s_phase()] = phase_established();
-                st[b + s_active()] = now;
+            if ev == tls.event_established() && st[b + front.s_phase()] == front.phase_handshake() {
+                front.log_established(io, engine, st, slot, now);
+                st[b + front.s_phase()] = front.phase_established();
+                st[b + front.s_active()] = now;
             }
         }
-        if !blocked && st[b + s_phase()] == phase_established() {
+        if !blocked && st[b + front.s_phase()] == front.phase_established() {
             // The echo: what was received goes back as it came.
-            if st[b + s_as()] < st[b + s_ae()] {
-                let k = tls.send(engine, slot, app[ab + st[b + s_as()]..ab + st[b + s_ae()]]);
+            if st[b + front.s_as()] < st[b + front.s_ae()] {
+                let k = tls.send(engine, slot, app[ab + st[b + front.s_as()]..ab + st[b + front.s_ae()]]);
                 if k > 0 {
-                    st[b + s_as()] = st[b + s_as()] + k;
+                    st[b + front.s_as()] = st[b + front.s_as()] + k;
                     going = true;
                 } else if k < 0 {
-                    return end_slot(io, engine, tab, st, slot, k, now);
+                    return front.end_slot(io, engine, tab, st, slot, k, now);
                 }
             }
-            if st[b + s_as()] == st[b + s_ae()] {
-                st[b + s_as()] = 0;
-                st[b + s_ae()] = 0;
-                let got = tls.recv(engine, slot, app[ab..ab + app_cap()]);
+            if st[b + front.s_as()] == st[b + front.s_ae()] {
+                st[b + front.s_as()] = 0;
+                st[b + front.s_ae()] = 0;
+                let got = tls.recv(engine, slot, app[ab..ab + front.app_cap()]);
                 if got > 0 {
-                    st[b + s_ae()] = got;
-                    st[b + s_in()] = st[b + s_in()] + got;
+                    st[b + front.s_ae()] = got;
+                    st[b + front.s_in()] = st[b + front.s_in()] + got;
                     going = true;
                 } else if got == 0 {
                     // The peer's close_notify, after everything it sent was
                     // echoed: ours, and the connection is done once it is written.
                     tls.finish(engine, slot);
-                    st[b + s_phase()] = phase_closing();
-                    st[b + s_since()] = now;
+                    st[b + front.s_phase()] = front.phase_closing();
+                    st[b + front.s_since()] = now;
                     going = true;
                 } else if got != tls.would_block() {
-                    return end_slot(io, engine, tab, st, slot, got, now);
+                    return front.end_slot(io, engine, tab, st, slot, got, now);
                 }
             }
         }
-        if !blocked && st[b + s_is()] < st[b + s_ie()] {
-            let c = tls.feed(engine, slot, inq[ib + st[b + s_is()]..ib + st[b + s_ie()]]);
+        if !blocked && st[b + front.s_is()] < st[b + front.s_ie()] {
+            let c = tls.feed(engine, slot, inq[ib + st[b + front.s_is()]..ib + st[b + front.s_ie()]]);
             if c > 0 {
-                st[b + s_is()] = st[b + s_is()] + c;
+                st[b + front.s_is()] = st[b + front.s_is()] + c;
                 going = true;
             } else if c < 0 {
                 // Failed: its alert, if any, is written on the next turn.
-                st[b + s_is()] = st[b + s_ie()];
+                st[b + front.s_is()] = st[b + front.s_ie()];
                 going = true;
             }
         }
-        if st[b + s_is()] == st[b + s_ie()] {
-            st[b + s_is()] = 0;
-            st[b + s_ie()] = 0;
+        if st[b + front.s_is()] == st[b + front.s_ie()] {
+            st[b + front.s_is()] = 0;
+            st[b + front.s_ie()] = 0;
         }
         // The socket is read only once nothing else moved this turn, so
         // what the last bytes did (a handshake completed, say) is seen,
         // and logged, before an end of file that came with them.
-        let idle_buffers = st[b + s_ie()] == 0 && st[b + s_ae()] == 0 && st[b + s_ps()] == st[b + s_pe()];
-        if !going && !blocked && idle_buffers && st[b + s_eof()] == 0 && st[b + s_phase()] != phase_closing() {
-            match conns.read(tab, slot, inq[ib..ib + inq_cap()]) {
+        let idle_buffers = st[b + front.s_ie()] == 0 && st[b + front.s_ae()] == 0 && st[b + front.s_ps()] == st[b + front.s_pe()];
+        if !going && !blocked && idle_buffers && st[b + front.s_eof()] == 0 && st[b + front.s_phase()] != front.phase_closing() {
+            match conns.read(tab, slot, inq[ib..ib + front.inq_cap()]) {
                 Received::Data(k) => {
-                    st[b + s_ie()] = k;
-                    st[b + s_active()] = now;
+                    st[b + front.s_ie()] = k;
+                    st[b + front.s_active()] = now;
                     going = true;
                 }
                 Received::End => {
-                    st[b + s_eof()] = 1;
+                    st[b + front.s_eof()] = 1;
                     tls.eof(engine, slot);
                     going = true;
                 }
                 Received::Again => {
                 }
                 Received::Failed(e) => {
-                    return end_slot(io, engine, tab, st, slot, r_socket(), now);
+                    return front.end_slot(io, engine, tab, st, slot, front.r_socket(), now);
                 }
             }
         }
@@ -538,80 +131,38 @@ fn pump[&i, &e, &t, &p, &s, &q, &n, &a](io: &!i Io, engine: &!e tls.Engine, tab:
     if blocked {
         want = 2;
     }
-    if want != st[b + s_watch()] {
+    if want != st[b + front.s_watch()] {
         conns.rewatch(tab, poller, slot, slot + 1, want);
-        st[b + s_watch()] = want;
+        st[b + front.s_watch()] = want;
     }
     return 0;
 }
 
 // Sends close_notify on an established connection, for `reason`.
 fn close_with[&i, &e, &t, &p, &s, &q, &n, &a](io: &!i Io, engine: &!e tls.Engine, tab: &!t conns.Table, poller: &!p Poller, st: &!s [int], pend: &!q [byte], inq: &!n [byte], app: &!a [byte], slot: int, reason: int, now: int) -> [conn_read, conn_write, poll, io_write] int {
-    let b = slot * stride();
+    let b = slot * front.stride();
     tls.finish(engine, slot);
-    st[b + s_phase()] = phase_closing();
-    st[b + s_since()] = now;
-    st[b + s_reason()] = reason;
+    st[b + front.s_phase()] = front.phase_closing();
+    st[b + front.s_since()] = now;
+    st[b + front.s_reason()] = reason;
     return pump(io, engine, tab, poller, st, pend, inq, app, slot, now);
 }
 
-// ---- Admission: the handshake bounds ----
-
-// Starts queued connections, oldest first, while both bounds allow:
-// fewer than `--handshakes` in progress and fewer than `--rate` started
-// in this second. Answers how many ended (a `serve` that refused).
-fn admit[&i, &e, &t, &p, &s, &g, &q, &c](io: &!i Io, engine: &!e tls.Engine, tab: &!t conns.Table, poller: &!p Poller, st: &!s [int], gl: &!g [int], queue: &!q [int], cfg: &c [int], now: int, now_unix: int) -> [poll, io_write] int {
-    var ended = 0;
-    if now - gl[g_window()] >= 1000 {
-        gl[g_window()] = now;
-        gl[g_started()] = 0;
-    }
-    let cap = cfg[c_conns()];
-    while gl[g_qlen()] > 0 && gl[g_started()] < cfg[c_rate()] && tls.handshakes_in_progress(engine) < cfg[c_handshakes()] {
-        let entry = queue[gl[g_qhead()]];
-        gl[g_qhead()] = (gl[g_qhead()] + 1) % cap;
-        gl[g_qlen()] = gl[g_qlen()] - 1;
-        let slot = entry % 4096;
-        let b = slot * stride();
-        // An entry whose connection ended while it waited, or whose slot a
-        // later connection took, is skipped.
-        if st[b + s_phase()] == phase_queued() && st[b + s_id()] == entry / 4096 {
-            let code = tls.serve(engine, slot, now_unix);
-            if code != 0 {
-                ended = ended + end_slot(io, engine, tab, st, slot, code, now);
-            } else {
-                st[b + s_phase()] = phase_handshake();
-                st[b + s_waited()] = now - st[b + s_since()];
-                st[b + s_since()] = now;
-                gl[g_started()] = gl[g_started()] + 1;
-                if conns.watch(tab, poller, slot, slot + 1, 1) != 0 {
-                    ended = ended + end_slot(io, engine, tab, st, slot, r_socket(), now);
-                } else {
-                    st[b + s_watch()] = 1;
-                }
-            }
-        }
-    }
-    return ended;
-}
-
-// ---- Time: the timeouts ----
-
 fn sweep[&i, &e, &t, &p, &s, &q, &n, &a, &c](io: &!i Io, engine: &!e tls.Engine, tab: &!t conns.Table, poller: &!p Poller, st: &!s [int], pend: &!q [byte], inq: &!n [byte], app: &!a [byte], cfg: &c [int], now: int) -> [conn_read, conn_write, poll, io_write] int {
     var slot = 0;
-    while slot < cfg[c_conns()] {
-        let b = slot * stride();
-        let phase = st[b + s_phase()];
-        let held = now - st[b + s_since()];
-        if phase == phase_queued() && held > cfg[c_hs_timeout()] {
-            end_slot(io, engine, tab, st, slot, r_queue_timeout(), now);
-        } else if phase == phase_handshake() && held > cfg[c_hs_timeout()] {
-            end_slot(io, engine, tab, st, slot, r_handshake_timeout(), now);
-        } else if phase == phase_established() && now - st[b + s_active()] > cfg[c_idle()] {
-            close_with(io, engine, tab, poller, st, pend, inq, app, slot, r_idle(), now);
-        } else if phase == phase_closing() && held > cfg[c_hs_timeout()] {
+    while slot < cfg[front.c_conns()] {
+        let b = slot * front.stride();
+        let phase = st[b + front.s_phase()];
+        let held = now - st[b + front.s_since()];
+        if phase == front.phase_queued() && held > cfg[front.c_hs_timeout()] {
+            front.end_slot(io, engine, tab, st, slot, front.r_queue_timeout(), now);
+        } else if phase == front.phase_handshake() && held > cfg[front.c_hs_timeout()] {
+            front.end_slot(io, engine, tab, st, slot, front.r_handshake_timeout(), now);
+        } else if phase == front.phase_established() && now - st[b + front.s_active()] > cfg[front.c_idle()] {
+            close_with(io, engine, tab, poller, st, pend, inq, app, slot, front.r_idle(), now);
+        } else if phase == front.phase_closing() && held > cfg[front.c_hs_timeout()] {
             // Our close_notify was never taken: the peer is not reading.
-            end_slot(io, engine, tab, st, slot, st[b + s_reason()], now);
+            front.end_slot(io, engine, tab, st, slot, st[b + front.s_reason()], now);
         }
         slot = slot + 1;
     }
@@ -622,127 +173,22 @@ fn sweep[&i, &e, &t, &p, &s, &q, &n, &a, &c](io: &!i Io, engine: &!e tls.Engine,
 // are sent close_notify.
 fn stop_all[&i, &e, &t, &p, &s, &q, &n, &a, &c](io: &!i Io, engine: &!e tls.Engine, tab: &!t conns.Table, poller: &!p Poller, st: &!s [int], pend: &!q [byte], inq: &!n [byte], app: &!a [byte], cfg: &c [int], now: int) -> [conn_read, conn_write, poll, io_write] int {
     var slot = 0;
-    while slot < cfg[c_conns()] {
-        let phase = st[slot * stride() + s_phase()];
-        if phase == phase_queued() || phase == phase_handshake() {
-            end_slot(io, engine, tab, st, slot, r_shutdown(), now);
-        } else if phase == phase_established() {
-            close_with(io, engine, tab, poller, st, pend, inq, app, slot, r_shutdown(), now);
+    while slot < cfg[front.c_conns()] {
+        let phase = st[slot * front.stride() + front.s_phase()];
+        if phase == front.phase_queued() || phase == front.phase_handshake() {
+            front.end_slot(io, engine, tab, st, slot, front.r_shutdown(), now);
+        } else if phase == front.phase_established() {
+            close_with(io, engine, tab, poller, st, pend, inq, app, slot, front.r_shutdown(), now);
         }
         slot = slot + 1;
     }
     return 0;
 }
 
-// ---- Reload ----
-
-// Every identity read again beneath `dir` and replaced in the engine.
-pub fn reload[&h, &i, &d, &e, &u, &l](heap: &!h Heap, io: &!i Io, dir: &d Dir, engine: &!e tls.Engine, subs: &u [byte], sublens: &l [int], count: int, now_unix: int) -> [heap, dir_read, file_read, io_write] int {
-    var id = 0;
-    var bad = 0;
-    while id < count {
-        let at = id * sub_cap();
-        let code = echo_identity.load(heap, dir, subs[at..at + sublens[id]], engine, id, now_unix);
-        io.write_all(io, "reload ");
-        io.print_int(io, id);
-        if code >= 0 {
-            io.write_all(io, " ok");
-        } else if code <= echo_identity.file_base() {
-            io.write_all(io, " unreadable ");
-            io.write_all(io, echo_identity.failed_file(code));
-            io.write_all(io, " errno=");
-            io.print_int(io, echo_identity.failed_errno(code));
-            bad = bad + 1;
-        } else {
-            io.write_all(io, " refused ");
-            io.write_all(io, tls.refusal_tag(code));
-            bad = bad + 1;
-        }
-        io.newline(io);
-        flush(io);
-        id = id + 1;
-    }
-    return bad;
-}
-
-// ---- The loop ----
-
-// Accepts every connection waiting on the listener: each takes a slot and
-// joins the queue, or, over the table or once stopping, is closed at once.
-fn accept_all[&h, &i, &l, &s, &g, &q, &c](heap: &!h Heap, io: &!i Io, table: conns.Table, listener: &!l Listener, st: &!s [int], gl: &!g [int], queue: &!q [int], cfg: &c [int], now: int) -> [heap, conn_accept, io_write] conns.Table {
-    var tab = table;
-    var more = true;
-    while more {
-        match tcp_accept(listener) {
-            Accepted::Ok(c) => {
-                var live = 0;
-                borrow tab as &tt in {
-                    live = conns.live(tt);
-                }
-                let id = gl[g_next_id()];
-                gl[g_next_id()] = id + 1;
-                if live >= cfg[c_conns()] || gl[g_stopping()] == 1 {
-                    conn_close(c);
-                    io.write_all(io, "refused ");
-                    io.print_int(io, id);
-                    if gl[g_stopping()] == 1 {
-                        io.write_all(io, " stopping\n");
-                    } else {
-                        io.write_all(io, " full\n");
-                    }
-                    flush(io);
-                } else {
-                    let (grown, slot) = conns.put(heap, tab, c);
-                    tab = grown;
-                    if slot >= 0 && slot < cfg[c_conns()] {
-                        borrow mut tab as &!tw in {
-                            if conns.nonblocking(tw, slot) != 0 {
-                                conns.close(tw, slot);
-                            } else {
-                                let b = slot * stride();
-                                st[b + s_phase()] = phase_queued();
-                                st[b + s_id()] = id;
-                                st[b + s_since()] = now;
-                                st[b + s_accepted()] = now;
-                                let at = (gl[g_qhead()] + gl[g_qlen()]) % cfg[c_conns()];
-                                queue[at] = id * 4096 + slot;
-                                gl[g_qlen()] = gl[g_qlen()] + 1;
-                            }
-                        }
-                    }
-                }
-            }
-            Accepted::Again => {
-                more = false;
-            }
-            Accepted::Failed(e) => {
-                more = false;
-            }
-        }
-    }
-    return tab;
-}
-
-// How long the next wait may sleep: until the rate's window turns if a
-// queued connection waits on it, else a quarter second, which is how
-// often the timeouts are looked at.
-fn timeout_of[&g, &c](gl: &g [int], cfg: &c [int], now: int) -> [] int {
-    if gl[g_qlen()] > 0 && gl[g_started()] >= cfg[c_rate()] {
-        let left = gl[g_window()] + 1000 - now;
-        if left < 1 {
-            return 1;
-        }
-        if left < 250 {
-            return left;
-        }
-    }
-    return 250;
-}
-
 // Serves until stopped. `subs`/`sublens` name each identity's
 // subdirectory beneath `dir`, for a reload. 0, or 4 if there is no poller.
 pub fn run[&h, &i, &l, &k, &e, &d, &w, &u, &n, &c](heap: &!h Heap, io: &!i Io, listener: &!l Listener, clock: &k Clock, engine: &!e tls.Engine, dir: &d Dir, watch: &!w SignalWatch, subs: &u [byte], sublens: &n [int], cfg: &c [int]) -> [heap, conn_accept, conn_read, conn_write, poll, clock, signals_read, dir_read, file_read, io_write] int {
-    let max = cfg[c_conns()];
+    let max = cfg[front.c_conns()];
     let sig_token = max + 1;
     match poller_new() {
         Polling::Failed(e) => {
@@ -755,12 +201,12 @@ pub fn run[&h, &i, &l, &k, &e, &d, &w, &u, &n, &c](heap: &!h Heap, io: &!i Io, l
                 poller_add_signals(pw, watch, sig_token);
             }
             var table = conns.empty(heap, max);
-            let stb = box_slice(heap, stride() * max, 0);
-            let glb = box_slice(heap, gl_len(), 0);
+            let stb = box_slice(heap, front.stride() * max, 0);
+            let glb = box_slice(heap, front.gl_len(), 0);
             let qb = box_slice(heap, max, 0);
-            let pendb = box_slice(heap, pend_cap() * max, byte_of(0));
-            let inqb = box_slice(heap, inq_cap() * max, byte_of(0));
-            let appb = box_slice(heap, app_cap() * max, byte_of(0));
+            let pendb = box_slice(heap, front.pend_cap() * max, byte_of(0));
+            let inqb = box_slice(heap, front.inq_cap() * max, byte_of(0));
+            let appb = box_slice(heap, front.app_cap() * max, byte_of(0));
             let evb = box_slice(heap, 2 * max + 8, 0);
             borrow mut stb as &!sw in {
                 borrow mut glb as &!gw in {
@@ -774,14 +220,14 @@ pub fn run[&h, &i, &l, &k, &e, &d, &w, &u, &n, &c](heap: &!h Heap, io: &!i Io, l
                                         let queue = contents(qw);
                                         let events = contents(ew);
                                         var now = clock_ms(clock);
-                                        gl[g_window()] = now;
-                                        gl[g_last_sweep()] = now;
-                                        gl[g_next_id()] = 1;
+                                        gl[front.g_window()] = now;
+                                        gl[front.g_last_sweep()] = now;
+                                        gl[front.g_next_id()] = 1;
                                         var running = true;
                                         while running {
                                             var ready = 0;
                                             borrow mut poll as &!pw in {
-                                                ready = poller_wait(pw, events, timeout_of(gl, cfg, now));
+                                                ready = poller_wait(pw, events, front.timeout_of(gl, cfg, now));
                                             }
                                             now = clock_ms(clock);
                                             let now_unix = clock_unix_ms(clock);
@@ -789,17 +235,17 @@ pub fn run[&h, &i, &l, &k, &e, &d, &w, &u, &n, &c](heap: &!h Heap, io: &!i Io, l
                                             while j < ready {
                                                 let token = events[2 * j];
                                                 if token == 0 {
-                                                    table = accept_all(heap, io, table, listener, st, gl, queue, cfg, now);
+                                                    table = front.accept_all(heap, io, table, listener, st, gl, queue, cfg, now);
                                                 } else if token == sig_token {
                                                     let mask = signals_pending(watch);
                                                     if sg.has(mask, sg.sighup()) {
-                                                        reload(heap, io, dir, engine, subs, sublens, cfg[c_identities()], now_unix);
+                                                        front.reload(heap, io, dir, engine, subs, sublens, cfg[front.c_identities()], now_unix);
                                                     }
-                                                    if sg.any(mask, sg.stop_signals()) && gl[g_stopping()] == 0 {
-                                                        gl[g_stopping()] = 1;
-                                                        gl[g_stop_at()] = now;
+                                                    if sg.any(mask, sg.stop_signals()) && gl[front.g_stopping()] == 0 {
+                                                        gl[front.g_stopping()] = 1;
+                                                        gl[front.g_stop_at()] = now;
                                                         io.write_all(io, "stopping\n");
-                                                        flush(io);
+                                                        front.flush(io);
                                                         borrow mut table as &!tw in {
                                                             borrow mut poll as &!pw in {
                                                                 stop_all(io, engine, tw, pw, st, contents(pdw), contents(iw), contents(aw), cfg, now);
@@ -808,7 +254,7 @@ pub fn run[&h, &i, &l, &k, &e, &d, &w, &u, &n, &c](heap: &!h Heap, io: &!i Io, l
                                                     }
                                                 } else {
                                                     let slot = token - 1;
-                                                    if slot >= 0 && slot < max && st[slot * stride() + s_phase()] >= phase_handshake() {
+                                                    if slot >= 0 && slot < max && st[slot * front.stride() + front.s_phase()] >= front.phase_handshake() {
                                                         borrow mut table as &!tw in {
                                                             borrow mut poll as &!pw in {
                                                                 pump(io, engine, tw, pw, st, contents(pdw), contents(iw), contents(aw), slot, now);
@@ -820,21 +266,21 @@ pub fn run[&h, &i, &l, &k, &e, &d, &w, &u, &n, &c](heap: &!h Heap, io: &!i Io, l
                                             }
                                             borrow mut table as &!tw in {
                                                 borrow mut poll as &!pw in {
-                                                    if now - gl[g_last_sweep()] >= 100 {
-                                                        gl[g_last_sweep()] = now;
+                                                    if now - gl[front.g_last_sweep()] >= 100 {
+                                                        gl[front.g_last_sweep()] = now;
                                                         sweep(io, engine, tw, pw, st, contents(pdw), contents(iw), contents(aw), cfg, now);
                                                     }
-                                                    if gl[g_stopping()] == 0 {
-                                                        admit(io, engine, tw, pw, st, gl, queue, cfg, now, now_unix);
+                                                    if gl[front.g_stopping()] == 0 {
+                                                        front.admit(io, engine, tw, pw, st, gl, queue, cfg, now, now_unix);
                                                     }
                                                 }
                                             }
-                                            if gl[g_stopping()] == 1 {
+                                            if gl[front.g_stopping()] == 1 {
                                                 var live = 0;
                                                 borrow table as &tt in {
                                                     live = conns.live(tt);
                                                 }
-                                                if live == 0 || now - gl[g_stop_at()] > drain_ms() {
+                                                if live == 0 || now - gl[front.g_stop_at()] > front.drain_ms() {
                                                     running = false;
                                                 }
                                             }
@@ -858,4 +304,57 @@ pub fn run[&h, &i, &l, &k, &e, &d, &w, &u, &n, &c](heap: &!h Heap, io: &!i Io, l
             return 0;
         }
     }
+}
+
+// Everything after the directory is open: the engine, the identities, the
+// listener, the signals, the loop. Shared by `examples/tls_echo/tls_echo.cho`, which
+// takes the directory from the command line, and `examples/tls_echo_fixed`, which
+// has it as a literal: the difference between them is only how `main` came by `dir`.
+pub fn serve[&h, &i, &n, &k, &s, &d, &u, &l, &c, &r, &a](heap: &!h Heap, io: &!i Io, net: &n Net(""), clock: &k Clock, claim: &s Signals("HUP,INT,TERM"), dir: &d Dir, subs: &u [byte], sublens: &l [int], cfg: &c [int], entropy: &r [byte], alpn: &a [byte]) -> [heap, dir_read, file_read, err_write, io_write, net_in(""), conn_accept, conn_read, conn_write, poll, clock, signals("HUP,INT,TERM"), signals_read] int {
+    var status = 0;
+    var engine = tls.open_server(heap, cfg[front.c_conns()]);
+    borrow mut engine as &!ew in {
+        tls.seed(ew, entropy);
+        if len(alpn) > 0 && tls.set_alpn(ew, alpn) != 0 {
+            io.error_all(io, "tls_echo: --alpn refused, tls-server-alpn-list\n");
+            status = 2;
+        }
+        if status == 0 {
+            status = front.add_all(heap, io, dir, ew, subs, sublens, cfg[front.c_identities()], clock_unix_ms(clock));
+        }
+        if status == 0 {
+            match tcp_listen(net, cfg[front.cfg_len()], 1024, 0) {
+                Listening::Ok(l) => {
+                    var listener = l;
+                    borrow mut listener as &!lh in {
+                        listener_nonblocking(lh);
+                        match signals_watch(claim) {
+                            Watching::Ok(w) => {
+                                var watch = w;
+                                io.write_all(io, "listening ");
+                                io.print_int(io, cfg[front.cfg_len()]);
+                                io.newline(io);
+                                front.flush(io);
+                                borrow mut watch as &!wh in {
+                                    status = run(heap, io, lh, clock, ew, dir, wh, subs, sublens, cfg);
+                                }
+                                signals_close(watch);
+                            }
+                            Watching::Failed(e) => {
+                                io.error_all(io, "tls_echo: cannot claim HUP, INT and TERM\n");
+                                status = 7;
+                            }
+                        }
+                    }
+                    listener_close(listener);
+                }
+                Listening::Failed(e) => {
+                    io.error_all(io, "tls_echo: cannot listen\n");
+                    status = 3;
+                }
+            }
+        }
+    }
+    tls.close(heap, engine);
+    return status;
 }

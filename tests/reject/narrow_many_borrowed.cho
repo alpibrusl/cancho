@@ -1,0 +1,21 @@
+//~ ERROR is borrowed
+//~ RULE capability-not-narrowable
+
+// A borrowed capability cannot be narrowed, by either form: narrowing consumes what it attenuates.
+// (`docs/narrowing-into-several.md` section 5.)
+
+fn split_it[&f](fs: &f Fs("")) -> [] int {
+    let (a, b) = narrow(fs, "/dev/urandom", "/etc/ssl");
+    release(a); release(b);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io); release(ffi); release(heap); release(args);
+    borrow fs as &f in {
+        split_it(f);
+    }
+    release(fs);
+    return 0;
+}

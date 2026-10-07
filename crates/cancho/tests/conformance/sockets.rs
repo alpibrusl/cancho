@@ -160,7 +160,7 @@ fn a_listener_echoes_a_real_client_on_both_backends() {
 /// `PORT`. The `io` is there so it can announce itself on standard error,
 /// which is how a test knows the server has reached a given point (a piped
 /// standard output is fully buffered and would say nothing until exit).
-fn io_program(port: u16, source: &str) -> String {
+pub(super) fn io_program(port: u16, source: &str) -> String {
     let main = r#"
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args, net, clock } = split(world);
@@ -173,7 +173,7 @@ fn main(world: World) -> [] int {
 }
 
 /// Wait for a line on the child's standard error.
-fn wait_for(lines: &mut impl std::io::BufRead, wanted: &str) {
+pub(super) fn wait_for(lines: &mut impl std::io::BufRead, wanted: &str) {
     let mut line = String::new();
     loop {
         line.clear();

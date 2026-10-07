@@ -404,7 +404,7 @@ The example `cancho-mqtt` and `cancho-gateway` copy
 ([`docs/tls-server.md`](../docs/tls-server.md) §11): `packages/tls`'s engine
 between each socket and an echo, many connections on one thread and one
 `Poller`, and **no foreign code**, so its authority report is bounded. Read
-`echo.cho`'s header first: the phases a connection goes through, how the two
+`front.cho`'s header first: the phases a connection goes through, how the two
 handshake bounds (in progress, and started a second) delay a burst instead
 of refusing it, the timeouts, the log line per connection with the suite,
 group, SNI and ALPN. Then `identity.cho`, which is why the loop holds a
@@ -412,6 +412,24 @@ directory handle and never the filesystem capability: the reload reads
 beneath one directory, following no link. `SIGHUP` reloads, `SIGTERM` sends
 close_notify to everyone and exits.
 
+
+### `https_hello/` — HTTPS/1.1 over that engine
+
+```sh
+cargo run -p cancho -- build --std examples/https_hello/{hello,loop,app}.cho \
+    examples/tls_echo/{front,identity}.cho packages/http-server/server.cho \
+    packages/tls/{tls,record,message,slot,client12,client,hello,identity,server}.cho \
+    packages/x509/{verify,names,x509,key}.cho -o https_hello
+./https_hello --port 8443 --dir /tmp/certs
+curl --cacert tests/vectors/tls/echo/ca.pem --resolve echo.lex-sys.test:8443:127.0.0.1 \
+    https://echo.lex-sys.test:8443/hello/world
+```
+
+`tls_echo`'s program with [`packages/http-server`](../docs/http-server.md) where the echo was, fed bytes
+instead of sockets (`http-server.md` §11): keep-alive, pipelining, a request answered in the order it came, a
+`/big/<n>` answer streamed as the client takes it, and a client that stops reading stops being read, all in
+one thread. Same options, same bounds, same reload, same authority report as `tls_echo`. Read `loop.cho`'s header
+(where the bytes go and who waits for whom), then `app.cho` (what a request is turned into, and `hold` + `stream`).
 ### `fetch/` — the other direction
 
 ```sh

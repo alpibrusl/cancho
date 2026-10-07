@@ -16,7 +16,9 @@ edition 6;
 // up to 16, the first the default for an unknown or absent name
 // (`examples/tls_echo/identity.cho` says why the directory is opened once
 // and read through the handle). The engine's entropy is 32 bytes of
-// `/dev/urandom`.
+// `/dev/urandom`. Because the operator names the directory, `main` holds `Fs("")` and the
+// report says `fs_read("")`; `examples/tls_echo_fixed` is this server with the directory
+// fixed at build time, and reports the two paths it reads (`serve` and the loop are shared).
 //
 // The defaults: no ALPN; 256 connections; 32 handshakes in progress and
 // 100 started a second (a full handshake measured 3.0 ms of this server's
@@ -27,206 +29,21 @@ edition 6;
 //
 // `SIGHUP` reads every identity again (`tls.replace_identity`); `SIGINT`
 // or `SIGTERM` stops it cleanly. What it prints, and how the bounds work,
-// is `examples/tls_echo/echo.cho`'s header. Exit status: 0 stopped by a
+// is `examples/tls_echo/front.cho`'s header. Exit status: 0 stopped by a
 // signal, 2 a usage error, 3 the port cannot be listened on, 4 no poller,
 // 5 the directory cannot be opened, 6 an identity refused, 7 the
 // signals cannot be claimed.
 
 import std.bytes;
-import std.flags;
 import std.io;
-import echo_identity;
 import echo_loop;
+import tls_front as front;
 import tls;
-
-// A decimal argument, or -1 if it is not one (or is over 10^9).
-fn number[&s](s: &s [byte]) -> [] int {
-    if len(s) == 0 || len(s) > 9 {
-        return 0 - 1;
-    }
-    var n = 0;
-    var i = 0;
-    while i < len(s) {
-        let c = int_of(s[i]);
-        if c < '0' || c > '9' {
-            return 0 - 1;
-        }
-        n = n * 10 + c - '0';
-        i = i + 1;
-    }
-    return n;
-}
 
 fn usage[&i](io: &!i Io) -> [err_write] int {
     io.error_all(io, "usage: tls_echo --port <n> --dir <directory> [--identity <subdirectory>]... [--alpn <p1,p2>]\n");
     io.error_all(io, "                [--connections <n>] [--handshakes <n>] [--rate <n>] [--handshake-timeout <ms>] [--idle <ms>]\n");
     return 2;
-}
-
-// A number option's value into `cfg[at]`, within `low..=high`: false if
-// it is not one.
-fn set_number[&c](cfg: &!c [int], at: int, text: &static [byte], low: int, high: int) -> [] bool {
-    let n = number(text);
-    if n < low || n > high {
-        return false;
-    }
-    cfg[at] = n;
-    return true;
-}
-
-// The command line into `cfg` (and the port into `cfg[cfg_len()]`), the
-// identities' subdirectories into `subs`/`sublens`, and the ALPN list,
-// commas made spaces, into `alpn`. Answers the directory, and in
-// `info[0]` the ALPN list's length and `info[1]` 0, or 2 for a usage
-// error.
-fn parse[&g, &c, &u, &n, &a, &f](g: &g Args, cfg: &!c [int], subs: &!u [byte], sublens: &!n [int], alpn: &!a [byte], info: &!f [int]) -> [args] &static [byte] {
-    var dir = "";
-    var bad = false;
-    var c = flags.start();
-    var going = true;
-    while going {
-        let (next, step) = flags.step(g, c);
-        c = next;
-        match step {
-            flags.Arg::Long(name) => {
-                let (after, text) = flags.value(g, c);
-                c = after;
-                if flags.named(name, "port") {
-                    bad = bad || !set_number(cfg, echo_loop.cfg_len(), text, 1, 65535);
-                } else if flags.named(name, "dir") {
-                    dir = text;
-                } else if flags.named(name, "identity") {
-                    let k = cfg[echo_loop.c_identities()];
-                    if k >= 16 || len(text) == 0 || len(text) > echo_loop.sub_cap() {
-                        bad = true;
-                    } else {
-                        var j = 0;
-                        while j < len(text) {
-                            subs[k * echo_loop.sub_cap() + j] = text[j];
-                            j = j + 1;
-                        }
-                        sublens[k] = len(text);
-                        cfg[echo_loop.c_identities()] = k + 1;
-                    }
-                } else if flags.named(name, "alpn") {
-                    if len(text) > len(alpn) {
-                        bad = true;
-                    } else {
-                        var j = 0;
-                        while j < len(text) {
-                            alpn[j] = text[j];
-                            if int_of(text[j]) == ',' {
-                                alpn[j] = byte_of(' ');
-                            }
-                            j = j + 1;
-                        }
-                        info[0] = len(text);
-                    }
-                } else if flags.named(name, "connections") {
-                    bad = bad || !set_number(cfg, echo_loop.c_conns(), text, 1, 4096);
-                } else if flags.named(name, "handshakes") {
-                    bad = bad || !set_number(cfg, echo_loop.c_handshakes(), text, 1, 4096);
-                } else if flags.named(name, "rate") {
-                    bad = bad || !set_number(cfg, echo_loop.c_rate(), text, 1, 1000000);
-                } else if flags.named(name, "handshake-timeout") {
-                    bad = bad || !set_number(cfg, echo_loop.c_hs_timeout(), text, 1, 3600000);
-                } else if flags.named(name, "idle") {
-                    bad = bad || !set_number(cfg, echo_loop.c_idle(), text, 1, 86400000);
-                } else {
-                    bad = true;
-                }
-            }
-            flags.Arg::Short(letter) => {
-                bad = true;
-            }
-            flags.Arg::Operand(text) => {
-                bad = true;
-            }
-            flags.Arg::Done => {
-                going = false;
-            }
-        }
-    }
-    if bad || len(dir) == 0 || cfg[echo_loop.cfg_len()] == 0 {
-        info[1] = 2;
-    }
-    return dir;
-}
-
-// Every identity added to the engine, the first the default. 0, or 6 if
-// one could not be read or was refused (each said on standard error).
-fn add_all[&h, &i, &d, &e, &u, &n](heap: &!h Heap, io: &!i Io, dir: &d Dir, engine: &!e tls.Engine, subs: &u [byte], sublens: &n [int], count: int, now_unix: int) -> [heap, dir_read, file_read, err_write] int {
-    var id = 0;
-    while id < count {
-        let at = id * echo_loop.sub_cap();
-        let code = echo_identity.load(heap, dir, subs[at..at + sublens[id]], engine, 0 - 1, now_unix);
-        if code < 0 {
-            io.error_all(io, "tls_echo: identity ");
-            io.error_all(io, subs[at..at + sublens[id]]);
-            if code <= echo_identity.file_base() {
-                io.error_all(io, ": cannot read ");
-                io.error_all(io, echo_identity.failed_file(code));
-            } else {
-                io.error_all(io, ": refused, ");
-                io.error_all(io, tls.refusal_tag(code));
-            }
-            io.error_all(io, "\n");
-            return 6;
-        }
-        id = id + 1;
-    }
-    return 0;
-}
-
-// Everything after the directory is open: the engine, the identities, the
-// listener, the signals, the loop.
-fn serve[&h, &i, &n, &k, &s, &d, &u, &l, &c, &r, &a](heap: &!h Heap, io: &!i Io, net: &n Net(""), clock: &k Clock, claim: &s Signals("HUP,INT,TERM"), dir: &d Dir, subs: &u [byte], sublens: &l [int], cfg: &c [int], entropy: &r [byte], alpn: &a [byte]) -> [heap, dir_read, file_read, err_write, io_write, net_in(""), conn_accept, conn_read, conn_write, poll, clock, signals("HUP,INT,TERM"), signals_read] int {
-    var status = 0;
-    var engine = tls.open_server(heap, cfg[echo_loop.c_conns()]);
-    borrow mut engine as &!ew in {
-        tls.seed(ew, entropy);
-        if len(alpn) > 0 && tls.set_alpn(ew, alpn) != 0 {
-            io.error_all(io, "tls_echo: --alpn refused, tls-server-alpn-list\n");
-            status = 2;
-        }
-        if status == 0 {
-            status = add_all(heap, io, dir, ew, subs, sublens, cfg[echo_loop.c_identities()], clock_unix_ms(clock));
-        }
-        if status == 0 {
-            match tcp_listen(net, cfg[echo_loop.cfg_len()], 1024, 0) {
-                Listening::Ok(l) => {
-                    var listener = l;
-                    borrow mut listener as &!lh in {
-                        listener_nonblocking(lh);
-                        match signals_watch(claim) {
-                            Watching::Ok(w) => {
-                                var watch = w;
-                                io.write_all(io, "listening ");
-                                io.print_int(io, cfg[echo_loop.cfg_len()]);
-                                io.newline(io);
-                                echo_loop.flush(io);
-                                borrow mut watch as &!wh in {
-                                    status = echo_loop.run(heap, io, lh, clock, ew, dir, wh, subs, sublens, cfg);
-                                }
-                                signals_close(watch);
-                            }
-                            Watching::Failed(e) => {
-                                io.error_all(io, "tls_echo: cannot claim HUP, INT and TERM\n");
-                                status = 7;
-                            }
-                        }
-                    }
-                    listener_close(listener);
-                }
-                Listening::Failed(e) => {
-                    io.error_all(io, "tls_echo: cannot listen\n");
-                    status = 3;
-                }
-            }
-        }
-    }
-    tls.close(heap, engine);
-    return status;
 }
 
 fn main(world: World) -> [] int {
@@ -236,29 +53,29 @@ fn main(world: World) -> [] int {
     var status = 0;
     borrow mut io as &!i in {
         borrow mut heap as &!h in {
-            let cfgb = box_slice(h, echo_loop.cfg_len() + 1, 0);
-            let subsb = box_slice(h, 16 * echo_loop.sub_cap(), byte_of(0));
+            let cfgb = box_slice(h, front.cfg_len() + 1, 0);
+            let subsb = box_slice(h, 16 * front.sub_cap(), byte_of(0));
             let lensb = box_slice(h, 16, 0);
             borrow mut cfgb as &!cw in {
                 borrow mut subsb as &!uw in {
                     borrow mut lensb as &!lw in {
                         let cfg = contents(cw);
-                        cfg[echo_loop.c_conns()] = 256;
-                        cfg[echo_loop.c_handshakes()] = 32;
-                        cfg[echo_loop.c_rate()] = 100;
-                        cfg[echo_loop.c_hs_timeout()] = 10000;
-                        cfg[echo_loop.c_idle()] = 60000;
+                        cfg[front.c_conns()] = 256;
+                        cfg[front.c_handshakes()] = 32;
+                        cfg[front.c_rate()] = 100;
+                        cfg[front.c_hs_timeout()] = 10000;
+                        cfg[front.c_idle()] = 60000;
                         region r {
                             let alpn = alloc_slice[r](512, byte_of(0));
                             let info = alloc_slice[r](2, 0);
                             let entropy = alloc_slice[r](32, byte_of(0));
                             var dir_name = "";
                             borrow args as &g in {
-                                dir_name = parse(g, cfg, contents(uw), contents(lw), alpn, info);
+                                dir_name = front.parse(g, cfg, contents(uw), contents(lw), alpn, info);
                             }
-                            if cfg[echo_loop.c_identities()] == 0 {
+                            if cfg[front.c_identities()] == 0 {
                                 // No `--identity`: the directory itself is the one.
-                                cfg[echo_loop.c_identities()] = 1;
+                                cfg[front.c_identities()] = 1;
                             }
                             if info[1] != 0 {
                                 status = usage(i);
@@ -290,7 +107,7 @@ fn main(world: World) -> [] int {
                                                 borrow net as &nn in {
                                                     borrow clock as &kk in {
                                                         borrow claim as &ss in {
-                                                            status = serve(h, i, nn, kk, ss, dh, contents(uw), contents(lw), cfg, entropy, alpn[0..info[0]]);
+                                                            status = echo_loop.serve(h, i, nn, kk, ss, dh, contents(uw), contents(lw), cfg, entropy, alpn[0..info[0]]);
                                                         }
                                                     }
                                                 }

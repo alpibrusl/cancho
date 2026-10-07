@@ -1,0 +1,14 @@
+//~ ERROR `narrow` takes a literal
+//~ RULE capability-not-narrowable
+
+// A literal is what makes the refinement checkable where it is written; a later literal is held to it as the first is.
+// (`docs/narrowing-into-several.md` section 5.)
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io); release(ffi); release(heap); release(args);
+    let name = "/etc/ssl";
+    let (a, b) = narrow(fs, "/dev/urandom", name);
+    release(a); release(b);
+    return 0;
+}

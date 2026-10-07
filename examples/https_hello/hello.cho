@@ -1,0 +1,176 @@
+edition 6;
+
+// `https_hello` -- an HTTPS/1.1 server: `tls_echo`'s loop (`examples/tls_echo`) with
+// `packages/http-server`, byte-fed (`docs/http-server.md` §11), where the echo was. TLS 1.3
+// from `packages/tls`, one thread, one `Poller`, up to `--connections` clients at once, each
+// with keep-alive and pipelining; no foreign code, so the authority report is bounded
+// (the same labels as `tls_echo`'s, pinned in `conformance/https_hello.rs`).
+//
+//     https_hello --port <n> --dir <directory> [--identity <subdirectory>]...
+//                 [--alpn <p1,p2,...>] [--connections <n>] [--handshakes <n>]
+//                 [--rate <per second>] [--handshake-timeout <ms>] [--idle <ms>]
+//
+// The options, the certificates (`--dir`, `--identity`), the bounds, `SIGHUP` and
+// `SIGINT`/`SIGTERM`, the log, and the exit statuses are `examples/tls_echo/tls_echo.cho`'s,
+// word for word, with one more status: 8, the HTTP server could not be opened. The routes
+// are `app.cho`'s header; the loop, and what happens to a connection's plaintext, is
+// `loop.cho`'s. The three files beside `packages/` it is built from are this directory,
+// `examples/tls_echo/front.cho` and `examples/tls_echo/identity.cho`.
+
+import std.bytes;
+import std.io;
+import https_loop;
+import tls_front as front;
+import tls;
+
+fn usage[&i](io: &!i Io) -> [err_write] int {
+    io.error_all(io, "usage: https_hello --port <n> --dir <directory> [--identity <subdirectory>]... [--alpn <p1,p2>]\n");
+    io.error_all(io, "                [--connections <n>] [--handshakes <n>] [--rate <n>] [--handshake-timeout <ms>] [--idle <ms>]\n");
+    return 2;
+}
+
+// Everything after the directory is open: the engine, the identities, the
+// listener, the signals, the loop.
+fn serve[&h, &i, &n, &k, &s, &d, &u, &l, &c, &r, &a](heap: &!h Heap, io: &!i Io, net: &n Net(""), clock: &k Clock, claim: &s Signals("HUP,INT,TERM"), dir: &d Dir, subs: &u [byte], sublens: &l [int], cfg: &c [int], entropy: &r [byte], alpn: &a [byte]) -> [heap, dir_read, file_read, err_write, io_write, net_in(""), conn_accept, conn_read, conn_write, poll, clock, signals("HUP,INT,TERM"), signals_read] int {
+    var status = 0;
+    var engine = tls.open_server(heap, cfg[front.c_conns()]);
+    borrow mut engine as &!ew in {
+        tls.seed(ew, entropy);
+        if len(alpn) > 0 && tls.set_alpn(ew, alpn) != 0 {
+            io.error_all(io, "https_hello: --alpn refused, tls-server-alpn-list\n");
+            status = 2;
+        }
+        if status == 0 {
+            status = front.add_all(heap, io, dir, ew, subs, sublens, cfg[front.c_identities()], clock_unix_ms(clock));
+        }
+        if status == 0 {
+            match tcp_listen(net, cfg[front.cfg_len()], 1024, 0) {
+                Listening::Ok(l) => {
+                    var listener = l;
+                    borrow mut listener as &!lh in {
+                        listener_nonblocking(lh);
+                        match signals_watch(claim) {
+                            Watching::Ok(w) => {
+                                var watch = w;
+                                io.write_all(io, "listening ");
+                                io.print_int(io, cfg[front.cfg_len()]);
+                                io.newline(io);
+                                front.flush(io);
+                                borrow mut watch as &!wh in {
+                                    status = https_loop.run(heap, io, lh, clock, ew, dir, wh, subs, sublens, cfg);
+                                }
+                                signals_close(watch);
+                            }
+                            Watching::Failed(e) => {
+                                io.error_all(io, "https_hello: cannot claim HUP, INT and TERM\n");
+                                status = 7;
+                            }
+                        }
+                    }
+                    listener_close(listener);
+                }
+                Listening::Failed(e) => {
+                    io.error_all(io, "https_hello: cannot listen\n");
+                    status = 3;
+                }
+            }
+        }
+    }
+    tls.close(heap, engine);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);
+    release(ffi);
+    let claim = narrow(signals, "HUP,INT,TERM");
+    var status = 0;
+    borrow mut io as &!i in {
+        borrow mut heap as &!h in {
+            let cfgb = box_slice(h, front.cfg_len() + 1, 0);
+            let subsb = box_slice(h, 16 * front.sub_cap(), byte_of(0));
+            let lensb = box_slice(h, 16, 0);
+            borrow mut cfgb as &!cw in {
+                borrow mut subsb as &!uw in {
+                    borrow mut lensb as &!lw in {
+                        let cfg = contents(cw);
+                        cfg[front.c_conns()] = 256;
+                        cfg[front.c_handshakes()] = 32;
+                        cfg[front.c_rate()] = 100;
+                        cfg[front.c_hs_timeout()] = 10000;
+                        cfg[front.c_idle()] = 60000;
+                        region r {
+                            let alpn = alloc_slice[r](512, byte_of(0));
+                            let info = alloc_slice[r](2, 0);
+                            let entropy = alloc_slice[r](32, byte_of(0));
+                            var dir_name = "";
+                            borrow args as &g in {
+                                dir_name = front.parse(g, cfg, contents(uw), contents(lw), alpn, info);
+                            }
+                            if cfg[front.c_identities()] == 0 {
+                                // No `--identity`: the directory itself is the one.
+                                cfg[front.c_identities()] = 1;
+                            }
+                            if info[1] != 0 {
+                                status = usage(i);
+                            } else {
+                                // The two uses of a path: the entropy, and the
+                                // directory, opened once. Nothing after them is
+                                // handed the filesystem capability: `serve`, the
+                                // loop and the reload hold the directory handle.
+                                var opened = DirOpened::Failed(2);
+                                borrow fs as &ff in {
+                                    if fs_read(ff, "/dev/urandom", entropy) != 32 {
+                                        io.error_all(i, "https_hello: cannot read 32 bytes of /dev/urandom\n");
+                                        status = 5;
+                                    }
+                                    match opened {
+                                        DirOpened::Ok(unused) => {
+                                            dir_close(unused);
+                                        }
+                                        DirOpened::Failed(unused) => {
+                                        }
+                                    }
+                                    opened = open_dir(ff, dir_name);
+                                }
+                                match opened {
+                                    DirOpened::Ok(d) => {
+                                        var dir = d;
+                                        if status == 0 {
+                                            borrow dir as &dh in {
+                                                borrow net as &nn in {
+                                                    borrow clock as &kk in {
+                                                        borrow claim as &ss in {
+                                                            status = serve(h, i, nn, kk, ss, dh, contents(uw), contents(lw), cfg, entropy, alpn[0..info[0]]);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        dir_close(dir);
+                                    }
+                                    DirOpened::Failed(e) => {
+                                        io.error_all(i, "https_hello: cannot open the directory --dir names\n");
+                                        status = 5;
+                                    }
+                                }
+                                bytes.zero(entropy);
+                            }
+                        }
+                    }
+                }
+            }
+            unbox_slice(h, cfgb);
+            unbox_slice(h, subsb);
+            unbox_slice(h, lensb);
+        }
+    }
+    release(fs);
+    release(net);
+    release(clock);
+    release(claim);
+    release(args);
+    release(io);
+    release(heap);
+    return status;
+}

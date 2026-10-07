@@ -39,6 +39,14 @@ fn named_kind() -> [] int {
     return 9;
 }
 
+fn param_kind() -> [] int {
+    return 10;
+}
+
+fn tvar_kind() -> [] int {
+    return 11;
+}
+
 fn unbound() -> [] int {
     return 0 - 100;
 }
@@ -56,6 +64,8 @@ fn var_base() -> [] int {
 pub fn reset[&s](st: &!s [int]) -> [] int {
     st[24] = first_table();
     st[26] = 0;
+    st[29] = 0;
+    st[31] = 0 - 1;
     return 0;
 }
 
@@ -79,6 +89,70 @@ pub fn make_ref[&s](st: &!s [int], unique: bool, area: int, inner: int) -> [] in
 // A struct the file declares, by the node of its declaration.
 pub fn make_named[&s](st: &!s [int], item: int) -> [] int {
     return make(st, named_kind(), item, 0, 0);
+}
+
+// A rigid type parameter of the function being checked, by its position.
+pub fn make_param[&s](st: &!s [int], index: int) -> [] int {
+    return make(st, param_kind(), index, 0, 0);
+}
+
+// A fresh type variable, unsolved; the types made for the variables of one call are consecutive.
+pub fn fresh_tvar[&s](st: &!s [int]) -> [] int {
+    let v = st[29];
+    st[st[30] + v] = 0;
+    st[29] = v + 1;
+    return make(st, tvar_kind(), v, 0, 0);
+}
+
+pub fn is_tvar[&s](st: &!s [int], ty: int) -> [] bool {
+    return ty >= first_table() && slot(st, ty, 0) == tvar_kind();
+}
+
+pub fn is_param[&s](st: &!s [int], ty: int) -> [] bool {
+    return ty >= first_table() && slot(st, ty, 0) == param_kind();
+}
+
+// Follow solved type variables until the head is not a solved variable.
+pub fn shallow[&s](st: &!s [int], ty: int) -> [] int {
+    var current = ty;
+    var go = true;
+    while go && is_tvar(st, current) {
+        let solved = st[st[30] + slot(st, current, 1)];
+        if solved == 0 {
+            go = false;
+        } else {
+            current = solved;
+        }
+    }
+    return current;
+}
+
+// Does the unsolved variable `var` occur in `ty`?
+fn occurs[&s](st: &!s [int], tv: int, ty: int) -> [] bool {
+    let t = shallow(st, ty);
+    if is_tvar(st, t) {
+        return slot(st, t, 1) == slot(st, tv, 1);
+    }
+    if is_ref(st, t) {
+        return occurs(st, tv, ref_inner(st, t));
+    }
+    if is_slice(st, t) {
+        return occurs(st, tv, slice_element(st, t));
+    }
+    return false;
+}
+
+// `ty` with every solved variable replaced by what it stands for, so nothing that leaves a call
+// carries a variable.
+pub fn resolve_type[&s](st: &!s [int], ty: int) -> [] int {
+    let t = shallow(st, ty);
+    if is_ref(st, t) {
+        return make_ref(st, ref_unique(st, t), slot(st, t, 2), resolve_type(st, ref_inner(st, t)));
+    }
+    if is_slice(st, t) {
+        return make_slice(st, resolve_type(st, slice_element(st, t)));
+    }
+    return t;
 }
 
 pub fn make_slice[&s](st: &!s [int], element: int) -> [] int {
@@ -225,7 +299,25 @@ pub fn outlives[&s, &x](st: &!s [int], text: &x [byte], outer: int, inner: int) 
 // What unifying two types came to: 0 they are the same, 1 they mismatch (a `type-mismatch`),
 // 2 their regions are different (a `region-mismatch`). A free region variable is bound to the
 // region it meets.
-pub fn unify[&s](st: &!s [int], expected: int, found: int) -> [] int {
+pub fn unify[&s](st: &!s [int], want: int, got: int) -> [] int {
+    let expected = shallow(st, want);
+    let found = shallow(st, got);
+    if is_tvar(st, expected) || is_tvar(st, found) {
+        if is_tvar(st, expected) && is_tvar(st, found) && slot(st, expected, 1) == slot(st, found, 1) {
+            return 0;
+        }
+        var bound = expected;
+        var other = found;
+        if !is_tvar(st, expected) {
+            bound = found;
+            other = expected;
+        }
+        if occurs(st, bound, other) {
+            return 3;
+        }
+        st[st[30] + slot(st, bound, 1)] = other;
+        return 0;
+    }
     if expected < first_table() || found < first_table() {
         if expected == found {
             return 0;
@@ -247,6 +339,9 @@ pub fn unify[&s](st: &!s [int], expected: int, found: int) -> [] int {
     if is_named(st, expected) && is_named(st, found) && named_item(st, expected) == named_item(st, found) {
         return 0;
     }
+    if is_param(st, expected) && is_param(st, found) && slot(st, expected, 1) == slot(st, found, 1) {
+        return 0;
+    }
     return 1;
 }
 
@@ -257,13 +352,18 @@ fn report[&s](st: &!s [int], status: int, from: int, to: int) -> [] int {
     if status == 2 {
         ast.fail(st, rules.r_region_mismatch(), from, to);
     }
+    if status == 3 {
+        ast.fail(st, rules.r_infinite_type(), from, to);
+    }
     return status;
 }
 
 // `expect_type`: `found` is usable where `expected` is wanted. Equality, with two coercions on
 // top and no others: a reference whose region outlives the expected one is accepted, and a
 // unique reference where a shared one is expected, never the reverse. The referent is invariant.
-pub fn expect_type[&s, &x](st: &!s [int], text: &x [byte], expected: int, found: int, from: int, to: int) -> [] int {
+pub fn expect_type[&s, &x](st: &!s [int], text: &x [byte], want: int, got: int, from: int, to: int) -> [] int {
+    let expected = shallow(st, want);
+    let found = shallow(st, got);
     if is_ref(st, expected) && is_ref(st, found) {
         let want_unique = ref_unique(st, expected);
         let got_unique = ref_unique(st, found);

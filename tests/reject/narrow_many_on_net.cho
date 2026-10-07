@@ -1,0 +1,14 @@
+//~ ERROR `Net` is not supported there
+//~ RULE capability-not-narrowable
+
+// `Net` is bounded by a textual prefix and has no asker for disjoint children; the multi-literal form says so.
+// (`docs/narrowing-into-several.md` section 5.)
+
+edition 4;
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args);
+    let (a, b) = narrow(net, "127.0.0.1:80", "127.0.0.1:443");
+    release(a); release(b);
+    return 0;
+}

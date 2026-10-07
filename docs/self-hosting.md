@@ -175,13 +175,19 @@ cancho compiler written in cancho, and `AGENTS.md` §7's rule against
 building what nothing asks for applies at this size exactly as it does
 at `docs/vcs.md`'s smaller ones.
 
-**Decision: stay on Rust for the compiler. Revisit this document,
-rather than re-running the spike, the day a concrete asker exists** —
-most plausibly `lex-os`'s own port maturing to the point where running
-the *cancho compiler itself* inside a sealed box (rather than just
-cancho *programs*) becomes something that box's own trust model
-needs. Nothing in this document's findings would need to change before
-that day; only the "no asker yet" line would.
+**Decision (as first written): stay on Rust for the compiler.** Revisit this document,
+rather than re-running the spike, the day a concrete asker exists. Nothing in this document's
+findings would need to change before that day; only the "no asker yet" line would.
+
+**Update: there is an asker.** The project's owner asks for a cancho compiler written in cancho,
+for the reason that a language that can build itself is the strongest proof of the language
+(2026-10-07). That is the "concrete asker" this section waited for, and `AGENTS.md` §7's rule
+against building what nothing asks for no longer applies to it. What stands: the Rust compiler is
+the oracle at every stage (the staged port of section 6 compares against it, and a stage is not
+done until it agrees), and nothing is switched over until the last stage, a fixed point where
+the compiler written in cancho compiles itself to the same output. The aim is the whole
+bootstrap: the checker complete, IR generation, a textual backend (LLVM IR or assembly, with the
+system tools shelled out to as section 4 describes), and the fixed point.
 
 ---
 
@@ -202,7 +208,9 @@ the stages found, in place, the way this document corrects its own claims.
 | 3c. Bodies, function by function (scalar functions so far) | `examples/selfhost/body.cho` (and `bodies.cho`) | `check_bodies` (`cancho-ir`), the Rust checker's body check, answered per function | **First slice.** The port answers `OK`, a refusal, or `SKIP` for each function; every function it answers is the Rust answer: 644 repository programs alone (278 `OK` bodies and 11 refusals among those it answers; 898 function answers skipped), the library's 789 functions with one program (271 `OK`, 518 skipped), 304 targeted cases, and 57,579 fuzz cases (51,588 alone, 5,991 with the library): 57,166 identical, none different; 413 are not UTF-8 |
 | 3d. References and slices of scalars | `examples/selfhost/types.cho` and `body.cho` | `check_bodies` | **Second slice.** Every function the port answers is the Rust answer: 644 repository programs, the library's 789 functions with one program (**437 verified `OK`, 55%**, from 34%), 408 targeted cases (104 for references, regions and slices), and 39,826 fuzz cases (35,352 alone, 4,474 with the library): 39,547 identical, none different; 279 are not UTF-8 |
 | 3e-1. Structs of scalars | `body.cho` (types in `types.cho`) | `check_bodies` | **Third slice.** Every function the port answers is the Rust answer: 81 targeted cases for struct literals, field reads and writes (539 in all), 8,000 fuzz cases alone and 4,200 with the library, 1,165 library cases: none different |
-| 3e-2. The rest of the bodies: enums, `match`, `borrow` blocks, generics, builtins, then linearity, effects | not started | `check_bodies` | |
+| 3e-2. Enums of scalars and `match` | `body.cho` | `check_bodies` | **Fourth slice.** Every function the port answers is the Rust answer: 85 targeted cases for enum values, `match` and its errors (624 in all, 5 cross-module in the several-files test), ~11,000 fuzz cases and 1,269 library cases: none different; the library's verified bodies are 461 of 814 (57%) |
+| 3e-3. Generic functions | `body.cho` (type variables and parameters in `types.cho`) | `check_bodies` | **Fifth slice.** Every function the port answers is the Rust answer: 88 targeted cases for type parameters, inference at a call and `ambiguous-type` (712 in all, 4 cross-module in the several-files test), 15,774 fuzz cases (11,220 alone, 4,554 with the library) and 1,359 library cases: none different; the library's verified bodies stay at 461 of 814 |
+| 3e-4. The rest of the bodies: generic types, `borrow` and `region` blocks, tuples, builtins, threads, then linearity, effects, regions | not started | `check_bodies` | |
 | 4. Backend | not started | | |
 
 **The method.** A port that builds no tree has nothing to compare, and one that does
@@ -259,7 +267,7 @@ refusal found before it still counted and anything after it did not, and a skipp
 counted, by what the oracle said, not hidden. Each slice removed some; the last removed the
 answer, and the harnesses now fail on anything but the oracle's. **Generated
 tables.** The prelude's 49 types (46 before `udp.md` added `Udp`, `UdpOpened` and `Datagram`) (name, arity, edition, whether another module may name it,
-which parameters are `val`-bounded) and the 130 builtins' names (118 when this was written) and editions are data the port
+which parameters are `val`-bounded) and the 133 builtins' names (118 when this was written) and editions are data the port
 cannot read from Rust, so `tables.cho` is generated, and a `cancho-ir` test fails when it is
 not what `prelude_types`, `mode_of` and `Builtin::ALL` say (`UPDATE_SELFHOST_TABLES=1 cargo test -p
 cancho-ir selfhost_tables` rewrites it).
@@ -391,6 +399,40 @@ is not a scalar) is `SKIP`. The library gains little, since its structs are most
 
 The mutation test of `body.cho` kills 139 of 199 (105 of 144 before); the survivors in the new code
 are node numbers that are never 0 and the equal-index case a duplicate has already caught.
+
+**Stage 3e-2: enums of scalars and `match`.** An enum the file declares, with no parameters, not
+`res`, and only scalar payloads is a `NAMED` type like a plain struct, and `val`. `body.cho` checks
+the variant expression (`not-an-enum`, `unknown-name`, `not-public`, `arity-mismatch`, each payload
+of its declared type) and `match` on a value or on a reference to one: the arms, in order, each a
+`_` or a variant named once (`match-arm-unreachable` for a repeat, for an arm after `_`, and for a `_`
+when every variant is already named; `unknown-name`, `arity-mismatch`, `duplicate-declaration` for
+a pattern; `match-not-exhaustive` at the end), with the bindings in a scope of their own. Through
+a reference each binding is a reference to the payload with the scrutinee's uniqueness and region,
+so nothing moves. A pattern is not kept in the tree, so the checker reads the tokens after the
+arm's first. `.` on an enum is `match-on-a-non-enum` (a read) or `linear-value-taken-apart` (a
+write), and a `match` terminates when every arm does. Anything else about an enum (a generic or
+`res` one, a payload that is not a scalar, a prelude type) is `SKIP`. The mutation test of
+`body.cho` kills 180 of 255; the survivors in the new code are node numbers that are never 0 and
+loop bounds the guards above them already settle.
+
+**Stage 3e-3: generic functions.** The type table gains a rigid type parameter (`Param`, by its
+position) and a type variable (`Var`, with its solution in an array beside the table, like the
+region variables). A call to a generic function makes a fresh variable for each type parameter of the
+callee, lowers the callee's declared types with the parameters as those variables, and unifies each
+argument with its parameter, binding variables as `Unifier::unify` does (an occurs check, and the
+result a `type-mismatch`, a `region-mismatch` or an `infinite-type`). Once the arguments have been
+unified every variable has to be solved: the first that is not is `ambiguous-type` at the call. The
+return type is then resolved all the way down, so no variable leaves the call, and nothing else in
+the checker needs to look through one. A function whose own type parameters are all `val`-bounded
+is checked with them as rigid types; one with an unbounded `T` is `SKIP`, because a value of `T` could
+be a resource and linearity is not checked yet. Generic structs and enums (a type applied to types)
+are the next slice. The library gains nothing (its generic functions mostly take a `Heap` or have an
+unbounded `T`), so the number of bodies verified stays at 461 of 814. The mutation test of
+`body.cho` kills 190 of 271, its survivors in the new code changing only whether a function is
+`SKIP` (which the comparison cannot see) or a loop bound the guards settle; that of
+`types.cho` kills 60 of 78 (40 of 54 before), the survivors in the new code being an occurs check no
+found type can reach, a variable compared with itself that a found type cannot be, and counters that
+stay distinct under the swap.
 
 The mutation test of `types.cho` (54 operator swaps) killed 40 on the first corpus of 458 targeted
 body cases (after region-variable, `where`-closure and coercion cases were added; 33 before); the 14
