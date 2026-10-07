@@ -2,6 +2,7 @@
 """Mutation fuzzing of `packages/tls`'s client (docs/tls-parity.md §3.4).
 
     python3 scripts/tls_fuzz.py <driver> [<runs>]
+    python3 scripts/tls_fuzz.py --server <server driver> [<runs>]
 
 `driver` is `tests/programs/tls_driver.ls` built with the package's files. Each
 run takes one of the recorded handshakes in `tests/vectors/tls/` (TLS 1.3
@@ -13,6 +14,11 @@ and never trap: a refusal is the expected end, a crash is the failure. Runs go
 100 to a driver process; a process that exits non-zero, or answers fewer lines
 than it was given, is re-run one connection at a time to name the input.
 Exit status 1 on any trap.
+
+With `--server` (docs/tls-server.md §7), the driver is `tests/programs/tls_server_driver.ls` and the connections are
+the honest ones of `tests/vectors/tls/liar_client.txt` (`scripts/tls_liar_client.py`): what is mutated is a line of
+the client's bytes, its ClientHello most of all, and the server must answer every line and never trap. Each
+connection starts by dropping the driver's slot, so a batch of them runs in one process.
 """
 import glob
 import os
@@ -32,6 +38,20 @@ def traces():
         asked = [l.rstrip("\n") for l in open(path) if l[:2] in ("C ", "F ", "W ", "Q")]
         out.append((name, asked))
     return out
+
+
+def server_traces():
+    out, current = [], None
+    for line in open(os.path.join(ROOT, "tests/vectors/tls/liar_client.txt")):
+        line = line.rstrip("\n")
+        if line.startswith("## "):
+            current = [] if line.startswith("## ok honest") else None
+            if current is not None:
+                out.append((line[3:], current))
+        elif current is not None and not line.startswith("#") and not line.startswith("= "):
+            current.append(line)
+    # Each connection begins by freeing the slot the last one used.
+    return [(name, ["D"] + asked) for name, asked in out]
 
 
 def mutate(rng, data):
@@ -80,10 +100,12 @@ def drive(driver, lines):
 
 
 def main():
-    driver = sys.argv[1]
-    runs = int(sys.argv[2]) if len(sys.argv) > 2 else 2000
+    server = sys.argv[1] == "--server"
+    args = sys.argv[2:] if server else sys.argv[1:]
+    driver = args[0]
+    runs = int(args[1]) if len(args) > 1 else 2000
     rng = random.Random(197)
-    all_traces = traces()
+    all_traces = server_traces() if server else traces()
     batch, traps, done = [], [], 0
     while done < runs:
         batch = [one_run(rng, rng.choice(all_traces)) for _ in range(min(100, runs - done))]

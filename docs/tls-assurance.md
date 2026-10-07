@@ -512,5 +512,6 @@ are not in CI: shared runners are too noisy for a t-test to mean anything, and a
 - **Fuzzing the Cranelift backend's code.** AFL++ instruments through `clang`, so only the LLVM backend's object is fuzzed. The
   committed corpus runs on both backends (§3.5), so a crash found on LLVM is checked on Cranelift. A crash only Cranelift's
   code would have is not searched for.
-- **A server.** There is none to fuzz: the package is a client.
+- **A server.** There is none to fuzz: the package is a client. *Since `docs/tls-server.md` step 2 there is one, and it has
+  two harnesses of its own, `fuzz_hello` and `fuzz_server` (`docs/tls-server.md` §10.5).*
 - **Persistent-mode fuzzing**, until the fork-server rate is the bottleneck (§3.4).

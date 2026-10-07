@@ -43,6 +43,9 @@ file:
 | `packages/tls/slot.ls` | `tls_slot` | *#207:* the slot's layout, states, transcript, record queue, alerts, the ECDH share, chain and signature checks (`docs/tls-parity.md` §3.4.1) |
 | `packages/tls/client12.ls` | `tls_client12` | *#207:* the TLS 1.2 handshake (`docs/tls-parity.md` §3.4) |
 | `packages/tls/tls.ls` | `tls` | the engine: slots, `feed`/`take`/`send`/`recv`/`event` (PR 3) |
+| `packages/tls/hello.ls` | `tls_hello` | *`docs/tls-server.md` step 2:* the ClientHello parsed with a server's rules, and the messages a server sends |
+| `packages/tls/server.ls` | `tls_server` | *the same:* the server's state machine, its key schedule, the signature and the client's Finished |
+| `packages/tls/identity.ls` | `tls_identity` | *the same:* a server engine's identities (chains, P-256 keys, names) and ALPN list |
 
 The package imports `std`, so it is published with `--std` (`docs/package-system.md` §4.8). It requires `packages/x509`, which is
 published with it (`docs/x509.md` §1).

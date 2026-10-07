@@ -1,7 +1,7 @@
 # A TLS 1.3 server for `packages/tls`: the design
 
-> **Status: design, its open questions (§9) answered as proposed (2026-10-07); step 1 built (`docs/ecdsa-sign.md`), the
-> server itself not yet.** `packages/tls` is a client (`docs/tls-pure.md`). Two programs of the toolbox need the other
+> **Status: steps 1 and 2 built: the signer (`docs/ecdsa-sign.md`) and the TLS 1.3 server (§10, as built); its open
+> questions (§9) answered as proposed (2026-10-07). Not independently reviewed (#209).** `packages/tls` is a client (`docs/tls-pure.md`). Two programs of the toolbox need the other
 > side: `lexsys-mqtt`, a broker whose clients connect on 8883, and `lexsys-gateway`, a reverse proxy that terminates HTTPS. Both
 > are at the design stage and both list TLS as out of scope because "it needs foreign code and would make the authority report
 > unbounded". A server in `packages/tls` removes that reason. This document is the design; its numbers are measured where it
@@ -47,7 +47,9 @@ DRBG, and the key exchanges (`std.x25519`, `std.ecdh` on P-256 and P-384, both c
   ALPN with no protocol in the list is refused with `no_application_protocol` (RFC 7301 §3.2, `tls-server-alpn`); a client that
   offers none is accepted and the program sees none.
 - **Middlebox compatibility** (RFC 8446 Appendix D.4): the legacy session id is echoed and a `change_cipher_spec` record is sent
-  after the ServerHello, as OpenSSL does, so a client in compatibility mode is not surprised.
+  after the ServerHello, as OpenSSL does, so a client in compatibility mode is not surprised. *As built: once, after the first
+  ServerHello or HelloRetryRequest the server sends (so after a HelloRetryRequest, not again before the ServerHello), and
+  whatever the session id; every TLS 1.3 client must drop one (RFC 8446 §5).*
 
 ### 2.2 Not in version 1, and why
 
@@ -127,6 +129,10 @@ signatures are also compared byte for byte with RFC 6979 written in Python (`doc
 - **The chain is not verified by the server.** It is sent as given; a chain that clients refuse is the operator's to fix.
   The engine checks only that the leaf parses, that its key is P-256, and that it is not expired at the time the identity is
   added (`tls-server-cert-expired`), so a stale file fails at start, not at the first client.
+- *As built, the room (`packages/tls/identity.ls`): a chain of at most 16 KiB as Certificate sends it (each certificate's DER
+  and 5 bytes), names of at most 1 KiB, an ALPN list of at most 512 bytes; over them, `tls-server-chain`, `tls-server-names`
+  and `tls-server-alpn-list`. A chain block that does not decode, or no certificate at all, is `tls-server-chain` too. 16
+  identities take 274 KiB of the engine, allocated by `open_server` only.*
 
 ## 5. The interface and the protocol
 
@@ -140,7 +146,7 @@ tls.seed(srv, entropy)                     // 32 bytes, as for the client
 id  = tls.add_identity(srv, chain_pem, key_pem, names, now_unix_ms)   // names: "a.example b.example *.example"
 tls.replace_identity(srv, id, chain_pem, key_pem, now_unix_ms)
 tls.set_alpn(srv, "http/1.1")              // a list, in the server's order of preference
-tls.accept(srv, slot, now_unix_ms)         // a new connection in `slot`
+tls.serve(srv, slot, now_unix_ms)          // a new connection in `slot` (*as built: not `accept`, below*)
 ... tls.feed / take / send / recv / event / finish / eof / drop, as for a client ...
 tls.server_name(srv, slot, out)            // the SNI the client sent, once established
 tls.alpn(srv, slot, out)                   // the protocol chosen
@@ -150,15 +156,41 @@ A separate `Server` type was considered, with the shared calls duplicated; one `
 byte-moving calls and the existing tests of them. An engine is all clients or all servers: `accept` on a client engine and
 `start` on a server engine are refused (`tls-role`).
 
+*Corrected (step 2): `accept` is a builtin's name (`tcp_accept`'s family: `accept` itself, edition 2), and a function may not
+take one, so the call is `tls.serve`. `tls-role` also refuses `trust` on a server engine and `add_identity`, `replace_identity`,
+`set_alpn`, `server_name` and `alpn` on a client one. `server_name` and `alpn` answer once the ClientHello is answered, not only
+once established. Added, for a program's log and the interop matrix: `tls.suite`, `tls.group` and `tls.retried` (what the
+connection negotiated), and `tls.alert_received` (the alert the peer sent, when `failure` is `tls-alert`), on either role.*
+
 ### 5.2 The handshake
 
 1. **ClientHello**, reassembled up to 16 KiB (an ML-KEM-768 share alone is 1,184 bytes, so a browser's ClientHello is a few KiB; step 2 records
-   the largest of the interop clients),
-   parsed with the bounds `tls_message` already applies to server messages, plus the rules the server owns: `legacy_version`
-   0x0303; `0x0304` in `supported_versions`; compression `null` only; `signature_algorithms` including
+   the largest of the interop clients; *measured: Chromium's, 1,818 bytes with its X25519MLKEM768 share; of the command-line
+   clients curl's, 512; OpenSSL and mosquitto 308, wolfSSL 395, Go 240, §10.4*),
+   parsed with the bounds `tls_message` already applies to server messages, plus the rules the server owns: ~~`legacy_version`
+   0x0303~~ (*corrected: RFC 8446 §4.2.1 says a server MUST NOT negotiate with `legacy_version` once `supported_versions` is
+   there, and `openssl s_server` takes 0x0301; it is not read*); `0x0304` in `supported_versions`; compression `null` only; `signature_algorithms` including
    `ecdsa_secp256r1_sha256`; no extension twice; `pre_shared_key` last if present (and ignored in version 1, with
    `psk_key_exchange_modes`); `early_data` ignored, so its data is skipped as RFC 8446 §4.2.10 allows for a server that rejects
    it, up to 16 KiB, then refused. Each refusal is an alert and a tag (§5.4).
+
+   *As built, the rules the list left out:* `signature_algorithms`, `supported_groups` and `key_share` all present
+   (`tls-server-missing-extension`, RFC 8446 §9.2); a share of this server's groups at its group's length, at most one a group,
+   and only for a group in `supported_groups`, and one `host_name` in `server_name` (`tls-server-illegal-parameter`, which
+   also takes a compression method other than null and `pre_shared_key` not last); an ALPN list of non-empty names. A share
+   of a group the server does not have (an X25519MLKEM768 hybrid, GREASE) is skipped, as is any extension it does not use. A
+   `server_name` over 255 bytes is kept as none, so the default identity answers it. The rules about what is offered are
+   checked after the whole message is read, in a fixed order: version, compression, a missing extension, a share outside
+   `supported_groups`, suite, signature scheme, group. *The second ClientHello*, after a HelloRetryRequest, must keep the
+   session id, still offer the suite the retry named, send a share of the group it named, and not offer early data
+   (`tls-server-retry-share`; RFC 8446 §4.1.2 lets a server check this). *Records:* one `change_cipher_spec` of `01` is
+   dropped after the first ClientHello and before the client's Finished (Appendix D.4), and any other is
+   `tls-unexpected-message`; a ClientHello, a Finished or a KeyUpdate must end its record (§5.1), checked before the message
+   is handled, so nothing is sent for one that does not; a plaintext alert is read after the server's flight, since a client
+   that refuses the flight before it has the handshake key alerts in the clear. *Early data* is skipped as RFC 8446 §4.2.10
+   says for a server that rejects it: after the flight, every record that does not open under the client's handshake key
+   is dropped until one opens, and before a second ClientHello every `application_data` record is; at most 16 KiB of
+   ciphertext in all, then `tls-server-early-data-size`.
 2. **Choose**: suite, group (or HelloRetryRequest, then back to 1 once), identity by SNI, ALPN.
 3. **ServerHello**, `change_cipher_spec`, then under the handshake keys **EncryptedExtensions** (ALPN, `server_name` empty if it
    was used), **Certificate**, **CertificateVerify** (§3), **Finished**, all in one flight from `take`.
@@ -180,6 +212,33 @@ Each refusal sends the alert RFC 8446 names and has a tag beginning `tls-server-
 `finished`, `sign-check`, `key-type`, `key-format`, `key-mismatch`, `cert-expired`, `identities-full`, and `tls-role`. The
 existing record-layer tags (`tls-record-*`) apply unchanged.
 
+*As built (`packages/tls/record.ls`, `slot.ls`): six more, for refusals the list had no tag for, and the alerts. The
+"record-layer tags" are the client's (`tls-unexpected-message`, `tls-record-overflow`, `tls-bad-record-mac`,
+`tls-decode-error`, `tls-protocol-version`, `tls-key-share`, `tls-too-many-messages`, `tls-alert`, `tls-peer-closed`);
+there is no `tls-record-*`.*
+
+| tag | alert | when |
+|---|---|---|
+| `tls-server-version` | protocol_version (70) | no `supported_versions`, or one without 0x0304, or no extensions at all |
+| `tls-server-suite` | handshake_failure (40) | no TLS 1.3 suite |
+| `tls-server-group` | handshake_failure (40) | no share and no supported group of X25519, P-256 or P-384 |
+| `tls-server-sigalg` | handshake_failure (40) | no `ecdsa_secp256r1_sha256` |
+| `tls-server-retry-share` | illegal_parameter (47) | the second ClientHello changed what it may not, or has no share of the group asked for |
+| `tls-server-extension-repeat` | illegal_parameter (47) | an extension twice |
+| `tls-server-illegal-parameter` | illegal_parameter (47) | *added:* a value RFC 8446 forbids (§5.2 above) |
+| `tls-server-missing-extension` | missing_extension (109) | *added:* no `signature_algorithms`, `supported_groups` or `key_share` |
+| `tls-server-alpn` | no_application_protocol (120) | ALPN offered, none in common |
+| `tls-server-client-hello-format` | decode_error (50) | a ClientHello that does not parse |
+| `tls-server-client-hello-length` | decode_error (50) | a ClientHello over 16 KiB |
+| `tls-server-early-data-size` | unexpected_message (10) | over 16 KiB of early data |
+| `tls-server-finished` | decrypt_error (51) | the client's Finished |
+| `tls-server-sign-check` | internal_error (80) | the signature did not verify before it was sent |
+| `tls-server-key-type`, `-key-format`, `-key-mismatch`, `-cert-expired`, `-identities-full` | none: `add_identity`'s answer | §4 |
+| `tls-server-chain`, `-names` | none: `add_identity`'s answer | *added:* §4, as built |
+| `tls-server-alpn-list` | none: `set_alpn`'s answer | *added:* a name over 255 bytes, or a list over 512 |
+| `tls-server-no-identity` | none: `serve`'s or `replace_identity`'s answer | *added:* no identity added, or none of that number |
+| `tls-role` | none | a call for the other role (§5.1) |
+
 ## 6. Cost
 
 *The signature is measured (step 1, `docs/ecdsa-sign.md` §7); the total is arithmetic from measured parts, and step 2
@@ -197,12 +256,35 @@ bottom of that range, and the check of §3.3 costs as much as the signature on t
 §9's question 3 has it; on the M4 it is about 0.8 ms, as estimated). OpenSSL 3.0.13 signs in 23 µs on the same i7
 (`openssl speed ecdsap256`, 44,132 a second), 65 times faster.*
 
-So about 250 full handshakes a second a core on the i7, by the arithmetic above. OpenSSL's P-256 signing is tens of microseconds with its NIST-prime
+**Measured (step 2), in place of the estimate.** `python3 scripts/tls_server_cost.py <tls_serve> 20`: the server
+(`tests/programs/tls_serve.ls`, LLVM backend, `echo` mode, one P-256 identity) under `openssl s_time -new`, full
+handshakes one after another for 20 seconds a row, the server process's CPU (user and system, `/proc/<pid>/stat`)
+divided by the handshakes `s_time` completed. **The machine:** Ubuntu 24.04, linux-aarch64, in Docker's 6-vCPU VM on the
+Apple M4 Max of `docs/tls-assurance.md` §6.1, the host busy with other builds (load average 4 to 5 of 6). Suite
+AES-128-GCM (the server's choice: the CPU has AES instructions). Two runs:
+
+| client's share | ms of server CPU a handshake | handshakes a second a core |
+|---|---|---|
+| X25519 | 3.86, 4.06 | 259, 246 |
+| P-256 | 3.44, 3.55 | 290, 282 |
+| P-384 | 6.09, 6.06 | 164, 165 |
+| P-521, then a HelloRetryRequest to P-256 | 3.65, 3.47 | 274, 288 |
+| *`openssl s_server` 3.0.13, X25519, the same client* | *0.20* | *4,975* |
+
+So **about 3.5 to 4 ms a handshake on X25519 or P-256, 6 ms on P-384**: inside the design's 3 to 5 ms for the first two,
+and above step 1's arithmetic for the M4 (2.8 ms), since the measured figure is the whole process (the socket, the
+poller, the transcript, HKDF and the records) and not the three operations alone. A HelloRetryRequest costs nothing
+measurable (one more message hashed). OpenSSL's server is **17 to 20 times** cheaper, at the bottom of the "10 to 50
+times" said here. Not measured: x86-64 (the i7 of `docs/ecdsa-sign.md` would be slower: its signature and check are 3 ms
+against the M4's 1.6), and the Cranelift backend.
+
+The paragraph that follows was the estimate's: about 250 full handshakes a second a core on the i7, by the arithmetic above. OpenSSL's P-256 signing is tens of microseconds with its NIST-prime
 arithmetic; this server's handshake is in the order of 10 to 50 times OpenSSL's. For the two programs that is acceptable:
 an MQTT client and an HTTP keep-alive connection handshake once and then stay. **What changes it** is in §8: session tickets
 (no signature on a resumed connection), a fixed-base table for k·G, and arithmetic specialised to the NIST primes
 (`docs/ecdsa.md` §5.4). Memory: a server slot is the client slot (about 179 KiB, `docs/tls-pure.md` §7.4) plus nothing
-significant; each identity holds its chain (a few KiB) and key in the engine.
+significant; each identity holds its chain (a few KiB) and key in the engine. *As built: five words a slot; 274 KiB of identities and 75 KiB
+of key-parsing work in a server engine (§10.1).*
 
 ## 7. Threat model, the server's side
 
@@ -218,7 +300,9 @@ significant; each identity holds its chain (a few KiB) and key in the engine.
   apart, and the name is compared as bytes after lower-casing ASCII, as `packages/x509/names.ls` does for the client.
 - **Parsing.** The ClientHello is now the input every peer controls. It goes to the fuzz harness (`scripts/tls_fuzz.py`) and
   the AFL setup (`scripts/fuzz_afl.py`) with a corpus of real ClientHellos (OpenSSL, Go, curl, Firefox, Chrome, mosquitto),
-  and the gate is no panic and no trap.
+  and the gate is no panic and no trap. *As built (§10.5): `scripts/tls_fuzz.py --server` mutates the lying client's honest
+  connections; AFL++ runs two harnesses, `fuzz_hello` (the parser) and `fuzz_server` (the engine from `serve`), from the
+  ClientHellos of OpenSSL, curl, Go, wolfSSL, mosquitto and Chromium. Firefox's is not in it: no Firefox could be run here.*
 
 ## 8. Steps, each its own PR with its gates
 
@@ -260,3 +344,161 @@ significant; each identity holds its chain (a few KiB) and key in the engine.
 5. **Independent review.** The client is "not independently reviewed" (#209). A server that signs with a long-lived key is a
    larger exposure than a client with ephemeral keys. *Proposed: the server carries the same notice, and the broker and the
    gateway say so in their READMEs until #209 is answered.*
+
+## 10. As built: step 2, the server
+
+*PR #339. The numbers are measured, each with the command that gives it; where building found this document wrong, the
+section that said so is corrected in place, marked "corrected (step 2)" or "as built".*
+
+### 10.1 What was built
+
+| File | Module | What |
+|---|---|---|
+| `packages/tls/hello.ls` | `tls_hello` | the ClientHello parsed with the rules of §5.2, the choices (suite, group, retry group, ALPN), and the messages a server sends: ServerHello, HelloRetryRequest, EncryptedExtensions, Certificate, CertificateVerify |
+| `packages/tls/server.ls` | `tls_server` | one server connection: `start`, `feed` and its record loop, the key schedule, the flight, the one function that calls the signer, the client's Finished compared in constant time, KeyUpdate |
+| `packages/tls/identity.ls` | `tls_identity` | a server engine's configuration in one byte slice: 16 identities (key, public point, names, the certificate_list as Certificate sends it) and the ALPN list |
+| `packages/tls/tls.ls` | `tls` | `open_server`, `add_identity`, `replace_identity`, `set_alpn`, `serve`, `server_name`, `alpn`, `handshakes_in_progress`, `suite`, `group`, `retried`, `alert_received`; the role; `feed` sends a server slot to `tls_server` |
+| `packages/tls/slot.ls`, `record.ls`, `message.ls` | | the server's states, flags and five slot fields; its 24 refusal codes and their alerts; `hrr_random` made public |
+
+**Reused unchanged:** the record layer and its AEADs, `tls_slot`'s transcript, keys, record queue, `fail` and `forget`, the
+ECDH share a HelloRetryRequest needs (`new_ecdh_share`: the P-256 or P-384 scalar comes from the X25519 secret by HKDF, as for
+the client), and `tls_client`'s `take`, `send`, `recv`, `finish`, `event`, `peer_eof` and `drop`, which serve a server slot as
+they are, and its `finished_mac`, `on_alert` and `compact_recv`, made public for the server. `client.ls` changes in nothing
+else, so its mutants' texts still match.
+
+**What is not shared, and why.** The record loop (`feed`, `on_record`, the handshake reassembly) is the server's own,
+about 200 lines the shape of the client's. The client's loop calls the client's message handler, and lex-sys
+has no function values (`docs/function-values.md`), so sharing it would mean `tls_client` importing `tls_server`, and every
+client build (`tls_driver`, hooks) taking the server and `x509_key` with it. The server's loop also differs where it must:
+early data, a plaintext alert after the flight, one `change_cipher_spec` between the ClientHello and the Finished, and the
+"message ends its record" rule checked before a message is handled.
+
+**The signer.** `tls_server.sign` is the one caller: SHA-256 of CertificateVerify's content, `ecdsa_sign.sign_checked` under
+the identity's key, hedged with 32 bytes of the engine's DRBG drawn at `serve` (RFC 6979 §3.6), verified under the identity's
+public point before it is used (§3.3, `tls-server-sign-check`), then `ecdsa_sign.to_der`. Its work is the slot's `std.ecdh`
+work area, which the key exchange has finished with. Each connection draws 96 bytes at `serve`: the ServerHello random, the
+X25519 secret, and the hedge; all three are in the slot's keys, which `forget` and `drop` overwrite.
+
+**Memory.** A server slot is the client's (`docs/tls-core.md` §9.1) and five words. A server engine adds its identities, 274 KiB
+for 16, and 75 KiB of work for the key parser (`std.ecdh`'s), and gives up the client's 1 MiB of roots; a client engine adds
+nothing (`open` allocates neither).
+
+**Editions.** `server.ls` is edition 7, for `hw_aes_gcm()`; `identity.ls` edition 6, as `x509_key` is.
+
+### 10.2 Interop
+
+`python3 scripts/tls_server_interop.py <tls_serve>`, in the image `scripts/interop/server.Dockerfile` describes (Ubuntu 24.04
+on linux-aarch64, in Docker on the M4 Max of `docs/tls-assurance.md` §6.1), `tests/programs/tls_serve.ls` built with the
+LLVM backend. Each row is one connection: the client verifies the chain and the name against the row's CA, its data comes
+back, and the server's own line for the connection says the suite, group, name and protocol the row asked for, and
+whether a HelloRetryRequest came first. For a `retry` row the client's only share is P-521's, with the group after it in
+`supported_groups`. curl and mosquitto have no option for TLS 1.3's groups or suites; they were set through an
+`OPENSSL_CONF`. **88 rows, 88 ok:**
+
+| Client | Version | Rows | What |
+|---|---|---|---|
+| `openssl s_client` | OpenSSL 3.0.13 | 23 | 3 suites × 3 groups, each direct and after a HelloRetryRequest; SNI choosing the second identity, a wildcard name, no SNI (the default); ALPN `http/1.1` agreed; ALPN `h3` alone refused, `no_application_protocol` |
+| curl | 8.5.0, on OpenSSL 3.0.13 | 18 | 3 × 3 × 2, an HTTP request to the server's `http` mode |
+| Go `crypto/tls` | 1.22.2 | 9 | 3 groups × 2 (Go does not let a client choose TLS 1.3's suites: the server's, AES-128-GCM); SNI; ALPN `h2,mqtt` agreed on `mqtt`, the server's order; ALPN `h3` refused |
+| wolfSSL | 5.6.6 | 19 | 3 × 3 × 2 (`scripts/interop/wolfssl_client.c`), ALPN `mqtt` |
+| mosquitto | 2.0.18 | 19 | 3 × 3 × 2, each row `mosquitto_sub` receiving the server's message and `mosquitto_pub` publishing one the server prints, against `tls_serve`'s `mqtt` mode; ALPN `mqtt` |
+
+**Not run:** Firefox and Chrome (no browser in the image). A Chromium ClientHello was caught instead (the Claude desktop
+app's built-in browser, a Chromium, sent to a listener on this machine) and answered by the server in the driver: it chose
+AES-128-GCM, X25519 over the X25519MLKEM768 hybrid, and `h2`. It is in the fuzzing corpus (§10.5).
+
+### 10.3 The lying client
+
+`python3 scripts/tls_liar_client.py <server driver> tests/vectors/tls/liar_client.txt`: **110 connections**, each a client
+that changes one thing, recorded and replayed byte for byte on both backends by `conformance/tls_server.rs` (and the honest
+ones again with the client's bytes fed one byte a line). The client is pyca/cryptography's primitives and RFC 8446, written
+apart from the server; it checks every byte the server sends, the CertificateVerify signature under the leaf's key
+included. 29 end `ok`: 26 honest connections (every suite and group, a HelloRetryRequest to each group, SNI by name, by wildcard, unknown and
+absent, ALPN in the server's order and ignored without a list, early data skipped before and after a HelloRetryRequest
+and at exactly 16 KiB, a ClientHello in one-byte records and one of exactly 16 KiB, a KeyUpdate answered, close_notify both
+ways, legacy_version 0x0301, GREASE, a hybrid share, `pre_shared_key` ignored), the server's suite order with and without AES
+instructions, and an identity replaced and a replacement refused. The other 81 each end with their tag and, for a connection, the alert §5.4 names, in the clear or under the key the server then holds. **Every
+tag of §5.4 is reached but `tls-server-sign-check`,** which needs the signer to fault; its path is shown by the mutant
+that checks the signature under another identity's point (§10.6), which every honest connection kills.
+
+### 10.4 The differential against `openssl s_server`
+
+`python3 scripts/tls_server_differential.py`: the lying client's connections decided on a ClientHello (72 of the 110: the
+client's bytes there do not depend on the server's) sent as recorded to `openssl s_server` 3.0.13 with the same identity,
+groups, suites and ALPN list, and the outcomes compared. **59 agree, 7 differ in the alert only, 6 differ as `EXPECTED`
+says, 0 otherwise.**
+
+| Case | `packages/tls` | OpenSSL | Why |
+|---|---|---|---|
+| a host name of 300 bytes | accepted, the default identity | unrecognized_name | RFC 6066 §3 allows either; this server never tells names apart (§7) |
+| an unknown extension twice | illegal_parameter | accepted | RFC 8446 §4.2: no extension twice; OpenSSL checks only those it knows |
+| two X25519 shares | illegal_parameter | accepted | RFC 8446 §4.2.8 lets a server refuse it |
+| a ClientHello over 16 KiB (two cases) | decode_error | waits, or accepts | this server's limit (§5.2); OpenSSL's is larger |
+| a second ClientHello with another session id | illegal_parameter | accepted | RFC 8446 §4.1.2 lets a server check it |
+
+The alerts that differ: an empty `supported_versions` and an odd `cipher_suites` length (decode_error here, protocol_version
+there); two host names (illegal_parameter against decode_error); a low-order X25519 share (illegal_parameter against
+internal_error); a record of version 2.0 (protocol_version against none); a fatal alert or close_notify instead of a
+ClientHello (none here, unexpected_message there). **Found by it, and fixed:** this server refused a ClientHello whose
+legacy_version was 0x0301, as §5.2 said to; OpenSSL takes it, and RFC 8446 §4.2.1 forbids a server to negotiate with that
+field once `supported_versions` is there. §5.2 is corrected, and the case is an honest one.
+
+### 10.5 Fuzzing
+
+- **AFL++** (`scripts/fuzz_afl.py`, 4.09c in the image of §10.2, one core a harness), two new harnesses: `fuzz_hello`, a
+  ClientHello's body through `tls_hello.client_hello` and every choice made from it, and `fuzz_server`, the engine from
+  `serve` with a fixed identity, fed a client's bytes in chunks the input names (odd-length inputs without an ALPN list).
+  Seeded from the ClientHellos of §10.2's clients and Chromium (`tests/vectors/fuzz/server/`, `hello/`). Two runs, the second resuming the first's queue on the final code:
+
+  | Harness | Executions | Hours | Per second | Edges | Crashes | Hangs |
+  |---|---|---|---|---|---|---|
+  | `fuzz_hello` | 11,501,751 | 0.75 | 4,246 | 130 of 348 | 0 | 0 |
+  | `fuzz_server` | 1,391,722 | 1.25 | 309 | 1,283 of 11,069 | 0 | 0 |
+  | **total** | **12,893,473** | | | | **0** | **0** |
+
+  **No crash and no hang.** `fuzz_server` is slow because every input loads the identity and signs: 3 ms of each 3.2.
+  `--minimize` kept 74 and 131 inputs, committed with the six real ClientHellos beside them. CI's `tls-assurance` job
+  fuzzes both for two minutes on x86-64 (its first run: 352,994 and 18,029 executions, 0 crashes, 0 hangs).
+- **Mutation** (`scripts/tls_fuzz.py --server`): 20,000 of the lying client's honest connections, one line of the
+  client's bytes mutated in each (bits flipped, bytes set, cut short, slices duplicated or dropped, bytes inserted, a
+  length set), replayed: **0 traps**.
+- **The corpus is a regression test:** `conformance/tls_fuzz.rs` runs every committed input of both harnesses on both
+  backends.
+
+### 10.6 Mutants
+
+`python3 scripts/tls_server_mutants.py <lex-sys>`: **71 of 71 killed**, none argued equivalent. Each is one bug in
+`hello.ls`, `server.ls`, `identity.ls`, or the server's part of `tls.ls` and `slot.ls`, against the 110 recorded
+connections. Two survived a first run, and each got the case that kills it: a leaf of another curve was caught later
+anyway, by the key's match against the certificate (a P-384 leaf with a key that is not PEM now says `key-type`, not
+`key-format`), and `handshakes_in_progress` was never read mid-handshake. The client's `scripts/tls_mutants.py` still kills
+**103 of 103**, after two of its mutants' texts were brought up to date with `set_read_keys` and `set_write_keys` as the
+hardware AES change (#334) left them: on main the script stopped with "the text occurs 0 times".
+
+### 10.7 The existing suites
+
+Unchanged by this PR, run again: the client's 84 lying-server cases and 20 ticket cases re-recorded byte for byte identical;
+`scripts/tls_differential.py` 59 agree, 17 alert only, 8 as documented, 0 otherwise, and `--handshakes` 21 of 21;
+`scripts/x509_matrix.py` 35 cases, 0 wrong; `scripts/publish_packages.py --check` with the server's three modules
+published.
+
+### 10.8 Where this differs from the design
+
+- `tls.accept` is `tls.serve` (a builtin owns `accept`), §5.1.
+- `legacy_version` is not read, §5.2 (the differential found it).
+- Six refusal tags more than §5.4 named, and the "record-layer tags" are the client's, §5.4.
+- The record loop is the server's own, not the client's, §10.1.
+- `suite`, `group`, `retried` and `alert_received` added, for logs.
+- An identity's chain is at most 16 KiB, names 1 KiB, the ALPN list 512 bytes, §4.
+
+### 10.9 Not done, and not verified
+
+- **`tls-server-sign-check` is not reached by any input**: it needs the signer to fault. A mutant reaches its path.
+- **Firefox's and Chrome's own clients** were not run; a Chromium ClientHello was answered in the driver, not over a socket
+  to a completed handshake.
+- **x86-64**: the cost ran on linux-aarch64 only. CI's `tls-assurance` job (ubuntu-latest, x86-64) runs the interop
+  matrix (88 of 88 there too; its Go sends a second share, so its three `retry` rows are taken directly, which the
+  harness allows for Go alone), the differential (the same 59, 7 and 6) and two minutes of each fuzzer.
+- **Timing:** no new secret-dependent code here but the Finished comparison, which is the client's pattern; the signer's
+  timing is step 1's. No dudect test of the server's handshake as a whole.
+- **Not independently reviewed (#209)**, as the client; the broker and the gateway must say so in their READMEs.

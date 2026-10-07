@@ -6,7 +6,8 @@
     python3 scripts/fuzz_afl.py <work> --minimize
 
 The harnesses are `tests/programs/fuzz_<harness>.ls`: der, chain, messages,
-client and flight. Each named one is built with `afl-clang-fast` as the LLVM
+client and flight, and the server's (docs/tls-server.md §7): hello, the
+ClientHello parser, and server, the whole server from `serve`. Each named one is built with `afl-clang-fast` as the LLVM
 backend's `CLANG` and the linker `CC` (so every edge is instrumented and
 nothing in the compiler changes), seeded from `scripts/fuzz_corpus.py seeds`
 and from the committed corpus in `tests/vectors/fuzz/<harness>/`, and run
@@ -19,7 +20,7 @@ and hangs. `--minimize` replaces `tests/vectors/fuzz/<harness>/` with
 or a hang.
 
 Needs `afl++` (`apt-get install afl++`) and a release build of the compiler
-(`cargo build --release -p lex-sys`).
+(`cargo build --release -p lex-sys`), or `LEX_SYS` naming one.
 """
 import os
 import shutil
@@ -30,16 +31,24 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 import fuzz_corpus  # noqa: E402
 
-HARNESSES = ["der", "chain", "messages", "client", "flight"]
+HARNESSES = ["der", "chain", "messages", "client", "flight", "hello", "server"]
 PACKAGES = [f"packages/tls/{f}.ls" for f in ("record", "message", "slot", "client12", "client")] + \
     [f"packages/x509/{f}.ls" for f in ("verify", "names", "x509")]
 SHARED = ["tests/programs/fuzz_common.ls", "tests/programs/fuzz_fixture.ls"]
+# The server's harnesses, each with its own files.
+FILES = {
+    "hello": ["packages/tls/record.ls", "packages/tls/message.ls", "packages/tls/hello.ls", "packages/x509/x509.ls"],
+    "server": ["tests/programs/fuzz_server_fixture.ls"]
+    + [f"packages/tls/{f}.ls" for f in ("tls", "record", "message", "slot", "client12", "client", "hello", "identity",
+                                        "server")]
+    + [f"packages/x509/{f}.ls" for f in ("verify", "names", "x509", "key")],
+}
 ENV = dict(os.environ, AFL_SKIP_CPUFREQ="1", AFL_NO_UI="1",
            AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES="1", AFL_NO_AFFINITY="0")
 
 
 def compiler():
-    exe = os.path.join(ROOT, "target/release/lex-sys")
+    exe = os.environ.get("LEX_SYS") or os.path.join(ROOT, "target/release/lex-sys")
     if not os.path.exists(exe):
         raise SystemExit("build the compiler first: cargo build --release -p lex-sys")
     return exe
@@ -48,7 +57,7 @@ def compiler():
 def build(work, harness):
     out = os.path.join(work, f"fuzz_{harness}")
     env = dict(os.environ, CLANG="afl-clang-fast", CC="afl-clang-fast", AFL_QUIET="1")
-    files = [os.path.join(ROOT, f) for f in [f"tests/programs/fuzz_{harness}.ls"] + SHARED + PACKAGES]
+    files = [os.path.join(ROOT, f) for f in [f"tests/programs/fuzz_{harness}.ls"] + FILES.get(harness, SHARED + PACKAGES)]
     subprocess.run([compiler(), "build", "--std", *files, "-o", out], env=env, check=True)
     return out
 

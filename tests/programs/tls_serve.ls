@@ -1,0 +1,721 @@
+edition 5;
+
+// `docs/tls-server.md` §8, step 2: a `packages/tls` server on a socket, for
+// the interop matrix (`scripts/tls_server_interop.py`): `openssl
+// s_client`, curl, Go, wolfSSL and mosquitto's clients connect to it. One
+// thread, one `Poller`, up to 64 connections at once, each in an engine
+// slot.
+//
+//     tls_serve <port> <mode> <alpn> <count> <seed> [<chain> <key> <names>]...
+//
+// `mode` is what the server does with a connection's data once the
+// handshake is done:
+//
+//     echo   sends back what it receives, and closes after the client does;
+//     http   reads one request head and answers 200 with a body naming the
+//            host name and ALPN protocol the handshake chose, then closes;
+//     mqtt   speaks enough MQTT 3.1.1 for `mosquitto_pub` and `mosquitto_sub`:
+//            CONNECT is answered with CONNACK, SUBSCRIBE with SUBACK and
+//            then one PUBLISH of `hello from lex-sys` on the topic asked
+//            for, a PUBLISH is printed, PINGREQ is answered, and
+//            DISCONNECT ends the connection.
+//
+// `alpn` is the protocols the server speaks, comma-separated, or `-` for
+// none. After `count` connections have ended the server exits (0: never).
+// `seed` is 64 hex digits for the engine's DRBG, or `-` for 32 bytes of
+// /dev/urandom. Each identity is a PEM chain file, its PEM key file, and
+// its names, comma-separated; the first is the default.
+//
+// Each connection that ends prints one line:
+//
+//     conn <code> <tag> <server_name or -> <alpn or -> <bytes received> <suite> <group> <retried|direct>
+//
+// (the suite and group as decimal numbers: 4865 is 0x1301, 29 X25519.)
+//
+// and an MQTT PUBLISH prints `publish <topic> <payload>`. Each line is
+// flushed as it is written.
+import std.conns;
+import std.io;
+import tls;
+
+fn number[&s](s: &s [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(s) {
+        n = n * 10 + int_of(s[i]) - 48;
+        i = i + 1;
+    }
+    return n;
+}
+
+fn digit(c: int) -> [] int {
+    if c >= 97 {
+        return c - 87;
+    }
+    return c - 48;
+}
+
+fn is_word[&s, &w](s: &s [byte], word: &w [byte]) -> [] bool {
+    if len(s) != len(word) {
+        return false;
+    }
+    var k = 0;
+    while k < len(word) {
+        if s[k] != word[k] {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+fn flush[&i](io: &!i Io) -> [io_write] int {
+    match flush_out(io) {
+        Done::Ok(n) => {
+            return 0;
+        }
+        Done::Failed(e) => {
+            return e;
+        }
+    }
+}
+
+// Per slot, in `st`: [phase, pending start, pending end, bytes received,
+// app fill, done reading].
+fn stride() -> [] int {
+    return 8;
+}
+
+fn pend_cap() -> [] int {
+    return 65536;
+}
+
+fn app_cap() -> [] int {
+    return 65536;
+}
+
+fn conns_max() -> [] int {
+    return 64;
+}
+
+fn mode_echo() -> [] int {
+    return 1;
+}
+
+fn mode_http() -> [] int {
+    return 2;
+}
+
+fn mode_mqtt() -> [] int {
+    return 3;
+}
+
+fn r_socket() -> [] int {
+    return 0 - 1001;
+}
+
+fn print_text[&i, &d](io: &!i Io, d: &d [byte]) -> [io_write] int {
+    if len(d) == 0 {
+        io.write_all(io, "-");
+    } else {
+        io.write_all(io, d);
+    }
+    return 0;
+}
+
+fn end_slot[&i, &e, &t, &s](io: &!i Io, engine: &!e tls.Engine, tab: &!t conns.Table, st: &!s [int], slot: int, result: int) -> [io_write] int {
+    let b = slot * stride();
+    io.write_all(io, "conn ");
+    io.print_int(io, result);
+    io.space(io);
+    if result == r_socket() {
+        io.write_all(io, "socket");
+    } else {
+        io.write_all(io, tls.refusal_tag(result));
+        if result == 0 - 2 {
+            io.write_all(io, "-");
+            io.print_int(io, tls.alert_received(engine, slot));
+        }
+    }
+    io.space(io);
+    region r {
+        let name = alloc_slice[r](256, byte_of(0));
+        print_text(io, name[0..tls.server_name(engine, slot, name)]);
+        io.space(io);
+        print_text(io, name[0..tls.alpn(engine, slot, name)]);
+    }
+    io.space(io);
+    io.print_int(io, st[b + 3]);
+    io.space(io);
+    io.print_int(io, tls.suite(engine, slot));
+    io.space(io);
+    io.print_int(io, tls.group(engine, slot));
+    if tls.retried(engine, slot) {
+        io.write_all(io, " retried");
+    } else {
+        io.write_all(io, " direct");
+    }
+    io.newline(io);
+    flush(io);
+    var k = 0;
+    while k < stride() {
+        st[b + k] = 0;
+        k = k + 1;
+    }
+    tls.drop(engine, slot);
+    conns.close(tab, slot);
+    return 1;
+}
+
+// Moves what the engine has for the socket into the slot's pending
+// buffer, and writes as much of it as the socket takes. -1 on a socket
+// error.
+fn push[&e, &t, &s, &p](engine: &!e tls.Engine, tab: &!t conns.Table, st: &!s [int], pend: &!p [byte], slot: int) -> [conn_write] int {
+    let b = slot * stride();
+    let base = slot * pend_cap();
+    if st[b + 1] == st[b + 2] {
+        st[b + 1] = 0;
+        st[b + 2] = tls.take(engine, slot, pend[base..base + pend_cap()]);
+    }
+    while st[b + 1] < st[b + 2] {
+        match conns.write(tab, slot, pend[base + st[b + 1]..base + st[b + 2]]) {
+            Sent::Wrote(k) => {
+                st[b + 1] = st[b + 1] + k;
+                if st[b + 1] == st[b + 2] {
+                    st[b + 1] = 0;
+                    st[b + 2] = tls.take(engine, slot, pend[base..base + pend_cap()]);
+                }
+            }
+            Sent::Again => {
+                return 0;
+            }
+            Sent::Failed(e) => {
+                return 0 - 1;
+            }
+        }
+    }
+    return 0;
+}
+
+// Sends all of `data` as application data (it is small: every answer of
+// this program fits the engine's queue).
+fn reply[&e, &d](engine: &!e tls.Engine, slot: int, data: &d [byte]) -> [] int {
+    var at = 0;
+    while at < len(data) {
+        let n = tls.send(engine, slot, data[at..len(data)]);
+        if n <= 0 {
+            return 0 - 1;
+        }
+        at = at + n;
+    }
+    return 0;
+}
+
+// MQTT's remaining length at `at` (1 to 4 bytes): the length, and in
+// `info[0]` how many bytes it took; -1 when more bytes are needed.
+fn mqtt_length[&a, &f](app: &a [byte], at: int, end: int, info: &!f [int]) -> [] int {
+    var n = 0;
+    var mult = 1;
+    var k = 0;
+    while k < 4 {
+        if at + k >= end {
+            return 0 - 1;
+        }
+        let c = int_of(app[at + k]);
+        n = n + (c & 127) * mult;
+        mult = mult * 128;
+        k = k + 1;
+        if c & 128 == 0 {
+            info[0] = k;
+            return n;
+        }
+    }
+    info[0] = k;
+    return n;
+}
+
+// The MQTT packets whole in `app[0..fill]`, answered; answers how many
+// bytes were used, or -1 to end the connection.
+fn mqtt[&i, &e, &a](io: &!i Io, engine: &!e tls.Engine, slot: int, app: &a [byte], fill: int) -> [io_write] int {
+    var at = 0;
+    region r {
+        let info = alloc_slice[r](1, 0);
+        let out = alloc_slice[r](512, byte_of(0));
+        var going = true;
+        while going && at + 2 <= fill {
+            let kind = int_of(app[at]) >> 4;
+            let n = mqtt_length(app, at + 1, fill, info);
+            let body = at + 1 + info[0];
+            if n < 0 || body + n > fill {
+                going = false;
+            } else {
+                if kind == 1 {
+                    // CONNECT: CONNACK, session not present, accepted.
+                    out[0] = byte_of(0x20);
+                    out[1] = byte_of(2);
+                    out[2] = byte_of(0);
+                    out[3] = byte_of(0);
+                    reply(engine, slot, out[0..4]);
+                } else if kind == 8 && n >= 5 {
+                    // SUBSCRIBE: SUBACK for the one topic at QoS 0, then a
+                    // message on it.
+                    let tn = int_of(app[body + 2]) * 256 + int_of(app[body + 3]);
+                    out[0] = byte_of(0x90);
+                    out[1] = byte_of(3);
+                    out[2] = app[body];
+                    out[3] = app[body + 1];
+                    out[4] = byte_of(0);
+                    reply(engine, slot, out[0..5]);
+                    let msg = "hello from lex-sys";
+                    if tn <= 200 && body + 4 + tn <= fill {
+                        out[0] = byte_of(0x30);
+                        out[1] = byte_of(2 + tn + len(msg));
+                        out[2] = byte_of(tn >> 8);
+                        out[3] = byte_of(tn & 255);
+                        var k = 0;
+                        while k < tn {
+                            out[4 + k] = app[body + 4 + k];
+                            k = k + 1;
+                        }
+                        k = 0;
+                        while k < len(msg) {
+                            out[4 + tn + k] = msg[k];
+                            k = k + 1;
+                        }
+                        reply(engine, slot, out[0..4 + tn + len(msg)]);
+                    }
+                } else if kind == 3 && n >= 2 {
+                    // PUBLISH at QoS 0: the topic and the payload, printed.
+                    let tn = int_of(app[body]) * 256 + int_of(app[body + 1]);
+                    if 2 + tn <= n {
+                        io.write_all(io, "publish ");
+                        io.write_all(io, app[body + 2..body + 2 + tn]);
+                        io.space(io);
+                        io.write_all(io, app[body + 2 + tn..body + n]);
+                        io.newline(io);
+                        flush(io);
+                    }
+                } else if kind == 12 {
+                    out[0] = byte_of(0xd0);
+                    out[1] = byte_of(0);
+                    reply(engine, slot, out[0..2]);
+                } else if kind == 14 {
+                    going = false;
+                    at = 0 - 1;
+                }
+                if at >= 0 {
+                    at = body + n;
+                }
+            }
+        }
+    }
+    return at;
+}
+
+// What the slot's mode does with the application data in `app`: 0 to go
+// on, 1 when the server has said all it will and closes.
+fn answer[&i, &e, &s, &a](io: &!i Io, engine: &!e tls.Engine, st: &!s [int], app: &!a [byte], slot: int, mode: int) -> [io_write] int {
+    let b = slot * stride();
+    let base = slot * app_cap();
+    let fill = st[b + 4];
+    if mode == mode_echo() {
+        if fill > 0 {
+            reply(engine, slot, app[base..base + fill]);
+            st[b + 4] = 0;
+        }
+        return 0;
+    }
+    if mode == mode_http() {
+        var k = 3;
+        var whole = false;
+        while k < fill && !whole {
+            if int_of(app[base + k - 3]) == 13 && int_of(app[base + k - 2]) == 10 && int_of(app[base + k - 1]) == 13 && int_of(app[base + k]) == 10 {
+                whole = true;
+            }
+            k = k + 1;
+        }
+        if !whole {
+            return 0;
+        }
+        region r {
+            let name = alloc_slice[r](256, byte_of(0));
+            let proto = alloc_slice[r](256, byte_of(0));
+            let nn = tls.server_name(engine, slot, name);
+            let pn = tls.alpn(engine, slot, proto);
+            let text = alloc_slice[r](1024, byte_of(0));
+            var at = 0;
+            let parts = "hello from lex-sys, name ";
+            var j = 0;
+            while j < len(parts) {
+                text[at] = parts[j];
+                at = at + 1;
+                j = j + 1;
+            }
+            j = 0;
+            while j < nn {
+                text[at] = name[j];
+                at = at + 1;
+                j = j + 1;
+            }
+            let mid = ", alpn ";
+            j = 0;
+            while j < len(mid) {
+                text[at] = mid[j];
+                at = at + 1;
+                j = j + 1;
+            }
+            j = 0;
+            while j < pn {
+                text[at] = proto[j];
+                at = at + 1;
+                j = j + 1;
+            }
+            text[at] = byte_of(10);
+            at = at + 1;
+            let line = "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: ";
+            reply(engine, slot, line);
+            let digits = alloc_slice[r](8, byte_of(0));
+            var v = at;
+            var d = 0;
+            while v > 0 || d == 0 {
+                digits[7 - d] = byte_of(48 + v % 10);
+                v = v / 10;
+                d = d + 1;
+            }
+            reply(engine, slot, digits[8 - d..8]);
+            reply(engine, slot, "\r\n\r\n");
+            reply(engine, slot, text[0..at]);
+        }
+        tls.finish(engine, slot);
+        return 1;
+    }
+    let used = mqtt(io, engine, slot, app[base..base + app_cap()], fill);
+    if used < 0 {
+        tls.finish(engine, slot);
+        return 1;
+    }
+    var k = 0;
+    while k < fill - used {
+        app[base + k] = app[base + used + k];
+        k = k + 1;
+    }
+    st[b + 4] = fill - used;
+    return 0;
+}
+
+// Everything the engine has received, into the slot's application
+// buffer; 0 after close_notify, else what `recv` last answered.
+fn drain[&e, &s, &a](engine: &!e tls.Engine, st: &!s [int], app: &!a [byte], slot: int) -> [] int {
+    let b = slot * stride();
+    let base = slot * app_cap();
+    var n = 1;
+    while n > 0 && st[b + 4] < app_cap() {
+        n = tls.recv(engine, slot, app[base + st[b + 4]..base + app_cap()]);
+        if n > 0 {
+            st[b + 3] = st[b + 3] + n;
+            st[b + 4] = st[b + 4] + n;
+        }
+    }
+    return n;
+}
+
+// One slot after the poller reported it: answers 1 when it ended.
+fn advance[&i, &e, &t, &p, &s, &q, &a, &n](io: &!i Io, engine: &!e tls.Engine, tab: &!t conns.Table, poller: &!p Poller, st: &!s [int], pend: &!q [byte], app: &!a [byte], input: &!n [byte], slot: int, mode: int) -> [conn_read, conn_write, poll, io_write] int {
+    let b = slot * stride();
+    var did_read = false;
+    var going = true;
+    while going {
+        going = false;
+        if push(engine, tab, st, pend, slot) != 0 {
+            return end_slot(io, engine, tab, st, slot, r_socket());
+        }
+        let ev = tls.event(engine, slot);
+        if ev == tls.event_failed() && st[b + 1] == st[b + 2] {
+            return end_slot(io, engine, tab, st, slot, tls.failure(engine, slot));
+        }
+        if ev == tls.event_closed() && st[b + 1] == st[b + 2] && st[b + 5] == 1 {
+            return end_slot(io, engine, tab, st, slot, 0);
+        }
+        if ev != tls.event_want_write() && st[b + 1] == st[b + 2] && !did_read {
+            did_read = true;
+            match conns.read(tab, slot, input) {
+                Received::Data(k) => {
+                    var used = 0;
+                    while used < k {
+                        let c = tls.feed(engine, slot, input[used..k]);
+                        if c < 0 {
+                            used = k;
+                        } else {
+                            used = used + c;
+                        }
+                        let left = drain(engine, st, app, slot);
+                        if tls.event(engine, slot) == tls.event_established() || left == 0 {
+                            if answer(io, engine, st, app, slot, mode) == 1 {
+                                st[b + 5] = 1;
+                            }
+                        }
+                        if left == 0 {
+                            // close_notify: answer it, and the connection is done.
+                            tls.finish(engine, slot);
+                            st[b + 5] = 1;
+                        }
+                        if push(engine, tab, st, pend, slot) != 0 {
+                            return end_slot(io, engine, tab, st, slot, r_socket());
+                        }
+                    }
+                    going = true;
+                }
+                Received::End => {
+                    let code = tls.eof(engine, slot);
+                    drain(engine, st, app, slot);
+                    return end_slot(io, engine, tab, st, slot, code);
+                }
+                Received::Again => {
+                    going = false;
+                }
+                Received::Failed(e) => {
+                    return end_slot(io, engine, tab, st, slot, r_socket());
+                }
+            }
+        }
+    }
+    var events = 1;
+    if st[b + 1] < st[b + 2] {
+        events = 3;
+    }
+    conns.rewatch(tab, poller, slot, slot + 1, events);
+    return 0;
+}
+
+fn serve_loop[&h, &i, &l, &k, &e](heap: &!h Heap, io: &!i Io, listener: &!l Listener, clock: &k Clock, engine: &!e tls.Engine, mode: int, count: int) -> [heap, conn_accept, conn_read, conn_write, poll, clock, io_write] int {
+    match poller_new() {
+        Polling::Failed(e) => {
+            return 4;
+        }
+        Polling::Ok(pl) => {
+            var poll = pl;
+            borrow mut poll as &!pw in {
+                poller_add_listener(pw, listener, 0);
+            }
+            var table = conns.empty(heap, conns_max());
+            let stb = box_slice(heap, stride() * conns_max(), 0);
+            let pendb = box_slice(heap, pend_cap() * conns_max(), byte_of(0));
+            let appb = box_slice(heap, app_cap() * conns_max(), byte_of(0));
+            let inb = box_slice(heap, 65536, byte_of(0));
+            borrow mut stb as &!sw in {
+                borrow mut pendb as &!qw in {
+                    borrow mut appb as &!aw in {
+                        borrow mut inb as &!nw in {
+                            let st = contents(sw);
+                            var ended = 0;
+                            region a {
+                                let events = alloc_slice[a](2 * conns_max() + 4, 0);
+                                while count == 0 || ended < count {
+                                    var ready = 0;
+                                    borrow mut poll as &!pw in {
+                                        ready = poller_wait(pw, events, 1000);
+                                    }
+                                    let now = clock_unix_ms(clock);
+                                    var j = 0;
+                                    while j < ready {
+                                        let token = events[2 * j];
+                                        if token == 0 {
+                                            var more = true;
+                                            while more {
+                                                match tcp_accept(listener) {
+                                                    Accepted::Ok(c) => {
+                                                        var live = 0;
+                                                        borrow table as &tt in {
+                                                            live = conns.live(tt);
+                                                        }
+                                                        if live >= conns_max() {
+                                                            conn_close(c);
+                                                        } else {
+                                                            let (grown, slot) = conns.put(heap, table, c);
+                                                            table = grown;
+                                                            if slot >= 0 {
+                                                                borrow mut table as &!tw in {
+                                                                    borrow mut poll as &!pw in {
+                                                                        if conns.nonblocking(tw, slot) != 0 || conns.watch(tw, pw, slot, slot + 1, 1) != 0 {
+                                                                            conns.close(tw, slot);
+                                                                        } else {
+                                                                            let code = tls.serve(engine, slot, now);
+                                                                            st[slot * stride()] = 1;
+                                                                            if code != 0 {
+                                                                                ended = ended + end_slot(io, engine, tw, st, slot, code);
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    Accepted::Again => {
+                                                        more = false;
+                                                    }
+                                                    Accepted::Failed(e) => {
+                                                        more = false;
+                                                    }
+                                                }
+                                            }
+                                        } else {
+                                            let slot = token - 1;
+                                            if slot >= 0 && slot < conns_max() && st[slot * stride()] == 1 {
+                                                borrow mut table as &!tw in {
+                                                    borrow mut poll as &!pw in {
+                                                        ended = ended + advance(io, engine, tw, pw, st, contents(qw), contents(aw), contents(nw), slot, mode);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        j = j + 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            unbox_slice(heap, stb);
+            unbox_slice(heap, pendb);
+            unbox_slice(heap, appb);
+            unbox_slice(heap, inb);
+            conns.drop(heap, table);
+            poller_close(poll);
+            return 0;
+        }
+    }
+}
+
+// A comma-separated argument with its commas made spaces, into `out`.
+fn spaced[&s, &o](s: &s [byte], out: &!o [byte]) -> [] int {
+    var k = 0;
+    while k < len(s) && k < len(out) {
+        out[k] = s[k];
+        if int_of(s[k]) == 44 {
+            out[k] = byte_of(32);
+        }
+        k = k + 1;
+    }
+    return k;
+}
+
+fn load[&h, &i, &f, &g, &e](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), g: &g Args, engine: &!e tls.Engine, now: int) -> [heap, fs_read(""), err_write, args] int {
+    var a = 6;
+    var bad = 0;
+    let chainb = box_slice(heap, 65536, byte_of(0));
+    let keyb = box_slice(heap, 8192, byte_of(0));
+    borrow mut chainb as &!cw in {
+        borrow mut keyb as &!kw in {
+            while a + 2 < arg_count(g) + 0 && bad == 0 {
+                let cn = fs_read(fs, arg(g, a), contents(cw));
+                let kn = fs_read(fs, arg(g, a + 1), contents(kw));
+                region r {
+                    let names = alloc_slice[r](1024, byte_of(0));
+                    let nn = spaced(arg(g, a + 2), names);
+                    if cn < 0 || kn < 0 {
+                        io.error_all(io, "tls_serve: cannot read a chain or key file\n");
+                        bad = 1;
+                    } else {
+                        let id = tls.add_identity(engine, contents(cw)[0..cn], contents(kw)[0..kn], names[0..nn], now);
+                        if id < 0 {
+                            io.error_all(io, "tls_serve: identity refused: ");
+                            io.error_all(io, tls.refusal_tag(id));
+                            io.error_all(io, "\n");
+                            bad = 1;
+                        }
+                    }
+                }
+                let k = contents(kw);
+                var z = 0;
+                while z < len(k) {
+                    k[z] = byte_of(0);
+                    z = z + 1;
+                }
+                a = a + 3;
+            }
+        }
+    }
+    unbox_slice(heap, chainb);
+    unbox_slice(heap, keyb);
+    return bad;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    var status = 2;
+    borrow mut io as &!i in {
+        borrow args as &g in {
+            if arg_count(g) < 9 {
+                io.error_all(i, "usage: tls_serve <port> <echo|http|mqtt> <alpn|-> <count> <seed|-> <chain> <key> <names> ...\n");
+            } else {
+                var mode = mode_mqtt();
+                if is_word(arg(g, 2), "echo") {
+                    mode = mode_echo();
+                } else if is_word(arg(g, 2), "http") {
+                    mode = mode_http();
+                }
+                borrow fs as &ff in {
+                    borrow mut heap as &!h in {
+                        var engine = tls.open_server(h, conns_max());
+                        borrow mut engine as &!ew in {
+                            region r {
+                                let entropy = alloc_slice[r](32, byte_of(0));
+                                let seed = arg(g, 5);
+                                if len(seed) == 64 {
+                                    var k = 0;
+                                    while k < 32 {
+                                        entropy[k] = byte_of(digit(int_of(seed[2 * k])) * 16 + digit(int_of(seed[2 * k + 1])) & 255);
+                                        k = k + 1;
+                                    }
+                                } else {
+                                    fs_read(ff, "/dev/urandom", entropy);
+                                }
+                                tls.seed(ew, entropy);
+                                let protocols = alloc_slice[r](512, byte_of(0));
+                                if !is_word(arg(g, 3), "-") {
+                                    tls.set_alpn(ew, protocols[0..spaced(arg(g, 3), protocols)]);
+                                }
+                            }
+                            var now = 0;
+                            borrow clock as &cc in {
+                                now = clock_unix_ms(cc);
+                            }
+                            if load(h, i, ff, g, ew, now) == 0 {
+                                borrow net as &nn in {
+                                    match tcp_listen(nn, number(arg(g, 1)), 128, 0) {
+                                        Listening::Ok(l) => {
+                                            var listener = l;
+                                            borrow mut listener as &!lh in {
+                                                listener_nonblocking(lh);
+                                                io.write_all(i, "listening\n");
+                                                flush(i);
+                                                borrow clock as &cc in {
+                                                    status = serve_loop(h, i, lh, cc, ew, mode, number(arg(g, 4)));
+                                                }
+                                            }
+                                            listener_close(listener);
+                                        }
+                                        Listening::Failed(e) => {
+                                            io.error_all(i, "tls_serve: cannot listen\n");
+                                            status = 3;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        tls.close(h, engine);
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(net);
+    release(clock);
+    release(args);
+    release(io);
+    release(heap);
+    return status;
+}

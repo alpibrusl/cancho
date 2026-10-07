@@ -29,6 +29,9 @@ import threading
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FILES = ["record.ls", "message.ls", "slot.ls", "client12.ls", "client.ls", "tls.ls"]
+# The engine (`tls.ls`) is built with the server too (docs/tls-server.md §5.1), whose mutants are
+# `scripts/tls_server_mutants.py`'s.
+SERVER_FILES = ["hello.ls", "identity.ls", "server.ls"]
 
 # (name, file, the text replaced, its replacement). Each `old` must occur exactly once in its file.
 MUTANTS = [
@@ -252,9 +255,9 @@ MUTANTS = [
     ("a close_notify before the handshake taken as a clean close (review E-3)", "client.ls",
      "        if ints[tls_slot.i_state()] != tls_slot.state_connected() {\n            return tls_record.peer_closed();\n        }\n", ""),
     ("a read key installed without preparing it (step 2 of docs/crypto-builtins.md)", "slot.ls",
-     "    tls_record.prepare(ints[i_suite()], bytes[k_read_key()..k_read_key() + key_len(ints)], ints[i_read_aead()..i_read_aead() + tls_record.context_len()]);\n", ""),
+     "        tls_record.prepare(ints[i_suite()], key, ints[i_read_aead()..i_read_aead() + tls_record.context_len()], bytes[k_read_hw()..k_read_hw() + tls_record.hw_len()]);\n", ""),
     ("a write key installed without preparing it", "slot.ls",
-     "    tls_record.prepare(ints[i_suite()], bytes[k_write_key()..k_write_key() + key_len(ints)], ints[i_write_aead()..i_write_aead() + tls_record.context_len()]);\n", ""),
+     "        tls_record.prepare(ints[i_suite()], key, ints[i_write_aead()..i_write_aead() + tls_record.context_len()], bytes[k_write_hw()..k_write_hw() + tls_record.hw_len()]);\n", ""),
     ("TLS 1.2's keys not prepared", "client12.ls", "    tls_slot.prepare_keys(ints, bytes);\n", ""),
     ("psk_key_exchange_modes sent only with a ticket, so no server need send one", "message.ls",
      "    if modes || len(ticket) > 0 {", "    if len(ticket) > 0 {"),
@@ -319,9 +322,10 @@ def ticket_cases():
 
 
 def build(lexsys, program, pkg, out, engine=False):
-    files = [os.path.join(pkg, f) for f in (FILES if engine else FILES[:5])]
+    files = [os.path.join(pkg, f) for f in (FILES + SERVER_FILES if engine else FILES[:5])]
+    x509 = ["verify.ls", "names.ls", "x509.ls"] + (["key.ls"] if engine else [])
     r = subprocess.run([lexsys, "build", "--std", os.path.join(ROOT, "tests/programs", program), *files,
-                        *[os.path.join(ROOT, "packages/x509", f) for f in ["verify.ls", "names.ls", "x509.ls"]],
+                        *[os.path.join(ROOT, "packages/x509", f) for f in x509],
                         "-o", out], capture_output=True, text=True)
     return r.returncode == 0, r.stderr
 
