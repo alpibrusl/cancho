@@ -1277,6 +1277,16 @@ impl<'a> FuncEmitter<'a> {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.nonblocking(&args)
             }
+            Callee::Builtin(Builtin::ConnPeer) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                if args.len() != 3 {
+                    return Err(format!(
+                        "`conn_peer` needs 3 leaves but {} were given",
+                        args.len()
+                    ));
+                }
+                self.conn_peer(&args)
+            }
             Callee::Builtin(Builtin::ConnNodelay) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.nodelay(&args)

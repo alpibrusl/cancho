@@ -772,6 +772,106 @@ impl<'a> FuncEmitter<'a> {
         Ok(vec![LValue::Reg(ok)])
     }
 
+    /// `conn_peer(&Conn, &![byte])` (`docs/conn-peer.md` §3): mirrors `cancho-codegen`'s own --
+    /// `getpeername(2)` into a `sockaddr` of this function's, then 19 bytes to the caller's buffer:
+    /// `4` or `6`, sixteen address bytes (an IPv4 address in the first four, the rest zero), the
+    /// port big-endian. `0`, or the `errno`; `EINVAL` for a buffer under 19 bytes or a socket that
+    /// is not IP, before anything is written to the buffer. Every path stores into one `alloca`
+    /// cell, as this backend builds no `phi`.
+    pub(crate) fn conn_peer(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        let darwin = self.is_darwin();
+        let fd = self.handle_fd(&args[0]);
+        let out = operand(&args[1]).to_string();
+        let sa = self.fresh();
+        self.hoist(format!("  {sa} = alloca i8, i64 32\n"));
+        let len = self.fresh();
+        self.hoist(format!("  {len} = alloca i32\n"));
+        let cell = self.fresh();
+        self.hoist(format!("  {cell} = alloca i64\n"));
+        let family_at = if darwin { 1 } else { 0 };
+        let inet6 = if darwin { 30 } else { 10 };
+        let n = self.blocks;
+        self.blocks += 1;
+        let (ask, classify, check6, v4, v6, port, bad, done) = (
+            format!("peerask{n}"),
+            format!("peerclass{n}"),
+            format!("peercheck6{n}"),
+            format!("peerv4{n}"),
+            format!("peerv6{n}"),
+            format!("peerport{n}"),
+            format!("peerbad{n}"),
+            format!("peerdone{n}"),
+        );
+
+        let small = self.fresh();
+        self.out.push_str(&format!("  {small} = icmp slt i64 {}, 19\n", operand(&args[2])));
+        self.out.push_str(&format!("  br i1 {small}, label %{bad}, label %{ask}\n"));
+
+        self.out.push_str(&format!("{ask}:\n"));
+        self.out.push_str(&format!("  store i32 32, ptr {len}\n"));
+        let result = self.fresh();
+        self.out.push_str(&format!(
+            "  {result} = call i32 @getpeername(i32 {fd}, ptr {sa}, ptr {len})\n"
+        ));
+        let reason = self.errno();
+        let failed = self.fresh();
+        self.out.push_str(&format!("  {failed} = icmp slt i32 {result}, 0\n"));
+        let failure = format!("peerfail{n}");
+        self.out.push_str(&format!("  br i1 {failed}, label %{failure}, label %{classify}\n"));
+
+        self.out.push_str(&format!("{failure}:\n"));
+        self.out.push_str(&format!("  store i64 {}, ptr {cell}\n", operand(&reason)));
+        self.out.push_str(&format!("  br label %{done}\n"));
+
+        self.out.push_str(&format!("{classify}:\n"));
+        let family = self.load_field(&sa, family_at, "i8");
+        let is4 = self.fresh();
+        self.out.push_str(&format!("  {is4} = icmp eq i8 {family}, 2\n"));
+        self.out.push_str(&format!("  br i1 {is4}, label %{v4}, label %{check6}\n"));
+
+        self.out.push_str(&format!("{check6}:\n"));
+        let is6 = self.fresh();
+        self.out.push_str(&format!("  {is6} = icmp eq i8 {family}, {inet6}\n"));
+        self.out.push_str(&format!("  br i1 {is6}, label %{v6}, label %{bad}\n"));
+
+        self.out.push_str(&format!("{v4}:\n"));
+        self.store_byte(&out, 0, "4");
+        for i in 0..16 {
+            if i < 4 {
+                let byte = self.load_field(&sa, 4 + i, "i8");
+                self.store_byte(&out, 1 + i, &byte);
+            } else {
+                self.store_byte(&out, 1 + i, "0");
+            }
+        }
+        self.out.push_str(&format!("  br label %{port}\n"));
+
+        self.out.push_str(&format!("{v6}:\n"));
+        self.store_byte(&out, 0, "6");
+        for i in 0..16 {
+            let byte = self.load_field(&sa, 8 + i, "i8");
+            self.store_byte(&out, 1 + i, &byte);
+        }
+        self.out.push_str(&format!("  br label %{port}\n"));
+
+        self.out.push_str(&format!("{port}:\n"));
+        for i in 0..2 {
+            let byte = self.load_field(&sa, 2 + i, "i8");
+            self.store_byte(&out, 17 + i, &byte);
+        }
+        self.out.push_str(&format!("  store i64 0, ptr {cell}\n"));
+        self.out.push_str(&format!("  br label %{done}\n"));
+
+        self.out.push_str(&format!("{bad}:\n"));
+        self.out.push_str(&format!("  store i64 {EINVAL}, ptr {cell}\n"));
+        self.out.push_str(&format!("  br label %{done}\n"));
+
+        self.out.push_str(&format!("{done}:\n"));
+        let answer = self.fresh();
+        self.out.push_str(&format!("  {answer} = load i64, ptr {cell}\n"));
+        Ok(vec![LValue::Reg(answer)])
+    }
+
     /// `clock_ms(&Clock)` (`docs/native-sockets.md` §5): `CLOCK_MONOTONIC`
     /// as milliseconds (clock id 1 on Linux, 6 on Darwin). With `wall`,
     /// `CLOCK_REALTIME` (id 0 on both): `clock_unix_ms` (§10.5).

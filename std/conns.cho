@@ -1,6 +1,7 @@
 edition 5;
 module std.conns;
 
+import std.addr;
 import std.vec;
 
 // `std.conns` -- many connections, by slot number.
@@ -245,6 +246,66 @@ pub fn connect_status[&t](table: &!t Table, slot: int) -> [] int {
         }
         Attached::Failed(e) => {
             return e;
+        }
+    }
+}
+
+// What `peer` answers.
+pub enum Peered {
+    // The other end's address and port, IPv4-mapped IPv6 normalised to IPv4
+    // (`docs/conn-peer.md` section 4).
+    Known(addr.Peer),
+    // Why there is none: `9` (`EBADF`) for a slot with nothing in it, the
+    // `errno` of `getpeername` (for a connection the other end has reset:
+    // `ENOTCONN`, 107, on Linux and `EINVAL`, 22, on macOS), or `22` for a
+    // socket that is not IP.
+    Unavailable(int),
+}
+
+// The address and port of the other end of the connection in `slot`, asked of
+// the kernel now (`getpeername`), not remembered from `accept`: ask once,
+// right after `put`, and keep the answer if it is needed after the connection
+// is gone (`docs/conn-peer.md` section 3). It is the socket peer, not an
+// identity: behind a proxy it is the proxy's. It is data the program receives,
+// not a capability: it names no resource, and holding one reaches nothing.
+pub fn peer[&t](table: &!t Table, slot: int) -> [] Peered {
+    let ticket = ticket_at(table, slot);
+    if ticket < 0 {
+        return Peered::Unavailable(9);
+    }
+    match conn_attach(ticket) {
+        Attached::Ok(c) => {
+            var conn = c;
+            var answer = Peered::Unavailable(9);
+            region r {
+                let raw = alloc_slice[r](19, byte_of(0));
+                var code = 9;
+                borrow conn as &h in {
+                    code = conn_peer(h, raw);
+                }
+                if code == 0 {
+                    match addr.decode(raw) {
+                        addr.Parsed::Ok(p) => {
+                            answer = Peered::Known(p);
+                        }
+                        addr.Parsed::Bad => {
+                            answer = Peered::Unavailable(22);
+                        }
+                    }
+                } else {
+                    answer = Peered::Unavailable(code);
+                }
+            }
+            let back = conn_detach(conn);
+            if back < 0 {
+                release_slot(table, slot);
+            } else {
+                vec.set(table.tickets, slot, back);
+            }
+            return answer;
+        }
+        Attached::Failed(e) => {
+            return Peered::Unavailable(e);
         }
     }
 }

@@ -47,6 +47,7 @@ mod capture;
 mod checked_output;
 mod close_on_exec;
 mod compile_time;
+mod conn_peer;
 mod corpus;
 mod crypto_builtins;
 mod differential;

@@ -499,6 +499,7 @@ const STD: &[(&str, &str)] = &[
     ("<std>/map.cho", include_str!("../../../std/map.cho")),
     ("<std>/http.cho", include_str!("../../../std/http.cho")),
     ("<std>/route.cho", include_str!("../../../std/route.cho")),
+    ("<std>/addr.cho", include_str!("../../../std/addr.cho")),
     ("<std>/conns.cho", include_str!("../../../std/conns.cho")),
     ("<std>/udps.cho", include_str!("../../../std/udps.cho")),
     ("<std>/signals.cho", include_str!("../../../std/signals.cho")),

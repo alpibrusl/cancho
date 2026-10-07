@@ -627,6 +627,23 @@ impl Builtin {
                 }],
                 named(PRELUDE_CLOCK),
             ),
+            // `docs/conn-peer.md` §3: the connection is only read (`getpeername` moves
+            // nothing), the buffer is written into.
+            Builtin::ConnPeer => (
+                vec![
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_CONN)),
+                    },
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                Type::Int,
+            ),
             Builtin::ConnNonblocking | Builtin::ConnNodelay | Builtin::ConnConnectStatus => (
                 vec![Type::Ref {
                     unique: true,

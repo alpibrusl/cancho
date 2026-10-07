@@ -759,6 +759,124 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         vec![self.builder.ins().select(failed, reason, zero)]
     }
 
+    /// `conn_peer(&Conn, &![byte])` (`docs/conn-peer.md` §3): `getpeername(2)` into a
+    /// `sockaddr` of this function's own, then the family, the address and the port written to the
+    /// caller's buffer as 19 bytes -- `4` or `6`, sixteen address bytes (an IPv4 address in the
+    /// first four, the rest zero), the port big-endian. The kernels differ in where the family
+    /// is (a `u16` on Linux, a length byte then a `u8` on Darwin) and in `AF_INET6` (10, 30), and
+    /// that difference stops here. `0`, or the `errno`; `EINVAL` for a buffer under 19 bytes or a
+    /// socket that is not IP, before anything is written to the buffer.
+    pub(crate) fn conn_peer(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let darwin = self.is_darwin();
+        let fd = self.handle_fd(args[0]);
+        let (out, room) = (args[1], args[2]);
+        let sa_slot = self.builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            32,
+            3,
+        ));
+        let sa = self.builder.ins().stack_addr(pointer, sa_slot, 0);
+        let len_slot = self.builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            4,
+            2,
+        ));
+        let len_at = self.builder.ins().stack_addr(pointer, len_slot, 0);
+        let capacity = self.builder.ins().iconst(types::I32, 32);
+        self.builder.ins().store(MemFlags::trusted(), capacity, len_at, 0);
+        let family_at = if darwin { 1 } else { 0 };
+        let inet6 = if darwin { 30 } else { 10 };
+
+        let merge = self.builder.create_block();
+        self.builder.append_block_param(merge, types::I64);
+        let too_small = self.builder.create_block();
+        let ask = self.builder.create_block();
+        let classify = self.builder.create_block();
+        let check6 = self.builder.create_block();
+        let v4 = self.builder.create_block();
+        let v6 = self.builder.create_block();
+        let port = self.builder.create_block();
+        let unsupported = self.builder.create_block();
+        let einval = self.builder.ins().iconst(types::I64, EINVAL);
+
+        let small = self.builder.ins().icmp_imm(IntCC::SignedLessThan, room, 19);
+        self.builder.ins().brif(small, too_small, &[], ask, &[]);
+
+        self.builder.switch_to_block(too_small);
+        self.builder.seal_block(too_small);
+        self.builder.ins().jump(merge, &[einval.into()]);
+
+        self.builder.switch_to_block(ask);
+        self.builder.seal_block(ask);
+        let result = self.libc_call(
+            "getpeername",
+            &[types::I32, pointer, pointer],
+            &[types::I32],
+            &[fd, sa, len_at],
+        );
+        let reason = self.errno();
+        let failed = self.builder.ins().icmp_imm(IntCC::SignedLessThan, result, 0);
+        self.builder.ins().brif(failed, merge, &[reason.into()], classify, &[]);
+
+        self.builder.switch_to_block(classify);
+        self.builder.seal_block(classify);
+        let family = self.builder.ins().load(types::I8, MemFlags::trusted(), sa, family_at);
+        let is4 = self.builder.ins().icmp_imm(IntCC::Equal, family, 2);
+        self.builder.ins().brif(is4, v4, &[], check6, &[]);
+
+        self.builder.switch_to_block(check6);
+        self.builder.seal_block(check6);
+        let is6 = self.builder.ins().icmp_imm(IntCC::Equal, family, inet6);
+        self.builder.ins().brif(is6, v6, &[], unsupported, &[]);
+
+        self.builder.switch_to_block(unsupported);
+        self.builder.seal_block(unsupported);
+        self.builder.ins().jump(merge, &[einval.into()]);
+
+        // `sockaddr_in`: the address is at 4..8. The unused twelve bytes are zeroed so the
+        // buffer holds the same sixteen bytes for the same peer however it was used before.
+        self.builder.switch_to_block(v4);
+        self.builder.seal_block(v4);
+        let four = self.builder.ins().iconst(types::I8, 4);
+        self.builder.ins().store(MemFlags::trusted(), four, out, 0);
+        let zero = self.builder.ins().iconst(types::I8, 0);
+        for i in 0..16 {
+            let byte = if i < 4 {
+                self.builder.ins().load(types::I8, MemFlags::trusted(), sa, 4 + i)
+            } else {
+                zero
+            };
+            self.builder.ins().store(MemFlags::trusted(), byte, out, 1 + i);
+        }
+        self.builder.ins().jump(port, &[]);
+
+        // `sockaddr_in6`: the address is at 8..24.
+        self.builder.switch_to_block(v6);
+        self.builder.seal_block(v6);
+        let six = self.builder.ins().iconst(types::I8, 6);
+        self.builder.ins().store(MemFlags::trusted(), six, out, 0);
+        for i in 0..16 {
+            let byte = self.builder.ins().load(types::I8, MemFlags::trusted(), sa, 8 + i);
+            self.builder.ins().store(MemFlags::trusted(), byte, out, 1 + i);
+        }
+        self.builder.ins().jump(port, &[]);
+
+        // The port is big-endian at 2..4 of both.
+        self.builder.switch_to_block(port);
+        self.builder.seal_block(port);
+        for i in 0..2 {
+            let byte = self.builder.ins().load(types::I8, MemFlags::trusted(), sa, 2 + i);
+            self.builder.ins().store(MemFlags::trusted(), byte, out, 17 + i);
+        }
+        let ok = self.builder.ins().iconst(types::I64, 0);
+        self.builder.ins().jump(merge, &[ok.into()]);
+
+        self.builder.switch_to_block(merge);
+        self.builder.seal_block(merge);
+        vec![self.builder.block_params(merge)[0]]
+    }
+
     /// `clock_ms(&Clock)` (`docs/native-sockets.md` §5): `CLOCK_MONOTONIC`
     /// as milliseconds. The clock id is 1 on Linux and 6 on Darwin; both
     /// answer a `timespec` of two 64-bit fields. With `wall`, the same
