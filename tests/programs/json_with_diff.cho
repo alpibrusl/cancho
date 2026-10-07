@@ -1,0 +1,159 @@
+// `docs/json.md` §3.1: `parse` and `parse_with` on one corpus, compared.
+//
+// Standard input is a list of documents, each framed as its length in decimal,
+// a newline, and that many bytes (a document may hold any byte, so there is no
+// separator that could not be inside one). For every document the program runs
+//
+//   * `parse` into a zeroed tape,
+//   * `parse_with` into another zeroed tape, with a state slice full of
+//     garbage left over from the previous document, and
+//   * both again into a tape too short for the document, which is where the
+//     `full` code and the partial tape come from,
+//
+// and checks that the answers are the same number and the tapes the same
+// ints, all of them, written or not. It prints `ok <documents> <accepted>
+// <refused>` and exits 0, or `differ <index> <what>` and exits 1.
+// `conformance/json.rs` feeds it the seed documents, a mutated corpus and the
+// edge cases the JSON test suites are made of.
+import std.buffer;
+import std.io;
+import std.json;
+
+fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap, io_read] buffer.Buffer {
+    var out = text;
+    var c = getchar(io);
+    while c >= 0 {
+        out = buffer.push(heap, out, byte_of(c));
+        c = getchar(io);
+    }
+    return out;
+}
+
+fn same_ints[&a, &b](x: &a [int], y: &b [int]) -> [] bool {
+    if len(x) != len(y) {
+        return false;
+    }
+    var k = 0;
+    while k < len(x) {
+        if x[k] != y[k] {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+fn garbage[&q](st: &!q [int], seed: int) -> [] int {
+    var k = 0;
+    while k < len(st) {
+        st[k] = seed * 7919 + k * 104729 - 31;
+        k = k + 1;
+    }
+    return 0;
+}
+
+// Both parsers on `src` with a tape of `cells` ints. 0 if they agree, 1 if the
+// answers differ, 2 if the tapes do. `accepted` is set to 1 if it parsed.
+fn compare[&h, &s, &c](heap: &!h Heap, src: &s [byte], cells: int, st: &!c [int], seed: int) -> [heap] (int, int) {
+    let a = box_slice(heap, cells, 0);
+    let b = box_slice(heap, cells, 0);
+    var verdict = 0;
+    var accepted = 0;
+    var first = 0;
+    var second = 0;
+    borrow mut a as &!aw in {
+        first = json.parse(src, contents(aw));
+    }
+    garbage(st, seed);
+    borrow mut b as &!bw in {
+        second = json.parse_with(src, contents(bw), st);
+    }
+    if first != second {
+        verdict = 1;
+    } else {
+        borrow a as &ar in {
+            borrow b as &br in {
+                if !same_ints(contents(ar), contents(br)) {
+                    verdict = 2;
+                }
+            }
+        }
+    }
+    if first >= 0 {
+        accepted = 1;
+    }
+    unbox_slice(heap, a);
+    unbox_slice(heap, b);
+    return (verdict, accepted);
+}
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
+    var text = buffer.empty(heap, 4096);
+    text = read_stdin(heap, io, text);
+    var docs = 0;
+    var accepted = 0;
+    var refused = 0;
+    var failed = 0;
+    let state = box_slice(heap, 5, 0);
+    borrow text as &b in {
+        let all = buffer.bytes(b);
+        var pos = 0;
+        borrow mut state as &!sw in {
+            let st = contents(sw);
+            while pos < len(all) && failed == 0 {
+                var n = 0;
+                while pos < len(all) && int_of(all[pos]) != 10 {
+                    n = n * 10 + (int_of(all[pos]) - 48);
+                    pos = pos + 1;
+                }
+                pos = pos + 1;
+                let src = all[pos..pos + n];
+                pos = pos + n;
+                let (v1, ok) = compare(heap, src, json.tape_len(src), st, docs);
+                let (v2, unused) = compare(heap, src, 3 * (1 + len(src) / 4), st, docs + 1);
+                if v1 != 0 || v2 != 0 {
+                    failed = 1;
+                    io.write_all(io, "differ ");
+                    io.print_int(io, docs);
+                    io.space(io);
+                    io.print_int(io, v1 * 10 + v2);
+                    io.newline(io);
+                }
+                if ok == 1 {
+                    accepted = accepted + 1;
+                } else {
+                    refused = refused + 1;
+                }
+                docs = docs + 1;
+            }
+        }
+    }
+    unbox_slice(heap, state);
+    buffer.drop(heap, text);
+    if failed == 0 {
+        io.write_all(io, "ok ");
+        io.print_int(io, docs);
+        io.space(io);
+        io.print_int(io, accepted);
+        io.space(io);
+        io.print_int(io, refused);
+        io.newline(io);
+    }
+    return failed;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(args);
+    release(fs);
+    release(ffi);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            status = run(h, i);
+        }
+    }
+    release(heap);
+    release(io);
+    return status;
+}

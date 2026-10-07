@@ -586,6 +586,13 @@ impl<'a> FuncEmitter<'a> {
             // `docs/checked-output.md`: the stream the arm above writes
             // into, flushed and asked whether any of it failed.
             Callee::Builtin(Builtin::FlushOut) => Ok(self.flush_out()),
+            // `docs/standard-input.md` §7: many bytes of standard input in
+            // one call, sorted into `Read`'s three constructors.
+            Callee::Builtin(Builtin::ReadBytes) => {
+                let skip = Builtin::ReadBytes.erased_args();
+                let flat: Vec<LValue> = evaluated.into_iter().skip(skip).flatten().collect();
+                self.read_stdin(&flat)
+            }
             // `docs/arguments.md` §3: `argc`, exactly as `main` was
             // handed it and stashed into `@lexs_argc` before this
             // function's own body could run.

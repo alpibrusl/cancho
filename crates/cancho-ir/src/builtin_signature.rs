@@ -65,6 +65,24 @@ impl Builtin {
                 }],
                 Type::Int,
             ),
+            // `docs/standard-input.md` §7: the borrowed `Io` and a buffer
+            // the read fills (unique, as `file_read`'s is), answering
+            // `file_read`'s own `Read`.
+            Builtin::ReadBytes => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_IO)),
+                    },
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                named(PRELUDE_READ),
+            ),
             // Checked at the call site (`docs/editions.md` §7): the return
             // type depends on the caller's edition, and a fixed signature
             // cannot say that.

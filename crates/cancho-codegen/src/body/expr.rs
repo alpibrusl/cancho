@@ -924,6 +924,9 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     // above write into, flushed and asked whether any of it
                     // failed.
                     Callee::Builtin(Builtin::FlushOut) => self.flush_out(),
+                    // `docs/standard-input.md` §7: many bytes of standard
+                    // input at once, through the stream `getchar` reads.
+                    Callee::Builtin(Builtin::ReadBytes) => self.read_stdin(&args),
                     // Sign-extended, not zero-extended: `EOF` is `-1` and
                     // zero-extending would hand the program 4294967295,
                     // which is a byte-range check that silently never

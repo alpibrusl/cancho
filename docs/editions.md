@@ -335,6 +335,15 @@ that never replaces a name, and `dir_mode` and `dir_own_mode` ([`directory-listi
 Each is a builtin under an existing label and a name an older file may already declare, so it is absent before
 edition 7 (`tests/reject/dir_rename_new_is_edition_seven.cho`) and nothing else about edition 6 changes.
 
+And **`read_bytes`** ([`standard-input.md`](standard-input.md) §7), standard input in bulk under the existing
+`io_read` label: `read_bytes(io, into) -> [io_read] Read`, with `file_read`'s own `Read`. A builtin under an existing
+label and a name a program may already declare (it is a natural name for a user function), so it is absent before
+edition 7 (`tests/reject/read_bytes_is_edition_seven.cho`) and nothing else about edition 6 changes. It adds no type, no
+label and no `Split` field. Adding it moved no identity: `cancho ids --std` over a program that imports every `std`
+module gives the same 1,677 hashes before and after, and 165 of the repository's programs give the same list
+(`std.json.parse_with`, which came in the same change, is a new `std` name, so it adds a `body` and a `sig` line and
+changes none; `std` modules are not editions).
+
 ---
 
 ## 8. What this does not do

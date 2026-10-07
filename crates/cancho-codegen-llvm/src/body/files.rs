@@ -53,6 +53,71 @@ impl<'a> FuncEmitter<'a> {
         vec![LValue::Reg(tag), LValue::Const(0), LValue::Reg(why)]
     }
 
+    /// `read_bytes(io, into)` (`docs/standard-input.md` §7): `args` is the
+    /// buffer's pointer and length. `fread` on `stdin`, sorted into `Read`
+    /// exactly as `cancho-codegen`'s own `read_stdin` does: a count is
+    /// `Got`; a zero is `Failed` when the stream's error indicator is set,
+    /// `End` when the buffer asked for something, and `Got(0)` when it did
+    /// not. On WASI the console's own buffer is read instead (`wasi_console`).
+    pub(crate) fn read_stdin(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        let [start, len] = args else {
+            return Err("`read_bytes` needs a byte slice argument".to_owned());
+        };
+        let st = self.size_ty();
+        let want = self.size_arg(&operand(len));
+        let wasi = crate::wasi_console::applies(self.triple);
+        let (moved, failed, reason) = if wasi {
+            let raw = self.fresh();
+            self.out.push_str(&format!(
+                "  {raw} = call i32 @cancho_read_into(ptr {}, i32 {want})\n",
+                operand(start)
+            ));
+            let moved = self.size_result(&raw, false);
+            let rc = self.fresh();
+            self.out.push_str(&format!("  {rc} = load i32, ptr @cancho_in_rc\n"));
+            let failed = self.fresh();
+            self.out.push_str(&format!("  {failed} = icmp ne i32 {rc}, 0\n"));
+            let translated = self.fresh();
+            self.out.push_str(&format!("  {translated} = call i32 @cancho_wasi_errno(i32 {rc})\n"));
+            let reason = self.widen(&translated);
+            (moved, failed, LValue::Reg(reason))
+        } else {
+            let symbol = match self.triple.operating_system {
+                target_lexicon::OperatingSystem::Darwin(_) => "__stdinp",
+                _ => "stdin",
+            };
+            let stream = self.fresh();
+            self.out.push_str(&format!("  {stream} = load ptr, ptr @{symbol}\n"));
+            let raw = self.fresh();
+            self.out.push_str(&format!(
+                "  {raw} = call {st} @fread(ptr {}, {st} 1, {st} {want}, ptr {stream})\n",
+                operand(start)
+            ));
+            let moved = self.size_result(&raw, false);
+            // `errno` straight after `fread`, before `ferror` can disturb it.
+            let reason = self.errno();
+            let indicator = self.fresh();
+            self.out.push_str(&format!("  {indicator} = call i32 @ferror(ptr {stream})\n"));
+            let failed = self.fresh();
+            self.out.push_str(&format!("  {failed} = icmp ne i32 {indicator}, 0\n"));
+            // A failure is reported once: the indicators are cleared, so that a later read
+            // is judged by what it finds and not by what an earlier one left behind.
+            self.out.push_str(&format!("  call void @clearerr(ptr {stream})\n"));
+            (moved, failed, reason)
+        };
+        let got = self.fresh();
+        self.out.push_str(&format!("  {got} = icmp ne i64 {moved}, 0\n"));
+        let asked = self.fresh();
+        self.out.push_str(&format!("  {asked} = icmp ne i64 {}, 0\n", operand(len)));
+        let ended = self.fresh();
+        self.out.push_str(&format!("  {ended} = select i1 {asked}, i64 1, i64 0\n"));
+        let none = self.fresh();
+        self.out.push_str(&format!("  {none} = select i1 {failed}, i64 2, i64 {ended}\n"));
+        let tag = self.fresh();
+        self.out.push_str(&format!("  {tag} = select i1 {got}, i64 0, i64 {none}\n"));
+        Ok(vec![LValue::Reg(tag), LValue::Reg(moved), reason])
+    }
+
     /// `flush_out` on WASI, against the console's own buffer instead of `stdout`'s
     /// (`wasi_console`): the same three answers. A failed flush reports its errno,
     /// translated to the language's numbering; an earlier failed write that a later

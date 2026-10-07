@@ -199,6 +199,10 @@ pub(crate) struct Console {
     /// is the property §1.2 measured the absence of: a diagnostic written
     /// before a trap has already left.
     pub(crate) stderr: DataId,
+    /// libc's `stdin`, the same way: `read_bytes` is `fread` on the stream
+    /// `getchar` reads, so that a program may use both
+    /// (`docs/standard-input.md` §7). `stdin` on glibc, `__stdinp` on macOS.
+    pub(crate) stdin: DataId,
 }
 
 /// How many leaves a return value may have before it travels through memory.

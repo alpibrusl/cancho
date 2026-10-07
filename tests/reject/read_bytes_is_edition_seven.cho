@@ -1,0 +1,30 @@
+//~ ERROR `read_bytes` is not a function in this program
+//~ RULE not-a-function
+
+// `docs/standard-input.md` §7: `read_bytes` is edition 7. An older file may already declare its
+// own `read_bytes`, so to it the name is not a builtin at all (`editions.md` §7).
+
+edition 6;
+
+fn pull[&i](io: &!i Io) -> [io_read] int {
+    region a {
+        let buf = alloc_slice[a](8, byte_of(0));
+        match read_bytes(io, buf) {
+            Read::Got(n) => {
+                return n;
+            }
+            Read::End => {
+                return 0;
+            }
+            Read::Failed(e) => {
+                return 0 - e;
+            }
+        }
+    }
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(net); release(clock); release(signals);
+    return 0;
+}

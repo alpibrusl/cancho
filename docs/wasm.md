@@ -310,11 +310,16 @@ program reads it.
 ## W2a results: the console without libc stdio
 
 `cancho-codegen-llvm/src/wasi_console.rs` is the console written against the two WASI
-calls it needs. On wasm32 `putchar`, `getchar`, `write_bytes`, `write_err` and `flush_out`
+calls it needs. On wasm32 `putchar`, `getchar`, `read_bytes`, `write_bytes`, `write_err` and `flush_out`
 no longer touch libc: the module declares `fd_write` and `fd_read` itself
 (`wasm-import-module` / `wasm-import-name` attributes on the IR declarations), keeps its
 own buffers, and `main` flushes stdout when it returns. Native output is unchanged.
 
+- **`read_bytes`** ([`standard-input.md`](standard-input.md) §7, edition 7) first hands out what
+  `getchar`'s 4 KiB stdin buffer holds, then calls `fd_read` straight into the caller's buffer until it
+  is full or the input ends (`cancho_read_into`); it imports nothing `getchar` did not
+  (`a_wasm32_bulk_read_never_calls_libc_stdio`). Run under `wasmtime` it agrees with the native build
+  on bytes, lines and an order-sensitive hash for buffers of 0, 7 and 65,536 bytes.
 - **stdout** is buffered (4 KiB), flushed when it fills, on `flush_out`, and when `main`
   returns, which is what libc does to a pipe, so the bytes and their order are the native
   build's. A write that fails sets a sticky error, as the `FILE`'s indicator does, and

@@ -1,0 +1,143 @@
+// `docs/standard-input.md` §7: `read_bytes`, standard input in bulk.
+//
+//     stdin_read_bytes CHUNK [mix]
+//
+// Reads standard input to its end `CHUNK` bytes at a time (a buffer of exactly that
+// size), and prints `bytes=N lines=L sum=S end=E` -- where `E` is `eof` or
+// `failed:ERRNO` -- so that `conformance/stdin.rs` can compare it with the same
+// numbers computed outside. `S` is a polynomial hash of the bytes in order, so a
+// byte dropped, repeated or reordered at a chunk boundary changes it.
+//
+// With `mix`, the first five bytes are taken with `getchar` first: the two reads
+// share one stream, and the count is still every byte.
+//
+// With CHUNK 0 the buffer is empty: the first answer is `Got(0)` (nothing was
+// asked for, so nothing ended), printed as `empty=ok`, and then the program reads
+// with a one-byte buffer to the end.
+edition 7;
+
+import std.io;
+
+fn parse_nat[&g](args: &g Args, at: int) -> [args] int {
+    var n = 0;
+    if at >= arg_count(args) {
+        return 0 - 1;
+    }
+    let text = arg(args, at);
+    var k = 0;
+    while k < len(text) {
+        n = n * 10 + (int_of(text[k]) - 48);
+        k = k + 1;
+    }
+    return n;
+}
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io, chunk: int, mix: bool) -> [heap, io_read, io_write] int {
+    var bytes = 0;
+    var lines = 0;
+    var sum = 0;
+    var end = 0 - 1;
+    if mix {
+        var k = 0;
+        while k < 5 {
+            let c = getchar(io);
+            if c >= 0 {
+                bytes = bytes + 1;
+                if c == 10 {
+                    lines = lines + 1;
+                }
+                sum = (sum * 31 + c + 1) % 1000000007;
+            }
+            k = k + 1;
+        }
+    }
+    var size = chunk;
+    if chunk == 0 {
+        size = 1;
+    }
+    let storage = box_slice(heap, size, byte_of(0));
+    borrow mut storage as &!w in {
+        let buf = contents(w);
+        if chunk == 0 {
+            let none = buf[0..0];
+            match read_bytes(io, none) {
+                Read::Got(n) => {
+                    if n == 0 {
+                        io.write_all(io, "empty=ok ");
+                    } else {
+                        io.write_all(io, "empty=bad ");
+                    }
+                }
+                Read::End => {
+                    io.write_all(io, "empty=end ");
+                }
+                Read::Failed(e) => {
+                    io.write_all(io, "empty=failed ");
+                }
+            }
+        }
+        while end < 0 {
+            match read_bytes(io, buf) {
+                Read::Got(n) => {
+                    var k = 0;
+                    while k < n {
+                        let c = int_of(buf[k]);
+                        if c == 10 {
+                            lines = lines + 1;
+                        }
+                        sum = (sum * 31 + c + 1) % 1000000007;
+                        k = k + 1;
+                    }
+                    bytes = bytes + n;
+                }
+                Read::End => {
+                    end = 0;
+                }
+                Read::Failed(e) => {
+                    end = e;
+                }
+            }
+        }
+    }
+    unbox_slice(heap, storage);
+    io.write_all(io, "bytes=");
+    io.print_int(io, bytes);
+    io.write_all(io, " lines=");
+    io.print_int(io, lines);
+    io.write_all(io, " sum=");
+    io.print_int(io, sum);
+    if end == 0 {
+        io.write_all(io, " end=eof\n");
+    } else {
+        io.write_all(io, " end=failed:");
+        io.print_int(io, end);
+        io.newline(io);
+    }
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(fs);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    var chunk = 0;
+    var mix = false;
+    borrow args as &g in {
+        chunk = parse_nat(g, 1);
+        mix = arg_count(g) > 2;
+    }
+    release(args);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            status = run(h, i, chunk, mix);
+        }
+    }
+    release(heap);
+    release(io);
+    return status;
+}
