@@ -321,3 +321,42 @@ significant; each identity holds its chain (a few KiB) and key in the engine.
 5. **Independent review.** The client is "not independently reviewed" (#209). A server that signs with a long-lived key is a
    larger exposure than a client with ephemeral keys. *Proposed: the server carries the same notice, and the broker and the
    gateway say so in their READMEs until #209 is answered.*
+
+## 10. As built: step 2, the server
+
+*PR #339. The numbers are measured, each with the command that gives it; where building found this document wrong, the
+section that said so is corrected in place, marked "corrected (step 2)" or "as built".*
+
+### 10.1 What was built
+
+| File | Module | What |
+|---|---|---|
+| `packages/tls/hello.ls` | `tls_hello` | the ClientHello parsed with the rules of §5.2, the choices (suite, group, retry group, ALPN), and the messages a server sends: ServerHello, HelloRetryRequest, EncryptedExtensions, Certificate, CertificateVerify |
+| `packages/tls/server.ls` | `tls_server` | one server connection: `start`, `feed` and its record loop, the key schedule, the flight, the one function that calls the signer, the client's Finished compared in constant time, KeyUpdate |
+| `packages/tls/identity.ls` | `tls_identity` | a server engine's configuration in one byte slice: 16 identities (key, public point, names, the certificate_list as Certificate sends it) and the ALPN list |
+| `packages/tls/tls.ls` | `tls` | `open_server`, `add_identity`, `replace_identity`, `set_alpn`, `serve`, `server_name`, `alpn`, `handshakes_in_progress`, `suite`, `group`, `retried`, `alert_received`; the role; `feed` sends a server slot to `tls_server` |
+| `packages/tls/slot.ls`, `record.ls`, `message.ls` | | the server's states, flags and five slot fields; its 24 refusal codes and their alerts; `hrr_random` made public |
+
+**Reused unchanged:** the record layer and its AEADs, `tls_slot`'s transcript, keys, record queue, `fail` and `forget`, the
+ECDH share a HelloRetryRequest needs (`new_ecdh_share`: the P-256 or P-384 scalar comes from the X25519 secret by HKDF, as for
+the client), and `tls_client`'s `take`, `send`, `recv`, `finish`, `event`, `peer_eof` and `drop`, which serve a server slot as
+they are. `client.ls` is not touched, so its 88 mutants' texts still match.
+
+**What is not shared, and why.** The record loop (`feed`, `on_record`, the handshake reassembly, the alert reader) is the
+server's own, about 250 lines the shape of the client's. The client's loop calls the client's message handler, and lex-sys
+has no function values (`docs/function-values.md`), so sharing it would mean `tls_client` importing `tls_server`, and every
+client build (`tls_driver`, hooks) taking the server and `x509_key` with it. The server's loop also differs where it must:
+early data, a plaintext alert after the flight, one `change_cipher_spec` between the ClientHello and the Finished, and the
+"message ends its record" rule checked before a message is handled.
+
+**The signer.** `tls_server.sign` is the one caller: SHA-256 of CertificateVerify's content, `ecdsa_sign.sign_checked` under
+the identity's key, hedged with 32 bytes of the engine's DRBG drawn at `serve` (RFC 6979 §3.6), verified under the identity's
+public point before it is used (§3.3, `tls-server-sign-check`), then `ecdsa_sign.to_der`. Its work is the slot's `std.ecdh`
+work area, which the key exchange has finished with. Each connection draws 96 bytes at `serve`: the ServerHello random, the
+X25519 secret, and the hedge; all three are in the slot's keys, which `forget` and `drop` overwrite.
+
+**Memory.** A server slot is the client's (`docs/tls-core.md` §9.1) and five words. A server engine adds its identities, 274 KiB
+for 16, and 75 KiB of work for the key parser (`std.ecdh`'s), and gives up the client's 1 MiB of roots; a client engine adds
+nothing (`open` allocates neither).
+
+**Editions.** `server.ls` is edition 7, for `hw_aes_gcm()`; `identity.ls` edition 6, as `x509_key` is.
