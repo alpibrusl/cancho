@@ -1,6 +1,6 @@
 # Narrowing one capability into several
 
-Status: **design, not built; the `covers` fix of section 6 is built (PR #PRNUM).** Found by the PostgreSQL TLS work (alpibrusl/cancho-pg#14, its `docs/tls.md` section 5 and
+Status: **design, not built; the `covers` fix of section 6 is built (PR #359).** Found by the PostgreSQL TLS work (alpibrusl/cancho-pg#14, its `docs/tls.md` section 5 and
 section 11.3): a program that reads two unrelated files holds `Fs("")`, and its authority report says `fs_read("")`, which
 is every file. Every claim below about the compiler today was checked against the code or a probe at `c0ad830`;
 section 10 lists which, and what was not.
@@ -265,7 +265,7 @@ bundle in: `narrow(fs, "/dev/urandom", "/etc/cancho-pg")` and a run-time file na
 
 ## 6. A latent row bug that option 2 makes reachable
 
-> **Fixed in PR #PRNUM.** `Label::covers` now compares `fs_read`, `fs_write` and `exec` labels with `extends_path`, the rule
+> **Fixed in PR #359.** `Label::covers` now compares `fs_read`, `fs_write` and `exec` labels with `extends_path`, the rule
 > `narrow` uses (`filesystem.md` §1.1). The probe below is refused `effect-not-declared` on `owner`'s row
 > (`tests/reject/fs_owned_prefix_covers_sibling.cho`, and `exec_owned_prefix_covers_sibling.cho` for `Exec`), and
 > `crates/cancho-ir/src/tests/label_covers.rs` pins the rule, including `covers` agreeing with `extends_path` on every
@@ -389,7 +389,7 @@ Nothing here needs a measurement of time or size: the change emits no code.
    in this design that can be written today without option 2 (it needs no `main` that reaches it).
 
 **Decided as proposed (2026-10-07):** all six questions above were decided as proposed. On question 4 the decision is: land
-the `covers` fix and this design now (the fix is PR #PRNUM), and build the multi-literal `narrow` when cancho-mqtt and
+the `covers` fix and this design now (the fix is PR #359), and build the multi-literal `narrow` when cancho-mqtt and
 cancho-gateway reach their TLS setup, which is the second asker.
 
 ## 10. What was verified, and how
