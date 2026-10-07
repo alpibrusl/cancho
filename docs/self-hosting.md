@@ -201,7 +201,8 @@ the stages found, in place, the way this document corrects its own claims.
 | 3b. Declarations (the first half of the checker, complete) | `examples/selfhost/pass1.cho`, `foreign.cho` and `checker.cho`, over a generated `tables.cho`; programs of several files | `check_declarations` (`cancho-ir`), the first half of the Rust checker | Same answer, `OK` or the first refusal's rule and span, on every program of the repository alone (633) and with the whole standard library parsed with them (633, 464 of them `OK`), on 169 targeted cases, and on 62,892 fuzz cases (51,534 alone, 11,358 with the library): 62,434 identical, 37,967 of them refusals, none different; 458 are not UTF-8; nothing is skipped |
 | 3c. Bodies, function by function (scalar functions so far) | `examples/selfhost/body.cho` (and `bodies.cho`) | `check_bodies` (`cancho-ir`), the Rust checker's body check, answered per function | **First slice.** The port answers `OK`, a refusal, or `SKIP` for each function; every function it answers is the Rust answer: 644 repository programs alone (278 `OK` bodies and 11 refusals among those it answers; 898 function answers skipped), the library's 789 functions with one program (271 `OK`, 518 skipped), 304 targeted cases, and 57,579 fuzz cases (51,588 alone, 5,991 with the library): 57,166 identical, none different; 413 are not UTF-8 |
 | 3d. References and slices of scalars | `examples/selfhost/types.cho` and `body.cho` | `check_bodies` | **Second slice.** Every function the port answers is the Rust answer: 644 repository programs, the library's 789 functions with one program (**437 verified `OK`, 55%**, from 34%), 408 targeted cases (104 for references, regions and slices), and 39,826 fuzz cases (35,352 alone, 4,474 with the library): 39,547 identical, none different; 279 are not UTF-8 |
-| 3e. The rest of the bodies: structs, enums, `match`, `borrow` blocks, generics, builtins, then linearity, effects | not started | `check_bodies` | |
+| 3e-1. Structs of scalars | `body.cho` (types in `types.cho`) | `check_bodies` | **Third slice.** Every function the port answers is the Rust answer: 81 targeted cases for struct literals, field reads and writes (539 in all), 8,000 fuzz cases alone and 4,200 with the library, 1,165 library cases: none different |
+| 3e-2. The rest of the bodies: enums, `match`, `borrow` blocks, generics, builtins, then linearity, effects | not started | `check_bodies` | |
 | 4. Backend | not started | | |
 
 **The method.** A port that builds no tree has nothing to compare, and one that does
@@ -377,6 +378,19 @@ lives. What it still skips: references to anything but a scalar or a slice of on
 Result: with references the port verifies **437 of the library's 789 function bodies (55%)**, up
 from 271 (34%), every one the Rust answer, and 375 `OK` bodies among the repository's own programs,
 up from 278.
+
+**Stage 3e-1: structs of scalars.** A struct the file declares, with no parameters, not `res`, and
+only scalar fields, is a type the table knows (`NAMED`, by the node of its declaration); it is `val`,
+so a value of it copies and linearity still has nothing to say. On top of it `body.cho` checks the
+struct literal (every field once, in declaration order, each of the declared type: `unknown-name`,
+`duplicate-declaration`, `field-order`, `missing-field`, `not-a-struct`, `not-public` in the order
+Rust meets them), `p.x` through a value or one reference, and `p.x = v` through a unique reference.
+Anything else that mentions a struct (a prelude type, an enum, a generic or `res` struct, a field that
+is not a scalar) is `SKIP`. The library gains little, since its structs are mostly generic or `res`
+(439 of 788 verified); the repository's own programs gain the most.
+
+The mutation test of `body.cho` kills 139 of 199 (105 of 144 before); the survivors in the new code
+are node numbers that are never 0 and the equal-index case a duplicate has already caught.
 
 The mutation test of `types.cho` (54 operator swaps) killed 40 on the first corpus of 458 targeted
 body cases (after region-variable, `where`-closure and coercion cases were added; 33 before); the 14

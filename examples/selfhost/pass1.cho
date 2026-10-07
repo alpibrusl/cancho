@@ -287,7 +287,7 @@ fn prelude_is[&x](text: &x [byte], from: int, to: int, p: int) -> [] bool {
 // What the name at token `name` means, written in a file at `edition`, looked for in
 // `target`: -1, a prelude index, or `user_base() + item`. The latest edition the file can see
 // wins, and of equals the last declared.
-fn lookup[&s, &x](st: &!s [int], text: &x [byte], name: int, target: int, edition: int) -> [] int {
+pub fn lookup[&s, &x](st: &!s [int], text: &x [byte], name: int, target: int, edition: int) -> [] int {
     let from = ast.tstart(st, name);
     let to = ast.tend(st, name);
     var best = 0 - 1;
@@ -315,7 +315,7 @@ fn lookup[&s, &x](st: &!s [int], text: &x [byte], name: int, target: int, editio
     return best;
 }
 
-fn def_public[&s](st: &!s [int], def: int) -> [] bool {
+pub fn def_public[&s](st: &!s [int], def: int) -> [] bool {
     if def >= user_base() {
         return ast.get(st, def - user_base(), 5) != 0;
     }

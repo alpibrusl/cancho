@@ -35,6 +35,10 @@ fn slice_kind() -> [] int {
     return 8;
 }
 
+fn named_kind() -> [] int {
+    return 9;
+}
+
 fn unbound() -> [] int {
     return 0 - 100;
 }
@@ -72,6 +76,11 @@ pub fn make_ref[&s](st: &!s [int], unique: bool, area: int, inner: int) -> [] in
     return make(st, ref_kind(), ast.flag(unique), area, inner);
 }
 
+// A struct the file declares, by the node of its declaration.
+pub fn make_named[&s](st: &!s [int], item: int) -> [] int {
+    return make(st, named_kind(), item, 0, 0);
+}
+
 pub fn make_slice[&s](st: &!s [int], element: int) -> [] int {
     return make(st, slice_kind(), element, 0, 0);
 }
@@ -86,6 +95,14 @@ pub fn is_ref[&s](st: &!s [int], ty: int) -> [] bool {
 
 pub fn is_slice[&s](st: &!s [int], ty: int) -> [] bool {
     return ty >= first_table() && slot(st, ty, 0) == slice_kind();
+}
+
+pub fn is_named[&s](st: &!s [int], ty: int) -> [] bool {
+    return ty >= first_table() && slot(st, ty, 0) == named_kind();
+}
+
+pub fn named_item[&s](st: &!s [int], ty: int) -> [] int {
+    return slot(st, ty, 1);
 }
 
 pub fn ref_unique[&s](st: &!s [int], ty: int) -> [] bool {
@@ -226,6 +243,9 @@ pub fn unify[&s](st: &!s [int], expected: int, found: int) -> [] int {
     }
     if is_slice(st, expected) && is_slice(st, found) {
         return unify(st, slice_element(st, expected), slice_element(st, found));
+    }
+    if is_named(st, expected) && is_named(st, found) && named_item(st, expected) == named_item(st, found) {
+        return 0;
     }
     return 1;
 }
