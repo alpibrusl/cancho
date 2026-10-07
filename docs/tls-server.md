@@ -1,7 +1,8 @@
 # A TLS 1.3 server for `packages/tls`: the design
 
-> **Status: steps 1 and 2 built: the signer (`docs/ecdsa-sign.md`) and the TLS 1.3 server (§10, as built); its open
-> questions (§9) answered as proposed (2026-10-07). Not independently reviewed (#209).** `packages/tls` is a client (`docs/tls-pure.md`). Two programs of the toolbox need the other
+> **Status: steps 1 to 3 built: the signer (`docs/ecdsa-sign.md`), the TLS 1.3 server (§10, as built) and the example
+> the broker and the gateway copy, `examples/tls_echo` (§11); its open questions (§9) answered as proposed (2026-10-07).
+> Not independently reviewed (#209).** `packages/tls` is a client (`docs/tls-pure.md`). Two programs of the toolbox need the other
 > side: `cancho-mqtt`, a broker whose clients connect on 8883, and `cancho-gateway`, a reverse proxy that terminates HTTPS. Both
 > are at the design stage and both list TLS as out of scope because "it needs foreign code and would make the authority report
 > unbounded". A server in `packages/tls` removes that reason. This document is the design; its numbers are measured where it
@@ -278,6 +279,11 @@ measurable (one more message hashed). OpenSSL's server is **17 to 20 times** che
 times" said here. Not measured: x86-64 (the i7 of `docs/ecdsa-sign.md` would be slower: its signature and check are 3 ms
 against the M4's 1.6), and the Cranelift backend.
 
+*Corrected (step 3, §11.4): about 0.9 ms of the X25519 row is `tls_serve`'s own loop, not the handshake. On the same
+machine, in one session, alternating, `examples/tls_echo` costs **3.0 ms** a handshake where `tls_serve` costs 3.8 to
+3.9 ms, with the same engine, client and identity. Where `tls_serve` spends the difference was not investigated; the
+engine's share is at most the 3.0 ms.*
+
 The paragraph that follows was the estimate's: about 250 full handshakes a second a core on the i7, by the arithmetic above. OpenSSL's P-256 signing is tens of microseconds with its NIST-prime
 arithmetic; this server's handshake is in the order of 10 to 50 times OpenSSL's. For the two programs that is acceptable:
 an MQTT client and an HTTP keep-alive connection handshake once and then stay. **What changes it** is in §8: session tickets
@@ -293,7 +299,10 @@ of key-parsing work in a server engine (§10.1).*
 - **CPU exhaustion.** A client can make the server sign by sending one ClientHello, and abandon the connection. At about 4 ms a
   handshake, 250 ClientHellos a second take a core. The engine cannot bound this: it does not see the network. The program
   does, and the design asks each to bound **handshakes started per second and in progress**, with a counter the engine keeps
-  (`tls.handshakes_in_progress`). The broker and the gateway design their limits with it.
+  (`tls.handshakes_in_progress`). The broker and the gateway design their limits with it. *As built (step 3, §11.2):
+  `examples/tls_echo` bounds both, delays the excess rather than refusing it, and gives a handshake a deadline; the
+  whole server process measured 3.0 ms a handshake on the M4 (about 330 ClientHellos a second take a core, not 250) and
+  5.5 ms on CI's x86-64 (about 180).*
 - **Memory exhaustion.** Bounded by the slots: a ClientHello cannot grow a slot past its 16 KiB reassembly limit.
 - **Timing of the key.** §3. The record layer and the key exchanges are constant time already.
 - **Choosing the identity.** SNI is attacker-chosen: a name with no identity gets the default, never an error that tells names
@@ -319,7 +328,9 @@ of key-parsing work in a server engine (§10.1).*
    - the fuzz corpus of §7, mutants over the new code, and the cost of §6 measured.
    Gate: every case passes; the cost measured and written here.
 3. **An example** that the two programs can copy: `examples/tls_echo` (a server over `std.conns` and a poller), and a section
-   in `docs/http-server.md` on serving `packages/http-server` over TLS.
+   in `docs/http-server.md` on serving `packages/http-server` over TLS. *Built (§11): the example, its tests and its cost;
+   `http.server` cannot take bytes that did not come from its own sockets, and `docs/http-server.md` §11 proposes the
+   change, not made.*
 4. **Client certificates**: CertificateRequest, the client's chain verified against a configured trust store with no host
    name, the verified subject and SANs given to the program. §9's question 2 decides whether it moves before step 3.
 5. **Session tickets**: stateless, sealed with a ticket key from the DRBG, rotated, `psk_dhe_ke` only (a fresh key exchange
@@ -502,3 +513,160 @@ published.
 - **Timing:** no new secret-dependent code here but the Finished comparison, which is the client's pattern; the signer's
   timing is step 1's. No dudect test of the server's handshake as a whole.
 - **Not independently reviewed (#209)**, as the client; the broker and the gateway must say so in their READMEs.
+
+## 11. As built: step 3, the example
+
+*PR #346. The numbers are measured, each with the command that gives it.*
+
+### 11.1 What was built
+
+`examples/tls_echo/`, three files, edition 6, no foreign code:
+
+| File | Module | What |
+|---|---|---|
+| `tls_echo.cho` | (root) | the command line (`std.flags`), the two reads that need a path, the engine, the identities, the listener, the signals |
+| `echo.cho` | `echo_loop` | the loop: one `Poller`, `std.conns`, each connection in the same slot of the table and of the engine; admission (the bounds), the timeouts, the echo with back-pressure, reload and stop, the log |
+| `identity.cho` | `echo_identity` | an identity's `chain.pem`, `key.pem` and `names` read beneath the directory handle and given to `add_identity` or `replace_identity`; the key's buffer overwritten after |
+
+```
+tls_echo --port <n> --dir <directory> [--identity <subdirectory>]... [--alpn <p1,p2>]
+         [--connections <n>] [--handshakes <n>] [--rate <per second>] [--handshake-timeout <ms>] [--idle <ms>]
+```
+
+It logs, per connection, what was negotiated and how it ended:
+
+```
+conn 7 established suite=TLS_AES_128_GCM_SHA256 group=x25519 sni=echo.lex-sys.test alpn=echo hrr=no waited=0 handshake=5
+conn 7 closed ok in=11 ms=1009
+```
+
+**The authority report** is bounded and pinned by `conformance/tls_echo.rs`: `args`, `clock`, `conn_accept`, `conn_read`,
+`conn_write`, `dir_read`, `err_write`, `file_read`, `fs_read("")`, `heap`, `io_write`, `net_in("")`, `poll`,
+`signals("HUP,INT,TERM")`, `signals_read`; no `ffi`, no foreign symbol. The other examples pin theirs in a test, not a
+file, and so does this one.
+
+**Reading the files, as narrowly as the language allows.** `narrow` takes a literal, and the operator names the
+directory, so a path read is `fs_read("")` whatever the program does (`docs/agent-toolbox.md` §2.2). What the language
+does allow is to spend it once: `main` reads 32 bytes of `/dev/urandom` and opens the directory with `open_dir`, and
+the rest of the program, the reload included, is handed the `Dir` and never the `Fs`. So `serve`, `run` and `reload`
+say `dir_read` and `file_read`, not `fs_read`: the code that faces the network can read beneath that one directory and
+nothing else, one component at a time and following no link (`docs/directory-handles.md`). The cost is that a symbolic
+link there is refused (`ELOOP`): certbot's `live/` is links into `archive/` and a Kubernetes secret volume is links into
+`..data/`, so a deployment copies the files in (a certbot `--deploy-hook` does, and sets the permissions this process
+needs at the same time). A program that knew its directory at build time could narrow to the literal instead
+(`Fs("/etc/cancho-mqtt")`), and its row would say so.
+
+### 11.2 The two decisions
+
+**Reload is `SIGHUP`, not a file's modification time.** Both are possible today (`dir_stat` answers an mtime beneath a
+`Dir`, #263). The signal is chosen because a renewal replaces two files, and a poll can see one changed and not the
+other: the engine refuses that pair (`tls-server-key-mismatch`, and the old identity keeps serving), so a poll is not
+unsafe, but it reloads at a moment nobody chose, logs a refusal for a correct deployment, and costs a `stat` per file
+per interval. A signal is sent by the deploy hook after both files are in place, which is the moment the operator
+means, and it is what nginx, HAProxy and mosquitto do. On `SIGHUP` every identity is read again and given to
+`tls.replace_identity`; a connection whose ClientHello was answered keeps the certificate it was sent, and a refused
+replacement is logged (`reload 0 refused tls-server-key-mismatch`) with the old identity still serving. Names are not
+reloaded (`replace_identity` keeps them); a change of names is a restart.
+
+**The handshake bounds delay; the table refuses.** Every connection is accepted into a slot of the table and a queue,
+unwatched, so its ClientHello waits in the kernel and costs nothing. A queued connection starts (`tls.serve`, then it
+is watched) when fewer than `--handshakes` are in progress (`tls.handshakes_in_progress`) and fewer than `--rate` were
+started in this second; oldest first. A connection over the table (`--connections`) is accepted and closed at once,
+before any TLS. Each phase has `--handshake-timeout` (queued, and in progress, separately), so a peer that connects and
+sends nothing holds a handshake place for that long and no longer; an established connection gets close_notify after
+`--idle`. Why delay and not refuse: a burst of honest clients (a broker restarted, a thousand MQTT clients reconnecting
+at once) is the common case of "too many handshakes", and delaying it costs each a wait while refusing costs each a
+retry with backoff; the attacker's case is bounded either way, by the same two numbers. The alternative of leaving the
+excess in the kernel's listen queue is not available: there is no way to stop watching a `Listener` short of closing it
+(`poller_remove` takes a `Conn`), so a listener that is not accepted from wakes `poller_wait` at once, every time.
+
+The defaults: 256 connections, 32 handshakes in progress, 100 started a second, 10 s to finish a handshake, 60 s
+idle. *Corrected on this PR:* the rate's default was 200, "most of one core" at 4 ms; CI's x86-64 runner measured
+5.5 ms a handshake (§11.4), where 200 a second is more than the one core the loop has and the bound bounds nothing. At
+100 it is a third of a core on the M4 (34%) and 59% on that runner, both measured. A deployment sets it from its own machine's
+figure.
+
+**Back-pressure.** A connection's socket is read only when everything read before it has been echoed and written, so
+a peer that does not read its echo stops being read, and its slot's three 16 KiB buffers are the most it can make the
+server hold. A stop (`SIGINT`, `SIGTERM`) refuses new connections, closes queued and handshaking ones, sends
+close_notify on established ones, and exits once those are written or after two seconds.
+
+### 11.3 Tests
+
+- **`conformance/tls_echo.rs`**, in `cargo test` on both CI targets, against `packages/tls`'s own client
+  (`tests/programs/tls_many.cho`), so it needs no TLS library outside the repository: the authority report pinned; 64
+  connections at once with at most 4 handshakes in progress, each verifying the chain and the name, sending 16,384 bytes,
+  getting them back and getting close_notify when idle; a reload that takes and one that is refused; then 8 more
+  connections on the renewed identity; then `SIGTERM`, exit status 0.
+- **`python3 scripts/tls_echo_test.py <tls_echo>`**, in CI's `tls-assurance` job (linux-x86_64) and run here in the
+  image of §10.2 (linux-aarch64) and on macOS 26 (darwin-aarch64, OpenSSL 3.6): **8 of 8 cases on each of the three**:
+
+  | case | what |
+  |---|---|
+  | `suites` | `openssl s_client`, 3 suites × 3 groups and a HelloRetryRequest (P-521 then P-256): the echo comes back, the log line says the suite, group, SNI, ALPN and `hrr` asked for |
+  | `many` | 200 connections at once (Python `ssl`), 20 echoes of 1 to 20,000 bytes each, every byte compared, each closed `ok` with close_notify both ways |
+  | `reload` | a connection opened before `SIGHUP` keeps echoing; one after it gets the renewed certificate (by serial); after a refused reload the renewed one still serves |
+  | `bound` | `--handshakes 2`: two peers that send nothing hold both places; an honest client is delayed 1.26 s, not refused, and completes when their 1.5 s deadline frees one |
+  | `rate` | `--rate 5`: 15 clients at once all complete in 2.0 s, the last having waited 2.0 s |
+  | `full` | `--connections 4`: a fifth connection is closed at once (0 ms), before a handshake |
+  | `idle` | `--idle 1000`: close_notify after 1.00 s |
+  | `shutdown` | `SIGTERM` with 10 connections: 10 close_notify, exit 0 |
+
+  curl and mosquitto are not in it: they speak HTTP and MQTT, which an echo answers with their own request; their
+  interop with this engine is §10.2's matrix.
+- **Mutants.** Eight single edits to `echo.cho`, each built and run against the case that should catch it; **8 of 8
+  killed**: the handshake bound ignored (`bound`: not delayed), the rate ignored (`rate`), no handshake deadline
+  (`bound`), no idle timeout (`idle`, and `conformance/tls_echo.rs`), a stop that leaves established connections to the
+  drain (`shutdown`), a reload that adds an identity instead of replacing it (`reload`: the old certificate still
+  served), the connection ended as soon as the peer's close_notify is read (`many`), and no table bound (`full`).
+- **Found while building it**, both in the example and fixed there: `tls.event` says `closed` as soon as the peer's
+  close_notify is read, before the server's own is queued, so a loop that ends a connection on `closed` closes the
+  socket without answering (Python's `ssl` saw `UNEXPECTED_EOF` on every `unwrap`); the example ends a connection on
+  `closed` only once it has queued its own. And a client's Finished and its end of file read in one turn made the
+  connection fail before the loop had logged it established (`openssl s_time`'s connections were never logged); the
+  socket is now read only when nothing else moved.
+
+### 11.4 Cost
+
+`python3 scripts/tls_echo_test.py <tls_echo> --cost 20`: `openssl s_time -new` (OpenSSL 3.0.13, its default X25519
+share, the server's AES-128-GCM) for 20 s a row, the server's CPU from `/proc/<pid>/stat` divided by the handshakes.
+LLVM backend; the machine of §6 (Ubuntu 24.04, linux-aarch64, Docker's 6-vCPU VM on the Apple M4 Max, the host's load
+average 2 to 4):
+
+| clients, server bounds | handshakes a second | server CPU | ms of CPU a handshake |
+|---|---|---|---|
+| 1, none | 316 | 94% of a core | **2.98** |
+| 4, none | 341 | 104% of a core (one thread: saturated) | 3.04 |
+| 4, `--rate 200` (the first default) | 210 (4,204 in 20 s, 21 windows) | 66% of a core | 3.15 |
+| 4, the defaults (`--rate 100`) | 105 (2,104 in 20 s) | 34% of a core | 3.27 |
+
+So **about 3.0 ms of CPU a full handshake, 330 to 340 handshakes a second on the one core the loop runs on**, and the
+rate bound holds a flood of handshakes to the share of a core it was set for. Beside it, alternating in one session,
+`tls_serve` (§6) under the same client measured 3.82 and 3.94 ms against the example's 3.03 and 2.99: the correction
+in §6.
+
+**x86-64**, CI's `tls-assurance` job on this PR (GitHub's ubuntu-latest runner, OpenSSL 3.0.13, the same command), the
+first measurement of the server on x86-64:
+
+| clients, server bounds | handshakes a second | server CPU | ms of CPU a handshake |
+|---|---|---|---|
+| 1, none | 170 | 94% of a core | **5.49** |
+| 4, none | 189 | 104% of a core | 5.53 |
+| 4, `--rate 200` | 188 | 104% of a core: the bound above what the core can do | 5.55 |
+| 4, the defaults (`--rate 100`), the next run | 105 (2,104 in 20 s) | 59% of a core | 5.58 |
+
+**About 5.5 ms a handshake there, 1.8 times the M4's**, in line with `docs/ecdsa-sign.md` §7's signer (1.5 ms on an
+i7 against 0.82 on the M4, and as much again for the check). It is why the rate's default is 100, not 200 (§11.2). The
+8 cases passed there too (`many` in 1.9 s).
+
+### 11.5 Not done, and not verified
+
+- **`http.server` over TLS** is not built: it reads and writes its own sockets (`docs/http-server.md` §11, which
+  proposes the change).
+- **More than one core.** One thread, as the design's programs are today; a second core is a second process on the
+  same port, which `tcp_listen`'s `SO_REUSEPORT` flag allows, not tried.
+- **A flood from many addresses** was not run; the bounds are per process, not per peer. A per-address bound is the
+  broker's and the gateway's to design, with the address, which `std.conns` does not give today.
+- **Cranelift**: the tests in CI build the example with the LLVM backend. Built with Cranelift by hand on darwin-aarch64,
+  it passes the same 8 cases (`many` in 3.4 s against LLVM's 0.8); its cost is not measured.
+- **Not independently reviewed (#209)**, as the engine.
