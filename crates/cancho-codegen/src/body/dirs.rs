@@ -151,6 +151,18 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         names: &[(Value, Value)],
         call: impl FnOnce(&mut Self, &[Value]) -> Value,
     ) -> Vec<Value> {
+        self.dir_call_mapping(names, None, call)
+    }
+
+    /// `dir_call`, and when `unsupported` is given, a kernel `EINVAL` from
+    /// `call` is answered as that value instead. The name check's own
+    /// `EINVAL` is not mapped, so the two stay apart.
+    pub(crate) fn dir_call_mapping(
+        &mut self,
+        names: &[(Value, Value)],
+        unsupported: Option<i64>,
+        call: impl FnOnce(&mut Self, &[Value]) -> Value,
+    ) -> Vec<Value> {
         let merge = self.builder.create_block();
         self.builder.append_block_param(merge, types::I64);
         self.builder.append_block_param(merge, types::I64);
@@ -159,7 +171,12 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         let copies: Vec<Value> =
             names.iter().map(|&(name, length)| self.component(name, length, refused)).collect();
         let result = call(self, &copies);
-        let reason = self.errno();
+        let mut reason = self.errno();
+        if let Some(unsupported) = unsupported {
+            let invalid = self.builder.ins().icmp_imm(IntCC::Equal, reason, cancho_ir::EINVAL);
+            let mapped = self.builder.ins().iconst(types::I64, unsupported);
+            reason = self.builder.ins().select(invalid, mapped, reason);
+        }
         let result = self.builder.ins().sextend(types::I64, result);
         self.builder.ins().jump(merge, &[result.into(), reason.into()]);
 
@@ -224,6 +241,32 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                 &[fd, copies[0], fd, copies[1]],
             )
         })
+    }
+
+    /// `dir_rename_new(dir, from, to)`: the rename that refuses to replace.
+    /// Linux `renameat2(RENAME_NOREPLACE)`, Darwin `renameatx_np(RENAME_EXCL)`;
+    /// a filesystem without it is `rename_unsupported`, never a plain rename
+    /// (`docs/directory-handles.md` §3, slice 4).
+    pub(crate) fn dir_rename_new(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let handle = args[0];
+        let darwin = self.is_darwin();
+        let symbol = if darwin { "renameatx_np" } else { "renameat2" };
+        self.dir_call_mapping(
+            &[(args[1], args[2]), (args[3], args[4])],
+            Some(cancho_ir::rename_unsupported(darwin)),
+            |this, copies| {
+                let fd = this.dir_fd(handle);
+                let flag =
+                    this.builder.ins().iconst(types::I32, cancho_ir::rename_no_replace(darwin));
+                this.libc_call(
+                    symbol,
+                    &[types::I32, pointer, types::I32, pointer, types::I32],
+                    &[types::I32],
+                    &[fd, copies[0], fd, copies[1], flag],
+                )
+            },
+        )
     }
 
     /// `dir_remove(dir, name)`: `unlinkat(dir, name, 0)`, which removes a

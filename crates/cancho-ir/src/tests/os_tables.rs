@@ -142,6 +142,9 @@ fn only_wasi_refuses_anything_and_what_it_refuses_is_a_gap() {
     assert_eq!(wasi_gap(Builtin::FileLock), Some(Gap::Locks));
     assert_eq!(wasi_gap(Builtin::DirMode), Some(Gap::Permissions));
     assert_eq!(wasi_gap(Builtin::DirOwnMode), Some(Gap::Permissions));
+    assert_eq!(wasi_gap(Builtin::DirRenameNew), Some(Gap::NoReplaceRename));
+    // The replacing rename is on WASI's side of the line; only the no-replace one is not.
+    assert_eq!(wasi_gap(Builtin::DirRename), None);
     for supported in [Builtin::DirStat, Builtin::FileSync, Builtin::DirSync, Builtin::FsRead] {
         assert_eq!(wasi_gap(supported), None, "{}", supported.name());
     }
@@ -150,7 +153,7 @@ fn only_wasi_refuses_anything_and_what_it_refuses_is_a_gap() {
     }
     assert_eq!(
         Builtin::ALL.iter().filter(|b| wasi_gap(**b).is_some()).count(),
-        47,
+        48,
         "the refused set moved: update docs/wasm.md with it"
     );
 }

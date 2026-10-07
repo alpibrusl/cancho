@@ -114,8 +114,8 @@ W0.3 took the four `__multi3` link errors to passes.
   refuses at the function that reaches the builtin, once per (function,
   family), naming the first builtin found:
   `` `main` uses `spawn`, and threads do not exist on `wasm32-wasip1` ``.
-  Five families (seven since W0.6, below), from `wasi_gap`, an exhaustive `match` over all 118 builtins
-  (47 refused, 72 supported; a new builtin is a compile error until someone
+  Five families (seven since W0.6, below), from `wasi_gap`, an exhaustive `match` over all 120 builtins
+  (48 refused, 72 supported; a new builtin is a compile error until someone
   says which side it is on): **threads** (`spawn`, `join`, `fork_*`),
   **sockets** (`connect`, `bind`, `listen`, `tcp_*`, `conn_*`), **the poller**
   (`poller_*`; `poll_oneoff` is the eventual mapping), **signals**, and
@@ -175,6 +175,13 @@ W0.3 took the four `__multi3` link errors to passes.
   `wasi_gap` (two new families, **file locks** and **permission bits**), so `check` and
   `build` refuse them at the function, with the rule tag, before any code is generated:
   47 builtins refused, 72 supported. `tests/reject/dir_mode_on_wasi.cho` is the fixture.
+- **`dir_rename_new` is refused too** (`wasi_gap`'s family *no-replace renames*, added
+  with `directory-handles.md` §3 slice 4). By the WASI preview 1 interface, not by running it: `path_rename`
+  replaces an existing destination and has no no-replace flag, so a WASI build could only look and then
+  rename, which is the window the builtin exists to close. Not measured under a runtime. A refusal is the safe
+  direction; `dir_rename` stays supported. `tests/reject/dir_rename_new_on_wasi.cho` is the fixture. The 47
+  refused of #320 are 48 with it; `os_tables.rs` pins the count. (The 118 and 46 that this section said before
+  were stale: `exec_spawn_in` had made it 119 and 47, and the builtin count is now 120.)
 - `run` uses `WASMTIME` (default `wasmtime`) and passes `WASMTIME_FLAGS`
   (e.g. `--dir=.`). A WASI module gets **no** directory unless one is
   granted, so the grant is spelled where it is made.

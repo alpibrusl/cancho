@@ -1115,6 +1115,10 @@ impl<'a> FuncEmitter<'a> {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.dir_rename(&args)
             }
+            Callee::Builtin(Builtin::DirRenameNew) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.dir_rename_new(&args)
+            }
             Callee::Builtin(Builtin::DirRemove) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.dir_remove(&args)
