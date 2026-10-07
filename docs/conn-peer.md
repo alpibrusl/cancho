@@ -1,6 +1,6 @@
 # The peer of a connection: `conn_peer`, `std.addr`, `conns.peer`
 
-> **Status: design (this document is the first commit of its PR); §10 is filled in by the commits that build it.**
+> **Status: built on both backends (§10); WASI refuses it with the other socket builtins; macOS arm64 and Linux arm64 run, Linux x86-64 is CI's.**
 > Two programs ask. `cancho-gateway` (an HTTP/1.1 reverse proxy terminating HTTPS) needs the client's address for
 > `X-Forwarded-For` and for per-address bounds; `cancho-mqtt` (the broker; its design section 7d reads "no per-source
 > limit (`std.conns` gives no peer address)") needs it for a per-source limit on handshakes and connections.
@@ -179,7 +179,60 @@ datagram's is.
 
 ## 10. What was built, and what building it found
 
-(Filled in by the commits that build it.)
+**Built.** `conn_peer(&Conn, &![byte]) -> [] int` (edition 5, both backends, no row; refused on WASI, so the builtin count is 134
+and the refused count 59, `os_tables.rs` and `wasm.md` moved with it), `std/addr.cho` (new; pure), `conns.peer` in
+`std/conns.cho`, `crates/cancho/tests/conformance/conn_peer.rs`, and in `examples/tls_echo/front.cho`: `peer=` on every
+connection line, `--per-address`, `--per-address-rate`. Nothing in `packages/` changed (no package store to republish; `python3
+scripts/publish_packages.py --check` says so). The IPv4-mapped normalisation, the `/32` and `/64` key, the canonical text and the
+parser are in `std/addr.cho`; none of it needs the compiler.
+
+**Tests**, each on both backends where it builds a program (`cargo test -p cancho --test conformance conn_peer`, 8 tests, all of
+them also run on Linux arm64 in Docker):
+
+| test | what it shows |
+|---|---|
+| `every_slot_answers_its_own_clients_address_and_port` | 11 clients at once from 11 distinct source ports; each slot's peer is its own client's `127.0.0.1:<port>`; slot 99, slot -1 and a closed slot are `Unavailable(9)`; the slot freed by `close` and taken by a later client answers *that* client's port, and slot 1 is unchanged |
+| `a_connection_that_ended_has_a_peer_only_if_it_was_not_reset` | a client that closed (FIN) still has its address; one that reset (`SO_LINGER` 0) is `Unavailable(107)` on Linux and `Unavailable(22)` on macOS, as §2 measured |
+| `the_builtin_fills_nineteen_bytes_and_refuses_fewer_without_writing` | an 18-byte and an empty buffer answer 22 and are left as they were (filled with 170); 19 bytes are filled in the §3.1 layout with the tail of an IPv4 address zero; a 25-byte buffer is written 19 bytes deep and no further |
+| `an_ipv6_peer_is_read_and_an_ipv4_one_on_the_same_socket_is_normalised` | an `AF_INET6` dual-stack socket made by the test is put under the program's listener (`dup2`, through `Ffi("libc")`: §2 says no cancho socket is IPv6, and this is the only way to run the IPv6 half). A client from `::1` is `[::1]:<port>` with key `6 0`; a client from `127.0.0.1` on the same socket, which the kernel reports as `::ffff:127.0.0.1`, is `127.0.0.1:<port>`, key `4 2130706433` |
+| `the_address_type_agrees_with_rust_on_a_generated_corpus` | `parse`, `text`, `text_port`, `decode` and `key` against Rust's `std::net` parser and an independent RFC 5952 formatter over 9,000-odd lines: IPv4 and IPv6 in six spellings (canonical, upper case, zero-padded, `::` over any run, a dotted tail), the mapped range and its neighbours, one- to three-character mutations of all of those, random strings of the alphabet, and 1,500 raw buffers with families 0, 4, 5, 6 and 255. Zero disagreements; every line answered (a trap would be a signal, not exit 0). Each parsed address also round-trips through `text` and through a mapped raw buffer inside the program |
+| `the_address_api_does_what_the_document_says` | masking, the mapped boundaries (`::fffe:`, a nonzero second or first word), `same` against `same_address`, the key (a /64 shares, one bit of the /64 differs, the two families never collide even for `::` and `0.0.0.0`, a key rebuilt from its parts), the buffer limits, `decode` refusals |
+| `asking_for_the_peer_adds_nothing_to_the_authority_report` | the authority report's effects and labels are byte-identical for a server with and without the call; no label mentions a peer |
+| `knowing_an_address_does_not_let_a_program_dial_it` | with `Net("127.0.0.1:9")` and `addr.v4(203, 0, 113, 7, 80)` in hand, `tcp_connect` to that host traps, as it did before |
+
+The existing `the_example_reports_a_bounded_authority_and_no_foreign_code` (`tls_echo.rs`), which pins every label of
+`examples/tls_echo`, passes unchanged: the example now asks for each peer and reports the same fifteen labels.
+`scripts/tls_echo_test.py` has three more cases: `peer`, `per-address` and `addr-rate` (§ of `tls-server.md` 11); on Linux all
+three run in full, including a client from `127.0.0.2` that is not affected; on macOS the second-address step says it is skipped.
+
+**What building it found.**
+
+- *Every cancho socket is IPv4* (§2). The IPv6 half of the type exists for the day a listener is dual-stack, and is tested
+  through `dup2`; it is not reachable by a program that does not hold `Ffi`. A gateway that wants IPv6 clients needs
+  dual-stack `tcp_listen` first (question 4).
+- *macOS and Linux disagree about a reset connection* (`EINVAL` against `ENOTCONN`), which the first draft of the library
+  comment had wrong (it said `ENOTCONN` for both); corrected in `std/conns.cho` and here.
+- *The first draft of `hex_value` and `hex_digit` in `std/addr.cho` were copies of `std/json.cho`'s and an example's*; the
+  repository's duplication check (`conformance/duplication.rs`) refused them, and they were rewritten rather than shared,
+  because `std.addr` importing `std.json` for a nibble would put a parser in every program that logs an address.
+- *`tls_echo`'s log lines are matched by substrings in four test files*, so `peer=` goes after the connection id
+  (`conn 3 peer=... established ...`, `refused 7 peer=... full`) and every existing match still holds. `case_full` matches
+  `endswith(" full")`, which is why the refusal reason stays last.
+- *The per-address handshake bound needs a table that outlives the connection*, because the attack it answers is handshake
+  spam by connections that end at once. The example keeps 1,024 keys per one-second window in the loop's global array
+  (`front.cho`, `g_ak`); the state is shared by `https_hello`, which therefore accepts the same two flags (not tested there).
+
+**Mutants** (`scripts/conn_peer_mutants.py`; the compiler is rebuilt for each): see the PR for the count killed. A surviving mutant
+fails the script.
+
+**Measured**, on macOS 26 arm64 under load from other jobs, `examples/tls_echo` with `--per-address-rate 2` against six
+simultaneous clients: they complete in 2.02 s with the last having waited 1.99 s (3 windows of 2), and on Linux a client from
+`127.0.0.2` took 48 ms meanwhile.
+
+**Not verified.** Linux x86-64 (CI is; here Linux was arm64 in Docker); the Darwin `sockaddr` layout is exercised on this Mac
+(arm64) and not on x86-64 macOS; WASI (the builtin is refused there, and `wasm.md` records the count); `https_hello` with the new
+flags (it builds, serves, and logs the peer through the shared `front.cho`, but no per-address case runs against it); a flood from
+more than 1,024 distinct addresses against the key table; the `X-Forwarded-For` header (the gateway's change).
 
 ## 11. Open questions, with proposed answers
 
