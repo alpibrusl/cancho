@@ -10,7 +10,7 @@
 use super::net::port_bound_of;
 use crate::*;
 
-use cancho_ir::{EINVAL, F_GETFL, F_SETFD, F_SETFL, FD_CLOEXEC, SocketOs as Os};
+use cancho_ir::{EBADF, EINVAL, F_GETFL, F_SETFD, F_SETFL, FD_CLOEXEC, SocketOs as Os};
 
 impl<'a> FuncEmitter<'a> {
     pub(crate) fn os(&self) -> Os {
@@ -131,7 +131,12 @@ impl<'a> FuncEmitter<'a> {
     /// `bind`, `listen`. Answers `Listening`'s three leaves -- the tag
     /// (`Ok` 0, `Failed` 1), the descriptor, the `errno` -- and every
     /// failure reads `errno` *before* the `close` that would overwrite it.
-    pub(crate) fn tcp_listen(&mut self, bound: &str, args: &[Expr]) -> Result<Vec<LValue>, String> {
+    pub(crate) fn tcp_listen(
+        &mut self,
+        bound: &str,
+        args: &[Expr],
+        datagram: bool,
+    ) -> Result<Vec<LValue>, String> {
         let os = self.os();
         let port = self.scalar(&args[1])?;
         let backlog = self.scalar(&args[2])?;
@@ -172,7 +177,7 @@ impl<'a> FuncEmitter<'a> {
         self.hoist(format!("  {err_cell} = alloca i64\n"));
         self.out.push_str(&format!("  store i64 0, ptr {err_cell}\n"));
 
-        let fd = self.tcp_socket();
+        let fd = if datagram { self.udp_socket() } else { self.tcp_socket() };
         let bad_socket = self.fresh();
         self.out.push_str(&format!("  {bad_socket} = icmp slt i32 {fd}, 0\n"));
         let n = self.blocks;
@@ -228,9 +233,14 @@ impl<'a> FuncEmitter<'a> {
         let backlog32 = self.fresh();
         self.out.push_str(&format!("  {backlog32} = trunc i64 {} to i32\n", operand(&backlog)));
         let listen_result = self.fresh();
-        self.out.push_str(&format!(
-            "  {listen_result} = call i32 @listen(i32 {fd}, i32 {backlog32})\n"
-        ));
+        if datagram {
+            // A datagram socket has nothing to listen for (`docs/udp.md` §2).
+            self.out.push_str(&format!("  {listen_result} = add i32 0, 0\n"));
+        } else {
+            self.out.push_str(&format!(
+                "  {listen_result} = call i32 @listen(i32 {fd}, i32 {backlog32})\n"
+            ));
+        }
         let listening = self.fresh();
         self.out.push_str(&format!("  {listening} = icmp eq i32 {listen_result}, 0\n"));
         self.out.push_str(&format!("  br i1 {listening}, label %{done}, label %{listen_failed}\n"));
@@ -418,12 +428,19 @@ impl<'a> FuncEmitter<'a> {
         let reason = self.fresh();
         self.out.push_str(&format!("  {reason} = load i64, ptr {reason_cell}\n"));
 
+        Ok(self.datagram_leaves(&moved, &reason, &operand(&args[2])))
+    }
+
+    /// `Datagram`'s leaves `[tag, got, truncated, errno]` from what `recv` answered (`moved`, or a
+    /// negative number with `reason`) and the buffer's length: `Got` 0, `Truncated` 1, `Again` 2,
+    /// `Failed` 3.
+    fn datagram_leaves(&mut self, moved: &str, reason: &str, room: &str) -> Vec<LValue> {
+        let os = self.os();
         let negative = self.fresh();
         self.out.push_str(&format!("  {negative} = icmp slt i64 {moved}, 0\n"));
         let cut = self.fresh();
         let compare = if self.is_darwin() { "sge" } else { "sgt" };
-        self.out
-            .push_str(&format!("  {cut} = icmp {compare} i64 {moved}, {}\n", operand(&args[2])));
+        self.out.push_str(&format!("  {cut} = icmp {compare} i64 {moved}, {room}\n"));
         let would_wait = self.fresh();
         self.out.push_str(&format!("  {would_wait} = icmp eq i64 {reason}, {}\n", os.eagain));
         let bad = self.fresh();
@@ -432,12 +449,176 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("  {delivered} = select i1 {cut}, i64 1, i64 0\n"));
         let tag = self.fresh();
         self.out.push_str(&format!("  {tag} = select i1 {negative}, i64 {bad}, i64 {delivered}\n"));
-        Ok(vec![
+        vec![
             LValue::Reg(tag),
-            LValue::Reg(moved.clone()),
-            LValue::Reg(moved),
-            LValue::Reg(reason),
-        ])
+            LValue::Reg(moved.to_owned()),
+            LValue::Reg(moved.to_owned()),
+            LValue::Reg(reason.to_owned()),
+        ]
+    }
+
+    /// The address of the peer-ring entry a ticket names (`ticket` an `i64`).
+    fn peer_entry(&mut self, ticket: &str) -> String {
+        let slot = self.fresh();
+        self.out
+            .push_str(&format!("  {slot} = and i64 {ticket}, {}\n", cancho_ir::UDP_PEER_SLOTS - 1));
+        let offset = self.fresh();
+        self.out
+            .push_str(&format!("  {offset} = mul i64 {slot}, {}\n", cancho_ir::UDP_PEER_STRIDE));
+        let entry = self.fresh();
+        self.out.push_str(&format!(
+            "  {entry} = getelementptr i8, ptr @{}, i64 {offset}\n",
+            cancho_ir::UDP_PEER_GLOBAL
+        ));
+        entry
+    }
+
+    /// `udp_recv_from(&!Udp, &![byte], &![int])` (`docs/udp.md` §4): `udp_recv` that also writes the
+    /// sender into the next entry of the peer ring and a ticket for it into the first cell of the
+    /// `int` slice. An empty buffer or an empty ticket slice is `Failed(EINVAL)` before the kernel.
+    pub(crate) fn udp_recv_from(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        let os = self.os();
+        let fd = self.handle_fd(&args[0]);
+        let (buf, room, cells_at, cells) =
+            (operand(&args[1]), operand(&args[2]), operand(&args[3]), operand(&args[4]));
+
+        // The ticket this datagram will be issued under, and the entry it will land in.
+        let counter = self.fresh();
+        self.out.push_str(&format!(
+            "  {counter} = getelementptr i8, ptr @{}, i64 {}\n",
+            cancho_ir::UDP_PEER_GLOBAL,
+            cancho_ir::UDP_PEER_SLOTS * cancho_ir::UDP_PEER_STRIDE
+        ));
+        let issued = self.fresh();
+        self.out.push_str(&format!("  {issued} = load i64, ptr {counter}\n"));
+        let ticket = self.fresh();
+        self.out.push_str(&format!("  {ticket} = add i64 {issued}, 1\n"));
+        let entry = self.peer_entry(&ticket);
+
+        let len_cell = self.fresh();
+        self.hoist(format!("  {len_cell} = alloca i32\n"));
+        self.out.push_str(&format!("  store i32 16, ptr {len_cell}\n"));
+        let moved_cell = self.fresh();
+        let reason_cell = self.fresh();
+        self.hoist(format!("  {moved_cell} = alloca i64\n"));
+        self.hoist(format!("  {reason_cell} = alloca i64\n"));
+        let no_room = self.fresh();
+        self.out.push_str(&format!("  {no_room} = icmp eq i64 {room}, 0\n"));
+        let no_cell = self.fresh();
+        self.out.push_str(&format!("  {no_cell} = icmp eq i64 {cells}, 0\n"));
+        let refused = self.fresh();
+        self.out.push_str(&format!("  {refused} = or i1 {no_room}, {no_cell}\n"));
+        let n = self.blocks;
+        self.blocks += 1;
+        let (refuse, receive, merge, record, after) = (
+            format!("nofrom{n}"),
+            format!("from{n}"),
+            format!("frommerge{n}"),
+            format!("fromrecord{n}"),
+            format!("fromafter{n}"),
+        );
+        self.out.push_str(&format!("  br i1 {refused}, label %{refuse}, label %{receive}\n"));
+
+        self.out.push_str(&format!("{refuse}:\n"));
+        self.out.push_str(&format!("  store i64 -1, ptr {moved_cell}\n"));
+        self.out.push_str(&format!("  store i64 {EINVAL}, ptr {reason_cell}\n"));
+        self.out.push_str(&format!("  br label %{merge}\n"));
+
+        self.out.push_str(&format!("{receive}:\n"));
+        let got = self.fresh();
+        self.out.push_str(&format!(
+            "  {got} = call i64 @recvfrom(i32 {fd}, ptr {buf}, i64 {room}, i32 {}, ptr {entry}, ptr {len_cell})\n",
+            os.msg_trunc
+        ));
+        let errno = self.errno();
+        self.out.push_str(&format!("  store i64 {got}, ptr {moved_cell}\n"));
+        self.out.push_str(&format!("  store i64 {}, ptr {reason_cell}\n", operand(&errno)));
+        self.out.push_str(&format!("  br label %{merge}\n"));
+
+        self.out.push_str(&format!("{merge}:\n"));
+        let moved = self.fresh();
+        self.out.push_str(&format!("  {moved} = load i64, ptr {moved_cell}\n"));
+        let reason = self.fresh();
+        self.out.push_str(&format!("  {reason} = load i64, ptr {reason_cell}\n"));
+        // Only a datagram that arrived is remembered and ticketed.
+        let arrived = self.fresh();
+        self.out.push_str(&format!("  {arrived} = icmp sge i64 {moved}, 0\n"));
+        self.out.push_str(&format!("  br i1 {arrived}, label %{record}, label %{after}\n"));
+
+        self.out.push_str(&format!("{record}:\n"));
+        self.store_field(&entry, cancho_ir::UDP_PEER_TICKET_AT, "i64", &ticket);
+        self.store_field(&entry, cancho_ir::UDP_PEER_FD_AT, "i32", &fd);
+        self.out.push_str(&format!("  store i64 {ticket}, ptr {counter}\n"));
+        self.out.push_str(&format!("  store i64 {ticket}, ptr {cells_at}\n"));
+        self.out.push_str(&format!("  br label %{after}\n"));
+
+        self.out.push_str(&format!("{after}:\n"));
+        Ok(self.datagram_leaves(&moved, &reason, &room))
+    }
+
+    /// `udp_send_to(&!Udp, &[byte], ticket)` (`docs/udp.md` §4): `sendto` the sender a ticket names,
+    /// if the ticket is positive, is still the one its ring entry holds, and was issued to *this*
+    /// socket; otherwise `Failed(EBADF)` and nothing is sent. `Sent` is `Wrote` 0, `Again` 1,
+    /// `Failed` 2.
+    pub(crate) fn udp_send_to(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        let os = self.os();
+        let fd = self.handle_fd(&args[0]);
+        let (buf, length, ticket) = (operand(&args[1]), operand(&args[2]), operand(&args[3]));
+        let entry = self.peer_entry(&ticket);
+
+        let stored = self.load_field(&entry, cancho_ir::UDP_PEER_TICKET_AT, "i64");
+        let owner = self.load_field(&entry, cancho_ir::UDP_PEER_FD_AT, "i32");
+        let positive = self.fresh();
+        self.out.push_str(&format!("  {positive} = icmp sgt i64 {ticket}, 0\n"));
+        let current = self.fresh();
+        self.out.push_str(&format!("  {current} = icmp eq i64 {stored}, {ticket}\n"));
+        let mine = self.fresh();
+        self.out.push_str(&format!("  {mine} = icmp eq i32 {owner}, {fd}\n"));
+        let both = self.fresh();
+        self.out.push_str(&format!("  {both} = and i1 {positive}, {current}\n"));
+        let valid = self.fresh();
+        self.out.push_str(&format!("  {valid} = and i1 {both}, {mine}\n"));
+
+        let moved_cell = self.fresh();
+        let reason_cell = self.fresh();
+        self.hoist(format!("  {moved_cell} = alloca i64\n"));
+        self.hoist(format!("  {reason_cell} = alloca i64\n"));
+        let n = self.blocks;
+        self.blocks += 1;
+        let (refuse, send, merge) =
+            (format!("notto{n}"), format!("sendto{n}"), format!("sendtomerge{n}"));
+        self.out.push_str(&format!("  br i1 {valid}, label %{send}, label %{refuse}\n"));
+
+        self.out.push_str(&format!("{refuse}:\n"));
+        self.out.push_str(&format!("  store i64 -1, ptr {moved_cell}\n"));
+        self.out.push_str(&format!("  store i64 {EBADF}, ptr {reason_cell}\n"));
+        self.out.push_str(&format!("  br label %{merge}\n"));
+
+        self.out.push_str(&format!("{send}:\n"));
+        let sent = self.fresh();
+        self.out.push_str(&format!(
+            "  {sent} = call i64 @sendto(i32 {fd}, ptr {buf}, i64 {length}, i32 {}, ptr {entry}, i32 16)\n",
+            os.msg_nosignal
+        ));
+        let errno = self.errno();
+        self.out.push_str(&format!("  store i64 {sent}, ptr {moved_cell}\n"));
+        self.out.push_str(&format!("  store i64 {}, ptr {reason_cell}\n", operand(&errno)));
+        self.out.push_str(&format!("  br label %{merge}\n"));
+
+        self.out.push_str(&format!("{merge}:\n"));
+        let moved = self.fresh();
+        self.out.push_str(&format!("  {moved} = load i64, ptr {moved_cell}\n"));
+        let reason = self.fresh();
+        self.out.push_str(&format!("  {reason} = load i64, ptr {reason_cell}\n"));
+        let negative = self.fresh();
+        self.out.push_str(&format!("  {negative} = icmp slt i64 {moved}, 0\n"));
+        let would_wait = self.fresh();
+        self.out.push_str(&format!("  {would_wait} = icmp eq i64 {reason}, {}\n", os.eagain));
+        let bad = self.fresh();
+        self.out.push_str(&format!("  {bad} = select i1 {would_wait}, i64 1, i64 2\n"));
+        let tag = self.fresh();
+        self.out.push_str(&format!("  {tag} = select i1 {negative}, i64 {bad}, i64 0\n"));
+        Ok(vec![LValue::Reg(tag), LValue::Reg(moved), LValue::Reg(reason)])
     }
 
     /// `udp_local_port(&Udp)`: the port the kernel chose, from `getsockname`, or `-errno`.

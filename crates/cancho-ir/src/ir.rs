@@ -542,6 +542,9 @@ pub enum Expr {
     TcpListen {
         bound: String,
         args: Vec<Expr>,
+        /// `udp_bind` (`docs/udp.md` §2): the same walk on a datagram socket, without `listen`,
+        /// answering a `UdpOpened`.
+        datagram: bool,
     },
     /// `tcp_connect(net, host, port)` -- `docs/native-sockets.md` §3,
     /// edition 5: `connect`'s check and walk answering a `Dialed`. `args` is

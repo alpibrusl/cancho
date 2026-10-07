@@ -5,7 +5,7 @@
 
 use super::net::port_bound_of;
 use crate::*;
-use cancho_ir::{EINVAL, F_GETFL, F_SETFD, F_SETFL, FD_CLOEXEC, SocketOs};
+use cancho_ir::{EBADF, EINVAL, F_GETFL, F_SETFD, F_SETFL, FD_CLOEXEC, SocketOs};
 
 impl<'a, 'f> BodyEmitter<'a, 'f> {
     pub(crate) fn is_darwin(&self) -> bool {
@@ -184,7 +184,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     /// own for the walk. Answers `Listening`'s three leaves: tag (`Ok` 0,
     /// `Failed` 1), descriptor, `errno` read before the `close` that would
     /// overwrite it.
-    pub(crate) fn tcp_listen(&mut self, bound: &str, args: &[Expr]) -> Vec<Value> {
+    pub(crate) fn tcp_listen(&mut self, bound: &str, args: &[Expr], datagram: bool) -> Vec<Value> {
         let pointer = self.pointer;
         let os = self.socket_os();
         let port = self.scalar(&args[1]);
@@ -216,7 +216,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
             self.builder.ins().store(MemFlags::trusted(), zero8, addr, i);
         }
 
-        let fd = self.tcp_socket();
+        let fd = if datagram { self.udp_socket() } else { self.tcp_socket() };
 
         // merge(descriptor, errno)
         let merge = self.builder.create_block();
@@ -270,8 +270,12 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         self.builder.switch_to_block(bound_ok);
         self.builder.seal_block(bound_ok);
         let backlog = self.builder.ins().ireduce(types::I32, backlog);
-        let listened =
-            self.libc_call("listen", &[types::I32, types::I32], &[types::I32], &[fd, backlog]);
+        // A datagram socket has nothing to listen for (`docs/udp.md` §2).
+        let listened = if datagram {
+            self.builder.ins().iconst(types::I32, 0)
+        } else {
+            self.libc_call("listen", &[types::I32, types::I32], &[types::I32], &[fd, backlog])
+        };
         let listening = self.builder.create_block();
         let listen_failed = self.builder.create_block();
         let ok = self.builder.ins().icmp_imm(IntCC::Equal, listened, 0);
@@ -431,12 +435,19 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         self.builder.seal_block(merge);
         let moved = self.builder.block_params(merge)[0];
         let reason = self.builder.block_params(merge)[1];
+        self.datagram_leaves(moved, reason, args[2])
+    }
 
+    /// `Datagram`'s leaves `[tag, got, truncated, errno]` from what `recv` answered (`moved`, or a
+    /// negative number with `reason`) and the buffer's length: `Got` 0, `Truncated` 1, `Again` 2,
+    /// `Failed` 3.
+    fn datagram_leaves(&mut self, moved: Value, reason: Value, room: Value) -> Vec<Value> {
+        let os = self.socket_os();
         let negative = self.builder.ins().icmp_imm(IntCC::SignedLessThan, moved, 0);
         let cut = if self.is_darwin() {
-            self.builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, moved, args[2])
+            self.builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, moved, room)
         } else {
-            self.builder.ins().icmp(IntCC::SignedGreaterThan, moved, args[2])
+            self.builder.ins().icmp(IntCC::SignedGreaterThan, moved, room)
         };
         let would_wait = self.builder.ins().icmp_imm(IntCC::Equal, reason, os.eagain);
         let zero = self.builder.ins().iconst(types::I64, 0);
@@ -447,6 +458,168 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         let delivered = self.builder.ins().select(cut, one, zero);
         let tag = self.builder.ins().select(negative, bad, delivered);
         vec![tag, moved, moved, reason]
+    }
+
+    /// The address of the peer-ring entry a ticket names, and the address of the ticket counter.
+    fn peer_entry(&mut self, ticket: Value) -> (Value, Value) {
+        let ring = self.global(cancho_ir::UDP_PEER_GLOBAL);
+        let slot = self.builder.ins().band_imm(ticket, cancho_ir::UDP_PEER_SLOTS - 1);
+        let offset = self.builder.ins().imul_imm(slot, cancho_ir::UDP_PEER_STRIDE);
+        let entry = self.builder.ins().iadd(ring, offset);
+        let counter = self
+            .builder
+            .ins()
+            .iadd_imm(ring, cancho_ir::UDP_PEER_SLOTS * cancho_ir::UDP_PEER_STRIDE);
+        (entry, counter)
+    }
+
+    /// `udp_recv_from(&!Udp, &![byte], &![int])` (`docs/udp.md` §4): `udp_recv` that also writes the
+    /// sender into the next entry of the peer ring and a ticket for it into the first cell of the
+    /// `int` slice. An empty buffer or an empty ticket slice is `Failed(EINVAL)` before the kernel.
+    pub(crate) fn udp_recv_from(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let os = self.socket_os();
+        let fd = self.handle_fd(args[0]);
+        let (buf, room, cells_at, cells) = (args[1], args[2], args[3], args[4]);
+
+        // The ticket this datagram will be issued under, and the entry it will land in.
+        let probe = self.global(cancho_ir::UDP_PEER_GLOBAL);
+        let counter_at = self
+            .builder
+            .ins()
+            .iadd_imm(probe, cancho_ir::UDP_PEER_SLOTS * cancho_ir::UDP_PEER_STRIDE);
+        let issued = self.builder.ins().load(types::I64, MemFlags::trusted(), counter_at, 0);
+        let ticket = self.builder.ins().iadd_imm(issued, 1);
+        let (entry, counter) = self.peer_entry(ticket);
+
+        let len_slot = self.builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            4,
+            2,
+        ));
+        let len_at = self.builder.ins().stack_addr(pointer, len_slot, 0);
+        let sixteen = self.builder.ins().iconst(types::I32, 16);
+        self.builder.ins().store(MemFlags::trusted(), sixteen, len_at, 0);
+
+        let merge = self.builder.create_block();
+        self.builder.append_block_param(merge, types::I64);
+        self.builder.append_block_param(merge, types::I64);
+        let refuse = self.builder.create_block();
+        let receive = self.builder.create_block();
+        let no_room = self.builder.ins().icmp_imm(IntCC::Equal, room, 0);
+        let no_cell = self.builder.ins().icmp_imm(IntCC::Equal, cells, 0);
+        let refused = self.builder.ins().bor(no_room, no_cell);
+        self.builder.ins().brif(refused, refuse, &[], receive, &[]);
+
+        self.builder.switch_to_block(refuse);
+        self.builder.seal_block(refuse);
+        let minus_one = self.builder.ins().iconst(types::I64, -1);
+        let einval = self.builder.ins().iconst(types::I64, EINVAL);
+        self.builder.ins().jump(merge, &[minus_one.into(), einval.into()]);
+
+        self.builder.switch_to_block(receive);
+        self.builder.seal_block(receive);
+        let flags = self.builder.ins().iconst(types::I32, os.msg_trunc);
+        let got = self.libc_call(
+            "recvfrom",
+            &[types::I32, pointer, types::I64, types::I32, pointer, pointer],
+            &[types::I64],
+            &[fd, buf, room, flags, entry, len_at],
+        );
+        let errno = self.errno();
+        self.builder.ins().jump(merge, &[got.into(), errno.into()]);
+
+        self.builder.switch_to_block(merge);
+        self.builder.seal_block(merge);
+        let moved = self.builder.block_params(merge)[0];
+        let reason = self.builder.block_params(merge)[1];
+
+        // Only a datagram that arrived is remembered and ticketed.
+        let record = self.builder.create_block();
+        let after = self.builder.create_block();
+        let arrived = self.builder.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, moved, 0);
+        self.builder.ins().brif(arrived, record, &[], after, &[]);
+
+        self.builder.switch_to_block(record);
+        self.builder.seal_block(record);
+        self.builder.ins().store(MemFlags::trusted(), ticket, entry, cancho_ir::UDP_PEER_TICKET_AT);
+        self.builder.ins().store(MemFlags::trusted(), fd, entry, cancho_ir::UDP_PEER_FD_AT);
+        self.builder.ins().store(MemFlags::trusted(), ticket, counter, 0);
+        self.builder.ins().store(MemFlags::trusted(), ticket, cells_at, 0);
+        self.builder.ins().jump(after, &[]);
+
+        self.builder.switch_to_block(after);
+        self.builder.seal_block(after);
+        self.datagram_leaves(moved, reason, room)
+    }
+
+    /// `udp_send_to(&!Udp, &[byte], ticket)` (`docs/udp.md` §4): `sendto` the sender a ticket names,
+    /// if the ticket is positive, is still the one its ring entry holds, and was issued to *this*
+    /// socket; otherwise `Failed(EBADF)` and nothing is sent. `Sent` is `Wrote` 0, `Again` 1,
+    /// `Failed` 2.
+    pub(crate) fn udp_send_to(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let os = self.socket_os();
+        let fd = self.handle_fd(args[0]);
+        let (buf, length, ticket) = (args[1], args[2], args[3]);
+        let (entry, _) = self.peer_entry(ticket);
+
+        let stored = self.builder.ins().load(
+            types::I64,
+            MemFlags::trusted(),
+            entry,
+            cancho_ir::UDP_PEER_TICKET_AT,
+        );
+        let owner = self.builder.ins().load(
+            types::I32,
+            MemFlags::trusted(),
+            entry,
+            cancho_ir::UDP_PEER_FD_AT,
+        );
+        let positive = self.builder.ins().icmp_imm(IntCC::SignedGreaterThan, ticket, 0);
+        let current = self.builder.ins().icmp(IntCC::Equal, stored, ticket);
+        let mine = self.builder.ins().icmp(IntCC::Equal, owner, fd);
+        let valid = self.builder.ins().band(positive, current);
+        let valid = self.builder.ins().band(valid, mine);
+
+        let merge = self.builder.create_block();
+        self.builder.append_block_param(merge, types::I64);
+        self.builder.append_block_param(merge, types::I64);
+        let refuse = self.builder.create_block();
+        let send = self.builder.create_block();
+        self.builder.ins().brif(valid, send, &[], refuse, &[]);
+
+        self.builder.switch_to_block(refuse);
+        self.builder.seal_block(refuse);
+        let minus_one = self.builder.ins().iconst(types::I64, -1);
+        let ebadf = self.builder.ins().iconst(types::I64, EBADF);
+        self.builder.ins().jump(merge, &[minus_one.into(), ebadf.into()]);
+
+        self.builder.switch_to_block(send);
+        self.builder.seal_block(send);
+        let flags = self.builder.ins().iconst(types::I32, os.msg_nosignal);
+        let sixteen = self.builder.ins().iconst(types::I32, 16);
+        let moved = self.libc_call(
+            "sendto",
+            &[types::I32, pointer, types::I64, types::I32, pointer, types::I32],
+            &[types::I64],
+            &[fd, buf, length, flags, entry, sixteen],
+        );
+        let errno = self.errno();
+        self.builder.ins().jump(merge, &[moved.into(), errno.into()]);
+
+        self.builder.switch_to_block(merge);
+        self.builder.seal_block(merge);
+        let moved = self.builder.block_params(merge)[0];
+        let reason = self.builder.block_params(merge)[1];
+        let negative = self.builder.ins().icmp_imm(IntCC::SignedLessThan, moved, 0);
+        let would_wait = self.builder.ins().icmp_imm(IntCC::Equal, reason, os.eagain);
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        let one = self.builder.ins().iconst(types::I64, 1);
+        let two = self.builder.ins().iconst(types::I64, 2);
+        let bad = self.builder.ins().select(would_wait, one, two);
+        let tag = self.builder.ins().select(negative, bad, zero);
+        vec![tag, moved, reason]
     }
 
     /// `udp_local_port(&Udp)`: the port the kernel chose, from `getsockname`, or `-errno`.

@@ -104,6 +104,9 @@ pub fn wasi_gap(builtin: Builtin) -> Option<Gap> {
         | B::ConnRead
         | B::ConnWrite
         | B::UdpConnect
+        | B::UdpBind
+        | B::UdpRecvFrom
+        | B::UdpSendTo
         | B::UdpRecv
         | B::UdpSend
         | B::UdpLocalPort

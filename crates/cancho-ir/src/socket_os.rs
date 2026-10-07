@@ -72,6 +72,8 @@ impl SocketOs {
 
 /// `EINVAL`, the same on both.
 pub const EINVAL: i64 = 22;
+/// `EBADF`, the same on both: what a ticket nobody issued is refused with.
+pub const EBADF: i64 = 9;
 /// `fcntl` commands, the same on both.
 pub const F_GETFL: i64 = 3;
 pub const F_SETFL: i64 = 4;
@@ -84,3 +86,16 @@ pub const FD_CLOEXEC: i64 = 1;
 pub const FD_EPOCH_SLOTS: i64 = 65536;
 /// The epoch table's symbol, defined once per program by the entry point.
 pub const FD_EPOCH_GLOBAL: &str = "lexs_fd_epoch";
+
+/// The peer ring (`docs/udp.md` §4): how many senders `udp_recv_from` remembers, each a
+/// `UDP_PEER_STRIDE`-byte entry (a `sockaddr_in`, then the ticket it was issued under as an `i64`,
+/// then the descriptor that received it as an `i32`), followed by the 8-byte count of tickets issued.
+pub const UDP_PEER_SLOTS: i64 = 65536;
+pub const UDP_PEER_STRIDE: i64 = 32;
+/// Where in an entry the ticket is stored, and the descriptor.
+pub const UDP_PEER_TICKET_AT: i32 = 16;
+pub const UDP_PEER_FD_AT: i32 = 24;
+/// The ring's symbol, defined once per program by the entry point: the entries, then the counter.
+pub const UDP_PEER_GLOBAL: &str = "lexs_udp_peers";
+/// The ring's size in bytes, counter included.
+pub const UDP_PEER_BYTES: usize = (UDP_PEER_SLOTS * UDP_PEER_STRIDE) as usize + 8;
