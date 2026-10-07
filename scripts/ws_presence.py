@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The Redis workload a charge-point registry needs, run against any RESP server (Redis or lexsys-cache).
+"""The Redis workload a charge-point registry needs, run against any RESP server (Redis or cancho-cache).
 
     python3 scripts/ws_presence.py --port 6380 --pid PID [--keys 10000] [--rate 333] [--seconds 30]
 

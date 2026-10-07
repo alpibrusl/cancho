@@ -4,7 +4,7 @@
     python3 scripts/process_mutants.py [--capture] [name-substring ...]
 
 Without `--capture`, the poller (slice 2) and the spawn's working directory
-(§4.10) against the process tests; with it, `std/process.ls` (slice 3, and
+(§4.10) against the process tests; with it, `std/process.cho` (slice 3, and
 `capture_both`, §7.2) against the capture tests.
 
 Each mutant is one backend source file with one deliberate bug, at one site.
@@ -29,12 +29,12 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LIMIT = 300
 
-CL_PROCESS = "crates/lex-sys-codegen/src/body/process.rs"
-LL_PROCESS = "crates/lex-sys-codegen-llvm/src/body/process.rs"
-CL_POLLER = "crates/lex-sys-codegen/src/body/poller.rs"
-LL_POLLER = "crates/lex-sys-codegen-llvm/src/body/poller.rs"
-CL_EXPR = "crates/lex-sys-codegen/src/body/expr.rs"
-LL_EXPR = "crates/lex-sys-codegen-llvm/src/body/expr.rs"
+CL_PROCESS = "crates/cancho-codegen/src/body/process.rs"
+LL_PROCESS = "crates/cancho-codegen-llvm/src/body/process.rs"
+CL_POLLER = "crates/cancho-codegen/src/body/poller.rs"
+LL_POLLER = "crates/cancho-codegen-llvm/src/body/poller.rs"
+CL_EXPR = "crates/cancho-codegen/src/body/expr.rs"
+LL_EXPR = "crates/cancho-codegen-llvm/src/body/expr.rs"
 
 # (name, file, the text replaced, its replacement). Each `old` occurs exactly
 # once in its file. The two already run (cl `pidfd` not closed, cl wrong pid,
@@ -161,7 +161,7 @@ CWD = [
 
 MUTANTS = MUTANTS + CWD
 
-PROCESS = "std/process.ls"
+PROCESS = "std/process.cho"
 
 # Slice 3: each choice §7.1 makes, undone.
 CAPTURE = [

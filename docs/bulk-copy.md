@@ -6,7 +6,7 @@ Status: **built**, edition 5, both backends.
 
 Moving bytes from one slice into another had one spelling: a loop of `dst[i] = src[i]`. Every program that assembles output writes
 it, and `std.buffer` wrote it twice (`reserve`'s copy into the bigger box, and `append`). On Cranelift the loop is a load, a store,
-two bounds checks and a branch per byte; clang vectorises it on LLVM, but not to a block move. `lexsys-tools` (#214) wrote its own
+two bounds checks and a branch per byte; clang vectorises it on LLVM, but not to a block move. `cancho-tools` (#214) wrote its own
 copy for the same reason, and its output path pays for it on every line it prints.
 
 [`memory-moves.md`](memory-moves.md)'s `copy_within` already lowers to `memmove`, but it moves bytes **inside one slice**: it cannot
@@ -24,7 +24,7 @@ it; the sub-slices carry their own checks, so the builtin needs only the one. It
 its cursor. It has no effect row and needs no capability.
 
 **`memmove`, not `memcpy`.** The two slices may be views of one buffer: the checker accepts `copy_into(xs[2..8], xs[0..5])`, a
-unique and a shared view of the same allocation in one call (`tests/accept/copy_into.ls` does it, in both directions). `memcpy` is
+unique and a shared view of the same allocation in one call (`tests/accept/copy_into.cho` does it, in both directions). `memcpy` is
 undefined on overlap; `memmove` is defined, and on glibc for non-overlapping ranges it costs the same.
 
 Cranelift checks and calls `memmove` as `copy_within` does; LLVM checks and calls the `memmove` it already declares (only when the
@@ -48,14 +48,14 @@ matters.
 
 ## 4. What it is checked by
 
-* `tests/accept/copy_into.ls`, on **both backends** (`tests/conformance/backends.rs`): between two slices, with the destination's
+* `tests/accept/copy_into.cho`, on **both backends** (`tests/conformance/backends.rs`): between two slices, with the destination's
   tail untouched; exactly full; nothing into something and nothing into nothing; overlapping views of one buffer in both directions
   (the forward case is the one a front-to-back loop smears); and `std.buffer` growing through forty appends and several doublings,
   every byte read back.
 * `tests/conformance/traps.rs`: three sources that do not fit (one byte too many, anything into an empty view, a longer slice)
   killed by a signal on **both backends**, and three calls at the edge that must succeed (exactly full, nothing into nothing, one
   byte into the last).
-* `tests/reject/copy_into_is_edition_five.ls`: an edition-4 file does not see the name.
+* `tests/reject/copy_into_is_edition_five.cho`: an edition-4 file does not see the name.
 
 **Mutants: twelve, eleven killed.** Killed, on each backend: no length check, `>=` for `>` (the exactly-full case), answering 0,
 copying the destination's length instead of the source's; and the builtin at edition 4 (the reject fixture), `append` copying to

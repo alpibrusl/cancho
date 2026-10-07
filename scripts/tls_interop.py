@@ -5,7 +5,7 @@
 
     python3 scripts/tls_interop.py <tls_many> [<server> ...]
 
-`tls_many` is `tests/programs/tls_many.ls` built with `packages/tls` and
+`tls_many` is `tests/programs/tls_many.cho` built with `packages/tls` and
 `packages/x509`. The servers, each skipped with the reason when it cannot run:
 
     go        Go's crypto/tls (scripts/interop/go_server.go; `go` on PATH)
@@ -128,7 +128,7 @@ http {{
     ssl_certificate c.pem; ssl_certificate_key k.pem;
     ssl_protocols {protocol};
     {suites}
-    location / {{ return 200 "hello, lexsys"; }}
+    location / {{ return 200 "hello, cancho"; }}
   }}
 }}
 """

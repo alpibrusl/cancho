@@ -40,7 +40,7 @@ README:
 `&!` is a lock on the **binding** for a block. `borrow mut x as &!r in
 { … }` freezes `x` — nothing may read it, move it, assign to it or
 borrow it again while the block runs, and `linear.rs` enforces all four
-(`tests/reject/two_unique_borrows.ls` and four siblings). That is a real
+(`tests/reject/two_unique_borrows.cho` and four siblings). That is a real
 guarantee and it is the one the language delivers.
 
 What it is **not** is a promise about *references*. A `&!r T` value is
@@ -51,7 +51,7 @@ binding says nothing about how many copies of the pointer are in flight.
 
 ## 2. The corpus, counted
 
-A temporary probe in `crates/lex-sys-ir/src/lib.rs` — at the call-argument
+A temporary probe in `crates/cancho-ir/src/lib.rs` — at the call-argument
 loop, and at the lowering of a name to `Expr::Load` — reported every
 reference-typed argument's root place and every read of a `&!` binding,
 under an environment variable. The corpus is every program the repository
@@ -75,7 +75,7 @@ fixtures alias on purpose, so they would each add a row to the table;
 leaving them out is what makes it a measurement of the corpus rather
 than of this document.
 
-The single aliasing call site is `before` in `examples/sort/sort.ls` (named by function, not line: this sentence said `:148` when the call was already on line 177, and a formatter moves lines):
+The single aliasing call site is `before` in `examples/sort/sort.cho` (named by function, not line: this sentence said `:148` when the call was already on line 177, and a formatter moves lines):
 
 ```
 bytes.compare(text[a_at..a_at + a_len], text[b_at..b_at + b_len])
@@ -83,7 +83,7 @@ bytes.compare(text[a_at..a_at + a_len], text[b_at..b_at + b_len])
 
 Two overlapping-by-construction views of one buffer, both **shared**.
 Rust accepts it, C accepts it, and no uniqueness rule would refuse it.
-So: in every line of lex-sys this repository has, **nothing aliases a
+So: in every line of cancho this repository has, **nothing aliases a
 unique reference except the fixtures written to prove it can**.
 
 That is the number the ROADMAP row wanted, and it says the rule is cheap.
@@ -99,7 +99,7 @@ second write, read back through the first reference.
 ### Route 1 — the same place twice
 
 ```
-both(s, s)      // tests/accept/aliasing_same_place_twice.ls
+both(s, s)      // tests/accept/aliasing_same_place_twice.cho
 ```
 
 Closed by a syntactic rule: no two reference arguments of one call may
@@ -111,7 +111,7 @@ reaches for first, and it is worth exactly as much as §3.2 leaves it.
 ### Route 2 — a copy into another binding
 
 ```
-let t = s;      // tests/accept/aliasing_through_a_copy.ls
+let t = s;      // tests/accept/aliasing_through_a_copy.cho
 both(s, t)
 ```
 
@@ -124,10 +124,10 @@ reference handed to a call is a fresh borrow that ends when the call
 does, which is what Rust does silently at every `&mut` argument.
 
 The reborrow is not optional. Without it the corpus loses **1,943**
-reads, 154 of them inside the standard library; `examples/tour.ls` alone
+reads, 154 of them inside the standard library; `examples/tour.cho` alone
 reads a `&!` binding in 372 distinct places. With it, the cost of the
 move rule is the **2** places that copy a `&!` into a new binding, both
-of them in `tests/accept/unique_borrow.ls`, whose comment says what it
+of them in `tests/accept/unique_borrow.cho`, whose comment says what it
 is doing:
 
 > `&!r` is `val`, so it copies — and the copies are copies of one
@@ -136,7 +136,7 @@ is doing:
 
 A slice makes the same copy without a binding:
 `alloc_slice[r](4, s)` is four aliases of one object
-(`tests/accept/aliasing_in_a_slice_of_references.ls`). A **struct**
+(`tests/accept/aliasing_in_a_slice_of_references.cho`). A **struct**
 cannot: a type declaration takes no region parameters, so a field can
 only name a region that needs none — `&static`, read-only data that
 aliases no arena. That asymmetry is the reason route 2 is bounded at all.
@@ -145,7 +145,7 @@ aliases no arena. That asymmetry is the reason route 2 is bounded at all.
 
 ```
 fn head[&a](s: &!a [int]) -> [] &!a [int] { return s[0..1]; }
-both(head(s), s)          // tests/accept/aliasing_through_a_return.ls
+both(head(s), s)          // tests/accept/aliasing_through_a_return.cho
 ```
 
 This one has no syntactic fix. The caller sees two expressions of the
@@ -218,7 +218,7 @@ rather than a preference.
 ## 5. The other end: the backend cannot take the answer
 
 Suppose the checker proved it anyway. The fact has one consumer — the
-code generator — and lex-sys generates through Cranelift 0.121.2, which
+code generator — and cancho generates through Cranelift 0.121.2, which
 does not have the concept.
 
 * `ir::AbiParam` is `{ value_type, purpose, extension }`. `purpose` is
@@ -250,7 +250,7 @@ In the order that would make it worth reopening:
 | **Provenance in signatures** | Lifetimes, in some form the non-goals can live with | Route 3, and with it the word "unique" |
 
 > **Update: threads exist, and the second condition is met.** `spawn` (#128) lets two threads hold copies of one
-> `&!`; the checker accepted it and the writes raced. Measured in `atomics.md` §2 (`benches/atomics/race.ls`: two
+> `&!`; the checker accepted it and the writes raced. Measured in `atomics.md` §2 (`benches/atomics/race.cho`: two
 > threads, one counter, updates lost on every run on both backends). The correctness argument is no longer
 > nil. **§6.1 closes it for `spawn`, and only for `spawn`**: routes 2 and 3 are still open everywhere else.
 
@@ -272,7 +272,7 @@ It needs the one fact route 2 lacked at one call: *this reference has been given
 * the lease ends at `join(h)` where `h` is the binding that took the handle, or at `join(spawn(..))`. A branch must
   agree on whether it is held, and a loop must leave it as it found it;
 * a handle passed on any other way (to a function that joins it, into a tuple) keeps its lease for the rest of the
-  borrow. That **refuses** a program that would have been fine rather than admitting one that races. (`tests/reject/spawn_unique_loop_lease_survives.ls`, `spawn_unique_branches_disagree.ls`.)
+  borrow. That **refuses** a program that would have been fine rather than admitting one that races. (`tests/reject/spawn_unique_loop_lease_survives.cho`, `spawn_unique_branches_disagree.cho`.)
 
 What it does not close, stated so it is not read as more:
 
@@ -286,7 +286,7 @@ What it does not close, stated so it is not read as more:
 * the object under `borrow shared` is `&`, which nothing writes through, and is unaffected.
 
 **Cost, measured:** across the repository `cargo test --workspace` and the 82-program corpus of §2, the only programs
-this refused were `benches/atomics/race.ls` and `benches/atomics/sb.ls`, the two that exist to demonstrate the hole.
+this refused were `benches/atomics/race.cho` and `benches/atomics/sb.cho`, the two that exist to demonstrate the hole.
 They no longer compile and are kept, with their measurements, as the record. No `tests/accept/` fixture, example or
 package spawned a `&!` twice.
 

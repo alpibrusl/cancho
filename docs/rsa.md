@@ -11,10 +11,10 @@
 
 | File | What |
 |---|---|
-| `std/bigmod.ls`, `module std.bigmod` | unsigned integers mod an odd `n` of up to 4,096 bits, in Montgomery form: `pow_mod(n, e, a, out, work)` over big-endian bytes |
-| `std/rsa.ls`, `module std.rsa` | `pkcs1_verify` (RSASSA-PKCS1-v1_5, RFC 8017 §8.2.2) and `pss_verify` (RSASSA-PSS, §8.1.2), over SHA-256, SHA-384 and SHA-512 |
+| `std/bigmod.cho`, `module std.bigmod` | unsigned integers mod an odd `n` of up to 4,096 bits, in Montgomery form: `pow_mod(n, e, a, out, work)` over big-endian bytes |
+| `std/rsa.cho`, `module std.rsa` | `pkcs1_verify` (RSASSA-PKCS1-v1_5, RFC 8017 §8.2.2) and `pss_verify` (RSASSA-PSS, §8.1.2), over SHA-256, SHA-384 and SHA-512 |
 
-`std/bignum.ls` already exists. It is a small decimal number type for float printing, not modular arithmetic, so the new module
+`std/bignum.cho` already exists. It is a small decimal number type for float printing, not modular arithmetic, so the new module
 gets its own name rather than growing that one.
 
 **Verification only.** No signing, no decryption, no key generation. Nothing here touches a secret: the modulus, the exponent,
@@ -68,7 +68,7 @@ wrapping would give a wrong answer silently.
   finding C-1 (#317):* `pow_mod` does a multiplication or two a bit of `e`, and the server sends both the key and the chain, so
   a 4,095-bit exponent made one RSA-4096 verification about 250 times 65537's, and the path builder tries up to 64. 64 bits is
   OpenSSL's bound for moduli over 3,072 bits (`RSA_MAX_PUBEXP_BITS`); BoringSSL's is 33, and the Web PKI uses 65537.
-  Measured on an Apple M4 (LLVM, `tests/programs/rsa_driver.ls`'s `M`, a 4,096-bit modulus, best of 5): 0.79 ms with 65537,
+  Measured on an Apple M4 (LLVM, `tests/programs/rsa_driver.cho`'s `M`, a 4,096-bit modulus, best of 5): 0.79 ms with 65537,
   3.15 ms with 2^64 − 1, 176 ms with 2^4095 − 1.
 - The modulus and exponent come in as big-endian bytes, as `packages/x509` locates them (`view[rsa_modulus_*]`).
 
@@ -146,7 +146,7 @@ bad key, never a `bigmod-*` one.
   `openssl dgst -verify` and `std.rsa`. The two must give the same answer every time.
 - **Cost:** verifications per second for 2,048 and 4,096 bits, on both backends, with the command used.
 
-All of it is run by `tests/programs/rsa_driver.ls`, which reads one case per line. `crates/lex-sys/tests/conformance/rsa.rs`
+All of it is run by `tests/programs/rsa_driver.cho`, which reads one case per line. `crates/cancho/tests/conformance/rsa.rs`
 runs the vectors and the refusals; `scripts/rsa_differential.py` runs Python and OpenSSL; `scripts/rsa_mutants.py` checks
 that the vectors would notice a bug (§5.4).
 
@@ -211,8 +211,8 @@ The files give a reason for each F: the message changed, `e` changed, the signat
 
 ### 5.4 Mutants
 
-`python3 scripts/rsa_mutants.py target/release/lex-sys`: **23 mutants, 23 killed**. Each mutant is one plausible bug in
-`std/bigmod.ls` or `std/rsa.ls`. The script builds it and runs §5.1 and §5.2's cases, the refusal rows and 2,000 `pow_mod`
+`python3 scripts/rsa_mutants.py target/release/cancho`: **23 mutants, 23 killed**. Each mutant is one plausible bug in
+`std/bigmod.cho` or `std/rsa.cho`. The script builds it and runs §5.1 and §5.2's cases, the refusal rows and 2,000 `pow_mod`
 rounds. Three mutants survived the first version of the script, and each one taught something:
 
 - **Lazy final reduction.** Montgomery multiplication was changed to subtract `n` only when the result overflows a limb. It

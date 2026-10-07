@@ -11,9 +11,9 @@
 #
 #   gcc -O2 -o kload benches/server/kload.c -lpthread   (a sixth argument, `lat`, adds latency percentiles)
 #   gcc -O2 -o cpoll benches/server/cpoll.c
-#   PORT=19001 benches/server/bench.sh "lex-sys" 2,3 "taskset -c 0 ./api 19001"
+#   PORT=19001 benches/server/bench.sh "cancho" 2,3 "taskset -c 0 ./api 19001"
 #
-# `./api` is `examples/api/api.ls` plus the fetched `http.server` package, built as
+# `./api` is `examples/api/api.cho` plus the fetched `http.server` package, built as
 # `examples/README.md` shows. The
 # FastAPI baseline is `benches/server/app.py` under
 # `python3 -m uvicorn app:app --port $PORT` (add `--loop uvloop --http httptools`

@@ -40,9 +40,9 @@ jobs:
         run: cargo test --workspace
 
       # The milestone in one line: build the smoke program and run it.
-      - name: Smoke — lex-sys build hello.ls && ./hello
+      - name: Smoke — cancho build hello.cho && ./hello
         run: |
-          cargo run --quiet -p lex-sys -- build examples/hello.ls -o hello
+          cargo run --quiet -p cancho -- build examples/hello.cho -o hello
           ./hello
           test "$(./hello)" = "Hello, world!"
 
@@ -64,10 +64,10 @@ jobs:
 
       - name: Compiler, and the many-connection client
         run: |
-          cargo build --release -p lex-sys
-          ./target/release/lex-sys build --std tests/programs/tls_many.ls \
-            packages/tls/{tls,record,message,slot,client12,client,hello,identity,server}.ls \
-            packages/x509/{verify,names,x509,key}.ls \
+          cargo build --release -p cancho
+          ./target/release/cancho build --std tests/programs/tls_many.cho \
+            packages/tls/{tls,record,message,slot,client12,client,hello,identity,server}.cho \
+            packages/x509/{verify,names,x509,key}.cho \
             -o "$RUNNER_TEMP/tls_many"
 
       - name: The committed package stores are current (docs/package-system.md §7.4)
@@ -90,9 +90,9 @@ jobs:
       - name: The server's interop matrix (docs/tls-server.md §10.2)
         run: |
           echo "127.0.0.1 srv.example other.example a.wild.example" | sudo tee -a /etc/hosts
-          ./target/release/lex-sys build --std tests/programs/tls_serve.ls \
-            packages/tls/{tls,record,message,slot,client12,client,hello,identity,server}.ls \
-            packages/x509/{verify,names,x509,key}.ls \
+          ./target/release/cancho build --std tests/programs/tls_serve.cho \
+            packages/tls/{tls,record,message,slot,client12,client,hello,identity,server}.cho \
+            packages/x509/{verify,names,x509,key}.cho \
             -o "$RUNNER_TEMP/tls_serve"
           python3 scripts/tls_server_interop.py "$RUNNER_TEMP/tls_serve"
 

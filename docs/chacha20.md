@@ -11,15 +11,15 @@
 
 ## 1. Where it lives
 
-`std/chacha20.ls`, `module std.chacha20`. **It is a file of its own,
-not part of `std/crypto.ls`.** #197 asks for that until the design
+`std/chacha20.cho`, `module std.chacha20`. **It is a file of its own,
+not part of `std/crypto.cho`.** #197 asks for that until the design
 document (#198) settles whether these primitives belong in `std` or in a
 package: a file of its own can move to `packages/` with a one-line
 change to its `module` header, and it does not collide with the SHA-384
-and HKDF work (#201), which edits `std/crypto.ls`.
+and HKDF work (#201), which edits `std/crypto.cho`.
 
 The cost #197 names is real and is paid here: `std/` is compiled into
-the compiler (`STD` in `crates/lex-sys/src/main.rs`, one
+the compiler (`STD` in `crates/cancho/src/main.rs`, one
 `include_str!` per file), so this file ships with a compiler release.
 It costs nothing in a program that does not import it
 (`std_declarations_cost_nothing_unless_called`, `docs/crypto.md` §6).
@@ -113,7 +113,7 @@ That is a property of the processor, not one this language promises. No
 function uses a table indexed by data. Command:
 
 ```sh
-lex-sys build --std tests/programs/aead_bench.ls --emit obj -o bench.o
+cancho build --std tests/programs/aead_bench.cho --emit obj -o bench.o
 python3 scripts/chacha20_branches.py bench.o     # 0 conditional jumps that are not traps
 ```
 
@@ -125,8 +125,8 @@ key, the keystream or `r`, and were not disassembled. The script now
 lists them too (`LOOPS`). They cannot meet the rule above, since they loop
 over a message on purpose, so their conditional jumps other than traps
 are printed for the reader and not counted. Read on LLVM, x86-64 (the
-object built for `x86_64-unknown-linux-gnu` from `aead_driver.ls`, which
-unlike `aead_bench.ls` calls `poly1305` and `open`): 37 such jumps, each
+object built for `x86_64-unknown-linux-gnu` from `aead_driver.cho`, which
+unlike `aead_bench.cho` calls `poly1305` and `open`): 37 such jumps, each
 after a compare of a key, nonce, message or output length with a
 constant or another length, a loop counter, an overflow check on index
 arithmetic jumped over (`jno`), a pointer difference (`xor`'s
@@ -137,7 +137,7 @@ to no `cmov` at all: the select is the `&`, `|` and `~` written in the
 source. The command is now:
 
 ```sh
-lex-sys build --std tests/programs/aead_driver.ls --emit obj -o aead.o
+cancho build --std tests/programs/aead_driver.cho --emit obj -o aead.o
 python3 scripts/chacha20_branches.py aead.o      # 0 conditional jumps that are not traps
 ```
 
@@ -172,8 +172,8 @@ promised", and that is an open question for #198.
 
 ## 4. Checked, not assumed
 
-`tests/programs/aead_driver.ls` drives every function from standard
-input, one case per line. `crates/lex-sys/tests/conformance/aead.rs`
+`tests/programs/aead_driver.cho` drives every function from standard
+input, one case per line. `crates/cancho/tests/conformance/aead.rs`
 runs it in `cargo test`:
 
 - **RFC 8439, 28 vectors** (`tests/vectors/rfc8439.txt`): §2.3.2,
@@ -225,7 +225,7 @@ Messages are 0 to 300 bytes, with one case in ten up to 4,100 bytes.
 | Cranelift | 10,000 | 30,000 | 0 |
 
 ```sh
-lex-sys build --std tests/programs/aead_driver.ls -o aead
+cancho build --std tests/programs/aead_driver.cho -o aead
 python3 scripts/aead_differential.py ./aead 100000
 ```
 
@@ -239,7 +239,7 @@ CI because pyca/cryptography is not a dependency of this repository.
 ## 5. Mutants
 
 A test that cannot fail proves nothing (`CONTRIBUTING.md`).
-`scripts/chacha20_mutants.py` builds 18 copies of `std/chacha20.ls`,
+`scripts/chacha20_mutants.py` builds 18 copies of `std/chacha20.cho`,
 each with one deliberate bug, as a local module beside the driver. It
 runs each against the RFC table, every Wycheproof case, the bit flips,
 the counter edge, and 2,000 differential cases. It first checks that
@@ -262,7 +262,7 @@ the unmutated file passes.
 | a nonce longer than 12 bytes accepted | Wycheproof (nonce size) |
 
 **18 mutants, 18 killed**, in 9 seconds:
-`python3 scripts/chacha20_mutants.py target/release/lex-sys`.
+`python3 scripts/chacha20_mutants.py target/release/cancho`.
 
 The first run had one survivor, the long nonce. The script then
 accepted any refusal for an invalid Wycheproof case, while `aead.rs`
@@ -275,7 +275,7 @@ mutant is killed.
 
 ## 6. Throughput
 
-`tests/programs/aead_bench.ls` seals one message repeatedly, each
+`tests/programs/aead_bench.cho` seals one message repeatedly, each
 round over the previous round's ciphertext, so no round can be skipped.
 The time is the difference between 1 round and many (median of 5). The
 copy back into the input is inside the timed loop, so these numbers
@@ -289,7 +289,7 @@ slightly understate `seal` itself. One core of an Intel Xeon at
 | 64 bytes | 62 MB/s (1.04 µs) | 12.5 MB/s (5.1 µs) | 533 MB/s |
 
 ```sh
-lex-sys build --std tests/programs/aead_bench.ls -o aead_bench
+cancho build --std tests/programs/aead_bench.cho -o aead_bench
 time ./aead_bench 1 16384; time ./aead_bench 4096 16384
 openssl speed -evp chacha20-poly1305 -seconds 2 -bytes 16384
 ```

@@ -27,7 +27,7 @@ Three properties, each one this repository had already built for a
 different reason and none of them assembled into one program before now:
 
 * **An authority report the caller can read before running it.**
-  `lex-sys authority --output json` is not new (`docs/under-a-grant.md`),
+  `cancho authority --output json` is not new (`docs/under-a-grant.md`),
   but nothing in `examples/` had used it to make a *specific, narrow*
   claim the way `seek` does — see §2.
 * **No silent truncation.** `docs/line-reading.md` found `cut` answering
@@ -41,7 +41,7 @@ different reason and none of them assembled into one program before now:
   > "No silent truncation" is true of what `seek` *reads* and false of
   > what it *writes*. `seek gamma big.txt > /dev/full` exits `0`: `seek`
   > never looks at `write_all`'s result, and the failed flush of the last
-  > buffer is invisible to any lex-sys program
+  > buffer is invisible to any cancho program
   > ([`bulk-io.md`](bulk-io.md) §3.3, corrected in the same change), so
   > truncated output and success are indistinguishable to the caller.
   > And `seek` holds the whole file in a heap buffer that doubles: peak
@@ -57,7 +57,7 @@ different reason and none of them assembled into one program before now:
 ## 2. `seek`, and the report it makes
 
 ```
-$ lex-sys authority examples/seek/seek.ls --std --output json
+$ cancho authority examples/seek/seek.cho --std --output json
 ```
 
 names exactly seven labels — `args`, `err_write`, `file_read`,
@@ -95,8 +95,8 @@ rather than in a comment nobody reads.
 
 What this means for `lex-os`, concretely: a supervisor that wants an
 agent to have `seek` scoped to one directory does not get there with a
-flag. It gets there by building a copy of `seek.ls` with that directory
-substituted for `Fs("")`'s literal, the same way `crates/lex-sys/tests/
+flag. It gets there by building a copy of `seek.cho` with that directory
+substituted for `Fs("")`'s literal, the same way `crates/cancho/tests/
 conformance/backends.rs`'s own `bind` test generates a program with a
 free port substituted in before compiling it (`docs/llvm-backend.md`
 §7.21). A capability fixed at build time and proved by the compiler is a
@@ -115,14 +115,14 @@ most `N` lines back, from however many files" is what that means in
 practice far more often than "at most `N` from each." Implementing GNU's
 own per-file reading would cost a second counter reset at every file
 boundary for a distinction the caller this tool is built for rarely
-wants — so this diverges and documents it, the same way `cut.ls` already
+wants — so this diverges and documents it, the same way `cut.cho` already
 documents refusing an operand GNU would open (`docs/porting.md`).
 
 ## 4. What is not here
 
 No regex: `std.regex` does not exist (confirmed by its absence, not
 assumed), so `seek` is a literal substring match, `std.bytes.find`
-underneath, the same primitive `cut.ls` and `sort.ls` already use. No
+underneath, the same primitive `cut.cho` and `sort.cho` already use. No
 recursive directory walk: nothing in this language lists a directory's
 contents, so `seek` searches the files named on its command line, the
 same restriction `cut`/`sort` already accept for the files they read.
@@ -132,7 +132,7 @@ behind them yet, `standard-library.md`'s own bar.
 
 ## 5. Checked
 
-`crates/lex-sys/tests/conformance/agent_tools.rs`: a match, a miss, `-n`,
+`crates/cancho/tests/conformance/agent_tools.rs`: a match, a miss, `-n`,
 `-c`, `-m` across two files, a missing file (exit `2`), no pattern given
 (exit `2`, usage), reading standard input when no file is named, and a
 file containing a NUL byte and non-UTF-8 bytes found and printed without

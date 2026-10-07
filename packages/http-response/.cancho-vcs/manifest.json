@@ -1,0 +1,16 @@
+{
+  "entries": {
+    "b41cd75530e2653f6fd0e4ddb47460b2f98d104c4d466f3869b1e64b9147ffae": {
+      "name": "status_of",
+      "stage_id": "f5bec95033007de386169d7b0cbfc1841253e8aaf166d559c39a9aaaff0b4ef9",
+      "source_hash": "1230e7090783b33feff02ce041feba369db4b87f577a0c58fbfa3a06aeb0c07c",
+      "uses_std": false
+    },
+    "d32e76aa1da6cdcbef66286db108f5bef3390deeae353aacd8d81eaf7f45f9ef": {
+      "name": "send_all",
+      "stage_id": "25b3d6dbd84ddc47c7a793d7a653f9b02c3062433d51f9aa6ea083babcb64b86",
+      "source_hash": "1230e7090783b33feff02ce041feba369db4b87f577a0c58fbfa3a06aeb0c07c",
+      "uses_std": false
+    }
+  }
+}

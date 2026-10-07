@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Mutation check of `std/ecdh.ls` and `std/bigmod.ls`'s constant-time
+"""Mutation check of `std/ecdh.cho` and `std/bigmod.cho`'s constant-time
 reduction (docs/ecdh.md §5).
 
-    python3 scripts/ecdh_mutants.py <lex-sys binary>
+    python3 scripts/ecdh_mutants.py <cancho binary>
 
 Each mutant is one of the two files with one deliberate bug, both built as
 local modules `ecdh` and `bigmod` beside a copy of
-`tests/programs/ecdh_driver.ls` and `tests/programs/bigmod_driver.ls`, and
+`tests/programs/ecdh_driver.cho` and `tests/programs/bigmod_driver.cho`, and
 run against the evidence `conformance/ecdh.rs` and
 `scripts/ecdh_differential.py` use: Wycheproof's P-256 and P-384 cases,
 NIST's KAS validity cases, the scalar's edges and the refusals, modular
@@ -120,15 +120,15 @@ def powers():
 
 def killed(compiler, sources, driver_src, work, cases, checks):
     files = {
-        "bigmod.ls": sources["bigmod"].replace("module std.bigmod;", "module bigmod;", 1),
-        "ecdh.ls": sources["ecdh"].replace("module std.ecdh;", "module ecdh;", 1).replace("import std.bigmod;", "import bigmod;", 1),
-        "driver.ls": driver_src.replace("import std.ecdh;", "import ecdh;", 1),
-        "powers.ls": open(os.path.join(ROOT, "tests/programs/bigmod_driver.ls")).read().replace("import std.bigmod;", "import bigmod;", 1),
+        "bigmod.cho": sources["bigmod"].replace("module std.bigmod;", "module bigmod;", 1),
+        "ecdh.cho": sources["ecdh"].replace("module std.ecdh;", "module ecdh;", 1).replace("import std.bigmod;", "import bigmod;", 1),
+        "driver.cho": driver_src.replace("import std.ecdh;", "import ecdh;", 1),
+        "powers.cho": open(os.path.join(ROOT, "tests/programs/bigmod_driver.cho")).read().replace("import std.bigmod;", "import bigmod;", 1),
     }
     for name, text in files.items():
         open(os.path.join(work, name), "w").write(text)
     pexe = os.path.join(work, "powers")
-    build = subprocess.run([compiler, "build", "--std", os.path.join(work, "powers.ls"), os.path.join(work, "bigmod.ls"), "-o", pexe],
+    build = subprocess.run([compiler, "build", "--std", os.path.join(work, "powers.cho"), os.path.join(work, "bigmod.cho"), "-o", pexe],
                            capture_output=True, text=True)
     if build.returncode != 0:
         return None, build.stderr.strip().splitlines()[:3]
@@ -138,7 +138,7 @@ def killed(compiler, sources, driver_src, work, cases, checks):
         if line.rstrip() != want:
             return True, [f"power {i}: {pcases[i][:60]}"]
     exe = os.path.join(work, "driver")
-    build = subprocess.run([compiler, "build", "--std"] + [os.path.join(work, n) for n in ["driver.ls", "ecdh.ls", "bigmod.ls"]] + ["-o", exe],
+    build = subprocess.run([compiler, "build", "--std"] + [os.path.join(work, n) for n in ["driver.cho", "ecdh.cho", "bigmod.cho"]] + ["-o", exe],
                            capture_output=True, text=True)
     if build.returncode != 0:
         return None, build.stderr.strip().splitlines()[:3]
@@ -157,8 +157,8 @@ def killed(compiler, sources, driver_src, work, cases, checks):
 
 def main():
     compiler = os.path.abspath(sys.argv[1])
-    sources = {m: open(os.path.join(ROOT, f"std/{m}.ls")).read() for m in ("ecdh", "bigmod")}
-    driver_src = open(os.path.join(ROOT, "tests/programs/ecdh_driver.ls")).read()
+    sources = {m: open(os.path.join(ROOT, f"std/{m}.cho")).read() for m in ("ecdh", "bigmod")}
+    driver_src = open(os.path.join(ROOT, "tests/programs/ecdh_driver.cho")).read()
     cases, checks = evidence()
     failed = 0
     with tempfile.TemporaryDirectory() as work:

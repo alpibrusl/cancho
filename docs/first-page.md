@@ -119,7 +119,7 @@ it shrank.
 
 ---
 
-## 4. Where lex-sys sits, which nothing said before
+## 4. Where cancho sits, which nothing said before
 
 Three repositories, one idea, and **two of them are wired together**:
 
@@ -138,7 +138,7 @@ Three repositories, one idea, and **two of them are wired together**:
               → perimeter → supervisor → audit
 
 
-                     lex-sys
+                     cancho
                      this repo
         a second, native language, same worldview
          — and no code edge to either of them —
@@ -149,7 +149,7 @@ agent's programs through the **real Lex front end**, so one declaration
 is enforced twice: statically by `lex-os-check` before the program
 loads, and at run time by the supervisor.
 
-`lex-sys` shares that worldview and **shares no code**. It mentions
+`cancho` shares that worldview and **shares no code**. It mentions
 `lex-os` in exactly two comments, and `lex-os` does not depend on it at
 all. Saying so is the point: the proposal assumed an integration that
 does not exist, and a first page that implied one would have been the
@@ -159,8 +159,8 @@ reason.
 
 | Join | State |
 |---|---|
-| lex-sys code in `lex-vcs` | 81% of that crate is already language-agnostic. Gated on a **plateau** in the effect vocabulary, not on a feature — [`hash-stability.md`](hash-stability.md) |
-| lex-sys code under a lex-os grant | Measured in [`under-a-grant.md`](under-a-grant.md): **not** a compiler integration. `authority --output json` is already the right interface and the grant's filesystem dimension works through it; `network` and `exec` do not, because both are libc |
+| cancho code in `lex-vcs` | 81% of that crate is already language-agnostic. Gated on a **plateau** in the effect vocabulary, not on a feature — [`hash-stability.md`](hash-stability.md) |
+| cancho code under a lex-os grant | Measured in [`under-a-grant.md`](under-a-grant.md): **not** a compiler integration. `authority --output json` is already the right interface and the grant's filesystem dimension works through it; `network` and `exec` do not, because both are libc |
 
 The second is worth writing down as a row rather than a paragraph,
 because it is the one place where this project's thesis and its runtime

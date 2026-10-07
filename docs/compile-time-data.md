@@ -47,7 +47,7 @@ smaller than §8 implied:
    `[int]` table — the shape a CRC or a 16-bit codec uses — is 512 KB
    and **traps**, measured. So it needs `Heap`, and a program that
    released `heap` cannot have one at all. `examples/base64/` and
-   `examples/newton.ls` both release `heap` in their first three lines.
+   `examples/newton.cho` both release `heap` in their first three lines.
 3. **Read-only pages.** A table in the binary is mapped from the file
    and shared; a table built at startup is dirtied anonymous memory,
    per process.
@@ -187,7 +187,7 @@ refused rather than half-evaluated.
 Everything else about the evaluator is unchanged, and that is the part
 worth noting: a `static` body may call any pure function, and those calls
 go through the same `Machine` that folds `factorial(5)`. The table is
-built by ordinary lex-sys code.
+built by ordinary cancho code.
 
 ---
 
@@ -216,7 +216,7 @@ arguments already buy.
 What it did buy in that program, exactly:
 
 - `value_of` keeps its signature, so it is still **pure** and
-  `lex-sys authority` still says so. The plumbed version's `value_of`
+  `cancho authority` still says so. The plumbed version's `value_of`
   takes a `&t [int]`, which is also pure — but `decode`'s signature
   grows a region parameter, and `main` grows a `region` block.
 - The table is in `.rodata`, 2 KB mapped from the file rather than
@@ -248,10 +248,10 @@ than in a chunk.
 
 | Fixture | Rule | § |
 |---|---|---|
-| `static_alloc_outside_a_static.ls` | `alloc_slice[static]` is lexical to a `static` item | 2.1 |
-| `unique_reference_into_a_static.ls` | `&!static` stays refused | 2.1 |
-| `static_that_cannot_be_evaluated.ls` | Refuse, don't downgrade | 3 |
-| `static_index_out_of_range.ls` | A certain trap while evaluating is a diagnostic | 4 |
+| `static_alloc_outside_a_static.cho` | `alloc_slice[static]` is lexical to a `static` item | 2.1 |
+| `unique_reference_into_a_static.cho` | `&!static` stays refused | 2.1 |
+| `static_that_cannot_be_evaluated.cho` | Refuse, don't downgrade | 3 |
+| `static_index_out_of_range.cho` | A certain trap while evaluating is a diagnostic | 4 |
 
 | Test | Rule | § |
 |---|---|---|
@@ -260,5 +260,5 @@ than in a chunk.
 
 | Accepting | Shows |
 |---|---|
-| `static_data.ls` | A table built by a loop, one built by calling a pure function, and both read back |
+| `static_data.cho` | A table built by a loop, one built by calling a pure function, and both read back |
 | `examples/base64/` | §1's 5.7×, without the plumbing §1 needed |

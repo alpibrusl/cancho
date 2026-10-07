@@ -7,7 +7,7 @@
 > that we are not yet as fast as C at the easiest thing there is.
 >
 > `2 + 3 * 4 - 14` is zero. C `-O2` compiles it to `xor %eax,%eax`.
-> lex-sys compiles it to a multiply, an add, a subtract, three overflow
+> cancho compiles it to a multiply, an add, a subtract, three overflow
 > checks and a load from a constant pool. §2 is the disassembly and §2.1
 > is why — and the why turns out to be `overflow-cost.md` §3.2's
 > mechanism, sighted a second time in a place that document did not look.
@@ -40,7 +40,7 @@ loop. On the strength of the estimate alone the answer would have been
 ### 1.2 What actually folds
 
 `scripts/folded.py` asks the compiler instead of re-deriving the answer —
-`lex-sys authority --output json` reports what the pass did — over
+`cancho authority --output json` reports what the pass did — over
 **64 programs**:
 
 ```
@@ -270,7 +270,7 @@ A compiler that evaluates at compile time is running the program on the
 **host** and shipping the answer to the **target**. That is only
 legitimate if the two agree, and C's do not have to:
 
-| | C | lex-sys |
+| | C | cancho |
 |---|---|---|
 | Integer width | implementation-defined | 64-bit, fixed |
 | Signed overflow | **undefined** | traps (§4) |
@@ -320,7 +320,7 @@ is the kind of claim that is thirty years out of date. At `-O2`:
 | `2 + 3 * 4 - 14` | `xor %eax,%eax` | **C wins today.** This is catch-up, not an edge |
 | `poly(5) - 47`, small non-recursive callee | `xor %eax,%eax` — inlined, then folded | **Parity.** We would match, not beat |
 | `sum_to(1000000)` | `movabs $0x746a4ae6e0` | **Parity, and not for the reason it looks.** clang did not run the loop; scalar evolution solved it in closed form |
-| `fib(23)` | **a runtime call** | **The edge.** clang gives up on recursion whatever the depth, and emits the call. lex-sys folds it (§5.1) |
+| `fib(23)` | **a runtime call** | **The edge.** clang gives up on recursion whatever the depth, and emits the call. cancho folds it (§5.1) |
 
 So the honest claim is narrow and it is not the headline anyone wants:
 
@@ -347,7 +347,7 @@ and it is narrower than the one §4.2 gave up on.
 > language change. §1 of that document is the correction, and what is
 > below is the original observation, which was right about the table.
 
-`examples/base64/base64.ls`, as it was:
+`examples/base64/base64.cho`, as it was:
 
 ```
 fn value_of(c: int) -> [] int {
@@ -384,7 +384,7 @@ section got wrong is *who* the 5.7× belonged to.
 | Question | Why it waits |
 |---|---|
 | Compile-time data | §8. The one that pays. Needs allocation during evaluation and static emission, which is a milestone rather than a pass |
-| ~~Reporting what was folded~~ | **Done in this slice.** `lex-sys authority` prints `evaluated at compile time` and `--output json` carries `folded_operators` and `folded_calls`. It is also the only portable way to test the pass: CI builds on two platforms and a disassembler is not among the things they share |
+| ~~Reporting what was folded~~ | **Done in this slice.** `cancho authority` prints `evaluated at compile time` and `--output json` carries `folded_operators` and `folded_calls`. It is also the only portable way to test the pass: CI builds on two platforms and a disassembler is not among the things they share |
 | A trapping **call** is not reported | §4 refuses a trapping *operator* where it is written, because lowering still has the span. The call pass runs afterwards, over an IR that carries no spans, so a pure call that traps on its constant arguments is left alone and traps at run time as it did before. The asymmetry is real and this is the note admitting it; closing it means spans in the IR |
 | Caching across builds | §6's hash makes it possible. Nothing has asked, and a cache that is wrong is worse than no cache |
 | Folding through `if` on a constant | Dead-branch elimination is the same fact applied to control flow. Cranelift does this one already, so it is redundant until it is not |
@@ -395,10 +395,10 @@ section got wrong is *who* the 5.7× belonged to.
 
 | Fixture | Rule | § |
 |---|---|---|
-| `constant_overflow.ls` | A certain overflow is refused where it is written | 4 |
-| `constant_division_by_zero.ls` | Every trap kind, not just overflow | 4 |
-| `constant_shift_past_the_width.ls` | …including `bitwise.md` §3's range | 4 |
-| `constant_trap_on_a_dead_branch.ls` | The narrowing §4.1 chose, recorded as deliberate | 4.1 |
+| `constant_overflow.cho` | A certain overflow is refused where it is written | 4 |
+| `constant_division_by_zero.cho` | Every trap kind, not just overflow | 4 |
+| `constant_shift_past_the_width.cho` | …including `bitwise.md` §3's range | 4 |
+| `constant_trap_on_a_dead_branch.cho` | The narrowing §4.1 chose, recorded as deliberate | 4.1 |
 
 | Test | Rule | § |
 |---|---|---|
@@ -410,7 +410,7 @@ section got wrong is *who* the 5.7× belonged to.
 
 | Accepting | Shows |
 |---|---|
-| `compile_time.ls` | Arithmetic, a nested call, a recursive call, bit operators — and the same `fib` on a runtime value, so the fixture says the cost changed and the answer did not |
+| `compile_time.cho` | Arithmetic, a nested call, a recursive call, bit operators — and the same `fib` on a runtime value, so the fixture says the cost changed and the answer did not |
 
 | Script | |
 |---|---|

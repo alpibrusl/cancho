@@ -23,9 +23,9 @@
 >    then looks for a symbol that does not exist), so it cannot be
 >    renamed around the collision, and this document's `edition 3;` was
 >    needed for `null_ptr()`. Fixed by `docs/many-files.md`, not by this
->    document: the raw socket moved to its own file, `socket.ls`, kept
+>    document: the raw socket moved to its own file, `socket.cho`, kept
 >    on edition 1 (where `connect` still resolves to the `extern fn`,
->    not the builtin) while `tls_client.ls` stays on edition 3 — the
+>    not the builtin) while `tls_client.cho` stays on edition 3 — the
 >    per-file edition `docs/editions.md` §7 designed for exactly this,
 >    a file that predates a name becoming a builtin not having to be
 >    rewritten around it. `docs/net.md` §5 recounts outbound to 5.
@@ -50,7 +50,7 @@
 
 ## 1. What is actually missing
 
-`crates/lex-sys/src/main.rs`'s `link` function is the whole of this
+`crates/cancho/src/main.rs`'s `link` function is the whole of this
 project's linking story:
 
 ```rust
@@ -81,15 +81,15 @@ one missing CLI feature, not two.
 ## 2. The shape of the fix: pass through, invent nothing
 
 The library this project already delegates to — `cc` — has had this
-solved since long before lex-sys existed: `-l<name>` links `lib<name>`,
+solved since long before cancho existed: `-l<name>` links `lib<name>`,
 `-L<path>` adds a directory to search for it. `M0` already made the
 decision this document does not need to re-argue (`link`'s own doc
 comment): *"`M0` shells out to `cc` rather than driving a linker
 itself."* Given that decision, the only question worth asking is
-whether `lex-sys` needs its own syntax for "link this library," and the
+whether `cancho` needs its own syntax for "link this library," and the
 answer is no — nothing about *which* library a foreign declaration
 needs is knowable from the declaration itself (`reach.md` §3.1.1: "the
-declaration is trusted — nothing checks a lex-sys signature against the
+declaration is trusted — nothing checks a cancho signature against the
 C header"), so there is nothing here for the compiler to infer and
 nothing to validate. The flag is the whole feature: take `-l`/`-L`
 exactly as `cc` defines them, and hand them to `cc` unexamined.
@@ -98,7 +98,7 @@ This also answers the question `docs/standard-library.md` §2 raises
 implicitly by not raising it: is this a package manifest question? No.
 A manifest resolves *which* library and *which version* satisfies a
 declared dependency; this document is one step earlier — there is no
-dependency declaration anywhere in a `.ls` file to resolve, only an
+dependency declaration anywhere in a `.cho` file to resolve, only an
 `extern fn` block whose author already knows which system library it
 needs, the same way they already know its exact C signature. A future
 package system, if one is ever built, would generate these same flags
@@ -111,8 +111,8 @@ by `build` and `run` — the two commands that reach `link` — and passed
 to `cc` verbatim, once per occurrence, in the order given:
 
 ```sh
-lex-sys build tls_client.ls --std -l ssl -l crypto -o tls_client
-lex-sys run   tls_client.ls --std -l ssl -l crypto
+cancho build tls_client.cho --std -l ssl -l crypto -o tls_client
+cancho run   tls_client.cho --std -l ssl -l crypto
 ```
 
 Not `--link`, and not one flag taking a comma-separated list: `cc`
@@ -146,7 +146,7 @@ that happens to be convenient to build.
 
 ### 3.2 Where this plugs into the existing structure
 
-- `Invocation` (`crates/lex-sys/src/main.rs`) gains `link_libs:
+- `Invocation` (`crates/cancho/src/main.rs`) gains `link_libs:
   Vec<String>` and `link_paths: Vec<String>`.
 - `parse_args` gains a second gate alongside `allow_output` --
   `allow_link` -- true for `build` and `run`, false everywhere else,
@@ -191,16 +191,16 @@ against this environment's genuine OpenSSL 3.0.13 (`openssl version`;
 loopback, on both backends:
 
 ```sh
-$ lex-sys build examples/tls_client/tls_client.ls examples/tls_client/socket.ls \
-      packages/net-connect/connect.ls packages/net-sockets/sockets.ls \
+$ cancho build examples/tls_client/tls_client.cho examples/tls_client/socket.cho \
+      packages/net-connect/connect.cho packages/net-sockets/sockets.cho \
       --std -l ssl -l crypto -o tls_client
 $ openssl s_server -accept 48395 -cert cert.pem -key key.pem -rev -naccept 1 -quiet &
-$ ./tls_client 127.0.0.1 48395 "hello lex-sys"
+$ ./tls_client 127.0.0.1 48395 "hello cancho"
 sys-xel olleh
 ```
 
 The two extra paths are `docs/next-phase.md` §4.1's own migration:
-`socket.ls` used to declare `socket`/`connect`/`close`/`address` for
+`socket.cho` used to declare `socket`/`connect`/`close`/`address` for
 itself; it now `import`s `net.connect`/`net.sockets` and needs both on
 the command line the same way any package-importing example does
 (`vcs fetch` for a pinned copy, or — as here, since both are already
@@ -209,22 +209,22 @@ checked into this repository — the source files directly).
 A genuine TLS 1.3 handshake (confirmed in the server's own diagnostic
 output: `Protocol version: TLSv1.3`, `Ciphersuite: TLS_AES_256_GCM_SHA384`)
 and a real encrypted round trip, not a stub — the reply is `"hello
-lex-sys"` reversed, exactly what `-rev` does to what it received, so
+cancho"` reversed, exactly what `-rev` does to what it received, so
 the bytes crossed the connection both ways intact. Repeated with
 `--backend cranelift` against a fresh server: `oot tfilenarc` for
 `"cranelift too"`, same result. Neither is CI-gated (the status note
 above says why); both are hand-verified transcripts, recorded here
 rather than only run once and discarded.
 
-> **Corrected (`tls-nonblocking.md` §2): the example's handshake failures were read as successes.** `examples/tls_client/tls_client.ls`
+> **Corrected (`tls-nonblocking.md` §2): the example's handshake failures were read as successes.** `examples/tls_client/tls_client.cho`
 > declared `SSL_connect`, `SSL_write`, `SSL_read`, `SSL_set_fd` and `SSL_shutdown` as returning `int`, and a C `int` result is only
 > sign-extended if the declaration says `c_int`: a failing `SSL_connect` (-1) was read as 4294967295, `<= 0` was false, and the program
-> wrote to a session that never existed (`examples/tls_nb/gaps/g13_int_vs_c_int.ls`). The five are `c_int` now. Separately, run against
+> wrote to a session that never existed (`examples/tls_nb/gaps/g13_int_vs_c_int.cho`). The five are `c_int` now. Separately, run against
 > a server that accepts and closes, the example is still killed by `SIGPIPE`: OpenSSL's socket BIO answers the end of file with a fatal
 > alert written by `write(2)`. It is a one-connection demonstration and is left as it is; a service must use the memory-BIO transport of
 > `examples/tls_nb/` or ignore the signal.
 
 > **Corrected (`foreign-authority.md`): "the capability is the only way to reach the foreign call" was not enforced.** `extern fn system[&c](command: &c [byte]) -> [] c_int;`, with no `Ffi`
-> parameter and an empty row, was accepted, ran a shell on both backends, and left `lex-sys authority` saying `"bounded": true`. A foreign function now borrows exactly one `Ffi`, naming
+> parameter and an empty row, was accepted, ran a shell on both backends, and left `cancho authority` saying `"bounded": true`. A foreign function now borrows exactly one `Ffi`, naming
 > one library (`foreign-declaration`). The same document makes the scope a set, so one program can hold `libc` and `libssl` together, and has the report list every reachable symbol as
 > `scope:symbol`. The `-l`/`-L` flags are the build's and do not appear in the report.

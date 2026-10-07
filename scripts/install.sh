@@ -1,14 +1,14 @@
 #!/bin/sh
-# Install a prebuilt lex-sys compiler (docs/package-system.md §9).
+# Install a prebuilt cancho compiler (docs/package-system.md §9).
 #
 #   install.sh <commit> [prefix]
 #
-#   <commit>  the full commit hash, the value of `lex-sys = "..."` in lex-sys.toml
-#   prefix    default $HOME/.local; the binary lands in <prefix>/bin/lex-sys
+#   <commit>  the full commit hash, the value of `cancho = "..."` in cancho.toml
+#   prefix    default $HOME/.local; the binary lands in <prefix>/bin/cancho
 #
 # Environment:
-#   LEX_SYS_RELEASES  base URL of the release assets
-#                     (default https://github.com/alpibrusl/lex-sys/releases/download/<commit>;
+#   CANCHO_RELEASES  base URL of the release assets
+#                     (default https://github.com/alpibrusl/cancho/releases/download/<commit>;
 #                     a release's tag is the full commit hash)
 #
 # The tarball is checked against its published sha256 before it is unpacked,
@@ -27,11 +27,11 @@ esac
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64)  target=linux-x86_64 ;;
   Darwin-arm64)  target=darwin-aarch64 ;;
-  *) echo "no prebuilt lex-sys for $(uname -s)-$(uname -m); build from source" >&2; exit 3 ;;
+  *) echo "no prebuilt cancho for $(uname -s)-$(uname -m); build from source" >&2; exit 3 ;;
 esac
 
-name=lex-sys-$rev-$target
-base=${LEX_SYS_RELEASES:-https://github.com/alpibrusl/lex-sys/releases/download/$rev}
+name=cancho-$rev-$target
+base=${CANCHO_RELEASES:-https://github.com/alpibrusl/cancho/releases/download/$rev}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
@@ -45,17 +45,17 @@ else got=$(shasum -a 256 "$work/$name.tar.gz" | cut -d' ' -f1); fi
 [ "$want" = "$got" ] || { echo "sha256 mismatch for $name.tar.gz (want $want, got $got)" >&2; exit 4; }
 
 tar -C "$work" -xzf "$work/$name.tar.gz"
-reported=$("$work/$name/bin/lex-sys" --version | sed -n 's/.*(rev \([0-9a-f]*\),.*/\1/p')
+reported=$("$work/$name/bin/cancho" --version | sed -n 's/.*(rev \([0-9a-f]*\),.*/\1/p')
 [ "$reported" = "$rev" ] || { echo "the binary reports rev '$reported', not $rev" >&2; exit 4; }
 
 mkdir -p "$prefix/bin"
-cp "$work/$name/bin/lex-sys" "$prefix/bin/lex-sys.new"
-mv "$prefix/bin/lex-sys.new" "$prefix/bin/lex-sys"
-echo "installed lex-sys $rev to $prefix/bin/lex-sys"
+cp "$work/$name/bin/cancho" "$prefix/bin/cancho.new"
+mv "$prefix/bin/cancho.new" "$prefix/bin/cancho"
+echo "installed cancho $rev to $prefix/bin/cancho"
 # The LLVM backend emits opaque pointers (`ptr`), which clang 15 introduced; older ones refuse its output.
 if command -v clang >/dev/null; then
   major=$(clang --version | sed -n 's/.*clang version \([0-9]*\).*/\1/p' | head -n 1)
-  case $major in ''|*[!0-9]*) ;; *) [ "$major" -ge 15 ] || echo "note: clang $major is too old for lex-sys (it needs 15 or newer; set CLANG to another)" >&2 ;; esac
+  case $major in ''|*[!0-9]*) ;; *) [ "$major" -ge 15 ] || echo "note: clang $major is too old for cancho (it needs 15 or newer; set CLANG to another)" >&2 ;; esac
 else
-  echo "note: lex-sys needs clang 15 or newer (and cc) on PATH at build time" >&2
+  echo "note: cancho needs clang 15 or newer (and cc) on PATH at build time" >&2
 fi

@@ -6,9 +6,9 @@
     python3 scripts/ecdsa_sign_differential.py keys <sign driver> [<count>]
     python3 scripts/ecdsa_sign_differential.py reference <sign driver> [<count>]
 
-`sign driver` is `tests/programs/ecdsa_sign_driver.ls` built with
-`lex-sys build --std` and `packages/x509/{x509,key}.ls`; `ecdsa driver` is
-`tests/programs/ecdsa_driver.ls`.
+`sign driver` is `tests/programs/ecdsa_sign_driver.cho` built with
+`cancho build --std` and `packages/x509/{x509,key}.cho`; `ecdsa driver` is
+`tests/programs/ecdsa_driver.cho`.
 
 `openssl` (default 10,000): each round draws a P-256 private key (random in
 [1, n), with 1, 2, n - 2 and n - 1 drawn often), a random message, and 32

@@ -1,0 +1,517 @@
+edition 5;
+
+// `server` -- an OCPP 1.6J endpoint on cancho: WebSocket (RFC 6455) with the `ocpp1.6` subprotocol, one thread, one poller
+// (`docs/websocket-spike.md`).
+//
+//     server <port> [<connections> [<idle seconds>]]
+//
+// It holds up to `<connections>` (default 12,000) charge points, each with a fixed 2 KiB to read into and 1 KiB of answers waiting to
+// be sent, allocated at start. It answers `BootNotification`, `Heartbeat`, `StatusNotification` and `MeterValues` (`ocpp.cho`) and
+// refuses everything it does not understand: a fragmented message, a frame over the buffer, a binary frame, a client without the
+// `ocpp1.6` subprotocol. A connection that has sent nothing for `<idle seconds>` (default 900, three heartbeat intervals) is closed.
+// Once every five seconds it prints `connections <n> messages <m>` on standard output.
+
+import std.buffer;
+import std.conns;
+import std.http;
+import std.io;
+import std.json;
+import ws;
+import ocpp;
+
+fn read_size() -> [] int {
+    return 2048;
+}
+
+fn write_size() -> [] int {
+    return 1024;
+}
+
+// The record of each connection, in `st[stride() * slot ..]`:
+//
+//      0  state: 0 free, 1 waiting for the handshake, 2 open, 3 closing (what is queued is sent, then it is closed)
+//      1  bytes in the read buffer
+//      2  bytes queued to send
+//      3  how much of that the kernel has taken
+//      4  the second it last did anything
+//      5  1 if it is watched for writable as well
+//      6  for a closing connection, the second it is closed at (0 until it is set)
+fn stride() -> [] int {
+    return 8;
+}
+
+fn http_error(code: int) -> [] &static [byte] {
+    if code == 1 {
+        return "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+    }
+    return "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+}
+
+// Queue `data` for sending on connection `slot`. Answers 0, or 1 if there is no room (the peer is not reading what it was sent).
+fn queue[&s, &w, &d](st: &!s [int], wb: &!w [byte], slot: int, data: &d [byte]) -> [] int {
+    let p = stride() * slot;
+    if st[p + 2] + len(data) > write_size() {
+        return 1;
+    }
+    let base = slot * write_size() + st[p + 2];
+    var i = 0;
+    while i < len(data) {
+        wb[base + i] = data[i];
+        i = i + 1;
+    }
+    st[p + 2] = st[p + 2] + len(data);
+    return 0;
+}
+
+// Queue a frame: header and payload.
+fn queue_frame[&s, &w, &d](st: &!s [int], wb: &!w [byte], slot: int, opcode: int, payload: &d [byte]) -> [] int {
+    var code = 0;
+    region a {
+        let h = alloc_slice[a](10, byte_of(0));
+        let n = ws.put_header(h, opcode, len(payload));
+        if st[stride() * slot + 2] + n + len(payload) > write_size() {
+            code = 1;
+        } else {
+            queue(st, wb, slot, h[0..n]);
+            queue(st, wb, slot, payload);
+        }
+    }
+    return code;
+}
+
+// Send what is queued on `slot`. Answers 0, or 1 if the connection is to be closed (a write failed). Keeps the poller's idea of
+// what the connection is waiting for in step with whether anything is left.
+fn flush[&t, &s, &w, &p](tab: &!t conns.Table, st: &!s [int], wb: &!w [byte], slot: int, poller: &!p Poller) -> [conn_write, poll] int {
+    let q = stride() * slot;
+    let base = slot * write_size();
+    var closed = 0;
+    var going = true;
+    while going && st[q + 3] < st[q + 2] {
+        match conns.write(tab, slot, wb[base + st[q + 3]..base + st[q + 2]]) {
+            Sent::Wrote(n) => {
+                st[q + 3] = st[q + 3] + n;
+            }
+            Sent::Again => {
+                going = false;
+            }
+            Sent::Failed(e) => {
+                closed = 1;
+                going = false;
+            }
+        }
+    }
+    if closed == 1 {
+        return 1;
+    }
+    if st[q + 3] >= st[q + 2] {
+        st[q + 2] = 0;
+        st[q + 3] = 0;
+        if st[q + 5] == 1 {
+            st[q + 5] = 0;
+            conns.rewatch(tab, poller, slot, slot + 1, 1);
+        }
+    } else if st[q + 5] == 0 {
+        st[q + 5] = 1;
+        conns.rewatch(tab, poller, slot, slot + 1, 3);
+    }
+    return 0;
+}
+
+// The close frame with `code` (RFC 6455 section 5.5.1), queued, and the connection marked to close once it is sent.
+fn refuse[&s, &w](st: &!s [int], wb: &!w [byte], slot: int, code: int) -> [] int {
+    region a {
+        let body = alloc_slice[a](2, byte_of(0));
+        body[0] = byte_of(code >> 8 & 255);
+        body[1] = byte_of(code & 255);
+        queue_frame(st, wb, slot, ws.close(), body);
+    }
+    st[stride() * slot] = 3;
+    return 0;
+}
+
+// Take `n` bytes off the front of what has been read on `slot`.
+fn consume[&s, &r](st: &!s [int], rb: &!r [byte], slot: int, n: int) -> [] int {
+    let p = stride() * slot;
+    let base = slot * read_size();
+    var i = 0;
+    while i < st[p + 1] - n {
+        rb[base + i] = rb[base + n + i];
+        i = i + 1;
+    }
+    st[p + 1] = st[p + 1] - n;
+    return 0;
+}
+
+// The handshake: if the head is complete, answer it. Answers 0 if it is not complete yet, 1 if it was taken (the connection is open)
+// or refused (the connection is closing).
+fn handshake[&s, &r, &w, &x](st: &!s [int], rb: &!r [byte], wb: &!w [byte], tape: &!x [int], slot: int) -> [] int {
+    let p = stride() * slot;
+    let base = slot * read_size();
+    let n = st[p + 1];
+    let end = find_blank(rb[base..base + n]);
+    if end < 0 {
+        if n >= read_size() {
+            queue(st, wb, slot, http_error(2));
+            st[p] = 3;
+            return 1;
+        }
+        return 0;
+    }
+    let head = rb[base..base + end + 4];
+    let parsed = http.parse(head, tape);
+    var why = 1;
+    if parsed > 0 {
+        why = ws.check_handshake(head, tape);
+    }
+    if parsed <= 0 || why != 0 {
+        queue(st, wb, slot, http_error(1));
+        st[p] = 3;
+        consume(st, rb, slot, end + 4);
+        return 1;
+    }
+    region a {
+        let accept = alloc_slice[a](28, byte_of(0));
+        ws.accept_key(http.header(head, tape, "sec-websocket-key"), accept);
+        queue(st, wb, slot, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ");
+        queue(st, wb, slot, accept);
+        queue(st, wb, slot, "\r\nSec-WebSocket-Protocol: ocpp1.6\r\n\r\n");
+    }
+    st[p] = 2;
+    consume(st, rb, slot, end + 4);
+    return 1;
+}
+
+// The index of the first `\r\n\r\n` in `text`, or -1.
+fn find_blank[&t](text: &t [byte]) -> [] int {
+    var i = 0;
+    while i + 3 < len(text) {
+        if int_of(text[i]) == 13 && int_of(text[i + 1]) == 10 && int_of(text[i + 2]) == 13 && int_of(text[i + 3]) == 10 {
+            return i;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// Every whole frame that has been read on `slot`: act on each. Answers how many OCPP messages were answered.
+fn frames[&s, &r, &w, &x, &y](st: &!s [int], rb: &!r [byte], wb: &!w [byte], tape: &!x [int], scratch: &!y [byte], slot: int, now_ms: int) -> [] int {
+    let p = stride() * slot;
+    let base = slot * read_size();
+    var answered = 0;
+    var going = true;
+    while going && st[p] == 2 {
+        let f = ws.parse_frame(rb[base..base + st[p + 1]], st[p + 1], read_size() - 14);
+        if f.0 == 0 {
+            going = false;
+        } else if f.0 < 0 {
+            if f.0 == 0 - 2 {
+                refuse(st, wb, slot, 1009);
+            } else if f.0 == 0 - 3 {
+                refuse(st, wb, slot, 1003);
+            } else {
+                refuse(st, wb, slot, 1002);
+            }
+            going = false;
+        } else {
+            let start = f.2;
+            let length = f.3;
+            if f.1 == ws.text() {
+                let msg = rb[base + start..base + start + length];
+                let m = ocpp.read_message(msg, tape[0..json.tape_len(msg)]);
+                var out = 0;
+                if m.0 == ocpp.call() {
+                    out = ocpp.reply(scratch, 0, msg, m.1, m.2, m.3, m.4, now_ms, 300);
+                } else if m.0 < 0 {
+                    out = ocpp.refusal(scratch, 0, m.0);
+                }
+                if out > 0 {
+                    if queue_frame(st, wb, slot, ws.text(), scratch[0..out]) != 0 {
+                        refuse(st, wb, slot, 1008);
+                    }
+                    answered = answered + 1;
+                }
+            } else if f.1 == ws.ping() {
+                if queue_frame(st, wb, slot, ws.pong(), rb[base + start..base + start + length]) != 0 {
+                    refuse(st, wb, slot, 1008);
+                }
+            } else if f.1 == ws.close() {
+                refuse(st, wb, slot, 1000);
+            } else if f.1 == ws.binary() {
+                refuse(st, wb, slot, 1003);
+            }
+            consume(st, rb, slot, f.0);
+        }
+    }
+    return answered;
+}
+
+// A connection woke. Answers 1 if it is to be closed now, else 0, and in `counts[0]` adds the messages answered.
+fn serve[&t, &s, &r, &w, &x, &z, &y, &p, &c](tab: &!t conns.Table, st: &!s [int], rb: &!r [byte], wb: &!w [byte], htape: &!x [int], jtape: &!z [int], scratch: &!y [byte], poller: &!p Poller, counts: &!c [int], slot: int, readiness: int, now_s: int, now_ms: int) -> [conn_read, conn_write, poll] int {
+    let q = stride() * slot;
+    if st[q] == 0 {
+        return 0;
+    }
+    if readiness & 2 != 0 || st[q + 3] < st[q + 2] {
+        if flush(tab, st, wb, slot, poller) == 1 {
+            return 1;
+        }
+    }
+    if readiness & 1 != 0 || readiness & 4 != 0 {
+        let base = slot * read_size();
+        if st[q] == 3 {
+            // Closing: what the peer still sends is read and thrown away, so that closing does not reset the connection (a close with
+            // unread input makes the kernel send RST, and the peer may then never see the close frame it was just sent).
+            st[q + 1] = 0;
+        }
+        if st[q + 1] >= read_size() {
+            return 1;
+        }
+        match conns.read(tab, slot, rb[base + st[q + 1]..base + read_size()]) {
+            Received::Data(got) => {
+                st[q + 1] = st[q + 1] + got;
+                st[q + 4] = now_s;
+                if st[q] == 1 {
+                    handshake(st, rb, wb, htape, slot);
+                }
+                if st[q] == 2 {
+                    counts[0] = counts[0] + frames(st, rb, wb, jtape, scratch, slot, now_ms);
+                }
+                if st[q] == 3 {
+                    st[q + 1] = 0;
+                }
+                if flush(tab, st, wb, slot, poller) == 1 {
+                    return 1;
+                }
+            }
+            Received::End => {
+                return 1;
+            }
+            Received::Again => {
+            }
+            Received::Failed(e) => {
+                return 1;
+            }
+        }
+    }
+    // A connection that is closing gets three seconds for the peer to answer the close, then it is closed.
+    if st[q] == 3 && st[q + 6] == 0 {
+        st[q + 6] = now_s + 3;
+    }
+    return 0;
+}
+
+// Digits only: the number they spell, or -1.
+fn parse_nat[&t](text: &t [byte]) -> [] int {
+    if len(text) == 0 || len(text) > 9 {
+        return 0 - 1;
+    }
+    var n = 0;
+    var i = 0;
+    while i < len(text) {
+        let c = int_of(text[i]);
+        if c < '0' || c > '9' {
+            return 0 - 1;
+        }
+        n = n * 10 + (c - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+// Close the connection in `slot` and forget it.
+fn drop_slot[&t, &s](tab: &!t conns.Table, st: &!s [int], slot: int) -> [] int {
+    conns.close(tab, slot);
+    var k = 0;
+    while k < stride() {
+        st[stride() * slot + k] = 0;
+        k = k + 1;
+    }
+    return 0;
+}
+
+// Take every connection waiting on the listener, up to `limit`.
+fn accept_all[&h, &l, &s, &p](heap: &!h Heap, tab: conns.Table, listener: &!l Listener, st: &!s [int], poller: &!p Poller, limit: int, now_s: int) -> [heap, conn_accept, poll] conns.Table {
+    var table = tab;
+    var more = true;
+    while more {
+        match tcp_accept(listener) {
+            Accepted::Ok(c) => {
+                var held = 0;
+                borrow table as &tt in {
+                    held = conns.live(tt);
+                }
+                if held >= limit {
+                    conn_close(c);
+                } else {
+                    let (grown, slot) = conns.put(heap, table, c);
+                    table = grown;
+                    if slot >= 0 {
+                        let q = stride() * slot;
+                        st[q] = 1;
+                        st[q + 1] = 0;
+                        st[q + 2] = 0;
+                        st[q + 3] = 0;
+                        st[q + 4] = now_s;
+                        st[q + 5] = 0;
+                        st[q + 6] = 0;
+                        borrow mut table as &!ct in {
+                            if conns.nonblocking(ct, slot) != 0 || conns.nodelay(ct, slot) != 0 || conns.watch(ct, poller, slot, slot + 1, 1) != 0 {
+                                drop_slot(ct, st, slot);
+                            }
+                        }
+                    }
+                }
+            }
+            Accepted::Again => {
+                more = false;
+            }
+            Accepted::Failed(e) => {
+                more = false;
+            }
+        }
+    }
+    return table;
+}
+
+fn serve_forever[&h, &l, &k, &i](heap: &!h Heap, listener: &!l Listener, clock: &k Clock, io: &!i Io, limit: int, idle: int) -> [heap, conn_accept, conn_read, conn_write, poll, clock, io_write] int {
+    match poller_new() {
+        Polling::Ok(p) => {
+            var poll = p;
+            borrow mut poll as &!pw in {
+                poller_add_listener(pw, listener, 0);
+            }
+            var table = conns.empty(heap, 1024);
+            // The per-connection slabs are on the heap: a region's arena takes at most 64 KiB at a time (docs/websocket-spike.md section 8).
+            let stb = box_slice(heap, stride() * limit, 0);
+            let rbb = box_slice(heap, read_size() * limit, byte_of(0));
+            let wbb = box_slice(heap, write_size() * limit, byte_of(0));
+            borrow mut stb as &!sw in {
+                borrow mut rbb as &!rw in {
+                    borrow mut wbb as &!ww in {
+                        let st = contents(sw);
+                        let rb = contents(rw);
+                        let wb = contents(ww);
+                        region a {
+                            let htape = alloc_slice[a](http.slots(32), 0);
+                            let jtape = alloc_slice[a](3 * read_size() + 16, 0);
+                            let scratch = alloc_slice[a](write_size(), byte_of(0));
+                            let counts = alloc_slice[a](2, 0);
+                            let events = alloc_slice[a](1024, 0);
+                            var last = 0;
+                            var printed = 0;
+                            while true {
+                                borrow mut poll as &!pw in {
+                                    let ready = poller_wait(pw, events, 1000);
+                                    let now_s = clock_ms(clock) / 1000;
+                                    let now_ms = clock_unix_ms(clock);
+                                    var j = 0;
+                                    while j < ready {
+                                        let token = events[2 * j];
+                                        if token == 0 {
+                                            table = accept_all(heap, table, listener, st, pw, limit, now_s);
+                                        } else {
+                                            let slot = token - 1;
+                                            borrow mut table as &!tw in {
+                                                if serve(tw, st, rb, wb, htape, jtape, scratch, pw, counts, slot, events[2 * j + 1], now_s, now_ms) == 1 {
+                                                    drop_slot(tw, st, slot);
+                                                }
+                                            }
+                                        }
+                                        j = j + 1;
+                                    }
+                                    if now_s != last {
+                                        last = now_s;
+                                        borrow mut table as &!tw in {
+                                            var s = 0;
+                                            while s < limit {
+                                                if st[stride() * s] != 0 && (now_s - st[stride() * s + 4] > idle || st[stride() * s] == 3 && st[stride() * s + 6] != 0 && now_s >= st[stride() * s + 6]) {
+                                                    drop_slot(tw, st, s);
+                                                }
+                                                s = s + 1;
+                                            }
+                                        }
+                                        if now_s - printed >= 5 {
+                                            printed = now_s;
+                                            var open_now = 0;
+                                            borrow table as &tt in {
+                                                open_now = conns.live(tt);
+                                            }
+                                            io.write_all(io, "connections ");
+                                            io.print_nat(io, open_now);
+                                            io.write_all(io, " messages ");
+                                            io.print_nat(io, counts[0]);
+                                            io.newline(io);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            unbox_slice(heap, stb);
+            unbox_slice(heap, rbb);
+            unbox_slice(heap, wbb);
+            conns.drop(heap, table);
+            poller_close(poll);
+            return 0;
+        }
+        Polling::Failed(e) => {
+            return 4;
+        }
+    }
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(fs);
+    var port = 0 - 1;
+    var limit = 12000;
+    var idle = 900;
+    borrow args as &g in {
+        if arg_count(g) > 1 {
+            port = parse_nat(arg(g, 1));
+        }
+        if arg_count(g) > 2 {
+            limit = parse_nat(arg(g, 2));
+        }
+        if arg_count(g) > 3 {
+            idle = parse_nat(arg(g, 3));
+        }
+    }
+    var status = 2;
+    if port > 0 && port < 65536 && limit > 0 && idle > 0 {
+        status = 3;
+        borrow mut heap as &!h in {
+            borrow net as &nn in {
+                match tcp_listen(nn, port, 4096, 0) {
+                    Listening::Ok(l) => {
+                        var listener = l;
+                        borrow mut listener as &!lh in {
+                            listener_nonblocking(lh);
+                            borrow mut io as &!i in {
+                                io.error_all(i, "listening\n");
+                            }
+                            borrow clock as &c in {
+                                borrow mut io as &!i in {
+                                    status = serve_forever(h, lh, c, i, limit, idle);
+                                }
+                            }
+                        }
+                        listener_close(listener);
+                    }
+                    Listening::Failed(e) => {
+                        status = 11;
+                    }
+                }
+            }
+        }
+    }
+    release(net);
+    release(clock);
+    release(args);
+    release(io);
+    release(heap);
+    return status;
+}

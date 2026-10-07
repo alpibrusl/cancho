@@ -1,7 +1,7 @@
 // Reference server for docs/server.md §5, the ceiling for this loop design: a
 // poll(2) keep-alive server in C that does not parse -- it finds the blank line
 // and sends one fixed answer. Build: gcc -O2 -o cpoll cpoll.c. Same
-// contract as api.ls (answers GET /users/42's body for any request).
+// contract as api.cho (answers GET /users/42's body for any request).
 #include <arpa/inet.h>
 #include <poll.h>
 #include <signal.h>

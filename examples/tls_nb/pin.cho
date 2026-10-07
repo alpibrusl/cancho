@@ -1,0 +1,83 @@
+edition 5;
+
+module pin;
+
+// `pin` -- which of the addresses a name resolved to a delivery may be sent to, and the one it is pinned to.
+//
+// The range test is `cancho-hooks`' `destination.is_public` (design section 26), copied here so this directory stands alone; the
+// copy and the original are checked against each other by `test/pin_test.py`. The point of the module is `choose`: the connection
+// is made to the **address that was checked**, as an IP literal (`tcp_connect_start` does no lookup for one), so there is no second
+// resolution for a changed answer (DNS rebinding) to win; the name is used afterwards only for SNI and for the certificate check.
+
+// Whether the packed address `a` (`a * 2^24 + b * 2^16 + c * 2^8 + d`) is outside every range that is not for the public
+// internet: 0/8, 10/8, 100.64/10, 127/8, 169.254/16 (the cloud metadata address is in it), 172.16/12, 192.0.0/24, 192.0.2/24,
+// 192.88.99/24, 192.168/16, 198.18/15, 198.51.100/24, 203.0.113/24, 224/4 and 240/4.
+pub fn is_public(a: int) -> [] bool {
+    let first = a / 16777216;
+    let second = a / 65536 % 256;
+    let third = a / 256 % 256;
+    if first == 0 || first == 10 || first == 127 || first >= 224 {
+        return false;
+    }
+    if first == 100 && second >= 64 && second <= 127 {
+        return false;
+    }
+    if first == 169 && second == 254 {
+        return false;
+    }
+    if first == 172 && second >= 16 && second <= 31 {
+        return false;
+    }
+    if first == 192 && second == 168 {
+        return false;
+    }
+    if first == 192 && second == 0 && (third == 0 || third == 2) {
+        return false;
+    }
+    if first == 192 && second == 88 && third == 99 {
+        return false;
+    }
+    if first == 198 && (second == 18 || second == 19) {
+        return false;
+    }
+    if first == 198 && second == 51 && third == 100 {
+        return false;
+    }
+    if first == 203 && second == 0 && third == 113 {
+        return false;
+    }
+    return true;
+}
+
+// The index of the address in `addrs[0..count]` to connect to, or -1 if none may be. The rule is the strict one: **every** address
+// the name resolved to must be allowed (unless `allow_private`), not just the one chosen. A name with a public address and a private
+// one is how a rebinding or a split-horizon answer looks from here, and a service that connects to the first public one is one
+// resolver change away from the private one. With `allow_private` any address does and the first is chosen.
+pub fn choose[&a](addrs: &a [int], count: int, allow_private: bool) -> [] int {
+    if count < 1 {
+        return 0 - 1;
+    }
+    if allow_private {
+        return 0;
+    }
+    var k = 0;
+    while k < count {
+        if !is_public(addrs[k]) {
+            return 0 - 1;
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+// The index of the first address in `addrs[0..count]` that is not public (the one to name when `choose` refuses the answer), or 0.
+pub fn first_refused[&a](addrs: &a [int], count: int) -> [] int {
+    var k = 0;
+    while k < count {
+        if !is_public(addrs[k]) {
+            return k;
+        }
+        k = k + 1;
+    }
+    return 0;
+}

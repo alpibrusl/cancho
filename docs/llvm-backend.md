@@ -34,23 +34,23 @@
 > `connect_and_bind_are_operands_on_both_backends`.
 >
 > **Superseded status, kept for the history below:** "first five slices
-> built, and `examples/hello.ls` builds" (§5, `lex-sys-codegen-llvm`,
+> built, and `examples/hello.cho` builds" (§5, `cancho-codegen-llvm`,
 > `--backend llvm`). §5 originally named
-> `hello.ls` as the *first* slice's target; building that slice found the
-> claim false — `hello.ls` needed checked arithmetic, bounds-checked
+> `hello.cho` as the *first* slice's target; building that slice found the
+> claim false — `hello.cho` needed checked arithmetic, bounds-checked
 > indexing, string-literal data, and (found along the way) control flow,
 > four things across four slices rather than one. The fourth, slices and
-> strings, is what closed that loop: `hello.ls` — `ci.yml`'s own smoke
+> strings, is what closed that loop: `hello.cho` — `ci.yml`'s own smoke
 > test — builds and runs through this backend, byte for byte the same as
 > through Cranelift. The fifth, structs and enums, is a different kind of
 > slice: nothing in this document's original plan asked for it by name
-> the way `hello.ls` asked for the first four — it is next because
+> the way `hello.cho` asked for the first four — it is next because
 > `docs/ROADMAP.md`'s own "later slices" list already named it, and
-> `tests/accept/enums.ls` turned out to be a ready-made target once it
-> landed. `tests/accept/llvm_smoke.ls`, `llvm_arith.ls` and
-> `llvm_control.ls` are what the first three slices' own bullet lists
+> `tests/accept/enums.cho` turned out to be a ready-made target once it
+> landed. `tests/accept/llvm_smoke.cho`, `llvm_arith.cho` and
+> `llvm_control.cho` are what the first three slices' own bullet lists
 > actually describe; the fourth and fifth needed no new fixture of their
-> own, because `hello.ls` and `enums.ls` already were ones. The second
+> own, because `hello.cho` and `enums.cho` already were ones. The second
 > slice found LLVM's `sdiv`/`srem` are **undefined**, not trapping, on
 > the two inputs Cranelift traps — a correction below, not assumed going
 > in. The third needed no `phi`: every local here is already memory, so
@@ -77,7 +77,7 @@
 > external tool, no new build dependency — `connect.md` §9's three-slice
 > split, aimed at a new target instead of a new capability. And there is
 > a real, measured correctness trap sitting in the middle of it: the
-> obvious way to emit lex-sys's overflow trap in LLVM IR produces the
+> obvious way to emit cancho's overflow trap in LLVM IR produces the
 > **wrong signal**, silently, on one of the two targets this project
 > ships.
 >
@@ -97,9 +97,9 @@
 > checked twins, otherwise identical, compile to none. §7.7 closed heap
 > boxing and, underneath it, a second gap nothing had tried to lift
 > since the first slice: a function could not return more than one
-> leaf. `reduce_checked.ls` — `docs/gpu.md`'s own kernel — needed both,
+> leaf. `reduce_checked.cho` — `docs/gpu.md`'s own kernel — needed both,
 > and confirms the same vectorisation split a fourth time. §7.9 closed
-> `getchar` and `s[a..b]`, and found `revcomp.ls`'s own boundary sitting
+> `getchar` and `s[a..b]`, and found `revcomp.cho`'s own boundary sitting
 > one gap further out still: `Place::Field`/`Place::Deref`, named since
 > §5 and, until now, never connected to a program that actually needed
 > it.
@@ -146,7 +146,7 @@ the "no C++ build dependency" §1 already quoted from `lib.rs`, just
 deferred from the compiler's *language* to the compiler's *build*.
 
 Option B has no such coupling, and it is not a new pattern here: `link`
-in `crates/lex-sys/src/main.rs` already shells out to `cc` for every
+in `crates/cancho/src/main.rs` already shells out to `cc` for every
 single build, Cranelift path included (`docs/backend-limits.md` never
 had to mention this because it is not a Cranelift fact, it is a M0
 fact). A second backend that shells out to `clang` for both compiling
@@ -259,7 +259,7 @@ generic between targets; only the checker's decision to trap can be.
 
 Checking §3.2 against `int::MIN / -1`-style division found something
 `emitted-checks.md` had only ever measured on x86-64. On aarch64
-(measured here, `div0.ls` and `mod0.ls` built with the actual
+(measured here, `div0.cho` and `mod0.cho` built with the actual
 compiler): **both** division and remainder by zero exit 132, `SIGILL`,
 disassembling to explicit `udf` after a compare. `emitted-checks.md` §4
 found, on x86-64, `1/0` dies with `SIGILL` from its own `ud2` and `1%0`
@@ -287,8 +287,8 @@ across `isa/`.
 
 ## 4. The shape this takes
 
-A sibling crate, `lex-sys-codegen-llvm`, with the same doorway
-`lex-sys-codegen` has:
+A sibling crate, `cancho-codegen-llvm`, with the same doorway
+`cancho-codegen` has:
 
 ```rust
 pub fn compile_object_for(
@@ -298,15 +298,15 @@ pub fn compile_object_for(
 ) -> Result<Vec<u8>, CodegenError>
 ```
 
-fed the identical `lex_sys_ir::Program` the Cranelift path already
+fed the identical `cancho_ir::Program` the Cranelift path already
 consumes — nothing about parsing, checking, or lowering to IR changes.
-`lex-sys-ir/src/lib.rs`'s own header already states the boundary this
+`cancho-ir/src/lib.rs`'s own header already states the boundary this
 relies on: *"the backend receives IR that cannot fail."* Internally it
 builds a `.ll` string and shells out to `clang -c` (§3.1), the way
 `link` already shells out to `cc` (§2).
 
 Built as such: `CodegenError` itself is not duplicated, only reused —
-`lex-sys-codegen-llvm` depends on `lex-sys-codegen` for that one type
+`cancho-codegen-llvm` depends on `cancho-codegen` for that one type
 (`{ function: Option<usize>, message: String }`, already backend-agnostic)
 so the CLI's `internal_refusal` needed no change to accept either
 backend's failures. Everything else stays as sibling as the plan said:
@@ -336,33 +336,33 @@ bigger than one slice too, and was "agreed as three slices once that
 came into view" rather than forced into one PR:
 
 **First slice: the doorway and the smallest possible program — built.**
-`lex-sys-codegen-llvm` exists, takes `--backend llvm`, and builds and
+`cancho-codegen-llvm` exists, takes `--backend llvm`, and builds and
 runs a program needing exactly: function declarations and calls,
 `World`/capability erasure (every capability is a zero-field struct, so
 it scalarises to no leaves at all — confirmed rather than assumed, since
-`lex-sys-codegen`'s own `abi::leaves_into` has no special case for `Io`,
+`cancho-codegen`'s own `abi::leaves_into` has no special case for `Io`,
 `Ffi`, `Fs`, `Heap` or `Args`; they fall through to the same struct rule
 `Split` does, five zero-leaf fields making a zero-leaf whole), `putchar`,
 and process exit. No arithmetic, no traps, no structs with real fields.
 
-**This corrects the row above: that program is not `examples/hello.ls`.**
+**This corrects the row above: that program is not `examples/hello.cho`.**
 `ci.yml`'s smoke test was assumed to be the smallest one, unchecked
 against what `strings.md` had since added to it. It is not — `write_all`'s
 `n = n + 1` and `n < len(s)` are checked arithmetic and a comparison,
 `s[n]` is bounds-checked indexing, and `"Hello, world!\n"` is a
 string-literal data object, and this slice lowers none of them.
-`tests/accept/llvm_smoke.ls` is the program this bullet list actually
+`tests/accept/llvm_smoke.cho` is the program this bullet list actually
 describes — two functions, one call between them, four `putchar`s, no
-operator anywhere — and it is what `lex-sys-codegen-llvm`'s own test
+operator anywhere — and it is what `cancho-codegen-llvm`'s own test
 builds and runs, checked byte-for-byte against the Cranelift path's
-output for the same file (`crates/lex-sys/tests/conformance/backends.rs`).
-`hello.ls` moves to the second slice below, where checked arithmetic
+output for the same file (`crates/cancho/tests/conformance/backends.rs`).
+`hello.cho` moves to the second slice below, where checked arithmetic
 lands, and needs bounds-checked indexing and string data besides —
 closer to a third and fourth slice than a continuation of this one.
 
 Every node this slice does not lower is refused with a located
 `CodegenError`, never a panic (`docs/internal-errors.md`): unlike
-`lex-sys-codegen`'s `unreachable!`s, which state an invariant the checker
+`cancho-codegen`'s `unreachable!`s, which state an invariant the checker
 already guarantees, a gap here is an ordinary limit of an opt-in,
 unfinished backend, and `--backend cranelift` is unaffected either way
 (`--backend` is purely additive, defaulting to `cranelift`).
@@ -371,7 +371,7 @@ unfinished backend, and `--backend cranelift` is unaffected either way
 Every `BinOp` that can trap (`Add`, `Sub`, `Mul`, `Div`, `Rem`, `Shl`,
 `Shr`) lowers, plus the three bitwise operators (`BitAnd`, `BitOr`,
 `BitXor`), which cannot trap and so needed no extra scoping to include —
-`tests/accept/llvm_arith.ls` exercises all ten, each once, printing a
+`tests/accept/llvm_arith.cho` exercises all ten, each once, printing a
 value chosen so the exact byte proves the answer rather than only
 `clang` accepting the module. The six comparisons (`Eq`/`Ne`/`Lt`/`Le`/
 `Gt`/`Ge`) lower too, but stay untested end to end: they are this
@@ -455,10 +455,10 @@ out to have been this backend's first working example of exactly that
 shape, one side of the diamond always `unreachable`.
 
 **What this closes**: comparisons, built and untested since the second
-slice, are now exercised end to end — `llvm_control.ls` prints a
+slice, are now exercised end to end — `llvm_control.cho` prints a
 different byte depending on each of the six, which is the first time
 any of them influenced this backend's output rather than merely
-compiling. **What it does not close**: `hello.ls` still refuses at this
+compiling. **What it does not close**: `hello.cho` still refuses at this
 point, now on its string literal (`Bytes`) rather than on its `while`
 loop — a `--backend llvm` run against it before this slice failed at
 the control flow; after, it reaches the greeting itself and fails there
@@ -474,16 +474,16 @@ refused too, for the arenas-and-regions reason already listed below —
 neither needed the branching this slice actually built to also need
 scoping into it.
 
-**Fourth slice: slices and strings — built, and `hello.ls` builds.**
+**Fourth slice: slices and strings — built, and `hello.cho` builds.**
 `Expr::Bytes`, `Expr::Len` and `Expr::Index` all lower, plus
-`Builtin::IntOf` (`hello.ls`'s own `int_of(s[n])`, a plain `zext i8` —
+`Builtin::IntOf` (`hello.cho`'s own `int_of(s[n])`, a plain `zext i8` —
 necessary plumbing to reach the target, the same reason the first slice
 needed `putchar` beyond what its own bullet list first named). Two
 things came out cheaper than expected and one came out exactly as
 planned:
 
 - **A string literal needed no instruction, only a declaration.**
-  `lex-sys-codegen`'s Cranelift path reads a literal's address with
+  `cancho-codegen`'s Cranelift path reads a literal's address with
   `global_value`, an instruction Cranelift's SSA builder needs to
   materialise a global into a value. LLVM has no equivalent step: `@sym`
   is already a `ptr` constant wherever one is expected, so
@@ -501,7 +501,7 @@ planned:
   does not accept directly.
 - **`docs/compile-time.md`'s constant folder does not reach `Index` at
   all**, unlike the second slice's own finding about `BinOp`. A literal
-  out-of-range index (`"abc"[5]`) passes `lex-sys check` and only traps
+  out-of-range index (`"abc"[5]`) passes `cancho check` and only traps
   at run time, which is what let this slice's own bounds-check tests
   (`indexing_past_a_slice_traps_with_sigill`,
   `indexing_before_a_slice_traps_with_sigill`) use a literal index
@@ -520,7 +520,7 @@ already reads a struct's fields this way through `Expr::Field`, one
 slice's worth of reading built before any construction was.
 
 `Expr::Enum` and `Stmt::Match` are where the real work was, and both
-matched `lex-sys-codegen`'s own layout exactly rather than inventing a
+matched `cancho-codegen`'s own layout exactly rather than inventing a
 narrower one: an enum's leaves are a tag (`i64`) followed by **every**
 variant's payload leaves, not only the constructed one — wasteful and
 deliberately so, because overlaying payloads is a layout decision this
@@ -532,7 +532,7 @@ readable without matching on the tag first, so what is actually there
 is unobservable); `bind_payload` reads the same offsets back out when a
 `match` arm binds them. `match_stmt` lowers to a chain of tag tests —
 `icmp eq` against each arm's variant, in order, falling through on a
-miss — matching `lex-sys-codegen`'s own comment that a jump table would
+miss — matching `cancho-codegen`'s own comment that a jump table would
 be faster and is the obvious later move for both backends alike, not
 just this one.
 
@@ -560,8 +560,8 @@ it, and costs nothing because nothing is loaded — has no counterpart
 here; `by_reference` scrutinees are refused outright. Getting that
 right needs the same pointer-into-a-referent arithmetic
 `Place::Field`/`Place::Deref` need, which is also still refused, for
-the same reason: none of it was needed to make `tests/accept/enums.ls`
-build, and `enums.ls`'s own `match` binds an *owned* `Point` (`Shape::
+the same reason: none of it was needed to make `tests/accept/enums.cho`
+build, and `enums.cho`'s own `match` binds an *owned* `Point` (`Shape::
 At(p, r) => p.x + p.y + r`), read back through the `Expr::Field` this
 backend already had.
 
@@ -576,7 +576,7 @@ is close to a direct match),
 `Net`. Each is a `Builtin` or `BinOp` variant this document is not
 claiming to have scoped — `ir.rs` has 34 builtins and lists them so the
 next slice can pick a subset by reading them rather than guessing at the
-size of what is left (`crates/lex-sys-ir/src/builtin.rs`).
+size of what is left (`crates/cancho-ir/src/builtin.rs`).
 
 **Partially answered, later, in §7: is it faster.** This section still
 holds as written for the session that wrote it — five slices in, nothing
@@ -594,7 +594,7 @@ crate before it found a ratio worth reporting.
 |---|---|
 | ~~The exact `ud2`/`udf` spelling and signal on linux-x86_64~~ | **Measured, this slice's session, on a real linux-x86_64 host**: `call void asm sideeffect "ud2", ""()` assembles to the same two bytes (`0f 0b`) Cranelift's own `ud2` does, and the linked binary exits 132 — `SIGILL` — every time, matching §3.2's aarch64 finding exactly (no `SIGTRAP` substitution, no divergence). One more thing confirmed alongside it: passing `clang -target <triple>` with the same spelling the `.ll` module's own `target triple` line carries silences the `overriding the module target triple` warning §3.1 first saw on darwin — `compile_object_for` always does this, so a program built through this crate never sees it. `aarch64`'s `udf #0xc11f` half of §3.2's fix is still unverified — no aarch64 host in this slice's session either — but this row is otherwise closed |
 | Which `clang`/LLVM IR version to target | Textual IR has version-dependent syntax; pinning to whatever `ci.yml`'s two runners ship, rather than a specific LLVM release, is the plan until a real incompatibility forces a choice. This slice's session measured against `clang` 18 on linux-x86_64 only |
-| ~~Optimisation level and its effect on trap codegen~~ | **Measured, §7**: `clang -O2` is now what `run_clang` always passes (it has to be, for `mem2reg` to run at all — §7). All sixteen `lex-sys-codegen-llvm` unit tests, including all seven trap-signal tests, pass unchanged under it: `-O2` does not fold, reorder, or eliminate a checked operation's trap on any kernel this backend can build today |
+| ~~Optimisation level and its effect on trap codegen~~ | **Measured, §7**: `clang -O2` is now what `run_clang` always passes (it has to be, for `mem2reg` to run at all — §7). All sixteen `cancho-codegen-llvm` unit tests, including all seven trap-signal tests, pass unchanged under it: `-O2` does not fold, reorder, or eliminate a checked operation's trap on any kernel this backend can build today |
 | Whether `noalias`/purity attributes get emitted at all | `backend-limits.md` §4's ceiling question — real, and not this document's to answer before the backend can run anything |
 
 ---
@@ -608,7 +608,7 @@ crate before it found a ratio worth reporting.
 false of what this crate was actually invoking: `run_clang` (`lib.rs`)
 called `clang -c -target <triple> <file>.ll`, no `-O` flag at all, and
 `mem2reg` is not part of `-O0`. Confirmed directly — a minimal `.ll`
-identical in shape to `sum_checked.ls`'s inner loop (`alloca`, `store`,
+identical in shape to `sum_checked.cho`'s inner loop (`alloca`, `store`,
 loop back-edge reading with `load`) compiles at the default optimisation
 level to nine real stack `load`/`store` instructions per iteration; at
 `-O2` the loop promotes to registers and, for a closed-form case like
@@ -624,19 +624,19 @@ is not proposing one; an "unoptimised LLVM backend" mode is not a
 configuration this project has a use for, since the entire reason to
 reach for `clang` over Cranelift is the optimisation pipeline §3.1
 already established `clang` brings for free. All sixteen
-`lex-sys-codegen-llvm` unit tests pass under `-O2`, including the seven
+`cancho-codegen-llvm` unit tests pass under `-O2`, including the seven
 that check a checked operation's trap raises the exact signal Cranelift
-raises (`the_two_backends_agree_on_*` in `crates/lex-sys/tests/
+raises (`the_two_backends_agree_on_*` in `crates/cancho/tests/
 conformance/backends.rs` also re-checks this at the CLI level) — `-O2`
 changes the code the trap sits inside, not whether or how it fires.
 
 ### 7.2 A first backend-vs-backend measurement
 
 Three of `benches/`'s kernels build on both backends today, unchanged:
-`sum_checked.ls` (tight checked arithmetic, no memory traffic — the
-"worst case" for the overflow check, `sum_checked.ls`'s own header),
-`fib_checked.ls` (recursion; the cost is calls, not arithmetic) and
-`benches/three/mandelbrot.ls` (Q16.16 fixed-point compute, the kernel
+`sum_checked.cho` (tight checked arithmetic, no memory traffic — the
+"worst case" for the overflow check, `sum_checked.cho`'s own header),
+`fib_checked.cho` (recursion; the cost is calls, not arithmetic) and
+`benches/three/mandelbrot.cho` (Q16.16 fixed-point compute, the kernel
 `docs/against-c-and-rust.md` already runs against C and Rust). All three
 are covered by a new differential test each
 (`the_two_backends_agree_on_sum_checked`,
@@ -671,7 +671,7 @@ SIMD-shaped cases (`sieve`, `scan`, `reduce`, the Benchmarks Game
 programs) that motivated the backend in the first place; §7.3 is why.
 
 **Against C, not just against Cranelift** — `scripts/backend_compare.py
---with-c` adds a third, three-way interleaved leg for `mandelbrot.ls`
+--with-c` adds a third, three-way interleaved leg for `mandelbrot.cho`
 against `mandelbrot.c`, the exact kernel `docs/against-c-and-rust.md`'s
 1.6×/1.69× headline came from:
 
@@ -684,7 +684,7 @@ mandelbrot, three-way interleaved against clang -O2 (20 rounds):
 
 `docs/against-c-and-rust.md` §2 stated a falsifier for exactly this
 number: *"if an LLVM backend lands and the gap stays at 1.6×, the claim
-was wrong."* It did not stay — lex-sys through `--backend llvm` is
+was wrong."* It did not stay — cancho through `--backend llvm` is
 **indistinguishable from C** on this kernel (0.96×–1.00× across repeated
 runs), while `--backend cranelift` reproduces the original 1.6×–1.8×
 almost exactly. `docs/against-c-and-rust.md` §2 now carries this
@@ -721,13 +721,13 @@ inspecting `emit.rs` and guessing:
 
 | Gap | Blocks | Where it already shows up in this document |
 |---|---|---|
-| ~~`region`/`alloc_slice` (arena allocation, `Stmt::Region`)~~ | **Closed, §7.5**: `sieve_*.ls`, `scan_*.ls`, `benches/three/sieve.ls` now build (`fasta.ls`/`revcomp.ls` still refuse, on `Type::Float` and `getchar` respectively — their own rows below) | §5's "later slices" list, already named |
-| ~~`wrapping_add`/`wrapping_sub`/`wrapping_mul`~~ | **Closed, §7.4**: every `_wrapping.ls` half of a `benches/` pair and `benches/three/purity.ls` now build on `--backend llvm` | Implicit in §5's "every `Builtin` beyond `PutChar`/`Split`/`Release`/`Narrow`/`IntOf`"; not previously named on its own |
-| Bare `Expr::Alloc` (single-value arena allocation) | `tests/accept/arena_roundtrip.ls` — this backend's own "outside the boundary" fixture, not a `benches/` program | Not previously named on its own; distinguished from `alloc_slice` only once §7.5 closed the latter |
-| ~~`box_slice`/`Contents`/`unbox_slice`~~ | **Closed, §7.7**: `reduce_*.ls`, every `benches/layout/*.ls` file now build (bare `box`/`unbox`, a single-value box, stay refused — nothing in `benches/` asks for one) | Same bucket as above; not previously named on its own |
-| `arg_count` (and argument reading generally) | `benches/game/binarytrees.ls`, `benches/game/fannkuch.ls` | Same bucket |
-| `Type::Float` and float arithmetic | `benches/game/spectral.ls`, `benches/game/fasta.ls` (two `alloc_slice` fills) | `emit.rs`'s own `LKind` doc comment already says floats are refused; not previously named as a *benchmark*-blocking gap |
-| ~~`getchar`/`io_read`~~ | **Closed, §7.9** (`tests/accept/stdin_roundtrip.ls` is the fixture; `revcomp.ls` itself needs `Place::Field`/`Place::Deref` too, found the same slice — its own row above, not closed) | Found trying to build `revcomp.ls` once §7.5 closed `region`; not previously named |
+| ~~`region`/`alloc_slice` (arena allocation, `Stmt::Region`)~~ | **Closed, §7.5**: `sieve_*.cho`, `scan_*.cho`, `benches/three/sieve.cho` now build (`fasta.cho`/`revcomp.cho` still refuse, on `Type::Float` and `getchar` respectively — their own rows below) | §5's "later slices" list, already named |
+| ~~`wrapping_add`/`wrapping_sub`/`wrapping_mul`~~ | **Closed, §7.4**: every `_wrapping.cho` half of a `benches/` pair and `benches/three/purity.cho` now build on `--backend llvm` | Implicit in §5's "every `Builtin` beyond `PutChar`/`Split`/`Release`/`Narrow`/`IntOf`"; not previously named on its own |
+| Bare `Expr::Alloc` (single-value arena allocation) | `tests/accept/arena_roundtrip.cho` — this backend's own "outside the boundary" fixture, not a `benches/` program | Not previously named on its own; distinguished from `alloc_slice` only once §7.5 closed the latter |
+| ~~`box_slice`/`Contents`/`unbox_slice`~~ | **Closed, §7.7**: `reduce_*.cho`, every `benches/layout/*.cho` file now build (bare `box`/`unbox`, a single-value box, stay refused — nothing in `benches/` asks for one) | Same bucket as above; not previously named on its own |
+| `arg_count` (and argument reading generally) | `benches/game/binarytrees.cho`, `benches/game/fannkuch.cho` | Same bucket |
+| `Type::Float` and float arithmetic | `benches/game/spectral.cho`, `benches/game/fasta.cho` (two `alloc_slice` fills) | `emit.rs`'s own `LKind` doc comment already says floats are refused; not previously named as a *benchmark*-blocking gap |
+| ~~`getchar`/`io_read`~~ | **Closed, §7.9** (`tests/accept/stdin_roundtrip.cho` is the fixture; `revcomp.cho` itself needs `Place::Field`/`Place::Deref` too, found the same slice — its own row above, not closed) | Found trying to build `revcomp.cho` once §7.5 closed `region`; not previously named |
 
 Ordered by what it would unblock, as each closed: **`wrapping_*` first**
 (§7.4) — smallest of the remaining gaps, and it made the overflow-
@@ -737,9 +737,9 @@ single gap by program count, and building against the real targets
 found two smaller gaps (`byte_of`, `Expr::Not`) sitting in front of it
 that no inspection of `emit.rs` alone would have named. **Heap boxing
 after that** (§7.7) — the next-biggest pocket, and building
-`reduce_checked.ls` against it found a second, unrelated gap
+`reduce_checked.cho` against it found a second, unrelated gap
 underneath: multi-leaf function returns, closed the same session.
-**`getchar` next** (§7.9) — smallest by design, and building `revcomp.ls`
+**`getchar` next** (§7.9) — smallest by design, and building `revcomp.cho`
 against it found `s[a..b]` in front, closed alongside it, and
 `Place::Field`/`Place::Deref` behind both, not closed. What is left —
 bare `alloc`, `Place::Field`/`Place::Deref`, `arg_count`, float — is
@@ -748,37 +748,37 @@ single builtin or bounds check (§7.10 has the current, complete list).
 
 | Bench | |
 |---|---|
-| `scripts/backend_compare.py` | Interleaved cranelift-vs-llvm timing on the kernels that build on both, today eleven; `--with-c` adds a three-way leg for `mandelbrot.ls` against `mandelbrot.c` |
-| `crates/lex-sys/tests/conformance/backends.rs` | `the_two_backends_agree_on_{sum_checked,fib_checked,mandelbrot,sum_wrapping,fib_wrapping,purity,sieve_checked,sieve_wrapping,scan_checked,scan_wrapping,the_three_language_sieve,reduce_checked,reduce_wrapping,layout_aos,layout_soa,layout_ints,layout_rgb,stdin_roundtrip}` — not a timing gate, for the reason `every_benchmark_pair_agrees` gives |
-| `crates/lex-sys-codegen-llvm/src/tests.rs` | `{subslicing_past_the_end,an_inverted_subslice}_traps_with_sigill` — the two ways `s[a..b]` can be wrong, checked by signal the same way every other trap here is |
-| `crates/lex-sys-codegen-llvm/src/tests.rs` | `allocating_past_an_arenas_chunk_traps_with_sigill` — the arena-exhaustion trap, checked by signal the same way every other trap here is |
+| `scripts/backend_compare.py` | Interleaved cranelift-vs-llvm timing on the kernels that build on both, today eleven; `--with-c` adds a three-way leg for `mandelbrot.cho` against `mandelbrot.c` |
+| `crates/cancho/tests/conformance/backends.rs` | `the_two_backends_agree_on_{sum_checked,fib_checked,mandelbrot,sum_wrapping,fib_wrapping,purity,sieve_checked,sieve_wrapping,scan_checked,scan_wrapping,the_three_language_sieve,reduce_checked,reduce_wrapping,layout_aos,layout_soa,layout_ints,layout_rgb,stdin_roundtrip}` — not a timing gate, for the reason `every_benchmark_pair_agrees` gives |
+| `crates/cancho-codegen-llvm/src/tests.rs` | `{subslicing_past_the_end,an_inverted_subslice}_traps_with_sigill` — the two ways `s[a..b]` can be wrong, checked by signal the same way every other trap here is |
+| `crates/cancho-codegen-llvm/src/tests.rs` | `allocating_past_an_arenas_chunk_traps_with_sigill` — the arena-exhaustion trap, checked by signal the same way every other trap here is |
 
 ### 7.4 `wrapping_add`/`sub`/`mul`, closed — and what removing a trap buys an optimiser
 
 §7.3's smallest-first ordering: `wrapping_add`, `wrapping_sub`,
 `wrapping_mul` lower to LLVM's own `add`/`sub`/`mul`, no `nsw`/`nuw`
 requested — already two's-complement wraparound, the direct counterpart
-of `lex-sys-codegen`'s plain `iadd`/`isub`/`imul` (`crates/lex-sys-
+of `cancho-codegen`'s plain `iadd`/`isub`/`imul` (`crates/cancho-
 codegen/src/body/expr.rs`). No overflow check, no new type, no new
 `Place`: three match arms and a four-line helper (`emit.rs`'s `wrapping`,
 built on the `plain` helper `BitAnd`/`BitOr`/`BitXor` already used).
 
 Every checked-vs-wrapping pair in `benches/` that does not also need
-`region`/`box_slice` now builds on `--backend llvm`: `sum_wrapping.ls`,
-`fib_wrapping.ls`, and `benches/three/purity.ls` besides (which needed
+`region`/`box_slice` now builds on `--backend llvm`: `sum_wrapping.cho`,
+`fib_wrapping.cho`, and `benches/three/purity.cho` besides (which needed
 this and nothing else). Three new differential tests
 (`the_two_backends_agree_on_{sum_wrapping,fib_wrapping,purity}`) join
 §7.2's three.
 
 **The interesting number is not the ratio — it's why one measurement
 looked broken until it was checked.** `scripts/backend_compare.py`
-first reported `sum_wrapping.ls` at **−99.1%** against Cranelift
+first reported `sum_wrapping.cho` at **−99.1%** against Cranelift
 (0.0012s against 0.1286s), which is not "faster," it is a different
 program running. `objdump` on the object confirms it: `lexs_run`
 compiles to `xor %eax,%eax; ret` — two instructions, no loop at all.
-`sum_wrapping.ls`'s inner loop is `total = total + i; total = total -
+`sum_wrapping.cho`'s inner loop is `total = total + i; total = total -
 i; i = i + 1`, which is mathematically a no-op on `total` regardless of
-`i`'s value, and — unlike `sum_checked.ls`'s identical shape — **nothing
+`i`'s value, and — unlike `sum_checked.cho`'s identical shape — **nothing
 in the wrapping version can trap**, so there is no observable effect
 left for the optimiser to have to preserve by actually running the two
 hundred million iterations. LLVM proves this and deletes the loop.
@@ -792,7 +792,7 @@ thing that makes a loop's effects observable, and an optimiser that has
 one can prove the loop is worth nothing and skip it entirely, which no
 amount of instruction selection would have bought on its own.
 
-`fib_wrapping.ls` is the number worth trusting instead — recursion with
+`fib_wrapping.cho` is the number worth trusting instead — recursion with
 data-dependent branching has no such algebraic identity to collapse, and
 `objdump` confirms real, unrolled code (21 instructions in `lexs_fib`,
 not two). Measured, **−23.3%** against Cranelift, in the same range
@@ -800,7 +800,7 @@ not two). Measured, **−23.3%** against Cranelift, in the same range
 
 This also answers a question `docs/overflow-cost.md` could only ask
 of Cranelift before: what the checked-vs-wrapping guarantee costs under
-LLVM. `sum_checked.ls` cannot collapse the way `sum_wrapping.ls` did —
+LLVM. `sum_checked.cho` cannot collapse the way `sum_wrapping.cho` did —
 its `+`/`-` can trap, so the loop's iteration count is observable even
 though the arithmetic result is not — and it still runs in **0.10s**
 against Cranelift's **0.22s** (§7.2). The overflow check's cost on this
@@ -814,28 +814,28 @@ kernel shape) — because LLVM had a bigger optimisation to lose.
 
 §7.3's second-named gap, and the bigger of the two remaining: `Stmt::
 Region`/`Expr::AllocSlice` need real arena allocation, which this
-backend had none of. Built the same shape `lex-sys-codegen`'s own
+backend had none of. Built the same shape `cancho-codegen`'s own
 `body/memory.rs` already has — one `malloc` in, one `free` out, and a
 bump pointer that only ever moves forward within the chunk — kept in two
 `ptr`-typed `alloca` cells rather than in an SSA value, this backend's
 own idiom for anything that needs to vary rather than an
-`lex-sys-codegen` `Variable`. `bump`'s bounds check is textually the
+`cancho-codegen` `Variable`. `bump`'s bounds check is textually the
 same two-comparison shape (`next` past `end`, or `next` wrapped below
-`at`) `lex-sys-codegen`'s own `bump` makes, translated into `ptr`
+`at`) `cancho-codegen`'s own `bump` makes, translated into `ptr`
 arithmetic throughout (`getelementptr`/`icmp` both work directly on
 `ptr` in LLVM IR, so nothing here needs `ptrtoint`). `ARENA_CHUNK` is
-the same 64 KiB constant, unmodified from `lex-sys-codegen`'s
-`abi::ARENA_CHUNK` — `sieve_checked.ls`'s own header sizes its
+the same 64 KiB constant, unmodified from `cancho-codegen`'s
+`abi::ARENA_CHUNK` — `sieve_checked.cho`'s own header sizes its
 allocation against this exact number, so a mismatched chunk would trap
 where the Cranelift build does not, or the reverse.
 
 "One `free` out" was true of a region left by falling out of its last
 statement and of nothing else: a `return` from inside one emitted its
 `ret` with no `free`, so the chunk was kept for good, one 64 KiB `malloc`
-per call (lex-sys#252). `lex-sys-codegen`'s `emit_return` had always freed
+per call (cancho#252). `cancho-codegen`'s `emit_return` had always freed
 every arena open at the `return`, innermost first; the `Stmt::Return` arm
 here now does the same (`release_arenas`), after the returned value is in
-registers. lexsys-hooks found it as about 11 KB kept per delivery attempt
+registers. cancho-hooks found it as about 11 KB kept per delivery attempt
 (2 MB to 1,075 MB resident over 100,000 deliveries), and worked around it
 by never returning from inside a region. A function that writes and reads
 its region at indices the optimiser cannot fold, called 100,000 times,
@@ -852,16 +852,16 @@ in §7.3's table; both were found by building the actual target and
 reading the refusal, the same method §7.3 itself used.
 
 Every program behind only these four gaps now builds on `--backend
-llvm`: `sieve_checked.ls`, `sieve_wrapping.ls`, `scan_checked.ls`,
-`scan_wrapping.ls`, and `benches/three/sieve.ls` — five differential
+llvm`: `sieve_checked.cho`, `sieve_wrapping.cho`, `scan_checked.cho`,
+`scan_wrapping.cho`, and `benches/three/sieve.cho` — five differential
 tests join the nine already in `backends.rs`, checked byte-for-byte
 (or exit-code-for-exit-code) against Cranelift, plus a new crate-level
 trap test: `allocating_past_an_arenas_chunk_traps_with_sigill`,
 requesting 9000 `int`s (72000 bytes) from one arena and checking the
 same `SIGILL` §3.2 already established for every other trap here.
-`fasta.ls`/`revcomp.ls` — §7.3's other two `region`-blocked programs —
-still refuse: `fasta.ls` on a `float`-typed `alloc_slice` fill, and
-`revcomp.ls` on `getchar` (`io_read`), each its own already-named gap.
+`fasta.cho`/`revcomp.cho` — §7.3's other two `region`-blocked programs —
+still refuse: `fasta.cho` on a `float`-typed `alloc_slice` fill, and
+`revcomp.cho` on `getchar` (`io_read`), each its own already-named gap.
 
 **Measured, `--rounds 25`, minimum of each interleaved half:**
 
@@ -880,18 +880,18 @@ direction as every kernel so far.
 
 **And, checked with `objdump` rather than assumed: the wrapping halves
 of these two pairs are the first kernels in this document where LLVM
-actually vectorises.** `scan_wrapping.ls`'s object has **409**
-`%xmm`/`%ymm`/`%zmm` instructions; `sieve_wrapping.ls`'s has **22**.
-`scan_checked.ls` and `sieve_checked.ls` — otherwise identical source,
+actually vectorises.** `scan_wrapping.cho`'s object has **409**
+`%xmm`/`%ymm`/`%zmm` instructions; `sieve_wrapping.cho`'s has **22**.
+`scan_checked.cho` and `sieve_checked.cho` — otherwise identical source,
 diffed to confirm the only change is `+`/`-` becoming `wrapping_add`/
 `wrapping_sub` at every site, including the loop's own induction
 variable — have **zero**, matching §7.2's and §7.4's finding on
-`sum_checked.ls`/`mandelbrot.ls` exactly. `check-cost.md`'s "an
+`sum_checked.cho`/`mandelbrot.cho` exactly. `check-cost.md`'s "an
 observable trap is not reassociable" is not a claim about arithmetic
 kernels specifically; this is the first direct evidence it holds for a
 bounds-checked memory scan too, on a real backend, both directions of
-the comparison in the same controlled pair. `sieve_wrapping.ls`'s
-smaller SIMD count against `scan_wrapping.ls`'s is not measured further
+the comparison in the same controlled pair. `sieve_wrapping.cho`'s
+smaller SIMD count against `scan_wrapping.cho`'s is not measured further
 here — its inner loop's stride (`m = m + p`) is data-dependent, not
 unit, which is a harder shape to vectorise regardless of trapping, and
 untangling how much of the gap is that versus something else is its own
@@ -901,18 +901,18 @@ question this document is not answering today.
 
 §7.6's largest remaining pocket: `box_slice`/`contents`/`unbox_slice`
 (`Expr::BoxedSlice`/`Expr::Contents`/`Expr::UnboxedSlice`), needed by
-`reduce_*.ls` and every `benches/layout/*.ls` file. Built the same
+`reduce_*.cho` and every `benches/layout/*.cho` file. Built the same
 shape `alloc_slice` already is — `boxed_slice` shares `alloc_slice`'s
 own `slice_bytes` helper (factored out once there were two callers) for
 the checked-multiply sizing, and reaches for `malloc`/a null trap
 instead of `bump`/an arena chunk; `contents` and `unbox_slice` are each
-one load and one `free` respectively, matching `lex-sys-codegen`'s own
+one load and one `free` respectively, matching `cancho-codegen`'s own
 `body/memory.rs` exactly. Bare `Boxed`/`Unboxed` (a single-value box,
 not a slice) stay refused — nothing in `benches/` asks for one.
 
-**Building `reduce_checked.ls` against this found a second, unrelated
+**Building `reduce_checked.cho` against this found a second, unrelated
 gap sitting underneath it: multi-leaf function returns.** `fill`, the
-helper that builds `reduce_checked.ls`'s array, returns `Box[[int]]` —
+helper that builds `reduce_checked.cho`'s array, returns `Box[[int]]` —
 two leaves, a pointer and a length (`docs/boxed-slices.md` §2) — and
 `emit`/`call` had refused any function return past one leaf since the
 first slice, a restriction nothing had tried to lift because nothing
@@ -927,11 +927,11 @@ struct return works the same way, untested only because nothing in
 `benches/` needs one yet.
 
 Every program behind only these gaps now builds on `--backend llvm`:
-`reduce_checked.ls`, `reduce_wrapping.ls`, and all four `benches/
-layout/*.ls` files (`aos.ls`, `soa.ls`, `ints.ls`, `rgb.ls`) — six
+`reduce_checked.cho`, `reduce_wrapping.cho`, and all four `benches/
+layout/*.cho` files (`aos.cho`, `soa.cho`, `ints.cho`, `rgb.cho`) — six
 differential tests join the eleven already in `backends.rs`, all
 checked byte-for-byte (or exit-code-for-exit-code) against Cranelift;
-the existing seventeen `lex-sys-codegen-llvm` unit tests, exercising
+the existing seventeen `cancho-codegen-llvm` unit tests, exercising
 every earlier slice's own return path, still pass unchanged.
 
 **Measured, `--rounds 20`, minimum of each interleaved half:**
@@ -942,11 +942,11 @@ reduce_checked        0.248s       0.096s            -61%
 reduce_wrapping       0.100s       0.068s            -32%
 ```
 
-`reduce_checked.ls` is `docs/gpu.md`'s own kernel — "the shape a GPU
+`reduce_checked.cho` is `docs/gpu.md`'s own kernel — "the shape a GPU
 runs," its own header says — and the first time it has been measured
 llvm-vs-cranelift rather than only cranelift-vs-C/Rust. **Checked with
-`objdump`, once more before trusting it**: `reduce_checked.ls` has
-**zero** SIMD instructions and `reduce_wrapping.ls` has **54**, the
+`objdump`, once more before trusting it**: `reduce_checked.cho` has
+**zero** SIMD instructions and `reduce_wrapping.cho` has **54**, the
 same pattern §7.5 found in `sieve`/`scan` and §7.2/§7.4 found in
 `sum`/`mandelbrot` — an observable trap blocks vectorisation, on a
 fourth and different kind of kernel now (a boxed-slice reduction,
@@ -963,39 +963,39 @@ rather than folding every kind of benchmark into one script.
 
 `box_slice`/`contents`/`unbox_slice` and multi-leaf returns move out of
 §7.6's table. What is left: bare `Expr::Alloc` (a single-value arena
-allocation — `tests/accept/arena_roundtrip.ls`, not a `benches/`
+allocation — `tests/accept/arena_roundtrip.cho`, not a `benches/`
 program but this backend's own "outside the boundary" fixture),
-`arg_count` (`benches/game/{binarytrees,fannkuch}.ls`), `Type::Float`
-(`benches/game/spectral.ls`, and `fasta.ls`'s two `float`-filled
+`arg_count` (`benches/game/{binarytrees,fannkuch}.cho`), `Type::Float`
+(`benches/game/spectral.cho`, and `fasta.cho`'s two `float`-filled
 `alloc_slice` calls), and `getchar`/`io_read` (`benches/game/
-revcomp.ls`). Four gaps, each its own single pocket, none bundled with
+revcomp.cho`). Four gaps, each its own single pocket, none bundled with
 anything else in `benches/` — the same shape §7.6 described, one
 row shorter.
 
-### 7.9 `getchar` and `s[a..b]`, closed — and `revcomp.ls`'s boundary moves past both
+### 7.9 `getchar` and `s[a..b]`, closed — and `revcomp.cho`'s boundary moves past both
 
 `getchar`'s own row: the mirror of `putchar`, sign-extended the same
 way, no argument to erase or narrow since `io: &!i Io` is already zero
-leaves. Trying it against `revcomp.ls` immediately found a second gap
+leaves. Trying it against `revcomp.cho` immediately found a second gap
 sitting in front, the same way `sieve`/`scan` found `byte_of`/`Expr::
 Not` in §7.5: `s[a..b]` (`Expr::Subslice`), used by the buffer helpers
-`revcomp.ls` calls through `std.buffer`. Built the same shape
+`revcomp.cho` calls through `std.buffer`. Built the same shape
 `element_address` already is — the same two bounds checks
-`lex-sys-codegen`'s own `subslice` makes (past the end, or inverted),
+`cancho-codegen`'s own `subslice` makes (past the end, or inverted),
 then a pointer-and-length pair rather than one element. Two new
 crate-level trap tests (`subslicing_past_the_end_traps_with_sigill`,
 `an_inverted_subslice_traps_with_sigill`) join the existing bounds-check
 pair.
 
 Neither gap had a `benches/` fixture of its own to build against, so
-`tests/accept/stdin_roundtrip.ls` — the repository's own first `//~
+`tests/accept/stdin_roundtrip.cho` — the repository's own first `//~
 STDIN` fixture — is what closes the loop this time: a `getchar`/
 `putchar` echo loop, piped `"hello\nworld\n"` and checked byte-for-byte
 against Cranelift's output, which needed its own comparison in
 `backends.rs` rather than reusing `assert_backends_agree` (nothing
 built here before piped a program's stdin).
 
-**`revcomp.ls` itself still refuses, and the boundary moved a second
+**`revcomp.cho` itself still refuses, and the boundary moved a second
 time in the same session — worth stating exactly, not left as "still
 blocked on `getchar`" now that it is not.** Past `getchar` and `s[a..b]`,
 it reaches `std.buffer`'s `Buffer.clear`, which writes a field through a
@@ -1004,24 +1004,24 @@ named in §5's fourth slice as needing "pointer arithmetic into a
 referent this backend has not built" and never closed since. This is a
 materially bigger gap than either of this slice's two — general
 struct-field writes through any reference, not one more builtin or one
-more bounds check — and is not scoped here. `revcomp.ls` is removed
+more bounds check — and is not scoped here. `revcomp.cho` is removed
 from the gap table below on that basis: it is no longer blocked by
 `getchar`, but it is still blocked, by something this document already
 knew about and had not yet connected to this specific program.
 
 ### 7.10 What still blocks the rest of `benches/`, updated again
 
-`getchar`/`io_read` moves out of §7.8's table, closed. `revcomp.ls`
+`getchar`/`io_read` moves out of §7.8's table, closed. `revcomp.cho`
 stays off the "now builds" list, moved instead under `Place::Field`/
 `Place::Deref` below, where it belongs now that `getchar` is not what
 stops it:
 
 | Gap | Blocks | Where it already shows up in this document |
 |---|---|---|
-| Bare `Expr::Alloc`/`Expr::Boxed`/`Expr::Unboxed` (single-value allocation, arena or heap) | `tests/accept/arena_roundtrip.ls` — this backend's own boundary fixture, no `benches/` program | §7.6, §7.8 |
-| ~~`Place::Field`/`Place::Deref` (writing through a reference)~~ | **Closed, §7.11**: `benches/game/revcomp.ls` now builds | §5's fourth slice, named and deferred there; not connected to a `benches/` program until §7.9 |
-| `arg_count` | `benches/game/{binarytrees,fannkuch}.ls` | §7.3 |
-| `Type::Float` | `benches/game/spectral.ls`, `fasta.ls`'s two `float`-filled `alloc_slice` calls | §7.3 |
+| Bare `Expr::Alloc`/`Expr::Boxed`/`Expr::Unboxed` (single-value allocation, arena or heap) | `tests/accept/arena_roundtrip.cho` — this backend's own boundary fixture, no `benches/` program | §7.6, §7.8 |
+| ~~`Place::Field`/`Place::Deref` (writing through a reference)~~ | **Closed, §7.11**: `benches/game/revcomp.cho` now builds | §5's fourth slice, named and deferred there; not connected to a `benches/` program until §7.9 |
+| `arg_count` | `benches/game/{binarytrees,fannkuch}.cho` | §7.3 |
+| `Type::Float` | `benches/game/spectral.cho`, `fasta.cho`'s two `float`-filled `alloc_slice` calls | §7.3 |
 
 Four gaps, one of them (`Place::Field`/`Place::Deref`) larger than
 anything else left in this table — every other row is a builtin, a
@@ -1033,7 +1033,7 @@ matching through a reference has been since §5.
 
 The gap §7.10's table called one row was, on contact, four IR nodes on
 the write side and five on the read side, none of them named until this
-slice actually built against `revcomp.ls`:
+slice actually built against `revcomp.cho`:
 
 - **Writes**: `Place::Deref` (`*r = e`, the whole referent replaced) and
   `Place::Field` (`r.x = e`, one field through a reference) — the two
@@ -1047,49 +1047,49 @@ slice actually built against `revcomp.ls`:
   TupleFieldRef`/`Expr::TupleFieldAddr`.
 - **`Expr::Tuple`/`Expr::TupleField`** — building an owned tuple and
   reading one of its components — were also never built, found only
-  because `tests/accept/tuple_roundtrip.ls` was reached for as a test
+  because `tests/accept/tuple_roundtrip.cho` was reached for as a test
   fixture and refused before it could serve as one.
 
 All nine share one new helper, `field_offset` (and its tuple-shaped
 twin, `tuple_field_offset`): the byte offset of one field among a
 struct's (or tuple's) leaves, computed once and used by every one of
 `Expr::Field`/`FieldRef`/`FieldAddr` and `Place::Field` alike — the
-same arithmetic `lex-sys-codegen`'s own `write` doc comment already
+same arithmetic `cancho-codegen`'s own `write` doc comment already
 named ("the same field arithmetic as reading one, running the other
 way"), collected into one function here rather than repeated five
 times. Every address is `ptr` arithmetic throughout
 (`getelementptr`/`load`/`store`, no `ptrtoint`), the same idiom
 §7.5's arena code and §7.9's `element_address` already established.
 
-**Building `revcomp.ls` against this found one more gap underneath,
+**Building `revcomp.cho` against this found one more gap underneath,
 the same way every slice since §7.3 has: `write_bytes`/`write_err`**
 (`docs/bulk-io.md` §3), needed once `std.buffer`'s own field writes
 stopped being the reason it refused. `fwrite` through `stdout`/
 `stderr` — `FILE *` *variables* in libc, so the symbol is the address
 of the pointer and the stream is one load away, and the symbol differs
 by platform (`__stdoutp`/`__stderrp` on Darwin, `stdout`/`stderr`
-elsewhere) exactly the way `lex-sys-codegen`'s own `emit.rs` already
+elsewhere) exactly the way `cancho-codegen`'s own `emit.rs` already
 resolves it.
 
-**`revcomp.ls` itself now builds, runs, and matches the Benchmarks
+**`revcomp.cho` itself now builds, runs, and matches the Benchmarks
 Game's own published output on `--backend llvm`** — checked against
 `benches/game/revcomp-1000.txt`, the same reference
 `benchmarks.rs`'s `fasta_and_reverse_complement_print_the_published_
 answer` already checks `--backend cranelift` against. Two more real
 fixtures needed nothing but what this slice built:
-`tests/accept/deref_roundtrip.ls` (the `int`/`Point` reference
-round-trip named above) and `tests/accept/tuple_roundtrip.ls` (tuples
+`tests/accept/deref_roundtrip.cho` (the `int`/`Point` reference
+round-trip named above) and `tests/accept/tuple_roundtrip.cho` (tuples
 through a reference). All three are new differential tests in
-`backends.rs`; `deref_roundtrip.ls` also gets a crate-level test,
+`backends.rs`; `deref_roundtrip.cho` also gets a crate-level test,
 matching every earlier slice's own fixture-plus-differential pair.
 
 **Measured** (piped a 1,000,000-record FASTA input generated by
-`--backend cranelift`'s own `fasta.ls`, since `fasta.ls` itself still
-needs `Type::Float` to build on `--backend llvm`): `revcomp.ls` is
+`--backend cranelift`'s own `fasta.cho`, since `fasta.cho` itself still
+needs `Type::Float` to build on `--backend llvm`): `revcomp.cho` is
 **42%–46% faster** on `--backend llvm`, in the same range every other
 kernel in this document has landed in. `objdump` finds **23** SIMD
 instructions in the `--backend llvm` object — real, but far short of
-`scan_wrapping.ls`'s 409 (§7.5): `revcomp.ls`'s read side is `getchar`,
+`scan_wrapping.cho`'s 409 (§7.5): `revcomp.cho`'s read side is `getchar`,
 one byte at a time (`bulk-io.md` §3.3 — there is no bulk read to reach
 for), which `benchmarks-game.md` §7 already found is what keeps this
 exact program's Cranelift-vs-C ratio inside the ordinary range rather
@@ -1115,22 +1115,22 @@ sizes of problem, not one:
 
 | Gap | Blocks | Where it already shows up in this document |
 |---|---|---|
-| Bare `Expr::Alloc`/`Expr::Boxed`/`Expr::Unboxed` (single-value allocation, arena or heap) | `tests/accept/arena_roundtrip.ls` — this backend's own boundary fixture, no `benches/` program | §7.6, §7.8 |
-| `arg_count` | `benches/game/{binarytrees,fannkuch}.ls` | §7.3 |
-| `Type::Float` | `benches/game/spectral.ls`, `fasta.ls`'s two `float`-filled `alloc_slice` calls | §7.3 |
+| Bare `Expr::Alloc`/`Expr::Boxed`/`Expr::Unboxed` (single-value allocation, arena or heap) | `tests/accept/arena_roundtrip.cho` — this backend's own boundary fixture, no `benches/` program | §7.6, §7.8 |
+| `arg_count` | `benches/game/{binarytrees,fannkuch}.cho` | §7.3 |
+| `Type::Float` | `benches/game/spectral.cho`, `fasta.cho`'s two `float`-filled `alloc_slice` calls | §7.3 |
 | Matching through a reference (`Stmt::Match`'s `by_reference`) | No `benches/` program reaches it yet | §5's fourth slice; named separately from field/deref access in §7.11 |
 
 Three gaps with a `benches/` program actually behind them, plus one
 with none yet. `Type::Float` is now the only row blocking more than one
-program (`spectral.ls` and `fasta.ls` both); `arg_count` blocks two of
+program (`spectral.cho` and `fasta.cho` both); `arg_count` blocks two of
 its own. Closing either finishes a `benches/` program outright, the
 same way §7.9 and §7.11 each did.
 
-### 7.13 `arg_count`/`arg`, closed — and `fannkuch.ls` builds, `binarytrees.ls` does not
+### 7.13 `arg_count`/`arg`, closed — and `fannkuch.cho` builds, `binarytrees.cho` does not
 
 `argc`/`argv` as `main` was handed them, stashed once into module-local
 storage (`@lexs_argc`, `@lexs_argv`, both `internal global`) before the
-entry function's own body runs — `lex-sys-codegen`'s own `emit_c_main`
+entry function's own body runs — `cancho-codegen`'s own `emit_c_main`
 does the identical thing a globals-table-and-`Linkage::Local` step
 apart (`docs/arguments.md` §3). `arg_count` is a load; `arg` is the
 same bounds check every other indexing operation in this backend
@@ -1141,20 +1141,20 @@ part of the value this backend hands back, matching `docs/
 arguments.md` §3.2.
 
 **Both of §7.12's named targets were tried, and only one of them
-builds.** `fannkuch.ls` builds, runs, and matches Cranelift exactly,
+builds.** `fannkuch.cho` builds, runs, and matches Cranelift exactly,
 both with no argument (the fallback path) and with one (`arg_count`
 and `arg` together, checked against a real `8`, not only assumed from
-reading the code). `binarytrees.ls` still refuses — past `arg_count`/
+reading the code). `binarytrees.cho` still refuses — past `arg_count`/
 `arg` it reaches `build`'s own `box[h](Tree::Node { .. })`, bare
 `Expr::Boxed`, §7.12's other still-open row and not touched here. The
-same shape §7.9 found with `revcomp.ls` and §7.6/§7.8 already named for
+same shape §7.9 found with `revcomp.cho` and §7.6/§7.8 already named for
 this one: a gap can block more than one program and close only some of
 them, and the table has to say which.
 
-`tests/accept/arguments.ls` — a ready-made fixture, never built
+`tests/accept/arguments.cho` — a ready-made fixture, never built
 through this backend before — gets a crate-level test (no arguments,
 its own contract) and a CLI differential test (also no arguments, the
-"one argument, its own name" path). `fannkuch.ls` gets its own CLI
+"one argument, its own name" path). `fannkuch.cho` gets its own CLI
 differential test passing a real `8`, the first test in this module to
 give a compiled program an actual argument rather than only piped
 stdin or none at all.
@@ -1164,21 +1164,21 @@ stdin or none at all.
 kernel in this document has landed in. `objdump` finds 16 SIMD
 instructions in the object — fannkuch's own array rotation is not the
 loop shape `scan`/`sieve` vectorise on, so this is a smaller number
-than those, consistent with §7.11's own reading of `revcomp.ls`'s
+than those, consistent with §7.11's own reading of `revcomp.cho`'s
 similarly modest count: how much a kernel vectorises depends on its
 own loop shape, not only on whether its traps are observable.
 
 ### 7.14 What still blocks the rest of `benches/`, updated again
 
 `arg_count`/`arg` moves out of §7.12's table, closed — but
-`binarytrees.ls` does not move with it, since bare `Expr::Boxed` was
+`binarytrees.cho` does not move with it, since bare `Expr::Boxed` was
 always the bigger of the two gaps standing between it and this
 backend, `arg_count`/`arg` merely the first one reached:
 
 | Gap | Blocks | Where it already shows up in this document |
 |---|---|---|
-| Bare `Expr::Alloc`/`Expr::Boxed`/`Expr::Unboxed` (single-value allocation, arena or heap) | `tests/accept/arena_roundtrip.ls`, `benches/game/binarytrees.ls` (`build`'s own `box[h](Tree::Node {..})`, found in §7.13) | §7.6, §7.8, §7.13 |
-| `Type::Float` | `benches/game/spectral.ls`, `fasta.ls`'s two `float`-filled `alloc_slice` calls | §7.3 |
+| Bare `Expr::Alloc`/`Expr::Boxed`/`Expr::Unboxed` (single-value allocation, arena or heap) | `tests/accept/arena_roundtrip.cho`, `benches/game/binarytrees.cho` (`build`'s own `box[h](Tree::Node {..})`, found in §7.13) | §7.6, §7.8, §7.13 |
+| `Type::Float` | `benches/game/spectral.cho`, `fasta.cho`'s two `float`-filled `alloc_slice` calls | §7.3 |
 | Matching through a reference (`Stmt::Match`'s `by_reference`) | No `benches/` program reaches it yet | §5's fourth slice; named separately from field/deref access in §7.11 |
 
 Two gaps with a `benches/` program behind them, one with none yet.
@@ -1187,14 +1187,14 @@ bare `Expr::Alloc`/`Expr::Boxed`/`Expr::Unboxed` now blocks a real
 `benches/` program for the first time, not only this backend's own
 boundary fixture.
 
-### 7.15 Bare `Expr::Alloc`/`Expr::Boxed`/`Expr::Unboxed`, closed — `binarytrees.ls` builds too
+### 7.15 Bare `Expr::Alloc`/`Expr::Boxed`/`Expr::Unboxed`, closed — `binarytrees.cho` builds too
 
 Single-value allocation, arena or heap: `alloc[a](value)` is `bump`
 plus one `store_leaves` call, the exact helper `alloc_slice` already
 opened (§7.5) minus its fill loop; `box(h, value)` is `boxed_slice`'s
 own `malloc`-and-null-check minus its fill loop; `unbox(h, b)` is one
 `load_leaves` followed by one `free`, the load ordered first because a
-freed pointer is not a valid read afterwards — `lex-sys-codegen`'s own
+freed pointer is not a valid read afterwards — `cancho-codegen`'s own
 `alloc`/`boxed`/`unboxed` (`body/memory.rs`) are the identical shape,
 each one a smaller version of a primitive this backend had already
 built for a slice's many elements. All three share one new
@@ -1203,10 +1203,10 @@ counterpart of `stride_of`'s per-element version — a whole value is
 never a bare `byte` the way a slice's element can be, so it needs none
 of that function's special case.
 
-**`tests/accept/arena_roundtrip.ls`** (`alloc`) and **`tests/accept/
-box_roundtrip.ls`** (`box`/`unbox`) were both ready-made fixtures,
+**`tests/accept/arena_roundtrip.cho`** (`alloc`) and **`tests/accept/
+box_roundtrip.cho`** (`box`/`unbox`) were both ready-made fixtures,
 checked against Cranelift byte-for-byte, each getting a crate-level
-test and a CLI differential test. **`binarytrees.ls` — §7.13's other
+test and a CLI differential test. **`binarytrees.cho` — §7.13's other
 named target, left refusing there on `build`'s own `box[h](Tree::Node
 {..})` — now builds too**, checked both with no argument (the fixture's
 own `//~ STDOUT` depth) and with a real one, matching Cranelift exactly
@@ -1216,7 +1216,7 @@ finding — a gap can block more than one program and close only some of
 them — resolves the other way this time: the *second*, deeper gap it
 found closes too, and both of its named targets now build.
 
-Not measured for performance: `binarytrees.ls` is allocation-and-
+Not measured for performance: `binarytrees.cho` is allocation-and-
 freeing-bound rather than arithmetic- or memory-scan-bound, the kind of
 kernel this document has not yet built a `--with-malloc` comparison
 for, and `objdump`'s own SIMD count is not the interesting number for a
@@ -1232,14 +1232,14 @@ both of its named `benches/` targets with it, not only one:
 
 | Gap | Blocks | Where it already shows up in this document |
 |---|---|---|
-| `Type::Float` | `benches/game/spectral.ls`, `fasta.ls`'s two `float`-filled `alloc_slice` calls | §7.3 |
+| `Type::Float` | `benches/game/spectral.cho`, `fasta.cho`'s two `float`-filled `alloc_slice` calls | §7.3 |
 | Matching through a reference (`Stmt::Match`'s `by_reference`) | No `benches/` program reaches it yet | §5's fourth slice; named separately from field/deref access in §7.11 |
 
 One gap left with a `benches/` program behind it, one with none yet.
 `Type::Float` is now the only thing standing between this backend and
 the rest of the Benchmarks Game suite in `benches/game/` — closing it
-finishes both `spectral.ls` and `fasta.ls` at once, the same way
-`arg_count`/`arg` very nearly did with `fannkuch.ls`/`binarytrees.ls`.
+finishes both `spectral.cho` and `fasta.cho` at once, the same way
+`arg_count`/`arg` very nearly did with `fannkuch.cho`/`binarytrees.cho`.
 
 ### 7.17 `Type::Float`, closed — and a structural gap the surface reading missed
 
@@ -1309,18 +1309,18 @@ unchecked-`float` one.
   a fourth thing this document would otherwise have to reopen later.
 
 **Both of `Type::Float`'s named targets build and match Cranelift
-exactly**: `spectral.ls` (accumulation loops, `float_of`, `sqrt`) and
-`fasta.ls` (many-digit decimal literals not exactly representable in
+exactly**: `spectral.cho` (accumulation loops, `float_of`, `sqrt`) and
+`fasta.cho` (many-digit decimal literals not exactly representable in
 binary, and a real runtime float comparison —
 `cumulative[idx] < r` — picking a base, not just arithmetic), the
 second checked against the Benchmarks Game's own published output the
-same way `revcomp.ls` was in §7.11.
-`tests/accept/floating_point.ls` — the design doc's own dedicated
+same way `revcomp.cho` was in §7.11.
+`tests/accept/floating_point.cho` — the design doc's own dedicated
 fixture, literals through `bits_of`/`is_nan` and the sign of `-0.0` —
 matches too, byte for byte. It could not become this crate's own
 crate-level test the way every other closed gap's fixture has,
 because it `import`s `std.io` for its printing and the crate-level
-harness's bare `lex_sys_ir::lower` has no `--std` source injection to
+harness's bare `cancho_ir::lower` has no `--std` source injection to
 resolve that; a self-contained program threading an unfoldable runtime
 value through `float_of`/`truncate`/`sqrt`/`bits_of`/`is_nan` stands in
 for it there instead, and the CLI differential suite covers the real
@@ -1335,7 +1335,7 @@ begin with.
 
 **One more consequence, unrelated to what floats compute**: this
 slice's own diff pushed `emit.rs` past `CONTRIBUTING.md`'s 2,000-line
-file budget. Split by concern, the same shape `lex-sys-codegen`'s own
+file budget. Split by concern, the same shape `cancho-codegen`'s own
 `body/` directory already is: `body/mod.rs` (the shared `FuncEmitter`
 scaffolding — `new`, `emit`, `stmts`), `body/arith.rs` (`scalar_kind`,
 `binop` and everything checked/unchecked arithmetic), `body/control.rs`
@@ -1359,9 +1359,9 @@ Every `benches/` program this document tracks now builds on
 happens to need: a match arm binding a *pointer into the scrutinee*
 rather than a copy of it (`docs/reading-references.md`'s address-only
 binding mode), still its own address arithmetic over an enum's variant
-layout, not yet built. `tests/accept/match_a_reference.ls` is this
+layout, not yet built. `tests/accept/match_a_reference.cho` is this
 backend's own boundary fixture for it now, the same role
-`arena_roundtrip.ls` and `floating_point.ls` each held in turn.
+`arena_roundtrip.cho` and `floating_point.cho` each held in turn.
 
 ### 7.19 Matching through a reference, closed — every documented gap is now closed
 
@@ -1392,9 +1392,9 @@ by-reference binding is one leaf" invariant: this backend returns an
 panic that would only fire in debug builds.
 
 **Both fixtures this document already knew about build and match
-Cranelift exactly.** `tests/accept/match_a_reference.ls` — read three
+Cranelift exactly.** `tests/accept/match_a_reference.cho` — read three
 times through a shared reference, freed once — matches byte for byte.
-`examples/tree.ls`, the richer target `docs/reading-references.md` §4
+`examples/tree.cho`, the richer target `docs/reading-references.md` §4
 names by name: a three-field variant (`Box[Tree]`, `int`, `Box[Tree]`)
 matched by reference three separate ways — `contains` binds and
 recurses through all three; `deepest` discards the first position with
@@ -1410,7 +1410,7 @@ in this slice's own session: it builds, runs, and matches Cranelift.
 
 **Every gap this document names a `benches/` or `tests/accept/` target
 for is now closed.** The "outside this backend" boundary fixture moves
-a fourth time: `tests/accept/bytes_to_c.ls`, refusing on a foreign
+a fourth time: `tests/accept/bytes_to_c.cho`, refusing on a foreign
 call (`extern fn`) — `Ffi`/`extern fn` was always the next-named gap in
 `lib.rs`'s own module header, just never connected to a fixture until
 matching through a reference stopped being in the way of naming it.
@@ -1441,9 +1441,9 @@ shape from `Sqrt`: narrow the `int` argument(s) to `i32`, `call`,
 `sext` the `i32` result back to `i64`. `emit.rs` gained two
 unconditional `declare`s (`declare i32 @listen(i32, i32)` and
 `declare i32 @accept(i32, ptr, ptr)`, the trailing `ptr null, ptr null`
-the same "the peer address is ignored" choice `examples/serve/serve.ls`
+the same "the peer address is ignored" choice `examples/serve/serve.cho`
 already made by hand); `body/expr.rs` gained the two match arms,
-mirroring `lex-sys-codegen`'s own `body/expr.rs` arms line for line.
+mirroring `cancho-codegen`'s own `body/expr.rs` arms line for line.
 
 **What this slice did not build, and could not have without building
 far more first:** a *real* bound fd. `bind` is a dedicated `Expr::Bind`
@@ -1454,17 +1454,17 @@ documented "not part of the LLVM backend yet" refusal, naming `Bind`
 specifically, while the same source runs to completion on
 `--backend cranelift`. `Ffi`/`extern fn` is refused too (§7.19's own
 finding), so there is no back door to a real socket either —
-`examples/serve/serve.ls`'s own hand-rolled `socket`+`bind`+`listen`+
+`examples/serve/serve.cho`'s own hand-rolled `socket`+`bind`+`listen`+
 `accept` sequence, which is how a real fd gets tested against
 Cranelift, is not reachable from this backend at all yet.
 
 **Tested the other side instead.** `tests/accept/
-listen_accept_bad_fd.ls` calls `listen(999, 16)` and `accept(999)`
+listen_accept_bad_fd.cho` calls `listen(999, 16)` and `accept(999)`
 against a deliberately invalid fd — never opened by anything — which
 fails the same way, `EBADF`, on any host, with no real socket and no
 live connection required. Both backends agree (`backends.rs`); the
 LLVM path also gets its own self-contained crate-level test
-(`crates/lex-sys-codegen-llvm/src/tests.rs`), the same "fixture plus
+(`crates/cancho-codegen-llvm/src/tests.rs`), the same "fixture plus
 differential plus crate-level" trio every earlier slice left behind.
 
 **Still refused:** `connect`, `bind`, and `Ffi`/`extern fn` — three of
@@ -1473,14 +1473,14 @@ differential plus crate-level" trio every earlier slice left behind.
 accept until at least one of the other two lands. `bind` is next,
 smallest-first (`connect`'s `getaddrinfo`-based host resolution is the
 larger of the two remaining pieces, per `docs/connect.md` and
-`crates/lex-sys-codegen/src/body/net.rs`'s own ~150 lines); no forcing
+`crates/cancho-codegen/src/body/net.rs`'s own ~150 lines); no forcing
 function names an order beyond that.
 
 ### 7.21 `bind`, closed — a real fd, and the first slice with no `phi`-free shortcut
 
 `bind` folds `socket`, `setsockopt(SO_REUSEADDR)` and `bind` into one
-call, building the same `struct sockaddr_in` `lex-sys-codegen`'s own
-`bind` builds by hand and `examples/serve/serve.ls` builds by hand
+call, building the same `struct sockaddr_in` `cancho-codegen`'s own
+`bind` builds by hand and `examples/serve/serve.cho` builds by hand
 again — family bytes (`2, 0`, the same "BSD reads family `0` as
 `AF_INET` too" fact `docs/connect.md` §3 already measured, so no
 platform branch is needed here either), the port big-endian, then
@@ -1492,7 +1492,7 @@ arena code already established.
 **The one genuinely new shape:** `socket`/`bind` can each fail, and a
 failure returns `-1` rather than trapping — only a bound mismatch
 traps, checked first, before any syscall runs, the same order
-`lex-sys-codegen`'s own `bind` checks it in. Every slice before this
+`cancho-codegen`'s own `bind` checks it in. Every slice before this
 one that needed a value conditional on a runtime test either trapped
 (never returning, so nothing to merge) or was a `Stmt`-level `if`
 writing into an already-`alloca`'d `var`. `bind` is the first
@@ -1504,7 +1504,7 @@ rule `if_stmt`/`while_stmt` established rather than introducing a new
 one.
 
 **Checked against a real accepted connection, not only against a
-description of one.** `crates/lex-sys/tests/conformance/backends.rs`
+description of one.** `crates/cancho/tests/conformance/backends.rs`
 gained `the_two_backends_bind_and_accept_a_real_connection`: for each
 backend, build a listener that binds a free loopback port, `listen`s,
 and `accept`s, spawn it, connect a real `TcpStream` from the test
@@ -1531,7 +1531,7 @@ reads or writes what it accepts, not only accepts it.
 ### 7.22 `connect`, closed — the last of `Net`'s four builtins
 
 Genuinely the larger of the two remaining pieces, as §7.21 predicted:
-`checked_host` (mirroring `lex-sys-codegen`'s own function of the same
+`checked_host` (mirroring `cancho-codegen`'s own function of the same
 name) is a loop, not a straight-line byte-store sequence — copying the
 dialled name into a 256-byte stack buffer while checking, byte by byte,
 that the prefix inside the capability's bound matches, and NUL-
@@ -1554,7 +1554,7 @@ needed once a struct has `i32` and `ptr` fields alongside `i8`s.
 `freeaddrinfo`, `connect`.
 
 **Checked against a real accepted connection, both directions.**
-`crates/lex-sys/tests/conformance/backends.rs`'s
+`crates/cancho/tests/conformance/backends.rs`'s
 `the_two_backends_connect_to_a_real_listener`: for each backend, build a
 client that `connect`s to a plain `std::net::TcpListener` (standing in
 for the peer, since `connect` does not care what accepted it) and check
@@ -1593,11 +1593,11 @@ not merely open one.
 ### 7.23 `Ffi`/`extern fn`, closed — and the correction finding it forced
 
 An import under the symbol the declaration named, mirroring
-`lex-sys-codegen`'s own `Callee::Extern` arm: a capability parameter
+`cancho-codegen`'s own `Callee::Extern` arm: a capability parameter
 carries no data and never reaches C (`crosses_to_c`, copied over
-unchanged); everything else crosses at lex-sys's own widths — an `int`
+unchanged); everything else crosses at cancho's own widths — an `int`
 is `i64` here whatever the C function's own parameter width is, the same
-choice `lex-sys-codegen`'s own `emit.rs` makes and `docs/reach.md` §3
+choice `cancho-codegen`'s own `emit.rs` makes and `docs/reach.md` §3
 documents. `emit.rs` gained a new pass declaring one `declare` per
 distinct symbol in `program.externs`, deduplicated (`docs/modules.md`
 §3: an `extern fn` name is scoped to its module, but the C symbol is
@@ -1621,14 +1621,14 @@ as a statement. Closed the same way `Callee::Fn`'s own arm already was:
 the declared return type's leaf, read structurally rather than
 evaluated.
 
-**Checked against `tests/accept/bytes_to_c.ls`, not a fixture written
+**Checked against `tests/accept/bytes_to_c.cho`, not a fixture written
 for this slice.** It was already checked in — GNU's own `write(fd, ptr,
 len)`, both a string literal and an arena-allocated slice crossing as
 the pointer-and-length pair `docs/strings.md` §6 describes — and its
 existing `//~ STDOUT`/`//~ EXIT` directives are now met on
 `--backend llvm` unchanged. `backends.rs`'s new
 `the_two_backends_agree_on_bytes_to_c` checks both backends against it;
-`crates/lex-sys-codegen-llvm/src/tests.rs`'s new
+`crates/cancho-codegen-llvm/src/tests.rs`'s new
 `extern_fn_labs_computes_the_real_answer` is the plain-`int` case,
 checked against the real answer (`labs(-5) == 5`) rather than only
 against "it built".
@@ -1640,12 +1640,12 @@ things this document had not named.**
    `examples/seek/`'s own `read_file` against `--backend llvm` and
    getting `` `OpenFile { .. }` is not part of the LLVM backend yet ``.
    The "outside this backend" boundary fixture moves a sixth time, from
-   `tests/accept/bytes_to_c.ls` (now inside) to `tests/accept/
-   file_handle.ls`, refusing on `fs_write`'s own `FileOp` — checked at
+   `tests/accept/bytes_to_c.cho` (now inside) to `tests/accept/
+   file_handle.cho`, refusing on `fs_write`'s own `FileOp` — checked at
    the crate level and through the CLI, the same two ways every earlier
    move was.
 2. **A user-declared `extern fn` can collide with this backend's own
-   fixed libc declarations.** `examples/serve/serve.ls` declares
+   fixed libc declarations.** `examples/serve/serve.cho` declares
    `extern fn socket[&f](ffi, domain: int, kind: int, proto: int)`,
    crossing every `int` at `i64`; `bind` (§7.21) already declared
    `@socket` unconditionally at libc's own `i32` width, for its own
@@ -1660,7 +1660,7 @@ things this document had not named.**
    shared with `open_read`/`fs_read`/`fs_write` since before `Net`
    existed." This slice makes the same exposure visible on
    `--backend llvm` too, for the same reason and left unfixed for the
-   same one: none of `serve.ls`/`fetch.ls`/`report.ls`/`collect.ls`
+   same one: none of `serve.cho`/`fetch.cho`/`report.cho`/`collect.cho`
    needs a *different* `socket`/`bind`/`connect`/`listen`/`accept`/
    `setsockopt`/`close` than this backend already declares for `Net`
    itself, so the fix is narrowing what each program actually asks
@@ -1678,7 +1678,7 @@ last gap before checking.
 (Corrected later: `fs_read`/`fs_write` closed as statements and `let`
 initialisers only, not as operands; see the status note at the top.)
 
-`checked_path` (mirroring `lex-sys-codegen`'s own function of the same
+`checked_path` (mirroring `cancho-codegen`'s own function of the same
 name) is `checked_host`'s loop with two things added: a `/`-boundary
 check on the way out (`/tmp` does not contain `/tmpevil`) and a `..`-
 traversal refusal inside the loop, both built the same "no `phi`,
@@ -1697,7 +1697,7 @@ already has, needed because `File` is an opaque prelude type
 arm, being ordinary prelude *enums* the general `TypeInfo::Enum` case
 already scalarises correctly.
 
-**Checked against `tests/accept/file_handle.ls`, the boundary fixture
+**Checked against `tests/accept/file_handle.cho`, the boundary fixture
 itself.** Unmodified, it now builds and runs on `--backend llvm`,
 matching its own `//~ STDOUT` directives exactly: `fs_write` writes a
 file, `open_read` opens it, `file_read` reads it twice — once for the
@@ -1708,7 +1708,7 @@ checks both backends against it.
 
 **One collision found immediately, and fixed rather than added to the
 known-exposure list.** `read`/`write`, declared unconditionally for
-`Fs`'s own use, broke `tests/accept/bytes_to_c.ls` — the very fixture
+`Fs`'s own use, broke `tests/accept/bytes_to_c.cho` — the very fixture
 §7.23 had just proven — because that program declares its own `extern
 fn write`, crossing every `int` at `i64`, where `Fs`'s own `write` call
 needs libc's true 32-bit `fd`. Unlike `socket`/`bind`/`connect`'s own
@@ -1734,20 +1734,20 @@ because nothing this document tracks compares a raw `byte`:
 `std.bytes.compare` converts through `int_of` first, `sieve`/`scan`/
 `fannkuch` compare `int`s throughout, and `match`'s own tag comparisons
 are already `i64`. `std.bytes.find`'s `text[at + i] != needle[i]` —
-called by `std.flags.named`, called by both `cut.ls` and `seek.ls` — is
+called by `std.flags.named`, called by both `cut.cho` and `seek.cho` — is
 the first comparison this document's own suite reaches that is not.
 Fixed by threading `binop`'s already-computed `lhs_kind` through to
 `compare`, the same value `float_binop` was already being dispatched on
-one line above it. `tests/accept/bytes_to_c.ls` did not trip this only
+one line above it. `tests/accept/bytes_to_c.cho` did not trip this only
 because a `&r [byte]` crossing to C never compares its bytes to
 anything; `examples/cut/`/`examples/seek/` compare them constantly.
 Checked directly: `byte_comparison_uses_the_right_width`
-(`crates/lex-sys-codegen-llvm/src/tests.rs`), `!=` and `==` on two
+(`crates/cancho-codegen-llvm/src/tests.rs`), `!=` and `==` on two
 runtime `byte`s an `int` literal cannot fold away.
 
 **The "outside this backend" boundary fixture moves a seventh time**,
-from `tests/accept/bytes_to_c.ls` (now inside, since §7.23) to
-`tests/accept/static_data.ls`, refusing on `Expr::Static` — found the
+from `tests/accept/bytes_to_c.cho` (now inside, since §7.23) to
+`tests/accept/static_data.cho`, refusing on `Expr::Static` — found the
 same way `Fs` was, by checking whether this backend's own `Expr` match
 was actually exhaustive rather than assuming it, once every named gap
 this document had tracked was closed. `docs/compile-time-data.md`'s
@@ -1757,13 +1757,13 @@ slice before this one had tried a program that used one.
 
 ### 7.25 `Expr::Static` and `Expr::BitNot`, closed — and the boundary that ran out of fixtures to move to
 
-`Expr::Static`'s data does not need building twice: `lex-sys-ir`
+`Expr::Static`'s data does not need building twice: `cancho-ir`
 already evaluates every `static` at compile time, into
 `Program::statics: Vec<StaticValue>` — one entry per `static`, holding
 its element type and its values as `i64`s (a `float`'s bits, the same
 shape `Expr::Float` already holds one in). Both backends read the same
 `Vec`; only laying it out and referencing it is backend work.
-`emit_module` gained a loop mirroring `lex-sys-codegen`'s own
+`emit_module` gained a loop mirroring `cancho-codegen`'s own
 `emit.rs`: one `private unnamed_addr constant [N x i8]` global per
 static, packed at `stride_of`'s own stride — one byte per element for
 `Type::Byte`, eight for `int`/`bool`/`float`, the same rule
@@ -1778,7 +1778,7 @@ static's global is declared exactly once in `emit_module`, because a
 512 KB table is not a greeting: two readers of the same `static` get
 two references to the one symbol, never two copies of the table.
 
-**Checked against `tests/accept/static_data.ls`, the boundary fixture
+**Checked against `tests/accept/static_data.cho`, the boundary fixture
 itself, unmodified.** It builds and runs on `--backend llvm`, matching
 Cranelift byte for byte: a table built by a `while` loop, a `[byte]`
 table shifted through `int_of`/`byte_of`, a second `[int]` table built
@@ -1787,7 +1787,7 @@ by calling a pure function (`twice`) against the first — proving a
 folds `factorial(5)` running it — and a pure function (`square_of`)
 that reads a `static` directly, with no parameter threading it in.
 `backends.rs`'s new `the_two_backends_agree_on_static_data` checks the
-same claim through the CLI, and `crates/lex-sys-codegen-llvm/src/
+same claim through the CLI, and `crates/cancho-codegen-llvm/src/
 tests.rs`'s new `a_static_table_is_built_at_compile_time_and_reads_
 back_correctly` checks a loop-built table numerically (`0 + 1 + 4 + 9 −
 14 = 0`) rather than only "it printed the right thing", so a wrong
@@ -1799,14 +1799,14 @@ checking whether it actually was.** Closing `Expr::Static` left this
 document ready to claim, again, that every named gap was closed — the
 same claim §7.20 through §7.22 made three times running before §7.23
 found it false. This time the check was direct: walk every variant
-`lex_sys_ir::ir::Expr` declares and confirm `body/expr.rs`'s `expr`
+`cancho_ir::ir::Expr` declares and confirm `body/expr.rs`'s `expr`
 match has an arm for each one, rather than trusting the running list of
 named gaps to be complete. `Expr::BitNot` had none. `tests/accept/
-bitwise.ls` already exercises `~0` and has since this backend's early
+bitwise.cho` already exercises `~0` and has since this backend's early
 slices, so a Cranelift-only reader would reasonably have assumed the
-operator worked everywhere `bitwise.ls` does — but `~0` is two
+operator worked everywhere `bitwise.cho` does — but `~0` is two
 literals, folded to `Expr::Int(-1)` by `docs/compile-time.md` §3 before
-codegen ever runs, so `bitwise.ls` alone was never capable of catching
+codegen ever runs, so `bitwise.cho` alone was never capable of catching
 a missing `BitNot` arm on this backend. Confirmed directly: a
 self-contained program applying `~` to `putchar`'s own runtime echo (a
 value the checker cannot fold) hit `` `BitNot(Load(Slot(n)))` is not
@@ -1818,15 +1818,15 @@ right above it already has, at `i64` and `-1` in place of `Not`'s `i8`
 and `1` — the two operators' entire difference, since `Not`'s operand
 is always exactly `0` or `1` and `BitNot`'s is not.
 
-**Checked against `tests/accept/bitwise.ls`, run against this backend
+**Checked against `tests/accept/bitwise.cho`, run against this backend
 for the first time.** `backends.rs`'s new `the_two_backends_agree_on_
 bitwise` matches Cranelift's output for every operator on that page —
 `&`, `|`, `^`, `<<`, `>>`, the arithmetic-shift and no-trap-on-value
-rules, and the precedence case — byte for byte; `bitwise.ls`'s own `~0`
+rules, and the precedence case — byte for byte; `bitwise.cho`'s own `~0`
 had run against Cranelift alone until now (`corpus.rs`, no `--backend`
 flag), never against this one. Because that fixture's only `~` use
 folds away, `bitnot_flips_every_bit_not_just_the_low_one`
-(`crates/lex-sys-codegen-llvm/src/tests.rs`) checks the operator on a
+(`crates/cancho-codegen-llvm/src/tests.rs`) checks the operator on a
 value the checker cannot fold: `~5` computed as `-6` and checked against
 `-6` arithmetically, rather than against the `4` a mistaken "flip the
 low bit" implementation (`Not`'s own shape) would have produced.
@@ -1848,7 +1848,7 @@ time, because this slice's own session found no real fixture left to
 move it to.** Every file in `tests/accept/` and every program in
 `examples/` was built against `--backend llvm`, checked directly rather
 than inferred from the two enums: all of them succeed. The one program
-that still refuses, `examples/collect/collect.ls` (and `fetch/`,
+that still refuses, `examples/collect/collect.cho` (and `fetch/`,
 `report/`, `serve/` alongside it), does so for the reason §7.23 already
 named and §7.24 already found a second instance of: each declares its
 own `extern fn socket`, crossing at `int`'s own `i64` width
@@ -1884,9 +1884,9 @@ asserted in prose.
 > `freeaddrinfo`/`close`/`creat`/`open` are now declared internally only
 > when the program's own `extern fn` does not already claim the symbol
 > — the same guard `read`/`write` already had, extended to every other
-> libc name this backend declares unconditionally. `collect.ls`,
-> `serve.ls`, `fetch.ls`, `report.ls`, `vsock.ls`,
-> `agent_guest.ls`/`agent_supervisor.ls` all build clean now.
+> libc name this backend declares unconditionally. `collect.cho`,
+> `serve.cho`, `fetch.cho`, `report.cho`, `vsock.cho`,
+> `agent_guest.cho`/`agent_supervisor.cho` all build clean now.
 > `a_program_outside_this_backend_is_refused_not_panicked` is now
 > `a_colliding_extern_fn_no_longer_collides`; `a_program_outside_this_
 > backend_is_refused_through_the_cli` is now `every_socket_declaring_

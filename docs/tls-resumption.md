@@ -3,7 +3,7 @@
 > **Status: built (#286), its results in §11.** Designed as below, then built; what building it found is §11, and the
 > sections it corrected say so in place. **Pools of tickets** (§12) answer §9's question 2 after hooks measured a burst.
 >
-> **The design, as first written:** #210 measured the pure client's full handshake at about 2.8 ms of CPU in `lexsys-hooks`, 4 to 7
+> **The design, as first written:** #210 measured the pure client's full handshake at about 2.8 ms of CPU in `cancho-hooks`, 4 to 7
 > times OpenSSL's, with no resumption (`docs/tls-hooks.md` §9). `docs/tls-pure.md` §7.2 left resumption out "until it is designed with
 > its hazard: a resumed session skips verification". This is that design. Its claims are measured on the machine named, or say they
 > are arithmetic from measured parts; where a later PR finds one false, that PR corrects it here, in place.
@@ -13,7 +13,7 @@
 ## 1. Where the 2.8 ms goes
 
 Each operation measured alone, on the machine of #210's handshake measurement (a 6-vCPU Linux VM on an Apple M4 Max, LLVM backend,
-lex-sys `7c1bd08`), with the existing benchmarks:
+cancho `7c1bd08`), with the existing benchmarks:
 
 | Operation | Command | Cost | In a full handshake | Total |
 |---|---|---|---|---|
@@ -22,7 +22,7 @@ lex-sys `7c1bd08`), with the existing benchmarks:
 | **sum** | | | | **2.77 ms** |
 
 hooks' `https_cost.py` measured a full handshake at 2.9 ms per delivery with a floor of 0.03 to 0.12 ms without TLS
-(`lexsys-hooks` `docs/pure-tls.md`). So **these four operations are the handshake**: everything else (hashing, the key schedule,
+(`cancho-hooks` `docs/pure-tls.md`). So **these four operations are the handshake**: everything else (hashing, the key schedule,
 the AEAD, parsing) is a few percent. That decides what resumption can save. *A certificate chain with an intermediate adds one
 verification per certificate; an RSA chain costs differently and was not measured.*
 
@@ -100,7 +100,7 @@ tls.set_ticket_max_age(engine, seconds)      // §3 rule 4; default 3,600
 
 ## 5. The protocol work in `packages/tls`
 
-- **NewSessionTicket is kept, not dropped** (`message.ls` parses it and drops it today): `ticket_lifetime`, `ticket_age_add`,
+- **NewSessionTicket is kept, not dropped** (`message.cho` parses it and drops it today): `ticket_lifetime`, `ticket_age_add`,
   `ticket_nonce`, the ticket, and an `early_data` extension, which is ignored.
 - **The resumption secret** (RFC 8446 §7.1: `resumption_master_secret`, from the master secret and the transcript through the
   client's Finished), and each ticket's PSK, `HKDF-Expand-Label(resumption_master_secret, "resumption", ticket_nonce, Hash.length)`.
@@ -112,7 +112,7 @@ tls.set_ticket_max_age(engine, seconds)      // §3 rule 4; default 3,600
   handshake, verified.
 - **HelloRetryRequest with a PSK:** the second ClientHello recomputes the binder over the new transcript (§4.2.11.2), and the
   ticket age is recomputed. *Corrected (review finding E-6, #209): the age is not recomputed. The second ClientHello sends the
-  `obfuscated_ticket_age` computed at `start_psk` again (`client.ls`, `send_client_hello`), since the engine is given no clock
+  `obfuscated_ticket_age` computed at `start_psk` again (`client.cho`, `send_client_hello`), since the engine is given no clock
   between the two flights. So it is understated by the HelloRetryRequest's round trip, within the tolerance RFC 8446 §4.2.11.1
   leaves to the server, as the first connection's duration overstates it (§11). Only the binder is recomputed.*
 
@@ -126,9 +126,9 @@ tls.set_ticket_max_age(engine, seconds)      // §3 rule 4; default 3,600
 - a Certificate or CertificateRequest after a resumed ServerHello (`tls-unexpected-message`);
 - a NewSessionTicket that does not parse is still `tls-decode-error`, as now.
 
-## 6. In `lexsys-hooks`
+## 6. In `cancho-hooks`
 
-`tlsx` maps its `save_session`, `free_session` and `open(..., session)` onto §4, as `src/tls.ls` maps them onto OpenSSL's. The
+`tlsx` maps its `save_session`, `free_session` and `open(..., session)` onto §4, as `src/tls.cho` maps them onto OpenSSL's. The
 generated build changes in one place (`open`'s session argument is kept, not removed), and `tests/sessions_test.py` runs on both
 builds. `docs/pure-tls.md`'s "differences" row for resumption goes, and the cost table gains a measured "resumed" row.
 
@@ -186,10 +186,10 @@ The build PR shows, each with its command:
 **Built:**
 - `packages/tls`: the ClientHello's `psk_key_exchange_modes` and `pre_shared_key` with its binder, the ServerHello's `pre_shared_key`
   (`tls-illegal-psk`, new), a resumed handshake with no Certificate, the resumption master secret, and NewSessionTicket kept with
-  its PSK (`message.ls`, `client.ls`, `slot.ls`).
-- The engine's ticket table with generation-tagged handles and §3's rules (`tls.ls`).
+  its PSK (`message.cho`, `client.cho`, `slot.cho`).
+- The engine's ticket table with generation-tagged handles and §3's rules (`tls.cho`).
 - Tests: ten lying-server cases (`scripts/tls_liar.py`, now 77), twelve cases of the engine's rules (`scripts/tls_tickets.py`,
-  replayed by `conformance/tls.rs` through `tests/programs/tls_tickets.ls`), a resumption row per TLS 1.3 server in
+  replayed by `conformance/tls.rs` through `tests/programs/tls_tickets.cho`), a resumption row per TLS 1.3 server in
   `scripts/tls_interop.py`, a ticket offered by `fuzz_client` on inputs of odd length, and mutants.
 
 **What it found, and corrected here:**
@@ -230,7 +230,7 @@ The build PR shows, each with its command:
 - **Fuzzing:** `fuzz_client` offers a fixed ticket on inputs of odd length, and the ticket parser is `fuzz_messages`'s case 6. 20
   minutes each of `fuzz_client`, `fuzz_messages` and `fuzz_flight` from the committed corpus: 8,459,281 executions, no crash and no
   hang; `fuzz_client` reached 1,824 edges, against 1,767 before.
-- **In `lexsys-hooks`** (its `docs/pure-tls.md`): a resumed delivery costs about 1.35 ms of the service's CPU against 3.0 ms for a
+- **In `cancho-hooks`** (its `docs/pure-tls.md`): a resumed delivery costs about 1.35 ms of the service's CPU against 3.0 ms for a
   full one. Under a burst to one endpoint fewer deliveries resume than with OpenSSL (401 of 600, against all of them), because a
   ticket is used once (rule 5) and hooks keeps one per endpoint, where OpenSSL reuses one session for every concurrent connection.
   §9's question 2 is where that is decided. *Decided: pools, §12.*
@@ -281,7 +281,7 @@ tls.set_tickets_per_pool(engine, n)               // at most n tickets a pool; 1
   (rule 1) is still checked against the ticket, so a caller that files two servers under one pool offers neither the other's.
 - **Cost.** `start_with` and `save_to` walk the table (hooks: 1,024 entries of 12 integers), against a handshake's 1.6 ms.
 
-**How it is tested.** `tests/programs/tls_tickets.ls` gains `S <pool>` (`save_to`) and `P <n>` (`set_tickets_per_pool`), and
+**How it is tested.** `tests/programs/tls_tickets.cho` gains `S <pool>` (`save_to`) and `P <n>` (`set_tickets_per_pool`), and
 `scripts/tls_tickets.py` cases for: a pool of three resuming three connections, newest first, then none; a pool over its size
 losing its oldest; `forget` emptying a pool; a pool's spent ticket beside a good one; a pool refilled after it was emptied; and a
 handle never issued. The liar's server issues each ticket with a different identity, so a case reads from the ClientHello which

@@ -1,6 +1,6 @@
 # RFC 7748 (Elliptic Curves for Security) X25519 vectors, one per line:
-# `<name> | <curve25519_driver.ls case> | <expected output in hex>`.
-# Read by `crates/lex-sys/tests/conformance/x25519.rs`; `docs/x25519.md` §4.
+# `<name> | <curve25519_driver.cho case> | <expected output in hex>`.
+# Read by `crates/cancho/tests/conformance/x25519.rs`; `docs/x25519.md` §4.
 #
 # Section 5.2's two vectors and its iterated test (1 and 1,000 iterations;
 # the 1,000,000 one is run by hand, docs/x25519.md §4.1), and section 6.1's

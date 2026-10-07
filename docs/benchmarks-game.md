@@ -15,7 +15,7 @@
 > **§8 re-runs the same five kernels now that `--backend llvm` is the
 > default** (`llvm-backend.md`, #127) — `scripts/game.py` takes no
 > `--backend` flag, so it was always going to measure whichever backend
-> a plain `lex-sys build` uses, and that stopped being Cranelift the day
+> a plain `cancho build` uses, and that stopped being Cranelift the day
 > the default flipped. The high end came down hard, as §4's own
 > falsifier predicted: spectral-norm's 2.58× is now **1.27×–1.46×**. The
 > low end did *not* fall the way a "LLVM is strictly better" story would
@@ -37,7 +37,7 @@ single headline, and it got one.
 Adding three programs that stress different things turns that headline
 into a range:
 
-| | what dominates | lex-sys / C |
+| | what dominates | cancho / C |
 |---|---|---|
 | **binary-trees** | `malloc` and `free` | **1.17×** |
 | **fannkuch-redux** | integer arrays, branches | **1.32×** |
@@ -93,18 +93,18 @@ Five of ten, which is itself a measurement of the language's reach.
 ## 3. What porting them needed that did not exist
 
 **`sqrt`.** `floating-point.md` §7 leaves `std.math` over floats open,
-so `spectral.ls` carries its own: Newton, which `examples/newton.ls`
+so `spectral.cho` carries its own: Newton, which `examples/newton.cho`
 already showed converges to the limit of binary64. The C program uses
 **the same hand-written Newton rather than libm's `sqrt`**, because
 otherwise the comparison would be between an intrinsic and a loop.
 
 **Superseded by #62.** `sqrt` is a builtin now — one instruction, no
-capability needed — and `spectral.ls` was one of the two programs whose
+capability needed — and `spectral.cho` was one of the two programs whose
 hand-rolled root motivated it: measured against a correctly-rounded
 root, its own twenty-step Newton loop was wrong on 58.4% of values and
 off by 143 orders of magnitude on a large one (`float-math.md` §2).
-`spectral.ls` calls the builtin now; the comparison this paragraph
-describes as avoided is the one that exists today, between lex-sys's
+`spectral.cho` calls the builtin now; the comparison this paragraph
+describes as avoided is the one that exists today, between cancho's
 intrinsic and C's still hand-written Newton (`spectral.c` keeps it, on
 purpose, for its own reasons). It does not bias the numbers below: the
 call happens once, outside the O(n²) loop this benchmark actually
@@ -114,7 +114,7 @@ describes does not hold since #62.
 **Fixed-precision printing.** The benchmark's answer is nine decimal
 places. `std.fmt.float_into` prints the *shortest* decimal that
 round-trips — `1.2742199912349306e0` — and a stated precision is
-`float-printing.md` §7's open row. So `spectral.ls` carries a nine-line
+`float-printing.md` §7's open row. So `spectral.cho` carries a nine-line
 formatter. Small, and a second vote for that row.
 
 **Nothing else.** fannkuch-redux and binary-trees needed no language
@@ -124,7 +124,7 @@ was already there.
 
 ### 3.1 And one compiler bug, found by a program nobody had written
 
-`spectral.ls` opens a `region` for its vectors, closes it, and later
+`spectral.cho` opens a `region` for its vectors, closes it, and later
 opens another inside a `borrow` to format the answer. **That crashed the
 compiler.**
 
@@ -137,7 +137,7 @@ arenas landed; in release it indexed out of bounds.
 
 No program in the repository had two `region` blocks side by side. The
 fix is three lines — index by arena number, `None` where not open — and
-`sibling_regions.ls` is the fixture that would have caught it.
+`sibling_regions.cho` is the fixture that would have caught it.
 
 This is `porting.md`'s lesson again: the bugs are found by the programs
 nobody thought to write.
@@ -187,7 +187,7 @@ so none of the published ratios carried an interval.
 `scripts/game.py` reports the **median and the range**, per build:
 
 ```
-program            N             lex-sys               C -O2   ratio
+program            N             cancho               C -O2   ratio
                         median  (spread)    median  (spread)
 fannkuch          11      3978.2ms ( 2.9%)      3007.6ms ( 1.3%)   1.32x
 spectral        2000       598.2ms (11.1%)       231.8ms ( 5.2%)   2.58x
@@ -205,7 +205,7 @@ build here, and a best-of-N report would have shown none of that.
 |---|---|
 | n-body | §2.1. Reachable now that `sqrt` exists, and it would add a second float-heavy point beside spectral-norm's own (now much smaller) gap |
 | ~~fasta and reverse-complement~~ | **Answered, by measuring** — §7. `fasta` is faster than C; `reverse-complement` is not |
-| Why `fasta` moved from 0.54× to 0.89×–0.90× under `--backend llvm` | §8. §7's own "this is an I/O-call-shape fact, not a backend fact" would predict no move at all, since `fasta.c` is unchanged; `objdump` on the per-line loop around `io.write_all`, the way §7.16 of `llvm-backend.md` already did for `spectral.ls`, is the next thing that would actually answer it rather than guess |
+| Why `fasta` moved from 0.54× to 0.89×–0.90× under `--backend llvm` | §8. §7's own "this is an I/O-call-shape fact, not a backend fact" would predict no move at all, since `fasta.c` is unchanged; `objdump` on the per-line loop around `io.write_all`, the way §7.16 of `llvm-backend.md` already did for `spectral.cho`, is the next thing that would actually answer it rather than guess |
 | A quieter host for `revcomp` | §8. 97%–203% spread on this container swallows any real signal; the three re-runs bracket 1.05×–1.60× without narrowing it |
 | ~~`std.math` over floats~~ | **Answered, and stale here since #62** — `sqrt` is a builtin (`float-math.md`), closing the capability question this row named; the n-body row above already assumed it. `exp`/`log`/`pow` followed (#95, `float-math.md` §7). Only `sin` is still open, for lack of an asker |
 | A stated precision in `std.fmt` | §3. `float-printing.md` §7's row, with a second caller now |
@@ -222,7 +222,7 @@ build here, and a best-of-N report would have shown none of that.
 
 | Fixture | Rule | § |
 |---|---|---|
-| `sibling_regions.ls` | Two `region` blocks side by side, which crashed the compiler until this slice | 3.1 |
+| `sibling_regions.cho` | Two `region` blocks side by side, which crashed the compiler until this slice | 3.1 |
 | `fasta-1000.txt`, `revcomp-1000.txt` | The Benchmarks Game's own N=1000 reference output for `fasta`, and for `reverse-complement` fed that file as input — fetched from benchmarksgame-team.pages.debian.net and reproduced as fixtures rather than downloaded at test time | 7 |
 
 ---
@@ -236,17 +236,17 @@ N=1000 reference output — not a value this repository derived, one
 downloaded from the Game's own site and committed as
 `benches/game/fasta-1000.txt` and `benches/game/revcomp-1000.txt`.
 
-`fasta.ls` draws one linear-congruential step and does one linear search
+`fasta.cho` draws one linear-congruential step and does one linear search
 over a cumulative-probability table per byte — the two things the
 benchmark's own description forbids optimising away — into a 60-byte
 line buffer, flushed with one `io.write_all` per line
-(`bulk-io.md`'s primitive). `revcomp.ls` reads with `getchar`, one byte
+(`bulk-io.md`'s primitive). `revcomp.cho` reads with `getchar`, one byte
 at a time: `bulk-io.md` §3.3 is why there is no bulk read to reach for,
 so the whole read side stays exactly as expensive as `standard-input.md`
 already priced it. Both write sides are the same prepared-line buffer.
 
 ```
-program            N             lex-sys               C -O2   ratio
+program            N             cancho               C -O2   ratio
                         median  (spread)    median  (spread)
 fasta         1000000       121.8ms ( 4.6%)       224.9ms ( 7.4%)   0.54x
 revcomp       1000000       208.3ms (16.6%)       174.5ms (15.8%)   1.19x
@@ -256,16 +256,16 @@ revcomp       1000000       208.3ms (16.6%)       174.5ms (15.8%)   1.19x
 `fasta.c` writes with `putchar`, one libc call per byte, because that is
 what an ordinary C program computing this algorithm writes and
 `benchmarks-game.md` §2's rule is the same algorithm, not a hand-tuned
-one. `fasta.ls` cannot write that way at all — there is no per-byte
+one. `fasta.cho` cannot write that way at all — there is no per-byte
 `Io` primitive cheap enough to reach for, only `io.write_all`, so the
-ordinary lex-sys program is the bulk one. The 0.54× is not Cranelift
+ordinary cancho program is the bulk one. The 0.54× is not Cranelift
 outrunning `cc -O2`; it is one `fwrite`-shaped call every 60 bytes
 outrunning one `putchar`-shaped call every byte, which `bulk-io.md` §1
 already measured in isolation (11× in C's own numbers) and which shows
 up here because the language leaves no slower way to write.
 
 **`reverse-complement` is the control.** Its read side is `getchar`
-either way it could be written — lex-sys has no bulk read
+either way it could be written — cancho has no bulk read
 (`bulk-io.md` §3.3) — so nothing shields it from the ordinary backend
 gap, and 1.19× lands inside the range the other five programs already
 described. The 16.6%/15.8% spread is the widest in the suite, which
@@ -285,7 +285,7 @@ and when it does, the ratio measures that instead.
 
 Everything above §8 was measured on `--backend cranelift`, whichever
 backend happened to be the default at the time — `scripts/game.py`
-passes no `--backend` flag to `lex-sys build`, by design, so it has
+passes no `--backend` flag to `cancho build`, by design, so it has
 always measured "the compiler," not one specific backend. That stopped
 meaning Cranelift the day #127 flipped the default to LLVM, and nobody
 had gone back and re-read what the script now reports until this slice
@@ -332,13 +332,13 @@ up in, whichever backend it is.
 it measured `io.write_all`'s bulk path beating `fasta.c`'s `putchar`-
 per-byte loop, a fact about the *libc call shape* the two programs use,
 independent of which backend compiles either one. If that reading is
-right, the ratio should not have moved when only the lex-sys side's
+right, the ratio should not have moved when only the cancho side's
 backend changed — `fasta.c` is still `cc -O2`, unchanged, call for
 call. It moved anyway, from 0.54× to 0.89×–0.90×: still faster than C,
 markedly less so. The likely account, not yet confirmed the way §7's
 own claim was: LLVM's `-O2` optimizes the *scalar* per-line loop around
 each `io.write_all` call differently than Cranelift did — nothing here
-has `objdump`-checked that loop the way §7.16 checked `spectral.ls`'s —
+has `objdump`-checked that loop the way §7.16 checked `spectral.cho`'s —
 so §7's own "this is an I/O-call-shape fact, not a backend fact" is
 probably still the larger effect, and what moved is a smaller backend-
 shaped one sitting on top of it that this slice did not isolate. Marked
@@ -359,5 +359,5 @@ closer to it. That document's own status header carries the correction.
 
 | Bench | |
 |---|---|
-| `benches/game/` | Five programs, each in lex-sys and C to the same algorithm |
-| `scripts/game.py` | Runs them against whichever backend `lex-sys build` defaults to today, checks the output every time, reports the spread |
+| `benches/game/` | Five programs, each in cancho and C to the same algorithm |
+| `scripts/game.py` | Runs them against whichever backend `cancho build` defaults to today, checks the output every time, reports the spread |

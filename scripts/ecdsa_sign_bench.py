@@ -3,7 +3,7 @@
 
     python3 scripts/ecdsa_sign_bench.py <sign driver> [<count>]
 
-`sign driver` is `tests/programs/ecdsa_sign_driver.ls` built as
+`sign driver` is `tests/programs/ecdsa_sign_driver.cho` built as
 `conformance/ecdsa_sign.rs` builds it, with the backend to be measured.
 Times `count` (default 2,000) signatures with random keys and digests and
 32 bytes of added randomness, as `sign` (`S`) and as `sign_checked` (`C`,

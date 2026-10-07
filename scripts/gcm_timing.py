@@ -3,18 +3,18 @@
 `--chacha20` of `std.chacha20`'s AEAD (docs/tls-assurance.md §6).
 
     cc -O2 -c tick.c -o tick.o && ar rcs libtick.a tick.o   # tick.c below
-    lex-sys build --std [--backend B] tests/programs/gcm_timing.ls -l tick -L . -o timing
+    cancho build --std [--backend B] tests/programs/gcm_timing.cho -l tick -L . -o timing
     python3 scripts/gcm_timing.py ./timing [<samples per test>] [--chacha20]
 
 `tick.c` is the cycle counter the program reads:
 
     #include <x86intrin.h>
-    long lexsys_tick(void) { unsigned aux; return (long)__rdtscp(&aux); }
+    long cancho_tick(void) { unsigned aux; return (long)__rdtscp(&aux); }
 
 or on aarch64, the generic timer, whose rate `cntfrq_el0` gives (1 GHz,
 measured, on an Apple M4 Max under macOS 26):
 
-    long lexsys_tick(void) { long v; __asm__ volatile("isb\n\tmrs %0, cntvct_el0" : "=r"(v)); return v; }
+    long cancho_tick(void) { long v; __asm__ volatile("isb\n\tmrs %0, cntvct_el0" : "=r"(v)); return v; }
 
 Every input is generated and read before anything is timed: decoding
 input just before a timed call, with branches on what it decodes, was

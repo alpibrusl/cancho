@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """W1 (docs/wasm.md): the same JSON filter, native and as a wasm module.
 
-Builds `tests/programs/json_roundtrip.ls` -- parse standard input with `std.json`
+Builds `tests/programs/json_roundtrip.cho` -- parse standard input with `std.json`
 and write it back, or `E <code> <position>` if the document is refused -- twice,
 for the host and for `wasm32-wasip1`, feeds both the same documents, and requires
 **byte-identical stdout and the same exit code** for every one. It exercises the
@@ -12,9 +12,9 @@ one would.
 It also prints the module's **import list**, read straight from the binary's
 import section, because that list is what W2 turns into a check.
 
-usage: wasm_json_differential.py LEX_SYS [--count N] [--seed S] [--keep DIR]
+usage: wasm_json_differential.py CANCHO [--count N] [--seed S] [--keep DIR]
 
-Needs what `lex-sys --help` says `--target` needs (CLANG, WASI_SYSROOT, wasm-ld)
+Needs what `cancho --help` says `--target` needs (CLANG, WASI_SYSROOT, wasm-ld)
 and `wasmtime` on the path. CI has none of it, so this is not in CI.
 """
 import argparse, concurrent.futures, decimal, math, os, random, struct, subprocess, sys, tempfile
@@ -22,9 +22,9 @@ import argparse, concurrent.futures, decimal, math, os, random, struct, subproce
 sys.path.insert(0, os.path.dirname(__file__))
 from wasm_imports import imports
 
-PROGRAM = "tests/programs/json_roundtrip.ls"
+PROGRAM = "tests/programs/json_roundtrip.cho"
 
-# The seeds `crates/lex-sys/tests/conformance/json.rs` uses: valid documents that
+# The seeds `crates/cancho/tests/conformance/json.rs` uses: valid documents that
 # exercise every production.
 SEEDS = [
     r'{"name":"Ada","age":36,"pi":3.14159,"ok":true,"none":null,"tags":["a","b"],"nest":{"x":[1,2,{"y":-1e3}]}}',
@@ -119,7 +119,7 @@ def run(cmd, doc: bytes):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("lex_sys")
+    ap.add_argument("cancho")
     ap.add_argument("--count", type=int, default=600, help="mutated documents (numbers add count/4 * ~8)")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--keep", help="keep the built binaries in this directory")
@@ -129,7 +129,7 @@ def main():
     os.makedirs(work, exist_ok=True)
     native, wasm = os.path.join(work, "roundtrip"), os.path.join(work, "roundtrip.wasm")
     for out, extra in ((native, []), (wasm, ["--target", "wasm32-wasip1"])):
-        b = subprocess.run([args.lex_sys, "build", PROGRAM, "--std", *extra, "-o", out],
+        b = subprocess.run([args.cancho, "build", PROGRAM, "--std", *extra, "-o", out],
                            capture_output=True, text=True)
         if b.returncode != 0:
             sys.exit(f"build failed ({extra or 'native'}):\n{b.stderr}")

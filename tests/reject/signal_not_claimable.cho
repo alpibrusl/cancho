@@ -1,0 +1,18 @@
+//~ ERROR `KILL` cannot be caught
+//~ RULE signal-not-claimable
+
+// `docs/signals.md` §2.2. A program claims only the signals a request
+// can be read from. `KILL` and `STOP` are not the program's to have; the
+// faults (`SEGV`, `ILL`, `BUS`, `FPE`) are not requests. Every other name
+// is refused under the same tag, with the reason it was refused for, and
+// `crates/cancho/tests/conformance/signals.rs` tries each of them.
+edition 6;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(net);
+    release(clock);
+    let claimed = narrow(signals, "KILL");
+    release(claimed);
+    return 0;
+}

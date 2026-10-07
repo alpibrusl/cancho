@@ -3,7 +3,7 @@
 
     python3 scripts/aead_differential.py <driver> [<count>]
 
-`driver` is `tests/programs/aead_driver.ls` built with `lex-sys build --std`.
+`driver` is `tests/programs/aead_driver.cho` built with `cancho build --std`.
 OpenSSL is reached through pyca/cryptography (`pip install cryptography`),
 whose AEAD and Poly1305 are OpenSSL's EVP implementations.
 

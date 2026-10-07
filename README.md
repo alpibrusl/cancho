@@ -1,4 +1,4 @@
-# lex-sys
+# cancho
 
 A **native systems language in which resource ownership and authority are
 part of the program's type-level contract.** Ownership and capability-typed
@@ -21,7 +21,7 @@ fn main(world: World) -> [] int {
     release(ffi); release(fs); release(heap); release(args);
 
     borrow mut io as &!i in {
-        greet(i, "lex-sys");
+        greet(i, "cancho");
     }
     release(io);
     return 0;
@@ -37,7 +37,7 @@ wants to, and `main`'s own row is `[]` even though it prints, because it
 *owns* the capability rather than borrowing one. Run it:
 
 ```sh
-cargo run -p lex-sys -- run examples/tour.ls --std
+cargo run -p cancho -- run examples/tour.cho --std
 ```
 
 ## What's deliberately not here
@@ -57,11 +57,11 @@ cargo run -p lex-sys -- run examples/tour.ls --std
   not added on later.
 
 And honestly, **not a usable language yet**: real dependencies now
-resolve end to end (`lex-sys vcs publish`/`lock`/`fetch`,
+resolve end to end (`cancho vcs publish`/`lock`/`fetch`,
 `docs/package-system.md`) — `packages/net-sockets/`,
 `packages/net-connect/`, `packages/agent-wire/`, `packages/
 http-request/`, and `packages/http-response/` are five real published
-packages (`packages/` also holds `http-server`, `tls` and `x509`), and `examples/fetch/fetch.ls` depends on two of them at once,
+packages (`packages/` also holds `http-server`, `tls` and `x509`), and `examples/fetch/fetch.cho` depends on two of them at once,
 composed with no new tooling. **A dependency's own dependencies resolve
 too now**
 (`docs/package-system.md` §4.6): `packages/http-request/` itself needs
@@ -84,14 +84,14 @@ similar opaque handles
 type-check, and `-l`/`-L` (`docs/foreign-linking.md`) let `build` link
 a library beyond libc, so a real TLS handshake compiles and runs
 today (`examples/tls_client/`).
-[The roadmap](https://alpibrusl.github.io/lex-sys/ROADMAP.html)
+[The roadmap](https://alpibrusl.github.io/cancho/ROADMAP.html)
 tracks what landed, what's next, and what each slice found out.
 
 ## Building
 
 ```sh
-git clone https://github.com/alpibrusl/lex-sys
-cd lex-sys
+git clone https://github.com/alpibrusl/cancho
+cd cancho
 cargo test --workspace   # the whole gate: fmt, clippy and every test
 ```
 
@@ -99,7 +99,7 @@ Green on **linux-x86_64** and **darwin-aarch64**. `--backend llvm` is the
 default codegen path (LLVM via `clang`, no new build dependency);
 `--backend cranelift` is faster to iterate on and used the same way.
 
-A project that pins a compiler (`lex-sys.toml`) can install the prebuilt one
+A project that pins a compiler (`cancho.toml`) can install the prebuilt one
 instead of building it, once a release exists for that commit:
 
 ```sh
@@ -111,28 +111,28 @@ It still needs `clang` and `cc` at build time (`docs/package-system.md` §9).
 ### The compiler's whole surface
 
 ```sh
-lex-sys build <file.ls>... [-o <output>] [--emit exe|obj] [--std] [--backend cranelift|llvm] [-l <name>]... [-L <path>]...
-lex-sys check <file.ls>... [--std] [--output json] [--backend cranelift|llvm]   # refuse, or say nothing
-lex-sys run   <file.ls>... [--std] [--backend cranelift|llvm] [-l <name>]... [-L <path>]...   # build, run, exit with the program's status
-lex-sys test  <file.ls>... [--std] [--backend cranelift|llvm]   # run every `fn test_*`, one process each; exit 4 if one failed
-lex-sys ids   <file.ls>... [--std]    # each declaration's content hash
-lex-sys authority <file.ls>... [--std] [--output json] [--target <triple>]  # what it can reach
-lex-sys layout    <file.ls>... [--std]  # what every leaf costs, and what packing would save
-lex-sys fmt   <file.ls|dir>... [--check]   # canonical layout, comments kept; --check exits 1 if anything would change
-lex-sys print <file.ls>               # the unit, rendered in canonical form
-lex-sys agent-guidelines              # AGENTS.md, from inside the binary
-lex-sys introspect [--output json]    # the full command tree, as data (docs/agent-cli.md)
-lex-sys skill [--output json] [<out-file>]  # a generated SKILL.md, agentskills.io
-lex-sys install [--ignore-compiler-rev]  # fetch and check the dependencies named in lex-sys.toml
-lex-sys add <name> <git-url> [--rev <hash> | --ref <name>] [--path <dir>] [--ignore-compiler-rev]  # add one, pinned to a commit
-lex-sys build [--bin <name>] [--ignore-compiler-rev]  # with no files: install, then build the programs of lex-sys.toml
-lex-sys test  [--test <name>] [--ignore-compiler-rev]  # with no files: install, then run the [[test]] sets of lex-sys.toml
-lex-sys vcs publish [--store <dir>] [--std] [--requires <lock>[:<dep-store>]]... <file.ls>  # log every declaration as an operation
-lex-sys vcs publish [--store <root>] [--std] --dir <dir>  # a library of several files, one store each, in dependency order
-lex-sys vcs log     [--store <dir>]            # what a store already has
-lex-sys vcs resolve [--lock <file>] [<store-dir>]  # re-check every pin under today's compiler
-lex-sys vcs lock (--store <dir> | --git <url> (--rev <hash> | --ref <name>) [--path <dir>]) -o <file> (--all | <name>...)  # pin names to a dependency's hash
-lex-sys vcs fetch --lock <file> [--store <dir>] -o <dir>  # verify a lock, write its sources to disk
+cancho build <file.cho>... [-o <output>] [--emit exe|obj] [--std] [--backend cranelift|llvm] [-l <name>]... [-L <path>]...
+cancho check <file.cho>... [--std] [--output json] [--backend cranelift|llvm]   # refuse, or say nothing
+cancho run   <file.cho>... [--std] [--backend cranelift|llvm] [-l <name>]... [-L <path>]...   # build, run, exit with the program's status
+cancho test  <file.cho>... [--std] [--backend cranelift|llvm]   # run every `fn test_*`, one process each; exit 4 if one failed
+cancho ids   <file.cho>... [--std]    # each declaration's content hash
+cancho authority <file.cho>... [--std] [--output json] [--target <triple>]  # what it can reach
+cancho layout    <file.cho>... [--std]  # what every leaf costs, and what packing would save
+cancho fmt   <file.cho|dir>... [--check]   # canonical layout, comments kept; --check exits 1 if anything would change
+cancho print <file.cho>               # the unit, rendered in canonical form
+cancho agent-guidelines              # AGENTS.md, from inside the binary
+cancho introspect [--output json]    # the full command tree, as data (docs/agent-cli.md)
+cancho skill [--output json] [<out-file>]  # a generated SKILL.md, agentskills.io
+cancho install [--ignore-compiler-rev]  # fetch and check the dependencies named in cancho.toml
+cancho add <name> <git-url> [--rev <hash> | --ref <name>] [--path <dir>] [--ignore-compiler-rev]  # add one, pinned to a commit
+cancho build [--bin <name>] [--ignore-compiler-rev]  # with no files: install, then build the programs of cancho.toml
+cancho test  [--test <name>] [--ignore-compiler-rev]  # with no files: install, then run the [[test]] sets of cancho.toml
+cancho vcs publish [--store <dir>] [--std] [--requires <lock>[:<dep-store>]]... <file.cho>  # log every declaration as an operation
+cancho vcs publish [--store <root>] [--std] --dir <dir>  # a library of several files, one store each, in dependency order
+cancho vcs log     [--store <dir>]            # what a store already has
+cancho vcs resolve [--lock <file>] [<store-dir>]  # re-check every pin under today's compiler
+cancho vcs lock (--store <dir> | --git <url> (--rev <hash> | --ref <name>) [--path <dir>]) -o <file> (--all | <name>...)  # pin names to a dependency's hash
+cancho vcs fetch --lock <file> [--store <dir>] -o <dir>  # verify a lock, write its sources to disk
 ```
 
 This block is checked against `--help` in both directions by a test
@@ -144,7 +144,7 @@ from the same reachability that decides what goes in the binary, so
 it's precise rather than conservative:
 
 ```sh
-$ lex-sys authority examples/tally.ls --std
+$ cancho authority examples/tally.cho --std
 performs
     io_read
     io_write
@@ -164,7 +164,7 @@ environment failed, and (`test` only) `4` a test failed.
 
 ## Docs
 
-**[alpibrusl.github.io/lex-sys](https://alpibrusl.github.io/lex-sys/)** —
+**[alpibrusl.github.io/cancho](https://alpibrusl.github.io/cancho/)** —
 the language, the ecosystem it sits in, and every design document, one
 per page, in order. Built from [`docs/`](docs/), which is just as
 readable straight on GitHub if you'd rather not leave the repo — start
@@ -174,7 +174,7 @@ at [`docs/README.md`](docs/README.md).
 
 [`CONTRIBUTING.md`](CONTRIBUTING.md) — the gate, how a slice is done,
 the file budget, and code conventions. [`AGENTS.md`](AGENTS.md) is the
-one page for writing lex-sys *programs*, not the compiler.
+one page for writing cancho *programs*, not the compiler.
 
 Design lands in `docs/` **before** the code that implements it, and a
 claim that turns out wrong is corrected in place there rather than
@@ -188,5 +188,5 @@ languages.
 
 Every package under `packages/` carries its own copy of the same `LICENSE`, so a
 package published or extracted on its own is still EUPL-1.2. The copy is a
-file beside the source, not a line in it: a comment in a `.ls` file would change
+file beside the source, not a line in it: a comment in a `.cho` file would change
 its `source_hash` and so every lock that pins it.

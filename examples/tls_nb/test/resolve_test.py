@@ -3,8 +3,8 @@
 
     python3 resolve_test.py      # exits 0 only if every check holds; prints the table of docs/tls-nonblocking.md section 6
 
-`blocking` is `tcp_connect_start(name)` (getaddrinfo inside); `tcp` is rtcp.ls (DNS over TCP on the poller); `thread` is
-rthread.ls (four workers, `res_query`). libc's two read /etc/resolv.conf, so they run in a private mount namespace in which that
+`blocking` is `tcp_connect_start(name)` (getaddrinfo inside); `tcp` is rtcp.cho (DNS over TCP on the poller); `thread` is
+rthread.cho (four workers, `res_query`). libc's two read /etc/resolv.conf, so they run in a private mount namespace in which that
 file names 127.0.0.1, where a stub on port 53 listens (`with_resolver.sh`); the `tcp` resolver is given the stub's address. The
 numbers that matter: `max_gap_ms`, how long the main loop went without running (a loop that waits for DNS has a gap as long as the
 wait), and `ms`, how long each lookup took.
@@ -48,10 +48,10 @@ def main():
     w = h.WORK
     os.makedirs(w, exist_ok=True)
     binary = os.path.join(w, "resolve_demo")
-    srcs = [os.path.join(h.EXAMPLE, s) for s in ("dns.ls", "rtcp.ls", "rthread.ls", "nat.ls", "resolve_demo.ls")]
+    srcs = [os.path.join(h.EXAMPLE, s) for s in ("dns.cho", "rtcp.cho", "rthread.cho", "nat.cho", "resolve_demo.cho")]
     # The thread resolver's sockets are the repository's own packages (`net.sockets`, `net.connect`), whose scope is `Ffi("libc")`.
-    srcs += [os.path.join(h.ROOT, "packages", "net-sockets", "sockets.ls"), os.path.join(h.ROOT, "packages", "net-connect", "connect.ls")]
-    subprocess.run([h.LEXSYS, "build"] + srcs + ["--std", "-o", binary], check=True)
+    srcs += [os.path.join(h.ROOT, "packages", "net-sockets", "sockets.cho"), os.path.join(h.ROOT, "packages", "net-connect", "connect.cho")]
+    subprocess.run([h.CANCHO, "build"] + srcs + ["--std", "-o", binary], check=True)
     bad = 0
     def check(label, ok, detail=""):
         nonlocal bad

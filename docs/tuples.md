@@ -19,7 +19,7 @@ The first:
 > returns a `res struct Inserted { slab, handle }` declared for the
 > purpose. Every operation that threads the slab needs one.
 
-`examples/slab/slab.ls` declares two types, `Inserted` and `Looked`,
+`examples/slab/slab.cho` declares two types, `Inserted` and `Looked`,
 that exist only because a function may return one value. Neither is a
 concept in the library. Both have to be named, documented, kept in step
 with their function, and read by anyone reading the code.
@@ -82,7 +82,7 @@ existed.
 > one-part tuple, and the checker refused it with the rule above. Nobody
 > had written it; the fuzzer did (`docs/fuzzing.md`), and found that the
 > printer dropped the comma, turning a refused program into an accepted
-> one on reprint. The printer now keeps it, and `one_tuple.ls` pins the
+> one on reprint. The printer now keeps it, and `one_tuple.cho` pins the
 > refusal. The rule — two components or more — did not change.
 
 ### 2.2 Structural, so there is no declaration
@@ -244,18 +244,18 @@ Stated before the code, the way `linearity-and-effects.md` §11 was.
 
 | Fixture | Rule | § |
 |---|---|---|
-| `tuple_arity_mismatch.ls` | A pattern names every component | 3.2 |
-| `tuple_index_past_the_end.ls` | `t.2` on a two-tuple is not a field | 3.1 |
-| `res_tuple_component_read.ls` | A `res` tuple is taken apart, not read | 3.1 |
-| `res_tuple_component_through_reference.ls` | Nothing moves out of a reference | 3.1 |
-| `tuple_leaked.ls` | A `res` tuple is consumed exactly once | 2.3 |
-| `empty_tuple_type.ls` | A tuple has two components or more | 2.1 |
-| `one_tuple.ls` | A tuple has two components or more, `(e,)` included | 2.1 |
-| `tuple_type_mismatch.ls` | `(int, bool)` and `(bool, int)` are different types | 2.2 |
-| `nested_tuple_pattern.ls` | No nested patterns | 4 |
+| `tuple_arity_mismatch.cho` | A pattern names every component | 3.2 |
+| `tuple_index_past_the_end.cho` | `t.2` on a two-tuple is not a field | 3.1 |
+| `res_tuple_component_read.cho` | A `res` tuple is taken apart, not read | 3.1 |
+| `res_tuple_component_through_reference.cho` | Nothing moves out of a reference | 3.1 |
+| `tuple_leaked.cho` | A `res` tuple is consumed exactly once | 2.3 |
+| `empty_tuple_type.cho` | A tuple has two components or more | 2.1 |
+| `one_tuple.cho` | A tuple has two components or more, `(e,)` included | 2.1 |
+| `tuple_type_mismatch.cho` | `(int, bool)` and `(bool, int)` are different types | 2.2 |
+| `nested_tuple_pattern.cho` | No nested patterns | 4 |
 
 | Accepting | Shows |
 |---|---|
-| `tuple_roundtrip.ls` | Construct, return, destructure, and `.0` on a `val` tuple |
-| `tuple_of_res.ls` | A `res` tuple threaded through a function and ended |
+| `tuple_roundtrip.cho` | Construct, return, destructure, and `.0` on a `val` tuple |
+| `tuple_of_res.cho` | A `res` tuple threaded through a function and ended |
 | `examples/slab/` | Rewritten: `Inserted` and `Looked` deleted, and the generated code unchanged |

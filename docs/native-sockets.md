@@ -1,11 +1,11 @@
 # Native sockets: servers without `Ffi("libc")`
 
 > **Status: design settled; slice 1 built (§10).** Stage 1 of removing C from the
-> path between a lex-sys program and the kernel. §7 is the whole
+> path between a cancho program and the kernel. §7 is the whole
 > roadmap to a toolchain with no C in it; this document is only the
 > first of its four stages, and it is the one with an asker — the
 > server in [`server.md`](server.md) and the two repositories that
-> will be built on it (`lex-sys-web`, `lex-sys-schema`).
+> will be built on it (`cancho-web`, `cancho-schema`).
 >
 > **What it corrects before it builds.** The first sketch of this stage
 > was `net_read(fd: int, buf)` / `net_write(fd: int, data)`, fixed
@@ -27,12 +27,12 @@
 
 That is two costs, and the second is the one that matters.
 
-**It is C on the critical path.** The program is lex-sys, the toolchain
+**It is C on the critical path.** The program is cancho, the toolchain
 that links it is Rust and (for the LLVM backend) `clang`, and every
 syscall goes through a libc this project did not write. Removing that
 is §7's whole subject.
 
-**The authority report says nothing.** `lex-sys authority` on the server
+**The authority report says nothing.** `cancho authority` on the server
 prints `ffi("libc")`, and `ffi("libc")` means *"may call any function
 in libc"* — `unlink`, `execve`, `system`. The program does not do those
 things, and the report cannot say so. A server whose row reads
@@ -240,7 +240,7 @@ from a forgeable number, and nothing asks for it.
 > **Corrected (`tls-nonblocking.md` §3.2): a program without `Ffi` can read the number.** The sentence above ("a program without `Ffi`
 > cannot reach the hatch") is false of the number, if not of anything it could be used for: a ticket is `epoch << 32 | descriptor`
 > (§10.3) and `std.conns.Table.tickets` is a field of a `pub` struct, so `vec.get(table.tickets, slot) & 0xffffffff` is the descriptor,
-> with no capability (`examples/tls_nb/gaps/g5_table_ticket.ls`; `tls.fd_of`). Calling anything on it still needs `Ffi`, so nothing is
+> with no capability (`examples/tls_nb/gaps/g5_table_ticket.cho`; `tls.fd_of`). Calling anything on it still needs `Ffi`, so nothing is
 > forged, but `Table`'s fields should not be readable. And `conn_raw_fd` is still not built: the TLS spike uses memory BIOs instead
 > (§3.2 there), partly because OpenSSL's own socket BIO writes with `write(2)` and a closed peer then kills the process with `SIGPIPE`,
 > which `conn_write`'s `MSG_NOSIGNAL` is built to prevent.
@@ -251,7 +251,7 @@ from a forgeable number, and nothing asks for it.
 |---|---|---|---|
 | 1 | **Handles** (this document) | `Ffi("libc")` from any program that only talks to the network | designing |
 | 2 | **A libc-free Linux runtime** | libc from the *builtins'* implementation: `_start`, `read`/`write`/`socket`/… as raw syscalls, `errno` as a negative return, `getaddrinfo` as a DNS client | not started |
-| 3 | **Port the frontend** | Rust from lexing, parsing, checking, lowering — `lex-sys-syntax` (5.3k lines), `-ir` (12.3k), `-types` (0.7k), `-id` (1.9k) | not started |
+| 3 | **Port the frontend** | Rust from lexing, parsing, checking, lowering — `cancho-syntax` (5.3k lines), `-ir` (12.3k), `-types` (0.7k), `-id` (1.9k) | not started |
 | 4 | **Own backend and linker** | Cranelift/LLVM/`clang`/`ld`; for macOS, an arm64 code-signing step | not started |
 
 Stage 1 is **not** C-removal in the compiler: the builtins still call
@@ -259,7 +259,7 @@ libc. What it removes is the *program's* dependence on libc, which is the
 precondition for stage 2. Until no program names a libc symbol,
 replacing libc underneath is a breaking change; after it, a
 backend-internal one — the same ordering that let `file_read` change
-from `read(2)` to anything without touching `sort.ls`.
+from `read(2)` to anything without touching `sort.cho`.
 
 Two honest limits, so nobody plans past them. **macOS cannot leave
 libSystem**: Apple does not guarantee its syscall numbers, and a binary
@@ -341,7 +341,7 @@ Four things the design did not know:
    `0xffff` and `4`. On macOS the `setsockopt` quietly did nothing and
    nobody saw it, because a failed `setsockopt` is ignored and a bind to a
    fresh port needs no reuse. `tcp_listen` takes its constants from
-   `lex_sys_ir::SocketOs`, one table both backends read; the old `bind` is
+   `cancho_ir::SocketOs`, one table both backends read; the old `bind` is
    untouched, as §9 decided. A program that needs `SO_REUSEADDR` on macOS
    should use `tcp_listen`.
 2. **A blocking `recv` of zero bytes waits for data.** `conn_read` into an
@@ -476,7 +476,7 @@ the runtime owns. Not decided here; the number is the reason to decide it.
 
 ### 10.5 `clock_unix_ms`: what a webhook service found missing
 
-Section 5 chose a **monotonic** clock for timeouts and said why: a wall clock that jumps forward would close every connection at once. That choice left a program with no way to ask what *day* it is. `lexsys-hooks` (a webhook delivery service) signs each delivery with Standard Webhooks, whose `webhook-timestamp` header is integer **Unix seconds** and which a receiver checks against its own clock, so a message stamped with a monotonic reading (here, 425,112 ms since an arbitrary origin) is refused as more than fifty years old.
+Section 5 chose a **monotonic** clock for timeouts and said why: a wall clock that jumps forward would close every connection at once. That choice left a program with no way to ask what *day* it is. `cancho-hooks` (a webhook delivery service) signs each delivery with Standard Webhooks, whose `webhook-timestamp` header is integer **Unix seconds** and which a receiver checks against its own clock, so a message stamped with a monotonic reading (here, 425,112 ms since an arbitrary origin) is refused as more than fifty years old.
 
 `clock_unix_ms(&Clock) -> [clock] int` is the second builtin on the same capability: milliseconds since 1970-01-01 UTC, from `CLOCK_REALTIME` (id 0 on both Linux and Darwin), read the way `clock_ms` reads `CLOCK_MONOTONIC`. It reports the same `clock` label, so a program that stamps messages says so, and a program without a `Clock` cannot. **It is for stamping, never for timing**: it can step backwards when the host's clock is set, and a timeout or a retry schedule built on it can fire early, late or never. The doc comment on the builtin says so; nothing in the compiler can enforce it.
 
@@ -484,7 +484,7 @@ Verified by `the_wall_clock_reads_unix_milliseconds`, which runs a program on bo
 
 ### 10.6 `tcp_connect_start`: what a delivery service measured
 
-`tcp_connect` waits until the kernel has an answer. For a server that dials other people (`lexsys-hooks` delivers webhooks) that is the whole service stopping for as long as one peer takes: a receiver whose accept queue is full makes the kernel drop the SYN, and the `connect` retries for minutes. Measured in `lexsys-hooks` (`docs/design.md` section 15), `POST /events` was held for **10 s or more** by one such endpoint, and for 255 ms a request by an endpoint that merely answered after 300 ms, because the attempt ran on the thread that serves ingest. The read side already had a remedy (a `Poller` and a deadline); the connect did not.
+`tcp_connect` waits until the kernel has an answer. For a server that dials other people (`cancho-hooks` delivers webhooks) that is the whole service stopping for as long as one peer takes: a receiver whose accept queue is full makes the kernel drop the SYN, and the `connect` retries for minutes. Measured in `cancho-hooks` (`docs/design.md` section 15), `POST /events` was held for **10 s or more** by one such endpoint, and for 255 ms a request by an endpoint that merely answered after 300 ms, because the attempt ran on the thread that serves ingest. The read side already had a remedy (a `Poller` and a deadline); the connect did not.
 
 Two builtins, both edition 5:
 
@@ -503,7 +503,7 @@ conn_connect_status(&!Conn)        -> int          // [], 0 connected, or the er
 
 ## 11. `conn_nodelay`: what a proxy found it needed
 
-A connection pooler for PostgreSQL (`lexsys-pg`, `docs/pooler.md`) forwards what one peer sends to another. Its first slices ran with no way to set a socket
+A connection pooler for PostgreSQL (`cancho-pg`, `docs/pooler.md`) forwards what one peer sends to another. Its first slices ran with no way to set a socket
 option, and the stall it hit is the old one: Nagle's algorithm holds back a small write while an earlier write is unacknowledged, and the peer's delayed
 acknowledgement answers it tens of milliseconds later. Measured on loopback, one outstanding request at a time, a 70,000-byte result:
 

@@ -1,10 +1,10 @@
-/* The same algorithm as `benches/sieve_checked.ls`, in C.
+/* The same algorithm as `benches/sieve_checked.cho`, in C.
  *
  * Memory-bound where `mandelbrot` is compute-bound, so the two together
  * say whether the gap in `docs/against-c-and-rust.md` §2 is about
  * arithmetic or about everything.
  *
- * Trapping semantics, to match lex-sys: the comparison is only a
+ * Trapping semantics, to match cancho: the comparison is only a
  * language comparison when both sides promise the same thing. */
 #include <stdio.h>
 #include <stdlib.h>

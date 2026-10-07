@@ -1,14 +1,14 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/lex-sys-syntax",
-    "crates/lex-sys-types",
-    "crates/lex-sys-id",
-    "crates/lex-sys-ir",
-    "crates/lex-sys-codegen",
-    "crates/lex-sys-codegen-llvm",
-    "crates/lex-sys-vcs",
-    "crates/lex-sys",
+    "crates/cancho-syntax",
+    "crates/cancho-types",
+    "crates/cancho-id",
+    "crates/cancho-ir",
+    "crates/cancho-codegen",
+    "crates/cancho-codegen-llvm",
+    "crates/cancho-vcs",
+    "crates/cancho",
 ]
 
 [workspace.package]
@@ -19,10 +19,10 @@ license = "EUPL-1.2"
 publish = false
 
 [workspace.dependencies]
-lex-sys-syntax = { path = "crates/lex-sys-syntax" }
-lex-sys-types = { path = "crates/lex-sys-types" }
-lex-sys-id = { path = "crates/lex-sys-id" }
-lex-sys-ir = { path = "crates/lex-sys-ir" }
-lex-sys-codegen = { path = "crates/lex-sys-codegen" }
-lex-sys-codegen-llvm = { path = "crates/lex-sys-codegen-llvm" }
-lex-sys-vcs = { path = "crates/lex-sys-vcs" }
+cancho-syntax = { path = "crates/cancho-syntax" }
+cancho-types = { path = "crates/cancho-types" }
+cancho-id = { path = "crates/cancho-id" }
+cancho-ir = { path = "crates/cancho-ir" }
+cancho-codegen = { path = "crates/cancho-codegen" }
+cancho-codegen-llvm = { path = "crates/cancho-codegen-llvm" }
+cancho-vcs = { path = "crates/cancho-vcs" }

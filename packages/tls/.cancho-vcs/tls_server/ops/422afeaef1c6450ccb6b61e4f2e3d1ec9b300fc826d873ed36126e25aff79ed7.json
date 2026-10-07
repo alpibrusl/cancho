@@ -1,0 +1,10 @@
+{
+  "op_id": "422afeaef1c6450ccb6b61e4f2e3d1ec9b300fc826d873ed36126e25aff79ed7",
+  "operation": {
+    "kind": "AddFunction",
+    "sig_id": "25047a09fcdddf10b2663ba2131707524e551ed88b9b313fb91412b85a36c8ce",
+    "stage_id": "0b6351bf1bde0b54f11bc7b6d9fb5e424dac7ffc5aaf231d219ae7e97ffd1036",
+    "effects": [],
+    "edition": 1
+  }
+}

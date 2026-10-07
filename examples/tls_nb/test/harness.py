@@ -7,7 +7,7 @@ import os, re, signal, socket, subprocess, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 EXAMPLE = os.path.dirname(HERE)
 ROOT = os.path.dirname(os.path.dirname(EXAMPLE))
-LEXSYS = os.environ.get("LEXSYS", "/home/user/lex-sys/target/release/lex-sys")
+CANCHO = os.environ.get("CANCHO", "/home/user/cancho/target/release/cancho")
 WORK = os.environ.get("TLS_NB_WORK", os.path.join(os.environ.get("TMPDIR", "/tmp"), "tls_nb_work"))
 CERTS = os.path.join(WORK, "certs")
 
@@ -19,11 +19,11 @@ def ensure_certs():
     return CERTS
 
 
-def build(name="tls_nb", sources=("tls.ls", "dns.ls", "rtcp.ls", "pin.ls", "nat.ls", "tls_nb.ls"), extra=()):
+def build(name="tls_nb", sources=("tls.cho", "dns.cho", "rtcp.cho", "pin.cho", "nat.cho", "tls_nb.cho"), extra=()):
     """Compile the client with the checked-in compiler; answers the binary's path."""
     os.makedirs(WORK, exist_ok=True)
     out = os.path.join(WORK, name)
-    cmd = [LEXSYS, "build"] + [os.path.join(EXAMPLE, s) for s in sources] + ["--std", "-l", "ssl", "-l", "crypto", "-o", out] + list(extra)
+    cmd = [CANCHO, "build"] + [os.path.join(EXAMPLE, s) for s in sources] + ["--std", "-l", "ssl", "-l", "crypto", "-o", out] + list(extra)
     subprocess.run(cmd, check=True)
     return out
 

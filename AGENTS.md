@@ -1,16 +1,16 @@
-# Writing lex-sys
+# Writing cancho
 
 > The entry point this repository did not have. `docs/` is **90,000
 > words across 42 documents** and none of them is a first page, so an
-> agent asked to write lex-sys had the choice of reading all of it or
+> agent asked to write cancho had the choice of reading all of it or
 > guessing. This is the short version, and every rule in it is here
 > because something in this repository got it wrong first.
 >
-> `lex-sys agent-guidelines` prints this file. The compiler carries it,
+> `cancho agent-guidelines` prints this file. The compiler carries it,
 > so a checkout is not required to read it.
 >
 > **Every checked code block below is run by the test suite.** The ones
-> marked `lex-sys` must compile; the ones marked `lex-sys-refused` must
+> marked `cancho` must compile; the ones marked `cancho-refused` must
 > be refused, with the rule they name. A guideline that stops being true
 > is a red build, not a stale paragraph.
 
@@ -19,12 +19,12 @@
 ## 0. The loop
 
 ```sh
-lex-sys check src/*.ls --std               # does it type-check?
-lex-sys check src/*.ls --std --output json # …and which rule, as data
-lex-sys authority src/*.ls --std           # what can it reach?
-lex-sys run src/*.ls --std                 # build and run in one step
-lex-sys fmt --check src/ tests/            # is it canonical? (`fmt src/` rewrites; docs/formatting.md)
-lex-sys test tests/*.ls --std              # run every `fn test_*`; exit 4 if one failed (docs/testing.md)
+cancho check src/*.cho --std               # does it type-check?
+cancho check src/*.cho --std --output json # …and which rule, as data
+cancho authority src/*.cho --std           # what can it reach?
+cancho run src/*.cho --std                 # build and run in one step
+cancho fmt --check src/ tests/            # is it canonical? (`fmt src/` rewrites; docs/formatting.md)
+cancho test tests/*.cho --std              # run every `fn test_*`; exit 4 if one failed (docs/testing.md)
 ```
 
 `check` reports **every** independent refusal, not the first. On a
@@ -33,7 +33,7 @@ name, there are 58 of them, and `docs/agent-errors.md` is the contract.
 One of them, `internal`, is the compiler's own failure, not your
 program's (`docs/internal-errors.md`).
 
-`lex-sys skill` and `lex-sys introspect` are how *this* page and the
+`cancho skill` and `cancho introspect` are how *this* page and the
 full command surface stay the same age: both are generated from one
 registration (`src/acli.rs`), not copied by hand, so a new command
 cannot ship without them (`docs/agent-cli.md`). Their "Exit codes" /
@@ -51,7 +51,7 @@ names what to change.
 `std.buffer`, `std.vec` and `std.list` take their resource **by value**
 and hand it back. A loop that fills one moves it round and round:
 
-```lex-sys
+```cancho
 import std.buffer;
 
 fn collect[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read] buffer.Buffer {
@@ -95,7 +95,7 @@ to write.
 This is the largest family of refusals in the suite after plain type
 errors — 19 fixtures. Four ways to get it wrong:
 
-```lex-sys-refused
+```cancho-refused
 //~ RULE linear-value-unconsumed
 
 // Nothing consumes `heap` before the block ends.
@@ -123,7 +123,7 @@ field out of it instead of taking the whole value apart.
 it is the parameter list saying something stronger. A function handed
 `&!i Io` says `[io_write]`, because that is what it did with it.
 
-```lex-sys
+```cancho
 import std.io;
 
 // Borrowed, so the row is exact.
@@ -146,7 +146,7 @@ fn main(world: World) -> [] int {
 An effect row is **exact in both directions**: a label the body performs
 must appear, and a label that appears must be performed.
 
-```lex-sys-refused
+```cancho-refused
 //~ RULE effect-not-declared
 
 import std.io;
@@ -166,7 +166,7 @@ fn main(world: World) -> [] int {
 
 The fix is `[io_write]` here, because that is what the body does. Where
 a row is wider than the body, **narrow the body** — do not widen the
-row to make the checker stop. `lex-sys authority` prints the union of
+row to make the checker stop. `cancho authority` prints the union of
 what a program reaches, and a row that over-declares makes that report
 a lie.
 
@@ -177,7 +177,7 @@ Labels: `io_read`, `io_write`, `err_write`, `fs_read(p)`, `fs_write(p)`,
 
 `edition 6;` adds `Signals`, the eighth field of `Split`. Narrow it to the
 signals you claim, and the row says which: `signals("INT,TERM")`, which
-`lex-sys authority` prints and which keeps the report bounded (the
+`cancho authority` prints and which keeps the report bounded (the
 `sigblock`/`signal` workaround through `Ffi("libc")` made it `UNBOUNDED`).
 `signals_pending` answers a bitmask of what arrived since the last call and
 never waits; `poller_add_signals` makes the claim something a `Poller`
@@ -185,7 +185,7 @@ wakes for; `signals_close` ends it, and after it the next signal ends the
 process, which is "a second signal kills at once". Claim before the first
 `spawn` (`docs/signals.md`).
 
-```lex-sys
+```cancho
 edition 6;
 import std.signals as sg;
 
@@ -219,11 +219,11 @@ fn main(world: World) -> [] int {
 ### 3.3 Foreign code: say which library, and read which symbols
 
 `Ffi` is the one capability whose label does not bound what it authorises, so a program that calls C reports `bounded: false`. What it reports *with* that is exact:
-`lex-sys authority` lists every foreign symbol the program can reach as `scope:symbol` (`unbounded_by`, one per line in `--output json`, so a CI pin diffs an added symbol as one added
+`cancho authority` lists every foreign symbol the program can reach as `scope:symbol` (`unbounded_by`, one per line in `--output json`, so a CI pin diffs an added symbol as one added
 line). A foreign function borrows **exactly one** `Ffi`, naming **one** library (anything else is `foreign-declaration`: a declaration with no capability used to be accepted and
 reported `bounded: true`). A program that calls two libraries narrows to a **set**, written in any order and answered alphabetically, and lends each function only what it needs:
 
-```lex-sys
+```cancho
 edition 5;
 
 extern fn labs[&f](ffi: &f Ffi("libc"), n: int) -> [ffi("libc")] int;
@@ -256,7 +256,7 @@ malformed one is `foreign-scope` (`docs/foreign-authority.md`).
 11 fixtures. A region is an arena, a `borrow` block, or a caller's
 region parameter, and nothing that points into one may leave it:
 
-```lex-sys-refused
+```cancho-refused
 //~ RULE reference-escapes-region
 
 fn leak() -> [] &static [byte] {
@@ -300,7 +300,7 @@ wrong once.**
 > **Corrected (#63).** This section shipped with a sixth row saying
 > *"there is no unary minus; write `0 - x`."* There is one: `UnOp::Neg`
 > is in the AST, `-x` parses, and it works on `int` and `float` alike —
-> `examples/newton.ls` had been using it since before that row was
+> `examples/newton.cho` had been using it since before that row was
 > written. The claim came from a golden-hash fixture that used `0 - a`,
 > and reading a fixture is not reading the language.
 >
@@ -319,7 +319,7 @@ wrong once.**
 
 Each of those, in a program the suite compiles:
 
-```lex-sys
+```cancho
 fn facts(x: float) -> [] float {
     // Unary minus exists, on `int` and `float` alike -- see the
     // correction above.
@@ -357,7 +357,7 @@ fn main(world: World) -> [] int {
 }
 ```
 
-```lex-sys-refused
+```cancho-refused
 //~ RULE unsized-type
 
 // A struct field cannot be `[T]`: it has no size of its own.
@@ -383,7 +383,7 @@ edition 6), `std.bignum`, `std.utf8`, `std.flags`, `std.crypto`, `std.ed25519`, 
 building a tree, and writes through a `Writer` you move from call to
 call, like a `Buffer`:
 
-```lex-sys
+```cancho
 import std.buffer;
 import std.json;
 
@@ -427,7 +427,7 @@ outside an object, a value with no key -- is a trap, not bad JSON.
 `std.route` maps a method and path to an id you chose (`docs/http.md`);
 you `match` on the id, so there is no handler registry:
 
-```lex-sys
+```cancho
 import std.buffer;
 import std.http;
 import std.route;

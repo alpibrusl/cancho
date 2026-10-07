@@ -16,7 +16,7 @@
 >
 > **The encoder has moved 20 times and the golden fixtures have observed
 > none of them**, because they landed after the movement stopped.
-> **The language has moved enough that 71% of this repository's own `.ls`
+> **The language has moved enough that 71% of this repository's own `.cho`
 > history no longer type-checks** — and the single largest cause is one
 > effect label being split in two.
 >
@@ -38,14 +38,14 @@
 
 ## 1. The encoder rate: zero, out of zero observations
 
-`crates/lex-sys-id/tests/golden.rs` pins 35 fixtures, one per node
+`crates/cancho-id/tests/golden.rs` pins 35 fixtures, one per node
 family. §8 introduced them for exactly this purpose: *"It is not a freeze
 and a failure is not a bug report — it asks which of two things
 happened."*
 
 | | |
 |---|---:|
-| commits touching `crates/lex-sys-id/src/` | **20** |
+| commits touching `crates/cancho-id/src/` | **20** |
 | …of those, since the goldens landed | **0** |
 | commits since the goldens landed | 14 |
 | golden hashes that moved in them | **0** |
@@ -54,7 +54,7 @@ So the fixtures have been green for fourteen commits, and that is worth
 less than it looks: **none of those commits changed the encoder.** The
 instrument was installed after the thing it measures stopped happening.
 
-One commit since did touch `crates/lex-sys-syntax/src/ast.rs` — file
+One commit since did touch `crates/cancho-syntax/src/ast.rs` — file
 handles (#65), which added three prelude type names. It added no *node
 kind*, so no tag moved, and the goldens were right to stay still. That
 is one observation of the right kind and it passed.
@@ -94,7 +94,7 @@ expect that to happen rather than not.
 > the wide fix is one regenerated package store, paid once, in a
 > language that moves faster than this (§2); the price of the narrow one is
 > a non-identifying identity. Also closed: an unused `static` (one nothing
-> reachable reads, so `lex-sys-ir` drops it) failed to publish as
+> reachable reads, so `cancho-ir` drops it) failed to publish as
 > "internal: ... no lowered function, extern or static"; the publish layer
 > now asks the source.
 
@@ -103,7 +103,7 @@ expect that to happen rather than not.
 ## 2. The language rate: 71% of its own past is unreadable
 
 The other rate needs no new instrument, because git has it. Every
-distinct revision of every `.ls` file under `std/` and `examples/` across
+distinct revision of every `.cho` file under `std/` and `examples/` across
 all **67** commits, compiled by **today's** binary — one compiler over
 every revision, so anything that fails is the language having moved and
 never the encoder:
@@ -158,18 +158,18 @@ And the causes are not spread out. Classified by first error:
 > kept above anyway, uncorrected in place, so the record shows what was
 > believed and when.
 >
-> One new cause is confirmed, not guessed: `examples/tls_client/socket.ls`
+> One new cause is confirmed, not guessed: `examples/tls_client/socket.cho`
 > (`docs/next-phase.md` §4.1's own migration onto `net.connect`) is
 > unreadable by this harness for a reason that has nothing to do with the
 > language moving. `scripts/history.py`'s own `lay_out` passes `--std` or
 > a file's same-folder siblings and nothing else — it has never known how
 > to hand a replayed file the `packages/` source a `vcs`-fetched import
-> needs. Every other package-importing example (`fetch.ls`, `report.ls`,
-> `serve.ls`, `collect.ls`, `vsock.ls`, `agent_guest.ls`,
-> `agent_supervisor.ls`, `results_stub.ls`) was already unreadable by this
+> needs. Every other package-importing example (`fetch.cho`, `report.cho`,
+> `serve.cho`, `collect.cho`, `vsock.cho`, `agent_guest.cho`,
+> `agent_supervisor.cho`, `results_stub.cho`) was already unreadable by this
 > same gap before this measurement, already inside the 61 — confirmed
-> directly, `lex-sys check <file> --std` on each reproduces the identical
-> `no module 'net.sockets'` refusal `socket.ls` now also gets. `socket.ls`
+> directly, `cancho check <file> --std` on each reproduces the identical
+> `no module 'net.sockets'` refusal `socket.cho` now also gets. `socket.cho`
 > joining that list is the harness missing an argument, not a program
 > whose identity moved.
 >
@@ -227,9 +227,9 @@ builtins.
 > — every builtin, every effect label, every prelude type's own row —
 > last changed at #92, the third `Net` slice. The 27 commits since
 > (#93 through #119, an entire second backend designed and built start
-> to finish) touch none of `crates/lex-sys-ir/`, `crates/lex-sys-types/`
-> or `crates/lex-sys-syntax/` at all — `git diff 52daddb..2999a7d --
-> crates/lex-sys-ir/ crates/lex-sys-types/ crates/lex-sys-syntax/` is
+> to finish) touch none of `crates/cancho-ir/`, `crates/cancho-types/`
+> or `crates/cancho-syntax/` at all — `git diff 52daddb..2999a7d --
+> crates/cancho-ir/ crates/cancho-types/ crates/cancho-syntax/` is
 > empty. The plateau this section said had not happened has now
 > happened, measured the same way §1 and §2 above were: by reading the
 > commit range rather than assuming it. Whether 27 commits is *long*
@@ -241,7 +241,7 @@ builtins.
 > that turns out to be the wrong thing to have measured.** `null_ptr`
 > (#137, [`opaque-pointers.md`](opaque-pointers.md) §3) and `spawn`/
 > `join`/`Thread` ([`threads.md`](threads.md)) all landed after #120,
-> touching `builtin.rs`/`defs.rs`/`crates/lex-sys-types` exactly the way
+> touching `builtin.rs`/`defs.rs`/`crates/cancho-types` exactly the way
 > this section's own reasoning predicted growth would. But every one of
 > them is edition-gated and additive by its own stated design
 > (`opaque-pointers.md` §4, `threads.md` §4): an edition-1 or -2 file

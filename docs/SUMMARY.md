@@ -103,7 +103,7 @@
 - [TLS parity with the OpenSSL backend](tls-parity.md)
 - [`std.ecdh`: P-256 and P-384 key exchange](ecdh.md)
 - [`value_barrier`: a value the optimiser cannot see through](value-barrier.md)
-- [The pure TLS backend in `lexsys-hooks`](tls-hooks.md)
+- [The pure TLS backend in `cancho-hooks`](tls-hooks.md)
 - [TLS 1.3 session resumption](tls-resumption.md)
 - [A TLS 1.3 server](tls-server.md)
 - [`std.ecdsa_sign`: ECDSA P-256 signing in constant time](ecdsa-sign.md)
@@ -118,14 +118,14 @@
 
 # Version control: the op log
 
-- [What lex-sys-vcs would need](vcs.md)
+- [What cancho-vcs would need](vcs.md)
 - [The first publish](vcs-publish.md)
 - [A package system](package-system.md)
 
 # Backend and performance
 
 - [What the overflow trap costs](overflow-cost.md)
-- [lex-sys against C and Rust](against-c-and-rust.md)
+- [cancho against C and Rust](against-c-and-rust.md)
 - [The checked purity proof](purity.md)
 - [Layout](layout.md)
 - [The Computer Language Benchmarks Game](benchmarks-game.md)
@@ -135,7 +135,7 @@
 - [The LLVM backend](llvm-backend.md)
 - [WebAssembly target](wasm.md)
 - [Every emitted check, priced](emitted-checks.md)
-- [Whether lex-sys can run on a GPU](gpu.md)
+- [Whether cancho can run on a GPU](gpu.md)
 - [The constant folder against the backend](differential.md)
 - [When the compiler is wrong](internal-errors.md)
 

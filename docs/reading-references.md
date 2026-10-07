@@ -21,7 +21,7 @@ nothing you can do to it.
 
 **A recursive structure cannot be read without destroying it.** `match`
 requires ownership, so taking a list apart to look at it *is* taking it
-apart. `heap.md` §4.1 records it, and `examples/tree.ls` is built around
+apart. `heap.md` §4.1 records it, and `examples/tree.cho` is built around
 it: the walk that prints the tree is the walk that frees it, because no
 other walk is expressible.
 
@@ -153,7 +153,7 @@ Reading copies the value out. Writing replaces it. Both require `T` to be
   values, one of which nobody is required to consume. §4 exists to make
   that impossible and this does not get an exception;
 * writing over a `res` would drop whatever was there without naming a
-  consumer, which is the same silent drop `assign_over_live_res.ls`
+  consumer, which is the same silent drop `assign_over_live_res.cho`
   already refuses.
 
 A `res` behind a reference is read the way it always was — by borrowing it
@@ -189,13 +189,13 @@ exactly as long as this frame does. The list is not touched: it is still
 owned by the caller, still owes exactly one traversal that ends it, and can
 be read as many times as anyone likes first.
 
-`examples/tree.ls` stops having to compute everything in the pass that
+`examples/tree.cho` stops having to compute everything in the pass that
 frees: `contains`, `deepest` and `tally` take `&t Tree`, hold no capability
 at all, and leave the tree as owned as they found it. The consuming walk is
 still there and still the only thing that ends the tree — it simply is no
 longer the only thing that can *look* at one.
 
-`tests/accept/match_a_reference.ls` is the minimal version: a list read
+`tests/accept/match_a_reference.cho` is the minimal version: a list read
 three times, then freed once.
 
 ---
@@ -231,18 +231,18 @@ three times, then freed once.
 
 | Fixture | Rule | § |
 |---|---|---|
-| `deref_a_res.ls` | Copying a `res` out of a reference duplicates an obligation | 3 |
-| `deref_a_non_reference.ls` | `*` follows a reference; there has to be one | 3 |
-| `write_through_shared_deref.ls` | `*r = v` needs a unique reference | 3 |
-| `match_reference_binding_escapes.ls` | A binding from a matched reference dies with the region | 2 |
-| `match_reference_payload_consumed.ls` | A `res` payload bound by reference may not be consumed | 2 |
-| `res_field_read_through_reference.ls` | A borrowed `res` field may not be **consumed** — refused at the use, by the type | 2.0 |
-| `res_tuple_component_through_reference.ls` | The same, where the aggregate is a tuple | 2.0 |
+| `deref_a_res.cho` | Copying a `res` out of a reference duplicates an obligation | 3 |
+| `deref_a_non_reference.cho` | `*` follows a reference; there has to be one | 3 |
+| `write_through_shared_deref.cho` | `*r = v` needs a unique reference | 3 |
+| `match_reference_binding_escapes.cho` | A binding from a matched reference dies with the region | 2 |
+| `match_reference_payload_consumed.cho` | A `res` payload bound by reference may not be consumed | 2 |
+| `res_field_read_through_reference.cho` | A borrowed `res` field may not be **consumed** — refused at the use, by the type | 2.0 |
+| `res_tuple_component_through_reference.cho` | The same, where the aggregate is a tuple | 2.0 |
 
 And the accepting counterparts:
 
 | Fixture | Shows |
 |---|---|
-| `borrowed_fields.ls` | A `res` field and a `res` tuple component read through a reference, at both modes — and `std.buffer` printed **twice** without being spent |
-| `match_a_reference.ls` | A list read twice and then freed |
-| `deref_roundtrip.ls` | `*r` reads, `*r = v` writes, through the right modes |
+| `borrowed_fields.cho` | A `res` field and a `res` tuple component read through a reference, at both modes — and `std.buffer` printed **twice** without being spent |
+| `match_a_reference.cho` | A list read twice and then freed |
+| `deref_roundtrip.cho` | `*r` reads, `*r = v` writes, through the right modes |

@@ -4,7 +4,7 @@
 > listed this as waiting on "a capability question answered first". This is
 > that question and its answer.
 >
-> It is also what turns `examples/lines.ls` from a demonstration into a
+> It is also what turns `examples/lines.cho` from a demonstration into a
 > tool. That file currently writes its own input because it has no way to
 > be told a path, which §5 there admits is "the one place the example is a
 > demonstration rather than a tool".
@@ -127,7 +127,7 @@ artifact of the C interface, not part of the value.
 
 ## 4. What this unlocks
 
-`examples/lines.ls` becomes a real tool: given a path it reads that file,
+`examples/lines.cho` becomes a real tool: given a path it reads that file,
 and given nothing it falls back to the sample it writes itself — which is
 how a command-line tool behaves anyway, and keeps the example runnable by
 a test harness that passes no arguments.
@@ -170,15 +170,15 @@ this is the "command-line" part of it.
 
 | Fixture | Rule | § |
 |---|---|---|
-| `args_without_capability.ls` | Reading the command line requires an `Args` | 2 |
-| `args_effect_undeclared.ls` | A row that reads argv must declare `args` | 2 |
-| `arg_written_through.ls` | An argument is shared; nothing writes through one | 3.1 |
+| `args_without_capability.cho` | Reading the command line requires an `Args` | 2 |
+| `args_effect_undeclared.cho` | A row that reads argv must declare `args` | 2 |
+| `arg_written_through.cho` | An argument is shared; nothing writes through one | 3.1 |
 
 And the accepting counterpart:
 
 | Fixture | Shows |
 |---|---|
-| `arguments.ls` | `arg_count`, `arg(0)`, and a loop over the rest |
+| `arguments.cho` | `arg_count`, `arg(0)`, and a loop over the rest |
 
 Plus two conformance tests, because both are things only a *running*
 program with real arguments can show: the bytes a program is started with

@@ -1,0 +1,12 @@
+[package]
+name = "cancho-ir"
+description = "Resolved intermediate representation for cancho, and lowering from the AST"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+cancho-syntax.workspace = true
+cancho-types.workspace = true

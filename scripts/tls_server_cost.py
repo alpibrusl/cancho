@@ -3,7 +3,7 @@
 
     python3 scripts/tls_server_cost.py <tls_serve> [<seconds>]
 
-`tls_serve` is `tests/programs/tls_serve.ls` built with the LLVM backend (the default) and `packages/tls`. It runs in
+`tls_serve` is `tests/programs/tls_serve.cho` built with the LLVM backend (the default) and `packages/tls`. It runs in
 `echo` mode with a P-256 identity; `openssl s_time -new` makes full handshakes against it, one after another, for
 `seconds` (default 20) a row, and the server's CPU time (user and system, from `/proc/<pid>/stat`) is divided by the
 handshakes it completed. Linux only. A row per group the client sends a share of (OpenSSL's `Groups`, through

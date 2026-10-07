@@ -3,7 +3,7 @@
 
     python3 scripts/kdf_differential.py <driver> [<count>]
 
-`driver` is `tests/programs/kdf_driver.ls` built with `lex-sys build --std`.
+`driver` is `tests/programs/kdf_driver.cho` built with `cancho build --std`.
 The references: Python's `hashlib` and `hmac` (OpenSSL's digests underneath),
 pyca/cryptography's `HKDF` (OpenSSL's `EVP_KDF`), and, for HKDF-Expand-Label,
 the RFC 8446 §7.1 structure built in Python over `hmac`.

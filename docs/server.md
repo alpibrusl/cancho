@@ -1,7 +1,7 @@
 # `examples/api`: a JSON API server, and what it costs
 
 > **Status: built, migrated (§8), and the loop extracted into a package
-> ([`http-server.md`](http-server.md)).** `examples/api/api.ls` over `std.http`,
+> ([`http-server.md`](http-server.md)).** `examples/api/api.cho` over `std.http`,
 > `std.route`, `std.json`, `std.conns` and the native socket builtins of
 > [`native-sockets.md`](native-sockets.md) -- no `Ffi`, no `extern fn`;
 > `conformance/api.rs` (21 tests over real sockets); the load generator and the
@@ -166,7 +166,7 @@ keep-alive), pinned to two cores; each server to one.
 | Server, one core | requests/second | what it does per request |
 |---|---|---|
 | C, `poll`, **no parsing** | 128,000 - 137,000 | finds the blank line, writes a fixed answer |
-| **`examples/api` (lex-sys)** | **117,000 - 129,000** | parses the head strictly, routes, builds the JSON, writes it |
+| **`examples/api` (cancho)** | **117,000 - 129,000** | parses the head strictly, routes, builds the JSON, writes it |
 | FastAPI on uvicorn, `uvloop` + `httptools` | 3,400 - 3,550 | the same route and body |
 | FastAPI on uvicorn, stock | 2,560 - 2,680 | the same |
 
@@ -199,7 +199,7 @@ measured *lower* than with one in this setup (1,200); that is the way uvicorn
 spreads a handful of long-lived connections across workers, not a property of
 FastAPI, and **no multi-worker FastAPI figure is claimed**. And the earlier
 figure in the conversation that proposed this -- 27,000 requests a second for
-lex-sys against 980 for FastAPI -- was a connection **per request**; this one is
+cancho against 980 for FastAPI -- was a connection **per request**; this one is
 keep-alive, which is why both numbers are so much higher and the gap is wider.
 
 ## 6. What it does not do
@@ -237,7 +237,7 @@ the authority report say `ffi("libc")` and nothing else. `signal(SIGPIPE)`
 non-blocking connection, on either kernel), the `SO_REUSE*` guesses (a flag on
 `tcp_listen`), the hand-built `sockaddr_in`, and the poll-record byte array and
 its `set_record`/`move_record` (a `Poller` and tokens). `net.lock` and the
-package fetch are gone from the build. `lex-sys authority` now reports
+package fetch are gone from the build. `cancho authority` now reports
 `net_in` -- naming no port, because the port is an argument -- `conn_accept`,
 `conn_read`, `conn_write`, `poll`, `clock`, `heap`, `args` and the console, and
 `the_server_holds_no_foreign_authority` pins it.
@@ -259,7 +259,7 @@ loop, `GET /users/42`), server on one core, three five-second runs:
 
 **A 47% fall, and it is the kernel, not the program.** The C reference with
 the same loop and no parsing falls the same way when its `poll` is replaced by
-`epoll` -- about 150,000 to about 80,000 -- so the lex-sys server holds about
+`epoll` -- about 150,000 to about 80,000 -- so the cancho server holds about
 nine tenths of the C ceiling for either, as it did before. What was ruled out,
 in order: the extra builtin calls and the ticket round trip (`conns.read` and
 `conns.write` are about one percent of the instructions each, under
@@ -276,7 +276,7 @@ comparison, not something observed inside the kernel.
 **What this corrects.** `native-sockets.md` §4 said `epoll` was *"also the
 scalable answer ... a performance change as well as a safety one"*. Measured
 here it is the reverse: `poll` is faster by about 1.8x at 32 connections and by
-about 1.8x at 300 (C: 186,000 and 165,000 against 96,000 and 105,000; lex-sys
+about 1.8x at 300 (C: 186,000 and 165,000 against 96,000 and 105,000; cancho
 before and after: 173,000 and 159,000 against 86,000 and 88,000). The crossover
 where `epoll`'s O(ready) beats `poll`'s O(registered) was **not found at or
 below 300 connections**; 800 could not be measured (the load generator reported
@@ -315,12 +315,12 @@ seconds, one run each:
 | Server, one core | req/s | p50 | p90 | p99 | p99.9 | max |
 |---|---|---|---|---|---|---|
 | C, `poll`, no parsing | 149,000 | 137 us | 220 us | 349 us | 1.1 ms | 3.3 ms |
-| **lex-sys, `poll` + `Ffi` (before §8)** | 139,000 | 147 us | 229 us | 418 us | 1.7 ms | 33 ms |
+| **cancho, `poll` + `Ffi` (before §8)** | 139,000 | 147 us | 229 us | 418 us | 1.7 ms | 33 ms |
 | C, `epoll`, no parsing | 84,000 | 228 us | 374 us | 591 us | 2.0 ms | 5.1 ms |
-| **lex-sys, `Poller` + handles (now)** | 71,000 | 285 us | 449 us | 647 us | 1.8 ms | 7.8 ms |
+| **cancho, `Poller` + handles (now)** | 71,000 | 285 us | 449 us | 647 us | 1.8 ms | 7.8 ms |
 | FastAPI on uvicorn, stock | 2,100 | 12.7 ms | 18.3 ms | 53 ms | 62 ms | 64 ms |
 
-What it says. **lex-sys tracks the C loop of the same kind at every
+What it says. **cancho tracks the C loop of the same kind at every
 percentile** -- its p99 is within 10% of C's `epoll` and its p99.9 is below it --
 so the loop has no pathological tail of its own; the shape is the kernel's, which
 §8 found. The one thing worth noticing is the `max` of 33 ms in the `poll`

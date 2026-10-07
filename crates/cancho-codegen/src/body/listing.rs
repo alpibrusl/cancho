@@ -1,0 +1,345 @@
+//! Directory listing (`docs/directory-listing.md`): `dir_list`, `dir_next`,
+//! `dir_list_close` and `dir_stat`. Mirrors `cancho-codegen-llvm`'s own
+//! `body/listing.rs`.
+//!
+//! A listing is libc's `DIR` stream on a descriptor of its own --
+//! `openat(dir, ".", O_RDONLY | O_DIRECTORY)`, not a `dup`, so two listings of
+//! one `Dir` do not share a position -- and `struct dirent` is read at the
+//! offsets `cancho_ir::dirent_layout` gives for the target (§3.4).
+
+use crate::*;
+
+impl<'a, 'f> BodyEmitter<'a, 'f> {
+    /// `errno = 0`: `readdir` reports an error only through `errno`, so a
+    /// step clears it first and reads it when the answer is null.
+    fn clear_errno(&mut self) {
+        let pointer = self.pointer;
+        let symbol = match self.module.isa().triple().operating_system {
+            target_lexicon::OperatingSystem::Darwin(_) => "__error",
+            _ => "__errno_location",
+        };
+        let id = self.libc_fn(symbol, &[], &[pointer]);
+        let at = self.module.declare_func_in_func(id, self.builder.func);
+        let call = self.builder.ins().call(at, &[]);
+        let address = self.builder.inst_results(call)[0];
+        let zero = self.builder.ins().iconst(types::I32, 0);
+        self.builder.ins().store(MemFlags::trusted(), zero, address, 0);
+    }
+
+    /// `dir_list(dir)`: `args` is the handle's address. `Listing`'s three
+    /// leaves: the tag, the stream and the reason.
+    pub(crate) fn dir_list(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let flags = self.open_flags();
+        // Close-on-exec, as every descriptor a builtin opens (`docs/processes.md` §4.5).
+        let directory = flags.directory | flags.cloexec;
+
+        // `"."`, NUL-terminated, on the stack.
+        let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            2,
+            0,
+        ));
+        let dot = self.builder.ins().stack_addr(pointer, slot, 0);
+        let byte = self.builder.ins().iconst(types::I8, i64::from(b'.'));
+        self.builder.ins().store(MemFlags::trusted(), byte, dot, 0);
+        let nul = self.builder.ins().iconst(types::I8, 0);
+        self.builder.ins().store(MemFlags::trusted(), nul, dot, 1);
+
+        let fd = self.dir_fd(args[0]);
+        let own = self.openat(fd, dot, directory, 0);
+        let reason = self.errno();
+
+        let opened = self.builder.create_block();
+        let merge = self.builder.create_block();
+        for _ in 0..3 {
+            self.builder.append_block_param(merge, types::I64);
+        }
+        let one = self.builder.ins().iconst(types::I64, 1);
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        let failed = self.builder.ins().icmp_imm(IntCC::SignedLessThan, own, 0);
+        self.builder.ins().brif(
+            failed,
+            merge,
+            &[one.into(), zero.into(), reason.into()],
+            opened,
+            &[],
+        );
+
+        // The stream takes the descriptor; if it cannot, the descriptor is
+        // closed here, after `errno` is read.
+        self.builder.switch_to_block(opened);
+        self.builder.seal_block(opened);
+        let stream = self.libc_call("fdopendir", &[types::I32], &[pointer], &[own]);
+        let reason = self.errno();
+        let null = self.builder.ins().icmp_imm(IntCC::Equal, stream, 0);
+        let refused = self.builder.create_block();
+        let started = self.builder.create_block();
+        self.builder.ins().brif(null, refused, &[], started, &[]);
+
+        self.builder.switch_to_block(refused);
+        self.builder.seal_block(refused);
+        self.libc_call("close", &[types::I32], &[types::I32], &[own]);
+        let one = self.builder.ins().iconst(types::I64, 1);
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        self.builder.ins().jump(merge, &[one.into(), zero.into(), reason.into()]);
+
+        self.builder.switch_to_block(started);
+        self.builder.seal_block(started);
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        self.builder.ins().jump(merge, &[zero.into(), stream.into(), zero.into()]);
+
+        self.builder.switch_to_block(merge);
+        self.builder.seal_block(merge);
+        self.builder.block_params(merge).to_vec()
+    }
+
+    /// `dir_next(list, name)`: `args` is the listing's address, then the
+    /// buffer's pointer and length. `Listed`'s four leaves: the tag (`Name`
+    /// 0, `End` 1, `Failed` 2), the length, the kind and the reason.
+    pub(crate) fn dir_next(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let layout = cancho_ir::dirent_layout(self.is_darwin());
+        let (handle, buffer, room) = (args[0], args[1], args[2]);
+        let stream = self.builder.ins().load(pointer, MemFlags::trusted(), handle, 0);
+
+        let step = self.builder.create_block();
+        let ended = self.builder.create_block();
+        let entry = self.builder.create_block();
+        let second = self.builder.create_block();
+        let keep = self.builder.create_block();
+        let copy = self.builder.create_block();
+        let short = self.builder.create_block();
+        let merge = self.builder.create_block();
+        for _ in 0..4 {
+            self.builder.append_block_param(merge, types::I64);
+        }
+        self.builder.ins().jump(step, &[]);
+
+        // One `readdir`, `errno` cleared first.
+        self.builder.switch_to_block(step);
+        self.clear_errno();
+        let found = self.libc_call("readdir", &[pointer], &[pointer], &[stream]);
+        let null = self.builder.ins().icmp_imm(IntCC::Equal, found, 0);
+        self.builder.ins().brif(null, ended, &[], entry, &[]);
+
+        // Null: the end if `errno` is still zero, a failure otherwise.
+        self.builder.switch_to_block(ended);
+        self.builder.seal_block(ended);
+        let reason = self.errno();
+        let quiet = self.builder.ins().icmp_imm(IntCC::Equal, reason, 0);
+        let one = self.builder.ins().iconst(types::I64, 1);
+        let two = self.builder.ins().iconst(types::I64, 2);
+        let tag = self.builder.ins().select(quiet, one, two);
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        self.builder.ins().jump(merge, &[tag.into(), zero.into(), zero.into(), reason.into()]);
+
+        // `.` and `..` are skipped. The name is NUL-terminated, so its second
+        // byte is always there to read.
+        self.builder.switch_to_block(entry);
+        self.builder.seal_block(entry);
+        let name = self.builder.ins().iadd_imm(found, i64::from(layout.d_name));
+        let length = self.libc_call("strlen", &[pointer], &[types::I64], &[name]);
+        let first = self.builder.ins().uload8(types::I64, MemFlags::trusted(), name, 0);
+        let first_dot = self.builder.ins().icmp_imm(IntCC::Equal, first, i64::from(b'.'));
+        let one_byte = self.builder.ins().icmp_imm(IntCC::Equal, length, 1);
+        let dot = self.builder.ins().band(one_byte, first_dot);
+        let two_bytes = self.builder.ins().icmp_imm(IntCC::Equal, length, 2);
+        let maybe = self.builder.ins().band(two_bytes, first_dot);
+        let either = self.builder.ins().bor(dot, maybe);
+        self.builder.ins().brif(either, second, &[], keep, &[]);
+
+        self.builder.switch_to_block(second);
+        self.builder.seal_block(second);
+        let other = self.builder.ins().uload8(types::I64, MemFlags::trusted(), name, 1);
+        let other_dot = self.builder.ins().icmp_imm(IntCC::Equal, other, i64::from(b'.'));
+        let dotdot = self.builder.ins().band(maybe, other_dot);
+        let skip = self.builder.ins().bor(dot, dotdot);
+        self.builder.ins().brif(skip, step, &[], keep, &[]);
+        self.builder.seal_block(step);
+
+        // A name longer than the buffer is refused whole, never cut.
+        self.builder.switch_to_block(keep);
+        self.builder.seal_block(keep);
+        let long = self.builder.ins().icmp(IntCC::SignedGreaterThan, length, room);
+        self.builder.ins().brif(long, short, &[], copy, &[]);
+
+        self.builder.switch_to_block(short);
+        self.builder.seal_block(short);
+        let two = self.builder.ins().iconst(types::I64, 2);
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        let errno = cancho_ir::enametoolong(self.is_darwin());
+        let too_long = self.builder.ins().iconst(types::I64, errno);
+        self.builder.ins().jump(merge, &[two.into(), zero.into(), zero.into(), too_long.into()]);
+
+        self.builder.switch_to_block(copy);
+        self.builder.seal_block(copy);
+        self.libc_call(
+            "memmove",
+            &[pointer, pointer, pointer],
+            &[pointer],
+            &[buffer, name, length],
+        );
+        let raw = self.builder.ins().uload8(types::I64, MemFlags::trusted(), found, layout.d_type);
+        let kind = self.kind_of(raw);
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        self.builder.ins().jump(merge, &[zero.into(), length.into(), kind.into(), zero.into()]);
+
+        self.builder.switch_to_block(merge);
+        self.builder.seal_block(merge);
+        self.builder.block_params(merge).to_vec()
+    }
+
+    /// `d_type` as the language numbers a kind (§3.1).
+    fn kind_of(&mut self, raw: Value) -> Value {
+        let mut kind = self.builder.ins().iconst(types::I64, cancho_ir::KIND_OTHER);
+        for (dt, ours) in [
+            (cancho_ir::DT_UNKNOWN, cancho_ir::KIND_UNKNOWN),
+            (cancho_ir::DT_LNK, cancho_ir::KIND_LINK),
+            (cancho_ir::DT_DIR, cancho_ir::KIND_DIRECTORY),
+            (cancho_ir::DT_REG, cancho_ir::KIND_FILE),
+        ] {
+            let is = self.builder.ins().icmp_imm(IntCC::Equal, raw, dt);
+            let value = self.builder.ins().iconst(types::I64, ours);
+            kind = self.builder.ins().select(is, value, kind);
+        }
+        kind
+    }
+
+    /// `dir_list_close(list)`: `closedir`, which closes the listing's own
+    /// descriptor and leaves the directory open.
+    pub(crate) fn dir_list_close(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let answer = self.libc_call("closedir", &[pointer], &[types::I32], &[args[0]]);
+        vec![self.builder.ins().sextend(types::I64, answer)]
+    }
+
+    /// `dir_stat(dir, name)`: `args` is the handle's address, then the name's
+    /// pointer and length. The name has `dir_enter`'s check; then
+    /// `fstatat(fd, name, &st, AT_SYMLINK_NOFOLLOW)` into a stack slot read at
+    /// the target's offsets (§3.4). `DirStat`'s five leaves: the tag, the kind,
+    /// the size, the modification time and the reason.
+    pub(crate) fn dir_stat(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let layout = cancho_ir::stat_layout(self.is_darwin(), self.aarch64());
+        let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            layout.size,
+            3,
+        ));
+        let buffer = self.builder.ins().stack_addr(pointer, slot, 0);
+        let handle = args[0];
+        let answer = self.dir_call(&[(args[1], args[2])], |this, copies| {
+            let fd = this.dir_fd(handle);
+            let flag = this.builder.ins().iconst(types::I32, layout.no_follow);
+            this.libc_call(
+                "fstatat",
+                &[types::I32, pointer, pointer, types::I32],
+                &[types::I32],
+                &[fd, copies[0], buffer, flag],
+            )
+        });
+        let (tag, reason) = (answer[0], answer[2]);
+        // Read only on success; a failure's payload is zero.
+        let ok = self.builder.ins().icmp_imm(IntCC::Equal, tag, 0);
+        let mode = if layout.mode_bits == 16 {
+            self.builder.ins().uload16(types::I64, MemFlags::trusted(), buffer, layout.mode)
+        } else {
+            self.builder.ins().uload32(MemFlags::trusted(), buffer, layout.mode)
+        };
+        let size = self.builder.ins().load(types::I64, MemFlags::trusted(), buffer, layout.st_size);
+        let mtime = self.builder.ins().load(types::I64, MemFlags::trusted(), buffer, layout.mtime);
+        let kind = self.kind_of_mode(mode);
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        let kind = self.builder.ins().select(ok, kind, zero);
+        let size = self.builder.ins().select(ok, size, zero);
+        let mtime = self.builder.ins().select(ok, mtime, zero);
+        vec![tag, kind, size, mtime, reason]
+    }
+
+    /// `dir_mode(dir, name)` (§3.5): `dir_stat`'s check and `fstatat`, and
+    /// `Done`'s three leaves with the permission bits (`st_mode & 0o7777`) on
+    /// success. `dir_call`'s answer is already `Done`'s shape; only its value
+    /// is replaced.
+    pub(crate) fn dir_mode(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let layout = cancho_ir::stat_layout(self.is_darwin(), self.aarch64());
+        let buffer = self.stat_buffer(layout);
+        let handle = args[0];
+        let answer = self.dir_call(&[(args[1], args[2])], |this, copies| {
+            let fd = this.dir_fd(handle);
+            let flag = this.builder.ins().iconst(types::I32, layout.no_follow);
+            this.libc_call(
+                "fstatat",
+                &[types::I32, pointer, pointer, types::I32],
+                &[types::I32],
+                &[fd, copies[0], buffer, flag],
+            )
+        });
+        let bits = self.permission_bits(answer[0], buffer, layout);
+        vec![answer[0], bits, answer[2]]
+    }
+
+    /// `dir_own_mode(dir)` (§3.5): `fstat` on the handle's descriptor, so the
+    /// directory's own bits need no search permission on it and no name.
+    pub(crate) fn dir_own_mode(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let layout = cancho_ir::stat_layout(self.is_darwin(), self.aarch64());
+        let buffer = self.stat_buffer(layout);
+        let fd = self.dir_fd(args[0]);
+        let result = self.libc_call("fstat", &[types::I32, pointer], &[types::I32], &[fd, buffer]);
+        let reason = self.errno();
+        let result = self.builder.ins().sextend(types::I64, result);
+        let failed = self.builder.ins().icmp_imm(IntCC::SignedLessThan, result, 0);
+        let one = self.builder.ins().iconst(types::I64, 1);
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        let tag = self.builder.ins().select(failed, one, zero);
+        let bits = self.permission_bits(tag, buffer, layout);
+        vec![tag, bits, reason]
+    }
+
+    /// A stack slot `struct stat` fits in, and its address.
+    fn stat_buffer(&mut self, layout: cancho_ir::StatLayout) -> Value {
+        let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            layout.size,
+            3,
+        ));
+        self.builder.ins().stack_addr(self.pointer, slot, 0)
+    }
+
+    /// `st_mode & 0o7777` read from `buffer` at the target's offset, or `0`
+    /// when `tag` says the call failed.
+    fn permission_bits(
+        &mut self,
+        tag: Value,
+        buffer: Value,
+        layout: cancho_ir::StatLayout,
+    ) -> Value {
+        let ok = self.builder.ins().icmp_imm(IntCC::Equal, tag, 0);
+        let mode = if layout.mode_bits == 16 {
+            self.builder.ins().uload16(types::I64, MemFlags::trusted(), buffer, layout.mode)
+        } else {
+            self.builder.ins().uload32(MemFlags::trusted(), buffer, layout.mode)
+        };
+        let bits = self.builder.ins().band_imm(mode, cancho_ir::PERMISSION_BITS);
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        self.builder.ins().select(ok, bits, zero)
+    }
+
+    /// `st_mode`'s type bits as the language numbers a kind (§3.2).
+    fn kind_of_mode(&mut self, mode: Value) -> Value {
+        let bits = self.builder.ins().band_imm(mode, cancho_ir::S_IFMT);
+        let mut kind = self.builder.ins().iconst(types::I64, cancho_ir::KIND_OTHER);
+        for (ty, ours) in [
+            (cancho_ir::S_IFLNK, cancho_ir::KIND_LINK),
+            (cancho_ir::S_IFDIR, cancho_ir::KIND_DIRECTORY),
+            (cancho_ir::S_IFREG, cancho_ir::KIND_FILE),
+        ] {
+            let is = self.builder.ins().icmp_imm(IntCC::Equal, bits, ty);
+            let value = self.builder.ins().iconst(types::I64, ours);
+            kind = self.builder.ins().select(is, value, kind);
+        }
+        kind
+    }
+}

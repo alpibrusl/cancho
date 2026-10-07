@@ -24,14 +24,14 @@ Two ways, and the second is the point.
 
 ```sh
 # Name the files, like any other module:
-lex-sys build tool.ls std/io.ls std/bytes.ls
+cancho build tool.cho std/io.cho std/bytes.cho
 
 # Or ask for the whole library:
-lex-sys build tool.ls --std
+cancho build tool.cho --std
 ```
 
 `--std` is **not** a search path. The library's source is compiled into
-the `lex-sys` binary, so the flag adds no filesystem lookup, no manifest
+the `cancho` binary, so the flag adds no filesystem lookup, no manifest
 and no build step — `modules.md` §6 promised none of those, and this
 keeps that promise by not going near the disk at all.
 
@@ -64,7 +64,7 @@ working on one byte or a run of them.
 
 | | |
 |---|---|
-| `is_blank(c)` | The six bytes C's `isspace` calls space. `examples/tally.ls` got this wrong twice before it was written down once |
+| `is_blank(c)` | The six bytes C's `isspace` calls space. `examples/tally.cho` got this wrong twice before it was written down once |
 | `is_digit(c)`, `is_upper(c)`, `is_lower(c)`, `is_alpha(c)` | Classification, ASCII, no locale |
 | `to_lower(c)`, `to_upper(c)` | ASCII case, and a no-op on anything else |
 | `digit_of(c)` | The value of a digit byte, `-1` for anything else |
@@ -98,7 +98,7 @@ functions reachability and nothing else.
 | | |
 |---|---|
 | `min(a, b)`, `max(a, b)`, `abs(n)` | |
-| `gcd(a, b)`, `sign(n)` | `examples/rational.ls` wrote `gcd` for itself; now it need not |
+| `gcd(a, b)`, `sign(n)` | `examples/rational.cho` wrote `gcd` for itself; now it need not |
 
 `abs` on the most negative integer **traps**, because negating it
 overflows and `defined-behaviour.md` §2.1 says an operation with no
@@ -154,7 +154,7 @@ not as `0.1000000000000000055511151231257827` and not as `0.100000`.
 **It is library code, and that is the interesting part.** Float printing
 is the routine every other language keeps in its runtime, in C or Rust,
 a thousand lines behind whatever interface it chose. Here it is
-`std/fmt.ls`, written in lex-sys, with an effect row of `[]` and no
+`std/fmt.cho`, written in cancho, with an effect row of `[]` and no
 `Heap` — the working numbers live in a `region`. The compiler's entire
 contribution is `bits_of`, a bitcast that gives every NaN one pattern
 ([`differential.md`](differential.md) §4). Anything `float_into` does, a
@@ -244,18 +244,18 @@ Three things, and the second is a language bug this slice fixed.
 
    It also made checking run in source order, which surfaced a
    **must-reject fixture that was passing for the wrong reason**:
-   `effect_not_propagated.ls` had `putchar(33)`, missing the `Io`, and
+   `effect_not_propagated.cho` had `putchar(33)`, missing the `Io`, and
    was refused for that rather than for the effect rule it tests. A
    fixture passing for the wrong reason deserves more attention than one
    failing, and this is the second time a rule's real test turned out to
    be somewhere other than where it was written down.
 3. **Byte classification is where programs quietly disagree.**
-   `tally.ls` and `wordcount.ls` each had their own idea of a word
+   `tally.cho` and `wordcount.cho` each had their own idea of a word
    boundary and they were not the same. One definition, in one place,
    is most of what a standard library is *for*.
 
    > **Corrected (#57).** "One definition, in one place" was the plan,
-   > not the outcome. `wordcount.ls` moved to `std.bytes`; **`tally.ls`
+   > not the outcome. `wordcount.cho` moved to `std.bytes`; **`tally.cho`
    > did not** — it kept a private `is_blank`, byte-identical, under a
    > comment arguing that a word boundary is a policy belonging in the
    > program. That argument was against putting it in the *compiler*,
@@ -263,7 +263,7 @@ Three things, and the second is a language bug this slice fixed.
    > option. So there were still two definitions for a year. They
    > agreed, and nothing checked that they did — which is the failure
    > mode this entry is about, surviving inside the entry that named it.
-   > `tally.ls` imports `std.bytes` now.
+   > `tally.cho` imports `std.bytes` now.
 
 ---
 
@@ -292,8 +292,8 @@ run, and its rules have fixtures.
 | `std_is_available_behind_a_flag` | `--std` compiles a program that imports it, with no file named |
 | `std_declarations_cost_nothing_unless_called` | §5.2: a program built with `--std` and one built without it emit **byte-identical** object files. This was false when it was first written down, which is why it is a test |
 | `abs_of_the_most_negative_integer_traps` | §3.3 |
-| `examples/wordcount.ls` | Rewritten on `std` — five helpers gone — and prints exactly what it printed before |
-| `examples/queue.ls` | The collections at work: jobs that own memory, held in a `List`, ended exactly once each |
+| `examples/wordcount.cho` | Rewritten on `std` — five helpers gone — and prints exactly what it printed before |
+| `examples/queue.cho` | The collections at work: jobs that own memory, held in a `List`, ended exactly once each |
 | `printing_preserves_every_identity_and_is_idempotent` | `std/` walks with everything else: the library is code and gets the same contract |
 
 Every example is now built with `--std` passed unconditionally, which is

@@ -2,15 +2,15 @@
 
 Status: **slices 1 and 2 built**, edition 6, both backends: open a directory, step into a child directory, open a
 file in it for reading (slice 1, #250), and create, append to, rename, remove and sync beneath it (slice 2). Linux
-measured; Darwin's flags and Apple AArch64's variadic call are written and run only by CI. Slice 3 (`lexsys-tools`
-on top) is built there (alpibrusl/lexsys-tools#4); §3 corrects what it said the row would become. Issue #227, gap L6 of [`agent-toolbox.md`](agent-toolbox.md).
+measured; Darwin's flags and Apple AArch64's variadic call are written and run only by CI. Slice 3 (`cancho-tools`
+on top) is built there (alpibrusl/cancho-tools#4); §3 corrects what it said the row would become. Issue #227, gap L6 of [`agent-toolbox.md`](agent-toolbox.md).
 
 ## 1. Why
 
 A path is a string, and the kernel resolves it every time it is used. [`agent-toolbox.md`](agent-toolbox.md) A.4
 measured what that means for a narrowed capability: under `Fs("/tmp/jailprobe")`, `/tmp/jailprobe/link.txt` -- a
 symlink to `/tmp/outside/secret.txt` -- **read the outside file**. The prefix check is lexical, and a link is not
-lexical. `lexsys-tools` (#214) has the same hole one level up: its `--root` is checked lexically in the tool (D9), so
+lexical. `cancho-tools` (#214) has the same hole one level up: its `--root` is checked lexically in the tool (D9), so
 a link inside the root reaches outside it, for `write` and `replace` as well as for the readers. D9 documented the
 escape and pinned it with a test (M8) that was written to flip the day a primitive existed.
 
@@ -87,7 +87,7 @@ generators.
 
 1. **Built (#250):** `Dir`, `DirOpened`, the four builtins above, `std.dirs.open_file` and `std.dirs.enter`, on both
    backends.
-2. **Built: writing beneath a directory**, what `lexsys-tools`' atomic write (a temporary, `fsync`, rename over the
+2. **Built: writing beneath a directory**, what `cancho-tools`' atomic write (a temporary, `fsync`, rename over the
    target, `fsync` the directory, a lock file appended to) needs, and nothing more. Five builtins, edition 6, each
    name with §2's one-component check:
 
@@ -110,8 +110,8 @@ generators.
      one; Cranelift cannot declare a variadic callee, so on that target the call is shaped the way the callee reads it,
      nine integer parameters with `mode` the ninth, as `fcntl`'s already is (`native-sockets.md` §3). Every `openat`
      in a module goes through that one shape, slice 1's included, since a module holds one signature per symbol. The
-     flags for both slices are one table in `lex_sys_ir::open_flags`.
-3. **Built in `lexsys-tools`** (alpibrusl/lexsys-tools#4): every tool opens `--root` with `open_dir` and every path
+     flags for both slices are one table in `cancho_ir::open_flags`.
+3. **Built in `cancho-tools`** (alpibrusl/cancho-tools#4): every tool opens `--root` with `open_dir` and every path
    beneath it one component at a time (its `toolbox.place`, which is `std.dirs.open_file`'s walk plus one probe: when
    `dir_enter` answers `ENOTDIR`, the component is opened once more with `dir_open_read`, so a link to a directory is
    `ELOOP` on Linux too, not indistinguishable from a plain file). `write` and `replace` lock, create, rename, remove
@@ -132,7 +132,7 @@ Slice 2:
   unchanged; rename within the directory, and `..`, an empty name and `../escaped` refused with `EINVAL` (nothing
   escapes); remove a file, remove a link (the link goes and its target stays), a missing name `ENOENT`; sync `Ok`; a
   created file is `0644`, which is the check that would catch a mis-shaped variadic call on Apple AArch64.
-* `tests/reject/dir_write_not_declared.ls`, and `dir_remove` in the accept fixture's owned-`Fs` function, so `dir_write`'s
+* `tests/reject/dir_write_not_declared.cho`, and `dir_remove` in the accept fixture's owned-`Fs` function, so `dir_write`'s
   discharge is checked.
 * **Mutants: 14, all killed.** On each backend: create without `O_EXCL`, append that follows links, append without
   `O_APPEND`, create with mode 0, and a rename that checks its first name twice. In the IR: `World` or `Fs` not
@@ -145,7 +145,7 @@ Slice 1:
   link to a directory outside is refused when entered; `..`, `.`, an empty name, a name with `/` and an absolute path
   are refused by `std.dirs.open_file` and, as single names, by the builtins (`EINVAL`) without a call; a missing name
   is `ENOENT`; `open_dir` of a file is `ENOTDIR`; a path outside the capability's prefix traps, as `open_read` does.
-* `tests/accept/directory_handles.ls`, on the default backend in the corpus and on both by hand: the shape of a program,
+* `tests/accept/directory_handles.cho`, on the default backend in the corpus and on both by hand: the shape of a program,
   every `Dir` closed, and a function that owns an `Fs` stepping beneath a directory with the row `[]` (owning the
   capability that paid for the handle discharges `dir_read`, as it discharges `file_read`).
 * `tests/reject/`: an unclosed `Dir` (`linear-value-unconsumed`), one taken apart by a pattern

@@ -6,7 +6,7 @@
 > awkward rather than incomplete"*, and that was the right word. A
 > language with `float` and no way to print one reports numbers through
 > `truncate` and a scale factor, which is fixed point with extra steps —
-> `examples/newton.ls` did exactly that, and said so.
+> `examples/newton.cho` did exactly that, and said so.
 >
 > This document is that row closed. The answer is `std.fmt.float_into`,
 > and the thing worth reading it for is **where** the answer lives:
@@ -61,7 +61,7 @@ printing the one place the language forgot.
 
 ## 2. Where it lives, which is the point
 
-`float_into` is **written in lex-sys**, in `std/fmt.ls`. It is not a
+`float_into` is **written in cancho**, in `std/fmt.cho`. It is not a
 builtin, not a call into libc, and not a special case in the code
 generator. The compiler's entire contribution is one builtin:
 
@@ -71,7 +71,7 @@ bits_of(x: float) -> int          // the same 64 bits, read as an integer
 
 A bitcast, plus two instructions that give every NaN one pattern
 (`movq`, `ucomisd`, `cmovp` on x86-64; [`differential.md`](differential.md)
-§4, #76). From there the algorithm is ordinary lex-sys: masks and
+§4, #76). From there the algorithm is ordinary cancho: masks and
 shifts to pull the mantissa and exponent apart (`bitwise.md`), a
 `region` to hold the working numbers, `while` loops, and a `[byte]` to
 write into. Its effect row is `[]` — printing a float performs nothing,
@@ -108,7 +108,7 @@ shortest rather than merely correct, and it is what Grisu2 cannot
 guarantee and falls back to Dragon4 for.
 
 The integers involved reach **1080 bits** (§4), so `std.bignum` is
-underneath — also written in lex-sys, also in this repository, and
+underneath — also written in cancho, also in this repository, and
 ninety lines rather than four hundred for the reason in §3 below.
 
 ### 3.1 The factors of two, and why the setup has four cases
@@ -192,9 +192,9 @@ So the rule is a **choice**, and the choice is observable:
 |---|---|
 | Rust's `{:e}` | `2.9802322387695313e-8` |
 | Python's `repr` | `2.9802322387695312e-8` |
-| lex-sys | `2.9802322387695313e-8` |
+| cancho | `2.9802322387695313e-8` |
 
-lex-sys follows Steele and White — round the tie up — which is what Rust
+cancho follows Steele and White — round the tie up — which is what Rust
 does. Python rounds the tie to the even digit. Over the 9000-value corpus
 in §5 the two disagree on **three** values, all of them exact ties, and
 every one of the six spellings round-trips.
@@ -277,7 +277,7 @@ sign and three exponent digits. The longest output there is is
 No `Heap`. The five bignums and the digits live in a `region`, so the
 whole thing is one arena that dies at the closing brace, and a program
 with no heap capability can still print a float. That is not an
-optimisation — `examples/newton.ls` releases `heap` in its first three
+optimisation — `examples/newton.cho` releases `heap` in its first three
 lines, and would not compile otherwise.
 
 ---
@@ -304,4 +304,4 @@ lines, and would not compile otherwise.
 
 | Accepting | Shows |
 |---|---|
-| `examples/newton.ls` | The residuals printed as floats rather than scaled through `truncate` — the thing this slice was for |
+| `examples/newton.cho` | The residuals printed as floats rather than scaled through `truncate` — the thing this slice was for |

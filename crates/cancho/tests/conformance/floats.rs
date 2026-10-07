@@ -1,0 +1,638 @@
+//! Floating point: printing, `sqrt`, and NaN.
+
+use super::*;
+
+/// The corpus the printer is checked against, and the driver that prints
+/// it (`docs/float-printing.md` §5).
+///
+/// The expected output *is* the literal that was written. `{:e}` is the
+/// shortest decimal that reads back to the same bits, and the lexer's
+/// `f64::from_str` is correctly rounded, so a program that prints back
+/// what it was given agrees with the oracle by construction -- and one
+/// that does not has disagreed about digits, not about notation.
+fn float_corpus() -> Vec<f64> {
+    let mut values: Vec<f64> = Vec::new();
+
+    // Every normal power of two. These are the values with *uneven*
+    // neighbours -- the gap below is half the gap above -- and they are
+    // the case a printer gets wrong first, so none of them is sampled.
+    for e in 1..=2046u64 {
+        values.push(f64::from_bits(e << 52));
+    }
+    // Every subnormal power of two, down to the smallest float there is,
+    // and the all-ones mantissa beside each: the top and the bottom of
+    // every subnormal binade.
+    for i in 0..52 {
+        values.push(f64::from_bits(1u64 << i));
+        values.push(f64::from_bits((1u64 << (i + 1)) - 1));
+    }
+    // Every power of ten in range, where the decimal and the binary
+    // grids line up worst.
+    for k in -307..=308 {
+        values.push(format!("1e{k}").parse().expect("a power of ten in range"));
+    }
+    // The ones with a reputation.
+    for text in [
+        "0.1",
+        "0.3",
+        "0.5",
+        "1.0",
+        "100.0",
+        "1e23",
+        "9.999999999999999e22",
+        "2.9802322387695312e-8",
+        "1.7976931348623157e308",
+        "2.2250738585072014e-308",
+        "5e-324",
+        "3.141592653589793",
+        "2.718281828459045",
+        "1.1125369292536007e-308",
+    ] {
+        values.push(text.parse().expect("a float in range"));
+    }
+
+    // Numbers with a short decimal form -- `3.5`, `19.99`, `0.000125`,
+    // `12345.6789`, a whole number -- which `std.fmt` prints without the exact
+    // arithmetic (its short path). This is where the two could disagree: the
+    // oracle's digits are the exact algorithm's, and the short path has to
+    // find the same ones. Every number of decimals from 0 to 17, in magnitudes
+    // from 1e-9 to 1e15, and the neighbours of each (one ulp either side),
+    // which are not short and must fall back correctly.
+    let mut short: u64 = 0x1234_5678_9abc_def1;
+    for decimals in 0..=17u32 {
+        for _ in 0..120 {
+            short = short.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let digits = 1 + (short >> 60) as u32 % 15;
+            let m = (short >> 8) % 10u64.pow(digits);
+            if m == 0 {
+                continue;
+            }
+            let x: f64 = format!("{m}e-{decimals}").parse().expect("a decimal");
+            values.push(x);
+            values.push(f64::from_bits(x.to_bits() + 1));
+            values.push(f64::from_bits(x.to_bits() - 1));
+        }
+    }
+    for text in [
+        "0.1",
+        "0.2",
+        "0.3",
+        "1.1",
+        "2.5",
+        "100",
+        "1000",
+        "1e15",
+        "999999999999999",
+        "123456789012345",
+        "0.000001",
+        "0.0000001",
+        "4.35",
+        "5e-5",
+        "0.30000000000000004",
+    ] {
+        values.push(text.parse().expect("a decimal"));
+    }
+
+    // And a deterministic spread of bit patterns, so the corpus is not
+    // only the cases someone thought of. splitmix64 rather than a
+    // dependency: the seed is fixed, so a failure here reproduces.
+    let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
+    while values.len() < 9000 {
+        state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut z = state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^= z >> 31;
+        let candidate = f64::from_bits(z);
+        if candidate.is_finite() {
+            values.push(candidate);
+        }
+    }
+    values
+}
+
+const SHOW_LS: &str = "\
+module main;
+
+import std.fmt;
+import std.io;
+
+fn show[&i](i: &!i Io, x: float) -> [io_write] int {
+    region a {
+        let buf = alloc_slice[a](24, byte_of(0));
+        let n = fmt.float_into(buf, x);
+        io.write_all(i, buf[0..n]);
+        io.newline(i);
+    }
+    return 0;
+}
+";
+
+/// Build and run a program that prints `values`, one per line.
+fn print_floats(tag: &str, values: &[f64]) -> Vec<String> {
+    let mut source = String::from(SHOW_LS);
+    source.push_str("\nfn main(world: World) -> [] int {\n");
+    source.push_str("    let Split { io, ffi, fs, heap, args } = split(world);\n");
+    source.push_str("    release(args); release(heap); release(fs); release(ffi);\n");
+    source.push_str("    borrow mut io as &!i in {\n");
+    for value in values {
+        // `{:e}` is the shortest round-tripping form, which is both a
+        // literal the lexer reads back exactly and the line the program
+        // should print.
+        source.push_str(&format!("        show(i, {value:e});\n"));
+    }
+    source.push_str("    }\n    release(io);\n    return 0;\n}\n");
+
+    let dir = scratch(tag);
+    let path = dir.join("corpus.cho");
+    std::fs::write(&path, &source).expect("a writable fixture");
+    let exe = dir.join("corpus");
+    let build = Command::new(BIN)
+        .args([
+            "build".as_ref(),
+            "--std".as_ref(),
+            path.as_os_str(),
+            "-o".as_ref(),
+            exe.as_os_str(),
+        ])
+        .output()
+        .expect("the compiler runs");
+    assert!(
+        build.status.success(),
+        "the corpus program should compile:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&exe).output().expect("the program runs");
+    assert_eq!(run.status.code(), Some(0), "the corpus program should exit 0");
+    let lines: Vec<String> =
+        String::from_utf8_lossy(&run.stdout).lines().map(str::to_owned).collect();
+    let _ = std::fs::remove_dir_all(&dir);
+    lines
+}
+
+#[test]
+fn shortest_printing_agrees_with_an_oracle() {
+    let values = float_corpus();
+    let lines = print_floats("float-corpus", &values);
+    assert_eq!(lines.len(), values.len(), "one line per value");
+
+    let mut wrong = Vec::new();
+    for (value, line) in values.iter().zip(&lines) {
+        let expected = format!("{value:e}");
+        if &expected != line {
+            wrong.push(format!("{expected} printed as {line}"));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "{} of {} values printed differently from the oracle; first few:\n{}",
+        wrong.len(),
+        values.len(),
+        wrong.iter().take(10).cloned().collect::<Vec<_>>().join("\n")
+    );
+}
+
+/// The three values that have no literal, and the signed zero. They are
+/// spelled rather than refused (`docs/floating-point.md` §2), and the
+/// spellings are the oracle's.
+#[test]
+fn the_values_with_no_literal_are_spelled() {
+    let source = format!(
+        "{SHOW_LS}\nfn main(world: World) -> [] int {{\n\
+         \x20   let Split {{ io, ffi, fs, heap, args }} = split(world);\n\
+         \x20   release(args); release(heap); release(fs); release(ffi);\n\
+         \x20   let huge = 1.0e308;\n\
+         \x20   let infinite = huge * 10.0;\n\
+         \x20   let nothing = 0.0;\n\
+         \x20   borrow mut io as &!i in {{\n\
+         \x20       show(i, infinite);\n\
+         \x20       show(i, -infinite);\n\
+         \x20       show(i, infinite - infinite);\n\
+         \x20       show(i, nothing / nothing);\n\
+         \x20       show(i, -nothing);\n\
+         \x20   }}\n\
+         \x20   release(io);\n\
+         \x20   return 0;\n\
+         }}\n"
+    );
+    let dir = scratch("float-specials");
+    let path = dir.join("specials.cho");
+    std::fs::write(&path, &source).expect("a writable fixture");
+    let exe = dir.join("specials");
+    let build = Command::new(BIN)
+        .args([
+            "build".as_ref(),
+            "--std".as_ref(),
+            path.as_os_str(),
+            "-o".as_ref(),
+            exe.as_os_str(),
+        ])
+        .output()
+        .expect("the compiler runs");
+    assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+    let run = Command::new(&exe).output().expect("the program runs");
+    let expected = format!(
+        "{:e}\n{:e}\n{:e}\n{:e}\n{:e}\n",
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+        f64::NAN,
+        -0.0f64
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout), expected);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A buffer too short is answered with -1 rather than a trap or a partial
+/// line: the caller chose the buffer, so the caller hears about it.
+#[test]
+fn a_short_buffer_is_refused_rather_than_overrun() {
+    let source = "\
+module main;
+
+import std.fmt;
+import std.io;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(args); release(heap); release(fs); release(ffi);
+    var code = 0;
+    region a {
+        let small = alloc_slice[a](4, byte_of(0));
+        if fmt.float_into(small, 3.141592653589793) == 0 - 1 {
+            code = 7;
+        }
+        let enough = alloc_slice[a](24, byte_of(0));
+        if fmt.float_into(enough, 3.141592653589793) != 19 {
+            code = 9;
+        }
+    }
+    release(io);
+    return code;
+}
+";
+    let dir = scratch("float-short-buffer");
+    let path = dir.join("short.cho");
+    std::fs::write(&path, source).expect("a writable fixture");
+    let exe = dir.join("short");
+    let build = Command::new(BIN)
+        .args([
+            "build".as_ref(),
+            "--std".as_ref(),
+            path.as_os_str(),
+            "-o".as_ref(),
+            exe.as_os_str(),
+        ])
+        .output()
+        .expect("the compiler runs");
+    assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+    let run = Command::new(&exe).output().expect("the program runs");
+    assert_eq!(run.status.code(), Some(7), "a short buffer answers -1, a long one the length");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `docs/differential.md` §4 — the one value that was not the same on
+/// every target.
+///
+/// IEEE-754 leaves the sign and payload of a *generated* NaN to the
+/// hardware, and x86-64 sets the sign where aarch64 does not, so
+/// `bits_of(0.0 / 0.0)` printed `-2251799813685248` on one CI runner and
+/// `9221120237041090560` on the other. Every way this language can make
+/// a NaN is tried here, at run time and folded, and all of them must read
+/// back as the one pattern.
+#[test]
+fn every_nan_has_one_bit_pattern() {
+    let source = "\
+import std.io;
+fn show[&i](i: &!i Io, x: float) -> [io_write] int {
+    io.print_int(i, bits_of(x));
+    io.newline(i);
+    return 0;
+}
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(args); release(heap); release(fs); release(ffi);
+    var zero = 0.0;
+    var one = 1.0;
+    var inf = 1.0 / 0.0;
+    borrow mut io as &!i in {
+        show(i, 0.0 / 0.0);
+        show(i, -(0.0 / 0.0));
+        show(i, zero / zero);
+        show(i, -(zero / zero));
+        show(i, inf - inf);
+        show(i, inf * zero);
+        show(i, sqrt(-one));
+        show(i, (zero / zero) + one);
+        show(i, -((zero / zero) * one));
+    }
+    release(io);
+    return 0;
+}
+";
+    let dir = scratch("one-nan");
+    let path = dir.join("nan.cho");
+    std::fs::write(&path, source).expect("a writable fixture");
+    let exe = dir.join("nan");
+    let build = Command::new(BIN)
+        .args([
+            "build".as_ref(),
+            "--std".as_ref(),
+            path.as_os_str(),
+            "-o".as_ref(),
+            exe.as_os_str(),
+        ])
+        .output()
+        .expect("the compiler runs");
+    assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+    let run = Command::new(&exe).output().expect("the program runs");
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 9);
+    for line in lines {
+        assert_eq!(line, "9221120237041090560", "every NaN reads as 0x7ff8000000000000");
+    }
+
+    // And the reason the canonicalisation exists, measured on the machine
+    // running this test rather than asserted: the hardware's own NaN.
+    // Where it already is the canonical pattern, `bits_of` changes
+    // nothing; where it is not, the program above would have printed the
+    // other one.
+    let hardware = (std::hint::black_box(0.0_f64) / std::hint::black_box(0.0_f64)).to_bits();
+    if cfg!(target_arch = "x86_64") {
+        assert_eq!(hardware, 0xfff8_0000_0000_0000, "x86-64's indefinite NaN has its sign set");
+    }
+    if cfg!(target_arch = "aarch64") {
+        assert_eq!(hardware, 0x7ff8_0000_0000_0000, "aarch64's default NaN is positive");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `docs/float-math.md` §2: `sqrt` is correctly rounded, and the two
+/// hand-rolled roots it replaced were not.
+///
+/// Checked against Rust's own `f64::sqrt` — the same instruction, so
+/// this is a test that the builtin reaches it rather than a test of the
+/// hardware. The values include the four exponents where the twenty-step
+/// Newton loop in `benches/game/spectral.cho` was wrong by 10^43 and
+/// more, which is the failure this replaced.
+#[test]
+fn sqrt_agrees_with_the_hardware() {
+    let dir = scratch("float-sqrt");
+
+    // A deterministic spread: the specials, a decade sweep, and values
+    // across the exponent range where the old loop fell short.
+    let mut values: Vec<f64> = vec![0.0, 1.0, 2.0, 0.25, 1e-300, 1e-8, 1e8, 1e100, 1e200, 1e300];
+    let mut seed = 0x5eed_u64;
+    for _ in 0..2000 {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let mantissa = f64::from(((seed >> 11) & 0xff_ffff) as u32) / 16_777_216.0;
+        let exponent = ((seed >> 40) % 600) as i32 - 300;
+        values.push(libm_ldexp(mantissa + 0.5, exponent));
+    }
+
+    /// `mantissa * 2^exponent`, without pulling in a dependency.
+    fn libm_ldexp(mantissa: f64, exponent: i32) -> f64 {
+        let mut out = mantissa;
+        let mut n = exponent;
+        while n > 0 {
+            out *= 2.0;
+            n -= 1;
+        }
+        while n < 0 {
+            out /= 2.0;
+            n += 1;
+        }
+        out
+    }
+
+    // The program prints `sqrt` of each value, shortest-round-trip, one
+    // per line — so a disagreement in the last bit is visible.
+    let mut program = String::from(
+        "import std.fmt;\nimport std.io;\n\n\
+         fn show[&i](i: &!i Io, x: float) -> [io_write] int {\n\
+         \x20   region a {\n\
+         \x20       let out = alloc_slice[a](32, byte_of(0));\n\
+         \x20       let n = fmt.float_into(out, x);\n\
+         \x20       io.write_all(i, out[0..n]);\n\
+         \x20   }\n\
+         \x20   return io.newline(i);\n\
+         }\n\n\
+         fn main(world: World) -> [] int {\n\
+         \x20   let Split { io, ffi, fs, heap, args } = split(world);\n\
+         \x20   release(ffi); release(fs); release(heap); release(args);\n\
+         \x20   borrow mut io as &!i in {\n",
+    );
+    for v in &values {
+        program.push_str(&format!("        show(i, sqrt({v:e}));\n"));
+    }
+    program.push_str("    }\n    release(io);\n    return 0;\n}\n");
+
+    let source = dir.join("sqrt.cho");
+    std::fs::write(&source, &program).expect("the program is written");
+    let exe = dir.join("sqrt");
+    let build = Command::new(BIN)
+        .args([
+            "build".as_ref(),
+            source.as_os_str(),
+            "--std".as_ref(),
+            "-o".as_ref(),
+            exe.as_os_str(),
+        ])
+        .output()
+        .expect("the compiler runs");
+    assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+
+    let out = Command::new(&exe).output().expect("it runs");
+    let printed = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = printed.lines().collect();
+    assert_eq!(lines.len(), values.len(), "one line per value");
+
+    for (line, value) in lines.iter().zip(&values) {
+        let got: f64 = line.parse().unwrap_or_else(|_| panic!("`{line}` is not a float"));
+        let want = value.sqrt();
+        assert_eq!(
+            got.to_bits(),
+            want.to_bits(),
+            "sqrt({value:e}) came back {got:e}, and the hardware says {want:e}"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Build a program that prints `std.fmt.float_into` of each expression in
+/// `exprs`, one per line, and hand back the parsed values.
+///
+/// The same harness `sqrt_agrees_with_the_hardware` uses, factored out so
+/// `exp`, `log` and `pow` can each supply their own expressions rather
+/// than duplicating the boilerplate three times.
+fn print_each(tag: &str, exprs: &[String]) -> Vec<f64> {
+    let dir = scratch(tag);
+    let mut program = String::from(
+        "import std.fmt;\nimport std.io;\nimport std.math;\n\n\
+         fn show[&i](i: &!i Io, x: float) -> [io_write] int {\n\
+         \x20   region a {\n\
+         \x20       let out = alloc_slice[a](32, byte_of(0));\n\
+         \x20       let n = fmt.float_into(out, x);\n\
+         \x20       io.write_all(i, out[0..n]);\n\
+         \x20   }\n\
+         \x20   return io.newline(i);\n\
+         }\n\n\
+         fn main(world: World) -> [] int {\n\
+         \x20   let Split { io, ffi, fs, heap, args } = split(world);\n\
+         \x20   release(ffi); release(fs); release(heap); release(args);\n\
+         \x20   borrow mut io as &!i in {\n",
+    );
+    for expr in exprs {
+        program.push_str(&format!("        show(i, {expr});\n"));
+    }
+    program.push_str("    }\n    release(io);\n    return 0;\n}\n");
+
+    let source = dir.join(format!("{tag}.cho"));
+    std::fs::write(&source, &program).expect("the program is written");
+    let exe = dir.join(tag);
+    let build = Command::new(BIN)
+        .args([
+            "build".as_ref(),
+            source.as_os_str(),
+            "--std".as_ref(),
+            "-o".as_ref(),
+            exe.as_os_str(),
+        ])
+        .output()
+        .expect("the compiler runs");
+    assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+
+    let out = Command::new(&exe).output().expect("it runs");
+    let printed = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = printed.lines().collect();
+    assert_eq!(lines.len(), exprs.len(), "one line per expression");
+    let values = lines
+        .iter()
+        .map(|line| line.parse().unwrap_or_else(|_| panic!("`{line}` is not a float")))
+        .collect();
+    let _ = std::fs::remove_dir_all(&dir);
+    values
+}
+
+/// `mantissa * 2^exponent`, without pulling in a dependency. A copy of
+/// `sqrt_agrees_with_the_hardware`'s own, kept local to each test rather
+/// than shared, since the whole point is that neither reaches for a crate.
+fn libm_ldexp(mantissa: f64, exponent: i32) -> f64 {
+    let mut out = mantissa;
+    let mut n = exponent;
+    while n > 0 {
+        out *= 2.0;
+        n -= 1;
+    }
+    while n < 0 {
+        out /= 2.0;
+        n += 1;
+    }
+    out
+}
+
+/// `got` and `want` agree to within `tol` relative error, with the two
+/// cases relative error cannot state: an exact zero, and an infinity.
+fn assert_rel_close(got: f64, want: f64, tol: f64, what: &str) {
+    if want == 0.0 {
+        assert_eq!(got, 0.0, "{what} came back {got:e}, wanted exactly 0");
+        return;
+    }
+    if want.is_infinite() {
+        assert_eq!(got, want, "{what} came back {got:e}, wanted {want:e}");
+        return;
+    }
+    let rel = (got - want).abs() / want.abs();
+    assert!(rel < tol, "{what} came back {got:e}, wanted {want:e} ({rel:e} relative error)");
+}
+
+/// `std.math.exp`, `log` and `pow` -- `docs/float-math.md` §6, closed as
+/// library code with a *stated* accuracy rather than a builtin, the way
+/// `std/math.cho`'s own comment explains: none of the three is one
+/// instruction the way `sqrt` is.
+///
+/// Checked against Rust's own `f64::exp`/`f64::ln`/`f64::powf` within
+/// 1e-9 relative error -- two orders of magnitude looser than the worst
+/// case measured while writing the algorithm (2.4e-14 for `exp`, 6e-14
+/// for `log`, away from where relative error stops meaning anything).
+/// **Not correctly rounded, and not asserted to be**: §2 there already
+/// found that unreachable in library code, for `sqrt`.
+#[test]
+fn exp_log_and_pow_agree_with_the_hardware_within_stated_accuracy() {
+    let mut seed = 0xf10a_u64;
+    let mut next = move || {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        seed
+    };
+
+    // `exp`: the whole non-overflowing range, plus the boundary itself.
+    let mut exp_inputs: Vec<f64> = vec![0.0, 1.0, -1.0, 700.0, -700.0, 709.5, -745.5, 1e-300];
+    for _ in 0..2000 {
+        let unit = (next() >> 11) as f64 / (1u64 << 53) as f64; // [0, 1)
+        exp_inputs.push(unit * 1400.0 - 700.0);
+    }
+    let exp_exprs: Vec<String> = exp_inputs.iter().map(|v| format!("math.exp({v:e})")).collect();
+    for (got, v) in print_each("float-exp", &exp_exprs).iter().zip(&exp_inputs) {
+        assert_rel_close(*got, v.exp(), 1e-9, &format!("exp({v:e})"));
+    }
+
+    // `log`: positive values across the whole exponent range (the same
+    // ldexp-style spread `sqrt_agrees_with_the_hardware` uses), plus the
+    // specials near 1, where relative error is not the right yardstick.
+    let mut log_inputs: Vec<f64> = vec![1.0, 2.0, std::f64::consts::E, 1e-300, 1e300, 0.5, 1.5];
+    for _ in 0..2000 {
+        let bits = next();
+        let mantissa = ((bits >> 11) & 0xff_ffff) as f64 / 16_777_216.0;
+        let exponent = ((bits >> 40) % 600) as i32 - 300;
+        log_inputs.push(libm_ldexp(mantissa + 0.5, exponent));
+    }
+    let log_exprs: Vec<String> = log_inputs.iter().map(|v| format!("math.log({v:e})")).collect();
+    for (got, v) in print_each("float-log", &log_exprs).iter().zip(&log_inputs) {
+        let want = v.ln();
+        if want.abs() < 0.01 {
+            assert!(
+                (got - want).abs() < 1e-9,
+                "log({v:e}) came back {got:e}, wanted {want:e} (absolute)"
+            );
+        } else {
+            assert_rel_close(*got, want, 1e-9, &format!("log({v:e})"));
+        }
+    }
+
+    // `pow`: positive bases across a spread of exponents, and negative
+    // bases at the one case they are defined for -- an integer exponent
+    // -- plus a non-integer one, which must come back NaN.
+    let mut pow_pairs: Vec<(f64, f64)> = vec![
+        (2.0, 10.0),
+        (2.0, 0.5),
+        (10.0, -3.0),
+        (1.0, 1e10),
+        (0.0, 2.0),
+        (0.0, -1.0),
+        (-2.0, 3.0),
+        (-2.0, 4.0),
+        (-8.0, 1.0 / 3.0),
+    ];
+    for _ in 0..500 {
+        let base = ((next() >> 11) as f64 / (1u64 << 53) as f64) * 100.0 + 0.01;
+        let exponent = ((next() >> 11) as f64 / (1u64 << 53) as f64) * 20.0 - 10.0;
+        pow_pairs.push((base, exponent));
+    }
+    let pow_exprs: Vec<String> =
+        pow_pairs.iter().map(|(b, e)| format!("math.pow({b:e}, {e:e})")).collect();
+    for (got, (b, e)) in print_each("float-pow", &pow_exprs).iter().zip(&pow_pairs) {
+        let want = b.powf(*e);
+        if want.is_nan() {
+            assert!(got.is_nan(), "pow({b:e}, {e:e}) should be NaN, came back {got:e}");
+        } else if want.abs() < 0.01 {
+            assert!(
+                (got - want).abs() < 1e-6,
+                "pow({b:e}, {e:e}) came back {got:e}, wanted {want:e} (absolute)"
+            );
+        } else {
+            assert_rel_close(*got, want, 1e-8, &format!("pow({b:e}, {e:e})"));
+        }
+    }
+}

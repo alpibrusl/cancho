@@ -24,7 +24,7 @@
 
 ## 1. The checks, counted by reading the backend
 
-Every `trapnz`/`trapz` in `crates/lex-sys-codegen/src/lib.rs`, grouped by
+Every `trapnz`/`trapz` in `crates/cancho-codegen/src/lib.rs`, grouped by
 what it guards. Eight can appear in a loop body and are what this
 document measures; the rest happen once per allocation or per syscall,
 where a comparison is not what the time goes on.
@@ -230,7 +230,7 @@ does it, and `band`/`bor`/`bxor` because there is nothing to prove.
 ## 6. A constant operand folds the check away
 
 Checked against the compiler rather than assumed. `x << 3` and `x << k`,
-from `lex-sys build` and `objdump`:
+from `cancho build` and `objdump`:
 
 ```
 lexs_shift_const:            lexs_shift_var:
@@ -291,7 +291,7 @@ more structural than one bad check:
 
 And it sharpens the roadmap's vectoriser row. An LLVM backend would
 vectorise the loops Cranelift leaves scalar — `gpu.md` §2.3 measured
-lex-sys at 2.27× off vectorised C *with the trap removed* — but it would
+cancho at 2.27× off vectorised C *with the trap removed* — but it would
 vectorise them only where the traps are not in the way, and §2's table
 is the list of places they are.
 
@@ -302,7 +302,7 @@ is the list of places they are.
 * **Not that the checks should go.** `defined-behaviour.md` §2.1 is the
   thesis, and a silently wrong answer is what this language exists not
   to give. Knowing the price is not an argument for not paying it.
-* **Not that these are lex-sys's numbers.** They are clang's, on kernels
+* **Not that these are cancho's numbers.** They are clang's, on kernels
   written in C, because Cranelift has no pass that produces SIMD from
   scalar code ([`backend-limits.md`](backend-limits.md) §1.4) —
   so the current backend pays none of this and gets none of the benefit

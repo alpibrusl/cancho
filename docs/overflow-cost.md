@@ -19,7 +19,7 @@
 Four programs, each written twice. The `_checked` half uses `+`, `-` and
 `*`, which trap on overflow. The `_wrapping` half is the same program with
 `wrapping_add`/`wrapping_sub`/`wrapping_mul`, which lower to a bare
-`iadd`/`isub`/`imul` (`crates/lex-sys-codegen`). Nothing else differs, so
+`iadd`/`isub`/`imul` (`crates/cancho-codegen`). Nothing else differs, so
 the gap between the two binaries is the guarantee and nothing else.
 
 ```sh
@@ -201,8 +201,8 @@ stack this project controls. Filed in §5.
   larger than advertised is a reason to advertise it correctly, not a
   reason to stop paying it.
 - **It does not say the language is 40% slower than C.** It says an
-  arithmetic-bound reduction is, in both lex-sys and C, when the arithmetic
-  is checked. The comparison between lex-sys and C at equal semantics is a
+  arithmetic-bound reduction is, in both cancho and C, when the arithmetic
+  is checked. The comparison between cancho and C at equal semantics is a
   different measurement, and this repository has not made it.
 - **It is one machine and one afternoon.** Four programs on
   linux-x86_64, no aarch64 numbers, no profile beyond wall-clock. The
@@ -230,8 +230,8 @@ stack this project controls. Filed in §5.
 
 | Program | Measures |
 |---|---|
-| `benches/sum_*.ls` | The ceiling: arithmetic and nothing else |
-| `benches/sieve_*.ls` | Memory-bound |
-| `benches/scan_*.ls` | Branch-bound, and §3.3 |
-| `benches/fib_*.ls` | Call-bound |
+| `benches/sum_*.cho` | The ceiling: arithmetic and nothing else |
+| `benches/sieve_*.cho` | Memory-bound |
+| `benches/scan_*.cho` | Branch-bound, and §3.3 |
+| `benches/fib_*.cho` | Call-bound |
 | `benches/reduce.c` | §3.2: what a mature backend does with the same guarantee |

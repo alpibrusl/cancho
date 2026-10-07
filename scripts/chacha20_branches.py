@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Where the secret-handling code of `std/chacha20.ls` can branch (docs/chacha20.md §3).
+"""Where the secret-handling code of `std/chacha20.cho` can branch (docs/chacha20.md §3).
 
-    lex-sys build --std tests/programs/aead_driver.ls --emit obj -o aead.o
+    cancho build --std tests/programs/aead_driver.cho --emit obj -o aead.o
     python3 scripts/chacha20_branches.py aead.o
     python3 scripts/chacha20_branches.py kdf.o crypto.compress crypto.compress512   # docs/hkdf.md §3
 
@@ -21,7 +21,7 @@ the key, the keystream or `r`, and loop over a message) are listed too, but
 they branch on purpose, on lengths, loop counters and the result of the tag
 comparison, so their other jumps are printed for the reader and not counted
 (docs/chacha20.md §3; review finding B-6, #209). Not with names given.
-`aead_driver.ls` calls every function here; `aead_bench.ls` does not call
+`aead_driver.cho` calls every function here; `aead_bench.cho` does not call
 `poly1305` or `open`. x86-64 only (GNU objdump syntax).
 """
 import collections
@@ -68,7 +68,7 @@ def main():
             m = re.match(r"\s*([0-9a-f]+):\s+(\S+)\s*(.*)", line)
             if m:
                 ins.append((int(m.group(1), 16), m.group(2), m.group(3)))
-        assert ins, f"no code for {f}: was the object built from aead_driver.ls?"
+        assert ins, f"no code for {f}: was the object built from aead_driver.cho?"
         at = {a: op for a, op, _ in ins}
         kinds = collections.Counter()
         for i, (_, op, arg) in enumerate(ins):

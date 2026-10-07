@@ -5,8 +5,8 @@
 #
 #   benches/parallel/threads_users.sh /path/to/users_reuse /path/to/users_threads /path/to/kload [rounds]
 #
-# users_reuse   `examples/users/users.ls` built with `tcp_listen(nn, port, 1024, 1)` (see copies_users.sh)
-# users_threads `examples/users_threads/users_threads.ls`, built with lexsys-web's scripts/build.sh
+# users_reuse   `examples/users/users.cho` built with `tcp_listen(nn, port, 1024, 1)` (see copies_users.sh)
+# users_threads `examples/users_threads/users_threads.cho`, built with cancho-web's scripts/build.sh
 procs=${1:?users_reuse binary}; threads=${2:?users_threads binary}; kload=${3:-/tmp/kload}; rounds=${4:-3}
 load() { for r in 1 2 3 4 5; do KLOAD_EXPECT=422 taskset -c 2,3 "$kload" "$1" 2 16 4 /users - POST '{"name":""}'; done | sort -n | tr '\n' ' '; }
 for round in $(seq 1 "$rounds"); do

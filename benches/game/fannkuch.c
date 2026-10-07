@@ -1,4 +1,4 @@
-// fannkuch-redux — the same algorithm as fannkuch.ls, line for line.
+// fannkuch-redux — the same algorithm as fannkuch.cho, line for line.
 //
 // Not the Benchmarks Game's own C entry, which is hand-vectorised and
 // threaded: `benchmarks-game.md` §2 is why. This is the comparison

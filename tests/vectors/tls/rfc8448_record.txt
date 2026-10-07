@@ -5,7 +5,7 @@
 # hex is AWS s2n-tls's transcription of RFC 8448
 # (tests/unit/s2n_tls13_record_aead_test.c, Apache License 2.0), as
 # kdf.txt's rows are; checked against the record's own length (0x2a2) and
-# content type (0x16) here. crates/lex-sys/tests/conformance/tls.rs opens it
+# content type (0x16) here. crates/cancho/tests/conformance/tls.rs opens it
 # with tls_record.open (docs/tls-parity.md section 3.3).
 key 3fce516009c21727d0f2e4e86ee403bc
 iv 5d313eb2671276ee13000b30

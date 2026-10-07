@@ -1,4 +1,4 @@
-# An agent toolbox: unix-like tools written in lex-sys
+# An agent toolbox: unix-like tools written in cancho
 
 > **Status: design, written before any tool code, with the probes it
 > rests on run and recorded (Appendix A and B). Nothing here is built.**
@@ -22,24 +22,24 @@
 
 ## 0. The position, tested
 
-The position under test: *an agent toolbox in lex-sys is a good idea only
+The position under test: *an agent toolbox in cancho is a good idea only
 if it is scoped (about ten tools, not a coreutils clone, POSIX flag
 fidelity a non-goal) and measured (the "agent-friendly" claim needs a
 protocol with a gate, not an opinion).*
 
 **It holds, and it needs four amendments that the evidence forced.**
 
-1. **The claim is two claims, and only one of them needs lex-sys.** The
+1. **The claim is two claims, and only one of them needs cancho.** The
    *contract* (JSON on stdout, semantic exit codes, errors with a rule
    tag and a repair hint, determinism) is language-independent: it can
    be had by putting a thin envelope around `rg`, `jq` and `sha256sum`.
-   What lex-sys alone can add is an **authority row the compiler
+   What cancho alone can add is an **authority row the compiler
    computes**, determinism by *absence of capability* (a tool cannot
    read the environment, the clock or a tty unless it was handed the
    capability), and defined behaviour on hostile input. A protocol that
    compares the toolbox only with raw GNU tools confounds the two. §7.2
    therefore has **three arms**, and the middle one (the incumbents behind
-   a conforming shim) is the one that decides whether lex-sys earned
+   a conforming shim) is the one that decides whether cancho earned
    anything. The position as first stated compared two things (GNU and the
    toolbox) and could not attribute a difference.
 
@@ -61,8 +61,8 @@ protocol with a gate, not an opinion).*
    `bounded: false` and destroys the premise. The first gate of the
    epic is therefore a **language slice**, not a tool.
 
-4. **lex-os cannot read a lex-sys authority today, and the failure is
-   silent.** Fed a lex-sys label verbatim, `lex-os-authority` derives
+4. **lex-os cannot read a cancho authority today, and the failure is
+   silent.** Fed a cancho label verbatim, `lex-os-authority` derives
    `network: none` for a program that dials a host and `fs: none, net:
    none, exec: none` for a program holding `ffi("libc")` (measured,
    §2.5). The "tool whose effect rows are exact has an authority a
@@ -131,10 +131,10 @@ Measured here where installed (`grep` 3.11, GNU coreutils 9.4, `rg` 14.1.0,
 environment**, so what follows about them is from their documentation, not
 measured.
 
-| Incumbent | What it already does well | Where it falls short *for an agent* (measured unless noted) | The honest case for **not** building the lex-sys tool |
+| Incumbent | What it already does well | Where it falls short *for an agent* (measured unless noted) | The honest case for **not** building the cancho tool |
 |---|---|---|---|
 | **GNU coreutils** | Ubiquitous, fast (`wc -l` of 64 MiB: 15 ms; `sha256sum`: 60 ms), decades of edge cases, an agent already knows the flags | Text output with no schema; errors are prose on stderr with no tag; some behaviour depends on locale (`sort`, `wc -w`) — *not demonstrable here: only `C`, `C.utf8` and `POSIX` are installed* | Every tool below that is a thin filter over bytes gains little more than an envelope. See the per-tool verdicts in §5 |
-| **ripgrep** | `--json` already emits a begin/match/end/summary NDJSON stream, with byte offsets, `{"text":…}` or `{"bytes":"<base64>"}` for a line holding `0xFF` (measured: the precedent for D2's `b64`), and is the fastest thing here (64 MiB, 1.3 M lines: 80–110 ms through a pipe) | Its JSON mode does **not** make errors data: `rg --json hello /nonexistent` prints a prose line on stderr, still prints a `summary` object on stdout, exits `2`; the `end` and `summary` records carry `elapsed`, so output is not byte-stable (measured: three runs of one `rg --json` on a 28-byte file gave three different checksums) | A lex-sys search tool is slower and has no regex. The gain is the error datum, stable bytes, and an exact authority row — nothing about search |
+| **ripgrep** | `--json` already emits a begin/match/end/summary NDJSON stream, with byte offsets, `{"text":…}` or `{"bytes":"<base64>"}` for a line holding `0xFF` (measured: the precedent for D2's `b64`), and is the fastest thing here (64 MiB, 1.3 M lines: 80–110 ms through a pipe) | Its JSON mode does **not** make errors data: `rg --json hello /nonexistent` prints a prose line on stderr, still prints a `summary` object on stdout, exits `2`; the `end` and `summary` records carry `elapsed`, so output is not byte-stable (measured: three runs of one `rg --json` on a 28-byte file gave three different checksums) | A cancho search tool is slower and has no regex. The gain is the error datum, stable bytes, and an exact authority row — nothing about search |
 | **jq** | A full language; fast to start (2.5 ms); strict parser | Can read a file anywhere and, with `input_filename`/`$ENV`, the environment; its authority is the process's | A path-only JSON reader is a strict subset of `jq`. Anything past a path is `jq`'s job, and the toolbox must **refuse** to grow past it (D15) |
 | **fd / find** | `fd` is fast, `.gitignore`-aware, and sensible by default (docs; not installed here). `find` can do anything | `find -delete` and `-exec` are the verbs a supervisor most wants to see absent from a row, and the row of `find` is the process's | Cannot be built today at all (A.2) |
 | **nushell** | Structured pipelines: tables instead of text, `ls`/`open`/`where` as data (docs; not installed here) | It is a shell: its authority is the user's, and its commands are not individually checkable | It is the strongest existing answer to "structured output". It does not give a per-command authority, an error tag or a repair — that gap, not the tables, is what the toolbox fills |
@@ -146,7 +146,7 @@ measured.
 
 All of it read from the source named, then probed with the prebuilt
 compiler where a claim needed a number. The compiler used is
-`lex-sys 0.0.0 (rev 052e623…)`; `git diff 052e623 HEAD -- crates std` touches
+`cancho 0.0.0 (rev 052e623…)`; `git diff 052e623 HEAD -- crates std` touches
 only three test files, so `std/` and the compiler are those of the commit
 this document is written against.
 
@@ -156,11 +156,11 @@ this document is written against.
 |---|---|---|
 | `main` is `fn main(world: World) -> [] int` and its return value is the exit status; there is no `exit` | `docs/arguments.md` §5, `docs/authority.md` §1.1 | A status is taken modulo 256: a program returning `r * 100` for argc 1, 2, 3 exits `100`, `200`, `44` |
 | Arguments come from the `Args` capability; `arg(a, 0)` is the program name, bytes, no encoding | `docs/arguments.md` §3 | — |
-| Flags: a *cursor* (`flags.step`/`flags.value`) that reports shapes and never meanings; the program decides what a value is | `std/flags.ls`, `docs/flags.md` §3 | — |
-| Standard input is `getchar`, one byte per call; there is no bulk read | `docs/standard-input.md`, `docs/bulk-io.md` §3.3 | A loop that reads and counts 64 MiB (`examples/tally.ls`) takes 0.35 to 0.38 s, about 180 MB/s; `cat` takes 14 ms |
-| Standard output is `write_bytes`, which is `fwrite` on the C `stdout` stream; standard error is `write_err` on the unbuffered stream | `crates/lex-sys-codegen-llvm/src/body/expr.rs` (`write_bytes`/`write_err`), `docs/standard-error.md` §3.3, §5 | See below |
+| Flags: a *cursor* (`flags.step`/`flags.value`) that reports shapes and never meanings; the program decides what a value is | `std/flags.cho`, `docs/flags.md` §3 | — |
+| Standard input is `getchar`, one byte per call; there is no bulk read | `docs/standard-input.md`, `docs/bulk-io.md` §3.3 | A loop that reads and counts 64 MiB (`examples/tally.cho`) takes 0.35 to 0.38 s, about 180 MB/s; `cat` takes 14 ms |
+| Standard output is `write_bytes`, which is `fwrite` on the C `stdout` stream; standard error is `write_err` on the unbuffered stream | `crates/cancho-codegen-llvm/src/body/expr.rs` (`write_bytes`/`write_err`), `docs/standard-error.md` §3.3, §5 | See below |
 | A **trap** (overflow, bounds, arena exhaustion, a failed allocation, an `Fs` prefix violation, `trap()`) is `SIGILL`, no message | `docs/defined-behaviour.md`, `docs/testing.md` §2 | Exit status 132 as a shell sees it; a program that wrote `{"partial":` and then trapped emitted **0 bytes** through a pipe: the stdio buffer is not flushed |
-| There is no environment, no clock and no tty query unless a capability or `Ffi` is held | `docs/arguments.md` §2.1, `docs/reach.md` §3.1, `Builtin::ALL` in `crates/lex-sys-ir/src/builtin.rs` (no `getenv`, no `isatty`; `clock_ms`/`clock_unix_ms` take a `Clock`) | — |
+| There is no environment, no clock and no tty query unless a capability or `Ffi` is held | `docs/arguments.md` §2.1, `docs/reach.md` §3.1, `Builtin::ALL` in `crates/cancho-ir/src/builtin.rs` (no `getenv`, no `isatty`; `clock_ms`/`clock_unix_ms` take a `Clock`) | — |
 
 #### The finding in the output row: a failed write is invisible
 
@@ -246,7 +246,7 @@ buffered while stderr is not, so the two streams do not interleave
   (*expected a string literal, found an identifier*) (A.1, A.9). So library
   code over files is written once per literal, and a build that wants
   `Fs("/srv/work")` is a source substitution, as `docs/agent-tools.md`
-  §3.1 already said and `crates/lex-sys/tests/conformance/backends.rs`'s
+  §3.1 already said and `crates/cancho/tests/conformance/backends.rs`'s
   `bind` test already does for a port.
 * **No listing, no stat.** `fs_list` and `fs_stat` are
   `not-a-function` (A.2). What a program can learn about a path: it
@@ -261,7 +261,7 @@ buffered while stderr is not, so the two streams do not interleave
   grows by doubling; **a failed allocation traps**, and nothing inside a
   program can ask the OS for a limit.
 * **The consequence is concrete in `std.crypto`.** `sha256` copies its
-  message, padded, into a `region` (`std/crypto.ls`), so any message
+  message, padded, into a `region` (`std/crypto.cho`), so any message
   longer than **65,527 bytes** traps; `sha512` any longer than **65,519**.
   Both measured by bisection (A.6) and checked equal to `sha256sum` on the
   last good size. `docs/crypto.md` states no limit and there is no
@@ -276,18 +276,18 @@ buffered while stderr is not, so the two streams do not interleave
   twice the size while the old one is still live. That is the ceiling of
   "no silent truncation" as `docs/agent-tools.md` built it, and D8 asks for
   better.* `std.json` is a tape: 24 bytes of tape per byte of source in the worst case
-  (`json.tape_len` is `3 * (len + 1)` ints, `std/json.ls`). A 4.7 MB
+  (`json.tape_len` is `3 * (len + 1)` ints, `std/json.cho`). A 4.7 MB
   document parsed with a heap tape peaked at 119,184 KB (26 times), in
   0.095 s including a byte-at-a-time stdin read. Fast, and the memory is
   the document times 25.
 
 ### 2.4 What the compiler can print about a program
 
-* `lex-sys authority <files> --std --output json` — the union of every
+* `cancho authority <files> --std --output json` — the union of every
   reachable function's *performed* effects, computed from reachability
   (`docs/authority.md` §2), `bounded` first, every label with its
   `argument`, the foreign symbols, and the list of provably pure
-  functions. Measured on `examples/seek/seek.ls`: seven labels
+  functions. Measured on `examples/seek/seek.cho`: seven labels
   (`args`, `err_write`, `file_read`, `fs_read("")`, `heap`, `io_read`,
   `io_write`), `bounded: true`, in 18 ms. It is **exact in both
   directions**: a probe that declared `fs_read("")` it did not perform was
@@ -296,18 +296,18 @@ buffered while stderr is not, so the two streams do not interleave
 * It reports the **program**, not an invocation. A two-applet program
   (`cat` and `rm` chosen by `argv[1]`) reports `fs_read("")` and
   `fs_write("")` for both (A.10) — which is why D17 is one binary per tool.
-* `lex-sys check --output json` answers `refused[]` of
+* `cancho check --output json` answers `refused[]` of
   `{rule, message, explanation, position}`; there is **no repair field**
   (`docs/agent-errors.md` §5.1 designed `fix` and cut it for lack of a
-  consumer whose behaviour had been watched). `lex-sys introspect` and
-  `skill` are ACLI-generated from `crates/lex-sys/src/acli.rs`
+  consumer whose behaviour had been watched). `cancho introspect` and
+  `skill` are ACLI-generated from `crates/cancho/src/acli.rs`
   (`docs/agent-cli.md`).
-* `lex-sys test` runs `fn test_*` (heap and io parameters only) one process
+* `cancho test` runs `fn test_*` (heap and io parameters only) one process
   each; a trap fails a test (`docs/testing.md` §3). There are **no
   `examples {}` blocks** — that is lex-lang's mechanism, not this
   language's.
 * **The ACLI SDK**, read from the `acli-0.5.0` crate that `lex-lang` and
-  `lex-sys` both use (`src/output.rs`, `src/exit_codes.rs`, `src/skill.rs`;
+  `cancho` both use (`src/output.rs`, `src/exit_codes.rs`, `src/skill.rs`;
   the ACLI *specification document* was not available and is not quoted):
   the envelope is `{ok, command, data | error{code, message, hint?,
   hints?, docs?}, dry_run?, planned_actions?, meta{duration_ms, version,
@@ -321,7 +321,7 @@ buffered while stderr is not, so the two streams do not interleave
 
 Read from `/home/user/lex-os` at the working copy's head.
 
-* `lex-os-authority` **derives from Lex source**, not lex-sys:
+* `lex-os-authority` **derives from Lex source**, not cancho:
   `derive(src)` runs the real Lex front end
   (`lex_os_check::effects_of_source`) and folds the effect names with
   `lex_types::trust::effect_requirement`
@@ -356,7 +356,7 @@ Read from `/home/user/lex-os` at the working copy's head.
 
 | Input to `derive_from_effects` | Derived grant | Notes |
 |---|---|---|
-| `net_out("api.example.test:80")` — the lex-sys label, verbatim | fs none, **net none**, exec none | `off_lattice: ["net_out"]`. A program that dials a host is derived as needing no network |
+| `net_out("api.example.test:80")` — the cancho label, verbatim | fs none, **net none**, exec none | `off_lattice: ["net_out"]`. A program that dials a host is derived as needing no network |
 | `net("api.example.test")` — after mapping the name | net allowlist | `egress: ["api.example.test"]`, `unscoped_net: false` |
 | `fs_read("")` + `fs_write("")` | fs read-write | `fs_read: [""]`, `fs_write: [""]`: the "root" is a string entry, not "everything" |
 | `fs_read("/work")` | fs read-only | `fs_read: ["/work"]` — informational; the gate ignores it |
@@ -384,12 +384,12 @@ lives; D16 decides what is fixed and what is routed round.
 | L3 | No file type, mode or mtime without opening (`fs_stat`) | A.2 | `list` entries, `stat` | compiler: builtin. **Built** (#222 slice 2): `dir_stat` on a `Dir` answers kind, size and mtime and never follows a link ([`directory-listing.md`](directory-listing.md)) |
 | L4 | `std.crypto.sha256`/`sha512` trap past 65,527/65,519 bytes; no incremental API | A.6 | `hash`, `write` preconditions | `std` (or in-package first, AGENTS.md §7) |
 | L5 | `narrow` takes a literal; no generic over `Fs(p)`/`Net(b)` | A.1, A.9 | static extent for a general tool | by design (`linearity-and-effects.md` §7.4); D14 routes round it |
-| L6 | No symlink-aware open or `realpath` under `Fs`; symlinks escape a narrowed prefix | A.4 | symlink-safe `--root` | compiler: a no-follow open, if wanted. **Built** (#227 slices 1 and 2): [`directory-handles.md`](directory-handles.md)'s `Dir` reads, creates, appends, renames, removes and syncs beneath a directory and follows no link; the tools on top are its slice 3, built in alpibrusl/lexsys-tools#4 |
+| L6 | No symlink-aware open or `realpath` under `Fs`; symlinks escape a narrowed prefix | A.4 | symlink-safe `--root` | compiler: a no-follow open, if wanted. **Built** (#227 slices 1 and 2): [`directory-handles.md`](directory-handles.md)'s `Dir` reads, creates, appends, renames, removes and syncs beneath a directory and follows no link; the tools on top are its slice 3, built in alpibrusl/cancho-tools#4 |
 | L7 | Outside-prefix, `..`, relative and sibling paths trap (132) rather than answering an error | A.4 | an error value for confinement | in-tool validation (D9); by design |
 | L8 | No `std.regex` | A.3 | regex `seek` | `std` — large; D15 declines it |
 | L9 | TLS needs `Ffi` (`conn_raw_fd`, `examples/tls_client`) | `docs/native-sockets.md` §6 | an `https` `fetch` with a bounded row | out of scope (D15) |
 | L10 | Invalid UTF-8 written through `std.json` becomes U+FFFD silently; there is no base64 in `std` (`examples/base64` only) | A.13 | lossless bytes in JSON | contract package (D2), a `std.base64` later |
-| L11 | Stdin is one byte per call (~180 MB/s) | `examples/tally.ls`, §2.1 | throughput only | none now |
+| L11 | Stdin is one byte per call (~180 MB/s) | `examples/tally.cho`, §2.1 | throughput only | none now |
 | L12 | A status is modulo 256; no `exit` | §2.1 | none | none: the table fits |
 | L13 | JSON tape is 24 B/byte of source | §2.3 | large-document query | none now; D8's `--max-bytes` |
 
@@ -446,7 +446,7 @@ maintainer can keep the language-gap list honest.
   may hold arbitrary bytes (a matched line, a file name) is emitted as
   `"text"` when `std.utf8.is_valid` holds and as `{"b64":"…"}` when it does
   not, in the schema as `text_or_bytes`. The base64 encoder is written in
-  the contract package first (`examples/base64/base64.ls` is the starting
+  the contract package first (`examples/base64/base64.cho` is the starting
   point) and moves to `std` when a second program wants it.
 * **Integers only.** `int` is 64-bit; sizes and offsets above 2^53 lose
   precision in a reader that decodes to a double. The schema says `integer`
@@ -536,7 +536,7 @@ already had an answer. `--require-match` gives the grep behaviour on request
 strategy without parsing.
 
 **Behaviour change, to confirm.** `seek`'s status for no match goes from 1
-to 0, and its "cannot read" from 2 to 3/4. `crates/lex-sys/tests/conformance/
+to 0, and its "cannot read" from 2 to 3/4. `crates/cancho/tests/conformance/
 agent_tools.rs` asserts the old values and changes in the same slice.
 
 ### D5. Errors are data, with a stable rule tag
@@ -556,7 +556,7 @@ adopted whole from `docs/agent-errors.md` §3.1 and `CONTRIBUTING.md`:
   and never repurposes the parent.
 * **Every tag has a fixture** that reaches it, and a test that the set of
   fixtures equals the catalogue (the toolbox's
-  `every_tool_rule_has_a_fixture`, modelled on lex-sys's own).
+  `every_tool_rule_has_a_fixture`, modelled on cancho's own).
 * **Independent errors are all reported, dependent ones are not
   invented** (`docs/agent-errors.md` §4). Five paths named, two unreadable:
   the output has the three results and an `errors` array with two entries
@@ -592,7 +592,7 @@ whole areas (`net.*`) to a dimension.
 kinds, each a datum a script applies without judgement:
 
 ```json
-{"kind":"retry","argv":["seek","--root","/work","needle","src/a.ls"]}
+{"kind":"retry","argv":["seek","--root","/work","needle","src/a.cho"]}
 {"kind":"choose","options":[{"argv":[…]},{"argv":[…]}]}
 {"kind":"none","reason":"the file changed since it was read; re-read, then decide"}
 ```
@@ -676,7 +676,7 @@ way to ask for a limit. A tool must therefore bound itself.
 
 1. **A streaming tool's memory is `O(chunk + longest line + bounded
    state)`, never `O(input)`.** The pattern is already in the repository
-   (`examples/seek/seek.ls` `read_file`): a 64 KiB heap `buffer`, filled by
+   (`examples/seek/seek.cho` `read_file`): a 64 KiB heap `buffer`, filled by
    `file_read` through `buffer.room`/`buffer.filled`, consumed, cleared with
    `buffer.clear` — *without* the `buffer.append` that makes `seek` hold the
    file. A line that spans chunks is carried in a second buffer that grows to
@@ -734,8 +734,8 @@ decision this document can make.
 * **Symlinks are not followed below the root.** *(Rewritten when M8
   flipped.)* This said there was no no-follow open (L6) and that the tests
   asserted the known escape. #227 built directory handles
-  ([`directory-handles.md`](directory-handles.md)), and `lexsys-tools`
-  (alpibrusl/lexsys-tools#4) now opens `--root` with `open_dir` and every
+  ([`directory-handles.md`](directory-handles.md)), and `cancho-tools`
+  (alpibrusl/cancho-tools#4) now opens `--root` with `open_dir` and every
   path beneath it one component at a time with `O_NOFOLLOW`: a link
   anywhere below the root is `path.symlink` (exit 4), and `introspect`
   records `confinement:"beneath"`. The root's own spelling is the caller's
@@ -773,7 +773,7 @@ paths: there is no `getcwd`.
   than litter), `file_sync`, then `fs_rename` over the destination (probed,
   A.8). A temp that already exists is `conflict.locked`.
 * **A lock held across check and replace** (`file_lock` on a sidecar
-  `<path>.lexsys-lock`), because a bare check-then-rename has a window in
+  `<path>.cancho-lock`), because a bare check-then-rename has a window in
   which two writers both pass. The lock is advisory
   (`docs/file-writes.md` §7): it defends against two toolbox processes, not
   against a writer that does not lock. Gate M7 includes a two-process race.
@@ -819,7 +819,7 @@ no hand-written second list to drift. This is the lesson of
 `introspect` reports:
 
 * the tool, its version, the compiler revision it was built with
-  (`lex-sys --version` at build), the schema ids and the schemas themselves;
+  (`cancho --version` at build), the schema ids and the schemas themselves;
 * every flag and operand with its type, default, and **`role`**
   (`path-read`, `path-write`, `host`, `none`) — D13 uses it;
 * the exit-code table of D4 with which codes this tool can emit;
@@ -846,8 +846,8 @@ the previous document found, once, by luck.
 
 **Decision.** A tool's authority is **never written by a person**. The build:
 
-1. runs `lex-sys authority <sources> --std --output json` (pass 1);
-2. writes `generated/manifest.ls`, a file holding the manifest and the
+1. runs `cancho authority <sources> --std --output json` (pass 1);
+2. writes `generated/manifest.cho`, a file holding the manifest and the
    schemas as string literals;
 3. rebuilds with it (pass 2); `tool introspect` prints it;
 4. checks the **fixed point**: pass-2 authority equals pass-1 authority.
@@ -887,13 +887,13 @@ than left to infer):
 
 ### D13. How lex-os consumes it
 
-**Decision.** A **bridge** maps a lex-sys authority report onto lex-os's
+**Decision.** A **bridge** maps a cancho authority report onto lex-os's
 `derive_from_effects` input, **failing closed**, and lives in lex-os (it
 needs `lex_types::EffectSet` and the lattice; reimplementing the lattice
 elsewhere would be a second, independent source of authority, which its
 `CLAUDE.md` forbids). The mapping:
 
-| lex-sys label | lex-os effect | Notes |
+| cancho label | lex-os effect | Notes |
 |---|---|---|
 | `fs_read(p)` | `fs_read` with scope `p` | `""` is the root, kept as an entry (§2.5) |
 | `fs_write(p)` | `fs_write` with scope `p` | |
@@ -917,7 +917,7 @@ that drops `net_out` must turn the test red** (S2's mutant).
 * `diff` between two releases of a tool is the review artifact — **after the
   prefix finding is fixed**: path scopes are compared as opaque strings, so
   narrowing `fs_read("")` to `fs_read("/work")` is reported as a *widening*
-  (§2.5). Until then the authority diff for lex-sys tools over-reports.
+  (§2.5). Until then the authority diff for cancho tools over-reports.
 * `lex-os-capsule` can bind a tool binary's content hash to the derived
   grant and egress, signed, and installing it narrows the consumer's
   manifest — the toolbox's release artifact.
@@ -940,10 +940,10 @@ reviewed, never refused; a path scope is not gated today; the perimeter's
 filesystem is a pair of booleans; and everything in D12's `not_narrowable`
 table.
 
-**Alternatives.** (a) Feed lex-sys labels verbatim: measured, unsafe.
+**Alternatives.** (a) Feed cancho labels verbatim: measured, unsafe.
 (b) A Python bridge in this repository that computes the grant: a second
-derivation of authority, which lex-os forbids. (c) Make lex-sys emit lex-os
-effect names: wrong direction; lex-sys's labels are its own and finer.
+derivation of authority, which lex-os forbids. (c) Make cancho emit lex-os
+effect names: wrong direction; cancho's labels are its own and finer.
 
 **To confirm — and it is a cross-repository commitment.** Whether lex-os
 wants this input at all; this document asks for it and changes nothing
@@ -1008,8 +1008,8 @@ from the grant entirely" (`manifests/src/commands.lex`), and a toolbox that
 shipped one would be handing the supervisor the one command it is built to
 refuse. (`write` replaces atomically and removes only its own temporary file.)
 
-**Amended: a tombstone is a rename, not a delete.** `lexsys-tools`' `move
---remove --if-sha256 HEX PATH` (lexsys-tools#25) takes a file away by renaming
+**Amended: a tombstone is a rename, not a delete.** `cancho-tools`' `move
+--remove --if-sha256 HEX PATH` (cancho-tools#25) takes a file away by renaming
 it to `.NAME.removed-<first 8 hex of HEX>` in the same directory. D15's reason
 stands: the content is kept, nothing in the toolbox purges it, and renaming it
 back undoes the removal, so the tool is `irreversible-bounded` like `write`,
@@ -1040,20 +1040,20 @@ the *shape*):
 ```text
 seek    [--root DIR] [--max-count N] [--max-line-bytes N] [--ascii-case-insensitive]
         [--require-match] [--format ndjson|text] PATTERN FILE...
-        {"type":"match","path":"a.ls","line":3,"offset":120,"text":"…"|{"b64":"…"}}
-        {"type":"file","path":"a.ls","matches":2,"bytes":4096,"binary":false}
+        {"type":"match","path":"a.cho","line":3,"offset":120,"text":"…"|{"b64":"…"}}
+        {"type":"file","path":"a.cho","matches":2,"bytes":4096,"binary":false}
         {"type":"error","error":{…}}
         {"type":"end","complete":true,"files":2,"matches":5,"truncated":false}
 
 write   [--root DIR] (--create | --if-sha256 HEX) [--content-sha256 HEX]
         [--dry-run] (--stdin | --content-file PATH) PATH
-        data: {"path":"a.ls","changed":true,"created":false,"bytes":812,
+        data: {"path":"a.cho","changed":true,"created":false,"bytes":812,
                "before_sha256":"…","after_sha256":"…"}
 replace [--root DIR] --old TEXT --new TEXT [--expect N=1] [--if-sha256 HEX] [--dry-run] PATH
-        data: {"path":"a.ls","replacements":1,"before_sha256":"…","after_sha256":"…"}
+        data: {"path":"a.cho","replacements":1,"before_sha256":"…","after_sha256":"…"}
 
 peek    [--root DIR] [--lines A:B | --bytes A:B] [--max-bytes N] PATH
-        data: {"path":"a.ls","size":4096,"kind":"text","range":{"from":1,"to":40},
+        data: {"path":"a.cho","size":4096,"kind":"text","range":{"from":1,"to":40},
                "lines":[{"n":1,"text":"…"}],"eof":false,"next":{"line":41}}
 
 jsonq   [--pointer /a/0/b] [--keys | --length | --type | --exists] [--max-bytes N] [FILE | -]
@@ -1064,17 +1064,17 @@ tally   [--root DIR] [--field N --delim D] [--top N] [--max-keys N] [FILE...]
         data: {"total":N,"distinct":M,"top":[{"key":"…","count":K}],"truncated":false}
 
 list    [--root DIR] [--depth N] [--max-entries N] [--kind f|d] DIR
-        {"type":"entry","path":"src/a.ls","kind":"file","size":812}   (sorted bytewise)
+        {"type":"entry","path":"src/a.cho","kind":"file","size":812}   (sorted bytewise)
         {"type":"end","complete":true,"entries":N,"truncated":false}
 
 hash    [--algo sha256|sha512] [--verify HEX] PATH...
-        {"type":"hash","path":"a.ls","algo":"sha256","hex":"…","bytes":812}
+        {"type":"hash","path":"a.cho","algo":"sha256","hex":"…","bytes":812}
 ```
 
-### D16. Language gaps: what is fixed in lex-sys, and what is routed round
+### D16. Language gaps: what is fixed in cancho, and what is routed round
 
-**Decision.** `std/*.ls` is compiled into the compiler with `include_str!`
-(`crates/lex-sys/src/main.rs:410-429`), so any `std` change *and* any new
+**Decision.** `std/*.cho` is compiled into the compiler with `include_str!`
+(`crates/cancho/src/main.rs:410-429`), so any `std` change *and* any new
 builtin is a compiler release, and `CONTRIBUTING.md`'s bar is two askers.
 The policy:
 
@@ -1084,7 +1084,7 @@ The policy:
   was written *and* a way to flush and learn the result; the document
   `bulk-io.md` §3.3 is already corrected to say it is open.
 * **L2/L3 (`fs_list`, `fs_stat`)** are the largest asks and the most
-  valuable. Askers: the toolbox's `list` (one) and `lexsys-log`, whose
+  valuable. Askers: the toolbox's `list` (one) and `cancho-log`, whose
   `docs/file-writes.md` §8 names `fs_list` as waiting for "a program that
   cannot" avoid it (two, if that program asks). Edition 6, both backends and
   both targets. **Fix in the compiler, as the first gate of B2.** `dirent`'s
@@ -1122,7 +1122,7 @@ reproduced here.
   cannot write* — is destroyed by merging. A supervisor cannot know which
   applet will run.
 * **Size and startup are no argument for merging.** Busybox exists to save
-  space and `exec` cost. A one-tool lex-sys binary is 16 KB (`hello`) to
+  space and `exec` cost. A one-tool cancho binary is 16 KB (`hello`) to
   22 KB (`seek`, 21,832 bytes); spawn cost is indistinguishable from
   `true` (0.98 ms against 1.01 ms for `/usr/bin/true`, 500 runs; `grep`
   1.30, `jq` 2.53, `rg` 4.56 — a probe, §B). `seek` builds in 0.2 s.
@@ -1136,11 +1136,11 @@ legitimate and cheaper to distribute, defeats nothing the row says beyond
 the class, and is a later optimisation if distribution count ever matters;
 not needed at ten tools of 20 KB.
 
-### D18. Where the code lives: a separate repository, `lexsys-tools`
+### D18. Where the code lives: a separate repository, `cancho-tools`
 
-**Decision.** A separate repository, `lexsys-tools`, with a `lex-sys.toml`
+**Decision.** A separate repository, `cancho-tools`, with a `cancho.toml`
 whose `[[bin]]` sections list one program per tool, the contract package as
-a directory of modules inside it, `[package] lex-sys = "<commit>"`
+a directory of modules inside it, `[package] cancho = "<commit>"`
 pinning the compiler, and `[[test]]` sections for the unit tests
 (`docs/package-system.md` §8.2, §8.8). Not `packages/` in this repository.
 
@@ -1152,22 +1152,22 @@ pinning the compiler, and `[[test]]` sections for the unit tests
   therefore *pin* a compiler by commit, which is what the project file
   does; in-tree `packages/` are consumed at the same commit as the
   examples and never pin anything.
-* **The precedent is the pattern the repository already set.** `lexsys-hooks`,
-  `lexsys-log`, `lexsys-web` are separate repositories using §7 and §8
+* **The precedent is the pattern the repository already set.** `cancho-hooks`,
+  `cancho-log`, `cancho-web` are separate repositories using §7 and §8
   (`docs/package-system.md` §7.1); a tools repo is the same shape, and it
-  can use `vcs lock --git` and `lex-sys install` unchanged.
+  can use `vcs lock --git` and `cancho install` unchanged.
 * **Different change rates and different gates.** The compiler's file
-  budget (`crates/lex-sys/tests/files.rs`), its two backends and its
+  budget (`crates/cancho/tests/files.rs`), its two backends and its
   conformance suite are the wrong gate for a 20 KB tool; the tool repo has
   its own: M1–M9 (§7), which are slow and need GNU tools.
 * **A `std` addition is a compiler release; a package is versioned apart.**
-  Language gaps land in `lex-sys`; the tools wait for a compiler commit and
+  Language gaps land in `cancho`; the tools wait for a compiler commit and
   bump a pin in a PR that shows the new authority diff
   (`docs/package-system.md` §7.5 step 6 is the missing half).
 
 **What would argue for `packages/`**: the tools' tests would run in the
 same PR as a compiler change that breaks them, instead of being found by a
-canary. The mitigation is one **canary job in `lex-sys` CI** that builds the
+canary. The mitigation is one **canary job in `cancho` CI** that builds the
 pinned tools at the compiler's head and reports (not blocks) — cheap, and it
 turns the 71% from a surprise into a number.
 
@@ -1219,7 +1219,7 @@ outrunning the evidence.)
 ```text
 python3 scripts/toolbench.py --tool seek --size 64MiB --runs 15 --sink pipe
 # per run: [tool, incumbent] interleaved; report min and median;
-# record: machine, kernel, `lex-sys --version`, incumbent versions,
+# record: machine, kernel, `cancho --version`, incumbent versions,
 # locale, page-cache state (warm), sink.
 # incumbents: grep -F, rg -F, sha256sum, jq, sed -n, LC_ALL=C sort|uniq -c, find
 # startup: 500 spawns of an empty workload per binary, mean ms
@@ -1263,7 +1263,7 @@ it tests D8's rule directly, and the existing `seek` fails it.
 |---|---|---|
 | **A. Incumbents** | GNU coreutils, `rg`, `jq`, `sed`, `find`/`ls`, as a shell | the baseline |
 | **B. Incumbents + shim** | the same programs behind a *conforming* envelope: JSON, the D4 exit codes, rule tags, D6 hints, D10 preconditions — a wrapper in any language | the value of the **contract** alone |
-| **C. Toolbox** | the lex-sys tools | B versus C is the value of the **implementation** (authority, determinism, defined behaviour) |
+| **C. Toolbox** | the cancho tools | B versus C is the value of the **implementation** (authority, determinism, defined behaviour) |
 | **D. Toolbox, hints removed** (ablation) | C with `repair` always `null`, tags kept | the **kill rule** for D6 (`docs/agent-errors.md` §5.1) |
 
 **Task suite format.** One JSON file per task, a directory of fixtures, a
@@ -1273,7 +1273,7 @@ verifier:
 {"id":"edit-precondition-03","category":"edit","goal":"…text the agent sees…",
  "fixture":{"tarball_sha256":"…","setup":["…seeded mutations…"]},
  "tools":{"A":["sed","grep"],"B":["…"],"C":["seek","peek","write"]},
- "faults":[{"after_call":2,"inject":"concurrent-edit","path":"src/a.ls"}],
+ "faults":[{"after_call":2,"inject":"concurrent-edit","path":"src/a.cho"}],
  "oracle":{"cmd":"python3 verify.py","success":"exit 0","unsafe":"exit 7"},
  "budget":{"max_tool_calls":30,"max_tokens":60000,"max_wall_s":600},
  "seeds":[1,2,3,4,5]}
@@ -1341,13 +1341,13 @@ Effort figures are **judgement, not measurement**, in working days for one
 person who knows the repository; they are there so a person can see the
 shape, not to be held to.
 
-**S0. The contract package** (about 5–8 days). In `lexsys-tools`, a
+**S0. The contract package** (about 5–8 days). In `cancho-tools`, a
 directory of modules, none over 2,000 lines: the error type and rule
 catalogue; the envelope `Writer` over `std.json`; the D4 exit codes; the
 table-driven flag parser over `std.flags`; D9's path validation; limits; the
 chunked reader of D8; `text_or_bytes` with the base64 encoder; the
 `introspect`/`skill` emitter; the incremental SHA-256 port.
-*Gate:* `lex-sys test` green; `fmt --check` and `check` clean; envelope and
+*Gate:* `cancho test` green; `fmt --check` and `check` clean; envelope and
 catalogue corpus validated (M1 for the contract itself); fuzz of the path
 validator and the flag parser with 0 traps (M4 slice); `authority` of a
 contract-only program within `{args, heap, io_write}`.
@@ -1441,7 +1441,7 @@ decision rule and sample size.
 | **The claim outruns the evidence** | The easy sentence ("a safer, agent-friendly `grep`") is already in this document's own prior art | §7.3's table; `introspect.evidence` lists which gates have run; the README gets nothing from S-last until S-last runs |
 | **Authority theatre** | `fs_read("")` with `bounded: true` reads as reassuring and means the whole filesystem | `not_narrowable` in every manifest (D12); §0 amendment 2; extent comes from D9/D13/D14 and the perimeter |
 | **A trap is the failure mode** | Overflow, bounds, `Writer` misuse (a bare value in an object is a trap, `docs/json.md` §3), arena and heap exhaustion all kill with no JSON, and unflushed stdout is lost | M4; the `end` record; no `region` sized from data; caps with tags |
-| **Maintenance** | 71% of this repository's history stops type-checking under today's compiler (`docs/hash-stability.md`); three targets' worth of `Split` and edition churn | compiler pin per release; a canary in `lex-sys` CI (D18); each tool is small (`seek` is 336 lines; `cut` 309; `sort` 359) |
+| **Maintenance** | 71% of this repository's history stops type-checking under today's compiler (`docs/hash-stability.md`); three targets' worth of `Split` and edition churn | compiler pin per release; a canary in `cancho` CI (D18); each tool is small (`seek` is 336 lines; `cut` 309; `sort` 359) |
 | **Two truths about a tool's flags** | A flag table and a parser written separately will drift | D11: the table *is* the parser's input; M1 runs every declared flag |
 | **Silent output failure** | L1 | the `end` record now; the compiler fix first (D16) |
 | **Cost of linear types in the tools** | `out = f(h, out, x)` three tokens longer every time (`AGENTS.md` §1) and a `res` consumed on every path | a shared contract package so each tool is mostly its own logic; reported as lines per tool against the shim's, as a *cost* in S-last |
@@ -1458,12 +1458,12 @@ decision rule and sample size.
 | Q2 | May the envelope drop `meta.duration_ms` and add `schema`/`rule`/`repair` (D3), and are errors on stdout (D5)? | A deviation from the ACLI SDK's `Envelope`; the spec text was not read |
 | Q3 | Does `repair` ship, under the kill rule (D6)? What is the comparison's tolerance? | The previous round cut `fix` for lack of evidence; this one produces the evidence, and a person should agree the rule before the run |
 | Q4 | Is "no blind overwrite" (D10) acceptable policy? | It will make an agent that has not read the file fail once |
-| Q5 | Should lex-sys add `fs_list`/`fs_stat` (D16), and does `lexsys-log` count as the second asker? | A language-scope decision with a two-asker bar and an edition bump |
+| Q5 | Should cancho add `fs_list`/`fs_stat` (D16), and does `cancho-log` count as the second asker? | A language-scope decision with a two-asker bar and an edition bump |
 | Q6 | Dry-run flag now, or the plan/apply split (D10)? | The flag is not provable by the row; the split is, and costs a binary and a plan format per mutating tool |
-| Q7 | Does lex-os want a lex-sys authority input (D13), and will it fix path-scope narrowing and unknown-label handling? Who owns the bridge? | A cross-repository commitment; lex-os is not changed by this document |
+| Q7 | Does lex-os want a cancho authority input (D13), and will it fix path-scope narrowing and unknown-label handling? Who owns the bridge? | A cross-repository commitment; lex-os is not changed by this document |
 | Q8 | Separate repository and name (D18); whether to register tools as lex-os commands with a path-scope facet (D13) | Ownership; and a facet nobody has written |
 | Q9 | Which model, harness and budget for S-last; is a lex-os box available to run it? | Not available here, and the sample size depends on a pilot |
-| Q10 | Should `lex-sys`'s own `check`/`authority` output be retrofitted to this envelope, since they are already agent-facing tools whose JSON has no `ok`? | Changes an existing, tested surface for consistency |
+| Q10 | Should `cancho`'s own `check`/`authority` output be retrofitted to this envelope, since they are already agent-facing tools whose JSON has no `ok`? | Changes an existing, tested surface for consistency |
 
 ---
 
@@ -1587,8 +1587,8 @@ a byte was lost; `std` has no base64, so a tool must pre-check with
 
 ## Appendix B. Probe record
 
-* Compiler: `lex-sys 0.0.0 (rev 052e623fb55a909f531456cd941bd375ab202dfc,
-  host x86_64-unknown-linux-gnu)`, `/home/user/lex-sys/target/release/lex-sys`;
+* Compiler: `cancho 0.0.0 (rev 052e623fb55a909f531456cd941bd375ab202dfc,
+  host x86_64-unknown-linux-gnu)`, `/home/user/cancho/target/release/cancho`;
   `std/` and `crates/` identical to commit `ab332d3` (only tests and scripts
   differ).
 * Machine: Linux 6.18, x86_64, 4 cores, a shared sandbox. **Noisy.**
@@ -1604,10 +1604,10 @@ a byte was lost; `std` has no base64, so a tool must pre-check with
   through a pipe, 5 runs: `seek -c` 0.42–0.57 s, `grep -c` 0.12–0.17,
   `grep -F -c` 0.11–0.18, `rg -c` 0.08–0.11; `seek -c` on stdin 0.54–0.71
   (3 runs). `cat` 14 ms, `wc -c` 2.5 ms, `wc -l` 15 ms, `wc -w` 0.9–1.0 s,
-  `sha256sum` 60 ms, `sort` 0.37–0.55 s. `examples/tally.ls` 0.35–0.38 s.
+  `sha256sum` 60 ms, `sort` 0.37–0.55 s. `examples/tally.cho` 0.35–0.38 s.
   JSON: parse of the 4.7 MB document 0.095 s with 119,184 KB peak; `jq length`
-  0.153 s. `seek` peak resident memory: 8,304 KB at 1 MiB, 13,776 KB at 8 MiB, 99,788 KB at 64 MiB exactly, 198,032 KB at 64 MiB + 28 bytes, 787,816 KB at 256 MiB + 112 bytes. `lex-sys build`
-  of `seek.ls` 0.206 s, a 21,832-byte executable; `hello` 16,056 bytes.
+  0.153 s. `seek` peak resident memory: 8,304 KB at 1 MiB, 13,776 KB at 8 MiB, 99,788 KB at 64 MiB exactly, 198,032 KB at 64 MiB + 28 bytes, 787,816 KB at 256 MiB + 112 bytes. `cancho build`
+  of `seek.cho` 0.206 s, a 21,832-byte executable; `hello` 16,056 bytes.
 * **The lex-os probe** is a scratch crate outside both repositories, with
   `lex-os-authority` and `lex-os-manifest` as path dependencies and
   `lex-types` at the tag lex-os pins (`v0.11.0`), built with
@@ -1634,17 +1634,17 @@ Corrected in place, each with a note naming this document, as
   reads, false of what it writes (`/dev/full` exits 0), and `seek` holds
   the file (between 1.5 and 3 times its size in memory) rather than a line
   (§2.1, §2.3).
-* **`docs/agent-cli.md` §3**: *"lex-sys's real codes are 0/1/2/3"*. There is a
-  fourth, `4`, for `lex-sys test` (`crates/lex-sys/src/main.rs` header,
+* **`docs/agent-cli.md` §3**: *"cancho's real codes are 0/1/2/3"*. There is a
+  fourth, `4`, for `cancho test` (`crates/cancho/src/main.rs` header,
   `docs/testing.md` §3).
-* **`docs/README.md`, "lex-sys code under a lex-os grant"**: *"`network` and
+* **`docs/README.md`, "cancho code under a lex-os grant"**: *"`network` and
   `exec` are not [enforceable], because both are libc."* Not true of
   `network` for a program built on `Net` (A.12); and the sentence's
   *"enforceable through it"* does not yet hold for either dimension, because
   lex-os cannot read the labels (§2.5).
 
 Found and **not** corrected (not documents' claims, or not this change's to
-make): `examples/tally.ls` prints `wc`-style padded columns that run together
+make): `examples/tally.cho` prints `wc`-style padded columns that run together
 when a count exceeds the field width (`1307997 11774082 67108892` printed as
 `13079971177408267108892`; GNU `wc` separates them), which is the plainest
 argument for D2 in this repository; and the two lex-os findings of D13

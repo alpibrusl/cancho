@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""lex-sys against C and Rust, on the same algorithm.
+"""cancho against C and Rust, on the same algorithm.
 
 `scripts/bench.py` measures one language against itself — what the
 overflow trap costs. This measures the language against the two it is
@@ -9,7 +9,7 @@ discipline:
   * **The same algorithm**, line for line, not the same *task*. Comparing
     `examples/sort` to GNU `sort` would measure decades of tuning.
   * **The same semantics.** Rust's release profile wraps on overflow and
-    lex-sys traps, so Rust is built both ways and the honest row is the
+    cancho traps, so Rust is built both ways and the honest row is the
     one that also traps.
   * **The same answer.** Every build prints a checksum, and a mismatch
     fails the run rather than being reported as a time.
@@ -34,7 +34,7 @@ THREE = ROOT / "benches" / "three"
 
 def compiler() -> pathlib.Path:
     for profile in ("release", "debug"):
-        exe = ROOT / "target" / profile / "lex-sys"
+        exe = ROOT / "target" / profile / "cancho"
         if exe.exists():
             return exe
     sys.exit("build the compiler first: cargo build --release")
@@ -83,24 +83,24 @@ def main() -> None:
     if cc is None or rustc is None:
         sys.exit("this needs a C compiler and rustc on the path")
 
-    scratch = pathlib.Path(tempfile.mkdtemp(prefix="lex-sys-three-"))
+    scratch = pathlib.Path(tempfile.mkdtemp(prefix="cancho-three-"))
     try:
-        # (label, source, how to build it). The lex-sys build is first in
+        # (label, source, how to build it). The cancho build is first in
         # each group so the checksum it prints is the one the others are
         # checked against.
         groups = {
             "mandelbrot (compute, Q16.16 fixed point)": [
-                ("lex-sys      traps", "mandelbrot.ls", None),
+                ("cancho      traps", "mandelbrot.cho", None),
                 ("C     -O2    traps", "mandelbrot.c", [cc, "-O2", "-DCHECKED=1"]),
                 ("Rust  -O     traps", "mandelbrot.rs", [rustc, "-O", "-Coverflow-checks=on"]),
                 ("C     -O2    wraps", "mandelbrot.c", [cc, "-O2", "-DCHECKED=0"]),
                 ("Rust  -O     wraps", "mandelbrot.rs", [rustc, "-O", "-Coverflow-checks=off"]),
             ],
-            # The row lex-sys cannot fill. Not a fair race against the
+            # The row cancho cannot fill. Not a fair race against the
             # fixed-point group above and not meant to be: it answers a
             # different question, which is what the *absence* of a float
             # type costs a program that wants this picture.
-            "mandelbrot (compute, f64 — lex-sys cannot enter)": [
+            "mandelbrot (compute, f64 — cancho cannot enter)": [
                 ("C     -O2    f64", "mandelbrot_f64.c", [cc, "-O2"]),
                 ("Rust  -O     f64", "mandelbrot_f64.rs", [rustc, "-O"]),
             ],
@@ -108,13 +108,13 @@ def main() -> None:
             # other two cannot check. Two-file builds, because the point
             # is a boundary the optimiser will not cross.
             "purity (a pure call, twice, across a compilation boundary)": [
-                ("lex-sys      knows", "purity.ls", None),
+                ("cancho      knows", "purity.cho", None),
                 ("C     -O2    blind", "purity.c", [cc, "-O2", "-DPROMISED=0"]),
                 ("Rust  -O     mute", "purity.rs", [rustc, "-O"]),
                 ("C     -O2    told", "purity.c", [cc, "-O2", "-DPROMISED=1"]),
             ],
             "sieve (memory-bound, all trapping)": [
-                ("lex-sys      traps", "sieve.ls", None),
+                ("cancho      traps", "sieve.cho", None),
                 ("C     -O2    traps", "sieve.c", [cc, "-O2"]),
                 ("Rust  -O     traps", "sieve.rs", [rustc, "-O", "-Coverflow-checks=on"]),
             ],
@@ -157,7 +157,7 @@ def main() -> None:
                 sys.exit(f"the builds disagree: {sorted(checksums)}")
 
             # Against the first C row in the group, which is the one
-            # written to match lex-sys: trapping where that is the axis,
+            # written to match cancho: trapping where that is the axis,
             # and uninformed where purity is.
             reference = next(
                 (s for label, s in results if label.startswith("C")),

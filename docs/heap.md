@@ -1,7 +1,7 @@
 # The heap
 
 > **Status: settled, and built in the same change.** The gate for the last
-> unchecked box on M2's list ([#1](https://github.com/alpibrusl/lex-sys/issues/1)):
+> unchecked box on M2's list ([#1](https://github.com/alpibrusl/cancho/issues/1)):
 > *"escape hatches with documented runtime cost"*. §9 of
 > `linearity-and-effects.md` named two — `Rc` and `Gen` — and both are
 > libraries over an allocator that did not exist. This document is that
@@ -223,7 +223,7 @@ recursive structure is not expressible today.
 
 For a box of a **struct** this does not bite, because field access already
 reaches through a reference: `contents(r).x` reads without consuming, and
-`tests/accept/box_roundtrip.ls` does exactly that. It bites for enums, which
+`tests/accept/box_roundtrip.cho` does exactly that. It bites for enums, which
 is what every recursive type needs a variant of.
 
 The consequence is worth stating plainly rather than hiding: in this
@@ -291,20 +291,20 @@ Stated in advance, as every section of `linearity-and-effects.md` §11 was.
 
 | Fixture | Rule | § |
 |---|---|---|
-| `box_without_heap.ls` | Allocating requires a `Heap` | 2 |
-| `box_leaked.ls` | A `Box` that is never unboxed is refused | 3.1 |
-| `box_used_after_unbox.ls` | `unbox` consumes; using the box after is refused | 3.1 |
-| `heap_effect_undeclared.ls` | A row that allocates must declare `heap` | 2 |
-| `recursive_without_box.ls` | A type containing itself *directly* still has no size | 4 |
-| `contents_escapes_its_borrow.ls` | `&r T` from a box dies with the borrow | 3 |
-| `box_destructured.ls` | A box is ended by `unbox`, not by a pattern | 3 |
+| `box_without_heap.cho` | Allocating requires a `Heap` | 2 |
+| `box_leaked.cho` | A `Box` that is never unboxed is refused | 3.1 |
+| `box_used_after_unbox.cho` | `unbox` consumes; using the box after is refused | 3.1 |
+| `heap_effect_undeclared.cho` | A row that allocates must declare `heap` | 2 |
+| `recursive_without_box.cho` | A type containing itself *directly* still has no size | 4 |
+| `contents_escapes_its_borrow.cho` | `&r T` from a box dies with the borrow | 3 |
+| `box_destructured.cho` | A box is ended by `unbox`, not by a pattern | 3 |
 
 And the accepting counterparts:
 
 | Fixture | Shows |
 |---|---|
-| `box_roundtrip.ls` | Box a value, read it through a borrow, unbox it |
-| `linked_list.ls` | A recursive type, built and freed by linearity |
+| `box_roundtrip.cho` | Box a value, read it through a borrow, unbox it |
+| `linked_list.cho` | A recursive type, built and freed by linearity |
 
 Plus `the_heap_actually_frees` (§3.1), because whether the emitted code
 frees is not a property any single program's types can state.

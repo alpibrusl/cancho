@@ -1,0 +1,21 @@
+//~ EXIT 0
+
+// `docs/byte-search.md` §2: a program may declare `memchr` itself, at cancho's crossing widths (`int` is 64 bits), and
+// still use `index_of_byte`. Cranelift declares the symbol with the same widths, so the two declarations agree; with
+// C's 32-bit `int` it refused the module as a compiler bug. LLVM leaves the declaration to the program.
+
+edition 5;
+
+extern fn memchr[&f](ffi: &f Ffi("libc"), p: c_ptr, c: int, n: int) -> [ffi("libc")] c_ptr;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    release(net);
+    release(clock);
+    release(io);
+    release(heap);
+    return index_of_byte("abc", byte_of('c')) - 2;
+}

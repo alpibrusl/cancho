@@ -1,7 +1,7 @@
 // From edition 2 on `connect` is a builtin, and a foreign declaration's Lex name IS the linked symbol, so the raw `connect(2)` can
 // only be declared in a file of edition 1 (foreign-linking.md). Any module that wants a socket of its own is split in two for it.
-// (Kept as text, not `.ls`: the repository's `net::the_network_programs_are_counted` counts every `extern fn connect` in a `.ls` under `examples/`
-// and wants one, `packages/net-connect/connect.ls`. `check_gaps.py` copies it to a `.ls` to run it.)
+// (Kept as text, not `.cho`: the repository's `net::the_network_programs_are_counted` counts every `extern fn connect` in a `.cho` under `examples/`
+// and wants one, `packages/net-connect/connect.cho`. `check_gaps.py` copies it to a `.cho` to run it.)
 edition 5;
 extern fn connect[&f, &a](ffi: &f Ffi("libc"), fd: int, addr: &a [byte]) -> [ffi("libc")] c_int;
 

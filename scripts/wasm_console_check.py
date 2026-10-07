@@ -9,14 +9,14 @@ with the row `[io_write]` imported a clock. The console is now written against
 `checked_output.rs` probe (`flush_out`) against the module to check the buffer's
 behaviour, not just its imports.
 
-It also runs `tests/accept/arguments.ls` native and as a module over a spread of command
+It also runs `tests/accept/arguments.cho` native and as a module over a spread of command
 lines (none, many, non-ASCII, an empty argument, a 3,000-byte one), because the module
 fetches the command line itself now, only for a program that reads it (W2c), and an import
 list that is right says nothing about whether the values are.
 
-usage: wasm_console_check.py LEX_SYS
+usage: wasm_console_check.py CANCHO
 
-Needs what `lex-sys --help` says `--target` needs, and `wasmtime`. CI has neither.
+Needs what `cancho --help` says `--target` needs, and `wasmtime`. CI has neither.
 """
 import os, re, subprocess, sys, tempfile
 
@@ -61,10 +61,10 @@ PROGRAMS = {
 }
 
 
-def build(lex_sys, source, out):
-    src = out + ".ls"
+def build(cancho, source, out):
+    src = out + ".cho"
     open(src, "w").write(source)
-    b = subprocess.run([lex_sys, "build", src, "--std", "--target", "wasm32-wasip1", "-o", out + ".wasm"],
+    b = subprocess.run([cancho, "build", src, "--std", "--target", "wasm32-wasip1", "-o", out + ".wasm"],
                        capture_output=True, text=True)
     if b.returncode != 0:
         sys.exit(f"build failed for {out}:\n{b.stderr}")
@@ -75,7 +75,7 @@ def checked_output_probe():
     """The program `checked_output.rs` runs on both native backends, so the wasm
     console is held to the same answers rather than to a copy of them."""
     root = os.path.join(os.path.dirname(__file__), "..")
-    text = open(os.path.join(root, "crates/lex-sys/tests/conformance/checked_output.rs")).read()
+    text = open(os.path.join(root, "crates/cancho/tests/conformance/checked_output.rs")).read()
     m = re.search(r'const PROBE: &str = "(.*?)";\n', text, re.S)
     if not m:
         sys.exit("cannot find PROBE in checked_output.rs")
@@ -97,15 +97,15 @@ ARG_CASES = [[], ["one"], ["one", "two"], ["h\u00e9llo", "w\u00f6rld", "\u65e5\u
              [""], ["x" * 3000], ["a b", "c  d"], ["--flag", "-x", "=="]]
 
 
-def arguments_part(lex_sys, work):
-    """`arguments.ls` prints how many arguments it got and each one after the name, and
+def arguments_part(cancho, work):
+    """`arguments.cho` prints how many arguments it got and each one after the name, and
     exits with the count: native against the module, on the same command lines."""
-    program = os.path.join(os.path.dirname(__file__), "..", "tests/accept/arguments.ls")
+    program = os.path.join(os.path.dirname(__file__), "..", "tests/accept/arguments.cho")
     native, wasm = os.path.join(work, "arguments"), os.path.join(work, "arguments.wasm")
     for out, extra in ((native, []), (wasm, ["--target", "wasm32-wasip1"])):
-        b = subprocess.run([lex_sys, "build", program, "--std", *extra, "-o", out], capture_output=True, text=True)
+        b = subprocess.run([cancho, "build", program, "--std", *extra, "-o", out], capture_output=True, text=True)
         if b.returncode:
-            sys.exit(f"arguments.ls: build failed {extra or 'native'}:\n{b.stderr}")
+            sys.exit(f"arguments.cho: build failed {extra or 'native'}:\n{b.stderr}")
     bad = []
     for args in ARG_CASES:
         n = subprocess.run([native, *args], capture_output=True)
@@ -118,13 +118,13 @@ def arguments_part(lex_sys, work):
 
 
 def main():
-    lex_sys = sys.argv[1]
+    cancho = sys.argv[1]
     work = tempfile.mkdtemp(prefix="wasm-console-")
     failures = []
 
     print("imports, per effect (proc_exit aside, which only a program that can exit non-zero has):")
     for name, (source, extra) in PROGRAMS.items():
-        got = wasi_functions(open(build(lex_sys, source, os.path.join(work, name)), "rb").read())
+        got = wasi_functions(open(build(cancho, source, os.path.join(work, name)), "rb").read())
         got -= EXIT
         want = extra
         verdict = "ok" if got == want else "WRONG"
@@ -133,7 +133,7 @@ def main():
         if got != want:
             failures.append(f"{name}: imports {sorted(got)}, wanted {sorted(want)}")
 
-    probe = build(lex_sys, checked_output_probe(), os.path.join(work, "probe"))
+    probe = build(cancho, checked_output_probe(), os.path.join(work, "probe"))
     print("flush_out (the checked_output.rs probe), against the module's own buffer:")
     cases = [
         ("small, reader present: status 100, the bytes arrive", [], False, 100, b"hello\n"),
@@ -152,7 +152,7 @@ def main():
             failures.append(f"{label}: status {status} (want {want_status}), {len(out)} bytes")
 
     print("arguments, native against the module (which fetches them itself):")
-    failures += arguments_part(lex_sys, work)
+    failures += arguments_part(cancho, work)
 
     if failures:
         sys.exit("\nFAILED:\n  " + "\n  ".join(failures))

@@ -1,13 +1,13 @@
 # WebAssembly target
 
-A `wasm32-wasip1` (later `wasip2`) target for `lex-sys`, through the existing
-LLVM backend. **Not a new backend**: `lex-sys-codegen-llvm` already emits
+A `wasm32-wasip1` (later `wasip2`) target for `cancho`, through the existing
+LLVM backend. **Not a new backend**: `cancho-codegen-llvm` already emits
 textual IR and shells out to `clang -target <triple>`; wasm is one more triple
 plus per-target builtin coverage.
 
 Why it is worth doing, in one line: [`related-work.md`](related-work.md) frames
-WASI as the incumbent and lex-sys as *"authority known before execution."* A
-wasm build gives **both** -- the static row from `lex-sys authority`, and a
+WASI as the incumbent and cancho as *"authority known before execution."* A
+wasm build gives **both** -- the static row from `cancho authority`, and a
 module whose import section the runtime enforces -- and makes `row ⊆ imports`
 a mechanical check. Defence in depth without a Firecracker VM per unit.
 
@@ -17,7 +17,7 @@ Status: **W0 through W0.5, the errno decision, W1, W2a (the console without libc
 
 ## W0 results
 
-`lex-sys run examples/hello.ls --target wasm32-wasip1` prints `Hello, world!`
+`cancho run examples/hello.cho --target wasm32-wasip1` prints `Hello, world!`
 under wasmtime, and `scripts/wasm_coverage.py` ran every `tests/accept`
 fixture for the target. This is the honest map (104 fixtures), run with
 `WASMTIME_FLAGS=--dir=/` because several fixtures open `/` as their
@@ -50,7 +50,7 @@ W0.3 took the four `__multi3` link errors to passes.
 - **Trap instruction.** `unreachable` on wasm32 (`trap_asm`). A trap is a
   wasmtime trap with **exit code 134**, not `SIGILL`/132: the behaviour is the
   same, the number is not (§Risks).
-- **`size_t` is 4 bytes.** `lex-sys`'s `int` is `i64` everywhere, and the
+- **`size_t` is 4 bytes.** `cancho`'s `int` is `i64` everywhere, and the
   backend declared `malloc(i64)`, `fwrite(ptr, i64, i64, ptr)`, `read`,
   `write`, `memchr`, ... (11 functions, 23 call sites). `wasm-ld` treats a call
   whose type disagrees with the definition as a *warning* that swaps in a
@@ -76,7 +76,7 @@ W0.3 took the four `__multi3` link errors to passes.
   (`function signature mismatch: write`) instead of a trap at run time.
   Two of the refusals in the first map were this working.
 - **W0.1: a `Wasi` arm for the file and directory constants.**
-  `lex_sys_ir::Os { Linux, Darwin, Wasi }` and `open_flags_for`,
+  `cancho_ir::Os { Linux, Darwin, Wasi }` and `open_flags_for`,
   `dirent_layout_for`, `dirent_types`, `enametoolong_for`, `stat_layout_for`
   (the `(darwin, aarch64)` helpers Cranelift calls are unchanged wrappers).
   The values are wasi-libc's headers', pinned in `tests/os_tables.rs`, and two
@@ -95,8 +95,8 @@ W0.3 took the four `__multi3` link errors to passes.
 - **`errno` is translated on WASI** to the language's numbering, which is
   Linux's. A program that compares a failure's `errno` (`e == 2` for a missing
   file) now means the same thing on every target it is built for. The table is
-  `lex_sys_ir::WASI_ERRNO_TO_LINUX`, all 76 of wasi-libc's `E*`, applied by a
-  generated `@lexsys_wasi_errno` at the one place the backend reads `errno`
+  `cancho_ir::WASI_ERRNO_TO_LINUX`, all 76 of wasi-libc's `E*`, applied by a
+  generated `@cancho_wasi_errno` at the one place the backend reads `errno`
   (zero stays zero; a number WASI does not define passes through). Why this
   over per-target accessors: the language already fixes some of its own error
   numbers at Linux's (`std.dirs.einval()` is 22), so a program on WASI
@@ -108,7 +108,7 @@ W0.3 took the four `__multi3` link errors to passes.
   `enametoolong` has a per-OS answer. That inconsistency is older than WASI and
   is not changed here; if it should be, the same mechanism applies.
 - **W0.2: what WASI cannot do is a located refusal.** A new rule,
-  `unsupported-on-target` (the 58th), and `lex_sys_ir::unsupported_on_target`,
+  `unsupported-on-target` (the 58th), and `cancho_ir::unsupported_on_target`,
   a pass over `Program::funcs` -- which *is* the reachable set -- run by `check`
   and `build` before any code is generated, so it needs no wasm toolchain. It
   refuses at the function that reaches the builtin, once per (function,
@@ -120,7 +120,7 @@ W0.3 took the four `__multi3` link errors to passes.
   **sockets** (`connect`, `bind`, `listen`, `tcp_*`, `conn_*`), **the poller**
   (`poller_*`; `poll_oneoff` is the eventual mapping), **signals**, and
   **processes and pipes**. Reject fixtures can now name a target
-  (`//~ TARGET wasm32-wasip1`); `tests/reject/spawn_on_wasi.ls` is the first.
+  (`//~ TARGET wasm32-wasip1`); `tests/reject/spawn_on_wasi.cho` is the first.
   What it does not cover: an `extern fn` names a C symbol, and whether that
   symbol exists on the target is the linker's to say, which is the one place a
   target gap is still a link error (the four `extern fn` rows below).
@@ -131,7 +131,7 @@ W0.3 took the four `__multi3` link errors to passes.
   to link. The alternative to an inline multiply was installing compiler-rt
   builtins (`wasi-runtimes` or wasi-sdk); that would have made every user of the
   target need one more package. Instead the module defines
-  `@lexsys_smul_overflow`, the same answer from 32-bit halves, used only on
+  `@cancho_smul_overflow`, the same answer from 32-bit halves, used only on
   wasm32 (`checked_arith`, the one place a checked multiply is emitted;
   native output is unchanged). It is checked against LLVM's own intrinsic on the
   host over the 400 pairs of twenty edge values (both extremes, the square root
@@ -174,7 +174,7 @@ W0.3 took the four `__multi3` link errors to passes.
   `644`, `1777` natively). A wrong answer is worse than a refusal. Both are now in
   `wasi_gap` (two new families, **file locks** and **permission bits**), so `check` and
   `build` refuse them at the function, with the rule tag, before any code is generated:
-  47 builtins refused, 72 supported. `tests/reject/dir_mode_on_wasi.ls` is the fixture.
+  47 builtins refused, 72 supported. `tests/reject/dir_mode_on_wasi.cho` is the fixture.
 - `run` uses `WASMTIME` (default `wasmtime`) and passes `WASMTIME_FLAGS`
   (e.g. `--dir=.`). A WASI module gets **no** directory unless one is
   granted, so the grant is spelled where it is made.
@@ -230,7 +230,7 @@ which are now located refusals rather than run-time traps.
 
 ## W1 results
 
-`tests/programs/json_roundtrip.ls` -- parse standard input with `std.json`, write it
+`tests/programs/json_roundtrip.cho` -- parse standard input with `std.json`, write it
 back, or print `E <code> <position>` if the document is refused -- built for the
 host and for `wasm32-wasip1` and fed the same documents by
 `scripts/wasm_json_differential.py`. It is a real program (128 lines) that exercises
@@ -302,7 +302,7 @@ program reads it.
 
 ## W2a results: the console without libc stdio
 
-`lex-sys-codegen-llvm/src/wasi_console.rs` is the console written against the two WASI
+`cancho-codegen-llvm/src/wasi_console.rs` is the console written against the two WASI
 calls it needs. On wasm32 `putchar`, `getchar`, `write_bytes`, `write_err` and `flush_out`
 no longer touch libc: the module declares `fd_write` and `fd_read` itself
 (`wasm-import-module` / `wasm-import-name` attributes on the IR declarations), keeps its
@@ -341,7 +341,7 @@ The differential from W1, with large documents added so the buffer's spill and d
 paths run (strings whose output lands either side of 4,096, 8,192 and 12,288 bytes, a
 6,000-element array, a 2,500-key object, a 400-deep nest): **1,617 documents, 1,131
 accepted and 484 refused byte-identical, 2 trapped on both builds, 0 different.** The two
-that trap are strings over 64 KiB, which exhaust the 64 KiB arena `json_roundtrip.ls` uses
+that trap are strings over 64 KiB, which exhaust the 64 KiB arena `json_roundtrip.cho` uses
 and trap natively too; the script counts a native SIGILL and a wasmtime trap (exit 134) as
 the same behaviour and requires both. The accept-fixture map did not move (83 / 20 / 1).
 
@@ -368,7 +368,7 @@ and keeps answering it.
 
 ## W2b results: what the row licenses
 
-`lex-sys-ir/src/wasi_imports.rs` is the table that bridges the two halves of the
+`cancho-ir/src/wasi_imports.rs` is the table that bridges the two halves of the
 authority fact: the **row** (what the checker says a program does) and the **import
 section** (what the runtime is asked to grant the module, and enforces). For each effect
 label, the WASI preview 1 functions a module built from a program that performs it may
@@ -388,7 +388,7 @@ create, append, rename, remove and sync; a program with it may use one of them):
   are exact in both directions, so a label in a row is performed by something; a module
   missing a required import has a row claiming more than the program does.
 
-`lex-sys authority --target wasm32-wasip1` reports them (and `--output json` carries a
+`cancho authority --target wasm32-wasip1` reports them (and `--output json` carries a
 `wasi` object: `required`, `allowed`, `refused`, `unbounded`, `unknown`); the
 host's report is unchanged. For the JSON filter: required and allowed are both
 `fd_read`, `fd_write`, which is exactly what its module imports.
@@ -459,7 +459,7 @@ that released its `args` capability and never read an argument still imported bo
 runtime would have granted it the command line whatever its row said: the one place W2b's
 table had to write "startup" instead of a label.
 
-The module now defines `_start` itself (`lex-sys-codegen-llvm/src/wasi_entry.rs`) and the link
+The module now defines `_start` itself (`cancho-codegen-llvm/src/wasi_entry.rs`) and the link
 no longer includes `crt1-command.o`. It does what crt1's did, minus the fetch: run the
 constructors (`__wasm_call_ctors`, where wasi-libc hangs its own set-up, preopens included),
 call the program, run the destructors, and leave through `_Exit` (`proc_exit`) on a non-zero
@@ -486,7 +486,7 @@ is *allowed* for every program and *required* of none, and `args` is a label lik
 
 ### Still correct
 
-- **Behaviour:** `tests/accept/arguments.ls`, native against the module, over nine command
+- **Behaviour:** `tests/accept/arguments.cho`, native against the module, over nine command
   lines (none, one, many, non-ASCII, an empty argument, a 3,000-byte argument, spaces, dashes):
   the same output and the same exit status in every case. An import list that is right says
   nothing about whether the values are, so this is the part that could have broken.
@@ -517,9 +517,9 @@ entry is still `main`.
 
 | Milestone | What | Acceptance |
 |---|---|---|
-| **W0** -- spike | `--target wasm32-wasip1`, `examples/hello.ls` runs in wasmtime | **Done**: one example prints the right bytes; conformance map above |
+| **W0** -- spike | `--target wasm32-wasip1`, `examples/hello.cho` runs in wasmtime | **Done**: one example prints the right bytes; conformance map above |
 | **W1** -- a real command | A stdin→stdout JSON filter on `std.json` | **Done**: byte-identical to native over 1,585 documents; the import list is measured, and is wider than the row (§W1 results) |
-| **W2** -- the authority check (**W2a, W2b and W2c are done**: the console without libc stdio, the label-to-imports table, `authority --target`, the cross-check, and a command line fetched only when read) | `lex-sys authority --target wasm32-wasip1` cross-checked against the module | A test that fails if the module imports anything the row does not explain, **and** if a label has no import (the rows are exact both ways); JSON report carries the import list |
+| **W2** -- the authority check (**W2a, W2b and W2c are done**: the console without libc stdio, the label-to-imports table, `authority --target`, the cross-check, and a command line fetched only when read) | `cancho authority --target wasm32-wasip1` cross-checked against the module | A test that fails if the module imports anything the row does not explain, **and** if a label has no import (the rows are exact both ways); JSON report carries the import list |
 | **W3** -- a pure library | `packages/x509` verify as a **reactor** module (exports, no `main`) | Import section is empty beyond memory; results identical to native on the x509 conformance fixtures; overhead measured |
 | **W4** -- components | `wasip2`, one WIT `resource` mapped to a `res` handle | `wasi:filesystem` descriptor as a linear handle, `own`/`borrow` ↔ `res`/`borrow`; then `examples/serve` as `wasi:http` |
 
@@ -559,11 +559,11 @@ which is cheaper.
    the CLI's `link_wasm` (the object comes from `clang`; the final link is
    the CLI's, not the backend's).
 5. **Coverage map.** Done once, above. Re-run with
-   `WASMTIME_FLAGS=--dir=/ python3 scripts/wasm_coverage.py <lex-sys>`.
+   `WASMTIME_FLAGS=--dir=/ python3 scripts/wasm_coverage.py <cancho>`.
 
 ## W1 -- a real command
 
-- Target: a jq-lite over `std.json` (`std/json.ls`), reading stdin, writing
+- Target: a jq-lite over `std.json` (`std/json.cho`), reading stdin, writing
   stdout. Row `[io_read, io_write]`.
 - Exercises heap, arenas, boxed slices and bytes -- exactly where a pointer-width
   bug would surface.
@@ -583,7 +583,7 @@ which is cheaper.
   is the spec; generate it from the builtin definitions rather than
   hand-writing it, and keep it as data inside the codegen crate with a
   completeness test, in the spirit of `every_rule_has_a_fixture`.
-- `lex-sys authority --output json` gains `imports: [...]` for wasm targets.
+- `cancho authority --output json` gains `imports: [...]` for wasm targets.
 - A conformance test: build every accept fixture for wasm, assert
   `imports(module) ≈ map(row(main)) ∪ runtime_baseline`, **equality** rather
   than subset, since effect rows are exact in both directions. Needs
@@ -635,7 +635,7 @@ sockets, threads and signals rows).
 | Area | wasip1 | wasip2 | Note |
 |---|---|---|---|
 | Console (`io_read`/`io_write`) | yes | yes | |
-| Files, directories, `openat`, `pread`/`pwrite` | yes | yes | Preopens replace absolute paths; `Fs` path prefix ↔ preopen. Constants differ (`open` flags, `stat`, `dirent`) and are tabled in `lex_sys_ir::Os`; `errno` is translated to the language's numbering |
+| Files, directories, `openat`, `pread`/`pwrite` | yes | yes | Preopens replace absolute paths; `Fs` path prefix ↔ preopen. Constants differ (`open` flags, `stat`, `dirent`) and are tabled in `cancho_ir::Os`; `errno` is translated to the language's numbering |
 | Heap, arenas | yes | yes | wasi-libc `malloc`; `size_t` is 32-bit |
 | Clock | yes | yes | |
 | `flock`, `fsync`, `rename` | partial | partial | Check per call |
@@ -672,7 +672,7 @@ report.
 
 ## Open decisions
 
-1. ~~`--target` flag vs. a separate `lex-sys wasm` subcommand.~~ **Flag**:
+1. ~~`--target` flag vs. a separate `cancho wasm` subcommand.~~ **Flag**:
    `compile_object_for` already takes a triple, and it mirrors `--backend`.
 2. `wasm32` vs. `wasm64` as the first target. **wasm32**, by the argument above.
 3. Library-mode export rules: may an exported function take a capability the

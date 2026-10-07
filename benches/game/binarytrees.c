@@ -1,4 +1,4 @@
-// binary-trees — the same algorithm as binarytrees.ls.
+// binary-trees — the same algorithm as binarytrees.cho.
 //
 // `malloc` and `free` per node, matching `box`/`unbox`: the Benchmarks
 // Game's own C entry uses an arena allocator, which measures a

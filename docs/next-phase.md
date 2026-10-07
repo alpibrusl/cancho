@@ -22,7 +22,7 @@ Three things happened, in order, that are the actual evidence for
 everything below:
 
 1. **A stale claim, found by chance.** `docs/benchmarks-game.md` §3 and
-   §5 described `spectral.ls` as still hand-rolling `sqrt`, four months
+   §5 described `spectral.cho` as still hand-rolling `sqrt`, four months
    after `#62` made it a builtin. Nothing had reason to reread that
    paragraph — it was found because a user asked "is `std.math` over
    floats really still open?" and the answer required rereading, not
@@ -56,7 +56,7 @@ repository has by that same line:
 
 | Already verified, not comprehended | By what |
 |---|---|
-| A function's effects match its body | `lex-sys check`, every build |
+| A function's effects match its body | `cancho check`, every build |
 | A refusal names a stable rule | `agent-errors.md`'s 52-rule catalogue, fixture-checked |
 | `AGENTS.md`'s code examples still compile/refuse as claimed | `docs::the_agents_examples_still_work` |
 | The generated doc tree can't drift from the dispatch table | `agent_cli::every_dispatched_command_is_documented` (landed this session, `#157`) |
@@ -85,10 +85,10 @@ that found `http.response` (`#153`) — surfaces two clusters that
 clear the project's own "two real askers" bar by a wide margin,
 neither previously flagged:
 
-| Function | Duplicated in | Already in `std/io.ls`? |
+| Function | Duplicated in | Already in `std/io.cho`? |
 |---|---|---|
-| `print_nat` | 7 examples (`tally.ls`, `pipeline.ls`, `tree.ls`, `tour.ls`, `modular/text.ls`, `slab/main.ls`, `wordfreq/text.ls`) | Yes, `pub fn print_nat`, byte-identical body |
-| `write_all` | 8 examples (`lines.ls`, `hello.ls`, `tree.ls`, `tour.ls`, `modular/text.ls`, `slab/main.ls`, `wordfreq/text.ls`, `buffer/main.ls`) | Yes, `pub fn write_all` — but `std.io`'s calls the `write_bytes` builtin (`docs/bulk-io.md`); every example's own copy is the pre-bulk-I/O `putchar`-per-byte loop. `hello.ls`'s copy stays: §3.1 |
+| `print_nat` | 7 examples (`tally.cho`, `pipeline.cho`, `tree.cho`, `tour.cho`, `modular/text.cho`, `slab/main.cho`, `wordfreq/text.cho`) | Yes, `pub fn print_nat`, byte-identical body |
+| `write_all` | 8 examples (`lines.cho`, `hello.cho`, `tree.cho`, `tour.cho`, `modular/text.cho`, `slab/main.cho`, `wordfreq/text.cho`, `buffer/main.cho`) | Yes, `pub fn write_all` — but `std.io`'s calls the `write_bytes` builtin (`docs/bulk-io.md`); every example's own copy is the pre-bulk-I/O `putchar`-per-byte loop. `hello.cho`'s copy stays: §3.1 |
 
 This is `docs/line-reading.md`'s "cut's long line" pattern a second
 time: example programs are not merely duplicating a helper, most of
@@ -101,22 +101,22 @@ it; the four that live in their own subdirectory (`wordfreq/`,
 instead, and two of those four needed `--std` added to that test's own
 build command as part of this migration.
 
-`examples/buffer/main.ls`'s own `write_all` had **zero** call sites in
+`examples/buffer/main.cho`'s own `write_all` had **zero** call sites in
 that file: dead code, found by the same grep that found the
 duplication, deleted outright rather than migrated.
 
 ### 3.1 Landed, with two exceptions found doing it
 
-The migration above is done (this PR). `lines.ls`, `tally.ls`,
-`pipeline.ls`, `tree.ls`, `tour.ls`, `wordfreq/{text,main,counts}.ls`
-and `slab/main.ls` now `import std.io;` and call
-`io.write_all`/`io.print_nat`; `buffer/main.ls`'s dead copy is gone.
+The migration above is done (this PR). `lines.cho`, `tally.cho`,
+`pipeline.cho`, `tree.cho`, `tour.cho`, `wordfreq/{text,main,counts}.cho`
+and `slab/main.cho` now `import std.io;` and call
+`io.write_all`/`io.print_nat`; `buffer/main.cho`'s dead copy is gone.
 Every migrated example's output was diffed against its own `//~
 STDOUT` directive before and after — byte-identical in every case,
 which is the whole point of the fix being mechanical. Seven files
 moved, not the ten §3 counted, for two reasons found only by doing it:
 
-**`examples/modular/text.ls` is deliberately excluded.** Its own header
+**`examples/modular/text.cho` is deliberately excluded.** Its own header
 comment says why it exists: *"The functions here are byte-for-byte the
 ones 25 other files in this repository each define for themselves --
 and moving them here changed **no hash**... because a call encodes the
@@ -126,7 +126,7 @@ four PRs before this one noticed it as duplication. Migrating this
 file onto `std.io` would delete the functions its own comment uses as
 the worked example.
 
-**`examples/hello.ls` is excluded for a different reason, found only
+**`examples/hello.cho` is excluded for a different reason, found only
 by running the full gate.** The first pass migrated it too, and `cargo
 test --workspace` immediately failed three unrelated tests —
 `corpus::run_builds_and_executes_in_one_step`,
@@ -139,13 +139,13 @@ file recording why and naming the three tests, so a future hunt does
 not propose the same fix and hit the same wall silently.
 
 **A third thing found doing the mechanical part, not before.**
-`wordfreq/`'s three files (`text.ls`, `main.ls`, `counts.ls`) have no
+`wordfreq/`'s three files (`text.cho`, `main.cho`, `counts.cho`) have no
 `module` line, so they share one root namespace the way `write_all`
-and `print_nat` themselves used to be reached unqualified from `main.ls`
-and `counts.ls`. `import std.io;` in more than one of them is refused —
+and `print_nat` themselves used to be reached unqualified from `main.cho`
+and `counts.cho`. `import std.io;` in more than one of them is refused —
 *"`io` is already bound to another import here"* — the same rule that
 refuses two definitions of one name in that namespace, applied to an
-import for the first time in this repository. One import, in `text.ls`,
+import for the first time in this repository. One import, in `text.cho`,
 serves the whole program; a comment in the other two says where it
 lives and why it is not repeated. Not previously documented anywhere,
 because nothing here had shared one root namespace across an import
@@ -160,7 +160,7 @@ does not replace reading the one file that explains why it exists.
 
 A second, smaller cluster — `nat_of`/`port_of`/`port_of_listen`, four
 files, ~182 characters each, already under different names in
-`serve.ls`/`collect.ls`/`agent_supervisor.ls`/`results_stub.ls` — meets
+`serve.cho`/`collect.cho`/`agent_supervisor.cho`/`results_stub.cho` — meets
 the two-asker bar too but is a shape question (three different names
 for the same parse), not a mechanical migration; it can wait.
 
@@ -186,8 +186,8 @@ hunt.
 Proposed: a conformance test — `audit::no_function_body_is_duplicated`
 or similar, mirroring `identity.rs`'s existing printing-idempotence
 style — that hashes every function body under `examples/`, `std/`,
-`packages/` (post-canonicalization, via `lex-sys print` or
-`lex-sys-id`, not regex, so it survives reformatting the regex-based
+`packages/` (post-canonicalization, via `cancho print` or
+`cancho-id`, not regex, so it survives reformatting the regex-based
 hunt script would not) and fails when two bodies in different files
 match, above a length floor to exclude one-line coincidences like `fn
 main`. It would not have caught §1.1/§1.2 (those are prose, not code),
@@ -199,32 +199,32 @@ rather than red on day one.
 ### 4.1 Landed, and it found more than the hunt did
 
 `duplication::no_function_body_is_duplicated_across_files`
-(`crates/lex-sys/tests/conformance/duplication.rs`) is that test. It
-settles §6's open question: a conformance test, not a `lex-sys audit`
+(`crates/cancho/tests/conformance/duplication.rs`) is that test. It
+settles §6's open question: a conformance test, not a `cancho audit`
 subcommand — `identity.rs`'s own precedent, and nothing here needs an
 agent to run it mid-task rather than `cargo test` catching it on every
 build.
 
-It is built on `lex-sys-id`, not on `lex-sys print`'s text, for a
+It is built on `cancho-id`, not on `cancho print`'s text, for a
 reason found while building it rather than argued in advance: each
 file is parsed and identified **alone**, exactly as
 `identity.rs::printing_preserves_every_identity_and_is_idempotent`
 already does — no `--std`, no cross-file resolution — and
-`lex-sys-id`'s own `qualified_name` already encodes a call to a name
+`cancho-id`'s own `qualified_name` already encodes a call to a name
 declared in the *same* file as that declaration's hash, and a call to
 anything else (a builtin, an import) as the literal name. Two files
 calling the same builtins the same way still collide, which is what
 catches a real copy; two files whose functions merely *read* alike but
 resolve an unqualified name against two different local declarations
-do not. `examples/rational.ls` and `std/result.ls` both define an
-`is_ok` whose `match` arms print identically — but `rational.ls`'s own
+do not. `examples/rational.cho` and `std/result.cho` both define an
+`is_ok` whose `match` arms print identically — but `rational.cho`'s own
 `Result[T]` (§3.1's own migration left it alone: it is a different,
 locally-declared enum, not `std.result`'s `Result[T, E]`) makes its
-`Result::Ok`/`Result::Err` hash differently from `std/result.ls`'s own.
+`Result::Ok`/`Result::Err` hash differently from `std/result.cho`'s own.
 A text diff cannot tell those two cases apart — the regex hunt behind
 §3 would have flagged it as a third cluster — a content hash always
 can, and the test finds no cluster there at all. `benches/`'s own
-`*_checked.ls`/`*_wrapping.ls` pairs are excluded from the scan for the
+`*_checked.cho`/`*_wrapping.cho` pairs are excluded from the scan for the
 opposite reason: `benchmarks.rs::every_benchmark_pair_agrees` already
 asserts each pair agrees on purpose, so including them here would mean
 allowlisting every pair for no added safety.
@@ -237,29 +237,29 @@ documented anywhere —
 
 | Function(s) | Files | Already under a shared name? |
 |---|---|---|
-| ~~`abs`~~ | `examples/rational.ls`, `std/math.ls` | **Migrated** — `rational.ls` now `import`s `std.math` and calls `math.abs`; its own copy is gone |
-| ~~`larger` / `max`~~ | `examples/tree.ls`, `std/math.ls` | **Migrated** — `tree.ls` now `import`s `std.math` and calls `math.max`; its own copy is gone |
-| `append` / `put` | `examples/lines.ls`, `packages/net-sockets/sockets.ls`, `examples/ocpp_ws/ocpp.ls` (the WebSocket spike's third copy, kept for the same reason) | Yes — `net.sockets.put`, same byte-blit loop, different name |
+| ~~`abs`~~ | `examples/rational.cho`, `std/math.cho` | **Migrated** — `rational.cho` now `import`s `std.math` and calls `math.abs`; its own copy is gone |
+| ~~`larger` / `max`~~ | `examples/tree.cho`, `std/math.cho` | **Migrated** — `tree.cho` now `import`s `std.math` and calls `math.max`; its own copy is gone |
+| `append` / `put` | `examples/lines.cho`, `packages/net-sockets/sockets.cho`, `examples/ocpp_ws/ocpp.cho` (the WebSocket spike's third copy, kept for the same reason) | Yes — `net.sockets.put`, same byte-blit loop, different name |
 
 — plus one the §3 hunt's own scope already should have caught and
 didn't, because it only hashed the four files each duplicate cluster
 already lived in and never rechecked a package's own extraction
-point: `packages/net-connect/connect.ls`'s `address` says in its own
+point: `packages/net-connect/connect.cho`'s `address` says in its own
 comment it was "extracted from" three files' copies, but
-`examples/tls_client/socket.ls` was never migrated onto the package
+`examples/tls_client/socket.cho` was never migrated onto the package
 and still carried the pre-extraction copy. **Migrated too**:
-`socket.ls` now `import`s `net.connect`/`net.sockets` and forwards into
+`socket.cho` now `import`s `net.connect`/`net.sockets` and forwards into
 them, verified against a real OpenSSL server over an actual TLS 1.3
 handshake, not just a build. The migration surfaced a real gap the
 type checker does not cover: the backend's own symbol for a function
-is its name alone (`crates/lex-sys-codegen/src/abi.rs`'s `lexs_`
+is its name alone (`crates/cancho-codegen/src/abi.rs`'s `lexs_`
 prefix, no module qualifier), so naming the forwarding wrapper
 `connect_to` — the obvious choice, and what the type checker itself
 resolves without complaint, module-scoped — collides with
 `net.connect`'s own `connect_to` at the object file the moment both
 are linked into one program; `clang -c` refuses the emitted LLVM IR
 with "invalid redefinition of function." Renamed to `socket.open`
-instead. `crates/lex-sys/tests/conformance/net.rs`'s
+instead. `crates/cancho/tests/conformance/net.rs`'s
 `the_network_programs_are_counted` — the standing count `docs/net.md`
 §5 rests on — moved with it: outbound is one declaring file now,
 matching inbound.
@@ -267,7 +267,7 @@ matching inbound.
 Both migrated rows landed the same session `§4.1` was written, each
 output-diffed against its own `//~ STDOUT` before and after (identical
 in both cases, and `address`'s migration diffed a real TLS handshake's
-bytes too) and the full gate rerun. `rational.ls`'s migration also
+bytes too) and the full gate rerun. `rational.cho`'s migration also
 moved `identity.rs::ids_are_stable_across_runs_and_survive_a_body_rewrite`,
 which patched `abs`'s own body text to exercise "a body rewrite moves
 no signature" — `gcd` carries that job now, and the `ids` calls there
@@ -311,12 +311,12 @@ document is making.
 
 | Question | Why it waits |
 |---|---|
-| ~~Does `audit::no_function_body_is_duplicated` belong in this repo's own test suite, or as a `lex-sys audit` subcommand an agent can run on demand?~~ | Decided, §4.1: a conformance test, `identity.rs`'s own precedent |
+| ~~Does `audit::no_function_body_is_duplicated` belong in this repo's own test suite, or as a `cancho audit` subcommand an agent can run on demand?~~ | Decided, §4.1: a conformance test, `identity.rs`'s own precedent |
 | Is there a mechanical check for §1.1/§1.2's category at all, even a partial one (e.g. flag a doc paragraph whose cited PR number is more than N merges behind `HEAD`)? | Speculative; no design exists yet, and §5 says why it's harder than §4 |
 | The `nat_of`/`port_of` cluster (§3) | Real, smaller, a shape question rather than a mechanical fix — pick up opportunistically |
-| ~~`address` (`examples/tls_client/socket.ls`, never migrated onto `packages/net-connect/connect.ls`)~~ | **Migrated**, §4.1 — and found a real backend gap doing it (a same-named `pub fn` in two modules collides at the object file; the type checker does not catch it) |
-| ~~`abs` / `larger` (`examples/rational.ls`, `examples/tree.ls`, not yet calling `std.math`)~~ | **Migrated**, §4.1 |
-| `append` (`examples/lines.ls`, not yet calling `packages/net-sockets/sockets.ls`'s `put`, §4.1) | Real, mechanical, but pulls a network package into a file that otherwise has no package dependency — worth a second look before migrating, not a pure copy-paste |
-| `read_stdin`/`read_file` (`examples/sort/sort.ls`, `examples/seek/seek.ls`, §4.1) | Real, identical present-day logic kept apart on purpose as two worked examples of the same fix (`docs/file-handles.md` §1) — extracting a shared helper would need a place to put it that isn't either example |
-| The whole of `examples/buffer/buffer.ls` (predates `std/buffer.ls`, never migrated, §4.1) | Real, larger than a one-function fix — the example's own `res struct Buffer` would need to become `std.buffer.Buffer` throughout, which is a rewrite of the file, not a swap |
+| ~~`address` (`examples/tls_client/socket.cho`, never migrated onto `packages/net-connect/connect.cho`)~~ | **Migrated**, §4.1 — and found a real backend gap doing it (a same-named `pub fn` in two modules collides at the object file; the type checker does not catch it) |
+| ~~`abs` / `larger` (`examples/rational.cho`, `examples/tree.cho`, not yet calling `std.math`)~~ | **Migrated**, §4.1 |
+| `append` (`examples/lines.cho`, not yet calling `packages/net-sockets/sockets.cho`'s `put`, §4.1) | Real, mechanical, but pulls a network package into a file that otherwise has no package dependency — worth a second look before migrating, not a pure copy-paste |
+| `read_stdin`/`read_file` (`examples/sort/sort.cho`, `examples/seek/seek.cho`, §4.1) | Real, identical present-day logic kept apart on purpose as two worked examples of the same fix (`docs/file-handles.md` §1) — extracting a shared helper would need a place to put it that isn't either example |
+| The whole of `examples/buffer/buffer.cho` (predates `std/buffer.cho`, never migrated, §4.1) | Real, larger than a one-function fix — the example's own `res struct Buffer` would need to become `std.buffer.Buffer` throughout, which is a rewrite of the file, not a swap |
 | `n-body`, why `fasta` moved the "wrong" direction under `--backend llvm`, a quieter `revcomp` host, a stated precision in `std.fmt` | `benchmarks-game.md` §5 and `float-printing.md` §7's own Open rows, unrelated to this document's argument, still on file |

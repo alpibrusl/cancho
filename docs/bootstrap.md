@@ -1,7 +1,7 @@
 # The v0 compiler
 
 Decisions M0 had to settle to exist, recorded here so they are not re-litigated
-by accident. Each was an open question in [#1](https://github.com/alpibrusl/lex-sys/issues/1).
+by accident. Each was an open question in [#1](https://github.com/alpibrusl/cancho/issues/1).
 
 ## Bootstrap host language: Rust
 
@@ -24,24 +24,24 @@ is **not yet**, for scale and lack of an asker, not for any reason this
 compiler's design would need to change. Nothing in this compiler's design
 assumes it stays in Rust.
 
-## File extension: `.ls`
+## File extension: `.cho`
 
-`.ls` over `.lxs`. Shorter, and the collision risk (LiveScript) is not one this
-ecosystem will meet in practice. `lex-sys build hello.ls`.
+`.cho` over `.lxs`. Shorter, and the collision risk (LiveScript) is not one this
+ecosystem will meet in practice. `cancho build hello.cho`.
 
 ## Layout
 
 ```
-crates/lex-sys-syntax    lexer, canonical-shaped AST, parser
-crates/lex-sys-ir        resolution and well-formedness checks; the M0 IR
-crates/lex-sys-codegen   Cranelift lowering, native object emission
-crates/lex-sys           the CLI
+crates/cancho-syntax    lexer, canonical-shaped AST, parser
+crates/cancho-ir        resolution and well-formedness checks; the M0 IR
+crates/cancho-codegen   Cranelift lowering, native object emission
+crates/cancho           the CLI
 examples/                programs that are meant to be read
 tests/accept             fixtures that must compile and run
 tests/reject             fixtures that must be refused, each stating why
 ```
 
-Everything the compiler can refuse, it refuses in `lex-sys-ir`. The backend
+Everything the compiler can refuse, it refuses in `cancho-ir`. The backend
 takes IR that has already been proven well-formed, so Cranelift lowering has no
 error path for a *program* — only for the environment.
 
@@ -110,5 +110,5 @@ AST whose hashes are already wrong, so the shape is settled now:
 | 2 | the command line was wrong |
 | 3 | the environment failed: no linker, unwritable output, unsupported host |
 
-`lex-sys run` is the exception: it exits with the compiled program's status, so
-`lex-sys run p.ls` and `lex-sys build p.ls && ./p` agree.
+`cancho run` is the exception: it exits with the compiled program's status, so
+`cancho run p.cho` and `cancho build p.cho && ./p` agree.

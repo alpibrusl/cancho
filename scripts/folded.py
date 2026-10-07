@@ -2,7 +2,7 @@
 """How much of this repository's code the compiler works out before it runs.
 
 `docs/compile-time.md` §1 is the census this produces. It asks the
-compiler rather than re-deriving the answer: `lex-sys authority --output
+compiler rather than re-deriving the answer: `cancho authority --output
 json` reports `folded_operators` and `folded_calls` for a program, so the
 number here is what the pass actually did and not an estimate of what it
 could do.
@@ -22,19 +22,19 @@ import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-BIN = ROOT / "target" / "release" / "lex-sys"
+BIN = ROOT / "target" / "release" / "cancho"
 
 
 def programs():
     """Every single-file program in the repository, in a stable order."""
     found = []
     for directory in ("examples", "tests/accept", "benches/three"):
-        found += sorted((ROOT / directory).glob("*.ls"))
+        found += sorted((ROOT / directory).glob("*.cho"))
     # The multi-file examples are directories; each one's entry point is
     # the file named after it.
     for directory in sorted((ROOT / "examples").iterdir()):
         if directory.is_dir():
-            entry = directory / f"{directory.name}.ls"
+            entry = directory / f"{directory.name}.cho"
             if entry.exists():
                 found.append(entry)
     return found

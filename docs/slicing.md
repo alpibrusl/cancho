@@ -158,9 +158,9 @@ feature.
 
 | Fixture | Rule | § |
 |---|---|---|
-| `slice_of_a_non_slice.ls` | `..` needs a run to range over | 1 |
-| `slice_bound_is_not_an_int.ls` | Both bounds are `int` | 1 |
-| `slice_escapes_its_region.ls` | A subslice is an ordinary reference, so it cannot outlive the borrow | 3 |
+| `slice_of_a_non_slice.cho` | `..` needs a run to range over | 1 |
+| `slice_bound_is_not_an_int.cho` | Both bounds are `int` | 1 |
+| `slice_escapes_its_region.cho` | A subslice is an ordinary reference, so it cannot outlive the borrow | 3 |
 
 §2's two bounds rules are **runtime** traps, so they are conformance
 tests rather than reject fixtures — the reject harness runs `check`, and
@@ -173,4 +173,4 @@ a program that traps is one that compiled:
 
 | Accepting | Shows |
 |---|---|
-| `slicing.ls` | A subslice read, re-sliced, passed where `&r [T]` is wanted, and emitted to two destinations with an exact row each |
+| `slicing.cho` | A subslice read, re-sliced, passed where `&r [T]` is wanted, and emitted to two destinations with an exact row each |

@@ -2,7 +2,7 @@
 
 > **Status: built.** §2's primitive (`trap()`, and `std.test`'s
 > `assert`/`assert_eq`/`assert_ne` on it) is on both backends, and §3's
-> runner is `lex-sys test`. A program — an agent's or a person's — had
+> runner is `cancho test`. A program — an agent's or a person's — had
 > no way to state "this must be true" at all before this, not even
 > that. What is *not* built is listed in §5: no per-test timeout, no
 > message on a failed assertion, nothing generic over `T`.
@@ -11,11 +11,11 @@
 
 An agent-usability survey this session — not a hunt for a specific
 bug, a direct question about what the toolchain still lacked for real
-use — found that `cargo test` (`crates/lex-sys/tests/conformance/`)
+use — found that `cargo test` (`crates/cancho/tests/conformance/`)
 is purely internal to developing the compiler itself, and that nothing
-comparable exists for a program written *in* lex-sys. The real path
+comparable exists for a program written *in* cancho. The real path
 to testing one's own function, before this document, was: write
-another `.ls` file, compare values with `if`/`==`, and return a
+another `.cho` file, compare values with `if`/`==`, and return a
 distinct `int` as the process exit status. No assertion, no failure
 message, no way to tell "this test failed" from "this program
 computed 1" apart from reading the number back and remembering what
@@ -49,7 +49,7 @@ for every checked operation) — so this is the first builtin that
 reaches it *unconditionally* rather than behind a check the compiler
 emits on its own, and adding it was mechanical on both: one
 `trap(TrapCode::unwrap_user(1))` plus a fresh dead block in
-`lex-sys-codegen`, one `trap_if("true")` in `lex-sys-codegen-llvm`.
+`cancho-codegen`, one `trap_if("true")` in `cancho-codegen-llvm`.
 
 `std.test.assert(condition: bool) -> [] int` is a library function
 built on it, not a second builtin:
@@ -73,7 +73,7 @@ way `docs/collections.md`'s own `unwrap_or` spells out a two-line
 `match`: not a new primitive, a name for the line every caller would
 otherwise write for itself.
 
-`tests/accept/assert.ls` is the pass side, checked against its own
+`tests/accept/assert.cho` is the pass side, checked against its own
 `//~ STDOUT`/`//~ EXIT` the ordinary way. The fail side cannot be: a
 trap is not a value a program's `return` can produce, so
 `traps.rs::assert_fails_the_same_way_every_other_trap_does` checks it
@@ -81,19 +81,19 @@ the way every other trap fixture here is checked — built, run, and
 confirmed killed by a signal (`run.status.code() == None`), not
 exited.
 
-## 3. The runner: `lex-sys test`
+## 3. The runner: `cancho test`
 
 This language has no macros and no reflection (`README.md`'s own
 "what's deliberately not here"), so nothing can enumerate a program's
-own declarations from inside it. `lex-sys test some_file.ls` does it
+own declarations from inside it. `cancho test some_file.cho` does it
 from outside: it parses each named file, takes every `fn test_*`, writes
 a `main` that runs whichever one `argv[1]` names, builds **once**, and
 runs the executable **once per test**, because a trap kills the process
 it happens in and a runner has to survive one test's failure to report
-the next (`crates/lex-sys/src/test_cli.rs`).
+the next (`crates/cancho/src/test_cli.rs`).
 
 ```
-$ lex-sys test --std ok.ls
+$ cancho test --std ok.cho
 running 4 tests
 test test_add ... ok
 test test_returns_nonzero ... FAILED
@@ -162,4 +162,4 @@ open, not answered here, the same way `docs/collections.md` §7 leaves
 | A message on a failed assertion | Would make `assert` the one trap with text, against every other trap's own design (§4) |
 | `assert_eq`/`assert_ne` over a generic `T` | Wants `==` over an arbitrary type, which nothing here has built yet |
 | Running tests in parallel | One process per test makes it possible; output would need buffering per test, which the runner already does |
-| Filtering (`lex-sys test f.ls -- name`) | Not needed until a file has enough tests to want one |
+| Filtering (`cancho test f.cho -- name`) | Not needed until a file has enough tests to want one |

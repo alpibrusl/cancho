@@ -1,4 +1,4 @@
-// The same picture in double precision -- the row lex-sys cannot fill.
+// The same picture in double precision -- the row cancho cannot fill.
 // `docs/against-c-and-rust.md` §4.
 
 #[inline(never)]

@@ -1,12 +1,12 @@
-// fasta -- the same algorithm as fasta.ls, following the Benchmarks
+// fasta -- the same algorithm as fasta.cho, following the Benchmarks
 // Game's own specification directly rather than either of its hand-tuned
 // C entries: one precomputes a 139968-entry lookup table, the other
 // threads across the three records. `benchmarks-game.md` §2 is why
 // neither is the comparison are-we-fast-yet's rule asks for.
 //
-// `double`, not `float`: lex-sys has one floating type, IEEE-754
+// `double`, not `float`: cancho has one floating type, IEEE-754
 // binary64 (`docs/floating-point.md`), and this reference has to do the
-// same arithmetic as fasta.ls to be a fair comparison. It also turns out
+// same arithmetic as fasta.cho to be a fair comparison. It also turns out
 // to reproduce the Benchmarks Game's own published N=1000 output bit for
 // bit, which is how the algorithm here was checked before either port
 // existed (`fasta-1000.txt`).

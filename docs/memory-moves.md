@@ -4,9 +4,9 @@ Status: **built**, edition 5.
 
 ## 1. Why
 
-`lexsys-cache`'s arena compaction slides every live record down over the garbage in place. With only indexing to do it, that is a loop
+`cancho-cache`'s arena compaction slides every live record down over the garbage in place. With only indexing to do it, that is a loop
 `data[to + i] = data[from + i]`, which the compiler cannot turn into a block move (the two ranges may overlap, and nothing says which way),
-and it ran at about 0.5 GB/s: **114.7 ms for the worst compaction of a 64 MiB arena** (`lexsys-cache`, `bench/stall.py`). A byte loop is also
+and it ran at about 0.5 GB/s: **114.7 ms for the worst compaction of a 64 MiB arena** (`cancho-cache`, `bench/stall.py`). A byte loop is also
 the wrong tool for a language that wants the safe operation to be the fast one: every program that moves a run of bytes (a buffer being
 compacted, a parser shifting its unread tail to the front) writes it, and each can get the direction wrong.
 
@@ -28,7 +28,7 @@ region slice in one call, which is why [`bulk-copy.md`](bulk-copy.md)'s two-slic
 
 ## 3. What it is checked by
 
-* `tests/accept/copy_within.ls`, on both backends: forward and backward overlap (the case a front-to-back loop gets wrong), the whole slice onto itself, empty
+* `tests/accept/copy_within.cho`, on both backends: forward and backward overlap (the case a front-to-back loop gets wrong), the whole slice onto itself, empty
   moves at both ends, a one-byte move, a move inside a sub-slice that touches nothing outside it.
 * `tests/conformance/traps.rs`: nine ways of being out of range (negative `dst`, `src`, `n`; past the end by each; beyond the length; and a count that would overflow
   `dst + n` and `src + n`) each killed by a signal on **both backends**, and three calls at the edge that must succeed.

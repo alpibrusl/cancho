@@ -8,7 +8,7 @@
 > program a file it can *read* without knowing its size. This is the other
 > half: a file it can **append to, update in place, make durable, and
 > replace atomically**. The asker is a durable log
-> (`lexsys-log`, the engine under a job queue and an audit trail), and it
+> (`cancho-log`, the engine under a job queue and an audit trail), and it
 > is the first program that cannot be written at all today rather than
 > written badly: `fs_write` rewrites a whole file from byte zero, and a
 > log is the opposite of that.
@@ -90,7 +90,7 @@ beat it on the same grounds, which apply unchanged:
 * **`Ffi("libc")` is the whole of libc.** A program that fsyncs through it
   can also `unlink` anything. The report says `ffi("libc")`, which is true
   and tells a supervisor nothing. A log that is supposed to touch
-  `/var/lib/log` and one socket should say exactly that, and `lex-sys
+  `/var/lib/log` and one socket should say exactly that, and `cancho
   authority` already prints `fs_write("/var/lib/log")` for the path
   operations. `under-a-grant.md` found the filesystem dimension is the one
   a `lex-os` grant can enforce, so this is the dimension worth keeping
@@ -178,7 +178,7 @@ accepts a `write`. Three facts follow, and one of them is a limit:
   `fs_write`, and a program that wants `0600` for a segment file cannot ask.
   Slice 1 accepts that; §8 lists it.
 * **No `O_CLOEXEC`.** The descriptor is inherited across `exec` (measured:
-  `FD_CLOEXEC` clear). lex-sys has no `exec` builtin, so this matters only
+  `FD_CLOEXEC` clear). cancho has no `exec` builtin, so this matters only
   to a program that reaches `fork`/`exec` through `Ffi`, and it is the
   same as `open_read` today. **Corrected ([`processes.md`](processes.md)
   §4.5):** the duplicate taken from `fopen`'s descriptor is now
@@ -231,7 +231,7 @@ Names follow `file-handles.md` §4.2: the subject, then the verb, and none
 of the three ordinary names (`write`, `read`, `sync`) that a program using
 `Ffi("libc")` may already declare. Zero fixtures, examples or packages in
 this repository use any of the names below (checked with `grep` over every
-`.ls` and `.rs` file).
+`.cho` and `.rs` file).
 
 ```
 open_append[&c,&a](fs: &c Fs(p), path: &a [byte]) -> [fs_write(p)] Opened   // "ab":  create or append
@@ -330,7 +330,7 @@ block device. The consequence for the design is stated plainly instead:
 > The documented response is to stop and recover from the log, never to
 > retry.
 
-That is policy for `lexsys-log`, and it is why `Done` carries the errno:
+That is policy for `cancho-log`, and it is why `Done` carries the errno:
 `ENOSPC` on a write is an ordinary condition a program may wait out,
 `EIO` on a sync is not.
 
@@ -376,7 +376,7 @@ answer it, and this machine cannot.
 **A volatile cache can make §1.1 flatter than it should be.** A device that
 acknowledges a flush it has not performed makes `fsync` fast and the
 numbers an illusion. The 193 µs here is consistent with a real flush on a
-virtual disk, and is not proof of one. The correctness of `lexsys-log`
+virtual disk, and is not proof of one. The correctness of `cancho-log`
 cannot rest on this table, and its crash tests (not this document's
 concern) do not.
 
@@ -399,7 +399,7 @@ file_lock[&f](file: &!f File)                                    -> [file_write]
   within one filesystem. Across filesystems it fails with `EXDEV` and the
   errno is returned, not retried. That guarantee is not measured here; it
   is what the standard says and what every database relies on. Durability
-  still needs §5.2's directory sync, and `lexsys-log` is the program that
+  still needs §5.2's directory sync, and `cancho-log` is the program that
   must do it.
 * **`fs_remove` is `unlink`.** It does not remove directories.
 * **`file_lock` is `flock(fd, LOCK_EX|LOCK_NB)`**: a non-blocking, exclusive,
@@ -472,7 +472,7 @@ suite, no source file over 2,000 lines (the largest touched is
    `file_truncate`, `file_size`, and the prelude enum `Done`, all edition 5.
    This is enough to write and recover a log. `std.fs` (`write_all`,
    `into_result`) is **not** built: nothing has asked for it yet, and the
-   first program that does (`lexsys-log`) will say what shape it wants.
+   first program that does (`cancho-log`) will say what shape it wants.
 2. **Path operations. Built.** `fs_rename`, `fs_remove`, `file_lock`. This is
    enough to rotate and seal a segment and to own a directory.
 3. **Listing, `mode`, `fdatasync`, `F_FULLFSYNC`**, each only when a program
@@ -564,7 +564,7 @@ is not evidence about a mode*):
   primitive.
 
 What no test at this layer can check is that an acknowledged sync survives
-a power cut. That is the log's crash test, in `lexsys-log`: truncate or
+a power cut. That is the log's crash test, in `cancho-log`: truncate or
 corrupt the file at every byte offset and require recovery to yield a valid
 prefix. This document supplies the primitives that test needs and the
 policy (§5.1) it must follow.

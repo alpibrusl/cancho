@@ -3,7 +3,7 @@
 > **Status: built, first slice of a larger initiative.**
 >
 > This is not a program-asked-for-it addition in the usual sense
-> `AGENTS.md` §7 describes — there is no second `.ls` program in this
+> `AGENTS.md` §7 describes — there is no second `.cho` program in this
 > repository that needed a hash function first. It exists because
 > `ROADMAP.md`'s own investigation into porting `lex-os` off Rust found
 > `crates/lex-os-audit`'s hash-chained log calls `sha2::Sha256` on every
@@ -33,9 +33,9 @@ output on real input**, not "the code looks like the pseudocode."
 
 ---
 
-## 2. The arithmetic problem: SHA-256 is 32-bit, lex-sys's `int` is not
+## 2. The arithmetic problem: SHA-256 is 32-bit, cancho's `int` is not
 
-Every lex-sys `int` is a checked, 64-bit two's-complement value —
+Every cancho `int` is a checked, 64-bit two's-complement value —
 `docs/defined-behaviour.md`'s whole point is that `+`/`-`/`*` **trap**
 on overflow rather than wrap. SHA-256 is specified entirely in
 **32-bit modular arithmetic**: every addition in the compression
@@ -71,7 +71,7 @@ which as a 64-bit `int` is always positive, so arithmetic and logical
 right shift agree on it. `rotr32` builds a 32-bit rotate out of two
 opposite shifts and an `mask32`-ed `|`, not a dedicated rotate operator
 this language does not have. `not32(x) = 0xffffffff - x` builds the
-32-bit bitwise complement out of subtraction rather than lex-sys's own
+32-bit bitwise complement out of subtraction rather than cancho's own
 `~` (which flips all 64 bits, not 32) — a true identity for any `x` in
 `[0, 0xffffffff]`, not an approximation.
 
@@ -85,7 +85,7 @@ data, known at compile time, read many times and written never. They
 are declared as two `static` items (`sha256_h0`, `sha256_k`) rather
 than as sixty-four `let` bindings recomputed per call or a parameter
 threaded through every function — the first real consumer of `static`
-outside its own design doc and `tests/accept/static_data.ls`, and
+outside its own design doc and `tests/accept/static_data.cho`, and
 exactly the table shape `compile-time-data.md` §2 used `decode_table`
 to illustrate.
 
@@ -145,7 +145,7 @@ block) at all. 56 is the smallest input that does — `56 + 9 = 65 > 64`
 — and it is the standard NIST test vector for exactly that reason, not
 picked here for one.
 
-`tests/accept/sha256.ls` checks all four, byte-for-byte, through
+`tests/accept/sha256.cho` checks all four, byte-for-byte, through
 `--std`, on both backends via the normal accept-fixture path.
 
 ---
@@ -157,7 +157,7 @@ picked here for one.
 called`: it builds one program with `--std` and one without and asserts
 the two object files are **byte-identical**. Adding `sha256_h0`/
 `sha256_k` broke it on the first run, and the reason is a real gap
-`static_data.ls` could never have exposed on its own: unlike a
+`static_data.cho` could never have exposed on its own: unlike a
 function, a `static` was never a root `mono`'s reachability worklist
 gated — `lib.rs` lowered and evaluated *every* `static` a program
 declared, unconditionally, and pushed the result into `Program::
@@ -167,7 +167,7 @@ construction, before this slice; a `std` module with a `static`
 nobody's reachable code reads did not, and nothing had ever declared
 one to find out.
 
-Fixed in `lex-sys-ir`, not in this module: `fold::collect_static_refs`/
+Fixed in `cancho-ir`, not in this module: `fold::collect_static_refs`/
 `collect_static_refs_body` walk every `Expr` a reachable function holds
 — exhaustively, with no wildcard arm, for the same reason `body/
 expr.rs`'s own match lost its wildcard in the LLVM backend's §7.25 — and
@@ -185,7 +185,7 @@ three statics where the *middle* one is dropped and the third has to
 renumber past it — both backends produce the arithmetically correct
 answer, not just a program that links.
 
-`static_data.ls` itself was never in a position to catch this: a
+`static_data.cho` itself was never in a position to catch this: a
 program written specifically to exercise a `static` also, necessarily,
 reads it. The gap needed a `static` sitting in a library **nobody had
 called yet**, which is exactly what this module's own status note —

@@ -2,7 +2,7 @@
 """Replay this repository's own past through today's compiler.
 
 `docs/editions.md` §2 is what these numbers mean. Every distinct revision
-of every `.ls` file under `std/` and `examples/` is checked by one
+of every `.cho` file under `std/` and `examples/` is checked by one
 binary, today's, so anything that fails is the language having moved.
 
 A library file is checked beside today's other library files and a
@@ -42,7 +42,7 @@ import sys
 import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-BIN = ROOT / "target" / "release" / "lex-sys"
+BIN = ROOT / "target" / "release" / "cancho"
 FIELDS = ["io", "ffi", "fs", "heap", "args"]
 EMPTY_MAIN = (
     "fn main(world: World) -> [] int {\n"
@@ -63,7 +63,7 @@ def revisions():
         for line in git("ls-tree", "-r", commit, "--", "std", "examples").splitlines():
             meta, path = line.split("\t")
             blob = meta.split()[2]
-            if path.endswith(".ls") and (blob, path) not in seen:
+            if path.endswith(".cho") and (blob, path) not in seen:
                 seen[(blob, path)] = commit
     return seen
 
@@ -91,16 +91,16 @@ def lay_out(work, blob, path, commit):
 
     target = put("target_" + os.path.basename(path), git("cat-file", "-p", blob))
     if path.startswith("std/"):
-        for lib in sorted((ROOT / "std").glob("*.ls")):
+        for lib in sorted((ROOT / "std").glob("*.cho")):
             if lib.name != os.path.basename(path):
                 put("std_" + lib.name, lib.read_text())
-        put("main.ls", EMPTY_MAIN)
+        put("main.cho", EMPTY_MAIN)
         return files, target, []
     folder = os.path.dirname(path)
     if folder != "examples":
         for line in git("ls-tree", commit, folder + "/").splitlines():
             meta, sibling = line.split("\t")
-            if sibling.endswith(".ls") and sibling != path:
+            if sibling.endswith(".cho") and sibling != path:
                 put("sib_" + os.path.basename(sibling), git("cat-file", "-p", meta.split()[2]))
     return files, target, ["--std"]
 
@@ -158,7 +158,7 @@ def main():
     if not BIN.exists():
         sys.exit("build first: cargo build --release")
 
-    work = pathlib.Path(tempfile.mkdtemp(prefix="lex-sys-history-"))
+    work = pathlib.Path(tempfile.mkdtemp(prefix="cancho-history-"))
     failing = collections.Counter()
     recovered = collections.Counter()
     remaining = collections.Counter()

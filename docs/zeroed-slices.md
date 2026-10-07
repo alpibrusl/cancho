@@ -10,14 +10,14 @@ because the language has no uninitialised memory. When the fill is zero, the loo
 `calloc` hands back zeroed memory, and for a large block -- which glibc takes straight from `mmap` -- the kernel supplies zero
 pages that are not even made resident until something touches them.
 
-Measured on `lexsys-tools`' `jsonq` before this change: `std.json` parses into a tape the caller provides, sized by
+Measured on `cancho-tools`' `jsonq` before this change: `std.json` parses into a tape the caller provides, sized by
 `json.tape_len` at 24 bytes per byte of source, and the zero fill of that tape was **43% of the instructions** (callgrind,
 `memset`), while most of the tape is never written (a node is at least one byte of source, so the bound is loose).
 
 ## 2. The rule
 
 A `box_slice` whose fill is, in the program's text, `0`, `false`, `0.0` or `byte_of(0)` -- every bit zero -- is
-`calloc(bytes, 1)` and no fill loop (`lex_sys_ir::is_zero_fill`, one function both backends call). Everything else keeps
+`calloc(bytes, 1)` and no fill loop (`cancho_ir::is_zero_fill`, one function both backends call). Everything else keeps
 `malloc` and the loop, including:
 
 * a zero **computed at run time** (`box_slice(h, n, f(x))`): the decision is made from the text, so both backends make it the
@@ -31,7 +31,7 @@ declare it itself, like every libc name a program may use (`llvm-backend.md`).
 
 ## 3. What it is worth
 
-`lexsys-tools`' `jsonq -p /0` on a 16 MiB JSON array, minimum of five runs, same machine:
+`cancho-tools`' `jsonq -p /0` on a 16 MiB JSON array, minimum of five runs, same machine:
 
 | | before | after | `jq -c .[0]` |
 |---|---|---|---|

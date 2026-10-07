@@ -11,11 +11,11 @@
 
 | File | What |
 |---|---|
-| `std/ecdsa_sign.ls`, `module std.ecdsa_sign` | `sign`, `sign_checked` and `to_der` on P-256 with SHA-256 (`ecdsa_secp256r1_sha256`) |
-| `packages/x509/key.ls`, `module x509_key` | `parse_pem`, `parse_der`, `public_point` and `matches_certificate`, for P-256 keys in PKCS#8 and SEC 1 |
-| `std/bigmod.ls` | `load_secret`: a register loaded from a secret without a branch or an index on its value (§2.2) |
-| `std/ecdh.ls` | `scalar_ok`: `in_range`'s constant-time check of a scalar against n, public |
-| `tests/programs/ecdsa_sign_driver.ls`, `ecdsa_sign_timing.ls` | the drivers of §5 and §6 |
+| `std/ecdsa_sign.cho`, `module std.ecdsa_sign` | `sign`, `sign_checked` and `to_der` on P-256 with SHA-256 (`ecdsa_secp256r1_sha256`) |
+| `packages/x509/key.cho`, `module x509_key` | `parse_pem`, `parse_der`, `public_point` and `matches_certificate`, for P-256 keys in PKCS#8 and SEC 1 |
+| `std/bigmod.cho` | `load_secret`: a register loaded from a secret without a branch or an index on its value (§2.2) |
+| `std/ecdh.cho` | `scalar_ok`: `in_range`'s constant-time check of a scalar against n, public |
+| `tests/programs/ecdsa_sign_driver.cho`, `ecdsa_sign_timing.cho` | the drivers of §5 and §6 |
 | `scripts/ecdsa_sign_{differential,keys,mutants,timing,bench}.py` | the evidence (§5 to §7) |
 
 **The API.**
@@ -86,7 +86,7 @@ It does no range check; the caller has made one in constant time.
 ### 2.3 The audit
 
 `scripts/chacha20_branches.py` (it now also takes a package's symbol, `lexs_x509_key.within`) over the object of
-`tests/programs/ecdsa_sign_driver.ls`, built by the LLVM backend on Linux x86-64. Every conditional jump that is not to a
+`tests/programs/ecdsa_sign_driver.cho`, built by the LLVM backend on Linux x86-64. Every conditional jump that is not to a
 trap was read in the disassembly:
 
 | Function | The jumps that are not to a trap compare |
@@ -188,8 +188,8 @@ audited (§2.3) but not timing-tested.
 
 ## 5. How it is tested, and the results
 
-`tests/programs/ecdsa_sign_driver.ls` runs everything, built with `packages/x509/x509.ls` and `key.ls`.
-`crates/lex-sys/tests/conformance/ecdsa_sign.rs` has the fixed cases; the scripts run OpenSSL and Python.
+`tests/programs/ecdsa_sign_driver.cho` runs everything, built with `packages/x509/x509.cho` and `key.cho`.
+`crates/cancho/tests/conformance/ecdsa_sign.rs` has the fixed cases; the scripts run OpenSSL and Python.
 
 ### 5.1 RFC 6979 and the refusals (`conformance/ecdsa_sign.rs`)
 
@@ -231,8 +231,8 @@ P-384 one, an RSA one and a broken one.
 
 ### 5.5 Mutants
 
-`python3 scripts/ecdsa_sign_mutants.py target/release/lex-sys` runs **37 mutants**: 17 in `std/ecdsa_sign.ls`, 2 in
-`bigmod.load_secret`, 1 in `ecdh.scalar_ok` and 17 in `packages/x509/key.ls`, each against §5.1 and §5.3's cases and the
+`python3 scripts/ecdsa_sign_mutants.py target/release/cancho` runs **37 mutants**: 17 in `std/ecdsa_sign.cho`, 2 in
+`bigmod.load_secret`, 1 in `ecdh.scalar_ok` and 17 in `packages/x509/key.cho`, each against §5.1 and §5.3's cases and the
 three differentials of §5.2 at 300, 100 and 6. **37 are killed**, on macOS (OpenSSL 3.6.4) and in the Linux container (OpenSSL 3.0.13).
 
 **Two first survived**, both in the PEM reader, both test gaps:
@@ -247,7 +247,7 @@ in them changed.
 ## 6. Timing
 
 `scripts/ecdsa_sign_timing.py`, `scripts/ecdh_timing.py`'s dudect test over `ecdsa_sign.sign` (`tests/programs/
-ecdsa_sign_timing.ls`): one message and one 32-byte added randomness for every call, the key drawn from one of two classes at
+ecdsa_sign_timing.cho`): one message and one 32-byte added randomness for every call, the key drawn from one of two classes at
 random. A fixed key then gives the same nonce every time and a random key a random nonce, so the whole secret input is fixed
 against random.
 
