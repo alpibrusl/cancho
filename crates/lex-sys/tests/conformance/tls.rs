@@ -69,13 +69,7 @@ fn build_tls_tickets(backend: &str) -> (PathBuf, PathBuf) {
     let build = Command::new(BIN)
         .args(["build", "--std", "--backend", backend])
         .arg(repo_root().join("tests/programs/tls_tickets.ls"))
-        .args(
-            ["tls.ls", "record.ls", "message.ls", "slot.ls", "client12.ls", "client.ls"]
-                .map(|f| repo_root().join("packages/tls").join(f)),
-        )
-        .args(
-            ["verify.ls", "names.ls", "x509.ls"].map(|f| repo_root().join("packages/x509").join(f)),
-        )
+        .args(super::tls_server::package_files())
         .arg("-o")
         .arg(&exe)
         .output()
@@ -511,13 +505,7 @@ fn sixty_four_connections_on_one_thread_fed_one_byte_and_in_bulk() {
     let build = Command::new(BIN)
         .args(["build", "--std", "--backend", "llvm"])
         .arg(repo_root().join("tests/programs/tls_many.ls"))
-        .args(
-            ["tls.ls", "record.ls", "message.ls", "slot.ls", "client12.ls", "client.ls"]
-                .map(|f| repo_root().join("packages/tls").join(f)),
-        )
-        .args(
-            ["verify.ls", "names.ls", "x509.ls"].map(|f| repo_root().join("packages/x509").join(f)),
-        )
+        .args(super::tls_server::package_files())
         .arg("-o")
         .arg(&exe)
         .output()

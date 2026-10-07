@@ -18,6 +18,8 @@ edition 5;
 //     D                                       tls.drop: `<code> <tag>`
 //     N                                       what the connection chose: `0 ok <event> <server_name> <alpn>
 //                                             <handshakes in progress>`
+//     O                                       the suite chosen for each mask of offered suites (`tls_hello`),
+//                                             with and without AES instructions: `0 ok` and 16 numbers
 //     C                                       the calls of the other role: `tls.start` on this engine, and
 //                                             `serve`, `add_identity`, `set_alpn` and `server_name` on a client
 //                                             engine: `<code> <tag>` each, on one line
@@ -26,6 +28,7 @@ edition 5;
 // socket> <application data received>`, the event once both are taken.
 import std.io;
 import tls;
+import tls_hello;
 
 fn nibble(c: int) -> [] int {
     if c >= 97 {
@@ -198,6 +201,19 @@ fn op_line[&h, &i, &s, &e, &o, &d](heap: &!h Heap, io: &!i Io, s: &s [byte], eng
     }
     if op == 67 {
         roles(heap, io, engine);
+        return 0;
+    }
+    if op == 79 {
+        io.write_all(io, "0 ok");
+        var mask = 0;
+        while mask < 8 {
+            io.space(io);
+            io.print_int(io, tls_hello.choose_suite(mask, true));
+            io.space(io);
+            io.print_int(io, tls_hello.choose_suite(mask, false));
+            mask = mask + 1;
+        }
+        io.newline(io);
         return 0;
     }
     if op == 78 {

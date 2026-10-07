@@ -547,6 +547,13 @@ fn on_handshake_bytes[&i, &b, &d, &c](ints: &!i [int], bytes: &!b [byte], conten
                 code = tls_record.record_overflow();
             } else if have < 4 + n {
                 going = false;
+            } else if have > 4 + n {
+                // Every message a server takes is followed by a new key or
+                // a new flight: a ClientHello, a Finished, a KeyUpdate. So
+                // none may share a record with what follows it (RFC 8446
+                // §5.1), and that is refused before the message is
+                // handled, so nothing is sent for it.
+                code = tls_record.unexpected_message();
             } else {
                 region r {
                     // A message is handled from a copy, so the handler may
@@ -555,12 +562,6 @@ fn on_handshake_bytes[&i, &b, &d, &c](ints: &!i [int], bytes: &!b [byte], conten
                     tls_slot.copy_bytes(bytes[p..p + 4 + n], message);
                     code = on_message(ints, bytes, message, cfg);
                     at = at + 4 + n;
-                    // A message must not share a record with the next key
-                    // (RFC 8446 §5.1): a ClientHello, after which the
-                    // server answers, a Finished and a KeyUpdate.
-                    if code == 0 && at < ints[tls_slot.i_hs_fill()] {
-                        code = tls_record.unexpected_message();
-                    }
                 }
             }
         }
