@@ -102,13 +102,20 @@ pub fn wasi_gap(builtin: Builtin) -> Option<Gap> {
         | B::ConnNodelay
         | B::ConnNonblocking
         | B::ConnRead
-        | B::ConnWrite => Some(Gap::Sockets),
+        | B::ConnWrite
+        | B::UdpConnect
+        | B::UdpRecv
+        | B::UdpSend
+        | B::UdpLocalPort
+        | B::UdpNonblocking
+        | B::UdpClose => Some(Gap::Sockets),
         B::PollerNew
         | B::PollerClose
         | B::PollerAddChild
         | B::PollerAddConn
         | B::PollerAddListener
         | B::PollerAddPipe
+        | B::PollerAddUdp
         | B::PollerAddSignals
         | B::PollerModify
         | B::PollerRemove

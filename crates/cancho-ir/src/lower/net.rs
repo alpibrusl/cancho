@@ -174,13 +174,19 @@ impl<'a> FnLowering<'a> {
         args: &[ExprId],
         span: Span,
         start: bool,
+        datagram: bool,
     ) -> Result<(Expr, Type), Diagnostic> {
+        let verb = match (datagram, start) {
+            (true, _) => "udp_connect",
+            (false, true) => "tcp_connect_start",
+            (false, false) => "tcp_connect",
+        };
         let [capability, name, port] = args else {
             return Err(Diagnostic::new(
                 Rule::ArityMismatch,
                 format!(
                     "`{}` takes 3 arguments -- the capability, the name and a port -- but {} were given",
-                    if start { "tcp_connect_start" } else { "tcp_connect" },
+                    verb,
                     args.len()
                 ),
                 span,
@@ -209,8 +215,16 @@ impl<'a> FnLowering<'a> {
         }]));
 
         Ok((
-            Expr::TcpConnect { bound, args: vec![net_value, name_value, port_value], start },
-            Type::Named(self.prelude()[PRELUDE_DIALED], Vec::new()),
+            Expr::TcpConnect {
+                bound,
+                args: vec![net_value, name_value, port_value],
+                start,
+                datagram,
+            },
+            Type::Named(
+                self.prelude()[if datagram { PRELUDE_UDP_OPENED } else { PRELUDE_DIALED }],
+                Vec::new(),
+            ),
         ))
     }
 

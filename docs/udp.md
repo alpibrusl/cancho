@@ -73,7 +73,7 @@ datagram or the call fails, because a datagram is never partial, and `Again` is 
 | `udp_local_port` | `(&Udp) -> int` | `[]` (§5) |
 | `udp_nonblocking` | `(&!Udp) -> int` | `[]` |
 | `udp_close` | `(Udp) -> int` | `[]` |
-| `poller_add_udp` | `(&!Poller, &Udp, token) -> int` | `poll` |
+| `poller_add_udp` | `(&!Poller, &Udp, token, events) -> int` | `poll` |
 
 `udp_send` on a bound socket, and `udp_send_to` on a connected one, answer `Failed(EDESTADDRREQ)` /
 `Failed(EISCONN)`-style errors from the kernel; the checker does not distinguish the two types (they are one

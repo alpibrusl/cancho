@@ -309,9 +309,10 @@ impl<'a> FuncEmitter<'a> {
                 let (bound, args) = (bound.clone(), args.clone());
                 self.tcp_listen(&bound, &args)
             }
-            Expr::TcpConnect { bound, args, start } => {
-                let (bound, args, start) = (bound.clone(), args.clone(), *start);
-                self.tcp_connect(&bound, &args, start)
+            Expr::TcpConnect { bound, args, start, datagram } => {
+                let (bound, args, start, datagram) =
+                    (bound.clone(), args.clone(), *start, *datagram);
+                self.tcp_connect(&bound, &args, start, datagram)
             }
             // `connect(net, name, port)` (§7.22, `docs/connect.md` §10):
             // the last of `Net`'s four builtins, mirroring
@@ -1065,7 +1066,7 @@ impl<'a> FuncEmitter<'a> {
             }
             // `docs/processes.md`: a channel is a socket pair, so its verbs
             // are the socket handles' (§4.4).
-            Callee::Builtin(Builtin::ConnWrite | Builtin::PipeWrite) => {
+            Callee::Builtin(Builtin::ConnWrite | Builtin::PipeWrite | Builtin::UdpSend) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 if args.len() != 3 {
                     return Err(format!(
@@ -1074,6 +1075,18 @@ impl<'a> FuncEmitter<'a> {
                     ));
                 }
                 self.conn_write(&args)
+            }
+            // `docs/udp.md` §3: a datagram socket is received on with its own verb.
+            Callee::Builtin(Builtin::UdpRecv) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                if args.len() != 3 {
+                    return Err(format!("`udp_recv` needs 3 leaves but {} were given", args.len()));
+                }
+                self.udp_recv(&args)
+            }
+            Callee::Builtin(Builtin::UdpLocalPort) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.udp_local_port(&args)
             }
             Callee::Builtin(Builtin::PipeRead) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
@@ -1195,7 +1208,7 @@ impl<'a> FuncEmitter<'a> {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.poller_ctl(&args, true, false)
             }
-            Callee::Builtin(Builtin::PollerAddConn) => {
+            Callee::Builtin(Builtin::PollerAddConn | Builtin::PollerAddUdp) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.poller_ctl(&args, false, false)
             }
@@ -1218,7 +1231,10 @@ impl<'a> FuncEmitter<'a> {
                 self.poller_wait(&args)
             }
             Callee::Builtin(
-                Builtin::ConnNonblocking | Builtin::ListenerNonblocking | Builtin::PipeNonblocking,
+                Builtin::ConnNonblocking
+                | Builtin::ListenerNonblocking
+                | Builtin::PipeNonblocking
+                | Builtin::UdpNonblocking,
             ) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.nonblocking(&args)
@@ -1233,6 +1249,7 @@ impl<'a> FuncEmitter<'a> {
             }
             Callee::Builtin(
                 Builtin::ConnClose
+                | Builtin::UdpClose
                 | Builtin::ListenerClose
                 | Builtin::PollerClose
                 | Builtin::PipeClose

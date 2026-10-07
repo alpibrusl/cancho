@@ -92,9 +92,18 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     /// without the flag; `fcntl` straight after on Darwin, which has no such
     /// flag.
     pub(crate) fn tcp_socket(&mut self) -> Value {
+        self.inet_socket(1)
+    }
+
+    /// `socket(AF_INET, SOCK_DGRAM, 0)`, close-on-exec the same way (`docs/udp.md` §3).
+    pub(crate) fn udp_socket(&mut self) -> Value {
+        self.inet_socket(2)
+    }
+
+    fn inet_socket(&mut self, kind: i64) -> Value {
         let os = self.socket_os();
         let domain = self.builder.ins().iconst(types::I32, 2);
-        let kind = self.builder.ins().iconst(types::I32, 1 | os.sock_cloexec);
+        let kind = self.builder.ins().iconst(types::I32, kind | os.sock_cloexec);
         let proto = self.builder.ins().iconst(types::I32, 0);
         let fd = self.libc_call(
             "socket",
@@ -379,6 +388,102 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         let not_failed = self.builder.ins().select(empty, one, zero);
         let tag = self.builder.ins().select(negative, bad, not_failed);
         vec![tag, moved, reason]
+    }
+
+    /// `udp_recv(&!Udp, &![byte])` (`docs/udp.md` §3): `Datagram` is `Got` 0, `Truncated` 1,
+    /// `Again` 2, `Failed` 3, and its leaves are `[tag, got, truncated, errno]`. One datagram per
+    /// call. An empty buffer is `Failed(EINVAL)` and never reaches the kernel, as `conn_read`'s is.
+    /// `Got(0)` is an empty datagram. On Linux `MSG_TRUNC` makes `recv` answer the datagram's real
+    /// length, so `Truncated(n)` carries it; Darwin has no such flag, so there a buffer filled
+    /// exactly is reported `Truncated` and `n` is the buffer's length.
+    pub(crate) fn udp_recv(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let os = self.socket_os();
+        let fd = self.handle_fd(args[0]);
+
+        let merge = self.builder.create_block();
+        self.builder.append_block_param(merge, types::I64);
+        self.builder.append_block_param(merge, types::I64);
+        let refuse = self.builder.create_block();
+        let receive = self.builder.create_block();
+        let no_room = self.builder.ins().icmp_imm(IntCC::Equal, args[2], 0);
+        self.builder.ins().brif(no_room, refuse, &[], receive, &[]);
+
+        self.builder.switch_to_block(refuse);
+        self.builder.seal_block(refuse);
+        let minus_one = self.builder.ins().iconst(types::I64, -1);
+        let einval = self.builder.ins().iconst(types::I64, EINVAL);
+        self.builder.ins().jump(merge, &[minus_one.into(), einval.into()]);
+
+        self.builder.switch_to_block(receive);
+        self.builder.seal_block(receive);
+        let flags = self.builder.ins().iconst(types::I32, os.msg_trunc);
+        let got = self.libc_call(
+            "recv",
+            &[types::I32, pointer, types::I64, types::I32],
+            &[types::I64],
+            &[fd, args[1], args[2], flags],
+        );
+        let errno = self.errno();
+        self.builder.ins().jump(merge, &[got.into(), errno.into()]);
+
+        self.builder.switch_to_block(merge);
+        self.builder.seal_block(merge);
+        let moved = self.builder.block_params(merge)[0];
+        let reason = self.builder.block_params(merge)[1];
+
+        let negative = self.builder.ins().icmp_imm(IntCC::SignedLessThan, moved, 0);
+        let cut = if self.is_darwin() {
+            self.builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, moved, args[2])
+        } else {
+            self.builder.ins().icmp(IntCC::SignedGreaterThan, moved, args[2])
+        };
+        let would_wait = self.builder.ins().icmp_imm(IntCC::Equal, reason, os.eagain);
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        let one = self.builder.ins().iconst(types::I64, 1);
+        let two = self.builder.ins().iconst(types::I64, 2);
+        let three = self.builder.ins().iconst(types::I64, 3);
+        let bad = self.builder.ins().select(would_wait, two, three);
+        let delivered = self.builder.ins().select(cut, one, zero);
+        let tag = self.builder.ins().select(negative, bad, delivered);
+        vec![tag, moved, moved, reason]
+    }
+
+    /// `udp_local_port(&Udp)`: the port the kernel chose, from `getsockname`, or `-errno`.
+    pub(crate) fn udp_local_port(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let fd = self.handle_fd(args[0]);
+        let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            16,
+            0,
+        ));
+        let addr = self.builder.ins().stack_addr(pointer, slot, 0);
+        let len_slot = self.builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            4,
+            2,
+        ));
+        let len_at = self.builder.ins().stack_addr(pointer, len_slot, 0);
+        let sixteen = self.builder.ins().iconst(types::I32, 16);
+        self.builder.ins().store(MemFlags::trusted(), sixteen, len_at, 0);
+        let result = self.libc_call(
+            "getsockname",
+            &[types::I32, pointer, pointer],
+            &[types::I32],
+            &[fd, addr, len_at],
+        );
+        let reason = self.errno();
+        // Big-endian at bytes 2 and 3 of a `sockaddr_in`, on both kernels.
+        let high = self.builder.ins().load(types::I8, MemFlags::trusted(), addr, 2);
+        let low = self.builder.ins().load(types::I8, MemFlags::trusted(), addr, 3);
+        let high = self.builder.ins().uextend(types::I64, high);
+        let low = self.builder.ins().uextend(types::I64, low);
+        let shifted = self.builder.ins().ishl_imm(high, 8);
+        let port = self.builder.ins().bor(shifted, low);
+        let failed = self.builder.ins().icmp_imm(IntCC::SignedLessThan, result, 0);
+        let negated = self.builder.ins().ineg(reason);
+        vec![self.builder.ins().select(failed, negated, port)]
     }
 
     /// `conn_write(&!Conn, &[byte])`: `Sent` is `Wrote` 0, `Again` 1,

@@ -193,9 +193,10 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                 let (bound, args) = (bound.clone(), args.clone());
                 self.tcp_listen(&bound, &args)
             }
-            Expr::TcpConnect { bound, args, start } => {
-                let (bound, args, start) = (bound.clone(), args.clone(), *start);
-                self.tcp_connect(&bound, &args, start)
+            Expr::TcpConnect { bound, args, start, datagram } => {
+                let (bound, args, start, datagram) =
+                    (bound.clone(), args.clone(), *start, *datagram);
+                self.tcp_connect(&bound, &args, start, datagram)
             }
             Expr::FieldRef { base, def, args, index } => {
                 let address = self.scalar(base);
@@ -705,6 +706,16 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::TcpAccept) => self.tcp_accept(&args),
                     Callee::Builtin(Builtin::ConnRead) => self.conn_read(&args),
                     Callee::Builtin(Builtin::ConnWrite) => self.conn_write(&args),
+                    // `docs/udp.md` §3: a datagram socket is sent on as a `Conn`
+                    // is -- `send(2)` on a connected socket, whole or not at all.
+                    Callee::Builtin(Builtin::UdpConnect) => {
+                        unreachable!("`udp_connect` is lowered as `Expr::TcpConnect`")
+                    }
+                    Callee::Builtin(Builtin::UdpSend) => self.conn_write(&args),
+                    Callee::Builtin(Builtin::UdpRecv) => self.udp_recv(&args),
+                    Callee::Builtin(Builtin::UdpLocalPort) => self.udp_local_port(&args),
+                    Callee::Builtin(Builtin::UdpNonblocking) => self.nonblocking(&args),
+                    Callee::Builtin(Builtin::PollerAddUdp) => self.poller_ctl(&args, false, false),
                     // `docs/processes.md`: a channel is a socket pair, so its
                     // verbs are the socket handles' (§4.4).
                     Callee::Builtin(Builtin::PipeRead) => self.conn_read(&args),
@@ -751,6 +762,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::ConnConnectStatus) => self.connect_status(&args),
                     Callee::Builtin(
                         Builtin::ConnClose
+                        | Builtin::UdpClose
                         | Builtin::ListenerClose
                         | Builtin::PollerClose
                         | Builtin::PipeClose

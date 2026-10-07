@@ -791,6 +791,12 @@ pub const PRELUDE: &[&str] = &[
     "Name",
     // What `dir_stat` answers.
     "DirStat",
+    // `docs/udp.md`: a datagram socket, what opening one answers, what a
+    // receive answers, and the arm only a receive has; edition 5 only.
+    "Udp",
+    "UdpOpened",
+    "Datagram",
+    "Truncated",
 ];
 
 impl Ast {

@@ -92,6 +92,7 @@ mod tls_echo;
 mod tls_fuzz;
 mod tls_server;
 mod traps;
+mod udp;
 mod vcs;
 mod vcs_remote;
 mod vcs_std;

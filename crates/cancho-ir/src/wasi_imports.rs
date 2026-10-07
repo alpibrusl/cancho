@@ -172,6 +172,8 @@ pub const REFUSED_LABELS: &[&str] = &[
     "conn_accept",
     "conn_read",
     "conn_write",
+    "udp_recv",
+    "udp_send",
     "poll",
     "signals",
     "signals_read",

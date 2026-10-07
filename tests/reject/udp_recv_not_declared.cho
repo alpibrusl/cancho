@@ -1,0 +1,36 @@
+//~ ERROR performs `udp_recv`, which its row [] does not declare
+//~ RULE effect-not-declared
+
+// `docs/udp.md` §3: receiving on a datagram socket is a path-free label
+// (`udp_recv`) a function that borrows a `Udp` must declare, so the
+// authority report says what a function can do with one.
+
+edition 5;
+fn pull[&c, &b](sock: &!c Udp, buf: &!b [byte]) -> [] int {
+    match udp_recv(sock, buf) {
+        Datagram::Got(n) => {
+            return n;
+        }
+        Datagram::Truncated(n) => {
+            return n;
+        }
+        Datagram::Again => {
+            return 0;
+        }
+        Datagram::Failed(e) => {
+            return 0 - 1;
+        }
+    }
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(clock);
+    release(net);
+    return 0;
+}
