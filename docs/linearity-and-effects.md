@@ -772,7 +772,10 @@ fn widen(fs: &!f Fs) -> [fs_write("/")] int {
 > order: owning `Ffi("")` discharges every `ffi(...)` label, because its
 > holder can narrow to any of them, and owning a `World` discharges both
 > `io` and the `Ffi` root. That is why `main` still declares `[]` while the
-> program calls into libc.
+> program calls into libc. For a path label (`fs_read`, `fs_write`, `exec`)
+> the order is the *path* prefix, `extends_path`, not the byte prefix:
+> owning `Fs("/tmp")` does not discharge `fs_read("/tmpevil")`
+> (`docs/filesystem.md` §1.1).
 
 ---
 
