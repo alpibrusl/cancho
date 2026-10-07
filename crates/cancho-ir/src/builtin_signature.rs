@@ -474,7 +474,7 @@ impl Builtin {
                     named(PRELUDE_OPENED)
                 },
             ),
-            Builtin::DirRename => (
+            Builtin::DirRename | Builtin::DirRenameNew => (
                 vec![
                     Type::Ref {
                         unique: false,

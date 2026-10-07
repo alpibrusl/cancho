@@ -419,6 +419,14 @@ pub(crate) fn emit_module(
     // `dir_own_mode` (`docs/directory-listing.md` §3.5).
     declare_libc_unless_own(&mut text, "fstat", "i32 @fstat(i32, ptr)");
     declare_libc_unless_own(&mut text, "renameat", "i32 @renameat(i32, ptr, i32, ptr)");
+    // `dir_rename_new` (`docs/directory-handles.md` §3, slice 4): each target's
+    // no-replace rename; the other target's is never called.
+    declare_libc_unless_own(&mut text, "renameat2", "i32 @renameat2(i32, ptr, i32, ptr, i32)");
+    declare_libc_unless_own(
+        &mut text,
+        "renameatx_np",
+        "i32 @renameatx_np(i32, ptr, i32, ptr, i32)",
+    );
     declare_libc_unless_own(&mut text, "unlinkat", "i32 @unlinkat(i32, ptr, i32)");
     // `connect` (§7.22, `docs/connect.md` §10): the last of `Net`'s four
     // builtins, needing `getaddrinfo`/`freeaddrinfo` (host resolution)
