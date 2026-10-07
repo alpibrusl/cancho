@@ -429,7 +429,9 @@ curl --cacert tests/vectors/tls/echo/ca.pem --resolve echo.lex-sys.test:8443:127
 instead of sockets (`http-server.md` §11): keep-alive, pipelining, a request answered in the order it came, a
 `/big/<n>` answer streamed as the client takes it, and a client that stops reading stops being read, all in
 one thread. Same options, same bounds, same reload, same authority report as `tls_echo`. Read `loop.cho`'s header
-(where the bytes go and who waits for whom), then `app.cho` (what a request is turned into, and `hold` + `stream`).
+(where the bytes go and who waits for whom), then `app.cho` (what a request is turned into, and `hold` + `stream`). `POST /upload`
+streams a body of any size through the 16 KiB buffer and answers its byte count and SHA-256 (`hold` + `proceed` + `body_part`/`body_take`, `http-server.md` §12);
+`POST /upload/refuse` is refused with a 413 before a `100 Continue`; `--read-timeout` and `--max-body` bound a head and a body.
 ### `http_fetch_nb/` — many requests at once, on one thread
 
 ```sh

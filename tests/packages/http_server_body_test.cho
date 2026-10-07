@@ -493,6 +493,21 @@ fn held_whole[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_wri
     test.assert_eq(server.body_total(srv, g), 0);
     test.assert(bs.answer_with(heap, srv, g, 0) > 0);
     bs.expect_answer(heap, bs.drain(heap, srv, k, 0), 0);
+    // Kept alive as the requests asked: neither answer ended the connection...
+    server.ready(srv, 0);
+    server.next(heap, srv);
+    test.assert(!server.closing(srv, k));
+    // ...and one that said `Connection: close` ends it, held whole or not.
+    server.input(srv, k, "POST /w HTTP/1.1\r\nHost: t\r\nConnection: close\r\nContent-Length: 3\r\n\r\nabc", 0);
+    server.ready(srv, 0);
+    test.assert(server.next(heap, srv) >= 0);
+    let c = server.hold(srv);
+    test.assert(bs.same(server.body_part(srv, c), "abc"));
+    test.assert(bs.answer_with(heap, srv, c, 3) > 0);
+    bs.expect_answer(heap, bs.drain(heap, srv, k, 0), 3);
+    server.ready(srv, 0);
+    server.next(heap, srv);
+    test.assert(server.closing(srv, k));
     return 0;
 }
 fn test_a_whole_request_held_is_read_from_its_ticket[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {

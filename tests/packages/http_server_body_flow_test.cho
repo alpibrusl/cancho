@@ -116,6 +116,41 @@ fn expect_refusals[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, con
     server.next(heap, srv);
     test.assert(server.closing(srv, j));
     server.detach(srv, j);
+    // 3b. Some of the body came with the head: that is touched too, and a refusal closes.
+    let n = server.attach(srv, 0);
+    server.input(srv, n, "POST /p HTTP/1.1\r\nHost: t\r\nExpect: 100-continue\r\nContent-Length: 1000\r\n\r\n0123456789", 0);
+    server.ready(srv, 0);
+    let y = bs.accept(heap, srv, false);
+    test.assert(y >= 0);
+    test.assert(bs.refuse_413(heap, srv, y) > 0);
+    bs.expect_has(heap, bs.drain(heap, srv, n, 0), "HTTP/1.1 413 ", "\"no\"");
+    server.ready(srv, 0);
+    server.next(heap, srv);
+    test.assert(server.closing(srv, n));
+    server.detach(srv, n);
+    // 3c. Refused in hand, without `hold`, with nothing of the body in: no 100, the request is not handed over again, and what follows is served.
+    let q = server.attach(srv, 0);
+    server.input(srv, q, "POST /p HTTP/1.1\r\nHost: t\r\nExpect: 100-continue\r\nContent-Length: 1000\r\n\r\n", 0);
+    server.ready(srv, 0);
+    test.assert_eq(server.next(heap, srv), q);
+    test.assert(server.streaming(srv));
+    let out = server.failure(heap, buffer.empty(heap, 64), 413, "no", true);
+    borrow out as &ob in {
+        test.assert(server.respond(srv, buffer.bytes(ob)) > 0);
+    }
+    buffer.drop(heap, out);
+    bs.expect_has(heap, bs.drain(heap, srv, q, 0), "HTTP/1.1 413 ", "\"no\"");
+    test.assert(!server.closing(srv, q));
+    server.ready(srv, 0);
+    test.assert_eq(server.next(heap, srv), 0 - 1);
+    server.input(srv, q, "GET /after HTTP/1.1\r\nHost: t\r\n\r\n", 0);
+    server.ready(srv, 0);
+    test.assert(server.next(heap, srv) >= 0);
+    test.assert(!server.streaming(srv));
+    test.assert(bs.same(http.method(server.head(srv), server.parsed(srv)), "GET"));
+    bs.respond_with(heap, srv, 0);
+    bs.expect_answer(heap, bs.drain(heap, srv, q, 0), 0);
+    server.detach(srv, q);
     // 4. Its body was all there: not streaming at all, and `proceed` has nothing to do.
     let m = server.attach(srv, 0);
     server.input(srv, m, "POST /p HTTP/1.1\r\nHost: t\r\nExpect: 100-continue\r\nContent-Length: 3\r\n\r\nabc", 0);
@@ -158,6 +193,7 @@ fn refused_with[&h, &s, &t, &p, &r](heap: &!h Heap, srv: &!s server.Server, text
         test.assert(bytes.starts_with(buffer.bytes(g), status));
         test.assert(bytes.find(buffer.bytes(g), "X-Rule: ") >= 0);
         test.assert(bytes.find(buffer.bytes(g), rule) >= 0);
+        test.assert(bytes.find(buffer.bytes(g), message_of(rule)) >= 0);
         test.assert(bytes.find(buffer.bytes(g), "Connection: close") >= 0);
     }
     buffer.drop(heap, got);
@@ -201,6 +237,17 @@ fn test_an_expectation_other_than_100_continue_is_417[&h](heap: &!h Heap) -> [he
 // A chunked upload is begun, and then `wire` goes in `step` bytes at a time: the server refuses it with `status` and `rule`
 // as soon as it sees the fault, which the application finds out from `body_state`, `room`, and its ticket; the refusal goes out
 // with the next `next`, and the connection ends.
+// What the client reads of a refusal, by rule.
+fn message_of[&r](rule: &r [byte]) -> [] &static [byte] {
+    if bytes.equal(rule, "body.too-large") { return "request body too large"; }
+    if bytes.equal(rule, "body.chunk-size") { return "bad chunk size"; }
+    if bytes.equal(rule, "body.chunk-framing") { return "bad chunk framing"; }
+    if bytes.equal(rule, "body.chunk-extension") { return "bad chunk extension"; }
+    if bytes.equal(rule, "body.trailer") { return "bad chunk trailer"; }
+    if bytes.equal(rule, "body.trailer-too-large") { return "chunk trailers too large"; }
+    return "expectation failed";
+}
+
 fn mid_body[&h, &s, &w, &p, &r](heap: &!h Heap, srv: &!s server.Server, wire_text: &w [byte], step: int, status: &p [byte], rule: &r [byte]) -> [heap, conn_write, poll] int {
     let k = server.attach(srv, 0);
     server.input(srv, k, "POST /p HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\n\r\n", 0);
@@ -220,20 +267,32 @@ fn mid_body[&h, &s, &w, &p, &r](heap: &!h Heap, srv: &!s server.Server, wire_tex
     test.assert_eq(bs.answer_with(heap, srv, t, 0), 0 - 1);
     server.ready(srv, 0);
     test.assert_eq(server.next(heap, srv), 0 - 1);
+    // The refusal is queued and not yet sent: the request is over all the same.
+    test.assert(server.pending(srv, k) > 0);
+    test.assert_eq(bs.answer_with(heap, srv, t, 0), 0 - 1);
+    test.assert_eq(server.stream(srv, t, "x"), 0 - 1);
+    test.assert_eq(server.body_state(srv, t), 0 - 1);
     let got = bs.drain(heap, srv, k, 0);
     borrow got as &g in {
         test.assert(bytes.starts_with(buffer.bytes(g), status));
         test.assert(bytes.find(buffer.bytes(g), "X-Rule: ") >= 0);
         test.assert(bytes.find(buffer.bytes(g), rule) >= 0);
+        test.assert(bytes.find(buffer.bytes(g), message_of(rule)) >= 0);
         test.assert(bytes.find(buffer.bytes(g), "Connection: close") >= 0);
     }
     buffer.drop(heap, got);
+    // The request is over for good: the ticket answers nothing, before the refusal is sent and after.
+    test.assert_eq(bs.answer_with(heap, srv, t, 0), 0 - 1);
+    test.assert_eq(server.stream(srv, t, "x"), 0 - 1);
     server.ready(srv, 0);
     server.next(heap, srv);
+    test.assert_eq(bs.answer_with(heap, srv, t, 0), 0 - 1);
+    test.assert_eq(server.stream(srv, t, "x"), 0 - 1);
     test.assert(server.closing(srv, k));
     server.detach(srv, k);
     return 0;
 }
+
 fn mid_body_both_ways[&h, &s, &w, &p, &r](heap: &!h Heap, srv: &!s server.Server, wire_text: &w [byte], status: &p [byte], rule: &r [byte]) -> [heap, conn_write, poll] int {
     mid_body(heap, srv, wire_text, 1, status, rule);
     mid_body(heap, srv, wire_text, 4096, status, rule);
@@ -316,6 +375,155 @@ fn test_every_body_fault_is_refused_with_its_status_and_rule_and_the_request_is_
     return 0;
 }
 // ---------------------------------------------------------------------
+// The chunk machine against a corpus: what is accepted, and what is refused with which rule
+// ---------------------------------------------------------------------
+
+// Case `i` of the corpus: a chunked body as it goes on the wire, what it decodes to, and the rule it is refused with ("end" past the last).
+// The server's maximum body is 100 bytes.
+fn corpus(i: int) -> [] (&static [byte], &static [byte], &static [byte]) {
+    if i == 0 { return ("0\r\n\r\n", "", ""); }
+    if i == 1 { return ("5\r\nhello\r\n0\r\n\r\n", "hello", ""); }
+    if i == 2 { return ("5;x=y\r\nhello\r\n0\r\n\r\n", "hello", ""); }
+    if i == 3 { return ("5;\r\nhello\r\n0\r\n\r\n", "hello", ""); }
+    if i == 4 { return ("05\r\nhello\r\n0\r\n\r\n", "hello", ""); }
+    if i == 5 { return ("00000005\r\nhello\r\n0\r\n\r\n", "hello", ""); }
+    if i == 6 { return ("A\r\n0123456789\r\n0\r\n\r\n", "0123456789", ""); }
+    if i == 7 { return ("a\r\n0123456789\r\n0\r\n\r\n", "0123456789", ""); }
+    if i == 8 { return ("1\r\na\r\n1\r\nb\r\n0\r\n\r\n", "ab", ""); }
+    if i == 9 { return ("0;e\r\n\r\n", "", ""); }
+    if i == 10 { return ("0\r\nT: v\r\n\r\n", "", ""); }
+    if i == 11 { return ("0\r\nT:\r\n\r\n", "", ""); }
+    if i == 12 { return ("0\r\nT: a\tb\r\n\r\n", "", ""); }
+    if i == 13 { return ("0\r\nA: 1\r\nB: 2\r\n\r\n", "", ""); }
+    if i == 14 { return ("5;a\tb\r\nhello\r\n0\r\n\r\n", "hello", ""); }
+    if i == 15 { return ("0\r\nT: café\r\n\r\n", "", ""); }
+    if i == 16 { return ("2\r\n\r\n\r\n0\r\n\r\n", "\r\n", ""); }
+    if i == 17 { return ("F\r\n0123456789abcde\r\n0\r\n\r\n", "0123456789abcde", ""); }
+    if i == 18 { return ("f\r\n0123456789abcde\r\n0\r\n\r\n", "0123456789abcde", ""); }
+    if i == 19 { return ("5\r\nhello\n\n0\r\n\r\n", "", "body.chunk-framing"); }
+    if i == 20 { return ("0\r\nT: v\r\r\r\n", "", "body.trailer"); }
+    if i == 21 { return ("g\r\n", "", "body.chunk-size"); }
+    if i == 22 { return ("\r\n", "", "body.chunk-size"); }
+    if i == 23 { return (";x\r\n", "", "body.chunk-size"); }
+    if i == 24 { return ("-1\r\n", "", "body.chunk-size"); }
+    if i == 25 { return ("000000001\r\nx\r\n0\r\n\r\n", "", "body.chunk-size"); }
+    if i == 26 { return ("5\nhello\r\n", "", "body.chunk-framing"); }
+    if i == 27 { return ("5\n\nhello\r\n0\r\n\r\n", "", "body.chunk-framing"); }
+    if i == 28 { return ("5\r\rhello\r\n0\r\n\r\n", "", "body.chunk-framing"); }
+    if i == 29 { return ("5\rXhello", "", "body.chunk-framing"); }
+    if i == 30 { return ("5 \r\nhello\r\n", "", "body.chunk-framing"); }
+    if i == 31 { return ("5\r\nhello\n\r\n0\r\n\r\n", "", "body.chunk-framing"); }
+    if i == 32 { return ("5\r\nhello\r\r0\r\n\r\n", "", "body.chunk-framing"); }
+    if i == 33 { return ("5\r\nhelloXX0\r\n\r\n", "", "body.chunk-framing"); }
+    if i == 34 { return ("5\r\nhello\n0\r\n\r\n", "", "body.chunk-framing"); }
+    if i == 35 { return ("5;a\rb\r\nhello", "", "body.chunk-framing"); }
+    if i == 36 { return ("5;a\0b\r\nhello\r\n0\r\n\r\n", "", "body.chunk-extension"); }
+    if i == 37 { return ("0\r\n \r\n\r\n", "", "body.trailer"); }
+    if i == 38 { return ("0\r\nT\r\n\r\n", "", "body.trailer"); }
+    if i == 39 { return ("0\r\nT : v\r\n\r\n", "", "body.trailer"); }
+    if i == 40 { return ("0\r\nT: v\nU: w\r\n\r\n", "", "body.trailer"); }
+    if i == 41 { return ("0\r\nT: v\r\r\n", "", "body.trailer"); }
+    if i == 42 { return ("0\r\n\r\r", "", "body.trailer"); }
+    if i == 43 { return ("0\r\n\n", "", "body.trailer"); }
+    if i == 44 { return ("0\r\nT: a\0b\r\n\r\n", "", "body.trailer"); }
+    if i == 45 { return ("0\r\n:v\r\n\r\n", "", "body.trailer"); }
+    if i == 46 { return ("65\r\n", "", "body.too-large"); }
+    if i == 47 { return ("2\r\nab\r\n63\r\n", "", "body.too-large"); }
+    if i == 48 { return ("1\r\na\r\n64\r\n", "", "body.too-large"); }
+    if i == 49 { return ("ffffffff\r\n", "", "body.too-large"); }
+    return ("", "", "end");
+}
+
+fn status_of[&r](rule: &r [byte]) -> [] &static [byte] {
+    if bytes.equal(rule, "body.too-large") { return "HTTP/1.1 413 "; }
+    if bytes.equal(rule, "body.trailer-too-large") { return "HTTP/1.1 431 "; }
+    return "HTTP/1.1 400 ";
+}
+
+// A chunked upload begun and `wire_text` sent in `step`-byte pieces: it comes out as `body`, or (`rule` is not "") it is refused with `rule`.
+fn wire_run[&h, &s, &w, &b, &r](heap: &!h Heap, srv: &!s server.Server, wire_text: &w [byte], step: int, body: &b [byte], rule: &r [byte]) -> [heap, conn_write, poll] int {
+    if len(rule) > 0 {
+        return mid_body(heap, srv, wire_text, step, status_of(rule), rule);
+    }
+    let k = server.attach(srv, 0);
+    server.input(srv, k, "POST /p HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\n\r\n", 0);
+    server.ready(srv, 0);
+    let t = bs.accept(heap, srv, true);
+    test.assert(t >= 0);
+    let (sink, took) = bs.push_all(heap, srv, k, t, wire_text, step, 64, buffer.empty(heap, 16), 0);
+    test.assert_eq(took, len(wire_text));
+    bs.check_streamed(heap, srv, t, sink, body);
+    test.assert(bs.answer_with(heap, srv, t, len(body)) > 0);
+    bs.expect_answer(heap, bs.drain(heap, srv, k, 0), len(body));
+    test.assert(!server.closing(srv, k));
+    server.detach(srv, k);
+    return 0;
+}
+
+// `wire_run` at two step sizes on a wire kept in a buffer, which is dropped.
+fn wire_run_buffer[&h, &s, &b, &r](heap: &!h Heap, srv: &!s server.Server, w: buffer.Buffer, body: &b [byte], rule: &r [byte]) -> [heap, conn_write, poll] int {
+    borrow w as &wb in {
+        wire_run(heap, srv, buffer.bytes(wb), 7, body, rule);
+        wire_run(heap, srv, buffer.bytes(wb), 4096, body, rule);
+    }
+    buffer.drop(heap, w);
+    return 0;
+}
+
+// `first`, `middle` of `n` bytes of `c`, and `last`.
+fn sandwich[&h, &a, &z](heap: &!h Heap, first: &a [byte], c: int, n: int, last: &z [byte]) -> [heap] buffer.Buffer {
+    let w = buffer.append(heap, buffer.empty(heap, 16), first);
+    return buffer.append(heap, bs.join(heap, w, bs.repeat(heap, c, n)), last);
+}
+
+fn chunk_corpus[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_write, poll] int {
+    test.assert_eq(server.limits(srv, 100, 64, 5000, 5000), 0);
+    var i = 0;
+    var going = true;
+    while going {
+        let (wire_text, body, rule) = corpus(i);
+        if bytes.equal(rule, "end") {
+            going = false;
+        } else {
+            wire_run(heap, srv, wire_text, 1, body, rule);
+            wire_run(heap, srv, wire_text, 4096, body, rule);
+            i = i + 1;
+        }
+    }
+    test.assert(i > 40);
+    // The bounds, on both sides of the line: an extension of 256 bytes, trailers of 4,096 (from the first byte of the first to the final CR),
+    // a body of 100.
+    wire_run_buffer(heap, srv, sandwich(heap, "5;", 97, 256, "\r\nhello\r\n0\r\n\r\n"), "hello", "");
+    wire_run_buffer(heap, srv, sandwich(heap, "5;", 97, 257, "\r\nhello\r\n0\r\n\r\n"), "", "body.chunk-extension");
+    wire_run_buffer(heap, srv, sandwich(heap, "0\r\nX: ", 97, 4090, "\r\n\r\n"), "", "");
+    wire_run_buffer(heap, srv, sandwich(heap, "0\r\nX: ", 97, 4091, "\r\n\r\n"), "", "body.trailer-too-large");
+    let hundred = bs.make_body(heap, 100, 1);
+    borrow hundred as &hb in {
+        wire_run_buffer(heap, srv, bs.wire(heap, buffer.bytes(hb), 100, "", ""), buffer.bytes(hb), "");
+        wire_run_buffer(heap, srv, bs.wire(heap, buffer.bytes(hb), 50, "", ""), buffer.bytes(hb), "");
+        wire_run_buffer(heap, srv, bs.wire(heap, buffer.bytes(hb), 1, "", ""), buffer.bytes(hb), "");
+    }
+    buffer.drop(heap, hundred);
+    return 0;
+}
+
+fn test_the_chunk_machine_accepts_and_refuses_exactly_what_the_framing_rules_say[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {
+    match server.open_bytes(heap, 8192, 4096, 30, 2) {
+        server.Opening::Ok(s) => {
+            var srv = s;
+            borrow mut srv as &!sw in {
+                chunk_corpus(heap, sw);
+            }
+            server.close(heap, srv);
+        }
+        server.Opening::Failed(e) => {
+            test.assert(false);
+        }
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------
 // The two timers, on the caller's clock
 // ---------------------------------------------------------------------
 
@@ -373,6 +581,14 @@ fn head_timer[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_wri
     }
     timed_out(heap, srv, m, 11100, "HTTP/1.1 408 ", "timeout.head");
     server.detach(srv, m);
+    // The scan runs at most every 50 ms, so a timer that expired a few milliseconds ago fires at the next scan, not at once.
+    let g = server.attach(srv, 12000);
+    server.input(srv, g, "GET / HTTP/1.1\r\nHo", 12000);
+    quiet(heap, srv, g, 12000);
+    quiet(heap, srv, g, 12960);
+    quiet(heap, srv, g, 13001);
+    timed_out(heap, srv, g, 13010, "HTTP/1.1 408 ", "timeout.head");
+    server.detach(srv, g);
     // A head that does end in time is not timed afterwards, and neither is a connection with no request in progress.
     let n = server.attach(srv, 20000);
     server.input(srv, n, "GET /a HTTP/1.1\r\nHost", 20000);
@@ -389,6 +605,21 @@ fn head_timer[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_wri
     server.ready(srv, 51000);
     test.assert(server.closing(srv, n));
     bs.expect_text(heap, bs.drain(heap, srv, n, 51000), "");
+    server.detach(srv, n);
+    // A partial head behind an answer is timed from when the server first looks at it, which is after the answer has gone: the time
+    // taking the answer (the caller's clock at `output`) is not the head's.
+    let o = server.attach(srv, 60000);
+    server.input(srv, o, "GET /a HTTP/1.1\r\nHost: t\r\n\r\nGET /b HTTP/1.1\r\nHo", 60000);
+    server.ready(srv, 60000);
+    test.assert(server.next(heap, srv) >= 0);
+    bs.respond_with(heap, srv, 0);
+    bs.expect_answer(heap, bs.drain(heap, srv, o, 69000), 0);
+    test.assert_eq(server.next(heap, srv), 0 - 1);
+    server.ready(srv, 69500);
+    test.assert_eq(server.next(heap, srv), 0 - 1);
+    test.assert_eq(server.pending(srv, o), 0);
+    test.assert(!server.closing(srv, o));
+    timed_out(heap, srv, o, 70100, "HTTP/1.1 408 ", "timeout.head");
     return 0;
 }
 fn test_a_head_has_a_deadline_that_trickling_does_not_extend_and_keep_alive_idle_is_not_it[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {
@@ -451,18 +682,80 @@ fn body_timer[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_wri
     server.ready(srv, 192100);
     test.assert_eq(server.body_state(srv, u), 0 - 1);
     server.detach(srv, j);
+    server.detach(srv, j);
+    // The boundary: 2001 ms after the last byte is past 2000, and a scan 51 ms after the last one sees it.
+    let q = server.attach(srv, 250000);
+    server.input(srv, q, "POST /p HTTP/1.1\r\nHost: t\r\nContent-Length: 500\r\n\r\n", 250000);
+    server.ready(srv, 250000);
+    let x = bs.accept(heap, srv, true);
+    server.input(srv, q, "01234", 251900);
+    server.ready(srv, 253850);
+    test.assert_eq(server.body_state(srv, x), 0);
+    server.ready(srv, 253901);
+    test.assert_eq(server.body_state(srv, x), 0 - 1);
+    server.detach(srv, q);
+    // A body that has all arrived is not timed while the application takes its time to answer.
+    let d = server.attach(srv, 260000);
+    server.input(srv, d, "POST /p HTTP/1.1\r\nHost: t\r\nContent-Length: 4\r\n\r\n", 260000);
+    server.ready(srv, 260000);
+    let y = bs.accept(heap, srv, true);
+    server.input(srv, d, "abcd", 260000);
+    server.ready(srv, 265000);
+    server.ready(srv, 270000);
+    test.assert_eq(server.body_state(srv, y), 1);
+    test.assert(bs.answer_with(heap, srv, y, 4) > 0);
+    bs.expect_answer(heap, bs.drain(heap, srv, d, 270000), 4);
+    test.assert(!server.closing(srv, d));
+    // A client told to wait is not timed for the application's deciding; the clock starts when it is told to go ahead.
+    let e = server.attach(srv, 275000);
+    server.input(srv, e, "POST /p HTTP/1.1\r\nHost: t\r\nExpect: 100-continue\r\nContent-Length: 500\r\n\r\n", 275000);
+    server.ready(srv, 275000);
+    let z = bs.accept(heap, srv, false);
+    server.ready(srv, 280000);
+    server.ready(srv, 280100);
+    test.assert_eq(server.body_state(srv, z), 0);
+    test.assert_eq(server.proceed(srv, z), 1);
+    bs.expect_text(heap, bs.drain(heap, srv, e, 280100), bs.continue_text());
+    server.ready(srv, 280200);
+    server.ready(srv, 281000);
+    test.assert_eq(server.body_state(srv, z), 0);
+    server.ready(srv, 282250);
+    test.assert_eq(server.body_state(srv, z), 0 - 1);
+    server.detach(srv, e);
+    // A stalled client whose answer is waiting to be sent is not timed: it is the one that is not reading.
+    let f = server.attach(srv, 290000);
+    server.input(srv, f, "POST /p HTTP/1.1\r\nHost: t\r\nContent-Length: 500\r\n\r\n", 290000);
+    server.ready(srv, 290000);
+    let v = bs.accept(heap, srv, true);
+    test.assert(server.stream(srv, v, "HTTP/1.1 200 OK\r\n") > 0);
+    server.ready(srv, 295000);
+    server.ready(srv, 298000);
+    test.assert_eq(server.body_state(srv, v), 0);
+    server.detach(srv, f);
+    // The clock starts when the head is handed over, not when something else happened: a connection that has been quiet for a long time
+    // is not timed out the moment its body begins.
+    let r = server.attach(srv, 500000);
+    server.input(srv, r, "POST /p HTTP/1.1\r\nHost: t\r\nContent-Length: 500\r\n\r\n", 500000);
+    server.ready(srv, 500000);
+    let u = bs.accept(heap, srv, true);
+    server.ready(srv, 500500);
+    server.ready(srv, 501000);
+    test.assert_eq(server.body_state(srv, u), 0);
+    server.ready(srv, 502100);
+    test.assert_eq(server.body_state(srv, u), 0 - 1);
+    server.detach(srv, r);
     // The answer has begun: the body stalls, and the connection just ends. There is nothing more to say on it.
-    let m = server.attach(srv, 300000);
-    server.input(srv, m, "POST /p HTTP/1.1\r\nHost: t\r\nContent-Length: 500\r\n\r\n", 300000);
-    server.ready(srv, 300000);
+    let m = server.attach(srv, 700000);
+    server.input(srv, m, "POST /p HTTP/1.1\r\nHost: t\r\nContent-Length: 500\r\n\r\n", 700000);
+    server.ready(srv, 700000);
     let w = bs.accept(heap, srv, false);
     test.assert(server.stream(srv, w, "HTTP/1.1 200 OK\r\n") > 0);
-    bs.expect_text(heap, bs.drain(heap, srv, m, 300000), "HTTP/1.1 200 OK\r\n");
-    server.ready(srv, 303000);
+    bs.expect_text(heap, bs.drain(heap, srv, m, 700000), "HTTP/1.1 200 OK\r\n");
+    server.ready(srv, 703000);
     server.next(heap, srv);
     test.assert(server.closing(srv, m));
     test.assert_eq(server.body_state(srv, w), 0 - 1);
-    bs.expect_text(heap, bs.drain(heap, srv, m, 303000), "");
+    bs.expect_text(heap, bs.drain(heap, srv, m, 703000), "");
     return 0;
 }
 fn test_a_stalled_body_times_out_but_a_slow_application_does_not[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {
@@ -501,6 +794,9 @@ fn pressure[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_write
         // The piece is the first 64; seeing it again changes nothing, taking it gives back exactly what was taken.
         test.assert(bs.same(server.body_part(srv, t), buffer.bytes(bb)[0..64]));
         test.assert(bs.same(server.body_part(srv, t), buffer.bytes(bb)[0..64]));
+        test.assert_eq(server.room(srv, k), 0);
+        test.assert_eq(server.body_take(srv, t, 0 - 1), 0 - 1);
+        test.assert_eq(server.body_take(srv, t, 65), 0 - 1);
         test.assert_eq(server.room(srv, k), 0);
         test.assert_eq(server.body_take(srv, t, 10), 10);
         test.assert_eq(server.room(srv, k), 10);
@@ -572,6 +868,7 @@ fn early_all_arrived[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, c
     server.ready(srv, 0);
     test.assert(server.next(heap, srv) >= 0);
     test.assert(bs.same(http.path(server.head(srv), server.parsed(srv)), "/z"));
+    test.assert(bs.same(http.method(server.head(srv), server.parsed(srv)), "GET"));
     bs.respond_with(heap, srv, 0);
     bs.expect_answer(heap, bs.drain(heap, srv, k, 0), 0);
     server.detach(srv, k);
@@ -600,12 +897,27 @@ fn early_in_hand[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_
     server.ready(srv, 0);
     test.assert_eq(server.next(heap, srv), j);
     test.assert(server.streaming(srv));
+    // `next` again, with nothing done: the same request, its body decoded once and not again.
+    test.assert_eq(server.next(heap, srv), j);
+    let t = server.hold(srv);
+    server.input(srv, j, "0\r\n\r\n", 0);
+    test.assert(bs.same(server.body_part(srv, t), "hello"));
+    test.assert_eq(server.body_state(srv, t), 1);
+    test.assert(bs.answer_with(heap, srv, t, 5) > 0);
+    bs.expect_answer(heap, bs.drain(heap, srv, j, 0), 5);
+    server.detach(srv, j);
+    // The same in hand, answered without `hold` while the body is not over: the answer comes, and the connection ends.
+    let m = server.attach(srv, 0);
+    server.input(srv, m, "POST /p HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n", 0);
+    server.ready(srv, 0);
+    test.assert_eq(server.next(heap, srv), m);
+    test.assert(server.streaming(srv));
     test.assert(bs.respond_with(heap, srv, 0) > 0);
-    bs.expect_answer(heap, bs.drain(heap, srv, j, 0), 0);
+    bs.expect_answer(heap, bs.drain(heap, srv, m, 0), 0);
     server.ready(srv, 0);
     server.next(heap, srv);
-    test.assert(server.closing(srv, j));
-    server.detach(srv, j);
+    test.assert(server.closing(srv, m));
+    server.detach(srv, m);
     return 0;
 }
 // 4. The answer streamed while the body is still coming: both flow; the answer ends when the body has all come, and the connection goes on.
@@ -663,29 +975,70 @@ fn peer_ends[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_writ
     server.end_input(srv, k);
     test.assert_eq(server.body_state(srv, t), 0 - 1);
     test.assert_eq(bs.answer_with(heap, srv, t, 0), 0 - 1);
-    server.ready(srv, 0);
+    // Time passing does not give it a timeout to answer: there is no one to answer.
+    server.ready(srv, 28000);
     server.next(heap, srv);
     test.assert(server.closing(srv, k));
-    bs.expect_text(heap, bs.drain(heap, srv, k, 0), "");
+    bs.expect_text(heap, bs.drain(heap, srv, k, 20000), "");
     server.detach(srv, k);
+    // An answer on its way is not dropped for the end: answered early (the connection will close once it is sent), then the peer ends.
+    let a = server.attach(srv, 40000);
+    server.input(srv, a, "POST /p HTTP/1.1\r\nHost: t\r\nContent-Length: 100\r\n\r\n0123", 40000);
+    server.ready(srv, 40000);
+    let ta = bs.accept(heap, srv, true);
+    test.assert(bs.answer_with(heap, srv, ta, 4) > 0);
+    server.end_input(srv, a);
+    server.ready(srv, 48000);
+    server.next(heap, srv);
+    bs.expect_answer(heap, bs.drain(heap, srv, a, 48000), 4);
+    server.ready(srv, 48000);
+    server.next(heap, srv);
+    test.assert(server.closing(srv, a));
+    server.detach(srv, a);
+    // What is waiting to be sent is dropped when the peer ends mid-body (a `100 Continue` it will never read).
+    let c = server.attach(srv, 60000);
+    server.input(srv, c, "POST /p HTTP/1.1\r\nHost: t\r\nExpect: 100-continue\r\nContent-Length: 100\r\n\r\n", 60000);
+    server.ready(srv, 60000);
+    let tc = bs.accept(heap, srv, true);
+    test.assert(tc >= 0);
+    test.assert(server.pending(srv, c) > 0);
+    server.end_input(srv, c);
+    server.ready(srv, 68000);
+    server.next(heap, srv);
+    test.assert(server.closing(srv, c));
+    bs.expect_text(heap, bs.drain(heap, srv, c, 68000), "");
+    server.detach(srv, c);
+    // In hand, not held: the answer is refused too.
+    let h = server.attach(srv, 80000);
+    server.input(srv, h, "POST /p HTTP/1.1\r\nHost: t\r\nContent-Length: 100\r\n\r\n0123", 80000);
+    server.ready(srv, 80000);
+    test.assert_eq(server.next(heap, srv), h);
+    test.assert(server.streaming(srv));
+    server.end_input(srv, h);
+    test.assert_eq(bs.respond_with(heap, srv, 0), 0 - 1);
+    server.ready(srv, 80000);
+    server.next(heap, srv);
+    test.assert(server.closing(srv, h));
+    bs.expect_text(heap, bs.drain(heap, srv, h, 80000), "");
+    server.detach(srv, h);
     // The same for chunked; and after the whole body it is answered as ever.
-    let j = server.attach(srv, 0);
-    server.input(srv, j, "POST /p HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc", 0);
-    server.ready(srv, 0);
+    let j = server.attach(srv, 100000);
+    server.input(srv, j, "POST /p HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc", 100000);
+    server.ready(srv, 108000);
     let u = bs.accept(heap, srv, true);
     server.end_input(srv, j);
     test.assert_eq(server.body_state(srv, u), 0 - 1);
-    server.ready(srv, 0);
+    server.ready(srv, 108000);
     server.next(heap, srv);
     test.assert(server.closing(srv, j));
     server.detach(srv, j);
-    let m = server.attach(srv, 0);
-    server.input(srv, m, "POST /p HTTP/1.1\r\nHost: t\r\nContent-Length: 600\r\n\r\n", 0);
-    server.ready(srv, 0);
+    let m = server.attach(srv, 100000);
+    server.input(srv, m, "POST /p HTTP/1.1\r\nHost: t\r\nContent-Length: 600\r\n\r\n", 100000);
+    server.ready(srv, 108000);
     let w = bs.accept(heap, srv, true);
     let body = bs.make_body(heap, 600, 2);
     borrow body as &bb in {
-        let (sink, took) = bs.push_all(heap, srv, m, w, buffer.bytes(bb), 4096, 64, buffer.empty(heap, 16), 0);
+        let (sink, took) = bs.push_all(heap, srv, m, w, buffer.bytes(bb), 4096, 64, buffer.empty(heap, 16), 100000);
         test.assert_eq(took, 600);
         bs.check_streamed(heap, srv, w, sink, buffer.bytes(bb));
     }
@@ -693,8 +1046,8 @@ fn peer_ends[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_writ
     server.end_input(srv, m);
     test.assert_eq(server.body_state(srv, w), 1);
     test.assert(bs.answer_with(heap, srv, w, 600) > 0);
-    bs.expect_answer(heap, bs.drain(heap, srv, m, 0), 600);
-    server.ready(srv, 0);
+    bs.expect_answer(heap, bs.drain(heap, srv, m, 100000), 600);
+    server.ready(srv, 108000);
     server.next(heap, srv);
     test.assert(server.closing(srv, m));
     return 0;
@@ -1128,6 +1481,60 @@ fn test_random_operations_with_bodies_never_trap_or_break_a_bound[&h](heap: &!h 
             }
         }
         seed = seed + 1;
+    }
+    return 0;
+}
+
+// A streaming request behind an answered one, left in hand when the round ends (the application neither held nor answered it):
+// the buffer is moved to the front under it, and it is still the same request, with its body where it was.
+fn left_in_hand[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_write, poll] int {
+    test.assert_eq(server.limits(srv, 100000, 64, 5000, 5000), 0);
+    let k = server.attach(srv, 0);
+    server.input(srv, k, "GET /a HTTP/1.1\r\nHost: t\r\n\r\nPOST /b HTTP/1.1\r\nHost: t\r\nContent-Length: 600\r\n\r\nabcdef", 0);
+    server.ready(srv, 0);
+    test.assert(server.next(heap, srv) >= 0);
+    test.assert(!server.streaming(srv));
+    bs.respond_with(heap, srv, 0);
+    bs.expect_answer(heap, bs.drain(heap, srv, k, 0), 0);
+    test.assert(server.next(heap, srv) >= 0);
+    test.assert(server.streaming(srv));
+    // What has arrived of its body is not `body`'s: that is for a request that is whole.
+    test.assert_eq(len(server.body(srv)), 0);
+    // The round ends here: nothing was done with it.
+    server.ready(srv, 0);
+    test.assert(server.next(heap, srv) >= 0);
+    test.assert(server.streaming(srv));
+    test.assert(bs.same(http.path(server.head(srv), server.parsed(srv)), "/b"));
+    let t = server.hold(srv);
+    test.assert(bs.same(server.body_part(srv, t), "abcdef"));
+    let body = bs.make_body(heap, 594, 5);
+    borrow body as &bb in {
+        let (sink, took) = bs.push_all(heap, srv, k, t, buffer.bytes(bb), 100, 64, buffer.empty(heap, 16), 0);
+        test.assert_eq(took, 594);
+        borrow sink as &sk in {
+            test.assert_eq(len(buffer.bytes(sk)), 600);
+            test.assert(bs.same(buffer.bytes(sk)[0..6], "abcdef"));
+        }
+        buffer.drop(heap, sink);
+    }
+    buffer.drop(heap, body);
+    test.assert_eq(server.body_state(srv, t), 1);
+    test.assert(bs.answer_with(heap, srv, t, 600) > 0);
+    return 0;
+}
+
+fn test_a_streaming_request_left_in_hand_when_the_round_ends_keeps_its_body[&h](heap: &!h Heap) -> [heap, conn_write, poll] int {
+    match server.open_bytes(heap, 256, 4096, 30, 2) {
+        server.Opening::Ok(s) => {
+            var srv = s;
+            borrow mut srv as &!sw in {
+                left_in_hand(heap, sw);
+            }
+            server.close(heap, srv);
+        }
+        server.Opening::Failed(e) => {
+            test.assert(false);
+        }
     }
     return 0;
 }

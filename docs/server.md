@@ -358,6 +358,8 @@ second, independently written decoder on 3,604 generated and mutated bodies
 server's throughput and tail are unchanged (69,000-72,000 a second, p99 about
 0.65 ms).
 
-What is **still not** done: streaming a body to a handler as it arrives (so a
+What is **still not** done *in this server*: streaming a body to a handler as it arrives (so a
 100 MB upload does not need a 100 MB buffer), `Expect: 100-continue`, and
-trailers.
+trailers. (*`packages/http-server` has all three since `http-server.md` §12: a server that calls `limits`
+streams, answers `100 Continue` when its application asks, and accepts and discards trailers and
+chunk extensions. `examples/api` does not call it.*)

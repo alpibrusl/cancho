@@ -7,7 +7,8 @@
 use super::*;
 
 /// (file, how many `fn test_*` it holds): a test deleted or renamed away is a red build here, not a quiet pass of fewer.
-const FILES: [(&str, usize); 2] = [("http_server_body_test.cho", 7), ("http_server_body_flow_test.cho", 13)];
+const FILES: [(&str, usize); 2] =
+    [("http_server_body_test.cho", 7), ("http_server_body_flow_test.cho", 15)];
 
 #[test]
 fn the_streaming_body_tests_pass_on_both_backends() {
@@ -24,8 +25,16 @@ fn the_streaming_body_tests_pass_on_both_backends() {
                 .output()
                 .expect("the compiler runs");
             let text = String::from_utf8_lossy(&out.stdout);
-            assert_eq!(out.status.code(), Some(0), "{name} on {backend}:\n{text}\n{}", String::from_utf8_lossy(&out.stderr));
-            assert!(text.contains(&format!("test result: ok. {tests} passed; 0 failed")), "{name} on {backend}: {text}");
+            assert_eq!(
+                out.status.code(),
+                Some(0),
+                "{name} on {backend}:\n{text}\n{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert!(
+                text.contains(&format!("test result: ok. {tests} passed; 0 failed")),
+                "{name} on {backend}: {text}"
+            );
         }
     }
 }

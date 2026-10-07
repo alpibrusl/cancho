@@ -6,7 +6,7 @@
 > lines. This extracts the loop; `docs/server.md` stays the account of what the
 > loop does and costs, this says where it lives and why it has this shape.
 > **§11 (byte-fed mode, so the loop can sit behind TLS) is built too**, and `examples/https_hello` is the HTTPS server made of it and
-> `packages/tls`.
+> `packages/tls`. **So is §12 (streaming request bodies and `Expect: 100-continue`)**: a body larger than the buffer, in pieces, with the same back-pressure and two timers of its own.
 
 ## 1. What was asked
 
@@ -93,7 +93,7 @@ The behaviour. Every test in `conformance/api.rs` runs against the migrated
 
 Streaming bodies, `Expect: 100-continue`, TLS and more than one core are
 `server.md` §6's list and remain the list. Handlers see a request whole.
-(*TLS: §11 is the byte-fed mode that lets a TLS terminator drive the loop. Streaming a *response* is `stream` there; streaming a request is still not.*)
+(*TLS: §11 is the byte-fed mode that lets a TLS terminator drive the loop. Streaming a *response* is `stream` there. Streaming a request, and `Expect`, are §12: a server that calls `limits` gets them; one that does not still sees a request whole and ignores `Expect`.*)
 
 ## 7. Built
 
@@ -505,9 +505,9 @@ Not measured: more than 32 connections, handshakes (`tls-server.md` §11.4's 3.0
 
 What the gateway (an HTTP/1.1 reverse proxy that terminates HTTPS) can build on today, and what it still lacks. In the order it will hit them:
 
-1. **Streaming a request body.** A request is handed over whole, so one larger than `size` is refused with a 413, and a proxy forwarding an upload would have to
-   buffer it. The gateway needs the body in pieces (a `body_part` view and a way to say "more is coming", with the same bound per connection) and `Expect: 100-continue`.
-   This is `server.md` §6's first open item and the largest piece of work left; `stream` only did the response direction.
+1. **Streaming a request body.** *Built, §12.* (It was: a request is handed over whole, so one larger than `size` is refused with a 413, and a proxy forwarding an upload would have to
+   buffer it.) `limits` opts in; the held request's ticket then gives `body_part`, `body_take`, `body_state`, `body_total` and `proceed` (`100 Continue`), with the same `room` rule as answers, and refusals with rule tags.
+   What the gateway still has to do with it is in §12.14.
 2. **Chunked responses.** `stream` sends bytes; a proxied answer of unknown length needs `Transfer-Encoding: chunked` framing on the way out (and de-chunking on the way in from the upstream). `std.http`
    has `dechunk` and no chunk writer.
 3. **The peer's address.** ~~`std.conns` does not give it~~ **Corrected ([`conn-peer.md`](conn-peer.md)):** `conns.peer(table, slot)` answers it (`std.addr.Peer`, with `text` for a log line and
@@ -517,16 +517,17 @@ What the gateway (an HTTP/1.1 reverse proxy that terminates HTTPS) can build on 
    with `hold`/`answer` for the request waiting on the upstream (§10) and `stream` for the answer's body. `packages/http-request` is blocking; a non-blocking client is the missing piece, as it was for `cancho-pg`. *(Built: [`http-client.md`](http-client.md), `packages/http-client` and `examples/http_fetch_nb`; what the gateway still needs of it is §10.7 there.)*
 5. **Upgrade.** `Upgrade: websocket` and `CONNECT` need a connection to stop being parsed once the 101 is sent and become a byte tunnel: `detach` frees the HTTP side's slot, but the bytes already buffered behind
    the request are the gateway's to recover (`head`/`body` views end with the request).
-6. **Two timeouts.** `idle` is one number for a keep-alive connection waiting for its next request and a client taking a minute to send a head. A proxy wants a header timeout of its own.
+6. **Two timeouts.** *Built, §12.8:* `head_ms` is a deadline for a head (a trickle does not extend it) and `body_ms` the longest the server waits for more of a body; both answer `408` with a rule tag. `idle` is still the
+   keep-alive connection's. (It was: `idle` was one number for a keep-alive connection waiting for its next request and a client taking a minute to send a head.)
 7. **ALPN.** The engine selects a protocol (`--alpn`); the loop could offer `http/1.1` and refuse `h2`, which it does not speak. Nothing is done with the negotiated value yet.
 8. **More than 1,024 connections** (`max_connections`) and more than one core (a second process on `SO_REUSEPORT`, not tried).
 9. **A byte-fed program's authority report lists `conn_write` and `poll`** (§11.2). If the gateway's reviewers want it without them, the package needs a second set of names whose rows have no socket in them; nothing has asked yet.
 
 ## 12. Streaming a request body, and `Expect: 100-continue`
 
-> **Status: design, written before the code** (`CONTRIBUTING.md`: design first, claims measured, a claim that turns out false is corrected in place in this section). The two numbers
-> below that are measured were measured before any code was written; everything else is a decision, and §12.12 is where building it is to say what turned out different.
-> It is the first item of §11.8 and `server.md` §6's: a proxy forwarding an upload cannot buffer it.
+> **Status: built** (this section was committed as a design first, with two measured numbers; building it corrected it in the places marked *Corrected*, collected in §12.12; the
+> tests, mutants and measurements are §12.13). It was the first item of §11.8 and `server.md` §6's: a proxy forwarding an upload cannot buffer it. `examples/https_hello` has the
+> upload routes, and `cancho-gateway`'s item 6 (a header timeout of its own) is §12.8.
 
 ### 12.1 What stopped it, measured
 
@@ -535,7 +536,8 @@ A request is handed to the application whole or not at all. `produce` waits unti
 `413`), and on the socket path the same code runs. Three consequences for a reverse proxy, each from that one rule:
 
 * an upload larger than `size` cannot be proxied at all (and `size` is memory times connections: `input_budget` caps the sum at 256 MiB);
-* a client that sends `Expect: 100-continue` (curl does for any body over 1 MiB; it waits one second, then sends the body anyway) cannot be told to go ahead or refused
+* a client that sends `Expect: 100-continue` (measured, curl 8.7.1 against a server that reads the head and then nothing: `-T` or `--data-binary` of a 3 MiB file sends it and then waits 1.0 s
+  before sending the body anyway; a 10 KB body sends no `Expect`) cannot be told to go ahead or refused
   before it sends the body, so a refusal costs the whole upload and the proxy cannot say "no" to a 1 GiB `PUT` cheaply;
 * the only timeout is `idle`, one number for a keep-alive connection waiting for its next request and a client taking a minute to send a head or a body
   (`cancho-gateway` `docs/design.md` §5 wants a header timeout of its own, a `408`; §11.8 item 6).
@@ -618,9 +620,9 @@ buffer of its own. States: size (1 to 8 hex digits, leading zeros count), extens
 * **Chunk extensions are accepted and ignored** (RFC 9112 §7.1.1: a recipient MUST ignore ones it does not recognise), within bounds: at most 256 bytes after the `;`, each a tab or a visible ASCII or
   high byte, never a control character or a bare CR or LF (`body.chunk-extension`). `std.http.dechunk` refuses them; the gateway's `framing.chunk-extension` does too. This server does not, because
   the framing is its own and an extension that cannot be told apart from data is not a smuggling vector when it is parsed by the same machine that finds the end of the chunk; an application that wants them refused
-  has the bound `max_ext` at 0 (§12.12 says if that was built).
+  can refuse them in its own code (it sees none: they are ignored here). A switch for refusing them was not built; nothing has asked for one.
 * **Trailers are accepted, validated and discarded.** After the zero chunk: zero or more `name: value` lines (name of token characters, a value of tabs and visible bytes, CRLF), then a blank line.
-  At most 4,096 bytes of them (`body.trailer-too-large`, `431`); a malformed line is `body.trailer`. The application never sees them: a proxy re-frames the body it forwards, so a trailer is dropped as
+  At most 4,096 bytes of them, counted from the first byte of the first trailer line to the final CR (`body.trailer-too-large`, `431`); a malformed line is `body.trailer`. The application never sees them: a proxy re-frames the body it forwards, so a trailer is dropped as
   RFC 9110 §6.5.2 allows. `body_state` is 1 only after the blank line.
 * **Bounds.** `max_body` on the decoded total, checked when a chunk's size line is read (`size + total > max_body` refuses at once, before the chunk's bytes), so a hostile
   `fffffff0` is refused without waiting for it. Framing overhead per chunk is bounded by the 8 digits, 256 extension bytes and four CRLF bytes, each chunk carrying at least one body byte: at most about 270 wire bytes for
@@ -658,7 +660,8 @@ every caller). The request is over from the instant it is recorded (`body_state`
 
 ### 12.6 Back-pressure in both directions
 
-**In.** The rule of §11.4, unchanged and shared: a byte is read only when there is room for it. `room(k)` is the free space in the connection's buffer, for a streaming body bounded by what the body still owes (`Content-Length`) — and
+**In.** The rule of §11.4, unchanged and shared: a byte is read only when there is room for it. `room(k)` is the free space in the connection's buffer plus the bytes the application has taken from
+the front of it (they are moved out of the way, once, by the next `input` that needs the room), for a streaming body bounded by what the body still owes (`Content-Length`) — and
 0 while an answer is waiting to go out, while the connection is ending, and while a refusal is recorded. A piece the application has not taken therefore stays in the buffer, the buffer fills, `room` is 0, the
 caller stops calling `tls.recv` (or the socket path stops being watched), and the client's TCP window closes. **A proxy passes its upstream's pressure to the client by simply not calling `body_take`.**
 The most a streaming connection holds is the same `size + out` of §11.4 whatever `max_body` is; a 1 GiB upload through a 16 KiB buffer is 16 KiB of the server's memory, which the live test measures.
@@ -680,8 +683,9 @@ unless the application has already begun its answer, in which case the connectio
 
 * **`head_ms`: a deadline for the head, not an idle limit.** It starts when `next` first looks at a request whose head is incomplete, and ends when the head is complete; a client that sends a byte every
   `head_ms - 1` milliseconds does not extend it (that is the slow-loris shape: many connections, each held open by a trickle). It does not run while the connection has an answer waiting (the server is not reading then).
-* **`body_ms`: the longest the server waits for the client to send more of a body.** It restarts when a body byte arrives and when the application takes a piece after the buffer was full, and it does not run while
-  the buffer is full and the application has not taken what is in it: waiting for the *application* is the application's to time (a gateway has its upstream timeouts), not the client's fault. A client that sends one byte
+* **`body_ms`: the longest the server waits for the client to send more of a body.** It starts when the head is handed over, restarts when a body byte arrives, when the application takes a piece, and when it
+  says `proceed`; it does not run while the buffer is full and the application has not taken what is in it, nor while a client that sent `Expect: 100-continue` has not been told to go ahead, nor while an answer waits to be sent
+  (the client is not reading): waiting for the *application* is the application's to time (a gateway has its upstream timeouts), not the client's fault. A client that sends one byte
   every `body_ms - 1` milliseconds is not stopped by this alone; each such byte is progress by definition. The bound on that case is the application's total deadline for the request, which `hold` always allowed (§10: "an application
   that wants a deadline answers with 504"), and `max_body` bounds the bytes.
 * The scan for expired timers runs at most every 50 ms, over the connection table. `ready`/`wait` do it; expiry only *records* the refusal (as in §12.4); `next` sends it.
