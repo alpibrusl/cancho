@@ -315,5 +315,8 @@ pub fn rule_tag(r: int) -> [] &static [byte] {
     if r == 44 {
         return "not-an-enum";
     }
+    if r == 45 {
+        return "ambiguous-type";
+    }
     return "unknown-name";
 }
