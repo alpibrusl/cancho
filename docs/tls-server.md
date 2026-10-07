@@ -558,6 +558,12 @@ link there is refused (`ELOOP`): certbot's `live/` is links into `archive/` and 
 needs at the same time). A program that knew its directory at build time could narrow to the literal instead
 (`Fs("/etc/cancho-mqtt")`), and its row would say so.
 
+*(Built, PR #364, `narrowing-into-several.md` §11.1: `examples/tls_echo_fixed` is that program. Its `main` is
+`narrow(fs, "/dev/urandom", "/etc/cancho/tls_echo")`, one `narrow` for the two paths it reads, so its pinned report
+(`conformance/tls_echo_fixed.rs`) has `fs_read("/dev/urandom")` and `fs_read("/etc/cancho/tls_echo")` where `tls_echo`'s has
+`fs_read("")`, and the same labels otherwise. It shares `serve` and the loop with `tls_echo`; the cost is that the directory is
+fixed when it is built and `--dir` is refused.)*
+
 ### 11.2 The two decisions
 
 **Reload is `SIGHUP`, not a file's modification time.** Both are possible today (`dir_stat` answers an mtime beneath a

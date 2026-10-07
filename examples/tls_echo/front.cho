@@ -617,10 +617,11 @@ pub fn set_number[&c](cfg: &!c [int], at: int, text: &static [byte], low: int, h
 
 // The command line into `cfg` (and the port into `cfg[cfg_len()]`), the
 // identities' subdirectories into `subs`/`sublens`, and the ALPN list,
-// commas made spaces, into `alpn`. Answers the directory, and in
+// commas made spaces, into `alpn`. Answers the directory (empty if
+// `--dir` was not given: `examples/tls_echo_fixed` has none to give), and in
 // `info[0]` the ALPN list's length and `info[1]` 0, or 2 for a usage
 // error.
-pub fn parse[&g, &c, &u, &n, &a, &f](g: &g Args, cfg: &!c [int], subs: &!u [byte], sublens: &!n [int], alpn: &!a [byte], info: &!f [int]) -> [args] &static [byte] {
+pub fn parse_flags[&g, &c, &u, &n, &a, &f](g: &g Args, cfg: &!c [int], subs: &!u [byte], sublens: &!n [int], alpn: &!a [byte], info: &!f [int]) -> [args] &static [byte] {
     var dir = "";
     var bad = false;
     var c = flags.start();
@@ -688,7 +689,17 @@ pub fn parse[&g, &c, &u, &n, &a, &f](g: &g Args, cfg: &!c [int], subs: &!u [byte
             }
         }
     }
-    if bad || len(dir) == 0 || cfg[cfg_len()] == 0 {
+    if bad || cfg[cfg_len()] == 0 {
+        info[1] = 2;
+    }
+    return dir;
+}
+
+// `parse_flags`, for a server whose operator names the directory: `--dir` is
+// required.
+pub fn parse[&g, &c, &u, &n, &a, &f](g: &g Args, cfg: &!c [int], subs: &!u [byte], sublens: &!n [int], alpn: &!a [byte], info: &!f [int]) -> [args] &static [byte] {
+    let dir = parse_flags(g, cfg, subs, sublens, alpn, info);
+    if len(dir) == 0 {
         info[1] = 2;
     }
     return dir;

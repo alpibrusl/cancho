@@ -1,0 +1,49 @@
+// `docs/narrowing-into-several.md` §5: one `narrow` with two literals consumes
+// `Fs("")` and answers a pair, one capability for each path, in the order
+// written. Each child reads only its own path; the report says exactly those two.
+//
+// The files are character devices every Unix has, so the fixture needs no setup:
+// `/dev/zero` fills the buffer and so does `/dev/urandom`, 16 bytes each.
+//~ STDOUT 32
+//~ EXIT 0
+
+fn print_nat[&i](io: &!i Io, n: int) -> [io_write] int {
+    if n >= 10 {
+        print_nat(io, n / 10);
+    }
+    return putchar(io, '0' + n % 10);
+}
+
+fn zeros[&f, &o](fs: &f Fs("/dev/zero"), out: &!o [byte]) -> [fs_read("/dev/zero")] int {
+    return fs_read(fs, "/dev/zero", out);
+}
+
+fn entropy[&f, &o](fs: &f Fs("/dev/urandom"), out: &!o [byte]) -> [fs_read("/dev/urandom")] int {
+    return fs_read(fs, "/dev/urandom", out);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(heap);
+    release(args);
+    let (zero, random) = narrow(fs, "/dev/zero", "/dev/urandom");
+    var got = 0;
+    region r {
+        let buffer = alloc_slice[r](16, byte_of(0));
+        borrow zero as &z in {
+            got = got + zeros(z, buffer);
+        }
+        borrow random as &e in {
+            got = got + entropy(e, buffer);
+        }
+    }
+    release(zero);
+    release(random);
+    borrow mut io as &!i in {
+        print_nat(i, got);
+        putchar(i, 10);
+    }
+    release(io);
+    return 0;
+}

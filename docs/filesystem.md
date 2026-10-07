@@ -71,6 +71,15 @@ declare `[]` for a body that read `/tmpevil`: an inexact row
 `net_out`/`net_in` keep a plain text prefix on their `"host:port"` bound, as
 `narrow` does for a `Net` (`net.md` §4).
 
+**More than one path.** `narrow(fs, "a", "b", ...)` spends the `Fs` and answers
+a tuple, one `Fs` per literal, each checked as above and against each other
+(no two equal, none inside another). A program that holds `/dev/urandom` and a
+certificate directory at once reports `fs_read("/dev/urandom")` and
+`fs_read("/etc/cancho/tls_echo")`, and not `fs_read("")`. Each operation is still
+checked at run time against the prefix of the capability it borrowed, so a read
+of one child's file through the other traps (`narrowing-into-several.md`,
+built in PR #364, `conformance/narrow_many.rs`).
+
 ---
 
 ## 2. Why the operations are builtins and not `extern fn`

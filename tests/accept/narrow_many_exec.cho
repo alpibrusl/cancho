@@ -1,0 +1,83 @@
+// `docs/narrowing-into-several.md` §5, item 4 and §9 question 3: `Exec` narrows
+// into several the way `Fs` does (`docs/processes.md` §4.1 gave it `Fs`'s rule).
+// Two programs, each startable through its own capability and no other.
+//~ STDOUT 1
+//~ EXIT 0
+
+edition 7;
+
+fn print_nat[&i](io: &!i Io, n: int) -> [io_write] int {
+    if n >= 10 {
+        print_nat(io, n / 10);
+    }
+    return putchar(io, '0' + n % 10);
+}
+
+fn run_true[&x](exec: &x Exec("/usr/bin/true")) -> [exec("/usr/bin/true")] int {
+    match exec_spawn(exec, "/usr/bin/true", "", "", Stdio::Null, Stdio::Null, Stdio::Null) {
+        Spawned::Ok(child) => {
+            match child_wait(child) {
+                Exited::Code(n) => {
+                    return n;
+                }
+                Exited::Signaled(s) => {
+                    return 100;
+                }
+                Exited::Failed(e) => {
+                    return 100;
+                }
+            }
+        }
+        Spawned::Failed(e) => {
+            return 100;
+        }
+    }
+}
+
+fn run_false[&x](exec: &x Exec("/usr/bin/false")) -> [exec("/usr/bin/false")] int {
+    match exec_spawn(exec, "/usr/bin/false", "", "", Stdio::Null, Stdio::Null, Stdio::Null) {
+        Spawned::Ok(child) => {
+            match child_wait(child) {
+                Exited::Code(n) => {
+                    return n;
+                }
+                Exited::Signaled(s) => {
+                    return 100;
+                }
+                Exited::Failed(e) => {
+                    return 100;
+                }
+            }
+        }
+        Spawned::Failed(e) => {
+            return 100;
+        }
+    }
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(heap);
+    release(args);
+    release(fs);
+    release(net);
+    release(clock);
+    release(signals);
+    let (yes, no) = narrow(exec, "/usr/bin/true", "/usr/bin/false");
+    var status = 0;
+    borrow yes as &a in {
+        status = status + run_true(a);
+    }
+    borrow no as &b in {
+        status = status + run_false(b);
+    }
+    release(yes);
+    release(no);
+    borrow mut io as &!i in {
+        print_nat(i, status);
+        putchar(i, 10);
+    }
+    release(io);
+    return 0;
+}

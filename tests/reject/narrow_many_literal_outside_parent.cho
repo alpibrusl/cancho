@@ -1,0 +1,14 @@
+//~ ERROR cannot be narrowed to
+//~ RULE capability-not-narrowable
+
+// A literal that does not extend the capability's path: `/dev/urandom` is outside `/etc/pg`, so the second narrow of the pair is refused, as a single `narrow` would refuse it.
+// (`docs/narrowing-into-several.md` section 5.)
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io); release(ffi); release(heap); release(args);
+    let wide = narrow(fs, "/etc/pg");
+    let (a, b) = narrow(wide, "/etc/pg/ca.crt", "/dev/urandom");
+    release(a); release(b);
+    return 0;
+}

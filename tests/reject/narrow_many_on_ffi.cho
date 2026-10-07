@@ -1,0 +1,13 @@
+//~ ERROR narrow(ffi, "libc,libm")
+//~ RULE capability-not-narrowable
+
+// `Ffi` narrows to a set in one capability; more than one literal is refused and the message names the set form (`docs/foreign-authority.md` section 5.2).
+// (`docs/narrowing-into-several.md` section 5.)
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io); release(fs); release(heap); release(args);
+    let (a, b) = narrow(ffi, "libc", "libm");
+    release(a); release(b);
+    return 0;
+}
