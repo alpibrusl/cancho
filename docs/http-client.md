@@ -524,7 +524,13 @@ TLS 1.3 is `GET /hello/42` against `examples/https_hello` (99 bytes with its hea
 | plain, a connection for each request | 22,266 30,336 29,094 | 20.16 µs |
 | TLS 1.3, keep-alive | 87,379 85,616 81,705 | 10.70 µs |
 | TLS 1.3, a handshake for each request | 97 97 97 | 3,069 µs |
-@@X86@@
+| **GitHub Actions x86-64 runner (`tls-assurance`), shared, unpinned**, as run in CI on this PR | | |
+| plain, keep-alive | 68,208 68,396 68,492 | 14.19 µs |
+| plain, a connection for each request | 10,960 10,764 10,699 | 84.34 µs |
+| TLS 1.3, keep-alive | 18,079 18,080 18,108 | 50.95 µs |
+| TLS 1.3, a handshake for each request | 94 94 94 | 10,334 µs |
+
+The shared x86-64 runner is 3 to 7 times slower per request than the pinned aarch64 VM (the same runner measures the server at 8.69 µs plain and 34.31 µs over TLS, `http-server.md` §11), so the client costs about 1.6 times the server there, not "about as much". The state machine alone is 0.17 to 0.20 s per 400,000 requests (0.4 to 0.5 µs) on that runner. CI pins the *shape* (`--pin`), not these numbers.
 
 So **a client core serves about 300,000 plain keep-alive requests a second and about 120,000 over TLS 1.3** on the aarch64 VM, against the server's
 2.7 µs and 9.8 µs a request (`http-server.md` §11.7, same VM): the client costs about as much as the server it talks to, which is what a mirror
