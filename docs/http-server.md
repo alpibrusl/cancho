@@ -495,7 +495,7 @@ What the gateway (an HTTP/1.1 reverse proxy that terminates HTTPS) can build on 
 3. **The peer's address.** `std.conns` does not give it, so there is no `X-Forwarded-For`, no per-address bound on handshakes or connections (`tls-server.md` §11.5), and no access log with
    an address. A `Conn` accessor in `std.conns` is the change.
 4. **Upstream connections in the same loop.** The gateway's own sockets to its upstreams go in the poller it owns (a byte-fed server has none of its own; `https_hello`'s `loop.cho` is the place),
-   with `hold`/`answer` for the request waiting on the upstream (§10) and `stream` for the answer's body. `packages/http-request` is blocking; a non-blocking client is the missing piece, as it was for `cancho-pg`.
+   with `hold`/`answer` for the request waiting on the upstream (§10) and `stream` for the answer's body. `packages/http-request` is blocking; a non-blocking client is the missing piece, as it was for `cancho-pg`. *(Designed in [`http-client.md`](http-client.md).)*
 5. **Upgrade.** `Upgrade: websocket` and `CONNECT` need a connection to stop being parsed once the 101 is sent and become a byte tunnel: `detach` frees the HTTP side's slot, but the bytes already buffered behind
    the request are the gateway's to recover (`head`/`body` views end with the request).
 6. **Two timeouts.** `idle` is one number for a keep-alive connection waiting for its next request and a client taking a minute to send a head. A proxy wants a header timeout of its own.
