@@ -29,6 +29,7 @@
 - [Native sockets](native-sockets.md)
 - [UDP](udp.md)
 - [Signals](signals.md)
+- [Connection peer address](conn-peer.md)
 - [Directory handles](directory-handles.md)
 - [Directory listing](directory-listing.md)
 - [Processes](processes.md)
