@@ -94,7 +94,7 @@ trap was read in the disassembly:
 | `bigmod.load_secret` | the limb count, the length, the loop counter, and `off > 22` (`cmp $0x17,%rcx`): positions |
 | `ecdh.in_range`, `ecdh.scalar_ok` | the loop counter and the curve's size; the borrow and the OR are `seta`/`setg`, not jumps |
 | `ecdsa_sign.finish` | `is_zero` on r and on s (public, above), `store_reg`'s positions, `set_small`'s counter |
-| `ecdsa_sign.reseed`, `rekey`, `candidate`, `copy32`, `wipe` | the HMAC state's length (`cmp $0xca`), and counters |
+| `ecdsa_sign.reseed`, `rekey`, `candidate`, `copy32`; `bignum.zero` | the HMAC state's length (`cmp $0xca`), and counters |
 | `ecdsa_sign.sign` | the lengths, the attempt counter, `public_key`'s answer and the code: §2.1's public values |
 | `lexs_x509_key.within`, `base64_value` | nothing but overflow traps: the masks stay arithmetic through `value_barrier` |
 | `lexs_x509_key.base64_decode` | whether a character is base64 at all (`cmp $0xff`), and only for one that is not: whitespace (`bt`), `=`; the count of padding and of bits, which are positions; and the final check that the bits left over are zero, whose answer is the file's validity |
@@ -255,11 +255,19 @@ against random.
 - **the key 1 against random keys**, the shape that found `std.ecdh`'s leak (`docs/ecdh.md` §3). Here it gives r·d with a
   one-limb d, which a multiplication whose time depended on its operands would show.
 
-**The machine:** MACHINE. **The gate:** |t| below 4.5 at 10^6 measurements a test (`docs/tls-server.md` §3.4).
+**The machine:** `gram`, an Intel Core i7-1260P (Alder Lake laptop part, 4 performance and 8 efficiency cores), Ubuntu's
+kernel, the `powersave` governor; the test in an `ubuntu:24.04` container pinned to performance core 2 (`--cpuset-cpus=2`),
+its sibling idle. `tick` is `rdtscp`. LLVM backend. **The gate:** |t| below 4.5 at 10^6 measurements a test (`docs/tls-server.md` §3.4).
 
 | Test, LLVM backend | Measurements | Median | max \|t\| |
 |---|---|---|---|
-RESULT_TIMING
+| a fixed key against random keys | 1,000,000 | 3,873,943 cycles | **1.66** |
+| the key 1 against random keys | 1,000,000 | 3,779,637 cycles | **2.81** |
+
+**Both pass.** The medians differ because each test's samples are mostly from its random class and the runs were at
+different times (the fixed-key run shared the machine with a `cargo test` on the efficiency cores for part of its length);
+the classes are interleaved within each run, so that moves both alike. A first run, stopped at 550,000 samples when `wipe` was
+replaced by `bignum.zero` (the duplication check found it a copy), stood at the same level. Cranelift was not timed.
 
 ## 7. Cost
 
@@ -268,11 +276,16 @@ run of as many DER encodings for the driver's own reading and printing. LLVM bac
 
 | Machine | `sign` | `sign_checked` | the check |
 |---|---|---|---|
-RESULT_COST
+| Intel i7-1260P (`gram`, Linux, Docker, one performance core) | **1.47 ms** (680 a second) | 2.98 ms | 1.50 ms |
+| Apple M4 Max (macOS, loaded: load average about 8) | **0.82 ms** (1,225 a second) | 1.62 ms | 0.80 ms |
+| i7-1260P, **Cranelift** | 4.10 ms | 7.75 ms | 3.65 ms |
+
+The i7's figures are three runs that agree within 4%; one earlier run gave 2.69 ms, with the core in a lower frequency state
+under the `powersave` governor, and is not used.
 
 Almost all of it is the k·G ladder (`std.ecdh.shared` on the Xeon of `docs/chacha20.md` §6 was 2.6 ms): the HMACs, the
 inversion and the two `bigmod.setup`s are the rest. OpenSSL's `openssl speed ecdsap256` on the same machine signs in
-RESULT_OPENSSL_SPEED, with a fixed-base table and arithmetic specialised to P-256's prime (`docs/ecdsa.md` §5.4).
+23 µs (OpenSSL 3.0.13, 44,132 a second; 65 times faster), with a fixed-base table and arithmetic specialised to P-256's prime (`docs/ecdsa.md` §5.4).
 `docs/tls-server.md` §6 now uses these numbers.
 
 ## 8. Found

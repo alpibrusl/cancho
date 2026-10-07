@@ -182,16 +182,22 @@ existing record-layer tags (`tls-record-*`) apply unchanged.
 
 ## 6. Cost
 
-*Arithmetic from measured parts, not measured; step 2 measures it.* One full handshake on the server, P-256 certificate:
+*The signature is measured (step 1, `docs/ecdsa-sign.md` §7); the total is arithmetic from measured parts, and step 2
+measures it.* One full handshake on the server, P-256 certificate:
 
 | operation | cost | source |
 |---|---|---|
 | X25519 key pair and shared secret | 1.14 ms | `docs/tls-resumption.md` §1 (6-vCPU Linux VM on an M4 Max) |
-| ECDSA P-256 sign: one scalar multiplication | about 1.3 to 2.6 ms | `std.ecdh.shared` is 2.6 ms on the Xeon of `docs/chacha20.md` §6; one multiplication without a fixed-base table |
-| verifying the signature (§3.3) | 0.82 ms | `docs/tls-resumption.md` §1 |
-| **total** | **about 3 to 5 ms of CPU** | |
+| ECDSA P-256 sign (`std.ecdsa_sign.sign`) | **1.5 ms** on an Intel i7-1260P, **0.82 ms** on an Apple M4 Max | measured, LLVM backend, `docs/ecdsa-sign.md` §7 |
+| verifying the signature (§3.3) | **1.5 ms** on the i7-1260P, **0.80 ms** on the M4 Max | measured: `sign_checked` less `sign`, same section |
+| **total** | **about 4 ms of CPU on the i7, about 2.8 ms on the M4** | the X25519 row is the M4 VM's; the i7's X25519 is not measured |
 
-So about 200 to 300 full handshakes a second a core. OpenSSL's P-256 signing is tens of microseconds with its NIST-prime
+*Corrected (step 1): the estimate was "about 1.3 to 2.6 ms" to sign and 3 to 5 ms in all. Measured, the signature is at the
+bottom of that range, and the check of §3.3 costs as much as the signature on the i7 (not "about a fifth of the cost" as
+§9's question 3 has it; on the M4 it is about 0.8 ms, as estimated). OpenSSL 3.0.13 signs in 23 µs on the same i7
+(`openssl speed ecdsap256`, 44,132 a second), 65 times faster.*
+
+So about 250 full handshakes a second a core on the i7, by the arithmetic above. OpenSSL's P-256 signing is tens of microseconds with its NIST-prime
 arithmetic; this server's handshake is in the order of 10 to 50 times OpenSSL's. For the two programs that is acceptable:
 an MQTT client and an HTTP keep-alive connection handshake once and then stay. **What changes it** is in §8: session tickets
 (no signature on a resumed connection), a fixed-base table for k·G, and arithmetic specialised to the NIST primes
