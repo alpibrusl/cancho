@@ -500,6 +500,7 @@ const STD: &[(&str, &str)] = &[
     ("<std>/http.cho", include_str!("../../../std/http.cho")),
     ("<std>/route.cho", include_str!("../../../std/route.cho")),
     ("<std>/conns.cho", include_str!("../../../std/conns.cho")),
+    ("<std>/udps.cho", include_str!("../../../std/udps.cho")),
     ("<std>/signals.cho", include_str!("../../../std/signals.cho")),
     ("<std>/dirs.cho", include_str!("../../../std/dirs.cho")),
     ("<std>/process.cho", include_str!("../../../std/process.cho")),

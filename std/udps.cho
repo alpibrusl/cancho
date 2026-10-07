@@ -1,0 +1,188 @@
+edition 5;
+module std.udps;
+
+import std.conns;
+
+// `std.udps` -- many datagram sockets, by slot number (`docs/udp.md` §11), in a `std.conns` `Table`.
+//
+// `std.conns` for `Udp`: a resolver holds a connected socket for every query in flight, and finds each by the
+// number the `Poller` gave back. A `Udp` is a resource and `std.vec` holds only copyable things, so a socket in a
+// `Table` is a **ticket**: `udp_detach` ends the `Udp` and answers an integer, `udp_attach` turns it back into
+// the `Udp` exactly once, and the runtime's per-descriptor epoch refuses a ticket never issued, already
+// redeemed, copied, of a `Conn`, or for a descriptor since reused. The integer is not authority.
+//
+// Every operation is `attach`, the one builtin, `detach`: the `Udp` is a resource for exactly that long and is back
+// in the table when the function returns. A `Table` must be ended with `drop`, which closes every socket still in it.
+// Slot numbers are reused, newest freed first. The table is `std.conns.empty`'s: it holds tickets, and a ticket of the other
+// kind in it is refused by every verb here with `EBADF`, never redeemed as the wrong socket.
+
+// Put a socket in, answering its slot -- or -1 if the runtime could not ticket it (a descriptor too large for the
+// epoch table), in which case it has been closed.
+pub fn put[&h](heap: &!h Heap, table: conns.Table, sock: Udp) -> [heap] (conns.Table, int) {
+    let ticket = udp_detach(sock);
+    if ticket < 0 {
+        return (table, 0 - 1);
+    }
+    return conns.store(heap, table, ticket);
+}
+
+// Put the socket back in `slot` after a call, or free the slot if it could not be ticketed again.
+fn restore[&t](table: &!t conns.Table, slot: int, sock: Udp) -> [] int {
+    let back = udp_detach(sock);
+    if back < 0 {
+        conns.release_slot(table, slot);
+    } else {
+        conns.replace(table, slot, back);
+    }
+    return 0;
+}
+
+// Receive one datagram from the socket in `slot`. A slot with nothing in it is `Failed(EBADF)`.
+pub fn recv[&t, &b](table: &!t conns.Table, slot: int, into: &!b [byte]) -> [udp_recv] Datagram {
+    let ticket = conns.ticket_at(table, slot);
+    if ticket < 0 {
+        return Datagram::Failed(9);
+    }
+    match udp_attach(ticket) {
+        UdpOpened::Ok(s) => {
+            var sock = s;
+            var answer = Datagram::Failed(9);
+            borrow mut sock as &!h in {
+                answer = udp_recv(h, into);
+            }
+            restore(table, slot, sock);
+            return answer;
+        }
+        UdpOpened::Failed(e) => {
+            return Datagram::Failed(e);
+        }
+    }
+}
+
+// Send one datagram on the socket in `slot` (a connected socket: to its peer).
+pub fn send[&t, &b](table: &!t conns.Table, slot: int, data: &b [byte]) -> [udp_send] Sent {
+    let ticket = conns.ticket_at(table, slot);
+    if ticket < 0 {
+        return Sent::Failed(9);
+    }
+    match udp_attach(ticket) {
+        UdpOpened::Ok(s) => {
+            var sock = s;
+            var answer = Sent::Failed(9);
+            borrow mut sock as &!h in {
+                answer = udp_send(h, data);
+            }
+            restore(table, slot, sock);
+            return answer;
+        }
+        UdpOpened::Failed(e) => {
+            return Sent::Failed(e);
+        }
+    }
+}
+
+// Make the socket in `slot` non-blocking. `0`, or an `errno`.
+pub fn nonblocking[&t](table: &!t conns.Table, slot: int) -> [] int {
+    let ticket = conns.ticket_at(table, slot);
+    if ticket < 0 {
+        return 9;
+    }
+    match udp_attach(ticket) {
+        UdpOpened::Ok(s) => {
+            var sock = s;
+            var answer = 9;
+            borrow mut sock as &!h in {
+                answer = udp_nonblocking(h);
+            }
+            restore(table, slot, sock);
+            return answer;
+        }
+        UdpOpened::Failed(e) => {
+            return e;
+        }
+    }
+}
+
+// The local port of the socket in `slot` (the one the kernel chose), or `-errno`.
+pub fn local_port[&t](table: &!t conns.Table, slot: int) -> [] int {
+    let ticket = conns.ticket_at(table, slot);
+    if ticket < 0 {
+        return 0 - 9;
+    }
+    match udp_attach(ticket) {
+        UdpOpened::Ok(s) => {
+            var sock = s;
+            var answer = 0 - 9;
+            borrow sock as &h in {
+                answer = udp_local_port(h);
+            }
+            restore(table, slot, sock);
+            return answer;
+        }
+        UdpOpened::Failed(e) => {
+            return 0 - e;
+        }
+    }
+}
+
+// Watch the socket in `slot` for readability, as `poller_add_udp` does: what the poller reports back is `token`.
+pub fn watch[&t, &p](table: &!t conns.Table, poller: &!p Poller, slot: int, token: int, events: int) -> [poll] int {
+    let ticket = conns.ticket_at(table, slot);
+    if ticket < 0 {
+        return 9;
+    }
+    match udp_attach(ticket) {
+        UdpOpened::Ok(s) => {
+            var sock = s;
+            var answer = 9;
+            borrow sock as &h in {
+                answer = poller_add_udp(poller, h, token, events);
+            }
+            restore(table, slot, sock);
+            return answer;
+        }
+        UdpOpened::Failed(e) => {
+            return e;
+        }
+    }
+}
+
+// Close the socket in `slot` and free the slot. `0`, or an `errno` (`EBADF` for a slot with nothing in it).
+pub fn close[&t](table: &!t conns.Table, slot: int) -> [] int {
+    let ticket = conns.ticket_at(table, slot);
+    if ticket < 0 {
+        return 9;
+    }
+    match udp_attach(ticket) {
+        UdpOpened::Ok(s) => {
+            let answer = udp_close(s);
+            conns.release_slot(table, slot);
+            return answer;
+        }
+        UdpOpened::Failed(e) => {
+            return e;
+        }
+    }
+}
+
+// End the table, closing every socket still in it (a connection's ticket is closed as the `Conn` it is, by
+// `conns.drop`). Answers how many sockets it closed.
+pub fn drop[&h](heap: &!h Heap, table: conns.Table) -> [heap] int {
+    var table2 = table;
+    var closed = 0;
+    var i = 0;
+    var n = 0;
+    borrow table2 as &s in {
+        n = conns.slots(s);
+    }
+    borrow mut table2 as &!w in {
+        while i < n {
+            if conns.ticket_at(w, i) >= 0 && close(w, i) == 0 {
+                closed = closed + 1;
+            }
+            i = i + 1;
+        }
+    }
+    conns.drop(heap, table2);
+    return closed;
+}

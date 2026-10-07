@@ -755,8 +755,10 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::PollerAddSignals) => {
                         self.poller_ctl(&args, true, false)
                     }
-                    Callee::Builtin(Builtin::ConnDetach) => self.conn_detach(&args),
-                    Callee::Builtin(Builtin::ConnAttach) => self.conn_attach(&args),
+                    Callee::Builtin(Builtin::ConnDetach) => self.conn_detach(&args, false),
+                    Callee::Builtin(Builtin::ConnAttach) => self.conn_attach(&args, false),
+                    Callee::Builtin(Builtin::UdpDetach) => self.conn_detach(&args, true),
+                    Callee::Builtin(Builtin::UdpAttach) => self.conn_attach(&args, true),
                     Callee::Builtin(Builtin::PollerAddListener) => {
                         self.poller_ctl(&args, true, false)
                     }

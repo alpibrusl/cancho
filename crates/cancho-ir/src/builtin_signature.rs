@@ -799,6 +799,8 @@ impl Builtin {
                 Type::Int,
             ),
             Builtin::UdpClose => (vec![named(PRELUDE_UDP)], Type::Int),
+            Builtin::UdpDetach => (vec![named(PRELUDE_UDP)], Type::Int),
+            Builtin::UdpAttach => (vec![Type::Int], named(PRELUDE_UDP_OPENED)),
             Builtin::PollerAddUdp => (
                 vec![
                     Type::Ref {

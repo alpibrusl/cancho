@@ -812,7 +812,14 @@ impl<'a> FuncEmitter<'a> {
     /// stays open, the `Conn` ends, and what comes back is a ticket -- the
     /// descriptor's epoch, bumped to an odd number, over its number. A
     /// descriptor too large for the table is closed and answers `-1`.
-    pub(crate) fn conn_detach(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+    ///
+    /// `udp` marks the ticket as a datagram socket's: bit 31 of the descriptor half is set, so
+    /// `conn_attach` refuses it and `udp_attach` refuses a ticket without it (`docs/udp.md` §11).
+    pub(crate) fn conn_detach(
+        &mut self,
+        args: &[LValue],
+        udp: bool,
+    ) -> Result<Vec<LValue>, String> {
         let fd = operand(&args[0]);
         let cell = self.fresh();
         self.hoist(format!("  {cell} = alloca i64\n"));
@@ -845,8 +852,11 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("  {masked} = and i64 {next64}, 2147483647\n"));
         let high = self.fresh();
         self.out.push_str(&format!("  {high} = shl i64 {masked}, 32\n"));
+        let plain = self.fresh();
+        self.out.push_str(&format!("  {plain} = or i64 {high}, {fd}\n"));
         let ticket = self.fresh();
-        self.out.push_str(&format!("  {ticket} = or i64 {high}, {fd}\n"));
+        let kind: i64 = if udp { 1 << 31 } else { 0 };
+        self.out.push_str(&format!("  {ticket} = or i64 {plain}, {kind}\n"));
         self.out.push_str(&format!("  store i64 {ticket}, ptr {cell}\n"));
         self.out.push_str(&format!("  br label %{merge}\n"));
 
@@ -860,10 +870,19 @@ impl<'a> FuncEmitter<'a> {
     /// ticket's epoch is odd, and it is the descriptor's *current* epoch --
     /// then the epoch moves on, so the ticket is spent. `Attached` is `Ok`
     /// 0 with the descriptor, `Failed` 1 with `EBADF`.
-    pub(crate) fn conn_attach(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+    ///
+    /// With `udp`, the ticket must carry the datagram kind bit (bit 31 of the descriptor half) and
+    /// the descriptor is the other 31 bits; without it, a ticket that carries the bit names a
+    /// descriptor past the table and is refused.
+    pub(crate) fn conn_attach(
+        &mut self,
+        args: &[LValue],
+        udp: bool,
+    ) -> Result<Vec<LValue>, String> {
         let ticket = operand(&args[0]);
         let fd = self.fresh();
-        self.out.push_str(&format!("  {fd} = and i64 {ticket}, 4294967295\n"));
+        let mask: i64 = if udp { 2_147_483_647 } else { 4_294_967_295 };
+        self.out.push_str(&format!("  {fd} = and i64 {ticket}, {mask}\n"));
         let epoch = self.fresh();
         self.out.push_str(&format!("  {epoch} = lshr i64 {ticket}, 32\n"));
         let in_range = self.fresh();
@@ -893,8 +912,19 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("  {a} = and i1 {in_range}, {same}\n"));
         let b = self.fresh();
         self.out.push_str(&format!("  {b} = and i1 {odd}, {non_negative}\n"));
-        let valid = self.fresh();
+        let mut valid = self.fresh();
         self.out.push_str(&format!("  {valid} = and i1 {a}, {b}\n"));
+        if udp {
+            let kind = self.fresh();
+            self.out.push_str(&format!("  {kind} = lshr i64 {ticket}, 31\n"));
+            let kind_bit = self.fresh();
+            self.out.push_str(&format!("  {kind_bit} = and i64 {kind}, 1\n"));
+            let is_udp = self.fresh();
+            self.out.push_str(&format!("  {is_udp} = icmp ne i64 {kind_bit}, 0\n"));
+            let both = self.fresh();
+            self.out.push_str(&format!("  {both} = and i1 {valid}, {is_udp}\n"));
+            valid = both;
+        }
 
         let n = self.blocks;
         self.blocks += 1;
