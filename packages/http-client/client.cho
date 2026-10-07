@@ -1,0 +1,1977 @@
+edition 5;
+
+module http_client;
+
+import http_client_wire as wire;
+
+// `http_client` -- a non-blocking HTTP/1.1 client for a program with one poller (`docs/http-client.md`).
+//
+// The package performs no I/O and reads no clock. The caller owns the sockets, the TLS engine and the poller; this
+// owns one slot per connection and tells the caller what to do, in the shape `http.server`'s byte-fed mode has:
+//
+//     var c = http_client.open(heap, slots, in_size, out_size, limits);
+//     let t = http_client.request(c, now, key, "GET", "/x", "host", "", wire.body_none(), 0);   // a ticket
+//     match http_client.poll(c, now) {
+//         Event::Connect(k) => { /* dial what `key(c, k)` names; then connected(c, k, now) or connect_failed(...) */ }
+//         Event::Head(t) => { /* status(c, t), header(c, t, "content-type"), ... */ }
+//         Event::Body(t) => { /* body(c, t) ...; consume(c, t, n, now) */ }
+//         Event::Done(t) => { }
+//         Event::Failed(t) => { /* failure(c, t), refusal_tag(...) */ }
+//         Event::Close(k) => { /* close the transport of k, then detach(c, k, now) */ }
+//         _ => { }
+//     }
+//     n = http_client.take(c, k, out, now);     // request bytes for the transport
+//     n = http_client.give(c, k, data, now);    // response bytes from it, as many as `room` allows
+//
+// A request is addressed by a ticket (`generation * 4096 + slot`) so a stale holder cannot touch the next request
+// that reuses the slot; the transport belongs to the slot. One slot carries one request at a time.
+
+// ---------------------------------------------------------------------
+// The slot
+// ---------------------------------------------------------------------
+
+// Per slot `k`, `state[48k..48k+48]` is, by the names below: the phase (0 free, 1 waiting for the caller's dial,
+// 2 idle in the pool, 3 carrying a request, 4 closing: the caller closes the transport and detaches), the pool key,
+// the generation, the events waiting (a bit each) and whether the slot is queued for `poll`; times (the phase's start,
+// the last progress, the transport's age, the request's start); the request (output buffer, flags, body mode); the
+// response (state, buffer fill, the head, framing, bytes available); and a chunked decoder's six words.
+fn stride() -> [] int {
+    return 48;
+}
+
+fn f_phase() -> [] int {
+    return 0;
+}
+
+fn f_key() -> [] int {
+    return 1;
+}
+
+fn f_gen() -> [] int {
+    return 2;
+}
+
+fn f_events() -> [] int {
+    return 3;
+}
+
+fn f_queued() -> [] int {
+    return 4;
+}
+
+fn f_t_phase() -> [] int {
+    return 5;
+}
+
+fn f_t_prog() -> [] int {
+    return 6;
+}
+
+fn f_t_open() -> [] int {
+    return 7;
+}
+
+fn f_uses() -> [] int {
+    return 8;
+}
+
+fn f_t_req() -> [] int {
+    return 9;
+}
+
+fn f_t_hold() -> [] int {
+    return 10;
+}
+
+fn f_out_len() -> [] int {
+    return 11;
+}
+
+fn f_out_sent() -> [] int {
+    return 12;
+}
+
+fn f_head_wire() -> [] int {
+    return 13;
+}
+
+fn f_bmode() -> [] int {
+    return 14;
+}
+
+fn f_bleft() -> [] int {
+    return 15;
+}
+
+fn f_rflags() -> [] int {
+    return 16;
+}
+
+fn f_attempts() -> [] int {
+    return 17;
+}
+
+fn f_reused() -> [] int {
+    return 18;
+}
+
+fn f_anyresp() -> [] int {
+    return 19;
+}
+
+fn f_rs() -> [] int {
+    return 20;
+}
+
+fn f_fill() -> [] int {
+    return 21;
+}
+
+fn f_scan() -> [] int {
+    return 22;
+}
+
+fn f_hl() -> [] int {
+    return 23;
+}
+
+fn f_bkind() -> [] int {
+    return 24;
+}
+
+fn f_brem() -> [] int {
+    return 25;
+}
+
+fn f_avail() -> [] int {
+    return 26;
+}
+
+fn f_info() -> [] int {
+    return 27;
+}
+
+fn f_fail() -> [] int {
+    return 29;
+}
+
+fn f_reason() -> [] int {
+    return 30;
+}
+
+fn f_complete() -> [] int {
+    return 31;
+}
+
+fn f_dirty() -> [] int {
+    return 32;
+}
+
+fn f_eof() -> [] int {
+    return 33;
+}
+
+fn f_reconnect() -> [] int {
+    return 34;
+}
+
+fn f_live() -> [] int {
+    return 35;
+}
+
+fn f_nopool() -> [] int {
+    return 36;
+}
+
+fn f_ctimeout() -> [] int {
+    return 37;
+}
+
+fn f_chunk() -> [] int {
+    return 38;
+}
+
+// Phases.
+fn ph_free() -> [] int {
+    return 0;
+}
+
+fn ph_connect() -> [] int {
+    return 1;
+}
+
+fn ph_idle() -> [] int {
+    return 2;
+}
+
+fn ph_active() -> [] int {
+    return 3;
+}
+
+fn ph_closing() -> [] int {
+    return 4;
+}
+
+// Response states: 0 none, 1 reading the head, 2 the body, 3 complete and consumed (`Done` waiting to be polled).
+fn rs_head() -> [] int {
+    return 1;
+}
+
+fn rs_body() -> [] int {
+    return 2;
+}
+
+fn rs_done() -> [] int {
+    return 3;
+}
+
+// Request flags (`rflags`): what the caller asked for (1 retry, 2 expect, 4 close), and what the client knows.
+fn rf_retry() -> [] int {
+    return 1;
+}
+
+fn rf_expect() -> [] int {
+    return 2;
+}
+
+fn rf_close() -> [] int {
+    return 4;
+}
+
+fn rf_head_method() -> [] int {
+    return 8;
+}
+
+fn rf_replayable() -> [] int {
+    return 16;
+}
+
+fn rf_hold() -> [] int {
+    return 32;
+}
+
+fn rf_req_done() -> [] int {
+    return 64;
+}
+
+fn rf_early() -> [] int {
+    return 128;
+}
+
+fn rf_body_done() -> [] int {
+    return 256;
+}
+
+// Body kinds.
+fn bk_none() -> [] int {
+    return 0;
+}
+
+fn bk_length() -> [] int {
+    return 1;
+}
+
+fn bk_chunked() -> [] int {
+    return 2;
+}
+
+fn bk_close() -> [] int {
+    return 3;
+}
+
+// Events, in the order a slot's are delivered.
+fn ev_connect() -> [] int {
+    return 1;
+}
+
+fn ev_continue() -> [] int {
+    return 2;
+}
+
+fn ev_head() -> [] int {
+    return 4;
+}
+
+fn ev_body() -> [] int {
+    return 8;
+}
+
+fn ev_done() -> [] int {
+    return 16;
+}
+
+fn ev_failed() -> [] int {
+    return 32;
+}
+
+fn ev_close() -> [] int {
+    return 64;
+}
+
+// Why a transport is being closed (`close_reason`).
+pub fn r_connection_close() -> [] int {
+    return 1;
+}
+
+pub fn r_not_reusable() -> [] int {
+    return 2;
+}
+
+pub fn r_idle_expired() -> [] int {
+    return 3;
+}
+
+pub fn r_lifetime() -> [] int {
+    return 4;
+}
+
+pub fn r_retired() -> [] int {
+    return 5;
+}
+
+pub fn r_evicted() -> [] int {
+    return 6;
+}
+
+pub fn r_unsolicited() -> [] int {
+    return 7;
+}
+
+pub fn r_peer_closed() -> [] int {
+    return 8;
+}
+
+pub fn r_failed() -> [] int {
+    return 9;
+}
+
+pub fn r_retry() -> [] int {
+    return 10;
+}
+
+pub fn r_aborted() -> [] int {
+    return 11;
+}
+
+pub fn r_max_requests() -> [] int {
+    return 12;
+}
+
+pub fn r_pool_full() -> [] int {
+    return 13;
+}
+
+pub fn close_reason_tag(reason: int) -> [] &static [byte] {
+    if reason == 1 {
+        return "connection-close";
+    }
+    if reason == 2 {
+        return "not-reusable";
+    }
+    if reason == 3 {
+        return "idle-expired";
+    }
+    if reason == 4 {
+        return "lifetime";
+    }
+    if reason == 5 {
+        return "retired";
+    }
+    if reason == 6 {
+        return "evicted";
+    }
+    if reason == 7 {
+        return "unsolicited";
+    }
+    if reason == 8 {
+        return "peer-closed";
+    }
+    if reason == 9 {
+        return "failed";
+    }
+    if reason == 10 {
+        return "retry";
+    }
+    if reason == 11 {
+        return "aborted";
+    }
+    if reason == 12 {
+        return "max-requests";
+    }
+    if reason == 13 {
+        return "pool-full";
+    }
+    return "none";
+}
+
+// ---------------------------------------------------------------------
+// The client
+// ---------------------------------------------------------------------
+
+// The five timers and the pool's bounds. Milliseconds on the caller's clock; `0` is none.
+pub struct Limits {
+    connect_ms: int,
+    head_ms: int,
+    body_ms: int,
+    total_ms: int,
+    expect_ms: int,
+    idle_ms: int,
+    lifetime_ms: int,
+    idle_per_key: int,
+    max_requests: int,
+}
+
+// What `cancho-hooks` and `cancho-gateway` converge on: 5 s to connect, 30 s for a head and between body pieces,
+// no total, 1 s for a `100 Continue`, 30 s idle, 5 minutes and 1,000 requests for a connection, 8 idle per key.
+pub fn default_limits() -> [] Limits {
+    return Limits { connect_ms: 5000, head_ms: 30000, body_ms: 30000, total_ms: 0, expect_ms: 1000, idle_ms: 30000, lifetime_ms: 300000, idle_per_key: 8, max_requests: 1000 };
+}
+
+pub res struct Client {
+    state: Box[[int]],
+    // One input buffer and one output buffer per slot.
+    ins: Box[[byte]],
+    outs: Box[[byte]],
+    // A response head's table per slot (`wire.slots`).
+    tables: Box[[int]],
+    // Slots with events waiting, in the order `poll` visits them.
+    ring: Box[[int]],
+    limits: Limits,
+    nslots: int,
+    in_size: int,
+    out_size: int,
+    qhead: int,
+    qcount: int,
+    // Counters, for tests and for a log: connections asked for, requests accepted, requests that found an idle
+    // connection, requests replayed on a new connection.
+    n_connects: int,
+    n_requests: int,
+    n_reuses: int,
+    n_retries: int,
+}
+
+pub enum Event {
+    None,
+    Connect(int),
+    Continue(int),
+    Head(int),
+    Body(int),
+    Done(int),
+    Failed(int),
+    Close(int),
+}
+
+// Response headers kept per head; more is `response.header`.
+fn max_headers() -> [] int {
+    return 64;
+}
+
+// A ticket is `generation * 4096 + slot`, the generation kept below 2^40.
+fn span() -> [] int {
+    return 4096;
+}
+
+fn gen_mod() -> [] int {
+    return 1099511627776;
+}
+
+// Interim responses accepted before the final one.
+fn max_informational() -> [] int {
+    return 8;
+}
+
+// All the buffers together are at most this many bytes, so a large `slots` shrinks rather than exhausts memory.
+fn budget() -> [] int {
+    return 1073741824;
+}
+
+// A client of `slots` connections, each with `in_size` bytes of response room and `out_size` bytes of request room
+// (a response head and a request head, with what rides in the same buffer, must fit). Numbers out of range are
+// brought into it: `slots` 1 to 1,024 (fewer if the buffers would pass 1 GiB), `in_size` 2,048 to 16 MiB,
+// `out_size` 1,024 to 16 MiB. Everything is allocated here.
+pub fn open[&h](heap: &!h Heap, slots: int, in_size: int, out_size: int, limits: Limits) -> [heap] Client {
+    var n = slots;
+    if n < 1 {
+        n = 1;
+    }
+    if n > 1024 {
+        n = 1024;
+    }
+    var insz = in_size;
+    if insz < 2048 {
+        insz = 2048;
+    }
+    if insz > 16777216 {
+        insz = 16777216;
+    }
+    var outsz = out_size;
+    if outsz < 1024 {
+        outsz = 1024;
+    }
+    if outsz > 16777216 {
+        outsz = 16777216;
+    }
+    while n > 1 && n * (insz + outsz) > budget() {
+        n = n - 1;
+    }
+    return Client { state: box_slice(heap, stride() * n, 0), ins: box_slice(heap, n * insz, byte_of(0)), outs: box_slice(heap, n * outsz, byte_of(0)), tables: box_slice(heap, n * wire.slots(max_headers()), 0), ring: box_slice(heap, n, 0), limits: limits, nslots: n, in_size: insz, out_size: outsz, qhead: 0, qcount: 0, n_connects: 0, n_requests: 0, n_reuses: 0, n_retries: 0 };
+}
+
+// Frees the buffers. The transports are the caller's: it closes them (a `Close` event for each it has not seen, or its
+// own table) before or after.
+pub fn close[&h](heap: &!h Heap, client: Client) -> [heap] int {
+    let Client { state, ins, outs, tables, ring, limits, nslots, in_size, out_size, qhead, qcount, n_connects, n_requests, n_reuses, n_retries } = client;
+    unbox_slice(heap, state);
+    unbox_slice(heap, ins);
+    unbox_slice(heap, outs);
+    unbox_slice(heap, tables);
+    unbox_slice(heap, ring);
+    return 0;
+}
+
+// How many slots there are (the clamped number).
+pub fn slots[&r](c: &r Client) -> [] int {
+    return c.nslots;
+}
+
+pub fn connects[&r](c: &r Client) -> [] int {
+    return c.n_connects;
+}
+
+pub fn requests[&r](c: &r Client) -> [] int {
+    return c.n_requests;
+}
+
+pub fn reuses[&r](c: &r Client) -> [] int {
+    return c.n_reuses;
+}
+
+pub fn retries[&r](c: &r Client) -> [] int {
+    return c.n_retries;
+}
+
+pub fn refusal_tag(code: int) -> [] &static [byte] {
+    return wire.refusal_tag(code);
+}
+
+pub fn body_none() -> [] int {
+    return wire.body_none();
+}
+
+pub fn body_chunked() -> [] int {
+    return wire.body_chunked();
+}
+
+// `request`'s flags.
+pub fn flag_retry() -> [] int {
+    return rf_retry();
+}
+
+pub fn flag_expect() -> [] int {
+    return rf_expect();
+}
+
+pub fn flag_close() -> [] int {
+    return rf_close();
+}
+
+// `connect_failed`'s kinds: the dial was refused or failed, the TLS handshake failed, the name did not resolve.
+pub fn kind_connect() -> [] int {
+    return 0;
+}
+
+pub fn kind_tls() -> [] int {
+    return 1;
+}
+
+pub fn kind_resolve() -> [] int {
+    return 2;
+}
+
+// ---------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------
+
+fn slot_ok[&r](c: &r Client, k: int) -> [] bool {
+    return k >= 0 && k < c.nslots;
+}
+
+fn get[&r](c: &r Client, k: int, field: int) -> [] int {
+    return contents(c.state)[stride() * k + field];
+}
+
+fn put[&r](c: &!r Client, k: int, field: int, v: int) -> [] int {
+    contents(c.state)[stride() * k + field] = v;
+    return 0;
+}
+
+fn flag[&r](c: &r Client, k: int, bit: int) -> [] bool {
+    return contents(c.state)[stride() * k + f_rflags()] / bit % 2 == 1;
+}
+
+fn set_flag[&r](c: &!r Client, k: int, bit: int, on: bool) -> [] int {
+    let st = contents(c.state);
+    let at = stride() * k + f_rflags();
+    let had = st[at] / bit % 2 == 1;
+    if on && !had {
+        st[at] = st[at] + bit;
+    }
+    if !on && had {
+        st[at] = st[at] - bit;
+    }
+    return 0;
+}
+
+fn ticket_for[&r](c: &r Client, k: int) -> [] int {
+    return get(c, k, f_gen()) * span() + k;
+}
+
+// The slot a ticket names, or -1 if the ticket is not the current one of its slot.
+fn slot_of_ticket[&r](c: &r Client, t: int) -> [] int {
+    if t < 0 {
+        return 0 - 1;
+    }
+    let k = t % span();
+    if k >= c.nslots || t / span() == 0 || get(c, k, f_gen()) != t / span() {
+        return 0 - 1;
+    }
+    return k;
+}
+
+// The slot a ticket was issued for, whatever has become of it.
+pub fn ticket_slot(t: int) -> [] int {
+    if t < 0 {
+        return 0 - 1;
+    }
+    return t % span();
+}
+
+// The slot's input buffer.
+fn inbuf[&r](c: &!r Client, k: int) -> [] &!r [byte] {
+    return contents(c.ins)[k * c.in_size..(k + 1) * c.in_size];
+}
+
+fn outbuf[&r](c: &!r Client, k: int) -> [] &!r [byte] {
+    return contents(c.outs)[k * c.out_size..(k + 1) * c.out_size];
+}
+
+// How many bytes a response head may take: the buffer, and no more than the wire module allows.
+fn head_cap[&r](c: &r Client) -> [] int {
+    if c.in_size < wire.max_head() {
+        return c.in_size;
+    }
+    return wire.max_head();
+}
+
+// Puts an event on slot `k` and the slot on the queue `poll` walks, once.
+fn post[&r](c: &!r Client, k: int, ev: int) -> [] int {
+    let st = contents(c.state);
+    let p = stride() * k;
+    if st[p + f_events()] / ev % 2 == 0 {
+        st[p + f_events()] = st[p + f_events()] + ev;
+    }
+    if st[p + f_queued()] == 0 {
+        st[p + f_queued()] = 1;
+        let ring = contents(c.ring);
+        ring[(c.qhead + c.qcount) % c.nslots] = k;
+        c.qcount = c.qcount + 1;
+    }
+    return 0;
+}
+
+fn unpost[&r](c: &!r Client, k: int, ev: int) -> [] int {
+    let st = contents(c.state);
+    let p = stride() * k;
+    if st[p + f_events()] / ev % 2 == 1 {
+        st[p + f_events()] = st[p + f_events()] - ev;
+    }
+    return 0;
+}
+
+fn has_event[&r](c: &r Client, k: int, ev: int) -> [] bool {
+    return get(c, k, f_events()) / ev % 2 == 1;
+}
+
+// The slot is ending its transport: the caller is told (`Close`) and calls `detach`.
+fn close_slot[&r](c: &!r Client, k: int, reason: int) -> [] int {
+    put(c, k, f_phase(), ph_closing());
+    put(c, k, f_reason(), reason);
+    unpost(c, k, ev_connect());
+    post(c, k, ev_close());
+    return 0;
+}
+
+// The request in slot `k` has failed with `code`: the caller is told (`Failed`), then the transport is closed.
+// Whatever was waiting to be read of the response is gone.
+fn fail[&r](c: &!r Client, k: int, code: int) -> [] int {
+    put(c, k, f_fail(), code);
+    put(c, k, f_live(), 0);
+    put(c, k, f_reconnect(), 0);
+    unpost(c, k, ev_body());
+    unpost(c, k, ev_done());
+    unpost(c, k, ev_continue());
+    unpost(c, k, ev_connect());
+    post(c, k, ev_failed());
+    close_slot(c, k, r_failed());
+    return 0;
+}
+
+// ---------------------------------------------------------------------
+// Making a request
+// ---------------------------------------------------------------------
+
+// Idle connections that have `key`.
+fn idle_with_key[&r](c: &r Client, key: int) -> [] int {
+    var n = 0;
+    var k = 0;
+    while k < c.nslots {
+        if get(c, k, f_phase()) == ph_idle() && get(c, k, f_key()) == key {
+            n = n + 1;
+        }
+        k = k + 1;
+    }
+    return n;
+}
+
+// The most recently used idle connection of `key` that has no event waiting, or -1.
+fn pooled[&r](c: &r Client, key: int) -> [] int {
+    var best = 0 - 1;
+    var k = 0;
+    while k < c.nslots {
+        if get(c, k, f_phase()) == ph_idle() && get(c, k, f_key()) == key && get(c, k, f_events()) == 0 {
+            if best < 0 || get(c, k, f_t_phase()) > get(c, best, f_t_phase()) {
+                best = k;
+            }
+        }
+        k = k + 1;
+    }
+    return best;
+}
+
+fn free_slot[&r](c: &r Client) -> [] int {
+    var k = 0;
+    while k < c.nslots {
+        if get(c, k, f_phase()) == ph_free() && get(c, k, f_events()) == 0 {
+            return k;
+        }
+        k = k + 1;
+    }
+    return 0 - 1;
+}
+
+// The least recently used idle connection (of any key other than `key`), or -1.
+fn oldest_idle[&r](c: &r Client, key: int) -> [] int {
+    var best = 0 - 1;
+    var k = 0;
+    while k < c.nslots {
+        if get(c, k, f_phase()) == ph_idle() && get(c, k, f_key()) != key && get(c, k, f_events()) == 0 {
+            if best < 0 || get(c, k, f_t_phase()) < get(c, best, f_t_phase()) {
+                best = k;
+            }
+        }
+        k = k + 1;
+    }
+    return best;
+}
+
+// Starts a request on `key` -- any non-negative number the caller uses to say which upstream -- and answers its
+// ticket, or `0 - code` for a refusal (`refusal_tag(code)`). `target` is origin-form, `host` goes in `Host:`, `extra`
+// is zero or more `Name: value` lines each ending CRLF (none the client writes itself), and `body` is `body_none()`,
+// `body_chunked()` or a length, given afterwards by `send_body`. `flags`: 1 `flag_retry()`, 2 `flag_expect()`, 4 `flag_close()`.
+//
+// An idle connection of the key carries it at once (its bytes are waiting to be taken); otherwise a slot is
+// connecting, and the caller is told (`Event::Connect`) to dial. With every slot busy, an idle connection of another
+// key is closed to make room, and with none, `client.full` is answered.
+pub fn request[&r, &m, &t, &h, &e](c: &!r Client, now: int, key: int, method: &m [byte], target: &t [byte], host: &h [byte], extra: &e [byte], body: int, flags: int) -> [] int {
+    if key < 0 {
+        return 0 - wire.c_key();
+    }
+    if !wire.valid_method(method) {
+        return 0 - wire.c_method();
+    }
+    if !wire.valid_target(target) {
+        return 0 - wire.c_target();
+    }
+    if !wire.valid_host(host) {
+        return 0 - wire.c_host();
+    }
+    if !wire.valid_extra(extra) {
+        return 0 - wire.c_header();
+    }
+    if body < 0 - 2 || body > 1125899906842624 || flags < 0 || flags > 7 {
+        return 0 - wire.c_length();
+    }
+    // Which slot: an idle connection, a free slot, or one made by closing another key's idle connection.
+    var k = pooled(c, key);
+    var how = 0;
+    if k < 0 {
+        k = free_slot(c);
+        how = 1;
+    }
+    if k < 0 {
+        k = oldest_idle(c, key);
+        how = 2;
+    }
+    if k < 0 {
+        return 0 - wire.c_full();
+    }
+    let wants_hold = flags / rf_expect() % 2 == 1 && (body > 0 || body == wire.body_chunked());
+    let head = wire.write_head(outbuf(c, k), method, target, host, extra, body, wants_hold, flags / rf_close() % 2 == 1);
+    if head < 0 {
+        return 0 - wire.c_too_large();
+    }
+    // Committed: nothing below refuses.
+    let st = contents(c.state);
+    let p = stride() * k;
+    var uses = 0;
+    if how == 0 {
+        uses = st[p + f_uses()];
+    }
+    var opened = 0;
+    if how == 0 {
+        opened = st[p + f_t_open()];
+    }
+    var gen = (st[p + f_gen()] + 1) % gen_mod();
+    if gen == 0 {
+        gen = 1;
+    }
+    let queued = st[p + f_queued()];
+    var i = 0;
+    while i < stride() {
+        st[p + i] = 0;
+        i = i + 1;
+    }
+    st[p + f_gen()] = gen;
+    st[p + f_queued()] = queued;
+    st[p + f_key()] = key;
+    st[p + f_uses()] = uses;
+    st[p + f_t_open()] = opened;
+    st[p + f_t_req()] = now;
+    st[p + f_t_prog()] = now;
+    st[p + f_t_hold()] = 0 - 1;
+    st[p + f_out_len()] = head;
+    st[p + f_head_wire()] = head;
+    st[p + f_live()] = 1;
+    var rf = flags;
+    if wire.is_head(method) {
+        rf = rf + rf_head_method();
+    }
+    if flags % 2 == 1 {
+        rf = rf + rf_replayable();
+    }
+    if wants_hold {
+        rf = rf + rf_hold();
+    }
+    if body == wire.body_none() {
+        rf = rf + rf_body_done();
+    } else if body == 0 {
+        rf = rf + rf_body_done();
+        st[p + f_bmode()] = 1;
+    } else if body > 0 {
+        st[p + f_bmode()] = 1;
+        st[p + f_bleft()] = body;
+    } else {
+        st[p + f_bmode()] = 2;
+        st[p + f_bleft()] = 1;
+    }
+    st[p + f_rflags()] = rf;
+    st[p + f_rs()] = rs_head();
+    c.n_requests = c.n_requests + 1;
+    if how == 0 {
+        st[p + f_phase()] = ph_active();
+        st[p + f_reused()] = 1;
+        st[p + f_uses()] = uses + 1;
+        c.n_reuses = c.n_reuses + 1;
+    } else if how == 1 {
+        st[p + f_phase()] = ph_connect();
+        st[p + f_t_phase()] = now;
+        c.n_connects = c.n_connects + 1;
+        post(c, k, ev_connect());
+    } else {
+        // The old transport is closed first; the request connects in the same slot once the caller has detached it.
+        st[p + f_reconnect()] = 1;
+        st[p + f_reason()] = r_evicted();
+        st[p + f_phase()] = ph_closing();
+        post(c, k, ev_close());
+    }
+    return ticket_for(c, k);
+}
+
+// The room `send_body` has for a request's body, in body bytes: the free space of the output buffer (less a chunk's
+// framing), no more than a length body has left, and none while `Expect: 100-continue` is waiting or after a response
+// arrived early. 0 for a ticket that is not a request in progress.
+pub fn send_room[&r](c: &r Client, t: int) -> [] int {
+    let k = slot_of_ticket(c, t);
+    if k < 0 || get(c, k, f_live()) != 1 || get(c, k, f_bmode()) == 0 || flag(c, k, rf_body_done()) || flag(c, k, rf_hold()) || flag(c, k, rf_early()) {
+        return 0;
+    }
+    var free = c.out_size - get(c, k, f_out_len());
+    if !flag(c, k, rf_replayable()) {
+        free = free + get(c, k, f_out_sent());
+    } else if free == 0 && get(c, k, f_out_sent()) == get(c, k, f_out_len()) {
+        free = c.out_size;
+    }
+    if get(c, k, f_bmode()) == 2 {
+        return wire.chunk_fit(free);
+    }
+    if free > get(c, k, f_bleft()) {
+        return get(c, k, f_bleft());
+    }
+    return free;
+}
+
+// Makes room in the output buffer: bytes already taken are dropped unless the request may still be replayed, and a
+// request that has outgrown the buffer can no longer be.
+fn reclaim[&r](c: &!r Client, k: int) -> [] int {
+    let st = contents(c.state);
+    let p = stride() * k;
+    if flag(c, k, rf_replayable()) && st[p + f_out_len()] == c.out_size && st[p + f_out_sent()] == st[p + f_out_len()] {
+        set_flag(c, k, rf_replayable(), false);
+    }
+    if !flag(c, k, rf_replayable()) && st[p + f_out_sent()] > 0 {
+        let rest = st[p + f_out_len()] - st[p + f_out_sent()];
+        if rest > 0 {
+            copy_within(outbuf(c, k), 0, st[p + f_out_sent()], rest);
+        }
+        st[p + f_out_len()] = rest;
+        st[p + f_head_wire()] = 0;
+        st[p + f_out_sent()] = 0;
+    }
+    return 0;
+}
+
+// Part of the request's body: as many of `bytes` as `send_room` allows, answering how many (the caller keeps the rest
+// and offers it again after the transport has taken some), or `0 - code`: `request.body-too-long` for more than a
+// length body declared, `request.response-arrived` after the upstream answered before the request was sent,
+// `request.no-body` for a request with none, `request.ticket` for a ticket that is not in progress.
+pub fn send_body[&r, &b](c: &!r Client, t: int, bytes: &b [byte], now: int) -> [] int {
+    let k = slot_of_ticket(c, t);
+    if k < 0 || get(c, k, f_live()) != 1 {
+        return 0 - wire.c_ticket();
+    }
+    if flag(c, k, rf_early()) {
+        return 0 - wire.c_response_arrived();
+    }
+    if get(c, k, f_bmode()) == 0 {
+        return 0 - wire.c_no_body();
+    }
+    if flag(c, k, rf_body_done()) {
+        if len(bytes) > 0 {
+            return 0 - wire.c_body_too_long();
+        }
+        return 0;
+    }
+    if get(c, k, f_bmode()) == 1 && len(bytes) > get(c, k, f_bleft()) {
+        return 0 - wire.c_body_too_long();
+    }
+    if len(bytes) == 0 || flag(c, k, rf_hold()) {
+        return 0;
+    }
+    let room = send_room(c, t);
+    if room <= 0 {
+        return 0;
+    }
+    var n = len(bytes);
+    if n > room {
+        n = room;
+    }
+    reclaim(c, k);
+    let st = contents(c.state);
+    let p = stride() * k;
+    let waiting = st[p + f_out_len()] - st[p + f_out_sent()];
+    if get(c, k, f_bmode()) == 1 {
+        copy_into(outbuf(c, k)[st[p + f_out_len()]..st[p + f_out_len()] + n], bytes[0..n]);
+        st[p + f_out_len()] = st[p + f_out_len()] + n;
+        st[p + f_bleft()] = st[p + f_bleft()] - n;
+        if st[p + f_bleft()] == 0 {
+            set_flag(c, k, rf_body_done(), true);
+        }
+    } else {
+        let end = wire.write_chunk(outbuf(c, k), st[p + f_out_len()], bytes[0..n]);
+        if end < 0 {
+            return 0;
+        }
+        st[p + f_out_len()] = end;
+    }
+    if waiting == 0 {
+        st[p + f_t_prog()] = now;
+    }
+    return n;
+}
+
+// The end of a chunked body (the last chunk). 1 when it is written, 0 when there is no room yet (offer again), or
+// `0 - code`. For a length body it answers 1 once all of it was given and `request.length` before.
+pub fn end_body[&r](c: &!r Client, t: int, now: int) -> [] int {
+    let k = slot_of_ticket(c, t);
+    if k < 0 || get(c, k, f_live()) != 1 {
+        return 0 - wire.c_ticket();
+    }
+    if flag(c, k, rf_early()) {
+        return 0 - wire.c_response_arrived();
+    }
+    if get(c, k, f_bmode()) == 0 {
+        return 0 - wire.c_no_body();
+    }
+    if flag(c, k, rf_body_done()) {
+        return 1;
+    }
+    if get(c, k, f_bmode()) == 1 {
+        return 0 - wire.c_length();
+    }
+    if flag(c, k, rf_hold()) {
+        return 0;
+    }
+    reclaim(c, k);
+    let st = contents(c.state);
+    let p = stride() * k;
+    let waiting = st[p + f_out_len()] - st[p + f_out_sent()];
+    let end = wire.write_last_chunk(outbuf(c, k), st[p + f_out_len()]);
+    if end < 0 {
+        return 0;
+    }
+    st[p + f_out_len()] = end;
+    set_flag(c, k, rf_body_done(), true);
+    if waiting == 0 {
+        st[p + f_t_prog()] = now;
+    }
+    return 1;
+}
+
+// ---------------------------------------------------------------------
+// The transport's side
+// ---------------------------------------------------------------------
+
+// The upstream a slot is for: the key of the request that dialled it or of the pool it is in. -1 for a free slot.
+pub fn key[&r](c: &r Client, k: int) -> [] int {
+    if !slot_ok(c, k) || get(c, k, f_phase()) == ph_free() {
+        return 0 - 1;
+    }
+    return get(c, k, f_key());
+}
+
+// The ticket of the request slot `k` carries or last carried, or -1.
+pub fn ticket_of[&r](c: &r Client, k: int) -> [] int {
+    if !slot_ok(c, k) || get(c, k, f_gen()) == 0 {
+        return 0 - 1;
+    }
+    return ticket_for(c, k);
+}
+
+// Why the transport of `k` is closing (`close_reason_tag`).
+pub fn close_reason[&r](c: &r Client, k: int) -> [] int {
+    if !slot_ok(c, k) {
+        return 0;
+    }
+    return get(c, k, f_reason());
+}
+
+// The caller's dial for slot `k` has succeeded and, over TLS, the handshake has: bytes can go. 0, or -1 for a slot that
+// is not waiting for a dial.
+pub fn connected[&r](c: &!r Client, k: int, now: int) -> [] int {
+    if !slot_ok(c, k) || get(c, k, f_phase()) != ph_connect() {
+        return 0 - 1;
+    }
+    put(c, k, f_phase(), ph_active());
+    put(c, k, f_t_open(), now);
+    put(c, k, f_t_phase(), now);
+    put(c, k, f_t_prog(), now);
+    put(c, k, f_uses(), 1);
+    put(c, k, f_reused(), 0);
+    return 0;
+}
+
+// The dial failed (`kind_connect()`), the handshake failed (`kind_tls()`) or the name did not resolve (`kind_resolve()`).
+// The request fails, and the transport -- whatever there is of it -- is to be closed (`Close`) and detached.
+pub fn connect_failed[&r](c: &!r Client, k: int, kind: int, now: int) -> [] int {
+    if !slot_ok(c, k) || get(c, k, f_phase()) != ph_connect() {
+        return 0 - 1;
+    }
+    var code = wire.c_connect();
+    if kind == kind_tls() {
+        code = wire.c_tls();
+    }
+    if kind == kind_resolve() {
+        code = wire.c_resolve();
+    }
+    fail(c, k, code);
+    return 0;
+}
+
+// How many request bytes slot `k`'s transport has waiting to take (0 while a request is held, being dialled, or done).
+pub fn pending[&r](c: &r Client, k: int) -> [] int {
+    if !slot_ok(c, k) || get(c, k, f_phase()) != ph_active() || get(c, k, f_live()) != 1 {
+        return 0;
+    }
+    var limit = get(c, k, f_out_len());
+    if flag(c, k, rf_hold()) {
+        limit = get(c, k, f_head_wire());
+    }
+    return limit - get(c, k, f_out_sent());
+}
+
+// Request bytes for the transport: up to `len(out)` of them, answering how many (0 when none is waiting). Taking bytes
+// is progress. The head goes first, and the rest of an `Expect: 100-continue` request only once it is released.
+pub fn take[&r, &o](c: &!r Client, k: int, out: &!o [byte], now: int) -> [] int {
+    var n = pending(c, k);
+    if n <= 0 {
+        return 0;
+    }
+    if len(out) < n {
+        n = len(out);
+    }
+    if n == 0 {
+        return 0;
+    }
+    let st = contents(c.state);
+    let p = stride() * k;
+    copy_into(out[0..n], outbuf(c, k)[st[p + f_out_sent()]..st[p + f_out_sent()] + n]);
+    st[p + f_out_sent()] = st[p + f_out_sent()] + n;
+    st[p + f_t_prog()] = now;
+    if flag(c, k, rf_hold()) && st[p + f_out_sent()] == st[p + f_head_wire()] {
+        st[p + f_t_hold()] = now;
+    }
+    if st[p + f_out_sent()] == st[p + f_out_len()] {
+        if flag(c, k, rf_body_done()) && !flag(c, k, rf_hold()) {
+            set_flag(c, k, rf_req_done(), true);
+        }
+        reclaim(c, k);
+    }
+    return n;
+}
+
+// How many bytes of response `give` takes for slot `k` now. 0 is not an error: hold the bytes and ask again after the
+// caller has consumed some. An idle connection takes what comes, to close it (`give`); one that is closing takes none.
+pub fn room[&r](c: &r Client, k: int) -> [] int {
+    if !slot_ok(c, k) {
+        return 0;
+    }
+    let phase = get(c, k, f_phase());
+    if phase == ph_idle() {
+        return c.in_size;
+    }
+    if phase != ph_active() || get(c, k, f_live()) != 1 {
+        return 0;
+    }
+    if get(c, k, f_rs()) == rs_done() || get(c, k, f_complete()) == 1 {
+        return 0;
+    }
+    return c.in_size - get(c, k, f_fill());
+}
+
+// Response bytes from the transport. Answers how many were taken (at most `room`; the caller keeps the rest), or -1 for
+// a slot that is not connected. A connection that is idle takes what it is given and closes: nothing is expected on it.
+pub fn give[&r, &d](c: &!r Client, k: int, data: &d [byte], now: int) -> [] int {
+    if !slot_ok(c, k) {
+        return 0 - 1;
+    }
+    let phase = get(c, k, f_phase());
+    if phase == ph_idle() {
+        if len(data) > 0 {
+            close_slot(c, k, r_unsolicited());
+        }
+        return len(data);
+    }
+    if phase == ph_closing() {
+        return len(data);
+    }
+    if phase != ph_active() {
+        return 0 - 1;
+    }
+    if get(c, k, f_live()) != 1 {
+        return len(data);
+    }
+    if get(c, k, f_rs()) == rs_done() || get(c, k, f_complete()) == 1 {
+        // Bytes behind a response that is complete: they are not the next one's. The connection will not be reused.
+        if len(data) > 0 {
+            put(c, k, f_dirty(), 1);
+        }
+        return len(data);
+    }
+    var n = room(c, k);
+    if n > len(data) {
+        n = len(data);
+    }
+    if n <= 0 {
+        return 0;
+    }
+    let st = contents(c.state);
+    let p = stride() * k;
+    copy_into(inbuf(c, k)[st[p + f_fill()]..st[p + f_fill()] + n], data[0..n]);
+    st[p + f_fill()] = st[p + f_fill()] + n;
+    st[p + f_t_prog()] = now;
+    if st[p + f_anyresp()] == 0 {
+        st[p + f_anyresp()] = 1;
+        set_flag(c, k, rf_replayable(), false);
+        reclaim(c, k);
+    }
+    advance(c, k, now);
+    return n;
+}
+
+// ---------------------------------------------------------------------
+// The response
+// ---------------------------------------------------------------------
+
+// The body is over (or there is none): once the caller has consumed what is left, the request is done.
+fn finish_body[&r](c: &!r Client, k: int) -> [] int {
+    if get(c, k, f_avail()) == 0 && get(c, k, f_rs()) != rs_done() {
+        put(c, k, f_rs(), rs_done());
+        post(c, k, ev_done());
+    }
+    return 0;
+}
+
+// Reads the head of the response in slot `k`: 0 when more bytes are needed, 1 when something was decided and the loop
+// should run again, -1 when the request failed.
+fn read_head[&r](c: &!r Client, k: int, now: int) -> [] int {
+    let st = contents(c.state);
+    let p = stride() * k;
+    let fill = st[p + f_fill()];
+    let cap = head_cap(c);
+    var scan_to = fill;
+    if scan_to > cap {
+        scan_to = cap;
+    }
+    var from = st[p + f_scan()] - 3;
+    if from < 0 {
+        from = 0;
+    }
+    let src = inbuf(c, k)[0..fill];
+    let blank = wire.head_end(src, from, scan_to);
+    if blank <= 0 - 2 {
+        fail(c, k, wire.c_resp_header());
+        return 0 - 1;
+    }
+    if !wire.looks_like_http(src) {
+        fail(c, k, wire.c_status_line());
+        return 0 - 1;
+    }
+    if blank < 0 {
+        if fill >= cap {
+            fail(c, k, wire.c_head_too_large());
+            return 0 - 1;
+        }
+        st[p + f_scan()] = fill;
+        return 0;
+    }
+    let tw = wire.slots(max_headers());
+    let table = contents(c.tables)[k * tw..(k + 1) * tw];
+    let n = wire.parse_head(src, table, cap);
+    if n < 0 {
+        fail(c, k, wire.error_code(n));
+        return 0 - 1;
+    }
+    let status = table[0];
+    if status < 200 {
+        if status == 101 {
+            fail(c, k, wire.c_upgrade());
+            return 0 - 1;
+        }
+        st[p + f_info()] = st[p + f_info()] + 1;
+        if st[p + f_info()] > max_informational() {
+            fail(c, k, wire.c_too_many_informational());
+            return 0 - 1;
+        }
+        if status == 100 && flag(c, k, rf_hold()) {
+            set_flag(c, k, rf_hold(), false);
+            post(c, k, ev_continue());
+        }
+        // The interim head is dropped; what follows it is read as the next head.
+        copy_within(inbuf(c, k), 0, n, fill - n);
+        st[p + f_fill()] = fill - n;
+        st[p + f_scan()] = 0;
+        return 1;
+    }
+    // The final head. Framing, RFC 9112 6.3.
+    st[p + f_hl()] = n;
+    st[p + f_rs()] = rs_body();
+    if flag(c, k, rf_head_method()) || status == 204 || status == 304 {
+        st[p + f_bkind()] = bk_none();
+    } else if table[5] % 2 == 1 {
+        st[p + f_bkind()] = bk_chunked();
+        wire.chunk_reset(contents(c.state), p + f_chunk());
+    } else if table[4] > 0 {
+        st[p + f_bkind()] = bk_length();
+        st[p + f_brem()] = table[4];
+    } else if table[4] == 0 {
+        st[p + f_bkind()] = bk_none();
+    } else {
+        st[p + f_bkind()] = bk_close();
+    }
+    if !flag(c, k, rf_req_done()) {
+        // The upstream answered before the request was all sent: what is not sent is dropped, and the connection is not reused.
+        set_flag(c, k, rf_early(), true);
+        set_flag(c, k, rf_hold(), false);
+        st[p + f_out_len()] = st[p + f_out_sent()];
+    }
+    post(c, k, ev_head());
+    return 1;
+}
+
+// Counts what has arrived of the body as available, decoding a chunked one in place.
+fn read_body[&r](c: &!r Client, k: int, now: int) -> [] int {
+    let st = contents(c.state);
+    let p = stride() * k;
+    let hl = st[p + f_hl()];
+    let fill = st[p + f_fill()];
+    let kind = st[p + f_bkind()];
+    let before = st[p + f_avail()];
+    if st[p + f_complete()] == 1 {
+        return 0;
+    }
+    if kind == bk_none() {
+        st[p + f_complete()] = 1;
+        if fill - hl > 0 {
+            st[p + f_dirty()] = 1;
+        }
+    } else if kind == bk_length() {
+        var take = fill - hl - st[p + f_avail()];
+        if take > st[p + f_brem()] {
+            take = st[p + f_brem()];
+        }
+        st[p + f_avail()] = st[p + f_avail()] + take;
+        st[p + f_brem()] = st[p + f_brem()] - take;
+        if st[p + f_brem()] == 0 {
+            st[p + f_complete()] = 1;
+            if fill - hl - st[p + f_avail()] > 0 {
+                st[p + f_dirty()] = 1;
+            }
+        }
+    } else if kind == bk_chunked() {
+        let from = hl + st[p + f_avail()];
+        let code = wire.chunk_run(inbuf(c, k), from, fill, from, contents(c.state), p + f_chunk());
+        if code != 0 {
+            fail(c, k, code);
+            return 0 - 1;
+        }
+        let wrote = st[p + f_chunk() + 3];
+        let used = st[p + f_chunk() + 4];
+        st[p + f_avail()] = wrote - hl;
+        if st[p + f_chunk()] == wire.chunk_done() {
+            st[p + f_complete()] = 1;
+            let left = fill - (from + used);
+            if left > 0 {
+                copy_within(inbuf(c, k), wrote, from + used, left);
+                st[p + f_dirty()] = 1;
+            }
+            st[p + f_fill()] = wrote + left;
+        } else {
+            st[p + f_fill()] = wrote;
+        }
+    } else {
+        st[p + f_avail()] = fill - hl;
+    }
+    if st[p + f_avail()] > before {
+        post(c, k, ev_body());
+    }
+    if st[p + f_complete()] == 1 {
+        finish_body(c, k);
+    }
+    return 0;
+}
+
+// Runs a connection's response as far as the bytes it has go.
+fn advance[&r](c: &!r Client, k: int, now: int) -> [] int {
+    var going = true;
+    while going {
+        going = false;
+        if get(c, k, f_phase()) == ph_active() && get(c, k, f_live()) == 1 {
+            if get(c, k, f_rs()) == rs_head() {
+                if read_head(c, k, now) == 1 {
+                    going = true;
+                }
+            } else if get(c, k, f_rs()) == rs_body() {
+                read_body(c, k, now);
+            }
+        }
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------
+// The caller reads
+// ---------------------------------------------------------------------
+
+// Part of the body in hand: the status, the headers and the body of the response to `t`, read after `Head`/`Body`.
+pub fn status[&r](c: &r Client, t: int) -> [] int {
+    let k = slot_of_ticket(c, t);
+    if k < 0 || get(c, k, f_rs()) < rs_body() {
+        return 0 - 1;
+    }
+    return contents(c.tables)[k * wire.slots(max_headers())];
+}
+
+pub fn version[&r](c: &r Client, t: int) -> [] int {
+    let k = slot_of_ticket(c, t);
+    if k < 0 || get(c, k, f_rs()) < rs_body() {
+        return 0 - 1;
+    }
+    return contents(c.tables)[k * wire.slots(max_headers()) + 1];
+}
+
+// How the body is framed: 0 none, 1 `Content-Length`, 2 chunked (decoded), 3 until the connection closes.
+pub fn body_kind[&r](c: &r Client, t: int) -> [] int {
+    let k = slot_of_ticket(c, t);
+    if k < 0 || get(c, k, f_rs()) < rs_body() {
+        return 0 - 1;
+    }
+    return get(c, k, f_bkind());
+}
+
+// The declared length, or -1 if there is none (chunked, until close, or a ticket with no head).
+pub fn content_length[&r](c: &r Client, t: int) -> [] int {
+    let k = slot_of_ticket(c, t);
+    if k < 0 || get(c, k, f_rs()) < rs_body() {
+        return 0 - 1;
+    }
+    return contents(c.tables)[k * wire.slots(max_headers()) + 4];
+}
+
+// Is the head's text still readable? It is until the first `consume` that takes bytes off.
+fn head_readable[&r](c: &r Client, k: int) -> [] bool {
+    return get(c, k, f_hl()) > 0 && get(c, k, f_rs()) >= rs_body();
+}
+
+pub fn header_count[&r](c: &r Client, t: int) -> [] int {
+    let k = slot_of_ticket(c, t);
+    if k < 0 || !head_readable(c, k) {
+        return 0;
+    }
+    return contents(c.tables)[k * wire.slots(max_headers()) + 2];
+}
+
+// The raw response head, status line and headers, with the blank line.
+pub fn head[&r](c: &r Client, t: int) -> [] &r [byte] {
+    let k = slot_of_ticket(c, t);
+    if k < 0 || !head_readable(c, k) {
+        return contents(c.ins)[0..0];
+    }
+    return contents(c.ins)[k * c.in_size..k * c.in_size + get(c, k, f_hl())];
+}
+
+pub fn header_name[&r](c: &r Client, t: int, i: int) -> [] &r [byte] {
+    let k = slot_of_ticket(c, t);
+    if k < 0 || !head_readable(c, k) || i < 0 || i >= contents(c.tables)[k * wire.slots(max_headers()) + 2] {
+        return contents(c.ins)[0..0];
+    }
+    let at = k * wire.slots(max_headers()) + 16 + 4 * i;
+    let base = k * c.in_size;
+    return contents(c.ins)[base + contents(c.tables)[at]..base + contents(c.tables)[at + 1]];
+}
+
+pub fn header_value[&r](c: &r Client, t: int, i: int) -> [] &r [byte] {
+    let k = slot_of_ticket(c, t);
+    if k < 0 || !head_readable(c, k) || i < 0 || i >= contents(c.tables)[k * wire.slots(max_headers()) + 2] {
+        return contents(c.ins)[0..0];
+    }
+    let at = k * wire.slots(max_headers()) + 16 + 4 * i;
+    let base = k * c.in_size;
+    return contents(c.ins)[base + contents(c.tables)[at + 2]..base + contents(c.tables)[at + 3]];
+}
+
+// The value of the first header called `name` (given in lower case), or an empty slice.
+pub fn header[&r, &n](c: &r Client, t: int, name: &n [byte]) -> [] &r [byte] {
+    let k = slot_of_ticket(c, t);
+    if k < 0 || !head_readable(c, k) {
+        return contents(c.ins)[0..0];
+    }
+    let tw = wire.slots(max_headers());
+    let i = wire.find_header(contents(c.ins)[k * c.in_size..(k + 1) * c.in_size], contents(c.tables)[k * tw..(k + 1) * tw], name);
+    if i < 0 {
+        return contents(c.ins)[0..0];
+    }
+    return header_value(c, t, i);
+}
+
+// The body bytes waiting, decoded if the response was chunked; take them off with `consume`.
+pub fn body[&r](c: &r Client, t: int) -> [] &r [byte] {
+    let k = slot_of_ticket(c, t);
+    if k < 0 || get(c, k, f_rs()) != rs_body() {
+        return contents(c.ins)[0..0];
+    }
+    let from = k * c.in_size + get(c, k, f_hl());
+    return contents(c.ins)[from..from + get(c, k, f_avail())];
+}
+
+// How many body bytes are waiting.
+pub fn avail[&r](c: &r Client, t: int) -> [] int {
+    let k = slot_of_ticket(c, t);
+    if k < 0 || get(c, k, f_rs()) != rs_body() {
+        return 0;
+    }
+    return get(c, k, f_avail());
+}
+
+// Takes `n` of the waiting body bytes off, answering `n`, or -1 for a ticket with no body in hand or an `n` that is more
+// than is waiting. The head's text is gone from the first `consume` that takes bytes. When the last byte of a complete
+// body goes, the request is done (`Event::Done`).
+pub fn consume[&r](c: &!r Client, t: int, n: int, now: int) -> [] int {
+    let k = slot_of_ticket(c, t);
+    if k < 0 || get(c, k, f_rs()) != rs_body() || n < 0 || n > get(c, k, f_avail()) {
+        return 0 - 1;
+    }
+    if n == 0 {
+        return 0;
+    }
+    let st = contents(c.state);
+    let p = stride() * k;
+    let hl = st[p + f_hl()];
+    if hl > 0 {
+        copy_within(inbuf(c, k), 0, hl, st[p + f_fill()] - hl);
+        st[p + f_fill()] = st[p + f_fill()] - hl;
+        st[p + f_hl()] = 0;
+    }
+    let left = st[p + f_fill()] - n;
+    if left > 0 {
+        copy_within(inbuf(c, k), 0, n, left);
+    }
+    st[p + f_fill()] = left;
+    st[p + f_avail()] = st[p + f_avail()] - n;
+    if st[p + f_avail()] == 0 {
+        st[p + f_t_prog()] = now;
+        if st[p + f_complete()] == 1 {
+            finish_body(c, k);
+        }
+    }
+    return n;
+}
+
+// Has the whole request gone to the upstream?
+pub fn request_complete[&r](c: &r Client, t: int) -> [] bool {
+    let k = slot_of_ticket(c, t);
+    return k >= 0 && flag(c, k, rf_req_done());
+}
+
+// Did the request go on a connection that had carried one before?
+pub fn reused[&r](c: &r Client, t: int) -> [] bool {
+    let k = slot_of_ticket(c, t);
+    return k >= 0 && get(c, k, f_reused()) == 1;
+}
+
+// 0, or 1 if the request was replayed on a new connection.
+pub fn attempts[&r](c: &r Client, t: int) -> [] int {
+    let k = slot_of_ticket(c, t);
+    if k < 0 {
+        return 0;
+    }
+    return get(c, k, f_attempts());
+}
+
+// Did `Event::Continue` come from the timer rather than a `100`?
+pub fn continued_by_timeout[&r](c: &r Client, t: int) -> [] bool {
+    let k = slot_of_ticket(c, t);
+    return k >= 0 && get(c, k, f_ctimeout()) == 1;
+}
+
+// The code a request failed with (`refusal_tag`), or 0.
+pub fn failure[&r](c: &r Client, t: int) -> [] int {
+    let k = slot_of_ticket(c, t);
+    if k < 0 {
+        return 0;
+    }
+    return get(c, k, f_fail());
+}
+
+// ---------------------------------------------------------------------
+// The transport ends
+// ---------------------------------------------------------------------
+
+// May the request in slot `k` be replayed on a new connection? It was on a reused one, nothing of a response came,
+// the caller allowed it, it has not been, and everything sent is still in the buffer.
+fn can_replay[&r](c: &r Client, k: int) -> [] bool {
+    return get(c, k, f_reused()) == 1 && get(c, k, f_anyresp()) == 0 && flag(c, k, rf_retry()) && get(c, k, f_attempts()) == 0 && flag(c, k, rf_replayable()) && get(c, k, f_live()) == 1;
+}
+
+// The request goes back to the start on a new transport: the old one is closed, and the request connects in this slot
+// once the caller has detached it.
+fn replay[&r](c: &!r Client, k: int) -> [] int {
+    let st = contents(c.state);
+    let p = stride() * k;
+    st[p + f_attempts()] = 1;
+    st[p + f_reconnect()] = 1;
+    st[p + f_out_sent()] = 0;
+    st[p + f_reused()] = 0;
+    st[p + f_fill()] = 0;
+    st[p + f_scan()] = 0;
+    st[p + f_info()] = 0;
+    st[p + f_t_hold()] = 0 - 1;
+    set_flag(c, k, rf_req_done(), false);
+    c.n_retries = c.n_retries + 1;
+    close_slot(c, k, r_retry());
+    return 0;
+}
+
+// The transport ended: `reset` says it failed rather than closed.
+fn transport_ended[&r](c: &!r Client, k: int, reset: bool, now: int) -> [] int {
+    let phase = get(c, k, f_phase());
+    if phase == ph_idle() {
+        close_slot(c, k, r_peer_closed());
+        return 0;
+    }
+    if phase == ph_connect() {
+        fail(c, k, wire.c_connect());
+        return 0;
+    }
+    if phase != ph_active() || get(c, k, f_live()) != 1 {
+        return 0;
+    }
+    let rs = get(c, k, f_rs());
+    if rs == rs_done() || get(c, k, f_complete()) == 1 {
+        put(c, k, f_eof(), 1);
+        return 0;
+    }
+    if rs == rs_head() {
+        if get(c, k, f_anyresp()) == 0 && can_replay(c, k) {
+            replay(c, k);
+            return 0;
+        }
+        if reset {
+            fail(c, k, wire.c_reset());
+        } else if get(c, k, f_anyresp()) == 0 {
+            fail(c, k, wire.c_closed_early());
+        } else {
+            fail(c, k, wire.c_truncated());
+        }
+        return 0;
+    }
+    // In the body.
+    if reset {
+        fail(c, k, wire.c_reset());
+    } else if get(c, k, f_bkind()) == bk_close() {
+        // A body that runs to the end of the connection ends with it.
+        put(c, k, f_complete(), 1);
+        put(c, k, f_eof(), 1);
+        finish_body(c, k);
+    } else {
+        fail(c, k, wire.c_truncated());
+    }
+    return 0;
+}
+
+// The peer ended the transport cleanly (a TCP end, or close_notify). 0, or -1 for a slot that has none.
+pub fn eof[&r](c: &!r Client, k: int, now: int) -> [] int {
+    if !slot_ok(c, k) || get(c, k, f_phase()) == ph_free() {
+        return 0 - 1;
+    }
+    transport_ended(c, k, false, now);
+    return 0;
+}
+
+// The transport failed (a read or write error, a TLS alert). 0, or -1 for a slot that has none.
+pub fn reset[&r](c: &!r Client, k: int, now: int) -> [] int {
+    if !slot_ok(c, k) || get(c, k, f_phase()) == ph_free() {
+        return 0 - 1;
+    }
+    transport_ended(c, k, true, now);
+    return 0;
+}
+
+// The caller has closed slot `k`'s transport (after `Event::Close`): the slot is free again, or, for a request that was
+// replayed or given an evicted connection's slot, connects (`Event::Connect`). 0, or -1 for a slot that is not closing.
+pub fn detach[&r](c: &!r Client, k: int, now: int) -> [] int {
+    if !slot_ok(c, k) || get(c, k, f_phase()) != ph_closing() {
+        return 0 - 1;
+    }
+    unpost(c, k, ev_close());
+    if get(c, k, f_reconnect()) == 1 && get(c, k, f_live()) == 1 {
+        put(c, k, f_reconnect(), 0);
+        put(c, k, f_phase(), ph_connect());
+        put(c, k, f_t_phase(), now);
+        put(c, k, f_t_prog(), now);
+        put(c, k, f_rs(), rs_head());
+        c.n_connects = c.n_connects + 1;
+        post(c, k, ev_connect());
+        return 0;
+    }
+    put(c, k, f_phase(), ph_free());
+    put(c, k, f_reconnect(), 0);
+    return 0;
+}
+
+// The caller gives the request up (its own client went away). The transport is closed (`Close`); nothing is reported
+// for the ticket. 0, or -1 for a ticket that is not in progress.
+pub fn abort[&r](c: &!r Client, t: int, now: int) -> [] int {
+    let k = slot_of_ticket(c, t);
+    if k < 0 || get(c, k, f_live()) != 1 {
+        return 0 - 1;
+    }
+    put(c, k, f_live(), 0);
+    put(c, k, f_reconnect(), 0);
+    unpost(c, k, ev_head());
+    unpost(c, k, ev_body());
+    unpost(c, k, ev_done());
+    unpost(c, k, ev_continue());
+    unpost(c, k, ev_connect());
+    let phase = get(c, k, f_phase());
+    if phase == ph_closing() {
+        return 0;
+    }
+    close_slot(c, k, r_aborted());
+    return 0;
+}
+
+// An upstream's connections are no longer to be reused (its address changed, its certificate was replaced): idle ones
+// close now, the others when their request ends. How many were closed.
+pub fn retire[&r](c: &!r Client, key: int, now: int) -> [] int {
+    var closed = 0;
+    var k = 0;
+    while k < c.nslots {
+        if get(c, k, f_phase()) != ph_free() && get(c, k, f_key()) == key {
+            if get(c, k, f_phase()) == ph_idle() {
+                close_slot(c, k, r_retired());
+                closed = closed + 1;
+            } else {
+                put(c, k, f_nopool(), 1);
+            }
+        }
+        k = k + 1;
+    }
+    return closed;
+}
+
+// ---------------------------------------------------------------------
+// Events and time
+// ---------------------------------------------------------------------
+
+// Is the response in `k` one whose connection may carry another request?
+fn reusable[&r](c: &r Client, k: int, now: int) -> [] int {
+    let table = contents(c.tables)[k * wire.slots(max_headers())..(k + 1) * wire.slots(max_headers())];
+    if table[1] != 11 || table[5] / 2 % 2 == 1 || flag(c, k, rf_close()) || get(c, k, f_bkind()) == bk_close() {
+        return r_connection_close();
+    }
+    if !flag(c, k, rf_req_done()) || flag(c, k, rf_early()) || get(c, k, f_dirty()) == 1 || get(c, k, f_eof()) == 1 || get(c, k, f_nopool()) == 1 {
+        return r_not_reusable();
+    }
+    if c.limits.max_requests > 0 && get(c, k, f_uses()) >= c.limits.max_requests {
+        return r_max_requests();
+    }
+    if c.limits.lifetime_ms > 0 && now - get(c, k, f_t_open()) >= c.limits.lifetime_ms {
+        return r_lifetime();
+    }
+    if idle_with_key(c, get(c, k, f_key())) >= c.limits.idle_per_key {
+        return r_pool_full();
+    }
+    return 0;
+}
+
+// The next thing the caller must act on, or `Event::None`. Events of one slot come in the order they happened:
+// `Connect`, `Continue`, `Head`, `Body`, `Done`, `Failed`, `Close`. `Done` is when the connection returns to the pool.
+pub fn poll[&r](c: &!r Client, now: int) -> [] Event {
+    while c.qcount > 0 {
+        let k = contents(c.ring)[c.qhead];
+        var bits = get(c, k, f_events());
+        var ev = 0;
+        if bits % 2 == 1 {
+            ev = ev_connect();
+        } else if bits / 2 % 2 == 1 {
+            ev = ev_continue();
+        } else if bits / 4 % 2 == 1 {
+            ev = ev_head();
+        } else if bits / 8 % 2 == 1 {
+            ev = ev_body();
+        } else if bits / 16 % 2 == 1 {
+            ev = ev_done();
+        } else if bits / 32 % 2 == 1 {
+            ev = ev_failed();
+        } else if bits / 64 % 2 == 1 {
+            ev = ev_close();
+        }
+        if ev != 0 {
+            unpost(c, k, ev);
+            bits = bits - ev;
+        }
+        if bits == 0 {
+            put(c, k, f_queued(), 0);
+            c.qhead = (c.qhead + 1) % c.nslots;
+            c.qcount = c.qcount - 1;
+        }
+        let ticket = ticket_for(c, k);
+        if ev == ev_connect() && get(c, k, f_phase()) == ph_connect() {
+            return Event::Connect(k);
+        }
+        if ev == ev_continue() {
+            return Event::Continue(ticket);
+        }
+        if ev == ev_head() {
+            return Event::Head(ticket);
+        }
+        if ev == ev_body() && get(c, k, f_avail()) > 0 {
+            return Event::Body(ticket);
+        }
+        if ev == ev_done() {
+            let why = reusable(c, k, now);
+            put(c, k, f_live(), 0);
+            if why == 0 {
+                put(c, k, f_phase(), ph_idle());
+                put(c, k, f_t_phase(), now);
+            } else {
+                close_slot(c, k, why);
+            }
+            return Event::Done(ticket);
+        }
+        if ev == ev_failed() {
+            return Event::Failed(ticket);
+        }
+        if ev == ev_close() {
+            return Event::Close(k);
+        }
+    }
+    return Event::None;
+}
+
+// When slot `k`'s next timer fires, in the caller's milliseconds, or -1 if it has none.
+fn due[&r](c: &r Client, k: int) -> [] int {
+    let phase = get(c, k, f_phase());
+    var at = 0 - 1;
+    if phase == ph_connect() {
+        if c.limits.connect_ms > 0 {
+            at = get(c, k, f_t_phase()) + c.limits.connect_ms;
+        }
+    } else if phase == ph_idle() {
+        if c.limits.idle_ms > 0 {
+            at = get(c, k, f_t_phase()) + c.limits.idle_ms;
+        }
+        if c.limits.lifetime_ms > 0 {
+            let end = get(c, k, f_t_open()) + c.limits.lifetime_ms;
+            if at < 0 || end < at {
+                at = end;
+            }
+        }
+    }
+    if (phase == ph_connect() || phase == ph_active()) && get(c, k, f_live()) == 1 && get(c, k, f_rs()) != rs_done() {
+        var t2 = 0 - 1;
+        if c.limits.total_ms > 0 {
+            t2 = get(c, k, f_t_req()) + c.limits.total_ms;
+        }
+        if phase == ph_active() {
+            let rs = get(c, k, f_rs());
+            if flag(c, k, rf_hold()) && get(c, k, f_t_hold()) >= 0 && c.limits.expect_ms > 0 {
+                let t3 = get(c, k, f_t_hold()) + c.limits.expect_ms;
+                if t2 < 0 || t3 < t2 {
+                    t2 = t3;
+                }
+            }
+            if rs == rs_head() && c.limits.head_ms > 0 && (flag(c, k, rf_req_done()) || pending(c, k) > 0) {
+                let t4 = get(c, k, f_t_prog()) + c.limits.head_ms;
+                if t2 < 0 || t4 < t2 {
+                    t2 = t4;
+                }
+            }
+            if rs == rs_body() && get(c, k, f_complete()) == 0 && get(c, k, f_avail()) == 0 && c.limits.body_ms > 0 {
+                let t5 = get(c, k, f_t_prog()) + c.limits.body_ms;
+                if t2 < 0 || t5 < t2 {
+                    t2 = t5;
+                }
+            }
+        }
+        if t2 >= 0 && (at < 0 || t2 < at) {
+            at = t2;
+        }
+    }
+    return at;
+}
+
+// Fires the timers that are due at `now`: a connect, a head, a body or the whole exchange that took too long fails its
+// request; an idle connection past its time, or any past its lifetime, closes; an `Expect` that nobody answered is released
+// (`Event::Continue`). Call once a turn. Answers how many fired.
+pub fn tick[&r](c: &!r Client, now: int) -> [] int {
+    var fired = 0;
+    var k = 0;
+    while k < c.nslots {
+        let at = due(c, k);
+        if at >= 0 && now >= at {
+            fired = fired + 1;
+            let phase = get(c, k, f_phase());
+            if phase == ph_idle() {
+                if c.limits.lifetime_ms > 0 && now - get(c, k, f_t_open()) >= c.limits.lifetime_ms {
+                    close_slot(c, k, r_lifetime());
+                } else {
+                    close_slot(c, k, r_idle_expired());
+                }
+            } else if phase == ph_connect() {
+                if c.limits.total_ms > 0 && now - get(c, k, f_t_req()) >= c.limits.total_ms {
+                    fail(c, k, wire.c_total_timeout());
+                } else {
+                    fail(c, k, wire.c_connect_timeout());
+                }
+            } else {
+                let rs = get(c, k, f_rs());
+                if c.limits.total_ms > 0 && now - get(c, k, f_t_req()) >= c.limits.total_ms {
+                    fail(c, k, wire.c_total_timeout());
+                } else if flag(c, k, rf_hold()) && get(c, k, f_t_hold()) >= 0 && c.limits.expect_ms > 0 && now - get(c, k, f_t_hold()) >= c.limits.expect_ms {
+                    set_flag(c, k, rf_hold(), false);
+                    put(c, k, f_ctimeout(), 1);
+                    post(c, k, ev_continue());
+                } else if rs == rs_head() {
+                    fail(c, k, wire.c_head_timeout());
+                } else {
+                    fail(c, k, wire.c_body_timeout());
+                }
+            }
+        }
+        k = k + 1;
+    }
+    return fired;
+}
+
+// Milliseconds from `now` to the next timer, 0 if one is due, or -1 if there is none: how long the caller's wait may be.
+pub fn next_deadline[&r](c: &r Client, now: int) -> [] int {
+    var best = 0 - 1;
+    var k = 0;
+    while k < c.nslots {
+        let at = due(c, k);
+        if at >= 0 && (best < 0 || at < best) {
+            best = at;
+        }
+        k = k + 1;
+    }
+    if best < 0 {
+        return 0 - 1;
+    }
+    if best <= now {
+        return 0;
+    }
+    return best - now;
+}
+
+// ---------------------------------------------------------------------
+// Counting
+// ---------------------------------------------------------------------
+
+pub fn idle[&r](c: &r Client) -> [] int {
+    var n = 0;
+    var k = 0;
+    while k < c.nslots {
+        if get(c, k, f_phase()) == ph_idle() {
+            n = n + 1;
+        }
+        k = k + 1;
+    }
+    return n;
+}
+
+// Slots carrying a request, dialling or closing.
+pub fn active[&r](c: &r Client) -> [] int {
+    var n = 0;
+    var k = 0;
+    while k < c.nslots {
+        let phase = get(c, k, f_phase());
+        if phase == ph_connect() || phase == ph_active() || phase == ph_closing() {
+            n = n + 1;
+        }
+        k = k + 1;
+    }
+    return n;
+}
+
+pub fn free_slots[&r](c: &r Client) -> [] int {
+    var n = 0;
+    var k = 0;
+    while k < c.nslots {
+        if get(c, k, f_phase()) == ph_free() {
+            n = n + 1;
+        }
+        k = k + 1;
+    }
+    return n;
+}

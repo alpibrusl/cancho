@@ -1,0 +1,1112 @@
+edition 5;
+
+module http_client_wire;
+
+import std.bytes;
+
+// `http_client_wire` -- what is on the wire, for `http_client` (`docs/http-client.md`): validating and
+// writing a request head, reading a response head into an integer table, and the incremental decoder
+// for a chunked body. Pure functions over slices and integers; no heap, no clock, no capability.
+//
+// Strictness is the point, as in `std.http`'s request parser, and the rules are the ones the two programs
+// that wrote this by hand agree on (`docs/http-client.md` §2.1): one reading of the framing or a refusal
+// with a tag. A refusal here is an integer code (below); `refusal_tag` names it.
+
+// ---------------------------------------------------------------------
+// Codes
+// ---------------------------------------------------------------------
+
+// What `request` and `send_body` refuse (the caller's mistake, answered at the call).
+pub fn c_method() -> [] int {
+    return 1;
+}
+
+pub fn c_target() -> [] int {
+    return 2;
+}
+
+pub fn c_host() -> [] int {
+    return 3;
+}
+
+pub fn c_header() -> [] int {
+    return 4;
+}
+
+pub fn c_length() -> [] int {
+    return 5;
+}
+
+pub fn c_too_large() -> [] int {
+    return 6;
+}
+
+pub fn c_key() -> [] int {
+    return 7;
+}
+
+pub fn c_body_too_long() -> [] int {
+    return 8;
+}
+
+pub fn c_response_arrived() -> [] int {
+    return 9;
+}
+
+pub fn c_full() -> [] int {
+    return 10;
+}
+
+pub fn c_no_body() -> [] int {
+    return 11;
+}
+
+pub fn c_ticket() -> [] int {
+    return 12;
+}
+
+// What the upstream sent (the names are `cancho-gateway`'s `response.*`).
+pub fn c_status_line() -> [] int {
+    return 20;
+}
+
+pub fn c_version() -> [] int {
+    return 21;
+}
+
+pub fn c_status() -> [] int {
+    return 22;
+}
+
+pub fn c_upgrade() -> [] int {
+    return 23;
+}
+
+pub fn c_resp_header() -> [] int {
+    return 24;
+}
+
+pub fn c_fold() -> [] int {
+    return 25;
+}
+
+pub fn c_resp_length() -> [] int {
+    return 26;
+}
+
+pub fn c_two_lengths() -> [] int {
+    return 27;
+}
+
+pub fn c_transfer_encoding() -> [] int {
+    return 28;
+}
+
+pub fn c_head_too_large() -> [] int {
+    return 29;
+}
+
+pub fn c_chunk() -> [] int {
+    return 30;
+}
+
+pub fn c_trailers_too_large() -> [] int {
+    return 31;
+}
+
+pub fn c_too_many_informational() -> [] int {
+    return 32;
+}
+
+// What happened to the connection.
+pub fn c_connect() -> [] int {
+    return 40;
+}
+
+pub fn c_tls() -> [] int {
+    return 41;
+}
+
+pub fn c_resolve() -> [] int {
+    return 42;
+}
+
+pub fn c_connect_timeout() -> [] int {
+    return 43;
+}
+
+pub fn c_head_timeout() -> [] int {
+    return 44;
+}
+
+pub fn c_body_timeout() -> [] int {
+    return 45;
+}
+
+pub fn c_total_timeout() -> [] int {
+    return 46;
+}
+
+pub fn c_closed_early() -> [] int {
+    return 47;
+}
+
+pub fn c_truncated() -> [] int {
+    return 48;
+}
+
+pub fn c_reset() -> [] int {
+    return 49;
+}
+
+pub fn c_aborted() -> [] int {
+    return 50;
+}
+
+// Not a refusal: the head has not all arrived.
+pub fn c_incomplete() -> [] int {
+    return 63;
+}
+
+// The tag of a code, for a log line or an error body.
+pub fn refusal_tag(code: int) -> [] &static [byte] {
+    if code == 1 {
+        return "request.method";
+    }
+    if code == 2 {
+        return "request.target";
+    }
+    if code == 3 {
+        return "request.host";
+    }
+    if code == 4 {
+        return "request.header";
+    }
+    if code == 5 {
+        return "request.length";
+    }
+    if code == 6 {
+        return "request.too-large";
+    }
+    if code == 7 {
+        return "request.key";
+    }
+    if code == 8 {
+        return "request.body-too-long";
+    }
+    if code == 9 {
+        return "request.response-arrived";
+    }
+    if code == 10 {
+        return "client.full";
+    }
+    if code == 11 {
+        return "request.no-body";
+    }
+    if code == 12 {
+        return "request.ticket";
+    }
+    if code == 20 {
+        return "response.status-line";
+    }
+    if code == 21 {
+        return "response.version";
+    }
+    if code == 22 {
+        return "response.status";
+    }
+    if code == 23 {
+        return "response.upgrade";
+    }
+    if code == 24 {
+        return "response.header";
+    }
+    if code == 25 {
+        return "response.fold";
+    }
+    if code == 26 {
+        return "response.length";
+    }
+    if code == 27 {
+        return "response.two-lengths";
+    }
+    if code == 28 {
+        return "response.transfer-encoding";
+    }
+    if code == 29 {
+        return "response.head-too-large";
+    }
+    if code == 30 {
+        return "response.chunk";
+    }
+    if code == 31 {
+        return "response.trailers-too-large";
+    }
+    if code == 32 {
+        return "response.too-many-informational";
+    }
+    if code == 40 {
+        return "client.connect";
+    }
+    if code == 41 {
+        return "client.tls";
+    }
+    if code == 42 {
+        return "client.resolve";
+    }
+    if code == 43 {
+        return "client.connect-timeout";
+    }
+    if code == 44 {
+        return "client.head-timeout";
+    }
+    if code == 45 {
+        return "client.body-timeout";
+    }
+    if code == 46 {
+        return "client.total-timeout";
+    }
+    if code == 47 {
+        return "client.closed-early";
+    }
+    if code == 48 {
+        return "client.truncated";
+    }
+    if code == 49 {
+        return "client.reset";
+    }
+    if code == 50 {
+        return "client.aborted";
+    }
+    return "none";
+}
+
+// ---------------------------------------------------------------------
+// Characters
+// ---------------------------------------------------------------------
+
+// What each byte may be (`std.http`'s table): bit 1 a token character (RFC 9110 §5.6.2), bit 2 a header-value
+// character (tab, space, visible ASCII and the opaque high bytes; not the other controls, and not CR or LF),
+// bit 4 a request-target character (visible ASCII).
+static classes: [int] {
+    let t = alloc_slice[static](256, 0);
+    var c = 0;
+    while c < 256 {
+        var v = 0;
+        let letter = c >= 65 && c <= 90 || c >= 97 && c <= 122;
+        let digit = c >= 48 && c <= 57;
+        if letter || digit || c == 33 || c == 35 || c == 36 || c == 37 || c == 38 || c == 39 || c == 42 || c == 43 || c == 45 || c == 46 || c == 94 || c == 95 || c == 96 || c == 124 || c == 126 {
+            v = v + 1;
+        }
+        if c == 9 || c >= 32 && c != 127 {
+            v = v + 2;
+        }
+        if c > 32 && c < 127 {
+            v = v + 4;
+        }
+        t[c] = v;
+        c = c + 1;
+    }
+    return t;
+}
+
+fn is_tchar(c: int) -> [] bool {
+    return classes[c] & 1 != 0;
+}
+
+fn is_value_char(c: int) -> [] bool {
+    return classes[c] & 2 != 0;
+}
+
+fn is_ows(c: int) -> [] bool {
+    return c == 32 || c == 9;
+}
+
+fn is_target_char(c: int) -> [] bool {
+    return classes[c] & 4 != 0;
+}
+
+fn hex_value(c: int) -> [] int {
+    if c >= 48 && c <= 57 {
+        return c - 48;
+    }
+    if c >= 97 && c <= 102 {
+        return c - 87;
+    }
+    if c >= 65 && c <= 70 {
+        return c - 55;
+    }
+    return 0 - 1;
+}
+
+// Does `src[start..end]` equal `lit` (which is lower case) ignoring ASCII case?
+fn eq_lower[&s, &l](src: &s [byte], start: int, end: int, lit: &l [byte]) -> [] bool {
+    if end - start != len(lit) {
+        return false;
+    }
+    var i = 0;
+    while i < len(lit) {
+        if bytes.to_lower(int_of(src[start + i])) != int_of(lit[i]) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------
+// The request
+// ---------------------------------------------------------------------
+
+// A method: a token, at most 32 bytes, and not `CONNECT` (the client does not tunnel).
+pub fn valid_method[&m](method: &m [byte]) -> [] bool {
+    if len(method) < 1 || len(method) > 32 {
+        return false;
+    }
+    var i = 0;
+    while i < len(method) {
+        if !is_tchar(int_of(method[i])) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return !bytes.equal(method, "CONNECT");
+}
+
+// An origin-form target (it starts with `/`) or `*`: visible ASCII, no fragment, at most 8,192 bytes.
+pub fn valid_target[&t](target: &t [byte]) -> [] bool {
+    if len(target) < 1 || len(target) > 8192 {
+        return false;
+    }
+    if bytes.equal(target, "*") {
+        return true;
+    }
+    if int_of(target[0]) != 47 {
+        return false;
+    }
+    var i = 0;
+    while i < len(target) {
+        let c = int_of(target[i]);
+        if !is_target_char(c) || c == 35 {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// A host: a registered name, an IPv4 address or a bracketed IPv6 one, with an optional port: letters, digits and
+// `. - _ : [ ] % ~`, 1 to 255 bytes. Nothing that could end the `Host` line or start another part of a URI.
+pub fn valid_host[&h](host: &h [byte]) -> [] bool {
+    if len(host) < 1 || len(host) > 255 {
+        return false;
+    }
+    var i = 0;
+    while i < len(host) {
+        let c = int_of(host[i]);
+        let letter = c >= 65 && c <= 90 || c >= 97 && c <= 122;
+        let digit = c >= 48 && c <= 57;
+        if !(letter || digit || c == 46 || c == 45 || c == 95 || c == 58 || c == 91 || c == 93 || c == 37 || c == 126) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Is the header name `src[start..end]` one the client writes itself? The caller's `extra` may not carry it, so a
+// request cannot have two framings or two connection policies.
+fn client_owns[&s](src: &s [byte], start: int, end: int) -> [] bool {
+    return eq_lower(src, start, end, "host") || eq_lower(src, start, end, "content-length") || eq_lower(src, start, end, "transfer-encoding") || eq_lower(src, start, end, "connection") || eq_lower(src, start, end, "expect") || eq_lower(src, start, end, "upgrade") || eq_lower(src, start, end, "te") || eq_lower(src, start, end, "trailer") || eq_lower(src, start, end, "keep-alive") || eq_lower(src, start, end, "proxy-connection");
+}
+
+// Zero or more complete header lines, `token ":" OWS value CRLF`, the value without control bytes and no bare CR or LF,
+// and no name the client owns.
+pub fn valid_extra[&e](extra: &e [byte]) -> [] bool {
+    var i = 0;
+    while i < len(extra) {
+        let name_start = i;
+        while i < len(extra) && is_tchar(int_of(extra[i])) {
+            i = i + 1;
+        }
+        if i == name_start || i >= len(extra) || int_of(extra[i]) != 58 {
+            return false;
+        }
+        if client_owns(extra, name_start, i) {
+            return false;
+        }
+        i = i + 1;
+        while i < len(extra) && is_value_char(int_of(extra[i])) {
+            i = i + 1;
+        }
+        if i + 1 >= len(extra) || int_of(extra[i]) != 13 || int_of(extra[i + 1]) != 10 {
+            return false;
+        }
+        i = i + 2;
+    }
+    return true;
+}
+
+// Does a request with this method carry `Content-Length: 0` when its body is empty? (RFC 9110 §8.6)
+pub fn wants_zero_length[&m](method: &m [byte]) -> [] bool {
+    return bytes.equal(method, "POST") || bytes.equal(method, "PUT") || bytes.equal(method, "PATCH");
+}
+
+// `HEAD`: the response has no body whatever its headers say.
+pub fn is_head[&m](method: &m [byte]) -> [] bool {
+    return bytes.equal(method, "HEAD");
+}
+
+// `s` at `at` in `out`, or -1 if it does not fit (and -1 stays -1, so a run of puts is checked once at the end).
+fn put[&o, &s](out: &!o [byte], at: int, s: &s [byte]) -> [] int {
+    if at < 0 || at + len(s) > len(out) {
+        return 0 - 1;
+    }
+    copy_into(out[at..at + len(s)], s);
+    return at + len(s);
+}
+
+fn put_byte[&o](out: &!o [byte], at: int, b: int) -> [] int {
+    if at < 0 || at >= len(out) {
+        return 0 - 1;
+    }
+    out[at] = byte_of(b);
+    return at + 1;
+}
+
+// A non-negative number in decimal.
+fn put_number[&o](out: &!o [byte], at: int, n: int) -> [] int {
+    if at < 0 {
+        return 0 - 1;
+    }
+    var digits = 1;
+    var rest = n / 10;
+    while rest > 0 {
+        digits = digits + 1;
+        rest = rest / 10;
+    }
+    if at + digits > len(out) {
+        return 0 - 1;
+    }
+    var i = digits;
+    var v = n;
+    while i > 0 {
+        out[at + i - 1] = byte_of(48 + v % 10);
+        v = v / 10;
+        i = i - 1;
+    }
+    return at + digits;
+}
+
+// The body of a request: none, `Content-Length` (`n`), or chunked.
+pub fn body_none() -> [] int {
+    return 0 - 2;
+}
+
+pub fn body_chunked() -> [] int {
+    return 0 - 1;
+}
+
+// Writes the request head into `out`, from byte 0: how many bytes, or -1 when it does not fit. `body` is
+// `body_none()`, `body_chunked()` or a length; `expect` adds `Expect: 100-continue`, `close` adds `Connection: close`.
+// The caller validated every argument (`valid_*`); this writes what it is given.
+pub fn write_head[&o, &m, &t, &h, &e](out: &!o [byte], method: &m [byte], target: &t [byte], host: &h [byte], extra: &e [byte], body: int, expect: bool, close: bool) -> [] int {
+    var at = put(out, 0, method);
+    at = put_byte(out, at, 32);
+    at = put(out, at, target);
+    at = put(out, at, " HTTP/1.1\r\nHost: ");
+    at = put(out, at, host);
+    at = put(out, at, "\r\n");
+    at = put(out, at, extra);
+    if body >= 0 && (body > 0 || wants_zero_length(method)) {
+        at = put(out, at, "Content-Length: ");
+        at = put_number(out, at, body);
+        at = put(out, at, "\r\n");
+    }
+    if body == body_chunked() {
+        at = put(out, at, "Transfer-Encoding: chunked\r\n");
+    }
+    if expect {
+        at = put(out, at, "Expect: 100-continue\r\n");
+    }
+    if close {
+        at = put(out, at, "Connection: close\r\n");
+    }
+    return put(out, at, "\r\n");
+}
+
+// How many hex digits `n` takes (n >= 0).
+fn hex_digits(n: int) -> [] int {
+    var d = 1;
+    var r = n / 16;
+    while r > 0 {
+        d = d + 1;
+        r = r / 16;
+    }
+    return d;
+}
+
+// The bytes a chunk of `n` data bytes costs beyond the data: size line and the two CRLFs.
+pub fn chunk_overhead(n: int) -> [] int {
+    return hex_digits(n) + 4;
+}
+
+// The largest chunk whose data and framing fit in `room` bytes, or 0 when not even one byte fits.
+pub fn chunk_fit(room: int) -> [] int {
+    var n = room - 5;
+    if n < 1 {
+        return 0;
+    }
+    while n > 0 && n + chunk_overhead(n) > room {
+        n = n - 1;
+    }
+    return n;
+}
+
+// Writes `HEX CRLF data CRLF` for `data` at `at`; the new end, or -1 if it does not fit.
+pub fn write_chunk[&o, &d](out: &!o [byte], at: int, data: &d [byte]) -> [] int {
+    let n = len(data);
+    let digits = hex_digits(n);
+    if at < 0 || at + n + digits + 4 > len(out) {
+        return 0 - 1;
+    }
+    var i = digits;
+    var v = n;
+    while i > 0 {
+        let h = v % 16;
+        if h < 10 {
+            out[at + i - 1] = byte_of(48 + h);
+        } else {
+            out[at + i - 1] = byte_of(87 + h);
+        }
+        v = v / 16;
+        i = i - 1;
+    }
+    out[at + digits] = byte_of(13);
+    out[at + digits + 1] = byte_of(10);
+    copy_into(out[at + digits + 2..at + digits + 2 + n], data);
+    out[at + digits + 2 + n] = byte_of(13);
+    out[at + digits + 3 + n] = byte_of(10);
+    return at + n + digits + 4;
+}
+
+// The last chunk, `0 CRLF CRLF`.
+pub fn write_last_chunk[&o](out: &!o [byte], at: int) -> [] int {
+    return put(out, at, "0\r\n\r\n");
+}
+
+// ---------------------------------------------------------------------
+// The response head
+// ---------------------------------------------------------------------
+
+fn fail(position: int, code: int) -> [] int {
+    return 0 - (position * 64 + code);
+}
+
+// Where in the input the problem is.
+pub fn error_position(result: int) -> [] int {
+    if result >= 0 {
+        return 0;
+    }
+    return (0 - result) / 64;
+}
+
+// Which code (above); 0 for a success.
+pub fn error_code(result: int) -> [] int {
+    if result >= 0 {
+        return 0;
+    }
+    return (0 - result) % 64;
+}
+
+// The head has not all arrived.
+pub fn is_incomplete(result: int) -> [] bool {
+    return result < 0 && error_code(result) == c_incomplete();
+}
+
+// Integers the table needs for up to `max_headers` headers:
+//
+//     0  the status code          1  the version, 10 or 11       2  the header count
+//     3  where the body starts    4  Content-Length, or -1       5  flags: 1 chunked, 2 `Connection: close`, 4 `Connection: keep-alive`
+//     6  reason starts            7  reason ends
+//     16 + 4*i  header i: name start, name end, value start, value end
+pub fn slots(max_headers: int) -> [] int {
+    return 16 + 4 * max_headers;
+}
+
+pub fn t_status() -> [] int {
+    return 0;
+}
+
+pub fn t_version() -> [] int {
+    return 1;
+}
+
+pub fn t_count() -> [] int {
+    return 2;
+}
+
+pub fn t_body_start() -> [] int {
+    return 3;
+}
+
+pub fn t_length() -> [] int {
+    return 4;
+}
+
+pub fn t_flags() -> [] int {
+    return 5;
+}
+
+// The head is at most this many bytes, whatever the buffer holds.
+pub fn max_head() -> [] int {
+    return 16384;
+}
+
+// Digits only, one to fifteen of them (so the product stays below 2^50).
+fn digits_value[&s](src: &s [byte], start: int, end: int) -> [] int {
+    if end <= start || end - start > 15 {
+        return 0 - 1;
+    }
+    var value = 0;
+    var i = start;
+    while i < end {
+        let c = int_of(src[i]);
+        if !bytes.is_digit(c) {
+            return 0 - 1;
+        }
+        value = value * 10 + (c - 48);
+        i = i + 1;
+    }
+    return value;
+}
+
+// Whether `src[start..end]`, a `Connection` value, lists `token` among its comma-separated tokens.
+fn lists_token[&s, &l](src: &s [byte], start: int, end: int, token: &l [byte]) -> [] bool {
+    var at = start;
+    while at < end {
+        var stop = at;
+        while stop < end && int_of(src[stop]) != 44 {
+            stop = stop + 1;
+        }
+        var from = at;
+        while from < stop && is_ows(int_of(src[from])) {
+            from = from + 1;
+        }
+        var to = stop;
+        while to > from && is_ows(int_of(src[to - 1])) {
+            to = to - 1;
+        }
+        if eq_lower(src, from, to, token) {
+            return true;
+        }
+        at = stop + 1;
+    }
+    return false;
+}
+
+// Where the blank line that ends the head starts (the `\r` of the final `\r\n\r\n`), looking at `src[from..limit]`
+// (`from` is where the last look ended, minus three, so a split blank line is found); -1 if there is none yet;
+// -2 minus the position for a line feed that no carriage return precedes, which this refuses as soon as it is seen.
+pub fn head_end[&s](src: &s [byte], from: int, limit: int) -> [] int {
+    var i = from;
+    if i < 0 {
+        i = 0;
+    }
+    while i < limit {
+        if int_of(src[i]) == 10 {
+            if i == 0 || int_of(src[i - 1]) != 13 {
+                return 0 - 2 - i;
+            }
+            if i >= 3 && int_of(src[i - 2]) == 10 && int_of(src[i - 3]) == 13 {
+                return i - 3;
+            }
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// The bytes seen so far are `HTTP/` as far as they go, or the response is not HTTP at all.
+pub fn looks_like_http[&s](src: &s [byte]) -> [] bool {
+    let want = "HTTP/";
+    var i = 0;
+    while i < len(src) && i < 5 {
+        if int_of(src[i]) != int_of(want[i]) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Read one response head from `src` into `table`.
+//
+// `src` may hold more than the head (the start of the body, or the next response); `parse_head` does not look past the
+// blank line. On success the answer is the offset where the body starts. `limit` is the most bytes a head may take
+// (at most `max_head()`); `table` must be `slots(n)` long for the `n` headers accepted.
+//
+// Refusals say where (`error_position`) and why (`error_code`); `is_incomplete` is the one that is not a refusal.
+pub fn parse_head[&s, &t](src: &s [byte], table: &!t [int], limit: int) -> [] int {
+    let n = len(src);
+    var cap = limit;
+    if cap > max_head() {
+        cap = max_head();
+    }
+    if !looks_like_http(src) {
+        return fail(0, c_status_line());
+    }
+    var scan_to = n;
+    if scan_to > cap {
+        scan_to = cap;
+    }
+    let blank = head_end(src, 0, scan_to);
+    if blank <= 0 - 2 {
+        return fail(0 - 2 - blank, c_resp_header());
+    }
+    if blank < 0 {
+        if n >= cap {
+            return fail(cap, c_head_too_large());
+        }
+        return fail(n, c_incomplete());
+    }
+    let lines_end = blank + 2;
+    let body_start = blank + 4;
+    let capacity = (len(table) - 16) / 4;
+
+    // Status line: HTTP/1.x SP DDD SP reason CRLF.
+    if lines_end < 15 {
+        return fail(lines_end, c_status_line());
+    }
+    var at = 5;
+    let major = int_of(src[at]);
+    if major != 49 {
+        if bytes.is_digit(major) {
+            return fail(at, c_version());
+        }
+        return fail(at, c_status_line());
+    }
+    at = at + 1;
+    if int_of(src[at]) != 46 {
+        return fail(at, c_status_line());
+    }
+    at = at + 1;
+    let minor = int_of(src[at]);
+    if minor == 49 {
+        table[1] = 11;
+    } else if minor == 48 {
+        table[1] = 10;
+    } else if bytes.is_digit(minor) {
+        return fail(at, c_version());
+    } else {
+        return fail(at, c_status_line());
+    }
+    at = at + 1;
+    if int_of(src[at]) != 32 {
+        return fail(at, c_status_line());
+    }
+    at = at + 1;
+    var code = 0;
+    var d = 0;
+    while d < 3 {
+        let c = int_of(src[at + d]);
+        if !bytes.is_digit(c) {
+            return fail(at + d, c_status_line());
+        }
+        code = code * 10 + (c - 48);
+        d = d + 1;
+    }
+    at = at + 3;
+    if code < 100 || code > 599 {
+        return fail(at - 3, c_status());
+    }
+    table[0] = code;
+    if int_of(src[at]) != 32 {
+        return fail(at, c_status_line());
+    }
+    at = at + 1;
+    table[6] = at;
+    while at < lines_end && is_value_char(int_of(src[at])) {
+        at = at + 1;
+    }
+    table[7] = at;
+    if at + 1 >= lines_end || int_of(src[at]) != 13 || int_of(src[at + 1]) != 10 {
+        return fail(at, c_status_line());
+    }
+    at = at + 2;
+
+    // Headers: name ":" OWS value OWS CRLF.
+    var count = 0;
+    while at < lines_end {
+        if is_ows(int_of(src[at])) {
+            return fail(at, c_fold());
+        }
+        let name_start = at;
+        while at < lines_end && is_tchar(int_of(src[at])) {
+            at = at + 1;
+        }
+        if at == name_start || at >= lines_end || int_of(src[at]) != 58 {
+            return fail(at, c_resp_header());
+        }
+        let name_end = at;
+        at = at + 1;
+        while at < lines_end && is_ows(int_of(src[at])) {
+            at = at + 1;
+        }
+        let value_start = at;
+        while at < lines_end && is_value_char(int_of(src[at])) {
+            at = at + 1;
+        }
+        if at + 1 >= lines_end || int_of(src[at]) != 13 || int_of(src[at + 1]) != 10 {
+            return fail(at, c_resp_header());
+        }
+        var value_end = at;
+        while value_end > value_start && is_ows(int_of(src[value_end - 1])) {
+            value_end = value_end - 1;
+        }
+        if count >= capacity {
+            return fail(name_start, c_resp_header());
+        }
+        table[16 + 4 * count] = name_start;
+        table[16 + 4 * count + 1] = name_end;
+        table[16 + 4 * count + 2] = value_start;
+        table[16 + 4 * count + 3] = value_end;
+        count = count + 1;
+        at = at + 2;
+    }
+    table[2] = count;
+    table[3] = body_start;
+
+    // What the headers say about the body and the connection.
+    var length = 0 - 1;
+    var chunked = false;
+    var closing = false;
+    var keeping = false;
+    var i = 0;
+    while i < count {
+        let ns = table[16 + 4 * i];
+        let ne = table[16 + 4 * i + 1];
+        let vs = table[16 + 4 * i + 2];
+        let ve = table[16 + 4 * i + 3];
+        if eq_lower(src, ns, ne, "content-length") {
+            let v = digits_value(src, vs, ve);
+            if v < 0 || length >= 0 {
+                return fail(vs, c_resp_length());
+            }
+            length = v;
+        } else if eq_lower(src, ns, ne, "transfer-encoding") {
+            if chunked || !eq_lower(src, vs, ve, "chunked") || table[1] == 10 {
+                return fail(vs, c_transfer_encoding());
+            }
+            chunked = true;
+        } else if eq_lower(src, ns, ne, "connection") {
+            if lists_token(src, vs, ve, "close") {
+                closing = true;
+            }
+            if lists_token(src, vs, ve, "keep-alive") {
+                keeping = true;
+            }
+        }
+        i = i + 1;
+    }
+    if chunked && length >= 0 {
+        return fail(0, c_two_lengths());
+    }
+    table[4] = length;
+    var flags = 0;
+    if chunked {
+        flags = flags + 1;
+    }
+    if closing {
+        flags = flags + 2;
+    }
+    if keeping {
+        flags = flags + 4;
+    }
+    table[5] = flags;
+    return body_start;
+}
+
+// The name of header `i` is `name` (lower case), ignoring case, in the head `src` and its table.
+pub fn header_is[&s, &t, &n](src: &s [byte], table: &t [int], i: int, name: &n [byte]) -> [] bool {
+    return eq_lower(src, table[16 + 4 * i], table[16 + 4 * i + 1], name);
+}
+
+// The index of the first header called `name` (lower case), or -1.
+pub fn find_header[&s, &t, &n](src: &s [byte], table: &t [int], name: &n [byte]) -> [] int {
+    var i = 0;
+    while i < table[2] {
+        if eq_lower(src, table[16 + 4 * i], table[16 + 4 * i + 1], name) {
+            return i;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// ---------------------------------------------------------------------
+// The chunked body, decoded as it arrives
+// ---------------------------------------------------------------------
+
+// A decoder's state is `chunk_slots()` integers:
+//
+//     0  where it is (below)         1  the size being read, or the data bytes left in the chunk
+//     2  bytes of the line it is in  3  where the decoded bytes end (an output of `chunk_run`)
+//     4  raw bytes `chunk_run` used  5  hex digits read in this size line
+//
+// States: 0 size digits, 1 extension, 2 the size line's LF, 3 data, 4 CR after data, 5 LF after data, 6 start of a
+// trailer line (or the final CR), 7 inside a trailer line, 8 the trailer line's LF, 9 the final LF, 10 done.
+pub fn chunk_slots() -> [] int {
+    return 6;
+}
+
+pub fn chunk_done() -> [] int {
+    return 10;
+}
+
+pub fn chunk_reset[&s](st: &!s [int], at: int) -> [] int {
+    var i = 0;
+    while i < chunk_slots() {
+        st[at + i] = 0;
+        i = i + 1;
+    }
+    return 0;
+}
+
+// A chunk-size line is at most this many bytes (digits and extension).
+fn max_line() -> [] int {
+    return 128;
+}
+
+// All trailer lines together are at most this many bytes.
+fn max_trailers() -> [] int {
+    return 8192;
+}
+
+// A chunk size past this is refused, as a `Content-Length` of more than fifteen digits is (2^50).
+fn max_chunk() -> [] int {
+    return 1125899906842624;
+}
+
+// Decodes `buf[from..to]` -- raw chunked bytes -- writing the data bytes in place from `w` (`w <= from`). Stops at the
+// end of the body (the byte after the final CRLF is not touched), so bytes behind the response stay where they are.
+// Answers 0 or a refusal code (`c_chunk`, `c_trailers_too_large`); `st[at+3]` is where the decoded bytes now end,
+// `st[at+4]` how many raw bytes were used, and `st[at+0] == chunk_done()` when the body is complete.
+pub fn chunk_run[&b, &s](buf: &!b [byte], from: int, to: int, w: int, st: &!s [int], at: int) -> [] int {
+    var i = from;
+    var wp = w;
+    var state = st[at];
+    var size = st[at + 1];
+    var line = st[at + 2];
+    var digits = st[at + 5];
+    var err = 0;
+    while i < to && state != chunk_done() && err == 0 {
+        if state == 3 {
+            // Data: a block move for as much as there is.
+            var take = size;
+            if take > to - i {
+                take = to - i;
+            }
+            if wp != i {
+                copy_within(buf, wp, i, take);
+            }
+            wp = wp + take;
+            i = i + take;
+            size = size - take;
+            if size == 0 {
+                state = 4;
+            }
+        } else {
+            let c = int_of(buf[i]);
+            i = i + 1;
+            if state == 0 {
+                line = line + 1;
+                let v = hex_value(c);
+                if v >= 0 {
+                    size = size * 16 + v;
+                    digits = digits + 1;
+                    if size > max_chunk() || line > max_line() {
+                        err = c_chunk();
+                    }
+                } else if c == 59 && digits > 0 {
+                    state = 1;
+                } else if c == 13 && digits > 0 {
+                    state = 2;
+                } else {
+                    err = c_chunk();
+                }
+            } else if state == 1 {
+                line = line + 1;
+                if line > max_line() {
+                    err = c_chunk();
+                } else if c == 13 {
+                    state = 2;
+                } else if !is_value_char(c) {
+                    err = c_chunk();
+                }
+            } else if state == 2 {
+                if c != 10 {
+                    err = c_chunk();
+                } else if size == 0 {
+                    state = 6;
+                    line = 0;
+                } else {
+                    state = 3;
+                    line = 0;
+                }
+            } else if state == 4 {
+                if c != 13 {
+                    err = c_chunk();
+                } else {
+                    state = 5;
+                }
+            } else if state == 5 {
+                if c != 10 {
+                    err = c_chunk();
+                } else {
+                    state = 0;
+                    size = 0;
+                    digits = 0;
+                    line = 0;
+                }
+            } else if state == 6 {
+                if c == 13 {
+                    state = 9;
+                } else if c == 10 {
+                    err = c_chunk();
+                } else {
+                    state = 7;
+                    line = line + 1;
+                }
+            } else if state == 7 {
+                line = line + 1;
+                if line > max_trailers() {
+                    err = c_trailers_too_large();
+                } else if c == 13 {
+                    state = 8;
+                } else if c == 10 {
+                    err = c_chunk();
+                }
+            } else if state == 8 {
+                if c != 10 {
+                    err = c_chunk();
+                } else {
+                    state = 6;
+                }
+            } else if state == 9 {
+                if c != 10 {
+                    err = c_chunk();
+                } else {
+                    state = 10;
+                }
+            }
+        }
+    }
+    st[at] = state;
+    st[at + 1] = size;
+    st[at + 2] = line;
+    st[at + 3] = wp;
+    st[at + 4] = i - from;
+    st[at + 5] = digits;
+    return err;
+}
