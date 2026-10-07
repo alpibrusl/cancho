@@ -181,6 +181,10 @@ pub fn r_not_an_enum() -> [] int {
     return 44;
 }
 
+pub fn r_ambiguous_type() -> [] int {
+    return 45;
+}
+
 pub fn rule_tag(r: int) -> [] &static [byte] {
     if r < 3 {
         return lc.rule_name(r);
@@ -310,6 +314,9 @@ pub fn rule_tag(r: int) -> [] &static [byte] {
     }
     if r == 44 {
         return "not-an-enum";
+    }
+    if r == 45 {
+        return "ambiguous-type";
     }
     return "unknown-name";
 }

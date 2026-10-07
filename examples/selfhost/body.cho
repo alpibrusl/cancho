@@ -155,11 +155,31 @@ fn enum_plain[&s](st: &!s [int], item: int) -> [] bool {
     return true;
 }
 
+// The element of a slice: a scalar or a type parameter, else 0.
+fn element_type[&s](st: &!s [int], ty: int) -> [] int {
+    let tag = scalar(st, ty);
+    if tag != 0 {
+        return tag;
+    }
+    if ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 1 {
+        return value_type(st, ty);
+    }
+    return 0;
+}
+
 // The type of the resolved type node `ty` when it is a scalar or a plain struct, else 0.
 fn value_type[&s](st: &!s [int], ty: int) -> [] int {
     let tag = scalar(st, ty);
     if tag != 0 {
         return tag;
+    }
+    if ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 1 {
+        // A type parameter: a variable at a call (the callee's, `st[31]` the first of them), and
+        // rigid in the body that declares it.
+        if st[31] >= 0 {
+            return st[31] + ast.get(st, ty, 9);
+        }
+        return types.make_param(st, ast.get(st, ty, 9));
     }
     if ast.get(st, ty, 8) == 3 && (struct_plain(st, ast.get(st, ty, 9)) || enum_plain(st, ast.get(st, ty, 9))) {
         return types.make_named(st, ast.get(st, ty, 9));
@@ -215,7 +235,7 @@ fn lower_type[&s, &x](st: &!s [int], text: &x [byte], ty: int, dp: int, fresh: i
     let inner = ast.get(st, ty, 6);
     var referent = 0;
     if ast.is_kind(st, inner, kinds.NK::TSlice) {
-        let element = scalar(st, ast.get(st, inner, 6));
+        let element = element_type(st, ast.get(st, inner, 6));
         if element != 0 {
             referent = types.make_slice(st, element);
         }
@@ -868,8 +888,17 @@ fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     if !plain_function(st, text, found) {
         return skip(st, from, to);
     }
-    // Each region parameter of the callee is a variable here, which the arguments solve.
+    // Each type and region parameter of the callee is a variable here, which the arguments solve.
     let callee_dp = ast.get(st, found, 6);
+    var tvars = 0 - 1;
+    var tmade = 0;
+    while tmade < pass1.count_params(st, callee_dp, false) {
+        let v = types.fresh_tvar(st);
+        if tmade == 0 {
+            tvars = v;
+        }
+        tmade = tmade + 1;
+    }
     var fresh = 0 - 1;
     var made = 0;
     while made < pass1.count_params(st, callee_dp, true) {
@@ -888,7 +917,7 @@ fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     while param >= 0 && ast.ok(st) {
         let a = expr(st, text, arg);
         if ast.ok(st) {
-            expect(st, text, lower_type(st, text, ast.get(st, param, 5), callee_dp, fresh), a.ty, ast.nstart(st, arg), ast.nend(st, arg));
+            expect(st, text, callee_type(st, text, ast.get(st, param, 5), callee_dp, fresh, tvars), a.ty, ast.nstart(st, arg), ast.nend(st, arg));
         }
         param = ast.next(st, param);
         arg = ast.next(st, arg);
@@ -904,19 +933,33 @@ fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         }
         k = k + 1;
     }
+    // Every type argument has to be settled by the arguments.
+    var position = 0;
+    while ast.ok(st) && position < tmade {
+        if types.is_tvar(st, types.shallow(st, tvars + position)) {
+            ast.fail(st, rules.r_ambiguous_type(), from, to);
+        }
+        position = position + 1;
+    }
     if !ast.ok(st) {
         return nothing();
     }
-    return plain(lower_type(st, text, ast.get(st, found, 10), callee_dp, fresh));
+    return plain(types.resolve_type(st, callee_type(st, text, ast.get(st, found, 10), callee_dp, fresh, tvars)));
+}
+
+// A type written in a callee's declaration, at one call: its type parameters are the variables made
+// for the call (the first is `tvars`) and its region parameters the region variables.
+fn callee_type[&s, &x](st: &!s [int], text: &x [byte], ty: int, dp: int, fresh: int, tvars: int) -> [] int {
+    st[31] = tvars;
+    let out = lower_type(st, text, ty, dp, fresh);
+    st[31] = 0 - 1;
+    return out;
 }
 
 // A function with no type parameters, an empty row, and only types this slice handles: the
 // functions this slice checks, and the callees it can call. Regions are fine.
 fn plain_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [] bool {
     let dp = ast.get(st, fn_item, 6);
-    if pass1.count_params(st, dp, false) > 0 {
-        return false;
-    }
     if !pass1.is_code(st, ast.get(st, fn_item, 9) + 1, lc.Tok::RBracket) {
         return false;
     }
@@ -1404,8 +1447,14 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
 // Its row need not be empty here: a declared label is decoration and refused after the body.
 fn plain_function_type[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [] bool {
     let dp = ast.get(st, fn_item, 6);
-    if pass1.count_params(st, dp, false) > 0 {
-        return false;
+    var k = 0;
+    while k < pass1.count_params(st, dp, false) {
+        // A value of a type parameter that is not `val` could be a resource: linearity is not
+        // checked yet.
+        if !pass1.param_bounded(st, dp, k) {
+            return false;
+        }
+        k = k + 1;
     }
     var param = ast.get(st, fn_item, 7);
     while param >= 0 {
