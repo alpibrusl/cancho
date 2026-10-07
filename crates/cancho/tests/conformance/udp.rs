@@ -23,15 +23,28 @@ fn against_peer(
             build(&dir, tag, &dial_program(port, &format!("127.0.0.1:{port}"), source), backend);
         let peer = peer.clone();
         let thread = std::thread::spawn(move || peer(socket));
-        let run = Command::new(&exe).output().expect("the program runs");
-        assert_eq!(
-            run.status.code(),
-            Some(expect),
-            "{backend}/{tag}: {}",
-            String::from_utf8_lossy(&run.stderr)
-        );
+        let code = run_with_deadline(&exe, tag, backend);
+        assert_eq!(code, Some(expect), "{backend}/{tag}");
         thread.join().unwrap();
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// Run `exe`, killing it after 20 seconds: a mutant that makes a receive block for ever must fail
+/// the test, not hang the suite.
+fn run_with_deadline(exe: &Path, tag: &str, backend: &str) -> Option<i32> {
+    let mut child = Command::new(exe).spawn().expect("the program runs");
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        if let Some(status) = child.try_wait().expect("a waitable child") {
+            return status.code();
+        }
+        if std::time::Instant::now() > deadline {
+            child.kill().expect("a killable child");
+            child.wait().expect("a reaped child");
+            panic!("{backend}/{tag}: still running after 20 seconds");
+        }
+        std::thread::sleep(Duration::from_millis(20));
     }
 }
 
@@ -254,7 +267,8 @@ fn a_nonblocking_receive_with_nothing_waiting_is_again_and_an_empty_buffer_is_ei
     against_peer("again", AGAIN, 0, |_socket| {});
 }
 
-/// Two sockets get two kernel-chosen ports, both real: the way to a fresh source port is a
+/// Two sockets get two kernel-chosen ports, both real (ephemeral ports are above 1023, which also
+/// catches a port read from the wrong bytes of the address): the way to a fresh source port is a
 /// fresh socket (`docs/udp.md` §5).
 const PORTS: &str = r#"
 fn run(bound: Net("BOUND"), io: Io) -> [] int {
@@ -270,7 +284,7 @@ fn run(bound: Net("BOUND"), io: Io) -> [] int {
                             borrow second as &sb in {
                                 let p = udp_local_port(fa);
                                 let q = udp_local_port(sb);
-                                if p > 0 && q > 0 && p != q { status = 0; } else { status = 5; }
+                                if p > 1023 && q > 1023 && p != q { status = 0; } else { status = 5; }
                             }
                         }
                         udp_close(second);

@@ -1,6 +1,6 @@
 # UDP: datagram sockets without `Ffi("libc")`
 
-> **Status: design; nothing built.** Issue [#355](https://github.com/alpibrusl/cancho/issues/355).
+> **Status: design settled; slice 2 (the connected half) built, §9; the bound half (`udp_bind`, peer tickets) not built.** Issue [#355](https://github.com/alpibrusl/cancho/issues/355).
 > The asker is [cancho-dns#18](https://github.com/alpibrusl/cancho-dns/issues/18), a forwarding and caching
 > DNS resolver. [`native-sockets.md`](native-sockets.md) §9 recorded "UDP and Unix sockets: no asker" and kept
 > `Conn` free of a transport name in case one came; this is that second transport. Everything here is
@@ -160,3 +160,38 @@ document's, and it is stated here so the two designs do not each assume the othe
 | Source port | **The kernel's, a fresh socket per query** (§5); a program-chosen port needs a `net_in` it does not mean |
 | Reuse `Conn` | **No**: empty datagrams and truncation are different answers |
 | IPv6, multicast, broadcast, `recvmmsg`, Unix datagram, DTLS | **Out**, as the issue says |
+
+## 9. What slice 2 built, and what is not done
+
+Built, edition 5, both backends: `Udp`, `UdpOpened`, `Datagram`, `udp_connect`, `udp_send`, `udp_recv`,
+`udp_local_port`, `udp_nonblocking`, `udp_close` and `poller_add_udp`. `udp_connect` is `tcp_connect`'s node
+(`Expr::TcpConnect` with a `datagram` flag), so the bound check, the resolver walk and the `net_out(bound)` row
+are the same code; `udp_send` is `conn_write`'s emitter and `udp_nonblocking` is `conn_nonblocking`'s.
+`poller_add_udp` takes `events` as `poller_add_conn` does (§3's table is corrected to say so), and there is no
+modify or remove: closing the socket removes it.
+
+**Checked**, by `conformance/udp.rs` on both backends: a datagram exchanged with a peer; an empty datagram as
+`Got(0)`; a 100-byte datagram into 16 bytes as `Truncated(100)` (Linux); a datagram from a stranger never
+reaching a connected socket; `Again` on a non-blocking socket with nothing waiting, and `Failed(EINVAL)` for an
+empty buffer; two sockets with two distinct ephemeral ports; a `Poller` reporting readability; `udp_connect` to a
+host or a port outside the bound trapping; and the authority report (`net_out` with the `host:port`, `udp_send`
+and `udp_recv`, no `ffi`, no `net_in`). Five reject fixtures: a forged `Udp { }`, a `Udp` taken apart, one left
+open, `udp_recv` without its label, and the builtins at edition 4.
+
+**Mutants**, all killed: truncation never reported (each backend); `MSG_TRUNC` dropped on Linux; the empty-buffer
+guard moved; a datagram `connect` over a stream socket (each backend); the local port always 0; the local port's
+high byte read from the wrong offset (LLVM); `udp_nonblocking` a no-op. Two survived the first version of the
+tests and were fixed by strengthening them, not by excusing them: the port test only checked "positive and
+different", which a port read from the wrong bytes also satisfies (it now requires an ephemeral port, above
+1023), and a blocking receive hung the suite instead of failing it (the harness now kills a program after 20
+seconds).
+
+**Found.** Adding builtins and types moved four things that pin counts, each corrected in place: the generated
+`examples/selfhost/tables.cho` (regenerated with `UPDATE_SELFHOST_TABLES=1`), the WASI refused set (48 to 55,
+`docs/wasm.md`), the checker's label count (26 to 28: `udp_recv`, `udp_send`), and the type and builtin counts in
+`docs/self-hosting.md`. The datagram builtins are refused on WASI as sockets are.
+
+**Not done.** `udp_bind`, the peer ring, `udp_peer` and `udp_send_to` (§4, slice 3), so a server cannot yet
+receive from strangers. The round-trip measurement against a C loop (§7 item 5): no number is claimed. Darwin: the
+`Truncated` rule (a buffer filled exactly reads as truncated, with the buffer's length), `getsockname` and the
+`kqueue` registration of a datagram socket are from platform headers, not from a run.
