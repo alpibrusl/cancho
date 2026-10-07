@@ -29,6 +29,9 @@ import threading
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FILES = ["record.ls", "message.ls", "slot.ls", "client12.ls", "client.ls", "tls.ls"]
+# The engine (`tls.ls`) is built with the server too (docs/tls-server.md §5.1), whose mutants are
+# `scripts/tls_server_mutants.py`'s.
+SERVER_FILES = ["hello.ls", "identity.ls", "server.ls"]
 
 # (name, file, the text replaced, its replacement). Each `old` must occur exactly once in its file.
 MUTANTS = [
@@ -319,9 +322,10 @@ def ticket_cases():
 
 
 def build(lexsys, program, pkg, out, engine=False):
-    files = [os.path.join(pkg, f) for f in (FILES if engine else FILES[:5])]
+    files = [os.path.join(pkg, f) for f in (FILES + SERVER_FILES if engine else FILES[:5])]
+    x509 = ["verify.ls", "names.ls", "x509.ls"] + (["key.ls"] if engine else [])
     r = subprocess.run([lexsys, "build", "--std", os.path.join(ROOT, "tests/programs", program), *files,
-                        *[os.path.join(ROOT, "packages/x509", f) for f in ["verify.ls", "names.ls", "x509.ls"]],
+                        *[os.path.join(ROOT, "packages/x509", f) for f in x509],
                         "-o", out], capture_output=True, text=True)
     return r.returncode == 0, r.stderr
 

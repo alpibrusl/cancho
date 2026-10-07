@@ -66,7 +66,8 @@ jobs:
         run: |
           cargo build --release -p lex-sys
           ./target/release/lex-sys build --std tests/programs/tls_many.ls \
-            packages/tls/{tls,record,message,slot,client12,client}.ls packages/x509/{verify,names,x509}.ls \
+            packages/tls/{tls,record,message,slot,client12,client,hello,identity,server}.ls \
+            packages/x509/{verify,names,x509,key}.ls \
             -o "$RUNNER_TEMP/tls_many"
 
       - name: The committed package stores are current (docs/package-system.md §7.4)

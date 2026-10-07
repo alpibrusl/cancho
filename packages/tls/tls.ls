@@ -889,3 +889,28 @@ pub fn handshakes_in_progress[&e](engine: &e Engine) -> [] int {
     }
     return n;
 }
+
+// What the connection in `slot` negotiated, for a log: the TLS 1.3 suite
+// (0x1301, 0x1302 or 0x1303) and the key exchange group (0x001d X25519,
+// 0x0017 P-256, 0x0018 P-384), each 0 until the server has chosen; and
+// whether a HelloRetryRequest came first. On either role's engine.
+pub fn suite[&e](engine: &e Engine, slot: int) -> [] int {
+    if !slot_ok(engine, slot) {
+        return 0;
+    }
+    return contents(engine.ints)[ints_of(slot) + tls_slot.i_suite()];
+}
+
+pub fn group[&e](engine: &e Engine, slot: int) -> [] int {
+    if !slot_ok(engine, slot) {
+        return 0;
+    }
+    return contents(engine.ints)[ints_of(slot) + tls_slot.i_group()];
+}
+
+pub fn retried[&e](engine: &e Engine, slot: int) -> [] bool {
+    if !slot_ok(engine, slot) {
+        return false;
+    }
+    return contents(engine.ints)[ints_of(slot) + tls_slot.i_flags()] & tls_slot.f_retried() != 0;
+}

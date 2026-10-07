@@ -92,7 +92,7 @@ fn hex(s: &str) -> String {
 #[test]
 fn every_lying_client_is_refused_with_its_own_tag_on_both_backends() {
     let cases = cases();
-    assert_eq!(cases.len(), 107);
+    assert_eq!(cases.len(), 110);
     for backend in ["cranelift", "llvm"] {
         let (dir, exe) = build_server_driver("liar", backend);
         for (tag, name, asked, answered) in &cases {

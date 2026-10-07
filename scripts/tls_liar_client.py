@@ -529,8 +529,15 @@ def honest(c):
     c.suites = [0x1303, 0x1302]
     c.expect_suite, c.expect_group = 0x1303, X25519
     c.alpn, c.expect_alpn = [b"h2", b"http/1.1"], b"http/1.1"
-    n = c.honest(alpn=b"http/1.1 mqtt")
-    assert n[3:5] == [HOST.hex(), b"http/1.1".hex()], f"server_name and alpn: {n}"
+    c.setup(alpn=b"http/1.1 mqtt")
+    n = c.c.ask("N")
+    assert n[2:] == ["1", "-", "-", "1"], f"waiting for the ClientHello, one handshake in progress: {n}"
+    c.send_hello()
+    c.flight()
+    n = c.c.ask("N")
+    assert n[2:] == ["1", HOST.hex(), b"http/1.1".hex(), "1"], f"the flight sent, still in progress: {n}"
+    n = c.established()
+    assert n[2:] == ["4", HOST.hex(), b"http/1.1".hex(), "0"], f"closed, none in progress: {n}"
 
 
 @case("the server's order of suites, with and without AES instructions", "ok", None, None)
@@ -626,6 +633,15 @@ def honest_unknown_name(c):
     c.host = b"nobody.example"
     c.expect_sni_ack = False
     c.honest()
+
+
+@case("honest: a host name of 300 bytes, which no identity can have: the default", "ok")
+def honest_long_name(c):
+    c.host = b"a" * 63 + (b"." + b"b" * 59) * 3 + b".example.com" + b"x" * 45
+    assert len(c.host) == 300
+    c.expect_sni_ack = False
+    n = c.honest()
+    assert n[3] == "-", n
 
 
 @case("honest: no server_name, the default identity", "ok")
@@ -759,6 +775,8 @@ config_case("add_identity: a P-256 key with a P-384 leaf", "tls-server-key-type"
             lambda c: f"I {(pem(P384_CERT) + pem(CA)).hex()} {key_pem(MAIN_KEY).hex()} {HOST.hex()} {NOW_MS}")
 config_case("add_identity: an Ed25519 key", "tls-server-key-type",
             lambda c: f"I {CHAIN.hex()} {CA_KEY.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).hex()} {HOST.hex()} {NOW_MS}")
+config_case("add_identity: a P-384 leaf and a key that is not PEM: the leaf refused first", "tls-server-key-type",
+            lambda c: f"I {(pem(P384_CERT) + pem(CA)).hex()} {b'not a key'.hex()} {HOST.hex()} {NOW_MS}")
 config_case("add_identity: a key that is not PEM", "tls-server-key-format",
             lambda c: f"I {CHAIN.hex()} {b'not a key'.hex()} {HOST.hex()} {NOW_MS}")
 config_case("add_identity: an encrypted key", "tls-server-key-format",
@@ -1145,6 +1163,16 @@ def early_not_offered(c):
     c.flight()
     c.c.feed(plain_record(23, bytes(100)))
     c.read = Keys(derive(c.master, b"s ap traffic", c.app_th, c.hash), c.suite)
+
+
+@case("early data offered and skipped; once a record opens, a bad one is refused, not skipped", "tls-bad-record-mac",
+      20, "ap")
+def early_then_bad(c):
+    c.early = True
+    connected(c)
+    rec = bytearray(c.write.seal(23, b"data"))
+    rec[-1] ^= 1
+    c.c.feed(bytes(rec))
 
 
 @case("the client's alert, in plaintext, refusing the server's certificate", "tls-alert")

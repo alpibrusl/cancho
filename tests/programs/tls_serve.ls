@@ -28,7 +28,9 @@ edition 5;
 //
 // Each connection that ends prints one line:
 //
-//     conn <code> <tag> <server_name or -> <alpn or -> <bytes received>
+//     conn <code> <tag> <server_name or -> <alpn or -> <bytes received> <suite> <group> <retried|direct>
+//
+// (the suite and group as decimal numbers: 4865 is 0x1301, 29 X25519.)
 //
 // and an MQTT PUBLISH prints `publish <topic> <payload>`. Each line is
 // flushed as it is written.
@@ -144,6 +146,15 @@ fn end_slot[&i, &e, &t, &s](io: &!i Io, engine: &!e tls.Engine, tab: &!t conns.T
     }
     io.space(io);
     io.print_int(io, st[b + 3]);
+    io.space(io);
+    io.print_int(io, tls.suite(engine, slot));
+    io.space(io);
+    io.print_int(io, tls.group(engine, slot));
+    if tls.retried(engine, slot) {
+        io.write_all(io, " retried");
+    } else {
+        io.write_all(io, " direct");
+    }
     io.newline(io);
     flush(io);
     var k = 0;
