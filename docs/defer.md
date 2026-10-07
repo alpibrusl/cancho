@@ -153,13 +153,13 @@ statement's own, never the expansion's.
 Measured rather than assumed. Across this repository the pattern §4.2
 describes — one resource, several exits — appears in **twelve**
 functions, and several of those would not benefit, because their paths
-consume *different* things and rebuild (`examples/tree.ls::insert` is
+consume *different* things and rebuild (`examples/tree.cho::insert` is
 the clearest).
 
 The honest case is not the existing code; it is the code that was not
 written. A fallible pipeline that acquires a buffer and bails out at
 four checks repeats the drop four times, tangled into each return
-expression. That program is `examples/pipeline_checks.ls`, and it is
+expression. That program is `examples/pipeline_checks.cho`, and it is
 seven lines shorter and considerably clearer with one `defer`.
 
 `defer` does **not** help the ceremony at `main`. Five `release` calls
@@ -182,11 +182,11 @@ become five `defer release` calls, which is the same five lines —
 
 | Fixture | Rule | § |
 |---|---|---|
-| `defer_consumes_twice.ls` | The expansion is real, so a second consumption is the ordinary error | 3 |
-| `defer_leaks_its_value.ls` | The value is discarded, so it may not be `res` | 2 |
-| `defer_on_a_frozen_value.ls` | A `defer` may not consume what an enclosing `borrow` froze | 2.1 |
+| `defer_consumes_twice.cho` | The expansion is real, so a second consumption is the ordinary error | 3 |
+| `defer_leaks_its_value.cho` | The value is discarded, so it may not be `res` | 2 |
+| `defer_on_a_frozen_value.cho` | A `defer` may not consume what an enclosing `borrow` froze | 2.1 |
 
 | Accepting | Shows |
 |---|---|
-| `defer.ls` | LIFO order, block scope, a loop body, and an early return through two frames |
-| `examples/pipeline_checks.ls` | §4: the program the feature is for |
+| `defer.cho` | LIFO order, block scope, a loop body, and an early return through two frames |
+| `examples/pipeline_checks.cho` | §4: the program the feature is for |

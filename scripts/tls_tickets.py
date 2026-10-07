@@ -3,7 +3,7 @@
 
     python3 scripts/tls_tickets.py <tickets> <out.txt>
 
-`tickets` is `tests/programs/tls_tickets.ls` built with `--std`, `packages/tls/tls.ls` and the package's
+`tickets` is `tests/programs/tls_tickets.cho` built with `--std`, `packages/tls/tls.cho` and the package's
 files: the engine, one slot and room for four tickets, resumption on, entropy fixed. Every full handshake's
 ClientHello must advertise psk_dhe_ke: a server may withhold tickets from one that does not (RFC 8446 §4.2.9). Each case first loads the liar's one root. The server is `scripts/tls_liar.py`'s
 honest TLS 1.3 server, written on pyca/cryptography and RFC 8446 alone; it issues a ticket after a full
@@ -31,7 +31,7 @@ The cases:
   size losing its oldest; `forget` emptying a pool; a refused ticket overwritten and an older good one
   offered; a pool refilled after it was emptied; a handle never issued.
 
-The file holds each case's lines and answers; `crates/lex-sys/tests/conformance/tls.rs` replays them on both
+The file holds each case's lines and answers; `crates/cancho/tests/conformance/tls.rs` replays them on both
 backends. Exit status 1 if any case fails.
 """
 import datetime

@@ -1,0 +1,17 @@
+{
+  "store": "../../net-sockets/.cancho-vcs",
+  "lock": {
+    "entries": {
+      "close": {
+        "sig_id": "e081f8ca7af1a9e4d6ea6d12cbb2ce338f1f0c851374cca32c5e68e6228a7a80",
+        "stage_id": "e081f8ca7af1a9e4d6ea6d12cbb2ce338f1f0c851374cca32c5e68e6228a7a80",
+        "source_hash": "a866a9e192bdb76efc851af60ad95122c36f04f0b6fb7dfa9146a8cf9095f067"
+      },
+      "socket": {
+        "sig_id": "3be5e4b16b30bade97dbf31f684e52a9c359ffa6446e32657a6d677fd09819bb",
+        "stage_id": "3be5e4b16b30bade97dbf31f684e52a9c359ffa6446e32657a6d677fd09819bb",
+        "source_hash": "a866a9e192bdb76efc851af60ad95122c36f04f0b6fb7dfa9146a8cf9095f067"
+      }
+    }
+  }
+}

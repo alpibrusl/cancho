@@ -1,0 +1,25 @@
+edition 5;
+
+module nat;
+
+import std.bytes;
+
+// `nat.parse` -- a decimal number of one to nine digits, or -1: what the two programs here (`tls_nb.cho`, `resolve_demo.cho`) read
+// their numbers with. It is the third copy of "parse an argument" in `examples/` (`docs/next-phase.md` section 3 counts the others);
+// it calls `std.bytes.digit_of`, which the older ones predate, and it is one module here so the two programs here do not carry a copy each.
+pub fn parse[&t](text: &t [byte]) -> [] int {
+    if len(text) == 0 || len(text) > 9 {
+        return 0 - 1;
+    }
+    var n = 0;
+    var i = 0;
+    while i < len(text) {
+        let digit = bytes.digit_of(int_of(text[i]));
+        if digit < 0 {
+            return 0 - 1;
+        }
+        n = n * 10 + digit;
+        i = i + 1;
+    }
+    return n;
+}

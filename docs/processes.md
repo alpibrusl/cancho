@@ -7,9 +7,9 @@
 > document, this document is corrected in place.
 >
 > Two askers ([`CONTRIBUTING.md`](../CONTRIBUTING.md)):
-> [#237](https://github.com/alpibrusl/lex-sys/issues/237) part (a), a test
+> [#237](https://github.com/alpibrusl/cancho/issues/237) part (a), a test
 > that starts a service, kills it and restarts it; and
-> [lexsys-tools#10](https://github.com/alpibrusl/lexsys-tools/issues/10),
+> [cancho-tools#10](https://github.com/alpibrusl/cancho-tools/issues/10),
 > an MCP server that runs each tool as its own process so each keeps its
 > own authority. [`editions.md`](editions.md) §6.4 has expected an `Exec`
 > since edition 2.
@@ -18,7 +18,7 @@
 
 ## 1. Why
 
-lex-sys has no way to start a process. A program that needs one declares
+cancho has no way to start a process. A program that needs one declares
 `fork`, `execve` and `waitpid` through `Ffi("libc")`, and
 [`reach.md`](reach.md) §5 is what that costs: `Ffi("libc")` is every
 authority at once. The report says `UNBOUNDED`, and a supervisor holding
@@ -28,11 +28,11 @@ dimension at all ([`under-a-grant.md`](under-a-grant.md) §2: *"`exec`: No"*).
 So the gap is the same one `Net` closed for the network: the authority
 has no name of its own. This document gives it one, and most of the work
 is saying exactly what that name does and does not bound (§2), because
-running a program is unlike every capability lex-sys has so far.
+running a program is unlike every capability cancho has so far.
 
 ### 1.1 What the two askers need
 
-| | #237 (a test harness) | lexsys-tools#10 (an MCP server) |
+| | #237 (a test harness) | cancho-tools#10 (an MCP server) |
 |---|---|---|
 | start a built program with arguments | yes | yes |
 | environment | yes, chosen by the test | none |
@@ -61,7 +61,7 @@ program is different in kind:
 That leaves two honest things a capability can bound, and this design
 bounds both:
 
-1. **Which programs may be started.** `Exec("/opt/lexsys-tools/bin")` may
+1. **Which programs may be started.** `Exec("/opt/cancho-tools/bin")` may
    start what lies under that directory and nothing else. That is a path
    prefix, with `Fs`'s rules (§4.1), and it is the part a grant can check:
    `exec("p")` in a report is a static bound, as `fs_read("p")` is.
@@ -76,9 +76,9 @@ What the design does **not** claim, stated here rather than discovered
 later:
 
 * **The child's own authority is the child's.** A report that says
-  `exec("/opt/lexsys-tools/bin")` composes with the reports of what lies
-  there. When those are lex-sys programs, each carries its own (`lex-sys
-  authority`, or, for lexsys-tools, `<tool> introspect`), and the closure
+  `exec("/opt/cancho-tools/bin")` composes with the reports of what lies
+  there. When those are cancho programs, each carries its own (`cancho
+  authority`, or, for cancho-tools, `<tool> introspect`), and the closure
   is computable. When they are not, it is not. The report says *exec*, so
   a supervisor knows the closure is a question.
 * **The bound is on the name, not on the bytes.** A script under the
@@ -140,12 +140,12 @@ discharges `pipe_read` and `pipe_write`; a `World` discharges `exec("")`.
 The MCP server's call, in full: start one tool with a fixed argument
 list, give it a request on standard input, read its answer, reap it.
 
-```lex-sys
+```cancho
 edition 7;
 
 // A sketch: the request is written and the answer read in the elided part.
-fn call[&h, &x, &q](heap: &!h Heap, exec: &x Exec("/opt/lexsys-tools/bin"), request: &q [byte])
-    -> [heap, exec("/opt/lexsys-tools/bin"), pipe_read, pipe_write] (buffer.Buffer, int) {
+fn call[&h, &x, &q](heap: &!h Heap, exec: &x Exec("/opt/cancho-tools/bin"), request: &q [byte])
+    -> [heap, exec("/opt/cancho-tools/bin"), pipe_read, pipe_write] (buffer.Buffer, int) {
     var answer = buffer.empty(heap, 4096);
     var status = 0 - 1;
     match pipe_open() {
@@ -156,7 +156,7 @@ fn call[&h, &x, &q](heap: &!h Heap, exec: &x Exec("/opt/lexsys-tools/bin"), requ
                 Piped::Ok(from_child, child_out) => {
                     // `\0`-separated (§4.2); a real caller builds this with `std.process.Argv` (§7.1).
                     let args = "--root\0/work\0--create\0--stdin\0notes.txt\0";
-                    match exec_spawn(exec, "/opt/lexsys-tools/bin/write", args, "",
+                    match exec_spawn(exec, "/opt/cancho-tools/bin/write", args, "",
                                      Stdio::Pipe(child_in), Stdio::Pipe(child_out), Stdio::Null) {
                         Spawned::Failed(e) => { pipe_close(to_child); pipe_close(from_child); }
                         Spawned::Ok(child) => {
@@ -199,7 +199,7 @@ deadline, and the reap.
   has the case). Relative paths are therefore for a program holding
   `Exec("")`, where the working directory is the parent's or, with
   `exec_spawn_in`, a `Dir`'s (§4.10). A program that has no
-  environment (lex-sys programs have none) has no `PATH` to search, and a
+  environment (cancho programs have none) has no `PATH` to search, and a
   search would make the program that runs depend on something the row
   does not name.
 * It is checked against the capability's prefix with `Fs`'s rule
@@ -215,7 +215,7 @@ deadline, and the reap.
   nothing.
 * `argv[0]` is `path` as given. `args` is the rest.
 
-`narrow(exec, "/opt/lexsys-tools/bin")` is the same `narrow` `Fs` has, at
+`narrow(exec, "/opt/cancho-tools/bin")` is the same `narrow` `Fs` has, at
 compile time, against a literal.
 
 ### 4.2 Arguments are `\0`-separated bytes
@@ -233,7 +233,7 @@ a kernel outcome. `std.process.Argv` builds one in a buffer (§7.1).
 
 `env` is the same encoding, each entry `NAME=value`. The child's
 environment is **exactly** `env`: nothing is inherited, and `""` is an
-empty environment. A lex-sys program cannot read its own environment, so
+empty environment. A cancho program cannot read its own environment, so
 it could not forward it knowingly. Inheriting it silently would hand the
 child an authority (`HOME`, credentials in variables, `LD_*`) that no row
 names.
@@ -285,7 +285,7 @@ change behind the program's back.
 ### 4.5 No descriptor crosses unless it is given
 
 Today every descriptor the backends open is inherited across `exec`.
-Measured, in a lex-sys program, by reading `/proc/self/fdinfo`: a `File`
+Measured, in a cancho program, by reading `/proc/self/fdinfo`: a `File`
 (`flags: 0100000`), a `Dir` (`0300000`) and a `Listener` (`02`) all have
 `O_CLOEXEC` (`02000000`) clear. Only the `Poller` and the signal
 descriptor set it.
@@ -311,15 +311,15 @@ child through `Ffi`, which is the leak this closes. `file-writes.md`'s
 > | `poller_new`, `signals_watch` | `epoll_create1(EPOLL_CLOEXEC)`, `signalfd(SFD_CLOEXEC)`, as before | `kqueue`, then `fcntl` |
 >
 > `creat`, `open` and `dup` are no longer called. The flag values live once,
-> in `lex_sys_ir::open_flags` and `SocketOs`.
+> in `cancho_ir::open_flags` and `SocketOs`.
 >
 > **Two windows remain, and both are stated rather than closed.** Where
 > Darwin has no flag, `fcntl` follows the call that made the descriptor,
 > so an `exec` on another thread between the two would still inherit it;
 > and `fopen`'s own descriptor is not close-on-exec for the instant before
-> its `fclose`, on both targets. Neither is reachable from a lex-sys
+> its `fclose`, on both targets. Neither is reachable from a cancho
 > program until slice 1 (only a foreign `exec` can start a process, and a
-> lex-sys program has one thread per `spawn` it wrote), and slice 1 closes
+> cancho program has one thread per `spawn` it wrote), and slice 1 closes
 > the first one for spawns it makes itself: `posix_spawn` on Darwin can be
 > asked to close every descriptor but the three it is given
 > (`POSIX_SPAWN_CLOEXEC_DEFAULT`).
@@ -329,7 +329,7 @@ child through `Ffi`, which is the leak this closes. `file-writes.md`'s
 > whatever the parent holds: macOS with `POSIX_SPAWN_CLOEXEC_DEFAULT`, Linux
 > with `posix_spawn_file_actions_addclosefrom_np(3)` (glibc 2.34 and later)
 > after the three `dup2`s. Close-on-exec alone could not promise that:
-> it covers what a lex-sys program opens, and a descriptor the program
+> it covers what a cancho program opens, and a descriptor the program
 > *inherited* without the flag (a CI runner hands every process several,
 > measured in slice 0's test) would have passed straight through to a child.
 > So both windows above are closed for every child `exec_spawn` starts; they
@@ -468,7 +468,7 @@ thread can be waited for by another, since the `Child` moves.
 A child started with `exec_spawn` starts in its parent's working directory.
 A tool that is told to work "in this project" would otherwise have to be
 handed an absolute path for everything or to `cd` itself, and the program
-that runs it (lexsys-tools' future `run`) has already opened that directory
+that runs it (cancho-tools' future `run`) has already opened that directory
 as a `Dir`. So there is a second builtin,
 
 ```
@@ -488,7 +488,7 @@ which is `exec_spawn` with the child's working directory the directory the
   `exec_spawn` consumes a `ChildEnd` because the child's end must not stay
   open in the parent (§4.4); a directory descriptor held open by the parent
   harms nothing, and the child never holds it (below). A `Dir` by value, or a
-  `File`, is a type error (`tests/reject/exec_spawn_in_owned_dir.ls`).
+  `File`, is a type error (`tests/reject/exec_spawn_in_owned_dir.cho`).
 * *No new row.* The row is `exec("p")` and no more. The `Dir` came from an
   `Fs` the program already held, and §2's point stands: starting a program is
   an authority over what that program can do, whatever directory it starts
@@ -536,8 +536,8 @@ program can arrange reaches that path, so it has no mutant (§8).
 | `fork` and `exec` as builtins | `fork` copies the parent's heap and every thread's locks into a child that runs one thread, and everything between `fork` and `exec` must be async-signal-safe. A language whose backend calls `malloc` cannot promise that. `posix_spawn` is the operation both askers mean, and it does the descriptor and signal setup (§4.4 to §4.6) in the kernel's own order |
 | Keep it `Ffi("libc")` | The status quo. `reach.md` §5 and `under-a-grant.md` §4 are the argument: `Ffi` is the one capability whose label does not bound what it authorises |
 | One run-to-completion builtin (`exec_run(..., input, output) -> code`) | Serves the MCP server and not #237, which must kill a child at a moment it chooses and serve sockets meanwhile. It is the right *library* function, and `std.process.capture` is it (slice 3, §7.1: the spawn stays with the caller), built on the handles |
-| A list of programs as the bound (`Exec("seek,write")`) | `Signals` uses a set because signals are a closed list. Programs are files, and the natural unit a deployment grants is a directory (`/opt/lexsys-tools/bin`). A prefix that is exactly one file already expresses "this one program" |
-| The child's ends as `File` | A `File` is a regular file: no `Again`, no readiness, and a write to a closed pipe raises `SIGPIPE`. A child's stream is a peer, and lex-sys already has a handle for a peer's byte stream. `Stdio::File` keeps redirecting to a real file |
+| A list of programs as the bound (`Exec("seek,write")`) | `Signals` uses a set because signals are a closed list. Programs are files, and the natural unit a deployment grants is a directory (`/opt/cancho-tools/bin`). A prefix that is exactly one file already expresses "this one program" |
+| The child's ends as `File` | A `File` is a regular file: no `Again`, no readiness, and a write to a closed pipe raises `SIGPIPE`. A child's stream is a peer, and cancho already has a handle for a peer's byte stream. `Stdio::File` keeps redirecting to a real file |
 | The parent's ends as `Conn` | The same machinery, but `conn_read` in a row would read as *network*. A distinct `Pipe` keeps the row honest about what the program talks to, at the cost of four small builtins over one backend path |
 | `PATH` lookup (`execvp`) | §4.1: the program that runs would depend on an environment the row does not name |
 | Inherit the environment | §4.3 |
@@ -580,9 +580,9 @@ does ([`net.md`](net.md) §4.1).
 | **1** | `Exec`, the `exec`, `child_signal`, `pipe_read`, `pipe_write` labels, `Split`'s ninth field, `pipe_open`, `exec_spawn`, `child_wait`, `child_kill`, the `Pipe` operations; both backends, both targets. **Built** (§8) | 7 |
 | **2** | `poller_add_pipe`, `poller_add_child`. **Built** (§4.8, §8) | 7 |
 | **3** | `std.process`: ~~`Args` (the `\0` builder) and `run(heap, exec, path, args, input, most, timeout)`~~ `Argv` (the `\0` builder), `channels`, and `capture(heap, clock, child, to_child, from_child, input, most, timeout)`, a bounded capture with a deadline, built on slices 1 and 2. **Corrected (#275):** neither name nor signature could be built; §7.1. **Built** (§8) | 7 |
-| **4** | lexsys-tools#10: the MCP server, as a lex-sys program holding `Exec` narrowed to the tools' directory ~~and nothing that writes~~ and no `Fs`, `Net` or `Ffi`. **Built** (lexsys-tools#17, §8) | 7 |
+| **4** | cancho-tools#10: the MCP server, as a cancho program holding `Exec` narrowed to the tools' directory ~~and nothing that writes~~ and no `Fs`, `Net` or `Ffi`. **Built** (cancho-tools#17, §8) | 7 |
 
-| **5** | The two prerequisites of a `run` tool in lexsys-tools: `exec_spawn_in` (the working directory, §4.10) and `std.process.capture_both` (standard error beside standard output, §7.2). **Built** (§8) | 7 |
+| **5** | The two prerequisites of a `run` tool in cancho-tools: `exec_spawn_in` (the working directory, §4.10) and `std.process.capture_both` (standard error beside standard output, §7.2). **Built** (§8) | 7 |
 
 ### 7.1 Slice 3: `std.process`
 
@@ -604,7 +604,7 @@ slice 2.**
 
 **The surface.**
 
-```lex-sys
+```cancho
 pub res struct Argv { .. }                       // a `\0`-separated list, in a buffer.Buffer
 pub fn argv[&h](heap: &!h Heap, capacity: int) -> [heap] Argv
 pub fn add[&h, &s](heap: &!h Heap, list: Argv, one: &s [byte]) -> [heap] (Argv, int)
@@ -623,7 +623,7 @@ pub fn capture[&h, &c, &i](heap: &!h Heap, clock: &c Clock, child: Child,
 
 The MCP server's call (§3.3), with it:
 
-```lex-sys
+```cancho
 match process.channels() {
     Channels::Failed(e) => { ... }
     Channels::Ok(to_child, child_in, from_child, child_out) => {
@@ -698,7 +698,7 @@ on one `Poller`: the output channel (readable, token 1), the input channel
   therefore cannot `capture`; it can still use the handles.
 * *Standard error is the caller's.* `capture` reads one stream: the MCP
   server returns a tool's standard output unchanged with its exit code
-  (lexsys-tools#10), and #237 drives its children through the handles. A
+  (cancho-tools#10), and #237 drives its children through the handles. A
   caller passes `Stdio::Null` or a `File` for the third stream. **Extended
   (§7.2):** `capture_both` reads it too, for a caller that needs it; `capture`
   itself is unchanged.
@@ -730,14 +730,14 @@ each path.
 
 ### 7.2 `capture_both`: standard error beside standard output
 
-A tool that runs a program for a model (lexsys-tools' future `run`) must
+A tool that runs a program for a model (cancho-tools' future `run`) must
 return both what the program printed and what it complained about, and they
 are not one stream: an exit code with an empty `stdout` and a reason on
 `stderr` is the common failure. `capture` read one channel and left the third
 stream to the caller. Both channels are now captured, bounded and under the
 deadline, by `capture_both`.
 
-```lex-sys
+```cancho
 pub enum ChannelsWithErrors { Ok(Pipe, ChildEnd, Pipe, ChildEnd, Pipe, ChildEnd), Failed(int) }
 pub fn channels_with_errors() -> [] ChannelsWithErrors   // input, output, errors: parent's end then child's
 pub fn capture_both[&h, &c, &i](heap: &!h Heap, clock: &c Clock, child: Child,
@@ -801,7 +801,7 @@ slice 2's, and is checked there.
   `exec_effect_undeclared` (`effect-not-declared`), `child_unwaited` and
   `child_end_kept` (`linear-value-unconsumed`), `child_taken_apart`
   (`linear-value-taken-apart`), `exec_is_edition_seven` (`unknown-name`).
-  One accepted program, `tests/accept/process_spawn.ls`, prints what
+  One accepted program, `tests/accept/process_spawn.cho`, prints what
   `/bin/echo` wrote down a channel.
 * **Conformance tests over real processes**
   (`tests/conformance/processes.rs`). Each case runs on both backends, and
@@ -917,13 +917,13 @@ slice 2's, and is checked there.
 
 ### Slice 3
 
-* **`std/process.ls`** (`docs/standard-library.md`): `Argv`, `add`, `list`,
+* **`std/process.cho`** (`docs/standard-library.md`): `Argv`, `add`, `list`,
   `count`, `drop`; `Channels`, `channels`, `close`; `Ran` and `capture`, as
   §7.1 gives them. `capture`'s row is `[heap, clock, poll]`, as §7.1 said:
   it calls `drain`, which declares `pipe_read`, and owning the `Pipe`
   discharges it.
 * **Conformance tests** (`tests/conformance/capture.rs`, one driver,
-  `tests/programs/process_capture.ls`, both backends printing the same):
+  `tests/programs/process_capture.cho`, both backends printing the same):
   * 1 MiB through `cat`, every byte back in order (1,048,576 bytes, 5 to 8
     ms on macOS, where 32 KiB written first deadlocks);
   * exactly `most` bytes is `Code(0)`; one more is `TooMuch` with `most`
@@ -970,7 +970,7 @@ slice 2's, and is checked there.
 
 ### Slice 4
 
-Built in lexsys-tools (#17); its design and measurements are that
+Built in cancho-tools (#17); its design and measurements are that
 repository's `docs/mcp.md`. What it says about this document's work:
 
 * **The design held.** The server calls `std.process.capture` once per tool
@@ -981,8 +981,8 @@ repository's `docs/mcp.md`. What it says about this document's work:
   or `Ffi`. The row's ~~"nothing that writes"~~ is corrected above: the server
   writes its answers to standard output, and writes no file.
 * **The bound is a literal at build time.** `narrow` takes one, so the
-  server's source names `/opt/lexsys-tools/bin` and a build script bakes
-  another directory in, as lexsys-tools' D14 variant bakes `--root` -- the
+  server's source names `/opt/cancho-tools/bin` and a build script bakes
+  another directory in, as cancho-tools' D14 variant bakes `--root` -- the
   open question of §9's "a bound chosen at deployment", met for `Exec`.
 * **A missing flush is invisible to batch tests.** A stdio server's answers
   sit in libc's buffer until `flush_out`; tests that send every request and
@@ -994,7 +994,7 @@ repository's `docs/mcp.md`. What it says about this document's work:
 ### Slice 5
 
 The working directory (§4.10) and `capture_both` (§7.2): the two things a
-`run` tool in lexsys-tools needs beneath it. Measured on macOS 26.2 (aarch64)
+`run` tool in cancho-tools needs beneath it. Measured on macOS 26.2 (aarch64)
 and Linux 7.0 with glibc 2.43 (x86-64), by
 `scripts/process_cwd_stderr_measure.py`; the Linux tests and mutants ran on
 the x86-64 host, the macOS tests on the Mac.
@@ -1003,20 +1003,20 @@ the x86-64 host, the macOS tests on the Mac.
   `exec_spawn` in both backends takes the flag and adds
   `posix_spawn_file_actions_addfchdir_np` (declared in the LLVM backend's
   `emit.rs`) between the three streams and the `closefrom`.
-  `std/process.ls`: `ChannelsWithErrors`, `channels_with_errors`,
+  `std/process.cho`: `ChannelsWithErrors`, `channels_with_errors`,
   `capture_both`, and the shared loop `gather`, which `capture` now calls.
 * **Refusals.** Two fixtures under `tests/reject/`:
   `exec_spawn_in_owned_dir` (`type-mismatch`) and `exec_spawn_in_arity`
   (`arity-mismatch`). No new rule.
 * **Conformance tests**, both backends, both targets. `processes.rs`
-  (driver `tests/programs/process_cwd.ls`): the child's `pwd` is the `Dir`'s and
+  (driver `tests/programs/process_cwd.cho`): the child's `pwd` is the `Dir`'s and
   without a `Dir` the parent's, and a second plain child afterwards shows the
   parent has not moved and `dir_close` still answers `0`; `./tool` is found
   beneath the `Dir` and is `ENOENT` without one; the descriptors the child
   lists are equal with and without the `Dir`; a directory that does not open
   starts nothing; a directory without search permission is `Spawned::Failed(13)`;
   a relative program path under `Exec("/bin")` traps. `capture.rs` (driver
-  `tests/programs/process_capture.ls`, new modes): output and errors kept apart
+  `tests/programs/process_capture.cho`, new modes): output and errors kept apart
   with the exit status; a megabyte of errors before any output; each bound its
   own (an exact bound is no overrun, one byte past is) and the child killed;
   the deadline returns both buffers; no processor spent on an ended errors
@@ -1060,6 +1060,6 @@ the x86-64 host, the macOS tests on the Mac.
 | Spawning beneath a `Dir` | §5's last row. Linux only, so it needs a decision about a capability that exists on one target |
 | ~~The working directory~~ | **Built (§4.10):** `exec_spawn_in`. Open still: a working directory that is not a `Dir` (a path), which needs the `Fs` rule's check and has no asker |
 | `Stdio::Merge` | §5. Needs an edition; `capture_both` serves the asker who wanted standard error |
-| A bound chosen at deployment | `narrow` takes a literal, so a server whose tools' directory is chosen when it is installed holds `Exec("")` or a literal it was built with. `Fs` has the same question (`authority.md` §2.3, `lines.ls`), and it should be answered for both at once |
+| A bound chosen at deployment | `narrow` takes a literal, so a server whose tools' directory is chosen when it is installed holds `Exec("")` or a literal it was built with. `Fs` has the same question (`authority.md` §2.3, `lines.cho`), and it should be answered for both at once |
 | Children of a parent that dies | §4.7. `PR_SET_PDEATHSIG` exists on Linux only |
 | Mapping `exec("p")` onto `lex-os`'s `exec` level | The same bridge `agent-toolbox.md` §2.5 found missing for `net_out`. The report carries what the bridge needs |

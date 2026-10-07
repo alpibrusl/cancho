@@ -3,7 +3,7 @@
 > **Status: design, decided; the DIT bit and the builtins built.** §9's five answers were accepted as proposed (2026-10-06),
 > and the four PRs of §10 follow in that order: the DIT bit (§6) and the builtins with their LLVM lowering (§3 to §5, as built
 > below) are done, and so are per-key caching (§6) and the `std` change (§8.1). `docs/tls-parity.md` §3.1 measured AES-GCM at about 170 times slower than OpenSSL's, and said the gap
-> is the instructions lex-sys cannot emit. This document says what it would take to emit them, what is measured so far, and
+> is the instructions cancho cannot emit. This document says what it would take to emit them, what is measured so far, and
 > what is not. Where a later PR finds a claim here false, that PR corrects it here, in place.
 
 ---
@@ -31,7 +31,7 @@ no `Ffi`; the builtins here are pure (`[]`), as `value_barrier` is.
 Each result is from the machine named. The rest of this document is a design built on them.
 
 **Cranelift cannot emit them.** Neither `cranelift-codegen` 0.121.2 (the version pinned in
-`crates/lex-sys-codegen/Cargo.toml`) nor 0.132.0 mentions `aesenc`, `aesdec`, `pclmulqdq`, `aese`, `aesmc` or `pmull64`
+`crates/cancho-codegen/Cargo.toml`) nor 0.132.0 mentions `aesenc`, `aesdec`, `pclmulqdq`, `aese`, `aesmc` or `pmull64`
 anywhere in `src/` or `meta/`. So on the Cranelift backend the builtins have no lowering, and §5 gives them an answer that
 keeps today's code.
 
@@ -59,11 +59,11 @@ aarch64 file for the host and said nothing about x86, which is why §2 names the
 **This CPU has them:** `hw.optional.arm.FEAT_AES`, `FEAT_PMULL` and `FEAT_DIT` all read 1 on the M4 Max of
 `docs/tls-assurance.md` §6.1.
 
-**Not measured:** how fast the hardware path would be in lex-sys. §8 sets that as a gate for the `std` PR, not a claim.
+**Not measured:** how fast the hardware path would be in cancho. §8 sets that as a gate for the `std` PR, not a claim.
 
 ## 3. The builtins
 
-lex-sys has no 128-bit value: the scalar types are `int` (64-bit), `byte`, `bool` and `float`. An AES block and a GHASH
+cancho has no 128-bit value: the scalar types are `int` (64-bit), `byte`, `bool` and `float`. An AES block and a GHASH
 product are 128 bits. Two ways round that were considered:
 
 | Option | What it is | Verdict |
@@ -74,7 +74,7 @@ product are 128 bits. Two ways round that were considered:
 The builtins, as `edition N;` (the latest, 6 today, as `value_barrier` was: `docs/editions.md` §5, a name a program could
 already declare). *As built: edition 7, the latest by then.*
 
-```lex-sys
+```cancho
 hw_aes_gcm() -> [] bool
 aes_encrypt_block(round_keys: &[byte], rounds: int, block: &[byte], out: &![byte]) -> [] int
 ghash_update(h: &[byte], y: &![byte], data: &[byte]) -> [] int
@@ -104,7 +104,7 @@ rule tag (`refused_key_length`) before it would call the builtin. The trap is fo
 
 ## 4. How the LLVM backend lowers them
 
-`crates/lex-sys-codegen-llvm/src/body/expr.rs` already lowers `value_barrier` to inline assembly. These three lower to
+`crates/cancho-codegen-llvm/src/body/expr.rs` already lowers `value_barrier` to inline assembly. These three lower to
 intrinsics instead, which LLVM can schedule:
 
 - **The functions that contain them carry `"target-features"="+aes,+pclmul,+ssse3"`** (x86-64) or `+aes` (aarch64). Because LLVM
@@ -114,7 +114,7 @@ intrinsics instead, which LLVM can schedule:
   key. **x86-64** loops `aesenc` and ends with `aesenclast`. Both are checked against FIPS-197's vectors (§7).
 - **`ghash_update`** is four carry-less multiplies a block and a reduction by the GCM polynomial, on both targets. The
   aarch64 form byte-reverses with `rev64` and `ext`; the x86-64 form with `pshufb`. *As built
-  (`crates/lex-sys-codegen-llvm/src/crypto.rs`): the instruction is used only for the four 64-by-64-bit products; the bit
+  (`crates/cancho-codegen-llvm/src/crypto.rs`): the instruction is used only for the four 64-by-64-bit products; the bit
   order (each byte's bits reversed, into the polynomial's natural order) and the reduction (the high half folded twice by
   `x^7 + x^2 + x + 1`) are LLVM `i128` and `i256` arithmetic, every shift by a constant. Simpler to check than a hand-scheduled
   register version, and it leaves the choice of instructions to LLVM. Its speed is the `std` PR's measurement.*
@@ -157,7 +157,7 @@ without the instructions will keep running, and because the builtins' gain shoul
   the ECDH timing failure on LLVM (|t| 16.19 to 1.84 and 10.40 to 2.15) and most of AES-GCM's on Cranelift
   (`docs/tls-assurance.md` §6.1). What it costs in speed is not measured here, and the DIT PR measures it.
   *Done (the first PR after this design): the LLVM backend's `main` sets it on aarch64 Linux and Darwin when the OS reports
-  FEAT_DIT (`crates/lex-sys-codegen-llvm/src/dit.rs`). Measured: P-256 with scalar 1 fails without it (|t| 9.11) and passes
+  FEAT_DIT (`crates/cancho-codegen-llvm/src/dit.rs`). Measured: P-256 with scalar 1 fails without it (|t| 9.11) and passes
   with it (2.11); the symmetric ciphers cost 3 to 6% more (`docs/tls-assurance.md` §6.1). Two things this paragraph did not
   know: a Darwin thread starts with DIT clear, so only `main`'s thread has it there (a Linux thread inherits it), and
   Cranelift has no inline assembly, so its programs do not set it.*
@@ -211,7 +211,7 @@ software path otherwise; `seal_software` and `open_software` stay public. A prep
 (`gcm.hw_len()`, 256: the round keys in FIPS 197's form from the new `aes.round_keys`, and H), which the record layer keeps
 in the slot's keys (`tls_slot.k_read_hw`, `k_write_hw`). The one-shot `seal` and `open` prepare only the path they take.
 
-**Speed**, AES-128-GCM seal with a prepared key (`tests/programs/gcm_speed.ls`, best of three; OpenSSL `speed -evp aes-128-gcm`):
+**Speed**, AES-128-GCM seal with a prepared key (`tests/programs/gcm_speed.cho`, best of three; OpenSSL `speed -evp aes-128-gcm`):
 
 | Machine | Size | hardware path | software path | OpenSSL | OpenSSL against hardware |
 |---|---|---|---|---|---|
@@ -232,13 +232,13 @@ program and compares every byte; the lying server's 84 recordings replay byte fo
 `scripts/gcm_timing.py` on the hardware path on the M4, max |t| 1.46 to 3.65, all passes. **No new capability:** the builtins
 are `[]`.
 - **Correctness:** §7's known answers and differential, on both backends.
-- **No new capability:** `lex-sys authority` on the pure backend shows no `ffi(...)`, as #210 requires.
+- **No new capability:** `cancho authority` on the pure backend shows no `ffi(...)`, as #210 requires.
 - **The gate:** `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --workspace`, and no source
   file over 2,000 lines.
 
 ### 7.1 Results (the builtins PR)
 
-`crates/lex-sys/tests/conformance/crypto_builtins.rs`, through `tests/programs/crypto_builtins_driver.ls`:
+`crates/cancho/tests/conformance/crypto_builtins.rs`, through `tests/programs/crypto_builtins_driver.cho`:
 - **Known answers:** FIPS 197 Appendix C.1 and C.3, and NIST's GCM test case 2 assembled from the two builtins (`H`,
   `AES(K, J0)` and the tag each the standard's value).
 - **A differential:** 600 random AES blocks (AES-128, -192 and -256) and 600 random GHASH runs of 1 to 12 blocks against plain

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Mutation check of SHA-2 (`std/crypto.ls`), `std/hmac.ls` and `std/hkdf.ls` (docs/hkdf.md §5).
+"""Mutation check of SHA-2 (`std/crypto.cho`), `std/hmac.cho` and `std/hkdf.cho` (docs/hkdf.md §5).
 
-    python3 scripts/kdf_mutants.py <lex-sys binary>
+    python3 scripts/kdf_mutants.py <cancho binary>
 
 Each mutant is one of the three files with one deliberate bug. All three are
 built as local modules (`crypto`, `hmac`, `hkdf`) beside a copy of
-`tests/programs/kdf_driver.ls`, and run against the evidence
+`tests/programs/kdf_driver.cho`, and run against the evidence
 `conformance/kdf.rs` uses: the vector table, the CAVP short-message and Monte
 Carlo files, every Wycheproof HMAC and HKDF case, the refusal rows, and 1,000
 rounds of `scripts/kdf_differential.py`. A mutant is killed when any of them
@@ -111,10 +111,10 @@ def run(compiler, sources, driver_src, work, cases, checks):
     for name, text in sources.items():
         text = text.replace(f"module std.{name};", f"module {name};", 1)
         text = text.replace("import std.crypto;", "import crypto;").replace("import std.hmac;", "import hmac;")
-        path = os.path.join(work, f"{name}.ls")
+        path = os.path.join(work, f"{name}.cho")
         open(path, "w").write(text)
         paths.append(path)
-    drv = os.path.join(work, "driver.ls")
+    drv = os.path.join(work, "driver.cho")
     exe = os.path.join(work, "driver")
     text = driver_src
     for name in sources:
@@ -139,8 +139,8 @@ def run(compiler, sources, driver_src, work, cases, checks):
 
 def main():
     compiler = os.path.abspath(sys.argv[1])
-    sources = {n: open(os.path.join(ROOT, f"std/{n}.ls")).read() for n in ("crypto", "hmac", "hkdf")}
-    driver_src = open(os.path.join(ROOT, "tests/programs/kdf_driver.ls")).read()
+    sources = {n: open(os.path.join(ROOT, f"std/{n}.cho")).read() for n in ("crypto", "hmac", "hkdf")}
+    driver_src = open(os.path.join(ROOT, "tests/programs/kdf_driver.cho")).read()
     cases, checks = evidence()
     failed = 0
     with tempfile.TemporaryDirectory() as work:

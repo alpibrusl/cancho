@@ -4,10 +4,10 @@
 >
 > `docs/overflow-cost.md` §4 named this as a measurement the repository
 > owed and had not made: *"It does not say the language is 40% slower
-> than C. […] The comparison between lex-sys and C at equal semantics is
+> than C. […] The comparison between cancho and C at equal semantics is
 > a different measurement, and this repository has not made it."*
 >
-> It is made now. The headline is that **at equal semantics lex-sys is
+> It is made now. The headline is that **at equal semantics cancho is
 > about 1.6× C and Rust**, that Rust and C are within 4% of each other,
 > and that the gap is therefore a backend gap rather than a language one.
 >
@@ -21,7 +21,7 @@
 > this document reaches, with a shape instead of a point.
 >
 > **§2's own falsifier is now answered, and the whole range did
-> collapse.** `docs/llvm-backend.md` §7 measured `mandelbrot.ls` through
+> collapse.** `docs/llvm-backend.md` §7 measured `mandelbrot.cho` through
 > `--backend llvm` against `mandelbrot.c`: **0.999×**, not 1.786×. That
 > was one point, re-measured while most of `benches/` still couldn't
 > build on this backend at all. `--backend llvm` is the default now
@@ -46,12 +46,12 @@ and worthless.
 
 **The same algorithm, line for line — not the same task.** Comparing
 `examples/sort` to GNU `sort` would measure decades of tuning and an
-external merge sort. `benches/three/mandelbrot.{ls,c,rs}` are the same
+external merge sort. `benches/three/mandelbrot.{cho,c,rs}` are the same
 loop written three times, with the same variables carried across
 iterations in the same order.
 
 **The same semantics.** Rust's release profile *wraps* on overflow;
-lex-sys traps. Reporting `rustc -O` against lex-sys would be reporting a
+cancho traps. Reporting `rustc -O` against cancho would be reporting a
 semantic difference as a performance difference, so Rust is built both
 ways and the honest row is the one that also traps.
 
@@ -75,7 +75,7 @@ and `rustc -O` (1.98).
 
 | build | time | vs C at equal semantics |
 |---|---|---|
-| **lex-sys** (traps) | 0.2098s | **1.69×** |
+| **cancho** (traps) | 0.2098s | **1.69×** |
 | C `-O2` (traps) | 0.1240s | 1.00× |
 | Rust `-O` (traps) | 0.1288s | 1.04× |
 | C `-O2` (wraps) | 0.1011s | 0.82× |
@@ -87,7 +87,7 @@ All five compute 39,690,297.
 
 | build | time | vs C |
 |---|---|---|
-| **lex-sys** | 0.3189s | **1.56×** |
+| **cancho** | 0.3189s | **1.56×** |
 | C `-O2` | 0.2044s | 1.00× |
 | Rust `-O` | 0.1633s | 0.80× |
 
@@ -97,7 +97,7 @@ All three compute 6057.
 
 Both tables above are `--backend cranelift`, whichever backend was the
 default the day they were measured. `scripts/three.py` passes no
-`--backend` flag to `lex-sys build`, so it has always measured
+`--backend` flag to `cancho build`, so it has always measured
 whatever "the compiler" defaults to — Cranelift then, LLVM since #127.
 Re-run on a cloud container reporting the same CPU model
 (`Intel(R) Xeon(R) Processor @ 2.10GHz`, so not necessarily the same
@@ -121,10 +121,10 @@ is real but less uniform.
 kernels. `benchmarks-game.md` §4 is why that sentence needed the
 qualifier it did not have. Not 1.0, and not the
 40% figure from `overflow-cost.md` — that one measured trapping against
-wrapping *within* lex-sys, which is a different question and is why this
+wrapping *within* cancho, which is a different question and is why this
 document exists.
 
-**Rust is within 4% of C at equal semantics, and lex-sys is not.** That
+**Rust is within 4% of C at equal semantics, and cancho is not.** That
 is the load-bearing observation. Rust carries linear-ish ownership, a
 borrow checker, bounds checks and monomorphisation, and pays essentially
 nothing for them on this kernel. So the 1.6× is not the price of safety,
@@ -139,10 +139,10 @@ attached and a falsifier: if an LLVM backend lands and the gap stays at
 
 **The falsifier is answered: the gap did not stay.** `docs/llvm-backend.md`
 §7 landed a working (if partial) LLVM backend and measured this exact
-kernel, `benches/three/mandelbrot.ls`, against `mandelbrot.c` on the same
+kernel, `benches/three/mandelbrot.cho`, against `mandelbrot.c` on the same
 host, same rounds, randomised (not merely interleaved) run order:
-lex-sys through `--backend llvm` is **0.999×** C — indistinguishable —
-against lex-sys through `--backend cranelift`'s **1.786×**, the same
+cancho through `--backend llvm` is **0.999×** C — indistinguishable —
+against cancho through `--backend cranelift`'s **1.786×**, the same
 figure this document's own 1.69× already said, within this host's noise.
 The gap was Cranelift against LLVM, and closing it took switching
 backends, not touching the language. This is one kernel, not the whole
@@ -161,7 +161,7 @@ that — Rust's clearing loop is an iterator that LLVM turns into a
 `memset` and the C is a written-out loop. **Treat the sieve row as a
 second opinion rather than a second measurement.**
 
-**And the measurement floor is higher than it looks.** The same lex-sys
+**And the measurement floor is higher than it looks.** The same cancho
 sieve, compiled from a version that returns its answer rather than
 printing it, ran 15% faster — a difference made entirely of code layout,
 the effect `overflow-cost.md` §3.3 found when padding an object moved a
@@ -173,13 +173,13 @@ loop by a few bytes. Anything here under about 15% is not a result.
 
 This is the part that is not about speed.
 
-lex-sys has no floating point (`reach.md` §2), so the Mandelbrot above is
+cancho has no floating point (`reach.md` §2), so the Mandelbrot above is
 Q16.16 fixed point: a value is the real number times 65536, a product is
 `(a * b) >> 16`. The C and Rust versions were written the same way so the
 comparison would be fair — but a program that actually wanted this
 picture would have written `double`.
 
-So here is that program, as the row lex-sys cannot enter:
+So here is that program, as the row cancho cannot enter:
 
 | build | time | vs C fixed-point |
 |---|---|---|
@@ -255,7 +255,7 @@ promise that they will get faster, because on evidence they will not.
 
 | Question | Why it waits |
 |---|---|
-| ~~Anything lex-sys does *better*~~ | **Answered — `docs/purity.md`.** There is exactly one candidate and it is structural: the row is a checked purity proof, which C can only promise and Rust cannot state. Measured at 1.94× (CSE) and 158× (hoisting a loop-invariant call), on 35% of the functions here, and collected by nothing today |
+| ~~Anything cancho does *better*~~ | **Answered — `docs/purity.md`.** There is exactly one candidate and it is structural: the row is a checked purity proof, which C can only promise and Rust cannot state. Measured at 1.94× (CSE) and 158× (hoisting a loop-invariant call), on 35% of the functions here, and collected by nothing today |
 | An LLVM backend | §3 makes this falsifiable: the claim is that 1.6× is Cranelift. The README already commits to "Cranelift for dev, LLVM for release", and this is the number that says what the second half is worth |
 | `jo` instead of `seto`/`test`/`jne` | `overflow-cost.md` §3.4. Three instructions for one on every checked operation, and this kernel does seven per iteration — the cheapest place to look for part of the 1.6× |
 | `float` | §4. Now with an argument attached: expressiveness, not speed, and the design question is which of IEEE-754's corners (NaN ordering, reassociation, `-0.0`) this language defines rather than inherits |
@@ -267,9 +267,9 @@ promise that they will get faster, because on evidence they will not.
 
 | Program | Measures |
 |---|---|
-| `benches/three/mandelbrot.{ls,c,rs}` | Compute-bound, identical line by line, five builds, one checksum |
-| `benches/three/mandelbrot_f64.{c,rs}` | §4: the row lex-sys cannot enter |
-| `benches/three/sieve.{ls,c,rs}` | Memory-bound, and §3's warning about reading it too hard |
+| `benches/three/mandelbrot.{cho,c,rs}` | Compute-bound, identical line by line, five builds, one checksum |
+| `benches/three/mandelbrot_f64.{c,rs}` | §4: the row cancho cannot enter |
+| `benches/three/sieve.{cho,c,rs}` | Memory-bound, and §3's warning about reading it too hard |
 | `scripts/three.py` | Builds all of them, refuses to time builds that disagree, prints the tables above |
 
 | Test | Shows |

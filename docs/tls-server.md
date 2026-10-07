@@ -2,7 +2,7 @@
 
 > **Status: steps 1 and 2 built: the signer (`docs/ecdsa-sign.md`) and the TLS 1.3 server (§10, as built); its open
 > questions (§9) answered as proposed (2026-10-07). Not independently reviewed (#209).** `packages/tls` is a client (`docs/tls-pure.md`). Two programs of the toolbox need the other
-> side: `lexsys-mqtt`, a broker whose clients connect on 8883, and `lexsys-gateway`, a reverse proxy that terminates HTTPS. Both
+> side: `cancho-mqtt`, a broker whose clients connect on 8883, and `cancho-gateway`, a reverse proxy that terminates HTTPS. Both
 > are at the design stage and both list TLS as out of scope because "it needs foreign code and would make the authority report
 > unbounded". A server in `packages/tls` removes that reason. This document is the design; its numbers are measured where it
 > names a measurement, and are otherwise arithmetic from measured parts, marked so. Where a later PR finds a claim false, that PR
@@ -129,7 +129,7 @@ signatures are also compared byte for byte with RFC 6979 written in Python (`doc
 - **The chain is not verified by the server.** It is sent as given; a chain that clients refuse is the operator's to fix.
   The engine checks only that the leaf parses, that its key is P-256, and that it is not expired at the time the identity is
   added (`tls-server-cert-expired`), so a stale file fails at start, not at the first client.
-- *As built, the room (`packages/tls/identity.ls`): a chain of at most 16 KiB as Certificate sends it (each certificate's DER
+- *As built, the room (`packages/tls/identity.cho`): a chain of at most 16 KiB as Certificate sends it (each certificate's DER
   and 5 bytes), names of at most 1 KiB, an ALPN list of at most 512 bytes; over them, `tls-server-chain`, `tls-server-names`
   and `tls-server-alpn-list`. A chain block that does not decode, or no certificate at all, is `tls-server-chain` too. 16
   identities take 274 KiB of the engine, allocated by `open_server` only.*
@@ -212,7 +212,7 @@ Each refusal sends the alert RFC 8446 names and has a tag beginning `tls-server-
 `finished`, `sign-check`, `key-type`, `key-format`, `key-mismatch`, `cert-expired`, `identities-full`, and `tls-role`. The
 existing record-layer tags (`tls-record-*`) apply unchanged.
 
-*As built (`packages/tls/record.ls`, `slot.ls`): six more, for refusals the list had no tag for, and the alerts. The
+*As built (`packages/tls/record.cho`, `slot.cho`): six more, for refusals the list had no tag for, and the alerts. The
 "record-layer tags" are the client's (`tls-unexpected-message`, `tls-record-overflow`, `tls-bad-record-mac`,
 `tls-decode-error`, `tls-protocol-version`, `tls-key-share`, `tls-too-many-messages`, `tls-alert`, `tls-peer-closed`);
 there is no `tls-record-*`.*
@@ -257,7 +257,7 @@ bottom of that range, and the check of §3.3 costs as much as the signature on t
 (`openssl speed ecdsap256`, 44,132 a second), 65 times faster.*
 
 **Measured (step 2), in place of the estimate.** `python3 scripts/tls_server_cost.py <tls_serve> 20`: the server
-(`tests/programs/tls_serve.ls`, LLVM backend, `echo` mode, one P-256 identity) under `openssl s_time -new`, full
+(`tests/programs/tls_serve.cho`, LLVM backend, `echo` mode, one P-256 identity) under `openssl s_time -new`, full
 handshakes one after another for 20 seconds a row, the server process's CPU (user and system, `/proc/<pid>/stat`)
 divided by the handshakes `s_time` completed. **The machine:** Ubuntu 24.04, linux-aarch64, in Docker's 6-vCPU VM on the
 Apple M4 Max of `docs/tls-assurance.md` §6.1, the host busy with other builds (load average 4 to 5 of 6). Suite
@@ -297,7 +297,7 @@ of key-parsing work in a server engine (§10.1).*
 - **Memory exhaustion.** Bounded by the slots: a ClientHello cannot grow a slot past its 16 KiB reassembly limit.
 - **Timing of the key.** §3. The record layer and the key exchanges are constant time already.
 - **Choosing the identity.** SNI is attacker-chosen: a name with no identity gets the default, never an error that tells names
-  apart, and the name is compared as bytes after lower-casing ASCII, as `packages/x509/names.ls` does for the client.
+  apart, and the name is compared as bytes after lower-casing ASCII, as `packages/x509/names.cho` does for the client.
 - **Parsing.** The ClientHello is now the input every peer controls. It goes to the fuzz harness (`scripts/tls_fuzz.py`) and
   the AFL setup (`scripts/fuzz_afl.py`) with a corpus of real ClientHellos (OpenSSL, Go, curl, Firefox, Chrome, mosquitto),
   and the gate is no panic and no trap. *As built (§10.5): `scripts/tls_fuzz.py --server` mutates the lying client's honest
@@ -311,7 +311,7 @@ of key-parsing work in a server engine (§10.1).*
    test, the audit and the mutants. Gate: all pass; the timing test's |t| below 4.5.
 2. **The TLS 1.3 server** (§5), with:
    - interop: `openssl s_client`, curl, Go `crypto/tls`, wolfSSL's client, and mosquitto's clients (`mosquitto_pub` over 8883,
-     against a lex-sys echo program), each across the three suites and three groups, with and without HelloRetryRequest;
+     against a cancho echo program), each across the three suites and three groups, with and without HelloRetryRequest;
    - a lying client: `scripts/tls_liar_client.py`, the shape of `scripts/tls_liar.py`, one case per refusal tag and per rule
      of §5.2;
    - a differential: the same malformed ClientHellos to `openssl s_server`, the alerts compared (an `EXPECTED` table for the
@@ -354,20 +354,20 @@ section that said so is corrected in place, marked "corrected (step 2)" or "as b
 
 | File | Module | What |
 |---|---|---|
-| `packages/tls/hello.ls` | `tls_hello` | the ClientHello parsed with the rules of §5.2, the choices (suite, group, retry group, ALPN), and the messages a server sends: ServerHello, HelloRetryRequest, EncryptedExtensions, Certificate, CertificateVerify |
-| `packages/tls/server.ls` | `tls_server` | one server connection: `start`, `feed` and its record loop, the key schedule, the flight, the one function that calls the signer, the client's Finished compared in constant time, KeyUpdate |
-| `packages/tls/identity.ls` | `tls_identity` | a server engine's configuration in one byte slice: 16 identities (key, public point, names, the certificate_list as Certificate sends it) and the ALPN list |
-| `packages/tls/tls.ls` | `tls` | `open_server`, `add_identity`, `replace_identity`, `set_alpn`, `serve`, `server_name`, `alpn`, `handshakes_in_progress`, `suite`, `group`, `retried`, `alert_received`; the role; `feed` sends a server slot to `tls_server` |
-| `packages/tls/slot.ls`, `record.ls`, `message.ls` | | the server's states, flags and five slot fields; its 24 refusal codes and their alerts; `hrr_random` made public |
+| `packages/tls/hello.cho` | `tls_hello` | the ClientHello parsed with the rules of §5.2, the choices (suite, group, retry group, ALPN), and the messages a server sends: ServerHello, HelloRetryRequest, EncryptedExtensions, Certificate, CertificateVerify |
+| `packages/tls/server.cho` | `tls_server` | one server connection: `start`, `feed` and its record loop, the key schedule, the flight, the one function that calls the signer, the client's Finished compared in constant time, KeyUpdate |
+| `packages/tls/identity.cho` | `tls_identity` | a server engine's configuration in one byte slice: 16 identities (key, public point, names, the certificate_list as Certificate sends it) and the ALPN list |
+| `packages/tls/tls.cho` | `tls` | `open_server`, `add_identity`, `replace_identity`, `set_alpn`, `serve`, `server_name`, `alpn`, `handshakes_in_progress`, `suite`, `group`, `retried`, `alert_received`; the role; `feed` sends a server slot to `tls_server` |
+| `packages/tls/slot.cho`, `record.cho`, `message.cho` | | the server's states, flags and five slot fields; its 24 refusal codes and their alerts; `hrr_random` made public |
 
 **Reused unchanged:** the record layer and its AEADs, `tls_slot`'s transcript, keys, record queue, `fail` and `forget`, the
 ECDH share a HelloRetryRequest needs (`new_ecdh_share`: the P-256 or P-384 scalar comes from the X25519 secret by HKDF, as for
 the client), and `tls_client`'s `take`, `send`, `recv`, `finish`, `event`, `peer_eof` and `drop`, which serve a server slot as
-they are, and its `finished_mac`, `on_alert` and `compact_recv`, made public for the server. `client.ls` changes in nothing
+they are, and its `finished_mac`, `on_alert` and `compact_recv`, made public for the server. `client.cho` changes in nothing
 else, so its mutants' texts still match.
 
 **What is not shared, and why.** The record loop (`feed`, `on_record`, the handshake reassembly) is the server's own,
-about 200 lines the shape of the client's. The client's loop calls the client's message handler, and lex-sys
+about 200 lines the shape of the client's. The client's loop calls the client's message handler, and cancho
 has no function values (`docs/function-values.md`), so sharing it would mean `tls_client` importing `tls_server`, and every
 client build (`tls_driver`, hooks) taking the server and `x509_key` with it. The server's loop also differs where it must:
 early data, a plaintext alert after the flight, one `change_cipher_spec` between the ClientHello and the Finished, and the
@@ -383,12 +383,12 @@ X25519 secret, and the hedge; all three are in the slot's keys, which `forget` a
 for 16, and 75 KiB of work for the key parser (`std.ecdh`'s), and gives up the client's 1 MiB of roots; a client engine adds
 nothing (`open` allocates neither).
 
-**Editions.** `server.ls` is edition 7, for `hw_aes_gcm()`; `identity.ls` edition 6, as `x509_key` is.
+**Editions.** `server.cho` is edition 7, for `hw_aes_gcm()`; `identity.cho` edition 6, as `x509_key` is.
 
 ### 10.2 Interop
 
 `python3 scripts/tls_server_interop.py <tls_serve>`, in the image `scripts/interop/server.Dockerfile` describes (Ubuntu 24.04
-on linux-aarch64, in Docker on the M4 Max of `docs/tls-assurance.md` §6.1), `tests/programs/tls_serve.ls` built with the
+on linux-aarch64, in Docker on the M4 Max of `docs/tls-assurance.md` §6.1), `tests/programs/tls_serve.cho` built with the
 LLVM backend. Each row is one connection: the client verifies the chain and the name against the row's CA, its data comes
 back, and the server's own line for the connection says the suite, group, name and protocol the row asked for, and
 whether a HelloRetryRequest came first. For a `retry` row the client's only share is P-521's, with the group after it in
@@ -467,8 +467,8 @@ field once `supported_versions` is there. §5.2 is corrected, and the case is an
 
 ### 10.6 Mutants
 
-`python3 scripts/tls_server_mutants.py <lex-sys>`: **71 of 71 killed**, none argued equivalent. Each is one bug in
-`hello.ls`, `server.ls`, `identity.ls`, or the server's part of `tls.ls` and `slot.ls`, against the 110 recorded
+`python3 scripts/tls_server_mutants.py <cancho>`: **71 of 71 killed**, none argued equivalent. Each is one bug in
+`hello.cho`, `server.cho`, `identity.cho`, or the server's part of `tls.cho` and `slot.cho`, against the 110 recorded
 connections. Two survived a first run, and each got the case that kills it: a leaf of another curve was caught later
 anyway, by the key's match against the certificate (a P-384 leaf with a key that is not PEM now says `key-type`, not
 `key-format`), and `handshakes_in_progress` was never read mid-handshake. The client's `scripts/tls_mutants.py` still kills

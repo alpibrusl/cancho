@@ -3,7 +3,7 @@
 
     python3 scripts/tls_liar_client.py <server driver> <out.txt>
 
-`server driver` is `tests/programs/tls_server_driver.ls` built with `--std` and the package's files. The
+`server driver` is `tests/programs/tls_server_driver.cho` built with `--std` and the package's files. The
 client is written here on pyca/cryptography's primitives (X25519, P-256 and P-384 ECDH, ECDSA verification,
 ChaCha20-Poly1305 and AES-GCM, HMAC-SHA-256 and -SHA-384), independently of the server; it knows only RFC 8446.
 It is the shape of `scripts/tls_liar.py`, the lying server, turned round. Each case is one connection in which
@@ -22,7 +22,7 @@ For a refusal, the server must end with the case's tag, failed (event 5), and mu
 §6.2 names: in plaintext before its ServerHello, under its handshake key or application key after (the server
 writes under its application key once its Finished is queued). The configuration refusals (`add_identity`,
 `set_alpn`, the role) answer their tag on the line itself. The file holds each case's driver lines and answers;
-`crates/lex-sys/tests/conformance/tls_server.rs` replays every case and `scripts/tls_server_mutants.py` runs each
+`crates/cancho/tests/conformance/tls_server.rs` replays every case and `scripts/tls_server_mutants.py` runs each
 mutant against them. Exit status 1 on any difference.
 """
 import datetime

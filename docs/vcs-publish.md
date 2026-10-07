@@ -1,10 +1,10 @@
-# `lex-sys-vcs`: the first publish, before transport
+# `cancho-vcs`: the first publish, before transport
 
 > **Status: design, not yet built.** Written on contact with the actual
 > code, which found the premise this document was going to start from —
 > "the local store works, so the next slice is HTTP push/pull" — false.
 > There is no `head`, no way to enumerate what is already logged, and no
-> way to turn real `.ls` source into `Operation`s at all: `crates/lex-sys-vcs`
+> way to turn real `.cho` source into `Operation`s at all: `crates/cancho-vcs`
 > is a library with no caller anywhere in this repository outside its own
 > tests. Transport has nothing to move until this slice exists. This
 > document scopes that slice, and only that slice.
@@ -17,14 +17,14 @@ the op log's own history index. Reading past that list rather than
 stopping at it finds something none of those five items name, because
 all five assume the thing this document is about already works.
 
-`crates/lex-sys-vcs` has no CLI command anywhere in `crates/lex-sys/src/main.rs`
+`crates/cancho-vcs` has no CLI command anywhere in `crates/cancho/src/main.rs`
 — the file's only top-level match arms are `check`, `agent-guidelines`,
 `docsync`, `repo-stats`, `print`, `ids`, `authority`, `layout`, `build`,
 `run`. Every one of the crate's own capabilities — `Operation::new`,
 `gate::check_candidate`, `OpLog::put`/`get`, `Chain::append` — is exercised
-today only by `crates/lex-sys-vcs/tests/`, hand-constructing an
+today only by `crates/cancho-vcs/tests/`, hand-constructing an
 `OperationKind::AddFunction { sig_id, stage_id, effects, in_file }` literal
-per test case. Nobody, human or agent, can run a `.ls` file through this
+per test case. Nobody, human or agent, can run a `.cho` file through this
 crate from a terminal. That is a smaller gap than "no transport"; it is
 "no first user."
 
@@ -36,9 +36,9 @@ crate from a terminal. That is a smaller gap than "no transport"; it is
 | A candidate program type-checks before its op is accepted | Yes | `gate::check_candidate(files: &[(&str, &str)])` |
 | Durable storage, one JSON file per `OpId` | Yes | `OpLog::open`/`put`/`get`/`contains` |
 | A hash-chained, Ed25519-sealable attestation log | Yes | `attestation::Chain<E>` |
-| **Turning real source into an `Operation`** | **No** | Nothing calls `Operation::new` outside a test. `vcs.md` §4 named this as real, ~1,500-line native work (`compute_diff`+`diff_to_ops`+`body_merge`, rewritten against `lex-sys-ir` rather than `lex_ast`) and it has not been started |
+| **Turning real source into an `Operation`** | **No** | Nothing calls `Operation::new` outside a test. `vcs.md` §4 named this as real, ~1,500-line native work (`compute_diff`+`diff_to_ops`+`body_merge`, rewritten against `cancho-ir` rather than `lex_ast`) and it has not been started |
 | **A "what does the log currently contain" read** | **No** | `OpLog` has `get(op_id)` and `contains(op_id)` — both need the `OpId` already in hand. There is no directory listing, no iteration, no way to ask "what functions does this store know about" without already knowing every hash to ask for |
-| **A head, a branch, a manifest — any notion of "current state"** | **No** | Grepped `vcs.md` for `head`/`branch`: the one hit is `lex-vcs`'s own generic table, describing what it has, not what `lex-sys-vcs` does. Nothing in this repository has ever named this gap, because nothing has tried to publish a second revision yet |
+| **A head, a branch, a manifest — any notion of "current state"** | **No** | Grepped `vcs.md` for `head`/`branch`: the one hit is `lex-vcs`'s own generic table, describing what it has, not what `cancho-vcs` does. Nothing in this repository has ever named this gap, because nothing has tried to publish a second revision yet |
 | A CLI command | No | Confirmed above |
 
 The gate, op log and attestation log are real and correctly built for
@@ -53,19 +53,19 @@ only needed to publish a **second** revision. A **first** publish, against
 an empty log, needs no diff at all: every declaration in the source is new,
 by definition, so every one of them is an `AddFunction`. This is exactly
 the asymmetry `lex-lang`'s own `lex publish` does not have (a `Store`
-always already has a previous head to diff against) and `lex-sys-vcs`
+always already has a previous head to diff against) and `cancho-vcs`
 gets for free from not having built branches yet.
 
-Concretely, reusing what `lex-sys ids` already computes rather than adding
+Concretely, reusing what `cancho ids` already computes rather than adding
 a second hashing path:
 
 ```rust
-let identities = lex_sys_id::identify(&ast); // already built, main.rs:1054
+let identities = cancho_id::identify(&ast); // already built, main.rs:1054
 for func in &identities.functions {
     let op = Operation::new(
         OperationKind::AddFunction {
-            sig_id: func.sig.clone(),        // already lex-sys-id's own hash
-            stage_id: func.body.clone(),     // already lex-sys-id's own hash
+            sig_id: func.sig.clone(),        // already cancho-id's own hash
+            stage_id: func.body.clone(),     // already cancho-id's own hash
             effects: effects_of(&decl),      // straight off the FnDecl's own row —
                                               // `authority.md`'s own source, not new
             in_file: module_ref_of(&decl),   // many-files.md's existing ModuleRef
@@ -113,7 +113,7 @@ migratable shape at the same discipline `editions.md` already applies to
 - **Incremental diffing** — detecting that an *existing* declaration's
   body changed (`ModifyBody`) or that one was removed (`RemoveFunction`)
   needs comparing two revisions structurally, which is `vcs.md` §4's own
-  ~600-line `compute_diff`+`diff_to_ops` rewrite against `lex-sys-ir`'s
+  ~600-line `compute_diff`+`diff_to_ops` rewrite against `cancho-ir`'s
   `Expr`/`FnDecl` (not `lex_ast::CExpr`). Real work, correctly deferred:
   it has no asker until slice 1 makes a *second* publish possible at all,
   and testing it needs two real revisions of a real program to diff, which
@@ -134,18 +134,18 @@ migratable shape at the same discipline `editions.md` already applies to
 
 ## 6. What "built" would look like
 
-- `lex-sys vcs publish [--store <dir>] [--std] <inputs...>` — new top-level match
-  arm in `crates/lex-sys/src/main.rs`, next to `build`/`run`/`ids`; parses
+- `cancho vcs publish [--store <dir>] [--std] <inputs...>` — new top-level match
+  arm in `crates/cancho/src/main.rs`, next to `build`/`run`/`ids`; parses
   and lowers exactly as `ids`/`check` already do, then runs §3's walk.
   Refuses (not panics) on: a gate rejection (reports the rejected
   declaration's rule tag, not a bare `422`-shaped opaque failure); a
-  `--store` directory that exists but is not a `lex-sys-vcs` store.
-- `lex-sys vcs log [--store <dir>]` — reads the manifest and lists what is
+  `--store` directory that exists but is not a `cancho-vcs` store.
+- `cancho vcs log [--store <dir>]` — reads the manifest and lists what is
   known, by name and `SigId`, the read-side counterpart with no analogue
   in the crate today (§2's second row).
-- A fixture pair: a real multi-function `.ls` file published against an
+- A fixture pair: a real multi-function `.cho` file published against an
   empty store, checked against the store's own on-disk `OperationRecord`
-  files afterward — the same "checked against real `lex-sys ids` output,
+  files afterward — the same "checked against real `cancho ids` output,
   not invented strings" discipline #124 already set for this crate's
   golden tests.
 

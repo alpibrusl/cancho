@@ -1,0 +1,107 @@
+// NOTE: since `aliasing.md` section 6.1 this program is REFUSED: it shares one struct between two threads through two
+// copies of one `&!`, which is exactly what the checker now stops. Kept as the record of what was measured; it is only
+// parsed by the tests, never compiled.
+// docs/atomics.md section 7.1: the store-buffering litmus test with PLAIN accesses, to show the gate's test has power.
+// Thread A: x[i] = 1; r1[i] = y[i].  Thread B: y[i] = 1; r2[i] = x[i].  Under sequential consistency r1 = r2 = 0 is
+// forbidden; with plain accesses it is allowed, and happens. The two threads share one struct through two copies
+// of one `&!` (the hole in race.cho), 3,000,000 trials with no barrier between them. Prints the number of trials
+// that ended r1 = r2 = 0. Measured (three runs each, docs/atomics.md section 7.1): arm64 macOS 87,632-94,205 on
+// Cranelift and 166,509-236,141 on LLVM (later reruns: 185,344; 254,134 and 293,499); x86-64 Linux 0-307,986 on Cranelift and 59,147-242,583 on LLVM. It is a
+// measurement of the race, NOT a conformance test: with real atomics the same count must be zero.
+//
+// Run: cancho run benches/atomics/sb.cho --backend llvm
+
+edition 6;
+
+res struct Shared {
+    x: Box[[int]],
+    y: Box[[int]],
+    r1: Box[[int]],
+    r2: Box[[int]],
+}
+
+fn a[&r](s: &!r Shared) -> [] int {
+    var i = 0;
+    while i < 3000000 {
+        contents(s.x)[i] = 1;
+        contents(s.r1)[i] = contents(s.y)[i];
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn b[&r](s: &!r Shared) -> [] int {
+    var i = 0;
+    while i < 3000000 {
+        contents(s.y)[i] = 1;
+        contents(s.r2)[i] = contents(s.x)[i];
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn count[&r](s: &r Shared) -> [] int {
+    var i = 0;
+    var both = 0;
+    while i < 3000000 {
+        if contents(s.r1)[i] == 0 && contents(s.r2)[i] == 0 {
+            both = both + 1;
+        }
+        i = i + 1;
+    }
+    return both;
+}
+
+fn run[&i, &h](io: &!i Io, heap: &!h Heap) -> [io_write, heap, conc] int {
+    var s = Shared { x: box_slice(heap, 3000000, 0), y: box_slice(heap, 3000000, 0), r1: box_slice(heap, 3000000, 7), r2: box_slice(heap, 3000000, 7) };
+    var both = 0;
+    borrow mut s as &!k in {
+        let k2 = k;
+        let fa = a;
+        let fb = b;
+        let ta = spawn(k, fa);
+        let tb = spawn(k2, fb);
+        let u = join(ta);
+        let v = join(tb);
+    }
+    borrow s as &q in {
+        both = count(q);
+    }
+    let Shared { x, y, r1, r2 } = s;
+    unbox_slice(heap, x);
+    unbox_slice(heap, y);
+    unbox_slice(heap, r1);
+    unbox_slice(heap, r2);
+    // print both as digits
+    var n = both;
+    var d = 1;
+    while d * 10 <= n {
+        d = d * 10;
+    }
+    while d > 0 {
+        putchar(io, '0' + n / d % 10);
+        d = d / 10;
+    }
+    putchar(io, 10);
+    return both;
+}
+
+fn main(world: World) -> [conc] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    var i0 = io;
+    var h0 = heap;
+    borrow mut i0 as &!i in {
+        borrow mut h0 as &!h in {
+            let c = run(i, h);
+        }
+    }
+    release(i0);
+    release(h0);
+    return 0;
+}

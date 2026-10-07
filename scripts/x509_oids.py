@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prints `packages/x509/x509.ls`'s `oid_table` from dotted OIDs (docs/x509.md §2.3).
+"""Prints `packages/x509/x509.cho`'s `oid_table` from dotted OIDs (docs/x509.md §2.3).
 
     python3 scripts/x509_oids.py
 

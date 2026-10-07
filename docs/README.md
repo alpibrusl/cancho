@@ -33,7 +33,7 @@ this is the third.**
             → supervisor → audit chain
 
 
-                    lex-sys
+                    cancho
                     this repo
        a second, native language, same worldview
 ```
@@ -47,7 +47,7 @@ the trust `Grant`, enforced twice: statically by `lex-os-check` before
 the program loads, and at run time by a supervisor the agent cannot
 reach.
 
-**`lex-sys`** — this repository — is a *second, lower-level language*
+**`cancho`** — this repository — is a *second, lower-level language*
 sharing that worldview, targeting the work Lex cannot do: native
 binaries, manual and region memory, syscalls, embedding, FFI. It shares
 the idea and **no code**: `lex-os` takes its grant from `lex-lang` and
@@ -55,8 +55,8 @@ does not depend on this repository at all.
 
 | Join | State |
 |---|---|
-| lex-sys code in `lex-vcs` | Most of that crate is already language-agnostic; gated on a plateau in the effect vocabulary rather than on a feature — [`vcs.md`](vcs.md) |
-| lex-sys code under a lex-os grant | Not a compiler integration: `authority --output json` is already the interface a supervisor reads, and its filesystem dimension is already enforceable through it. `network` and `exec` are not, because both are libc — [`under-a-grant.md`](under-a-grant.md). *Corrected for `network` ([`agent-toolbox.md`](agent-toolbox.md) §2.5): a program built on the `Net` builtins reports `net_out("host:port")` and `bounded: true`, and only a program that reaches the network through `Ffi` is still opaque; `exec` is still libc. But "enforceable through it" does not yet hold for either dimension: `lex-os` reads Lex effect names, and fed a lex-sys label verbatim it derives `network: none` for a program that dials a host (measured), so the join needs a bridge that fails closed.* |
+| cancho code in `lex-vcs` | Most of that crate is already language-agnostic; gated on a plateau in the effect vocabulary rather than on a feature — [`vcs.md`](vcs.md) |
+| cancho code under a lex-os grant | Not a compiler integration: `authority --output json` is already the interface a supervisor reads, and its filesystem dimension is already enforceable through it. `network` and `exec` are not, because both are libc — [`under-a-grant.md`](under-a-grant.md). *Corrected for `network` ([`agent-toolbox.md`](agent-toolbox.md) §2.5): a program built on the `Net` builtins reports `net_out("host:port")` and `bounded: true`, and only a program that reaches the network through `Ffi` is still opaque; `exec` is still libc. But "enforceable through it" does not yet hold for either dimension: `lex-os` reads Lex effect names, and fed a cancho label verbatim it derives `network: none` for a program that dials a host (measured), so the join needs a bridge that fails closed.* |
 
 ---
 
@@ -87,18 +87,18 @@ combines:
 | **Capabilities** | `World`, `Io`, `Fs(prefix)`, `Ffi(lib)`, `Heap`, `Args`, `File`, `Net(bound)` — linear values, `split` once, released by name | [`linearity-and-effects.md`](linearity-and-effects.md) |
 | **Effect rows** | A canonically ordered set, exact in both directions, every label tracing to a builtin | [`linearity-and-effects.md`](linearity-and-effects.md) |
 | **Narrowing** | Prefix extension, one way, and it *consumes* what it attenuates | [`filesystem.md`](filesystem.md), [`reach.md`](reach.md) |
-| **Authority report** | `lex-sys authority`, computed from reachability; `--output json` for a supervisor, and it **fails closed** on foreign code | [`authority.md`](authority.md) |
+| **Authority report** | `cancho authority`, computed from reachability; `--output json` for a supervisor, and it **fails closed** on foreign code | [`authority.md`](authority.md) |
 | **Borrowing** | Lexical regions, no borrow checker; `&!` is a lock on the binding | [`aliasing.md`](aliasing.md) |
 | **Memory** | Arenas, a general heap with recursive types, boxed slices, growable buffers | [`heap.md`](heap.md), [`boxed-slices.md`](boxed-slices.md) |
 | **Types** | `int` `byte` `bool` `float` (and `f32` from edition 6), structs, enums with exhaustive `match`, tuples, generics with `[T: val]` bounds | [`floating-point.md`](floating-point.md), [`tuples.md`](tuples.md) |
 | **Defined behaviour** | Checked arithmetic that traps, left-to-right evaluation, every C hole named and closed | [`defined-behaviour.md`](defined-behaviour.md) |
 | **Threads** | Compiler-provided `spawn`/`join`, never crossing the C ABI; one pointer-width payload today; atomics designed, not built | [`threads.md`](threads.md), [`atomics.md`](atomics.md) |
-| **Program identity** | `lex-sys ids` — per-declaration content hashes, checked against golden fixtures | [`canonical-ast.md`](canonical-ast.md), [`hash-stability.md`](hash-stability.md) |
-| **A content-addressed op log** | `lex-sys vcs publish`/`log` — every declaration as a typed, gated operation | [`vcs.md`](vcs.md), [`vcs-publish.md`](vcs-publish.md) |
+| **Program identity** | `cancho ids` — per-declaration content hashes, checked against golden fixtures | [`canonical-ast.md`](canonical-ast.md), [`hash-stability.md`](hash-stability.md) |
+| **A content-addressed op log** | `cancho vcs publish`/`log` — every declaration as a typed, gated operation | [`vcs.md`](vcs.md), [`vcs-publish.md`](vcs-publish.md) |
 | **Compile time** | Pure calls on constant arguments folded; `static` items whose bodies run during compilation | [`compile-time-data.md`](compile-time-data.md) |
 | **I/O** | The console in three directions, file handles as linear resources, bulk reads and writes, a `Net` capability for sockets | [`file-handles.md`](file-handles.md), [`bulk-io.md`](bulk-io.md), [`net.md`](net.md) |
 | **Refusals** | Every rule carries a stable tag; `check --output json` reports every independent one as data | [`agent-errors.md`](agent-errors.md) |
-| **Standard library** | Written in lex-sys, including shortest round-trip float printing and a UTF-8 decoder | [`standard-library.md`](standard-library.md) |
+| **Standard library** | Written in cancho, including shortest round-trip float printing and a UTF-8 decoder | [`standard-library.md`](standard-library.md) |
 | **Two backends** | Cranelift (dev) and LLVM (release, **default**) — an opt-in second backend became the default once nothing it refused had an asker left | [`llvm-backend.md`](llvm-backend.md) |
 
 What is **not** there yet, and why, is [`ROADMAP.md`](ROADMAP.md).
@@ -233,14 +233,14 @@ rather than a person typing at a shell ([`agent-tools.md`](agent-tools.md)).
 
 ## Related work
 
-lex-sys builds on other people's ideas, and the closest of them got
+cancho builds on other people's ideas, and the closest of them got
 there first.
 
 - **Austral** — the nearest relative: linear types, capabilities as linear
   values with a root capability handed to the entry point, lexical
   borrowing, no borrow checker. Most of this core is Austral's first.
-  lex-sys adds the same authority stated as an **exact effect row**, which
-  is what `lex-sys authority` reads.
+  cancho adds the same authority stated as an **exact effect row**, which
+  is what `cancho authority` reads.
 - **Koka** — effects as a row of labels. Kept the row; no handlers, no row
   polymorphism.
 - **Effekt** — *effects as capabilities*, from the effect-handler side:
@@ -256,7 +256,7 @@ there first.
 - **Lex** — the parent language, and the worldview.
 
 **The competitor is WASI, not Rust.** For running code you did not write,
-WebAssembly with WASI enforces authority at run time, by trying. lex-sys
+WebAssembly with WASI enforces authority at run time, by trying. cancho
 knows it **before execution**, from the program's text, with no runtime
 cost. What each project contributed, traced to the document that used it:
 [`related-work.md`](related-work.md).
@@ -314,17 +314,17 @@ than restated here: [`overflow-cost.md`](overflow-cost.md),
 ## Layout
 
 ```
-crates/lex-sys-syntax    lexer, canonical-shaped AST, parser
-crates/lex-sys-types     the type vocabulary: representation and unification
-crates/lex-sys-ir        resolution, type checking, monomorphisation; the IR
-crates/lex-sys-codegen   Cranelift lowering, native object emission
-crates/lex-sys-codegen-llvm  the LLVM backend, --backend llvm (default)
-crates/lex-sys-id        canonical encoding and content hashes
-crates/lex-sys-vcs       content-addressed operation log (vcs.md)
-crates/lex-sys           the CLI
+crates/cancho-syntax    lexer, canonical-shaped AST, parser
+crates/cancho-types     the type vocabulary: representation and unification
+crates/cancho-ir        resolution, type checking, monomorphisation; the IR
+crates/cancho-codegen   Cranelift lowering, native object emission
+crates/cancho-codegen-llvm  the LLVM backend, --backend llvm (default)
+crates/cancho-id        canonical encoding and content hashes
+crates/cancho-vcs       content-addressed operation log (vcs.md)
+crates/cancho           the CLI
 std/                     the standard library, as Lex source
 examples/                programs meant to be read
-packages/                published lex-sys-vcs packages (package-system.md)
+packages/                published cancho-vcs packages (package-system.md)
 tests/accept             fixtures that must compile and run
 tests/reject             fixtures that must be refused, each stating why
 benches/                 checked/wrapping pairs; what the overflow trap costs
@@ -332,7 +332,7 @@ scripts/bench.py         runs them and prints the table
 docs/                    this directory
 ```
 
-Everything a program can be refused for is refused in `lex-sys-ir`, so the
+Everything a program can be refused for is refused in `cancho-ir`, so the
 backend has no error path for a *program* — only for the environment. Each
 fixture declares its own expectation in its header (`//~ STDOUT`, `//~
 EXIT`, `//~ ERROR`), so adding a rule to the language means adding a
@@ -348,9 +348,9 @@ not repeated here; a doc's own header carries its own detail.
 
 | Doc | Purpose | Status |
 |---|---|---|
-| [`linearity-and-effects.md`](linearity-and-effects.md) | Core type-system rules: linear/affine ownership, capability-typed effects, how they unify | settled and built ([#2](https://github.com/alpibrusl/lex-sys/issues/2)) |
-| [`bootstrap.md`](bootstrap.md) | What M0 settled: host language, file extension, the M0 surface | written ([#3](https://github.com/alpibrusl/lex-sys/issues/3)) |
-| [`canonical-ast.md`](canonical-ast.md) | AST shape, canonicalisation, per-unit identity (`lex-sys ids`) | written and built |
+| [`linearity-and-effects.md`](linearity-and-effects.md) | Core type-system rules: linear/affine ownership, capability-typed effects, how they unify | settled and built ([#2](https://github.com/alpibrusl/cancho/issues/2)) |
+| [`bootstrap.md`](bootstrap.md) | What M0 settled: host language, file extension, the M0 surface | written ([#3](https://github.com/alpibrusl/cancho/issues/3)) |
+| [`canonical-ast.md`](canonical-ast.md) | AST shape, canonicalisation, per-unit identity (`cancho ids`) | written and built |
 | `memory-model.md` | Regions/arenas, escape, the escape hatches | not written — settled piecemeal by `heap.md`/`sharing.md`; nothing left to write on its own |
 | [`strings.md`](strings.md) | A string is bytes, not an encoding; `byte` as storage | settled and built |
 | [`boxed-slices.md`](boxed-slices.md) | `Box[[T]]`: a pointer and a length | settled and built |
@@ -381,45 +381,45 @@ not repeated here; a doc's own header carries its own detail.
 | [`bulk-copy.md`](bulk-copy.md) | `copy_into(dst, src)`: all of one slice onto the front of another as one `memmove`, edition 5; why overlap is possible, and `std.buffer`'s copies rewritten on it (640 MiB of appends: 2.00 s to 0.026 s on Cranelift, 0.47 s to 0.026 s on LLVM) | built, with a fixture on both backends, six trapping and edge shapes, and mutants checked |
 | [`native-sockets.md`](native-sockets.md) | Servers without `Ffi("libc")`: typed `Listener`/`Conn`/`Poller` handles, `Clock`, and the four-stage road to a toolchain with no C | slice 1 built (edition 5): `tcp_listen`/`tcp_accept`/`conn_read`/`conn_write` over typed handles on both backends, no `Ffi`; fixed-signature fd builtins rejected because an `int` descriptor is forgeable (§2); `Poller`, `Clock`, `tcp_connect` next |
 | [`signals.md`](signals.md) | `Signals`/`SignalWatch` (edition 6): knowing you were asked to stop without `Ffi("libc")` -- a capability narrowed to the signals it claims, so the authority report names them and stays bounded; a bitmask `signals_pending`, a handle the `Poller` waits on, and `signals_close` for "a second signal kills at once" | built on both backends: `signalfd` on Linux, measured; `kqueue` `EVFILT_SIGNAL` on macOS, written and **not run** |
-| [`directory-handles.md`](directory-handles.md) | `Dir` (edition 6): a path opened beneath a directory one component at a time, following no link -- the fix for a symlink inside a narrowed prefix or a tool's `--root` reading outside it (#227, gap L6). `open_dir`, `dir_enter`, `dir_open_read`, `dir_close`, and `std.dirs` for a whole path; measured against `openat2` | slices 1 and 2 built on both backends (read beneath; create, append, rename, remove, sync beneath); `lexsys-tools` on top is slice 3 |
-| [`processes.md`](processes.md) | `Exec` (edition 7): starting a program without `Ffi("libc")` -- a capability narrowed to a path prefix of the programs it may start, a linear `Child` that must be reaped, `Pipe` ends the parent cannot leak, an exact environment and descriptor set, and the `Poller` waiting on both (#237, lexsys-tools#10) | slices 0 to 4 built: close-on-exec everywhere, the capability with children and channels, the `Poller` watching both, `std.process.capture` (#271, #274, #275, #276), and the MCP server that uses them (lexsys-tools#17); slice 5, the two prerequisites of a `run` tool: a child's working directory (`exec_spawn_in`, §4.10) and `capture_both` (§7.2) |
+| [`directory-handles.md`](directory-handles.md) | `Dir` (edition 6): a path opened beneath a directory one component at a time, following no link -- the fix for a symlink inside a narrowed prefix or a tool's `--root` reading outside it (#227, gap L6). `open_dir`, `dir_enter`, `dir_open_read`, `dir_close`, and `std.dirs` for a whole path; measured against `openat2` | slices 1 and 2 built on both backends (read beneath; create, append, rename, remove, sync beneath); `cancho-tools` on top is slice 3 |
+| [`processes.md`](processes.md) | `Exec` (edition 7): starting a program without `Ffi("libc")` -- a capability narrowed to a path prefix of the programs it may start, a linear `Child` that must be reaped, `Pipe` ends the parent cannot leak, an exact environment and descriptor set, and the `Poller` waiting on both (#237, cancho-tools#10) | slices 0 to 4 built: close-on-exec everywhere, the capability with children and channels, the `Poller` watching both, `std.process.capture` (#271, #274, #275, #276), and the MCP server that uses them (cancho-tools#17); slice 5, the two prerequisites of a `run` tool: a child's working directory (`exec_spawn_in`, §4.10) and `capture_both` (§7.2) |
 | [`directory-listing.md`](directory-listing.md) | Listing a directory and a file's status on a `Dir` handle rather than a path (#222, gaps L2 and L3): `dir_list`, `dir_next`, `dir_list_close`, `dir_stat`, and `std.dirs.list` sorted bytewise; the `dirent`/`stat` layout table for three targets; measured cost per entry | slices 1 and 2 built on both backends (`dir_list`, `dir_next`, `dir_list_close`, `std.dirs.list`; `dir_stat`); the `list` tool is slice 3 |
 | [`foreign-authority.md`](foreign-authority.md) | What a program that calls C can reach, symbol by symbol: `Ffi("libc,libssl")` is a set of libraries (one capability, lent narrower), the report lists every reachable foreign symbol as `scope:symbol` (`unbounded_by`, one a line, so a CI pin diffs an added symbol), and a foreign function must borrow exactly one `Ffi` | built on both backends; **closes a hole**: an `extern fn` with no capability was accepted, ran a shell and reported `bounded: true`. Symbol-level rows and capabilities weighed and declined; the `statx` argument shape and `\x` found, pinned, not fixed |
-| [`websocket-spike.md`](websocket-spike.md) | A WebSocket/OCPP connection layer on lex-sys against the `lex` runtime: 10,000 connections, measured, plus the gaps found and the `lexsys-cache`-for-Redis question | measured: 80 MB and 0% idle CPU at 10,000 connections (the runtime's thread-per-connection stand-in saturates a core near 1,500); the service-level gaps are listed in §10 |
-| [`formatting.md`](formatting.md) | `lex-sys fmt`: the canonical layout with comments, blank lines and literal spellings kept | built; refuses, rather than risks, a file it cannot reproduce |
-| [`testing.md`](testing.md) | `trap()` and `std.test`'s `assert` — what a program needed to state "this must be true" at all | `trap()`, `std.test`, and `lex-sys test` are built; no per-test timeout, no message on a failed assertion |
+| [`websocket-spike.md`](websocket-spike.md) | A WebSocket/OCPP connection layer on cancho against the `lex` runtime: 10,000 connections, measured, plus the gaps found and the `cancho-cache`-for-Redis question | measured: 80 MB and 0% idle CPU at 10,000 connections (the runtime's thread-per-connection stand-in saturates a core near 1,500); the service-level gaps are listed in §10 |
+| [`formatting.md`](formatting.md) | `cancho fmt`: the canonical layout with comments, blank lines and literal spellings kept | built; refuses, rather than risks, a file it cannot reproduce |
+| [`testing.md`](testing.md) | `trap()` and `std.test`'s `assert` — what a program needed to state "this must be true" at all | `trap()`, `std.test`, and `cancho test` are built; no per-test timeout, no message on a failed assertion |
 | [`slicing.md`](slicing.md) | `s[a..b]`, half-open and trapping | settled and built |
 | [`defer.md`](defer.md) | `defer E;` as sugar, expanded during lowering | settled and built |
-| [`authority.md`](authority.md) | `lex-sys authority`; `release` at `main` is the declaration | settled and built |
+| [`authority.md`](authority.md) | `cancho authority`; `release` at `main` is the declaration | settled and built |
 | [`budget.md`](budget.md) | Whether `[budget]` is a type-system feature | settled — no |
 | [`reach.md`](reach.md) | What a program can reach, via a real REST endpoint | settled and built; corrected by `opaque-pointers.md` and `foreign-linking.md` |
 | [`opaque-pointers.md`](opaque-pointers.md) | `c_ptr`: one opaque foreign-pointer shape | settled and built (edition 3) |
 | [`foreign-linking.md`](foreign-linking.md) | `-l`/`-L`: linking beyond libc | settled and built — `examples/tls_client/`, a real handshake |
-| [`tls-nonblocking.md`](tls-nonblocking.md) | `https` for a service with one thread: a non-blocking OpenSSL client on the `Poller` (memory BIOs), certificate verification with every failure told apart, the authority it costs, a resolver that does not stop the loop and a pinned address, what `lexsys-hooks` would change, and 12 gaps with reproducers | spiked and measured (`examples/tls_nb/`): 64 handshakes on one thread, ~0.6 ms of CPU each (0.3 resumed), 26-48 KiB a connection; not built into any service; OpenSSL through FFI by decision, a pure lex-sys TLS is a research project |
+| [`tls-nonblocking.md`](tls-nonblocking.md) | `https` for a service with one thread: a non-blocking OpenSSL client on the `Poller` (memory BIOs), certificate verification with every failure told apart, the authority it costs, a resolver that does not stop the loop and a pinned address, what `cancho-hooks` would change, and 12 gaps with reproducers | spiked and measured (`examples/tls_nb/`): 64 handshakes on one thread, ~0.6 ms of CPU each (0.3 resumed), 26-48 KiB a connection; not built into any service; OpenSSL through FFI by decision, a pure cancho TLS is a research project |
 | [`overflow-cost.md`](overflow-cost.md) | What the overflow trap costs, measured | measured — corrects the README and `defined-behaviour.md` §2.1 |
 | [`bitwise.md`](bitwise.md) | `& \| ^ ~ << >>`, hex literals | settled and built |
 | [`porting.md`](porting.md) | Real programs ported and checked byte-for-byte: `base64`, `sort` | done twice |
-| [`against-c-and-rust.md`](against-c-and-rust.md) | lex-sys against C and Rust on the same algorithm | measured |
+| [`against-c-and-rust.md`](against-c-and-rust.md) | cancho against C and Rust on the same algorithm | measured |
 | [`purity.md`](purity.md) | The checked purity proof C can only promise and Rust can't state | measured and unspent |
 | [`floating-point.md`](floating-point.md) | `float`, IEEE-754 binary64 | settled and built |
 | [`float-printing.md`](float-printing.md) | Shortest round-trip decimal printing | settled and built |
-| [`f32.md`](f32.md) | `f32`, IEEE-754 binary32, asked by `lexsys-gpu`: the type, the `f32` suffix, `f32_of`/`float_of32`/`bits_of32`/`f32_of_bits`, the bit-for-bit gate against binary64, `sqrt32` and the `int` conversions, and `std.fmt32` (Rust's `{:?}` and `{:.N}` and a decimal read straight to the nearest `f32`, every 2³² pattern checked) | F1, F2 and F3 built (edition 6); F4 `lexsys-gpu` not |
+| [`f32.md`](f32.md) | `f32`, IEEE-754 binary32, asked by `cancho-gpu`: the type, the `f32` suffix, `f32_of`/`float_of32`/`bits_of32`/`f32_of_bits`, the bit-for-bit gate against binary64, `sqrt32` and the `int` conversions, and `std.fmt32` (Rust's `{:?}` and `{:.N}` and a decimal read straight to the nearest `f32`, every 2³² pattern checked) | F1, F2 and F3 built (edition 6); F4 `cancho-gpu` not |
 | [`compile-time.md`](compile-time.md) | Constant folding and pure-call evaluation | settled and built |
 | [`compile-time-data.md`](compile-time-data.md) | `static` items evaluated during compilation | settled and built |
-| [`layout.md`](layout.md) | What every leaf costs; packing and transposing | measured, deferred with a trigger (`lex-sys layout`) |
+| [`layout.md`](layout.md) | What every leaf costs; packing and transposing | measured, deferred with a trigger (`cancho layout`) |
 | [`benchmarks-game.md`](benchmarks-game.md) | Five kernels from the Computer Language Benchmarks Game | measured |
 | [`bulk-io.md`](bulk-io.md) | `write_bytes`: a whole slice in one call | settled and built |
 | [`file-handles.md`](file-handles.md) | An open file as a linear resource | settled and built |
 | [`file-writes.md`](file-writes.md) | The write side of a file handle: append, positional read/write, `fsync`, truncate, rename, lock — what a durable log needs; `fopen`-based opens to avoid variadic `open` | slice 1 built (edition 5): `open_append`/`open_write`/`open_new`/`open_rw`, `file_write`/`file_pwrite`/`file_pread`/`file_sync`/`file_truncate`/`file_size` on both backends; the cost of sync measured (0.4 µs written, ~190 µs durable, 4.2 µs batched by 100); slice 2 adds `fs_rename`, `fs_remove` and `file_lock` (a lock the kernel drops when the holder dies) |
 | [`utf8.md`](utf8.md) | Decoding `&r [byte]` into code points | settled and built |
 | [`standard-error.md`](standard-error.md) | `err_write`: a third label on `Io`, not an eighth capability | settled and built |
-| [`../AGENTS.md`](../AGENTS.md) | How to write lex-sys in one page | written and enforced |
+| [`../AGENTS.md`](../AGENTS.md) | How to write cancho in one page | written and enforced |
 | [`float-math.md`](float-math.md) | `sqrt` as a builtin, then `exp`/`log`/`pow`, then `floor`/`ceil`/`round`/`fabs`/`fmin`/`fmax`/`sin`/`cos`, then `exp`/`log`/`pow` fixed to 1–4 ulp and `expm1`/`log1p`/`log2`/`log10`/the hyperbolics added, then `tan`/`atan`/`atan2`/`asin`/`acos` and a Payne–Hanek reduction for every finite argument | settled and built; every function measured against libm in ulps |
-| [`gpu.md`](gpu.md) | Whether lex-sys can run on a GPU, and whether `lex-gpu` should exist | measured; decided |
+| [`gpu.md`](gpu.md) | Whether cancho can run on a GPU, and whether `lex-gpu` should exist | measured; decided |
 | [`line-reading.md`](line-reading.md) | Whether `std` needs a line reader | measured — no; found and fixed a silent truncation bug |
 | [`agent-errors.md`](agent-errors.md) | Refusals a machine can read: stable rule tags, `check --output json` | settled and built |
 | [`agent-tools.md`](agent-tools.md) | A tool genuinely shaped for an agent's own loop | built (`examples/seek/`) |
-| [`agent-toolbox.md`](agent-toolbox.md) | Whether a *set* of unix-like tools in lex-sys, with a JSON contract, rule-tagged errors with repair hints and a compiler-derived authority, is worth building — and the protocol that would say so | design; the probes it rests on are run and recorded, nothing is built. Found: `Fs` extent cannot be static (`narrow` takes a literal), no directory listing or regex, `sha256` traps past 64 KiB, a failed `stdout` write is invisible, and lex-os reads a lex-sys `net_out` label as *no network*; corrects `bulk-io.md` §3.3 and `agent-tools.md` §1 |
+| [`agent-toolbox.md`](agent-toolbox.md) | Whether a *set* of unix-like tools in cancho, with a JSON contract, rule-tagged errors with repair hints and a compiler-derived authority, is worth building — and the protocol that would say so | design; the probes it rests on are run and recorded, nothing is built. Found: `Fs` extent cannot be static (`narrow` takes a literal), no directory listing or regex, `sha256` traps past 64 KiB, a failed `stdout` write is invisible, and lex-os reads a cancho `net_out` label as *no network*; corrects `bulk-io.md` §3.3 and `agent-tools.md` §1 |
 | [`aliasing.md`](aliasing.md) | Whether `&!` should mean Rust's `&mut` | measured — no |
 | [`check-cost.md`](check-cost.md) | The price of every check this language emits | measured — corrects `overflow-cost.md` and `gpu.md` |
 | [`poison.md`](poison.md) | A per-lane flag instead of a trap, on a vector ISA | measured — depends on the check |
@@ -427,16 +427,16 @@ not repeated here; a doc's own header carries its own detail.
 | [`llvm-backend.md`](llvm-backend.md) | A second backend, `--backend llvm` | **complete, and the default** |
 | [`effect-polymorphism.md`](effect-polymorphism.md) | Whether an effect row can be polymorphic | a documented no, counted by reading |
 | [`hash-stability.md`](hash-stability.md) | How often a content hash actually moves | measured — the plateau `vcs.md` needed |
-| [`vcs.md`](vcs.md) | How much of `lex-vcs` lex-sys can reuse | plateau answered yes; foundation, gate, op log and attestation built |
-| [`vcs-publish.md`](vcs-publish.md) | The first real caller of `lex-sys-vcs`: publish, no diffing needed | built (`lex-sys vcs publish`/`log`) |
-| [`package-system.md`](package-system.md) | What a package would be, built from what already exists rather than invented fresh | `lex-sys vcs resolve`/`vcs lock`/`vcs fetch` are the first three real slices; `net.sockets`, `net.connect`, `agent.wire`, `http.request`, and `http.response` (`packages/`) are five real packages, `examples/fetch/fetch.ls` composes two of them at once with no new tooling, and `http.request`/`net.connect`/`http.response` each depend on `net.sockets` -- a true closure of stores, resolved recursively by `vcs publish --requires`/`vcs resolve`/`vcs fetch` (§4.6), the one thing this row used to call missing. **§7 (packages across repositories) is built for its first two steps:** a lock can carry an `origin` (a git URL, a full commit hash and a path) and `vcs fetch`/`resolve`/`lock --git` fetch it into a cache of checkouts keyed by commit, with every pin re-checked as for a local store; `vcs publish --dir` publishes a library of several files in dependency order, and `static` declarations now publish. **§8 (the project file) is built, `lex-sys test` in a project included:** `lex-sys.toml`, `lex-sys install`, `lex-sys add`, `lex-sys build` with no files, and a compiler revision in `--version` that a project checks. **§9 (prebuilt compilers) is built, unreleased:** `scripts/package-release.sh`, `scripts/install.sh` (checksum and reported commit both checked) and a release workflow whose tag is the commit. Still missing: the first published release, and a human-readable version string |
+| [`vcs.md`](vcs.md) | How much of `lex-vcs` cancho can reuse | plateau answered yes; foundation, gate, op log and attestation built |
+| [`vcs-publish.md`](vcs-publish.md) | The first real caller of `cancho-vcs`: publish, no diffing needed | built (`cancho vcs publish`/`log`) |
+| [`package-system.md`](package-system.md) | What a package would be, built from what already exists rather than invented fresh | `cancho vcs resolve`/`vcs lock`/`vcs fetch` are the first three real slices; `net.sockets`, `net.connect`, `agent.wire`, `http.request`, and `http.response` (`packages/`) are five real packages, `examples/fetch/fetch.cho` composes two of them at once with no new tooling, and `http.request`/`net.connect`/`http.response` each depend on `net.sockets` -- a true closure of stores, resolved recursively by `vcs publish --requires`/`vcs resolve`/`vcs fetch` (§4.6), the one thing this row used to call missing. **§7 (packages across repositories) is built for its first two steps:** a lock can carry an `origin` (a git URL, a full commit hash and a path) and `vcs fetch`/`resolve`/`lock --git` fetch it into a cache of checkouts keyed by commit, with every pin re-checked as for a local store; `vcs publish --dir` publishes a library of several files in dependency order, and `static` declarations now publish. **§8 (the project file) is built, `cancho test` in a project included:** `cancho.toml`, `cancho install`, `cancho add`, `cancho build` with no files, and a compiler revision in `--version` that a project checks. **§9 (prebuilt compilers) is built, unreleased:** `scripts/package-release.sh`, `scripts/install.sh` (checksum and reported commit both checked) and a release workflow whose tag is the commit. Still missing: the first published release, and a human-readable version string |
 | [`character-literals.md`](character-literals.md) | `'a'`: a third spelling of an integer | settled and built |
 | [`emitted-checks.md`](emitted-checks.md) | The price list, read out of the binary | an audit; found a real compiler bug |
 | [`flags.md`](flags.md) | `std.flags`: a cursor, not a `getopt_long` table | settled and built |
 | [`first-page.md`](first-page.md) | What a reader of `README.md` actually learns | measured, and acted on — this guide is the result |
-| [`under-a-grant.md`](under-a-grant.md) | Whether a `lex-os` grant can decide a lex-sys authority report | measured — filesystem is enforceable; network and exec are not |
+| [`under-a-grant.md`](under-a-grant.md) | Whether a `lex-os` grant can decide a cancho authority report | measured — filesystem is enforceable; network and exec are not |
 | [`net.md`](net.md) | `Net`: sockets, taken out of libc | settled and built |
-| [`related-work.md`](related-work.md) | What lex-sys took from Cyclone, Koka, Rust, Vale, Zig, Lex, Austral | written |
+| [`related-work.md`](related-work.md) | What cancho took from Cyclone, Koka, Rust, Vale, Zig, Lex, Austral | written |
 | [`differential.md`](differential.md) | The constant folder against the backend | a test; found and fixed one disagreement |
 | [`connect.md`](connect.md) | `examples/fetch/`: an HTTP client, and what `connect` needed | a probe |
 | [`listen.md`](listen.md) | `examples/collect/`: the inbound counterpart | a probe; cleared `Net`'s last bar |
@@ -462,12 +462,12 @@ not repeated here; a doc's own header carries its own detail.
 | [`ecdh.md`](ecdh.md) | `std.ecdh`: P-256 and P-384 key exchange with a secret scalar -- complete formulas, a masked table, `std.bigmod`'s reductions made constant time, and the timing test that found LLVM turning the masks into branches | built; not independently reviewed |
 | [`value-barrier.md`](value-barrier.md) | `value_barrier`, edition 6: a value `clang -O2` cannot reason about, so a constant-time mask stays an `and` | built |
 | [`crypto-builtins.md`](crypto-builtins.md) | Hardware AES and carry-less multiply: `aes_encrypt_block`, `ghash_update` and `hw_aes_gcm`, block-level over byte slices so no 128-bit type is needed; measured so far: Cranelift has no such instruction, and LLVM compiles the intrinsics only with the target feature on | built: DIT, the builtins, per-key caching and the `std` hardware path |
-| [`tls-hooks.md`](tls-hooks.md) | The pure TLS backend in `lexsys-hooks` (#210): the two interfaces are not the same (an adapter is needed), one source cannot carry both capability rows (no effect polymorphism), the pure client has no resumption, and "no `Ffi` at all" cannot hold because hooks also holds `libc`; the build, the tests on both backends, the measurements | design |
+| [`tls-hooks.md`](tls-hooks.md) | The pure TLS backend in `cancho-hooks` (#210): the two interfaces are not the same (an adapter is needed), one source cannot carry both capability rows (no effect polymorphism), the pure client has no resumption, and "no `Ffi` at all" cannot hold because hooks also holds `libc`; the build, the tests on both backends, the measurements | design |
 | [`tls-resumption.md`](tls-resumption.md) | TLS 1.3 resumption for `packages/tls`: the full handshake's 2.8 ms is two X25519 and two ECDSA verifications (measured); PSK with (EC)DHE removes the verifications and keeps forward secrecy, about 1.2 ms; eight rules bound the hazard that a resumed session skips verification. Built: resumes against OpenSSL, Go, rustls, wolfSSL, nginx and GnuTLS; a resumed connection measured at half a full one's CPU | built |
-| [`tls-server.md`](tls-server.md) | A TLS 1.3 server for `packages/tls`, for `lexsys-mqtt` and `lexsys-gateway`: constant-time ECDSA P-256 signing first (`ecdsa-sign.md`, built), then the server handshake with SNI, ALPN and HelloRetryRequest (built: interop with OpenSSL, curl, Go, wolfSSL and mosquitto, a lying client of 110 cases, a differential against `openssl s_server`, fuzzing and mutants; a full handshake measured at 3.5 to 4 ms of CPU on X25519 or P-256 (6 ms on P-384), 17 to 20 times OpenSSL's); client certificates, tickets and TLS 1.2 as later steps | steps 1 and 2 built; not independently reviewed |
+| [`tls-server.md`](tls-server.md) | A TLS 1.3 server for `packages/tls`, for `cancho-mqtt` and `cancho-gateway`: constant-time ECDSA P-256 signing first (`ecdsa-sign.md`, built), then the server handshake with SNI, ALPN and HelloRetryRequest (built: interop with OpenSSL, curl, Go, wolfSSL and mosquitto, a lying client of 110 cases, a differential against `openssl s_server`, fuzzing and mutants; a full handshake measured at 3.5 to 4 ms of CPU on X25519 or P-256 (6 ms on P-384), 17 to 20 times OpenSSL's); client certificates, tickets and TLS 1.2 as later steps | steps 1 and 2 built; not independently reviewed |
 | [`ecdsa-sign.md`](ecdsa-sign.md) | `std.ecdsa_sign`: ECDSA P-256 signing in constant time on `std.ecdh`'s ladder, RFC 6979's nonce hedged with the caller's randomness, a signature verified before it is given out; and `packages/x509`'s `x509_key`, P-256 private keys from PKCS#8 and SEC 1 PEM. Step 1 of `tls-server.md` | built; not independently reviewed |
-| [`self-hosting.md`](self-hosting.md) | Whether lex-sys could host its own toolchain | run; decided not yet — no asker |
-| [`agent-cli.md`](agent-cli.md) | `lex-sys introspect`/`skill`: the CLI surface as data, imported from `lex-lang`'s ACLI integration | built; found a false-familiarity bug in the process (`-o`/`-l`/`-L` would have rendered as `--o`/`--l`/`--L`) |
+| [`self-hosting.md`](self-hosting.md) | Whether cancho could host its own toolchain | run; decided not yet — no asker |
+| [`agent-cli.md`](agent-cli.md) | `cancho introspect`/`skill`: the CLI surface as data, imported from `lex-lang`'s ACLI integration | built; found a false-familiarity bug in the process (`-o`/`-l`/`-L` would have rendered as `--o`/`--l`/`--L`) |
 | [`next-phase.md`](next-phase.md) | Replacing episodic duplication/staleness hunts with a mechanical check, argued from `MANIFESTO.md` and three of this session's own mistakes | §3's real instance (10 examples duplicating `std.io`) migrated, 7 of them (§3.1 has the three exceptions); §4's own standing check, the actual proposal, not built yet |
 
 `linearity-and-effects.md` was the gating artifact: the decision set that

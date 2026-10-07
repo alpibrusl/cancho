@@ -1,5 +1,5 @@
 #!/bin/bash
-# The T3 baseline of docs/parallelism.md: one process and two processes sharing a port (SO_REUSEPORT) of lexsys-web's
+# The T3 baseline of docs/parallelism.md: one process and two processes sharing a port (SO_REUSEPORT) of cancho-web's
 # in-memory `users` service, on a workload that keeps no state (POST /users with an invalid body: the whole JSON parse,
 # validation and error rendering, no store). Copy i is pinned to core i, the load generator to cores 2 and 3, so two
 # copies is the most this 4-core machine can run without the load generator sharing a core.
@@ -7,8 +7,8 @@
 #   benches/parallel/copies_users.sh /path/to/users-built-with-listen-flags-1 /path/to/kload
 #
 # `users` listens with flags 0; build the measurement variant with
-#     sed 's/tcp_listen(nn, port, 1024, 0)/tcp_listen(nn, port, 1024, 1)/' examples/users/users.ls > users_reuse.ls
-# and the packages fetched by lexsys-web's scripts/build.sh.
+#     sed 's/tcp_listen(nn, port, 1024, 0)/tcp_listen(nn, port, 1024, 1)/' examples/users/users.cho > users_reuse.cho
+# and the packages fetched by cancho-web's scripts/build.sh.
 bin=${1:?users binary}; kload=${2:-/tmp/kload}
 for n in 1 2; do
   port=$((19900 + n)); pids=()

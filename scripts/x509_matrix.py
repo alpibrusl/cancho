@@ -6,7 +6,7 @@
 Every certificate is made by `openssl req` and `openssl ca` (OpenSSL 3.0.13),
 with fixed dates, under one root that is the store. Each case is a leaf, its
 intermediates, a host and the tag it must get. For each case, both run:
-- the verifier, through `tests/programs/x509_verify_driver.ls`;
+- the verifier, through `tests/programs/x509_verify_driver.cho`;
 - `openssl verify -x509_strict -purpose sslserver -attime <t> -CAfile root
   -untrusted <intermediates> -verify_hostname <host> (or -verify_ip) leaf`.
 

@@ -1,5 +1,5 @@
-// The same algorithm as `benches/sieve_checked.ls`, in Rust.
-// Built with `-C overflow-checks=on`, to match lex-sys's semantics.
+// The same algorithm as `benches/sieve_checked.cho`, in Rust.
+// Built with `-C overflow-checks=on`, to match cancho's semantics.
 
 const LIMIT: usize = 60000;
 const ROUNDS: i64 = 1000;

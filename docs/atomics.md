@@ -2,7 +2,7 @@
 
 > **Status: design, with the measurements it needed. No compiler change.** `threads.md` §4 and `parallelism.md` T5
 > say atomics and channels are "not started until a program asks". A program now asks: a parallel CSV scan in
-> `lexsys-table` (a dynamic work counter between workers, and results delivered in order) and a possible network
+> `cancho-table` (a dynamic work counter between workers, and results delivered in order) and a possible network
 > broker. The question that came with the request was *is there a hard constraint, or did nobody ask?* §1 answers
 > it with evidence, and the answer is **nobody asked, plus four real constraints that shape the design but block
 > nothing**. The most important thing this document found is not about atomics: **the checker does not stop two
@@ -33,10 +33,10 @@
 
 | fact | how known |
 |---|---|
-| **The compiler already emits an atomic.** `spawn`/`join` keep a count of unjoined threads with one atomic add (`count_thread`, `lex-sys-codegen/src/body/signals.rs`; `lex-sys-codegen-llvm/src/body/signals.rs`). It has been in every threaded binary since #128 | **measured**: `lex-sys build tests/accept/spawn_join.ls --emit obj` disassembled: Cranelift on arm64 emits `ldaxr`/`stlxr`; LLVM `--target x86_64-unknown-linux-gnu` emits `lock xadd`, `--target aarch64-unknown-linux-gnu` emits `ldaxr`/`stlxr` |
+| **The compiler already emits an atomic.** `spawn`/`join` keep a count of unjoined threads with one atomic add (`count_thread`, `cancho-codegen/src/body/signals.rs`; `cancho-codegen-llvm/src/body/signals.rs`). It has been in every threaded binary since #128 | **measured**: `cancho build tests/accept/spawn_join.cho --emit obj` disassembled: Cranelift on arm64 emits `ldaxr`/`stlxr`; LLVM `--target x86_64-unknown-linux-gnu` emits `lock xadd`, `--target aarch64-unknown-linux-gnu` emits `ldaxr`/`stlxr` |
 | **Both backends have all five operations, sequentially consistent.** Cranelift 0.121.2: `atomic_load`, `atomic_store`, `atomic_rmw` (with `Add`, `Xchg` and the bitwise ops), `atomic_cas`, `fence`; its own documentation says each is "sequentially consistent and creates happens-before edges that order normal (non-atomic) loads and stores". LLVM: `load atomic`, `store atomic`, `atomicrmw`, `cmpxchg`, all `seq_cst` | Cranelift: **read** (`cranelift-codegen-meta` 0.121.2 `instructions.rs`, and the x64 and aarch64 `lower.isle`). LLVM: **measured** on a hand-written module, §4.2 |
-| **A shared reference already crosses to several threads at once.** One `&r Ffi` is the payload of two spawns and read a third time by `main` after both joins (`tests/accept/spawn_thread_ids.ls`); `crosses_to_a_thread` admits any non-slice `Type::Ref`, so **`&Atomic` needs no change to the payload rule** | read, and `spawn_thread_ids.ls` is a conformance test |
-| **A struct with a `Box[[byte]]` and an `Ffi` field crosses by `&r` to four threads, which read through it.** | **measured**, `benches/atomics/libatomic_counter.ls`, §1.3 |
+| **A shared reference already crosses to several threads at once.** One `&r Ffi` is the payload of two spawns and read a third time by `main` after both joins (`tests/accept/spawn_thread_ids.cho`); `crosses_to_a_thread` admits any non-slice `Type::Ref`, so **`&Atomic` needs no change to the payload rule** | read, and `spawn_thread_ids.cho` is a conformance test |
+| **A struct with a `Box[[byte]]` and an `Ffi` field crosses by `&r` to four threads, which read through it.** | **measured**, `benches/atomics/libatomic_counter.cho`, §1.3 |
 | `Atomic`'s memory is one `malloc`, so it is aligned. The one atomic the compiler emits had a latent alignment bug (a zeroed global, `threads.md` §6, SIGBUS on aarch64 Linux); a `malloc`ed cell does not have it | read |
 
 Nothing in the language, the ABI, either backend or either OS forbids an atomic. The wall `threads.md` §1 found for
@@ -71,36 +71,36 @@ boundary (the checker's own message: "the only references that cross a foreign b
 and a `[byte]` slice"), and it crosses as a pointer **and a length**, which are the first two C arguments. So a
 slice of 8 bytes is `(p, 8)`: an `__atomic_fetch_add_8(p, 8, order)`.
 
-`benches/atomics/libatomic_counter.ls`: four threads each add 8 to one 8-byte heap cell a million times through a
+`benches/atomics/libatomic_counter.cho`: four threads each add 8 to one 8-byte heap cell a million times through a
 shared `&r Shared`, with `Ffi("atomic")` and `-l atomic`. **Measured on x86-64 Linux, both backends: the answer is
 exactly 32,000,000 on every run**, in 0.05-0.08 s for the four million contended increments (about 12-20 ns each,
 thread start included). It works, so no hard constraint exists even today. It is not an answer: it is Linux only
 (macOS has no `libatomic`), it needs `Ffi`, which `reach.md` says is every authority at once, it adds only `v = len`,
-it cannot load, store or compare, and the "increment" is a call through the PLT. It is a stopgap for `lexsys-table`'s
+it cannot load, store or compare, and the "increment" is a call through the PLT. It is a stopgap for `cancho-table`'s
 one counter and nothing more, and it is the reason a second asker cannot be satisfied by writing it first.
 
 ### 1.4 What the askers need
 
 | asker | needs | atomics alone cover it? |
 |---|---|---|
-| `lexsys-table`: workers claim chunks of a CSV from a shared counter | `fetch_add` on one cell | yes (A0) |
-| `lexsys-table`: results come back **in chunk order** | one `ready` word and one result word per chunk, a consumer that reads them in order | yes for a small result (a count, an aggregate), A0; **no** for rows (§9.2) |
+| `cancho-table`: workers claim chunks of a CSV from a shared counter | `fetch_add` on one cell | yes (A0) |
+| `cancho-table`: results come back **in chunk order** | one `ready` word and one result word per chunk, a consumer that reads them in order | yes for a small result (a count, an aggregate), A0; **no** for rows (§9.2) |
 | a broker: handlers fed by an acceptor | an MPSC queue, blocking, and a way to wake a thread that is blocked in the `Poller` | queue yes (A3); **waking a poller no**, §6.4 |
-| `lexsys-cache` (`thread-payloads.md` §4) | a shared store | no: needs shared mutable memory, not a word |
+| `cancho-cache` (`thread-payloads.md` §4) | a shared store | no: needs shared mutable memory, not a word |
 
-`lexsys-table`'s repository holds no threaded code and no design for it today (checked: nothing in its `docs/` or
+`cancho-table`'s repository holds no threaded code and no design for it today (checked: nothing in its `docs/` or
 `README.md` mentions a thread or an atomic); the ask is the request that came with this document, not a program.
-`AGENTS.md`'s bar of a second program is met in the sense that `lexsys-cache` named the same absence in writing.
+`AGENTS.md`'s bar of a second program is met in the sense that `cancho-cache` named the same absence in writing.
 
 ---
 
 ## 2. The hole: nothing stops two threads writing one value
 
 > **Closed for `spawn` since this was written** (`aliasing.md` §6.1). `spawn` lends the `&!` it is given until
-> `join`, so the program below is refused (`tests/reject/spawn_two_copies_of_unique.ls`); the join-first control is
-> accepted (`tests/accept/spawn_unique_join_first.ls`). `benches/atomics/race.ls` and `sb.ls` no longer compile: they
+> `join`, so the program below is refused (`tests/reject/spawn_two_copies_of_unique.cho`); the join-first control is
+> accepted (`tests/accept/spawn_unique_join_first.cho`). `benches/atomics/race.cho` and `sb.cho` no longer compile: they
 > are kept as the record of what was measured. Everything below describes the checker *before* that change, and
-> stands as the measurement. It also means §7.1's plain-access litmus test (`sb.ls`) cannot be rerun without a
+> stands as the measurement. It also means §7.1's plain-access litmus test (`sb.cho`) cannot be rerun without a
 > reference the checker still lets two threads share (§1.3's atomics are exactly that, once they exist).
 
 `threads.md` §3 argues that no new soundness rule is needed because "the aliasing rule ... forbids a second writer
@@ -108,7 +108,7 @@ while a reference is live ... and a spawned thread joined before its region clos
 checker already refuses to admit exists". `aliasing.md` says the rule is not that: `&!` is **a lock on the binding**,
 `&!r T` is `val` and copies, and two copies are two copies of one pointer.
 
-Put the two together and it is a program the checker accepts (`benches/atomics/race.ls`):
+Put the two together and it is a program the checker accepts (`benches/atomics/race.cho`):
 
 ```
 borrow mut c as &!r in {
@@ -138,7 +138,7 @@ What this means for atomics:
 * **`threads.md` §3, `parallelism.md` §2 and `aliasing.md` §6 are corrected in place** by this change.
 
 Why the hole is also a *test fixture* for this design: it is the cheapest way to show the litmus tests of §7 can fail
-(plain accesses, no atomics): `benches/atomics/sb.ls` is the store-buffering test written with plain accesses through
+(plain accesses, no atomics): `benches/atomics/sb.cho` is the store-buffering test written with plain accesses through
 that hole, and §7.1 reports what it measured.
 
 ---
@@ -190,7 +190,7 @@ The argument does not use the aliasing rule (§2), which is the one that does no
    expressible** whoever holds a `&Atomic`, however many copies of it there are, on however many threads.
 2. **No use after free.** `atomic_free` consumes the handle, and consuming needs the binding not to be borrowed. The
    borrow's block cannot close before `join` (the existing escape check: a `Thread[&r Atomic, R]` that outlived `r`
-   is `reference-escapes-region`, `tests/reject/spawn_handle_escapes_borrow.ls`, an existing rule applied to one more
+   is `reference-escapes-region`, `tests/reject/spawn_handle_escapes_borrow.cho`, an existing rule applied to one more
    type). So no thread is running when the cell is freed. Nothing here is new.
 3. **No out-of-bounds.** The index is checked on every operation.
 4. **No tear.** Cells are 8-byte aligned (they come from `malloc`, which gives at least 16), operations are 64-bit,
@@ -210,7 +210,7 @@ What it does to the existing rules:
     `atomic_load` carries `conc`, so the function's `performs` is not empty and `is_pure` is false. This is the
     reason §5 chooses a label and not `[]`. It is a gate (§7.3, mutant 7).
   * **The backends**: neither emits `noalias`, `readonly` or `invariant` for a reference (**read**: `grep` of
-    `lex-sys-codegen-llvm/src`, and `aliasing.md` §5 for Cranelift), so no backend assumes a shared reference's
+    `cancho-codegen-llvm/src`, and `aliasing.md` §5 for Cranelift), so no backend assumes a shared reference's
     pointee is stable during a borrow.
 * **It does not touch uniqueness.** `&!` stays what `aliasing.md` says.
 * **Linearity**: `Atomic` is `res`, so a `val` struct cannot hold one (the existing "a `val` type may not hold a
@@ -223,9 +223,9 @@ What it does to the existing rules:
 `hash-stability.md`: a new *node kind* moves tags; a new *name* does not. `Atomic` and the builtins are names (like
 `File` in #65, which "added three prelude type names ... no node kind, no tag moved"). **Expected: no existing hash
 moves**, because the whole feature is edition 8, absent from older files. **Unknown until built** whether adding names
-to the interner's `PRELUDE` list (`lex-sys-syntax/src/ast.rs`) shifts any `DefId` an existing encoding reads. The
-gate for it is mechanical (§8, A0): the 35 golden fixtures of `crates/lex-sys-id/tests/golden.rs` unchanged, and
-`lex-sys ids` over every file in `examples/` and `tests/accept/` byte-identical before and after. If either moves, the
+to the interner's `PRELUDE` list (`cancho-syntax/src/ast.rs`) shifts any `DefId` an existing encoding reads. The
+gate for it is mechanical (§8, A0): the 35 golden fixtures of `crates/cancho-id/tests/golden.rs` unchanged, and
+`cancho ids` over every file in `examples/` and `tests/accept/` byte-identical before and after. If either moves, the
 change is withdrawn, because that is exactly the "rate" `hash-stability.md` measured.
 
 ---
@@ -290,7 +290,7 @@ past 2^63 gets a negative number, not a trap.
 What was verified and what was assumed:
 
 * **Measured**: the existing `fetch_add` the compiler already emits, on Cranelift (arm64 host: `ldaxr`/`stlxr`) and on
-  LLVM (x86-64 and aarch64 targets: `lock xadd`, `ldaxr`/`stlxr`), by disassembling `spawn_join.ls`. The whole LLVM
+  LLVM (x86-64 and aarch64 targets: `lock xadd`, `ldaxr`/`stlxr`), by disassembling `spawn_join.cho`. The whole LLVM
   column, including the x64 and aarch64 instructions, by compiling a module of the five operations with `clang -O2`
   for both triples (baseline CPUs, no LSE).
 * **Read, not run**: Cranelift's x64 column (the `lower.isle` rules and their comments) and aarch64's `ldar`/`stlr`
@@ -324,7 +324,7 @@ label and no new capability.**
   no capability carries it" (`wasi_imports.rs`). An atomic is meaningless without a second thread and the pair is
   always used together. Reuse costs nothing in vocabulary and **gets a refusal for free**: `conc` is in
   `REFUSED_LABELS` for `wasm32-wasip1`, so a program that uses an atomic is refused on WASI with the located refusal
-  threads already get (`tests/reject/spawn_on_wasi.ls`), with no new code. A single-threaded atomic on WASI would
+  threads already get (`tests/reject/spawn_on_wasi.cho`), with no new code. A single-threaded atomic on WASI would
   work but is pointless.
   The cost: `conc` now also tells a reader "shares mutable cells", and a supervisor cannot distinguish "may spawn"
   from "may share state". Nothing needs the difference today (a grant of threads without shared state has no
@@ -333,7 +333,7 @@ label and no new capability.**
 * **No capability.** The authority to touch a cell is **holding a reference to it**, the same as for a `&!` buffer.
   A thread given no `&Atomic` cannot reach one; no operation names a cell by anything but the reference.
 
-### 5.2 What `lex-sys authority` should say
+### 5.2 What `cancho authority` should say
 
 Today a threaded program reports `performs conc`, `bounded: true`. **Unchanged, with one text change**: the line
 should say what the label now means. Suggested wording for the report: `conc: runs threads, and may share cells between them`.
@@ -369,7 +369,7 @@ order chosen below; the user's suggestion that blocking is needed *for* a bounde
 channel that must not burn CPU while empty.
 
 What a retry loop needs that does not exist as a builtin: a **sleep**. **Read**: `grep` of `builtin.rs` finds no
-sleep or yield; `spawn_parallel_sleep.ls` reaches `usleep` through `Ffi("libc")`. A `Poller` wait with a timeout and
+sleep or yield; `spawn_parallel_sleep.cho` reaches `usleep` through `Ffi("libc")`. A `Poller` wait with a timeout and
 no descriptors might serve as a sleep; **not tried**. A pure spin works and burns a core.
 
 ### 6.2 `wait`/`wake` (A2), what it costs
@@ -404,7 +404,7 @@ atomic_wake(a: &r Atomic, i: int, n: int) -> [conc] int           // wakes at mo
 ### 6.3 The channel, as a library
 
 Not a primitive: a `std` module (`std.chan`) once a second program needs it (`AGENTS.md` §7), written in
-`lexsys-table` first. **Messages are `int`s** (a pointer-width leaf, like a thread's payload): the int is an index, a
+`cancho-table` first. **Messages are `int`s** (a pointer-width leaf, like a thread's payload): the int is an index, a
 handle, a count. A message that is a buffer is an index into memory the *receiver's side already owns and lent to the
 sender*; moving a `Box` through a queue needs `join`-style Box crossing (`parallelism.md` §8.6, "not expressible
 yet").
@@ -498,7 +498,7 @@ on these machines are **SB** (x86 and arm), **MP** and **MP-plain** (arm; x86 on
 
 **Power check, which is the point of the gate (the tests must be able to fail).** The whole matrix is re-run with the
 accesses written **plain**, and it has to see the forbidden outcome. Measured so far, **with plain accesses through
-the hole of §2** (`benches/atomics/sb.ls`: 3,000,000 trials per run, no barrier, three runs each):
+the hole of §2** (`benches/atomics/sb.cho`: 3,000,000 trials per run, no barrier, three runs each):
 
 | | Cranelift | LLVM |
 |---|---|---|
@@ -517,7 +517,7 @@ measures the *race*, not any atomic: there are no atomics yet. It is what the ga
 threads (cores 0-5 on the Linux box), repeated 50 times, both backends, all three platforms. Then the same with
 `cas` in a retry loop (A1), and with the two cells on **the same and on different cache lines** (the stress finds
 nothing about false sharing; the timing does, and is reported, not gated). **Pass: exact, every run.**
-Control, measured: the same counter with plain adds loses updates (`race.ls`, 400 M expected, `L` on every run).
+Control, measured: the same counter with plain adds loses updates (`race.cho`, 400 M expected, `L` on every run).
 
 ### 7.3 Mutants: each must be killed
 
@@ -528,7 +528,7 @@ A mutant is the lowering deliberately wrong in one way. Each is a change to the 
 |---|---|---|---|
 | 1 | `atomic_load` lowered as a plain `load` | the **emission test** (the LLVM text must contain `load atomic`; the Cranelift IR/object must contain `atomic_load`/`ldar`) and the **spin test** (`while atomic_load(flag, 0) == 0 {}` must terminate; LLVM at `-O2` hoists a plain load and loops forever) | **invisible to litmus tests and to the object code on x86**, where both are `movq` (§4.2). The emission test is the only thing that sees it there |
 | 2 | `atomic_store` as a plain `store` | **SB** (x86: `mov` instead of `xchg`/`mfence`; arm64 `str` instead of `stlr`) | |
-| 3 | `fetch_add` as `load; add; store` | the stress counter | the loss rate is in `race.ls`'s control |
+| 3 | `fetch_add` as `load; add; store` | the stress counter | the loss rate is in `race.cho`'s control |
 | 4 | `cas` that stores even when the compare fails | the CAS stress and a single-thread unit test | |
 | 5 | `exchange` as a store (drops the old value) | a single-thread unit test: the old value is returned | |
 | 6 | `seq_cst` weakened to `monotonic` in the LLVM text | **SB** on x86 and arm64 (plain-shaped stores) | detectable only if SB sees it, §7.1's power check |
@@ -547,7 +547,7 @@ occupancy never above `cap`, `Empty`/`Full` never returned wrongly, no state whe
 finished.
 
 Honest limits. It checks a **model**, and a model drifts from the code. Two mitigations, both part of the gate:
-the model is **extracted mechanically from `std/chan.ls`** (the functions are restricted to straight-line atomic
+the model is **extracted mechanically from `std/chan.cho`** (the functions are restricted to straight-line atomic
 operations, loops and arithmetic, so this is a small parser, not an interpreter), and the real compiled code runs
 under a **test-only scheduling mode** that yields at every atomic operation with a seeded choice, replaying
 10,000 seeds, whose observable results must be a subset of the model's. Whether the mechanical extraction is as small
@@ -563,21 +563,21 @@ the document says the check is weaker. The scheduling mode is a compiler flag, s
 **Edition 8.** `Atomic` and the builtins are additive names, absent from an older file (`editions.md`'s table of additive and refining changes: "the new
 thing is absent in older editions. Exact, with no tool and no second meaning"), like `fork_clock` (edition 5) and
 `exec` (edition 7). Costs, all one-off: the parser's range (`1..=7` and its message in `parser/items.rs`), the
-`PRELUDE` names, the builtin table, both backends' arms, `docs/editions.md`'s list, `lex-sys introspect`. A file that
+`PRELUDE` names, the builtin table, both backends' arms, `docs/editions.md`'s list, `cancho introspect`. A file that
 declares `edition 8` hashes differently from its edition-7 text (`editions.md` §6.3), which touches only the files
-that adopt it: `std/chan.ls` and the programs that use it. **Rejected: shipping A0 inside edition 7**: edition 7 is
+that adopt it: `std/chan.cho` and the programs that use it. **Rejected: shipping A0 inside edition 7**: edition 7 is
 closed (`editions.md` §6.4, the freeze: new names go into the next edition) and a name added to it could shadow a user's own `Atomic`.
 
 ### 8.2 The stages
 
 | stage | what | gate (can fail) |
 |---|---|---|
-| **A0** | the type, `atomic_new`/`free`/`len`, `load`, `store`, `fetch_add`; both backends; edition 8; the reject fixtures; the litmus harness itself (it needs only these three) | all of: (1) `tests/accept`: the work counter and the ordered slots of §9.2 agree on both backends; (2) **SB, MP, MP-plain, LB, CoRR, 2+2W zero forbidden, in 100 M trials, every cell of the matrix** (IRIW 10 M); (3) the **power check**: plain versions see the forbidden outcome in 10 M trials on every cell; (4) stress: 2/4/8/16 threads x 10 M exact, 50 runs; (5) mutants 1, 2, 3, 6, 7, 8, 9 killed; (6) **rejects**: a plain read or write of an `Atomic`'s word (none exists: a fixture that tries `unbox`/`contents`/destructuring), `atomic_free` while borrowed (`linear`), a `Thread[&r Atomic, R]` escaping its `borrow` (`reference-escapes-region`), a `val struct` holding one, an out-of-range index (trap); (7) the 35 golden hashes and `lex-sys ids` over `examples/` and `tests/accept/` **unchanged**; (8) `lex-sys authority` reports `conc`, and a WASI build is refused; (9) the Cranelift x86-64 object disassembled (§4.2's **read**). **Performance**: uncontended `fetch_add` within **1.3x of C's `__atomic_fetch_add` seq_cst** in the same loop, on both platforms; if not, say so and say whether the indirection of §3.2 is why |
+| **A0** | the type, `atomic_new`/`free`/`len`, `load`, `store`, `fetch_add`; both backends; edition 8; the reject fixtures; the litmus harness itself (it needs only these three) | all of: (1) `tests/accept`: the work counter and the ordered slots of §9.2 agree on both backends; (2) **SB, MP, MP-plain, LB, CoRR, 2+2W zero forbidden, in 100 M trials, every cell of the matrix** (IRIW 10 M); (3) the **power check**: plain versions see the forbidden outcome in 10 M trials on every cell; (4) stress: 2/4/8/16 threads x 10 M exact, 50 runs; (5) mutants 1, 2, 3, 6, 7, 8, 9 killed; (6) **rejects**: a plain read or write of an `Atomic`'s word (none exists: a fixture that tries `unbox`/`contents`/destructuring), `atomic_free` while borrowed (`linear`), a `Thread[&r Atomic, R]` escaping its `borrow` (`reference-escapes-region`), a `val struct` holding one, an out-of-range index (trap); (7) the 35 golden hashes and `cancho ids` over `examples/` and `tests/accept/` **unchanged**; (8) `cancho authority` reports `conc`, and a WASI build is refused; (9) the Cranelift x86-64 object disassembled (§4.2's **read**). **Performance**: uncontended `fetch_add` within **1.3x of C's `__atomic_fetch_add` seq_cst** in the same loop, on both platforms; if not, say so and say whether the indirection of §3.2 is why |
 | **A1** | `atomic_exchange`, `atomic_cas` (answers the old value) | CAS-increment stress, 2-16 threads x 10 M, exact; mutants 4 and 5 killed; **a lock-free stack or the ticket of §9.2 built on it passes its own model check** (§7.4) |
 | **A2** | `atomic_wait`/`atomic_wake` | **only if A3's retry-loop measurement asks for it.** A ping-pong of 1 M handoffs between two threads over wait/wake **beats a sleep-backoff loop's latency** by a measured margin, never loses a wakeup in 100 M handoffs (a hang is the failure, a timeout is the detector), and survives 10 M spurious wakeups injected by a test mode. The macOS symbol question (§6.2) is decided and recorded before any code. If it is not decided, A2 is not built and the channel stays on backoff |
-| **A3** | `std.chan` (or the package), written first in `lexsys-table` | the §7.4 model check of the channel passes on all configurations, and the 10,000-seed replay agrees; 8 producers x 1 consumer, 100 M messages, none lost, none duplicated, per-producer order kept; **the parallel CSV scan's output is byte-identical to the single-thread scan's for 1, 2, 4 and 8 workers, 200 runs each**, and 8 workers are **at least 2.5x faster than one on at least 6 cores** (a measurement, reported with the core count as `parallelism.md` §3.4 does; below that, it is written up as the result and the design is questioned) |
+| **A3** | `std.chan` (or the package), written first in `cancho-table` | the §7.4 model check of the channel passes on all configurations, and the 10,000-seed replay agrees; 8 producers x 1 consumer, 100 M messages, none lost, none duplicated, per-producer order kept; **the parallel CSV scan's output is byte-identical to the single-thread scan's for 1, 2, 4 and 8 workers, 200 runs each**, and 8 workers are **at least 2.5x faster than one on at least 6 cores** (a measurement, reported with the core count as `parallelism.md` §3.4 does; below that, it is written up as the result and the design is questioned) |
 
-A0-A1 need no second program (the counter is `lexsys-table`'s). **A3 moves to `std` only when a second program wants
+A0-A1 need no second program (the counter is `cancho-table`'s). **A3 moves to `std` only when a second program wants
 it** (the broker would be the second). The order A0 -> A1 -> A3 -> (A2 if measured) is deliberate: A2 is the only
 stage that adds a kernel dependency, so it waits for a number.
 
@@ -589,7 +589,7 @@ stage that adds a kernel dependency, so it waits for a number.
 
 * **The hole of §2.** Plain shared mutation across threads remains unchecked. Atomics are *a safe way to share one
   word*, not a safe way to share data.
-* **Shared mutable data structures** (a hash map two threads insert into, `lexsys-cache`'s store). A word is not a
+* **Shared mutable data structures** (a hash map two threads insert into, `cancho-cache`'s store). A word is not a
   table. That needs either a lock (`threads.md` §4's "Mutex-shaped capability", not designed) or an algorithm built
   from CAS, which is a *library* (and a hard one) and is not scheduled.
 * **Messages that own memory.** `join` refuses a `Box` result, so a channel carries an int and the buffer it names
@@ -612,10 +612,10 @@ per spawn, `parallelism.md` §3.4), join the workers in order and merge. The cos
 holds one worker while the others finish. Over-partition (more, smaller jobs than workers) and spawn per job: thread
 start is a `pthread_create`, whose cost is not recorded in this repository (`threads.md` §4 says measuring it is part
 of §5 and it was not done); measure it before choosing the chunk size. **Processes** (`parallelism.md` §3.5) share
-nothing and have been measured to scale (25,180 a second for three processes against 15,638 for one, `lexsys-web`).
+nothing and have been measured to scale (25,180 a second for three processes against 15,638 for one, `cancho-web`).
 For the single work counter on Linux only, the libatomic stopgap of §1.3 works today.
 
-**The CSV scan with A0, as a design to try** (not built; `lexsys-table` writes it first):
+**The CSV scan with A0, as a design to try** (not built; `cancho-table` writes it first):
 
 ```
 res struct Shared { data: Box[[byte]], next: Atomic /* word 0: next chunk */, ready: Atomic /* word k: chunk k done */,
@@ -657,6 +657,6 @@ exists, the rows version has no safe design, and the aggregate version is what t
 
 | | |
 |---|---|
-| `benches/atomics/race.ls` | the data race of §2 that the checker accepts |
-| `benches/atomics/sb.ls` | store buffering with plain accesses: what the litmus gate must be able to see (§7.1) |
-| `benches/atomics/libatomic_counter.ls` | the Linux-only counter stopgap of §1.3 |
+| `benches/atomics/race.cho` | the data race of §2 that the checker accepts |
+| `benches/atomics/sb.cho` | store buffering with plain accesses: what the litmus gate must be able to see (§7.1) |
+| `benches/atomics/libatomic_counter.cho` | the Linux-only counter stopgap of §1.3 |

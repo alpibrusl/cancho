@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Mutation check of `std/bigmod.ls` and `std/rsa.ls` (docs/rsa.md §5.4).
+"""Mutation check of `std/bigmod.cho` and `std/rsa.cho` (docs/rsa.md §5.4).
 
-    python3 scripts/rsa_mutants.py <lex-sys binary>
+    python3 scripts/rsa_mutants.py <cancho binary>
 
 Each mutant is one of the two files with one deliberate bug. Both are built as
-local modules (`bigmod`, `rsa`) beside a copy of `tests/programs/rsa_driver.ls`
+local modules (`bigmod`, `rsa`) beside a copy of `tests/programs/rsa_driver.cho`
 and run against what `conformance/rsa.rs` runs: every supported Wycheproof
 case, the NIST SigVer files, and the refusal rows. Then 2,000 rounds of
 `scripts/rsa_differential.py pow` run against Python. A mutant is killed when
@@ -118,10 +118,10 @@ def run(compiler, sources, driver_src, work, cases, checks):
     paths = []
     for name, text in sources.items():
         text = text.replace(f"module std.{name};", f"module {name};", 1).replace("import std.bigmod;", "import bigmod;")
-        path = os.path.join(work, f"{name}.ls")
+        path = os.path.join(work, f"{name}.cho")
         open(path, "w").write(text)
         paths.append(path)
-    drv, exe = os.path.join(work, "driver.ls"), os.path.join(work, "driver")
+    drv, exe = os.path.join(work, "driver.cho"), os.path.join(work, "driver")
     text = driver_src
     for name in sources:
         text = text.replace(f"import std.{name};", f"import {name};", 1)
@@ -145,8 +145,8 @@ def run(compiler, sources, driver_src, work, cases, checks):
 
 def main():
     compiler = os.path.abspath(sys.argv[1])
-    sources = {n: open(os.path.join(ROOT, f"std/{n}.ls")).read() for n in ("bigmod", "rsa")}
-    driver_src = open(os.path.join(ROOT, "tests/programs/rsa_driver.ls")).read()
+    sources = {n: open(os.path.join(ROOT, f"std/{n}.cho")).read() for n in ("bigmod", "rsa")}
+    driver_src = open(os.path.join(ROOT, "tests/programs/rsa_driver.cho")).read()
     cases, checks = evidence()
     failed = 0
     with tempfile.TemporaryDirectory() as work:

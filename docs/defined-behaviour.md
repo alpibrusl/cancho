@@ -1,14 +1,14 @@
 # Defined behaviour
 
 > **Status: settled for what exists; the open list at the end is what does
-> not exist yet.** Written for M3 ([#1](https://github.com/alpibrusl/lex-sys/issues/1)),
+> not exist yet.** Written for M3 ([#1](https://github.com/alpibrusl/cancho/issues/1)),
 > and implemented in the same slice rather than after it — every rule below
 > has a fixture, and the ones that end a process have a conformance test
 > that runs the binary and checks it died.
 
 C and Rust both leave behaviour open in places, and C leaves it open in the
 places that matter most. This document is the list of those places and what
-lex-sys defines them to instead.
+cancho defines them to instead.
 
 This is not pedantry, and it is not a safety feature bolted on the side. It
 is what makes the rest of the project mean anything: **content-addressing,
@@ -284,15 +284,15 @@ Not by assertion. Every rule above is a fixture:
 
 | Rule | Where |
 |---|---|
-| Overflow traps | `crates/lex-sys/tests/conformance/traps.rs` — builds a program and checks the process died by signal |
+| Overflow traps | `crates/cancho/tests/conformance/traps.rs` — builds a program and checks the process died by signal |
 | Indexing past a slice traps | same, for `xs[5]` and `xs[-1]` on a slice of 3 |
 | `byte_of` traps outside a byte | same, for `byte_of(256)` and `byte_of(-1)` |
 | Division by zero traps | same, and it predates this document |
 | Arena exhaustion traps | same |
-| Wrapping does not trap | `tests/accept/wrapping_arithmetic.ls` |
-| Struct fields run in declaration order | `tests/reject/struct_fields_out_of_order.ls` |
-| A slice is a reference, and `[T]` is not a value | `tests/accept/slices.ls`, `tests/reject/unsized_slice_value.ls` |
-| An oversized literal is refused | `crates/lex-sys-syntax` unit tests |
+| Wrapping does not trap | `tests/accept/wrapping_arithmetic.cho` |
+| Struct fields run in declaration order | `tests/reject/struct_fields_out_of_order.cho` |
+| A slice is a reference, and `[T]` is not a value | `tests/accept/slices.cho`, `tests/reject/unsized_slice_value.cho` |
+| An oversized literal is refused | `crates/cancho-syntax` unit tests |
 
 A rule with no fixture is a rule this project does not have.
 

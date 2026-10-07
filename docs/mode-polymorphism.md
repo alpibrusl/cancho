@@ -153,8 +153,8 @@ Three functions need `[T: val]`, and each is genuinely val-only:
 
 | | |
 |---|---|
-| `unwrap_or` in `examples/tour.ls`, `examples/rational.ls`, `tests/accept/generics.ls` | Drops `fallback` on the `Some` path |
-| `is_ok` in `examples/rational.ls` | Matches and ignores the payload |
+| `unwrap_or` in `examples/tour.cho`, `examples/rational.cho`, `tests/accept/generics.cho` | Drops `fallback` on the `Some` path |
+| `is_ok` in `examples/rational.cho` | Matches and ignores the payload |
 
 They are not workarounds. `unwrap_or` over a resource type would have to
 drop one of two values, which is the thing this language refuses — and
@@ -193,13 +193,13 @@ neither.
 
 | Fixture | Rule | § |
 |---|---|---|
-| `val_generic_holding_a_res.ls` | The leak — a `val`-declared generic at a resource argument | 2 |
-| `val_generic_copied.ls` | The double free, from the same hole | 2 |
-| `unbounded_generic_drops_its_parameter.ls` | An unbounded parameter is checked as `res`, at the definition | 3.1, 4 |
-| `val_bound_violated_at_the_call_site.ls` | `[T: val]` refused where the argument is `res`, and reported *there* | 3.1 |
-| `res_bound_is_not_a_thing.ls` | There is no `[T: res]` | 3.2 |
+| `val_generic_holding_a_res.cho` | The leak — a `val`-declared generic at a resource argument | 2 |
+| `val_generic_copied.cho` | The double free, from the same hole | 2 |
+| `unbounded_generic_drops_its_parameter.cho` | An unbounded parameter is checked as `res`, at the definition | 3.1, 4 |
+| `val_bound_violated_at_the_call_site.cho` | `[T: val]` refused where the argument is `res`, and reported *there* | 3.1 |
+| `res_bound_is_not_a_thing.cho` | There is no `[T: res]` | 3.2 |
 
 | Accepting | Shows |
 |---|---|
-| `mode_polymorphism.ls` | One generic used at both modes, and a `[T: val]` one used at a copyable type |
-| `tests/accept/generics.ls` | Rewritten: `unwrap_or` declares `[T: val]`, which is what it always meant |
+| `mode_polymorphism.cho` | One generic used at both modes, and a `[T: val]` one used at a copyable type |
+| `tests/accept/generics.cho` | Rewritten: `unwrap_or` declares `[T: val]`, which is what it always meant |

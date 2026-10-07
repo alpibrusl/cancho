@@ -3,8 +3,8 @@
 > **Status: a test, and it found one thing — though not the thing it
 > was built to find.**
 >
-> lex-sys computes an expression's value in two places. The constant
-> folder (`crates/lex-sys-ir/src/fold.rs`, [`compile-time.md`](compile-time.md))
+> cancho computes an expression's value in two places. The constant
+> folder (`crates/cancho-ir/src/fold.rs`, [`compile-time.md`](compile-time.md))
 > works it out while compiling, and the backend emits instructions that
 > work it out when the program runs. If the two ever disagree, a program
 > prints one thing when its arithmetic happens to be literal and another
@@ -94,7 +94,7 @@ proves nothing:
   would pass for the wrong reason.
 - **The run-time operands are invisible to both optimisers.** `ival(k)`
   is a pure function, but `k` is a loop variable, so the folder has no
-  constant to evaluate. Cranelift 0.121 has no inliner, and lex-sys
+  constant to evaluate. Cranelift 0.121 has no inliner, and cancho
   gives it one function at a time. Neither of them can see an operand.
 - **A trap in the run-time arm is found without losing results.**
   Standard output is fully buffered when it is not a terminal, so a
@@ -264,7 +264,7 @@ Two reasons this is the right repair and not a documented exception:
 
 - **Nothing a program can do reaches a NaN's payload.** There is no
   `float_of_bits` ([`floating-point.md`](floating-point.md) §4.1), so a
-  lex-sys program cannot construct a NaN with a chosen payload. It only
+  cancho program cannot construct a NaN with a chosen payload. It only
   ever sees NaNs the hardware generated, and their bits are the
   hardware's accident. Canonicalising throws away nothing the program
   put there. The one exception is a NaN returned by foreign code, which

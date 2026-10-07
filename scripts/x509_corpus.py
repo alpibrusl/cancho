@@ -9,7 +9,7 @@ script (keys are random, so a second run writes different bytes).
 - `corpus.pem`: certificates made here with pyca/cryptography, one of each
   key type and signature algorithm `docs/x509.md` §2 names, with every
   extension the parser reads, and the two leniencies.
-- `corpus.txt`: the line `tests/programs/x509_driver.ls` must print for each,
+- `corpus.txt`: the line `tests/programs/x509_driver.cho` must print for each,
   as `scripts/x509_check.py` computes it from pyca's reading.
 - `negative.txt`: `name | tag | hex`, one damaged certificate per refusal,
   each made by editing one field of a good certificate's DER tree and
@@ -105,7 +105,7 @@ NOW = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
 
 
 def name(cn):
-    return x509.Name([x509.NameAttribute(NameOID.ORGANIZATION_NAME, "lex-sys tests"), x509.NameAttribute(NameOID.COMMON_NAME, cn)])
+    return x509.Name([x509.NameAttribute(NameOID.ORGANIZATION_NAME, "cancho tests"), x509.NameAttribute(NameOID.COMMON_NAME, cn)])
 
 
 def build(subject, issuer, key, signer, serial, days, exts, alg=hashes.SHA256(), pss=False, start=NOW):

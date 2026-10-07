@@ -6,14 +6,14 @@
 
 ## 1. What is missing
 
-`examples/lines.ls` is the M3 acceptance criterion: a real command-line
+`examples/lines.cho` is the M3 acceptance criterion: a real command-line
 tool that reads and writes files, counts and filters. It cannot be piped
 into.
 
 Nothing here can. A program can write to the console (`putchar`), read
 and write files (`fs_read`, `fs_write`), and read its command line
 (`arg`). It cannot read the one input every tool in a pipeline gets. So
-`wordcount.ls` counts an *embedded* document, which is a demonstration
+`wordcount.cho` counts an *embedded* document, which is a demonstration
 of counting rather than a program anyone would run.
 
 ---
@@ -111,7 +111,7 @@ and the policy belongs to the program. A line is a policy too — where
 it ends, what to do with a carriage return, what happens when it is
 longer than a buffer — and none of those belong in a compiler.
 
-`examples/tally.ls` is the demonstration: a real `wc` over standard
+`examples/tally.cho` is the demonstration: a real `wc` over standard
 input, built from `getchar` and nothing else.
 
 Writing it found two things worth having found, which is the argument
@@ -184,9 +184,9 @@ header.
 
 | Fixture | Rule | § |
 |---|---|---|
-| `getchar_without_capability.ls` | Reading the console needs an `Io` | 2 |
-| `io_read_undeclared.ls` | An effect performed is an effect declared | 2 |
-| `io_write_does_not_cover_io_read.ls` | The two labels are distinct, and a row saying one does not permit the other | 2.1 |
+| `getchar_without_capability.cho` | Reading the console needs an `Io` | 2 |
+| `io_read_undeclared.cho` | An effect performed is an effect declared | 2 |
+| `io_write_does_not_cover_io_read.cho` | The two labels are distinct, and a row saying one does not permit the other | 2.1 |
 
 The third is the one that matters. It is what makes the rename a real
 distinction rather than a spelling: a function declaring `[io_write]`
@@ -194,5 +194,5 @@ may not call `getchar`, and the refusal names the label it is missing.
 
 | Accepting | Shows |
 |---|---|
-| `stdin_roundtrip.ls` | `getchar` to end of input, a row carrying both labels, and the first fixture with a `//~ STDIN` |
-| `examples/tally.ls` | A real `wc` over standard input: the program that could not be written before, and the one that found the two things in §3.2 |
+| `stdin_roundtrip.cho` | `getchar` to end of input, a row carrying both labels, and the first fixture with a `//~ STDIN` |
+| `examples/tally.cho` | A real `wc` over standard input: the program that could not be written before, and the one that found the two things in §3.2 |

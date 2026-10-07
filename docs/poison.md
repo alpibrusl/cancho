@@ -136,7 +136,7 @@ has. Written that way the element-wise check vectorises fully and is
 **free**: 0.98×, 49 packed, against 0 packed for the same semantics
 written as the builtin.
 
-That is worth knowing for a language that emits its own IR. lex-sys
+That is worth knowing for a language that emits its own IR. cancho
 lowers `+` to `sadd_overflow` plus `trapnz`; a backend emitting a
 wrapping add, the sign test and a flag OR would get the check for
 nothing on an element-wise addition.
@@ -186,8 +186,8 @@ awkward, because a reduction is exactly what a GPU is for.
 
 ## 5. What this does not say
 
-* **Not that lex-sys should switch to poison.** This measures C compiled
-  by clang. lex-sys emits Cranelift, which vectorises none of these
+* **Not that cancho should switch to poison.** This measures C compiled
+  by clang. cancho emits Cranelift, which vectorises none of these
   loops (`gpu.md` §2.3), so today the language would pay poison's extra
   work and collect none of its benefit. This is a measurement of what a
   backend *with* a vectoriser would find.
@@ -236,6 +236,6 @@ before anyone builds it.
 
 | Question | Why it waits |
 |---|---|
-| Does the sign spelling pay off in Cranelift? | §3 found the builtin opaque to *clang*. lex-sys emits `sadd_overflow` + `trapnz` and Cranelift vectorises nothing, so the spelling is free to change and currently buys nothing. It becomes a real question the day the backend has a vectoriser |
+| Does the sign spelling pay off in Cranelift? | §3 found the builtin opaque to *clang*. cancho emits `sadd_overflow` + `trapnz` and Cranelift vectorises nothing, so the spelling is free to change and currently buys nothing. It becomes a real question the day the backend has a vectoriser |
 | A per-element trap that is not a stop | The middle option nobody has costed: a trap that records the element and continues, which is poison with the `where` kept. It costs a store per failure and nothing per success, and no kernel here measures it |
 | The reduction case, properly | §3 says "no partial sum overflowed" is not reassociable. The question that leaves open is whether a *different* claim — no overflow in any association order, which is a bound on the inputs — is cheap enough to be worth having, and that is arithmetic rather than measurement |

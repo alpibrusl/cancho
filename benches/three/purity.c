@@ -2,7 +2,7 @@
  *
  * The attribute is an **unchecked promise**: write it on a function that
  * is not pure and the program miscompiles silently, with no diagnostic
- * ever. That is the difference `docs/purity.md` §1 is about -- lex-sys
+ * ever. That is the difference `docs/purity.md` §1 is about -- cancho
  * computes the same fact and the type checker proves it. */
 #include <stdio.h>
 

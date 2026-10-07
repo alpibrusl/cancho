@@ -9,21 +9,21 @@ Does storing every leaf in 8 bytes cost anything?
 
 | | |
 |---|---|
-| `rgb.ls` / `rgb.c` | `struct { r, g, b: byte }` — 24 bytes here, 3 in C |
-| `ints.ls` / `ints.c` | `struct { r, g, b: int }` — 24 bytes in **both** |
+| `rgb.cho` / `rgb.c` | `struct { r, g, b: byte }` — 24 bytes here, 3 in C |
+| `ints.cho` / `ints.c` | `struct { r, g, b: int }` — 24 bytes in **both** |
 
-The pair is the measurement: lex-sys's two times are nearly equal
+The pair is the measurement: cancho's two times are nearly equal
 because its layout does not change, and C's differ by 2.6× because C's
 does. Everything else about the two programs is identical.
 
 ## The shape question (§3)
 
-Is array-of-structs to struct-of-arrays a lex-sys advantage?
+Is array-of-structs to struct-of-arrays a cancho advantage?
 
 | | |
 |---|---|
-| `aos.ls` / `aos.c` | One array of `{x, y, z: int}`, a loop touching only `.x` |
-| `soa.ls` / `soa.c` | Three arrays, the same loop |
+| `aos.cho` / `aos.c` | One array of `{x, y, z: int}`, a loop touching only `.x` |
+| `soa.cho` / `soa.c` | Three arrays, the same loop |
 
 Transposed **by hand** in both languages, because the answer turned out
 to be that a compiler doing it automatically would not be doing anything
@@ -35,7 +35,7 @@ much. §3 is the four numbers and what they settle.
 ```sh
 cargo build --release
 for f in rgb ints aos soa; do
-    ./target/release/lex-sys build --std benches/layout/$f.ls -o /tmp/$f
+    ./target/release/cancho build --std benches/layout/$f.cho -o /tmp/$f
     cc -O2 benches/layout/$f.c -o /tmp/${f}_c
 done
 ```

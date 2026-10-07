@@ -3,7 +3,7 @@
 
     python3 scripts/tls_record_differential.py <driver> [<count>]
 
-`driver` is `tests/programs/tls_driver.ls` built with the package's files. For
+`driver` is `tests/programs/tls_driver.cho` built with the package's files. For
 each of `count` rounds (default 2,000): a record sealed by `tls_record.seal`
 must equal the RFC 8446 §5.2 record built here with pyca's AEAD for a suite
 picked at random of the three (ChaCha20Poly1305, AESGCM with a 16- or 32-byte

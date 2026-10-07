@@ -15,7 +15,7 @@
 
 ## 1. The result first
 
-`examples/base64/base64.ls` is byte-for-byte GNU `base64` on encode and
+`examples/base64/base64.cho` is byte-for-byte GNU `base64` on encode and
 decode, including the 76-column wrapping, the padding, the trailing
 newline, and the exit status on malformed input. The conformance suite
 pipes the same bytes through both binaries and compares
@@ -78,7 +78,7 @@ could not have been known without doing it.
 ## 4. The rows in anger
 
 ```
-$ lex-sys authority examples/base64/base64.ls --std
+$ cancho authority examples/base64/base64.cho --std
 performs
     args
     err_write
@@ -138,11 +138,11 @@ a row on an idle one.
 It is a bug the port did not cause and did not contain. It surfaced
 because this slice ran the suite under heavy load for an unrelated
 reason, which is the kind of luck that only happens when there is a suite
-to run. `serve.ls` now has `read_request`, which loops to the end of the
+to run. `serve.cho` now has `read_request`, which loops to the end of the
 request line, and ten consecutive full runs are clean.
 
 **Two tests that had quietly stopped testing anything.**
-`tests/reject/unknown_character.ls` asserted that `^` is not a token, and
+`tests/reject/unknown_character.cho` asserted that `^` is not a token, and
 so did a unit test in the lexer. It is now. Both were caught immediately
 — the fixture's stated error no longer matched, and the unit test's
 assertion failed — which is exactly what a fixture that *states its own
@@ -235,13 +235,13 @@ file again. A 1.2 MB file is therefore read six times.
 >
 > The real costs were the two this paragraph missed, and **both have
 > since been fixed without handles**. The loop gave up at **8 MiB**, not
-> the 16 MiB `sort.ls` claimed, so the example could not sort a file of
+> the 16 MiB `sort.cho` claimed, so the example could not sort a file of
 > 8,388,608 bytes or more (§1.1) — it now reaches 1 GiB, with a fixture
 > past the old bound in the conformance suite. And giving up returned
 > the same `-1` as a file that could not be opened (§1.2) — it now
 > answers `-2` and exits 3.
 >
-> What survives is the part `sort.ls` cannot reach from inside itself:
+> What survives is the part `sort.cho` cannot reach from inside itself:
 > neither failure **prints** anything, because there is no standard
 > error (`reach.md` §6). A script can tell them apart; a person cannot.
 
@@ -336,7 +336,7 @@ never touches
 
 `fs_read("")` is **unnarrowed**, and that is correct rather than sloppy:
 this program reads paths its user supplies, so there is no prefix it
-could commit to. Compare `examples/lines.ls`, which narrows to `/tmp`
+could commit to. Compare `examples/lines.cho`, which narrows to `/tmp`
 because it chooses its own paths.
 
 So the report distinguishes *a tool that reads what you tell it to* from
@@ -408,7 +408,7 @@ The numbers are small; the code is not.
 
 * **The ceiling is gone.** Not raised — gone. There is no doubling loop
   to run out of attempts, so the limit is the heap, which is the limit
-  a sort holding the whole file in memory always had. `sort.ls` used to
+  a sort holding the whole file in memory always had. `sort.cho` used to
   carry fifteen attempts and a comment explaining why fifteen.
 * **A status went with it.** `sort` exited **3** with *"file too
   large"*, a status GNU has no equivalent for because GNU spills to
@@ -416,7 +416,7 @@ The numbers are small; the code is not.
   fewer status than GNU rather than one more.
 * **The reason is in hand.** `open_read` answers `Failed(errno)`, so
   the number GNU turns into *No such file or directory* is finally
-  reachable from a lex-sys program. It is not spent yet — printing `2`
+  reachable from a cancho program. It is not spent yet — printing `2`
   is worse than what is printed now, and the table that turns one into
   the other is a library nothing has asked for
   (`file-handles.md` §6).
@@ -446,11 +446,11 @@ runtime is what that constant was worth.
 | Test | Shows |
 |---|---|
 | `base64_agrees_with_coreutils` | §1: the same bytes as `/usr/bin/base64`, both directions, twelve sizes, three malformed inputs, and a megabyte through a 64 KiB arena |
-| `an_http_server_written_in_lex_sys_answers_a_real_request` | §5's bug, after the fix — it is the test that found it |
+| `an_http_server_written_in_cancho_answers_a_real_request` | §5's bug, after the fix — it is the test that found it |
 
 | `sort_agrees_with_gnu_sort` | §9: seven input shapes, named files, several at once, a missing file, and 1.2 MB past the first read — and, with no reference present, that the output is still a sorted permutation of the input |
 
 | Program | Shows |
 |---|---|
-| `examples/base64/base64.ls` | The first port: bits, and a program that owns nothing |
-| `examples/sort/sort.ls` | The second: five owned resources, the heap, and rows at depth — and, since §10, the first program to read through a handle |
+| `examples/base64/base64.cho` | The first port: bits, and a program that owns nothing |
+| `examples/sort/sort.cho` | The second: five owned resources, the heap, and rows at depth — and, since §10, the first program to read through a handle |

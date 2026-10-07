@@ -1,10 +1,10 @@
-# Content-addressed VCS: what lex-sys would need, and what it would not
+# Content-addressed VCS: what cancho would need, and what it would not
 
 > **Status: §7's plateau question is answered, and the gate, op log,
-> attestation and signing are built.** `crates/lex-sys-vcs` exists: the
+> attestation and signing are built.** `crates/cancho-vcs` exists: the
 > `Operation` vocabulary (§4's scoped-down `AddFunction`/
 > `RemoveFunction`/`ModifyBody`, no `budget_cost`), the edition tag
-> (§6), canonical BLAKE3 identity (checked against real `lex-sys-id`
+> (§6), canonical BLAKE3 identity (checked against real `cancho-id`
 > hashes, not invented strings), a `gate.rs` that type-checks a
 > candidate program with no code changed at the boundary from `lex-vcs`
 > (§3's own claim, now checkable), a loose-file op log, and a
@@ -27,8 +27,8 @@
 
 `README.md`'s design commitments table lists the AST as "canonical,
 content-addressable, stable per-unit identity — designed in, never
-retrofitted," and `lex-sys ids` prints exactly that per declaration.
-What lex-sys does not have is anywhere to *put* those identities: a
+retrofitted," and `cancho ids` prints exactly that per declaration.
+What cancho does not have is anywhere to *put* those identities: a
 program here is still a set of files under ordinary git, diffed and
 merged line by line, the one part of `lexlang.org/manifesto`'s own
 argument (§IV, *"discard line-based version control... content-
@@ -43,14 +43,14 @@ prose, and *"the `rule_tag` half transfers whole, and `suggested_
 transform` does not — its own guidelines page shows it beside
 `rule_tag` in the checker's JSON, and in the source it lives in
 `lex-store`/`lex-vcs`/`lex-lsp` as an attestation against an op id,
-which is machinery lex-sys deliberately does not have."* A store is
+which is machinery cancho deliberately does not have."* A store is
 not a nice-to-have layered on top of the checker; it is what the
 other half of that repair loop is made of.
 
 `lex-lang`'s `crates/lex-vcs` already built this once. The question
 this document answers is not *whether* to have an op-log VCS — that
 argument is `agent-errors.md` §2's, made before this document existed
-— it is **how much of `lex-vcs` lex-sys can reuse, and what has to be
+— it is **how much of `lex-vcs` cancho can reuse, and what has to be
 native**, so that building it is a scoped slice rather than a second
 multi-crate project.
 
@@ -70,7 +70,7 @@ be on purpose:**
 |---|---|---|
 | `operation.rs` (1046 ll) | `Operation`, `OperationKind`, `OpId`, `SigId`, `StageId`, `EffectSet`, `BlobId`, `ModuleRef` | Every one of these types is a type alias to `String` or `BTreeSet<String>` — read straight from the source: *"we keep it as `String` here so this crate has no dependency on `lex-store`'s internals"* (`SigId`), *"kept as a string so this crate doesn't pull in `lex-syntax`'s parser"* (`ModuleRef`). The decoupling is stated, not incidental |
 | `apply.rs` + `gate.rs` | Applies an `Operation` to a store state; wraps that with a type-check pass | `gate.rs`'s own header: the gate runs `lex_types::check_program` against the *candidate* program and rejects the op if it does not typecheck. Nothing about the gate's own logic is Lex-specific — it calls out to *a* checker and reads back *a* verdict |
-| `attestation.rs`, `signing.rs`, `merge.rs`, `merge_session.rs`, `issue.rs`, `predicate.rs`, `op_log.rs`, `history_index.rs`, `migrate.rs` | Attestation log, Ed25519 signing (`Keypair`/`verify_message`), whole-function merge, multi-file merge sessions, typed issues, predicate branches, the op log itself, and format migration | All key on `OpId`/`SigId`/`StageId`/`String`, none import `lex_ast`. `lex_vcs::signing` is, incidentally, exactly the Ed25519 verification code `docs/sha512.md` §5 named as unstarted for lex-sys's own runtime — a second, independent reason the two initiatives will eventually meet |
+| `attestation.rs`, `signing.rs`, `merge.rs`, `merge_session.rs`, `issue.rs`, `predicate.rs`, `op_log.rs`, `history_index.rs`, `migrate.rs` | Attestation log, Ed25519 signing (`Keypair`/`verify_message`), whole-function merge, multi-file merge sessions, typed issues, predicate branches, the op log itself, and format migration | All key on `OpId`/`SigId`/`StageId`/`String`, none import `lex_ast`. `lex_vcs::signing` is, incidentally, exactly the Ed25519 verification code `docs/sha512.md` §5 named as unstarted for cancho's own runtime — a second, independent reason the two initiatives will eventually meet |
 
 **Not generic, and named exactly because they are the exception:**
 
@@ -89,24 +89,24 @@ the crate names `lex_ast` at all.
 ## 3. What ports as-is, unmodified, and why that is more than it sounds
 
 `Operation`/`OperationKind`/`OpId`/`SigId`/`StageId`/`EffectSet` need
-no lex-sys-specific type at all: `lex-sys ids` already produces the
+no cancho-specific type at all: `cancho ids` already produces the
 `String` content hashes `SigId`/`StageId` want, and an
-`EffectSet` is already how `lex-sys authority` reports a row —
+`EffectSet` is already how `cancho authority` reports a row —
 `docs/authority.md`'s own JSON output is a sorted list of effect-label
 strings. A `AddFunction { sig_id, stage_id, effects, budget_cost,
-in_file }` op is legible to lex-sys with no field renamed:
+in_file }` op is legible to cancho with no field renamed:
 
-- `sig_id`/`stage_id`: `lex-sys-id`'s own hashes, unchanged.
-- `effects`: the row `lex-sys authority`/`check --output json` already
+- `sig_id`/`stage_id`: `cancho-id`'s own hashes, unchanged.
+- `effects`: the row `cancho authority`/`check --output json` already
   emits as strings.
 - `in_file`: `many-files.md`'s own model — identity by content rather
   than location — is exactly what this field records for lex-lang's
-  multi-module packages, and lex-sys already has multi-file programs
+  multi-module packages, and cancho already has multi-file programs
   with the same property.
 - `budget_cost` (and `ModifyBody`'s `from_budget`/`to_budget`): the one
-  field with **no** lex-sys equivalent, because `budget.md` settled
+  field with **no** cancho equivalent, because `budget.md` settled
   `[budget]` as a language feature with a documented **no** — *"none
-  of those is a property of a program's text."* lex-sys-sourced ops
+  of those is a property of a program's text."* cancho-sourced ops
   simply never populate it, and the field's own `Option` +
   `skip_serializing_if` discipline (already built so a pre-`#247` op
   keeps its `OpId` unchanged) is exactly the mechanism that makes
@@ -115,10 +115,10 @@ in_file }` op is legible to lex-sys with no field renamed:
 
 The apply→gate pipeline (`apply.rs`, `gate.rs`) ports as an *idea*
 with no code changed even at the boundary: `gate.rs` asks one question
-of the *candidate* program — does it typecheck — and lex-sys already
+of the *candidate* program — does it typecheck — and cancho already
 answers that question, at the same total, per-declaration granularity
 `agent-errors.md` §1 measured. Swapping `lex_types::check_program` for
-whatever calls into `lex-sys-ir`'s own checker is the entire seam.
+whatever calls into `cancho-ir`'s own checker is the entire seam.
 
 Attestation, signing, merge sessions, issues, predicates, the op log
 and history index: no seam at all, because none of them read an AST —
@@ -130,7 +130,7 @@ they read `OpId`s, `SigId`s, and the `String`s a `SigId` and an
 ## 4. What has to be native, and what changes about it here
 
 `compute_diff`, `diff_to_ops` and `body_merge` cannot be reused; they
-have to be re-*written*, against `lex-sys-ir`'s own `Expr`/`FnDecl`
+have to be re-*written*, against `cancho-ir`'s own `Expr`/`FnDecl`
 rather than `lex_ast::CExpr`. That is real, new work at roughly the
 scale the existing files are — not a wrapper, not a trait
 parameterization, because the node shapes genuinely differ (no
@@ -141,7 +141,7 @@ no-wildcard walks over every `Expr` variant (built for static
 reachability, `crypto.md` §6, and reused unmodified as the discipline
 for this) are the shape `diff_expr`'s own match should take, so a
 future `Expr` variant that goes unhandled is a build failure here the
-same way it already is in `lex-sys-codegen-llvm`'s `body/expr.rs`.
+same way it already is in `cancho-codegen-llvm`'s `body/expr.rs`.
 
 **One real difference from lex-lang, and it does not need a new
 invariant — `body_merge.rs` already built the thing that resolves
@@ -149,13 +149,13 @@ it.** `ROADMAP.md`'s own #55 row raised the concern first: *"in a
 linear language two edits that each typecheck can together move a
 value twice, so it will conflict far more often here than it does
 there."* Reading `body_merge.rs` finds the answer was already written
-into the design before lex-sys asked the question: *"It makes no type
+into the design before cancho asked the question: *"It makes no type
 judgement — that's the caller's job (the store type-checks the merged
 body through the same gate every other write goes through); a body
 that merges structurally but not by type is still a conflict."* A
 merge that is structurally clean but consumes a linear value twice is
 exactly the case §3's gate already exists to catch — nothing about
-`gate.rs`'s design needs to change for lex-sys, because it was never
+`gate.rs`'s design needs to change for cancho, because it was never
 "trust the merge," it was "verify the candidate" from the start.
 
 What *does* change is the **rate**, and that is worth measuring rather
@@ -163,7 +163,7 @@ than assuming, the same way `hash-stability.md` measured the plateau
 rather than assuming one had happened. In a non-linear language, two
 edits to disjoint subtrees that each typecheck are very likely to also
 typecheck *together* — there is no shared resource for them to race
-over. In lex-sys, "disjoint subtrees, each typechecks alone" is a
+over. In cancho, "disjoint subtrees, each typechecks alone" is a
 strictly weaker guarantee, because a linear value can be consumed once
 in each of two structurally-disjoint edits and the merge will look
 clean node-by-node right up until the gate runs. So: expect a body
@@ -176,13 +176,13 @@ gap against lex-lang's own experience, worth its own future slice
 consumed on both sides *before* declaring the merge clean, rather than
 after), and explicitly not attempted in this document.
 
-`diff_to_ops`'s `OperationKind` vocabulary is narrower for lex-sys than
+`diff_to_ops`'s `OperationKind` vocabulary is narrower for cancho than
 for lex-lang, in the same direction `budget_cost` already is: no
-generics-with-trait-bounds to diff (lex-sys has `[T: val]`, not
+generics-with-trait-bounds to diff (cancho has `[T: val]`, not
 lex-lang's trait system), no closures, no `comptime` macros to expand
 before diffing (`README.md`'s own non-goal: *"no textual or proc
 macros — macros break stable content-addressing"*, which if anything
-makes lex-sys's diff *simpler* to get right than a macro-expanding
+makes cancho's diff *simpler* to get right than a macro-expanding
 language's would be).
 
 ---
@@ -190,16 +190,16 @@ language's would be).
 ## 5. Where the code should live
 
 Not a `Cargo.toml` dependency on `lex-lang`'s `lex-vcs` crate. The
-`lex-os`/`lex-sys` relationship already set this precedent and said
+`lex-os`/`cancho` relationship already set this precedent and said
 why out loud: *"It shares the idea and no code: `lex-os` takes its
 grant from `lex-lang` and checks `.lex`, and does not depend on this
 repository at all."* The same reasoning applies here in the other
-direction — a new `lex-sys-vcs` crate, built against this repository's
+direction — a new `cancho-vcs` crate, built against this repository's
 own types, sharing the *scheme* (canonical JSON, a content-addressed
 `OpId`, `String`-keyed `SigId`/`StageId`/`EffectSet`) with no shared
 code and no cross-repo `Cargo.toml` edge. **Built, and one detail
 changed on contact**: `OpId` is BLAKE3, not `lex-vcs`'s SHA-256 —
-`docs/canonical-ast.md` already chose BLAKE3 for `lex-sys-id`'s own
+`docs/canonical-ast.md` already chose BLAKE3 for `cancho-id`'s own
 hashes and said why, and nothing in that reasoning is specific to an
 AST node rather than an operation, so matching `lex-vcs`'s algorithm
 would have meant a second hash dependency for no reason but
@@ -214,7 +214,7 @@ other. That is worth reconsidering — pulling the ~81% into a shared
 implementations turn out to need the same fix often enough that the
 duplication is expensive to carry, not on the strength of "it would be
 nice to share." Nothing in this repository's own history suggests that
-yet: `lex-os` and `lex-sys` have shared **zero** lines of code since
+yet: `lex-os` and `cancho` have shared **zero** lines of code since
 that relationship was stated, and it has cost nothing measurable.
 
 ---
@@ -224,7 +224,7 @@ that relationship was stated, and it has cost nothing measurable.
 `hash-stability.md` did not find one number, it found two that
 disagree: the *encoder* has moved 20 times with the golden fixtures
 observing none of it, while the *language* moved enough that 71% of
-this repository's own historical `.ls` revisions no longer typecheck,
+this repository's own historical `.cho` revisions no longer typecheck,
 almost half of that from one label rename (`io` → `io_read`/
 `io_write`). An op DAG keyed on content hashes that predate a label
 rename does not become wrong when the rename lands — the hashes are
@@ -276,10 +276,10 @@ documents keep catching in each other.
 
 **Built**: the foundation (`Operation`/`OperationKind`/`OpId`/`SigId`/
 `StageId`/`EffectSet`, canonical BLAKE3 identity, the edition tag from
-§6, checked against real `lex-sys-id` output); the apply→gate pipeline
+§6, checked against real `cancho-id` output); the apply→gate pipeline
 (`gate.rs`, checking §3's claim directly against real code — a
 candidate program either typechecks or is refused with the same rule
-tag `lex-sys check` would report, no `main`-shape check, since an
+tag `cancho check` would report, no `main`-shape check, since an
 operation can be about a library declaration); a loose-file op log
 (`op_log.rs`, one JSON file per `OpId`, idempotent, refusing a record
 whose claimed identity disagrees with its own payload); and a
@@ -289,13 +289,13 @@ same crate `lex-os-audit` uses, deliberately not `std.ed25519`
 (`docs/ed25519.md`'s own module, built for a different consumer, §1
 there). This is the meeting point §8's previous revision named: this
 initiative and `docs/sha512.md` §5's deferred Ed25519 slice, closed by
-the same crate on the Rust side and a purpose-built module on the `.ls`
+the same crate on the Rust side and a purpose-built module on the `.cho`
 side, each serving the consumer that actually needs it rather than one
 serving both.
 
 **Found while scoping what came after this list, not by anything this
 section itself named**: none of the built pieces above can be reached
-from a real `.ls` file yet. Every one of them is exercised only by this
+from a real `.cho` file yet. Every one of them is exercised only by this
 crate's own tests, hand-constructing an `Operation` literal — there is
 no walk from real source to an `Operation`, no way to list what a store
 already contains without already knowing its `OpId`s, and no CLI command

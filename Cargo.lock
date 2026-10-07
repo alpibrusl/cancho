@@ -137,6 +137,91 @@ dependencies = [
 ]
 
 [[package]]
+name = "cancho"
+version = "0.0.0"
+dependencies = [
+ "acli",
+ "cancho-codegen",
+ "cancho-codegen-llvm",
+ "cancho-id",
+ "cancho-ir",
+ "cancho-syntax",
+ "cancho-types",
+ "cancho-vcs",
+ "httparse",
+ "serde",
+ "serde_json",
+ "target-lexicon",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "cancho-codegen"
+version = "0.0.0"
+dependencies = [
+ "cancho-ir",
+ "cancho-syntax",
+ "cancho-types",
+ "cranelift-codegen",
+ "cranelift-frontend",
+ "cranelift-module",
+ "cranelift-native",
+ "cranelift-object",
+ "object",
+ "target-lexicon",
+]
+
+[[package]]
+name = "cancho-codegen-llvm"
+version = "0.0.0"
+dependencies = [
+ "cancho-codegen",
+ "cancho-ir",
+ "cancho-syntax",
+ "cancho-types",
+ "target-lexicon",
+]
+
+[[package]]
+name = "cancho-id"
+version = "0.0.0"
+dependencies = [
+ "blake3",
+ "cancho-syntax",
+]
+
+[[package]]
+name = "cancho-ir"
+version = "0.0.0"
+dependencies = [
+ "cancho-syntax",
+ "cancho-types",
+]
+
+[[package]]
+name = "cancho-syntax"
+version = "0.0.0"
+
+[[package]]
+name = "cancho-types"
+version = "0.0.0"
+
+[[package]]
+name = "cancho-vcs"
+version = "0.0.0"
+dependencies = [
+ "blake3",
+ "cancho-id",
+ "cancho-ir",
+ "cancho-syntax",
+ "ed25519-dalek",
+ "hex",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cc"
 version = "1.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -627,91 +712,6 @@ name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
-
-[[package]]
-name = "lex-sys"
-version = "0.0.0"
-dependencies = [
- "acli",
- "httparse",
- "lex-sys-codegen",
- "lex-sys-codegen-llvm",
- "lex-sys-id",
- "lex-sys-ir",
- "lex-sys-syntax",
- "lex-sys-types",
- "lex-sys-vcs",
- "serde",
- "serde_json",
- "target-lexicon",
- "tempfile",
- "toml",
-]
-
-[[package]]
-name = "lex-sys-codegen"
-version = "0.0.0"
-dependencies = [
- "cranelift-codegen",
- "cranelift-frontend",
- "cranelift-module",
- "cranelift-native",
- "cranelift-object",
- "lex-sys-ir",
- "lex-sys-syntax",
- "lex-sys-types",
- "object",
- "target-lexicon",
-]
-
-[[package]]
-name = "lex-sys-codegen-llvm"
-version = "0.0.0"
-dependencies = [
- "lex-sys-codegen",
- "lex-sys-ir",
- "lex-sys-syntax",
- "lex-sys-types",
- "target-lexicon",
-]
-
-[[package]]
-name = "lex-sys-id"
-version = "0.0.0"
-dependencies = [
- "blake3",
- "lex-sys-syntax",
-]
-
-[[package]]
-name = "lex-sys-ir"
-version = "0.0.0"
-dependencies = [
- "lex-sys-syntax",
- "lex-sys-types",
-]
-
-[[package]]
-name = "lex-sys-syntax"
-version = "0.0.0"
-
-[[package]]
-name = "lex-sys-types"
-version = "0.0.0"
-
-[[package]]
-name = "lex-sys-vcs"
-version = "0.0.0"
-dependencies = [
- "blake3",
- "ed25519-dalek",
- "hex",
- "lex-sys-id",
- "lex-sys-ir",
- "lex-sys-syntax",
- "serde",
- "serde_json",
-]
 
 [[package]]
 name = "libc"

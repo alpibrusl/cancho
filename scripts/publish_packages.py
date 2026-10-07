@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Publish `packages/x509` and `packages/tls` as `.lex-sys-vcs` stores (docs/tls-hooks.md §3).
+"""Publish `packages/x509` and `packages/tls` as `.cancho-vcs` stores (docs/tls-hooks.md §3).
 
     python3 scripts/publish_packages.py            # rebuild the committed stores
     python3 scripts/publish_packages.py --check    # fail if they are not what a fresh publish gives
 
-Each module is published into its own store, `packages/<package>/.lex-sys-vcs/<module>`, requiring the stores of
+Each module is published into its own store, `packages/<package>/.cancho-vcs/<module>`, requiring the stores of
 the modules it imports. `vcs publish --dir` cannot be used: it refuses `--requires`, and `packages/tls` imports
 `packages/x509`. So the order and the requirements are read from each file's `module` and `import` lines, and the
 modules are published one file at a time, as `docs/package-system.md` §7.4 describes. A store records its
@@ -14,7 +14,7 @@ requirements as paths relative to itself, so the layout above is part of the res
 store with the committed one. Publishing is deterministic (`docs/package-system.md` §7.4), so any difference is a
 source that changed without its store.
 
-The compiler is `target/release/lex-sys`, or `LEX_SYS`.
+The compiler is `target/release/cancho`, or `CANCHO`.
 """
 import filecmp
 import os
@@ -26,23 +26,23 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PACKAGES = ["x509", "tls"]
-STORE = ".lex-sys-vcs"
+STORE = ".cancho-vcs"
 
 
 def compiler():
-    exe = os.environ.get("LEX_SYS") or os.path.join(ROOT, "target/release/lex-sys")
+    exe = os.environ.get("CANCHO") or os.path.join(ROOT, "target/release/cancho")
     if not os.path.exists(exe):
-        raise SystemExit("build the compiler first: cargo build --release -p lex-sys")
+        raise SystemExit("build the compiler first: cargo build --release -p cancho")
     return exe
 
 
 def modules(tree):
-    """{module: (package, file, [imported modules that are not std])} for every `.ls` of the packages in `tree`."""
+    """{module: (package, file, [imported modules that are not std])} for every `.cho` of the packages in `tree`."""
     found = {}
     for pkg in PACKAGES:
         d = os.path.join(tree, "packages", pkg)
         for name in sorted(os.listdir(d)):
-            if not name.endswith(".ls"):
+            if not name.endswith(".cho"):
                 continue
             text = open(os.path.join(d, name)).read()
             mod = re.search(r"^module\s+(\w+)\s*;", text, re.M)

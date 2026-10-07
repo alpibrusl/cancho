@@ -32,8 +32,8 @@ perimeter answers 'which host?'. Two layers, one grant."* The budget is
 the third, and it is charged in `lex-os-supervisor`'s mediation loop —
 log → reversibility → perimeter → **budget → charge** → allow.
 
-`lex-sys` owns the first layer, and owns it well: the effect row *is*
-the answer, `lex-sys authority` reports it, and `docs/authority.md` §2
+`cancho` owns the first layer, and owns it well: the effect row *is*
+the answer, `cancho authority` reports it, and `docs/authority.md` §2
 shows it falls out of reachability the compiler already computes.
 
 ## 2. The units settle it
@@ -78,7 +78,7 @@ particular, checked exactly.
 
 ## 4. What a program does today, and why it is enough
 
-`examples/pipeline.ls` runs jobs against a budget right now, with no
+`examples/pipeline.cho` runs jobs against a budget right now, with no
 language support:
 
 ```
@@ -113,7 +113,7 @@ is not a budget.
 
 The number comes from **whoever is doing the budgeting**, and that is
 not the program. It is the embedder — which for Lex is its host, and for
-`lex-sys` is `lex-os`, where the number is in a signed manifest and the
+`cancho` is `lex-os`, where the number is in a signed manifest and the
 charge happens before the effect runs.
 
 ---
@@ -124,11 +124,11 @@ The useful half of the request is not enforcement, it is **legibility**:
 a supervisor deciding whether to run a program wants to know what the
 program can reach, in a form it can check against a grant.
 
-That is `lex-sys authority`, and this slice gives it a machine-readable
+That is `cancho authority`, and this slice gives it a machine-readable
 form:
 
 ```sh
-$ lex-sys authority examples/tour.ls --std --output json
+$ cancho authority examples/tour.cho --std --output json
 {
   "effects": ["args", "ffi", "fs_read", "fs_write", "heap", "io_write"],
   "labels": [
@@ -153,8 +153,8 @@ pub struct CheckReport {
 }
 ```
 
-— so a `lex-sys` program can be checked against a manifest the same way,
-by the same wall, without `lex-sys` learning what a cent is.
+— so a `cancho` program can be checked against a manifest the same way,
+by the same wall, without `cancho` learning what a cent is.
 
 ---
 
@@ -162,6 +162,6 @@ by the same wall, without `lex-sys` learning what a cent is.
 
 | Question | Why it waits |
 |---|---|
-| Wiring this into `lex-os-check` | A change in that repository, against a `Grant` whose vocabulary is its own. §5 is the half `lex-sys` owes |
+| Wiring this into `lex-os-check` | A change in that repository, against a `Grant` whose vocabulary is its own. §5 is the half `cancho` owes |
 | An `--output json` for `check` | Diagnostics as data, which is a separate and larger surface than one report |
 | A cost model, if a static bound is ever wanted | §3. It needs one backend, or a unit that is honest about being abstract |

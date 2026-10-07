@@ -6,7 +6,7 @@ Status: **built**, edition 5, both backends.
 
 Every scan for one byte -- the end of a line, the next delimiter, the first byte of a needle -- was a loop of `text[i] == b`, one
 bounds-checked load and one branch per byte. On Cranelift that loop runs at about 0.3 GB/s; clang vectorises it on LLVM, but only
-inside the function that holds it. libc's `memchr` reads a word or a vector at a time on every target. `lexsys-tools` (#214) wrote its
+inside the function that holds it. libc's `memchr` reads a word or a vector at a time on every target. `cancho-tools` (#214) wrote its
 own Horspool search rather than use `std.bytes`' `find`, and its line splitter is that loop; `find` and `count_byte` were both that loop.
 
 ## 2. The primitive
@@ -21,8 +21,8 @@ start. No effect row, no capability.
 
 Both backends call `memchr` and turn its null into -1. Cranelift passes the byte widened to 64 bits, not as C's 32-bit `int`: the callee
 reads the low 32 bits either way, and 64 bits is the width a program that declares `memchr` itself gives it (`int` is 64 bits at
-lex-sys's crossing, `reach.md` §3). With 32 bits the two declarations disagreed and Cranelift refused the module as a compiler bug
-(found writing `tests/accept/index_of_byte_beside_own_memchr.ls`). LLVM declares `memchr` only when the program does not.
+cancho's crossing, `reach.md` §3). With 32 bits the two declarations disagreed and Cranelift refused the module as a compiler bug
+(found writing `tests/accept/index_of_byte_beside_own_memchr.cho`). LLVM declares `memchr` only when the program does not.
 
 `std.bytes` is now edition 5 (editions are per file and additive, so every importer is unaffected):
 
@@ -49,14 +49,14 @@ space is better searched for without it.
 
 ## 4. What it is checked by
 
-* `tests/accept/index_of_byte.ls`, on **both backends** (`tests/conformance/backends.rs`). Each answer is checked against a byte loop:
+* `tests/accept/index_of_byte.cho`, on **both backends** (`tests/conformance/backends.rs`). Each answer is checked against a byte loop:
   * the first, last and a middle byte, an absent byte, an empty slice;
   * a sub-slice that answers from its own start and does not see past its end;
   * 0 and 255 at every position of a 300-byte slice;
   * `bytes.find` with false starts, the needle at the very end, a needle longer than the text, an empty needle and an empty text;
   * `bytes.count_byte`, including -1 and 353, which are not bytes.
-* `tests/accept/index_of_byte_beside_own_memchr.ls`, on both backends: a program that declares `memchr` itself.
-* `tests/reject/index_of_byte_is_edition_five.ls`: an edition-4 file does not see the name.
+* `tests/accept/index_of_byte_beside_own_memchr.cho`, on both backends: a program that declares `memchr` itself.
+* `tests/reject/index_of_byte_is_edition_five.cho`: an edition-4 file does not see the name.
 
 **Mutants: twelve, eleven killed.** Killed, on each backend: no null check (the absent byte answers a garbage offset), the answer
 and -1 swapped; on Cranelift, searching one byte short; the builtin at edition 4 (the reject fixture); and in `std.bytes`, `find`

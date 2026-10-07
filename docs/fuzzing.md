@@ -3,7 +3,7 @@
 > **Status: a test, and it found four bugs, all in the printer.**
 >
 > Every other suite here checks programs someone chose to write. A
-> fuzzer writes programs nobody chose: it takes every `.ls` file in the
+> fuzzer writes programs nobody chose: it takes every `.cho` file in the
 > repository, damages each one a little, and feeds the result through
 > the whole compiler. Three properties must hold for every mutant.
 > Nothing panics. What parses prints back to the same tree. What the
@@ -45,7 +45,7 @@ libFuzzer, and this repository pins stable Rust 1.98.1
 (`rust-toolchain.toml`) with no dependencies outside Cranelift. A fuzzer
 that needs a second toolchain would run on somebody's laptop, and never
 in CI. So this one is an ordinary integration test,
-`crates/lex-sys/tests/fuzz.rs`, in under 400 lines. It is stable, has no
+`crates/cancho/tests/fuzz.rs`, in under 400 lines. It is stable, has no
 dependencies and is deterministic. A seed and an iteration count
 reproduce a run exactly on either CI target.
 
@@ -58,7 +58,7 @@ compiler and makes small, well-formed edits to it (§2).
 
 ## 2. The mutator
 
-**Seeds.** Every `.ls` file under the repository, found by walking it:
+**Seeds.** Every `.cho` file under the repository, found by walking it:
 331 files and 563,500 bytes, from `tests/` (273), `examples/` (26),
 `benches/` (20) and `std/` (12). The reject fixtures are included on
 purpose. Each one is a program one edit away from a refusal, which is
@@ -134,9 +134,9 @@ The first four were in the printer. None needed the checker, and none
 was a panic. The printer is where the canonical form is written, and
 [`canonical-ast.md`](canonical-ast.md) needs it to be exact. Hashes are
 computed from the tree, not the text, so no hash was ever wrong. But
-`lex-sys print` output that reparses to a different program is a
+`cancho print` output that reparses to a different program is a
 silently wrong answer, which the language exists to refuse. (Only the
-`print` command uses the printer. `lex-sys-id` hashes the tree
+`print` command uses the printer. `cancho-id` hashes the tree
 directly.)
 
 ### 4.1 `(e,)` lost its comma
@@ -153,7 +153,7 @@ accepts.**
 
 The fix keeps the comma (`print.rs`, `tuple`). The design did not move:
 `(e,)` is still refused, by the same rule and now with a message that
-names it. `tests/reject/one_tuple.ls` pins the refusal, which "there
+names it. `tests/reject/one_tuple.cho` pins the refusal, which "there
 is no one-tuple to write" had said could not exist. `tuples.md` §2.1 is
 corrected in place.
 
@@ -231,7 +231,7 @@ read too narrowly. A stack overflow is not a panic Rust's `catch_unwind`
 can intercept -- it aborts the process outright, which is why this
 finding could not be caught, reported and deduplicated the way the
 four in the printer were, and had to be bisected by hand instead
-(§5's `LEX_SYS_FUZZ_ITERATIONS`, narrowed until one iteration count
+(§5's `CANCHO_FUZZ_ITERATIONS`, narrowed until one iteration count
 crashed and the one below it did not).
 
 The fix lowers `DEPTH` to 32: measured empirically as under half of 68,
@@ -251,8 +251,8 @@ In CI it is part of `cargo test --workspace`: 3,000 mutants, seed
 that fails the build on any finding. A long run is a local command:
 
 ```sh
-LEX_SYS_FUZZ_ITERATIONS=150000 LEX_SYS_FUZZ_SEED=0x0badcafe \
-    cargo test --release -p lex-sys --test fuzz -- --nocapture
+CANCHO_FUZZ_ITERATIONS=150000 CANCHO_FUZZ_SEED=0x0badcafe \
+    cargo test --release -p cancho --test fuzz -- --nocapture
 ```
 
 Both variables take decimal or `0x` hex. A value that does not parse
@@ -261,15 +261,15 @@ runs here found that out the hard way: `0x0badcafe` was silently
 replaced by the default seed, and the "second seed" repeated the first
 exactly, down to the last count.
 
-A finding is written to `$TMPDIR/lex-sys-fuzz/finding-N.ls` as one line
-of space-separated tokens. `lex-sys print` makes it readable. A tree
+A finding is written to `$TMPDIR/cancho-fuzz/finding-N.cho` as one line
+of space-separated tokens. `cancho print` makes it readable. A tree
 mismatch is headed by `//` lines naming the first node that differs,
-before and after. `LEX_SYS_FUZZ_REPLAY=<file>` runs one saved finding
+before and after. `CANCHO_FUZZ_REPLAY=<file>` runs one saved finding
 through the same pipeline:
 
 ```sh
-LEX_SYS_FUZZ_REPLAY=/tmp/lex-sys-fuzz/finding-0.ls \
-    cargo test --release -p lex-sys --test fuzz a_saved_finding_replays
+CANCHO_FUZZ_REPLAY=/tmp/cancho-fuzz/finding-0.cho \
+    cargo test --release -p cancho --test fuzz a_saved_finding_replays
 ```
 
 There is no automatic minimizer. The four bugs above were cut down by
@@ -302,9 +302,9 @@ hand, and each became a unit test beside the code it fixed.
 | Test | What it pins |
 |---|---|
 | `mutants_never_crash_the_compiler` (`tests/fuzz.rs`) | §3: the three properties on 3,000 mutants, and the reach floors |
-| `a_saved_finding_replays` (`tests/fuzz.rs`) | §5: one finding, when `LEX_SYS_FUZZ_REPLAY` names it; nothing otherwise |
+| `a_saved_finding_replays` (`tests/fuzz.rs`) | §5: one finding, when `CANCHO_FUZZ_REPLAY` names it; nothing otherwise |
 | `a_one_part_tuple_keeps_its_comma` (`print.rs`) | §4.1 |
 | `a_label_argument_keeps_its_escapes` (`print.rs`) | §4.2 |
 | `prefix_and_postfix_bind_tighter_than_every_binary_operator` (`print.rs`) | §4.3, and that no operator binds as tightly as a prefix |
 | `a_numeric_literal_before_a_dot_keeps_its_parentheses` (`print.rs`) | §4.4 |
-| `tests/reject/one_tuple.ls` | §4.1: `(e,)` is refused, by the rule `()` meets |
+| `tests/reject/one_tuple.cho` | §4.1: `(e,)` is refused, by the rule `()` meets |

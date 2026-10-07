@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A dudect-style timing test of `std.x25519` (docs/tls-assurance.md §6).
 
-    lex-sys build --std [--backend B] tests/programs/x25519_timing.ls -l tick -L . -o timing
+    cancho build --std [--backend B] tests/programs/x25519_timing.cho -l tick -L . -o timing
     python3 scripts/x25519_timing.py ./timing [<samples per test>]
 
 `tick` is the cycle counter `scripts/gcm_timing.py` describes. Each test

@@ -22,13 +22,13 @@
 
 ## 2. Files and API
 
-`packages/x509/x509.ls` is 1,598 lines, so verification is two new modules beside it, each under 2,000 lines
-(`crates/lex-sys/tests/files.rs`):
+`packages/x509/x509.cho` is 1,598 lines, so verification is two new modules beside it, each under 2,000 lines
+(`crates/cancho/tests/files.rs`):
 
 | File | Module | What |
 |---|---|---|
-| `packages/x509/names.ls` | `x509_names` | a host as a DNS name or an IP address; matching a SAN; reading and applying name constraints |
-| `packages/x509/verify.ls` | `x509_verify` | the root store; building a path; the checks of `docs/tls-pure.md` §5.2 on each certificate |
+| `packages/x509/names.cho` | `x509_names` | a host as a DNS name or an IP address; matching a SAN; reading and applying name constraints |
+| `packages/x509/verify.cho` | `x509_verify` | the root store; building a path; the checks of `docs/tls-pure.md` §5.2 on each certificate |
 
 ```
 // The store: the roots of a PEM bundle, each as a 3-byte length and its DER, the format of
@@ -69,7 +69,7 @@ each of these (`pathological::*`, `rfc5280::*`).
   says so.
 - **No certificate twice in one path.** That refuses a loop instead of following it (`docs/tls-pure.md` §5.2), and it covers
   `pathological::intermediate-cycle-*`. *Corrected (review finding D-2, #209): "twice" is by position in what the server sent,
-  not by content (`verify.ls`, `in_path`). The same self-issued CA certificate sent at two positions can stand twice in one
+  not by content (`verify.cho`, `in_path`). The same self-issued CA certificate sent at two positions can stand twice in one
   path. That is no loop: each hop still costs a signature of the 64-signature budget below and one of the depth slots, so the
   search stays bounded, and the second copy adds no authority the first did not have.*
 - **A budget.** At most 64 signature verifications per `verify`. x509-limbo's `pathological-chain-*` cases send 100
@@ -136,7 +136,7 @@ DNS host only a `dNSName` entry. A wildcard is the whole left-most label, needs 
 label. A dNSName entry that is not a valid name (empty labels, a `*` anywhere else) matches nothing; it does not refuse the
 certificate. *Corrected (review finding D-5, #209): it does not when no CA above it has nameConstraints. Under a constrained CA
 every dNSName of the SAN is constrained (§5.3), and one that is not a valid name cannot be placed inside or outside a subtree,
-so it refuses the chain as `x509-name-constraint` (`names.ls`, `constraints_ok`): a leaf naming `example.com` and
+so it refuses the chain as `x509-name-constraint` (`names.cho`, `constraints_ok`): a leaf naming `example.com` and
 `example.com.` under a constrained intermediate is refused. That is the safe side; webpki skips such an entry instead.*
 
 ### 5.3 Name constraints
@@ -149,7 +149,7 @@ constraints. Among the 30,379 certificates of `limbo.json`, the constraint subtr
   subtree with a leading dot (`.example.com`) matches only proper subdomains. An empty subtree matches every name.
 - **`iPAddress` subtrees** are an address and a mask of the same length, 8 or 32 bytes. An address of the other family never
   matches. A mask that is not contiguous ones then zeros is unreadable (below). *Corrected (review finding D-3, #209): only
-  when it is read, which is when a certificate below carries an `iPAddress` of the subtree's family (`names.ls`, `subtrees`).
+  when it is read, which is when a certificate below carries an `iPAddress` of the subtree's family (`names.cho`, `subtrees`).
   The pass that reads the constraints once with no name checks a subtree's length, not its mask, so a CA with such a mask is
   accepted above a chain with no address of that family. Whenever the constraint would apply, it is refused: no name escapes
   it.*
@@ -253,10 +253,10 @@ At least 12, each killed by §6.1 to §6.3:
 
 | File | Lines | What |
 |---|---|---|
-| `packages/x509/names.ls` (`x509_names`) | 565 | the host as a DNS name or an IPv4 or IPv6 address; SAN matching; name constraints |
-| `packages/x509/verify.ls` (`x509_verify`) | 778 | `store_load`, `verify`, the refusal tags; path building, the checks of §4, the signatures |
-| `packages/x509/x509.ls` | 1,665 | four OIDs for RSASSA-PSS's parameters (SHA-256, -384, -512, MGF1), from `scripts/x509_oids.py` and checked against `openssl asn1parse`; `is_ip_literal`, moved here from `packages/tls/message.ls` so the two share one copy (`conformance/duplication.rs`) |
-| `tests/programs/x509_verify_driver.ls` | 203 | a store line and chain lines, from standard input |
+| `packages/x509/names.cho` (`x509_names`) | 565 | the host as a DNS name or an IPv4 or IPv6 address; SAN matching; name constraints |
+| `packages/x509/verify.cho` (`x509_verify`) | 778 | `store_load`, `verify`, the refusal tags; path building, the checks of §4, the signatures |
+| `packages/x509/x509.cho` | 1,665 | four OIDs for RSASSA-PSS's parameters (SHA-256, -384, -512, MGF1), from `scripts/x509_oids.py` and checked against `openssl asn1parse`; `is_ip_literal`, moved here from `packages/tls/message.cho` so the two share one copy (`conformance/duplication.rs`) |
+| `tests/programs/x509_verify_driver.cho` | 203 | a store line and chain lines, from standard input |
 | `scripts/x509_limbo.py verify`, `x509_matrix.py`, `x509_online.py`, `x509_verify_mutants.py` | | §6's four gates |
 
 `conformance/x509_verify.rs` replays all three committed files (`tests/vectors/x509/verify/`), the matrix and the real chains on
@@ -384,7 +384,7 @@ limbo found these before any of them reached `main`. Each is corrected where its
   | `x509-expired`, `x509-not-yet-valid` | `certificate_expired` (45) |
   | `x509-key-usage`, `x509-critical-extension`, `x509-unsupported-algorithm`, `x509-key-size` | `unsupported_certificate` (43) |
   | `x509-bad-signature`, `x509-name-mismatch`, `x509-not-ca`, `x509-path-too-long`, `x509-name-constraint`, `x509-chain-too-large`, `x509-decode` | `bad_certificate` (42) |
-- **`tests/programs/tls_driver.ls`.** `C` takes a PEM root bundle and a time instead of pins. `tls_many` checks against
+- **`tests/programs/tls_driver.cho`.** `C` takes a PEM root bundle and a time instead of pins. `tls_many` checks against
   `clock_unix_ms`. Its first version passed `clock_ms`, a monotonic clock, and every certificate was "not yet valid".
 - **Every recording was made again with a CA:**
   - the tlslite-ng traces: an RSA-2048 CA for the RSA leaf, a P-256 CA for the ECDSA leaf;

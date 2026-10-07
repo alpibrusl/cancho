@@ -19,9 +19,9 @@
 routes the request line and answers with JSON:
 
 ```
-$ lex-sys vcs fetch --lock examples/serve/net.lock \
-      --store packages/net-sockets/.lex-sys-vcs -o /tmp/net-sockets
-$ lex-sys build examples/serve/serve.ls /tmp/net-sockets/*.ls --std -o serve && ./serve 8080 &
+$ cancho vcs fetch --lock examples/serve/net.lock \
+      --store packages/net-sockets/.cancho-vcs -o /tmp/net-sockets
+$ cancho build examples/serve/serve.cho /tmp/net-sockets/*.cho --std -o serve && ./serve 8080 &
 $ curl -i http://127.0.0.1:8080/health
 HTTP/1.1 200 OK
 Content-Length: 11
@@ -32,16 +32,16 @@ Content-Type: application/json
 ```
 
 The `fetch` line pulls in `net.sockets` (`packages/net-sockets/`), this
-repository's first real `lex-sys-vcs` package (`docs/package-system.md`
+repository's first real `cancho-vcs` package (`docs/package-system.md`
 §6): the eight `extern fn`s against libc it declares used to live in
-`serve.ls` itself, byte-for-byte duplicated in
-`examples/results_stub/results_stub.ls`, and now live in one published,
+`serve.cho` itself, byte-for-byte duplicated in
+`examples/results_stub/results_stub.cho`, and now live in one published,
 locked, fetched file both `import` instead.
 
 That is a real socket, a real `accept`, and a real client. The test
 harness makes the same request from Rust over loopback and checks the
 status line, the body and the declared length
-(`an_http_server_written_in_lex_sys_answers_a_real_request`), because a
+(`an_http_server_written_in_cancho_answers_a_real_request`), because a
 claim of this shape is worth exactly what it is tested with.
 
 > **And it was worth it.** The first version read the request with a
@@ -94,7 +94,7 @@ This cuts both ways, and §5 is the cut.
 | A REST/HTTP server | **Yes** — `examples/serve/` | Sockets are libc, and every argument is a scalar or a byte slice |
 | An HTTP client | **Yes** | `connect` is the same shape as `bind` |
 | Reading and writing files | **Yes**, without FFI at all | `Fs(prefix)` builtins, narrowable to a directory (`filesystem.md`) |
-| A command-line tool | **Yes** | `Args`, `examples/lines.ls`, `examples/wordfreq/` |
+| A command-line tool | **Yes** | `Args`, `examples/lines.cho`, `examples/wordfreq/` |
 | Several processes | **Yes** | `fork` returns an `int`, and an `int` is a value |
 | Threads | **No** | Function values exist now, but `pthread_create`'s `void *arg` is still `c_ptr`-opaque and un-crossable (§3.3); `threads.md`'s own `spawn`/`join` is proposed, not yet built |
 | TLS | **Yes** (corrected below, twice) | `SSL_CTX *`/`SSL *` cross (§3.1), and `-lssl -lcrypto` links (`docs/foreign-linking.md`) — `examples/tls_client/`, a real handshake |
@@ -110,7 +110,7 @@ This cuts both ways, and §5 is the cut.
 > already accepted for an "integer-shaped pointer" like a file
 > descriptor, made a first-class type instead of a convention. TLS is
 > marked **Partial** rather than **Yes** for a reason that has nothing
-> to do with the type system: `lex-sys build` only ever links libc, and
+> to do with the type system: `cancho build` only ever links libc, and
 > a real TLS client needs `-lssl -lcrypto`, which the build pipeline
 > has no way to ask for yet (`opaque-pointers.md` §5). A Postgres
 > client is unaffected by this correction only because nothing has
@@ -158,7 +158,7 @@ this whole language is built to define away.
 
 So the rule is:
 
-> **A value crosses into a lex-sys program only if the checker can say
+> **A value crosses into a cancho program only if the checker can say
 > where it came from.**
 
 An `int` qualifies: it is a number, and a number's provenance is nothing.
@@ -177,7 +177,7 @@ does, by claiming nothing the checker cannot back up.
 
 ### 3.1.1 And smuggling one does not help
 
-The declaration is trusted — nothing checks a lex-sys signature against
+The declaration is trusted — nothing checks a cancho signature against
 the C header — so `malloc` can be declared to return `int` and the
 compiler will believe it:
 
@@ -256,7 +256,7 @@ proposed and not yet built.
 
 ### 3.4 A return crosses at a width this document never checked
 
-§2 states the rule as "everything else crosses at lex-sys's own widths,"
+§2 states the rule as "everything else crosses at cancho's own widths,"
 and that is true and safe for a **parameter**: this backend writes a
 full 64-bit register, C reads the low bits its own narrower parameter
 type declares, and the bits above that are never read, so a caller
@@ -287,7 +287,7 @@ exceed 2^31 bytes, however rarely in practice), so they must stay wide
 too. There is no way to tell these apart from the declaration's `int`
 alone — `close`, `connect`, `labs` and `read` are four different real C
 widths (`int`, `int`, `long`, `ssize_t`, the first two the same by
-coincidence) spelled identically at the lex-sys boundary, and reading
+coincidence) spelled identically at the cancho boundary, and reading
 uniformly at 64 bits is silently right for two of them and silently
 wrong for the other two whenever the value is negative.
 
@@ -319,8 +319,8 @@ a real `bind`/`accept` failure. `read`/`write` are unchanged: their real
 return is `ssize_t`, not `int`, and belongs on the wide side of this
 split.
 
-`tests/accept/foreign_narrow_return.ls` checks `access`'s real `-1`
-directly, on both backends; `crates/lex-sys/tests/conformance/backends.
+`tests/accept/foreign_narrow_return.cho` checks `access`'s real `-1`
+directly, on both backends; `crates/cancho/tests/conformance/backends.
 rs`'s `the_two_backends_agree_on_a_narrow_foreign_return` is the same
 claim through the CLI.
 
@@ -423,9 +423,9 @@ Filed in §6 rather than answered here.
 > argument above frames this as a question of taste — whether a host is
 > worth narrowing to — and that framing is now incomplete. Measured
 > against `lex-os`'s real grant, **two of its three dimensions cannot be
-> decided without it**: a lex-sys program that runs a network server
+> decided without it**: a cancho program that runs a network server
 > reports `args` and `ffi`, so a grant saying `network: None` has nothing
-> to refuse it with. The row is the prerequisite for lex-sys code running
+> to refuse it with. The row is the prerequisite for cancho code running
 > under a grant at all, not a refinement of the report.
 >
 > **And corrected (#74): [`net.md`](net.md) §1.** *"A host is a thing
@@ -509,12 +509,12 @@ checked.
 
 | Fixture | Rule | § |
 |---|---|---|
-| `foreign_result_is_a_pointer.ls` | A foreign result is a scalar, and a handle is a pointer | 3.1 |
-| `foreign_effect_undeclared.ls` | The row still has to say `ffi` | 1.1 |
-| `ffi_without_capability.ls` | And the capability is still the only way in | 1.1 |
+| `foreign_result_is_a_pointer.cho` | A foreign result is a scalar, and a handle is a pointer | 3.1 |
+| `foreign_effect_undeclared.cho` | The row still has to say `ffi` | 1.1 |
+| `ffi_without_capability.cho` | And the capability is still the only way in | 1.1 |
 
 | Test | Shows |
 |---|---|
-| `an_http_server_written_in_lex_sys_answers_a_real_request` | §1, over a real socket, both routes, with the declared length checked against the body |
+| `an_http_server_written_in_cancho_answers_a_real_request` | §1, over a real socket, both routes, with the declared length checked against the body |
 | `the_authority_report_names_the_syscalls_the_row_cannot` | §5.2: the row is `ffi("libc")`, and the symbols are what say *server* |
-| `examples/serve/serve.ls` | The program |
+| `examples/serve/serve.cho` | The program |

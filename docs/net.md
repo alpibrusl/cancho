@@ -30,7 +30,7 @@
 >
 > [`under-a-grant.md`](under-a-grant.md) §5 promoted
 > [`reach.md`](reach.md) §6's `Net(host)` row from a question of taste to
-> the prerequisite for lex-sys code running under a `lex-os` grant. This
+> the prerequisite for cancho code running under a `lex-os` grant. This
 > is the design, written before the code the way `filesystem.md` was.
 
 ---
@@ -60,8 +60,8 @@ egress      ["results.demo.internal:443"]
 Two fields, and both are **outbound**. There is no inbound notion in the
 grant at all.
 
-> **So the one program lex-sys has does the direction the grant does not
-> describe, and the grant describes a direction lex-sys has no program
+> **So the one program cancho has does the direction the grant does not
+> describe, and the grant describes a direction cancho has no program
 > for.**
 
 That is not a defect in either. It is the reason this document exists
@@ -161,7 +161,7 @@ Against a grant, the mapping is then direct and is the thing
 
 ### 4.1 Decided: the builtin resolves names, after checking them
 
-[`connect.md`](connect.md) §1 found that a lex-sys program can only ever
+[`connect.md`](connect.md) §1 found that a cancho program can only ever
 connect to an **address**, while a `lex-os` grant only ever names
 **hosts**, so whoever turns one into the other also owns the check. There
 were two candidates: a builtin that calls `getaddrinfo`, or the
@@ -170,7 +170,7 @@ It checks the name against the bound its `Net` capability was narrowed
 to, and only then looks it up. A name outside the bound is refused
 before any lookup happens.
 
-The deciding requirement is that **lex-sys is usable without `lex-os`**.
+The deciding requirement is that **cancho is usable without `lex-os`**.
 Under the other answer, a program on an ordinary host could not use a
 host name at all (`fetch` takes four octets today and nothing else), and
 nothing would narrow where it connects, since the only check would live
@@ -204,7 +204,7 @@ answers the shape question [`connect.md`](connect.md) §6 left open.
 construction, the perimeter should write its pinned addresses into the
 guest's hosts file when it provisions the box. Until it does, a host with
 several addresses can resolve differently in the box than on the host.
-That is a change in `lex-os`, not here, and nothing in lex-sys depends on
+That is a change in `lex-os`, not here, and nothing in cancho depends on
 it: a mismatch fails closed, as a refused connection.
 
 **What this does not settle.** The builtin's failure for a name outside
@@ -272,14 +272,14 @@ half with an asker is the one the grant does not ask about.
 > fourth and third program clearing the same bar, not a new one.
 
 > **Recounted (#129): inbound 4.** `examples/results_stub/` is the
-> lex-sys port of `lex-os/crates/results-stub` -- the single
+> cancho port of `lex-os/crates/results-stub` -- the single
 > allowed-egress target the lex-os demo's manifest narrows to
-> (`lex-os` issue #10), and the lex-sys epic issue's own "lex-os
-> component ported/written in lex-sys" -- `socket`/`bind`/`listen`/
+> (`lex-os` issue #10), and the cancho epic issue's own "lex-os
+> component ported/written in cancho" -- `socket`/`bind`/`listen`/
 > `accept` again, the same declarations `serve/`/`collect`/
 > `agent_supervisor` already made; a fourth program clearing the same
 > bar, unlike `vsock/`/`agent_guest/`/`agent_supervisor`, which are
-> lex-sys *analogues* of a lex-os exchange rather than a port of a real
+> cancho *analogues* of a lex-os exchange rather than a port of a real
 > lex-os source file.
 
 > **Recounted: outbound 5.** `examples/tls_client/` (`docs/foreign-linking.md`)
@@ -294,7 +294,7 @@ half with an asker is the one the grant does not ask about.
 > **Recounted (#141): inbound still 4 programs, now 3 declaring files.**
 > `serve/` and `results_stub/` no longer write `extern fn bind`/`listen`/
 > `accept` themselves -- both `import net.sockets`
-> (`packages/net-sockets/sockets.ls`, `docs/package-system.md` §6), this
+> (`packages/net-sockets/sockets.cho`, `docs/package-system.md` §6), this
 > repository's first real published package, built because the two files
 > had duplicated the same eight `extern fn`s and two byte helpers,
 > byte-for-byte, since #129. The four programs still ask for inbound
@@ -305,7 +305,7 @@ half with an asker is the one the grant does not ask about.
 
 > **Recounted: outbound still 5 programs, now 4 declaring files.**
 > `examples/fetch/` no longer writes `extern fn connect` itself -- it
-> `import`s `net.connect` (`packages/net-connect/connect.ls`), a second
+> `import`s `net.connect` (`packages/net-connect/connect.cho`), a second
 > real package, alongside `net.sockets` for `socket`/`read`/`write`/
 > `close`: the first program here with two real dependencies at once,
 > composed with no new tooling (`docs/package-system.md`'s own status
@@ -321,9 +321,9 @@ half with an asker is the one the grant does not ask about.
 > `serve/`/`results_stub/` and the move above made for `fetch/`, finished
 > for the rest of the corpus rather than left as the "candidates, not
 > done here" #141 named them. Inbound is 4 programs across the one
-> `packages/net-sockets/sockets.ls` file now; outbound is 5 programs
-> across `packages/net-connect/connect.ls` and `examples/tls_client/
-> socket.ls` alone, the latter still on edition 1 for the reason given
+> `packages/net-sockets/sockets.cho` file now; outbound is 5 programs
+> across `packages/net-connect/connect.cho` and `examples/tls_client/
+> socket.cho` alone, the latter still on edition 1 for the reason given
 > above. Nothing about what `Net` would need to cover changed on either
 > side -- every program still asks for exactly the socket authority it
 > always did; nine files' worth of duplicated declarations collapsed
@@ -331,30 +331,30 @@ half with an asker is the one the grant does not ask about.
 
 > **Recounted: outbound down to its package file alone, the last
 > straggler found by a standing check rather than a fresh hunt.**
-> `examples/tls_client/socket.ls` -- kept on edition 1 for the reason
+> `examples/tls_client/socket.cho` -- kept on edition 1 for the reason
 > given above, and for that reason not part of the move above -- no
 > longer declares its own `extern fn socket`/`connect`/`close` or its
 > own `address`: `docs/next-phase.md` §4.1's duplicate-body conformance
 > check (built after this document's own count had gone stale twice, by
 > the same hunt-vs-verify argument `next-phase.md` §1--2 makes) found
-> the copy `packages/net-connect/connect.ls`'s own header already named
+> the copy `packages/net-connect/connect.cho`'s own header already named
 > as one of the files its declarations were extracted from, never
 > migrated. It now `import`s `net.connect`/`net.sockets` and forwards
 > into them, verified against a real OpenSSL server over an actual
 > TLS 1.3 handshake. It is still its own file (edition 1, a marker of
-> *that file* rather than the program, `tls_client.ls` needing edition 3
+> *that file* rather than the program, `tls_client.cho` needing edition 3
 > for `c_ptr`) and still declares no builtin `Net` capability, for the
 > reason already on record -- but it declares no `extern fn` of its own
 > either now, just two `pub fn`s forwarding into the packages. One of
 > those two is not named `connect_to`: the backend's own symbol for a
 > function is its name alone, with no module qualifier
-> (`crates/lex-sys-codegen/src/abi.rs`), so a second `pub fn connect_to`
+> (`crates/cancho-codegen/src/abi.rs`), so a second `pub fn connect_to`
 > compiled into the same program as `net.connect`'s own collides at the
 > object file -- `clang -c` refuses the emitted LLVM IR outright, past
 > what the type checker's own module-scoped resolution catches. Named
 > `socket.open` instead. Inbound is still 4 programs across
-> `packages/net-sockets/sockets.ls` alone; outbound is now 5 programs
-> across `packages/net-connect/connect.ls` alone -- both halves down to
+> `packages/net-sockets/sockets.cho` alone; outbound is now 5 programs
+> across `packages/net-connect/connect.cho` alone -- both halves down to
 > one declaring file each, matching.
 
 That is the honest state up to here. Both halves of the two-asker bar
@@ -382,7 +382,7 @@ which needs the remaining socket operations to become builtins too.
   label is a *name to be checked*, and turning it into an address is
   either a builtin of its own or the perimeter's job — §5's program
   will say which. *It did not choose one (#77).* It showed that a
-  lex-sys program can only ever connect to an address, while a grant
+  cancho program can only ever connect to an address, while a grant
   only ever names hosts, so whoever resolves also owns the check
   ([`connect.md`](connect.md) §1). *Decided (#83): a `connect`
   builtin resolves, after checking the name against its capability's

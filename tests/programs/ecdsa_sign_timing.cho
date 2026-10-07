@@ -1,0 +1,121 @@
+// `docs/ecdsa-sign.md` §6: the timing of `std.ecdsa_sign.sign`, for the
+// dudect-style test `scripts/ecdsa_sign_timing.py` runs.
+//
+// Standard input is one header line, the digest signed every time (32
+// bytes in lowercase hex), then records in lowercase hex, each a
+// private key and the added randomness (32 bytes each), back to back
+// with no separator.
+//
+// Everything is read and decoded before anything is timed. Each call's
+// time is read with the `tick` library's `cancho_tick` (a cycle
+// counter), so this program is built with `-l tick -L <dir>`; the times
+// are printed, one a line, once every call has run.
+import std.buffer;
+import std.ecdsa_sign;
+import std.io;
+
+extern fn cancho_tick[&f](ffi: &f Ffi("tick")) -> [ffi("tick")] int;
+
+fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap, io_read] buffer.Buffer {
+    var out = text;
+    var c = getchar(io);
+    while c >= 0 {
+        out = buffer.push(heap, out, byte_of(c));
+        c = getchar(io);
+    }
+    return out;
+}
+
+fn nibble(c: int) -> [] int {
+    if c >= 97 {
+        return c - 87;
+    }
+    return c - 48;
+}
+
+fn unhex_into[&s, &o](s: &s [byte], start: int, out: &!o [byte]) -> [] int {
+    var j = 0;
+    while j < len(out) {
+        out[j] = byte_of(nibble(int_of(s[start + 2 * j])) * 16 + nibble(int_of(s[start + 2 * j + 1])));
+        j = j + 1;
+    }
+    return 0;
+}
+
+// Decodes the records into `all`, then times every call into `times`.
+fn time_into[&f, &s, &a, &t, &w](ffi: &f Ffi("tick"), s: &s [byte], all: &!a [byte], times: &!t [int], work: &!w [int]) -> [ffi("tick")] int {
+    unhex_into(s, 65, all);
+    region r {
+        let digest = alloc_slice[r](32, byte_of(0));
+        unhex_into(s, 0, digest);
+        let sig = alloc_slice[r](64, byte_of(0));
+        var i = 0;
+        while i < len(times) {
+            let at = i * 64;
+            let key = all[at..at + 32];
+            let extra = all[at + 32..at + 64];
+            let t0 = cancho_tick(ffi);
+            ecdsa_sign.sign(digest, key, extra, sig, work);
+            times[i] = cancho_tick(ffi) - t0;
+            i = i + 1;
+        }
+    }
+    return 0;
+}
+
+fn time_all[&h, &i, &f, &s](heap: &!h Heap, io: &!i Io, ffi: &f Ffi("tick"), s: &s [byte]) -> [heap, io_write, ffi("tick")] int {
+    // The digest's 64 digits and a newline, then 128 digits a record.
+    let count = (len(s) - 65) / 128;
+    // On the heap: a region holds at most one 64 KiB chunk.
+    let all = box_slice(heap, count * 64, byte_of(0));
+    let times = box_slice(heap, count, 0);
+    let work = box_slice(heap, ecdsa_sign.work_len(), 0);
+    borrow mut all as &!x in {
+        borrow mut times as &!y in {
+            borrow mut work as &!z in {
+                time_into(ffi, s, contents(x), contents(y), contents(z));
+            }
+        }
+    }
+    borrow times as &y in {
+        let t = contents(y);
+        var i = 0;
+        while i < len(t) {
+            io.print_int(io, t[i]);
+            io.newline(io);
+            i = i + 1;
+        }
+    }
+    unbox_slice(heap, all);
+    unbox_slice(heap, times);
+    unbox_slice(heap, work);
+    return 0;
+}
+
+fn run[&h, &i, &f](heap: &!h Heap, io: &!i Io, ffi: &f Ffi("tick")) -> [heap, io_read, io_write, ffi("tick")] int {
+    var text = buffer.empty(heap, 1 << 20);
+    text = read_stdin(heap, io, text);
+    borrow text as &b in {
+        time_all(heap, io, ffi, buffer.bytes(b));
+    }
+    buffer.drop(heap, text);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(args);
+    release(fs);
+    let tick = narrow(ffi, "tick");
+    borrow tick as &f in {
+        borrow mut heap as &!h in {
+            borrow mut io as &!i in {
+                run(h, i, f);
+            }
+        }
+    }
+    release(tick);
+    release(heap);
+    release(io);
+    return 0;
+}

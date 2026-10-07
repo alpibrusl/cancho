@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Compare the checker port (`check.ls`) with the Rust checker's declarations half.
+"""Compare the checker port (`check.cho`) with the Rust checker's declarations half.
 
     check_diff.py [--std] ORACLE PORT file...
 
-ORACLE is `check_declarations` (`crates/lex-sys-ir/examples/check_declarations.rs`), PORT is
-`check.ls` built; both read a source file on standard input and print `OK` or `ERR rule start end`.
+ORACLE is `check_declarations` (`crates/cancho-ir/examples/check_declarations.rs`), PORT is
+`check.cho` built; both read a source file on standard input and print `OK` or `ERR rule start end`.
 Both print `OK` or `ERR rule start end`, and must print the same.
-With `--std` each program is parsed with the standard library, as `lex-sys check --std` does: the
-oracle and the port are given a stream of files (see `driver.ls`), the program's and then every
+With `--std` each program is parsed with the standard library, as `cancho check --std` does: the
+oracle and the port are given a stream of files (see `driver.cho`), the program's and then every
 file of `std/`, and the port is `check_files`.
 Exit status 1 if any compared file differs.
 """
@@ -19,7 +19,7 @@ def stream(path):
     """The program's file and then the library's, as `FILE <length>` records."""
     global STD
     if STD is None:
-        STD = [open(f, "rb").read() for f in sorted(glob.glob("std/*.ls"))]
+        STD = [open(f, "rb").read() for f in sorted(glob.glob("std/*.cho"))]
     out = b""
     for data in [open(path, "rb").read()] + STD:
         out += b"FILE %d\n" % len(data) + data

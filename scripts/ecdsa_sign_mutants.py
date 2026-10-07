@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Mutation check of `std/ecdsa_sign.ls`, `std.bigmod.load_secret`,
-`std.ecdh.scalar_ok` and `packages/x509/key.ls` (docs/ecdsa-sign.md §5.5).
+"""Mutation check of `std/ecdsa_sign.cho`, `std.bigmod.load_secret`,
+`std.ecdh.scalar_ok` and `packages/x509/key.cho` (docs/ecdsa-sign.md §5.5).
 
-    python3 scripts/ecdsa_sign_mutants.py <lex-sys binary>
+    python3 scripts/ecdsa_sign_mutants.py <cancho binary>
 
 Each mutant is one of the files with one deliberate bug. The three std files
 are built as local modules (`ecdsa_sign`, `bigmod`, `ecdh`) beside a copy of
-`tests/programs/ecdsa_sign_driver.ls` and the package's `x509.ls` and
-`key.ls`, then run against the evidence `conformance/ecdsa_sign.rs` and
+`tests/programs/ecdsa_sign_driver.cho` and the package's `x509.cho` and
+`key.cho`, then run against the evidence `conformance/ecdsa_sign.rs` and
 `scripts/ecdsa_sign_differential.py` use:
 - RFC 6979 A.2.5's signatures, their DER, the added randomness, and every
   refusal of the signer;
@@ -129,12 +129,12 @@ def killed(compiler, sources, work, pairs):
                               .replace("import std.ecdh;", "import ecdh;")
                               .replace("import std.ecdsa_sign;", "import ecdsa_sign;"))
     files = {
-        "bigmod.ls": sources["bigmod"].replace("module std.bigmod;", "module bigmod;", 1),
-        "ecdh.ls": std_local(sources["ecdh"].replace("module std.ecdh;", "module ecdh;", 1)),
-        "ecdsa_sign.ls": std_local(sources["ecdsa_sign"].replace("module std.ecdsa_sign;", "module ecdsa_sign;", 1)),
-        "key.ls": std_local(sources["key"]),
-        "x509.ls": open(os.path.join(ROOT, "packages/x509/x509.ls")).read(),
-        "driver.ls": std_local(open(os.path.join(ROOT, "tests/programs/ecdsa_sign_driver.ls")).read()),
+        "bigmod.cho": sources["bigmod"].replace("module std.bigmod;", "module bigmod;", 1),
+        "ecdh.cho": std_local(sources["ecdh"].replace("module std.ecdh;", "module ecdh;", 1)),
+        "ecdsa_sign.cho": std_local(sources["ecdsa_sign"].replace("module std.ecdsa_sign;", "module ecdsa_sign;", 1)),
+        "key.cho": std_local(sources["key"]),
+        "x509.cho": open(os.path.join(ROOT, "packages/x509/x509.cho")).read(),
+        "driver.cho": std_local(open(os.path.join(ROOT, "tests/programs/ecdsa_sign_driver.cho")).read()),
     }
     for name, text in files.items():
         open(os.path.join(work, name), "w").write(text)
@@ -164,13 +164,13 @@ ECDSA_DRIVER = None
 def main():
     global ECDSA_DRIVER
     compiler = os.path.abspath(sys.argv[1])
-    sources = {m: open(os.path.join(ROOT, f"std/{m}.ls")).read() for m in ("ecdsa_sign", "bigmod", "ecdh")}
-    sources["key"] = open(os.path.join(ROOT, "packages/x509/key.ls")).read()
+    sources = {m: open(os.path.join(ROOT, f"std/{m}.cho")).read() for m in ("ecdsa_sign", "bigmod", "ecdh")}
+    sources["key"] = open(os.path.join(ROOT, "packages/x509/key.cho")).read()
     pairs = evidence()
     failed = 0
     with tempfile.TemporaryDirectory() as work:
         ECDSA_DRIVER = os.path.join(work, "ecdsa_driver")
-        subprocess.run([compiler, "build", "--std", os.path.join(ROOT, "tests/programs/ecdsa_driver.ls"), "-o", ECDSA_DRIVER],
+        subprocess.run([compiler, "build", "--std", os.path.join(ROOT, "tests/programs/ecdsa_driver.cho"), "-o", ECDSA_DRIVER],
                        check=True, capture_output=True)
         dead, why = killed(compiler, sources, work, pairs)
         assert dead is False, f"the unmutated files must pass: {why}"

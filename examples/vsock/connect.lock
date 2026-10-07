@@ -1,9 +1,9 @@
 {
   "entries": {
     "connect": {
-      "sig_id": "8aa3391a8814ea8cc575f294eda65b82eeb95d50b55bb6eeee40da77806989da",
-      "stage_id": "8aa3391a8814ea8cc575f294eda65b82eeb95d50b55bb6eeee40da77806989da",
-      "source_hash": "ed7a26493332298beedb13d53a6e5c68b0512bf1ea2600556fe48c2ce2471d51"
+      "sig_id": "1d003d80c8269c93c25c285053e5318c14e47c23e17ed335435be3ee5cb63eb9",
+      "stage_id": "1d003d80c8269c93c25c285053e5318c14e47c23e17ed335435be3ee5cb63eb9",
+      "source_hash": "a111ac6872d0c17c2af63bb8f2f81fe52e1c1fefea5301165e83b277d7ad6385"
     }
   }
 }

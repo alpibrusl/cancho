@@ -1,0 +1,15 @@
+//~ ERROR is a local binding, not a function
+//~ RULE not-a-function
+
+// `docs/function-values.md` §4.2, corrected in place: a local binding
+// *can* be called now, if its type is `fn(...) -> [row] R`
+// (`tests/accept/function_value.cho`). A binding that holds a plain
+// `int` is still not a thing to call, and the refusal says which of
+// the two this one is.
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args);
+    let value = 7;
+    return value(1);
+}

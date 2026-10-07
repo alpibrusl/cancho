@@ -48,7 +48,7 @@ For each case, OpenSSL's outcome:
   fatal alert ("SSL alert number"), or one of its own (":error:").
 
 `packages/tls`'s outcome is the case's expectation, which
-`crates/lex-sys/tests/conformance/tls.rs` checks against the client on every
+`crates/cancho/tests/conformance/tls.rs` checks against the client on every
 test run (`tests/vectors/tls/liar.txt`). Each line is the case, both outcomes
 and `agree`; `alert` when they differ in the alert alone, since RFC 8446 lets an
 implementation choose between some (§6.2: "SHOULD"); `known` when they differ
@@ -71,7 +71,7 @@ import tls_liar  # noqa: E402
 
 IDLE = 0.4  # seconds of quiet that end a read of what the client sent
 CCS = bytes([20, 3, 3, 0, 1, 1])
-# What `packages/tls` offers (`packages/tls/message.ls`, `client_hello`), so
+# What `packages/tls` offers (`packages/tls/message.cho`, `client_hello`), so
 # the two clients are asked the same question: its groups, its TLS 1.3 and
 # TLS 1.2 suites in its order, and its signature schemes.
 OFFER = [

@@ -24,7 +24,7 @@ restarting the process, and reading a request that **carries a body**.
 
 ## 2. `collect/`: a bounded accept loop that reads one
 
-`examples/collect/collect.ls` takes a port and a count on the command
+`examples/collect/collect.cho` takes a port and a count on the command
 line, accepts that many connections in a loop, and for each one reads
 a `POST` request in full — headers, then the body, by `Content-Length`,
 the same accounting `examples/report/`'s `exchange` sends by
@@ -60,7 +60,7 @@ Both halves of `Net` have now cleared the two-asker bar.
 
 ## 5. What writing it found
 
-Not in `collect.ls` itself: reused unchanged from `docs/connect.md` §8's
+Not in `collect.cho` itself: reused unchanged from `docs/connect.md` §8's
 answer, its body streams straight to standard output rather than being
 copied into a scratch slice, so a region's 64 KiB arena cap is never in
 play here either.
@@ -90,14 +90,14 @@ declare by hand against `Ffi("libc")`:
 - **`bind(net, port) -> [net_in(bound)] int`** folds `socket`,
   `setsockopt(SO_REUSEADDR)` and `bind` into one call, the inbound
   mirror of `connect`'s `socket`+`connect` (`docs/connect.md` §9). It
-  builds the same `struct sockaddr_in` `serve.ls`'s own `serve`
+  builds the same `struct sockaddr_in` `serve.cho`'s own `serve`
   function builds by hand: family bytes, the port big-endian, and
   `INADDR_ANY` — eight zero bytes where `connect`'s has four octets,
   because a listener binds every address the host has, not one it
   chose.
 - **`listen(fd, backlog) -> [] int`** and **`accept(fd) -> [] int`**
   are thin: `listen(2)` and `accept(2)` with the peer address ignored
-  (`NULL, NULL`, the same as `serve.ls`'s own `accept(libc, fd, 0, 0)`).
+  (`NULL, NULL`, the same as `serve.cho`'s own `accept(libc, fd, 0, 0)`).
   Neither takes a capability — the fd is what `bind` already proved
   the authority for — so both are fixed signatures, checked the way
   `Builtin::Close` is, not the way `connect` and `bind` are.
@@ -152,7 +152,7 @@ is not one of the three builtins this slice adds). Declaring `extern
 fn close` in that test alongside `bind` failed to compile:
 `IncompatibleSignature` on the linker symbol `close`, because it is
 declared twice at two different widths. Every `extern fn` in this
-compiler crosses a lex-sys `int` as 64 bits, whatever the C function's
+compiler crosses a cancho `int` as 64 bits, whatever the C function's
 own parameter or return width — `abi.rs`'s `leaves_into` always
 answers `types::I64` for `Type::Int`, foreign calls included. `bind`'s
 own internal `close` (the socket-failure path, `docs/net.md` §3's
@@ -183,5 +183,5 @@ own — not answered by avoiding it once.
 | `an_inbound_agent_reads_several_requests_in_a_row` | `collect` accepts three connections in a row without restarting, and reads each body whole | 2 |
 | `collect_reads_a_body_larger_than_one_read` | a body that arrives across more than one `read`, larger than the 4 KiB a request line alone would need, drained concurrently with the exchange | 2, 5 |
 | `the_network_programs_are_counted` | inbound 2, outbound 2 | 4 |
-| `a_lex_sys_listener_accepts_a_real_connection` | `bind`/`listen`/`accept`, built, answer a real client over loopback | 6 |
+| `a_cancho_listener_accepts_a_real_connection` | `bind`/`listen`/`accept`, built, answer a real client over loopback | 6 |
 | `binding_the_wrong_port_traps` | `bind`'s port is checked against the capability's bound, the inbound mirror of `connecting_to_the_wrong_port_traps` | 6.1 |

@@ -1,16 +1,16 @@
-# A package system for lex-sys
+# A package system for cancho
 
 > **Status: design, not yet built** — except §4.2's own recheck step,
-> which is: **`lex-sys vcs resolve <store-dir>`** re-parses and
+> which is: **`cancho vcs resolve <store-dir>`** re-parses and
 > re-typechecks the source behind every pin in a real second
-> `.lex-sys-vcs` store under today's compiler, and refuses if a pin no
+> `.cancho-vcs` store under today's compiler, and refuses if a pin no
 > longer matches its own source, its source no longer type-checks, or a
 > source blob is missing. This is §6's own proposed smallest slice, done,
 > and it needed a real prerequisite this document had not named: neither
 > `OpLog` nor `Manifest` store a declaration's actual source, only its
-> hash — `Blobs` (`crates/lex-sys-vcs/src/blobs.rs`), a small
+> hash — `Blobs` (`crates/cancho-vcs/src/blobs.rs`), a small
 > content-addressed store for exactly that, is the piece that was
-> missing. **§4.5's naming half is built too**: `lex-sys vcs lock --store
+> missing. **§4.5's naming half is built too**: `cancho vcs lock --store
 > <dep-store> -o <file> <name>...` looks a name up in a dependency's
 > manifest and pins it by hash into a lock file, refusing if the name is
 > unpublished or ambiguous; `vcs resolve --lock <file> <store-dir>` scopes
@@ -20,10 +20,10 @@
 > may carry its own `requires/*.json`, written by `vcs publish
 > --requires <lock>:<dep-store>`, and `vcs resolve`/`vcs fetch` walk it
 > however deep, detecting a cycle and catching a diamond conflict rather
-> than guessing. **§4.7's first fetch step is built too**: `lex-sys vcs fetch
+> than guessing. **§4.7's first fetch step is built too**: `cancho vcs fetch
 > --lock <file> --store <dep-store> -o <dir>` re-verifies a lock the same
 > way `vcs resolve --lock` does, then writes each distinct verified
-> source to `-o` as `<source_hash>.ls`. It needed no compiler change at
+> source to `-o` as `<source_hash>.cho`. It needed no compiler change at
 > all — `modules.md` §4.2 already means a program is the set of files
 > named on the command line and `import` already resolves a name against
 > whichever of them declares it, so a fetched file is `import`-able the
@@ -32,7 +32,7 @@
 > scope for naming ("distribution, not naming"); `standard-library.md`
 > §2.1 named it "the decision to revisit first when a package story
 > exists." Both waited on two things that did not exist yet and now do:
-> `lex-sys-vcs` (`vcs-publish.md`, #123–#134 — a real content-addressed
+> `cancho-vcs` (`vcs-publish.md`, #123–#134 — a real content-addressed
 > store with a gate) and editions (`editions.md`, #85–#92 — a way for a
 > file to stay compatible with an older compiler without a version
 > number). This document is otherwise still the first slice: not a
@@ -42,9 +42,9 @@
 > effectively already made.
 >
 > **A first real package now exists: `net.sockets`
-> (`packages/net-sockets/sockets.ls`, #141).** Not a fixture built to
-> exercise the pipeline — `examples/serve/serve.ls` and
-> `examples/results_stub/results_stub.ls` had independently declared the
+> (`packages/net-sockets/sockets.cho`, #141).** Not a fixture built to
+> exercise the pipeline — `examples/serve/serve.cho` and
+> `examples/results_stub/results_stub.cho` had independently declared the
 > same eight `extern fn`s against libc and the same two byte-writing
 > helpers since #129, an organic duplication this project's own rule
 > (`standard-library.md`: "a feature earns its way in when a program
@@ -52,7 +52,7 @@
 > `vcs publish` had never hit: every store published here before now held
 > only ordinary functions with bodies, and `cmd_publish` looked up a
 > lowered IR function to read its effects, which an `extern fn`
-> declaration — a signature and nothing else, per `lex-sys-id`'s own
+> declaration — a signature and nothing else, per `cancho-id`'s own
 > `identify()` — does not have. Fixed by reading effects from
 > `Program::externs` instead when no lowered function matches, the row
 > the declaration itself carries, not one a lowering pass computed. Both
@@ -62,7 +62,7 @@
 > extraction.
 >
 > **A second real package, `net.connect` (`packages/net-connect/
-> connect.ls`), and the first program with two real dependencies at
+> connect.cho`), and the first program with two real dependencies at
 > once.** Six more examples turned out to duplicate `net.sockets`'
 > declarations independently -- `examples/fetch/`, `examples/report/`,
 > `examples/collect/`, `examples/vsock/`, `examples/agent_guest/`,
@@ -71,7 +71,7 @@
 > ones (`collect`/`agent_supervisor`, joining `serve`/`results_stub`)
 > want `net.sockets` alone, the outbound ones want `net.sockets` plus
 > `connect`, which is now its own package rather than joining
-> `net.sockets`, for the same reason. `examples/fetch/fetch.ls` migrated
+> `net.sockets`, for the same reason. `examples/fetch/fetch.cho` migrated
 > onto both, proving what §6 flagged as unbuilt is not the same question
 > as "does more than one dependency work at all": **it already does**,
 > with no new tooling -- two independent `vcs lock`/`vcs fetch` pairs,
@@ -84,11 +84,11 @@
 > before now.
 >
 > **Found and fixed a real, separate compiler gap, not a package-system
-> one**: `lex-sys authority`'s `foreign_symbols` field was not
+> one**: `cancho authority`'s `foreign_symbols` field was not
 > reachability-pruned the way effects and `Program::funcs` are -- it
 > listed every `extern fn` declared in the compiled unit, called or not,
 > so importing a package that declares more than a program calls made
-> the report over-name what the program reaches. Fixed in `lex-sys-ir`
+> the report over-name what the program reaches. Fixed in `cancho-ir`
 > (`fold::collect_extern_refs`/`reachable_externs`), read-only over
 > `Program::externs` so `Callee::Extern`'s index and codegen are
 > untouched. `docs/authority.md` §3 and `docs/under-a-grant.md` §6 have
@@ -96,19 +96,19 @@
 >
 > **The other five of those six duplicating examples migrated too.**
 > `examples/report/`, `examples/vsock/`, and `examples/agent_guest/` now
-> `import net.sockets`/`net.connect`, the same shape as `fetch.ls`;
+> `import net.sockets`/`net.connect`, the same shape as `fetch.cho`;
 > `examples/collect/` and `examples/agent_supervisor/` now `import
-> net.sockets` alone, the same shape as `serve.ls`/`results_stub.ls`.
+> net.sockets` alone, the same shape as `serve.cho`/`results_stub.cho`.
 > Nothing in this section's own "not built yet" gap moved: this was nine
 > already-real files converging on the two already-real packages, not a
 > new question about composition.
 >
-> **A third package, `agent.wire` (`packages/agent-wire/wire.ls`), with
-> no `extern fn` in it.** `examples/vsock/vsock.ls` and
-> `examples/agent_guest/agent_guest.ls` duplicated the same five pure
+> **A third package, `agent.wire` (`packages/agent-wire/wire.cho`), with
+> no `extern fn` in it.** `examples/vsock/vsock.cho` and
+> `examples/agent_guest/agent_guest.cho` duplicated the same five pure
 > functions -- an `AgentViewMsg` decoder, byte-for-byte, the same "two
 > real askers" bar `net.sockets` cleared first. Confirms a package is
-> just a `lex-sys-vcs` store, indifferent to whether what it publishes
+> just a `cancho-vcs` store, indifferent to whether what it publishes
 > declares against libc or is ordinary Lex with a body. §6 has the
 > detail, including the one real publish-time constraint it found
 > (`--std` was not available to `vcs publish` -- corrected: §4.8
@@ -118,7 +118,7 @@
 >
 > **Closure resolution, built (§4.6): a package can depend on a
 > package.** Found from a real fourth duplication — `examples/collect/
-> collect.ls` and `examples/agent_supervisor/agent_supervisor.ls`
+> collect.cho` and `examples/agent_supervisor/agent_supervisor.cho`
 > duplicate `content_length_of`/`read_request` byte-for-byte, but the
 > package that would hold them needs `net.sockets` itself, and `vcs
 > publish` refused that outright until now. `vcs publish --requires
@@ -127,7 +127,7 @@
 > refusing a cycle or a diamond conflict (two paths pinning the same
 > store's same name to two different heads) rather than guessing.
 > **Found one real thing wrong with this section's own first draft**:
-> `lex-sys-id::identify()` is not resolution-independent the way it
+> `cancho-id::identify()` is not resolution-independent the way it
 > claimed — a call's contribution to its own caller's body hash is the
 > *resolved* callee's signature when the callee resolves, so computing
 > identity without the dependency present recorded the wrong hash,
@@ -137,12 +137,12 @@
 > `http.request` itself, which is the next slice.
 >
 > **`packages/http-request/` built too, the real case §4.6 was found
-> from.** `content_length_of`/`read_request` move into `request.ls`,
+> from.** `content_length_of`/`read_request` move into `request.cho`,
 > published with `--requires <net.lock>:packages/net-sockets/
-> .lex-sys-vcs`; `collect.ls` and `agent_supervisor.ls` both `import
+> .cancho-vcs`; `collect.cho` and `agent_supervisor.cho` both `import
 > http.request` instead, and drop their separate `net.sockets` lock
 > entirely — one fetch of `http.request` transitively materializes the
-> whole `net-sockets.ls` file too, since a store is always exactly one
+> whole `net-sockets.cho` file too, since a store is always exactly one
 > file. **Found a second real thing wrong with this section's own first
 > draft**: `Requirement.store`, read back as a bare path, was silently
 > interpreted against *whoever runs `vcs resolve`/`vcs fetch` next*'s own
@@ -157,8 +157,8 @@
 > **`net.connect` extended, and a fifth package, `http.response`.**
 > Hashing every function body across `examples/`, `packages/`, `std/`
 > and `benches/` and grouping the ones that collide -- rather than
-> rereading files by eye -- found a fifth duplicated cluster: `fetch.ls`,
-> `report.ls` and `agent_guest.ls` each declare the same six functions.
+> rereading files by eye -- found a fifth duplicated cluster: `fetch.cho`,
+> `report.cho` and `agent_guest.cho` each declare the same six functions.
 > `octets_of`/`port_of`/`address`/`connect_to` are generic to any
 > outbound program and joined `net.connect` itself (growing an
 > already-published store is the same act as its first publish, just a
@@ -174,7 +174,7 @@
 > which `build`/`check` correctly refuse as a duplicate declaration. Not
 > a resolver gap (`vcs resolve` on either store alone is silent), only in
 > how a consumer composes two fetches: one shared output directory is
-> enough, since `vcs fetch` writes each file as `<source_hash>.ls` and a
+> enough, since `vcs fetch` writes each file as `<source_hash>.cho` and a
 > second fetch of the same content overwrites the same path rather than
 > writing a new one.
 
@@ -197,22 +197,22 @@ this section.
 
 | Piece | Where | What it already gives a package system |
 |---|---|---|
-| Content-addressed declarations | `lex-sys-id::identify()`, `SigId`/`BodyId` | The identity a dependency pin should be made of — already exists, per declaration, today |
+| Content-addressed declarations | `cancho-id::identify()`, `SigId`/`BodyId` | The identity a dependency pin should be made of — already exists, per declaration, today |
 | **"A call encodes the callee's hash, not its spelling"** | `modules.md` §2 | The single fact this whole design rests on (§4.5) |
-| A content-addressed store with a gate | `crates/lex-sys-vcs` — `Operation`/`OpId`/`StageId`/`OpLog`, `gate::check_candidate` | "A package is a repository of hashed declarations that refuses what does not type-check" is already built, for one repository |
-| A publish/log CLI | `lex-sys vcs publish`/`vcs log` (`vcs-publish.md`) | The shape a `lex-sys pkg publish` would take, reusing the same crate |
+| A content-addressed store with a gate | `crates/cancho-vcs` — `Operation`/`OpId`/`StageId`/`OpLog`, `gate::check_candidate` | "A package is a repository of hashed declarations that refuses what does not type-check" is already built, for one repository |
+| A publish/log CLI | `cancho vcs publish`/`vcs log` (`vcs-publish.md`) | The shape a `cancho pkg publish` would take, reusing the same crate |
 | Per-file, additive compatibility | `editions.md` | The answer to "does an old dependency still compile," already solved without a version number |
-| A fail-closed authority report | `lex-sys authority --output json` (`authority.md`, `reach.md` §5) | What a dependency's public surface is *allowed* to be checked against, already machine-readable |
+| A fail-closed authority report | `cancho authority --output json` (`authority.md`, `reach.md` §5) | What a dependency's public surface is *allowed* to be checked against, already machine-readable |
 | Deriving/diffing the least authority a program needs | `lex-os-authority` (`lex-os` repo) | The mechanical "did this upgrade widen what I'm exposed to" answer — built for one program's own revisions, the same shape a dependency bump needs |
 | A signed capability contract, consumer's grant as the ceiling | `lex-os-capsule` (`lex-os` repo) | "Refuse, don't downgrade": installing something never silently grants more than was already allowed |
-| A real, working package manager for the sibling language | `lex-lang`'s `lex pkg` — `crates/lex-store` (`Store`, content-addressed "stages" under `<root>/stages/<SigId>/`), `crates/lex-store/src/deps.rs` (lock-driven recursive resolution), `crates/lex-syntax/src/registry.rs` (a hosted index over stores) | Proof this design is not speculative — `lex pkg`'s `Store` **is** the same idea `lex-sys-vcs` already ported once (`vcs.md` §7, "shares the idea and no code") |
+| A real, working package manager for the sibling language | `lex-lang`'s `lex pkg` — `crates/lex-store` (`Store`, content-addressed "stages" under `<root>/stages/<SigId>/`), `crates/lex-store/src/deps.rs` (lock-driven recursive resolution), `crates/lex-syntax/src/registry.rs` (a hosted index over stores) | Proof this design is not speculative — `lex pkg`'s `Store` **is** the same idea `cancho-vcs` already ported once (`vcs.md` §7, "shares the idea and no code") |
 | Machine-readable refusals | `agent-errors.md` — rule tags, `check --output json` | The vocabulary a resolution failure should speak, not a bespoke error format |
 
 The load-bearing row is the fourth: `lex-lang` already has a real,
 working, hosted package manager, and its core data structure is a
 content-addressed store keyed by declaration hash, resolved by pinning
-a `(store, head)` — which is not a coincidence, it is `lex-sys-vcs`'s
-own architecture, described from the other side. `lex-sys-vcs` was
+a `(store, head)` — which is not a coincidence, it is `cancho-vcs`'s
+own architecture, described from the other side. `cancho-vcs` was
 built by porting `lex-vcs`'s *idea* with no shared code
 (`vcs.md` §7); this document proposes doing the same thing one layer
 up — porting `lex pkg`'s idea, not its code — because the two
@@ -238,8 +238,8 @@ designed:
 - **Refuse, don't downgrade.** `lex-os`'s repo-wide rule, and
   `lex-os-capsule`'s own phrasing of it for distribution: "the
   consumer's grant — not the publisher's declaration — is the
-  ceiling." A lex-sys package has no runtime grant to check against
-  (lex-sys itself has no sandbox — that is `lex-os`'s job), so the
+  ceiling." A cancho package has no runtime grant to check against
+  (cancho itself has no sandbox — that is `lex-os`'s job), so the
   translation is a build-time one: what a dependency's authority report
   already says is allowed to be **shown and re-checked**, never
   silently exceeded by an upgrade. §4.4.
@@ -250,9 +250,9 @@ designed:
 
 ## 4. The shape
 
-### 4.1 A package is a `lex-sys-vcs` store at a pinned head
+### 4.1 A package is a `cancho-vcs` store at a pinned head
 
-No new identity system. `crates/lex-sys-vcs`'s `Operation`/`OpId`/
+No new identity system. `crates/cancho-vcs`'s `Operation`/`OpId`/
 `SigId`/`StageId`/`OpLog` are already, word for word, what `lex-store`'s
 own module doc calls itself: *"a content-addressed code repository."*
 A package is nothing more than an `OpLog` someone else published, and a
@@ -271,13 +271,13 @@ recursion. The same package pinned to two different heads anywhere in
 the closure is a conflict, refused with a rule tag, never silently
 resolved by picking one.
 
-Where this has to diverge from `lex pkg`, on purpose: `lex-sys-vcs`'s
+Where this has to diverge from `lex pkg`, on purpose: `cancho-vcs`'s
 own gate (`gate::check_candidate`) re-parses and re-typechecks a
 candidate before accepting it into a log at all (`vcs-publish.md` §3) —
 this project already refuses to trust a hash's claimed shape without
 recomputing it once. A resolver should hold a dependency to the same
 standard the store holds a publish to: fetch the *source* behind a pin,
-not only its hash, and run it through the consumer's own `lex-sys
+not only its hash, and run it through the consumer's own `cancho
 check` before it is usable. A lock file's `SigId` is not proof the code
 still type-checks under today's compiler — `hash-stability.md` already
 measured that **71% of this repository's own history** stops
@@ -295,21 +295,21 @@ the *mechanism* (a build script) that gives `npm`/Cargo/`pip` their
 worst agent-safety failure mode; this section says the resolver itself
 inherits the same rule rather than merely benefiting from it by
 accident. An agent wiring up a dependency graph unattended should never
-need to sandbox `lex-sys pkg` the way it has to sandbox `npm install`.
+need to sandbox `cancho pkg` the way it has to sandbox `npm install`.
 
 ### 4.4 What a pin buys an agent, mechanically, before it is trusted
 
-Every package publishes its own `lex-sys authority --output json`
+Every package publishes its own `cancho authority --output json`
 report for its public (`pub fn`) surface, computed by the publisher's
 compiler — but per §3's "refuse, don't downgrade," this is
 **transparency, not trust**. `lex-os-capsule` already built the rule
 this needs, for a different kind of artifact: *"the consumer's grant —
-not the publisher's declaration — is the ceiling."* For lex-sys, with
+not the publisher's declaration — is the ceiling."* For cancho, with
 no runtime grant to check against, the ceiling is the *consumer's own
 rebuild*:
 
 - Adding a dependency for the first time computes the union of what the
-  whole closure's public surface performs (`lex-sys authority`,
+  whole closure's public surface performs (`cancho authority`,
   already fails closed: `"bounded": false` for anything reaching
   foreign code) and shows it before a lock entry is written — an agent
   decides once, against real data, not a publisher's promise.
@@ -335,7 +335,7 @@ can silently substitute a different package under the same name later
 confusion and typosquatting's entire attack surface in a registry that
 works that way.
 
-**Built as `lex-sys vcs lock`, and one prediction corrected on
+**Built as `cancho vcs lock`, and one prediction corrected on
 contact.** This paragraph originally said re-locking an existing name to
 a different hash should be a refusal; building it found that too strict.
 The attack this section is about is *automatic* substitution — a build
@@ -353,7 +353,7 @@ re-derives a name from anything live.
 ### 4.6 Closure resolution: a package that depends on a package
 
 The real motivating case, found rather than invented: `examples/collect/
-collect.ls` and `examples/agent_supervisor/agent_supervisor.ls` — both
+collect.cho` and `examples/agent_supervisor/agent_supervisor.cho` — both
 already `import net.sockets` — duplicate a second pair of functions
 byte-for-byte, `content_length_of` and `read_request` (63 lines
 together), an HTTP request reader built on top of `sockets.read`. That
@@ -369,14 +369,14 @@ file declares it
 
 — because `vcs publish` only ever sees the one file it is publishing
 (§4.1), and `vcs resolve --lock`/`vcs fetch --lock`'s own re-check
-(`verify_selected` in `crates/lex-sys/src/vcs_cli.rs`) type-checks each
+(`verify_selected` in `crates/cancho/src/vcs_cli.rs`) type-checks each
 pinned source blob **alone**, the same restriction. Both are real, not
 incidental: a package with no dependency of its own (all three built so
 far) never needed either to change.
 
 **One prediction this section made turned out wrong, and building the
 fix found it rather than assuming it.** The first draft here claimed
-`lex-sys-id::identify()` is purely structural — a hash of a function's
+`cancho-id::identify()` is purely structural — a hash of a function's
 own written signature and body, never of what an imported callee's
 declaration actually says — and that only the soundness gate below
 needed a dependency's source in scope. Wiring `vcs publish --requires`
@@ -384,7 +384,7 @@ against a real dependency and then re-verifying it with `vcs resolve`
 found that false on the very first try: identity computed with the
 dependency absent and identity computed with it present disagreed,
 `vcs resolve` refusing a body that had, in truth, not moved at all.
-`lex-sys-id::qualified_name` (`crates/lex-sys-id/src/lib.rs`) is why —
+`cancho-id::qualified_name` (`crates/cancho-id/src/lib.rs`) is why —
 a call's contribution to its caller's body hash is the *resolved*
 callee's own signature hash (`tag::FREE`) when the callee resolves, and
 only the bare written name (`tag::NONE`) when it does not; a callee's
@@ -398,14 +398,14 @@ exist," never "what does its call hash to") to filter a dependency's
 own declarations back out before publishing.
 
 **What does not need to change**, once identity itself is computed
-correctly: resolving `import net.sockets` is `lex-sys-ir`'s job
+correctly: resolving `import net.sockets` is `cancho-ir`'s job
 (`defs.rs`'s module-scope pass, run during `lower_all`), not a second
 identity pass — the "no module" refusal above comes from there, and the
 soundness gate — confirming a pinned declaration still type-checks
 under today's compiler, the actual point of re-verifying rather than
 trusting a hash (`hash-stability.md`'s whole finding) — is a `lower_all`
 call already made from an `Ast` built by merging named texts
-(`parse_program`'s own loop, `crates/lex-sys/src/main.rs`); nothing
+(`parse_program`'s own loop, `crates/cancho/src/main.rs`); nothing
 about multi-file lowering itself is new, `net.connect`+`net.sockets`
 compose that way at `build` time already. What is new is doing it from
 already-verified **text in memory** rather than files a caller named on
@@ -427,11 +427,11 @@ directory, not the repo root. Reading `req.store` as a bare path and
 letting the OS interpret it against *whoever calls resolve/fetch next*'s
 own working directory means the exact same closure walk succeeds from
 one working directory and fails from another — reproduced directly:
-`vcs fetch --store packages/http-request/.lex-sys-vcs ...` from the repo
+`vcs fetch --store packages/http-request/.cancho-vcs ...` from the repo
 root fetches `net.sockets` transitively without complaint; the identical
 command, with both `--lock`/`--store` made absolute first, run from
-`crates/lex-sys/` instead, refuses with `put`/`read ... is no longer
-published at packages/net-sockets/.lex-sys-vcs` — the *store's own*
+`crates/cancho/` instead, refuses with `put`/`read ... is no longer
+published at packages/net-sockets/.cancho-vcs` — the *store's own*
 `--store` argument was absolute and correct, but the *string inside
 `requires/0.json`* was still read bare and resolved against the wrong
 base. Fixed the same way `import` itself is never working-directory-
@@ -507,7 +507,7 @@ did not choose between explicitly.
 needs it *first*. A `DepLocator`-shaped abstraction — `lex-store/src/
 deps.rs`'s own phrase, "what a pin points at is context-specific... [is]
 abstracted" — can resolve a dependency from a local path or a plain
-`git clone` of someone else's `.lex-sys-vcs` store before any hosted
+`git clone` of someone else's `.cancho-vcs` store before any hosted
 service exists, the same way this repository's own `--std` shipped by
 embedding the library's source rather than waiting on a package host at
 all (`standard-library.md` §2). A hub, when one is worth building, is
@@ -516,9 +516,9 @@ content-addressed stores — never a second source of truth, and never a
 place authority is decided (that stays local, per §4.4, on every
 machine that resolves, agent or human).
 
-**The first fetch step is built as `lex-sys vcs fetch`.** It re-verifies
+**The first fetch step is built as `cancho vcs fetch`.** It re-verifies
 a lock exactly the way `vcs resolve --lock` does, then materializes each
-distinct verified source as `<out-dir>/<source_hash>.ls` — nothing is
+distinct verified source as `<out-dir>/<source_hash>.cho` — nothing is
 written unless every pin verifies. This is the `DepLocator`-shaped
 "local path" case above, made concrete: a plain directory of files is
 already a valid resolution target, because §6 found that `import` needs
@@ -604,18 +604,18 @@ identity in the store's `requires/` metadata, not a manifest flag.
 
 ## 6. What would make this real
 
-**Done: `lex-sys vcs resolve`** — the minimum resolver in §4.1–§4.2
-against a real, genuinely separate `.lex-sys-vcs` store, exactly as
+**Done: `cancho vcs resolve`** — the minimum resolver in §4.1–§4.2
+against a real, genuinely separate `.cancho-vcs` store, exactly as
 proposed here. The answer to whether the recheck step is as cheap in
 practice as this document assumed: yes, for a store this size — a
 re-parse and a re-typecheck per distinct source file, deduplicated
-across the declarations that share one, is the same cost `lex-sys
+across the declarations that share one, is the same cost `cancho
 check` already pays for an ordinary program. What it found that this
 document had not named: source itself had nowhere to live (`Blobs`,
 now built).
 
-**Done too: `lex-sys vcs lock` / `vcs resolve --lock`** — §4.5's naming
-half now has a lock file format (`crates/lex-sys-vcs/src/lock.rs`,
+**Done too: `cancho vcs lock` / `vcs resolve --lock`** — §4.5's naming
+half now has a lock file format (`crates/cancho-vcs/src/lock.rs`,
 name-keyed rather than `Manifest`'s `SigId`-keyed, because a consumer
 looks a dependency up by the name it wrote down, not by a hash it does
 not have yet) and a command that writes one, plus `resolve`'s own
@@ -625,8 +625,8 @@ One prediction this section made turned out wrong and is corrected at
 re-running the command by hand is a deliberate choice, not the
 automatic substitution the guarantee is actually about.
 
-**Done too: `lex-sys vcs fetch`** — a lock's pins, re-verified and
-materialized on disk as `<source_hash>.ls` files, one per distinct
+**Done too: `cancho vcs fetch`** — a lock's pins, re-verified and
+materialized on disk as `<source_hash>.cho` files, one per distinct
 source. This was scoped, in the previous revision of this section, as
 needing `import` to learn to read a lock at compile time. Building it
 found that premise wrong: `modules.md` §4.2 already means a program is
@@ -642,8 +642,8 @@ fetches it, and then builds and runs a second, separate source file that
 in the compiler.
 
 **Done too, and the first time any of this ran on a real program rather
-than a fixture: `net.sockets`** (`packages/net-sockets/sockets.ls`) —
-`examples/serve/serve.ls`'s and `examples/results_stub/results_stub.ls`'s
+than a fixture: `net.sockets`** (`packages/net-sockets/sockets.cho`) —
+`examples/serve/serve.cho`'s and `examples/results_stub/results_stub.cho`'s
 own duplicated `extern fn`s and byte helpers, published once, locked by
 each consumer, and `import`ed rather than copy-pasted. This is what found
 `vcs publish`'s only real gap so far: it had never been asked to publish
@@ -656,8 +656,8 @@ after the extraction — the strongest evidence yet that a fetched package
 composes with the rest of the toolchain exactly the way an ordinary file
 does, because it *is* one.
 
-**Done too: `net.connect` (`packages/net-connect/connect.ls`) and a real
-program with two dependencies at once.** `examples/fetch/fetch.ls`
+**Done too: `net.connect` (`packages/net-connect/connect.cho`) and a real
+program with two dependencies at once.** `examples/fetch/fetch.cho`
 locks and fetches `net.sockets` and `net.connect` independently — two
 `vcs lock`/`vcs fetch` pairs, composed at the same `build` command
 line — and builds, runs, and answers a real request exactly as before
@@ -670,17 +670,17 @@ unrelated to packages: `authority.md` §3.)
 **Done too: every other duplicated consumer moved onto both packages.**
 `examples/report/`, `examples/vsock/`, and `examples/agent_guest/` --
 named above as candidates for the `net.connect` move and left there --
-now `import net.sockets` and `net.connect` the same way `fetch.ls` does;
+now `import net.sockets` and `net.connect` the same way `fetch.cho` does;
 `examples/collect/` and `examples/agent_supervisor/` now `import
-net.sockets` alone, the same way `serve.ls`/`results_stub.ls` do. Every
+net.sockets` alone, the same way `serve.cho`/`results_stub.cho` do. Every
 one of the nine files that used to declare its own copy of these
 `extern fn`s now imports the package instead, verified the same way
 each earlier one was: locked, fetched fresh, and built. `docs/net.md`
 §5 has the recount.
 
-**Done too: `agent.wire` (`packages/agent-wire/wire.ls`), the third real
+**Done too: `agent.wire` (`packages/agent-wire/wire.cho`), the third real
 package and the first with no `extern fn` in it at all.**
-`examples/vsock/vsock.ls` and `examples/agent_guest/agent_guest.ls`
+`examples/vsock/vsock.cho` and `examples/agent_guest/agent_guest.cho`
 duplicated the same five pure functions -- `find_after`/`end_of_quoted`/
 `goal_start_of`/`goal_end_of`/`step_of`, a decoder for one field of a
 real `lex-os-proto` `AgentViewMsg` line -- byte-for-byte, exactly the
@@ -694,17 +694,17 @@ unconditionally, unlike `build`/`check`; **no longer true** -- §4.8) --
 was already true for
 `net.sockets`'s own `put`/`put_nat`, which is why neither package
 imports anything from `std`. The escaper on the other side of this same
-wire protocol (`append_json_escaped` in `vsock.ls`, `put_escaped` in
-`agent_supervisor.ls`) stays unextracted: same escaping rule, but two
+wire protocol (`append_json_escaped` in `vsock.cho`, `put_escaped` in
+`agent_supervisor.cho`) stays unextracted: same escaping rule, but two
 different signatures (one writes into a `std.buffer.Buffer`, the other
-into a fixed slice with a cursor, because `agent_supervisor.ls` has no
+into a fixed slice with a cursor, because `agent_supervisor.cho` has no
 `Heap` to spend), so bundling them would be guessing at a shape neither
 file asked for rather than naming one that is already duplicated.
 
 **Done: closure resolution (§4.6), against a real motivating case
 rather than the hypothetical one this section used to point at.**
-`examples/collect/collect.ls` and `examples/agent_supervisor/
-agent_supervisor.ls` duplicate a fourth byte-for-byte pair,
+`examples/collect/collect.cho` and `examples/agent_supervisor/
+agent_supervisor.cho` duplicate a fourth byte-for-byte pair,
 `content_length_of`/`read_request`, and extracting it needs a package
 that itself needs `net.sockets` — a true closure of stores, not just
 several direct ones, the gap this section used to say was not built.
@@ -720,16 +720,16 @@ the package this gap was found *from* — is the next slice, not this
 one: this PR proves the mechanism against synthetic packages built
 for exactly that, before trusting it with a real one.
 
-**Done too: `packages/http-request/` (`request.ls`), the real motivating
+**Done too: `packages/http-request/` (`request.cho`), the real motivating
 case §4.6 was found from, and the first package that itself depends on
-another.** `content_length_of`/`read_request` move out of `collect.ls`
-and `agent_supervisor.ls` into one file, published with `--requires
-<net.lock>:packages/net-sockets/.lex-sys-vcs`; both examples now `import
+another.** `content_length_of`/`read_request` move out of `collect.cho`
+and `agent_supervisor.cho` into one file, published with `--requires
+<net.lock>:packages/net-sockets/.cancho-vcs`; both examples now `import
 http.request` instead of duplicating the pair, calling
 `request.content_length_of`/`request.read_request`. A store is always
 exactly one file (`vcs publish` refuses more than one input), so
 fetching any of `http.request`'s own declarations transitively
-materializes the *whole* `net-sockets.ls` file too — both examples drop
+materializes the *whole* `net-sockets.cho` file too — both examples drop
 their own separate direct `net.sockets` lock entirely, since the one
 `http.request` fetch already brings in every `sockets.*` declaration
 they call directly. Publishing it also found the second wrong prediction
@@ -740,8 +740,8 @@ non-synthetic dependency pair was fetched from a working directory other
 than the repo root.
 
 **Done too: `net.connect` extended, and a fifth package,
-`packages/http-response/` (`response.ls`).** `examples/fetch/fetch.ls`,
-`examples/report/report.ls` and `examples/agent_guest/agent_guest.ls`
+`packages/http-response/` (`response.cho`).** `examples/fetch/fetch.cho`,
+`examples/report/report.cho` and `examples/agent_guest/agent_guest.cho`
 turned out to duplicate a fifth cluster, six functions byte-for-byte
 this time — `octets_of`/`port_of`/`address`/`connect_to` and
 `send_all`/`status_of` — three real askers each, found by hashing every
@@ -771,7 +771,7 @@ now fetches `net.sockets` twice, under two different paths, which
 in the resolver itself (`vcs resolve` on either store alone is silent),
 only in how a *consumer* composes two fetches: fetching both locks into
 one shared output directory is enough, since `vcs fetch` writes each
-file as `<source_hash>.ls` and two fetches of the same content
+file as `<source_hash>.cho` and two fetches of the same content
 overwrite the same path rather than writing two different ones.
 `examples/README.md` and the conformance test harness
 (`fetch_net_dependencies`) both moved to that shape.
@@ -787,37 +787,37 @@ Sections 4 to 6 built a package system that works inside one checkout:
 `vcs fetch` takes `--store <dir>`, a directory on the same disk, and the
 only example of a package used from another program is `examples/api`
 consuming `packages/http-server` from the *same repository*. The first
-programs written outside this repository did not use it. `lexsys-hooks`
+programs written outside this repository did not use it. `cancho-hooks`
 (a webhook service, four sibling repositories) builds like this:
 
 ```sh
-git clone lex-sys; git clone lexsys-log; git clone lexsys-hooks
-(cd lex-sys && git checkout $LEX_SYS_REV && cargo build --release)    # the compiler
-(cd lexsys-log && git checkout $LOG_REV)                              # a library
+git clone cancho; git clone cancho-log; git clone cancho-hooks
+(cd cancho && git checkout $CANCHO_REV && cargo build --release)    # the compiler
+(cd cancho-log && git checkout $LOG_REV)                              # a library
 scripts/build.sh   # names every file of http-server and of the log by relative path
 ```
 
 Two SHAs in CI, three clones, a file list written by hand, and no check
 that what was cloned is what the author tested except the SHA. That is
-exactly the ritual a lock file exists to remove, and `lexsys-web`,
-`lexsys-pg` and `lexsys-cache` each repeat part of it (`lexsys-web` needs
-`lexsys-schema` and `http-server`). The two-asker bar of `CONTRIBUTING.md`
+exactly the ritual a lock file exists to remove, and `cancho-web`,
+`cancho-pg` and `cancho-cache` each repeat part of it (`cancho-web` needs
+`cancho-schema` and `http-server`). The two-asker bar of `CONTRIBUTING.md`
 is cleared by a count, not an argument.
 
-Trying to use the existing machinery for `lexsys-log` found three things,
+Trying to use the existing machinery for `cancho-log` found three things,
 each reproduced rather than assumed:
 
 1. **A lock says what, not where.** `Lock` holds `name -> (sig_id,
    stage_id, source_hash)`; `vcs fetch` takes a local directory. The only
    way to get the store is to clone its repository by hand.
-2. **`lexsys-log` cannot be published.** `vcs publish crc.ls` fails with
+2. **`cancho-log` cannot be published.** `vcs publish crc.cho` fails with
    ``internal: `crc_table` has an identity but no lowered function or
-   extern``. `lex-sys-id::identify` gives a `static` two identities (its
+   extern``. `cancho-id::identify` gives a `static` two identities (its
    name and type, and its body, `compile-time-data.md` §2) and `cmd_publish` reads a
    declaration's effects from a lowered function or an extern, which a
    `static` is neither. This is the same shape as the `extern fn` gap §6
    records for `net.sockets`, one declaration kind further along.
-3. **One file per store.** `lexsys-log` is four modules (`crc`, `record`,
+3. **One file per store.** `cancho-log` is four modules (`crc`, `record`,
    `segment`, `log`), each importing the one before. Published one file at
    a time that is four `vcs publish` runs in dependency order, each
    `--requires` taking a lock file for the one before; correct, and a ritual
@@ -837,7 +837,7 @@ repeat. Read from `crates/lex-syntax/src/workspace.rs`,
 | `rev` could not be shallow-cloned: a full clone, then `checkout` | Cost grows with the dependency's history | `git fetch --depth 1 <url> <hash>` into a fresh repository (hosts that serve a commit by hash, which GitHub does), falling back to a full fetch only if that is refused |
 | Git dependencies carry **no lock entry**; "hosted verification resolves dependencies only through `lex.lock` pins into registry stores (it never fetches git)" (#944) | Two tiers: pinned-and-checkable (registry) and convenient-and-unpinned (git) | One tier. A pin is always a hash of source (`Lock`'s `source_hash`), so *the transport carries no trust* and git can be the transport: whatever git delivers is re-parsed, re-typechecked and re-hashed by `vcs fetch` exactly as a local store is |
 | `lex = "0.10.15"` as a toolchain floor in `[package]`, which nothing read until #803 | A dependency moved onto a newer stdlib, installed without complaint, and the mismatch surfaced as `unknown_field` errors naming a function nobody in the consuming repo had written; now `lex pkg install` refuses (`--ignore-lex-floor` to override) | **Not in this slice, and the reason it is the next one**: `hash-stability.md` is the same failure at a larger scale. Section 7.5 |
-| Prebuilt release tarballs with a `.sha256`, installed by `curl \| tar` in docs and CI | CI installs a pinned `lex` in seconds | Section 7.5; today a lex-sys consumer runs `cargo build --release` of the compiler in CI |
+| Prebuilt release tarballs with a `.sha256`, installed by `curl \| tar` in docs and CI | CI installs a pinned `lex` in seconds | Section 7.5; today a cancho consumer runs `cargo build --release` of the compiler in CI |
 | A hosted registry (archive download, immutable releases, signed contracts, `--trusted-keys`) | Real infrastructure, built after git | Out of scope, as §4.7 already argued: a registry would be a name-to-pin index in front of the same stores |
 | `import "pkg/module"` resolved by walking up to the nearest `lex.toml` | The compiler reads the manifest | **Deliberately not copied**: `modules.md` §4.2 and §6 above found that `import` needs no search path, and the compiler stays ignorant of where files came from |
 
@@ -847,9 +847,9 @@ repeat. Read from `crates/lex-syntax/src/workspace.rs`,
 one store (`vcs fetch --lock` takes one `--store`):
 
 ```json
-{ "origin": { "git": "https://github.com/alpibrusl/lexsys-log",
+{ "origin": { "git": "https://github.com/alpibrusl/cancho-log",
               "rev": "c0c3852541e927c3e893331207f1a0aaf184bc2e",
-              "path": ".lex-sys-vcs/log" },
+              "path": ".cancho-vcs/log" },
   "entries": { ... unchanged ... } }
 ```
 
@@ -857,7 +857,7 @@ one store (`vcs fetch --lock` takes one `--store`):
   repository) and nothing else. A branch or tag name is refused at the
   point of writing and at the point of reading.
 * `path` is the store's directory inside the repository (default
-  `.lex-sys-vcs`).
+  `.cancho-vcs`).
 * An older lock without `origin` loads as before.
 
 **Commands.**
@@ -879,8 +879,8 @@ one store (`vcs fetch --lock` takes one `--store`):
   all of `packages/` and all of what step 2 publishes, keep working inside
   the checkout unchanged.
 
-**The cache.** `$LEX_SYS_CACHE`, else `$XDG_CACHE_HOME/lex-sys`, else
-`$HOME/.cache/lex-sys`; a checkout lives at `git/<rev>/`. (The first draft of this section keyed it by the repository's location too, `git/<blake3(url)[..16]>/<rev>/`; building it found that wrong in the useful direction: a commit hash *is* its content, so two mirrors of one commit should share a directory, and where it came from decides nothing. Corrected in place.)
+**The cache.** `$CANCHO_CACHE`, else `$XDG_CACHE_HOME/cancho`, else
+`$HOME/.cache/cancho`; a checkout lives at `git/<rev>/`. (The first draft of this section keyed it by the repository's location too, `git/<blake3(url)[..16]>/<rev>/`; building it found that wrong in the useful direction: a commit hash *is* its content, so two mirrors of one commit should share a directory, and where it came from decides nothing. Corrected in place.)
 It is created once, in a temporary directory beside its destination
 (`git init`; `git fetch --depth 1 <url> <rev>`; `git checkout --detach
 FETCH_HEAD`; `git rev-parse HEAD` must equal `rev`), and renamed into place,
@@ -911,7 +911,7 @@ resolution of anything the lock does not name.
    like any declaration. Private statics (`crc_table`) are published too,
    as private functions already are; a consumer only ever names a public
    one.
-2. **`vcs publish --dir <dir> --store <root>`** publishes every `.ls` file
+2. **`vcs publish --dir <dir> --store <root>`** publishes every `.cho` file
    of a directory, each into its own store `<root>/<module>`, in dependency
    order. The order and the `--requires` are *derived*, not typed: each
    file's module name and imports come from its parse, an import of another
@@ -933,7 +933,7 @@ resolution of anything the lock does not name.
    churn. (This is a claim and is a gate item below.)
 
 The store is committed to the library's repository, as `packages/*/
-.lex-sys-vcs` already is here. A CI check that the committed store matches
+.cancho-vcs` already is here. A CI check that the committed store matches
 `vcs publish --dir` of the source is natural and not part of this step.
 
 **A package that imports another package (#210).** `packages/tls` imports `packages/x509`, which `--dir` cannot publish:
@@ -942,52 +942,52 @@ directory. **Measured**, on this compiler:
 - `vcs publish --dir packages/x509` works, and `packages/tls` is refused for its `import x509_verify`.
 - Publishing one file at a time works, each module into its own store with `--requires <lock>:<store>` for every module it
   imports, in dependency order. `scripts/publish_packages.py` reads the order and the requirements from each file's `module`
-  and `import` lines, so none is typed, and writes `packages/<package>/.lex-sys-vcs/<module>`. A store records its
+  and `import` lines, so none is typed, and writes `packages/<package>/.cancho-vcs/<module>`. A store records its
   requirements as paths relative to itself, so the layout is part of the result. 9 modules (`x509`, `x509_names`,
   `x509_verify`, `tls_record`, `tls_message`, `tls_slot`, `tls_client12`, `tls_client`, `tls`), 2.6 MB.
 - **It is deterministic:** `--check` publishes a copy of the sources into a scratch tree and compares every file of every
   store with the committed one. It passes, and it fails (exit 1) on a source that changed without its store. CI runs it in the
   `tls-assurance` job. This is the CI check §7.4 named as "natural and not part of this step".
 - **A consumer takes one dependency.** A scratch project with `[dependencies.tls] ... path =
-  "packages/tls/.lex-sys-vcs/tls"` pinned to a revision: `lex-sys install` fetched **nine files**, the three `x509` and six
+  "packages/tls/.cancho-vcs/tls"` pinned to a revision: `cancho install` fetched **nine files**, the three `x509` and six
   `tls` modules, through the recorded requirements. It built, linked and ran a program that opens and closes an engine. The
   authority report of that program, with the dependency, is `heap` and `io_write`, `bounded`, and no `unbounded_by`: a
   consumer of the pure TLS package gains no foreign authority.
 
 ### 7.5 Not in this step, in the order I would take them
 
-3. **A project file** (`lex-sys.toml`: entry files, dependencies, the
+3. **A project file** (`cancho.toml`: entry files, dependencies, the
    compiler it was written for) read by `build`, `check` and `test`, so a
    consumer's `scripts/build.sh` and its file list disappear, and a
    module-level `lock` derived from the `import` lines.
 4. **A compiler pin that is checked.** `lex-lang`'s #803 is the argument:
    a floor nobody read produced errors that named the wrong thing. For
-   lex-sys the needed fact is stronger than a floor, because
+   cancho the needed fact is stronger than a floor, because
    `hash-stability.md` measured that most of this repository's history does
    not type-check under today's compiler: the project file records the
-   compiler's source revision, `lex-sys --version` reports its own, and
+   compiler's source revision, `cancho --version` reports its own, and
    `build` refuses a mismatch with a message that says so. This needs
-   `lex-sys` to *know* its revision, which it does not today.
+   `cancho` to *know* its revision, which it does not today.
 5. **Prebuilt compiler releases**, so CI installs a pinned compiler in
    seconds instead of running `cargo build --release` each time.
 6. **`update` shows the authority diff** (§4.4): what a bumped dependency
-   can newly do, from `lex-sys authority --output json` of both sides.
+   can newly do, from `cancho authority --output json` of both sides.
 
 ### 7.6 The gate, fixed before the build
 
 Steps 1 and 2 are done when all of these hold, measured, on the
-`lexsys-hooks` / `lexsys-log` / `lex-sys` triple, and a gate that fails is
+`cancho-hooks` / `cancho-log` / `cancho` triple, and a gate that fails is
 reported as failed, not loosened:
 
 | | Claim | How it is checked |
 |---|---|---|
-| G1 | **`lexsys-hooks` builds from its own repository plus the compiler**: no `../lexsys-log`, no `../lex-sys` source tree for the packages | a clean directory containing a clone of `lexsys-hooks` and nothing else; `lex-sys vcs lock --git … --all`, `vcs fetch`, `build`; then `idempotency_test` and `chaos` pass on that binary |
+| G1 | **`cancho-hooks` builds from its own repository plus the compiler**: no `../cancho-log`, no `../cancho` source tree for the packages | a clean directory containing a clone of `cancho-hooks` and nothing else; `cancho vcs lock --git … --all`, `vcs fetch`, `build`; then `idempotency_test` and `chaos` pass on that binary |
 | G2 | **A tampered checkout is refused** | one byte changed in a cached source blob (and, separately, in the manifest) before `fetch`: nonzero exit, nothing written to `-o` |
 | G3 | **A cache hit needs no network and no `git`** | the second `fetch` run with `PATH` stripped of `git` succeeds |
 | G4 | **A pin is a hash** | `--rev main` is refused; a lock edited to hold a branch name is refused at load; moving a branch of the origin changes nothing |
-| G5 | **`lexsys-log` publishes, resolves and is deterministic** | `vcs publish --dir src` on all four modules succeeds including `static`; `vcs resolve` of the closure passes; publishing twice gives byte-identical trees; publishing after editing a function succeeds |
+| G5 | **`cancho-log` publishes, resolves and is deterministic** | `vcs publish --dir src` on all four modules succeeds including `static`; `vcs resolve` of the closure passes; publishing twice gives byte-identical trees; publishing after editing a function succeeds |
 | G6 | **Mutation survivors are classified**, as for hooks: remove each check (hash length, `rev-parse`, tamper recheck, atomic rename, origin-wins in closure) and the test that dies is named | a table in the section that records the result |
-| G7 | **Cost is reported, not gated**: cold fetch of `lexsys-log` and of `http-server`, cache-hit fetch, `publish --dir` time | numbers in this section |
+| G7 | **Cost is reported, not gated**: cold fetch of `cancho-log` and of `http-server`, cache-hit fetch, `publish --dir` time | numbers in this section |
 
 ### 7.7 What building steps 1 and 2 showed
 
@@ -995,13 +995,13 @@ reported as failed, not loosened:
 
 | | Result |
 |---|---|
-| G1 | **Met.** In a directory holding a clone of `lexsys-hooks` and the compiler binary, and nothing else: `vcs lock --git … --all` for `lexsys-log` (commit `f4bde04`) and for `http-server` (a commit of this repository), `vcs fetch` of both, `build`. `idempotency_test` (including the 65,536-key stage) and `chaos` (2,000 events, power cuts) pass on that binary. The binary is **not byte-identical** to the one `scripts/build.sh` makes from sibling checkouts; the fetched files are named by hash and so sorted differently, and I did not chase the difference further than that, so "same behaviour under these suites" is the claim, not "same bytes" |
+| G1 | **Met.** In a directory holding a clone of `cancho-hooks` and the compiler binary, and nothing else: `vcs lock --git … --all` for `cancho-log` (commit `f4bde04`) and for `http-server` (a commit of this repository), `vcs fetch` of both, `build`. `idempotency_test` (including the 65,536-key stage) and `chaos` (2,000 events, power cuts) pass on that binary. The binary is **not byte-identical** to the one `scripts/build.sh` makes from sibling checkouts; the fetched files are named by hash and so sorted differently, and I did not chase the difference further than that, so "same behaviour under these suites" is the claim, not "same bytes" |
 | G2 | **Met.** One byte changed in a cached source blob: `fetch` exits nonzero and writes nothing (`a_cached_checkout_that_was_changed_is_refused_and_nothing_is_written`) |
 | G3 | **Met.** The repository deleted and `git` taken off `PATH`, the second `fetch` succeeds from the cache (`a_second_fetch_is_served_from_the_cache_without_git`) |
 | G4 | **Met.** `--rev master` refused at the command and, in a hand-edited lock, at load; `--ref` resolved once and the hash written; a branch that moves afterwards changes nothing a lock pins |
-| G5 | **Met.** All four modules of `lexsys-log` publish, `crc`'s `static` included; `vcs resolve` passes for each; publishing twice gives a byte-identical tree, and publishing after editing a function succeeds |
+| G5 | **Met.** All four modules of `cancho-log` publish, `crc`'s `static` included; `vcs resolve` passes for each; publishing twice gives a byte-identical tree, and publishing after editing a function succeeds |
 | G6 | **Met, with one unverified check**, below |
-| G7 | Reported: cold fetch of `lexsys-log` 0.55 s and of this repository's `http-server` 1.34 s (a depth-1 fetch by hash from GitHub through this environment's proxy, 8.3 MB of cache for both); the second fetch of each, from the cache, 0.06 s for both together; `vcs publish --dir` of the four modules 0.15 s; the whole closure of `log` verified in well under a second |
+| G7 | Reported: cold fetch of `cancho-log` 0.55 s and of this repository's `http-server` 1.34 s (a depth-1 fetch by hash from GitHub through this environment's proxy, 8.3 MB of cache for both); the second fetch of each, from the cache, 0.06 s for both together; `vcs publish --dir` of the four modules 0.15 s; the whole closure of `log` verified in well under a second |
 
 **Mutants of the new code: twenty-one, twenty killed.** Killed (the test that died is in `vcs_remote.rs` unless noted): a `rev` that is not a full hash accepted (`lock.rs` unit test and `a_lock_holds_a_commit_and_never_a_name`); a `path` that leaves the repository accepted; an origin not validated on load; the checkout's `.git` kept; the checkout built in place instead of beside its destination (`a_fetch_that_fails_leaves_no_half_made_checkout`); the cache always refilled; an origin that beats an explicit `--store`; a requirement that ignores its lock's origin; a machine-specific path recorded in a requirement; modules published in alphabetical rather than dependency order; stores not cleared before a republish; a `static` refused; a program in the directory refused instead of skipped; no cycle detection; an unplaceable import accepted; `--ref` writing the name instead of the hash; a lock extended with a different store; every transport allowed; git hooks not disabled; `ext::` not refused by `validate`. Three of these **survived the first set of tests and each told something**: the machine-path check only looked for the cache's absolute path and the requirement held a relative path to it (the test now asserts the recorded store is empty); nothing exercised `vcs lock` on a lock that already pins another commit; and the hook and transport settings are invisible to any test that does not provide a hook or a cleartext server (a template directory with a `post-checkout` hook now proves the first; a listener that hangs up on connection proves the second). **Unverified: the `git rev-parse HEAD` comparison after the checkout.** It is a second line behind git's own object hashing and the full-length `rev` that `validate` demands, and I could not construct a repository in which the first fails and the second passes. It stays as defence in depth with no test.
 
@@ -1011,9 +1011,9 @@ reported as failed, not loosened:
 * **A module's qualifier is its last name segment.** For `module libx.base;` the call is `base.pick(i)`, not `libx.base.pick(i)`. Not a bug, but the tests' first draft assumed the other, and a directory of modules whose last segments collide would have to be told apart by the author.
 * **A test hung instead of failing.** The cleartext-transport test first listened and checked afterwards; with the transport check removed, git connected, waited for an answer that never came, and the mutation run stalled for twenty minutes. The listener now hangs up at once.
 * **The cache holds trees, not repositories.** The `.git` directory is deleted once the commit is verified: nothing later can run `git` in it by accident, and it is smaller. The cost is that a checkout cannot be updated in place, which is the design.
-* **`--dir` skips a file with no `module` declaration** (a program such as `logtool.ls`) and says so. A library module that forgot its `module` line is skipped the same way, visibly.
+* **`--dir` skips a file with no `module` declaration** (a program such as `logtool.cho`) and says so. A library module that forgot its `module` line is skipped the same way, visibly.
 
-**Not built, as §7.5 says:** the project file, the compiler pin, prebuilt releases, and the authority diff on update. Also not built and noticed: a CI check in a library's repository that its committed `.lex-sys-vcs` matches `vcs publish --dir` of its source (needs this change in a pinned compiler first); a `git` that is not installed is an environment error with git's own message and no suggestion; an origin whose server serves only branches and tags falls back to a full fetch of them, which was written and is not tested.
+**Not built, as §7.5 says:** the project file, the compiler pin, prebuilt releases, and the authority diff on update. Also not built and noticed: a CI check in a library's repository that its committed `.cancho-vcs` matches `vcs publish --dir` of its source (needs this change in a pinned compiler first); a `git` that is not installed is an environment error with git's own message and no suggestion; an origin whose server serves only branches and tags falls back to a full fetch of them, which was written and is not tested.
 
 ## 8. The project file
 
@@ -1021,25 +1021,25 @@ reported as failed, not loosened:
 
 ### 8.1 What asked for it
 
-§7 let a program depend on a library in another repository, and `lexsys-hooks` is the proof; it also shows what is still done by hand. Its `scripts/build.sh` lists the source files, runs `vcs fetch` once per lock, clears the output directory so an old lock's files do not become second declarations, and passes `build/deps/*.ls` to `build`. Its CI repeats the file lists for the unit tests. Its two locks are moved by a second script that takes two full commit hashes. And nothing says which compiler the sources were written for: CI pins a commit of `lex-sys` in a YAML file, which `lex-sys` itself cannot read, and `hash-stability.md` measured what that costs when it is wrong (71% of this repository's own history stops type-checking under today's compiler). `lex-lang` found the same thing from the other side: a toolchain floor was written in `lex.toml` for a long time and nothing read it, until a dependency that had moved to a newer standard library installed without complaint and failed with errors that named a function nobody in the consuming repository had written (#803).
+§7 let a program depend on a library in another repository, and `cancho-hooks` is the proof; it also shows what is still done by hand. Its `scripts/build.sh` lists the source files, runs `vcs fetch` once per lock, clears the output directory so an old lock's files do not become second declarations, and passes `build/deps/*.cho` to `build`. Its CI repeats the file lists for the unit tests. Its two locks are moved by a second script that takes two full commit hashes. And nothing says which compiler the sources were written for: CI pins a commit of `cancho` in a YAML file, which `cancho` itself cannot read, and `hash-stability.md` measured what that costs when it is wrong (71% of this repository's own history stops type-checking under today's compiler). `lex-lang` found the same thing from the other side: a toolchain floor was written in `lex.toml` for a long time and nothing read it, until a dependency that had moved to a newer standard library installed without complaint and failed with errors that named a function nobody in the consuming repository had written (#803).
 
 ### 8.2 The file
 
-`lex-sys.toml`, at the root of a project:
+`cancho.toml`, at the root of a project:
 
 ```toml
 [package]
 name = "hooks"
-lex-sys = "f804ce7e6fcf5717ea52442bf648a1fe81090f98"   # the compiler these sources were written for
+cancho = "f804ce7e6fcf5717ea52442bf648a1fe81090f98"   # the compiler these sources were written for
 
 [dependencies.log]
-git = "https://github.com/alpibrusl/lexsys-log"
+git = "https://github.com/alpibrusl/cancho-log"
 rev = "6b4f46fd045f9e6c1a3f4bda22ee9d850daf63d1"       # a full commit hash, never a name
-path = ".lex-sys-vcs/log"                              # the store inside the repository
+path = ".cancho-vcs/log"                              # the store inside the repository
 
 [[bin]]
 name = "hooks"
-sources = ["src"]                                      # files, or a directory: every .ls directly in it
+sources = ["src"]                                      # files, or a directory: every .cho directly in it
 std = true
 out = "build/hooks"                                    # default: build/<name>
 ```
@@ -1047,17 +1047,17 @@ out = "build/hooks"                                    # default: build/<name>
 * **Unknown keys are refused**, not ignored: serde silently dropped `lex = "..."` in `lex.toml` for as long as nothing read it, and a misspelt key here would be the same trap.
 * **`rev` is a full commit hash** (`Origin::validate`, §7.3). There is no separate lock file: a manifest of exact commits has no ranges to resolve, and the declaration pins that `vcs lock --all` would write are derived from the store at that commit and re-checked on every install. A lock appears when a dependency can name something that moves.
 * **A dependency's own dependencies** (a package in another repository that a package requires) are not listed: they are in the store's `requires/` with their own origins (§7.3), and fetched with it.
-* **Paths are relative to the directory holding `lex-sys.toml`**, found by looking from the current directory upwards.
+* **Paths are relative to the directory holding `cancho.toml`**, found by looking from the current directory upwards.
 
 ### 8.3 The commands
 
-* `lex-sys install` reads the file, checks the compiler (below), and for each dependency fetches its commit into the cache, re-parses, re-typechecks and re-hashes every declaration, and writes the sources to `build/deps/<hash>.ls`, clearing that directory first. It is the `vcs fetch` of §7 for every dependency of the project at once.
-* `lex-sys add <name> <git-url> [--rev <hash> | --ref <name>] [--path <dir>]` adds a dependency: `--ref` (default: the repository's head) is resolved once and **the hash is what is written**; the store is fetched and checked before the file is touched; then the table is appended to `lex-sys.toml` (appended, so comments in the file survive) and the project is installed. A name that is already there is refused.
-* `lex-sys build` with no file arguments builds every `[[bin]]` (`--bin <name>` one of them): it installs first, which costs a directory lookup and a recheck when everything is cached (0.06 s for the two libraries of `lexsys-hooks`), so there is no staleness to get wrong. With files it is `build` as before.
+* `cancho install` reads the file, checks the compiler (below), and for each dependency fetches its commit into the cache, re-parses, re-typechecks and re-hashes every declaration, and writes the sources to `build/deps/<hash>.cho`, clearing that directory first. It is the `vcs fetch` of §7 for every dependency of the project at once.
+* `cancho add <name> <git-url> [--rev <hash> | --ref <name>] [--path <dir>]` adds a dependency: `--ref` (default: the repository's head) is resolved once and **the hash is what is written**; the store is fetched and checked before the file is touched; then the table is appended to `cancho.toml` (appended, so comments in the file survive) and the project is installed. A name that is already there is refused.
+* `cancho build` with no file arguments builds every `[[bin]]` (`--bin <name>` one of them): it installs first, which costs a directory lookup and a recheck when everything is cached (0.06 s for the two libraries of `cancho-hooks`), so there is no staleness to get wrong. With files it is `build` as before.
 
 ### 8.4 The compiler
 
-`lex-sys --version` reports the commit it was built from: `build.rs` reads it from git (suffixed `-dirty` if the working tree has uncommitted changes), or from `LEX_SYS_REV` for a build outside a git checkout, and says `unknown` otherwise. `install` and `build` compare it with `[package] lex-sys` and **refuse a difference**, naming both; `--ignore-compiler-rev` is the escape hatch for someone who knows. A binary that does not know its own revision cannot be checked and is refused the same way: a floor that cannot be read is how #803 happened. The pin is on a *commit* because that is what the repository can say exactly; when compilers are released as binaries (§7.5 step 5) the release will embed the commit it was built from.
+`cancho --version` reports the commit it was built from: `build.rs` reads it from git (suffixed `-dirty` if the working tree has uncommitted changes), or from `CANCHO_REV` for a build outside a git checkout, and says `unknown` otherwise. `install` and `build` compare it with `[package] cancho` and **refuse a difference**, naming both; `--ignore-compiler-rev` is the escape hatch for someone who knows. A binary that does not know its own revision cannot be checked and is refused the same way: a floor that cannot be read is how #803 happened. The pin is on a *commit* because that is what the repository can say exactly; when compilers are released as binaries (§7.5 step 5) the release will embed the commit it was built from.
 
 ### 8.5 What this does not do
 
@@ -1065,54 +1065,54 @@ No version ranges, no registry, no feature flags, no dev-dependencies, no worksp
 
 ### 8.6 Distributing a program
 
-Asked alongside this: does `lex-sys build` make a binary that a package can be shipped as, and should `lex-sys` make Docker images? Measured on `lexsys-hooks`: `build` makes a native executable (an ELF PIE, 169 KB), linked by `cc` (the `CC` environment variable names another linker), and the only shared library it needs is libc (`ldd`: `libc.so.6` and the loader). A static one builds with a linker that adds `-static` (`CC=./static-cc`, a three-line script): 1.2 MB, `not a dynamic executable`, with the glibc warning that `getaddrinfo` still wants the shared libraries at run time, which the service avoids by dialling IP literals (§16 of its design). So a program is distributable as a file today, and a static one runs in an image with nothing else in it. **No Docker daemon was available in the environment this was written in, so no image was built here**; that is a claim about the binary, not a test of an image. The recommendation, not built: `lex-sys` does not generate images (an image is a deployment decision, not a compiler's), a release is the binary, its checksum and `lex-sys authority --output json` of it (what it can do, in the form `lex-os-capsule` already signs), and an image of the *compiler* for CI is a thin layer over a release.
+Asked alongside this: does `cancho build` make a binary that a package can be shipped as, and should `cancho` make Docker images? Measured on `cancho-hooks`: `build` makes a native executable (an ELF PIE, 169 KB), linked by `cc` (the `CC` environment variable names another linker), and the only shared library it needs is libc (`ldd`: `libc.so.6` and the loader). A static one builds with a linker that adds `-static` (`CC=./static-cc`, a three-line script): 1.2 MB, `not a dynamic executable`, with the glibc warning that `getaddrinfo` still wants the shared libraries at run time, which the service avoids by dialling IP literals (§16 of its design). So a program is distributable as a file today, and a static one runs in an image with nothing else in it. **No Docker daemon was available in the environment this was written in, so no image was built here**; that is a claim about the binary, not a test of an image. The recommendation, not built: `cancho` does not generate images (an image is a deployment decision, not a compiler's), a release is the binary, its checksum and `cancho authority --output json` of it (what it can do, in the form `lex-os-capsule` already signs), and an image of the *compiler* for CI is a thin layer over a release.
 
 ### 8.7 What building the project file showed
 
-Built as designed in §8.2 to §8.4: `lex-sys.toml` (`[package]`, `[dependencies.<name>]`, `[[bin]]`), `lex-sys install`, `lex-sys add`, `lex-sys build` with no files and `--bin`, and the compiler's revision in `--version` (`build.rs`) checked against `[package] lex-sys`. About 430 lines in `crates/lex-sys/src/project.rs`, one of them shared with `vcs fetch`: `fetch_verified` was cut out of `cmd_fetch`, and both call it.
+Built as designed in §8.2 to §8.4: `cancho.toml` (`[package]`, `[dependencies.<name>]`, `[[bin]]`), `cancho install`, `cancho add`, `cancho build` with no files and `--bin`, and the compiler's revision in `--version` (`build.rs`) checked against `[package] cancho`. About 430 lines in `crates/cancho/src/project.rs`, one of them shared with `vcs fetch`: `fetch_verified` was cut out of `cmd_fetch`, and both call it.
 
-**Checked.** `lexsys-hooks` runs on it: `lex-sys.toml` replaces its two lock files, its `lock.sh`, the file lists in `build.sh`, and the second copy of the compiler pin in its CI (the workflow reads the commit out of `lex-sys.toml`, so there is one place to change). `lex-sys build` there takes 5.7 s from nothing, of which the installs are the same two libraries as in §7.7 and the rest is compiling. 11 conformance tests (`project.rs`), on local git repositories: add, install and build end to end with the program's exit code; a `--ref` is resolved once and the hash written; every refusal of `add` leaves the file as it was, and an install that fails *after* the file was written puts it back (a store whose blob was changed after publishing); a project file with an unknown key, an unknown section, a name for a `rev`, a path that leaves the repository, a `lex-sys` that is not a hash, duplicate programs, a program with no sources or a bad name is refused, each with its reason; the wrong compiler is refused naming both, and `--ignore-compiler-rev` goes on with a note; a moved pin replaces what the old one fetched; the project is found from a directory below it; `build <files>` is still the compiler it was; `--bin` picks one; an empty store is not a dependency.
+**Checked.** `cancho-hooks` runs on it: `cancho.toml` replaces its two lock files, its `lock.sh`, the file lists in `build.sh`, and the second copy of the compiler pin in its CI (the workflow reads the commit out of `cancho.toml`, so there is one place to change). `cancho build` there takes 5.7 s from nothing, of which the installs are the same two libraries as in §7.7 and the rest is compiling. 11 conformance tests (`project.rs`), on local git repositories: add, install and build end to end with the program's exit code; a `--ref` is resolved once and the hash written; every refusal of `add` leaves the file as it was, and an install that fails *after* the file was written puts it back (a store whose blob was changed after publishing); a project file with an unknown key, an unknown section, a name for a `rev`, a path that leaves the repository, a `cancho` that is not a hash, duplicate programs, a program with no sources or a bad name is refused, each with its reason; the wrong compiler is refused naming both, and `--ignore-compiler-rev` goes on with a note; a moved pin replaces what the old one fetched; the project is found from a directory below it; `build <files>` is still the compiler it was; `--bin` picks one; an empty store is not a dependency.
 
-**Mutants of the new code: twenty-three, twenty-two killed, one unverified.** Killed: the compiler check always passing; `--ignore-compiler-rev` ignored; the fetched directory not cleared; unknown keys allowed (at the top, and in a program); a dependency's origin not validated at load; `lex-sys` not validated; `add` without its rollback, allowing a duplicate, writing the ref's name instead of its hash, accepting any name, or skipping the store check; a project build that did not install first; `wants_project` always true or the search not going upwards; `--bin` ignored or an unknown one accepted; an empty store accepted; an install failure that does not name the dependency; duplicate or source-less programs; a `--version` without the revision; a stamp that is always `unknown`. **Five of these survived the first tests, and each was a test that checked less than it said:** the "unknown key" case appended its key to the last table, which the program's own check caught, so nothing proved the top level refused; the origin and `lex-sys` cases were refused later by other checks, so the load-time ones were untested until the tests asserted the reason; a build that skipped its install passed because every test had installed before; and a bad dependency name was refused by a later check, not the name's. (Two more mutants, a failure that did not name its dependency and duplicate programs, were first written wrongly and did not apply; they were redone and killed.) **Unverified: the branch of `check_compiler` for a compiler that does not know its revision** (`unknown`, a build outside a git checkout without `LEX_SYS_REV`). It needs a second build of the compiler to reach, and is a plain refusal; I read it, I did not run it.
+**Mutants of the new code: twenty-three, twenty-two killed, one unverified.** Killed: the compiler check always passing; `--ignore-compiler-rev` ignored; the fetched directory not cleared; unknown keys allowed (at the top, and in a program); a dependency's origin not validated at load; `cancho` not validated; `add` without its rollback, allowing a duplicate, writing the ref's name instead of its hash, accepting any name, or skipping the store check; a project build that did not install first; `wants_project` always true or the search not going upwards; `--bin` ignored or an unknown one accepted; an empty store accepted; an install failure that does not name the dependency; duplicate or source-less programs; a `--version` without the revision; a stamp that is always `unknown`. **Five of these survived the first tests, and each was a test that checked less than it said:** the "unknown key" case appended its key to the last table, which the program's own check caught, so nothing proved the top level refused; the origin and `cancho` cases were refused later by other checks, so the load-time ones were untested until the tests asserted the reason; a build that skipped its install passed because every test had installed before; and a bad dependency name was refused by a later check, not the name's. (Two more mutants, a failure that did not name its dependency and duplicate programs, were first written wrongly and did not apply; they were redone and killed.) **Unverified: the branch of `check_compiler` for a compiler that does not know its revision** (`unknown`, a build outside a git checkout without `CANCHO_REV`). It needs a second build of the compiler to reach, and is a plain refusal; I read it, I did not run it.
 
 **Found along the way.**
 
 * **A hash in the file is checked against a build that may be dirty.** The compiler says `-dirty` when tracked files differ from the commit, and such a revision can never equal the 40 hex digits the file holds. That is the right answer (a compiler with local edits is not the commit), and it means the test of the *accepted* case only runs when the tree is clean, as in CI; locally it is skipped and says nothing.
 * **`name = "app"` appears twice in a small project file**, and a string replace in a test put the compiler pin into the program too. `deny_unknown_fields` caught it, which is the case for having it.
-* **The commit is not known before it exists.** `lexsys-hooks` has to name a compiler that contains the project file, which this change is; the file in its pull request holds the commit of a build of this branch and is moved to the merge commit once there is one, the same dance as the `lexsys-log` pin in §7.
+* **The commit is not known before it exists.** `cancho-hooks` has to name a compiler that contains the project file, which this change is; the file in its pull request holds the commit of a build of this branch and is moved to the merge commit once there is one, the same dance as the `cancho-log` pin in §7.
 
-**Not built, as §8.5 says.** And one thing noticed: `lex-sys test` has no project mode, so `lexsys-hooks` still spells out its three unit-test commands, with `build/deps/*.ls` as the way to name the libraries.
+**Not built, as §8.5 says.** And one thing noticed: `cancho test` has no project mode, so `cancho-hooks` still spells out its three unit-test commands, with `build/deps/*.cho` as the way to name the libraries.
 
-### 8.8 `lex-sys test` in a project
+### 8.8 `cancho test` in a project
 
 `[[test]]` is a set of files whose `test_*` functions run together, against the project's dependencies, with `std = true` if they need the library:
 
 ```toml
 [[test]]
 name = "state"
-sources = ["tests/state_test.ls", "src/state.ls"]
+sources = ["tests/state_test.cho", "src/state.cho"]
 ```
 
-`lex-sys test` with no files installs, then runs every set (`--test <name>` one), each as the file-taking `lex-sys test` always was (`testing.md` §3), under a header `== test <name>`. A failing set does not stop the others; the exit code is the first failure's (4, a failed test). With files, `test` is the runner it was. A set has the same checks as a program: a unique name, at least one source, no unknown keys. 10 mutants of the new code, 10 killed; one survived until the test of "files still mean the old runner" was actually written (an edit to the test file had silently not applied after `cargo fmt` reflowed it, which is why the mutation run was done after, not before, claiming it).
+`cancho test` with no files installs, then runs every set (`--test <name>` one), each as the file-taking `cancho test` always was (`testing.md` §3), under a header `== test <name>`. A failing set does not stop the others; the exit code is the first failure's (4, a failed test). With files, `test` is the runner it was. A set has the same checks as a program: a unique name, at least one source, no unknown keys. 10 mutants of the new code, 10 killed; one survived until the test of "files still mean the old runner" was actually written (an edit to the test file had silently not applied after `cargo fmt` reflowed it, which is why the mutation run was done after, not before, claiming it).
 
-**Found along the way: the compiler needs more than libc.** `lex-sys build` is not a closed box: the LLVM backend emits IR and runs **`clang`** (the `CLANG` environment variable names another), then links with **`cc`** (`CC`). A released compiler binary (§7.5 step 5) therefore depends on a C toolchain being installed where it runs, and an image of the compiler for CI would be the place that bundles it. `ldd` on the compiler itself: libc and libgcc_s, 8.5 MB.
+**Found along the way: the compiler needs more than libc.** `cancho build` is not a closed box: the LLVM backend emits IR and runs **`clang`** (the `CLANG` environment variable names another), then links with **`cc`** (`CC`). A released compiler binary (§7.5 step 5) therefore depends on a C toolchain being installed where it runs, and an image of the compiler for CI would be the place that bundles it. `ldd` on the compiler itself: libc and libgcc_s, 8.5 MB.
 
 ## 9. Prebuilt compilers
 
 ### 9.1 What asked for it
 
-A project pins the compiler by commit (§8.4), and every machine that builds it, a laptop, a CI job, an image, has so far built that commit from source: a Rust toolchain and about 1m23s of `cargo build --release` on the machine this was written on. `lexsys-hooks`' CI does it on every run. A release is the same compiler built once.
+A project pins the compiler by commit (§8.4), and every machine that builds it, a laptop, a CI job, an image, has so far built that commit from source: a Rust toolchain and about 1m23s of `cargo build --release` on the machine this was written on. `cancho-hooks`' CI does it on every run. A release is the same compiler built once.
 
 ### 9.2 What is built
 
-* `.github/workflows/release.yml`: builds `lex-sys` on `ubuntu-22.04` (`linux-x86_64`) and `macos-latest` (`darwin-aarch64`), packages it, installs the package with `scripts/install.sh` into a scratch prefix and **builds `hello.ls` with the installed binary**, and uploads the assets. It runs for pull requests that touch it, and on `workflow_dispatch`; only a dispatch with `publish: true` creates a release.
-* **The tag is the commit**: the full 40 hex digits, the string `lex-sys.toml` already holds. A version number would be one more name to map to the commit; nobody pins one. So from a pin an installer can build the URL of the asset without asking anything.
-* `scripts/package-release.sh <target> [dir]` writes `lex-sys-<commit>-<target>.tar.gz` (`bin/lex-sys`, `LICENSE`, `README.md`) and `…tar.gz.sha256`. The commit is **read from the binary** (`--version`), not from the checkout, and a binary that does not report a clean commit (`-dirty`, `unknown`, nothing) is not packaged: a release that is not the commit it is named for is the failure §8.4 exists to prevent. The archive is reproducible on GNU tar (sorted names, no owners, mtime 0).
-* `scripts/install.sh <commit> [prefix]` downloads the asset and its checksum, **refuses a checksum that does not match, unpacks, and refuses a binary that does not report the commit that was asked for**, then moves it into `<prefix>/bin`. Nothing is installed on a refusal. `LEX_SYS_RELEASES` points it at another place (a mirror, or a directory for a test). Exit codes: 2 for something that is not a full commit hash, 3 for a platform with no asset, 4 for a checksum or commit mismatch.
+* `.github/workflows/release.yml`: builds `cancho` on `ubuntu-22.04` (`linux-x86_64`) and `macos-latest` (`darwin-aarch64`), packages it, installs the package with `scripts/install.sh` into a scratch prefix and **builds `hello.cho` with the installed binary**, and uploads the assets. It runs for pull requests that touch it, and on `workflow_dispatch`; only a dispatch with `publish: true` creates a release.
+* **The tag is the commit**: the full 40 hex digits, the string `cancho.toml` already holds. A version number would be one more name to map to the commit; nobody pins one. So from a pin an installer can build the URL of the asset without asking anything.
+* `scripts/package-release.sh <target> [dir]` writes `cancho-<commit>-<target>.tar.gz` (`bin/cancho`, `LICENSE`, `README.md`) and `…tar.gz.sha256`. The commit is **read from the binary** (`--version`), not from the checkout, and a binary that does not report a clean commit (`-dirty`, `unknown`, nothing) is not packaged: a release that is not the commit it is named for is the failure §8.4 exists to prevent. The archive is reproducible on GNU tar (sorted names, no owners, mtime 0).
+* `scripts/install.sh <commit> [prefix]` downloads the asset and its checksum, **refuses a checksum that does not match, unpacks, and refuses a binary that does not report the commit that was asked for**, then moves it into `<prefix>/bin`. Nothing is installed on a refusal. `CANCHO_RELEASES` points it at another place (a mirror, or a directory for a test). Exit codes: 2 for something that is not a full commit hash, 3 for a platform with no asset, 4 for a checksum or commit mismatch.
 
 ### 9.3 What is, and is not, in the tarball
 
-The compiler is self-contained but for the two programs it runs: the standard library and the guidelines are compiled in (`include_str!`), and `ldd` shows `libc` and `libgcc_s` only. **It still needs `clang` (the LLVM backend, the default) and `cc` (the linker) at build time**, as the source build does; `install.sh` says so when `clang` is not on `PATH`, **and when it is older than 15**: the backend's IR uses opaque pointers, and clang 14 (the default of Ubuntu 22.04) refuses it (`ptr type is only supported in -opaque-pointers mode`). Found by the first run of the release workflow on `ubuntu-22.04`, which built the compiler and could not build `hello.ls` with it; the workflow now installs `clang-15` there and names it with `CLANG`. Not bundling them is deliberate: the toolchain is whatever the host's is, and the compiler's output is checked by running it.
+The compiler is self-contained but for the two programs it runs: the standard library and the guidelines are compiled in (`include_str!`), and `ldd` shows `libc` and `libgcc_s` only. **It still needs `clang` (the LLVM backend, the default) and `cc` (the linker) at build time**, as the source build does; `install.sh` says so when `clang` is not on `PATH`, **and when it is older than 15**: the backend's IR uses opaque pointers, and clang 14 (the default of Ubuntu 22.04) refuses it (`ptr type is only supported in -opaque-pointers mode`). Found by the first run of the release workflow on `ubuntu-22.04`, which built the compiler and could not build `hello.cho` with it; the workflow now installs `clang-15` there and names it with `CLANG`. Not bundling them is deliberate: the toolchain is whatever the host's is, and the compiler's output is checked by running it.
 
 ### 9.4 Why `ubuntu-22.04`
 
@@ -1122,11 +1122,11 @@ A binary links against the glibc it was built with and needs that version or new
 
 Six conformance tests (`release.rs`, skipped with a message on a machine `install.sh` has no asset for) run the scripts against a stand-in compiler (a shell script that prints a version line, so the result does not depend on whether the compiler under test was built from a clean tree): package then install, and the installed binary reports the commit; `-dirty`, `unknown` and a bare version are not packaged and nothing is written; packaging twice, a second apart, gives the same bytes; a tarball with a byte appended is not installed (exit 4, no prefix created); a genuine asset renamed to another commit is not installed (exit 4); and what is not a commit (`abc`, `main`, 41 digits, 40 non-hex characters, `../` repeated to 40, empty), an asset that does not exist and a checksum file that does not exist are each refused with nothing installed. Mutants of the scripts: of nine, six killed at once; the control no-op survived as it must; one non-hex check survived until the test passed forty characters that are not hex, and was then killed; one (`--sort=name`) survives and is believed unobservable here, since three files are listed in the same order by every filesystem tried, and the flag is kept for the ones that do not.
 
-On this machine, packaging the compiler built from a clean checkout of `main` gave a 2.8 MB tarball; `install.sh` from a `file://` directory installed it, and the installed binary built and ran `hello.ls`.
+On this machine, packaging the compiler built from a clean checkout of `main` gave a 2.8 MB tarball; `install.sh` from a `file://` directory installed it, and the installed binary built and ran `hello.cho`.
 
 ### 9.6 Not verified
 
 **What the first run on GitHub showed** (it ran for the pull request that adds it): the conformance tests failed on macOS because they named the stand-in asset `linux-x86_64` while `install.sh` looks for `darwin-aarch64` on that machine (the tests now ask for the target the installer will compute), and `install.sh ''` exited 1 there where dash exits 2 (the script now checks the argument itself); and the 22.04 leg found the clang requirement of §9.3. What is still not tested: the `macos-latest` release leg end to end, whether a binary built on 22.04 starts on an older glibc than the runner's (it ran on 22.04 itself, which is the evidence for §9.4), and `gh release create`. **No release has been published**, and none will be without being asked: a published release is an outward act, and a tag named for a commit stays.
 
-`lexsys-hooks`' CI would try the release asset first and build from source if it is absent; that is a change in that repository, after the first release exists.
+`cancho-hooks`' CI would try the release asset first and build from source if it is absent; that is a change in that repository, after the first release exists.
 

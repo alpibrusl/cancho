@@ -3,7 +3,7 @@
 
     python3 scripts/tls_live.py <tls_many> [<conc>]
 
-`tls_many` is `tests/programs/tls_many.ls` built with `packages/tls` and
+`tls_many` is `tests/programs/tls_many.cho` built with `packages/tls` and
 `packages/x509`. For each certificate key (P-256, P-384, RSA-2048, RSA-4096,
 Ed25519) a threaded Python `ssl` server (OpenSSL underneath) is started with a
 fresh certificate from a fresh P-256 CA, which is all tls_many trusts, TLS 1.3 only. It answers each request with a
@@ -214,7 +214,7 @@ class TlsLite:
             request = b""
             while b"\r\n\r\n" not in request:
                 request += bytes(conn.read())
-            conn.write(b"HTTP/1.0 200 OK\r\nContent-Length: 13\r\n\r\nhello, lexsys")
+            conn.write(b"HTTP/1.0 200 OK\r\nContent-Length: 13\r\n\r\nhello, cancho")
             conn.close()
         except Exception:  # noqa: BLE001 -- the client's line reports it
             raw.close()

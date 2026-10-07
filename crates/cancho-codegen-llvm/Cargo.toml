@@ -1,0 +1,17 @@
+[package]
+name = "cancho-codegen-llvm"
+description = "LLVM textual-IR lowering for cancho, shelled out to clang"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+cancho-codegen.workspace = true
+cancho-ir.workspace = true
+cancho-types.workspace = true
+target-lexicon = "0.13.5"
+
+[dev-dependencies]
+cancho-syntax.workspace = true

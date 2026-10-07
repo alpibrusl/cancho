@@ -1,7 +1,7 @@
 # Linearity and effects
 
 > **Status: settled, implementation in progress.** This is the gating artifact
-> for M2 ([#2](https://github.com/alpibrusl/lex-sys/issues/2)), and it was
+> for M2 ([#2](https://github.com/alpibrusl/cancho/issues/2)), and it was
 > reviewed and accepted before any M2 code was written. The rules below are
 > now the specification the implementation is measured against; §12 lists what
 > is still open, and nothing there blocks the rest.
@@ -59,7 +59,7 @@ Three words are used precisely throughout:
 
 ## 2. The one rule
 
-The thesis of lex-sys is that ownership and effects are the same idea, and that
+The thesis of cancho is that ownership and effects are the same idea, and that
 a language designed from scratch can have one system where Rust and Koka have
 two. Here is that claim made precise:
 
@@ -159,7 +159,7 @@ monomorphisation has quietly answered half of it:
 
 That is the price, and it is the price §12 predicted: the error lands on the
 definition's line, from a call site elsewhere. The message names the
-instantiation so it can be found, and `tests/reject/res_leaked_from_generic.ls`
+instantiation so it can be found, and `tests/reject/res_leaked_from_generic.cho`
 pins the behaviour. What is *not* available is a signature that says "this
 works for every mode" and is checked once — that remains open, and is the part
 that interacts with every other rule here.
@@ -208,18 +208,18 @@ but each has a fixture, because a rule with no must-reject fixture is a hope:
 
 | Written | Why it is refused | Fixture |
 |---|---|---|
-| `open(1);` as a statement | the value is produced and dropped | `res_discarded.ls` |
-| `f.fd` on a `res` `f` | a part read without taking the whole apart is a *borrow*, which is §5 | `res_field_read.ls` |
-| `_ =>` on a `res` scrutinee | consumes the value and produces no parts | `res_matched_by_wildcard.ls` |
-| `Slot::Full(_)` on a `res` payload | the same, one level down | `res_payload_ignored.ls` |
+| `open(1);` as a statement | the value is produced and dropped | `res_discarded.cho` |
+| `f.fd` on a `res` `f` | a part read without taking the whole apart is a *borrow*, which is §5 | `res_field_read.cho` |
+| `_ =>` on a `res` scrutinee | consumes the value and produces no parts | `res_matched_by_wildcard.cho` |
+| `Slot::Full(_)` on a `res` payload | the same, one level down | `res_payload_ignored.cho` |
 
 Assignment is the fifth: `f = open(2)` overwrites whatever `f` held, so a live
 `res` binding must be spent before it can be reassigned
-(`assign_over_live_res.ls`). A spent one may be, and is live again after.
+(`assign_over_live_res.cho`). A spent one may be, and is live again after.
 
 Destructuring takes the *whole* value apart — every field named, exactly once.
 A pattern that names some of the fields would be a partial move, which is not
-on the list (`destructure_partial.ls`).
+on the list (`destructure_partial.cho`).
 
 **Accept:**
 
@@ -476,7 +476,7 @@ spends its whole argument refusing.
 §1 says the syntax here is illustrative. Three places where the implementation
 chose differently, and why:
 
-- **`borrow` is a statement, not an expression.** lex-sys blocks are
+- **`borrow` is a statement, not an expression.** cancho blocks are
   statement lists with no tail expression, so `borrow f as &r in { r }` has
   nowhere to put a result. It is shaped like `if` and `while` instead, and a
   value leaves a block the way it always has — by `return`, which is the case
@@ -489,7 +489,7 @@ chose differently, and why:
   result may not mention `r`. With no block result, the two ways out are a
   `return` and a binding declared outside the block whose type inference
   fills in from inside it. Both are the same occurs-check over one type;
-  `tests/reject/reference_escapes_via_inference.ls` is the second one, and it
+  `tests/reject/reference_escapes_via_inference.cho` is the second one, and it
   is not hypothetical.
 
 **A place is narrower than it looks.** Writing through a `&!r` needs
@@ -598,9 +598,9 @@ registration, not a weakening of this rule.
 > **An arena is a `borrow` block with the referent taken out.** Opening one
 > pushes a block onto the same table §5 uses, with the same parent link — so
 > §5.2's outlives relation, §5's occurs-check and the scope rules apply to
-> it without a line of new reasoning. `reference_escapes_arena.ls` is
-> refused by the code that refuses `reference_escapes_borrow.ls`, and
-> `inner_region_stored_in_outer.ls` by the code behind `unrelated_regions.ls`.
+> it without a line of new reasoning. `reference_escapes_arena.cho` is
+> refused by the code that refuses `reference_escapes_borrow.cho`, and
+> `inner_region_stored_in_outer.cho` by the code behind `unrelated_regions.cho`.
 > That is §6's claim — "an arena's lifetime and a borrow's lifetime are one
 > mechanism, not two that happen to look alike" — and it is structural
 > rather than asserted.
@@ -754,12 +754,12 @@ fn widen(fs: &!f Fs) -> [fs_write("/")] int {
 > *(M3 added `Fs(prefix)` as the second capability carrying a value, over
 > the same `narrow`. One rule had to be made sharper for it: a **path**
 > prefix extends at a `/` or not at all, because `/tmp` is a byte prefix of
-> `/tmpevil` and does not contain it — `fs_sibling_prefix.ls`. A library
+> `/tmpevil` and does not contain it — `fs_sibling_prefix.cho`. A library
 > name has no such structure, so `Ffi` keeps the plain textual rule. See
 > `docs/filesystem.md` §1.1.)* The unnarrowed
 > root is the empty string, a prefix of everything, so the `Ffi` that
 > `split` hands out can still become any library while an `Ffi("libcrypto")`
-> can never become `Ffi("libc")` — `effect_widened.ls`. Narrowing to what a
+> can never become `Ffi("libc")` — `effect_widened.cho`. Narrowing to what a
 > capability already names is refused too: it grants nothing and would read
 > as though it had.
 >
@@ -796,12 +796,12 @@ fn widen(fs: &!f Fs) -> [fs_write("/")] int {
 > paid rather than avoided.
 >
 > The prelude's types are predeclared rather than written in a program, and
-> a program may not declare its own — `capability_redeclared.ls`. Nor write
+> a program may not declare its own — `capability_redeclared.cho`. Nor write
 > one as a literal: `Io { }` would be an ambient constructor spelled
-> differently, so it is refused (`no_ambient_capability.ls`). Since `World`
+> differently, so it is refused (`no_ambient_capability.cho`). Since `World`
 > and `Io` carry no fields, taking one apart would end authority without
 > naming a consumer, so that is refused too and `release` is the only way
-> (`capability_destructured.ls`). `Split` is destructured on purpose.
+> (`capability_destructured.cho`). `Split` is destructured on purpose.
 >
 > **Owning discharges; borrowing declares.** §8.2's remark that `main`'s row
 > is `[]` is implemented as a rule: an effect whose capability a function
@@ -915,8 +915,8 @@ the exact point they enter the program.
 >
 > * the row and the capability parameters must agree exactly, in both
 >   directions — a declaration naming an effect it holds no capability for
->   is `ffi_without_capability.ls`, and one holding a capability it does not
->   declare is `foreign_effect_undeclared.ls`;
+>   is `ffi_without_capability.cho`, and one holding a capability it does not
+>   declare is `foreign_effect_undeclared.cho`;
 > * the borrowed capability must name a library. The unnarrowed root names
 >   none, so `Ffi("")` is refused here — narrow first;
 > * only what C can name crosses: `int`, `bool`, `()`, and borrowed
@@ -929,7 +929,7 @@ the exact point they enter the program.
 > narrower C integer type needs a type to name it, and M2 does not have one.
 >
 > **The capability does not travel.** It is checked, then erased: what libc
-> receives is the integer and nothing else. `narrowed_capability.ls` calls
+> receives is the integer and nothing else. `narrowed_capability.cho` calls
 > `labs(-7)` and prints `7`, which it could not do if a zero-sized
 > capability were pushed in front of the argument.
 >
@@ -1018,9 +1018,9 @@ lookup, and nothing in it can diverge.
 ## 11. The must-reject suite
 
 This is the deliverable the gate actually cares about: the rules above,
-restated as fixtures. M0 already has the harness — `tests/reject/*.ls`, each
+restated as fixtures. M0 already has the harness — `tests/reject/*.cho`, each
 fixture declaring its own expected message in a `//~ ERROR` header, run by
-`crates/lex-sys/tests/conformance.rs`. M2 adds to it; it does not invent
+`crates/cancho/tests/conformance.rs`. M2 adds to it; it does not invent
 anything.
 
 A ✓ in the last column means the fixture exists and the rule is enforced.
@@ -1028,58 +1028,58 @@ Every row carries one.
 
 | Fixture | Rule | § | |
 |---|---|---|---|
-| `res_copied.ls` | A `res` value may not be used twice | 3 | ✓ |
-| `val_contains_res.ls` | A `val` type may not contain a `res` field | 3 | ✓ |
-| `unconsumed_at_scope_end.ls` | A live `res` value at scope end is an error | 4 | ✓ |
-| `unconsumed_on_one_path.ls` | Every path must consume | 4 | ✓ |
-| `use_after_move.ls` | A consumed value may not be used | 4.1 | ✓ |
-| `branches_disagree.ls` | Branches must agree about what is live | 4.2 | ✓ |
-| `consume_in_loop.ls` | A loop body may not consume an outer binding | 4.3 | ✓ |
-| `reference_escapes_borrow.ls` | A block's result may not mention its region | 5 | ✓ |
-| `move_while_frozen.ls` | A frozen value may not be moved or consumed | 5 | ✓ |
-| `read_while_locked.ls` | A uniquely borrowed value may not be read | 5 | ✓ |
-| `two_unique_borrows.ls` | One unique borrow at a time | 5 | ✓ |
-| `unrelated_regions.ls` | Sibling regions do not outlive each other | 5.2 | ✓ |
-| `region_param_unsatisfied.ls` | A declared `<=` must hold at the call site | 5.2 | ✓ |
-| `reference_escapes_arena.ls` | Nothing mentioning the arena's region escapes it | 6 | ✓ |
-| `inner_region_stored_in_outer.ls` | An inner region's reference may not be stored outward | 6 | ✓ |
-| `arena_holds_res.ls` | `alloc` takes `val` data only | 6.1 | ✓ |
-| `undeclared_effect.ls` | A call's row must be a subset of the declared row | 7.2 | ✓ |
-| `effect_declared_not_performed.ls` | An over-wide row is an error | 7.3 | ✓ |
-| `effect_widened.ls` | A capability may be narrowed, never widened | 7.4 | ✓ |
-| `no_ambient_capability.ls` | There is no way to obtain a capability but to be given one | 8.2 | ✓ |
-| `capability_used_after_release.ls` | A capability is a resource | 8.3 | ✓ |
-| `capability_leaked.ls` | A capability must be released | 8.3 | ✓ |
-| `ffi_without_capability.ls` | A foreign call requires its `Ffi` capability | 8.4 | ✓ |
+| `res_copied.cho` | A `res` value may not be used twice | 3 | ✓ |
+| `val_contains_res.cho` | A `val` type may not contain a `res` field | 3 | ✓ |
+| `unconsumed_at_scope_end.cho` | A live `res` value at scope end is an error | 4 | ✓ |
+| `unconsumed_on_one_path.cho` | Every path must consume | 4 | ✓ |
+| `use_after_move.cho` | A consumed value may not be used | 4.1 | ✓ |
+| `branches_disagree.cho` | Branches must agree about what is live | 4.2 | ✓ |
+| `consume_in_loop.cho` | A loop body may not consume an outer binding | 4.3 | ✓ |
+| `reference_escapes_borrow.cho` | A block's result may not mention its region | 5 | ✓ |
+| `move_while_frozen.cho` | A frozen value may not be moved or consumed | 5 | ✓ |
+| `read_while_locked.cho` | A uniquely borrowed value may not be read | 5 | ✓ |
+| `two_unique_borrows.cho` | One unique borrow at a time | 5 | ✓ |
+| `unrelated_regions.cho` | Sibling regions do not outlive each other | 5.2 | ✓ |
+| `region_param_unsatisfied.cho` | A declared `<=` must hold at the call site | 5.2 | ✓ |
+| `reference_escapes_arena.cho` | Nothing mentioning the arena's region escapes it | 6 | ✓ |
+| `inner_region_stored_in_outer.cho` | An inner region's reference may not be stored outward | 6 | ✓ |
+| `arena_holds_res.cho` | `alloc` takes `val` data only | 6.1 | ✓ |
+| `undeclared_effect.cho` | A call's row must be a subset of the declared row | 7.2 | ✓ |
+| `effect_declared_not_performed.cho` | An over-wide row is an error | 7.3 | ✓ |
+| `effect_widened.cho` | A capability may be narrowed, never widened | 7.4 | ✓ |
+| `no_ambient_capability.cho` | There is no way to obtain a capability but to be given one | 8.2 | ✓ |
+| `capability_used_after_release.cho` | A capability is a resource | 8.3 | ✓ |
+| `capability_leaked.cho` | A capability must be released | 8.3 | ✓ |
+| `ffi_without_capability.cho` | A foreign call requires its `Ffi` capability | 8.4 | ✓ |
 
-§7 adds three more: `effect_not_propagated.ls` (a row is transitive),
-`ungrounded_effect_label.ls` (a label nothing performs) and
-`effect_row_required.ls` (the syntax).
+§7 adds three more: `effect_not_propagated.cho` (a row is transitive),
+`ungrounded_effect_label.cho` (a label nothing performs) and
+`effect_row_required.cho` (the syntax).
 
-§8.4 adds one beyond the table — `foreign_effect_undeclared.ls`, a foreign
+§8.4 adds one beyond the table — `foreign_effect_undeclared.cho`, a foreign
 declaration holding a capability its row does not name.
 
-§8 adds three: `world_leaked.ls` (the root is a resource too),
-`capability_destructured.ls` (taking one apart is not releasing it) and
-`capability_redeclared.ls` (a program may not declare its own `Io`).
-`main_takes_the_world.ls` replaces M0's `main_takes_arguments.ls`, since
+§8 adds three: `world_leaked.cho` (the root is a resource too),
+`capability_destructured.cho` (taking one apart is not releasing it) and
+`capability_redeclared.cho` (a program may not declare its own `Io`).
+`main_takes_the_world.cho` replaces M0's `main_takes_arguments.cho`, since
 `main` now takes exactly one thing.
 
 §5 adds eight must-reject fixtures beyond the table, for the rules §5.3
-describes and for the syntax: `region_not_in_scope.ls`,
-`reference_escapes_via_inference.ls`, `assign_while_frozen.ls`,
-`borrow_after_move.ls`, `borrow_mode_mismatch.ls`,
-`unique_borrow_of_frozen.ls`, `write_through_shared.ls` and
-`assign_field_of_local.ls`. Its accepting counterparts are
-`borrow_and_return.ls`, `two_shared_borrows.ls`, `nested_regions.ls` and
-`unique_borrow.ls`.
+describes and for the syntax: `region_not_in_scope.cho`,
+`reference_escapes_via_inference.cho`, `assign_while_frozen.cho`,
+`borrow_after_move.cho`, `borrow_mode_mismatch.cho`,
+`unique_borrow_of_frozen.cho`, `write_through_shared.cho` and
+`assign_field_of_local.cho`. Its accepting counterparts are
+`borrow_and_return.cho`, `two_shared_borrows.cho`, `nested_regions.cho` and
+`unique_borrow.cho`.
 
 §4.1's four accidental consumers and §3.1's instantiation rule add six more
-must-reject fixtures beyond the table — `res_discarded.ls`,
-`res_field_read.ls`, `res_matched_by_wildcard.ls`, `res_payload_ignored.ls`,
-`assign_over_live_res.ls`, `destructure_partial.ls` and
-`res_leaked_from_generic.ls` — plus `var_destructure.ls` for the syntax. Their
-accepting counterpart is `destructuring.ls`.
+must-reject fixtures beyond the table — `res_discarded.cho`,
+`res_field_read.cho`, `res_matched_by_wildcard.cho`, `res_payload_ignored.cho`,
+`assign_over_live_res.cho`, `destructure_partial.cho` and
+`res_leaked_from_generic.cho` — plus `var_destructure.cho` for the syntax. Their
+accepting counterpart is `destructuring.cho`.
 
 Each fixture is the smallest program that triggers its rule and nothing else.
 An accepting counterpart goes in `tests/accept/` for every one of them — a rule
@@ -1087,15 +1087,15 @@ that rejects everything is not a rule either:
 
 | Fixture | Shows | |
 |---|---|---|
-| `consume_once.ls` | The straight-line happy path | ✓ |
-| `consume_on_both_paths.ls` | Branch agreement | ✓ |
-| `borrow_and_return.ls` | A borrow used and discarded inside its region | ✓ |
-| `two_shared_borrows.ls` | Shared borrows nest | ✓ |
-| `nested_regions.ls` | An inner region reading an outer one | ✓ |
-| `arena_roundtrip.ls` | Allocate, walk, release in O(1) | ✓ |
-| `effect_exact.ls` | A row that is exactly what the body performs | ✓ |
-| `narrowed_capability.ls` | Attenuation, and a call that fits inside it | ✓ |
-| `threaded_io.ls` | `main` splitting `World` and threading `Io` down three frames | ✓ |
+| `consume_once.cho` | The straight-line happy path | ✓ |
+| `consume_on_both_paths.cho` | Branch agreement | ✓ |
+| `borrow_and_return.cho` | A borrow used and discarded inside its region | ✓ |
+| `two_shared_borrows.cho` | Shared borrows nest | ✓ |
+| `nested_regions.cho` | An inner region reading an outer one | ✓ |
+| `arena_roundtrip.cho` | Allocate, walk, release in O(1) | ✓ |
+| `effect_exact.cho` | A row that is exactly what the body performs | ✓ |
+| `narrowed_capability.cho` | Attenuation, and a call that fits inside it | ✓ |
+| `threaded_io.cho` | `main` splitting `World` and threading `Io` down three frames | ✓ |
 
 ---
 
@@ -1123,7 +1123,7 @@ push if something here feels wrong.
   written down. `main` owns rather than borrows, so its row is `[]` and
   every entry point in this repository has the same signature — the
   releases are the declaration, not ceremony around it. What the tooling
-  owed was to *read* them, which `lex-sys authority` now does.
+  owed was to *read* them, which `cancho authority` now does.
 - **Mode polymorphism.** *Answered — see `docs/mode-polymorphism.md`.* The
   half-answer below was right: monomorphisation does make `fn id[T](x: T) -> T`
   work at both modes. The signature that says so is `[T: val]`, checked once
@@ -1147,7 +1147,7 @@ push if something here feels wrong.
   settle it: wall-clock seconds, commands, **money in cents**. None of
   those is a property of a program's text. What was wanted is
   legibility rather than enforcement, and that is
-  `lex-sys authority --output json`.
+  `cancho authority --output json`.
 
 ---
 

@@ -4,7 +4,7 @@
     python3 scripts/tls_fuzz.py <driver> [<runs>]
     python3 scripts/tls_fuzz.py --server <server driver> [<runs>]
 
-`driver` is `tests/programs/tls_driver.ls` built with the package's files. Each
+`driver` is `tests/programs/tls_driver.cho` built with the package's files. Each
 run takes one of the recorded handshakes in `tests/vectors/tls/` (TLS 1.3
 against tlslite-ng, TLS 1.2 against OpenSSL), mutates the bytes the server sent
 in one of its `F` lines -- a bit flipped, bytes set at random, the data cut
@@ -15,7 +15,7 @@ and never trap: a refusal is the expected end, a crash is the failure. Runs go
 than it was given, is re-run one connection at a time to name the input.
 Exit status 1 on any trap.
 
-With `--server` (docs/tls-server.md §7), the driver is `tests/programs/tls_server_driver.ls` and the connections are
+With `--server` (docs/tls-server.md §7), the driver is `tests/programs/tls_server_driver.cho` and the connections are
 the honest ones of `tests/vectors/tls/liar_client.txt` (`scripts/tls_liar_client.py`): what is mutated is a line of
 the client's bytes, its ClientHello most of all, and the server must answer every line and never trap. Each
 connection starts by dropping the driver's slot, so a batch of them runs in one process.

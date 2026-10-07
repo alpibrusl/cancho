@@ -24,7 +24,7 @@
 > a captureless function value, a single non-slice reference, or an
 > *owned* zero-or-one-leaf capability (`Io`, `File`, `Ffi`, `Fs`, `Args`,
 > `Heap`) — checked by `Rule::ThreadPayloadType`
-> (`crates/lex-sys-ir/src/lower/conc.rs`). `body`'s own compiled entry
+> (`crates/cancho-ir/src/lower/conc.rs`). `body`'s own compiled entry
 > point becomes `pthread_create`'s start routine directly; the reason a
 > general struct payload is still refused is not a missing feature but a
 > missing *prerequisite* feature — this language has no
@@ -58,7 +58,7 @@
 > compiler at all, so no fixture can even construct what step 5 would
 > refuse. Rather than build the trampoline speculatively, this project's
 > own rule (`AGENTS.md` §7: a feature earns its way in when a program
-> asks) was applied and checked directly: nothing across `lex-sys`,
+> asks) was applied and checked directly: nothing across `cancho`,
 > `lex-os`, `lex-lang` or `lex-gpu` asks for a multi-field spawn
 > payload today — `lex-os-guest`'s own reasoning loop is single-threaded
 > by design with no expressed want for concurrency, and `lex-lang`'s own
@@ -152,7 +152,7 @@ conditions apply to it. What replaces them:
 - **`body` is a captureless function value** (`function-values.md`
   §4.2, unchanged) — this is the asker §6 of that document said would
   justify building them. `payload` is its one argument, and unlike a
-  C callback's `void *`, it is an ordinary lex-sys value of any
+  C callback's `void *`, it is an ordinary cancho value of any
   type the checker already understands, because the compiler runtime
   calls `body`'s own compiled entry point directly — the same
   `lexs_<name>` symbol a normal call already targets — rather than
@@ -170,7 +170,7 @@ conditions apply to it. What replaces them:
 - **`join` is mandatory.** `Thread[R]` is `res`: obliged to be
   consumed, exactly like a `File` handle or any other capability
   (`linearity-and-effects.md` §4). A program that spawns and never
-  joins does not compile, for the reason `file_handle_unclosed.ls`
+  joins does not compile, for the reason `file_handle_unclosed.cho`
   already exists.
 
 ## 3. Why this needs no new soundness rule, only a new obligation
@@ -179,13 +179,13 @@ conditions apply to it. What replaces them:
 > false of `&!` in general, and the claim that the checker "already refuses to admit" a second writer was wrong. Then
 > closed (`aliasing.md` §6.1): a `&!` given to `spawn` is now lent to that thread until its handle is joined, and a
 > second spawn of a copy of it, or any use of it by the spawning thread meanwhile, is refused
-> (`tests/reject/spawn_two_copies_of_unique.ls`, `spawn_same_unique_twice.ls`, `spawn_unique_used_while_lent.ls`;
-> `tests/accept/spawn_unique_join_first.ls` is the control that stays accepted). The paragraph below is what was
+> (`tests/reject/spawn_two_copies_of_unique.cho`, `spawn_same_unique_twice.cho`, `spawn_unique_used_while_lent.cho`;
+> `tests/accept/spawn_unique_join_first.cho` is the control that stays accepted). The paragraph below is what was
 > measured before that change.** `&!r T` is
 > `val` (`aliasing.md` §1): `let a = r; let b = r;` is two copies of one pointer, and `spawn(a, ..)` and
 > `spawn(b, ..)` each take one. That compiles on both backends and loses updates: two threads adding 1 to one
 > counter 200,000,000 times each ended short of 400,000,000 on every run, on arm64 macOS and x86-64 Linux
-> (`benches/atomics/race.ls`; the control that joins the first thread before spawning the second is exact). So a
+> (`benches/atomics/race.cho`; the control that joins the first thread before spawning the second is exact). So a
 > *data race on an ordinary value is expressible today*; what is sound is a shared `&` (nothing writes through it)
 > and a `&!` that is the only copy. The one-reference-per-thread tests in §5 do not exercise the copy.
 
@@ -221,7 +221,7 @@ concurrent *unique* reference to. The rule was never about time; it
 was about which reference exists when. Enforcing "the handle cannot
 outlive the region its payload mentions" is exactly
 `linearity-and-effects.md` §5 rule 4, the escape check
-`Type::mentions` already performs (`crates/lex-sys-types/src/lib.rs`)
+`Type::mentions` already performs (`crates/cancho-types/src/lib.rs`)
 — applied to `Thread[R]`'s own type the same way it is applied to a
 `borrow` block's result today. No new check; the existing one, asked
 about one more kind of value.
@@ -295,14 +295,14 @@ feature that does not exist yet for any of them to ask for.
 
 1. **Function values, minimal slice. Built (#127).** `Type::Fn`,
    `Expr::FnValue`/`Expr::CallIndirect`, on both backends —
-   `tests/accept/function_value.ls`.
+   `tests/accept/function_value.cho`.
 2. **`spawn`/`join`, no shared data. Built.** `tests/accept/
-   spawn_join.ls`: a thread that receives an owned `int`, computes on
+   spawn_join.cho`: a thread that receives an owned `int`, computes on
    it with no capability, and returns an `int` through `join`.
    Verified by checking two things directly rather than trusting the
-   type checker alone (`tests/accept/spawn_thread_ids.ls`,
-   `tests/accept/spawn_parallel_sleep.ls`, checked on both backends in
-   `crates/lex-sys/tests/conformance/backends.rs`): distinct OS thread
+   type checker alone (`tests/accept/spawn_thread_ids.cho`,
+   `tests/accept/spawn_parallel_sleep.cho`, checked on both backends in
+   `crates/cancho/tests/conformance/backends.rs`): distinct OS thread
    IDs (`pthread_self`, declared the ordinary `extern fn` way — no
    `gettid` needed, since a thread ID here is only ever compared, never
    printed as the kernel's own number) and wall-clock evidence of real
@@ -313,12 +313,12 @@ feature that does not exist yet for any of them to ask for.
    than one spawn, and the spawning side still reads it after every
    `join`" case: one borrowed `Ffi("libc")` capability is `payload` for
    two threads and is read a third time by `main` once both are
-   joined. `tests/reject/spawn_handle_escapes_borrow.ls` checks §3's
+   joined. `tests/reject/spawn_handle_escapes_borrow.cho` checks §3's
    soundness argument itself: a `Thread[&r int, int]` handle returned
    out of the `borrow r` block that opened `r`, without `join`ing
    first, is refused by the existing `reference-escapes-region` check
    — no new rule, exactly as §3 predicted. `tests/reject/
-   spawn_payload_type_not_supported.ls` checks this slice's own wall:
+   spawn_payload_type_not_supported.cho` checks this slice's own wall:
    a multi-field struct payload is refused by `Rule::ThreadPayloadType`
    before it ever reaches codegen.
 3. **`spawn`/`join` with a moved capability. Built — and this step's own
@@ -330,15 +330,15 @@ feature that does not exist yet for any of them to ask for.
    zero-field capability (`Io`, `Ffi`, `Fs`, `Args`, `Heap`) is exactly
    zero — the same shapes this slice's codegen already handles for
    `int` and `()`, so the fix was a wider `crosses_to_a_thread`
-   allowlist, not a trampoline. `tests/accept/spawn_owned_io.ls` moves
+   allowlist, not a trampoline. `tests/accept/spawn_owned_io.cho` moves
    an owned `Io` into a thread that writes to the real console (a
    zero-leaf capability, `worker`'s own row correctly `[]` since owning
    `Io` outright *discharges* `io_write`, `defs.rs`'s `discharged_by`);
-   `tests/accept/spawn_owned_file.ls` moves an owned, already-`open_read`
+   `tests/accept/spawn_owned_file.cho` moves an owned, already-`open_read`
    `File` into a thread that reads it and closes it there (one real
    leaf, the fd). Both checked on both backends
    (`the_two_backends_agree_on_spawn_owned_io`/`_file`,
-   `crates/lex-sys/tests/conformance/backends.rs`). Left genuinely
+   `crates/cancho/tests/conformance/backends.rs`). Left genuinely
    unbuilt: a capability shaped like a real multi-field struct — none
    of today's capabilities are, so this step's trampoline-free answer
    may not generalise past `File`/`Io`'s own accidentally-simple shape.
@@ -347,7 +347,7 @@ feature that does not exist yet for any of them to ask for.
    companion — a `tests/reject/` fixture proving a *unique* value
    cannot be read from the spawning side before `join` — is built as
    the owned-capability case's own mirror rather than a separate
-   reference fixture: `tests/reject/spawn_owned_capability_reused.ls`
+   reference fixture: `tests/reject/spawn_owned_capability_reused.cho`
    moves an owned `Io` into `spawn` and then `release`s it again from
    the spawning function, refused by the pre-existing
    `linear-use-after-move` rule with no thread-specific rule added,
@@ -362,7 +362,7 @@ feature that does not exist yet for any of them to ask for.
    a multi-field spawn payload (`Rc`-shaped or otherwise) have a real
    asker anywhere today — and that was checked directly rather than
    left as a standing TODO: a repo-wide search across all four reachable
-   repositories (`lex-sys`, `lex-os`, `lex-lang`, `lex-gpu`) found none.
+   repositories (`cancho`, `lex-os`, `lex-lang`, `lex-gpu`) found none.
    `lex-os-guest`'s reasoning loop (the concrete production target §2's
    own status note names) is single-threaded by design, with no comment
    or TODO anywhere in it wanting concurrency. `lex-lang`'s own,
@@ -376,12 +376,12 @@ feature that does not exist yet for any of them to ask for.
 
 > **Corrected (`parallelism.md` §3.4): a multi-field payload does not need the trampoline when it is passed by
 > reference.** A unique reference to a struct, including one that owns a `Box[[int]]`, is one pointer leaf and
-> crosses today on both backends (`tests/accept/spawn_struct_ref.ls`); the trampoline is needed only for an *owned*
+> crosses today on both backends (`tests/accept/spawn_struct_ref.cho`); the trampoline is needed only for an *owned*
 > struct. Two further findings from the same probes: each spawn needs **its own function value** (one `work` taken
 > once is instantiated at the first borrow's region, and the second reference "does not outlive" it); and `Net(..)`
 > and `Clock` were refused as payloads although `crosses_to_a_thread`'s own comment lists `Net` among the zero-field
 > capabilities, which was an allowlist omission, not a design position: both are admitted now
-> (`tests/accept/spawn_owned_net.ls`, `spawn_owned_clock.ls`).
+> (`tests/accept/spawn_owned_net.cho`, `spawn_owned_clock.cho`).
 
 Steps 1 through 4 are built. Step 3's struct-shaped-capability half and
 step 5 are **measured and decided not yet**, the same verdict
@@ -405,7 +405,7 @@ the alignment-check bit that lets ordinary loads through.
 **Measured** on Debian trixie aarch64 (colima, kernel 6.8, rustc
 1.98.1, clang 19.1.7), on `origin/main` at 906ad24:
 
-* `tests/accept/spawn_join.ls` built with `--backend cranelift` exits
+* `tests/accept/spawn_join.cho` built with `--backend cranelift` exits
   135 (`SIGBUS`) and prints nothing; with `--backend llvm` it prints
   `42` and exits 0. The fault is at the `ldaxr` of `count_thread`, on
   address `0x…60049`.
@@ -415,7 +415,7 @@ the alignment-check bit that lets ordinary loads through.
   `0x20031`, `lexs_argv` at `0x20039`, `lexs_fd_epoch` at `0x20041`,
   `lexs_signal_state` at `0x60041`. `.bss` itself is aligned `2**0`.
   Cranelift's `DataDescription` defaults to an alignment of one, and
-  `lex-sys-codegen` never set one.
+  `cancho-codegen` never set one.
 * The same compiler on macOS arm64 emits the same `ldaxr`/`stlxr` loop,
   and the program prints `42`: `ld64` starts `__bss` on a page and puts
   nothing of its own ahead of these objects, so they land on
@@ -453,7 +453,7 @@ its alignment. Word data (the zeroed globals, and a `static` whose
 elements are 8-byte leaves) is aligned to 8, which is the size of a
 leaf (`layout.md` §1) and what LLVM already gives the same objects.
 Byte data (string literals, a `static` of `byte`) stays at 1, so
-nothing grows. `lex-sys-codegen`'s
+nothing grows. `cancho-codegen`'s
 `every_word_global_is_aligned_to_a_word` reads the alignment back out
 of both the ELF and the Mach-O object, so the check runs on every host
 CI has, including the two where the misalignment never faults.

@@ -21,7 +21,7 @@ fifteen runs:
 
 | | min | median |
 |---|---|---|
-| lex-sys, `io.write_all` (one `putchar` per byte) | 40.5 ms | 42.3 ms |
+| cancho, `io.write_all` (one `putchar` per byte) | 40.5 ms | 42.3 ms |
 | C, `putchar` per byte | 32.5 ms | 33.7 ms |
 | C, `fwrite` per line | **2.8 ms** | **3.0 ms** |
 
@@ -29,20 +29,20 @@ Two things fall out of those three rows, and they point in different
 directions:
 
 - **Per-byte output costs 11× in C too.** 33.7 ms against 3.0 ms is
-  libc's own per-call overhead, not anything lex-sys does. A language
+  libc's own per-call overhead, not anything cancho does. A language
   that emits one `putchar` per byte is paying what C pays for the same
   shape.
 - **The 42 against 34 is the ordinary backend gap** — 1.25×, inside
   `benchmarks-game.md` §1's range and unremarkable.
 
-So the cost is not that lex-sys writes badly. It is that lex-sys could
+So the cost is not that cancho writes badly. It is that cancho could
 not write any other way.
 
 And it shows up in a real program. `examples/base64/` encoding 4 MB:
 
 | | min | median |
 |---|---|---|
-| lex-sys | 54.3 ms | 55.1 ms |
+| cancho | 54.3 ms | 55.1 ms |
 | GNU coreutils `base64` | 5.8 ms | 5.9 ms |
 
 9.3×, on a program whose actual work is a shift and a table lookup.
@@ -51,7 +51,7 @@ And it shows up in a real program. `examples/base64/` encoding 4 MB:
 
 ## 2. The authority asymmetry, which is the actual bug
 
-`examples/serve/serve.ls` already does bulk output:
+`examples/serve/serve.cho` already does bulk output:
 
 ```
 extern fn write[&f, &b](ffi: &f Ffi("libc"), fd: int, buf: &b [byte])
@@ -103,7 +103,7 @@ The IR's own comment on `putchar` said this was coming:
 > there is any FFI."*
 
 It was half right. What replaced it is not a capability-gated foreign
-call — that is what `serve.ls` had, and §2 is why it was the wrong
+call — that is what `serve.cho` had, and §2 is why it was the wrong
 shape. It is a **second primitive behind the same capability**, which
 changes what a grant of `Io` is worth without changing what it permits.
 
@@ -146,7 +146,7 @@ the harder one half-answered.
 > **Corrected ([`agent-toolbox.md`](agent-toolbox.md) §2.1).** *"it wrote
 > the bytes or the process is gone"* is false for a stream that fails.
 > `write_bytes` is `fwrite` on the C `stdout` stream
-> (`crates/lex-sys-codegen-llvm/src/body/expr.rs`), which is buffered,
+> (`crates/cancho-codegen-llvm/src/body/expr.rs`), which is buffered,
 > and the count it answers is what was handed to the buffer, not what
 > reached the file. Measured with the prebuilt compiler: a program that
 > writes `hello\n` through `io.write_all` is answered `6` and **exits
@@ -187,7 +187,7 @@ machine, same runs:
 
 Medians. The first row is the primitive on its own: **12.8× faster, and
 within 1.1× of C's `fwrite`** on the same loop. Writing is no longer a
-thing lex-sys is slow at.
+thing cancho is slow at.
 
 The second row is why the first one is not the headline. base64 got
 **1.6× faster**, not 12.8×, and the missing time is the buffer.
@@ -201,12 +201,12 @@ another slice each time rather than writing a prepared one:
 
 | | median |
 |---|---|
-| lex-sys, prepared line | 3.0 ms |
-| lex-sys, filled byte by byte | 9.2 ms |
+| cancho, prepared line | 3.0 ms |
+| cancho, filled byte by byte | 9.2 ms |
 | C, filled byte by byte | 3.0 ms |
 
 So 8 M bounds-checked byte stores cost **6 ms** where C's cost nothing
-measurable — `cc -O2` turns a 63-byte copy into vector moves and lex-sys
+measurable — `cc -O2` turns a 63-byte copy into vector moves and cancho
 emits the loop. base64 buffers 5.4 MB, so about 4 ms of what the bulk
 write saved went straight back into filling the buffer. That is a real
 cost and it is still a fifth of what the calls cost.

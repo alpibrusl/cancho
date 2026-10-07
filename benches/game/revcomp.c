@@ -1,4 +1,4 @@
-// reverse-complement -- the same algorithm as revcomp.ls: read FASTA
+// reverse-complement -- the same algorithm as revcomp.cho: read FASTA
 // records from stdin, and for each one print its header followed by its
 // sequence reversed and complemented, wrapped at 60 columns.
 //

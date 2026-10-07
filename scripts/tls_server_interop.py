@@ -3,7 +3,7 @@
 
     python3 scripts/tls_server_interop.py <tls_serve> [--corpus <dir>] [<client> ...]
 
-`tls_serve` is `tests/programs/tls_serve.ls` built with `packages/tls` and `packages/x509`. It runs in the image
+`tls_serve` is `tests/programs/tls_serve.cho` built with `packages/tls` and `packages/x509`. It runs in the image
 `scripts/interop/server.Dockerfile` describes (Ubuntu 24.04: OpenSSL 3.0.13, curl 8.5.0, Go 1.22, wolfSSL 5.6.6,
 mosquitto 2.0); `/etc/hosts` must name `srv.example`, `other.example` and `a.wild.example` as 127.0.0.1, as
 `docker run --add-host` does. The clients, each skipped with the reason when it cannot run:
@@ -203,7 +203,7 @@ def openssl_row(srv, work, suite, group, retry, sni="srv.example", alpn=None, re
     if refuse:
         bad = check(srv, since, None, 0, False, None, None, refuse)
         return bad if bad else (None if code != 0 else "the client did not fail")
-    if code != 0 or "hello from lex-sys" not in out:
+    if code != 0 or "hello from cancho" not in out:
         return f"s_client {code}: {out.strip()[-200:]}"
     name = sni if sni in ("srv.example", "other.example", "a.wild.example") else None
     return check(srv, since, SUITES[suite], GROUPS[group], retry, sni, "http/1.1" if alpn == "http/1.1" else None)
@@ -213,7 +213,7 @@ def curl_row(srv, work, suite, group, retry):
     env = dict(os.environ, OPENSSL_CONF=openssl_conf(work, suite, groups_for(group, retry)))
     since = srv.mark()
     code, out = run(["curl", "-sS", "--http1.1", "--cacert", "ca.pem", f"https://srv.example:{srv.port}/"], env=env)
-    if code != 0 or "hello from lex-sys, name srv.example, alpn http/1.1" not in out:
+    if code != 0 or "hello from cancho, name srv.example, alpn http/1.1" not in out:
         return f"curl {code}: {out.strip()[-200:]}"
     return check(srv, since, SUITES[suite], GROUPS[group], retry, "srv.example", "http/1.1")
 
@@ -245,12 +245,12 @@ def wolfssl_row(srv, work, exe, suite, group, retry, alpn="-"):
 def mosquitto_row(srv, work, suite, group, retry, alpn=None):
     env = dict(os.environ, OPENSSL_CONF=openssl_conf(work, suite, groups_for(group, retry)))
     common = ["-h", "srv.example", "-p", str(srv.port), "--cafile", "ca.pem", "--tls-version", "tlsv1.3",
-              "-t", "lexsys/interop", "-i", "lexsys-interop"]
+              "-t", "cancho/interop", "-i", "cancho-interop"]
     if alpn:
         common += ["--tls-alpn", alpn]
     since = srv.mark()
     code, out = run(["mosquitto_sub", *common, "-C", "1", "-W", "10"], env=env)
-    if code != 0 or out.strip() != "hello from lex-sys":
+    if code != 0 or out.strip() != "hello from cancho":
         return f"mosquitto_sub {code}: {out.strip()[-200:]}"
     bad = check(srv, since, SUITES[suite], GROUPS[group], retry, "srv.example", alpn)
     if bad:
@@ -263,7 +263,7 @@ def mosquitto_row(srv, work, suite, group, retry, alpn=None):
     bad = check(srv, since, SUITES[suite], GROUPS[group], retry, "srv.example", alpn)
     if bad:
         return "pub: " + bad
-    if f"publish lexsys/interop {payload}" not in srv.published(since):
+    if f"publish cancho/interop {payload}" not in srv.published(since):
         return "pub: the server did not print the message"
     return None
 

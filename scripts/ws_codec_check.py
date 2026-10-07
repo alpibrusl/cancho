@@ -3,7 +3,7 @@
 
     python3 scripts/ws_codec_check.py <probe> [<server>]
 
-`probe` is `examples/ocpp_ws/probe.ls` built with `lex-sys build --std`. 1,000 random inputs, every length from 0 to 130 at least
+`probe` is `examples/ocpp_ws/probe.cho` built with `cancho build --std`. 1,000 random inputs, every length from 0 to 130 at least
 seven times; any difference is printed and the exit status is 1.
 """
 import base64

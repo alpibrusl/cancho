@@ -5,8 +5,8 @@
     python3 scripts/x509_limbo.py <driver> limbo.json
     python3 scripts/x509_limbo.py verify <verify driver> limbo.json [<subset.txt>]
 
-`driver` is `tests/programs/x509_driver.ls` built with `--std` and
-`packages/x509/x509.ls`. x509-limbo's cases are about path validation
+`driver` is `tests/programs/x509_driver.cho` built with `--std` and
+`packages/x509/x509.cho`. x509-limbo's cases are about path validation
 (#206), not parsing, so each one is used here only as a source of
 certificates: every distinct certificate in it is parsed, and each refusal
 is listed with the cases that use it and what those cases expect. Also
@@ -15,8 +15,8 @@ compared: whether pyca/cryptography loads the same certificate.
 Exit status 1 when a case that expects SUCCESS has its leaf refused, or when
 a certificate pyca refuses is accepted here.
 
-`verify` runs every case through `tests/programs/x509_verify_driver.ls`
-(built with `--std`, `packages/x509/verify.ls`, `names.ls` and `x509.ls`),
+`verify` runs every case through `tests/programs/x509_verify_driver.cho`
+(built with `--std`, `packages/x509/verify.cho`, `names.cho` and `x509.cho`),
 as docs/x509-verify.md §6.1 says: the trusted certificates as the store, the
 leaf and the intermediates as the chain, `expected_peer_name` as the host,
 `validation_time` (now, when null) as the time, `max_chain_depth` (6 when

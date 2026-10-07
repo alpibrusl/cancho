@@ -1,8 +1,8 @@
 # `std.map`: a hash map from byte strings to copyable values
 
-> **Status: built.** `std/map.ls`; tests `tests/lex/map_test.ls` (5, run by
-> `lex-sys test` on both backends); drivers `tests/programs/map_bench.ls`
-> and `map_lookup_bench.ls`. Insert, overwrite, lookup, remove, and
+> **Status: built.** `std/map.cho`; tests `tests/lex/map_test.cho` (5, run by
+> `cancho test` on both backends); drivers `tests/programs/map_bench.cho`
+> and `map_lookup_bench.cho`. Insert, overwrite, lookup, remove, and
 > iteration in insertion order. §5 has the numbers, §7 the compiler bug a
 > benchmark found.
 
@@ -103,7 +103,7 @@ compacts it with tombstones in the probe chains.
 runs, taken as a difference between a short and a long run so the build of
 the table cancels.
 
-| Lookup, 12-byte keys | lex-sys | Rust `HashMap<Vec<u8>, _>` | Python `dict` |
+| Lookup, 12-byte keys | cancho | Rust `HashMap<Vec<u8>, _>` | Python `dict` |
 |---|---|---|---|
 | 100,000 keys (in cache) | 51-72 ns | 52-81 ns | ~190 ns |
 | 2,000,000 keys (past cache) | 171-196 ns | 208-251 ns | ~455 ns |
@@ -114,8 +114,8 @@ faster. Rust's default hasher is SipHash, built for the hostile-key case
 are separate allocations where these are one contiguous buffer, which is a
 layout difference as much as a table one. The Python column is one run.
 
-Put 1M keys, get 1M, remove 500k, get 1M (`map_bench.ls`), building every
-key as a string as it goes: lex-sys 1.2-1.4 s, Rust 1.6-2.2 s, Python
+Put 1M keys, get 1M, remove 500k, get 1M (`map_bench.cho`), building every
+key as a string as it goes: cancho 1.2-1.4 s, Rust 1.6-2.2 s, Python
 2.4 s. That figure is mostly key construction and allocation, which all
 three do.
 

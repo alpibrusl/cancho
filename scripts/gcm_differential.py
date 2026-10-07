@@ -3,7 +3,7 @@
 
     python3 scripts/gcm_differential.py <driver> [<count>]
 
-`driver` is `tests/programs/gcm_driver.ls` built with `lex-sys build --std`.
+`driver` is `tests/programs/gcm_driver.cho` built with `cancho build --std`.
 OpenSSL is reached through pyca/cryptography (`pip install cryptography`),
 whose AESGCM is OpenSSL's EVP implementation.
 

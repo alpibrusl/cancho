@@ -41,8 +41,8 @@ gains nothing else.
 ## 2. A program is a set of files
 
 ```sh
-lex-sys build main.ls util.ls list.ls -o app
-lex-sys check main.ls util.ls
+cancho build main.cho util.cho list.cho -o app
+cancho check main.cho util.cho
 ```
 
 Named on the command line, in any order, and that is the whole of it. No
@@ -50,7 +50,7 @@ Named on the command line, in any order, and that is the whole of it. No
 
 ### 2.1 Why not `import`
 
-`import "util.ls"` would make a program self-describing, which is a real
+`import "util.cho"` would make a program self-describing, which is a real
 advantage, and it needs three things this document would rather not decide
 yet: how a path resolves (relative to what?), what happens when two files
 import each other, and where a *library* lives when it is not next to the
@@ -67,7 +67,7 @@ no privacy, and no qualified name — `push` is `push` wherever it was
 written.
 
 So a name declared twice is an error, whether the two declarations are in
-one file or in two. That is not a new rule: it is `duplicate_function.ls`,
+one file or in two. That is not a new rule: it is `duplicate_function.cho`,
 which has been enforced since M1, now noticing a second file.
 
 The cost is real and worth stating: with no privacy, a library's internal
@@ -121,10 +121,10 @@ of declarations however they were spelled across how many files.
 
 ## 5. What one file still means
 
-* **`lex-sys print <file>`** renders exactly one file, and round-trips it
+* **`cancho print <file>`** renders exactly one file, and round-trips it
   exactly as before. Printing is per file because printing is about text,
   and text is what a file is.
-* **`lex-sys ids <file>`** prints that file's declarations' hashes. Per
+* **`cancho ids <file>`** prints that file's declarations' hashes. Per
   file for the same reason, and §3 is the property that makes the choice
   harmless.
 * **`main`** must be declared exactly once across all the files, which is

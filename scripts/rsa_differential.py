@@ -4,7 +4,7 @@
     python3 scripts/rsa_differential.py <driver> pow [<count>]
     python3 scripts/rsa_differential.py <driver> openssl [<count>]
 
-`driver` is `tests/programs/rsa_driver.ls` built with `lex-sys build --std`.
+`driver` is `tests/programs/rsa_driver.cho` built with `cancho build --std`.
 
 `pow` (default 100,000): `bigmod.pow_mod` against Python's `pow(a, e, n)`.
 Moduli are odd, of a random size from 2 to 4,096 bits, with the sizes at

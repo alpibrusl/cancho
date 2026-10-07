@@ -1,0 +1,23 @@
+[package]
+name = "cancho-codegen"
+description = "Cranelift lowering and native object emission for cancho"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+cranelift-codegen = "0.121.2"
+cranelift-frontend = "0.121.2"
+cranelift-module = "0.121.2"
+cranelift-native = "0.121.2"
+cranelift-object = "0.121.2"
+cancho-ir.workspace = true
+cancho-types.workspace = true
+target-lexicon = "0.13.5"
+
+[dev-dependencies]
+# Matches the version cranelift-object already pulls in, so the tree holds one copy.
+object = "0.36"
+cancho-syntax.workspace = true

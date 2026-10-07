@@ -12,13 +12,13 @@ python3 scripts/bench.py --with-c     # and the C comparison
 
 ## The shape
 
-Each benchmark is a **pair**. `<name>_checked.ls` uses `+`, `-` and `*`,
-which trap on overflow. `<name>_wrapping.ls` is the same program with
+Each benchmark is a **pair**. `<name>_checked.cho` uses `+`, `-` and `*`,
+which trap on overflow. `<name>_wrapping.cho` is the same program with
 `wrapping_add`/`wrapping_sub`/`wrapping_mul`, which lower to a bare
 `iadd`/`isub`/`imul` with no trap. Nothing else differs, so the gap
 between the two binaries is the guarantee and nothing else.
 
-The wrapping halves are deliberately **not** idiomatic lex-sys.
+The wrapping halves are deliberately **not** idiomatic cancho.
 `wrapping_add` means *the bits are the intent*
 ([`defined-behaviour.md`](../docs/defined-behaviour.md) §2.2); here the
 intent is only to delete the check, which is the one thing it is not for.
@@ -43,7 +43,7 @@ are known to be the same program.
 ## `guards.c` — every *other* check
 
 `reduce.c` switches two guards. `guards.c` is the same idea carried to
-all of them: one kernel per check lex-sys emits inside a loop body, each
+all of them: one kernel per check cancho emits inside a loop body, each
 written so the unguarded form is as vectorisable as the instruction set
 allows, so that what the guard costs is visible rather than hidden
 behind a loop that was scalar anyway.
@@ -85,7 +85,7 @@ condition is about one association order).
 ## Against C and Rust
 
 `benches/three/` is a different comparison: the same algorithm written in
-lex-sys, C and Rust, to answer what `docs/overflow-cost.md` §4 said this
+cancho, C and Rust, to answer what `docs/overflow-cost.md` §4 said this
 repository owed and had not measured.
 
 ```sh
@@ -102,9 +102,9 @@ result. The short version: **1.6× at equal semantics**, with Rust within
 4% of C — so the gap is Cranelift against LLVM rather than the price of
 ownership or effect rows.
 
-`mandelbrot_f64.{c,rs}` is the row lex-sys cannot enter, and it is there
+`mandelbrot_f64.{c,rs}` is the row cancho cannot enter, and it is there
 for §4: double precision turns out to be **17% slower** than the Q16.16
-fixed point lex-sys is forced into, while being ten orders of magnitude
+fixed point cancho is forced into, while being ten orders of magnitude
 more precise. The missing `float` is an expressiveness gap, not a speed
 one.
 
@@ -115,13 +115,13 @@ function is called twice in a hot loop across a **compilation boundary**,
 which is where declaring purity stops being redundant with inlining:
 
 ```
-lex-sys      knows, cannot spend      0.2854s
+cancho      knows, cannot spend      0.2854s
 C     -O2    knows nothing            0.1878s
 Rust  -O     cannot be told           0.1847s
 C     -O2    __attribute__((const))   0.0012s   151x faster
 ```
 
-lex-sys computes that fact and proves it; C can only promise it, with
+cancho computes that fact and proves it; C can only promise it, with
 nothing checking; Rust has no way to say it. Today nothing consumes it —
 Cranelift has no call attribute for "no side effects" — so the 151×
 sits unspent, and `docs/purity.md` §3 is honest about how much of it a

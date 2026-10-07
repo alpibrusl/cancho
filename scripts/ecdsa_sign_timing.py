@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A dudect-style timing test of `std.ecdsa_sign` (docs/ecdsa-sign.md §6).
 
-    lex-sys build --std [--backend B] tests/programs/ecdsa_sign_timing.ls -l tick -L . -o timing
+    cancho build --std [--backend B] tests/programs/ecdsa_sign_timing.cho -l tick -L . -o timing
     python3 scripts/ecdsa_sign_timing.py ./timing [<samples per test>] [<batch>]
 
 `tick` is the cycle counter `scripts/gcm_timing.py` describes. Each test

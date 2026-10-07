@@ -1,7 +1,7 @@
-# Contributing to lex-sys
+# Contributing to cancho
 
 This is how the compiler itself is worked on. For how to *write*
-lex-sys, read [`AGENTS.md`](AGENTS.md). Everything here is a practice the
+cancho, read [`AGENTS.md`](AGENTS.md). Everything here is a practice the
 repository already follows, and each one that can be checked is checked
 by the build.
 
@@ -43,21 +43,21 @@ programs, the documentation link check, and the file budget below.
 
 ## Files
 
-**No source file over 2,000 lines.** `crates/lex-sys/tests/files.rs`
-enforces it on every `.rs`, `.ls`, `.py` and `.c` file in the
+**No source file over 2,000 lines.** `crates/cancho/tests/files.rs`
+enforces it on every `.rs`, `.cho`, `.py` and `.c` file in the
 repository. rustc's own `tidy` refuses files over 3,000 lines, and these
 crates are smaller. A file over the budget can be given a **ceiling**,
 its current size, which may only come down: the number drops as the
 file shrinks and the row is deleted once it is under the budget.
 Raising a ceiling is not a fix. The table is empty today: the three
-files that were over the line (`lex-sys-ir`, `lex-sys-codegen`, and the
+files that were over the line (`cancho-ir`, `cancho-codegen`, and the
 conformance suite) were each split when the rule arrived.
 
 When a file gets close, split it **by concern**, not by size:
 
 - `lib.rs` is the table of contents. It holds the crate's documentation,
   its `mod` declarations, its public re-exports and its entry points,
-  and little else. `lex-sys-ir` is the example: `ir.rs` is the IR,
+  and little else. `cancho-ir` is the example: `ir.rs` is the IR,
   `defs.rs` the declarations, `function.rs` one function at a time, and
   `lower/` the walk over a body.
 - **A large `impl` can be split across child modules.** Children see
@@ -83,9 +83,9 @@ When a file gets close, split it **by concern**, not by size:
 - **Visibility is as narrow as it can be.** Crate-internal items are
   `pub(crate)`, and the public API is what `lib.rs` re-exports.
 - **Imports are explicit in new code.** The modules split out of
-  `lex-sys-ir` start with `use crate::*;` because the split was a pure
+  `cancho-ir` start with `use crate::*;` because the split was a pure
   move out of one namespace. New modules name what they use.
-- **Every refusal has a rule tag** (`lex_sys_syntax::Rule`), a located
+- **Every refusal has a rule tag** (`cancho_syntax::Rule`), a located
   span where one exists, and a fixture under `tests/reject/` that
   reaches it (`every_rule_has_a_fixture`).
 - **Input never reaches a panic.** An `unreachable!` or `expect` states

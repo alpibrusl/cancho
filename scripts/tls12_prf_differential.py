@@ -4,7 +4,7 @@
 
     python3 scripts/tls12_prf_differential.py <driver> [<count>] [--write <rows.txt>]
 
-`driver` is `tests/programs/tls_driver.ls` built with the package's files; its
+`driver` is `tests/programs/tls_driver.cho` built with the package's files; its
 `P` line is `tls_record.prf`. For each of `count` cases (default 1,000): a hash
 (SHA-256 or SHA-384), a secret, a label and a seed at random, among them the
 extended master secret's (RFC 7627 §4: label "extended master secret", a
@@ -68,7 +68,7 @@ def main():
     bad = sum(1 for g, w in zip(lines, wants) if g != f"0 ok {w}") + abs(len(lines) - len(wants))
     print(f"TLS 1.2 PRF: {count} cases against OpenSSL's TLS1-PRF and Python, {bad} differences")
     if write:
-        head = ["# The TLS 1.2 PRF (RFC 5246 §5) and extended master secret (RFC 7627 §4): `tls_driver.ls`'s",
+        head = ["# The TLS 1.2 PRF (RFC 5246 §5) and extended master secret (RFC 7627 §4): `tls_driver.cho`'s",
                 "# `P <hash length> <secret> <label> <seed> <n>` | the output. Printed by",
                 "# `scripts/tls12_prf_differential.py --write` from OpenSSL's TLS1-PRF (`openssl kdf`), each row",
                 "# also checked against P_hash on Python's hmac. Read by `conformance/tls.rs`."]

@@ -27,7 +27,7 @@ failure paths produce **zero bytes** on every stream:
 
 Eleven of the nineteen programs under `examples/` have at least one
 non-zero exit; `examples/serve/` has four distinct ones. None of them
-says anything, and `sort.ls` carries a comment admitting it:
+says anything, and `sort.cho` carries a comment admitting it:
 
 > *"GNU writes the failing path to standard error and exits 2. There is
 > no standard error here yet, so this is the status alone."*
@@ -70,7 +70,7 @@ it is a stream that has arrived by the time the next instruction runs.
 
 ### 1.3 A silent path is a path nothing compares
 
-`examples/cut/cut.ls` says, above its parser:
+`examples/cut/cut.cho` says, above its parser:
 
 > *"Answers `-1` in `from_open` on a malformed list, which `main` turns
 > into the exit status GNU uses."*
@@ -124,7 +124,7 @@ So: **one capability, a third label.**
 ### 2.1 What it does widen, said plainly
 
 This is not free and the honest version is worth writing down. Before
-this change, an `Io` holder could not reach descriptor 2 from lex-sys at
+this change, an `Io` holder could not reach descriptor 2 from cancho at
 all — only through `Ffi("libc")`, which `reach.md` §5 establishes is every
 authority at once. After it, an `Io` holder can. **A grant of `Io` is
 worth more than it was.**
@@ -218,7 +218,7 @@ output does not.
 
 ## 4. What the report must not say
 
-`lex-sys authority` prints a negative half — *"never touches"* — and
+`cancho authority` prints a negative half — *"never touches"* — and
 `authority.md` §2.2 is why it is the interesting half: an absent label is
 a proof.
 
@@ -252,9 +252,9 @@ keeps.
 
 **What is promised is per-stream order**, which is the same promise the
 output stream already makes for mixing `putchar` and `write_bytes` —
-both go through one stdio stream, and `tests/accept/bulk_write.ls`
+both go through one stdio stream, and `tests/accept/bulk_write.cho`
 checks the interleaving. Every byte written to standard error appears in
-the order it was written, and `tests/accept/standard_error.ls` checks
+the order it was written, and `tests/accept/standard_error.cho` checks
 that. Across the two streams, nothing, and nothing in either fixture
 asserts one.
 

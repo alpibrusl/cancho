@@ -4,7 +4,7 @@
     python3 scripts/tls_trace.py <driver> <rsa|ecdsa> <out.txt> [<suite> <group>]
     python3 scripts/tls_trace.py <driver> <rsa|ecdsa> <out.txt> --openssl12 <cipher>
 
-`driver` is `tests/programs/tls_driver.ls` built with `--std` and the package's
+`driver` is `tests/programs/tls_driver.cho` built with `--std` and the package's
 files. A tlslite-ng 0.8.2 server (pure Python, an implementation independent of
 this one) runs in a thread on one end of a socket pair. It is restricted to
 TLS 1.3, ChaCha20-Poly1305 and X25519 (or the tlslite-ng suite and group
@@ -27,7 +27,7 @@ status page and closes.
 The client does the handshake, sends `GET / HTTP/1.0`, reads the answer, and
 sees the server's close_notify. The file holds every line given to the driver
 and, after each, the line it answered (`= ...`).
-`crates/lex-sys/tests/conformance/tls.rs` replays it with no network: the same
+`crates/cancho/tests/conformance/tls.rs` replays it with no network: the same
 input must give the same answers, byte for byte. The server's randomness is
 not fixed, so a second recording differs; the replay does not need it to.
 """
@@ -44,7 +44,7 @@ from cryptography.x509.oid import NameOID
 from tlslite import HandshakeSettings, TLSConnection, X509CertChain
 from tlslite.utils.keyfactory import parsePEMKey
 
-BODY = b"HTTP/1.0 200 OK\r\nContent-Length: 13\r\n\r\nhello, lexsys"
+BODY = b"HTTP/1.0 200 OK\r\nContent-Length: 13\r\n\r\nhello, cancho"
 
 
 NOW = 1780272000  # 2026-06-01, inside both certificates' validity

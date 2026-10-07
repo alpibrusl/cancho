@@ -1,0 +1,34 @@
+{
+  "entries": {
+    "1087956c063ffbcdc3eea85308bcd1c33327afb2ed23043be9dcbe5902440b52": {
+      "name": "goal_start_of",
+      "stage_id": "5f11968e8e543aea529baa54130dbd3a66c227358b1694180bbe15741cfc8a8c",
+      "source_hash": "3d8276bc0b03ad46f97b204b9c7983109c6feca83a972888de5ceaef8d7dce34",
+      "uses_std": false
+    },
+    "3280b7bcff0b04fe0b3fa85c594e016bc6e417ec9ecc80ab37e58c3e3a954138": {
+      "name": "end_of_quoted",
+      "stage_id": "f1e23d683ac5a72a591fcb10fcbde240c88af33632e23f83b9f33bb93e53f1c9",
+      "source_hash": "3d8276bc0b03ad46f97b204b9c7983109c6feca83a972888de5ceaef8d7dce34",
+      "uses_std": false
+    },
+    "438ce60138b3edc2460b6044777749b70eeab1e0d67d6b017c1ed655e3b864fd": {
+      "name": "step_of",
+      "stage_id": "2b27ba7c26befae5dd8a3cb6998e422f2b65226e429e539d397b977c0e93bb3d",
+      "source_hash": "3d8276bc0b03ad46f97b204b9c7983109c6feca83a972888de5ceaef8d7dce34",
+      "uses_std": false
+    },
+    "7df8de6bf7f9cf67161473b20cc33cc54870f095b4656995a27318778af4c615": {
+      "name": "goal_end_of",
+      "stage_id": "236dba1c43ecb6dbd44c1b4b2098d9eed0451b001fec461c27269506a00fa59b",
+      "source_hash": "3d8276bc0b03ad46f97b204b9c7983109c6feca83a972888de5ceaef8d7dce34",
+      "uses_std": false
+    },
+    "f72510d504f54800a7b267f73697e81c264de6777b2403e95102d73e42237652": {
+      "name": "find_after",
+      "stage_id": "b29f9b7dbcc5eddb3286761c65fd83458fec35421d2fc3bf5b94238f5341fea1",
+      "source_hash": "3d8276bc0b03ad46f97b204b9c7983109c6feca83a972888de5ceaef8d7dce34",
+      "uses_std": false
+    }
+  }
+}

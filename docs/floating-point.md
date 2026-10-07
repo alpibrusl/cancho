@@ -27,7 +27,7 @@ let big = 6.02214076e23;
 One floating type, named for what it is rather than how wide it is —
 `int`, `byte`, `bool`, `float`. *(Corrected: this paragraph said "There is no
 `f32`: a second width is a second set of conversion rules and a second rounding
-story", and `lexsys-gpu` asked ([`f32.md`](f32.md), #251). `f32` now exists
+story", and `cancho-gpu` asked ([`f32.md`](f32.md), #251). `f32` now exists
 from edition 6, with **no** implicit conversion in either direction, which is
 what keeps the second set of conversion rules at one: the programmer writes
 `f32_of` or `float_of32` at each crossing. `float` is unchanged and is still
@@ -182,7 +182,7 @@ without `float_of_bits`, which is missing on purpose (below). See
 It exists so that **taking a float apart is a program's job rather than
 the compiler's**. The sign, the exponent and the mantissa are what a
 printer needs, and `float-printing.md` is the proof that having them is
-enough: `std.fmt.float_into` is written in lex-sys, on this one
+enough: `std.fmt.float_into` is written in cancho, on this one
 instruction, and nothing else about floats had to move into the compiler
 to make it possible.
 
@@ -238,15 +238,15 @@ the wrong side when the coordinate itself is only good to 1.5 × 10⁻⁵.
 > **Printing is no longer here.** It was the first row of this table and
 > the one called *"what makes `float` awkward rather than incomplete"*.
 > `float-printing.md` closes it: `std.fmt.float_into` writes the shortest
-> decimal that reads back to the same bits, in lex-sys rather than in the
+> decimal that reads back to the same bits, in cancho rather than in the
 > compiler, on one new builtin (`bits_of`). What is left below is the
 > rest.
 
 | Question | Why it waits |
 |---|---|
-| ~~`std.math` over floats~~ | **Half answered — `float-math.md`.** The capability question was the wrong question for `sqrt`: it is *one instruction*, so it reaches no library, needs no `Ffi`, and its row is `[]`. It is a builtin rather than library code for the reason §2 there measures — the two programs that hand-rolled a square root got **58.4%** of values wrong in the last place, and one was wrong by **143 orders of magnitude**, because a correctly-rounded root is not expressible in lex-sys. `sin`, `exp` and `log` are the half that really is about error analysis, and nothing has asked |
+| ~~`std.math` over floats~~ | **Half answered — `float-math.md`.** The capability question was the wrong question for `sqrt`: it is *one instruction*, so it reaches no library, needs no `Ffi`, and its row is `[]`. It is a builtin rather than library code for the reason §2 there measures — the two programs that hand-rolled a square root got **58.4%** of values wrong in the last place, and one was wrong by **143 orders of magnitude**, because a correctly-rounded root is not expressible in cancho. `sin`, `exp` and `log` are the half that really is about error analysis, and nothing has asked |
 | A total order | §5. IEEE-754 §5.10 defines `totalOrder`; the question is whether `std.math` should carry it or whether sorting floats should simply be documented as the caller's problem |
-| ~~`f32`~~ | **F1, F2 and F3 built — [`f32.md`](f32.md).** Asked by `lexsys-gpu` (a measured 20× on its interpreter). The conversion-rule worry is answered there by having no implicit conversion in either direction; the type, `+ - * /`, comparisons and the four conversions are on both backends and bit-identical to binary64 rounded once over 10⁶ random pairs and every special value. `sqrt32` and the `int` conversions are F2; printing, fixed point and correctly rounded reading are F3 (`std.fmt32`, checked against Rust over every 32-bit pattern). `%` has no `float` counterpart and `f32` has none |
+| ~~`f32`~~ | **F1, F2 and F3 built — [`f32.md`](f32.md).** Asked by `cancho-gpu` (a measured 20× on its interpreter). The conversion-rule worry is answered there by having no implicit conversion in either direction; the type, `+ - * /`, comparisons and the four conversions are on both backends and bit-identical to binary64 rounded once over 10⁶ random pairs and every special value. `sqrt32` and the `int` conversions are F2; printing, fixed point and correctly rounded reading are F3 (`std.fmt32`, checked against Rust over every 32-bit pattern). `%` has no `float` counterpart and `f32` has none |
 | Literal parsing exactness | `0.1` is read by Rust's `f64::from_str`, which is correctly rounded. Worth stating as a contract rather than an implementation detail once there is a second front end. (For `f32`, `std.fmt32.f32_of_text` states it: correctly rounded directly to binary32, `f32.md` §5.3) |
 
 ---
@@ -255,9 +255,9 @@ the wrong side when the coordinate itself is only good to 1.5 × 10⁻⁵.
 
 | Fixture | Rule | § |
 |---|---|---|
-| `float_without_conversion.ls` | No implicit `int` → `float` | 4 |
-| `float_literal_needs_digits.ls` | `1.` is not a literal | 1 |
-| `truncating_a_nan.ls` | Refused where it can be seen; the runtime case is a conformance test | 4 |
+| `float_without_conversion.cho` | No implicit `int` → `float` | 4 |
+| `float_literal_needs_digits.cho` | `1.` is not a literal | 1 |
+| `truncating_a_nan.cho` | Refused where it can be seen; the runtime case is a conformance test | 4 |
 
 | Test | Rule | § |
 |---|---|---|
@@ -266,5 +266,5 @@ the wrong side when the coordinate itself is only good to 1.5 × 10⁻⁵.
 
 | Accepting | Shows |
 |---|---|
-| `floating_point.ls` | Literals, arithmetic, comparison, both conversions, `is_nan`, and §4.1's `bits_of` — including that `-0.0` keeps its sign where `==` cannot see it |
-| `examples/newton.ls` | §6: a numerical method that Q16.16 could not carry, now printing its residuals as floats (`float-printing.md`) |
+| `floating_point.cho` | Literals, arithmetic, comparison, both conversions, `is_nan`, and §4.1's `bits_of` — including that `-0.0` keeps its sign where `==` cannot see it |
+| `examples/newton.cho` | §6: a numerical method that Q16.16 could not carry, now printing its residuals as floats (`float-printing.md`) |

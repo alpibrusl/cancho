@@ -1,7 +1,7 @@
 # Strings
 
 > **Status: settled and built.** This was the gating artifact for M3's last
-> item ([#1](https://github.com/alpibrusl/lex-sys/issues/1)), written and
+> item ([#1](https://github.com/alpibrusl/cancho/issues/1)), written and
 > reviewed before the code the way `linearity-and-effects.md` was written
 > before M2. §9's must-reject suite was stated in advance and is now
 > enforced, fixture by fixture.
@@ -41,7 +41,7 @@ string, so `defined-behaviour.md` §8's open question ("Strings — encoding,
 and what an invalid one is") is closed by having no encoding to be invalid
 against.
 
-Validation and decoding belong in a library, written *in* lex-sys, over
+Validation and decoding belong in a library, written *in* cancho, over
 `&r [byte]`. That is the "slice-shaped, not a port of `std.str`" the epic
 asks for.
 
@@ -210,28 +210,28 @@ difference.
 
 | Fixture | Rule | § |
 |---|---|---|
-| `byte_out_of_range.ls` | `byte_of(256)` traps rather than truncating | 2 |
-| `byte_arithmetic.ls` | `b + 1` is refused; a byte is storage | 2 |
-| `string_literal_is_shared.ls` | A literal may not be written through | 4 |
-| `unknown_escape.ls` | `"\q"` is refused where it is written | 4 |
-| `string_escapes_its_region.ls` | A buffer in an arena does not outlive it | 5 |
-| `c_string_without_terminator.ls` | A `&r [byte]` is not a C string | 6 |
+| `byte_out_of_range.cho` | `byte_of(256)` traps rather than truncating | 2 |
+| `byte_arithmetic.cho` | `b + 1` is refused; a byte is storage | 2 |
+| `string_literal_is_shared.cho` | A literal may not be written through | 4 |
+| `unknown_escape.cho` | `"\q"` is refused where it is written | 4 |
+| `string_escapes_its_region.cho` | A buffer in an arena does not outlive it | 5 |
+| `c_string_without_terminator.cho` | A `&r [byte]` is not a C string | 6 |
 
 And the accepting counterparts, because a rule that rejects everything is not
 a rule:
 
 | Fixture | Shows |
 |---|---|
-| `string_literal.ls` | A literal printed a byte at a time, with no packing |
-| `string_buffer.ls` | A buffer built in an arena, written, read back |
-| `bytes_to_c.ls` | A pointer and a length crossing to a C function that takes both |
+| `string_literal.cho` | A literal printed a byte at a time, with no packing |
+| `string_buffer.cho` | A buffer built in an arena, written, read back |
+| `bytes_to_c.cho` | A pointer and a length crossing to a C function that takes both |
 
-`examples/hello.ls` stops packing its greeting into two 64-bit words, which
+`examples/hello.cho` stops packing its greeting into two 64-bit words, which
 is the single clearest signal that this landed: that file had been carrying
 an M0 workaround since the first milestone, and the comment at the top of it
 said so. It now writes `"Hello, world!\n"`.
 
-`examples/wordcount.ls` is the first program in the repo that is mostly text
+`examples/wordcount.cho` is the first program in the repo that is mostly text
 processing rather than demonstration: `wc` over an embedded document, with a
 whole-word search that is two slices compared a byte at a time — which is
 all a string comparison is when a string is bytes. It counts bytes and ASCII

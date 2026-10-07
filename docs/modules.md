@@ -68,7 +68,7 @@ story and it costs nothing.
 
 ### 3.1 Declared, not derived from the path
 
-A module could be named by where its file sits — `std/io.ls` is
+A module could be named by where its file sits — `std/io.cho` is
 `std.io`. It is not, because `many-files.md` §3 chose identity by content
 rather than location, and deriving a module name from a file path puts
 the file system back into the language: a build that reorganises
@@ -149,9 +149,9 @@ let max = 3;
 return math.max(max, 2);    // `std.math`'s `max`, called with the local
 ```
 
-This was always what the identity hash did (`lex-sys-id`'s
+This was always what the identity hash did (`cancho-id`'s
 `qualified_name` consults locals only for an unqualified name, per §2).
-The checker disagreed until `std/process.ls` found it: it looked for a
+The checker disagreed until `std/process.cho` found it: it looked for a
 local before reading the qualifier, so a local `list` made
 `process.list(lr)` a `not-a-function` refusal, and a local *function
 value* with the right signature was called in the module function's
@@ -223,9 +223,9 @@ written down.
 
 | Rule | Where | § |
 |---|---|---|
-| A `module` declaration is the first item | `tests/reject/module_not_first.ls` | 3 |
-| At most one per file | `tests/reject/two_module_declarations.ls` | 3 |
-| An import names a module the program declares | `tests/reject/import_unknown_module.ls` | 4 |
+| A `module` declaration is the first item | `tests/reject/module_not_first.cho` | 3 |
+| At most one per file | `tests/reject/two_module_declarations.cho` | 3 |
+| An import names a module the program declares | `tests/reject/import_unknown_module.cho` | 4 |
 | Two imports may not bind the same qualifier | conformance, with the `as` that fixes it | 4 |
 | Private is private, for a function | conformance | 5 |
 | Private is private, for a type | conformance | 5 |

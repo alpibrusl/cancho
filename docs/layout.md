@@ -2,13 +2,13 @@
 
 > **Status: measured, and mostly answered "no".**
 >
-> `ROADMAP.md` listed struct layout as a place lex-sys could go **past**
+> `ROADMAP.md` listed struct layout as a place cancho could go **past**
 > C: *"packing reaches C; array-of-structs to struct-of-arrays goes past
 > it."* Half of that is right and the interesting half is wrong.
 >
 > Packing is real and this repository has nothing to spend it on (§2).
 > Transposing does **not** go past C, because C gets the same 1.38× from
-> it that lex-sys gets (§3) — measured, both directions. So this document
+> it that cancho gets (§3) — measured, both directions. So this document
 > is the measurement, the deferral with its trigger, and the correction.
 
 ---
@@ -46,13 +46,13 @@ anything**.
 A memory-bound traversal of 4 000 000 structs, eight passes, best of
 five. The two rows differ only in the field type:
 
-| struct | lex-sys | C `-O2` | ratio |
+| struct | cancho | C `-O2` | ratio |
 |---|---|---|---|
 | `{ r, g, b: byte }` | 178 ms | 32 ms | **5.6×** |
 | `{ r, g, b: int }` | 174 ms | 82 ms | **2.1×** |
 
 Read those two rows against each other, because that is where the answer
-is. **lex-sys's own time barely moves** — 178 against 174 — because its
+is. **cancho's own time barely moves** — 178 against 174 — because its
 layout does not change: 24 bytes either way. C's time moves by 2.6×,
 because C's layout moves by 8× — 3 bytes against 24.
 
@@ -92,7 +92,7 @@ no test.
 
 ### 2.3 So it is deferred with a trigger rather than built
 
-§4 is the instrument. `lex-sys layout` reports every type's size and
+§4 is the instrument. `cancho layout` reports every type's size and
 what it would be packed, so "would this help my program?" is a command
 rather than a memory — and this deferral has a falsifier instead of a
 promise. The first program here with an image, a packet header or a
@@ -104,7 +104,7 @@ token stream in it will make the report say so.
 
 Array-of-structs to struct-of-arrays is the transform C **cannot** do
 for you: struct layout is part of C's ABI, so a C programmer who wants
-it rewrites the program. lex-sys promises no layout, so a compiler could
+it rewrites the program. cancho promises no layout, so a compiler could
 do it silently. That was the argument for it going *past* C.
 
 The argument does not survive measurement. A loop touching **one field
@@ -112,11 +112,11 @@ of three**, 4 000 000 elements, eight passes, both transposed by hand:
 
 | | array of structs | struct of arrays | gain |
 |---|---|---|---|
-| lex-sys | 125 ms | 87 ms | **1.43×** |
+| cancho | 125 ms | 87 ms | **1.43×** |
 | C `-O2` | 72 ms | 55 ms | **1.31×** |
 
 **The transform is worth about the same in both languages.** It does not
-move lex-sys past C; it moves lex-sys and C along together, and the gap
+move cancho past C; it moves cancho and C along together, and the gap
 between them stays what it was.
 
 Two reasons the memory-traffic argument oversells it:
@@ -126,7 +126,7 @@ Two reasons the memory-traffic argument oversells it:
   from RAM and the loop is bound by its own instructions — a
   bounds-checked load, an add and a compare — rather than by bandwidth.
 - Where the model *would* be right is a vectorised loop, and
-  `overflow-cost.md` §3.2 already established that lex-sys does not
+  `overflow-cost.md` §3.2 already established that cancho does not
   vectorise: a trapping add is not reassociable. So the half of the
   prize that needs contiguity-plus-SIMD is a half this backend cannot
   collect even if the layout were perfect.
@@ -137,15 +137,15 @@ this compiler does not have and would have to grow — for 1.4× on a shape
 where C gets 1.3× by hand.
 
 > So: **no.** Not "later", not "when the backend is better" — the
-> measurement says the transform is not a lex-sys advantage at all, and
+> measurement says the transform is not a cancho advantage at all, and
 > the roadmap entry claiming it was is corrected rather than deferred.
 
 ---
 
-## 4. `lex-sys layout`
+## 4. `cancho layout`
 
 ```
-$ lex-sys layout examples/slab/slab.ls examples/slab/main.ls --std
+$ cancho layout examples/slab/slab.cho examples/slab/main.cho --std
 type                     leaves    size   packed   stride
 Gen                           2      16       16       16
 Entry                         3      24       24       24
@@ -159,7 +159,7 @@ than as a paragraph: this program has nothing to gain. The same report on
 a struct that does:
 
 ```
-$ lex-sys layout rgb.ls --std
+$ cancho layout rgb.cho --std
 type                     leaves    size   packed   stride
 Rgb                           3      24        3       24
 Buffer                        3      24       24       24
@@ -200,7 +200,7 @@ It is a report rather than a flag because there is nothing to turn on:
 
 | Question | Why it waits |
 |---|---|
-| Packing narrow leaves | §2.3. Deferred with a trigger, not a date: when `lex-sys layout`'s `size` and `packed` columns differ on a program someone cares about |
+| Packing narrow leaves | §2.3. Deferred with a trigger, not a date: when `cancho layout`'s `size` and `packed` columns differ on a program someone cares about |
 | A vectoriser, or a backend with one | §3's second reason. It gates the half of the transposing prize that is real, and it is the same wall `overflow-cost.md` §3.2 hit — so it is one problem wearing two hats, not two |
 | Enum tag width | A tag is one leaf, so 8 bytes, whatever the variant count. Packing would make it 1 for any enum under 256 variants. Folded into §2 rather than separate: it is the same change and the same trigger |
 | Layout as a contract | §5. Nothing needs it yet. `reach.md` §3.2 keeps aggregates out of FFI, which is what keeps it free |

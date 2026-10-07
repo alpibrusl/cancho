@@ -3,8 +3,8 @@
 
     python3 pinned_test.py       # exits 0 only if every check holds
 
-The client resolves the name with DNS over TCP on its poller (rtcp.ls), judges every address in the answer (pin.ls: the rule of
-lexsys-hooks' src/destination.ls), connects to the address it chose **as an IP literal** (no second lookup), and uses the name only
+The client resolves the name with DNS over TCP on its poller (rtcp.cho), judges every address in the answer (pin.cho: the rule of
+cancho-hooks' src/destination.cho), connects to the address it chose **as an IP literal** (no second lookup), and uses the name only
 for SNI and for the certificate check. The name server is dns_stub.py; the receivers are TLS servers for the name `hooks.test`
 (the certificate says nothing of any IP address), and plain listeners that count the connections they are given.
 """

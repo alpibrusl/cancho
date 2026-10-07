@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""lex-sys against C on programs from the Computer Language Benchmarks Game.
+"""cancho against C on programs from the Computer Language Benchmarks Game.
 
 `scripts/three.py` measures two kernels against C and Rust.  This measures
 a wider set, for the reason `docs/benchmarks-game.md` §1 gives: two
@@ -69,13 +69,13 @@ REVCOMP_QUICK_N = 200_000
 
 
 def build(tmp: pathlib.Path, name: str) -> tuple[pathlib.Path, pathlib.Path]:
-    """The lex-sys build and the C build of one program."""
-    compiler = ROOT / "target" / "release" / "lex-sys"
+    """The cancho build and the C build of one program."""
+    compiler = ROOT / "target" / "release" / "cancho"
     if not compiler.exists():
         sys.exit(f"build it first: cargo build --release   ({compiler} is missing)")
     ls = tmp / name
     subprocess.run(
-        [str(compiler), "build", "--std", str(GAME / f"{name}.ls"), "-o", str(ls)],
+        [str(compiler), "build", "--std", str(GAME / f"{name}.cho"), "-o", str(ls)],
         check=True,
     )
     c = tmp / f"{name}_c"
@@ -121,7 +121,7 @@ def main() -> int:
     args = parser.parse_args()
 
     tmp = pathlib.Path(subprocess.run(["mktemp", "-d"], capture_output=True, text=True).stdout.strip())
-    print(f"{'program':<14}{'N':>6}  {'lex-sys':>18}  {'C -O2':>18}   ratio")
+    print(f"{'program':<14}{'N':>6}  {'cancho':>18}  {'C -O2':>18}   ratio")
     print(f"{'':14}{'':>6}  {'median  (spread)':>18}  {'median  (spread)':>18}")
     ratios = []
     fasta_ls = None  # kept, so revcomp's input is generated once, below

@@ -152,7 +152,7 @@ rather than leaving it to be discovered.
 ### 5.1 `&` in expression position is unambiguous
 
 `&` is the reference constructor — `&r T`, `&!r T`, and a region binder
-`fn f[&r]`. All three are *type* positions, and lex-sys has never let a
+`fn f[&r]`. All three are *type* positions, and cancho has never let a
 type and an expression meet: a type appears after `:`, after `->`, or
 inside `[...]` on a declaration, and nowhere else.
 
@@ -171,7 +171,7 @@ problem that C++ spent a decade on does not exist here.
 ## 6. Adding these moved no hash
 
 An operator is hashed by a code inside `Binary`/`Unary`
-(`crates/lex-sys-id`), not by a node tag of its own, and the six new
+(`crates/cancho-id`), not by a node tag of its own, and the six new
 codes are appended after the thirteen that existed. So every `SigId` and
 `body_hash` in the repository is byte-identical to what it was before
 this slice, and `docs/INVARIANTS.md` needed no entry.
@@ -187,8 +187,8 @@ hashes of a program written before the operators existed.
 
 | Fixture | Rule | § |
 |---|---|---|
-| `bitwise_on_a_byte.ls` | `byte` still has no arithmetic, so a mask says where the range check is | 1 |
-| `bitwise_on_a_bool.ls` | `&` is not `&&`, and a `bool` is not an `int` | 1 |
+| `bitwise_on_a_byte.cho` | `byte` still has no arithmetic, so a mask says where the range check is | 1 |
+| `bitwise_on_a_bool.cho` | `&` is not `&&`, and a `bool` is not an `int` | 1 |
 
 An out-of-range shift is **not** a reject fixture, for the reason
 `slicing.md` §8 gives: the reject harness runs `check`, and a program that
@@ -201,5 +201,5 @@ traps is one that compiled. Those are conformance tests.
 
 | Accepting | Shows |
 |---|---|
-| `bitwise.ls` | All six, the precedence table, arithmetic `>>`, `1 << 63`, and a hex mask |
+| `bitwise.cho` | All six, the precedence table, arithmetic `>>`, `1 << 63`, and a hex mask |
 | `examples/base64/` | §1's promise as a program: the port that needed them |

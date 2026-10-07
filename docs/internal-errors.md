@@ -28,9 +28,9 @@ fn main(world: World) -> [] int {
 
 | Command | Answer | Exit |
 |---|---|---|
-| `lex-sys check` | nothing | **0** |
-| `lex-sys check --output json` | `{ "refused": [] }` | **0** |
-| `lex-sys build` | ``code generation failed: in `main`: Compilation error: Verifier errors`` | **3** |
+| `cancho check` | nothing | **0** |
+| `cancho check --output json` | `{ "refused": [] }` | **0** |
+| `cancho build` | ``code generation failed: in `main`: Compilation error: Verifier errors`` | **3** |
 
 Three things are wrong with that, and only the first is the one the
 audit named:
@@ -48,7 +48,7 @@ audit named:
    fails in a step it was told was only about linking.
 
 There is a second way the backend fails, and it is found by reading the
-code, not by running it. `lex-sys-codegen` has **22** `unreachable!`,
+code, not by running it. `cancho-codegen` has **22** `unreachable!`,
 `panic!` or `.expect(` sites outside its tests. Nearly all of them say
 the same thing: *"the checker should have refused it."* Each one is an
 invariant between the front end and the back end, and if one ever
@@ -62,15 +62,15 @@ not even one of the four documented codes.
 A backend failure is a refusal with rule **`internal`**:
 
 ```
-sort.ls:12:1: error: the compiler failed to generate code for `merge`; this is a bug in lex-sys, not in the program (Compilation error: Verifier errors)
+sort.cho:12:1: error: the compiler failed to generate code for `merge`; this is a bug in cancho, not in the program (Compilation error: Verifier errors)
 ```
 
 ```json
 {
   "rule": "internal",
-  "message": "the compiler failed to generate code for `merge`; this is a bug in lex-sys, not in the program (Compilation error: Verifier errors)",
+  "message": "the compiler failed to generate code for `merge`; this is a bug in cancho, not in the program (Compilation error: Verifier errors)",
   "explanation": "The compiler failed on a program it had accepted. The program is not at fault; the position is the function whose code could not be generated.",
-  "position": { "file": "sort.ls", "line": 12, "column": 1 }
+  "position": { "file": "sort.cho", "line": 12, "column": 1 }
 }
 ```
 
@@ -108,7 +108,7 @@ Measured on this machine, median of seven runs:
 | `examples/sort/` | 4.8 ms | 11.0 ms | 2.3× |
 | `examples/base64/` | 4.2 ms | 8.3 ms | 2.0× |
 | `examples/fetch/` | 4.2 ms | 8.6 ms | 2.0× |
-| `examples/tour.ls` | 5.4 ms | 12.6 ms | 2.3× |
+| `examples/tour.cho` | 5.4 ms | 12.6 ms | 2.3× |
 | the differential's 9,500-function program | 222 ms | 570 ms | 2.6× |
 
 About twice the time, and a few milliseconds in absolute terms on
@@ -141,7 +141,7 @@ the front end never produces: an IR function whose declared return type
 disagrees with what its body returns. That is #71's bug in its smallest
 form, written straight into the IR:
 
-- `a_backend_failure_names_its_function` (in `lex-sys-codegen`) checks
+- `a_backend_failure_names_its_function` (in `cancho-codegen`) checks
   that the verifier's refusal comes back naming the function that
   failed.
 - `a_backend_failure_is_a_located_internal_refusal` (in the CLI) takes a
