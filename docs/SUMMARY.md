@@ -49,6 +49,7 @@
 - [Standard input](standard-input.md)
 - [Standard error](standard-error.md)
 - [The authority report](authority.md)
+- [Narrowing one capability into several](narrowing-into-several.md)
 - [Whether \[budget\] is a type-system feature](budget.md)
 - [What a program can reach](reach.md)
 - [Opaque pointers and c_ptr](opaque-pointers.md)
