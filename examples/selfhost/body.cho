@@ -130,13 +130,38 @@ fn struct_plain[&s](st: &!s [int], item: int) -> [] bool {
     return true;
 }
 
+// An enum this slice handles: declared in the file, not `res`, with no parameters, and only
+// scalar payloads, so a value of it is `val` and copies.
+fn enum_plain[&s](st: &!s [int], item: int) -> [] bool {
+    if !ast.is_kind(st, item, kinds.NK::IEnum) {
+        return false;
+    }
+    if ast.get(st, item, 6) == 2 || ast.get(st, item, 7) >= 0 {
+        return false;
+    }
+    var v = ast.get(st, item, 8);
+    while v >= 0 {
+        var p = ast.get(st, v, 5);
+        var n = ast.get(st, v, 6);
+        while n > 0 {
+            if scalar(st, p) == 0 {
+                return false;
+            }
+            p = ast.next(st, p);
+            n = n - 1;
+        }
+        v = ast.next(st, v);
+    }
+    return true;
+}
+
 // The type of the resolved type node `ty` when it is a scalar or a plain struct, else 0.
 fn value_type[&s](st: &!s [int], ty: int) -> [] int {
     let tag = scalar(st, ty);
     if tag != 0 {
         return tag;
     }
-    if ast.get(st, ty, 8) == 3 && struct_plain(st, ast.get(st, ty, 9)) {
+    if ast.get(st, ty, 8) == 3 && (struct_plain(st, ast.get(st, ty, 9)) || enum_plain(st, ast.get(st, ty, 9))) {
         return types.make_named(st, ast.get(st, ty, 9));
     }
     return 0;
@@ -392,7 +417,78 @@ fn expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     if ast.is_kind(st, id, kinds.NK::EField) {
         return field_expr(st, text, id);
     }
+    if ast.is_kind(st, id, kinds.NK::EVariant) {
+        return variant_expr(st, text, id);
+    }
     return skip(st, from, to);
+}
+
+// `Enum::Variant(a, b)`: a value of a plain enum, each payload of the declared type.
+fn variant_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
+    let from = ast.nstart(st, id);
+    let to = ast.nend(st, id);
+    let target = pass1.resolve_module(st, text, st[22], ast.get(st, id, 4));
+    if target < 0 {
+        ast.fail(st, rules.r_module_not_imported(), from, to);
+        return nothing();
+    }
+    let found = pass1.lookup(st, text, ast.get(st, id, 5), target, st[23]);
+    if found < 0 {
+        ast.fail(st, rules.r_not_an_enum(), from, to);
+        return nothing();
+    }
+    if found < pass1.user_base() {
+        return skip(st, from, to);
+    }
+    let item = found - pass1.user_base();
+    if !ast.is_kind(st, item, kinds.NK::IEnum) {
+        ast.fail(st, rules.r_not_an_enum(), from, to);
+        return nothing();
+    }
+    let variant = variant_named(st, text, item, ast.get(st, id, 6));
+    if variant < 0 {
+        ast.fail(st, rules.r_unknown_name(), from, to);
+        return nothing();
+    }
+    if target != st[22] && !pass1.def_public(st, found) {
+        ast.fail(st, rules.r_not_public(), from, to);
+        return nothing();
+    }
+    if !enum_plain(st, item) {
+        return skip(st, from, to);
+    }
+    if ast.get(st, id, 8) != ast.get(st, variant, 6) {
+        ast.fail(st, rules.r_arity_mismatch(), from, to);
+        return nothing();
+    }
+    var arg = ast.get(st, id, 7);
+    var want = ast.get(st, variant, 5);
+    var left = ast.get(st, id, 8);
+    while left > 0 && ast.ok(st) {
+        let v = expr(st, text, arg);
+        if ast.ok(st) {
+            expect(st, text, scalar(st, want), v.ty, ast.nstart(st, arg), ast.nend(st, arg));
+        }
+        arg = ast.next(st, arg);
+        want = ast.next(st, want);
+        left = left - 1;
+    }
+    if !ast.ok(st) {
+        return nothing();
+    }
+    return plain(types.make_named(st, item));
+}
+
+// The Variant node of the enum `item` called like token `name`, or -1.
+fn variant_named[&s, &x](st: &!s [int], text: &x [byte], item: int, name: int) -> [] int {
+    var v = ast.get(st, item, 8);
+    while v >= 0 {
+        if ast.same(st, text, ast.get(st, v, 4), name) {
+            return v;
+        }
+        v = ast.next(st, v);
+    }
+    return 0 - 1;
 }
 
 // Is a field called `name` written in the literal's fields before `stop`?
@@ -489,6 +585,10 @@ fn field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         return nothing();
     }
     let item = types.named_item(st, held);
+    if !ast.is_kind(st, item, kinds.NK::IStruct) {
+        ast.fail(st, rules.r_match_on_a_non_enum(), ast.nstart(st, base), ast.nend(st, base));
+        return nothing();
+    }
     let index = field_index(st, text, item, ast.get(st, id, 5));
     if index < 0 {
         ast.fail(st, rules.r_unknown_name(), from, to);
@@ -830,6 +930,202 @@ fn plain_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [] bo
     return lower_type(st, text, ast.get(st, fn_item, 10), dp, 0 - 1) != 0;
 }
 
+// ------------------------------------------------------------- `match` ---
+//
+// A pattern is not kept in the tree: an Arm remembers its first token and these read the rest.
+// `_`, or `q.Enum::Variant(a, _)` with the qualifier and the bindings optional.
+
+fn pat_wild[&s](st: &!s [int], tok: int) -> [] bool {
+    return pass1.is_code(st, tok, lc.Tok::Underscore);
+}
+
+fn pat_qualifier[&s](st: &!s [int], tok: int) -> [] int {
+    if pass1.is_code(st, tok + 1, lc.Tok::Dot) {
+        return tok;
+    }
+    return 0 - 1;
+}
+
+fn pat_enum[&s](st: &!s [int], tok: int) -> [] int {
+    if pass1.is_code(st, tok + 1, lc.Tok::Dot) {
+        return tok + 2;
+    }
+    return tok;
+}
+
+fn pat_variant[&s](st: &!s [int], tok: int) -> [] int {
+    return pat_enum(st, tok) + 2;
+}
+
+// How many names, or `_`, the pattern binds.
+fn pat_bindings[&s](st: &!s [int], tok: int) -> [] int {
+    var p = pat_variant(st, tok) + 1;
+    if !pass1.is_code(st, p, lc.Tok::LParen) {
+        return 0;
+    }
+    p = p + 1;
+    var n = 0;
+    while !pass1.is_code(st, p, lc.Tok::RParen) {
+        n = n + 1;
+        p = p + 1;
+        if pass1.is_code(st, p, lc.Tok::Comma) {
+            p = p + 1;
+        }
+    }
+    return n;
+}
+
+// The token of binding number `k` of the pattern.
+fn pat_binding[&s](st: &!s [int], tok: int, k: int) -> [] int {
+    var p = pat_variant(st, tok) + 2;
+    var i = 0;
+    while i < k {
+        p = p + 1;
+        if pass1.is_code(st, p, lc.Tok::Comma) {
+            p = p + 1;
+        }
+        i = i + 1;
+    }
+    return p;
+}
+
+// Is the variant spelled like token `vtok` named by one of the `k` arms from `first`?
+fn covered_in[&s, &x](st: &!s [int], text: &x [byte], first: int, k: int, vtok: int) -> [] bool {
+    var arm = first;
+    var left = k;
+    while left > 0 {
+        let tok = ast.get(st, arm, 4);
+        if !pat_wild(st, tok) && ast.same(st, text, pat_variant(st, tok), vtok) {
+            return true;
+        }
+        arm = ast.next(st, arm);
+        left = left - 1;
+    }
+    return false;
+}
+
+fn all_covered[&s, &x](st: &!s [int], text: &x [byte], item: int, first: int, k: int) -> [] bool {
+    var v = ast.get(st, item, 8);
+    while v >= 0 {
+        if !covered_in(st, text, first, k, ast.get(st, v, 4)) {
+            return false;
+        }
+        v = ast.next(st, v);
+    }
+    return true;
+}
+
+// One arm that names a variant: the pattern's checks, its bindings in a scope of their own,
+// and its body. `k` arms come before it.
+fn variant_arm[&s, &x](st: &!s [int], text: &x [byte], item: int, first: int, k: int, arm: int, by_ref: bool, unique: bool, area: int, ret: int, from: int, to: int) -> [] int {
+    let tok = ast.get(st, arm, 4);
+    let target = pass1.resolve_module(st, text, st[22], pat_qualifier(st, tok));
+    if pat_qualifier(st, tok) >= 0 && target < 0 {
+        ast.fail(st, rules.r_module_not_imported(), from, to);
+        return 0;
+    }
+    if !ast.same(st, text, pat_enum(st, tok), ast.get(st, item, 4)) || ast.get(st, item, 13) != target {
+        ast.fail(st, rules.r_unknown_name(), from, to);
+        return 0;
+    }
+    let variant = variant_named(st, text, item, pat_variant(st, tok));
+    if variant < 0 {
+        ast.fail(st, rules.r_unknown_name(), from, to);
+        return 0;
+    }
+    if covered_in(st, text, first, k, pat_variant(st, tok)) {
+        ast.fail(st, rules.r_match_arm_unreachable(), from, to);
+        return 0;
+    }
+    if pat_bindings(st, tok) != ast.get(st, variant, 6) {
+        ast.fail(st, rules.r_arity_mismatch(), from, to);
+        return 0;
+    }
+    let mark = st[21];
+    var want = ast.get(st, variant, 5);
+    var i = 0;
+    while i < ast.get(st, variant, 6) && ast.ok(st) {
+        let at = pat_binding(st, tok, i);
+        if !pat_wild(st, at) {
+            var j = mark;
+            var again = false;
+            while j < st[21] {
+                if ast.same(st, text, st[st[20] + 3 * j], at) {
+                    again = true;
+                }
+                j = j + 1;
+            }
+            if again {
+                ast.fail(st, rules.r_duplicate_declaration(), from, to);
+            } else {
+                var ty = scalar(st, want);
+                if by_ref {
+                    ty = types.make_ref(st, unique, area, ty);
+                }
+                bind(st, at, ty, false);
+            }
+        }
+        want = ast.next(st, want);
+        i = i + 1;
+    }
+    if ast.ok(st) {
+        block(st, text, ast.get(st, arm, 5), ast.get(st, arm, 6), ret);
+    }
+    st[21] = mark;
+    return 0;
+}
+
+// `match e { Enum::A(x) => { .. } Enum::B => { .. } _ => { .. } }` on a plain enum or a reference
+// to one: every variant once, or a `_` that is not redundant, and the arms cover everything.
+fn match_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
+    let from = ast.nstart(st, id);
+    let to = ast.nend(st, id);
+    let scrutinee = ast.get(st, id, 4);
+    let s = expr(st, text, scrutinee);
+    if !ast.ok(st) {
+        return 0;
+    }
+    var held = s.ty;
+    var by_ref = false;
+    var unique = false;
+    var area = 0;
+    if types.is_ref(st, held) {
+        by_ref = true;
+        unique = types.ref_unique(st, held);
+        area = types.ref_region(st, held);
+        held = types.ref_inner(st, held);
+    }
+    if !types.is_named(st, held) || !ast.is_kind(st, types.named_item(st, held), kinds.NK::IEnum) {
+        ast.fail(st, rules.r_match_on_a_non_enum(), ast.nstart(st, scrutinee), ast.nend(st, scrutinee));
+        return 0;
+    }
+    let item = types.named_item(st, held);
+    let first = ast.get(st, id, 5);
+    var arm = first;
+    var k = 0;
+    var wildcard = false;
+    while k < ast.get(st, id, 6) && ast.ok(st) {
+        if wildcard {
+            ast.fail(st, rules.r_match_arm_unreachable(), from, to);
+        } else if pat_wild(st, ast.get(st, arm, 4)) {
+            if all_covered(st, text, item, first, k) {
+                ast.fail(st, rules.r_match_arm_unreachable(), from, to);
+            } else {
+                wildcard = true;
+                block(st, text, ast.get(st, arm, 5), ast.get(st, arm, 6), ret);
+            }
+        } else {
+            variant_arm(st, text, item, first, k, arm, by_ref, unique, area, ret, from, to);
+        }
+        arm = ast.next(st, arm);
+        k = k + 1;
+    }
+    if ast.ok(st) && !wildcard && !all_covered(st, text, item, first, k) {
+        ast.fail(st, rules.r_match_not_exhaustive(), from, to);
+    }
+    return 0;
+}
+
 // ----------------------------------------------------------- statements ---
 
 // Does a block whose first statement is `head`, of `n`, end in a statement that returns on every
@@ -852,6 +1148,18 @@ fn terminates[&s](st: &!s [int], head: int, n: int) -> [] bool {
             return false;
         }
         return terminates(st, ast.get(st, last, 5), ast.get(st, last, 6)) && terminates(st, ast.get(st, last, 7), ast.get(st, last, 8));
+    }
+    if ast.is_kind(st, last, kinds.NK::SMatch) {
+        var arm = ast.get(st, last, 5);
+        var left = ast.get(st, last, 6);
+        while left > 0 {
+            if !terminates(st, ast.get(st, arm, 5), ast.get(st, arm, 6)) {
+                return false;
+            }
+            arm = ast.next(st, arm);
+            left = left - 1;
+        }
+        return true;
     }
     return false;
 }
@@ -986,6 +1294,10 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
                 return 0;
             }
             let item = types.named_item(st, referent);
+            if !ast.is_kind(st, item, kinds.NK::IStruct) {
+                ast.fail(st, rules.r_linear_value_taken_apart(), ast.nstart(st, base), ast.nend(st, base));
+                return 0;
+            }
             let index = field_index(st, text, item, ast.get(st, place, 5));
             if index < 0 {
                 ast.fail(st, rules.r_unknown_name(), from, to);
@@ -1009,6 +1321,9 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
         }
         expect(st, text, binding_type(st, i), found.ty, ast.nstart(st, value), ast.nend(st, value));
         return 0;
+    }
+    if ast.is_kind(st, id, kinds.NK::SMatch) {
+        return match_stmt(st, text, id, ret);
     }
     if ast.is_kind(st, id, kinds.NK::SExpr) {
         expr(st, text, ast.get(st, id, 4));

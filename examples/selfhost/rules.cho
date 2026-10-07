@@ -161,6 +161,26 @@ pub fn r_not_a_struct() -> [] int {
     return 39;
 }
 
+pub fn r_match_on_a_non_enum() -> [] int {
+    return 40;
+}
+
+pub fn r_linear_value_taken_apart() -> [] int {
+    return 41;
+}
+
+pub fn r_match_not_exhaustive() -> [] int {
+    return 42;
+}
+
+pub fn r_match_arm_unreachable() -> [] int {
+    return 43;
+}
+
+pub fn r_not_an_enum() -> [] int {
+    return 44;
+}
+
 pub fn rule_tag(r: int) -> [] &static [byte] {
     if r < 3 {
         return lc.rule_name(r);
@@ -275,6 +295,21 @@ pub fn rule_tag(r: int) -> [] &static [byte] {
     }
     if r == 39 {
         return "not-a-struct";
+    }
+    if r == 40 {
+        return "match-on-a-non-enum";
+    }
+    if r == 41 {
+        return "linear-value-taken-apart";
+    }
+    if r == 42 {
+        return "match-not-exhaustive";
+    }
+    if r == 43 {
+        return "match-arm-unreachable";
+    }
+    if r == 44 {
+        return "not-an-enum";
     }
     return "unknown-name";
 }
