@@ -241,6 +241,12 @@ impl Label {
     /// narrowed to. `ffi("")` covers every library, `ffi("libc")` covers
     /// `ffi("libc")` and nothing else, and a label with no argument covers
     /// only itself.
+    ///
+    /// `fs_read`, `fs_write` and `exec` name a *path*, and a path prefix is
+    /// not a byte prefix (`docs/filesystem.md` §1.1): `fs_read("/tmp")` covers
+    /// `fs_read("/tmp/x")` and itself, and does not cover `fs_read("/tmpevil")`.
+    /// That is [`extends_path`], the rule `narrow` already checks, so what a
+    /// capability covers is still exactly what it can be narrowed to.
     pub fn covers(&self, other: &Label) -> bool {
         self.name == other.name
             && match (&self.argument, &other.argument) {
@@ -255,6 +261,14 @@ impl Label {
                 // of libraries. `ffi("libc")` is a prefix of `ffi("libcrypto")`
                 // as text and covers nothing of it.
                 (Some(mine), Some(theirs)) if self.name == "ffi" => scope_covers(mine, theirs),
+                (Some(mine), Some(theirs))
+                    if matches!(self.name.as_str(), "fs_read" | "fs_write" | "exec") =>
+                {
+                    extends_path(mine, theirs)
+                }
+                // `net_out` and `net_in` bound a `"host:port"` by plain text
+                // (`docs/net.md` §4), which is also what `narrow` checks for
+                // a `Net`; no label that carries an argument is left over.
                 (Some(mine), Some(theirs)) => theirs.starts_with(mine.as_str()),
                 _ => false,
             }

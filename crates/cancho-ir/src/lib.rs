@@ -958,6 +958,11 @@ mod foreign_tests;
 #[path = "tests/linearity.rs"]
 mod linearity_tests;
 
+/// What a path label covers: `docs/filesystem.md` §1.1.
+#[cfg(test)]
+#[path = "tests/label_covers.rs"]
+mod label_covers_tests;
+
 /// The tables the staged port of the checker carries: `docs/self-hosting.md` section 6.
 #[cfg(test)]
 #[path = "tests/selfhost_tables.rs"]
