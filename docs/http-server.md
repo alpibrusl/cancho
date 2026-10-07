@@ -441,7 +441,7 @@ the engine's bytes, `end_slot`, the reload and the command line (about 450 lines
 `echo.cho` keeps `pump`, `close_with`, `sweep`, `stop_all` and `run`, which touch the plaintext. `main` and `serve` remain in each program (they name their loop; a third
 program would move them: link-time selection of the module that holds `run` would do it).
 
-`scripts/https_hello_test.py` (14 cases; CI's `tls-assurance` job runs them):
+`scripts/https_hello_test.py` (15 cases; CI's `tls-assurance` job runs them):
 
 | case | what it checks |
 |---|---|
@@ -453,11 +453,29 @@ program would move them: link-time selection of the module that holds `run` woul
 | `big` | `/big/<n>` for 16 sizes from 0 to 64 MiB (the boundaries of the 16 KiB record and the 64 KiB output room among them): every byte checked, the connection serves after each; a request pipelined behind a big one is answered in order; a length past 1 GiB, not a number, negative or empty is refused and the connection goes on |
 | `stalled` | a client asks for 1 GiB and reads 100 bytes: the server's resident memory does not grow past 4 MB beside it, another client is served throughout (the slowest of its requests is reported), and the stalled one is ended after `--idle`; the server serves after |
 | `slow` | half a request and silence: ended after `--idle`, and the clients beside it are served |
+| `ended` | a connection ended by `Connection: close` and then written to every 50 ms (each write refused by the closed socket) beside a keep-alive client making 40 requests: every one is answered and no other connection is closed. The writes come from a thread of their own (below) |
 | `reload`, `bound`, `full`, `idle`, `shutdown` | `tls_echo`'s cases, over HTTP: a connection open before `SIGHUP` keeps its certificate and keeps being served, a later one gets the renewed one, a refused reload leaves it; `--handshakes 2` held by two silent peers delays an honest one rather than refusing it; a fifth connection over `--connections 4` is closed at once; an idle keep-alive connection is sent close_notify; `SIGTERM` with 10 open keep-alive connections sends close_notify to each and exits 0 |
 | `hostile` | 1,500 connections each sending a mangled request (flipped bytes, cuts, bare LFs, a 100 KB target, a thousand headers, JSON 5,000 deep, lengths past 2^64 or negative, chunk sizes past the end, 1,000 NULs): the server is alive after every one and serves after the last |
 
 **Results.** 14 of 14 on linux-aarch64 (Docker, with curl 8.5 built on OpenSSL 3.0.13), 13 of 14 on macOS (its curl is SecureTransport and the case says so); `tls_echo_test.py` still passes 8 of 8 on both after `front.cho`. 
 `conformance/https_hello.rs` (64 connections through `tls_many`, a reload taken and one refused, a stop, the authority pin) and `conformance/http_server_bytes.rs` run in `cargo test` on both CI targets; `cargo test --workspace` on linux-aarch64 in Docker passes everything but the two tests that need a git checkout, as before this change.
+
+**A false report, and why `ended` writes from its own thread.** It was reported that bytes arriving on an ended connection made the server close a different one: a Python
+client with D and H in one thread, D ended by `Connection: close` and then written to every 50 ms, saw H's next request fail with `BrokenPipeError` within 0.1 s, the server alive
+and logging no close of H (it logged `conn 2 closed tls-peer-closed` only afterwards, when `http.client` closed H on the error). Measured on macOS, Python 3.14.5 with OpenSSL 3.6.4,
+the server is not involved:
+
+- when D's `conn 1 closed` is logged its descriptor is gone (`lsof`), so D's later bytes reach only the kernel, which answers them with a reset to D. The server's descriptor
+  for H stays `ESTABLISHED`, nothing arrives on H's socket, and a turn of the loop never sees them;
+- H in a second process, beside the same D written to the same way: 10 of 10 requests answered;
+- the same two clients against a plain-Python TLS 1.3 server (`ssl`, one thread per connection, D closed after one read, H echoed): H's write right after D's refused one
+  raises `BrokenPipeError`, the one after that succeeds;
+- calling OpenSSL's `ERR_clear_error` (through `ctypes`, on the `libcrypto` that `_ssl` links) between D's refused write and H's makes every write on H succeed.
+
+The cause is the client's: OpenSSL keeps its error queue per thread, D's refused `SSL_write` leaves an `EPIPE` on it, and CPython's `_ssl` reports that entry as the
+failure of the next write on another socket in the same thread. There was nothing to correct in `loop.cho` or `front.cho`. The `ended` case keeps the report's sequence, with D's
+writes on their own thread: the unchanged server passes it 5 of 5. To check that the case can fail, `end_slot` was made to close the next slot too (a wrong-slot close,
+the bug the report suspected): the case failed (`ConnectionResetError` on H's next request). That change was not kept.
 
 ### 11.7 Cost
 
