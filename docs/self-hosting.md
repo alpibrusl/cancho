@@ -212,7 +212,8 @@ the stages found, in place, the way this document corrects its own claims.
 | 3e-3. Generic functions | `body.cho` (type variables and parameters in `types.cho`) | `check_bodies` | **Fifth slice.** Every function the port answers is the Rust answer: 88 targeted cases for type parameters, inference at a call and `ambiguous-type` (712 in all, 4 cross-module in the several-files test), 15,774 fuzz cases (11,220 alone, 4,554 with the library) and 1,359 library cases: none different; the library's verified bodies stay at 461 of 814 |
 | 3e-4. `borrow` and `region` blocks | `body.cho` (block regions in `types.cho`) | `check_bodies` | **Sixth slice.** Every function the port answers is the Rust answer: 1,271 targeted body cases (456 of them for borrows, regions and their variants), 2 cross-module in the several-files test, 16,000 fuzz cases (11,463 alone, 4,726 with the library) and 1,475 library cases: none different; the library's verified bodies stay at 461 of 814 |
 | 3e-5. The rest of the bodies: builtins and effect rows, generic types, tuples, arena allocation, threads, then linearity, effects, regions | not started | `check_bodies` | |
-| 4. Backend | not started | | |
+| 4a. Writing LLVM IR for functions of `int` and `bool`: literals, the arithmetic and bitwise operators with their traps, comparisons, calls, `let`, assignment, `return` | `examples/selfhost/emit.cho`, written by the checker as it walks (`compile.cho`) | the Rust compiler, by what the built programs do | **First slice of the backend.** 74 programs built both ways and run: the same exit status, or a trap in both (28 trap); none different |
+| 4b. The rest of the backend: control flow, `&&` and `||`, `World` and `main`, bytes and strings, output, structs, enums, references, `clang` run by the compiler itself | not started | | |
 
 **The method.** A port that builds no tree has nothing to compare, and one that does
 needs a printer, which is another port. So stage 2's parser wrote the tree the Rust parser
@@ -457,6 +458,23 @@ cases now come padded with bindings, with sibling blocks opened before, and with
 conflict could be reported. The mutation test of the new code in `body.cho` kills 33 of 42, the
 survivors being equivalent comparisons, a stored name nothing reads, and loops whose only effect is
 whether a function is `SKIP`.
+
+**Stage 4a: the first code.** The backend is written the way the Rust one is: the module is LLVM IR as
+text, and `clang` turns it into the executable (`cancho-codegen-llvm` does the same, so nothing here
+needs a library cancho cannot reach). The port writes it while the checker walks, because the checker
+already visits every expression in the order it runs and knows its type: the state gains three
+buffers (the finished output, the function being written, and its `alloca`s, which belong in the entry
+block however late a `let` comes), and `emit.cho` the operations that write to them, an operand being
+a constant or a temporary `%t<n>`. Each function is `define i64 @lexs_name(...)` with a stack slot for
+each binding, a `load` for a name, `llvm.sadd.with.overflow` and its siblings and a branch to a trap
+for `+`, `-` and `*`, the explicit checks `sdiv` and `srem` need for a zero divisor and `int::MIN` by
+-1, the range check on a shift, comparisons as `icmp`, a `call` for a call and a `ret` for a
+`return`. The checker does what it did and writes only when `compile` mode asks; anything it cannot
+write yet (floats, bytes, references, control flow, a generic function) is a `SKIP`, which in this
+mode is a refusal with the function named. The IR is not compared with the Rust backend's, which is
+another text; the programs are: each of 74 is built by both compilers and run, and must end the same
+way, the same exit status or a trap. A program the Rust build needs a `main(world)` for: the cancho
+compiler calls a function named `run` from a C `main` for now, until `World` and `release` are checked.
 
 The mutation test of `types.cho` (54 operator swaps) killed 40 on the first corpus of 458 targeted
 body cases (after region-variable, `where`-closure and coercion cases were added; 33 before); the 14

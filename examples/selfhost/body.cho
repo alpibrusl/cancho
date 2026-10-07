@@ -35,6 +35,7 @@ import selfhost.kinds;
 import selfhost.rules;
 import selfhost.pass1;
 import selfhost.types;
+import selfhost.emit;
 
 // What an expression came to: its type, and whether it is a known integer (a literal, or a
 // literal operation that folded) and which.
@@ -42,18 +43,24 @@ struct Ex {
     ty: int,
     known: bool,
     value: int,
+    reg: int,
 }
 
 fn plain(ty: int) -> [] Ex {
-    return Ex { ty: ty, known: false, value: 0 };
+    return Ex { ty: ty, known: false, value: 0, reg: 0 - 1 };
 }
 
 fn constant(value: int) -> [] Ex {
-    return Ex { ty: 1, known: true, value: value };
+    return Ex { ty: 1, known: true, value: value, reg: 0 - 1 };
 }
 
 fn nothing() -> [] Ex {
-    return Ex { ty: 0, known: false, value: 0 };
+    return Ex { ty: 0, known: false, value: 0, reg: 0 - 1 };
+}
+
+// A value in the temporary `reg` of the code being written.
+fn in_reg(ty: int, reg: int) -> [] Ex {
+    return Ex { ty: ty, known: false, value: 0, reg: reg };
 }
 
 // Something the port does not check yet: the function's answer is `SKIP`.
@@ -76,11 +83,18 @@ fn smallest() -> [] int {
 // and the log of every binding ever declared (`st[38]`, four ints each: type, the block open then,
 // that span) is what the escape check reads once the body is done. A binding starts owned.
 fn bind[&s](st: &!s [int], name: int, ty: int, mutable: bool, from: int, to: int) -> [] int {
-    let at = st[20] + 4 * st[21];
+    if emit.on(st) {
+        if ty != 1 && ty != 5 {
+            return ast.fail(st, rules.r_skip(), from, to);
+        }
+        emit.alloca(st, ty, st[39]);
+    }
+    let at = st[20] + 5 * st[21];
     st[at] = name;
     st[at + 1] = ty;
     st[at + 2] = ast.flag(mutable);
     st[at + 3] = 0;
+    st[at + 4] = st[39];
     st[21] = st[21] + 1;
     let log = st[38] + 4 * st[39];
     st[log] = ty;
@@ -95,7 +109,7 @@ fn bind[&s](st: &!s [int], name: int, ty: int, mutable: bool, from: int, to: int
 fn find[&s, &x](st: &!s [int], text: &x [byte], name: int) -> [] int {
     var i = st[21] - 1;
     while i >= 0 {
-        if ast.same(st, text, st[st[20] + 4 * i], name) {
+        if ast.same(st, text, st[st[20] + 5 * i], name) {
             return i;
         }
         i = i - 1;
@@ -104,11 +118,11 @@ fn find[&s, &x](st: &!s [int], text: &x [byte], name: int) -> [] int {
 }
 
 fn binding_type[&s](st: &!s [int], i: int) -> [] int {
-    return st[st[20] + 4 * i + 1];
+    return st[st[20] + 5 * i + 1];
 }
 
 fn binding_mutable[&s](st: &!s [int], i: int) -> [] bool {
-    return st[st[20] + 4 * i + 2] != 0;
+    return st[st[20] + 5 * i + 2] != 0;
 }
 
 // ------------------------------------------------------- borrows, blocks ---
@@ -127,8 +141,13 @@ fn note[&s](st: &!s [int], rule: int, from: int, to: int) -> [] int {
     return 0;
 }
 
+// The number this binding was declared as, which names its stack slot in the code.
+fn slot_of[&s](st: &!s [int], i: int) -> [] int {
+    return st[st[20] + 5 * i + 4];
+}
+
 fn borrowed[&s](st: &!s [int], i: int) -> [] int {
-    return st[st[20] + 4 * i + 3];
+    return st[st[20] + 5 * i + 3];
 }
 
 // A name was read.
@@ -156,9 +175,9 @@ fn freeze[&s](st: &!s [int], i: int, unique: bool, from: int, to: int) -> [] int
         return 0;
     }
     if unique {
-        st[st[20] + 4 * i + 3] = 0 - 1;
+        st[st[20] + 5 * i + 3] = 0 - 1;
     } else {
-        st[st[20] + 4 * i + 3] = held + 1;
+        st[st[20] + 5 * i + 3] = held + 1;
     }
     return 0;
 }
@@ -166,9 +185,9 @@ fn freeze[&s](st: &!s [int], i: int, unique: bool, from: int, to: int) -> [] int
 fn thaw[&s](st: &!s [int], i: int, unique: bool) -> [] int {
     let held = borrowed(st, i);
     if held > 1 && !unique {
-        st[st[20] + 4 * i + 3] = held - 1;
+        st[st[20] + 5 * i + 3] = held - 1;
     } else {
-        st[st[20] + 4 * i + 3] = 0;
+        st[st[20] + 5 * i + 3] = 0;
     }
     return 0;
 }
@@ -492,6 +511,9 @@ fn fold_int(op: int, a: int, b: int) -> [] Folded {
 fn expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
+    if emit.on(st) && !writes_code(st, id) {
+        return skip(st, from, to);
+    }
     if ast.is_kind(st, id, kinds.NK::EInt) {
         return constant(ast.get(st, id, 4));
     }
@@ -508,6 +530,9 @@ fn expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         return plain(4);
     }
     if ast.is_kind(st, id, kinds.NK::EBool) {
+        if emit.on(st) {
+            return Ex { ty: 5, known: true, value: ast.get(st, id, 4), reg: 0 - 1 };
+        }
         return plain(5);
     }
     if ast.is_kind(st, id, kinds.NK::EStr) {
@@ -718,6 +743,21 @@ fn field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     return plain(field_type(st, item, index));
 }
 
+// The expressions the code can be written for so far: whole numbers and booleans, names, the
+// operators but `&&` and `||`, and calls.
+fn writes_code[&s](st: &!s [int], id: int) -> [] bool {
+    if ast.is_kind(st, id, kinds.NK::EInt) || ast.is_kind(st, id, kinds.NK::EBool) || ast.is_kind(st, id, kinds.NK::EName) || ast.is_kind(st, id, kinds.NK::ECall) {
+        return true;
+    }
+    if ast.is_kind(st, id, kinds.NK::EUnary) {
+        return ast.get(st, id, 4) != 3;
+    }
+    if ast.is_kind(st, id, kinds.NK::EBinary) {
+        return ast.get(st, id, 4) >= 2;
+    }
+    return false;
+}
+
 fn name_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
@@ -725,6 +765,9 @@ fn name_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     let i = find(st, text, name);
     if i >= 0 {
         use_slot(st, i, from, to);
+        if emit.on(st) {
+            return in_reg(binding_type(st, i), emit.load(st, binding_type(st, i), slot_of(st, i)));
+        }
         return plain(binding_type(st, i));
     }
     // A name that is not a local may still be a `static`, a function used as a value, or a
@@ -785,15 +828,24 @@ fn unary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
             }
             return constant(0 - operand.value);
         }
+        if emit.on(st) {
+            return in_reg(operand.ty, emit.checked(st, 1, true, 0, 0 - 1, operand.known, operand.value, operand.reg));
+        }
         return plain(operand.ty);
     }
     if op == 1 {
         expect(st, text, 5, operand.ty, of, ot);
+        if emit.on(st) && ast.ok(st) {
+            return in_reg(5, emit.not(st, operand.known, operand.value, operand.reg));
+        }
         return plain(5);
     }
     expect(st, text, 1, operand.ty, of, ot);
     if operand.known {
         return constant(~operand.value);
+    }
+    if emit.on(st) && ast.ok(st) {
+        return in_reg(1, emit.bit_not(st, operand.known, operand.value, operand.reg));
     }
     return plain(1);
 }
@@ -864,7 +916,33 @@ fn binary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
             return constant(f.value);
         }
     }
+    if emit.on(st) {
+        return in_reg(result, binary_code(st, op, operand, l, r));
+    }
     return plain(result);
+}
+
+// The code for `l op r` on two operands of type `ty`, answering the temporary of the result.
+fn binary_code[&s](st: &!s [int], op: int, ty: int, l: Ex, r: Ex) -> [] int {
+    if op >= 13 && op <= 15 {
+        return emit.checked(st, op - 13, l.known, l.value, l.reg, r.known, r.value, r.reg);
+    }
+    if op == 16 || op == 17 {
+        return emit.divide(st, op == 17, l.known, l.value, l.reg, r.known, r.value, r.reg);
+    }
+    if op == 11 || op == 12 {
+        return emit.shift(st, op == 11, l.known, l.value, l.reg, r.known, r.value, r.reg);
+    }
+    if op >= 8 && op <= 10 {
+        var kind = 2;
+        if op == 10 {
+            kind = 0;
+        } else if op == 8 {
+            kind = 1;
+        }
+        return emit.bitwise(st, kind, l.known, l.value, l.reg, r.known, r.value, r.reg);
+    }
+    return emit.compare(st, op, ty, l.known, l.value, l.reg, r.known, r.value, r.reg);
 }
 
 // `s[i]`: one element of a slice. The base is checked first, then the index.
@@ -990,6 +1068,9 @@ fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     if !plain_function(st, text, found) {
         return skip(st, from, to);
     }
+    if emit.on(st) && pass1.count_params(st, ast.get(st, found, 6), false) > 0 {
+        return skip(st, from, to);
+    }
     // Each type and region parameter of the callee is a variable here, which the arguments solve.
     let callee_dp = ast.get(st, found, 6);
     var tvars = 0 - 1;
@@ -1020,6 +1101,9 @@ fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         let a = expr(st, text, arg);
         if ast.ok(st) {
             expect(st, text, callee_type(st, text, ast.get(st, param, 5), callee_dp, fresh, tvars), a.ty, ast.nstart(st, arg), ast.nend(st, arg));
+            if emit.on(st) {
+                emit.push_arg(st, a.ty, a.known, a.value, a.reg);
+            }
         }
         param = ast.next(st, param);
         arg = ast.next(st, arg);
@@ -1046,7 +1130,14 @@ fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     if !ast.ok(st) {
         return nothing();
     }
-    return plain(types.resolve_type(st, callee_type(st, text, ast.get(st, found, 10), callee_dp, fresh, tvars)));
+    let result = types.resolve_type(st, callee_type(st, text, ast.get(st, found, 10), callee_dp, fresh, tvars));
+    if emit.on(st) {
+        if result != 1 && result != 5 {
+            return skip(st, from, to);
+        }
+        return in_reg(result, emit.call(st, text, callee, result, nargs));
+    }
+    return plain(result);
 }
 
 // A type written in a callee's declaration, at one call: its type parameters are the variables made
@@ -1195,7 +1286,7 @@ fn variant_arm[&s, &x](st: &!s [int], text: &x [byte], item: int, first: int, k:
             var j = mark;
             var again = false;
             while j < st[21] {
-                if ast.same(st, text, st[st[20] + 4 * j], at) {
+                if ast.same(st, text, st[st[20] + 5 * j], at) {
                     again = true;
                 }
                 j = j + 1;
@@ -1371,9 +1462,22 @@ fn condition[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] int {
     return 0;
 }
 
+// The statements the code can be written for so far: `let`, assignment to a name, an expression,
+// and `return`.
+fn writes_stmt[&s](st: &!s [int], id: int) -> [] bool {
+    if ast.is_kind(st, id, kinds.NK::SAssign) {
+        return ast.is_kind(st, ast.get(st, id, 4), kinds.NK::EName);
+    }
+    return ast.is_kind(st, id, kinds.NK::SLet) || ast.is_kind(st, id, kinds.NK::SExpr) || ast.is_kind(st, id, kinds.NK::SReturn);
+}
+
 fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
+    if emit.on(st) && !writes_stmt(st, id) {
+        skip(st, from, to);
+        return 0;
+    }
     if ast.is_kind(st, id, kinds.NK::SLet) {
         let value = ast.get(st, id, 7);
         let found = expr(st, text, value);
@@ -1401,6 +1505,9 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
         }
         if ast.ok(st) {
             bind(st, ast.get(st, id, 5), declared, ast.get(st, id, 4) != 0, from, to);
+            if emit.on(st) && ast.ok(st) {
+                emit.store(st, declared, found.known, found.value, found.reg, st[39] - 1);
+            }
         }
         return 0;
     }
@@ -1508,6 +1615,9 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
         }
         assign_slot(st, i, from, to);
         expect(st, text, binding_type(st, i), found.ty, ast.nstart(st, value), ast.nend(st, value));
+        if emit.on(st) && ast.ok(st) {
+            emit.store(st, binding_type(st, i), found.known, found.value, found.reg, slot_of(st, i));
+        }
         return 0;
     }
     if ast.is_kind(st, id, kinds.NK::SMatch) {
@@ -1545,6 +1655,9 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
         let found = expr(st, text, value);
         if ast.ok(st) {
             expect(st, text, ret, found.ty, ast.nstart(st, value), ast.nend(st, value));
+            if emit.on(st) && ast.ok(st) {
+                emit.ret(st, ret, found.known, found.value, found.reg);
+            }
         }
         return 0;
     }
@@ -1573,12 +1686,43 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
         ast.fail(st, rules.r_skip(), from, to);
         return 2;
     }
-    var param = ast.get(st, fn_item, 7);
-    while param >= 0 {
-        bind(st, ast.get(st, param, 4), lower_type(st, text, ast.get(st, param, 5), st[28], 0 - 1), false, ast.nstart(st, ast.get(st, param, 5)), ast.nend(st, ast.get(st, param, 5)));
-        param = ast.next(st, param);
-    }
     let ret = lower_type(st, text, ast.get(st, fn_item, 10), st[28], 0 - 1);
+    if emit.on(st) {
+        // Code is written for functions of whole numbers and booleans, which are not generic.
+        var ok = ret == 1 || ret == 5;
+        var k = 0;
+        var p = ast.get(st, fn_item, 7);
+        while p >= 0 {
+            let pt = lower_type(st, text, ast.get(st, p, 5), st[28], 0 - 1);
+            ok = ok && (pt == 1 || pt == 5);
+            p = ast.next(st, p);
+            k = k + 1;
+        }
+        if !ok || pass1.count_params(st, st[28], false) > 0 {
+            ast.fail(st, rules.r_skip(), from, to);
+            return 2;
+        }
+        emit.header_start(st, text, ast.get(st, fn_item, 4), ret);
+        k = 0;
+        p = ast.get(st, fn_item, 7);
+        while p >= 0 {
+            emit.header_param(st, lower_type(st, text, ast.get(st, p, 5), st[28], 0 - 1), k);
+            p = ast.next(st, p);
+            k = k + 1;
+        }
+        emit.header_end(st);
+    }
+    var param = ast.get(st, fn_item, 7);
+    var index = 0;
+    while param >= 0 {
+        let pt = lower_type(st, text, ast.get(st, param, 5), st[28], 0 - 1);
+        bind(st, ast.get(st, param, 4), pt, false, ast.nstart(st, ast.get(st, param, 5)), ast.nend(st, ast.get(st, param, 5)));
+        if emit.on(st) {
+            emit.store_param(st, pt, index, st[39] - 1);
+        }
+        param = ast.next(st, param);
+        index = index + 1;
+    }
     block(st, text, ast.get(st, fn_item, 11), ast.get(st, fn_item, 12), ret);
     // What Rust checks once the body is lowered: no binding may hold a reference into a block it
     // outlives, then the borrow conflicts the walk found.
@@ -1603,6 +1747,9 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
         ast.fail(st, rules.r_missing_return(), from, to);
     }
     if ast.ok(st) {
+        if emit.on(st) {
+            emit.finish(st);
+        }
         return 0;
     }
     if st[3] == rules.r_skip() {
