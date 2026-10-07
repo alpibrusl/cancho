@@ -744,7 +744,7 @@ fn field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
 }
 
 // The expressions the code can be written for so far: whole numbers and booleans, names, the
-// operators but `&&` and `||`, and calls.
+// operators, and calls.
 fn writes_code[&s](st: &!s [int], id: int) -> [] bool {
     if ast.is_kind(st, id, kinds.NK::EInt) || ast.is_kind(st, id, kinds.NK::EBool) || ast.is_kind(st, id, kinds.NK::EName) || ast.is_kind(st, id, kinds.NK::ECall) {
         return true;
@@ -753,7 +753,7 @@ fn writes_code[&s](st: &!s [int], id: int) -> [] bool {
         return ast.get(st, id, 4) != 3;
     }
     if ast.is_kind(st, id, kinds.NK::EBinary) {
-        return ast.get(st, id, 4) >= 2;
+        return true;
     }
     return false;
 }
@@ -862,9 +862,20 @@ fn binary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     if !ast.ok(st) {
         return nothing();
     }
+    // `&&` and `||` do not compute their right side when the left has decided: its code is written
+    // between the two, in blocks of its own.
+    var short = 0 - 1;
+    if emit.on(st) && op <= 1 {
+        short = emit.label(st);
+        emit.short_begin(st, short, op == 0, l.known, l.value, l.reg);
+    }
     let r = expr(st, text, rhs_id);
     if !ast.ok(st) {
         return nothing();
+    }
+    var short_reg = 0 - 1;
+    if short >= 0 {
+        short_reg = emit.short_end(st, short, r.known, r.value, r.reg);
     }
     // Both sides agree first, then the operator says what it accepts.
     expect(st, text, l.ty, r.ty, ast.nstart(st, rhs_id), ast.nend(st, rhs_id));
@@ -915,6 +926,9 @@ fn binary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         if result == 1 {
             return constant(f.value);
         }
+    }
+    if short_reg >= 0 {
+        return in_reg(5, short_reg);
     }
     if emit.on(st) {
         return in_reg(result, binary_code(st, op, operand, l, r));
@@ -1454,21 +1468,21 @@ fn block[&s, &x](st: &!s [int], text: &x [byte], head: int, n: int, ret: int) ->
     return 0;
 }
 
-fn condition[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] int {
+fn condition[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     let found = expr(st, text, id);
     if ast.ok(st) {
         expect(st, text, 5, found.ty, ast.nstart(st, id), ast.nend(st, id));
     }
-    return 0;
+    return found;
 }
 
 // The statements the code can be written for so far: `let`, assignment to a name, an expression,
-// and `return`.
+// `return`, `if` and `while`.
 fn writes_stmt[&s](st: &!s [int], id: int) -> [] bool {
     if ast.is_kind(st, id, kinds.NK::SAssign) {
         return ast.is_kind(st, ast.get(st, id, 4), kinds.NK::EName);
     }
-    return ast.is_kind(st, id, kinds.NK::SLet) || ast.is_kind(st, id, kinds.NK::SExpr) || ast.is_kind(st, id, kinds.NK::SReturn);
+    return ast.is_kind(st, id, kinds.NK::SLet) || ast.is_kind(st, id, kinds.NK::SExpr) || ast.is_kind(st, id, kinds.NK::SReturn) || ast.is_kind(st, id, kinds.NK::SIf) || ast.is_kind(st, id, kinds.NK::SWhile);
 }
 
 fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
@@ -1634,19 +1648,41 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
         return 0;
     }
     if ast.is_kind(st, id, kinds.NK::SIf) {
-        condition(st, text, ast.get(st, id, 4));
+        let c = condition(st, text, ast.get(st, id, 4));
+        var n = 0 - 1;
+        if emit.on(st) && ast.ok(st) {
+            n = emit.label(st);
+            emit.if_begin(st, n, c.known, c.value, c.reg);
+        }
         if ast.ok(st) {
             block(st, text, ast.get(st, id, 5), ast.get(st, id, 6), ret);
+        }
+        if n >= 0 {
+            emit.if_else(st, n);
         }
         if ast.ok(st) && ast.get(st, id, 8) >= 0 {
             block(st, text, ast.get(st, id, 7), ast.get(st, id, 8), ret);
         }
+        if n >= 0 {
+            emit.if_end(st, n);
+        }
         return 0;
     }
     if ast.is_kind(st, id, kinds.NK::SWhile) {
-        condition(st, text, ast.get(st, id, 4));
+        var n = 0 - 1;
+        if emit.on(st) {
+            n = emit.label(st);
+            emit.while_head(st, n);
+        }
+        let c = condition(st, text, ast.get(st, id, 4));
+        if n >= 0 && ast.ok(st) {
+            emit.while_cond(st, n, c.known, c.value, c.reg);
+        }
         if ast.ok(st) {
             block(st, text, ast.get(st, id, 5), ast.get(st, id, 6), ret);
+        }
+        if n >= 0 {
+            emit.while_end(st, n);
         }
         return 0;
     }

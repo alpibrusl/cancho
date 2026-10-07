@@ -81,7 +81,7 @@ fn built_by_cancho(compiler: &Path, index: usize, program: &str) -> Ended {
 }
 
 /// Programs the compiler in cancho can write: whole numbers and booleans, calls, `let`, assignment,
-/// `return`, and the operators but `&&` and `||`. The ones that trap are here too: a trap is
+/// `return`, `if` and `while`, and every operator. The ones that trap are here too: a trap is
 /// something both must do.
 const PROGRAMS: &[&str] = &[
     "fn run() -> [] int { return 0; }",
@@ -158,6 +158,55 @@ const PROGRAMS: &[&str] = &[
     "fn run() -> [] int { var a = 1; a = a + 1; a = a + 1; a = a + 1; a = a + 1; a = a + 1; return a; }",
     "fn f(x: int) -> [] int { return x + 1; }\nfn g(x: int) -> [] int { return f(x) * 2; }\nfn h(x: int) -> [] int { return g(x) - f(x); }\nfn run() -> [] int { return h(10); }",
     "fn a(x: int) -> [] int { return x + 1; }\nfn run() -> [] int { return a(a(a(a(a(a(a(a(0)))))))); }",
+    "fn run() -> [] int { var i = 0; var s = 0; while i < 10 { s = s + i; i = i + 1; } return s; }",
+    "fn run() -> [] int { var i = 0; while i < 100 { i = i + 7; } return i; }",
+    "fn run() -> [] int { var i = 5; while i > 100 { i = i + 1; } return i; }",
+    "fn run() -> [] int { if true { return 1; } return 2; }",
+    "fn run() -> [] int { if false { return 1; } return 2; }",
+    "fn run() -> [] int { if 1 < 2 { return 10; } else { return 20; } }",
+    "fn run() -> [] int { if 3 < 2 { return 10; } else { return 20; } }",
+    "fn run() -> [] int { var x = 0; if 1 < 2 { x = 5; } x = x + 1; return x; }",
+    "fn run() -> [] int { var x = 0; if 2 < 1 { x = 5; } x = x + 1; return x; }",
+    "fn run() -> [] int { var x = 0; if 2 < 1 { x = 5; } else { x = 8; } return x; }",
+    "fn f(n: int) -> [] int { if n < 0 { return 0 - 1; } else if n == 0 { return 0; } else { return 1; } }\nfn run() -> [] int { return f(0 - 5) + f(0) * 10 + f(7) * 100 + 100; }",
+    "fn f(n: int) -> [] int { if n < 10 { return 1; } else if n < 100 { return 2; } else if n < 1000 { return 3; } return 4; }\nfn run() -> [] int { return f(5) + f(50) * 10 + f(500) * 100 + f(5000) * 1000 - 4000 - 3000; }",
+    "fn fact(n: int) -> [] int { if n <= 1 { return 1; } return n * fact(n - 1); }\nfn run() -> [] int { return fact(5); }",
+    "fn fact(n: int) -> [] int { if n <= 1 { return 1; } return n * fact(n - 1); }\nfn run() -> [] int { return fact(20) / 1000000000000000; }",
+    "fn fact(n: int) -> [] int { if n <= 1 { return 1; } return n * fact(n - 1); }\nfn run() -> [] int { return fact(21); }",
+    "fn fib(n: int) -> [] int { if n < 2 { return n; } return fib(n - 1) + fib(n - 2); }\nfn run() -> [] int { return fib(15); }",
+    "fn fib(n: int) -> [] int { var a = 0; var b = 1; var i = 0; while i < n { let t = a + b; a = b; b = t; i = i + 1; } return a; }\nfn run() -> [] int { return fib(30) % 256; }",
+    "fn fib(n: int) -> [] int { var a = 0; var b = 1; var i = 0; while i < n { let t = a + b; a = b; b = t; i = i + 1; } return a; }\nfn run() -> [] int { return fib(93); }",
+    "fn gcd(a: int, b: int) -> [] int { var x = a; var y = b; while y != 0 { let t = x % y; x = y; y = t; } return x; }\nfn run() -> [] int { return gcd(1071, 462) + gcd(17, 5) + gcd(100, 75); }",
+    "fn pow(b: int, e: int) -> [] int { var r = 1; var i = 0; while i < e { r = r * b; i = i + 1; } return r; }\nfn run() -> [] int { return pow(2, 10) % 256 + pow(3, 4); }",
+    "fn pow(b: int, e: int) -> [] int { var r = 1; var i = 0; while i < e { r = r * b; i = i + 1; } return r; }\nfn run() -> [] int { return pow(2, 63); }",
+    "fn pow(b: int, e: int) -> [] int { var r = 1; var i = 0; while i < e { r = r * b; i = i + 1; } return r; }\nfn run() -> [] int { return pow(2, 62) / pow(2, 55); }",
+    "fn collatz(n: int) -> [] int { var x = n; var steps = 0; while x != 1 { if x % 2 == 0 { x = x / 2; } else { x = 3 * x + 1; } steps = steps + 1; } return steps; }\nfn run() -> [] int { return collatz(27); }",
+    "fn digits(n: int) -> [] int { var x = n; var s = 0; while x > 0 { s = s + x % 10; x = x / 10; } return s; }\nfn run() -> [] int { return digits(98765); }",
+    "fn prime(n: int) -> [] bool { if n < 2 { return false; } var d = 2; while d * d <= n { if n % d == 0 { return false; } d = d + 1; } return true; }\nfn run() -> [] int { var count = 0; var i = 0; while i < 100 { if prime(i) { count = count + 1; } i = i + 1; } return count; }",
+    "fn isqrt(n: int) -> [] int { var r = 0; while (r + 1) * (r + 1) <= n { r = r + 1; } return r; }\nfn run() -> [] int { return isqrt(1000000) % 256 + isqrt(99); }",
+    "fn run() -> [] int { var i = 0; var j = 0; var s = 0; while i < 5 { j = 0; while j < 5 { s = s + i * j; j = j + 1; } i = i + 1; } return s; }",
+    "fn run() -> [] int { var i = 0; var s = 0; while i < 10 { if i % 2 == 0 { s = s + i; } else { s = s - 1; } i = i + 1; } return s + 100; }",
+    "fn first_over(n: int) -> [] int { var i = 0; while true { if i * i > n { return i; } i = i + 1; } return 0; }\nfn run() -> [] int { return first_over(50); }",
+    "fn find(n: int) -> [] int { var i = 0; while i < 100 { if i * 3 == n { return i; } i = i + 1; } return 0 - 1; }\nfn run() -> [] int { return find(42) + find(7) + 100; }",
+    "fn run() -> [] int { var i = 0; var s = 0; while i < 1000000 { s = s + i % 3; i = i + 1; } return s % 256; }",
+    "fn run() -> [] int { var s = 1; var i = 0; while i < 70 { s = s * 2; i = i + 1; } return s; }",
+    "fn run() -> [] int { var s = 0; var i = 0; while i < 10 { s = s + 100 / (5 - i); i = i + 1; } return s; }",
+    "fn run() -> [] int { let a = true && true; let b = true && false; let c = false || true; let d = false || false; if a && !b && c && !d { return 1; } return 0; }",
+    "fn t() -> [] bool { return true; }\nfn f() -> [] bool { return false; }\nfn run() -> [] int { var n = 0; if t() && f() { n = n + 1; } if t() || f() { n = n + 10; } if f() && t() { n = n + 100; } if f() || t() { n = n + 50; } return n; }",
+    "fn boom(a: int) -> [] bool { return 1 / a == 1; }\nfn run() -> [] int { if false && boom(0) { return 1; } return 2; }",
+    "fn boom(a: int) -> [] bool { return 1 / a == 1; }\nfn run() -> [] int { if true || boom(0) { return 1; } return 2; }",
+    "fn boom(a: int) -> [] bool { return 1 / a == 1; }\nfn run() -> [] int { if true && boom(0) { return 1; } return 2; }",
+    "fn boom(a: int) -> [] bool { return 1 / a == 1; }\nfn run() -> [] int { if false || boom(0) { return 1; } return 2; }",
+    "fn ok(a: int) -> [] bool { return a > 0; }\nfn run() -> [] int { var n = 0; var i = 0 - 3; while i < 4 { if ok(i) && i < 3 || i == 0 - 2 { n = n + 1; } i = i + 1; } return n; }",
+    "fn run() -> [] int { var i = 0; var s = 0; while i < 20 && s < 50 { s = s + i; i = i + 1; } return s * 10 + i; }",
+    "fn run() -> [] int { let a = 5; let b = a > 3 && a < 10; let c = a > 3 || a < 0; let d = !(a == 5); if b && c && !d { return 7; } else { return 9; } }",
+    "fn sign(n: int) -> [] int { if n < 0 { return 0 - 1; } if n > 0 { return 1; } return 0; }\nfn run() -> [] int { return sign(0 - 9) + sign(0) + sign(9) + 10; }",
+    "fn max(a: int, b: int) -> [] int { if a > b { return a; } return b; }\nfn min(a: int, b: int) -> [] int { if a < b { return a; } return b; }\nfn run() -> [] int { return max(3, 8) * 10 + min(3, 8); }",
+    "fn abs(n: int) -> [] int { if n < 0 { return 0 - n; } return n; }\nfn run() -> [] int { return abs(0 - 5) + abs(5) + abs(0 - 9223372036854775807); }",
+    "fn abs(n: int) -> [] int { if n < 0 { return 0 - n; } return n; }\nfn run() -> [] int { return abs(0 - 9223372036854775807 - 1); }",
+    "fn run() -> [] int { var x = 10; while x > 0 { x = x - 3; } return x + 100; }",
+    "fn count(n: int) -> [] int { if n == 0 { return 0; } return 1 + count(n - 1); }\nfn run() -> [] int { return count(1000); }",
+    "fn ack(m: int, n: int) -> [] int { if m == 0 { return n + 1; } if n == 0 { return ack(m - 1, 1); } return ack(m - 1, ack(m, n - 1)); }\nfn run() -> [] int { return ack(2, 3); }",
 ];
 
 #[test]
@@ -185,6 +234,6 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
         different.join("\n")
     );
     eprintln!("{} programs built both ways, {trapped} of them trap", results.len());
-    assert!(trapped >= 15, "{trapped} of the programs trap; the test is about them too");
+    assert!(trapped >= 20, "{trapped} of the programs trap; the test is about them too");
     let _ = std::fs::remove_dir_all(compiler.parent().expect("a scratch directory"));
 }

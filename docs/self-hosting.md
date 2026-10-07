@@ -213,7 +213,8 @@ the stages found, in place, the way this document corrects its own claims.
 | 3e-4. `borrow` and `region` blocks | `body.cho` (block regions in `types.cho`) | `check_bodies` | **Sixth slice.** Every function the port answers is the Rust answer: 1,271 targeted body cases (456 of them for borrows, regions and their variants), 2 cross-module in the several-files test, 16,000 fuzz cases (11,463 alone, 4,726 with the library) and 1,475 library cases: none different; the library's verified bodies stay at 461 of 814 |
 | 3e-5. The rest of the bodies: builtins and effect rows, generic types, tuples, arena allocation, threads, then linearity, effects, regions | not started | `check_bodies` | |
 | 4a. Writing LLVM IR for functions of `int` and `bool`: literals, the arithmetic and bitwise operators with their traps, comparisons, calls, `let`, assignment, `return` | `examples/selfhost/emit.cho`, written by the checker as it walks (`compile.cho`) | the Rust compiler, by what the built programs do | **First slice of the backend.** 74 programs built both ways and run: the same exit status, or a trap in both (18 trap); none different |
-| 4b. The rest of the backend: control flow, `&&` and `||`, `World` and `main`, bytes and strings, output, structs, enums, references, `clang` run by the compiler itself | not started | | |
+| 4b. Control flow: `if` with `else`, `while`, `&&` and `||` (the right side only when the left has not decided it) | `emit.cho` and `body.cho` | the Rust compiler, by what the built programs do | **Second slice of the backend.** 123 programs built both ways and run, 49 of them new (loops, recursion, early returns, short-circuit that must not run its right side, traps inside loops): the same exit status or a trap in both (27 trap); none different |
+| 4c. The rest of the backend: `World` and `main`, bytes and strings, output, structs, enums, references, generics, `clang` run by the compiler itself | not started | | |
 
 **The method.** A port that builds no tree has nothing to compare, and one that does
 needs a printer, which is another port. So stage 2's parser wrote the tree the Rust parser
@@ -475,6 +476,17 @@ mode is a refusal with the function named. The IR is not compared with the Rust 
 another text; the programs are: each of 74 is built by both compilers and run, and must end the same
 way, the same exit status or a trap. A program the Rust build needs a `main(world)` for: the cancho
 compiler calls a function named `run` from a C `main` for now, until `World` and `release` are checked.
+
+**Stage 4b: control flow.** An `if` is a branch on the condition to a `then` block, an `else` block (empty
+when there is none) and an `end` block; a `while` is a `head` block where the condition is computed, a
+branch to the `body` or the `end`, and a jump back. Each construct takes one number from the same counter
+the trap blocks use, so no two share a label. `a && b` and `a || b` keep their result in a stack slot of
+their own: after `a` the slot holds it and `b` is computed only if `a` did not decide the answer. The
+condition now hands its value back so the branch can name it. After a `return` the next block is a
+`dead` one, so every `br` that ends an arm has a block to end, and the end of the function is an
+`unreachable` the checker has shown nothing reaches. Programs that matter here: a short-circuit whose
+right side would trap if it ran (it must not), loops that trap on the iteration that overflows, an early
+`return` from inside a loop, and the recursive ones.
 
 The mutation test of `types.cho` (54 operator swaps) killed 40 on the first corpus of 458 targeted
 body cases (after region-variable, `where`-closure and coercion cases were added; 33 before); the 14
