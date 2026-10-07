@@ -111,6 +111,62 @@ fn scalar[&s](st: &!s [int], ty: int) -> [] int {
     return 0;
 }
 
+// A struct this slice handles: declared in the file, not `res`, with no parameters, and only
+// scalar fields, so a value of it is `val` and copies.
+fn struct_plain[&s](st: &!s [int], item: int) -> [] bool {
+    if !ast.is_kind(st, item, kinds.NK::IStruct) {
+        return false;
+    }
+    if ast.get(st, item, 6) == 2 || ast.get(st, item, 7) >= 0 {
+        return false;
+    }
+    var f = ast.get(st, item, 8);
+    while f >= 0 {
+        if scalar(st, ast.get(st, f, 5)) == 0 {
+            return false;
+        }
+        f = ast.next(st, f);
+    }
+    return true;
+}
+
+// The type of the resolved type node `ty` when it is a scalar or a plain struct, else 0.
+fn value_type[&s](st: &!s [int], ty: int) -> [] int {
+    let tag = scalar(st, ty);
+    if tag != 0 {
+        return tag;
+    }
+    if ast.get(st, ty, 8) == 3 && struct_plain(st, ast.get(st, ty, 9)) {
+        return types.make_named(st, ast.get(st, ty, 9));
+    }
+    return 0;
+}
+
+// The position of the field called `name` in the struct `item`, or -1.
+fn field_index[&s, &x](st: &!s [int], text: &x [byte], item: int, name: int) -> [] int {
+    var f = ast.get(st, item, 8);
+    var i = 0;
+    while f >= 0 {
+        if ast.same(st, text, ast.get(st, f, 4), name) {
+            return i;
+        }
+        f = ast.next(st, f);
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// The scalar type of field number `index` of the struct `item`.
+fn field_type[&s](st: &!s [int], item: int, index: int) -> [] int {
+    var f = ast.get(st, item, 8);
+    var i = 0;
+    while i < index {
+        f = ast.next(st, f);
+        i = i + 1;
+    }
+    return scalar(st, ast.get(st, f, 5));
+}
+
 // The type of the resolved type node `ty`, written in a declaration whose `[...]` starts at `dp`,
 // or 0 if it is one this slice does not handle: a scalar, or a reference to a scalar or to a slice
 // of one. `fresh` is -1 when the declaration is the function being checked, whose region
@@ -118,7 +174,7 @@ fn scalar[&s](st: &!s [int], ty: int) -> [] int {
 // its region parameters, which stand in for them at this call.
 fn lower_type[&s, &x](st: &!s [int], text: &x [byte], ty: int, dp: int, fresh: int) -> [] int {
     if ast.is_kind(st, ty, kinds.NK::TName) {
-        return scalar(st, ty);
+        return value_type(st, ty);
     }
     if !ast.is_kind(st, ty, kinds.NK::TRef) {
         return 0;
@@ -139,7 +195,7 @@ fn lower_type[&s, &x](st: &!s [int], text: &x [byte], ty: int, dp: int, fresh: i
             referent = types.make_slice(st, element);
         }
     } else {
-        referent = scalar(st, inner);
+        referent = value_type(st, inner);
     }
     if referent == 0 {
         return 0;
@@ -330,7 +386,115 @@ fn expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     if ast.is_kind(st, id, kinds.NK::ECall) {
         return call_expr(st, text, id);
     }
+    if ast.is_kind(st, id, kinds.NK::EStructLit) {
+        return struct_lit(st, text, id);
+    }
+    if ast.is_kind(st, id, kinds.NK::EField) {
+        return field_expr(st, text, id);
+    }
     return skip(st, from, to);
+}
+
+// Is a field called `name` written in the literal's fields before `stop`?
+fn given_before[&s, &x](st: &!s [int], text: &x [byte], first: int, stop: int, name: int) -> [] bool {
+    var f = first;
+    while f != stop {
+        if ast.same(st, text, ast.get(st, f, 4), name) {
+            return true;
+        }
+        f = ast.next(st, f);
+    }
+    return false;
+}
+
+// `Name { a: x, b: y }`: every field, once, in declaration order, each of the declared type.
+fn struct_lit[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
+    let from = ast.nstart(st, id);
+    let to = ast.nend(st, id);
+    let target = pass1.resolve_module(st, text, st[22], ast.get(st, id, 4));
+    if target < 0 {
+        ast.fail(st, rules.r_module_not_imported(), from, to);
+        return nothing();
+    }
+    let found = pass1.lookup(st, text, ast.get(st, id, 5), target, st[23]);
+    if found < 0 {
+        ast.fail(st, rules.r_not_a_struct(), from, to);
+        return nothing();
+    }
+    if found < pass1.user_base() {
+        return skip(st, from, to);
+    }
+    let item = found - pass1.user_base();
+    if !ast.is_kind(st, item, kinds.NK::IStruct) {
+        ast.fail(st, rules.r_not_a_struct(), from, to);
+        return nothing();
+    }
+    if target != st[22] && !pass1.def_public(st, found) {
+        ast.fail(st, rules.r_not_public(), from, to);
+        return nothing();
+    }
+    if !struct_plain(st, item) {
+        return skip(st, from, to);
+    }
+    let first = ast.get(st, id, 6);
+    var init = first;
+    var previous = 0 - 1;
+    while init >= 0 && ast.ok(st) {
+        let name = ast.get(st, init, 4);
+        let value = ast.get(st, init, 5);
+        let index = field_index(st, text, item, name);
+        if index < 0 {
+            ast.fail(st, rules.r_unknown_name(), from, to);
+        } else if given_before(st, text, first, init, name) {
+            ast.fail(st, rules.r_duplicate_declaration(), from, to);
+        } else if index < previous {
+            ast.fail(st, rules.r_field_order(), ast.nstart(st, value), ast.nend(st, value));
+        } else {
+            previous = index;
+            let v = expr(st, text, value);
+            if ast.ok(st) {
+                expect(st, text, field_type(st, item, index), v.ty, ast.nstart(st, value), ast.nend(st, value));
+            }
+        }
+        init = ast.next(st, init);
+    }
+    var decl = ast.get(st, item, 8);
+    while decl >= 0 && ast.ok(st) {
+        if !given_before(st, text, first, 0 - 1, ast.get(st, decl, 4)) {
+            ast.fail(st, rules.r_missing_field(), from, to);
+        }
+        decl = ast.next(st, decl);
+    }
+    if !ast.ok(st) {
+        return nothing();
+    }
+    return plain(types.make_named(st, item));
+}
+
+// `base.name`: a field of a struct, or of a reference to one, copied out.
+fn field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
+    let from = ast.nstart(st, id);
+    let to = ast.nend(st, id);
+    let base = ast.get(st, id, 4);
+    let b = expr(st, text, base);
+    if !ast.ok(st) {
+        return nothing();
+    }
+    var held = b.ty;
+    if types.is_ref(st, held) {
+        held = types.ref_inner(st, held);
+    }
+    if !types.is_named(st, held) {
+        ast.fail(st, rules.r_unknown_name(), ast.nstart(st, base), ast.nend(st, base));
+        return nothing();
+    }
+    let item = types.named_item(st, held);
+    let index = field_index(st, text, item, ast.get(st, id, 5));
+    if index < 0 {
+        ast.fail(st, rules.r_unknown_name(), from, to);
+        return nothing();
+    }
+    return plain(field_type(st, item, index));
 }
 
 fn name_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
@@ -799,6 +963,35 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
             if ast.ok(st) {
                 expect(st, text, e, found.ty, ast.nstart(st, value), ast.nend(st, value));
             }
+            return 0;
+        }
+        if ast.is_kind(st, place, kinds.NK::EField) {
+            // `r.x = v`: a field through a unique reference to a struct.
+            let base = ast.get(st, place, 4);
+            let b = expr(st, text, base);
+            if !ast.ok(st) {
+                return 0;
+            }
+            if !types.is_ref(st, b.ty) {
+                ast.fail(st, rules.r_not_a_reference(), ast.nstart(st, base), ast.nend(st, base));
+                return 0;
+            }
+            if !types.ref_unique(st, b.ty) {
+                ast.fail(st, rules.r_shared_reference_written(), ast.nstart(st, base), ast.nend(st, base));
+                return 0;
+            }
+            let referent = types.ref_inner(st, b.ty);
+            if !types.is_named(st, referent) {
+                ast.fail(st, rules.r_unknown_name(), ast.nstart(st, base), ast.nend(st, base));
+                return 0;
+            }
+            let item = types.named_item(st, referent);
+            let index = field_index(st, text, item, ast.get(st, place, 5));
+            if index < 0 {
+                ast.fail(st, rules.r_unknown_name(), from, to);
+                return 0;
+            }
+            expect(st, text, field_type(st, item, index), found.ty, ast.nstart(st, value), ast.nend(st, value));
             return 0;
         }
         if !ast.is_kind(st, place, kinds.NK::EName) {
