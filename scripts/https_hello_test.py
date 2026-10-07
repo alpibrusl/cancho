@@ -433,7 +433,7 @@ def case_stalled(exe):
         if during - before > 4096:
             return f"server RSS grew {during - before} KB while a client stalled on a 1 GiB body"
         # The stalled client does not read; once idle passes the server ends it.
-        line = server.wait_for(lambda l: l.startswith("conn 2 closed idle"), 8)[-1]
+        line = server.wait_for(lambda l: l.startswith("conn 2 ") and " closed idle" in l, 8)[-1]
         stall.settimeout(10)
         ended = False
         try:

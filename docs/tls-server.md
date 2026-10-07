@@ -539,8 +539,8 @@ tls_echo --port <n> --dir <directory> [--identity <subdirectory>]... [--alpn <p1
 It logs, per connection, what was negotiated and how it ended:
 
 ```
-conn 7 established suite=TLS_AES_128_GCM_SHA256 group=x25519 sni=echo.lex-sys.test alpn=echo hrr=no waited=0 handshake=5
-conn 7 closed ok in=11 ms=1009
+conn 7 peer=127.0.0.1:51109 established suite=TLS_AES_128_GCM_SHA256 group=x25519 sni=echo.lex-sys.test alpn=echo hrr=no waited=0 handshake=5
+conn 7 peer=127.0.0.1:51109 closed ok in=11 ms=1009
 ```
 
 **The authority report** is bounded and pinned by `conformance/tls_echo.rs`: `args`, `clock`, `conn_accept`, `conn_read`,
