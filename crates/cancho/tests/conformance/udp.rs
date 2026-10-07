@@ -900,3 +900,53 @@ fn a_datagram_server_reports_its_port_and_no_net_out() {
         "a bound socket needs no outbound authority:\n{json}"
     );
 }
+
+/// An empty ticket slice is refused before the kernel (`Failed(EINVAL)`), and a receive that
+/// delivered nothing leaves no ticket behind: the cell is still the 7 it was given.
+const NO_CELL: &str = r#"
+fn run(bound: Net("PORT"), io: Io) -> [] int {
+    var status = 1;
+    borrow mut io as &!i in {
+        borrow bound as &n in {
+            match udp_bind(n, PORT, 0) {
+                UdpOpened::Ok(u) => {
+                    var sock = u;
+                    borrow mut sock as &!uh in {
+                        udp_nonblocking(uh);
+                        io.error_all(i, "ready\n");
+                        region a {
+                            var buf = alloc_slice[a](64, byte_of(0));
+                            var none = alloc_slice[a](0, 0);
+                            var who = alloc_slice[a](1, 7);
+                            var seen = 0;
+                            match udp_recv_from(uh, buf, none) {
+                                Datagram::Failed(e) => { if e == 22 { seen = seen + 1; } }
+                                Datagram::Got(k) => { }
+                                Datagram::Truncated(k) => { }
+                                Datagram::Again => { }
+                            }
+                            match udp_recv_from(uh, buf, who) {
+                                Datagram::Again => { if who[0] == 7 { seen = seen + 1; } }
+                                Datagram::Got(k) => { }
+                                Datagram::Truncated(k) => { }
+                                Datagram::Failed(e) => { }
+                            }
+                            if seen == 2 { status = 0; }
+                        }
+                    }
+                    udp_close(sock);
+                }
+                UdpOpened::Failed(e) => { status = 2; }
+            }
+        }
+    }
+    release(bound);
+    release(io);
+    return status;
+}
+"#;
+
+#[test]
+fn an_empty_ticket_slice_is_einval_and_a_failed_receive_leaves_no_ticket() {
+    serve("no-cell", NO_CELL, 0, |_port| {});
+}
