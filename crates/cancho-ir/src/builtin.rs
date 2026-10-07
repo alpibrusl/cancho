@@ -71,6 +71,26 @@ pub enum Builtin {
     /// `fs_read`'s `-1` for a file that could not be read. §3.1 says why
     /// an enum would be better and §6 keeps it open.
     GetChar,
+    /// `read_bytes[&i, &b](io: &!i Io, into: &!b [byte]) -> [io_read] Read`
+    /// -- standard input, many bytes in one call (`docs/standard-input.md`
+    /// §7, edition 7).
+    ///
+    /// `getchar` is a libc call per byte, 71 MB/s on macOS against 2.9 GB/s
+    /// for a file read in bulk. The way around it that was already open,
+    /// `/dev/stdin` through `file_read`, reaches standard input through the
+    /// *file system*, so a program's authority report would say
+    /// `fs_read` and not `io_read`: faster and quieter, which is the
+    /// direction `docs/bulk-io.md` §2 calls a bug. This is the same read
+    /// behind the same capability and the same label, and it answers
+    /// `file_read`'s three outcomes (`Got`, `End`, `Failed`) instead of a
+    /// sentinel.
+    ///
+    /// It is `fread` on the C `stdin` stream and not `read(0)`, so that
+    /// bytes `getchar` has already buffered are not lost to it and a
+    /// program may use both on one stream. The price is that a short count
+    /// means end of input, not "whatever had arrived": it waits until the
+    /// buffer is full or the input ends.
+    ReadBytes,
     /// `split(w: World) -> [] Split` — consumes the root of all authority
     /// and hands back its parts (§8.2).
     ///
@@ -731,6 +751,7 @@ impl Builtin {
         Builtin::WriteErr,
         Builtin::FlushOut,
         Builtin::GetChar,
+        Builtin::ReadBytes,
         Builtin::Split,
         Builtin::Release,
         Builtin::Narrow,
@@ -868,6 +889,7 @@ impl Builtin {
             Builtin::FlushOut => "flush_out",
             Builtin::WriteErr => "write_err",
             Builtin::GetChar => "getchar",
+            Builtin::ReadBytes => "read_bytes",
             Builtin::Split => "split",
             Builtin::Release => "release",
             Builtin::Narrow => "narrow",
@@ -1117,6 +1139,9 @@ impl Builtin {
             // `docs/directory-handles.md` §3, slice 4: edition 7 as well --
             // `dir_rename_new` is a name a program may already declare.
             Builtin::DirRenameNew => 7,
+            // `docs/standard-input.md` §7: edition 7 too -- `read_bytes` is
+            // a name a program may already declare.
+            Builtin::ReadBytes => 7,
             // `docs/crypto-builtins.md` §3: the latest edition, as
             // `value_barrier` was, since a program may already declare
             // these names.
@@ -1176,7 +1201,7 @@ impl Builtin {
             // leaf-free, so it contributes no values either way, and
             // skipping it keeps the argument positions honest.
             Builtin::PutChar | Builtin::GetChar | Builtin::ArgCount | Builtin::Arg => 1,
-            Builtin::Write | Builtin::WriteErr | Builtin::FlushOut => 1,
+            Builtin::Write | Builtin::WriteErr | Builtin::FlushOut | Builtin::ReadBytes => 1,
             _ => 0,
         }
     }
@@ -1196,7 +1221,7 @@ impl Builtin {
             | Builtin::ArgCount
             | Builtin::Arg => 1,
             // Two: the borrowed `Io` and the slice's own region.
-            Builtin::Write | Builtin::WriteErr => 2,
+            Builtin::Write | Builtin::WriteErr | Builtin::ReadBytes => 2,
             // Two: the borrowed handle and the buffer's own region.
             Builtin::ReadFile => 2,
             // The handle's region and the buffer's.
@@ -1282,7 +1307,7 @@ impl Builtin {
             // direction, its own label. A row saying `[io_write]` does not
             // permit a read, which is what makes the two labels a
             // distinction rather than a spelling.
-            Builtin::GetChar => Effects::plain(["io_read"]),
+            Builtin::GetChar | Builtin::ReadBytes => Effects::plain(["io_read"]),
             // `docs/heap.md` §2. Both reach the allocator, so both perform
             // `heap`; `contents` is a load and performs nothing.
             Builtin::Box

@@ -125,6 +125,50 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         vec![tag, zero, reason]
     }
 
+    /// `read_bytes(io, into)`: `fread` on `stdin`, sorted into `Read`
+    /// (`docs/standard-input.md` §7). `args` is the buffer's pointer and
+    /// length; the `Io` has no leaves.
+    ///
+    /// `fread` and not `read(0)`: it is the stream `getchar` reads, so bytes
+    /// already in its buffer are not lost, and it keeps asking until the
+    /// buffer is full or the input ends, so a short count is the end. A count
+    /// of zero is the end, or a failure when the stream's error indicator is
+    /// set, or nothing at all when the buffer asked for nothing. `errno` is
+    /// read straight after `fread`, before `ferror` can disturb it, and the
+    /// stream's indicators are cleared after `ferror` has been asked.
+    pub(crate) fn read_stdin(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let stream = self.module.declare_data_in_func(self.console.stdin, self.builder.func);
+        let stream = self.builder.ins().global_value(pointer, stream);
+        // `stdin` is a `FILE *` variable: the symbol is its address.
+        let stream = self.builder.ins().load(pointer, MemFlags::trusted(), stream, 0);
+        let one = self.builder.ins().iconst(pointer, 1);
+        let moved = self.libc_call(
+            "fread",
+            &[pointer, pointer, pointer, pointer],
+            &[pointer],
+            &[args[0], one, args[1], stream],
+        );
+        let reason = self.errno();
+        let indicator = self.libc_call("ferror", &[pointer], &[types::I32], &[stream]);
+        // A failure is reported once: the indicators are cleared, so that a later read
+        // is judged by what it finds and not by what an earlier one left behind.
+        let clear = self.libc_fn("clearerr", &[pointer], &[]);
+        let clear = self.module.declare_func_in_func(clear, self.builder.func);
+        self.builder.ins().call(clear, &[stream]);
+        let got = self.builder.ins().icmp_imm(IntCC::NotEqual, moved, 0);
+        let failed = self.builder.ins().icmp_imm(IntCC::NotEqual, indicator, 0);
+        let asked = self.builder.ins().icmp_imm(IntCC::NotEqual, args[1], 0);
+        // Tags in declaration order: `Got(int)` 0, `End` 1, `Failed(int)` 2.
+        let two = self.builder.ins().iconst(types::I64, 2);
+        let one = self.builder.ins().iconst(types::I64, 1);
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        let ended = self.builder.ins().select(asked, one, zero);
+        let none = self.builder.ins().select(failed, two, ended);
+        let tag = self.builder.ins().select(got, zero, none);
+        vec![tag, moved, reason]
+    }
+
     /// `Read`'s three leaves from the byte count a `read`-shaped call gave.
     fn read_answer(&mut self, moved: Value) -> Vec<Value> {
         let negative = self.builder.ins().icmp_imm(IntCC::SignedLessThan, moved, 0);

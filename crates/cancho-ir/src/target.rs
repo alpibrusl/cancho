@@ -142,6 +142,7 @@ pub fn wasi_gap(builtin: Builtin) -> Option<Gap> {
         | B::WriteErr
         | B::FlushOut
         | B::GetChar
+        | B::ReadBytes
         | B::Split
         | B::Narrow
         | B::CopyWithin

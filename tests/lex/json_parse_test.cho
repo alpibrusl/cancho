@@ -377,3 +377,64 @@ fn test_negative_zero_keeps_its_sign() -> [] int {
     }
     return 0;
 }
+
+// ---- parse_with (docs/json.md §3.1) ----------------------------------------
+
+fn test_parse_with_reads_a_document_as_parse_does() -> [] int {
+    let doc = "{\"user\":{\"name\":\"Ada\",\"age\":36},\"tags\":[\"a\",\"b\"]}";
+    region a {
+        let tape = alloc_slice[a](json.tape_len(doc), 0);
+        let st = alloc_slice[a](2, 0);
+        let nodes = json.parse_with(doc, tape, st);
+        test.assert_eq(nodes, 11);
+        let user = json.get(doc, tape, 0, "user");
+        test.assert_eq(json.to_int(doc, tape, json.get(doc, tape, user, "age")), 36);
+        test.assert_eq(json.count(tape, json.get(doc, tape, 0, "tags")), 2);
+    }
+    return 0;
+}
+
+fn test_parse_with_takes_its_errors_from_parse() -> [] int {
+    region a {
+        let st = alloc_slice[a](2, 0);
+        cycle_documents(st);
+    }
+    return 0;
+}
+
+// One state slice, reused for documents that parse and documents that do not, in turn:
+// each answer is `parse`'s and nothing of a document is left for the next.
+fn cycle_documents[&q](st: &!q [int]) -> [] int {
+    var round = 0;
+    while round < 3 {
+        region a {
+            let good = "[1,[2,3],{\"k\":null}]";
+            let tape = alloc_slice[a](json.tape_len(good), 0);
+            test.assert_eq(json.parse_with(good, tape, st), json.parse(good, tape));
+            let bad = "[1,]";
+            let tape2 = alloc_slice[a](json.tape_len(bad), 0);
+            let want = json.parse(bad, tape2);
+            test.assert_eq(json.parse_with(bad, tape2, st), want);
+            test.assert_eq(json.error_position(want), 3);
+            let trailing = "{} x";
+            let tape3 = alloc_slice[a](json.tape_len(trailing), 0);
+            test.assert_eq(json.parse_with(trailing, tape3, st), json.parse(trailing, tape3));
+            let tiny = alloc_slice[a](3, 0);
+            test.assert_eq(json.parse_with(good, tiny, st), json.parse(good, tiny));
+            test.assert_eq(json.error_code(json.parse_with(good, tiny, st)), 8);
+        }
+        round = round + 1;
+    }
+    return 0;
+}
+
+fn test_parse_with_does_not_trust_what_the_state_held() -> [] int {
+    let doc = "[true,false]";
+    region a {
+        let tape = alloc_slice[a](json.tape_len(doc), 0);
+        let st = alloc_slice[a](5, 777);
+        test.assert_eq(json.parse_with(doc, tape, st), 3);
+        test.assert_eq(json.parse_with(doc, tape, st), 3);
+    }
+    return 0;
+}

@@ -362,12 +362,12 @@ not repeated here; a doc's own header carries its own detail.
 | [`sharing.md`](sharing.md) | Why `Rc` is not expressible, and `Gen` | settled and built — corrects `linearity-and-effects.md` §9 |
 | [`tuples.md`](tuples.md) | `(A, B)` as a structural anonymous struct | settled and built |
 | [`shadowing.md`](shadowing.md) | Shadowing: allowed exactly when the binding is dead | settled and built |
-| [`standard-input.md`](standard-input.md) | `getchar`: a second label on `Io`, not a new capability | settled and built |
+| [`standard-input.md`](standard-input.md) | `getchar`: a second label on `Io`, not a new capability; `read_bytes` (edition 7): the bulk read behind the same label, 76x `getchar` on macOS | settled and built |
 | [`modules.md`](modules.md) | `module`/`import`/`pub`; a module is a namespace, not a trust boundary | settled and built |
 | [`standard-library.md`](standard-library.md) | What belongs in `std`, and how a function earns its way in | written and built |
 | [`mode-polymorphism.md`](mode-polymorphism.md) | `[T: val]` bounds | settled and built — found a leak and a double free |
 | [`collections.md`](collections.md) | Which collections hold a resource, and why it's about shape | settled and built |
-| [`json.md`](json.md) | `std.json`: a strict, zero-copy tape parser and a Writer that cannot write bad JSON | built; 13,000 numbers bit-exact against Rust, 1,500 mutated documents against `serde_json`, 355 MB/s to the tape |
+| [`json.md`](json.md) | `std.json`: a strict, zero-copy tape parser and a Writer that cannot write bad JSON | built; 13,000 numbers bit-exact against Rust, 1,500 mutated documents against `serde_json`, 355 MB/s to the tape; `parse_with` (§3.1): no region per call, 5.8x on macOS and 8.7x more at 16 threads, identical to `parse` on 58,733 documents and the 318 files of JSONTestSuite |
 | [`map.md`](map.md) | `std.map`: a hash map from byte strings to copyable values, iterating in insertion order | built; tested against a model over 30,000 random operations; found the LLVM backend growing the stack inside loops |
 | [`http.md`](http.md) | `std.http` and `std.route`: a strict request parser (refuses what request smuggling lives on) and a router that answers with an id you `match` on | built; 1,089 requests identical to `httparse` field for field, none accepted that it refuses; 1.0-1.4 µs a request, flat to 5,000 routes |
 | [`server.md`](server.md) | `examples/api`: a JSON API server over `std.http`, `std.route`, `std.json` and native sockets -- one thread, a `Poller`, keep-alive, pipelining, no `Ffi` | built; 17 tests over real sockets; migrated off `poll(2)`/libc (§8): authority now exact, throughput 134,000 → 73,000 a second -- the kernel's `epoll` in this VM, not the program (a C server falls the same way) -- still ~25× FastAPI |

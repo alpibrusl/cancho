@@ -1497,6 +1497,58 @@ fn a_wasm32_console_never_calls_libc_stdio() {
     assert!(!native.contains("cancho_console") && !native.contains("cancho_putchar"));
 }
 
+/// `read_bytes` (`docs/standard-input.md` §7) on wasm32 is the console's own buffer and `fd_read`,
+/// as `getchar` is: no `fread`, `ferror` or `clearerr` call survives (they would bring stdio's
+/// imports back), and the one WASI import is `fd_read`. Native keeps `fread` on `stdin`.
+/// Text only, so CI runs it.
+#[test]
+fn a_wasm32_bulk_read_never_calls_libc_stdio() {
+    const BULK: &str = "edition 7;\n\
+         fn main(world: World) -> [] int {\n\
+             let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);\n\
+             release(ffi); release(fs); release(heap); release(args); release(net);\n\
+             release(clock); release(signals); release(exec);\n\
+             var n = 0;\n\
+             borrow mut io as &!i in {\n\
+                 region a {\n\
+                     let buf = alloc_slice[a](16, byte_of(0));\n\
+                     match read_bytes(i, buf) {\n\
+                         Read::Got(k) => { n = k; }\n\
+                         Read::End => { n = 0; }\n\
+                         Read::Failed(e) => { n = 0 - e; }\n\
+                     }\n\
+                 }\n\
+             }\n\
+             release(io);\n\
+             return n;\n\
+         }\n";
+    let ast = parse(BULK).expect("should parse");
+    let program = cancho_ir::lower(&ast).expect("should lower");
+    let wasm: Triple = "wasm32-wasip1".parse().expect("a valid triple");
+    let text = emit::emit_module(&program, "main", &wasm).expect("wasm32 should emit");
+    let code = || text.lines().filter(|l| !l.trim_start().starts_with("declare "));
+    for libc in ["fread", "ferror", "clearerr", "getchar"] {
+        assert!(
+            !code().any(|l| l.contains(&format!("@{libc}("))),
+            "a wasm32 module calls libc's `{libc}`"
+        );
+    }
+    assert!(text.contains("call i32 @cancho_read_into("), "{text}");
+    assert!(
+        !code().any(|l| !l.contains("external global") && l.contains("@stdin")),
+        "a wasm32 module reaches libc's `stdin`"
+    );
+
+    let host: Triple = "x86_64-unknown-linux-gnu".parse().expect("a valid triple");
+    let native = emit::emit_module(&program, "main", &host).expect("native should emit");
+    assert!(native.contains("call i64 @fread("), "{native}");
+    assert!(native.contains("call void @clearerr("), "{native}");
+    assert!(!native.contains("cancho_read_into"));
+    let mac: Triple = "aarch64-apple-darwin".parse().expect("a valid triple");
+    let mac = emit::emit_module(&program, "main", &mac).expect("darwin should emit");
+    assert!(mac.contains("load ptr, ptr @__stdinp"), "{mac}");
+}
+
 /// W0.5 (`docs/wasm.md`): on WASI a file is opened for writing with `openat` and the
 /// mode's flags, not through `fopen` and a `dup` of its descriptor. WASI has no
 /// `dup`: `fcntl(F_DUPFD_CLOEXEC)` answered `EINVAL`, so `open_write`, `open_append`,
