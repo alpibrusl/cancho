@@ -134,13 +134,43 @@ pub fn c_max_body() -> [] int {
     return 9;
 }
 
-pub fn cfg_len() -> [] int {
+// `--areas`: the work areas the engine's slots share (`docs/tls-memory.md` section 7.3), 0 for one for every slot.
+pub fn c_areas() -> [] int {
     return 10;
+}
+
+pub fn cfg_len() -> [] int {
+    return 11;
+}
+
+// The areas to open the engine with: `--areas`, or one for every connection.
+pub fn areas_of[&c](cfg: &c [int]) -> [] int {
+    if cfg[c_areas()] == 0 {
+        return cfg[c_conns()];
+    }
+    return cfg[c_areas()];
+}
+
+// The most handshakes in progress: `--handshakes`, and with `--areas` no more than half of the areas, rounded up. A
+// handshake holds an area until it is done, so without this a burst of new connections could take every area and
+// the established connections that need one for a record would fail `tls-pool` (`docs/tls-memory.md` section 7.5).
+pub fn handshake_cap[&c](cfg: &c [int]) -> [] int {
+    if cfg[c_areas()] > 0 && (cfg[c_areas()] + 1) / 2 < cfg[c_handshakes()] {
+        return (cfg[c_areas()] + 1) / 2;
+    }
+    return cfg[c_handshakes()];
 }
 
 // The room for an identity's subdirectory name, in `subs`.
 pub fn sub_cap() -> [] int {
     return 256;
+}
+
+// A queue entry is `id * slot_base() + slot` in one word, so the table has at most this many slots
+// (`--connections`, and so `--handshakes` and `--per-address`). It was 4,096 until `docs/tls-memory.md`
+// measured 10,000 connections.
+pub fn slot_base() -> [] int {
+    return 1048576;
 }
 
 pub fn stride() -> [] int {
@@ -617,16 +647,16 @@ pub fn admit[&i, &e, &t, &p, &s, &g, &q, &c](io: &!i Io, engine: &!e tls.Engine,
     // One pass over what was queued when it began: a connection passed over goes to the tail,
     // and is not looked at again until the next call.
     var passes = gl[g_qlen()];
-    while passes > 0 && gl[g_qlen()] > 0 && gl[g_started()] < cfg[c_rate()] && tls.handshakes_in_progress(engine) < cfg[c_handshakes()] {
+    while passes > 0 && gl[g_qlen()] > 0 && gl[g_started()] < cfg[c_rate()] && tls.handshakes_in_progress(engine) < handshake_cap(cfg) {
         passes = passes - 1;
         let entry = queue[gl[g_qhead()]];
         gl[g_qhead()] = (gl[g_qhead()] + 1) % cap;
         gl[g_qlen()] = gl[g_qlen()] - 1;
-        let slot = entry % 4096;
+        let slot = entry % slot_base();
         let b = slot * stride();
         // An entry whose connection ended while it waited, or whose slot a
         // later connection took, is skipped.
-        if st[b + s_phase()] == phase_queued() && st[b + s_id()] == entry / 4096 {
+        if st[b + s_phase()] == phase_queued() && st[b + s_id()] == entry / slot_base() {
             if !addr_allows(gl, cfg, slot_key_family(st, b), slot_key_bits(st, b)) {
                 queue[(gl[g_qhead()] + gl[g_qlen()]) % cap] = entry;
                 gl[g_qlen()] = gl[g_qlen()] + 1;
@@ -799,7 +829,7 @@ pub fn accept_all[&h, &i, &l, &s, &g, &q, &c](heap: &!h Heap, io: &!i Io, table:
                                     st[b + s_since()] = now;
                                     st[b + s_accepted()] = now;
                                     let at = (gl[g_qhead()] + gl[g_qlen()]) % cfg[c_conns()];
-                                    queue[at] = id * 4096 + slot;
+                                    queue[at] = id * slot_base() + slot;
                                     gl[g_qlen()] = gl[g_qlen()] + 1;
                                 }
                             }
@@ -913,13 +943,15 @@ pub fn parse_flags[&g, &c, &u, &n, &a, &f](g: &g Args, cfg: &!c [int], subs: &!u
                         info[0] = len(text);
                     }
                 } else if flags.named(name, "connections") {
-                    bad = bad || !set_number(cfg, c_conns(), text, 1, 4096);
+                    bad = bad || !set_number(cfg, c_conns(), text, 1, slot_base());
                 } else if flags.named(name, "handshakes") {
-                    bad = bad || !set_number(cfg, c_handshakes(), text, 1, 4096);
+                    bad = bad || !set_number(cfg, c_handshakes(), text, 1, slot_base());
+                } else if flags.named(name, "areas") {
+                    bad = bad || !set_number(cfg, c_areas(), text, 1, slot_base());
                 } else if flags.named(name, "rate") {
                     bad = bad || !set_number(cfg, c_rate(), text, 1, 1000000);
                 } else if flags.named(name, "per-address") {
-                    bad = bad || !set_number(cfg, c_per_addr(), text, 1, 4096);
+                    bad = bad || !set_number(cfg, c_per_addr(), text, 1, slot_base());
                 } else if flags.named(name, "per-address-rate") {
                     bad = bad || !set_number(cfg, c_addr_rate(), text, 1, 1000000);
                 } else if flags.named(name, "handshake-timeout") {

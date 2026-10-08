@@ -1,0 +1,531 @@
+edition 5;
+
+// `docs/tls-memory.md` section 8: `packages/tls`'s work areas, with no network. A client engine and a server
+// engine in one process, their bytes carried between them by this program, each with `areas` work areas for
+// `slots` slots.
+//
+//     tls_pool <slots> <areas> <steps> <seed> [hold] < ca.pem NUL chain.pem NUL key.pem
+//
+// (the three files on standard input, a NUL byte between them; the leaf is for `echo.lex-sys.test`). It prints one
+// line for each thing it checks, `ok ...` or `FAIL ...`, and exits 1 if any failed:
+//
+//   handshakes   every slot is started in turn on both engines, the next only once the engine says it has an
+//                area (`areas_free`), and a start with none free is refused `tls-pool` and starts nothing;
+//   steps        `steps` rounds, each on a slot an LCG picks: a message of 1 to 40,000 bytes goes to the server
+//                in pieces of a size the LCG picks, comes back echoed, and is checked byte for byte; afterwards
+//                the connection is idle, so the server has all its areas, which is checked on both engines;
+//   partial      when there are fewer areas than slots: a record half fed to one connection holds the one area, a
+//                second connection that then needs it fails `tls-pool` with its keys cleared, and the first still
+//                completes when its record does;
+//   drop         the slots dropped, the areas all free.
+//
+// With `hold`, `scripts/tls_memory.py engine` measures the two engines with nothing else in the process: after the
+// handshakes it prints `ready start` before the handshakes, `ready established` after them, and waits 4 seconds each time, then sends 16,384 bytes through each connection in
+// turn, prints `ready echoed` and waits 4 seconds; then it goes on as above.
+import std.buffer;
+import std.io;
+import tls;
+
+fn number[&s](s: &s [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(s) {
+        n = n * 10 + int_of(s[i]) - 48;
+        i = i + 1;
+    }
+    return n;
+}
+
+fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap, io_read] buffer.Buffer {
+    var out = text;
+    var c = getchar(io);
+    while c >= 0 {
+        out = buffer.push(heap, out, byte_of(c));
+        c = getchar(io);
+    }
+    return out;
+}
+
+// The pattern slot `k` sends, byte `at` of everything it has sent.
+fn pattern(k: int, at: int) -> [] int {
+    return at * 7 + k * 13 + at / 251 & 255;
+}
+
+fn next(x: int) -> [] int {
+    return (x * 1103515245 + 12345) % 2147483648;
+}
+
+fn say[&i, &w](io: &!i Io, ok: bool, what: &w [byte]) -> [io_write] int {
+    if ok {
+        io.write_all(io, "ok ");
+    } else {
+        io.write_all(io, "FAIL ");
+    }
+    io.write_all(io, what);
+    io.newline(io);
+    if ok {
+        return 0;
+    }
+    return 1;
+}
+
+fn say_n[&i, &w](io: &!i Io, ok: bool, what: &w [byte], n: int) -> [io_write] int {
+    if ok {
+        io.write_all(io, "ok ");
+    } else {
+        io.write_all(io, "FAIL ");
+    }
+    io.write_all(io, what);
+    io.space(io);
+    io.print_int(io, n);
+    io.newline(io);
+    if ok {
+        return 0;
+    }
+    return 1;
+}
+
+// What the server did with the bytes of slot `k`'s connection: everything it received it sends back. What the
+// client gets back it compares with the pattern, counting the bytes in `st[k * 4 + 1]` and the mismatches in
+// `st[k * 4 + 2]`.
+fn client_recv[&c, &s, &a](cli: &!c tls.Engine, st: &!s [int], app: &!a [byte], k: int) -> [] int {
+    var moved = 0;
+    var n = tls.recv(cli, k, app);
+    while n > 0 {
+        var j = 0;
+        while j < n {
+            if int_of(app[j]) != pattern(k, st[k * 4 + 1] + j) {
+                st[k * 4 + 2] = st[k * 4 + 2] + 1;
+            }
+            j = j + 1;
+        }
+        st[k * 4 + 1] = st[k * 4 + 1] + n;
+        moved = moved + n;
+        n = tls.recv(cli, k, app);
+    }
+    return moved;
+}
+
+// Everything the server received on `k` goes back.
+fn server_echo[&e, &a](srv: &!e tls.Engine, app: &!a [byte], k: int) -> [] int {
+    var moved = 0;
+    var n = tls.recv(srv, k, app);
+    while n > 0 {
+        var sent = 0;
+        while sent < n {
+            let c = tls.send(srv, k, app[sent..n]);
+            if c <= 0 {
+                return moved;
+            }
+            sent = sent + c;
+        }
+        moved = moved + n;
+        n = tls.recv(srv, k, app);
+    }
+    return moved;
+}
+
+// One direction of the wire for slot `k` until nothing more moves: `from` has bytes for the socket, `to` is fed
+// them in pieces of `chunk` bytes. Answers the bytes moved.
+fn carry[&f, &t, &w, &s, &a](from: &!f tls.Engine, to: &!t tls.Engine, wire: &!w [byte], st: &!s [int], app: &!a [byte], k: int, chunk: int, toward_server: bool) -> [] int {
+    var total = 0;
+    var n = tls.take(from, k, wire);
+    while n > 0 {
+        var used = 0;
+        while used < n {
+            var end = used + chunk;
+            if end > n {
+                end = n;
+            }
+            let c = tls.feed(to, k, wire[used..end]);
+            if c < 0 {
+                return total;
+            }
+            used = used + c;
+            if toward_server {
+                server_echo(to, app, k);
+            } else {
+                client_recv(to, st, app, k);
+            }
+            if c == 0 {
+                // Nothing taken: the engine wants its output taken first.
+                used = n;
+            }
+        }
+        total = total + n;
+        n = tls.take(from, k, wire);
+    }
+    return total;
+}
+
+// Both directions, until neither moves.
+fn settle[&c, &s, &w, &t, &a](cli: &!c tls.Engine, srv: &!s tls.Engine, wire: &!w [byte], st: &!t [int], app: &!a [byte], k: int, chunk: int) -> [] int {
+    var total = 0;
+    var moved = 1;
+    while moved > 0 {
+        moved = carry(cli, srv, wire, st, app, k, chunk, true) + carry(srv, cli, wire, st, app, k, chunk, false);
+        total = total + moved;
+    }
+    return total;
+}
+
+fn tag_is[&e](engine: &e tls.Engine, k: int, tag: &static [byte]) -> [] bool {
+    let have = tls.refusal_tag(tls.failure(engine, k));
+    if len(have) != len(tag) {
+        return false;
+    }
+    var j = 0;
+    while j < len(tag) {
+        if have[j] != tag[j] {
+            return false;
+        }
+        j = j + 1;
+    }
+    return true;
+}
+
+// Says `what`, flushed, and keeps the process busy for four seconds: a harness reads its memory meanwhile.
+fn wait[&i, &k, &w](io: &!i Io, clock: &k Clock, what: &w [byte]) -> [io_write, clock] int {
+    io.write_all(io, what);
+    io.newline(io);
+    flush_out(io);
+    let until = clock_ms(clock) + 4000;
+    while clock_ms(clock) < until {
+    }
+    return 0;
+}
+
+fn drive[&i, &c, &s, &w, &a, &m, &t, &k](io: &!i Io, clock: &k Clock, cli: &!c tls.Engine, srv: &!s tls.Engine, wire: &!w [byte], app: &!a [byte], msg: &!m [byte], st: &!t [int], slots: int, areas: int, steps: int, seed: int, hold: bool) -> [io_write, clock] int {
+    var failed = 0;
+    let now = 1800000000000;
+    region r {
+        let host = "echo.lex-sys.test";
+        // The handshakes, one slot after another, each finished before the next is started: while a handshake
+        // is in progress it holds an area, so with fewer areas than slots the pool is the bound.
+        var refused = 0;
+        var started = 0;
+        var k = 0;
+        var good = true;
+        if hold {
+            wait(io, clock, "ready start");
+        }
+        while k < slots {
+            if tls.areas_free(srv) == 0 || tls.areas_free(cli) == 0 {
+                good = false;
+            }
+            let a = tls.serve(srv, k, now);
+            let b = tls.start(cli, k, host, now);
+            if a != 0 || b != 0 {
+                good = false;
+            }
+            settle(cli, srv, wire, st, app, k, 1 + (seed + k) % 1500);
+            if tls.event(cli, k) != tls.event_established() || tls.event(srv, k) != tls.event_established() {
+                good = false;
+            }
+            // Established and idle: no area held, on either engine.
+            if tls.areas_free(srv) != areas || tls.areas_free(cli) != areas {
+                good = false;
+            }
+            k = k + 1;
+        }
+        failed = failed + say_n(io, good, "handshakes, every slot established and holding no area, slots", slots);
+        if hold {
+            wait(io, clock, "ready established");
+            var q = 0;
+            while q < slots {
+                var j = 0;
+                while j < 16384 {
+                    msg[j] = byte_of(pattern(q, st[q * 4] + j));
+                    j = j + 1;
+                }
+                tls.send(cli, q, msg[0..16384]);
+                st[q * 4] = st[q * 4] + 16384;
+                settle(cli, srv, wire, st, app, q, 16384);
+                q = q + 1;
+            }
+            wait(io, clock, "ready echoed");
+        }
+        // A start with none free is refused and starts nothing.
+        if areas < slots {
+            // Fill every area with a handshake begun and not carried on.
+            var j = 0;
+            var all = true;
+            while j < areas {
+                tls.drop(srv, j);
+                tls.drop(cli, j);
+                if tls.serve(srv, j, now) != 0 || tls.start(cli, j, host, now) != 0 {
+                    all = false;
+                }
+                j = j + 1;
+            }
+            if tls.areas_free(srv) != 0 || tls.areas_free(cli) != 0 {
+                all = false;
+            }
+            failed = failed + say(io, all, "areas full of handshakes in progress");
+            let other = areas;
+            tls.drop(srv, other);
+            tls.drop(cli, other);
+            let code = tls.serve(srv, other, now);
+            let again = tls.start(cli, other, host, now);
+            failed = failed + say_n(io, code == 0 - 72 && again == 0 - 72, "serve and start with no area free are tls-pool, code", code);
+            failed = failed + say(io, tls.event(srv, other) == tls.event_failed(), "a refused slot is not started");
+            // Carry the handshakes on: the areas come back.
+            j = 0;
+            while j < areas {
+                settle(cli, srv, wire, st, app, j, 700);
+                j = j + 1;
+            }
+            failed = failed + say(io, tls.areas_free(srv) == areas && tls.areas_free(cli) == areas, "the areas come back when the handshakes finish");
+            j = areas;
+            while j < slots {
+                tls.drop(srv, j);
+                tls.drop(cli, j);
+                tls.serve(srv, j, now);
+                tls.start(cli, j, host, now);
+                settle(cli, srv, wire, st, app, j, 900);
+                j = j + 1;
+            }
+            failed = failed + say(io, tls.areas_free(srv) == areas && tls.areas_free(cli) == areas, "every slot established again");
+        }
+        // Traffic: a message of random size in random pieces, echoed, on a random slot.
+        var x = seed;
+        var step = 0;
+        var wrong = 0;
+        var leaked = 0;
+        var sent_total = 0;
+        while step < steps {
+            x = next(x);
+            let slot = x / 7 % slots;
+            x = next(x);
+            var size = 1 + x / 11 % 40000;
+            if step % 5 == 0 {
+                size = 1 + x / 11 % 20;
+            }
+            x = next(x);
+            let chunk = 1 + x / 13 % 3000;
+            var j = 0;
+            while j < size {
+                msg[j] = byte_of(pattern(slot, st[slot * 4] + j));
+                j = j + 1;
+            }
+            var sent = 0;
+            while sent < size {
+                let c = tls.send(cli, slot, msg[sent..size]);
+                if c > 0 {
+                    sent = sent + c;
+                }
+                settle(cli, srv, wire, st, app, slot, chunk);
+                if c <= 0 && settle(cli, srv, wire, st, app, slot, chunk) == 0 {
+                    sent = size + 1;
+                }
+            }
+            st[slot * 4] = st[slot * 4] + size;
+            settle(cli, srv, wire, st, app, slot, chunk);
+            if st[slot * 4 + 1] != st[slot * 4] || st[slot * 4 + 2] != 0 {
+                wrong = wrong + 1;
+            }
+            if tls.areas_free(srv) != areas || tls.areas_free(cli) != areas {
+                leaked = leaked + 1;
+            }
+            sent_total = sent_total + size;
+            step = step + 1;
+        }
+        failed = failed + say_n(io, wrong == 0, "steps echoed byte for byte, wrong", wrong);
+        failed = failed + say_n(io, leaked == 0, "steps that left an area leased, leaked", leaked);
+        failed = failed + say_n(io, tls.event(srv, 0) == tls.event_established() && tls.event(cli, 0) == tls.event_established(), "still established, bytes echoed", sent_total);
+        // A connection with data waiting keeps its area while another is served: its record fed and not received,
+        // then its echo made and not taken, with a second connection's whole exchange between each.
+        if areas >= 2 && slots >= 2 {
+            let a = 0;
+            let b = 1;
+            let m = 5000;
+            var j = 0;
+            while j < m {
+                msg[j] = byte_of(pattern(a, st[a * 4] + j));
+                j = j + 1;
+            }
+            tls.send(cli, a, msg[0..m]);
+            let n = tls.take(cli, a, wire);
+            let c = tls.feed(srv, a, wire[0..n]);
+            // The second connection, start to end, while the first's data waits for `recv`.
+            var side = true;
+            var q = 0;
+            while q < 2 {
+                var x = 0;
+                while x < 3000 {
+                    app[x] = byte_of(pattern(b, st[b * 4] + x));
+                    x = x + 1;
+                }
+                // `app` is the client's scratch for `client_recv`; the message goes through `msg` beyond `m`.
+                var y = 0;
+                while y < 3000 {
+                    msg[m + y] = app[y];
+                    y = y + 1;
+                }
+                tls.send(cli, b, msg[m..m + 3000]);
+                st[b * 4] = st[b * 4] + 3000;
+                settle(cli, srv, wire, st, app, b, 700);
+                if st[b * 4 + 1] != st[b * 4] || st[b * 4 + 2] != 0 {
+                    side = false;
+                }
+                if q == 0 {
+                    // The first connection's data, received and echoed and left for the socket.
+                    server_echo(srv, app, a);
+                }
+                q = q + 1;
+            }
+            st[a * 4] = st[a * 4] + m;
+            settle(cli, srv, wire, st, app, a, 900);
+            failed = failed + say_n(io, c == n && side && st[a * 4 + 1] == st[a * 4] && st[a * 4 + 2] == 0 && tls.areas_free(srv) == areas, "a connection with data waiting keeps its area while another is served, fed", c);
+        }
+        // A record half fed holds the one area; a second connection that needs one fails.
+        if areas < slots && slots >= 3 && areas == 1 {
+            let a = 0;
+            let b = 1;
+            let p = 2;
+            // Slot a: a record from the client, only its first 40 bytes fed to the server.
+            let m = 3000;
+            var j = 0;
+            while j < m {
+                msg[j] = byte_of(pattern(a, st[a * 4] + j));
+                j = j + 1;
+            }
+            tls.send(cli, a, msg[0..m]);
+            let n = tls.take(cli, a, wire);
+            let c = tls.feed(srv, a, wire[0..40]);
+            failed = failed + say_n(io, c == 40 && tls.areas_free(srv) == 0, "a record half fed holds the area, fed", c);
+            // Slot b: the client sends a record, and the server, with no area for it, fails the connection.
+            tls.send(cli, b, msg[0..100]);
+            let nb = tls.take(cli, b, app);
+            let cb = tls.feed(srv, b, app[0..nb]);
+            failed = failed + say_n(io, cb < 0 && tls.event(srv, b) == tls.event_failed() && tag_is(srv, b, "tls-pool"), "a connection fed with no area free fails tls-pool, code", cb);
+            // Slot a goes on: the rest of its record.
+            let d = tls.feed(srv, a, wire[40..n]);
+            server_echo(srv, app, a);
+            st[a * 4] = st[a * 4] + m;
+            settle(cli, srv, wire, st, app, a, 500);
+            failed = failed + say_n(io, d == n - 40 && tls.areas_free(srv) == areas && tls.event(srv, a) == tls.event_established(), "the first completes and the area comes back, fed", d);
+            failed = failed + say(io, st[a * 4 + 1] == st[a * 4] && st[a * 4 + 2] == 0, "and its echo is right");
+            // A third connection is unaffected by the failure of the second.
+            tls.send(cli, p, msg[0..200]);
+            st[p * 4] = st[p * 4] + 200;
+            settle(cli, srv, wire, st, app, p, 64);
+            failed = failed + say(io, st[p * 4 + 1] == st[p * 4] && tls.areas_free(srv) == areas, "another connection is served");
+        }
+        // A connection dropped while it holds an area gives the area back.
+        let lone = slots - 1;
+        tls.drop(srv, lone);
+        tls.drop(cli, lone);
+        tls.serve(srv, lone, now);
+        tls.start(cli, lone, host, now);
+        let held = areas - tls.areas_free(srv) == 1 && areas - tls.areas_free(cli) == 1 && tls.handshakes_in_progress(srv) == 1 && tls.event(srv, lone) == tls.event_want_read();
+        tls.drop(srv, lone);
+        tls.drop(cli, lone);
+        failed = failed + say(io, held && tls.areas_free(srv) == areas && tls.areas_free(cli) == areas, "a handshake in progress holds an area, and dropping it gives the area back");
+        // Every slot dropped: the areas are all free and every slot is free to start again.
+        k = 0;
+        while k < slots {
+            tls.drop(srv, k);
+            tls.drop(cli, k);
+            k = k + 1;
+        }
+        failed = failed + say(io, tls.areas_free(srv) == areas && tls.areas_free(cli) == areas, "all slots dropped, all areas free");
+        failed = failed + say(io, tls.serve(srv, 0, now) == 0, "a slot can be served again");
+        tls.drop(srv, 0);
+    }
+    return failed;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    var status = 2;
+    borrow mut io as &!i in {
+        borrow args as &g in {
+            if arg_count(g) < 5 {
+                io.error_all(i, "usage: tls_pool <slots> <areas> <steps> <seed> < ca NUL chain NUL key\n");
+            } else {
+                let slots = number(arg(g, 1));
+                let areas = number(arg(g, 2));
+                let steps = number(arg(g, 3));
+                let seed = number(arg(g, 4));
+                let hold = arg_count(g) >= 6 && len(arg(g, 5)) == 4;
+                borrow mut heap as &!h in {
+                    var all = buffer.empty(h, 65536);
+                    all = read_stdin(h, i, all);
+                    let wireb = box_slice(h, 65536, byte_of(0));
+                    let appb = box_slice(h, 16640, byte_of(0));
+                    let msgb = box_slice(h, 40000, byte_of(0));
+                    let stb = box_slice(h, 4 * slots, 0);
+                    var cli = tls.open_with_areas(h, slots, 1, areas);
+                    var srv = tls.open_server_with_areas(h, slots, areas);
+                    region r {
+                        let entropy = alloc_slice[r](32, byte_of(0));
+                        var k = 0;
+                        while k < 32 {
+                            entropy[k] = byte_of(k * 5 + 1);
+                            k = k + 1;
+                        }
+                        borrow all as &ab in {
+                            let text = buffer.bytes(ab);
+                            // The three files, between NUL bytes.
+                            var cut1 = 0;
+                            while cut1 < len(text) && int_of(text[cut1]) != 0 {
+                                cut1 = cut1 + 1;
+                            }
+                            var cut2 = cut1 + 1;
+                            while cut2 < len(text) && int_of(text[cut2]) != 0 {
+                                cut2 = cut2 + 1;
+                            }
+                            if cut2 >= len(text) {
+                                io.error_all(i, "tls_pool: expected three files\n");
+                            } else {
+                                borrow mut cli as &!cw in {
+                                    borrow mut srv as &!sw in {
+                                        tls.seed(cw, entropy);
+                                        entropy[0] = byte_of(99);
+                                        tls.seed(sw, entropy);
+                                        let roots = tls.trust(cw, text[0..cut1]);
+                                        let id = tls.add_identity(sw, text[cut1 + 1..cut2], text[cut2 + 1..len(text)], "echo.lex-sys.test", 1800000000000);
+                                        if roots < 1 || id < 0 {
+                                            io.error_all(i, "tls_pool: the identity or the root was refused\n");
+                                        } else {
+                                            borrow mut wireb as &!ww in {
+                                                borrow mut appb as &!aw in {
+                                                    borrow mut msgb as &!mw in {
+                                                        borrow mut stb as &!tw in {
+                                                            borrow clock as &kk in {
+                                                                status = drive(i, kk, cw, sw, contents(ww), contents(aw), contents(mw), contents(tw), slots, areas, steps, seed, hold);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    unbox_slice(h, wireb);
+                    unbox_slice(h, appb);
+                    unbox_slice(h, msgb);
+                    unbox_slice(h, stb);
+                    tls.close(h, cli);
+                    tls.close(h, srv);
+                    buffer.drop(h, all);
+                }
+            }
+        }
+    }
+    release(fs);
+    release(net);
+    release(clock);
+    release(args);
+    release(io);
+    release(heap);
+    if status > 0 {
+        return 1;
+    }
+    return 0;
+}

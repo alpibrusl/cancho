@@ -44,7 +44,7 @@ import tls;
 fn usage[&i](io: &!i Io) -> [err_write] int {
     io.error_all(io, "usage: tls_echo --port <n> --dir <directory> [--identity <subdirectory>]... [--alpn <p1,p2>]\n");
     io.error_all(io, "                [--connections <n>] [--handshakes <n>] [--rate <n>] [--handshake-timeout <ms>] [--idle <ms>]\n");
-    io.error_all(io, "                [--per-address <n>] [--per-address-rate <n>]\n");
+    io.error_all(io, "                [--per-address <n>] [--per-address-rate <n>] [--areas <n>]\n");
     return 2;
 }
 

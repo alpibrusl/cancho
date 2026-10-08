@@ -164,6 +164,9 @@ MUTANTS = [
      "    if id == tls_identity.max_identities() + 1 {\n        return tls_record.server_identities_full();"),
     ("handshakes in progress not counted", "tls.cho", "            n = n + 1;\n        }\n        s = s + 1;",
      "            n = n + 0;\n        }\n        s = s + 1;"),
+    ("the server's name read from the wrong place", "tls.cho",
+     "tls_slot.copy_bytes(contents(engine.cbytes)[b + tls_slot.b_sni()..b + tls_slot.b_sni() + n], out[0..n]);",
+     "tls_slot.copy_bytes(contents(engine.cbytes)[b + tls_slot.b_alpn()..b + tls_slot.b_alpn() + n], out[0..n]);"),
     ("no_application_protocol sent as handshake_failure", "slot.cho", "        return 120;", "        return 40;"),
     ("missing_extension sent as decode_error", "slot.cho", "        return 109;", "        return 50;"),
 ]
