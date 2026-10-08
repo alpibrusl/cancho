@@ -94,8 +94,8 @@ pub fn not_after[&c](cfg: &c [byte], id: int) -> [] int {
 
 // The certificate_list TLS 1.3's Certificate sends.
 pub fn list[&c](cfg: &c [byte], id: int) -> [] &c [byte] {
-    let n = tls_message.get(cfg, at(id) + o_list_len(), 3);
-    return cfg[at(id) + o_list()..at(id) + o_list() + n];
+    let from = at(id) + o_list();
+    return cfg[from..from + tls_message.get(cfg, at(id) + o_list_len(), 3)];
 }
 
 // The certificate_list as TLS 1.2's Certificate sends it, with its 3-byte

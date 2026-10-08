@@ -72,6 +72,13 @@ connection that *was* verified. So a ticket is a stored verdict, and every way t
 8. **Nothing about it is trusted from the server.** The ServerHello's `pre_shared_key` must name the one identity offered (index
    0), the suite must hash with the PSK's hash, `psk_dhe_ke` means a `key_share` must be there, and a server that does not resume
    is a full handshake with the full verification, never a failure.
+9. **Bound to the client identity.** *Since #386 (`docs/tls-parity.md` §6.5):* a ticket records the engine's trust generation, which adding, replacing or
+   removing a client identity raises as `trust` does, so a ticket saved before the identity changed is not offered after. A resumed connection sends no
+   certificate; the server carried the client's identity in the ticket.
+10. **Bound to the client certificate's life.** *Since #386:* the ticket's `notAfter` (rule 3) is the earlier of the server leaf's and the client leaf's,
+    when a client certificate was sent.
+11. **Not bound to the ALPN offer.** *Since #386 (`docs/tls-parity.md` §6.6):* RFC 8446 ties a ticket to a protocol only for early data, which is not sent; a resumed
+    handshake carries ALPN again and the client checks that choice against this connection's offer.
 
 ## 4. The interface
 
