@@ -74,6 +74,40 @@ def alpn_ext(*names):
     return ext(16, u16(len(body)) + body)
 
 
+def client_extensions(msg):
+    """The extensions of the ClientHello message `msg`, as (type, body) in order."""
+    b = msg[4:]
+    at = 2 + 32
+    at += 1 + b[at]
+    at += 2 + int.from_bytes(b[at:at + 2], "big")
+    at += 1 + b[at]
+    end = at + 2 + int.from_bytes(b[at:at + 2], "big")
+    at += 2
+    out = []
+    while at < end:
+        kind, n = int.from_bytes(b[at:at + 2], "big"), int.from_bytes(b[at + 2:at + 4], "big")
+        out.append((kind, b[at + 4:at + 4 + n]))
+        at += 4 + n
+    assert at == end
+    return out
+
+
+def check_offer(msg, alpn):
+    """The ClientHello carries the ALPN extension (16) once, with exactly the offer, between
+    signature_algorithms_cert (50) and supported_versions (43); with no offer, none."""
+    exts = client_extensions(msg)
+    kinds = [k for k, _ in exts]
+    if not alpn:
+        assert 16 not in kinds, "no ALPN extension when nothing is offered"
+        return
+    assert kinds.count(16) == 1, "ALPN once"
+    body = dict(exts)[16]
+    names = alpn.split(" ")
+    wire = b"".join(bytes([len(n)]) + n.encode() for n in names)
+    assert body == u16(len(wire)) + wire, f"the offer: {body.hex()}"
+    assert kinds.index(50) < kinds.index(16) < kinds.index(43), "its place among the extensions"
+
+
 def prelude(conv, alpn, identity, hosts):
     """The driver lines before `C`: the ALPN offer and the identity."""
     if alpn:
@@ -94,11 +128,12 @@ class AuthServer(Server):
         self.cr_raw = None  # a whole CertificateRequest body, for the malformed ones
         self.cr_count = 1
         self.client_pub = KEY.public_key()
-        self.sent_chain = None
+        self.client_cert = CERT
 
     def start(self, alpn=None, identity=True, hosts=HOST):
         prelude(self.c, alpn, identity, hosts)
         super().start()
+        check_offer(self.transcript, alpn)
 
     def cr_message(self):
         if self.cr_raw is not None:
@@ -137,7 +172,7 @@ class AuthServer(Server):
         else:
             n = int.from_bytes(lst[3:6], "big")
             der = lst[6:6 + n]
-            assert der == CERT.public_bytes(serialization.Encoding.DER), "the identity's certificate"
+            assert der == self.client_cert.public_bytes(serialization.Encoding.DER), "the identity's certificate"
             assert lst[6 + n:8 + n] == b"\0\0", "no certificate extensions"
         self.transcript += cert
         if expect == "chain":
@@ -408,6 +443,7 @@ class AuthServer12(Server12):
     def start(self, alpn=None, identity=True, hosts=HOST):
         prelude(self.c, alpn, identity, hosts)
         super().start()
+        check_offer(self.transcript, alpn)
 
     def cr_message(self):
         if self.cr_raw is not None:

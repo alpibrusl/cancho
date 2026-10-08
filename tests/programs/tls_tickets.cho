@@ -17,6 +17,13 @@ edition 5;
 //     X <handle>                   tls.forget
 //     A <seconds>                  tls.set_ticket_max_age
 //     K                            whether the connection resumed: the code is 1 or 0
+//     I <chain> <key> <hosts> <ms> tls.add_client_identity (the engine is opened with `open_mutual_with_tickets`): the code is the identity
+//     J <id> <chain> <key> <ms>    tls.replace_client_identity
+//     Z <id>                       tls.remove_client_identity
+//     L <protocols>                tls.set_alpn_offer (text; `-` for none)
+//     B <host> <now> <handle> <protocols>   tls.start_alpn, as `C` is tls.start_with (`-`: offer nothing)
+//     Y                            tls.client_auth: the code is 0, 1 or 2
+//     E                            tls.alpn: the code is the length of the protocol the server chose, and the `take` field is it
 //
 // Each line is answered `<code> <tag> <event> <bytes for the socket>
 // <application data received>`, as `tls_driver.cho` answers.
@@ -186,6 +193,66 @@ fn op[&i, &e, &s, &o](io: &!i Io, engine: &!e tls.Engine, s: &s [byte], out: &!o
         if tls.resumed(engine, 0) {
             code = 1;
         }
+    } else if kind == 73 {
+        region r {
+            let chain = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, chain);
+            let g = next_field(s, f);
+            let key = alloc_slice[r](hex_len(s, g), byte_of(0));
+            hex_into(s, g, key);
+            let h = next_field(s, g);
+            let hosts = alloc_slice[r](hex_len(s, h), byte_of(0));
+            hex_into(s, h, hosts);
+            code = tls.add_client_identity(engine, chain, key, hosts, number(s, next_field(s, h)));
+        }
+    } else if kind == 74 {
+        region r {
+            let id = number(s, f);
+            let g = next_field(s, f);
+            let chain = alloc_slice[r](hex_len(s, g), byte_of(0));
+            hex_into(s, g, chain);
+            let h = next_field(s, g);
+            let key = alloc_slice[r](hex_len(s, h), byte_of(0));
+            hex_into(s, h, key);
+            code = tls.replace_client_identity(engine, id, chain, key, number(s, next_field(s, h)));
+        }
+    } else if kind == 90 {
+        code = tls.remove_client_identity(engine, number(s, f));
+    } else if kind == 76 {
+        region r {
+            let text = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, text);
+            code = tls.set_alpn_offer(engine, text);
+        }
+    } else if kind == 66 {
+        region r {
+            let host = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, host);
+            let g = next_field(s, f);
+            let now = number(s, g);
+            let h = next_field(s, g);
+            let handle = number(s, h);
+            let k = next_field(s, h);
+            let protocols = alloc_slice[r](hex_len(s, k), byte_of(0));
+            hex_into(s, k, protocols);
+            tls.drop(engine, 0);
+            code = tls.start_alpn(engine, 0, host, now, handle, protocols);
+        }
+    } else if kind == 89 {
+        code = tls.client_auth(engine, 0);
+    } else if kind == 69 {
+        region r {
+            let name = alloc_slice[r](255, byte_of(0));
+            code = tls.alpn(engine, 0, name);
+            io.print_int(io, code);
+            io.write_all(io, " ok ");
+            io.print_int(io, tls.event(engine, 0));
+            io.space(io);
+            print_hex(io, name[0..code]);
+            io.write_all(io, " -");
+            io.newline(io);
+        }
+        return 0;
     }
     answer(io, engine, code, out);
     return 0;
@@ -221,7 +288,7 @@ fn flush[&i](io: &!i Io) -> [io_write] int {
 fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
     var line = box_slice(heap, 262144, byte_of(0));
     var out = box_slice(heap, 131072, byte_of(0));
-    var engine = tls.open_with_tickets(heap, 1, 4);
+    var engine = tls.open_mutual_with_tickets(heap, 1, 4);
     borrow mut engine as &!ew in {
         tls.set_resumption(ew, true);
         region r {
