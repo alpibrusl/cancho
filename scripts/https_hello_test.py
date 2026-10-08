@@ -34,11 +34,22 @@ the case says so rather than pass). Each case starts its own server on a free po
     hostile    1,500 connections each sending a mangled request (flipped bytes, cuts, bare LFs, 100 KB headers, a thousand
                headers, nested JSON 5,000 deep, huge or negative lengths, chunk sizes past the end): the server is alive
                after every one, and still serves
+    upload     `POST /upload` of 0 bytes to 1 GiB (`UPLOAD_TOP_MIB`), with a length and chunked (pieces of 1 byte to 1 MiB, with
+               extensions and trailers): the answer's byte count and SHA-256 are those of what was sent, the server's memory does
+               not grow with the size, and the connection serves after; a request pipelined behind an upload is answered in order
+    expect     `Expect: 100-continue`: the `100` is sent when the application accepts the body; `/upload/refuse` is answered 413 with no
+               `100` (and the connection goes on); another expectation is 417; curl's `-T`, `--expect100-timeout` and a refused
+               upload that sends no byte of its body; `openssl s_client` uploading; `--max-body` refuses by the head, and mid-chunked
+    halfbody   a client that sends half a head, half a length body, half a chunked body, or a byte at a time, and stalls: answered 408
+               (`timeout.head`, `timeout.body`) after `--read-timeout`, and the clients beside it are served throughout
+    mangled    1,500 connections each sending a mangled upload (flipped bytes, cuts, bad chunk sizes, trailers and extensions, lengths
+               that lie, `Expect` heads): the server is alive after every one, its memory is where it was, and a good upload still hashes
 
 With `--cost <seconds>`: requests a second over TLS against `kload` (benches/server/kload.c, plain, `examples/api`) and
 `tload` (benches/server/tload.c, the same closed loop over OpenSSL) on one core each side; see docs/http-server.md §11.7.
 One line a case, then a count; exit status 1 if any failed.
 """
+import hashlib
 import http.client
 import json
 import os
@@ -430,7 +441,10 @@ def case_stalled(exe):
                 return f"a client beside the stalled one: {status} {body!r}"
             served += 1
         during = rss_kb(server.proc.pid)
-        if during - before > 4096:
+        # 16 MiB, not 4: the server serves 18,000+ requests beside the stalled client in this window, and on a shared CI runner the
+        # allocator alone grew it 4.1 and 4.2 MB (the same commit passed one run and failed the other at 4,244 KB). A server that
+        # buffered the stalled body would grow by the part of the 1 GiB that was sent, orders of magnitude over this.
+        if during - before > 16384:
             return f"server RSS grew {during - before} KB while a client stalled on a 1 GiB body"
         # The stalled client does not read; once idle passes the server ends it.
         line = server.wait_for(lambda l: l.startswith("conn 2 ") and " closed idle" in l, 8)[-1]
@@ -710,9 +724,403 @@ def case_hostile(exe):
         server.stop()
 
 
+# ---- uploads ----
+
+MIB = 1 << 20
+UPLOAD_TOP = int(os.environ.get("UPLOAD_TOP_MIB", "1024")) * MIB
+BLOCK = os.urandom(MIB + 13)
+BLOCK2 = BLOCK + BLOCK  # so a piece starting anywhere in the first MiB and up to 1 MiB long is never cut short
+
+
+class Wire:
+    """A TLS socket with a read buffer, so answers can be read one at a time however they arrive."""
+
+    def __init__(self, port, timeout=600):
+        self.sock = https(port, timeout)
+        self.buf = b""
+
+    def sendall(self, data):
+        self.sock.sendall(data)
+
+    def response(self, timeout=600):
+        """One answer: (status, {header: value}, body). A `100 Continue` is an answer like any other."""
+        self.sock.settimeout(timeout)
+        while b"\r\n\r\n" not in self.buf:
+            part = self.sock.recv(65536)
+            if not part:
+                raise AssertionError(f"closed before an answer: {self.buf[:200]!r}")
+            self.buf += part
+        head, rest = self.buf.split(b"\r\n\r\n", 1)
+        lines = head.decode("latin-1").split("\r\n")
+        headers = {}
+        for line in lines[1:]:
+            name, _, value = line.partition(":")
+            headers[name.strip().lower()] = value.strip()
+        n = int(headers.get("content-length", 0))
+        while len(rest) < n:
+            part = self.sock.recv(65536)
+            if not part:
+                raise AssertionError("closed in a body")
+            rest += part
+        self.buf = rest[n:]
+        return int(lines[0].split(" ")[1]), headers, rest[:n]
+
+    def ended(self, timeout=8):
+        """Does the connection end (close_notify, a reset, end of file) within `timeout` seconds, with nothing but the buffer left?"""
+        end = time.monotonic() + timeout
+        self.sock.settimeout(1)
+        while time.monotonic() < end:
+            try:
+                if not self.sock.recv(65536):
+                    return True
+            except socket.timeout:
+                continue
+            except (ssl.SSLError, ConnectionError, OSError):
+                return True
+        return False
+
+    def close(self):
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+
+
+def body_pieces(size, piece):
+    """`size` bytes of the repeating block, `piece` at a time, starting somewhere different each time."""
+    view = memoryview(BLOCK2)
+    sent = 0
+    while sent < size:
+        n = min(piece, size - sent)
+        start = (sent * 7) % MIB
+        yield view[start:start + n]
+        sent += n
+
+
+def upload(wire, path, size, chunk=0, headers=b"", ext=b"", trailers=b"", wait100=False):
+    """POST `size` bytes to `path`: a length body if `chunk` is 0, else chunked in pieces of `chunk` bytes (an extension `ext` after every
+    seventh size, `trailers` after the last chunk). The answer, and the SHA-256 of what was sent."""
+    digest = hashlib.sha256()
+    if chunk:
+        head = b"POST %s HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n%s\r\n" % (path.encode(), headers)
+    else:
+        head = b"POST %s HTTP/1.1\r\nHost: x\r\nContent-Length: %d\r\n%s\r\n" % (path.encode(), size, headers)
+    wire.sendall(head)
+    if wait100:
+        status, _, _ = wire.response(30)
+        if status != 100:
+            raise AssertionError(f"waiting for 100 Continue: {status}")
+    k = 0
+    for piece in body_pieces(size, chunk or MIB):
+        digest.update(piece)
+        if chunk:
+            wire.sendall(b"%x%s\r\n" % (len(piece), ext if k % 7 == 0 else b"") + bytes(piece) + b"\r\n")
+            k += 1
+        else:
+            wire.sendall(piece)
+    if chunk:
+        wire.sendall(b"0\r\n" + trailers + b"\r\n")
+    return wire.response(), digest.hexdigest()
+
+
+def check_upload(wire, size, **kw):
+    (status, _, body), want = upload(wire, "/upload", size, **kw)
+    got = json.loads(body) if status == 200 else None
+    if status != 200 or got != {"bytes": size, "sha256": want}:
+        return f"{size} bytes {kw}: {status} {body[:200]!r} (wanted {want})"
+    return None
+
+
+def case_upload(exe):
+    server = Server(exe)
+    try:
+        sizes = [s for s in (0, 1, 2, 16383, 16384, 16385, 65535, 65536, 65537, MIB, 16 * MIB, 128 * MIB) if s < UPLOAD_TOP] + [UPLOAD_TOP]
+        c = Wire(server.port)
+        before = rss_kb(server.proc.pid)
+        peak = [before]
+        stop = threading.Event()
+
+        def sample():
+            while not stop.is_set():
+                peak[0] = max(peak[0], rss_kb(server.proc.pid))
+                time.sleep(0.2)
+
+        sampler = threading.Thread(target=sample, daemon=True)
+        sampler.start()
+        t0 = time.monotonic()
+        total = 0
+        try:
+            for size in sizes:
+                for kw in ({}, {"chunk": 65536 if size else 1}):
+                    failed = check_upload(c, size, **kw)
+                    if failed:
+                        return failed
+                    total += size
+            took = time.monotonic() - t0
+        finally:
+            stop.set()
+            sampler.join()
+        # The connection that carried all of that still serves.
+        c.sendall(b"GET /hello/after HTTP/1.1\r\nHost: x\r\n\r\n")
+        if c.response()[2] != b"hello, after\n":
+            return "the connection did not serve after the uploads"
+        if peak[0] - before > 16384:
+            return f"server RSS went {before} -> {peak[0]} KB over {total / MIB:.0f} MiB of uploads"
+        # Pieces of every size, with extensions and trailers, on fresh connections.
+        for chunk in (1, 2, 7, 100, 4095, 16384, 16385, 1000003):
+            n = min(chunk * 300, 4 * MIB)
+            failed = check_upload(Wire(server.port, 120), n, chunk=chunk, ext=b";name=\"v v\";k", trailers=b"X-Sum: 1\r\nX-Other: two words\r\n")
+            if failed:
+                return failed
+        # Pipelined: an upload, a request behind it, an upload, all in one write; answers in order.
+        body = os.urandom(300000)
+        e = Wire(server.port, 120)
+        e.sendall(b"POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: 300000\r\n\r\n" + body
+                  + b"GET /hello/mid HTTP/1.1\r\nHost: x\r\n\r\n"
+                  + b"POST /upload HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n%x\r\n" % len(body) + body + b"\r\n0\r\n\r\n")
+        want = hashlib.sha256(body).hexdigest()
+        answer = json.dumps({"bytes": len(body), "sha256": want}, separators=(",", ":")).encode()
+        for expected in (answer, b"hello, mid\n", answer):
+            status, _, got = e.response(60)
+            if (status, got) != (200, expected):
+                return f"pipelined: {status} {got[:100]!r}"
+        return (f"ok ({len(sizes)} sizes to {UPLOAD_TOP // MIB} MiB, each with a length and chunked, {total / MIB:.0f} MiB hashed correctly at "
+                f"{total / MIB / took:.0f} MiB/s; server RSS {before} -> {peak[0]} KB; chunks of 1 to 1,000,003 bytes; pipelined)")
+    finally:
+        server.stop()
+
+
+def case_expect(exe):
+    server = Server(exe, extra=["--max-body", "1"])
+    try:
+        # The `100` comes when the application accepts the body, and the upload completes.
+        w = Wire(server.port)
+        t0 = time.monotonic()
+        (status, _, body), want = upload(w, "/upload", 300000, headers=b"Expect: 100-continue\r\n", wait100=True)
+        if status != 200 or json.loads(body)["sha256"] != want:
+            return f"Expect upload: {status} {body[:100]!r}"
+        waited = time.monotonic() - t0
+        # Refused by its head: no `100`, the first thing back is the 413, and the connection serves after.
+        w.sendall(b"POST /upload/refuse HTTP/1.1\r\nHost: x\r\nContent-Length: 900000\r\nExpect: 100-continue\r\n\r\n")
+        status, headers, body = w.response(10)
+        if status != 413 or b"takes no body" not in body:
+            return f"refused: {status} {body!r}"
+        w.sendall(b"GET /hello/after HTTP/1.1\r\nHost: x\r\n\r\n")
+        if w.response(10)[2] != b"hello, after\n":
+            return "the connection did not serve after a refusal that sent no 100"
+        # The same for a client that does not wait and sends some of its body: refused, and the connection ends.
+        w2 = Wire(server.port)
+        w2.sendall(b"POST /upload/refuse HTTP/1.1\r\nHost: x\r\nContent-Length: 1000000\r\n\r\n" + b"x" * 5000)
+        if w2.response(10)[0] != 413 or not w2.ended():
+            return "a refused upload that was already sending was not refused and ended"
+        # Another expectation: 417, with its rule. A length over --max-body (1 MiB): 413 by the head, before any 100.
+        w3 = Wire(server.port)
+        w3.sendall(b"POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\nExpect: gimme\r\n\r\n")
+        status, headers, _ = w3.response(10)
+        if status != 417 or headers.get("x-rule") != "expect.unsupported":
+            return f"Expect: gimme: {status} {headers}"
+        w4 = Wire(server.port)
+        w4.sendall(b"POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: %d\r\nExpect: 100-continue\r\n\r\n" % (MIB + 1))
+        status, headers, _ = w4.response(10)
+        if status != 413 or headers.get("x-rule") != "body.too-large":
+            return f"a length over --max-body: {status} {headers}"
+        # Chunked past --max-body: refused while it is still being sent.
+        w5 = Wire(server.port)
+        w5.sendall(b"POST /upload HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n")
+        for _ in range(17):
+            # Sixteen chunks of 64 KiB are exactly the 1 MiB; the size line of the seventeenth is refused.
+            w5.sendall(b"10000\r\n" + b"z" * 65536 + b"\r\n")
+        status, headers, _ = w5.response(10)
+        if status != 413 or headers.get("x-rule") != "body.too-large":
+            return f"chunked past --max-body: {status} {headers}"
+        notes = [f"waited {waited * 1000:.0f} ms for the whole upload, 100 included"]
+        # curl: -T with Expect, and a refused upload that sends no byte of its body.
+        version = subprocess.run(["curl", "--version"], capture_output=True).stdout.decode()
+        if "OpenSSL" in version.split("\n")[0]:
+            path = os.path.join(server.work, "payload")
+            with open(path, "wb") as f:
+                f.write(BLOCK[:900000])
+            common = ["curl", "-sS", "--cacert", CA, "--resolve", f"{HOST}:{server.port}:127.0.0.1", "--tlsv1.3", "-X", "POST",
+                      "-H", "Expect: 100-continue", "--expect100-timeout", "10", "-T", path, "-w", "\n%{http_code} %{size_upload}"]
+            t0 = time.monotonic()
+            out = subprocess.run(common + [f"https://{HOST}:{server.port}/upload"], capture_output=True)
+            took = time.monotonic() - t0
+            body, _, tail = out.stdout.rpartition(b"\n")
+            if tail != b"200 900000" or json.loads(body)["sha256"] != hashlib.sha256(BLOCK[:900000]).hexdigest():
+                return f"curl -T: {out.stdout[:200]!r} {out.stderr[:200]!r}"
+            if took > 5:
+                return f"curl -T waited {took:.1f} s: the 100 did not come"
+            out = subprocess.run(common + [f"https://{HOST}:{server.port}/upload/refuse"], capture_output=True)
+            tail = out.stdout.rpartition(b"\n")[2]
+            if tail != b"413 0":
+                return f"curl refused upload: {out.stdout[:200]!r} {out.stderr[:200]!r} (wanted 413 and 0 bytes uploaded)"
+            notes.append("curl -T with Expect uploaded 900,000 bytes in %.2f s; a refused one uploaded 0 bytes" % took)
+        else:
+            notes.append("curl skipped: not built with OpenSSL")
+        # openssl s_client uploading 300 KB, answered.
+        body = os.urandom(300000)
+        p, got = s_client(server, b"POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: 300000\r\n\r\n" + body, lambda g: g.endswith(b'"}'), timeout=30)
+        p.kill()
+        p.wait()
+        if hashlib.sha256(body).hexdigest().encode() not in got:
+            return f"openssl s_client upload: {got[-200:]!r}"
+        notes.append("openssl s_client uploaded 300,000 bytes")
+        return "ok (" + "; ".join(notes) + ")"
+    finally:
+        server.stop()
+
+
+def case_halfbody(exe):
+    server = Server(exe, extra=["--read-timeout", "1000"])
+    try:
+        stalled = []
+        # Half a head; half a length body; half a chunked body; a head a byte at a time.
+        a = Wire(server.port, 30)
+        a.sendall(b"POST /upload HTTP/1.1\r\nHost: x\r\nX-Slow: ")
+        b = Wire(server.port, 30)
+        b.sendall(b"POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: 100000\r\n\r\n" + b"b" * 50000)
+        c = Wire(server.port, 30)
+        c.sendall(b"POST /upload HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n186a0\r\n" + b"c" * 50000)
+        d = Wire(server.port, 30)
+        stalled = [("head", a, "timeout.head"), ("length body", b, "timeout.body"), ("chunked body", c, "timeout.body"), ("trickled head", d, "timeout.head")]
+        t0 = time.monotonic()
+        answers = {}
+
+        def wait_for(name, wire):
+            try:
+                answers[name] = (wire.response(10), time.monotonic() - t0)
+            except Exception as e:  # noqa: BLE001 -- reported below
+                answers[name] = (e, time.monotonic() - t0)
+
+        waiters = [threading.Thread(target=wait_for, args=(name, wire), daemon=True) for name, wire, _ in stalled]
+        for w in waiters:
+            w.start()
+        beside = 0
+        slowest = 0
+        h = client(server.port)
+        trickle = b"POST /upload HTTP/1.1\r\nHost: x\r\nX-Slow: yyyyyyyyyyyyyyyyyyyyyyyy"
+        i = 0
+        while time.monotonic() - t0 < 1.4:
+            if i < len(trickle) and time.monotonic() - t0 < 0.9:
+                d.sendall(trickle[i:i + 1])
+                i += 1
+            started = time.monotonic()
+            status, body = get(h, f"/hello/beside{beside}")
+            slowest = max(slowest, time.monotonic() - started)
+            if (status, body) != (200, f"hello, beside{beside}\n".encode()):
+                return f"a client beside the stalled ones: {status} {body!r}"
+            beside += 1
+            time.sleep(0.05)
+        for w in waiters:
+            w.join(15)
+        waits = []
+        for name, wire, rule in stalled:
+            got, when = answers[name]
+            if isinstance(got, Exception):
+                return f"{name}: {got!r}"
+            status, headers, _ = got
+            waits.append(when)
+            if status != 408 or headers.get("x-rule") != rule:
+                return f"{name}: {status} {headers}"
+            if not wire.ended():
+                return f"{name}: the connection was not ended after the 408"
+        if min(waits) < 0.9:
+            return f"a 408 came after {min(waits):.2f} s, before the 1 s deadline"
+        # The server is fine, and an upload that sends its body in time is not timed out however long it takes in all.
+        w = Wire(server.port, 60)
+        w.sendall(b"POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: 6000\r\n\r\n")
+        digest = hashlib.sha256()
+        for k in range(6):
+            piece = os.urandom(1000)
+            digest.update(piece)
+            w.sendall(piece)
+            time.sleep(0.5)
+        status, _, body = w.response(10)
+        if status != 200 or json.loads(body)["sha256"] != digest.hexdigest():
+            return f"a slow but steady upload (3 s in all against a 1 s timeout): {status} {body[:100]!r}"
+        return (f"ok (4 stalled clients answered 408 after {min(waits):.2f} to {max(waits):.2f} s; {beside} requests beside them, slowest "
+                f"{slowest * 1000:.0f} ms; a steady upload of 3 s was not timed out)")
+    finally:
+        server.stop()
+
+
+def case_mangled(exe):
+    import random
+    server = Server(exe, extra=["--connections", "64", "--handshakes", "16", "--rate", "100000", "--read-timeout", "300", "--max-body", "4"])
+    try:
+        rnd = random.Random(20261008)
+        body = os.urandom(3000)
+        chunked = b"%x;a=b\r\n" % len(body) + body + b"\r\n0\r\nT: v\r\n\r\n"
+        bases = [b"POST /upload HTTP/1.1\r\nHost: h\r\nContent-Length: 3000\r\n\r\n" + body,
+                 b"POST /upload HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n" + chunked,
+                 b"POST /upload HTTP/1.1\r\nHost: h\r\nExpect: 100-continue\r\nContent-Length: 3000\r\n\r\n" + body,
+                 b"POST /echo HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n" + chunked,
+                 b"POST /upload/refuse HTTP/1.1\r\nHost: h\r\nExpect: 100-continue\r\nContent-Length: 3000\r\n\r\n" + body]
+        specials = [b"POST /upload HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\nffffffff\r\n",
+                    b"POST /upload HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n" + b"X: " + b"a" * 5000 + b"\r\n\r\n",
+                    b"POST /upload HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n5;" + b"e" * 300 + b"\r\nhello\r\n0\r\n\r\n",
+                    b"POST /upload HTTP/1.1\r\nHost: h\r\nContent-Length: 99999999999999999999\r\n\r\n",
+                    b"POST /upload HTTP/1.1\r\nHost: h\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello",
+                    b"POST /upload HTTP/1.1\r\nHost: h\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+                    b"POST /upload HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: gzip, chunked\r\n\r\n",
+                    b"POST /upload HTTP/1.1\r\nHost: h\r\nExpect: 100-continue\r\nExpect: nope\r\nContent-Length: 5\r\n\r\n",
+                    b"POST /upload HTTP/1.1\r\nHost: h\r\nContent-Length: 3000\r\n\r\n" + b"z" * 10,
+                    b"POST /upload HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n" + b"1\r\na\r\n" * 3000]
+        before = rss_kb(server.proc.pid)
+        sent = 0
+        for i in range(1500):
+            if i % 5 == 0:
+                data = rnd.choice(specials)
+            else:
+                data = bytearray(rnd.choice(bases))
+                for _ in range(rnd.randint(0, 4)):
+                    kind = rnd.randint(0, 4)
+                    at = rnd.randrange(len(data) + 1)
+                    if kind == 0 and data:
+                        data[min(at, len(data) - 1)] = rnd.randrange(256)
+                    elif kind == 1:
+                        del data[at:]
+                    elif kind == 2:
+                        data[at:at] = rnd.choice([b"\r\n", b"\n", b"\x00", b" ", b":", b";", b"0\r\n\r\n", b"ffff\r\n"])
+                    elif kind == 3:
+                        data[at:at] = rnd.randbytes(rnd.randint(1, 20))
+                    else:
+                        data[at:at + rnd.randint(1, 30)] = b""
+                data = bytes(data)
+            try:
+                c = https(server.port, 5)
+                c.sendall(data)
+                c.settimeout(0.05)
+                try:
+                    while c.recv(65536):
+                        pass
+                except (socket.timeout, ssl.SSLError, ConnectionError, OSError):
+                    pass
+                c.close()
+            except (ssl.SSLError, ConnectionError, OSError):
+                pass
+            sent += 1
+            if server.proc.poll() is not None:
+                return f"the server died after {sent} requests (exit {server.proc.returncode}), last: {data[:200]!r}"
+        time.sleep(1.5)
+        failed = check_upload(Wire(server.port, 60), 1000000)
+        if failed:
+            return f"after the mangled uploads: {failed}"
+        failed = check_upload(Wire(server.port, 60), 100000, chunk=777)
+        if failed:
+            return f"after the mangled uploads: {failed}"
+        after = rss_kb(server.proc.pid)
+        if after - before > 16384:
+            return f"server RSS went {before} -> {after} KB over {sent} mangled uploads"
+        return f"ok ({sent} mangled uploads; the server is alive, RSS {before} -> {after} KB, and a good upload still hashes)"
+    finally:
+        server.stop()
+
+
 CASES = {"curl": case_curl, "openssl": case_openssl, "http": case_http, "pipelined": case_pipelined, "many": case_many,
          "big": case_big, "stalled": case_stalled, "slow": case_slow, "ended": case_ended, "reload": case_reload, "bound": case_bound,
-         "full": case_full, "idle": case_idle, "shutdown": case_shutdown, "hostile": case_hostile}
+         "full": case_full, "idle": case_idle, "shutdown": case_shutdown, "hostile": case_hostile, "upload": case_upload,
+         "expect": case_expect, "halfbody": case_halfbody, "mangled": case_mangled}
 
 
 # ---- the cost ----

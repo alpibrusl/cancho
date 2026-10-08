@@ -1,0 +1,417 @@
+module body_support;
+
+import std.buffer;
+import std.bytes;
+import std.http;
+import std.test;
+import http.server;
+
+// The helpers of `http_server_body_test.cho` and `http_server_body_flow_test.cho` (`docs/http-server.md` §12): bodies and requests built
+// to order, the application of these tests (take a request, hold it, pull its body, answer it), and the checks both files make.
+// Run with the package's source beside them.
+
+// ---------------------------------------------------------------------
+// Bodies and requests
+// ---------------------------------------------------------------------
+
+// Byte `i` of a test body: a letter that depends on where it is, so a byte moved, lost or repeated shows.
+pub fn pat(i: int, seed: int) -> [] int {
+    return 97 + (i * 7 + i / 13 + seed) % 26;
+}
+
+pub fn make_body[&h](heap: &!h Heap, n: int, seed: int) -> [heap] buffer.Buffer {
+    var b = buffer.empty(heap, n + 1);
+    var i = 0;
+    while i < n {
+        b = buffer.push(heap, b, byte_of(pat(i, seed)));
+        i = i + 1;
+    }
+    return b;
+}
+
+pub fn push_hex[&h](heap: &!h Heap, b: buffer.Buffer, n: int) -> [heap] buffer.Buffer {
+    var out = b;
+    if n >= 16 {
+        out = push_hex(heap, out, n / 16);
+    }
+    let d = n % 16;
+    if d < 10 {
+        return buffer.push(heap, out, byte_of(48 + d));
+    }
+    return buffer.push(heap, out, byte_of(87 + d));
+}
+
+// The head of `POST /p` with a length, then `extra` header lines.
+pub fn head_cl[&h, &x](heap: &!h Heap, n: int, extra: &x [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, buffer.empty(heap, 96), "POST /p HTTP/1.1\r\nHost: t\r\nContent-Length: ");
+    b = buffer.push_nat(heap, b, n);
+    b = buffer.append(heap, b, "\r\n");
+    b = buffer.append(heap, b, extra);
+    return buffer.append(heap, b, "\r\n");
+}
+
+pub fn head_chunked[&h, &x](heap: &!h Heap, extra: &x [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, buffer.empty(heap, 96), "POST /p HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\n");
+    b = buffer.append(heap, b, extra);
+    return buffer.append(heap, b, "\r\n");
+}
+
+// `body` as a chunked body in chunks of `size`: `ext` after every size, `trailers` (header lines) after the last chunk.
+pub fn wire[&h, &b, &e, &t](heap: &!h Heap, body: &b [byte], size: int, ext: &e [byte], trailers: &t [byte]) -> [heap] buffer.Buffer {
+    var w = buffer.empty(heap, 2 * len(body) + 64);
+    var at = 0;
+    while at < len(body) {
+        var m = size;
+        if at + m > len(body) {
+            m = len(body) - at;
+        }
+        w = push_hex(heap, w, m);
+        w = buffer.append(heap, w, ext);
+        w = buffer.append(heap, w, "\r\n");
+        w = buffer.append(heap, w, body[at..at + m]);
+        w = buffer.append(heap, w, "\r\n");
+        at = at + m;
+    }
+    w = buffer.append(heap, w, "0");
+    w = buffer.append(heap, w, ext);
+    w = buffer.append(heap, w, "\r\n");
+    w = buffer.append(heap, w, trailers);
+    return buffer.append(heap, w, "\r\n");
+}
+
+// `first` followed by `second`, both dropped.
+pub fn join[&h](heap: &!h Heap, first: buffer.Buffer, second: buffer.Buffer) -> [heap] buffer.Buffer {
+    var out = first;
+    borrow second as &sb in {
+        out = buffer.append(heap, out, buffer.bytes(sb));
+    }
+    buffer.drop(heap, second);
+    return out;
+}
+
+pub fn same[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {
+    return bytes.equal(x, y);
+}
+
+// ---------------------------------------------------------------------
+// The application of these tests
+// ---------------------------------------------------------------------
+
+// Take the request `next` has. A streaming one is held (and, if `go`, the client is told to go ahead); answers its
+// ticket. -1: there is no request; -2: one that is whole, left in hand.
+pub fn accept[&h, &s](heap: &!h Heap, srv: &!s server.Server, go: bool) -> [heap, conn_write, poll] int {
+    if server.next(heap, srv) < 0 {
+        return 0 - 1;
+    }
+    if !server.streaming(srv) {
+        return 0 - 2;
+    }
+    let t = server.hold(srv);
+    if go {
+        server.proceed(srv, t);
+    }
+    return t;
+}
+
+// Every piece that has arrived, `take` bytes of it at a time, added to `sink`.
+pub fn pull[&h, &s](heap: &!h Heap, srv: &!s server.Server, t: int, sink: buffer.Buffer, take: int) -> [heap, poll] buffer.Buffer {
+    var out = sink;
+    var going = true;
+    while going {
+        var n = len(server.body_part(srv, t));
+        if n > take {
+            n = take;
+        }
+        if n == 0 {
+            going = false;
+        } else {
+            out = buffer.append(heap, out, server.body_part(srv, t)[0..n]);
+            test.assert_eq(server.body_take(srv, t, n), n);
+        }
+    }
+    return out;
+}
+
+// Answer ticket `t` with the number of bytes the body had, as text.
+pub fn answer_with[&h, &s](heap: &!h Heap, srv: &!s server.Server, t: int, total: int) -> [heap, conn_write, poll] int {
+    var text = buffer.push_nat(heap, buffer.empty(heap, 16), total);
+    var out = buffer.empty(heap, 128);
+    borrow text as &tb in {
+        out = server.reply_as(heap, out, 200, "text/plain", buffer.bytes(tb), true, "");
+    }
+    var sent = 0 - 1;
+    borrow out as &ob in {
+        sent = server.answer(srv, t, buffer.bytes(ob));
+    }
+    buffer.drop(heap, text);
+    buffer.drop(heap, out);
+    return sent;
+}
+
+// Everything connection `k` has waiting, taken 11 bytes at a time.
+pub fn drain[&h, &s](heap: &!h Heap, srv: &!s server.Server, k: int, now: int) -> [heap] buffer.Buffer {
+    var got = buffer.empty(heap, 64);
+    region r {
+        let piece = alloc_slice[r](11, byte_of(0));
+        var n = server.output(srv, k, piece, now);
+        while n > 0 {
+            got = buffer.append(heap, got, piece[0..n]);
+            n = server.output(srv, k, piece, now);
+        }
+    }
+    return got;
+}
+
+// The text of what was drained is `want` exactly.
+pub fn expect_text[&h, &w](heap: &!h Heap, got: buffer.Buffer, want: &w [byte]) -> [heap] int {
+    borrow got as &g in {
+        test.assert(same(buffer.bytes(g), want));
+    }
+    buffer.drop(heap, got);
+    return 0;
+}
+
+// What was drained starts with `prefix` and contains `needle`.
+pub fn expect_has[&h, &p, &n](heap: &!h Heap, got: buffer.Buffer, prefix: &p [byte], needle: &n [byte]) -> [heap] int {
+    borrow got as &g in {
+        test.assert(bytes.starts_with(buffer.bytes(g), prefix));
+        test.assert(bytes.find(buffer.bytes(g), needle) >= 0);
+    }
+    buffer.drop(heap, got);
+    return 0;
+}
+
+// `text` into `k`, `step` bytes at a time, with the application pulling `take` at a time after each: how many of
+// `text`'s bytes the server took (it takes none past the end of a length body, or while its room is 0), and the sink.
+pub fn push_all[&h, &s, &t](heap: &!h Heap, srv: &!s server.Server, k: int, ticket: int, text: &t [byte], step: int, take: int, sink: buffer.Buffer, now: int) -> [heap, poll] (buffer.Buffer, int) {
+    var out = sink;
+    var at = 0;
+    var stuck = 0;
+    while at < len(text) && stuck < 3 {
+        var to = at + step;
+        if to > len(text) {
+            to = len(text);
+        }
+        let took = server.input(srv, k, text[at..to], now);
+        test.assert(took >= 0 && took <= to - at);
+        at = at + took;
+        server.ready(srv, now);
+        out = pull(heap, srv, ticket, out, take);
+        if took == 0 {
+            stuck = stuck + 1;
+        } else {
+            stuck = 0;
+        }
+    }
+    return (out, at);
+}
+
+// The ticket's body is `body`, all of it, and nothing more.
+pub fn check_streamed[&h, &s, &b](heap: &!h Heap, srv: &!s server.Server, t: int, sink: buffer.Buffer, body: &b [byte]) -> [heap] int {
+    borrow sink as &sk in {
+        test.assert(same(buffer.bytes(sk), body));
+    }
+    buffer.drop(heap, sink);
+    test.assert_eq(server.body_state(srv, t), 1);
+    test.assert_eq(server.body_total(srv, t), len(body));
+    test.assert_eq(len(server.body_part(srv, t)), 0);
+    return 0;
+}
+
+// One request, a head then its body (`wire_body`: as it goes on the wire, `body`: what it decodes to) fed `step` bytes at a time and
+// pulled `take` at a time, answered. The connection is `k`.
+pub fn one_upload[&h, &s, &x, &y](heap: &!h Heap, srv: &!s server.Server, k: int, head: buffer.Buffer, body: &x [byte], wire_body: &y [byte], step: int, take: int) -> [heap, conn_write, poll] int {
+    var sink = buffer.empty(heap, 64);
+    borrow head as &hb in {
+        test.assert_eq(server.input(srv, k, buffer.bytes(hb), 0), len(buffer.bytes(hb)));
+    }
+    buffer.drop(heap, head);
+    server.ready(srv, 0);
+    let t = accept(heap, srv, true);
+    test.assert(t >= 0);
+    test.assert_eq(server.body_state(srv, t), 0);
+    let (s2, took) = push_all(heap, srv, k, t, wire_body, step, take, sink, 0);
+    test.assert_eq(took, len(wire_body));
+    check_streamed(heap, srv, t, s2, body);
+    test.assert(answer_with(heap, srv, t, len(body)) > 0);
+    // Answered: the ticket is spent, and the connection serves the next request.
+    test.assert_eq(server.body_state(srv, t), 0 - 1);
+    test.assert_eq(server.body_total(srv, t), 0 - 1);
+    test.assert(!server.closing(srv, k));
+    return 0;
+}
+
+// What the answer to `n` bytes of body is.
+pub fn answer_of[&h](heap: &!h Heap, n: int) -> [heap] buffer.Buffer {
+    var text = buffer.push_nat(heap, buffer.empty(heap, 16), n);
+    var out = buffer.empty(heap, 128);
+    borrow text as &tb in {
+        out = server.reply_as(heap, out, 200, "text/plain", buffer.bytes(tb), true, "");
+    }
+    buffer.drop(heap, text);
+    return out;
+}
+
+// What was drained is the answer to `n` bytes of body.
+pub fn expect_answer[&h](heap: &!h Heap, got: buffer.Buffer, n: int) -> [heap] int {
+    let want = answer_of(heap, n);
+    borrow want as &w in {
+        expect_text(heap, got, buffer.bytes(w));
+    }
+    buffer.drop(heap, want);
+    return 0;
+}
+
+// ---------------------------------------------------------------------
+// A length body larger than the buffer
+// ---------------------------------------------------------------------
+
+pub fn size_case(i: int) -> [] int {
+    if i == 0 {
+        return 1;
+    }
+    if i == 1 {
+        return 63;
+    }
+    if i == 2 {
+        return 64;
+    }
+    if i == 3 {
+        return 65;
+    }
+    if i == 4 {
+        return 255;
+    }
+    if i == 5 {
+        return 256;
+    }
+    if i == 6 {
+        return 257;
+    }
+    if i == 7 {
+        return 1000;
+    }
+    return 5000;
+}
+
+pub fn step_case(i: int) -> [] int {
+    if i == 0 {
+        return 1;
+    }
+    if i == 1 {
+        return 7;
+    }
+    if i == 2 {
+        return 64;
+    }
+    if i == 3 {
+        return 100;
+    }
+    return 4096;
+}
+
+pub fn take_case(i: int) -> [] int {
+    if i == 0 {
+        return 1;
+    }
+    if i == 1 {
+        return 13;
+    }
+    return 64;
+}
+
+// ---------------------------------------------------------------------
+// A request split at every point, whole or streamed
+// ---------------------------------------------------------------------
+
+// Answer the whole request in hand (`body` is its body) with the count, as `answer_with` does a held one.
+pub fn respond_with[&h, &s](heap: &!h Heap, srv: &!s server.Server, n: int) -> [heap, conn_write] int {
+    let out = answer_of(heap, n);
+    var sent = 0 - 1;
+    borrow out as &ob in {
+        sent = server.respond(srv, buffer.bytes(ob));
+    }
+    buffer.drop(heap, out);
+    return sent;
+}
+
+// One turn of the application: take a request if `next` has one (a whole one is answered at once, a streaming one
+// held), and pull what has arrived of a held one. `ap[0]` is the ticket or -1, `ap[1]` is 1 once a whole request was
+// answered. The sink gets the body either way.
+pub fn turn[&h, &s, &a](heap: &!h Heap, srv: &!s server.Server, ap: &!a [int], sink: buffer.Buffer, now: int) -> [heap, conn_write, poll] buffer.Buffer {
+    var out = sink;
+    server.ready(srv, now);
+    if ap[0] < 0 && ap[1] == 0 {
+        let r = accept(heap, srv, true);
+        if r >= 0 {
+            ap[0] = r;
+        } else if r == 0 - 2 {
+            out = buffer.append(heap, out, server.body(srv));
+            respond_with(heap, srv, len(server.body(srv)));
+            ap[1] = 1;
+        }
+    }
+    if ap[0] >= 0 {
+        out = pull(heap, srv, ap[0], out, 64);
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------
+// Pipelined requests behind a streamed body
+// ---------------------------------------------------------------------
+
+pub fn min_of(a: int, b: int) -> [] int {
+    if a < b {
+        return a;
+    }
+    return b;
+}
+
+// ---------------------------------------------------------------------
+// Expect: 100-continue
+// ---------------------------------------------------------------------
+
+pub fn continue_text() -> [] &static [byte] {
+    return "HTTP/1.1 100 Continue\r\n\r\n";
+}
+
+// A refusal, answered by the application with `reply_as`: 413 and text.
+pub fn refuse_413[&h, &s](heap: &!h Heap, srv: &!s server.Server, t: int) -> [heap, conn_write, poll] int {
+    let out = server.failure(heap, buffer.empty(heap, 64), 413, "no", true);
+    var sent = 0 - 1;
+    borrow out as &ob in {
+        sent = server.answer(srv, t, buffer.bytes(ob));
+    }
+    buffer.drop(heap, out);
+    return sent;
+}
+
+// What `next` finds and does with `text` on a fresh connection: the status line and rule if it is refused. The connection `k`.
+pub fn feed_head[&h, &s, &t](heap: &!h Heap, srv: &!s server.Server, k: int, text: &t [byte]) -> [heap, conn_write, poll] int {
+    test.assert_eq(server.input(srv, k, text, 0), len(text));
+    server.ready(srv, 0);
+    return accept(heap, srv, false);
+}
+
+// ---------------------------------------------------------------------
+// Every refusal, with its status and its rule
+// ---------------------------------------------------------------------
+
+pub fn repeat[&h](heap: &!h Heap, c: int, n: int) -> [heap] buffer.Buffer {
+    var b = buffer.empty(heap, n + 1);
+    var i = 0;
+    while i < n {
+        b = buffer.push(heap, b, byte_of(c));
+        i = i + 1;
+    }
+    return b;
+}
+
+// ---------------------------------------------------------------------
+// Random streams of requests, split and consumed at random
+// ---------------------------------------------------------------------
+
+pub fn next_random(r: int) -> [] int {
+    return (r * 1103515245 + 12345) % 2147483648;
+}

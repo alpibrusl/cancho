@@ -6,7 +6,7 @@
 > lines. This extracts the loop; `docs/server.md` stays the account of what the
 > loop does and costs, this says where it lives and why it has this shape.
 > **§11 (byte-fed mode, so the loop can sit behind TLS) is built too**, and `examples/https_hello` is the HTTPS server made of it and
-> `packages/tls`.
+> `packages/tls`. **So is §12 (streaming request bodies and `Expect: 100-continue`)**: a body larger than the buffer, in pieces, with the same back-pressure and two timers of its own.
 
 ## 1. What was asked
 
@@ -93,7 +93,7 @@ The behaviour. Every test in `conformance/api.rs` runs against the migrated
 
 Streaming bodies, `Expect: 100-continue`, TLS and more than one core are
 `server.md` §6's list and remain the list. Handlers see a request whole.
-(*TLS: §11 is the byte-fed mode that lets a TLS terminator drive the loop. Streaming a *response* is `stream` there; streaming a request is still not.*)
+(*TLS: §11 is the byte-fed mode that lets a TLS terminator drive the loop. Streaming a *response* is `stream` there. Streaming a request, and `Expect`, are §12: a server that calls `limits` gets them; one that does not still sees a request whole and ignores `Expect`.*)
 
 ## 7. Built
 
@@ -505,9 +505,9 @@ Not measured: more than 32 connections, handshakes (`tls-server.md` §11.4's 3.0
 
 What the gateway (an HTTP/1.1 reverse proxy that terminates HTTPS) can build on today, and what it still lacks. In the order it will hit them:
 
-1. **Streaming a request body.** A request is handed over whole, so one larger than `size` is refused with a 413, and a proxy forwarding an upload would have to
-   buffer it. The gateway needs the body in pieces (a `body_part` view and a way to say "more is coming", with the same bound per connection) and `Expect: 100-continue`.
-   This is `server.md` §6's first open item and the largest piece of work left; `stream` only did the response direction.
+1. **Streaming a request body.** *Built, §12.* (It was: a request is handed over whole, so one larger than `size` is refused with a 413, and a proxy forwarding an upload would have to
+   buffer it.) `limits` opts in; the held request's ticket then gives `body_part`, `body_take`, `body_state`, `body_total` and `proceed` (`100 Continue`), with the same `room` rule as answers, and refusals with rule tags.
+   What the gateway still has to do with it is in §12.14.
 2. **Chunked responses.** `stream` sends bytes; a proxied answer of unknown length needs `Transfer-Encoding: chunked` framing on the way out (and de-chunking on the way in from the upstream). `std.http`
    has `dechunk` and no chunk writer.
 3. **The peer's address.** ~~`std.conns` does not give it~~ **Corrected ([`conn-peer.md`](conn-peer.md)):** `conns.peer(table, slot)` answers it (`std.addr.Peer`, with `text` for a log line and
@@ -517,7 +517,297 @@ What the gateway (an HTTP/1.1 reverse proxy that terminates HTTPS) can build on 
    with `hold`/`answer` for the request waiting on the upstream (§10) and `stream` for the answer's body. `packages/http-request` is blocking; a non-blocking client is the missing piece, as it was for `cancho-pg`. *(Built: [`http-client.md`](http-client.md), `packages/http-client` and `examples/http_fetch_nb`; what the gateway still needs of it is §10.7 there.)*
 5. **Upgrade.** `Upgrade: websocket` and `CONNECT` need a connection to stop being parsed once the 101 is sent and become a byte tunnel: `detach` frees the HTTP side's slot, but the bytes already buffered behind
    the request are the gateway's to recover (`head`/`body` views end with the request).
-6. **Two timeouts.** `idle` is one number for a keep-alive connection waiting for its next request and a client taking a minute to send a head. A proxy wants a header timeout of its own.
+6. **Two timeouts.** *Built, §12.8:* `head_ms` is a deadline for a head (a trickle does not extend it) and `body_ms` the longest the server waits for more of a body; both answer `408` with a rule tag. `idle` is still the
+   keep-alive connection's. (It was: `idle` was one number for a keep-alive connection waiting for its next request and a client taking a minute to send a head.)
 7. **ALPN.** The engine selects a protocol (`--alpn`); the loop could offer `http/1.1` and refuse `h2`, which it does not speak. Nothing is done with the negotiated value yet.
 8. **More than 1,024 connections** (`max_connections`) and more than one core (a second process on `SO_REUSEPORT`, not tried).
 9. **A byte-fed program's authority report lists `conn_write` and `poll`** (§11.2). If the gateway's reviewers want it without them, the package needs a second set of names whose rows have no socket in them; nothing has asked yet.
+
+## 12. Streaming a request body, and `Expect: 100-continue`
+
+> **Status: built** (this section was committed as a design first, with two measured numbers; building it corrected it in the places marked *Corrected*, collected in §12.12; the
+> tests, mutants and measurements are §12.13). It was the first item of §11.8 and `server.md` §6's: a proxy forwarding an upload cannot buffer it. `examples/https_hello` has the
+> upload routes, and `cancho-gateway`'s item 6 (a header timeout of its own) is §12.8.
+
+### 12.1 What stopped it, measured
+
+A request is handed to the application whole or not at all. `produce` waits until `head + body` is in the connection's `size`-byte input buffer, and refuses what can never fit:
+`tests/packages/http_server_bytes_test.cho` pins it (`POST` with `Content-Length: 1000` into `size` 128 is `413 request too large`; a chunked body that outgrows the buffer is the same
+`413`), and on the socket path the same code runs. Three consequences for a reverse proxy, each from that one rule:
+
+* an upload larger than `size` cannot be proxied at all (and `size` is memory times connections: `input_budget` caps the sum at 256 MiB);
+* a client that sends `Expect: 100-continue` (measured, curl 8.7.1 against a server that reads the head and then nothing: `-T` or `--data-binary` of a 3 MiB file sends it and then waits 1.0 s
+  before sending the body anyway; a 10 KB body sends no `Expect`) cannot be told to go ahead or refused
+  before it sends the body, so a refusal costs the whole upload and the proxy cannot say "no" to a 1 GiB `PUT` cheaply;
+* the only timeout is `idle`, one number for a keep-alive connection waiting for its next request and a client taking a minute to send a head or a body
+  (`cancho-gateway` `docs/design.md` §5 wants a header timeout of its own, a `408`; §11.8 item 6).
+
+**The per-byte cost of the machine this design needs.** The chunked decoder below is a state machine run once over each byte, in place. Measured on this machine (Apple M4 Max, LLVM backend,
+`cancho build --std`; a 64,000-byte buffer, 4,096 passes = 262 MB, a two-state machine that drops every CR and copies the rest, byte by byte): **134 ms, 1.96 GB/s, 0.51 ns a byte**; the same
+loop as a plain forward copy of the buffer within itself is turned into a `memmove` by LLVM (2 ms for the 262 MB), so a *content-length* body costs no copy at all and a chunked one costs about
+half a nanosecond a byte. The TLS path measured 83 MB/s (§11.7), so the framing is not where an upload's time will go, and this design does not trade clarity for speed in it.
+
+### 12.2 The shape: a pull, and it is the request's ticket that pulls
+
+Three shapes were considered.
+
+1. **A callback per piece** (`serve(.., on_head, on_body_part, on_end)`). Refused for the reason of §2, unchanged: a piece is a view of a buffer the loop borrowed itself, a function value's type
+   cannot name that region, and the application's own state would have to be reachable from a closure the language does not have.
+2. **`next` answering the same request again for every piece** (the request in hand with a `body` that grows). The request in hand is *one* request per `next`, and a
+   proxy has thousands of uploads in flight, each waiting on its own upstream socket; "in hand" has no place to remember which. It would also give `body` two meanings.
+3. **The held request's ticket (§10) pulls its own body.** Chosen. `hold` already is "this request goes on while I do other things, name it with a ticket, and the server will not give out anything
+   behind it". An upload is exactly that: the application takes the head from `next`, decides (refuses it, or `hold`s it), and then, whenever it can use bytes (its upstream socket is writable) it asks
+   the ticket for the next piece. The views are borrows of the `Server`, as every view is.
+
+So the API is five new calls on a ticket and one on the request in hand, and the existing calls do not change:
+
+```
+server.limits(srv, max_body, piece, head_ms, body_ms) -> int  // opt in: 0, or -1 for a bound under 1; before this, nothing below happens and §12.4's first row holds
+server.streaming(srv) -> bool                                  // the request in hand has a body that is still arriving (or does not fit)
+t = server.hold(srv)                                           // unchanged. For a streaming request it also lets go of the head: copy what you need first
+server.proceed(srv, t) -> int                                  // "I will read the body": answers 100 Continue if the client asked for it and it was not sent. 1 sent, 0 nothing to send, -1 the request is over
+p = server.body_part(srv, t) -> &[byte]                        // the next piece: at most `piece` bytes that have arrived and not been taken; empty when none now
+n = server.body_take(srv, t, n) -> int                         // the application has used n bytes of the piece it saw: n, or -1 (n past the piece, or the request is over)
+s = server.body_state(srv, t) -> int                           // 0 more is coming, 1 all of it has arrived (bytes may still wait in the buffer), -1 the request is over: stop
+n = server.body_total(srv, t) -> int                           // bytes of the body received so far, decoded
+```
+
+*The end of a body* is `body_state == 1` with `body_part` empty: no separate `body_end` call, because "all arrived" and "all taken" are two facts and a proxy that is slow to take needs both
+(it has seen the end of the stream and still owes the upstream a piece). `body_state == -1` is the one answer for every way a request ends under the application's feet: the server refused it
+(framing, size, a timeout), the connection went (a reset, the peer's end in the middle of the body, `detach`), or the ticket was answered. The application finds out by asking, in the same loop that gives
+streamed *answers* what room they have (`feed_streams` in `examples/https_hello/app.cho`), because there is no callback to be told by; §12.9 says what the server has done by then.
+
+**Why opt-in (`limits`).** A server that never calls it is, in every byte it reads and writes, the server of §11: the `413`, the ignored `Expect`, `idle` as the only timer. The `api` and `http_server`
+tests and every consumer pinned to the store stay as they are. A server that calls it has told the loop what its bounds are, and the loop can then do what a bound makes possible
+(hand over a head early, refuse by `Expect`, time a head). The four numbers are bounds, so they are parameters and not defaults the package chose: `max_body` the most body bytes a request may have
+(the `Content-Length`, or the decoded total), `piece` the most `body_part` shows at once (clipped to `size`), `head_ms` and `body_ms` the two timers of §12.8.
+
+### 12.3 When `next` hands over a head early
+
+With `limits`, `produce` parses the head as before and then looks at the body:
+
+| the request | what `next` does |
+|---|---|
+| no body (`Content-Length` 0 or absent, not chunked) | as ever |
+| `Content-Length` above `max_body` | refuses `413` (`body.too-large`) *now*: before any `100`, before the client sends a byte of it |
+| `Content-Length` and the whole body is in the buffer, and head + body fit `size` | as ever: `head`, `parsed`, `body`, `respond`. `streaming` is false |
+| `Content-Length` and any of it has not arrived (or head + body do not fit `size`) | hands over the head at once; `streaming` is true |
+| chunked, and the framing in the buffer reaches the final CRLF (§12.4) | as ever: the body is decoded in place, `body` is the whole decoded body, `streaming` is false |
+| chunked, and it does not | hands over the head at once; `streaming` is true |
+| an `Expect` other than `100-continue` (on any request) | refuses `417` (`expect.unsupported`) |
+
+**What a request that fits does, exactly.** Without `limits`: everything it did. With `limits`: a request whose head *and entire body* are in the buffer when its head is parsed is
+handed over whole, with the same `head`, `parsed`, `body` and `respond` and the same bytes in the answer; what is different is a request that fits `size` and whose body arrives in a later
+read, which was held back until whole and is now handed over as soon as its head is complete. That is deliberate and is the only change: it is what lets the application see `Expect` before the
+client has sent anything, and an application that opted in already handles `streaming`. A fed-at-once request and the same bytes fed one at a time therefore reach the application in different forms; both
+are tested to produce the same body bytes and the same answer.
+
+An application that wants no streaming for small bodies reads the body from `body_part` anyway: **`body_part`, `body_take` and `body_state` work for a request that `streaming` called false too,
+once it is held** (a whole body is "all arrived" at once), so one loop over pieces serves both forms. (A chunked body held whole is still in the buffer where it was decoded; the legacy chunk scratch
+`decoded` is no longer used by a server with `limits`: the decoding is in place, §12.4.)
+
+### 12.4 Framing
+
+**`Content-Length`.** The head's length, parsed and refused by `std.http` as today (400 for a malformed, repeated-and-different or with-`Transfer-Encoding` length). The server counts: `remaining = length - bytes already in the
+buffer`. **Input is never taken past the end of the body** (`room` is `min(free space, remaining)`, and the socket path reads only that many), so what follows a body on the wire is never mixed
+into it, and a request pipelined behind a streamed body is simply the next bytes the caller offers once `remaining` is 0.
+
+**`Transfer-Encoding: chunked`.** `std.http.parse` accepts exactly `chunked` and refuses every other coding and a `Content-Length` beside it, as today. The decoder is a byte-at-a-time state machine
+whose state lives in the connection's words, so a body fed one byte at a time is decoded once, not again from the start at every byte as `std.http.dechunk` does. It decodes **in place**: decoded bytes are written
+over the framing that carried them (the write position never passes the read position), so the buffer holds `[decoded, not yet taken][nothing else]` while a body is arriving, and a chunk of any size needs no
+buffer of its own. States: size (1 to 8 hex digits, leading zeros count), extension, the LF of a size line, data, the CR and LF after data, then after the zero chunk a trailer section and the final CRLF.
+
+* **Chunk extensions are accepted and ignored** (RFC 9112 §7.1.1: a recipient MUST ignore ones it does not recognise), within bounds: at most 256 bytes after the `;`, each a tab or a visible ASCII or
+  high byte, never a control character or a bare CR or LF (`body.chunk-extension`). `std.http.dechunk` refuses them; the gateway's `framing.chunk-extension` does too. This server does not, because
+  the framing is its own and an extension that cannot be told apart from data is not a smuggling vector when it is parsed by the same machine that finds the end of the chunk; an application that wants them refused
+  can refuse them in its own code (it sees none: they are ignored here). A switch for refusing them was not built; nothing has asked for one.
+* **Trailers are accepted, checked for bytes that could confuse a parser, and discarded.** After the zero chunk: zero or more lines, each of bytes with no control character (a tab is allowed) up to a CRLF, then a blank line. Their `name: value` syntax is not checked, because nothing
+  reads them: what matters is that no bare LF, NUL or CR hides in one.
+  At most 4,096 bytes of them, counted from the first byte of the first trailer line to the final CR (`body.trailer-too-large`, `431`); a malformed line is `body.trailer`. The application never sees them: a proxy re-frames the body it forwards, so a trailer is dropped as
+  RFC 9110 §6.5.2 allows. `body_state` is 1 only after the blank line.
+* **Bounds.** `max_body` on the decoded total, checked when a chunk's size line is read (`size + total > max_body` refuses at once, before the chunk's bytes), so a hostile
+  `fffffff0` is refused without waiting for it. Framing overhead per chunk is bounded by the 8 digits, 256 extension bytes and four CRLF bytes, each chunk carrying at least one body byte: at most about 270 wire bytes for
+  each body byte, and time-bounded by `body_ms` like any other byte.
+
+**Every refusal**, with its rule tag and status. The tag is sent in an `X-Rule` header beside `failure`'s `{"error": ...}` (a server without `limits` sends what it sent before, with no `X-Rule`). All close the connection after the answer.
+
+| rule | status | when |
+|---|---|---|
+| `body.too-large` | 413 | `Content-Length` over `max_body`; decoded total over `max_body` |
+| `body.chunk-size` | 400 | a size line with no hex digit first, or more than 8 digits |
+| `body.chunk-framing` | 400 | anything but CRLF where CRLF belongs: a bare LF, a size line with something after its digits, data not followed by CRLF |
+| `body.chunk-extension` | 400 | an extension over 256 bytes, or with a control character |
+| `body.trailer` | 400 | a control character (a tab apart) in a trailer line, a trailer line or the final line not ended by CRLF |
+| `body.trailer-too-large` | 431 | more than 4,096 bytes of trailers |
+| `timeout.head` | 408 | §12.8 |
+| `timeout.body` | 408 | §12.8 |
+| `expect.unsupported` | 417 | an `Expect` header with any member other than `100-continue` |
+| `head.too-large`, `head.malformed` | 431, 400 | what §11.4 already refuses (a head that fills `size`; `std.http`'s refusals): tagged only when `limits` is on |
+| (no answer) `body.truncated` | | the peer ends or the connection resets mid-body: nothing to answer to; the request is over (`-1`) |
+
+A refusal found while reading (framing, size) is *recorded* by `input`/`step` and answered by the next `next`: `input` has no heap to build an answer in and its effect row stays `[]` (a widening would break
+every caller). The request is over from the instant it is recorded (`body_state` is -1, `room` is 0), the answer is queued by the `next` that follows, and the connection ends once it is sent.
+
+### 12.5 `Expect: 100-continue`
+
+* **Only HTTP/1.1, only for a request with a body that is streaming.** On a 1.0 request, on a request without a body, and on a request whose body had already arrived whole, it is ignored (RFC 9110 §10.1.1: the client has
+  sent it, or has no body to wait to send).
+* **The server never sends `100 Continue` by itself.** The application sends it by `proceed(t)`, after it has decided it wants the body: after its route and its limits, after its upstream accepted the connection,
+  after a quota check. A gateway that refuses by route or size answers the head with a final status and sends no `100`, and the client does not send the body.
+* `proceed` writes `HTTP/1.1 100 Continue\r\n\r\n` into the connection's output (it fits: `out` is at least 512 and nothing of this request's has been queued), once. It answers 0 afterwards, if
+  the request had no `Expect`, and if the application has already started its answer (`stream` was called): a `100` after the first byte of a final response is an error on the wire.
+* **`417`** for an `Expect` header any of whose values is not `100-continue` (case-insensitively; `100-continue, x` too), by `next`, before the application sees the request.
+* A client that sends the body without waiting (curl waits one second, others do not wait) simply has its body buffered up to `size`, taken by `body_part` as usual, and is never sent a `100`.
+
+### 12.6 Back-pressure in both directions
+
+**In.** The rule of §11.4, unchanged and shared: a byte is read only when there is room for it. `room(k)` is the free space in the connection's buffer plus the bytes the application has taken from
+the front of it (they are moved out of the way, once, by the next `input` that needs the room), for a streaming body bounded by what the body still owes (`Content-Length`) — and
+0 while an answer is waiting to go out, while the connection is ending, and while a refusal is recorded. A piece the application has not taken therefore stays in the buffer, the buffer fills, `room` is 0, the
+caller stops calling `tls.recv` (or the socket path stops being watched), and the client's TCP window closes. **A proxy passes its upstream's pressure to the client by simply not calling `body_take`.**
+The most a streaming connection holds is the same `size + out` of §11.4 whatever `max_body` is; a 1 GiB upload through a 16 KiB buffer is 16 KiB of the server's memory, which the live test measures.
+
+**Out.** Unchanged too, and it applies while a body is still arriving: an answer waiting to be sent stops `room`, so a client that sends a body and does not read the response it is already getting (an
+early refusal, `100 Continue`, a streamed echo) stops being read, and a stalled sender and a stalled reader are both timed (§12.8). `body_take` re-arms the socket server's read interest (`settle`) when it makes room;
+a byte-fed caller finds the room by asking `room`.
+
+### 12.7 Pipelining after a streamed body
+
+A request behind a streamed body is held back for two reasons that are already the rule: nothing is handed out for a connection while a request is held (§10), and `room` never takes bytes past the end of a
+`Content-Length` body. For a chunked body, the machine stops at the final CRLF and the bytes after it are the next request's, moved down to follow the body in the buffer. When the streamed request is answered, whatever of its body
+the application did not take is dropped (the body has fully arrived, or the connection is closing, §12.9) and the buffered next request is given out by the next `next`, without waiting for new input.
+
+### 12.8 The timeouts
+
+Both are in milliseconds, on the caller's clock (the one given to `attach`, `input`, `output`, `ready`; `wait` reads its own). Both answer `408` (`timeout.head`, `timeout.body`) with the connection closing after,
+unless the application has already begun its answer, in which case the connection is closed with nothing more sent. They are *in addition to* `idle`, which is unchanged: a keep-alive connection with no request in progress ends by it.
+
+* **`head_ms`: a deadline for the head, not an idle limit.** It starts when `next` first looks at a request whose head is incomplete, and ends when the head is complete; a client that sends a byte every
+  `head_ms - 1` milliseconds does not extend it (that is the slow-loris shape: many connections, each held open by a trickle). It does not run while the connection has an answer waiting (the server is not reading then).
+* **`body_ms`: the longest the server waits for the client to send more of a body.** It starts when the head is handed over, restarts when a body byte arrives, when the application takes a piece, and when it
+  says `proceed`; it does not run while the buffer is full and the application has not taken what is in it, nor while a client that sent `Expect: 100-continue` has not been told to go ahead, nor while an answer waits to be sent
+  (the client is not reading): waiting for the *application* is the application's to time (a gateway has its upstream timeouts), not the client's fault. A client that sends one byte
+  every `body_ms - 1` milliseconds is not stopped by this alone; each such byte is progress by definition. The bound on that case is the application's total deadline for the request, which `hold` always allowed (§10: "an application
+  that wants a deadline answers with 504"), and `max_body` bounds the bytes.
+* The scan for expired timers runs at most every 50 ms, over the connection table. `ready`/`wait` do it; expiry only *records* the refusal (as in §12.4); `next` sends it.
+
+### 12.9 Answering before the body has been read
+
+The application may `respond`/`answer` a streaming request at any time: a refusal to the head, an `413` after counting bytes, an upstream that answered early. What the server does with the connection afterwards:
+
+* **The body had all arrived** (`body_state` 1): the untaken bytes are dropped and the connection carries on, keep-alive as the request asked.
+* **The body had not started** (an `Expect` request, no `100` sent, no body byte received or taken): the client was never told to send it, so the connection carries on keep-alive. If the client sends
+  the body anyway its bytes are the next "request" and are refused as one (`400`), which closes; no worse than any client that pipelines garbage.
+* **Otherwise the connection closes once the answer has gone** (as if it had said `Connection: close`, whatever the application's head said, because the server cannot rewrite an answer it was handed). The
+  alternative, reading and discarding the rest, is a decision about someone else's bandwidth that the application can take by taking the pieces and dropping them before it answers; the server does not
+  drain by itself because a 1 GiB `PUT` refused at 100 MB would otherwise cost the server 900 MB of reading to keep one connection. The client may see a reset before it has read the answer if it is still
+  sending when the connection closes: that is a property of closing a TCP connection with unread data, and the lingering close that avoids it belongs to the program that owns the socket.
+* While the answer is streamed (`hold` + `stream`) and the body is still coming, both flow (§12.6, "Out"); if the body then fails, the answer cannot be replaced by a refusal, so the connection is closed.
+
+A refusal the server makes mid-body (§12.4, §12.8) while the application holds the request: the request is over (`body_state` -1, `answer`/`stream` -1), the refusal is queued unless the application had started
+its answer, and the connection ends. The application's ticket is not reusable (§10's generation).
+
+### 12.10 The memory bound per connection
+
+`size` bytes of input buffer, `out` bytes of answer, and 32 words of state (`stride` goes from 16 to 32): `max * (size + out)` and 256 bytes a connection, fixed at `open`/`open_bytes`, as §11.4. A streaming body adds nothing: it *is*
+the input buffer. The `decoded` scratch of the legacy chunk path is not used by a server with `limits` and is allocated as before (a socket server or one without `limits` still needs it).
+
+### 12.11 One implementation for both paths
+
+The socket path and the byte-fed path differ in where bytes cross a boundary (§11.3) and that is all they will differ in:
+
+| | |
+|---|---|
+| classify a head, `Expect`, refuse | `produce`, one function |
+| count a body, run the chunk machine | `ingest`, called by `step` (socket) and `input` (fed) after they have put bytes in the buffer; one function |
+| how much may be read | `readable`, called by `step`, `settle` and `room` |
+| the timers | `sweep_timers`, called by `sweep_idle`'s two callers (`wait`'s `serve_events`, `ready`) |
+| `hold`, `answer`, `deliver_to`, end of request, `body_*`, `proceed` | one function each, on the connection's state |
+
+`step` (socket) reads at most `readable` bytes and calls `ingest` on what it got; `input` (fed) takes at most `readable` and calls `ingest`. The duplication test would refuse a copy of either.
+
+### 12.12 What building found, and what it corrected
+
+*Corrected* marks a sentence above that was changed in place. Each of these was found by a test, and the test is named.
+
+* **`enqueue` could write past the ready queue (a bug in §11's shared code, not in the new).** `answer` ended a held connection's turn with `finish`, which cleared its "queued" flag even when `input` had added an entry for it while it was held, so
+  the next `input` queued it a second time; a caller that feeds and answers without calling `next` between (the new tests do; a socket server's loop never) filled a queue of `max` entries with copies of one connection and the next store trapped. `answer` now keeps the flag.
+  (`test_a_length_body_larger_than_the_buffer_arrives_byte_for_byte`, 3 uploads on a server with `max` 2.)
+* **A request with no body, with `limits`, kept the previous request's head length** (`classify` returned before setting `state[7..10]`), so the connection's next request began at the wrong byte. (`test_requests_pipelined_behind_a_streamed_body_are_served_in_order`.)
+* **A socket server closed a connection whose buffer was "full" of bytes the application had already taken** (`step`'s `st[p] >= size` check ran before the room `body_take` gave back counted). It asks `readable` now, and `reclaim` moves what is left to the front only when a read needs the room.
+  *Corrected:* §12.6 said `body_take` frees the room; it makes it available, and the move happens at the next read. (`uploads_arrive_byte_for_byte_over_sockets...`, the first run.)
+* **`finish` moved a connection's buffer to the front without moving a streaming request's body start with it**, when the application left a streaming request in hand at the end of a round. (`test_a_streaming_request_left_in_hand_when_the_round_ends_keeps_its_body`.)
+* **The body timer ran while a client that had sent `Expect: 100-continue` was waiting for the application's decision, and did not restart when the application said `proceed`.** It does not run then, and restarts. *Corrected:* §12.8 now says so. (`test_a_stalled_body_times_out_but_a_slow_application_does_not`.)
+* **A refusal recorded by a timer or by `end_input` was sent by `next`, but `examples/https_hello`'s loop only moved a connection's answer to its TLS slot when input had arrived for it**, so a `408` sat in the server's output for ever. The loop's sweep pumps a connection that has something waiting (`server.pending`). (`scripts/https_hello_test.py halfbody`.)
+* **`examples/https_hello`'s `/echo` needed its body whole, and a body that arrives in two reads is now handed over streaming** (§12.3 says so; reading the existing `http` and `pipelined` cases, which send chunked bodies to `/echo` in several writes, showed the example would have refused them). The example holds such a request, leaves its body in the server's buffer and answers when the body has all come, or refuses it
+  with a 413 if the buffer fills first (`answer_whole` in `app.cho`): the recipe for an application that wants a bounded body whole. The other way, a server that waits for a body that fits, was considered and not built: it needs a "handed over late" state (the head stays valid while the body arrives) for little gain, since `size` is already the threshold between the two.
+* **`piece` is not clipped to `size`**: a larger one is the same, because the buffer holds no more. *Corrected* in §12.2. The clipping line was equivalent under every test.
+* **The timers' scan is at most every 50 ms**, so a timer fires up to 50 ms after it is due (`test_a_head_has_a_deadline_that_trickling_does_not_extend...` pins it). *Corrected:* §12.8 said "at most every 50 ms" already; the tests are what made the consequence a sentence.
+* **Not built:** a switch that refuses chunk extensions; draining or lingering on an early answer; a per-route `max_body` (the application answers `413` itself); a counter of discarded trailer lines (word 28 is spare).
+* **`packages/http-server/server.cho` is 1,990 lines of the 2,000 allowed**, in `cancho fmt`'s form (`formatting::the_repository_is_formatted` holds it to that). The streaming code is about 640 of them. To fit, the refusal table is one string (`rule`), trailer lines are checked for control bytes but not for `name: value`
+  syntax, and the chunk machine's fixed-byte states share one function (`want`); `std.http.hex_value` is now `pub` so the server does not carry a copy (the duplication check found it). The next addition to this file needs the package split into two modules (`Core` and the loop in one, the streaming in another importing it): a change to how
+  the package is published (its store is flat, and the locks of `examples/api` and `tests/programs` pin it), not to this one.
+* **Found in `examples/https_hello`, not fixed here:** a client that keeps sending bytes after the server has ended its connection makes the server reset a different, healthy connection (reproduced on `main` at #360: a `Connection: close` request, then bytes on the same socket, while another client is served). Its cause is not known; a task to find and fix it was filed. The new cases avoid triggering it (a stalled client stops sending when it is answered `408`).
+
+
+### 12.13 Tests, mutants and measurements
+
+**Without a socket** (`tests/packages/http_server_body_test.cho` and `http_server_body_flow_test.cho`, with their helpers in `body_support.cho`; `cancho test` on both backends through `conformance/http_server_body.rs`): 22 tests.
+
+| test | what it fixes |
+|---|---|
+| a length body larger than the buffer | sizes around the buffer (256) and the piece (64) up to 5,000 bytes, fed 1, 7, 64, 100 and 4,096 bytes at a time and pulled 1, 13 and 64 at a time: every byte, `body_total`, the answer, the connection serves after |
+| a chunked body with extensions and trailers | 4 body sizes x 4 chunk sizes x extension/trailer combinations x 3 feed steps x 2 pull sizes (384 uploads), byte for byte |
+| a request cut at every byte | a length request, a chunked one with an extension and a trailer and a chunked one in one chunk, cut at every point of the request: the same body and one answer, whole or streamed |
+| requests pipelined behind a streamed body | a 700-byte body (length and chunked) then `GET` and `POST`, fed 1 to 4,096 bytes at a time: bodies and answers in order |
+| a request that fits | answered with the same bytes with or without `limits` (five requests, HTTP/1.0 and `Connection: close` among them); a whole chunked body with an extension and a trailer is decoded (a server without `limits` refuses it) with the next request moved down behind it; a whole request held is read from its ticket |
+| `Expect` | `100` sent once and only when the application proceeds; a refusal before the body sends no `100` and keeps the connection (and closes it once the client has started sending, or sent some of the body with the head); a refusal in hand without `hold`; `417` for four kinds of unsupported expectation; the token is case-insensitive |
+| every fault | 18 chunked wires, a length over the maximum, a whole body over it, a head too large and a malformed one, each fed one byte at a time and at once, refused with its status, message and rule, the request over from the instant it is read, the ticket refused before and after the refusal is sent |
+| the chunk machine against a corpus | 50 wires, accepted (with the body they decode to) or refused (with the rule), at two feed steps; the bounds on both sides of the line (extension 256 and 257 bytes, trailers 4,096 and 4,097, a body of exactly 100) |
+| the timers | the head deadline (the boundary millisecond, a trickle, a scan within 50 ms of the last, a keep-alive connection that is not timed, the clock of the answer being taken); the body stall (the boundary, a body that has all arrived, a client told to wait, a full buffer nobody takes, an answer waiting, an answer begun) |
+| back-pressure | a piece not taken stops the reading; the room returns exactly as bytes are taken; an answer waiting stops it however much room there is |
+| answering early | all arrived (kept, the rest dropped, what follows served), part of a length or chunked body (closes), in hand, streamed both ways |
+| the peer's end | mid-body (the request is over, nothing answered, what waits is dropped), an answer on its way is not, in hand |
+| tickets | two uploads at once, stale generations, bad tickets, detach |
+| a streaming request left in hand | the round ends with it unanswered and unheld: its body is where it was |
+| no `limits` | nothing changes: the 413, `Expect` ignored, no `X-Rule`; the new calls refuse |
+| random | 8 seeds: 40 requests (none, length, chunked) split and consumed at random, byte for byte; 8 seeds x 3,000 random operations with hostile fragments and bad tickets must not trap or break a bound |
+
+**With sockets** (`tests/programs/server_upload.cho` and `conformance/http_server_upload.rs`, in `cargo test`): 6 tests that build a server program from the package's source and talk to it over loopback: uploads of a length and chunked body with `100 Continue`, pipelining, keep-alive and four uploads at once; a refusal before the body, every fault by its rule,
+`417`, an early answer; a client that stalls in a head or a body, and the others served; back-pressure (a slow application: the client's writes block, the test asserts under 64 MiB of 256 were taken) and clients that leave; a server that visits connections late, so a fault `wait` found waits through turns in which the client sends more; and a connection that reads while its neighbour's buffer holds untaken bytes.
+
+**Against real clients** (`scripts/https_hello_test.py`, CI's `tls-assurance` job; 18 of 18 on linux-aarch64 in Docker, curl 8.5 on OpenSSL 3.0.13), four new cases over TLS 1.3:
+
+| case | result |
+|---|---|
+| `upload` | `POST /upload` of 0, 1, 2, 16,383 to 65,537 bytes, 1, 16, 128 MiB and **1 GiB**, each with a length and chunked: byte count and SHA-256 equal to what was sent, 2,338 MiB hashed at 142 MiB/s with both ends hashing; the server's RSS 1,944 -> 2,060 KB over all of it; chunks of 1 to 1,000,003 bytes with extensions and trailers; an upload, a request and an upload pipelined in one write |
+| `expect` | the `100` came 44 ms into an upload that was waiting for it; `/upload/refuse` answered `413` with no `100` and the connection served after; `417`; `--max-body` refusing a length by its head and a chunked body while it was sent; `curl -X POST -T file -H 'Expect: 100-continue' --expect100-timeout 10` uploaded 900,000 bytes in 0.06 s, and the same to `/upload/refuse` uploaded **0 bytes** (`%{size_upload}`); `openssl s_client` uploaded 300,000 |
+| `halfbody` | half a head, half a length body, half a chunked body and a head a byte at a time: `408` with the rule at 1.05 to 1.11 s for `--read-timeout 1000`; 27 requests beside them, the slowest 41 ms; a steady upload that took 3 s was not timed out |
+| `mangled` | 1,500 connections each with a mangled upload (flipped bytes, cuts, bad chunk sizes, long extensions and trailers, lengths that lie, `Expect` heads): the server alive after every one, RSS 1,792 -> 2,932 KB, and a good upload still hashes |
+
+macOS (aarch64, curl on SecureTransport so the curl part is skipped, and says so): the same cases, uploads to 128 MiB at 98 MiB/s. CI's x86-64 run (the `tls-assurance` job on #369, GitHub's `ubuntu-latest`, curl on OpenSSL 3.0.13): **18 of 18 cases**; `upload` 2,338 MiB hashed correctly at 124 MiB/s with the server's RSS 4,292 -> 4,420 KB; `expect` waited 43 ms for the upload with its `100`, `curl -T` uploaded 900,000 bytes in 0.02 s and a refused one 0 bytes;
+`halfbody` answered 408 at 1.05 to 1.10 s with 27 requests served beside, the slowest 41 ms; `mangled` RSS 2,140 -> 5,244 KB over 1,500; both mutant runs (232 and the byte-fed 90) as stated; its cost step gave 4.42 microseconds of server CPU a request plain and 18.49 over TLS (a different runner from §11.7's 5.59 and 23.40: the comparison that means something is the alternated one below).
+
+**Mutants.** `scripts/http_server_body_mutants.py` (CI runs it): **232 single-edit mutations of the new code and of the shared lines that now call it, 215 killed and 17 argued equivalent in the script, none surviving.** The first run killed 155 of 230 (12 `old` texts did not match, the rest survived); the third left 22 survivors, 19 of which are argued equivalent in the script and 3 needed tests (the clock that `output` keeps, a ticket asked after the refusal is queued
+and before it is sent, the message of every refusal); between them the tests added for survivors were the timer boundaries, a body that has all arrived or a client told to wait not being timed, `Expect` untouched or touched by bytes that came with the head, a request in hand looked at twice, and the corpus's bare LF where a CR belongs. The mutants are compared as tokens, so `cancho fmt`'s layout does not matter. 9 more are of the lines only the socket path runs (`python3 scripts/http_server_body_mutants.py ... --socket`, by hand: each builds the server program): the first run killed 7 of 9, the two survivors needed a server that visits connections late and a slow
+neighbour, and **9 of 9 are killed**. The byte-fed mode's own 90 (`http_server_bytes_mutants.py`) still give 79 killed and 11 argued equivalent, as §11.5 says.
+
+**Cost.** The socket path with no `limits` is the same: examples/api, `kload`, one core, three 5 s rounds, the CPU a request read from `/proc` (Docker Desktop's Linux VM on an Apple M4 Max with other containers running, so the rates moved by 1.5x between rounds and the CPU is the figure to read): **3.01 and 3.24 microseconds before, 3.10 and 3.17 after.** `https_hello` over TLS (`tload`), which now calls
+`limits` and so classifies every request: before 11.17, 9.16, 11.76 and 9.02 microseconds in four alternated runs (mean 10.3), the same example with the `limits` call taken out 10.52, 10.72, 10.07 and 10.32 (10.4), after 10.17, 9.85, 9.43 and 7.87 (9.3): no difference this machine can see. The memory a connection can make the server hold is as §11.4: `size + out` and 32 words (it was 16), whatever the body.
+Upload throughput is above (142 MiB/s on that VM with SHA-256 at both ends; 98 MiB/s on the Mac).
+
+
+### 12.14 What `cancho-gateway` still needs
+
+What the gateway can build on now, and what it still lacks, in the order it will hit them (§11.8 has the rest, unchanged except where marked):
+
+1. **The proxy loop over a ticket.** `limits`, then for a request `streaming` reports: `hold`, read the head and copy what the upstream needs before `hold` (it lets go of the head), `proceed` when the upstream has accepted (or the route's policy has), and each turn `body_part` -> write to the upstream as far as it takes -> `body_take` what it took. An upstream that takes nothing is a client that is not read: it needs no code. `body_state` 1 and an empty
+   `body_part` is the end; -1 means stop and drop the upstream. A chunked upstream request is framed by the gateway from the pieces (the server discards extensions and trailers). `examples/https_hello/app.cho`'s `feed_uploads` is the loop with a hash where the upstream write goes.
+2. **Per-route bounds.** `max_body` is the server's one number. A route's own is the application's: answer `413` from the head (before any `100`) or after counting. There is no per-route `head_ms` or `body_ms`.
+3. **A request's total deadline** is still the application's (§12.8): `body_ms` stops a client that goes quiet, not one that sends a byte every `body_ms - 1` ms.
+4. **No lingering close, no drain** (§12.9): a request answered while its body is in flight closes the connection once the answer is sent; the client may see a reset before it has read it. A gateway that wants to keep the connection after refusing a body in flight takes the pieces and drops them before answering, up to its own bound.
+5. **No readiness list.** The application asks each ticket it holds (`body_state`/`body_part`) in the loop that already gives streams their room; with thousands of idle uploads that is thousands of calls a turn, each a few loads. A "tickets with news" list like `foreign` would be the change; nothing has asked.
+6. **Chunked responses, the peer's address, upstream connections in the same loop, `Upgrade`, ALPN, more than 1,024 connections, the second set of effect names**: §11.8's items 2, 3, 4, 5, 7, 8 and 9, unchanged. `packages/http-request` is being made non-blocking by another change.
+7. **`packages/http-server/server.cho` has 10 lines left** (§12.12). The next thing added to it splits the package.
+8. **`examples/https_hello` has a bug that predates this change** (a client that keeps sending after its connection was ended resets another connection, §12.12) which a gateway on the same loop would inherit: filed.
+

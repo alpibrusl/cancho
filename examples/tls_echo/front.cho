@@ -123,8 +123,19 @@ pub fn c_addr_rate() -> [] int {
     return 7;
 }
 
-pub fn cfg_len() -> [] int {
+// `--read-timeout` (ms): how long a client may take to send a request's head, and the longest it may leave a body without sending more
+// (`http-server.md` §12.8). `--max-body` (MiB): the most body a request may have. Only the programs that serve HTTP read them
+// (`https_hello`); `tls_echo` accepts the options and ignores them.
+pub fn c_read_timeout() -> [] int {
     return 8;
+}
+
+pub fn c_max_body() -> [] int {
+    return 9;
+}
+
+pub fn cfg_len() -> [] int {
+    return 10;
 }
 
 // The room for an identity's subdirectory name, in `subs`.
@@ -915,6 +926,10 @@ pub fn parse_flags[&g, &c, &u, &n, &a, &f](g: &g Args, cfg: &!c [int], subs: &!u
                     bad = bad || !set_number(cfg, c_hs_timeout(), text, 1, 3600000);
                 } else if flags.named(name, "idle") {
                     bad = bad || !set_number(cfg, c_idle(), text, 1, 86400000);
+                } else if flags.named(name, "read-timeout") {
+                    bad = bad || !set_number(cfg, c_read_timeout(), text, 1, 3600000);
+                } else if flags.named(name, "max-body") {
+                    bad = bad || !set_number(cfg, c_max_body(), text, 1, 1048576);
                 } else {
                     bad = true;
                 }

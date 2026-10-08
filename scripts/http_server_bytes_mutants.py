@@ -21,6 +21,9 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from http_server_body_mutants import mutate, tokens  # noqa: E402 -- the source is compared as tokens, so `cancho fmt`'s layout does not matter
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SERVER = os.path.join(ROOT, "packages/http-server/server.cho")
 TESTS = os.path.join(ROOT, "tests/packages/http_server_bytes_test.cho")
@@ -32,12 +35,12 @@ MUTANTS = [
     ("open_bytes: an output room under 512 accepted", "    if size < 1 || out < least_output() || max < 1 {", "    if size < 1 || out < 0 || max < 1 {"),
     ("open_bytes: no connections accepted", "    if size < 1 || out < least_output() || max < 1 {", "    if size < 1 || out < least_output() || max < 0 {"),
     ("open_bytes: the limit is the larger of the two", "            if max < limit {\n                limit = max;", "            if max > limit {\n                limit = max;"),
-    ("open_bytes: the output room is the socket server's", "fed: 1, osize: out, nlive: 0, scan: 0 };", "fed: 1, osize: 65536, nlive: 0, scan: 0 };"),
-    ("open_bytes: not marked byte-fed", "fed: 1, osize: out, nlive: 0, scan: 0 };", "fed: 0, osize: out, nlive: 0, scan: 0 };"),
+    ("open_bytes: the output room is the socket server's", 'fed: 1, osize: out,', 'fed: 1, osize: 65536,'),
+    ('open_bytes: not marked byte-fed', 'fed: 1, osize: out,', 'fed: 0, osize: out,'),
     # ---- attach ----
     ("attach: one connection too many", "    if srv.core.fed != 1 || srv.core.nlive >= srv.core.limit {", "    if srv.core.fed != 1 || srv.core.nlive > srv.core.limit {"),
     ("attach: an occupied slot taken", "    while tried < srv.core.limit && st[stride() * k + 4] != 0 {", "    while tried < srv.core.limit && st[stride() * k + 4] == 7 {"),
-    ("attach: the slot is not initialised", "    init_slot(srv.core, k, now_ms / 1000);\n    srv.core.scan", "    srv.core.scan"),
+    ('attach: the slot is not initialised', 'init_slot(srv.core, k, now_ms / 1000);', ''),
     ("attach: the scan does not move on", "    srv.core.scan = (k + 1) % srv.core.limit;\n    srv.core.nlive = srv.core.nlive + 1;", "    srv.core.scan = k;\n    srv.core.nlive = srv.core.nlive + 1;"),
     ("attach: the count not kept", "    srv.core.nlive = srv.core.nlive + 1;\n    return k;", "    return k;"),
     ("attach: the time in milliseconds taken for seconds", "    init_slot(srv.core, k, now_ms / 1000);", "    init_slot(srv.core, k, now_ms);"),
@@ -49,19 +52,19 @@ MUTANTS = [
     ("room: answers waiting do not stop input", "    if st[p + 2] > 0 || st[p + 3] == 1 || st[p + 15] == 1 {", "    if st[p + 3] == 1 || st[p + 15] == 1 {"),
     ("room: a closing connection takes input", "    if st[p + 2] > 0 || st[p + 3] == 1 || st[p + 15] == 1 {", "    if st[p + 2] > 0 || st[p + 15] == 1 {"),
     ("room: an ended connection takes input", "    if st[p + 2] > 0 || st[p + 3] == 1 || st[p + 15] == 1 {", "    if st[p + 2] > 0 || st[p + 3] == 1 {"),
-    ("room: the whole buffer, whatever it holds", "    return srv.core.size - st[p];\n}\n\n// Bytes the peer sent", "    return srv.core.size;\n}\n\n// Bytes the peer sent"),
+    ('room: the whole buffer, whatever it holds', 'return readable(srv.core, k);', 'return srv.core.size;'),
     ("input: more than was given", "    if len(data) < n {\n        n = len(data);\n    }\n    if n > 0 {\n        let st = contents(srv.core.state);\n        let bf", "    if n > 0 {\n        let st = contents(srv.core.state);\n        let bf"),
-    ("input: the connection not queued", "        st[p + 1] = now_ms / 1000;\n        enqueue(srv.core, k);\n    }\n    return n;", "        st[p + 1] = now_ms / 1000;\n    }\n    return n;"),
+    ('input: the connection not queued', 'ingest(srv.core, k, st[p] - n); enqueue(srv.core, k); } return n;', 'ingest(srv.core, k, st[p] - n); } return n;'),
     ("input: bytes written over the buffered ones", "        let at = k * srv.core.size + st[p];\n        var i = 0;\n        while i < n {\n            bf[at + i] = data[i];", "        let at = k * srv.core.size;\n        var i = 0;\n        while i < n {\n            bf[at + i] = data[i];"),
     ("input: the buffered count not advanced", "        st[p] = st[p] + n;\n        st[p + 1] = now_ms / 1000;", "        st[p + 1] = now_ms / 1000;"),
     ("input: not counted as progress", "        st[p] = st[p] + n;\n        st[p + 1] = now_ms / 1000;", "        st[p] = st[p] + n;"),
     ("input: the time in milliseconds taken for seconds", "        st[p] = st[p] + n;\n        st[p + 1] = now_ms / 1000;", "        st[p] = st[p] + n;\n        st[p + 1] = now_ms;"),
-    ("input: a dead connection answers 0, not -1", "    if !live_slot(srv.core, k) {\n        return 0 - 1;\n    }\n    var n = room(srv, k);", "    if !live_slot(srv.core, k) {\n        return 0;\n    }\n    var n = room(srv, k);"),
+    ('input: a dead connection answers 0, not -1', 'if !live_slot(srv.core, k) { return 0 - 1; } srv.core.now = now_ms;', 'if !live_slot(srv.core, k) { return 0; } srv.core.now = now_ms;'),
     ("live_slot: one slot past the end", "    if core.fed != 1 || k < 0 || k >= core.limit {\n        return false;\n    }\n    return contents(core.state)", "    if core.fed != 1 || k < 0 || k > core.limit {\n        return false;\n    }\n    return contents(core.state)"),
     ("live_slot: an ended connection is live", "    return contents(core.state)[stride() * k + 4] == 1;\n}\n\n// A new connection", "    return contents(core.state)[stride() * k + 4] != 0;\n}\n\n// A new connection"),
     # ---- the peer's end ----
-    ("end_input: the end not recorded", "    contents(srv.core.state)[stride() * k + 15] = 1;\n    enqueue(srv.core, k);", "    enqueue(srv.core, k);"),
-    ("end_input: not queued", "    contents(srv.core.state)[stride() * k + 15] = 1;\n    enqueue(srv.core, k);", "    contents(srv.core.state)[stride() * k + 15] = 1;"),
+    ('end_input: the end not recorded', 'st[stride() * k + 15] = 1;', ''),
+    ('end_input: not queued', 'st[stride() * k + 25] = 10; } enqueue(srv.core, k); return 0;', 'st[stride() * k + 25] = 10; } return 0;'),
     ("advance: an ended connection with an answer waiting closes at once", "                if st[q + 15] == 1 && st[q + 2] == 0 && st[q + 13] == 0 {", "                if st[q + 15] == 1 && st[q + 13] == 0 {"),
     ("advance: an ended connection with a held request closes", "                if st[q + 15] == 1 && st[q + 2] == 0 && st[q + 13] == 0 {", "                if st[q + 15] == 1 && st[q + 2] == 0 {"),
     ("advance: an ended connection never closes", "                if st[q + 15] == 1 && st[q + 2] == 0 && st[q + 13] == 0 {", "                if st[q + 15] == 7 && st[q + 2] == 0 && st[q + 13] == 0 {"),
@@ -87,19 +90,19 @@ MUTANTS = [
     ("shut: the slot freed, not ended", "        st[stride() * k + 2] = 0;\n        st[stride() * k + 4] = 2;", "        st[stride() * k + 2] = 0;\n        st[stride() * k + 4] = 0;"),
     ("shut: what was waiting to be sent kept", "        st[stride() * k + 2] = 0;\n        st[stride() * k + 4] = 2;", "        st[stride() * k + 4] = 2;"),
     ("shut: a held request stays held", "        st[stride() * k + 12] = 0;\n        st[stride() * k + 13] = 0;\n        return 0;\n    }\n    conns.close", "        st[stride() * k + 12] = 0;\n        return 0;\n    }\n    conns.close"),
-    ("detach: the queue not cleaned", "    if st[p + 12] == 1 {\n        // Out of the queue", "    if st[p + 12] == 7 {\n        // Out of the queue"),
+    ('detach: the queue not cleaned', 'if st[p + 12] == 1 { let queue = contents(srv.core.ready);', 'if st[p + 12] == 7 { let queue = contents(srv.core.ready);'),
     ("detach: the request in hand kept", "    if srv.core.cur == k {\n        srv.core.cur = 0 - 1;\n    }", "    if srv.core.cur == 99 {\n        srv.core.cur = 0 - 1;\n    }"),
-    ("detach: the count not kept", "    st[p + 13] = 0;\n    srv.core.nlive = srv.core.nlive - 1;\n    return 0;", "    st[p + 13] = 0;\n    return 0;"),
+    ('detach: the count not kept', 'clear_body(srv.core, k); srv.core.nlive = srv.core.nlive - 1;', 'clear_body(srv.core, k);'),
     ("detach: a slot not in use detached again", "    if st[p + 4] == 0 {\n        return 0 - 1;\n    }\n    if srv.core.cur == k {", "    if srv.core.cur == k {"),
     ("detach: buffered input kept for the next connection", "    st[p] = 0;\n    st[p + 2] = 0;\n    st[p + 4] = 0;\n    st[p + 12] = 0;", "    st[p + 2] = 0;\n    st[p + 4] = 0;\n    st[p + 12] = 0;"),
-    ("detach: the slot not freed", "    st[p + 2] = 0;\n    st[p + 4] = 0;\n    st[p + 12] = 0;\n    st[p + 13] = 0;\n    srv.core.nlive", "    st[p + 2] = 0;\n    st[p + 12] = 0;\n    st[p + 13] = 0;\n    srv.core.nlive"),
+    ('detach: the slot not freed', 'st[p + 2] = 0; st[p + 4] = 0; st[p + 12] = 0;', 'st[p + 2] = 0; st[p + 12] = 0;'),
     ("detach: the cursor not moved back past a removed entry", "            } else if from < srv.core.cursor {\n                srv.core.cursor = srv.core.cursor - 1;\n            }", "            } else if from < 0 {\n                srv.core.cursor = srv.core.cursor - 1;\n            }"),
-    ("detach: a ticket outlives the connection", "    st[p + 13] = 0;\n    srv.core.nlive = srv.core.nlive - 1;", "    srv.core.nlive = srv.core.nlive - 1;"),
+    ('detach: a ticket outlives the connection', 'st[p + 13] = 0; clear_body(srv.core, k);', 'clear_body(srv.core, k);'),
     # ---- time ----
     ("ready: no sweep", "    begin_round(srv.tab, srv.core);\n    sweep_idle(srv.tab, srv.core, now_ms / 1000);", "    begin_round(srv.tab, srv.core);"),
-    ("ready: the time in milliseconds taken for seconds", "    sweep_idle(srv.tab, srv.core, now_ms / 1000);\n    return srv.core.nready", "    sweep_idle(srv.tab, srv.core, now_ms);\n    return srv.core.nready"),
+    ('ready: the time in milliseconds taken for seconds', 'sweep_idle(srv.tab, srv.core, now_ms / 1000); sweep_timers(', 'sweep_idle(srv.tab, srv.core, now_ms); sweep_timers('),
     ("ready: begin_round not run", "    begin_round(srv.tab, srv.core);\n    sweep_idle", "    if srv.core.fed == 7 {\n        begin_round(srv.tab, srv.core);\n    }\n    sweep_idle"),
-    ("sweep_idle: a byte-fed server not swept", "        var count = core.limit;\n        if core.fed == 0 {", "        var count = 0;\n        if core.fed == 0 {"),
+    ('sweep_idle: a byte-fed server not swept', 'core.last_sweep = now; var count = core.limit;', 'core.last_sweep = now; var count = 0;'),
     ("sweep_idle: closes at the limit, not past it", "&& now - st[p + 1] > core.idle {", "&& now - st[p + 1] >= core.idle {"),
     ("sweep_idle: closes a second late", "&& now - st[p + 1] > core.idle {", "&& now - st[p + 1] > core.idle + 1 {"),
     ("sweep_idle: a held stream nobody takes is spared", "            if st[p + 4] == 1 && (st[p + 13] == 0 || st[p + 2] > 0) && now", "            if st[p + 4] == 1 && st[p + 13] == 0 && now"),
@@ -114,17 +117,17 @@ MUTANTS = [
     ("emit: a byte-fed server writes to a socket", "    if pending == 0 && fed == 0 {", "    if pending == 0 {"),
     ("emit: an answer exactly filling the room refused", "    if pending + len(data) - at > len(pend) {", "    if pending + len(data) - at >= len(pend) {"),
     ("emit: an answer one byte over the room accepted", "    if pending + len(data) - at > len(pend) {", "    if pending + len(data) - at > len(pend) + 1 {"),
-    ("deliver_to: the output room is the socket server's", "    let osize = core.osize;\n    st[p + 2] = emit(", "    let osize = output_size();\n    st[p + 2] = emit("),
+    ("deliver_to: the output room is the socket server's", 'let osize = core.osize;', 'let osize = output_size();'),
     ("produce: a refusal queued in the socket server's room", "pd[k * core.osize..(k + 1) * core.osize], st[p + 2]);\n        }\n        buffer.drop(heap, o);", "pd[k * output_size()..(k + 1) * output_size()], st[p + 2]);\n        }\n        buffer.drop(heap, o);"),
     ("connections: the socket table's count", "    if srv.core.fed == 1 {\n        return srv.core.nlive;\n    }", "    if srv.core.fed == 7 {\n        return srv.core.nlive;\n    }"),
     ("stream: a socket server's connection streamed to", "    if srv.core.fed != 1 || ticket < 0 {\n        return 0 - 1;\n    }\n    let k = ticket % ticket_span();\n    if k >= srv.core.limit {", "    if ticket < 0 {\n        return 0 - 1;\n    }\n    let k = ticket % ticket_span();\n    if k >= srv.core.limit {"),
-    ("stream: a ticket of another connection in the slot", "    if st[p + 4] != 1 || st[p + 13] != 1 || st[p + 14] != ticket / ticket_span() {\n        return 0 - 1;\n    }\n    var n = srv.core.osize", "    if st[p + 4] != 1 || st[p + 13] != 1 {\n        return 0 - 1;\n    }\n    var n = srv.core.osize"),
-    ("stream: a request that is not held", "    if st[p + 4] != 1 || st[p + 13] != 1 || st[p + 14] != ticket / ticket_span() {\n        return 0 - 1;\n    }\n    var n = srv.core.osize", "    if st[p + 4] != 1 || st[p + 14] != ticket / ticket_span() {\n        return 0 - 1;\n    }\n    var n = srv.core.osize"),
-    ("stream: a connection that has ended", "    if st[p + 4] != 1 || st[p + 13] != 1 || st[p + 14] != ticket / ticket_span() {\n        return 0 - 1;\n    }\n    var n = srv.core.osize", "    if st[p + 4] == 0 || st[p + 13] != 1 || st[p + 14] != ticket / ticket_span() {\n        return 0 - 1;\n    }\n    var n = srv.core.osize"),
+    ('stream: a ticket of another connection in the slot', 'st[p + 13] != 1 || st[p + 14] != ticket / ticket_span() || st[p + 25] != 0 { return 0 - 1; } var n = srv.core.osize', 'st[p + 13] != 1 || st[p + 25] != 0 { return 0 - 1; } var n = srv.core.osize'),
+    ('stream: a request that is not held', 'st[p + 4] != 1 || st[p + 13] != 1 || st[p + 14] != ticket / ticket_span() || st[p + 25] != 0 { return 0 - 1; } var n = srv.core.osize', 'st[p + 4] != 1 || st[p + 14] != ticket / ticket_span() || st[p + 25] != 0 { return 0 - 1; } var n = srv.core.osize'),
+    ('stream: a connection that has ended', 'st[p + 4] != 1 || st[p + 13] != 1 || st[p + 14] != ticket / ticket_span() || st[p + 25] != 0 { return 0 - 1; } var n = srv.core.osize', 'st[p + 4] == 0 || st[p + 13] != 1 || st[p + 14] != ticket / ticket_span() || st[p + 25] != 0 { return 0 - 1; } var n = srv.core.osize'),
     ("stream: the room not looked at", "    var n = srv.core.osize - st[p + 2];\n    if len(bytes) < n {\n        n = len(bytes);\n    }\n    let pd", "    var n = len(bytes);\n    let pd"),
     ("stream: more than was given", "    var n = srv.core.osize - st[p + 2];\n    if len(bytes) < n {\n        n = len(bytes);\n    }\n    let pd", "    var n = srv.core.osize - st[p + 2];\n    let pd"),
     ("stream: bytes written over those waiting", "    let at = k * srv.core.osize + st[p + 2];\n    var i = 0;\n    while i < n {\n        pd[at + i] = bytes[i];", "    let at = k * srv.core.osize;\n    var i = 0;\n    while i < n {\n        pd[at + i] = bytes[i];"),
-    ("stream: the count waiting not raised", "    st[p + 2] = st[p + 2] + n;\n    return n;", "    return n;"),
+    ('stream: the count waiting not raised', 'st[p + 2] = st[p + 2] + n; if n > 0 {', 'if n > 0 {'),
     ("stream: a slot past the table", "    let k = ticket % ticket_span();\n    if k >= srv.core.limit {\n        return 0 - 1;\n    }\n    let st = contents(srv.core.state);\n    let p = stride() * k;\n    if st[p + 4] != 1 || st[p + 13] != 1 || st[p + 14]", "    let k = ticket % ticket_span();\n    let st = contents(srv.core.state);\n    let p = stride() * k;\n    if st[p + 4] != 1 || st[p + 13] != 1 || st[p + 14]"),
 ]
 
@@ -172,9 +175,10 @@ def run(exe, server_text, name):
 
 def judge(job):
     exe, name, old, new, source = job
-    if source.count(old) != 1:
-        return name, "BAD", f"`old` occurs {source.count(old)} times"
-    r = run(exe, source.replace(old, new), name)
+    text, n = mutate(source, old, new)
+    if text is None:
+        return name, "BAD", f"`old` occurs {n} times"
+    r = run(exe, text, name)
     if r.returncode == 4 or "FAILED" in r.stdout:
         return name, "killed", ""
     if r.returncode == 0:
@@ -198,8 +202,8 @@ def main():
         k = args.index("--jobs")
         jobs = int(args[k + 1])
         del args[k:k + 2]
-    source = open(SERVER).read()
-    base = run(exe, source, "unmutated")
+    source = tokens(open(SERVER).read())
+    base = run(exe, " ".join(source), "unmutated")
     if base.returncode != 0:
         print("the unmutated source does not pass:\n" + base.stdout + base.stderr)
         return 1

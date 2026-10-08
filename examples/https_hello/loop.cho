@@ -279,6 +279,10 @@ fn sweep[&i, &e, &t, &p, &s, &q, &n, &a, &r, &v, &x, &c](io: &!i Io, engine: &!e
             front.end_slot(io, engine, tab, st, slot, front.r_handshake_timeout(), now);
         } else if phase == front.phase_established() && now - st[b + front.s_active()] > cfg[front.c_idle()] {
             close_with(io, engine, tab, poller, st, pend, inq, app, rcv, srv, ap, slot, front.r_idle(), now);
+        } else if phase == front.phase_established() && server.pending(srv, st[b + front.s_hslot()] - 1) > 0 {
+            // The server has something to send that no input of the client's brought: a refusal its timers made (`timeout.head`,
+            // `timeout.body`, `docs/http-server.md` §12.8). It is moved to the engine, and if the connection ends with it, closed.
+            pump(io, engine, tab, poller, st, pend, inq, app, rcv, srv, ap, slot, now);
         } else if phase == front.phase_established() && server.closing(srv, st[b + front.s_hslot()] - 1) {
             // The server ended it (its own idle limit, an answer it could not hold).
             close_with(io, engine, tab, poller, st, pend, inq, app, rcv, srv, ap, slot, front.r_idle(), now);
@@ -347,6 +351,11 @@ pub fn run[&h, &i, &l, &k, &e, &d, &w, &u, &n, &c](heap: &!h Heap, io: &!i Io, l
                         poller_add_listener(pw, listener, 0);
                         poller_add_signals(pw, watch, sig_token);
                     }
+                    // Bodies stream (`docs/http-server.md` §12): up to `--max-body` MiB, and `--read-timeout` for a head or for a body that stalls.
+                    var limited = 0 - 1;
+                    borrow mut srv as &!sv in {
+                        limited = server.limits(sv, cfg[front.c_max_body()] * 1048576, request_cap(), cfg[front.c_read_timeout()], cfg[front.c_read_timeout()]);
+                    }
                     var table = conns.empty(heap, max);
                     let router = hello_app.routes(heap);
                     let stb = box_slice(heap, front.stride() * max, 0);
@@ -358,7 +367,7 @@ pub fn run[&h, &i, &l, &k, &e, &d, &w, &u, &n, &c](heap: &!h Heap, io: &!i Io, l
                         most = route.most_params(mr);
                     }
                     let prb = box_slice(heap, 2 * most + 2, 0);
-                    let bgb = box_slice(heap, 1, 0);
+                    let bgb = box_slice(heap, 3, 0);
                     let pendb = box_slice(heap, front.pend_cap() * max, byte_of(0));
                     let inqb = box_slice(heap, front.inq_cap() * max, byte_of(0));
                     let appb = box_slice(heap, front.app_cap() * max, byte_of(0));
@@ -447,6 +456,7 @@ pub fn run[&h, &i, &l, &k, &e, &d, &w, &u, &n, &c](heap: &!h Heap, io: &!i Io, l
                                                                             while moved && round < rounds() {
                                                                                 var answered = 0;
                                                                                 var given = 0;
+                                                                                var taken = 0;
                                                                                 var pumped = 0;
                                                                                 borrow mut srv as &!sv in {
                                                                                     server.ready(sv, now);
@@ -454,13 +464,14 @@ pub fn run[&h, &i, &l, &k, &e, &d, &w, &u, &n, &c](heap: &!h Heap, io: &!i Io, l
                                                                                     scratch = spare;
                                                                                     answered = count;
                                                                                     given = hello_app.feed_streams(sv, ap, contents(cw));
+                                                                                    taken = hello_app.feed_uploads(heap, sv, ap);
                                                                                     borrow mut table as &!tw in {
                                                                                         borrow mut poll as &!pw in {
                                                                                             pumped = flush_touched(io, engine, tw, pw, st, contents(pdw), contents(iw), contents(aw), contents(vw), sv, ap, max, now);
                                                                                         }
                                                                                     }
                                                                                 }
-                                                                                moved = answered > 0 || given > 0 || pumped > 0;
+                                                                                moved = answered > 0 || given > 0 || taken > 0 || pumped > 0;
                                                                                 round = round + 1;
                                                                             }
                                                                             busy = moved;
