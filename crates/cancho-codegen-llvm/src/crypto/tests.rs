@@ -39,8 +39,7 @@ fn the_keystream_tail_is_wiped_with_volatile_stores() {
 fn each_intrinsic_is_declared_once_and_each_instruction_has_its_features() {
     for triple in triples() {
         let text = definitions(&triple, ALL_CALLS);
-        let mut declared: Vec<&str> =
-            text.lines().filter(|l| l.starts_with("declare ")).collect();
+        let mut declared: Vec<&str> = text.lines().filter(|l| l.starts_with("declare ")).collect();
         let total = declared.len();
         declared.sort_unstable();
         declared.dedup();

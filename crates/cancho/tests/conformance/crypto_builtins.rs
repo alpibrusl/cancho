@@ -247,14 +247,17 @@ fn the_hardware_builtins_agree_with_fips_nist_and_the_references_on_llvm() {
         lines.push(format!("C {nr} {} {} {counter} {}", hex(&rk), hex(&nonce), field(&data)));
         want.push(field(&ctr(&rk, nr, &nonce, counter, &data, &s)));
     }
-    // The powers of H: entry k is H^(k+1) with its 16 bytes reversed.
+    // The powers of H: entry k is H^(k+1) times x^-1 (shifted left by one, and
+    // 0xC2000...01 xored in if a bit left the top), as a little-endian integer.
     for _ in 0..50 {
         let h = rng.bytes(16);
         let hh = u128::from_be_bytes(h.clone().try_into().unwrap());
         let mut power = hh;
         let mut table = Vec::new();
         for _ in 0..8 {
-            table.extend(power.to_le_bytes());
+            let twisted = (power << 1)
+                ^ if power >> 127 == 1 { 0xC200_0000_0000_0000_0000_0000_0000_0001 } else { 0 };
+            table.extend(twisted.to_le_bytes());
             power = gf_mul(power, hh);
         }
         lines.push(format!("P {}", hex(&h)));

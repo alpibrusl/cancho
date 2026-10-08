@@ -76,42 +76,34 @@ fn load_block(g: &mut Gen, ptr: &str) -> String {
 pub(super) fn core(isa: Isa) -> String {
     let f = isa.features;
     let mut out = String::new();
-    // The shift by one, the two folds.
+    // The reduction of the 256-bit product `(hi + mid >> 64 : lo + mid << 64)`, by shifts of 64-bit lanes only
+    // (the sequence of the Linux kernel's `ghash-clmulni-intel`, checked in `scripts/ghash_reflected_model.py`):
+    // a first phase that folds the low half's lanes into the next lane, a second that folds what it made.
     let _ = write!(
         out,
         "define internal {V} @cancho_gh_reduce({V} %lo, {V} %mid, {V} %hi) alwaysinline \"target-features\"=\"{f}\" {{\n\
 entry:\n\
   %midl = shufflevector {V} %mid, {V} zeroinitializer, <2 x i32> <i32 2, i32 0>\n\
   %midh = shufflevector {V} %mid, {V} zeroinitializer, <2 x i32> <i32 1, i32 2>\n\
-  %pl = xor {V} %lo, %midl\n\
-  %ph = xor {V} %hi, %midh\n\
-  %plo = bitcast {V} %pl to i128\n\
-  %phi = bitcast {V} %ph to i128\n\
-  %hs = shl i128 %phi, 1\n\
-  %lc = lshr i128 %plo, 127\n\
-  %high = or i128 %hs, %lc\n\
-  %low = shl i128 %plo, 1\n\
-  %a1 = lshr i128 %low, 1\n\
-  %a2 = lshr i128 %low, 2\n\
-  %a7 = lshr i128 %low, 7\n\
-  %th0 = xor i128 %low, %a1\n\
-  %th1 = xor i128 %a2, %a7\n\
-  %th = xor i128 %th0, %th1\n\
-  %b1 = shl i128 %low, 127\n\
-  %b2 = shl i128 %low, 126\n\
-  %b7 = shl i128 %low, 121\n\
-  %tl0 = xor i128 %b1, %b2\n\
-  %tl = xor i128 %tl0, %b7\n\
-  %c1 = lshr i128 %tl, 1\n\
-  %c2 = lshr i128 %tl, 2\n\
-  %c7 = lshr i128 %tl, 7\n\
-  %u0 = xor i128 %tl, %c1\n\
-  %u1 = xor i128 %c2, %c7\n\
-  %u = xor i128 %u0, %u1\n\
-  %r0 = xor i128 %high, %th\n\
-  %r = xor i128 %r0, %u\n\
-  %rv = bitcast i128 %r to {V}\n\
-  ret {V} %rv\n\
+  %data = xor {V} %lo, %midl\n\
+  %top = xor {V} %hi, %midh\n\
+  %a1 = shl {V} %data, <i64 1, i64 1>\n\
+  %a2 = xor {V} %a1, %data\n\
+  %a3 = shl {V} %a2, <i64 5, i64 5>\n\
+  %a4 = xor {V} %a3, %data\n\
+  %t3 = shl {V} %a4, <i64 57, i64 57>\n\
+  %t2 = shufflevector {V} %t3, {V} zeroinitializer, <2 x i32> <i32 2, i32 0>\n\
+  %t3h = shufflevector {V} %t3, {V} zeroinitializer, <2 x i32> <i32 1, i32 2>\n\
+  %data2 = xor {V} %data, %t2\n\
+  %top2 = xor {V} %top, %t3h\n\
+  %b1 = lshr {V} %data2, <i64 5, i64 5>\n\
+  %b2 = xor {V} %b1, %data2\n\
+  %b3 = lshr {V} %b2, <i64 1, i64 1>\n\
+  %b4 = xor {V} %b3, %data2\n\
+  %b5 = lshr {V} %b4, <i64 1, i64 1>\n\
+  %r0 = xor {V} %top2, %b5\n\
+  %r = xor {V} %r0, %data2\n\
+  ret {V} %r\n\
 }}\n"
     );
     // y' = (y + x) * H, for a block already reflected: `@cancho_gh_mul1`.
@@ -233,20 +225,36 @@ j{n}:\n\
     g
 }
 
-/// `@cancho_ghash_powers(ptr h, ptr table)`: H^1 to H^8, reflected, one
-/// 16-byte entry each.
+/// `v` times x^-1 modulo the GCM polynomial, in the reflected order: a shift left by one, and the constant
+/// `0xC2000000000000000000000000000001` (x^127 + x^6 + x + 1, x^-1 itself) when the bit that left was set.
+fn twist(g: &mut Gen, v: &str) -> String {
+    let b = g.op(&format!("bitcast {V} {v} to i128"));
+    let carry = g.op(&format!("lshr i128 {b}, 127"));
+    let mask = g.op(&format!("sub i128 0, {carry}"));
+    let fold = g.op(&format!("and i128 {mask}, 257870231182273679343338569694386847745"));
+    let shifted = g.op(&format!("shl i128 {b}, 1"));
+    let r = g.op(&format!("xor i128 {shifted}, {fold}"));
+    g.op(&format!("bitcast i128 {r} to {V}"))
+}
+
+/// `@cancho_ghash_powers(ptr h, ptr table)`: the powers H^1 to H^8, each times x^-1 (`twist`), one 16-byte entry
+/// each. A product of two blocks, one of them twisted, comes out of `@cancho_gh_reduce` already aligned, so the
+/// products need no shift (`docs/gcm-wide.md` §3.2). The powers themselves are made with the same products: H^(k+1) is
+/// H^k times the twisted H.
 pub(super) fn powers(isa: Isa) -> String {
     let f = isa.features;
     let mut g = Gen::new();
     let h = load_block(&mut g, "%h");
-    g.line(&format!("store {V} {h}, ptr %table, align 1"));
-    let mut prev = h.clone();
+    let first = twist(&mut g, &h);
+    g.line(&format!("store {V} {first}, ptr %table, align 1"));
+    let mut power = h.clone();
     for k in 1..8 {
-        let s = accumulate(isa, &mut g, None, &prev, &h);
-        prev =
+        let s = accumulate(isa, &mut g, None, &power, &first);
+        power =
             g.op(&format!("call {V} @cancho_gh_reduce({V} {}, {V} {}, {V} {})", s.lo, s.mid, s.hi));
+        let t = twist(&mut g, &power);
         let p = g.op(&format!("getelementptr i8, ptr %table, i64 {}", 16 * k));
-        g.line(&format!("store {V} {prev}, ptr {p}, align 1"));
+        g.line(&format!("store {V} {t}, ptr {p}, align 1"));
     }
     format!(
         "define internal void @cancho_ghash_powers(ptr %h, ptr %table) noinline \"target-features\"=\"{f}\" {{\nentry:\n{}  ret void\n}}\n",
