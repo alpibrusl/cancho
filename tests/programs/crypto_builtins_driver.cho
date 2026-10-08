@@ -8,15 +8,16 @@ edition 7;
 //     A <rounds> <keys> <block>               aes_encrypt_block: the block out
 //     C <rounds> <keys> <nonce> <counter> <data>
 //                                             aes_ctr32: data XOR keystream
+//     c, d <as C>                             an output one byte too long, or
+//                                             too short: a trap
 //     P <h>                                   ghash_powers: the 128-byte table
 //     T <rounds> <keys> <h> <nonce> <aad> <text>
 //                                             gcm_tag: the tag (the table is
 //                                             ghash_powers(h)'s)
 //     D <rounds> <keys> <h> <nonce> <aad> <text> <tag>
 //                                             gcm_tag_diff: 0 or 1
-//     X <rounds> <keys> <h> <nonce> <aad> <text> <tag>
-//                                             the same traps' cases, with the
-//                                             table one byte short
+//     X <as D>                                the same with a table one byte
+//                                             short: a trap
 //
 // and one line out per case. All but `H` are only sent when `H` said 1.
 import std.buffer;
@@ -131,7 +132,7 @@ fn one[&i, &s](io: &!i Io, s: &s [byte], at: int) -> [io_write] int {
             let out = alloc_slice[r](16, byte_of(0));
             aes_encrypt_block(keys, rounds, block, out);
             print_hex(io, out);
-        } else if op == 67 {
+        } else if op == 67 || op == 99 || op == 100 {
             let rounds = decimal(s, starts[0], ends[0]);
             let keys = alloc_slice[r](hex_len(s, starts[1], ends[1]), byte_of(0));
             hex_field(s, starts[1], ends[1], keys);
@@ -140,7 +141,15 @@ fn one[&i, &s](io: &!i Io, s: &s [byte], at: int) -> [io_write] int {
             let counter = decimal(s, starts[3], ends[3]);
             let data = alloc_slice[r](hex_len(s, starts[4], ends[4]), byte_of(0));
             hex_field(s, starts[4], ends[4], data);
-            let out = alloc_slice[r](len(data), byte_of(0));
+            // `c` and `d` give `out` one byte too many, or too few.
+            var out_len = len(data);
+            if op == 99 {
+                out_len = out_len + 1;
+            }
+            if op == 100 {
+                out_len = out_len - 1;
+            }
+            let out = alloc_slice[r](out_len, byte_of(0));
             aes_ctr32(keys, rounds, nonce, counter, data, out);
             if len(out) == 0 {
                 io.write_all(io, "-");

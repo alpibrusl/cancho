@@ -44,17 +44,20 @@ MUTANTS = [
     ("gcm", "the associated data and ciphertext hashed in the wrong order", "    ghash(w, aad);\n    ghash(w, ciphertext);", "    ghash(w, ciphertext);\n    ghash(w, aad);"),
     ("gcm", "the tag masked with counter 2, not J0", "aes.ctr32_with(nr, skey, nonce, 1, blk, tag, q);", "aes.ctr32_with(nr, skey, nonce, 2, blk, tag, q);"),
     ("gcm", "encryption from counter 1", "aes.ctr32_with(ctx[0], ctx[c_skey()..c_h()], nonce, 2, plaintext, out[0..text], q);", "aes.ctr32_with(ctx[0], ctx[c_skey()..c_h()], nonce, 1, plaintext, out[0..text], q);"),
-    # The hardware path (`docs/crypto-builtins.md` §6, step 4): killed only where `hw_aes_gcm()` is true.
-    ("gcm", "hardware: encryption from counter 1", "ctr_hw(keys, nr, nonce, 2, plaintext, out[0..text], blk, ks);", "ctr_hw(keys, nr, nonce, 1, plaintext, out[0..text], blk, ks);"),
-    ("gcm", "hardware: the last partial block not padded with zeros", "            pad[k] = byte_of(0);\n", "            pad[k] = byte_of(1);\n"),
-    ("gcm", "hardware: the ciphertext's length in bytes", "    ghash_hw(h, y, ciphertext, blk);\n    let abits = len(aad) * 8;\n    let cbits = len(ciphertext) * 8;", "    ghash_hw(h, y, ciphertext, blk);\n    let abits = len(aad) * 8;\n    let cbits = len(ciphertext);"),
-    ("gcm", "hardware: decrypted before the tag is checked", "        if diff == 0 {\n            ctr_hw(", "        if true {\n            ctr_hw("),
-    ("gcm", "hardware: H not the encryption of zero", "aes_encrypt_block(hw[0..(nr + 1) * 16], nr, zeros, hw[hw_h()..hw_h() + 16]);", "aes.round_keys(key, hw[hw_h()..hw_h() + 16]);"),
+    # The hardware path (`docs/crypto-builtins.md` §6, step 4; `docs/gcm-wide.md` §3.4): killed only where `hw_aes_gcm()` is
+    # true. The builtins' own code is mutated by `scripts/gcm_wide_mutants.py`.
+    ("gcm", "hardware: encryption from counter 1", "aes_ctr32(keys, nr, nonce, 2, plaintext, out[0..text]);", "aes_ctr32(keys, nr, nonce, 1, plaintext, out[0..text]);"),
+    ("gcm", "hardware: decryption from counter 1", "aes_ctr32(keys, nr, nonce, 2, sealed[0..text], out);", "aes_ctr32(keys, nr, nonce, 1, sealed[0..text], out);"),
+    ("gcm", "hardware: decrypted before the tag is checked", "    if diff != 0 {\n        return refused_tag_mismatch();\n    }\n    aes_ctr32(", "    if diff == 99 {\n        return refused_tag_mismatch();\n    }\n    aes_ctr32("),
+    ("gcm", "hardware: the tag taken from the start of the sealed message", "sealed[0..text], sealed[text..text + 16]);", "sealed[0..text], sealed[0..16]);"),
+    ("gcm", "hardware: the associated data not hashed when sealing", "nonce, aad, out[0..text], out[text..text + 16]);", "nonce, nonce[0..0], out[0..text], out[text..text + 16]);"),
+    ("gcm", "hardware: H not the encryption of zero", "ghash_powers(h, hw[hw_table()..hw_table() + hw_table_len()]);", "ghash_powers(zeros, hw[hw_table()..hw_table() + hw_table_len()]);"),
+    ("gcm", "hardware: the powers overlap the round keys", "fn hw_table() -> [] int {\n    return 240;", "fn hw_table() -> [] int {\n    return 232;"),
+    ("gcm", "hardware: AES-256's round keys cut to AES-128's", "    let nr = ctx[0];\n    let keys = hw[0..(nr + 1) * 16];\n    aes_ctr32(keys, nr, nonce, 2, plaintext", "    let nr = ctx[0];\n    let keys = hw[0..176];\n    aes_ctr32(keys, nr, nonce, 2, plaintext"),
     # The prepared key (`docs/crypto-builtins.md` §6, step 2).
     ("gcm", "an unprepared context taken as prepared", "&& (ctx[0] == 10 || ctx[0] == 14)", "&& ctx[0] >= 0"),
     ("gcm", "the last partial block not padded with zeros", "        var b = 0;\n        if at + k < len(s) {", "        var b = 255;\n        if at + k < len(s) {"),
     ("gcm", "a one-byte-short tag compare", "q, w, blk);\n        // Every byte is compared whatever the earlier ones were.\n        var i = 0;\n        while i < 16 {", "q, w, blk);\n        // Every byte is compared whatever the earlier ones were.\n        var i = 0;\n        while i < 15 {"),
-    ("gcm", "hardware: a one-byte-short tag compare", "y, blk, ks);\n        // Every byte is compared whatever the earlier ones were.\n        var i = 0;\n        while i < 16 {", "y, blk, ks);\n        // Every byte is compared whatever the earlier ones were.\n        var i = 0;\n        while i < 15 {"),
     ("gcm", "plaintext released on a bad tag", "        if diff == 0 {\n            aes.ctr32_with(", "        if diff == diff {\n            aes.ctr32_with("),
     ("gcm", "a long nonce accepted", "if len(nonce) != 12 {", "if len(nonce) < 12 {"),
 ]

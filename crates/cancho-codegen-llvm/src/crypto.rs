@@ -18,6 +18,8 @@
 
 mod aes;
 mod ghash;
+#[cfg(test)]
+mod tests;
 
 use target_lexicon::{Architecture, OperatingSystem, Triple};
 
