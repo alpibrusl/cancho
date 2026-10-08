@@ -164,3 +164,27 @@ jobs:
       # `conformance/http_server_upload.rs` once per mutant; they were run by hand, §12.13.)
       - name: The streaming-body mutants (docs/http-server.md §12.13)
         run: python3 scripts/http_server_body_mutants.py ./target/release/cancho
+
+  # docs/hash-stability.md §7's plateau rule, as a checked property (#405):
+  # every historical revision of every .cho under std/ and examples/ must
+  # read under today's compiler, or its failing rule appear in the committed
+  # exemption list with a reason. The number stays honest (exempted rules
+  # still count as not reading); what fails the build is unexplained debt,
+  # and an exemption that stops failing is reported so the list only shrinks.
+  stability:
+    name: stability-plateau
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The full history: the replay reads every distinct revision of
+          # every tracked .cho, which a shallow clone does not have.
+          fetch-depth: 0
+      - name: Toolchain versions
+        run: |
+          cargo --version
+          rustc --version --verbose
+      - name: The plateau — every revision reads or its debt is explained
+        run: |
+          cargo build --release -p cancho
+          python3 scripts/history.py --explain
