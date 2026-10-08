@@ -27,8 +27,8 @@ server on a free port with the options it needs, and says `ok` or what failed:
                affected, and a place freed by a close is usable again
     addr-rate  `--per-address-rate 2`: six clients from one address are started two a second, while a client from
                another address (Linux only, as above) is not delayed by them
-    areas      `--areas 16`: 120 clients at once are served, their handshakes delayed to the areas free, 6 of the 120
-               established connections used at once, and the server's resident memory for 120 idle ones is measured
+    areas      `--areas 16`: 1,000 clients are served, their handshakes delayed to the areas free, 6 of the 1,000
+               established connections used at once, and the server's resident memory for 1,000 idle ones is measured
                (docs/tls-memory.md)
 
 curl and mosquitto's clients are not here: they speak HTTP and MQTT, which an echo answers with their own request.
@@ -532,34 +532,36 @@ def rss_kib(pid):
 
 
 def case_areas(exe):
-    """`--areas 16` for 120 connections (docs/tls-memory.md section 7): the handshakes are delayed to the areas
-    free and not refused, 120 established connections that are idle hold no area, 6 of them are used at once, and on
-    Linux 120 idle connections are well under what a slot a connection cost (119 KiB each)."""
-    server = Server(exe, extra=["--connections", "256", "--handshakes", "64", "--areas", "16", "--rate", "100000"])
+    """`--areas 16` for 1,000 connections (docs/tls-memory.md section 7): the handshakes are delayed to the areas free
+    and not refused, the 1,000 established connections that are idle hold no area, 6 of them are used at once, and on
+    Linux 1,000 idle connections are well under what a slot a connection cost (119 KiB each). A thousand and not a
+    hundred because a kernel with transparent huge pages `always` (CI's) counts the few areas that are in use in
+    units of 2 MiB, which a hundred connections do not amortise."""
+    count = 1000
+    server = Server(exe, extra=["--connections", "1100", "--handshakes", "64", "--areas", "16", "--rate", "100000"])
     try:
         errors = []
         conns = []
         lock = threading.Lock()
-        start = threading.Barrier(120)
         before = rss_kib(server.proc.pid)
 
-        def dial(k):
+        def dial(first):
             try:
-                start.wait(30)
-                c = connect(server.port, timeout=60)
-                echo(c, b"hello %d" % k)
-                with lock:
-                    conns.append(c)
+                for k in range(first, first + count // 40):
+                    c = connect(server.port, timeout=120)
+                    echo(c, b"hello %d" % k)
+                    with lock:
+                        conns.append(c)
             except Exception as e:  # noqa: BLE001 -- every failure is reported
-                errors.append(f"{k}: {e!r}")
+                errors.append(f"{first}: {e!r}")
 
-        threads = [threading.Thread(target=dial, args=(k,)) for k in range(120)]
+        threads = [threading.Thread(target=dial, args=(k * (count // 40),)) for k in range(40)]
         for t in threads:
             t.start()
         for t in threads:
-            t.join(120)
-        if errors or len(conns) != 120:
-            return f"{len(errors)} of 120 failed, first: {errors[:1]}"
+            t.join(300)
+        if errors or len(conns) != count:
+            return f"{len(errors)} of 40 dialers failed, {len(conns)} of {count} connected, first: {errors[:1]}"
         time.sleep(1)
         after = rss_kib(server.proc.pid)
         busy = []
@@ -582,14 +584,14 @@ def case_areas(exe):
         for c in conns:
             c.unwrap()
             c.close()
-        ended = server.wait_for(lambda l: " closed ok " in l, 15, 120)
+        ended = server.wait_for(lambda l: " closed ok " in l, 60, count)
         note = ""
         if before is not None and after is not None:
-            per = (after - before) / 120
-            if per > 50:
-                return f"120 idle connections cost {per:.1f} KiB each in the server, over the 50 KiB this case allows"
+            per = (after - before) / count
+            if per > 60:
+                return f"{count} idle connections cost {per:.1f} KiB each in the server, over the 60 KiB this case allows"
             note = f", {per:.1f} KiB resident each idle"
-        return f"ok (120 connections on 16 areas, 6 busy at once{note}; {len(ended)} closed ok)"
+        return f"ok ({count} connections on 16 areas, 6 busy at once{note}; {len(ended)} closed ok)"
     finally:
         server.stop()
 
