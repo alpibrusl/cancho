@@ -436,7 +436,12 @@ plaintext), which is a change to `packages/tls/record.cho` and to the builtins' 
 - **ctgrind (aarch64, Valgrind's Memcheck):** 0 reports from the preparation and the seal in 8 cases, 1 from each open (the
   tag branch); 0 invalid reads or writes over every length in exact-size buffers.
 - **Mutants:** `gcm_mutants.py`: 34 of 34 killed on aarch64 and on x86-64 (the hardware path's 8 among them);
-  `gcm_wide_mutants.py`: MUTANT_TALLY.
+  `gcm_wide_mutants.py`: 61 mutants of the generated code (58 run on each instruction set: 55 shared and 3 of each), **59
+  killed and 2 argued equivalent**, on aarch64 Linux and on x86-64. The two that no answer can show are the tail's
+  whole-block loop counted wrong and the tail's byte loop started early: the byte loop finishes every byte the first leaves, with the
+  same keystream, so only the work moves between them. A third that survived the conformance test, the 64-byte group
+  counted for the 128-byte one (a wrong answer nowhere, a read and a write past the buffer), is what the guard bytes and
+  Memcheck's sweep were added for.
 
 ## 9. Not done, and what fell short
 
