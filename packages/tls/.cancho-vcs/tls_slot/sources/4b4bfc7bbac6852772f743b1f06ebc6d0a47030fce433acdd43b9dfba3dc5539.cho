@@ -551,11 +551,11 @@ pub fn k_read_hw() -> [] int {
 }
 
 pub fn k_write_hw() -> [] int {
-    return b_keys() + 1472;
+    return b_keys() + 1584;
 }
 
 pub fn keys_len() -> [] int {
-    return 1728;
+    return 1952;
 }
 
 // The largest ticket kept (`docs/tls-resumption.md` §4): a larger one is
