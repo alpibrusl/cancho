@@ -4,17 +4,23 @@ import std.p256;
 import std.p256_comb;
 
 // `std.p256_pt` -- P-256 points on `std.p256`'s arithmetic
-// (`docs/p256-fast.md` §5), for `std.ecdh`, `std.ecdsa` and `std.ecdsa_sign`.
+// (`docs/p256-fast.md` §5 and §6), for `std.ecdh`, `std.ecdsa_sign` and
+// `std.ecdsa`. Two multiplications by a secret scalar, both constant time:
 //
-// The variable-base multiplication is `std.ecdh`'s ladder as it was
-// (`docs/ecdh.md` §2) on the new field: a four-bit window, sixteen multiples
-// read under masks, Renes, Costello and Batina's complete formulas for a = -3
-// (eprint 2015/1060, algorithms 4 and 6) in projective coordinates, so no
-// branch handles a special case. Only the arithmetic changed.
+// - the variable base (`point_multiply`, ECDH's `shared`) is `std.ecdh`'s
+//   ladder as it was (`docs/ecdh.md` §2) on the new field: a four-bit window,
+//   sixteen multiples read under masks, and Renes, Costello and Batina's
+//   complete formulas for a = -3 (eprint 2015/1060, algorithms 4 and 6) in
+//   projective coordinates, so no branch handles a special case;
+// - the generator (`base_multiply`, `public_key` and the nonce's k G) is a
+//   sum of 65 entries of a table, one for each signed four-bit digit of the
+//   scalar, with no doubling: `std.p256_comb`'s `static`, read under masks.
 //
 // A point is three elements X, Y, Z (Montgomery form); infinity is (0 : 1 : 0).
 // Its functions answer 0, or the codes of `std.ecdh` (-54 to -58), which it
-// documents: this module sits under `std.ecdh` and cannot import it.
+// documents: this module sits under `std.ecdh` and cannot import it. The
+// values stay lazily reduced between the multiplications; the bounds that
+// makes safe are `scripts/p256_bounds.py`'s (`docs/p256-fast.md` §4.4).
 
 // Temporaries t0..t4 for `add_points` and `double_point`.
 fn t(i: int) -> [] int {

@@ -15,17 +15,19 @@ import std.p256_pt;
 // (#209).
 //
 // A module of its own, not part of `std.ecdsa`: it multiplies with
-// `std.ecdh`'s ladder, and `std.ecdh` imports `std.ecdsa` for the curve
+// `std.ecdh`'s `public_key`, and `std.ecdh` imports `std.ecdsa` for the curve
 // constants, so `std.ecdsa` cannot import it back.
 //
 // Signing (SEC 1 §4.1.3):
 // - the nonce k is RFC 6979's (§3.2 there), HMAC-DRBG over SHA-256
 //   seeded with the key and the digest, with the caller's 32 bytes of
 //   randomness as §3.6's additional data;
-// - (x, _) = k·G by `std.ecdh.public_key`, the constant-time ladder;
-// - r = x mod n, s = k^-1 (e + r·d) mod n in `std.bigmod`'s registers,
-//   whose `mul`, `add` and reduction are masked, and whose `inverse` is
-//   Fermat's with the public exponent n - 2.
+// - (x, _) = k·G by `std.ecdh.public_key`, which for P-256 is `std.p256_pt`'s
+//   sum of 65 entries of a table under masks, no doubling
+//   (`docs/p256-fast.md` §6);
+// - r = x mod n, s = k^-1 (e + r·d) mod n in `std.p256`'s arithmetic modulo
+//   n (straight-line kernels, no branch, no index), whose inverse is Fermat's
+//   with the public exponent n - 2.
 // Nothing branches on d or k, or indexes by them. The branches left are
 // on public values: the lengths, the answers of the range checks (a
 // candidate k out of range is discarded, which says nothing of the k

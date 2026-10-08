@@ -12,6 +12,8 @@
 //     K k      ecdh.public_key of the scalar k: x || y in hex, or `-` for a refusal
 //     W k w    the width-w wNAF of k (p256_vf.wnaf): its 257 digits, space separated
 //     V q e sig  ecdsa.verify_raw (P-256): the code, for the public point q (65 bytes), the digest e and sig = r || s
+//     P a b    the raw kernels on 35-byte (280-bit) operands, limbs all the way to 2^28 - 1: mul_p, R a b mul_n,
+//     D a      sqr_p, E a sqr_n. The ten limbs of the answer in decimal, to check the accumulators' bound
 //     T r x    p256_vf.check_x: 1 when a sum of affine x passes the check against r, else 0
 //     C a b    a * b * c mod p, where c is 8 (a*b, add, add, add) -- a chain of lazy sums
 import std.buffer;
@@ -19,6 +21,7 @@ import std.io;
 import std.ecdh;
 import std.ecdsa;
 import std.p256;
+import std.p256_kernels;
 import std.p256_vf;
 
 fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap, io_read] buffer.Buffer {
@@ -107,6 +110,33 @@ fn case[&i, &s, &w](io: &!i Io, s: &s [byte], at: int, w: &!w [int]) -> [io_writ
             hex_into(s, f2, e);
             hex_into(s, f3, sig);
             io.print_int(io, ecdsa.verify_raw(256, e, q, sig, w));
+            io.newline(io);
+            return 0;
+        } else if op == 80 || op == 82 || op == 68 || op == 69 {
+            // The operands are 70 hex digits, wider than the 64 the rest of `case` reads.
+            let wa = alloc_slice[r](35, byte_of(0));
+            let wb = alloc_slice[r](35, byte_of(0));
+            hex_into(s, f1, wa);
+            if op == 80 || op == 82 {
+                hex_into(s, f2, wb);
+            }
+            p256.load(wa, w, x);
+            p256.load(wb, w, y);
+            if op == 80 {
+                p256_kernels.mul_p(w, x, y, z);
+            } else if op == 82 {
+                p256_kernels.mul_n(w, x, y, z);
+            } else if op == 68 {
+                p256_kernels.sqr_p(w, x, z);
+            } else {
+                p256_kernels.sqr_n(w, x, z);
+            }
+            var i = 0;
+            while i < 10 {
+                io.print_int(io, w[z + i]);
+                io.space(io);
+                i = i + 1;
+            }
             io.newline(io);
             return 0;
         } else if op == 84 {
