@@ -101,6 +101,9 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::WrappingAdd
                     | Builtin::WrappingSub
                     | Builtin::WrappingMul
+                    | Builtin::MulWide
+                    | Builtin::AddCarry
+                    | Builtin::SubBorrow
                     | Builtin::ValueBarrier
                     | Builtin::Close
                     | Builtin::ArgCount

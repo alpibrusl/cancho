@@ -158,6 +158,9 @@ pub fn wasi_gap(builtin: Builtin) -> Option<Gap> {
         | B::HwAesGcm
         | B::AesEncryptBlock
         | B::GhashUpdate
+        | B::MulWide
+        | B::AddCarry
+        | B::SubBorrow
         | B::ByteOf
         | B::FloatOf
         | B::Truncate

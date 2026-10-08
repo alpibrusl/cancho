@@ -505,6 +505,40 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::WrappingMul) => {
                         vec![self.builder.ins().imul(args[0], args[1])]
                     }
+                    // `docs/wide-multiply.md` §5: `umulhi` and `imul` for the
+                    // product; the carries are `icmp`s, which are `setcc`
+                    // on x86-64 and `cset` on aarch64, never a branch.
+                    // (`uadd_overflow` has no aarch64 lowering in 0.121.)
+                    Callee::Builtin(Builtin::MulWide) => {
+                        let hi = self.builder.ins().umulhi(args[0], args[1]);
+                        let lo = self.builder.ins().imul(args[0], args[1]);
+                        vec![hi, lo]
+                    }
+                    Callee::Builtin(Builtin::AddCarry | Builtin::SubBorrow) => {
+                        let sub = matches!(callee, Callee::Builtin(Builtin::SubBorrow));
+                        let (a, b) = (args[0], args[1]);
+                        let nonzero = self.builder.ins().icmp_imm(IntCC::NotEqual, args[2], 0);
+                        let cin = self.builder.ins().uextend(types::I64, nonzero);
+                        let first = if sub {
+                            self.builder.ins().isub(a, b)
+                        } else {
+                            self.builder.ins().iadd(a, b)
+                        };
+                        let second = if sub {
+                            self.builder.ins().isub(first, cin)
+                        } else {
+                            self.builder.ins().iadd(first, cin)
+                        };
+                        // The sum wrapped iff it is below an addend; the
+                        // difference wrapped iff it is above the minuend.
+                        let cc =
+                            if sub { IntCC::UnsignedGreaterThan } else { IntCC::UnsignedLessThan };
+                        let o1 = self.builder.ins().icmp(cc, first, a);
+                        let o2 = self.builder.ins().icmp(cc, second, first);
+                        let both = self.builder.ins().bor(o1, o2);
+                        let out = self.builder.ins().uextend(types::I64, both);
+                        vec![second, out]
+                    }
                     // `len` never reaches here: it is checked and lowered
                     // at the call site, like `release` and `narrow`, because
                     // its argument's element type is what decides it.

@@ -1,0 +1,22 @@
+//~ ERROR `mul_wide` is not a function in this program
+//~ RULE not-a-function
+
+// `docs/wide-multiply.md` §7: `mul_wide`, `add_carry` and `sub_borrow` are
+// edition 7. An older file may already declare its own `mul_wide`, so to it
+// the name is not a builtin at all -- the rule every edition-gated builtin
+// follows (`editions.md` §7).
+
+edition 6;
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    let (hi, lo) = mul_wide(1, 2);
+    return hi + lo;
+}

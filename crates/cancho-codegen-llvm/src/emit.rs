@@ -322,6 +322,9 @@ pub(crate) fn emit_module(
     text.push_str("declare {i64, i1} @llvm.sadd.with.overflow.i64(i64, i64)\n");
     text.push_str("declare {i64, i1} @llvm.ssub.with.overflow.i64(i64, i64)\n");
     text.push_str("declare {i64, i1} @llvm.smul.with.overflow.i64(i64, i64)\n");
+    // `docs/wide-multiply.md` §4: the unsigned pair `add_carry` and `sub_borrow` use.
+    text.push_str("declare {i64, i1} @llvm.uadd.with.overflow.i64(i64, i64)\n");
+    text.push_str("declare {i64, i1} @llvm.usub.with.overflow.i64(i64, i64)\n");
     // `sqrt` (§7.17, `docs/float-math.md` §2): correctly rounded per
     // IEEE-754, which is why this is the one arithmetic builtin that is
     // an intrinsic rather than an instruction sequence.
