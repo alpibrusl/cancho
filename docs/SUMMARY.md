@@ -18,6 +18,7 @@
 - [Aliasing: does `&!` mean `&mut`?](aliasing.md)
 - [Collections](collections.md)
 - [Testing](testing.md)
+- [Satisfy: a contract a candidate must meet](satisfy.md)
 - [Formatting](formatting.md)
 - [JSON](json.md)
 - [Hash map](map.md)
