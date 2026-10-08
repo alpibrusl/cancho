@@ -298,8 +298,9 @@ pub fn context_len() -> [] int {
 
 // The hardware path's part of a prepared key (`docs/crypto-builtins.md`
 // §6, step 4; `docs/gcm-wide.md` §3.3), as bytes, which the builtins take:
-// the round keys in FIPS 197's form (up to 240 bytes), then GHASH's powers H^1 to H^8 in the form `ghash_powers` makes
-// (128 bytes), which let the tag take eight blocks to a reduction.
+// the round keys in FIPS 197's form (up to 240 bytes), then GHASH's
+// powers H^1 to H^8 in the form `ghash_powers` makes (128 bytes), which
+// let the tag take eight blocks to a reduction.
 pub fn hw_len() -> [] int {
     return 368;
 }
