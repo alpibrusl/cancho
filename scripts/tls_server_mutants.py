@@ -18,7 +18,7 @@ import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TLS = ["tls.cho", "record.cho", "message.cho", "slot.cho", "client12.cho", "client.cho", "hello.cho", "identity.cho",
+TLS = ["tls.cho", "record.cho", "message.cho", "slot.cho", "cident.cho", "client12.cho", "client.cho", "hello.cho", "identity.cho",
        "server.cho"]
 X509 = ["verify.cho", "names.cho", "x509.cho", "key.cho"]
 

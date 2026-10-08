@@ -164,7 +164,13 @@ pub fn copy_to[&s, &o](src: &s [byte], out: &!o [byte], at: int) -> [] int {
 // share, the longest cookie, the fixed extensions, and a ticket of
 // `max_ticket()` bytes with a SHA-384 binder.
 pub fn max_client_hello() -> [] int {
-    return 704 + max_cookie() + 6 + 4 + 2 + 2 + max_ticket() + 4 + 2 + 1 + 48;
+    return 704 + max_cookie() + 6 + 4 + 2 + 2 + max_ticket() + 4 + 2 + 1 + 48 + 4 + 2 + tls_slot_alpn_cap();
+}
+
+// The longest ALPN offer in wire form (`tls_slot.alpn_offer_cap()`; this
+// module cannot import the slot).
+pub fn tls_slot_alpn_cap() -> [] int {
+    return 256;
 }
 
 // The largest ticket offered or kept (`tls_slot.ticket_cap()`).
@@ -191,8 +197,10 @@ pub fn binders_len(hash_len: int) -> [] int {
 // (`docs/tls-resumption.md` §5): `pre_shared_key` last, its one identity with
 // `age` as its obfuscated_ticket_age and a binder of `hash_len` zero
 // bytes, which the caller computes over the truncated ClientHello and
-// writes in its place (the last `hash_len` bytes).
-pub fn client_hello[&r, &s, &k, &c, &h, &t, &o](random: &r [byte], session_id: &s [byte], group: int, share: &k [byte], cookie: &c [byte], host: &h [byte], modes: bool, ticket: &t [byte], age: int, hash_len: int, out: &!o [byte]) -> [] int {
+// writes in its place (the last `hash_len` bytes). `alpn`, if not empty, is the
+// ALPN offer in wire form (`docs/tls-parity.md` §6.6), sent as the extension
+// between `signature_algorithms_cert` and `supported_versions`.
+pub fn client_hello[&r, &s, &k, &c, &h, &t, &a, &o](random: &r [byte], session_id: &s [byte], group: int, share: &k [byte], cookie: &c [byte], host: &h [byte], modes: bool, ticket: &t [byte], age: int, hash_len: int, alpn: &a [byte], out: &!o [byte]) -> [] int {
     var at = 4;
     at = put(out, at, 0x0303, 2);
     at = copy_to(random, out, at);
@@ -268,6 +276,13 @@ pub fn client_hello[&r, &s, &k, &c, &h, &t, &o](random: &r [byte], session_id: &
     at = put(out, at, rsa_pkcs1_sha256(), 2);
     at = put(out, at, rsa_pkcs1_sha384(), 2);
     at = put(out, at, rsa_pkcs1_sha512(), 2);
+    if len(alpn) > 0 {
+        // application_layer_protocol_negotiation (RFC 7301 §3.1).
+        at = put(out, at, 16, 2);
+        at = put(out, at, len(alpn) + 2, 2);
+        at = put(out, at, len(alpn), 2);
+        at = copy_to(alpn, out, at);
+    }
     // supported_versions: TLS 1.3, then 1.2.
     at = put(out, at, 43, 2);
     at = put(out, at, 5, 2);
@@ -376,8 +391,28 @@ pub fn sh_psk() -> [] int {
     return 7;
 }
 
-pub fn sh_info_len() -> [] int {
+// TLS 1.2's ALPN answer: the protocol's range in the body, or 0 and 0
+// (`docs/tls-parity.md` §6.6).
+pub fn sh_alpn_start() -> [] int {
     return 8;
+}
+
+pub fn sh_alpn_end() -> [] int {
+    return 9;
+}
+
+pub fn sh_info_len() -> [] int {
+    return 10;
+}
+
+// An ALPN extension's body `b[body..body + size]` (RFC 7301 §3.1 for a
+// server's answer): a list of exactly one name of 1 to 255 bytes. Where
+// the name starts (it ends with the body), or `tls-decode-error`.
+pub fn alpn_name[&b](b: &b [byte], body: int, size: int) -> [] int {
+    if size < 4 || get(b, body, 2) != size - 2 || int_of(b[body + 2]) != size - 3 {
+        return tls_record.decode_error();
+    }
+    return body + 3;
 }
 
 // The ServerHello body `b`, against the session id the client sent: a
@@ -434,6 +469,8 @@ pub fn server_hello[&b, &s, &i](b: &b [byte], session_id: &s [byte], info: &!i [
     // (RFC 6066 §3; nginx does). TLS 1.3 sends that one in
     // EncryptedExtensions instead.
     var sni = false;
+    var alpn_at = 0;
+    var alpn_end = 0;
     var reneg = false;
     var ems = false;
     var formats = false;
@@ -515,6 +552,15 @@ pub fn server_hello[&b, &s, &i](b: &b [byte], session_id: &s [byte], info: &!i [
                 return tls_record.decode_error();
             }
             sni = true;
+        } else if kind == 16 && !retry {
+            if alpn_at != 0 {
+                return tls_record.decode_error();
+            }
+            alpn_at = alpn_name(b, body, size);
+            if alpn_at < 0 {
+                return alpn_at;
+            }
+            alpn_end = body + size;
         } else if kind == 23 && !retry {
             if ems || size != 0 {
                 return tls_record.decode_error();
@@ -584,7 +630,7 @@ pub fn server_hello[&b, &s, &i](b: &b [byte], session_id: &s [byte], info: &!i [
         if !tls_record.suite_known(suite) {
             return tls_record.no_shared_cipher();
         }
-        if reneg || ems || formats || sni {
+        if reneg || ems || formats || sni || alpn_at != 0 {
             // TLS 1.2's extensions in a TLS 1.3 ServerHello.
             return tls_record.unsupported_extension();
         }
@@ -623,6 +669,8 @@ pub fn server_hello[&b, &s, &i](b: &b [byte], session_id: &s [byte], info: &!i [
     if psk {
         info[sh_psk()] = 1;
     }
+    info[sh_alpn_start()] = alpn_at;
+    info[sh_alpn_end()] = alpn_end;
     info[sh_version()] = 0x0304;
     if version == 0 {
         info[sh_version()] = 0x0303;
@@ -635,6 +683,23 @@ pub fn server_hello[&b, &s, &i](b: &b [byte], session_id: &s [byte], info: &!i [
 // Only what the client offered may come back: an empty `server_name`
 // acknowledgement, and `supported_groups` (which a server may send).
 pub fn encrypted_extensions[&b](b: &b [byte]) -> [] int {
+    var code = 0;
+    region r {
+        let info = alloc_slice[r](2, 0);
+        code = encrypted_extensions_alpn(b, false, info);
+    }
+    return code;
+}
+
+// `encrypted_extensions`, and ALPN when `offered` (the client sent the
+// extension): one protocol, its range in `b` into `info[0]` and `info[1]`
+// (0 and 0 when none came). ALPN when none was offered is
+// `tls-unsupported-extension`, as any extension that was not asked for
+// (RFC 8446 §4.2); one twice is `tls-decode-error`. Whether the protocol
+// is one that was offered is the caller's (`docs/tls-parity.md` §6.6).
+pub fn encrypted_extensions_alpn[&b, &i](b: &b [byte], offered: bool, info: &!i [int]) -> [] int {
+    info[0] = 0;
+    info[1] = 0;
     let n = len(b);
     if n < 2 || 2 + get(b, 0, 2) != n {
         return tls_record.decode_error();
@@ -661,6 +726,16 @@ pub fn encrypted_extensions[&b](b: &b [byte]) -> [] int {
                 return tls_record.decode_error();
             }
             seen_groups = true;
+        } else if kind == 16 && offered {
+            if info[0] != 0 {
+                return tls_record.decode_error();
+            }
+            let start = alpn_name(b, at + 4, size);
+            if start < 0 {
+                return start;
+            }
+            info[0] = start;
+            info[1] = at + 4 + size;
         } else {
             return tls_record.unsupported_extension();
         }
@@ -941,6 +1016,163 @@ pub fn certificate_request12[&b](b: &b [byte]) -> [] int {
     at = at + 2 + get(b, at, 2);
     if at + 2 > n || at + 2 + get(b, at, 2) != n {
         return tls_record.decode_error();
+    }
+    return 0;
+}
+
+// ---- CertificateRequest, for client authentication (`docs/tls-parity.md` §6.3) ----
+
+// What `certificate_request` and `certificate_request12_info` find, as
+// indices into their `info` (`cr_info_len()` words). `cr_sigalg` is 1 if
+// `ecdsa_secp256r1_sha256` is listed, the one scheme the client signs
+// with (TLS 1.2: and `ecdsa_sign` is among the certificate types);
+// `cr_ca_start` and `cr_ca_end` are the range of the authorities' names in
+// the body (the 2-byte-length-prefixed DER names, framed and checked), or 0
+// and 0 for none; `cr_context` is the context's length (TLS 1.3).
+pub fn cr_sigalg() -> [] int {
+    return 0;
+}
+
+pub fn cr_ca_start() -> [] int {
+    return 1;
+}
+
+pub fn cr_ca_end() -> [] int {
+    return 2;
+}
+
+pub fn cr_context() -> [] int {
+    return 3;
+}
+
+pub fn cr_info_len() -> [] int {
+    return 4;
+}
+
+// A list of 2-byte-length-prefixed names filling `b[from..to]`, each of
+// 1 byte or more: whether it tiles exactly.
+fn names_tile[&b](b: &b [byte], from: int, to: int) -> [] bool {
+    var at = from;
+    while at < to {
+        if at + 2 > to {
+            return false;
+        }
+        let n = get(b, at, 2);
+        if n == 0 || at + 2 + n > to {
+            return false;
+        }
+        at = at + 2 + n;
+    }
+    return true;
+}
+
+// Whether the `signature_algorithms` list `b[from..to]` (2-byte pairs)
+// holds `ecdsa_secp256r1_sha256`; false for an odd or empty list.
+fn lists_p256_sha256[&b](b: &b [byte], from: int, to: int) -> [] bool {
+    var at = from;
+    var found = false;
+    while at + 2 <= to {
+        if get(b, at, 2) == ecdsa_p256_sha256() {
+            found = true;
+        }
+        at = at + 2;
+    }
+    return found;
+}
+
+// A TLS 1.3 CertificateRequest body (RFC 8446 §4.3.2): the context, then
+// extensions. `signature_algorithms` and `certificate_authorities` are read,
+// once each (RFC 8446 §4.2); every other extension is framed and ignored, as
+// a receiver must. Nothing is allocated from a length the peer names.
+pub fn certificate_request[&b, &i](b: &b [byte], info: &!i [int]) -> [] int {
+    var k = 0;
+    while k < cr_info_len() {
+        info[k] = 0;
+        k = k + 1;
+    }
+    let n = len(b);
+    if n < 3 || 1 + int_of(b[0]) + 2 > n {
+        return tls_record.decode_error();
+    }
+    let cn = int_of(b[0]);
+    let ext = 1 + cn;
+    if ext + 2 + get(b, ext, 2) != n {
+        return tls_record.decode_error();
+    }
+    info[cr_context()] = cn;
+    var at = ext + 2;
+    var seen_sigalgs = false;
+    var seen_ca = false;
+    while at < n {
+        if at + 4 > n {
+            return tls_record.decode_error();
+        }
+        let kind = get(b, at, 2);
+        let size = get(b, at + 2, 2);
+        let body = at + 4;
+        if body + size > n {
+            return tls_record.decode_error();
+        }
+        if kind == 13 {
+            if seen_sigalgs || size < 4 || get(b, body, 2) != size - 2 || size % 2 != 0 {
+                return tls_record.decode_error();
+            }
+            seen_sigalgs = true;
+            if lists_p256_sha256(b, body + 2, body + size) {
+                info[cr_sigalg()] = 1;
+            }
+        } else if kind == 47 {
+            if seen_ca || size < 2 || get(b, body, 2) != size - 2 || !names_tile(b, body + 2, body + size) {
+                return tls_record.decode_error();
+            }
+            seen_ca = true;
+            if size > 2 {
+                info[cr_ca_start()] = body + 2;
+                info[cr_ca_end()] = body + size;
+            }
+        }
+        at = body + size;
+    }
+    return 0;
+}
+
+// A TLS 1.2 CertificateRequest body (RFC 5246 §7.4.4), checked for shape
+// as `certificate_request12` does, and read the same way.
+pub fn certificate_request12_info[&b, &i](b: &b [byte], info: &!i [int]) -> [] int {
+    var k = 0;
+    while k < cr_info_len() {
+        info[k] = 0;
+        k = k + 1;
+    }
+    let code = certificate_request12(b);
+    if code != 0 {
+        return code;
+    }
+    let n = len(b);
+    let types = int_of(b[0]);
+    var ecdsa_type = false;
+    var t = 1;
+    while t < 1 + types {
+        if int_of(b[t]) == 64 {
+            ecdsa_type = true;
+        }
+        t = t + 1;
+    }
+    let at = 1 + types;
+    let sig = get(b, at, 2);
+    if sig % 2 != 0 {
+        return tls_record.decode_error();
+    }
+    if ecdsa_type && lists_p256_sha256(b, at + 2, at + 2 + sig) {
+        info[cr_sigalg()] = 1;
+    }
+    let ca = at + 2 + sig;
+    if !names_tile(b, ca + 2, n) {
+        return tls_record.decode_error();
+    }
+    if n > ca + 2 {
+        info[cr_ca_start()] = ca + 2;
+        info[cr_ca_end()] = n;
     }
     return 0;
 }

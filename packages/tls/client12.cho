@@ -1,6 +1,10 @@
 module tls_client12;
+import std.bytes;
 import std.ecdh;
+import std.ecdsa_sign;
+import std.hkdf;
 import std.x25519;
+import tls_cident;
 import tls_message;
 import tls_record;
 import tls_slot;
@@ -12,11 +16,108 @@ import x509;
 // slot `tls_slot` lays out. `tls_client` hands it a TLS 1.2 ServerHello,
 // every handshake message after, and the server's change_cipher_spec.
 // The server is authenticated by its chain and by its signature over the
-// key exchange; there is no client certificate, no session resumption
+// key exchange; the client may answer a CertificateRequest with a P-256
+// certificate (`docs/tls-parity.md` §6.4); there is no session resumption
 // and no renegotiation. Not independently reviewed (#209).
 
+// Whether a CertificateRequest (`info`: `tls_message.certificate_request`'s or
+// `certificate_request12_info`'s, of `body`) is answered with the identity
+// chosen at `start` (`docs/tls-parity.md` §6.3): one was chosen, the request
+// lists the scheme the key signs with, and its authorities list is empty or
+// names an issuer of the chain. Sets `f_cert_send` if so. Shared by both
+// versions.
+pub fn answer_request[&i, &c, &m, &f](ints: &!i [int], cred: &c [byte], body: &m [byte], info: &f [int]) -> [] int {
+    let id = ints[tls_slot.i_identity()] - 1;
+    if id >= 0 && tls_cident.in_use(cred, id) && info[tls_message.cr_sigalg()] == 1 {
+        let from = info[tls_message.cr_ca_start()];
+        let to = info[tls_message.cr_ca_end()];
+        if to == from || tls_cident.names_issuer(cred, id, body[from..to]) {
+            tls_slot.set_flag(ints, tls_slot.f_cert_send());
+        }
+    }
+    return 0;
+}
+
+// The protocol `name` the server chose (RFC 7301 §3.1), against the offer
+// the slot holds: kept (its length and where it starts in the offer) if it is
+// one of them; `tls-unsupported-extension` if nothing was offered (RFC 8446
+// §4.2); `tls-alpn-selected` if it is not in the offer. Shared by both
+// versions (`docs/tls-parity.md` §6.6).
+pub fn take_alpn[&i, &b, &n](ints: &!i [int], bytes: &b [byte], name: &n [byte]) -> [] int {
+    let total = ints[tls_slot.i_alpn_offer_len()];
+    if total == 0 {
+        return tls_record.unsupported_extension();
+    }
+    let base = tls_slot.b_alpn_offer();
+    var at = 0;
+    while at < total {
+        let m = int_of(bytes[base + at]);
+        if m == len(name) && bytes.equal(bytes[base + at + 1..base + at + 1 + m], name) {
+            ints[tls_slot.i_alpn_len()] = m;
+            ints[tls_slot.i_alpn_at()] = at + 1;
+            return 0;
+        }
+        at = at + 1 + m;
+    }
+    return tls_record.alpn_selected();
+}
+
+// The earlier of the server leaf's and the client leaf's notAfter: a ticket
+// from this connection is not offered after either (`docs/tls-parity.md`
+// §6.5, rule 10).
+pub fn client_not_after(server: int, client: int) -> [] int {
+    if client < server || server == 0 {
+        return client;
+    }
+    return server;
+}
+
+// The client's CertificateVerify message (type, length, scheme, signature),
+// into `out` (80 bytes): `digest` (SHA-256) signed by the identity chosen,
+// the nonce hedged with bytes derived from `secret`, a secret the slot holds
+// now (`docs/tls-parity.md` §6.4). The length written, or
+// `tls-client-sign` if the signer refused or its check failed. The signer's
+// work is the slot's `std.ecdh` work, free once the key exchange is done.
+pub fn certificate_verify_message[&i, &c, &g, &s, &o](ints: &!i [int], cred: &c [byte], digest: &g [byte], secret: &s [byte], out: &!o [byte]) -> [] int {
+    let id = ints[tls_slot.i_identity()] - 1;
+    var n = 0;
+    region r {
+        let extra = alloc_slice[r](32, byte_of(0));
+        hkdf.expand_label(len(secret), secret, "client sign hedge", "", extra);
+        let sig = alloc_slice[r](64, byte_of(0));
+        let der = alloc_slice[r](ecdsa_sign.der_max(), byte_of(0));
+        var code = ecdsa_sign.sign_checked(digest, tls_cident.key(cred, id), tls_cident.point(cred, id), extra, sig, ints[tls_slot.i_ecdh_work()..tls_slot.i_ecdh_work() + ecdh.work_len()]);
+        if code == 0 {
+            let dn = ecdsa_sign.to_der(sig, der);
+            if dn < 0 {
+                code = dn;
+            } else {
+                out[0] = byte_of(tls_message.type_certificate_verify());
+                tls_message.put(out, 1, 4 + dn, 3);
+                tls_message.put(out, 4, tls_message.ecdsa_p256_sha256(), 2);
+                tls_message.put(out, 6, dn, 2);
+                tls_slot.copy_bytes(der[0..dn], out[8..8 + dn]);
+                n = 8 + dn;
+            }
+        }
+        if code != 0 {
+            n = tls_record.client_sign();
+        }
+        tls_slot.zero(extra);
+        tls_slot.zero(sig);
+    }
+    return n;
+}
+
 // A TLS 1.2 ServerHello, already parsed (`tls_message.server_hello`).
-pub fn on_server_hello12[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message: &m [byte], suite: int) -> [] int {
+pub fn on_server_hello12[&i, &b, &m, &f](ints: &!i [int], bytes: &!b [byte], message: &m [byte], suite: int, info: &f [int]) -> [] int {
+    let name = info[tls_message.sh_alpn_start()];
+    if name > 0 {
+        let code = take_alpn(ints, bytes, message[4 + name..4 + info[tls_message.sh_alpn_end()]]);
+        if code != 0 {
+            return code;
+        }
+    }
     tls_slot.set_flag(ints, tls_slot.f_tls12());
     ints[tls_slot.i_suite()] = suite;
     tls_slot.copy_bytes(message[6..38], bytes[tls_slot.k_server_random()..tls_slot.k_server_random() + 32]);
@@ -26,7 +127,7 @@ pub fn on_server_hello12[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message
 }
 
 // One whole handshake message, header included, in a TLS 1.2 state.
-pub fn on_message12[&i, &b, &m, &p](ints: &!i [int], bytes: &!b [byte], message: &m [byte], store: &p [byte]) -> [] int {
+pub fn on_message12[&i, &b, &m, &p, &c](ints: &!i [int], bytes: &!b [byte], message: &m [byte], store: &p [byte], cred: &c [byte]) -> [] int {
     let kind = int_of(message[0]);
     let state = ints[tls_slot.i_state()];
     if state == tls_slot.state_wait_certificate12() && kind == tls_message.type_certificate() {
@@ -36,15 +137,20 @@ pub fn on_message12[&i, &b, &m, &p](ints: &!i [int], bytes: &!b [byte], message:
         return on_key_exchange(ints, bytes, message);
     }
     if state == tls_slot.state_wait_server_done() && kind == tls_message.type_certificate_request() && !tls_slot.has(ints, tls_slot.f_cert_requested()) {
-        let code = tls_message.certificate_request12(message[4..len(message)]);
-        if code == 0 {
-            tls_slot.set_flag(ints, tls_slot.f_cert_requested());
-            tls_slot.transcript_add(ints, message);
+        var code = 0;
+        region r {
+            let info = alloc_slice[r](tls_message.cr_info_len(), 0);
+            code = tls_message.certificate_request12_info(message[4..len(message)], info);
+            if code == 0 {
+                tls_slot.set_flag(ints, tls_slot.f_cert_requested());
+                answer_request(ints, cred, message[4..len(message)], info);
+                tls_slot.transcript_add(ints, message);
+            }
         }
         return code;
     }
     if state == tls_slot.state_wait_server_done() && kind == tls_message.type_server_hello_done() {
-        return on_server_done(ints, bytes, message);
+        return on_server_done(ints, bytes, message, cred);
     }
     if state == tls_slot.state_wait_finished12() && kind == tls_message.type_finished() {
         return on_finished12(ints, bytes, message);
@@ -128,7 +234,7 @@ fn on_key_exchange[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message: &m [
 // requested, ClientKeyExchange, then the keys: the extended master
 // secret over the session hash (RFC 7627 §4), the key block, and
 // change_cipher_spec and Finished under the new write key.
-fn on_server_done[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message: &m [byte]) -> [] int {
+fn on_server_done[&i, &b, &m, &c](ints: &!i [int], bytes: &!b [byte], message: &m [byte], cred: &c [byte]) -> [] int {
     if len(message) != 4 {
         return tls_record.decode_error();
     }
@@ -140,7 +246,18 @@ fn on_server_done[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message: &m [b
     let curve = tls_slot.curve_of(group);
     var code = 0;
     region r {
-        if tls_slot.has(ints, tls_slot.f_cert_requested()) {
+        if tls_slot.has(ints, tls_slot.f_cert_send()) {
+            // The identity's chain, a list of DER certificates with no
+            // per-certificate extensions (RFC 5246 §7.4.2).
+            let id = ints[tls_slot.i_identity()] - 1;
+            let cert = alloc_slice[r](4 + tls_cident.chain_cap() + 3, byte_of(0));
+            let m = tls_cident.list12(cred, id, cert[4..4 + tls_cident.chain_cap() + 3]);
+            cert[0] = byte_of(tls_message.type_certificate());
+            tls_message.put(cert, 1, m, 3);
+            tls_slot.transcript_add(ints, cert[0..4 + m]);
+            code = tls_slot.queue_record(ints, bytes, tls_record.type_handshake(), cert[0..4 + m]);
+            ints[tls_slot.i_not_after()] = client_not_after(ints[tls_slot.i_not_after()], tls_cident.not_after(cred, id));
+        } else if tls_slot.has(ints, tls_slot.f_cert_requested()) {
             let cert = alloc_slice[r](7, byte_of(0));
             cert[0] = byte_of(tls_message.type_certificate());
             cert[3] = byte_of(3);
@@ -180,11 +297,28 @@ fn on_server_done[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message: &m [b
             tls_slot.transcript_hash(ints, session_hash);
             let master = bytes[tls_slot.k_master()..tls_slot.k_master() + 48];
             tls_record.prf(h, pms, "extended master secret", session_hash, master);
-            key_block(ints, bytes);
-            let ccs = alloc_slice[r](1, byte_of(1));
-            code = tls_slot.queue_record(ints, bytes, tls_record.type_change_cipher_spec(), ccs);
-            tls_slot.set_flag(ints, tls_slot.f_write_protected());
-            ints[tls_slot.i_write_seq()] = 0;
+            if tls_slot.has(ints, tls_slot.f_cert_send()) {
+                // RFC 5246 §7.4.8: the signature is over every handshake
+                // message so far, hashed with the scheme's hash (SHA-256),
+                // whatever the suite's.
+                let digest = alloc_slice[r](32, byte_of(0));
+                tls_slot.transcript_hash(ints, digest);
+                let cv = alloc_slice[r](80, byte_of(0));
+                let n = certificate_verify_message(ints, cred, digest, master, cv);
+                if n < 0 {
+                    code = n;
+                } else {
+                    tls_slot.transcript_add(ints, cv[0..n]);
+                    code = tls_slot.queue_record(ints, bytes, tls_record.type_handshake(), cv[0..n]);
+                }
+            }
+            if code == 0 {
+                key_block(ints, bytes);
+                let ccs = alloc_slice[r](1, byte_of(1));
+                code = tls_slot.queue_record(ints, bytes, tls_record.type_change_cipher_spec(), ccs);
+                tls_slot.set_flag(ints, tls_slot.f_write_protected());
+                ints[tls_slot.i_write_seq()] = 0;
+            }
         }
         if code == 0 {
             let fin = alloc_slice[r](16, byte_of(0));

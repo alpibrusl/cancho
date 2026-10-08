@@ -17,6 +17,7 @@ pub(super) fn package_files() -> Vec<PathBuf> {
         "record.cho",
         "message.cho",
         "slot.cho",
+        "cident.cho",
         "client12.cho",
         "client.cho",
         "hello.cho",
