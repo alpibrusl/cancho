@@ -927,4 +927,3 @@ pub fn plain_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
     }
     return scope.lower_type(st, text, ast.get(st, fn_item, 10), dp, 0 - 1) != 0;
 }
-

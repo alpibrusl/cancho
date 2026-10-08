@@ -346,4 +346,3 @@ pub fn element[&s](st: &!s [int], ty: int, from: int, to: int) -> [] int {
     }
     return e;
 }
-
