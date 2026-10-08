@@ -56,7 +56,7 @@ DRBG, and the key exchanges (`std.x25519`, `std.ecdh` on P-256 and P-384, both c
 
 | | why not yet | where |
 |---|---|---|
-| client certificates (mutual TLS) | MQTT deployments use them, so it is wanted; it is a second verification path (`x509_verify` without a host name) and an authorization interface | step 4 (§8), §9's question 2 |
+| client certificates (mutual TLS) | MQTT deployments use them, so it is wanted; it is a second verification path (`x509_verify` without a host name) and an authorization interface | step 4 (§8), §9's question 2; *designed in §13* |
 | ~~session tickets (resumption)~~ | *built:* saves the signature, which is most of the server's cost (§6); stateless tickets with a ticket key and its rotation | step 5 (§8), §12 |
 | **0-RTT early data** | replayable by design; no program here needs it | never, unless a design argues for it |
 | TLS 1.2 | a second server state machine; who needs it is §9's question 1 | step 6, if answered yes |
@@ -1077,3 +1077,327 @@ M4 Max), the x86-64 ones on a Linux box (an Intel i7-1260P, `taskset -c 6`).
   key is never an index or a branch; the rules compare public values. The key schedule from a PSK is the client's.
 - **Independent review**: none (#209), as the engine.
 - **A long soak.** The fuzzers ran for the times in §12.12; no multi-day run.
+
+## 13. Client certificates (mutual TLS): the design
+
+*Step 4 of §8, issue #384. Written before the code. Sizes are arithmetic from the layout below and are checked by the
+build (§13.11); costs are arithmetic from measured primitives and marked so, and §13.12 is where they are measured. The
+resumption rules (§13.8) are decided here against the design of session tickets (§12, issue #379), read from its branch
+(`tls-server-tickets`, `230decd`), and are built when that lands. Where building finds a statement here false, the
+section that made it is corrected in place.*
+
+**What it is for.** Many MQTT fleets authenticate a device by the certificate it presents, and a gateway can pass a
+verified client identity to the service behind it (`cancho-mqtt` PR #22, section 7d). The engine does one thing:
+**it authenticates, the program authorizes.** After a client has been handled, the engine can say "a CA of the store you
+gave me vouched for this key, for client authentication, at the time the handshake ran, and the client proved it holds
+that key". It never says what that identity may do.
+
+### 13.1 Modes
+
+`tls.client_auth(engine, mode)`, on a server engine, before or between connections:
+
+| mode | the server | a client with no certificate | a client with a certificate that does not verify |
+|---|---|---|---|
+| `0` **off** (the default) | sends no CertificateRequest: every byte of §5.2 is as it was, and the 110 recorded connections replay unchanged | accepted, no identity | n/a: none was asked for, an unsolicited Certificate is `tls-unexpected-message` |
+| `1` **optional** | sends a CertificateRequest | accepted, **no identity**: `peer_verified` answers 0 | **refused**, with the alert of the chain's fault |
+| `2` **required** | sends a CertificateRequest | refused: `certificate_required` (116), `tls-server-client-cert-required` | refused, as above |
+
+- **Optional is not "verify if convenient".** A certificate that is presented and wrong ends the connection in both modes
+  (RFC 8446 §4.4.2.4 lets a server continue only without a certificate, "at its discretion", and OpenSSL's
+  `SSL_VERIFY_PEER` without `FAIL_IF_NO_PEER_CERT` is the same). A program in `optional` mode must test
+  `peer_verified` before it trusts an identity: *no identity is not an error* is the point of the mode.
+- **The mode is per engine, taken when a connection is served.** `serve` copies it into the slot's flags, so changing the
+  mode does not change a handshake in progress. A mode per identity or per host name (a gateway that wants certificates on
+  `api.example` and not on `www.example`) is **not** in version 1: the workaround is two engines on two listeners, and the
+  asker that makes it worth a field in the identities (§4) has not come. *Decide when one does.*
+- **A mode other than off needs a store.** `client_auth(engine, 1 or 2)` before any `trust_clients` is refused,
+  `tls-server-client-store`, so a program cannot ask for certificates and trust nothing. (A store is never emptied once
+  loaded: §13.3.)
+
+### 13.2 What the server sends, and reads
+
+**CertificateRequest** (RFC 8446 §4.3.2), in the server's encrypted flight, after EncryptedExtensions and before
+Certificate, added to the transcript like the rest (so the server's Finished covers it):
+
+| field | value | why |
+|---|---|---|
+| `certificate_request_context` | empty | post-handshake authentication is not offered (§13.9); the context is only for it |
+| `signature_algorithms` (13) | `ecdsa_secp256r1_sha256` (0x0403), `ecdsa_secp384r1_sha384` (0x0503), `rsa_pss_rsae_sha256/384/512` (0x0804, 0x0805, 0x0806), `ed25519` (0x0807) | the schemes the server verifies for **CertificateVerify**: one per key type of §13.4. Not `rsa_pkcs1_*` (forbidden in TLS 1.3 for CertificateVerify), not `ecdsa_secp521r1_sha512` (no P-521 verifier in `check_signature`), not `rsa_pss_pss_*` (`packages/x509` reads `rsaEncryption` keys only) |
+| `signature_algorithms_cert` (50) | the six above and `rsa_pkcs1_sha256/384/512` (0x0401, 0x0501, 0x0601) | the schemes the CA signatures of the chain may use. Without it the first list governs the chain too (RFC 8446 §4.2.3), and a client whose intermediate is signed `sha256WithRSAEncryption`, which `x509_verify` accepts, would be told not to send it |
+| `certificate_authorities` (47) | the subject Name (DER) of each root of the store, **when the list is at most 8,192 bytes**, else the extension is left out | the client picks the certificate it holds that one of these issued (Go's `GetClientCertificate` default does; OpenSSL, wolfSSL and mosquitto send theirs regardless). It is a hint: the verification of §13.5 is the check. Left out when large, as RFC 8446 §4.2.4 leaves it optional. *It tells any peer that connects the names of the CAs; they are not secret, and the server's own chain names its CA already.* |
+| `oid_filters` (48) | **not sent** | the extension filters certificate extensions by value; no client in the interop matrix reads it, and the checks it could express (EKU, key usage) are made by the verifier |
+
+The CertificateRequest is at most 4 + 1 + 2 + 18 + 24 + (6 + 8,192) bytes, **8,247**, and the flight's buffer grows by
+that (`respond` sizes it from `tls_identity.chain_cap()`).
+
+**The client's flight**, read in the states `wait_client_certificate` and `wait_client_verify` that precede
+`wait_client_finished` when a request was sent:
+
+1. **Certificate** (RFC 8446 §4.4.2). Its `certificate_request_context` must be empty (non-empty:
+   `tls-server-illegal-parameter`, the alert `illegal_parameter`); a CertificateEntry extension is
+   `tls-unsupported-extension` (none was asked for); the message is **at most 16,384 bytes**, checked when its header
+   arrives, before it is read (`x509-chain-too-large`, the alert `bad_certificate`); **at most 5 certificates**
+   (`tls_message.certificate`'s bound of 8 is the client's; here the leaf, up to 3 intermediates and the root) and
+   `max_intermediates` is 3.
+   - **An empty certificate_list** is the client saying it has none. `optional`: the connection goes on to Finished with
+     no identity. `required`: `tls-server-client-cert-required`, alert 116.
+   - Any other message in this state, Finished included, is `tls-unexpected-message`: a client must answer the request
+     with a Certificate, empty if it has none (RFC 8446 §4.4.2).
+2. **CertificateVerify** (§4.4.3), only after a non-empty Certificate: any other message there (a Finished, or a
+   CertificateVerify after an empty Certificate) is `tls-unexpected-message`. The signature is over
+   64 spaces, `TLS 1.3, client CertificateVerify`, a zero byte, and the transcript hash **through the client's
+   Certificate** (the server's flight, with the CertificateRequest, and the Certificate just read).
+   - The scheme must be one the request listed, else `tls-server-client-sigalg`, the alert `illegal_parameter`
+     (RFC 8446 §4.2.3); a scheme that is listed but does not fit the key (ECDSA P-384 key, `ecdsa_secp256r1_sha256`)
+     is `tls-bad-certificate-verify`, alert `decrypt_error`, as `tls_slot.check_signature` answers it for the client.
+   - The signature is checked by `tls_slot.check_signature`, the code the client runs on the server's: ECDSA over
+     P-256 and P-384 (`std.ecdsa`), RSA-PSS (`std.rsa`), Ed25519 (`std.ed25519`), all verifiers, **no secret
+     touched** (§4.2 of `docs/tls-pure.md`: the right-hand column).
+3. **Finished** as before (§10.1, constant time), with the MAC over the transcript through the client's
+   CertificateVerify, which is what RFC 8446 §4.4.4 says and `finished_mac` already computes from the running
+   transcript: the two new messages are added to it as they are accepted. The application secrets were derived at the
+   end of the server's flight, from the transcript through the *server's* Finished (§7.1), as they must be; nothing
+   there changes.
+
+### 13.3 The trust store
+
+- **Its own call, its own bytes.** `tls.trust_clients(engine, pem) -> roots | refusal` replaces the client store with
+  the certificates of a PEM bundle. It is **not** `tls.trust`: that call is the client engine's, for the roots of
+  servers, with room for the system bundle (1 MiB); on a server engine it is refused today (`tls-role`, §5.1) and
+  **stays refused**. Letting `trust` mean "the clients' roots" on a server engine would put the one call that takes
+  the system bundle next to the one that must never take it (`docs/x509-verify.md` §10.3: public CAs have issued
+  certificates with both `serverAuth` and `clientAuth`, and 4 of the 128 system roots carry an EKU that would refuse
+  every client certificate under `clientAuth`). `trust_clients` on a client engine is `tls-role`.
+- **The engine cannot tell a public CA from a private one, and says so; two tripwires make the mistake loud.** The
+  store holds **at most 32 roots and 65,536 bytes** (`x509_verify.store_load`'s format; 128 roots of the system
+  bundle take 138,350 bytes, §8.2 of `docs/x509-verify.md`). A bundle over either is refused whole,
+  `tls-server-client-store`, so pointing the call at `/etc/ssl/certs/ca-certificates.crt` fails at the first call. It
+  is a heuristic, not a guarantee (32 public roots would fit), and the documentation says it is one.
+- **Strict, unlike `trust`.** `trust` skips a block it cannot read, so one odd root does not lose the rest
+  (`docs/x509.md` §5.3). A client store is a file an operator wrote for this purpose: a block that is not a
+  certificate this package reads (a private key pasted into the file, a certificate with an algorithm the verifier
+  refuses) is a mistake to report, not to skip. `trust_clients` refuses it, `tls-server-client-store`, **and the
+  store is as it was**. A bundle with no certificate is refused too, so the store is never empty after the first
+  successful call.
+- **Replacement at run time**, as `replace_identity` (§4, §11.2): `trust_clients` again replaces the store and bumps
+  `tls.client_generation(engine)`, which counts successful replacements (0: none yet). A handshake **reads the store when
+  its Certificate is handled**, not when it began: a CA removed from the file stops vouching for every handshake that has
+  not yet verified its chain, including ones in progress. (`replace_identity` lets a started connection keep the old
+  identity because the certificate it was sent is already on the wire; nothing is on the wire here but the CA *names*,
+  a hint.) A connection that has verified keeps its verdict, and records the generation it was verified under:
+  `tls.peer_verified(engine, slot)` answers it (§13.6). A program that revokes by replacing the store walks its slots and
+  closes those whose generation is older than `client_generation`. The example does (§13.10).
+- **Revocation is not checked** (`docs/tls-pure.md` §4.1: out of scope, and the client says the same of servers): a
+  client whose certificate was revoked is accepted until it expires or the CA leaves the store. The program's answer is
+  the one it must have anyway: a deny list on the identity it is given (the fingerprint, §13.6), which applies to every
+  connection, resumed ones included (§13.8).
+- **Where it lives.** In the engine's `cfg` slice, `tls_identity`'s, after the 16 identities: the mode (1 byte), the
+  generation (4), the store's length (3), and the store (65,536). `cfg` is already what every `feed` is given, so no
+  signature changes. **+65,545 bytes an engine** (a server engine is 274 KiB of identities already), allocated by
+  `open_server` only; a client engine and every slot are unchanged.
+
+### 13.4 The key types, and what is checked on the chain
+
+Accepted client keys, each with its CertificateVerify scheme: **ECDSA P-256** (`ecdsa_secp256r1_sha256`),
+**ECDSA P-384** (`ecdsa_secp384r1_sha384`), **RSA** (`rsa_pss_rsae_sha256/384/512`; `rsa.work_len()` bounds the modulus,
+`x509-key-size` for one it refuses), **Ed25519** (`ed25519`). Refused, with `x509-unsupported-algorithm` (alert 43): a P-521
+key, an RSASSA-PSS-OID key, any other.
+
+The chain is `x509_verify.verify_chain(store, certs, ranges, now, 3, purpose_client_auth(), leaf)`
+(`docs/x509-verify.md` §10): the path to a root of the store, every signature, every validity, `cA` and `pathLen`,
+**keyUsage `digitalSignature`** and **EKU `clientAuth`** (the leaf, every intermediate, and the root when it has one;
+`anyExtendedKeyUsage` alone is refused), and name constraints over every SAN. **No name is checked**: there is none to
+expect. `leaf` is the view of the verified certificate, from which the identity of §13.6 is read; on a refusal it is
+zeros (§10.3), so a program that ignored the answer would read nothing. The refusals are the verifier's tags
+(`x509-expired`, `x509-not-yet-valid`, `x509-unknown-issuer`, `x509-key-usage`, `x509-name-constraint`, `x509-path-too-long`,
+`x509-bad-signature`, `x509-not-ca`, `x509-chain-too-large`, `x509-decode`) with their alerts (`tls_slot.alert_for`:
+`unknown_ca` 48, `certificate_expired` 45, `unsupported_certificate` 43, `bad_certificate` 42), unchanged.
+
+**A leaf that is itself in the store** (a pinned device certificate, self-signed) is a question for the verifier, not for
+this design; §13.11's tests measure what `verify_chain` answers and this section records it.
+
+### 13.5 The clock
+
+The chain is checked at **the time the program gave `serve`** (`now_unix_ms`, its `clock_unix_ms`), kept in the slot as
+seconds. A handshake that has waited in the program's queue is `serve`d when it starts (§11.2), so the time is the
+handshake's, to within the program's handshake deadline; the engine has no clock of its own (§5.3). Validity is exact
+(`notBefore <= now <= notAfter`), as the verifier does everywhere: no skew allowance. A program whose devices have wrong
+clocks and present certificates "not yet valid" sees `x509-not-yet-valid` and the alert `certificate_expired`
+(RFC 8446 §6.2 has no other for it), and fixes the device or the CA's `notBefore`. *When tickets land, the clock is the
+later of this and `tls.set_time` (§12.7).*
+
+### 13.6 The verified identity, given to the program
+
+An established connection (and one `closed` after it, for a program that logs on close; never a failed one) can be asked,
+**in the program's own slot**:
+
+```
+tls.peer_verified(engine, slot) -> generation | 0   // 0: no client certificate (off, or optional and none sent)
+tls.peer_certificate(engine, slot, out) -> n        // the leaf's DER; n <= 16,384; out too small: tls-server-peer-buffer
+tls.peer_subject(engine, slot, out) -> n            // the subject Name's DER (SEQUENCE of RDNs), 0 if the leaf has none
+tls.peer_serial(engine, slot, out) -> n             // the serial number's content bytes
+tls.peer_fingerprint(engine, slot, out) -> 32       // SHA-256 of the leaf's DER, computed here, not by the client
+tls.peer_not_after(engine, slot) -> seconds         // the leaf's notAfter
+tls.peer_san(engine, slot, at, entry) -> next | 0   // subjectAltName one GeneralName at a time, x509_verify.san_next
+                                                    //   entry[0] tag, entry[1], entry[2] the content's range in peer_certificate's DER
+tls.client_generation(engine) -> n                  // §13.3
+```
+
+- **Zero bytes of slot.** The leaf is kept in the slot's `b_leaf` (16,384 bytes, which a server slot never used: it
+  holds the *server's* leaf for a client) and its length in `i_leaf_len`; the view is parsed again for each call
+  (`x509.parse`, once a call). So no slot grows, and the **chain buffer is the handshake
+  reassembly buffer** the slot already has (64 KiB, `hs_cap`), bounded by §13.2's 16,384 and five certificates.
+  *The only allocation is the verifier's own region, freed when the message is handled: the message copy
+  (at most 16,388 bytes), the ranges, a 40-word view a certificate, the signature work area.*
+- **`peer_verified` is the gate.** Every other call answers 0 bytes when it is 0 or the connection is not established
+  (or closed after establishment), so an `optional` connection with no certificate, a failed one and a slot that was
+  reused read nothing: `start` zeroes the length, and the leaf's bytes are never read past it.
+- **The subject and the SANs are the CA's words.** The engine adds nothing: no common name, no "identity string", no
+  decision. A function that picks a common name out of the Name is `docs/x509-verify.md` §10.1's "until a program asks";
+  `examples/tls_echo` has one (a Name printer for its log line, §13.10), and if the broker and the gateway both copy it,
+  it moves into `packages/x509`.
+- **The authority of the SAN is the store's.** A name constraint on the CA limits the SANs it can vouch for (§10.3),
+  but a CA with no constraint vouches for any subject: **a program that authorizes by subject or SAN must trust each CA
+  of its store for every subject it could carry.** The fingerprint is the identity that does not depend on that.
+- **Authentication is not authorization** (§13 opening): the program decides what `peer_fingerprint`, a SAN or a
+  subject may do, on every connection, resumed ones included.
+
+### 13.7 The refusal tags
+
+New, besides the verifier's `x509-*` (§13.4) and the existing `tls-*` that the flight can also raise:
+
+| tag | alert | when |
+|---|---|---|
+| `tls-server-client-cert-required` | certificate_required (116) | `required`, and the client's Certificate has no certificate |
+| `tls-server-client-sigalg` | illegal_parameter (47) | the client's CertificateVerify names a scheme the CertificateRequest did not list |
+| `tls-server-client-store` | none: `trust_clients`'s or `client_auth`'s answer | a bundle with no certificate, a block that is not one, over 32 roots or 65,536 bytes; or a mode asked for with no store |
+| `tls-server-client-auth-config` | none: `client_auth`'s answer | a mode other than 0, 1, 2 |
+| `tls-server-peer-buffer` | none: `peer_certificate`'s answer | `out` shorter than the certificate |
+| `tls-role` | none | `client_auth`, `trust_clients` or a `peer_` call on a client engine |
+
+Reused unchanged: `tls-server-illegal-parameter` (a non-empty request context), `tls-unsupported-extension` (a
+CertificateEntry extension), `tls-decode-error` (a Certificate or CertificateVerify that does not parse),
+`tls-unexpected-message` (the wrong message, or a Certificate nobody asked for), `tls-bad-certificate-verify`,
+`tls-server-finished`, and `x509-chain-too-large` for the message, certificate count or leaf over their bounds. The alert
+mapping of `tls_slot` gains the two alerts above; every other refusal maps as it does.
+
+### 13.8 Resumption (§12): the decision
+
+A resumed session **skips verification**: the client proves it holds the PSK, which a connection that *was* verified made
+(`docs/tls-resumption.md` §3's hazard, seen from the other side). On the client side a ticket is a stored verdict about a
+*server*, and eight rules say when the verdict is stale. For a server the verdict is about a *client*, and it matters
+more: the identity is what the program authorizes with, and a ticket that carried a different identity, or a stale one,
+is an authorization bug. The rules, with the client's number each mirrors:
+
+| | rule | the client's rule | |
+|---|---|---|---|
+| **R1** | **No ticket carries a client identity unless the program asked for it.** A connection whose client was verified is issued tickets only if `tls.set_client_tickets(engine, on)` was called (a #379 call; off by default). With it off, the server sends **no NewSessionTicket on that connection**, and a client that returns makes a full handshake and presents its certificate again. This is the default #379's rule g sets (§12.3), and it is what main has: tickets do not exist yet | rule 2 (the trust store), the hazard | The cost of the safe default is the whole point of §6 for authenticated peers: they do the signature and the chain, 4 to 8 ms on x86-64. An MQTT device that connects once a day does not mind; a gateway whose clients reconnect in bursts does, and turns it on |
+| **R2** | **The ticket holds the identity, not a pointer to one.** With `set_client_tickets` on, the sealed ticket (§12.1) carries `auth = 1`, the client's leaf **DER**, `verified_at`, and the client store's **digest** (R3). A resumed connection reads its identity from the ticket's leaf with the same code that reads a verified one (`b_leaf`, the same `peer_` calls), so **the program is given byte for byte the identity of the connection that was verified, or the resumption is refused**: there is no third thing, and a ticket cannot name an identity the server did not verify, because it opens only under the ticket key | the host name is kept beside the ticket (§11) | A leaf over **1,024 bytes** is not carried: the ticket would be at most about 1.8 KiB (§12.1's 681-byte largest, plus the leaf, a time and a digest) of the 2,048 the `packages/tls` client keeps (`docs/tls-resumption.md` §4), and no NewSessionTicket is sent for that connection (the verdict is `client-too-large`, not an error). Measured leaf sizes belong in §13.12 (a P-256 leaf with one SAN: about 400 bytes) |
+| **R3** | **Refused after the client store changed.** The ticket carries `SHA-256` of the store's loaded bytes (the digest, 32 bytes, not the generation). A resumption is a full handshake when the digest of the store *now* differs | rule 2 | A counter would be per process: a fleet sharing a ticket key (§12.2) that loads the same file would refuse each other's tickets after any one restart. A digest changes exactly when the file's roots do, and a reload that found the same file refuses nothing. `tls.client_generation` (§13.3) is for the program's own use |
+| **R4** | **Refused when the client's certificate has expired**, and a ticket never outlives it: its expiry is capped at the leaf's `notAfter`, as §12.3 c caps it at the server certificate's | rule 3 | |
+| **R5** | **Bounded from the verification, not from the ticket.** The ticket's life is also capped at `verified_at + client_max_age` (default **1 hour**, `tls.set_client_ticket_max_age`), where `verified_at` is the time of the *full handshake that verified the client*; a resumed connection's new tickets inherit it. A chain of resumptions never outlives the verification it started from | rule 4 and its "as built" correction | There is no revocation (§13.3); this is the window |
+| **R6** | **Required means required.** In `required` mode a ticket with `auth = 0` (issued when the mode was off or optional and the client sent none) is **not accepted**: full handshake, which asks for the certificate. In `optional` either is accepted, and a resumed `auth = 0` connection has no identity, as the original had none. In `off` a ticket with `auth = 1` is **not accepted** either (`auth`): a program that turned client authentication off asked for connections with no identity, and `peer_verified` does not answer non-zero for one | the client's refuse-by-rule shape | The `auth` verdict is the one #379's rule g already reserves |
+| **R7** | **No early data**, as §12.3 b: a resumption never accepts 0-RTT, so nothing the client authenticates is replayable | rule 6 | |
+| **R8** | **A replay is harmless for identity**, as §12.4: the ClientHello's binder proves the PSK, and the handshake keys need the client's ephemeral key, so a recorded resumption yields no session and no identity | rule 5 | The identity is given to the program only once Finished has verified |
+| **R9** | **A different identity on a ticket is not a thing**: a resumed connection does not run `verify_chain` and does not read a certificate from the client, so the client cannot change who it is by what it sends after the ClientHello | rule 8 | |
+
+- **What is built when.** The tickets build is #379's. This section decides the rules so that build and this one
+  agree before either is merged; **this PR builds R1 as main has it** (no tickets exist) and the fields R2 to R6 need:
+  the slot's `f_client_auth` flag and the client leaf in `b_leaf`, and the store's digest in `cfg`. The ticket
+  carriage (R2 to R6) is written against `tls_ticket` once #379 is merged: a follow-up to this PR, with the verdicts
+  `auth`, `client-store`, `client-expired`, `client-too-large` added to §12.7's list and a lying-client case for each.
+  If #379 merges first, the carriage goes into this PR before it merges.
+- **The interface #379 must give** (read from its branch, which has `auth = 0` and a refusal of `auth != 0` in its ticket
+  format, §12.1 and §12.3 g): `plaintext` gains `client_len (2)` and the DER after it; `auth` takes 1 only when R1's
+  call is on; `ticket_verdict` gains the four verdicts above. A ticket that an older server meets with `auth != 0` is
+  refused (`auth`), which is already its rule g.
+- **What the program sees on a resumed connection** is the same calls (§13.6): `peer_verified` answers the **current**
+  generation (the digest matched, so the store is equivalent to the one that verified), and `peer_certificate` the leaf
+  from the ticket. Whether the connection was resumed is `tls.resumed` (#379).
+
+### 13.9 What is not offered
+
+- **Post-handshake authentication** (RFC 8446 §4.6.2). The `post_handshake_auth` extension (49) in a ClientHello is
+  ignored (a server need not answer it), and the server never sends a CertificateRequest after the handshake. A
+  Certificate, CertificateVerify or Finished message from the client on an established connection is
+  `tls-unexpected-message` (`on_message` answers it for every type it does not expect). So a program that wants a
+  client certificate for one URL of many closes and reconnects, or runs a second listener (§13.1).
+- **Renegotiation**: TLS 1.3 has none; a ClientHello on an established connection is `tls-unexpected-message`, as today.
+- **TLS 1.2** client certificates: there is no TLS 1.2 server (§2.2).
+- **A certificate chosen by SNI**: the request is the same for every identity (§13.1).
+- **OCSP, CRLs**: §13.3.
+
+### 13.10 The examples
+
+`examples/tls_echo` and `examples/https_hello` gain:
+
+```
+--client-ca <name>        a file of the client CAs' PEM certificates, beneath --dir (tls_echo, https_hello)
+                          or in the fixed directory (tls_echo_fixed); mode `optional`
+--require-client-cert     mode `required` (with --client-ca)
+```
+
+and each connection line gains `client=<subject>` (an RFC 4514-style rendering of the verified subject's RDNs, ASCII
+only, anything else escaped, `-` when there is none) and `fp=<first 16 hex digits of the fingerprint>`:
+
+```
+conn 7 peer=127.0.0.1:51109 established suite=TLS_AES_128_GCM_SHA256 group=x25519 sni=echo.lex-sys.test alpn=echo hrr=no client=CN=device-17 fp=3fa1c0de9b21aa07 waited=0 handshake=7
+```
+
+- **The authority report does not change.** The file is read beneath the `Dir` the program already holds (`file_read`,
+  `dir_read`), by the same function that reads an identity's files, and `tls_echo_fixed` reads it from the directory its
+  one `narrow(fs, "/dev/urandom", "/etc/cancho/tls_echo")` already names. The report's label set is what §11.1 pins.
+  `conformance/tls_echo.rs`'s pinned list is unchanged; a test asserts it.
+- **`SIGHUP` reloads the store with the identities**: `trust_clients` again, a refused file logged
+  (`reload client-ca refused tls-server-client-store`) with the old store still serving; after a successful change the
+  loop closes every established connection whose `peer_verified` is older than `client_generation`
+  (`closed revoked`), because a program that replaces the store to revoke means it.
+- **The log line is the program's, not the engine's**: the engine gives bytes; the example formats them.
+
+### 13.11 How it will be tested
+
+- **Interop** (`scripts/tls_server_interop.py`, a `clientauth` section): a CA, client certificates in every key type
+  and chain length, `required` and `optional` servers: `openssl s_client -cert/-key`, curl `--cert/--key`, Go
+  `tls.Config.Certificates` (`scripts/interop/go_client.go` gains a client certificate), wolfSSL (`wolfssl_client.c`
+  gains `wolfSSL_CTX_use_certificate_chain_file`), mosquitto's `--cert/--key`, in modes `off`, `optional`, `required`, with
+  chains of one and two certificates, P-256, P-384, RSA-PSS (RSA-2048) and Ed25519 keys. `packages/tls`'s own client
+  cannot present a certificate yet (#386); its row is added when it can. Each row: the client completes, and the
+  server's line carries the subject the row's certificate has, equal to what **OpenSSL reports for the same certificate**
+  (`openssl x509 -subject -nameopt RFC2253 -fingerprint -sha256`, compared to `client=` and `fp=`).
+- **The lying client** (`scripts/tls_liar_client_auth.py`, the shape of `tls_liar_client.py`, which it imports; the
+  driver gains `M`, `K`, `P`): one case per rule: no certificate when required, an empty Certificate when optional (accepted,
+  no identity), a wrong CertificateVerify (a flipped bit; a signature over another transcript; the *server's* context
+  string), a wrong scheme (not listed), a listed scheme that does not fit the key, an untrusted CA, an expired leaf, a
+  not-yet-valid one, an EKU of `serverAuth` only, a key usage without `digitalSignature`, a name constraint violated, a
+  chain over each bound (6 certificates, a message over 16 KiB, a leaf over 16 KiB), a self-signed leaf, a certificate for
+  a different key than the one that signs, a CertificateVerify without a Certificate, a Finished in place of the
+  Certificate, a non-empty request context, a CertificateEntry extension, a duplicate Certificate, a Certificate
+  after Finished, handshake bytes replayed from another connection, the store replaced between the request and the
+  Certificate (refused) and after establishment (kept, generation older), and the honest ones for each key type.
+- **A differential against `openssl s_server`** (`-Verify 1` for required, `-verify 1` for optional,
+  `scripts/tls_server_differential.py --client-auth`): the client's flight is built from the server's, so the harness
+  plays a live client against **both** servers (the lying client's logic over a socket) and compares the outcome
+  (established or the alert) for each malformed flight; an `EXPECTED` table for the cases the RFC allows either.
+- **Fuzz**: `fuzz_server` and its corpus gain client flights (a full honest handshake with a certificate: the server's
+  random is fixed by the harness's seed, so the client's bytes replay); `scripts/tls_fuzz.py --server` mutates the
+  client-auth cases; `fuzz_hello` is unchanged (the ClientHello is). The corpus is a regression test.
+- **Mutants** (`scripts/tls_server_mutants.py`): one per decision above (the purpose passed to the verifier, the context
+  string, the transcript the signature covers, the optional/required test, the sigalg list test, the store read at
+  Certificate time, the strict store, the 16 KiB bound, the certificate count, the identity gate, `max_intermediates`, the
+  EKU), all killed or argued equivalent.
+- **The existing suites unchanged**: the 110 recorded connections replay byte for byte (mode off adds no byte), the
+  client's suites, `x509_matrix.py`, `publish_packages.py --check`.
+
+### 13.12 Cost and memory
+
+*Arithmetic from measured parts, until §13.12 below is filled by the build.* A client-authenticated full handshake does
+**one more chain verification and one more signature verification** than §6's: ECDSA P-256 verification is 0.82 ms on the
+M4 and 1.5 ms on the i7 (`docs/ecdsa-sign.md` §7), so a client leaf signed by a root of the store, with a P-256 key:
+**two verifications, 1.6 ms (M4) to 3.0 ms (i7)**; with an intermediate: three, **2.5 to 4.5 ms**. The issue's "about
+1.6 to 2.5 ms" is the M4's. A P-384 key costs more (not yet measured), RSA-2048 PSS and Ed25519 are not measured here.
+So an authenticated handshake is about **3.5 + 2 = 5.5 ms on the M4 and 5.5 + 3.5 = 9 ms on x86-64**, to be measured on
+both. The handshake rate bound of §11.2 (100 a second) is then a larger share of a core for authenticated peers; the
+example's `--rate` default is not changed, and a program with certificates sets it from its own figure.
+
+**Memory:** per slot **0 bytes** (§13.6); per engine **+65,545 bytes** (§13.3); the flight's transient buffer +8,247.
+Checked by `tls.cho`'s sizes in the build (a test asserts `bytes_len()` and `ints_len()` are as they were).
