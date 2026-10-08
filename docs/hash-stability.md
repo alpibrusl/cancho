@@ -251,6 +251,21 @@ builtins.
 > measurement above is the evidence, not an assumption: the corpus grew
 > by 24 revisions in this same window and only 3 joined the unreadable
 > pile. The vocabulary moved. The past it could break did not.
+>
+> **Held mechanically (current at head).** The number this section kept
+> having to re-state is now a checked property rather than a paragraph.
+> `scripts/history.py --explain` replays every distinct revision of
+> every `.cho` under `std/` and `examples/` through today's compiler and
+> refuses, exit 1, on any failing rule not listed with a reason in
+> [`stability-exemptions.md`](stability-exemptions.md); a listed rule
+> that stops failing is reported as stale, so the list only ever shrinks,
+> and the CI job `stability-plateau` runs it on every push with the full
+> history fetched. The failing count stays honest — an exemption does
+> not remove a revision from the number — so the 37%→39% climb this
+> section could only correct in prose is, from here, either a red build
+> or a new line in a committed file with a reason beside it. The
+> baseline at introduction: 203 revisions, 133 do not read (65%), the
+> three rules and their reasons in the exemption file.
 
 ---
 
