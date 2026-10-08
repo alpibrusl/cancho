@@ -4,6 +4,7 @@
 `docs/editions.md` §2 is what these numbers mean. Every distinct revision
 of every `.cho` file under `std/` and `examples/` is checked by one
 binary, today's, so anything that fails is the language having moved.
+
 A library file is checked beside today's other library files and a
 `main` that does nothing, because a file of a program is not a program.
 An example in a directory is checked beside its siblings as they were
@@ -233,6 +234,7 @@ def main():
             remaining[(now[0]["rule"], shape(now[0]["message"]))] += 1
         else:
             recovered[first[0]["rule"]] += 1
+
     shutil.rmtree(work, ignore_errors=True)
     unreadable = sum(failing.values())
     print(f"{total} revisions, {total - unreadable} read today, {unreadable} do not")
