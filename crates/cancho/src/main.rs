@@ -140,8 +140,8 @@ every function, one identity for every type. A unit hashes its content,
 not the file it sits in. See docs/canonical-ast.md.
 
 `print` renders one parsed file in canonical form. It is the AST-to-text
-direction of that same pipeline, not a formatter: comments never reach the
-AST, so they are not in the output. `fmt` is the formatter.
+direction of that same pipeline, not a formatter: comments never reach
+the AST, so they are not in the output. `fmt` is the formatter.
 
 `vcs publish` logs every declaration in one file as an `AddFunction`
 operation in a content-addressed store at `--store` (default
@@ -169,8 +169,8 @@ Exit 0 only if every pin still resolves exactly as published. `--lock
 <file>` scopes this to just the names `vcs lock` pinned, instead of
 everything the store has ever published. If the store itself has a
 dependency (`--requires` at publish time), its own closure is walked
-and verified too, refusing on a cycle or a diamond conflict rather than
-guessing. See docs/package-system.md §4.2 and §4.6.
+and verified too, refusing on a cycle or a diamond conflict rather
+than guessing. See docs/package-system.md §4.2 and §4.6.
 
 `vcs lock --store <dir> -o <file> <name>...` looks each name up in a
 dependency store's manifest and pins it -- by hash, not by name -- into
@@ -1043,7 +1043,7 @@ fn escaped(value: &str) -> String {
 /// (`docs/authority.md`).
 ///
 /// The surface is the union of the declared rows of everything `main`
-/// reaches, and that needs no new analysis: pass 2 already emits exactly
+/// reaches, and that needed no new analysis: pass 2 already emits exactly
 /// what `main` reaches (`standard-library.md` §5.2), so `Program::funcs`
 /// *is* the reachable set and every `Func` carries its row. The same
 /// reachability that decides what goes in the binary decides what the
@@ -1152,6 +1152,41 @@ fn mentions_parameter(ty: &Type) -> bool {
 /// on its behalf.
 fn bounds_its_domain(label: &str) -> bool {
     label != "ffi"
+}
+
+/// The domains of the negative half (`docs/authority.md` §2.2): what a
+/// capability language is *for* is the question "what can this not do",
+/// and an absent label is a proof rather than an absence of evidence.
+/// Both outputs — the prose report's "never touches" and the JSON's
+/// `never_touches` — answer it from this one table, so the two cannot
+/// drift apart.
+fn untouched_domains(labels: &[String]) -> Vec<&'static str> {
+    [
+        // All three streams, because a program whose entire
+        // output is a diagnostic touches the console —
+        // `docs/standard-error.md` §4 is the lie this row prevents.
+        ("the console", ["io_read", "io_write", "err_write"].as_slice()),
+        ("the filesystem", ["fs_read", "fs_write", "file_read", "file_write"].as_slice()),
+        (
+            "the network",
+            ["net_out", "net_in", "conn_accept", "conn_read", "conn_write"].as_slice(),
+        ),
+        ("the heap", ["heap"].as_slice()),
+        ("the command line", ["args"].as_slice()),
+        ("signals", ["signals", "signals_read"].as_slice()),
+        // `docs/processes.md` §2: starting a program, and what a parent
+        // does with the children it started.
+        ("other programs", ["exec", "child_signal", "pipe_read", "pipe_write"].as_slice()),
+        ("foreign code", ["ffi"].as_slice()),
+    ]
+    .into_iter()
+    .filter(|(_, names)| {
+        !names.iter().any(|name| {
+            labels.iter().any(|label| label == name || label.starts_with(&format!("{name}(")))
+        })
+    })
+    .map(|(what, _)| what)
+    .collect()
 }
 
 fn print_authority(
@@ -1295,6 +1330,13 @@ fn print_authority(
                 )?;
             }
             writeln!(out, "  ],")?;
+            // The negative half, beside the positive one so a consumer
+            // never reads silence as absence (`docs/authority.md` §2.2):
+            // the same domains the prose report's "never touches" lists,
+            // from the one table both share. A domain absent here is
+            // performed; a domain present is proven out of reach.
+            let untouched = untouched_domains(&labels);
+            writeln!(out, "  \"never_touches\": [{}],", quoted(&untouched))?;
             writeln!(out, "  \"foreign_symbols\": [{}],", quoted(&symbols))?;
             writeln!(out, "  \"pure\": [{}],", quoted(&pure))?;
             writeln!(out, "  \"folded_operators\": {folded_operators},")?;
@@ -1351,32 +1393,7 @@ fn print_authority(
         // The negative half, which is the one a capability language is for:
         // a reader wants to know what a program *cannot* do, and an absent
         // label is exactly that.
-        let untouched: Vec<&str> = [
-            // All three streams, because a program whose entire
-            // output is a diagnostic touches the console —
-            // `docs/standard-error.md` §4 is the lie this row prevents.
-            ("the console", ["io_read", "io_write", "err_write"].as_slice()),
-            ("the filesystem", ["fs_read", "fs_write", "file_read", "file_write"].as_slice()),
-            (
-                "the network",
-                ["net_out", "net_in", "conn_accept", "conn_read", "conn_write"].as_slice(),
-            ),
-            ("the heap", ["heap"].as_slice()),
-            ("the command line", ["args"].as_slice()),
-            ("signals", ["signals", "signals_read"].as_slice()),
-            // `docs/processes.md` §2: starting a program, and what a parent
-            // does with the children it started.
-            ("other programs", ["exec", "child_signal", "pipe_read", "pipe_write"].as_slice()),
-            ("foreign code", ["ffi"].as_slice()),
-        ]
-        .into_iter()
-        .filter(|(_, names)| {
-            !names.iter().any(|name| {
-                labels.iter().any(|label| label == name || label.starts_with(&format!("{name}(")))
-            })
-        })
-        .map(|(what, _)| what)
-        .collect();
+        let untouched: Vec<&str> = untouched_domains(&labels);
         if !untouched.is_empty() {
             writeln!(out, "never touches")?;
             for what in untouched {
