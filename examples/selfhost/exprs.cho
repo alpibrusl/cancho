@@ -15,6 +15,7 @@ import selfhost.emit;
 import selfhost.scope;
 import selfhost.prims;
 import selfhost.builtins;
+import selfhost.effects;
 
 // What an expression came to: its type, and whether it is a known integer (a literal, or a
 // literal operation that folded) and which.
@@ -715,7 +716,7 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     let start = builtins.builtin_sig_start(b);
-    if builtins.builtin_sig(start) != 0 || builtins.builtin_effect_count(b) > 0 || emit.on(st) {
+    if builtins.builtin_sig(start) != 0 || emit.on(st) || !effects.perform(st, b) {
         return skip(st, from, to);
     }
     var fresh = 0 - 1;
@@ -832,6 +833,8 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     if emit.on(st) && pass1.count_params(st, ast.get(st, found, 6), false) > 0 {
         return skip(st, from, to);
     }
+    // What the callee's row says it performs, the caller performs.
+    effects.perform_row(st, effects.row_mask(st, text, found));
     // Each type and region parameter of the callee is a variable here, which the arguments solve.
     let callee_dp = ast.get(st, found, 6);
     var tvars = 0 - 1;
@@ -911,11 +914,11 @@ pub fn callee_type[&s, &x](st: &!s [int], text: &x [byte], ty: int, dp: int, fre
     return out;
 }
 
-// A function with no type parameters, an empty row, and only types this slice handles: the
-// functions this slice checks, and the callees it can call. Regions are fine.
+// A function whose row is plain labels and only types this slice handles: the callees it can call.
+// Regions and type parameters are fine.
 pub fn plain_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [] bool {
     let dp = ast.get(st, fn_item, 6);
-    if !pass1.is_code(st, ast.get(st, fn_item, 9) + 1, lc.Tok::RBracket) {
+    if !effects.plain_row(st, effects.row_mask(st, text, fn_item)) {
         return false;
     }
     var param = ast.get(st, fn_item, 7);

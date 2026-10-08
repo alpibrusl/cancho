@@ -38,6 +38,7 @@ import selfhost.types;
 import selfhost.emit;
 import selfhost.scope;
 import selfhost.exprs;
+import selfhost.effects;
 
 // What an expression came to: its type, and whether it is a known integer (a literal, or a
 
@@ -581,6 +582,7 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
     st[35] = 0;
     st[37] = 0 - 1;
     st[39] = 0;
+    st[54] = 0;
     st[22] = ast.get(st, fn_item, 13);
     st[23] = ast.get(st, fn_item, 14);
     let from = ast.nstart(st, fn_item);
@@ -646,10 +648,8 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
         ast.fail(st, st[32], st[33], st[34]);
     }
     if ast.ok(st) {
-        // The row is exact: nothing here performs anything, so a declared label is decoration.
-        if !pass1.is_code(st, ast.get(st, fn_item, 9) + 1, lc.Tok::RBracket) {
-            ast.fail(st, rules.r_effect_declared_not_performed(), from, to);
-        }
+        // The row is exact, both ways.
+        effects.check(st, text, fn_item, from, to);
     }
     if ast.ok(st) && !terminates(st, ast.get(st, fn_item, 11), ast.get(st, fn_item, 12)) {
         ast.fail(st, rules.r_missing_return(), from, to);

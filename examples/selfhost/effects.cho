@@ -1,0 +1,152 @@
+module selfhost.effects;
+
+// effects.cho -- what a function performs, against the row it declares.
+//
+// A function's row lists the effects it may have, and Rust holds it exact (`docs/linearity-and-
+// effects.md` section 7.3): what a body performs, which is what the builtins it calls perform and
+// what the rows of the functions it calls say, must be the row, in both directions. A label in the
+// body and not the row is `effect-not-declared`; a label in the row and not the body is
+// `effect-declared-not-performed`. Both are refused at the function.
+//
+// A set of labels is an integer here, bit i for the label `builtins.effect_name(i)`. A label that
+// carries an argument (`fs_read("/tmp")`), or whose name no builtin performs, is not one of those;
+// a row with either is reported in the two high bits and left to the callers to be careful about.
+
+import selfhost.ast;
+import selfhost.rules;
+import selfhost.builtins;
+import selfhost.lexcore as lc;
+import selfhost.pass1;
+
+pub fn two_to[&s](st: &!s [int], n: int) -> [] int {
+    var v = 1;
+    var i = 0;
+    while i < n {
+        v = v * 2;
+        i = i + 1;
+    }
+    return v;
+}
+
+// The bit of the high flag for a label with an argument, and for one no builtin performs.
+pub fn arg_flag[&s](st: &!s [int]) -> [] int {
+    return two_to(st, 60);
+}
+
+pub fn unknown_flag[&s](st: &!s [int]) -> [] int {
+    return two_to(st, 61);
+}
+
+// Does `mask` have bit `n` set?
+fn has[&s](st: &!s [int], mask: int, n: int) -> [] bool {
+    return mask / two_to(st, n) % 2 == 1;
+}
+
+// The labels of the row of function `fn_item`: the mask of those a builtin performs, plus the
+// flags for an argument and for an unknown name. `[` is the token the item keeps for it.
+pub fn row_mask[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [] int {
+    var p = ast.get(st, fn_item, 9) + 1;
+    var mask = 0;
+    while !pass1.is_code(st, p, lc.Tok::RBracket) {
+        var found = 0 - 1;
+        var i = 0;
+        while i < builtins.effect_count() {
+            if lc.spells(text, ast.tstart(st, p), ast.tend(st, p), builtins.effect_name(i)) {
+                found = i;
+            }
+            i = i + 1;
+        }
+        p = p + 1;
+        if pass1.is_code(st, p, lc.Tok::LParen) {
+            while !pass1.is_code(st, p, lc.Tok::RParen) {
+                p = p + 1;
+            }
+            p = p + 1;
+            if !has(st, mask, 60) {
+                mask = mask + arg_flag(st);
+            }
+        } else if found < 0 {
+            if !has(st, mask, 61) {
+                mask = mask + unknown_flag(st);
+            }
+        } else if !has(st, mask, found) {
+            mask = mask + two_to(st, found);
+        }
+        if pass1.is_code(st, p, lc.Tok::Comma) {
+            p = p + 1;
+        }
+    }
+    return mask;
+}
+
+// A row that is only labels a builtin performs: nothing with an argument, nothing unknown.
+pub fn plain_row[&s](st: &!s [int], mask: int) -> [] bool {
+    return mask < arg_flag(st);
+}
+
+// The builtin `b` performs its labels: added to the set `st[54]` the function being checked
+// keeps. A label that carries an argument is not one the checker follows: answers false.
+pub fn perform[&s](st: &!s [int], b: int) -> [] bool {
+    var k = 0;
+    while k < builtins.builtin_effect_count(b) {
+        let code = builtins.builtin_effect(b, k);
+        if code % 2 == 1 {
+            return false;
+        }
+        if !has(st, st[54], code / 2) {
+            st[54] = st[54] + two_to(st, code / 2);
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+// The labels a call to a function with the row `mask` performs, added to the set.
+pub fn perform_row[&s](st: &!s [int], mask: int) -> [] int {
+    var n = 0;
+    while n < builtins.effect_count() {
+        if has(st, mask, n) && !has(st, st[54], n) {
+            st[54] = st[54] + two_to(st, n);
+        }
+        n = n + 1;
+    }
+    return 0;
+}
+
+// The row is exact: what the body performed against what `fn_item` declares. The first
+// disagreement is a refusal at the function, `effect-not-declared` when the body does more than the
+// row says and `effect-declared-not-performed` when the row says more.
+pub fn check[&s, &x](st: &!s [int], text: &x [byte], fn_item: int, from: int, to: int) -> [] int {
+    let declared = row_mask(st, text, fn_item);
+    let performed = st[54];
+    if has(st, declared, 60) {
+        // A label with an argument is a different label from the plain one a builtin performs, and
+        // from every other: nothing performed can be compared with it yet.
+        if performed != 0 {
+            ast.fail(st, rules.r_skip(), from, to);
+            return 0;
+        }
+        ast.fail(st, rules.r_effect_declared_not_performed(), from, to);
+        return 0;
+    }
+    var n = 0;
+    while n < builtins.effect_count() {
+        if has(st, performed, n) && !has(st, declared, n) {
+            ast.fail(st, rules.r_effect_not_declared(), from, to);
+            return 0;
+        }
+        n = n + 1;
+    }
+    n = 0;
+    while n < builtins.effect_count() {
+        if has(st, declared, n) && !has(st, performed, n) {
+            ast.fail(st, rules.r_effect_declared_not_performed(), from, to);
+            return 0;
+        }
+        n = n + 1;
+    }
+    if has(st, declared, 61) {
+        ast.fail(st, rules.r_effect_declared_not_performed(), from, to);
+    }
+    return 0;
+}
