@@ -108,13 +108,14 @@ def check_offer(msg, alpn):
     assert kinds.index(50) < kinds.index(16) < kinds.index(43), "its place among the extensions"
 
 
-def prelude(conv, alpn, identity, hosts):
-    """The driver lines before `C`: the ALPN offer and the identity."""
+def prelude(conv, alpn, identity, hosts, extra=()):
+    """The driver lines before `C`: the ALPN offer and the identity; `extra` certificates follow the leaf in its chain."""
     if alpn:
         f = conv.ask(f"L {alpn.encode().hex()}")
         assert f[0] == "0", f
     if identity:
-        f = conv.ask(f"I 0 {pem_cert(CERT).hex()} {pem_key(KEY).hex()} {hosts.hex()} {NOW}")
+        chain = pem_cert(CERT) + b"".join(pem_cert(c) for c in extra)
+        f = conv.ask(f"I 0 {chain.hex()} {pem_key(KEY).hex()} {hosts.hex()} {NOW}")
         assert f[0] == "0", f
 
 
@@ -130,8 +131,9 @@ class AuthServer(Server):
         self.client_pub = KEY.public_key()
         self.client_cert = CERT
 
-    def start(self, alpn=None, identity=True, hosts=HOST):
-        prelude(self.c, alpn, identity, hosts)
+    def start(self, alpn=None, identity=True, hosts=HOST, extra=()):
+        prelude(self.c, alpn, identity, hosts, extra)
+        self.chain = [self.client_cert] + list(extra)
         super().start()
         check_offer(self.transcript, alpn)
 
@@ -170,10 +172,14 @@ class AuthServer(Server):
         if expect == "empty":
             assert len(lst) == 3, "an empty Certificate"
         else:
-            n = int.from_bytes(lst[3:6], "big")
-            der = lst[6:6 + n]
-            assert der == self.client_cert.public_bytes(serialization.Encoding.DER), "the identity's certificate"
-            assert lst[6 + n:8 + n] == b"\0\0", "no certificate extensions"
+            at = 3
+            for cert_in_chain in self.chain:
+                n = int.from_bytes(lst[at:at + 3], "big")
+                der = lst[at + 3:at + 3 + n]
+                assert der == cert_in_chain.public_bytes(serialization.Encoding.DER), "the identity's certificate"
+                assert lst[at + 3 + n:at + 5 + n] == b"\0\0", "no certificate extensions"
+                at += 5 + n
+            assert at == len(lst), "the whole chain, and nothing after it"
         self.transcript += cert
         if expect == "chain":
             kind, cv = self.read.open(rest.pop(0))
@@ -257,6 +263,13 @@ case("client auth: an unknown extension in the request is ignored", "ok")(
 many = [b"\x30\x0b\x31\x09\x30\x07\x06\x03\x55\x04\x03\x0c\x00" + i.to_bytes(4, "big") + b"x" * 4 for i in range(2600)]
 case("client auth: 2,600 authorities, ours the last", "ok")(mutual("chain", 1, SIG + authorities(many + [CA_NAME])))
 case("client auth: 2,600 authorities, none ours: the empty Certificate", "ok")(mutual("empty", 2, SIG + authorities(many)))
+
+case("client auth: a chain of two certificates, each with an empty extension list", "ok")(
+    mutual("chain", 1, SIG, extra=[CA[1]]))
+# The same length as CA_NAME, other bytes: only a byte-for-byte comparison tells them apart.
+SAME_LENGTH = CA_NAME[:-1] + bytes([CA_NAME[-1] ^ 1])
+case("client auth: an authorities name of the issuer's length and other bytes: empty Certificate", "ok")(
+    mutual("empty", 2, SIG + authorities([SAME_LENGTH])))
 
 # ---- TLS 1.3: a request it cannot answer is answered with the empty Certificate ----
 case("client auth: no common signature scheme (Ed25519 only): empty Certificate", "ok")(
@@ -353,6 +366,9 @@ case("ALPN: an unoffered selection (spdy/3)", "tls-alpn-selected", 47)(
 case("ALPN: a selection that is a prefix of an offered name", "tls-alpn-selected", 47)(
     lambda s: (s.start(alpn="h2 http/1.1", identity=False), setattr(s, "ee_extensions", alpn_ext(b"http/1.")),
                s.c.feed(s.hello_and_flight())))
+case("ALPN: a selection of an offered name's length and other bytes (h3 for h2)", "tls-alpn-selected", 47)(
+    lambda s: (s.start(alpn="h2 http/1.1", identity=False), setattr(s, "ee_extensions", alpn_ext(b"h3")),
+               s.c.feed(s.hello_and_flight())))
 case("ALPN: a 255-byte selection never offered", "tls-alpn-selected", 47)(
     lambda s: (s.start(alpn="h2", identity=False), setattr(s, "ee_extensions", alpn_ext(b"q" * 255)),
                s.c.feed(s.hello_and_flight())))
@@ -440,8 +456,9 @@ class AuthServer12(Server12):
     query = AuthServer.query
     finish_honest = AuthServer.finish_honest
 
-    def start(self, alpn=None, identity=True, hosts=HOST):
-        prelude(self.c, alpn, identity, hosts)
+    def start(self, alpn=None, identity=True, hosts=HOST, extra=()):
+        prelude(self.c, alpn, identity, hosts, extra)
+        self.chain = [CERT] + list(extra)
         super().start()
         check_offer(self.transcript, alpn)
 
@@ -475,10 +492,14 @@ class AuthServer12(Server12):
             if expect == "empty":
                 assert cert == plain_record(22, message(11, u24(0))), "an empty Certificate"
             else:
-                n = int.from_bytes(cert[12:15], "big")
-                der = cert[15:15 + n]
-                assert der == CERT.public_bytes(serialization.Encoding.DER), "the identity's certificate"
-                assert len(cert) == 5 + 4 + 3 + 3 + n, "a list of one certificate, with no extensions"
+                lst = cert[9:]
+                assert int.from_bytes(lst[:3], "big") == len(lst) - 3
+                at = 3
+                for cert_in_chain in self.chain:
+                    n = int.from_bytes(lst[at:at + 3], "big")
+                    assert lst[at + 3:at + 3 + n] == cert_in_chain.public_bytes(serialization.Encoding.DER), "the identity's certificate"
+                    at += 3 + n
+                assert at == len(lst), "a list of the chain's certificates, with no extensions"
             self.transcript += cert[5:]
         cke = recs.pop(0)
         assert cke[0] == 22 and cke[5] == 16, cke[:6].hex()
@@ -539,6 +560,8 @@ case12("TLS 1.2 client auth: ChaCha20-Poly1305 and the authorities name the issu
     mutual12("chain", 1, ([RSA_SIGN, ECDSA_SIGN], [ED25519, ECDSA_SHA256], [CA_NAME]), suite=0xcca9))
 case12("TLS 1.2 client auth: P-256 key exchange", "ok")(
     lambda s: (setattr(s, "group", P256), mutual12("chain", 1, ([ECDSA_SIGN], [ECDSA_SHA256], []))(s)))
+case12("TLS 1.2 client auth: a chain of two certificates", "ok")(
+    mutual12("chain", 1, ([ECDSA_SIGN], [ECDSA_SHA256], []), extra=[CA[1]]))
 case12("TLS 1.2 client auth: ecdsa_sign is not a certificate type: empty Certificate", "ok")(
     mutual12("empty", 2, ([RSA_SIGN], [ECDSA_SHA256], [])))
 case12("TLS 1.2 client auth: Ed25519 only: empty Certificate", "ok")(mutual12("empty", 2, ([ECDSA_SIGN], [ED25519], [])))
