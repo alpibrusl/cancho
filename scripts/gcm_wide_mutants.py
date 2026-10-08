@@ -133,7 +133,10 @@ def main():
     env = dict(os.environ, CARGO_TARGET_DIR=target)
     work = os.path.join(scratch, "tree")
     os.makedirs(work, exist_ok=True)
-    subprocess.run(["rsync", "-a", "--delete", "--exclude", "target", "--exclude", ".git", ROOT + "/", work + "/"], check=True)
+    if shutil.which("rsync"):
+        subprocess.run(["rsync", "-a", "--delete", "--exclude", "target", "--exclude", ".git", "--exclude", ".docker-*", ROOT + "/", work + "/"], check=True)
+    else:
+        shutil.copytree(ROOT, work, dirs_exist_ok=True, ignore=shutil.ignore_patterns("target", ".git", ".docker-*"))
     failed = skipped = killed = 0
     bad = evidence(work, env)
     assert bad is None, f"the unmutated tree must pass: {bad}"
