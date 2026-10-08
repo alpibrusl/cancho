@@ -1,8 +1,8 @@
-//! The hardware AES and GHASH builtins (`docs/crypto-builtins.md` §7),
-//! through `tests/programs/crypto_builtins_driver.cho`: FIPS 197's examples,
-//! NIST's GCM test case 2 assembled from the two builtins, and a
+//! The hardware AES and GHASH builtins (`docs/crypto-builtins.md` §7,
+//! `docs/gcm-wide.md` §6), through `tests/programs/crypto_builtins_driver.cho`:
+//! FIPS 197's examples, NIST's GCM test case 2 from the builtins, and a
 //! differential against the plain reference implementations below over
-//! random keys, blocks and lengths. On LLVM, `hw_aes_gcm()` must answer
+//! random keys, blocks and every length. On LLVM, `hw_aes_gcm()` must answer
 //! true on this suite's two hosts (x86-64 Linux and aarch64 macOS), so a
 //! silent fall back to software cannot hide; on Cranelift it answers false
 //! and the block builtins trap.
@@ -143,13 +143,51 @@ fn ghash(h: &[u8], y: &[u8], data: &[u8]) -> Vec<u8> {
     let hh = u128::from_be_bytes(h.try_into().unwrap());
     let mut acc = u128::from_be_bytes(y.try_into().unwrap());
     for block in data.chunks(16) {
-        acc = gf_mul(acc ^ u128::from_be_bytes(block.try_into().unwrap()), hh);
+        // The last block is padded with zeros.
+        let mut padded = [0u8; 16];
+        padded[..block.len()].copy_from_slice(block);
+        acc = gf_mul(acc ^ u128::from_be_bytes(padded), hh);
     }
     acc.to_be_bytes().to_vec()
 }
 
-/// FIPS 197, NIST's GCM test case 2 from the builtins, and 600 random
-/// cases of each against the references, on LLVM.
+/// Counter mode as SP 800-38D §6.5 writes it: `inc32` on the last four
+/// bytes of the counter block, modulo 2^32.
+fn ctr(rk: &[u8], nr: usize, nonce: &[u8], counter: u32, data: &[u8], s: &[u8; 256]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len());
+    for (k, chunk) in data.chunks(16).enumerate() {
+        let mut block = nonce.to_vec();
+        block.extend_from_slice(&counter.wrapping_add(k as u32).to_be_bytes());
+        let stream = encrypt(rk, nr, &block, s);
+        out.extend(chunk.iter().zip(&stream).map(|(a, b)| a ^ b));
+    }
+    out
+}
+
+/// The GCM tag of `text` and `aad` (SP 800-38D §7.1, steps 5 and 6).
+fn tag(rk: &[u8], nr: usize, nonce: &[u8], aad: &[u8], text: &[u8], s: &[u8; 256]) -> Vec<u8> {
+    let h = encrypt(rk, nr, &[0u8; 16], s);
+    let mut y = ghash(&h, &[0u8; 16], aad);
+    y = ghash(&h, &y, text);
+    let mut lengths = ((aad.len() as u64) * 8).to_be_bytes().to_vec();
+    lengths.extend(((text.len() as u64) * 8).to_be_bytes());
+    y = ghash(&h, &y, &lengths);
+    let mut j0 = nonce.to_vec();
+    j0.extend(1u32.to_be_bytes());
+    let mask = encrypt(rk, nr, &j0, s);
+    y.iter().zip(&mask).map(|(a, b)| a ^ b).collect()
+}
+
+/// `-` for no bytes, hex otherwise: the driver's field.
+fn field(bytes: &[u8]) -> String {
+    if bytes.is_empty() { "-".to_string() } else { hex(bytes) }
+}
+
+/// FIPS 197, NIST's GCM test case 2 from the builtins, and random cases of
+/// each builtin against the references, on LLVM: AES blocks, counter mode
+/// over every length from 0 to 300 bytes and counters about to wrap, the
+/// powers of H, and tags over every text length, with associated data of
+/// every length class, up to 16 KiB.
 #[test]
 fn the_hardware_builtins_agree_with_fips_nist_and_the_references_on_llvm() {
     let (dir, exe) = build_driver("agree", "llvm");
@@ -166,22 +204,19 @@ fn the_hardware_builtins_agree_with_fips_nist_and_the_references_on_llvm() {
         want.push(out.to_string());
     }
     // NIST GCM test case 2 (all-zero key, IV and plaintext): H = AES(K, 0),
-    // the tag AES(K, J0) XOR GHASH(C || lengths). H and AES(K, J0) are the
-    // builtin's own answers, checked here against the standard's values.
+    // the tag AES(K, J0) XOR GHASH(C || lengths), with the ciphertext
+    // `aes_ctr32` makes from counter 2 and the tag `gcm_tag` makes.
     let (rk, nr) = expand(&[0u8; 16], &s);
     lines.push(format!("A {nr} {} {}", hex(&rk), "00".repeat(16)));
     want.push("66e94bd4ef8a2c3b884cfa59ca342b2e".to_string());
-    lines.push(format!("A {nr} {} {}00000001", hex(&rk), "00".repeat(12)));
-    want.push("58e2fccefa7e3061367f1d57a4e7455a".to_string());
-    let lengths = format!("{}{:016x}", "00".repeat(8), 128);
+    lines.push(format!("C {nr} {} {} 2 {}", hex(&rk), "00".repeat(12), "00".repeat(16)));
+    want.push("0388dace60b6a392f328c2b971b2fe78".to_string());
     lines.push(format!(
-        "G 66e94bd4ef8a2c3b884cfa59ca342b2e {} 0388dace60b6a392f328c2b971b2fe78{lengths}",
-        "00".repeat(16)
+        "T {nr} {} 66e94bd4ef8a2c3b884cfa59ca342b2e {} - 0388dace60b6a392f328c2b971b2fe78",
+        hex(&rk),
+        "00".repeat(12)
     ));
-    // The tag is ab6e47d42cec13bdf53a67b21257bddf = AES(K, J0) XOR this.
-    let tag = unhex("ab6e47d42cec13bdf53a67b21257bddf");
-    let ek = unhex("58e2fccefa7e3061367f1d57a4e7455a");
-    want.push(hex(&tag.iter().zip(&ek).map(|(a, b)| a ^ b).collect::<Vec<u8>>()));
+    want.push("ab6e47d42cec13bdf53a67b21257bddf".to_string());
 
     let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
     for _ in 0..600 {
@@ -192,12 +227,92 @@ fn the_hardware_builtins_agree_with_fips_nist_and_the_references_on_llvm() {
         lines.push(format!("A {nr} {} {}", hex(&rk), hex(&block)));
         want.push(hex(&encrypt(&rk, nr, &block, &s)));
     }
-    for _ in 0..600 {
-        let (h, y) = (rng.bytes(16), rng.bytes(16));
-        let blocks = 1 + (rng.next() % 12) as usize;
-        let data = rng.bytes(16 * blocks);
-        lines.push(format!("G {} {} {}", hex(&h), hex(&y), hex(&data)));
-        want.push(hex(&ghash(&h, &y, &data)));
+    // Counter mode: every length to 300 (so every tail, whole blocks and
+    // bytes, after zero to two groups of eight), and 200 more with a
+    // counter near the wrap.
+    for len in 0..=300usize {
+        let key = rng.bytes([16, 24, 32][len % 3]);
+        let (rk, nr) = expand(&key, &s);
+        let nonce = rng.bytes(12);
+        let counter = (rng.next() % 1_000_000) as u32;
+        let data = rng.bytes(len);
+        lines.push(format!("C {nr} {} {} {counter} {}", hex(&rk), hex(&nonce), field(&data)));
+        want.push(field(&ctr(&rk, nr, &nonce, counter, &data, &s)));
+    }
+    for k in 0..200usize {
+        let (rk, nr) = expand(&rng.bytes(16), &s);
+        let nonce = rng.bytes(12);
+        let counter = u32::MAX - (k % 20) as u32;
+        let data = rng.bytes(16 * (k % 40) + k % 16);
+        lines.push(format!("C {nr} {} {} {counter} {}", hex(&rk), hex(&nonce), field(&data)));
+        want.push(field(&ctr(&rk, nr, &nonce, counter, &data, &s)));
+    }
+    // The powers of H: entry k is H^(k+1) with its 16 bytes reversed.
+    for _ in 0..50 {
+        let h = rng.bytes(16);
+        let hh = u128::from_be_bytes(h.clone().try_into().unwrap());
+        let mut power = hh;
+        let mut table = Vec::new();
+        for _ in 0..8 {
+            table.extend(power.to_le_bytes());
+            power = gf_mul(power, hh);
+        }
+        lines.push(format!("P {}", hex(&h)));
+        want.push(hex(&table));
+    }
+    // Tags: every text length to 300 with associated data of lengths from
+    // 0 to 70; then a spread of longer ones up to 16 KiB and 8 KiB of
+    // associated data.
+    let mut cases: Vec<(usize, usize)> = (0..=300usize).map(|t| (t, (t * 7) % 71)).collect();
+    cases.extend((0..=300usize).map(|a| ((a * 13) % 301, a)));
+    cases.extend([
+        (16384, 13),
+        (16384 + 1, 0),
+        (16383, 5),
+        (1024, 13),
+        (4096, 4096),
+        (127, 129),
+        (128, 128),
+        (255, 256),
+        (257, 255),
+        (0, 8192),
+        (1000, 0),
+    ]);
+    for (text_len, aad_len) in cases {
+        let key = rng.bytes([16, 24, 32][(text_len + aad_len) % 3]);
+        let (rk, nr) = expand(&key, &s);
+        let h = encrypt(&rk, nr, &[0u8; 16], &s);
+        let nonce = rng.bytes(12);
+        let (aad, text) = (rng.bytes(aad_len), rng.bytes(text_len));
+        lines.push(format!(
+            "T {nr} {} {} {} {} {}",
+            hex(&rk),
+            hex(&h),
+            hex(&nonce),
+            field(&aad),
+            field(&text)
+        ));
+        want.push(hex(&tag(&rk, nr, &nonce, &aad, &text, &s)));
+        // The same tag compared: equal, and with each byte changed in turn.
+        let good = tag(&rk, nr, &nonce, &aad, &text, &s);
+        let cmp = |expected: &[u8]| {
+            format!(
+                "D {nr} {} {} {} {} {} {}",
+                hex(&rk),
+                hex(&h),
+                hex(&nonce),
+                field(&aad),
+                field(&text),
+                hex(expected)
+            )
+        };
+        lines.push(cmp(&good));
+        want.push("0".to_string());
+        let at = (text_len + aad_len) % 16;
+        let mut bad = good.clone();
+        bad[at] ^= 1 << (text_len % 8);
+        lines.push(cmp(&bad));
+        want.push("1".to_string());
     }
     // The reference is checked too: FIPS 197's first example.
     let (rk, nr) = expand(&(0..16).collect::<Vec<u8>>(), &s);
@@ -214,7 +329,7 @@ fn the_hardware_builtins_agree_with_fips_nist_and_the_references_on_llvm() {
         String::from_utf8_lossy(&out.stdout).lines().map(str::to_string).collect();
     assert_eq!(got.len(), want.len(), "one answer per case");
     for (k, (g, w)) in got.iter().zip(&want).enumerate() {
-        assert_eq!(g, w, "case {k}: {}", lines[k]);
+        assert_eq!(g, w, "case {k}: {}", &lines[k][..lines[k].len().min(200)]);
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -226,23 +341,42 @@ fn on_cranelift_the_hardware_is_absent_and_a_block_builtin_traps() {
     let (dir, exe) = build_driver("absent", "cranelift");
     let out = feed(&exe, b"H\n");
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "0");
-    let block = format!("A 10 {} {}\n", "00".repeat(176), "00".repeat(16));
-    let out = feed(&exe, block.as_bytes());
-    assert_ne!(out.status.code(), Some(0), "a block builtin on Cranelift traps");
+    for case in [
+        format!("A 10 {} {}", "00".repeat(176), "00".repeat(16)),
+        format!("C 10 {} {} 0 {}", "00".repeat(176), "00".repeat(12), "00".repeat(16)),
+        format!("P {}", "00".repeat(16)),
+        format!("T 10 {} {} {} - -", "00".repeat(176), "00".repeat(16), "00".repeat(12)),
+    ] {
+        let out = feed(&exe, format!("{case}\n").as_bytes());
+        assert_ne!(out.status.code(), Some(0), "{case}: a builtin on Cranelift traps");
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A wrong length or round count traps, as an index out of bounds does,
-/// before any instruction runs (`docs/crypto-builtins.md` §3).
+/// A wrong length, counter or round count traps, as an index out of
+/// bounds does, before any instruction runs (`docs/crypto-builtins.md` §3,
+/// `docs/gcm-wide.md` §4).
 #[test]
 fn a_wrong_length_or_round_count_traps_on_llvm() {
     let (dir, exe) = build_driver("traps", "llvm");
+    let z = |n: usize| if n == 0 { "-".to_string() } else { "00".repeat(n) };
     for case in [
-        format!("A 11 {} {}", "00".repeat(192), "00".repeat(16)),
-        format!("A 10 {} {}", "00".repeat(160), "00".repeat(16)),
-        format!("A 10 {} {}", "00".repeat(176), "00".repeat(15)),
-        format!("G {} {} {}", "00".repeat(15), "00".repeat(16), "00".repeat(16)),
-        format!("G {} {} {}", "00".repeat(16), "00".repeat(16), "00".repeat(17)),
+        format!("A 11 {} {}", z(192), z(16)),
+        format!("A 10 {} {}", z(160), z(16)),
+        format!("A 10 {} {}", z(176), z(15)),
+        format!("C 11 {} {} 0 {}", z(192), z(12), z(16)),
+        format!("C 10 {} {} 0 {}", z(160), z(12), z(16)),
+        format!("C 10 {} {} 0 {}", z(176), z(11), z(16)),
+        format!("C 10 {} {} 0 {}", z(176), z(13), z(16)),
+        format!("C 10 {} {} 4294967296 {}", z(176), z(12), z(16)),
+        format!("P {}", z(15)),
+        format!("P {}", z(17)),
+        format!("T 10 {} {} {} - {}", z(176), z(16), z(11), z(16)),
+        format!("T 10 {} {} {} - {}", z(160), z(16), z(12), z(16)),
+        format!("T 12 {} {} {} - {}", z(176), z(16), z(12), z(16)),
+        format!("D 10 {} {} {} - {} {}", z(176), z(16), z(12), z(16), z(15)),
+        format!("D 10 {} {} {} - {} {}", z(176), z(16), z(12), z(16), z(17)),
+        format!("X 10 {} {} {} - {} {}", z(176), z(16), z(12), z(16), z(16)),
     ] {
         let out = feed(&exe, format!("{case}\n").as_bytes());
         assert_ne!(out.status.code(), Some(0), "{case}: traps");

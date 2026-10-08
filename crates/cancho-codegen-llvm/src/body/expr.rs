@@ -1059,9 +1059,21 @@ impl<'a> FuncEmitter<'a> {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.aes_encrypt_block(&args)
             }
-            Callee::Builtin(Builtin::GhashUpdate) => {
+            Callee::Builtin(Builtin::AesCtr32) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
-                self.ghash_update(&args)
+                self.aes_ctr32(&args)
+            }
+            Callee::Builtin(Builtin::GhashPowers) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.ghash_powers(&args)
+            }
+            Callee::Builtin(Builtin::GcmTag) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.gcm_tag(&args, false)
+            }
+            Callee::Builtin(Builtin::GcmTagDiff) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.gcm_tag(&args, true)
             }
             // `docs/byte-search.md`: one `memchr`.
             Callee::Builtin(Builtin::IndexOfByte) => {

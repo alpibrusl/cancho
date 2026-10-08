@@ -1,14 +1,24 @@
 edition 7;
 
-// `docs/crypto-builtins.md` §7: the hardware AES and GHASH builtins,
-// driven from standard input. One case per line, byte strings in
-// lowercase hex:
+// `docs/crypto-builtins.md` §7, `docs/gcm-wide.md` §6: the hardware AES and
+// GHASH builtins, driven from standard input. One case per line, byte
+// strings in lowercase hex, `-` for an empty one:
 //
-//     H                                  hw_aes_gcm(): 1 or 0
-//     A <rounds> <round keys> <block>    aes_encrypt_block: the block out
-//     G <h> <y> <data>                   ghash_update: y after
+//     H                                       hw_aes_gcm(): 1 or 0
+//     A <rounds> <keys> <block>               aes_encrypt_block: the block out
+//     C <rounds> <keys> <nonce> <counter> <data>
+//                                             aes_ctr32: data XOR keystream
+//     P <h>                                   ghash_powers: the 128-byte table
+//     T <rounds> <keys> <h> <nonce> <aad> <text>
+//                                             gcm_tag: the tag (the table is
+//                                             ghash_powers(h)'s)
+//     D <rounds> <keys> <h> <nonce> <aad> <text> <tag>
+//                                             gcm_tag_diff: 0 or 1
+//     X <rounds> <keys> <h> <nonce> <aad> <text> <tag>
+//                                             the same traps' cases, with the
+//                                             table one byte short
 //
-// and one line out per case. `A` and `G` are only sent when `H` said 1.
+// and one line out per case. All but `H` are only sent when `H` said 1.
 import std.buffer;
 import std.io;
 
@@ -69,6 +79,21 @@ fn print_hex[&i, &d](io: &!i Io, d: &d [byte]) -> [io_write] int {
     return 0;
 }
 
+// The hex field `[at, end)`, which is `-` for no bytes.
+fn hex_len[&s](s: &s [byte], at: int, end: int) -> [] int {
+    if end - at == 1 && int_of(s[at]) == 45 {
+        return 0;
+    }
+    return (end - at) / 2;
+}
+
+fn hex_field[&s, &o](s: &s [byte], at: int, end: int, o: &!o [byte]) -> [] int {
+    if hex_len(s, at, end) > 0 {
+        hex_into(s, at, o);
+    }
+    return 0;
+}
+
 // One case, the line starting at `at`; answers where the next line starts.
 fn one[&i, &s](io: &!i Io, s: &s [byte], at: int) -> [io_write] int {
     let op = int_of(s[at]);
@@ -81,34 +106,90 @@ fn one[&i, &s](io: &!i Io, s: &s [byte], at: int) -> [io_write] int {
         io.newline(io);
         return at + 2;
     }
-    let f1 = at + 2;
-    let e1 = field_end(s, f1);
-    let f2 = e1 + 1;
-    let e2 = field_end(s, f2);
-    let f3 = e2 + 1;
-    let e3 = field_end(s, f3);
+    var line_end = at;
+    while int_of(s[line_end]) != 10 {
+        line_end = line_end + 1;
+    }
     region r {
+        // Where each field starts and ends (at most eight).
+        let starts = alloc_slice[r](8, 0);
+        let ends = alloc_slice[r](8, 0);
+        var n = 0;
+        var f = at + 2;
+        while f <= line_end && n < 8 {
+            starts[n] = f;
+            ends[n] = field_end(s, f);
+            f = ends[n] + 1;
+            n = n + 1;
+        }
         if op == 65 {
-            let rounds = decimal(s, f1, e1);
-            let keys = alloc_slice[r]((e2 - f2) / 2, byte_of(0));
-            hex_into(s, f2, keys);
-            let block = alloc_slice[r]((e3 - f3) / 2, byte_of(0));
-            hex_into(s, f3, block);
+            let rounds = decimal(s, starts[0], ends[0]);
+            let keys = alloc_slice[r](hex_len(s, starts[1], ends[1]), byte_of(0));
+            hex_field(s, starts[1], ends[1], keys);
+            let block = alloc_slice[r](hex_len(s, starts[2], ends[2]), byte_of(0));
+            hex_field(s, starts[2], ends[2], block);
             let out = alloc_slice[r](16, byte_of(0));
             aes_encrypt_block(keys, rounds, block, out);
             print_hex(io, out);
+        } else if op == 67 {
+            let rounds = decimal(s, starts[0], ends[0]);
+            let keys = alloc_slice[r](hex_len(s, starts[1], ends[1]), byte_of(0));
+            hex_field(s, starts[1], ends[1], keys);
+            let nonce = alloc_slice[r](hex_len(s, starts[2], ends[2]), byte_of(0));
+            hex_field(s, starts[2], ends[2], nonce);
+            let counter = decimal(s, starts[3], ends[3]);
+            let data = alloc_slice[r](hex_len(s, starts[4], ends[4]), byte_of(0));
+            hex_field(s, starts[4], ends[4], data);
+            let out = alloc_slice[r](len(data), byte_of(0));
+            aes_ctr32(keys, rounds, nonce, counter, data, out);
+            if len(out) == 0 {
+                io.write_all(io, "-");
+                io.newline(io);
+            } else {
+                print_hex(io, out);
+            }
+        } else if op == 80 {
+            let h = alloc_slice[r](hex_len(s, starts[0], ends[0]), byte_of(0));
+            hex_field(s, starts[0], ends[0], h);
+            let table = alloc_slice[r](128, byte_of(0));
+            ghash_powers(h, table);
+            print_hex(io, table);
         } else {
-            let h = alloc_slice[r]((e1 - f1) / 2, byte_of(0));
-            hex_into(s, f1, h);
-            let y = alloc_slice[r]((e2 - f2) / 2, byte_of(0));
-            hex_into(s, f2, y);
-            let data = alloc_slice[r]((e3 - f3) / 2, byte_of(0));
-            hex_into(s, f3, data);
-            ghash_update(h, y, data);
-            print_hex(io, y);
+            let rounds = decimal(s, starts[0], ends[0]);
+            let keys = alloc_slice[r](hex_len(s, starts[1], ends[1]), byte_of(0));
+            hex_field(s, starts[1], ends[1], keys);
+            let h = alloc_slice[r](hex_len(s, starts[2], ends[2]), byte_of(0));
+            hex_field(s, starts[2], ends[2], h);
+            let nonce = alloc_slice[r](hex_len(s, starts[3], ends[3]), byte_of(0));
+            hex_field(s, starts[3], ends[3], nonce);
+            let aad = alloc_slice[r](hex_len(s, starts[4], ends[4]), byte_of(0));
+            hex_field(s, starts[4], ends[4], aad);
+            let text = alloc_slice[r](hex_len(s, starts[5], ends[5]), byte_of(0));
+            hex_field(s, starts[5], ends[5], text);
+            var table_len = 128;
+            if op == 88 {
+                table_len = 127;
+            }
+            let table = alloc_slice[r](128, byte_of(0));
+            ghash_powers(h, table);
+            if op == 84 {
+                let tag = alloc_slice[r](16, byte_of(0));
+                gcm_tag(keys, rounds, table, nonce, aad, text, tag);
+                print_hex(io, tag);
+            } else {
+                let tag = alloc_slice[r](hex_len(s, starts[6], ends[6]), byte_of(0));
+                hex_field(s, starts[6], ends[6], tag);
+                let diff = gcm_tag_diff(keys, rounds, table[0..table_len], nonce, aad, text, tag);
+                if diff == 0 {
+                    io.write_all(io, "0");
+                } else {
+                    io.write_all(io, "1");
+                }
+                io.newline(io);
+            }
         }
     }
-    return e3 + 1;
+    return line_end + 1;
 }
 
 fn cases[&i, &s](io: &!i Io, s: &s [byte]) -> [io_write] int {

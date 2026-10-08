@@ -627,7 +627,13 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::HwAesGcm) => {
                         vec![self.builder.ins().iconst(types::I8, 0)]
                     }
-                    Callee::Builtin(Builtin::AesEncryptBlock | Builtin::GhashUpdate) => {
+                    Callee::Builtin(
+                        Builtin::AesEncryptBlock
+                        | Builtin::AesCtr32
+                        | Builtin::GhashPowers
+                        | Builtin::GcmTag
+                        | Builtin::GcmTagDiff,
+                    ) => {
                         self.builder.ins().trap(TrapCode::unwrap_user(1));
                         let dead = self.builder.create_block();
                         self.builder.switch_to_block(dead);
