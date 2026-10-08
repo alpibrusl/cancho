@@ -1,0 +1,509 @@
+module selfhost.emit;
+
+// emit.cho -- the code the checker writes while it walks a function.
+//
+// Stage 4 of the self-hosting port (`docs/self-hosting.md` section 6): the checker already visits
+// every expression in the order it runs and knows its type, so it writes LLVM IR as it goes, the
+// text the Rust backend writes (`cancho-codegen-llvm`), and `clang` does the rest. The Rust
+// compiler is the oracle here as everywhere, compared by what the programs do and not by the
+// text: both are built from the same source, run, and must agree.
+//
+// The code goes to one of three buffers of the state, a byte to an int, `st[49]` saying which:
+//
+//     0 the output, the finished functions, kept
+//     1 the body of the function being written
+//     2 its `alloca`s, which belong at the top, in the entry block, however late a `let` comes
+//
+// An operand is a constant (`known`, `value`) or the temporary `%t<reg>`; a type is the checker's
+// tag, 1 `int` as `i64` and 5 `bool` as `i1`, which are the only two written so far.
+
+import selfhost.ast;
+
+pub fn on[&s](st: &!s [int]) -> [] bool {
+    return st[40] != 0;
+}
+
+// Write to buffer `target`.
+pub fn aim[&s](st: &!s [int], target: int) -> [] int {
+    st[49] = target;
+    return 0;
+}
+
+pub fn put[&s](st: &!s [int], b: int) -> [] int {
+    let t = st[49];
+    st[st[43 + 2 * t] + st[44 + 2 * t]] = b;
+    st[44 + 2 * t] = st[44 + 2 * t] + 1;
+    return 0;
+}
+
+pub fn str[&s](st: &!s [int], s: &static [byte]) -> [] int {
+    var i = 0;
+    while i < len(s) {
+        put(st, int_of(s[i]));
+        i = i + 1;
+    }
+    return 0;
+}
+
+// A natural number in decimal.
+pub fn nat[&s](st: &!s [int], n: int) -> [] int {
+    var scale = 1;
+    while n / scale >= 10 {
+        scale = scale * 10;
+    }
+    var rest = n;
+    while scale > 0 {
+        let digit = rest / scale;
+        put(st, '0' + digit);
+        rest = rest - digit * scale;
+        scale = scale / 10;
+    }
+    return 0;
+}
+
+// An `int` in decimal.
+pub fn int[&s](st: &!s [int], n: int) -> [] int {
+    if n >= 0 {
+        return nat(st, n);
+    }
+    if n == 0 - 9223372036854775807 - 1 {
+        return str(st, "-9223372036854775808");
+    }
+    put(st, '-');
+    return nat(st, 0 - n);
+}
+
+// The bytes of `text` from `from` to `to`.
+pub fn slice[&s, &x](st: &!s [int], text: &x [byte], from: int, to: int) -> [] int {
+    var i = from;
+    while i < to {
+        put(st, int_of(text[i]));
+        i = i + 1;
+    }
+    return 0;
+}
+
+// Append buffer `from` to buffer `to`.
+pub fn copy[&s](st: &!s [int], from: int, to: int) -> [] int {
+    let keep = st[49];
+    st[49] = to;
+    var i = 0;
+    while i < st[44 + 2 * from] {
+        put(st, st[st[43 + 2 * from] + i]);
+        i = i + 1;
+    }
+    st[49] = keep;
+    return 0;
+}
+
+pub fn clear[&s](st: &!s [int], target: int) -> [] int {
+    st[44 + 2 * target] = 0;
+    return 0;
+}
+
+// A fresh temporary number and a fresh label number, for the function being written.
+pub fn fresh[&s](st: &!s [int]) -> [] int {
+    let n = st[41];
+    st[41] = n + 1;
+    return n;
+}
+
+pub fn label[&s](st: &!s [int]) -> [] int {
+    let n = st[42];
+    st[42] = n + 1;
+    return n;
+}
+
+// ------------------------------------------------------------------ types, operands ---
+
+pub fn llvm_type[&s](st: &!s [int], ty: int) -> [] int {
+    if ty == 5 {
+        return str(st, "i1");
+    }
+    return str(st, "i64");
+}
+
+// An operand: a constant or a temporary.
+pub fn operand[&s](st: &!s [int], ty: int, known: bool, value: int, reg: int) -> [] int {
+    if known {
+        if ty == 5 {
+            if value != 0 {
+                return str(st, "true");
+            }
+            return str(st, "false");
+        }
+        return int(st, value);
+    }
+    str(st, "%t");
+    return nat(st, reg);
+}
+
+fn temp[&s](st: &!s [int], n: int) -> [] int {
+    str(st, "%t");
+    return nat(st, n);
+}
+
+// `  %t<n> = ` for a new temporary, which is answered.
+fn start[&s](st: &!s [int]) -> [] int {
+    let n = fresh(st);
+    str(st, "  ");
+    temp(st, n);
+    str(st, " = ");
+    return n;
+}
+
+// ---------------------------------------------------------------------- stack slots ---
+
+// A stack slot for the binding declared as number `slot`, in the entry block.
+pub fn alloca[&s](st: &!s [int], ty: int, slot: int) -> [] int {
+    let keep = st[49];
+    st[49] = 2;
+    str(st, "  %s");
+    nat(st, slot);
+    str(st, " = alloca ");
+    llvm_type(st, ty);
+    str(st, "\n");
+    st[49] = keep;
+    return 0;
+}
+
+// `%t<n> = load` from a slot; answers n.
+pub fn load[&s](st: &!s [int], ty: int, slot: int) -> [] int {
+    let n = start(st);
+    str(st, "load ");
+    llvm_type(st, ty);
+    str(st, ", ptr %s");
+    nat(st, slot);
+    str(st, "\n");
+    return n;
+}
+
+pub fn store[&s](st: &!s [int], ty: int, known: bool, value: int, reg: int, slot: int) -> [] int {
+    str(st, "  store ");
+    llvm_type(st, ty);
+    str(st, " ");
+    operand(st, ty, known, value, reg);
+    str(st, ", ptr %s");
+    nat(st, slot);
+    str(st, "\n");
+    return 0;
+}
+
+// A parameter's value into its slot at entry.
+pub fn store_param[&s](st: &!s [int], ty: int, index: int, slot: int) -> [] int {
+    str(st, "  store ");
+    llvm_type(st, ty);
+    str(st, " %arg");
+    nat(st, index);
+    str(st, ", ptr %s");
+    nat(st, slot);
+    str(st, "\n");
+    return 0;
+}
+
+// -------------------------------------------------------------------------- traps ---
+
+// Trap if the `i1` temporary `flag` is set, and go on in a new block otherwise.
+fn trap_if[&s](st: &!s [int], flag: int) -> [] int {
+    let n = label(st);
+    str(st, "  br i1 ");
+    temp(st, flag);
+    str(st, ", label %trap");
+    nat(st, n);
+    str(st, ", label %ok");
+    nat(st, n);
+    str(st, "\ntrap");
+    nat(st, n);
+    str(st, ":\n  call void @llvm.trap()\n  unreachable\nok");
+    nat(st, n);
+    str(st, ":\n");
+    return 0;
+}
+
+// -------------------------------------------------------------------- arithmetic ---
+
+// `+` (0), `-` (1) or `*` (2) on `int`, trapping on overflow: the intrinsic's pair, its value,
+// its flag.
+pub fn checked[&s](st: &!s [int], kind: int, ak: bool, av: int, ar: int, bk: bool, bv: int, br: int) -> [] int {
+    let pair = start(st);
+    str(st, "call {i64, i1} @llvm.");
+    if kind == 0 {
+        str(st, "sadd");
+    } else if kind == 1 {
+        str(st, "ssub");
+    } else {
+        str(st, "smul");
+    }
+    str(st, ".with.overflow.i64(i64 ");
+    operand(st, 1, ak, av, ar);
+    str(st, ", i64 ");
+    operand(st, 1, bk, bv, br);
+    str(st, ")\n");
+    let value = start(st);
+    str(st, "extractvalue {i64, i1} ");
+    temp(st, pair);
+    str(st, ", 0\n");
+    let flag = start(st);
+    str(st, "extractvalue {i64, i1} ");
+    temp(st, pair);
+    str(st, ", 1\n");
+    trap_if(st, flag);
+    return value;
+}
+
+// `&` (0), `|` (1), `^` (2): nothing to check.
+pub fn bitwise[&s](st: &!s [int], kind: int, ak: bool, av: int, ar: int, bk: bool, bv: int, br: int) -> [] int {
+    let n = start(st);
+    if kind == 0 {
+        str(st, "and");
+    } else if kind == 1 {
+        str(st, "or");
+    } else {
+        str(st, "xor");
+    }
+    str(st, " i64 ");
+    operand(st, 1, ak, av, ar);
+    str(st, ", ");
+    operand(st, 1, bk, bv, br);
+    str(st, "\n");
+    return n;
+}
+
+// `<<` and `>>`: an amount outside 0..64 traps, and `>>` is arithmetic.
+pub fn shift[&s](st: &!s [int], left: bool, ak: bool, av: int, ar: int, bk: bool, bv: int, br: int) -> [] int {
+    let range = start(st);
+    str(st, "icmp uge i64 ");
+    operand(st, 1, bk, bv, br);
+    str(st, ", 64\n");
+    trap_if(st, range);
+    let n = start(st);
+    if left {
+        str(st, "shl");
+    } else {
+        str(st, "ashr");
+    }
+    str(st, " i64 ");
+    operand(st, 1, ak, av, ar);
+    str(st, ", ");
+    operand(st, 1, bk, bv, br);
+    str(st, "\n");
+    return n;
+}
+
+// `/` and `%`: LLVM's `sdiv` and `srem` are undefined on a zero divisor and on `int::MIN` by -1, so
+// both are checked first. `int::MIN / -1` traps; `int::MIN % -1` is 0, reached by a branch because
+// a `select` would still evaluate the undefined pair.
+pub fn divide[&s](st: &!s [int], remainder: bool, ak: bool, av: int, ar: int, bk: bool, bv: int, br: int) -> [] int {
+    let zero = start(st);
+    str(st, "icmp eq i64 ");
+    operand(st, 1, bk, bv, br);
+    str(st, ", 0\n");
+    trap_if(st, zero);
+    let is_min = start(st);
+    str(st, "icmp eq i64 ");
+    operand(st, 1, ak, av, ar);
+    str(st, ", -9223372036854775808\n");
+    let is_neg1 = start(st);
+    str(st, "icmp eq i64 ");
+    operand(st, 1, bk, bv, br);
+    str(st, ", -1\n");
+    let both = start(st);
+    str(st, "and i1 ");
+    temp(st, is_min);
+    str(st, ", ");
+    temp(st, is_neg1);
+    str(st, "\n");
+    if !remainder {
+        trap_if(st, both);
+        let q = start(st);
+        str(st, "sdiv i64 ");
+        operand(st, 1, ak, av, ar);
+        str(st, ", ");
+        operand(st, 1, bk, bv, br);
+        str(st, "\n");
+        return q;
+    }
+    let n = label(st);
+    str(st, "  br i1 ");
+    temp(st, both);
+    str(st, ", label %remspecial");
+    nat(st, n);
+    str(st, ", label %remcompute");
+    nat(st, n);
+    str(st, "\nremcompute");
+    nat(st, n);
+    str(st, ":\n");
+    let computed = start(st);
+    str(st, "srem i64 ");
+    operand(st, 1, ak, av, ar);
+    str(st, ", ");
+    operand(st, 1, bk, bv, br);
+    str(st, "\n  br label %remend");
+    nat(st, n);
+    str(st, "\nremspecial");
+    nat(st, n);
+    str(st, ":\n  br label %remend");
+    nat(st, n);
+    str(st, "\nremend");
+    nat(st, n);
+    str(st, ":\n");
+    let result = start(st);
+    str(st, "phi i64 [ 0, %remspecial");
+    nat(st, n);
+    str(st, " ], [ ");
+    temp(st, computed);
+    str(st, ", %remcompute");
+    nat(st, n);
+    str(st, " ]\n");
+    return result;
+}
+
+// A comparison, `==` (2) through `>=` (7) by the operator number, on two values of type `ty`: an
+// `i1`.
+pub fn compare[&s](st: &!s [int], op: int, ty: int, ak: bool, av: int, ar: int, bk: bool, bv: int, br: int) -> [] int {
+    let n = start(st);
+    str(st, "icmp ");
+    if op == 2 {
+        str(st, "eq");
+    } else if op == 3 {
+        str(st, "ne");
+    } else if op == 4 {
+        str(st, "slt");
+    } else if op == 5 {
+        str(st, "sle");
+    } else if op == 6 {
+        str(st, "sgt");
+    } else {
+        str(st, "sge");
+    }
+    str(st, " ");
+    llvm_type(st, ty);
+    str(st, " ");
+    operand(st, ty, ak, av, ar);
+    str(st, ", ");
+    operand(st, ty, bk, bv, br);
+    str(st, "\n");
+    return n;
+}
+
+// `!b`.
+pub fn not[&s](st: &!s [int], ak: bool, av: int, ar: int) -> [] int {
+    let n = start(st);
+    str(st, "xor i1 ");
+    operand(st, 5, ak, av, ar);
+    str(st, ", true\n");
+    return n;
+}
+
+// `~x`.
+pub fn bit_not[&s](st: &!s [int], ak: bool, av: int, ar: int) -> [] int {
+    let n = start(st);
+    str(st, "xor i64 ");
+    operand(st, 1, ak, av, ar);
+    str(st, ", -1\n");
+    return n;
+}
+
+// ------------------------------------------------------------------------- calls ---
+
+// The arguments of the calls being written wait on a stack of four ints each, at `st[52 + ...]`'s
+// base `st[51]`, with `st[52]` how many: a call's arguments are known one at a time, and the
+// call written once the last is.
+pub fn push_arg[&s](st: &!s [int], ty: int, known: bool, value: int, reg: int) -> [] int {
+    let at = st[51] + 4 * st[52];
+    st[at] = ty;
+    st[at + 1] = ast.flag(known);
+    st[at + 2] = value;
+    st[at + 3] = reg;
+    st[52] = st[52] + 1;
+    return 0;
+}
+
+// The call of `name`, the identifier at token `name` of `text`, to the last `n` arguments pushed,
+// returning `ret`; answers the temporary of the result.
+pub fn call[&s, &x](st: &!s [int], text: &x [byte], name: int, ret: int, n: int) -> [] int {
+    let first = st[52] - n;
+    let result = start(st);
+    str(st, "call ");
+    llvm_type(st, ret);
+    str(st, " @lexs_");
+    slice(st, text, ast.tstart(st, name), ast.tend(st, name));
+    str(st, "(");
+    var i = 0;
+    while i < n {
+        let at = st[51] + 4 * (first + i);
+        if i > 0 {
+            str(st, ", ");
+        }
+        llvm_type(st, st[at]);
+        str(st, " ");
+        operand(st, st[at], st[at + 1] != 0, st[at + 2], st[at + 3]);
+        i = i + 1;
+    }
+    str(st, ")\n");
+    st[52] = first;
+    return result;
+}
+
+// ---------------------------------------------------------------------- statements ---
+
+// `ret` of an operand, then a block of its own for whatever follows, so that every block ends in
+// one terminator even when the checker has refused nothing after a `return`.
+pub fn ret[&s](st: &!s [int], ty: int, known: bool, value: int, reg: int) -> [] int {
+    str(st, "  ret ");
+    llvm_type(st, ty);
+    str(st, " ");
+    operand(st, ty, known, value, reg);
+    str(st, "\n");
+    let n = label(st);
+    str(st, "dead");
+    nat(st, n);
+    str(st, ":\n");
+    return 0;
+}
+
+// ----------------------------------------------------------------------- functions ---
+
+// The head of a function goes to the output at once: `define <ret> @lexs_<name>(`, then one
+// `header_param` for each parameter and a `header_end`. Its body and `alloca`s wait in their buffers
+// until `finish`.
+pub fn header_start[&s, &x](st: &!s [int], text: &x [byte], name: int, ret_ty: int) -> [] int {
+    aim(st, 0);
+    str(st, "define ");
+    llvm_type(st, ret_ty);
+    str(st, " @lexs_");
+    slice(st, text, ast.tstart(st, name), ast.tend(st, name));
+    str(st, "(");
+    return 0;
+}
+
+pub fn header_param[&s](st: &!s [int], ty: int, index: int) -> [] int {
+    if index > 0 {
+        str(st, ", ");
+    }
+    llvm_type(st, ty);
+    str(st, " %arg");
+    nat(st, index);
+    return 0;
+}
+
+pub fn header_end[&s](st: &!s [int]) -> [] int {
+    str(st, ") {\nentry:\n");
+    clear(st, 1);
+    clear(st, 2);
+    st[41] = 0;
+    st[42] = 0;
+    st[52] = 0;
+    aim(st, 1);
+    return 0;
+}
+
+// The `alloca`s, the body, and an `unreachable` for the end that the checker has shown no path reaches.
+pub fn finish[&s](st: &!s [int]) -> [] int {
+    copy(st, 2, 0);
+    copy(st, 1, 0);
+    aim(st, 0);
+    str(st, "  unreachable\n}\n\n");
+    aim(st, 1);
+    return 0;
+}

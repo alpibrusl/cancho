@@ -1,0 +1,13 @@
+// compile.cho -- a program as LLVM IR text: the program.
+//
+// Stage 4 of the self-hosting port (`docs/self-hosting.md` section 6, epic #295). Reads a program on
+// standard input, checks it, and writes the code `emit.cho` writes for every function, for `clang`
+// to turn into an executable. A function the checker refuses, or that has not yet a way to be
+// written, is one line, `ERR rule-tag start end`, and nothing else. The oracle is the Rust compiler:
+// the same program built by both and run must do the same.
+
+import selfhost.driver;
+
+fn main(world: World) -> [] int {
+    return driver.drive(world, 3, false);
+}

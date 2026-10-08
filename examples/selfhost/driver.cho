@@ -11,6 +11,8 @@ module selfhost.driver;
 //     mode 1   the checker's answer (`checker.cho`): `OK`, or the first refusal
 //     mode 2   as mode 1 for the declarations, and then, if they are well formed, one line for
 //              each function: `fn <start> <end>` and `OK`, a refusal, or `SKIP` (`body.cho`)
+//     mode 3   the program as LLVM IR text (`emit.cho`), for `clang`; a function the checker
+//              refuses, or has not yet a way to write, is the one line `ERR rule-tag start end`
 //
 // One file is the whole of standard input. Several files are a stream, each as a line
 // `FILE <length>` and then that many bytes, in the order the compiler parses them (the files
@@ -26,6 +28,8 @@ import selfhost.rules;
 import selfhost.listing;
 import selfhost.checker;
 import selfhost.body;
+import selfhost.emit;
+import selfhost.pass1;
 import selfhost.kinds;
 
 fn refusal[&i, &s](io: &!i Io, st: &!s [int]) -> [io_write] int {
@@ -71,6 +75,39 @@ fn bodies[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte]) -> [io_write] 
     return 0;
 }
 
+// Mode 3: every function is checked, and written as it is; then the module is printed, with the
+// declarations of what the code calls and, if there is a function called `run`, the C `main` that
+// calls it and answers its result as the exit status.
+fn compile[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte]) -> [io_write] int {
+    var item = st[15];
+    var entry = false;
+    while item >= 0 {
+        if ast.is_kind(st, item, kinds.NK::IFn) {
+            if body.check_function(st, text, item) != 0 {
+                return refusal(io, st);
+            }
+            if pass1.is_word(st, text, ast.get(st, item, 4), "run") {
+                entry = true;
+            }
+        }
+        item = ast.next(st, item);
+    }
+    console.write_all(io, "declare {i64, i1} @llvm.sadd.with.overflow.i64(i64, i64)\n");
+    console.write_all(io, "declare {i64, i1} @llvm.ssub.with.overflow.i64(i64, i64)\n");
+    console.write_all(io, "declare {i64, i1} @llvm.smul.with.overflow.i64(i64, i64)\n");
+    console.write_all(io, "declare void @llvm.trap()\n\n");
+    var at = 0;
+    while at < st[44] {
+        putchar(io, st[st[43] + at]);
+        at = at + 1;
+    }
+    if entry {
+        console.write_all(io, "define i32 @main(i32 %argc, ptr %argv) {\nentry:\n");
+        console.write_all(io, "  %r = call i64 @lexs_run()\n  %status = trunc i64 %r to i32\n  ret i32 %status\n}\n");
+    }
+    return 0;
+}
+
 fn answer[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], mode: int) -> [io_write] int {
     if ast.parse(st, text) != 0 {
         return refusal(io, st);
@@ -84,6 +121,9 @@ fn answer[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], mode: int) -> 
             console.write_all(io, "OK");
             console.newline(io);
             return 0;
+        }
+        if mode == 3 {
+            return compile(io, st, text);
         }
         return bodies(io, st, text);
     }
@@ -120,10 +160,18 @@ fn header_end[&r](raw: &r [byte], at: int) -> [] int {
 fn run_one[&h, &i, &x](heap: &!h Heap, io: &!i Io, text: &x [byte], mode: int) -> [heap, io_write] int {
     var status = 0;
     let tokens = ast.count_tokens(text);
-    let state = box_slice(heap, ast.size_for(tokens, 1), 0);
+    var size = ast.size_for(tokens, 1);
+    if mode == 3 {
+        size = size + ast.emit_size(tokens);
+    }
+    let state = box_slice(heap, size, 0);
     borrow mut state as &!b in {
         let st = contents(b);
-        ast.layout(st, tokens, 1);
+        if mode == 3 {
+            ast.layout_emit(st, tokens, 1);
+        } else {
+            ast.layout(st, tokens, 1);
+        }
         ast.set_file(st, 0, 0, len(text));
         status = answer(io, st, text, mode);
     }
