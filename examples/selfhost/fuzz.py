@@ -1594,7 +1594,117 @@ BODY_EDGE = {
     'd_after_close_region': 'fn id2[&a](x: &a int, y: &a int) -> [] &a int { return x; }\nfn f[&r]() -> [] int { var x = 1; region a { region b { let c = 1; } borrow x as &p in { let d = id2(p, p); return 0; } } }',
     'd2_after_close_region': 'fn id2[&a](x: &a int, y: &a int) -> [] &a int { return x; }\nfn f[&r]() -> [] int { var pad = 7; var pad2 = 8; var x = 1; region a { region b { let c = 1; } borrow x as &p in { let d = id2(p, p); return 0; } } }',
     'd3_after_close_region': 'fn id2[&a](x: &a int, y: &a int) -> [] &a int { return x; }\nfn f[&r]() -> [] int { var z0 = 0; borrow z0 as &w0 in { } region w1 { } var x = 1; region a { region b { let c = 1; } borrow x as &p in { let d = id2(p, p); return 0; } } }',
+    'p_wadd': 'fn f[&r]() -> [] int { return wrapping_add(9223372036854775807, 1); }',
+    'p_wsub': 'fn f[&r]() -> [] int { return wrapping_sub(2, 5); }',
+    'p_wmul': 'fn f[&r]() -> [] int { return wrapping_mul(3037000500, 3037000500); }',
+    'p_wadd_arity_few': 'fn f[&r]() -> [] int { return wrapping_add(1); }',
+    'p_wadd_arity_many': 'fn f[&r]() -> [] int { return wrapping_add(1, 2, 3); }',
+    'p_wadd_arity_none': 'fn f[&r]() -> [] int { return wrapping_add(); }',
+    'p_wadd_type': 'fn f[&r]() -> [] int { return wrapping_add(1, true); }',
+    'p_wadd_type2': 'fn f[&r]() -> [] int { return wrapping_add(1.5, 2); }',
+    'p_wadd_ret': 'fn f[&r]() -> [] int { let b: bool = wrapping_add(1, 2); return 0; }',
+    'p_wadd_arg_error': 'fn f[&r]() -> [] int { return wrapping_add(nope, 2); }',
+    'p_wadd_second_error': 'fn f[&r]() -> [] int { return wrapping_add(1, nope); }',
+    'p_wadd_nested': 'fn f[&r]() -> [] int { return wrapping_add(wrapping_mul(2, 3), wrapping_sub(5, 1)); }',
+    'p_wadd_vars': 'fn f[&r](a: int, b: int) -> [] int { return wrapping_add(a, b); }',
+    'p_byte_of': 'fn f[&r]() -> [] int { let b = byte_of(65); return 1; }',
+    'p_byte_roundtrip': 'fn f[&r]() -> [] int { return int_of(byte_of(65)); }',
+    'p_int_of_wrong': 'fn f[&r]() -> [] int { return int_of(65); }',
+    'p_byte_of_wrong': 'fn f[&r]() -> [] int { let b = byte_of(true); return 1; }',
+    'p_byte_arith': 'fn f[&r]() -> [] int { let b = byte_of(1); let c = b + b; return 1; }',
+    'p_float_of': 'fn f[&r]() -> [] int { let g: float = float_of(3); return 1; }',
+    'p_float_of_wrong': 'fn f[&r]() -> [] int { let g: int = float_of(3); return 1; }',
+    'p_truncate': 'fn f[&r]() -> [] int { return truncate(2.5); }',
+    'p_truncate_wrong': 'fn f[&r]() -> [] int { return truncate(2); }',
+    'p_is_nan': 'fn f[&r]() -> [] int { let n = is_nan(1.0); if n { return 1; } return 2; }',
+    'p_is_nan_wrong': 'fn f[&r]() -> [] int { let n = is_nan(1); return 1; }',
+    'p_sqrt': 'fn f[&r]() -> [] int { let r = sqrt(4.0); let x: float = r; return 1; }',
+    'p_sqrt_wrong': 'fn f[&r]() -> [] int { let r = sqrt(4); return 1; }',
+    'p_bits_of': 'fn f[&r]() -> [] int { return bits_of(1.5); }',
+    'p_chain': 'fn f[&r]() -> [] int { return truncate(sqrt(float_of(16))); }',
+    'p_chain_wrong': 'fn f[&r]() -> [] int { return truncate(sqrt(16)); }',
+    'p_f32_old_edition': 'fn f[&r]() -> [] int { let x = f32_of(1.0); return 1; }',
+    'p_f32_of': 'edition 6;\nfn f[&r]() -> [] int { let x = f32_of(1.0); return 1; }',
+    'p_f32_roundtrip': 'edition 6;\nfn f[&r]() -> [] int { return truncate(float_of32(f32_of(2.5))); }',
+    'p_f32_sqrt': 'edition 6;\nfn f[&r]() -> [] int { let x = sqrt32(f32_of(4.0)); return 1; }',
+    'p_f32_bits': 'edition 6;\nfn f[&r]() -> [] int { return bits_of32(f32_of(1.0)); }',
+    'p_f32_wrong': 'edition 6;\nfn f[&r]() -> [] int { let x = f32_of(1); return 1; }',
+    'p_f32_of_int': 'edition 6;\nfn f[&r]() -> [] int { let x = f32_of_int(3); return int_of_f32(x); }',
+    'p_f32_of_bits': 'edition 6;\nfn f[&r]() -> [] int { let x = f32_of_bits(1065353216); return 1; }',
+    'p_value_barrier': 'edition 6;\nfn f[&r]() -> [] int { return value_barrier(3); }',
+    'p_value_barrier_old': 'fn f[&r]() -> [] int { return value_barrier(3); }',
+    'p_value_barrier_wrong': 'edition 6;\nfn f[&r]() -> [] int { return value_barrier(true); }',
+    'p_user_shadows_new_builtin': 'fn sqrt32(n: int) -> [] int { return n; }\nfn f[&r]() -> [] int { return sqrt32(2); }',
+    'p_user_shadows_new_builtin_ed6': 'edition 6;\nfn sqrt32(n: int) -> [] int { return n; }\nfn f[&r]() -> [] int { return sqrt32(2); }',
+    'p_index_of_byte': 'edition 5;\nfn f[&r](s: &r [byte]) -> [] int { return index_of_byte(s, byte_of(7)); }',
+    'p_index_of_byte_unique': 'edition 5;\nfn f[&r](s: &!r [byte]) -> [] int { return index_of_byte(s, byte_of(7)); }',
+    'p_index_of_byte_wrong': 'edition 5;\nfn f[&r](s: &r [byte]) -> [] int { return index_of_byte(s, 7); }',
+    'p_index_of_byte_not_slice': 'edition 5;\nfn f[&r]() -> [] int { return index_of_byte(3, byte_of(7)); }',
+    'p_index_of_byte_ints': 'edition 5;\nfn f[&r](s: &r [int]) -> [] int { return index_of_byte(s, byte_of(7)); }',
+    'p_copy_within': 'edition 5;\nfn f[&r](s: &!r [byte]) -> [] int { return copy_within(s, 0, 1, 2); }',
+    'p_copy_within_shared': 'edition 5;\nfn f[&r](s: &r [byte]) -> [] int { return copy_within(s, 0, 1, 2); }',
+    'p_copy_within_arity': 'edition 5;\nfn f[&r](s: &!r [byte]) -> [] int { return copy_within(s, 0, 1); }',
+    'p_copy_within_wrong': 'edition 5;\nfn f[&r](s: &!r [byte]) -> [] int { return copy_within(s, 0, 1, true); }',
+    'p_copy_into': 'edition 5;\nfn f[&r, &q](d: &!r [byte], s: &q [byte]) -> [] int { return copy_into(d, s); }',
+    'p_copy_into_swapped': 'edition 5;\nfn f[&r, &q](d: &!r [byte], s: &q [byte]) -> [] int { return copy_into(s, d); }',
+    'p_copy_into_same_region': 'edition 5;\nfn f[&r](d: &!r [byte], s: &r [byte]) -> [] int { return copy_into(d, s); }',
+    'p_copy_into_literal': 'edition 5;\nfn f[&r](d: &!r [byte]) -> [] int { return copy_into(d, "abc"); }',
+    'p_copy_into_elem': 'edition 5;\nfn f[&r, &q](d: &!r [int], s: &q [int]) -> [] int { return copy_into(d, s); }',
+    'p_io_param_unused': 'fn f[&i](io: &!i Io) -> [] int { return 1; }',
+    'p_io_param_row': 'fn f[&i](io: &!i Io) -> [io_write] int { return 1; }',
+    'p_io_shared': 'fn f[&i](io: &i Io) -> [] int { return 1; }',
+    'p_io_pass': 'fn g[&j](io: &!j Io) -> [] int { return 1; }\nfn f[&i](io: &!i Io) -> [] int { return g(io); }',
+    'p_io_pass_wrong': 'fn g[&j](io: &!j Io) -> [] int { return 1; }\nfn f[&i](io: &!i Io) -> [] int { return g(5); }',
+    'p_io_pass_shared': 'fn g[&j](io: &!j Io) -> [] int { return 1; }\nfn f[&i](io: &i Io) -> [] int { return g(io); }',
+    'p_io_deref': 'fn f[&i](io: &!i Io) -> [] int { let x = *io; return 1; }',
+    'p_io_by_value': 'fn f[&r](io: Io) -> [] int { return 1; }',
+    'p_io_assign': 'fn f[&i](io: &!i Io) -> [] int { *io = *io; return 1; }',
+    'p_heap_param': 'fn f[&i](h: &!i Heap) -> [] int { return 1; }',
+    'p_args_param': 'fn f[&i](a: &i Args) -> [] int { return 1; }',
+    'p_file_param': 'fn f[&i](f: &!i File) -> [] int { return 1; }',
+    'p_done_result': 'fn f[&r]() -> [] Done { return 1; }',
+    'p_putchar_skips': 'fn f[&i](io: &!i Io) -> [io_write] int { return putchar(io, 65); }',
+    'p_split_skips': 'fn f[&r](w: World) -> [] int { return 1; }',
+    'p_hw_aes': 'edition 6;\nfn f[&r]() -> [] int { let b = hw_aes_gcm(); return 1; }',
+    'p_trap': 'fn f[&r]() -> [] int { return trap(); }',
+    'p_null_ptr': 'edition 3;\nfn f[&r]() -> [] int { let p = null_ptr(); return 1; }',
+    'p_done_result_ed5': 'edition 5;\nfn f[&r]() -> [] Done { return 1; }',
+    'p_index_of_byte_ed1_user': 'fn index_of_byte(s: int) -> [] int { return s; }\nfn f[&r]() -> [] int { return index_of_byte(3); }',
+    'p_match_prelude': 'edition 5;\nfn f[&r](d: &r Done) -> [] int { match d { _ => { return 1; } } return 0; }',
+    'p_field_prelude': 'edition 5;\nfn f[&r](d: &r Done) -> [] int { return d.x; }',
+    'p_field_prelude_value': 'edition 5;\nfn f(d: Done) -> [] int { return d.x; }',
+    'p_done_param': 'edition 5;\nfn f(d: Done) -> [] int { return 1; }',
+    'p_done_pass': 'edition 5;\nfn f(d: Done) -> [] Done { return d; }',
+    'p_done_mismatch': 'edition 5;\nfn f(d: Done) -> [] int { return d; }',
+    'p_done_vs_read': 'edition 5;\nfn f(d: Done, r: Read) -> [] Done { return r; }',
+    'p_done_twice': 'edition 5;\nfn f(d: Done) -> [] Done { let a = d; let b = d; return a; }',
+    'p_opened_param': 'edition 5;\nfn f(o: Opened) -> [] int { return 1; }',
+    'p_read_param_ref': 'edition 5;\nfn f[&r](x: &r Read) -> [] int { return 1; }',
+    'p_done_call': 'edition 5;\nfn g(d: Done) -> [] Done { return d; }\nfn f(d: Done) -> [] Done { return g(d); }',
+    'p_done_call_wrong': 'edition 5;\nfn g(d: Done) -> [] Done { return d; }\nfn f() -> [] Done { return g(3); }',
+    'p_done_eq': 'edition 5;\nfn f(a: Done, b: Done) -> [] bool { return a == b; }',
+    'p_udp_port': 'edition 5;\nfn f[&r](u: &r Udp) -> [] int { return udp_local_port(u); }',
+    'p_udp_port_wrong': 'edition 5;\nfn f[&r](u: &r Conn) -> [] int { return udp_local_port(u); }',
+    'p_udp_port_unique': 'edition 5;\nfn f[&r](u: &!r Udp) -> [] int { return udp_local_port(u); }',
+    'p_udp_port_int': 'edition 5;\nfn f() -> [] int { return udp_local_port(3); }',
+    'p_udp_port_arity': 'edition 5;\nfn f[&r](u: &r Udp) -> [] int { return udp_local_port(u, 1); }',
+    'p_conn_nonblocking': 'edition 5;\nfn f[&r](c: &!r Conn) -> [] int { return conn_nonblocking(c); }',
+    'p_conn_nonblocking_shared': 'edition 5;\nfn f[&r](c: &r Conn) -> [] int { return conn_nonblocking(c); }',
+    'p_listener_nonblocking': 'edition 5;\nfn f[&r](l: &!r Listener) -> [] int { return listener_nonblocking(l); }',
+    'p_listener_vs_conn': 'edition 5;\nfn f[&r](l: &!r Listener) -> [] int { return conn_nodelay(l); }',
+    'p_fork_clock': 'edition 5;\nfn f[&r](c: &r Clock) -> [] int { let d = fork_clock(c); return 1; }',
+    'p_poller_close_value': 'edition 5;\nfn f(p: Poller) -> [] int { return poller_close(p); }',
+    'p_attach': 'edition 5;\nfn f() -> [] int { let a = conn_attach(3); return 1; }',
+    'p_poller_new': 'edition 5;\nfn f() -> [] int { let p = poller_new(); return 1; }',
+    'p_udp_nonblocking_result': 'edition 5;\nfn f[&r](u: &!r Udp) -> [] bool { return udp_nonblocking(u); }',
+    'p_pipe_nonblocking': 'edition 7;\nfn f[&r](p: &!r Pipe) -> [] int { return pipe_nonblocking(p); }',
+    'p_child_kill_effect': 'edition 7;\nfn f[&r](c: &r Child) -> [] int { return child_kill(c, 9); }',
 }
+
+
+# Cases of `BODY_EDGE` whose name starts `p_` that are meant to be skipped (a resource used by value,
+# a type the checker cannot hold, a builtin that performs an effect): every other is answered.
+MUST_SKIP = {"p_io_deref", "p_io_by_value", "p_io_assign", "p_putchar_skips", "p_split_skips", "p_null_ptr", "p_match_prelude", "p_field_prelude", "p_field_prelude_value", "p_opened_param", "p_fork_clock", "p_poller_close_value", "p_attach", "p_poller_new", "p_child_kill_effect"}
 
 
 def build_corpus(paths):
@@ -1701,6 +1811,9 @@ def main():
 
     same = refused = bad = skipped = skipped_port = 0
     by_rule = collections.Counter()
+    # A comparison cannot see a function the port answers `SKIP`, so a change that only makes it give
+    # up would pass. Some cases are written to be answered; one of those that is skipped is a failure.
+    must_answer = {f"edge:{k}" for k in BODY_EDGE if k.startswith("p_") and k not in MUST_SKIP}
     shown = 0
     if args.keep:
         os.makedirs(args.keep, exist_ok=True)
@@ -1711,7 +1824,7 @@ def main():
                 continue
             if args.bodies:
                 la, lb = a[1].decode().splitlines(), b[1].decode().splitlines()
-                if len(la) == len(lb) and all(y.endswith(" SKIP") or x == y for x, y in zip(la, lb)):
+                if len(la) == len(lb) and all(y.endswith(" SKIP") or x == y for x, y in zip(la, lb)) and not (name in must_answer and any(y.endswith(" SKIP") and int(y.split()[1]) < len(data) for y in lb)):
                     same += 1
                     skipped_port += sum(y.endswith(" SKIP") for y in lb)
                     for x, y in zip(la, lb):
