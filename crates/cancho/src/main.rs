@@ -765,7 +765,7 @@ fn check_program(
         }
         // Re-parsing to render is cheap beside the checking that just
         // happened, and it keeps `compile_reporting` from having to hand
-        // back a map it could not build on its own on a parse error.
+        // back a map it could not build on a parse error.
         let (_, map) = parse_program(inputs, with_std)?;
         let text: Vec<String> = refusals.iter().map(|r| r.render(&map)).collect();
         return Err(refused(text.join("\n\n")));
@@ -1139,7 +1139,7 @@ fn mentions_parameter(ty: &Type) -> bool {
 /// Whether a label's name bounds what it authorises.
 ///
 /// Every label but one names the domain it grants: `fs_read("/tmp")` is a
-/// directory, `io_write` is one stream, ` `heap` reaches nothing else. The
+/// directory, `io_write` is one stream, `heap` reaches nothing else. The
 /// exception is `ffi`, whose argument names a *library* -- and a library
 /// is not an authority domain: `Ffi("libc")` grants sockets, processes and
 /// `unlink` in the same breath as `abs` (`docs/under-a-grant.md` §4).
@@ -1583,7 +1583,7 @@ fn link_wasm(object: &Path, output: &Path, triple: &Triple) -> Result<(), Failur
 /// Link with the platform C toolchain.
 ///
 /// M0 shells out to `cc` rather than driving a linker itself: the C runtime
-/// provides `_start` and `patchar`, and "no C" is a much later goal than "no
+/// provides `_start` and `putchar`, and "no C" is a much later goal than "no
 /// Rust" (#1).
 ///
 /// `link_libs`/`link_paths` are `-l`/`-L`, passed to `cc` unexamined, in the
@@ -1606,7 +1606,7 @@ fn link(
         .status()
         .map_err(|e| environment(format!("cannot run the linker `{cc}`: {e}")))?;
     if !status.success() {
-        return Err(environment(format!("the linker `{cc}` failed with {status}"));
+        return Err(environment(format!("the linker `{cc}` failed with {status}")));
     }
     Ok(())
 }
