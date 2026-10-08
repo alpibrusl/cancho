@@ -807,6 +807,22 @@ impl Builtin {
                 }],
                 Type::Int,
             ),
+            Builtin::UdpPeer => (
+                vec![
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_UDP)),
+                    },
+                    Type::Int,
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                Type::Int,
+            ),
             Builtin::UdpNonblocking => (
                 vec![Type::Ref {
                     unique: true,

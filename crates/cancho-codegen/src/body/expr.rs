@@ -727,6 +727,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::UdpSendTo) => self.udp_send_to(&args),
                     Callee::Builtin(Builtin::UdpRecv) => self.udp_recv(&args),
                     Callee::Builtin(Builtin::UdpLocalPort) => self.udp_local_port(&args),
+                    Callee::Builtin(Builtin::UdpPeer) => self.udp_peer(&args),
                     Callee::Builtin(Builtin::UdpNonblocking) => self.nonblocking(&args),
                     Callee::Builtin(Builtin::PollerAddUdp) => self.poller_ctl(&args, false, false),
                     // `docs/processes.md`: a channel is a socket pair, so its
