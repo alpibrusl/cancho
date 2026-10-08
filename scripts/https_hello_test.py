@@ -441,7 +441,10 @@ def case_stalled(exe):
                 return f"a client beside the stalled one: {status} {body!r}"
             served += 1
         during = rss_kb(server.proc.pid)
-        if during - before > 4096:
+        # 16 MiB, not 4: the server serves 18,000+ requests beside the stalled client in this window, and on a shared CI runner the
+        # allocator alone grew it 4.1 and 4.2 MB (the same commit passed one run and failed the other at 4,244 KB). A server that
+        # buffered the stalled body would grow by the part of the 1 GiB that was sent, orders of magnitude over this.
+        if during - before > 16384:
             return f"server RSS grew {during - before} KB while a client stalled on a 1 GiB body"
         # The stalled client does not read; once idle passes the server ends it.
         line = server.wait_for(lambda l: l.startswith("conn 2 ") and " closed idle" in l, 8)[-1]
