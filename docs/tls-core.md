@@ -224,6 +224,11 @@ the zeroing stores are not to memory about to be freed. That is the case where a
 
 `docs/tls-pure.md` §7.4 is corrected to point here. Shrinking it is that document's question 6, and #208's to measure.
 
+*Corrected (#383, `docs/tls-memory.md`): the slot is now 187,191 bytes and **10,241 words**, 262.8 KiB: `std.ecdh`'s work area (9,593 words) had
+been added to it. And the slot is not what an established connection costs: it keeps a core of 4.5 KiB (a server) or 8.3 KiB (a
+client), and the buffers and the work area are leased (`tls-memory.md` §7). The byte layout now starts with the core (the keys
+and the ticket state), then the buffers; the integers end with the transcripts and the work area.*
+
 ### 9.2 Evidence
 
 - **The record layer against pyca/cryptography:** `scripts/tls_record_differential.py`. 2,000 records sealed and 2,000 opened
@@ -304,7 +309,9 @@ All of it passes the gate, and the parts that need no Python run in `cargo test`
 
   64 connections take 0.4 s at 65,536 a read and 3.8 to 4.2 s at one byte (three runs each), on a 64 KiB body each (the Python server is the larger
   share). Peak RSS of `tls_many` is 31.1 MiB **with 1 connection and with 64**. So the 64 slots (11.2 MiB, §9.1) are not what
-  its size is made of; #208 measures where it goes.
+  its size is made of; #208 measures where it goes. *Corrected (#383, `docs/tls-memory.md` §4): the client's resident memory grows by 184 KiB a connection (2.1 MiB with one,
+  11.2 MiB with 50, 38.9 MiB with 200, on this tree), most of it the slot's integers and the pages of its buffers; the figure above
+  was of another tree.*
 - **The lying server** (`scripts/tls_liar.py`, `tests/vectors/tls/liar.txt`). 29 connections, each recorded and replayed
   **byte for byte on both backends**; a second recording is identical. Two are honest, in the hardest legal shape:
   - a change_cipher_spec;

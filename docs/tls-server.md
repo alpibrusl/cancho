@@ -239,6 +239,7 @@ there is no `tls-record-*`.*
 | `tls-server-alpn-list` | none: `set_alpn`'s answer | *added:* a name over 255 bytes, or a list over 512 |
 | `tls-server-no-identity` | none: `serve`'s or `replace_identity`'s answer | *added:* no identity added, or none of that number |
 | `tls-role` | none | a call for the other role (§5.1) |
+| `tls-pool` | none (internal_error is not sent: there is no buffer to seal it in) | an engine opened with `open_server_with_areas` had every work area leased (`docs/tls-memory.md` §7.3) |
 
 ## 6. Cost
 
@@ -288,7 +289,7 @@ The paragraph that follows was the estimate's: about 250 full handshakes a secon
 arithmetic; this server's handshake is in the order of 10 to 50 times OpenSSL's. For the two programs that is acceptable:
 an MQTT client and an HTTP keep-alive connection handshake once and then stay. **What changes it** is in §8: session tickets
 (no signature on a resumed connection), a fixed-base table for k·G, and arithmetic specialised to the NIST primes
-(`docs/ecdsa.md` §5.4). Memory: a server slot is the client slot (about 179 KiB, `docs/tls-pure.md` §7.4) plus nothing
+(`docs/ecdsa.md` §5.4). Memory: a server slot is the client slot (about 179 KiB, `docs/tls-pure.md` §7.4; *263 KiB, and 119 KiB resident for an established connection, until #383: `docs/tls-memory.md`*) plus nothing
 significant; each identity holds its chain (a few KiB) and key in the engine. *As built: five words a slot; 274 KiB of identities and 75 KiB
 of key-parsing work in a server engine (§10.1).*
 
@@ -390,7 +391,7 @@ public point before it is used (§3.3, `tls-server-sign-check`), then `ecdsa_sig
 work area, which the key exchange has finished with. Each connection draws 96 bytes at `serve`: the ServerHello random, the
 X25519 secret, and the hedge; all three are in the slot's keys, which `forget` and `drop` overwrite.
 
-**Memory.** A server slot is the client's (`docs/tls-core.md` §9.1) and five words. A server engine adds its identities, 274 KiB
+**Memory.** A server slot is the client's (`docs/tls-core.md` §9.1) and five words. *(#383: and an established connection holds 4.5 KiB of it, `docs/tls-memory.md`.)* A server engine adds its identities, 274 KiB
 for 16, and 75 KiB of work for the key parser (`std.ecdh`'s), and gives up the client's 1 MiB of roots; a client engine adds
 nothing (`open` allocates neither).
 
@@ -533,7 +534,7 @@ pieces, so what was in `echo.cho` and `tls_echo.cho` and has nothing to do with 
 ```
 tls_echo --port <n> --dir <directory> [--identity <subdirectory>]... [--alpn <p1,p2>]
          [--connections <n>] [--handshakes <n>] [--rate <per second>] [--handshake-timeout <ms>] [--idle <ms>]
-         [--per-address <n>] [--per-address-rate <per second>]
+         [--per-address <n>] [--per-address-rate <per second>] [--areas <n>]
 ```
 
 It logs, per connection, what was negotiated and how it ended:
@@ -604,6 +605,16 @@ idle. *Corrected on this PR:* the rate's default was 200, "most of one core" at 
 100 it is a third of a core on the M4 (34%) and 59% on that runner, both measured. A deployment sets it from its own machine's
 figure.
 
+**Work areas** (`--areas <n>`, default `--connections`; `docs/tls-memory.md` §7). The engine keeps what an established connection
+needs, 4.5 KiB, for every connection, and leases the rest, a handshake's scratch and the record buffers, for as long as a handshake
+runs or bytes are in flight. With the default there is an area for every connection, nothing is ever refused for want of one, and
+the address space is what it was; with `--areas` smaller, a queued connection is **delayed** until its handshake can have an area (at
+most half of the areas, rounded up, are in handshakes at once, so the established connections that need one for a record find one),
+and a connection that needs an area for a record and finds none fails with `tls-pool`. A peer that stops half way through a record holds
+an area until `--idle`, so the number is a bound on how many peers can do that before the others fail: size it for the connections that
+can hold one at an instant, not for the connections. `--connections` (and so `--handshakes` and `--per-address`) may now be up to
+1,048,576; it was 4,096, the width of a queue entry's slot field, until `tls-memory.md` measured 10,000.
+
 **Back-pressure.** A connection's socket is read only when everything read before it has been echoed and written, so
 a peer that does not read its echo stops being read, and its slot's three 16 KiB buffers are the most it can make the
 server hold. A stop (`SIGINT`, `SIGTERM`) refuses new connections, closes queued and handshaking ones, sends
@@ -632,6 +643,7 @@ close_notify on established ones, and exits once those are written or after two 
   | `peer` | the established, closed and refused lines each say `peer=127.0.0.1:<the client's source port>` |
   | `per-address` | `--per-address 3`: a fourth connection from 127.0.0.1 is closed at once (0 ms) as `per-address`; a client from 127.0.0.2 (Linux only; macOS has no second loopback address, and the step says it was skipped) is served; a place freed by a close is reusable |
   | `addr-rate` | `--per-address-rate 2`: six clients from one address complete in 2.0 s (the last waited 1.99 s); a client from 127.0.0.2 meanwhile took 48 ms (Linux) |
+  | `areas` | `--areas 16`: 120 clients at once are all served (their handshakes delayed to the areas free, not refused), 6 of the 120 established connections used at once, all closed `ok`; on Linux the server's resident memory for the 120 idle ones is measured and must be under 50 KiB each (`tls-memory.md` §7.5) |
 
   curl and mosquitto are not in it: they speak HTTP and MQTT, which an echo answers with their own request; their
   interop with this engine is §10.2's matrix.

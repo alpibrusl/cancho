@@ -89,7 +89,48 @@ MUTANTS = [
      "    if code == 0 && new_key && at < 0 {"),
     ("the engine's DRBG key not replaced", "tls.cho", "                key[i] = stream[i];\n", ""),
     ("the engine's slots overlapping", "tls.cho",
-     "    return slot * tls_client.bytes_len();", "    return slot * (tls_client.bytes_len() / 2);"),
+     "    return slot * core_len(engine);", "    return slot * (core_len(engine) / 2);"),
+    # ---- The work areas (docs/tls-memory.md section 7) ----
+    ("serve leaving the core stale", "tls.cho",
+     "        tls_slot.zero(random);\n    }\n    settle(engine, slot);\n    contents(engine.meta)[m_started(engine, slot)] = now_unix_ms;",
+     "        tls_slot.zero(random);\n    }\n    contents(engine.meta)[m_started(engine, slot)] = now_unix_ms;"),
+    ("the core not copied out after a call", "tls.cho",
+     "        contents(engine.cints)[ci + k] = contents(engine.ints)[ai + k];\n", ""),
+    ("the core not copied in when an area is leased", "tls.cho",
+     "        contents(engine.ints)[ai + k] = contents(engine.cints)[ci + k];\n", ""),
+    ("the bytes of the core not copied in", "tls.cho",
+     "    copy_into(contents(engine.bytes)[ab..ab + n], contents(engine.cbytes)[cb..cb + n]);",
+     "    copy_into(contents(engine.bytes)[ab..ab], contents(engine.cbytes)[cb..cb]);"),
+    ("the bytes of the core not copied out", "tls.cho",
+     "    copy_into(contents(engine.cbytes)[cb..cb + n], contents(engine.bytes)[ab..ab + n]);",
+     "    copy_into(contents(engine.cbytes)[cb..cb], contents(engine.bytes)[ab..ab]);"),
+    ("an idle connection keeping its area", "tls.cho",
+     "    if idle(contents(engine.ints)[ai..ai + tls_client.ints_len()]) {", "    if false {"),
+    ("an area given back while data waits for recv", "tls.cho",
+     " && ints[tls_slot.i_recv_start()] == ints[tls_slot.i_recv_end()] && !tls_slot.keeps_area(ints);",
+     " && !tls_slot.keeps_area(ints);"),
+    ("an area given back while bytes wait for the socket", "tls.cho",
+     " && ints[tls_slot.i_out_start()] == ints[tls_slot.i_out_end()]", ""),
+    ("an area given back with half a record in it", "tls.cho",
+     " && ints[tls_slot.i_in_fill()] == 0 && ints[tls_slot.i_hs_fill()] == 0", ""),
+    ("an area given back in the middle of a handshake", "tls.cho",
+     "    return (s == tls_slot.state_connected() || s == tls_slot.state_closed() || s == tls_slot.state_failed()) &&",
+     "    return (s >= 0) &&"),
+    ("a lease when every area is leased", "tls.cho",
+     "    if free == 0 {\n        return tls_record.pool();\n    }", "    if free == 0 {\n        return 0;\n    }"),
+    ("a connection with no area not failed", "tls.cho",
+     "    contents(engine.cints)[ci + tls_slot.i_state()] = tls_slot.state_failed();\n", ""),
+    ("a failed connection's keys kept", "tls.cho",
+     "    tls_slot.zero(contents(engine.cbytes)[cb + tls_slot.b_keys()..cb + tls_slot.b_keys() + tls_slot.keys_len()]);\n    return code;",
+     "    return code;"),
+    ("take on a connection with no area asking for one", "tls.cho",
+     "        // A connection without an area has nothing queued (`idle`).\n        return 0;", "        return tls_record.pool();"),
+    ("a dropped slot keeping its area", "tls.cho",
+     "        contents(engine.meta)[m_dirty(engine, slot)] = 0;\n        unlease(engine, slot);\n    }\n    // The core",
+     "        contents(engine.meta)[m_dirty(engine, slot)] = 0;\n    }\n    // The core"),
+    ("a dropped slot keeping its core", "tls.cho",
+     "    var k = 0;\n    while k < tls_slot.ints_core_len() {\n        contents(engine.cints)[ci + k] = 0;\n        k = k + 1;\n    }\n    let cb = core_bytes(engine, slot);\n    tls_slot.zero(contents(engine.cbytes)[cb..cb + core_len(engine)]);\n    contents(engine.meta)[m_busy(slot)] = 0;",
+     "    contents(engine.meta)[m_busy(slot)] = 0;"),
     # ---- Suites and HelloRetryRequest (docs/tls-parity.md §3.3) ----
     ("SHA-384's transcript never chosen", "slot.cho",
      "        if len(out) == 48 {\n            let copy = alloc_slice[r](crypto.sha512_state_len(), 0);\n            var k = 0;\n            while k < len(copy) {\n                copy[k] = ints[i_transcript384() + k];\n                k = k + 1;\n            }\n            crypto.sha384_final(copy, out);",
@@ -304,7 +345,13 @@ def cases():
 
 # Mutants that change no behaviour the client can reach, each with the argument. Such a mutant must survive;
 # one that is killed was not equivalent, and the run fails.
-EQUIVALENT = {}
+EQUIVALENT = {
+    "a dropped slot keeping its core": "a new connection in the slot starts from `start`, which zeroes the integers and writes what it reads of the "
+    "bytes, so nothing reads what a dropped core held; clearing it is the hygiene of docs/tls-core.md section 8, which only a read of the "
+    "engine's memory can see",
+    "a failed connection's keys kept": "the connection is failed either way and no call reads its keys again; clearing them is the hygiene of "
+    "docs/tls-core.md section 8 (best effort), which only a read of the engine's memory can see",
+}
 
 
 def ticket_cases():
@@ -426,6 +473,25 @@ def serve_streams(tls_many, chunk, cut):
     return None
 
 
+def pool(cancho, pkg, work):
+    """`tests/programs/tls_pool.cho`: the engines with as many areas as slots, with fewer and with one."""
+    exe = os.path.join(work, "tls_pool")
+    ok, err = build(cancho, "tls_pool.cho", pkg, exe, engine=True)
+    if not ok:
+        return "BUILD " + err.strip().splitlines()[0]
+    vectors = os.path.join(ROOT, "tests/vectors/tls/echo")
+    stdin = b"\0".join(open(os.path.join(vectors, f), "rb").read() for f in ("ca.pem", "first/chain.pem", "first/key.pem"))
+    for config in (["8", "8", "40", "1"], ["8", "3", "40", "2"], ["8", "1", "40", "3"], ["5", "2", "60", "5"]):
+        try:
+            r = subprocess.run([exe, *config], input=stdin, capture_output=True, timeout=120)
+        except subprocess.TimeoutExpired:
+            return f"tls_pool {' '.join(config)}: timed out"
+        lines = r.stdout.decode().splitlines()
+        if r.returncode != 0 or not lines or any(not l.startswith("ok ") for l in lines):
+            return f"tls_pool {' '.join(config)}: " + next((l for l in lines if not l.startswith("ok ")), f"exit {r.returncode}")
+    return None
+
+
 def evidence(cancho, pkg, work, engine):
     """None when the package passes everything, else what failed."""
     driver = os.path.join(work, "driver")
@@ -446,7 +512,8 @@ def evidence(cancho, pkg, work, engine):
     ok, err = build(cancho, "tls_many.cho", pkg, many, engine=True)
     if not ok:
         return "BUILD " + err.strip().splitlines()[0]
-    return serve_streams(many, "1", False) or serve_streams(many, "65536", False) or serve_streams(many, "65536", True)
+    found = serve_streams(many, "1", False) or serve_streams(many, "65536", False) or serve_streams(many, "65536", True)
+    return found or pool(cancho, pkg, work)
 
 
 def main():

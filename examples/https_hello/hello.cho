@@ -28,7 +28,7 @@ import tls;
 fn usage[&i](io: &!i Io) -> [err_write] int {
     io.error_all(io, "usage: https_hello --port <n> --dir <directory> [--identity <subdirectory>]... [--alpn <p1,p2>]\n");
     io.error_all(io, "                [--connections <n>] [--handshakes <n>] [--rate <n>] [--handshake-timeout <ms>] [--idle <ms>]\n");
-    io.error_all(io, "                [--per-address <n>] [--per-address-rate <n>]\n");
+    io.error_all(io, "                [--per-address <n>] [--per-address-rate <n>] [--areas <n>]\n");
     io.error_all(io, "                [--read-timeout <ms>] [--max-body <MiB>]\n");
     return 2;
 }
@@ -37,7 +37,7 @@ fn usage[&i](io: &!i Io) -> [err_write] int {
 // listener, the signals, the loop.
 fn serve[&h, &i, &n, &k, &s, &d, &u, &l, &c, &r, &a](heap: &!h Heap, io: &!i Io, net: &n Net(""), clock: &k Clock, claim: &s Signals("HUP,INT,TERM"), dir: &d Dir, subs: &u [byte], sublens: &l [int], cfg: &c [int], entropy: &r [byte], alpn: &a [byte]) -> [heap, dir_read, file_read, err_write, io_write, net_in(""), conn_accept, conn_read, conn_write, poll, clock, signals("HUP,INT,TERM"), signals_read] int {
     var status = 0;
-    var engine = tls.open_server(heap, cfg[front.c_conns()]);
+    var engine = tls.open_server_with_areas(heap, cfg[front.c_conns()], front.areas_of(cfg));
     borrow mut engine as &!ew in {
         tls.seed(ew, entropy);
         if len(alpn) > 0 && tls.set_alpn(ew, alpn) != 0 {

@@ -4,6 +4,7 @@
     python3 scripts/tls_memory.py cancho  <tls_echo>   [--counts 50,100,200,10000] [--json out.json]
     python3 scripts/tls_memory.py openssl <ossl_hold> [release] [...]
     python3 scripts/tls_memory.py https   <https_hello> [...]
+    python3 scripts/tls_memory.py engine  <tls_pool> [--areas <n>] [...]
 
 Starts a server for each count N (so one count's heap never carries into the next) and opens N connections one after
 another from this process. It reads the server's VmRSS (Linux `/proc/<pid>/status`) after each phase. The first server
@@ -29,6 +30,13 @@ tests/vectors/tls/echo (ECDSA P-256). `cancho` and `https` run the repository's 
 benches/server/ossl_hold.c (build: `gcc -O2 -o ossl_hold benches/server/ossl_hold.c -lssl -lcrypto`), with
 `release` for SSL_MODE_RELEASE_BUFFERS. The RSS of the server only: the clients live in this process. Kernel socket
 memory (a few KiB a connection, the same for every server) is not in RSS and not counted.
+
+`engine` measures the engines alone, with no sockets and no example: `tests/programs/tls_pool.cho` (built with
+`packages/tls`) holds N slots of a client engine and N of a server engine in one process, carries their bytes
+between them, and says `ready start`, `ready established` and `ready echoed` (each connection having sent and been
+sent back 16,384 bytes in turn), waiting 4 seconds each time; the figure is the process's VmRSS over the first, per
+connection, for a client slot and a server slot together. `--areas` is the work areas each engine has (default
+N: one for every slot).
 
 Needs Linux and `ulimit -n` of at least 2 N + 64. Timings from this script are not measurements of speed.
 """
@@ -249,6 +257,28 @@ def run(kind, exe, n, extra):
     return result
 
 
+def run_engine(exe, n, areas):
+    pem = b""
+    for part in (CA, os.path.join(VECTORS, "first/chain.pem"), os.path.join(VECTORS, "first/key.pem")):
+        with open(part, "rb") as f:
+            pem += f.read() + b"\0"
+    pem = pem[:-1]
+    proc = subprocess.Popen([exe, str(n), str(areas or n), "0", "1", "hold"], stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    proc.stdin.write(pem)
+    proc.stdin.close()
+    result = {"n": n, "areas": areas or n, "rss": {}}
+    for line in proc.stdout:
+        line = line.decode().strip()
+        if line.startswith("ready "):
+            time.sleep(2)
+            phase = line.split()[1]
+            result["rss"][phase] = status(proc.pid, "VmRSS")
+            print(f"  engine n={n:<6} areas={areas or n:<6} {phase:<12} VmRSS {result['rss'][phase]:>9} KiB", flush=True)
+    proc.wait()
+    return result
+
+
 def table(results):
     lines = ["| N | " + " | ".join(PHASES[1:]) + " |", "|---|" + "---|" * (len(PHASES) - 1)]
     for r in results:
@@ -260,7 +290,8 @@ def table(results):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("kind", choices=["cancho", "openssl", "https"])
+    ap.add_argument("kind", choices=["cancho", "openssl", "https", "engine"])
+    ap.add_argument("--areas", type=int, default=0)
     ap.add_argument("exe")
     ap.add_argument("extra", nargs="*")
     ap.add_argument("--counts", default="50,100,200")
@@ -268,7 +299,21 @@ def main():
     a = ap.parse_args()
     results = []
     for n in [int(x) for x in a.counts.split(",")]:
-        results.append(run(a.kind, a.exe, n, a.extra))
+        if a.kind == "engine":
+            results.append(run_engine(a.exe, n, a.areas))
+        else:
+            results.append(run(a.kind, a.exe, n, a.extra))
+    if a.kind == "engine":
+        print()
+        print("KiB of RSS per connection (a client slot and a server slot), over RSS at start:")
+        print("| N | areas | established | echoed |\n|---|---|---|---|")
+        for r in results:
+            rss = r["rss"]
+            print(f"| {r['n']} | {r['areas']} | {(rss['established'] - rss['start']) / r['n']:.1f} | {(rss['echoed'] - rss['start']) / r['n']:.1f} |")
+        if a.json:
+            with open(a.json, "w") as f:
+                json.dump(results, f, indent=1)
+        return
     print()
     print(f"KiB of server RSS per connection, over RSS at start ({a.kind} {' '.join(a.extra)}):")
     print(table(results))

@@ -27,6 +27,9 @@ server on a free port with the options it needs, and says `ok` or what failed:
                affected, and a place freed by a close is usable again
     addr-rate  `--per-address-rate 2`: six clients from one address are started two a second, while a client from
                another address (Linux only, as above) is not delayed by them
+    areas      `--areas 16`: 120 clients at once are served, their handshakes delayed to the areas free, 6 of the 120
+               established connections used at once, and the server's resident memory for 120 idle ones is measured
+               (docs/tls-memory.md)
 
 curl and mosquitto's clients are not here: they speak HTTP and MQTT, which an echo answers with their own request.
 Their interop with this server is docs/tls-server.md §10.2's matrix, against `tests/programs/tls_serve.cho`.
@@ -517,9 +520,83 @@ def case_addr_rate(exe):
         server.stop()
 
 
+def rss_kib(pid):
+    """The process's resident memory in KiB (Linux), or None."""
+    try:
+        for line in open(f"/proc/{pid}/status"):
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1])
+    except OSError:
+        return None
+    return None
+
+
+def case_areas(exe):
+    """`--areas 16` for 120 connections (docs/tls-memory.md section 7): the handshakes are delayed to the areas
+    free and not refused, 120 established connections that are idle hold no area, 6 of them are used at once, and on
+    Linux 120 idle connections are well under what a slot a connection cost (119 KiB each)."""
+    server = Server(exe, extra=["--connections", "256", "--handshakes", "64", "--areas", "16", "--rate", "100000"])
+    try:
+        errors = []
+        conns = []
+        lock = threading.Lock()
+        start = threading.Barrier(120)
+        before = rss_kib(server.proc.pid)
+
+        def dial(k):
+            try:
+                start.wait(30)
+                c = connect(server.port, timeout=60)
+                echo(c, b"hello %d" % k)
+                with lock:
+                    conns.append(c)
+            except Exception as e:  # noqa: BLE001 -- every failure is reported
+                errors.append(f"{k}: {e!r}")
+
+        threads = [threading.Thread(target=dial, args=(k,)) for k in range(120)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(120)
+        if errors or len(conns) != 120:
+            return f"{len(errors)} of 120 failed, first: {errors[:1]}"
+        time.sleep(1)
+        after = rss_kib(server.proc.pid)
+        busy = []
+
+        def work(k):
+            try:
+                rnd = random.Random(k)
+                for _ in range(30):
+                    echo(conns[k], rnd.randbytes(rnd.randint(1, 20000)))
+            except Exception as e:  # noqa: BLE001
+                busy.append(f"{k}: {e!r}")
+
+        workers = [threading.Thread(target=work, args=(k,)) for k in range(6)]
+        for t in workers:
+            t.start()
+        for t in workers:
+            t.join(120)
+        if busy:
+            return f"{len(busy)} of 6 busy connections failed, first: {busy[0]}"
+        for c in conns:
+            c.unwrap()
+            c.close()
+        ended = server.wait_for(lambda l: " closed ok " in l, 15, 120)
+        note = ""
+        if before is not None and after is not None:
+            per = (after - before) / 120
+            if per > 50:
+                return f"120 idle connections cost {per:.1f} KiB each in the server, over the 50 KiB this case allows"
+            note = f", {per:.1f} KiB resident each idle"
+        return f"ok (120 connections on 16 areas, 6 busy at once{note}; {len(ended)} closed ok)"
+    finally:
+        server.stop()
+
+
 CASES = {"suites": case_suites, "many": case_many, "reload": case_reload, "bound": case_bound,
          "rate": case_rate, "full": case_full, "idle": case_idle, "shutdown": case_shutdown,
-         "peer": case_peer, "per-address": case_per_address, "addr-rate": case_addr_rate}
+         "peer": case_peer, "per-address": case_per_address, "addr-rate": case_addr_rate, "areas": case_areas}
 
 
 # ---- the cost ----

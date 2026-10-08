@@ -17,6 +17,7 @@ the case says so rather than pass). Each case starts its own server on a free po
                every escape, an HTTP/1.0 request closed after its answer, a chunked request body
     pipelined  300 requests in one write, then 300 with bodies (length and chunked) in one write, answers in order
     many       200 connections at once (Python `ssl`, one thread each), 10 requests each
+    areas      `--areas 16`: 100 keep-alive connections at once on 16 areas, 4 of them busy, all closed with close_notify
     big        `/big/<n>` for n from 0 to 64 MiB: every byte checked (the body is a to z repeating), keep-alive after
     stalled    a client asks for 1 GiB and stops reading: the server's memory does not grow, the other clients are
                served meanwhile, and the stalled one is closed after `--idle`
@@ -1117,10 +1118,65 @@ def case_mangled(exe):
         server.stop()
 
 
+def case_areas(exe):
+    """`--areas 16` (docs/tls-memory.md section 7): 100 keep-alive connections handshaken at once on 16 areas, then 4 of
+    them used for 25 requests each while the other 96 sit idle, then all closed with close_notify."""
+    server = Server(exe, extra=["--connections", "256", "--handshakes", "64", "--areas", "16", "--rate", "100000"])
+    try:
+        errors = []
+        hs = []
+        lock = threading.Lock()
+        start = threading.Barrier(100)
+
+        def dial(k):
+            try:
+                start.wait(30)
+                h = client(server.port, 60)
+                status, body = get(h, f"/hello/a{k}")
+                if (status, body) != (200, f"hello, a{k}\n".encode()):
+                    raise AssertionError(f"{status} {body!r}")
+                with lock:
+                    hs.append(h)
+            except Exception as e:  # noqa: BLE001 -- every failure is reported
+                errors.append(f"{k}: {e!r}")
+
+        threads = [threading.Thread(target=dial, args=(k,)) for k in range(100)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(120)
+        if errors or len(hs) != 100:
+            return f"{len(errors)} of 100 failed, first: {errors[:1]}"
+
+        def work(k):
+            try:
+                for i in range(25):
+                    status, body = get(hs[k], f"/hello/w{k}-{i}")
+                    if (status, body) != (200, f"hello, w{k}-{i}\n".encode()):
+                        raise AssertionError(f"{status} {body!r}")
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"{k}: {e!r}")
+
+        workers = [threading.Thread(target=work, args=(k,)) for k in range(4)]
+        for t in workers:
+            t.start()
+        for t in workers:
+            t.join(120)
+        if errors:
+            return f"{len(errors)} of 4 busy connections failed, first: {errors[0]}"
+        for h in hs:
+            h.sock.unwrap()
+            h.close()
+        ended = server.wait_for(lambda l: " closed ok " in l, 15, 100)
+        return f"ok (100 connections on 16 areas, 4 busy at once, 100 requests; {len(ended)} closed ok)"
+    finally:
+        server.stop()
+
+
 CASES = {"curl": case_curl, "openssl": case_openssl, "http": case_http, "pipelined": case_pipelined, "many": case_many,
          "big": case_big, "stalled": case_stalled, "slow": case_slow, "ended": case_ended, "reload": case_reload, "bound": case_bound,
          "full": case_full, "idle": case_idle, "shutdown": case_shutdown, "hostile": case_hostile, "upload": case_upload,
-         "expect": case_expect, "halfbody": case_halfbody, "mangled": case_mangled}
+         "expect": case_expect, "halfbody": case_halfbody, "mangled": case_mangled, "areas": case_areas}
 
 
 # ---- the cost ----
