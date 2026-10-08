@@ -1699,12 +1699,79 @@ BODY_EDGE = {
     'p_udp_nonblocking_result': 'edition 5;\nfn f[&r](u: &!r Udp) -> [] bool { return udp_nonblocking(u); }',
     'p_pipe_nonblocking': 'edition 7;\nfn f[&r](p: &!r Pipe) -> [] int { return pipe_nonblocking(p); }',
     'p_child_kill_effect': 'edition 7;\nfn f[&r](c: &r Child) -> [] int { return child_kill(c, 9); }',
+    'x_putchar': 'fn f[&i](io: &!i Io) -> [io_write] int { return putchar(io, 65); }',
+    'x_putchar_no_row': 'fn f[&i](io: &!i Io) -> [] int { return putchar(io, 65); }',
+    'x_putchar_wrong_row': 'fn f[&i](io: &!i Io) -> [io_read] int { return putchar(io, 65); }',
+    'x_putchar_extra': 'fn f[&i](io: &!i Io) -> [io_write, io_read] int { return putchar(io, 65); }',
+    'x_putchar_extra_first': 'fn f[&i](io: &!i Io) -> [io_read, io_write] int { return putchar(io, 65); }',
+    'x_putchar_dup_row': 'fn f[&i](io: &!i Io) -> [io_write, io_write] int { return putchar(io, 65); }',
+    'x_putchar_trailing_comma': 'fn f[&i](io: &!i Io) -> [io_write,] int { return putchar(io, 65); }',
+    'x_pure_with_row': 'fn f[&i](io: &!i Io) -> [io_write] int { return 1; }',
+    'x_pure_no_row': 'fn f[&i](io: &!i Io) -> [] int { return 1; }',
+    'x_getchar': 'fn f[&i](io: &!i Io) -> [io_read] int { return getchar(io); }',
+    'x_getchar_wrong': 'fn f[&i](io: &!i Io) -> [io_write] int { return getchar(io); }',
+    'x_both': 'fn f[&i](io: &!i Io) -> [io_write, io_read] int { let a = putchar(io, 65); return getchar(io); }',
+    'x_both_order': 'fn f[&i](io: &!i Io) -> [io_read, io_write] int { let a = putchar(io, 65); return getchar(io); }',
+    'x_both_missing': 'fn f[&i](io: &!i Io) -> [io_write] int { let a = putchar(io, 65); return getchar(io); }',
+    'x_both_extra': 'fn f[&i](io: &!i Io) -> [io_write, io_read, err_write] int { let a = putchar(io, 65); return getchar(io); }',
+    'x_write_bytes': 'fn f[&i](io: &!i Io) -> [io_write] int { return write_bytes(io, "hi"); }',
+    'x_write_bytes_no_row': 'fn f[&i](io: &!i Io) -> [] int { return write_bytes(io, "hi"); }',
+    'x_write_bytes_slice': 'fn f[&i, &q](io: &!i Io, s: &q [byte]) -> [io_write] int { return write_bytes(io, s); }',
+    'x_write_bytes_type': 'fn f[&i](io: &!i Io) -> [io_write] int { return write_bytes(io, 5); }',
+    'x_write_err': 'fn f[&i](io: &!i Io) -> [err_write] int { return write_err(io, "hi"); }',
+    'x_write_err_wrong': 'fn f[&i](io: &!i Io) -> [io_write] int { return write_err(io, "hi"); }',
+    'x_flush': 'edition 5;\nfn f[&i](io: &!i Io) -> [io_write] int { let d = flush_out(io); return 1; }',
+    'x_flush_old_edition': 'fn f[&i](io: &!i Io) -> [io_write] int { let d = flush_out(io); return 1; }',
+    'x_clock': 'edition 5;\nfn f[&i](c: &i Clock) -> [clock] int { return clock_ms(c); }',
+    'x_clock_no_row': 'edition 5;\nfn f[&i](c: &i Clock) -> [] int { return clock_ms(c); }',
+    'x_args': 'fn f[&i](a: &i Args) -> [args] int { return arg_count(a); }',
+    'x_args_no_row': 'fn f[&i](a: &i Args) -> [] int { return arg_count(a); }',
+    'x_args_arg': 'fn f[&i](a: &i Args) -> [args] int { let s = arg(a, 0); return len(s); }',
+    'x_unshared_io_shared': 'fn f[&i](io: &i Io) -> [io_write] int { return putchar(io, 65); }',
+    'x_callee_row': 'fn say[&j](io: &!j Io) -> [io_write] int { return putchar(io, 65); }\nfn f[&i](io: &!i Io) -> [io_write] int { return say(io); }',
+    'x_callee_row_missing': 'fn say[&j](io: &!j Io) -> [io_write] int { return putchar(io, 65); }\nfn f[&i](io: &!i Io) -> [] int { return say(io); }',
+    'x_callee_row_extra': 'fn say[&j](io: &!j Io) -> [io_write] int { return putchar(io, 65); }\nfn f[&i](io: &!i Io) -> [io_write, io_read] int { return say(io); }',
+    'x_callee_row_wrong': 'fn say[&j](io: &!j Io) -> [io_write] int { return putchar(io, 65); }\nfn f[&i](io: &!i Io) -> [io_read] int { return say(io); }',
+    'x_callee_twice': 'fn say[&j](io: &!j Io) -> [io_write] int { return putchar(io, 65); }\nfn f[&i](io: &!i Io) -> [io_write] int { let a = say(io); return say(io); }',
+    'x_callee_and_builtin': 'fn say[&j](io: &!j Io) -> [io_write] int { return putchar(io, 65); }\nfn f[&i](io: &!i Io) -> [io_write, io_read] int { let a = say(io); return getchar(io); }',
+    'x_callee_and_builtin_missing': 'fn say[&j](io: &!j Io) -> [io_write] int { return putchar(io, 65); }\nfn f[&i](io: &!i Io) -> [io_write] int { let a = say(io); return getchar(io); }',
+    'x_callee_pure_caller_pure': 'fn pure(n: int) -> [] int { return n; }\nfn f[&i](io: &!i Io) -> [] int { return pure(3); }',
+    'x_callee_chain': 'fn say[&j](io: &!j Io) -> [io_write] int { return putchar(io, 65); }\nfn mid[&k](io: &!k Io) -> [io_write] int { return say(io); }\nfn f[&i](io: &!i Io) -> [io_write] int { return mid(io); }',
+    'x_callee_chain_bad_middle': 'fn say[&j](io: &!j Io) -> [io_write] int { return putchar(io, 65); }\nfn mid[&k](io: &!k Io) -> [] int { return say(io); }\nfn f[&i](io: &!i Io) -> [io_write] int { return mid(io); }',
+    'x_recursive': 'fn f[&i](io: &!i Io, n: int) -> [io_write] int { if n == 0 { return putchar(io, 65); } return f(io, n - 1); }',
+    'x_recursive_pure': 'fn f(n: int) -> [] int { if n == 0 { return 1; } return f(n - 1); }',
+    'x_recursive_extra': 'fn f[&i](io: &!i Io, n: int) -> [io_write] int { if n == 0 { return 1; } return f(io, n - 1); }',
+    'x_in_branch': 'fn f[&i](io: &!i Io) -> [io_write] int { if true { return putchar(io, 65); } return 1; }',
+    'x_in_loop': 'fn f[&i](io: &!i Io) -> [io_write] int { var i = 0; while i < 3 { let a = putchar(io, 65); i = i + 1; } return i; }',
+    'x_in_short_circuit': 'fn f[&i](io: &!i Io) -> [io_write] int { if true && putchar(io, 65) == 65 { return 1; } return 0; }',
+    'x_in_arg': 'fn f[&i](io: &!i Io) -> [io_write] int { return wrapping_add(putchar(io, 65), 1); }',
+    'x_in_dead_branch': 'fn f[&i](io: &!i Io) -> [io_write] int { if false { let a = putchar(io, 65); } return 1; }',
+    'x_unknown_label': 'fn f[&i](io: &!i Io) -> [bogus] int { return 1; }',
+    'x_unknown_label_putchar': 'fn f[&i](io: &!i Io) -> [bogus] int { return putchar(io, 65); }',
+    'x_unknown_label_and_known': 'fn f[&i](io: &!i Io) -> [bogus, io_write] int { return putchar(io, 65); }',
+    'x_arg_label_pure': 'fn f[&i](io: &!i Io) -> [fs_read("/tmp")] int { return 1; }',
+    'x_arg_label_putchar': 'fn f[&i](io: &!i Io) -> [fs_read("/tmp")] int { return putchar(io, 65); }',
+    'x_arg_label_and_plain': 'fn f[&i](io: &!i Io) -> [io_write, fs_read("/tmp")] int { return putchar(io, 65); }',
+    'x_generic': 'fn f[T: val, &i](io: &!i Io, x: T) -> [io_write] int { return putchar(io, 1); }',
+    'x_generic_no_row': 'fn f[T: val, &i](io: &!i Io, x: T) -> [] int { return putchar(io, 1); }',
+    'x_pass_io_through': 'fn g[&j](io: &!j Io) -> [io_write] int { return putchar(io, 1); }\nfn f[&i](io: &!i Io) -> [io_write] int { return g(io); }',
+    'x_borrowed_row_shadow': 'fn f[&i](io: &!i Io) -> [io_write] int { var x = 1; borrow mut x as &!r in { *r = putchar(io, 65); } return x; }',
+    'x_no_params_row': 'fn f() -> [io_write] int { return 1; }',
+    'x_trap_builtin': 'fn f[&i](io: &!i Io) -> [] int { return trap(); }',
+    'x_effect_in_match': 'enum E { A, B }\nfn f[&i](io: &!i Io, e: E) -> [io_write] int { match e { E::A => { return putchar(io, 65); } E::B => { return 1; } } }',
+    'x_effect_in_match_no_row': 'enum E { A, B }\nfn f[&i](io: &!i Io, e: E) -> [] int { match e { E::A => { return putchar(io, 65); } E::B => { return 1; } } }',
+    'x_missing_return_with_row': 'fn f[&i](io: &!i Io) -> [io_write] int { let a = putchar(io, 65); }',
+    'x_body_error_first': 'fn f[&i](io: &!i Io) -> [] int { let a = putchar(io, 65); return nope; }',
+    'x_body_error_before_row': 'fn f[&i](io: &!i Io) -> [io_write] int { return nope; }',
+    'x_callee_arg_row_caller_none': 'fn g() -> [fs_read("/x")] int { return 1; }\nfn f() -> [] int { return g(); }',
+    'x_callee_arg_row_caller_same': 'fn g() -> [fs_read("/x")] int { return 1; }\nfn f() -> [fs_read("/x")] int { return g(); }',
+    'x_callee_arg_row_caller_plain': 'fn g() -> [fs_read("/x")] int { return 1; }\nfn f[&i](io: &!i Io) -> [io_write] int { let a = g(); return putchar(io, 65); }',
 }
 
 
 # Cases of `BODY_EDGE` whose name starts `p_` that are meant to be skipped (a resource used by value,
 # a type the checker cannot hold, a builtin that performs an effect): every other is answered.
-MUST_SKIP = {"p_io_deref", "p_io_by_value", "p_io_assign", "p_putchar_skips", "p_split_skips", "p_null_ptr", "p_match_prelude", "p_field_prelude", "p_field_prelude_value", "p_opened_param", "p_fork_clock", "p_poller_close_value", "p_attach", "p_poller_new", "p_child_kill_effect"}
+MUST_SKIP = {"x_callee_arg_row_caller_none", "x_callee_arg_row_caller_same", "x_callee_arg_row_caller_plain", "x_arg_label_putchar", "x_arg_label_and_plain", "p_io_deref", "p_io_by_value", "p_io_assign", "p_split_skips", "p_null_ptr", "p_match_prelude", "p_field_prelude", "p_field_prelude_value", "p_opened_param", "p_fork_clock", "p_poller_close_value", "p_attach", "p_poller_new", "p_child_kill_effect"}
 
 
 def build_corpus(paths):
@@ -1813,7 +1880,7 @@ def main():
     by_rule = collections.Counter()
     # A comparison cannot see a function the port answers `SKIP`, so a change that only makes it give
     # up would pass. Some cases are written to be answered; one of those that is skipped is a failure.
-    must_answer = {f"edge:{k}" for k in BODY_EDGE if k.startswith("p_") and k not in MUST_SKIP}
+    must_answer = {f"edge:{k}" for k in BODY_EDGE if k[:2] in ("p_", "x_") and k not in MUST_SKIP}
     shown = 0
     if args.keep:
         os.makedirs(args.keep, exist_ok=True)

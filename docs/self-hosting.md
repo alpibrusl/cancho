@@ -212,7 +212,8 @@ the stages found, in place, the way this document corrects its own claims.
 | 3e-3. Generic functions | `body.cho` (type variables and parameters in `types.cho`) | `check_bodies` | **Fifth slice.** Every function the port answers is the Rust answer: 88 targeted cases for type parameters, inference at a call and `ambiguous-type` (712 in all, 4 cross-module in the several-files test), 15,774 fuzz cases (11,220 alone, 4,554 with the library) and 1,359 library cases: none different; the library's verified bodies stay at 461 of 814 |
 | 3e-4. `borrow` and `region` blocks | `body.cho` (block regions in `types.cho`) | `check_bodies` | **Sixth slice.** Every function the port answers is the Rust answer: 1,271 targeted body cases (456 of them for borrows, regions and their variants), 2 cross-module in the several-files test, 16,000 fuzz cases (11,463 alone, 4,726 with the library) and 1,475 library cases: none different; the library's verified bodies stay at 461 of 814 |
 | 3e-5. Builtins that perform nothing, and prelude types | `prims.cho`, over a generated `builtins.cho` | `check_bodies` | **Seventh slice.** Every function the port answers is the Rust answer: 1,376 targeted body cases (105 new, among them the ones that must be answered and not skipped), ~19,000 fuzz cases and 2,033 library cases: none different; the library's verified bodies go from 461 to **590 of 814 (72%)** |
-| 3e-6. The rest of the bodies: builtins that perform effects and rows, generic types, tuples, arena allocation, threads, then linearity, effects, regions | not started | `check_bodies` | |
+| 3e-6. Effect rows | `effects.cho` | `check_bodies` | **Eighth slice.** Every function the port answers is the Rust answer: 1,443 targeted body cases (67 new, with the strict ones that must be answered), ~19,500 fuzz cases (13,434 alone, 6,044 with the library) and 2,156 library cases: none different; the library's verified bodies are **625 of 855 (73%)** |
+| 3e-7. The rest of the bodies: arena allocation (`alloc`, `alloc_slice`), the heap builtins (`box_slice`, `contents`), generic types, tuples, threads, then linearity, effects with arguments, regions | not started | `check_bodies` | |
 | 4a. Writing LLVM IR for functions of `int` and `bool`: literals, the arithmetic and bitwise operators with their traps, comparisons, calls, `let`, assignment, `return` | `examples/selfhost/emit.cho`, written by the checker as it walks (`compile.cho`) | the Rust compiler, by what the built programs do | **First slice of the backend.** 74 programs built both ways and run: the same exit status, or a trap in both (18 trap); none different |
 | 4b. Control flow: `if` with `else`, `while`, `&&` and `||` (the right side only when the left has not decided it) | `emit.cho` and `body.cho` | the Rust compiler, by what the built programs do | **Second slice of the backend.** 123 programs built both ways and run, 49 of them new (loops, recursion, early returns, short-circuit that must not run its right side, traps inside loops): the same exit status or a trap in both (27 trap); none different |
 | 4c. `World`, `release` and a real `main`: `main(world: World)` calls the program, a `World` passed between functions, `release(world)` | `emit.cho`, `body.cho`, `types.cho`, `driver.cho` | the Rust compiler, by what the built programs do | **Third slice of the backend.** 254 builds run and compared: every one of the 123 programs through the old `run` convention and through a real `main`, and 8 more with a `main` of their own (a `World` passed on, `release` used as a value): the same exit status or a trap in both (55 trap); none different |
@@ -481,6 +482,27 @@ skipped is a failure. The mutation test of `prims.cho` kills 27 of 38 (9 of 38 b
 were written for it), the survivors being branches no builtin the checker can call reaches. The state
 and `body.cho` were split for length: `scope.cho` (bindings, borrows, blocks and the lowering of written
 types), `exprs.cho` (expressions, folding, calls) and `body.cho` (statements and `check_function`).
+
+**Stage 3e-6: effect rows.** A function's row is exact (`docs/linearity-and-effects.md` section 7.3): what
+its body performs, which is what the builtins it calls perform and what the rows of the functions it
+calls say, must be the row, both ways. Rust finds the first label in the body that the row does not
+declare (`effect-not-declared`), and failing that the first in the row the body does not perform
+(`effect-declared-not-performed`); both are refused at the function. A set of labels is an integer here, bit
+i for the i-th label of the generated table (twenty, so far), a label a function's row names that no
+builtin performs is a flag in a high bit, and so is one that carries an argument (`fs_read("/tmp")`).
+A call to a builtin adds its labels, a call to a function adds the labels of its row, in whatever branch
+or loop it is, and `check` compares the two sets once the body is clean and the borrow conflicts are
+reported, where Rust does, and before the missing `return`. What it leaves to `SKIP`: a callee whose
+row has an argument or an unknown label, and a body that performs anything in a function whose own row
+has an argument label, because a plain label and one with an argument are different labels and
+the port does not yet follow how an owned capability discharges them. A function that owns a capability
+by value is not checked either, so nothing is discharged here. The cases include the row in either
+order, with a trailing comma, with a duplicate, with a name nothing performs, rows that propagate
+through two and three callees and through recursion, and an effect in a dead branch, a short-circuit
+and an argument. The mutation test of `effects.cho` kills 24 of 31, the survivors being loop bounds
+that read one label past the table and a sentinel, and one case it found missing (a callee whose row is
+only an argument label), which is now one. With the pure builtins this takes the library from 590 of
+814 to 625 of 855 verified, and the checker can now answer for a function that prints.
 
 **Stage 4a: the first code.** The backend is written the way the Rust one is: the module is LLVM IR as
 text, and `clang` turns it into the executable (`cancho-codegen-llvm` does the same, so nothing here
