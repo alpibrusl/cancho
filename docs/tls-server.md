@@ -279,6 +279,8 @@ measurable (one more message hashed). OpenSSL's server is **17 to 20 times** che
 times" said here. Not measured: x86-64 (the i7 of `docs/ecdsa-sign.md` would be slower: its signature and check are 3 ms
 against the M4's 1.6), and the Cranelift backend.
 
+*Measured later, x86-64 and with the profile inside (`tls-performance.md` §3.3): `tls_echo` on an i7-1260P costs 4.51 ms of CPU a handshake in a quiet minute and 16.5M cycles (OpenSSL's `s_server` 1.09M, 15 times less); the two X25519 operations, the signature and the check are 89% of it, and `malloc`/`free`/`brk` of the 64 KiB `region` chunks 5.7%.*
+
 *Corrected (step 3, §11.4): about 0.9 ms of the X25519 row is `tls_serve`'s own loop, not the handshake. On the same
 machine, in one session, alternating, `examples/tls_echo` costs **3.0 ms** a handshake where `tls_serve` costs 3.8 to
 3.9 ms, with the same engine, client and identity. Where `tls_serve` spends the difference was not investigated; the
