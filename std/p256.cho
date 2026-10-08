@@ -279,17 +279,6 @@ pub fn is_zero[&w](w: &w [int], x: int) -> [] bool {
     return any == 0;
 }
 
-pub fn equal[&w](w: &w [int], x: int, y: int) -> [] bool {
-    var i = 0;
-    while i < 10 {
-        if w[x + i] != w[y + i] {
-            return false;
-        }
-        i = i + 1;
-    }
-    return true;
-}
-
 pub fn copy[&w](w: &!w [int], from: int, to: int) -> [] int {
     let a = w[from..from + 10];
     let b = w[to..to + 10];

@@ -182,6 +182,35 @@ def raw_cases(rng, count, compact=False):
     return out
 
 
+def python_verify(q, e, r, s):
+    """SEC 1 §4.1.4 in integers, with std.ecdsa's codes: -38 r, -39 s, -40 infinity, -41 mismatch, 0."""
+    if not 0 < r < N:
+        return -38
+    if not 0 < s < N:
+        return -39
+    w = pow(s, -1, N)
+    pt = ec_add(ec_mul(e * w % N, (GX, GY)), ec_mul(r * w % N, q))
+    if pt is None:
+        return -40
+    return 0 if pt[0] % N == r else -41
+
+
+def edge_signatures(rng, count):
+    """Signatures that are not valid, with r and s at the edges of a ten-limb representation (a single
+    nonzero limb, the top one included, 0, n - 1, n, 2^256 - 1) and the codes the integers give."""
+    out = []
+    edgev = [0, 1, 2, 1 << 28, 1 << 56, 1 << 224, 1 << 252, 15 << 252, 1 << 255, N - 1, N, N + 1, MAX, 3 << 252, 5 << 28]
+    for _ in range(max(2, count // 20)):
+        d = rng.randrange(1, N)
+        q = ec_mul(d, (GX, GY))
+        e = rng.randrange(1 << 256)
+        pt = "04" + h(q[0]) + h(q[1])
+        for r in edgev:
+            for s in rng.sample(edgev, 4) + [rng.randrange(1, N)]:
+                out.append((f"V {pt} {h(e)} {h(r)}{h(s)}", str(python_verify(q, e, r, s))))
+    return out
+
+
 def run(driver, lines):
     out = subprocess.run([driver], input="\n".join(lines) + "\n", capture_output=True, text=True, check=True).stdout.split("\n")
     assert out[-1] == "" and len(out) == len(lines) + 1
@@ -224,6 +253,7 @@ def main():
             for width in (5, 7):
                 cases.append((f"W {h(k)} {width}", " ".join(map(str, wnaf(k, width))) + " "))
     cases += verify_cases(rng, count, vectors)
+    cases += edge_signatures(rng, 40 if vectors else count)
     cases += raw_cases(rng, count // 4, vectors)
     # The final check of verification: x = r, or x = r + n when that is below p. No real signature
     # reaches the second (p - n is about 2^128), so these are the check on its own.
