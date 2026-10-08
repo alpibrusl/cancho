@@ -227,18 +227,22 @@ pub fn float_into[&o](out: &!o [byte], x: float) -> [] int {
                 var last = digit;
                 if low && high {
                     // Both neighbours are in reach, so the remainder
-                    // decides: `2r` against `s` is "which half".
+                    // decides: `2r` against `s` is "which half", and the
+                    // nearer of the two decimals wins.
                     //
-                    // Dead level is the one case where both answers are
-                    // shortest *and* round-trip, so the rule is a choice
-                    // rather than a derivation. Steele and White's is
-                    // "round the tie up", and this follows it: Rust's
-                    // `{:e}` agrees and Python's `repr` does not, which
-                    // is a measured fact about the two rather than a bug
-                    // in either (§3.4).
+                    // An exact tie -- the value sits dead between two
+                    // shortest decimals -- goes to the one with the even
+                    // last digit. That is the rule that makes the answer
+                    // *unique*: shortest, then closest to the exact value,
+                    // then even. It is Ryu's, Python's `repr`'s and
+                    // Java's (JDK 19+); the first version of this routine
+                    // rounded the tie up, as Rust's `{:e}` does, so the
+                    // same float printed two different strings depending on
+                    // which tool wrote it (`float-printing.md` §3.4).
                     bignum.copy(scratch, r);
                     bignum.mul_small(scratch, 2);
-                    if bignum.compare(scratch, s) >= 0 {
+                    let half = bignum.compare(scratch, s);
+                    if half > 0 || half == 0 && digit % 2 == 1 {
                         last = digit + 1;
                     }
                 } else if high {

@@ -214,6 +214,15 @@ pub enum Builtin {
     /// is the argument: a correct shortest-round-trip printer, written in
     /// cancho, rather than a hole in the standard library.
     BitsOf,
+    /// `float_of_bits(n: int) -> [] float` — the `float` whose 64 bits are
+    /// `n`: `bits_of`'s inverse, and as little a conversion as it is
+    /// (`docs/floating-point.md` §4.1). Pure and capability-free. Edition 7,
+    /// because a program may already declare the name.
+    ///
+    /// Every pattern is a value, a NaN's payload included; `bits_of` still
+    /// answers one pattern for every NaN, so the pair is an identity on
+    /// every non-NaN and on none of the NaN payloads.
+    FloatOfBits,
     /// `f32_of(x: float) -> [] f32` — the nearest `f32` to a `float`,
     /// ties to even, an overflow giving infinity (`docs/f32.md` §2).
     ///
@@ -516,6 +525,12 @@ pub enum Builtin {
     /// a request in several writes, waits on the other end's delayed acknowledgement
     /// (tens of milliseconds) without it (`docs/native-sockets.md` section 11).
     ConnNodelay,
+    /// `conn_peer(&Conn, &![byte]) -> [] int` -- `docs/conn-peer.md`: the address and port of the
+    /// other end of a connection, written into the caller's buffer as 19 bytes (family `4` or `6`,
+    /// sixteen address bytes, the port big-endian), by `getpeername(2)`. `0`, or the `errno`
+    /// (`EINVAL` for a buffer under 19 bytes or a socket that is not IP). It names no resource and
+    /// grants nothing: the address is data the program receives, not authority to dial it.
+    ConnPeer,
     /// `conn_connect_status(&!Conn) -> [] int` -- `docs/native-sockets.md` §10.6:
     /// how a connection started with `tcp_connect_start` ended: `0` connected, or
     /// the `errno` (`SO_ERROR`). Meaningful only once a `Poller` has reported the
@@ -544,6 +559,14 @@ pub enum Builtin {
     UdpNonblocking,
     /// `udp_close(Udp) -> [] int`: consumes the handle.
     UdpClose,
+    /// `udp_detach(Udp) -> [] int` -- `docs/udp.md` §11: `conn_detach` for a datagram socket. The `Udp`
+    /// ends, the descriptor stays open, and what comes back is a **ticket** a `Vec[int]` can hold. The
+    /// ticket carries a kind bit, so a `Conn`'s ticket does not redeem as a `Udp` nor the reverse. `-1`
+    /// if it could not be done, in which case the socket has been closed.
+    UdpDetach,
+    /// `udp_attach(int) -> [] UdpOpened` -- redeems a `udp_detach` ticket **once**. A ticket never
+    /// issued, already redeemed, of the other kind, or for a descriptor since reused is `Failed(EBADF)`.
+    UdpAttach,
     /// `udp_bind(net, port, flags) -> [net_in(bound)] UdpOpened` -- `docs/udp.md` §2, edition 5
     /// only: `tcp_listen` for datagrams (`socket`, `SO_REUSEADDR`, `bind`; no `listen`). Checked
     /// at the call site, like [`Builtin::TcpListen`]. `flags` bit 1 is `SO_REUSEPORT`.
@@ -754,6 +777,7 @@ impl Builtin {
         Builtin::IsNan,
         Builtin::Sqrt,
         Builtin::BitsOf,
+        Builtin::FloatOfBits,
         Builtin::F32Of,
         Builtin::FloatOf32,
         Builtin::BitsOf32,
@@ -809,6 +833,7 @@ impl Builtin {
         Builtin::ConnWrite,
         Builtin::ConnNonblocking,
         Builtin::ConnNodelay,
+        Builtin::ConnPeer,
         Builtin::ConnConnectStatus,
         Builtin::ListenerNonblocking,
         Builtin::ConnClose,
@@ -822,6 +847,8 @@ impl Builtin {
         Builtin::UdpLocalPort,
         Builtin::UdpNonblocking,
         Builtin::UdpClose,
+        Builtin::UdpDetach,
+        Builtin::UdpAttach,
         Builtin::PollerAddUdp,
         Builtin::SignalsWatch,
         Builtin::SignalsPending,
@@ -891,6 +918,7 @@ impl Builtin {
             Builtin::IsNan => "is_nan",
             Builtin::Sqrt => "sqrt",
             Builtin::BitsOf => "bits_of",
+            Builtin::FloatOfBits => "float_of_bits",
             Builtin::F32Of => "f32_of",
             Builtin::FloatOf32 => "float_of32",
             Builtin::BitsOf32 => "bits_of32",
@@ -946,6 +974,7 @@ impl Builtin {
             Builtin::ConnWrite => "conn_write",
             Builtin::ConnNonblocking => "conn_nonblocking",
             Builtin::ConnNodelay => "conn_nodelay",
+            Builtin::ConnPeer => "conn_peer",
             Builtin::ConnConnectStatus => "conn_connect_status",
             Builtin::ListenerNonblocking => "listener_nonblocking",
             Builtin::ConnClose => "conn_close",
@@ -959,6 +988,8 @@ impl Builtin {
             Builtin::UdpLocalPort => "udp_local_port",
             Builtin::UdpNonblocking => "udp_nonblocking",
             Builtin::UdpClose => "udp_close",
+            Builtin::UdpDetach => "udp_detach",
+            Builtin::UdpAttach => "udp_attach",
             Builtin::PollerAddUdp => "poller_add_udp",
             Builtin::SignalsWatch => "signals_watch",
             Builtin::SignalsPending => "signals_pending",
@@ -1040,6 +1071,7 @@ impl Builtin {
             | Builtin::ConnWrite
             | Builtin::ConnNonblocking
             | Builtin::ConnNodelay
+            | Builtin::ConnPeer
             | Builtin::ConnConnectStatus
             | Builtin::ListenerNonblocking
             | Builtin::ConnClose
@@ -1058,6 +1090,8 @@ impl Builtin {
             | Builtin::UdpLocalPort
             | Builtin::UdpNonblocking
             | Builtin::UdpClose
+            | Builtin::UdpDetach
+            | Builtin::UdpAttach
             | Builtin::PollerAddUdp => 5,
             // `docs/checked-output.md`: a name a program may already have
             // declared for itself, so it is visible from edition 5 only.
@@ -1121,6 +1155,10 @@ impl Builtin {
             // `value_barrier` was, since a program may already declare
             // these names.
             Builtin::HwAesGcm | Builtin::AesEncryptBlock | Builtin::GhashUpdate => 7,
+            // `docs/floating-point.md` §4.1: edition 7, the latest -- the
+            // first caller was a table reader that decoded doubles through
+            // `ldexp`; `float_of_bits` is a name a program may declare.
+            Builtin::FloatOfBits => 7,
             // `docs/file-writes.md`: edition 5, for the same reason --
             // `file_write` and `open_new` are names a program may already
             // declare against libc.
@@ -1207,6 +1245,7 @@ impl Builtin {
             // buffer's own.
             Builtin::ConnRead
             | Builtin::ConnWrite
+            | Builtin::ConnPeer
             | Builtin::UdpRecv
             | Builtin::UdpSend
             | Builtin::UdpSendTo => 2,

@@ -1,0 +1,285 @@
+edition 5;
+
+module http_client_slot;
+
+// `http_client_slot` -- the layout of a connection's slot in `http_client` (`docs/http-client.md` §3.2): which word of its state is
+// which, and the numbers the words hold. Names for integers, nothing else; it is a module of its own so that `http_client` is
+// the state machine and not also the table of what its words mean.
+
+// Per slot `k`, `state[48k..48k+48]` is, by the names below: the phase (0 free, 1 waiting for the caller's dial,
+// 2 idle in the pool, 3 carrying a request, 4 closing: the caller closes the transport and detaches), the pool key,
+// the generation, the events waiting (a bit each) and whether the slot is queued for `poll`; times (the phase's start,
+// the last progress, the transport's age, the request's start); the request (output buffer, flags, body mode); the
+// response (state, buffer fill, the head, framing, bytes available); and a chunked decoder's six words.
+pub fn stride() -> [] int {
+    return 48;
+}
+
+pub fn f_phase() -> [] int {
+    return 0;
+}
+
+pub fn f_key() -> [] int {
+    return 1;
+}
+
+pub fn f_gen() -> [] int {
+    return 2;
+}
+
+pub fn f_events() -> [] int {
+    return 3;
+}
+
+pub fn f_queued() -> [] int {
+    return 4;
+}
+
+pub fn f_t_phase() -> [] int {
+    return 5;
+}
+
+pub fn f_t_prog() -> [] int {
+    return 6;
+}
+
+pub fn f_t_open() -> [] int {
+    return 7;
+}
+
+pub fn f_uses() -> [] int {
+    return 8;
+}
+
+pub fn f_t_req() -> [] int {
+    return 9;
+}
+
+pub fn f_t_hold() -> [] int {
+    return 10;
+}
+
+pub fn f_out_len() -> [] int {
+    return 11;
+}
+
+pub fn f_out_sent() -> [] int {
+    return 12;
+}
+
+pub fn f_head_wire() -> [] int {
+    return 13;
+}
+
+pub fn f_bmode() -> [] int {
+    return 14;
+}
+
+pub fn f_bleft() -> [] int {
+    return 15;
+}
+
+pub fn f_rflags() -> [] int {
+    return 16;
+}
+
+pub fn f_attempts() -> [] int {
+    return 17;
+}
+
+pub fn f_reused() -> [] int {
+    return 18;
+}
+
+pub fn f_anyresp() -> [] int {
+    return 19;
+}
+
+pub fn f_rs() -> [] int {
+    return 20;
+}
+
+pub fn f_fill() -> [] int {
+    return 21;
+}
+
+pub fn f_scan() -> [] int {
+    return 22;
+}
+
+pub fn f_hl() -> [] int {
+    return 23;
+}
+
+pub fn f_bkind() -> [] int {
+    return 24;
+}
+
+pub fn f_brem() -> [] int {
+    return 25;
+}
+
+pub fn f_avail() -> [] int {
+    return 26;
+}
+
+pub fn f_info() -> [] int {
+    return 27;
+}
+
+pub fn f_fail() -> [] int {
+    return 29;
+}
+
+pub fn f_reason() -> [] int {
+    return 30;
+}
+
+pub fn f_complete() -> [] int {
+    return 31;
+}
+
+pub fn f_dirty() -> [] int {
+    return 32;
+}
+
+pub fn f_eof() -> [] int {
+    return 33;
+}
+
+pub fn f_reconnect() -> [] int {
+    return 34;
+}
+
+pub fn f_live() -> [] int {
+    return 35;
+}
+
+pub fn f_nopool() -> [] int {
+    return 36;
+}
+
+pub fn f_ctimeout() -> [] int {
+    return 37;
+}
+
+pub fn f_chunk() -> [] int {
+    return 38;
+}
+
+// Phases.
+pub fn ph_free() -> [] int {
+    return 0;
+}
+
+pub fn ph_connect() -> [] int {
+    return 1;
+}
+
+pub fn ph_idle() -> [] int {
+    return 2;
+}
+
+pub fn ph_active() -> [] int {
+    return 3;
+}
+
+pub fn ph_closing() -> [] int {
+    return 4;
+}
+
+// Response states: 0 none, 1 reading the head, 2 the body, 3 complete and consumed (`Done` waiting to be polled).
+pub fn rs_head() -> [] int {
+    return 1;
+}
+
+pub fn rs_body() -> [] int {
+    return 2;
+}
+
+pub fn rs_done() -> [] int {
+    return 3;
+}
+
+// Request flags (`rflags`): what the caller asked for (1 retry, 2 expect, 4 close), and what the client knows.
+pub fn rf_retry() -> [] int {
+    return 1;
+}
+
+pub fn rf_expect() -> [] int {
+    return 2;
+}
+
+pub fn rf_close() -> [] int {
+    return 4;
+}
+
+pub fn rf_head_method() -> [] int {
+    return 8;
+}
+
+pub fn rf_replayable() -> [] int {
+    return 16;
+}
+
+pub fn rf_hold() -> [] int {
+    return 32;
+}
+
+pub fn rf_req_done() -> [] int {
+    return 64;
+}
+
+pub fn rf_early() -> [] int {
+    return 128;
+}
+
+pub fn rf_body_done() -> [] int {
+    return 256;
+}
+
+// Body kinds.
+pub fn bk_none() -> [] int {
+    return 0;
+}
+
+pub fn bk_length() -> [] int {
+    return 1;
+}
+
+pub fn bk_chunked() -> [] int {
+    return 2;
+}
+
+pub fn bk_close() -> [] int {
+    return 3;
+}
+
+// Events, in the order a slot's are delivered.
+pub fn ev_connect() -> [] int {
+    return 1;
+}
+
+pub fn ev_continue() -> [] int {
+    return 2;
+}
+
+pub fn ev_head() -> [] int {
+    return 4;
+}
+
+pub fn ev_body() -> [] int {
+    return 8;
+}
+
+pub fn ev_done() -> [] int {
+    return 16;
+}
+
+pub fn ev_failed() -> [] int {
+    return 32;
+}
+
+pub fn ev_close() -> [] int {
+    return 64;
+}

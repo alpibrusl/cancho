@@ -131,3 +131,28 @@ jobs:
 
       - name: The byte-fed mode's mutants (docs/http-server.md §11.5)
         run: python3 scripts/http_server_bytes_mutants.py ./target/release/cancho
+
+      # docs/http-client.md §9: the non-blocking HTTP client (`packages/http-client`) through `examples/http_fetch_nb`, against
+      # servers that decide every byte they send (plain TCP and TLS 1.3), nginx (which ends connections with `Connection: close`
+      # after 5 requests), the repository's own `https_hello`, and a server that damages its responses; then a million damaged
+      # responses through the client with nothing to hold them but its buffers, its cost, and its mutants.
+      - name: The HTTP client (docs/http-client.md §9)
+        run: |
+          ./target/release/cancho build --std examples/http_fetch_nb/{fetch,fetch_io}.cho \
+            packages/http-client/{slot,wire,client}.cho \
+            packages/tls/{tls,record,message,slot,client12,client,hello,identity,server}.cho \
+            packages/x509/{verify,names,x509,key}.cho \
+            -o "$RUNNER_TEMP/http_fetch_nb"
+          python3 scripts/http_client_test.py "$RUNNER_TEMP/http_fetch_nb" --https-hello "$RUNNER_TEMP/https_hello"
+          ./target/release/cancho build --std packages/http-client/{slot,wire,client}.cho tests/programs/http_client_fuzz.cho -o "$RUNNER_TEMP/http_client_fuzz"
+          "$RUNNER_TEMP/http_client_fuzz" 1000000 7
+          ./target/release/cancho build --std packages/http-client/{slot,wire,client}.cho tests/programs/http_client_bench.cho -o "$RUNNER_TEMP/http_client_bench"
+          "$RUNNER_TEMP/http_client_bench" 400000 8 26
+          "$RUNNER_TEMP/http_client_bench" 400000 64 26
+          ./target/release/cancho build --std examples/api/api.cho packages/http-server/server.cho -o "$RUNNER_TEMP/api"
+          python3 scripts/http_client_test.py "$RUNNER_TEMP/http_fetch_nb" --pin --cost 5 \
+            --server "$RUNNER_TEMP/api" --https-hello "$RUNNER_TEMP/https_hello"
+
+      - name: The HTTP client's mutants (docs/http-client.md §9)
+        run: python3 scripts/http_client_mutants.py ./target/release/cancho
+

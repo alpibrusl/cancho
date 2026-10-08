@@ -772,6 +772,106 @@ impl<'a> FuncEmitter<'a> {
         Ok(vec![LValue::Reg(ok)])
     }
 
+    /// `conn_peer(&Conn, &![byte])` (`docs/conn-peer.md` §3): mirrors `cancho-codegen`'s own --
+    /// `getpeername(2)` into a `sockaddr` of this function's, then 19 bytes to the caller's buffer:
+    /// `4` or `6`, sixteen address bytes (an IPv4 address in the first four, the rest zero), the
+    /// port big-endian. `0`, or the `errno`; `EINVAL` for a buffer under 19 bytes or a socket that
+    /// is not IP, before anything is written to the buffer. Every path stores into one `alloca`
+    /// cell, as this backend builds no `phi`.
+    pub(crate) fn conn_peer(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        let darwin = self.is_darwin();
+        let fd = self.handle_fd(&args[0]);
+        let out = operand(&args[1]).to_string();
+        let sa = self.fresh();
+        self.hoist(format!("  {sa} = alloca i8, i64 32\n"));
+        let len = self.fresh();
+        self.hoist(format!("  {len} = alloca i32\n"));
+        let cell = self.fresh();
+        self.hoist(format!("  {cell} = alloca i64\n"));
+        let family_at = if darwin { 1 } else { 0 };
+        let inet6 = if darwin { 30 } else { 10 };
+        let n = self.blocks;
+        self.blocks += 1;
+        let (ask, classify, check6, v4, v6, port, bad, done) = (
+            format!("peerask{n}"),
+            format!("peerclass{n}"),
+            format!("peercheck6{n}"),
+            format!("peerv4{n}"),
+            format!("peerv6{n}"),
+            format!("peerport{n}"),
+            format!("peerbad{n}"),
+            format!("peerdone{n}"),
+        );
+
+        let small = self.fresh();
+        self.out.push_str(&format!("  {small} = icmp slt i64 {}, 19\n", operand(&args[2])));
+        self.out.push_str(&format!("  br i1 {small}, label %{bad}, label %{ask}\n"));
+
+        self.out.push_str(&format!("{ask}:\n"));
+        self.out.push_str(&format!("  store i32 32, ptr {len}\n"));
+        let result = self.fresh();
+        self.out.push_str(&format!(
+            "  {result} = call i32 @getpeername(i32 {fd}, ptr {sa}, ptr {len})\n"
+        ));
+        let reason = self.errno();
+        let failed = self.fresh();
+        self.out.push_str(&format!("  {failed} = icmp slt i32 {result}, 0\n"));
+        let failure = format!("peerfail{n}");
+        self.out.push_str(&format!("  br i1 {failed}, label %{failure}, label %{classify}\n"));
+
+        self.out.push_str(&format!("{failure}:\n"));
+        self.out.push_str(&format!("  store i64 {}, ptr {cell}\n", operand(&reason)));
+        self.out.push_str(&format!("  br label %{done}\n"));
+
+        self.out.push_str(&format!("{classify}:\n"));
+        let family = self.load_field(&sa, family_at, "i8");
+        let is4 = self.fresh();
+        self.out.push_str(&format!("  {is4} = icmp eq i8 {family}, 2\n"));
+        self.out.push_str(&format!("  br i1 {is4}, label %{v4}, label %{check6}\n"));
+
+        self.out.push_str(&format!("{check6}:\n"));
+        let is6 = self.fresh();
+        self.out.push_str(&format!("  {is6} = icmp eq i8 {family}, {inet6}\n"));
+        self.out.push_str(&format!("  br i1 {is6}, label %{v6}, label %{bad}\n"));
+
+        self.out.push_str(&format!("{v4}:\n"));
+        self.store_byte(&out, 0, "4");
+        for i in 0..16 {
+            if i < 4 {
+                let byte = self.load_field(&sa, 4 + i, "i8");
+                self.store_byte(&out, 1 + i, &byte);
+            } else {
+                self.store_byte(&out, 1 + i, "0");
+            }
+        }
+        self.out.push_str(&format!("  br label %{port}\n"));
+
+        self.out.push_str(&format!("{v6}:\n"));
+        self.store_byte(&out, 0, "6");
+        for i in 0..16 {
+            let byte = self.load_field(&sa, 8 + i, "i8");
+            self.store_byte(&out, 1 + i, &byte);
+        }
+        self.out.push_str(&format!("  br label %{port}\n"));
+
+        self.out.push_str(&format!("{port}:\n"));
+        for i in 0..2 {
+            let byte = self.load_field(&sa, 2 + i, "i8");
+            self.store_byte(&out, 17 + i, &byte);
+        }
+        self.out.push_str(&format!("  store i64 0, ptr {cell}\n"));
+        self.out.push_str(&format!("  br label %{done}\n"));
+
+        self.out.push_str(&format!("{bad}:\n"));
+        self.out.push_str(&format!("  store i64 {EINVAL}, ptr {cell}\n"));
+        self.out.push_str(&format!("  br label %{done}\n"));
+
+        self.out.push_str(&format!("{done}:\n"));
+        let answer = self.fresh();
+        self.out.push_str(&format!("  {answer} = load i64, ptr {cell}\n"));
+        Ok(vec![LValue::Reg(answer)])
+    }
+
     /// `clock_ms(&Clock)` (`docs/native-sockets.md` §5): `CLOCK_MONOTONIC`
     /// as milliseconds (clock id 1 on Linux, 6 on Darwin). With `wall`,
     /// `CLOCK_REALTIME` (id 0 on both): `clock_unix_ms` (§10.5).
@@ -812,7 +912,14 @@ impl<'a> FuncEmitter<'a> {
     /// stays open, the `Conn` ends, and what comes back is a ticket -- the
     /// descriptor's epoch, bumped to an odd number, over its number. A
     /// descriptor too large for the table is closed and answers `-1`.
-    pub(crate) fn conn_detach(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+    ///
+    /// `udp` marks the ticket as a datagram socket's: bit 31 of the descriptor half is set, so
+    /// `conn_attach` refuses it and `udp_attach` refuses a ticket without it (`docs/udp.md` §11).
+    pub(crate) fn conn_detach(
+        &mut self,
+        args: &[LValue],
+        udp: bool,
+    ) -> Result<Vec<LValue>, String> {
         let fd = operand(&args[0]);
         let cell = self.fresh();
         self.hoist(format!("  {cell} = alloca i64\n"));
@@ -845,8 +952,11 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("  {masked} = and i64 {next64}, 2147483647\n"));
         let high = self.fresh();
         self.out.push_str(&format!("  {high} = shl i64 {masked}, 32\n"));
+        let plain = self.fresh();
+        self.out.push_str(&format!("  {plain} = or i64 {high}, {fd}\n"));
         let ticket = self.fresh();
-        self.out.push_str(&format!("  {ticket} = or i64 {high}, {fd}\n"));
+        let kind: i64 = if udp { 1 << 31 } else { 0 };
+        self.out.push_str(&format!("  {ticket} = or i64 {plain}, {kind}\n"));
         self.out.push_str(&format!("  store i64 {ticket}, ptr {cell}\n"));
         self.out.push_str(&format!("  br label %{merge}\n"));
 
@@ -860,10 +970,19 @@ impl<'a> FuncEmitter<'a> {
     /// ticket's epoch is odd, and it is the descriptor's *current* epoch --
     /// then the epoch moves on, so the ticket is spent. `Attached` is `Ok`
     /// 0 with the descriptor, `Failed` 1 with `EBADF`.
-    pub(crate) fn conn_attach(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+    ///
+    /// With `udp`, the ticket must carry the datagram kind bit (bit 31 of the descriptor half) and
+    /// the descriptor is the other 31 bits; without it, a ticket that carries the bit names a
+    /// descriptor past the table and is refused.
+    pub(crate) fn conn_attach(
+        &mut self,
+        args: &[LValue],
+        udp: bool,
+    ) -> Result<Vec<LValue>, String> {
         let ticket = operand(&args[0]);
         let fd = self.fresh();
-        self.out.push_str(&format!("  {fd} = and i64 {ticket}, 4294967295\n"));
+        let mask: i64 = if udp { 2_147_483_647 } else { 4_294_967_295 };
+        self.out.push_str(&format!("  {fd} = and i64 {ticket}, {mask}\n"));
         let epoch = self.fresh();
         self.out.push_str(&format!("  {epoch} = lshr i64 {ticket}, 32\n"));
         let in_range = self.fresh();
@@ -893,8 +1012,19 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("  {a} = and i1 {in_range}, {same}\n"));
         let b = self.fresh();
         self.out.push_str(&format!("  {b} = and i1 {odd}, {non_negative}\n"));
-        let valid = self.fresh();
+        let mut valid = self.fresh();
         self.out.push_str(&format!("  {valid} = and i1 {a}, {b}\n"));
+        if udp {
+            let kind = self.fresh();
+            self.out.push_str(&format!("  {kind} = lshr i64 {ticket}, 31\n"));
+            let kind_bit = self.fresh();
+            self.out.push_str(&format!("  {kind_bit} = and i64 {kind}, 1\n"));
+            let is_udp = self.fresh();
+            self.out.push_str(&format!("  {is_udp} = icmp ne i64 {kind_bit}, 0\n"));
+            let both = self.fresh();
+            self.out.push_str(&format!("  {both} = and i1 {valid}, {is_udp}\n"));
+            valid = both;
+        }
 
         let n = self.blocks;
         self.blocks += 1;

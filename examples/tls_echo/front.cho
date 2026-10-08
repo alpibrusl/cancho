@@ -45,6 +45,19 @@ module tls_front;
 // long and no longer; an established one is closed with close_notify after
 // `--idle` without a byte either way.
 //
+// **The peer** (`docs/conn-peer.md`). Every line about a connection says who it is from, as the
+// socket sees it: `peer=<address>:<port>`. It is asked of the kernel once, right after the
+// connection is put in the table (`conns.peer`), and kept in the slot, because a connection that
+// has ended has no peer to ask (a reset one has none even sooner, which is `peer=-`). Two more
+// bounds count under the peer's **key** (`addr.key`: an IPv4 address, or an IPv6 /64):
+// `--per-address <n>` refuses a connection when `<n>` from the same key are already held (it
+// is closed at once, as one over the table is: `refused <id> peer=... per-address`), and
+// `--per-address-rate <n>` delays a queued connection while `<n>` handshakes from its key were
+// already started in this second, as `--rate` delays it for all keys together. Both are 0 (off)
+// unless given. A client behind a proxy or NAT is the proxy's or the NAT's address, and counts
+// with everything else behind it. An IPv4-mapped address is the IPv4 one (`docs/conn-peer.md`
+// section 4); no cancho listener is dual-stack yet, so today every peer here is IPv4.
+//
 // **Reload** is `SIGHUP`: every identity is read again from its directory
 // and given to `tls.replace_identity`; a connection whose ClientHello was
 // answered keeps the certificate it was sent, and every later one gets the
@@ -57,9 +70,9 @@ module tls_front;
 // Lines it prints, each flushed as it is written:
 //
 //     listening <port>
-//     conn <n> established suite=<name> group=<name> sni=<name|-> alpn=<protocol|-> hrr=<yes|no> waited=<ms> handshake=<ms>
-//     conn <n> closed <why> in=<bytes> ms=<since accepted>
-//     refused <n> full
+//     conn <n> peer=<address:port> established suite=<name> group=<name> sni=<name|-> alpn=<protocol|-> hrr=<yes|no> waited=<ms> handshake=<ms>
+//     conn <n> peer=<address:port> closed <why> in=<bytes> ms=<since accepted>
+//     refused <n> peer=<address:port> full | stopping | per-address
 //     reload <identity> ok | reload <identity> refused <tag> | reload <identity> unreadable <file> errno=<n>
 //     stopping
 //
@@ -68,6 +81,7 @@ module tls_front;
 // the engine's refusal tag (`tls-peer-closed`, `tls-alert-<n>`, a
 // `tls-server-*` tag, ...).
 
+import std.addr;
 import std.conns;
 import std.flags;
 import std.io;
@@ -98,6 +112,17 @@ pub fn c_identities() -> [] int {
     return 5;
 }
 
+// `--per-address`: at most this many connections from one address key (`std.addr.key`: an
+// IPv4 address, or an IPv6 /64), 0 for no bound; and `--per-address-rate`: at most this many
+// handshakes started in a second from one key, 0 for no bound.
+pub fn c_per_addr() -> [] int {
+    return 6;
+}
+
+pub fn c_addr_rate() -> [] int {
+    return 7;
+}
+
 pub fn cfg_len() -> [] int {
     return 8;
 }
@@ -108,7 +133,7 @@ pub fn sub_cap() -> [] int {
 }
 
 pub fn stride() -> [] int {
-    return 20;
+    return 26;
 }
 
 pub fn s_phase() -> [] int {
@@ -201,6 +226,34 @@ pub fn s_peer_closed() -> [] int {
     return 19;
 }
 
+// The connection's peer, asked once when it was accepted (`docs/conn-peer.md` section 7): the
+// family (4 or 6; 0 for none), the four address words and the port. It is kept here because the
+// connection is gone when the line saying it closed is written, and a peer cannot be asked of
+// a socket that is not there.
+pub fn s_pfam() -> [] int {
+    return 20;
+}
+
+pub fn s_pw0() -> [] int {
+    return 21;
+}
+
+pub fn s_pw1() -> [] int {
+    return 22;
+}
+
+pub fn s_pw2() -> [] int {
+    return 23;
+}
+
+pub fn s_pw3() -> [] int {
+    return 24;
+}
+
+pub fn s_pport() -> [] int {
+    return 25;
+}
+
 pub fn phase_free() -> [] int {
     return 0;
 }
@@ -254,8 +307,31 @@ pub fn g_last_sweep() -> [] int {
     return 7;
 }
 
-pub fn gl_len() -> [] int {
+// The window's number, counted from 1: an entry of the address table is current only if it
+// holds this.
+pub fn g_wserial() -> [] int {
     return 8;
+}
+
+// How many queued connections the last `admit` left waiting for their address's rate.
+pub fn g_held() -> [] int {
+    return 9;
+}
+
+// The address table of `--per-address-rate`: `ak_cap()` entries of four ints from `g_ak()`,
+// each (family, key bits, window number, handshakes started in it). A window's number that is
+// not the current one makes an entry free, so nothing is ever cleared. At most `ak_cap()`
+// distinct keys can start a handshake in one window; the next is delayed to the next.
+pub fn g_ak() -> [] int {
+    return 10;
+}
+
+pub fn ak_cap() -> [] int {
+    return 1024;
+}
+
+pub fn gl_len() -> [] int {
+    return 10 + 4 * 1024;
 }
 
 // Each slot's buffers.
@@ -364,10 +440,27 @@ pub fn why[&i, &e](io: &!i Io, engine: &e tls.Engine, slot: int, reason: int) ->
     return 0;
 }
 
+// The peer kept in `st` for the slot at `b`, as `address:port` (`[address]:port` for IPv6), or
+// `-` when there is none.
+pub fn print_peer[&i, &s](io: &!i Io, st: &s [int], b: int) -> [io_write] int {
+    if st[b + s_pfam()] == 0 {
+        io.write_all(io, "-");
+        return 0;
+    }
+    let p = addr.from_parts(st[b + s_pfam()], st[b + s_pw0()], st[b + s_pw1()], st[b + s_pw2()], st[b + s_pw3()], st[b + s_pport()]);
+    region r {
+        let text = alloc_slice[r](addr.max_text(), byte_of(0));
+        io.write_all(io, text[0..addr.text_port(p, text)]);
+    }
+    return 0;
+}
+
 pub fn log_established[&i, &e, &s](io: &!i Io, engine: &e tls.Engine, st: &s [int], slot: int, now: int) -> [io_write] int {
     let b = slot * stride();
     io.write_all(io, "conn ");
     io.print_int(io, st[b + s_id()]);
+    io.write_all(io, " peer=");
+    print_peer(io, st, b);
     io.write_all(io, " established suite=");
     io.write_all(io, suite_name(tls.suite(engine, slot)));
     io.write_all(io, " group=");
@@ -399,6 +492,8 @@ pub fn end_slot[&i, &e, &t, &s](io: &!i Io, engine: &!e tls.Engine, tab: &!t con
     let b = slot * stride();
     io.write_all(io, "conn ");
     io.print_int(io, st[b + s_id()]);
+    io.write_all(io, " peer=");
+    print_peer(io, st, b);
     io.write_all(io, " closed ");
     why(io, engine, slot, reason);
     io.write_all(io, " in=");
@@ -447,17 +542,72 @@ pub fn flush_slot[&e, &t, &s, &p](engine: &!e tls.Engine, tab: &!t conns.Table, 
     return 0;
 }
 
+// Whether a handshake from the key (`family`, `bits`) may start now under `--per-address-rate`,
+// counting it if so. A key is counted in the address table of `gl` for the current window; an
+// entry from an earlier window is free. If the table holds `ak_cap()` keys of this window the
+// answer is no, which delays the connection to the next window and never lets one through.
+pub fn addr_allows[&g, &c](gl: &!g [int], cfg: &c [int], family: int, bits: int) -> [] bool {
+    let limit = cfg[c_addr_rate()];
+    if limit == 0 {
+        return true;
+    }
+    let serial = gl[g_wserial()] + 1;
+    var free = 0 - 1;
+    var k = 0;
+    while k < ak_cap() {
+        let at = g_ak() + 4 * k;
+        if gl[at + 2] == serial {
+            if gl[at] == family && gl[at + 1] == bits {
+                if gl[at + 3] >= limit {
+                    return false;
+                }
+                gl[at + 3] = gl[at + 3] + 1;
+                return true;
+            }
+        } else if free < 0 {
+            free = at;
+        }
+        k = k + 1;
+    }
+    if free < 0 {
+        return false;
+    }
+    gl[free] = family;
+    gl[free + 1] = bits;
+    gl[free + 2] = serial;
+    gl[free + 3] = 1;
+    return true;
+}
+
+// The slot's key, as (family, bits) -- the two ints `addr.key_from` takes back.
+pub fn slot_key_family[&s](st: &s [int], b: int) -> [] int {
+    return addr.key_family(addr.key(addr.from_parts(st[b + s_pfam()], st[b + s_pw0()], st[b + s_pw1()], st[b + s_pw2()], st[b + s_pw3()], 0)));
+}
+
+pub fn slot_key_bits[&s](st: &s [int], b: int) -> [] int {
+    return addr.key_bits(addr.key(addr.from_parts(st[b + s_pfam()], st[b + s_pw0()], st[b + s_pw1()], st[b + s_pw2()], st[b + s_pw3()], 0)));
+}
+
 // Starts queued connections, oldest first, while both bounds allow:
 // fewer than `--handshakes` in progress and fewer than `--rate` started
-// in this second. Answers how many ended (a `serve` that refused).
+// in this second. A connection whose address key has already started
+// `--per-address-rate` handshakes in this second is passed over and keeps
+// its place in the queue's order for the next window, without holding up
+// the ones behind it. Answers how many ended (a `serve` that refused).
 pub fn admit[&i, &e, &t, &p, &s, &g, &q, &c](io: &!i Io, engine: &!e tls.Engine, tab: &!t conns.Table, poller: &!p Poller, st: &!s [int], gl: &!g [int], queue: &!q [int], cfg: &c [int], now: int, now_unix: int) -> [poll, io_write] int {
     var ended = 0;
     if now - gl[g_window()] >= 1000 {
         gl[g_window()] = now;
         gl[g_started()] = 0;
+        gl[g_wserial()] = gl[g_wserial()] + 1;
     }
+    gl[g_held()] = 0;
     let cap = cfg[c_conns()];
-    while gl[g_qlen()] > 0 && gl[g_started()] < cfg[c_rate()] && tls.handshakes_in_progress(engine) < cfg[c_handshakes()] {
+    // One pass over what was queued when it began: a connection passed over goes to the tail,
+    // and is not looked at again until the next call.
+    var passes = gl[g_qlen()];
+    while passes > 0 && gl[g_qlen()] > 0 && gl[g_started()] < cfg[c_rate()] && tls.handshakes_in_progress(engine) < cfg[c_handshakes()] {
+        passes = passes - 1;
         let entry = queue[gl[g_qhead()]];
         gl[g_qhead()] = (gl[g_qhead()] + 1) % cap;
         gl[g_qlen()] = gl[g_qlen()] - 1;
@@ -466,18 +616,24 @@ pub fn admit[&i, &e, &t, &p, &s, &g, &q, &c](io: &!i Io, engine: &!e tls.Engine,
         // An entry whose connection ended while it waited, or whose slot a
         // later connection took, is skipped.
         if st[b + s_phase()] == phase_queued() && st[b + s_id()] == entry / 4096 {
-            let code = tls.serve(engine, slot, now_unix);
-            if code != 0 {
-                ended = ended + end_slot(io, engine, tab, st, slot, code, now);
+            if !addr_allows(gl, cfg, slot_key_family(st, b), slot_key_bits(st, b)) {
+                queue[(gl[g_qhead()] + gl[g_qlen()]) % cap] = entry;
+                gl[g_qlen()] = gl[g_qlen()] + 1;
+                gl[g_held()] = gl[g_held()] + 1;
             } else {
-                st[b + s_phase()] = phase_handshake();
-                st[b + s_waited()] = now - st[b + s_since()];
-                st[b + s_since()] = now;
-                gl[g_started()] = gl[g_started()] + 1;
-                if conns.watch(tab, poller, slot, slot + 1, 1) != 0 {
-                    ended = ended + end_slot(io, engine, tab, st, slot, r_socket(), now);
+                let code = tls.serve(engine, slot, now_unix);
+                if code != 0 {
+                    ended = ended + end_slot(io, engine, tab, st, slot, code, now);
                 } else {
-                    st[b + s_watch()] = 1;
+                    st[b + s_phase()] = phase_handshake();
+                    st[b + s_waited()] = now - st[b + s_since()];
+                    st[b + s_since()] = now;
+                    gl[g_started()] = gl[g_started()] + 1;
+                    if conns.watch(tab, poller, slot, slot + 1, 1) != 0 {
+                        ended = ended + end_slot(io, engine, tab, st, slot, r_socket(), now);
+                    } else {
+                        st[b + s_watch()] = 1;
+                    }
                 }
             }
         }
@@ -514,8 +670,45 @@ pub fn reload[&h, &i, &d, &e, &u, &l](heap: &!h Heap, io: &!i Io, dir: &d Dir, e
     return bad;
 }
 
+// `address:port` of a connection that is not in a table (so `conns.peer` cannot be asked), or `-`.
+fn print_conn_peer[&i, &h](io: &!i Io, conn: &h Conn) -> [io_write] int {
+    region r {
+        let raw = alloc_slice[r](addr.raw_len(), byte_of(0));
+        if conn_peer(conn, raw) == 0 {
+            match addr.decode(raw) {
+                addr.Parsed::Ok(p) => {
+                    let text = alloc_slice[r](addr.max_text(), byte_of(0));
+                    io.write_all(io, text[0..addr.text_port(p, text)]);
+                }
+                addr.Parsed::Bad => {
+                    io.write_all(io, "-");
+                }
+            }
+        } else {
+            io.write_all(io, "-");
+        }
+    }
+    return 0;
+}
+
+// How many connections in the table (any phase but free) are from the key (`family`, `bits`).
+pub fn count_key[&s](st: &s [int], slots: int, family: int, bits: int) -> [] int {
+    var n = 0;
+    var slot = 0;
+    while slot < slots {
+        let b = slot * stride();
+        if st[b + s_phase()] != phase_free() && st[b + s_pfam()] != 0 && slot_key_family(st, b) == family && slot_key_bits(st, b) == bits {
+            n = n + 1;
+        }
+        slot = slot + 1;
+    }
+    return n;
+}
+
 // Accepts every connection waiting on the listener: each takes a slot and
-// joins the queue, or, over the table or once stopping, is closed at once.
+// joins the queue, or, over the table, once stopping, or over `--per-address`, is
+// closed at once. The peer is asked right after the connection is put in the table and
+// kept in its slot (`docs/conn-peer.md` section 7).
 pub fn accept_all[&h, &i, &l, &s, &g, &q, &c](heap: &!h Heap, io: &!i Io, table: conns.Table, listener: &!l Listener, st: &!s [int], gl: &!g [int], queue: &!q [int], cfg: &c [int], now: int) -> [heap, conn_accept, io_write] conns.Table {
     var tab = table;
     var more = true;
@@ -529,9 +722,15 @@ pub fn accept_all[&h, &i, &l, &s, &g, &q, &c](heap: &!h Heap, io: &!i Io, table:
                 let id = gl[g_next_id()];
                 gl[g_next_id()] = id + 1;
                 if live >= cfg[c_conns()] || gl[g_stopping()] == 1 {
-                    conn_close(c);
+                    // It never enters the table, so its peer is read from the connection itself.
+                    var refused = c;
                     io.write_all(io, "refused ");
                     io.print_int(io, id);
+                    io.write_all(io, " peer=");
+                    borrow refused as &rh in {
+                        print_conn_peer(io, rh);
+                    }
+                    conn_close(refused);
                     if gl[g_stopping()] == 1 {
                         io.write_all(io, " stopping\n");
                     } else {
@@ -547,13 +746,51 @@ pub fn accept_all[&h, &i, &l, &s, &g, &q, &c](heap: &!h Heap, io: &!i Io, table:
                                 conns.close(tw, slot);
                             } else {
                                 let b = slot * stride();
-                                st[b + s_phase()] = phase_queued();
-                                st[b + s_id()] = id;
-                                st[b + s_since()] = now;
-                                st[b + s_accepted()] = now;
-                                let at = (gl[g_qhead()] + gl[g_qlen()]) % cfg[c_conns()];
-                                queue[at] = id * 4096 + slot;
-                                gl[g_qlen()] = gl[g_qlen()] + 1;
+                                var family = 0;
+                                match conns.peer(tw, slot) {
+                                    conns.Peered::Known(p) => {
+                                        family = addr.family(p);
+                                        st[b + s_pfam()] = family;
+                                        st[b + s_pw0()] = addr.word(p, 0);
+                                        st[b + s_pw1()] = addr.word(p, 1);
+                                        st[b + s_pw2()] = addr.word(p, 2);
+                                        st[b + s_pw3()] = addr.word(p, 3);
+                                        st[b + s_pport()] = addr.port(p);
+                                    }
+                                    conns.Peered::Unavailable(e) => {
+                                    }
+                                }
+                                var why = "";
+                                if family == 0 {
+                                    // It ended between `accept` and now; there is nobody to serve.
+                                    why = "gone";
+                                } else if cfg[c_per_addr()] > 0 && count_key(st, cfg[c_conns()], family, slot_key_bits(st, b)) >= cfg[c_per_addr()] {
+                                    why = "per-address";
+                                }
+                                if len(why) > 0 {
+                                    io.write_all(io, "refused ");
+                                    io.print_int(io, id);
+                                    io.write_all(io, " peer=");
+                                    print_peer(io, st, b);
+                                    io.write_all(io, " ");
+                                    io.write_all(io, why);
+                                    io.newline(io);
+                                    flush(io);
+                                    var k = 0;
+                                    while k < stride() {
+                                        st[b + k] = 0;
+                                        k = k + 1;
+                                    }
+                                    conns.close(tw, slot);
+                                } else {
+                                    st[b + s_phase()] = phase_queued();
+                                    st[b + s_id()] = id;
+                                    st[b + s_since()] = now;
+                                    st[b + s_accepted()] = now;
+                                    let at = (gl[g_qhead()] + gl[g_qlen()]) % cfg[c_conns()];
+                                    queue[at] = id * 4096 + slot;
+                                    gl[g_qlen()] = gl[g_qlen()] + 1;
+                                }
                             }
                         }
                     }
@@ -574,7 +811,7 @@ pub fn accept_all[&h, &i, &l, &s, &g, &q, &c](heap: &!h Heap, io: &!i Io, table:
 // queued connection waits on it, else a quarter second, which is how
 // often the timeouts are looked at.
 pub fn timeout_of[&g, &c](gl: &g [int], cfg: &c [int], now: int) -> [] int {
-    if gl[g_qlen()] > 0 && gl[g_started()] >= cfg[c_rate()] {
+    if gl[g_qlen()] > 0 && (gl[g_started()] >= cfg[c_rate()] || gl[g_held()] > 0) {
         let left = gl[g_window()] + 1000 - now;
         if left < 1 {
             return 1;
@@ -670,6 +907,10 @@ pub fn parse_flags[&g, &c, &u, &n, &a, &f](g: &g Args, cfg: &!c [int], subs: &!u
                     bad = bad || !set_number(cfg, c_handshakes(), text, 1, 4096);
                 } else if flags.named(name, "rate") {
                     bad = bad || !set_number(cfg, c_rate(), text, 1, 1000000);
+                } else if flags.named(name, "per-address") {
+                    bad = bad || !set_number(cfg, c_per_addr(), text, 1, 4096);
+                } else if flags.named(name, "per-address-rate") {
+                    bad = bad || !set_number(cfg, c_addr_rate(), text, 1, 1000000);
                 } else if flags.named(name, "handshake-timeout") {
                     bad = bad || !set_number(cfg, c_hs_timeout(), text, 1, 3600000);
                 } else if flags.named(name, "idle") {

@@ -78,6 +78,27 @@ it.
   shortcut gets wrong, built from `m * 5^s / 10^s` in 128-bit integers),
   integers on both sides of 2^53 and of `int`'s ends, subnormals,
   the overflow edge, and exponents of a million digits. Zero mismatches.
+
+  **Corrected:** that corpus built its halfway cells only among the
+  *normal* floats (`m` of 54 bits, shifts under 26), so "and subnormals"
+  meant random subnormals in their shortest form -- which no tie can be
+  -- and the claim above said more than it tested. A downstream table
+  reader found that `to_float` read the exact halfway point between two
+  of the larger subnormals (between about 1e-308 and 2^-1022: the 768
+  significant digits of `(2k+1) * 2^-1075`) to the wrong neighbour about
+  half the time: the digit cap was 767, so the final `5` was dropped as a
+  "sticky" digit, the tie became a value above the middle, and it went
+  up whatever the parity. **Measured: 33,541 of the 1,000,000 cells of
+  `float_text.rs` (3.4%; 440 of 1,700 in the first reproduction, and 113
+  of 400 exact midpoints of 52-bit subnormals) read wrong, none in any
+  other shape.** The cap is 768 now. `conformance/float_text.rs` reads
+  **1,000,000 cells** against Rust's parse -- the halfway point, a hair
+  above and a hair below it for every subnormal below 64 units, for the
+  largest subnormals and smallest normals, for 30,000 anywhere, and up
+  to `DBL_MAX` plus half an ulp (a tie that rounds to infinity) --
+  and `scripts/float_differential.py` runs the same driver against
+  Python's `float()` and against exact rational arithmetic (`fractions`),
+  1,000,000 cells, 0 differences.
   The same run checks `to_int` against an `i128` parse clamped to `i64`.
 * **Accept and refuse what `serde_json` does, over damaged input.** Ten
   valid documents and 1,500 mutations of them (one to two bytes replaced,
@@ -102,7 +123,7 @@ exact floats and one correctly rounded operation (Clinger's fast path).
 Everything else -- and a random double printed in 17 digits is the common
 case -- needs exact arithmetic, because `m * 10^e` in floating point is
 off by an ulp often enough to break a round trip. `slow_decimal` does it
-with `std.bignum`: the digits (up to 767, the most a halfway point can
+with `std.bignum`: the digits (up to 768, the most a halfway point can
 have, plus a sticky digit for the rest) and the power of ten become
 bignums, scaled so the quotient has 56–57 bits, divided bit by bit, and
 rounded on those bits with the remainder as the sticky bit. Limbs are

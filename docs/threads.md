@@ -457,3 +457,55 @@ nothing grows. `cancho-codegen`'s
 `every_word_global_is_aligned_to_a_word` reads the alignment back out
 of both the ELF and the Mach-O object, so the check runs on every host
 CI has, including the two where the misalignment never faults.
+
+---
+
+## 7. A `region` per unit of work does not scale with threads on macOS
+
+*Measured on an Apple M4 Max (16 cores), macOS 26, from a table reader
+(`cancho-table`, `docs/numbers.md`) that opens one `region` per cell: on a
+1M-row file 1 thread took 1.09 s and 16 took 2.15 s, where Linux scaled.*
+
+**Cause: the system `malloc` on a request over 32 KiB, not the region
+code.** A `region` is one `malloc(ARENA_CHUNK)` and one `free`
+(`region_stmt`: "one `malloc` in, one `free` out"), and `ARENA_CHUNK` is
+64 KiB. libmalloc serves requests up to 32 KiB from per-thread magazines;
+above that (measured: 32,768 bytes is fast, 33,000 is not) each
+`malloc`/`free` goes to the kernel's VM allocator, which is cheap on one
+thread (about 0.5 µs a pair) and, with the same loop on every thread,
+serialises: the time is almost all *system* time. That a lock inside the
+VM allocator is what they queue on is an inference from the sys time and
+from `mmap`/`munmap` behaving the same, not something profiled below
+that.
+
+| what | 1 thread | 8 threads | 16 threads |
+|---|---|---|---|
+| C, `malloc(64 KiB)`; `free`, 100,000 per thread, wall | 0.05 s | **1.28 s** (sys 6.9 s) | |
+| the same, 200,000 per thread | 0.11 s | | **5.74 s** (user 16 s, **sys 62 s**) |
+| the same at 32,768 bytes | 0.00 s | 0.00 s | |
+| the same at 33,000 bytes | 0.05 s | **1.34 s** (sys 3.8 s) | |
+| C, `mmap`/`munmap` 64 KiB, 100,000 per thread | 0.15 s | 2.56 s (sys 13 s) | |
+| C, one chunk per thread kept and reused | | 0.00 s | |
+| `cancho build --backend cranelift`, 300,000 regions, 80 `int`s each, per thread | 0.40 s | 4.69 s (sys 20.5 s) | **8.59 s** (user 20.7 s, sys 41.0 s) |
+
+Same work per thread, so a flat row would be linear scaling: it is 21
+times slower at 16 threads. The cliff sits between 32,768 and 33,000
+bytes and the size does not matter above it (49 KiB, 64 KiB, 128 KiB, 1
+MiB are alike), so `mmap` is not a way out either. With
+`--backend llvm` (the default) a toy loop whose arena never escapes does
+not show it, because LLVM deletes a `malloc`/`free` pair it can see
+through (0.22 s at 1 and at 16 threads); a region whose chunk is passed
+to a call it cannot see through, which is any real reader, pays in full.
+
+**Not fixed here, and why.** Both ways to fix it change what a program
+means or need machinery this repository does not have: a chunk of 32 KiB
+or less makes every program that allocates between 32 and 64 KiB in one
+region trap (`allocating_past_an_arenas_chunk_traps_with_sigill` is the trap), and a
+per-thread chunk that a region takes and gives back needs thread-local
+storage in both backends, a thread-exit hook to free it, and a rule for
+nested regions, which is a design and not a patch. What a program can do
+today is open **one region per batch** and not one per item (a row's
+cells, a block of 1,000 rows), which turns the cost into one lock
+acquisition per batch; on macOS `--threads` with a region per cell should
+be left off until a chunk cache exists. The reproduction is in
+`scripts/region_scaling.c`.
