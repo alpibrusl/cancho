@@ -799,7 +799,11 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     /// stays open, the `Conn` ends, and what comes back is a ticket -- the
     /// descriptor's epoch, bumped to an odd number, over its number. A
     /// descriptor too large for the table is closed and answers `-1`.
-    pub(crate) fn conn_detach(&mut self, args: &[Value]) -> Vec<Value> {
+    ///
+    /// `udp` marks the ticket as a datagram socket's: bit 31 of the descriptor half is set, so
+    /// `conn_attach` (which reads all 32 bits, and finds a descriptor past the table) refuses it and
+    /// `udp_attach` refuses a ticket without it (`docs/udp.md` §11).
+    pub(crate) fn conn_detach(&mut self, args: &[Value], udp: bool) -> Vec<Value> {
         let fd = args[0];
         let merge = self.builder.create_block();
         self.builder.append_block_param(merge, types::I64);
@@ -828,7 +832,10 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         let next64 = self.builder.ins().uextend(types::I64, next);
         let masked = self.builder.ins().band_imm(next64, 0x7fff_ffff);
         let high = self.builder.ins().ishl_imm(masked, 32);
-        let ticket = self.builder.ins().bor(high, fd);
+        let mut ticket = self.builder.ins().bor(high, fd);
+        if udp {
+            ticket = self.builder.ins().bor_imm(ticket, 1 << 31);
+        }
         self.builder.ins().jump(merge, &[ticket.into()]);
 
         self.builder.switch_to_block(merge);
@@ -840,9 +847,13 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     /// ticket's epoch is odd, and it is the descriptor's *current* epoch --
     /// then the epoch moves on, so the ticket is spent. `Attached` is `Ok`
     /// 0 with the descriptor, `Failed` 1 with `EBADF`.
-    pub(crate) fn conn_attach(&mut self, args: &[Value]) -> Vec<Value> {
+    ///
+    /// With `udp`, the ticket must carry the datagram kind bit (bit 31 of the descriptor half) and
+    /// the descriptor is the other 31 bits; without it, a ticket that carries the bit names a
+    /// descriptor past the table and is refused.
+    pub(crate) fn conn_attach(&mut self, args: &[Value], udp: bool) -> Vec<Value> {
         let ticket = args[0];
-        let fd = self.builder.ins().band_imm(ticket, 0xffff_ffff);
+        let fd = self.builder.ins().band_imm(ticket, if udp { 0x7fff_ffff } else { 0xffff_ffff });
         let epoch = self.builder.ins().ushr_imm(ticket, 32);
         let in_range =
             self.builder.ins().icmp_imm(IntCC::UnsignedLessThan, fd, cancho_ir::FD_EPOCH_SLOTS);
@@ -860,7 +871,13 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         let non_negative = self.builder.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, ticket, 0);
         let a = self.builder.ins().band(in_range, same);
         let b = self.builder.ins().band(odd, non_negative);
-        let valid = self.builder.ins().band(a, b);
+        let mut valid = self.builder.ins().band(a, b);
+        if udp {
+            let kind = self.builder.ins().ushr_imm(ticket, 31);
+            let kind_bit = self.builder.ins().band_imm(kind, 1);
+            let is_udp = self.builder.ins().icmp_imm(IntCC::NotEqual, kind_bit, 0);
+            valid = self.builder.ins().band(valid, is_udp);
+        }
 
         let spend = self.builder.create_block();
         let after = self.builder.create_block();

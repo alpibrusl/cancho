@@ -154,7 +154,9 @@ document's, and it is stated here so the two designs do not each assume the othe
    `udp_nonblocking`, `udp_close`, `udp_local_port`, `poller_add_udp`; tests and mutants.
 3. **The bound half**: `udp_bind`, the peer ring, `udp_recv_from`, `udp_send_to`; the forgery tests (§10).
 4. **`std.conns`-style table** for `Udp` tickets, if a program asks (a resolver holding many upstream sockets
-   will); decided by the programs, not here.
+   will); decided by the programs, not here. **A program asked** ([cancho-dns](https://github.com/alpibrusl/cancho-dns)
+   D3: one connected socket per query in flight, a source port per query, the only form that keeps the
+   defence of `docs/design.md` §6). Built as §11.
 
 | Question | Settled |
 |---|---|
@@ -232,6 +234,42 @@ an order of magnitude; a program that holds replies longer must answer or drop t
 tickets.
 
 **Not done.** The round-trip measurement against a C loop. A `std` table of `Udp` handles for a program that
-holds many upstream sockets (slice 4, when a program asks). The ring is a fixed size; a larger one is a
+holds many upstream sockets (slice 4: built, §11). The ring is a fixed size; a larger one is a
 constant in `socket_os.rs`. Darwin: this slice's tests (the ring, the tickets, `udp_bind`) passed on the
 `darwin-aarch64` CI job of #358; that is the CI result, not a run on a Mac here.
+
+## 11. Slice 4: tickets for datagram sockets
+
+**Why now.** cancho-dns D3 sends every upstream query from a fresh connected socket, so that its source port is
+the kernel's and unpredictable (§5), and it has hundreds of queries in flight. `Udp` is a resource and `std.vec`
+holds only copyable things (`native-sockets.md` §10.3), so there was nowhere to put them: found by reading the
+forwarder's design against the language before writing it, not by a failure.
+
+**What it is.** `conn_detach`/`conn_attach` again, for `Udp`:
+
+- `udp_detach(Udp) -> int` ends the handle, leaves the descriptor open and answers a **ticket**; `-1` means the
+  descriptor is past the epoch table and the socket was closed rather than leaked.
+- `udp_attach(int) -> UdpOpened` redeems a ticket **once** (`Ok(Udp)`), or `Failed(EBADF)`: never issued, already
+  redeemed, copied, forged, of the other kind, or for a descriptor since reused. `UdpOpened` is reused; no new type.
+- `std.udps`: `put`, `send`, `recv`, `nonblocking`, `local_port`, `watch`, `close` and `drop` over **a `std.conns`
+  `Table`** (`empty`, `live` and `slots` are `conns`'s). A table holds tickets, not sockets, and the kind bit below
+  makes each verb refuse the other kind's, so one table may hold both; `conns` gained `store`, `replace`, `ticket_at`
+  and `release_slot` as public so that the two modules share the slot bookkeeping instead of copying it (the
+  repository refuses a duplicated function body).
+
+**One epoch table, a kind bit.** Both kinds of ticket use the descriptor epochs of `native-sockets.md` §10.3, because
+a descriptor is one thing whatever it carries. Left like that, a `Conn`'s ticket would redeem as a `Udp` and the
+reverse: memory-safe, since both are descriptors, but the wrong verbs on the wrong socket. So a `Udp` ticket sets
+**bit 31 of its descriptor half**. `conn_attach` reads all 32 bits, finds a descriptor beyond the 65,536-entry table
+and refuses it; `udp_attach` requires the bit and reads the other 31. No second table, and the 31-bit epoch and
+the odd/even rule are unchanged.
+
+**Built and tested** on both backends (`tests/conformance/udp.rs`): a ticket from `udp_connect` redeems and the
+socket still sends and receives; eight forged redemptions refused (zero, negative, one, `i64::MAX`, the real ticket
+plus one, plus two epochs, with the kind bit cleared, and redeemed as a `Conn`); a second redemption refused; a
+`Conn`'s ticket refused by `udp_attach` and not spent by the refusal; and a three-socket table (slots in order, each
+send and receive finding its own peer, a closed slot refusing stale use and being reused, `drop` closing the rest).
+The builtins are refused on WASI with the others (`Gap::Sockets`) and are edition 5.
+
+**Not done.** Nothing here measures what a table costs per datagram (two extra builtin calls and two table accesses,
+as `native-sockets.md` §10.3 says for `Conn`); cancho-dns D3 is the first program that will.

@@ -53,7 +53,7 @@ pub fn slots[&t](table: &t Table) -> [] int {
 }
 
 // The ticket in `slot`, or -1 for a slot that is free or out of range.
-fn ticket_at[&t](table: &t Table, slot: int) -> [] int {
+pub fn ticket_at[&t](table: &t Table, slot: int) -> [] int {
     if slot < 0 || slot >= vec.size(table.tickets) {
         return 0 - 1;
     }
@@ -72,6 +72,12 @@ pub fn put[&h](heap: &!h Heap, table: Table, conn: Conn) -> [heap] (Table, int) 
     if ticket < 0 {
         return (table, 0 - 1);
     }
+    return store(heap, table, ticket);
+}
+
+// Put a ticket of either kind (`conn_detach` or `udp_detach`) in the first free slot, answering the slot. `std.udps`
+// puts datagram sockets in the same `Table`; the kind bit keeps each verb from redeeming the other's ticket.
+pub fn store[&h](heap: &!h Heap, table: Table, ticket: int) -> [heap] (Table, int) {
     let Table { tickets, free_head, live } = table;
     var held = tickets;
     if free_head >= 0 {
@@ -90,8 +96,14 @@ pub fn put[&h](heap: &!h Heap, table: Table, conn: Conn) -> [heap] (Table, int) 
     return (Table { tickets: held, free_head: free_head, live: live + 1 }, slot);
 }
 
+// Put a ticket back in the slot its socket came from, after a verb detached it again.
+pub fn replace[&t](table: &!t Table, slot: int, ticket: int) -> [] int {
+    vec.set(table.tickets, slot, ticket);
+    return 0;
+}
+
 // Give a slot back after its connection is gone.
-fn release_slot[&t](table: &!t Table, slot: int) -> [] int {
+pub fn release_slot[&t](table: &!t Table, slot: int) -> [] int {
     vec.set(table.tickets, slot, 0 - 2 - table.free_head);
     table.free_head = slot;
     table.live = table.live - 1;

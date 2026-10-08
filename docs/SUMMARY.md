@@ -24,6 +24,7 @@
 - [HTTP and routing](http.md)
 - [The API server](server.md)
 - [The server loop as a package](http-server.md)
+- [A non-blocking HTTP client](http-client.md)
 - [Parallelism: threads and vectorization](parallelism.md)
 - [Native sockets](native-sockets.md)
 - [UDP](udp.md)

@@ -1026,7 +1026,7 @@ fn slow_decimal[&s](src: &s [byte], start: int, end: int, digits: int, scale: in
         // Limbs enough for the digits, the power of ten, and the 57-bit
         // quotient scaling on top: four bits a decimal digit is generous (it is
         // 3.33), and a 17-digit number needs a dozen limbs where a worst-case
-        // 767-digit one needs a few hundred.
+        // 768-digit one needs a few hundred.
         //
         // The power of ten is capped: a decimal whose exponent is past
         // about 1,100 is decided as 0 or infinity below without touching a
@@ -1037,9 +1037,15 @@ fn slow_decimal[&s](src: &s [byte], start: int, end: int, digits: int, scale: in
         let n = alloc_slice[a](limbs, 0);
         let q = alloc_slice[a](limbs, 0);
         let aux = alloc_slice[a](6, 0);
-        // 767 significant digits are enough to decide any rounding: that is
-        // the most a double's halfway point can have.
-        scan_decimal(src, start, end, 767, n, aux);
+        // 768 significant digits are enough to decide any rounding: that is
+        // the most a double's halfway point can have. (It was 767 once, and
+        // wrong: the halfway point between the largest subnormal and 2^-1022,
+        // and those just below it down to 1e-308, is (2k+1) * 2^-1075, which
+        // is 1075 decimal places and only 307 zeros before the first digit.
+        // Its last digit, always a 5, was dropped as a "sticky" digit, so the
+        // tie read as above-the-middle and went up -- the wrong way half the
+        // time. Exactly halfway cells there were misrounded about one in four.)
+        scan_decimal(src, start, end, 768, n, aux);
         let negative = aux[0] == 1;
         let kept = aux[2];
         var e10 = aux[3];
@@ -1155,8 +1161,8 @@ pub fn to_float[&s, &t](src: &s [byte], tape: &t [int], i: int) -> [] float {
         let m = aux[1];
         let e10 = aux[3];
         digits = aux[5];
-        if digits > 767 {
-            digits = 767;
+        if digits > 768 {
+            digits = 768;
         }
         scale = e10;
         if aux[2] == 0 {

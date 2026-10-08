@@ -1,0 +1,250 @@
+edition 5;
+
+// `docs/http-client.md` §9, gate 4: no response reaches a trap. A million damaged responses (by default) through the whole client,
+// each fed in pieces of random sizes:
+//
+//     http_client_fuzz <responses> <seed>
+//
+// A valid response is picked from a small corpus (lengths, chunked, until close, interim, 204, HEAD-like, a pipelined pair) and
+// damaged -- bytes flipped, the end cut off, bytes inserted, a span repeated, another response spliced in -- and given to a request
+// in pieces of one to forty bytes with the events handled between them, the body consumed in pieces of at most 7 bytes (so the
+// buffers are shifted all the time); then the transport ends. Every request must end, in `Done` or in `Failed`, and the client's
+// own counts must add up. Prints `responses done failed stuck`; the status is 0 if nothing was stuck, 1 otherwise, and a trap
+// is a signal.
+import std.io;
+import http_client as hc;
+
+fn number_at[&g](args: &g Args, at: int, otherwise: int) -> [args] int {
+    if arg_count(args) <= at {
+        return otherwise;
+    }
+    let a = arg(args, at);
+    var n = 0;
+    var i = 0;
+    while i < len(a) {
+        n = n * 10 + (int_of(a[i]) - 48);
+        i = i + 1;
+    }
+    return n;
+}
+
+fn corpus(i: int) -> [] &static [byte] {
+    if i == 0 {
+        return "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 11\r\n\r\nhello world";
+    }
+    if i == 1 {
+        return "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n6;ext=1\r\n world\r\n0\r\nX-T: 1\r\n\r\n";
+    }
+    if i == 2 {
+        return "HTTP/1.0 200 OK\r\nConnection: close\r\n\r\nuntil the end of the connection";
+    }
+    if i == 3 {
+        return "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 103 Early Hints\r\nLink: </a>\r\n\r\nHTTP/1.1 204 No Content\r\n\r\n";
+    }
+    if i == 4 {
+        return "HTTP/1.1 301 Moved\r\nLocation: http://example.test/\r\nSet-Cookie: a=b\r\nSet-Cookie: c=d\r\nContent-Length: 0\r\n\r\n";
+    }
+    if i == 5 {
+        return "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nokHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+    }
+    if i == 6 {
+        return "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\nConnection: keep-alive, close\r\n\r\nnot found";
+    }
+    return "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nTrailer: X\r\n\r\n3\r\nabc\r\n0\r\n\r\n";
+}
+
+// `r` advanced: a linear congruential step.
+fn step(r: int) -> [] int {
+    return (r * 1103515245 + 12345) % 2147483648;
+}
+
+// A damaged copy of corpus item `pick` in `buf`: its length.
+fn damaged[&x](buf: &!x [byte], pick: int, seed: int) -> [] int {
+    var r = seed;
+    let src = corpus(pick);
+    var n = len(src);
+    copy_into(buf[0..n], src);
+    r = step(r);
+    var edits = r / 65536 % 5;
+    while edits > 0 {
+        r = step(r);
+        let kind = r / 65536 % 6;
+        r = step(r);
+        let at = r / 256 % (n + 1);
+        r = step(r);
+        let byte = r / 4096 % 256;
+        if kind == 0 && n > 0 {
+            buf[at % n] = byte_of(byte);
+        } else if kind == 1 {
+            n = at;
+        } else if kind == 2 && n + 8 < len(buf) {
+            let count = 1 + byte % 7;
+            copy_within(buf, at + count, at, n - at);
+            var j = 0;
+            while j < count {
+                r = step(r);
+                buf[at + j] = byte_of(r / 4096 % 256);
+                j = j + 1;
+            }
+            n = n + count;
+        } else if kind == 3 && n > 0 && n + 16 < len(buf) {
+            let from = at % n;
+            var span = 1 + byte % 12;
+            if from + span > n {
+                span = n - from;
+            }
+            copy_within(buf, from + span, from, n - from);
+            copy_within(buf, from + span, from, 0);
+            n = n + span;
+        } else if kind == 4 {
+            let other = corpus(byte % 8);
+            if at + len(other) < len(buf) {
+                copy_into(buf[at..at + len(other)], other);
+                if at + len(other) > n {
+                    n = at + len(other);
+                }
+            }
+        } else if n > 3 {
+            // Bare line feeds and carriage returns.
+            buf[at % n] = byte_of(10);
+        }
+        edits = edits - 1;
+    }
+    return n;
+}
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io, responses: int, seed: int) -> [heap, io_write] int {
+    var c = hc.open(heap, 1, 2048, 1024, hc.Limits { connect_ms: 0, head_ms: 0, body_ms: 0, total_ms: 0, expect_ms: 0, idle_ms: 0, lifetime_ms: 0, idle_per_key: 1, max_requests: 0 });
+    var done = 0;
+    var failed = 0;
+    var stuck = 0;
+    var r = seed;
+    borrow mut c as &!cw in {
+        region a {
+            let buf = alloc_slice[a](1024, byte_of(0));
+            let out = alloc_slice[a](2048, byte_of(0));
+            var n = 0;
+            while n < responses {
+                r = step(r);
+                let pick = r / 65536 % 8;
+                r = step(r);
+                let size = damaged(buf, pick, r);
+                let t = hc.request(cw, 0, 1, "GET", "/x", "h", "", hc.body_none(), 0);
+                var settled = false;
+                var fed = 0;
+                var ended = false;
+                var guard = 0;
+                while !settled && guard < 100000 && t > 0 {
+                    guard = guard + 1;
+                    match hc.poll(cw, 0) {
+                        hc.Event::Connect(slot) => {
+                            hc.connected(cw, slot, 0);
+                        }
+                        hc.Event::Body(ticket) => {
+                            var take = hc.avail(cw, ticket);
+                            if take > 7 {
+                                take = 7;
+                            }
+                            hc.consume(cw, ticket, take, 0);
+                        }
+                        hc.Event::Done(ticket) => {
+                            done = done + 1;
+                            settled = true;
+                        }
+                        hc.Event::Failed(ticket) => {
+                            failed = failed + 1;
+                            settled = true;
+                        }
+                        hc.Event::Close(slot) => {
+                            hc.detach(cw, slot, 0);
+                        }
+                        hc.Event::None => {
+                            if hc.pending(cw, 0) > 0 {
+                                hc.take(cw, 0, out, 0);
+                            } else if hc.avail(cw, t) > 0 {
+                                // What was announced and not taken is the caller's: it takes it before anything else happens.
+                                var take = hc.avail(cw, t);
+                                if take > 7 {
+                                    take = 7;
+                                }
+                                hc.consume(cw, t, take, 0);
+                            } else if fed < size && hc.room(cw, 0) > 0 {
+                                r = step(r);
+                                var piece = 1 + r / 65536 % 40;
+                                if fed + piece > size {
+                                    piece = size - fed;
+                                }
+                                fed = fed + hc.give(cw, 0, buf[fed..fed + piece], 0);
+                            } else if fed < size {
+                                // The client takes nothing more and has nothing waiting: the response ended before the bytes did.
+                                guard = 100000;
+                            } else if !ended {
+                                ended = true;
+                                hc.eof(cw, 0, 0);
+                            } else {
+                                guard = 100000;
+                            }
+                        }
+                        _ => {
+                        }
+                    }
+                }
+                if !settled {
+                    stuck = stuck + 1;
+                }
+                // The next response starts from the pool or a new dial.
+                hc.close_idle(cw, 0);
+                var closing = true;
+                while closing {
+                    match hc.poll(cw, 0) {
+                        hc.Event::Close(slot) => {
+                            hc.detach(cw, slot, 0);
+                        }
+                        hc.Event::None => {
+                            closing = false;
+                        }
+                        _ => {
+                        }
+                    }
+                }
+                n = n + 1;
+            }
+        }
+    }
+    hc.close(heap, c);
+    io.print_int(io, responses);
+    io.space(io);
+    io.print_int(io, done);
+    io.space(io);
+    io.print_int(io, failed);
+    io.space(io);
+    io.print_int(io, stuck);
+    io.newline(io);
+    return stuck;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(fs);
+    release(net);
+    release(clock);
+    var responses = 0;
+    var seed = 0;
+    borrow args as &g in {
+        responses = number_at(g, 1, 100000);
+        seed = number_at(g, 2, 1);
+    }
+    release(args);
+    var status = 1;
+    borrow mut io as &!i in {
+        borrow mut heap as &!h in {
+            if run(h, i, responses, seed) == 0 {
+                status = 0;
+            }
+        }
+    }
+    release(io);
+    release(heap);
+    return status;
+}
