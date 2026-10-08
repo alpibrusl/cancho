@@ -495,7 +495,7 @@ def case_ended(exe):
         if get(h, "/hello/b") != (200, b"hello, b\n"):
             return "the keep-alive client was not served before"
         ended.sendall(b"GET /hello/x HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
-        server.wait_for(lambda l: l.startswith("conn 1 closed"), 5)
+        server.wait_for(lambda l: l.startswith("conn 1 ") and " closed" in l, 5)
         # The ended client keeps writing, from a thread of its own: OpenSSL's error queue is per thread and CPython's
         # `_ssl` does not clear it, so a write refused on `ended` (EPIPE) would otherwise be reported again by the next
         # write on `h` in the same thread, as `h`'s own BrokenPipeError, though `h` is untouched (http-server.md §11.6).
