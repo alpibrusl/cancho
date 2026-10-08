@@ -37,6 +37,7 @@ what can this thing reach? — would be nowhere.
 
 The natural objection is that the row should carry this. It cannot, and
 the reason is structural rather than an oversight.
+
 §8.2: a row lists what a function **borrows**. Owning a capability is
 strictly stronger and strictly more visible, so an effect a function has
 outright does not appear in its row. That is why `main` prints while
