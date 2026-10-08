@@ -160,8 +160,8 @@ And the causes are not spread out. Classified by first error:
 >
 > One new cause is confirmed, not guessed: `examples/tls_client/socket.cho`
 > (`docs/next-phase.md` §4.1's own migration onto `net.connect`) is
-> unreadable by this harness for a reason that has nothing to do with the
-> language moving. `scripts/history.py`'s own `lay_out` passes `--std` or
+> unreadable by this harness for a reason that has nothing to do with
+> the language moving. `scripts/history.py`'s own `lay_out` passes `--std` or
 > a file's same-folder siblings and nothing else — it has never known how
 > to hand a replayed file the `packages/` source a `vcs`-fetched import
 > needs. Every other package-importing example (`fetch.cho`, `report.cho`,
@@ -251,6 +251,21 @@ builtins.
 > measurement above is the evidence, not an assumption: the corpus grew
 > by 24 revisions in this same window and only 3 joined the unreadable
 > pile. The vocabulary moved. The past it could break did not.
+>
+> **Held mechanically (current at head).** The number this section kept
+> having to re-state is now a checked property rather than a paragraph.
+> `scripts/history.py --explain` replays every distinct revision of
+> every `.cho` under `std/` and `examples/` through today's compiler and
+> refuses, exit 1, on any failing rule not listed with a reason in
+> [`stability-exemptions.md`](stability-exemptions.md); a listed rule
+> that stops failing is reported as stale, so the list only ever shrinks,
+> and the CI job `stability-plateau` runs it on every push with the full
+> history fetched. The failing count stays honest — an exemption does
+> not remove a revision from the number — so the 37%→39% climb this
+> section could only correct in prose is, from here, either a red build
+> or a new line in a committed file with a reason beside it. The
+> baseline at introduction: 203 revisions, 133 do not read (65%), the
+> three rules and their reasons in the exemption file.
 
 ---
 
