@@ -67,15 +67,13 @@ fn a_body_change_is_one_modify_body_op() {
     };
     assert!(run().status.success());
     let ops = dir.join(".cancho").join("ops");
-    let before: usize =
-        std::fs::read_dir(&ops).map(|it| it.count()).unwrap_or(0);
+    let before: usize = std::fs::read_dir(&ops).map(|it| it.count()).unwrap_or(0);
     write_two(&dir, BODY_CHANGED);
     let out = run();
     assert!(out.status.success());
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("1 body change(s)"), "a body change says so:\n{text}");
-    let after: usize =
-        std::fs::read_dir(&ops).map(|it| it.count()).unwrap_or(0);
+    let after: usize = std::fs::read_dir(&ops).map(|it| it.count()).unwrap_or(0);
     assert_eq!(after, before + 1, "one body change appends exactly one op record");
     let _ = std::fs::remove_dir_all(&dir);
 }
