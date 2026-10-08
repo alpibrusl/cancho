@@ -22,6 +22,7 @@ pub(super) fn package_files() -> Vec<PathBuf> {
         "hello.cho",
         "identity.cho",
         "ticket.cho",
+        "clientauth.cho",
         "server.cho",
     ];
     let x509 = ["verify.cho", "names.cho", "x509.cho", "key.cho"];
@@ -31,7 +32,7 @@ pub(super) fn package_files() -> Vec<PathBuf> {
     files
 }
 
-fn build_server_driver(test: &str, backend: &str) -> (PathBuf, PathBuf) {
+pub(super) fn build_server_driver(test: &str, backend: &str) -> (PathBuf, PathBuf) {
     let dir = scratch(&format!("tls-server-{test}-{backend}"));
     let exe = dir.join("driver");
     let build = Command::new(BIN)
@@ -46,7 +47,7 @@ fn build_server_driver(test: &str, backend: &str) -> (PathBuf, PathBuf) {
     (dir, exe)
 }
 
-fn run(exe: &Path, lines: &[String]) -> Vec<String> {
+pub(super) fn run(exe: &Path, lines: &[String]) -> Vec<String> {
     let mut input = lines.join("\n");
     input.push('\n');
     let out = feed(exe, input.as_bytes());
@@ -59,11 +60,15 @@ fn run(exe: &Path, lines: &[String]) -> Vec<String> {
 
 /// `liar_client.txt`'s cases: the tag each must end with, its name, its
 /// driver lines and the answers recorded for them.
-type Case = (String, String, Vec<String>, Vec<String>);
+pub(super) type Case = (String, String, Vec<String>, Vec<String>);
 
 fn cases() -> Vec<Case> {
-    let text =
-        std::fs::read_to_string(repo_root().join("tests/vectors/tls/liar_client.txt")).unwrap();
+    cases_in("tests/vectors/tls/liar_client.txt")
+}
+
+/// The cases of a recording (`scripts/tls_liar_client.py`'s format).
+pub(super) fn cases_in(file: &str) -> Vec<Case> {
+    let text = std::fs::read_to_string(repo_root().join(file)).unwrap();
     let mut cases: Vec<Case> = Vec::new();
     for line in text.lines() {
         if let Some(head) = line.strip_prefix("## ") {
@@ -79,11 +84,11 @@ fn cases() -> Vec<Case> {
     cases
 }
 
-fn field(line: &str, n: usize) -> &str {
+pub(super) fn field(line: &str, n: usize) -> &str {
     line.split(' ').nth(n).unwrap_or("")
 }
 
-fn hex(s: &str) -> String {
+pub(super) fn hex(s: &str) -> String {
     if s == "-" { String::new() } else { s.to_string() }
 }
 

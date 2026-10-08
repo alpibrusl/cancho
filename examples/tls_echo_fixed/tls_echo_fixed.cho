@@ -8,7 +8,9 @@ edition 6;
 //
 //     tls_echo_fixed --port <n> [--identity <subdirectory>]... [--alpn <p1,p2,...>]
 //                    [--connections <n>] [--handshakes <n>] [--rate <per second>]
-//                    [--handshake-timeout <ms>] [--idle <ms>]
+//                    [--handshake-timeout <ms>] [--idle <ms>] [--client-ca <file> [--require-client-cert]]
+//
+// `--client-ca` names a file in the fixed directory (`docs/tls-server.md` §13): no path is added to the report.
 //
 // What it costs: the directory is part of the build (change it by editing the literal
 // below and rebuilding), and `--dir` is refused. Everything else is `tls_echo`'s --
@@ -32,6 +34,7 @@ fn usage[&i](io: &!i Io) -> [err_write] int {
     io.error_all(io, "usage: tls_echo_fixed --port <n> [--identity <subdirectory>]... [--alpn <p1,p2>]\n");
     io.error_all(io, "                      [--connections <n>] [--handshakes <n>] [--rate <n>] [--handshake-timeout <ms>] [--idle <ms>]\n");
     io.error_all(io, "                      [--tickets <n>] [--ticket-lifetime <seconds>] [--ticket-keys <file in the directory>]\n");
+    io.error_all(io, "                      [--client-ca <file> [--require-client-cert]]\n");
     return 2;
 }
 
@@ -48,7 +51,7 @@ fn main(world: World) -> [] int {
         borrow mut heap as &!h in {
             let cfgb = box_slice(h, front.cfg_len() + 1, 0);
             let subsb = box_slice(h, front.subs_len(), byte_of(0));
-            let lensb = box_slice(h, front.key_slot() + 1, 0);
+            let lensb = box_slice(h, front.lens_len(), 0);
             borrow mut cfgb as &!cw in {
                 borrow mut subsb as &!uw in {
                     borrow mut lensb as &!lw in {

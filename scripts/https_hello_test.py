@@ -24,6 +24,9 @@ the case says so rather than pass). Each case starts its own server on a free po
     ended      a connection ended by `Connection: close` and then written to (from its own thread: OpenSSL's per-thread
                error queue would report its refused writes on the next write of another socket in the same thread) does
                not disturb a keep-alive client beside it: 40 requests answered, no other connection closed
+    clientauth as `tls_echo`'s: `--client-ca` with and without `--require-client-cert`, the subject and fingerprint OpenSSL reports on
+               the log line, no certificate and a stranger's refused with their tags, the store replaced on SIGHUP (the old client's
+               connection closed `revoked`), a refused file leaving the store as it was; the data is an HTTP request
     reload     as `tls_echo`'s: a connection open before SIGHUP keeps its certificate and keeps being served; one after
                gets the renewed one; a refused reload leaves the renewed one serving
     bound      `--handshakes 2`: two peers that connect and send nothing hold both places, an honest client waits
@@ -1171,7 +1174,23 @@ def case_tickets(exe):
             srv.stop()
 
 
-CASES = {"curl": case_curl, "openssl": case_openssl, "http": case_http, "pipelined": case_pipelined, "many": case_many,
+
+def case_clientauth(exe):
+    def talk(conn):
+        conn.sendall(b"GET /hello/mutual HTTP/1.1\r\nHost: x\r\n\r\n")
+        got = b""
+        while b"\r\n\r\n" not in got:
+            part = conn.recv(65536)
+            if not part:
+                raise AssertionError(f"the connection ended after {got!r}")
+            got += part
+        if not got.startswith(b"HTTP/1.1 200"):
+            raise AssertionError(f"the answer is {got[:60]!r}")
+
+    return echo.clientauth(exe, talk, Server)
+
+
+CASES = {"clientauth": case_clientauth, "curl": case_curl, "openssl": case_openssl, "http": case_http, "pipelined": case_pipelined, "many": case_many,
          "big": case_big, "stalled": case_stalled, "slow": case_slow, "ended": case_ended, "reload": case_reload, "bound": case_bound,
          "full": case_full, "idle": case_idle, "shutdown": case_shutdown, "hostile": case_hostile, "upload": case_upload,
          "expect": case_expect, "halfbody": case_halfbody, "mangled": case_mangled, "tickets": case_tickets}

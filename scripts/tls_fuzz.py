@@ -17,7 +17,8 @@ Exit status 1 on any trap.
 
 With `--server` (docs/tls-server.md §7), the driver is `tests/programs/tls_server_driver.cho` and the connections are
 the honest ones of `tests/vectors/tls/liar_client.txt` (`scripts/tls_liar_client.py`: the 26 honest connections and, with
-session tickets, the 55 ticket cases that end `ok`, each of several connections on one engine): what is mutated is a line of
+session tickets, the 55 ticket cases that end `ok`, each of several connections on one engine) and of `liar_client_auth.txt`
+(`scripts/tls_liar_client_auth.py`: the client-certificate ones): what is mutated is a line of
 the client's bytes, its ClientHello most of all, and the server must answer every line and never trap. Each
 connection starts by dropping the driver's slot, so a batch of them runs in one process.
 """
@@ -43,14 +44,17 @@ def traces():
 
 def server_traces():
     out, current = [], None
-    for line in open(os.path.join(ROOT, "tests/vectors/tls/liar_client.txt")):
-        line = line.rstrip("\n")
-        if line.startswith("## "):
-            current = [] if line.startswith(("## ok honest", "## ok tickets: ")) else None
-            if current is not None:
-                out.append((line[3:], current))
-        elif current is not None and not line.startswith("#") and not line.startswith("= "):
-            current.append(line)
+    # The lying client's honest connections, its ticket cases, and the client-certificate ones (docs/tls-server.md §13.11): the
+    # Certificate, the CertificateVerify and the Finished are lines of the client's bytes to mutate, like the ClientHello.
+    for name in ("liar_client.txt", "liar_client_auth.txt"):
+        for line in open(os.path.join(ROOT, "tests/vectors/tls", name)):
+            line = line.rstrip("\n")
+            if line.startswith("## "):
+                current = [] if line.startswith(("## ok honest", "## ok tickets")) else None
+                if current is not None:
+                    out.append((line[3:], current))
+            elif current is not None and not line.startswith("#") and not line.startswith("= "):
+                current.append(line)
     # Each connection begins by freeing the slot the last one used.
     return [(name, ["D"] + asked) for name, asked in out]
 

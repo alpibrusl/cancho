@@ -11,6 +11,7 @@ edition 6;
 //              [--rate <per second>] [--handshake-timeout <ms>] [--idle <ms>]
 //              [--per-address <n>] [--per-address-rate <per second>]
 //              [--tickets <n>] [--ticket-lifetime <seconds>] [--ticket-keys <file>]
+//              [--client-ca <file> [--require-client-cert]]
 //
 // `--tickets <n>` sends each client that can resume `n` session tickets (0 to 8; the default 0 sends none:
 // `docs/tls-server.md` §12), good for `--ticket-lifetime` seconds (3,600). The engine makes its own ticket key and
@@ -36,6 +37,11 @@ edition 6;
 // set it from the machine's own figure);
 // 10,000 ms to finish a handshake; 60,000 ms idle.
 //
+// `--client-ca` names a file beneath `--dir` of the PEM certificates of the CAs a client's certificate may come from (its own file,
+// never the system bundle): the server then asks every client for one (`docs/tls-server.md` §13), and with `--require-client-cert`
+// refuses a client with none. The line of a connection says the verified client's subject and fingerprint; what it may do is the
+// program's to decide, and this one only echoes. `SIGHUP` reads the file again and closes the connections verified under the old one.
+//
 // `SIGHUP` reads every identity again (`tls.replace_identity`); `SIGINT`
 // or `SIGTERM` stops it cleanly. What it prints, and how the bounds work,
 // is `examples/tls_echo/front.cho`'s header. Exit status: 0 stopped by a
@@ -52,7 +58,7 @@ import tls;
 fn usage[&i](io: &!i Io) -> [err_write] int {
     io.error_all(io, "usage: tls_echo --port <n> --dir <directory> [--identity <subdirectory>]... [--alpn <p1,p2>]\n");
     io.error_all(io, "                [--connections <n>] [--handshakes <n>] [--rate <n>] [--handshake-timeout <ms>] [--idle <ms>]\n");
-    io.error_all(io, "                [--per-address <n>] [--per-address-rate <n>]\n");
+    io.error_all(io, "                [--per-address <n>] [--per-address-rate <n>] [--client-ca <file> [--require-client-cert]]\n");
     io.error_all(io, "                [--tickets <n>] [--ticket-lifetime <seconds>] [--ticket-keys <file in the directory>]\n");
     return 2;
 }
@@ -66,7 +72,7 @@ fn main(world: World) -> [] int {
         borrow mut heap as &!h in {
             let cfgb = box_slice(h, front.cfg_len() + 1, 0);
             let subsb = box_slice(h, front.subs_len(), byte_of(0));
-            let lensb = box_slice(h, front.key_slot() + 1, 0);
+            let lensb = box_slice(h, front.lens_len(), 0);
             borrow mut cfgb as &!cw in {
                 borrow mut subsb as &!uw in {
                     borrow mut lensb as &!lw in {

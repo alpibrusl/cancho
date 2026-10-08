@@ -1,0 +1,147 @@
+edition 5;
+
+// `docs/tls-server.md` §13.11: the server's handling of a client's Certificate and CertificateVerify, from standard
+// input. The first byte of the input says what the rest is (bit 0: a Certificate, or a CertificateVerify after a good
+// Certificate; bits 1 to 3: the client's chain among `fuzz_clientauth_fixture`'s five, for the good Certificate and the
+// key a CertificateVerify is checked under; bit 4: `required`, else `optional`) and the rest is the message's body, whose
+// handshake header is put in front. The slot is as `serve` leaves it, with the clients' store loaded, a transcript of the
+// Certificate alone and SHA-256, so a good CertificateVerify exists (`scripts/tls_clientauth_fuzz_seeds.py`).
+// The code under test is `tls_clientauth` and what it calls: the message parser, the chain verifier with the client
+// purpose, and the signature checks of every key type. It must answer, and never trap.
+import fuzz_clientauth_fixture;
+import std.io;
+import tls_client;
+import tls_clientauth;
+import tls_identity;
+import tls_message;
+import tls_server;
+import tls_slot;
+import x509;
+
+fn read_all[&i, &o](io: &!i Io, into: &!o [byte]) -> [io_read] int {
+    var n = 0;
+    var c = getchar(io);
+    while c >= 0 && n < len(into) {
+        into[n] = byte_of(c);
+        n = n + 1;
+        c = getchar(io);
+    }
+    return n;
+}
+
+// `kind`, a 3-byte length and `body`, into `out`: the whole message's length.
+fn frame[&b, &o](kind: int, body: &b [byte], out: &!o [byte]) -> [] int {
+    out[0] = byte_of(kind);
+    tls_message.put(out, 1, len(body), 3);
+    var k = 0;
+    while k < len(body) {
+        out[4 + k] = body[k];
+        k = k + 1;
+    }
+    return 4 + len(body);
+}
+
+// A Certificate's body for the PEM chain `text`: an empty context, and each certificate with no extensions.
+fn certificate_body[&t, &o](text: &t [byte], out: &!o [byte]) -> [] int {
+    var n = 4;
+    region r {
+        let der = alloc_slice[r](x509.max_certificate(), byte_of(0));
+        let info = alloc_slice[r](2, 0);
+        var at = 0;
+        var going = true;
+        while going {
+            if x509.pem_next(text, at, der, info) != 0 {
+                going = false;
+            } else {
+                tls_message.put(out, n, info[0], 3);
+                var k = 0;
+                while k < info[0] {
+                    out[n + 3 + k] = der[k];
+                    k = k + 1;
+                }
+                n = n + 5 + info[0];
+                at = info[1];
+            }
+        }
+    }
+    tls_message.put(out, 1, n - 4, 3);
+    return n;
+}
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read] int {
+    var input = box_slice(heap, 65536, byte_of(0));
+    var message = box_slice(heap, 65536 + 8, byte_of(0));
+    var cfg = box_slice(heap, tls_identity.cfg_len(), byte_of(0));
+    var ints = box_slice(heap, tls_client.ints_len(), 0);
+    var bytes = box_slice(heap, tls_client.bytes_len(), byte_of(0));
+    borrow mut input as &!d in {
+        borrow mut message as &!m in {
+            borrow mut cfg as &!c in {
+                borrow mut ints as &!n in {
+                    borrow mut bytes as &!b in {
+                        let total = read_all(io, contents(d));
+                        if total >= 1 {
+                            let sel = int_of(contents(d)[0]);
+                            let which = sel >> 1 & 7;
+                            tls_identity.load_client_store(contents(c), fuzz_clientauth_fixture.store());
+                            var mode = 1;
+                            if sel & 16 != 0 {
+                                mode = 2;
+                            }
+                            tls_identity.set_client_mode(contents(c), mode);
+                            region r {
+                                let random = alloc_slice[r](96, byte_of(0));
+                                tls_server.start(contents(n), contents(b), random);
+                            }
+                            contents(n)[tls_slot.i_suite()] = 4865;
+                            tls_clientauth.begin(contents(n), contents(c), fuzz_clientauth_fixture.now_s());
+                            contents(n)[tls_slot.i_state()] = tls_slot.state_wait_client_certificate();
+                            if sel & 1 == 0 {
+                                let used = frame(11, contents(d)[1..total], contents(m));
+                                tls_clientauth.on_certificate(contents(n), contents(b), contents(m)[0..used], contents(c));
+                            } else {
+                                // A good Certificate first: the leaf is kept and the transcript holds it.
+                                let body = certificate_body(fuzz_clientauth_fixture.chain(which), contents(m)[4..65536]);
+                                let used = frame(11, contents(m)[4..4 + body], contents(m));
+                                if tls_clientauth.on_certificate(contents(n), contents(b), contents(m)[0..used], contents(c)) == 0 {
+                                    let size = frame(15, contents(d)[1..total], contents(m));
+                                    tls_clientauth.on_certificate_verify(contents(n), contents(b), contents(m)[0..size]);
+                                }
+                            }
+                            tls_clientauth.established(contents(n));
+                            region q {
+                                let out = alloc_slice[q](16384, byte_of(0));
+                                tls_clientauth.certificate(contents(n), contents(b));
+                                tls_clientauth.fingerprint(contents(n), contents(b), out);
+                                tls_clientauth.generation(contents(n));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, input);
+    unbox_slice(heap, message);
+    unbox_slice(heap, cfg);
+    unbox_slice(heap, ints);
+    unbox_slice(heap, bytes);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(args);
+    release(ffi);
+    release(fs);
+    release(net);
+    release(clock);
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            run(h, i);
+        }
+    }
+    release(heap);
+    release(io);
+    return 0;
+}

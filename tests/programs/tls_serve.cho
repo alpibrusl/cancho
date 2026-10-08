@@ -6,7 +6,7 @@ edition 5;
 // thread, one `Poller`, up to 64 connections at once, each in an engine
 // slot.
 //
-//     tls_serve <port> <mode> <alpn> <count> <seed> <tickets> [<chain> <key> <names>]...
+//     tls_serve <port> <mode> <alpn> <count> <seed> <tickets> [<chain> <key> <names>]... [--client-ca <file> <optional|required>]
 //
 // `mode` is what the server does with a connection's data once the
 // handshake is done:
@@ -39,6 +39,13 @@ edition 5;
 //
 // and an MQTT PUBLISH prints `publish <topic> <payload>`. Each line is
 // flushed as it is written.
+//
+// Every `conn` line ends with the client the engine verified (docs/tls-server.md §13.6):
+//
+//     <peer_verified> <fingerprint hex or -> <subject DER hex or -> <SANs: tag:hex,... or ->
+//
+// `0 - - -` when there is none. With `--client-ca <file> <optional|required>` last, the file of CA certificates is the
+// clients' store and the server asks every client for a certificate.
 import std.conns;
 import std.io;
 import tls;
@@ -128,6 +135,59 @@ fn print_text[&i, &d](io: &!i Io, d: &d [byte]) -> [io_write] int {
     return 0;
 }
 
+fn print_hex[&i, &d](io: &!i Io, d: &d [byte]) -> [io_write] int {
+    let digits = "0123456789abcdef";
+    var n = 0;
+    while n < len(d) {
+        let b = int_of(d[n]);
+        io.write_all(io, digits[b >> 4..(b >> 4) + 1]);
+        io.write_all(io, digits[b & 15..(b & 15) + 1]);
+        n = n + 1;
+    }
+    if len(d) == 0 {
+        io.write_all(io, "-");
+    }
+    return 0;
+}
+
+// The verified client of `slot`, if any (`docs/tls-server.md` §13.6).
+fn identity[&i, &e](io: &!i Io, engine: &!e tls.Engine, slot: int) -> [io_write] int {
+    io.space(io);
+    io.print_int(io, tls.peer_verified(engine, slot));
+    region r {
+        let der = alloc_slice[r](16384, byte_of(0));
+        io.space(io);
+        print_hex(io, der[0..tls.peer_fingerprint(engine, slot, der)]);
+        io.space(io);
+        print_hex(io, der[0..tls.peer_subject(engine, slot, der)]);
+        io.space(io);
+        let n = tls.peer_certificate(engine, slot, der);
+        let entry = alloc_slice[r](3, 0);
+        var at = 0;
+        var count = 0;
+        var more = true;
+        while more && n > 0 {
+            let next = tls.peer_san(engine, slot, at, entry);
+            if next == 0 {
+                more = false;
+            } else {
+                if count > 0 {
+                    io.write_all(io, ",");
+                }
+                io.print_int(io, entry[0]);
+                io.write_all(io, ":");
+                print_hex(io, der[entry[1]..entry[2]]);
+                count = count + 1;
+                at = next;
+            }
+        }
+        if count == 0 {
+            io.write_all(io, "-");
+        }
+    }
+    return 0;
+}
+
 fn end_slot[&i, &e, &t, &s](io: &!i Io, engine: &!e tls.Engine, tab: &!t conns.Table, st: &!s [int], slot: int, result: int) -> [io_write] int {
     let b = slot * stride();
     io.write_all(io, "conn ");
@@ -166,6 +226,7 @@ fn end_slot[&i, &e, &t, &s](io: &!i Io, engine: &!e tls.Engine, tab: &!t conns.T
         io.write_all(io, " full ");
     }
     io.write_all(io, tls.ticket_verdict_tag(tls.ticket_verdict(engine, slot)));
+    identity(io, engine, slot);
     io.newline(io);
     flush(io);
     var k = 0;
@@ -654,14 +715,14 @@ fn tickets[&i, &f, &g, &e](io: &!i Io, fs: &f Fs(""), g: &g Args, engine: &!e tl
     return 0;
 }
 
-fn load[&h, &i, &f, &g, &e](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), g: &g Args, engine: &!e tls.Engine, now: int) -> [heap, fs_read(""), err_write, args] int {
+fn load[&h, &i, &f, &g, &e](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), g: &g Args, engine: &!e tls.Engine, now: int, limit: int) -> [heap, fs_read(""), err_write, args] int {
     var a = 7;
     var bad = 0;
     let chainb = box_slice(heap, 65536, byte_of(0));
     let keyb = box_slice(heap, 8192, byte_of(0));
     borrow mut chainb as &!cw in {
         borrow mut keyb as &!kw in {
-            while a + 2 < arg_count(g) + 0 && bad == 0 {
+            while a + 2 < limit && bad == 0 {
                 let cn = fs_read(fs, arg(g, a), contents(cw));
                 let kn = fs_read(fs, arg(g, a + 1), contents(kw));
                 region r {
@@ -692,6 +753,35 @@ fn load[&h, &i, &f, &g, &e](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), g: &g Arg
     }
     unbox_slice(heap, chainb);
     unbox_slice(heap, keyb);
+    return bad;
+}
+
+// `--client-ca <file> <optional|required>` as the last three arguments: the file read and given to
+// `trust_clients`, and the mode set. 0, or 1 when the file or the mode is refused.
+fn clients[&h, &i, &f, &g, &e](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), g: &g Args, engine: &!e tls.Engine) -> [heap, fs_read(""), err_write, args] int {
+    let at = arg_count(g) - 3;
+    var bad = 0;
+    let pemb = box_slice(heap, 65536, byte_of(0));
+    borrow mut pemb as &!pw in {
+        let n = fs_read(fs, arg(g, at + 1), contents(pw));
+        if n < 0 {
+            io.error_all(io, "tls_serve: cannot read the client CA file\n");
+            bad = 1;
+        } else {
+            let roots = tls.trust_clients(engine, contents(pw)[0..n]);
+            var mode = 1;
+            if is_word(arg(g, at + 2), "required") {
+                mode = 2;
+            }
+            if roots < 0 || tls.client_auth(engine, mode) != 0 {
+                io.error_all(io, "tls_serve: client CA refused: ");
+                io.error_all(io, tls.refusal_tag(roots));
+                io.error_all(io, "\n");
+                bad = 1;
+            }
+        }
+    }
+    unbox_slice(heap, pemb);
     return bad;
 }
 
@@ -737,7 +827,13 @@ fn main(world: World) -> [] int {
                                 now = clock_unix_ms(cc);
                             }
                             tickets(i, ff, g, ew, now);
-                            if load(h, i, ff, g, ew, now) == 0 {
+                            var limit = arg_count(g);
+                            var with_clients = false;
+                            if limit >= 13 && is_word(arg(g, limit - 3), "--client-ca") {
+                                limit = limit - 3;
+                                with_clients = true;
+                            }
+                            if load(h, i, ff, g, ew, now, limit) == 0 && (!with_clients || clients(h, i, ff, g, ew) == 0) {
                                 borrow net as &nn in {
                                     match tcp_listen(nn, number(arg(g, 1)), 128, 0) {
                                         Listening::Ok(l) => {

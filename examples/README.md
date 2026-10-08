@@ -391,7 +391,7 @@ bytes into answers), then `serve` (the loop and the dense connection array).
 
 ```sh
 cargo run -p cancho -- build --std examples/tls_echo/*.cho \
-    packages/tls/{tls,record,message,slot,client12,client,hello,identity,ticket,server}.cho \
+    packages/tls/{tls,record,message,slot,client12,client,hello,identity,clientauth,ticket,server}.cho \
     packages/x509/{verify,names,x509,key}.cho -o tls_echo
 mkdir -p /tmp/certs && cp tests/vectors/tls/echo/first/* /tmp/certs/   # chain.pem, key.pem, names
 ./tls_echo --port 8443 --dir /tmp/certs --alpn echo
@@ -415,13 +415,21 @@ tickets ([`docs/tls-server.md`](../docs/tls-server.md) §12; `--ticket-lifetime`
 several processes, read again on `SIGHUP`), and a client that comes back resumes with one key exchange and no
 signature.
 
+**Client certificates** (mutual TLS, [`tls-server.md`](../docs/tls-server.md) §13): `--client-ca <file>` names a file, beneath
+`--dir`, of the PEM certificates of the CAs that may vouch for a client (its own file, never the system bundle), and the server asks
+every client for a certificate; with `--require-client-cert` one that sends none is refused. The connection's line then says who the
+engine verified: `client=CN=device-17,O=Fleet,C=ES fp=3fa1c0de9b21aa07` (the subject as RFC 4514 writes it, and the first 16 hex digits
+of the certificate's SHA-256). The engine authenticates; what the identity may do is the program's. `SIGHUP` reads the file again, and a
+connection verified under the old store is closed (`closed revoked`). The authority report does not change: the file is read through the
+same directory handle as the identities.
+
 
 ### `https_hello/` — HTTPS/1.1 over that engine
 
 ```sh
 cargo run -p cancho -- build --std examples/https_hello/{hello,loop,app}.cho \
     examples/tls_echo/{front,identity}.cho packages/http-server/server.cho \
-    packages/tls/{tls,record,message,slot,client12,client,hello,identity,ticket,server}.cho \
+    packages/tls/{tls,record,message,slot,client12,client,hello,identity,clientauth,ticket,server}.cho \
     packages/x509/{verify,names,x509,key}.cho -o https_hello
 ./https_hello --port 8443 --dir /tmp/certs
 curl --cacert tests/vectors/tls/echo/ca.pem --resolve echo.lex-sys.test:8443:127.0.0.1 \
@@ -440,7 +448,7 @@ streams a body of any size through the 16 KiB buffer and answers its byte count 
 ```sh
 cargo run -p cancho -- build --std examples/http_fetch_nb/{fetch,fetch_io}.cho \
     packages/http-client/{wire,client}.cho \
-    packages/tls/{tls,record,message,slot,client12,client,hello,identity,ticket,server}.cho \
+    packages/tls/{tls,record,message,slot,client12,client,hello,identity,clientauth,ticket,server}.cho \
     packages/x509/{verify,names,x509,key}.cho -o http_fetch_nb
 ./http_fetch_nb --repeat 100 http://127.0.0.1:8080/a http://127.0.0.1:8080/b
 ./http_fetch_nb --resolve echo.lex-sys.test=127.0.0.1 --repeat 3 \

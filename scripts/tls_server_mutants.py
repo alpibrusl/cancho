@@ -6,7 +6,8 @@
 Each mutant is one of the server's files (`hello.cho`, `identity.cho`, `server.cho`, and the server's parts of
 `tls.cho` and `slot.cho`) with one deliberate bug. The package is copied to a scratch directory, the mutant
 applied there, and `tests/programs/tls_server_driver.cho` built against it. It replays every connection of
-`tests/vectors/tls/liar_client.txt` (`scripts/tls_liar_client.py`), each answer compared byte for byte, as
+`tests/vectors/tls/liar_client.txt` (`scripts/tls_liar_client.py`) and `liar_client_auth.txt`
+(`scripts/tls_liar_client_auth.py`), each answer compared byte for byte, as
 `crates/cancho/tests/conformance/tls_server.rs` does. A mutant is killed when any answer differs or the driver
 traps. The unmutated package is run first and must pass. A mutant that changes nothing a client can reach is
 listed in EQUIVALENT with the argument, and must survive. Exit status 1 if a mutant survives or fails to build.
@@ -19,7 +20,7 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TLS = ["tls.cho", "record.cho", "message.cho", "slot.cho", "client12.cho", "client.cho", "hello.cho", "identity.cho",
-       "ticket.cho", "server.cho"]
+       "clientauth.cho", "ticket.cho", "server.cho"]
 X509 = ["verify.cho", "names.cho", "x509.cho", "key.cho"]
 
 # (name, file, the text replaced, its replacement). Each `old` must occur exactly once in its file.
@@ -117,12 +118,12 @@ MUTANTS = [
      " || tls_slot.has(ints, tls_slot.f_ccs_seen()) {"),
     ("a second change_cipher_spec taken", "server.cho", " || tls_slot.has(ints, tls_slot.f_ccs_seen()) || !between {",
      " || !between {"),
-    ("a message allowed to share a record with what follows", "server.cho", "            } else if have > 4 + n {",
-     "            } else if false {"),
+    ("a message allowed to share a record with what follows", "server.cho", "            } else if have > 4 + n && !(",
+     "            } else if false && !("),
     ("a ClientHello over 16 KiB taken", "server.cho", "            } else if hello && n > tls_hello.max_client_hello() {",
      "            } else if hello && n > tls_slot.hs_cap() {"),
     ("a plaintext alert after the flight not read", "server.cho",
-     "    let plain_alert = kind == tls_record.type_alert() && state == tls_slot.state_wait_client_finished();",
+     "    let plain_alert = kind == tls_record.type_alert() && flight_sent(state);",
      "    let plain_alert = false;"),
     ("a KeyUpdate not answered", "server.cho", "        if asked == 1 {", "        if asked == 2 {"),
     ("33 KeyUpdates allowed", "server.cho", "    if ints[tls_slot.i_key_updates()] > 32 {", "    if ints[tls_slot.i_key_updates()] > 33 {"),
@@ -303,22 +304,162 @@ MUTANTS = [
      "            crypto.sha256(chain[3..3 + tls_message.get(chain, 0, 3)], cfg[b + o_fp()..b + o_fp() + 32]);\n", ""),
     ("the certificate's end not recorded", "identity.cho", "tls_message.put(cfg, b + o_not_after(), leaf_not_after, 8);",
      "tls_message.put(cfg, b + o_not_after(), 0, 8);"),
+    # ---- Client certificates (docs/tls-server.md §13): the client's flight (clientauth.cho) ----
+    ("the client's chain verified for serverAuth", "clientauth.cho", "x509_verify.purpose_client_auth(), view)",
+     "x509_verify.purpose_server_auth(), view)"),
+    ("required not enforced", "clientauth.cho",
+     "        if tls_slot.has(ints, tls_slot.f_auth_require()) {\n            return tls_record.server_client_cert_required();",
+     "        if false {\n            return tls_record.server_client_cert_required();"),
+    ("an empty Certificate always refused", "clientauth.cho",
+     "        if tls_slot.has(ints, tls_slot.f_auth_require()) {\n            return tls_record.server_client_cert_required();",
+     "        if true {\n            return tls_record.server_client_cert_required();"),
+    ("the request context not checked", "clientauth.cho", "    if len(body) >= 1 && int_of(body[0]) != 0 {",
+     "    if false {"),
+    ("more than five certificates taken", "clientauth.cho", "info[2] > max_certificates() ||", "info[2] > 8 ||"),
+    ("five certificates become eight", "clientauth.cho", "pub fn max_certificates() -> [] int {\n    return 5;",
+     "pub fn max_certificates() -> [] int {\n    return 8;"),
+    ("a leaf over the room not refused", "clientauth.cho", "|| info[1] - info[0] > tls_slot.leaf_cap()) {", "|| false) {"),
+    ("four intermediates allowed", "clientauth.cho", "pub fn max_intermediates() -> [] int {\n    return 3;",
+     "pub fn max_intermediates() -> [] int {\n    return 6;"),
+    ("a message of 64 KiB allowed", "clientauth.cho", "pub fn max_message() -> [] int {\n    return 16384;",
+     "pub fn max_message() -> [] int {\n    return 65536;"),
+    ("a scheme not listed taken", "clientauth.cho", "if code == 0 && !tls_hello.client_scheme_listed(info[0]) {",
+     "if false {"),
+    ("the server's context string for the client's signature", "clientauth.cho", '"TLS 1.3, client CertificateVerify"',
+     '"TLS 1.3, server CertificateVerify"'),
+    ("the client's Certificate left out of the transcript", "clientauth.cho",
+     "                tls_slot.set_flag(ints, tls_slot.f_client_cert());\n                tls_slot.transcript_add(ints, message);",
+     "                tls_slot.set_flag(ints, tls_slot.f_client_cert());"),
+    ("an empty Certificate left out of the transcript", "clientauth.cho",
+     "        tls_slot.transcript_add(ints, message);\n        ints[tls_slot.i_state()] = tls_slot.state_wait_client_finished();\n        return 0;",
+     "        ints[tls_slot.i_state()] = tls_slot.state_wait_client_finished();\n        return 0;"),
+    ("the CertificateVerify left out of the transcript", "clientauth.cho",
+     "false);\n        }\n        if code == 0 {\n            tls_slot.transcript_add(ints, message);",
+     "false);\n        }\n        if false {\n            tls_slot.transcript_add(ints, message);"),
+    ("the identity never marked", "clientauth.cho", "        tls_slot.set_flag(ints, tls_slot.f_client_auth());",
+     "        tls_slot.set_flag(ints, 0);"),
+    ("the identity of a failed connection given", "clientauth.cho",
+     "    return tls_slot.has(ints, tls_slot.f_client_auth()) && ints[tls_slot.i_state()] != tls_slot.state_failed();",
+     "    return tls_slot.has(ints, tls_slot.f_client_auth());"),
+    ("the certificate given whether or not verified", "clientauth.cho", "    if verified(ints) {\n        n = ints[tls_slot.i_leaf_len()];",
+     "    if true {\n        n = ints[tls_slot.i_leaf_len()];"),
+    ("the generation not kept", "clientauth.cho",
+     "ints[tls_slot.i_peer_generation()] = tls_identity.client_generation(cfg);", "ints[tls_slot.i_peer_generation()] = 1;"),
+    ("the leaf's notAfter not kept", "clientauth.cho", "ints[tls_slot.i_not_after()] = view[x509.not_after()];",
+     "ints[tls_slot.i_not_after()] = 0;"),
+    ("required mode never required", "clientauth.cho",
+     "    if mode == 2 {\n        tls_slot.set_flag(ints, tls_slot.f_auth_require());",
+     "    if mode == 9 {\n        tls_slot.set_flag(ints, tls_slot.f_auth_require());"),
+    ("optional mode never asking", "clientauth.cho", "    if mode >= 1 {", "    if mode >= 2 {"),
+    ("the clock not given", "clientauth.cho", "    ints[tls_slot.i_now()] = now;", "    ints[tls_slot.i_now()] = 0;"),
+    ("the chain checked at the time serve was given, not the engine's latest", "clientauth.cho",
+     "    var now = ints[tls_slot.i_srv_now_ms()] / 1000;\n", "    var now = 0;\n"),
+    ("a fingerprint of the leaf less a byte", "clientauth.cho", "    crypto.sha256(der, out[0..32]);",
+     "    crypto.sha256(der[0..len(der) - 1], out[0..32]);"),
+    # ---- the CertificateRequest (hello.cho) and the store (identity.cho) ----
+    ("the PKCS#1 schemes left out of signature_algorithms_cert", "hello.cho",
+     "    at = tls_message.put(out, at, tls_message.rsa_pkcs1_sha512(), 2);\n", ""),
+    ("Ed25519 not listed", "hello.cho", "    return tls_message.ed25519();\n}\n\npub fn client_schemes",
+     "    return tls_message.rsa_pss_sha512();\n}\n\npub fn client_schemes"),
+    ("no certificate_authorities", "hello.cho", "    if len(authorities) > 0 {", "    if false {"),
+    ("more than 32 roots taken", "identity.cho", "n > max_client_roots()", "n > 40"),
+    ("a bundle with no certificate taken", "identity.cho", "if n <= 0 ||", "if false ||"),
+    ("a block that is not a certificate tolerated", "identity.cho", " || n != pem_blocks(pem) {", " {"),
+    ("the generation not counted", "identity.cho", "tls_message.put(cfg, b + 1, (client_generation(cfg) + 1) % 4294967296, 4);",
+     "tls_message.put(cfg, b + 1, client_generation(cfg), 4);"),
+    ("a mode asked for with no store", "identity.cho", "    if mode != 0 && len(client_store(cfg)) == 0 {", "    if false {"),
+    ("a mode of 3 taken", "identity.cho", "    if mode < 0 || mode > 2 {", "    if mode < 0 || mode > 3 {"),
+    ("the list of names one byte too long for the limit", "identity.cho", "n + 2 + sl > authorities_cap()",
+     "n + 2 + sl >= authorities_cap()"),
+    ("the limit of the names list 8,193", "identity.cho", "pub fn authorities_cap() -> [] int {\n    return 8192;",
+     "pub fn authorities_cap() -> [] int {\n    return 8193;"),
+    # ---- the server's states (server.cho) ----
+    ("the CertificateRequest left out of the transcript", "server.cho",
+     "            tls_slot.transcript_add(ints, flight[n..n + asked]);\n", ""),
+    ("the wait for the client's Certificate not entered", "server.cho",
+     "    if tls_clientauth.requested(ints) {\n        ints[tls_slot.i_state()] = tls_slot.state_wait_client_certificate();",
+     "    if false {\n        ints[tls_slot.i_state()] = tls_slot.state_wait_client_certificate();"),
+    ("the identity not established at Finished", "server.cho", "        tls_clientauth.established(ints);\n", ""),
+    ("the client's Certificate not handled", "server.cho",
+     "if state == tls_slot.state_wait_client_certificate() && kind == tls_message.type_certificate() {", "if false {"),
+    ("the client's CertificateVerify not handled", "server.cho",
+     "if state == tls_slot.state_wait_client_verify() && kind == tls_message.type_certificate_verify() {", "if false {"),
+    ("the Certificate's bound not checked at its header", "server.cho", "n > tls_clientauth.max_message()", "n > 65536"),
+    ("the client's flight may not share a record", "server.cho",
+     " && !(state == tls_slot.state_wait_client_certificate() && int_of(bytes[p]) == tls_message.type_certificate() || state == tls_slot.state_wait_client_verify() && int_of(bytes[p]) == tls_message.type_certificate_verify())",
+     ""),
+    ("a handshake waiting for the client's certificate not in progress", "server.cho",
+     " || s == tls_slot.state_wait_client_certificate() || s == tls_slot.state_wait_client_verify();", ";"),
+    ("change_cipher_spec expected only before the Finished", "server.cho",
+     "    return state == tls_slot.state_wait_client_finished() || state == tls_slot.state_wait_client_certificate() || state == tls_slot.state_wait_client_verify();",
+     "    return state == tls_slot.state_wait_client_finished();"),
+    # ---- alerts (slot.cho) and the engine (tls.cho) ----
+    # ---- client certificates and session tickets (docs/tls-server.md §13.8) ----
+    ("a client authenticated by a certificate is sent tickets", "server.cho", " || tls_clientauth.certified(ints) {", " {"),
+    ("required client authentication resumes on a ticket", "server.cho",
+     "    if tls_slot.has(ints, tls_slot.f_auth_require()) {\n        // A resumption is not an authentication",
+     "    if false {\n        // A resumption is not an authentication"),
+    ("a resumed handshake asks for a certificate", "server.cho",
+     "        tls_slot.clear_flag(ints, tls_slot.f_auth_request());\n", ""),
+    ("certificate_required sent as handshake_failure", "slot.cho", "        return 116;", "        return 40;"),
+    ("a scheme not listed sent as handshake_failure", "slot.cho",
+     "    if code == tls_record.server_client_sigalg() {\n        return 47;", "    if code == tls_record.server_client_sigalg() {\n        return 40;"),
+    ("serve without the client mode", "tls.cho",
+     "            tls_clientauth.begin(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.ids), now_unix_ms / 1000);",
+     "            let skipped = 0;"),
+    ("a block the engine cannot read tolerated", "identity.cho", " || info[1] != 0 ||", " ||"),
+    ("client_auth on a client engine", "tls.cho",
+     "pub fn client_auth[&e](engine: &!e Engine, mode: int) -> [] int {\n    if !is_server(engine) {",
+     "pub fn client_auth[&e](engine: &!e Engine, mode: int) -> [] int {\n    if false {"),
+    ("trust_clients on a client engine", "tls.cho",
+     "pub fn trust_clients[&e, &p](engine: &!e Engine, pem: &p [byte]) -> [] int {\n    if !is_server(engine) {",
+     "pub fn trust_clients[&e, &p](engine: &!e Engine, pem: &p [byte]) -> [] int {\n    if false {"),
+    ("client_generation on a client engine", "tls.cho",
+     "pub fn client_generation[&e](engine: &e Engine) -> [] int {\n    if !is_server(engine) {",
+     "pub fn client_generation[&e](engine: &e Engine) -> [] int {\n    if false {"),
+    ("peer_verified on a client engine", "tls.cho",
+     "pub fn peer_verified[&e](engine: &e Engine, slot: int) -> [] int {\n    if !is_server(engine) {",
+     "pub fn peer_verified[&e](engine: &e Engine, slot: int) -> [] int {\n    if false {"),
+    ("peer_certificate on a client engine", "tls.cho",
+     "pub fn peer_certificate[&e, &o](engine: &e Engine, slot: int, out: &!o [byte]) -> [] int {\n    if !is_server(engine) {",
+     "pub fn peer_certificate[&e, &o](engine: &e Engine, slot: int, out: &!o [byte]) -> [] int {\n    if false {"),
+    ("peer_subject and peer_serial on a client engine", "tls.cho",
+     "fn peer_range[&e, &o](engine: &e Engine, slot: int, from: int, to: int, out: &!o [byte]) -> [] int {\n    if !is_server(engine) {",
+     "fn peer_range[&e, &o](engine: &e Engine, slot: int, from: int, to: int, out: &!o [byte]) -> [] int {\n    if false {"),
+    ("peer_fingerprint on a client engine", "tls.cho",
+     "pub fn peer_fingerprint[&e, &o](engine: &e Engine, slot: int, out: &!o [byte]) -> [] int {\n    if !is_server(engine) {",
+     "pub fn peer_fingerprint[&e, &o](engine: &e Engine, slot: int, out: &!o [byte]) -> [] int {\n    if false {"),
+    ("a short buffer for the certificate not refused", "tls.cho", "    if len(der) > len(out) {\n        return tls_record.server_peer_buffer();",
+     "    if len(der) > len(out) + 100000 {\n        return tls_record.server_peer_buffer();"),
 ]
 
 # Mutants that change no behaviour a client can reach, each with the argument. Such a mutant must survive.
-EQUIVALENT = {}
+EQUIVALENT = {
+    "the clock not given":
+        "through the engine the clock is `max(serve's time, the latest set_time)`, which `feed` hands the slot as "
+        "`i_srv_now_ms` and which is never less than `serve`'s, so `i_now` is the fallback for a caller that has no "
+        "engine (`fuzz_clientauth`) and nothing the engine can reach",
+    "a block the engine cannot read tolerated":
+        "every block of the file must be a certificate that was stored (`n != pem_blocks(pem)`), and a block that "
+        "was skipped is a block that was not stored, so the count already refuses it",
+    "a leaf over the room not refused":
+        "the Certificate message is at most 16,384 bytes (checked at its header, `max_message`), so a leaf in it is "
+        "under `leaf_cap()`, also 16,384: the check is a second line of defence",
+}
 
 
 def cases():
+    """The connections of both recordings: the lying client's (§10.3) and the client certificates' (§13.11)."""
     out = []
-    for line in open(os.path.join(ROOT, "tests/vectors/tls/liar_client.txt")):
-        line = line.rstrip("\n")
-        if line.startswith("## "):
-            out.append((line[3:], [], []))
-        elif line.startswith("= "):
-            out[-1][2].append(line[2:])
-        elif not line.startswith("#"):
-            out[-1][1].append(line)
+    for name in ("liar_client.txt", "liar_client_auth.txt"):
+        for line in open(os.path.join(ROOT, "tests/vectors/tls", name)):
+            line = line.rstrip("\n")
+            if line.startswith("## "):
+                out.append((line[3:], [], []))
+            elif line.startswith("= "):
+                out[-1][2].append(line[2:])
+            elif not line.startswith("#"):
+                out[-1][1].append(line)
     return out
 
 

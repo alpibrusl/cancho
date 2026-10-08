@@ -70,13 +70,22 @@ module tls_front;
 // Lines it prints, each flushed as it is written:
 //
 //     listening <port>
-//     conn <n> peer=<address:port> established suite=<name> group=<name> sni=<name|-> alpn=<protocol|-> hrr=<yes|no> waited=<ms> handshake=<ms>
+//     conn <n> peer=<address:port> established suite=<name> group=<name> sni=<name|-> alpn=<protocol|-> hrr=<yes|no> [client=<subject> fp=<hex>] waited=<ms> handshake=<ms>
 //     conn <n> peer=<address:port> closed <why> in=<bytes> ms=<since accepted>
 //     refused <n> peer=<address:port> full | stopping | per-address
 //     reload <identity> ok | reload <identity> refused <tag> | reload <identity> unreadable <file> errno=<n>
+//     reload client-ca ok | reload client-ca refused <tag> | reload client-ca unreadable <file> errno=<n>
 //     stopping
 //
-// `<why>` is `ok` (close_notify both ways), `idle`, `shutdown`,
+// `client=` and `fp=` are there only for a connection whose client the engine verified (`--client-ca`, `docs/tls-server.md`
+// §13): the subject Name as RFC 4514 writes it (OpenSSL's `-nameopt RFC2253`), and the first 16 hex digits of the leaf's
+// SHA-256, which the engine computes from the certificate it verified. They are what the program is given and nothing more:
+// the engine authenticates, the program authorizes. **Clients' CA** (`--client-ca <file>` beneath `--dir`, `--require-client-cert`):
+// loaded at start (`tls.trust_clients`, `tls.client_auth`), read again on `SIGHUP`; a file the engine refuses leaves the store as
+// it was, and when the store was replaced every established connection verified under the old one is sent close_notify and
+// ended (`closed revoked`).
+//
+// `<why>` is `ok` (close_notify both ways), `idle`, `shutdown`, `revoked`,
 // `handshake-timeout`, `queue-timeout`, `socket` (the socket failed), or
 // the engine's refusal tag (`tls-peer-closed`, `tls-alert-<n>`, a
 // `tls-server-*` tag, ...).
@@ -89,6 +98,7 @@ import std.http;
 import std.io;
 import echo_identity;
 import tls;
+import x509;
 
 pub fn c_conns() -> [] int {
     return 0;
@@ -146,17 +156,36 @@ pub fn c_ticket_lifetime() -> [] int {
     return 11;
 }
 
-pub fn cfg_len() -> [] int {
+// `--client-ca` (1 when given: the name is `subs`' entry `client_slot()`) and `--require-client-cert`
+// (`docs/tls-server.md` §13.10).
+pub fn c_client_ca() -> [] int {
     return 12;
 }
 
-// The identities' subdirectories take the first 16 slots of `subs`; the 17th holds the name of `--ticket-keys`'s file.
+pub fn c_require() -> [] int {
+    return 13;
+}
+
+pub fn cfg_len() -> [] int {
+    return 14;
+}
+
+// The identities' subdirectories take the first 16 slots of `subs`; the 17th holds the name of `--ticket-keys`'s file, the
+// 18th the name of the clients' CA file (`--client-ca`).
 pub fn key_slot() -> [] int {
     return 16;
 }
 
+pub fn client_slot() -> [] int {
+    return 17;
+}
+
 pub fn subs_len() -> [] int {
-    return 17 * sub_cap();
+    return 18 * sub_cap();
+}
+
+pub fn lens_len() -> [] int {
+    return 18;
 }
 
 // The room for an identity's subdirectory name, in `subs`.
@@ -405,6 +434,12 @@ pub fn r_shutdown() -> [] int {
     return 0 - 1005;
 }
 
+// A connection whose client was verified under a clients' store that has since been replaced
+// (`docs/tls-server.md` §13.3).
+pub fn r_revoked() -> [] int {
+    return 0 - 1006;
+}
+
 pub fn flush[&i](io: &!i Io) -> [io_write] int {
     match flush_out(io) {
         Done::Ok(n) => {
@@ -462,6 +497,8 @@ pub fn why[&i, &e](io: &!i Io, engine: &e tls.Engine, slot: int, reason: int) ->
         io.write_all(io, "queue-timeout");
     } else if reason == r_shutdown() {
         io.write_all(io, "shutdown");
+    } else if reason == r_revoked() {
+        io.write_all(io, "revoked");
     } else {
         io.write_all(io, tls.refusal_tag(reason));
         if reason == 0 - 2 {
@@ -483,6 +520,204 @@ pub fn print_peer[&i, &s](io: &!i Io, st: &s [int], b: int) -> [io_write] int {
     region r {
         let text = alloc_slice[r](addr.max_text(), byte_of(0));
         io.write_all(io, text[0..addr.text_port(p, text)]);
+    }
+    return 0;
+}
+
+// The OID in `der[s..e]` by the short name OpenSSL's RFC 2253 output uses, or empty if it has none here.
+fn oid_name[&d](der: &d [byte], s: int, e: int) -> [] &static [byte] {
+    if e - s == 3 && int_of(der[s]) == 0x55 && int_of(der[s + 1]) == 0x04 {
+        let k = int_of(der[s + 2]);
+        if k == 3 {
+            return "CN";
+        }
+        if k == 5 {
+            return "serialNumber";
+        }
+        if k == 6 {
+            return "C";
+        }
+        if k == 7 {
+            return "L";
+        }
+        if k == 8 {
+            return "ST";
+        }
+        if k == 9 {
+            return "street";
+        }
+        if k == 10 {
+            return "O";
+        }
+        if k == 11 {
+            return "OU";
+        }
+    }
+    if e - s == 9 && int_of(der[s]) == 0x2a && int_of(der[s + 1]) == 0x86 && int_of(der[s + 2]) == 0x48 && int_of(der[s + 3]) == 0x86 && int_of(der[s + 4]) == 0xf7 && int_of(der[s + 5]) == 0x0d && int_of(der[s + 6]) == 1 && int_of(der[s + 7]) == 9 && int_of(der[s + 8]) == 1 {
+        return "emailAddress";
+    }
+    return "";
+}
+
+// An OID in dotted decimal.
+fn print_dotted[&i, &d](io: &!i Io, der: &d [byte], s: int, e: int) -> [io_write] int {
+    if e <= s {
+        return 0;
+    }
+    let first = int_of(der[s]);
+    io.print_int(io, first / 40);
+    io.write_all(io, ".");
+    io.print_int(io, first % 40);
+    var v = 0;
+    var k = s + 1;
+    while k < e {
+        v = v * 128 + (int_of(der[k]) & 127);
+        if int_of(der[k]) & 128 == 0 {
+            io.write_all(io, ".");
+            io.print_int(io, v);
+            v = 0;
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn print_hex_digits[&i, &d](io: &!i Io, der: &d [byte], s: int, e: int) -> [io_write] int {
+    let digits = "0123456789ABCDEF";
+    var k = s;
+    while k < e {
+        let c = int_of(der[k]);
+        io.write_all(io, digits[c >> 4..(c >> 4) + 1]);
+        io.write_all(io, digits[c & 15..(c & 15) + 1]);
+        k = k + 1;
+    }
+    return 0;
+}
+
+// A string attribute's bytes escaped as RFC 4514 section 2.4 says, with every byte outside printable ASCII as
+// `\XX`, as OpenSSL's `-nameopt RFC2253` prints it: `"`, `+`, `,`, `;`, `<`, `>` and `\` behind a backslash, a
+// leading space or `#` and a trailing space too.
+fn print_value[&i, &d](io: &!i Io, der: &d [byte], s: int, e: int) -> [io_write] int {
+    var k = s;
+    while k < e {
+        let c = int_of(der[k]);
+        if c < 32 || c >= 127 {
+            io.write_all(io, "\\");
+            print_hex_digits(io, der, k, k + 1);
+        } else if c == '"' || c == '+' || c == ',' || c == ';' || c == '<' || c == '>' || c == '\\' || k == s && (c == ' ' || c == '#') || k == e - 1 && c == ' ' {
+            io.write_all(io, "\\");
+            io.write_all(io, der[k..k + 1]);
+        } else {
+            io.write_all(io, der[k..k + 1]);
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+// A Name (DER) as RFC 4514 writes it, the RDNs last to first, a multi-valued one joined by `+`: `CN=device-17,O=Fleet,C=ES`.
+// An attribute with no short name here is its dotted OID, and a value that is not a string `#` and the value's DER in hex.
+// `-` for a Name that is empty or does not parse.
+pub fn print_subject[&i, &d](io: &!i Io, der: &d [byte]) -> [io_write] int {
+    var printed = false;
+    region r {
+        let t = alloc_slice[r](3, 0);
+        let rdns = alloc_slice[r](64, 0);
+        var n = 0;
+        if x509.tlv(der, 0, len(der), t) == 0 && t[0] == 0x30 {
+            let end = t[2];
+            var at = t[1];
+            while at < end && n < 32 {
+                if x509.tlv(der, at, end, t) != 0 || t[0] != 0x31 {
+                    at = end;
+                } else {
+                    rdns[2 * n] = t[1];
+                    rdns[2 * n + 1] = t[2];
+                    n = n + 1;
+                    at = t[2];
+                }
+            }
+        }
+        var j = n;
+        while j > 0 {
+            j = j - 1;
+            var inner = rdns[2 * j];
+            let stop = rdns[2 * j + 1];
+            var first = true;
+            while inner < stop {
+                // One attribute: a sequence of an OID and a value.
+                if x509.tlv(der, inner, stop, t) != 0 || t[0] != 0x30 {
+                    inner = stop;
+                } else {
+                    let seq_end = t[2];
+                    let body = t[1];
+                    if x509.tlv(der, body, seq_end, t) == 0 && t[0] == 0x06 {
+                        let o0 = t[1];
+                        let o1 = t[2];
+                        let v0 = t[2];
+                        if x509.tlv(der, v0, seq_end, t) == 0 {
+                            if printed {
+                                if first {
+                                    io.write_all(io, ",");
+                                } else {
+                                    io.write_all(io, "+");
+                                }
+                            } else if !first {
+                                io.write_all(io, "+");
+                            }
+                            first = false;
+                            printed = true;
+                            let name = oid_name(der, o0, o1);
+                            if len(name) > 0 {
+                                io.write_all(io, name);
+                            } else {
+                                print_dotted(io, der, o0, o1);
+                            }
+                            io.write_all(io, "=");
+                            let kind = t[0];
+                            if kind == 0x0c || kind == 0x13 || kind == 0x16 || kind == 0x14 {
+                                print_value(io, der, t[1], t[2]);
+                            } else {
+                                io.write_all(io, "#");
+                                print_hex_digits(io, der, v0, t[2]);
+                            }
+                        }
+                    }
+                    inner = seq_end;
+                }
+            }
+        }
+    }
+    if !printed {
+        io.write_all(io, "-");
+    }
+    return 0;
+}
+
+// ` client=<subject> fp=<the first 16 hex digits of the leaf's SHA-256>` for the verified client of `slot`: what the
+// engine gives the program (`tls.peer_subject`, `tls.peer_fingerprint`); what the program does with it is its own.
+pub fn print_client[&i, &e](io: &!i Io, engine: &e tls.Engine, slot: int) -> [io_write] int {
+    region r {
+        let name = alloc_slice[r](4096, byte_of(0));
+        let sn = tls.peer_subject(engine, slot, name);
+        io.write_all(io, " client=");
+        if sn > 0 {
+            print_subject(io, name[0..sn]);
+        } else {
+            io.write_all(io, "-");
+        }
+        let fp = alloc_slice[r](32, byte_of(0));
+        if tls.peer_fingerprint(engine, slot, fp) == 32 {
+            io.write_all(io, " fp=");
+            let lower = "0123456789abcdef";
+            var k = 0;
+            while k < 8 {
+                let c = int_of(fp[k]);
+                io.write_all(io, lower[c >> 4..(c >> 4) + 1]);
+                io.write_all(io, lower[c & 15..(c & 15) + 1]);
+                k = k + 1;
+            }
+        }
     }
     return 0;
 }
@@ -513,6 +748,9 @@ pub fn log_established[&i, &e, &s](io: &!i Io, engine: &e tls.Engine, st: &s [in
         io.write_all(io, " resumed=yes");
     } else {
         io.write_all(io, " resumed=no");
+    }
+    if tls.peer_verified(engine, slot) > 0 {
+        print_client(io, engine, slot);
     }
     io.write_all(io, " waited=");
     io.print_int(io, st[b + s_waited()]);
@@ -995,74 +1233,90 @@ pub fn parse_flags[&g, &c, &u, &n, &a, &f](g: &g Args, cfg: &!c [int], subs: &!u
         c = next;
         match step {
             flags.Arg::Long(name) => {
-                let (after, text) = flags.value(g, c);
-                c = after;
-                if flags.named(name, "port") {
-                    bad = bad || !set_number(cfg, cfg_len(), text, 1, 65535);
-                } else if flags.named(name, "dir") {
-                    dir = text;
-                } else if flags.named(name, "identity") {
-                    let k = cfg[c_identities()];
-                    if k >= key_slot() || len(text) == 0 || len(text) > sub_cap() {
-                        bad = true;
-                    } else {
-                        var j = 0;
-                        while j < len(text) {
-                            subs[k * sub_cap() + j] = text[j];
-                            j = j + 1;
-                        }
-                        sublens[k] = len(text);
-                        cfg[c_identities()] = k + 1;
-                    }
-                } else if flags.named(name, "tickets") {
-                    bad = bad || !set_number(cfg, c_tickets(), text, 0, 8);
-                } else if flags.named(name, "ticket-lifetime") {
-                    bad = bad || !set_number(cfg, c_ticket_lifetime(), text, 1, 604800);
-                } else if flags.named(name, "ticket-keys") {
-                    if len(text) == 0 || len(text) > sub_cap() {
-                        bad = true;
-                    } else {
-                        var j = 0;
-                        while j < len(text) {
-                            subs[key_slot() * sub_cap() + j] = text[j];
-                            j = j + 1;
-                        }
-                        sublens[key_slot()] = len(text);
-                    }
-                } else if flags.named(name, "alpn") {
-                    if len(text) > len(alpn) {
-                        bad = true;
-                    } else {
-                        var j = 0;
-                        while j < len(text) {
-                            alpn[j] = text[j];
-                            if int_of(text[j]) == ',' {
-                                alpn[j] = byte_of(' ');
-                            }
-                            j = j + 1;
-                        }
-                        info[0] = len(text);
-                    }
-                } else if flags.named(name, "connections") {
-                    bad = bad || !set_number(cfg, c_conns(), text, 1, 4096);
-                } else if flags.named(name, "handshakes") {
-                    bad = bad || !set_number(cfg, c_handshakes(), text, 1, 4096);
-                } else if flags.named(name, "rate") {
-                    bad = bad || !set_number(cfg, c_rate(), text, 1, 1000000);
-                } else if flags.named(name, "per-address") {
-                    bad = bad || !set_number(cfg, c_per_addr(), text, 1, 4096);
-                } else if flags.named(name, "per-address-rate") {
-                    bad = bad || !set_number(cfg, c_addr_rate(), text, 1, 1000000);
-                } else if flags.named(name, "handshake-timeout") {
-                    bad = bad || !set_number(cfg, c_hs_timeout(), text, 1, 3600000);
-                } else if flags.named(name, "idle") {
-                    bad = bad || !set_number(cfg, c_idle(), text, 1, 86400000);
-                } else if flags.named(name, "read-timeout") {
-                    bad = bad || !set_number(cfg, c_read_timeout(), text, 1, 3600000);
-                } else if flags.named(name, "max-body") {
-                    bad = bad || !set_number(cfg, c_max_body(), text, 1, 1048576);
+                if flags.named(name, "require-client-cert") {
+                    cfg[c_require()] = 1;
                 } else {
-                    bad = true;
+                    let (after, text) = flags.value(g, c);
+                    c = after;
+                    if flags.named(name, "client-ca") {
+                        if len(text) == 0 || len(text) > sub_cap() {
+                            bad = true;
+                        } else {
+                            var j = 0;
+                            while j < len(text) {
+                                subs[client_slot() * sub_cap() + j] = text[j];
+                                j = j + 1;
+                            }
+                            sublens[client_slot()] = len(text);
+                            cfg[c_client_ca()] = 1;
+                        }
+                    } else if flags.named(name, "port") {
+                        bad = bad || !set_number(cfg, cfg_len(), text, 1, 65535);
+                    } else if flags.named(name, "dir") {
+                        dir = text;
+                    } else if flags.named(name, "identity") {
+                        let k = cfg[c_identities()];
+                        if k >= key_slot() || len(text) == 0 || len(text) > sub_cap() {
+                            bad = true;
+                        } else {
+                            var j = 0;
+                            while j < len(text) {
+                                subs[k * sub_cap() + j] = text[j];
+                                j = j + 1;
+                            }
+                            sublens[k] = len(text);
+                            cfg[c_identities()] = k + 1;
+                        }
+                    } else if flags.named(name, "tickets") {
+                        bad = bad || !set_number(cfg, c_tickets(), text, 0, 8);
+                    } else if flags.named(name, "ticket-lifetime") {
+                        bad = bad || !set_number(cfg, c_ticket_lifetime(), text, 1, 604800);
+                    } else if flags.named(name, "ticket-keys") {
+                        if len(text) == 0 || len(text) > sub_cap() {
+                            bad = true;
+                        } else {
+                            var j = 0;
+                            while j < len(text) {
+                                subs[key_slot() * sub_cap() + j] = text[j];
+                                j = j + 1;
+                            }
+                            sublens[key_slot()] = len(text);
+                        }
+                    } else if flags.named(name, "alpn") {
+                        if len(text) > len(alpn) {
+                            bad = true;
+                        } else {
+                            var j = 0;
+                            while j < len(text) {
+                                alpn[j] = text[j];
+                                if int_of(text[j]) == ',' {
+                                    alpn[j] = byte_of(' ');
+                                }
+                                j = j + 1;
+                            }
+                            info[0] = len(text);
+                        }
+                    } else if flags.named(name, "connections") {
+                        bad = bad || !set_number(cfg, c_conns(), text, 1, 4096);
+                    } else if flags.named(name, "handshakes") {
+                        bad = bad || !set_number(cfg, c_handshakes(), text, 1, 4096);
+                    } else if flags.named(name, "rate") {
+                        bad = bad || !set_number(cfg, c_rate(), text, 1, 1000000);
+                    } else if flags.named(name, "per-address") {
+                        bad = bad || !set_number(cfg, c_per_addr(), text, 1, 4096);
+                    } else if flags.named(name, "per-address-rate") {
+                        bad = bad || !set_number(cfg, c_addr_rate(), text, 1, 1000000);
+                    } else if flags.named(name, "handshake-timeout") {
+                        bad = bad || !set_number(cfg, c_hs_timeout(), text, 1, 3600000);
+                    } else if flags.named(name, "idle") {
+                        bad = bad || !set_number(cfg, c_idle(), text, 1, 86400000);
+                    } else if flags.named(name, "read-timeout") {
+                        bad = bad || !set_number(cfg, c_read_timeout(), text, 1, 3600000);
+                    } else if flags.named(name, "max-body") {
+                        bad = bad || !set_number(cfg, c_max_body(), text, 1, 1048576);
+                    } else {
+                        bad = true;
+                    }
                 }
             }
             flags.Arg::Short(letter) => {
@@ -1076,7 +1330,7 @@ pub fn parse_flags[&g, &c, &u, &n, &a, &f](g: &g Args, cfg: &!c [int], subs: &!u
             }
         }
     }
-    if bad || cfg[cfg_len()] == 0 {
+    if bad || cfg[cfg_len()] == 0 || cfg[c_require()] == 1 && cfg[c_client_ca()] == 0 {
         info[1] = 2;
     }
     return dir;
@@ -1094,7 +1348,8 @@ pub fn parse[&g, &c, &u, &n, &a, &f](g: &g Args, cfg: &!c [int], subs: &!u [byte
 
 // Every identity added to the engine, the first the default. 0, or 6 if
 // one could not be read or was refused (each said on standard error).
-pub fn add_all[&h, &i, &d, &e, &u, &n](heap: &!h Heap, io: &!i Io, dir: &d Dir, engine: &!e tls.Engine, subs: &u [byte], sublens: &n [int], count: int, now_unix: int) -> [heap, dir_read, file_read, err_write] int {
+pub fn add_all[&h, &i, &d, &e, &u, &n, &c](heap: &!h Heap, io: &!i Io, dir: &d Dir, engine: &!e tls.Engine, subs: &u [byte], sublens: &n [int], cfg: &c [int], now_unix: int) -> [heap, dir_read, file_read, err_write] int {
+    let count = cfg[c_identities()];
     var id = 0;
     while id < count {
         let at = id * sub_cap();
@@ -1114,5 +1369,70 @@ pub fn add_all[&h, &i, &d, &e, &u, &n](heap: &!h Heap, io: &!i Io, dir: &d Dir, 
         }
         id = id + 1;
     }
+    return start_clients(heap, io, dir, engine, subs, sublens, cfg);
+}
+
+// With `--client-ca`: the file read and given to the engine as the clients' store, and the engine asked for certificates,
+// `optional`, or `required` with `--require-client-cert` (`docs/tls-server.md` §13). 0, or 6 if the file cannot be read
+// or the engine refuses it (said on standard error).
+pub fn start_clients[&h, &i, &d, &e, &u, &n, &c](heap: &!h Heap, io: &!i Io, dir: &d Dir, engine: &!e tls.Engine, subs: &u [byte], sublens: &n [int], cfg: &c [int]) -> [heap, dir_read, file_read, err_write] int {
+    if cfg[c_client_ca()] == 0 {
+        return 0;
+    }
+    let at = client_slot() * sub_cap();
+    let roots = echo_identity.load_clients(heap, dir, subs[at..at + sublens[client_slot()]], engine);
+    var mode = 1;
+    if cfg[c_require()] == 1 {
+        mode = 2;
+    }
+    if roots < 0 || tls.client_auth(engine, mode) != 0 {
+        io.error_all(io, "tls_echo: --client-ca ");
+        io.error_all(io, subs[at..at + sublens[client_slot()]]);
+        if roots <= echo_identity.file_base() {
+            io.error_all(io, ": cannot read ");
+            io.error_all(io, echo_identity.failed_file(roots));
+        } else {
+            io.error_all(io, ": refused, ");
+            io.error_all(io, tls.refusal_tag(roots));
+        }
+        io.error_all(io, "\n");
+        return 6;
+    }
     return 0;
+}
+
+// `SIGHUP` for the clients' store: the file read again and given to `tls.trust_clients`; a refused file is said
+// (`reload client-ca refused <tag>`) and the store is as it was. 1 if the store was replaced, so a connection verified
+// under the old one is to be closed (`stale`), else 0.
+pub fn reload_clients[&h, &i, &d, &e, &u, &n, &c](heap: &!h Heap, io: &!i Io, dir: &d Dir, engine: &!e tls.Engine, subs: &u [byte], sublens: &n [int], cfg: &c [int]) -> [heap, dir_read, file_read, io_write] int {
+    if cfg[c_client_ca()] == 0 {
+        return 0;
+    }
+    let before = tls.client_generation(engine);
+    let at = client_slot() * sub_cap();
+    let roots = echo_identity.load_clients(heap, dir, subs[at..at + sublens[client_slot()]], engine);
+    io.write_all(io, "reload client-ca ");
+    if roots >= 0 {
+        io.write_all(io, "ok");
+    } else if roots <= echo_identity.file_base() {
+        io.write_all(io, "unreadable ");
+        io.write_all(io, echo_identity.failed_file(roots));
+        io.write_all(io, " errno=");
+        io.print_int(io, echo_identity.failed_errno(roots));
+    } else {
+        io.write_all(io, "refused ");
+        io.write_all(io, tls.refusal_tag(roots));
+    }
+    io.newline(io);
+    flush(io);
+    if tls.client_generation(engine) != before {
+        return 1;
+    }
+    return 0;
+}
+
+// Whether the connection in `slot` was verified under a clients' store that has been replaced since.
+pub fn stale[&e](engine: &e tls.Engine, slot: int) -> [] bool {
+    let g = tls.peer_verified(engine, slot);
+    return g > 0 && g < tls.client_generation(engine);
 }

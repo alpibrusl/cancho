@@ -26,6 +26,15 @@ edition 5;
 //                                             <handshakes in progress>`
 //     O                                       the suite chosen for each mask of offered suites (`tls_hello`),
 //                                             with and without AES instructions: `0 ok` and 16 numbers
+//     G <mode>                                tls.client_auth (0 off, 1 optional, 2 required): `<code> <tag>`
+//     H <pem>                                 tls.trust_clients: `<roots or code> <tag>`
+//     P                                       the client's verified identity, once established:
+//                                             `0 ok <peer_verified> <client_generation> <fingerprint> <subject>
+//                                             <serial> <not_after> <leaf DER> <SANs>`, each SAN `<tag>:<content hex>`
+//                                             comma-separated, `-` for none
+//     L                                       the sizes: `0 ok <ints in a slot> <bytes in a slot> <the engine's cfg>`
+//     B <n>                                   tls.peer_certificate into a buffer of n bytes: `<code> <tag>`
+//     Y                                       the client-certificate calls on a client engine: `<code> <tag>` each
 //     C                                       the calls of the other role: `tls.start` on this engine, and
 //                                             `serve`, `add_identity`, `set_alpn`, the ticket calls and `server_name`
 //                                             on a client engine: `<code> <tag>` each, on one line
@@ -35,6 +44,8 @@ edition 5;
 import std.io;
 import tls;
 import tls_hello;
+import tls_identity;
+import tls_slot;
 
 fn nibble(c: int) -> [] int {
     if c >= 97 {
@@ -168,6 +179,83 @@ fn roles[&h, &i, &e](heap: &!h Heap, io: &!i Io, engine: &!e tls.Engine) -> [hea
     return 0;
 }
 
+// The client-certificate calls on a client engine, each refused `tls-role`.
+fn client_roles[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
+    var client = tls.open(heap, 1);
+    borrow mut client as &!cw in {
+        tag_line(io, tls.client_auth(cw, 0));
+        io.space(io);
+        tag_line(io, tls.trust_clients(cw, "-"));
+        io.space(io);
+        tag_line(io, tls.client_generation(cw));
+        io.space(io);
+        tag_line(io, tls.peer_verified(cw, 0));
+        region r {
+            let buf = alloc_slice[r](64, byte_of(0));
+            io.space(io);
+            tag_line(io, tls.peer_certificate(cw, 0, buf));
+            io.space(io);
+            tag_line(io, tls.peer_subject(cw, 0, buf));
+            io.space(io);
+            tag_line(io, tls.peer_serial(cw, 0, buf));
+            io.space(io);
+            tag_line(io, tls.peer_fingerprint(cw, 0, buf));
+        }
+    }
+    tls.close(heap, client);
+    io.newline(io);
+    return 0;
+}
+
+// What a program is given about the verified client of slot 0 (`docs/tls-server.md` §13.6).
+fn identity[&i, &e, &o](io: &!i Io, engine: &!e tls.Engine, out: &!o [byte]) -> [io_write] int {
+    io.write_all(io, "0 ok ");
+    io.print_int(io, tls.peer_verified(engine, 0));
+    io.space(io);
+    io.print_int(io, tls.client_generation(engine));
+    io.space(io);
+    let fp = tls.peer_fingerprint(engine, 0, out[0..32]);
+    print_hex(io, out[0..fp]);
+    io.space(io);
+    let sub = tls.peer_subject(engine, 0, out);
+    print_hex(io, out[0..sub]);
+    io.space(io);
+    let ser = tls.peer_serial(engine, 0, out);
+    print_hex(io, out[0..ser]);
+    io.space(io);
+    io.print_int(io, tls.peer_not_after(engine, 0));
+    io.space(io);
+    let der = tls.peer_certificate(engine, 0, out);
+    print_hex(io, out[0..der]);
+    io.space(io);
+    var count = 0;
+    region r {
+        let entry = alloc_slice[r](3, 0);
+        var at = 0;
+        var more = true;
+        while more {
+            let next = tls.peer_san(engine, 0, at, entry);
+            if next == 0 {
+                more = false;
+            } else {
+                if count > 0 {
+                    io.write_all(io, ",");
+                }
+                io.print_int(io, entry[0]);
+                io.write_all(io, ":");
+                print_hex(io, out[entry[1]..entry[2]]);
+                count = count + 1;
+                at = next;
+            }
+        }
+    }
+    if count == 0 {
+        io.write_all(io, "-");
+    }
+    io.newline(io);
+    return 0;
+}
+
 fn op_line[&h, &i, &s, &e, &o, &d](heap: &!h Heap, io: &!i Io, s: &s [byte], engine: &!e tls.Engine, out: &!o [byte], held: &!d [byte]) -> [heap, io_write] int {
     let op = int_of(s[0]);
     let f = 2;
@@ -253,6 +341,43 @@ fn op_line[&h, &i, &s, &e, &o, &d](heap: &!h Heap, io: &!i Io, s: &s [byte], eng
     }
     if op == 67 {
         roles(heap, io, engine);
+        return 0;
+    }
+    if op == 71 {
+        tag_line(io, tls.client_auth(engine, number(s, f)));
+        io.newline(io);
+        return 0;
+    }
+    if op == 72 {
+        let n = hex_into(s, f, held);
+        tag_line(io, tls.trust_clients(engine, held[0..n]));
+        io.newline(io);
+        return 0;
+    }
+    if op == 80 {
+        identity(io, engine, out);
+        return 0;
+    }
+    if op == 89 {
+        client_roles(heap, io);
+        return 0;
+    }
+    if op == 76 {
+        io.write_all(io, "0 ok ");
+        io.print_int(io, tls_slot.ints_len());
+        io.space(io);
+        io.print_int(io, tls_slot.bytes_len());
+        io.space(io);
+        io.print_int(io, tls_identity.cfg_len());
+        io.newline(io);
+        return 0;
+    }
+    if op == 66 {
+        region r {
+            let buf = alloc_slice[r](number(s, f), byte_of(0));
+            tag_line(io, tls.peer_certificate(engine, 0, buf));
+        }
+        io.newline(io);
         return 0;
     }
     if op == 79 {
