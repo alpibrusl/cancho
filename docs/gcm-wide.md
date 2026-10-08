@@ -115,28 +115,38 @@ reversed the bits of every block (and of H, and the state) to get the natural or
 makes expensive. The reflected form of Gueron and Kounavis needs none: **read the block as a big-endian integer (one byte
 reversal)**, so that bit `127 - i` is the coefficient of `x^i`, and multiply as integers.
 
-With `a` and `b` in that form, `clmul(a, b)` has the coefficient of `x^m` at bit `254 - m`. Shifted left by one it is at
-bit `255 - m`, so the upper 128 bits of the 256-bit result are the polynomial's coefficients 0 to 127 in the same order and the
-lower 128 bits are coefficients 128 to 255 (the part to fold back). With the modulus `x^128 = x^7 + x^2 + x + 1`, folding the
-low half `L` is `L ^ L>>1 ^ L>>2 ^ L>>7` into the high half (a multiply by `x^k` is a right shift by `k` in this order), and the
-bits that fell off the bottom (at most seven, coefficients 128 to 134) are folded once more the same way. All shifts are by
-constants. In code, with `(Hi, Lo)` the shifted product:
+With `a` and `b` in that form, `clmul(a, b)` has the coefficient of `x^m` at bit `254 - m`. Read as a 256-bit window with
+its top bit as `x^0` (bit `255 - m` is `x^m`), that is `x` times the product, so the product of `a` and `b * x^-1` is the
+window's polynomial exactly: **store each power of H times `x^-1`** (`H^k` shifted left by one, with `0xC2000...01`, which is
+`x^127 + x^6 + x + 1` and so `x^-1` itself, XORed in if a bit left the top) and no product is ever shifted. The upper 128
+bits of the window are then the polynomial's coefficients 0 to 127 in the same order and the lower 128 bits are coefficients
+128 to 255 (the part to fold back by `x^128 = x^7 + x^2 + x + 1`).
+
+**The reduction** is the one the Linux kernel's `ghash-clmulni-intel` uses, on 64-bit lanes only (`psllq`, `psrlq` and one
+byte shift of the whole register: on aarch64 `shl`, `ushr` and `ext`), with `(T1 : D)` the window, `D` the lower half:
 
 ```
-T  = (Lo, 0) ^ (Lo, 0)>>1 ^ (Lo, 0)>>2 ^ (Lo, 0)>>7        as 256 bits: T_hi = Lo ^ Lo>>1 ^ Lo>>2 ^ Lo>>7,
-                                                                       T_lo = Lo<<127 ^ Lo<<126 ^ Lo<<121
-U  = T_lo ^ T_lo>>1 ^ T_lo>>2 ^ T_lo>>7
-result = Hi ^ T_hi ^ U
+phase 1:  T3 = ((((D << 1) ^ D) << 5) ^ D) << 57          every shift of each 64-bit lane
+          D  = D ^ (T3 moved up one lane)                  T1 = T1 ^ (T3 moved down one lane)
+phase 2:  T2 = ((((D >> 5) ^ D) >> 1) ^ D) >> 1
+          result = T1 ^ D ^ T2
 ```
 
-This was checked against SP 800-38D §6.3's bit-by-bit algorithm in a model (200 random single products and an eight-block
+The first phase folds each lane's low bits into the other lane, the second is `D ^ D>>1 ^ D>>2 ^ D>>7` (the polynomial's
+shifts 0, 1, 2 and 7) added to the upper half. An earlier version of this builtin did the same fold on 128-bit integers in the
+general registers, from a left shift of every product by one: the vector version is the same arithmetic in about half the
+instructions and none of the transfers between register files (a 2% faster 16 KiB record on x86-64, measured; the reduction
+was a third of that record's cycles when removed outright, 0.23 of 0.68 a byte, so most of it is not the arithmetic but the
+multiplies and loads around it).
+
+This was checked against SP 800-38D §6.3's bit-by-bit algorithm in a model (300 random single products and an eight-block
 aggregation) before any IR was written: `scripts/ghash_reflected_model.py`, whose steps are the code's.
 
 **Aggregation.** The recurrence `Y_i = (Y_{i-1} ^ X_i) * H` unrolls over eight blocks to
 `Y_8 = (Y_0 ^ X_1) * H^8 ^ X_2 * H^7 ^ ... ^ X_8 * H`. Carry-less multiplication distributes over XOR, so the eight unreduced
-256-bit products can be summed, and **the shift and the fold are done once for the sum**. For the product of two 128-bit values
+256-bit products can be summed, and **the fold is done once for the sum**. For the product of two 128-bit values
 the builtin keeps three accumulators, the sums of the four 64-by-64 products: low halves, high halves, and the two cross terms
-together; the 256-bit value is `lo ^ (mid << 64) ^ (hi << 128)` and is built once per group. Four `pclmulqdq` (or `pmull`) a
+together; the 256-bit window is `lo ^ (mid << 64) ^ (hi << 128)` and is built once per group. Four `pclmulqdq` (or `pmull`) a
 block and no Karatsuba: Karatsuba saves one multiply a block for extra XORs and a table of the halves' sums, and is a
 measured option for later (§8), not a first design.
 
@@ -145,7 +155,8 @@ powers shifted: a group of `n` blocks multiplies block `j` by `H^(n-j)`, so grou
 one routine, all reading the same table. The tail of `m` blocks (1 to 7) is split by the bits of `m` into groups of 4, 2 and 1:
 at most three reductions, not seven.
 
-**The table.** `ghash_powers` computes `H^1` to `H^8` once per key and stores them reflected, 16 bytes each, `H^1` first.
+**The table.** `ghash_powers` computes `H^1` to `H^8` once per key (each the previous times the twisted H) and stores each
+times `x^-1`, 16 bytes, `H^1` first.
 
 ### 3.3 The prepared key (`hw_len()`)
 
@@ -165,7 +176,7 @@ gcm_tag(round_keys: &[byte], rounds: int, table: &[byte], nonce: &[byte], aad: &
 gcm_tag_diff(round_keys: &[byte], rounds: int, table: &[byte], nonce: &[byte], aad: &[byte], text: &[byte], expected: &[byte]) -> [] int
 ```
 
-`ghash_powers` fills the 128-byte `table` from the 16-byte `h` (`H = AES(K, 0)`). `gcm_tag` writes the 16-byte tag of `text`
+`ghash_powers` fills the 128-byte `table` from the 16-byte `h` (`H = AES(K, 0)`) with the twisted powers of §3.2. `gcm_tag` writes the 16-byte tag of `text`
 (the ciphertext) and `aad` under `nonce`: GHASH of `aad`, zero-padded to a multiple of 16, then of `text`, zero-padded, then the
 length block (both lengths in bits, 64 each), XORed with `AES(K, nonce || 1)`. The encryption of `nonce || 1` is issued first so
 its latency runs under the hashing. `gcm_tag_diff` computes the same tag and answers 0 if it equals `expected` and nonzero if

@@ -1,6 +1,8 @@
 # Hardware AES and carry-less multiply: two builtins, and a way to ask whether the CPU has them
 
-> **Status: design, decided; the DIT bit and the builtins built.** §9's five answers were accepted as proposed (2026-10-06),
+> **Status: design, decided; the DIT bit and the builtins built.** *#382 (`docs/gcm-wide.md`) replaced `ghash_update` with
+> `ghash_powers`, `gcm_tag` and `gcm_tag_diff`, added `aes_ctr32`, and grew the hardware part of a prepared key from 256 to
+> 368 bytes; where this document describes those, the notes marked #382 say what is true now.* §9's five answers were accepted as proposed (2026-10-06),
 > and the four PRs of §10 follow in that order: the DIT bit (§6) and the builtins with their LLVM lowering (§3 to §5, as built
 > below) are done, and so are per-key caching (§6) and the `std` change (§8.1). `docs/tls-parity.md` §3.1 measured AES-GCM at about 170 times slower than OpenSSL's, and said the gap
 > is the instructions cancho cannot emit. This document says what it would take to emit them, what is measured so far, and
@@ -88,6 +90,9 @@ information, so branching on it is not a timing leak.
 standard form (`rounds + 1` blocks of 16 bytes, `rounds` 10 for AES-128 and 14 for AES-256), `block` is 16 bytes, `out` is 16
 bytes. The instructions differ in where they place AddRoundKey (`AESE` first, `AESENC` last), and the lowering handles that:
 the program sees the one standard layout on both targets.
+
+*(#382: replaced. `ghash_update` took a block at a time and reduced after each; `docs/gcm-wide.md` §3.2 and §3.4 give the
+aggregated form that took its place, `ghash_powers`, `gcm_tag` and `gcm_tag_diff`, and `aes_ctr32` for counter mode.)*
 
 **`ghash_update(h, y, data)`** is `y = (y XOR block) * h` in GF(2^128) for every 16-byte block of `data`, in GCM's bit
 order, with `y` updated in place. The reduction stays in registers. It takes `data` whole, and `std.gcm` does its own
@@ -208,7 +213,7 @@ The numbers the `std` PR must show, each with its command, and an honest "not me
 `std.gcm`'s `seal_with` and `open_with` take the hardware path where `hw_aes_gcm()` is true (`seal_hardware`,
 `open_hardware`: CTR with `aes_encrypt_block`, GHASH with `ghash_update`, the padding and lengths block as before) and the
 software path otherwise; `seal_software` and `open_software` stay public. A prepared key gains its hardware part as bytes
-(`gcm.hw_len()`, 256: the round keys in FIPS 197's form from the new `aes.round_keys`, and H), which the record layer keeps
+(`gcm.hw_len()`, 256 *(#382: 368, the round keys then the eight twisted powers of H)*: the round keys in FIPS 197's form from the new `aes.round_keys`, and H), which the record layer keeps
 in the slot's keys (`tls_slot.k_read_hw`, `k_write_hw`). The one-shot `seal` and `open` prepare only the path they take.
 
 **Speed**, AES-128-GCM seal with a prepared key (`tests/programs/gcm_speed.cho`, best of three; OpenSSL `speed -evp aes-128-gcm`):
@@ -223,7 +228,10 @@ in the slot's keys (`tls_slot.k_read_hw`, `k_write_hw`). The one-shot `seal` and
 At 16 KiB the hardware path is 11 to 13 times the software one. At 64 bytes Darwin is five times slower than Linux on the same
 CPU: a call allocates one region, which is a 64 KiB `malloc`, and Darwin's is slow at that size (three regions a call took 235
 ms per 200,000 seals, one takes 129). What remains of the gap to OpenSSL at 16 KiB is one call a block of each builtin, with its
-length checks, where OpenSSL interleaves several blocks in registers.
+length checks, where OpenSSL interleaves several blocks in registers. *(#382 measured it again before changing anything,
+and corrected this: the call was not the cost. The cipher's instructions were 17% of a 16 KiB record; the byte-at-a-time XOR
+in cancho, and GHASH's bit reversal and reduction after every block, were most of the rest, and on Darwin a region's
+`malloc` was 88% of a 64-byte one. `docs/gcm-wide.md` §2 has the profile and §8 the result.)*
 
 **Correctness:** every GCM vector (FIPS 197, CAVP, Wycheproof, every refusal) runs on the hardware path on LLVM, and on the
 software path on Cranelift; `the_hardware_and_software_paths_agree` seals and opens 400 random messages on both paths in one
