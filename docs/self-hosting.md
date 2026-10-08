@@ -217,7 +217,8 @@ the stages found, in place, the way this document corrects its own claims.
 | 4a. Writing LLVM IR for functions of `int` and `bool`: literals, the arithmetic and bitwise operators with their traps, comparisons, calls, `let`, assignment, `return` | `examples/selfhost/emit.cho`, written by the checker as it walks (`compile.cho`) | the Rust compiler, by what the built programs do | **First slice of the backend.** 74 programs built both ways and run: the same exit status, or a trap in both (18 trap); none different |
 | 4b. Control flow: `if` with `else`, `while`, `&&` and `||` (the right side only when the left has not decided it) | `emit.cho` and `body.cho` | the Rust compiler, by what the built programs do | **Second slice of the backend.** 123 programs built both ways and run, 49 of them new (loops, recursion, early returns, short-circuit that must not run its right side, traps inside loops): the same exit status or a trap in both (27 trap); none different |
 | 4c. `World`, `release` and a real `main`: `main(world: World)` calls the program, a `World` passed between functions, `release(world)` | `emit.cho`, `body.cho`, `types.cho`, `driver.cho` | the Rust compiler, by what the built programs do | **Third slice of the backend.** 254 builds run and compared: every one of the 123 programs through the old `run` convention and through a real `main`, and 8 more with a `main` of their own (a `World` passed on, `release` used as a value): the same exit status or a trap in both (55 trap); none different |
-| 4d. The rest of the backend: bytes and strings, output (`split`, `Io`), structs, enums, references, generics, `clang` run by the compiler itself | not started | | |
+| 4d. Output: `split(world)` and its parts, a `borrow` of the `Io`, `putchar`, references to whole numbers and booleans, and what an owned capability discharges | `emit.cho`, `body.cho`, `exprs.cho`, `effects.cho` | the Rust compiler, by what the built programs do and write | **Fourth slice of the backend.** 268 builds run and compared, 14 of them print (characters, decimal numbers by recursion, loops, `if` chains, nested helpers, sequential borrows, a trap after output): the same exit status or trap and the same bytes on the standard output (56 trap); none different |
+| 4e. The rest of the backend: strings and `write_bytes`, bytes, slices, structs, enums, references in general, generics, `clang` run by the compiler itself | not started | | |
 
 **The method.** A port that builds no tree has nothing to compare, and one that does
 needs a printer, which is another port. So stage 2's parser wrote the tree the Rust parser
@@ -542,6 +543,19 @@ change: outside compile mode a `World` still makes a function `SKIP`, because ch
 checking that its `World` is consumed exactly once, which is linearity and not written; in compile mode
 the program is taken to be well formed, which is the Rust compiler's to say. The 123 programs are built
 through a real `main` as well as through `run`.
+
+**Stage 4d: output.** `split(world)` answers a prelude struct (which one depends on the edition) and the
+destructuring `let Split { io, ffi, fs, heap, args } = split(world);` binds each part with its own
+type, taken from the generated fields; none of them has a code, as in the Rust backend. A reference is
+a `ptr`: `borrow mut io as &!r in { .. }` stores in the reference's slot a pointer to a byte of its own
+(a `Io` has no representation to point at), and a borrow of a whole number or a boolean stores the
+address of its stack slot, so a function can be given `&!i Io` and a call passes the pointer.
+`putchar` is a `trunc` to `i32`, a call to the C function and a `sext` back, as the Rust backend
+writes it. What it made visible was the row of `main`: a function that owns a capability needs no label
+for what the capability allows (section 8.2 of `docs/linearity-and-effects.md`), so the effect check
+subtracts what the parameters discharge, taken from the same generated table that `discharged_by`
+fills, before comparing. The test now compares what a program writes as well as how it ends, and
+the first thing a cancho-written compiler printed was `Hi`.
 
 The mutation test of `types.cho` (54 operator swaps) killed 40 on the first corpus of 458 targeted
 body cases (after region-variable, `where`-closure and coercion cases were added; 33 before); the 14

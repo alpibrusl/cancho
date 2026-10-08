@@ -97,7 +97,8 @@ fn compile[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte]) -> [io_write]
     console.write_all(io, "declare {i64, i1} @llvm.sadd.with.overflow.i64(i64, i64)\n");
     console.write_all(io, "declare {i64, i1} @llvm.ssub.with.overflow.i64(i64, i64)\n");
     console.write_all(io, "declare {i64, i1} @llvm.smul.with.overflow.i64(i64, i64)\n");
-    console.write_all(io, "declare void @llvm.trap()\n\n");
+    console.write_all(io, "declare void @llvm.trap()\n");
+    console.write_all(io, "declare i32 @putchar(i32)\n\n");
     var at = 0;
     while at < st[44] {
         putchar(io, st[st[43] + at]);
