@@ -339,6 +339,12 @@ pub fn alpn_selected() -> [] int {
     return -130;
 }
 
+// An extension twice in one message from the server (RFC 8446 §4.2): a CertificateRequest's `signature_algorithms` or
+// `certificate_authorities`, an ALPN answer. The same rule, and the alert, as the server's `tls-server-extension-repeat`.
+pub fn extension_repeat() -> [] int {
+    return -131;
+}
+
 pub fn refusal_tag(code: int) -> [] &static [byte] {
     if code == 0 {
         return "ok";
@@ -546,6 +552,9 @@ pub fn refusal_tag(code: int) -> [] &static [byte] {
     }
     if code == -130 {
         return "tls-alpn-selected";
+    }
+    if code == -131 {
+        return "tls-extension-repeat";
     }
     return "unknown";
 }

@@ -874,7 +874,7 @@ pub fn alert_for(code: int) -> [] int {
     if code == tls_record.key_share() || code == tls_record.hello_retry() || code == tls_record.illegal_psk() {
         return 47;
     }
-    if code == tls_record.alpn_selected() {
+    if code == tls_record.alpn_selected() || code == tls_record.extension_repeat() {
         return 47;
     }
     if code == tls_record.decode_error() {
