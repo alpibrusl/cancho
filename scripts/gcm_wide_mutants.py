@@ -152,6 +152,13 @@ def main():
         subprocess.run(["rsync", "-a", "--delete", "--exclude", "target", "--exclude", ".git", "--exclude", ".docker-*", ROOT + "/", work + "/"], check=True)
     else:
         shutil.copytree(ROOT, work, dirs_exist_ok=True, ignore=shutil.ignore_patterns("target", ".git", ".docker-*"))
+    # Cargo rebuilds by modification time: a copy whose files are older than an earlier run's artifacts (a run that
+    # was interrupted with a mutant applied) would be taken for built, so every file is made newer than the build.
+    now = None
+    for dirpath, _, names in os.walk(work):
+        for name in names:
+            if name.endswith((".rs", ".cho", ".toml")):
+                os.utime(os.path.join(dirpath, name), now)
     failed = skipped = killed = 0
     bad = evidence(work, env)
     assert bad is None, f"the unmutated tree must pass: {bad}"
