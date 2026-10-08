@@ -42,7 +42,10 @@ Their interop with this server is docs/tls-server.md §10.2's matrix, against `t
 
 With `--cost <seconds>`: `openssl s_time -new` against the server for that long, with 1 and with 4 clients at once
 and the bounds lifted, then 4 clients against the default bounds, and the server's CPU (Linux `/proc/<pid>/stat`;
-elsewhere `ps`) divided by the handshakes: connections a second, and milliseconds of CPU a handshake. One line a case, then a count; exit status 1 if any failed.
+elsewhere `ps`) divided by the handshakes: connections a second, and milliseconds of CPU a handshake. With `--cost <seconds> --tickets
+[--rounds <n>]` instead (docs/tls-server.md §12.9): a full handshake with tickets off, a full one with two tickets sent, and a resumed
+one (Python's `ssl`, one connection at a time), `n` times round in turn, the median and the best ms of server CPU of each.
+One line a case, then a count; exit status 1 if any failed.
 """
 import os
 import re
@@ -706,12 +709,13 @@ def cost(exe, seconds, clients, extra):
         server.stop()
 
 
-def cost_resumed(exe, seconds, extra):
-    """The server's CPU for connections that resume: one full handshake, then `seconds` of connections offering its
-    session (Python's `ssl`; the server's lines say how many resumed)."""
+def cost_python(exe, seconds, extra, resume):
+    """The server's CPU for connections made by Python's `ssl`, one at a time for `seconds`: each a full handshake, or
+    (`resume`) one offering the session a first full handshake was sent. The server's lines say how many were
+    established, and how many of those resumed."""
     server = Server(exe, extra=extra)
     try:
-        sess, _ = make_session(server.port)
+        sess = make_session(server.port)[0] if resume else None
         before = cpu_seconds(server.proc.pid)
         mark = len(server.lines)
         end = time.time() + seconds
@@ -723,10 +727,30 @@ def cost_resumed(exe, seconds, extra):
             c.close()
         time.sleep(1)
         cpu = cpu_seconds(server.proc.pid) - before
-        resumed = sum(1 for l in server.text()[mark:] if " established " in l and field(l, "resumed") == "yes")
-        return resumed, cpu
+        lines = [l for l in server.text()[mark:] if " established " in l]
+        done = sum(1 for l in lines if (field(l, "resumed") == "yes") == resume)
+        return done, cpu
     finally:
         server.stop()
+
+
+def cost_tickets(exe, seconds, rounds):
+    """Full without tickets, full with two sent, and resumed, `rounds` times round in turn (a machine whose speed
+    changes over the minutes moves all three together): the median and the best ms of server CPU a handshake."""
+    import statistics
+    kinds = [("full, tickets off", UNBOUNDED, False), ("full, tickets on (2 sent)", UNBOUNDED + ["--tickets", "2"], False),
+             ("resumed, tickets on", UNBOUNDED + ["--tickets", "2"], True)]
+    per = {k[0]: [] for k in kinds}
+    for _ in range(rounds):
+        for what, extra, resume in kinds:
+            done, cpu = cost_python(exe, seconds, extra, resume)
+            if done:
+                per[what].append(cpu / done * 1000)
+    full = statistics.median(per[kinds[0][0]])
+    for what, _, _ in kinds:
+        med, best = statistics.median(per[what]), min(per[what])
+        print(f"cost       {what}: median {med:.2f} ms, best {best:.2f} ms a handshake of server CPU "
+              f"({med / full:.2f} of the median full handshake; {rounds} rounds of {seconds} s)", flush=True)
 
 
 def main():
@@ -740,6 +764,9 @@ def main():
         k = args.index("--cost")
         seconds = int(args[k + 1])
         del args[k:k + 2]
+    if "--rounds" in args:
+        k = args.index("--rounds")
+        del args[k:k + 2]
     args = [a for a in args if a != "--tickets"]
     names = args or list(CASES)
     failed = 0
@@ -752,7 +779,7 @@ def main():
         failed += 0 if ok else 1
         print(f"{name:10} {result}", flush=True)
     rows = [(1, UNBOUNDED, "no bounds"), (4, UNBOUNDED, "no bounds"), (4, [], "the defaults: --rate 100")]
-    for clients, extra, what in (rows if seconds else []):
+    for clients, extra, what in (rows if seconds and "--tickets" not in sys.argv else []):
         done, cpu, established = cost(exe, seconds, clients, extra)
         rate = done / seconds
         per = cpu / done * 1000 if done else 0
@@ -760,16 +787,8 @@ def main():
               f"{rate:.0f} a second, {cpu:.2f} s of server CPU ({cpu / seconds:.0%} of a core), "
               f"{per:.2f} ms a handshake", flush=True)
     if seconds and "--tickets" in sys.argv:
-        for what, extra, resumed in [("full, tickets off", UNBOUNDED, False),
-                                     ("full, tickets on (2 sent)", UNBOUNDED + ["--tickets", "2"], False),
-                                     ("resumed, tickets on", UNBOUNDED + ["--tickets", "2"], True)]:
-            if resumed:
-                done, cpu = cost_resumed(exe, seconds, extra)
-            else:
-                done, cpu, _ = cost(exe, seconds, 1, extra)
-            per = cpu / done * 1000 if done else 0
-            print(f"cost       {what}: {done} handshakes in {seconds} s, {cpu:.2f} s of server CPU, "
-                  f"{per:.2f} ms a handshake", flush=True)
+        rounds = int(sys.argv[sys.argv.index("--rounds") + 1]) if "--rounds" in sys.argv else 5
+        cost_tickets(exe, seconds, rounds)
     print(f"{len(names) - failed} of {len(names)} cases ok")
     return 1 if failed else 0
 

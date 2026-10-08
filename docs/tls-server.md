@@ -260,6 +260,9 @@ bottom of that range, and the check of §3.3 costs as much as the signature on t
 §9's question 3 has it; on the M4 it is about 0.8 ms, as estimated). OpenSSL 3.0.13 signs in 23 µs on the same i7
 (`openssl speed ecdsap256`, 44,132 a second), 65 times faster.*
 
+*Resumed handshakes (step 5, §12.9): 1.52 ms against 3.15 ms of `examples/tls_echo` on the M4, and about a third to a half of a
+full handshake on an x86-64 box too loaded to give an absolute figure.*
+
 **Measured (step 2), in place of the estimate.** `python3 scripts/tls_server_cost.py <tls_serve> 20`: the server
 (`tests/programs/tls_serve.cho`, LLVM backend, `echo` mode, one P-256 identity) under `openssl s_time -new`, full
 handshakes one after another for 20 seconds a row, the server process's CPU (user and system, `/proc/<pid>/stat`)
@@ -851,6 +854,13 @@ The configuration calls answer `tls-server-ticket-config` (a count over 8 or a l
   post-handshake message, under the server's application key), in the same turn as the check, so a client that starts to
   read finds them. A resumed connection is sent `count` new tickets too (a new ticket per connection keeps the client's use
   of a ticket single, as the client does). They are not sent on a connection that failed.
+- **`event` says `want_write` while the engine has output, so a connection that ends its handshake with tickets queued
+  does not report `established` until they are taken.** *Found by the interop run, not by design:* `tests/programs/tls_serve.cho`
+  answered a request only when `event` said `established` after a read, and a client that sent its Finished and its request in
+  one segment (OpenSSL does) hung in about one connection in six with tickets on and never without. The engine is as
+  documented (`docs/tls-pure.md` §2.2: the event once the output is taken); the program, which has data waiting, must not
+  wait for the event (the harness now answers whenever it has data), and `examples/tls_echo` and `examples/https_hello`, which
+  flush before they look at the event, never had it: 1,440 connections of 120 clients at once, 1,320 resumed, no error.
 - **A connection that never reads them** costs `count` × about 250 to 700 bytes of the slot's output, which `feed` already
   bounds (it stops reading while less than 1 KiB is free).
 - **KeyUpdate.** A ticket is made once, at the end of the handshake, under the server's first application key; it does not
@@ -866,6 +876,7 @@ tls.set_tickets(engine, count, lifetime_s) -> 0 | tls-server-ticket-config  // s
 tls.set_ticket_keys(engine, keys, now_ms)  -> 0 | tls-server-ticket-key      // n x 32 bytes, first current (§12.2)
 tls.rotate_ticket_key(engine, now_ms)      -> 0 | tls-no-entropy             // draw a key, make it current
 tls.set_time(engine, now_ms)               -> 0                              // the engine's clock for tickets (§12.3 c)
+tls.ticket_keys(engine)                    -> int                            // how many keys open tickets now
 tls.resumed(engine, slot)                  -> bool                           // as for a client
 tls.ticket_verdict(engine, slot)           -> int                            // why a connection did or did not resume
 tls.ticket_verdict_tag(verdict)            -> "tls-ticket-..."
@@ -901,8 +912,33 @@ the server do more than 4 small AEAD opens.
 
 ### 12.9 Cost
 
-*To be measured by the build (§6's method); the expectation is a resumed handshake of about one key exchange (1.1 to 1.5
-ms) against 3.0 to 5.5 ms.*
+**Measured** (the expectation written before the build was a resumed handshake of about one key exchange, 1.1 to 1.5 ms,
+against 3.0 to 5.5 ms). `python3 scripts/tls_echo_test.py <tls_echo> --cost 6 --tickets --rounds 7`: the server of
+`examples/tls_echo` (LLVM backend, one thread, a P-256 identity, AES-128-GCM chosen by the server on both machines), a Python
+`ssl` client making connections one at a time for 6 s, the server's CPU (user and system, `/proc/<pid>/stat` or `ps`) divided
+by the handshakes its own `established` lines count. Three rows, **alternating, 7 rounds each**, so a machine whose speed
+changes over the minutes moves all three together; the median and the best of the 7:
+
+| | full, tickets off | full, 2 tickets sent | **resumed** | resumed / full |
+|---|---|---|---|---|
+| **arm64**: Apple M4 Max, macOS 26.2, native; the host busy with other builds (load average 11 to 17) | 3.15 ms (best 3.07) | 3.20 ms (best 3.12) | **1.52 ms** (best 1.50) | **0.48** |
+| **x86-64**: Intel i7-1260P, Linux, pinned to **core 6** (`taskset -c 6`), the box shared (load average 4 to 10) | 9.74 ms (best 5.47) | 9.63 ms (best 6.82) | **3.46 ms** (best 2.91) | **0.35** of the median, 0.53 of best to best |
+
+- **A resumed handshake costs about half a full one on arm64 (1.52 against 3.15 ms), and about a third to a half on x86-64.**
+  What it still pays is the key exchange (the X25519 key pair and shared secret, 1.14 ms on the M4 of `docs/tls-resumption.md` §1)
+  and the key schedule, the records and the transcript: 1.5 ms, inside the 1.1 to 1.5 expected.
+- **Issuing two tickets on a full handshake costs 1.6% on arm64** (3.20 against 3.15 ms) **and nothing a noisy x86-64 box can see**
+  (9.63 against 9.74; the best of 7 is 6.82 against 5.47, which is the box).
+- **The x86-64 figures move more than a factor of three between runs**: five single runs of the same rows (an earlier form of the script, with `openssl s_time -new` for
+  the full handshakes), minutes apart, gave a full handshake of 19.6, 19.9, 12.5, 5.2 and 5.8 ms and a resumed one of 8.3, 7.0,
+  4.7, 3.2 and 2.5 while other jobs on the box came and went (load average 4 to 10 on 16 cores; the other cores are theirs),
+  and CI's runner measured 5.5 ms for a full handshake of the same code in §11.4. The ratio ranged from 0.35 to 0.62 and the
+  absolute figures are the box's; the quiet runs, 5.2 and 5.8 ms full against 3.2 and 2.5 resumed, are those of CI. The row
+  `tls_serve` gives (`python3 scripts/tls_server_cost.py <tls_serve> 6 --tickets --rounds 9`, whose loop costs more than the
+  example's, §6) is the same shape: X25519, full 14.7 ms median (best 7.5), 15.4 with tickets (best 7.6), resumed 6.3 (best 3.3),
+  0.43; P-256, full 21.3 (best 15.6), resumed 7.0 (best 2.8).
+- **Not measured**: the Docker linux-aarch64 of §6 and §11.4 (its disk was full of other jobs' images when the run was due);
+  the Cranelift backend; a resumption through a HelloRetryRequest (it costs one more message hashed, §6).
 
 ### 12.10 Memory
 
@@ -979,20 +1015,52 @@ M4 Max), the x86-64 ones on a Linux box (an Intel i7-1260P, `taskset -c 6`).
   The example's own live tests (`scripts/tls_echo_test.py`, `scripts/https_hello_test.py`, §12.13) add Python's `ssl`.
 
 - **The differential** (`python3 scripts/tls_server_tickets_differential.py <tls_serve>`, against `openssl s_server`
-  3.0.13 with the same identity and tickets on): the same client behaviour against each server's own tickets, 11 cases:
-  **8 agree, 1 differs in the alert only, 2 differ as `EXPECTED` says.** They agree on an honest resumption, a ticket used
+  3.0.13 with the same identity and tickets on): the same client behaviour against each server's own tickets, 12 cases:
+  **9 agree, 1 differs in the alert only, 2 differ as `EXPECTED` says.** They agree on an honest resumption, a ticket used
   twice, `psk_ke` only, **`pre_shared_key` without `psk_key_exchange_modes` (both abort, `missing_extension`)**, a ticket with one
   bit changed, a truncated one, one of 15,000 bytes, early data offered (both resume and skip it), and a good ticket second of
-  two. A wrong binder: this server `decrypt_error` (51, as RFC 8446 §4.2.11.2 says), OpenSSL `illegal_parameter` (47). The two
+  two behind a made-up one. A wrong binder: this server `decrypt_error` (51, as RFC 8446 §4.2.11.2 says), OpenSSL `illegal_parameter` (47). The two
   that differ on purpose: OpenSSL resumes a ticket for another host name (it does not compare it; this server does), and one
   whose claimed age is 60 s off (OpenSSL does not check the age without early data; this server does, within 30 s).
   `scripts/tls_server_differential.py` (the ClientHello cases of §10.4) is unchanged: 59 agree, 7 alert, 6 as documented,
   skipping the ticket cases, which are several connections.
 
-- **Live tests of the examples** (`scripts/tls_echo_test.py`, 4 new cases of 15; `scripts/https_hello_test.py`, 1 of 20; and
+- **Live tests of the examples** (`scripts/tls_echo_test.py`, 4 new cases of 15, all ok; `scripts/https_hello_test.py`, 1 new of 20; and
   `conformance/tls_echo.rs`, `https_hello.rs` against `packages/tls`'s own client): a session kept by Python's `ssl`
   resumes three times from one session; **a session from one process resumes at another that holds the same key file, not
   at one with another**; a rotation by `SIGHUP` (a new key on top) keeps the old session, a second rotation that drops its key
   refuses it, a file that is not hex is refused (`reload tickets refused tls-server-ticket-key`) and the keys stay; **a
   certificate renewed and loaded by `SIGHUP` refuses the tickets of the old one and a reload of the same certificate keeps
   them**; a session offered after its 2 s lifetime does not resume.
+
+### 12.14 Where this differs from the design, and what building it found
+
+- **The ticket is 681 bytes at most**, not 705: the arithmetic of §12.1 was right and its first sum wrong (corrected in place).
+- **A ticket from the future is not a separate test.** The first draft had `age < -window` beside the difference of the two
+  ages; the mutant that removed it survived, because with a client age that is never negative the difference alone is more
+  than the window whenever the server's age is less than minus the window. The clause was dead code and is gone.
+- **`event` and the tickets' output** (§12.6): the interop run hung one connection in six in the test harness, not in the
+  engine; the harness is fixed and §12.6 says so.
+- **The wrong-binder alert** is `decrypt_error` here and `illegal_parameter` in OpenSSL (the differential, above); §12.3 f says
+  which the RFC names.
+- **The lying client's own binder was wrong** by one byte in its first version of the padded case (§12.12). The server was
+  right to refuse; it was refusing for the wrong reason, and only a mutant that removed the right reason showed it.
+- **`tls.ticket_keys`** was not in the design's interface; the program that supplies keys wants to log how many open.
+- **mosquitto does not resume** (§12.12), against the issue's hope that it would; it is the client's, not this server's.
+
+### 12.15 Not done, and not verified
+
+- **A resumption count or a rate limit.** A ticket resumes as often as its client offers it, until it expires (§12.4); the
+  engine counts nothing. A program that wants a single-use ticket keeps the binders it has seen, or does not send tickets.
+- **Client certificates (#384).** Tickets carry `auth` 0 and refuse anything else (§12.3 g); what a ticket of an
+  authenticated client holds is #384's design.
+- **P-384, Ed25519 and RSA identities** (step 7): a ticket binds a leaf's SHA-256, which is key-type independent, so
+  nothing here changes; not exercised.
+- **0-RTT**: refused, not deferred (§2.2).
+- **TLS 1.2 tickets (RFC 5077)**: step 6, if it is ever built.
+- **Browsers**: Chrome and Firefox were not run, here as in §10.9; their ClientHello carries `psk_key_exchange_modes` and
+  resumes with the standard extension, and the interop matrix has OpenSSL, curl, Go, wolfSSL, GnuTLS and rustls.
+- **Timing of the ticket path**: no dudect test. The AEAD tag and the binder are compared with every byte examined; the ticket
+  key is never an index or a branch; the rules compare public values. The key schedule from a PSK is the client's.
+- **Independent review**: none (#209), as the engine.
+- **A long soak.** The fuzzers ran for the times in §12.12; no multi-day run.
