@@ -56,3 +56,35 @@ fn every_client_certificate_and_alpn_case_replays_and_ends_with_its_tag_on_both_
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// The engine's rules for client identities and ALPN (`docs/tls-parity.md` §6.2, §6.5, §6.6), recorded by
+/// `scripts/tls_tickets_auth.py` against the same server: an identity added, replaced or removed keeps a saved ticket
+/// back, the client certificate's notAfter bounds a ticket, the identity is chosen by the host, and a ticket is not bound
+/// to the ALPN offer. Each case replays byte for byte.
+#[test]
+fn the_engine_keeps_a_ticket_back_when_the_identity_changes_and_chooses_it_by_host_on_both_backends() {
+    let text =
+        std::fs::read_to_string(repo_root().join("tests/vectors/tls/tickets_auth.txt")).unwrap();
+    let mut cases: Vec<(String, Vec<String>, Vec<String>)> = Vec::new();
+    for line in text.lines() {
+        if let Some(name) = line.strip_prefix("## ") {
+            cases.push((name.to_string(), Vec::new(), Vec::new()));
+        } else if line.starts_with('#') {
+        } else if let Some(a) = line.strip_prefix("= ") {
+            cases.last_mut().unwrap().2.push(a.to_string());
+        } else {
+            cases.last_mut().unwrap().1.push(line.to_string());
+        }
+    }
+    assert_eq!(cases.len(), 9);
+    for backend in ["cranelift", "llvm"] {
+        let (dir, exe) = super::tls::build_tls_tickets(backend);
+        for (name, asked, answered) in &cases {
+            let got = super::tls::run(&exe, asked);
+            for (n, (g, w)) in got.iter().zip(answered).enumerate() {
+                assert_eq!(g, w, "{name} line {n} on {backend}");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
