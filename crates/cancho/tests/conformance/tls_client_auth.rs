@@ -14,7 +14,7 @@ const RECORDING: &str = "tests/vectors/tls/liar_client_auth.txt";
 #[test]
 fn every_client_certificate_case_replays_with_its_own_tag_on_both_backends() {
     let cases = cases_in(RECORDING);
-    assert_eq!(cases.len(), 77);
+    assert_eq!(cases.len(), 78);
     for backend in ["cranelift", "llvm"] {
         let (dir, exe) = build_server_driver("client-auth", backend);
         for (tag, name, asked, answered) in &cases {

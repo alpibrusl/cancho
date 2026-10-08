@@ -607,6 +607,13 @@ def honest_retry(c):
     c.identity(DEVICE)
 
 
+@case("honest: required, post_handshake_auth offered in the ClientHello: ignored, the request comes in the handshake", "ok",
+      None, None)
+def honest_post_handshake_auth(c):
+    c.extra = ext(49, b"")
+    c.honest_auth(DEVICE)
+
+
 @case("honest: required, ChaCha20-Poly1305, no change_cipher_spec, an empty session id", "ok", None, None)
 def honest_chacha(c):
     c.suites, c.expect_suite = [0x1303], 0x1303

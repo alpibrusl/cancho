@@ -1110,8 +1110,8 @@ that key". It never says what that identity may do.
 | `2` **required** | sends a CertificateRequest | refused: `certificate_required` (116), `tls-server-client-cert-required` | refused, as above |
 
 - **Optional is not "verify if convenient".** A certificate that is presented and wrong ends the connection in both modes
-  (RFC 8446 §4.4.2.4 lets a server continue only without a certificate, "at its discretion", and OpenSSL's
-  `SSL_VERIFY_PEER` without `FAIL_IF_NO_PEER_CERT` is the same). A program in `optional` mode must test
+  (RFC 8446 §4.4.2.4 lets a server continue only without a certificate, "at its discretion"; `openssl s_server -verify`
+  does the same once it is given `-verify_return_error`, measured in §13.16, without which it goes on after a verification error). A program in `optional` mode must test
   `peer_verified` before it trusts an identity: *no identity is not an error* is the point of the mode.
 - **The mode is per engine, taken when a connection is served.** `serve` copies it into the slot's flags, so changing the
   mode does not change a handshake in progress. A mode per identity or per host name (a gateway that wants certificates on
@@ -1473,18 +1473,20 @@ Each leaf has a country, an organization and a common name, and four kinds of su
 A row passes when the client completes and its data comes back, **and the identity `tls_serve` prints for the connection (what the
 program is given through `tls.peer_*`) is what OpenSSL reports for the same certificate**: the fingerprint is `openssl x509
 -fingerprint -sha256`'s, the SANs are `openssl x509 -ext subjectAltName`'s in order, and the subject's DER is the certificate's.
-On x86-64 (gram: Ubuntu, OpenSSL 3.5.5, curl; no Go, wolfSSL or mosquitto there) the OpenSSL and curl rows: **30 of 30**.
+The 75 rows ran before this work was put on #394's head (the engine's client-certificate code is the same). On the merged tree, on
+x86-64 (gram: Ubuntu, OpenSSL 3.5.5, curl; no Go, wolfSSL or mosquitto there) the OpenSSL and curl rows: **30 of 30**; CI's
+`tls-assurance` job runs all five clients on it.
 The examples' tests (below) compare the log line's `client=` with `openssl x509 -nameopt RFC2253`, for a subject with a comma,
 quotes, a `+`, a leading `#` and a trailing space, a `;`, `<`, `>`, a backslash and a non-ASCII letter: they agree.
 **Not run:** `packages/tls`'s own client (it cannot present a certificate: #386), Firefox, Chrome, Windows' schannel.
 
 ### 13.16 The lying client, the differential, fuzzing, mutants
 
-- **The lying client** (`python3 scripts/tls_liar_client_auth.py <driver> <out.txt>`): **77 connections**, replayed byte for byte on
+- **The lying client** (`python3 scripts/tls_liar_client_auth.py <driver> <out.txt>`): **78 connections**, replayed byte for byte on
   both backends by `conformance/tls_client_auth.rs` (the honest ones again with the client's bytes fed one byte a line, and the
-  identity compared). 30 end `ok`: the honest connections (5 key types, the three RSA-PSS schemes, chains of one, two and three
+  identity compared). 31 end `ok`: the honest connections (5 key types, the three RSA-PSS schemes, chains of one, two and three
   certificates, a leaf with four kinds of SAN and a serial with its top bit set, a leaf with none, the flight in one record, after a
-  HelloRetryRequest, with ChaCha20 and no change_cipher_spec, `optional` with and without a certificate, `off`, a store of two
+  HelloRetryRequest, with `post_handshake_auth` offered and ignored, with ChaCha20 and no change_cipher_spec, `optional` with and without a certificate, `off`, a store of two
   CAs, a store whose names are exactly 8,192 bytes and one of 8,193, a name constraint satisfied, the store replaced after the
   connection, a device that is its own CA) the memory sizes and the three cases of §13.8 (a client with a certificate is sent no ticket; an anonymous client's ticket resumes with no CertificateRequest and no identity; a ticket from an optional connection is refused when certificates are required, the client presenting its own); the other 47 each end with their tag (six of them on a configuration call) and, for a connection, the alert §13.7 names. One
   case per rule of §13.2 to §13.4, and one for each item of the task's list: no certificate when required; an empty Certificate when
@@ -1508,10 +1510,13 @@ quotes, a `+`, a leading `#` and a trailing space, a `;`, `<`, `>`, a backslash 
   edges) and 330,362 of `server` (1,368 of 11,532, with client authentication on for a third of its inputs)**: no crash and no hang.
   The queue was minimised to 249 inputs, committed beside the 23 seeds (a good Certificate and CertificateVerify for each key type, and
   the lying client's refusals); `conformance/tls_fuzz.rs` runs them on both backends. `tls_fuzz.py --server` (§13.11), on the tree with the tickets: **20,000 mutated connections over 48 recorded handshakes, 0 traps** (x86-64).
-- **Mutants.** `python3 scripts/tls_server_mutants.py <cancho>` replays both recordings: **126 mutants, 124 killed, 2 equivalent
-  (argued in the script), 0 survived**; 55 of them are new (the purpose, the context string, each message's place in the
-  transcript, the optional/required test, the bounds, the strict store, the identity gate, the states, the alerts, each `tls-role`
-  refusal). 
+- **Mutants.** `python3 scripts/tls_server_mutants.py <cancho> [--shard k/n]` replays the recordings of §10.3, §12 and this section: **202
+  mutants, 199 killed, 3 equivalent (argued in the script), 0 survived** (five shards, 41, 41, 40, 40 and 40 mutants: three on the M4, two on
+  gram). 143 are the tickets' and 59 are new: the purpose, the context string, each message's place in the transcript, the
+  optional/required test, the bounds, the strict store, the identity gate, the states, the alerts, each `tls-role` refusal, the clock, and
+  the three hooks of §13.8. The three equivalent: a leaf over the room (the message bound already holds it), a block `store_load`
+  skipped (the count of `-----BEGIN ` markers already refuses it), and the clock `begin` stores (through the engine the slot's clock
+  is never behind it).
 
 ### 13.17 Cost
 
