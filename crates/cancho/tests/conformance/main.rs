@@ -113,6 +113,7 @@ mod vcs_std;
 mod vcs_sync;
 mod wasm_target;
 mod word_scan;
+mod wide_multiply;
 mod x25519;
 mod x509;
 mod x509_verify;
