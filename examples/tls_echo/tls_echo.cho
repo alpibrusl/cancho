@@ -9,6 +9,7 @@ edition 6;
 //     tls_echo --port <n> --dir <directory> [--identity <subdirectory>]...
 //              [--alpn <p1,p2,...>] [--connections <n>] [--handshakes <n>]
 //              [--rate <per second>] [--handshake-timeout <ms>] [--idle <ms>]
+//              [--per-address <n>] [--per-address-rate <per second>]
 //
 // `--dir` holds the certificates: `chain.pem` (PEM, leaf first), `key.pem`
 // (P-256, PKCS#8 or SEC 1, unencrypted) and `names` (the host names it
@@ -43,6 +44,7 @@ import tls;
 fn usage[&i](io: &!i Io) -> [err_write] int {
     io.error_all(io, "usage: tls_echo --port <n> --dir <directory> [--identity <subdirectory>]... [--alpn <p1,p2>]\n");
     io.error_all(io, "                [--connections <n>] [--handshakes <n>] [--rate <n>] [--handshake-timeout <ms>] [--idle <ms>]\n");
+    io.error_all(io, "                [--per-address <n>] [--per-address-rate <n>]\n");
     return 2;
 }
 

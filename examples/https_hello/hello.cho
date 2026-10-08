@@ -9,6 +9,7 @@ edition 6;
 //     https_hello --port <n> --dir <directory> [--identity <subdirectory>]...
 //                 [--alpn <p1,p2,...>] [--connections <n>] [--handshakes <n>]
 //                 [--rate <per second>] [--handshake-timeout <ms>] [--idle <ms>]
+//                 [--per-address <n>] [--per-address-rate <per second>]
 //
 // The options, the certificates (`--dir`, `--identity`), the bounds, `SIGHUP` and
 // `SIGINT`/`SIGTERM`, the log, and the exit statuses are `examples/tls_echo/tls_echo.cho`'s,
@@ -26,6 +27,7 @@ import tls;
 fn usage[&i](io: &!i Io) -> [err_write] int {
     io.error_all(io, "usage: https_hello --port <n> --dir <directory> [--identity <subdirectory>]... [--alpn <p1,p2>]\n");
     io.error_all(io, "                [--connections <n>] [--handshakes <n>] [--rate <n>] [--handshake-timeout <ms>] [--idle <ms>]\n");
+    io.error_all(io, "                [--per-address <n>] [--per-address-rate <n>]\n");
     return 2;
 }
 
