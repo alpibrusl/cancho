@@ -111,6 +111,7 @@
 - [TLS 1.3 session resumption](tls-resumption.md)
 - [A TLS 1.3 server](tls-server.md)
 - [`std.ecdsa_sign`: ECDSA P-256 signing in constant time](ecdsa-sign.md)
+- [`std.p256`: faster P-256](p256-fast.md)
 - [Hardware AES and carry-less multiply](crypto-builtins.md)
 
 # Compile time and program identity
