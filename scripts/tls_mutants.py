@@ -390,7 +390,7 @@ def cases():
             elif not line.startswith("#"):
                 asked.append(line)
         out.append((name, asked, answered))
-    # The 84 connections of the lying server, and the 75 about client certificates and ALPN
+    # The 84 connections of the lying server, and the 77 about client certificates and ALPN
     # (`scripts/tls_liar_auth.py`, docs/tls-parity.md §6).
     for vectors in ("liar.txt", "liar_auth.txt"):
         for line in open(os.path.join(ROOT, "tests/vectors/tls", vectors)):
@@ -406,7 +406,14 @@ def cases():
 
 # Mutants that change no behaviour the client can reach, each with the argument. Such a mutant must survive;
 # one that is killed was not equivalent, and the run fails.
-EQUIVALENT = {}
+EQUIVALENT = {
+    "ALPN: an ALPN answer in EncryptedExtensions accepted when none was offered":
+        "the parser then returns the protocol's range, and `tls_client12.take_alpn` refuses it with the same tag "
+        "(`tls-unsupported-extension`) because the offer is empty: two checks for one rule, and the first is defence in depth",
+    "ALPN: a name over 255 bytes accepted":
+        "a name over 255 bytes is at least 257 bytes in wire form, which the offer's cap of 256 refuses with the same tag "
+        "(`tls-alpn-list`) on the next test; the 255 limit keeps `byte_of(e - p)` from trapping should the cap ever grow",
+}
 
 
 def ticket_cases():

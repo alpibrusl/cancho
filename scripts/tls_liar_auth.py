@@ -130,6 +130,7 @@ class AuthServer(Server):
         self.cr_count = 1
         self.client_pub = KEY.public_key()
         self.client_cert = CERT
+        self.chain = None
 
     def start(self, alpn=None, identity=True, hosts=HOST, extra=()):
         prelude(self.c, alpn, identity, hosts, extra)
@@ -173,7 +174,7 @@ class AuthServer(Server):
             assert len(lst) == 3, "an empty Certificate"
         else:
             at = 3
-            for cert_in_chain in self.chain:
+            for cert_in_chain in (self.chain or [self.client_cert]):
                 n = int.from_bytes(lst[at:at + 3], "big")
                 der = lst[at + 3:at + 3 + n]
                 assert der == cert_in_chain.public_bytes(serialization.Encoding.DER), "the identity's certificate"
@@ -266,6 +267,11 @@ case("client auth: 2,600 authorities, none ours: the empty Certificate", "ok")(m
 
 case("client auth: a chain of two certificates, each with an empty extension list", "ok")(
     mutual("chain", 1, SIG, extra=[CA[1]]))
+# A chain whose second certificate was issued by another CA: naming that CA (and not the leaf's) in the request is answered
+# with the chain, so every certificate's issuer is considered.
+INTERMEDIATE = client_certificate(client_key("intermediate"), OTHER_CA, name="tls_liar intermediate", serial=388)
+case("client auth: the authorities name only the second certificate's issuer", "ok")(
+    mutual("chain", 1, SIG + authorities([OTHER_CA_NAME]), extra=[INTERMEDIATE]))
 # The same length as CA_NAME, other bytes: only a byte-for-byte comparison tells them apart.
 SAME_LENGTH = CA_NAME[:-1] + bytes([CA_NAME[-1] ^ 1])
 case("client auth: an authorities name of the issuer's length and other bytes: empty Certificate", "ok")(
@@ -562,6 +568,8 @@ case12("TLS 1.2 client auth: P-256 key exchange", "ok")(
     lambda s: (setattr(s, "group", P256), mutual12("chain", 1, ([ECDSA_SIGN], [ECDSA_SHA256], []))(s)))
 case12("TLS 1.2 client auth: a chain of two certificates", "ok")(
     mutual12("chain", 1, ([ECDSA_SIGN], [ECDSA_SHA256], []), extra=[CA[1]]))
+case12("TLS 1.2 client auth: the authorities name only the second certificate's issuer", "ok")(
+    mutual12("chain", 1, ([ECDSA_SIGN], [ECDSA_SHA256], [OTHER_CA_NAME]), extra=[INTERMEDIATE]))
 case12("TLS 1.2 client auth: ecdsa_sign is not a certificate type: empty Certificate", "ok")(
     mutual12("empty", 2, ([RSA_SIGN], [ECDSA_SHA256], [])))
 case12("TLS 1.2 client auth: Ed25519 only: empty Certificate", "ok")(mutual12("empty", 2, ([ECDSA_SIGN], [ED25519], [])))
