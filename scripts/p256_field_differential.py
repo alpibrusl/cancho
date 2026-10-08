@@ -148,6 +148,40 @@ def verify_cases(rng, count, compact=False):
     return out
 
 
+R280 = 1 << 280
+
+
+def montgomery(a, b, mod):
+    """What the kernels compute, whatever the size of a and b: (a b + m mod) / R, m = -a b mod^-1 mod R."""
+    t = a * b
+    m = (-t * pow(mod, -1, R280)) % R280
+    return (t + m * mod) // R280
+
+
+def raw_limbs(v):
+    return " ".join(str(v >> (28 * i) & M28) for i in range(9)) + f" {v >> 252} "
+
+
+def raw_cases(rng, count, compact=False):
+    """The kernels on operands as large as their limbs allow: every limb 2^28 - 1 is the case the
+    `wrapping_*` accumulators' bound (scripts/p256_gen.py) is about."""
+    top = (1 << 280) - 1
+    edges_ = [top, top - 1, top ^ (M28 << 28), top ^ M28, M28, 1 << 279, P, 4096 * P, 4095 * P + P - 1, N, 4096 * N, 4095 * N + N - 1, 0, 1, (1 << 256) - 1, int("0f" * 35, 16), int("f0" * 35, 16), int("ff00" * 17 + "ff", 16)]
+    out = []
+    if compact:
+        edges_ = edges_[:5] + edges_[6:8] + edges_[8:10] + edges_[12:13] + edges_[14:16]
+    pairs = [(a, b) for a in edges_ for b in edges_] + [(rng.randrange(1 << 280), rng.randrange(1 << 280)) for _ in range(count)]
+    for a, b in pairs:
+        ha, hb = f"{a:070x}", f"{b:070x}"
+        out.append((f"P {ha} {hb}", raw_limbs(montgomery(a, b, P))))
+        out.append((f"R {ha} {hb}", raw_limbs(montgomery(a, b, N))))
+    for a, _ in pairs[: len(edges_) ** 2 // 3 + count]:
+        ha = f"{a:070x}"
+        out.append((f"D {ha}", raw_limbs(montgomery(a, a, P))))
+        out.append((f"E {ha}", raw_limbs(montgomery(a, a, N))))
+    return out
+
+
 def run(driver, lines):
     out = subprocess.run([driver], input="\n".join(lines) + "\n", capture_output=True, text=True, check=True).stdout.split("\n")
     assert out[-1] == "" and len(out) == len(lines) + 1
@@ -190,6 +224,7 @@ def main():
             for width in (5, 7):
                 cases.append((f"W {h(k)} {width}", " ".join(map(str, wnaf(k, width))) + " "))
     cases += verify_cases(rng, count, vectors)
+    cases += raw_cases(rng, count // 4, vectors)
     # The final check of verification: x = r, or x = r + n when that is below p. No real signature
     # reaches the second (p - n is about 2^128), so these are the check on its own.
     small = [1, 2, 3, 12345, (1 << 126) - 1, P - N - 1, P - N - 2, P - N, P - N + 1, N - 1, N - 2, P - 1, N - (1 << 127)]

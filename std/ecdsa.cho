@@ -9,8 +9,9 @@ import std.p256_vf;
 // Verification only, on public data: nothing here is constant time,
 // and the ladder branches on the scalars' bits. The arithmetic is
 // `std.bigmod`'s registers, modulo p for points and modulo n for
-// scalars (`docs/ecdsa.md` §2). Every function answers 0 for a valid
-// signature or a negative code whose name is `refusal_tag(code)`.
+// scalars (`docs/ecdsa.md` §2). P-256 verification is `std.p256_vf`'s
+// (`docs/p256-fast.md` §7); the codes are the same. Every function answers 0
+// for a valid signature or a negative code whose name is `refusal_tag(code)`.
 
 pub fn ok() -> [] int {
     return 0;
