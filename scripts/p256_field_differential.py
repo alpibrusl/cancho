@@ -102,6 +102,52 @@ def scalar_edges():
     return out
 
 
+def crafted(d, u1, u2):
+    """A (digest, r, s) that verifies under the key d with exactly these u1 = e / s and u2 = r / s,
+    or None when R = u1 G + u2 Q is the point at infinity (then any r, s with u2 = r / s is the
+    case: the verifier must answer -40)."""
+    q = ec_mul(d, (GX, GY))
+    k = (u1 + u2 * d) % N
+    if u2 % N == 0:
+        return None
+    if k == 0:
+        r = 1
+    else:
+        r = ec_mul(k, (GX, GY))[0] % N
+        if r == 0:
+            return None
+    s = r * pow(u2, -1, N) % N
+    e = u1 * s % N
+    return q, e, r, s, k == 0
+
+
+def verify_cases(rng, count, compact=False):
+    """Signatures whose u1, u2 take the shapes that make Shamir's trick add equal and opposite
+    points: keys 1, 2, 3, n - 1, n - 2 (Q = +-G, +-2G, 3G, so the two tables hold the same
+    points), u1 = u2, u1 = -u2, u2 = 2 u1, small values, runs of ones, and random."""
+    out = []
+    keys = [1, 2, N - 1, rng.randrange(1, N)] if compact else [1, 2, 3, N - 1, N - 2, 5, rng.randrange(1, N)]
+    for d in keys:
+        pairs = []
+        for u in ([1, 3, 64, N - 1, rng.randrange(1, N)] if compact else [1, 2, 3, 5, 7, 31, 63, 64, 65, 127, (1 << 128) - 1, (1 << 255) - 1, N - 1, N - 2, N // 2, rng.randrange(1, N)]):
+            pairs += [(u, u), (u, N - u), (u, 2 * u % N), (2 * u % N, u), (u, pow(2, -1, N) * u % N), (u, 1), (1, u), (N - u, u), (u, d and (N - pow(d, -1, N) * u) % N or 1)]
+        pairs += [(rng.randrange(1, N), rng.randrange(1, N)) for _ in range(count // 4)]
+        for u1, u2 in pairs:
+            u1, u2 = u1 % N, u2 % N
+            if u1 == 0 or u2 == 0:
+                continue
+            c = crafted(d, u1, u2)
+            if c is None:
+                continue
+            q, e, r, sv, infinity = c
+            pt = "04" + h(q[0]) + h(q[1])
+            want = "-40" if infinity else "0"
+            out.append((f"V {pt} {h(e)} {h(r)}{h(sv)}", want))
+            if not infinity:
+                out.append((f"V {pt} {h(e)} {h((r + 1) % N)}{h(sv)}", "-41"))
+    return out
+
+
 def run(driver, lines):
     out = subprocess.run([driver], input="\n".join(lines) + "\n", capture_output=True, text=True, check=True).stdout.split("\n")
     assert out[-1] == "" and len(out) == len(lines) + 1
@@ -143,6 +189,7 @@ def main():
         if k < 1 << 256:
             for width in (5, 7):
                 cases.append((f"W {h(k)} {width}", " ".join(map(str, wnaf(k, width))) + " "))
+    cases += verify_cases(rng, count, vectors)
     # The final check of verification: x = r, or x = r + n when that is below p. No real signature
     # reaches the second (p - n is about 2^128), so these are the check on its own.
     small = [1, 2, 3, 12345, (1 << 126) - 1, P - N - 1, P - N - 2, P - N, P - N + 1, N - 1, N - 2, P - 1, N - (1 << 127)]
