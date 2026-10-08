@@ -1,5 +1,6 @@
 module std.ecdsa;
 import std.bigmod;
+import std.p256_vf;
 
 // `std.ecdsa` -- ECDSA signature verification on P-256 and P-384
 // (SEC 1 §4.1.4; `docs/ecdsa.md`). Sub-issue 7 (#204) of the pure TLS 1.3
@@ -8,8 +9,9 @@ import std.bigmod;
 // Verification only, on public data: nothing here is constant time,
 // and the ladder branches on the scalars' bits. The arithmetic is
 // `std.bigmod`'s registers, modulo p for points and modulo n for
-// scalars (`docs/ecdsa.md` §2). Every function answers 0 for a valid
-// signature or a negative code whose name is `refusal_tag(code)`.
+// scalars (`docs/ecdsa.md` §2). P-256 verification is `std.p256_vf`'s
+// (`docs/p256-fast.md` §7); the codes are the same. Every function answers 0
+// for a valid signature or a negative code whose name is `refusal_tag(code)`.
 
 pub fn ok() -> [] int {
     return 0;
@@ -452,6 +454,12 @@ fn verify[&d, &q, &r, &s, &w](curve: int, digest: &d [byte], point: &q [byte], r
     if len(point) != 1 + 2 * size || int_of(point[0]) != 4 {
         return -31;
     }
+    if curve == 256 {
+        // P-256 on `std.p256` (`docs/p256-fast.md` §7); the codes are the same.
+        let fast = p256_vf.verify(digest, point, r, s, work);
+        wipe_p256(work);
+        return fast;
+    }
     var code = 0;
     region v {
         let n = alloc_slice[v](size, byte_of(0));
@@ -476,6 +484,17 @@ fn verify[&d, &q, &r, &s, &w](curve: int, digest: &d [byte], point: &q [byte], r
         }
     }
     return code;
+}
+
+// Zeroes what `p256_vf.verify` used: public data, but the table of one
+// call's point is not left behind for the next.
+fn wipe_p256[&w](w: &!w [int]) -> [] int {
+    var i = 0;
+    while i < p256_vf.work_len() {
+        w[i] = 0;
+        i = i + 1;
+    }
+    return 0;
 }
 
 fn check_curve[&w](curve: int, work: &w [int]) -> [] int {

@@ -163,6 +163,9 @@ Two file names tried, `ecdsa_secp256r1_sha256_bitflip_test.json` and its P-384 f
 
 ### 5.4 Cost
 
+*Corrected (#380, `docs/p256-fast.md`): the prime's form is now used for P-256, in verification as in signing and key exchange: `ecdsa.verify_raw` is 106 µs on an M4 against 814, and 258 µs against 1,742 on the loaded i7 (`docs/p256-fast.md` §9); P-384 is unchanged. The table below is `main` before that change.*
+
+
 `python3 scripts/ecdsa_bench.py <driver>`, on one core of an Intel Xeon at 2.80 GHz:
 
 | | Cranelift | LLVM | OpenSSL 3.0.13 (`openssl speed ecdsap256 ecdsap384`) |
@@ -187,5 +190,5 @@ signatures plus `CertificateVerify`: 4 to 6 ms with P-256 on LLVM. That is the f
 - **P-521.** `docs/tls-pure.md` §5.2 lists P-256 and P-384 only. One system root has a P-521 key, and a chain through it would
   be refused by #206.
 - **Compressed points.** `packages/x509` refuses them already.
-- **Prime-specific reduction** (§5.4).
+- **Prime-specific reduction** (§5.4). *Done for P-256 (#380); P-384 still open.*
 - **The independent review.** #209.

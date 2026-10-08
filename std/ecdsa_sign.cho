@@ -1,11 +1,12 @@
 edition 6;
 module std.ecdsa_sign;
-import std.bigmod;
 import std.bignum;
 import std.bytes;
 import std.ecdh;
 import std.ecdsa;
 import std.hmac;
+import std.p256;
+import std.p256_pt;
 
 // `std.ecdsa_sign` -- ECDSA signing on P-256 with SHA-256
 // (`ecdsa_secp256r1_sha256`), constant time in the private key and the
@@ -14,17 +15,19 @@ import std.hmac;
 // (#209).
 //
 // A module of its own, not part of `std.ecdsa`: it multiplies with
-// `std.ecdh`'s ladder, and `std.ecdh` imports `std.ecdsa` for the curve
+// `std.ecdh`'s `public_key`, and `std.ecdh` imports `std.ecdsa` for the curve
 // constants, so `std.ecdsa` cannot import it back.
 //
 // Signing (SEC 1 §4.1.3):
 // - the nonce k is RFC 6979's (§3.2 there), HMAC-DRBG over SHA-256
 //   seeded with the key and the digest, with the caller's 32 bytes of
 //   randomness as §3.6's additional data;
-// - (x, _) = k·G by `std.ecdh.public_key`, the constant-time ladder;
-// - r = x mod n, s = k^-1 (e + r·d) mod n in `std.bigmod`'s registers,
-//   whose `mul`, `add` and reduction are masked, and whose `inverse` is
-//   Fermat's with the public exponent n - 2.
+// - (x, _) = k·G by `std.ecdh.public_key`, which for P-256 is `std.p256_pt`'s
+//   sum of 65 entries of a table under masks, no doubling
+//   (`docs/p256-fast.md` §6);
+// - r = x mod n, s = k^-1 (e + r·d) mod n in `std.p256`'s arithmetic modulo
+//   n (straight-line kernels, no branch, no index), whose inverse is Fermat's
+//   with the public exponent n - 2.
 // Nothing branches on d or k, or indexes by them. The branches left are
 // on public values: the lengths, the answers of the range checks (a
 // candidate k out of range is discarded, which says nothing of the k
@@ -177,38 +180,42 @@ fn candidate[&st, &k, &v, &t](st: &!st [int], kk: &k [byte], v: &!v [byte], t: &
 // ---- s, modulo n ----
 
 // r = x mod n into sig[0..32] and s = k^-1 (e + r·d) mod n into
-// sig[32..64], with `w` set up modulo n. `refused_nonce()` when r or s
+// sig[32..64], on `std.p256`'s arithmetic modulo n. `refused_nonce()` when r or s
 // is zero, so the caller takes the next k.
 fn finish[&e, &d, &k, &x, &s, &w](e: &e [byte], key: &d [byte], k: &k [byte], x: &x [byte], sig: &!s [byte], w: &!w [int]) -> [] int {
-    let rr = bigmod.reg(0);
-    let dr = bigmod.reg(1);
-    let kr = bigmod.reg(2);
-    let er = bigmod.reg(3);
-    let sr = bigmod.reg(4);
+    p256.init(w);
+    let rr = p256.fe(p256.base());
+    let dr = p256.fe(p256.base() + 1);
+    let kr = p256.fe(p256.base() + 2);
+    let er = p256.fe(p256.base() + 3);
+    let sr = p256.fe(p256.base() + 4);
     // x < p < 2n: one subtraction reduces it. r is public.
-    bigmod.load_reduced(x, w, rr);
-    if bigmod.is_zero(w, rr) {
+    p256.load(x, w, rr);
+    p256.sreduce(w, rr, rr);
+    if p256.is_zero(w, rr) {
         return refused_nonce();
     }
-    bigmod.store_reg(w, rr, sig[0..32]);
-    bigmod.load_secret(key, w, dr);
-    bigmod.to_mont(w, dr, dr);
-    bigmod.load_secret(k, w, kr);
-    bigmod.to_mont(w, kr, kr);
-    bigmod.inverse(w, kr, kr);
+    p256.store(w, rr, sig[0..32]);
+    // d and k are loaded by position only, and are below n (the caller's
+    // constant-time range checks).
+    p256.load(key, w, dr);
+    p256.sto_mont(w, dr, dr);
+    p256.load(k, w, kr);
+    p256.sto_mont(w, kr, kr);
+    p256.sinvert(w, kr, kr);
     // e is the digest already reduced mod n: public.
-    bigmod.load_reg(e, w, er);
-    bigmod.to_mont(w, er, er);
-    bigmod.to_mont(w, rr, rr);
-    bigmod.mul(w, rr, dr, sr);
-    bigmod.add(w, er, sr, sr);
-    bigmod.mul(w, kr, sr, sr);
-    bigmod.from_mont(w, sr, sr);
+    p256.load(e, w, er);
+    p256.sto_mont(w, er, er);
+    p256.sto_mont(w, rr, rr);
+    p256.smul(w, rr, dr, sr);
+    p256.sadd(w, er, sr, sr);
+    p256.smul(w, kr, sr, sr);
+    p256.sfrom_mont(w, sr, sr);
     // s is public once it is sent; zero is not a signature.
-    if bigmod.is_zero(w, sr) {
+    if p256.is_zero(w, sr) {
         return refused_nonce();
     }
-    bigmod.store_reg(w, sr, sig[32..64]);
+    p256.store(w, sr, sig[32..64]);
     return 0;
 }
 
@@ -248,7 +255,6 @@ pub fn sign[&g, &d, &e, &s, &w](digest: &g [byte], key: &d [byte], extra: &e [by
     }
     code = refused_nonce();
     region r {
-        let n = alloc_slice[r](32, byte_of(0));
         let h = alloc_slice[r](32, byte_of(0));
         let kk = alloc_slice[r](32, byte_of(0));
         let v = alloc_slice[r](32, byte_of(1));
@@ -256,11 +262,11 @@ pub fn sign[&g, &d, &e, &s, &w](digest: &g [byte], key: &d [byte], extra: &e [by
         let point = alloc_slice[r](65, byte_of(0));
         let sep = alloc_slice[r](1, byte_of(0));
         let st = alloc_slice[r](hmac.state_len(32), 0);
-        ecdsa.curve_param(256, 4, n);
         // bits2octets(h1): the digest mod n. It is below 2^256 < 2n.
-        bigmod.setup(n, work);
-        bigmod.load_reduced(digest, work, bigmod.reg(0));
-        bigmod.store_reg(work, bigmod.reg(0), h);
+        p256.init(work);
+        p256.load(digest, work, p256.fe(p256.base()));
+        p256.sreduce(work, p256.fe(p256.base()), p256.fe(p256.base()));
+        p256.store(work, p256.fe(p256.base()), h);
         reseed(st, kk, v, sep, key, h, extra);
         sep[0] = byte_of(1);
         reseed(st, kk, v, sep, key, h, extra);
@@ -271,7 +277,6 @@ pub fn sign[&g, &d, &e, &s, &w](digest: &g [byte], key: &d [byte], extra: &e [by
             // A candidate not in [1, n) is refused by the ladder's own
             // constant-time range check, and the next one is drawn.
             if ecdh.public_key(256, t, point, work) == 0 {
-                bigmod.setup(n, work);
                 code = finish(h, key, t, point[1..33], sig, work);
             }
             if code == refused_nonce() {
@@ -287,7 +292,7 @@ pub fn sign[&g, &d, &e, &s, &w](digest: &g [byte], key: &d [byte], extra: &e [by
         bytes.zero(point);
         bignum.zero(st);
     }
-    bignum.zero(work);
+    p256.wipe(work, 0, p256_pt.work_len());
     if code != 0 {
         bytes.zero(sig);
     }
