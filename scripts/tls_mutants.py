@@ -322,8 +322,8 @@ MUTANTS = [
     ("client auth: a key that is not the leaf's accepted", "cident.cho",
      "            if m == -92 {\n                code = tls_record.client_key_mismatch();", "            if false {\n                code = tls_record.client_key_mismatch();"),
     ("client auth: a request's authorities list that does not tile accepted", "message.cho",
-     "            if seen_ca || size < 2 || get(b, body, 2) != size - 2 || !names_tile(b, body + 2, body + size) {",
-     "            if seen_ca || size < 2 || get(b, body, 2) != size - 2 {"),
+     "            if size < 2 || get(b, body, 2) != size - 2 || !names_tile(b, body + 2, body + size) {",
+     "            if size < 2 || get(b, body, 2) != size - 2 {"),
     ("client auth: signature_algorithms twice accepted", "message.cho",
      "            if seen_sigalgs {\n                return tls_record.extension_repeat();\n            }\n            if size < 4",
      "            if size < 4"),
@@ -354,7 +354,8 @@ MUTANTS = [
     ("ALPN: the answer's name length not checked", "message.cho",
      "    if size < 4 || get(b, body, 2) != size - 2 || int_of(b[body + 2]) != size - 3 {", "    if size < 4 || get(b, body, 2) != size - 2 {"),
     ("ALPN: an empty answer accepted", "message.cho",
-     "    if size < 4 || get(b, body, 2) != size - 2", "    if size < 3 || get(b, body, 2) != size - 2"),
+     "    if size < 4 || get(b, body, 2) != size - 2 || int_of(b[body + 2]) != size - 3 {",
+     "    if size < 3 || get(b, body, 2) != size - 2 || int_of(b[body + 2]) != size - 3 {"),
     ("ALPN: the answer twice accepted in a TLS 1.2 ServerHello", "message.cho",
      "            if alpn_at != 0 {\n                return tls_record.extension_repeat();\n            }\n            alpn_at = alpn_name(b, body, size);",
      "            alpn_at = alpn_name(b, body, size);"),
@@ -366,7 +367,8 @@ MUTANTS = [
     ("ALPN: an ALPN answer in EncryptedExtensions accepted when none was offered", "message.cho",
      "        } else if kind == 16 && offered {", "        } else if kind == 16 {"),
     ("ALPN: the unoffered selection's alert is handshake_failure", "slot.cho",
-     "    if code == tls_record.alpn_selected() {\n        return 47;", "    if code == tls_record.alpn_selected() {\n        return 40;"),
+     "    if code == tls_record.alpn_selected() || code == tls_record.extension_repeat() {\n        return 47;",
+     "    if code == tls_record.alpn_selected() || code == tls_record.extension_repeat() {\n        return 40;"),
     ("ALPN: the engine's default offer never used", "tls.cho",
      "        let n = default_offer(engine, wire);\n        code = start_with_wire", "        let n = 0 * default_offer(engine, wire);\n        code = start_with_wire"),
     ("ALPN: a list over the cap accepted by set_alpn_offer", "cident.cho",
@@ -562,8 +564,8 @@ def evidence(cancho, pkg, work, engine):
 
 def main():
     cancho = sys.argv[1]
-    # `--only <text>`: just the mutants whose name contains it (the unmutated package still runs first).
-    only = sys.argv[sys.argv.index("--only") + 1] if "--only" in sys.argv else None
+    # `--only <text>`, once or more: just the mutants whose name contains one (the unmutated package still runs first).
+    only = [sys.argv[i + 1] for i, a in enumerate(sys.argv) if a == "--only"] or None
     work = tempfile.mkdtemp(prefix="tls-mutants-")
     pkg = os.path.join(work, "tls")
     src = os.path.join(ROOT, "packages/tls")
@@ -574,7 +576,7 @@ def main():
         sys.exit(1)
     print("unmutated: passes")
     survived = 0
-    run = [m for m in MUTANTS if only is None or only in m[0]]
+    run = [m for m in MUTANTS if only is None or any(o in m[0] for o in only)]
     for name, file, old, new in run:
         text = open(os.path.join(src, file)).read()
         assert text.count(old) == 1, f"{name}: the text occurs {text.count(old)} times"

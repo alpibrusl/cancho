@@ -832,7 +832,19 @@ inputs join the corpora (`tests/vectors/fuzz`), all replayed on both backends by
 and the 39 honest connections of the lying server (identities and ALPN offers included): **20,000 mutated connections over 53 recorded handshakes, 0 traps.** AFL++ was
 not run for this PR (see §6.12).
 
-**Mutants** (`scripts/tls_mutants.py`, @MUTANTS@).
+**Mutants** (`python3 scripts/tls_mutants.py target/release/cancho`): **148, of which 146 killed and 2 argued equivalent, none survived** (103 before,
+45 new). Each new one is a bug in one place: the context string, the transcript missing the Certificate or the CertificateVerify, the request's context not echoed, the
+digest, the hedge, the notAfter bound on a ticket, the authorities ignored or compared by length alone or only for the first certificate, the scheme not required,
+TLS 1.2's digest under the suite's hash, its chain with TLS 1.3's extensions or cut short, `ecdsa_sign` not required, `*` never matching, any identity for any host, an
+expired leaf or another key accepted, a request that does not parse accepted (authorities that do not tile, a name of length 0, a scheme list twice), the engine not choosing by
+host or leaving tickets offerable after an add, a replace or a remove, an unoffered ALPN choice accepted or compared by length alone or when nothing was offered, the
+start of the choice lost, the extension left out of the ClientHello, each of the answer's three length checks, its empty form, twice in either version, in a TLS 1.3 ServerHello,
+the alert, the default offer never used, the cap on the offer and the offer truncated. **Two are equivalent, each argued in `EQUIVALENT`:** an ALPN answer in
+EncryptedExtensions accepted by the parser when nothing was offered (`take_alpn` refuses it with the same tag), and a name over 255 bytes accepted by `alpn_wire` (the offer's 256-byte
+cap refuses it with the same tag). Four of the new ones survived a first run and each got the case that kills it: a name of the issuer's length and other bytes (the comparison
+by length alone), a chain whose second certificate has another issuer (only the first considered), a selection of an offered name's length (h3 for h2), and the engine's default
+offer through `start` rather than `start_alpn`. Three older mutants' texts (`server_name` in a TLS 1.3 ServerHello, an unexpected extension, resumption never advertised) and
+one of the server's (`start` on a server engine, now in `start_plain`) were brought up to the new code. `scripts/tls_server_mutants.py`: **71 of 71 killed.**
 
 **Cost of the extra signature** (`scripts/tls_client_auth_cost.py`; the machine is the M-series Mac this was built on, arm64 macOS, load average
 12 to 17 while it ran, the LLVM backend, `fetch` against `openssl s_server -www` 3.6.4 on loopback; the Docker VM had no disk left to run it
