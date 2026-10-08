@@ -313,6 +313,7 @@ than restated here: [`overflow-cost.md`](overflow-cost.md),
 
 ## Layout
 
+
 ```
 crates/cancho-syntax    lexer, canonical-shaped AST, parser
 crates/cancho-types     the type vocabulary: representation and unification
@@ -392,6 +393,7 @@ not repeated here; a doc's own header carries its own detail.
 | [`websocket-spike.md`](websocket-spike.md) | A WebSocket/OCPP connection layer on cancho against the `lex` runtime: 10,000 connections, measured, plus the gaps found and the `cancho-cache`-for-Redis question | measured: 80 MB and 0% idle CPU at 10,000 connections (the runtime's thread-per-connection stand-in saturates a core near 1,500); the service-level gaps are listed in §10 |
 | [`formatting.md`](formatting.md) | `cancho fmt`: the canonical layout with comments, blank lines and literal spellings kept | built; refuses, rather than risks, a file it cannot reproduce |
 | [`testing.md`](testing.md) | `trap()` and `std.test`'s `assert` — what a program needed to state "this must be true" at all | `trap()`, `std.test`, and `cancho test` are built; no per-test timeout, no message on a failed assertion |
+| [`satisfy.md`](satisfy.md) | The spec-to-implementation loop: a contract is a `.cho` file whose tests call the candidate; satisfaction is `check` plus `test` composed, with the verdict and the recomputed `SigId` answered (#406) | built; the first contract (`tests/satisfy/`) is CI-checked |
 | [`slicing.md`](slicing.md) | `s[a..b]`, half-open and trapping | settled and built |
 | [`defer.md`](defer.md) | `defer E;` as sugar, expanded during lowering | settled and built |
 | [`authority.md`](authority.md) | `cancho authority`; `release` at `main` is the declaration | settled and built |
