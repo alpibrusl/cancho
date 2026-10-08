@@ -1,1 +1,271 @@
-SURGICAL: identical to blob f11eec9 except the two print lines restored to the upstream single-space form: line 240 'print(f"  {n:4}  {rule:24} {message}")' and line 267 with the same single space. All other bytes unchanged from the tested local tree (git blob 6a5adb43a93f18672b982cd9183156fd5012ca03, 11,622 bytes).
+#!/usr/bin/env python3
+"""Replay this repository's own past through today's compiler.
+
+`docs/editions.md` §2 is what these numbers mean. Every distinct revision
+of every `.cho` file under `std/` and `examples/` is checked by one
+binary, today's, so anything that fails is the language having moved.
+A library file is checked beside today's other library files and a
+`main` that does nothing, because a file of a program is not a program.
+An example in a directory is checked beside its siblings as they were
+in the commit that introduced it.
+
+    python3 scripts/history.py             # replay, and classify what fails
+    python3 scripts/history.py --migrate   # then try the two mechanical steps
+    python3 scripts/history.py --alias     # or read an old `io` as both halves
+    python3 scripts/history.py --explain   # or hold the plateau (docs/stability-exemptions.md)
+
+`--alias` is what an edition could do inside the compiler without a
+tool: read an old file's `io` label as `io_read, io_write`, the two labels
+that replaced it, and check again.
+
+`--migrate` simulates a migration tool driven by the checker's own
+refusals, applied only to the file under test. It knows two steps:
+
+* a row repair: add a label the body performs, drop one it does not
+  (and drop the old `io` whenever one of its halves is added);
+* a `Split` repair: name the capabilities the pattern leaves out, and
+  release each at once.
+
+Anything else stops it, so what it recovers is a lower bound on what a
+real tool, one that edits every file of a program, would recover.
+
+`--explain` is `docs/hash-stability.md` §7's plateau rule as a checked
+property: a failing rule not listed with a reason in the committed
+exemption file is exit 1, and a listed rule that no longer fails is
+reported as stale. The replay itself uses `--backend cranelift`, so the
+instrument depends on no host toolchain beyond Rust.
+"""
+
+import argparse
+import collections
+import json
+import os
+import pathlib
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+BIN = ROOT / "target" / "release" / "cancho"
+FIELDS = ["io", "ffi", "fs", "heap", "args"]
+EMPTY_MAIN = (
+    "fn main(world: World) -> [] int {\n"
+    "    let Split { io, ffi, fs, heap, args } = split(world);\n"
+    "    release(args);\n    release(ffi);\n    release(fs);\n"
+    "    release(heap);\n    release(io);\n    return 0;\n}\n"
+)
+
+
+def git(*args):
+    return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True).stdout
+
+
+def revisions():
+    """(blob, path) -> the oldest commit that has it."""
+    seen = {}
+    for commit in reversed(git("log", "--format=%H", "--", "std", "examples").split()):
+        for line in git("ls-tree", "-r", commit, "--", "std", "examples").splitlines():
+            meta, path = line.split("\t")
+            blob = meta.split()[2]
+            if path.endswith(".cho") and (blob, path) not in seen:
+                seen[(blob, path)] = commit
+    return seen
+
+
+def refusals(files, args):
+    out = subprocess.run(
+        [str(BIN), "check", "--output", "json", "--backend", "cranelift", *map(str, files), *args],
+        capture_output=True,
+        text=True,
+    ).stdout
+    return json.loads(out)["refused"]
+
+
+def lay_out(work, blob, path, commit):
+    """Write the program a revision belongs to; answer (files, target, args)."""
+    shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(parents=True)
+    files = []
+
+    def put(name, text):
+        p = work / name
+        p.write_text(text)
+        files.append(p)
+        return p
+
+    target = put("target_" + os.path.basename(path), git("cat-file", "-p", blob))
+    if path.startswith("std/"):
+        for lib in sorted((ROOT / "std").glob("*.cho")):
+            if lib.name != os.path.basename(path):
+                put("std_" + lib.name, lib.read_text())
+        put("main.cho", EMPTY_MAIN)
+        return files, target, []
+    folder = os.path.dirname(path)
+    if folder != "examples":
+        for line in git("ls-tree", commit, folder + "/").splitlines():
+            meta, sibling = line.split("\t")
+            if sibling.endswith(".cho") and sibling != path:
+                put("sib_" + os.path.basename(sibling), git("cat-file", "-p", meta.split()[2]))
+    return files, target, ["--std"]
+
+
+def repair(text, refusal, target):
+    """One migration step on the file under test, or None."""
+    pos = refusal.get("position")
+    if not pos or not pos["file"].endswith(target.name):
+        return None
+    lines = text.split("\n")
+    line, col = pos["line"] - 1, pos["column"] - 1
+    msg = refusal["message"]
+    if refusal["rule"] == "type-mismatch" and msg.startswith("expected `[`"):
+        lines[line] = lines[line][:col] + "[] " + lines[line][col:]
+        return "\n".join(lines)
+    if msg.startswith("`Split` has") and "this pattern names" in msg:
+        m = re.search(r"Split\s*\{([^}]*)\}", lines[line])
+        if not m:
+            return None
+        have = [f.strip() for f in m.group(1).split(",") if f.strip()]
+        missing = [f for f in FIELDS if f not in have]
+        indent = re.match(r"\s*", lines[line]).group(0)
+        lines[line] = lines[line][: m.start()] + "Split { " + ", ".join(have + missing) + " }" + lines[line][m.end():]
+        for f in reversed(missing):
+            lines.insert(line + 1, f"{indent}release({f});")
+        return "\n".join(lines)
+    added = re.match(r"`[^`]*` performs `([^`]*)`, which its row", msg)
+    dropped = re.match(r"`[^`]*` declares `([^`]*)` but never performs it", msg)
+    if not (added or dropped):
+        return None
+    for k in range(line, min(line + 6, len(lines))):
+        m = re.search(r"->\s*\[([^\]]*)\]", lines[k])
+        if m:
+            labels = [l.strip() for l in m.group(1).split(",") if l.strip()]
+            if added:
+                labels = [l for l in labels if l != "io"] + [added.group(1)]
+            else:
+                labels = [l for l in labels if l != dropped.group(1)]
+            labels = list(dict.fromkeys(labels))
+            lines[k] = lines[k][: m.start()] + "-> [" + ", ".join(labels) + "]" + lines[k][m.end():]
+            return "\n".join(lines)
+    return None
+
+
+def shape(message):
+    message = re.sub(r"`[^`]*`", "`_`", message)
+    return re.sub(r"\[[^\]]*\]", "[_]", message)[:100]
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("--migrate", action="store_true")
+    parser.add_argument("--alias", action="store_true")
+    # `docs/hash-stability.md` §7's plateau rule: every historical revision
+    # must read under today's compiler, or appear in the committed exemption
+    # list with a reason. In this mode an unexplained failure is exit 1, so
+    # CI can hold the number the doc keeps having to correct.
+    parser.add_argument("--explain", action="store_true")
+    options = parser.parse_args()
+    if not BIN.exists():
+        sys.exit("build first: cargo build --release")
+
+    # The exemption list: one `rule | reason` row a line of the table in
+    # `docs/stability-exemptions.md`, read from the committed file so the
+    # debt is in the repository rather than in a paragraph that gets
+    # corrected when the number climbs. Only a row whose first cell names
+    # a rule counts: the header and the dashes row are skipped, and a
+    # first cell that is not a rule name is a typo the check below will
+    # surface as an exemption that never fires.
+    exemptions: dict[str, str] = {}
+    if options.explain:
+        list_path = ROOT / "docs" / "stability-exemptions.md"
+        if not list_path.exists():
+            sys.exit("--explain needs docs/stability-exemptions.md")
+        for line in list_path.read_text().splitlines():
+            line = line.strip()
+            if not line.startswith("|") or set(line) <= {"|", "-", " "}:
+                continue
+            cells = [c.strip() for c in line.strip("|").split("|")]
+            if len(cells) < 2 or cells[0] in ("rule", ""):
+                continue
+            exemptions[cells[0]] = cells[1]
+
+    work = pathlib.Path(tempfile.mkdtemp(prefix="cancho-history-"))
+    failing = collections.Counter()
+    recovered = collections.Counter()
+    remaining = collections.Counter()
+    total = 0
+    for (blob, path), commit in sorted(revisions().items(), key=lambda kv: kv[0][1]):
+        total += 1
+        files, target, args = lay_out(work, blob, path, commit)
+        first = refusals(files, args)
+        if not first:
+            continue
+        failing[(first[0]["rule"], shape(first[0]["message"]))] += 1
+        if options.alias:
+            text = re.sub(
+                r"->\s*\[([^\]]*)\]",
+                lambda m: "-> [" + ", ".join(dict.fromkeys(
+                    x for l in m.group(1).split(",") if l.strip()
+                    for x in (["io_read", "io_write"] if l.strip() == "io" else [l.strip()])
+                )) + "]",
+                target.read_text(),
+            )
+            target.write_text(text)
+            now = refusals(files, args)
+            if now:
+                remaining[(now[0]["rule"], shape(now[0]["message"]))] += 1
+            else:
+                recovered[first[0]["rule"]] += 1
+            continue
+        if not options.migrate:
+            continue
+        for _ in range(60):
+            now = refusals(files, args)
+            if not now:
+                break
+            step = next((r for r in (repair(target.read_text(), x, target) for x in now) if r), None)
+            if step is None:
+                break
+            target.write_text(step)
+        now = refusals(files, args)
+        if now:
+            remaining[(now[0]["rule"], shape(now[0]["message"]))] += 1
+        else:
+            recovered[first[0]["rule"]] += 1
+    shutil.rmtree(work, ignore_errors=True)
+    unreadable = sum(failing.values())
+    print(f"{total} revisions, {total - unreadable} read today, {unreadable} do not")
+    for (rule, message), n in failing.most_common():
+        print(f"  {n:4}  {rule:24} {message}")
+    # The plateau check itself: a failure is debt, and debt is either in the
+    # committed list with a reason or it fails the run. A rule in the list
+    # still counts toward the failing total — the number stays honest —
+    # but it does not fail the build; an unlisted one does, and a listed
+    # rule that no longer fails is reported as stale so the list only ever
+    # shrinks.
+    if options.explain:
+        failing_rules = {rule for (rule, _), _ in failing.items()}
+        unexplained = failing_rules - exemptions.keys()
+        stale = [r for r in exemptions if r not in failing_rules]
+        if stale:
+            print("\nexemptions that no longer fail (remove them):")
+            for rule in sorted(stale):
+                print(f"  {rule:24}  {exemptions[rule]}")
+        if unexplained:
+            print("\nUNEXPLAINED (add to docs/stability-exemptions.md or fix):")
+            for rule in sorted(unexplained):
+                count = sum(n for (r, _), n in failing.items() if r == rule)
+                print(f"  {count:4}  {rule}")
+            sys.exit(1)
+        print(f"\nplateau holds: {len(exemptions)} exempted rules, every failing rule explained")
+    if options.migrate or options.alias:
+        how = "the two mechanical steps" if options.migrate else "reading `io` as both halves"
+        print(f"\nrecovered by {how}: {sum(recovered.values())}")
+        print("what stops the rest:")
+        for (rule, message), n in remaining.most_common():
+            print(f"  {n:4}  {rule:24} {message}")
+
+
+if __name__ == "__main__":
+    main()
