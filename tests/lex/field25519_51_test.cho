@@ -1,0 +1,92 @@
+edition 7;
+import std.field25519_51;
+import std.test;
+
+// `docs/wide-multiply.md` §10: the corners of `std.field25519_51` that a ladder
+// reaches only with a probability of about 2^-51 a result, so that RFC 7748's
+// vectors cannot be relied on to test them.
+
+// 2^255 = 19 (mod p). Limb 4 is all ones and limb 3 is 2^51: the carry out of
+// limb 3 makes limb 4 2^51, which only a second weak pass folds away.
+fn test_pack_needs_its_second_carry_pass() -> [] int {
+    region r {
+        let a = alloc_slice[r](5, 0);
+        a[3] = 2251799813685248;
+        a[4] = 2251799813685247;
+        let out = alloc_slice[r](32, byte_of(0));
+        field25519_51.pack(out, a);
+        test.assert_eq(int_of(out[0]), 19);
+        var i = 1;
+        while i < 32 {
+            test.assert_eq(int_of(out[i]), 0);
+            i = i + 1;
+        }
+    }
+    return 0;
+}
+
+// p itself packs to zero, and p + 1 to one: the final subtraction of p.
+fn test_pack_reduces_p_to_zero() -> [] int {
+    region r {
+        let a = alloc_slice[r](5, 2251799813685247);
+        a[0] = 2251799813685229;
+        let out = alloc_slice[r](32, byte_of(1));
+        field25519_51.pack(out, a);
+        var i = 0;
+        while i < 32 {
+            test.assert_eq(int_of(out[i]), 0);
+            i = i + 1;
+        }
+        a[0] = 2251799813685230;
+        field25519_51.pack(out, a);
+        test.assert_eq(int_of(out[0]), 1);
+    }
+    return 0;
+}
+
+// (p - 1)^2 = 1.
+fn test_minus_one_squared_is_one() -> [] int {
+    region r {
+        let bytes = alloc_slice[r](32, byte_of(255));
+        bytes[0] = byte_of(236);
+        bytes[31] = byte_of(127);
+        let a = alloc_slice[r](5, 0);
+        field25519_51.unpack(a, bytes);
+        let sq = alloc_slice[r](5, 0);
+        field25519_51.square(sq, a);
+        let prod = alloc_slice[r](5, 0);
+        field25519_51.mul(prod, a, a);
+        let out = alloc_slice[r](32, byte_of(9));
+        field25519_51.pack(out, sq);
+        test.assert_eq(int_of(out[0]), 1);
+        field25519_51.pack(out, prod);
+        test.assert_eq(int_of(out[0]), 1);
+        var i = 1;
+        while i < 32 {
+            test.assert_eq(int_of(out[i]), 0);
+            i = i + 1;
+        }
+    }
+    return 0;
+}
+
+// a * a^-1 = 1 for a = 2.
+fn test_invert_undoes_multiplication() -> [] int {
+    region r {
+        let a = alloc_slice[r](5, 0);
+        field25519_51.set_small(a, 2);
+        let inv = alloc_slice[r](5, 0);
+        field25519_51.invert(inv, a);
+        let prod = alloc_slice[r](5, 0);
+        field25519_51.mul(prod, a, inv);
+        let out = alloc_slice[r](32, byte_of(9));
+        field25519_51.pack(out, prod);
+        test.assert_eq(int_of(out[0]), 1);
+        var i = 1;
+        while i < 32 {
+            test.assert_eq(int_of(out[i]), 0);
+            i = i + 1;
+        }
+    }
+    return 0;
+}
