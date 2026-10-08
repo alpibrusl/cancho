@@ -382,7 +382,7 @@ def cases():
     """Every connection `conformance/tls.rs` replays, as (name, lines, answers)."""
     out = []
     names = sorted(os.listdir(os.path.join(ROOT, "tests/vectors/tls")))
-    for name in [n for n in names if n.startswith("tlslite_") or n.startswith("openssl12_")]:
+    for name in [n for n in names if n.startswith(("tlslite_", "openssl12_", "openssl13_"))]:
         asked, answered = [], []
         for line in open(os.path.join(ROOT, "tests/vectors/tls", name)):
             line = line.rstrip("\n")

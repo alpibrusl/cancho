@@ -64,7 +64,7 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read] int {
     var slot_ints = box_slice(heap, tls_client.ints_len(), 0);
     var out = box_slice(heap, 65536, byte_of(0));
     var wire = box_slice(heap, 65536, byte_of(0));
-    var store = box_slice(heap, 131072, byte_of(0));
+    var store = box_slice(heap, fuzz_common.store_len(), byte_of(0));
     var random = box_slice(heap, 96, byte_of(0));
     borrow mut input as &!d in {
         borrow mut slot_bytes as &!b in {
@@ -73,19 +73,42 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read] int {
                     borrow mut wire as &!w in {
                         borrow mut store as &!s in {
                             borrow mut random as &!r in {
-                                let used = fuzz_common.load_store(contents(s));
+                                let used = fuzz_common.load_store(contents(s)[0..fuzz_common.roots_cap()]);
                                 fuzz_common.load_random(contents(r));
                                 let total = fuzz_common.read_all(io, contents(d));
                                 let s0 = contents(s)[0..used];
+                                let cred = contents(s)[fuzz_common.roots_cap()..fuzz_common.store_len()];
                                 let ints = contents(n);
                                 let bytes = contents(b);
                                 let input = contents(d);
-                                var code = tls_client.start(ints, bytes, fuzz_fixture.host(), contents(r), fuzz_fixture.now());
+                                var code = fuzz_common.load_identity(contents(s), ints);
+                                // The input's first byte: the flight (its low seven bits, modulo the recorded flights) and, with the
+                                // high bit, an ALPN offer ("h2" and "http/1.1"), which no recorded flight was made with.
+                                let first = int_of(input[0]);
+                                region offer {
+                                    let alpn = alloc_slice[offer](0, byte_of(0));
+                                    if total > 0 && first >= 128 {
+                                        let wire = alloc_slice[offer](12, byte_of(0));
+                                        wire[0] = byte_of(2);
+                                        wire[1] = byte_of('h');
+                                        wire[2] = byte_of('2');
+                                        wire[3] = byte_of(8);
+                                        var j = 0;
+                                        while j < 8 {
+                                            wire[4 + j] = "http/1.1"[j];
+                                            j = j + 1;
+                                        }
+                                        code = tls_client.start_alpn(ints, bytes, fuzz_fixture.host(), contents(r), fuzz_fixture.now(), alpn, alpn, 0, 0, 0, false, wire);
+                                    } else {
+                                        code = tls_client.start(ints, bytes, fuzz_fixture.host(), contents(r), fuzz_fixture.now());
+                                    }
+                                }
+                                ints[tls_slot.i_identity()] = 1;
                                 fuzz_common.drain(ints, bytes, contents(o));
                                 if total > 0 {
-                                    let hello = fuzz_fixture.server_hello_hex(int_of(input[0]) % 3);
+                                    let hello = fuzz_fixture.server_hello_hex(int_of(input[0]) % 128 % 4);
                                     let m = fuzz_common.from_hex(hello, contents(w));
-                                    code = fuzz_common.feed_all(ints, bytes, contents(w)[0..m], contents(o), s0);
+                                    code = fuzz_common.feed_all(ints, bytes, contents(w)[0..m], contents(o), s0, cred);
                                 }
                                 var at = 1;
                                 while code >= 0 && at + 3 <= total {
@@ -98,7 +121,7 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read] int {
                                     let made = record(ints, bytes, kind, input[at..at + size], contents(w));
                                     at = at + size;
                                     if made > 0 {
-                                        code = fuzz_common.feed_all(ints, bytes, contents(w)[0..made], contents(o), s0);
+                                        code = fuzz_common.feed_all(ints, bytes, contents(w)[0..made], contents(o), s0, cred);
                                     }
                                 }
                                 if tls_client.event(ints) == tls_client.event_established() {

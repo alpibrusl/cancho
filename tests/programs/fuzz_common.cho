@@ -6,7 +6,10 @@ module fuzz_common;
 // client takes.
 import fuzz_fixture;
 import std.io;
+import tls_cident;
 import tls_client;
+import tls_slot;
+import x509_key;
 import x509_verify;
 
 // Standard input into `into`, at most its length; how many bytes were read.
@@ -57,6 +60,21 @@ pub fn load_store[&s](store: &!s [byte]) -> [] int {
     return n;
 }
 
+// What a harness's `store` holds: the roots in its first 128 KiB, then the client identities (`docs/tls-parity.md` §6).
+pub fn roots_cap() -> [] int {
+    return 131072;
+}
+
+pub fn store_len() -> [] int {
+    return roots_cap() + tls_cident.cfg_len();
+}
+
+// The fixture's client identity into the identity room of `store`, for every host; the key parser's work is the slot's
+// `std.ecdh` work, free before `start`. 0 or a refusal.
+pub fn load_identity[&s, &n](store: &!s [byte], ints: &!n [int]) -> [] int {
+    return tls_cident.load(store[roots_cap()..store_len()], 0, fuzz_fixture.identity_chain(), fuzz_fixture.identity_key(), "*", false, fuzz_fixture.now(), ints[tls_slot.i_ecdh_work()..tls_slot.i_ecdh_work() + x509_key.work_len()]);
+}
+
 // Everything `take` and `recv` have, taken as a caller would; how many
 // bytes that was.
 pub fn drain[&n, &b, &o](ints: &!n [int], bytes: &!b [byte], out: &!o [byte]) -> [] int {
@@ -75,11 +93,11 @@ pub fn drain[&n, &b, &o](ints: &!n [int], bytes: &!b [byte], out: &!o [byte]) ->
 }
 
 // `data`, fed until it is all consumed or the client stops taking it.
-pub fn feed_all[&n, &b, &d, &o, &p](ints: &!n [int], bytes: &!b [byte], data: &d [byte], out: &!o [byte], store: &p [byte]) -> [] int {
+pub fn feed_all[&n, &b, &d, &o, &p, &q](ints: &!n [int], bytes: &!b [byte], data: &d [byte], out: &!o [byte], store: &p [byte], cred: &q [byte]) -> [] int {
     var at = 0;
     var going = true;
     while going {
-        let c = tls_client.feed(ints, bytes, data[at..len(data)], store);
+        let c = tls_client.feed_with(ints, bytes, data[at..len(data)], store, cred);
         let drained = drain(ints, bytes, out);
         if c < 0 {
             return c;

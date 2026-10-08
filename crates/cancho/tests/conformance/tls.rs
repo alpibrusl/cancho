@@ -146,7 +146,7 @@ fn hex(s: &str) -> String {
 /// The recorded handshakes: `scripts/tls_trace.py`'s certificate, suite and
 /// group for each, against tlslite-ng (TLS 1.3) and `openssl s_server
 /// -tls1_2` (`docs/tls-parity.md` §3.4).
-const TRACES: [&str; 11] = [
+const TRACES: [&str; 14] = [
     "tlslite_rsa.txt",
     "tlslite_ecdsa.txt",
     "tlslite_aes256_x25519.txt",
@@ -158,6 +158,11 @@ const TRACES: [&str; 11] = [
     "openssl12_ecdhe_rsa_aes128_gcm_sha256.txt",
     "openssl12_ecdhe_rsa_aes256_gcm_sha384.txt",
     "openssl12_ecdhe_rsa_chacha20_poly1305.txt",
+    // The server asks for a client certificate and verifies it (`docs/tls-parity.md` §6.10): tlslite-ng (TLS 1.3), OpenSSL's
+    // TLS 1.2 and its TLS 1.3.
+    "tlslite_mutual_ecdsa.txt",
+    "openssl12_mutual_ecdhe_ecdsa_aes128_gcm_sha256.txt",
+    "openssl13_mutual_ecdsa.txt",
 ];
 
 #[test]
