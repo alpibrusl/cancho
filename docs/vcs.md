@@ -274,6 +274,28 @@ documents keep catching in each other.
 
 ## 8. What is next
 
+**Built (`vcs sync`, #403)**: the store rides inside git. `cancho vcs sync
+[--dir <dir>] [--std] [--check]` walks every `.cho` under a directory,
+recomputes every declaration's identity with `cancho-id` (one file at a
+time, because a directory is not one program), and writes two things
+into `.cancho/` as plain text: `ids.txt`, one sorted line per declaration
+— `fn <module> <name> <sig> <body>` — and the op records for what moved
+against the committed index, in the same loose-file `OpLog` shape
+`vcs publish` writes. Because the index is line-oriented and
+key-sorted, an ordinary `git merge` of two branches that touched
+different functions resolves as text, and a conflict lands on exactly
+the declarations that genuinely collided — no custom driver, no new
+store to visit. `--check` writes nothing and exits 1 on any semantic
+change: added, body-changed (`ModifyBody`, `SigId` untouched),
+signature-changed (callers by `SigId` affected), or removed
+(`RemoveFunction`) — the CI shape, so a PR that changes what a caller
+depends on is a red diff rather than a silent rewrite of the index. A
+file that does not check is reported as a warning and indexed for what
+it does declare — the reject fixtures under `tests/` are sources the
+walk sees, by design, and a history that cannot compile is still a
+history with identities. The CI job `semantic-index` runs `--check`
+once `.cancho/ids.txt` is committed.
+
 **Built**: the foundation (`Operation`/`OperationKind`/`OpId`/`SigId`/
 `StageId`/`EffectSet`, canonical BLAKE3 identity, the edition tag from
 §6, checked against real `cancho-id` output); the apply→gate pipeline

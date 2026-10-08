@@ -32,7 +32,7 @@ use crate::{Failure, environment, refused, usage, vcs_dir, vcs_origin};
 /// their dependency source as trusted strings, never as paths on disk,
 /// so they need this rather than writing a temp file just to hand
 /// `parse_program` something it can re-read.
-fn parse_texts(
+pub(crate) fn parse_texts(
     named: &[(String, String)],
 ) -> Result<(cancho_syntax::Ast, cancho_syntax::SourceMap), String> {
     let mut map = cancho_syntax::SourceMap::new();
@@ -80,21 +80,22 @@ fn std_texts() -> Vec<(String, String)> {
 /// `docs/editions.md`: only edition 1 exists today, so this is not a
 /// simplification pending a real one — it is the one plateau
 /// `docs/vcs.md` §7 already measured. Revisit when a second edition does.
-const EDITION: u32 = 1;
+pub(crate) const EDITION: u32 = 1;
 
 const DEFAULT_STORE: &str = ".cancho-vcs";
 
 pub fn cmd_vcs(args: &[String]) -> Result<ExitCode, Failure> {
     match args.first().map(String::as_str) {
         Some("publish") => cmd_publish(&args[1..]),
+        Some("sync") => crate::vcs_sync::cmd_sync(&args[1..]),
         Some("log") => cmd_log(&args[1..]),
         Some("resolve") => cmd_resolve(&args[1..]),
         Some("lock") => cmd_lock(&args[1..]),
         Some("fetch") => cmd_fetch(&args[1..]),
         Some(other) => Err(usage(format!("unknown `vcs` subcommand `{other}`"))),
-        None => {
-            Err(usage("`vcs` needs a subcommand: `publish`, `log`, `resolve`, `lock` or `fetch`"))
-        }
+        None => Err(usage(
+            "`vcs` needs a subcommand: `publish`, `sync`, `log`, `resolve`, `lock` or `fetch`",
+        )),
     }
 }
 

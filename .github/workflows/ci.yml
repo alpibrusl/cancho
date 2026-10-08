@@ -164,3 +164,26 @@ jobs:
       # `conformance/http_server_upload.rs` once per mutant; they were run by hand, §12.13.)
       - name: The streaming-body mutants (docs/http-server.md §12.13)
         run: python3 scripts/http_server_body_mutants.py ./target/release/cancho
+
+  # docs/vcs.md §8 + #403: the store rides inside git. Once `.cancho/ids.txt`
+  # is committed, a PR that changes what a declaration *is* — not the text,
+  # the `SigId` a caller depends on — is a red diff here rather than a silent
+  # index rewrite. Until the index lands, this stays a manual command:
+  #   cancho vcs sync --dir . --check
+  semantic-index:
+    name: semantic-index
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain versions
+        run: |
+          cargo --version
+          rustc --version --verbose
+      - name: The semantic index matches the source (cancho vcs sync --check)
+        run: |
+          cargo build --release -p cancho
+          if [ -f .cancho/ids.txt ]; then
+            ./target/release/cancho vcs sync --dir . --check
+          else
+            echo ".cancho/ids.txt not committed yet; the check starts when it lands"
+          fi
