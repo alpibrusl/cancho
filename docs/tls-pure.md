@@ -420,6 +420,11 @@ history, as `cancho-hooks` stores `attempts.status` today (`docs/tls-nonblocking
 | `tls-bad-finished` | the server's `Finished` does not verify | the same |
 | `tls-too-many-messages` | the KeyUpdate or warning-alert limits (§7.1) | the same |
 | `tls-illegal-psk` | *#286:* a `pre_shared_key` in a ServerHello that names an identity other than the one offered, or comes with a suite whose hash is not the ticket's (one answering a ClientHello that offered none is `tls-unsupported-extension`, RFC 8446 §4.2) (`docs/tls-resumption.md` §5) | a broken or hostile peer |
+| `tls-alpn-selected` | *#386:* the server chose an ALPN protocol that is not in the offer (`docs/tls-parity.md` §6.6) | the server is broken or hostile, or the offer was not what the program meant |
+| `tls-extension-repeat` | *#386:* `signature_algorithms` or `certificate_authorities` twice in a CertificateRequest, or ALPN twice in a server's answer | a broken or hostile peer |
+| `tls-alpn-list` | *#386:* `set_alpn_offer` or `start_alpn` given a name that is empty or over 255 bytes, or a list over 256 | a program bug |
+| `tls-client-key-type`, `-key-format`, `-key-mismatch`, `-cert-expired`, `-chain`, `-names`, `-identities-full`, `-no-identity` | *#386:* `add_client_identity`, `replace_client_identity` and `remove_client_identity` refusing what they were given (`docs/tls-parity.md` §6.2, §6.7) | fix the files or the call |
+| `tls-client-sign` | *#386:* the signer refused or its check failed while signing a CertificateVerify: a fault, not an input | report it |
 | `tls-no-entropy` | the engine was never seeded | a program bug: seed it in `main` |
 | `tls-slot` | a slot number out of range, or a slot already in use | a program bug |
 
