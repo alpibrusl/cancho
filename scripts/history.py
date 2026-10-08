@@ -234,7 +234,6 @@ def main():
             remaining[(now[0]["rule"], shape(now[0]["message"]))] += 1
         else:
             recovered[first[0]["rule"]] += 1
-
     shutil.rmtree(work, ignore_errors=True)
     unreadable = sum(failing.values())
     print(f"{total} revisions, {total - unreadable} read today, {unreadable} do not")
