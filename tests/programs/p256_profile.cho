@@ -2,7 +2,8 @@
 // `rounds` times, for `scripts/p256_bench.py`. Standard input is one line,
 // `<op> <rounds>`.
 //
-//     m  p256.mul, q  p256.sqr, a  p256.add, s  p256.sub (mod p, in elements)
+//     m  p256.mul, q  p256.sqr, p  p256.add then p256.sub (mod p, in elements)
+//     r  four independent chains of p256.mul (throughput, not latency)
 //     i  p256.invert mod p,  n  p256.sinvert mod n,  o  p256.smul mod n
 //     g  ecdh.public_key,  h  ecdh.shared,  k  ecdsa_sign.sign,  c  sign_checked,  v  ecdsa.verify_raw
 import std.p256;
@@ -73,11 +74,13 @@ fn work_loop[&w, &o](op: int, rounds: int, w: &!w [int], out: &!o [byte]) -> [] 
                 p256.mul(w, x, y, x);
             } else if op == 113 {
                 p256.sqr(w, x, x);
-            } else if op == 97 {
+            } else if op == 114 {
+                p256.mul(w, x, y, x);
+                p256.mul(w, z, y, z);
+                p256.mul(w, p256.fe(p256.base() + 4), y, p256.fe(p256.base() + 4));
+                p256.mul(w, p256.fe(p256.base() + 5), y, p256.fe(p256.base() + 5));
+            } else if op == 112 {
                 p256.add(w, x, y, x);
-                p256.sub32(w, x, y, x);
-            } else if op == 115 {
-                p256.sub32(w, x, y, x);
                 p256.sub32(w, x, y, x);
             } else if op == 105 {
                 p256.invert(w, x, x);

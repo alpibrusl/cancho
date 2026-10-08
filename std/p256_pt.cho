@@ -41,15 +41,15 @@ fn pt_table(i: int) -> [] int {
     return p256.base() + 14 + 3 * i;
 }
 
-fn x_of(p: int) -> [] int {
+pub fn x_of(p: int) -> [] int {
     return p256.fe(p);
 }
 
-fn y_of(p: int) -> [] int {
+pub fn y_of(p: int) -> [] int {
     return p256.fe(p + 1);
 }
 
-fn z_of(p: int) -> [] int {
+pub fn z_of(p: int) -> [] int {
     return p256.fe(p + 2);
 }
 
@@ -64,7 +64,7 @@ fn digits() -> [] int {
     return p256.fe(p256.base() + 14 + 3 * 16 + 2);
 }
 
-fn copy_point[&w](w: &!w [int], from: int, to: int) -> [] int {
+pub fn copy_point[&w](w: &!w [int], from: int, to: int) -> [] int {
     p256.copy(w, x_of(from), x_of(to));
     p256.copy(w, y_of(from), y_of(to));
     p256.copy(w, z_of(from), z_of(to));
@@ -230,7 +230,7 @@ fn double_point[&w](w: &!w [int], p: int, d: int) -> [] int {
 }
 
 // -1 (all ones) when a = b, else 0, for 0 <= a, b < 2^62: no branch.
-fn eq_mask(a: int, b: int) -> [] int {
+pub fn eq_mask(a: int, b: int) -> [] int {
     return (a ^ b) - 1 >> 63;
 }
 
@@ -238,9 +238,10 @@ fn eq_mask(a: int, b: int) -> [] int {
 // multiple: which one is taken shows in no branch and no address.
 fn select[&w](w: &!w [int], idx: int) -> [] int {
     let s = x_of(pt_sel());
+    let sl = w[s..s + 30];
     var j = 0;
     while j < 30 {
-        w[s + j] = 0;
+        sl[j] = 0;
         j = j + 1;
     }
     var i = 0;
@@ -249,9 +250,10 @@ fn select[&w](w: &!w [int], idx: int) -> [] int {
         // branch on whether this is the entry (`docs/value-barrier.md`).
         let m = value_barrier(eq_mask(i, idx));
         let from = x_of(pt_table(i));
+        let en = w[from..from + 30];
         j = 0;
         while j < 30 {
-            w[s + j] = w[s + j] | w[from + j] & m;
+            sl[j] = sl[j] | en[j] & m;
             j = j + 1;
         }
         i = i + 1;
@@ -301,7 +303,7 @@ fn recode[&s, &w](scalar: &s [byte], w: &!w [int]) -> [] int {
     while i < 64 {
         let byte = int_of(scalar[31 - i / 2]);
         let v = (byte >> 4 * (i % 2) & 15) + carry;
-        let c = (v + 7) >> 4;
+        let c = v + 7 >> 4;
         w[dig + i] = v - 16 * c;
         carry = c;
         i = i + 1;
@@ -331,18 +333,19 @@ fn comb_multiply[&w](w: &!w [int]) -> [] int {
         let neg = value_barrier(d >> 63);
         let mag = (d ^ neg) - neg;
         // The entry: x then y, zero for a zero digit.
+        let entry = w[x_of(sel)..x_of(sel) + 20];
         var t = 0;
         while t < 20 {
-            w[x_of(sel) + t] = 0;
+            entry[t] = 0;
             t = t + 1;
         }
         var j = 0;
         while j < 8 {
             let m = value_barrier(eq_mask(j + 1, mag));
-            let at = (8 * i + j) * 20;
+            let row = p256_comb.comb_row((8 * i + j) * 20);
             t = 0;
             while t < 20 {
-                w[x_of(sel) + t] = w[x_of(sel) + t] | p256_comb.comb_at(at + t) & m;
+                entry[t] = entry[t] | row[t] & m;
                 t = t + 1;
             }
             j = j + 1;
@@ -352,7 +355,7 @@ fn comb_multiply[&w](w: &!w [int]) -> [] int {
         t = 0;
         while t < 10 {
             let y = w[y_of(sel) + t];
-            w[y_of(sel) + t] = y ^ ((y ^ w[z_of(sel) + t]) & neg);
+            w[y_of(sel) + t] = y ^ (y ^ w[z_of(sel) + t]) & neg;
             t = t + 1;
         }
         mixed_add(w, pt_acc(), sel);
@@ -362,7 +365,7 @@ fn comb_multiply[&w](w: &!w [int]) -> [] int {
         while t < 30 {
             let old = w[x_of(pt_acc()) + t];
             let new = w[x_of(pt_out()) + t];
-            w[x_of(pt_acc()) + t] = new ^ ((old ^ new) & keep);
+            w[x_of(pt_acc()) + t] = new ^ (old ^ new) & keep;
             t = t + 1;
         }
         i = i + 1;

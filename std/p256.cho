@@ -88,6 +88,11 @@ fn put_const[&w](w: &!w [int], which: int, d: int) -> [] int {
     return 0;
 }
 
+// The group order n itself (plain, not Montgomery form) into the element at `d`.
+pub fn put_n[&w](w: &!w [int], d: int) -> [] int {
+    return put_const(w, p256_kernels.c_n(), d);
+}
+
 // Puts the constants in elements 0 to 5.
 pub fn init[&w](w: &!w [int]) -> [] int {
     put_const(w, p256_kernels.c_one(), one());
@@ -286,19 +291,22 @@ pub fn equal[&w](w: &w [int], x: int, y: int) -> [] bool {
 }
 
 pub fn copy[&w](w: &!w [int], from: int, to: int) -> [] int {
+    let a = w[from..from + 10];
+    let b = w[to..to + 10];
     var i = 0;
     while i < 10 {
-        w[to + i] = w[from + i];
+        b[i] = a[i];
         i = i + 1;
     }
     return 0;
 }
 
-// d = x as a Montgomery-form constant 0 (all limbs zero).
+// d = 0 (all limbs zero).
 pub fn set_zero[&w](w: &!w [int], d: int) -> [] int {
+    let b = w[d..d + 10];
     var i = 0;
     while i < 10 {
-        w[d + i] = 0;
+        b[i] = 0;
         i = i + 1;
     }
     return 0;

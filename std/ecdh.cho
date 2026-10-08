@@ -226,11 +226,6 @@ fn double_point[&w](w: &!w [int], p: int, d: int) -> [] int {
     return ecdsa.copy_point(w, pt_out(), d);
 }
 
-// -1 (all ones) when a = b, else 0, for 0 <= a, b < 2^62: no branch.
-fn eq_mask(a: int, b: int) -> [] int {
-    return (a ^ b) - 1 >> 63;
-}
-
 // The selected point = multiple `idx` of the table, reading every
 // multiple: which one is taken shows in no branch and no address.
 fn select[&w](w: &!w [int], idx: int) -> [] int {
@@ -246,7 +241,7 @@ fn select[&w](w: &!w [int], idx: int) -> [] int {
     while i < 16 {
         // Through the barrier, or `clang -O2` makes the `and` below a
         // branch on whether this is the entry (`docs/value-barrier.md`).
-        let m = value_barrier(eq_mask(i, idx));
+        let m = value_barrier(p256_pt.eq_mask(i, idx));
         let from = x_of(pt_table(i));
         j = 0;
         while j < span {

@@ -126,30 +126,19 @@ def render():
 //   signed four-bit digit selects, 65 positions of 8.
 // - `odd`: (2k + 1) * G, k in 0..31, at word 20 k: the odd multiples to 63 G.
 
-fn comb_hex() -> [] &static [byte] {{
-    return "{comb}";
-}}
-
-fn odd_hex() -> [] &static [byte] {{
-    return "{odd}";
-}}
-
-fn nibble(c: int) -> [] int {{
-    if c >= 97 {{
-        return c - 87;
-    }}
-    return c - 48;
-}}
-
+// The static bodies hold their own literal and decode it inline: a function they called would be
+// emitted into every program built with `--std` (`modules::std_declarations_cost_nothing_unless_called`).
+// A hex digit's value: `(c >> 6) * 9 + (c & 15)` is 0 to 9 for '0' to '9' and 10 to 15 for 'a' to 'f'.
 pub static comb: [int] {{
     let t = alloc_slice[static](10400, 0);
-    let s = comb_hex();
+    let s = "{comb}";
     var i = 0;
     while i < 10400 {{
         var v = 0;
         var j = 0;
         while j < 7 {{
-            v = v * 16 + nibble(int_of(s[7 * i + j]));
+            let c = int_of(s[7 * i + j]);
+            v = v * 16 + (c >> 6) * 9 + (c & 15);
             j = j + 1;
         }}
         t[i] = v;
@@ -160,13 +149,14 @@ pub static comb: [int] {{
 
 pub static odd: [int] {{
     let t = alloc_slice[static](640, 0);
-    let s = odd_hex();
+    let s = "{odd}";
     var i = 0;
     while i < 640 {{
         var v = 0;
         var j = 0;
         while j < 7 {{
-            v = v * 16 + nibble(int_of(s[7 * i + j]));
+            let c = int_of(s[7 * i + j]);
+            v = v * 16 + (c >> 6) * 9 + (c & 15);
             j = j + 1;
         }}
         t[i] = v;
@@ -183,6 +173,17 @@ pub fn comb_at(i: int) -> [] int {{
 // Word `i` of `odd`.
 pub fn odd_at(i: int) -> [] int {{
     return odd[i];
+}}
+
+// The 20 words of a `comb` point at word `at`, as a slice (its length is known, so reading it
+// costs no bounds check per word).
+pub fn comb_row(at: int) -> [] &static [int] {{
+    return comb[at..at + 20];
+}}
+
+// The 20 words of an `odd` point at word `at`.
+pub fn odd_row(at: int) -> [] &static [int] {{
+    return odd[at..at + 20];
 }}
 '''
 
