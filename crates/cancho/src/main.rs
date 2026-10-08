@@ -35,6 +35,7 @@ mod test_cli;
 mod vcs_cli;
 mod vcs_dir;
 mod vcs_origin;
+mod vcs_sync;
 
 const USAGE: &str = "\
 cancho — the bootstrap compiler for the cancho systems dialect
@@ -58,6 +59,7 @@ usage:
     cancho test  [--test <name>] [--ignore-compiler-rev]
     cancho vcs publish [--store <dir>] [--std] [--requires <lock>[:<dep-store>]]... <file.cho>
     cancho vcs publish [--store <root>] [--std] --dir <dir>
+    cancho vcs sync [--dir <dir>] [--std] [--check]
     cancho vcs log     [--store <dir>]
     cancho vcs resolve [--lock <file>] [<store-dir>]
     cancho vcs lock (--store <dir> | --git <url> (--rev <hash> | --ref <name>) [--path <dir>]) -o <file> (--all | <name>...)
