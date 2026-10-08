@@ -190,6 +190,11 @@ pub fn make_prelude[&s](st: &!s [int], index: int) -> [] int {
     return make(st, prelude_kind(), index, 0, 0);
 }
 
+// The index in `tables.cho` of a prelude type.
+pub fn prelude_index[&s](st: &!s [int], ty: int) -> [] int {
+    return slot(st, ty, 1);
+}
+
 pub fn is_prelude[&s](st: &!s [int], ty: int) -> [] bool {
     return ty >= first_table() && slot(st, ty, 0) == prelude_kind();
 }

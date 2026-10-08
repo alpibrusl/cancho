@@ -17,6 +17,7 @@ import selfhost.rules;
 import selfhost.builtins;
 import selfhost.lexcore as lc;
 import selfhost.pass1;
+import selfhost.tables;
 
 pub fn two_to[&s](st: &!s [int], n: int) -> [] int {
     var v = 1;
@@ -113,12 +114,62 @@ pub fn perform_row[&s](st: &!s [int], mask: int) -> [] int {
     return 0;
 }
 
+// The labels owning a value of the prelude type `index` stands for: what `discharged_by` says of it.
+// A type that carries a literal discharges labels with an argument too, which are not in the mask.
+pub fn discharged[&s](st: &!s [int], index: int) -> [] int {
+    let labels = tables.prelude_labels(index);
+    var mask = 0;
+    var i = 0;
+    while i < len(labels) {
+        var j = i;
+        while j < len(labels) && int_of(labels[j]) != 32 {
+            j = j + 1;
+        }
+        if j > i {
+            let last = int_of(labels[j - 1]);
+            if last != '*' && last != '=' {
+                var n = 0;
+                while n < builtins.effect_count() {
+                    if lc.spells(labels, i, j, builtins.effect_name(n)) && !has(st, mask, n) {
+                        mask = mask + two_to(st, n);
+                    }
+                    n = n + 1;
+                }
+            }
+        }
+        i = j + 1;
+    }
+    return mask;
+}
+
+// The labels of two masks.
+pub fn union[&s](st: &!s [int], a: int, b: int) -> [] int {
+    var mask = a;
+    var n = 0;
+    while n < builtins.effect_count() {
+        if has(st, b, n) && !has(st, mask, n) {
+            mask = mask + two_to(st, n);
+        }
+        n = n + 1;
+    }
+    return mask;
+}
+
 // The row is exact: what the body performed against what `fn_item` declares. The first
 // disagreement is a refusal at the function, `effect-not-declared` when the body does more than the
 // row says and `effect-declared-not-performed` when the row says more.
-pub fn check[&s, &x](st: &!s [int], text: &x [byte], fn_item: int, from: int, to: int) -> [] int {
+pub fn check[&s, &x](st: &!s [int], text: &x [byte], fn_item: int, from: int, to: int, authority: int) -> [] int {
     let declared = row_mask(st, text, fn_item);
-    let performed = st[54];
+    // A function that owns a capability needs no label for what the capability allows (section 8.2
+    // of the same document): what the parameters discharge is not performed as far as the row goes.
+    var performed = 0;
+    var m = 0;
+    while m < builtins.effect_count() {
+        if has(st, st[54], m) && !has(st, authority, m) {
+            performed = performed + two_to(st, m);
+        }
+        m = m + 1;
+    }
     if has(st, declared, 60) {
         // A label with an argument is a different label from the plain one a builtin performs, and
         // from every other: nothing performed can be compared with it yet.
