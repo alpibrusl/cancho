@@ -385,21 +385,25 @@ fn load_point[&x, &y, &w](x: &x [byte], y: &y [byte], w: &!w [int]) -> [] int {
     return 0;
 }
 
-// Whether the point in table slot 1 (Z = 1) is on the curve:
-// y^2 = x^3 - 3x + b. Public coordinates.
+// Whether the point (x, y) (elements in Montgomery form, bounded as a
+// multiplication's answer) is on the curve: y^2 = x^3 - 3x + b. The three
+// elements s0, s1, s2 are scratch. Public coordinates: variable time.
+pub fn on_curve_xy[&w](w: &!w [int], x: int, y: int, s0: int, s1: int, s2: int) -> [] bool {
+    p256.sqr(w, y, s0);
+    p256.sqr(w, x, s1);
+    p256.mul(w, s1, x, s1);
+    p256.add(w, x, x, s2);
+    p256.add(w, s2, x, s2);
+    p256.sub8(w, s1, s2, s1);
+    p256.add(w, s1, p256.b_mont(), s1);
+    p256.sub16(w, s0, s1, s0);
+    p256.from_mont(w, s0, s0);
+    return p256.is_zero(w, s0);
+}
+
+// Whether the point in table slot 1 (Z = 1) is on the curve.
 fn on_curve[&w](w: &!w [int]) -> [] bool {
-    let x = x_of(pt_table(1));
-    let y = y_of(pt_table(1));
-    p256.sqr(w, y, t(0));
-    p256.sqr(w, x, t(1));
-    p256.mul(w, t(1), x, t(1));
-    p256.add(w, x, x, t(2));
-    p256.add(w, t(2), x, t(2));
-    p256.sub8(w, t(1), t(2), t(1));
-    p256.add(w, t(1), p256.b_mont(), t(1));
-    p256.sub16(w, t(0), t(1), t(0));
-    p256.from_mont(w, t(0), t(0));
-    return p256.is_zero(w, t(0));
+    return on_curve_xy(w, x_of(pt_table(1)), y_of(pt_table(1)), t(0), t(1), t(2));
 }
 
 // The accumulator's affine x (and y, when `out_y` is not empty) as

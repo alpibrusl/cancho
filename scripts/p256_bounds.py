@@ -29,7 +29,11 @@ MUL_LIMIT = Fraction(1 << 24)
 FORMULAS = {
     "add_points": ("std/p256_pt.cho", ["x1", "y1", "z1", "x2", "y2", "z2"], ["x3", "y3", "z3"], {"b": Fraction(1)}),
     "mixed_add": ("std/p256_pt.cho", ["x1", "y1", "z1", "x2", "y2"], ["x3", "y3", "z3"], {"b": Fraction(1)}),
-    "on_curve": ("std/p256_pt.cho", ["x", "y"], [], {"p256.b_mont()": Fraction(1)}),
+    "on_curve_xy": ("std/p256_pt.cho", ["x", "y"], [], {"p256.b_mont()": Fraction(1)}),
+    "double": ("std/p256_vf.cho", ["x", "y", "z"], ["x_of(d)", "y_of(d)", "z_of(d)"], {}, 8),
+    "add_jac": ("std/p256_vf.cho", ["x_of(p)", "y_of(p)", "z_of(p)", "x_of(q)", "y_of(q)", "z_of(q)"], ["x_of(d)", "y_of(d)", "z_of(d)"], {}, 8),
+    "load_q": ("std/p256_vf.cho", ["y_of(pt_ent())"], ["y_of(pt_ent())"], {"e_zero()": Fraction(0)}, 2),
+    "madd": ("std/p256_vf.cho", ["x1", "y1", "z1", "x2", "y2"], ["x_of(d)", "y_of(d)", "z_of(d)"], {}, 8),
     "double_point": ("std/p256_pt.cho", ["x", "y", "z"], ["x3", "y3", "z3"], {"b": Fraction(1)}),
 }
 EXTRA = {}  # filled by formulas registered below, when their files exist
@@ -123,39 +127,57 @@ def run(path, name, inputs, outputs, consts, b_in, rewrite=None):
     return ({o: bound[o] for o in outputs}, worst_mul, worst_sub, worst_val), None
 
 
+# Functions whose outputs feed each other's inputs share one bound: the smallest B
+# for which every output is at most B when every input is at most B.
+GROUPS = [
+    ["add_points", "mixed_add", "double_point"],
+    ["double", "add_jac", "madd", "load_q"],
+    ["on_curve_xy"],
+]
+
+
 def main():
     do_rewrite = "--rewrite" in sys.argv
     failed = False
     table = dict(FORMULAS)
     table.update(EXTRA)
-    for name, (path, ins, outs, consts) in table.items():
-        if not (ROOT / path).exists():
+    for group in GROUPS:
+        group = [g for g in group if g in table and (ROOT / table[g][0]).exists()]
+        if not group:
             continue
-        b_in = Fraction(2)
-        for _ in range(6):
-            edits = [] if do_rewrite else None
-            res, err = run(path, name, ins, outs, consts, b_in, edits)
+        b_in = Fraction(max((table[g][4] if len(table[g]) > 4 else 2) for g in group))
+        for _ in range(12):
+            results, edits, err = {}, {}, None
+            for name in group:
+                path, ins, outs, consts = table[name][:4]
+                edits[name] = [] if do_rewrite else None
+                res, err = run(path, name, ins, outs, consts, b_in, edits[name])
+                if err:
+                    break
+                results[name] = res
             if err:
                 print("FAIL", err)
                 failed = True
                 break
-            out, wm, ws, wv = res
-            if not out or max(out.values()) <= b_in:
-                if edits:
-                    text = (ROOT / path).read_text()
-                    start = text.index(f"fn {name}[")
-                    head, tail = text[:start], text[start:]
-                    for old, new in edits:
-                        tail = tail.replace(old, new, 1)
-                    (ROOT / path).write_text(head + tail)
-                print(f"{name:14} inputs <= {float(b_in):6.1f} p   outputs <= {float(max(out.values(), default=Fraction(0))):6.1f} p   "
-                      f"largest product {float(wm):9.1f} p^2 (limit {float(MUL_LIMIT):.0f})   largest subtrahend {float(ws):5.1f} p   "
-                      f"largest value {float(wv):6.1f} p (limit {float(LIMIT):.0f})")
+            top = max((max(r[0].values(), default=Fraction(0)) for r in results.values()), default=Fraction(0))
+            if top <= b_in:
+                for name in group:
+                    out, wm, ws, wv = results[name]
+                    print(f"{name:12} inputs <= {float(b_in):5.1f} p   outputs <= {float(max(out.values(), default=Fraction(0))):5.1f} p   "
+                          f"largest product {float(wm):8.1f} p^2 (limit {int(MUL_LIMIT)})   largest subtrahend {float(ws):5.1f} p   "
+                          f"largest value {float(wv):5.1f} p (limit {int(LIMIT)})")
+                    if edits[name]:
+                        path = table[name][0]
+                        text = (ROOT / path).read_text()
+                        start = text.index(f"fn {name}[")
+                        head, tail = text[:start], text[start:]
+                        for old, new in edits[name]:
+                            tail = tail.replace(old, new, 1)
+                        (ROOT / path).write_text(head + tail)
                 break
-            print(f"  {name}: inputs <= {float(b_in):.1f} p give outputs <= {float(max(out.values())):.1f} p")
-            b_in = Fraction(-(-max(out.values()) // 1))
+            b_in = Fraction(-(-top // 1))
         else:
-            print(f"FAIL {name}: the bound does not close")
+            print(f"FAIL {group}: the bound does not close")
             failed = True
     sys.exit(1 if failed else 0)
 
