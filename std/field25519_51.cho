@@ -1,0 +1,369 @@
+edition 7;
+module std.field25519_51;
+
+// `std.field25519_51` -- arithmetic modulo p = 2^255 - 19 on five limbs of 51
+// bits, the representation of curve25519-donna-c64 and ref10's 64-bit code
+// (`docs/wide-multiply.md` §8). The multiplication takes the full 128-bit
+// product of two limbs with `mul_wide` and adds columns of them into a
+// two-word accumulator with `add_carry`; `std.field25519`, 16 limbs of 16
+// bits, stays for Ed25519 until this module is proven there too.
+//
+// An element is a `[int]` of 5 limbs, limb `i` holding bits `51i` to `51i + 50`.
+// A limb is non-negative and an `int` holds it as the unsigned word it is.
+// After `mul`, `square`, `mul_small` or `unpack` every limb is under 2^51 plus
+// a few bits (limb 0 and 1 may be a little over, by at most 2^13); `add` of two
+// such elements stays under 2^52 and `sub` under 2^53. `mul` accepts limbs
+// under 2^54: a column is then at most 5 products of (2^54 * 19 * 2^54), under
+// 2^117, and its high word is under 2^53, so no accumulator wraps.
+//
+// Every function has the same instruction sequence whatever the values: no
+// `if`, no loop bound and no index depends on an element. The one selection,
+// `cswap`, is a masked XOR whose mask passes through `value_barrier`
+// (`docs/value-barrier.md`). The arithmetic is `wrapping_*` and the two wide
+// builtins, which cannot trap, so no overflow test is computed from a secret
+// limb.
+
+fn m51() -> [] int {
+    return 0x7ffffffffffff;
+}
+
+// The high word of an accumulator shifted into place: bits 51.. of the
+// 128-bit value `hi * 2^64 + lo`, as a word. `lo >> 51` is arithmetic, so its
+// 13 meaningful bits are masked.
+fn shr51(hi: int, lo: int) -> [] int {
+    return (lo >> 51 & 0x1fff) | (hi << 13);
+}
+
+// `(hi, lo) + a * b` as a 128-bit accumulator.
+fn mac(hi: int, lo: int, a: int, b: int) -> [] (int, int) {
+    let (h, l) = mul_wide(a, b);
+    let (s, c) = add_carry(lo, l, 0);
+    return (wrapping_add(wrapping_add(hi, h), c), s);
+}
+
+// `(hi, lo) + w` for a word `w`.
+fn addw(hi: int, lo: int, w: int) -> [] (int, int) {
+    let (s, c) = add_carry(lo, w, 0);
+    return (wrapping_add(hi, c), s);
+}
+
+pub fn limbs() -> [] int {
+    return 5;
+}
+
+pub fn copy[&o, &a](o: &!o [int], a: &a [int]) -> [] int {
+    o[0] = a[0];
+    o[1] = a[1];
+    o[2] = a[2];
+    o[3] = a[3];
+    o[4] = a[4];
+    return 0;
+}
+
+// `o = v`, for a small non-negative `v` (under 2^51).
+pub fn set_small[&o](o: &!o [int], v: int) -> [] int {
+    o[0] = v;
+    o[1] = 0;
+    o[2] = 0;
+    o[3] = 0;
+    o[4] = 0;
+    return 0;
+}
+
+pub fn add[&o, &a, &b](o: &!o [int], a: &a [int], b: &b [int]) -> [] int {
+    o[0] = wrapping_add(a[0], b[0]);
+    o[1] = wrapping_add(a[1], b[1]);
+    o[2] = wrapping_add(a[2], b[2]);
+    o[3] = wrapping_add(a[3], b[3]);
+    o[4] = wrapping_add(a[4], b[4]);
+    return 0;
+}
+
+// `o = a - b`, as `a + 2p - b`, so every limb stays non-negative while `b`'s
+// limbs are under 2^52 - 38 (2p's limbs are 2^52 - 38 and 2^52 - 2).
+pub fn sub[&o, &a, &b](o: &!o [int], a: &a [int], b: &b [int]) -> [] int {
+    o[0] = wrapping_sub(wrapping_add(a[0], 0xfffffffffffda), b[0]);
+    o[1] = wrapping_sub(wrapping_add(a[1], 0xffffffffffffe), b[1]);
+    o[2] = wrapping_sub(wrapping_add(a[2], 0xffffffffffffe), b[2]);
+    o[3] = wrapping_sub(wrapping_add(a[3], 0xffffffffffffe), b[3]);
+    o[4] = wrapping_sub(wrapping_add(a[4], 0xffffffffffffe), b[4]);
+    return 0;
+}
+
+// The five accumulators, reduced: limb `i` of the result is the low 51 bits of
+// accumulator `i` plus the carry out of accumulator `i - 1`, and the carry out
+// of the top folds into limb 0 as `* 19` (2^255 = 19 mod p).
+fn finish[&o](o: &!o [int], h0: int, l0: int, h1: int, l1: int, h2: int, l2: int, h3: int, l3: int, h4: int, l4: int) -> [] int {
+    var r0 = l0 & m51();
+    var c = shr51(h0, l0);
+    let (g1, k1) = addw(h1, l1, c);
+    var r1 = k1 & m51();
+    c = shr51(g1, k1);
+    let (g2, k2) = addw(h2, l2, c);
+    var r2 = k2 & m51();
+    c = shr51(g2, k2);
+    let (g3, k3) = addw(h3, l3, c);
+    let r3 = k3 & m51();
+    c = shr51(g3, k3);
+    let (g4, k4) = addw(h4, l4, c);
+    let r4 = k4 & m51();
+    c = shr51(g4, k4);
+    r0 = wrapping_add(r0, wrapping_mul(c, 19));
+    c = r0 >> 51;
+    r0 = r0 & m51();
+    r1 = wrapping_add(r1, c);
+    c = r1 >> 51;
+    r1 = r1 & m51();
+    r2 = wrapping_add(r2, c);
+    o[0] = r0;
+    o[1] = r1;
+    o[2] = r2;
+    o[3] = r3;
+    o[4] = r4;
+    return 0;
+}
+
+// `o = a * b`. Column `k` is the sum of `a_i * b_j` with `i + j = k`, plus
+// `19 *` the sum with `i + j = k + 5` (2^255 = 19 mod p). The inputs are read
+// before `o` is written, so `o` may be `a` or `b`.
+pub fn mul[&o, &a, &b](o: &!o [int], a: &a [int], b: &b [int]) -> [] int {
+    let a0 = a[0];
+    let a1 = a[1];
+    let a2 = a[2];
+    let a3 = a[3];
+    let a4 = a[4];
+    let b0 = b[0];
+    let b1 = b[1];
+    let b2 = b[2];
+    let b3 = b[3];
+    let b4 = b[4];
+    let a1x = wrapping_mul(a1, 19);
+    let a2x = wrapping_mul(a2, 19);
+    let a3x = wrapping_mul(a3, 19);
+    let a4x = wrapping_mul(a4, 19);
+
+    let (h0, l0) = mac(0, 0, a0, b0);
+    let (h0, l0) = mac(h0, l0, a4x, b1);
+    let (h0, l0) = mac(h0, l0, a3x, b2);
+    let (h0, l0) = mac(h0, l0, a2x, b3);
+    let (h0, l0) = mac(h0, l0, a1x, b4);
+
+    let (h1, l1) = mac(0, 0, a0, b1);
+    let (h1, l1) = mac(h1, l1, a1, b0);
+    let (h1, l1) = mac(h1, l1, a4x, b2);
+    let (h1, l1) = mac(h1, l1, a3x, b3);
+    let (h1, l1) = mac(h1, l1, a2x, b4);
+
+    let (h2, l2) = mac(0, 0, a0, b2);
+    let (h2, l2) = mac(h2, l2, a1, b1);
+    let (h2, l2) = mac(h2, l2, a2, b0);
+    let (h2, l2) = mac(h2, l2, a4x, b3);
+    let (h2, l2) = mac(h2, l2, a3x, b4);
+
+    let (h3, l3) = mac(0, 0, a0, b3);
+    let (h3, l3) = mac(h3, l3, a1, b2);
+    let (h3, l3) = mac(h3, l3, a2, b1);
+    let (h3, l3) = mac(h3, l3, a3, b0);
+    let (h3, l3) = mac(h3, l3, a4x, b4);
+
+    let (h4, l4) = mac(0, 0, a0, b4);
+    let (h4, l4) = mac(h4, l4, a1, b3);
+    let (h4, l4) = mac(h4, l4, a2, b2);
+    let (h4, l4) = mac(h4, l4, a3, b1);
+    let (h4, l4) = mac(h4, l4, a4, b0);
+
+    return finish(o, h0, l0, h1, l1, h2, l2, h3, l3, h4, l4);
+}
+
+// `o = a * a`.
+pub fn square[&o, &a](o: &!o [int], a: &a [int]) -> [] int {
+    return mul(o, a, a);
+}
+
+// `o = a * k` for a constant `k` under 2^17 (X25519's `(A - 2) / 4`, 121665).
+pub fn mul_small[&o, &a](o: &!o [int], a: &a [int], k: int) -> [] int {
+    let (h0, l0) = mul_wide(a[0], k);
+    let (h1, l1) = mul_wide(a[1], k);
+    let (h2, l2) = mul_wide(a[2], k);
+    let (h3, l3) = mul_wide(a[3], k);
+    let (h4, l4) = mul_wide(a[4], k);
+    return finish(o, h0, l0, h1, l1, h2, l2, h3, l3, h4, l4);
+}
+
+// Swaps `p` and `q` when `bit` is 1 and leaves them when it is 0, with the
+// same work either way (RFC 7748 §5's `cswap`): `mask` is all ones or all
+// zeros, never a branch, and passes through `value_barrier` where it is made
+// (`docs/value-barrier.md` §4).
+pub fn cswap[&p, &q](p: &!p [int], q: &!q [int], bit: int) -> [] int {
+    let mask = value_barrier(wrapping_sub(0, bit));
+    let x0 = mask & (p[0] ^ q[0]);
+    let x1 = mask & (p[1] ^ q[1]);
+    let x2 = mask & (p[2] ^ q[2]);
+    let x3 = mask & (p[3] ^ q[3]);
+    let x4 = mask & (p[4] ^ q[4]);
+    p[0] = p[0] ^ x0;
+    q[0] = q[0] ^ x0;
+    p[1] = p[1] ^ x1;
+    q[1] = q[1] ^ x1;
+    p[2] = p[2] ^ x2;
+    q[2] = q[2] ^ x2;
+    p[3] = p[3] ^ x3;
+    q[3] = q[3] ^ x3;
+    p[4] = p[4] ^ x4;
+    q[4] = q[4] ^ x4;
+    return 0;
+}
+
+// `o = a` squared `n` times (`n` is a constant of the caller's).
+fn square_n[&o](o: &!o [int], n: int) -> [] int {
+    var i = 0;
+    while i < n {
+        square(o, o);
+        i = i + 1;
+    }
+    return 0;
+}
+
+// `o = a^(p-2) = 1/a` (and 0 for 0), by ref10's addition chain for
+// 2^255 - 21: 254 squarings and 11 multiplications, the same sequence for every
+// `a`. The temporaries are the function's own region.
+pub fn invert[&o, &a](o: &!o [int], a: &a [int]) -> [] int {
+    region r {
+        let z2 = alloc_slice[r](5, 0);
+        let z9 = alloc_slice[r](5, 0);
+        let z11 = alloc_slice[r](5, 0);
+        let t = alloc_slice[r](5, 0);
+        let u = alloc_slice[r](5, 0);
+        let v = alloc_slice[r](5, 0);
+        square(z2, a);
+        copy(t, z2);
+        square_n(t, 2);
+        mul(z9, t, a);
+        mul(z11, z9, z2);
+        square(t, z11);
+        mul(t, t, z9);
+        // t = a^(2^5 - 1)
+        copy(u, t);
+        square_n(u, 5);
+        mul(u, u, t);
+        // u = a^(2^10 - 1)
+        copy(v, u);
+        square_n(v, 10);
+        mul(v, v, u);
+        // v = a^(2^20 - 1); t is free, u stays for 2^50 - 1
+        copy(t, v);
+        square_n(t, 20);
+        mul(t, t, v);
+        // t = a^(2^40 - 1)
+        square_n(t, 10);
+        mul(t, t, u);
+        // t = a^(2^50 - 1); u becomes 2^100 - 1
+        copy(u, t);
+        square_n(u, 50);
+        mul(u, u, t);
+        // u = a^(2^100 - 1)
+        copy(v, u);
+        square_n(v, 100);
+        mul(v, v, u);
+        // v = a^(2^200 - 1)
+        square_n(v, 50);
+        mul(v, v, t);
+        // v = a^(2^250 - 1)
+        square_n(v, 5);
+        mul(o, v, z11);
+        set_small(z2, 0);
+        set_small(z9, 0);
+        set_small(z11, 0);
+        set_small(t, 0);
+        set_small(u, 0);
+        set_small(v, 0);
+    }
+    return 0;
+}
+
+fn word[&s](s: &s [byte], at: int) -> [] int {
+    return int_of(s[at]) | int_of(s[at + 1]) << 8 | int_of(s[at + 2]) << 16 | int_of(s[at + 3]) << 24 | int_of(s[at + 4]) << 32 | int_of(s[at + 5]) << 40 | int_of(s[at + 6]) << 48 | int_of(s[at + 7]) << 56;
+}
+
+// 32 little-endian bytes into an element. The top bit of byte 31 is ignored,
+// as RFC 7748 §5 requires of a u-coordinate; a value of p or more is taken mod
+// p by the arithmetic that follows (non-canonical inputs are accepted).
+pub fn unpack[&o, &s](o: &!o [int], s: &s [byte]) -> [] int {
+    let w0 = word(s, 0);
+    let w1 = word(s, 8);
+    let w2 = word(s, 16);
+    let w3 = word(s, 24);
+    o[0] = w0 & m51();
+    o[1] = (w0 >> 51 & 0x1fff) | (w1 << 13 & m51());
+    o[2] = (w1 >> 38 & 0x3ffffff) | (w2 << 26 & m51());
+    o[3] = (w2 >> 25 & 0x7fffffffff) | (w3 << 39 & m51());
+    o[4] = w3 >> 12 & m51();
+    return 0;
+}
+
+// One pass of carries through five limbs, the top carry folding into limb 0
+// as `* 19`; `(limbs, carry out of the top)`-free, so it is called twice.
+fn weak[&t](t: &!t [int]) -> [] int {
+    var c = t[4] >> 51;
+    let t4 = t[4] & m51();
+    let t0 = wrapping_add(t[0], wrapping_mul(c, 19));
+    c = t0 >> 51;
+    let r0 = t0 & m51();
+    let t1 = wrapping_add(t[1], c);
+    c = t1 >> 51;
+    let r1 = t1 & m51();
+    let t2 = wrapping_add(t[2], c);
+    c = t2 >> 51;
+    let r2 = t2 & m51();
+    let t3 = wrapping_add(t[3], c);
+    c = t3 >> 51;
+    let r3 = t3 & m51();
+    let r4 = wrapping_add(t4, c);
+    t[0] = r0;
+    t[1] = r1;
+    t[2] = r2;
+    t[3] = r3;
+    t[4] = r4;
+    return 0;
+}
+
+// The canonical 32-byte encoding, fully reduced below p, into `out[0..32]`:
+// weak carries, then `q`, 1 exactly when the value is p or more (the carry out
+// of adding 19), and `q * 19` added back with the top bit dropped. No branch.
+pub fn pack[&o, &a](out: &!o [byte], a: &a [int]) -> [] int {
+    region r {
+        let t = alloc_slice[r](5, 0);
+        copy(t, a);
+        weak(t);
+        weak(t);
+        let u0 = wrapping_add(t[0], 19);
+        let u1 = wrapping_add(t[1], u0 >> 51);
+        let u2 = wrapping_add(t[2], u1 >> 51);
+        let u3 = wrapping_add(t[3], u2 >> 51);
+        let u4 = wrapping_add(t[4], u3 >> 51);
+        let q = u4 >> 51;
+        let v0 = wrapping_add(t[0], wrapping_mul(q, 19));
+        let v1 = wrapping_add(t[1], v0 >> 51);
+        let v2 = wrapping_add(t[2], v1 >> 51);
+        let v3 = wrapping_add(t[3], v2 >> 51);
+        let v4 = wrapping_add(t[4], v3 >> 51) & m51();
+        let f0 = v0 & m51();
+        let f1 = v1 & m51();
+        let f2 = v2 & m51();
+        let f3 = v3 & m51();
+        let w0 = f0 | (f1 << 51);
+        let w1 = (f1 >> 13 & 0x3fffffffff) | (f2 << 38);
+        let w2 = (f2 >> 26 & 0x1ffffff) | (f3 << 25);
+        let w3 = (f3 >> 39 & 0xfff) | (v4 << 12);
+        var i = 0;
+        while i < 8 {
+            out[i] = byte_of(w0 >> (8 * i) & 255);
+            out[8 + i] = byte_of(w1 >> (8 * i) & 255);
+            out[16 + i] = byte_of(w2 >> (8 * i) & 255);
+            out[24 + i] = byte_of(w3 >> (8 * i) & 255);
+            i = i + 1;
+        }
+        set_small(t, 0);
+    }
+    return 0;
+}
