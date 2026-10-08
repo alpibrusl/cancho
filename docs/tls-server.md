@@ -1,7 +1,7 @@
 # A TLS 1.3 server for `packages/tls`: the design
 
-> **Status: steps 1 to 3 and 5 built: the signer (`docs/ecdsa-sign.md`), the TLS 1.3 server (§10, as built), the example
-> the broker and the gateway copy, `examples/tls_echo` (§11), and session tickets (§12); its open questions (§9) answered as proposed (2026-10-07).
+> **Status: steps 1 to 5 built: the signer (`docs/ecdsa-sign.md`), the TLS 1.3 server (§10, as built), the example
+> the broker and the gateway copy, `examples/tls_echo` (§11), session tickets (§12) and client certificates (§13); its open questions (§9) answered as proposed (2026-10-07).
 > Not independently reviewed (#209).** `packages/tls` is a client (`docs/tls-pure.md`). Two programs of the toolbox need the other
 > side: `cancho-mqtt`, a broker whose clients connect on 8883, and `cancho-gateway`, a reverse proxy that terminates HTTPS. Both
 > are at the design stage and both list TLS as out of scope because "it needs foreign code and would make the authority report
@@ -298,6 +298,12 @@ an MQTT client and an HTTP keep-alive connection handshake once and then stay. *
 significant; each identity holds its chain (a few KiB) and key in the engine. *As built: five words a slot; 274 KiB of identities and 75 KiB
 of key-parsing work in a server engine (§10.1).*
 
+**With a client certificate (§13.17, measured).** A handshake that verifies a client's chain and its CertificateVerify retires **50.6 million
+more user-space instructions with a P-256 key under the CA than the 75.6 million of a handshake with none** (x86-64, `perf stat`), and 25.1 million
+more for each intermediate; on the M4 it costs **1.7 ms more** (3.23 to 4.94 ms), and 2.5 ms more with an intermediate. P-384
+(+3.2 ms on the M4), RSA-2048 (+1.0) and Ed25519 (+4.2) cost differently. A program that bounds handshakes by rate (§11.2) sets the rate from
+this figure when it asks for certificates.
+
 ## 7. Threat model, the server's side
 
 `docs/tls-pure.md` §4 holds for the record layer. What a server adds:
@@ -338,7 +344,8 @@ of key-parsing work in a server engine (§10.1).*
    `http.server` could not take bytes that did not come from its own sockets; *corrected: it can now* (`docs/http-server.md`
    §11, a byte-fed mode), and `examples/https_hello` is the HTTPS server built on it.*
 4. **Client certificates**: CertificateRequest, the client's chain verified against a configured trust store with no host
-   name, the verified subject and SANs given to the program. §9's question 2 decides whether it moves before step 3.
+   name, the verified subject and SANs given to the program. §9's question 2 decides whether it moves before step 3. *Built
+   (§13), after step 5, on the tickets' head.*
 5. **Session tickets**: stateless, sealed with a ticket key from the DRBG, rotated, `psk_dhe_ke` only (a fresh key exchange
    every time, so forward secrecy stays), never 0-RTT. Saves the signature and its check: about 2 to 3.5 ms of the 3 to 5.
    *Built (§12, #379): the design is §12.1 to §12.10, what was built and measured §12.11 to §12.15.*
@@ -1500,7 +1507,7 @@ quotes, a `+`, a leading `#` and a trailing space, a `;`, `<`, `>`, a backslash 
 - **Fuzz.** `fuzz_clientauth` (§13.11), AFL++ 4.09c, one core each, 0.42 h each: **773,208 executions of `clientauth` (1,125 of 4,655
   edges) and 330,362 of `server` (1,368 of 11,532, with client authentication on for a third of its inputs)**: no crash and no hang.
   The queue was minimised to 249 inputs, committed beside the 23 seeds (a good Certificate and CertificateVerify for each key type, and
-  the lying client's refusals); `conformance/tls_fuzz.rs` runs them on both backends. `tls_fuzz.py --server` (§13.11): @@MUTATION@@.
+  the lying client's refusals); `conformance/tls_fuzz.rs` runs them on both backends. `tls_fuzz.py --server` (§13.11), on the tree with the tickets: **20,000 mutated connections over 48 recorded handshakes, 0 traps** (x86-64).
 - **Mutants.** `python3 scripts/tls_server_mutants.py <cancho>` replays both recordings: **126 mutants, 124 killed, 2 equivalent
   (argued in the script), 0 survived**; 55 of them are new (the purpose, the context string, each message's place in the
   transcript, the optional/required test, the bounds, the strict store, the identity gate, the states, the alerts, each `tls-role`
@@ -1508,7 +1515,52 @@ quotes, a `+`, a leading `#` and a trailing space, a `;`, `<`, `>`, a backslash 
 
 ### 13.17 Cost
 
-@@COST@@
+`python3 scripts/tls_server_clientauth_cost.py <tls_serve> 10 5`: the method of §6 and §11.4 (the server's CPU time from `/proc/<pid>/stat`,
+or `ps`, divided by the handshakes completed) with another load: Python's `ssl`, because `openssl s_time` sends the leaf of a client
+certificate and never the intermediate behind it (§13.14) and counts a handshake complete before the server has judged the
+client. Each handshake is a TLS 1.3 connection with an X25519 share, a byte out and back (so the server has accepted the client),
+and a close; 10 s a cell, 5 rounds with the rows interleaved. The suite is AES-128-GCM (the server's choice).
+
+**Apple M4 Max, macOS 26, arm64 natively** (the Docker VM's disk was full, §13.21), OpenSSL 3.6.4's Python client, no other work
+of ours on the machine (others were: the load average was 16 to 23), milliseconds of server CPU a handshake, median of 5 rounds
+(minimum to maximum):
+
+| | ms | min to max | more than none |
+|---|---|---|---|
+| no client authentication | **3.23** | 3.11 to 3.99 | |
+| optional, the client sends none | 3.17 | 3.06 to 3.35 | -0.06 (the CertificateRequest and an empty Certificate: not measurable) |
+| required, P-256 key under the CA (a chain of one) | **4.94** | 4.84 to 5.62 | **+1.71** |
+| required, P-256 key under an intermediate (a chain of two) | **5.76** | 5.67 to 6.66 | **+2.53** |
+| required, P-384 key | 6.40 | 6.33 to 7.36 | +3.16 |
+| required, RSA-2048 key (RSA-PSS) | 4.26 | 4.09 to 4.91 | +1.03 |
+| required, Ed25519 key | 7.47 | 6.95 to 8.36 | +4.23 |
+
+The design's arithmetic (§13.12) holds on the M4: two P-256 verifications (the CA's signature on the leaf, the client's
+CertificateVerify) at the 0.82 ms of `docs/ecdsa-sign.md` §7 are 1.64 ms against 1.71 measured; a third for an intermediate, 2.46
+against 2.53. The other key types are the CertificateVerify's verification beyond the CA's one P-256: about 2.4 ms for P-384, 0.2 ms for
+RSA-2048 (public exponent 65537), and **3.4 ms for Ed25519**, the most expensive key a client can present here; these three are the
+remainders after the CA's verification, and were not timed alone.
+
+**x86-64** (gram: linux-x86_64, an Intel P-core, `taskset -c 6`, `perf stat`): milliseconds there are **not a measurement**: core 6 and
+its hyper-thread sibling were in use by other work throughout (the script measures the others' share of the cpu and of its sibling and
+refused all 35 cells: 43 to 81% of the cpu and 100% of the sibling), and the server's CPU time per handshake came out at 15 to 42 ms
+against §11.4's 5.5. What does not depend on who else is on the machine is the **user-space instructions the server retires a handshake**
+(`perf stat -e cpu_core/instructions/u -p <server>`; five rounds each within 0.2 of the median):
+
+| | millions of instructions | more than none |
+|---|---|---|
+| no client authentication | 75.63 | |
+| optional, the client sends none | 75.68 | +0.05 |
+| required, P-256 under the CA | 126.27 | **+50.64** |
+| required, P-256 under an intermediate | 151.35 | **+75.72** |
+| required, P-384 | 170.22 | +94.59 |
+| required, RSA-2048 | 106.54 | +30.91 |
+| required, Ed25519 | 152.76 | +77.13 |
+
+Each P-256 verification is 25.2 million instructions (+50.64 for two, +75.72 for three), so on x86-64 a client certificate with a P-256 key
+costs **two thirds of the 75.6 million of a handshake with none, and one more third for each intermediate**. The M4's ratio is near it (4.94 against 3.23 is 1.53
+times; 126.27 against 75.63 is 1.67). CI's `tls-assurance` job runs the script on an x86-64 runner (`ubuntu-latest`, not pinned) and
+its log has milliseconds: @CI@
 
 ### 13.18 The examples
 

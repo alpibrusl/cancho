@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Mutation check of `packages/tls`'s server (docs/tls-server.md §8, step 2), the shape of `scripts/tls_mutants.py`.
 
-    python3 scripts/tls_server_mutants.py <cancho binary> [--only <text in a mutant's name>]
+    python3 scripts/tls_server_mutants.py <cancho binary> [--only <text in a mutant's name>] [--shard <k>/<n>]
 
 Each mutant is one of the server's files (`hello.cho`, `identity.cho`, `server.cho`, and the server's parts of
 `tls.cho` and `slot.cho`) with one deliberate bug. The package is copied to a scratch directory, the mutant
@@ -501,6 +501,10 @@ def main():
     print("unmutated: passes")
     survived = 0
     run = [m for m in MUTANTS if only is None or only in m[0]]
+    if "--shard" in sys.argv:
+        # Mutant i runs in shard i mod n, so n processes share the list (each builds its own driver).
+        k, n = (int(x) for x in sys.argv[sys.argv.index("--shard") + 1].split("/"))
+        run = [m for i, m in enumerate(run) if i % n == k]
     for name, file, old, new in run:
         text = open(os.path.join(src, file)).read()
         assert text.count(old) == 1, f"{name}: the text occurs {text.count(old)} times"
