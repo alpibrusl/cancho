@@ -849,7 +849,7 @@ The configuration calls answer `tls-server-ticket-config` (a count over 8 or a l
 
 ### 12.6 Number of tickets, NewSessionTicket, KeyUpdate (rule h)
 
-- **Count.** `count` tickets (default 2, as OpenSSL; 0 turns tickets off; at most 8) are sent on each connection that
+- **Count.** `count` tickets (0 turns tickets off and is the default; at most 8; `--tickets 2` in the examples, OpenSSL's number) are sent on each connection that
   listed `psk_dhe_ke`, after the client's Finished has been checked (RFC 8446 §4.6.1: a NewSessionTicket is a
   post-handshake message, under the server's application key), in the same turn as the check, so a client that starts to
   read finds them. A resumed connection is sent `count` new tickets too (a new ticket per connection keeps the client's use
@@ -892,7 +892,7 @@ verdicts, in the order the rules are tried (§12.3): `resumed`, `off`, `no-psk-d
 a `pre_shared_key` are tried, a ticket of more than 681 bytes is `unknown` without being opened, so a hello cannot make
 the server do more than 4 small AEAD opens.
 
-### 12.8 How it will be tested
+### 12.8 How it will be tested (the results are §12.12)
 
 - **Unit and conformance, both backends:** the ticket module sealed and opened (every field, every rule), run through
   `tests/programs/tls_server_driver.cho`'s new lines and recorded with the rest of `liar_client.txt`
@@ -942,8 +942,9 @@ changes over the minutes moves all three together; the median and the best of th
 
 ### 12.10 Memory
 
-*Per slot: nothing new.* A server slot reuses the client's resumption fields it never uses (the PSK, the resumption master
-secret, the ticket's randomness area), all of which `forget` already overwrites. *Per engine:* the ticket keys and settings,
+*Per slot: nothing new.* A server slot reuses the client's resumption fields it never uses: the PSK and the resumption master
+secret (among the keys `forget` overwrites), and the area that holds a client's ticket for the 36 bytes of randomness a ticket
+needs, a salt and a `ticket_age_add`, neither a secret, overwritten when the tickets are made. *Per engine:* the ticket keys and settings,
 4 keys of 72 bytes and 8 bytes of header, **296 bytes**, allocated by `open_server` only; and an identity gains its
 certificate fingerprint and `notAfter`, 40 bytes each, 640 bytes for 16. A ticket needs no storage on the server.
 
@@ -1024,6 +1025,18 @@ M4 Max), the x86-64 ones on a Linux box (an Intel i7-1260P, `taskset -c 6`).
   whose claimed age is 60 s off (OpenSSL does not check the age without early data; this server does, within 30 s).
   `scripts/tls_server_differential.py` (the ClientHello cases of §10.4) is unchanged: 59 agree, 7 alert, 6 as documented,
   skipping the ticket cases, which are several connections.
+
+- **Fuzzing** (`scripts/fuzz_afl.py`, AFL++ 4.09c in the image, one core a harness): `fuzz_server` now runs with tickets on under a
+  fixed key (`tests/programs/fuzz_server_fixture.cho`), and both harnesses are seeded with 13 ClientHellos that resume
+  (`scripts/tls_server_fuzz_seeds.py`, in `tests/vectors/fuzz/server/` and `hello/`): a ticket that is right, one off in each
+  field, a wrong binder, several identities, `psk_ke` only, no modes, early data, SHA-384, after a HelloRetryRequest. Each seed
+  reaches the verdict it is named for (checked with the driver's `U` line). A first campaign on the final code: `fuzz_hello`
+  **2,915,676 executions** (4,165 a second, 155 of 418 edges), `fuzz_server` **454,125 executions** (303 a second, 1,457 of 12,172
+  edges, against 1,283 of 11,069 before tickets), **0 crashes, 0 hangs**; CI's `tls-assurance` job, two minutes each on x86-64: 530,333 and 27,638
+  executions, the same edges, 0 and 0. The server's edges had stopped growing at 1,457 within the two minutes of CI (the seeds
+  start the fuzzer at the binder and the key schedule); a longer second campaign was due and **did not run: the Docker VM's disk
+  was full of other jobs' images** when it was started. `conformance/tls_fuzz.rs` replays the whole committed corpus on both
+  backends. `scripts/tls_fuzz.py --server` (one line of the lying client's bytes mutated, bits flipped, cuts, insertions, lengths set) now takes the 55 ticket cases that end `ok` beside the 26 honest connections: **40,000 mutated connections over 81 recorded handshakes, 0 traps**.
 
 - **Live tests of the examples** (`scripts/tls_echo_test.py`, 4 new cases of 15, all ok; `scripts/https_hello_test.py`, 1 new of 20; and
   `conformance/tls_echo.rs`, `https_hello.rs` against `packages/tls`'s own client): a session kept by Python's `ssl`
