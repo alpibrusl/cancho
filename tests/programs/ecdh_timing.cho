@@ -1,10 +1,12 @@
-// `docs/ecdh.md` §3: the timing of `std.ecdh.shared`, for the
+// `docs/ecdh.md` §3: the timing of `std.ecdh.shared`, and with `k` in the
+// header of `std.ecdh.public_key` (`docs/p256-fast.md` §8), for the
 // dudect-style test `scripts/ecdh_timing.py` runs.
 //
 // Standard input is one header line, `<curve>` (256 or 384, in
-// decimal), then records in lowercase hex, each a scalar (curve / 8
-// bytes) and an uncompressed peer point (1 + curve / 4 bytes), back to
-// back with no separator.
+// decimal) and optionally ` k`, then records in lowercase hex, each a
+// scalar (curve / 8 bytes) and an uncompressed peer point (1 + curve / 4
+// bytes), back to back with no separator. The peer point is ignored
+// when the header says `k`.
 //
 // Everything is read and decoded before anything is timed. Each call's
 // time is read with the `tick` library's `cancho_tick` (a cycle
@@ -53,7 +55,7 @@ fn nibble(c: int) -> [] int {
 }
 
 // Decodes the records into `all`, then times every call into `times`.
-fn time_into[&f, &s, &a, &t, &w](ffi: &f Ffi("tick"), s: &s [byte], start: int, curve: int, all: &!a [byte], times: &!t [int], work: &!w [int]) -> [ffi("tick")] int {
+fn time_into[&f, &s, &a, &t, &w](ffi: &f Ffi("tick"), s: &s [byte], start: int, curve: int, public: bool, all: &!a [byte], times: &!t [int], work: &!w [int]) -> [ffi("tick")] int {
     let size = curve / 8;
     let rec = size + 1 + 2 * size;
     var j = 0;
@@ -63,13 +65,18 @@ fn time_into[&f, &s, &a, &t, &w](ffi: &f Ffi("tick"), s: &s [byte], start: int, 
     }
     region r {
         let out = alloc_slice[r](size, byte_of(0));
+        let point = alloc_slice[r](1 + 2 * size, byte_of(0));
         var i = 0;
         while i < len(times) {
             let at = i * rec;
             let scalar = all[at..at + size];
             let peer = all[at + size..at + rec];
             let t0 = cancho_tick(ffi);
-            ecdh.shared(curve, scalar, peer, out, work);
+            if public {
+                ecdh.public_key(curve, scalar, point, work);
+            } else {
+                ecdh.shared(curve, scalar, peer, out, work);
+            }
             times[i] = cancho_tick(ffi) - t0;
             i = i + 1;
         }
@@ -79,7 +86,12 @@ fn time_into[&f, &s, &a, &t, &w](ffi: &f Ffi("tick"), s: &s [byte], start: int, 
 
 fn time_all[&h, &i, &f, &s](heap: &!h Heap, io: &!i Io, ffi: &f Ffi("tick"), s: &s [byte]) -> [heap, io_write, ffi("tick")] int {
     let curve = number(s, 0);
-    let start = number_end(s, 0) + 1;
+    var start = number_end(s, 0) + 1;
+    var public = false;
+    if int_of(s[number_end(s, 0)]) == 32 {
+        public = int_of(s[start]) == 107;
+        start = start + 2;
+    }
     let size = curve / 8;
     let rec = size + 1 + 2 * size;
     let count = (len(s) - start) / (2 * rec);
@@ -90,7 +102,7 @@ fn time_all[&h, &i, &f, &s](heap: &!h Heap, io: &!i Io, ffi: &f Ffi("tick"), s: 
     borrow mut all as &!x in {
         borrow mut times as &!y in {
             borrow mut work as &!z in {
-                time_into(ffi, s, start, curve, contents(x), contents(y), contents(z));
+                time_into(ffi, s, start, curve, public, contents(x), contents(y), contents(z));
             }
         }
     }

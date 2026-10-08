@@ -266,17 +266,17 @@ pub fn below_n[&w](w: &w [int], x: int) -> [] bool {
     return below(w, x, p256_kernels.c_n());
 }
 
-// Whether the element at `x` is zero (tight and fully reduced), stopping at
-// the first nonzero limb: for a public value.
+// Whether the element at `x` is zero (tight and fully reduced): every limb is
+// read and ORed, and only the answer is branched on, so the time does not say
+// where the first nonzero limb is (`affine` asks of a secret's Z).
 pub fn is_zero[&w](w: &w [int], x: int) -> [] bool {
+    var any = 0;
     var i = 0;
     while i < 10 {
-        if w[x + i] != 0 {
-            return false;
-        }
+        any = any | w[x + i];
         i = i + 1;
     }
-    return true;
+    return any == 0;
 }
 
 pub fn equal[&w](w: &w [int], x: int, y: int) -> [] bool {

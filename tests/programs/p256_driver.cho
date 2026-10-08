@@ -11,11 +11,13 @@
 //     B a      `below_p`, `below_n` of a: `<0|1><0|1>`
 //     K k      ecdh.public_key of the scalar k: x || y in hex, or `-` for a refusal
 //     W k w    the width-w wNAF of k (p256_vf.wnaf): its 257 digits, space separated
+//     V q e sig  ecdsa.verify_raw (P-256): the code, for the public point q (65 bytes), the digest e and sig = r || s
 //     T r x    p256_vf.check_x: 1 when a sum of affine x passes the check against r, else 0
 //     C a b    a * b * c mod p, where c is 8 (a*b, add, add, add) -- a chain of lazy sums
 import std.buffer;
 import std.io;
 import std.ecdh;
+import std.ecdsa;
 import std.p256;
 import std.p256_vf;
 
@@ -94,6 +96,17 @@ fn case[&i, &s, &w](io: &!i Io, s: &s [byte], at: int, w: &!w [int]) -> [io_writ
             } else {
                 io.write_all(io, "-");
             }
+            io.newline(io);
+            return 0;
+        } else if op == 86 {
+            let q = alloc_slice[r](65, byte_of(0));
+            let e = alloc_slice[r](32, byte_of(0));
+            let sig = alloc_slice[r](64, byte_of(0));
+            hex_into(s, f1, q);
+            let f3 = field_end(s, f2) + 1;
+            hex_into(s, f2, e);
+            hex_into(s, f3, sig);
+            io.print_int(io, ecdsa.verify_raw(256, e, q, sig, w));
             io.newline(io);
             return 0;
         } else if op == 84 {
