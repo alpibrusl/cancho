@@ -1,0 +1,439 @@
+edition 7;
+// `docs/tls-performance.md` §3.1: the cost of each primitive the TLS handshake and the records are made of, in one
+// process, so the figures are comparable and one baseline file can guard them (`scripts/tls_perf.py`).
+//
+//     tls_prims_bench [<target ms> [<repeats> [<only op> [<rounds> [<only size>]]]]]
+//
+// Each operation is run in a loop of `rounds` calls, `rounds` doubling until the loop takes at least `target ms`
+// (default 150) of `clock_ms`; that is repeated `repeats` times (default 3) and the least time is printed, one line
+// per operation:
+//
+//     <op> <size> <nanoseconds per call> <rounds>
+//
+// With `<rounds>` the operation (`<only op>`, 0 for every one) runs exactly that many times, once, and the line
+// says the average over them: `scripts/tls_perf.py` runs it twice under `perf stat` and takes the difference, which
+// is cycles and instructions a call and does not depend on the clock's frequency.
+//
+// `size` is the message size for the hashes and the AEADs and 0 for the rest. The inputs are fixed, so every call
+// does the same work; the result of the last call is folded into a checksum that the last line prints, so no loop
+// can be taken out. The setup of each operation (keys, a signature to verify) is done once, outside the clock.
+import std.chacha20;
+import std.crypto;
+import std.ecdh;
+import std.ecdsa;
+import std.ecdsa_sign;
+import std.gcm;
+import std.hkdf;
+import std.hmac;
+import std.io;
+import std.x25519;
+
+fn number_of[&s](text: &s [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(text) {
+        n = n * 10 + (int_of(text[i]) - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+// The operations, numbered as the output names them.
+//  1 x25519 public key        2 x25519 shared secret     3 P-256 public key (ecdh)   4 P-256 shared secret (ecdh)
+//  5 ECDSA P-256 verify       6 ECDSA P-256 sign         7 sign + verify-before-send 8 SHA-256 of `size` bytes
+//  9 SHA-384 of `size`       10 HMAC-SHA-256 of `size`  11 HKDF-Expand-Label (32)   12 HKDF-Extract
+// 13 AES-128-GCM seal        14 AES-128-GCM open        15 ChaCha20-Poly1305 seal   16 ChaCha20-Poly1305 open
+// 17 AES-128-GCM prepare (the key schedule and the hash key, once per traffic key)
+// 18 HKDF-Expand-Label (48, SHA-384)
+// 19 calibration: 1,000 steps of a dependent multiply-add chain, which no change to a primitive can touch
+fn ops() -> [] int {
+    return 19;
+}
+
+fn name_of(op: int) -> [] &static [byte] {
+    if op == 1 {
+        return "x25519_public";
+    }
+    if op == 2 {
+        return "x25519_shared";
+    }
+    if op == 3 {
+        return "p256_public";
+    }
+    if op == 4 {
+        return "p256_shared";
+    }
+    if op == 5 {
+        return "ecdsa_p256_verify";
+    }
+    if op == 6 {
+        return "ecdsa_p256_sign";
+    }
+    if op == 7 {
+        return "ecdsa_p256_sign_checked";
+    }
+    if op == 8 {
+        return "sha256";
+    }
+    if op == 9 {
+        return "sha384";
+    }
+    if op == 10 {
+        return "hmac_sha256";
+    }
+    if op == 11 {
+        return "hkdf_expand_label_32";
+    }
+    if op == 12 {
+        return "hkdf_extract_32";
+    }
+    if op == 13 {
+        return "aes128gcm_seal";
+    }
+    if op == 14 {
+        return "aes128gcm_open";
+    }
+    if op == 15 {
+        return "chacha20poly1305_seal";
+    }
+    if op == 16 {
+        return "chacha20poly1305_open";
+    }
+    if op == 17 {
+        return "aes128gcm_prepare";
+    }
+    if op == 18 {
+        return "hkdf_expand_label_48";
+    }
+    return "calibrate";
+}
+
+// The sizes an operation is measured at.
+fn sized(op: int) -> [] bool {
+    return op >= 8 && op <= 10 || op >= 13 && op <= 16;
+}
+
+// One run of `rounds` calls of `op`, returning the milliseconds it took and the checksum through `sink`.
+fn spin[&k, &s, &w](clock: &k Clock, work: &!w [int], op: int, size: int, rounds: int, sink: &!s [int]) -> [clock] int {
+    var took = 0;
+    region r {
+        let scalar = alloc_slice[r](32, byte_of(0x11));
+        let digest = alloc_slice[r](32, byte_of(0x5a));
+        let extra = alloc_slice[r](32, byte_of(0x77));
+        let pub25 = alloc_slice[r](32, byte_of(0));
+        let out32 = alloc_slice[r](32, byte_of(0));
+        let point = alloc_slice[r](65, byte_of(0));
+        let sig = alloc_slice[r](64, byte_of(0));
+        let der = alloc_slice[r](80, byte_of(0));
+        let key = alloc_slice[r](16, byte_of(7));
+        let nonce = alloc_slice[r](12, byte_of(1));
+        let aad = alloc_slice[r](13, byte_of(23));
+        let text = alloc_slice[r](size + 1, byte_of(42));
+        let key32 = alloc_slice[r](32, byte_of(9));
+        let key48 = alloc_slice[r](48, byte_of(9));
+        let out48 = alloc_slice[r](48, byte_of(0));
+        let hash384 = alloc_slice[r](48, byte_of(0));
+        let msg = text[0..size];
+        // Setup, outside the clock and only for the operations that need it: the public key for the shared secret, the
+        // point for the verifications, a signature to verify.
+        scalar[0] = byte_of(0x09);
+        if op == 2 {
+            x25519.public_key(scalar, pub25);
+        }
+        if op == 4 || op == 5 || op == 7 {
+            ecdh.public_key(256, scalar, point, work);
+        }
+        var der_len = 0;
+        if op == 5 {
+            ecdsa_sign.sign(digest, scalar, extra, sig, work);
+            der_len = ecdsa_sign.to_der(sig, der);
+        }
+        let der_sig = der[0..der_len];
+        let t0 = clock_ms(clock);
+        var n = 0;
+        var acc = 0;
+        if op == 1 {
+            while n < rounds {
+                x25519.public_key(scalar, out32);
+                acc = acc + int_of(out32[0]);
+                n = n + 1;
+            }
+        }
+        if op == 2 {
+            while n < rounds {
+                x25519.scalarmult(scalar, pub25, out32);
+                acc = acc + int_of(out32[0]);
+                n = n + 1;
+            }
+        }
+        if op == 3 {
+            while n < rounds {
+                ecdh.public_key(256, scalar, point, work);
+                acc = acc + int_of(point[1]);
+                n = n + 1;
+            }
+        }
+        if op == 4 {
+            while n < rounds {
+                ecdh.shared(256, scalar, point, out32, work);
+                acc = acc + int_of(out32[0]);
+                n = n + 1;
+            }
+        }
+        if op == 5 {
+            while n < rounds {
+                acc = acc + ecdsa.verify_der(256, digest, point, der_sig, work);
+                n = n + 1;
+            }
+        }
+        if op == 6 {
+            while n < rounds {
+                ecdsa_sign.sign(digest, scalar, extra, sig, work);
+                acc = acc + int_of(sig[0]);
+                n = n + 1;
+            }
+        }
+        if op == 7 {
+            while n < rounds {
+                ecdsa_sign.sign_checked(digest, scalar, point, extra, sig, work);
+                acc = acc + int_of(sig[0]);
+                n = n + 1;
+            }
+        }
+        if op == 8 {
+            while n < rounds {
+                crypto.sha256(msg, out32);
+                acc = acc + int_of(out32[0]);
+                n = n + 1;
+            }
+        }
+        if op == 9 {
+            while n < rounds {
+                crypto.sha384(msg, out48);
+                acc = acc + int_of(out48[0]);
+                n = n + 1;
+            }
+        }
+        if op == 10 {
+            while n < rounds {
+                hmac.sha256(key32, msg, out32);
+                acc = acc + int_of(out32[0]);
+                n = n + 1;
+            }
+        }
+        if op == 11 {
+            while n < rounds {
+                hkdf.expand_label(32, key32, "key", digest[0..0], out32[0..16]);
+                acc = acc + int_of(out32[0]);
+                n = n + 1;
+            }
+        }
+        if op == 12 {
+            while n < rounds {
+                hkdf.extract(32, extra, key32, out32);
+                acc = acc + int_of(out32[0]);
+                n = n + 1;
+            }
+        }
+        if op == 18 {
+            crypto.sha384(msg, hash384);
+            while n < rounds {
+                hkdf.expand_label(48, key48, "key", hash384, out48[0..16]);
+                acc = acc + int_of(out48[0]);
+                n = n + 1;
+            }
+        }
+        if op == 19 {
+            var x = 1;
+            while n < rounds {
+                var j = 0;
+                while j < 1000 {
+                    x = x * 1103515245 + 12345 & 0x7fffffff;
+                    j = j + 1;
+                }
+                acc = acc + x;
+                n = n + 1;
+            }
+        }
+        took = clock_ms(clock) - t0;
+        sink[0] = sink[0] + acc;
+    }
+    return took;
+}
+
+// The AEAD operations, in a region of their own: three buffers of `size` bytes do not fit beside the public-key work.
+fn spin_aead[&k, &s](clock: &k Clock, op: int, size: int, rounds: int, sink: &!s [int]) -> [clock] int {
+    var took = 0;
+    region r {
+        let key = alloc_slice[r](16, byte_of(7));
+        let key32 = alloc_slice[r](32, byte_of(9));
+        let nonce = alloc_slice[r](12, byte_of(1));
+        let aad = alloc_slice[r](13, byte_of(23));
+        let text = alloc_slice[r](size + 1, byte_of(42));
+        let sealed = alloc_slice[r](size + 17, byte_of(0));
+        let plain = alloc_slice[r](size + 1, byte_of(0));
+        let ctx = alloc_slice[r](gcm.context_len(), 0);
+        let hw = alloc_slice[r](gcm.hw_len(), byte_of(0));
+        let msg = text[0..size];
+        gcm.prepare(key, ctx, hw);
+        gcm.seal_with(ctx, hw, nonce, aad, msg, sealed[0..size + 16]);
+        let t0 = clock_ms(clock);
+        var n = 0;
+        var acc = 0;
+        if op == 13 {
+            while n < rounds {
+                gcm.seal_with(ctx, hw, nonce, aad, msg, sealed[0..size + 16]);
+                acc = acc + int_of(sealed[0]);
+                n = n + 1;
+            }
+        }
+        if op == 14 {
+            while n < rounds {
+                acc = acc + gcm.open_with(ctx, hw, nonce, aad, sealed[0..size + 16], plain[0..size]);
+                n = n + 1;
+            }
+        }
+        if op == 15 {
+            while n < rounds {
+                chacha20.seal(key32, nonce, aad, msg, sealed[0..size + 16]);
+                acc = acc + int_of(sealed[0]);
+                n = n + 1;
+            }
+        }
+        if op == 16 {
+            chacha20.seal(key32, nonce, aad, msg, sealed[0..size + 16]);
+            while n < rounds {
+                acc = acc + chacha20.open(key32, nonce, aad, sealed[0..size + 16], plain[0..size]);
+                n = n + 1;
+            }
+        }
+        if op == 17 {
+            while n < rounds {
+                gcm.prepare(key, ctx, hw);
+                acc = acc + int_of(hw[0]);
+                n = n + 1;
+            }
+        }
+        took = clock_ms(clock) - t0;
+        sink[0] = sink[0] + acc;
+    }
+    return took;
+}
+
+fn once[&k, &s, &w](clock: &k Clock, work: &!w [int], op: int, size: int, rounds: int, sink: &!s [int]) -> [clock] int {
+    if op >= 13 && op <= 17 {
+        return spin_aead(clock, op, size, rounds, sink);
+    }
+    return spin(clock, work, op, size, rounds, sink);
+}
+
+fn measure[&i, &k, &s, &w](io: &!i Io, clock: &k Clock, work: &!w [int], op: int, size: int, target: int, repeats: int, fixed: int, sink: &!s [int]) -> [io_write, clock] int {
+    // Find `rounds` by doubling until a run takes `target` ms, or take `fixed` rounds, once.
+    var rounds = 1;
+    var took = 0;
+    if fixed > 0 {
+        rounds = fixed;
+        took = once(clock, work, op, size, rounds, sink);
+    } else {
+        took = once(clock, work, op, size, rounds, sink);
+        while took < target && rounds < 1000000000 {
+            rounds = rounds * 2;
+            took = once(clock, work, op, size, rounds, sink);
+        }
+    }
+    var best = took;
+    var rep = 1;
+    while rep < repeats && fixed == 0 {
+        let t = once(clock, work, op, size, rounds, sink);
+        if t < best {
+            best = t;
+        }
+        rep = rep + 1;
+    }
+    io.write_all(io, name_of(op));
+    io.space(io);
+    io.print_int(io, size);
+    io.space(io);
+    io.print_int(io, best * 1000000 / rounds);
+    io.space(io);
+    io.print_int(io, rounds);
+    io.newline(io);
+    return 0;
+}
+
+fn run[&i, &k, &w](io: &!i Io, clock: &k Clock, work: &!w [int], target: int, repeats: int, only: int, fixed: int, only_size: int) -> [io_write, clock] int {
+    region r {
+        let sink = alloc_slice[r](1, 0);
+        var op = 1;
+        while op <= ops() {
+            if only == 0 || only == op {
+                if sized(op) {
+                    if only_size == 0 || only_size == 64 {
+                        measure(io, clock, work, op, 64, target, repeats, fixed, sink);
+                    }
+                    if only_size == 0 || only_size == 1024 {
+                        measure(io, clock, work, op, 1024, target, repeats, fixed, sink);
+                    }
+                    if only_size == 0 || only_size == 16384 {
+                        measure(io, clock, work, op, 16384, target, repeats, fixed, sink);
+                    }
+                } else {
+                    measure(io, clock, work, op, 0, target, repeats, fixed, sink);
+                }
+            }
+            op = op + 1;
+        }
+        io.write_all(io, "checksum ");
+        io.print_int(io, sink[0]);
+        io.newline(io);
+    }
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(fs);
+    release(net);
+    release(signals);
+    release(exec);
+    var target = 150;
+    var repeats = 3;
+    var only = 0;
+    var fixed = 0;
+    var only_size = 0;
+    borrow args as &g in {
+        if arg_count(g) > 1 {
+            target = number_of(arg(g, 1));
+        }
+        if arg_count(g) > 2 {
+            repeats = number_of(arg(g, 2));
+        }
+        if arg_count(g) > 3 {
+            only = number_of(arg(g, 3));
+        }
+        if arg_count(g) > 4 {
+            fixed = number_of(arg(g, 4));
+        }
+        if arg_count(g) > 5 {
+            only_size = number_of(arg(g, 5));
+        }
+    }
+    release(args);
+    // On the heap: the work is larger than a region's 64 KiB.
+    borrow mut heap as &!h in {
+        let big = box_slice(h, ecdh.work_len(), 0);
+        borrow mut big as &!x in {
+            borrow mut io as &!i in {
+                borrow clock as &k in {
+                    run(i, k, contents(x), target, repeats, only, fixed, only_size);
+                }
+            }
+        }
+        unbox_slice(h, big);
+    }
+    release(heap);
+    release(io);
+    release(clock);
+    return 0;
+}
