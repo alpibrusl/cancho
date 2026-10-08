@@ -116,6 +116,21 @@ pub enum Builtin {
     /// `memchr` answers. Pure and capability-free: it reads only the slice it was given. Edition 5.
     /// `docs/byte-search.md`.
     IndexOfByte,
+    /// `load_le64(text: &t [byte], at: int) -> int` -- the eight bytes `text[at..at + 8]` as one little-endian 64-bit
+    /// integer, on every target. Traps unless `0 <= at <= len(text) - 8`, as indexing does. Pure and capability-free.
+    /// Edition 8. `docs/word-scan.md`.
+    LoadLe64,
+    /// `byte_mask64(text: &t [byte], at: int, b: byte) -> int` -- bit `k` of the answer is set when `text[at + k]` is `b`,
+    /// for `k` in 0..64. Traps unless `0 <= at <= len(text) - 64`. Pure. Edition 8. `docs/word-scan.md`.
+    ByteMask64,
+    /// `trailing_zeros(x: int) -> int` -- the zero bits below the lowest set bit of `x`; 64 for 0. Pure, total. Edition 8.
+    TrailingZeros,
+    /// `leading_zeros(x: int) -> int` -- the zero bits above the highest set bit of `x`; 64 for 0, 0 for a negative `x`.
+    /// Pure, total. Edition 8.
+    LeadingZeros,
+    /// `popcount(x: int) -> int` -- the set bits of `x`'s 64-bit pattern (a negative `x` counts its two's complement); 0
+    /// for 0. Pure, total. Edition 8.
+    Popcount,
     /// `fork_clock(c: &x Clock) -> Clock` — a second owned `Clock` from a
     /// shared borrow of the first (`docs/parallelism.md` §9).
     ///
@@ -762,6 +777,11 @@ impl Builtin {
         Builtin::CopyWithin,
         Builtin::CopyInto,
         Builtin::IndexOfByte,
+        Builtin::LoadLe64,
+        Builtin::ByteMask64,
+        Builtin::TrailingZeros,
+        Builtin::LeadingZeros,
+        Builtin::Popcount,
         Builtin::WrappingAdd,
         Builtin::WrappingSub,
         Builtin::WrappingMul,
@@ -903,6 +923,11 @@ impl Builtin {
             Builtin::CopyWithin => "copy_within",
             Builtin::CopyInto => "copy_into",
             Builtin::IndexOfByte => "index_of_byte",
+            Builtin::LoadLe64 => "load_le64",
+            Builtin::ByteMask64 => "byte_mask64",
+            Builtin::TrailingZeros => "trailing_zeros",
+            Builtin::LeadingZeros => "leading_zeros",
+            Builtin::Popcount => "popcount",
             Builtin::WrappingAdd => "wrapping_add",
             Builtin::WrappingSub => "wrapping_sub",
             Builtin::WrappingMul => "wrapping_mul",
@@ -1175,6 +1200,13 @@ impl Builtin {
             | Builtin::FsRename
             | Builtin::FsRemove
             | Builtin::FileLock => 5,
+            // `docs/word-scan.md` §6: edition 8. Edition 7 is closed (`docs/editions.md` §6.4), and these are names a
+            // program may already declare for itself.
+            Builtin::LoadLe64
+            | Builtin::ByteMask64
+            | Builtin::TrailingZeros
+            | Builtin::LeadingZeros
+            | Builtin::Popcount => 8,
             _ => 1,
         }
     }
@@ -1293,6 +1325,8 @@ impl Builtin {
             | Builtin::ForkClock
             | Builtin::CopyWithin
             | Builtin::IndexOfByte
+            | Builtin::LoadLe64
+            | Builtin::ByteMask64
             | Builtin::ClockMs
             | Builtin::ClockUnixMs => 1,
             // The destination's region and the source's.

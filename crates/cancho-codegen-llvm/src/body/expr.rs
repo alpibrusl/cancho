@@ -1063,6 +1063,33 @@ impl<'a> FuncEmitter<'a> {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.ghash_update(&args)
             }
+            // `docs/word-scan.md`: inline IR, no library call.
+            Callee::Builtin(
+                b @ (Builtin::LoadLe64
+                | Builtin::ByteMask64
+                | Builtin::TrailingZeros
+                | Builtin::LeadingZeros
+                | Builtin::Popcount),
+            ) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                let wanted = match b {
+                    Builtin::LoadLe64 => 3,
+                    Builtin::ByteMask64 => 4,
+                    _ => 1,
+                };
+                if args.len() != wanted {
+                    return Err(format!(
+                        "`{}` needs {wanted} leaves but {} were given",
+                        b.name(),
+                        args.len()
+                    ));
+                }
+                match b {
+                    Builtin::LoadLe64 => self.load_le64(&args),
+                    Builtin::ByteMask64 => self.byte_mask64(&args),
+                    _ => Ok(self.bit_count(*b, &args)),
+                }
+            }
             // `docs/byte-search.md`: one `memchr`.
             Callee::Builtin(Builtin::IndexOfByte) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();

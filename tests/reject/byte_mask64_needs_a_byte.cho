@@ -1,0 +1,20 @@
+//~ ERROR expected `byte`, found `int`
+//~ RULE type-mismatch
+
+// `docs/word-scan.md` §3: the byte to look for is a `byte`, as `index_of_byte`'s is. `byte_mask64(text, at, 44)` is a
+// compile error rather than a silent truncation of 300 to 44.
+
+edition 8;
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    return byte_mask64("0123456789012345678901234567890123456789012345678901234567890123", 0, 44);
+}

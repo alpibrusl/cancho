@@ -150,6 +150,11 @@ pub fn wasi_gap(builtin: Builtin) -> Option<Gap> {
         | B::CopyWithin
         | B::CopyInto
         | B::IndexOfByte
+        | B::LoadLe64
+        | B::ByteMask64
+        | B::TrailingZeros
+        | B::LeadingZeros
+        | B::Popcount
         | B::Release
         | B::WrappingAdd
         | B::WrappingSub

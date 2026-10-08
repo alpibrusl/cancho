@@ -1,0 +1,22 @@
+== llvm, 1073741824 bytes, median of 7 rounds (x86_64)
+1 count ','   byte loop                answer   64339968   1681.9 ms/pass   3.623 instr/B   3.262 cycles/B
+2 count ','   load_le64 + SWAR         answer   64339968    399.8 ms/pass   3.509 instr/B   0.720 cycles/B
+3 count ','   byte_mask64              answer   64339968    100.8 ms/pass   0.596 instr/B   0.176 cycles/B
+4 find last   byte loop                answer 1073741823    447.6 ms/pass   2.757 instr/B   0.671 cycles/B
+5 find last   load_le64 + SWAR + tz    answer 1073741823    141.9 ms/pass   1.318 instr/B   0.222 cycles/B
+6 find last   byte_mask64 + tz         answer 1073741823    109.0 ms/pass   0.361 instr/B   0.132 cycles/B
+7 find last   index_of_byte (memchr)   answer 1073741823     99.4 ms/pass   0.102 instr/B   0.125 cycles/B
+8 3 structural byte loop               answer   92045312   1940.2 ms/pass   4.848 instr/B   3.415 cycles/B
+9 3 structural byte_mask64 x3          answer   92045312    196.9 ms/pass   1.161 instr/B   0.298 cycles/B
+
+== cranelift, 1073741824 bytes, median of 7 rounds (x86_64)
+1 count ','   byte loop                answer   64339968   2853.0 ms/pass  12.241 instr/B   4.690 cycles/B
+2 count ','   load_le64 + SWAR         answer   64339968    780.2 ms/pass   6.756 instr/B   1.284 cycles/B
+3 count ','   byte_mask64              answer   64339968    143.1 ms/pass   1.080 instr/B   0.240 cycles/B
+4 find last   byte loop                answer 1073741823   1525.9 ms/pass  12.006 instr/B   2.521 cycles/B
+5 find last   load_le64 + SWAR + tz    answer 1073741823    523.9 ms/pass   4.254 instr/B   0.818 cycles/B
+6 find last   byte_mask64 + tz         answer 1073741823    112.1 ms/pass   0.751 instr/B   0.173 cycles/B
+7 find last   index_of_byte (memchr)   answer 1073741823     54.2 ms/pass   0.101 instr/B   0.100 cycles/B
+8 3 structural byte loop               answer   92045312   4916.9 ms/pass  22.075 instr/B   8.045 cycles/B
+9 3 structural byte_mask64 x3          answer   92045312    277.4 ms/pass   1.783 instr/B   0.393 cycles/B
+

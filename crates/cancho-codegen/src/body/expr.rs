@@ -744,6 +744,12 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::CopyWithin) => self.copy_within(&args),
                     Callee::Builtin(Builtin::CopyInto) => self.copy_into(&args),
                     Callee::Builtin(Builtin::IndexOfByte) => self.index_of_byte(&args),
+                    // `docs/word-scan.md`: Cranelift's own instructions, no libc.
+                    Callee::Builtin(Builtin::LoadLe64) => self.load_le64(&args),
+                    Callee::Builtin(Builtin::ByteMask64) => self.byte_mask64(&args),
+                    Callee::Builtin(
+                        b @ (Builtin::TrailingZeros | Builtin::LeadingZeros | Builtin::Popcount),
+                    ) => self.bit_count(*b, args[0]),
                     // `docs/native-sockets.md` §4: the poller.
                     Callee::Builtin(Builtin::PollerNew) => self.poller_new(),
                     Callee::Builtin(Builtin::ClockMs) => self.clock_ms(false),

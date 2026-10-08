@@ -1,0 +1,259 @@
+// `docs/word-scan.md` §5: scanning a buffer for one byte, a byte at a time and a word or 64 bytes at a time. `KERNEL`
+// and `SIZE` are replaced by `run.py` before the build, so each variant is its own binary and `perf stat` / `time -l`
+// see nothing of the others. Kernel 0 only fills the buffer: the other kernels' instruction counts are measured against it.
+//
+//   1 count ',' (about 1 byte in 16), byte loop          2 the same, `load_le64` and SWAR    3 the same, `byte_mask64`
+//   4 find a byte that is only at the very end, byte loop  5 the same, SWAR and `trailing_zeros`  6 the same, `byte_mask64`
+//   7 the same, `index_of_byte` (`memchr`), the ceiling a library call gives
+//   8 count ',' '"' '\n' (the structural bytes of a CSV), byte loop        9 the same, three `byte_mask64` or-ed
+//
+// Runs three passes of the kernel and prints the sum of their answers: three times the answer of one pass. The time is
+// the process's own, taken by `run.py`, because an optimiser is free to move a pure call across a clock reading.
+
+edition 8;
+
+import std.io;
+
+fn lcg(x: int) -> [] int {
+    return wrapping_add(wrapping_mul(x, 6364136223846793005), 1442695040888963407);
+}
+
+// A 64 KiB block of letters with a ',' about every 16 bytes, a '"' every 64 and a '\n' every 100.
+fn block[&b](xs: &!b [byte]) -> [] int {
+    var x = 12345;
+    var i = 0;
+    while i < len(xs) {
+        x = lcg(x);
+        let r = x >> 33 & 0xffffff;
+        var c = 97 + r % 26;
+        if (r >> 8) % 16 == 0 {
+            c = 44;
+        }
+        if (r >> 12) % 64 == 0 {
+            c = 34;
+        }
+        if (r >> 16) % 100 == 0 {
+            c = 10;
+        }
+        xs[i] = byte_of(c);
+        i = i + 1;
+    }
+    return 0;
+}
+
+// Doubles the block across the whole buffer with `copy_within`, so the fill costs a few memmoves.
+fn spread[&b](xs: &!b [byte]) -> [] int {
+    var have = 65536;
+    while have < len(xs) {
+        var take = have;
+        if take > len(xs) - have {
+            take = len(xs) - have;
+        }
+        copy_within(xs, have, 0, take);
+        have = have + take;
+    }
+    return 0;
+}
+
+fn count_loop[&t](t: &t [byte], b: byte) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(t) {
+        if t[i] == b {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn count_swar[&t](t: &t [byte], b: byte) -> [] int {
+    let rep = wrapping_mul(int_of(b), 0x0101010101010101);
+    let low = 0x7f7f7f7f7f7f7f7f;
+    var n = 0;
+    var at = 0;
+    while at + 8 <= len(t) {
+        let x = load_le64(t, at) ^ rep;
+        let m = ~(wrapping_add(x & low, low) | x | low);
+        n = n + popcount(m);
+        at = at + 8;
+    }
+    while at < len(t) {
+        if t[at] == b {
+            n = n + 1;
+        }
+        at = at + 1;
+    }
+    return n;
+}
+
+fn count_mask[&t](t: &t [byte], b: byte) -> [] int {
+    var n = 0;
+    var at = 0;
+    while at + 64 <= len(t) {
+        n = n + popcount(byte_mask64(t, at, b));
+        at = at + 64;
+    }
+    while at < len(t) {
+        if t[at] == b {
+            n = n + 1;
+        }
+        at = at + 1;
+    }
+    return n;
+}
+
+fn find_loop[&t](t: &t [byte], b: byte) -> [] int {
+    var i = 0;
+    while i < len(t) {
+        if t[i] == b {
+            return i;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+fn find_swar[&t](t: &t [byte], b: byte) -> [] int {
+    let rep = wrapping_mul(int_of(b), 0x0101010101010101);
+    let low = 0x7f7f7f7f7f7f7f7f;
+    var at = 0;
+    while at + 8 <= len(t) {
+        let x = load_le64(t, at) ^ rep;
+        let m = ~(wrapping_add(x & low, low) | x | low);
+        if m != 0 {
+            return at + (trailing_zeros(m) >> 3);
+        }
+        at = at + 8;
+    }
+    while at < len(t) {
+        if t[at] == b {
+            return at;
+        }
+        at = at + 1;
+    }
+    return 0 - 1;
+}
+
+fn find_mask[&t](t: &t [byte], b: byte) -> [] int {
+    var at = 0;
+    while at + 64 <= len(t) {
+        let m = byte_mask64(t, at, b);
+        if m != 0 {
+            return at + trailing_zeros(m);
+        }
+        at = at + 64;
+    }
+    while at < len(t) {
+        if t[at] == b {
+            return at;
+        }
+        at = at + 1;
+    }
+    return 0 - 1;
+}
+
+fn structural_loop[&t](t: &t [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(t) {
+        let c = t[i];
+        if c == byte_of(44) || c == byte_of(34) || c == byte_of(10) {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn structural_mask[&t](t: &t [byte]) -> [] int {
+    var n = 0;
+    var at = 0;
+    while at + 64 <= len(t) {
+        let m = byte_mask64(t, at, byte_of(44)) | byte_mask64(t, at, byte_of(34)) | byte_mask64(t, at, byte_of(10));
+        n = n + popcount(m);
+        at = at + 64;
+    }
+    while at < len(t) {
+        let c = t[at];
+        if c == byte_of(44) || c == byte_of(34) || c == byte_of(10) {
+            n = n + 1;
+        }
+        at = at + 1;
+    }
+    return n;
+}
+
+fn kernel[&t](t: &t [byte]) -> [] int {
+    if KERNEL == 1 {
+        return count_loop(t, byte_of(44));
+    }
+    if KERNEL == 2 {
+        return count_swar(t, byte_of(44));
+    }
+    if KERNEL == 3 {
+        return count_mask(t, byte_of(44));
+    }
+    if KERNEL == 4 {
+        return find_loop(t, byte_of(1));
+    }
+    if KERNEL == 5 {
+        return find_swar(t, byte_of(1));
+    }
+    if KERNEL == 6 {
+        return find_mask(t, byte_of(1));
+    }
+    if KERNEL == 7 {
+        return index_of_byte(t, byte_of(1));
+    }
+    if KERNEL == 8 {
+        return structural_loop(t);
+    }
+    if KERNEL == 9 {
+        return structural_mask(t);
+    }
+    return 0;
+}
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
+    let buffer = box_slice(heap, SIZE, byte_of(97));
+    var total = 0;
+    borrow mut buffer as &!w in {
+        let t = contents(w);
+        block(t[0..65536]);
+        spread(t);
+        t[len(t) - 1] = byte_of(1);
+        var pass = 0;
+        while pass < 3 && KERNEL != 0 {
+            // A store each pass and a sum over the answers: the kernels are pure, and without both the optimiser may run
+            // one pass, or none, ahead of or after the loop.
+            t[len(t) - 2] = byte_of(2 + pass);
+            total = total + kernel(t);
+            pass = pass + 1;
+        }
+    }
+    unbox_slice(heap, buffer);
+    io.print_int(io, total);
+    io.newline(io);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    var status = 1;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            status = run(h, i);
+        }
+    }
+    release(heap);
+    release(io);
+    return status;
+}
