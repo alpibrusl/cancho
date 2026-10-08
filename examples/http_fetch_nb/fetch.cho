@@ -1,0 +1,777 @@
+edition 5;
+
+// `http_fetch_nb` -- fetch several URLs at once on one thread (`docs/http-client.md` §6). Each URL is a lane: it is requested, read to
+// its end, and requested again `--repeat` times, over a connection the pool keeps; the lanes run together, in one loop, on one
+// `Poller`, through `packages/http-client` and `fetch_io` (this directory), the I/O it leaves to its caller.
+//
+//     http_fetch_nb [options] [--resolve name=ip]... url... [< roots.pem]
+//
+//     --slots N        connections at most (1 to 64; 8)        --repeat R      requests per URL, one after the other (1)
+//     --timeout S      seconds to run, at most (30)            --retry         let a request be replayed once on a new connection
+//     --post N         POST N bytes (a pattern) as a body     --chunked-post N  the same, `Transfer-Encoding: chunked`
+//     --expect         `Expect: 100-continue` with the body    --head          HEAD instead of GET
+//     --connect-ms N, --head-ms N, --body-ms N: the client's timers (5000, 30000, 30000)     --quiet   only failures and the summary
+//     --pool N         idle connections kept for one upstream (8)      --close   `Connection: close` on every request: a connection for each
+//
+// A URL is `http://host[:port]/path` or `https://host[:port]/path`. **A host is an IPv4 literal or a name given to `--resolve`**:
+// resolving is the caller's, and this program is the caller (`docs/http-client.md` §3.8). For `https` the PEM bundle of roots on
+// standard input is the trust store (nothing is built in) and the chain is checked against the host as written in the URL.
+// One line per response, as `tls_many`'s are:
+//
+//     <lane> <status> <bytes of body> <SHA-256 of them> <new|reused>
+//     <lane> failed <tag>
+//
+// then `done ok=<n> failed=<n> connects=<n> reuses=<n> retries=<n>`. Exit status 0 if every request completed (whatever its
+// status), 1 if one failed, 2 for a bad command line.
+
+import std.buffer;
+import std.crypto;
+import std.io;
+import fetch_io as fio;
+import http_client as hc;
+
+// ---------------------------------------------------------------------
+// The command line
+// ---------------------------------------------------------------------
+
+// A decimal number of one to nine digits, or -1.
+fn number[&s](s: &s [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(s) && n >= 0 {
+        if int_of(s[i]) < 48 || int_of(s[i]) > 57 {
+            n = 0 - 1;
+        } else {
+            n = n * 10 + int_of(s[i]) - 48;
+        }
+        i = i + 1;
+    }
+    if len(s) == 0 || len(s) > 9 {
+        return 0 - 1;
+    }
+    return n;
+}
+
+fn starts[&s, &p](s: &s [byte], p: &p [byte]) -> [] bool {
+    if len(s) < len(p) {
+        return false;
+    }
+    var i = 0;
+    while i < len(p) {
+        if s[i] != p[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn same[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {
+    return len(x) == len(y) && starts(x, y);
+}
+
+// Is `s` four decimal octets?
+fn is_ipv4[&s](s: &s [byte]) -> [] bool {
+    var dots = 0;
+    var digits = 0;
+    var i = 0;
+    while i < len(s) {
+        let c = int_of(s[i]);
+        if c == 46 {
+            if digits == 0 {
+                return false;
+            }
+            dots = dots + 1;
+            digits = 0;
+        } else if c >= 48 && c <= 57 {
+            digits = digits + 1;
+            if digits > 3 {
+                return false;
+            }
+        } else {
+            return false;
+        }
+        i = i + 1;
+    }
+    return dots == 3 && digits > 0;
+}
+
+// The `cfg` index of a value option, or -1.
+fn value_option[&s](a: &s [byte]) -> [] int {
+    if same(a, "--slots") {
+        return 0;
+    }
+    if same(a, "--repeat") {
+        return 1;
+    }
+    if same(a, "--timeout") {
+        return 2;
+    }
+    if same(a, "--post") || same(a, "--chunked-post") {
+        return 9;
+    }
+    if same(a, "--connect-ms") {
+        return 13;
+    }
+    if same(a, "--head-ms") {
+        return 14;
+    }
+    if same(a, "--body-ms") {
+        return 15;
+    }
+    if same(a, "--pool") {
+        return 16;
+    }
+    return 0 - 1;
+}
+
+// `cfg`: 0 slots, 1 requests per URL, 2 seconds to run, 3 retry allowed, 4 the first URL's argument, 5 how many URLs, 6 how many
+// `--resolve`, 7 whether any URL is `https`, 8 a body: 0 none, 1 with a length, 2 chunked, 9 its size, 10 `Expect`, 11 `HEAD`,
+// 12 quiet, 13 14 15 the connect, head and body timers (0: the default), 16 idle connections kept for one upstream (0: 8), 17 `Connection: close` on every request. Answers "", or the reason the command line is refused.
+fn parse_options[&g, &c, &r](args: &g Args, cfg: &!c [int], resolves: &!r [int]) -> [args] &static [byte] {
+    cfg[0] = 8;
+    cfg[1] = 1;
+    cfg[2] = 30;
+    var at = 1;
+    var going = true;
+    while going && at < arg_count(args) {
+        let a = arg(args, at);
+        let slot = value_option(a);
+        if same(a, "--retry") {
+            cfg[3] = 1;
+            at = at + 1;
+        } else if same(a, "--expect") {
+            cfg[10] = 1;
+            at = at + 1;
+        } else if same(a, "--head") {
+            cfg[11] = 1;
+            at = at + 1;
+        } else if same(a, "--quiet") {
+            cfg[12] = 1;
+            at = at + 1;
+        } else if same(a, "--close") {
+            cfg[17] = 1;
+            at = at + 1;
+        } else if slot >= 0 {
+            if at + 1 >= arg_count(args) {
+                return "an option needs a value";
+            }
+            let v = number(arg(args, at + 1));
+            if v < 0 {
+                return "an option needs a number";
+            }
+            cfg[slot] = v;
+            if same(a, "--post") {
+                cfg[8] = 1;
+            }
+            if same(a, "--chunked-post") {
+                cfg[8] = 2;
+            }
+            at = at + 2;
+        } else if same(a, "--resolve") {
+            if at + 1 >= arg_count(args) || cfg[6] >= len(resolves) {
+                return "--resolve needs name=ip, at most 16 times";
+            }
+            resolves[cfg[6]] = at + 1;
+            cfg[6] = cfg[6] + 1;
+            at = at + 2;
+        } else if starts(a, "--") {
+            return "unknown option";
+        } else {
+            going = false;
+        }
+    }
+    cfg[4] = at;
+    cfg[5] = arg_count(args) - at;
+    if cfg[5] < 1 {
+        return "no URL";
+    }
+    if cfg[5] > 64 {
+        return "at most 64 URLs";
+    }
+    if cfg[0] < 1 || cfg[0] > 64 || cfg[1] < 1 || cfg[2] < 1 {
+        return "--slots is 1 to 64, --repeat and --timeout at least 1";
+    }
+    if cfg[11] == 1 && cfg[8] != 0 {
+        return "--head and a body do not go together";
+    }
+    return "";
+}
+
+// ---------------------------------------------------------------------
+// The URLs
+// ---------------------------------------------------------------------
+
+// Per lane, `ln[l * 16 ..]`: 0 the argument that is its URL, 1 its upstream, 2 where its path starts in the URL, 3 where its
+// authority starts, 4 the argument holding its address, 5 where the address starts in it, 6 where it ends, 7 the port, 8 1 for
+// https, 9 requests left to make, 10 its ticket, 11 state (0 waiting to be asked, 1 in flight, 2 over), 12 the status of the response
+// in flight, 13 the bytes of its body so far.
+fn lane_stride() -> [] int {
+    return 16;
+}
+
+// Reads `url` into `out[0..]`: where the authority starts, where it ends (the path starts), where the host ends, the port, and
+// 1 for https. False for something that is not an http or https URL with a host and a port in range.
+fn parse_url[&u, &o](url: &u [byte], out: &!o [int]) -> [] bool {
+    var scheme_len = 0;
+    out[4] = 0;
+    out[3] = 80;
+    if starts(url, "http://") {
+        scheme_len = 7;
+    } else if starts(url, "https://") {
+        scheme_len = 8;
+        out[4] = 1;
+        out[3] = 443;
+    } else {
+        return false;
+    }
+    var host_end = scheme_len;
+    while host_end < len(url) && int_of(url[host_end]) != 47 && int_of(url[host_end]) != 58 {
+        host_end = host_end + 1;
+    }
+    var auth_end = host_end;
+    if host_end < len(url) && int_of(url[host_end]) == 58 {
+        var p = host_end + 1;
+        var port = 0;
+        while p < len(url) && int_of(url[p]) != 47 {
+            let c = int_of(url[p]);
+            if c < 48 || c > 57 || port > 100000 {
+                return false;
+            }
+            port = port * 10 + c - 48;
+            p = p + 1;
+        }
+        out[3] = port;
+        auth_end = p;
+    }
+    out[0] = scheme_len;
+    out[1] = auth_end;
+    out[2] = host_end;
+    return host_end > scheme_len && out[3] >= 1 && out[3] <= 65535;
+}
+
+// Where the address of `host` is: the argument and the span in it. A literal is its own address; a name must have been given to
+// `--resolve`. -1 when it is neither.
+fn resolve[&g, &h, &q, &r, &o](args: &g Args, host: &h [byte], url_arg: int, host_from: int, cfg: &q [int], resolves: &r [int], out: &!o [int]) -> [args] int {
+    if is_ipv4(host) {
+        out[0] = url_arg;
+        out[1] = host_from;
+        out[2] = host_from + len(host);
+        return 0;
+    }
+    var i = 0;
+    while i < cfg[6] {
+        let pair = arg(args, resolves[i]);
+        var eq = 0;
+        while eq < len(pair) && int_of(pair[eq]) != 61 {
+            eq = eq + 1;
+        }
+        if eq < len(pair) && same(pair[0..eq], host) {
+            out[0] = resolves[i];
+            out[1] = eq + 1;
+            out[2] = len(pair);
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// Builds the lanes and the upstreams. Answers 0, or the reason.
+fn build_lanes[&g, &i, &c, &r, &l](args: &g Args, io: &!i fio.Loop, cfg: &c [int], resolves: &r [int], ln: &!l [int]) -> [args] &static [byte] {
+    var l = 0;
+    while l < cfg[5] {
+        let a = cfg[4] + l;
+        let url = arg(args, a);
+        let b = l * lane_stride();
+        region scratch {
+            let u = alloc_slice[scratch](8, 0);
+            let r3 = alloc_slice[scratch](4, 0);
+            if !parse_url(url, u) {
+                return "a URL must be http://host[:port]/path or https://host[:port]/path";
+            }
+            let host = url[u[0]..u[2]];
+            if resolve(args, host, a, u[0], cfg, resolves, r3) < 0 {
+                return "a host must be an IPv4 address or given to --resolve name=ip";
+            }
+            ln[b] = a;
+            ln[b + 2] = u[1];
+            ln[b + 3] = u[0];
+            ln[b + 4] = r3[0];
+            ln[b + 5] = r3[1];
+            ln[b + 6] = r3[2];
+            ln[b + 7] = u[3];
+            ln[b + 8] = u[4];
+            ln[b + 9] = cfg[1];
+            ln[b + 10] = 0 - 1;
+            // One upstream for each address, port and scheme.
+            var up = 0 - 1;
+            var j = 0;
+            while j < l {
+                let o = j * lane_stride();
+                if ln[o + 7] == u[3] && ln[o + 8] == u[4] && same(arg(args, ln[o + 4])[ln[o + 5]..ln[o + 6]], arg(args, r3[0])[r3[1]..r3[2]]) && same(arg(args, ln[o])[ln[o + 3]..ln[o + 3] + 1], url[u[0]..u[0] + 1]) {
+                    up = ln[o + 1];
+                }
+                j = j + 1;
+            }
+            if up < 0 {
+                up = fio.add_upstream(io, arg(args, r3[0])[r3[1]..r3[2]], u[3], u[4] == 1, host);
+            }
+            if up < 0 {
+                return "too many upstreams";
+            }
+            ln[b + 1] = up;
+        }
+        l = l + 1;
+    }
+    return "";
+}
+
+fn print_hex[&i, &d](io: &!i Io, d: &d [byte]) -> [io_write] int {
+    let digits = "0123456789abcdef";
+    var n = 0;
+    while n < len(d) {
+        let b = int_of(d[n]);
+        io.write_all(io, digits[b >> 4..(b >> 4) + 1]);
+        io.write_all(io, digits[b & 15..(b & 15) + 1]);
+        n = n + 1;
+    }
+    return 0;
+}
+
+// Everything on standard input, appended to `text`.
+fn slurp[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap, io_read] buffer.Buffer {
+    var out = text;
+    var c = getchar(io);
+    while c != 0 - 1 {
+        out = buffer.push(heap, out, byte_of(c));
+        c = getchar(io);
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------
+// The loop
+// ---------------------------------------------------------------------
+
+// The lane whose request is `ticket`, or -1.
+fn lane_of[&l](ln: &l [int], lanes: int, ticket: int) -> [] int {
+    var l = 0;
+    while l < lanes {
+        if ln[l * lane_stride() + 10] == ticket && ln[l * lane_stride() + 11] == 1 {
+            return l;
+        }
+        l = l + 1;
+    }
+    return 0 - 1;
+}
+
+fn sha_of[&s](sha: &!s [int], lane: int) -> [] &!s [int] {
+    return sha[lane * crypto.sha256_state_len()..(lane + 1) * crypto.sha256_state_len()];
+}
+
+fn say_failure[&i](io: &!i Io, lane: int, code: int) -> [io_write] int {
+    io.print_int(io, lane);
+    io.write_all(io, " failed ");
+    io.write_all(io, hc.refusal_tag(code));
+    io.newline(io);
+    return 0;
+}
+
+// Asks for the next request of every lane that is waiting. A client with no room leaves the lane waiting; a request it refuses
+// ends the lane. How many lanes ended.
+fn start_requests[&g, &c, &l, &s, &i, &x](args: &g Args, cw: &!c hc.Client, ln: &!l [int], sha: &!s [int], cfg: &x [int], now: int, io: &!i Io) -> [args, io_write] int {
+    var ended = 0;
+    var flags = 0;
+    if cfg[3] == 1 {
+        flags = hc.flag_retry();
+    }
+    if cfg[17] == 1 {
+        flags = flags + hc.flag_close();
+    }
+    var body = hc.body_none();
+    if cfg[8] == 1 {
+        body = cfg[9];
+    }
+    if cfg[8] == 2 {
+        body = hc.body_chunked();
+    }
+    if cfg[8] != 0 && cfg[9] > 0 && cfg[10] == 1 {
+        flags = flags + hc.flag_expect();
+    }
+    var l = 0;
+    while l < cfg[5] {
+        let b = l * lane_stride();
+        if ln[b + 11] == 0 {
+            let url = arg(args, ln[b]);
+            var target = "/";
+            if ln[b + 2] < len(url) {
+                target = url[ln[b + 2]..len(url)];
+            }
+            var method = "GET";
+            if cfg[11] == 1 {
+                method = "HEAD";
+            }
+            if cfg[8] != 0 {
+                method = "POST";
+            }
+            let t = hc.request(cw, now, ln[b + 1], method, target, url[ln[b + 3]..ln[b + 2]], "", body, flags);
+            if t > 0 {
+                ln[b + 10] = t;
+                ln[b + 11] = 1;
+                ln[b + 12] = 0;
+                ln[b + 13] = 0;
+                ln[b + 14] = 0;
+                ln[b + 15] = 0;
+                if cfg[12] == 0 {
+                    crypto.sha256_init(sha_of(sha, l));
+                }
+            } else if t != 0 - wire_full() {
+                say_failure(io, l, 0 - t);
+                ln[b + 11] = 2;
+                ended = ended + 1;
+            }
+        }
+        l = l + 1;
+    }
+    return ended;
+}
+
+// `client.full`'s code, the one refusal that means "ask again later".
+fn wire_full() -> [] int {
+    return 10;
+}
+
+// Gives the requests that have a body the next of it, as the client has room: a pattern, byte `i` being `i` modulo 251.
+fn push_bodies[&c, &l, &x, &q](cw: &!c hc.Client, ln: &!l [int], cfg: &x [int], now: int, piece: &!q [byte]) -> [] int {
+    if cfg[8] == 0 {
+        return 0;
+    }
+    var l = 0;
+    while l < cfg[5] {
+        let b = l * lane_stride();
+        var rounds = 0;
+        while ln[b + 11] == 1 && ln[b + 15] == 0 && rounds < 64 {
+            rounds = rounds + 1;
+            let t = ln[b + 10];
+            let left = cfg[9] - ln[b + 14];
+            if left == 0 {
+                if cfg[8] == 2 {
+                    if hc.end_body(cw, t, now) != 0 {
+                        ln[b + 15] = 1;
+                    } else {
+                        rounds = 64;
+                    }
+                } else {
+                    ln[b + 15] = 1;
+                }
+            } else {
+                var n = hc.send_room(cw, t);
+                if n > left {
+                    n = left;
+                }
+                if n > len(piece) {
+                    n = len(piece);
+                }
+                if n <= 0 {
+                    rounds = 64;
+                } else {
+                    var i = 0;
+                    while i < n {
+                        piece[i] = byte_of((ln[b + 14] + i) % 251);
+                        i = i + 1;
+                    }
+                    let m = hc.send_body(cw, t, piece[0..n], now);
+                    if m < 0 {
+                        // The upstream answered before the request was sent: the rest is not wanted.
+                        ln[b + 15] = 1;
+                    } else {
+                        ln[b + 14] = ln[b + 14] + m;
+                        if m < n {
+                            rounds = 64;
+                        }
+                    }
+                }
+            }
+        }
+        l = l + 1;
+    }
+    return 0;
+}
+
+// Handles the client's events until every lane is over or the time is up; prints a line for each response. Answers the number
+// that failed. The `Io` comes back (a dial gives it up and returns it).
+fn run[&h, &n, &k, &i, &g, &x, &c, &l, &s, &q](heap: &!h Heap, net: &n Net(""), clock: &k Clock, io: &!i Io, args: &g Args, iox: fio.Loop, cw: &!c hc.Client, cfg: &x [int], ln: &!l [int], sha: &!s [int], piece: &!q [byte]) -> [heap, args, net_out(""), conn_read, conn_write, poll, clock, io_write] (fio.Loop, int, int) {
+    var iov = iox;
+    let lanes = cfg[5];
+    var failed = 0;
+    var ok = 0;
+    var finished = 0;
+    let started = clock_ms(clock);
+    var now = started;
+    while finished < lanes && now - started < cfg[2] * 1000 {
+        finished = finished + start_requests(args, cw, ln, sha, cfg, now, io);
+        push_bodies(cw, ln, cfg, now, piece);
+        borrow mut iov as &!ioh in {
+            fio.step(ioh, cw, clock, 100);
+        }
+        now = clock_ms(clock);
+        var going = true;
+        while going {
+            match hc.poll(cw, now) {
+                hc.Event::None => {
+                    going = false;
+                }
+                hc.Event::Connect(slot) => {
+                    iov = fio.dial(heap, iov, net, cw, slot, now);
+                }
+                hc.Event::Close(slot) => {
+                    borrow mut iov as &!ioh in {
+                        fio.shut(ioh, cw, slot, now);
+                    }
+                }
+                hc.Event::Head(t) => {
+                    let l = lane_of(ln, lanes, t);
+                    if l >= 0 {
+                        ln[l * lane_stride() + 12] = hc.status(cw, t);
+                    }
+                }
+                hc.Event::Body(t) => {
+                    let l = lane_of(ln, lanes, t);
+                    let n = hc.avail(cw, t);
+                    if l >= 0 {
+                        // The hash is of what is printed: with --quiet nothing is, and the client's own cost is not hidden behind SHA-256.
+                        if cfg[12] == 0 {
+                            crypto.sha256_update(sha_of(sha, l), hc.body(cw, t));
+                        }
+                        ln[l * lane_stride() + 13] = ln[l * lane_stride() + 13] + n;
+                    }
+                    hc.consume(cw, t, n, now);
+                }
+                hc.Event::Done(t) => {
+                    let l = lane_of(ln, lanes, t);
+                    if l >= 0 {
+                        let b = l * lane_stride();
+                        if cfg[12] == 0 {
+                            io.print_int(io, l);
+                            io.space(io);
+                            io.print_int(io, ln[b + 12]);
+                            io.space(io);
+                            io.print_int(io, ln[b + 13]);
+                            io.space(io);
+                            region d {
+                                let digest = alloc_slice[d](32, byte_of(0));
+                                crypto.sha256_final(sha_of(sha, l), digest);
+                                print_hex(io, digest);
+                            }
+                            if hc.reused(cw, t) {
+                                io.write_all(io, " reused\n");
+                            } else {
+                                io.write_all(io, " new\n");
+                            }
+                        }
+                        ok = ok + 1;
+                        ln[b + 9] = ln[b + 9] - 1;
+                        if ln[b + 9] > 0 {
+                            ln[b + 11] = 0;
+                        } else {
+                            ln[b + 11] = 2;
+                            finished = finished + 1;
+                        }
+                    }
+                }
+                hc.Event::Failed(t) => {
+                    let l = lane_of(ln, lanes, t);
+                    if l >= 0 {
+                        say_failure(io, l, hc.failure(cw, t));
+                        ln[l * lane_stride() + 11] = 2;
+                        failed = failed + 1;
+                        finished = finished + 1;
+                    }
+                }
+                hc.Event::Continue(t) => {
+                }
+            }
+        }
+        hc.tick(cw, now);
+    }
+    // The pool is closed, each connection with close_notify if it is TLS, before the program ends.
+    hc.close_idle(cw, now);
+    var closing = true;
+    while closing {
+        match hc.poll(cw, now) {
+            hc.Event::Close(slot) => {
+                borrow mut iov as &!ioh in {
+                    fio.shut(ioh, cw, slot, now);
+                }
+            }
+            hc.Event::None => {
+                closing = false;
+            }
+            _ => {
+            }
+        }
+    }
+    // Lanes still going when the time is up have failed.
+    var l = 0;
+    while l < lanes {
+        if ln[l * lane_stride() + 11] != 2 {
+            io.print_int(io, l);
+            io.write_all(io, " failed timeout\n");
+            failed = failed + 1;
+        }
+        l = l + 1;
+    }
+    return (iov, ok, failed);
+}
+
+// The client's limits: the defaults, with the timers the command line set.
+fn limits_of[&x](cfg: &x [int]) -> [] hc.Limits {
+    var connect = 5000;
+    var head = 30000;
+    var body = 30000;
+    if cfg[13] > 0 {
+        connect = cfg[13];
+    }
+    if cfg[14] > 0 {
+        head = cfg[14];
+    }
+    if cfg[15] > 0 {
+        body = cfg[15];
+    }
+    var per_key = 8;
+    if cfg[16] > 0 {
+        per_key = cfg[16];
+    }
+    return hc.Limits { connect_ms: connect, head_ms: head, body_ms: body, total_ms: 0, expect_ms: 1000, idle_ms: 30000, lifetime_ms: 300000, idle_per_key: per_key, max_requests: 1000000 };
+}
+
+fn all_secure[&g, &x](args: &g Args, cfg: &x [int]) -> [args] bool {
+    var l = 0;
+    while l < cfg[5] {
+        if starts(arg(args, cfg[4] + l), "https://") {
+            return true;
+        }
+        l = l + 1;
+    }
+    return false;
+}
+
+fn go[&h, &n, &k, &i, &g, &u](heap: &!h Heap, net: &n Net(""), clock: &k Clock, io: &!i Io, args: &g Args, entropy: &u [byte]) -> [heap, args, net_out(""), conn_read, conn_write, poll, clock, io_write, io_read, err_write] int {
+    var status = 2;
+    region a {
+        let cfg = alloc_slice[a](24, 0);
+        let resolves = alloc_slice[a](16, 0);
+        let msg = parse_options(args, cfg, resolves);
+        if len(msg) > 0 {
+            io.error_all(io, "http_fetch_nb: ");
+            io.error_all(io, msg);
+            io.error_all(io, "\nusage: http_fetch_nb [--slots N] [--repeat R] [--timeout S] [--retry] [--resolve name=ip]... url... [< roots.pem]\n");
+            return 2;
+        }
+        let secure = all_secure(args, cfg);
+        match fio.open(heap, cfg[0], secure) {
+            fio.Started::Failed(e) => {
+                io.error_all(io, "http_fetch_nb: no poller\n");
+                status = 3;
+            }
+            fio.Started::Ok(opened) => {
+                var iox = opened;
+                let ln = alloc_slice[a](lane_stride() * 64, 0);
+                let piece = alloc_slice[a](4096, byte_of(0));
+                var shab = box_slice(heap, crypto.sha256_state_len() * cfg[5], 0);
+                var reason = "";
+                borrow mut iox as &!ioh in {
+                    reason = build_lanes(args, ioh, cfg, resolves, ln);
+                }
+                if len(reason) > 0 {
+                    io.error_all(io, "http_fetch_nb: ");
+                    io.error_all(io, reason);
+                    io.newline(io);
+                } else {
+                    var roots = 1;
+                    if secure {
+                        var pem = buffer.empty(heap, 65536);
+                        pem = slurp(heap, io, pem);
+                        borrow mut iox as &!ioh in {
+                            borrow pem as &pb in {
+                                roots = fio.trust(ioh, buffer.bytes(pb));
+                            }
+                            fio.seed(ioh, entropy);
+                        }
+                        buffer.drop(heap, pem);
+                    }
+                    if roots < 1 {
+                        io.error_all(io, "http_fetch_nb: an https URL needs the roots it is checked against (PEM) on standard input\n");
+                    } else {
+                        var client = hc.open(heap, cfg[0], 65536, 16384, limits_of(cfg));
+                        var result = 0 - 1;
+                        borrow mut client as &!cw in {
+                            var back = iox;
+                            var ok = 0;
+                            var failed = 0;
+                            borrow mut shab as &!shw in {
+                                let (b2, ok2, failed2) = run(heap, net, clock, io, args, back, cw, cfg, ln, contents(shw), piece);
+                                back = b2;
+                                ok = ok2;
+                                failed = failed2;
+                            }
+                            iox = back;
+                            result = failed;
+                            io.write_all(io, "done ok=");
+                            io.print_int(io, ok);
+                            io.write_all(io, " failed=");
+                            io.print_int(io, failed);
+                            io.write_all(io, " connects=");
+                            io.print_int(io, hc.connects(cw));
+                            io.write_all(io, " reuses=");
+                            io.print_int(io, hc.reuses(cw));
+                            io.write_all(io, " retries=");
+                            io.print_int(io, hc.retries(cw));
+                            io.newline(io);
+                        }
+                        hc.close(heap, client);
+                        status = 0;
+                        if result != 0 {
+                            status = 1;
+                        }
+                    }
+                }
+                unbox_slice(heap, shab);
+                fio.close(heap, iox);
+            }
+        }
+    }
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    let urandom = narrow(fs, "/dev/urandom");
+    var status = 2;
+    borrow mut io as &!i in {
+        borrow mut heap as &!h in {
+            borrow args as &g in {
+                region r {
+                    let entropy = alloc_slice[r](32, byte_of(0));
+                    borrow urandom as &u in {
+                        fs_read(u, "/dev/urandom", entropy);
+                    }
+                    borrow net as &nn in {
+                        borrow clock as &cc in {
+                            status = go(h, nn, cc, i, g, entropy);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(urandom);
+    release(net);
+    release(clock);
+    release(args);
+    release(io);
+    release(heap);
+    return status;
+}

@@ -11,7 +11,7 @@ use super::*;
 use std::io::{BufRead, BufReader};
 use std::sync::{Arc, Condvar, Mutex};
 
-fn example_files() -> Vec<PathBuf> {
+pub(super) fn example_files() -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = ["hello.cho", "loop.cho", "app.cho"]
         .iter()
         .map(|f| repo_root().join("examples/https_hello").join(f))

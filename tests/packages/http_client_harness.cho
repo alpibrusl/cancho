@@ -1,0 +1,494 @@
+edition 5;
+
+module http_client_harness;
+
+import std.buffer;
+import std.bytes;
+import std.test;
+import http_client as hc;
+import http_client_wire as wire;
+
+// What the tests of `http_client` share (`docs/http-client.md` §5): a client with no sockets, driven as a caller's loop would
+// drive it, and an upstream the tests play by hand.
+
+// `http_client` (`docs/http-client.md`): a client with no sockets, driven by the test as a caller's loop would, and an
+// upstream the test plays by hand. Run with the package's sources beside this file (`cancho test --std
+// packages/http-client/wire.cho packages/http-client/client.cho <this>`, `conformance/http_client.rs`).
+// ---------------------------------------------------------------------
+// The harness
+// ---------------------------------------------------------------------
+// The world: `w[0]` events logged, `w[1]` mode, `w[2]` bytes of body consumed. Modes: 1 answer every `Connect` with
+// `connected`, 2 consume every `Body` into the sink, 4 detach every `Close`. `log[i]` is `kind * 100000000 + value`
+// for the i-th event: 1 Connect(slot), 2 Continue, 3 Head, 4 Body, 5 Done, 6 Failed (tickets), 7 Close(slot).
+pub fn mode_dial() -> [] int {
+    return 1;
+}
+
+pub fn mode_eat() -> [] int {
+    return 2;
+}
+
+pub fn mode_detach() -> [] int {
+    return 4;
+}
+
+pub fn mode_all() -> [] int {
+    return 7;
+}
+
+pub fn kind_of(entry: int) -> [] int {
+    return entry / 100000000;
+}
+
+pub fn value_of(entry: int) -> [] int {
+    return entry % 100000000;
+}
+
+// A check that records the first line that failed in `w[7]` instead of trapping, so a red test says which one
+// (`returned N` is the line of the first failed check). The number after `w,` is rewritten to its line by
+// `scripts/` ... by hand: it is only ever a label.
+pub fn ck[&x](w: &!x [int], id: int, ok: bool) -> [] int {
+    if !ok && w[7] == 0 {
+        // A label of 0 would read as a pass: a check that has none is still a failure.
+        w[7] = 1 + id % 255;
+    }
+    return 0;
+}
+
+pub fn eq[&x](w: &!x [int], id: int, got: int, want: int) -> [] int {
+    if got != want && w[7] == 0 {
+        w[7] = 1 + id % 255;
+    }
+    return 0;
+}
+
+// Handles every event there is. The body consumed goes in `sink`.
+pub fn pump[&h, &r, &w, &l](heap: &!h Heap, c: &!r hc.Client, w: &!w [int], log: &!l [int], sink: buffer.Buffer, now: int) -> [heap] buffer.Buffer {
+    var out = sink;
+    var going = true;
+    while going {
+        match hc.poll(c, now) {
+            hc.Event::None => {
+                going = false;
+            }
+            hc.Event::Connect(k) => {
+                log[w[0]] = 100000000 + k;
+                w[0] = w[0] + 1;
+                if w[1] % 2 == 1 {
+                    eq(w, 78, hc.connected(c, k, now), 0);
+                }
+            }
+            hc.Event::Continue(t) => {
+                log[w[0]] = 200000000 + t;
+                w[0] = w[0] + 1;
+            }
+            hc.Event::Head(t) => {
+                log[w[0]] = 300000000 + t;
+                w[0] = w[0] + 1;
+            }
+            hc.Event::Body(t) => {
+                log[w[0]] = 400000000 + t;
+                w[0] = w[0] + 1;
+                if w[1] / 2 % 2 == 1 {
+                    let n = hc.avail(c, t);
+                    out = buffer.append(heap, out, hc.body(c, t));
+                    eq(w, 95, hc.consume(c, t, n, now), n);
+                    w[2] = w[2] + n;
+                }
+            }
+            hc.Event::Done(t) => {
+                log[w[0]] = 500000000 + t;
+                w[0] = w[0] + 1;
+            }
+            hc.Event::Failed(t) => {
+                log[w[0]] = 600000000 + t;
+                w[0] = w[0] + 1;
+            }
+            hc.Event::Close(k) => {
+                log[w[0]] = 700000000 + k;
+                w[0] = w[0] + 1;
+                if w[1] / 4 % 2 == 1 {
+                    eq(w, 111, hc.detach(c, k, now), 0);
+                }
+            }
+        }
+    }
+    return out;
+}
+
+// The request bytes slot `k`'s transport has waiting, taken 7 at a time (so a partial `take` is shown to leave the rest),
+// appended to `into`.
+pub fn take_into[&h, &r](heap: &!h Heap, c: &!r hc.Client, k: int, now: int, into: buffer.Buffer) -> [heap] buffer.Buffer {
+    var got = into;
+    region a {
+        let piece = alloc_slice[a](7, byte_of(0));
+        var n = hc.take(c, k, piece, now);
+        while n > 0 {
+            got = buffer.append(heap, got, piece[0..n]);
+            n = hc.take(c, k, piece, now);
+        }
+    }
+    return got;
+}
+
+pub fn sent[&h, &r](heap: &!h Heap, c: &!r hc.Client, k: int, now: int) -> [heap] buffer.Buffer {
+    return take_into(heap, c, k, now, buffer.empty(heap, 64));
+}
+
+// `got` is exactly `want`; `got` is freed.
+pub fn assert_bytes[&h, &x, &y](heap: &!h Heap, w: &!y [int], id: int, got: buffer.Buffer, want: &x [byte]) -> [heap] int {
+    borrow got as &g in {
+        ck(w, id, bytes.equal(buffer.bytes(g), want));
+    }
+    buffer.drop(heap, got);
+    return 0;
+}
+
+// `text` into slot `k`, `step` bytes at a time with the events handled after each, as a caller's loop would. A piece the client
+// does not take (its buffer is full) is offered again after the events have been handled; a body the harness does not eat
+// would stop here, so the test asserts progress.
+pub fn feed[&h, &r, &w, &l, &t](heap: &!h Heap, c: &!r hc.Client, w: &!w [int], log: &!l [int], sink: buffer.Buffer, k: int, text: &t [byte], step: int, now: int) -> [heap] buffer.Buffer {
+    var out = sink;
+    var at = 0;
+    var stuck = 0;
+    while at < len(text) {
+        var to = at + step;
+        if to > len(text) {
+            to = len(text);
+        }
+        let n = hc.give(c, k, text[at..to], now);
+        // A negative answer is a slot with no transport: the connection ended (a failure, and the caller closed it), and
+        // nothing more is offered to it.
+        if n < 0 {
+            at = len(text);
+        } else {
+            at = at + n;
+        }
+        out = pump(heap, c, w, log, out, now);
+        if n == 0 {
+            stuck = stuck + 1;
+            ck(w, 170, stuck < 4);
+            if stuck >= 4 {
+                at = len(text);
+            }
+        } else {
+            stuck = 0;
+        }
+    }
+    return out;
+}
+
+// How many events of `kind` the log holds.
+pub fn count_of[&l](w: &!l [int], log: &!l [int], kind: int) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < w[0] {
+        if kind_of(log[i]) == kind {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+// The response `text` to a `method` request, in pieces of `step` bytes, on a fresh client: the body must come out as
+// `want`, with one `Head` and one `Done` and no `Failed`; `ends` says whether the upstream then ends the connection
+// (what a body that runs to the end of it needs). Answers the first failed check, or 0.
+pub fn one_response[&h, &x, &y, &m](heap: &!h Heap, text: &x [byte], want: &y [byte], step: int, method: &m [byte], ends: bool, keeps: bool) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 2, 4096, 4096, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](256, 0);
+            w[1] = mode_all();
+            let t = hc.request(cw, 0, 7, method, "/x", "h", "", hc.body_none(), 0);
+            ck(w, 206, t >= 0);
+            var sink = buffer.empty(heap, 64);
+            sink = pump(heap, cw, w, log, sink, 0);
+            eq(w, 209, kind_of(log[0]), 1);
+            buffer.drop(heap, sent(heap, cw, 0, 0));
+            sink = feed(heap, cw, w, log, sink, 0, text, step, 1);
+            if ends {
+                eq(w, 213, hc.eof(cw, 0, 2), 0);
+                sink = pump(heap, cw, w, log, sink, 2);
+            }
+            eq(w, 216, hc.failure(cw, t), 0);
+            eq(w, 217, count_of(w, log, 3), 1);
+            eq(w, 218, count_of(w, log, 5), 1);
+            eq(w, 219, count_of(w, log, 6), 0);
+            if keeps {
+                eq(w, 221, kind_of(log[w[0] - 1]), 5);
+                eq(w, 222, hc.idle(cw), 1);
+            } else {
+                eq(w, 224, kind_of(log[w[0] - 1]), 7);
+                eq(w, 225, kind_of(log[w[0] - 2]), 5);
+                eq(w, 226, hc.idle(cw), 0);
+            }
+            assert_bytes(heap, w, 228, sink, want);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+// `one_response` at each step in turn.
+pub fn every_step[&h, &x, &y, &m](heap: &!h Heap, text: &x [byte], want: &y [byte], method: &m [byte], ends: bool, keeps: bool) -> [heap] int {
+    var r = one_response(heap, text, want, 1, method, ends, keeps);
+    if r == 0 {
+        r = one_response(heap, text, want, 2, method, ends, keeps);
+    }
+    if r == 0 {
+        r = one_response(heap, text, want, 3, method, ends, keeps);
+    }
+    if r == 0 {
+        r = one_response(heap, text, want, 5, method, ends, keeps);
+    }
+    if r == 0 {
+        r = one_response(heap, text, want, 7, method, ends, keeps);
+    }
+    if r == 0 {
+        r = one_response(heap, text, want, 1000, method, ends, keeps);
+    }
+    return r;
+}
+
+// ---------------------------------------------------------------------
+// Refusals: what the upstream sent that is not read
+// ---------------------------------------------------------------------
+// `text` is a response that must fail the request with `code` (and close its connection), fed in pieces of `step` bytes.
+pub fn fail_case[&h, &x](heap: &!h Heap, text: &x [byte], code: int, step: int) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 2, 4096, 4096, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](512, 0);
+            w[1] = mode_all();
+            let t = hc.request(cw, 0, 7, "GET", "/x", "h", "", hc.body_none(), 0);
+            var sink = buffer.empty(heap, 64);
+            sink = pump(heap, cw, w, log, sink, 0);
+            buffer.drop(heap, sent(heap, cw, 0, 0));
+            sink = feed(heap, cw, w, log, sink, 0, text, step, 1);
+            eq(w, 274, hc.failure(cw, t), code);
+            eq(w, 275, count_of(w, log, 6), 1);
+            eq(w, 276, count_of(w, log, 7), 1);
+            eq(w, 277, count_of(w, log, 5), 0);
+            // The transport was closed and detached: the slot is free, and the next request connects.
+            eq(w, 279, hc.free_slots(cw), 2);
+            eq(w, 280, hc.idle(cw), 0);
+            ck(w, 281, hc.request(cw, 2, 7, "GET", "/y", "h", "", hc.body_none(), 0) > 0);
+            sink = pump(heap, cw, w, log, sink, 2);
+            eq(w, 283, hc.connects(cw), 2);
+            buffer.drop(heap, sink);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn fail_every_step[&h, &x](heap: &!h Heap, text: &x [byte], code: int) -> [heap] int {
+    var r = fail_case(heap, text, code, 1);
+    if r == 0 {
+        r = fail_case(heap, text, code, 5);
+    }
+    if r == 0 {
+        r = fail_case(heap, text, code, 1000);
+    }
+    return r;
+}
+
+// `n` copies of `piece` after `head`, then `tail`.
+pub fn repeated[&h, &a, &b, &d](heap: &!h Heap, head: &a [byte], piece: &b [byte], n: int, tail: &d [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 256);
+    out = buffer.append(heap, out, head);
+    var i = 0;
+    while i < n {
+        out = buffer.append(heap, out, piece);
+        i = i + 1;
+    }
+    return buffer.append(heap, out, tail);
+}
+
+pub fn fail_built[&h](heap: &!h Heap, text: buffer.Buffer, code: int) -> [heap] int {
+    var r = 0;
+    borrow text as &tb in {
+        r = fail_every_step(heap, buffer.bytes(tb), code);
+    }
+    buffer.drop(heap, text);
+    return r;
+}
+
+// ---------------------------------------------------------------------
+// The request: a body in pieces
+// ---------------------------------------------------------------------
+// Limits, in the order of `Limits`' fields: connect, head, body, total, expect, idle, lifetime (all ms; 0 none), idle per key,
+// requests per connection.
+pub fn limits(connect: int, head: int, body: int, total: int, expect: int, idle: int, lifetime: int, per_key: int, max: int) -> [] hc.Limits {
+    return hc.Limits { connect_ms: connect, head_ms: head, body_ms: body, total_ms: total, expect_ms: expect, idle_ms: idle, lifetime_ms: lifetime, idle_per_key: per_key, max_requests: max };
+}
+
+// A request, dialled and its connection up: its ticket.
+pub fn started[&h, &r, &w, &l, &m, &t](heap: &!h Heap, c: &!r hc.Client, w: &!w [int], log: &!l [int], key: int, method: &m [byte], target: &t [byte], body: int, flags: int, now: int) -> [heap] int {
+    let t2 = hc.request(c, now, key, method, target, "h", "", body, flags);
+    ck(w, 336, t2 > 0);
+    buffer.drop(heap, pump(heap, c, w, log, buffer.empty(heap, 16), now));
+    return t2;
+}
+
+// Bytes `from..to` of a pattern that is easy to check and never repeats within 251 bytes.
+pub fn pattern[&o](out: &!o [byte], from: int) -> [] int {
+    var i = 0;
+    while i < len(out) {
+        out[i] = byte_of((from + i) % 251);
+        i = i + 1;
+    }
+    return 0;
+}
+
+pub fn is_pattern[&o](got: &o [byte], from: int) -> [] bool {
+    var i = 0;
+    while i < len(got) {
+        if int_of(got[i]) != (from + i) % 251 {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------
+// Expect: 100-continue, and a response before the request is sent
+// ---------------------------------------------------------------------
+// A whole response to the request in slot `k`, in one piece, the body eaten.
+pub fn reply[&h, &r, &w, &l, &x](heap: &!h Heap, c: &!r hc.Client, w: &!w [int], log: &!l [int], k: int, text: &x [byte], now: int) -> [heap] int {
+    buffer.drop(heap, feed(heap, c, w, log, buffer.empty(heap, 16), k, text, 100000, now));
+    return 0;
+}
+
+// ---------------------------------------------------------------------
+// The pool
+// ---------------------------------------------------------------------
+// A whole exchange on `key`: the request, its connection (dialled if need be), the response, to `Done`. The ticket.
+pub fn exchange[&h, &r, &w, &l, &x](heap: &!h Heap, c: &!r hc.Client, w: &!w [int], log: &!l [int], key: int, target: &x [byte], text: &x [byte], now: int) -> [heap] int {
+    let t = hc.request(c, now, key, "GET", target, "h", "", hc.body_none(), 0);
+    ck(w, 377, t > 0);
+    buffer.drop(heap, pump(heap, c, w, log, buffer.empty(heap, 16), now));
+    buffer.drop(heap, sent(heap, c, hc.ticket_slot(t), now));
+    reply(heap, c, w, log, hc.ticket_slot(t), text, now);
+    return t;
+}
+
+// Two requests on one upstream: whether the second dials (the first's connection was not kept) or not.
+pub fn second_dials[&h, &x](heap: &!h Heap, first: &x [byte], flags: int, per_key: int, max: int, ends: bool) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 2, 2048, 1024, limits(0, 0, 0, 0, 1000, 0, 0, per_key, max));
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](128, 0);
+            w[1] = mode_all();
+            let t1 = hc.request(cw, 0, 5, "GET", "/a", "h", "", hc.body_none(), flags);
+            buffer.drop(heap, pump(heap, cw, w, log, buffer.empty(heap, 16), 0));
+            buffer.drop(heap, sent(heap, cw, 0, 0));
+            reply(heap, cw, w, log, 0, first, 1);
+            // A body that runs to the end of the connection is over when the connection is.
+            if ends {
+                hc.eof(cw, 0, 1);
+                buffer.drop(heap, pump(heap, cw, w, log, buffer.empty(heap, 16), 1));
+            }
+            eq(w, 402, count_of(w, log, 5), 1);
+            eq(w, 403, hc.idle(cw), 0);
+            let t2 = hc.request(cw, 2, 5, "GET", "/b", "h", "", hc.body_none(), 0);
+            ck(w, 405, t2 > 0);
+            ck(w, 406, !hc.reused(cw, t2));
+            eq(w, 407, hc.connects(cw), 2);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+// ---------------------------------------------------------------------
+// The one retry
+// ---------------------------------------------------------------------
+// One request has gone on a connection and finished; a second, with `flags`, is on that connection (reused) and its
+// request bytes taken. The ticket of the second.
+pub fn second_on_reused[&h, &r, &w, &l, &m](heap: &!h Heap, c: &!r hc.Client, w: &!w [int], log: &!l [int], method: &m [byte], body: int, flags: int) -> [heap] int {
+    exchange(heap, c, w, log, 4, "/first", "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n", 10);
+    let t = hc.request(c, 20, 4, method, "/second", "h", "", body, flags);
+    ck(w, 423, t > 0);
+    ck(w, 424, hc.reused(c, t));
+    return t;
+}
+
+// `how`: 0 eof, 1 reset. The request, on a reused connection with `flags`, is hit by it before any response byte; the code it
+// ends with, or 0 if it was replayed.
+pub fn lost_before_any_byte[&h, &m](heap: &!h Heap, method: &m [byte], body: int, flags: int, how: int, fresh: bool) -> [heap] int {
+    var code = 0 - 1;
+    var c = hc.open(heap, 2, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](128, 0);
+            w[1] = mode_all();
+            var t = 0;
+            if fresh {
+                t = hc.request(cw, 20, 4, method, "/second", "h", "", body, flags);
+                buffer.drop(heap, pump(heap, cw, w, log, buffer.empty(heap, 16), 20));
+            } else {
+                t = second_on_reused(heap, cw, w, log, method, body, flags);
+            }
+            buffer.drop(heap, sent(heap, cw, 0, 21));
+            if how == 0 {
+                hc.eof(cw, 0, 22);
+            } else {
+                hc.reset(cw, 0, 22);
+            }
+            buffer.drop(heap, pump(heap, cw, w, log, buffer.empty(heap, 16), 22));
+            code = hc.failure(cw, t);
+            if w[7] != 0 {
+                code = 1000;
+            }
+        }
+    }
+    hc.close(heap, c);
+    return code;
+}
+
+// ---------------------------------------------------------------------
+// The transport ends
+// ---------------------------------------------------------------------
+// An exchange cut by `how` (0 eof, 1 reset) after `text` of the response: the code the request ends with (0 if it completed).
+pub fn cut_after[&h, &x](heap: &!h Heap, text: &x [byte], how: int) -> [heap] int {
+    var code = 0 - 1;
+    var c = hc.open(heap, 1, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](128, 0);
+            w[1] = mode_all();
+            let t = started(heap, cw, w, log, 1, "GET", "/x", hc.body_none(), 0, 0);
+            buffer.drop(heap, sent(heap, cw, 0, 1));
+            reply(heap, cw, w, log, 0, text, 2);
+            if how == 0 {
+                hc.eof(cw, 0, 3);
+            } else {
+                hc.reset(cw, 0, 3);
+            }
+            buffer.drop(heap, pump(heap, cw, w, log, buffer.empty(heap, 16), 3));
+            code = hc.failure(cw, t);
+            if code == 0 && count_of(w, log, 5) != 1 {
+                code = 0 - 2;
+            }
+            if w[7] != 0 {
+                code = 1000;
+            }
+        }
+    }
+    hc.close(heap, c);
+    return code;
+}
