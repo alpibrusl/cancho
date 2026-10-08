@@ -95,6 +95,19 @@ fn hex_field[&s, &o](s: &s [byte], at: int, end: int, o: &!o [byte]) -> [] int {
     return 0;
 }
 
+// Whether the 32 guard bytes after `at` still hold 0xA5: a builtin wrote
+// only where it was given.
+fn guard_ok[&b](b: &b [byte], at: int) -> [] bool {
+    var k = 0;
+    while k < 32 {
+        if int_of(b[at + k]) != 165 {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
 // One case, the line starting at `at`; answers where the next line starts.
 fn one[&i, &s](io: &!i Io, s: &s [byte], at: int) -> [io_write] int {
     let op = int_of(s[at]);
@@ -149,20 +162,29 @@ fn one[&i, &s](io: &!i Io, s: &s [byte], at: int) -> [io_write] int {
             if op == 100 {
                 out_len = out_len - 1;
             }
-            let out = alloc_slice[r](out_len, byte_of(0));
-            aes_ctr32(keys, rounds, nonce, counter, data, out);
-            if len(out) == 0 {
+            // The output is followed by guard bytes, which must stay as they were.
+            let buf = alloc_slice[r](out_len + 32, byte_of(165));
+            aes_ctr32(keys, rounds, nonce, counter, data, buf[0..out_len]);
+            if !guard_ok(buf, out_len) {
+                io.write_all(io, "overrun");
+                io.newline(io);
+            } else if out_len == 0 {
                 io.write_all(io, "-");
                 io.newline(io);
             } else {
-                print_hex(io, out);
+                print_hex(io, buf[0..out_len]);
             }
         } else if op == 80 {
             let h = alloc_slice[r](hex_len(s, starts[0], ends[0]), byte_of(0));
             hex_field(s, starts[0], ends[0], h);
-            let table = alloc_slice[r](128, byte_of(0));
-            ghash_powers(h, table);
-            print_hex(io, table);
+            let buf = alloc_slice[r](128 + 32, byte_of(165));
+            ghash_powers(h, buf[0..128]);
+            if guard_ok(buf, 128) {
+                print_hex(io, buf[0..128]);
+            } else {
+                io.write_all(io, "overrun");
+                io.newline(io);
+            }
         } else {
             let rounds = decimal(s, starts[0], ends[0]);
             let keys = alloc_slice[r](hex_len(s, starts[1], ends[1]), byte_of(0));
@@ -182,9 +204,14 @@ fn one[&i, &s](io: &!i Io, s: &s [byte], at: int) -> [io_write] int {
             let table = alloc_slice[r](128, byte_of(0));
             ghash_powers(h, table);
             if op == 84 {
-                let tag = alloc_slice[r](16, byte_of(0));
-                gcm_tag(keys, rounds, table, nonce, aad, text, tag);
-                print_hex(io, tag);
+                let buf = alloc_slice[r](16 + 32, byte_of(165));
+                gcm_tag(keys, rounds, table, nonce, aad, text, buf[0..16]);
+                if guard_ok(buf, 16) {
+                    print_hex(io, buf[0..16]);
+                } else {
+                    io.write_all(io, "overrun");
+                    io.newline(io);
+                }
             } else {
                 let tag = alloc_slice[r](hex_len(s, starts[6], ends[6]), byte_of(0));
                 hex_field(s, starts[6], ends[6], tag);

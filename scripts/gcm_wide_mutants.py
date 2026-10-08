@@ -16,7 +16,11 @@ rebuilt, and the evidence run:
   changed in each byte, and every wrong length a trap, against references written from
   FIPS 197 and SP 800-38D in the test;
 - `cargo test -p cancho-codegen-llvm crypto`: the generated text itself (a wipe that no
-  answer shows).
+  answer shows);
+- where Valgrind is installed, `scripts/gcm_ctgrind.sh <compiler> sweep`: every length 0 to 300
+  and around 1, 4 and 16 KiB in buffers of exactly that size, sealed and opened under Memcheck,
+  which reports a read or a write one byte outside a buffer (an output past its end is also
+  caught by the conformance test's guard bytes, an input read past its end by this alone).
 
 A mutant is killed when either fails (or the build does not complete: a mutant that is not
 a program is not a surviving one, and is reported as such). The unmutated tree is run first
@@ -112,6 +116,13 @@ def run(cmd, cwd, env=None, timeout=3600):
     return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, env=env, timeout=timeout)
 
 
+# Mutants that cannot change an answer, with why. They are run all the same: one that is killed is reported.
+EQUIVALENT = {
+    "the tail's bytes start in the middle of a block": "the byte loop recomputes out[q] = in[q] ^ keystream[q] "
+    "for the bytes it starts on early, which the whole-block loop already wrote with the same value",
+}
+
+
 def evidence(work, env):
     """None when everything passes, else a line saying what failed."""
     for cmd in (["cargo", "test", "-p", "cancho-codegen-llvm", "crypto"],
@@ -121,6 +132,10 @@ def evidence(work, env):
             failed = [l for l in (r.stdout + r.stderr).splitlines() if l.startswith("test ") and "FAILED" in l]
             built = "error" in r.stderr and "could not compile" in r.stderr
             return ("did not build" if built else "; ".join(failed[:2]) or "failed")
+    if shutil.which("valgrind") and shutil.which("objcopy"):
+        r = run(["bash", "scripts/gcm_ctgrind.sh", os.path.join(env["CARGO_TARGET_DIR"], "debug/cancho"), "sweep"], work, env)
+        if r.returncode != 0:
+            return "Memcheck: " + (r.stdout + r.stderr).strip().splitlines()[-1][:160]
     return None
 
 
@@ -156,7 +171,10 @@ def main():
             why = evidence(work, env)
         finally:
             open(full, "w").write(text)
-        if why is None:
+        if why is None and name in EQUIVALENT:
+            print(f"EQUIVALENT    {name}: {EQUIVALENT[name]}", flush=True)
+            killed += 1
+        elif why is None:
             failed += 1
             print(f"SURVIVED      {name}", flush=True)
         else:
