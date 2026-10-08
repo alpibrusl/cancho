@@ -1,0 +1,158 @@
+edition 7;
+// `docs/gcm-wide.md` §2, §6: what a seal and an open cost per record size,
+// the number the hardware path is judged by (`openssl speed -evp
+// aes-128-gcm` is the comparison).
+//
+//     gcm_cost [<key bytes, 16 or 32>] [<path: hw or sw>] [<megabytes per run>] [<only this size>]
+//
+// For each size of 64, 1,024 and 16,384 bytes (OpenSSL's `speed` also
+// uses 16 and 256 and 8,192), seals and then opens `<megabytes>` MB (default 128) of
+// records under one prepared key, three times, and prints the best run:
+// `<op> <size> <nanoseconds per record> <MB/s>`. The record's associated
+// data is 13 bytes, a TLS record header's length, as `scripts/gcm_timing.py`
+// uses.
+import std.gcm;
+import std.io;
+
+fn number_of[&s](text: &s [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(text) {
+        n = n * 10 + (int_of(text[i]) - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+fn pad[&i](io: &!i Io, n: int, width: int) -> [io_write] int {
+    var digits = 1;
+    var m = n;
+    while m >= 10 {
+        m = m / 10;
+        digits = digits + 1;
+    }
+    while digits < width {
+        io.space(io);
+        digits = digits + 1;
+    }
+    io.print_int(io, n);
+    return 0;
+}
+
+// Runs `n` seals (`seal` true) or opens of `size` bytes under `ctx`/`hw`,
+// on the hardware path or the software one, and answers the milliseconds.
+fn time_it[&k, &c, &w, &t, &o, &s, &a](clock: &k Clock, ctx: &c [int], hw: &w [byte], nonce: &t [byte], aad: &a [byte], text: &o [byte], sealed: &!s [byte], out: &!o [byte], size: int, n: int, seal: bool, software: bool) -> [clock] int {
+    let t0 = clock_ms(clock);
+    var k = 0;
+    while k < n {
+        if seal {
+            if software {
+                gcm.seal_software(ctx, nonce, aad, text, sealed);
+            } else {
+                gcm.seal_with(ctx, hw, nonce, aad, text, sealed);
+            }
+        } else if software {
+            gcm.open_software(ctx, nonce, aad, sealed, out);
+        } else {
+            gcm.open_with(ctx, hw, nonce, aad, sealed, out);
+        }
+        k = k + 1;
+    }
+    return clock_ms(clock) - t0;
+}
+
+fn run[&i, &k](io: &!i Io, clock: &k Clock, key_len: int, software: bool, mb: int, size: int, seal: bool) -> [io_write, clock] int {
+    let n = mb * 1048576 / size;
+    var best = 1000000000;
+    region r {
+        let key = alloc_slice[r](key_len, byte_of(7));
+        let nonce = alloc_slice[r](12, byte_of(1));
+        let aad = alloc_slice[r](13, byte_of(23));
+        let text = alloc_slice[r](size, byte_of(42));
+        let sealed = alloc_slice[r](size + 16, byte_of(0));
+        let out = alloc_slice[r](size, byte_of(0));
+        let ctx = alloc_slice[r](gcm.context_len(), 0);
+        let hw = alloc_slice[r](gcm.hw_len(), byte_of(0));
+        gcm.prepare(key, ctx, hw);
+        // An open needs a valid sealed message to open.
+        gcm.seal_software(ctx, nonce, aad, text, sealed);
+        var round = 0;
+        while round < 3 {
+            let ms = time_it(clock, ctx, hw, nonce, aad, text, sealed, out, size, n, seal, software);
+            if ms < best {
+                best = ms;
+            }
+            round = round + 1;
+        }
+    }
+    if seal {
+        io.write_all(io, "seal ");
+    } else {
+        io.write_all(io, "open ");
+    }
+    pad(io, size, 6);
+    io.space(io);
+    // Nanoseconds a record and MB/s, from the milliseconds of `n` records.
+    if best < 1 {
+        best = 1;
+    }
+    pad(io, best * 1000000 / n, 8);
+    io.space(io);
+    pad(io, n * size / 1000 / best, 6);
+    io.newline(io);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(net);
+    release(signals);
+    release(exec);
+    var key_len = 16;
+    var software = false;
+    var mb = 128;
+    var only = 0;
+    borrow args as &g in {
+        if arg_count(g) > 1 {
+            key_len = number_of(arg(g, 1));
+        }
+        if arg_count(g) > 2 {
+            software = len(arg(g, 2)) == 2 && int_of(arg(g, 2)[0]) == 's';
+        }
+        if arg_count(g) > 3 {
+            mb = number_of(arg(g, 3));
+        }
+        if arg_count(g) > 4 {
+            only = number_of(arg(g, 4));
+        }
+    }
+    release(args);
+    borrow mut io as &!i in {
+        borrow clock as &k in {
+            if only == 0 || only == 64 {
+                run(i, k, key_len, software, mb, 64, true);
+            }
+            if only == 0 || only == 1024 {
+                run(i, k, key_len, software, mb, 1024, true);
+            }
+            if only == 0 || only == 16384 {
+                run(i, k, key_len, software, mb, 16384, true);
+            }
+            if only == 0 || only == 64 {
+                run(i, k, key_len, software, mb, 64, false);
+            }
+            if only == 0 || only == 1024 {
+                run(i, k, key_len, software, mb, 1024, false);
+            }
+            if only == 0 || only == 16384 {
+                run(i, k, key_len, software, mb, 16384, false);
+            }
+        }
+    }
+    release(io);
+    release(clock);
+    return 0;
+}

@@ -1,0 +1,119 @@
+edition 7;
+// `docs/gcm-wide.md` §2.3: what `tls_record.seal` and `tls_record.open` cost
+// beside `std.gcm`'s own seal and open (`gcm_cost.cho`), per record size: the
+// difference is the record layer around the cipher (the inner plaintext's
+// copy, the nonce, the header, the trailing content type).
+//
+//     record_cost [<megabytes per run>]
+//
+// For content of 64, 1,024 and 16,384 bytes under TLS_AES_128_GCM_SHA256,
+// prints `<op> <size> <nanoseconds per record> <MB/s of content>`, the best
+// of three runs, as `gcm_cost` does. Built with `packages/tls` and
+// `packages/x509`.
+import std.io;
+import tls_record;
+
+fn number_of[&s](text: &s [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(text) {
+        n = n * 10 + (int_of(text[i]) - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+fn pad[&i](io: &!i Io, n: int, width: int) -> [io_write] int {
+    var digits = 1;
+    var m = n;
+    while m >= 10 {
+        m = m / 10;
+        digits = digits + 1;
+    }
+    while digits < width {
+        io.space(io);
+        digits = digits + 1;
+    }
+    io.print_int(io, n);
+    return 0;
+}
+
+fn run[&i, &k](io: &!i Io, clock: &k Clock, mb: int, size: int, seal: bool) -> [io_write, clock] int {
+    let n = mb * 1048576 / size;
+    var best = 1000000000;
+    region r {
+        let key = alloc_slice[r](16, byte_of(7));
+        let iv = alloc_slice[r](12, byte_of(1));
+        let content = alloc_slice[r](size, byte_of(42));
+        let record = alloc_slice[r](size + 22, byte_of(0));
+        let plain = alloc_slice[r](size + 1, byte_of(0));
+        let info = alloc_slice[r](2, 0);
+        let ctx = alloc_slice[r](tls_record.context_len(), 0);
+        let hw = alloc_slice[r](tls_record.hw_len(), byte_of(0));
+        tls_record.prepare(4865, key, ctx, hw);
+        tls_record.seal(4865, key, ctx, hw, iv, 0, 23, content, record);
+        var round = 0;
+        while round < 3 {
+            let t0 = clock_ms(clock);
+            var j = 0;
+            while j < n {
+                if seal {
+                    tls_record.seal(4865, key, ctx, hw, iv, 0, 23, content, record);
+                } else {
+                    tls_record.open(4865, key, ctx, hw, iv, 0, record, plain, info);
+                }
+                j = j + 1;
+            }
+            let ms = clock_ms(clock) - t0;
+            if ms < best {
+                best = ms;
+            }
+            round = round + 1;
+        }
+    }
+    if seal {
+        io.write_all(io, "seal ");
+    } else {
+        io.write_all(io, "open ");
+    }
+    pad(io, size, 6);
+    io.space(io);
+    if best < 1 {
+        best = 1;
+    }
+    pad(io, best * 1000000 / n, 8);
+    io.space(io);
+    pad(io, n * size / 1000 / best, 6);
+    io.newline(io);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(net);
+    release(signals);
+    release(exec);
+    var mb = 64;
+    borrow args as &g in {
+        if arg_count(g) > 1 {
+            mb = number_of(arg(g, 1));
+        }
+    }
+    release(args);
+    borrow mut io as &!i in {
+        borrow clock as &k in {
+            run(i, k, mb, 64, true);
+            run(i, k, mb, 1024, true);
+            run(i, k, mb, 16384, true);
+            run(i, k, mb, 64, false);
+            run(i, k, mb, 1024, false);
+            run(i, k, mb, 16384, false);
+        }
+    }
+    release(io);
+    release(clock);
+    return 0;
+}

@@ -154,10 +154,10 @@ pub enum Builtin {
     /// on Cranelift, which makes no such branches, the identity.
     ValueBarrier,
     /// `hw_aes_gcm() -> [] bool` — whether this CPU has the instructions
-    /// `aes_encrypt_block` and `ghash_update` use (`docs/crypto-builtins.md`
-    /// §3): AES, PCLMULQDQ and SSSE3 on x86-64, AES and PMULL on aarch64.
-    /// The CPU is read once. False on Cranelift and WebAssembly, which have
-    /// no such instructions (§5).
+    /// the builtins below use (`docs/crypto-builtins.md` §3): AES,
+    /// PCLMULQDQ and SSSE3 on x86-64, AES and PMULL on aarch64. The CPU is
+    /// read once. False on Cranelift and WebAssembly, which have no such
+    /// instructions (§5).
     HwAesGcm,
     /// `aes_encrypt_block(round_keys: &[byte], rounds: int, block: &[byte],
     /// out: &![byte]) -> [] int` — the FIPS-197 cipher on one block with the
@@ -167,13 +167,37 @@ pub enum Builtin {
     /// lengths are the caller's, never the network's. Answers 0. Only
     /// where `hw_aes_gcm()` is true; elsewhere it traps.
     AesEncryptBlock,
-    /// `ghash_update(h: &[byte], y: &![byte], data: &[byte]) -> [] int` —
-    /// GCM's GHASH (SP 800-38D §6.4) over every 16-byte block of `data`:
-    /// `y = (y XOR block) * h` in GF(2^128), in GCM's bit order, `y`
-    /// updated in place (§3). `h` and `y` are 16 bytes and `data` a
-    /// multiple of 16, or it traps. Answers 0. Only where `hw_aes_gcm()` is
-    /// true; elsewhere it traps.
-    GhashUpdate,
+    /// `aes_ctr32(round_keys: &[byte], rounds: int, nonce: &[byte], counter:
+    /// int, input: &[byte], out: &![byte]) -> [] int` — AES in counter mode
+    /// over the whole of `input`, eight blocks at a time (`docs/gcm-wide.md`
+    /// §3.1): `out[i] = input[i] XOR E(nonce || be32(counter + i / 16))[i %
+    /// 16]`. `nonce` is 12 bytes, `counter` is in `0..2^32` and wraps modulo
+    /// 2^32 as SP 800-38D's `inc32` does, `out` is as long as `input`
+    /// (which may end inside a block), or it traps. Answers 0. Only where
+    /// `hw_aes_gcm()` is true; elsewhere it traps.
+    AesCtr32,
+    /// `ghash_powers(h: &[byte], table: &![byte]) -> [] int` — fills the
+    /// 128-byte `table` with the powers H^1 to H^8 of the 16-byte hash key
+    /// `h`, in the form `gcm_tag` and `gcm_tag_diff` use (`docs/gcm-wide.md`
+    /// §3.2). Answers 0. Only where `hw_aes_gcm()` is true; elsewhere it
+    /// traps.
+    GhashPowers,
+    /// `gcm_tag(round_keys: &[byte], rounds: int, table: &[byte], nonce:
+    /// &[byte], aad: &[byte], text: &[byte], tag: &![byte]) -> [] int` —
+    /// the AES-GCM tag (SP 800-38D §7.1) of `text`, the ciphertext, and
+    /// `aad` under a 12-byte `nonce`: GHASH over `aad` and `text`, each
+    /// zero-padded to a multiple of 16, and the two lengths in bits,
+    /// aggregated eight blocks to a reduction, XORed with the encryption of
+    /// `nonce || 1`. `tag` is 16 bytes, `table` is `ghash_powers`'s. Answers
+    /// 0. Only where `hw_aes_gcm()` is true; elsewhere it traps.
+    GcmTag,
+    /// `gcm_tag_diff(round_keys: &[byte], rounds: int, table: &[byte], nonce:
+    /// &[byte], aad: &[byte], text: &[byte], expected: &[byte]) -> [] int` —
+    /// `gcm_tag`'s tag compared with the 16 bytes `expected`: 0 when they
+    /// are equal, nonzero when not. Every byte is compared whatever the
+    /// earlier ones were (`docs/gcm-wide.md` §5). Only where
+    /// `hw_aes_gcm()` is true; elsewhere it traps.
+    GcmTagDiff,
     /// `byte_of(n: int) -> [] byte` — narrow an integer to a byte, or trap.
     ///
     /// `docs/strings.md` §2: it traps outside 0..255 rather than
@@ -768,7 +792,10 @@ impl Builtin {
         Builtin::ValueBarrier,
         Builtin::HwAesGcm,
         Builtin::AesEncryptBlock,
-        Builtin::GhashUpdate,
+        Builtin::AesCtr32,
+        Builtin::GhashPowers,
+        Builtin::GcmTag,
+        Builtin::GcmTagDiff,
         Builtin::Len,
         Builtin::ByteOf,
         Builtin::IntOf,
@@ -909,7 +936,10 @@ impl Builtin {
             Builtin::ValueBarrier => "value_barrier",
             Builtin::HwAesGcm => "hw_aes_gcm",
             Builtin::AesEncryptBlock => "aes_encrypt_block",
-            Builtin::GhashUpdate => "ghash_update",
+            Builtin::AesCtr32 => "aes_ctr32",
+            Builtin::GhashPowers => "ghash_powers",
+            Builtin::GcmTag => "gcm_tag",
+            Builtin::GcmTagDiff => "gcm_tag_diff",
             Builtin::Len => "len",
             Builtin::ByteOf => "byte_of",
             Builtin::IntOf => "int_of",
@@ -1154,7 +1184,12 @@ impl Builtin {
             // `docs/crypto-builtins.md` §3: the latest edition, as
             // `value_barrier` was, since a program may already declare
             // these names.
-            Builtin::HwAesGcm | Builtin::AesEncryptBlock | Builtin::GhashUpdate => 7,
+            Builtin::HwAesGcm
+            | Builtin::AesEncryptBlock
+            | Builtin::AesCtr32
+            | Builtin::GhashPowers
+            | Builtin::GcmTag
+            | Builtin::GcmTagDiff => 7,
             // `docs/floating-point.md` §4.1: edition 7, the latest -- the
             // first caller was a table reader that decoded doubles through
             // `ldexp`; `float_of_bits` is a name a program may declare.
@@ -1297,9 +1332,15 @@ impl Builtin {
             | Builtin::ClockUnixMs => 1,
             // The destination's region and the source's.
             Builtin::CopyInto => 2,
-            // The key's, the block's and the output's; `h`'s, `y`'s and
-            // the data's.
-            Builtin::AesEncryptBlock | Builtin::GhashUpdate => 3,
+            // The key's, the block's and the output's.
+            Builtin::AesEncryptBlock => 3,
+            // The key's, the nonce's, the input's and the output's.
+            Builtin::AesCtr32 => 4,
+            // `h`'s and the table's.
+            Builtin::GhashPowers => 2,
+            // The key's, the table's, the nonce's, the associated data's,
+            // the text's and the tag's (or the expected tag's).
+            Builtin::GcmTag | Builtin::GcmTagDiff => 6,
             _ => 0,
         }
     }

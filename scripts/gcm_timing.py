@@ -4,7 +4,7 @@
 
     cc -O2 -c tick.c -o tick.o && ar rcs libtick.a tick.o   # tick.c below
     cancho build --std [--backend B] tests/programs/gcm_timing.cho -l tick -L . -o timing
-    python3 scripts/gcm_timing.py ./timing [<samples per test>] [--chacha20]
+    python3 scripts/gcm_timing.py ./timing [<samples per test>] [--chacha20] [--size <bytes>]
 
 `tick.c` is the cycle counter the program reads:
 
@@ -80,8 +80,13 @@ def run(exe, op, records):
 
 
 def main():
+    global SIZE
     chacha = "--chacha20" in sys.argv
     args = [a for a in sys.argv[1:] if a != "--chacha20"]
+    if "--size" in args:
+        at = args.index("--size")
+        SIZE = int(args[at + 1])
+        del args[at:at + 2]
     exe = args[0]
     n = int(args[1]) if len(args) > 1 else 100000
     # ChaCha20-Poly1305's ops are the lowercase ones, and its key is 32 bytes.

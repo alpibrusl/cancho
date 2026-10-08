@@ -112,6 +112,7 @@
 - [A TLS 1.3 server](tls-server.md)
 - [`std.ecdsa_sign`: ECDSA P-256 signing in constant time](ecdsa-sign.md)
 - [Hardware AES and carry-less multiply](crypto-builtins.md)
+- [Multi-block AES-GCM and aggregated GHASH](gcm-wide.md)
 
 # Compile time and program identity
 

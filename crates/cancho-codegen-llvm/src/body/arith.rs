@@ -145,7 +145,10 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::CopyInto
                     | Builtin::IndexOfByte
                     | Builtin::AesEncryptBlock
-                    | Builtin::GhashUpdate
+                    | Builtin::AesCtr32
+                    | Builtin::GhashPowers
+                    | Builtin::GcmTag
+                    | Builtin::GcmTagDiff
                     | Builtin::ConnDetach
                     | Builtin::UdpDetach
                     | Builtin::Trap
