@@ -53,8 +53,8 @@ FIELDS = ["io", "ffi", "fs", "heap", "args"]
 EMPTY_MAIN = (
     "fn main(world: World) -> [] int {\n"
     "    let Split { io, ffi, fs, heap, args } = split(world);\n"
-    "    release(args);\n    release(ffi); release(fs); release(heap);\n"
-    "    release(io);\n    return 0;\n}\n"
+    "    release(args);\n    release(ffi);\n    release(fs);\n"
+    "    release(heap);\n    release(io);\n    return 0;\n}\n"
 )
 
 
