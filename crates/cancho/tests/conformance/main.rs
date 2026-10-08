@@ -97,6 +97,7 @@ mod signals;
 mod sockets;
 mod testing;
 mod tls;
+mod tls_auth;
 mod tls_echo;
 mod tls_echo_fixed;
 mod tls_fuzz;

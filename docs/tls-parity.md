@@ -1,5 +1,7 @@
 # TLS parity with the OpenSSL backend: AES-GCM, P-256/P-384 key exchange, TLS 1.2
 
+> **§6 (client certificates, ALPN, and the revocation and ML-KEM decisions, #386): design, then built in the same PR; see §6.**
+>
 > **Status: built (#207, all five PRs): AES-GCM (§3.1.1), P-256 and P-384 key exchange (`docs/ecdh.md`), TLS 1.3's AES-GCM suites and HelloRetryRequest (§3.3.1), TLS 1.2 (§3.4.1).** Sub-issue 10 of the self-contained TLS 1.3 client (#197). The issue asked for a
 > measured number of receivers needing TLS 1.2 or AES-GCM before anything is built. That number cannot be measured here, and
 > the requirement replaces it: **the maintainer's requirement is that the pure client be equivalent to the OpenSSL backend**
@@ -451,3 +453,428 @@ nothing to replay. The gates are:
 
 Each is refused with its own tag, so an operator can see which one a receiver needs. #210's comparison against OpenSSL
 reports how many receivers each one costs.
+
+## 6. What the client did not do (#386): client certificates, ALPN, and two decisions
+
+> **Status: design, before the code (#386).** The issue lists four gaps. A gateway needs two of them now, **client certificates**
+> (mutual TLS to an upstream) and **ALPN** (naming the protocol the connection will carry), and both are designed here and
+> built in the same PR. The other two, **revocation** and the **post-quantum hybrid key share**, are decisions: §6.8 and
+> §6.9 give the evidence and a proposed answer, for a person to accept. Nothing in §6.1 to §6.7 is measured yet; the build
+> fills in "as built" results, and corrects here, in place, whatever it finds false.
+
+### 6.1 The four gaps, and what is decided
+
+| Gap | Decision | Where |
+|---|---|---|
+| Client certificates | **build**: TLS 1.3 and TLS 1.2, P-256 keys, up to 4 identities chosen by the host name | §6.2 to §6.5 |
+| ALPN | **build**: an offer list, the protocol chosen reported, a protocol not offered refused, TLS 1.3 and TLS 1.2 | §6.6 |
+| Revocation (CRL, OCSP, stapled OCSP) | **decide**: proposed, do not build now | §6.8 |
+| X25519MLKEM768 | **decide**: proposed, do not build now | §6.9 |
+
+Refused on purpose, not deferred, and unchanged: 0-RTT, PSK-only resumption, TLS 1.2 resumption, post-handshake authentication
+(`docs/tls-resumption.md` §3). A server that sends a `CertificateRequest` after the handshake is `tls-unexpected-message`, as now,
+because `post_handshake_auth` is never offered.
+
+### 6.2 Client certificates: the API
+
+`docs/tls-pure.md` §7.2 left them out and answered every `CertificateRequest` with an empty `Certificate` (§7.1). The signer
+they need is built (`std.ecdsa_sign.sign_checked`, `docs/ecdsa-sign.md`), and so is the key parser (`x509_key.parse_pem`) and the
+shape of a held identity (`docs/tls-server.md` §4, `tls_identity`).
+
+```
+tls.open_mutual(heap, slots) -> Engine                  // a client engine that holds identities: open_mutual_with_tickets(heap, slots, tickets) too
+tls.add_client_identity(engine, chain_pem, key_pem, hosts, now_unix_ms) -> id | refusal
+tls.replace_client_identity(engine, id, chain_pem, key_pem, now_unix_ms) -> 0 | refusal      // keeps its hosts
+tls.remove_client_identity(engine, id) -> 0 | refusal                                         // overwrites the key
+tls.client_auth(engine, slot) -> 0 | 1 | 2                                                    // see §6.3
+```
+
+- **The identity is the engine's, chosen by the host.** A gateway talks to several upstreams, so one engine-wide identity is not
+  enough, and a per-pool one (a pool is a ticket pool, `docs/tls-resumption.md` §12) names the wrong thing: a pool is a
+  place to find a ticket, an identity is a thing you prove. `hosts` is a space-separated list, `*.example.com` standing for
+  one label as a certificate name does (`x509_names.dns_matches`), or `*` alone for every host. `start` picks the first identity
+  whose hosts match the name it is given, in the order they were added, and none otherwise. **An identity is never sent to a host
+  it does not name**: an upstream that asks for a certificate it should not get (a public site with optional client
+  authentication) learns nothing. `hosts` may not be empty (`tls-client-names`), so a forgotten argument is a refusal, not an identity that
+  is silently never used.
+- **What the engine holds**, per identity: the chain as `Certificate` sends it (each certificate's DER, up to 12 KiB in all: a message of the client's has to fit one record, and `tls_identity`'s 16 KiB for a server
+  would not), the key (32 bytes), its public point (65), the leaf's `notAfter`, and the hosts (up to 512
+  bytes). Four identities; the engine never gives a key back, and there is no function that answers one. **Memory:** an
+  `open_mutual` engine adds 51,636 bytes for the four (12,909 each) and the key parser's work (`x509_key.work_len()` words, 77 KB);
+  an engine opened with `open` adds nothing. **A slot holds none of it**: it holds which identity it chose, so the chain's
+  12 KiB is not paid 64 times. The chain is read from the engine's store when the client's flight is built, which is one
+  call of `feed`, so a `replace_client_identity` between two calls cannot give a connection a chain and a signature from two
+  identities.
+- **Overwritten**: `remove_client_identity` and `replace_client_identity` overwrite the old key and chain first, and
+  `close` overwrites all four (best effort, `docs/tls-pure.md` §7.3). `tls.drop` of a slot is unchanged.
+- **The key** comes from `x509_key.parse_pem`: an unencrypted PKCS#8 `PRIVATE KEY` or SEC 1 `EC PRIVATE KEY`, **P-256 only**, as the
+  server's. It must be the leaf's key (`tls-client-key-mismatch`), the leaf must parse and not have expired at `now_unix_ms`
+  (`tls-client-cert-expired`), and a refused replacement leaves the identity as it was. **What other keys need**, and why they are
+  not built: *P-384* needs `std.ecdsa_sign` for that curve with SHA-384 (the ladder, the order and the RFC 6979 HMAC are
+  parameters of `std.ecdh` and `std.bigmod` already, so this is a port, not new arithmetic), and a P-384 key parser path; *Ed25519*
+  needs a signer in `std.ed25519` (verification is all it has) and PKCS#8's `1.3.101.112`; *RSA* needs a modular exponentiation by a
+  **secret** exponent, which `std.bigmod` is not (`docs/tls-parity.md` §3.2: variable time, built for public values), so it needs
+  a constant-time, blinded private operation first. A mutual-TLS backend whose policy accepts only RSA client certificates is
+  out of reach until then, and the refusal says so (`tls-client-key-type`).
+
+### 6.3 Which `CertificateRequest`s are answered with a certificate
+
+The identity is chosen at `start` (§6.2). When the server's `CertificateRequest` comes, the client sends the chain only if **all** of
+these hold; otherwise it sends the empty `Certificate` it sends today (RFC 8446 §4.4.2: a client with no suitable certificate sends
+an empty one), and the server decides:
+
+1. an identity was chosen for this host;
+2. **`signature_algorithms`** lists `ecdsa_secp256r1_sha256` (0x0403), the only scheme this key signs with. (TLS 1.2: the
+   `certificate_types` list also holds `ecdsa_sign`, 64.) A request with no `signature_algorithms` is not satisfiable:
+   RFC 8446 §4.3.2 requires it, and a client cannot know what a server will verify;
+3. **`certificate_authorities`** is empty or absent, or one of its names is the issuer of a certificate in our chain (byte for byte,
+   as the DER `Name`; `x509.issuer_start` and `issuer_end` are whole TLVs). RFC 8446 §4.2.4 says the server SHOULD be guided by it, so a
+   name that matches nothing is "not satisfiable", not a protocol error.
+
+**Not checked**, and said: `signature_algorithms_cert` and `oid_filters`. The chain's own signature algorithms are not compared to
+`signature_algorithms_cert`; if the server cannot verify our CA's signature it ends the handshake with an alert, and the client reports
+`tls-alert`. `client_auth` says what happened (and `tls-alert`'s detail the alert):
+
+| `tls.client_auth` | meaning |
+|---|---|
+| 0 | the server asked for nothing (or the connection resumed, which asks for nothing, §6.5) |
+| 1 | asked, and the chain was sent with a `CertificateVerify` |
+| 2 | asked, and the empty `Certificate` was sent: no identity for the host, or the request was not satisfiable |
+
+**A server that requires a certificate when none is configured** ends the handshake with `certificate_required` (116; TLS 1.2 servers send
+`handshake_failure`, 40). The client fails with `tls-alert`, detail 116, and `client_auth` is 2. That is the clean refusal: no new tag,
+because the alert is the server's word and `client_auth` is ours. **Optional mode** (OpenSSL `-verify`, nginx `ssl_verify_client optional`,
+Go `VerifyClientCertIfGiven`) completes whether a certificate was sent or not.
+
+### 6.4 The signature, and TLS 1.2
+
+- **TLS 1.3.** The client's flight is `change_cipher_spec`, `Certificate` (the request's context echoed, then the chain), `CertificateVerify`,
+  `Finished`. The signature is over 64 bytes of 0x20, the context string `TLS 1.3, client CertificateVerify`, a zero byte, and the transcript
+  hash through the client's `Certificate` (RFC 8446 §4.4.3), under `ecdsa_secp256r1_sha256`: `SHA-256` of that content, then
+  `std.ecdsa_sign.sign_checked` under the identity's key and point, then `to_der`. The transcript hash is the suite's (SHA-256 or
+  SHA-384); the digest signed is always SHA-256. `sign_checked` verifies the signature before it is used, as the server's does
+  (`docs/tls-server.md` §3.3), so a fault sends nothing (`tls-client-sign`, never reached by an input).
+- **The nonce is hedged** with 32 bytes derived from a secret the slot holds at that moment (`HKDF-Expand-Label` of the client's handshake traffic
+  secret, or of the TLS 1.2 master secret, labelled `client sign hedge`): RFC 6979 §3.6, so a fault in one signature does not recur and
+  nothing new is drawn from the engine's generator (the ClientHello's 96 bytes are all it draws, and `start` is unchanged).
+- **The work area** is the slot's `std.ecdh` work, which the key exchange has finished with by then. No allocation grows.
+- **TLS 1.2: built, not refused.** The client speaks TLS 1.2 to the upstreams a TLS 1.3 client cannot reach, and an mTLS backend that old
+  is the likeliest to ask for a certificate. The slot already runs the SHA-256 and the SHA-384 transcript side by side
+  (`tls_slot.transcript_add`), so the one thing 1.2 needs that 1.3 does not, a SHA-256 hash of all the handshake messages whatever the
+  suite's hash, is already there. The client sends `Certificate` (a list of DER certificates, with no per-certificate extensions),
+  `ClientKeyExchange`, `CertificateVerify` (RFC 5246 §7.4.8: the scheme and a signature over **all handshake messages so far, hashed with SHA-256**,
+  not the content string), `change_cipher_spec`, `Finished`. The extended master secret is over the session hash through
+  `ClientKeyExchange` (RFC 7627 §4), so it is computed before `CertificateVerify` and is not affected by it.
+
+### 6.5 Resumption: what a ticket obtained with client authentication binds
+
+`docs/tls-resumption.md` §3 gives eight rules and none says what a client certificate does to a ticket. A resumed connection sends no
+certificate (a PSK handshake has no `CertificateRequest`); the server carries the client's identity in the ticket. So the ticket is a stored
+verdict about *our* identity as well as the server's, and every way it could go stale is a rule:
+
+- **9. Bound to the identity configuration.** `add_client_identity`, `replace_client_identity` and `remove_client_identity` each count as a
+  `trust` call (they raise the same generation, `tmeta[t_trust]`), so **no ticket saved before is offered after**. A resumption must not be
+  presented as an identity that changed or was removed, and a server that issued the ticket to an anonymous session must not be asked to
+  resume it as the one we now hold. The cost: after a certificate renewal the next connection to each upstream is a full handshake. That is one
+  handshake per upstream per renewal; certificates are renewed in weeks.
+- **10. Bound to the client certificate's life.** The ticket's `notAfter` (rule 3) becomes the **earlier** of the server leaf's and the client leaf's,
+  when a client certificate was sent. A full handshake would send an expired certificate and be refused; a resumption must not outlive it either.
+- **11. Not across a host** is rule 1 unchanged, and it is what keeps an identity chosen by host name from reaching a ticket for another.
+- **TLS 1.2** has no tickets here (rule 7); nothing to bind.
+
+`start_with` with a pool whose ticket the rules refuse overwrites the ticket and does a full handshake with the identity now configured
+(`docs/tls-resumption.md` §12). `tls.resumed` is true and `client_auth` 0 on a resumed connection.
+
+### 6.6 ALPN
+
+RFC 7301. **The API:**
+
+```
+tls.set_alpn_offer(engine, protocols) -> 0 | refusal           // the default offer, space-separated: "h2 http/1.1"; empty clears it
+tls.start_alpn(engine, slot, host, now_unix_ms, pool, protocols) -> 0 | refusal   // this connection's own offer (pool 0: a new pool); empty offers none
+tls.alpn(engine, slot, out) -> n                                // the protocol the server chose, into out; 0 for none
+```
+
+`start` and `start_with` offer the engine's default; `start_alpn` overrides it for one connection (a gateway talks h2 to one upstream and
+HTTP/1.1 to another). `alpn` is the server's call too (`tls_identity`'s chosen protocol, unchanged); on a client engine it answers the
+server's choice once EncryptedExtensions (TLS 1.3) or the ServerHello (TLS 1.2) has been read.
+
+- **The offer** is at most 256 bytes in ALPN's wire form (each name after its length byte), each name 1 to 255 bytes. A name that is empty, over 255
+  bytes, or a list over the cap is `tls-alpn-list` and the list is as it was. The offer is copied into the slot (256 bytes, §6.7) so a
+  later `set_alpn_offer` does not change a handshake in flight, and so the server's choice can be checked against it.
+- **The extension** goes in the ClientHello between `signature_algorithms_cert` and `supported_versions`, only when the offer is not empty.
+  With none offered, the ClientHello is byte for byte today's, so every recording and ticket test stands.
+- **The server's answer.** TLS 1.3: in EncryptedExtensions. TLS 1.2: in the ServerHello's extensions. Exactly one name (RFC 7301 §3.1).
+  - one that is **not in the offer** is `tls-alpn-selected` (alert `illegal_parameter`, 47). The server's answer is the only thing that could make
+    the client run a protocol it never offered, so it is checked byte for byte against the offer. A name longer than the offer's cap can
+    never be in it, so it is the same refusal; a length that does not fit the extension is `tls-decode-error`, and the extension twice `tls-extension-repeat`;
+  - an ALPN answer when **nothing was offered** is `tls-unsupported-extension` (RFC 8446 §4.2), as now;
+  - ALPN in a TLS 1.3 `ServerHello` (not EncryptedExtensions) is `tls-unsupported-extension`;
+  - **no answer** is a connection with no protocol: `alpn` answers 0, and the caller decides. A program that needs h2 closes. (The server is the one that
+    ends a handshake with `no_application_protocol`, 120, and that arrives as `tls-alert`.)
+- **ALPN and resumption.** A ticket is *not* bound to the offer. RFC 8446 §4.6.1 ties a ticket's use to the protocol only for early data, which
+  is not sent; a resumed handshake carries ALPN in EncryptedExtensions again and the client checks that choice against **this** connection's offer.
+  So `start_with` after a changed offer resumes and reports the new choice, and the check is the same.
+- **`hooks` and `http-client` consumers.** `packages/http-client` speaks HTTP/1.1 only. Its I/O driver (`examples/http_fetch_nb/fetch_io.cho`)
+  calls `tls.start`; with `set_alpn_offer("http/1.1")` a server that would pick `h2` for a client that said nothing picks `http/1.1`, and the answer is
+  readable. `cancho-hooks` maps `open(...)` onto `tls.start`; it can offer `http/1.1` the same way. Neither changes unless it asks.
+
+### 6.7 Hostile input, memory, and the refusals
+
+- **`CertificateRequest`** (TLS 1.3 and 1.2) is at most the handshake reassembly buffer, 64 KiB, as every message. Nothing is allocated from a length it
+  names: the context is at most 255 bytes (the slot's `k_context`, 256), the extensions and the authorities list are walked in place, and each is
+  checked to end where it says. `signature_algorithms` and `certificate_authorities` twice in one request are `tls-extension-repeat` (RFC 8446 §4.2, alert 47 as OpenSSL sends);
+  an authorities list whose names do not tile it, a name of length 0, or a `signature_algorithms` list of odd length, are `tls-decode-error`. Matching the authorities
+  against our chain is at most (the chain's certificates) times (the list's bytes), about 8 × 64 KiB comparisons; it reads and compares, writes nothing.
+  A second `CertificateRequest` is `tls-unexpected-message` (the flag that is set at the first, as now); one after `Finished` is out of order for the same
+  reason; one in a resumed handshake is out of order too.
+- **Slot layout (the shared files, as little as possible):**
+  - `tls_slot.ints_len()`: **+2 words** (10,241 to 10,243), appended after `i_session_len`: `i_alpn_offer_len` (0 to 256) and `i_alpn_at` (where the server's choice starts in the offer, valid
+    when `i_alpn_len`, which the server already has for its own choice, is more than 0). The slot's chosen identity is `i_identity` (the server's field for the same
+    idea; a client slot is free to hold it, as id + 1, 0 for none).
+  - `tls_slot.bytes_len()`: **+256 bytes** (187,191 to 187,447), appended at the end (`b_alpn_offer`, after the ticket host name). A slot is
+    269,391 bytes, 272 more; 64 slots: 17 KiB.
+  - `tls_slot`: one flag, `f_cert_send`, bit 24 (16,777,216; the server's client-authentication work uses bits 15 to 18). A ClientHello offering
+    ALPN adds at most 4 + 2 + 256 bytes to `max_client_hello`.
+  - `tls_record`: refusal codes **-120 to -131** (the server's are -40 to -71), `tls-client-*`, `tls-alpn-*` and `tls-extension-repeat`, below.
+  - `tls.cho`: no field is added to `Engine`; a client engine opened with `open_mutual` keeps its identities in the field `ids` (empty for a client) and the parser's
+    work in `srv` after the role word (which is 2 for it). `t_fields` is unchanged: rule 9 reuses `t_trust`, rule 10 reuses the entry's `notAfter`.
+- **New tags** (alert in the last column; every refusal has a rule tag, CLAUDE.md):
+
+| Code | Tag | When | Alert |
+|---|---|---|---|
+| -120 | `tls-client-key-type` | `add_client_identity`: a key, or a leaf, that is not P-256 | n/a |
+| -121 | `tls-client-key-format` | a key that is not an unencrypted PKCS#8 or SEC 1 PEM block | n/a |
+| -122 | `tls-client-key-mismatch` | the key is not the leaf's | n/a |
+| -123 | `tls-client-cert-expired` | the leaf has expired at `now_unix_ms` | n/a |
+| -124 | `tls-client-chain` | no certificate, a block that does not decode, a leaf that does not parse, or over 16 KiB | n/a |
+| -125 | `tls-client-names` | no hosts, or over 512 bytes | n/a |
+| -126 | `tls-client-identities-full` | four identities held | n/a |
+| -127 | `tls-client-no-identity` | `replace` or `remove` of an id never added | n/a |
+| -128 | `tls-client-sign` | the signer refused or its check failed: a fault, not an input | 80 |
+| -129 | `tls-alpn-list` | `set_alpn_offer` or `start_alpn`: an empty name, a name over 255 bytes, a list over 256 | n/a |
+| -130 | `tls-alpn-selected` | the server chose a protocol that is not in the offer | 47 |
+| -131 | `tls-extension-repeat` | `signature_algorithms` or `certificate_authorities` twice in a CertificateRequest, or ALPN twice in a server's answer (RFC 8446 §4.2) | 47 |
+
+  A client call on an engine not opened with `open_mutual`, or a server engine, is `tls-role` (-57), as the server's calls on a client engine are.
+
+### 6.8 Revocation: the decision, proposed
+
+**Proposed: build nothing now. Say plainly that revocation is not checked (`docs/tls-pure.md` §5.4 already does), and keep the controls that do work for a gateway.**
+Evidence, from public sources read for this section (summaries of vendor and CA pages; where a default could not be read in a primary document it is marked *unverified*):
+
+- **Few clients check by default.** Chrome does no online OCSP or CRL check and uses CRLSets; Firefox uses CRLite from version 137 and turned OCSP off for DV
+  certificates in 142 (Mozilla, Aug 2025); curl checks a stapled response only with `--cert-status`, and then a missing one is a hard failure; Go's `crypto/tls` and
+  `x509.Verify` check nothing; rustls checks only CRLs the program passes. *Unverified:* OpenSSL and Python `ssl` check nothing unless `X509_V_FLAG_CRL_CHECK` is
+  set (as the issue says; the manual was not re-read here).
+- **The public web is leaving OCSP.** Let's Encrypt removed OCSP URLs from certificates on 7 May 2025 and shut its responders on 6 Aug 2025, and Must-Staple requests
+  failed from January 2025 ("Must Staple has failed to get wide browser support"; letsencrypt.org, 5 Dec 2024). CA/Browser Forum ballot SC-063 made OCSP optional and CRLs
+  mandatory (effective 15 Mar 2024). Stapling was seen on about 8% of Firefox connections in early 2023 (Firefox telemetry, CA/B Forum list, Feb 2023) and has
+  fallen with Let's Encrypt's change: no 2024 to 2026 measurement was found.
+- **Certificates are getting short.** Let's Encrypt offers 6-day certificates (generally available 15 Jan 2026); CA/B Forum SC-081v3 cuts the maximum to 200 days
+  (15 Mar 2026), 100 (2027) and 47 (2029). A short life is revocation by expiry, and it needs no code here.
+- **Soft-fail defends against little.** A client that accepts a connection when no response comes is defeated by an attacker who removes the staple; only
+  Must-Staple made it hard, and it is being abandoned.
+- **The attack surface is real.** Honouring a stapled response means a BasicOCSPResponse parser (an ASN.1 structure with optional, tagged and nested parts), the
+  responder's certificate (a delegated responder needs `id-kp-OCSPSigning` and the CA's signature), a CertID match (SHA-1 is still common, so SHA-1 would be
+  needed for this one use), `thisUpdate`/`nextUpdate` with a skew rule, and the choice of what a missing or stale response means. OpenSSL itself had
+  CVE-2022-1343 (`OCSP_basic_verify` reported success when the signer failed to verify). An estimate, not a measurement: 400 to 800 lines of security-critical
+  code and a second signature entry point, for a check that is soft by nature and that a growing part of the web no longer feeds.
+
+**What a gateway should do instead** (in the README of the package and in `docs/tls-pure.md` §5.4): use short-lived certificates or a private CA for
+upstreams it controls; keep `trust` to the roots it needs, not the system bundle; keep `set_ticket_max_age` short (resumption is the other way a
+revoked certificate stays trusted, `docs/tls-resumption.md` §3 rule 4); and, for a revoked upstream key, remove its root or replace its certificate.
+
+**If a person wants more, the smallest useful step** is an **opt-in `require stapled OCSP`** mode, off by default: send `status_request` (RFC 6066 §8) in the ClientHello,
+and when the server's `CertificateStatus` (TLS 1.2) or the leaf's `status_request` extension (TLS 1.3) carries a response, verify it against the issuer in the
+chain already built, and refuse the connection if it says `revoked`, has expired, or fails to verify; a missing response is accepted unless the mode is
+`require`. That is the code above, and its gate would be a differential against `openssl ocsp` and `openssl s_server -status` with Wycheproof-style malformed
+responses. A CRL path (operator-supplied files, checked against the leaf's serial) is the other candidate, and is larger. **Not proposed**: live OCSP (it leaks
+the host to the CA and needs an HTTP client inside the TLS client) and CRLSet or CRLite (a data pipeline, not code).
+
+**Decision for a person:** accept "not checked, documented, mitigations as above" (proposed), or ask for the opt-in stapled mode as its own change.
+
+### 6.9 X25519MLKEM768: the decision, proposed
+
+**Proposed: do not build it now; do not claim the client reaches every server; add a check to the interop matrix that reports `tls-alert` 40 or 70 from a
+server with a post-quantum-only policy, and revisit on the triggers below.**
+
+- **No server that requires it was found.** No public evidence turned up of a server, CDN or cloud policy that refuses a client without the hybrid share. AWS's
+  load balancer policies with the hybrid are opt-in and the console default still accepts classical clients; Cloudflare supports it and does not require it.
+  The standards track has it (RFC 10024, August 2026: `X25519MLKEM768`, code point 0x11EC; key share = ML-KEM-768 encapsulation key 1,184 bytes then the X25519
+  share, 1,216 bytes; the server's = ciphertext 1,088 then X25519, 1,120; the shared secret = the two secrets, ML-KEM first, 64 bytes). NSA's CNSA 2.0
+  makes post-quantum key exchange mandatory for new national-security systems from 1 Jan 2027 and exclusive by 2033, with ML-KEM-1024, a different group
+  and a different audience. So a *requirement* is plausible first on a government or private upstream, and not observed anywhere on the public web.
+- **What share of servers *supports* it** (not the same as requires): Cloudflare reports 39% of the top 100,000 domains supporting post-quantum key agreement in
+  September 2025, up from 28% six months before, and 12.8% of origins it scanned in September 2026, up from 3.7% a year earlier and 0.5% in 2023. On the
+  client side more than half of human traffic to Cloudflare used the hybrid by October 2025. (Secondary readings of vendor blog posts, dated as given; Cloudflare
+  Radar itself could not be read from here.) **Because servers that support it also accept X25519, the share that *needs* it is, on this evidence, near
+  zero.** That is a measurement of absence from public sources, not of every server: it says nothing about a private upstream.
+- **What ML-KEM-768 would cost.** Go's implementation is about 500 lines of code with 200 of comments and 650 of tests, with Barrett reduction (no
+  division) from the start; on ARM64 it takes about 56 µs to encapsulate and 109 µs to decapsulate (Valsorda, words.filippo.io/mlkem768). A client needs key
+  generation and **decapsulation**, the secret-handling half. In this repository that is: the NTT and polynomial arithmetic mod 3329 on `int` (no
+  overflow trap risk: every product is under 2^24), SHA-3 (Keccak, which `std` does not have: a second hash with its own constant-time argument and
+  vectors), the centred binomial sampler for the **secret** noise (branch-free and index-free), the Fujisaki-Okamoto re-encryption with a constant-time
+  ciphertext compare and a constant-time select of the key or the implicit-rejection key, byte encoding of 12-bit coefficients, and a ClientHello that grows by 1,216
+  bytes and no longer fits one packet (Chrome 124 broke middleboxes that hard-code ClientHello sizes). It also needs a bigger slot (the decapsulation key is 2,400 bytes, the
+  encapsulation key 1,184) and a ClientHello buffer that is no longer 2,688 bytes.
+- **The constant-time risk is the reason to be careful, more than the lines.** KyberSlash (Bernstein et al., 2024) recovered keys in minutes or hours from secret-dependent
+  *divisions* in widely used implementations, including the reference code; the same failure is available to any port that writes `x / 3329` on a secret. This
+  language has the tools (`value_barrier`, `docs/value-barrier.md`; `scripts/chacha20_branches.py`; the dudect harness) but each is a new audit. mlkem-native
+  (CBMC and HOL Light proofs) and libcrux-ml-kem (hax) are the verified references; a port should follow one of them, with the NIST ACVP vectors and
+  Valsorda's CCTV cases (negative and "unlucky" XOF cases) as gates, plus mutants and a branch audit as `docs/ecdh.md` §3 did.
+- **The reason not to wait forever:** harvest-now-decrypt-later is a threat to the confidentiality of what a gateway sends today, not to a requirement the
+  upstream imposes. That is an argument for *offering* the hybrid, which is a separate question from *needing* it; offering it adds the 1,216-byte share to
+  every ClientHello for a benefit only if the upstream supports it. For upstreams an operator controls, who can say which they run, this is a decision per
+  deployment.
+
+**Triggers to revisit** (proposed): a named upstream announces a post-quantum-only policy; origin support passes about half of the top domains; an
+OpenSSL-compatible peer the gateway must reach drops the classical groups from its default; or the hooks receivers' stack asks. **Estimate if built:** one module
+for ML-KEM (about 700 lines with Keccak), one for the hybrid share in `message.cho` and `slot.cho`, a growth of `max_client_hello` by 1,216 bytes, a
+dozen mutants, ACVP and CCTV vectors, a branch audit, one PR of the size of `docs/ecdh.md`'s.
+
+**Decision for a person:** accept "not now, with triggers" (proposed), or ask for the build as its own epic with the constant-time audit as its first gate.
+
+### 6.10 Gates
+
+Tests for the build, each against a server that asks for a client certificate or negotiates ALPN, and a case for every rule above:
+`openssl s_server -Verify` and `-verify`, nginx `ssl_verify_client on|optional`, Go `ClientAuth: RequireAndVerifyClientCert`, wolfSSL; success, wrong
+CA, an expired client certificate, a server that requires one when none is configured, optional mode; the lying server for the new rules
+(`scripts/tls_liar_auth.py`); the differential against `openssl s_client` for the same flights; fuzz corpora extended; `scripts/tls_mutants.py` extended and all
+killed or argued; the existing suites byte for byte as they were; the cost of the extra signature, measured; `examples/http_fetch_nb/fetch_io.cho` with
+`--client-cert`, `--client-key` and ALPN, live against `openssl s_server -Verify` and nginx.
+
+### 6.11 As built (#386)
+
+*Every number is from the command beside it. Where building found §6.1 to §6.9 wrong, the section says so in place (marked "corrected").*
+
+**What was built**
+
+| File | What |
+|---|---|
+| `packages/tls/cident.cho` (`tls_cident`), new | the identities: four, each a chain, a P-256 key, its point, the leaf's `notAfter` and the hosts it names, in one byte slice (51,636 bytes); `load` (the checks of §6.2), `remove`, `select` by host, `names_issuer` (the authorities against the chain's issuers), `list12`, `alpn_wire` |
+| `packages/tls/message.cho` | the ClientHello's ALPN extension; `certificate_request` and `certificate_request12_info` (the shape, the scheme, the authorities); `encrypted_extensions_alpn`; the ServerHello's ALPN (TLS 1.2); `alpn_name` |
+| `packages/tls/client.cho` | `start_alpn`, `feed_with`, the CertificateRequest handler, `send_identity` (Certificate and CertificateVerify), `client_auth`, `alpn` |
+| `packages/tls/client12.cho` | `answer_request` (shared by both versions), `certificate_verify_message` (the one caller of the signer), `take_alpn`, TLS 1.2's Certificate and CertificateVerify |
+| `packages/tls/tls.cho`, `slot.cho`, `record.cho` | `open_mutual`, `add_client_identity`, `replace_client_identity`, `remove_client_identity`, `client_auth`, `set_alpn_offer`, `start_alpn`, `alpn` on a client engine; the slot fields and flag of §6.7; 12 refusal codes |
+| `examples/http_fetch_nb/fetch.cho`, `fetch_io.cho` | `--client-cert`, `--client-key` and `--alpn`; a response line ends ` alpn=<protocol or -> auth=<0, 1 or 2>` when either is given |
+
+*Corrected:* §6.2 said an `open_mutual` engine keeps its identities in `ids`; it does, and in `roots` after the trust store it also keeps the default
+ALPN offer (258 bytes), which a client engine has no other field for. No field was added to `Engine`.
+
+**The signer's caller.** `certificate_verify_message` is the one place `std.ecdsa_sign` is called by the client. It signs a SHA-256 digest with
+`sign_checked` (the signature verified before it is used), the nonce hedged with `HKDF-Expand-Label(secret, "client sign hedge")` of the client's
+handshake traffic secret (TLS 1.3) or the master secret (TLS 1.2), into the slot's `std.ecdh` work area. TLS 1.3's content is the 64 spaces, the
+context string and the transcript hash; TLS 1.2's digest is the slot's SHA-256 transcript hash whatever the suite's (the slot keeps both,
+`tls_slot.transcript_add`), taken after `ClientKeyExchange` and before the extended master secret's key block, so neither is disturbed by the other.
+
+**The lying server** (`scripts/tls_liar_auth.py`, the same server code as `tls_liar.py` imported unchanged; `tests/vectors/tls/liar_auth.txt`, replayed byte for
+byte on both backends by `conformance/tls_auth.rs`): **77 connections**. 39 end `ok`, and every one that sends a chain has its Certificate, its CertificateVerify
+(under TLS 1.3's context string, or TLS 1.2's SHA-256 over every message) and its Finished checked by pyca/cryptography. The rest, by rule:
+
+| The server does | Tag | Alert |
+|---|---|---|
+| asks, and the client answers: ChaCha20, AES-256-GCM-SHA384, a retry to P-256, a context to echo, the identity named by a wildcard host or by `*`, an unknown extension, a chain of two certificates, the authorities naming the issuer or only the second certificate's issuer, 2,000 authorities (about 60 KB) with ours last; TLS 1.2 under three suites and P-256, a chain of two, the authorities | `ok` | none |
+| asks, and the client cannot or will not: Ed25519 or RSA-PSS only, no `signature_algorithms`, authorities naming another CA, 2,000 authorities none ours, a name of the issuer's length and other bytes, no identity configured, an identity for another host; TLS 1.2 without `ecdsa_sign`, Ed25519 only, another CA, 2,000 authorities over four records | `ok`, the empty Certificate | none |
+| requires one and none is configured (`certificate_required`) | `tls-alert` | |
+| a second CertificateRequest; one after Finished; one in a resumed handshake; TLS 1.2: a second, one after ServerHelloDone | `tls-unexpected-message` | 10 |
+| `signature_algorithms` or `certificate_authorities` twice; ALPN twice (1.3 and 1.2) | `tls-extension-repeat` | 47 |
+| authorities that do not tile their list, a name of length 0, an odd `signature_algorithms`, a context longer than the message, extensions longer than it, ALPN with a list or name length that does not fit, two names, or an empty one (1.3 and 1.2) | `tls-decode-error` | 50 |
+| ALPN offered h2 and http/1.1 and answered spdy/3; a prefix of an offered name; h3 for h2; 255 bytes never offered (1.3), spdy/3 (1.2) | `tls-alpn-selected` | 47 |
+| ALPN in a TLS 1.2 ServerHello when nothing was offered; in a TLS 1.3 ServerHello | `tls-unsupported-extension` | 110 |
+| the identity's own refusals: an expired leaf, another key, a key that is not PEM, a P-384 key, an Ed25519 leaf, no certificate, no hosts; an offer of 256 bytes, a name of 256 | `tls-client-*`, `tls-alpn-list` | (a call) |
+
+The server also checks the ClientHello: the ALPN extension is there once, with exactly the offer, between `signature_algorithms_cert` and
+`supported_versions`, and absent when nothing was offered. **The engine's rules** (`scripts/tls_tickets_auth.py`, `tests/vectors/tls/tickets_auth.txt`,
+10 cases): an identity added, replaced or removed keeps a saved ticket back (rule 9), and a ticket saved after is offered and resumed with `client_auth` 0;
+the client certificate's `notAfter` bounds a ticket whose server certificate lasts ten years (rule 10), offered at `notAfter` and not after; the identity is
+chosen by the host; four identities, a fifth, a replace and a remove of ones never added, a mismatched key, an expired leaf and no hosts are refused through the
+engine with their tags; the default offer is what `start` sends and a connection's own replaces it, even by none; a ticket resumes under another offer and the new
+choice is reported.
+
+**Recorded against real servers** (`scripts/tls_trace.py --mutual`, replayed by `conformance/tls.rs` with the other eleven, now fourteen, and in one-byte and
+coalesced splits): tlslite-ng 0.8.2 (TLS 1.3, `reqCert`), `openssl s_server -tls1_2 -Verify 1` and `-tls1_3 -Verify 1` (the OpenSSL 3.6.4 of the machine that
+recorded them, macOS; the other traces are 3.0.13). Each server verified the client's CertificateVerify and Finished, and said it saw the certificate.
+
+**Interop** (`scripts/tls_auth_interop.py`, in the `lexsys-interop` image's Ubuntu 24.04 on linux-aarch64 for OpenSSL 3.0.13, nginx 1.24.0, Go 1.22.2 and
+wolfSSL 5.6.6; `fetch` built by this PR's compiler): **92 rows, 92 ok**, each a server and a `fetch`. Per server and per version (1.3, 1.2): a valid
+certificate accepted; none configured against `require` refused (`tls-alert`; nginx answers `400 No required SSL certificate was sent` after the handshake);
+a certificate from another CA refused (by the CA list, and for OpenSSL also with no authorities named, so the server's own verification refuses what is sent);
+`optional` completes with `auth=2` without a certificate and `auth=1` with one; a certificate configured and never asked for is `auth=0`; the client's own
+refusal of an expired leaf and of an RSA key before any connection; OpenSSL with its clock three days on (`-attime`) refuses a certificate that expires after one; Go, wolfSSL and nginx put what they saw
+in the body (`client=client-good alpn=...`) and its SHA-256 is checked. ALPN: the offer the server speaks chosen and reported; two offered, the server's order
+(OpenSSL, Go) or the client's (wolfSSL: it chose h2 for `h2,http/1.1` against a list of `http/1.1,h2`) decides; no offer to a server with a list, none chosen;
+**nothing in common: OpenSSL's `s_server`, nginx and Go end the handshake (`fetch` says `client.tls`; the server's `no_application_protocol` alert), wolfSSL
+completes with no protocol.**
+
+**The differential against `openssl s_client` 3.0.13** (`scripts/tls_differential_auth.py`, the liar's cases beside OpenSSL's client with `-cert`, `-key` and `-alpn`,
+OpenSSL's TLS 1.3 and TLS 1.2 signatures verified by the same server code): **67 connections (the 77, less 9 that configure the engine and one that needs OpenSSL's
+saved session), 58 agree, 3 differ in the alert only, 6 differ as documented, 0 otherwise.**
+
+| Case | `packages/tls` | OpenSSL | Why |
+|---|---|---|---|
+| ALPN: the server chooses a name that is not in the offer (four 1.3 cases, one 1.2) | `tls-alpn-selected` | accepts | RFC 7301 §3.1: the choice is one of the client's; OpenSSL 3.0 takes any name |
+| a CertificateRequest with no `signature_algorithms` | the empty Certificate | refuses the request | RFC 8446 §4.3.2 requires it; this client treats the request as one it cannot satisfy |
+| duplicate extensions, an empty ALPN name, an odd `signature_algorithms` (1.2), ALPN in a TLS 1.3 ServerHello | 47 / 50 / 50 / 110 | 47 / 80 / 80 / 47 | alerts only |
+
+**What the differential also showed, not as a difference of outcome.** OpenSSL's `s_client -cert` **sends its certificate to a request that does not name its issuer**
+(authorities naming another CA, 2,000 names none ours, a name of the issuer's length), to one whose `signature_algorithms` lacks its scheme in TLS 1.2 (no `ecdsa_sign`),
+and to every host. This client sends the empty Certificate in each, which is what §6.3 says: the server asked for certificates from CAs we are not under (RFC 8446
+§4.2.4), and sending it a certificate it cannot accept discloses the identity to a server that cannot use it. Both complete against the liar, which does not
+require one. A deployment whose server lists the wrong authorities (some do) would find this client stricter than OpenSSL; the answer is to fix the list,
+or, if that is the policy a person wants, to send anyway (§6.12, question 1).
+
+**Fuzzing.** `fuzz_messages` takes four more kinds (a TLS 1.3 CertificateRequest; the TLS 1.2 one with its info; EncryptedExtensions with an ALPN offer sent; the
+authorities of a request matched against the fixture identity's chain); `fuzz_flight` and `fuzz_client` configure the fixture identity, and `fuzz_flight` offers ALPN
+when the input's first byte is 128 or more; the fixture holds the mutual traces' roots and identity and a fourth recorded flight, the mutual one, whose Finished
+verifies under the harness's ClientHello, so the client's Certificate and CertificateVerify are produced from real flights; 3 recorded mutual handshakes and 23 new
+inputs join the corpora (`tests/vectors/fuzz`), all replayed on both backends by `conformance/tls_fuzz.rs`. `scripts/tls_fuzz.py` mutates the three mutual traces
+and the 39 honest connections of the lying server (identities and ALPN offers included): **20,000 mutated connections over 53 recorded handshakes, 0 traps.** AFL++ was
+not run for this PR (see §6.12).
+
+**Mutants** (`python3 scripts/tls_mutants.py target/release/cancho`): **148, of which 146 killed and 2 argued equivalent, none survived** (103 before,
+45 new). Each new one is a bug in one place: the context string, the transcript missing the Certificate or the CertificateVerify, the request's context not echoed, the
+digest, the hedge, the notAfter bound on a ticket, the authorities ignored or compared by length alone or only for the first certificate, the scheme not required,
+TLS 1.2's digest under the suite's hash, its chain with TLS 1.3's extensions or cut short, `ecdsa_sign` not required, `*` never matching, any identity for any host, an
+expired leaf or another key accepted, a request that does not parse accepted (authorities that do not tile, a name of length 0, a scheme list twice), the engine not choosing by
+host or leaving tickets offerable after an add, a replace or a remove, an unoffered ALPN choice accepted or compared by length alone or when nothing was offered, the
+start of the choice lost, the extension left out of the ClientHello, each of the answer's three length checks, its empty form, twice in either version, in a TLS 1.3 ServerHello,
+the alert, the default offer never used, the cap on the offer and the offer truncated. **Two are equivalent, each argued in `EQUIVALENT`:** an ALPN answer in
+EncryptedExtensions accepted by the parser when nothing was offered (`take_alpn` refuses it with the same tag), and a name over 255 bytes accepted by `alpn_wire` (the offer's 256-byte
+cap refuses it with the same tag). Four of the new ones survived a first run and each got the case that kills it: a name of the issuer's length and other bytes (the comparison
+by length alone), a chain whose second certificate has another issuer (only the first considered), a selection of an offered name's length (h3 for h2), and the engine's default
+offer through `start` rather than `start_alpn`. Three older mutants' texts (`server_name` in a TLS 1.3 ServerHello, an unexpected extension, resumption never advertised) and
+one of the server's (`start` on a server engine, now in `start_plain`) were brought up to the new code. `scripts/tls_server_mutants.py`: **71 of 71 killed.**
+
+**Cost of the extra signature** (`scripts/tls_client_auth_cost.py`; the machine is the M-series Mac this was built on, arm64 macOS, load average
+12 to 17 while it ran, the LLVM backend, `fetch` against `openssl s_server -www` 3.6.4 on loopback; the Docker VM had no disk left to run it
+in the `lexsys-hooks-env` image, and `gram` was not used): the client's own CPU (user and system, `wait4`) per full handshake, the best of 3 runs of
+200, a connection for each request and no tickets:
+
+| | the server asks for nothing | asks, the client declines (empty Certificate) | asks, the client answers | **the signature** |
+|---|---|---|---|---|
+| TLS 1.3 | 3.462 ms | 3.511 ms | 5.308 ms | **1.797 ms** (51% of a handshake) |
+| TLS 1.2 | 3.965 ms | 3.911 ms | 5.713 ms | **1.802 ms** (46%) |
+
+That is what `docs/ecdsa-sign.md` §7 measured for a `sign_checked` on an M4 Max, 1.62 ms (a signature 0.82 and its verification 0.80), plus about 0.2 ms
+for the chain's bytes, the digest and the message. Asking is free (the first two columns agree within the noise of a loaded machine); answering costs two
+P-256 multiplications. It is the price of the safety check (`sign_checked` verifies before it sends); `sign` alone would be half of it. A mutual handshake costs about 1.5 times a one-way one here, and a resumed connection pays none of it (§6.5).
+
+**Existing suites.** The 84 connections of `liar.txt`, the 20 ticket cases of `tickets.txt`, the eleven earlier traces, the 64 streams and the RFC 8448 record
+all replay as recorded: nothing was re-recorded, and the ClientHello is byte for byte today's when no ALPN is offered. `scripts/tls_differential.py` and
+`scripts/tls_interop.py` were not changed.
+
+### 6.12 Not done, not verified, and for a person
+
+1. **Should a client send its certificate to a request whose authorities do not name its issuer?** *Proposed: no, as built* (§6.3, and the differential above): it
+   is what RFC 8446 §4.2.4 says a server wants, and it discloses nothing to a server that cannot accept it. OpenSSL sends. A deployment whose server mis-lists its
+   authorities is the case for a switch.
+2. **Not built:** P-384, Ed25519 and RSA client keys (§6.2 says what each needs); `signature_algorithms_cert` and `oid_filters` are not checked (a server that cannot verify our
+   CA's signature ends the handshake and the client reports `tls-alert`); post-handshake authentication; client authentication on a resumed connection (a ticket carries it).
+3. **Not run:** the merged `packages/tls` server's client certificates (#384 had not landed; its branch is `tls-server-client-certs`); wolfSSL, Go and nginx in TLS 1.2 with an
+   RSA client certificate (the client refuses one before connecting); AFL++ over the new harnesses for hours (the corpora are seeds plus 20,000 mutations); the cost on
+   x86-64.
+4. **Timing.** The signature is `std.ecdsa_sign`'s, whose constant-time argument and branch audit are `docs/ecdsa-sign.md` §2 and §6; the client adds no new
+   secret-dependent branch (the code that reads the key is `tls_cident.key` and `point`, two slices handed to the signer). No dudect test of the client handshake as a whole.
+5. **Revocation and X25519MLKEM768** are §6.8 and §6.9, for a person.
+6. **Not independently reviewed (#209),** as the rest of the client.

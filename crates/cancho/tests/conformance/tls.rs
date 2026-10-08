@@ -1,9 +1,11 @@
-//! `packages/tls` with no network (`docs/tls-core.md` §6.1): eleven recorded
+//! `packages/tls` with no network (`docs/tls-core.md` §6.1): fourteen recorded
 //! handshakes replayed byte for byte on both backends -- five TLS 1.3
 //! against tlslite-ng (ChaCha20 with X25519, AES-256-GCM with X25519, and a
 //! HelloRetryRequest to P-256 and to P-384 under AES-GCM,
 //! `docs/tls-parity.md` §3.3) and six TLS 1.2 against `openssl s_server`,
-//! one a suite (§3.4) -- the TLS 1.2 PRF against its definition,
+//! one a suite (§3.4), and three in which the server asks for a client
+//! certificate and verifies it (tlslite-ng's TLS 1.3, OpenSSL's TLS 1.2 and
+//! TLS 1.3: `docs/tls-parity.md` §6.10) -- the TLS 1.2 PRF against its definition,
 //! the same server bytes fed one byte at a time and all at once, a wrong
 //! root, a crafted ServerHello for each rule of RFC 8446 §4.1.3 the
 //! client enforces, and the 84 connections of `scripts/tls_liar.py`'s
@@ -15,18 +17,18 @@
 use super::json::feed;
 use super::*;
 
-fn build_tls_driver(test: &str, backend: &str) -> (PathBuf, PathBuf) {
+pub(super) fn build_tls_driver(test: &str, backend: &str) -> (PathBuf, PathBuf) {
     let dir = scratch(&format!("tls-{test}-{backend}"));
     let exe = dir.join("driver");
     let build = Command::new(BIN)
         .args(["build", "--std", "--backend", backend])
         .arg(repo_root().join("tests/programs/tls_driver.cho"))
         .args(
-            ["record.cho", "message.cho", "slot.cho", "client12.cho", "client.cho"]
+            ["record.cho", "message.cho", "slot.cho", "cident.cho", "client12.cho", "client.cho"]
                 .map(|f| repo_root().join("packages/tls").join(f)),
         )
         .args(
-            ["verify.cho", "names.cho", "x509.cho"]
+            ["verify.cho", "names.cho", "x509.cho", "key.cho"]
                 .map(|f| repo_root().join("packages/x509").join(f)),
         )
         .arg("-o")
@@ -37,7 +39,7 @@ fn build_tls_driver(test: &str, backend: &str) -> (PathBuf, PathBuf) {
     (dir, exe)
 }
 
-fn run(exe: &Path, lines: &[String]) -> Vec<String> {
+pub(super) fn run(exe: &Path, lines: &[String]) -> Vec<String> {
     let mut input = lines.join("\n");
     input.push('\n');
     let out = feed(exe, input.as_bytes());
@@ -64,8 +66,13 @@ fn trace(name: &str) -> (Vec<String>, Vec<String>) {
 }
 
 /// `tests/programs/tls_tickets.cho`: the engine, built with the whole package.
-fn build_tls_tickets(backend: &str) -> (PathBuf, PathBuf) {
-    let dir = scratch(&format!("tls-tickets-{backend}"));
+pub(super) fn build_tls_tickets(backend: &str) -> (PathBuf, PathBuf) {
+    build_tls_tickets_in("tls-tickets", backend)
+}
+
+/// `build_tls_tickets` in a scratch directory of its own: two tests building into one race.
+pub(super) fn build_tls_tickets_in(label: &str, backend: &str) -> (PathBuf, PathBuf) {
+    let dir = scratch(&format!("{label}-{backend}"));
     let exe = dir.join("tickets");
     let build = Command::new(BIN)
         .args(["build", "--std", "--backend", backend])
@@ -141,7 +148,7 @@ fn hex(s: &str) -> String {
 /// The recorded handshakes: `scripts/tls_trace.py`'s certificate, suite and
 /// group for each, against tlslite-ng (TLS 1.3) and `openssl s_server
 /// -tls1_2` (`docs/tls-parity.md` §3.4).
-const TRACES: [&str; 11] = [
+const TRACES: [&str; 14] = [
     "tlslite_rsa.txt",
     "tlslite_ecdsa.txt",
     "tlslite_aes256_x25519.txt",
@@ -153,6 +160,11 @@ const TRACES: [&str; 11] = [
     "openssl12_ecdhe_rsa_aes128_gcm_sha256.txt",
     "openssl12_ecdhe_rsa_aes256_gcm_sha384.txt",
     "openssl12_ecdhe_rsa_chacha20_poly1305.txt",
+    // The server asks for a client certificate and verifies it (`docs/tls-parity.md` §6.10): tlslite-ng (TLS 1.3), OpenSSL's
+    // TLS 1.2 and its TLS 1.3.
+    "tlslite_mutual_ecdsa.txt",
+    "openssl12_mutual_ecdhe_ecdsa_aes128_gcm_sha256.txt",
+    "openssl13_mutual_ecdsa.txt",
 ];
 
 #[test]
@@ -224,8 +236,11 @@ fn the_same_bytes_in_any_split_give_the_same_connection() {
         assert_eq!(field(got.last().unwrap(), 2), "4", "{name}: closed");
         // Every F before the request in one line.
         let first_w = asked.iter().position(|l| l.starts_with("W ")).unwrap();
-        let flight: String = asked[1..first_w].iter().map(|l| &l[2..]).collect();
-        let mut coalesced = vec![asked[0].clone(), format!("F {flight}")];
+        // The mutual traces begin with an `I` line, the client's identity, before `C`.
+        let start = asked.iter().position(|l| l.starts_with("C ")).unwrap();
+        let flight: String = asked[start + 1..first_w].iter().map(|l| &l[2..]).collect();
+        let mut coalesced: Vec<String> = asked[..=start].to_vec();
+        coalesced.push(format!("F {flight}"));
         coalesced.extend(asked[first_w..].iter().cloned());
         let got = run(&exe, &coalesced);
         assert_eq!(total(&got, 3), want_out, "{name}: coalesced, what the client sent");

@@ -21,7 +21,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TRACES = sorted(glob.glob(os.path.join(ROOT, "tests/vectors/tls/*_*.txt")))
 TRACES = [t for t in TRACES
-          if os.path.basename(t).startswith(("tlslite_", "openssl12_"))]
+          if os.path.basename(t).startswith(("tlslite_", "openssl12_", "openssl13_"))]
 
 
 def start_line(path):
@@ -50,6 +50,15 @@ def lit(text):
         else:
             raise SystemExit(f"not printable: {ch!r}")
     return '"' + "".join(out) + '"'
+
+
+def identity():
+    """The chain and key (PEM) the first mutual trace gave the driver."""
+    for line in open(trace("tlslite_mutual_ecdsa")):
+        if line.startswith("I "):
+            f = line.split()
+            return bytes.fromhex(f[2]), bytes.fromhex(f[3])
+    raise SystemExit("tlslite_mutual_ecdsa: no I line")
 
 
 def fixture():
@@ -83,6 +92,16 @@ def fixture():
         "",
         "pub fn now() -> [] int {",
         f"    return {now};",
+        "}",
+        "",
+        "// The client identity the harnesses configure (`tls_cident`): the PEM chain and key of the mutual traces' `I` line,",
+        "// which is every host's, so the flight that asks for a certificate is answered with it.",
+        "pub fn identity_chain() -> [] &static [byte] {",
+        f"    return {lit(identity()[0].decode())};",
+        "}",
+        "",
+        "pub fn identity_key() -> [] &static [byte] {",
+        f"    return {lit(identity()[1].decode())};",
         "}",
         "",
         "// fuzz_flight's ServerHello records, as hex: one for each of",
@@ -182,7 +201,7 @@ def der_certificates():
 
 # The TLS 1.3 traces fuzz_flight starts from: one X25519 ServerHello each,
 # with no HelloRetryRequest. Their ServerHellos go into the fixture.
-FLIGHTS = ["tlslite_rsa", "tlslite_ecdsa", "tlslite_aes256_x25519"]
+FLIGHTS = ["tlslite_rsa", "tlslite_ecdsa", "tlslite_aes256_x25519", "tlslite_mutual_ecdsa"]
 
 
 def trace(stem):
@@ -190,9 +209,12 @@ def trace(stem):
 
 
 def client_hello(path):
-    """The first record the client wrote (the `=` answer to `C`)."""
+    """The first record the client wrote (the `=` answer to the `C` line)."""
+    after_start = False
     for line in open(path):
-        if line.startswith("= "):
+        if line.startswith("C "):
+            after_start = True
+        elif after_start and line.startswith("= "):
             return bytes.fromhex(line.split()[4])
     raise SystemExit(f"{path}: no ClientHello")
 
@@ -282,7 +304,7 @@ def messages(hs):
 
 
 # fuzz_messages' first byte: which parser.
-PARSERS = {2: 0, 11: 8, 12: 9, 13: 10}
+PARSERS = {2: 0, 11: 8, 12: 9, 13: 12}
 
 
 def seeds(base):
@@ -325,6 +347,27 @@ def seeds(base):
         ticket = bytes([4]) + (24).to_bytes(3, "big") + bytes(4) + bytes(4) + b"\x01\x07" + b"\x00\x0a" + bytes(10) + b"\x00\x00"
         update = bytes([24, 0, 0, 1, 1])
         put("flight", stem + "_post", enc(out[:2] + [(22, ticket), (22, update)] + out[2:]))
+    # fuzz_messages' CertificateRequests (TLS 1.3's, from the mutual flight) and ALPN answers.
+    for stem in FLIGHTS:
+        for kind, plain in flight(stem)[1]:
+            if kind == 22:
+                for m in messages(plain):
+                    if m[0] == 13:
+                        put("messages", stem + "_request", bytes([11]) + m[4:])
+                        put("messages", stem + "_request_authorities", bytes([14]) + m[4:])
+    def u16(n):
+        return n.to_bytes(2, "big")
+    sigalgs = lambda *v: u16(13) + u16(2 + 2 * len(v)) + u16(2 * len(v)) + b"".join(u16(x) for x in v)
+    cas = u16(47) + u16(2 + 2 + 5) + u16(2 + 5) + u16(5) + b"\x30\x03\x31\x01\x30"
+    put("messages", "request13_sigalgs_cas", bytes([11]) + b"\0" + u16(len(sigalgs(0x0403, 0x0807) + cas)) + sigalgs(0x0403, 0x0807) + cas)
+    put("messages", "request13_context", bytes([11]) + b"\3abc" + u16(len(sigalgs(0x0403))) + sigalgs(0x0403))
+    put("messages", "request13_empty", bytes([11]) + b"\0\0\0")
+    put("messages", "request12", bytes([12]) + b"\1\x40" + u16(2) + u16(0x0403) + u16(0))
+    put("messages", "request12_cas", bytes([12]) + b"\1\x40" + u16(4) + u16(0x0403) + u16(0x0807) + u16(7) + u16(5) + b"\x30\x03\x31\x01\x30")
+    alpn = u16(16) + u16(2 + 1 + 2) + u16(3) + b"\2h2"
+    put("messages", "ee_alpn", bytes([13]) + u16(len(alpn)) + alpn)
+    put("messages", "ee_alpn_twice", bytes([13]) + u16(2 * len(alpn)) + alpn + alpn)
+    put("messages", "ee_alpn_empty", bytes([13]) + u16(7) + u16(16) + u16(3) + u16(1) + b"\0")
     # The encrypted messages' simplest legal forms, for the parsers the
     # traces cannot seed in the clear.
     put("messages", "encrypted_extensions", bytes([1]) + b"\0\0")

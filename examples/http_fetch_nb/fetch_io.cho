@@ -156,7 +156,8 @@ pub enum Started {
     Failed(int),
 }
 
-// A `Loop` for a client of `slots` connections. The TLS engine has a slot for each (269,119 bytes apiece) only when `tls_on`.
+// A `Loop` for a client of `slots` connections. The TLS engine has a slot for each (269,391 bytes apiece) only when `tls_on`, and is opened
+// to hold client identities (`docs/tls-parity.md` §6.2: about 50 KiB and the key parser's 77 KB more, once).
 pub fn open[&h](heap: &!h Heap, slots: int, tls_on: bool) -> [heap] Started {
     match poller_new() {
         Polling::Failed(e) => {
@@ -169,7 +170,7 @@ pub fn open[&h](heap: &!h Heap, slots: int, tls_on: bool) -> [heap] Started {
                 engine_slots = slots;
                 on = 1;
             }
-            let rest = Rest { poller: p, engine: tls.open(heap, engine_slots), st: box_slice(heap, stride() * slots, 0), inq: box_slice(heap, inq_cap() * slots, byte_of(0)), rcv: box_slice(heap, rcv_cap() * slots, byte_of(0)), req: box_slice(heap, req_cap() * slots, byte_of(0)), pend: box_slice(heap, pend_cap() * slots, byte_of(0)), events: box_slice(heap, 2 * slots + 2, 0), ups: box_slice(heap, 4 * max_upstreams(), 0), ips: box_slice(heap, 16 * max_upstreams(), byte_of(0)), names: box_slice(heap, 64 * max_upstreams(), byte_of(0)), slots: slots, nups: 0, tls_on: on, seeded: 0 };
+            let rest = Rest { poller: p, engine: tls.open_mutual(heap, engine_slots), st: box_slice(heap, stride() * slots, 0), inq: box_slice(heap, inq_cap() * slots, byte_of(0)), rcv: box_slice(heap, rcv_cap() * slots, byte_of(0)), req: box_slice(heap, req_cap() * slots, byte_of(0)), pend: box_slice(heap, pend_cap() * slots, byte_of(0)), events: box_slice(heap, 2 * slots + 2, 0), ups: box_slice(heap, 4 * max_upstreams(), 0), ips: box_slice(heap, 16 * max_upstreams(), byte_of(0)), names: box_slice(heap, 64 * max_upstreams(), byte_of(0)), slots: slots, nups: 0, tls_on: on, seeded: 0 };
             return Started::Ok(Loop { tab: conns.empty(heap, slots), rest: rest });
         }
     }
@@ -196,6 +197,27 @@ pub fn close[&h](heap: &!h Heap, io: Loop) -> [heap] int {
 // The roots an `https` upstream's chain is checked against (PEM). How many were read; 0 means every handshake will be refused.
 pub fn trust[&i, &p](io: &!i Loop, pem: &p [byte]) -> [] int {
     return tls.trust(io.rest.engine, pem);
+}
+
+// A client identity (`docs/tls-parity.md` §6.2): the PEM chain and key an upstream that asks for a certificate is answered with, for every host
+// this loop is given (the operator named the files for this run). Its number, or the engine's refusal (`tls-client-*`).
+pub fn client_identity[&i, &c, &k](io: &!i Loop, chain_pem: &c [byte], key_pem: &k [byte], now_unix_ms: int) -> [] int {
+    return tls.add_client_identity(io.rest.engine, chain_pem, key_pem, "*", now_unix_ms);
+}
+
+// The protocols every TLS connection offers (ALPN, space-separated: "h2 http/1.1"). 0, or `tls-alpn-list`.
+pub fn alpn_offer[&i, &p](io: &!i Loop, protocols: &p [byte]) -> [] int {
+    return tls.set_alpn_offer(io.rest.engine, protocols);
+}
+
+// What the TLS connection in slot `k` reports: the protocol the server chose (its length, into `out`; 0 for none), and what became of a
+// CertificateRequest (`tls.client_auth`: 0 none, 1 the chain was sent, 2 the empty Certificate).
+pub fn alpn_chosen[&i, &o](io: &i Loop, k: int, out: &!o [byte]) -> [] int {
+    return tls.alpn(io.rest.engine, k, out);
+}
+
+pub fn client_auth[&i](io: &i Loop, k: int) -> [] int {
+    return tls.client_auth(io.rest.engine, k);
 }
 
 // 32 bytes of entropy for the engine's generator.

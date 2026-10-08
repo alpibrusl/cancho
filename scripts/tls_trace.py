@@ -3,6 +3,9 @@
 
     python3 scripts/tls_trace.py <driver> <rsa|ecdsa> <out.txt> [<suite> <group>]
     python3 scripts/tls_trace.py <driver> <rsa|ecdsa> <out.txt> --openssl12 <cipher>
+    python3 scripts/tls_trace.py <driver> ecdsa <out.txt> --mutual [<suite> <group>]
+    python3 scripts/tls_trace.py <driver> ecdsa <out.txt> --mutual --openssl12 <cipher>
+    python3 scripts/tls_trace.py <driver> ecdsa <out.txt> --mutual --openssl13
 
 `driver` is `tests/programs/tls_driver.cho` built with `--std` and the package's
 files. A tlslite-ng 0.8.2 server (pure Python, an implementation independent of
@@ -23,6 +26,11 @@ With `--openssl12`, the server is `openssl s_server -tls1_2 -cipher <cipher> -ww
 instead (OpenSSL's own TLS 1.2, docs/tls-parity.md §3.4), over a loopback
 socket: the same certificate and root, and it answers the request with its
 status page and closes.
+
+With `--mutual` the server asks for a client certificate (tlslite-ng's `reqCert`, or `openssl s_server -Verify 1 -CAfile`
+for either OpenSSL mode, `--openssl13` being OpenSSL's TLS 1.3) and the driver is given a P-256 identity (an `I` line, issued
+by the same CA, for every host) first: the client answers the CertificateRequest with its chain and a CertificateVerify
+that the server verifies (`docs/tls-parity.md` §6.4). The recording asserts the server saw the certificate.
 
 The client does the handshake, sends `GET / HTTP/1.0`, reads the answer, and
 sees the server's close_notify. The file holds every line given to the driver
@@ -50,8 +58,20 @@ BODY = b"HTTP/1.0 200 OK\r\nContent-Length: 13\r\n\r\nhello, cancho"
 NOW = 1780272000  # 2026-06-01, inside both certificates' validity
 
 
-def certificate(kind):
-    """A CA and a leaf for `localhost` it issued, both of `kind`."""
+def client_identity(ca_key, ca_name):
+    """A P-256 client key and its certificate from the CA, as PEM: (chain, key)."""
+    start = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "tls_trace client")])
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(ca_name).public_key(key.public_key())
+            .serial_number(386).not_valid_before(start).not_valid_after(start + datetime.timedelta(days=3650))
+            .sign(ca_key, hashes.SHA256()))
+    return (cert.public_bytes(serialization.Encoding.PEM),
+            key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+
+
+def certificate(kind, client=False):
+    """A CA and a leaf for `localhost` it issued, both of `kind`; with `client`, also a client identity from the CA."""
     def new_key():
         return rsa.generate_private_key(65537, 2048) if kind == "rsa" else ec.generate_private_key(ec.SECP256R1())
     start = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
@@ -69,21 +89,28 @@ def certificate(kind):
             .sign(ca_key, hashes.SHA256()))
     key_pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
                                 serialization.NoEncryption()).decode()
+    if client:
+        return ca, cert, key_pem, client_identity(ca_key, ca_name)
     return ca, cert, key_pem
 
 
-def openssl12(cert, key_pem, cipher):
-    """`openssl s_server -tls1_2` on a loopback port: (process, connected socket, temporary directory)."""
+def openssl12(cert, key_pem, cipher, ca=None, version="-tls1_2"):
+    """`openssl s_server -tls1_2` (or `version`) on a loopback port: (process, connected socket, temporary directory); with
+    `ca`, it asks for a client certificate (`-Verify 1`) and verifies it against `ca`."""
     import tempfile
     import time
     d = tempfile.TemporaryDirectory()
     open(f"{d.name}/c.pem", "wb").write(cert.public_bytes(serialization.Encoding.PEM))
     open(f"{d.name}/k.pem", "w").write(key_pem)
+    mutual = []
+    if ca is not None:
+        open(f"{d.name}/ca.pem", "wb").write(ca.public_bytes(serialization.Encoding.PEM))
+        mutual = ["-Verify", "1", "-CAfile", "ca.pem", "-verify_return_error"]
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
     proc = subprocess.Popen(["openssl", "s_server", "-accept", f"127.0.0.1:{port}", "-cert", "c.pem", "-key", "k.pem",
-                             "-tls1_2", "-cipher", cipher, "-www", "-naccept", "1", "-quiet"],
+                             version, "-cipher", cipher, "-www", "-naccept", "1", "-quiet", *mutual],
                             cwd=d.name, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(100):
         try:
@@ -94,11 +121,19 @@ def openssl12(cert, key_pem, cipher):
 
 
 def main():
-    driver, kind, out = sys.argv[1], sys.argv[2], sys.argv[3]
-    if len(sys.argv) > 5 and sys.argv[4] == "--openssl12":
-        return main12(driver, kind, out, sys.argv[5])
-    suite, group = (sys.argv[4], sys.argv[5]) if len(sys.argv) > 5 else ("chacha20-poly1305", "x25519")
-    ca, cert, key_pem = certificate(kind)
+    argv = [a for a in sys.argv if a != "--mutual"]
+    mutual = len(argv) != len(sys.argv)
+    driver, kind, out = argv[1], argv[2], argv[3]
+    if len(argv) > 4 and argv[4] == "--openssl13":
+        return main12(driver, kind, out, "ECDHE-ECDSA-AES256-GCM-SHA384", True, "-tls1_3")
+    if len(argv) > 5 and argv[4] == "--openssl12":
+        return main12(driver, kind, out, argv[5], mutual)
+    suite, group = (argv[4], argv[5]) if len(argv) > 5 else ("chacha20-poly1305", "x25519")
+    identity = None
+    if mutual:
+        ca, cert, key_pem, identity = certificate(kind, True)
+    else:
+        ca, cert, key_pem = certificate(kind)
     roots = ca.public_bytes(serialization.Encoding.PEM)
     server_end, client_end = socket.socketpair()
     seen = {}
@@ -112,7 +147,10 @@ def main():
         settings.keyShares = [group]
         chain = X509CertChain()
         chain.parsePemList(cert.public_bytes(serialization.Encoding.PEM).decode())
-        conn.handshakeServer(certChain=chain, privateKey=parsePEMKey(key_pem, private=True), settings=settings)
+        conn.handshakeServer(certChain=chain, privateKey=parsePEMKey(key_pem, private=True), settings=settings,
+                             reqCert=mutual)
+        if mutual:
+            seen["client"] = conn.session.clientCertChain
         seen["request"] = bytes(conn.read())
         conn.write(BODY)
         conn.close()
@@ -120,7 +158,7 @@ def main():
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()
     proc = subprocess.Popen([driver], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
-    lines = [f"# scripts/tls_trace.py {kind} {suite} {group}: packages/tls against tlslite-ng 0.8.2. `=` lines are the client's answers.",
+    lines = [f"# scripts/tls_trace.py {kind} {'--mutual ' if mutual else ''}{suite} {group}: packages/tls against tlslite-ng 0.8.2. `=` lines are the client's answers.",
              f"# Root: {ca.public_bytes(serialization.Encoding.DER).hex()}"]
 
     def ask(line):
@@ -133,6 +171,8 @@ def main():
             client_end.sendall(bytes.fromhex(fields[3]))
         return fields
 
+    if identity:
+        ask(f"I 0 {identity[0].hex()} {identity[1].hex()} {b'*'.hex()} {NOW}")
     ask(f"C {b'localhost'.hex()} {bytes(range(96)).hex()} {roots.hex()} {NOW}")
     client_end.settimeout(10)
     received = b""
@@ -153,18 +193,25 @@ def main():
     proc.stdin.close()
     proc.wait()
     assert seen.get("request") == b"GET / HTTP/1.0\r\n\r\n", seen
+    if mutual:
+        assert seen.get("client") is not None and seen["client"].getEndEntityPublicKey() is not None, "tlslite-ng saw the certificate"
     assert received == BODY, received
     assert lines[-1].split(" ")[3] == "4", "the client saw the server's close_notify"
     open(out, "w").write("\n".join(lines) + "\n")
     print(f"{out}: {sum(1 for l in lines if l[:1] in 'CFW')} driver lines; tlslite-ng got the request, the client the body")
 
 
-def main12(driver, kind, out, cipher):
-    ca, cert, key_pem = certificate(kind)
+def main12(driver, kind, out, cipher, mutual=False, version="-tls1_2"):
+    identity = None
+    if mutual:
+        ca, cert, key_pem, identity = certificate(kind, True)
+    else:
+        ca, cert, key_pem = certificate(kind)
     roots = ca.public_bytes(serialization.Encoding.PEM)
-    proc, sock, tmp = openssl12(cert, key_pem, cipher)
+    proc, sock, tmp = openssl12(cert, key_pem, cipher, ca if mutual else None, version)
     client = subprocess.Popen([driver], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
-    lines = [f"# scripts/tls_trace.py {kind} --openssl12 {cipher}: packages/tls against openssl s_server -tls1_2 -www.",
+    lines = [f"# scripts/tls_trace.py {kind} {'--mutual ' if mutual else ''}{'--openssl13' if version == '-tls1_3' else '--openssl12 ' + cipher}: packages/tls against "
+             f"openssl s_server {version} -www{' -Verify 1' if mutual else ''} ({subprocess.run(['openssl', 'version'], capture_output=True, text=True).stdout.strip()}).",
              "# `=` lines are the client's answers.",
              f"# Root: {ca.public_bytes(serialization.Encoding.DER).hex()}"]
 
@@ -178,6 +225,8 @@ def main12(driver, kind, out, cipher):
             sock.sendall(bytes.fromhex(fields[3]))
         return fields
 
+    if identity:
+        ask(f"I 0 {identity[0].hex()} {identity[1].hex()} {b'*'.hex()} {NOW}")
     ask(f"C {b'localhost'.hex()} {bytes(range(96)).hex()} {roots.hex()} {NOW}")
     sock.settimeout(10)
     received = b""
@@ -210,7 +259,9 @@ def main12(driver, kind, out, cipher):
     proc.kill()
     proc.wait()
     assert received.startswith(b"HTTP/1.0 200 ok"), received[:40]
-    assert f"Cipher is {cipher}".encode() in received or cipher.encode() in received, "the cipher asked for"
+    assert f"Cipher is {cipher}".encode() in received or cipher.encode() in received or version == "-tls1_3", "the cipher asked for"
+    if mutual:
+        assert b"no client certificate available" not in received and b"tls_trace client" in received, "OpenSSL saw the client's certificate"
     assert lines[-1].split(" ")[3] == "4", "the connection closed"
     open(out, "w").write("\n".join(lines) + "\n")
     print(f"{out}: {sum(1 for l in lines if l[:1] in 'CFW')} driver lines; {len(received)} bytes of OpenSSL's status page")

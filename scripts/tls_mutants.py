@@ -28,7 +28,7 @@ import tempfile
 import threading
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FILES = ["record.cho", "message.cho", "slot.cho", "client12.cho", "client.cho", "tls.cho"]
+FILES = ["record.cho", "message.cho", "slot.cho", "cident.cho", "client12.cho", "client.cho", "tls.cho"]
 # The engine (`tls.cho`) is built with the server too (docs/tls-server.md §5.1), whose mutants are
 # `scripts/tls_server_mutants.py`'s.
 SERVER_FILES = ["hello.cho", "identity.cho", "server.cho"]
@@ -56,13 +56,13 @@ MUTANTS = [
      "int_of(b[33]) <= 1 {\n            return tls_record.protocol_version();",
      "int_of(b[33]) <= 1 && false {\n            return tls_record.protocol_version();"),
     ("server_name allowed in a TLS 1.3 ServerHello", "message.cho",
-     "if reneg || ems || formats || sni {", "if reneg || ems || formats {"),
+     "if reneg || ems || formats || sni || alpn_at != 0 {", "if reneg || ems || formats || alpn_at != 0 {"),
     ("server_name allowed twice in a TLS 1.2 ServerHello", "message.cho",
      "            if sni || size != 0 {", "            if size != 0 {"),
     ("the HelloRetryRequest random ignored", "message.cho", "    let retry = k == 32;", "    let retry = k == 33;"),
     ("an unexpected extension accepted", "message.cho",
-     "            seen_groups = true;\n        } else {\n            return tls_record.unsupported_extension();\n        }",
-     "            seen_groups = true;\n        }"),
+     "            info[1] = at + 4 + size;\n        } else {\n            return tls_record.unsupported_extension();\n        }",
+     "            info[1] = at + 4 + size;\n        }"),
     ("the record limit off by one", "record.cho",
      "    let n = int_of(buf[at + 3]) * 256 + int_of(buf[at + 4]);\n    if n > max_ciphertext() {",
      "    let n = int_of(buf[at + 3]) * 256 + int_of(buf[at + 4]);\n    if n >= max_ciphertext() {"),
@@ -262,7 +262,7 @@ MUTANTS = [
     ("psk_key_exchange_modes sent only with a ticket, so no server need send one", "message.cho",
      "    if modes || len(ticket) > 0 {", "    if len(ticket) > 0 {"),
     ("resumption never advertised by the engine", "tls.cho",
-     "0, 0, 0, contents(engine.tmeta)[t_resume()] == 1);", "0, 0, 0, false);"),
+     "0, 0, 0, contents(engine.tmeta)[t_resume()] == 1, alpn);", "0, 0, 0, false, alpn);"),
     ("the obfuscated age without ticket_age_add", "tls.cho",
      "contents(engine.tmeta)[tf(e, 5)] + contents(engine.tmeta)[tf(e, 7)];", "contents(engine.tmeta)[tf(e, 5)];"),
     # ---- Review findings (#209) ----
@@ -275,6 +275,108 @@ MUTANTS = [
      "if tls_slot.out_free(ints) < n + overhead + 2 + overhead {", "if tls_slot.out_free(ints) < n + overhead {"),
     ("a KeyUpdate allowed to share a record with the next message (review E-8)", "client.cho",
      " || int_of(message[0]) == tls_message.type_key_update();", ";"),
+    # Client certificates and ALPN (docs/tls-parity.md §6).
+    ("client auth: CertificateVerify under the server's context string", "client.cho",
+     'let label = "TLS 1.3, client CertificateVerify";', 'let label = "TLS 1.3, server CertificateVerify";'),
+    ("client auth: the client Certificate left out of the transcript", "client.cho",
+     "        tls_slot.transcript_add(ints, cert);\n        code = tls_slot.queue_record(ints, bytes, tls_record.type_handshake(), cert);\n        if code == 0 {",
+     "        code = tls_slot.queue_record(ints, bytes, tls_record.type_handshake(), cert);\n        if code == 0 {"),
+    ("client auth: CertificateVerify left out of the transcript", "client.cho",
+     "                tls_slot.transcript_add(ints, cv[0..n]);\n                code = tls_slot.queue_record(ints, bytes, tls_record.type_handshake(), cv[0..n]);",
+     "                code = tls_slot.queue_record(ints, bytes, tls_record.type_handshake(), cv[0..n]);"),
+    ("client auth: the request's context not echoed", "client.cho",
+     "        cert[4] = byte_of(cn);\n        tls_slot.copy_bytes(bytes[tls_slot.k_context()", "        cert[4] = byte_of(0);\n        tls_slot.copy_bytes(bytes[tls_slot.k_context()"),
+    ("client auth: the transcript hash signed without the SHA-256 digest", "client.cho",
+     "            crypto.sha256(content, digest);", "            crypto.sha256(content[98..98 + h], digest);"),
+    ("client auth: the nonce's hedge from another label", "client12.cho",
+     '"client sign hedge"', '"server sign hedge"'),
+    ("client auth: a ticket not bounded by the client certificate", "client12.cho",
+     "    if client < server || server == 0 {", "    if server == 0 {"),
+    ("client auth: no identity ever used", "client12.cho",
+     "            tls_slot.set_flag(ints, tls_slot.f_cert_send());", "            tls_slot.clear_flag(ints, tls_slot.f_cert_send());"),
+    ("client auth: the authorities ignored", "client12.cho",
+     "if to == from || tls_cident.names_issuer(cred, id, body[from..to]) {", "if true {"),
+    ("client auth: an empty authorities list is a mismatch", "client12.cho",
+     "if to == from || tls_cident.names_issuer(cred, id, body[from..to]) {", "if tls_cident.names_issuer(cred, id, body[from..to]) {"),
+    ("client auth: the signature scheme not required", "client12.cho",
+     " && info[tls_message.cr_sigalg()] == 1 {", " {"),
+    ("client auth: TLS 1.2 digest under the suite's hash", "client12.cho",
+     "                let digest = alloc_slice[r](32, byte_of(0));", "                let digest = alloc_slice[r](h, byte_of(0));"),
+    ("client auth: TLS 1.2 chain with TLS 1.3's extensions", "client12.cho",
+     "let m = tls_cident.list12(cred, id, cert[4..4 + tls_cident.chain_cap() + 3]);",
+     "let m = tls_slot.copy_bytes(tls_cident.list(cred, id), cert[7..7 + tls_cident.chain_cap()]) + 3 + 0 * tls_message.put(cert, 4, len(tls_cident.list(cred, id)), 3);"),
+    ("client auth: ecdsa_sign not required among TLS 1.2's certificate types", "message.cho",
+     "    if ecdsa_type && lists_p256_sha256(b, at + 2, at + 2 + sig) {", "    if lists_p256_sha256(b, at + 2, at + 2 + sig) {"),
+    ("client auth: the authorities' names compared by length alone", "cident.cho",
+     "if m == len(issuer) && bytes.equal(authorities[p + 2..p + 2 + m], issuer) {", "if m == len(issuer) {"),
+    ("client auth: only a chain's first certificate considered for the authorities", "cident.cho",
+     "                from = from + 3 + n + 2;\n            }\n        }\n    }\n    return hit;", "                from = len(src);\n            }\n        }\n    }\n    return hit;"),
+    ("client auth: TLS 1.2 chain stops after its first certificate", "cident.cho",
+     "        from = from + 3 + n + 2;\n    }\n    tls_message.put(out, 0, to - 3, 3);", "        from = len(src);\n    }\n    tls_message.put(out, 0, to - 3, 3);"),
+    ("client auth: a wildcard host `*` never matches", "cident.cho",
+     "if e - p == 1 && int_of(names[p]) == 42 {", "if false {"),
+    ("client auth: any identity chosen whatever the host", "cident.cho",
+     "                        } else if x509_names.dns_matches(names[p..e], lower) {", "                        } else if true {"),
+    ("client auth: an expired leaf accepted", "cident.cho",
+     "                    } else if view[x509.not_after()] < now {", "                    } else if false {"),
+    ("client auth: a key that is not the leaf's accepted", "cident.cho",
+     "            if m == -92 {\n                code = tls_record.client_key_mismatch();", "            if false {\n                code = tls_record.client_key_mismatch();"),
+    ("client auth: a request's authorities list that does not tile accepted", "message.cho",
+     "            if size < 2 || get(b, body, 2) != size - 2 || !names_tile(b, body + 2, body + size) {",
+     "            if size < 2 || get(b, body, 2) != size - 2 {"),
+    ("client auth: signature_algorithms twice accepted", "message.cho",
+     "            if seen_sigalgs {\n                return tls_record.extension_repeat();\n            }\n            if size < 4",
+     "            if size < 4"),
+    ("client auth: an authorities name of length 0 accepted", "message.cho",
+     "        if n == 0 || at + 2 + n > to {", "        if at + 2 + n > to {"),
+    ("client auth: the engine does not choose the identity by host", "tls.cho",
+     "tls_cident.select(contents(engine.ids), host) + 1;", "1;"),
+    ("client auth: a new identity leaves saved tickets offerable", "tls.cho",
+     "    contents(engine.tmeta)[t_trust()] = contents(engine.tmeta)[t_trust()] + 1;\n    return id;", "    return id;"),
+    ("client auth: a replaced identity leaves saved tickets offerable", "tls.cho",
+     "    if code == 0 {\n        contents(engine.tmeta)[t_trust()] = contents(engine.tmeta)[t_trust()] + 1;\n    }\n    return code;\n}\n\n// Identity `id` forgotten, its key and chain overwritten.",
+     "    return code;\n}\n\n// Identity `id` forgotten, its key and chain overwritten."),
+    ("client auth: a removed identity leaves saved tickets offerable", "tls.cho",
+     "    let code = tls_cident.remove(contents(engine.ids), id);\n    if code == 0 {\n        contents(engine.tmeta)[t_trust()] = contents(engine.tmeta)[t_trust()] + 1;\n    }\n    return code;",
+     "    let code = tls_cident.remove(contents(engine.ids), id);\n    return code;"),
+    ("ALPN: an unoffered selection accepted", "client12.cho",
+     "    return tls_record.alpn_selected();\n}", "    return 0;\n}"),
+    ("ALPN: a selection compared by length alone", "client12.cho",
+     "if m == len(name) && bytes.equal(bytes[base + at + 1..base + at + 1 + m], name) {", "if m == len(name) {"),
+    ("ALPN: a selection when nothing was offered accepted", "client12.cho",
+     "    if total == 0 {\n        return tls_record.unsupported_extension();\n    }", "    if total == 0 {\n        return 0;\n    }"),
+    ("ALPN: the selection's start not kept", "client12.cho",
+     "            ints[tls_slot.i_alpn_at()] = at + 1;", "            ints[tls_slot.i_alpn_at()] = at;"),
+    ("ALPN: the extension left out of the ClientHello", "message.cho",
+     "    if len(alpn) > 0 {\n        // application_layer_protocol_negotiation", "    if false {\n        // application_layer_protocol_negotiation"),
+    ("ALPN: the answer's list length not checked", "message.cho",
+     "    if size < 4 || get(b, body, 2) != size - 2 || int_of(b[body + 2]) != size - 3 {", "    if size < 4 || int_of(b[body + 2]) != size - 3 {"),
+    ("ALPN: the answer's name length not checked", "message.cho",
+     "    if size < 4 || get(b, body, 2) != size - 2 || int_of(b[body + 2]) != size - 3 {", "    if size < 4 || get(b, body, 2) != size - 2 {"),
+    ("ALPN: an empty answer accepted", "message.cho",
+     "    if size < 4 || get(b, body, 2) != size - 2 || int_of(b[body + 2]) != size - 3 {",
+     "    if size < 3 || get(b, body, 2) != size - 2 || int_of(b[body + 2]) != size - 3 {"),
+    ("ALPN: the answer twice accepted in a TLS 1.2 ServerHello", "message.cho",
+     "            if alpn_at != 0 {\n                return tls_record.extension_repeat();\n            }\n            alpn_at = alpn_name(b, body, size);",
+     "            alpn_at = alpn_name(b, body, size);"),
+    ("ALPN: the answer twice accepted in EncryptedExtensions", "message.cho",
+     "            if info[0] != 0 {\n                return tls_record.extension_repeat();\n            }\n            let start = alpn_name(b, at + 4, size);",
+     "            let start = alpn_name(b, at + 4, size);"),
+    ("ALPN: ALPN allowed in a TLS 1.3 ServerHello", "message.cho",
+     "if reneg || ems || formats || sni || alpn_at != 0 {", "if reneg || ems || formats || sni {"),
+    ("ALPN: an ALPN answer in EncryptedExtensions accepted when none was offered", "message.cho",
+     "        } else if kind == 16 && offered {", "        } else if kind == 16 {"),
+    ("ALPN: the unoffered selection's alert is handshake_failure", "slot.cho",
+     "    if code == tls_record.alpn_selected() || code == tls_record.extension_repeat() {\n        return 47;",
+     "    if code == tls_record.alpn_selected() || code == tls_record.extension_repeat() {\n        return 40;"),
+    ("ALPN: the engine's default offer never used", "tls.cho",
+     "        let n = default_offer(engine, wire);\n        code = start_with_wire", "        let n = 0 * default_offer(engine, wire);\n        code = start_with_wire"),
+    ("ALPN: a list over the cap accepted by set_alpn_offer", "cident.cho",
+     "            if e - p > 255 || n + 1 + e - p > len(out) {", "            if e - p > 255 {"),
+    ("ALPN: a name over 255 bytes accepted", "cident.cho",
+     "            if e - p > 255 || n + 1 + e - p > len(out) {", "            if n + 1 + e - p > len(out) {"),
+    ("ALPN: the offer copied into the slot truncated", "client.cho",
+     "    ints[tls_slot.i_alpn_offer_len()] = len(alpn);", "    ints[tls_slot.i_alpn_offer_len()] = len(alpn) - 1;"),
 ]
 
 
@@ -282,7 +384,7 @@ def cases():
     """Every connection `conformance/tls.rs` replays, as (name, lines, answers)."""
     out = []
     names = sorted(os.listdir(os.path.join(ROOT, "tests/vectors/tls")))
-    for name in [n for n in names if n.startswith("tlslite_") or n.startswith("openssl12_")]:
+    for name in [n for n in names if n.startswith(("tlslite_", "openssl12_", "openssl13_"))]:
         asked, answered = [], []
         for line in open(os.path.join(ROOT, "tests/vectors/tls", name)):
             line = line.rstrip("\n")
@@ -291,39 +393,50 @@ def cases():
             elif not line.startswith("#"):
                 asked.append(line)
         out.append((name, asked, answered))
-    for line in open(os.path.join(ROOT, "tests/vectors/tls/liar.txt")):
-        line = line.rstrip("\n")
-        if line.startswith("## "):
-            out.append((line[3:], [], []))
-        elif line.startswith("= "):
-            out[-1][2].append(line[2:])
-        elif not line.startswith("#"):
-            out[-1][1].append(line)
+    # The 84 connections of the lying server, and the 77 about client certificates and ALPN
+    # (`scripts/tls_liar_auth.py`, docs/tls-parity.md §6).
+    for vectors in ("liar.txt", "liar_auth.txt"):
+        for line in open(os.path.join(ROOT, "tests/vectors/tls", vectors)):
+            line = line.rstrip("\n")
+            if line.startswith("## "):
+                out.append((line[3:], [], []))
+            elif line.startswith("= "):
+                out[-1][2].append(line[2:])
+            elif not line.startswith("#"):
+                out[-1][1].append(line)
     return out
 
 
 # Mutants that change no behaviour the client can reach, each with the argument. Such a mutant must survive;
 # one that is killed was not equivalent, and the run fails.
-EQUIVALENT = {}
+EQUIVALENT = {
+    "ALPN: an ALPN answer in EncryptedExtensions accepted when none was offered":
+        "the parser then returns the protocol's range, and `tls_client12.take_alpn` refuses it with the same tag "
+        "(`tls-unsupported-extension`) because the offer is empty: two checks for one rule, and the first is defence in depth",
+    "ALPN: a name over 255 bytes accepted":
+        "a name over 255 bytes is at least 257 bytes in wire form, which the offer's cap of 256 refuses with the same tag "
+        "(`tls-alpn-list`) on the next test; the 255 limit keeps `byte_of(e - p)` from trapping should the cap ever grow",
+}
 
 
 def ticket_cases():
-    """`tests/vectors/tls/tickets.txt`'s cases, as (name, lines, answers)."""
+    """`tests/vectors/tls/tickets.txt`'s cases and `tickets_auth.txt`'s, as (name, lines, answers)."""
     out = []
-    for line in open(os.path.join(ROOT, "tests/vectors/tls/tickets.txt")):
-        line = line.rstrip("\n")
-        if line.startswith("## "):
-            out.append((line[3:], [], []))
-        elif line.startswith("= "):
-            out[-1][2].append(line[2:])
-        elif not line.startswith("#"):
-            out[-1][1].append(line)
+    for vectors in ("tickets.txt", "tickets_auth.txt"):
+        for line in open(os.path.join(ROOT, "tests/vectors/tls", vectors)):
+            line = line.rstrip("\n")
+            if line.startswith("## "):
+                out.append((line[3:], [], []))
+            elif line.startswith("= "):
+                out[-1][2].append(line[2:])
+            elif not line.startswith("#"):
+                out[-1][1].append(line)
     return out
 
 
 def build(cancho, program, pkg, out, engine=False):
-    files = [os.path.join(pkg, f) for f in (FILES + SERVER_FILES if engine else FILES[:5])]
-    x509 = ["verify.cho", "names.cho", "x509.cho"] + (["key.cho"] if engine else [])
+    files = [os.path.join(pkg, f) for f in (FILES + SERVER_FILES if engine else FILES[:6])]
+    x509 = ["verify.cho", "names.cho", "x509.cho", "key.cho"]
     r = subprocess.run([cancho, "build", "--std", os.path.join(ROOT, "tests/programs", program), *files,
                         *[os.path.join(ROOT, "packages/x509", f) for f in x509],
                         "-o", out], capture_output=True, text=True)
@@ -451,8 +564,8 @@ def evidence(cancho, pkg, work, engine):
 
 def main():
     cancho = sys.argv[1]
-    # `--only <text>`: just the mutants whose name contains it (the unmutated package still runs first).
-    only = sys.argv[sys.argv.index("--only") + 1] if "--only" in sys.argv else None
+    # `--only <text>`, once or more: just the mutants whose name contains one (the unmutated package still runs first).
+    only = [sys.argv[i + 1] for i, a in enumerate(sys.argv) if a == "--only"] or None
     work = tempfile.mkdtemp(prefix="tls-mutants-")
     pkg = os.path.join(work, "tls")
     src = os.path.join(ROOT, "packages/tls")
@@ -463,7 +576,7 @@ def main():
         sys.exit(1)
     print("unmutated: passes")
     survived = 0
-    run = [m for m in MUTANTS if only is None or only in m[0]]
+    run = [m for m in MUTANTS if only is None or any(o in m[0] for o in only)]
     for name, file, old, new in run:
         text = open(os.path.join(src, file)).read()
         assert text.count(old) == 1, f"{name}: the text occurs {text.count(old)} times"

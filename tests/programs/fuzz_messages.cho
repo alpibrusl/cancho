@@ -1,7 +1,7 @@
 edition 5;
 
 // `docs/tls-assurance.md` §3.3: one handshake message's body, from
-// standard input, to the parser its first byte names (modulo 11):
+// standard input, to the parser its first byte names (modulo 15):
 //
 //     0 server_hello (with the session id the client sends)
 //     1 encrypted_extensions     2 certificate      3 certificate_verify
@@ -9,9 +9,16 @@ edition 5;
 //     6 new_session_ticket       7 key_update
 //     8 certificate12            9 server_key_exchange
 //     10 certificate_request12
+//     11 certificate_request (TLS 1.3)   12 certificate_request12_info   13 encrypted_extensions_alpn, an offer sent
+//     14 the authorities of a CertificateRequest body against the client identity (`tls_cident.names_issuer`)
+//     (`docs/tls-parity.md` §6.3, §6.6)
 import fuzz_common;
+import fuzz_fixture;
 import std.io;
+import tls_cident;
 import tls_message;
+import tls_slot;
+import x509_key;
 
 // Each parser's `info` is exactly as long as the client makes it, so a
 // write past what the client allocates traps here too.
@@ -26,6 +33,10 @@ fn info_len(which: int) -> [] int {
         return tls_message.nst_info_len();
     } else if which == 9 {
         return tls_message.ske_info_len();
+    } else if which == 11 || which == 12 {
+        return tls_message.cr_info_len();
+    } else if which == 13 {
+        return 2;
     }
     return 0;
 }
@@ -51,28 +62,62 @@ fn parse[&b, &r, &f](which: int, b: &b [byte], random: &r [byte], info: &!f [int
         return tls_message.certificate12(b, info);
     } else if which == 9 {
         return tls_message.server_key_exchange(b, info);
+    } else if which == 11 {
+        return tls_message.certificate_request(b, info);
+    } else if which == 12 {
+        return tls_message.certificate_request12_info(b, info);
+    } else if which == 13 {
+        return tls_message.encrypted_extensions_alpn(b, true, info);
     }
     return tls_message.certificate_request12(b);
+}
+
+// Kind 14: the body is a CertificateRequest's (TLS 1.3); the authorities it names, if it parses, are matched against
+// the fixture identity's chain, as `answer_request` does.
+fn authorities[&b, &c, &w](body: &b [byte], cred: &!c [byte], work: &!w [int]) -> [] int {
+    var found = 0;
+    region q {
+        let info = alloc_slice[q](tls_message.cr_info_len(), 0);
+        if tls_message.certificate_request(body, info) == 0 && tls_cident.load(cred, 0, fuzz_fixture.identity_chain(), fuzz_fixture.identity_key(), "*", false, fuzz_fixture.now(), work) == 0 {
+            if tls_cident.names_issuer(cred, 0, body[info[tls_message.cr_ca_start()]..info[tls_message.cr_ca_end()]]) {
+                found = 1;
+            }
+        }
+    }
+    return found;
 }
 
 fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read] int {
     var input = box_slice(heap, 65536, byte_of(0));
     var random = box_slice(heap, 96, byte_of(0));
+    // The identity's room and the key parser's work are more than a region holds.
+    var cred = box_slice(heap, tls_cident.cfg_len(), byte_of(0));
+    var work = box_slice(heap, x509_key.work_len(), 0);
     borrow mut input as &!d in {
         borrow mut random as &!r in {
-            fuzz_common.load_random(contents(r));
-            let n = fuzz_common.read_all(io, contents(d));
-            if n > 0 {
-                let which = int_of(contents(d)[0]) % 11;
-                region q {
-                    let info = alloc_slice[q](info_len(which), 0);
-                    parse(which, contents(d)[1..n], contents(r), info);
+            borrow mut cred as &!cw in {
+                borrow mut work as &!ww in {
+                    fuzz_common.load_random(contents(r));
+                    let n = fuzz_common.read_all(io, contents(d));
+                    if n > 0 {
+                        let which = int_of(contents(d)[0]) % 15;
+                        region q {
+                            let info = alloc_slice[q](info_len(which), 0);
+                            if which == 14 {
+                                authorities(contents(d)[1..n], contents(cw), contents(ww));
+                            } else {
+                                parse(which, contents(d)[1..n], contents(r), info);
+                            }
+                        }
+                    }
                 }
             }
         }
     }
     unbox_slice(heap, input);
     unbox_slice(heap, random);
+    unbox_slice(heap, cred);
+    unbox_slice(heap, work);
     return 0;
 }
 

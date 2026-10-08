@@ -16,13 +16,14 @@ import fuzz_common;
 import fuzz_fixture;
 import std.io;
 import tls_client;
+import tls_slot;
 
 fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read] int {
     var input = box_slice(heap, 262144, byte_of(0));
     var slot_bytes = box_slice(heap, tls_client.bytes_len(), byte_of(0));
     var slot_ints = box_slice(heap, tls_client.ints_len(), 0);
     var out = box_slice(heap, 65536, byte_of(0));
-    var store = box_slice(heap, 131072, byte_of(0));
+    var store = box_slice(heap, fuzz_common.store_len(), byte_of(0));
     var random = box_slice(heap, 96, byte_of(0));
     borrow mut input as &!d in {
         borrow mut slot_bytes as &!b in {
@@ -30,18 +31,20 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read] int {
                 borrow mut out as &!o in {
                     borrow mut store as &!s in {
                         borrow mut random as &!r in {
-                            let used = fuzz_common.load_store(contents(s));
+                            let used = fuzz_common.load_store(contents(s)[0..fuzz_common.roots_cap()]);
                             fuzz_common.load_random(contents(r));
                             let total = fuzz_common.read_all(io, contents(d));
                             let s0 = contents(s)[0..used];
+                            let cred = contents(s)[fuzz_common.roots_cap()..fuzz_common.store_len()];
                             let ints = contents(n);
                             let bytes = contents(b);
-                            var code = 0;
+                            var code = fuzz_common.load_identity(contents(s), ints);
                             if total % 2 == 1 {
                                 code = tls_client.start_psk(ints, bytes, fuzz_fixture.host(), contents(r), fuzz_fixture.now(), "fuzz_client's ticket", "0123456789abcdef0123456789abcdef", 1000, fuzz_fixture.now(), fuzz_fixture.now() + 86400, true);
                             } else {
                                 code = tls_client.start(ints, bytes, fuzz_fixture.host(), contents(r), fuzz_fixture.now());
                             }
+                            ints[tls_slot.i_identity()] = 1;
                             fuzz_common.drain(ints, bytes, contents(o));
                             var at = 0;
                             while code >= 0 && at < total {
@@ -55,7 +58,7 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read] int {
                                         size = named;
                                     }
                                 }
-                                code = fuzz_common.feed_all(ints, bytes, contents(d)[from..from + size], contents(o), s0);
+                                code = fuzz_common.feed_all(ints, bytes, contents(d)[from..from + size], contents(o), s0, cred);
                                 at = from + size;
                                 if size == 0 {
                                     at = at + 1;

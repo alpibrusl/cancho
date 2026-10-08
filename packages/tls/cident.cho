@@ -1,0 +1,368 @@
+edition 6;
+module tls_cident;
+import std.bytes;
+import tls_message;
+import tls_record;
+import tls_slot;
+import x509;
+import x509_key;
+import x509_names;
+
+// `tls_cident` -- the identities a client engine presents to a server that
+// asks for a certificate (`docs/tls-parity.md` §6.2): up to four, each a
+// chain, its P-256 key, and the hosts it may be sent to. All of it is one
+// byte slice the engine owns (`tls.open_mutual`) and hands to `tls_client`
+// with every `feed`. The engine never reads a file and has no function that
+// answers a key. Not independently reviewed (#209).
+//
+// The layout, a fixed stride per identity: in use (1 byte), the key (32),
+// its public point (65), the leaf's notAfter (6), the hosts' length (2) and
+// the hosts, the certificate_list's length (3) and the list as TLS 1.3's
+// Certificate sends it (each certificate after a 3-byte length, then 2
+// bytes of no extensions).
+
+pub fn max_identities() -> [] int {
+    return 4;
+}
+
+// The certificate_list's room. A client's Certificate message must fit one
+// record (4 + 1 + the context + 3 + this), so it stays well under 16,384.
+pub fn chain_cap() -> [] int {
+    return 12288;
+}
+
+pub fn names_cap() -> [] int {
+    return 512;
+}
+
+fn o_key() -> [] int {
+    return 1;
+}
+
+fn o_point() -> [] int {
+    return 33;
+}
+
+fn o_not_after() -> [] int {
+    return 98;
+}
+
+fn o_names_len() -> [] int {
+    return 104;
+}
+
+fn o_names() -> [] int {
+    return 106;
+}
+
+fn o_list_len() -> [] int {
+    return o_names() + names_cap();
+}
+
+fn o_list() -> [] int {
+    return o_list_len() + 3;
+}
+
+fn stride() -> [] int {
+    return o_list() + chain_cap();
+}
+
+fn at(id: int) -> [] int {
+    return id * stride();
+}
+
+pub fn cfg_len() -> [] int {
+    return max_identities() * stride();
+}
+
+pub fn in_use[&c](cfg: &c [byte], id: int) -> [] bool {
+    return len(cfg) >= cfg_len() && id >= 0 && id < max_identities() && int_of(cfg[at(id)]) == 1;
+}
+
+pub fn key[&c](cfg: &c [byte], id: int) -> [] &c [byte] {
+    return cfg[at(id) + o_key()..at(id) + o_key() + 32];
+}
+
+pub fn point[&c](cfg: &c [byte], id: int) -> [] &c [byte] {
+    return cfg[at(id) + o_point()..at(id) + o_point() + 65];
+}
+
+// The leaf's notAfter, seconds since 1970.
+pub fn not_after[&c](cfg: &c [byte], id: int) -> [] int {
+    return tls_message.get(cfg, at(id) + o_not_after(), 6);
+}
+
+// The certificate_list TLS 1.3's Certificate sends.
+pub fn list[&c](cfg: &c [byte], id: int) -> [] &c [byte] {
+    let from = at(id) + o_list();
+    return cfg[from..from + tls_message.get(cfg, at(id) + o_list_len(), 3)];
+}
+
+// The certificate_list as TLS 1.2's Certificate sends it, with its 3-byte
+// length: each certificate after a 3-byte length and no extensions. Written
+// into `out` (at least `chain_cap()` bytes); how many bytes.
+pub fn list12[&c, &o](cfg: &c [byte], id: int, out: &!o [byte]) -> [] int {
+    let src = list(cfg, id);
+    var from = 0;
+    var to = 3;
+    while from + 3 <= len(src) {
+        let n = tls_message.get(src, from, 3);
+        if from + 3 + n + 2 > len(src) {
+            return 0;
+        }
+        tls_message.put(out, to, n, 3);
+        tls_slot.copy_bytes(src[from + 3..from + 3 + n], out[to + 3..to + 3 + n]);
+        to = to + 3 + n;
+        from = from + 3 + n + 2;
+    }
+    tls_message.put(out, 0, to - 3, 3);
+    return to;
+}
+
+// A key parser's refusal as this package's (`x509_key.refusal_tag`): a key
+// of another algorithm or curve is `client_key_type`; anything else about
+// the file, `client_key_format`.
+fn from_key(code: int) -> [] int {
+    if code == 0 {
+        return 0;
+    }
+    if code == -82 || code == -83 {
+        return tls_record.client_key_type();
+    }
+    return tls_record.client_key_format();
+}
+
+// The chain `chain_pem` (PEM certificates, leaf first) and its key
+// `key_pem` (PKCS#8 or SEC 1, P-256) checked as `docs/tls-parity.md` §6.2
+// says, and written into identity `id` with `hosts` (space-separated;
+// `None` keeps the hosts `id` has). `now` is seconds since 1970; `work` holds
+// `x509_key.work_len()` words. Nothing is written unless every check passes:
+// a refused replacement leaves the identity as it was. 0, or the refusal.
+pub fn load[&c, &p, &k, &n, &w](cfg: &!c [byte], id: int, chain_pem: &p [byte], key_pem: &k [byte], hosts: &n [byte], keep_hosts: bool, now: int, work: &!w [int]) -> [] int {
+    if len(cfg) < cfg_len() || id < 0 || id >= max_identities() {
+        return tls_record.client_no_identity();
+    }
+    if !keep_hosts {
+        if len(hosts) > names_cap() {
+            return tls_record.client_names();
+        }
+        var named = false;
+        var i = 0;
+        while i < len(hosts) {
+            if int_of(hosts[i]) != 32 {
+                named = true;
+            }
+            i = i + 1;
+        }
+        if !named {
+            return tls_record.client_names();
+        }
+    }
+    var code = 0;
+    region r {
+        let chain = alloc_slice[r](chain_cap(), byte_of(0));
+        let der = alloc_slice[r](chain_cap(), byte_of(0));
+        let info = alloc_slice[r](2, 0);
+        let view = alloc_slice[r](x509.view_len(), 0);
+        let secret = alloc_slice[r](32, byte_of(0));
+        let pub_point = alloc_slice[r](65, byte_of(0));
+        var used = 0;
+        var certs = 0;
+        var from = 0;
+        var going = true;
+        var expires = 0;
+        while code == 0 && going {
+            let got = x509.pem_next(chain_pem, from, der, info);
+            if got == 1 {
+                going = false;
+            } else if got != 0 || used + 5 + info[0] > chain_cap() {
+                code = tls_record.client_chain();
+            } else {
+                if certs == 0 {
+                    // The leaf: it parses, its key is P-256, and it has not
+                    // expired.
+                    if x509.parse(der[0..info[0]], view) != 0 {
+                        code = tls_record.client_chain();
+                    } else if view[x509.key_algorithm()] != x509.oid_ec_public_key() || view[x509.key_curve()] != x509.oid_p256() {
+                        code = tls_record.client_key_type();
+                    } else if view[x509.not_after()] < now {
+                        code = tls_record.client_cert_expired();
+                    }
+                    expires = view[x509.not_after()];
+                }
+                tls_message.put(chain, used, info[0], 3);
+                tls_slot.copy_bytes(der[0..info[0]], chain[used + 3..used + 3 + info[0]]);
+                used = used + 5 + info[0];
+                certs = certs + 1;
+                from = info[1];
+            }
+        }
+        if code == 0 && certs == 0 {
+            code = tls_record.client_chain();
+        }
+        if code == 0 {
+            code = from_key(x509_key.parse_pem(key_pem, secret, pub_point, work));
+        }
+        if code == 0 {
+            let leaf_len = tls_message.get(chain, 0, 3);
+            let m = x509_key.matches_certificate(chain[3..3 + leaf_len], pub_point);
+            if m == -92 {
+                code = tls_record.client_key_mismatch();
+            } else if m != 0 {
+                code = tls_record.client_key_type();
+            }
+        }
+        if code == 0 {
+            let b = at(id);
+            // The old key goes first (best effort, `docs/tls-pure.md` §7.3).
+            bytes.zero(cfg[b + o_key()..b + o_key() + 32]);
+            tls_slot.copy_bytes(secret, cfg[b + o_key()..b + o_key() + 32]);
+            tls_slot.copy_bytes(pub_point, cfg[b + o_point()..b + o_point() + 65]);
+            tls_message.put(cfg, b + o_not_after(), expires, 6);
+            bytes.zero(cfg[b + o_list()..b + o_list() + chain_cap()]);
+            tls_message.put(cfg, b + o_list_len(), used, 3);
+            tls_slot.copy_bytes(chain[0..used], cfg[b + o_list()..b + o_list() + used]);
+            if !keep_hosts {
+                bytes.zero(cfg[b + o_names()..b + o_names() + names_cap()]);
+                tls_message.put(cfg, b + o_names_len(), len(hosts), 2);
+                var i = 0;
+                while i < len(hosts) {
+                    cfg[b + o_names() + i] = byte_of(bytes.to_lower(int_of(hosts[i])));
+                    i = i + 1;
+                }
+            }
+            cfg[b] = byte_of(1);
+        }
+        bytes.zero(secret);
+        bytes.zero(der);
+    }
+    return code;
+}
+
+// The ALPN offer `text` (names separated by spaces: "h2 http/1.1") in its
+// wire form (each name after its length byte) into `out`, which holds
+// `tls_slot.alpn_offer_cap()` bytes: how many, or `tls-alpn-list` for a name
+// over 255 bytes or a list over the cap (`docs/tls-parity.md` §6.6). Empty
+// text is an empty offer.
+pub fn alpn_wire[&t, &o](text: &t [byte], out: &!o [byte]) -> [] int {
+    var n = 0;
+    var p = 0;
+    while p < len(text) {
+        while p < len(text) && int_of(text[p]) == 32 {
+            p = p + 1;
+        }
+        var e = p;
+        while e < len(text) && int_of(text[e]) != 32 {
+            e = e + 1;
+        }
+        if e > p {
+            if e - p > 255 || n + 1 + e - p > len(out) {
+                return tls_record.alpn_list();
+            }
+            out[n] = byte_of(e - p);
+            tls_slot.copy_bytes(text[p..e], out[n + 1..n + 1 + e - p]);
+            n = n + 1 + e - p;
+        }
+        p = e;
+    }
+    return n;
+}
+
+// Identity `id` forgotten, its key and chain overwritten.
+pub fn remove[&c](cfg: &!c [byte], id: int) -> [] int {
+    if !in_use(cfg, id) {
+        return tls_record.client_no_identity();
+    }
+    bytes.zero(cfg[at(id)..at(id) + stride()]);
+    return 0;
+}
+
+// The identity whose hosts match `host` (`x509_names`'s rules, so
+// `*.example.com` stands for one label; `*` alone matches every host), the
+// first in the order of the slots; or -1 when none does. An identity is
+// never sent to a host it does not name (`docs/tls-parity.md` §6.2).
+pub fn select[&c, &h](cfg: &c [byte], host: &h [byte]) -> [] int {
+    if len(host) == 0 || len(host) > 255 || len(cfg) < cfg_len() {
+        return 0 - 1;
+    }
+    var found = 0 - 1;
+    region r {
+        let lower = alloc_slice[r](len(host), byte_of(0));
+        var j = 0;
+        while j < len(host) {
+            lower[j] = byte_of(bytes.to_lower(int_of(host[j])));
+            j = j + 1;
+        }
+        var id = 0;
+        while id < max_identities() && found < 0 {
+            if in_use(cfg, id) {
+                let b = at(id);
+                let names = cfg[b + o_names()..b + o_names() + tls_message.get(cfg, b + o_names_len(), 2)];
+                var p = 0;
+                while p < len(names) {
+                    while p < len(names) && int_of(names[p]) == 32 {
+                        p = p + 1;
+                    }
+                    var e = p;
+                    while e < len(names) && int_of(names[e]) != 32 {
+                        e = e + 1;
+                    }
+                    if e > p && found < 0 {
+                        if e - p == 1 && int_of(names[p]) == 42 {
+                            found = id;
+                        } else if x509_names.dns_matches(names[p..e], lower) {
+                            found = id;
+                        }
+                    }
+                    p = e;
+                }
+            }
+            id = id + 1;
+        }
+    }
+    return found;
+}
+
+// Whether the `certificate_authorities` names `authorities` (2-byte-length
+// -prefixed DER names, already framed by the caller) include the issuer of a
+// certificate in identity `id`'s chain, byte for byte (RFC 8446 §4.2.4).
+// Reads and compares; writes nothing; at most (the chain's certificates) times
+// (`len(authorities)`) comparisons.
+pub fn names_issuer[&c, &a](cfg: &c [byte], id: int, authorities: &a [byte]) -> [] bool {
+    let src = list(cfg, id);
+    var from = 0;
+    var hit = false;
+    region r {
+        let view = alloc_slice[r](x509.view_len(), 0);
+        while !hit && from + 3 <= len(src) {
+            let n = tls_message.get(src, from, 3);
+            if from + 3 + n + 2 > len(src) {
+                from = len(src);
+            } else {
+                let der = src[from + 3..from + 3 + n];
+                if x509.parse(der, view) == 0 {
+                    let issuer = der[view[x509.issuer_start()]..view[x509.issuer_end()]];
+                    var p = 0;
+                    while !hit && p + 2 <= len(authorities) {
+                        let m = tls_message.get(authorities, p, 2);
+                        if p + 2 + m > len(authorities) {
+                            p = len(authorities);
+                        } else {
+                            if m == len(issuer) && bytes.equal(authorities[p + 2..p + 2 + m], issuer) {
+                                hit = true;
+                            }
+                            p = p + 2 + m;
+                        }
+                    }
+                }
+                from = from + 3 + n + 2;
+            }
+        }
+    }
+    return hit;
+}
+
+// Every key and chain overwritten (best effort, `docs/tls-pure.md` §7.3).
+pub fn wipe[&c](cfg: &!c [byte]) -> [] int {
+    return bytes.zero(cfg);
+}
