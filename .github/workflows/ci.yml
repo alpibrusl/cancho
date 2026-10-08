@@ -46,6 +46,28 @@ jobs:
           ./hello
           test "$(./hello)" = "Hello, world!"
 
+  # docs/tls-performance.md §6: the cost of each primitive the TLS stack is made of, against the baseline recorded in
+  # `benches/tls_baseline.json`. A change that makes a primitive 1.3 times dearer in instructions (counted under valgrind, so the
+  # runner's clock and load do not matter) fails here. A short job: the compiler, then about a minute.
+  tls-perf:
+    name: tls-perf
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compiler
+        run: cargo build --release -p cancho
+
+      - name: Valgrind, which counts the instructions the guard compares
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y valgrind
+
+      - name: The primitives against the recorded baseline (docs/tls-performance.md §6)
+        run: |
+          ./target/release/cancho build --std tests/programs/tls_prims_bench.cho -o "$RUNNER_TEMP/tls_prims_bench"
+          python3 scripts/tls_perf.py check "$RUNNER_TEMP/tls_prims_bench"
+
   # #208 (docs/tls-assurance.md §8): packages/tls against every other TLS
   # server the runner can install, and beside `openssl s_client` on the same
   # handshakes and on the lying server's cases, each failing on a row that
