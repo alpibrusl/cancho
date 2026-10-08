@@ -55,6 +55,29 @@ def run_openssl(cipher, size, cpu):
     return float(m.group(1)) / 1000 if m else None
 
 
+def openssl_cycles_per_byte(cipher, size, cpu):
+    """OpenSSL's user cycles per byte, from `perf stat` around `openssl speed`, or None."""
+    if not shutil.which("perf") or not shutil.which("openssl"):
+        return None
+    for event in ("cpu_core/cycles/u", "cycles:u"):
+        r = subprocess.run(pinned(["perf", "stat", "-x,", "-e", event, "openssl", "speed", "-evp", cipher, "-seconds", "2", "-bytes", str(size)], cpu),
+                           capture_output=True, text=True)
+        done = re.search(r":\s*(\d+) " + re.escape(cipher.upper()) + r" ops in", r.stdout + r.stderr)
+        for line in r.stderr.splitlines():
+            if "cycles" in line and done:
+                try:
+                    return float(line.split(",")[0]) / (int(done.group(1)) * size)
+                except ValueError:
+                    pass
+    return None
+
+
+def best_of(n, f, *args):
+    """The smallest of `n` answers of `f`, ignoring the ones that are None."""
+    values = [v for v in (f(*args) for _ in range(n)) if v is not None]
+    return min(values) if values else None
+
+
 def cycles_per_byte(exe, key, cpu, size, mb=32):
     """User cycles per byte sealed and opened, from `perf stat`, or None."""
     if not shutil.which("perf"):
@@ -104,9 +127,11 @@ def main():
             print(f"{size:>7} {b or 0:>9.0f} {a or 0:>9.0f} {gain:>6} {o or 0:>9.0f} {ratio:>14}   {best['after'].get(('open', size), 0):.0f}")
         if "--cycles" in args:
             for size in SIZES:
-                after = cycles_per_byte(exe, key, cpu, size)
-                before = cycles_per_byte(base, key, cpu, size) if base else None
-                print(f"  cycles/byte at {size}: before {before and round(before, 2)} after {after and round(after, 2)}")
+                after = best_of(3, cycles_per_byte, exe, key, cpu, size)
+                before = best_of(3, cycles_per_byte, base, key, cpu, size) if base else None
+                ssl = best_of(3, openssl_cycles_per_byte, cipher, size, cpu)
+                print(f"  cycles/byte at {size}: before {before and round(before, 2)} after {after and round(after, 2)} "
+                      f"openssl {ssl and round(ssl, 2)}" + (f" (OpenSSL takes {ssl / after:.0%} of the cycles a byte)" if ssl and after else ""))
 
 
 if __name__ == "__main__":

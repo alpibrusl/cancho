@@ -1,9 +1,10 @@
 # Multi-block AES-GCM and aggregated GHASH
 
-> **Status: design (#382, part of #378).** `docs/crypto-builtins.md` gave `std.gcm` the hardware AES and carry-less multiply
+> **Status: built (#382, part of #378).** `docs/crypto-builtins.md` gave `std.gcm` the hardware AES and carry-less multiply
 > instructions, one block at a time through out-of-line builtin calls, and reduced GHASH after every block. It reached 0.56 to
-> 1.1 GB/s against OpenSSL's 4 to 8. This document profiles where the time goes, says what to build, and computes what to
-> expect from the measured parts. Where a later commit finds a claim here false, that commit corrects it here, in place.
+> 1.1 GB/s against OpenSSL's 4 to 8. This document profiles where the time goes (§2), says what was built and computes what to
+> expect from the measured parts (§3), and gives what it measured (§8) and what it did not do (§9). Where a later commit finds
+> a claim here false, that commit corrects it here, in place.
 
 ---
 
@@ -83,6 +84,26 @@ What that says:
 This redirects part of the work, as the issue asked it to if the profile said so: the multi-block builtins are the main part,
 but the larger gain at the record sizes a TLS connection spends most of its bytes on (1 to 16 KiB) is the XOR loop and the
 GHASH reductions, and at small sizes it is the allocation. All three are in this design.
+
+### 2.3 The record layer around the cipher
+
+`tests/programs/record_cost.cho` times `tls_record.seal` and `tls_record.open` (TLS_AES_128_GCM_SHA256, a prepared key) the
+same way, so the difference from `gcm_cost`'s row is what the record layer adds. It is measured here, before the change, as the
+issue asked, and again in §8.2 after it:
+
+| Apple M4 Max, before | 64 B | 1,024 B | 16,384 B |
+|---|---|---|---|
+| `tls_record.seal`, ns a record | 1,235 | 2,120 | 16,113 |
+| `std.gcm`'s seal alone (§2.1) | 658 | 1,556 | 15,625 |
+| the record layer's own | 577 | 564 | 488 |
+
+The record layer's own cost is about 0.5 microseconds a record at every size. It is `region r { ... }` (one 64 KiB `malloc` and
+`free`, which is what 88% of a 64-byte record was on Darwin in §2.2), the byte-at-a-time copy of the plaintext into the inner
+plaintext, and the 12-byte nonce. Before this change it was a third of a 64-byte record and 3% of a 16 KiB one. **After it, it
+is most of a small record** (§8.2), which is the redirect the issue allowed for: it does not change what is built here, and
+the cipher was the right thing to fix first, since it was 53 to 97% of every row. What follows from it is a separate change to
+`packages/tls/record.cho` (an AEAD that seals in place, so no inner copy and no region), noted in §9 and not made here: it changes `packages/tls`, which other
+work is changing at the same time, and wants a design of its own (§9).
 
 ## 3. The design
 
@@ -259,8 +280,11 @@ instruction exists, `hw_aes_gcm()` answers false, `std.gcm` takes the software p
   a ragged last block is the only branch (on `len mod 16`).
 - **Tag comparison.** `gcm_tag_diff` XORs the two tags and ORs the halves: no early exit. Its caller branches on the answer,
   which is public by construction (it is whether the record authenticated), as the previous comparison's was.
-- **Nothing secret is left behind.** The keystream tail buffer is overwritten before the function returns (volatile stores).
-  The ciphertext copied for padding is public. The table of powers is part of the prepared key and `forget` overwrites it.
+- **What is left behind, and what is not.** The keystream tail buffer is overwritten before the function returns (volatile
+  stores; a unit test reads the generated text for them). The ciphertext copied for padding is public. The table of powers is
+  part of the prepared key and `forget` overwrites it. Registers the compiler spills to the builtin's own stack frame (round
+  keys, counter blocks) are not erased, as in every compiled implementation, OpenSSL's included; that was equally so for the
+  builtins this replaces.
 - **DIT.** On aarch64 the LLVM backend sets `PSTATE.DIT` in `main` (`docs/crypto-builtins.md` §6, `dit.rs`). This design does
   not touch that code, and the builtins' instructions (`aese`, `aesmc`, `pmull`, `eor`, `rev`, `ext`, `shl`) are all in the DIT
   list of the Arm ARM or data-independent by definition; the timing run is repeated on the M4 with and without it (§7).
@@ -279,21 +303,165 @@ is no buffer for it. An empty `aad` or `text` hashes nothing. The 32-bit counter
 
 ## 7. How it is checked
 
-- **Known answers and a differential on every length, in the compiler's own suite** (`crates/cancho/tests/conformance/
-  crypto_builtins.rs`, through `tests/programs/crypto_builtins_driver.cho`): FIPS 197, NIST's test case 2 from the builtins, and
-  references written from FIPS 197 and SP 800-38D in the test: `aes_ctr32` on **every length 0 to 300** and with counters about
-  to wrap; the eight powers; `gcm_tag` on every text length 0 to 300 with associated data of every length class and a spread
-  up to 16 KiB; `gcm_tag_diff` equal and with one byte changed in each of the tag's 16 positions; every wrong length or round
-  count a trap.
-- **`std.gcm`'s vectors** (FIPS 197, CAVP, Wycheproof; `conformance/gcm.rs`) on both paths as before, and the hardware path now
-  runs them through the new builtins.
-- **`scripts/gcm_differential.py`** against OpenSSL (pyca/cryptography), now over **every message length 0 to 600 and the
-  neighbourhood of 16 KiB**, associated data of every length class, 24,000 checks; run on x86-64 and aarch64.
-- **`scripts/gcm_mutants.py`**, extended with mutants of the new generated code (the compiler's, in
-  `crates/cancho-codegen-llvm/src/crypto/`) as well as of `std/gcm.cho`: all killed or argued equivalent.
-- **`scripts/gcm_timing.py`**, the dudect test at 10^6 measurements on x86-64 (|t| below 4.5), and the object-code audit.
-- **`scripts/aead_differential.py`, `scripts/tls_record_differential.py`**, and the TLS suites that negotiate AES-GCM.
+- **Known answers and a differential on every length, in the compiler's own suite**
+  (`crates/cancho/tests/conformance/crypto_builtins.rs`, through `tests/programs/crypto_builtins_driver.cho`): FIPS 197,
+  NIST's test case 2 from the builtins, and references written from FIPS 197 and SP 800-38D in the test: `aes_ctr32` on
+  **every length 0 to 300** and with counters about to wrap; the eight powers; `gcm_tag` on every text length 0 to 300 with
+  associated data of lengths 0 to 70, every associated-data length 0 to 300, and a spread up to 16 KiB; `gcm_tag_diff`
+  equal and with one bit changed; every wrong length, counter or round count a trap. Each output is followed by 32 guard
+  bytes that must stay as they were.
+- **`std.gcm`'s vectors** (FIPS 197, CAVP, Wycheproof; `conformance/gcm.rs`) on both paths and both backends, as before:
+  the hardware path now runs them through the new builtins.
+- **`scripts/gcm_differential.py`** against OpenSSL (pyca/cryptography) and the software path: 10,000 random cases and a sweep
+  of **every message length 0 to 600, every associated-data length 0 to 300, and the lengths around 4 KiB and 16 KiB**, both
+  directions, a flipped bit refused, 60,950 checks.
+- **`scripts/gcm_ctgrind.sh`** (Valgrind's Memcheck, aarch64 Linux): the key and the message marked undefined, a seal and an
+  open for AES-128 and AES-256 at 0, 64, 1,000 and 16,384 bytes: no report from the preparation or the seal, and exactly one
+  from the open, the branch on whether the tag matched (§5). Then a sweep of **every length in buffers of exactly that size**
+  for an `Invalid read` or `Invalid write`: an input read past its end, or an output written past it, which no answer shows.
+- **`scripts/gcm_mutants.py`** (the cancho of `std/gcm.cho` and `std/aes.cho`: the hardware path's mutants follow the new
+  code) and **`scripts/gcm_wide_mutants.py`** (the Rust that writes the IR: 61 mutants of the counter blocks, the cipher, the
+  reduction, the powers, the tag, the tail and the call sites' checks, run on each instruction set).
+- **`scripts/gcm_timing.py`**, the dudect test, at 10^6 measurements a test on x86-64 (|t| below 4.5), and
+  **`scripts/gcm_branches.py`**, the object-code audit.
+- **`scripts/aead_differential.py`, `scripts/tls_record_differential.py`**, the lying server's 84 recordings, and the TLS suites
+  that negotiate AES-GCM (the interop matrix, the differential beside `openssl s_client`).
+- **`cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --workspace`**, every `.cho` file
+  checked by the new and the old compiler with the same answer (but the driver that uses `aes_ctr32`), the package stores
+  republished (`scripts/publish_packages.py --check`), the selfhost tables regenerated.
 
 ## 8. Results
 
-*To be filled in by the commits that build and measure it.*
+### 8.1 What a record costs, before and after, beside OpenSSL
+
+`scripts/gcm_cost.py` (`tests/programs/gcm_cost.cho` built by the compiler before this change and after it, and
+`openssl speed -evp aes-128-gcm aes-256-gcm`), a seal with a prepared key and 13 bytes of associated data, the best of five
+runs of each in turn. MB/s are 10^6 bytes a second. **The machines were shared and the numbers move**, so they are marked:
+the comparisons are made in the same minute, and on Linux x86-64 the cycles a byte (`perf stat`, user cycles, best of three) are
+given beside them since they do not depend on the clock the governor picked.
+
+**Apple M4 Max, macOS 26, load average 17 (other sessions' work), OpenSSL 3.6.4 (Homebrew):**
+
+| AES-128-GCM seal | before | after | after / before | OpenSSL | after / OpenSSL |
+|---|---|---|---|---|---|
+| 64 B | 98 MB/s | 1,789 MB/s | **18.3** | 612 MB/s | 2.9 |
+| 1,024 B | 674 | 6,391 | **9.5** | 5,658 | 1.13 |
+| 16,384 B | 1,073 | 7,064 | **6.6** | 10,372 | 0.68 |
+
+AES-256-GCM: 97 to 1,789 MB/s (18.4 times), 636 to 5,592 (8.8), 986 to 6,100 (6.2), against OpenSSL's 756, 5,046 and 8,833. An
+open costs the same as a seal within 5%.
+
+**aarch64 Linux, the same M4 Max in Docker (`lexsys-hooks-env`, 6 cores, load average 3), OpenSSL 3.0.13:**
+
+| AES-128-GCM seal | before | after | after / before | OpenSSL | after / OpenSSL |
+|---|---|---|---|---|---|
+| 64 B | 554 MB/s | 2,236 MB/s | **4.0** | 3,960 MB/s | 0.56 |
+| 1,024 B | 1,065 | 6,710 | **6.3** | 7,567 | 0.89 |
+| 16,384 B | 1,137 | 6,710 | **5.9** | 7,999 | 0.84 |
+
+AES-256-GCM: 528 to 1,917, 1,001 to 5,592, 1,048 to 6,100, against OpenSSL's 3,632, 7,569 and 7,993. (At 64 bytes `openssl speed`
+on this build does not do an `EVP_CipherInit` for each message and the Linux x86-64 build below does; it is a different
+measurement of the same name.)
+
+**Linux x86-64, `ssh gram`: Intel Core i7-1260P (Alder Lake), one P-core thread (`taskset -c 7`) whose sibling thread another
+user's work shared, the `powersave` governor (the clock moved between about 1.9 and 4.5 GHz during these runs), load average
+4 to 8, OpenSSL 3.5.5.** The fastest of three sessions' best runs, MB/s, then cycles a byte (before / after / OpenSSL):
+
+| AES-128-GCM seal | before | after | after / before | OpenSSL | cycles/byte before / after / OpenSSL | OpenSSL's cycles / ours |
+|---|---|---|---|---|---|---|
+| 64 B | 218 | 932 | **4.3** | 173 | 20.6 / 3.87 / 18.5 | 4.8 |
+| 1,024 B | 341 | 3,728 | **10.9** | 1,220 | 8.69 / 1.02 / 2.00 | 2.0 |
+| 16,384 B | 373 | 4,194 | **11.2** | 3,332 | 8.35 / 0.98 / 0.88 | 0.89 |
+
+AES-256-GCM: 163 to 688 MB/s, 313 to 2,917, 338 to 3,441, against OpenSSL's 147, 1,287 and 2,963; cycles a byte 21.1 / 9.56 /
+8.83 before and 4.27 / 1.20 / 1.09 after, OpenSSL's 19.3 / 2.24 / 0.99.
+
+What these say:
+- **16 KiB: 5.9 to 11.2 times faster** (the issue expected 2 to 4), 0.98 cycles a byte on x86-64 where today's was 8.35, **at 89%
+  of OpenSSL's speed on x86-64 (by cycles), 84% on aarch64 Linux and 68% on the M4 under macOS**.
+  The best single x86-64 run was 0.68 cycles a byte (OpenSSL's 0.55 in the same minute): the ratio of the two stayed between 1.1
+  and 1.25 across every session, the clock and the neighbour moving both.
+- **1 KiB: 6.3 to 10.9 times, at or above OpenSSL's `speed`** (113%, 89%, 200% on the three machines).
+- **64 B: 4.0 to 18.3 times.** The cost of a small record is now a fixed 190 to 250 cycles on x86-64 and 30 ns on the M4, in
+  two builtin calls with nothing allocated; OpenSSL's `speed` figure includes a context set-up per message on the x86-64 build
+  (the 18.5 cycles a byte) and not on the aarch64 one.
+- **Predicted (§3.5): 5 to 8 times at 16 KiB, 0.7 to 1.2 cycles a byte; 5 to 6 times at 1 KiB; about 4 times at 64 B on
+  x86-64 and about 15 on the M4.** Measured: 5.9 to 11.2, 6.3 to 10.9, 4.3 to 5.3 and 18. The prediction held, and was
+  conservative on x86-64.
+- **Where the rest of the gap to OpenSSL is.** On the M4 a sampling profile of a 16 KiB seal is 60% GHASH and 40% counter mode.
+  Both are two passes over the record, not the one stitched loop OpenSSL's `aes-gcm-armv8` and `aesni-gcm` run, in which the
+  multiplier and the AES units work at the same time. Removing the reduction altogether on x86-64 (a measurement, not a
+  build) gave 0.45 cycles a byte against 0.68, so the multiplies and the loads are most of what GHASH costs and a cheaper
+  reduction (§3.2's, which made it 2% faster) could not have made up the difference. Karatsuba (three multiplies a block,
+  not four) and stitching are the next steps and each is its own change (§9).
+
+### 8.2 The record layer, before and after
+
+`tests/programs/record_cost.cho`, `tls_record.seal` and `open` (TLS_AES_128_GCM_SHA256, a prepared key), one content type, ns a
+record, before this change / after it:
+
+| | 64 B | 1,024 B | 16,384 B |
+|---|---|---|---|
+| Apple M4 Max, seal | 1,235 / 605 | 2,120 / 750 | 16,113 / 3,200 |
+| Apple M4 Max, open | 1,235 / 600 | 2,105 / 747 | 16,357 / 2,930 |
+| gram (x86-64), seal | 377 / 150 | 3,723 / 396 | 53,710 / 4,394 |
+| gram (x86-64), open | 398 / 146 | 2,624 / 366 | 38,085 / 3,906 |
+
+A TLS record seals 2 to 12 times faster. **What dominates it now is the record layer, not the cipher** (§2.3): on the M4 a
+64-byte record is 605 ns of which the cipher is 36, and a 16 KiB one 3.2 microseconds of which it is 2.3. The cost that
+remains is a `region` (a 64 KiB `malloc` and `free`, slow on Darwin), the byte-at-a-time copy of the content into the inner
+plaintext, and the nonce. Removing them needs an AEAD that seals in place (the builtin writing the ciphertext over the
+plaintext), which is a change to `packages/tls/record.cho` and to the builtins' contract, and is §9's first item.
+
+### 8.3 The gates
+
+- **Known answers and the differential (§7):** the compiler's suite, on this Mac (aarch64) and on Linux x86-64 (gram, and CI's
+  runner): all pass; `scripts/gcm_differential.py` over every length: **60,950 checks, 0 differences** on x86-64 (OpenSSL
+  3.5.5) and 60,950 on aarch64 (OpenSSL 4.0.3), software path included; `aead_differential.py` 15,000 and 9,000 checks, 0
+  differences; `tls_record_differential.py` 3,000 rounds on each, 0 differences; the lying server's 84 cases pass and its
+  recording is byte-for-byte the committed one, on both. The interop matrix (`tls_interop.py`: Go, rustls, wolfSSL, mbedTLS,
+  Botan, BoringSSL, nginx, GnuTLS) **115 rows ok, 0 failed** on aarch64 Linux, and `tls_differential.py`: 21 handshakes agree,
+  0 differ; 59 agree, 17 differ in the alert only, 8 as documented, 0 otherwise.
+- **Timing (`scripts/gcm_timing.py`, x86-64, gram, `taskset -c 7`, 64-byte message, 13 bytes of associated data):
+  10^6 measurements a test, max |t| 2.36 (seal, fixed key against random), 1.87 (seal, data), 1.26 (open, data) and 1.48 (open,
+  tag position), all under 4.5.** Beyond the issue's gate: 200,000 a test at 1,000 bytes (a length that ends inside a block and
+  a group of eight): 1.54, 2.17, 1.47, 1.73; 10,000 a test at 16,384 bytes: 2.42, 1.47, 1.81, 2.79. On the M4 under macOS
+  with `PSTATE.DIT` set by the LLVM backend's `main` (code this change does not touch): 200,000 a test, 2.58, 1.93, 1.18, 1.91.
+- **Object-code audit (`scripts/gcm_branches.py`, x86-64):** 71 conditional jumps that do not go to a trap in `seal_hardware`,
+  `open_hardware` and the six builtin functions (12, 11, 5, 23, 10, 0, 5, 5). Each is after a comparison of a register with
+  a constant or a register, never of memory, and reading them (the group counts, `len & 127`, `len & 15`, the block count's
+  bits, the round count 10, 12 or 14, the unrolled remainders of the rounds loop and of the tail's bytes, the slice bounds) none
+  tests a byte of the key, the data, a counter block or a hash value, which are only operands of vector instructions. The
+  script fails on a comparison of any other shape.
+- **ctgrind (aarch64, Valgrind's Memcheck):** 0 reports from the preparation and the seal in 8 cases, 1 from each open (the
+  tag branch); 0 invalid reads or writes over every length in exact-size buffers.
+- **Mutants:** `gcm_mutants.py`: 34 of 34 killed on aarch64 and on x86-64 (the hardware path's 8 among them);
+  `gcm_wide_mutants.py`: MUTANT_TALLY.
+
+## 9. Not done, and what fell short
+
+1. **The record layer is now the cost of a TLS record** (§8.2). A change to `packages/tls/record.cho` that removes the `region`
+   and the byte-at-a-time copy of the content wants the cipher to seal in place: `aes_ctr32` with the input and the output
+   one slice (a contract the borrow rules cannot express as two arguments, so a builtin of its own or a `gcm.seal_in_place`),
+   and the content type written after the content in the output buffer. It is a design of its own, in a package other work
+   is changing, so it is not made here. Until it is, a 64-byte record costs 600 ns on Darwin whatever the cipher does, and
+   `https_hello` and `tls_echo` (the 83 to 245 MB/s of the issue) are not remeasured here: they would show the record layer.
+2. **Stitching AES and GHASH, and Karatsuba.** The two passes over a record leave the carry-less multiplier idle while the AES
+   units work and the reverse; OpenSSL runs them in one loop. That is the 11% (x86-64, 16 KiB) to 32% (M4 under macOS) that
+   separates this from OpenSSL, and §8.1 says where the M4's time goes (60% GHASH). Three multiplies a block for four, with
+   the sums of the halves of each power in the table, would cut GHASH's multiplies by a quarter; both are measured options.
+3. **ChaCha20-Poly1305 for machines without AES instructions** (the issue's second bullet) needs vector arithmetic; noted in §1,
+   not decided.
+4. **x86-64 under Valgrind.** `gram` has no Valgrind, so the ctgrind and addressability checks ran on aarch64 Linux only, with
+   the same IR generator for the shared parts; x86-64's evidence is the dudect test (10^6 measurements a test), the object-code
+   audit, and the conformance suite on a real x86-64 CPU (gram, and the CI runner).
+5. **A prepared key is 224 bytes larger a connection** (`hw_len()` 256 to 368 bytes, in each of two directions;
+   `packages/tls/slot.cho`'s offsets moved and the package stores were republished). Other changes to the slot will conflict
+   with it mechanically; the offsets are `k_read_hw()`, `k_write_hw()` and `keys_len()`.
+6. **Numbers on shared machines.** The M4 and `gram` were loaded by other work throughout (load averages 17 and 4 to 8) and
+   `gram`'s governor moved the clock between 1.9 and 4.5 GHz; a quiet machine would show higher absolute figures. The
+   cycles a byte on x86-64 are the steadier measure, and the ratio to OpenSSL's, taken in the same minute, stayed within
+   0.8 to 0.9 at 16 KiB.
+7. **The compiler's `cargo test --workspace` on Linux ran on CI's x86-64 runner**, which passed; the aarch64 Linux container
+   this work used had a full disk and a host-mounted work directory, on which 13 filesystem tests fail (11 of them also
+   on `origin/main` in the same container; the other two write `/tmp`, which was full). Nothing in them is near this change.
