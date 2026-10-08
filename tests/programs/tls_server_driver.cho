@@ -10,6 +10,12 @@ edition 5;
 //     I <chain> <key> <names> <now ms>        tls.add_identity (PEM bytes; names text): `<id or code> <tag>`
 //     R <id> <chain> <key> <now ms>           tls.replace_identity: `<code> <tag>`
 //     A <protocols>                           tls.set_alpn (text): `<code> <tag>`
+//     T <count> <lifetime s>                  tls.set_tickets: `<code> <tag>`
+//     K <keys> <now ms>                       tls.set_ticket_keys (n x 32 bytes): `<code> <tag>`
+//     X <now ms>                              tls.rotate_ticket_key: `<code> <tag>`
+//     M <now ms>                              tls.set_time: `<code> <tag>`
+//     U                                       the connection's resumption: `0 ok <resumed 0 or 1> <verdict> <verdict tag>
+//                                             <ticket keys that open tickets>`
 //     V <now ms>                              tls.serve in slot 0
 //     F <bytes>                               tls.feed, then everything `take` and `recv` give
 //     W <plaintext>                           tls.send
@@ -21,8 +27,8 @@ edition 5;
 //     O                                       the suite chosen for each mask of offered suites (`tls_hello`),
 //                                             with and without AES instructions: `0 ok` and 16 numbers
 //     C                                       the calls of the other role: `tls.start` on this engine, and
-//                                             `serve`, `add_identity`, `set_alpn` and `server_name` on a client
-//                                             engine: `<code> <tag>` each, on one line
+//                                             `serve`, `add_identity`, `set_alpn`, the ticket calls and `server_name`
+//                                             on a client engine: `<code> <tag>` each, on one line
 //
 // `V`, `F`, `W`, `Q` and `Z` answer `<code> <tag> <event> <bytes for the
 // socket> <application data received>`, the event once both are taken.
@@ -143,6 +149,14 @@ fn roles[&h, &i, &e](heap: &!h Heap, io: &!i Io, engine: &!e tls.Engine) -> [hea
         tag_line(io, tls.add_identity(cw, "", "", "", 0));
         io.space(io);
         tag_line(io, tls.set_alpn(cw, "h2"));
+        io.space(io);
+        tag_line(io, tls.set_tickets(cw, 1, 60));
+        io.space(io);
+        tag_line(io, tls.set_ticket_keys(cw, "", 0));
+        io.space(io);
+        tag_line(io, tls.rotate_ticket_key(cw, 0));
+        io.space(io);
+        tag_line(io, tls.set_time(cw, 0));
         region r {
             let name = alloc_slice[r](8, byte_of(0));
             io.space(io);
@@ -191,6 +205,44 @@ fn op_line[&h, &i, &s, &e, &o, &d](heap: &!h Heap, io: &!i Io, s: &s [byte], eng
     if op == 65 {
         let n = hex_into(s, f, held);
         tag_line(io, tls.set_alpn(engine, held[0..n]));
+        io.newline(io);
+        return 0;
+    }
+    if op == 84 {
+        let c = number(s, f);
+        tag_line(io, tls.set_tickets(engine, c, number(s, next_field(s, f))));
+        io.newline(io);
+        return 0;
+    }
+    if op == 75 {
+        let n = hex_into(s, f, held);
+        tag_line(io, tls.set_ticket_keys(engine, held[0..n], number(s, next_field(s, f))));
+        tls_zero(held);
+        io.newline(io);
+        return 0;
+    }
+    if op == 88 {
+        tag_line(io, tls.rotate_ticket_key(engine, number(s, f)));
+        io.newline(io);
+        return 0;
+    }
+    if op == 77 {
+        tag_line(io, tls.set_time(engine, number(s, f)));
+        io.newline(io);
+        return 0;
+    }
+    if op == 85 {
+        io.write_all(io, "0 ok ");
+        if tls.resumed(engine, 0) {
+            io.write_all(io, "1 ");
+        } else {
+            io.write_all(io, "0 ");
+        }
+        io.print_int(io, tls.ticket_verdict(engine, 0));
+        io.space(io);
+        io.write_all(io, tls.ticket_verdict_tag(tls.ticket_verdict(engine, 0)));
+        io.space(io);
+        io.print_int(io, tls.ticket_keys(engine));
         io.newline(io);
         return 0;
     }

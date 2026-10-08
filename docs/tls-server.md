@@ -1,7 +1,7 @@
 # A TLS 1.3 server for `packages/tls`: the design
 
-> **Status: steps 1 to 3 built: the signer (`docs/ecdsa-sign.md`), the TLS 1.3 server (§10, as built) and the example
-> the broker and the gateway copy, `examples/tls_echo` (§11); its open questions (§9) answered as proposed (2026-10-07).
+> **Status: steps 1 to 3 and 5 built: the signer (`docs/ecdsa-sign.md`), the TLS 1.3 server (§10, as built), the example
+> the broker and the gateway copy, `examples/tls_echo` (§11), and session tickets (§12); its open questions (§9) answered as proposed (2026-10-07).
 > Not independently reviewed (#209).** `packages/tls` is a client (`docs/tls-pure.md`). Two programs of the toolbox need the other
 > side: `cancho-mqtt`, a broker whose clients connect on 8883, and `cancho-gateway`, a reverse proxy that terminates HTTPS. Both
 > are at the design stage and both list TLS as out of scope because "it needs foreign code and would make the authority report
@@ -57,7 +57,7 @@ DRBG, and the key exchanges (`std.x25519`, `std.ecdh` on P-256 and P-384, both c
 | | why not yet | where |
 |---|---|---|
 | client certificates (mutual TLS) | MQTT deployments use them, so it is wanted; it is a second verification path (`x509_verify` without a host name) and an authorization interface | step 4 (§8), §9's question 2 |
-| session tickets (resumption) | saves the signature, which is most of the server's cost (§6); stateless tickets need a ticket key and its rotation | step 5 (§8) |
+| ~~session tickets (resumption)~~ | *built:* saves the signature, which is most of the server's cost (§6); stateless tickets with a ticket key and its rotation | step 5 (§8), §12 |
 | **0-RTT early data** | replayable by design; no program here needs it | never, unless a design argues for it |
 | TLS 1.2 | a second server state machine; who needs it is §9's question 1 | step 6, if answered yes |
 | renegotiation, compression, PSK without (EC)DHE, post-handshake authentication | not in TLS 1.3, or not needed | never |
@@ -239,6 +239,9 @@ there is no `tls-record-*`.*
 | `tls-server-alpn-list` | none: `set_alpn`'s answer | *added:* a name over 255 bytes, or a list over 512 |
 | `tls-server-no-identity` | none: `serve`'s or `replace_identity`'s answer | *added:* no identity added, or none of that number |
 | `tls-role` | none | a call for the other role (§5.1) |
+| `tls-server-binder` | decrypt_error (51) | *added (§12.5):* a ticket this server made, passing every rule, whose PSK binder does not match |
+| `tls-server-ticket-config` | none: `set_tickets`' answer | *added (§12.5):* a count over 8 or a lifetime outside one second to seven days |
+| `tls-server-ticket-key` | none: `set_ticket_keys`' answer | *added (§12.5):* no key, a length that is not a whole number of 32-byte keys, or more than 4 |
 
 ## 6. Cost
 
@@ -335,6 +338,7 @@ of key-parsing work in a server engine (§10.1).*
    name, the verified subject and SANs given to the program. §9's question 2 decides whether it moves before step 3.
 5. **Session tickets**: stateless, sealed with a ticket key from the DRBG, rotated, `psk_dhe_ke` only (a fresh key exchange
    every time, so forward secrecy stays), never 0-RTT. Saves the signature and its check: about 2 to 3.5 ms of the 3 to 5.
+   *Built (§12, #379): the design is §12.1 to §12.10, what was built and measured §12.11 to §12.15.*
 6. **TLS 1.2**, ECDHE-ECDSA with AEAD suites and the extended master secret required, if §9's question 1 says so.
 7. **More key types**, each with its own constant-time signer and timing test: P-384, Ed25519 (on `std.field25519`, which is
    constant time, replacing `std.ed25519`'s big-number signing), RSA-PSS (needs blinding; `std.bigmod.pow_mod` branches on its
@@ -736,7 +740,7 @@ plaintext (version 1) =
   96-bit random nonce under one shared key reaches a 2^-32 collision after 2^32 tickets, which a busy fleet makes in
   days, and a repeated ChaCha20-Poly1305 nonce gives away the Poly1305 key and the XOR of two PSKs. The cost is one
   HKDF-Extract and Expand (a few HMAC-SHA-256 blocks) a ticket.
-- **The ticket is 64 bytes of overhead and at most 705 bytes in all**: 16 + 32 + (1+1+8+8+4+2+1+48+32+1+255+1+255 = 617)
+- **The ticket is 64 bytes of overhead and at most 681 bytes in all**: 16 + 32 + (1+1+8+8+4+2+1+48+32+1+255+1+255 = 617)
   + 16 = 681 at the largest (a 255-byte name and protocol, SHA-384); typically a name of 20 bytes and `h2`: about 250.
   The client keeps tickets of up to 2,048 bytes (`docs/tls-resumption.md` §4), so every ticket fits.
 - **What the client sees** is opaque bytes. It learns the lifetime, `ticket_age_add` and a nonce (the index of the
@@ -786,10 +790,10 @@ demands as aborts, below.
 |---|---|---|---|
 | **a** | **psk_dhe_ke only.** The ClientHello's `psk_key_exchange_modes` must list `psk_dhe_ke` (1). A hello that lists only `psk_ke` (0) is a full handshake; `pre_shared_key` without `psk_key_exchange_modes` is `missing_extension` (RFC 8446 §4.2.9: a MUST). The ServerHello always carries a `key_share`. Tickets are sent only to a client that listed `psk_dhe_ke`, as Go's and rustls's servers do (§4.2.9 says a server SHOULD NOT send tickets the client's modes cannot use). | rule 8 (the ServerHello must carry a `key_share`; a resumption without one is refused) | A fresh X25519, P-256 or P-384 exchange on every resumption: forward secrecy is kept; the ticket key and the PSK together do not give a resumed session's keys. |
 | **b** | **Never early data.** `early_data` in a ClientHello that offers a ticket is accepted as an extension and *not accepted as 0-RTT*: EncryptedExtensions has no `early_data`, and the client's early records are skipped by trial decryption (RFC 8446 §4.2.10), up to 16 KiB, as §5.2 already does for a full handshake. A NewSessionTicket never carries `early_data` (`max_early_data_size`), so no compliant client sends any. | rule 6 | |
-| **c** | **Lifetime and age.** `expiry_ms` is `issue_ms + lifetime`, capped at the leaf's notAfter; a ticket is refused (`expired`) at or after it. The ClientHello's `obfuscated_ticket_age` minus the ticket's `age_add`, mod 2^32, is the age the client claims in ms; the server's own age is `now - issue_ms`; they must agree to within **30 s** (`age`). A ticket from the future (`now < issue_ms - 30 s`: another host's clock) is refused too. The lifetime sent is the setting (default 1 hour) capped at 7 days (RFC 8446 §4.6.1) and at the certificate's remaining life. | rules 3 and 4 | The window is wide because the client's age is counted from when it *received* the ticket (this package's client counts from the start of the connection that got it: `docs/tls-resumption.md` §11) and the server's from when it *issued* it, and the engine's clock is the one the program last gave it. It is not a replay defence (§12.4), only a freshness one. |
+| **c** | **Lifetime and age.** `expiry_ms` is `issue_ms + lifetime`, capped at the leaf's notAfter; a ticket is refused (`expired`) at or after it. The ClientHello's `obfuscated_ticket_age` minus the ticket's `age_add`, mod 2^32, is the age the client claims in ms; the server's own age is `now - issue_ms`; they must agree to within **30 s** (`age`). A ticket from the future (another host's clock ahead) is the same test: its server age is negative and the two ages differ by more than the window. The lifetime sent is the setting (default 1 hour) capped at 7 days (RFC 8446 §4.6.1) and at the certificate's remaining life. | rules 3 and 4 | The window is wide because the client's age is counted from when it *received* the ticket (this package's client counts from the start of the connection that got it: `docs/tls-resumption.md` §11) and the server's from when it *issued* it, and the engine's clock is the one the program last gave it. It is not a replay defence (§12.4), only a freshness one. |
 | **d** | **Bound to the name, the identity, the suite.** The ticket carries the host name the client sent and a SHA-256 of the issuing identity's leaf certificate. A resumption must send the same name (`name`), and the identity that name selects now must have that same certificate (`identity`): **`replace_identity` with a different certificate refuses every ticket of that identity**, because the fingerprint changes; with the same certificate (a reload that found nothing new) it refuses none, and tickets stay good across a process restart that loads the same files. The suite chosen for the new connection must hash as the ticket's (`suite`, RFC 8446 §4.2.11: the PSK's hash must be the cipher suite's); the ALPN protocol the new connection chooses must be the one the ticket records (`alpn`). | rules 1, 2, 3 (name, trust store, certificate) | The fingerprint, not an identity number or a generation counter: a counter is per process and would make §12.3's fleet refuse its own tickets, and a number can be reused. The certificate's *chain* is not part of the fingerprint: the leaf is what the client verified the name against, and a changed intermediate is the operator's affair (§4). |
 | **e** | **Replay.** §12.4. | rule 5 (used once) | A ticket is **not single use** on the server; the argument and the bound are in §12.4. |
-| **f** | **The binder, in constant time.** The binder is recomputed over the transcript through the ClientHello's `pre_shared_key` truncated before its binders (RFC 8446 §4.2.11.2) and compared with every byte examined, as the client's Finished is (§10.1). A ticket that opened and passed the rules above but whose binder is wrong aborts the handshake with `decrypt_error` (`tls-server-binder`), as the RFC says and as OpenSSL does, after a HelloRetryRequest too (the transcript then holds it). | the client's own binder check, which the client does not need | An *unopenable* ticket is no abort (the server cannot know it was ours): a full handshake. Only a ticket the server authored and a binder that does not match are an abort: nothing a bystander can use as an oracle, since opening the ticket needs the ticket key. |
+| **f** | **The binder, in constant time.** The binder is recomputed over the transcript through the ClientHello's `pre_shared_key` truncated before its binders (RFC 8446 §4.2.11.2) and compared with every byte examined, as the client's Finished is (§10.1). A ticket that opened and passed the rules above but whose binder is wrong aborts the handshake with `decrypt_error` (`tls-server-binder`), as RFC 8446 §4.2.11.2 says, after a HelloRetryRequest too (the transcript then holds it). *OpenSSL aborts too, but with `illegal_parameter` (47); the differential, §12.12, records it.* | the client's own binder check, which the client does not need | An *unopenable* ticket is no abort (the server cannot know it was ours): a full handshake. Only a ticket the server authored and a binder that does not match are an abort: nothing a bystander can use as an oracle, since opening the ticket needs the ticket key. |
 | **g** | **No client certificate yet.** A resumed session skips every step of a full handshake that is not the PSK's proof, among them the *client's* certificate (#384). The ticket's `auth` byte is 0 today because this server asks for none. **When #384 lands, a connection whose client authenticated carries a ticket only if the program asks for it, and the ticket then holds the client's certificate fingerprint and `notAfter`, is refused after the client trust store changes, and its `auth` is 1.** Until then a ticket with `auth` ≠ 0 is refused (`auth`), so an older server that meets a newer server's ticket in a fleet never resumes a connection the client authenticated and the older cannot represent. | rule 2 (trust store) and the "verify-nothing" hazard of `docs/tls-resumption.md` §3 | The safe default for #384 is **no tickets on authenticated connections**; the conservative path costs a client-authenticated peer a full handshake (the signature is the server's, which is the cost this document removes, but the client's certificate chain verification is the other half, and it too is saved only if the ticket carries the verdict). |
 | **h** | **How many, when, and KeyUpdate.** §12.6. | | |
 
@@ -874,7 +878,7 @@ connection. The verdict is a small integer with a tag, for logs, tests and the d
 verdicts, in the order the rules are tried (§12.3): `resumed`, `off`, `no-psk-dhe-ke`, `unknown` (not our key, a key past its
 `open_until`, or a size no ticket has), `tampered` (our key, and the AEAD says no), `format`, `auth`, `expired`, `age`,
 `name`, `identity`, `suite`, `alpn`, and `none` for a hello with no `pre_shared_key`. At most the **first 4 identities** of
-a `pre_shared_key` are tried, a ticket of more than 700 bytes is `unknown` without being opened, so a hello cannot make
+a `pre_shared_key` are tried, a ticket of more than 681 bytes is `unknown` without being opened, so a hello cannot make
 the server do more than 4 small AEAD opens.
 
 ### 12.8 How it will be tested
@@ -904,5 +908,91 @@ ms) against 3.0 to 5.5 ms.*
 
 *Per slot: nothing new.* A server slot reuses the client's resumption fields it never uses (the PSK, the resumption master
 secret, the ticket's randomness area), all of which `forget` already overwrites. *Per engine:* the ticket keys and settings,
-4 keys of 72 bytes and 16 bytes of header, **about 0.3 KiB**, allocated by `open_server` only; and an identity gains its
+4 keys of 72 bytes and 8 bytes of header, **296 bytes**, allocated by `open_server` only; and an identity gains its
 certificate fingerprint and `notAfter`, 40 bytes each, 640 bytes for 16. A ticket needs no storage on the server.
+
+### 12.11 What was built
+
+| File | What |
+|---|---|
+| `packages/tls/ticket.cho` (`tls_ticket`) | the ticket (§12.1): sealed and opened; the ring of 4 ticket keys, `make_current`, `set_keys`, the engine's own rotation (`due`); the rules (§12.3) as one function, `check`; the settings; the verdicts and their tags |
+| `packages/tls/hello.cho` | the ClientHello's `pre_shared_key` and `psk_key_exchange_modes` parsed (`ch_psk_*`, `psk_entry`), the ServerHello's `pre_shared_key`, the NewSessionTicket encoded |
+| `packages/tls/server.cho` | `try_resume` (the identities tried, the rules, the binder), the key schedule from the PSK, a flight with no Certificate, `issue_tickets` after the client's Finished |
+| `packages/tls/identity.cho` | an identity records its leaf's SHA-256 and `notAfter` |
+| `packages/tls/tls.cho` | `set_tickets`, `set_ticket_keys`, `rotate_ticket_key`, `set_time`, `ticket_keys`, `ticket_verdict`, `ticket_verdict_tag`; the engine's clock; `resumed` answers for a server slot |
+| `packages/tls/record.cho`, `slot.cho` | three tags (`tls-server-binder`, `-ticket-config`, `-ticket-key`) and the alert of the first |
+| `examples/tls_echo`, `examples/https_hello` | `--tickets <n>`, `--ticket-lifetime <s>`, `--ticket-keys <file>`; `SIGHUP` reads the key file again; `tls.set_time` each turn of the loop; `resumed=yes|no` on the `established` line |
+
+`server.cho` is 880 lines, `ticket.cho` 655, `tls.cho` 1,025; no file passes 2,000.
+
+### 12.12 Tests and results
+
+All commands from the repository root; the Linux ones in the image of §10.2 (Ubuntu 24.04, linux-aarch64, Docker on the Apple
+M4 Max), the x86-64 ones on a Linux box (an Intel i7-1260P, `taskset -c 6`).
+
+- **The lying client** (`python3 scripts/tls_liar_client.py <server driver> tests/vectors/tls/liar_client.txt`):
+  **183 connections**, the 110 of §10.3 unchanged byte for byte (but the role case, which gained four calls) and **73 new**, in
+  `scripts/tls_liar_tickets.py`: 55 end `ok` (resumptions, and fallbacks each checked against the verdict the engine gave:
+  `U` in the driver) and 18 end in a refusal or a configuration answer (6 `tls-server-binder`, 6
+  `tls-server-client-hello-format`, and one each of `-finished`, `-illegal-parameter`, `-missing-extension`,
+  `-ticket-config`, `-ticket-key` and `tls-no-entropy`), listed below by rule. Recorded; `conformance/tls_server.rs`
+  replays every one on both backends, and the recording made on x86-64 is identical to the one made on arm64.
+
+  | rule | cases |
+  |---|---|
+  | honest | a full handshake sent 2 tickets with distinct PSKs; resumed under AES-256-GCM (SHA-384, a 48-byte PSK), ChaCha20 and AES-128, with X25519 and P-256, after a HelloRetryRequest, for the second identity with ALPN, the good ticket second of three and fifth of five (only four are tried), one ticket used three times, a chain of resumptions, early data offered and skipped, a ticket cut to the certificate's remaining life, one sealed by the lying client itself in §12.1's format (a cross-implementation check of the format and the key schedule), the clock moved during a long connection |
+  | a (psk_dhe_ke only) | `psk_ke` only: full, no ticket sent; no modes at all: none sent; `pre_shared_key` without modes: `missing_extension`; an empty mode list |
+  | b (no early data) | the early-data attempt above; a NewSessionTicket never carries an extension (asserted for every ticket the client reads) |
+  | c (lifetime, age) | expired, at exactly the expiry, one millisecond before; age 60 s high, 31 s low, 29 s off; from a clock 60 s ahead; a lifetime cut by the certificate |
+  | d (name, identity, suite) | another name, no name, `replace_identity` with a new certificate (refused) and with the same one (kept), the SHA-384 offered a SHA-256 ticket, another ALPN protocol, a made-up fingerprint |
+  | e (replay) | one ticket three times; a captured ClientHello replayed inside the window (resumed) and 60 s later (`age`) |
+  | f (binder) | wrong first byte, wrong last byte only, one byte too long, wrong PSK, after a HelloRetryRequest with the retry left out of the transcript, a forged ticket with a wrong binder; and a wrong binder on a ticket that fails a rule is *not* an abort |
+  | keys | previous key opens, a dropped key does not, the same keys given again change nothing, a ring of four (the fifth rotation evicts the oldest; three leave it), the end of a previous key to the millisecond, the engine's own rotation after exactly a lifetime, supplied keys never replaced by the engine's |
+  | tampering | one bit of the text, the tag, the salt; truncated by 10 and to 40 bytes; the key name; 15,000 bytes; one byte appended; a key holder's ticket of version 2, with trailing bytes, a 20-byte PSK, `auth` 1 |
+  | settings | count 9, lifetime 0 and 8 days, keys of 0, 31, 33 and 160 bytes refused; rotation before the engine is seeded; the ticket calls on a client engine (`tls-role`); the count raised mid-handshake |
+  | malformed | identities and binders of different numbers, an identity running past its list, an empty identity (alone and first of two), a binder of 31 bytes (alone and two) |
+
+- **Mutants** (`python3 scripts/tls_server_mutants.py target/release/cancho`): **143 of 143 killed**, none argued equivalent:
+  the 71 of §10.6 and 72 new, one per decision of §12.3, the key ring, the parser and the settings. A first run killed 140 and
+  left three, each a gap in the cases and not in the code: a binder of 31 bytes was caught by the list's own minimum before the
+  per-binder one; an empty identity alone was too short for the list's; and the "binder too long" case had a wrong binder
+  anyway, because **the lying client's own binder was computed over a header one byte short** (a bug in the test, found by the
+  mutant that survived it). Each got a case that only its mutant's line can fail. `scripts/tls_mutants.py` (the client's) still
+  kills **103 of 103**.
+
+- **Interop** (`python3 scripts/tls_server_tickets_interop.py <tls_serve> --many <tls_many>`, `tls_serve` with tickets on):
+  16 rows, 16 ok:
+
+  | client | rows |
+  |---|---|
+  | `openssl s_client -sess_out` / `-sess_in`, OpenSSL 3.0.13 | AES-128, AES-256 and ChaCha20 with X25519; AES-128 with P-256 and P-384; a HelloRetryRequest first: each resumes (`Reused, TLSv1.3`) |
+  | curl 8.5.0 | two URLs in one run resume |
+  | Go `crypto/tls` 1.22.2 | 3 connections: full, resumed, resumed |
+  | wolfSSL 5.6.6 | the same |
+  | GnuTLS `gnutls-cli --resume` 3.8.3 | resumes |
+  | rustls 0.23 on ring | full, resumed, resumed (`handshake_kind`) |
+  | mosquitto 2.0.18 | **does not resume**: libmosquitto never sets a session on its SSL object; two `mosquitto_sub` connections are both full, and the row asserts it, so a version that resumes fails it and says so |
+  | `packages/tls`'s own client (`tls_many resume`) | 8 connections, then 8 resumed |
+  | two server processes sharing a key file | a session from A resumes at B; at a third process with another key, a full handshake with the verdict `unknown` |
+  | a ticket of 2 s lifetime, 3.5 s later | a full handshake: OpenSSL's client does not offer an expired session (`none`); a client that did is the lying client's `expired` |
+
+  The example's own live tests (`scripts/tls_echo_test.py`, `scripts/https_hello_test.py`, §12.13) add Python's `ssl`.
+
+- **The differential** (`python3 scripts/tls_server_tickets_differential.py <tls_serve>`, against `openssl s_server`
+  3.0.13 with the same identity and tickets on): the same client behaviour against each server's own tickets, 11 cases:
+  **8 agree, 1 differs in the alert only, 2 differ as `EXPECTED` says.** They agree on an honest resumption, a ticket used
+  twice, `psk_ke` only, **`pre_shared_key` without `psk_key_exchange_modes` (both abort, `missing_extension`)**, a ticket with one
+  bit changed, a truncated one, one of 15,000 bytes, early data offered (both resume and skip it), and a good ticket second of
+  two. A wrong binder: this server `decrypt_error` (51, as RFC 8446 §4.2.11.2 says), OpenSSL `illegal_parameter` (47). The two
+  that differ on purpose: OpenSSL resumes a ticket for another host name (it does not compare it; this server does), and one
+  whose claimed age is 60 s off (OpenSSL does not check the age without early data; this server does, within 30 s).
+  `scripts/tls_server_differential.py` (the ClientHello cases of §10.4) is unchanged: 59 agree, 7 alert, 6 as documented,
+  skipping the ticket cases, which are several connections.
+
+- **Live tests of the examples** (`scripts/tls_echo_test.py`, 4 new cases of 15; `scripts/https_hello_test.py`, 1 of 20; and
+  `conformance/tls_echo.rs`, `https_hello.rs` against `packages/tls`'s own client): a session kept by Python's `ssl`
+  resumes three times from one session; **a session from one process resumes at another that holds the same key file, not
+  at one with another**; a rotation by `SIGHUP` (a new key on top) keeps the old session, a second rotation that drops its key
+  refuses it, a file that is not hex is refused (`reload tickets refused tls-server-ticket-key`) and the keys stay; **a
+  certificate renewed and loaded by `SIGHUP` refuses the tickets of the old one and a reload of the same certificate keeps
+  them**; a session offered after its 2 s lifetime does not resume.

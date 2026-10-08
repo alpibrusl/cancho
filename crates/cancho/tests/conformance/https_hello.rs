@@ -6,7 +6,7 @@
 //! pipelining, 200 connections, a large body, a client that stops reading (CI's
 //! `tls-assurance` job runs it).
 
-use super::tls_echo::{Log, Running, build, install, signal};
+use super::tls_echo::{Log, Running, build, install, resuming_clients, signal};
 use super::*;
 use std::io::{BufRead, BufReader};
 use std::sync::{Arc, Condvar, Mutex};
@@ -143,6 +143,50 @@ fn the_server_answers_many_clients_reloads_and_stops_cleanly() {
     let status = server.0.wait().unwrap();
     reader.join().unwrap();
     log.wait("stopping", 1);
+    assert_eq!(status.code(), Some(0));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Session tickets in the HTTPS server (`docs/tls-server.md` §12): with `--tickets 2`, `packages/tls`'s
+/// own client resumes all 8 connections of its second round, each answered by the application as
+/// before, and the server's lines say `resumed=yes`.
+#[test]
+fn the_server_resumes_the_packages_own_client_when_tickets_are_on() {
+    let dir = scratch("https-hello-tickets");
+    let hello = build(&dir, "https_hello", &example_files());
+    let mut many_files = vec![repo_root().join("tests/programs/tls_many.cho")];
+    many_files.extend(super::tls_server::package_files());
+    let many = build(&dir, "tls_many", &many_files);
+    let certs = dir.join("certs");
+    std::fs::create_dir_all(&certs).unwrap();
+    install("first", &certs, &["chain.pem", "key.pem", "names"]);
+
+    let port = free_port();
+    let mut server = Running(
+        Command::new(&hello)
+            .args(["--port", &port.to_string(), "--dir"])
+            .arg(&certs)
+            .args(["--idle", "1000", "--handshakes", "4", "--connections", "64", "--tickets", "2"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let log = Arc::new(Log { lines: Mutex::new(Vec::new()), more: Condvar::new() });
+    let stdout = server.0.stdout.take().unwrap();
+    let writer = Arc::clone(&log);
+    let reader = std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            writer.lines.lock().unwrap().push(line.unwrap());
+            writer.more.notify_all();
+        }
+    });
+    log.wait("listening", 1);
+    assert_eq!(resuming_clients(&many, port, 8), 8, "every second-round connection resumed");
+    log.wait(" resumed=yes ", 8);
+    log.wait(" resumed=no ", 8);
+    signal(server.0.id(), "TERM");
+    let status = server.0.wait().unwrap();
+    reader.join().unwrap();
     assert_eq!(status.code(), Some(0));
     let _ = std::fs::remove_dir_all(&dir);
 }

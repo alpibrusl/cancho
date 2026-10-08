@@ -22,6 +22,15 @@ server on a free port with the options it needs, and says `ok` or what failed:
     shutdown   SIGTERM with 10 connections open: each gets close_notify, the server exits 0
     peer       every line about a connection names its peer (`peer=127.0.0.1:<the client's source port>`), the
                established, closed and refused lines alike (docs/conn-peer.md)
+    tickets    `--tickets 2`: a client that kept its session resumes (Python `ssl`, `session_reused`), three times
+               from the one session, and the server's line says `resumed=yes`; without the flag nothing resumes
+    ticket-keys  `--ticket-keys <file>` shared by two processes: a session from one resumes at the other and not
+               at a third with another file; a rotation by SIGHUP (a new key on top) keeps the old session for
+               one lifetime, a second rotation that drops its key refuses it; a bad file is refused and the keys
+               stay
+    ticket-identity  a certificate renewed and loaded by SIGHUP refuses the tickets of the old (they were made
+               for the other certificate), and a reload of the same certificate keeps them
+    ticket-lifetime  `--ticket-lifetime 2`: a session offered after 3 seconds does not resume
     per-address  `--per-address 3`: a fourth connection from one address is closed at once (`per-address`), one
                from another address (127.0.0.2: Linux has all of 127.0.0.0/8, macOS only 127.0.0.1) is not
                affected, and a place freed by a close is usable again
@@ -66,9 +75,11 @@ def free_port():
 class Server:
     """`tls_echo` on a free port, its lines collected as they come."""
 
-    def __init__(self, exe, identity="first", extra=()):
+    def __init__(self, exe, identity="first", extra=(), files=None):
         self.work = tempfile.mkdtemp(prefix="tls_echo_")
         self.install(identity)
+        for name, data in (files or {}).items():
+            open(os.path.join(self.work, name), "wb").write(data)
         self.port = free_port()
         self.lines = []
         self.cond = threading.Condition()
@@ -259,6 +270,140 @@ def case_reload(exe):
             c.unwrap()
             c.close()
         return "ok (old kept, new renewed, refused reload left renewed serving)"
+    finally:
+        server.stop()
+
+
+# Python's ssl hands a session only to the SSLContext it came from.
+SESSION_CONTEXT = context()
+
+
+def make_session(port):
+    """A full connection that echoes (so the client has read the NewSessionTickets): its session."""
+    raw = socket.create_connection(("127.0.0.1", port), timeout=10)
+    c = SESSION_CONTEXT.wrap_socket(raw, server_hostname=HOST)
+    echo(c, b"to get a ticket")
+    sess = c.session
+    reused = c.session_reused
+    c.unwrap()
+    c.close()
+    return sess, reused
+
+
+def resume_with(port, sess):
+    """A connection offering `sess`: whether it resumed, and the session it ends with."""
+    raw = socket.create_connection(("127.0.0.1", port), timeout=10)
+    c = SESSION_CONTEXT.wrap_socket(raw, server_hostname=HOST, session=sess)
+    echo(c, b"offering a ticket")
+    reused = c.session_reused
+    new = c.session
+    c.unwrap()
+    c.close()
+    return reused, new
+
+
+def case_tickets(exe):
+    off = Server(exe)
+    try:
+        sess, _ = make_session(off.port)
+        reused, _ = resume_with(off.port, sess)
+        if reused:
+            return "a server without --tickets resumed"
+    finally:
+        off.stop()
+    server = Server(exe, extra=["--tickets", "2"])
+    try:
+        sess, first = make_session(server.port)
+        if first:
+            return "the first connection resumed"
+        for n in range(3):
+            reused, _ = resume_with(server.port, sess)
+            if not reused:
+                return f"resumption {n} from one session did not resume"
+        lines = server.wait_for(lambda l: " established " in l, 5, 4)
+        got = [field(l, "resumed") for l in lines]
+        if got != ["no", "yes", "yes", "yes"]:
+            return f"the server's lines say resumed={got}"
+        return "ok (full, then resumed 3 times from one session; off without the flag)"
+    finally:
+        server.stop()
+
+
+def case_ticket_keys(exe):
+    k1, k2, k3 = (os.urandom(32).hex().encode() for _ in range(3))
+    a = Server(exe, extra=["--tickets", "1", "--ticket-keys", "keys"], files={"keys": k1 + b"\n"})
+    b = Server(exe, extra=["--tickets", "1", "--ticket-keys", "keys"], files={"keys": k1 + b"\n"})
+    c = Server(exe, extra=["--tickets", "1", "--ticket-keys", "keys"], files={"keys": k3 + b"\n"})
+    try:
+        sess, _ = make_session(a.port)
+        if not resume_with(b.port, sess)[0]:
+            return "process B, with A's key file, did not resume A's session"
+        if resume_with(c.port, sess)[0]:
+            return "process C, with another key, resumed A's session"
+        # A rotation: the new key on top, the old below it, then SIGHUP.
+        open(os.path.join(a.work, "keys"), "wb").write(k2 + b"\n" + k1 + b"\n")
+        a.signal(signal.SIGHUP)
+        a.wait_for(lambda l: l == "reload tickets ok", 5)
+        reused, newer = resume_with(a.port, sess)
+        if not reused:
+            return "after a rotation the previous key no longer opened the session"
+        # The session it ends with was made under the new key; drop the old key.
+        sess2, _ = make_session(a.port)
+        open(os.path.join(a.work, "keys"), "wb").write(k2 + b"\n")
+        a.signal(signal.SIGHUP)
+        a.wait_for(lambda l: l == "reload tickets ok", 5, 2)
+        if resume_with(a.port, sess)[0]:
+            return "a session from a key that was dropped resumed"
+        if not resume_with(a.port, sess2)[0]:
+            return "a session from the current key did not resume after the old key was dropped"
+        # A bad file is refused and the keys stay.
+        open(os.path.join(a.work, "keys"), "wb").write(b"not hex\n")
+        a.signal(signal.SIGHUP)
+        a.wait_for(lambda l: l == "reload tickets refused tls-server-ticket-key", 5)
+        if not resume_with(a.port, sess2)[0]:
+            return "a refused key file took the keys away"
+        return "ok (A's session resumed at B, not at C; rotated by SIGHUP; the dropped key refused; a bad file refused)"
+    finally:
+        for s in (a, b, c):
+            s.stop()
+
+
+def case_ticket_identity(exe):
+    server = Server(exe, identity="first", extra=["--tickets", "1"])
+    try:
+        sess, _ = make_session(server.port)
+        if not resume_with(server.port, sess)[0]:
+            return "no resumption before the reload"
+        server.install("first", files=("chain.pem", "key.pem"))
+        server.signal(signal.SIGHUP)
+        server.wait_for(lambda l: l == "reload 0 ok", 5)
+        reused, sess = resume_with(server.port, sess)
+        if not reused:
+            return "a reload of the same certificate refused the ticket"
+        server.install("renewed", files=("chain.pem", "key.pem"))
+        server.signal(signal.SIGHUP)
+        server.wait_for(lambda l: l == "reload 0 ok", 5, 2)
+        reused, sess = resume_with(server.port, sess)
+        if reused:
+            return "a ticket made for the old certificate resumed after the identity was replaced"
+        # The session it ends with is for the renewed certificate.
+        if not resume_with(server.port, sess)[0]:
+            return "the renewed certificate's own session did not resume"
+        return "ok (kept across a reload of the same certificate, refused after a renewal, the new one resumes)"
+    finally:
+        server.stop()
+
+
+def case_ticket_lifetime(exe):
+    server = Server(exe, extra=["--tickets", "1", "--ticket-lifetime", "2"])
+    try:
+        sess, _ = make_session(server.port)
+        if not resume_with(server.port, sess)[0]:
+            return "no resumption inside the lifetime"
+        time.sleep(3.2)
+        if resume_with(server.port, sess)[0]:
+            return "a session resumed after its lifetime"
+        return "ok (inside 2 s resumed, 3.2 s later not)"
     finally:
         server.stop()
 
@@ -519,7 +664,9 @@ def case_addr_rate(exe):
 
 CASES = {"suites": case_suites, "many": case_many, "reload": case_reload, "bound": case_bound,
          "rate": case_rate, "full": case_full, "idle": case_idle, "shutdown": case_shutdown,
-         "peer": case_peer, "per-address": case_per_address, "addr-rate": case_addr_rate}
+         "peer": case_peer, "per-address": case_per_address, "addr-rate": case_addr_rate,
+         "tickets": case_tickets, "ticket-keys": case_ticket_keys, "ticket-identity": case_ticket_identity,
+         "ticket-lifetime": case_ticket_lifetime}
 
 
 # ---- the cost ----
@@ -559,6 +706,29 @@ def cost(exe, seconds, clients, extra):
         server.stop()
 
 
+def cost_resumed(exe, seconds, extra):
+    """The server's CPU for connections that resume: one full handshake, then `seconds` of connections offering its
+    session (Python's `ssl`; the server's lines say how many resumed)."""
+    server = Server(exe, extra=extra)
+    try:
+        sess, _ = make_session(server.port)
+        before = cpu_seconds(server.proc.pid)
+        mark = len(server.lines)
+        end = time.time() + seconds
+        while time.time() < end:
+            raw = socket.create_connection(("127.0.0.1", server.port), timeout=10)
+            c = SESSION_CONTEXT.wrap_socket(raw, server_hostname=HOST, session=sess)
+            c.sendall(b"x")
+            c.recv(1)
+            c.close()
+        time.sleep(1)
+        cpu = cpu_seconds(server.proc.pid) - before
+        resumed = sum(1 for l in server.text()[mark:] if " established " in l and field(l, "resumed") == "yes")
+        return resumed, cpu
+    finally:
+        server.stop()
+
+
 def main():
     args = sys.argv[1:]
     if not args:
@@ -570,6 +740,7 @@ def main():
         k = args.index("--cost")
         seconds = int(args[k + 1])
         del args[k:k + 2]
+    args = [a for a in args if a != "--tickets"]
     names = args or list(CASES)
     failed = 0
     for name in names:
@@ -588,6 +759,17 @@ def main():
         print(f"cost       {clients} client(s), {what}, {seconds} s: {done} handshakes ({established} logged), "
               f"{rate:.0f} a second, {cpu:.2f} s of server CPU ({cpu / seconds:.0%} of a core), "
               f"{per:.2f} ms a handshake", flush=True)
+    if seconds and "--tickets" in sys.argv:
+        for what, extra, resumed in [("full, tickets off", UNBOUNDED, False),
+                                     ("full, tickets on (2 sent)", UNBOUNDED + ["--tickets", "2"], False),
+                                     ("resumed, tickets on", UNBOUNDED + ["--tickets", "2"], True)]:
+            if resumed:
+                done, cpu = cost_resumed(exe, seconds, extra)
+            else:
+                done, cpu, _ = cost(exe, seconds, 1, extra)
+            per = cpu / done * 1000 if done else 0
+            print(f"cost       {what}: {done} handshakes in {seconds} s, {cpu:.2f} s of server CPU, "
+                  f"{per:.2f} ms a handshake", flush=True)
     print(f"{len(names) - failed} of {len(names)} cases ok")
     return 1 if failed else 0
 

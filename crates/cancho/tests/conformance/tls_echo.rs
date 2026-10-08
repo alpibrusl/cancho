@@ -204,3 +204,95 @@ fn the_echo_serves_many_connections_reloads_and_stops_cleanly() {
     assert_eq!(status.code(), Some(0));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `conc` connections of `tls_many resume`, twice over: the second round
+/// offers the tickets the first was sent (`docs/tls-resumption.md`). How many
+/// of the lines say `resumed`; every connection of both rounds must have
+/// completed (each round ends `done ok=<conc> failed=0`).
+pub(super) fn resuming_clients(exe: &Path, port: u16, conc: usize) -> usize {
+    let ca = std::fs::read(repo_root().join("tests/vectors/tls/echo/ca.pem")).unwrap();
+    let mut child = Command::new(exe)
+        .args([
+            "127.0.0.1",
+            &port.to_string(),
+            "echo.lex-sys.test",
+            &conc.to_string(),
+            "65536",
+            "resume",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(&ca).unwrap();
+    let out = child.wait_with_output().unwrap();
+    let lines: Vec<String> =
+        String::from_utf8_lossy(&out.stdout).lines().map(str::to_string).collect();
+    assert_eq!(lines.last().cloned(), Some(format!("done ok={conc} failed=0")), "{lines:?}");
+    lines.iter().filter(|l| l.ends_with(" resumed")).count()
+}
+
+/// Session tickets in the example (`docs/tls-server.md` §12): with `--tickets 2`
+/// and a key file, `packages/tls`'s own client resumes all 8 connections of
+/// its second round, the server's lines say `resumed=yes`, a reload of the key
+/// file (`SIGHUP`) takes a new key, and a file that is not hex is refused and
+/// leaves the keys as they were.
+#[test]
+fn the_echo_resumes_the_packages_own_client_and_reloads_its_ticket_keys() {
+    let dir = scratch("tls-echo-tickets");
+    let echo = build(&dir, "tls_echo", &example_files());
+    let mut many_files = vec![repo_root().join("tests/programs/tls_many.cho")];
+    many_files.extend(super::tls_server::package_files());
+    let many = build(&dir, "tls_many", &many_files);
+    let certs = dir.join("certs");
+    std::fs::create_dir_all(&certs).unwrap();
+    install("first", &certs, &["chain.pem", "key.pem", "names"]);
+    let key = |n: u8| format!("{}\n", format!("{n:02x}").repeat(32));
+    std::fs::write(certs.join("keys"), key(1)).unwrap();
+
+    let port = free_port();
+    let mut server = Running(
+        Command::new(&echo)
+            .args(["--port", &port.to_string(), "--dir"])
+            .arg(&certs)
+            .args(["--idle", "1000", "--handshakes", "4", "--connections", "64"])
+            .args(["--tickets", "2", "--ticket-keys", "keys"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let log = Arc::new(Log { lines: Mutex::new(Vec::new()), more: Condvar::new() });
+    let stdout = server.0.stdout.take().unwrap();
+    let writer = Arc::clone(&log);
+    let reader = std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            writer.lines.lock().unwrap().push(line.unwrap());
+            writer.more.notify_all();
+        }
+    });
+    log.wait("listening", 1);
+
+    assert_eq!(resuming_clients(&many, port, 8), 8, "every second-round connection resumed");
+    log.wait(" resumed=yes ", 8);
+    log.wait(" resumed=no ", 8);
+
+    // A new key on top, the old below it: reloaded, and still serving.
+    std::fs::write(certs.join("keys"), format!("{}{}", key(2), key(1))).unwrap();
+    signal(server.0.id(), "HUP");
+    log.wait("reload tickets ok", 1);
+    assert_eq!(resuming_clients(&many, port, 8), 8);
+    log.wait(" resumed=yes ", 16);
+
+    // A file that is not hex is refused, and the keys stay.
+    std::fs::write(certs.join("keys"), "not hex\n").unwrap();
+    signal(server.0.id(), "HUP");
+    log.wait("reload tickets refused tls-server-ticket-key", 1);
+    assert_eq!(resuming_clients(&many, port, 8), 8);
+    log.wait(" resumed=yes ", 24);
+
+    signal(server.0.id(), "TERM");
+    let status = server.0.wait().unwrap();
+    reader.join().unwrap();
+    assert_eq!(status.code(), Some(0));
+    let _ = std::fs::remove_dir_all(&dir);
+}

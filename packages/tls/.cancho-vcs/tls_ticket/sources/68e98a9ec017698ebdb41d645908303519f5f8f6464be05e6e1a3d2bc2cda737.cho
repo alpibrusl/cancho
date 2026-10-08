@@ -1,0 +1,655 @@
+edition 6;
+module tls_ticket;
+import std.bytes;
+import std.chacha20;
+import std.hkdf;
+import std.hmac;
+import tls_message;
+import tls_record;
+import tls_slot;
+
+// `tls_ticket` -- the server's session tickets (`docs/tls-server.md` §12): a ticket is the connection's
+// resumption state sealed under a ticket key and handed to the client, so the server keeps nothing
+// for it; the ring of ticket keys and its rotation; the settings; and the rules a ticket must pass
+// to be resumed (§12.3). All of it is one byte slice, `tk`, which the engine owns and hands to
+// `tls_server` with every `feed`. A key is never given back. Not independently reviewed (#209).
+//
+// The layout of `tk`: tickets a connection (1 byte, 0: off), whether the engine makes its own keys
+// (1), the current key's index (1, 255: none), a spare byte, the lifetime in seconds (4); then 4 key
+// entries of 72 bytes: in use (1), 7 spare, created (8, ms), open until (8, ms, 0: no end, the
+// current key), name (16), secret (32).
+
+pub fn max_keys() -> [] int {
+    return 4;
+}
+
+pub fn max_count() -> [] int {
+    return 8;
+}
+
+pub fn max_lifetime() -> [] int {
+    return 604800;
+}
+
+pub fn default_lifetime() -> [] int {
+    return 3600;
+}
+
+// How far the client's ticket age and the server's may differ (`docs/tls-server.md` §12.3 c).
+pub fn window_ms() -> [] int {
+    return 30000;
+}
+
+fn o_count() -> [] int {
+    return 0;
+}
+
+fn o_auto() -> [] int {
+    return 1;
+}
+
+fn o_current() -> [] int {
+    return 2;
+}
+
+fn o_lifetime() -> [] int {
+    return 4;
+}
+
+fn keys_base() -> [] int {
+    return 8;
+}
+
+fn key_stride() -> [] int {
+    return 72;
+}
+
+fn e_created() -> [] int {
+    return 8;
+}
+
+fn e_until() -> [] int {
+    return 16;
+}
+
+fn e_name() -> [] int {
+    return 24;
+}
+
+fn e_secret() -> [] int {
+    return 40;
+}
+
+fn kat(i: int) -> [] int {
+    return keys_base() + i * key_stride();
+}
+
+pub fn tk_len() -> [] int {
+    return keys_base() + max_keys() * key_stride();
+}
+
+// ---- The verdict on a ticket offered (`docs/tls-server.md` §12.7) ----
+
+pub fn v_none() -> [] int {
+    return 0;
+}
+
+pub fn v_resumed() -> [] int {
+    return 1;
+}
+
+pub fn v_off() -> [] int {
+    return 2;
+}
+
+pub fn v_no_psk_dhe_ke() -> [] int {
+    return 3;
+}
+
+pub fn v_unknown() -> [] int {
+    return 4;
+}
+
+pub fn v_tampered() -> [] int {
+    return 5;
+}
+
+pub fn v_format() -> [] int {
+    return 6;
+}
+
+pub fn v_auth() -> [] int {
+    return 7;
+}
+
+pub fn v_expired() -> [] int {
+    return 8;
+}
+
+pub fn v_age() -> [] int {
+    return 9;
+}
+
+pub fn v_name() -> [] int {
+    return 10;
+}
+
+pub fn v_identity() -> [] int {
+    return 11;
+}
+
+pub fn v_suite() -> [] int {
+    return 12;
+}
+
+pub fn v_alpn() -> [] int {
+    return 13;
+}
+
+pub fn verdict_tag(v: int) -> [] &static [byte] {
+    if v == 0 {
+        return "tls-ticket-none";
+    }
+    if v == 1 {
+        return "tls-ticket-resumed";
+    }
+    if v == 2 {
+        return "tls-ticket-off";
+    }
+    if v == 3 {
+        return "tls-ticket-no-psk-dhe-ke";
+    }
+    if v == 4 {
+        return "tls-ticket-unknown";
+    }
+    if v == 5 {
+        return "tls-ticket-tampered";
+    }
+    if v == 6 {
+        return "tls-ticket-format";
+    }
+    if v == 7 {
+        return "tls-ticket-auth";
+    }
+    if v == 8 {
+        return "tls-ticket-expired";
+    }
+    if v == 9 {
+        return "tls-ticket-age";
+    }
+    if v == 10 {
+        return "tls-ticket-name";
+    }
+    if v == 11 {
+        return "tls-ticket-identity";
+    }
+    if v == 12 {
+        return "tls-ticket-suite";
+    }
+    if v == 13 {
+        return "tls-ticket-alpn";
+    }
+    return "unknown";
+}
+
+// ---- Settings ----
+
+pub fn init[&t](tk: &!t [byte]) -> [] int {
+    tk[o_current()] = byte_of(255);
+    tk[o_auto()] = byte_of(1);
+    tls_message.put(tk, o_lifetime(), default_lifetime(), 4);
+    return 0;
+}
+
+// Tickets a connection: 0 is off.
+pub fn count[&t](tk: &t [byte]) -> [] int {
+    return int_of(tk[o_count()]);
+}
+
+pub fn lifetime[&t](tk: &t [byte]) -> [] int {
+    return tls_message.get(tk, o_lifetime(), 4);
+}
+
+// `count` tickets a connection (0 to 8; 0 off) of `lifetime_s` seconds (1 to 7 days), or
+// `tls-server-ticket-config`.
+pub fn configure[&t](tk: &!t [byte], n: int, lifetime_s: int) -> [] int {
+    if n < 0 || n > max_count() || lifetime_s < 1 || lifetime_s > max_lifetime() {
+        return tls_record.server_ticket_config();
+    }
+    tk[o_count()] = byte_of(n);
+    tls_message.put(tk, o_lifetime(), lifetime_s, 4);
+    return 0;
+}
+
+// ---- The ring of keys (`docs/tls-server.md` §12.2) ----
+
+fn in_use[&t](tk: &t [byte], s: int) -> [] bool {
+    return int_of(tk[kat(s)]) == 1;
+}
+
+fn current_slot[&t](tk: &t [byte]) -> [] int {
+    let c = int_of(tk[o_current()]);
+    if c < max_keys() && in_use(tk, c) {
+        return c;
+    }
+    return 0 - 1;
+}
+
+// A key's name: the first 16 bytes of HMAC-SHA-256(secret, a label), so every process given the
+// same secret computes the same name.
+fn name_of[&s, &o](secret: &s [byte], out: &!o [byte]) -> [] int {
+    region r {
+        let full = alloc_slice[r](32, byte_of(0));
+        hmac.mac(32, secret, "cancho tls ticket key name v1", full);
+        tls_slot.copy_bytes(full[0..16], out);
+    }
+    return 0;
+}
+
+// The slot holding the key called `name`, or -1.
+fn find[&t, &n](tk: &t [byte], name: &n [byte]) -> [] int {
+    var s = 0;
+    while s < max_keys() {
+        if in_use(tk, s) && bytes.equal(tk[kat(s) + e_name()..kat(s) + e_name() + 16], name) {
+            return s;
+        }
+        s = s + 1;
+    }
+    return 0 - 1;
+}
+
+fn wipe_slot[&t](tk: &!t [byte], s: int) -> [] int {
+    bytes.zero(tk[kat(s)..kat(s) + key_stride()]);
+    return 0;
+}
+
+fn place[&t, &k, &n](tk: &!t [byte], s: int, secret: &k [byte], name: &n [byte], created: int, until: int) -> [] int {
+    tk[kat(s)] = byte_of(1);
+    tls_message.put(tk, kat(s) + e_created(), created, 8);
+    tls_message.put(tk, kat(s) + e_until(), until, 8);
+    tls_slot.copy_bytes(name, tk[kat(s) + e_name()..kat(s) + e_name() + 16]);
+    tls_slot.copy_bytes(secret, tk[kat(s) + e_secret()..kat(s) + e_secret() + 32]);
+    return 0;
+}
+
+// A slot for a new key: an unused one, else the oldest of those not in `keep` (a mask) and not
+// `avoid`.
+fn spare[&t, &m](tk: &t [byte], keep: &m [int], avoid: int) -> [] int {
+    var s = 0;
+    while s < max_keys() {
+        if !in_use(tk, s) && keep[s] == 0 && s != avoid {
+            return s;
+        }
+        s = s + 1;
+    }
+    var best = 0 - 1;
+    s = 0;
+    while s < max_keys() {
+        if keep[s] == 0 && s != avoid {
+            if best < 0 || tls_message.get(tk, kat(s) + e_created(), 8) < tls_message.get(tk, kat(best) + e_created(), 8) {
+                best = s;
+            }
+        }
+        s = s + 1;
+    }
+    return best;
+}
+
+// `secret` becomes the current key; the key that was current opens tickets for one lifetime more
+// and then no longer. A secret that is current already changes nothing.
+pub fn make_current[&t, &k](tk: &!t [byte], secret: &k [byte], now_ms: int) -> [] int {
+    region r {
+        let name = alloc_slice[r](16, byte_of(0));
+        let keep = alloc_slice[r](max_keys(), 0);
+        name_of(secret, name);
+        let cur = current_slot(tk);
+        var s = find(tk, name);
+        if s < 0 || s != cur {
+            if cur >= 0 {
+                tls_message.put(tk, kat(cur) + e_until(), now_ms + lifetime(tk) * 1000, 8);
+            }
+            if s < 0 {
+                s = spare(tk, keep, cur);
+                place(tk, s, secret, name, now_ms, 0);
+            } else {
+                tls_message.put(tk, kat(s) + e_until(), 0, 8);
+            }
+            tk[o_current()] = byte_of(s);
+        }
+    }
+    return 0;
+}
+
+// The engine's own rotation is due: tickets are on, the program supplies no keys, and there is no
+// current key or it has served a lifetime.
+pub fn due[&t](tk: &t [byte], now_ms: int) -> [] bool {
+    if count(tk) == 0 || int_of(tk[o_auto()]) != 1 {
+        return false;
+    }
+    let cur = current_slot(tk);
+    if cur < 0 {
+        return true;
+    }
+    return now_ms >= tls_message.get(tk, kat(cur) + e_created(), 8) + lifetime(tk) * 1000;
+}
+
+// Whether there is a key that seals.
+pub fn has_current[&t](tk: &t [byte]) -> [] bool {
+    return current_slot(tk) >= 0;
+}
+
+// The keys that still open tickets at `now_ms`, the current one included.
+pub fn open_keys[&t](tk: &t [byte], now_ms: int) -> [] int {
+    var n = 0;
+    var s = 0;
+    while s < max_keys() {
+        if usable(tk, s, now_ms) {
+            n = n + 1;
+        }
+        s = s + 1;
+    }
+    return n;
+}
+
+fn usable[&t](tk: &t [byte], s: int, now_ms: int) -> [] bool {
+    if !in_use(tk, s) {
+        return false;
+    }
+    let until = tls_message.get(tk, kat(s) + e_until(), 8);
+    return until == 0 || now_ms < until;
+}
+
+// The keys the program supplies, `n` of 32 bytes each: the first is current, the others open
+// tickets for one lifetime from `now_ms` unless the engine already held them (`docs/tls-server.md`
+// §12.2). A key not listed is overwritten. The engine then makes no keys of its own. `n` outside 1
+// to 4 is `tls-server-ticket-key`.
+pub fn set_keys[&t, &k](tk: &!t [byte], keys: &k [byte], now_ms: int) -> [] int {
+    let n = len(keys) / 32;
+    if len(keys) == 0 || len(keys) % 32 != 0 || n > max_keys() {
+        return tls_record.server_ticket_key();
+    }
+    let until = now_ms + lifetime(tk) * 1000;
+    region r {
+        let keep = alloc_slice[r](max_keys(), 0);
+        let slot_of = alloc_slice[r](max_keys(), 0 - 1);
+        let name = alloc_slice[r](16, byte_of(0));
+        let before = current_slot(tk);
+        var i = 0;
+        while i < n {
+            name_of(keys[i * 32..i * 32 + 32], name);
+            let s = find(tk, name);
+            slot_of[i] = s;
+            if s >= 0 {
+                keep[s] = 1;
+            }
+            i = i + 1;
+        }
+        i = 0;
+        while i < n {
+            name_of(keys[i * 32..i * 32 + 32], name);
+            var s = slot_of[i];
+            var fresh = false;
+            if s < 0 {
+                s = spare(tk, keep, 0 - 1);
+                wipe_slot(tk, s);
+                place(tk, s, keys[i * 32..i * 32 + 32], name, now_ms, until);
+                keep[s] = 1;
+                fresh = true;
+            }
+            if i == 0 {
+                tls_message.put(tk, kat(s) + e_until(), 0, 8);
+                tk[o_current()] = byte_of(s);
+            } else if fresh || s == before {
+                tls_message.put(tk, kat(s) + e_until(), until, 8);
+            }
+            i = i + 1;
+        }
+        var s = 0;
+        while s < max_keys() {
+            if keep[s] == 0 {
+                wipe_slot(tk, s);
+            }
+            s = s + 1;
+        }
+    }
+    tk[o_auto()] = byte_of(0);
+    return 0;
+}
+
+// ---- Sealing (`docs/tls-server.md` §12.1) ----
+
+// The most a ticket holds: 617 bytes of plaintext (a 255-byte name and protocol, a SHA-384 PSK)
+// and 64 of key name, salt and tag.
+pub fn max_ticket() -> [] int {
+    return 681;
+}
+
+fn subkey[&k, &s, &o](key: &k [byte], salt: &s [byte], out: &!o [byte]) -> [] int {
+    region r {
+        let prk = alloc_slice[r](32, byte_of(0));
+        hkdf.extract(32, salt, key, prk);
+        hkdf.expand(32, prk, "cancho tls ticket v1", out);
+        bytes.zero(prk);
+    }
+    return 0;
+}
+
+// The associated data: the format's version, the key's name and the salt, which are the first 48
+// bytes of the ticket.
+fn aad_of[&t, &o](ticket: &t [byte], out: &!o [byte]) -> [] int {
+    out[0] = byte_of(1);
+    tls_slot.copy_bytes(ticket[0..48], out[1..49]);
+    return 0;
+}
+
+// `plain` sealed under the current key and `salt` (32 fresh bytes) into `out`, which is
+// `len(plain) + 64` bytes: the key's name, the salt, the ciphertext and its tag. 0, or -1 when
+// there is no current key (a caller checks `has_current`) or the sizes are wrong.
+pub fn seal[&t, &p, &s, &o](tk: &t [byte], plain: &p [byte], salt: &s [byte], out: &!o [byte]) -> [] int {
+    let cur = current_slot(tk);
+    if cur < 0 || len(salt) != 32 || len(out) != len(plain) + 64 {
+        return 0 - 1;
+    }
+    tls_slot.copy_bytes(tk[kat(cur) + e_name()..kat(cur) + e_name() + 16], out[0..16]);
+    tls_slot.copy_bytes(salt, out[16..48]);
+    var code = 0;
+    region r {
+        let sk = alloc_slice[r](32, byte_of(0));
+        let nonce = alloc_slice[r](12, byte_of(0));
+        let aad = alloc_slice[r](49, byte_of(0));
+        subkey(tk[kat(cur) + e_secret()..kat(cur) + e_secret() + 32], salt, sk);
+        aad_of(out, aad);
+        code = chacha20.seal(sk, nonce, aad, plain, out[48..len(out)]);
+        bytes.zero(sk);
+    }
+    if code != 0 {
+        return 0 - 1;
+    }
+    return len(out);
+}
+
+// `ticket` opened into `out` (at least `len(ticket) - 64` bytes) at `now_ms`: the plaintext's
+// length, or the negative of the verdict: `v_unknown` for a size no ticket has or a key this engine
+// does not hold (or no longer opens with), `v_tampered` when it holds the key and the tag says no.
+pub fn open[&t, &k, &o](tk: &t [byte], ticket: &k [byte], now_ms: int, out: &!o [byte]) -> [] int {
+    if len(ticket) < 64 + 1 || len(ticket) > max_ticket() || len(out) < len(ticket) - 64 {
+        return 0 - v_unknown();
+    }
+    var result = 0 - v_unknown();
+    region r {
+        let s = find(tk, ticket[0..16]);
+        if s >= 0 && usable(tk, s, now_ms) {
+            let sk = alloc_slice[r](32, byte_of(0));
+            let nonce = alloc_slice[r](12, byte_of(0));
+            let aad = alloc_slice[r](49, byte_of(0));
+            subkey(tk[kat(s) + e_secret()..kat(s) + e_secret() + 32], ticket[16..48], sk);
+            aad_of(ticket, aad);
+            let n = len(ticket) - 64;
+            if chacha20.open(sk, nonce, aad, ticket[48..len(ticket)], out[0..n]) == 0 {
+                result = n;
+            } else {
+                result = 0 - v_tampered();
+            }
+            bytes.zero(sk);
+        }
+    }
+    return result;
+}
+
+// ---- The plaintext of a ticket (§12.1) ----
+
+fn p_issue() -> [] int {
+    return 2;
+}
+
+fn p_expiry() -> [] int {
+    return 10;
+}
+
+fn p_age_add() -> [] int {
+    return 18;
+}
+
+fn p_suite() -> [] int {
+    return 22;
+}
+
+fn p_hlen() -> [] int {
+    return 24;
+}
+
+fn p_psk() -> [] int {
+    return 25;
+}
+
+pub fn plain_len(hash_len: int, sni_len: int, alpn_len: int) -> [] int {
+    return 25 + hash_len + 32 + 1 + sni_len + 1 + alpn_len;
+}
+
+// The plaintext of a ticket into `out` (`plain_len` bytes).
+pub fn encode[&o, &k, &f, &s, &a](out: &!o [byte], issue_ms: int, expiry_ms: int, age_add: int, suite: int, psk: &k [byte], fp: &f [byte], sni: &s [byte], alpn: &a [byte]) -> [] int {
+    out[0] = byte_of(1);
+    out[1] = byte_of(0);
+    tls_message.put(out, p_issue(), issue_ms, 8);
+    tls_message.put(out, p_expiry(), expiry_ms, 8);
+    tls_message.put(out, p_age_add(), age_add, 4);
+    tls_message.put(out, p_suite(), suite, 2);
+    out[p_hlen()] = byte_of(len(psk));
+    var at = p_psk();
+    at = tls_message.copy_to(psk, out, at);
+    at = tls_message.copy_to(fp, out, at);
+    out[at] = byte_of(len(sni));
+    at = tls_message.copy_to(sni, out, at + 1);
+    out[at] = byte_of(len(alpn));
+    at = tls_message.copy_to(alpn, out, at + 1);
+    return at;
+}
+
+// Whether `plain` is version 1, with a PSK of 32 or 48 bytes, a name and a protocol, and nothing
+// else.
+pub fn well_formed[&p](plain: &p [byte]) -> [] bool {
+    if len(plain) < 25 || int_of(plain[0]) != 1 {
+        return false;
+    }
+    let h = int_of(plain[p_hlen()]);
+    if h != 32 && h != 48 {
+        return false;
+    }
+    let at = p_psk() + h + 32;
+    if at + 1 > len(plain) {
+        return false;
+    }
+    let s = int_of(plain[at]);
+    if at + 1 + s + 1 > len(plain) {
+        return false;
+    }
+    let a = int_of(plain[at + 1 + s]);
+    return at + 1 + s + 1 + a == len(plain);
+}
+
+pub fn t_auth[&p](plain: &p [byte]) -> [] int {
+    return int_of(plain[1]);
+}
+
+pub fn t_issue[&p](plain: &p [byte]) -> [] int {
+    return tls_message.get(plain, p_issue(), 8);
+}
+
+pub fn t_expiry[&p](plain: &p [byte]) -> [] int {
+    return tls_message.get(plain, p_expiry(), 8);
+}
+
+pub fn t_age_add[&p](plain: &p [byte]) -> [] int {
+    return tls_message.get(plain, p_age_add(), 4);
+}
+
+pub fn t_suite[&p](plain: &p [byte]) -> [] int {
+    return tls_message.get(plain, p_suite(), 2);
+}
+
+pub fn t_hash_len[&p](plain: &p [byte]) -> [] int {
+    return int_of(plain[p_hlen()]);
+}
+
+pub fn t_psk[&p](plain: &p [byte]) -> [] &p [byte] {
+    return plain[p_psk()..p_psk() + int_of(plain[p_hlen()])];
+}
+
+fn fp_at[&p](plain: &p [byte]) -> [] int {
+    return p_psk() + int_of(plain[p_hlen()]);
+}
+
+pub fn t_fp[&p](plain: &p [byte]) -> [] &p [byte] {
+    return plain[fp_at(plain)..fp_at(plain) + 32];
+}
+
+pub fn t_sni[&p](plain: &p [byte]) -> [] &p [byte] {
+    let at = fp_at(plain) + 32;
+    return plain[at + 1..at + 1 + int_of(plain[at])];
+}
+
+pub fn t_alpn[&p](plain: &p [byte]) -> [] &p [byte] {
+    let at = fp_at(plain) + 32;
+    let b = at + 1 + int_of(plain[at]);
+    return plain[b + 1..b + 1 + int_of(plain[b])];
+}
+
+// ---- The rules (§12.3) ----
+
+// The verdict on an opened ticket `plain` for a ClientHello at `now_ms` that sends `obfuscated_age`
+// (RFC 8446 §4.2.11: the client's age in ms plus this ticket's `age_add`, mod 2^32), the name `sni` it sends, the leaf's
+// fingerprint `fp` of the identity that name selects, the hash length of the suite chosen and the
+// protocol chosen: 0 when every rule holds, else the first that fails, in the order of §12.7.
+pub fn check[&p, &s, &f, &a](plain: &p [byte], now_ms: int, obfuscated_age: int, sni: &s [byte], fp: &f [byte], hash_len: int, alpn: &a [byte]) -> [] int {
+    if !well_formed(plain) {
+        return v_format();
+    }
+    if t_auth(plain) != 0 {
+        return v_auth();
+    }
+    if now_ms >= t_expiry(plain) {
+        return v_expired();
+    }
+    let age = now_ms - t_issue(plain);
+    let client_age = (obfuscated_age - t_age_add(plain) + 4294967296) % 4294967296;
+    var d = client_age - age;
+    if d < 0 {
+        d = 0 - d;
+    }
+    if d > window_ms() {
+        return v_age();
+    }
+    if !bytes.equal(t_sni(plain), sni) {
+        return v_name();
+    }
+    if !bytes.equal(t_fp(plain), fp) {
+        return v_identity();
+    }
+    if t_hash_len(plain) != hash_len {
+        return v_suite();
+    }
+    if !bytes.equal(t_alpn(plain), alpn) {
+        return v_alpn();
+    }
+    return 0;
+}

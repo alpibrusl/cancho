@@ -10,6 +10,14 @@ edition 6;
 //              [--alpn <p1,p2,...>] [--connections <n>] [--handshakes <n>]
 //              [--rate <per second>] [--handshake-timeout <ms>] [--idle <ms>]
 //              [--per-address <n>] [--per-address-rate <per second>]
+//              [--tickets <n>] [--ticket-lifetime <seconds>] [--ticket-keys <file>]
+//
+// `--tickets <n>` sends each client that can resume `n` session tickets (0 to 8; the default 0 sends none:
+// `docs/tls-server.md` §12), good for `--ticket-lifetime` seconds (3,600). The engine makes its own ticket key and
+// replaces it every lifetime, so tickets last as long as the process. `--ticket-keys` names a file in `--dir` of up to
+// 4 lines of 64 hex digits (`openssl rand -hex 32`), the newest first, that every process of a fleet shares; `SIGHUP`
+// reads it again, so a rotation is a new line at the top of the file and a signal, and the old keys still open
+// tickets for one lifetime. Without it, a restart ends every ticket.
 //
 // `--dir` holds the certificates: `chain.pem` (PEM, leaf first), `key.pem`
 // (P-256, PKCS#8 or SEC 1, unencrypted) and `names` (the host names it
@@ -45,6 +53,7 @@ fn usage[&i](io: &!i Io) -> [err_write] int {
     io.error_all(io, "usage: tls_echo --port <n> --dir <directory> [--identity <subdirectory>]... [--alpn <p1,p2>]\n");
     io.error_all(io, "                [--connections <n>] [--handshakes <n>] [--rate <n>] [--handshake-timeout <ms>] [--idle <ms>]\n");
     io.error_all(io, "                [--per-address <n>] [--per-address-rate <n>]\n");
+    io.error_all(io, "                [--tickets <n>] [--ticket-lifetime <seconds>] [--ticket-keys <file in the directory>]\n");
     return 2;
 }
 
@@ -56,8 +65,8 @@ fn main(world: World) -> [] int {
     borrow mut io as &!i in {
         borrow mut heap as &!h in {
             let cfgb = box_slice(h, front.cfg_len() + 1, 0);
-            let subsb = box_slice(h, 16 * front.sub_cap(), byte_of(0));
-            let lensb = box_slice(h, 16, 0);
+            let subsb = box_slice(h, front.subs_len(), byte_of(0));
+            let lensb = box_slice(h, front.key_slot() + 1, 0);
             borrow mut cfgb as &!cw in {
                 borrow mut subsb as &!uw in {
                     borrow mut lensb as &!lw in {
