@@ -549,6 +549,13 @@ pub enum Builtin {
     UdpSend,
     /// `udp_local_port(&Udp) -> [] int`: the port the kernel chose, or `-errno`.
     UdpLocalPort,
+    /// `udp_peer(&Udp, ticket) -> [] int` -- `docs/udp.md` §12: who a ticket names, as data: the sender's IPv4 address as a
+    /// 32-bit number (first octet highest) shifted up 16 bits, or'd with its port. `-1` for a ticket that is not valid on this
+    /// socket (the check `udp_send_to` makes). It reaches nothing: there is still no send to an address.
+    UdpPeer,
+    /// `conn_peer(&Conn) -> [] int` -- `docs/native-sockets.md` §10: the same number for the far end of a connection
+    /// (`getpeername`), or `-errno`.
+    ConnPeer,
     /// `udp_nonblocking(&!Udp) -> [] int`: one way, explicit.
     UdpNonblocking,
     /// `udp_close(Udp) -> [] int`: consumes the handle.
@@ -838,6 +845,8 @@ impl Builtin {
         Builtin::UdpRecv,
         Builtin::UdpSend,
         Builtin::UdpLocalPort,
+        Builtin::UdpPeer,
+        Builtin::ConnPeer,
         Builtin::UdpNonblocking,
         Builtin::UdpClose,
         Builtin::UdpDetach,
@@ -978,6 +987,8 @@ impl Builtin {
             Builtin::UdpRecv => "udp_recv",
             Builtin::UdpSend => "udp_send",
             Builtin::UdpLocalPort => "udp_local_port",
+            Builtin::UdpPeer => "udp_peer",
+            Builtin::ConnPeer => "conn_peer",
             Builtin::UdpNonblocking => "udp_nonblocking",
             Builtin::UdpClose => "udp_close",
             Builtin::UdpDetach => "udp_detach",
@@ -1079,6 +1090,8 @@ impl Builtin {
             | Builtin::UdpRecv
             | Builtin::UdpSend
             | Builtin::UdpLocalPort
+            | Builtin::UdpPeer
+            | Builtin::ConnPeer
             | Builtin::UdpNonblocking
             | Builtin::UdpClose
             | Builtin::UdpDetach
@@ -1279,6 +1292,8 @@ impl Builtin {
             | Builtin::ConnConnectStatus
             | Builtin::ListenerNonblocking
             | Builtin::UdpLocalPort
+            | Builtin::UdpPeer
+            | Builtin::ConnPeer
             | Builtin::UdpNonblocking
             | Builtin::ForkClock
             | Builtin::CopyWithin

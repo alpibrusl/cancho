@@ -622,8 +622,34 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         vec![tag, moved, reason]
     }
 
-    /// `udp_local_port(&Udp)`: the port the kernel chose, from `getsockname`, or `-errno`.
-    pub(crate) fn udp_local_port(&mut self, args: &[Value]) -> Vec<Value> {
+    /// One byte of a `sockaddr_in` at `base + offset`, as an `i64`.
+    fn sockaddr_byte(&mut self, base: Value, offset: i32) -> Value {
+        let b = self.builder.ins().load(types::I8, MemFlags::trusted(), base, offset);
+        self.builder.ins().uextend(types::I64, b)
+    }
+
+    /// The number a `sockaddr_in` at `base` stands for: its port (big-endian at bytes 2 and 3, on both kernels), and with
+    /// `with_address` the IPv4 address (bytes 4 to 7) above it, shifted up 16 bits.
+    fn sockaddr_number(&mut self, base: Value, with_address: bool) -> Value {
+        let high = self.sockaddr_byte(base, 2);
+        let low = self.sockaddr_byte(base, 3);
+        let shifted = self.builder.ins().ishl_imm(high, 8);
+        let port = self.builder.ins().bor(shifted, low);
+        if !with_address {
+            return port;
+        }
+        let mut address = self.sockaddr_byte(base, 4);
+        for offset in 5..8 {
+            let next = self.sockaddr_byte(base, offset);
+            let up = self.builder.ins().ishl_imm(address, 8);
+            address = self.builder.ins().bor(up, next);
+        }
+        let above = self.builder.ins().ishl_imm(address, 16);
+        self.builder.ins().bor(above, port)
+    }
+
+    /// `getsockname` or `getpeername` (`call`) on the handle, answered as `sockaddr_number`, or `-errno`.
+    fn socket_name(&mut self, args: &[Value], call: &str, with_address: bool) -> Vec<Value> {
         let pointer = self.pointer;
         let fd = self.handle_fd(args[0]);
         let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
@@ -641,22 +667,55 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         let sixteen = self.builder.ins().iconst(types::I32, 16);
         self.builder.ins().store(MemFlags::trusted(), sixteen, len_at, 0);
         let result = self.libc_call(
-            "getsockname",
+            call,
             &[types::I32, pointer, pointer],
             &[types::I32],
             &[fd, addr, len_at],
         );
         let reason = self.errno();
-        // Big-endian at bytes 2 and 3 of a `sockaddr_in`, on both kernels.
-        let high = self.builder.ins().load(types::I8, MemFlags::trusted(), addr, 2);
-        let low = self.builder.ins().load(types::I8, MemFlags::trusted(), addr, 3);
-        let high = self.builder.ins().uextend(types::I64, high);
-        let low = self.builder.ins().uextend(types::I64, low);
-        let shifted = self.builder.ins().ishl_imm(high, 8);
-        let port = self.builder.ins().bor(shifted, low);
+        let number = self.sockaddr_number(addr, with_address);
         let failed = self.builder.ins().icmp_imm(IntCC::SignedLessThan, result, 0);
         let negated = self.builder.ins().ineg(reason);
-        vec![self.builder.ins().select(failed, negated, port)]
+        vec![self.builder.ins().select(failed, negated, number)]
+    }
+
+    /// `udp_local_port(&Udp)`: the port the kernel chose, from `getsockname`, or `-errno`.
+    pub(crate) fn udp_local_port(&mut self, args: &[Value]) -> Vec<Value> {
+        self.socket_name(args, "getsockname", false)
+    }
+
+    /// `conn_peer(&Conn)` (`docs/native-sockets.md` §10): address and port of the far end, from `getpeername`, or `-errno`.
+    pub(crate) fn conn_peer(&mut self, args: &[Value]) -> Vec<Value> {
+        self.socket_name(args, "getpeername", true)
+    }
+
+    /// `udp_peer(&Udp, ticket)` (`docs/udp.md` §12): who the ticket names, if it is valid on this socket (positive, still the
+    /// one its ring entry holds, issued to this socket: the checks `udp_send_to` makes), else `-1`.
+    pub(crate) fn udp_peer(&mut self, args: &[Value]) -> Vec<Value> {
+        let fd = self.handle_fd(args[0]);
+        let ticket = args[1];
+        let (entry, _) = self.peer_entry(ticket);
+        let stored = self.builder.ins().load(
+            types::I64,
+            MemFlags::trusted(),
+            entry,
+            cancho_ir::UDP_PEER_TICKET_AT,
+        );
+        let owner = self.builder.ins().load(
+            types::I32,
+            MemFlags::trusted(),
+            entry,
+            cancho_ir::UDP_PEER_FD_AT,
+        );
+        let positive = self.builder.ins().icmp_imm(IntCC::SignedGreaterThan, ticket, 0);
+        let current = self.builder.ins().icmp(IntCC::Equal, stored, ticket);
+        let mine = self.builder.ins().icmp(IntCC::Equal, owner, fd);
+        let valid = self.builder.ins().band(positive, current);
+        let valid = self.builder.ins().band(valid, mine);
+        // The entry is inside the ring whatever the ticket, so the loads are safe; the answer is discarded when invalid.
+        let number = self.sockaddr_number(entry, true);
+        let minus_one = self.builder.ins().iconst(types::I64, -1);
+        vec![self.builder.ins().select(valid, number, minus_one)]
     }
 
     /// `conn_write(&!Conn, &[byte])`: `Sent` is `Wrote` 0, `Again` 1,

@@ -1201,3 +1201,189 @@ fn a_socket_table_finds_each_socket_by_slot() {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+// ---------------------------------------------------------------------
+// Who a ticket, or a connection, names (`docs/udp.md` §12)
+// ---------------------------------------------------------------------
+
+/// The six bytes that tell `address * 65536 + port` (first octet highest) in `PEER`, big-endian, in cancho: `out[0..6]`.
+const PEER_BYTES: &str = r#"
+fn put_peer[&b](out: &!b [byte], peer: int) -> [] int {
+    out[0] = byte_of(peer / 1099511627776 % 256);
+    out[1] = byte_of(peer / 4294967296 % 256);
+    out[2] = byte_of(peer / 16777216 % 256);
+    out[3] = byte_of(peer / 65536 % 256);
+    out[4] = byte_of(peer / 256 % 256);
+    out[5] = byte_of(peer % 256);
+    return 0;
+}
+"#;
+
+/// `udp_peer` names the sender of a ticket as data; a forged, stale or other socket's ticket is -1 (the checks `udp_send_to`
+/// makes), and the real one is the sender's address and port.
+const UDP_PEER: &str = r#"
+fn run(net: Net(""), io: Io) -> [] int {
+    var status = 1;
+    borrow mut io as &!i in {
+        borrow net as &n in {
+            match udp_bind(n, PORT, 0) {
+                UdpOpened::Ok(u) => {
+                    var sock = u;
+                    match udp_bind(n, OTHER, 0) {
+                        UdpOpened::Ok(v) => {
+                            var stranger = v;
+                            borrow mut sock as &!uh in {
+                                borrow stranger as &sh in {
+                                    io.error_all(i, "ready\n");
+                                    region a {
+                                        var buf = alloc_slice[a](64, byte_of(0));
+                                        var who = alloc_slice[a](1, 0);
+                                        match udp_recv_from(uh, buf, who) {
+                                            Datagram::Got(k) => {
+                                                let peer = udp_peer(uh, who[0]);
+                                                var bad = 0;
+                                                if udp_peer(uh, 0) != 0 - 1 { bad = bad + 1; }
+                                                if udp_peer(uh, 0 - 5) != 0 - 1 { bad = bad + 1; }
+                                                if udp_peer(uh, who[0] + 1000) != 0 - 1 { bad = bad + 1; }
+                                                if udp_peer(uh, who[0] + 65536) != 0 - 1 { bad = bad + 1; }
+                                                if udp_peer(uh, who[0] - 65536) != 0 - 1 { bad = bad + 1; }
+                                                if udp_peer(sh, who[0]) != 0 - 1 { bad = bad + 1; }
+                                                var out = alloc_slice[a](6, byte_of(0));
+                                                put_peer(out, peer);
+                                                if bad == 0 && peer > 0 {
+                                                    match udp_send_to(uh, out, who[0]) {
+                                                        Sent::Wrote(w) => { status = 0; }
+                                                        Sent::Again => { status = 6; }
+                                                        Sent::Failed(e) => { status = 7; }
+                                                    }
+                                                } else {
+                                                    status = 10 + bad;
+                                                }
+                                            }
+                                            Datagram::Truncated(k) => { status = 3; }
+                                            Datagram::Again => { status = 4; }
+                                            Datagram::Failed(e) => { status = 8; }
+                                        }
+                                    }
+                                }
+                            }
+                            udp_close(stranger);
+                        }
+                        UdpOpened::Failed(e) => { status = 9; }
+                    }
+                    udp_close(sock);
+                }
+                UdpOpened::Failed(e) => { status = 2; }
+            }
+        }
+    }
+    release(net);
+    release(io);
+    return status;
+}
+"#;
+
+#[test]
+fn a_ticket_names_its_sender_and_only_on_the_socket_that_heard_it() {
+    let source = format!("{PEER_BYTES}{UDP_PEER}");
+    serve_open("udp-peer", &source, 0, |port| {
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        socket.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        socket.send_to(b"hi", ("127.0.0.1", port)).unwrap();
+        let mut buf = [0u8; 64];
+        let (n, _) = socket.recv_from(&mut buf).unwrap();
+        let mine = socket.local_addr().unwrap().port();
+        assert_eq!(&buf[..n], &[127, 0, 0, 1, (mine >> 8) as u8, mine as u8]);
+    });
+}
+
+/// `conn_peer` and `conns.peer`: the far end of an accepted connection, and -9 for a slot with nothing in it.
+const CONN_PEER: &str = r#"
+edition 5;
+import std.conns;
+import std.io;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi); release(fs); release(args); release(clock);
+    var h = heap;
+    var io2 = io;
+    let bound = narrow(net, "PORT");
+    var status = 1;
+    borrow mut io2 as &!i in {
+    borrow mut h as &!hh in {
+        borrow bound as &n in {
+            match tcp_listen(n, PORT, 8, 0) {
+                Listening::Ok(l) => {
+                    var listener = l;
+                    borrow mut listener as &!lh in {
+                        io.error_all(i, "ready\n");
+                        match tcp_accept(lh) {
+                            Accepted::Ok(c) => {
+                                var direct = c;
+                                var seen = 0 - 1;
+                                borrow direct as &dh in {
+                                    seen = conn_peer(dh);
+                                }
+                                var table = conns.empty(hh, 2);
+                                let (t2, slot) = conns.put(hh, table, direct);
+                                table = t2;
+                                borrow mut table as &!tb in {
+                                    let through = conns.peer(tb, slot);
+                                    let stale = conns.peer(tb, 1);
+                                    region a {
+                                        var out = alloc_slice[a](6, byte_of(0));
+                                        put_peer(out, seen);
+                                        if seen > 0 && through == seen && stale == 0 - 9 {
+                                            match conns.write(tb, slot, out) {
+                                                Sent::Wrote(w) => { status = 0; }
+                                                Sent::Again => { status = 6; }
+                                                Sent::Failed(e) => { status = 7; }
+                                            }
+                                        } else {
+                                            status = 10;
+                                        }
+                                    }
+                                }
+                                conns.drop(hh, table);
+                            }
+                            Accepted::Again => { status = 4; }
+                            Accepted::Failed(e) => { status = 5; }
+                        }
+                    }
+                    listener_close(listener);
+                }
+                Listening::Failed(e) => { status = 2; }
+            }
+        }
+    }
+    }
+    release(bound);
+    release(io2);
+    release(h);
+    return status;
+}
+"#;
+
+#[test]
+fn a_connection_names_its_far_end() {
+    use std::io::Read as _;
+    for backend in BACKENDS {
+        let port = free_udp_port();
+        let dir = scratch(&format!("udp-conn-peer-{backend}"));
+        let source = format!("{CONN_PEER}{PEER_BYTES}").replace("PORT", &port.to_string());
+        let exe = build(&dir, "connpeer", &source, backend);
+        let mut child = Command::new(&exe).stderr(Stdio::piped()).spawn().expect("the server runs");
+        let mut lines = std::io::BufReader::new(child.stderr.take().unwrap());
+        wait_for(&mut lines, "ready");
+        let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        let mine = stream.local_addr().unwrap().port();
+        let mut got = [0u8; 6];
+        stream.read_exact(&mut got).unwrap();
+        assert_eq!(got, [127, 0, 0, 1, (mine >> 8) as u8, mine as u8], "{backend}");
+        let status = child.wait().unwrap();
+        assert_eq!(status.code(), Some(0), "{backend}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

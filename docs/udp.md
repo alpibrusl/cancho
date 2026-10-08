@@ -273,3 +273,30 @@ The builtins are refused on WASI with the others (`Gap::Sockets`) and are editio
 
 **Not done.** Nothing here measures what a table costs per datagram (two extra builtin calls and two table accesses,
 as `native-sockets.md` §10.3 says for `Conn`); cancho-dns D3 is the first program that will.
+
+## 12. Slice 5: who a ticket, or a connection, names
+
+**Why.** cancho-dns needs to refuse clients outside a configured set of prefixes and to rate-limit by client network
+(`docs/design.md` section 6). Both need the client's address, and the language gave no way to read it: a bound socket
+answers a sender through a *ticket* (§4), deliberately not an address, and `Accepted` carries no peer
+(`native-sockets.md` §10 deferred `conn_peer` until "an access log exists"). Found by reading the access policy against
+the language before writing it.
+
+**What it adds**, edition 5, refused on WASI with the other socket builtins, no capability and no authority label:
+
+- `udp_peer(&Udp, ticket) -> int`: the sender a ticket names, as `address * 65536 + port` (the IPv4 address a 32-bit number,
+  first octet highest), or `-1` for a ticket that is not valid on this socket: the three checks `udp_send_to` makes
+  (positive, still the one its ring entry holds, issued to *this* socket).
+- `conn_peer(&Conn) -> int`: the same number for the far end of a connection, from `getpeername`, or `-errno`.
+- `conns.peer(table, slot)` in `std.conns`: the same for a connection in a table, `-9` for a slot with nothing in it.
+
+**Why it grants nothing.** The address is data the program received anyway. It does not make the destination of a
+send free: there is still no send to an address (§2), and `udp_send_to` still takes only a ticket. So the authority
+report is unchanged, and a program can now *decide* about a client but not *reach* one it was not given.
+
+**Built and tested** on both backends: the address and port of a real client over UDP and over TCP, compared with what the
+client's own socket says; five forged tickets and another socket's ticket give `-1`; `conns.peer` agrees with `conn_peer`
+and refuses a stale slot. Seven mutants killed (the owner check dropped, the ticket not compared, the address left out
+of the number, and `conn_peer` asking for the near end instead of the far one, on each backend that has the code).
+
+**Not done.** IPv6 (the sockets are IPv4 throughout). A text form of the address: the number is what a prefix test wants.

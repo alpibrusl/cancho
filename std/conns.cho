@@ -192,6 +192,34 @@ pub fn nonblocking[&t](table: &!t Table, slot: int) -> [] int {
     }
 }
 
+// Who is at the far end of the connection in `slot` (`conn_peer`): its IPv4 address in the 32 bits above its port, as one number
+// (`address * 65536 + port`, the first octet the highest), or `-errno` -- `-9` for a slot with nothing in it.
+pub fn peer[&t](table: &!t Table, slot: int) -> [] int {
+    let ticket = ticket_at(table, slot);
+    if ticket < 0 {
+        return 0 - 9;
+    }
+    match conn_attach(ticket) {
+        Attached::Ok(c) => {
+            var conn = c;
+            var answer = 0 - 9;
+            borrow conn as &h in {
+                answer = conn_peer(h);
+            }
+            let back = conn_detach(conn);
+            if back < 0 {
+                release_slot(table, slot);
+            } else {
+                vec.set(table.tickets, slot, back);
+            }
+            return answer;
+        }
+        Attached::Failed(e) => {
+            return 0 - e;
+        }
+    }
+}
+
 // Turn `TCP_NODELAY` on for the connection in `slot`: what is written goes out at once instead of waiting for the acknowledgement
 // of what was written before it (which a peer delays by tens of milliseconds). `0`, or an `errno`.
 pub fn nodelay[&t](table: &!t Table, slot: int) -> [] int {

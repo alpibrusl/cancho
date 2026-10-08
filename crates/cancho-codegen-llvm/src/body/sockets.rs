@@ -621,8 +621,46 @@ impl<'a> FuncEmitter<'a> {
         Ok(vec![LValue::Reg(tag), LValue::Reg(moved), LValue::Reg(reason)])
     }
 
-    /// `udp_local_port(&Udp)`: the port the kernel chose, from `getsockname`, or `-errno`.
-    pub(crate) fn udp_local_port(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+    /// The number a `sockaddr_in` at `base` stands for: its port (big-endian at bytes 2 and 3, on both kernels), and with
+    /// `with_address` the IPv4 address (bytes 4 to 7) above it, shifted up 16 bits.
+    fn sockaddr_number(&mut self, base: &str, with_address: bool) -> String {
+        let byte = |this: &mut Self, offset: i32| {
+            let raw = this.load_field(base, offset, "i8");
+            let wide = this.fresh();
+            this.out.push_str(&format!("  {wide} = zext i8 {raw} to i64\n"));
+            wide
+        };
+        let high = byte(self, 2);
+        let low = byte(self, 3);
+        let shifted = self.fresh();
+        self.out.push_str(&format!("  {shifted} = shl i64 {high}, 8\n"));
+        let port = self.fresh();
+        self.out.push_str(&format!("  {port} = or i64 {shifted}, {low}\n"));
+        if !with_address {
+            return port;
+        }
+        let mut address = byte(self, 4);
+        for offset in 5..8 {
+            let next = byte(self, offset);
+            let up = self.fresh();
+            self.out.push_str(&format!("  {up} = shl i64 {address}, 8\n"));
+            address = self.fresh();
+            self.out.push_str(&format!("  {address} = or i64 {up}, {next}\n"));
+        }
+        let above = self.fresh();
+        self.out.push_str(&format!("  {above} = shl i64 {address}, 16\n"));
+        let number = self.fresh();
+        self.out.push_str(&format!("  {number} = or i64 {above}, {port}\n"));
+        number
+    }
+
+    /// `getsockname` or `getpeername` (`call`) on the handle, answered as `sockaddr_number`, or `-errno`.
+    fn socket_name(
+        &mut self,
+        args: &[LValue],
+        call: &str,
+        with_address: bool,
+    ) -> Result<Vec<LValue>, String> {
         let fd = self.handle_fd(&args[0]);
         let addr = self.fresh();
         self.hoist(format!("  {addr} = alloca i8, i64 16\n"));
@@ -630,33 +668,50 @@ impl<'a> FuncEmitter<'a> {
         self.hoist(format!("  {len} = alloca i32\n"));
         self.out.push_str(&format!("  store i32 16, ptr {len}\n"));
         let result = self.fresh();
-        self.out.push_str(&format!(
-            "  {result} = call i32 @getsockname(i32 {fd}, ptr {addr}, ptr {len})\n"
-        ));
+        self.out
+            .push_str(&format!("  {result} = call i32 @{call}(i32 {fd}, ptr {addr}, ptr {len})\n"));
         let reason = self.errno();
-        // Big-endian at bytes 2 and 3 of a `sockaddr_in`, on both kernels.
-        let high = self.load_field(&addr, 2, "i8");
-        let low = self.load_field(&addr, 3, "i8");
-        let high = {
-            let wide = self.fresh();
-            self.out.push_str(&format!("  {wide} = zext i8 {high} to i64\n"));
-            wide
-        };
-        let low = {
-            let wide = self.fresh();
-            self.out.push_str(&format!("  {wide} = zext i8 {low} to i64\n"));
-            wide
-        };
-        let shifted = self.fresh();
-        self.out.push_str(&format!("  {shifted} = shl i64 {high}, 8\n"));
-        let port = self.fresh();
-        self.out.push_str(&format!("  {port} = or i64 {shifted}, {low}\n"));
+        let number = self.sockaddr_number(&addr, with_address);
         let failed = self.fresh();
         self.out.push_str(&format!("  {failed} = icmp slt i32 {result}, 0\n"));
         let negated = self.fresh();
         self.out.push_str(&format!("  {negated} = sub i64 0, {}\n", operand(&reason)));
         let answer = self.fresh();
-        self.out.push_str(&format!("  {answer} = select i1 {failed}, i64 {negated}, i64 {port}\n"));
+        self.out
+            .push_str(&format!("  {answer} = select i1 {failed}, i64 {negated}, i64 {number}\n"));
+        Ok(vec![LValue::Reg(answer)])
+    }
+
+    /// `udp_local_port(&Udp)`: the port the kernel chose, from `getsockname`, or `-errno`.
+    pub(crate) fn udp_local_port(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        self.socket_name(args, "getsockname", false)
+    }
+
+    /// `conn_peer(&Conn)` (`docs/native-sockets.md` §10): address and port of the far end, or `-errno`.
+    pub(crate) fn conn_peer(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        self.socket_name(args, "getpeername", true)
+    }
+
+    /// `udp_peer(&Udp, ticket)` (`docs/udp.md` §12): who the ticket names, if it is valid on this socket, else `-1`.
+    pub(crate) fn udp_peer(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        let fd = self.handle_fd(&args[0]);
+        let ticket = operand(&args[1]);
+        let entry = self.peer_entry(&ticket);
+        let stored = self.load_field(&entry, cancho_ir::UDP_PEER_TICKET_AT, "i64");
+        let owner = self.load_field(&entry, cancho_ir::UDP_PEER_FD_AT, "i32");
+        let positive = self.fresh();
+        self.out.push_str(&format!("  {positive} = icmp sgt i64 {ticket}, 0\n"));
+        let current = self.fresh();
+        self.out.push_str(&format!("  {current} = icmp eq i64 {stored}, {ticket}\n"));
+        let mine = self.fresh();
+        self.out.push_str(&format!("  {mine} = icmp eq i32 {owner}, {fd}\n"));
+        let both = self.fresh();
+        self.out.push_str(&format!("  {both} = and i1 {positive}, {current}\n"));
+        let valid = self.fresh();
+        self.out.push_str(&format!("  {valid} = and i1 {both}, {mine}\n"));
+        let number = self.sockaddr_number(&entry, true);
+        let answer = self.fresh();
+        self.out.push_str(&format!("  {answer} = select i1 {valid}, i64 {number}, i64 -1\n"));
         Ok(vec![LValue::Reg(answer)])
     }
 

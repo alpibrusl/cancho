@@ -409,6 +409,7 @@ pub(crate) fn emit_module(
     declare_libc_unless_own(&mut text, "bind", "i32 @bind(i32, ptr, i32)");
     // `udp_local_port` (`docs/udp.md` §3) reads the port the kernel chose.
     declare_libc_unless_own(&mut text, "getsockname", "i32 @getsockname(i32, ptr, ptr)");
+    declare_libc_unless_own(&mut text, "getpeername", "i32 @getpeername(i32, ptr, ptr)");
     declare_libc_unless_own(&mut text, "close", "i32 @close(i32)");
     // `docs/directory-handles.md`: `openat` is variadic (its `mode`, read
     // with `O_CREAT`) and declared so, which puts `mode` wherever the target

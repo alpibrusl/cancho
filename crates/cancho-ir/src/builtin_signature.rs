@@ -790,6 +790,25 @@ impl Builtin {
                 }],
                 Type::Int,
             ),
+            Builtin::UdpPeer => (
+                vec![
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_UDP)),
+                    },
+                    Type::Int,
+                ],
+                Type::Int,
+            ),
+            Builtin::ConnPeer => (
+                vec![Type::Ref {
+                    unique: false,
+                    region: Region::Param(0),
+                    inner: Box::new(named(PRELUDE_CONN)),
+                }],
+                Type::Int,
+            ),
             Builtin::UdpNonblocking => (
                 vec![Type::Ref {
                     unique: true,

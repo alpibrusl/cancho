@@ -317,7 +317,7 @@ paragraph pointing here when this one is built, not before.
 | `Clock` capability, or a per-registration deadline in the `Poller`? | **`Clock`** (§5). A deadline the kernel reports as an event is less general, and the web layer will want the time for logs and `Date:` headers anyway; `poller_wait`'s timeout stays |
 | `SO_REUSEPORT` | **A flags argument on `tcp_listen`** (bit 1), not a second builtin |
 | The old int-returning `bind`/`listen`/`accept`/`connect` | **Kept**, documented as superseded; they cannot be removed without breaking files that check today |
-| Peer address on `accept` | **Not in `Accepted`.** A later `conn_peer(&Conn, &![byte]) -> int` is additive and costs nothing now; no asker until an access log exists |
+| Peer address on `accept` | **Not in `Accepted`.** Built later as `conn_peer(&Conn) -> int` (the address and port as one number, from `getpeername`), when cancho-dns asked for an access list: `udp.md` §12 |
 | Packages depending on `std` (#63) | **Yes**, separately, after slice 1 |
 | UDP and Unix sockets | No asker. `Conn` is deliberately not named `TcpConn` — if a second transport arrives it should find the name free — but nothing here is built for it |
 
