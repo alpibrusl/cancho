@@ -212,8 +212,8 @@ can drift, and a bug fixed in one will not automatically reach the
 other. That is worth reconsidering — pulling the ~81% into a shared
 `lex-vcs-core` crate both repositories depend on — only if the two
 implementations turn out to need the same fix often enough that the
-duplication is expensive to carry, not on the strength of "it would
-be nice to share." Nothing in this repository's own history suggests that
+duplication is expensive to carry, not on the strength of "it would be
+nice to share." Nothing in this repository's own history suggests that
 yet: `lex-os` and `cancho` have shared **zero** lines of code since
 that relationship was stated, and it has cost nothing measurable.
 
