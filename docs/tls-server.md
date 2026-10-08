@@ -242,6 +242,8 @@ there is no `tls-record-*`.*
 
 ## 6. Cost
 
+*Corrected (#380, `docs/p256-fast.md` §9): the signature is 59 µs on the M4 and the check of §3.3 104 µs; the 1.5 ms and 0.82 ms below are `main` before that change.*
+
 *The signature is measured (step 1, `docs/ecdsa-sign.md` §7); the total is arithmetic from measured parts, and step 2
 measures it.* One full handshake on the server, P-256 certificate:
 
