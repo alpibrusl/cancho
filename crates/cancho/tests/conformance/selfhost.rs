@@ -296,6 +296,8 @@ fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "listing.cho",
         "checker.cho",
         "body.cho",
+        "exprs.cho",
+        "scope.cho",
         "types.cho",
         "emit.cho",
         "foreign.cho",

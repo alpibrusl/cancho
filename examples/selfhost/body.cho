@@ -36,1179 +36,10 @@ import selfhost.rules;
 import selfhost.pass1;
 import selfhost.types;
 import selfhost.emit;
+import selfhost.scope;
+import selfhost.exprs;
 
 // What an expression came to: its type, and whether it is a known integer (a literal, or a
-// literal operation that folded) and which.
-struct Ex {
-    ty: int,
-    known: bool,
-    value: int,
-    reg: int,
-}
-
-fn plain(ty: int) -> [] Ex {
-    return Ex { ty: ty, known: false, value: 0, reg: 0 - 1 };
-}
-
-fn constant(value: int) -> [] Ex {
-    return Ex { ty: 1, known: true, value: value, reg: 0 - 1 };
-}
-
-fn nothing() -> [] Ex {
-    return Ex { ty: 0, known: false, value: 0, reg: 0 - 1 };
-}
-
-// A value in the temporary `reg` of the code being written.
-fn in_reg(ty: int, reg: int) -> [] Ex {
-    return Ex { ty: ty, known: false, value: 0, reg: reg };
-}
-
-// Something the port does not check yet: the function's answer is `SKIP`.
-fn skip[&s](st: &!s [int], from: int, to: int) -> [] Ex {
-    ast.fail(st, rules.r_skip(), from, to);
-    return nothing();
-}
-
-fn largest() -> [] int {
-    return 9223372036854775807;
-}
-
-fn smallest() -> [] int {
-    return 0 - 9223372036854775807 - 1;
-}
-
-// ------------------------------------------------------------- bindings ---
-
-// A new binding. The span is where Rust says it was declared (a parameter's type, a statement),
-// and the log of every binding ever declared (`st[38]`, four ints each: type, the block open then,
-// that span) is what the escape check reads once the body is done. A binding starts owned.
-fn bind[&s](st: &!s [int], name: int, ty: int, mutable: bool, from: int, to: int) -> [] int {
-    if emit.on(st) {
-        if types.is_prelude(st, ty) {
-            // nothing to keep
-        } else if ty != 1 && ty != 5 {
-            return ast.fail(st, rules.r_skip(), from, to);
-        } else {
-            emit.alloca(st, ty, st[39]);
-        }
-    }
-    let at = st[20] + 5 * st[21];
-    st[at] = name;
-    st[at + 1] = ty;
-    st[at + 2] = ast.flag(mutable);
-    st[at + 3] = 0;
-    st[at + 4] = st[39];
-    st[21] = st[21] + 1;
-    let log = st[38] + 4 * st[39];
-    st[log] = ty;
-    st[log + 1] = st[37];
-    st[log + 2] = from;
-    st[log + 3] = to;
-    st[39] = st[39] + 1;
-    return 0;
-}
-
-// The most recent live binding spelled like token `name`, or -1.
-fn find[&s, &x](st: &!s [int], text: &x [byte], name: int) -> [] int {
-    var i = st[21] - 1;
-    while i >= 0 {
-        if ast.same(st, text, st[st[20] + 5 * i], name) {
-            return i;
-        }
-        i = i - 1;
-    }
-    return 0 - 1;
-}
-
-fn binding_type[&s](st: &!s [int], i: int) -> [] int {
-    return st[st[20] + 5 * i + 1];
-}
-
-fn binding_mutable[&s](st: &!s [int], i: int) -> [] bool {
-    return st[st[20] + 5 * i + 2] != 0;
-}
-
-// ------------------------------------------------------- borrows, blocks ---
-//
-// Whether a binding is borrowed is a flag in its record: 0 owned, -1 locked by a unique borrow,
-// n frozen by n shared ones. The conflicts are Rust's linear pass, which runs after the body and
-// only if the body had no error; so the first is kept (`st[32]` its rule, `st[33]`, `st[34]` its
-// span) and reported at the end, if nothing else was wrong.
-
-fn note[&s](st: &!s [int], rule: int, from: int, to: int) -> [] int {
-    if st[32] == 0 {
-        st[32] = rule;
-        st[33] = from;
-        st[34] = to;
-    }
-    return 0;
-}
-
-// The number this binding was declared as, which names its stack slot in the code.
-fn slot_of[&s](st: &!s [int], i: int) -> [] int {
-    return st[st[20] + 5 * i + 4];
-}
-
-fn borrowed[&s](st: &!s [int], i: int) -> [] int {
-    return st[st[20] + 5 * i + 3];
-}
-
-// A name was read.
-fn use_slot[&s](st: &!s [int], i: int, from: int, to: int) -> [] int {
-    if borrowed(st, i) < 0 {
-        note(st, rules.r_borrow_conflict(), from, to);
-    }
-    return 0;
-}
-
-// A binding was assigned to.
-fn assign_slot[&s](st: &!s [int], i: int, from: int, to: int) -> [] int {
-    if borrowed(st, i) != 0 {
-        note(st, rules.r_borrow_conflict(), from, to);
-    }
-    return 0;
-}
-
-// A `borrow` block opens over a binding: one unique borrow at a time and never beside a shared
-// one, and shared ones nest.
-fn freeze[&s](st: &!s [int], i: int, unique: bool, from: int, to: int) -> [] int {
-    let held = borrowed(st, i);
-    if held < 0 || held > 0 && unique {
-        note(st, rules.r_borrow_conflict(), from, to);
-        return 0;
-    }
-    if unique {
-        st[st[20] + 5 * i + 3] = 0 - 1;
-    } else {
-        st[st[20] + 5 * i + 3] = held + 1;
-    }
-    return 0;
-}
-
-fn thaw[&s](st: &!s [int], i: int, unique: bool) -> [] int {
-    let held = borrowed(st, i);
-    if held > 1 && !unique {
-        st[st[20] + 5 * i + 3] = held - 1;
-    } else {
-        st[st[20] + 5 * i + 3] = 0;
-    }
-    return 0;
-}
-
-// A block opens, named by the token `name`, inside the one open now: its number.
-fn open_block[&s](st: &!s [int], name: int) -> [] int {
-    let id = st[35];
-    st[st[36] + 2 * id] = st[37];
-    st[st[36] + 2 * id + 1] = name;
-    st[35] = id + 1;
-    st[37] = id;
-    return id;
-}
-
-fn close_block[&s](st: &!s [int]) -> [] int {
-    st[37] = st[st[36] + 2 * st[37]];
-    return 0;
-}
-
-// Does a type written in an annotation name a region other than `static`?
-fn names_region[&s, &x](st: &!s [int], text: &x [byte], ty: int) -> [] bool {
-    if ast.is_kind(st, ty, kinds.NK::TRef) {
-        if !pass1.is_word(st, text, ast.get(st, ty, 5), "static") {
-            return true;
-        }
-        return names_region(st, text, ast.get(st, ty, 6));
-    }
-    if ast.is_kind(st, ty, kinds.NK::TSlice) {
-        return names_region(st, text, ast.get(st, ty, 6));
-    }
-    return false;
-}
-
-// ---------------------------------------------------------------- types ---
-
-// The scalar tag of the resolved type node `ty`, or 0 if it is not a scalar.
-fn scalar[&s](st: &!s [int], ty: int) -> [] int {
-    if ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 0 {
-        return ast.get(st, ty, 10);
-    }
-    return 0;
-}
-
-// A struct this slice handles: declared in the file, not `res`, with no parameters, and only
-// scalar fields, so a value of it is `val` and copies.
-fn struct_plain[&s](st: &!s [int], item: int) -> [] bool {
-    if !ast.is_kind(st, item, kinds.NK::IStruct) {
-        return false;
-    }
-    if ast.get(st, item, 6) == 2 || ast.get(st, item, 7) >= 0 {
-        return false;
-    }
-    var f = ast.get(st, item, 8);
-    while f >= 0 {
-        if scalar(st, ast.get(st, f, 5)) == 0 {
-            return false;
-        }
-        f = ast.next(st, f);
-    }
-    return true;
-}
-
-// `World`, the first of the prelude types: what `main` is handed, and nothing a value of can do
-// but be `release`d or `split`. The code written for it is none, as in the Rust backend.
-fn world_index() -> [] int {
-    return 0;
-}
-
-// An enum this slice handles: declared in the file, not `res`, with no parameters, and only
-// scalar payloads, so a value of it is `val` and copies.
-fn enum_plain[&s](st: &!s [int], item: int) -> [] bool {
-    if !ast.is_kind(st, item, kinds.NK::IEnum) {
-        return false;
-    }
-    if ast.get(st, item, 6) == 2 || ast.get(st, item, 7) >= 0 {
-        return false;
-    }
-    var v = ast.get(st, item, 8);
-    while v >= 0 {
-        var p = ast.get(st, v, 5);
-        var n = ast.get(st, v, 6);
-        while n > 0 {
-            if scalar(st, p) == 0 {
-                return false;
-            }
-            p = ast.next(st, p);
-            n = n - 1;
-        }
-        v = ast.next(st, v);
-    }
-    return true;
-}
-
-// The element of a slice: a scalar or a type parameter, else 0.
-fn element_type[&s](st: &!s [int], ty: int) -> [] int {
-    let tag = scalar(st, ty);
-    if tag != 0 {
-        return tag;
-    }
-    if ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 1 {
-        return value_type(st, ty);
-    }
-    return 0;
-}
-
-// The type of the resolved type node `ty` when it is a scalar or a plain struct, else 0.
-fn value_type[&s](st: &!s [int], ty: int) -> [] int {
-    let tag = scalar(st, ty);
-    if tag != 0 {
-        return tag;
-    }
-    if ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 1 {
-        // A type parameter: a variable at a call (the callee's, `st[31]` the first of them), and
-        // rigid in the body that declares it.
-        if st[31] >= 0 {
-            return st[31] + ast.get(st, ty, 9);
-        }
-        return types.make_param(st, ast.get(st, ty, 9));
-    }
-    if emit.on(st) && ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 2 && ast.get(st, ty, 9) == world_index() && ast.get(st, ty, 7) == 0 {
-        return types.make_prelude(st, world_index());
-    }
-    if ast.get(st, ty, 8) == 3 && (struct_plain(st, ast.get(st, ty, 9)) || enum_plain(st, ast.get(st, ty, 9))) {
-        return types.make_named(st, ast.get(st, ty, 9));
-    }
-    return 0;
-}
-
-// The position of the field called `name` in the struct `item`, or -1.
-fn field_index[&s, &x](st: &!s [int], text: &x [byte], item: int, name: int) -> [] int {
-    var f = ast.get(st, item, 8);
-    var i = 0;
-    while f >= 0 {
-        if ast.same(st, text, ast.get(st, f, 4), name) {
-            return i;
-        }
-        f = ast.next(st, f);
-        i = i + 1;
-    }
-    return 0 - 1;
-}
-
-// The scalar type of field number `index` of the struct `item`.
-fn field_type[&s](st: &!s [int], item: int, index: int) -> [] int {
-    var f = ast.get(st, item, 8);
-    var i = 0;
-    while i < index {
-        f = ast.next(st, f);
-        i = i + 1;
-    }
-    return scalar(st, ast.get(st, f, 5));
-}
-
-// The type of the resolved type node `ty`, written in a declaration whose `[...]` starts at `dp`,
-// or 0 if it is one this slice does not handle: a scalar, or a reference to a scalar or to a slice
-// of one. `fresh` is -1 when the declaration is the function being checked, whose region
-// parameters are what the regions are; for a callee it is the first of the variables made for
-// its region parameters, which stand in for them at this call.
-fn lower_type[&s, &x](st: &!s [int], text: &x [byte], ty: int, dp: int, fresh: int) -> [] int {
-    if ast.is_kind(st, ty, kinds.NK::TName) {
-        return value_type(st, ty);
-    }
-    if !ast.is_kind(st, ty, kinds.NK::TRef) {
-        return 0;
-    }
-    let reg = ast.get(st, ty, 5);
-    var area = types.static_region();
-    if !pass1.is_word(st, text, reg, "static") {
-        area = pass1.param_index(st, text, dp, true, reg);
-        if fresh >= 0 {
-            area = fresh + area;
-        }
-    }
-    let inner = ast.get(st, ty, 6);
-    var referent = 0;
-    if ast.is_kind(st, inner, kinds.NK::TSlice) {
-        let element = element_type(st, ast.get(st, inner, 6));
-        if element != 0 {
-            referent = types.make_slice(st, element);
-        }
-    } else {
-        referent = value_type(st, inner);
-    }
-    if referent == 0 {
-        return 0;
-    }
-    return types.make_ref(st, ast.get(st, ty, 4) != 0, area, referent);
-}
-
-// `expect_type`: `found` is usable where `expected` is wanted, or a refusal at the span.
-fn expect[&s, &x](st: &!s [int], text: &x [byte], expected: int, found: int, from: int, to: int) -> [] int {
-    return types.expect_type(st, text, expected, found, from, to);
-}
-
-// The element type of a reference to a slice, or `not-a-slice` at the span.
-fn element[&s](st: &!s [int], ty: int, from: int, to: int) -> [] int {
-    let e = types.element_of(st, ty);
-    if e == 0 {
-        ast.fail(st, rules.r_not_a_slice(), from, to);
-    }
-    return e;
-}
-
-// ------------------------------------------------------ integer folding ---
-//
-// A literal operation that can only trap is refused, and folds through nested literals; a
-// result that does not trap is itself a literal. Arithmetic here traps on overflow too, so each
-// case is decided before it is taken.
-
-fn add_fits(a: int, b: int) -> [] bool {
-    if b > 0 {
-        return a <= largest() - b;
-    }
-    return a >= smallest() - b;
-}
-
-fn sub_fits(a: int, b: int) -> [] bool {
-    if b < 0 {
-        return a <= largest() + b;
-    }
-    return a >= smallest() + b;
-}
-
-fn mul_fits(a: int, b: int) -> [] bool {
-    if a == 0 || b == 0 {
-        return true;
-    }
-    if a == 0 - 1 {
-        return b != smallest();
-    }
-    if b == 0 - 1 {
-        return a != smallest();
-    }
-    if a > 0 {
-        if b > 0 {
-            return a <= largest() / b;
-        }
-        return b >= smallest() / a;
-    }
-    if b > 0 {
-        return a >= smallest() / b;
-    }
-    return a >= largest() / b;
-}
-
-// 2 to the power `n`, as the 64 bits it is: `n == 63` is the sign bit.
-fn bit(n: int) -> [] int {
-    var v = 1;
-    var k = 0;
-    while k < n {
-        v = wrapping_mul(v, 2);
-        k = k + 1;
-    }
-    return v;
-}
-
-// An integer operation over two known integers: the result, or a refusal (`trapped` is the
-// answer's second half).
-struct Folded {
-    trapped: bool,
-    value: int,
-}
-
-fn folded(value: int) -> [] Folded {
-    return Folded { trapped: false, value: value };
-}
-
-fn trapped() -> [] Folded {
-    return Folded { trapped: true, value: 0 };
-}
-
-// `op` is an index of `ast.op_name`.
-fn fold_int(op: int, a: int, b: int) -> [] Folded {
-    if op == 13 {
-        if add_fits(a, b) {
-            return folded(a + b);
-        }
-        return trapped();
-    }
-    if op == 14 {
-        if sub_fits(a, b) {
-            return folded(a - b);
-        }
-        return trapped();
-    }
-    if op == 15 {
-        if mul_fits(a, b) {
-            return folded(a * b);
-        }
-        return trapped();
-    }
-    if op == 16 {
-        if b == 0 || a == smallest() && b == 0 - 1 {
-            return trapped();
-        }
-        return folded(a / b);
-    }
-    if op == 17 {
-        if b == 0 {
-            return trapped();
-        }
-        if b == 0 - 1 {
-            return folded(0);
-        }
-        return folded(a % b);
-    }
-    if op == 11 || op == 12 {
-        if b < 0 || b > 63 {
-            return trapped();
-        }
-        if op == 11 {
-            return folded(wrapping_mul(a, bit(b)));
-        }
-        return folded(a >> b);
-    }
-    if op == 10 {
-        return folded(a & b);
-    }
-    if op == 8 {
-        return folded(a | b);
-    }
-    if op == 9 {
-        return folded(a ^ b);
-    }
-    return folded(0);
-}
-
-// ---------------------------------------------------------- expressions ---
-
-fn expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
-    let from = ast.nstart(st, id);
-    let to = ast.nend(st, id);
-    if emit.on(st) && !writes_code(st, id) {
-        return skip(st, from, to);
-    }
-    if ast.is_kind(st, id, kinds.NK::EInt) {
-        return constant(ast.get(st, id, 4));
-    }
-    if ast.is_kind(st, id, kinds.NK::EFloat) {
-        if ast.get(st, id, 4) == 0 {
-            return plain(3);
-        }
-        // The `f32` suffix is edition 6's, and refused here and not in the parser, which does not
-        // know the edition.
-        if st[23] < 6 {
-            ast.fail(st, rules.r_literal_form(), from, to);
-            return nothing();
-        }
-        return plain(4);
-    }
-    if ast.is_kind(st, id, kinds.NK::EBool) {
-        if emit.on(st) {
-            return Ex { ty: 5, known: true, value: ast.get(st, id, 4), reg: 0 - 1 };
-        }
-        return plain(5);
-    }
-    if ast.is_kind(st, id, kinds.NK::EStr) {
-        // A literal is a shared slice of bytes in the `static` region.
-        return plain(types.make_ref(st, false, types.static_region(), types.make_slice(st, 2)));
-    }
-    if ast.is_kind(st, id, kinds.NK::EName) {
-        return name_expr(st, text, id);
-    }
-    if ast.is_kind(st, id, kinds.NK::EIndex) {
-        return index_expr(st, text, id);
-    }
-    if ast.is_kind(st, id, kinds.NK::ESlice) {
-        return subslice_expr(st, text, id);
-    }
-    if ast.is_kind(st, id, kinds.NK::EUnary) {
-        return unary_expr(st, text, id);
-    }
-    if ast.is_kind(st, id, kinds.NK::EBinary) {
-        return binary_expr(st, text, id);
-    }
-    if ast.is_kind(st, id, kinds.NK::ECall) {
-        return call_expr(st, text, id);
-    }
-    if ast.is_kind(st, id, kinds.NK::EStructLit) {
-        return struct_lit(st, text, id);
-    }
-    if ast.is_kind(st, id, kinds.NK::EField) {
-        return field_expr(st, text, id);
-    }
-    if ast.is_kind(st, id, kinds.NK::EVariant) {
-        return variant_expr(st, text, id);
-    }
-    return skip(st, from, to);
-}
-
-// `Enum::Variant(a, b)`: a value of a plain enum, each payload of the declared type.
-fn variant_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
-    let from = ast.nstart(st, id);
-    let to = ast.nend(st, id);
-    let target = pass1.resolve_module(st, text, st[22], ast.get(st, id, 4));
-    if target < 0 {
-        ast.fail(st, rules.r_module_not_imported(), from, to);
-        return nothing();
-    }
-    let found = pass1.lookup(st, text, ast.get(st, id, 5), target, st[23]);
-    if found < 0 {
-        ast.fail(st, rules.r_not_an_enum(), from, to);
-        return nothing();
-    }
-    if found < pass1.user_base() {
-        return skip(st, from, to);
-    }
-    let item = found - pass1.user_base();
-    if !ast.is_kind(st, item, kinds.NK::IEnum) {
-        ast.fail(st, rules.r_not_an_enum(), from, to);
-        return nothing();
-    }
-    let variant = variant_named(st, text, item, ast.get(st, id, 6));
-    if variant < 0 {
-        ast.fail(st, rules.r_unknown_name(), from, to);
-        return nothing();
-    }
-    if target != st[22] && !pass1.def_public(st, found) {
-        ast.fail(st, rules.r_not_public(), from, to);
-        return nothing();
-    }
-    if !enum_plain(st, item) {
-        return skip(st, from, to);
-    }
-    if ast.get(st, id, 8) != ast.get(st, variant, 6) {
-        ast.fail(st, rules.r_arity_mismatch(), from, to);
-        return nothing();
-    }
-    var arg = ast.get(st, id, 7);
-    var want = ast.get(st, variant, 5);
-    var left = ast.get(st, id, 8);
-    while left > 0 && ast.ok(st) {
-        let v = expr(st, text, arg);
-        if ast.ok(st) {
-            expect(st, text, scalar(st, want), v.ty, ast.nstart(st, arg), ast.nend(st, arg));
-        }
-        arg = ast.next(st, arg);
-        want = ast.next(st, want);
-        left = left - 1;
-    }
-    if !ast.ok(st) {
-        return nothing();
-    }
-    return plain(types.make_named(st, item));
-}
-
-// The Variant node of the enum `item` called like token `name`, or -1.
-fn variant_named[&s, &x](st: &!s [int], text: &x [byte], item: int, name: int) -> [] int {
-    var v = ast.get(st, item, 8);
-    while v >= 0 {
-        if ast.same(st, text, ast.get(st, v, 4), name) {
-            return v;
-        }
-        v = ast.next(st, v);
-    }
-    return 0 - 1;
-}
-
-// Is a field called `name` written in the literal's fields before `stop`?
-fn given_before[&s, &x](st: &!s [int], text: &x [byte], first: int, stop: int, name: int) -> [] bool {
-    var f = first;
-    while f != stop {
-        if ast.same(st, text, ast.get(st, f, 4), name) {
-            return true;
-        }
-        f = ast.next(st, f);
-    }
-    return false;
-}
-
-// `Name { a: x, b: y }`: every field, once, in declaration order, each of the declared type.
-fn struct_lit[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
-    let from = ast.nstart(st, id);
-    let to = ast.nend(st, id);
-    let target = pass1.resolve_module(st, text, st[22], ast.get(st, id, 4));
-    if target < 0 {
-        ast.fail(st, rules.r_module_not_imported(), from, to);
-        return nothing();
-    }
-    let found = pass1.lookup(st, text, ast.get(st, id, 5), target, st[23]);
-    if found < 0 {
-        ast.fail(st, rules.r_not_a_struct(), from, to);
-        return nothing();
-    }
-    if found < pass1.user_base() {
-        return skip(st, from, to);
-    }
-    let item = found - pass1.user_base();
-    if !ast.is_kind(st, item, kinds.NK::IStruct) {
-        ast.fail(st, rules.r_not_a_struct(), from, to);
-        return nothing();
-    }
-    if target != st[22] && !pass1.def_public(st, found) {
-        ast.fail(st, rules.r_not_public(), from, to);
-        return nothing();
-    }
-    if !struct_plain(st, item) {
-        return skip(st, from, to);
-    }
-    let first = ast.get(st, id, 6);
-    var init = first;
-    var previous = 0 - 1;
-    while init >= 0 && ast.ok(st) {
-        let name = ast.get(st, init, 4);
-        let value = ast.get(st, init, 5);
-        let index = field_index(st, text, item, name);
-        if index < 0 {
-            ast.fail(st, rules.r_unknown_name(), from, to);
-        } else if given_before(st, text, first, init, name) {
-            ast.fail(st, rules.r_duplicate_declaration(), from, to);
-        } else if index < previous {
-            ast.fail(st, rules.r_field_order(), ast.nstart(st, value), ast.nend(st, value));
-        } else {
-            previous = index;
-            let v = expr(st, text, value);
-            if ast.ok(st) {
-                expect(st, text, field_type(st, item, index), v.ty, ast.nstart(st, value), ast.nend(st, value));
-            }
-        }
-        init = ast.next(st, init);
-    }
-    var decl = ast.get(st, item, 8);
-    while decl >= 0 && ast.ok(st) {
-        if !given_before(st, text, first, 0 - 1, ast.get(st, decl, 4)) {
-            ast.fail(st, rules.r_missing_field(), from, to);
-        }
-        decl = ast.next(st, decl);
-    }
-    if !ast.ok(st) {
-        return nothing();
-    }
-    return plain(types.make_named(st, item));
-}
-
-// `base.name`: a field of a struct, or of a reference to one, copied out.
-fn field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
-    let from = ast.nstart(st, id);
-    let to = ast.nend(st, id);
-    let base = ast.get(st, id, 4);
-    let b = expr(st, text, base);
-    if !ast.ok(st) {
-        return nothing();
-    }
-    var held = b.ty;
-    if types.is_ref(st, held) {
-        held = types.ref_inner(st, held);
-    }
-    if !types.is_named(st, held) {
-        ast.fail(st, rules.r_unknown_name(), ast.nstart(st, base), ast.nend(st, base));
-        return nothing();
-    }
-    let item = types.named_item(st, held);
-    if !ast.is_kind(st, item, kinds.NK::IStruct) {
-        ast.fail(st, rules.r_match_on_a_non_enum(), ast.nstart(st, base), ast.nend(st, base));
-        return nothing();
-    }
-    let index = field_index(st, text, item, ast.get(st, id, 5));
-    if index < 0 {
-        ast.fail(st, rules.r_unknown_name(), from, to);
-        return nothing();
-    }
-    return plain(field_type(st, item, index));
-}
-
-// The expressions the code can be written for so far: whole numbers and booleans, names, the
-// operators, and calls.
-fn writes_code[&s](st: &!s [int], id: int) -> [] bool {
-    if ast.is_kind(st, id, kinds.NK::EInt) || ast.is_kind(st, id, kinds.NK::EBool) || ast.is_kind(st, id, kinds.NK::EName) || ast.is_kind(st, id, kinds.NK::ECall) {
-        return true;
-    }
-    if ast.is_kind(st, id, kinds.NK::EUnary) {
-        return ast.get(st, id, 4) != 3;
-    }
-    if ast.is_kind(st, id, kinds.NK::EBinary) {
-        return true;
-    }
-    return false;
-}
-
-fn name_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
-    let from = ast.nstart(st, id);
-    let to = ast.nend(st, id);
-    let name = ast.get(st, id, 4);
-    let i = find(st, text, name);
-    if i >= 0 {
-        use_slot(st, i, from, to);
-        if emit.on(st) {
-            if types.is_prelude(st, binding_type(st, i)) {
-                return in_reg(binding_type(st, i), 0 - 1);
-            }
-            return in_reg(binding_type(st, i), emit.load(st, binding_type(st, i), slot_of(st, i)));
-        }
-        return plain(binding_type(st, i));
-    }
-    // A name that is not a local may still be a `static`, a function used as a value, or a
-    // builtin: those are values of types this slice does not check.
-    if names_something(st, text, name) {
-        return skip(st, from, to);
-    }
-    ast.fail(st, rules.r_unknown_name(), from, to);
-    return nothing();
-}
-
-// Is `name` a static of the current function's module, a function of any module, or a builtin?
-fn names_something[&s, &x](st: &!s [int], text: &x [byte], name: int) -> [] bool {
-    var it = st[15];
-    while it >= 0 {
-        if ast.is_kind(st, it, kinds.NK::IStatic) && ast.same(st, text, ast.get(st, it, 4), name) && ast.get(st, it, 13) == st[22] {
-            return true;
-        }
-        if ast.is_kind(st, it, kinds.NK::IFn) && ast.same(st, text, ast.get(st, it, 4), name) {
-            return true;
-        }
-        it = ast.next(st, it);
-    }
-    return pass1.builtin_named(st, text, name);
-}
-
-fn unary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
-    let from = ast.nstart(st, id);
-    let to = ast.nend(st, id);
-    let op = ast.get(st, id, 4);
-    let operand_id = ast.get(st, id, 5);
-    let operand = expr(st, text, operand_id);
-    if !ast.ok(st) {
-        return nothing();
-    }
-    let of = ast.nstart(st, operand_id);
-    let ot = ast.nend(st, operand_id);
-    if op == 3 {
-        // `*r`: what a reference points at, copied. A slice is not a value to copy.
-        if !types.is_ref(st, operand.ty) {
-            ast.fail(st, rules.r_not_a_reference(), of, ot);
-            return nothing();
-        }
-        if types.is_slice(st, types.ref_inner(st, operand.ty)) {
-            return skip(st, from, to);
-        }
-        return plain(types.ref_inner(st, operand.ty));
-    }
-    if op == 0 {
-        if operand.ty != 1 && operand.ty != 3 && operand.ty != 4 {
-            ast.fail(st, rules.r_operator_type_mismatch(), of, ot);
-            return nothing();
-        }
-        if operand.known && operand.ty == 1 {
-            if operand.value == smallest() {
-                ast.fail(st, rules.r_constant_traps(), from, to);
-                return nothing();
-            }
-            return constant(0 - operand.value);
-        }
-        if emit.on(st) {
-            return in_reg(operand.ty, emit.checked(st, 1, true, 0, 0 - 1, operand.known, operand.value, operand.reg));
-        }
-        return plain(operand.ty);
-    }
-    if op == 1 {
-        expect(st, text, 5, operand.ty, of, ot);
-        if emit.on(st) && ast.ok(st) {
-            return in_reg(5, emit.not(st, operand.known, operand.value, operand.reg));
-        }
-        return plain(5);
-    }
-    expect(st, text, 1, operand.ty, of, ot);
-    if operand.known {
-        return constant(~operand.value);
-    }
-    if emit.on(st) && ast.ok(st) {
-        return in_reg(1, emit.bit_not(st, operand.known, operand.value, operand.reg));
-    }
-    return plain(1);
-}
-
-fn binary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
-    let from = ast.nstart(st, id);
-    let to = ast.nend(st, id);
-    let op = ast.get(st, id, 4);
-    let lhs_id = ast.get(st, id, 5);
-    let rhs_id = ast.get(st, id, 6);
-    let lf = ast.nstart(st, lhs_id);
-    let lt = ast.nend(st, lhs_id);
-    let l = expr(st, text, lhs_id);
-    if !ast.ok(st) {
-        return nothing();
-    }
-    // `&&` and `||` do not compute their right side when the left has decided: its code is written
-    // between the two, in blocks of its own.
-    var short = 0 - 1;
-    if emit.on(st) && op <= 1 {
-        short = emit.label(st);
-        emit.short_begin(st, short, op == 0, l.known, l.value, l.reg);
-    }
-    let r = expr(st, text, rhs_id);
-    if !ast.ok(st) {
-        return nothing();
-    }
-    var short_reg = 0 - 1;
-    if short >= 0 {
-        short_reg = emit.short_end(st, short, r.known, r.value, r.reg);
-    }
-    // Both sides agree first, then the operator says what it accepts.
-    expect(st, text, l.ty, r.ty, ast.nstart(st, rhs_id), ast.nend(st, rhs_id));
-    if !ast.ok(st) {
-        return nothing();
-    }
-    let operand = l.ty;
-    let arithmetic = operand == 1 || operand == 3 || operand == 4;
-    if op >= 13 && op <= 16 {
-        if !arithmetic {
-            ast.fail(st, rules.r_operator_type_mismatch(), lf, lt);
-            return nothing();
-        }
-    }
-    if op == 17 || op >= 8 && op <= 12 {
-        expect(st, text, 1, operand, lf, lt);
-    }
-    if op == 0 || op == 1 {
-        expect(st, text, 5, operand, lf, lt);
-    }
-    if op >= 4 && op <= 7 {
-        if !arithmetic {
-            ast.fail(st, rules.r_operator_type_mismatch(), lf, lt);
-            return nothing();
-        }
-    }
-    // `==` and `!=` compare two scalars, and nothing else.
-    if op == 2 || op == 3 {
-        if operand < 1 || operand > 5 {
-            ast.fail(st, rules.r_operator_type_mismatch(), lf, lt);
-            return nothing();
-        }
-    }
-    if !ast.ok(st) {
-        return nothing();
-    }
-    // A comparison and a short-circuit answer a `bool`; the rest answer their operand.
-    var result = operand;
-    if op <= 7 {
-        result = 5;
-    }
-    if l.known && r.known && operand == 1 {
-        let f = fold_int(op, l.value, r.value);
-        if f.trapped {
-            ast.fail(st, rules.r_constant_traps(), from, to);
-            return nothing();
-        }
-        if result == 1 {
-            return constant(f.value);
-        }
-    }
-    if short_reg >= 0 {
-        return in_reg(5, short_reg);
-    }
-    if emit.on(st) {
-        return in_reg(result, binary_code(st, op, operand, l, r));
-    }
-    return plain(result);
-}
-
-// The code for `l op r` on two operands of type `ty`, answering the temporary of the result.
-fn binary_code[&s](st: &!s [int], op: int, ty: int, l: Ex, r: Ex) -> [] int {
-    if op >= 13 && op <= 15 {
-        return emit.checked(st, op - 13, l.known, l.value, l.reg, r.known, r.value, r.reg);
-    }
-    if op == 16 || op == 17 {
-        return emit.divide(st, op == 17, l.known, l.value, l.reg, r.known, r.value, r.reg);
-    }
-    if op == 11 || op == 12 {
-        return emit.shift(st, op == 11, l.known, l.value, l.reg, r.known, r.value, r.reg);
-    }
-    if op >= 8 && op <= 10 {
-        var kind = 2;
-        if op == 10 {
-            kind = 0;
-        } else if op == 8 {
-            kind = 1;
-        }
-        return emit.bitwise(st, kind, l.known, l.value, l.reg, r.known, r.value, r.reg);
-    }
-    return emit.compare(st, op, ty, l.known, l.value, l.reg, r.known, r.value, r.reg);
-}
-
-// `s[i]`: one element of a slice. The base is checked first, then the index.
-fn index_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
-    let base = ast.get(st, id, 4);
-    let index = ast.get(st, id, 5);
-    let b = expr(st, text, base);
-    if !ast.ok(st) {
-        return nothing();
-    }
-    let e = element(st, b.ty, ast.nstart(st, base), ast.nend(st, base));
-    if !ast.ok(st) {
-        return nothing();
-    }
-    let i = expr(st, text, index);
-    if ast.ok(st) {
-        expect(st, text, 1, i.ty, ast.nstart(st, index), ast.nend(st, index));
-    }
-    return plain(e);
-}
-
-// `s[a..b]`: a shorter run of the same slice, in the same region and as unique or shared.
-fn subslice_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
-    let base = ast.get(st, id, 4);
-    let start = ast.get(st, id, 5);
-    let end = ast.get(st, id, 6);
-    let b = expr(st, text, base);
-    if !ast.ok(st) {
-        return nothing();
-    }
-    let e = element(st, b.ty, ast.nstart(st, base), ast.nend(st, base));
-    if !ast.ok(st) {
-        return nothing();
-    }
-    let a = expr(st, text, start);
-    if ast.ok(st) {
-        expect(st, text, 1, a.ty, ast.nstart(st, start), ast.nend(st, start));
-    }
-    if !ast.ok(st) {
-        return nothing();
-    }
-    let z = expr(st, text, end);
-    if ast.ok(st) {
-        expect(st, text, 1, z.ty, ast.nstart(st, end), ast.nend(st, end));
-    }
-    if !ast.ok(st) {
-        return nothing();
-    }
-    return plain(types.make_ref(st, types.ref_unique(st, b.ty), types.ref_region(st, b.ty), types.make_slice(st, e)));
-}
-
-// `len(s)`: how many elements a slice has.
-fn len_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
-    let from = ast.nstart(st, id);
-    let to = ast.nend(st, id);
-    if ast.get(st, id, 7) != 1 {
-        ast.fail(st, rules.r_arity_mismatch(), from, to);
-        return nothing();
-    }
-    let arg = ast.get(st, id, 6);
-    let a = expr(st, text, arg);
-    if ast.ok(st) {
-        element(st, a.ty, ast.nstart(st, arg), ast.nend(st, arg));
-    }
-    if !ast.ok(st) {
-        return nothing();
-    }
-    return plain(1);
-}
-
-fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
-    let from = ast.nstart(st, id);
-    let to = ast.nend(st, id);
-    let qualifier = ast.get(st, id, 4);
-    let callee = ast.get(st, id, 5);
-    let nargs = ast.get(st, id, 7);
-    // Only an unqualified name can be a local.
-    if qualifier < 0 {
-        let local = find(st, text, callee);
-        if local >= 0 {
-            ast.fail(st, rules.r_not_a_function(), from, to);
-            return nothing();
-        }
-    }
-    let unit_of = st[22];
-    let target = pass1.resolve_module(st, text, unit_of, qualifier);
-    if target < 0 {
-        ast.fail(st, rules.r_module_not_imported(), from, to);
-        return nothing();
-    }
-    // `len` is a builtin of every edition, and is checked before anything else is looked up.
-    if pass1.is_word(st, text, callee, "len") {
-        return len_expr(st, text, id);
-    }
-    // `release(world)` ends a capability: no code, and `0` if the answer is wanted.
-    if emit.on(st) && qualifier < 0 && pass1.is_word(st, text, callee, "release") {
-        if nargs != 1 {
-            return skip(st, from, to);
-        }
-        let given = expr(st, text, ast.get(st, id, 6));
-        if !ast.ok(st) {
-            return nothing();
-        }
-        if !types.is_prelude(st, given.ty) {
-            return skip(st, from, to);
-        }
-        return constant(0);
-    }
-    // A builtin the file's edition can name comes first, then a foreign function: not checked.
-    if pass1.builtin_name(st, text, callee, st[23]) {
-        return skip(st, from, to);
-    }
-    var it = st[15];
-    while it >= 0 {
-        if ast.is_kind(st, it, kinds.NK::IExtern) && ast.get(st, it, 13) == target && ast.same(st, text, ast.get(st, it, 4), callee) {
-            return skip(st, from, to);
-        }
-        it = ast.next(st, it);
-    }
-    var found = 0 - 1;
-    it = st[15];
-    while it >= 0 && found < 0 {
-        if ast.is_kind(st, it, kinds.NK::IFn) && ast.get(st, it, 13) == target && ast.same(st, text, ast.get(st, it, 4), callee) {
-            found = it;
-        }
-        it = ast.next(st, it);
-    }
-    if found < 0 {
-        ast.fail(st, rules.r_not_a_function(), from, to);
-        return nothing();
-    }
-    if target != unit_of && ast.get(st, found, 5) == 0 {
-        ast.fail(st, rules.r_not_public(), from, to);
-        return nothing();
-    }
-    // A callee that is generic, declares effects, or has a type this slice does not handle.
-    if !plain_function(st, text, found) {
-        return skip(st, from, to);
-    }
-    if emit.on(st) && pass1.count_params(st, ast.get(st, found, 6), false) > 0 {
-        return skip(st, from, to);
-    }
-    // Each type and region parameter of the callee is a variable here, which the arguments solve.
-    let callee_dp = ast.get(st, found, 6);
-    var tvars = 0 - 1;
-    var tmade = 0;
-    while tmade < pass1.count_params(st, callee_dp, false) {
-        let v = types.fresh_tvar(st);
-        if tmade == 0 {
-            tvars = v;
-        }
-        tmade = tmade + 1;
-    }
-    var fresh = 0 - 1;
-    var made = 0;
-    while made < pass1.count_params(st, callee_dp, true) {
-        let r = types.fresh_region(st);
-        if made == 0 {
-            fresh = r;
-        }
-        made = made + 1;
-    }
-    if ast.get(st, found, 8) != nargs {
-        ast.fail(st, rules.r_arity_mismatch(), from, to);
-        return nothing();
-    }
-    var param = ast.get(st, found, 7);
-    var arg = ast.get(st, id, 6);
-    let first_arg = st[52];
-    while param >= 0 && ast.ok(st) {
-        let a = expr(st, text, arg);
-        if ast.ok(st) {
-            expect(st, text, callee_type(st, text, ast.get(st, param, 5), callee_dp, fresh, tvars), a.ty, ast.nstart(st, arg), ast.nend(st, arg));
-            if emit.on(st) && !types.is_prelude(st, a.ty) {
-                emit.push_arg(st, a.ty, a.known, a.value, a.reg);
-            }
-        }
-        param = ast.next(st, param);
-        arg = ast.next(st, arg);
-    }
-    // What the callee's `where` clauses demand of the regions the arguments solved.
-    var k = 0;
-    while ast.ok(st) && pass1.nth_outlive(st, callee_dp, k) >= 0 {
-        let inner = pass1.nth_outlive(st, callee_dp, k);
-        let got_inner = types.resolve_region(st, fresh + pass1.param_index(st, text, callee_dp, true, inner));
-        let got_outer = types.resolve_region(st, fresh + pass1.param_index(st, text, callee_dp, true, inner + 2));
-        if !types.outlives(st, text, got_outer, got_inner) {
-            ast.fail(st, rules.r_reference_escapes_region(), from, to);
-        }
-        k = k + 1;
-    }
-    // Every type argument has to be settled by the arguments.
-    var position = 0;
-    while ast.ok(st) && position < tmade {
-        if types.is_tvar(st, types.shallow(st, tvars + position)) {
-            ast.fail(st, rules.r_ambiguous_type(), from, to);
-        }
-        position = position + 1;
-    }
-    if !ast.ok(st) {
-        return nothing();
-    }
-    let result = types.resolve_type(st, callee_type(st, text, ast.get(st, found, 10), callee_dp, fresh, tvars));
-    if emit.on(st) {
-        if result != 1 && result != 5 {
-            return skip(st, from, to);
-        }
-        return in_reg(result, emit.call(st, text, callee, result, st[52] - first_arg));
-    }
-    return plain(result);
-}
-
-// A type written in a callee's declaration, at one call: its type parameters are the variables made
-// for the call (the first is `tvars`) and its region parameters the region variables.
-fn callee_type[&s, &x](st: &!s [int], text: &x [byte], ty: int, dp: int, fresh: int, tvars: int) -> [] int {
-    st[31] = tvars;
-    let out = lower_type(st, text, ty, dp, fresh);
-    st[31] = 0 - 1;
-    return out;
-}
-
-// A function with no type parameters, an empty row, and only types this slice handles: the
-// functions this slice checks, and the callees it can call. Regions are fine.
-fn plain_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [] bool {
-    let dp = ast.get(st, fn_item, 6);
-    if !pass1.is_code(st, ast.get(st, fn_item, 9) + 1, lc.Tok::RBracket) {
-        return false;
-    }
-    var param = ast.get(st, fn_item, 7);
-    while param >= 0 {
-        if lower_type(st, text, ast.get(st, param, 5), dp, 0 - 1) == 0 {
-            return false;
-        }
-        param = ast.next(st, param);
-    }
-    return lower_type(st, text, ast.get(st, fn_item, 10), dp, 0 - 1) != 0;
-}
 
 // ------------------------------------------------------------- `match` ---
 //
@@ -1308,7 +139,7 @@ fn variant_arm[&s, &x](st: &!s [int], text: &x [byte], item: int, first: int, k:
         ast.fail(st, rules.r_unknown_name(), from, to);
         return 0;
     }
-    let variant = variant_named(st, text, item, pat_variant(st, tok));
+    let variant = exprs.variant_named(st, text, item, pat_variant(st, tok));
     if variant < 0 {
         ast.fail(st, rules.r_unknown_name(), from, to);
         return 0;
@@ -1338,11 +169,11 @@ fn variant_arm[&s, &x](st: &!s [int], text: &x [byte], item: int, first: int, k:
             if again {
                 ast.fail(st, rules.r_duplicate_declaration(), from, to);
             } else {
-                var ty = scalar(st, want);
+                var ty = scope.scalar(st, want);
                 if by_ref {
                     ty = types.make_ref(st, unique, area, ty);
                 }
-                bind(st, at, ty, false, from, to);
+                scope.bind(st, at, ty, false, from, to);
             }
         }
         want = ast.next(st, want);
@@ -1361,7 +192,7 @@ fn match_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] i
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     let scrutinee = ast.get(st, id, 4);
-    let s = expr(st, text, scrutinee);
+    let s = exprs.expr(st, text, scrutinee);
     if !ast.ok(st) {
         return 0;
     }
@@ -1411,29 +242,29 @@ fn match_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] i
 fn borrow_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
-    let i = find(st, text, ast.get(st, id, 4));
+    let i = scope.find(st, text, ast.get(st, id, 4));
     if i < 0 {
         ast.fail(st, rules.r_unknown_name(), from, to);
         return 0;
     }
     let unique = ast.get(st, id, 5) != 0;
-    let referent = binding_type(st, i);
+    let referent = scope.binding_type(st, i);
     let mark = st[21];
-    let block_id = open_block(st, ast.get(st, id, 6));
-    freeze(st, i, unique, from, to);
-    bind(st, ast.get(st, id, 6), types.make_ref(st, unique, types.block_region(block_id), referent), false, from, to);
+    let block_id = scope.open_block(st, ast.get(st, id, 6));
+    scope.freeze(st, i, unique, from, to);
+    scope.bind(st, ast.get(st, id, 6), types.make_ref(st, unique, types.block_region(block_id), referent), false, from, to);
     block(st, text, ast.get(st, id, 7), ast.get(st, id, 8), ret);
-    thaw(st, i, unique);
+    scope.thaw(st, i, unique);
     st[21] = mark;
-    close_block(st);
+    scope.close_block(st);
     return 0;
 }
 
 // `region a { .. }`: an arena's region, a block with nothing frozen.
 fn region_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
-    open_block(st, ast.get(st, id, 4));
+    scope.open_block(st, ast.get(st, id, 4));
     block(st, text, ast.get(st, id, 5), ast.get(st, id, 6), ret);
-    close_block(st);
+    scope.close_block(st);
     return 0;
 }
 
@@ -1498,10 +329,10 @@ fn block[&s, &x](st: &!s [int], text: &x [byte], head: int, n: int, ret: int) ->
     return 0;
 }
 
-fn condition[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
-    let found = expr(st, text, id);
+fn condition[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] exprs.Ex {
+    let found = exprs.expr(st, text, id);
     if ast.ok(st) {
-        expect(st, text, 5, found.ty, ast.nstart(st, id), ast.nend(st, id));
+        scope.expect(st, text, 5, found.ty, ast.nstart(st, id), ast.nend(st, id));
     }
     return found;
 }
@@ -1519,20 +350,20 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     if emit.on(st) && !writes_stmt(st, id) {
-        skip(st, from, to);
+        exprs.skip(st, from, to);
         return 0;
     }
     if ast.is_kind(st, id, kinds.NK::SLet) {
         let value = ast.get(st, id, 7);
-        let found = expr(st, text, value);
+        let found = exprs.expr(st, text, value);
         if !ast.ok(st) {
             return 0;
         }
         var declared = found.ty;
         let written = ast.get(st, id, 6);
-        if written >= 0 && st[37] >= 0 && names_region(st, text, written) {
+        if written >= 0 && st[37] >= 0 && scope.names_region(st, text, written) {
             // A region named in an annotation inside a block may be the block's own.
-            skip(st, from, to);
+            exprs.skip(st, from, to);
             return 0;
         }
         if written >= 0 {
@@ -1540,15 +371,15 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
             if !ast.ok(st) {
                 return 0;
             }
-            declared = lower_type(st, text, written, st[28], 0 - 1);
+            declared = scope.lower_type(st, text, written, st[28], 0 - 1);
             if declared == 0 {
-                skip(st, from, to);
+                exprs.skip(st, from, to);
                 return 0;
             }
-            expect(st, text, declared, found.ty, ast.nstart(st, value), ast.nend(st, value));
+            scope.expect(st, text, declared, found.ty, ast.nstart(st, value), ast.nend(st, value));
         }
         if ast.ok(st) {
-            bind(st, ast.get(st, id, 5), declared, ast.get(st, id, 4) != 0, from, to);
+            scope.bind(st, ast.get(st, id, 5), declared, ast.get(st, id, 4) != 0, from, to);
             if emit.on(st) && ast.ok(st) {
                 emit.store(st, declared, found.known, found.value, found.reg, st[39] - 1);
             }
@@ -1557,7 +388,7 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
     }
     if ast.is_kind(st, id, kinds.NK::SAssign) {
         let value = ast.get(st, id, 5);
-        let found = expr(st, text, value);
+        let found = exprs.expr(st, text, value);
         if !ast.ok(st) {
             return 0;
         }
@@ -1565,7 +396,7 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
         if ast.is_kind(st, place, kinds.NK::EUnary) && ast.get(st, place, 4) == 3 {
             // `*r = v`: through a unique reference to a scalar.
             let operand = ast.get(st, place, 5);
-            let o = expr(st, text, operand);
+            let o = exprs.expr(st, text, operand);
             if !ast.ok(st) {
                 return 0;
             }
@@ -1579,17 +410,17 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
             }
             let referent = types.ref_inner(st, o.ty);
             if types.is_slice(st, referent) {
-                skip(st, from, to);
+                exprs.skip(st, from, to);
                 return 0;
             }
-            expect(st, text, referent, found.ty, ast.nstart(st, value), ast.nend(st, value));
+            scope.expect(st, text, referent, found.ty, ast.nstart(st, value), ast.nend(st, value));
             return 0;
         }
         if ast.is_kind(st, place, kinds.NK::EIndex) {
             // `s[i] = v`: an element of a unique slice.
             let base = ast.get(st, place, 4);
             let index = ast.get(st, place, 5);
-            let b = expr(st, text, base);
+            let b = exprs.expr(st, text, base);
             if !ast.ok(st) {
                 return 0;
             }
@@ -1597,24 +428,24 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
                 ast.fail(st, rules.r_shared_reference_written(), ast.nstart(st, base), ast.nend(st, base));
                 return 0;
             }
-            let e = element(st, b.ty, ast.nstart(st, base), ast.nend(st, base));
+            let e = scope.element(st, b.ty, ast.nstart(st, base), ast.nend(st, base));
             if !ast.ok(st) {
                 return 0;
             }
-            let i = expr(st, text, index);
+            let i = exprs.expr(st, text, index);
             if !ast.ok(st) {
                 return 0;
             }
-            expect(st, text, 1, i.ty, ast.nstart(st, index), ast.nend(st, index));
+            scope.expect(st, text, 1, i.ty, ast.nstart(st, index), ast.nend(st, index));
             if ast.ok(st) {
-                expect(st, text, e, found.ty, ast.nstart(st, value), ast.nend(st, value));
+                scope.expect(st, text, e, found.ty, ast.nstart(st, value), ast.nend(st, value));
             }
             return 0;
         }
         if ast.is_kind(st, place, kinds.NK::EField) {
             // `r.x = v`: a field through a unique reference to a struct.
             let base = ast.get(st, place, 4);
-            let b = expr(st, text, base);
+            let b = exprs.expr(st, text, base);
             if !ast.ok(st) {
                 return 0;
             }
@@ -1636,31 +467,31 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
                 ast.fail(st, rules.r_linear_value_taken_apart(), ast.nstart(st, base), ast.nend(st, base));
                 return 0;
             }
-            let index = field_index(st, text, item, ast.get(st, place, 5));
+            let index = scope.field_index(st, text, item, ast.get(st, place, 5));
             if index < 0 {
                 ast.fail(st, rules.r_unknown_name(), from, to);
                 return 0;
             }
-            expect(st, text, field_type(st, item, index), found.ty, ast.nstart(st, value), ast.nend(st, value));
+            scope.expect(st, text, scope.field_type(st, item, index), found.ty, ast.nstart(st, value), ast.nend(st, value));
             return 0;
         }
         if !ast.is_kind(st, place, kinds.NK::EName) {
-            skip(st, from, to);
+            exprs.skip(st, from, to);
             return 0;
         }
-        let i = find(st, text, ast.get(st, place, 4));
+        let i = scope.find(st, text, ast.get(st, place, 4));
         if i < 0 {
             ast.fail(st, rules.r_unknown_name(), from, to);
             return 0;
         }
-        if !binding_mutable(st, i) {
+        if !scope.binding_mutable(st, i) {
             ast.fail(st, rules.r_assign_to_immutable(), from, to);
             return 0;
         }
-        assign_slot(st, i, from, to);
-        expect(st, text, binding_type(st, i), found.ty, ast.nstart(st, value), ast.nend(st, value));
+        scope.assign_slot(st, i, from, to);
+        scope.expect(st, text, scope.binding_type(st, i), found.ty, ast.nstart(st, value), ast.nend(st, value));
         if emit.on(st) && ast.ok(st) {
-            emit.store(st, binding_type(st, i), found.known, found.value, found.reg, slot_of(st, i));
+            emit.store(st, scope.binding_type(st, i), found.known, found.value, found.reg, scope.slot_of(st, i));
         }
         return 0;
     }
@@ -1674,7 +505,7 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
         return region_stmt(st, text, id, ret);
     }
     if ast.is_kind(st, id, kinds.NK::SExpr) {
-        expr(st, text, ast.get(st, id, 4));
+        exprs.expr(st, text, ast.get(st, id, 4));
         return 0;
     }
     if ast.is_kind(st, id, kinds.NK::SIf) {
@@ -1718,16 +549,16 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
     }
     if ast.is_kind(st, id, kinds.NK::SReturn) {
         let value = ast.get(st, id, 4);
-        let found = expr(st, text, value);
+        let found = exprs.expr(st, text, value);
         if ast.ok(st) {
-            expect(st, text, ret, found.ty, ast.nstart(st, value), ast.nend(st, value));
+            scope.expect(st, text, ret, found.ty, ast.nstart(st, value), ast.nend(st, value));
             if emit.on(st) && ast.ok(st) {
                 emit.ret(st, ret, found.known, found.value, found.reg);
             }
         }
         return 0;
     }
-    skip(st, from, to);
+    exprs.skip(st, from, to);
     return 0;
 }
 
@@ -1752,14 +583,14 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
         ast.fail(st, rules.r_skip(), from, to);
         return 2;
     }
-    let ret = lower_type(st, text, ast.get(st, fn_item, 10), st[28], 0 - 1);
+    let ret = scope.lower_type(st, text, ast.get(st, fn_item, 10), st[28], 0 - 1);
     if emit.on(st) {
         // Code is written for functions of whole numbers and booleans, which are not generic.
         var ok = ret == 1 || ret == 5;
         var k = 0;
         var p = ast.get(st, fn_item, 7);
         while p >= 0 {
-            let pt = lower_type(st, text, ast.get(st, p, 5), st[28], 0 - 1);
+            let pt = scope.lower_type(st, text, ast.get(st, p, 5), st[28], 0 - 1);
             ok = ok && (pt == 1 || pt == 5 || types.is_prelude(st, pt));
             p = ast.next(st, p);
             k = k + 1;
@@ -1772,7 +603,7 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
         k = 0;
         p = ast.get(st, fn_item, 7);
         while p >= 0 {
-            let pt = lower_type(st, text, ast.get(st, p, 5), st[28], 0 - 1);
+            let pt = scope.lower_type(st, text, ast.get(st, p, 5), st[28], 0 - 1);
             if !types.is_prelude(st, pt) {
                 emit.header_param(st, pt, k);
                 k = k + 1;
@@ -1784,8 +615,8 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
     var param = ast.get(st, fn_item, 7);
     var index = 0;
     while param >= 0 {
-        let pt = lower_type(st, text, ast.get(st, param, 5), st[28], 0 - 1);
-        bind(st, ast.get(st, param, 4), pt, false, ast.nstart(st, ast.get(st, param, 5)), ast.nend(st, ast.get(st, param, 5)));
+        let pt = scope.lower_type(st, text, ast.get(st, param, 5), st[28], 0 - 1);
+        scope.bind(st, ast.get(st, param, 4), pt, false, ast.nstart(st, ast.get(st, param, 5)), ast.nend(st, ast.get(st, param, 5)));
         if emit.on(st) && !types.is_prelude(st, pt) {
             emit.store_param(st, pt, index, st[39] - 1);
             index = index + 1;
@@ -1842,10 +673,11 @@ fn plain_function_type[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> 
     }
     var param = ast.get(st, fn_item, 7);
     while param >= 0 {
-        if lower_type(st, text, ast.get(st, param, 5), dp, 0 - 1) == 0 {
+        if scope.lower_type(st, text, ast.get(st, param, 5), dp, 0 - 1) == 0 {
             return false;
         }
         param = ast.next(st, param);
     }
-    return lower_type(st, text, ast.get(st, fn_item, 10), dp, 0 - 1) != 0;
+    return scope.lower_type(st, text, ast.get(st, fn_item, 10), dp, 0 - 1) != 0;
 }
+
