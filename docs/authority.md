@@ -37,7 +37,6 @@ what can this thing reach? — would be nowhere.
 
 The natural objection is that the row should carry this. It cannot, and
 the reason is structural rather than an oversight.
-
 §8.2: a row lists what a function **borrows**. Owning a capability is
 strictly stronger and strictly more visible, so an effect a function has
 outright does not appear in its row. That is why `main` prints while
@@ -104,6 +103,15 @@ A capability language is for the question *what can this **not** do*, so
 the report answers it. An absent label is a proof, not an absence of
 evidence: the capability was released, and nothing in the language
 creates another.
+
+Both forms answer it, and from one table. The prose report says
+`never touches` and lists the domains; `--output json` carries the same
+domains as `never_touches`, so a consumer reading only data can tell
+"performs no `exec`" from "does not model `exec`" — silence is not how
+absence is spelled. The domains are the eight the prose report lists
+(the console, the filesystem, the network, the heap, the command line,
+signals, other programs, foreign code), computed by one function both
+outputs share, so the two cannot drift apart.
 
 ### 2.3 It shows narrowing
 
