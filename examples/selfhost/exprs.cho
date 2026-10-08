@@ -13,6 +13,8 @@ import selfhost.pass1;
 import selfhost.types;
 import selfhost.emit;
 import selfhost.scope;
+import selfhost.prims;
+import selfhost.builtins;
 
 // What an expression came to: its type, and whether it is a known integer (a literal, or a
 // literal operation that folded) and which.
@@ -398,6 +400,9 @@ pub fn field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     if types.is_ref(st, held) {
         held = types.ref_inner(st, held);
     }
+    if types.is_prelude(st, held) {
+        return skip(st, from, to);
+    }
     if !types.is_named(st, held) {
         ast.fail(st, rules.r_unknown_name(), ast.nstart(st, base), ast.nend(st, base));
         return nothing();
@@ -486,7 +491,7 @@ pub fn unary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
             ast.fail(st, rules.r_not_a_reference(), of, ot);
             return nothing();
         }
-        if types.is_slice(st, types.ref_inner(st, operand.ty)) {
+        if types.is_slice(st, types.ref_inner(st, operand.ty)) || types.is_prelude(st, types.ref_inner(st, operand.ty)) {
             return skip(st, from, to);
         }
         return plain(types.ref_inner(st, operand.ty));
@@ -702,6 +707,58 @@ pub fn len_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     return plain(1);
 }
 
+// A call to a builtin the table says everything about: it takes what its signature says, as a
+// call to a function does, its region parameters made variables the arguments solve. A builtin the
+// lowering checks by hand, one that performs an effect (rows are not checked yet) and one with a
+// type the checker cannot hold are `SKIP`; and every builtin is while code is being written.
+pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> [] Ex {
+    let from = ast.nstart(st, id);
+    let to = ast.nend(st, id);
+    let start = builtins.builtin_sig_start(b);
+    if builtins.builtin_sig(start) != 0 || builtins.builtin_effect_count(b) > 0 || emit.on(st) {
+        return skip(st, from, to);
+    }
+    var fresh = 0 - 1;
+    var made = 0;
+    while made < builtins.builtin_regions(b) {
+        let r = types.fresh_region(st);
+        if made == 0 {
+            fresh = r;
+        }
+        made = made + 1;
+    }
+    let wanted = builtins.builtin_sig(start + 1);
+    if wanted != ast.get(st, id, 7) {
+        ast.fail(st, rules.r_arity_mismatch(), from, to);
+        return nothing();
+    }
+    var cursor = start + 2;
+    var arg = ast.get(st, id, 6);
+    var k = 0;
+    while k < wanted && ast.ok(st) {
+        let param = prims.decode(st, false, cursor, fresh, false);
+        cursor = st[53];
+        let a = expr(st, text, arg);
+        if ast.ok(st) {
+            if param == 0 {
+                skip(st, from, to);
+            } else {
+                scope.expect(st, text, param, a.ty, ast.nstart(st, arg), ast.nend(st, arg));
+            }
+        }
+        arg = ast.next(st, arg);
+        k = k + 1;
+    }
+    if !ast.ok(st) {
+        return nothing();
+    }
+    let result = prims.decode(st, false, cursor, fresh, false);
+    if result == 0 {
+        return skip(st, from, to);
+    }
+    return plain(result);
+}
+
 pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
@@ -741,8 +798,9 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         return constant(0);
     }
     // A builtin the file's edition can name comes first, then a foreign function: not checked.
-    if pass1.builtin_name(st, text, callee, st[23]) {
-        return skip(st, from, to);
+    let known = prims.builtin_at(st, text, callee, st[23]);
+    if known >= 0 {
+        return builtin_call(st, text, id, known);
     }
     var it = st[15];
     while it >= 0 {

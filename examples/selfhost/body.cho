@@ -206,6 +206,10 @@ fn match_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] i
         area = types.ref_region(st, held);
         held = types.ref_inner(st, held);
     }
+    if types.is_prelude(st, held) {
+        exprs.skip(st, from, to);
+        return 0;
+    }
     if !types.is_named(st, held) || !ast.is_kind(st, types.named_item(st, held), kinds.NK::IEnum) {
         ast.fail(st, rules.r_match_on_a_non_enum(), ast.nstart(st, scrutinee), ast.nend(st, scrutinee));
         return 0;
@@ -409,7 +413,7 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
                 return 0;
             }
             let referent = types.ref_inner(st, o.ty);
-            if types.is_slice(st, referent) {
+            if types.is_slice(st, referent) || types.is_prelude(st, referent) {
                 exprs.skip(st, from, to);
                 return 0;
             }
@@ -458,6 +462,10 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
                 return 0;
             }
             let referent = types.ref_inner(st, b.ty);
+            if types.is_prelude(st, referent) {
+                exprs.skip(st, from, to);
+                return 0;
+            }
             if !types.is_named(st, referent) {
                 ast.fail(st, rules.r_unknown_name(), ast.nstart(st, base), ast.nend(st, base));
                 return 0;

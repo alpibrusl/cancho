@@ -235,6 +235,16 @@ pub fn element_type[&s](st: &!s [int], ty: int) -> [] int {
     return 0;
 }
 
+// The type behind a reference: as `value_type`, and also a prelude type without arguments, which
+// is what a capability or a handle is borrowed as (`&!r Io`). Behind a reference nothing moves, so
+// whether it is a resource does not matter here.
+pub fn referent_type[&s](st: &!s [int], ty: int) -> [] int {
+    if ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 2 && ast.get(st, ty, 7) == 0 {
+        return types.make_prelude(st, ast.get(st, ty, 9));
+    }
+    return value_type(st, ty);
+}
+
 // The type of the resolved type node `ty` when it is a scalar or a plain struct, else 0.
 pub fn value_type[&s](st: &!s [int], ty: int) -> [] int {
     let tag = scalar(st, ty);
@@ -251,6 +261,10 @@ pub fn value_type[&s](st: &!s [int], ty: int) -> [] int {
     }
     if emit.on(st) && ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 2 && ast.get(st, ty, 9) == world_index() && ast.get(st, ty, 7) == 0 {
         return types.make_prelude(st, world_index());
+    }
+    // A prelude type without arguments that is not a resource: `Done`, `Read`, `Opened`.
+    if ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 2 && ast.get(st, ty, 7) == 0 && tables.prelude_res(ast.get(st, ty, 9)) == 0 {
+        return types.make_prelude(st, ast.get(st, ty, 9));
     }
     if ast.get(st, ty, 8) == 3 && (struct_plain(st, ast.get(st, ty, 9)) || enum_plain(st, ast.get(st, ty, 9))) {
         return types.make_named(st, ast.get(st, ty, 9));
@@ -311,7 +325,7 @@ pub fn lower_type[&s, &x](st: &!s [int], text: &x [byte], ty: int, dp: int, fres
             referent = types.make_slice(st, element);
         }
     } else {
-        referent = value_type(st, inner);
+        referent = referent_type(st, inner);
     }
     if referent == 0 {
         return 0;

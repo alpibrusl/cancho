@@ -211,7 +211,8 @@ the stages found, in place, the way this document corrects its own claims.
 | 3e-2. Enums of scalars and `match` | `body.cho` | `check_bodies` | **Fourth slice.** Every function the port answers is the Rust answer: 85 targeted cases for enum values, `match` and its errors (624 in all, 5 cross-module in the several-files test), ~11,000 fuzz cases and 1,269 library cases: none different; the library's verified bodies are 461 of 814 (57%) |
 | 3e-3. Generic functions | `body.cho` (type variables and parameters in `types.cho`) | `check_bodies` | **Fifth slice.** Every function the port answers is the Rust answer: 88 targeted cases for type parameters, inference at a call and `ambiguous-type` (712 in all, 4 cross-module in the several-files test), 15,774 fuzz cases (11,220 alone, 4,554 with the library) and 1,359 library cases: none different; the library's verified bodies stay at 461 of 814 |
 | 3e-4. `borrow` and `region` blocks | `body.cho` (block regions in `types.cho`) | `check_bodies` | **Sixth slice.** Every function the port answers is the Rust answer: 1,271 targeted body cases (456 of them for borrows, regions and their variants), 2 cross-module in the several-files test, 16,000 fuzz cases (11,463 alone, 4,726 with the library) and 1,475 library cases: none different; the library's verified bodies stay at 461 of 814 |
-| 3e-5. The rest of the bodies: builtins and effect rows, generic types, tuples, arena allocation, threads, then linearity, effects, regions | not started | `check_bodies` | |
+| 3e-5. Builtins that perform nothing, and prelude types | `prims.cho`, over a generated `builtins.cho` | `check_bodies` | **Seventh slice.** Every function the port answers is the Rust answer: 1,376 targeted body cases (131 new, among them the ones that must be answered and not skipped), ~19,000 fuzz cases and 2,033 library cases: none different; the library's verified bodies go from 461 to **590 of 814 (72%)** |
+| 3e-6. The rest of the bodies: builtins that perform effects and rows, generic types, tuples, arena allocation, threads, then linearity, effects, regions | not started | `check_bodies` | |
 | 4a. Writing LLVM IR for functions of `int` and `bool`: literals, the arithmetic and bitwise operators with their traps, comparisons, calls, `let`, assignment, `return` | `examples/selfhost/emit.cho`, written by the checker as it walks (`compile.cho`) | the Rust compiler, by what the built programs do | **First slice of the backend.** 74 programs built both ways and run: the same exit status, or a trap in both (18 trap); none different |
 | 4b. Control flow: `if` with `else`, `while`, `&&` and `||` (the right side only when the left has not decided it) | `emit.cho` and `body.cho` | the Rust compiler, by what the built programs do | **Second slice of the backend.** 123 programs built both ways and run, 49 of them new (loops, recursion, early returns, short-circuit that must not run its right side, traps inside loops): the same exit status or a trap in both (27 trap); none different |
 | 4c. `World`, `release` and a real `main`: `main(world: World)` calls the program, a `World` passed between functions, `release(world)` | `emit.cho`, `body.cho`, `types.cho`, `driver.cho` | the Rust compiler, by what the built programs do | **Third slice of the backend.** 254 builds run and compared: every one of the 123 programs through the old `run` convention and through a real `main`, and 8 more with a `main` of their own (a `World` passed on, `release` used as a value): the same exit status or a trap in both (55 trap); none different |
@@ -460,6 +461,26 @@ cases now come padded with bindings, with sibling blocks opened before, and with
 conflict could be reported. The mutation test of the new code in `body.cho` kills 33 of 42, the
 survivors being equivalent comparisons, a stored name nothing reads, and loops whose only effect is
 whether a function is `SKIP`.
+
+**Stage 3e-5: builtins and prelude types.** What the checker needs to know of a builtin is data, so it
+is generated: `builtins.cho`, beside `tables.cho`, holds for each builtin its signature as a prefix-coded
+run of integers (a scalar, a reference with its region parameter, a slice, a prelude type, a tuple, a type
+parameter), its region parameters and its effect labels, and for each prelude struct its fields (the
+`Split` of each edition). `prims.cho` decodes a signature into the checker's types, with each region
+parameter a fresh variable, and a call to a builtin goes the way a call to a function does: the
+arity (`arity-mismatch`), each argument unified with its parameter, the result. What it cannot hold (a
+tuple, a type parameter, a literal type, a prelude type that is a resource and not behind a reference) decodes to
+nothing and the call is `SKIP`; so is a builtin the lowering checks by hand (`split`, `release`, `len`,
+`box`), and a builtin that performs an effect, because rows are not checked yet and answering `OK`
+for a function whose row Rust would refuse would be wrong. The prelude types without arguments are now
+types of the checker too: `Io`, `Heap`, `Args`, `File` behind a reference (a borrowed capability is
+`val`), and `Done`, `Read` (not resources) by value; a field read or a `match` on one is `SKIP`. The case
+list now has a strictness: a skipped function cannot be seen by a comparison, so a change that only
+makes the port give up would pass; the cases written to be answered are marked, and one of them
+skipped is a failure. The mutation test of `prims.cho` kills 27 of 38 (9 of 38 before the cases
+were written for it), the survivors being branches no builtin the checker can call reaches. The state
+and `body.cho` were split for length: `scope.cho` (bindings, borrows, blocks and the lowering of written
+types), `exprs.cho` (expressions, folding, calls) and `body.cho` (statements and `check_function`).
 
 **Stage 4a: the first code.** The backend is written the way the Rust one is: the module is LLVM IR as
 text, and `clang` turns it into the executable (`cancho-codegen-llvm` does the same, so nothing here
