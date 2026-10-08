@@ -4,7 +4,6 @@
 `docs/editions.md` §2 is what these numbers mean. Every distinct revision
 of every `.cho` file under `std/` and `examples/` is checked by one
 binary, today's, so anything that fails is the language having moved.
-
 A library file is checked beside today's other library files and a
 `main` that does nothing, because a file of a program is not a program.
 An example in a directory is checked beside its siblings as they were
@@ -13,6 +12,7 @@ in the commit that introduced it.
     python3 scripts/history.py             # replay, and classify what fails
     python3 scripts/history.py --migrate   # then try the two mechanical steps
     python3 scripts/history.py --alias     # or read an old `io` as both halves
+    python3 scripts/history.py --explain   # or hold the plateau (docs/stability-exemptions.md)
 
 `--alias` is what an edition could do inside the compiler without a
 tool: read an old file's `io` label as `io_read, io_write`, the two labels
@@ -28,6 +28,12 @@ refusals, applied only to the file under test. It knows two steps:
 
 Anything else stops it, so what it recovers is a lower bound on what a
 real tool, one that edits every file of a program, would recover.
+
+`--explain` is `docs/hash-stability.md` §7's plateau rule as a checked
+property: a failing rule not listed with a reason in the committed
+exemption file is exit 1, and a listed rule that no longer fails is
+reported as stale. The replay itself uses `--backend cranelift`, so the
+instrument depends on no host toolchain beyond Rust.
 """
 
 import argparse
@@ -47,8 +53,8 @@ FIELDS = ["io", "ffi", "fs", "heap", "args"]
 EMPTY_MAIN = (
     "fn main(world: World) -> [] int {\n"
     "    let Split { io, ffi, fs, heap, args } = split(world);\n"
-    "    release(args);\n    release(ffi);\n    release(fs);\n"
-    "    release(heap);\n    release(io);\n    return 0;\n}\n"
+    "    release(args);\n    release(ffi); release(fs); release(heap);\n"
+    "    release(io);\n    return 0;\n}\n"
 )
 
 
@@ -70,7 +76,7 @@ def revisions():
 
 def refusals(files, args):
     out = subprocess.run(
-        [str(BIN), "check", "--output", "json", *map(str, files), *args],
+        [str(BIN), "check", "--output", "json", "--backend", "cranelift", *map(str, files), *args],
         capture_output=True,
         text=True,
     ).stdout
@@ -154,9 +160,35 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--migrate", action="store_true")
     parser.add_argument("--alias", action="store_true")
+    # `docs/hash-stability.md` §7's plateau rule: every historical revision
+    # must read under today's compiler, or appear in the committed exemption
+    # list with a reason. In this mode an unexplained failure is exit 1, so
+    # CI can hold the number the doc keeps having to correct.
+    parser.add_argument("--explain", action="store_true")
     options = parser.parse_args()
     if not BIN.exists():
         sys.exit("build first: cargo build --release")
+
+    # The exemption list: one `rule | reason` row a line of the table in
+    # `docs/stability-exemptions.md`, read from the committed file so the
+    # debt is in the repository rather than in a paragraph that gets
+    # corrected when the number climbs. Only a row whose first cell names
+    # a rule counts: the header and the dashes row are skipped, and a
+    # first cell that is not a rule name is a typo the check below will
+    # surface as an exemption that never fires.
+    exemptions: dict[str, str] = {}
+    if options.explain:
+        list_path = ROOT / "docs" / "stability-exemptions.md"
+        if not list_path.exists():
+            sys.exit("--explain needs docs/stability-exemptions.md")
+        for line in list_path.read_text().splitlines():
+            line = line.strip()
+            if not line.startswith("|") or set(line) <= {"|", "-", " "}:
+                continue
+            cells = [c.strip() for c in line.strip("|").split("|")]
+            if len(cells) < 2 or cells[0] in ("rule", ""):
+                continue
+            exemptions[cells[0]] = cells[1]
 
     work = pathlib.Path(tempfile.mkdtemp(prefix="cancho-history-"))
     failing = collections.Counter()
@@ -202,17 +234,37 @@ def main():
         else:
             recovered[first[0]["rule"]] += 1
     shutil.rmtree(work, ignore_errors=True)
-
     unreadable = sum(failing.values())
     print(f"{total} revisions, {total - unreadable} read today, {unreadable} do not")
     for (rule, message), n in failing.most_common():
-        print(f"  {n:4}  {rule:24} {message}")
+        print(f"  {n:4}  {rule:24}  {message}")
+    # The plateau check itself: a failure is debt, and debt is either in the
+    # committed list with a reason or it fails the run. A rule in the list
+    # still counts toward the failing total — the number stays honest —
+    # but it does not fail the build; an unlisted one does, and a listed
+    # rule that no longer fails is reported as stale so the list only ever
+    # shrinks.
+    if options.explain:
+        failing_rules = {rule for (rule, _), _ in failing.items()}
+        unexplained = failing_rules - exemptions.keys()
+        stale = [r for r in exemptions if r not in failing_rules]
+        if stale:
+            print("\nexemptions that no longer fail (remove them):")
+            for rule in sorted(stale):
+                print(f"  {rule:24}  {exemptions[rule]}")
+        if unexplained:
+            print("\nUNEXPLAINED (add to docs/stability-exemptions.md or fix):")
+            for rule in sorted(unexplained):
+                count = sum(n for (r, _), n in failing.items() if r == rule)
+                print(f"  {count:4}  {rule}")
+            sys.exit(1)
+        print(f"\nplateau holds: {len(exemptions)} exempted rules, every failing rule explained")
     if options.migrate or options.alias:
         how = "the two mechanical steps" if options.migrate else "reading `io` as both halves"
         print(f"\nrecovered by {how}: {sum(recovered.values())}")
         print("what stops the rest:")
         for (rule, message), n in remaining.most_common():
-            print(f"  {n:4}  {rule:24} {message}")
+            print(f"  {n:4}  {rule:24}  {message}")
 
 
 if __name__ == "__main__":
