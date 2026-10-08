@@ -22,11 +22,11 @@ fn build_tls_driver(test: &str, backend: &str) -> (PathBuf, PathBuf) {
         .args(["build", "--std", "--backend", backend])
         .arg(repo_root().join("tests/programs/tls_driver.cho"))
         .args(
-            ["record.cho", "message.cho", "slot.cho", "client12.cho", "client.cho"]
+            ["record.cho", "message.cho", "slot.cho", "cident.cho", "client12.cho", "client.cho"]
                 .map(|f| repo_root().join("packages/tls").join(f)),
         )
         .args(
-            ["verify.cho", "names.cho", "x509.cho"]
+            ["verify.cho", "names.cho", "x509.cho", "key.cho"]
                 .map(|f| repo_root().join("packages/x509").join(f)),
         )
         .arg("-o")

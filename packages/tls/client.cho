@@ -4,6 +4,7 @@ import std.ecdh;
 import std.hkdf;
 import std.hmac;
 import std.x25519;
+import tls_cident;
 import tls_client12;
 import tls_message;
 import tls_slot;
@@ -68,7 +69,31 @@ pub fn start[&i, &b, &h, &r](ints: &!i [int], bytes: &!b [byte], host: &h [byte]
 // ClientHello that the client can resume, so a server may send it tickets
 // (implied by a ticket offered).
 pub fn start_psk[&i, &b, &h, &r, &t, &k](ints: &!i [int], bytes: &!b [byte], host: &h [byte], random: &r [byte], now: int, ticket: &t [byte], psk: &k [byte], age: int, verified_at: int, not_after: int, advertise: bool) -> [] int {
-    if len(ints) < tls_slot.ints_len() || len(bytes) < tls_slot.bytes_len() || len(random) != 96 || len(host) > 255 {
+    return start_alpn(ints, bytes, host, random, now, ticket, psk, age, verified_at, not_after, advertise, host[0..0]);
+}
+
+// Whether `wire` is an ALPN offer: names of 1 to 255 bytes, each after its
+// length byte, tiling it, at most `tls_slot.alpn_offer_cap()` bytes.
+pub fn alpn_wire_ok[&w](wire: &w [byte]) -> [] bool {
+    if len(wire) > tls_slot.alpn_offer_cap() {
+        return false;
+    }
+    var at = 0;
+    while at < len(wire) {
+        let n = int_of(wire[at]);
+        if n == 0 || at + 1 + n > len(wire) {
+            return false;
+        }
+        at = at + 1 + n;
+    }
+    return true;
+}
+
+// `start_psk`, offering the protocols in `alpn` (ALPN's wire form; empty
+// offers none, and the ClientHello is as `start_psk`'s) (`docs/tls-parity.md`
+// §6.6).
+pub fn start_alpn[&i, &b, &h, &r, &t, &k, &a](ints: &!i [int], bytes: &!b [byte], host: &h [byte], random: &r [byte], now: int, ticket: &t [byte], psk: &k [byte], age: int, verified_at: int, not_after: int, advertise: bool, alpn: &a [byte]) -> [] int {
+    if len(ints) < tls_slot.ints_len() || len(bytes) < tls_slot.bytes_len() || len(random) != 96 || len(host) > 255 || !alpn_wire_ok(alpn) {
         return tls_record.bad_slot();
     }
     if len(ticket) > tls_slot.ticket_cap() || len(ticket) > 0 && len(psk) != 32 && len(psk) != 48 {
@@ -85,6 +110,8 @@ pub fn start_psk[&i, &b, &h, &r, &t, &k](ints: &!i [int], bytes: &!b [byte], hos
     tls_slot.copy_bytes(random[64..96], bytes[tls_slot.k_x25519()..tls_slot.k_x25519() + 32]);
     tls_slot.copy_bytes(host, bytes[tls_slot.k_host()..tls_slot.k_host() + len(host)]);
     ints[tls_slot.i_host_len()] = len(host);
+    tls_slot.copy_bytes(alpn, bytes[tls_slot.b_alpn_offer()..tls_slot.b_alpn_offer() + len(alpn)]);
+    ints[tls_slot.i_alpn_offer_len()] = len(alpn);
     ints[tls_slot.i_now()] = now;
     ints[tls_slot.i_group()] = tls_message.group_x25519();
     if advertise {
@@ -122,7 +149,7 @@ fn send_client_hello[&i, &b, &s, &c](ints: &!i [int], bytes: &!b [byte], share: 
             tn = ints[tls_slot.i_offer_len()];
             h = ints[tls_slot.i_offer_hash()];
         }
-        let n = tls_message.client_hello(bytes[tls_slot.k_random()..tls_slot.k_random() + 32], bytes[tls_slot.k_session_id()..tls_slot.k_session_id() + 32], ints[tls_slot.i_group()], share, cookie, bytes[tls_slot.k_host()..tls_slot.k_host() + ints[tls_slot.i_host_len()]], tls_slot.has(ints, tls_slot.f_advertise()), bytes[tls_slot.b_offer()..tls_slot.b_offer() + tn], ints[tls_slot.i_offer_age()], h, hello);
+        let n = tls_message.client_hello(bytes[tls_slot.k_random()..tls_slot.k_random() + 32], bytes[tls_slot.k_session_id()..tls_slot.k_session_id() + 32], ints[tls_slot.i_group()], share, cookie, bytes[tls_slot.k_host()..tls_slot.k_host() + ints[tls_slot.i_host_len()]], tls_slot.has(ints, tls_slot.f_advertise()), bytes[tls_slot.b_offer()..tls_slot.b_offer() + tn], ints[tls_slot.i_offer_age()], h, bytes[tls_slot.b_alpn_offer()..tls_slot.b_alpn_offer() + ints[tls_slot.i_alpn_offer_len()]], hello);
         if tn > 0 {
             binder(ints, bytes, hello[0..n]);
         }
@@ -193,7 +220,7 @@ fn on_server_hello[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message: &m [
             code = tls_record.protocol_version();
         }
         if code == 0 && tls12 {
-            code = tls_client12.on_server_hello12(ints, bytes, message, suite);
+            code = tls_client12.on_server_hello12(ints, bytes, message, suite, info);
         } else if code == 0 && tls_slot.has(ints, tls_slot.f_retried()) {
             // After a retry: no second one, and the suite it named.
             if info[tls_message.sh_retry()] == 1 {
@@ -396,7 +423,7 @@ pub fn finished_mac[&i, &s, &o](ints: &i [int], secret: &s [byte], out: &!o [byt
 // The server's Finished, then the client's flight: a change_cipher_spec
 // for middleboxes (RFC 8446 Appendix D.4), an empty Certificate if one
 // was requested, and Finished; then the application keys.
-fn on_finished[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message: &m [byte]) -> [] int {
+fn on_finished[&i, &b, &m, &c](ints: &!i [int], bytes: &!b [byte], message: &m [byte], cred: &c [byte]) -> [] int {
     let h = tls_slot.hash_len(ints);
     var code = tls_message.finished(message[4..len(message)], h);
     region r {
@@ -423,7 +450,9 @@ fn on_finished[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message: &m [byte
             let ccs = alloc_slice[r](1, byte_of(1));
             code = tls_slot.queue_record(ints, bytes, tls_record.type_change_cipher_spec(), ccs);
             tls_slot.set_write_keys(ints, bytes, tls_slot.k_client_hs());
-            if code == 0 && tls_slot.has(ints, tls_slot.f_cert_requested()) {
+            if code == 0 && tls_slot.has(ints, tls_slot.f_cert_send()) {
+                code = send_identity(ints, bytes, cred);
+            } else if code == 0 && tls_slot.has(ints, tls_slot.f_cert_requested()) {
                 let cn = ints[tls_slot.i_context_len()];
                 let cert = alloc_slice[r](4 + 1 + cn + 3, byte_of(0));
                 cert[0] = byte_of(tls_message.type_certificate());
@@ -460,6 +489,50 @@ fn on_finished[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message: &m [byte
                 ints[tls_slot.i_state()] = tls_slot.state_connected();
             }
         }
+    }
+    return code;
+}
+
+// The client's Certificate (the request's context echoed, then the identity's
+// chain) and CertificateVerify, queued, both in the transcript
+// (`docs/tls-parity.md` §6.4): the signature is over the transcript hash
+// through the Certificate. The ticket this connection earns is not offered
+// after the client leaf expires (§6.5, rule 10).
+fn send_identity[&i, &b, &c](ints: &!i [int], bytes: &!b [byte], cred: &c [byte]) -> [] int {
+    let id = ints[tls_slot.i_identity()] - 1;
+    let h = tls_slot.hash_len(ints);
+    var code = 0;
+    region r {
+        let list = tls_cident.list(cred, id);
+        let cn = ints[tls_slot.i_context_len()];
+        let cert = alloc_slice[r](4 + 1 + cn + 3 + len(list), byte_of(0));
+        cert[0] = byte_of(tls_message.type_certificate());
+        tls_message.put(cert, 1, 1 + cn + 3 + len(list), 3);
+        cert[4] = byte_of(cn);
+        tls_slot.copy_bytes(bytes[tls_slot.k_context()..tls_slot.k_context() + cn], cert[5..5 + cn]);
+        tls_message.put(cert, 5 + cn, len(list), 3);
+        tls_slot.copy_bytes(list, cert[8 + cn..8 + cn + len(list)]);
+        tls_slot.transcript_add(ints, cert);
+        code = tls_slot.queue_record(ints, bytes, tls_record.type_handshake(), cert);
+        if code == 0 {
+            // 64 spaces, the context string, a zero byte, the hash.
+            let content = alloc_slice[r](64 + 33 + 1 + h, byte_of(32));
+            let label = "TLS 1.3, client CertificateVerify";
+            tls_slot.copy_bytes(label, content[64..97]);
+            content[97] = byte_of(0);
+            tls_slot.transcript_hash(ints, content[98..98 + h]);
+            let digest = alloc_slice[r](32, byte_of(0));
+            crypto.sha256(content, digest);
+            let cv = alloc_slice[r](80, byte_of(0));
+            let n = tls_client12.certificate_verify_message(ints, cred, digest, bytes[tls_slot.k_client_hs()..tls_slot.k_client_hs() + h], cv);
+            if n < 0 {
+                code = n;
+            } else {
+                tls_slot.transcript_add(ints, cv[0..n]);
+                code = tls_slot.queue_record(ints, bytes, tls_record.type_handshake(), cv[0..n]);
+            }
+        }
+        ints[tls_slot.i_not_after()] = tls_client12.client_not_after(ints[tls_slot.i_not_after()], tls_cident.not_after(cred, id));
     }
     return code;
 }
@@ -529,17 +602,24 @@ fn on_key_update[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message: &m [by
 }
 
 // One whole handshake message, header included, in the current state.
-fn on_message[&i, &b, &m, &p](ints: &!i [int], bytes: &!b [byte], message: &m [byte], store: &p [byte]) -> [] int {
+fn on_message[&i, &b, &m, &p, &c](ints: &!i [int], bytes: &!b [byte], message: &m [byte], store: &p [byte], cred: &c [byte]) -> [] int {
     let kind = int_of(message[0]);
     let state = ints[tls_slot.i_state()];
     if tls_slot.has(ints, tls_slot.f_tls12()) {
-        return tls_client12.on_message12(ints, bytes, message, store);
+        return tls_client12.on_message12(ints, bytes, message, store, cred);
     }
     if state == tls_slot.state_wait_server_hello() && kind == tls_message.type_server_hello() {
         return on_server_hello(ints, bytes, message);
     }
     if state == tls_slot.state_wait_extensions() && kind == tls_message.type_encrypted_extensions() {
-        let code = tls_message.encrypted_extensions(message[4..len(message)]);
+        var code = 0;
+        region r {
+            let info = alloc_slice[r](2, 0);
+            code = tls_message.encrypted_extensions_alpn(message[4..len(message)], ints[tls_slot.i_alpn_offer_len()] > 0, info);
+            if code == 0 && info[0] > 0 {
+                code = tls_client12.take_alpn(ints, bytes, message[4 + info[0]..4 + info[1]]);
+            }
+        }
         if code == 0 {
             tls_slot.transcript_add(ints, message);
             ints[tls_slot.i_state()] = tls_slot.state_wait_certificate();
@@ -552,21 +632,23 @@ fn on_message[&i, &b, &m, &p](ints: &!i [int], bytes: &!b [byte], message: &m [b
         return code;
     }
     if state == tls_slot.state_wait_certificate() && kind == tls_message.type_certificate_request() && !tls_slot.has(ints, tls_slot.f_cert_requested()) {
-        // The context is echoed; the rest of the request is not used.
+        // The context is echoed; the request is read for the scheme and the
+        // authorities (`docs/tls-parity.md` §6.3).
         let body = message[4..len(message)];
-        if len(body) < 3 || 1 + int_of(body[0]) + 2 > len(body) {
-            return tls_record.decode_error();
+        var code = 0;
+        region r {
+            let info = alloc_slice[r](tls_message.cr_info_len(), 0);
+            code = tls_message.certificate_request(body, info);
+            if code == 0 {
+                let cn = info[tls_message.cr_context()];
+                tls_slot.copy_bytes(body[1..1 + cn], bytes[tls_slot.k_context()..tls_slot.k_context() + cn]);
+                ints[tls_slot.i_context_len()] = cn;
+                tls_slot.set_flag(ints, tls_slot.f_cert_requested());
+                tls_client12.answer_request(ints, cred, body, info);
+                tls_slot.transcript_add(ints, message);
+            }
         }
-        let cn = int_of(body[0]);
-        let ext = 1 + cn;
-        if ext + 2 + int_of(body[ext]) * 256 + int_of(body[ext + 1]) != len(body) {
-            return tls_record.decode_error();
-        }
-        tls_slot.copy_bytes(body[1..1 + cn], bytes[tls_slot.k_context()..tls_slot.k_context() + cn]);
-        ints[tls_slot.i_context_len()] = cn;
-        tls_slot.set_flag(ints, tls_slot.f_cert_requested());
-        tls_slot.transcript_add(ints, message);
-        return 0;
+        return code;
     }
     if state == tls_slot.state_wait_certificate() && kind == tls_message.type_certificate() {
         return on_certificate(ints, bytes, message, store);
@@ -575,7 +657,7 @@ fn on_message[&i, &b, &m, &p](ints: &!i [int], bytes: &!b [byte], message: &m [b
         return on_certificate_verify(ints, bytes, message);
     }
     if state == tls_slot.state_wait_finished() && kind == tls_message.type_finished() {
-        return on_finished(ints, bytes, message);
+        return on_finished(ints, bytes, message, cred);
     }
     if state == tls_slot.state_connected() && kind == tls_message.type_new_session_ticket() {
         return on_ticket(ints, bytes, message);
@@ -587,7 +669,7 @@ fn on_message[&i, &b, &m, &p](ints: &!i [int], bytes: &!b [byte], message: &m [b
 }
 
 // Appends handshake bytes and handles every whole message they finish.
-fn on_handshake_bytes[&i, &b, &c, &p](ints: &!i [int], bytes: &!b [byte], content: &c [byte], store: &p [byte]) -> [] int {
+fn on_handshake_bytes[&i, &b, &c, &p, &q](ints: &!i [int], bytes: &!b [byte], content: &c [byte], store: &p [byte], cred: &q [byte]) -> [] int {
     let fill = ints[tls_slot.i_hs_fill()];
     if fill + len(content) > tls_slot.hs_cap() {
         return tls_record.record_overflow();
@@ -615,7 +697,7 @@ fn on_handshake_bytes[&i, &b, &c, &p](ints: &!i [int], bytes: &!b [byte], conten
                     let message = alloc_slice[r](4 + n, byte_of(0));
                     tls_slot.copy_bytes(bytes[p..p + 4 + n], message);
                     let before = ints[tls_slot.i_state()];
-                    code = on_message(ints, bytes, message, store);
+                    code = on_message(ints, bytes, message, store, cred);
                     at = at + 4 + n;
                     // A message must not share a record with the next key
                     // (RFC 8446 §5.1): after ServerHello and Finished, the
@@ -678,7 +760,7 @@ pub fn on_alert[&i, &b, &c](ints: &!i [int], bytes: &!b [byte], content: &c [byt
 }
 
 // One whole record from `bytes[tls_slot.b_in()..]`, `n` bytes long.
-fn on_record[&i, &b, &p](ints: &!i [int], bytes: &!b [byte], n: int, store: &p [byte]) -> [] int {
+fn on_record[&i, &b, &p, &q](ints: &!i [int], bytes: &!b [byte], n: int, store: &p [byte], cred: &q [byte]) -> [] int {
     let kind = int_of(bytes[tls_slot.b_in()]);
     let body = n - 5;
     let state = ints[tls_slot.i_state()];
@@ -710,7 +792,7 @@ fn on_record[&i, &b, &p](ints: &!i [int], bytes: &!b [byte], n: int, store: &p [
             let content = alloc_slice[r](body, byte_of(0));
             tls_slot.copy_bytes(bytes[tls_slot.b_in() + 5..tls_slot.b_in() + n], content);
             if kind == tls_record.type_handshake() {
-                plain = on_handshake_bytes(ints, bytes, content, store);
+                plain = on_handshake_bytes(ints, bytes, content, store, cred);
             } else {
                 plain = on_alert(ints, bytes, content);
             }
@@ -747,7 +829,7 @@ fn on_record[&i, &b, &p](ints: &!i [int], bytes: &!b [byte], n: int, store: &p [
             if size == 0 {
                 code = tls_record.unexpected_message();
             } else {
-                code = on_handshake_bytes(ints, bytes, content, store);
+                code = on_handshake_bytes(ints, bytes, content, store, cred);
             }
         } else if inner == tls_record.type_alert() {
             code = on_alert(ints, bytes, content);
@@ -772,12 +854,24 @@ fn on_record[&i, &b, &p](ints: &!i [int], bytes: &!b [byte], n: int, store: &p [
 // unless output or received data must be taken first), or the
 // connection's failure.
 pub fn feed[&i, &b, &d, &p](ints: &!i [int], bytes: &!b [byte], data: &d [byte], store: &p [byte]) -> [] int {
+    return feed_with(ints, bytes, data, store, store[0..0]);
+}
+
+// `feed`, with the engine's client identities `cred` (`tls_cident`'s layout;
+// empty for none), which a CertificateRequest may be answered from
+// (`docs/tls-parity.md` §6.3).
+pub fn feed_with[&i, &b, &d, &p, &q](ints: &!i [int], bytes: &!b [byte], data: &d [byte], store: &p [byte], cred: &q [byte]) -> [] int {
     var consumed = 0;
     var code = 0;
     while consumed < len(data) && code == 0 && ints[tls_slot.i_state()] != tls_slot.state_failed() && !tls_slot.has(ints, tls_slot.f_close_received()) {
         // Room for what one record can produce: an answer, or its content.
         compact_recv(ints, bytes);
-        if tls_slot.out_free(ints) < 1024 || tls_slot.recv_cap() - ints[tls_slot.i_recv_end()] < tls_record.max_plaintext() {
+        // A client's Certificate is a record of its own (`docs/tls-parity.md` §6.7).
+        var room = 1024;
+        if tls_slot.has(ints, tls_slot.f_cert_send()) && (ints[tls_slot.i_state()] == tls_slot.state_wait_finished() || ints[tls_slot.i_state()] == tls_slot.state_wait_server_done()) {
+            room = 1024 + 5 + 22 + 4 + 1 + 255 + 3 + tls_cident.chain_cap();
+        }
+        if tls_slot.out_free(ints) < room || tls_slot.recv_cap() - ints[tls_slot.i_recv_end()] < tls_record.max_plaintext() {
             return consumed;
         }
         let fill = ints[tls_slot.i_in_fill()];
@@ -803,7 +897,7 @@ pub fn feed[&i, &b, &d, &p](ints: &!i [int], bytes: &!b [byte], data: &d [byte],
             let total = 5 + int_of(bytes[tls_slot.b_in() + 3]) * 256 + int_of(bytes[tls_slot.b_in() + 4]);
             if ints[tls_slot.i_in_fill()] == total {
                 ints[tls_slot.i_in_fill()] = 0;
-                code = on_record(ints, bytes, total, store);
+                code = on_record(ints, bytes, total, store, cred);
             }
         }
     }
@@ -970,6 +1064,31 @@ pub fn failure[&i](ints: &i [int]) -> [] int {
 // Whether the connection resumed a session (known once established).
 pub fn resumed[&i](ints: &i [int]) -> [] bool {
     return tls_slot.has(ints, tls_slot.f_resumed());
+}
+
+// What became of a CertificateRequest (`docs/tls-parity.md` §6.3): 0 none
+// came, 1 it was answered with the identity's chain, 2 with the empty
+// Certificate.
+pub fn client_auth[&i](ints: &i [int]) -> [] int {
+    if tls_slot.has(ints, tls_slot.f_cert_send()) {
+        return 1;
+    }
+    if tls_slot.has(ints, tls_slot.f_cert_requested()) {
+        return 2;
+    }
+    return 0;
+}
+
+// The ALPN protocol the server chose, into `out` (at most 255 bytes): its
+// length, 0 for none (`docs/tls-parity.md` §6.6).
+pub fn alpn[&i, &b, &o](ints: &i [int], bytes: &b [byte], out: &!o [byte]) -> [] int {
+    var n = ints[tls_slot.i_alpn_len()];
+    if n > len(out) {
+        n = len(out);
+    }
+    let at = tls_slot.b_alpn_offer() + ints[tls_slot.i_alpn_at()];
+    tls_slot.copy_bytes(bytes[at..at + n], out[0..n]);
+    return n;
 }
 
 pub fn alert_received[&i](ints: &i [int]) -> [] int {

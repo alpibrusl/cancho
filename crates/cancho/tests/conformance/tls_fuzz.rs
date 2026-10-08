@@ -10,14 +10,16 @@
 use super::json::feed;
 use super::*;
 
-const PACKAGES: [&str; 8] = [
+const PACKAGES: [&str; 10] = [
     "packages/tls/record.cho",
     "packages/tls/message.cho",
     "packages/tls/slot.cho",
+    "packages/tls/cident.cho",
     "packages/tls/client12.cho",
     "packages/tls/client.cho",
     "packages/x509/verify.cho",
     "packages/x509/names.cho",
+    "packages/x509/key.cho",
     "packages/x509/x509.cho",
 ];
 

@@ -282,6 +282,63 @@ pub fn server_alpn_list() -> [] int {
     return -63;
 }
 
+// ---- The client's refusals for client certificates and ALPN (`docs/tls-parity.md` §6.7) ----
+
+// `add_client_identity`: a key, or a leaf certificate, that is not P-256 (`docs/tls-parity.md` §6.2).
+pub fn client_key_type() -> [] int {
+    return -120;
+}
+
+// `add_client_identity`: a key that is not an unencrypted PKCS#8 or SEC 1 PEM block this package reads.
+pub fn client_key_format() -> [] int {
+    return -121;
+}
+
+// `add_client_identity`: the key is not the leaf certificate's.
+pub fn client_key_mismatch() -> [] int {
+    return -122;
+}
+
+// `add_client_identity`: the leaf certificate has expired at the time given.
+pub fn client_cert_expired() -> [] int {
+    return -123;
+}
+
+// `add_client_identity`: no certificate in the chain, a block that does not decode, a leaf that does not parse, or a chain over `tls_cident.chain_cap()` bytes.
+pub fn client_chain() -> [] int {
+    return -124;
+}
+
+// `add_client_identity`: no hosts, or a list over `tls_cident.names_cap()` bytes.
+pub fn client_names() -> [] int {
+    return -125;
+}
+
+// `add_client_identity`: the engine holds its four identities already.
+pub fn client_identities_full() -> [] int {
+    return -126;
+}
+
+// `replace_client_identity` or `remove_client_identity` of an identity never added.
+pub fn client_no_identity() -> [] int {
+    return -127;
+}
+
+// The signer refused or its check failed while signing CertificateVerify: a fault, not an input (`docs/tls-parity.md` §6.4).
+pub fn client_sign() -> [] int {
+    return -128;
+}
+
+// `set_alpn_offer` or `start_alpn`: an empty protocol name, one over 255 bytes, or a list over `tls_slot.alpn_offer_cap()`.
+pub fn alpn_list() -> [] int {
+    return -129;
+}
+
+// The server chose an ALPN protocol that is not in the offer (`docs/tls-parity.md` §6.6).
+pub fn alpn_selected() -> [] int {
+    return -130;
+}
+
 pub fn refusal_tag(code: int) -> [] &static [byte] {
     if code == 0 {
         return "ok";
@@ -456,6 +513,39 @@ pub fn refusal_tag(code: int) -> [] &static [byte] {
     }
     if code == -63 {
         return "tls-server-alpn-list";
+    }
+    if code == -120 {
+        return "tls-client-key-type";
+    }
+    if code == -121 {
+        return "tls-client-key-format";
+    }
+    if code == -122 {
+        return "tls-client-key-mismatch";
+    }
+    if code == -123 {
+        return "tls-client-cert-expired";
+    }
+    if code == -124 {
+        return "tls-client-chain";
+    }
+    if code == -125 {
+        return "tls-client-names";
+    }
+    if code == -126 {
+        return "tls-client-identities-full";
+    }
+    if code == -127 {
+        return "tls-client-no-identity";
+    }
+    if code == -128 {
+        return "tls-client-sign";
+    }
+    if code == -129 {
+        return "tls-alpn-list";
+    }
+    if code == -130 {
+        return "tls-alpn-selected";
     }
     return "unknown";
 }
