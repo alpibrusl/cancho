@@ -1228,11 +1228,19 @@ impl<'a> FuncEmitter<'a> {
             }
             Callee::Builtin(Builtin::ConnDetach) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
-                self.conn_detach(&args)
+                self.conn_detach(&args, false)
+            }
+            Callee::Builtin(Builtin::UdpDetach) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.conn_detach(&args, true)
+            }
+            Callee::Builtin(Builtin::UdpAttach) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.conn_attach(&args, true)
             }
             Callee::Builtin(Builtin::ConnAttach) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
-                self.conn_attach(&args)
+                self.conn_attach(&args, false)
             }
             Callee::Builtin(Builtin::PollerAddListener) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();

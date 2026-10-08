@@ -146,6 +146,7 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::AesEncryptBlock
                     | Builtin::GhashUpdate
                     | Builtin::ConnDetach
+                    | Builtin::UdpDetach
                     | Builtin::Trap
                     | Builtin::Release,
                 ) => Ok(LKind::I64),

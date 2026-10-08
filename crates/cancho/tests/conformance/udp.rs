@@ -950,3 +950,254 @@ fn run(bound: Net("PORT"), io: Io) -> [] int {
 fn an_empty_ticket_slice_is_einval_and_a_failed_receive_leaves_no_ticket() {
     serve("no-cell", NO_CELL, 0, |_port| {});
 }
+
+// ---------------------------------------------------------------------
+// Tickets for datagram sockets (`docs/udp.md` §11)
+// ---------------------------------------------------------------------
+
+/// One attempt to redeem `TICKET` as a `Udp` that must be refused with `EBADF`.
+fn udp_attach_refused(ticket: &str) -> String {
+    format!(
+        "match udp_attach({ticket}) {{\n\
+             UdpOpened::Failed(e) => {{ if e == 9 {{ refused = refused + 1; }} }}\n\
+             UdpOpened::Ok(x) => {{ udp_close(x); }}\n\
+         }}\n"
+    )
+}
+
+/// Forged tickets reach nothing, a ticket of the other kind is refused (and not spent), the real one
+/// redeems once and the socket still works, and a second redemption is refused.
+fn tickets_program() -> String {
+    let forged: String = [
+        udp_attach_refused("0"),
+        udp_attach_refused("0 - 1"),
+        udp_attach_refused("1"),
+        udp_attach_refused("9223372036854775807"),
+        udp_attach_refused("ticket + 1"),
+        udp_attach_refused("ticket + 8589934592"),
+        udp_attach_refused("ticket - 2147483648"),
+        "match conn_attach(ticket) {\n\
+             Attached::Failed(e) => { if e == 9 { refused = refused + 1; } }\n\
+             Attached::Ok(x) => { conn_close(x); }\n\
+         }\n"
+        .to_owned(),
+    ]
+    .concat();
+    format!(
+        r#"
+fn run(bound: Net("BOUND"), io: Io) -> [] int {{
+    var status = 1;
+    borrow bound as &n in {{
+        match udp_connect(n, "127.0.0.1", PORT) {{
+            UdpOpened::Ok(u) => {{
+                let ticket = udp_detach(u);
+                var refused = 0;
+                if ticket > 0 {{
+                    {forged}
+                    match udp_attach(ticket) {{
+                        UdpOpened::Ok(back) => {{
+                            var sock = back;
+                            borrow mut sock as &!uh in {{
+                                match udp_send(uh, "ping") {{
+                                    Sent::Wrote(w) => {{
+                                        region a {{
+                                            var buf = alloc_slice[a](16, byte_of(0));
+                                            match udp_recv(uh, buf) {{
+                                                Datagram::Got(k) => {{
+                                                    if k == 4 && int_of(buf[0]) == 80 {{ status = 0; }} else {{ status = 5; }}
+                                                }}
+                                                Datagram::Truncated(k) => {{ status = 6; }}
+                                                Datagram::Again => {{ status = 7; }}
+                                                Datagram::Failed(e) => {{ status = 8; }}
+                                            }}
+                                        }}
+                                    }}
+                                    Sent::Again => {{ status = 9; }}
+                                    Sent::Failed(e) => {{ status = 10; }}
+                                }}
+                            }}
+                            udp_close(sock);
+                        }}
+                        UdpOpened::Failed(e) => {{ status = 3; }}
+                    }}
+                    {again}
+                    if status == 0 && refused != 9 {{ status = 20 + refused; }}
+                }} else {{
+                    status = 4;
+                }}
+            }}
+            UdpOpened::Failed(e) => {{ status = 2; }}
+        }}
+    }}
+    release(bound);
+    release(io);
+    return status;
+}}
+"#,
+        again = udp_attach_refused("ticket")
+    )
+}
+
+#[test]
+fn a_datagram_ticket_redeems_once_and_a_forged_one_reaches_nothing() {
+    against_peer("tickets", &tickets_program(), 0, |socket| {
+        let mut buf = [0u8; 16];
+        let (n, from) = socket.recv_from(&mut buf).unwrap();
+        socket.send_to(&buf[..n].to_ascii_uppercase(), from).unwrap();
+    });
+}
+
+/// A `Conn`'s ticket is not a `Udp`'s: `udp_attach` refuses it, it is not spent by the refusal, and it
+/// still redeems as the `Conn` it was.
+const TCP_TICKET: &str = r#"
+fn run(bound: Net("BOUND"), io: Io) -> [] int {
+    var status = 1;
+    borrow bound as &n in {
+        match tcp_connect(n, "127.0.0.1", PORT) {
+            Dialed::Ok(c) => {
+                let ticket = conn_detach(c);
+                var score = 0;
+                match udp_attach(ticket) {
+                    UdpOpened::Failed(e) => { if e == 9 { score = score + 1; } }
+                    UdpOpened::Ok(x) => { udp_close(x); }
+                }
+                match conn_attach(ticket) {
+                    Attached::Ok(back) => { conn_close(back); score = score + 1; }
+                    Attached::Failed(e) => { }
+                }
+                if score == 2 { status = 0; } else { status = 10 + score; }
+            }
+            Dialed::Failed(e) => { status = 2; }
+        }
+    }
+    release(bound);
+    release(io);
+    return status;
+}
+"#;
+
+#[test]
+fn a_connections_ticket_is_not_a_datagram_sockets() {
+    for backend in BACKENDS {
+        // The same port number for a TCP listener and a UDP socket, so one narrowing serves both.
+        let (listener, port) = loop {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            if UdpSocket::bind(("127.0.0.1", port)).is_ok() {
+                break (listener, port);
+            }
+        };
+        let dir = scratch(&format!("udp-tcp-ticket-{backend}"));
+        let exe = build(
+            &dir,
+            "tcpticket",
+            &dial_program(port, &format!("127.0.0.1:{port}"), TCP_TICKET),
+            backend,
+        );
+        let code = run_with_deadline(&exe, "tcpticket", backend);
+        assert_eq!(code, Some(0), "{backend}");
+        drop(listener);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// `std.udps`: three sockets by slot, each send and receive finding its own, a closed slot refusing
+/// stale use and being reused, and `drop` closing what is left.
+const UDPS: &str = r#"
+edition 5;
+import std.conns;
+import std.udps;
+import std.io;
+
+fn first[&t, &b](table: &!t conns.Table, slot: int, buf: &!b [byte]) -> [udp_recv] int {
+    match udps.recv(table, slot, buf) {
+        Datagram::Got(n) => { return int_of(buf[0]); }
+        Datagram::Truncated(n) => { return 0 - 1; }
+        Datagram::Again => { return 0 - 2; }
+        Datagram::Failed(e) => { return 0 - 3; }
+    }
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi); release(fs); release(args); release(clock);
+    var h = heap;
+    let bound = narrow(net, "BOUND");
+    var score = 0;
+    borrow mut h as &!hh in {
+        borrow bound as &n in {
+            var table = conns.empty(hh, 2);
+            var k = 0;
+            while k < 3 {
+                match udp_connect(n, "127.0.0.1", PORT) {
+                    UdpOpened::Ok(u) => {
+                        let (t2, slot) = udps.put(hh, table, u);
+                        table = t2;
+                        if slot == k { score = score + 1; }
+                    }
+                    UdpOpened::Failed(e) => { }
+                }
+                k = k + 1;
+            }
+            region r {
+                var buf = alloc_slice[r](8, byte_of(0));
+                borrow mut table as &!tb in {
+                    udps.send(tb, 0, "a");
+                    udps.send(tb, 1, "b");
+                    udps.send(tb, 2, "c");
+                    if first(tb, 1, buf) == 66 { score = score + 1; }
+                    if first(tb, 0, buf) == 65 { score = score + 1; }
+                    if first(tb, 2, buf) == 67 { score = score + 1; }
+                    if udps.close(tb, 0) == 0 && conns.live(tb) == 2 { score = score + 1; }
+                    match udps.send(tb, 0, "x") {
+                        Sent::Failed(e) => { if e == 9 { score = score + 1; } }
+                        Sent::Wrote(w) => { }
+                        Sent::Again => { }
+                    }
+                    if udps.close(tb, 0) == 9 { score = score + 1; }
+                }
+            }
+            match udp_connect(n, "127.0.0.1", PORT) {
+                UdpOpened::Ok(u) => {
+                    let (t3, slot) = udps.put(hh, table, u);
+                    table = t3;
+                    if slot == 0 { score = score + 1; }
+                }
+                UdpOpened::Failed(e) => { }
+            }
+            if udps.drop(hh, table) == 3 { score = score + 1; }
+        }
+    }
+    release(bound);
+    release(io);
+    release(h);
+    if score == 11 {
+        return 0;
+    }
+    return 100 + score;
+}
+"#;
+
+#[test]
+fn a_socket_table_finds_each_socket_by_slot() {
+    for backend in BACKENDS {
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        socket.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        let port = socket.local_addr().unwrap().port();
+        let dir = scratch(&format!("udp-table-{backend}"));
+        let source =
+            UDPS.replace("BOUND", &format!("127.0.0.1:{port}")).replace("PORT", &port.to_string());
+        let exe = build(&dir, "table", &source, backend);
+        let peer = std::thread::spawn(move || {
+            let mut buf = [0u8; 16];
+            for _ in 0..3 {
+                let (n, from) = socket.recv_from(&mut buf).unwrap();
+                socket.send_to(&buf[..n].to_ascii_uppercase(), from).unwrap();
+            }
+        });
+        let code = run_with_deadline(&exe, "table", backend);
+        assert_eq!(code, Some(0), "{backend}");
+        peer.join().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

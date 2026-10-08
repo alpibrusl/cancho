@@ -553,6 +553,14 @@ pub enum Builtin {
     UdpNonblocking,
     /// `udp_close(Udp) -> [] int`: consumes the handle.
     UdpClose,
+    /// `udp_detach(Udp) -> [] int` -- `docs/udp.md` §11: `conn_detach` for a datagram socket. The `Udp`
+    /// ends, the descriptor stays open, and what comes back is a **ticket** a `Vec[int]` can hold. The
+    /// ticket carries a kind bit, so a `Conn`'s ticket does not redeem as a `Udp` nor the reverse. `-1`
+    /// if it could not be done, in which case the socket has been closed.
+    UdpDetach,
+    /// `udp_attach(int) -> [] UdpOpened` -- redeems a `udp_detach` ticket **once**. A ticket never
+    /// issued, already redeemed, of the other kind, or for a descriptor since reused is `Failed(EBADF)`.
+    UdpAttach,
     /// `udp_bind(net, port, flags) -> [net_in(bound)] UdpOpened` -- `docs/udp.md` §2, edition 5
     /// only: `tcp_listen` for datagrams (`socket`, `SO_REUSEADDR`, `bind`; no `listen`). Checked
     /// at the call site, like [`Builtin::TcpListen`]. `flags` bit 1 is `SO_REUSEPORT`.
@@ -832,6 +840,8 @@ impl Builtin {
         Builtin::UdpLocalPort,
         Builtin::UdpNonblocking,
         Builtin::UdpClose,
+        Builtin::UdpDetach,
+        Builtin::UdpAttach,
         Builtin::PollerAddUdp,
         Builtin::SignalsWatch,
         Builtin::SignalsPending,
@@ -970,6 +980,8 @@ impl Builtin {
             Builtin::UdpLocalPort => "udp_local_port",
             Builtin::UdpNonblocking => "udp_nonblocking",
             Builtin::UdpClose => "udp_close",
+            Builtin::UdpDetach => "udp_detach",
+            Builtin::UdpAttach => "udp_attach",
             Builtin::PollerAddUdp => "poller_add_udp",
             Builtin::SignalsWatch => "signals_watch",
             Builtin::SignalsPending => "signals_pending",
@@ -1069,6 +1081,8 @@ impl Builtin {
             | Builtin::UdpLocalPort
             | Builtin::UdpNonblocking
             | Builtin::UdpClose
+            | Builtin::UdpDetach
+            | Builtin::UdpAttach
             | Builtin::PollerAddUdp => 5,
             // `docs/checked-output.md`: a name a program may already have
             // declared for itself, so it is visible from edition 5 only.
