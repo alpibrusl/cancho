@@ -28,6 +28,7 @@ MUL_LIMIT = Fraction(1 << 24)
 # Names are the tokens in the calls; t(i) are temporaries.
 FORMULAS = {
     "add_points": ("std/p256_pt.cho", ["x1", "y1", "z1", "x2", "y2", "z2"], ["x3", "y3", "z3"], {"b": Fraction(1)}),
+    "mixed_add": ("std/p256_pt.cho", ["x1", "y1", "z1", "x2", "y2"], ["x3", "y3", "z3"], {"b": Fraction(1)}),
     "on_curve": ("std/p256_pt.cho", ["x", "y"], [], {"p256.b_mont()": Fraction(1)}),
     "double_point": ("std/p256_pt.cho", ["x", "y", "z"], ["x3", "y3", "z3"], {"b": Fraction(1)}),
 }
@@ -46,7 +47,7 @@ CALL = re.compile(r"p256\.(mul|sqr|add|sub)\(w, ([^)]*?(?:\(\d+\))?)(?:, ([^,]*?
 
 
 def args(line):
-    m = re.match(r"\s*p256\.(mul|sqr|add|sub(?:2|4|8|16|32|64)?)\(w, (.*)\);\s*$", line)
+    m = re.match(r"\s*p256\.(mul|sqr|add|copy|sub(?:2|4|8|16|32|64)?)\(w, (.*)\);\s*$", line)
     if not m:
         return None
     parts = []
@@ -84,7 +85,7 @@ def run(path, name, inputs, outputs, consts, b_in, rewrite=None):
         if a is None:
             continue
         op, parts = a
-        if op == "sqr":
+        if op in ("sqr", "copy"):
             x, d = parts
             y = x
         else:
@@ -92,6 +93,9 @@ def run(path, name, inputs, outputs, consts, b_in, rewrite=None):
         if x not in bound or y not in bound:
             raise SystemExit(f"{name}: {x if x not in bound else y} used before it is set: {line.strip()}")
         bx, by = bound[x], bound[y]
+        if op == "copy":
+            bound[d] = bx
+            continue
         if op in ("mul", "sqr"):
             prod = bx * by
             worst_mul = max(worst_mul, prod)
