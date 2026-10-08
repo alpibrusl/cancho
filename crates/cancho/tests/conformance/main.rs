@@ -106,6 +106,7 @@ mod udp;
 mod vcs;
 mod vcs_remote;
 mod vcs_std;
+mod vcs_sync;
 mod wasm_target;
 mod x25519;
 mod x509;
