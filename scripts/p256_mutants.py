@@ -74,9 +74,9 @@ mut(K, "canon_n", "canon_n: never subtracts", "let m = value_barrier(u - 1);", "
 # Constants: a limb of each of R^2 mod p, b R mod p, R^2 mod n, p - 2, n - 2.
 mut(K, "", "consts: a limb of R^2 mod p changed", "    t[30] = 327680;", "    t[30] = 327681;")
 mut(K, "", "consts: a limb of b R mod p changed", "    // 4: b_mont\n    t[40] =", "    // 4: b_mont\n    t[40] = 1 +")
-mut(K, "", "consts: a limb of R^2 mod n changed", "    // 7: n_r2\n    t[70] =", "    // 7: n_r2\n    t[70] = 1 +")
-mut(K, "", "consts: a limb of p - 2 changed", "    // 8: p_minus_2\n    t[80] = 268435453;", "    // 8: p_minus_2\n    t[80] = 268435452;")
-mut(K, "", "consts: a limb of n - 2 changed", "    // 9: n_minus_2\n    t[90] =", "    // 9: n_minus_2\n    t[90] = 1 +")
+mut(K, "", "consts: a limb of R^2 mod n changed", "    // 6: n_r2\n    t[60] =", "    // 6: n_r2\n    t[60] = 1 +")
+mut(K, "", "consts: a limb of p - 2 changed", "    // 7: p_minus_2\n    t[70] = 268435453;", "    // 7: p_minus_2\n    t[70] = 268435452;")
+mut(K, "", "consts: a limb of n - 2 changed", "    // 8: n_minus_2\n    t[80] =", "    // 8: n_minus_2\n    t[80] = 1 +")
 mut(K, "", "consts: R mod p changed", "    // 2: one_mont\n    t[20] = 16777216;", "    // 2: one_mont\n    t[20] = 16777217;")
 mut(CB, "", "comb: the first point's x changed", 'let s = "', 'let s = "1')
 mut(CB, "", "odd: the first point changed", "pub static odd: [int] {\n    let t = alloc_slice[static](640, 0);\n    let s = \"", "pub static odd: [int] {\n    let t = alloc_slice[static](640, 0);\n    let s = \"1")
@@ -102,7 +102,6 @@ mut(F, "sreduce", "sreduce: does nothing", "return p256_kernels.canon_n(w, x, d)
 mut(F, "to_mont", "to_mont: multiplies by 1", "return p256_kernels.mul_p(w, x, r2(), d);", "return p256_kernels.mul_p(w, x, one(), d);")
 mut(F, "sto_mont", "sto_mont: multiplies by R^2 mod p", "return p256_kernels.mul_n(w, x, n_r2(), d);", "return p256_kernels.mul_n(w, x, r2(), d);")
 mut(F, "init", "init: b in Montgomery form not set", "    put_const(w, p256_kernels.c_b_mont(), b_mont());\n", "    put_const(w, p256_kernels.c_one(), b_mont());\n")
-mut(F, "init", "init: R mod n for R mod p", "put_const(w, p256_kernels.c_n_one_mont(), n_one_mont());", "put_const(w, p256_kernels.c_one_mont(), n_one_mont());")
 mut(F, "put_n", "put_n: p for n", "return put_const(w, p256_kernels.c_n(), d);", "return put_const(w, p256_kernels.c_p(), d);")
 
 # ---- std.p256_pt: the ladder, the comb, the points ----
@@ -189,7 +188,14 @@ mut(ES, "sign", "sign: the work not wiped", "    p256.wipe(work, 0, p256_pt.work
 
 # Argued to change nothing observable (docs/p256-fast.md §8.4); each is still run, and reported.
 EQUIVALENT = {
-    "recode: the carry threshold 9 (digits to +9)": "(v + 8) >> 4 turns a nibble of 8 into -8 and a carry; the digits still sum to k and stay within [-8, 8], so the table covers them. The result is the same point by another route.",
+    "recode: the carry threshold 9 (digits to +9)": "(v + 8) >> 4 turns a nibble of 8 into -8 and a carry; the digits still sum to k and stay within [-8, 8], so the table covers them. The same point by another route.",
+    "affine: the infinity test dropped": "A valid scalar in [1, n) times a point of prime order is never the point at infinity, so Z is never zero: the test is a defence no input reaches (docs/ecdh.md §1 said the same of ecdh-result-infinity).",
+    "wnaf: the window threshold": "The window value d is odd and 2^(width-1) is even, so d > 2^(width-1) - 1 and d >= 2^(width-1) are the same test.",
+    "wnaf: the carry added a bit early": "When the digit is negative the window's top bit (i + width - 1) is set and the window is then skipped; adding 2^(i+width-1) to a set bit carries into i + width exactly as adding 2^(i+width) does, and the bits in between are never read again.",
+    "load_q: the wrong multiple": "k is odd, so (k - 1) / 2 and k / 2 are the same integer division.",
+    "verify: u1's digits at width 5": "A width-5 wNAF of u1 has digits in +-15, all in the generator's table of +-63: the same sum with more additions.",
+    "ecdsa P-256: the fast path skipped for the wrong curve": "The generic bigmod path is still there and correct for P-256, so the answers are the same; the mutant shows the two paths agree on every case run.",
+    "sign: r not reduced mod n": "x < p < 2n, and x >= n has probability (p - n) / p, about 2^-128 per signature: no input reaches it (the same reasoning as docs/ecdsa-sign.md §2.1's 2^-256 for r = 0).",
 }
 
 
