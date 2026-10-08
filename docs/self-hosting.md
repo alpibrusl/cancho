@@ -210,7 +210,8 @@ the stages found, in place, the way this document corrects its own claims.
 | 3e-1. Structs of scalars | `body.cho` (types in `types.cho`) | `check_bodies` | **Third slice.** Every function the port answers is the Rust answer: 81 targeted cases for struct literals, field reads and writes (539 in all), 8,000 fuzz cases alone and 4,200 with the library, 1,165 library cases: none different |
 | 3e-2. Enums of scalars and `match` | `body.cho` | `check_bodies` | **Fourth slice.** Every function the port answers is the Rust answer: 85 targeted cases for enum values, `match` and its errors (624 in all, 5 cross-module in the several-files test), ~11,000 fuzz cases and 1,269 library cases: none different; the library's verified bodies are 461 of 814 (57%) |
 | 3e-3. Generic functions | `body.cho` (type variables and parameters in `types.cho`) | `check_bodies` | **Fifth slice.** Every function the port answers is the Rust answer: 88 targeted cases for type parameters, inference at a call and `ambiguous-type` (712 in all, 4 cross-module in the several-files test), 15,774 fuzz cases (11,220 alone, 4,554 with the library) and 1,359 library cases: none different; the library's verified bodies stay at 461 of 814 |
-| 3e-4. The rest of the bodies: generic types, `borrow` and `region` blocks, tuples, builtins, threads, then linearity, effects, regions | not started | `check_bodies` | |
+| 3e-4. `borrow` and `region` blocks | `body.cho` (block regions in `types.cho`) | `check_bodies` | **Sixth slice.** Every function the port answers is the Rust answer: 1,271 targeted body cases (456 of them for borrows, regions and their variants), 2 cross-module in the several-files test, 16,000 fuzz cases (11,463 alone, 4,726 with the library) and 1,475 library cases: none different; the library's verified bodies stay at 461 of 814 |
+| 3e-5. The rest of the bodies: builtins and effect rows, generic types, tuples, arena allocation, threads, then linearity, effects, regions | not started | `check_bodies` | |
 | 4. Backend | not started | | |
 
 **The method.** A port that builds no tree has nothing to compare, and one that does
@@ -433,6 +434,29 @@ unbounded `T`), so the number of bodies verified stays at 461 of 814. The mutati
 `types.cho` kills 60 of 78 (40 of 54 before), the survivors in the new code being an occurs check no
 found type can reach, a variable compared with itself that a found type cannot be, and counters that
 stay distinct under the swap.
+
+**Stage 3e-4: `borrow` and `region` blocks.** A block is a region of its own, numbered in the
+order it opens and remembering the block that was open around it; a reference into it is `Ref`
+with that region, and `outlives` answers as `Region::Block` does (a block outlives the ones it
+encloses, a region parameter outlives every block, nothing outlives `static`). `borrow x as &r in {}`
+looks `x` up (`unknown-name`), opens the block, freezes `x` (or locks it, for `borrow mut`), binds
+`r` to a reference of the block's region, checks the body and thaws; `region a {}` is the same
+with nothing frozen. Whether a binding is borrowed is a flag in its record: owned, frozen by
+n shared borrows, or locked by a unique one. A name read while locked, an assignment while frozen
+or locked, a second unique borrow, and a unique borrow of a frozen name are `borrow-conflict`.
+Rust finds those in its linear pass, which runs after the body and only if the body had no
+error, so the port notes the first as it walks and reports it at the end, after the check that
+no binding holds a reference into a block it outlives (every binding is logged with the block open
+where it was declared) and before the row and the missing `return`. A `let` annotation that names a
+region inside a block is `SKIP`, because the name may be the block's own. A `borrow` or `region`
+whose body returns terminates the block around it. The header of the state grows to 48 slots and
+a binding record to four. Of the first mutation run's survivors, some showed that the cases
+used the first binding and the first block everywhere (so an offset swap changed nothing); the
+cases now come padded with bindings, with sibling blocks opened before, and without the final
+`return` that made the statement after a returning block `unreachable-statement` before a
+conflict could be reported. The mutation test of the new code in `body.cho` kills 33 of 42, the
+survivors being equivalent comparisons, a stored name nothing reads, and loops whose only effect is
+whether a function is `SKIP`.
 
 The mutation test of `types.cho` (54 operator swaps) killed 40 on the first corpus of 458 targeted
 body cases (after region-variable, `where`-closure and coercion cases were added; 33 before); the 14

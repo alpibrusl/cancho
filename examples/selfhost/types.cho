@@ -51,6 +51,32 @@ fn unbound() -> [] int {
     return 0 - 100;
 }
 
+// The region of a `borrow` or `region` block, by its number: -2 is the first, -3 the second.
+pub fn block_region(id: int) -> [] int {
+    return 0 - 2 - id;
+}
+
+pub fn is_block(area: int) -> [] bool {
+    return area <= 0 - 2;
+}
+
+pub fn block_id(area: int) -> [] int {
+    return 0 - 2 - area;
+}
+
+// Does block `outer` enclose block `inner` (or is it the same)? The blocks keep their enclosing
+// block in the state: entry `id` of the table at `st[36]` is its parent, or -1.
+pub fn encloses[&s](st: &!s [int], outer: int, inner: int) -> [] bool {
+    var current = inner;
+    while current >= 0 {
+        if current == outer {
+            return true;
+        }
+        current = st[st[36] + 2 * current];
+    }
+    return false;
+}
+
 pub fn static_region() -> [] int {
     return 0 - 1;
 }
@@ -288,6 +314,13 @@ pub fn outlives[&s, &x](st: &!s [int], text: &x [byte], outer: int, inner: int) 
     if inner == static_region() {
         return false;
     }
+    if is_block(outer) && is_block(inner) {
+        return encloses(st, block_id(outer), block_id(inner));
+    }
+    // A region parameter is open for the whole body, so it outlives every block in it.
+    if is_block(inner) && outer >= 0 && !is_var(outer) {
+        return true;
+    }
     if outer >= 0 && inner >= 0 && !is_var(outer) && !is_var(inner) {
         return reaches(st, text, inner, outer, pass1.count_params(st, st[28], true) + 1);
     }
@@ -295,6 +328,23 @@ pub fn outlives[&s, &x](st: &!s [int], text: &x [byte], outer: int, inner: int) 
 }
 
 // ------------------------------------------------------ equality, coercion ---
+
+// Does `ty` mention a block region that does not enclose `scope`, the innermost block open where
+// something was declared (-1 for none)? Answers that region's block, or -1.
+pub fn escaping_block[&s](st: &!s [int], ty: int, scope: int) -> [] int {
+    let t = shallow(st, ty);
+    if is_ref(st, t) {
+        let area = ref_region(st, t);
+        if is_block(area) && !encloses(st, block_id(area), scope) {
+            return block_id(area);
+        }
+        return escaping_block(st, ref_inner(st, t), scope);
+    }
+    if is_slice(st, t) {
+        return escaping_block(st, slice_element(st, t), scope);
+    }
+    return 0 - 1;
+}
 
 // What unifying two types came to: 0 they are the same, 1 they mismatch (a `type-mismatch`),
 // 2 their regions are different (a `region-mismatch`). A free region variable is bound to the

@@ -97,20 +97,26 @@ pub struct Dp {
 // What `st` must hold for a program of `tokens` tokens in `files` files: every node takes at
 // least a token, so the number of tokens bounds the number of nodes.
 pub fn size_for(tokens: int, files: int) -> [] int {
-    return 32 + 4 * tokens + 2 * (files + 2) + 2 * files + 16 * (tokens + 16) + 3 * (tokens + 16) + 40 * (tokens + 16);
+    return 48 + 4 * tokens + 2 * (files + 2) + 2 * files + 16 * (tokens + 16) + 4 * (tokens + 16) + 40 * (tokens + 16) + 6 * (tokens + 16);
 }
 
 pub fn layout[&s](st: &!s [int], tokens: int, files: int) -> [] int {
-    st[19] = 32 + 3 * tokens;
-    st[16] = 32 + 4 * tokens;
+    st[19] = 48 + 3 * tokens;
+    st[16] = 48 + 4 * tokens;
     st[18] = st[16] + 2 * (files + 2);
     st[14] = st[18] + 2 * files;
     st[17] = files;
     st[20] = st[14] + 16 * (tokens + 16);
     st[21] = 0;
-    st[25] = st[20] + 3 * (tokens + 16);
+    st[25] = st[20] + 4 * (tokens + 16);
     st[27] = st[25] + 32 * (tokens + 16);
     st[30] = st[27] + 4 * (tokens + 16);
+    st[36] = st[30] + 4 * (tokens + 16);
+    st[38] = st[36] + 2 * (tokens + 16);
+    st[32] = 0;
+    st[35] = 0;
+    st[37] = 0 - 1;
+    st[39] = 0;
     st[24] = 8;
     st[26] = 0;
     st[29] = 0;
@@ -291,16 +297,16 @@ pub fn fail[&s](st: &!s [int], rule: int, from: int, to: int) -> [] int {
 // ------------------------------------------------------- token plumbing ---
 
 pub fn tstart[&s](st: &!s [int], i: int) -> [] int {
-    return st[32 + 3 * i + 1];
+    return st[48 + 3 * i + 1];
 }
 
 pub fn tend[&s](st: &!s [int], i: int) -> [] int {
-    return st[32 + 3 * i + 2];
+    return st[48 + 3 * i + 2];
 }
 
 // The code of token `i`, whatever the parser's state.
 pub fn code_at[&s](st: &!s [int], i: int) -> [] int {
-    return st[32 + 3 * i];
+    return st[48 + 3 * i];
 }
 
 // The kind of the token `n` ahead, saturating at end of file. After a refusal
@@ -1754,9 +1760,9 @@ pub fn tokenize[&s, &x](st: &!s [int], text: &x [byte], base: int) -> [] int {
     var done = false;
     while !done {
         if pos >= len(text) {
-            st[32 + 3 * n] = eof_code();
-            st[32 + 3 * n + 1] = base + len(text);
-            st[32 + 3 * n + 2] = base + len(text);
+            st[48 + 3 * n] = eof_code();
+            st[48 + 3 * n + 1] = base + len(text);
+            st[48 + 3 * n + 2] = base + len(text);
             n = n + 1;
             done = true;
         } else {
@@ -1765,9 +1771,9 @@ pub fn tokenize[&s, &x](st: &!s [int], text: &x [byte], base: int) -> [] int {
                     pos = next;
                 }
                 lc.Step::Token(k, from, to) => {
-                    st[32 + 3 * n] = lc.code(k);
-                    st[32 + 3 * n + 1] = base + from;
-                    st[32 + 3 * n + 2] = base + to;
+                    st[48 + 3 * n] = lc.code(k);
+                    st[48 + 3 * n + 1] = base + from;
+                    st[48 + 3 * n + 2] = base + to;
                     n = n + 1;
                     after_dot = lc.is_dot(k);
                     pos = to;

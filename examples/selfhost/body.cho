@@ -72,12 +72,22 @@ fn smallest() -> [] int {
 
 // ------------------------------------------------------------- bindings ---
 
-fn bind[&s](st: &!s [int], name: int, ty: int, mutable: bool) -> [] int {
-    let at = st[20] + 3 * st[21];
+// A new binding. The span is where Rust says it was declared (a parameter's type, a statement),
+// and the log of every binding ever declared (`st[38]`, four ints each: type, the block open then,
+// that span) is what the escape check reads once the body is done. A binding starts owned.
+fn bind[&s](st: &!s [int], name: int, ty: int, mutable: bool, from: int, to: int) -> [] int {
+    let at = st[20] + 4 * st[21];
     st[at] = name;
     st[at + 1] = ty;
     st[at + 2] = ast.flag(mutable);
+    st[at + 3] = 0;
     st[21] = st[21] + 1;
+    let log = st[38] + 4 * st[39];
+    st[log] = ty;
+    st[log + 1] = st[37];
+    st[log + 2] = from;
+    st[log + 3] = to;
+    st[39] = st[39] + 1;
     return 0;
 }
 
@@ -85,7 +95,7 @@ fn bind[&s](st: &!s [int], name: int, ty: int, mutable: bool) -> [] int {
 fn find[&s, &x](st: &!s [int], text: &x [byte], name: int) -> [] int {
     var i = st[21] - 1;
     while i >= 0 {
-        if ast.same(st, text, st[st[20] + 3 * i], name) {
+        if ast.same(st, text, st[st[20] + 4 * i], name) {
             return i;
         }
         i = i - 1;
@@ -94,11 +104,102 @@ fn find[&s, &x](st: &!s [int], text: &x [byte], name: int) -> [] int {
 }
 
 fn binding_type[&s](st: &!s [int], i: int) -> [] int {
-    return st[st[20] + 3 * i + 1];
+    return st[st[20] + 4 * i + 1];
 }
 
 fn binding_mutable[&s](st: &!s [int], i: int) -> [] bool {
-    return st[st[20] + 3 * i + 2] != 0;
+    return st[st[20] + 4 * i + 2] != 0;
+}
+
+// ------------------------------------------------------- borrows, blocks ---
+//
+// Whether a binding is borrowed is a flag in its record: 0 owned, -1 locked by a unique borrow,
+// n frozen by n shared ones. The conflicts are Rust's linear pass, which runs after the body and
+// only if the body had no error; so the first is kept (`st[32]` its rule, `st[33]`, `st[34]` its
+// span) and reported at the end, if nothing else was wrong.
+
+fn note[&s](st: &!s [int], rule: int, from: int, to: int) -> [] int {
+    if st[32] == 0 {
+        st[32] = rule;
+        st[33] = from;
+        st[34] = to;
+    }
+    return 0;
+}
+
+fn borrowed[&s](st: &!s [int], i: int) -> [] int {
+    return st[st[20] + 4 * i + 3];
+}
+
+// A name was read.
+fn use_slot[&s](st: &!s [int], i: int, from: int, to: int) -> [] int {
+    if borrowed(st, i) < 0 {
+        note(st, rules.r_borrow_conflict(), from, to);
+    }
+    return 0;
+}
+
+// A binding was assigned to.
+fn assign_slot[&s](st: &!s [int], i: int, from: int, to: int) -> [] int {
+    if borrowed(st, i) != 0 {
+        note(st, rules.r_borrow_conflict(), from, to);
+    }
+    return 0;
+}
+
+// A `borrow` block opens over a binding: one unique borrow at a time and never beside a shared
+// one, and shared ones nest.
+fn freeze[&s](st: &!s [int], i: int, unique: bool, from: int, to: int) -> [] int {
+    let held = borrowed(st, i);
+    if held < 0 || held > 0 && unique {
+        note(st, rules.r_borrow_conflict(), from, to);
+        return 0;
+    }
+    if unique {
+        st[st[20] + 4 * i + 3] = 0 - 1;
+    } else {
+        st[st[20] + 4 * i + 3] = held + 1;
+    }
+    return 0;
+}
+
+fn thaw[&s](st: &!s [int], i: int, unique: bool) -> [] int {
+    let held = borrowed(st, i);
+    if held > 1 && !unique {
+        st[st[20] + 4 * i + 3] = held - 1;
+    } else {
+        st[st[20] + 4 * i + 3] = 0;
+    }
+    return 0;
+}
+
+// A block opens, named by the token `name`, inside the one open now: its number.
+fn open_block[&s](st: &!s [int], name: int) -> [] int {
+    let id = st[35];
+    st[st[36] + 2 * id] = st[37];
+    st[st[36] + 2 * id + 1] = name;
+    st[35] = id + 1;
+    st[37] = id;
+    return id;
+}
+
+fn close_block[&s](st: &!s [int]) -> [] int {
+    st[37] = st[st[36] + 2 * st[37]];
+    return 0;
+}
+
+// Does a type written in an annotation name a region other than `static`?
+fn names_region[&s, &x](st: &!s [int], text: &x [byte], ty: int) -> [] bool {
+    if ast.is_kind(st, ty, kinds.NK::TRef) {
+        if !pass1.is_word(st, text, ast.get(st, ty, 5), "static") {
+            return true;
+        }
+        return names_region(st, text, ast.get(st, ty, 6));
+    }
+    if ast.is_kind(st, ty, kinds.NK::TSlice) {
+        return names_region(st, text, ast.get(st, ty, 6));
+    }
+    return false;
 }
 
 // ---------------------------------------------------------------- types ---
@@ -623,6 +724,7 @@ fn name_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     let name = ast.get(st, id, 4);
     let i = find(st, text, name);
     if i >= 0 {
+        use_slot(st, i, from, to);
         return plain(binding_type(st, i));
     }
     // A name that is not a local may still be a `static`, a function used as a value, or a
@@ -1093,7 +1195,7 @@ fn variant_arm[&s, &x](st: &!s [int], text: &x [byte], item: int, first: int, k:
             var j = mark;
             var again = false;
             while j < st[21] {
-                if ast.same(st, text, st[st[20] + 3 * j], at) {
+                if ast.same(st, text, st[st[20] + 4 * j], at) {
                     again = true;
                 }
                 j = j + 1;
@@ -1105,7 +1207,7 @@ fn variant_arm[&s, &x](st: &!s [int], text: &x [byte], item: int, first: int, k:
                 if by_ref {
                     ty = types.make_ref(st, unique, area, ty);
                 }
-                bind(st, at, ty, false);
+                bind(st, at, ty, false, from, to);
             }
         }
         want = ast.next(st, want);
@@ -1169,6 +1271,37 @@ fn match_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] i
     return 0;
 }
 
+// `borrow x as r { .. }` and `borrow mut x as r { .. }`: `r` is a reference to `x` in a region of its
+// own, the block, and `x` is frozen (or locked, when unique) until it ends.
+fn borrow_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
+    let from = ast.nstart(st, id);
+    let to = ast.nend(st, id);
+    let i = find(st, text, ast.get(st, id, 4));
+    if i < 0 {
+        ast.fail(st, rules.r_unknown_name(), from, to);
+        return 0;
+    }
+    let unique = ast.get(st, id, 5) != 0;
+    let referent = binding_type(st, i);
+    let mark = st[21];
+    let block_id = open_block(st, ast.get(st, id, 6));
+    freeze(st, i, unique, from, to);
+    bind(st, ast.get(st, id, 6), types.make_ref(st, unique, types.block_region(block_id), referent), false, from, to);
+    block(st, text, ast.get(st, id, 7), ast.get(st, id, 8), ret);
+    thaw(st, i, unique);
+    st[21] = mark;
+    close_block(st);
+    return 0;
+}
+
+// `region a { .. }`: an arena's region, a block with nothing frozen.
+fn region_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
+    open_block(st, ast.get(st, id, 4));
+    block(st, text, ast.get(st, id, 5), ast.get(st, id, 6), ret);
+    close_block(st);
+    return 0;
+}
+
 // ----------------------------------------------------------- statements ---
 
 // Does a block whose first statement is `head`, of `n`, end in a statement that returns on every
@@ -1191,6 +1324,12 @@ fn terminates[&s](st: &!s [int], head: int, n: int) -> [] bool {
             return false;
         }
         return terminates(st, ast.get(st, last, 5), ast.get(st, last, 6)) && terminates(st, ast.get(st, last, 7), ast.get(st, last, 8));
+    }
+    if ast.is_kind(st, last, kinds.NK::SBorrow) {
+        return terminates(st, ast.get(st, last, 7), ast.get(st, last, 8));
+    }
+    if ast.is_kind(st, last, kinds.NK::SRegion) {
+        return terminates(st, ast.get(st, last, 5), ast.get(st, last, 6));
     }
     if ast.is_kind(st, last, kinds.NK::SMatch) {
         var arm = ast.get(st, last, 5);
@@ -1243,6 +1382,11 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
         }
         var declared = found.ty;
         let written = ast.get(st, id, 6);
+        if written >= 0 && st[37] >= 0 && names_region(st, text, written) {
+            // A region named in an annotation inside a block may be the block's own.
+            skip(st, from, to);
+            return 0;
+        }
         if written >= 0 {
             pass1.resolve(st, text, written, st[22], st[23], st[28], true, false);
             if !ast.ok(st) {
@@ -1256,7 +1400,7 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
             expect(st, text, declared, found.ty, ast.nstart(st, value), ast.nend(st, value));
         }
         if ast.ok(st) {
-            bind(st, ast.get(st, id, 5), declared, ast.get(st, id, 4) != 0);
+            bind(st, ast.get(st, id, 5), declared, ast.get(st, id, 4) != 0, from, to);
         }
         return 0;
     }
@@ -1362,11 +1506,18 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
             ast.fail(st, rules.r_assign_to_immutable(), from, to);
             return 0;
         }
+        assign_slot(st, i, from, to);
         expect(st, text, binding_type(st, i), found.ty, ast.nstart(st, value), ast.nend(st, value));
         return 0;
     }
     if ast.is_kind(st, id, kinds.NK::SMatch) {
         return match_stmt(st, text, id, ret);
+    }
+    if ast.is_kind(st, id, kinds.NK::SBorrow) {
+        return borrow_stmt(st, text, id, ret);
+    }
+    if ast.is_kind(st, id, kinds.NK::SRegion) {
+        return region_stmt(st, text, id, ret);
     }
     if ast.is_kind(st, id, kinds.NK::SExpr) {
         expr(st, text, ast.get(st, id, 4));
@@ -1408,6 +1559,10 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
 pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [] int {
     st[2] = 0;
     st[21] = 0;
+    st[32] = 0;
+    st[35] = 0;
+    st[37] = 0 - 1;
+    st[39] = 0;
     st[22] = ast.get(st, fn_item, 13);
     st[23] = ast.get(st, fn_item, 14);
     let from = ast.nstart(st, fn_item);
@@ -1420,11 +1575,24 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
     }
     var param = ast.get(st, fn_item, 7);
     while param >= 0 {
-        bind(st, ast.get(st, param, 4), lower_type(st, text, ast.get(st, param, 5), st[28], 0 - 1), false);
+        bind(st, ast.get(st, param, 4), lower_type(st, text, ast.get(st, param, 5), st[28], 0 - 1), false, ast.nstart(st, ast.get(st, param, 5)), ast.nend(st, ast.get(st, param, 5)));
         param = ast.next(st, param);
     }
     let ret = lower_type(st, text, ast.get(st, fn_item, 10), st[28], 0 - 1);
     block(st, text, ast.get(st, fn_item, 11), ast.get(st, fn_item, 12), ret);
+    // What Rust checks once the body is lowered: no binding may hold a reference into a block it
+    // outlives, then the borrow conflicts the walk found.
+    var slot = 0;
+    while ast.ok(st) && slot < st[39] {
+        let log = st[38] + 4 * slot;
+        if types.escaping_block(st, st[log], st[log + 1]) >= 0 {
+            ast.fail(st, rules.r_reference_escapes_region(), st[log + 2], st[log + 3]);
+        }
+        slot = slot + 1;
+    }
+    if ast.ok(st) && st[32] != 0 {
+        ast.fail(st, st[32], st[33], st[34]);
+    }
     if ast.ok(st) {
         // The row is exact: nothing here performs anything, so a declared label is decoration.
         if !pass1.is_code(st, ast.get(st, fn_item, 9) + 1, lc.Tok::RBracket) {

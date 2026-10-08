@@ -185,6 +185,10 @@ pub fn r_ambiguous_type() -> [] int {
     return 45;
 }
 
+pub fn r_borrow_conflict() -> [] int {
+    return 46;
+}
+
 pub fn rule_tag(r: int) -> [] &static [byte] {
     if r < 3 {
         return lc.rule_name(r);
@@ -317,6 +321,9 @@ pub fn rule_tag(r: int) -> [] &static [byte] {
     }
     if r == 45 {
         return "ambiguous-type";
+    }
+    if r == 46 {
+        return "borrow-conflict";
     }
     return "unknown-name";
 }
