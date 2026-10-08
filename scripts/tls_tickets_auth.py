@@ -205,6 +205,18 @@ def alpn_offers(c):
     assert c.ask(f"B {L.HOST.hex()} {L.NOW * 1000} 0 {(b'y' * 256).hex()}")[1] == "tls-alpn-list"
 
 
+@case("ALPN: tls.start and tls.start_with offer the engine's default")
+def alpn_default_used(c):
+    assert c.ask(f"L {b'h2 http/1.1'.hex()}")[:2] == ["0", "ok"]
+    assert c.ask(f"C {L.HOST.hex()} {L.NOW * 1000} 0")[:2] == ["0", "ok"]
+    (hello,) = c.take()
+    A.check_offer(L.parse_client_hello(hello)[0], "h2 http/1.1")
+    assert c.ask(f"L {b'spdy/3'.hex()}")[:2] == ["0", "ok"]
+    assert c.ask(f"C {L.HOST.hex()} {L.NOW * 1000} 0")[:2] == ["0", "ok"]
+    (hello,) = c.take()
+    A.check_offer(L.parse_client_hello(hello)[0], "spdy/3")
+
+
 @case("ALPN: the server's choice is reported by the engine")
 def alpn_reported(c):
     s = Eng(c)
