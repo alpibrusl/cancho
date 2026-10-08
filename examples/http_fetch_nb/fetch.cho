@@ -12,11 +12,16 @@ edition 5;
 //     --expect         `Expect: 100-continue` with the body    --head          HEAD instead of GET
 //     --connect-ms N, --head-ms N, --body-ms N: the client's timers (5000, 30000, 30000)     --quiet   only failures and the summary
 //     --pool N         idle connections kept for one upstream (8)      --close   `Connection: close` on every request: a connection for each
+//     --client-cert FILE --client-key FILE   a client certificate for an upstream that asks for one (PEM chain, leaf first; P-256 key, PKCS#8 or
+//                      SEC 1, unencrypted): answers a CertificateRequest from every `https` upstream (`docs/tls-parity.md` §6.2). Both, or neither.
+//     --alpn LIST      offer these ALPN protocols, comma-separated (`h2,http/1.1`): this client speaks HTTP/1.1 only, so `--alpn http/1.1` keeps a
+//                      server from choosing h2 (`docs/tls-parity.md` §6.6)
 //
 // A URL is `http://host[:port]/path` or `https://host[:port]/path`. **A host is an IPv4 literal or a name given to `--resolve`**:
 // resolving is the caller's, and this program is the caller (`docs/http-client.md` §3.8). For `https` the PEM bundle of roots on
 // standard input is the trust store (nothing is built in) and the chain is checked against the host as written in the URL.
-// One line per response, as `tls_many`'s are:
+// One line per response, as `tls_many`'s are (with `--alpn` or `--client-cert`, an `https` response's line ends with what that connection
+// negotiated: ` alpn=<protocol, or -> auth=<0 none asked, 1 the chain was sent, 2 the empty Certificate>`):
 //
 //     <lane> <status> <bytes of body> <SHA-256 of them> <new|reused>
 //     <lane> failed <tag>
@@ -25,10 +30,12 @@ edition 5;
 // status), 1 if one failed, 2 for a bad command line.
 
 import std.buffer;
+import std.bytes;
 import std.crypto;
 import std.io;
 import fetch_io as fio;
 import http_client as hc;
+import tls;
 
 // ---------------------------------------------------------------------
 // The command line
@@ -127,7 +134,8 @@ fn value_option[&s](a: &s [byte]) -> [] int {
 
 // `cfg`: 0 slots, 1 requests per URL, 2 seconds to run, 3 retry allowed, 4 the first URL's argument, 5 how many URLs, 6 how many
 // `--resolve`, 7 whether any URL is `https`, 8 a body: 0 none, 1 with a length, 2 chunked, 9 its size, 10 `Expect`, 11 `HEAD`,
-// 12 quiet, 13 14 15 the connect, head and body timers (0: the default), 16 idle connections kept for one upstream (0: 8), 17 `Connection: close` on every request. Answers "", or the reason the command line is refused.
+// 12 quiet, 13 14 15 the connect, head and body timers (0: the default), 16 idle connections kept for one upstream (0: 8), 17 `Connection: close` on every request,
+// 18 19 20 the argument (plus one) holding the `--alpn` list, the `--client-cert` file and the `--client-key` file (0: none). Answers "", or the reason the command line is refused.
 fn parse_options[&g, &c, &r](args: &g Args, cfg: &!c [int], resolves: &!r [int]) -> [args] &static [byte] {
     cfg[0] = 8;
     cfg[1] = 1;
@@ -152,6 +160,19 @@ fn parse_options[&g, &c, &r](args: &g Args, cfg: &!c [int], resolves: &!r [int])
         } else if same(a, "--close") {
             cfg[17] = 1;
             at = at + 1;
+        } else if same(a, "--alpn") || same(a, "--client-cert") || same(a, "--client-key") {
+            if at + 1 >= arg_count(args) {
+                return "an option needs a value";
+            }
+            // The index of the value argument, plus one.
+            if same(a, "--alpn") {
+                cfg[18] = at + 2;
+            } else if same(a, "--client-cert") {
+                cfg[19] = at + 2;
+            } else {
+                cfg[20] = at + 2;
+            }
+            at = at + 2;
         } else if slot >= 0 {
             if at + 1 >= arg_count(args) {
                 return "an option needs a value";
@@ -194,6 +215,9 @@ fn parse_options[&g, &c, &r](args: &g Args, cfg: &!c [int], resolves: &!r [int])
     }
     if cfg[11] == 1 && cfg[8] != 0 {
         return "--head and a body do not go together";
+    }
+    if cfg[19] > 0 != cfg[20] > 0 {
+        return "--client-cert and --client-key go together";
     }
     return "";
 }
@@ -565,10 +589,31 @@ fn run[&h, &n, &k, &i, &g, &x, &c, &l, &s, &q](heap: &!h Heap, net: &n Net(""), 
                                 print_hex(io, digest);
                             }
                             if hc.reused(cw, t) {
-                                io.write_all(io, " reused\n");
+                                io.write_all(io, " reused");
                             } else {
-                                io.write_all(io, " new\n");
+                                io.write_all(io, " new");
                             }
+                            if (cfg[18] > 0 || cfg[19] > 0) && ln[b + 8] == 1 {
+                                // What this connection negotiated (`docs/tls-parity.md` §6.3, §6.6).
+                                region w {
+                                    let name = alloc_slice[w](255, byte_of(0));
+                                    var got = 0;
+                                    var auth = 0;
+                                    borrow iov as &ir in {
+                                        got = fio.alpn_chosen(ir, hc.ticket_slot(t), name);
+                                        auth = fio.client_auth(ir, hc.ticket_slot(t));
+                                    }
+                                    io.write_all(io, " alpn=");
+                                    if got > 0 {
+                                        io.write_all(io, name[0..got]);
+                                    } else {
+                                        io.write_all(io, "-");
+                                    }
+                                    io.write_all(io, " auth=");
+                                    io.print_int(io, auth);
+                                }
+                            }
+                            io.newline(io);
                         }
                         ok = ok + 1;
                         ln[b + 9] = ln[b + 9] - 1;
@@ -657,7 +702,7 @@ fn all_secure[&g, &x](args: &g Args, cfg: &x [int]) -> [args] bool {
     return false;
 }
 
-fn go[&h, &n, &k, &i, &g, &u](heap: &!h Heap, net: &n Net(""), clock: &k Clock, io: &!i Io, args: &g Args, entropy: &u [byte]) -> [heap, args, net_out(""), conn_read, conn_write, poll, clock, io_write, io_read, err_write] int {
+fn go[&h, &n, &k, &i, &g, &u, &p, &q](heap: &!h Heap, net: &n Net(""), clock: &k Clock, io: &!i Io, args: &g Args, entropy: &u [byte], chain: &p [byte], key: &q [byte]) -> [heap, args, net_out(""), conn_read, conn_write, poll, clock, io_write, io_read, err_write] int {
     var status = 2;
     region a {
         let cfg = alloc_slice[a](24, 0);
@@ -701,8 +746,39 @@ fn go[&h, &n, &k, &i, &g, &u](heap: &!h Heap, net: &n Net(""), clock: &k Clock, 
                         }
                         buffer.drop(heap, pem);
                     }
+                    var configured = 0;
+                    if roots >= 1 && secure && cfg[18] > 0 {
+                        // The ALPN list: commas for the spaces the engine takes.
+                        region al {
+                            let list = arg(args, cfg[18] - 1);
+                            let spaced = alloc_slice[al](len(list), byte_of(0));
+                            var j = 0;
+                            while j < len(list) {
+                                spaced[j] = list[j];
+                                if int_of(list[j]) == 44 {
+                                    spaced[j] = byte_of(32);
+                                }
+                                j = j + 1;
+                            }
+                            borrow mut iox as &!ioh in {
+                                configured = fio.alpn_offer(ioh, spaced);
+                            }
+                        }
+                    }
+                    if roots >= 1 && secure && len(chain) > 0 && configured == 0 {
+                        borrow mut iox as &!ioh in {
+                            configured = fio.client_identity(ioh, chain, key, clock_unix_ms(clock));
+                            if configured > 0 {
+                                configured = 0;
+                            }
+                        }
+                    }
                     if roots < 1 {
                         io.error_all(io, "http_fetch_nb: an https URL needs the roots it is checked against (PEM) on standard input\n");
+                    } else if configured < 0 {
+                        io.error_all(io, "http_fetch_nb: refused: ");
+                        io.error_all(io, tls_tag(configured));
+                        io.newline(io);
                     } else {
                         var client = hc.open(heap, cfg[0], 65536, 16384, limits_of(cfg));
                         var result = 0 - 1;
@@ -745,29 +821,66 @@ fn go[&h, &n, &k, &i, &g, &u](heap: &!h Heap, net: &n Net(""), clock: &k Clock, 
     return status;
 }
 
+// A refusal of the engine as its tag.
+fn tls_tag(code: int) -> [] &static [byte] {
+    return tls.refusal_tag(code);
+}
+
+// The argument after `name`, or 0.
+fn option_value[&g](args: &g Args, name: &static [byte]) -> [args] int {
+    var at = 1;
+    while at + 1 < arg_count(args) {
+        if same(arg(args, at), name) {
+            return at + 1;
+        }
+        at = at + 1;
+    }
+    return 0;
+}
+
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args, net, clock } = split(world);
     release(ffi);
-    let urandom = narrow(fs, "/dev/urandom");
     var status = 2;
     borrow mut io as &!i in {
         borrow mut heap as &!h in {
             borrow args as &g in {
                 region r {
                     let entropy = alloc_slice[r](32, byte_of(0));
-                    borrow urandom as &u in {
-                        fs_read(u, "/dev/urandom", entropy);
-                    }
-                    borrow net as &nn in {
-                        borrow clock as &cc in {
-                            status = go(h, nn, cc, i, g, entropy);
+                    // The operator names the client certificate's files, so this program holds the whole filesystem (`fs_read("")`) as
+                    // `tls_echo` does; it reads `/dev/urandom` and those two files, and nothing else.
+                    let chain = alloc_slice[r](32768, byte_of(0));
+                    let key = alloc_slice[r](8192, byte_of(0));
+                    var chain_n = 0;
+                    var key_n = 0;
+                    var unreadable = 0;
+                    borrow fs as &ff in {
+                        fs_read(ff, "/dev/urandom", entropy);
+                        let ci = option_value(g, "--client-cert");
+                        let ki = option_value(g, "--client-key");
+                        if ci > 0 && ki > 0 {
+                            chain_n = fs_read(ff, arg(g, ci), chain);
+                            key_n = fs_read(ff, arg(g, ki), key);
+                            if chain_n <= 0 || key_n <= 0 {
+                                unreadable = 1;
+                            }
                         }
                     }
+                    if unreadable == 1 {
+                        io.error_all(i, "http_fetch_nb: cannot read --client-cert or --client-key\n");
+                    } else {
+                        borrow net as &nn in {
+                            borrow clock as &cc in {
+                                status = go(h, nn, cc, i, g, entropy, chain[0..chain_n], key[0..key_n]);
+                            }
+                        }
+                    }
+                    bytes.zero(key);
                 }
             }
         }
     }
-    release(urandom);
+    release(fs);
     release(net);
     release(clock);
     release(args);

@@ -28,8 +28,9 @@ fn example_files() -> Vec<PathBuf> {
 
 /// The report, pinned, as the TLS echo's is: what the example can reach is the review of it a supervisor reads, so a label that
 /// appears or goes is a red build. No foreign code (`bounded`); the network only outbound (`net_out`, with no host named: the
-/// URLs are the operator's); the sockets and the poller; the clock; the console and standard input (the roots); and one path,
-/// `/dev/urandom`, for the TLS engine's entropy. No file is written and nothing is listened on.
+/// URLs are the operator's); the sockets and the poller; the clock; the console and standard input (the roots); and the filesystem for
+/// reading (`fs_read("")`, since #386): `/dev/urandom` for the TLS engine's entropy and the two files `--client-cert` and `--client-key`
+/// name, which the operator chooses, as `tls_echo`'s directory is (`docs/tls-parity.md` §6.2). No file is written and nothing is listened on.
 #[test]
 fn the_example_reports_a_bounded_authority_and_no_foreign_code() {
     let out = Command::new(BIN)
@@ -53,7 +54,7 @@ fn the_example_reports_a_bounded_authority_and_no_foreign_code() {
         "\"conn_read\", \"argument\": null",
         "\"conn_write\", \"argument\": null",
         "\"err_write\", \"argument\": null",
-        "\"fs_read\", \"argument\": \"/dev/urandom\"",
+        "\"fs_read\", \"argument\": \"\"",
         "\"heap\", \"argument\": null",
         "\"io_read\", \"argument\": null",
         "\"io_write\", \"argument\": null",
