@@ -15,7 +15,7 @@
 use super::json::feed;
 use super::*;
 
-fn build_tls_driver(test: &str, backend: &str) -> (PathBuf, PathBuf) {
+pub(super) fn build_tls_driver(test: &str, backend: &str) -> (PathBuf, PathBuf) {
     let dir = scratch(&format!("tls-{test}-{backend}"));
     let exe = dir.join("driver");
     let build = Command::new(BIN)
@@ -37,7 +37,7 @@ fn build_tls_driver(test: &str, backend: &str) -> (PathBuf, PathBuf) {
     (dir, exe)
 }
 
-fn run(exe: &Path, lines: &[String]) -> Vec<String> {
+pub(super) fn run(exe: &Path, lines: &[String]) -> Vec<String> {
     let mut input = lines.join("\n");
     input.push('\n');
     let out = feed(exe, input.as_bytes());
