@@ -621,6 +621,74 @@ impl<'a> FuncEmitter<'a> {
         Ok(vec![LValue::Reg(tag), LValue::Reg(moved), LValue::Reg(reason)])
     }
 
+    /// `udp_peer(&Udp, ticket, &![byte])` (`docs/udp.md` §12): who a ticket names, in the 19 bytes `conn_peer` writes, after the
+    /// three checks `udp_send_to` makes. `EBADF` for a ticket that fails them, `EINVAL` for a buffer under 19 bytes; nothing is
+    /// written in either case.
+    pub(crate) fn udp_peer(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        let fd = self.handle_fd(&args[0]);
+        let (ticket, out, room) = (operand(&args[1]), operand(&args[2]), operand(&args[3]));
+        let entry = self.peer_entry(&ticket);
+        let stored = self.load_field(&entry, cancho_ir::UDP_PEER_TICKET_AT, "i64");
+        let owner = self.load_field(&entry, cancho_ir::UDP_PEER_FD_AT, "i32");
+        let positive = self.fresh();
+        self.out.push_str(&format!("  {positive} = icmp sgt i64 {ticket}, 0\n"));
+        let current = self.fresh();
+        self.out.push_str(&format!("  {current} = icmp eq i64 {stored}, {ticket}\n"));
+        let mine = self.fresh();
+        self.out.push_str(&format!("  {mine} = icmp eq i32 {owner}, {fd}\n"));
+        let both = self.fresh();
+        self.out.push_str(&format!("  {both} = and i1 {positive}, {current}\n"));
+        let valid = self.fresh();
+        self.out.push_str(&format!("  {valid} = and i1 {both}, {mine}\n"));
+
+        let cell = self.fresh();
+        self.hoist(format!("  {cell} = alloca i64\n"));
+        let n = self.blocks;
+        self.blocks += 1;
+        let (bad_ticket, check_room, small, write, done) = (
+            format!("upeerbad{n}"),
+            format!("upeerroom{n}"),
+            format!("upeersmall{n}"),
+            format!("upeerwrite{n}"),
+            format!("upeerdone{n}"),
+        );
+        self.out.push_str(&format!("  br i1 {valid}, label %{check_room}, label %{bad_ticket}\n"));
+
+        self.out.push_str(&format!("{bad_ticket}:\n"));
+        self.out.push_str(&format!("  store i64 {EBADF}, ptr {cell}\n"));
+        self.out.push_str(&format!("  br label %{done}\n"));
+
+        self.out.push_str(&format!("{check_room}:\n"));
+        let enough = self.fresh();
+        self.out.push_str(&format!("  {enough} = icmp sge i64 {room}, 19\n"));
+        self.out.push_str(&format!("  br i1 {enough}, label %{write}, label %{small}\n"));
+
+        self.out.push_str(&format!("{small}:\n"));
+        self.out.push_str(&format!("  store i64 {EINVAL}, ptr {cell}\n"));
+        self.out.push_str(&format!("  br label %{done}\n"));
+
+        self.out.push_str(&format!("{write}:\n"));
+        self.store_byte(&out, 0, "4");
+        for i in 0..4 {
+            let byte = self.load_field(&entry, 4 + i, "i8");
+            self.store_byte(&out, 1 + i, &byte);
+        }
+        for i in 5..17 {
+            self.store_byte(&out, i, "0");
+        }
+        for i in 0..2 {
+            let byte = self.load_field(&entry, 2 + i, "i8");
+            self.store_byte(&out, 17 + i, &byte);
+        }
+        self.out.push_str(&format!("  store i64 0, ptr {cell}\n"));
+        self.out.push_str(&format!("  br label %{done}\n"));
+
+        self.out.push_str(&format!("{done}:\n"));
+        let answer = self.fresh();
+        self.out.push_str(&format!("  {answer} = load i64, ptr {cell}\n"));
+        Ok(vec![LValue::Reg(answer)])
+    }
+
     /// `udp_local_port(&Udp)`: the port the kernel chose, from `getsockname`, or `-errno`.
     pub(crate) fn udp_local_port(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
         let fd = self.handle_fd(&args[0]);

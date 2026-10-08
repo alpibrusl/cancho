@@ -1201,3 +1201,92 @@ fn a_socket_table_finds_each_socket_by_slot() {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+// ---------------------------------------------------------------------
+// Who a ticket names (`docs/udp.md` §12)
+// ---------------------------------------------------------------------
+
+/// `udp_peer` writes the sender of a ticket in the 19 bytes `conn_peer` uses; a forged, stale, other-socket or too-short call
+/// answers the errno it should and writes nothing.
+const UDP_PEER: &str = r#"
+fn run(net: Net(""), io: Io) -> [] int {
+    var status = 1;
+    borrow mut io as &!i in {
+        borrow net as &n in {
+            match udp_bind(n, PORT, 0) {
+                UdpOpened::Ok(u) => {
+                    var sock = u;
+                    match udp_bind(n, OTHER, 0) {
+                        UdpOpened::Ok(v) => {
+                            var stranger = v;
+                            borrow mut sock as &!uh in {
+                                borrow stranger as &sh in {
+                                    io.error_all(i, "ready\n");
+                                    region a {
+                                        var buf = alloc_slice[a](64, byte_of(0));
+                                        var who = alloc_slice[a](1, 0);
+                                        var out = alloc_slice[a](19, byte_of(7));
+                                        var short = alloc_slice[a](18, byte_of(7));
+                                        var spare = alloc_slice[a](19, byte_of(7));
+                                        match udp_recv_from(uh, buf, who) {
+                                            Datagram::Got(k) => {
+                                                var bad = 0;
+                                                if udp_peer(uh, 0, spare) != 9 { bad = bad + 1; }
+                                                if udp_peer(uh, 0 - 5, spare) != 9 { bad = bad + 1; }
+                                                if udp_peer(uh, who[0] + 1000, spare) != 9 { bad = bad + 1; }
+                                                if udp_peer(uh, who[0] + 65536, spare) != 9 { bad = bad + 1; }
+                                                if udp_peer(uh, who[0] - 65536, spare) != 9 { bad = bad + 1; }
+                                                if udp_peer(sh, who[0], spare) != 9 { bad = bad + 1; }
+                                                if udp_peer(uh, who[0], short) != 22 { bad = bad + 1; }
+                                                if int_of(short[0]) != 7 || int_of(short[17]) != 7 || int_of(spare[0]) != 7 || int_of(spare[18]) != 7 { bad = bad + 1; }
+                                                let ok = udp_peer(uh, who[0], out);
+                                                if ok == 0 && bad == 0 {
+                                                    match udp_send_to(uh, out, who[0]) {
+                                                        Sent::Wrote(w) => { status = 0; }
+                                                        Sent::Again => { status = 6; }
+                                                        Sent::Failed(e) => { status = 7; }
+                                                    }
+                                                } else {
+                                                    status = 10 + bad;
+                                                }
+                                            }
+                                            Datagram::Truncated(k) => { status = 3; }
+                                            Datagram::Again => { status = 4; }
+                                            Datagram::Failed(e) => { status = 8; }
+                                        }
+                                    }
+                                }
+                            }
+                            udp_close(stranger);
+                        }
+                        UdpOpened::Failed(e) => { status = 9; }
+                    }
+                    udp_close(sock);
+                }
+                UdpOpened::Failed(e) => { status = 2; }
+            }
+        }
+    }
+    release(net);
+    release(io);
+    return status;
+}
+"#;
+
+#[test]
+fn a_ticket_names_its_sender_and_only_on_the_socket_that_heard_it() {
+    serve_open("udp-peer", UDP_PEER, 0, |port| {
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        socket.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        socket.send_to(b"hi", ("127.0.0.1", port)).unwrap();
+        let mut buf = [0u8; 64];
+        let (n, _) = socket.recv_from(&mut buf).unwrap();
+        let mine = socket.local_addr().unwrap().port();
+        let mut want = [0u8; 19];
+        want[0] = 4;
+        want[1..5].copy_from_slice(&[127, 0, 0, 1]);
+        want[17] = (mine >> 8) as u8;
+        want[18] = mine as u8;
+        assert_eq!(&buf[..n], &want);
+    });
+}

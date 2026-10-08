@@ -273,7 +273,7 @@ refusal found before it still counted and anything after it did not, and a skipp
 counted, by what the oracle said, not hidden. Each slice removed some; the last removed the
 answer, and the harnesses now fail on anything but the oracle's. **Generated
 tables.** The prelude's 49 types (46 before `udp.md` added `Udp`, `UdpOpened` and `Datagram`) (name, arity, edition, whether another module may name it,
-which parameters are `val`-bounded) and the 133 builtins' names (118 when this was written) and editions are data the port
+which parameters are `val`-bounded) and the 137 builtins' names (118 when this was written) and editions are data the port
 cannot read from Rust, so `tables.cho` is generated, and a `cancho-ir` test fails when it is
 not what `prelude_types`, `mode_of` and `Builtin::ALL` say (`UPDATE_SELFHOST_TABLES=1 cargo test -p
 cancho-ir selfhost_tables` rewrites it).

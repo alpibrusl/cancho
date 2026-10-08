@@ -273,3 +273,27 @@ The builtins are refused on WASI with the others (`Gap::Sockets`) and are editio
 
 **Not done.** Nothing here measures what a table costs per datagram (two extra builtin calls and two table accesses,
 as `native-sockets.md` §10.3 says for `Conn`); cancho-dns D3 is the first program that will.
+
+## 12. Slice 5: who a ticket names
+
+**Why.** cancho-dns needs to refuse clients outside configured networks and to rate-limit by client network (`design.md` section 6 there). A bound
+socket answers a sender through a *ticket*, deliberately not an address (§4), so a program could not read who had written to it.
+Found by reading that policy against the language before writing it. (`conn_peer` for an accepted TCP connection had been added
+meanwhile for two other programs, `conn-peer.md`; the datagram half is what was left.)
+
+**What it adds**, edition 5, refused on WASI with the other socket builtins, no capability and no authority label:
+`udp_peer(&Udp, ticket, &![byte]) -> int` writes the sender a ticket names into the caller's buffer in **the form `conn_peer` uses**
+(19 bytes: family, sixteen address bytes, the port big-endian; the family is always `4` here, as every cancho socket is IPv4), so
+`std.addr.decode` reads it and `std.addr.key` keys a bound on it. It makes the three checks `udp_send_to` makes (positive, still the
+one its ring entry holds, issued to *this* socket) and answers `EBADF` if one fails; a buffer under 19 bytes answers `EINVAL`; in
+neither case is anything written. `0` otherwise.
+
+**Why it grants nothing.** The address is data the program received anyway. There is still no send to an address, and `udp_send_to`
+still takes only a ticket, so the authority report is unchanged: a program can *decide* about a client, not *reach* one it was not given.
+
+**Built and tested** on both backends over real sockets: the sender's address and port as the client's own socket reports them;
+six refused tickets (never issued, zero, negative, a ring's length ahead and behind, another socket's) each `EBADF`; a buffer of 18 bytes
+`EINVAL` and untouched. Eight mutants killed (the owner check dropped, the buffer size unchecked, the address read from the wrong
+offset, a padding byte left unwritten, on each backend).
+
+**Not done.** IPv6 (a datagram's sender is IPv4 until sockets are dual-stack).
