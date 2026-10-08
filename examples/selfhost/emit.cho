@@ -404,6 +404,129 @@ pub fn bit_not[&s](st: &!s [int], ak: bool, av: int, ar: int) -> [] int {
     return n;
 }
 
+// ------------------------------------------------------------------------ control flow ---
+//
+// Each construct takes one number `n` from `label`, and its blocks are named by it: `then`, `else`,
+// `end` for an `if`; `head`, `body`, `end` for a `while`; `scrhs` and `scend` for `&&` and `||`.
+// Whatever follows a `ret` is in a block of its own, so the `br` that ends an arm is always in a
+// block, and the checker has refused the code that would make it matter.
+
+// The `if` whose condition is the `i1` operand: the branch, and the block of the `then` arm.
+pub fn if_begin[&s](st: &!s [int], n: int, known: bool, value: int, reg: int) -> [] int {
+    str(st, "  br i1 ");
+    operand(st, 5, known, value, reg);
+    str(st, ", label %then");
+    nat(st, n);
+    str(st, ", label %else");
+    nat(st, n);
+    str(st, "\nthen");
+    nat(st, n);
+    str(st, ":\n");
+    return 0;
+}
+
+// The end of the `then` arm and the start of the `else` one, which is empty if there is none.
+pub fn if_else[&s](st: &!s [int], n: int) -> [] int {
+    str(st, "  br label %end");
+    nat(st, n);
+    str(st, "\nelse");
+    nat(st, n);
+    str(st, ":\n");
+    return 0;
+}
+
+pub fn if_end[&s](st: &!s [int], n: int) -> [] int {
+    str(st, "  br label %end");
+    nat(st, n);
+    str(st, "\nend");
+    nat(st, n);
+    str(st, ":\n");
+    return 0;
+}
+
+// The head of a `while`, where its condition is computed.
+pub fn while_head[&s](st: &!s [int], n: int) -> [] int {
+    str(st, "  br label %head");
+    nat(st, n);
+    str(st, "\nhead");
+    nat(st, n);
+    str(st, ":\n");
+    return 0;
+}
+
+// The branch on the condition, and the block of the body.
+pub fn while_cond[&s](st: &!s [int], n: int, known: bool, value: int, reg: int) -> [] int {
+    str(st, "  br i1 ");
+    operand(st, 5, known, value, reg);
+    str(st, ", label %body");
+    nat(st, n);
+    str(st, ", label %end");
+    nat(st, n);
+    str(st, "\nbody");
+    nat(st, n);
+    str(st, ":\n");
+    return 0;
+}
+
+pub fn while_end[&s](st: &!s [int], n: int) -> [] int {
+    str(st, "  br label %head");
+    nat(st, n);
+    str(st, "\nend");
+    nat(st, n);
+    str(st, ":\n");
+    return 0;
+}
+
+// `a && b` and `a || b`: the result lives in a stack slot of its own, `%sc<n>`. After `a`, the slot
+// holds `a` and `b` is computed only if `a` did not already decide it.
+pub fn short_begin[&s](st: &!s [int], n: int, either: bool, known: bool, value: int, reg: int) -> [] int {
+    let keep = st[49];
+    st[49] = 2;
+    str(st, "  %sc");
+    nat(st, n);
+    str(st, " = alloca i1\n");
+    st[49] = keep;
+    str(st, "  store i1 ");
+    operand(st, 5, known, value, reg);
+    str(st, ", ptr %sc");
+    nat(st, n);
+    str(st, "\n  br i1 ");
+    operand(st, 5, known, value, reg);
+    if either {
+        str(st, ", label %scend");
+        nat(st, n);
+        str(st, ", label %scrhs");
+        nat(st, n);
+    } else {
+        str(st, ", label %scrhs");
+        nat(st, n);
+        str(st, ", label %scend");
+        nat(st, n);
+    }
+    str(st, "\nscrhs");
+    nat(st, n);
+    str(st, ":\n");
+    return 0;
+}
+
+// After `b`: the slot takes it, and the result is the slot, in a temporary.
+pub fn short_end[&s](st: &!s [int], n: int, known: bool, value: int, reg: int) -> [] int {
+    str(st, "  store i1 ");
+    operand(st, 5, known, value, reg);
+    str(st, ", ptr %sc");
+    nat(st, n);
+    str(st, "\n  br label %scend");
+    nat(st, n);
+    str(st, "\nscend");
+    nat(st, n);
+    str(st, ":\n");
+    let r = start(st);
+    str(st, "load i1, ptr %sc");
+    nat(st, n);
+    str(st, "\n");
+    return r;
+}
+
 // ------------------------------------------------------------------------- calls ---
 
 // The arguments of the calls being written wait on a stack of four ints each, at `st[52 + ...]`'s
