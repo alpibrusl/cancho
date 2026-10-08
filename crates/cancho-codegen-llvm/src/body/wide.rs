@@ -4,9 +4,10 @@
 //! no call (a 128-bit multiply is not left to `__multi3`), so each takes the
 //! same time whatever its operands are.
 
-use crate::*;
+use target_lexicon::{Architecture, Triple};
 
-use target_lexicon::Architecture;
+use super::FuncEmitter;
+use crate::{LValue, operand};
 
 /// Whether the target has a 64x64 -> 128-bit multiply in hardware, so that
 /// LLVM's `i128` multiply of two zero-extended words is one instruction (`mul`
