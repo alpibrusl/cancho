@@ -327,7 +327,8 @@ fork. The package README must say that a forking program reseeds in each child.
 
   It also sends a 32-byte legacy session id and accepts one `change_cipher_spec` record before the encrypted handshake (RFC 8446
   Appendix D.4, middlebox compatibility).
-- **Not offered:** PSK, early data, ALPN, `max_fragment_length`, `status_request`. An extension in the ServerHello or in
+- **Not offered:** PSK, early data, `max_fragment_length`, `status_request`. *Corrected (#386, `docs/tls-parity.md` §6.6): ALPN is offered when the
+  caller sets an offer (`set_alpn_offer`, `start_alpn`), and not otherwise; the ClientHello is unchanged when none is set.* *(PSK is offered for resumption since #286.)* An extension in the ServerHello or in
   EncryptedExtensions that the client did not offer is refused (`tls-unsupported-extension`, RFC 8446 §4.2).
 - **Records:**
   - a plaintext record is at most 2^14 bytes, and a ciphertext record at most 2^14 + 256, with anything larger refused
@@ -340,7 +341,9 @@ fork. The package README must say that a forking program reseeds in each child.
 - **Order.** `ServerHello`, `EncryptedExtensions`, `Certificate`, `CertificateVerify`, `Finished`, and anything else at that
   point is `tls-unexpected-message`.
 - **CertificateRequest.** It is answered with an empty `Certificate`, since there are no client certificates (§4.1), and the
-  server decides.
+  server decides. *Corrected (#386, `docs/tls-parity.md` §6.3): with an identity configured for the host (`add_client_identity`), a request whose
+  `signature_algorithms` lists `ecdsa_secp256r1_sha256` and whose `certificate_authorities` is empty or names our issuer is answered with the chain and a
+  `CertificateVerify`; anything else, and every request when no identity is configured, is answered with the empty `Certificate` as before.*
 - **After the handshake:**
   - `NewSessionTicket` is parsed and dropped (no resumption, §7.2); *since #286's build
     (`docs/tls-resumption.md`): kept, the newest one, for the engine to save;*
@@ -361,7 +364,9 @@ fork. The package README must say that a forking program reseeds in each child.
   hazard: a resumed session skips verification, as §10.4 there says. *Since #286: TLS 1.3 resumption with (EC)DHE is designed
   and built, with eight rules for that hazard (`docs/tls-resumption.md`). 0-RTT, PSK-only resumption and TLS 1.2 resumption
   stay out, refused by that design, not deferred.*
-- **Client certificates. Post-handshake authentication**, which is refused if requested, because it is not offered.
+- **Client certificates.** *Since #386: built for P-256 keys, TLS 1.3 and TLS 1.2 (`docs/tls-parity.md` §6.2 to §6.5).* **Post-handshake authentication**,
+  which is refused if requested, because it is not offered.
+- **Revocation and the post-quantum hybrid share** are decisions, not code: `docs/tls-parity.md` §6.8 and §6.9.
 
 ### 7.3 Secrets in memory
 
