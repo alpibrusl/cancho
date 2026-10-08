@@ -509,16 +509,18 @@ choice.
 
 **What it catches, shown and not claimed.** A copy of the benchmark with X25519 and SHA-256 each done twice failed exactly
 those four rows (`x25519_public`, `sha256` at 64, 1,024 and 16,384 bytes) at a ratio of 2.00 and passed the other 29. A change
-that makes a primitive twice as slow is caught; one that adds 20% is not (1.3 is a guess at what the compiler and CPU differences between the machine that recorded the baseline and CI's runner will need;
-CI's first runs say, §7 Q6).
+that makes a primitive twice as slow is caught; one that adds 20% is not (1.3 is wide for what CI showed: the compiler and CPU differences between the machine that recorded the baseline and GitHub's
+runner moved the counts by 2% down to 11% up).
 **What it cannot catch:** a change in instruction *count* that leaves time alone or the reverse (a code layout that halves
 the IPC), the handshake as a whole (a primitive added to the path), and memory. The allocator (A1) and the engine are in no row;
 `scripts/tls_echo_test.py --cost` and `scripts/https_hello_test.py --cost` remain where those are measured.
 
 **CI.** The `tls-perf` job builds the compiler and the benchmark and runs `check`. `valgrind` is not on the runner by default: the
 job installs it. The baseline file holds one entry per architecture (`x86_64` from the machine of §2.1, `aarch64` from the
-M4 VM); the first CI run's table is the check that the x86-64 entry carries over to GitHub's runner, and if its compiler differs
-enough the entry is re-recorded from the runner's own log in the same PR, not loosened.
+M4 VM); **the x86-64 entry carries over to GitHub's runner**: on #391's first CI runs (ubuntu-latest, its own clang and valgrind) all 33 rows
+were between 0.98 and 1.11 of the instruction counts recorded on the i7, two runs alike. That is the evidence for the factor:
+1.3 leaves room for compiler differences of that size, and 1.2 would too. If a later runner image moves a row past it, the entry
+is re-recorded from the runner's own log in the same PR that notices, not loosened.
 
 ---
 
@@ -553,10 +555,10 @@ multiply", which is the question the issue means to ask.
 `s_server` and accepts 5 times because OpenSSL does not run the check. *Proposed:* as written; a wall-clock handshake rate on a
 named machine is quoted beside it in each PR but is not the gate, since §2.1 says the clock is not stable.
 
-**Q6. Is the guard a required check, and at what factor?** *Proposed:* **required once its first CI runs show the x86-64
-baseline carries over**; 1.3 on instruction counts (a primitive that gets 30% dearer is a finding), re-recorded in the same
-PR by anything that moves a primitive. If GitHub's runners and clang differ enough to need a second x86-64 entry, record it
-under its own tag rather than raise the factor.
+**Q6. Is the guard a required check, and at what factor?** *Proposed:* **required**: its first CI runs showed the x86-64 baseline
+carries over (0.98 to 1.11 on all rows). 1.3 on instruction counts is kept (a primitive that gets 30% dearer is a finding), and
+the baseline is re-recorded in the same PR by anything that moves a primitive. If a runner image or clang ever needs a second
+x86-64 entry, record it under its own tag rather than raise the factor.
 
 **Q7. Does the SHA-256 instruction (D3) get a builtin?** *Proposed:* **not yet.** SHA-2 is 0.7% of a handshake today and
 becomes about 4% after the levers of §4.3; decide then, with the vector-type question for ChaCha20 (§4.4), since both
@@ -581,7 +583,7 @@ are the targets; P-384 is 1.7 times the P-256 handshake (`tls-server.md` §6) an
 ## 9. Not done
 
 - No lever is built; every gain in §4 is arithmetic from the profile.
-- The guard's baseline for GitHub's runner is not recorded (§6).
+- A baseline for GitHub's arm64 runner (`macos-latest`): the job runs on ubuntu-latest only, so `aarch64` is guarded where someone runs it (§6).
 - Cycle counts on arm64, a quiet x86-64 machine, a steady-state client, memory per connection, P-384, RSA, TLS 1.2, Cranelift
   and latency (§5).
 - `tls_serve`'s 0.9 ms difference from `tls_echo` (§3.3).
