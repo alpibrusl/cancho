@@ -391,7 +391,7 @@ bytes into answers), then `serve` (the loop and the dense connection array).
 
 ```sh
 cargo run -p cancho -- build --std examples/tls_echo/*.cho \
-    packages/tls/{tls,record,message,slot,client12,client,hello,identity,server}.cho \
+    packages/tls/{tls,record,message,slot,client12,client,hello,identity,ticket,server}.cho \
     packages/x509/{verify,names,x509,key}.cho -o tls_echo
 mkdir -p /tmp/certs && cp tests/vectors/tls/echo/first/* /tmp/certs/   # chain.pem, key.pem, names
 ./tls_echo --port 8443 --dir /tmp/certs --alpn echo
@@ -410,7 +410,10 @@ of refusing it, the timeouts, the log line per connection with the suite,
 group, SNI and ALPN. Then `identity.cho`, which is why the loop holds a
 directory handle and never the filesystem capability: the reload reads
 beneath one directory, following no link. `SIGHUP` reloads, `SIGTERM` sends
-close_notify to everyone and exits.
+close_notify to everyone and exits. With `--tickets 2` it sends each client that can resume two session
+tickets ([`docs/tls-server.md`](../docs/tls-server.md) §12; `--ticket-lifetime`, `--ticket-keys <file>` for keys shared by
+several processes, read again on `SIGHUP`), and a client that comes back resumes with one key exchange and no
+signature.
 
 
 ### `https_hello/` — HTTPS/1.1 over that engine
@@ -418,7 +421,7 @@ close_notify to everyone and exits.
 ```sh
 cargo run -p cancho -- build --std examples/https_hello/{hello,loop,app}.cho \
     examples/tls_echo/{front,identity}.cho packages/http-server/server.cho \
-    packages/tls/{tls,record,message,slot,client12,client,hello,identity,server}.cho \
+    packages/tls/{tls,record,message,slot,client12,client,hello,identity,ticket,server}.cho \
     packages/x509/{verify,names,x509,key}.cho -o https_hello
 ./https_hello --port 8443 --dir /tmp/certs
 curl --cacert tests/vectors/tls/echo/ca.pem --resolve echo.lex-sys.test:8443:127.0.0.1 \
@@ -437,7 +440,7 @@ streams a body of any size through the 16 KiB buffer and answers its byte count 
 ```sh
 cargo run -p cancho -- build --std examples/http_fetch_nb/{fetch,fetch_io}.cho \
     packages/http-client/{wire,client}.cho \
-    packages/tls/{tls,record,message,slot,client12,client,hello,identity,server}.cho \
+    packages/tls/{tls,record,message,slot,client12,client,hello,identity,ticket,server}.cho \
     packages/x509/{verify,names,x509,key}.cho -o http_fetch_nb
 ./http_fetch_nb --repeat 100 http://127.0.0.1:8080/a http://127.0.0.1:8080/b
 ./http_fetch_nb --resolve echo.lex-sys.test=127.0.0.1 --repeat 3 \

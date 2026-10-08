@@ -21,6 +21,7 @@ pub(super) fn package_files() -> Vec<PathBuf> {
         "client.cho",
         "hello.cho",
         "identity.cho",
+        "ticket.cho",
         "server.cho",
     ];
     let x509 = ["verify.cho", "names.cho", "x509.cho", "key.cho"];
@@ -92,7 +93,7 @@ fn hex(s: &str) -> String {
 #[test]
 fn every_lying_client_is_refused_with_its_own_tag_on_both_backends() {
     let cases = cases();
-    assert_eq!(cases.len(), 110);
+    assert_eq!(cases.len(), 183);
     for backend in ["cranelift", "llvm"] {
         let (dir, exe) = build_server_driver("liar", backend);
         for (tag, name, asked, answered) in &cases {

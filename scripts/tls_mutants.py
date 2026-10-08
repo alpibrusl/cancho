@@ -31,7 +31,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FILES = ["record.cho", "message.cho", "slot.cho", "client12.cho", "client.cho", "tls.cho"]
 # The engine (`tls.cho`) is built with the server too (docs/tls-server.md §5.1), whose mutants are
 # `scripts/tls_server_mutants.py`'s.
-SERVER_FILES = ["hello.cho", "identity.cho", "server.cho"]
+SERVER_FILES = ["hello.cho", "identity.cho", "ticket.cho", "server.cho"]
 
 # (name, file, the text replaced, its replacement). Each `old` must occur exactly once in its file.
 MUTANTS = [

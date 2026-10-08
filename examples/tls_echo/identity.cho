@@ -107,6 +107,11 @@ fn read_beneath[&d, &p, &o](dir: &d Dir, path: &p [byte], into: &!o [byte]) -> [
     }
 }
 
+// A file beneath `dir` read into `into`: how many bytes, or `-errno` (`EFBIG`, 27, for a file larger than `into`).
+pub fn read_file[&d, &p, &o](dir: &d Dir, path: &p [byte], into: &!o [byte]) -> [dir_read, file_read] int {
+    return read_beneath(dir, path, into);
+}
+
 // `sub/leaf`, or `leaf` when `sub` is empty, into `out`: its length.
 fn path_of[&s, &l, &o](sub: &s [byte], leaf: &l [byte], out: &!o [byte]) -> [] int {
     var at = 0;

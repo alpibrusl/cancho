@@ -411,6 +411,7 @@ pub fn run[&h, &i, &l, &k, &e, &d, &w, &u, &n, &c](heap: &!h Heap, io: &!i Io, l
                                                                             }
                                                                             now = clock_ms(clock);
                                                                             let now_unix = clock_unix_ms(clock);
+                                                                            tls.set_time(engine, now_unix);
                                                                             var j = 0;
                                                                             while j < ready {
                                                                                 let token = events[2 * j];

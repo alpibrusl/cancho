@@ -16,7 +16,8 @@ than it was given, is re-run one connection at a time to name the input.
 Exit status 1 on any trap.
 
 With `--server` (docs/tls-server.md §7), the driver is `tests/programs/tls_server_driver.cho` and the connections are
-the honest ones of `tests/vectors/tls/liar_client.txt` (`scripts/tls_liar_client.py`): what is mutated is a line of
+the honest ones of `tests/vectors/tls/liar_client.txt` (`scripts/tls_liar_client.py`: the 26 honest connections and, with
+session tickets, the 55 ticket cases that end `ok`, each of several connections on one engine): what is mutated is a line of
 the client's bytes, its ClientHello most of all, and the server must answer every line and never trap. Each
 connection starts by dropping the driver's slot, so a batch of them runs in one process.
 """
@@ -45,7 +46,7 @@ def server_traces():
     for line in open(os.path.join(ROOT, "tests/vectors/tls/liar_client.txt")):
         line = line.rstrip("\n")
         if line.startswith("## "):
-            current = [] if line.startswith("## ok honest") else None
+            current = [] if line.startswith(("## ok honest", "## ok tickets: ")) else None
             if current is not None:
                 out.append((line[3:], current))
         elif current is not None and not line.startswith("#") and not line.startswith("= "):

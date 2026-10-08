@@ -45,6 +45,10 @@ the case says so rather than pass). Each case starts its own server on a free po
     mangled    1,500 connections each sending a mangled upload (flipped bytes, cuts, bad chunk sizes, trailers and extensions, lengths
                that lie, `Expect` heads): the server is alive after every one, its memory is where it was, and a good upload still hashes
 
+    tickets    `--tickets 2 --ticket-keys keys`: a session kept from one request resumes, twice, and a request on the resumed
+               connection is answered; a process with the same key file resumes it too, one with another file does not; a
+               rotation by SIGHUP keeps the session and a dropped key refuses it (docs/tls-server.md §12)
+
 With `--cost <seconds>`: requests a second over TLS against `kload` (benches/server/kload.c, plain, `examples/api`) and
 `tload` (benches/server/tload.c, the same closed loop over OpenSSL) on one core each side; see docs/http-server.md §11.7.
 One line a case, then a count; exit status 1 if any failed.
@@ -1117,10 +1121,60 @@ def case_mangled(exe):
         server.stop()
 
 
+def case_tickets(exe):
+    k1, k2, k3 = (os.urandom(32).hex().encode() for _ in range(3))
+    flags = ["--tickets", "2", "--ticket-keys", "keys"]
+    a = Server(exe, extra=flags, files={"keys": k1 + b"\n"})
+    b = Server(exe, extra=flags, files={"keys": k1 + b"\n"})
+    c = Server(exe, extra=flags, files={"keys": k3 + b"\n"})
+    try:
+        def fetch(port, sess=None):
+            raw = socket.create_connection(("127.0.0.1", port), timeout=10)
+            conn = echo.SESSION_CONTEXT.wrap_socket(raw, server_hostname=HOST, session=sess)
+            conn.sendall(b"GET /hello/ticket HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+            got = b""
+            while True:
+                part = conn.recv(65536)
+                if not part:
+                    break
+                got += part
+            reused, new = conn.session_reused, conn.session
+            conn.close()
+            if not got.startswith(b"HTTP/1.1 200"):
+                raise AssertionError(f"an answer of {got[:80]!r}")
+            return reused, new
+
+        reused, sess = fetch(a.port)
+        if reused:
+            return "the first request resumed"
+        for n in range(2):
+            reused, _ = fetch(a.port, sess)
+            if not reused:
+                return f"resumption {n} did not resume"
+        if not fetch(b.port, sess)[0]:
+            return "a process with the same key file did not resume the session"
+        if fetch(c.port, sess)[0]:
+            return "a process with another key file resumed it"
+        open(os.path.join(a.work, "keys"), "wb").write(k2 + b"\n" + k1 + b"\n")
+        a.signal(signal.SIGHUP)
+        a.wait_for(lambda l: l == "reload tickets ok", 5)
+        if not fetch(a.port, sess)[0]:
+            return "after a rotation the previous key no longer opened the session"
+        open(os.path.join(a.work, "keys"), "wb").write(k2 + b"\n")
+        a.signal(signal.SIGHUP)
+        a.wait_for(lambda l: l == "reload tickets ok", 5, 2)
+        if fetch(a.port, sess)[0]:
+            return "a session from a dropped key resumed"
+        return "ok (resumed twice, at a second process with the same keys, across a rotation; the dropped key refused)"
+    finally:
+        for srv in (a, b, c):
+            srv.stop()
+
+
 CASES = {"curl": case_curl, "openssl": case_openssl, "http": case_http, "pipelined": case_pipelined, "many": case_many,
          "big": case_big, "stalled": case_stalled, "slow": case_slow, "ended": case_ended, "reload": case_reload, "bound": case_bound,
          "full": case_full, "idle": case_idle, "shutdown": case_shutdown, "hostile": case_hostile, "upload": case_upload,
-         "expect": case_expect, "halfbody": case_halfbody, "mangled": case_mangled}
+         "expect": case_expect, "halfbody": case_halfbody, "mangled": case_mangled, "tickets": case_tickets}
 
 
 # ---- the cost ----
