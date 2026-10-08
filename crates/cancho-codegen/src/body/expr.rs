@@ -774,6 +774,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                         self.nonblocking(&args)
                     }
                     Callee::Builtin(Builtin::ConnNodelay) => self.nodelay(&args),
+                    Callee::Builtin(Builtin::ConnPeer) => self.conn_peer(&args),
                     Callee::Builtin(Builtin::ConnConnectStatus) => self.connect_status(&args),
                     Callee::Builtin(
                         Builtin::ConnClose

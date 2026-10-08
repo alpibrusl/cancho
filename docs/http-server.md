@@ -510,8 +510,9 @@ What the gateway (an HTTP/1.1 reverse proxy that terminates HTTPS) can build on 
    This is `server.md` §6's first open item and the largest piece of work left; `stream` only did the response direction.
 2. **Chunked responses.** `stream` sends bytes; a proxied answer of unknown length needs `Transfer-Encoding: chunked` framing on the way out (and de-chunking on the way in from the upstream). `std.http`
    has `dechunk` and no chunk writer.
-3. **The peer's address.** `std.conns` does not give it, so there is no `X-Forwarded-For`, no per-address bound on handshakes or connections (`tls-server.md` §11.5), and no access log with
-   an address. A `Conn` accessor in `std.conns` is the change.
+3. **The peer's address.** ~~`std.conns` does not give it~~ **Corrected ([`conn-peer.md`](conn-peer.md)):** `conns.peer(table, slot)` answers it (`std.addr.Peer`, with `text` for a log line and
+   an `X-Forwarded-For` entry and `key` for a per-address bound), and `examples/tls_echo` logs it and bounds by it; `examples/https_hello` logs it (the lines are `front.cho`'s). What is not done is
+   `packages/http-server`'s use of it: the `X-Forwarded-For` header, and the access log, are the gateway's change after this one.
 4. **Upstream connections in the same loop.** The gateway's own sockets to its upstreams go in the poller it owns (a byte-fed server has none of its own; `https_hello`'s `loop.cho` is the place),
    with `hold`/`answer` for the request waiting on the upstream (§10) and `stream` for the answer's body. `packages/http-request` is blocking; a non-blocking client is the missing piece, as it was for `cancho-pg`. *(Built: [`http-client.md`](http-client.md), `packages/http-client` and `examples/http_fetch_nb`; what the gateway still needs of it is §10.7 there.)*
 5. **Upgrade.** `Upgrade: websocket` and `CONNECT` need a connection to stop being parsed once the 101 is sent and become a byte tunnel: `detach` frees the HTTP side's slot, but the bytes already buffered behind

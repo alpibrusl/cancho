@@ -113,6 +113,7 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::Accept
                     | Builtin::ConnNonblocking
                     | Builtin::ConnNodelay
+                    | Builtin::ConnPeer
                     | Builtin::ConnConnectStatus
                     | Builtin::ListenerNonblocking
                     | Builtin::UdpLocalPort

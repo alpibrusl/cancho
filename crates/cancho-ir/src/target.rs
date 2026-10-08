@@ -100,6 +100,7 @@ pub fn wasi_gap(builtin: Builtin) -> Option<Gap> {
         | B::ConnConnectStatus
         | B::ConnDetach
         | B::ConnNodelay
+        | B::ConnPeer
         | B::ConnNonblocking
         | B::ConnRead
         | B::ConnWrite
