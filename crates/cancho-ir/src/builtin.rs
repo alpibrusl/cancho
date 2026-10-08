@@ -174,6 +174,19 @@ pub enum Builtin {
     /// multiple of 16, or it traps. Answers 0. Only where `hw_aes_gcm()` is
     /// true; elsewhere it traps.
     GhashUpdate,
+    /// `mul_wide(a: int, b: int) -> [] (int, int)` — the full 128-bit product
+    /// of two 64-bit words read as unsigned, as `(hi, lo)`
+    /// (`docs/wide-multiply.md` §3). It cannot overflow, so it never traps.
+    /// Edition 7.
+    MulWide,
+    /// `add_carry(a: int, b: int, carry: int) -> [] (int, int)` — `a + b +
+    /// (carry != 0)` over unsigned 64-bit words, as `(sum, carry_out)` with
+    /// `carry_out` 0 or 1 (§3). Edition 7.
+    AddCarry,
+    /// `sub_borrow(a: int, b: int, borrow: int) -> [] (int, int)` — `a - b -
+    /// (borrow != 0)` over unsigned 64-bit words, as `(difference,
+    /// borrow_out)` with `borrow_out` 0 or 1 (§3). Edition 7.
+    SubBorrow,
     /// `byte_of(n: int) -> [] byte` — narrow an integer to a byte, or trap.
     ///
     /// `docs/strings.md` §2: it traps outside 0..255 rather than
@@ -769,6 +782,9 @@ impl Builtin {
         Builtin::HwAesGcm,
         Builtin::AesEncryptBlock,
         Builtin::GhashUpdate,
+        Builtin::MulWide,
+        Builtin::AddCarry,
+        Builtin::SubBorrow,
         Builtin::Len,
         Builtin::ByteOf,
         Builtin::IntOf,
@@ -910,6 +926,9 @@ impl Builtin {
             Builtin::HwAesGcm => "hw_aes_gcm",
             Builtin::AesEncryptBlock => "aes_encrypt_block",
             Builtin::GhashUpdate => "ghash_update",
+            Builtin::MulWide => "mul_wide",
+            Builtin::AddCarry => "add_carry",
+            Builtin::SubBorrow => "sub_borrow",
             Builtin::Len => "len",
             Builtin::ByteOf => "byte_of",
             Builtin::IntOf => "int_of",
@@ -1155,6 +1174,9 @@ impl Builtin {
             // `value_barrier` was, since a program may already declare
             // these names.
             Builtin::HwAesGcm | Builtin::AesEncryptBlock | Builtin::GhashUpdate => 7,
+            // `docs/wide-multiply.md` §7: edition 7, the latest -- `mul_wide`,
+            // `add_carry` and `sub_borrow` are names a program may declare.
+            Builtin::MulWide | Builtin::AddCarry | Builtin::SubBorrow => 7,
             // `docs/floating-point.md` §4.1: edition 7, the latest -- the
             // first caller was a table reader that decoded doubles through
             // `ldexp`; `float_of_bits` is a name a program may declare.

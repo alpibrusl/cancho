@@ -107,6 +107,7 @@ mod vcs;
 mod vcs_remote;
 mod vcs_std;
 mod wasm_target;
+mod wide_multiply;
 mod x25519;
 mod x509;
 mod x509_verify;

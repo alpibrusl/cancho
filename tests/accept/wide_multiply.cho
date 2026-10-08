@@ -1,0 +1,46 @@
+//~ STDOUT 1 0
+//~ STDOUT -2 1
+//~ STDOUT 0 1
+//~ STDOUT -1 1
+
+// `docs/wide-multiply.md` §3: the three builtins on the values their carries
+// turn on. A word is an `int` read as unsigned, so -1 is 2^64 - 1.
+edition 7;
+
+import std.io;
+
+fn show[&i](io: &!i Io, x: int, y: int) -> [io_write] int {
+    io.print_int(io, x);
+    io.space(io);
+    io.print_int(io, y);
+    io.newline(io);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    borrow mut io as &!i in {
+        // 2^63 * 2 = 2^64: hi 1, lo 0.
+        let (h, l) = mul_wide(-9223372036854775807 - 1, 2);
+        show(i, h, l);
+        // (2^64 - 1)^2 = 2^128 - 2^65 + 1: hi 2^64 - 2, lo 1.
+        let (h2, l2) = mul_wide(-1, -1);
+        show(i, h2, l2);
+        // 2^64 - 1 + 0 + carry 1 wraps to 0 and carries out.
+        let (s, c) = add_carry(-1, 0, 1);
+        show(i, s, c);
+        // 0 - 0 - borrow 1 wraps to 2^64 - 1 and borrows out.
+        let (d, b) = sub_borrow(0, 0, 1);
+        show(i, d, b);
+    }
+    release(io);
+    return 0;
+}

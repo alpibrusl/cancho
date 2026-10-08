@@ -494,6 +494,10 @@ impl<'a> FuncEmitter<'a> {
             Callee::Builtin(Builtin::WrappingAdd) => self.wrapping("add", evaluated),
             Callee::Builtin(Builtin::WrappingSub) => self.wrapping("sub", evaluated),
             Callee::Builtin(Builtin::WrappingMul) => self.wrapping("mul", evaluated),
+            // `docs/wide-multiply.md` §4: register arithmetic, `body/wide.rs`.
+            Callee::Builtin(Builtin::MulWide) => self.mul_wide(evaluated),
+            Callee::Builtin(Builtin::AddCarry) => self.add_carry(evaluated, false),
+            Callee::Builtin(Builtin::SubBorrow) => self.add_carry(evaluated, true),
             Callee::Builtin(Builtin::PutChar) => {
                 let skip = Builtin::PutChar.erased_args();
                 let c = evaluated

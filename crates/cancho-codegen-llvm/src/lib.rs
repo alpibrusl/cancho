@@ -369,3 +369,5 @@ fn run_clang(module: &str, triple: &Triple) -> Result<Vec<u8>, CodegenError> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod wide_tests;
