@@ -120,6 +120,8 @@ def run(cmd, cwd, env=None, timeout=3600):
 EQUIVALENT = {
     "the tail's bytes start in the middle of a block": "the byte loop recomputes out[q] = in[q] ^ keystream[q] "
     "for the bytes it starts on early, which the whole-block loop already wrote with the same value",
+    "five whole blocks of tail for every eight": "the whole-block loop of the tail only speeds up what the byte loop "
+    "after it would do: that loop finishes every byte the first left, with the same keystream",
 }
 
 
