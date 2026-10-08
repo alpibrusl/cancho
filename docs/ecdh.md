@@ -8,6 +8,8 @@
 
 ---
 
+*Updated (#380, `docs/p256-fast.md`): P-256 no longer runs on `std.bigmod`. `public_key` is a sum of 65 entries of a table of the generator, and `shared` is this document's ladder on `std.p256`'s straight-line field; the checks, the codes and P-384 are as described here. §2's reductions still serve P-384 and RSA. §5 is corrected below.*
+
 ## 1. What is built
 
 | File | What |
@@ -149,10 +151,12 @@ One core of the Xeon in `docs/chacha20.md` §6, LLVM backend, the time of one `s
 | `std.ecdh.shared` | 2.6 ms | 6.4 ms |
 | `std.x25519` (`docs/x25519.md` §6), for comparison | 1.08 ms | |
 
+*Corrected (#380): P-256 is now **138 µs** a `shared` and **35 µs** a `public_key` on an M4 (755 and 768 µs before), 5.5 and 22 times faster; `docs/p256-fast.md` §9 has the machines and the loads. P-384 is as above. The timing test for the new code is `docs/p256-fast.md` §8.3.*
+
 TLS spends one `public_key` and one `shared` per handshake on the group the server picks. X25519 stays the share a
 ClientHello sends first, as OpenSSL's does (`docs/tls-parity.md` §2), so P-256 and P-384 cost only when a server asks for
-them with a HelloRetryRequest. A generic Montgomery multiplication does not use the NIST primes' special form, as
-`docs/ecdsa.md` §5.4 says. That is the first place to look if the cost matters.
+them with a HelloRetryRequest. A generic Montgomery multiplication did not use the NIST primes' special form, as
+`docs/ecdsa.md` §5.4 says; it was where the cost was, and for P-256 it is now used (`docs/p256-fast.md` §4.2).
 
 ## 6. What the change to `std.bigmod` cost
 

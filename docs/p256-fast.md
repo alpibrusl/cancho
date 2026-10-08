@@ -268,11 +268,45 @@ the result (which a valid input never reaches), the exponents, the scalar range 
 
 `scripts/chacha20_branches.py` over the objects of `tests/programs/ecdh_timing.cho` and `ecdsa_sign_timing.cho` (LLVM, on
 `gram`), every non-trap conditional jump read in the disassembly (`scripts/p256_ctx.py` prints each with the instructions
-before it): RESULT_AUDIT
+before it): 69 non-trap jumps in all (`ecdh.o`) and every one read. None tests a secret.
+- **Loop counters, lengths and the code of a call** (`cmp $K,%reg` against 8, 20, 30, 65, 0x40, a slice's length): `select`,
+  `multiply`, `comb_multiply`, `recode`, `base_multiply`, `point_multiply`, `store`, `load`, `wipe`, `check_p256`.
+- **`p256.load` and `p256.store`'s `cmp $0x15,%rcx; jb`**: `off > 20`, a byte's position in its limb.
+- **`p256.pow`**: the `started` flag, `scalar` (which field), and `nib != 0`: all of the public exponent.
+- **`comb_multiply`'s one `test %cl,%cl; je`** is not a branch on a digit: `cl` is `setb`/`setb`/`and` of two *pointer* comparisons,
+  the overlap test LLVM makes before it vectorises the masked OR loop (the entry in `work` against the row of the static).
+  The mask in the loop is `and`/`or` on `xmm` registers.
+- **`cmovb`, `cmovne`, `cmovae`, `cmovle`**: `max(len - 0x370, 0)` and similar lengths, the hexadecimal digit of a curve constant, and
+  `check_p256`'s answer of `in_range` (a public result of a constant-time comparison, as `docs/ecdh.md` §3).
+- **`affine`'s `cmpq $0x0,...; jne` chain** was `is_zero` stopping at the first nonzero limb of a secret's Z: a leak of the position of
+  the first nonzero limb, at probability 2^-28 a limb. It is now an OR of all ten limbs and one branch on the answer (§8.1).
+- **`p256_kernels.*`** (mul, sqr, add, sub_K, canon): no conditional jump except the overflow and bounds checks to `ud2`; `canon_*` has
+  none and its mask is `value_barrier`'s.
+- **`ecdsa_sign.finish`**: `is_zero` of r and of s (public once sent) and `store`'s loop; `sign`: the lengths, the attempt counter and the codes
+  of public checks.
 
 ### 8.3 Timing: dudect on `gram`
 
-RESULT_TIMING
+Intel Core i7-1260P, performance core 2 (`taskset -c 2`), Linux x86-64, LLVM backend, `rdtscp`, the `powersave` governor, a
+machine shared with other jobs (load average 3 to 9 during these runs, the core at 1.3 to 1.8 GHz, which is why the medians are
+large: the classes are interleaved, so it moves both alike). Fixed against random, as before, 10^6 measurements a test, batches of
+50,000. **The gate is |t| < 4.5.**
+
+| Function | Test | Measurements | Median (TSC cycles) | max \|t\| |
+|---|---|---|---|---|
+| `ecdh.public_key` P-256 (the table) | scalar 1 against random | 1,000,000 | 451,194 | **1.83** |
+| | a fixed scalar against random | 1,000,000 | 395,631 | **1.94** |
+| | scalar 0x88..88 (every digit 8) against random | 1,000,000 | 289,785 | **1.74** |
+| | scalar n − 1 (every digit carried) against random | 1,000,000 | 252,135 | **2.07** |
+| `ecdh.shared` P-256 (the ladder) | scalar 1 against random | 1,000,000 | 1,359,306 | **1.63** |
+| | a fixed scalar against random | 1,000,000 | 1,217,884 | **1.29** |
+| `ecdsa_sign.sign` | a fixed key against random | 1,000,000 | 629,929 | **2.07** |
+| | the key 1 against random | 1,000,000 | 378,814 | **1.41** |
+
+All eight pass. The two extra `public_key` classes are the comb's own extremes (§6), not in the earlier tests. The timing programs
+were built before the last two commits, which removed two unused constants and changed comments: the code of every function timed is
+the same text. Cranelift and Apple silicon were not timed (`docs/tls-assurance.md` §6.1 found the M4 fails scalar 1 on both
+backends for the CPU's data-dependent timing; P-256's new code was not re-run there).
 
 ### 8.4 Mutants
 
@@ -308,7 +342,59 @@ RESULT_TIMING
 
 ## 9. Cost
 
-RESULT_COST
+`python3 scripts/p256_bench.py <after> --vs <before> ...`: each driver run alternately five times for every operation, the best of five of each,
+LLVM backend, one core, minus the run of one round. `<before>` is `tests/programs/p256_profile_before.cho` built by `main`'s compiler
+(the worktree `origin/main` at the base of this PR), `<after>` is `p256_profile.cho` built by this branch's.
+
+**Apple M4 Max, macOS 26, native arm64** (load average 12.7 to 13.5, other jobs building; three passes, the median shown, passes within 3%):
+
+| Operation | before | after | |
+|---|---|---|---|
+| field multiplication mod p | 117 ns | 20 ns | 5.8x |
+| field squaring mod p | 117 ns | 19 ns | 6.1x |
+| addition + subtraction mod p | 36 ns | 13 ns | 2.7x |
+| inversion mod p | 44.4 µs | 5.8 µs | 7.7x |
+| inversion mod n | 51.9 µs | 10.0 µs | 5.2x |
+| multiplication mod n | 112 ns | 32 ns | 3.5x |
+| `ecdh.public_key` (k·G) | 768 µs | 34.6 µs | **22x** |
+| `ecdh.shared` (k·P) | 755 µs | 138 µs | **5.5x** |
+| `ecdsa_sign.sign` | 820 µs | 59.2 µs | **13.8x** |
+| `ecdsa_sign.sign_checked` | 1,644 µs | 163.6 µs | **10.1x** |
+| `ecdsa.verify_raw` | 814 µs | 105.8 µs | **7.7x** |
+
+**Intel Core i7-1260P (`gram`), Linux x86-64, performance core 2 (`taskset -c 2`)**: the machine was shared with other jobs the whole
+time (load average 6 to 13, the core at 0.5 to 1.8 GHz under `powersave`, on a sibling thread busy with someone's build), so the absolute
+times of three passes ranged over a factor of 2 to 4. The ratio of each interleaved pair is steady, and is what is reliable; the times
+are the fastest of the three passes:
+
+| Operation | before | after | ratio (range of the three passes) |
+|---|---|---|---|
+| field multiplication mod p | 255 ns | 64 ns | 3.8 to 4.0x |
+| `ecdh.public_key` | 1,575 µs | 84 µs | 16.7 to 18.6x |
+| `ecdh.shared` | 2,052 µs | 577 µs | 3.6 to 4.2x |
+| `ecdsa_sign.sign` | 1,716 µs | 124 µs | 13.6 to 14.5x |
+| `ecdsa_sign.sign_checked` | 3,508 µs | 379 µs | 8.6 to 9.3x |
+| `ecdsa.verify_raw` | 1,742 µs | 258 µs | 5.9 to 7.0x |
+
+An earlier, quieter minute (load 5.8, `docs/p256-fast.md` §1's first table) gave `main` at 1,143 µs for `public_key`, 1,240 µs for `sign` and
+1,231 µs for `verify`; the prototype multiplication on that machine was 44 ns against 167 ns generic. So an unloaded i7 signs in about
+a tenth of 1.24 ms by the ratio, which is not a measurement. **Not measured on a quiet core: it was not available.**
+
+**Docker arm64** (the image `lexsys-hooks-env`, a 6-vCPU Linux VM on the same M4 Max): `main` before, measured early (load 4.3):
+`public_key` 757 µs, `shared` 746, `sign` 808, `sign_checked` 1,631, `verify` 848, multiplication 114 ns, inversions 44.7 and 50.1 µs. The
+**after** was not measured: the VM's disk filled (other jobs' images; 63 GB of 90, 36 GB of volumes) while the mutant run was in it,
+and no container could start. What ran in it before that: the whole `cargo test --workspace --no-fail-fast` of this branch, Linux
+aarch64, **627 passed and 2 failed** (`project::a_compiler_other_than_the_one_named_is_refused` and
+`vcs_remote::a_lock_holds_a_commit_and_never_a_name`, which need a git checkout the container does not have: the worktree's `.git`
+points outside it); every p256, ecdh, ecdsa and tls test passed. The M4 above is the same CPU natively.
+
+**For reference**, OpenSSL 3.0.13 on `docs/ecdsa-sign.md` §7's i7: `ecdsap256` signs in 23 µs and `docs/ecdsa.md` §5.4's Xeon verifies in 75 µs. Against
+those, on the M4 (not the same machine): signing is 2.6 times OpenSSL's time, down from 36 times (a different machine, so indicative).
+
+**The check after signing (`docs/tls-server.md` §3.3), re-measured.** `sign_checked` less `sign` is 104 µs on the M4: the check is now
+64% of the combined cost, where it was 49% (it was equal to the signature on the i7). A full handshake that signs and checks now spends
+164 µs there, where it spent 1.64 ms. The check stays, as the design decided: a fault during signing leaks the key, 104 µs is 0.1 ms of a
+handshake whose other costs are the TLS engine's, and it is verification alone that is now the larger half.
 
 ## 10. Not done, fell short, not verified
 
