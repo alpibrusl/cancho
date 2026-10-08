@@ -36,6 +36,12 @@ server on a free port with the options it needs, and says `ok` or what failed:
                affected, and a place freed by a close is usable again
     addr-rate  `--per-address-rate 2`: six clients from one address are started two a second, while a client from
                another address (Linux only, as above) is not delayed by them
+    clientauth `--client-ca` with and without `--require-client-cert` (docs/tls-server.md §13.10): the log line of a
+               client with a certificate says the subject and fingerprint OpenSSL reports for it (a subject with
+               commas, quotes, `+`, `#`, a trailing space and a non-ASCII letter included); no certificate when
+               required, and a stranger's, are refused with their tags; after SIGHUP with another CA the old client's
+               connection ends `revoked`, its next one is refused and the new CA's is served; a refused file leaves the
+               store as it was; with no `--require-client-cert` a client with none is served and logged without one
 
 curl and mosquitto's clients are not here: they speak HTTP and MQTT, which an echo answers with their own request.
 Their interop with this server is docs/tls-server.md §10.2's matrix, against `tests/programs/tls_serve.cho`.
@@ -665,7 +671,109 @@ def case_addr_rate(exe):
         server.stop()
 
 
-CASES = {"suites": case_suites, "many": case_many, "reload": case_reload, "bound": case_bound,
+def case_clientauth(exe):
+    return clientauth(exe, lambda conn: echo(conn, b"mutual"), Server)
+
+
+def clientauth(exe, talk, server_class):
+    """The case `clientauth`, for a server that `server_class` starts and `talk(conn)` exchanges data with (it raises
+    `AssertionError` or an `ssl`/`OSError` when the exchange does not work)."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import clientauth_fixture as pki
+    ca, other = pki.make_ca("fleet root"), pki.make_ca("another root")
+    awkward_key, awkward = pki.make_client(ca, pki.AWKWARD)
+    plain_key, plain = pki.make_client(ca, pki.PLAIN)
+    stranger_key, stranger = pki.make_client(other, pki.PLAIN)
+    keep = tempfile.mkdtemp(prefix="tls_echo_pki_")
+    paths = {}
+    for name, (key, cert) in {"awkward": (awkward_key, awkward), "plain": (plain_key, plain),
+                              "stranger": (stranger_key, stranger)}.items():
+        paths[name] = (os.path.join(keep, name + ".pem"), os.path.join(keep, name + ".key"))
+        open(paths[name][0], "wb").write(pki.pem(cert))
+        open(paths[name][1], "wb").write(pki.key_pem(key))
+
+    def attempt(server, name):
+        """Connect presenting `name`'s certificate (or none) and echo: None, or what failed."""
+        ctx = context()
+        if name:
+            ctx.load_cert_chain(*paths[name])
+        try:
+            conn = ctx.wrap_socket(socket.create_connection(("127.0.0.1", server.port), timeout=10), server_hostname=HOST)
+            talk(conn)
+            return conn
+        except (ssl.SSLError, ConnectionError, AssertionError, OSError) as e:
+            return e
+
+    def established(server, count):
+        return [l for l in server.wait_for(lambda l: " established " in l, 10, count)][count - 1]
+
+    server = server_class(exe, extra=["--client-ca", "clients.pem", "--require-client-cert"],
+                          files={"clients.pem": pki.pem(ca[1])})
+    try:
+        conn = attempt(server, "awkward")
+        if isinstance(conn, Exception):
+            return f"a client with a certificate was refused: {conn!r}"
+        line = established(server, 1)
+        subject, fp = pki.openssl_view(paths["awkward"][0])
+        got = re.search(r" client=(.*) fp=([0-9a-f]{16}) waited=", line)
+        if not got or (got.group(1), got.group(2)) != (subject, fp):
+            return f"the line says {got and got.groups()}, OpenSSL reports {(subject, fp)}: {line}"
+        plain_conn = attempt(server, "plain")
+        if isinstance(plain_conn, Exception):
+            return f"a second client was refused: {plain_conn!r}"
+        subject2, fp2 = pki.openssl_view(paths["plain"][0])
+        got2 = re.search(r" client=(.*) fp=([0-9a-f]{16}) waited=", established(server, 2))
+        if not got2 or (got2.group(1), got2.group(2)) != (subject2, fp2):
+            return f"the second line says {got2 and got2.groups()}, OpenSSL reports {(subject2, fp2)}"
+        for who, tag in ((None, "tls-server-client-cert-required"), ("stranger", "x509-unknown-issuer")):
+            r = attempt(server, who)
+            if not isinstance(r, Exception):
+                return f"{who or 'a client with no certificate'} was served"
+            server.wait_for(lambda l, t=tag: f" closed {t} " in l, 5)
+        # The store replaced by another CA's: the old client is closed, revoked.
+        open(os.path.join(server.work, "clients.pem"), "wb").write(pki.pem(other[1]))
+        server.signal(signal.SIGHUP)
+        server.wait_for(lambda l: l == "reload client-ca ok", 5)
+        server.wait_for(lambda l: " closed revoked " in l, 5, 2)
+        try:
+            talk(conn)
+            return "a connection verified under the old store still echoes after it was replaced"
+        except (ssl.SSLError, ConnectionError, AssertionError, OSError):
+            pass
+        if not isinstance(attempt(server, "awkward"), Exception):
+            return "the old CA's client was served after the store was replaced"
+        fresh = attempt(server, "stranger")
+        if isinstance(fresh, Exception):
+            return f"the new CA's client was refused: {fresh!r}"
+        # A refused file leaves the store as it was.
+        open(os.path.join(server.work, "clients.pem"), "wb").write(b"not a certificate\n")
+        server.signal(signal.SIGHUP)
+        server.wait_for(lambda l: l == "reload client-ca refused tls-server-client-store", 5)
+        again = attempt(server, "stranger")
+        if isinstance(again, Exception):
+            return f"after a refused file the new CA's client was refused: {again!r}"
+    finally:
+        server.stop()
+    optional = server_class(exe, extra=["--client-ca", "clients.pem"], files={"clients.pem": pki.pem(ca[1])})
+    try:
+        none = attempt(optional, None)
+        if isinstance(none, Exception):
+            return f"optional: a client with no certificate was refused: {none!r}"
+        if " client=" in established(optional, 1):
+            return "optional: a client with no certificate was logged with one"
+        some = attempt(optional, "plain")
+        if isinstance(some, Exception):
+            return f"optional: a client with a certificate was refused: {some!r}"
+        if " client=" not in established(optional, 2):
+            return "optional: a client with a certificate was logged with none"
+        if not isinstance(attempt(optional, "stranger"), Exception):
+            return "optional: a certificate of an unknown CA was served"
+    finally:
+        optional.stop()
+    return "ok (the subject and fingerprint OpenSSL reports, required and optional, revoked on SIGHUP, a refused file kept the store)"
+
+
+CASES = {"clientauth": case_clientauth, "suites": case_suites, "many": case_many, "reload": case_reload, "bound": case_bound,
          "rate": case_rate, "full": case_full, "idle": case_idle, "shutdown": case_shutdown,
          "peer": case_peer, "per-address": case_per_address, "addr-rate": case_addr_rate,
          "tickets": case_tickets, "ticket-keys": case_ticket_keys, "ticket-identity": case_ticket_identity,

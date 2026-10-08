@@ -9,11 +9,15 @@ edition 5;
 // would. At the end, data is sent if the connection got that far, then the
 // peer's end of stream and `finish`. The identity, seed and time are
 // `fuzz_server_fixture`'s, with session tickets on under its ticket key (§12); the server speaks `h2` and `http/1.1`. An input of
-// odd length is served with no ALPN list, so both paths are reached.
+// odd length is served with no ALPN list, so both paths are reached. An input whose length mod 4 is 2 or 3 is served
+// with client authentication optional (2) or required (3), the store of `fuzz_clientauth_fixture`
+// (docs/tls-server.md §13.11): the CertificateRequest is built and the new states are entered; the client's
+// own flight is `fuzz_clientauth`'s.
 //
 // The corpus starts from real ClientHellos (`tests/vectors/fuzz/server/`,
 // OpenSSL, curl, Go, wolfSSL, mosquitto and Chromium), so the fuzzer begins
 // at the parser's far side rather than at its first length check.
+import fuzz_clientauth_fixture;
 import fuzz_server_fixture;
 import std.io;
 import tls;
@@ -56,6 +60,10 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read] int {
                 }
                 tls.set_tickets(e, 2, 3600);
                 tls.set_ticket_keys(e, fuzz_server_fixture.ticket_key(), fuzz_server_fixture.now_ms());
+                if total % 4 >= 2 {
+                    tls.trust_clients(e, fuzz_clientauth_fixture.store());
+                    tls.client_auth(e, total % 4 - 1);
+                }
                 var code = tls.serve(e, 0, fuzz_server_fixture.now_ms());
                 var at = 0;
                 while code >= 0 && at < total {

@@ -39,7 +39,13 @@ fn replay(harness: &str) {
         .map(|f| repo_root().join(f))
         .collect();
     } else if harness == "server" {
-        files = vec![repo_root().join("tests/programs/fuzz_server_fixture.cho")];
+        files = vec![
+            repo_root().join("tests/programs/fuzz_server_fixture.cho"),
+            repo_root().join("tests/programs/fuzz_clientauth_fixture.cho"),
+        ];
+        files.extend(super::tls_server::package_files());
+    } else if harness == "clientauth" {
+        files = vec![repo_root().join("tests/programs/fuzz_clientauth_fixture.cho")];
         files.extend(super::tls_server::package_files());
     }
     let dir = repo_root().join("tests/vectors/fuzz").join(harness);
@@ -110,4 +116,11 @@ fn hello_corpus_never_traps() {
 #[test]
 fn server_corpus_never_traps() {
     replay("server");
+}
+
+/// The client's Certificate and CertificateVerify (`docs/tls-server.md` §13.11), from the good ones of each key
+/// type and what AFL++ made of them.
+#[test]
+fn clientauth_corpus_never_traps() {
+    replay("clientauth");
 }

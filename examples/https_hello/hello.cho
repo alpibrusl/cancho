@@ -11,7 +11,7 @@ edition 6;
 //                 [--rate <per second>] [--handshake-timeout <ms>] [--idle <ms>]
 //                 [--per-address <n>] [--per-address-rate <per second>]
 //                 [--tickets <n>] [--ticket-lifetime <seconds>] [--ticket-keys <file>]
-//                 [--read-timeout <ms>] [--max-body <MiB>]
+//                 [--read-timeout <ms>] [--max-body <MiB>] [--client-ca <file> [--require-client-cert]]
 //
 // The options, the certificates (`--dir`, `--identity`), the bounds, `SIGHUP` and
 // `SIGINT`/`SIGTERM`, the log, and the exit statuses are `examples/tls_echo/tls_echo.cho`'s,
@@ -31,7 +31,7 @@ fn usage[&i](io: &!i Io) -> [err_write] int {
     io.error_all(io, "                [--connections <n>] [--handshakes <n>] [--rate <n>] [--handshake-timeout <ms>] [--idle <ms>]\n");
     io.error_all(io, "                [--per-address <n>] [--per-address-rate <n>]\n");
     io.error_all(io, "                [--tickets <n>] [--ticket-lifetime <seconds>] [--ticket-keys <file in the directory>]\n");
-    io.error_all(io, "                [--read-timeout <ms>] [--max-body <MiB>]\n");
+    io.error_all(io, "                [--read-timeout <ms>] [--max-body <MiB>] [--client-ca <file> [--require-client-cert]]\n");
     return 2;
 }
 
@@ -47,7 +47,7 @@ fn serve[&h, &i, &n, &k, &s, &d, &u, &l, &c, &r, &a](heap: &!h Heap, io: &!i Io,
             status = 2;
         }
         if status == 0 {
-            status = front.add_all(heap, io, dir, ew, subs, sublens, cfg[front.c_identities()], clock_unix_ms(clock));
+            status = front.add_all(heap, io, dir, ew, subs, sublens, cfg, clock_unix_ms(clock));
         }
         if status == 0 {
             status = front.tickets(io, dir, ew, cfg, subs, sublens, clock_unix_ms(clock));
@@ -98,7 +98,7 @@ fn main(world: World) -> [] int {
         borrow mut heap as &!h in {
             let cfgb = box_slice(h, front.cfg_len() + 1, 0);
             let subsb = box_slice(h, front.subs_len(), byte_of(0));
-            let lensb = box_slice(h, front.key_slot() + 1, 0);
+            let lensb = box_slice(h, front.lens_len(), 0);
             borrow mut cfgb as &!cw in {
                 borrow mut subsb as &!uw in {
                     borrow mut lensb as &!lw in {

@@ -1,11 +1,12 @@
 // A Go crypto/tls client for scripts/tls_server_interop.py (docs/tls-server.md §8, step 2).
 //
-//	go_client <host:port> <server name> <ca.pem> <curves> <alpn> <message>
+//	go_client <host:port> <server name> <ca.pem> <curves> <alpn> <message> [<client chain.pem> <client key.pem>]
 //
 // `curves` is a comma-separated list of X25519, P256, P384 and P521, in order of preference: Go sends a key share
 // for the first only, so a first curve the server does not have makes it ask with a HelloRetryRequest. `alpn` is
 // a comma-separated list, or `-`. TLS 1.3 only; Go does not let a client choose among TLS 1.3's suites. It sends
-// `message`, reads until the server closes, and prints `ok <version> <suite> <alpn> <bytes read>`, or `error
+// `message`, reads until the server closes (with a client chain and key, Go's `tls.Config.Certificates`,
+// docs/tls-server.md §13: it sends the certificate when the server asks for one and one of them fits), and prints `ok <version> <suite> <alpn> <bytes read>`, or `error
 // <what>` and exits 1.
 package main
 
@@ -29,6 +30,13 @@ func main() {
 	names := map[string]tls.CurveID{"X25519": tls.X25519, "P256": tls.CurveP256, "P384": tls.CurveP384, "P521": tls.CurveP521}
 	for _, c := range strings.Split(os.Args[4], ",") {
 		config.CurvePreferences = append(config.CurvePreferences, names[c])
+	}
+	if len(os.Args) > 8 {
+		pair, err := tls.LoadX509KeyPair(os.Args[7], os.Args[8])
+		if err != nil {
+			panic(err)
+		}
+		config.Certificates = []tls.Certificate{pair}
 	}
 	if os.Args[5] != "-" {
 		config.NextProtos = strings.Split(os.Args[5], ",")

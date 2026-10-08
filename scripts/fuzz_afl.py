@@ -7,7 +7,8 @@
 
 The harnesses are `tests/programs/fuzz_<harness>.cho`: der, chain, messages,
 client and flight, and the server's (docs/tls-server.md §7): hello, the
-ClientHello parser, and server, the whole server from `serve`. Each named one is built with `afl-clang-fast` as the LLVM
+ClientHello parser, server, the whole server from `serve`, and clientauth (§13.11), the client's Certificate and
+CertificateVerify. Each named one is built with `afl-clang-fast` as the LLVM
 backend's `CLANG` and the linker `CC` (so every edge is instrumented and
 nothing in the compiler changes), seeded from `scripts/fuzz_corpus.py seeds`
 and from the committed corpus in `tests/vectors/fuzz/<harness>/`, and run
@@ -31,16 +32,20 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 import fuzz_corpus  # noqa: E402
 
-HARNESSES = ["der", "chain", "messages", "client", "flight", "hello", "server"]
+HARNESSES = ["der", "chain", "messages", "client", "flight", "hello", "server", "clientauth"]
 PACKAGES = [f"packages/tls/{f}.cho" for f in ("record", "message", "slot", "client12", "client")] + \
     [f"packages/x509/{f}.cho" for f in ("verify", "names", "x509")]
 SHARED = ["tests/programs/fuzz_common.cho", "tests/programs/fuzz_fixture.cho"]
 # The server's harnesses, each with its own files.
 FILES = {
     "hello": ["packages/tls/record.cho", "packages/tls/message.cho", "packages/tls/hello.cho", "packages/x509/x509.cho"],
-    "server": ["tests/programs/fuzz_server_fixture.cho"]
+    "server": ["tests/programs/fuzz_server_fixture.cho", "tests/programs/fuzz_clientauth_fixture.cho"]
     + [f"packages/tls/{f}.cho" for f in ("tls", "record", "message", "slot", "client12", "client", "hello", "identity",
-                                        "ticket", "server")]
+                                        "clientauth", "ticket", "server")]
+    + [f"packages/x509/{f}.cho" for f in ("verify", "names", "x509", "key")],
+    "clientauth": ["tests/programs/fuzz_clientauth_fixture.cho"]
+    + [f"packages/tls/{f}.cho" for f in ("tls", "record", "message", "slot", "client12", "client", "hello", "identity",
+                                        "clientauth", "ticket", "server")]
     + [f"packages/x509/{f}.cho" for f in ("verify", "names", "x509", "key")],
 }
 ENV = dict(os.environ, AFL_SKIP_CPUFREQ="1", AFL_NO_UI="1",

@@ -47,7 +47,8 @@ pub fn efbig() -> [] int {
     return 27;
 }
 
-// Which file a `load` answer below `file_base()` names, and its `errno`.
+// Which file a `load` answer below `file_base()` names, and its `errno`: `load_clients` answers
+// `file_base() * 4 + -errno`.
 pub fn failed_file(code: int) -> [] &static [byte] {
     if code > file_base() * 2 {
         return "chain.pem";
@@ -55,7 +56,10 @@ pub fn failed_file(code: int) -> [] &static [byte] {
     if code > file_base() * 3 {
         return "key.pem";
     }
-    return "names";
+    if code > file_base() * 4 {
+        return "names";
+    }
+    return "the client CA file";
 }
 
 pub fn failed_errno(code: int) -> [] int {
@@ -200,5 +204,24 @@ pub fn load[&h, &d, &s, &e](heap: &!h Heap, dir: &d Dir, sub: &s [byte], engine:
     }
     unbox_slice(heap, chain);
     unbox_slice(heap, key);
+    return answer;
+}
+
+// The clients' CA file `name` beneath `dir` (`--client-ca`), read and given to the engine as the store a client's
+// chain is verified against (`tls.trust_clients`, `docs/tls-server.md` §13.3): the roots stored, the engine's
+// refusal (`tls-server-client-store`), or a file that could not be read (`file_base()`). A file the engine refuses
+// leaves the store as it was.
+pub fn load_clients[&h, &d, &s, &e](heap: &!h Heap, dir: &d Dir, name: &s [byte], engine: &!e tls.Engine) -> [heap, dir_read, file_read] int {
+    var answer = 0;
+    let pem = box_slice(heap, chain_cap(), byte_of(0));
+    borrow mut pem as &!pw in {
+        let n = read_beneath(dir, name, contents(pw));
+        if n < 0 {
+            answer = file_base() * 4 + n;
+        } else {
+            answer = tls.trust_clients(engine, contents(pw)[0..n]);
+        }
+    }
+    unbox_slice(heap, pem);
     return answer;
 }

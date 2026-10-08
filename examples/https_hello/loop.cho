@@ -295,6 +295,19 @@ fn sweep[&i, &e, &t, &p, &s, &q, &n, &a, &r, &v, &x, &c](io: &!i Io, engine: &!e
     return 0;
 }
 
+// The clients' store was replaced (`SIGHUP`): every established connection whose client was verified under the
+// old one is sent close_notify and ended (`closed revoked`), as `examples/tls_echo/echo.cho` does.
+fn revoke_stale[&i, &e, &t, &p, &s, &q, &n, &a, &r, &v, &x, &c](io: &!i Io, engine: &!e tls.Engine, tab: &!t conns.Table, poller: &!p Poller, st: &!s [int], pend: &!q [byte], inq: &!n [byte], app: &!a [byte], rcv: &!r [byte], srv: &!v server.Server, ap: &!x [int], cfg: &c [int], now: int) -> [conn_read, conn_write, poll, io_write] int {
+    var slot = 0;
+    while slot < cfg[front.c_conns()] {
+        if st[slot * front.stride() + front.s_phase()] == front.phase_established() && front.stale(engine, slot) {
+            close_with(io, engine, tab, poller, st, pend, inq, app, rcv, srv, ap, slot, front.r_revoked(), now);
+        }
+        slot = slot + 1;
+    }
+    return 0;
+}
+
 // A stop: queued and handshaking connections are closed, established ones are sent
 // close_notify.
 fn stop_all[&i, &e, &t, &p, &s, &q, &n, &a, &r, &v, &x, &c](io: &!i Io, engine: &!e tls.Engine, tab: &!t conns.Table, poller: &!p Poller, st: &!s [int], pend: &!q [byte], inq: &!n [byte], app: &!a [byte], rcv: &!r [byte], srv: &!v server.Server, ap: &!x [int], cfg: &c [int], now: int) -> [conn_read, conn_write, poll, io_write] int {
@@ -421,6 +434,15 @@ pub fn run[&h, &i, &l, &k, &e, &d, &w, &u, &n, &c](heap: &!h Heap, io: &!i Io, l
                                                                                     let mask = signals_pending(watch);
                                                                                     if sg.has(mask, sg.sighup()) {
                                                                                         front.reload(heap, io, dir, engine, subs, sublens, cfg[front.c_identities()], now_unix);
+                                                                                        if front.reload_clients(heap, io, dir, engine, subs, sublens, cfg) == 1 {
+                                                                                            borrow mut table as &!tw in {
+                                                                                                borrow mut poll as &!pw in {
+                                                                                                    borrow mut srv as &!sv in {
+                                                                                                        revoke_stale(io, engine, tw, pw, st, contents(pdw), contents(iw), contents(aw), contents(vw), sv, ap, cfg, now);
+                                                                                                    }
+                                                                                                }
+                                                                                            }
+                                                                                        }
                                                                                     }
                                                                                     if sg.any(mask, sg.stop_signals()) && gl[front.g_stopping()] == 0 {
                                                                                         gl[front.g_stopping()] = 1;

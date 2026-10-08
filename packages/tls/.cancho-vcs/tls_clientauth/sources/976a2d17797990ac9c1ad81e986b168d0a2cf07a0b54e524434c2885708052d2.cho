@@ -1,0 +1,214 @@
+module tls_clientauth;
+import std.crypto;
+import tls_hello;
+import tls_identity;
+import tls_message;
+import tls_record;
+import tls_slot;
+import x509;
+import x509_verify;
+
+// `tls_clientauth` -- client certificates on a server connection (`docs/tls-server.md` §13): the
+// CertificateRequest the server sends, the client's Certificate verified against the clients' store as a
+// client's chain (`x509_verify.verify_chain` with `purpose_client_auth()` and no name), its
+// CertificateVerify, and the identity the program may ask for once the connection is established. The
+// engine authenticates, the program authorizes: nothing here decides what an identity may do. Public data
+// only: no secret is read or written. Not independently reviewed (#209).
+
+// The most certificates a client sends (the leaf, up to three intermediates and the root), the most bytes
+// of its Certificate message (checked when the header is in), and the intermediates the verifier allows
+// (`docs/tls-server.md` §13.2).
+pub fn max_certificates() -> [] int {
+    return 5;
+}
+
+pub fn max_message() -> [] int {
+    return 16384;
+}
+
+pub fn max_intermediates() -> [] int {
+    return 3;
+}
+
+// ---- Starting ----
+
+// A connection served at `now` (seconds): the engine's mode at this moment is the connection's, and the
+// clock the chain is checked against.
+pub fn begin[&i, &c](ints: &!i [int], cfg: &c [byte], now: int) -> [] int {
+    let mode = tls_identity.client_mode(cfg);
+    ints[tls_slot.i_now()] = now;
+    if mode >= 1 {
+        tls_slot.set_flag(ints, tls_slot.f_auth_request());
+    }
+    if mode == 2 {
+        tls_slot.set_flag(ints, tls_slot.f_auth_require());
+    }
+    return 0;
+}
+
+// The clock the chain is checked against, seconds: the time `serve` was given, or the engine's latest (`set_time`, a
+// later `serve`), whichever is later (`docs/tls-server.md` §13.5).
+fn clock[&i](ints: &i [int]) -> [] int {
+    var now = ints[tls_slot.i_srv_now_ms()] / 1000;
+    if now < ints[tls_slot.i_now()] {
+        now = ints[tls_slot.i_now()];
+    }
+    return now;
+}
+
+// Whether this connection sends a CertificateRequest.
+pub fn requested[&i](ints: &i [int]) -> [] bool {
+    return tls_slot.has(ints, tls_slot.f_auth_request());
+}
+
+// The CertificateRequest into `out` (`tls_hello.certificate_request_cap()` bytes): its length. The
+// certificate_authorities are the store's as it is now.
+pub fn request[&c, &o](cfg: &c [byte], out: &!o [byte]) -> [] int {
+    var n = 0;
+    region r {
+        let names = alloc_slice[r](tls_identity.authorities_cap(), byte_of(0));
+        let used = tls_identity.client_authorities(cfg, names);
+        n = tls_hello.certificate_request(names[0..used], out);
+    }
+    return n;
+}
+
+// ---- The client's flight ----
+
+// The client's Certificate (RFC 8446 §4.4.2), a whole handshake message. An empty list is the client
+// saying it has no certificate: refused when required, else the handshake goes on to Finished with no
+// identity. Otherwise the chain is verified now, against the store as it is now and the clock `begin` was
+// given, and the leaf kept for CertificateVerify and for the program.
+pub fn on_certificate[&i, &b, &m, &c](ints: &!i [int], bytes: &!b [byte], message: &m [byte], cfg: &c [byte]) -> [] int {
+    let body = message[4..len(message)];
+    if len(body) >= 1 && int_of(body[0]) != 0 {
+        // The context of a CertificateRequest sent during the handshake is empty (§4.4.2).
+        return tls_record.server_illegal_parameter();
+    }
+    if len(body) == 4 && tls_message.get(body, 1, 3) == 0 {
+        if tls_slot.has(ints, tls_slot.f_auth_require()) {
+            return tls_record.server_client_cert_required();
+        }
+        tls_slot.transcript_add(ints, message);
+        ints[tls_slot.i_state()] = tls_slot.state_wait_client_finished();
+        return 0;
+    }
+    var code = 0;
+    region r {
+        let info = alloc_slice[r](3 + 2 * tls_message.max_certificates(), 0);
+        code = tls_message.certificate(body, info);
+        if code == 0 && (info[2] > max_certificates() || info[1] - info[0] > tls_slot.leaf_cap()) {
+            code = tls_record.x509_chain_too_large();
+        }
+        if code == 0 {
+            let n = info[2];
+            let ranges = alloc_slice[r](2 * n, 0);
+            var k = 0;
+            while k < 2 * n {
+                ranges[k] = info[3 + k];
+                k = k + 1;
+            }
+            let view = alloc_slice[r](x509.view_len(), 0);
+            code = tls_slot.from_x509(x509_verify.verify_chain(tls_identity.client_store(cfg), body, ranges, clock(ints), max_intermediates(), x509_verify.purpose_client_auth(), view));
+            if code == 0 {
+                ints[tls_slot.i_leaf_len()] = tls_slot.copy_bytes(body[info[0]..info[1]], bytes[tls_slot.b_leaf()..tls_slot.b_leaf() + info[1] - info[0]]);
+                ints[tls_slot.i_not_after()] = view[x509.not_after()];
+                ints[tls_slot.i_peer_generation()] = tls_identity.client_generation(cfg);
+                tls_slot.set_flag(ints, tls_slot.f_client_cert());
+                tls_slot.transcript_add(ints, message);
+            }
+        }
+    }
+    if code == 0 {
+        ints[tls_slot.i_state()] = tls_slot.state_wait_client_verify();
+    }
+    return code;
+}
+
+// The client's CertificateVerify (§4.4.3): its signature over the transcript through its Certificate, by
+// the key of the leaf just verified, under a scheme the CertificateRequest listed.
+pub fn on_certificate_verify[&i, &b, &m](ints: &!i [int], bytes: &!b [byte], message: &m [byte]) -> [] int {
+    var code = 0;
+    region r {
+        let info = alloc_slice[r](3, 0);
+        code = tls_message.certificate_verify(message[4..len(message)], info);
+        if code == 0 && !tls_hello.client_scheme_listed(info[0]) {
+            code = tls_record.server_client_sigalg();
+        }
+        if code == 0 {
+            // 64 spaces, the context string, a zero byte, the hash.
+            let h = tls_slot.hash_len(ints);
+            let content = alloc_slice[r](64 + 33 + 1 + h, byte_of(32));
+            let label = "TLS 1.3, client CertificateVerify";
+            tls_slot.copy_bytes(label, content[64..97]);
+            content[97] = byte_of(0);
+            tls_slot.transcript_hash(ints, content[98..98 + h]);
+            code = tls_slot.check_signature(bytes[tls_slot.b_leaf()..tls_slot.b_leaf() + ints[tls_slot.i_leaf_len()]], info[0], content, message[4 + info[1]..4 + info[2]], false);
+        }
+        if code == 0 {
+            tls_slot.transcript_add(ints, message);
+        }
+    }
+    if code == 0 {
+        ints[tls_slot.i_state()] = tls_slot.state_wait_client_finished();
+    }
+    return code;
+}
+
+// Whether the client presented a certificate that verified (its CertificateVerify is awaited or was checked).
+pub fn certified[&i](ints: &i [int]) -> [] bool {
+    return tls_slot.has(ints, tls_slot.f_client_cert());
+}
+
+// The client's Finished has verified: a client that proved a certificate is that identity from now.
+pub fn established[&i](ints: &!i [int]) -> [] int {
+    if tls_slot.has(ints, tls_slot.f_client_cert()) {
+        tls_slot.set_flag(ints, tls_slot.f_client_auth());
+    }
+    return 0;
+}
+
+// ---- The identity (`docs/tls-server.md` §13.6) ----
+
+// Whether the connection is established as a verified client: the Finished checked after its Certificate
+// and CertificateVerify, and no failure since.
+pub fn verified[&i](ints: &i [int]) -> [] bool {
+    return tls_slot.has(ints, tls_slot.f_client_auth()) && ints[tls_slot.i_state()] != tls_slot.state_failed();
+}
+
+// The generation of the clients' store the chain was verified under, 0 for none.
+pub fn generation[&i](ints: &i [int]) -> [] int {
+    if verified(ints) {
+        return ints[tls_slot.i_peer_generation()];
+    }
+    return 0;
+}
+
+// The verified leaf's DER. Empty unless `verified`.
+pub fn certificate[&i, &b](ints: &i [int], bytes: &b [byte]) -> [] &b [byte] {
+    var n = 0;
+    if verified(ints) {
+        n = ints[tls_slot.i_leaf_len()];
+    }
+    return bytes[tls_slot.b_leaf()..tls_slot.b_leaf() + n];
+}
+
+// The verified leaf parsed into `view` (`x509.view_len()` words): 0, or a refusal (also when there is
+// no verified leaf).
+pub fn leaf_view[&i, &b, &v](ints: &i [int], bytes: &b [byte], view: &!v [int]) -> [] int {
+    let der = certificate(ints, bytes);
+    if len(der) == 0 {
+        return tls_record.x509_decode();
+    }
+    return x509.parse(der, view);
+}
+
+// SHA-256 of the verified leaf's DER into `out` (32 bytes): 32, or 0 when there is none.
+pub fn fingerprint[&i, &b, &o](ints: &i [int], bytes: &b [byte], out: &!o [byte]) -> [] int {
+    let der = certificate(ints, bytes);
+    if len(der) == 0 || len(out) < 32 {
+        return 0;
+    }
+    crypto.sha256(der, out[0..32]);
+    return 32;
+}
