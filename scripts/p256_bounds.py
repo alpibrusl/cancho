@@ -33,6 +33,7 @@ FORMULAS = {
     "double": ("std/p256_vf.cho", ["x", "y", "z"], ["x_of(d)", "y_of(d)", "z_of(d)"], {}, 8),
     "add_jac": ("std/p256_vf.cho", ["x_of(p)", "y_of(p)", "z_of(p)", "x_of(q)", "y_of(q)", "z_of(q)"], ["x_of(d)", "y_of(d)", "z_of(d)"], {}, 8),
     "load_q": ("std/p256_vf.cho", ["y_of(pt_ent())"], ["y_of(pt_ent())"], {"e_zero()": Fraction(0)}, 2),
+    "matches": ("std/p256_vf.cho", ["rr", "x_of(pt_acc())", "z_of(pt_acc())"], [], {}, 8),
     "madd": ("std/p256_vf.cho", ["x1", "y1", "z1", "x2", "y2"], ["x_of(d)", "y_of(d)", "z_of(d)"], {}, 8),
     "double_point": ("std/p256_pt.cho", ["x", "y", "z"], ["x3", "y3", "z3"], {"b": Fraction(1)}),
 }
@@ -41,7 +42,7 @@ EXTRA = {}  # filled by formulas registered below, when their files exist
 
 def body(path, name):
     text = (ROOT / path).read_text()
-    m = re.search(r"fn %s\[&w\]\(w: &!w \[int\][^)]*\) -> \[\] \w+ \{\n(.*?)\n\}\n" % re.escape(name), text, re.S)
+    m = re.search(r"fn %s\[[^\]]*\]\([^{]*\) -> \[\] \w+ \{\n(.*?)\n\}\n" % re.escape(name), text, re.S)
     if not m:
         raise SystemExit(f"no function {name} in {path}")
     return m.group(1)
@@ -51,7 +52,7 @@ CALL = re.compile(r"p256\.(mul|sqr|add|sub)\(w, ([^)]*?(?:\(\d+\))?)(?:, ([^,]*?
 
 
 def args(line):
-    m = re.match(r"\s*p256\.(mul|sqr|add|copy|sub(?:2|4|8|16|32|64)?)\(w, (.*)\);\s*$", line)
+    m = re.match(r"\s*p256\.(mul|sqr|add|copy|put_n|to_mont|from_mont|sub(?:2|4|8|16|32|64)?)\(w, (.*)\);\s*$", line)
     if not m:
         return None
     parts = []
@@ -89,7 +90,10 @@ def run(path, name, inputs, outputs, consts, b_in, rewrite=None):
         if a is None:
             continue
         op, parts = a
-        if op in ("sqr", "copy"):
+        if op == "put_n":
+            bound[parts[0]] = Fraction(1)
+            continue
+        if op in ("sqr", "copy", "to_mont", "from_mont"):
             x, d = parts
             y = x
         else:
@@ -99,6 +103,16 @@ def run(path, name, inputs, outputs, consts, b_in, rewrite=None):
         bx, by = bound[x], bound[y]
         if op == "copy":
             bound[d] = bx
+            continue
+        if op == "from_mont":
+            # Multiplied by 1 and reduced: in [0, p).
+            bound[d] = Fraction(1)
+            continue
+        if op == "to_mont":
+            # A multiplication by R^2 mod p, which is below p.
+            prod = bx
+            worst_mul = max(worst_mul, prod)
+            bound[d] = 1 + prod / LIMIT
             continue
         if op in ("mul", "sqr"):
             prod = bx * by
@@ -131,7 +145,7 @@ def run(path, name, inputs, outputs, consts, b_in, rewrite=None):
 # for which every output is at most B when every input is at most B.
 GROUPS = [
     ["add_points", "mixed_add", "double_point"],
-    ["double", "add_jac", "madd", "load_q"],
+    ["double", "add_jac", "madd", "load_q", "matches"],
     ["on_curve_xy"],
 ]
 

@@ -75,22 +75,19 @@ pub fn work_len() -> [] int {
 }
 
 fn x_of(p: int) -> [] int {
-    return p256.fe(p);
+    return p256_pt.x_of(p);
 }
 
 fn y_of(p: int) -> [] int {
-    return p256.fe(p + 1);
+    return p256_pt.y_of(p);
 }
 
 fn z_of(p: int) -> [] int {
-    return p256.fe(p + 2);
+    return p256_pt.z_of(p);
 }
 
 fn copy_point[&w](w: &!w [int], from: int, to: int) -> [] int {
-    p256.copy(w, x_of(from), x_of(to));
-    p256.copy(w, y_of(from), y_of(to));
-    p256.copy(w, z_of(from), z_of(to));
-    return 0;
+    return p256_pt.copy_point(w, from, to);
 }
 
 // Whether the element at `x` is zero modulo p; `s` is a scratch element.
@@ -273,8 +270,9 @@ fn add_bit[&w](w: &!w [int], x: int, pos: int) -> [] int {
 
 // The width-`width` non-adjacent form of the element at `x` (a number below
 // 2^256, destroyed) into `dig`: 257 digits, each 0 or odd in
-// (-2^(width-1), 2^(width-1)), nonzero digits at least `width` apart.
-fn wnaf[&w](w: &!w [int], x: int, dig: int, width: int) -> [] int {
+// (-2^(width-1), 2^(width-1)), nonzero digits at least `width` apart. Public for
+// `tests/programs/p256_driver.cho`.
+pub fn wnaf[&w](w: &!w [int], x: int, dig: int, width: int) -> [] int {
     var i = 0;
     while i < 260 {
         w[dig + i] = 0;
@@ -329,6 +327,40 @@ fn load_q[&w](w: &!w [int], d: int) -> [] int {
         p256.sub32(w, e_zero(), y_of(pt_ent()), y_of(pt_ent()));
     }
     return 0;
+}
+
+// Whether the sum in `pt_acc()` has x = r modulo n (`rr` is r, below n): x = r, or x = r + n
+// when that is below p. Compared as X = r Z^2, so there is no inversion.
+fn matches[&w](w: &!w [int], rr: int) -> [] bool {
+    p256.sqr(w, z_of(pt_acc()), t(0));
+    p256.to_mont(w, rr, t(1));
+    p256.mul(w, t(1), t(0), t(1));
+    p256.sub2(w, x_of(pt_acc()), t(1), t(2));
+    if zero_mod(w, t(2), t(3)) {
+        return true;
+    }
+    p256.put_n(w, t(3));
+    p256.add(w, rr, t(3), t(3));
+    if p256.below_p(w, t(3)) {
+        p256.to_mont(w, t(3), t(1));
+        p256.mul(w, t(1), t(0), t(1));
+        p256.sub2(w, x_of(pt_acc()), t(1), t(2));
+        if zero_mod(w, t(2), t(3)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Whether a sum with affine x `x` (Z = 1) passes the final check against `r`: `matches`, for
+// `tests/programs/p256_driver.cho`, which cannot reach the sums for which x = r + n.
+pub fn check_x[&r, &x, &w](r: &r [byte], x: &x [byte], w: &!w [int]) -> [] bool {
+    p256.init(w);
+    p256.load(r, w, e_r());
+    p256.load(x, w, x_of(pt_acc()));
+    p256.to_mont(w, x_of(pt_acc()), x_of(pt_acc()));
+    p256.copy(w, p256.one_mont(), z_of(pt_acc()));
+    return matches(w, e_r());
 }
 
 // SEC 1 §4.1.4 steps 4 and 5 for P-256 (`docs/p256-fast.md` §7): the point
@@ -429,13 +461,7 @@ pub fn verify[&d, &q, &r, &s, &w](digest: &d [byte], point: &q [byte], r: &r [by
     if inf {
         return -40;
     }
-    // x = X / Z^2, modulo n, against r.
-    p256.sqr(w, z_of(pt_acc()), t(0));
-    p256.invert(w, t(0), t(0));
-    p256.mul(w, x_of(pt_acc()), t(0), t(0));
-    p256.from_mont(w, t(0), t(0));
-    p256.sreduce(w, t(0), t(0));
-    if !p256.equal(w, t(0), rr) {
+    if !matches(w, rr) {
         return -41;
     }
     return 0;

@@ -72,11 +72,14 @@ def mont_mul(name, mod, square, bound):
     assert not special or ninv == 1
     out = []
     out.append(f"pub fn {name}[&w](w: &!w [int], x: int, {'' if square else 'y: int, '}d: int) -> [] int {{")
+    out.append("    let xs = w[x..x + 10];")
     for i in range(N):
-        out.append(f"    let a{i} = w[x + {i}];")
+        out.append(f"    let a{i} = xs[{i}];")
     if not square:
+        out.append("    let ys = w[y..y + 10];")
         for i in range(N):
-            out.append(f"    let b{i} = w[y + {i}];")
+            out.append(f"    let b{i} = ys[{i}];")
+    out.append("    let os = w[d..d + 10];")
     b = "a" if square else "b"
     out.append("    var s = 0;")
     out.append("    var c = 0;")
@@ -96,7 +99,7 @@ def mont_mul(name, mod, square, bound):
                 e = f"wrapping_mul(a{pairs[0][0]}, a{pairs[0][1]})"
                 for (i, j) in pairs[1:]:
                     e = f"wrapping_add({e}, wrapping_mul(a{i}, a{j}))"
-                terms.append((f"({e} << 1)", 2 * len(pairs) * L * L))
+                terms.append((f"{e} << 1", 2 * len(pairs) * L * L))
             for (i, j) in cross:
                 if i == j:
                     terms.append((f"wrapping_mul(a{i}, a{i})", L * L))
@@ -123,7 +126,7 @@ def mont_mul(name, mod, square, bound):
                 if f[0] == "ones":
                     terms.append((f"wrapping_sub({sm} << {f[1]}, {sm})", len(idx) * mmax * ((1 << f[1]) - 1)))
                 elif f[0] == "pow":
-                    terms.append((f"({sm} << {f[1]})", len(idx) * mmax * (1 << f[1])))
+                    terms.append((f"{sm} << {f[1]}", len(idx) * mmax * (1 << f[1])))
                 else:
                     raise AssertionError(f)
         else:
@@ -150,11 +153,11 @@ def mont_mul(name, mod, square, bound):
                 out.append(f"    c = s >> {BITS};")
                 cmax = total >> BITS
         elif k < 2 * N - 1:
-            out.append(f"    w[d + {k - N}] = s & {M};")
+            out.append(f"    os[{k - N}] = s & {M};")
             out.append(f"    c = s >> {BITS};")
             cmax = total >> BITS
         else:
-            out.append(f"    w[d + {k - N}] = s;")
+            out.append(f"    os[{k - N}] = s;")
     out.append("    return 0;")
     out.append("}")
     return "\n".join(out)
@@ -162,15 +165,18 @@ def mont_mul(name, mod, square, bound):
 
 def add_kernel():
     out = ["pub fn add[&w](w: &!w [int], x: int, y: int, d: int) -> [] int {"]
+    out.append("    let xs = w[x..x + 10];")
+    out.append("    let ys = w[y..y + 10];")
+    out.append("    let os = w[d..d + 10];")
     out.append("    var c = 0;")
     out.append("    var v = 0;")
     for i in range(N):
-        out.append(f"    v = w[x + {i}] + w[y + {i}]{' + c' if i else ''};")
+        out.append(f"    v = xs[{i}] + ys[{i}]{' + c' if i else ''};")
         if i < N - 1:
-            out.append(f"    w[d + {i}] = v & {M};")
+            out.append(f"    os[{i}] = v & {M};")
             out.append(f"    c = v >> {BITS};")
         else:
-            out.append(f"    w[d + {i}] = v;")
+            out.append(f"    os[{i}] = v;")
     out.append("    return 0;")
     out.append("}")
     return "\n".join(out)
@@ -191,15 +197,18 @@ def redundant(v):
 def sub_kernel(k_mult, name="sub"):
     d = redundant(k_mult * P)
     out = [f"pub fn {name}[&w](w: &!w [int], x: int, y: int, d: int) -> [] int {{"]
+    out.append("    let xs = w[x..x + 10];")
+    out.append("    let ys = w[y..y + 10];")
+    out.append("    let os = w[d..d + 10];")
     out.append("    var c = 0;")
     out.append("    var v = 0;")
     for i in range(N):
-        out.append(f"    v = w[x + {i}] + {d[i]} - w[y + {i}]{' + c' if i else ''};")
+        out.append(f"    v = xs[{i}] + {d[i]} - ys[{i}]{' + c' if i else ''};")
         if i < N - 1:
-            out.append(f"    w[d + {i}] = v & {M};")
+            out.append(f"    os[{i}] = v & {M};")
             out.append(f"    c = v >> {BITS};")
         else:
-            out.append(f"    w[d + {i}] = v;")
+            out.append(f"    os[{i}] = v;")
     out.append("    return 0;")
     out.append("}")
     return "\n".join(out)
