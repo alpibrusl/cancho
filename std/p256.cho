@@ -1,0 +1,375 @@
+edition 6;
+module std.p256;
+import std.p256_kernels;
+
+// `std.p256` -- arithmetic modulo P-256's prime p and its group order n
+// (`docs/p256-fast.md` §4), for `std.ecdh`, `std.ecdsa` and `std.ecdsa_sign`.
+// It replaces `std.bigmod`'s generic Montgomery multiplication on the hot
+// paths of that curve; `std.bigmod` still serves RSA and P-384.
+//
+// A number is ten limbs of 28 bits in ten consecutive words of the caller's
+// `work` (an *element*), named by the offset of its first word. Values live
+// in Montgomery form with R = 2^280, so one multiplication is
+// x * y / R. The kernels (`std.p256_kernels`, generated) are straight-line
+// code, so none of this branches on a value or indexes by one; the few
+// functions that do (`below_p`, `is_zero`, `pow`'s exponent) say so, and
+// are for public values or a public exponent.
+//
+// Bounds (`docs/p256-fast.md` §4.3; `scripts/p256_bounds.py` checks them
+// against the formulas of `std.p256_pt`): every element is tight (limbs
+// below 2^28). `mul` and `sqr` take inputs up to 4096 p and answer below
+// 1.001 p. `add` does not reduce. `sub2` to `sub64` add 2 p to 64 p first, so the
+// second operand must be below that. The value of an element must stay below 2^280
+// (about 16 million p), which no sequence of the formulas comes near.
+//
+// Registers: elements 0 to 7 hold constants (`init` fills them), 8 to 23
+// the exponentiation table; a caller's own start at `base()`.
+
+pub fn ok() -> [] int {
+    return 0;
+}
+
+fn mask() -> [] int {
+    return 0xfffffff;
+}
+
+// The offset of element `i`.
+pub fn fe(i: int) -> [] int {
+    return 10 * i;
+}
+
+// Constants, set by `init`.
+pub fn one() -> [] int {
+    return fe(0);
+}
+
+pub fn r2() -> [] int {
+    return fe(1);
+}
+
+pub fn b_mont() -> [] int {
+    return fe(2);
+}
+
+pub fn n_r2() -> [] int {
+    return fe(3);
+}
+
+// R mod p, which is 1 in Montgomery form.
+pub fn one_mont() -> [] int {
+    return fe(4);
+}
+
+// R mod n.
+pub fn n_one_mont() -> [] int {
+    return fe(5);
+}
+
+// The first element a caller may use.
+pub fn base() -> [] int {
+    return 24;
+}
+
+// Words `work` must hold for `count` elements of the caller's.
+pub fn words(count: int) -> [] int {
+    return fe(base() + count);
+}
+
+fn table() -> [] int {
+    return 8;
+}
+
+fn put_const[&w](w: &!w [int], which: int, d: int) -> [] int {
+    var i = 0;
+    while i < 10 {
+        w[d + i] = p256_kernels.cst(which + i);
+        i = i + 1;
+    }
+    return 0;
+}
+
+// Puts the constants in elements 0 to 5.
+pub fn init[&w](w: &!w [int]) -> [] int {
+    put_const(w, p256_kernels.c_one(), one());
+    put_const(w, p256_kernels.c_r2(), r2());
+    put_const(w, p256_kernels.c_b_mont(), b_mont());
+    put_const(w, p256_kernels.c_n_r2(), n_r2());
+    put_const(w, p256_kernels.c_one_mont(), one_mont());
+    put_const(w, p256_kernels.c_n_one_mont(), n_one_mont());
+    return 0;
+}
+
+// ---- Modulo p ----
+
+// d = x * y / R. `d` may be `x` or `y`.
+pub fn mul[&w](w: &!w [int], x: int, y: int, d: int) -> [] int {
+    return p256_kernels.mul_p(w, x, y, d);
+}
+
+pub fn sqr[&w](w: &!w [int], x: int, d: int) -> [] int {
+    return p256_kernels.sqr_p(w, x, d);
+}
+
+// d = x + y, not reduced.
+pub fn add[&w](w: &!w [int], x: int, y: int, d: int) -> [] int {
+    return p256_kernels.add(w, x, y, d);
+}
+
+// d = x - y + 2 p, for y below 2 p.
+pub fn sub2[&w](w: &!w [int], x: int, y: int, d: int) -> [] int {
+    return p256_kernels.sub_2(w, x, y, d);
+}
+
+// d = x - y + 4 p, for y below 4 p.
+pub fn sub4[&w](w: &!w [int], x: int, y: int, d: int) -> [] int {
+    return p256_kernels.sub_4(w, x, y, d);
+}
+
+// d = x - y + 8 p, for y below 8 p.
+pub fn sub8[&w](w: &!w [int], x: int, y: int, d: int) -> [] int {
+    return p256_kernels.sub_8(w, x, y, d);
+}
+
+// d = x - y + 16 p, for y below 16 p.
+pub fn sub16[&w](w: &!w [int], x: int, y: int, d: int) -> [] int {
+    return p256_kernels.sub_16(w, x, y, d);
+}
+
+// d = x - y + 32 p, for y below 32 p.
+pub fn sub32[&w](w: &!w [int], x: int, y: int, d: int) -> [] int {
+    return p256_kernels.sub_32(w, x, y, d);
+}
+
+// d = x - y + 64 p, for y below 64 p.
+pub fn sub64[&w](w: &!w [int], x: int, y: int, d: int) -> [] int {
+    return p256_kernels.sub_64(w, x, y, d);
+}
+
+// Into Montgomery form: d = x * R mod p, for x below 4096 p.
+pub fn to_mont[&w](w: &!w [int], x: int, d: int) -> [] int {
+    return p256_kernels.mul_p(w, x, r2(), d);
+}
+
+// Out of Montgomery form, and fully reduced: d = x / R mod p, in [0, p).
+pub fn from_mont[&w](w: &!w [int], x: int, d: int) -> [] int {
+    p256_kernels.mul_p(w, x, one(), d);
+    return p256_kernels.canon_p(w, d, d);
+}
+
+// ---- Modulo n ----
+
+pub fn smul[&w](w: &!w [int], x: int, y: int, d: int) -> [] int {
+    return p256_kernels.mul_n(w, x, y, d);
+}
+
+pub fn ssqr[&w](w: &!w [int], x: int, d: int) -> [] int {
+    return p256_kernels.sqr_n(w, x, d);
+}
+
+pub fn sadd[&w](w: &!w [int], x: int, y: int, d: int) -> [] int {
+    return p256_kernels.add(w, x, y, d);
+}
+
+pub fn sto_mont[&w](w: &!w [int], x: int, d: int) -> [] int {
+    return p256_kernels.mul_n(w, x, n_r2(), d);
+}
+
+// d = x mod n for x below 2n (one conditional subtraction, without a branch).
+pub fn sreduce[&w](w: &!w [int], x: int, d: int) -> [] int {
+    return p256_kernels.canon_n(w, x, d);
+}
+
+// Out of Montgomery form, and fully reduced: d = x / R mod n, in [0, n).
+pub fn sfrom_mont[&w](w: &!w [int], x: int, d: int) -> [] int {
+    p256_kernels.mul_n(w, x, one(), d);
+    return p256_kernels.canon_n(w, d, d);
+}
+
+// ---- Bytes ----
+
+// 32 (or fewer) big-endian bytes into the element at `d`, without a branch
+// or an index on a byte's value: which limb a byte lands in, and whether it
+// straddles two, depend on its position. No range check. -3 when `b` is
+// longer than 35 bytes, which cannot be held.
+pub fn load[&b, &w](b: &b [byte], w: &!w [int], d: int) -> [] int {
+    if len(b) > 35 {
+        return -3;
+    }
+    var i = 0;
+    while i < 10 {
+        w[d + i] = 0;
+        i = i + 1;
+    }
+    var p = 0;
+    var j = len(b) - 1;
+    while j >= 0 {
+        let v = int_of(b[j]);
+        let idx = p / 28;
+        let off = p % 28;
+        w[d + idx] = w[d + idx] | v << off & mask();
+        if off > 20 {
+            w[d + idx + 1] = w[d + idx + 1] | v >> 28 - off;
+        }
+        p = p + 8;
+        j = j - 1;
+    }
+    return 0;
+}
+
+// The element at `x` (tight, and below 2^256) as 32 big-endian bytes.
+pub fn store[&w, &o](w: &w [int], x: int, out: &!o [byte]) -> [] int {
+    var j = 0;
+    while j < len(out) && j < 35 {
+        let p = j * 8;
+        let idx = p / 28;
+        let off = p % 28;
+        var v = w[x + idx] >> off;
+        if off > 20 {
+            v = v | w[x + idx + 1] << 28 - off;
+        }
+        out[len(out) - 1 - j] = byte_of(v & 255);
+        j = j + 1;
+    }
+    return 0;
+}
+
+// Whether the element at `x` (tight) is below `which` ('p' = 0 or the order
+// = 1), by comparing from the top limb: variable time, for public values.
+fn below[&w](w: &w [int], x: int, which: int) -> [] bool {
+    var i = 9;
+    while i >= 0 {
+        let m = p256_kernels.cst(which + i);
+        let v = w[x + i];
+        if v < m {
+            return true;
+        }
+        if v > m {
+            return false;
+        }
+        i = i - 1;
+    }
+    return false;
+}
+
+// Whether the element at `x` is below p; for a public value.
+pub fn below_p[&w](w: &w [int], x: int) -> [] bool {
+    return below(w, x, p256_kernels.c_p());
+}
+
+// Whether the element at `x` is below n; for a public value.
+pub fn below_n[&w](w: &w [int], x: int) -> [] bool {
+    return below(w, x, p256_kernels.c_n());
+}
+
+// Whether the element at `x` is zero (tight and fully reduced), stopping at
+// the first nonzero limb: for a public value.
+pub fn is_zero[&w](w: &w [int], x: int) -> [] bool {
+    var i = 0;
+    while i < 10 {
+        if w[x + i] != 0 {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+pub fn equal[&w](w: &w [int], x: int, y: int) -> [] bool {
+    var i = 0;
+    while i < 10 {
+        if w[x + i] != w[y + i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+pub fn copy[&w](w: &!w [int], from: int, to: int) -> [] int {
+    var i = 0;
+    while i < 10 {
+        w[to + i] = w[from + i];
+        i = i + 1;
+    }
+    return 0;
+}
+
+// d = x as a Montgomery-form constant 0 (all limbs zero).
+pub fn set_zero[&w](w: &!w [int], d: int) -> [] int {
+    var i = 0;
+    while i < 10 {
+        w[d + i] = 0;
+        i = i + 1;
+    }
+    return 0;
+}
+
+// Zeroes `count` words from `from`.
+pub fn wipe[&w](w: &!w [int], from: int, count: int) -> [] int {
+    var i = 0;
+    while i < count {
+        w[from + i] = 0;
+        i = i + 1;
+    }
+    return 0;
+}
+
+// ---- Inversion ----
+
+// d = x^(e) for the public exponent in constant `which` (p - 2 or n - 2), x
+// in Montgomery form, fixed windows of four bits, the exponent's nibbles
+// public. `scalar` selects the group order's multiplication.
+fn pow[&w](w: &!w [int], x: int, d: int, which: int, scalar: bool) -> [] int {
+    // table(i) = x^i for i in 1..15.
+    copy(w, x, fe(table() + 1));
+    var i = 2;
+    while i < 16 {
+        if scalar {
+            smul(w, fe(table() + i - 1), fe(table() + 1), fe(table() + i));
+        } else {
+            mul(w, fe(table() + i - 1), fe(table() + 1), fe(table() + i));
+        }
+        i = i + 1;
+    }
+    var started = false;
+    var k = 63;
+    while k >= 0 {
+        // Nibble k of the exponent.
+        let limb = p256_kernels.cst(which + 4 * k / 28);
+        let nib = limb >> 4 * k % 28 & 15;
+        // A nibble never straddles two limbs: 28 is a multiple of 4.
+        if started {
+            var s = 0;
+            while s < 4 {
+                if scalar {
+                    ssqr(w, d, d);
+                } else {
+                    sqr(w, d, d);
+                }
+                s = s + 1;
+            }
+            if nib != 0 {
+                if scalar {
+                    smul(w, d, fe(table() + nib), d);
+                } else {
+                    mul(w, d, fe(table() + nib), d);
+                }
+            }
+        } else if nib != 0 {
+            copy(w, fe(table() + nib), d);
+            started = true;
+        }
+        k = k - 1;
+    }
+    return 0;
+}
+
+// d = x^-1 mod p, x in Montgomery form and nonzero modulo p. `d` may be `x`.
+pub fn invert[&w](w: &!w [int], x: int, d: int) -> [] int {
+    return pow(w, x, d, p256_kernels.c_p_minus_2(), false);
+}
+
+// d = x^-1 mod n, x in Montgomery form (mod n) and nonzero. `d` may be `x`.
+pub fn sinvert[&w](w: &!w [int], x: int, d: int) -> [] int {
+    return pow(w, x, d, p256_kernels.c_n_minus_2(), true);
+}
