@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Mutation check of `std/field25519.cho`, `std/x25519.cho` and the ported `std/ed25519.cho` (docs/x25519.md §5).
+"""Mutation check of `std/field25519.cho`, `std/field25519_51.cho`, `std/x25519.cho` and the ported `std/ed25519.cho`
+(docs/x25519.md §5, docs/wide-multiply.md §10).
 
     python3 scripts/curve25519_mutants.py <cancho binary>
 
-Each mutant is one of the three files with one deliberate bug. All three are built as local modules (`field25519`,
-`x25519`, `ed25519`) beside a copy of `tests/programs/curve25519_driver.cho`, and run against: the RFC 7748 table, every
+Each mutant is one of the four files with one deliberate bug. All four are built as local modules (`field25519`,
+`field25519_51`, `x25519`, `ed25519`) beside a copy of `tests/programs/curve25519_driver.cho`, and run against: the RFC 7748 table, every
 Wycheproof X25519 and Ed25519 case, `tests/accept/ed25519.cho`'s three OpenSSL keypairs (public key, signature, verify, a tampered
 signature refused), and 300 rounds of `scripts/curve25519_differential.py`. A mutant is killed when any of them
 disagrees or the driver traps. The unmutated files are run first and must pass. Exit status 1 if a mutant survives or
@@ -29,12 +30,29 @@ MUTANTS = [
     ("field25519", "pack does one trial subtraction, not two", "    while pass < 2 {", "    while pass < 1 {"),
     ("field25519", "unpack keeps the top bit", "    o[15] = o[15] & 0x7fff;", "    o[15] = o[15] & 0xffff;"),
     ("field25519", "pow2523's exponent off", "        if bit != 1 {", "        if bit != 0 {"),
-    ("x25519", "a24 as 121666", "        field25519.set_small(a24, 0xdb41);", "        field25519.set_small(a24, 0xdb42);"),
+    ("field25519_51", "limb 1's fold factor 18, not 19", "    let a1x = wrapping_mul(a1, 19);", "    let a1x = wrapping_mul(a1, 18);"),
+    ("field25519_51", "a product missing from column 2", "    let (h2, l2) = mac(h2, l2, a2, b0);\n", ""),
+    ("field25519_51", "the carry of the low-word addition lost", "    return (wrapping_add(wrapping_add(hi, h), c), s);", "    return (wrapping_add(hi, h), s);"),
+    ("field25519_51", "the carry into the next column loses the high word", "    return (wrapping_add(hi, c), s);", "    return (hi, s);"),
+    ("field25519_51", "the column carry shifted by 12, not 13", "| (hi << 13);", "| (hi << 12);"),
+    ("field25519_51", "the column carry's low part masked to 12 bits", "(lo >> 51 & 0x1fff)", "(lo >> 51 & 0xfff)"),
+    ("field25519_51", "the top carry folded in as 1, not 19", "r0 = wrapping_add(r0, wrapping_mul(c, 19));", "r0 = wrapping_add(r0, c);"),
+    ("field25519_51", "limb 0's carry never reaches limb 1", "    r1 = wrapping_add(r1, c);\n    c = r1 >> 51;", "    c = r1 >> 51;"),
+    ("field25519_51", "sub's bias for limb 0 off by one", "wrapping_add(a[0], 0xfffffffffffda)", "wrapping_add(a[0], 0xfffffffffffdb)"),
+    ("field25519_51", "sub's bias for limb 3 too small", "wrapping_add(a[3], 0xffffffffffffe)", "wrapping_add(a[3], 0xffffffffffffc)"),
+    ("field25519_51", "cswap leaves the top limb", "    p[4] = p[4] ^ x4;\n    q[4] = q[4] ^ x4;\n", ""),
+    ("field25519_51", "mul_small reads limb 0 for limb 1", "let (h1, l1) = mul_wide(a[1], k);", "let (h1, l1) = mul_wide(a[0], k);"),
+    ("field25519_51", "the inversion's 2^100 step squares 99 times", "square_n(v, 100);", "square_n(v, 99);"),
+    ("field25519_51", "pack never subtracts p", "wrapping_add(t[0], wrapping_mul(q, 19))", "wrapping_add(t[0], 0)"),
+    ("field25519_51", "pack does one weak carry pass, not two", "        weak(t);\n        weak(t);\n", "        weak(t);\n"),
+    ("field25519_51", "unpack keeps bit 255", "o[4] = w3 >> 12 & m51();", "o[4] = w3 >> 12 & 0xfffffffffffff;"),
+    ("field25519_51", "the byte order of pack's third word", "out[16 + i] = byte_of(w2 >> (8 * i) & 255);", "out[16 + i] = byte_of(w3 >> (8 * i) & 255);"),
+    ("x25519", "a24 as 121666", "field25519_51.mul_small(z2, c, 121665);", "field25519_51.mul_small(z2, c, 121666);"),
     ("x25519", "bit 254 not set by the clamp", "    if i == 254 {\n        return 1;\n    }", "    if i == 254 {\n        return int_of(k[31]) >> 6 & 1;\n    }"),
     ("x25519", "the low three bits not cleared", "    if i < 3 || i == 255 {", "    if i == 255 {"),
-    ("x25519", "the final swap left out", "        field25519.cswap(x2, x3, swap);\n        field25519.cswap(z2, z3, swap);\n\n        field25519.invert", "        field25519.cswap(z2, z3, swap);\n\n        field25519.invert"),
+    ("x25519", "the final swap left out", "        field25519_51.cswap(x2, x3, swap);\n        field25519_51.cswap(z2, z3, swap);\n\n        field25519_51.invert", "        field25519_51.cswap(z2, z3, swap);\n\n        field25519_51.invert"),
     ("x25519", "the zero secret accepted", "    if diff == 0 {\n        return refused_zero_secret();", "    if diff == 256 {\n        return refused_zero_secret();"),
-    ("x25519", "z3 not multiplied by x1", "            field25519.mul(z3, z3, x1, t);\n", ""),
+    ("x25519", "z3 not multiplied by x1", "            field25519_51.mul(z3, z3, x1);\n", ""),
     ("ed25519", "the ladder's swap back left out", "            point_copy(sum, acc);\n            point_cswap(acc, other, b);", "            point_copy(sum, acc);"),
     ("ed25519", "the square root's second candidate never tried", "                field25519.mul(cand, cand, sqrt_m1_limbs, w);", "                field25519.mul(cand, cand, d_limbs, w);"),
     ("ed25519", "the sign bit ignored on decompression", "                if field25519.parity(cand, w) != sign {", "                if field25519.parity(cand, w) != 0 {"),
@@ -81,6 +99,7 @@ def run(compiler, sources, driver_src, work, cases, checks):
     paths = []
     for name, text in sources.items():
         text = text.replace(f"module std.{name};", f"module {name};", 1).replace("import std.field25519;", "import field25519;")
+        text = text.replace("import std.field25519_51;", "import field25519_51;")
         path = os.path.join(work, f"{name}.cho")
         open(path, "w").write(text)
         paths.append(path)
@@ -107,7 +126,7 @@ def run(compiler, sources, driver_src, work, cases, checks):
 
 def main():
     compiler = os.path.abspath(sys.argv[1])
-    sources = {n: open(os.path.join(ROOT, f"std/{n}.cho")).read() for n in ("field25519", "x25519", "ed25519")}
+    sources = {n: open(os.path.join(ROOT, f"std/{n}.cho")).read() for n in ("field25519", "field25519_51", "x25519", "ed25519")}
     driver_src = open(os.path.join(ROOT, "tests/programs/curve25519_driver.cho")).read()
     cases, checks = evidence()
     failed = 0
