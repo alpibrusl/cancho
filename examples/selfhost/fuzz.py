@@ -1824,7 +1824,7 @@ def main():
                 continue
             if args.bodies:
                 la, lb = a[1].decode().splitlines(), b[1].decode().splitlines()
-                if len(la) == len(lb) and all(y.endswith(" SKIP") or x == y for x, y in zip(la, lb)) and not (name in must_answer and any(y.endswith(" SKIP") for y in lb)):
+                if len(la) == len(lb) and all(y.endswith(" SKIP") or x == y for x, y in zip(la, lb)) and not (name in must_answer and any(y.endswith(" SKIP") and int(y.split()[1]) < len(data) for y in lb)):
                     same += 1
                     skipped_port += sum(y.endswith(" SKIP") for y in lb)
                     for x, y in zip(la, lb):
