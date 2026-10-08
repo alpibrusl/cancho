@@ -47,6 +47,10 @@ fn tvar_kind() -> [] int {
     return 11;
 }
 
+fn prelude_kind() -> [] int {
+    return 12;
+}
+
 fn unbound() -> [] int {
     return 0 - 100;
 }
@@ -179,6 +183,15 @@ pub fn resolve_type[&s](st: &!s [int], ty: int) -> [] int {
         return make_slice(st, resolve_type(st, slice_element(st, t)));
     }
     return t;
+}
+
+// A prelude type without arguments, by its index in `tables.cho`: `World`, so far.
+pub fn make_prelude[&s](st: &!s [int], index: int) -> [] int {
+    return make(st, prelude_kind(), index, 0, 0);
+}
+
+pub fn is_prelude[&s](st: &!s [int], ty: int) -> [] bool {
+    return ty >= first_table() && slot(st, ty, 0) == prelude_kind();
 }
 
 pub fn make_slice[&s](st: &!s [int], element: int) -> [] int {
@@ -390,6 +403,9 @@ pub fn unify[&s](st: &!s [int], want: int, got: int) -> [] int {
         return 0;
     }
     if is_param(st, expected) && is_param(st, found) && slot(st, expected, 1) == slot(st, found, 1) {
+        return 0;
+    }
+    if is_prelude(st, expected) && is_prelude(st, found) && slot(st, expected, 1) == slot(st, found, 1) {
         return 0;
     }
     return 1;

@@ -28,14 +28,17 @@ fn run_it(exe: &Path) -> Ended {
     }
 }
 
-/// The program built by the Rust compiler, with the `main` the language needs.
+/// The `main` the language needs, for a program that defines `run`.
+fn with_main(program: &str) -> String {
+    format!("{program}\nfn main(world: World) -> [] int {{ release(world); return run(); }}\n")
+}
+
+/// The program, which has a `main`, built by the Rust compiler.
 fn built_by_rust(index: usize, program: &str) -> Ended {
     let dir = scratch(&format!("selfhost-compile-rust-{index}"));
     let source = dir.join("program.cho");
     let exe = dir.join("program");
-    let text =
-        format!("{program}\nfn main(world: World) -> [] int {{ release(world); return run(); }}\n");
-    std::fs::write(&source, text).expect("the scratch directory is writable");
+    std::fs::write(&source, program).expect("the scratch directory is writable");
     let build = Command::new(BIN)
         .arg("build")
         .arg(&source)
@@ -209,12 +212,40 @@ const PROGRAMS: &[&str] = &[
     "fn ack(m: int, n: int) -> [] int { if m == 0 { return n + 1; } if n == 0 { return ack(m - 1, 1); } return ack(m - 1, ack(m, n - 1)); }\nfn run() -> [] int { return ack(2, 3); }",
 ];
 
+/// Programs with a `main` of their own, which the cancho compiler calls as the C `main` does.
+const WITH_MAIN: &[&str] = &[
+    "fn finish(w: World) -> [] int { release(w); return 3; }\nfn main(world: World) -> [] int { return finish(world); }",
+    "fn finish(w: World, n: int) -> [] int { release(w); return n * 2; }\nfn main(world: World) -> [] int { return finish(world, 21); }",
+    "fn pass(w: World) -> [] int { return finish(w, 5); }\nfn finish(w: World, n: int) -> [] int { release(w); return n + 1; }\nfn main(world: World) -> [] int { return pass(world); }",
+    "fn main(world: World) -> [] int { var i = 0; var s = 0; while i < 10 { s = s + i; i = i + 1; } release(world); return s; }",
+    "fn big(n: int) -> [] int { return n + 1; }\nfn main(world: World) -> [] int { release(world); return big(9223372036854775807); }",
+    "fn work(w: World, n: int) -> [] int { release(w); if n > 3 { return n * 10; } return n; }\nfn main(world: World) -> [] int { return work(world, 5) % 256; }",
+    "fn sq(n: int) -> [] int { return n * n; }\nfn main(world: World) -> [] int { release(world); return sq(sq(3)) - sq(8); }",
+    "fn main(world: World) -> [] int { let r = release(world); return r + 4; }",
+];
+
 #[test]
 fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
     let compiler = build("compile", &with_front_end("compile.cho"));
-    let numbered: Vec<(usize, &str)> = PROGRAMS.iter().copied().enumerate().collect();
-    let results = in_parallel(&numbered, |(index, program)| {
-        (*program, built_by_rust(*index, program), built_by_cancho(&compiler, *index, program))
+    // Each program defining `run` is built three ways: by Rust with the `main` the language needs, by
+    // the compiler in cancho from the program alone (it calls `run` itself), and by the compiler in
+    // cancho from the program with that `main`, which is the way real programs are written.
+    let mut jobs: Vec<(String, String)> = Vec::new();
+    for program in PROGRAMS {
+        jobs.push(((*program).to_owned(), (*program).to_owned()));
+        jobs.push((with_main(program), with_main(program)));
+    }
+    for program in WITH_MAIN {
+        jobs.push(((*program).to_owned(), (*program).to_owned()));
+    }
+    let numbered: Vec<(usize, &(String, String))> = jobs.iter().enumerate().collect();
+    let results = in_parallel(&numbered, |(index, (rust_text, cancho_text))| {
+        let rust = if cancho_text.contains("fn main") {
+            built_by_rust(*index, rust_text)
+        } else {
+            built_by_rust(*index, &with_main(rust_text))
+        };
+        (cancho_text.clone(), rust, built_by_cancho(&compiler, *index, cancho_text))
     });
     let mut different = Vec::new();
     let mut trapped = 0;
@@ -234,6 +265,6 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
         different.join("\n")
     );
     eprintln!("{} programs built both ways, {trapped} of them trap", results.len());
-    assert!(trapped >= 20, "{trapped} of the programs trap; the test is about them too");
+    assert!(trapped >= 40, "{trapped} of the programs trap; the test is about them too");
     let _ = std::fs::remove_dir_all(compiler.parent().expect("a scratch directory"));
 }

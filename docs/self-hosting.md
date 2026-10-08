@@ -214,7 +214,8 @@ the stages found, in place, the way this document corrects its own claims.
 | 3e-5. The rest of the bodies: builtins and effect rows, generic types, tuples, arena allocation, threads, then linearity, effects, regions | not started | `check_bodies` | |
 | 4a. Writing LLVM IR for functions of `int` and `bool`: literals, the arithmetic and bitwise operators with their traps, comparisons, calls, `let`, assignment, `return` | `examples/selfhost/emit.cho`, written by the checker as it walks (`compile.cho`) | the Rust compiler, by what the built programs do | **First slice of the backend.** 74 programs built both ways and run: the same exit status, or a trap in both (18 trap); none different |
 | 4b. Control flow: `if` with `else`, `while`, `&&` and `||` (the right side only when the left has not decided it) | `emit.cho` and `body.cho` | the Rust compiler, by what the built programs do | **Second slice of the backend.** 123 programs built both ways and run, 49 of them new (loops, recursion, early returns, short-circuit that must not run its right side, traps inside loops): the same exit status or a trap in both (27 trap); none different |
-| 4c. The rest of the backend: `World` and `main`, bytes and strings, output, structs, enums, references, generics, `clang` run by the compiler itself | not started | | |
+| 4c. `World`, `release` and a real `main`: `main(world: World)` calls the program, a `World` passed between functions, `release(world)` | `emit.cho`, `body.cho`, `types.cho`, `driver.cho` | the Rust compiler, by what the built programs do | **Third slice of the backend.** 254 builds run and compared: every one of the 123 programs through the old `run` convention and through a real `main`, and 8 more with a `main` of their own (a `World` passed on, `release` used as a value): the same exit status or a trap in both (55 trap); none different |
+| 4d. The rest of the backend: bytes and strings, output (`split`, `Io`), structs, enums, references, generics, `clang` run by the compiler itself | not started | | |
 
 **The method.** A port that builds no tree has nothing to compare, and one that does
 needs a printer, which is another port. So stage 2's parser wrote the tree the Rust parser
@@ -487,6 +488,17 @@ condition now hands its value back so the branch can name it. After a `return` t
 `unreachable` the checker has shown nothing reaches. Programs that matter here: a short-circuit whose
 right side would trap if it ran (it must not), loops that trap on the iteration that overflows, an early
 `return` from inside a loop, and the recursive ones.
+
+**Stage 4c: `World` and `main`.** `World` is the first prelude type with a type of its own in the table
+(by its index in `tables.cho`), and only in compile mode, where it is a type a parameter may have and a
+function may pass on. Like the Rust backend the port writes no code for it: a function's `World`
+parameter has no argument and no stack slot, and a call's `World` argument is not passed. `release(w)`
+is a call that writes nothing and answers `0`. The driver calls the program's `main` from the C one
+when it has it, and a function called `run` when it has not, as before. The checker's answers do not
+change: outside compile mode a `World` still makes a function `SKIP`, because checking `main` means
+checking that its `World` is consumed exactly once, which is linearity and not written; in compile mode
+the program is taken to be well formed, which is the Rust compiler's to say. The 123 programs are built
+through a real `main` as well as through `run`.
 
 The mutation test of `types.cho` (54 operator swaps) killed 40 on the first corpus of 458 targeted
 body cases (after region-variable, `where`-closure and coercion cases were added; 33 before); the 14
