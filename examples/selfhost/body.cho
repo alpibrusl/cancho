@@ -84,10 +84,13 @@ fn smallest() -> [] int {
 // that span) is what the escape check reads once the body is done. A binding starts owned.
 fn bind[&s](st: &!s [int], name: int, ty: int, mutable: bool, from: int, to: int) -> [] int {
     if emit.on(st) {
-        if ty != 1 && ty != 5 {
+        if types.is_prelude(st, ty) {
+            // nothing to keep
+        } else if ty != 1 && ty != 5 {
             return ast.fail(st, rules.r_skip(), from, to);
+        } else {
+            emit.alloca(st, ty, st[39]);
         }
-        emit.alloca(st, ty, st[39]);
     }
     let at = st[20] + 5 * st[21];
     st[at] = name;
@@ -250,6 +253,12 @@ fn struct_plain[&s](st: &!s [int], item: int) -> [] bool {
     return true;
 }
 
+// `World`, the first of the prelude types: what `main` is handed, and nothing a value of can do
+// but be `release`d or `split`. The code written for it is none, as in the Rust backend.
+fn world_index() -> [] int {
+    return 0;
+}
+
 // An enum this slice handles: declared in the file, not `res`, with no parameters, and only
 // scalar payloads, so a value of it is `val` and copies.
 fn enum_plain[&s](st: &!s [int], item: int) -> [] bool {
@@ -300,6 +309,9 @@ fn value_type[&s](st: &!s [int], ty: int) -> [] int {
             return st[31] + ast.get(st, ty, 9);
         }
         return types.make_param(st, ast.get(st, ty, 9));
+    }
+    if emit.on(st) && ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 2 && ast.get(st, ty, 9) == world_index() && ast.get(st, ty, 7) == 0 {
+        return types.make_prelude(st, world_index());
     }
     if ast.get(st, ty, 8) == 3 && (struct_plain(st, ast.get(st, ty, 9)) || enum_plain(st, ast.get(st, ty, 9))) {
         return types.make_named(st, ast.get(st, ty, 9));
@@ -766,6 +778,9 @@ fn name_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     if i >= 0 {
         use_slot(st, i, from, to);
         if emit.on(st) {
+            if types.is_prelude(st, binding_type(st, i)) {
+                return in_reg(binding_type(st, i), 0 - 1);
+            }
             return in_reg(binding_type(st, i), emit.load(st, binding_type(st, i), slot_of(st, i)));
         }
         return plain(binding_type(st, i));
@@ -1051,6 +1066,20 @@ fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     if pass1.is_word(st, text, callee, "len") {
         return len_expr(st, text, id);
     }
+    // `release(world)` ends a capability: no code, and `0` if the answer is wanted.
+    if emit.on(st) && qualifier < 0 && pass1.is_word(st, text, callee, "release") {
+        if nargs != 1 {
+            return skip(st, from, to);
+        }
+        let given = expr(st, text, ast.get(st, id, 6));
+        if !ast.ok(st) {
+            return nothing();
+        }
+        if !types.is_prelude(st, given.ty) {
+            return skip(st, from, to);
+        }
+        return constant(0);
+    }
     // A builtin the file's edition can name comes first, then a foreign function: not checked.
     if pass1.builtin_name(st, text, callee, st[23]) {
         return skip(st, from, to);
@@ -1111,11 +1140,12 @@ fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     }
     var param = ast.get(st, found, 7);
     var arg = ast.get(st, id, 6);
+    let first_arg = st[52];
     while param >= 0 && ast.ok(st) {
         let a = expr(st, text, arg);
         if ast.ok(st) {
             expect(st, text, callee_type(st, text, ast.get(st, param, 5), callee_dp, fresh, tvars), a.ty, ast.nstart(st, arg), ast.nend(st, arg));
-            if emit.on(st) {
+            if emit.on(st) && !types.is_prelude(st, a.ty) {
                 emit.push_arg(st, a.ty, a.known, a.value, a.reg);
             }
         }
@@ -1149,7 +1179,7 @@ fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         if result != 1 && result != 5 {
             return skip(st, from, to);
         }
-        return in_reg(result, emit.call(st, text, callee, result, nargs));
+        return in_reg(result, emit.call(st, text, callee, result, st[52] - first_arg));
     }
     return plain(result);
 }
@@ -1730,7 +1760,7 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
         var p = ast.get(st, fn_item, 7);
         while p >= 0 {
             let pt = lower_type(st, text, ast.get(st, p, 5), st[28], 0 - 1);
-            ok = ok && (pt == 1 || pt == 5);
+            ok = ok && (pt == 1 || pt == 5 || types.is_prelude(st, pt));
             p = ast.next(st, p);
             k = k + 1;
         }
@@ -1742,9 +1772,12 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
         k = 0;
         p = ast.get(st, fn_item, 7);
         while p >= 0 {
-            emit.header_param(st, lower_type(st, text, ast.get(st, p, 5), st[28], 0 - 1), k);
+            let pt = lower_type(st, text, ast.get(st, p, 5), st[28], 0 - 1);
+            if !types.is_prelude(st, pt) {
+                emit.header_param(st, pt, k);
+                k = k + 1;
+            }
             p = ast.next(st, p);
-            k = k + 1;
         }
         emit.header_end(st);
     }
@@ -1753,11 +1786,11 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
     while param >= 0 {
         let pt = lower_type(st, text, ast.get(st, param, 5), st[28], 0 - 1);
         bind(st, ast.get(st, param, 4), pt, false, ast.nstart(st, ast.get(st, param, 5)), ast.nend(st, ast.get(st, param, 5)));
-        if emit.on(st) {
+        if emit.on(st) && !types.is_prelude(st, pt) {
             emit.store_param(st, pt, index, st[39] - 1);
+            index = index + 1;
         }
         param = ast.next(st, param);
-        index = index + 1;
     }
     block(st, text, ast.get(st, fn_item, 11), ast.get(st, fn_item, 12), ret);
     // What Rust checks once the body is lowered: no binding may hold a reference into a block it

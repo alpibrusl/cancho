@@ -76,18 +76,20 @@ fn bodies[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte]) -> [io_write] 
 }
 
 // Mode 3: every function is checked, and written as it is; then the module is printed, with the
-// declarations of what the code calls and, if there is a function called `run`, the C `main` that
-// calls it and answers its result as the exit status.
+// declarations of what the code calls and the C `main` that calls the program's `main` (or, failing
+// that, a function called `run`) and answers its result as the exit status.
 fn compile[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte]) -> [io_write] int {
     var item = st[15];
-    var entry = false;
+    var entry = 0;
     while item >= 0 {
         if ast.is_kind(st, item, kinds.NK::IFn) {
             if body.check_function(st, text, item) != 0 {
                 return refusal(io, st);
             }
-            if pass1.is_word(st, text, ast.get(st, item, 4), "run") {
-                entry = true;
+            if pass1.is_word(st, text, ast.get(st, item, 4), "main") {
+                entry = 2;
+            } else if entry == 0 && pass1.is_word(st, text, ast.get(st, item, 4), "run") {
+                entry = 1;
             }
         }
         item = ast.next(st, item);
@@ -101,7 +103,10 @@ fn compile[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte]) -> [io_write]
         putchar(io, st[st[43] + at]);
         at = at + 1;
     }
-    if entry {
+    if entry == 2 {
+        console.write_all(io, "define i32 @main(i32 %argc, ptr %argv) {\nentry:\n");
+        console.write_all(io, "  %r = call i64 @lexs_main()\n  %status = trunc i64 %r to i32\n  ret i32 %status\n}\n");
+    } else if entry == 1 {
         console.write_all(io, "define i32 @main(i32 %argc, ptr %argv) {\nentry:\n");
         console.write_all(io, "  %r = call i64 @lexs_run()\n  %status = trunc i64 %r to i32\n  ret i32 %status\n}\n");
     }
