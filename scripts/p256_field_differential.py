@@ -130,11 +130,11 @@ def verify_cases(rng, count, compact=False):
     for d in keys:
         pairs = []
         for u in ([1, 3, 64, N - 1, rng.randrange(1, N)] if compact else [1, 2, 3, 5, 7, 31, 63, 64, 65, 127, (1 << 128) - 1, (1 << 255) - 1, N - 1, N - 2, N // 2, rng.randrange(1, N)]):
-            pairs += [(u, u), (u, N - u), (u, 2 * u % N), (2 * u % N, u), (u, pow(2, -1, N) * u % N), (u, 1), (1, u), (N - u, u), (u, d and (N - pow(d, -1, N) * u) % N or 1)]
+            pairs += [(u, u), (u, N - u), (u, 2 * u % N), (2 * u % N, u), (u, pow(2, -1, N) * u % N), (u, 1), (1, u), (N - u, u), (0, u), (u, d and (N - pow(d, -1, N) * u) % N or 1)]
         pairs += [(rng.randrange(1, N), rng.randrange(1, N)) for _ in range(count // 4)]
         for u1, u2 in pairs:
             u1, u2 = u1 % N, u2 % N
-            if u1 == 0 or u2 == 0:
+            if u2 == 0:
                 continue
             c = crafted(d, u1, u2)
             if c is None:
