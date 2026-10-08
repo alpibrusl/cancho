@@ -175,9 +175,42 @@ pub fn mul[&o, &a, &b](o: &!o [int], a: &a [int], b: &b [int]) -> [] int {
     return finish(o, h0, l0, h1, l1, h2, l2, h3, l3, h4, l4);
 }
 
-// `o = a * a`.
+// `o = a * a`: the same columns as `mul(o, a, a)`, with each product of two
+// different limbs counted once and doubled, 15 products instead of 25.
 pub fn square[&o, &a](o: &!o [int], a: &a [int]) -> [] int {
-    return mul(o, a, a);
+    let a0 = a[0];
+    let a1 = a[1];
+    let a2 = a[2];
+    let a3 = a[3];
+    let a4 = a[4];
+    let d0 = wrapping_mul(a0, 2);
+    let d1 = wrapping_mul(a1, 2);
+    let d2 = wrapping_mul(a2, 38);
+    let a3x = wrapping_mul(a3, 19);
+    let a4x = wrapping_mul(a4, 19);
+    let d4 = wrapping_mul(a4, 38);
+
+    let (h0, l0) = mac(0, 0, a0, a0);
+    let (h0, l0) = mac(h0, l0, d4, a1);
+    let (h0, l0) = mac(h0, l0, d2, a3);
+
+    let (h1, l1) = mac(0, 0, d0, a1);
+    let (h1, l1) = mac(h1, l1, d4, a2);
+    let (h1, l1) = mac(h1, l1, a3, a3x);
+
+    let (h2, l2) = mac(0, 0, d0, a2);
+    let (h2, l2) = mac(h2, l2, a1, a1);
+    let (h2, l2) = mac(h2, l2, d4, a3);
+
+    let (h3, l3) = mac(0, 0, d0, a3);
+    let (h3, l3) = mac(h3, l3, d1, a2);
+    let (h3, l3) = mac(h3, l3, a4, a4x);
+
+    let (h4, l4) = mac(0, 0, d0, a4);
+    let (h4, l4) = mac(h4, l4, d1, a3);
+    let (h4, l4) = mac(h4, l4, a2, a2);
+
+    return finish(o, h0, l0, h1, l1, h2, l2, h3, l3, h4, l4);
 }
 
 // `o = a * k` for a constant `k` under 2^17 (X25519's `(A - 2) / 4`, 121665).
