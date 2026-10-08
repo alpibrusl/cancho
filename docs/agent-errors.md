@@ -1,22 +1,40 @@
 # Refusals a machine can read
 
-> **Status: measured, then designed.**
+> **Status: measured, then designed, then built (#59).**
 >
 > lex-lang's `docs/AGENT_GUIDELINES.md` is a contract with a *reader
 > that is a program*: `lex check --output json` answers a stable
-> `rule_tag`, and §4's rule is **repair, don't regenerate**. cancho has
-> none of that. It has 196 must-reject fixtures, each of which answers
-> a sentence written for a person.
+> `rule_tag`, and §4's rule is **repair, don't regenerate**. Before
+> #59, cancho had none of that: 196 must-reject fixtures, each of
+> which answered a sentence written for a person.
 >
-> §1 measures what that costs a machine. §2 is the part of lex-lang's
-> answer that transfers and the part that cannot, and the line between
-> them is not where the guidelines page puts it.
+> §1 is the measurement that motivated the slice, kept because the
+> method outlives the state it measured; it describes cancho as it
+> was when #59 opened, not as it is. §2 is the part of lex-lang's
+> answer that transferred and the part that could not, and the line
+> between them is not where the guidelines page puts it. §5 is the
+> shape on the wire as it ships today; the catalogue is
+> `crates/cancho-syntax/src/rules.rs`, and the plural is real: `check`
+> answers every independent refusal, not the first.
+>
+> **Corrected in place.** Until this correction, the paragraph above
+> said *"cancho has none of that"* in the present tense — 42 slices
+> after #59 shipped the catalogue, `check --output json` and the
+> plural — and two readers outside the project took it as current.
+> The convention that follows: **a status header describes the head
+> of `main` at the time of writing, and the slice that changes what a
+> header describes updates that header in the same PR.** Measurement
+> sections stay as they were measured, with the revision named — a
+> measurement outlives the state it measured, which is why §1 below is
+> retitled *"before #59"* and dated rather than rewritten.
 
 ---
 
-## 1. What a refusal gives a machine today
+## 1. What a refusal gave a machine before #59
 
-`check` run over every fixture in `tests/reject/`:
+`check` run over every fixture in `tests/reject/`, at the revision
+where #59 opened (the corpus has grown since; this is the reading the
+slice was measured against, not the current one):
 
 | | |
 |---|---|
@@ -91,10 +109,10 @@ English.
 }
 ```
 
-and cancho has every ingredient: `Diagnostic { message, span }`, a
+and cancho had every ingredient: `Diagnostic { message, span }`, a
 `SourceMap` that resolves a span to `file:line:col`, and `--output json`
-already shipped on `authority`. What is missing is the tag and the
-plural.
+already shipped on `authority`. What was missing was the tag and the
+plural — both shipped in #59, as §5 records.
 
 **The repair half does not transfer, and the guidelines page is
 misleading about why.** §4.2 shows `suggested_transform` inline in the
