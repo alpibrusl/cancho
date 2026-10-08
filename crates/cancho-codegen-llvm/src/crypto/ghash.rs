@@ -4,16 +4,17 @@
 //! A block is held byte-reversed, so that bit `127 - i` of the 128-bit
 //! integer is the coefficient of `x^i` (GCM's "reflected" order) and no bit
 //! reversal is ever needed. The carry-less product of two such integers has
-//! the coefficient of `x^m` at bit `254 - m`; shifted left by one it has it
-//! at `255 - m`, so its upper 128 bits are the low half of the product in
-//! the same order and its lower 128 bits are the high half (the part
-//! to be folded back). Folding is multiplying by `x^7 + x^2 + x + 1`,
-//! which in this order is a right shift by 0, 1, 2 and 7; the bits that fall
-//! off the bottom are folded once more. The sum of eight products needs
-//! one shift and one fold, not eight: `(a*h^8 + b*h^7 + ...) mod p`.
+//! the coefficient of `x^m` at bit `254 - m`, which as a 256-bit window with
+//! its top bit as `x^0` is `x` times the product: so every power of H is
+//! stored times `x^-1` (`twist`) and no product is shifted. The window's
+//! upper half is the product's low half in the same order and its lower half
+//! the high half, to be folded back by `x^7 + x^2 + x + 1` (`@cancho_gh_reduce`,
+//! by shifts of 64-bit lanes). The sum of eight products needs one fold, not
+//! eight: `(a*h^8 + b*h^7 + ...) mod p`.
 //!
 //! The model this is written from, checked against the bitwise algorithm of
-//! SP 800-38D §6.3 before any IR was written, is in `docs/gcm-wide.md` §3.2.
+//! SP 800-38D §6.3 before any IR was written, is `scripts/ghash_reflected_model.py`
+//! and `docs/gcm-wide.md` §3.2.
 
 use super::{Gen, Isa, V};
 use std::fmt::Write;
