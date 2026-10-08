@@ -144,6 +144,8 @@ On arm64 the same commands, without `perf stat`; the profile is `perf record -e 
 
 ## 3. The measurements
 
+*Every table below is from one of the two machines of §2.1: x86-64 is the i7-1260P, Ubuntu 26.04, Linux 7.0.0-38, `powersave`, THP `madvise`, load average 4 to 10, shared; arm64 is the M4 Max VM, Ubuntu 24.04, Linux 6.8.0-100, THP `madvise`, load average 1 to 7. A table says where it is from only if it differs.*
+
 ### 3.1 Each primitive alone
 
 `tls_prims_bench`, x86-64, user-space cycles (the least of three passes) and instructions (exact), against OpenSSL's
@@ -449,7 +451,8 @@ measurement:**
   **The 3-times stretch needs wide multiply.**
 - The client handshake with A1, B3, B4, C1 and B5: 100 − 9.9 − 18.0 − 7.8 − 16.7 − 11.9 = **35.7%**, which is **6.9M cycles,
   4.1 times OpenSSL's 1.70M**: inside T2's 5. (Arithmetic; the same assumptions.)
-- **Tickets (D1)** give a returning client a handshake of 42.5% of a full one (7.0M cycles, 6.4 times a *full* OpenSSL handshake);
+- **Tickets (D1)** give a returning client a handshake of 42.5% of a full one (7.0M cycles, 6.4 times a *full* OpenSSL handshake; the
+  client side, which resumes already, measured 2.2 times cheaper in hooks, `pure-tls.md`, against the 2.35 here);
   with A1 36.8% (6.1M), which meets T5 (the X25519 operations, 31.8%, plus 10%: 41.8%), and with C1 as well 17.7% (2.9M): the resumed
   handshake is the X25519 operations plus the rest, and nothing else is left to cut but the ladders.
 - **A kept request** is 2 to 2.5 times cheaper with A1 alone, at OpenSSL's cost (§3.5): T3 needs only A1.
