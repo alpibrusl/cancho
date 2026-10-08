@@ -124,7 +124,7 @@ fn the_authority_report_has_a_machine_readable_form() {
         text.matches(']').count(),
         "unbalanced brackets:\n{text}"
     );
-    for key in ["\"effects\"", "\"labels\"", "\"foreign_symbols\""] {
+    for key in ["\"effects\"", "\"labels\"", "\"never_touches\"", "\"foreign_symbols\""] {
         assert!(text.contains(key), "missing {key}:\n{text}");
     }
     // The coarse kind and the precise argument, both present and distinct.
@@ -140,6 +140,22 @@ fn the_authority_report_has_a_machine_readable_form() {
         "an unnarrowed label needs an explicit null:\n{text}"
     );
     assert!(text.contains("\"labs\""), "the foreign symbol should be named:\n{text}");
+    // The negative half beside the positive one (`docs/authority.md` §2.2):
+    // `tour.cho` touches the filesystem and the console, so those two
+    // domains must be absent from the proof, and a domain it never
+    // touches must be present — silence is not how absence is spelled.
+    assert!(
+        text.contains("\"never_touches\": ["),
+        "the negative half is the point of a capability language:\n{text}"
+    );
+    assert!(
+        !text.contains("\"the filesystem\""),
+        "`tour.cho` touches the filesystem, so it cannot be proven out of reach:\n{text}"
+    );
+    assert!(
+        text.contains("\"other programs\""),
+        "`tour.cho` performs no `exec`, so the report must say so as data:\n{text}"
+    );
 
     // And the human form is unchanged by the flag's existence.
     let plain = Command::new(BIN)
@@ -169,9 +185,9 @@ fn purity_is_the_row_plus_what_a_reference_may_do() {
         (
             "fn double(x: int) -> [] int { return x + x; }\n\
              fn main(world: World) -> [] int {\n\
-             \x20   let Split { io, ffi, fs, heap, args } = split(world);\n\
-             \x20   release(args); release(heap); release(fs); release(ffi); release(io);\n\
-             \x20   return double(0);\n\
+             \u{20}   let Split { io, ffi, fs, heap, args } = split(world);\n\
+             \u{20}   release(args); release(heap); release(fs); release(ffi); release(io);\n\
+             \u{20}   return double(0);\n\
              }\n",
             "double",
             true,
@@ -180,9 +196,9 @@ fn purity_is_the_row_plus_what_a_reference_may_do() {
         (
             "fn first[&r](s: &r [byte]) -> [] int { return int_of(s[0]); }\n\
              fn main(world: World) -> [] int {\n\
-             \x20   let Split { io, ffi, fs, heap, args } = split(world);\n\
-             \x20   release(args); release(heap); release(fs); release(ffi); release(io);\n\
-             \x20   return first(\"a\") - 97;\n\
+             \u{20}   let Split { io, ffi, fs, heap, args } = split(world);\n\
+             \u{20}   release(args); release(heap); release(fs); release(ffi); release(io);\n\
+             \u{20}   return first(\"a\") - 97;\n\
              }\n",
             "first",
             true,
@@ -191,11 +207,11 @@ fn purity_is_the_row_plus_what_a_reference_may_do() {
         (
             "fn poke[&r](s: &!r [byte]) -> [] int { s[0] = byte_of(1); return 0; }\n\
              fn main(world: World) -> [] int {\n\
-             \x20   let Split { io, ffi, fs, heap, args } = split(world);\n\
-             \x20   release(args); release(heap); release(fs); release(ffi); release(io);\n\
-             \x20   var out = 0;\n\
-             \x20   region a { let s = alloc_slice[a](2, byte_of(0)); out = poke(s); }\n\
-             \x20   return out;\n\
+             \u{20}   let Split { io, ffi, fs, heap, args } = split(world);\n\
+             \u{20}   release(args); release(heap); release(fs); release(ffi); release(io);\n\
+             \u{20}   var out = 0;\n\
+             \u{20}   region a { let s = alloc_slice[a](2, byte_of(0)); out = poke(s); }\n\
+             \u{20}   return out;\n\
              }\n",
             "poke",
             false,
@@ -204,11 +220,11 @@ fn purity_is_the_row_plus_what_a_reference_may_do() {
         (
             "fn pair[&r](t: (int, &!r [byte])) -> [] int { return t.0; }\n\
              fn main(world: World) -> [] int {\n\
-             \x20   let Split { io, ffi, fs, heap, args } = split(world);\n\
-             \x20   release(args); release(heap); release(fs); release(ffi); release(io);\n\
-             \x20   var out = 0;\n\
-             \x20   region a { let s = alloc_slice[a](2, byte_of(0)); out = pair((0, s)); }\n\
-             \x20   return out;\n\
+             \u{20}   let Split { io, ffi, fs, heap, args } = split(world);\n\
+             \u{20}   release(args); release(heap); release(fs); release(ffi); release(io);\n\
+             \u{20}   var out = 0;\n\
+             \u{20}   region a { let s = alloc_slice[a](2, byte_of(0)); out = pair((0, s)); }\n\
+             \u{20}   return out;\n\
              }\n",
             "pair",
             false,
@@ -217,12 +233,12 @@ fn purity_is_the_row_plus_what_a_reference_may_do() {
         (
             "fn shout[&i](io: &!i Io) -> [io_write] int { putchar(io, 10); return 0; }\n\
              fn main(world: World) -> [] int {\n\
-             \x20   let Split { io, ffi, fs, heap, args } = split(world);\n\
-             \x20   release(args); release(heap); release(fs); release(ffi);\n\
-             \x20   var out = 0;\n\
-             \x20   borrow mut io as &!i in { out = shout(i); }\n\
-             \x20   release(io);\n\
-             \x20   return out;\n\
+             \u{20}   let Split { io, ffi, fs, heap, args } = split(world);\n\
+             \u{20}   release(args); release(heap); release(fs); release(ffi);\n\
+             \u{20}   var out = 0;\n\
+             \u{20}   borrow mut io as &!i in { out = shout(i); }\n\
+             \u{20}   release(io);\n\
+             \u{20}   return out;\n\
              }\n",
             "shout",
             false,
@@ -230,14 +246,14 @@ fn purity_is_the_row_plus_what_a_reference_may_do() {
         // A local arena is invisible from outside, so it does not count.
         (
             "fn scratch(n: int) -> [] int {\n\
-             \x20   var total = 0;\n\
-             \x20   region a { let s = alloc_slice[a](n, byte_of(1)); total = len(s); }\n\
-             \x20   return total;\n\
+             \u{20}   var total = 0;\n\
+             \u{20}   region a { let s = alloc_slice[a](n, byte_of(1)); total = len(s); }\n\
+             \u{20}   return total;\n\
              }\n\
              fn main(world: World) -> [] int {\n\
-             \x20   let Split { io, ffi, fs, heap, args } = split(world);\n\
-             \x20   release(args); release(heap); release(fs); release(ffi); release(io);\n\
-             \x20   return scratch(4) - 4;\n\
+             \u{20}   let Split { io, ffi, fs, heap, args } = split(world);\n\
+             \u{20}   release(args); release(heap); release(fs); release(ffi); release(io);\n\
+             \u{20}   return scratch(4) - 4;\n\
              }\n",
             "scratch",
             true,
