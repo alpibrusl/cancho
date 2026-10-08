@@ -1,0 +1,442 @@
+edition 6;
+module std.p256_vf;
+import std.p256;
+import std.p256_comb;
+import std.p256_pt;
+
+// `std.p256_vf` -- ECDSA verification on P-256 (SEC 1 §4.1.4) on `std.p256`'s
+// arithmetic (`docs/p256-fast.md` §7), for `std.ecdsa`. Public data only:
+// nothing here is constant time, and it branches and indexes on the scalars.
+//
+// u1 G + u2 Q by Shamir's trick over one chain of doublings: u1 in width-7
+// wNAF against the generator's odd multiples 1G .. 63G (a `static`, affine,
+// mixed additions), u2 in width-5 wNAF against 1Q .. 15Q built per call.
+// Points are Jacobian (X : Y : Z), x = X / Z^2, with the doubling of
+// dbl-2001-b and the additions of add-2007-bl and madd-2007-bl; the cases
+// they do not cover (an equal pair, an opposite pair) are handled by the
+// caller of the formula, as `std.ecdsa` did. Whether a value is zero modulo p
+// is asked of its reduced form (`p256.from_mont`): a lazy element has no
+// single representation of zero. Whether the running sum is the point at
+// infinity is a flag, not a test of Z.
+//
+// Every function answers 0, or a code of `std.ecdsa` (-33 to -41).
+
+// Temporaries t0..t13.
+fn t(i: int) -> [] int {
+    return p256.fe(p256.base() + i);
+}
+
+fn pt_acc() -> [] int {
+    return p256.base() + 14;
+}
+
+// A table entry or a doubled point, a point of its own.
+fn pt_ent() -> [] int {
+    return p256.base() + 17;
+}
+
+fn pt_q2() -> [] int {
+    return p256.base() + 20;
+}
+
+// Multiple 2k + 1 of Q, k = 0 to 7.
+fn qtab(k: int) -> [] int {
+    return p256.base() + 23 + 3 * k;
+}
+
+// u1, u2, r and a scratch element.
+fn e_u1() -> [] int {
+    return p256.fe(p256.base() + 47);
+}
+
+fn e_u2() -> [] int {
+    return p256.fe(p256.base() + 48);
+}
+
+fn e_r() -> [] int {
+    return p256.fe(p256.base() + 49);
+}
+
+fn e_zero() -> [] int {
+    return p256.fe(p256.base() + 50);
+}
+
+// The wNAF digits of u1 and of u2, 260 words each.
+fn dig1() -> [] int {
+    return p256.fe(p256.base() + 51);
+}
+
+fn dig2() -> [] int {
+    return dig1() + 260;
+}
+
+pub fn work_len() -> [] int {
+    return dig2() + 260;
+}
+
+fn x_of(p: int) -> [] int {
+    return p256.fe(p);
+}
+
+fn y_of(p: int) -> [] int {
+    return p256.fe(p + 1);
+}
+
+fn z_of(p: int) -> [] int {
+    return p256.fe(p + 2);
+}
+
+fn copy_point[&w](w: &!w [int], from: int, to: int) -> [] int {
+    p256.copy(w, x_of(from), x_of(to));
+    p256.copy(w, y_of(from), y_of(to));
+    p256.copy(w, z_of(from), z_of(to));
+    return 0;
+}
+
+// Whether the element at `x` is zero modulo p; `s` is a scratch element.
+fn zero_mod[&w](w: &!w [int], x: int, s: int) -> [] bool {
+    p256.from_mont(w, x, s);
+    return p256.is_zero(w, s);
+}
+
+// d = 2p (dbl-2001-b, a = -3). Gives Z = 0 by itself for p infinite or
+// Y = 0. `d` may be `p`.
+fn double[&w](w: &!w [int], p: int, d: int) -> [] int {
+    let x = x_of(p);
+    let y = y_of(p);
+    let z = z_of(p);
+    // delta = Z^2, gamma = Y^2, beta = X gamma.
+    p256.sqr(w, z, t(0));
+    p256.sqr(w, y, t(1));
+    p256.mul(w, x, t(1), t(2));
+    // alpha = 3 (X - delta)(X + delta).
+    p256.sub2(w, x, t(0), t(3));
+    p256.add(w, x, t(0), t(4));
+    p256.mul(w, t(3), t(4), t(3));
+    p256.add(w, t(3), t(3), t(4));
+    p256.add(w, t(4), t(3), t(5));
+    // X3 = alpha^2 - 8 beta.
+    p256.sqr(w, t(5), t(6));
+    p256.add(w, t(2), t(2), t(7));
+    p256.add(w, t(7), t(7), t(7));
+    p256.add(w, t(7), t(7), t(8));
+    p256.sub16(w, t(6), t(8), t(9));
+    // Z3 = (Y + Z)^2 - gamma - delta.
+    p256.add(w, y, z, t(10));
+    p256.sqr(w, t(10), t(10));
+    p256.sub2(w, t(10), t(1), t(10));
+    p256.sub2(w, t(10), t(0), t(10));
+    // Y3 = alpha (4 beta - X3) - 8 gamma^2.
+    p256.sub32(w, t(7), t(9), t(11));
+    p256.mul(w, t(5), t(11), t(11));
+    p256.sqr(w, t(1), t(12));
+    p256.add(w, t(12), t(12), t(12));
+    p256.add(w, t(12), t(12), t(12));
+    p256.add(w, t(12), t(12), t(12));
+    p256.sub16(w, t(11), t(12), t(11));
+    p256.copy(w, t(9), x_of(d));
+    p256.copy(w, t(11), y_of(d));
+    p256.copy(w, t(10), z_of(d));
+    return 0;
+}
+
+// d = p + q (add-2007-bl) for two finite points; `d` may be `p`. 0, or 1 when
+// the sum is the point at infinity (p = -q); an equal pair is doubled.
+fn add_jac[&w](w: &!w [int], p: int, q: int, d: int) -> [] int {
+    // Z1Z1, Z2Z2, U1 = X1 Z2Z2, U2 = X2 Z1Z1, S1 = Y1 Z2 Z2Z2, S2 = Y2 Z1 Z1Z1.
+    p256.sqr(w, z_of(p), t(0));
+    p256.sqr(w, z_of(q), t(1));
+    p256.mul(w, x_of(p), t(1), t(2));
+    p256.mul(w, x_of(q), t(0), t(3));
+    p256.mul(w, y_of(p), z_of(q), t(4));
+    p256.mul(w, t(4), t(1), t(4));
+    p256.mul(w, y_of(q), z_of(p), t(5));
+    p256.mul(w, t(5), t(0), t(5));
+    // H = U2 - U1, r = S2 - S1.
+    p256.sub2(w, t(3), t(2), t(6));
+    p256.sub2(w, t(5), t(4), t(7));
+    if zero_mod(w, t(6), t(13)) {
+        if zero_mod(w, t(7), t(13)) {
+            return double(w, p, d);
+        }
+        return 1;
+    }
+    // r = 2 (S2 - S1), I = (2H)^2, J = H I, V = U1 I.
+    p256.add(w, t(7), t(7), t(7));
+    p256.add(w, t(6), t(6), t(8));
+    p256.sqr(w, t(8), t(8));
+    p256.mul(w, t(6), t(8), t(9));
+    p256.mul(w, t(2), t(8), t(10));
+    // X3 = r^2 - J - 2V.
+    p256.sqr(w, t(7), t(11));
+    p256.sub2(w, t(11), t(9), t(11));
+    p256.sub2(w, t(11), t(10), t(11));
+    p256.sub2(w, t(11), t(10), t(11));
+    // Y3 = r (V - X3) - 2 S1 J.
+    p256.sub8(w, t(10), t(11), t(12));
+    p256.mul(w, t(7), t(12), t(12));
+    p256.mul(w, t(4), t(9), t(3));
+    p256.add(w, t(3), t(3), t(3));
+    p256.sub4(w, t(12), t(3), t(12));
+    // Z3 = ((Z1 + Z2)^2 - Z1Z1 - Z2Z2) H.
+    p256.add(w, z_of(p), z_of(q), t(3));
+    p256.sqr(w, t(3), t(3));
+    p256.sub2(w, t(3), t(0), t(3));
+    p256.sub2(w, t(3), t(1), t(3));
+    p256.mul(w, t(3), t(6), t(3));
+    p256.copy(w, t(11), x_of(d));
+    p256.copy(w, t(12), y_of(d));
+    p256.copy(w, t(3), z_of(d));
+    return 0;
+}
+
+// d = p + q for q affine, (X2, Y2) with Z2 = 1 (madd-2007-bl); `d` may be `p`.
+// 0, or 1 when the sum is the point at infinity; an equal pair is doubled.
+fn madd[&w](w: &!w [int], p: int, q: int, d: int) -> [] int {
+    let x1 = x_of(p);
+    let y1 = y_of(p);
+    let z1 = z_of(p);
+    let x2 = x_of(q);
+    let y2 = y_of(q);
+    // Z1Z1, U2 = X2 Z1Z1, S2 = Y2 Z1 Z1Z1, H = U2 - X1, r = S2 - Y1.
+    p256.sqr(w, z1, t(0));
+    p256.mul(w, x2, t(0), t(1));
+    p256.mul(w, y2, z1, t(2));
+    p256.mul(w, t(2), t(0), t(2));
+    p256.sub32(w, t(1), x1, t(3));
+    p256.sub32(w, t(2), y1, t(4));
+    if zero_mod(w, t(3), t(13)) {
+        if zero_mod(w, t(4), t(13)) {
+            return double(w, p, d);
+        }
+        return 1;
+    }
+    // HH, I = 4 HH, J = H I, r = 2 r, V = X1 I.
+    p256.sqr(w, t(3), t(5));
+    p256.add(w, t(5), t(5), t(6));
+    p256.add(w, t(6), t(6), t(6));
+    p256.mul(w, t(3), t(6), t(7));
+    p256.add(w, t(4), t(4), t(4));
+    p256.mul(w, x1, t(6), t(8));
+    // X3 = r^2 - J - 2V.
+    p256.sqr(w, t(4), t(9));
+    p256.sub2(w, t(9), t(7), t(9));
+    p256.sub2(w, t(9), t(8), t(9));
+    p256.sub2(w, t(9), t(8), t(9));
+    // Y3 = r (V - X3) - 2 Y1 J.
+    p256.sub8(w, t(8), t(9), t(10));
+    p256.mul(w, t(4), t(10), t(10));
+    p256.mul(w, y1, t(7), t(11));
+    p256.add(w, t(11), t(11), t(11));
+    p256.sub4(w, t(10), t(11), t(10));
+    // Z3 = (Z1 + H)^2 - Z1Z1 - HH.
+    p256.add(w, z1, t(3), t(12));
+    p256.sqr(w, t(12), t(12));
+    p256.sub2(w, t(12), t(0), t(12));
+    p256.sub2(w, t(12), t(5), t(12));
+    p256.copy(w, t(9), x_of(d));
+    p256.copy(w, t(10), y_of(d));
+    p256.copy(w, t(12), z_of(d));
+    return 0;
+}
+
+// ---- wNAF ----
+
+// Bit `i` of the element at `x` (tight limbs of 28 bits).
+fn bit[&w](w: &w [int], x: int, i: int) -> [] int {
+    return w[x + i / 28] >> i % 28 & 1;
+}
+
+// The `width` bits from bit `i` of the element at `x`, as a number.
+fn bits[&w](w: &w [int], x: int, i: int, width: int) -> [] int {
+    let idx = i / 28;
+    let off = i % 28;
+    var v = w[x + idx] >> off;
+    if off + width > 28 && idx + 1 < 10 {
+        v = v | w[x + idx + 1] << 28 - off;
+    }
+    return v & (1 << width) - 1;
+}
+
+// Adds 2^pos to the element at `x`, rippling the carry through the limbs.
+fn add_bit[&w](w: &!w [int], x: int, pos: int) -> [] int {
+    var idx = pos / 28;
+    var v = w[x + idx] + (1 << pos % 28);
+    while v >> 28 != 0 && idx < 9 {
+        w[x + idx] = v & 0xfffffff;
+        idx = idx + 1;
+        v = w[x + idx] + 1;
+    }
+    w[x + idx] = v;
+    return 0;
+}
+
+// The width-`width` non-adjacent form of the element at `x` (a number below
+// 2^256, destroyed) into `dig`: 257 digits, each 0 or odd in
+// (-2^(width-1), 2^(width-1)), nonzero digits at least `width` apart.
+fn wnaf[&w](w: &!w [int], x: int, dig: int, width: int) -> [] int {
+    var i = 0;
+    while i < 260 {
+        w[dig + i] = 0;
+        i = i + 1;
+    }
+    i = 0;
+    while i < 257 {
+        if bit(w, x, i) == 0 {
+            i = i + 1;
+        } else {
+            let d = bits(w, x, i, width);
+            if d >= 1 << width - 1 {
+                w[dig + i] = d - (1 << width);
+                add_bit(w, x, i + width);
+            } else {
+                w[dig + i] = d;
+            }
+            i = i + width;
+        }
+    }
+    return 0;
+}
+
+// The entry for digit `d` (odd, nonzero) of the generator's table into the
+// affine point `pt_ent()`: X, Y as elements; Z is set to 1.
+fn load_g[&w](w: &!w [int], d: int) -> [] int {
+    var k = d;
+    if d < 0 {
+        k = 0 - d;
+    }
+    let at = (k - 1) / 2 * 20;
+    var t = 0;
+    while t < 20 {
+        w[x_of(pt_ent()) + t] = p256_comb.odd_at(at + t);
+        t = t + 1;
+    }
+    p256.copy(w, p256.one_mont(), z_of(pt_ent()));
+    if d < 0 {
+        p256.sub2(w, e_zero(), y_of(pt_ent()), y_of(pt_ent()));
+    }
+    return 0;
+}
+
+// The entry for digit `d` of Q's table into `pt_ent()`.
+fn load_q[&w](w: &!w [int], d: int) -> [] int {
+    var k = d;
+    if d < 0 {
+        k = 0 - d;
+    }
+    copy_point(w, qtab((k - 1) / 2), pt_ent());
+    if d < 0 {
+        p256.sub32(w, e_zero(), y_of(pt_ent()), y_of(pt_ent()));
+    }
+    return 0;
+}
+
+// SEC 1 §4.1.4 steps 4 and 5 for P-256 (`docs/p256-fast.md` §7): the point
+// `point` (04 || x || y), the digest, r and s as big-endian bytes of any
+// length up to 35. The code is `std.ecdsa`'s: -38 r, -39 s, -33 and -34 the
+// point, -40 infinity, -41 mismatch.
+pub fn verify[&d, &q, &r, &s, &w](digest: &d [byte], point: &q [byte], r: &r [byte], s: &s [byte], w: &!w [int]) -> [] int {
+    p256.init(w);
+    p256.set_zero(w, e_zero());
+    // r and s in [1, n).
+    if len(r) > 35 || len(s) > 35 {
+        if len(r) > 35 {
+            return -38;
+        }
+        return -39;
+    }
+    let rr = e_r();
+    let sm = t(0);
+    let em = t(1);
+    p256.load(r, w, rr);
+    if !p256.below_n(w, rr) || p256.is_zero(w, rr) {
+        return -38;
+    }
+    p256.load(s, w, sm);
+    if !p256.below_n(w, sm) || p256.is_zero(w, sm) {
+        return -39;
+    }
+    // e: the digest's leftmost 32 bytes, below 2^256 < 2n: one subtraction.
+    var m = len(digest);
+    if m > 32 {
+        m = 32;
+    }
+    p256.load(digest[0..m], w, em);
+    p256.sreduce(w, em, em);
+    // u1 = e / s, u2 = r / s modulo n, as plain numbers.
+    p256.sto_mont(w, sm, sm);
+    p256.sinvert(w, sm, sm);
+    p256.sto_mont(w, em, em);
+    p256.smul(w, em, sm, e_u1());
+    p256.sfrom_mont(w, e_u1(), e_u1());
+    p256.copy(w, rr, t(2));
+    p256.sto_mont(w, t(2), t(2));
+    p256.smul(w, t(2), sm, e_u2());
+    p256.sfrom_mont(w, e_u2(), e_u2());
+    wnaf(w, e_u1(), dig1(), 7);
+    wnaf(w, e_u2(), dig2(), 5);
+    // Q: both coordinates below p, on the curve.
+    let q1 = qtab(0);
+    p256.load(point[1..33], w, x_of(q1));
+    p256.load(point[33..65], w, y_of(q1));
+    if !p256.below_p(w, x_of(q1)) || !p256.below_p(w, y_of(q1)) {
+        return -33;
+    }
+    p256.to_mont(w, x_of(q1), x_of(q1));
+    p256.to_mont(w, y_of(q1), y_of(q1));
+    p256.copy(w, p256.one_mont(), z_of(q1));
+    if !p256_pt.on_curve_xy(w, x_of(q1), y_of(q1), t(0), t(1), t(2)) {
+        return -34;
+    }
+    // 1Q, 3Q, ..., 15Q.
+    double(w, q1, pt_q2());
+    var k = 1;
+    while k < 8 {
+        if add_jac(w, qtab(k - 1), pt_q2(), qtab(k)) != 0 {
+            return -40;
+        }
+        k = k + 1;
+    }
+    // The chain.
+    var inf = true;
+    var i = 256;
+    while i >= 0 {
+        if !inf {
+            double(w, pt_acc(), pt_acc());
+        }
+        let d1 = w[dig1() + i];
+        if d1 != 0 {
+            load_g(w, d1);
+            if inf {
+                copy_point(w, pt_ent(), pt_acc());
+                inf = false;
+            } else if madd(w, pt_acc(), pt_ent(), pt_acc()) != 0 {
+                inf = true;
+            }
+        }
+        let d2 = w[dig2() + i];
+        if d2 != 0 {
+            load_q(w, d2);
+            if inf {
+                copy_point(w, pt_ent(), pt_acc());
+                inf = false;
+            } else if add_jac(w, pt_acc(), pt_ent(), pt_acc()) != 0 {
+                inf = true;
+            }
+        }
+        i = i - 1;
+    }
+    if inf {
+        return -40;
+    }
+    // x = X / Z^2, modulo n, against r.
+    p256.sqr(w, z_of(pt_acc()), t(0));
+    p256.invert(w, t(0), t(0));
+    p256.mul(w, x_of(pt_acc()), t(0), t(0));
+    p256.from_mont(w, t(0), t(0));
+    p256.sreduce(w, t(0), t(0));
+    if !p256.equal(w, t(0), rr) {
+        return -41;
+    }
+    return 0;
+}
