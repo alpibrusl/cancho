@@ -147,3 +147,11 @@ baseline behind the requests-a-second figures in
 `benches/server/cepoll.c` is `cpoll.c` with `epoll(7)` in place of `poll(2)` -- the control that separated what the kernel costs from what `examples/api` does (`docs/server.md` §8). Build: `gcc -O2 -o cepoll cepoll.c`.
 
 `benches/server/tload.c` is `kload.c` over TLS 1.3 (OpenSSL): the same closed loop, every connection handshaken first and the chain checked. It is the load behind the TLS figure in [`docs/http-server.md`](../docs/http-server.md) §11.7, run by `python3 scripts/https_hello_test.py <https_hello> --cost <seconds> --kload ... --tload ... --plain ...`. Build: `gcc -O2 -o tload tload.c -lssl -lcrypto -lpthread`.
+
+## `word_scan/`
+
+Not an overflow pair either: one byte-scan kernel per binary over a 1 GiB buffer, written a byte at a time, with
+`load_le64` and SWAR, with `byte_mask64`, and with `index_of_byte`
+([`docs/word-scan.md`](../docs/word-scan.md) §5). `python3 benches/word_scan/run.py` builds each kernel for both backends
+and prints milliseconds, instructions and cycles a byte (`perf stat` on Linux, `time -l` on macOS); `results-*.txt` are the
+two runs the document quotes.

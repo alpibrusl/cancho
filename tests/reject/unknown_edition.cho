@@ -1,4 +1,4 @@
-//~ ERROR unknown edition 8; the only editions today are 1, 2, 3, 4, 5, 6 and 7
+//~ ERROR unknown edition 9; the only editions today are 1, 2, 3, 4, 5, 6, 7 and 8
 //~ RULE unknown-edition
 
 // `docs/editions.md` §6.1, §7.
@@ -10,9 +10,10 @@
 // (`docs/threads.md` §2); edition 5 adds the socket handles
 // (`docs/native-sockets.md` §3); edition 6 adds the signal capability
 // (`docs/signals.md`); edition 7 adds the capability to start a program
-// (`docs/processes.md`). There is nothing later than that yet to opt into.
+// (`docs/processes.md`); edition 8 adds the word-at-a-time scan
+// (`docs/word-scan.md`). There is nothing later than that yet to opt into.
 
-edition 8;
+edition 9;
 
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args } = split(world);

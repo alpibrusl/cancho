@@ -337,6 +337,14 @@ that never replaces a name, and `dir_mode` and `dir_own_mode` ([`directory-listi
 Each is a builtin under an existing label and a name an older file may already declare, so it is absent before
 edition 7 (`tests/reject/dir_rename_new_is_edition_seven.cho`) and nothing else about edition 6 changes.
 
+**Edition 8 is edition 7 plus the word-at-a-time scan** ([`word-scan.md`](word-scan.md)): the builtins `load_le64`,
+`byte_mask64`, `trailing_zeros`, `leading_zeros` and `popcount`. It exists because §6.4 closes edition 7 (the freeze: a name
+added to it could shadow a user's own), and these are exactly the names a program may declare for itself: `popcount` and
+`trailing_zeros` are what anyone writes by hand before the language has them (`tests/accept/word_scan_beside_own_names.cho`
+declares all five at edition 7 and means its own). `Split` is unchanged, so an edition-8 file destructures the nine fields
+edition 7 does. A file that declares `edition 8` hashes differently from its edition-7 text (§6.3), which touches only the
+files that adopt it; no other file's hash moves (`word-scan.md` §6 counts it).
+
 ---
 
 ## 8. What this does not do

@@ -1,0 +1,21 @@
+//~ ERROR `load_le64` is not a function in this program
+//~ RULE not-a-function
+
+// `docs/word-scan.md` §6: `load_le64`, `byte_mask64`, `trailing_zeros`, `leading_zeros` and `popcount` are edition 8. An
+// older file may already declare its own `popcount`, so to it the name is not a builtin at all -- the rule every
+// edition-gated builtin follows (`editions.md` §7).
+
+edition 7;
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    return load_le64("abcdefgh", 0);
+}

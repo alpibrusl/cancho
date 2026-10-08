@@ -99,6 +99,11 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::WriteErr
                     | Builtin::GetChar
                     | Builtin::WrappingAdd
+                    | Builtin::LoadLe64
+                    | Builtin::ByteMask64
+                    | Builtin::TrailingZeros
+                    | Builtin::LeadingZeros
+                    | Builtin::Popcount
                     | Builtin::WrappingSub
                     | Builtin::WrappingMul
                     | Builtin::ValueBarrier

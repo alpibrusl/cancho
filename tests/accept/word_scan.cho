@@ -1,0 +1,194 @@
+//~ EXIT 0
+
+// `docs/word-scan.md`: `load_le64`, `byte_mask64`, `trailing_zeros`, `leading_zeros` and `popcount`, each checked against
+// a loop written out a byte or a bit at a time, which cannot be wrong the same way. Two buffers of pseudo-random bytes
+// (all 256 values, and five values only so that a needle is found often), every start offset 0..9 into each (so the
+// loads are not all aligned), every length 0..=140 and every `at` the primitive allows, the last one included.
+
+edition 8;
+
+fn fill[&b](xs: &!b [byte], seed: int, few: bool) -> [] int {
+    var x = seed;
+    var i = 0;
+    while i < len(xs) {
+        x = wrapping_add(wrapping_mul(x, 6364136223846793005), 1442695040888963407);
+        var r = x >> 33 & 255;
+        if few {
+            let pick = r % 5;
+            r = 255;
+            if pick == 0 {
+                r = 44;
+            }
+            if pick == 1 {
+                r = 34;
+            }
+            if pick == 2 {
+                r = 10;
+            }
+            if pick == 3 {
+                r = 0;
+            }
+        }
+        xs[i] = byte_of(r);
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn slow_word[&t](text: &t [byte], at: int) -> [] int {
+    var w = 0;
+    var k = 7;
+    while k >= 0 {
+        w = w << 8 | int_of(text[at + k]);
+        k = k - 1;
+    }
+    return w;
+}
+
+fn slow_mask[&t](text: &t [byte], at: int, b: byte) -> [] int {
+    var m = 0;
+    var k = 0;
+    while k < 64 {
+        if text[at + k] == b {
+            m = m | 1 << k;
+        }
+        k = k + 1;
+    }
+    return m;
+}
+
+fn slow_trailing(x: int) -> [] int {
+    var n = 0;
+    while n < 64 && x >> n & 1 == 0 {
+        n = n + 1;
+    }
+    return n;
+}
+
+fn slow_leading(x: int) -> [] int {
+    var n = 0;
+    while n < 64 && x >> 63 - n & 1 == 0 {
+        n = n + 1;
+    }
+    return n;
+}
+
+fn slow_pop(x: int) -> [] int {
+    var n = 0;
+    var k = 0;
+    while k < 64 {
+        n = n + (x >> k & 1);
+        k = k + 1;
+    }
+    return n;
+}
+
+fn counts_agree(x: int) -> [] int {
+    var bad = 0;
+    if trailing_zeros(x) != slow_trailing(x) {
+        bad = bad + 1;
+    }
+    if leading_zeros(x) != slow_leading(x) {
+        bad = bad + 1;
+    }
+    if popcount(x) != slow_pop(x) {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+fn check[&t](text: &t [byte]) -> [] int {
+    var bad = 0;
+    let n = len(text);
+    var at = 0;
+    while at + 8 <= n {
+        let w = load_le64(text, at);
+        if w != slow_word(text, at) {
+            bad = bad + 1;
+        }
+        bad = bad + counts_agree(w);
+        at = at + 1;
+    }
+    at = 0;
+    while at + 64 <= n {
+        var which = 0;
+        while which < 8 {
+            var b = 0;
+            if which == 1 {
+                b = 44;
+            }
+            if which == 2 {
+                b = 34;
+            }
+            if which == 3 {
+                b = 10;
+            }
+            if which == 4 {
+                b = 255;
+            }
+            if which == 5 {
+                b = 128;
+            }
+            if which == 6 {
+                b = 127;
+            }
+            if which == 7 {
+                b = 1;
+            }
+            if byte_mask64(text, at, byte_of(b)) != slow_mask(text, at, byte_of(b)) {
+                bad = bad + 1;
+            }
+            which = which + 1;
+        }
+        at = at + 1;
+    }
+    return bad;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(io);
+    release(heap);
+    var bad = 0;
+
+    // The counts on their own: zero, one, all ones, the sign bit, each single bit, each run of low ones.
+    bad = bad + counts_agree(0) + counts_agree(1) + counts_agree(0 - 1) + counts_agree(0 - 9223372036854775807 - 1);
+    bad = bad + counts_agree(9223372036854775807) + counts_agree(0 - 2);
+    var k = 0;
+    while k < 64 {
+        bad = bad + counts_agree(1 << k) + counts_agree(wrapping_sub(1 << k, 1)) + counts_agree(wrapping_sub(0, 1 << k));
+        k = k + 1;
+    }
+    if trailing_zeros(0) != 64 || leading_zeros(0) != 64 || popcount(0) != 0 || leading_zeros(0 - 1) != 0 || popcount(0 - 1) != 64 {
+        bad = bad + 1;
+    }
+
+    region a {
+        var which = 0;
+        while which < 2 {
+            let buf = alloc_slice[a](400, byte_of(0));
+            fill(buf, 7 + which, which == 1);
+            var start = 0;
+            while start < 10 {
+                var length = 0;
+                while length <= 140 {
+                    bad = bad + check(buf[start..start + length]);
+                    length = length + 1;
+                }
+                start = start + 1;
+            }
+            which = which + 1;
+        }
+    }
+    if bad != 0 {
+        return 1;
+    }
+    return 0;
+}

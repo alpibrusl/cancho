@@ -320,6 +320,9 @@ pub(crate) fn emit_module(
     // unconditionally, the same way `putchar` is -- an unused `declare`
     // costs nothing, and every function in the module shares one `.ll`.
     text.push_str("declare {i64, i1} @llvm.sadd.with.overflow.i64(i64, i64)\n");
+    text.push_str("declare i64 @llvm.cttz.i64(i64, i1)\n");
+    text.push_str("declare i64 @llvm.ctlz.i64(i64, i1)\n");
+    text.push_str("declare i64 @llvm.ctpop.i64(i64)\n");
     text.push_str("declare {i64, i1} @llvm.ssub.with.overflow.i64(i64, i64)\n");
     text.push_str("declare {i64, i1} @llvm.smul.with.overflow.i64(i64, i64)\n");
     // `sqrt` (§7.17, `docs/float-math.md` §2): correctly rounded per

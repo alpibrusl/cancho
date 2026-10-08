@@ -1272,6 +1272,22 @@ fn the_two_backends_agree_beside_a_program_s_own_memchr() {
     );
 }
 
+/// `docs/word-scan.md`: the word-at-a-time primitives against loops written a byte and a bit at a time, on both backends.
+#[test]
+fn the_two_backends_agree_on_word_scan() {
+    assert_backends_agree("backends-word-scan", "tests/accept/word_scan.cho", "");
+}
+
+/// `docs/word-scan.md` §6: an edition-7 program's own `popcount` and friends are untouched, on both backends.
+#[test]
+fn the_two_backends_agree_beside_a_program_s_own_word_scan_names() {
+    assert_backends_agree(
+        "backends-word-scan-own-names",
+        "tests/accept/word_scan_beside_own_names.cho",
+        "",
+    );
+}
+
 /// `join(a) + join(b)`: a join as an arithmetic operand, which the LLVM backend could not type.
 #[test]
 fn the_two_backends_agree_on_a_join_as_an_operand() {
