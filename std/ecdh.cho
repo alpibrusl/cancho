@@ -2,6 +2,7 @@ edition 6;
 module std.ecdh;
 import std.bigmod;
 import std.ecdsa;
+import std.p256_pt;
 
 // `std.ecdh` -- elliptic-curve Diffie-Hellman on P-256 and P-384 (SEC 1
 // §3.3.1, NIST SP 800-56A §5.7.1.2; `docs/ecdh.md`), for TLS key
@@ -406,6 +407,9 @@ fn affine[&x, &y, &w](w: &!w [int], out_x: &!x [byte], out_y: &!y [byte]) -> [] 
 // `scalar` is curve / 8 bytes, big-endian, in [1, n); `work` holds
 // `work_len()` words.
 pub fn public_key[&s, &o, &w](curve: int, scalar: &s [byte], out: &!o [byte], work: &!w [int]) -> [] int {
+    if curve == 256 {
+        return public_key_p256(scalar, out, work);
+    }
     var code = prepare(curve, scalar, work);
     if code != 0 {
         return code;
@@ -433,6 +437,9 @@ pub fn public_key[&s, &o, &w](curve: int, scalar: &s [byte], out: &!o [byte], wo
 // bytes). `peer` must be an uncompressed point, 0x04 || x || y, on the
 // curve; `scalar` and `work` are as `public_key` takes them.
 pub fn shared[&s, &p, &o, &w](curve: int, scalar: &s [byte], peer: &p [byte], out: &!o [byte], work: &!w [int]) -> [] int {
+    if curve == 256 {
+        return shared_p256(scalar, peer, out, work);
+    }
     var code = prepare(curve, scalar, work);
     if code != 0 {
         return code;
@@ -466,4 +473,53 @@ fn wipe[&w](w: &!w [int]) -> [] int {
         i = i + 1;
     }
     return 0;
+}
+
+// ---- P-256 on `std.p256_pt` (`docs/p256-fast.md` §5) ----
+
+// The checks `prepare` makes, for P-256, and no bigmod set-up: -50 to -53.
+fn check_p256[&s, &w](scalar: &s [byte], w: &w [int]) -> [] int {
+    if len(w) < work_len() {
+        return -51;
+    }
+    if len(scalar) != 32 {
+        return -52;
+    }
+    var ok = 0;
+    region r {
+        let k = alloc_slice[r](32, byte_of(0));
+        ecdsa.curve_param(256, 4, k);
+        ok = in_range(scalar, k);
+    }
+    if ok == 0 {
+        return refused_scalar_range();
+    }
+    return 0;
+}
+
+fn public_key_p256[&s, &o, &w](scalar: &s [byte], out: &!o [byte], work: &!w [int]) -> [] int {
+    var code = check_p256(scalar, work);
+    if code != 0 {
+        return code;
+    }
+    if len(out) != 65 {
+        return -57;
+    }
+    out[0] = byte_of(4);
+    code = p256_pt.base_multiply(scalar, out[1..33], out[33..65], work);
+    return code;
+}
+
+fn shared_p256[&s, &p, &o, &w](scalar: &s [byte], peer: &p [byte], out: &!o [byte], work: &!w [int]) -> [] int {
+    var code = check_p256(scalar, work);
+    if code != 0 {
+        return code;
+    }
+    if len(out) != 32 {
+        return -57;
+    }
+    if len(peer) != 65 || int_of(peer[0]) != 4 {
+        return -54;
+    }
+    return p256_pt.point_multiply(scalar, peer[1..33], peer[33..65], out, work);
 }

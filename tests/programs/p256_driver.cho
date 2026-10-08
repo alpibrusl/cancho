@@ -1,0 +1,180 @@
+// `docs/p256-fast.md` §4: `std.p256`'s field and scalar arithmetic, driven from
+// standard input so Python's integers can check every operation.
+//
+// One case per line, 32-byte values in lowercase hex, each answered with the
+// result in hex (32 bytes) or `-` when the operation refuses:
+//
+//     M a b    a * b mod p          A a b   a + b mod p        S a b   a - b mod p
+//     Q a      a^2 mod p            I a     a^-1 mod p (a != 0)
+//     X a b    a * b mod n          Y a     a^-1 mod n         Z a b   a + b mod n
+//     L a      a through load and store (a < 2^256)
+//     B a      `below_p`, `below_n` of a: `<0|1><0|1>`
+//     C a b    a * b * c mod p, where c is 8 (a*b, add, add, add) -- a chain of lazy sums
+import std.buffer;
+import std.io;
+import std.p256;
+
+fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap, io_read] buffer.Buffer {
+    var out = text;
+    var c = getchar(io);
+    while c >= 0 {
+        out = buffer.push(heap, out, byte_of(c));
+        c = getchar(io);
+    }
+    return out;
+}
+
+fn nibble(c: int) -> [] int {
+    if c >= 97 {
+        return c - 87;
+    }
+    return c - 48;
+}
+
+fn field_end[&s](s: &s [byte], at: int) -> [] int {
+    var e = at;
+    while e < len(s) && int_of(s[e]) != 32 && int_of(s[e]) != 10 {
+        e = e + 1;
+    }
+    return e;
+}
+
+fn hex_into[&s, &o](s: &s [byte], at: int, o: &!o [byte]) -> [] int {
+    var i = 0;
+    while i < len(o) {
+        o[i] = byte_of(nibble(int_of(s[at + i * 2])) * 16 + nibble(int_of(s[at + i * 2 + 1])));
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn print_hex[&i, &d](io: &!i Io, d: &d [byte]) -> [io_write] int {
+    let digits = "0123456789abcdef";
+    var n = 0;
+    while n < len(d) {
+        let b = int_of(d[n]);
+        io.write_all(io, digits[b >> 4..(b >> 4) + 1]);
+        io.write_all(io, digits[b & 15..(b & 15) + 1]);
+        n = n + 1;
+    }
+    return 0;
+}
+
+fn case[&i, &s, &w](io: &!i Io, s: &s [byte], at: int, w: &!w [int]) -> [io_write] int {
+    let op = int_of(s[at]);
+    let f1 = at + 2;
+    let f2 = field_end(s, f1) + 1;
+    p256.init(w);
+    let ra = p256.base();
+    let rb = p256.base() + 1;
+    let rc = p256.base() + 2;
+    region r {
+        let a = alloc_slice[r](32, byte_of(0));
+        let b = alloc_slice[r](32, byte_of(0));
+        let out = alloc_slice[r](32, byte_of(0));
+        hex_into(s, f1, a);
+        if f2 < len(s) && int_of(s[f2 - 1]) == 32 {
+            hex_into(s, f2, b);
+        }
+        p256.load(a, w, p256.fe(ra));
+        p256.load(b, w, p256.fe(rb));
+        let x = p256.fe(ra);
+        let y = p256.fe(rb);
+        let z = p256.fe(rc);
+        if op == 76 {
+            p256.store(w, x, out);
+        } else if op == 66 {
+            var v = 48;
+            if p256.below_p(w, x) {
+                v = 49;
+            }
+            io.write_all(io, "p");
+            io.print_int(io, v - 48);
+            v = 48;
+            if p256.below_n(w, x) {
+                v = 49;
+            }
+            io.write_all(io, "n");
+            io.print_int(io, v - 48);
+            io.newline(io);
+            return 0;
+        } else if op == 88 || op == 89 || op == 90 {
+            p256.sto_mont(w, x, x);
+            p256.sto_mont(w, y, y);
+            if op == 88 {
+                p256.smul(w, x, y, z);
+            } else if op == 90 {
+                p256.sadd(w, x, y, z);
+            } else {
+                p256.sinvert(w, x, z);
+            }
+            p256.sfrom_mont(w, z, z);
+            p256.store(w, z, out);
+        } else {
+            p256.to_mont(w, x, x);
+            p256.to_mont(w, y, y);
+            if op == 77 {
+                p256.mul(w, x, y, z);
+            } else if op == 65 {
+                p256.add(w, x, y, z);
+            } else if op == 83 {
+                p256.sub32(w, x, y, z);
+            } else if op == 81 {
+                p256.sqr(w, x, z);
+            } else if op == 73 {
+                p256.invert(w, x, z);
+            } else {
+                p256.mul(w, x, y, z);
+                p256.add(w, z, z, z);
+                p256.add(w, z, z, z);
+                p256.add(w, z, z, z);
+                p256.sub32(w, z, y, z);
+                p256.mul(w, z, z, z);
+            }
+            p256.from_mont(w, z, z);
+            p256.store(w, z, out);
+        }
+        print_hex(io, out);
+        io.newline(io);
+    }
+    return 0;
+}
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
+    var text = buffer.empty(heap, 4096);
+    text = read_stdin(heap, io, text);
+    let work = box_slice(heap, p256.words(40), 0);
+    borrow text as &b in {
+        let s = buffer.bytes(b);
+        borrow mut work as &!w in {
+            var at = 0;
+            while at < len(s) {
+                if int_of(s[at]) != 10 {
+                    case(io, s, at, contents(w));
+                }
+                while at < len(s) && int_of(s[at]) != 10 {
+                    at = at + 1;
+                }
+                at = at + 1;
+            }
+        }
+    }
+    unbox_slice(heap, work);
+    buffer.drop(heap, text);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(args);
+    release(ffi);
+    release(fs);
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            run(h, i);
+        }
+    }
+    release(heap);
+    release(io);
+    return 0;
+}
