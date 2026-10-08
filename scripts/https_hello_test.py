@@ -47,6 +47,8 @@ the case says so rather than pass). Each case starts its own server on a free po
 
 With `--cost <seconds>`: requests a second over TLS against `kload` (benches/server/kload.c, plain, `examples/api`) and
 `tload` (benches/server/tload.c, the same closed loop over OpenSSL) on one core each side; see docs/http-server.md §11.7.
+`--oserv <oserv>` (benches/server/oserv.c) adds OpenSSL's own server under the same loads, plain and over TLS
+(docs/tls-performance.md §3.5); `COST_SERVER_CPU` and `COST_LOAD_CPUS` name the cores (defaults `0` and `2,3`).
 One line a case, then a count; exit status 1 if any failed.
 """
 import hashlib
@@ -1125,29 +1127,38 @@ CASES = {"curl": case_curl, "openssl": case_openssl, "http": case_http, "pipelin
 
 # ---- the cost ----
 
-def cost(exe, seconds, kload, tload, plain):
+def cost(exe, seconds, kload, tload, plain, oserv=None):
     """Requests a second, one core for the server (`taskset -c 0` where there is one), the load on two others, three rounds;
-    and the server's own CPU a request, which a loaded or virtual machine disturbs less than a rate."""
+    and the server's own CPU a request, which a loaded or virtual machine disturbs less than a rate. `COST_SERVER_CPU` and
+    `COST_LOAD_CPUS` name the cores (defaults 0 and 2,3). With `oserv` (benches/server/oserv.c), the same closed loop
+    against a one-thread OpenSSL server answering the same nine bytes, plain and over TLS: the OpenSSL figure of
+    docs/tls-performance.md §3.5."""
     rows = []
-    pin = ["taskset", "-c", "0"] if shutil.which("taskset") else []
-    load_pin = ["taskset", "-c", "2,3"] if shutil.which("taskset") else []
-    if plain:
+    pin = ["taskset", "-c", os.environ.get("COST_SERVER_CPU", "0")] if shutil.which("taskset") else []
+    load_pin = ["taskset", "-c", os.environ.get("COST_LOAD_CPUS", "2,3")] if shutil.which("taskset") else []
+
+    def plain_row(what, argv, path):
         port = echo.free_port()
-        proc = subprocess.Popen(pin + [plain, str(port)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        proc = subprocess.Popen(pin + [argv[0], str(port)] + argv[1:], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
             time.sleep(1)
             before = echo.cpu_seconds(proc.pid)
-            rounds = [int(subprocess.run(load_pin + [kload, str(port), "2", "16", str(seconds), "/users/42"], capture_output=True).stdout.split()[0])
+            rounds = [int(subprocess.run(load_pin + [kload, str(port), "2", "16", str(seconds), path], capture_output=True).stdout.split()[0])
                       for _ in range(3)]
             cpu = echo.cpu_seconds(proc.pid) - before
-            rows.append(("plain `examples/api` over kload, GET /users/42", rounds, cpu / (sum(rounds) * seconds) * 1e6))
+            rows.append((what, rounds, cpu / (sum(rounds) * seconds) * 1e6))
         finally:
             proc.kill()
             proc.wait()
+
+    if plain:
+        plain_row("plain `examples/api` over kload, GET /users/42", [plain], "/users/42")
+    if oserv:
+        plain_row("`oserv` plain (OpenSSL's server code, no TLS) over kload, GET /hello/42", [oserv, os.path.join(echo.VECTORS, "first", "chain.pem"), os.path.join(echo.VECTORS, "first", "key.pem"), "plain"], "/hello/42")
     server = Server(exe, extra=["--connections", "256", "--handshakes", "256", "--rate", "100000", "--idle", "120000"])
     try:
         if pin:
-            os.system(f"taskset -cp 0 {server.proc.pid} >/dev/null")
+            os.system(f"taskset -cp {pin[2]} {server.proc.pid} >/dev/null")
         rounds = []
         before = echo.cpu_seconds(server.proc.pid)
         for _ in range(3):
@@ -1157,6 +1168,22 @@ def cost(exe, seconds, kload, tload, plain):
         rows.append(("`https_hello` over tload (TLS 1.3, keep-alive), GET /hello/42", rounds, cpu / (sum(rounds) * seconds) * 1e6))
     finally:
         server.stop()
+    if oserv:
+        chain, key = os.path.join(echo.VECTORS, "first", "chain.pem"), os.path.join(echo.VECTORS, "first", "key.pem")
+        port = echo.free_port()
+        proc = subprocess.Popen(pin + [oserv, str(port), chain, key], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            time.sleep(1)
+            before = echo.cpu_seconds(proc.pid)
+            rounds = []
+            for _ in range(3):
+                out = subprocess.run(load_pin + [tload, str(port), "2", "16", str(seconds), "/hello/42", CA, HOST], capture_output=True)
+                rounds.append(int(out.stdout.split()[0]))
+            cpu = echo.cpu_seconds(proc.pid) - before
+            rows.append(("`oserv` over tload (OpenSSL, TLS 1.3, keep-alive), GET /hello/42", rounds, cpu / (sum(rounds) * seconds) * 1e6))
+        finally:
+            proc.kill()
+            proc.wait()
     return rows
 
 
@@ -1172,7 +1199,7 @@ def main():
         k = args.index("--cost")
         seconds = int(args[k + 1])
         del args[k:k + 2]
-        for name in ("kload", "tload", "plain"):
+        for name in ("kload", "tload", "plain", "oserv"):
             if f"--{name}" in args:
                 k = args.index(f"--{name}")
                 tools[name] = os.path.abspath(args[k + 1])
@@ -1188,7 +1215,7 @@ def main():
         failed += 0 if ok else 1
         print(f"{name:10} {result}", flush=True)
     if seconds:
-        for what, rounds, per in cost(exe, seconds, tools["kload"], tools["tload"], tools.get("plain")):
+        for what, rounds, per in cost(exe, seconds, tools["kload"], tools["tload"], tools.get("plain"), tools.get("oserv")):
             print(f"cost       {what}: {' '.join(str(r) for r in rounds)} requests a second ({seconds} s rounds), "
                   f"{per:.2f} microseconds of server CPU a request")
         return 0
