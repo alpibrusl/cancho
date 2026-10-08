@@ -1,6 +1,7 @@
 edition 6;
 module std.p256_pt;
 import std.p256;
+import std.p256_comb;
 
 // `std.p256_pt` -- P-256 points on `std.p256`'s arithmetic
 // (`docs/p256-fast.md` §5), for `std.ecdh`, `std.ecdsa` and `std.ecdsa_sign`.
@@ -55,7 +56,12 @@ fn z_of(p: int) -> [] int {
 // Words `work` must hold for this module: the elements of `std.p256` and
 // the points above.
 pub fn work_len() -> [] int {
-    return p256.words(14 + 3 * 16 + 4);
+    return p256.words(14 + 3 * 16 + 4 + 8);
+}
+
+// The 65 signed digits of the scalar, after the variable-base table.
+fn digits() -> [] int {
+    return p256.fe(p256.base() + 14 + 3 * 16 + 2);
 }
 
 fn copy_point[&w](w: &!w [int], from: int, to: int) -> [] int {
@@ -122,6 +128,59 @@ fn add_points[&w](w: &!w [int], p: int, q: int, d: int) -> [] int {
     p256.mul(w, t(3), t(0), t(1));
     p256.add(w, z3, t(1), z3);
     return copy_point(w, pt_out(), d);
+}
+
+// pt_out = p + q for q affine (Z = 1): RCB algorithm 5, a = -3. `q` is two
+// elements, X then Y, and must not be infinity. The result is left in
+// `pt_out` and not copied, so a caller may merge it under a mask.
+fn mixed_add[&w](w: &!w [int], p: int, q: int) -> [] int {
+    let x1 = x_of(p);
+    let y1 = y_of(p);
+    let z1 = z_of(p);
+    let x2 = x_of(q);
+    let y2 = y_of(q);
+    let x3 = x_of(pt_out());
+    let y3 = y_of(pt_out());
+    let z3 = z_of(pt_out());
+    let b = p256.b_mont();
+    p256.mul(w, x1, x2, t(0));
+    p256.mul(w, y1, y2, t(1));
+    p256.copy(w, z1, t(2));
+    p256.add(w, x1, y1, t(3));
+    p256.add(w, x2, y2, t(4));
+    p256.mul(w, t(3), t(4), t(3));
+    p256.add(w, t(0), t(1), t(4));
+    p256.sub4(w, t(3), t(4), t(3));
+    p256.mul(w, y2, z1, t(4));
+    p256.add(w, t(4), y1, t(4));
+    p256.mul(w, x2, z1, y3);
+    p256.add(w, y3, x1, y3);
+    p256.mul(w, b, t(2), z3);
+    p256.sub2(w, y3, z3, x3);
+    p256.add(w, x3, x3, z3);
+    p256.add(w, x3, z3, x3);
+    p256.sub32(w, t(1), x3, z3);
+    p256.add(w, t(1), x3, x3);
+    p256.mul(w, b, y3, y3);
+    p256.add(w, t(2), t(2), t(1));
+    p256.add(w, t(1), t(2), t(2));
+    p256.sub16(w, y3, t(2), y3);
+    p256.sub2(w, y3, t(0), y3);
+    p256.add(w, y3, y3, t(1));
+    p256.add(w, t(1), y3, y3);
+    p256.add(w, t(0), t(0), t(1));
+    p256.add(w, t(1), t(0), t(0));
+    p256.sub16(w, t(0), t(2), t(0));
+    p256.mul(w, t(4), y3, t(1));
+    p256.mul(w, t(0), y3, t(2));
+    p256.mul(w, x3, z3, y3);
+    p256.add(w, y3, t(2), y3);
+    p256.mul(w, t(3), x3, x3);
+    p256.sub2(w, x3, t(1), x3);
+    p256.mul(w, t(4), z3, z3);
+    p256.mul(w, t(3), t(0), t(1));
+    p256.add(w, z3, t(1), z3);
+    return 0;
 }
 
 // d = 2p, complete (RCB algorithm 6, a = -3). `d` may be `p`.
@@ -229,6 +288,88 @@ fn multiply[&s, &w](w: &!w [int], scalar: &s [byte]) -> [] int {
     return 0;
 }
 
+// ---- k times the generator, from a table (docs/p256-fast.md §6) ----
+
+// The digits of `scalar` (32 bytes, big-endian) in signed radix 16: k = sum
+// of d_i 16^i, d_i in [-8, 8], 65 of them, the last 0 or 1. A nibble above 8
+// becomes negative and carries one into the next. Arithmetic only: no
+// comparison, no branch, no index on the scalar.
+fn recode[&s, &w](scalar: &s [byte], w: &!w [int]) -> [] int {
+    let dig = digits();
+    var carry = 0;
+    var i = 0;
+    while i < 64 {
+        let byte = int_of(scalar[31 - i / 2]);
+        let v = (byte >> 4 * (i % 2) & 15) + carry;
+        let c = (v + 7) >> 4;
+        w[dig + i] = v - 16 * c;
+        carry = c;
+        i = i + 1;
+    }
+    w[dig + 64] = carry;
+    return 0;
+}
+
+// k times the generator into the accumulator. Sixty-five mixed additions of a
+// table entry and no doubling. Constant time in k: position i of the table is
+// public; within it every one of the eight multiples is read under a mask, a
+// negative digit is applied by choosing between y and -y under a mask, and a
+// zero digit adds a dummy entry and keeps the old sum under a mask.
+fn comb_multiply[&w](w: &!w [int]) -> [] int {
+    let dig = digits();
+    let sel = pt_sel();
+    let zero = x_of(pt_table(0));
+    p256.set_zero(w, zero);
+    // The accumulator is the point at infinity, (0 : 1 : 0).
+    p256.set_zero(w, x_of(pt_acc()));
+    p256.copy(w, p256.one_mont(), y_of(pt_acc()));
+    p256.set_zero(w, z_of(pt_acc()));
+    var i = 0;
+    while i < 65 {
+        let d = w[dig + i];
+        // All ones for a negative digit; its magnitude.
+        let neg = value_barrier(d >> 63);
+        let mag = (d ^ neg) - neg;
+        // The entry: x then y, zero for a zero digit.
+        var t = 0;
+        while t < 20 {
+            w[x_of(sel) + t] = 0;
+            t = t + 1;
+        }
+        var j = 0;
+        while j < 8 {
+            let m = value_barrier(eq_mask(j + 1, mag));
+            let at = (8 * i + j) * 20;
+            t = 0;
+            while t < 20 {
+                w[x_of(sel) + t] = w[x_of(sel) + t] | p256_comb.comb_at(at + t) & m;
+                t = t + 1;
+            }
+            j = j + 1;
+        }
+        // y or -y: 2p - y is at most 2p, and the next multiplication takes it.
+        p256.sub2(w, zero, y_of(sel), z_of(sel));
+        t = 0;
+        while t < 10 {
+            let y = w[y_of(sel) + t];
+            w[y_of(sel) + t] = y ^ ((y ^ w[z_of(sel) + t]) & neg);
+            t = t + 1;
+        }
+        mixed_add(w, pt_acc(), sel);
+        // A zero digit keeps the old sum.
+        let keep = value_barrier(eq_mask(mag, 0));
+        t = 0;
+        while t < 30 {
+            let old = w[x_of(pt_acc()) + t];
+            let new = w[x_of(pt_out()) + t];
+            w[x_of(pt_acc()) + t] = new ^ ((old ^ new) & keep);
+            t = t + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
 // The point (x, y), big-endian, into table slot 1 in Montgomery form, with
 // Z = 1. -55 when a coordinate is not below p. Coordinates are public.
 fn load_point[&x, &y, &w](x: &x [byte], y: &y [byte], w: &!w [int]) -> [] int {
@@ -285,14 +426,8 @@ fn affine[&x, &y, &w](w: &!w [int], out_x: &!x [byte], out_y: &!y [byte]) -> [] 
 // `scalar` is 32 bytes, big-endian, in [1, n), range-checked by the caller.
 pub fn base_multiply[&s, &x, &y, &w](scalar: &s [byte], out_x: &!x [byte], out_y: &!y [byte], w: &!w [int]) -> [] int {
     p256.init(w);
-    region r {
-        let gx = alloc_slice[r](32, byte_of(0));
-        let gy = alloc_slice[r](32, byte_of(0));
-        unhex(g_x(), gx);
-        unhex(g_y(), gy);
-        load_point(gx, gy, w);
-    }
-    multiply(w, scalar);
+    recode(scalar, w);
+    comb_multiply(w);
     let code = affine(w, out_x, out_y);
     p256.wipe(w, 0, work_len());
     return code;
@@ -313,28 +448,4 @@ pub fn point_multiply[&s, &px, &py, &x, &w](scalar: &s [byte], peer_x: &px [byte
     code = affine(w, out_x, out_x[0..0]);
     p256.wipe(w, 0, work_len());
     return code;
-}
-
-fn g_x() -> [] &static [byte] {
-    return "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296";
-}
-
-fn g_y() -> [] &static [byte] {
-    return "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5";
-}
-
-fn nibble(c: int) -> [] int {
-    if c >= 97 {
-        return c - 87;
-    }
-    return c - 48;
-}
-
-fn unhex[&h, &o](hex: &h [byte], out: &!o [byte]) -> [] int {
-    var i = 0;
-    while i < len(out) {
-        out[i] = byte_of(nibble(int_of(hex[2 * i])) * 16 + nibble(int_of(hex[2 * i + 1])));
-        i = i + 1;
-    }
-    return 0;
 }

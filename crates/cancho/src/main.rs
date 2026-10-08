@@ -493,6 +493,7 @@ const STD: &[(&str, &str)] = &[
     ("<std>/rsa.cho", include_str!("../../../std/rsa.cho")),
     ("<std>/p256_kernels.cho", include_str!("../../../std/p256_kernels.cho")),
     ("<std>/p256.cho", include_str!("../../../std/p256.cho")),
+    ("<std>/p256_comb.cho", include_str!("../../../std/p256_comb.cho")),
     ("<std>/p256_pt.cho", include_str!("../../../std/p256_pt.cho")),
     ("<std>/ecdsa.cho", include_str!("../../../std/ecdsa.cho")),
     ("<std>/ecdh.cho", include_str!("../../../std/ecdh.cho")),
