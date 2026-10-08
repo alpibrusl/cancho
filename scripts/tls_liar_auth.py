@@ -61,6 +61,15 @@ CA_NAME = CA[1].subject.public_bytes()
 OTHER_CA_NAME = OTHER_CA[1].subject.public_bytes()
 
 
+def split_messages(msgs, buf):
+    """The whole handshake messages at the front of `buf`, appended to `msgs` as (type, bytes)."""
+    while len(buf) >= 4 and len(buf) >= 4 + int.from_bytes(buf[1:4], "big"):
+        n = 4 + int.from_bytes(buf[1:4], "big")
+        msgs = msgs + [(buf[0], buf[:n])]
+        buf = buf[n:]
+    return msgs, buf
+
+
 def authorities(names):
     return ext(47, u16(sum(2 + len(n) for n in names)) + b"".join(u16(len(n)) + n for n in names))
 
@@ -92,6 +101,10 @@ def client_extensions(msg):
     return out
 
 
+LAST_SENT = None  # what the last non-strict client sent: "chain" or "empty"
+PLACEMENT = True  # whether the ALPN extension's place among the others is checked (`tls_differential_auth.py` clears it)
+
+
 def check_offer(msg, alpn):
     """The ClientHello carries the ALPN extension (16) once, with exactly the offer, between
     signature_algorithms_cert (50) and supported_versions (43); with no offer, none."""
@@ -105,7 +118,8 @@ def check_offer(msg, alpn):
     names = alpn.split(" ")
     wire = b"".join(bytes([len(n)]) + n.encode() for n in names)
     assert body == u16(len(wire)) + wire, f"the offer: {body.hex()}"
-    assert kinds.index(50) < kinds.index(16) < kinds.index(43), "its place among the extensions"
+    if PLACEMENT:
+        assert kinds.index(50) < kinds.index(16) < kinds.index(43), "its place among the extensions"
 
 
 def prelude(conv, alpn, identity, hosts, extra=()):
@@ -122,6 +136,10 @@ def prelude(conv, alpn, identity, hosts, extra=()):
 class AuthServer(Server):
     """The TLS 1.3 server of `tls_liar`, asking for a certificate when `cr_exts` is set."""
 
+    # False: take whatever chain the client sends (OpenSSL's differs from `packages/tls`'s in which certificates it adds and
+    # whether it answers a request it could decline), and note what it sent in `observed`.
+    strict = True
+
     def __init__(self, conv):
         super().__init__(conv)
         self.cr_exts = None  # the CertificateRequest's extensions, or None for no request
@@ -131,6 +149,7 @@ class AuthServer(Server):
         self.client_pub = KEY.public_key()
         self.client_cert = CERT
         self.chain = None
+        self.observed = None
 
     def start(self, alpn=None, identity=True, hosts=HOST, extra=()):
         prelude(self.c, alpn, identity, hosts, extra)
@@ -157,34 +176,45 @@ class AuthServer(Server):
         return ee, cr + cert, cv, fin
 
     def client_flight(self, expect):
-        """The client's change_cipher_spec, then Certificate, CertificateVerify when it sent a chain, and Finished,
-        each checked; "chain" or "empty"."""
+        """The client's change_cipher_spec, then Certificate, CertificateVerify when it sent a chain, and Finished, each
+        checked ("chain" or "empty"), whatever records they share."""
         recs = self.c.take()
         assert recs[0] == plain_record(20, b"\1"), "a change_cipher_spec first"
         h = self.hash
         app_th = self.transcript
-        kind, cert = self.read.open(recs[1])
-        assert kind == 22 and cert[0] == 11, "the client's Certificate"
+        rest = recs[1:]
+        msgs, buf = [], b""
+        while not (msgs and msgs[-1][0] == 20):
+            kind, content = self.read.open(rest.pop(0))
+            assert kind == 22, "handshake records"
+            buf += content
+            msgs, buf = split_messages(msgs, buf)
+        assert buf == b"", "no partial message"
+        if not self.strict:
+            expect = self.observed = "chain" if len(msgs) == 3 else "empty"
+            globals()["LAST_SENT"] = expect
+        assert len(msgs) == (3 if expect == "chain" else 2), f"{len(msgs)} messages"
+        cert = msgs[0][1]
+        assert cert[0] == 11, "the client's Certificate"
         body = cert[4:]
         assert body[0] == len(self.cr_context) and body[1:1 + body[0]] == self.cr_context, "the context echoed"
         lst = body[1 + body[0]:]
         assert int.from_bytes(lst[:3], "big") == len(lst) - 3
-        rest = recs[2:]
         if expect == "empty":
             assert len(lst) == 3, "an empty Certificate"
         else:
             at = 3
-            for cert_in_chain in (self.chain or [self.client_cert]):
+            for cert_in_chain in (self.chain or [self.client_cert])[:None if self.strict else 1]:
                 n = int.from_bytes(lst[at:at + 3], "big")
                 der = lst[at + 3:at + 3 + n]
                 assert der == cert_in_chain.public_bytes(serialization.Encoding.DER), "the identity's certificate"
                 assert lst[at + 3 + n:at + 5 + n] == b"\0\0", "no certificate extensions"
                 at += 5 + n
-            assert at == len(lst), "the whole chain, and nothing after it"
+            assert at == len(lst) or not self.strict, "the whole chain, and nothing after it"
         self.transcript += cert
         if expect == "chain":
-            kind, cv = self.read.open(rest.pop(0))
-            assert kind == 22 and cv[0] == 15, "CertificateVerify"
+            cv = msgs[1][1]
+            assert cv[0] == 15, "CertificateVerify"
             assert int.from_bytes(cv[4:6], "big") == ECDSA_SHA256, "ecdsa_secp256r1_sha256"
             sig = cv[8:8 + int.from_bytes(cv[6:8], "big")]
             content = b" " * 64 + b"TLS 1.3, client CertificateVerify\0" + h(self.transcript).digest()
@@ -193,10 +223,10 @@ class AuthServer(Server):
             except InvalidSignature:
                 raise AssertionError("the client's CertificateVerify does not verify")
             self.transcript += cv
-        kind, fin = self.read.open(rest.pop(0))
+        fin = msgs[-1][1]
         key = expand_label(self.c_hs, b"finished", b"", len(self.c_hs), h)
         want = message(20, hmac.new(key, h(self.transcript).digest(), h).digest())
-        assert (kind, fin) == (22, want), "the client's Finished"
+        assert fin == want, "the client's Finished"
         self.transcript += fin
         self.write = Keys(derive(self.master, b"s ap traffic", app_th, h), self.suite)
         self.read = Keys(derive(self.master, b"c ap traffic", app_th, h), self.suite)
@@ -260,10 +290,11 @@ case("client auth: the identity named by a wildcard host", "ok")(
 case("client auth: the identity named for every host", "ok")(mutual("chain", 1, SIG, hosts=b"*"))
 case("client auth: an unknown extension in the request is ignored", "ok")(
     mutual("chain", 1, SIG + ext(0x7a7a, b"opaque")))
-# The last of 2,600 names is ours: the whole list is walked (a list of about 60 KB, nearly the slot's buffer).
-many = [b"\x30\x0b\x31\x09\x30\x07\x06\x03\x55\x04\x03\x0c\x00" + i.to_bytes(4, "big") + b"x" * 4 for i in range(2600)]
-case("client auth: 2,600 authorities, ours the last", "ok")(mutual("chain", 1, SIG + authorities(many + [CA_NAME])))
-case("client auth: 2,600 authorities, none ours: the empty Certificate", "ok")(mutual("empty", 2, SIG + authorities(many)))
+# The last of 2,000 names is ours: the whole list is walked (a list of about 60 KB, nearly the slot's buffer). Each is a well-formed
+# DER Name, as a real server's are.
+many = [x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, f"authority {i:05}")]).public_bytes() for i in range(2000)]
+case("client auth: 2,000 authorities, ours the last", "ok")(mutual("chain", 1, SIG + authorities(many + [CA_NAME])))
+case("client auth: 2,000 authorities, none ours: the empty Certificate", "ok")(mutual("empty", 2, SIG + authorities(many)))
 
 case("client auth: a chain of two certificates, each with an empty extension list", "ok")(
     mutual("chain", 1, SIG, extra=[CA[1]]))
@@ -312,9 +343,9 @@ def required_without_identity(s):
 # ---- TLS 1.3: a request that lies ----
 case("client auth: a second CertificateRequest", "tls-unexpected-message", 10)(
     lambda s: (s.start(), setattr(s, "cr_exts", SIG), setattr(s, "cr_count", 2), s.c.feed(s.hello_and_flight())))
-case("client auth: signature_algorithms twice", "tls-decode-error", 50)(
+case("client auth: signature_algorithms twice", "tls-extension-repeat", 47)(
     lambda s: (s.start(), setattr(s, "cr_exts", SIG + sigalgs(ECDSA_SHA256)), s.c.feed(s.hello_and_flight())))
-case("client auth: certificate_authorities twice", "tls-decode-error", 50)(
+case("client auth: certificate_authorities twice", "tls-extension-repeat", 47)(
     lambda s: (s.start(), setattr(s, "cr_exts", SIG + authorities([CA_NAME]) + authorities([CA_NAME])),
                s.c.feed(s.hello_and_flight())))
 case("client auth: an authorities list whose names do not tile it", "tls-decode-error", 50)(
@@ -390,7 +421,7 @@ case("ALPN: the answer's name length does not fit", "tls-decode-error", 50)(
 case("ALPN: the answer names an empty protocol", "tls-decode-error", 50)(
     lambda s: (s.start(alpn="h2", identity=False), setattr(s, "ee_extensions", ext(16, u16(1) + b"\0")),
                s.c.feed(s.hello_and_flight())))
-case("ALPN: the answer twice", "tls-decode-error", 50)(
+case("ALPN: the answer twice", "tls-extension-repeat", 47)(
     lambda s: (s.start(alpn="h2", identity=False), setattr(s, "ee_extensions", alpn_ext(H2) + alpn_ext(H2)),
                s.c.feed(s.hello_and_flight())))
 case("ALPN: in the ServerHello of TLS 1.3, not EncryptedExtensions", "tls-unsupported-extension", 110)(
@@ -453,6 +484,8 @@ identity_case("identity: an Ed25519 leaf", "tls-client-key-type",
 class AuthServer12(Server12):
     """The TLS 1.2 server of `tls_liar`, asking for a certificate when `cr` is set."""
 
+    strict = True
+
     def __init__(self, conv):
         super().__init__(conv)
         self.cr = None  # (certificate types, signature schemes, authorities)
@@ -489,42 +522,54 @@ class AuthServer12(Server12):
         return out
 
     def client_flight(self, expect=None):
+        """The client's Certificate (if asked), ClientKeyExchange, CertificateVerify (if it sent a chain), change_cipher_spec and
+        Finished, each checked, whatever records the plaintext messages share."""
         recs = self.c.take()
         h = self.hash
         asked = self.cr is not None or self.cr_raw is not None
+        msgs, buf = [], b""
+        while recs[0][0] == 22:
+            buf += recs.pop(0)[5:]
+            msgs, buf = split_messages(msgs, buf)
+        assert buf == b"", "no partial message"
+        if not self.strict and asked:
+            expect = self.observed = "empty" if msgs[0][1] == message(11, u24(0)) else "chain"
+            globals()["LAST_SENT"] = expect
+        assert len(msgs) == (1 if asked else 0) + 1 + (1 if expect == "chain" else 0), f"{len(msgs)} messages"
         if asked:
-            cert = recs.pop(0)
-            assert cert[0] == 22 and cert[5] == 11, "the client's Certificate"
+            cert = msgs.pop(0)[1]
+            assert cert[0] == 11, "the client's Certificate"
             if expect == "empty":
-                assert cert == plain_record(22, message(11, u24(0))), "an empty Certificate"
+                assert cert == message(11, u24(0)), "an empty Certificate"
             else:
-                lst = cert[9:]
+                lst = cert[4:]
                 assert int.from_bytes(lst[:3], "big") == len(lst) - 3
                 at = 3
-                for cert_in_chain in self.chain:
+                for cert_in_chain in (self.chain or [CERT])[:None if self.strict else 1]:
                     n = int.from_bytes(lst[at:at + 3], "big")
                     assert lst[at + 3:at + 3 + n] == cert_in_chain.public_bytes(serialization.Encoding.DER), "the identity's certificate"
                     at += 3 + n
-                assert at == len(lst), "a list of the chain's certificates, with no extensions"
-            self.transcript += cert[5:]
-        cke = recs.pop(0)
-        assert cke[0] == 22 and cke[5] == 16, cke[:6].hex()
-        point = cke[10:]
+                assert at == len(lst) or not self.strict, "a list of the chain's certificates, with no extensions"
+            self.transcript += cert
+        cke = msgs.pop(0)[1]
+        assert cke[0] == 16, "ClientKeyExchange"
+        point = cke[5:]
+        assert cke[4] == len(point)
         self.client_shares = {self.group: point}
-        self.transcript += cke[5:]
+        self.transcript += cke
         pms = self.shared_secret()
         master = prf(pms, b"extended master secret", h(self.transcript).digest(), 48, h)
         if expect == "chain":
-            cv = recs.pop(0)
-            assert cv[0] == 22 and cv[5] == 15, "CertificateVerify"
-            assert int.from_bytes(cv[9:11], "big") == ECDSA_SHA256
-            sig = cv[13:13 + int.from_bytes(cv[11:13], "big")]
+            cv = msgs.pop(0)[1]
+            assert cv[0] == 15, "CertificateVerify"
+            assert int.from_bytes(cv[4:6], "big") == ECDSA_SHA256
+            sig = cv[8:8 + int.from_bytes(cv[6:8], "big")]
             try:
                 # RFC 5246 §7.4.8: over every handshake message so far, hashed with SHA-256 whatever the suite's.
                 self.client_pub.verify(sig, self.transcript, ec.ECDSA(hashes.SHA256()))
             except InvalidSignature:
                 raise AssertionError("the client's TLS 1.2 CertificateVerify does not verify")
-            self.transcript += cv[5:]
+            self.transcript += cv
         _, kl, il, _ = L.SUITES12[self.suite]
         block = prf(master, b"key expansion", self.server_random + self.client_random, 2 * kl + 2 * il, h)
         self.read = L.Keys12(self.suite, block[:kl], block[2 * kl:2 * kl + il])
@@ -577,7 +622,7 @@ case12("TLS 1.2 client auth: the authorities name another CA: empty Certificate"
     mutual12("empty", 2, ([ECDSA_SIGN], [ECDSA_SHA256], [OTHER_CA_NAME])))
 case12("TLS 1.2 client auth: no identity configured: empty Certificate", "ok")(
     mutual12("empty", 2, ([ECDSA_SIGN], [ECDSA_SHA256], []), identity=False))
-case12("TLS 1.2 client auth: 2,600 authorities, none ours, a message split over four records", "ok")(
+case12("TLS 1.2 client auth: 2,000 authorities, none ours, a message split over four records", "ok")(
     mutual12("empty", 2, ([ECDSA_SIGN], [ECDSA_SHA256], many)))
 case12("TLS 1.2 client auth: a CertificateRequest with an authorities list that does not tile", "tls-decode-error", 50)(
     lambda s: (s.start(), setattr(s, "cr_raw", b"\1\x40" + u16(2) + u16(ECDSA_SHA256) + u16(5) + u16(9) + b"abc"),
@@ -635,7 +680,7 @@ def alpn12_two(s):
     s.c.feed(plain_record(22, s.server_hello12()))
 
 
-@case12("TLS 1.2 ALPN: the answer twice", "tls-decode-error", 50)
+@case12("TLS 1.2 ALPN: the answer twice", "tls-extension-repeat", 47)
 def alpn12_twice(s):
     s.start(alpn="h2", identity=False)
     s.sh_extra = alpn_ext(H2) + alpn_ext(H2)

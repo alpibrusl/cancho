@@ -554,7 +554,7 @@ pub fn server_hello[&b, &s, &i](b: &b [byte], session_id: &s [byte], info: &!i [
             sni = true;
         } else if kind == 16 && !retry {
             if alpn_at != 0 {
-                return tls_record.decode_error();
+                return tls_record.extension_repeat();
             }
             alpn_at = alpn_name(b, body, size);
             if alpn_at < 0 {
@@ -728,7 +728,7 @@ pub fn encrypted_extensions_alpn[&b, &i](b: &b [byte], offered: bool, info: &!i 
             seen_groups = true;
         } else if kind == 16 && offered {
             if info[0] != 0 {
-                return tls_record.decode_error();
+                return tls_record.extension_repeat();
             }
             let start = alpn_name(b, at + 4, size);
             if start < 0 {
@@ -1114,7 +1114,10 @@ pub fn certificate_request[&b, &i](b: &b [byte], info: &!i [int]) -> [] int {
             return tls_record.decode_error();
         }
         if kind == 13 {
-            if seen_sigalgs || size < 4 || get(b, body, 2) != size - 2 || size % 2 != 0 {
+            if seen_sigalgs {
+                return tls_record.extension_repeat();
+            }
+            if size < 4 || get(b, body, 2) != size - 2 || size % 2 != 0 {
                 return tls_record.decode_error();
             }
             seen_sigalgs = true;
@@ -1122,7 +1125,10 @@ pub fn certificate_request[&b, &i](b: &b [byte], info: &!i [int]) -> [] int {
                 info[cr_sigalg()] = 1;
             }
         } else if kind == 47 {
-            if seen_ca || size < 2 || get(b, body, 2) != size - 2 || !names_tile(b, body + 2, body + size) {
+            if seen_ca {
+                return tls_record.extension_repeat();
+            }
+            if size < 2 || get(b, body, 2) != size - 2 || !names_tile(b, body + 2, body + size) {
                 return tls_record.decode_error();
             }
             seen_ca = true;

@@ -7,7 +7,8 @@
 use super::*;
 
 fn cases() -> Vec<(String, String, Vec<String>, Vec<String>)> {
-    let text = std::fs::read_to_string(repo_root().join("tests/vectors/tls/liar_auth.txt")).unwrap();
+    let text =
+        std::fs::read_to_string(repo_root().join("tests/vectors/tls/liar_auth.txt")).unwrap();
     let mut cases: Vec<(String, String, Vec<String>, Vec<String>)> = Vec::new();
     for line in text.lines() {
         if let Some(head) = line.strip_prefix("## ") {
@@ -62,7 +63,8 @@ fn every_client_certificate_and_alpn_case_replays_and_ends_with_its_tag_on_both_
 /// back, the client certificate's notAfter bounds a ticket, the identity is chosen by the host, and a ticket is not bound
 /// to the ALPN offer. Each case replays byte for byte.
 #[test]
-fn the_engine_keeps_a_ticket_back_when_the_identity_changes_and_chooses_it_by_host_on_both_backends() {
+fn the_engine_keeps_a_ticket_back_when_the_identity_changes_and_chooses_it_by_host_on_both_backends()
+ {
     let text =
         std::fs::read_to_string(repo_root().join("tests/vectors/tls/tickets_auth.txt")).unwrap();
     let mut cases: Vec<(String, Vec<String>, Vec<String>)> = Vec::new();
@@ -78,7 +80,7 @@ fn the_engine_keeps_a_ticket_back_when_the_identity_changes_and_chooses_it_by_ho
     }
     assert_eq!(cases.len(), 10);
     for backend in ["cranelift", "llvm"] {
-        let (dir, exe) = super::tls::build_tls_tickets(backend);
+        let (dir, exe) = super::tls::build_tls_tickets_in("tls-auth-tickets", backend);
         for (name, asked, answered) in &cases {
             let got = super::tls::run(&exe, asked);
             for (n, (g, w)) in got.iter().zip(answered).enumerate() {

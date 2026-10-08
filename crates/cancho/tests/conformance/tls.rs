@@ -65,7 +65,12 @@ fn trace(name: &str) -> (Vec<String>, Vec<String>) {
 
 /// `tests/programs/tls_tickets.cho`: the engine, built with the whole package.
 pub(super) fn build_tls_tickets(backend: &str) -> (PathBuf, PathBuf) {
-    let dir = scratch(&format!("tls-tickets-{backend}"));
+    build_tls_tickets_in("tls-tickets", backend)
+}
+
+/// `build_tls_tickets` in a scratch directory of its own: two tests building into one race.
+pub(super) fn build_tls_tickets_in(label: &str, backend: &str) -> (PathBuf, PathBuf) {
+    let dir = scratch(&format!("{label}-{backend}"));
     let exe = dir.join("tickets");
     let build = Command::new(BIN)
         .args(["build", "--std", "--backend", backend])
