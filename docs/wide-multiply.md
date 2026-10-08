@@ -75,7 +75,7 @@ sub_borrow(a: int, b: int, borrow: int) -> [] (int, int)
 Every word is an `int` **read as an unsigned 64-bit integer**: `-1` is 2^64 - 1. There is no new type. A word is stored in the
 `int` the language has, and the `int` operations that do not care about the sign (`&`, `|`, `^`, `<<`, `wrapping_add`,
 `wrapping_sub`, `wrapping_mul`) already treat it as a bit pattern. `>>` is arithmetic, so extracting a field of bits above bit
-0 takes a mask (`x >> 51 & 0x1fff`); §8 shows it costs nothing in practice.
+0 takes a mask (`x >> 51 & 0x1fff`); §10.6 shows LLVM folds it into one funnel shift on aarch64.
 
 - **`mul_wide(a, b)`** is the exact product `a * b` as `(hi, lo)`: `hi * 2^64 + lo`. It cannot overflow, so it never traps.
 - **`add_carry(a, b, carry)`** is `a + b + (carry != 0)` as `(sum, carry_out)`: `sum` the low 64 bits, `carry_out` 0 or 1.
@@ -156,8 +156,8 @@ operands are. Three things are claimed and checked, none by argument alone.
 
 1. **No branch, no call, no memory access** in the code of the builtins. `scripts/wide_multiply_objdump.py` builds
    `tests/programs/wide_multiply_ct.cho`, whose function `words` is nothing but the three builtins, disassembles the object
-   and fails on any jump, call or return other than the last `ret`. What it found (the function, in full, for x86-64 with
-   LLVM; the other three are in the document's §10 results):
+   and fails on any jump, call or return other than the last `ret`. What it found (the function, in full, for x86-64 and
+   aarch64 with LLVM; all four are in §10.3):
 
    ```
    x86-64, LLVM:    mul %rdi ; setne ; setne ; lea ; add ; adc ; setb ; adc ; movzbl ; add ; sbb ; adc ; ret
@@ -217,12 +217,117 @@ stays, whole, for `std.ed25519`, which has its own point arithmetic over 16 limb
 
 ## 10. Results
 
-*(Filled in by the prototype's measurements; see the end of this document.)*
+### 10.1 What was built
+
+`std/field25519_51.cho` (`std.field25519_51`): `add`, `sub`, `mul`, `square`, `mul_small`, `cswap`, `invert`, `pack`, `unpack`, over
+five 51-bit limbs; `mul` is 25 `mul_wide`s, each added into a two-word accumulator by `add_carry`, and `square` is 15.
+`std.x25519` imports it instead of `std.field25519`; its ladder, clamping and refusals are the same lines. The inversion is
+ref10's addition chain (254 squarings and 11 multiplications) where the old field did 253 squarings and 251 multiplications by a bit
+loop, so part of the gain below is not the builtins; §10.5 separates it. `std.field25519` is unchanged and `std.ed25519` still uses it.
+`tests/lex/field25519_51_test.cho` pins the corners a ladder reaches with probability near 2^-51 (a result needing the second carry
+pass of `pack`, p and p + 1, (p - 1)^2, 2 * 2^-1).
+
+### 10.2 Correctness
+
+- RFC 7748's eight vectors (including the 1,000-iteration one) and every Wycheproof X25519 case, on both backends, on macOS arm64
+  and x86-64 Linux (`crates/cancho/tests/conformance/x25519.rs`).
+- `scripts/curve25519_differential.py` against OpenSSL (pyca/cryptography 50.0.2): **200,000 X25519 and 1,000 Ed25519 rounds, 404,000
+  checks, 0 differences** on macOS arm64 with LLVM; 20,000 and 300, 0 differences, on aarch64 Linux.
+- `mul_wide`, `add_carry`, `sub_borrow`: §9, on all of LLVM, Cranelift and wasm32, on macOS arm64 and on x86-64 Linux (both backends
+  there too; wasm32 only on macOS).
+- Mutants. `scripts/wide_multiply_mutants.py`: **20 of 20 killed** (the LLVM lowering and its wasm32 path, the Cranelift lowering, the
+  edition). `scripts/curve25519_mutants.py`: 38 mutants of the four files, **33 killed**, 5 survive: three of them were known
+  (`docs/x25519.md` §5: the X25519 "final swap left out", which is equivalent because clamping clears bit 0, and Ed25519's
+  `point_equal`); two are **new, and a loss of coverage**: `std.field25519`'s "`pack` does one trial subtraction" and "`unpack` keeps
+  the top bit" were killed by X25519's vectors, and X25519 no longer runs on that field. They are bugs in a module only Ed25519 now
+  uses, and Ed25519's vectors do not reach them; a test of `std.field25519` through Ed25519 would. The fifth, "`pack` of the new field does one weak
+  carry pass, not two", is, I believe, equivalent: the later `q` step absorbs the one extra bit that a single pass can leave
+  (checked on the crafted element of the unit test, not proved for every input bound), and the second pass is kept as margin.
+
+### 10.3 Constant time
+
+| What | x86-64 gram, LLVM | Apple M4 Max, LLVM | aarch64 Linux (Docker on the M4), LLVM |
+|---|---|---|---|
+| dudect (`scripts/x25519_timing.py`), 10^6 samples a test, fixed scalar / sparse scalar, max abs t (bar 4.5) | 1.94 / 1.78 | 1.69 / 2.47 | 1.40 / 1.21 |
+| ctgrind (`scripts/curve25519_ctgrind.sh`, Valgrind Memcheck, scalar marked undefined) | not run: no Valgrind on gram | not run: no Valgrind on macOS | **0 reports** (the planted-`if` control of `docs/x25519.md` §3.1 not re-run; Ed25519 signing, the known exception, 1,300) |
+
+- Branch audit (`scripts/chacha20_branches.py`, x86-64): in every function of `std.field25519_51` the only conditional jumps are
+  bounds-check traps, plus `square_n`'s loop counter; `pack` has three `cmovb`, on the output slice's length. In `x25519.scalarmult`
+  the 11 jumps that are not traps are on the loop counter `i`, `scalar_bit`'s tests of it, and the lengths. None is on a field value.
+- Value barrier (`docs/value-barrier.md` §4): `cswap`, the one selection, makes its mask through `value_barrier`, as before.
+- The builtins' own object code (`scripts/wide_multiply_objdump.py`; `words` is the three builtins and nothing else):
+
+  | Backend, machine | instructions | widening multiply | carry instructions | branch or call |
+  |---|---|---|---|---|
+  | LLVM, x86-64 | 18 | `mul` | `adc`, `sbb`, `setb` | none |
+  | LLVM, aarch64 | 17 | `mul`, `umulh` | `adc`, `adcs`, `sbcs`, `cset` | none |
+  | Cranelift, x86-64 | 43 | `mul`, `imul` | `setb` | none |
+  | Cranelift, aarch64 | 32 | `umulh` | `cset` | none |
+
+  The x86-64 LLVM code is `mulx`-free: the baseline x86-64 target has no BMI2, and `-march=native` bought nothing in C (§2).
+- **Not run:** a dudect test of Cranelift's X25519, on either machine. Cranelift does not set `PSTATE.DIT`, and `docs/tls-assurance.md`
+  §6.1 found Cranelift failing it for other primitives; the instructions it chooses are the ones above, but no timing test says so.
+
+### 10.4 Speed
+
+`scripts/curve25519_bench.py`, median of five runs of N operations less one, N chosen so a run is about a second; "before" is
+the unchanged ladder on `std.field25519` (the same source built as a local module on the same compiler), "after" the final tree. OpenSSL is
+`openssl speed ecdhx25519` on the same machine.
+
+| Machine, CPU, load | Backend | before | after | speed-up | OpenSSL |
+|---|---|---|---|---|---|
+| Apple M4 Max, macOS, idle | LLVM | 0.585 ms | **0.025 ms** | **23x** | 0.019 ms (OpenSSL 3.6.4) |
+| | Cranelift | 1.362 ms | 0.071 ms | 19x | |
+| aarch64 Linux, Docker on the M4 Max, idle | LLVM | 0.60 ms | 0.026 ms | 23x | 0.019 ms (OpenSSL 3.0.13) |
+| gram, Intel i7-1260P, cores 4-5, **load average 6 to 12 from other agents**, seven interleaved runs | LLVM | median 1.87 ms (min 1.32) | median 0.108 ms (min 0.068) | 17x on medians, 19x on minima | 0.0267 ms, measured earlier when quiet |
+| | Cranelift | median 3.98 ms (min 2.69) | median 0.398 ms (min 0.336) | 10x | |
+| gram, an earlier run before the squaring change, load 3.6 | LLVM | 0.664 to 0.93 ms | 0.051 to 0.063 ms | 12 to 13x | |
+
+gram's absolute figures are not reproducible: it ran at one third of its early speed by the end of the work, other agents' jobs
+included one on a sibling hardware thread of the pinned cores. The ratios within one interleaved run are the evidence, not the
+milliseconds; the three quiet-time anchors are the early 0.664 ms before, the C figures of §2 (16-bit 0.50 ms, 51-bit 0.050 ms), and OpenSSL's 0.0267 ms.
+
+### 10.5 Where the gain came from
+
+On the M4, LLVM: 0.585 ms before. The new field with the old bit-loop inversion would cost 253 + 251 = 504 field operations for the
+inversion against 265; with 2,550 in the ladder that is about 8%, so 1.1x of the 23x is the addition chain, and the squaring
+(15 products against 25, measured 8% on the whole) another 1.1x. The rest, about 19x, is the representation:
+**25 products in 5 limbs against 256 in 16, and `mul_wide` and `add_carry` letting each be two instructions.** That is more than §2's C
+ratio (8.8x) because the code in this language on 16 limbs was 2.4 times slower than the same code in C (loop control, bounds checks and
+every limb a load and a store through a slice), and the 51-bit code, being straight-line on locals, has none of that to lose:
+0.025 ms is the C `unsigned __int128` figure (0.027 ms) to within 8%.
+
+### 10.6 Verdict
+
+**It reaches 3x, and by a wide margin: 23x on arm64, 17 to 19x on x86-64 under load, 19x on Cranelift/arm64 and 10x on Cranelift/x86-64
+(load).** X25519 costs 1.3 times OpenSSL's hand-written assembly on the M4 (0.025 against 0.019 ms) and about 2.5 to 4 times on
+gram (0.068 to 0.108 ms under load against 0.0267 ms quiet; the comparison is unfair to this language until gram is quiet).
+The wide builtins are therefore worth keeping, and the larger win for every public-key operation exists *if* the others behave
+like X25519 (§11).
+
+What limits it from here, in order of what I would check, none of it measured:
+1. **x86-64 baseline instructions.** `mul`, not `mulx`, and one carry chain, not two (`adcx`/`adox`). OpenSSL's x86-64 X25519 uses both.
+   Reaching them needs `"target-features"="+bmi2,+adx"` on the functions that use the builtins and a run-time CPU test, the shape
+   `docs/crypto-builtins.md` §4 built for AES. C at `-march=native` (§2) gained nothing, so the expected gain is small.
+2. **Limbs through memory.** `add`, `sub` and `cswap` are separate passes over 5-element slices, as the old ladder's were; the ladder step is
+   about 10 field operations, and fusing them by hand would keep the limbs in registers. A language-level fix is an array value type, not a builtin.
+3. **The carry extraction.** `(hi << 13) | (lo >> 51)` is one `extr` on aarch64 (LLVM found it; 5 in `mul`'s object code), so no funnel-shift builtin is needed there. On x86-64 it is `shrd` when LLVM finds it; not checked.
+4. **Bounds checks** in each function (`udf`/`ud2` branches): cheap and predicted, about 15 in `mul`.
+The language's loop overhead is *not* what limits it: the 51-bit code has no inner loops.
 
 ## 11. What this does not do, and what each user would gain
 
-Not done here, and each a decision for a person: P-256, P-384, RSA and Poly1305 are not moved. The estimates are **by
-arithmetic from the inner loops, not measured**, and §10's X25519 figure is the only evidence about how well this language turns
-such a loop into instructions.
+Not done here, and each a decision for a person: P-256, P-384, RSA and Poly1305 are not moved. The estimates are **by arithmetic from
+the inner loops, not measured**; §10 is the only evidence about how well this language turns such a loop into instructions, and
+it was better than its C estimate.
 
-*(To be completed with §10.)*
+| User | Today | With the builtins | Arithmetic |
+|---|---|---|---|
+| `std.bigmod` Montgomery multiplication (P-256, P-384, RSA), `mont_mul` | 30-bit limbs: k = 9, 13, 69 for 256, 384, 2,048 bits; the inner step does two multiplies and fits 62 bits | 64-bit limbs: k = 4, 6, 32; the inner step is two `mul_wide`s and three or four `add_carry`s | inner steps k x k: 81 to 16, 169 to 36, 4,761 to 1,024 (5.1x, 4.7x, 4.6x fewer); each step costs about 1.4x more instructions (10 against 7); so 3 to 3.5x on `mont_mul` |
+| P-256 ECDH, ECDSA | the same `mont_mul` plus table selection that reads all 16 entries under masks, additions, copies | | at most the `mont_mul` gain; the share of `mont_mul` in `std.ecdh` was not measured here. If it is 80%, 2.2 to 2.5x on the whole |
+| RSA-2048 private-key operation | `pow_mod` on 69 limbs | on 32 limbs | 3 to 3.5x |
+| Poly1305 (`std.chacha20`) | 5 limbs of 26 bits: 25 products and reductions a 16-byte block | 3 limbs of 44 bits (poly1305-donna-64): 9 `mul_wide`s | 2 to 2.5x on the MAC, which is a minority of ChaCha20-Poly1305's per-byte cost; ChaCha20 itself is untouched |
+| `std.ed25519` | 16-bit `std.field25519`, 3 ms to sign | `std.field25519_51` ported into its point arithmetic | its field multiplications are most of a signature, so the X25519 factor is the ceiling; the bit-serial scalar arithmetic mod L, which does not use them, is the remainder |
+
+The ordering by value, which is a decision for a person: `std.bigmod` first (one change speeds P-256, P-384, ECDSA verification and RSA),
+then Ed25519, then Poly1305.

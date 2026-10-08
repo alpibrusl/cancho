@@ -31,7 +31,7 @@ fn m51() -> [] int {
 // 128-bit value `hi * 2^64 + lo`, as a word. `lo >> 51` is arithmetic, so its
 // 13 meaningful bits are masked.
 fn shr51(hi: int, lo: int) -> [] int {
-    return (lo >> 51 & 0x1fff) | (hi << 13);
+    return lo >> 51 & 0x1fff | hi << 13;
 }
 
 // `(hi, lo) + a * b` as a 128-bit accumulator.
@@ -327,9 +327,9 @@ pub fn unpack[&o, &s](o: &!o [int], s: &s [byte]) -> [] int {
     let w2 = word(s, 16);
     let w3 = word(s, 24);
     o[0] = w0 & m51();
-    o[1] = (w0 >> 51 & 0x1fff) | (w1 << 13 & m51());
-    o[2] = (w1 >> 38 & 0x3ffffff) | (w2 << 26 & m51());
-    o[3] = (w2 >> 25 & 0x7fffffffff) | (w3 << 39 & m51());
+    o[1] = w0 >> 51 & 0x1fff | w1 << 13 & m51();
+    o[2] = w1 >> 38 & 0x3ffffff | w2 << 26 & m51();
+    o[3] = w2 >> 25 & 0x7fffffffff | w3 << 39 & m51();
     o[4] = w3 >> 12 & m51();
     return 0;
 }
@@ -384,16 +384,16 @@ pub fn pack[&o, &a](out: &!o [byte], a: &a [int]) -> [] int {
         let f1 = v1 & m51();
         let f2 = v2 & m51();
         let f3 = v3 & m51();
-        let w0 = f0 | (f1 << 51);
-        let w1 = (f1 >> 13 & 0x3fffffffff) | (f2 << 38);
-        let w2 = (f2 >> 26 & 0x1ffffff) | (f3 << 25);
-        let w3 = (f3 >> 39 & 0xfff) | (v4 << 12);
+        let w0 = f0 | f1 << 51;
+        let w1 = f1 >> 13 & 0x3fffffffff | f2 << 38;
+        let w2 = f2 >> 26 & 0x1ffffff | f3 << 25;
+        let w3 = f3 >> 39 & 0xfff | v4 << 12;
         var i = 0;
         while i < 8 {
-            out[i] = byte_of(w0 >> (8 * i) & 255);
-            out[8 + i] = byte_of(w1 >> (8 * i) & 255);
-            out[16 + i] = byte_of(w2 >> (8 * i) & 255);
-            out[24 + i] = byte_of(w3 >> (8 * i) & 255);
+            out[i] = byte_of(w0 >> 8 * i & 255);
+            out[8 + i] = byte_of(w1 >> 8 * i & 255);
+            out[16 + i] = byte_of(w2 >> 8 * i & 255);
+            out[24 + i] = byte_of(w3 >> 8 * i & 255);
             i = i + 1;
         }
         set_small(t, 0);
