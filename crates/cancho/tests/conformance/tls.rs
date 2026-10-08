@@ -1,9 +1,11 @@
-//! `packages/tls` with no network (`docs/tls-core.md` §6.1): eleven recorded
+//! `packages/tls` with no network (`docs/tls-core.md` §6.1): fourteen recorded
 //! handshakes replayed byte for byte on both backends -- five TLS 1.3
 //! against tlslite-ng (ChaCha20 with X25519, AES-256-GCM with X25519, and a
 //! HelloRetryRequest to P-256 and to P-384 under AES-GCM,
 //! `docs/tls-parity.md` §3.3) and six TLS 1.2 against `openssl s_server`,
-//! one a suite (§3.4) -- the TLS 1.2 PRF against its definition,
+//! one a suite (§3.4), and three in which the server asks for a client
+//! certificate and verifies it (tlslite-ng's TLS 1.3, OpenSSL's TLS 1.2 and
+//! TLS 1.3: `docs/tls-parity.md` §6.10) -- the TLS 1.2 PRF against its definition,
 //! the same server bytes fed one byte at a time and all at once, a wrong
 //! root, a crafted ServerHello for each rule of RFC 8446 §4.1.3 the
 //! client enforces, and the 84 connections of `scripts/tls_liar.py`'s
@@ -234,8 +236,11 @@ fn the_same_bytes_in_any_split_give_the_same_connection() {
         assert_eq!(field(got.last().unwrap(), 2), "4", "{name}: closed");
         // Every F before the request in one line.
         let first_w = asked.iter().position(|l| l.starts_with("W ")).unwrap();
-        let flight: String = asked[1..first_w].iter().map(|l| &l[2..]).collect();
-        let mut coalesced = vec![asked[0].clone(), format!("F {flight}")];
+        // The mutual traces begin with an `I` line, the client's identity, before `C`.
+        let start = asked.iter().position(|l| l.starts_with("C ")).unwrap();
+        let flight: String = asked[start + 1..first_w].iter().map(|l| &l[2..]).collect();
+        let mut coalesced: Vec<String> = asked[..=start].to_vec();
+        coalesced.push(format!("F {flight}"));
         coalesced.extend(asked[first_w..].iter().cloned());
         let got = run(&exe, &coalesced);
         assert_eq!(total(&got, 3), want_out, "{name}: coalesced, what the client sent");

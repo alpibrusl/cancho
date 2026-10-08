@@ -497,12 +497,12 @@ tls.client_auth(engine, slot) -> 0 | 1 | 2                                      
   it does not name**: an upstream that asks for a certificate it should not get (a public site with optional client
   authentication) learns nothing. `hosts` may not be empty (`tls-client-names`), so a forgotten argument is a refusal, not an identity that
   is silently never used.
-- **What the engine holds**, per identity: the chain as `Certificate` sends it (each certificate's DER, up to 16 KiB in all, as
-  `tls_identity` holds a server's), the key (32 bytes), its public point (65), the leaf's `notAfter`, and the hosts (up to 512
-  bytes). Four identities; the engine never gives a key back, and there is no function that answers one. **Memory:** a
-  `open_mutual` engine adds about 69 KiB for the four and 77 KB for the key parser's work (`x509_key.work_len()` words);
+- **What the engine holds**, per identity: the chain as `Certificate` sends it (each certificate's DER, up to 12 KiB in all: a message of the client's has to fit one record, and `tls_identity`'s 16 KiB for a server
+  would not), the key (32 bytes), its public point (65), the leaf's `notAfter`, and the hosts (up to 512
+  bytes). Four identities; the engine never gives a key back, and there is no function that answers one. **Memory:** an
+  `open_mutual` engine adds 51,636 bytes for the four (12,909 each) and the key parser's work (`x509_key.work_len()` words, 77 KB);
   an engine opened with `open` adds nothing. **A slot holds none of it**: it holds which identity it chose, so the chain's
-  16 KiB is not paid 64 times. The chain is read from the engine's store when the client's flight is built, which is one
+  12 KiB is not paid 64 times. The chain is read from the engine's store when the client's flight is built, which is one
   call of `feed`, so a `replace_client_identity` between two calls cannot give a connection a chain and a signature from two
   identities.
 - **Overwritten**: `remove_client_identity` and `replace_client_identity` overwrite the old key and chain first, and
@@ -607,7 +607,7 @@ server's choice once EncryptedExtensions (TLS 1.3) or the ServerHello (TLS 1.2) 
 - **The server's answer.** TLS 1.3: in EncryptedExtensions. TLS 1.2: in the ServerHello's extensions. Exactly one name (RFC 7301 §3.1).
   - one that is **not in the offer** is `tls-alpn-selected` (alert `illegal_parameter`, 47). The server's answer is the only thing that could make
     the client run a protocol it never offered, so it is checked byte for byte against the offer. A name longer than the offer's cap can
-    never be in it, so it is the same refusal; a length that does not fit the extension is `tls-decode-error`;
+    never be in it, so it is the same refusal; a length that does not fit the extension is `tls-decode-error`, and the extension twice `tls-extension-repeat`;
   - an ALPN answer when **nothing was offered** is `tls-unsupported-extension` (RFC 8446 §4.2), as now;
   - ALPN in a TLS 1.3 `ServerHello` (not EncryptedExtensions) is `tls-unsupported-extension`;
   - **no answer** is a connection with no protocol: `alpn` answers 0, and the caller decides. A program that needs h2 closes. (The server is the one that
@@ -623,18 +623,20 @@ server's choice once EncryptedExtensions (TLS 1.3) or the ServerHello (TLS 1.2) 
 
 - **`CertificateRequest`** (TLS 1.3 and 1.2) is at most the handshake reassembly buffer, 64 KiB, as every message. Nothing is allocated from a length it
   names: the context is at most 255 bytes (the slot's `k_context`, 256), the extensions and the authorities list are walked in place, and each is
-  checked to end where it says. `signature_algorithms` and `certificate_authorities` twice in one request are `tls-decode-error` (RFC 8446 §4.2);
-  an authorities list whose names do not tile it, a name of length 0, or a `signature_algorithms` list of odd length, the same. Matching the authorities
+  checked to end where it says. `signature_algorithms` and `certificate_authorities` twice in one request are `tls-extension-repeat` (RFC 8446 §4.2, alert 47 as OpenSSL sends);
+  an authorities list whose names do not tile it, a name of length 0, or a `signature_algorithms` list of odd length, are `tls-decode-error`. Matching the authorities
   against our chain is at most (the chain's certificates) times (the list's bytes), about 8 × 64 KiB comparisons; it reads and compares, writes nothing.
   A second `CertificateRequest` is `tls-unexpected-message` (the flag that is set at the first, as now); one after `Finished` is out of order for the same
   reason; one in a resumed handshake is out of order too.
 - **Slot layout (the shared files, as little as possible):**
-  - `tls_slot.ints_len()`: **+2 words**, appended after `i_session_len`: `i_alpn_offer_len` (0 to 256) and `i_alpn_at` (where the server's choice starts in the offer, valid
+  - `tls_slot.ints_len()`: **+2 words** (10,241 to 10,243), appended after `i_session_len`: `i_alpn_offer_len` (0 to 256) and `i_alpn_at` (where the server's choice starts in the offer, valid
     when `i_alpn_len`, which the server already has for its own choice, is more than 0). The slot's chosen identity is `i_identity` (the server's field for the same
     idea; a client slot is free to hold it, as id + 1, 0 for none).
-  - `tls_slot.bytes_len()`: **+256 bytes**, appended at the end (`b_alpn_offer`, after the ticket host name). 64 slots: 16 KiB.
-  - `tls_slot`: one flag, `f_cert_send`, bit 24 (the server's client-authentication work uses bits 15 to 18).
-  - `tls_record`: refusal codes **-120 to -130** (the server's are -40 to -71), `tls-client-*` and `tls-alpn-*`, below.
+  - `tls_slot.bytes_len()`: **+256 bytes** (187,191 to 187,447), appended at the end (`b_alpn_offer`, after the ticket host name). A slot is
+    269,391 bytes, 272 more; 64 slots: 17 KiB.
+  - `tls_slot`: one flag, `f_cert_send`, bit 24 (16,777,216; the server's client-authentication work uses bits 15 to 18). A ClientHello offering
+    ALPN adds at most 4 + 2 + 256 bytes to `max_client_hello`.
+  - `tls_record`: refusal codes **-120 to -131** (the server's are -40 to -71), `tls-client-*`, `tls-alpn-*` and `tls-extension-repeat`, below.
   - `tls.cho`: no field is added to `Engine`; a client engine opened with `open_mutual` keeps its identities in the field `ids` (empty for a client) and the parser's
     work in `srv` after the role word (which is 2 for it). `t_fields` is unchanged: rule 9 reuses `t_trust`, rule 10 reuses the entry's `notAfter`.
 - **New tags** (alert in the last column; every refusal has a rule tag, CLAUDE.md):
@@ -652,6 +654,7 @@ server's choice once EncryptedExtensions (TLS 1.3) or the ServerHello (TLS 1.2) 
 | -128 | `tls-client-sign` | the signer refused or its check failed: a fault, not an input | 80 |
 | -129 | `tls-alpn-list` | `set_alpn_offer` or `start_alpn`: an empty name, a name over 255 bytes, a list over 256 | n/a |
 | -130 | `tls-alpn-selected` | the server chose a protocol that is not in the offer | 47 |
+| -131 | `tls-extension-repeat` | `signature_algorithms` or `certificate_authorities` twice in a CertificateRequest, or ALPN twice in a server's answer (RFC 8446 §4.2) | 47 |
 
   A client call on an engine not opened with `open_mutual`, or a server engine, is `tls-role` (-57), as the server's calls on a client engine are.
 

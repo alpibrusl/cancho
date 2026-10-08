@@ -156,7 +156,7 @@ pub enum Started {
     Failed(int),
 }
 
-// A `Loop` for a client of `slots` connections. The TLS engine has a slot for each (269,375 bytes apiece) only when `tls_on`, and is opened
+// A `Loop` for a client of `slots` connections. The TLS engine has a slot for each (269,391 bytes apiece) only when `tls_on`, and is opened
 // to hold client identities (`docs/tls-parity.md` §6.2: about 50 KiB and the key parser's 77 KB more, once).
 pub fn open[&h](heap: &!h Heap, slots: int, tls_on: bool) -> [heap] Started {
     match poller_new() {
