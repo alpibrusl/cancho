@@ -1,0 +1,90 @@
+edition 5;
+
+// `packages/http-client` with no socket (`docs/http-client.md` §3.2, §9): one request made, its bytes taken, a response given in
+// pieces of three, and the body written to standard output. `conformance/http_client.rs` runs it and pins its authority report:
+// what the client itself can reach is the heap and nothing else (the `io_write` is this program printing).
+//
+//     cancho run --std packages/http-client/{slot,wire,client}.cho tests/programs/http_client_bytes.cho
+
+import std.io;
+import http_client as hc;
+
+fn exchange[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
+    var c = hc.open(heap, 2, 4096, 4096, hc.default_limits());
+    var status = 0;
+    borrow mut c as &!cw in {
+        let t = hc.request(cw, 0, 1, "GET", "/hello", "example.test", "Accept: text/plain\r\n", hc.body_none(), 0);
+        var going = true;
+        var sent = false;
+        var at = 0;
+        let reply = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n6\r\nhello \r\n5\r\nworld\r\n0\r\n\r\n";
+        while going {
+            match hc.poll(cw, 1) {
+                hc.Event::Connect(k) => {
+                    // The caller dials what `hc.key(cw, k)` names; here nothing is dialled.
+                    hc.connected(cw, k, 1);
+                }
+                hc.Event::Body(ticket) => {
+                    io.write_all(io, hc.body(cw, ticket));
+                    hc.consume(cw, ticket, hc.avail(cw, ticket), 1);
+                }
+                hc.Event::Done(ticket) => {
+                    status = hc.status(cw, ticket);
+                    io.newline(io);
+                    going = false;
+                }
+                hc.Event::Failed(ticket) => {
+                    io.write_all(io, hc.refusal_tag(hc.failure(cw, ticket)));
+                    status = 0 - 1;
+                    going = false;
+                }
+                hc.Event::None => {
+                    if !sent {
+                        region a {
+                            let wire_out = alloc_slice[a](256, byte_of(0));
+                            let n = hc.take(cw, 0, wire_out, 1);
+                            io.write_all(io, wire_out[0..n]);
+                            sent = n > 0;
+                        }
+                    } else if at < len(reply) {
+                        var to = at + 3;
+                        if to > len(reply) {
+                            to = len(reply);
+                        }
+                        at = at + hc.give(cw, 0, reply[at..to], 1);
+                    } else {
+                        going = false;
+                    }
+                }
+                _ => {
+                }
+            }
+        }
+        if t < 0 {
+            status = 0 - 2;
+        }
+    }
+    hc.close(heap, c);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    release(net);
+    release(clock);
+    var status = 1;
+    borrow mut io as &!i in {
+        borrow mut heap as &!h in {
+            status = exchange(h, i);
+        }
+    }
+    release(io);
+    release(heap);
+    if status == 200 {
+        return 0;
+    }
+    return 1;
+}

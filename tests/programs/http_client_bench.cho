@@ -1,0 +1,149 @@
+edition 5;
+
+// `docs/http-client.md` §10: what the client costs with no socket and no TLS in the way -- the state machine alone.
+//
+//     http_client_bench <requests> <slots> <body bytes>
+//
+// `slots` requests are kept in flight on one upstream; each is answered by a canned response (`Content-Length`, `body bytes` of
+// body) fed to its connection in one piece, its body consumed, and the next request made on the connection the pool kept. Nothing
+// is read from or written to anything. Prints the requests done and the milliseconds they took, so the cost of one is the
+// difference between two runs of different length.
+import std.io;
+import http_client as hc;
+
+fn number_at[&g](args: &g Args, at: int, otherwise: int) -> [args] int {
+    if arg_count(args) <= at {
+        return otherwise;
+    }
+    let a = arg(args, at);
+    var n = 0;
+    var i = 0;
+    while i < len(a) {
+        n = n * 10 + (int_of(a[i]) - 48);
+        i = i + 1;
+    }
+    return n;
+}
+
+fn run[&h, &k, &i](heap: &!h Heap, clock: &k Clock, io: &!i Io, requests: int, slots: int, body: int) -> [heap, clock, io_write] int {
+    var c = hc.open(heap, slots, 65536, 16384, hc.Limits { connect_ms: 0, head_ms: 0, body_ms: 0, total_ms: 0, expect_ms: 0, idle_ms: 0, lifetime_ms: 0, idle_per_key: slots, max_requests: 0 });
+    var done = 0;
+    var failed = 0;
+    var started = 0;
+    var elapsed = 0;
+    borrow mut c as &!cw in {
+        region a {
+            let out = alloc_slice[a](4096, byte_of(0));
+            // The canned response: a head with the length, and the body.
+            let reply = alloc_slice[a](body + 128, byte_of(120));
+            let head = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ";
+            copy_into(reply[0..len(head)], head);
+            var at = len(head);
+            var digits = 1;
+            var rest = body / 10;
+            while rest > 0 {
+                digits = digits + 1;
+                rest = rest / 10;
+            }
+            var v = body;
+            var d = digits;
+            while d > 0 {
+                reply[at + d - 1] = byte_of(48 + v % 10);
+                v = v / 10;
+                d = d - 1;
+            }
+            at = at + digits;
+            reply[at] = byte_of(13);
+            reply[at + 1] = byte_of(10);
+            reply[at + 2] = byte_of(13);
+            reply[at + 3] = byte_of(10);
+            let size = at + 4 + body;
+            let t0 = clock_ms(clock);
+            // `slots` requests in flight; a finished one is replaced.
+            var n = 0;
+            while n < slots && started < requests {
+                if hc.request(cw, 0, 1, "GET", "/users/42", "example.test", "Accept: application/json\r\n", hc.body_none(), 0) > 0 {
+                    started = started + 1;
+                }
+                n = n + 1;
+            }
+            while done < requests {
+                match hc.poll(cw, 0) {
+                    hc.Event::Connect(slot) => {
+                        hc.connected(cw, slot, 0);
+                    }
+                    hc.Event::Body(t) => {
+                        hc.consume(cw, t, hc.avail(cw, t), 0);
+                    }
+                    hc.Event::Done(t) => {
+                        done = done + 1;
+                        if started < requests {
+                            if hc.request(cw, 0, 1, "GET", "/users/42", "example.test", "Accept: application/json\r\n", hc.body_none(), 0) > 0 {
+                                started = started + 1;
+                            }
+                        }
+                    }
+                    hc.Event::None => {
+                        // The transport: take what each connection has to send and answer it.
+                        var s = 0;
+                        while s < slots {
+                            if hc.pending(cw, s) > 0 {
+                                hc.take(cw, s, out, 0);
+                                hc.give(cw, s, reply[0..size], 0);
+                            }
+                            s = s + 1;
+                        }
+                    }
+                    hc.Event::Failed(t) => {
+                        done = done + 1;
+                        failed = failed + 1;
+                    }
+                    _ => {
+                    }
+                }
+            }
+            elapsed = clock_ms(clock) - t0;
+        }
+    }
+    io.print_int(io, done);
+    io.space(io);
+    io.print_int(io, elapsed);
+    io.space(io);
+    io.print_int(io, failed);
+    io.space(io);
+    borrow c as &cr in {
+        io.print_int(io, hc.connects(cr));
+        io.space(io);
+        io.print_int(io, hc.reuses(cr));
+    }
+    io.newline(io);
+    hc.close(heap, c);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(fs);
+    release(net);
+    var requests = 0;
+    var slots = 0;
+    var body = 0;
+    borrow args as &g in {
+        requests = number_at(g, 1, 100000);
+        slots = number_at(g, 2, 8);
+        body = number_at(g, 3, 26);
+    }
+    release(args);
+    borrow mut io as &!i in {
+        borrow mut heap as &!h in {
+            borrow clock as &k in {
+                run(h, k, i, requests, slots, body);
+            }
+        }
+    }
+    release(clock);
+    release(io);
+    release(heap);
+    return 0;
+}

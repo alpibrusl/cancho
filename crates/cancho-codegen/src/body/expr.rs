@@ -548,10 +548,18 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     // 0.0` is `0xfff8...` on x86-64 and `0x7ff8...` on
                     // aarch64, so a bare `bitcast` made `bits_of` the one
                     // operation whose answer depended on where the program
-                    // ran (`docs/differential.md` §4). Nothing a program
-                    // can do reaches a NaN's payload -- there is no
-                    // `float_of_bits` -- so the only thing canonicalising
-                    // loses is the hardware's accident.
+                    // ran (`docs/differential.md` §4). Arithmetic never
+                    // reaches a NaN's payload, so what canonicalising loses
+                    // is the hardware's accident -- and the payload a
+                    // program built with `float_of_bits` (edition 7), which
+                    // it can never read back: one pattern for every NaN.
+                    // `bits_of`'s inverse: the same sixty-four bits, read as
+                    // a float. No NaN is rewritten on the way in, so a
+                    // program can build one with a payload; `bits_of` reads
+                    // it back as the canonical pattern.
+                    Callee::Builtin(Builtin::FloatOfBits) => {
+                        vec![self.builder.ins().bitcast(types::F64, MemFlags::new(), args[0])]
+                    }
                     Callee::Builtin(Builtin::BitsOf) => {
                         let x = args[0];
                         let raw = self.builder.ins().bitcast(types::I64, MemFlags::new(), x);
@@ -747,8 +755,10 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::PollerAddSignals) => {
                         self.poller_ctl(&args, true, false)
                     }
-                    Callee::Builtin(Builtin::ConnDetach) => self.conn_detach(&args),
-                    Callee::Builtin(Builtin::ConnAttach) => self.conn_attach(&args),
+                    Callee::Builtin(Builtin::ConnDetach) => self.conn_detach(&args, false),
+                    Callee::Builtin(Builtin::ConnAttach) => self.conn_attach(&args, false),
+                    Callee::Builtin(Builtin::UdpDetach) => self.conn_detach(&args, true),
+                    Callee::Builtin(Builtin::UdpAttach) => self.conn_attach(&args, true),
                     Callee::Builtin(Builtin::PollerAddListener) => {
                         self.poller_ctl(&args, true, false)
                     }

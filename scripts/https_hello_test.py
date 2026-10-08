@@ -21,6 +21,9 @@ the case says so rather than pass). Each case starts its own server on a free po
     stalled    a client asks for 1 GiB and stops reading: the server's memory does not grow, the other clients are
                served meanwhile, and the stalled one is closed after `--idle`
     slow       a client that sends half a request and waits is closed after `--idle`, and does not hold up the rest
+    ended      a connection ended by `Connection: close` and then written to (from its own thread: OpenSSL's per-thread
+               error queue would report its refused writes on the next write of another socket in the same thread) does
+               not disturb a keep-alive client beside it: 40 requests answered, no other connection closed
     reload     as `tls_echo`'s: a connection open before SIGHUP keeps its certificate and keeps being served; one after
                gets the renewed one; a refused reload leaves the renewed one serving
     bound      `--handshakes 2`: two peers that connect and send nothing hold both places, an honest client waits
@@ -484,6 +487,49 @@ def case_slow(exe):
         server.stop()
 
 
+def case_ended(exe):
+    server = Server(exe)
+    try:
+        ended = https(server.port, 10)
+        h = client(server.port, 10)
+        if get(h, "/hello/b") != (200, b"hello, b\n"):
+            return "the keep-alive client was not served before"
+        ended.sendall(b"GET /hello/x HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+        server.wait_for(lambda l: l.startswith("conn 1 closed"), 5)
+        # The ended client keeps writing, from a thread of its own: OpenSSL's error queue is per thread and CPython's
+        # `_ssl` does not clear it, so a write refused on `ended` (EPIPE) would otherwise be reported again by the next
+        # write on `h` in the same thread, as `h`'s own BrokenPipeError, though `h` is untouched (http-server.md §11.6).
+        refused = []
+        done = threading.Event()
+
+        def write_on():
+            while not done.is_set():
+                try:
+                    ended.sendall(b"y")
+                except (ssl.SSLError, OSError):
+                    refused.append(1)
+                time.sleep(0.05)
+
+        writer = threading.Thread(target=write_on, daemon=True)
+        writer.start()
+        try:
+            for i in range(40):
+                if get(h, f"/hello/k{i}") != (200, f"hello, k{i}\n".encode()):
+                    return f"the keep-alive client's request {i} after the other connection ended was not served"
+                time.sleep(0.05)
+        finally:
+            done.set()
+            writer.join(5)
+        if not refused:
+            return "the ended connection's writes were never refused: it was not closed"
+        others = [l for l in server.text() if l.startswith("conn ") and not l.startswith("conn 1 ")]
+        if any(" closed" in l for l in others):
+            return f"another connection was closed: {others}"
+        return f"ok (40 requests beside a connection written to after it ended; {len(refused)} of its writes refused)"
+    finally:
+        server.stop()
+
+
 def case_reload(exe):
     server = Server(exe, identity="first")
     try:
@@ -665,7 +711,7 @@ def case_hostile(exe):
 
 
 CASES = {"curl": case_curl, "openssl": case_openssl, "http": case_http, "pipelined": case_pipelined, "many": case_many,
-         "big": case_big, "stalled": case_stalled, "slow": case_slow, "reload": case_reload, "bound": case_bound,
+         "big": case_big, "stalled": case_stalled, "slow": case_slow, "ended": case_ended, "reload": case_reload, "bound": case_bound,
          "full": case_full, "idle": case_idle, "shutdown": case_shutdown, "hostile": case_hostile}
 
 
