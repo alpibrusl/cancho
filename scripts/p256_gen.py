@@ -246,11 +246,9 @@ def consts():
         ("r2", r2p),
         ("b_mont", B * R % P),
         ("n", ORDER),
-        ("n_one_mont", R % ORDER),
         ("n_r2", r2n),
         ("p_minus_2", P - 2),
         ("n_minus_2", ORDER - 2),
-        ("three_mont", 3 * R % P),
     ]
     return table
 

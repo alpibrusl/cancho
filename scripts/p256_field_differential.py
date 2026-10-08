@@ -255,6 +255,8 @@ def main():
     cases += verify_cases(rng, count, vectors)
     cases += edge_signatures(rng, 40 if vectors else count)
     cases += raw_cases(rng, count // 4, vectors)
+    for k in [1, 2, N - 1, rng.randrange(1, N), rng.randrange(1, N)]:
+        cases += [(f"G {h(k)}", "1"), (f"H {h(k)}", "1")]
     # The final check of verification: x = r, or x = r + n when that is below p. No real signature
     # reaches the second (p - n is about 2^128), so these are the check on its own.
     small = [1, 2, 3, 12345, (1 << 126) - 1, P - N - 1, P - N - 2, P - N, P - N + 1, N - 1, N - 2, P - 1, N - (1 << 127)]

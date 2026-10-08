@@ -14,12 +14,16 @@
 //     V q e sig  ecdsa.verify_raw (P-256): the code, for the public point q (65 bytes), the digest e and sig = r || s
 //     P a b    the raw kernels on 35-byte (280-bit) operands, limbs all the way to 2^28 - 1: mul_p, R a b mul_n,
 //     D a      sqr_p, E a sqr_n. The ten limbs of the answer in decimal, to check the accumulators' bound
+//     G k      ecdh.public_key, then whether `work` holds only zeros where the call used it: 1 or 0
+//     H k      ecdsa_sign.sign of the digest k with the key k, then the same
 //     T r x    p256_vf.check_x: 1 when a sum of affine x passes the check against r, else 0
 //     C a b    a * b * c mod p, where c is 8 (a*b, add, add, add) -- a chain of lazy sums
 import std.buffer;
 import std.io;
 import std.ecdh;
 import std.ecdsa;
+import std.ecdsa_sign;
+import std.p256_pt;
 import std.p256;
 import std.p256_kernels;
 import std.p256_vf;
@@ -137,6 +141,32 @@ fn case[&i, &s, &w](io: &!i Io, s: &s [byte], at: int, w: &!w [int]) -> [io_writ
                 io.space(io);
                 i = i + 1;
             }
+            io.newline(io);
+            return 0;
+        } else if op == 71 || op == 72 {
+            // `work` starts full of ones; a call that wipes what it used leaves zeros in it.
+            var i = 0;
+            while i < len(w) {
+                w[i] = 0 - 1;
+                i = i + 1;
+            }
+            if op == 71 {
+                let pk = alloc_slice[r](65, byte_of(0));
+                ecdh.public_key(256, a, pk, w);
+            } else {
+                let sig = alloc_slice[r](64, byte_of(0));
+                let none = alloc_slice[r](0, byte_of(0));
+                ecdsa_sign.sign(a, a, none, sig, w);
+            }
+            var dirty = 0;
+            i = 0;
+            while i < p256_pt.work_len() {
+                if w[i] != 0 {
+                    dirty = 1;
+                }
+                i = i + 1;
+            }
+            io.print_int(io, 1 - dirty);
             io.newline(io);
             return 0;
         } else if op == 84 {

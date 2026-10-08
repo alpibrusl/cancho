@@ -60,11 +60,6 @@ pub fn one_mont() -> [] int {
     return fe(4);
 }
 
-// R mod n.
-pub fn n_one_mont() -> [] int {
-    return fe(5);
-}
-
 // The first element a caller may use.
 pub fn base() -> [] int {
     return 24;
@@ -93,14 +88,13 @@ pub fn put_n[&w](w: &!w [int], d: int) -> [] int {
     return put_const(w, p256_kernels.c_n(), d);
 }
 
-// Puts the constants in elements 0 to 5.
+// Puts the constants in elements 0 to 4.
 pub fn init[&w](w: &!w [int]) -> [] int {
     put_const(w, p256_kernels.c_one(), one());
     put_const(w, p256_kernels.c_r2(), r2());
     put_const(w, p256_kernels.c_b_mont(), b_mont());
     put_const(w, p256_kernels.c_n_r2(), n_r2());
     put_const(w, p256_kernels.c_one_mont(), one_mont());
-    put_const(w, p256_kernels.c_n_one_mont(), n_one_mont());
     return 0;
 }
 
