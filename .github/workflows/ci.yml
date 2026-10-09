@@ -50,18 +50,27 @@ jobs:
   # server the runner can install, and beside `openssl s_client` on the same
   # handshakes and on the lying server's cases, each failing on a row that
   # does not; then AFL++ over every fuzzing harness, ten minutes in all.
+  # #208 (docs/tls-assurance.md §8): packages/tls against every other TLS
+  # server the runner can install, and beside `openssl s_client` on the same
+  # handshakes and on the lying server's cases, each failing on a row that
+  # does not; then AFL++ over every fuzzing harness.
+  #
+  # Split into three parallel jobs, one per concern, because the one job it
+  # was had grown to ~30 minutes of serial steps and GitHub-hosted runners
+  # evict it around the 29-minute wall ("The runner has received a shutdown
+  # signal", exit 143) -- three PRs' red checks were that eviction, not a
+  # TLS failure, and the failure point drifted with the queue's load. The
+  # step commands are unchanged; only the grouping moved.
   tls-assurance:
     name: tls-assurance
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Tools
         run: |
           sudo apt-get update
           sudo apt-get install -y nginx gnutls-bin libwolfssl-dev libmbedtls-dev libbotan-2-dev \
             android-libboringssl-dev python3-cryptography afl++ mosquitto-clients libssl-dev curl
-
       - name: Compiler, and the many-connection client
         run: |
           cargo build --release -p cancho
@@ -69,41 +78,59 @@ jobs:
             packages/tls/{tls,record,message,slot,client12,client,hello,identity,server}.cho \
             packages/x509/{verify,names,x509,key}.cho \
             -o "$RUNNER_TEMP/tls_many"
-
       - name: The committed package stores are current (docs/package-system.md §7.4)
         run: python3 scripts/publish_packages.py --check
-
       - name: Interop matrix (docs/tls-assurance.md §5)
         run: python3 scripts/tls_interop.py "$RUNNER_TEMP/tls_many"
-
       - name: Differential, the same handshakes (§4)
         run: python3 scripts/tls_differential.py --handshakes "$RUNNER_TEMP/tls_many"
-
       - name: Differential, the lying server (§4)
         run: python3 scripts/tls_differential.py
-
       - name: Fuzz, two minutes a harness, failing on any crash or hang (§3)
         run: python3 scripts/fuzz_afl.py "$RUNNER_TEMP/fuzz" der:120 chain:120 messages:120 client:120 flight:120
 
-      # docs/tls-server.md §10: the server against OpenSSL, curl, Go, wolfSSL and mosquitto, beside
-      # `openssl s_server` on the lying client's ClientHellos, and its two fuzzing harnesses.
-      - name: The server's interop matrix (docs/tls-server.md §10.2)
+  # docs/tls-server.md §10: the server against OpenSSL, curl, Go, wolfSSL and
+  # mosquitto, beside `openssl s_server` on the lying client's ClientHellos,
+  # and its two fuzzing harnesses.
+  tls-assurance-server:
+    name: tls-assurance (server)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
         run: |
+          sudo apt-get update
+          sudo apt-get install -y gnutls-bin libwolfssl-dev libmbedtls-dev libbotan-2-dev \
+            android-libboringssl-dev python3-cryptography afl++ mosquitto-clients libssl-dev curl
+      - name: Compiler, and the server
+        run: |
+          cargo build --release -p cancho
           echo "127.0.0.1 srv.example other.example a.wild.example" | sudo tee -a /etc/hosts
           ./target/release/cancho build --std tests/programs/tls_serve.cho \
             packages/tls/{tls,record,message,slot,client12,client,hello,identity,server}.cho \
             packages/x509/{verify,names,x509,key}.cho \
             -o "$RUNNER_TEMP/tls_serve"
-          python3 scripts/tls_server_interop.py "$RUNNER_TEMP/tls_serve"
-
+      - name: The server's interop matrix (docs/tls-server.md §10.2)
+        run: python3 scripts/tls_server_interop.py "$RUNNER_TEMP/tls_serve"
       - name: The server's differential against openssl s_server (§10.3)
         run: python3 scripts/tls_server_differential.py
-
       - name: Fuzz the server, two minutes a harness (§10.5)
         run: python3 scripts/fuzz_afl.py "$RUNNER_TEMP/fuzz_server" hello:120 server:120
 
-      # docs/tls-server.md §11: the example the broker and the gateway copy, against `openssl s_client` and Python's
-      # `ssl` (echoes, 200 connections, reload, the handshake bounds, idle, stop), and its cost on x86-64.
+  # docs/tls-server.md §11 and docs/http-server.md §§11-12: the TLS echo
+  # example, the HTTPS example, and their mutants -- the example the broker
+  # and the gateway copy.
+  tls-assurance-examples:
+    name: tls-assurance (examples)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nginx python3-cryptography libssl-dev curl gcc
+      - name: Compiler
+        run: cargo build --release -p cancho
       - name: The TLS echo example (docs/tls-server.md §11)
         run: |
           ./target/release/cancho build --std examples/tls_echo/{tls_echo,echo,front,identity}.cho \
@@ -111,7 +138,6 @@ jobs:
             packages/x509/{verify,names,x509,key}.cho \
             -o "$RUNNER_TEMP/tls_echo"
           python3 scripts/tls_echo_test.py "$RUNNER_TEMP/tls_echo" --cost 20
-
       # docs/http-server.md §11: the byte-fed `http.server` behind the TLS engine, against curl, `openssl s_client` and
       # Python's `ssl`/`http.client` (keep-alive, pipelining, 200 connections, a streamed 64 MiB body, a client that stops
       # reading, reload, the bounds), and its cost over TLS against the plain server, one core each. §12 adds uploads to the
@@ -130,10 +156,8 @@ jobs:
           ./target/release/cancho build --std examples/api/api.cho packages/http-server/server.cho -o "$RUNNER_TEMP/api"
           python3 scripts/https_hello_test.py "$RUNNER_TEMP/https_hello" --cost 5 \
             --kload "$RUNNER_TEMP/kload" --tload "$RUNNER_TEMP/tload" --plain "$RUNNER_TEMP/api"
-
       - name: The byte-fed mode's mutants (docs/http-server.md §11.5)
         run: python3 scripts/http_server_bytes_mutants.py ./target/release/cancho
-
       # docs/http-client.md §9: the non-blocking HTTP client (`packages/http-client`) through `examples/http_fetch_nb`, against
       # servers that decide every byte they send (plain TCP and TLS 1.3), nginx (which ends connections with `Connection: close`
       # after 5 requests), the repository's own `https_hello`, and a server that damages its responses; then a million damaged
@@ -154,10 +178,8 @@ jobs:
           ./target/release/cancho build --std examples/api/api.cho packages/http-server/server.cho -o "$RUNNER_TEMP/api"
           python3 scripts/http_client_test.py "$RUNNER_TEMP/http_fetch_nb" --pin --cost 5 \
             --server "$RUNNER_TEMP/api" --https-hello "$RUNNER_TEMP/https_hello"
-
       - name: The HTTP client's mutants (docs/http-client.md §9)
         run: python3 scripts/http_client_mutants.py ./target/release/cancho
-
       # docs/http-server.md §12: streaming request bodies and `Expect: 100-continue`. `https_hello_test.py` above ran its upload, expect,
       # halfbody and mangled cases (uploads of 0 bytes to 1 GiB, hashed; 100 Continue; 408s; mangled bodies). These are the mutants of the
       # new code, against the tests without a socket. (The few lines only the socket path runs have `--socket` mutants, which build
