@@ -571,6 +571,22 @@ fn is_ident_continue(b: u8) -> bool {
     b == b'_' || b.is_ascii_alphanumeric()
 }
 
+/// A name the lexer would have produced as one `Ident` token: the check
+/// `cancho ingest` makes on every name in a JSON unit, so a tree built
+/// from data cannot contain a name no `.cho` text could ever have
+/// written (`docs/structured-ingest.md` §3).
+pub fn is_identifier(s: &str) -> bool {
+    let mut bytes = s.bytes();
+    bytes.next().is_some_and(is_ident_start) && bytes.all(is_ident_continue)
+}
+
+/// Whether a name is one of the language's keywords, which never intern:
+/// the parser reads them as tokens, so an ingest that accepted one would
+/// build a tree whose printed text does not reparse.
+pub fn is_keyword(s: &str) -> bool {
+    keyword(s).is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -44,6 +44,15 @@ pub enum Rule {
     ForeignBoundaryType,
     ForeignDeclaration,
     ForeignScope,
+    /// The JSON handed to `cancho ingest` is not JSON, or an object is
+    /// not where one must be (`docs/structured-ingest.md` §3).
+    IngestJson,
+    /// A JSON node's kind names nothing the compiler builds
+    /// (`docs/structured-ingest.md` §3).
+    IngestNode,
+    /// A known JSON node with the wrong shape: a missing or wrongly
+    /// typed field, a negative tuple index (`docs/structured-ingest.md` §3).
+    IngestArity,
     InfiniteType,
     /// The compiler failed on a program it had accepted
     /// (`docs/internal-errors.md`). No fixture reaches it on purpose.
@@ -92,7 +101,7 @@ pub enum Rule {
 
 impl Rule {
     /// Every rule, in tag order. The catalogue as data.
-    pub const ALL: [Rule; 58] = [
+    pub const ALL: [Rule; 61] = [
         Rule::AmbiguousType,
         Rule::ArityMismatch,
         Rule::AssignToImmutable,
@@ -110,6 +119,9 @@ impl Rule {
         Rule::ForeignDeclaration,
         Rule::ForeignScope,
         Rule::InfiniteType,
+        Rule::IngestArity,
+        Rule::IngestJson,
+        Rule::IngestNode,
         Rule::Internal,
         Rule::LinearUseAfterMove,
         Rule::LinearValueTakenApart,
@@ -172,6 +184,9 @@ impl Rule {
             Rule::ForeignBoundaryType => "foreign-boundary-type",
             Rule::ForeignDeclaration => "foreign-declaration",
             Rule::ForeignScope => "foreign-scope",
+            Rule::IngestJson => "ingest-json",
+            Rule::IngestNode => "ingest-node",
+            Rule::IngestArity => "ingest-arity",
             Rule::InfiniteType => "infinite-type",
             Rule::Internal => "internal",
             Rule::LinearUseAfterMove => "linear-use-after-move",
@@ -291,6 +306,15 @@ impl Rule {
             Rule::ForeignScope => {
                 "The scope of an `Ffi` is the set of libraries it names: letters, digits, `_`, \
                  `.`, `+` and `-`, comma separated, each once, such as `\"libc,libssl\"`."
+            }
+            Rule::IngestJson => {
+                "The JSON handed to `cancho ingest` has to be JSON, with an object where the \n                 shape needs one (`docs/structured-ingest.md`)."
+            }
+            Rule::IngestNode => {
+                "A JSON node's `kind` has to name something the compiler builds. An unknown \n                 word is a vocabulary error, not a malformed one."
+            }
+            Rule::IngestArity => {
+                "A known JSON node with a missing or wrongly typed field, or a negative \n                 tuple index, cannot become a tree."
             }
             Rule::InfiniteType => {
                 "A type that contains itself has no finite size, so a `Box` has to sit somewhere on \

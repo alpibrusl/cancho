@@ -48,7 +48,8 @@ usage:
     cancho ids   <file.cho>... [--std]
     cancho authority <file.cho>... [--std] [--output json] [--target <triple>]
     cancho layout    <file.cho>... [--std]
-    cancho print <file.cho>
+    cancho print <file.cho> [--output json]
+    cancho ingest <file.json> [--output json]
     cancho agent-guidelines
     cancho introspect [--output json]
     cancho skill [--output json] [<out-file>]
@@ -338,7 +339,7 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
         // `docs/many-files.md` §5: printing is about text, and text is
         // what a file is -- so this renders exactly one.
         "print" => {
-            let Invocation { inputs, .. } = parse_args(&args[1..], false, false)?;
+            let Invocation { inputs, json, .. } = parse_args(&args[1..], false, false)?;
             let [input] = &inputs[..] else {
                 return Err(usage("`print` renders one file at a time"));
             };
@@ -346,6 +347,58 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
                 .map_err(|e| environment(format!("cannot read `{}`: {e}", input.display())))?;
             let file = SourceFile::new(input.display().to_string(), text);
             let ast = cancho_syntax::parse(&file.text).map_err(|d| refused(d.render(&file)))?;
+            // `--output json` is the data form of the same tree
+            // (`docs/structured-ingest.md` §2): the AST as JSON rather than
+            // as canonical text, for an agent that reads the one and writes
+            // the other.
+            if json {
+                println!("{}", cancho_syntax::write_json(&cancho_syntax::ast_to_json(&ast)));
+                return Ok(ExitCode::SUCCESS);
+            }
+            print!("{}", cancho_syntax::print(&ast));
+            Ok(ExitCode::SUCCESS)
+        }
+        // `docs/structured-ingest.md`: the other direction of the same
+        // pipeline — JSON in, canonical `.cho` text out, with the tree
+        // checked against the same vocabulary the encoder writes and a
+        // refusal carrying a rule like any other.
+        "ingest" => {
+            let Invocation { inputs, json: as_data, .. } = parse_args(&args[1..], false, false)?;
+            let [input] = &inputs[..] else {
+                return Err(usage("`ingest` reads one file at a time"));
+            };
+            let text = std::fs::read_to_string(input)
+                .map_err(|e| environment(format!("cannot read `{}`: {e}", input.display())))?;
+            let file = SourceFile::new(input.display().to_string(), text);
+            let build = cancho_syntax::read_json(&file.text)
+                .and_then(|json| cancho_syntax::json_to_ast(&json));
+            let Ok(ast) = build else {
+                // A refusal is data here too (`docs/structured-ingest.md`
+                // §3): an agent's first contact with this path is a
+                // rejected file, and `--output json` answers the rule, the
+                // sentence and the position the way `check` does — the
+                // same shape, the same exit code, no new vocabulary.
+                let d = build.expect_err("checked above");
+                if as_data {
+                    let line = 1 + file.text[..d.span.start as usize]
+                        .bytes()
+                        .filter(|b| *b == b'\n')
+                        .count();
+                    let column = d.span.start + 1;
+                    let body = format!(
+                        "{{\n  \"refused\": [\n    {{\n      \"rule\": \"{}\",\n      \"message\": \"{}\",\n      \"explanation\": \"{}\",\n      \"position\": {{ \"file\": \"{}\", \"line\": {line}, \"column\": {column} }}\n    }}\n  ]\n}}\n",
+                        d.rule.tag(),
+                        escaped(&d.message),
+                        escaped(d.rule.explanation()),
+                        escaped(&file.path),
+                    );
+                    let stdout = io::stdout();
+                    let mut out = stdout.lock();
+                    let _ = out.write_all(body.as_bytes()).and_then(|()| out.flush());
+                    return Ok(ExitCode::from(EXIT_REFUSED));
+                }
+                return Err(refused(d.render(&file)));
+            };
             print!("{}", cancho_syntax::print(&ast));
             Ok(ExitCode::SUCCESS)
         }

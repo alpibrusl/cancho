@@ -7,6 +7,8 @@
 
 pub mod ast;
 pub mod format;
+pub mod ingest;
+pub mod json;
 pub mod lexer;
 pub mod parser;
 pub mod print;
@@ -15,6 +17,8 @@ pub mod span;
 
 pub use ast::Ast;
 pub use format::{FormatError, format};
+pub use ingest::{ast_to_json, json_to_ast};
+pub use json::{Json, read_json, write_json};
 pub use parser::{parse, parse_into};
 pub use print::print;
 pub use rules::Rule;
