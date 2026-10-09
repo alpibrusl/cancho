@@ -8,16 +8,16 @@ const BACKENDS: [&str; 2] = ["cranelift", "llvm"];
 
 /// One libc symbol, called through one helper.
 const ONE_SYMBOL: &str = "\
-extern fn getpid[&f](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] c_int;
+extern fn getpid[&f](ffi: &f Ffi("libc")) -> [ffi("libc")] c_int;
 
-fn alive[&f](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] bool {
+fn alive[&f](ffi: &f Ffi("libc")) -> [ffi("libc")] bool {
     return getpid(ffi) > 0;
 }
 
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args } = split(world);
     release(io); release(fs); release(heap); release(args);
-    let libc = narrow(ffi, \"libc\");
+    let libc = narrow(ffi, "libc");
     var status = 1;
     borrow libc as &f in {
         if alive(f) { status = 0; }
@@ -32,21 +32,21 @@ fn main(world: World) -> [] int {
 /// scope is the *claim* and the symbol is the fact).
 const TWO_LIBRARIES: &str = "\
 edition 5;
-extern fn labs[&f](ffi: &f Ffi(\"libc\"), n: int) -> [ffi(\"libc\")] int;
-extern fn pthread_self[&f](ffi: &f Ffi(\"libpthread\")) -> [ffi(\"libpthread\")] int;
+extern fn labs[&f](ffi: &f Ffi("libc"), n: int) -> [ffi("libc")] int;
+extern fn pthread_self[&f](ffi: &f Ffi("libpthread")) -> [ffi("libpthread")] int;
 
-fn magnitude[&f](ffi: &f Ffi(\"libc,libpthread\"), n: int) -> [ffi(\"libc\")] int {
+fn magnitude[&f](ffi: &f Ffi("libc,libpthread"), n: int) -> [ffi("libc")] int {
     return labs(ffi, n);
 }
 
-fn thread[&f](ffi: &f Ffi(\"libc,libpthread\")) -> [ffi(\"libpthread\")] int {
+fn thread[&f](ffi: &f Ffi("libc,libpthread")) -> [ffi("libpthread")] int {
     return pthread_self(ffi);
 }
 
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args, net, clock } = split(world);
     release(io); release(fs); release(heap); release(args); release(net); release(clock);
-    let native = narrow(ffi, \"libpthread,libc\");
+    let native = narrow(ffi, "libpthread,libc");
     var status = 0;
     borrow native as &f in {
         status = magnitude(f, 0 - 7);
@@ -60,10 +60,10 @@ fn main(world: World) -> [] int {
 /// Declares a symbol that exists nowhere and a second that does, and calls
 /// neither: the report says nothing, and the program links and runs.
 const DECLARED_NEVER_CALLED: &str = "\
-extern fn getpid[&f](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] c_int;
-extern fn no_such_symbol_anywhere[&f](ffi: &f Ffi(\"libnowhere\")) -> [ffi(\"libnowhere\")] c_int;
+extern fn getpid[&f](ffi: &f Ffi("libc")) -> [ffi("libc")] c_int;
+extern fn no_such_symbol_anywhere[&f](ffi: &f Ffi("libnowhere")) -> [ffi("libnowhere")] c_int;
 
-fn unreached[&f](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int {
+fn unreached[&f](ffi: &f Ffi("libc")) -> [ffi("libc")] int {
     return getpid(ffi);
 }
 
@@ -179,6 +179,7 @@ fn one_libc_symbol_is_named_exactly() {
          \x20 \"labels\": [\n\
          \x20   { \"name\": \"ffi\", \"argument\": \"libc\", \"bounded\": false }\n\
          \x20 ],\n\
+         \x20 \"never_touches\": [\"the console\", \"the filesystem\", \"the network\", \"the heap\", \"the command line\", \"signals\", \"other programs\"],\n\
          \x20 \"foreign_symbols\": [\"getpid\"],\n\
          \x20 \"pure\": [],\n\
          \x20 \"folded_operators\": 0,\n\
