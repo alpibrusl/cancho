@@ -1,3 +1,1 @@
-one:x two:
-x three:\x four:\\x
-pipe:& | pipe2:& \| pipe3:& \\|
+deleted: backslash probe, see commit history
