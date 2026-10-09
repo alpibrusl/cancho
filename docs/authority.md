@@ -105,6 +105,15 @@ the report answers it. An absent label is a proof, not an absence of
 evidence: the capability was released, and nothing in the language
 creates another.
 
+Both forms answer it, and from one table. The prose report says
+`never touches` and lists the domains; `--output json` carries the same
+domains as `never_touches`, so a consumer reading only data can tell
+"performs no `exec`" from "does not model `exec`" — silence is not how
+absence is spelled. The domains are the eight the prose report lists
+(the console, the filesystem, the network, the heap, the command line,
+signals, other programs, foreign code), computed by one function both
+outputs share, so the two cannot drift apart.
+
 ### 2.3 It shows narrowing
 
 ```
