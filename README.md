@@ -117,6 +117,7 @@ cancho build <file.cho>... [-o <output>] [--emit exe|obj] [--std] [--backend cra
 cancho check <file.cho>... [--std] [--output json] [--backend cranelift|llvm]   # refuse, or say nothing
 cancho run   <file.cho>... [--std] [--backend cranelift|llvm] [-l <name>]... [-L <path>]...   # build, run, exit with the program's status
 cancho test  <file.cho>... [--std] [--backend cranelift|llvm]   # run every `fn test_*`, one process each; exit 4 if one failed
+cancho satisfy <contract.cho> <candidate.cho> [--std]   # a contract's tests call the candidate; the verdict names the SigId
 cancho ids   <file.cho>... [--std]    # each declaration's content hash
 cancho authority <file.cho>... [--std] [--output json] [--target <triple>]  # what it can reach
 cancho layout    <file.cho>... [--std]  # what every leaf costs, and what packing would save
