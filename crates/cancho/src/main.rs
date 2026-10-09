@@ -31,6 +31,7 @@ mod acli;
 mod fmt_cli;
 mod foreign_report;
 mod project;
+mod satisfy_cli;
 mod test_cli;
 mod vcs_cli;
 mod vcs_dir;
@@ -44,6 +45,7 @@ usage:
     cancho check <file.cho>... [--std] [--output json] [--backend cranelift|llvm] [--target <triple>]
     cancho run   <file.cho>... [--std] [--backend cranelift|llvm] [--target <triple>] [-l <name>]... [-L <path>]...
     cancho test  <file.cho>... [--std] [--backend cranelift|llvm] [-l <name>]... [-L <path>]...
+    cancho satisfy <contract.cho> <candidate.cho> [--std]
     cancho fmt   <file.cho|dir>... [--check]
     cancho ids   <file.cho>... [--std]
     cancho authority <file.cho>... [--std] [--output json] [--target <triple>]
@@ -113,6 +115,12 @@ docs/internal-errors.md.
 exits 4 if any failed. A test answers 0 to pass; `std.test`'s `assert`
 traps otherwise. The files must not declare `main`: the runner writes
 one. See docs/testing.md.
+
+`satisfy` runs a contract's tests against a candidate: the contract's
+test functions call the candidate's declarations, so a candidate that
+does not check is refused by the ordinary checker and one that does not
+pass fails with `test`'s own exit code, and the verdict answers the
+recomputed `SigId` of each candidate declaration. See docs/satisfy.md.
 
 `fmt` rewrites each file (or each `.cho` under a directory) in canonical
 layout, keeping its comments, its blank lines and the way it spelled each
@@ -354,6 +362,9 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
         // `docs/testing.md` §3.
         "test" if project::wants_project_test(&args[1..]) => project::cmd_test(&args[1..]),
         "test" => test_cli::cmd_test(&args[1..]),
+        // `docs/satisfy.md` §2: check plus test, composed, with the
+        // verdict named.
+        "satisfy" => satisfy_cli::cmd_satisfy(&args[1..]),
         "ids" => {
             let Invocation { inputs, with_std, .. } = parse_args(&args[1..], false, false)?;
             print_ids(&inputs, with_std)?;
@@ -1196,7 +1207,7 @@ fn print_authority(
     // declared in the compiled unit whether anything calls it or not,
     // unlike `Program::funcs`, which pass 2 already pruned to what `main`
     // reaches -- so the report is filtered to the same reachable set,
-    // rather than trusting `program.externs`'s own length.
+    // rather than trusting `program.externs`' own length.
     let reachable = cancho_ir::reachable_externs(&program);
     let mut symbols: Vec<&str> = program
         .externs
