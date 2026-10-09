@@ -1,0 +1,8 @@
+// The candidate `max` satisfies its contract with the ordinary `if`:
+// a person or an agent could have written this, and the verdict is the
+// same either way, because the gate is the compiler (`docs/satisfy.md` §2).
+
+pub fn max(a: int, b: int) -> [] int {
+    if a > b { return a; }
+    return b;
+}

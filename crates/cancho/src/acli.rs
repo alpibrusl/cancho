@@ -58,6 +58,7 @@ fn commands() -> Vec<CommandInfo> {
         cmd_fmt(),
         cmd_ids(),
         cmd_authority(),
+        cmd_satisfy(),
         cmd_layout(),
         cmd_print(),
         cmd_agent_guidelines(),
@@ -279,6 +280,31 @@ fn cmd_authority() -> CommandInfo {
         ),
     ])
     .with_see_also(vec!["check", "layout"])
+}
+
+fn cmd_satisfy() -> CommandInfo {
+    CommandInfo::new(
+        "satisfy",
+        "the spec-to-implementation loop (docs/satisfy.md): a contract is a .cho file whose \
+         `fn test_*` call the candidate, and satisfaction is the checker and the test runner \
+         composed against one program, the verdict named with the candidate's recomputed \
+         SigId (exit 0 = satisfied, 1 = refused by the checker, 4 = a test failed, \
+         2 = bad command line or a contract with no tests)",
+    )
+    .idempotent(false)
+    .add_argument("contract", "string", "the .cho file whose `fn test_*` call the candidate", false)
+    .add_argument(
+        "candidate",
+        "string",
+        "the .cho file whose declarations the contract's tests call",
+        false,
+    )
+    .add_option("std", "bool", "make the standard library's source available", None)
+    .with_examples(vec![(
+        "Ask a contract of an implementation",
+        "cancho satisfy --std tests/satisfy/max.contract.cho tests/satisfy/max.candidate.cho",
+    )])
+    .with_see_also(vec!["test", "check", "ids"])
 }
 
 fn cmd_layout() -> CommandInfo {

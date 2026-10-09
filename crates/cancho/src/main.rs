@@ -31,6 +31,7 @@ mod acli;
 mod fmt_cli;
 mod foreign_report;
 mod project;
+mod satisfy_cli;
 mod test_cli;
 mod vcs_cli;
 mod vcs_dir;
@@ -44,6 +45,7 @@ usage:
     cancho check <file.cho>... [--std] [--output json] [--backend cranelift|llvm] [--target <triple>]
     cancho run   <file.cho>... [--std] [--backend cranelift|llvm] [--target <triple>] [-l <name>]... [-L <path>]...
     cancho test  <file.cho>... [--std] [--backend cranelift|llvm] [-l <name>]... [-L <path>]...
+    cancho satisfy <contract.cho> <candidate.cho> [--std]
     cancho fmt   <file.cho|dir>... [--check]
     cancho ids   <file.cho>... [--std]
     cancho authority <file.cho>... [--std] [--output json] [--target <triple>]
@@ -354,6 +356,7 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
         // `docs/testing.md` §3.
         "test" if project::wants_project_test(&args[1..]) => project::cmd_test(&args[1..]),
         "test" => test_cli::cmd_test(&args[1..]),
+        "satisfy" => satisfy_cli::cmd_satisfy(&args[1..]),
         "ids" => {
             let Invocation { inputs, with_std, .. } = parse_args(&args[1..], false, false)?;
             print_ids(&inputs, with_std)?;

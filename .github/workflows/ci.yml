@@ -164,3 +164,20 @@ jobs:
       # `conformance/http_server_upload.rs` once per mutant; they were run by hand, §12.13.)
       - name: The streaming-body mutants (docs/http-server.md §12.13)
         run: python3 scripts/http_server_body_mutants.py ./target/release/cancho
+
+  # docs/satisfy.md (#406): the spec-to-implementation loop's first
+  # end-to-end run is a checked property of this repository — the
+  # committed contract/candidate pair, satisfied on every push.
+  satisfy:
+    name: satisfy-contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain versions
+        run: |
+          cargo --version
+          rustc --version --verbose
+      - name: The committed contract is satisfied (cancho satisfy)
+        run: |
+          cargo build --release -p cancho
+          ./target/release/cancho satisfy tests/satisfy/max.contract.cho tests/satisfy/max.candidate.cho --std

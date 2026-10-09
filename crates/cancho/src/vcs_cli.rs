@@ -32,7 +32,7 @@ use crate::{Failure, environment, refused, usage, vcs_dir, vcs_origin};
 /// their dependency source as trusted strings, never as paths on disk,
 /// so they need this rather than writing a temp file just to hand
 /// `parse_program` something it can re-read.
-fn parse_texts(
+pub(crate) fn parse_texts(
     named: &[(String, String)],
 ) -> Result<(cancho_syntax::Ast, cancho_syntax::SourceMap), String> {
     let mut map = cancho_syntax::SourceMap::new();
