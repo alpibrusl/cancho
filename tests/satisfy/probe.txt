@@ -1,0 +1,3 @@
+one:x two:
+x three:\x four:\\x
+pipe:& | pipe2:& \| pipe3:& \\|
