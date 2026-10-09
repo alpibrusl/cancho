@@ -60,7 +60,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y nginx gnutls-bin libwolfssl-dev libmbedtls-dev libbotan-2-dev \
-            android-libboringssl-dev python3-cryptography afl++ mosquitto-clients libssl-dev curl
+            android-libboringssl-dev python3-cryptography afl++ mosquitto-clients libssl-dev curl valgrind
 
       - name: Compiler, and the many-connection client
         run: |
@@ -73,6 +73,8 @@ jobs:
       - name: The committed package stores are current (docs/package-system.md §7.4)
         run: python3 scripts/publish_packages.py --check
 
+      - name: The ctgrind check, X25519 and Ed25519 signing (docs/x25519.md §3.1, #290)
+        run: scripts/curve25519_ctgrind.sh target/release/cancho
       - name: Interop matrix (docs/tls-assurance.md §5)
         run: python3 scripts/tls_interop.py "$RUNNER_TEMP/tls_many"
 

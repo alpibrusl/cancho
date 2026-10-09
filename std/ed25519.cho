@@ -1,13 +1,15 @@
+edition 6;
 module std.ed25519;
 import std.crypto;
 import std.field25519;
 
-// Ed25519 (RFC 8032). `docs/ed25519.md` is the design; §6 is explicit
-// about what this module does not provide: constant-time execution.
-// Every operation here is ordinary conditional branching and ordinary
-// arithmetic, so an attacker with a timing oracle on repeated signing
-// operations could learn about the secret scalar. Correct on every
-// checked vector is not the same claim as safe against that attacker.
+// Ed25519 (RFC 8032). `docs/ed25519.md` is the design. The field
+// arithmetic and the point ladder are constant time (`docs/x25519.md`
+// §3.1), and since #290 so is the scalar arithmetic modulo the group
+// order on the signing path: the reduction, the multiply and the final
+// add subtract under masks made through `value_barrier`, never behind
+// a branch on a secret. The ctgrind check of `docs/x25519.md` §3.1
+// covers `sign` end to end and fails on any report.
 // §1 is also explicit about who this is for: a future cancho port of
 // lex-os-guest, not this repository's own Rust tooling, which already
 // has `ed25519-dalek` and should keep using it.
@@ -160,19 +162,112 @@ fn bn_reduce_wide[&o, &x, &m](o: &!o [byte], x: &x [byte], m: &m [byte]) -> [] i
         let bit_idx = bit % 8;
         let b = int_of(x[byte_idx]) >> bit_idx & 1;
         bn_shl1_into(o, b);
-        if bn_compare(o, m) >= 0 {
-            bn_sub_into(o, m);
-        }
+        ct_sub_if_ge(o, m);
         bit = bit - 1;
     }
     return 0;
 }
 
+// Whether `a` is at least `m`, byte-wise, with no early exit: the
+// borrow chain runs over every byte whatever the answer (#290,
+// `docs/value-barrier.md`). 1 when `a >= m`, else 0.
+fn ct_ge[&a, &m](a: &a [byte], m: &m [byte]) -> [] int {
+    var need = 0;
+    var i = 0;
+    while i < len(a) {
+        let d = int_of(a[i]) - int_of(m[i]) - need;
+        need = d >> 63 & 1;
+        i = i + 1;
+    }
+    return 1 - need;
+}
+
+// `a -= m` when `a >= m`, and is left unchanged when it is not, with
+// no branch on the answer: the mask is made through `value_barrier`
+// (`docs/value-barrier.md` §4), or the optimiser can turn the
+// masked subtraction back into a conditional one. When the mask is 0
+// the subtraction takes nothing, and the borrow chain it still
+// computes cancels itself.
+fn ct_sub_if_ge[&a, &m](a: &!a [byte], m: &m [byte]) -> [] int {
+    let mask = value_barrier(0 - ct_ge(a, m));
+    var need = 0;
+    var i = 0;
+    while i < len(a) {
+        let d = int_of(a[i]) - (int_of(m[i]) & mask) - need;
+        if d < 0 {
+            a[i] = byte_of(d + 256);
+            need = 1;
+        } else {
+            a[i] = byte_of(d);
+            need = 0;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// `a += b` under `mask` (all ones: add, 0: leave), byte-wise, with no
+// branch on the mask or on the bytes. Adding 0 never carries, so the
+// carry chain is correct either way.
+fn ct_add_masked[&a, &b](a: &!a [byte], b: &b [byte], mask: int) -> [] int {
+    var carry = 0;
+    var i = 0;
+    while i < len(a) {
+        let sum = int_of(a[i]) + (int_of(b[i]) & mask) + carry;
+        a[i] = byte_of(sum & 0xff);
+        carry = sum >> 8;
+        i = i + 1;
+    }
+    return 0;
+}
+
+// `o = a * b mod m`, for operands of any size below the buffer's
+// width: both are reduced first (below), and the loop then keeps the
+// accumulator below `m`, one masked subtract a step. Double-and-add
+// from the top bit of the reduced `a`:
+// each bit doubles the accumulator and adds `b` under a mask made
+// through `value_barrier`, so nothing branches on `a`, `b` or the
+// accumulator (#290). The schoolbook `bn_mul_full` this replaces had
+// a carry loop that ran for as long as the carry was set -- a branch
+// and an iteration count on the operands.
 fn bn_mulmod[&o, &a, &b, &m](o: &!o [byte], a: &a [byte], b: &b [byte], m: &m [byte]) -> [] int {
     region r {
-        let wide = alloc_slice[r](len(a) + len(b), byte_of(0));
-        bn_mul_full(wide, a, b);
-        bn_reduce_wide(o, wide, m);
+        // Both operands reduced first: the caller's `b` may be above
+        // `m` (`sign` passes the clamped key, whose bit 254 is set,
+        // against `l` near 2^252), and the loop below keeps the
+        // accumulator below `m` only if what it adds is. Reducing
+        // first is the same answer: (a * b) mod m does not change
+        // when either operand is taken mod m. `bn_reduce_wide` is
+        // itself constant time, so this adds no branch.
+        let ra = alloc_slice[r](len(m), byte_of(0));
+        let rb = alloc_slice[r](len(m), byte_of(0));
+        bn_reduce_wide(ra, a, m);
+        bn_reduce_wide(rb, b, m);
+        var z = 0;
+        while z < len(o) {
+            o[z] = byte_of(0);
+            z = z + 1;
+        }
+        var bit = len(m) * 8 - 1;
+        while bit >= 0 {
+            // o = 2o mod m: double byte-wise (the carry out is 0,
+            // since o < m and m's top bit is below the buffer's),
+            // then one masked subtract.
+            var carry = 0;
+            var i = 0;
+            while i < len(o) {
+                let v = int_of(o[i]) << 1 | carry;
+                o[i] = byte_of(v & 0xff);
+                carry = v >> 8;
+                i = i + 1;
+            }
+            ct_sub_if_ge(o, m);
+            // o += rb when this bit of `ra` is set.
+            let mask = value_barrier(0 - (int_of(ra[bit / 8]) >> bit % 8 & 1));
+            ct_add_masked(o, rb, mask);
+            ct_sub_if_ge(o, m);
+            bit = bit - 1;
+        }
     }
     return 0;
 }
@@ -183,9 +278,7 @@ fn bn_mulmod[&o, &a, &b, &m](o: &!o [byte], a: &a [byte], b: &b [byte], m: &m [b
 fn bn_addmod[&o, &a, &b, &m](o: &!o [byte], a: &a [byte], b: &b [byte], m: &m [byte]) -> [] int {
     bn_copy_into(o, a);
     bn_add_into(o, b);
-    if bn_compare(o, m) >= 0 {
-        bn_sub_into(o, m);
-    }
+    ct_sub_if_ge(o, m);
     return 0;
 }
 

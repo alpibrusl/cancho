@@ -40,7 +40,7 @@ const SEED: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d
 const SEED2: &str = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
 
 /// One block's second half (32 bytes), a short draw (16), and draws
-/// that span two and three keys (48, 64), 
+/// that span two and three keys (48, 64),
 #[test]
 fn fast_key_erasure_draws() {
     let cases = vec![
@@ -52,8 +52,12 @@ fn fast_key_erasure_draws() {
     let want = [
         format!("0 ok 2b23cce7a26023ab3f0eef693ac87f64258235eab1f7a32dc22762a0485b410c"),
         format!("0 ok 2b23cce7a26023ab3f0eef693ac87f64"),
-        format!("0 ok 2b23cce7a26023ab3f0eef693ac87f64258235eab1f7a32dc22762a0485b410c2d41a59c90e41a8e7a4dccaa1c460699"),
-        format!("0 ok 2b23cce7a26023ab3f0eef693ac87f64258235eab1f7a32dc22762a0485b410c2d41a59c90e41a8e7a4dccaa1c46069983b1a333ce25719ec3437768ab57fa42"),
+        format!(
+            "0 ok 2b23cce7a26023ab3f0eef693ac87f64258235eab1f7a32dc22762a0485b410c2d41a59c90e41a8e7a4dccaa1c460699"
+        ),
+        format!(
+            "0 ok 2b23cce7a26023ab3f0eef693ac87f64258235eab1f7a32dc22762a0485b410c2d41a59c90e41a8e7a4dccaa1c46069983b1a333ce25719ec3437768ab57fa42"
+        ),
     ];
     for backend in ["cranelift"] {
         let (dir, exe) = build_drbg_driver("draws", backend);
