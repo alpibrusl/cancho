@@ -121,7 +121,8 @@ cancho ids   <file.cho>... [--std]    # each declaration's content hash
 cancho authority <file.cho>... [--std] [--output json] [--target <triple>]  # what it can reach
 cancho layout    <file.cho>... [--std]  # what every leaf costs, and what packing would save
 cancho fmt   <file.cho|dir>... [--check]   # canonical layout, comments kept; --check exits 1 if anything would change
-cancho print <file.cho>               # the unit, rendered in canonical form
+cancho print <file.cho> [--output json]  # the unit, as canonical text or as the JSON an agent reads
+cancho ingest <file.json> [--output json]  # that JSON back as canonical text; refusals as data
 cancho agent-guidelines              # AGENTS.md, from inside the binary
 cancho introspect [--output json]    # the full command tree, as data (docs/agent-cli.md)
 cancho skill [--output json] [<out-file>]  # a generated SKILL.md, agentskills.io
