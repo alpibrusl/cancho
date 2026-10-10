@@ -62,16 +62,8 @@ REPLACED = {
     "test-tls13-keyshare-omitted.py": "tlsfuzzer_cancho/test-keyshare-omitted.py",
     "test-tls13-unrecognised-groups.py": "tlsfuzzer_cancho/test-unrecognised-groups.py",
     "test-tls13-version-negotiation.py": "tlsfuzzer_cancho/test-version-negotiation.py",
-}
-
-# The stock scripts whose sanity cannot negotiate with this server: each offers
-# RSA-PSS signature algorithms only (their `signature_algorithms` assumes an
-# RSA identity), so every connection is refused before the script's subject is
-# reached, and the failure says nothing about the server. Their subjects are
-# not yet ported to `tlsfuzzer_cancho`; until they are, the skip says so.
-SANITY_RSA = {
-    "test-tls13-record-layer-limits.py": "plaintext and record size limits, at 2**14 and above",
-    "test-tls13-shuffled-extentions.py": "extension order, and unassigned extension ids",
+    "test-tls13-record-layer-limits.py": "tlsfuzzer_cancho/test-record-layer-limits.py",
+    "test-tls13-shuffled-extentions.py": "tlsfuzzer_cancho/test-shuffled-extensions.py",
 }
 
 SKIPPED = {
@@ -168,12 +160,6 @@ def main():
         if code != 0:
             failed += 1
     for name in names:
-        if name in SANITY_RSA:
-            print(f"skip {name}: sanity offers RSA-PSS sigalgs only, so it cannot"
-                  f" negotiate with a P-256 identity; subject not yet ported --"
-                  f" {SANITY_RSA[name]}")
-            skipped += 1
-            continue
         if name in REPLACED:
             print(f"skip {name}: assumptions differ, {REPLACED[name]} holds the same check")
             skipped += 1

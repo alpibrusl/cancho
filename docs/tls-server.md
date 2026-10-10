@@ -486,18 +486,23 @@ whose subject this server covers are run with our own scripts beside them
 (`scripts/tlsfuzzer_cancho/`), which make the same checks under this server's actual
 surface: the sanity conversation, the compatibility CCS and its abuses
 (Appendix D.4), the record layer's empties and zero content types (§5.4), and the
-malformed and unexpected-message cases. Each stock script the assumptions rule out is
-skipped with its reason printed, so the run says what was not tested; CI runs the whole
-matrix on both backends' server builds and fails on any script's failure.
+malformed and unexpected-message cases. Every stock script whose subject applies is replaced by one of this
+repository's own, named in the skip line, so the run says where each check lives; CI
+runs the whole matrix and fails on any script's failure. As built: 10 run, 10 ok,
+the two stock scripts whose sanity negotiates here (`conversation`, `lengths`) beside
+the eight of ours.
 
 **What it found, kept honest:** the runs surfaced two divergences, both xfailed in the
 scripts until they are settled, and both conformance questions rather than security
-holes. #416: a record whose inner plaintext is empty, or whose content type byte is
-zero, is answered `decode_error` where RFC 8446 §5.4's reading (and tlsfuzzer's stock
-script) names `unexpected_message`. #418: a ClientHello whose only key share is of a
-group not in `supported_groups` gets a HelloRetryRequest -- the server skips unknown
-shares, as it does GREASE -- where the stock script's strict reading of §4.2.8 expects
-`illegal_parameter`. Everything else passes: the sanity conversation; the CCS cases
+holes, each xfailed in its script with its number. #416: a record whose inner plaintext
+is empty, or whose content type byte is zero, is answered `decode_error` where
+RFC 8446 §5.4's reading (and tlsfuzzer's stock script) names `unexpected_message`.
+#418: a ClientHello whose only key share is of a group not in `supported_groups` gets a
+HelloRetryRequest -- the server skips unknown shares, as it does GREASE -- where the
+stock script's strict reading of §4.2.8 expects `illegal_parameter`. #419: zero padding
+after a Finished inside one record is refused `decode_error`, where OpenSSL and the
+stock script's mechanism accept it -- the handshake stream's reader treats the zeros
+as the header of a message that never comes. Everything else passes: the sanity conversation; the CCS cases
 (the middlebox CCS in its place, a second one and a two-byte one each refused
 `unexpected_message`); key_share omitted (`missing_extension`) and empty
 (`decode_error`); legacy_version variants with TLS 1.3 negotiated; supported_versions
