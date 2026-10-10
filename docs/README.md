@@ -99,6 +99,9 @@ combines:
 | **I/O** | The console in three directions, file handles as linear resources, bulk reads and writes, a `Net` capability for sockets | [`file-handles.md`](file-handles.md), [`bulk-io.md`](bulk-io.md), [`net.md`](net.md) |
 | **Refusals** | Every rule carries a stable tag; `check --output json` reports every independent one as data | [`agent-errors.md`](agent-errors.md) |
 | **Standard library** | Written in cancho, including shortest round-trip float printing and a UTF-8 decoder | [`standard-library.md`](standard-library.md) |
+| [`crc.md`](crc.md) | `std.crc`: the three checksums, and CRC-64's two-halves design | built |
+| [`net-bounds.md`](net-bounds.md) | Separate ways in and out, set-valued bounds, exact host matching (#362) | design; §2.4 is a report fix recommended first |
+| [`shared-store.md`](shared-store.md) | Several threads, one store: the answer is process-per-core, with the two missing primitives named (#354) | design; answered, topic closed |
 | **Two backends** | Cranelift (dev) and LLVM (release, **default**) — an opt-in second backend became the default once nothing it refused had an asker left | [`llvm-backend.md`](llvm-backend.md) |
 
 What is **not** there yet, and why, is [`ROADMAP.md`](ROADMAP.md).

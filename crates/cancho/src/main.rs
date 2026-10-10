@@ -472,6 +472,7 @@ const STD: &[(&str, &str)] = &[
     ("<std>/io.cho", include_str!("../../../std/io.cho")),
     ("<std>/buffer.cho", include_str!("../../../std/buffer.cho")),
     ("<std>/option.cho", include_str!("../../../std/option.cho")),
+    ("<std>/crc.cho", include_str!("../../../std/crc.cho")),
     ("<std>/result.cho", include_str!("../../../std/result.cho")),
     ("<std>/list.cho", include_str!("../../../std/list.cho")),
     ("<std>/vec.cho", include_str!("../../../std/vec.cho")),
