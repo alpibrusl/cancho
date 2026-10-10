@@ -86,8 +86,8 @@ go:
   %size = load i32, ptr %bytes
   %slots = add i32 %count, 1
   %arrbytes = shl i32 %slots, 2
-  %argv = call ptr @malloc(i32 %arrbytes)
-  %buf = call ptr @malloc(i32 %size)
+  %argv = call ptr @cancho_malloc(i32 %arrbytes)
+  %buf = call ptr @cancho_malloc(i32 %size)
   %nargv = icmp eq ptr %argv, null
   %nbuf = icmp eq ptr %buf, null
   %notempty = icmp ne i32 %size, 0

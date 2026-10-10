@@ -228,3 +228,16 @@ rather than only run once and discarded.
 > parameter and an empty row, was accepted, ran a shell on both backends, and left `cancho authority` saying `"bounded": true`. A foreign function now borrows exactly one `Ffi`, naming
 > one library (`foreign-declaration`). The same document makes the scope a set, so one program can hold `libc` and `libssl` together, and has the report list every reachable symbol as
 > `scope:symbol`. The `-l`/`-L` flags are the build's and do not appear in the report.
+
+> **#388: the arena's allocator no longer takes the names `malloc` and `free`.**
+> A program declaring `extern fn free` (to release a `c_ptr` libc allocated,
+> e.g. from `strdup`) collided with the backend's own unconditional
+> `declare void @free(ptr)` — `clang` refused the module with
+> `invalid redefinition of function 'free'`, answered as `internal`, and the
+> same collision sat one declaration away for `malloc`. The LLVM backend's
+> arena, boxed slices and the wasi entry now allocate under its own private
+> `cancho_` namespace (`@cancho_malloc`/`@cancho_free`), the same namespace
+> `cancho_entry` already lives in — so a program's declaration owns the
+> public names outright, with whatever signature it wrote (cancho has no
+> `void`, so a program's `free` returns `i64`). Nothing today said these
+> two names were taken; now the doc says they are not.

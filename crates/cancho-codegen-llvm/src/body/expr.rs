@@ -172,7 +172,8 @@ impl<'a> FuncEmitter<'a> {
                             .to_owned(),
                     );
                 }
-                self.out.push_str(&format!("  call void @free(ptr {})\n", operand(&leaves[0])));
+                self.out
+                    .push_str(&format!("  call void @cancho_free(ptr {})\n", operand(&leaves[0])));
                 Ok(vec![leaves[1].clone()])
             }
             // `contents(b)`: one load. A reference to a box points at

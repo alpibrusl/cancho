@@ -378,3 +378,5 @@ the Cranelift dependency all check out). The decision is **not yet**:
 29,368 real lines of compiler and no asker for a cancho-hosted
 compiler today. Revisit `self-hosting.md` when one exists, rather than
 re-running this spike.
+
+| [#420](https://github.com/alpibrusl/cancho/pull/420) | [Foreign linking](foreign-linking.md) | #388. `extern fn free` collided with the LLVM backend's own arena declaration — `invalid redefinition of function 'free'`, answered `internal`, and cancho-robot's first spike had to leak the string instead. Fixed at the root rather than guarded: the backend's arena, boxed slices and wasi entry allocate under its private `cancho_` namespace (`@cancho_malloc`/`@cancho_free`, where `cancho_entry` already lived), so a program's declaration owns the public names with whatever signature it wrote — cancho has no `void`, so a program's `free` returns `i64`, and the two declarations can no longer disagree. The old `declare_libc_unless_own` route would have left the arena calling the program's signature; the private names remove the collision rather than negotiate it |
