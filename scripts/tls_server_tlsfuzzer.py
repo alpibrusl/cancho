@@ -59,6 +59,9 @@ REPLACED = {
     "test-tls13-empty-alert.py": "tlsfuzzer_cancho/test-empty-and-zero.py",
     "test-tls13-zero-content-type.py": "tlsfuzzer_cancho/test-empty-and-zero.py",
     "test-tls13-ccs.py": "tlsfuzzer_cancho/test-ccs.py",
+    "test-tls13-keyshare-omitted.py": "tlsfuzzer_cancho/test-keyshare-omitted.py",
+    "test-tls13-unrecognised-groups.py": "tlsfuzzer_cancho/test-unrecognised-groups.py",
+    "test-tls13-version-negotiation.py": "tlsfuzzer_cancho/test-version-negotiation.py",
 }
 
 # The stock scripts whose sanity cannot negotiate with this server: each offers
@@ -67,11 +70,8 @@ REPLACED = {
 # reached, and the failure says nothing about the server. Their subjects are
 # not yet ported to `tlsfuzzer_cancho`; until they are, the skip says so.
 SANITY_RSA = {
-    "test-tls13-keyshare-omitted.py": "a key_share omitted, and supported_groups without a share",
     "test-tls13-record-layer-limits.py": "plaintext and record size limits, at 2**14 and above",
     "test-tls13-shuffled-extentions.py": "extension order, and unassigned extension ids",
-    "test-tls13-unrecognised-groups.py": "a key share of a group not in supported_groups",
-    "test-tls13-version-negotiation.py": "legacy_version and record-layer version variants",
 }
 
 SKIPPED = {

@@ -490,12 +490,19 @@ malformed and unexpected-message cases. Each stock script the assumptions rule o
 skipped with its reason printed, so the run says what was not tested; CI runs the whole
 matrix on both backends' server builds and fails on any script's failure.
 
-**What it found, kept honest:** the first run surfaced one divergence -- a record whose
-inner plaintext is empty, or whose content type byte is zero, is answered with
-`decode_error` where RFC 8446 §5.4's reading (and tlsfuzzer's stock script) name
-`unexpected_message` -- tracked as #416, xfailed in the script until it is settled. The
-CCS cases pass: the middlebox CCS once, in its place, and a second one, a two-byte one,
-each refused with `unexpected_message`.
+**What it found, kept honest:** the runs surfaced two divergences, both xfailed in the
+scripts until they are settled, and both conformance questions rather than security
+holes. #416: a record whose inner plaintext is empty, or whose content type byte is
+zero, is answered `decode_error` where RFC 8446 §5.4's reading (and tlsfuzzer's stock
+script) names `unexpected_message`. #418: a ClientHello whose only key share is of a
+group not in `supported_groups` gets a HelloRetryRequest -- the server skips unknown
+shares, as it does GREASE -- where the stock script's strict reading of §4.2.8 expects
+`illegal_parameter`. Everything else passes: the sanity conversation; the CCS cases
+(the middlebox CCS in its place, a second one and a two-byte one each refused
+`unexpected_message`); key_share omitted (`missing_extension`) and empty
+(`decode_error`); legacy_version variants with TLS 1.3 negotiated; supported_versions
+without (3,4) refused `protocol_version`; unknown groups listed with the accepted
+share offered, handshaking anyway.
 
 ### 10.6 Mutants
 
