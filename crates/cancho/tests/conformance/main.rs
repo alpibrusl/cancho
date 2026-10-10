@@ -57,6 +57,7 @@ mod directory_modes;
 mod directory_rename_new;
 mod directory_writes;
 mod docs;
+mod drbg;
 mod duplication;
 mod ecdh;
 mod ecdsa;

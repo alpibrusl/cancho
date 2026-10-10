@@ -494,6 +494,7 @@ const STD: &[(&str, &str)] = &[
     ("<std>/ecdsa.cho", include_str!("../../../std/ecdsa.cho")),
     ("<std>/ecdh.cho", include_str!("../../../std/ecdh.cho")),
     ("<std>/ecdsa_sign.cho", include_str!("../../../std/ecdsa_sign.cho")),
+    ("<std>/drbg.cho", include_str!("../../../std/drbg.cho")),
     ("<std>/test.cho", include_str!("../../../std/test.cho")),
     ("<std>/json.cho", include_str!("../../../std/json.cho")),
     ("<std>/map.cho", include_str!("../../../std/map.cho")),
