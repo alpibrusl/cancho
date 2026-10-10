@@ -180,8 +180,8 @@ impl<'a> FuncEmitter<'a> {
         self.out
             .push_str(&format!("  call i32 @posix_spawn_file_actions_destroy(ptr {actions})\n"));
         self.out.push_str(&format!("  call i32 @posix_spawnattr_destroy(ptr {attributes})\n"));
-        self.out.push_str(&format!("  call void @free(ptr {argv})\n"));
-        self.out.push_str(&format!("  call void @free(ptr {envp})\n"));
+        self.out.push_str(&format!("  call void @cancho_free(ptr {argv})\n"));
+        self.out.push_str(&format!("  call void @cancho_free(ptr {envp})\n"));
 
         // What was handed to the child is the parent's no longer, whether or
         // not the child started (§4.1: a failed spawn leaks nothing).
@@ -297,7 +297,7 @@ impl<'a> FuncEmitter<'a> {
         let st = self.size_ty();
         let size = self.size_arg(&bytes);
         let array = self.fresh();
-        self.out.push_str(&format!("  {array} = call ptr @malloc({st} {size})\n"));
+        self.out.push_str(&format!("  {array} = call ptr @cancho_malloc({st} {size})\n"));
         let missing = self.fresh();
         self.out.push_str(&format!("  {missing} = icmp eq ptr {array}, null\n"));
         self.trap_if(&missing)?;

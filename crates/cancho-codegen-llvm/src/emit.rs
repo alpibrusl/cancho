@@ -313,8 +313,19 @@ pub(crate) fn emit_module(
     // declares these the same way, on first use rather than unconditionally
     // there, but an unused `declare` here costs nothing, the same reasoning
     // `putchar`'s own unconditional declaration already relies on.
-    text.push_str(&format!("declare ptr @malloc({st})\n"));
-    text.push_str("declare void @free(ptr)\n");
+    // The arena's own allocator, under this backend's private `cancho_`
+    // namespace (#388): a program may declare `extern fn free` or
+    // `malloc` itself -- releasing a `c_ptr` that libc allocated is a
+    // legitimate program -- and cancho has no `void`, so the program's
+    // declaration returns `i64` while the arena calls `call void`. Two
+    // declarations of one symbol with disagreeing signatures is what
+    // `clang` refused as `invalid redefinition`; routing the arena
+    // through names no program can declare removes the collision at the
+    // root, the same namespace `cancho_entry` already lives in. The
+    // signatures stay the backend's own: an unused `declare` costs
+    // nothing, which is the reasoning `putchar` already relies on.
+    text.push_str(&format!("declare ptr @cancho_malloc({st})\n"));
+    text.push_str("declare void @cancho_free(ptr)\n");
     // Checked arithmetic (§5's second slice): the three overflow-reporting
     // intrinsics `Expr::Bin`'s `Add`/`Sub`/`Mul` arms call. Declared
     // unconditionally, the same way `putchar` is -- an unused `declare`

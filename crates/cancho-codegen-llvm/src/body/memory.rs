@@ -132,7 +132,7 @@ impl<'a> FuncEmitter<'a> {
         let st = self.size_ty();
         let chunk = self.size_arg(&ARENA_CHUNK.to_string());
         let base = self.fresh();
-        self.out.push_str(&format!("  {base} = call ptr @malloc({st} {chunk})\n"));
+        self.out.push_str(&format!("  {base} = call ptr @cancho_malloc({st} {chunk})\n"));
         // Out of memory is a trap, not a null pointer wandering into a
         // store -- the language has no undefined behaviour to fall back
         // on, the same reasoning `box`/`box_slice` already trap on here.
@@ -164,7 +164,7 @@ impl<'a> FuncEmitter<'a> {
         if !terminated {
             let held = self.fresh();
             self.out.push_str(&format!("  {held} = load ptr, ptr {base_cell}\n"));
-            self.out.push_str(&format!("  call void @free(ptr {held})\n"));
+            self.out.push_str(&format!("  call void @cancho_free(ptr {held})\n"));
         }
         self.arenas[arena as usize] = None;
         Ok(terminated)
@@ -177,7 +177,7 @@ impl<'a> FuncEmitter<'a> {
             let Some((base_cell, _)) = self.arenas[index].clone() else { continue };
             let held = self.fresh();
             self.out.push_str(&format!("  {held} = load ptr, ptr {base_cell}\n"));
-            self.out.push_str(&format!("  call void @free(ptr {held})\n"));
+            self.out.push_str(&format!("  call void @cancho_free(ptr {held})\n"));
         }
     }
 
@@ -335,7 +335,7 @@ impl<'a> FuncEmitter<'a> {
             // -- `cancho-codegen`'s own `boxed_slice` makes the same choice.
             self.out.push_str(&format!("  {start} = call ptr @calloc({st} {size}, {st} 1)\n"));
         } else {
-            self.out.push_str(&format!("  {start} = call ptr @malloc({st} {size})\n"));
+            self.out.push_str(&format!("  {start} = call ptr @cancho_malloc({st} {size})\n"));
         }
         let is_null = self.fresh();
         self.out.push_str(&format!("  {is_null} = icmp eq ptr {start}, null\n"));
@@ -385,7 +385,7 @@ impl<'a> FuncEmitter<'a> {
         let st = self.size_ty();
         let size = self.size_arg(&bytes.to_string());
         let at = self.fresh();
-        self.out.push_str(&format!("  {at} = call ptr @malloc({st} {size})\n"));
+        self.out.push_str(&format!("  {at} = call ptr @cancho_malloc({st} {size})\n"));
         let is_null = self.fresh();
         self.out.push_str(&format!("  {is_null} = icmp eq ptr {at}, null\n"));
         self.trap_if(&is_null)?;
@@ -405,7 +405,7 @@ impl<'a> FuncEmitter<'a> {
         };
         let kinds = leaves_of(ty, self.program)?;
         let values = self.load_leaves(&operand(at), &kinds);
-        self.out.push_str(&format!("  call void @free(ptr {})\n", operand(at)));
+        self.out.push_str(&format!("  call void @cancho_free(ptr {})\n", operand(at)));
         Ok(values)
     }
 
