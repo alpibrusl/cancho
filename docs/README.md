@@ -422,6 +422,7 @@ not repeated here; a doc's own header carries its own detail.
 | [`gpu.md`](gpu.md) | Whether cancho can run on a GPU, and whether `lex-gpu` should exist | measured; decided |
 | [`line-reading.md`](line-reading.md) | Whether `std` needs a line reader | measured — no; found and fixed a silent truncation bug |
 | [`agent-errors.md`](agent-errors.md) | Refusals a machine can read: stable rule tags, `check --output json` | settled and built |
+| [`tty.md`](tty.md) | `Tty`, the serial-port capability (#422 T1): both measured termios ABIs, the surface, the labels — design |
 | [`agent-tools.md`](agent-tools.md) | A tool genuinely shaped for an agent's own loop | built (`examples/seek/`) |
 | [`agent-toolbox.md`](agent-toolbox.md) | Whether a *set* of unix-like tools in cancho, with a JSON contract, rule-tagged errors with repair hints and a compiler-derived authority, is worth building — and the protocol that would say so | design; the probes it rests on are run and recorded, nothing is built. Found: `Fs` extent cannot be static (`narrow` takes a literal), no directory listing or regex, `sha256` traps past 64 KiB, a failed `stdout` write is invisible, and lex-os reads a cancho `net_out` label as *no network*; corrects `bulk-io.md` §3.3 and `agent-tools.md` §1 |
 | [`aliasing.md`](aliasing.md) | Whether `&!` should mean Rust's `&mut` | measured — no |
