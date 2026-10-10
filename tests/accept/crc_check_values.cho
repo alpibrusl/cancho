@@ -1,0 +1,90 @@
+edition 5;
+// `std.crc` (#352): the three checksums against the standard catalogue's
+// published check values for `"123456789"` -- not from memory, each is the
+// value the catalogue (and Redis's own `crc16` reference, for the slot
+// hash) records:
+//
+//   CRC-16/XMODEM  0x31C3              (init 0, poly 0x1021, no reflect)
+//   CRC-32/IEEE    0xCBF43926          (reflected, init/xorout all ones)
+//   CRC-64/XZ      hi 0x995DC9BB       lo 0xDF1939FA
+//                                  (the "Jones" polynomial, reflected;
+//                                   the answer is the two 32-bit halves)
+//
+// The incremental forms are checked too: feeding the string one byte at a
+// time and in two halves must give the one-call answer, which is what a
+// snapshot writer checksumming in slices needs to be true.
+//~ STDOUT 000031c3
+//~ STDOUT cbf43926
+//~ STDOUT 995dc9bb df1939fa
+//~ STDOUT 000031c3
+//~ STDOUT cbf43926
+//~ STDOUT 995dc9bb df1939fa
+//~ EXIT 0
+import std.io;
+import std.crc;
+
+fn print_hex[&i](io: &!i Io, value: int) -> [io_write] int {
+    let alphabet = "0123456789abcdef";
+    var shifted = value;
+    var digits = 0;
+    while digits < 8 {
+        putchar(io, int_of(alphabet[shifted >> 28 & 0xf]));
+        shifted = shifted << 4;
+        digits = digits + 1;
+    }
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi); release(fs); release(heap); release(args); release(net); release(clock);
+    borrow mut io as &!i in {
+        let text = "123456789";
+
+        // The one-call forms, against the catalogue.
+        print_hex(i, crc.crc16_of(text));
+        putchar(i, 10);
+        print_hex(i, crc.crc32_of(text));
+        putchar(i, 10);
+        let (hi, lo) = crc.crc64_of(text);
+        print_hex(i, hi);
+        putchar(i, 32);
+        print_hex(i, lo);
+        putchar(i, 10);
+
+        // The incremental forms, one byte at a time -- and CRC-64 split
+        // across two updates, which is the snapshot case: slices between
+        // turns of an event loop.
+        var s16 = crc.crc16_start();
+        var s32 = crc.crc32_start();
+        var s64 = crc.crc64_start();
+        var n = 0;
+        while n < len(text) {
+            let one = text[n..n + 1];
+            s16 = crc.crc16_update(s16, one);
+            s32 = crc.crc32_update(s32, one);
+            if n == 4 {
+                // The first four bytes as one slice, the rest one at a
+                // time: both must agree with the one-call answer.
+                let head = text[0..5];
+                s64 = crc.crc64_update(s64, head);
+            } else {
+                if n >= 4 {
+                    s64 = crc.crc64_update(s64, one);
+                }
+            }
+            n = n + 1;
+        }
+        print_hex(i, crc.crc16_finish(s16));
+        putchar(i, 10);
+        print_hex(i, crc.crc32_finish(s32));
+        putchar(i, 10);
+        let (fhi, flo) = crc.crc64_finish(s64);
+        print_hex(i, fhi);
+        putchar(i, 32);
+        print_hex(i, flo);
+        putchar(i, 10);
+    }
+    release(io);
+    return 0;
+}

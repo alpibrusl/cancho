@@ -1,0 +1,239 @@
+module std.crc;
+
+// `std.crc` — the three checksums a cancho program has been asked for by
+// name, each gated against the standard catalogue's published check
+// value for `"123456789"` (#352).
+//
+// Two askers cleared `CONTRIBUTING.md`'s bar, and they want three
+// polynomials:
+//
+//   * **CRC-16/XMODEM** — Redis Cluster's hash slot is
+//     `crc16(key) mod 16384` (with `{hash tag}` handling), so a
+//     cluster-aware client must agree with the server byte for byte
+//     (cancho-cache's cluster-lite epic).
+//   * **CRC-64/XZ** (the "Jones" polynomial, reflected) — the checksum a
+//     snapshot or replication format wants; `crc64_finish` answers the
+//     catalogue's value, and Redis's own `crc64` is the same polynomial
+//     with the caller choosing the initial state.
+//   * **CRC-32/IEEE** — a log or snapshot record check. cancho-log has
+//     its own private `crc.cho`, a *Castagnoli* CRC-32C, which stays
+//     where it is: that is a different polynomial, not a second copy of
+//     this one.
+//
+// All three are reflected-or-not as their standard says, table-driven
+// where a table earns its 2 KiB, and incremental (`start`/`update`/
+// `finish`) beside a one-call `of` — a snapshot is checksummed in slices
+// across turns of an event loop, so the state has to survive between
+// them.
+//
+// **A checksum's width is a mask, not a type.** `int` is 64-bit and
+// signed, and `>>` is arithmetic (`docs/bitwise.md` §2): a state whose
+// top bit is set would sign-extend under `>>` and read back wrong.
+// CRC-16 and CRC-32 stay under 2^31 by masking, so their `>>` is logical
+// for free. CRC-64 cannot — its state genuinely uses the top bit, and
+// the mask `0xffffffffffffffff` is not a literal a 64-bit signed
+// language can write. Its state is therefore held as **two 32-bit
+// halves**, every intermediate of which is under 2^56 and every shift
+// logical by construction. The table is stored the same way, as two
+// 256-entry statics; that is not an optimisation but the design.
+//
+// No imports: a checksum is shifts and xors, and a module with nothing
+// to depend on publishes first (`docs/package-system.md`).
+
+// ---- CRC-16/XMODEM (CCITT-FALSE family: poly 0x1021, init 0, no
+//      reflection, no final xor) ---------------------------------------------
+//
+// Sixteen bits, non-reflected: the byte loop is eight shift-and-condition
+// steps, and a 256-entry table for it costs more than the loop. This is
+// the exact loop Redis's own `crc16` reference implements for
+// `CLUSTER KEYSLOT`.
+
+// The state before any byte: XMODEM starts at 0.
+pub fn crc16_start() -> [] int {
+    return 0;
+}
+
+// Feed `data` into a running CRC-16/XMODEM state.
+pub fn crc16_update[&b](state: int, data: &b [byte]) -> [] int {
+    var c = state & 0xffff;
+    var i = 0;
+    while i < len(data) {
+        c = c ^ int_of(data[i]) << 8;
+        var k = 0;
+        while k < 8 {
+            if c & 0x8000 != 0 {
+                c = (c << 1) ^ 0x1021;
+            } else {
+                c = c << 1;
+            }
+            c = c & 0xffff;
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    return c;
+}
+
+// The checksum of a state (XMODEM has no final xor).
+pub fn crc16_finish(state: int) -> [] int {
+    return state & 0xffff;
+}
+
+// The checksum of `data` in one call.
+pub fn crc16_of[&b](data: &b [byte]) -> [] int {
+    return crc16_finish(crc16_update(crc16_start(), data));
+}
+
+// ---- CRC-32/IEEE (reflected, poly 0xedb88320, init and xorout all ones) ----
+
+static crc32_table: [int] {
+    let t = alloc_slice[static](256, 0);
+    var i = 0;
+    while i < 256 {
+        var c = i;
+        var k = 0;
+        while k < 8 {
+            if c & 1 == 1 {
+                c = c >> 1 ^ 0xedb88320;
+            } else {
+                c = c >> 1;
+            }
+            c = c & 0xffffffff;
+            k = k + 1;
+        }
+        t[i] = c;
+        i = i + 1;
+    }
+    return t;
+}
+
+// The state before any byte: IEEE starts at all ones.
+pub fn crc32_start() -> [] int {
+    return 0xffffffff;
+}
+
+// Feed `data` into a running CRC-32/IEEE state.
+pub fn crc32_update[&b](state: int, data: &b [byte]) -> [] int {
+    var c = state & 0xffffffff;
+    var i = 0;
+    while i < len(data) {
+        c = c >> 8 ^ crc32_table[(c ^ int_of(data[i])) & 0xff];
+        c = c & 0xffffffff;
+        i = i + 1;
+    }
+    return c;
+}
+
+// The checksum of a state: the complement, masked to the width.
+pub fn crc32_finish(state: int) -> [] int {
+    return (state ^ 0xffffffff) & 0xffffffff;
+}
+
+// The checksum of `data` in one call.
+pub fn crc32_of[&b](data: &b [byte]) -> [] int {
+    return crc32_finish(crc32_update(crc32_start(), data));
+}
+
+// ---- CRC-64/XZ ("Jones", reflected poly 0xc96c5795d7870f42, init and
+//      xorout all ones) -------------------------------------------------------
+//
+// The state is two 32-bit halves, `hi` and `lo`, each always in
+// [0, 2^32): no intermediate reaches a sign bit, every `>>` is logical,
+// and no 64-bit mask is ever needed. The update, derived from the
+// one-word form `crc = table[(crc ^ b) & 0xff] ^ (crc >> 8)`:
+//
+//   idx = (lo ^ b) & 0xff                — the byte meets the low half
+//   shr = (lo >> 8) | (hi << 24)         — the logical `crc >> 8`, under 2^56
+//   lo  = table_lo[idx] ^ (shr & 0xffffffff)
+//   hi  = table_hi[idx] ^ (shr >> 32)
+//
+// The table is stored as the same two halves, built from the one-word
+// entries: each entry is split once when the program is compiled.
+
+// The one-word entry is built in halves too, for the same reason the
+// state is: the 64-bit entry uses the top bit, `>>` is arithmetic, and
+// the 64-bit mask is not a literal this language can write. Each entry
+// is two 32-bit words through all eight steps — the shift moves a bit
+// from `hi` into `lo`'s top, then the halves xor their own half of the
+// polynomial (0xd7870f42 below, 0xc96c5795 above). The one-word table
+// is what this computes, split once; `crc64_test.cho` checks both halves
+// against the catalogue's value.
+static crc64_table_lo: [int] {
+    let t = alloc_slice[static](256, 0);
+    var i = 0;
+    while i < 256 {
+        var chi = 0;
+        var clo = i;
+        var k = 0;
+        while k < 8 {
+            if clo & 1 == 1 {
+                clo = (clo >> 1 | (chi & 1) << 31) ^ 0xd7870f42;
+                chi = chi >> 1 ^ 0xc96c5795;
+            } else {
+                clo = clo >> 1 | (chi & 1) << 31;
+                chi = chi >> 1;
+            }
+            k = k + 1;
+        }
+        t[i] = clo;
+        i = i + 1;
+    }
+    return t;
+}
+
+static crc64_table_hi: [int] {
+    let t = alloc_slice[static](256, 0);
+    var i = 0;
+    while i < 256 {
+        var chi = 0;
+        var clo = i;
+        var k = 0;
+        while k < 8 {
+            if clo & 1 == 1 {
+                clo = (clo >> 1 | (chi & 1) << 31) ^ 0xd7870f42;
+                chi = chi >> 1 ^ 0xc96c5795;
+            } else {
+                clo = clo >> 1 | (chi & 1) << 31;
+                chi = chi >> 1;
+            }
+            k = k + 1;
+        }
+        t[i] = chi;
+        i = i + 1;
+    }
+    return t;
+}
+
+// The state before any byte: XZ starts at all ones, which in halves is
+// two all-ones 32-bit words.
+pub fn crc64_start() -> [] (int, int) {
+    return (0xffffffff, 0xffffffff);
+}
+
+// Feed `data` into a running CRC-64/XZ state, in halves.
+pub fn crc64_update[&b](state: (int, int), data: &b [byte]) -> [] (int, int) {
+    var hi = state.0;
+    var lo = state.1;
+    var i = 0;
+    while i < len(data) {
+        let idx = (lo ^ int_of(data[i])) & 0xff;
+        let shr = (lo >> 8) | (hi << 24);
+        lo = crc64_table_lo[idx] ^ (shr & 0xffffffff);
+        hi = crc64_table_hi[idx] ^ (shr >> 32);
+        i = i + 1;
+    }
+    return (hi, lo);
+}
+
+// The checksum of a state: each half complemented. The answer is the
+// pair; a caller that wants it as one number combines the halves
+// itself, because `hi * 4294967296 + lo` is a 64-bit value the caller
+// may legitimately want to keep in halves too.
+pub fn crc64_finish(state: (int, int)) -> [] (int, int) {
+    return (state.0 ^ 0xffffffff, state.1 ^ 0xffffffff);
+}
+
+// The checksum of `data` in one call.
+pub fn crc64_of[&b](data: &b [byte]) -> [] (int, int) {
+    return crc64_finish(crc64_update(crc64_start(), data));
+}

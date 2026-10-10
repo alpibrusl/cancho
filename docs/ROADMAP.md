@@ -378,3 +378,5 @@ the Cranelift dependency all check out). The decision is **not yet**:
 29,368 real lines of compiler and no asker for a cancho-hosted
 compiler today. Revisit `self-hosting.md` when one exists, rather than
 re-running this spike.
+
+| [#421](https://github.com/alpibrusl/cancho/pull/421) | [std.crc](crc.md) | #352, two askers (cancho-cache's cluster slots, cancho-log's record check). CRC-16/XMODEM (Redis's `crc16` loop, table-free at 16 bits), CRC-32/IEEE, and CRC-64 — whose state genuinely uses the top bit, which a 64-bit **signed** language whose `>>` is arithmetic and whose all-ones mask is not a writable literal cannot hold in one word. The design is two 32-bit halves, state and table both, no mask ever needed; `docs/crc.md` §2 records why an unsigned-shift emulation was tried and rejected. **Corrected in place:** the issue's cited CRC-64 check value `0xE9C6D914C4B8D9CA` matches no init/xorout combination of the cited polynomial — all four computed; the catalogue's CRC-64/XZ value `0x995DC9BBDF1939FA` is what ships and what the gate checks |
