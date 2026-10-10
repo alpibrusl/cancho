@@ -46,12 +46,24 @@ impl FuncEmitter<'_> {
 
         // Raw mode, 8N1, `CLOCAL | CREAD`, `VMIN 0 / VTIME 0`, and the
         // speed bits on Linux, at the measured offsets and widths.
-        let width = if cfg!(target_os = "macos") { "i64" } else { "i32" };
         let cflag = CS8 | CLOCAL | CREAD | TTY_CFLAG_SPEED;
+        let width = if cfg!(target_os = "macos") { "i64" } else { "i32" };
+        let stride = if cfg!(target_os = "macos") { 8 } else { 4 };
+        // The whole struct is zeroed first, one word per pass at the
+        // target's own width: an alloca answers what was on the stack,
+        // and raw 8N1 is *defined by* the zeros -- no input, output or
+        // local flags, no line discipline, `VMIN 0 / VTIME 0` -- so this
+        // is not hygiene but the configuration itself, and `c_cflag` is
+        // the one field that is not zero by design. The zeroing walks
+        // the struct at the target's field width (4-byte fields on
+        // Linux at 0/4/8/12, 8-byte on macOS at 0/8/16/24), never a
+        // hardcoded offset list that happens to be one target's.
+        let mut at = 0;
+        while at < TERMIOS_SIZE {
+            self.store_word(&termios, at, width, 0);
+            at += stride;
+        }
         self.store_word(&termios, CFLAG_AT, width, cflag);
-        self.store_word(&termios, 0, width, 0);
-        self.store_word(&termios, 8, width, 0);
-        self.store_word(&termios, 16, width, 0);
         self.store_cc(&termios, CC_AT + VMIN, 0);
         self.store_cc(&termios, CC_AT + VTIME, 0);
 
@@ -139,17 +151,23 @@ impl FuncEmitter<'_> {
 
     // ---- helpers ---------------------------------------------------------
 
-    /// A flags word of `struct termios`, at the target's width.
+    /// A flags word of `struct termios`, at the target's width. The field
+    /// address is an instruction, not a `getelementptr` constant expression:
+    /// the base is a function-local value, and LLVM forbids one in a
+    /// constant-expression position (`clang`'s "invalid use of
+    /// function-local name", the emission the first cut shipped).
     fn store_word(&mut self, base: &str, at: usize, width: &str, value: i64) {
-        self.out.push_str(&format!(
-            "  store {width} {value}, ptr getelementptr(i8, ptr {base}, i64 {at})\n"
-        ));
+        let field = self.fresh();
+        self.out
+            .push_str(&format!("  {field} = getelementptr inbounds i8, ptr {base}, i64 {at}\n"));
+        self.out.push_str(&format!("  store {width} {value}, ptr {field}\n"));
     }
 
-    /// One byte of `c_cc`.
+    /// One byte of `c_cc`, the same way.
     fn store_cc(&mut self, base: &str, at: usize, value: i64) {
-        self.out.push_str(&format!(
-            "  store i8 {value}, ptr getelementptr(i8, ptr {base}, i64 {at})\n"
-        ));
+        let field = self.fresh();
+        self.out
+            .push_str(&format!("  {field} = getelementptr inbounds i8, ptr {base}, i64 {at}\n"));
+        self.out.push_str(&format!("  store i8 {value}, ptr {field}\n"));
     }
 }

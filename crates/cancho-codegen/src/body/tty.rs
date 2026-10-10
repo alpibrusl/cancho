@@ -66,10 +66,22 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         // step on macOS is the same `tcsetattr` at `MACOS_STANDARD_STEP`,
         // the two-step the spike measured (research log finding 3).
         let cflag = CS8 | CLOCAL | CREAD | TTY_CFLAG_SPEED;
+        let width = if cfg!(target_os = "macos") { 8 } else { 4 };
+        // The whole struct is zeroed first, one word per pass at the
+        // target's own width: the stack slot answers what was on the
+        // stack, and raw 8N1 is *defined by* the zeros -- no input,
+        // output or local flags, no line discipline, `VMIN 0 / VTIME 0`
+        // -- so this is not hygiene but the configuration itself, and
+        // `c_cflag` is the one field that is not zero by design. The
+        // zeroing walks the struct at the field width (4-byte fields on
+        // Linux at 0/4/8/12, 8-byte on macOS at 0/8/16/24), never a
+        // hardcoded offset list that happens to be one target's.
+        let mut at = 0;
+        while at < TERMIOS_SIZE {
+            self.store_word(termios, at, 0);
+            at += width;
+        }
         self.store_word(termios, CFLAG_AT, cflag);
-        self.store_word(termios, 0, 0); // c_iflag
-        self.store_word(termios, 8, 0); // c_oflag (4-byte fields on Linux are at 0/4/8/12)
-        self.store_word(termios, 16, 0); // c_lflag
         self.store_byte(termios, CC_AT + VMIN, 0);
         self.store_byte(termios, CC_AT + VTIME, 0);
 
