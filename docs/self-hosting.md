@@ -633,6 +633,19 @@ program starts, so a static that reads another is not supported, and the table i
 is visible to a program, but the first is a difference: a static whose body traps is a compile error in
 Rust and a trap at startup here.
 
+**The census (mode 4, `census.cho`).** To measure how far the compiler in cancho is from compiling a program,
+the bodies mode runs with the code on and says, for each function, `OK` (the checker accepts it and code
+is written) or `SKIP <from> <to>` with the first construct it has no code for. Fed the compiler's own source and
+the `std` modules it imports (`bytes`, `buffer`, `io`, `math`; 644 functions), on 2026-10-12: **488 of
+the compiler's own 544 functions (90%)** get code, 20 of the 39 in `std.bytes`/`buffer`/`io`, and 6 of the 61
+in `std.math`, which is floating point and which the compiler does not use. `OK` here means code is written,
+not that it has been run: the programs run so far are the 382 of the differential test. What the other 56
+of the compiler's functions stop at: a function that returns a slice or calls one (`tables.*`,
+`builtins.effect_name`, `rules.rule_tag`: about 20), a sub-slice `s[a..b]` (about 12), a struct with a field
+that is not a whole number, byte or boolean (`block`'s result, `Buffer`: about 14), a few builtins
+(`wrapping_mul`) and floats (1). Not measured: calls across modules, which the test programs do not make, and
+a binary that has been built from all of it.
+
 The mutation test of `types.cho` (54 operator swaps) killed 40 on the first corpus of 458 targeted
 body cases (after region-variable, `where`-closure and coercion cases were added; 33 before); the 14
 that survive are guards the other conditions already make redundant (`&&` on kinds that are
