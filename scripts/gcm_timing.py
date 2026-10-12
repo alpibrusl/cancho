@@ -4,7 +4,7 @@
 
     cc -O2 -c tick.c -o tick.o && ar rcs libtick.a tick.o   # tick.c below
     cancho build --std [--backend B] tests/programs/gcm_timing.cho -l tick -L . -o timing
-    python3 scripts/gcm_timing.py ./timing [<samples per test>] [--chacha20]
+    python3 scripts/gcm_timing.py ./timing [<samples per test>] [--chacha20] [--size <bytes>] [--prepared [--pool <n>]]
 
 `tick.c` is the cycle counter the program reads:
 
@@ -15,6 +15,14 @@ or on aarch64, the generic timer, whose rate `cntfrq_el0` gives (1 GHz,
 measured, on an Apple M4 Max under macOS 26):
 
     long cancho_tick(void) { long v; __asm__ volatile("isb\n\tmrs %0, cntvct_el0" : "=r"(v)); return v; }
+
+With `--prepared` (docs/gcm-wide.md §8.3), the calls timed are `gcm.seal_with` and `gcm.open_with`
+under a key prepared once, which is what the record layer runs and is nothing but the hardware path's
+two builtin calls; without it, the one-shot `gcm.seal` and `gcm.open`, where preparing the key and a
+64 KiB region are most of what is timed. The prepared tests are the three that keep one key ("seal,
+data", "open, data", "open, tag"), and their inputs come from two pools of `--pool` (default 256)
+records a class, measurement `i` of a class using record `i mod pool`: both classes then cycle
+through as many buffers, and a 16 KiB message can be measured a million times.
 
 Every input is generated and read before anything is timed: decoding
 input just before a timed call, with branches on what it decodes, was
@@ -71,6 +79,17 @@ def max_t(samples):
     return worst
 
 
+def run_pooled(exe, op, fixed, rand, classes, pool):
+    """Times one call per class in `classes` over pools of `pool` fixed and random records."""
+    recs = [fixed() for _ in range(pool)] + [rand() for _ in range(pool)]
+    k, n, a, d = (len(x) for x in recs[0])
+    data = (f"{op} {k} {n} {a} {d} {pool} {len(classes)}\n".encode()
+            + b"".join(b"".join(r) for r in recs).hex().encode() + b"\n"
+            + "".join(str(c) for c in classes).encode())
+    out = subprocess.run([exe], input=data, capture_output=True, check=True).stdout
+    return [int(x) for x in out.decode().split()]
+
+
 def run(exe, op, records):
     """Times one call per record, each a (key, nonce, aad, data) tuple."""
     k, n, a, d = (len(x) for x in records[0])
@@ -80,8 +99,19 @@ def run(exe, op, records):
 
 
 def main():
+    global SIZE
     chacha = "--chacha20" in sys.argv
-    args = [a for a in sys.argv[1:] if a != "--chacha20"]
+    prepared = "--prepared" in sys.argv
+    args = [a for a in sys.argv[1:] if a not in ("--chacha20", "--prepared")]
+    pool = 256
+    if "--pool" in args:
+        at = args.index("--pool")
+        pool = int(args[at + 1])
+        del args[at:at + 2]
+    if "--size" in args:
+        at = args.index("--size")
+        SIZE = int(args[at + 1])
+        del args[at:at + 2]
     exe = args[0]
     n = int(args[1]) if len(args) > 1 else 100000
     # ChaCha20-Poly1305's ops are the lowercase ones, and its key is 32 bytes.
@@ -103,10 +133,18 @@ def main():
                       lambda: (key, nonce, bytes(AAD), ct + bytes(15) + bytes([1]))),
     }
 
+    if prepared:
+        assert not chacha, "--prepared is std.gcm's"
+        tests = {name: ({"S": "P", "O": "Q"}[op], fixed, rand) for name, (op, fixed, rand) in tests.items() if name != "seal, key"}
+        print(f"prepared key, {SIZE}-byte messages, pools of {pool} records a class", flush=True)
+
     leaked = False
     for name, (op, fixed, rand) in tests.items():
         classes = [rng.randrange(2) for _ in range(n)]
-        times = run(exe, op, [fixed() if c == 0 else rand() for c in classes])
+        if prepared:
+            times = run_pooled(exe, op, fixed, rand, classes, pool)
+        else:
+            times = run(exe, op, [fixed() if c == 0 else rand() for c in classes])
         assert len(times) == n
         # The first thousand warm the caches and the branch predictor.
         samples = list(zip(classes, times))[1000:]

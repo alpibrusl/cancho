@@ -10,7 +10,8 @@ edition 6;
 //                 [--alpn <p1,p2,...>] [--connections <n>] [--handshakes <n>]
 //                 [--rate <per second>] [--handshake-timeout <ms>] [--idle <ms>]
 //                 [--per-address <n>] [--per-address-rate <per second>]
-//                 [--read-timeout <ms>] [--max-body <MiB>]
+//                 [--tickets <n>] [--ticket-lifetime <seconds>] [--ticket-keys <file>]
+//                 [--read-timeout <ms>] [--max-body <MiB>] [--client-ca <file> [--require-client-cert]]
 //
 // The options, the certificates (`--dir`, `--identity`), the bounds, `SIGHUP` and
 // `SIGINT`/`SIGTERM`, the log, and the exit statuses are `examples/tls_echo/tls_echo.cho`'s,
@@ -28,8 +29,9 @@ import tls;
 fn usage[&i](io: &!i Io) -> [err_write] int {
     io.error_all(io, "usage: https_hello --port <n> --dir <directory> [--identity <subdirectory>]... [--alpn <p1,p2>]\n");
     io.error_all(io, "                [--connections <n>] [--handshakes <n>] [--rate <n>] [--handshake-timeout <ms>] [--idle <ms>]\n");
-    io.error_all(io, "                [--per-address <n>] [--per-address-rate <n>]\n");
-    io.error_all(io, "                [--read-timeout <ms>] [--max-body <MiB>]\n");
+    io.error_all(io, "                [--per-address <n>] [--per-address-rate <n>] [--areas <n>]\n");
+    io.error_all(io, "                [--tickets <n>] [--ticket-lifetime <seconds>] [--ticket-keys <file in the directory>]\n");
+    io.error_all(io, "                [--read-timeout <ms>] [--max-body <MiB>] [--client-ca <file> [--require-client-cert]]\n");
     return 2;
 }
 
@@ -37,7 +39,7 @@ fn usage[&i](io: &!i Io) -> [err_write] int {
 // listener, the signals, the loop.
 fn serve[&h, &i, &n, &k, &s, &d, &u, &l, &c, &r, &a](heap: &!h Heap, io: &!i Io, net: &n Net(""), clock: &k Clock, claim: &s Signals("HUP,INT,TERM"), dir: &d Dir, subs: &u [byte], sublens: &l [int], cfg: &c [int], entropy: &r [byte], alpn: &a [byte]) -> [heap, dir_read, file_read, err_write, io_write, net_in(""), conn_accept, conn_read, conn_write, poll, clock, signals("HUP,INT,TERM"), signals_read] int {
     var status = 0;
-    var engine = tls.open_server(heap, cfg[front.c_conns()]);
+    var engine = tls.open_server_with_areas(heap, cfg[front.c_conns()], front.areas_of(cfg));
     borrow mut engine as &!ew in {
         tls.seed(ew, entropy);
         if len(alpn) > 0 && tls.set_alpn(ew, alpn) != 0 {
@@ -45,7 +47,10 @@ fn serve[&h, &i, &n, &k, &s, &d, &u, &l, &c, &r, &a](heap: &!h Heap, io: &!i Io,
             status = 2;
         }
         if status == 0 {
-            status = front.add_all(heap, io, dir, ew, subs, sublens, cfg[front.c_identities()], clock_unix_ms(clock));
+            status = front.add_all(heap, io, dir, ew, subs, sublens, cfg, clock_unix_ms(clock));
+        }
+        if status == 0 {
+            status = front.tickets(io, dir, ew, cfg, subs, sublens, clock_unix_ms(clock));
         }
         if status == 0 {
             match tcp_listen(net, cfg[front.cfg_len()], 1024, 0) {
@@ -92,8 +97,8 @@ fn main(world: World) -> [] int {
     borrow mut io as &!i in {
         borrow mut heap as &!h in {
             let cfgb = box_slice(h, front.cfg_len() + 1, 0);
-            let subsb = box_slice(h, 16 * front.sub_cap(), byte_of(0));
-            let lensb = box_slice(h, 16, 0);
+            let subsb = box_slice(h, front.subs_len(), byte_of(0));
+            let lensb = box_slice(h, front.lens_len(), 0);
             borrow mut cfgb as &!cw in {
                 borrow mut subsb as &!uw in {
                     borrow mut lensb as &!lw in {

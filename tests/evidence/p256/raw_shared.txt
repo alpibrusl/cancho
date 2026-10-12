@@ -1,0 +1,8 @@
+# commit 3b71b5292370f40cbf6e29c7ef57cb91050d753d (branch p256-faster); machine gram, Intel Core i7-1260P, Linux 7.0.0-38-generic, x86-64; LLVM backend
+# taskset -c 2-3 (one physical core, both threads); governor of cpu2/cpu3: performance/performance
+# start: 2026-10-12T10:25:03+02:00;  10:25:03 up 4 days, 23:44,  6 users,  load average: 9,21, 8,10, 5,61
+# python3 scripts/ecdh_timing.py ecdh_timing 1000000 --curves=256
+P-256 shared scalar 1     1000000 samples, median 978555 cycles, max |t| = 1.73
+P-256 shared fixed scalar 1000000 samples, median 785486 cycles, max |t| = 1.78
+P-256 shared scalar 16^k  1000000 samples, median 799812 cycles, max |t| = 1.70
+# end: 2026-10-12T10:45:26+02:00;  10:45:26 up 5 days, 4 min, 11 users,  load average: 7,13, 6,99, 6,85

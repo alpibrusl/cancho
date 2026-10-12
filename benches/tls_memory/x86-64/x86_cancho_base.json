@@ -1,0 +1,302 @@
+[
+ {
+  "n": 50,
+  "rss": {
+   "start": 2220,
+   "connected": 6468,
+   "handshake": 7688,
+   "established": 8292,
+   "echoed": 12816,
+   "partial": 12816,
+   "all-echoed": 12816
+  },
+  "smaps_established": [
+   [
+    14756,
+    5880,
+    "[anon]"
+   ],
+   [
+    1632,
+    1056,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    288,
+    288,
+    "/home/alpibru/Workspace/tlsmem-bin/tls_echo_base"
+   ],
+   [
+    1092,
+    228,
+    "[anon]"
+   ],
+   [
+    188,
+    188,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    324,
+    172,
+    "[heap]"
+   ],
+   [
+    160,
+    160,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    312,
+    120,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    44,
+    44,
+    "/home/alpibru/Workspace/tlsmem-bin/tls_echo_base"
+   ],
+   [
+    44,
+    44,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    52,
+    20,
+    "[anon]"
+   ],
+   [
+    132,
+    20,
+    "[stack]"
+   ]
+  ],
+  "start_after_restart": 2216
+ },
+ {
+  "n": 100,
+  "rss": {
+   "start": 2220,
+   "connected": 10732,
+   "handshake": 13184,
+   "established": 14380,
+   "echoed": 23420,
+   "partial": 23420,
+   "all-echoed": 23420
+  },
+  "smaps_established": [
+   [
+    31100,
+    12168,
+    "[anon]"
+   ],
+   [
+    1632,
+    1056,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    288,
+    288,
+    "/home/alpibru/Workspace/tlsmem-bin/tls_echo_base"
+   ],
+   [
+    188,
+    184,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    336,
+    176,
+    "[heap]"
+   ],
+   [
+    160,
+    160,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    312,
+    120,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    44,
+    44,
+    "/home/alpibru/Workspace/tlsmem-bin/tls_echo_base"
+   ],
+   [
+    44,
+    44,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    288,
+    28,
+    "[anon]"
+   ],
+   [
+    52,
+    20,
+    "[anon]"
+   ],
+   [
+    132,
+    20,
+    "[stack]"
+   ]
+  ],
+  "start_after_restart": 2220
+ },
+ {
+  "n": 200,
+  "rss": {
+   "start": 2236,
+   "connected": 19240,
+   "handshake": 24144,
+   "established": 26552,
+   "echoed": 44632,
+   "partial": 44632,
+   "all-echoed": 44632
+  },
+  "smaps_established": [
+   [
+    62180,
+    24328,
+    "[anon]"
+   ],
+   [
+    1632,
+    1056,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    288,
+    288,
+    "/home/alpibru/Workspace/tlsmem-bin/tls_echo_base"
+   ],
+   [
+    188,
+    188,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    364,
+    184,
+    "[heap]"
+   ],
+   [
+    160,
+    160,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    312,
+    120,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    44,
+    44,
+    "/home/alpibru/Workspace/tlsmem-bin/tls_echo_base"
+   ],
+   [
+    44,
+    44,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    288,
+    28,
+    "[anon]"
+   ],
+   [
+    52,
+    20,
+    "[anon]"
+   ],
+   [
+    132,
+    20,
+    "[stack]"
+   ]
+  ],
+  "start_after_restart": 2232
+ },
+ {
+  "n": 10000,
+  "rss": {
+   "start": 2300,
+   "connected": 854564,
+   "handshake": 1100388,
+   "established": 1220732,
+   "echoed": 2123724,
+   "partial": 2123724,
+   "all-echoed": 2123724
+  },
+  "smaps_established": [
+   [
+    3110324,
+    1218208,
+    "[anon]"
+   ],
+   [
+    1632,
+    1056,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    288,
+    288,
+    "/home/alpibru/Workspace/tlsmem-bin/tls_echo_base"
+   ],
+   [
+    468,
+    288,
+    "[heap]"
+   ],
+   [
+    448,
+    188,
+    "[anon]"
+   ],
+   [
+    188,
+    188,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    160,
+    160,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    312,
+    120,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    44,
+    44,
+    "/home/alpibru/Workspace/tlsmem-bin/tls_echo_base"
+   ],
+   [
+    44,
+    44,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    256,
+    40,
+    "[anon]"
+   ],
+   [
+    52,
+    20,
+    "[anon]"
+   ]
+  ],
+  "start_after_restart": 2296
+ }
+]

@@ -437,3 +437,224 @@ fn a_misused_writer_traps_instead_of_writing_bad_json() {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// Documents of the kinds the JSON test suites (`nst/JSONTestSuite`, `y_`, `n_` and `i_` files)
+/// are made of, written out: the corpus below mutates the seeds, and this is what mutation is
+/// unlikely to reach -- depth at the limit and past it, bytes a string may not hold, a BOM,
+/// numbers at the edge of the grammar, truncations, and trailing bytes.
+fn edge_documents() -> Vec<Vec<u8>> {
+    let mut docs: Vec<Vec<u8>> = [
+        "",
+        " ",
+        "\n",
+        "[",
+        "]",
+        "{",
+        "}",
+        "[,]",
+        "[1,]",
+        "[,1]",
+        "[1 2]",
+        "[1,,2]",
+        "{,}",
+        "{\"a\"}",
+        "{\"a\":}",
+        "{\"a\":1,}",
+        "{a:1}",
+        "{'a':1}",
+        "{\"a\" 1}",
+        "{\"a\":1 \"b\":2}",
+        "{1:2}",
+        "[\"a\"",
+        "[\"a\\\"]",
+        "\"\\",
+        "\"\\u\"",
+        "\"\\u12\"",
+        "\"\\u123g\"",
+        "\"\\ud800\"",
+        "\"\\udc00\"",
+        "\"\\ud800\\u0041\"",
+        "\"\\ud83d\\ude00\"",
+        "\"\\x41\"",
+        "\"\\'\"",
+        "\"\t\"",
+        "\"\n\"",
+        "\"\u{7f}\"",
+        "\"\0\"",
+        "01",
+        "-01",
+        "+1",
+        "1.",
+        ".5",
+        "-.5",
+        "1e",
+        "1e+",
+        "1E-",
+        "0e0",
+        "-",
+        "--1",
+        "1.e1",
+        "0x1",
+        "NaN",
+        "Infinity",
+        "-Infinity",
+        "nul",
+        "nulll",
+        "tru",
+        "truee",
+        "False",
+        "TRUE",
+        "[1]x",
+        "[1] [2]",
+        "{} {}",
+        "1 2",
+        "null null",
+        "// c\n1",
+        "/* c */ 1",
+        "[1, // c\n2]",
+        "1e400",
+        "-1e400",
+        "1e-400",
+        "123456789012345678901234567890",
+        "-0",
+        "0.0e0",
+        "\u{feff}1",
+        "\u{feff}[]",
+        "[]\u{feff}",
+        "\u{a0}1",
+        "1\u{a0}",
+        "\u{2028}1",
+        "[\"\u{2028}\u{2029}\"]",
+        "\"é日😀\"",
+        "[\"\u{10ffff}\"]",
+    ]
+    .iter()
+    .map(|s| s.as_bytes().to_vec())
+    .collect();
+    // Bytes that are not text: truncated, overlong and surrogate UTF-8, in and out of a string.
+    for bytes in [
+        &b"\"\xc3\""[..],
+        b"\"\xc0\xaf\"",
+        b"\"\xe0\x80\xaf\"",
+        b"\"\xed\xa0\x80\"",
+        b"\"\xf4\x90\x80\x80\"",
+        b"\"\xf8\x88\x80\x80\x80\"",
+        b"\"\x80\"",
+        b"\"\xff\"",
+        b"\xff",
+        b"\xc3\xa9",
+        b"[\xc3\xa9]",
+        b"{\"\xc3\":1}",
+        b"[1,\xffnull]",
+        b"\"\xef\xbf\xbe\"",
+        b"\"\xf0\x9f\x98\x80\"",
+    ] {
+        docs.push(bytes.to_vec());
+    }
+    // Nesting at, just under and just past the limit of 128, both kinds, closed and not.
+    for depth in [1usize, 2, 127, 128, 129, 130, 1000] {
+        docs.push([vec![b'['; depth], vec![b']'; depth]].concat());
+        docs.push([vec![b'['; depth], vec![b']'; depth.saturating_sub(1)]].concat());
+        docs.push(
+            ["{\"a\":".repeat(depth).into_bytes(), b"1".to_vec(), vec![b'}'; depth]].concat(),
+        );
+    }
+    docs.push(vec![b'['; 100_000]);
+    // A document the 4-wide short tape cannot hold, an object with many keys, a long string.
+    docs.push(format!("[{}]", "1,".repeat(5000) + "1").into_bytes());
+    docs.push(
+        format!("{{{}}}", (0..300).map(|k| format!("\"k{k}\":{k}")).collect::<Vec<_>>().join(","))
+            .into_bytes(),
+    );
+    docs.push(format!("\"{}\"", "x\\u00e9".repeat(3000)).into_bytes());
+    docs
+}
+
+/// Every document of `edge_documents`, every seed, every prefix of every seed (the truncation the
+/// suites call `n_structure_*` and `n_*_incomplete`), every seed with any one byte of the pool in
+/// any one position, and forty thousand seeds with one or two random damages.
+fn parse_with_corpus() -> Vec<Vec<u8>> {
+    const POOL: &[u8] = b"{}[]\",:\\-+.eE09tfnul \t\n\r\x00\x1f\x7f\xc3\xa9\xff\xed\xa0\x80uabx/'";
+    let mut docs = edge_documents();
+    for seed in SEEDS {
+        let seed = seed.as_bytes();
+        docs.push(seed.to_vec());
+        for end in 0..seed.len() {
+            docs.push(seed[..end].to_vec());
+        }
+    }
+    for seed in SEEDS.iter().filter(|s| s.len() < 200) {
+        let seed = seed.as_bytes();
+        for at in 0..seed.len() {
+            for &b in POOL {
+                let mut doc = seed.to_vec();
+                doc[at] = b;
+                docs.push(doc);
+            }
+        }
+    }
+    let mut rng = Lcg(7);
+    for _ in 0..40_000 {
+        let seed = SEEDS[rng.below(SEEDS.len() as u64) as usize];
+        docs.push(mutate(seed.as_bytes(), &mut rng));
+    }
+    docs
+}
+
+#[test]
+fn parse_with_answers_what_parse_answers_and_writes_the_same_tape() {
+    // `parse_with` takes its two ints of state from the caller instead of making a region
+    // (`docs/json.md` §3.1); the claim is that nothing else differs. The driver runs both on every
+    // document -- into a tape of the right size and into one too short, with a state slice that
+    // still holds the previous document's garbage -- and compares the answers and every int of the
+    // tapes. A parser that agrees on ~59,000 damaged documents and on the edge cases agrees.
+    let (dir, exe) = build_driver("json-with-diff", "json_with_diff.cho");
+    let docs = parse_with_corpus();
+    let mut framed = Vec::new();
+    for doc in &docs {
+        framed.extend_from_slice(format!("{}\n", doc.len()).as_bytes());
+        framed.extend_from_slice(doc);
+    }
+    let out = feed(&exe, &framed);
+    let _ = std::fs::remove_dir_all(&dir);
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{text}{}", String::from_utf8_lossy(&out.stderr));
+    let fields: Vec<&str> = text.split_whitespace().collect();
+    assert_eq!(fields[0], "ok", "{text}");
+    let (total, accepted, refused): (usize, usize, usize) =
+        (fields[1].parse().unwrap(), fields[2].parse().unwrap(), fields[3].parse().unwrap());
+    eprintln!("parse_with: {total} documents, {accepted} accepted, {refused} refused");
+    assert_eq!(total, docs.len(), "the driver read every document");
+    assert!(accepted > 1000 && refused > 10_000, "the corpus should exercise both: {text}");
+}
+
+fn nesting(doc: &[u8]) -> usize {
+    doc.iter().filter(|b| matches!(b, b'[' | b'{')).count()
+}
+
+#[test]
+fn parse_with_agrees_with_serde_json_on_what_is_a_document() {
+    // The test above ties `parse_with` to `parse`. This one pins the corpus to an outside oracle,
+    // so that "they agree" cannot mean "both wrong the same way": `serde_json` classifies every
+    // edge document and the library agrees. Deep nesting is left out: the two parsers' depth
+    // limits are policy, and `std.json`'s (128, `docs/json.md`) is pinned by its own tests.
+    let (dir, exe) = build_driver("json-with-oracle", "json_roundtrip.cho");
+    let mut checked = 0;
+    for doc in edge_documents().iter().filter(|d| d.len() < 2000 && nesting(d) < 100) {
+        let Ok(theirs) = reference(doc) else { continue };
+        let out = feed(&exe, doc);
+        let text = String::from_utf8_lossy(&out.stdout);
+        let ours = out.status.code() == Some(0) && !text.starts_with("E ");
+        assert_eq!(
+            ours,
+            theirs.is_some(),
+            "{:?}: serde_json {}, std.json {}",
+            String::from_utf8_lossy(doc),
+            if theirs.is_some() { "accepts" } else { "refuses" },
+            if ours { "accepts" } else { "refuses" }
+        );
+        checked += 1;
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(checked > 100, "{checked}");
+}

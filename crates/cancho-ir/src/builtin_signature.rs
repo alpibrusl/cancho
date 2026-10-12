@@ -65,6 +65,24 @@ impl Builtin {
                 }],
                 Type::Int,
             ),
+            // `docs/standard-input.md` §7: the borrowed `Io` and a buffer
+            // the read fills (unique, as `file_read`'s is), answering
+            // `file_read`'s own `Read`.
+            Builtin::ReadBytes => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_IO)),
+                    },
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                named(PRELUDE_READ),
+            ),
             // Checked at the call site (`docs/editions.md` §7): the return
             // type depends on the caller's edition, and a fixed signature
             // cannot say that.
@@ -96,6 +114,33 @@ impl Builtin {
                 ],
                 Type::Int,
             ),
+            Builtin::AesCtr32 => (
+                vec![
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(0),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Int,
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Int,
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(2),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(3),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                Type::Int,
+            ),
             Builtin::GhashUpdate => (
                 vec![
                     Type::Ref {
@@ -111,6 +156,101 @@ impl Builtin {
                     Type::Ref {
                         unique: false,
                         region: Region::Param(2),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                Type::Int,
+            ),
+            // `docs/wide-multiply.md` §3: unsigned words in `int`s, a pair out.
+            Builtin::MulWide => {
+                (vec![Type::Int, Type::Int], Type::Tuple(vec![Type::Int, Type::Int]))
+            }
+            Builtin::AddCarry | Builtin::SubBorrow => {
+                (vec![Type::Int, Type::Int, Type::Int], Type::Tuple(vec![Type::Int, Type::Int]))
+            }
+            Builtin::GhashPowers => (
+                vec![
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(0),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Int,
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                Type::Int,
+            ),
+            Builtin::GcmTag => (
+                vec![
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(0),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Int,
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(2),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(3),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(4),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(5),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                Type::Int,
+            ),
+            Builtin::GcmTagDiff => (
+                vec![
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(0),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Int,
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(2),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(3),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(4),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(5),
                         inner: Box::new(Type::Slice(Box::new(Type::Byte))),
                     },
                 ],

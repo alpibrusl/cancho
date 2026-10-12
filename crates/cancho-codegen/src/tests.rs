@@ -127,14 +127,16 @@ fn symbols_are_spelled_for_their_platform_and_prefixed_once() {
                 "{triple} should define `{expected}`, got {names:?}"
             );
         }
-        // libc spells macOS's `stdout` as `__stdoutp` and its
-        // `stderr` as `__stderrp`, so the Mach-O symbols are
-        // `___stdoutp` and `___stderrp` — three underscores, prefixed once,
+        // libc spells macOS's `stdout` as `__stdoutp`, its
+        // `stderr` as `__stderrp` and its `stdin` as `__stdinp` (`read_bytes`,
+        // `docs/standard-input.md` §7), so the Mach-O symbols are
+        // `___stdoutp`, `___stderrp` and `___stdinp` — three underscores, prefixed once,
         // and correct (`docs/bulk-io.md` §3). The check below is a
         // proxy for "prefixed once" and cannot tell that apart from
         // the bug, so the one name that is legitimately spelled with
         // underscores is named here rather than the guard weakened.
-        let spelled_with_underscores = ["___stdoutp", "__stdoutp", "___stderrp", "__stderrp"];
+        let spelled_with_underscores =
+            ["___stdoutp", "__stdoutp", "___stderrp", "__stderrp", "___stdinp", "__stdinp"];
         assert!(
             !names
                 .iter()

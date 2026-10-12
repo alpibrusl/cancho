@@ -71,6 +71,26 @@ pub enum Builtin {
     /// `fs_read`'s `-1` for a file that could not be read. §3.1 says why
     /// an enum would be better and §6 keeps it open.
     GetChar,
+    /// `read_bytes[&i, &b](io: &!i Io, into: &!b [byte]) -> [io_read] Read`
+    /// -- standard input, many bytes in one call (`docs/standard-input.md`
+    /// §7, edition 9).
+    ///
+    /// `getchar` is a libc call per byte, 71 MB/s on macOS against 2.9 GB/s
+    /// for a file read in bulk. The way around it that was already open,
+    /// `/dev/stdin` through `file_read`, reaches standard input through the
+    /// *file system*, so a program's authority report would say
+    /// `fs_read` and not `io_read`: faster and quieter, which is the
+    /// direction `docs/bulk-io.md` §2 calls a bug. This is the same read
+    /// behind the same capability and the same label, and it answers
+    /// `file_read`'s three outcomes (`Got`, `End`, `Failed`) instead of a
+    /// sentinel.
+    ///
+    /// It is `fread` on the C `stdin` stream and not `read(0)`, so that
+    /// bytes `getchar` has already buffered are not lost to it and a
+    /// program may use both on one stream. The price is that a short count
+    /// means end of input, not "whatever had arrived": it waits until the
+    /// buffer is full or the input ends.
+    ReadBytes,
     /// `split(w: World) -> [] Split` — consumes the root of all authority
     /// and hands back its parts (§8.2).
     ///
@@ -169,10 +189,10 @@ pub enum Builtin {
     /// on Cranelift, which makes no such branches, the identity.
     ValueBarrier,
     /// `hw_aes_gcm() -> [] bool` — whether this CPU has the instructions
-    /// `aes_encrypt_block` and `ghash_update` use (`docs/crypto-builtins.md`
-    /// §3): AES, PCLMULQDQ and SSSE3 on x86-64, AES and PMULL on aarch64.
-    /// The CPU is read once. False on Cranelift and WebAssembly, which have
-    /// no such instructions (§5).
+    /// the builtins below use (`docs/crypto-builtins.md` §3): AES,
+    /// PCLMULQDQ and SSSE3 on x86-64, AES and PMULL on aarch64. The CPU is
+    /// read once. False on Cranelift and WebAssembly, which have no such
+    /// instructions (§5).
     HwAesGcm,
     /// `aes_encrypt_block(round_keys: &[byte], rounds: int, block: &[byte],
     /// out: &![byte]) -> [] int` — the FIPS-197 cipher on one block with the
@@ -182,13 +202,62 @@ pub enum Builtin {
     /// lengths are the caller's, never the network's. Answers 0. Only
     /// where `hw_aes_gcm()` is true; elsewhere it traps.
     AesEncryptBlock,
+    /// `aes_ctr32(round_keys: &[byte], rounds: int, nonce: &[byte], counter:
+    /// int, input: &[byte], out: &![byte]) -> [] int` — AES in counter mode
+    /// over the whole of `input`, eight blocks at a time (`docs/gcm-wide.md`
+    /// §3.1): `out[i] = input[i] XOR E(nonce || be32(counter + i / 16))[i %
+    /// 16]`. `nonce` is 12 bytes, `counter` is in `0..2^32` and wraps modulo
+    /// 2^32 as SP 800-38D's `inc32` does, `out` is as long as `input`
+    /// (which may end inside a block), or it traps. Answers 0. Only where
+    /// `hw_aes_gcm()` is true; elsewhere it traps.
+    AesCtr32,
+    /// `ghash_powers(round_keys: &[byte], rounds: int, table: &![byte]) -> []
+    /// int` — fills the 128-byte `table` with the powers H^1 to H^8 of the
+    /// hash key H = AES(K, 0), in the form `gcm_tag` and `gcm_tag_diff` use
+    /// (`docs/gcm-wide.md` §3.2). H itself is made in registers and never
+    /// stored, so no copy of it is left in memory. `round_keys` and `rounds`
+    /// as `aes_encrypt_block` takes them. Answers 0. Only where
+    /// `hw_aes_gcm()` is true; elsewhere it traps.
+    GhashPowers,
     /// `ghash_update(h: &[byte], y: &![byte], data: &[byte]) -> [] int` —
-    /// GCM's GHASH (SP 800-38D §6.4) over every 16-byte block of `data`:
-    /// `y = (y XOR block) * h` in GF(2^128), in GCM's bit order, `y`
-    /// updated in place (§3). `h` and `y` are 16 bytes and `data` a
-    /// multiple of 16, or it traps. Answers 0. Only where `hw_aes_gcm()` is
+    /// **retired, and kept so that edition-7 programs written before #382
+    /// still read** (`docs/editions.md` §7, `docs/stability-exemptions.md`):
+    /// GCM's GHASH (SP 800-38D §6.4) over every 16-byte block of `data`,
+    /// `y = (y XOR block) * h`, `y` updated in place. `h` and `y` are 16
+    /// bytes and `data` a multiple of 16, or it traps. Answers 0. `std.gcm`
+    /// no longer calls it: `ghash_powers`, `gcm_tag` and `gcm_tag_diff`
+    /// replaced it (`docs/gcm-wide.md` §3.4). Only where `hw_aes_gcm()` is
     /// true; elsewhere it traps.
     GhashUpdate,
+    /// `mul_wide(a: int, b: int) -> [] (int, int)` — the full 128-bit product
+    /// of two 64-bit words read as unsigned, as `(hi, lo)`
+    /// (`docs/wide-multiply.md` §3). It cannot overflow, so it never traps.
+    /// Edition 7.
+    MulWide,
+    /// `add_carry(a: int, b: int, carry: int) -> [] (int, int)` — `a + b +
+    /// (carry != 0)` over unsigned 64-bit words, as `(sum, carry_out)` with
+    /// `carry_out` 0 or 1 (§3). Edition 7.
+    AddCarry,
+    /// `sub_borrow(a: int, b: int, borrow: int) -> [] (int, int)` — `a - b -
+    /// (borrow != 0)` over unsigned 64-bit words, as `(difference,
+    /// borrow_out)` with `borrow_out` 0 or 1 (§3). Edition 7.
+    SubBorrow,
+    /// `gcm_tag(round_keys: &[byte], rounds: int, table: &[byte], nonce:
+    /// &[byte], aad: &[byte], text: &[byte], tag: &![byte]) -> [] int` —
+    /// the AES-GCM tag (SP 800-38D §7.1) of `text`, the ciphertext, and
+    /// `aad` under a 12-byte `nonce`: GHASH over `aad` and `text`, each
+    /// zero-padded to a multiple of 16, and the two lengths in bits,
+    /// aggregated eight blocks to a reduction, XORed with the encryption of
+    /// `nonce || 1`. `tag` is 16 bytes, `table` is `ghash_powers`'s. Answers
+    /// 0. Only where `hw_aes_gcm()` is true; elsewhere it traps.
+    GcmTag,
+    /// `gcm_tag_diff(round_keys: &[byte], rounds: int, table: &[byte], nonce:
+    /// &[byte], aad: &[byte], text: &[byte], expected: &[byte]) -> [] int` —
+    /// `gcm_tag`'s tag compared with the 16 bytes `expected`: 0 when they
+    /// are equal, nonzero when not. Every byte is compared whatever the
+    /// earlier ones were (`docs/gcm-wide.md` §5). Only where
+    /// `hw_aes_gcm()` is true; elsewhere it traps.
+    GcmTagDiff,
     /// `byte_of(n: int) -> [] byte` — narrow an integer to a byte, or trap.
     ///
     /// `docs/strings.md` §2: it traps outside 0..255 rather than
@@ -800,6 +869,7 @@ impl Builtin {
         Builtin::WriteErr,
         Builtin::FlushOut,
         Builtin::GetChar,
+        Builtin::ReadBytes,
         Builtin::Split,
         Builtin::Release,
         Builtin::Narrow,
@@ -819,7 +889,14 @@ impl Builtin {
         Builtin::ValueBarrier,
         Builtin::HwAesGcm,
         Builtin::AesEncryptBlock,
+        Builtin::AesCtr32,
+        Builtin::GhashPowers,
         Builtin::GhashUpdate,
+        Builtin::MulWide,
+        Builtin::AddCarry,
+        Builtin::SubBorrow,
+        Builtin::GcmTag,
+        Builtin::GcmTagDiff,
         Builtin::Len,
         Builtin::ByteOf,
         Builtin::IntOf,
@@ -954,6 +1031,7 @@ impl Builtin {
             Builtin::FlushOut => "flush_out",
             Builtin::WriteErr => "write_err",
             Builtin::GetChar => "getchar",
+            Builtin::ReadBytes => "read_bytes",
             Builtin::Split => "split",
             Builtin::Release => "release",
             Builtin::Narrow => "narrow",
@@ -973,7 +1051,14 @@ impl Builtin {
             Builtin::ValueBarrier => "value_barrier",
             Builtin::HwAesGcm => "hw_aes_gcm",
             Builtin::AesEncryptBlock => "aes_encrypt_block",
+            Builtin::AesCtr32 => "aes_ctr32",
+            Builtin::GhashPowers => "ghash_powers",
             Builtin::GhashUpdate => "ghash_update",
+            Builtin::MulWide => "mul_wide",
+            Builtin::AddCarry => "add_carry",
+            Builtin::SubBorrow => "sub_borrow",
+            Builtin::GcmTag => "gcm_tag",
+            Builtin::GcmTagDiff => "gcm_tag_diff",
             Builtin::Len => "len",
             Builtin::ByteOf => "byte_of",
             Builtin::IntOf => "int_of",
@@ -1234,10 +1319,20 @@ impl Builtin {
             // `docs/directory-handles.md` §3, slice 4: edition 7 as well --
             // `dir_rename_new` is a name a program may already declare.
             Builtin::DirRenameNew => 7,
+            // `docs/standard-input.md` §7: edition 9 -- `read_bytes` is
+            // a name a program may already declare.
+            Builtin::ReadBytes => 9,
             // `docs/crypto-builtins.md` §3: the latest edition, as
             // `value_barrier` was, since a program may already declare
             // these names.
             Builtin::HwAesGcm | Builtin::AesEncryptBlock | Builtin::GhashUpdate => 7,
+            // `docs/wide-multiply.md` §7: edition 7, the latest -- `mul_wide`,
+            // `add_carry` and `sub_borrow` are names a program may declare.
+            Builtin::MulWide | Builtin::AddCarry | Builtin::SubBorrow => 7,
+            // `docs/gcm-wide.md` §4: edition 9, the latest. Edition 7 is
+            // closed (`docs/editions.md` §6.4), and these are names a program
+            // may already declare for itself.
+            Builtin::AesCtr32 | Builtin::GhashPowers | Builtin::GcmTag | Builtin::GcmTagDiff => 9,
             // `docs/floating-point.md` §4.1: edition 7, the latest -- the
             // first caller was a table reader that decoded doubles through
             // `ldexp`; `float_of_bits` is a name a program may declare.
@@ -1304,7 +1399,7 @@ impl Builtin {
             // leaf-free, so it contributes no values either way, and
             // skipping it keeps the argument positions honest.
             Builtin::PutChar | Builtin::GetChar | Builtin::ArgCount | Builtin::Arg => 1,
-            Builtin::Write | Builtin::WriteErr | Builtin::FlushOut => 1,
+            Builtin::Write | Builtin::WriteErr | Builtin::FlushOut | Builtin::ReadBytes => 1,
             _ => 0,
         }
     }
@@ -1324,7 +1419,7 @@ impl Builtin {
             | Builtin::ArgCount
             | Builtin::Arg => 1,
             // Two: the borrowed `Io` and the slice's own region.
-            Builtin::Write | Builtin::WriteErr => 2,
+            Builtin::Write | Builtin::WriteErr | Builtin::ReadBytes => 2,
             // Two: the borrowed handle and the buffer's own region.
             Builtin::ReadFile => 2,
             // The handle's region and the buffer's.
@@ -1398,9 +1493,17 @@ impl Builtin {
             | Builtin::ClockUnixMs => 1,
             // The destination's region and the source's.
             Builtin::CopyInto => 2,
-            // The key's, the block's and the output's; `h`'s, `y`'s and
-            // the data's.
-            Builtin::AesEncryptBlock | Builtin::GhashUpdate => 3,
+            // The key's, the block's and the output's.
+            Builtin::AesEncryptBlock => 3,
+            // The key's, the nonce's, the input's and the output's.
+            Builtin::AesCtr32 => 4,
+            // The key's and the table's.
+            Builtin::GhashPowers => 2,
+            // `h`'s, `y`'s and the data's.
+            Builtin::GhashUpdate => 3,
+            // The key's, the table's, the nonce's, the associated data's,
+            // the text's and the tag's (or the expected tag's).
+            Builtin::GcmTag | Builtin::GcmTagDiff => 6,
             _ => 0,
         }
     }
@@ -1422,7 +1525,7 @@ impl Builtin {
             // direction, its own label. A row saying `[io_write]` does not
             // permit a read, which is what makes the two labels a
             // distinction rather than a spelling.
-            Builtin::GetChar => Effects::plain(["io_read"]),
+            Builtin::GetChar | Builtin::ReadBytes => Effects::plain(["io_read"]),
             // `docs/heap.md` §2. Both reach the allocator, so both perform
             // `heap`; `contents` is a load and performs nothing.
             Builtin::Box

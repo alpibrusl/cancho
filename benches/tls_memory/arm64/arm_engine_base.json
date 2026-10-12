@@ -1,0 +1,38 @@
+[
+ {
+  "n": 50,
+  "areas": 50,
+  "rss": {
+   "start": 1764,
+   "established": 12304,
+   "echoed": 18056
+  }
+ },
+ {
+  "n": 100,
+  "areas": 100,
+  "rss": {
+   "start": 1764,
+   "established": 22892,
+   "echoed": 34384
+  }
+ },
+ {
+  "n": 200,
+  "areas": 200,
+  "rss": {
+   "start": 1772,
+   "established": 44020,
+   "echoed": 67000
+  }
+ },
+ {
+  "n": 10000,
+  "areas": 10000,
+  "rss": {
+   "start": 1772,
+   "established": 2115972,
+   "echoed": 3264624
+  }
+ }
+]

@@ -51,6 +51,15 @@ fn pump[&i, &e, &t, &p, &s, &q, &n, &a](io: &!i Io, engine: &!e tls.Engine, tab:
                 st[b + front.s_since()] = now;
                 going = true;
             }
+            if ev == tls.event_established() && st[b + front.s_phase()] == front.phase_handshake() && front.stale(engine, slot) {
+                // Verified under a store replaced since (the engine refuses that before Finished; this is the
+                // program's own check): closed as `revoked`, never served.
+                tls.finish(engine, slot);
+                st[b + front.s_phase()] = front.phase_closing();
+                st[b + front.s_since()] = now;
+                st[b + front.s_reason()] = front.r_revoked();
+                going = true;
+            }
             if ev == tls.event_established() && st[b + front.s_phase()] == front.phase_handshake() {
                 front.log_established(io, engine, st, slot, now);
                 st[b + front.s_phase()] = front.phase_established();
@@ -158,11 +167,27 @@ fn sweep[&i, &e, &t, &p, &s, &q, &n, &a, &c](io: &!i Io, engine: &!e tls.Engine,
             front.end_slot(io, engine, tab, st, slot, front.r_queue_timeout(), now);
         } else if phase == front.phase_handshake() && held > cfg[front.c_hs_timeout()] {
             front.end_slot(io, engine, tab, st, slot, front.r_handshake_timeout(), now);
+        } else if phase == front.phase_established() && front.area_overdue(engine, st, cfg, slot, now) {
+            front.end_slot(io, engine, tab, st, slot, front.r_record_timeout(), now);
         } else if phase == front.phase_established() && now - st[b + front.s_active()] > cfg[front.c_idle()] {
             close_with(io, engine, tab, poller, st, pend, inq, app, slot, front.r_idle(), now);
         } else if phase == front.phase_closing() && held > cfg[front.c_hs_timeout()] {
             // Our close_notify was never taken: the peer is not reading.
             front.end_slot(io, engine, tab, st, slot, st[b + front.s_reason()], now);
+        }
+        slot = slot + 1;
+    }
+    return 0;
+}
+
+// The clients' store was replaced (`SIGHUP`): every established connection whose client was verified under the
+// old one is sent close_notify and ended (`closed revoked`), because a program that replaces the store to
+// revoke means it (`docs/tls-server.md` §13.3).
+fn revoke_stale[&i, &e, &t, &p, &s, &q, &n, &a, &c](io: &!i Io, engine: &!e tls.Engine, tab: &!t conns.Table, poller: &!p Poller, st: &!s [int], pend: &!q [byte], inq: &!n [byte], app: &!a [byte], cfg: &c [int], now: int) -> [conn_read, conn_write, poll, io_write] int {
+    var slot = 0;
+    while slot < cfg[front.c_conns()] {
+        if st[slot * front.stride() + front.s_phase()] == front.phase_established() && front.stale(engine, slot) {
+            close_with(io, engine, tab, poller, st, pend, inq, app, slot, front.r_revoked(), now);
         }
         slot = slot + 1;
     }
@@ -231,6 +256,7 @@ pub fn run[&h, &i, &l, &k, &e, &d, &w, &u, &n, &c](heap: &!h Heap, io: &!i Io, l
                                             }
                                             now = clock_ms(clock);
                                             let now_unix = clock_unix_ms(clock);
+                                            tls.set_time(engine, now_unix);
                                             var j = 0;
                                             while j < ready {
                                                 let token = events[2 * j];
@@ -240,6 +266,13 @@ pub fn run[&h, &i, &l, &k, &e, &d, &w, &u, &n, &c](heap: &!h Heap, io: &!i Io, l
                                                     let mask = signals_pending(watch);
                                                     if sg.has(mask, sg.sighup()) {
                                                         front.reload(heap, io, dir, engine, subs, sublens, cfg[front.c_identities()], now_unix);
+                                                        if front.reload_clients(heap, io, dir, engine, subs, sublens, cfg) == 1 {
+                                                            borrow mut table as &!tw in {
+                                                                borrow mut poll as &!pw in {
+                                                                    revoke_stale(io, engine, tw, pw, st, contents(pdw), contents(iw), contents(aw), cfg, now);
+                                                                }
+                                                            }
+                                                        }
                                                     }
                                                     if sg.any(mask, sg.stop_signals()) && gl[front.g_stopping()] == 0 {
                                                         gl[front.g_stopping()] = 1;
@@ -312,7 +345,7 @@ pub fn run[&h, &i, &l, &k, &e, &d, &w, &u, &n, &c](heap: &!h Heap, io: &!i Io, l
 // has it as a literal: the difference between them is only how `main` came by `dir`.
 pub fn serve[&h, &i, &n, &k, &s, &d, &u, &l, &c, &r, &a](heap: &!h Heap, io: &!i Io, net: &n Net(""), clock: &k Clock, claim: &s Signals("HUP,INT,TERM"), dir: &d Dir, subs: &u [byte], sublens: &l [int], cfg: &c [int], entropy: &r [byte], alpn: &a [byte]) -> [heap, dir_read, file_read, err_write, io_write, net_in(""), conn_accept, conn_read, conn_write, poll, clock, signals("HUP,INT,TERM"), signals_read] int {
     var status = 0;
-    var engine = tls.open_server(heap, cfg[front.c_conns()]);
+    var engine = tls.open_server_with_areas(heap, cfg[front.c_conns()], front.areas_of(cfg));
     borrow mut engine as &!ew in {
         tls.seed(ew, entropy);
         if len(alpn) > 0 && tls.set_alpn(ew, alpn) != 0 {
@@ -320,7 +353,10 @@ pub fn serve[&h, &i, &n, &k, &s, &d, &u, &l, &c, &r, &a](heap: &!h Heap, io: &!i
             status = 2;
         }
         if status == 0 {
-            status = front.add_all(heap, io, dir, ew, subs, sublens, cfg[front.c_identities()], clock_unix_ms(clock));
+            status = front.add_all(heap, io, dir, ew, subs, sublens, cfg, clock_unix_ms(clock));
+        }
+        if status == 0 {
+            status = front.tickets(io, dir, ew, cfg, subs, sublens, clock_unix_ms(clock));
         }
         if status == 0 {
             match tcp_listen(net, cfg[front.cfg_len()], 1024, 0) {

@@ -57,6 +57,7 @@ it.
 | **Strict** | RFC 8259 and nothing else: no comments, trailing commas, leading zeros, `+1`, `.5`, `1.`, `NaN`, `'single'`; no unescaped control character in a string; no lone surrogate (`\ud800`) |
 | **UTF-8 is validated** | Every byte ≥ 0x80 in a string is checked with `std.utf8` (overlongs, surrogates, > U+10FFFF refused). A parser that accepts what another refuses is where request-smuggling bugs live |
 | **A parse error is a value** | `parse` answers the node count, or `0 - (position * 16 + code)`; `error_code`, `error_position`, `error_message` take it apart. Nine codes |
+| **`parse_with` is `parse` with the scratch state in the caller's hands** | `parse_with(src, tape, st)` answers exactly what `parse(src, tape)` answers and writes the same tape, for every input (§3.1), but takes the two ints of state as a slice instead of making a `region` to hold them |
 | **Nesting is limited to 128** | Not recursed into until the stack runs out: the stack is the one resource a parser cannot be handed |
 | **A full tape is an error** | Code 8, not an overrun |
 | **Integers saturate** | `to_int` clamps at the ends of `int` (a 20-digit number is not an overflow trap in a server); `fits_int` says whether it was exact. A float node truncates toward zero, saturating |
@@ -67,6 +68,79 @@ it.
 | **Invalid UTF-8 going out becomes U+FFFD** | The output is always a valid document, whatever was handed in |
 | **A float that is not finite is `null`** | What most encoders do, and what keeps the document valid |
 | **Floats keep their kind** | `3.0` is written `3.0`, so it reads back as a float; positional from 1e-6 to 1e21, scientific outside, shortest digits that round-trip |
+
+### 3.1 `parse_with`: no region per call
+
+`parse` begins `region a { let st = alloc_slice[a](2, 0); ... }`: two ints of state in an arena
+made and freed on every call. A caller that parses one large document never notices. A
+caller that parses a million small ones (JSON lines, one request body after another) pays for
+the arena a million times, and on macOS that is nearly all of what a call costs.
+`cancho-table`'s reader design (`docs/readers.md` §6) measured it and asked for this.
+
+```
+let st = alloc_slice[a](2, 0);                 // or a heap slice; once
+let tape = alloc_slice[a](12288, 0);           // once
+let nodes = json.parse_with(line, tape, st);   // per document, no region
+```
+
+`st` is at least two ints. Their contents on entry do not matter (`parse_with` sets them),
+so one `st` serves any number of documents and nothing of one document is visible to the next.
+A shorter `st` is the caller's bug and traps at the first store, as any index out of range does.
+`parse` is **unchanged, byte for byte**, so no identity that mentions it moved (§3.3).
+The name is `parse_with` (open to a better one; `readers.md` §6 used it for its spike, and it
+sorts beside `parse`).
+
+**Measured** (`benches/json_lines.py`: 1,000,000 JSON lines of 72 bytes, `{"id":..,"status":..,
+"bytes":..,"path":..,"note":..}`, the task per line `parse`, `get` of `status` and `bytes`, two
+`to_int`, a count and a sum; cost per line = (best of 5 runs of 11 rounds − best of 5 runs of 1
+round) / 10 rounds / lines, so reading the file drops out; every mode's answer is compared with
+the rows' before it is timed). `parse` is one tape reused for every line; `region` is a tape
+allocated in a region per line, which is what a first version writes.
+
+| ns per line, wall clock | `parse` | `region` | **`parse_with`** | `parse` / `parse_with` |
+|---|---:|---:|---:|---:|
+| macOS arm64, 1 thread (re-measured after the rebase onto edition 9; load 10 rising to 20; best of 5) | 567 | 1,035 | **94** | **6.1x** |
+| macOS, 16 threads (same run) | 1,623 | 3,219 | **9.7** | 167x |
+| macOS, 2 / 4 / 8 threads, `parse` (from the earlier run, load 15 to 22) | 1,241 / 1,403 / 1,492 | | | |
+| macOS, 2 / 4 / 8 threads, `parse_with` (from the earlier run) | | | 55 / 30 / 13.8 | |
+| macOS before this change (`origin/main`'s compiler, same program without `parse_with`; same session, load 20) | 571 (1 thread), 1,568 (16) | 1,139 (1), 3,222 (16) | not there | |
+| Linux x86-64 (`gram`, cores 0 to 5, load 5; re-measured; best of 5), 1 thread | 237 | 280 | **233** | 1.02x |
+| Linux, 6 threads (same run) | 156 | 193 | **80.5** | 1.94x |
+| Linux, 2 / 4 threads (from the earlier run: `parse` 180 / 165, `region` 315 / 192, `parse_with` 164 / 142) | | | | |
+
+Per line is wall time over all lines, so a perfectly parallel mode divides by the thread count.
+`parse` on the Mac does the opposite: **1.6 µs per line at 16 threads against 0.57 µs at 1**, 2.6x
+*slower* with 16 threads than with one (2.9x in the re-measured run): a `region` is a `malloc` and a `free`, and this
+allocator does not scale with threads here (not diagnosed further); `parse_with` goes from 94 to 9.7 ns, 9.6x. On Linux the arena is cheap (about 30 ns),
+so the gain at one thread is small (1.02x in the re-measured run, 1.18x in the earlier one), which is what `readers.md` predicted (283 against 255). The number worth
+having is the Mac's: it is where a user's laptop is, and where "a library function that gets
+slower when you add threads" costs a day to find.
+
+### 3.2 The differential
+
+`parse_with` is the same grammar as `parse` and a second copy of its body (a call from `parse`
+would have been shorter and would have moved `parse`'s identity, §3.3), so the claim that
+they agree is tested rather than argued. `tests/programs/json_with_diff.cho` runs both on every
+document, into a tape of the right size and into one too short (where the `full` code and the
+partial tape come from), with the state slice still holding the previous document's garbage, and
+compares the answers and **every int of both tapes**. `conformance/json.rs` feeds it 58,733
+documents (11,444 accepted, 47,289 refused): the seeds, every prefix of every seed, every short seed with each of 39 pool bytes in each
+position, 40,000 randomly damaged seeds and the edge documents of the JSON test suites written
+out (depth 127, 128, 129, 1000 and 100,000, lone surrogates, overlong and truncated UTF-8, a BOM,
+`01`, `1.`, `NaN`, comments, trailing bytes). Zero differences. A second test classifies the edge
+documents with `serde_json` so that "they agree" cannot mean "both wrong the same way".
+`scripts/json_with_suite.py` runs `nst/JSONTestSuite` (318 files; not vendored): **95 `y_` all
+accepted, 188 `n_` all refused, 10 `i_` accepted and 25 refused, `parse` and `parse_with`
+agreeing on all 318, answers and tapes.** Breaking `parse_with` three ways (not resetting the
+node count, not checking trailing bytes, an off-by-one error position) fails the differential each
+time (`differ 3`, `differ 37`, `differ 0` is the document index that caught it).
+
+### 3.3 Identity
+
+Adding `parse_with` adds a `body` and a `sig` to `std.json` and changes none: `cancho ids --std`
+over a program that imports every `std` module lists 1,805 identities on `origin/main` (6a8bc1ed; 1,677 when this was first measured, before more `std` modules arrived) and the same
+1,805 plus those two on this branch (`comm` finds nothing only on `origin/main`). Over the programs in `tests/` and `examples/` that `cancho ids` can read, 95 list identical
+identities with and without this change; with `--std` all 211 differ by exactly those two lines and nothing else. (The earlier run reported 165.)
 
 ## 4. Why it can be trusted
 
@@ -215,7 +289,7 @@ rest, and is not that: it trusts its text.)
 | Pretty printing | `{"a":1}`, never indented |
 | Comments, JSON5, trailing commas | Refused, by design (§3) |
 | Schema validation, typed decoding | No reflection, no macros: a model is a hand-written function over the tape. Generating those from a declaration is a tool, not a library |
-| Newline-delimited JSON | Split on `\n` with `std.bytes` and parse each; nothing needed here |
+| Newline-delimited JSON | Split on `\n` with `std.bytes` and parse each with `parse_with` (§3.1), one tape and one state for the whole file |
 
 ## 8. Open
 

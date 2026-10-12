@@ -1,0 +1,254 @@
+// What parsing one small JSON document costs, per document, with and without a region per call
+// (`docs/json.md` §3.1). The file is JSON lines (`benches/json_lines.py` writes it and times this).
+//
+//     json_lines MODE ROUNDS [THREADS] < file
+//
+//   MODE
+//     lines    find the line ends and add their lengths: the floor every mode shares
+//     parse    json.parse into ONE tape reused for every line (it makes its own state in a region per call)
+//     region   json.parse into a tape allocated in a region per line (what a first version writes)
+//     with     json.parse_with, tape and state allocated once   (needs a compiler that has it: see WITH below)
+//
+// For every line the task is the same: take `status` and `bytes`, count the lines whose status is 404, and
+// add up `bytes`. It prints "count sum" (the same for every mode: that is how a mode that is fast because it
+// is wrong is caught). THREADS (default 1) cuts the file at line ends into that many slices, each copied to a
+// thread of its own that runs ROUNDS rounds, so the cost of the allocator under threads shows.
+//
+// The lines between `WITH-BEGIN` and `WITH-END` are the only use of `parse_with`; `json_lines.py` strips them
+// to build the same program for a compiler that predates it.
+edition 5;
+
+import std.buffer;
+import std.bytes;
+import std.io;
+import std.json;
+
+fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap, io_read] buffer.Buffer {
+    var out = text;
+    var c = getchar(io);
+    while c >= 0 {
+        out = buffer.push(heap, out, byte_of(c));
+        c = getchar(io);
+    }
+    return out;
+}
+
+fn number_of[&s](text: &s [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(text) {
+        n = n * 10 + (int_of(text[i]) - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+fn task[&l, &t, &o](line: &l [byte], tape: &t [int], out: &!o [int]) -> [] int {
+    let s = json.get(line, tape, 0, "status");
+    let b = json.get(line, tape, 0, "bytes");
+    if json.to_int(line, tape, s) == 404 {
+        out[0] = out[0] + 1;
+    }
+    out[1] = out[1] + json.to_int(line, tape, b);
+    return 0;
+}
+
+fn rec_parse[&l, &t, &o](line: &l [byte], tape: &!t [int], out: &!o [int]) -> [] int {
+    if json.parse(line, tape) < 0 {
+        out[2] = out[2] + 1;
+        return 1;
+    }
+    return task(line, tape, out);
+}
+
+fn rec_region[&l, &o](line: &l [byte], out: &!o [int]) -> [] int {
+    var r = 0;
+    region a {
+        let tape = alloc_slice[a](json.tape_len(line), 0);
+        r = rec_parse(line, tape, out);
+    }
+    return r;
+}
+
+// WITH-BEGIN
+fn rec_with[&l, &t, &q, &o](line: &l [byte], tape: &!t [int], st: &!q [int], out: &!o [int]) -> [] int {
+    if json.parse_with(line, tape, st) < 0 {
+        out[2] = out[2] + 1;
+        return 1;
+    }
+    return task(line, tape, out);
+}
+
+// WITH-END
+
+fn run[&d, &t, &q, &o](data: &d [byte], mode: int, rounds: int, tape: &!t [int], st: &!q [int], out: &!o [int]) -> [] int {
+    var round = 0;
+    var total = 0;
+    let n = len(data);
+    while round < rounds {
+        var at = 0;
+        while at < n {
+            var end = n;
+            let f = index_of_byte(data[at..n], byte_of(10));
+            if f >= 0 {
+                end = at + f;
+            }
+            let line = data[at..end];
+            if mode == 1 {
+                total = total + len(line);
+            } else if mode == 2 {
+                rec_parse(line, tape, out);
+            } else if mode == 3 {
+                rec_region(line, out);
+                // WITH-BEGIN
+            } else if mode == 4 {
+                rec_with(line, tape, st, out);
+                // WITH-END
+            }
+            at = end + 1;
+        }
+        round = round + 1;
+    }
+    return total;
+}
+
+res struct Job {
+    heap: Heap,
+    data: Box[[byte]],
+    tape: Box[[int]],
+    st: Box[[int]],
+    out: Box[[int]],
+    par: Box[[int]],
+}
+
+fn work[&w](j: &!w Job) -> [] int {
+    let total = run(contents(j.data), contents(j.par)[0], contents(j.par)[1], contents(j.tape), contents(j.st), contents(j.out));
+    contents(j.par)[2] = total;
+    return 0;
+}
+
+fn fan[&p, &d, &b, &s](parent: &!p Heap, data: &d [byte], bounds: &b [int], k: int, n: int, mode: int, rounds: int, sums: &!s [int]) -> [heap, conc] int {
+    if k >= n {
+        return 0;
+    }
+    let lo = bounds[k];
+    let hi = bounds[k + 1];
+    let forked = fork_heap(parent);
+    var job = Job { heap: forked, data: box_slice(parent, hi - lo, byte_of(0)), tape: box_slice(parent, 12288, 0), st: box_slice(parent, 2, 0), out: box_slice(parent, 4, 0), par: box_slice(parent, 4, 0) };
+    borrow mut job as &!kj in {
+        copy_into(contents(kj.data)[0..hi - lo], data[lo..hi]);
+        contents(kj.par)[0] = mode;
+        contents(kj.par)[1] = rounds;
+    }
+    borrow mut job as &!kj in {
+        let body = work;
+        let thread = spawn(kj, body);
+        fan(parent, data, bounds, k + 1, n, mode, rounds, sums);
+        join(thread);
+    }
+    let Job { heap, data, tape, st, out, par } = job;
+    release(heap);
+    borrow out as &ob in {
+        sums[3 * k] = contents(ob)[0];
+        sums[3 * k + 1] = contents(ob)[1];
+        sums[3 * k + 2] = contents(ob)[2];
+    }
+    unbox_slice(parent, data);
+    unbox_slice(parent, tape);
+    unbox_slice(parent, st);
+    unbox_slice(parent, out);
+    unbox_slice(parent, par);
+    return 0;
+}
+
+// `parts` slices whose ends are line ends: bounds[0..=parts].
+fn cut[&d, &b](data: &d [byte], parts: int, bounds: &!b [int]) -> [] int {
+    let n = len(data);
+    var k = 0;
+    bounds[0] = 0;
+    while k < parts {
+        var at = n / parts * (k + 1);
+        if k + 1 == parts {
+            at = n;
+        } else {
+            if at < bounds[k] {
+                at = bounds[k];
+            }
+            let f = index_of_byte(data[at..n], byte_of(10));
+            if f >= 0 {
+                at = at + f + 1;
+            } else {
+                at = n;
+            }
+        }
+        bounds[k + 1] = at;
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn main(world: World) -> [conc] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(fs);
+    release(ffi);
+    release(net);
+    release(clock);
+    var mode = 0;
+    var rounds = 1;
+    var threads = 1;
+    borrow args as &g in {
+        let a1 = arg(g, 1);
+        if bytes.equal(a1, "lines") {
+            mode = 1;
+        } else if bytes.equal(a1, "parse") {
+            mode = 2;
+        } else if bytes.equal(a1, "region") {
+            mode = 3;
+        } else if bytes.equal(a1, "with") {
+            mode = 4;
+        }
+        rounds = number_of(arg(g, 2));
+        if arg_count(g) > 3 {
+            threads = number_of(arg(g, 3));
+        }
+    }
+    release(args);
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            var text = buffer.empty(h, 1048576);
+            text = read_stdin(h, i, text);
+            borrow text as &b in {
+                var bounds = box_slice(h, threads + 1, 0);
+                var sums = box_slice(h, 3 * threads, 0);
+                var count = 0;
+                var sum = 0;
+                var refused = 0;
+                borrow mut bounds as &!bw in {
+                    borrow mut sums as &!sw in {
+                        cut(buffer.bytes(b), threads, contents(bw));
+                        fan(h, buffer.bytes(b), contents(bw), 0, threads, mode, rounds, contents(sw));
+                        var k = 0;
+                        while k < threads {
+                            count = count + contents(sw)[3 * k];
+                            sum = sum + contents(sw)[3 * k + 1];
+                            refused = refused + contents(sw)[3 * k + 2];
+                            k = k + 1;
+                        }
+                    }
+                }
+                io.print_int(i, count / rounds);
+                io.space(i);
+                io.print_int(i, sum / rounds);
+                io.space(i);
+                io.print_int(i, refused);
+                io.newline(i);
+                unbox_slice(h, bounds);
+                unbox_slice(h, sums);
+            }
+            buffer.drop(h, text);
+        }
+    }
+    release(heap);
+    release(io);
+    return 0;
+}

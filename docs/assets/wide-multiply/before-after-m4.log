@@ -1,0 +1,29 @@
+commit f01214a0; Apple M4 Max, macOS; 11:06  up 6 days, 14:19, 5 users, load averages: 8.96 6.93 6.62
+before: e347688d5f5adc9f38b0312a4c336ab69f6fbfa5; backend llvm
+before 0.572 ms
+after  0.025 ms
+before 0.579 ms
+after  0.025 ms
+before 0.576 ms
+after  0.024 ms
+before 0.573 ms
+after  0.025 ms
+before 0.575 ms
+after  0.025 ms
+before median 0.575 ms, min 0.572 ms
+after  median 0.025 ms, min 0.024 ms
+speed-up (medians): 23.0x
+before: e347688d5f5adc9f38b0312a4c336ab69f6fbfa5; backend cranelift
+before 1.297 ms
+after  0.065 ms
+before 1.270 ms
+after  0.064 ms
+before 1.277 ms
+after  0.066 ms
+before 1.285 ms
+after  0.067 ms
+before 1.276 ms
+after  0.065 ms
+before median 1.277 ms, min 1.270 ms
+after  median 0.065 ms, min 0.064 ms
+speed-up (medians): 19.6x

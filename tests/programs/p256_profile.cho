@@ -1,0 +1,162 @@
+// Profile of the P-256 operations of `docs/p256-fast.md` §8: one op, run
+// `rounds` times, for `scripts/p256_bench.py`. Standard input is one line,
+// `<op> <rounds>`.
+//
+//     m  p256.mul, q  p256.sqr, p  p256.add then p256.sub (mod p, in elements)
+//     r  four independent chains of p256.mul (throughput, not latency)
+//     i  p256.invert mod p,  n  p256.sinvert mod n,  o  p256.smul mod n
+//     g  ecdh.public_key,  h  ecdh.shared,  k  ecdsa_sign.sign,  c  sign_checked,  v  ecdsa.verify_raw
+import std.p256;
+import std.buffer;
+import std.ecdh;
+import std.ecdsa;
+import std.ecdsa_sign;
+import std.io;
+
+fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap, io_read] buffer.Buffer {
+    var out = text;
+    var c = getchar(io);
+    while c >= 0 {
+        out = buffer.push(heap, out, byte_of(c));
+        c = getchar(io);
+    }
+    return out;
+}
+
+fn fill[&o](out: &!o [byte], seed: int) -> [] int {
+    var i = 0;
+    var x = seed;
+    while i < len(out) {
+        x = (x * 1103515245 + 12345) % 2147483648;
+        out[i] = byte_of(x >> 8 & 255);
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn work_loop[&w, &o](op: int, rounds: int, w: &!w [int], out: &!o [byte]) -> [] int {
+    var acc = 0;
+    region r {
+        let p = alloc_slice[r](32, byte_of(0));
+        ecdsa.curve_param(256, 0, p);
+        let n = alloc_slice[r](32, byte_of(0));
+        ecdsa.curve_param(256, 4, n);
+        let a = alloc_slice[r](32, byte_of(0));
+        fill(a, 7);
+        a[0] = byte_of(1);
+        let b = alloc_slice[r](32, byte_of(0));
+        fill(b, 9);
+        b[0] = byte_of(2);
+        let key = alloc_slice[r](32, byte_of(0));
+        fill(key, 11);
+        key[0] = byte_of(0x40);
+        let digest = alloc_slice[r](32, byte_of(0));
+        fill(digest, 13);
+        let extra = alloc_slice[r](32, byte_of(0));
+        fill(extra, 17);
+        let point = alloc_slice[r](65, byte_of(0));
+        let sig = alloc_slice[r](64, byte_of(0));
+        let shared = alloc_slice[r](32, byte_of(0));
+        ecdh.public_key(256, key, point, w);
+        ecdsa_sign.sign(digest, key, extra, sig, w);
+        p256.init(w);
+        p256.load(a, w, p256.fe(p256.base()));
+        p256.load(b, w, p256.fe(p256.base() + 1));
+        p256.to_mont(w, p256.fe(p256.base()), p256.fe(p256.base()));
+        p256.to_mont(w, p256.fe(p256.base() + 1), p256.fe(p256.base() + 1));
+        p256.sto_mont(w, p256.fe(p256.base() + 1), p256.fe(p256.base() + 2));
+        var k = 0;
+        while k < rounds {
+            let x = p256.fe(p256.base());
+            let y = p256.fe(p256.base() + 1);
+            let z = p256.fe(p256.base() + 2);
+            if op == 109 {
+                p256.mul(w, x, y, x);
+            } else if op == 113 {
+                p256.sqr(w, x, x);
+            } else if op == 114 {
+                p256.mul(w, x, y, x);
+                p256.mul(w, z, y, z);
+                p256.mul(w, p256.fe(p256.base() + 4), y, p256.fe(p256.base() + 4));
+                p256.mul(w, p256.fe(p256.base() + 5), y, p256.fe(p256.base() + 5));
+            } else if op == 112 {
+                p256.add(w, x, y, x);
+                p256.sub32(w, x, y, x);
+            } else if op == 105 {
+                p256.invert(w, x, x);
+            } else if op == 110 {
+                p256.sinvert(w, z, z);
+            } else if op == 111 {
+                p256.smul(w, z, z, z);
+            } else if op == 103 {
+                ecdh.public_key(256, key, point, w);
+                acc = acc + int_of(point[40]);
+            } else if op == 104 {
+                ecdh.shared(256, key, point, shared, w);
+                acc = acc + int_of(shared[3]);
+            } else if op == 107 {
+                ecdsa_sign.sign(digest, key, extra, sig, w);
+                acc = acc + int_of(sig[5]);
+            } else if op == 99 {
+                ecdsa_sign.sign_checked(digest, key, point, extra, sig, w);
+                acc = acc + int_of(sig[5]);
+            } else if op == 118 {
+                acc = acc + 0 - ecdsa.verify_raw(256, digest, point, sig, w);
+            }
+            k = k + 1;
+        }
+        p256.sfrom_mont(w, p256.fe(p256.base() + 2), p256.fe(p256.base() + 3));
+        p256.store(w, p256.fe(p256.base() + 3), out[0..32]);
+    }
+    return acc;
+}
+
+fn number[&s](s: &s [byte], at: int) -> [] int {
+    var n = 0;
+    var p = at;
+    while p < len(s) && int_of(s[p]) >= 48 && int_of(s[p]) <= 57 {
+        n = n * 10 + int_of(s[p]) - 48;
+        p = p + 1;
+    }
+    return n;
+}
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
+    var text = buffer.empty(heap, 64);
+    text = read_stdin(heap, io, text);
+    let work = box_slice(heap, ecdsa_sign.work_len(), 0);
+    let out = box_slice(heap, 32, byte_of(0));
+    borrow text as &b in {
+        let s = buffer.bytes(b);
+        let op = int_of(s[0]);
+        let rounds = number(s, 2);
+        borrow mut work as &!w in {
+            borrow mut out as &!o in {
+                let acc = work_loop(op, rounds, contents(w), contents(o));
+                io.print_int(io, acc);
+                io.newline(io);
+                io.print_int(io, int_of(contents(o)[31]));
+                io.newline(io);
+            }
+        }
+    }
+    unbox_slice(heap, out);
+    unbox_slice(heap, work);
+    buffer.drop(heap, text);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(args);
+    release(ffi);
+    release(fs);
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            run(h, i);
+        }
+    }
+    release(heap);
+    release(io);
+    return 0;
+}

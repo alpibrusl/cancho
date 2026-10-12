@@ -1,0 +1,44 @@
+f01214a0
+arm64
+Apple M4 Max
+unmutated: passes 680 cases and the differential
+killed        field25519: the carry's 2^256 = 38 fold as 37: case 526: V 7d4d0e7f6153a69b6242b522abbee685fda4420f8834b108
+killed        field25519: the product's fold of the top limbs as 19: case 526: V 7d4d0e7f6153a69b6242b522abbee685fda4420f8834b108
+killed        field25519: one carry after a product, not two: case 526: V 7d4d0e7f6153a69b6242b522abbee685fda4420f8834b108
+killed        field25519: cswap that swaps only fifteen limbs: case 526: V 7d4d0e7f6153a69b6242b522abbee685fda4420f8834b108
+killed        field25519: the inversion's exponent off (bit 3 skipped, not 4): case 526: V 7d4d0e7f6153a69b6242b522abbee685fda4420f8834b108
+killed        field25519: pack keeps h when h - p was the answer: case 526: V 7d4d0e7f6153a69b6242b522abbee685fda4420f8834b108
+killed        field25519: pack does one trial subtraction, not two: tests/lex/field25519_test.cho
+killed        field25519: unpack keeps the top bit: tests/lex/field25519_test.cho
+killed        field25519: pow2523's exponent off: case 526: V 7d4d0e7f6153a69b6242b522abbee685fda4420f8834b108
+killed        field25519_51: limb 1's fold factor 18, not 19: case 0: S a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18
+killed        field25519_51: a product missing from column 2: case 0: S a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18
+killed        field25519_51: the carry of the low-word addition lost: case 0: S a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18
+killed        field25519_51: the carry into the next column loses the high word: case 0: S a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18
+killed        field25519_51: the column carry shifted by 12, not 13: case 0: S a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18
+killed        field25519_51: the column carry's low part masked to 12 bits: case 0: S a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18
+killed        field25519_51: the top carry folded in as 1, not 19: case 0: S a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18
+killed        field25519_51: the top carry's shift not masked: tests/lex/field25519_51_test.cho
+killed        field25519_51: limb 0's carry never reaches limb 1: case 0: S a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18
+killed        field25519_51: sub's bias for limb 0 off by one: case 0: S a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18
+killed        field25519_51: sub's bias for limb 3 too small: case 0: S a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18
+killed        field25519_51: cswap leaves the top limb: case 0: S a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18
+killed        field25519_51: mul_small reads limb 0 for limb 1: case 0: S a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18
+killed        field25519_51: the inversion's 2^100 step squares 99 times: case 0: S a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18
+killed        field25519_51: pack never subtracts p: case 39: S 88227494038f2bb811d47805bcdf04a2ac585ada7f2f2338
+SURVIVED      field25519_51: pack does one weak carry pass, not two: 
+killed        field25519_51: unpack keeps bit 255: case 1: S 4b66e9d4d1b4673c5ad22691957d6af5c11b6421e0ea01d4
+killed        field25519_51: the byte order of pack's third word: case 0: S a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18
+killed        x25519: a24 as 121666: case 0: S a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18
+killed        x25519: bit 254 not set by the clamp: case 1: S 4b66e9d4d1b4673c5ad22691957d6af5c11b6421e0ea01d4
+killed        x25519: the low three bits not cleared: case 0: S a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18
+SURVIVED      x25519: the final swap left out: 
+killed        x25519: the zero secret accepted: case 39: S 88227494038f2bb811d47805bcdf04a2ac585ada7f2f2338
+killed        x25519: z3 not multiplied by x1: case 0: S a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18
+killed        ed25519: the ladder's swap back left out: case 526: V 7d4d0e7f6153a69b6242b522abbee685fda4420f8834b108
+killed        ed25519: the square root's second candidate never tried: case 526: V 7d4d0e7f6153a69b6242b522abbee685fda4420f8834b108
+killed        ed25519: the sign bit ignored on decompression: case 526: V 7d4d0e7f6153a69b6242b522abbee685fda4420f8834b108
+SURVIVED      ed25519: point_equal compares x only: 
+killed        ed25519: x = 0 with the sign bit set accepted: case 676: V d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325
+killed        ed25519: a signature of any length passed on: case 558: V 7d4d0e7f6153a69b6242b522abbee685fda4420f8834b108
+39 mutants, 36 killed

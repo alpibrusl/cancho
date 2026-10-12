@@ -96,9 +96,9 @@ def free_port():
 class Server:
     """`tls_serve` in one mode, its `conn` lines collected as they come."""
 
-    def __init__(self, exe, mode, work):
+    def __init__(self, exe, mode, work, tickets="-"):
         self.port = free_port()
-        self.proc = subprocess.Popen([exe, str(self.port), mode, "http/1.1,mqtt", "0", "-",
+        self.proc = subprocess.Popen([exe, str(self.port), mode, "http/1.1,mqtt", "0", "-", tickets,
                                       "main.pem", "main.key", "srv.example,*.wild.example",
                                       "other.pem", "other.key", "other.example"],
                                      cwd=work, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)

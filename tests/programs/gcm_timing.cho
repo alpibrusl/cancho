@@ -8,6 +8,18 @@
 // Then records in lowercase hex, each key, nonce, aad and data at
 // those lengths, back to back, with no separator.
 //
+// `P` (seal) and `Q` (open) time `gcm.seal_with` and `gcm.open_with`
+// under a key prepared once (`docs/gcm-wide.md` §8.3), so what is timed
+// is the hardware path's two builtin calls and nothing else. Their header
+// adds two numbers, `<pool> <count>`: then come `pool` records of the
+// fixed class and `pool` of the random one (the key is the first
+// record's), a newline, and `count` characters `0` or `1`, the class of
+// each measurement in turn. Measurement `i` of class `c` uses record
+// `i mod pool` of that class, so both classes cycle through the same
+// number of distinct buffers and neither is favoured by the cache; a
+// pool, not one record a measurement, is what lets 16 KiB messages be
+// measured a million times.
+//
 // Everything is read and decoded before anything is timed, so what
 // runs just before each call is the same whatever its input. Each call's time is
 // read with the `tick` library's `cancho_tick` (a cycle counter), so
@@ -100,6 +112,95 @@ fn time_into[&f, &s, &a, &t](ffi: &f Ffi("tick"), s: &s [byte], start: int, op: 
     return 0;
 }
 
+// The `P` and `Q` measurements: `times` holds each measurement's record
+// offset on entry, so nothing is decoded between measurements, and its
+// time on return.
+fn time_pool[&f, &a, &t](ffi: &f Ffi("tick"), op: int, k: int, n: int, a: int, d: int, all: &a [byte], times: &!t [int]) -> [ffi("tick")] int {
+    region r {
+        var room = d + 16;
+        if op == 81 {
+            room = d - 16;
+        }
+        let out = alloc_slice[r](room, byte_of(0));
+        let ctx = alloc_slice[r](gcm.context_len(), 0);
+        let hw = alloc_slice[r](gcm.hw_len(), byte_of(0));
+        gcm.prepare(all[0..k], ctx, hw);
+        var i = 0;
+        while i < len(times) {
+            let at = times[i];
+            let nonce = all[at + k..at + k + n];
+            let aad = all[at + k + n..at + k + n + a];
+            let data = all[at + k + n + a..at + k + n + a + d];
+            if op == 80 {
+                let t0 = cancho_tick(ffi);
+                gcm.seal_with(ctx, hw, nonce, aad, data, out);
+                times[i] = cancho_tick(ffi) - t0;
+            } else {
+                let t0 = cancho_tick(ffi);
+                gcm.open_with(ctx, hw, nonce, aad, data, out);
+                times[i] = cancho_tick(ffi) - t0;
+            }
+            i = i + 1;
+        }
+        gcm.forget(ctx, hw);
+    }
+    return 0;
+}
+
+fn time_pooled[&h, &i, &f, &s](heap: &!h Heap, io: &!i Io, ffi: &f Ffi("tick"), s: &s [byte]) -> [heap, io_write, ffi("tick")] int {
+    let op = int_of(s[0]);
+    let f1 = 2;
+    let f2 = number_end(s, f1) + 1;
+    let f3 = number_end(s, f2) + 1;
+    let f4 = number_end(s, f3) + 1;
+    let f5 = number_end(s, f4) + 1;
+    let f6 = number_end(s, f5) + 1;
+    let k = number(s, f1);
+    let n = number(s, f2);
+    let a = number(s, f3);
+    let d = number(s, f4);
+    let pool = number(s, f5);
+    let count = number(s, f6);
+    let start = number_end(s, f6) + 1;
+    let rec = k + n + a + d;
+    let all = box_slice(heap, 2 * pool * rec, byte_of(0));
+    let times = box_slice(heap, count, 0);
+    let classes = start + 4 * pool * rec + 1;
+    borrow mut all as &!x in {
+        let bytes = contents(x);
+        var j = 0;
+        while j < len(bytes) {
+            bytes[j] = byte_of(nibble(int_of(s[start + 2 * j])) * 16 + nibble(int_of(s[start + 2 * j + 1])));
+            j = j + 1;
+        }
+    }
+    borrow mut times as &!y in {
+        let t = contents(y);
+        var i = 0;
+        while i < count {
+            t[i] = ((int_of(s[classes + i]) - 48) * pool + i % pool) * rec;
+            i = i + 1;
+        }
+    }
+    borrow all as &x in {
+        borrow mut times as &!y in {
+            time_pool(ffi, op, k, n, a, d, contents(x), contents(y));
+        }
+    }
+    borrow times as &y in {
+        let t = contents(y);
+        var i = 0;
+        while i < len(t) {
+            io.print_int(io, t[i]);
+            io.newline(io);
+            i = i + 1;
+        }
+    }
+    unbox_slice(heap, all);
+    unbox_slice(heap, times);
+    return 0;
+}
+
 fn time_all[&h, &i, &f, &s](heap: &!h Heap, io: &!i Io, ffi: &f Ffi("tick"), s: &s [byte]) -> [heap, io_write, ffi("tick")] int {
     let op = int_of(s[0]);
     let f1 = 2;
@@ -139,7 +240,12 @@ fn run[&h, &i, &f](heap: &!h Heap, io: &!i Io, ffi: &f Ffi("tick")) -> [heap, io
     var text = buffer.empty(heap, 1 << 20);
     text = read_stdin(heap, io, text);
     borrow text as &b in {
-        time_all(heap, io, ffi, buffer.bytes(b));
+        let s = buffer.bytes(b);
+        if int_of(s[0]) == 80 || int_of(s[0]) == 81 {
+            time_pooled(heap, io, ffi, s);
+        } else {
+            time_all(heap, io, ffi, s);
+        }
     }
     buffer.drop(heap, text);
     return 0;

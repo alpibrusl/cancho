@@ -95,6 +95,16 @@ pub fn state_wait_client_finished() -> [] int {
     return 22;
 }
 
+// With client authentication (`docs/tls-server.md` §13.2), after the flight the server waits for the
+// client's Certificate, then, if it holds a certificate, its CertificateVerify, then the Finished.
+pub fn state_wait_client_certificate() -> [] int {
+    return 23;
+}
+
+pub fn state_wait_client_verify() -> [] int {
+    return 24;
+}
+
 // `event`'s answers (`docs/tls-pure.md` §2.2).
 pub fn event_want_read() -> [] int {
     return 1;
@@ -205,7 +215,7 @@ pub fn i_group() -> [] int {
 // Two running transcripts, SHA-256 and SHA-384, both fed until the suite
 // is known (RFC 8446 §4.4.1 lets a client keep both).
 pub fn i_transcript() -> [] int {
-    return 20;
+    return ints_core_len();
 }
 
 pub fn i_transcript384() -> [] int {
@@ -222,7 +232,7 @@ pub fn i_ecdh_work() -> [] int {
 // (0: none), its obfuscated age, and its hash's length (the suite's hash
 // must match it).
 pub fn i_offer_len() -> [] int {
-    return i_ecdh_work() + ecdh.work_len();
+    return 20;
 }
 
 pub fn i_offer_age() -> [] int {
@@ -324,8 +334,46 @@ pub fn i_trust_gen() -> [] int {
     return i_alpn_len() + 8;
 }
 
-pub fn ints_len() -> [] int {
+// What a connection keeps once established: the words before the transcripts (`docs/tls-memory.md` section 7.1). A
+// field added at the end of the integers goes here, and is in the core; the transcripts and `std.ecdh`'s work after
+// them are the handshake's scratch, which the engine leases to a connection while it needs it.
+pub fn ints_core_len() -> [] int {
     return i_alpn_len() + 9;
+}
+
+pub fn ints_len() -> [] int {
+    return i_ecdh_work() + ecdh.work_len();
+}
+
+// Whether an established connection needs its buffers kept: the engine takes its work area back when it does
+// not (`tls.cho`'s `idle`).
+pub fn keeps_area[&i](ints: &i [int]) -> [] bool {
+    // A server's connection with a verified client (`docs/tls-server.md` §13.6) keeps its area until it is dropped
+    // or fails: the leaf `peer_certificate` and the other `peer_` calls read is in `b_leaf`, up to 16 KiB.
+    return has(ints, f_client_auth()) && ints[i_state()] != state_failed();
+}
+
+// A server's resumption (`docs/tls-server.md` §12) uses fields of the client's that a server slot has
+// no use for: the verdict on the ticket offered (`tls_ticket`'s `v_*`) where the client keeps a
+// ticket's lifetime, and the engine's clock at the last `feed`, in milliseconds, where
+// it keeps the age of the ticket it offered.
+pub fn i_srv_verdict() -> [] int {
+    return i_ticket_lifetime();
+}
+
+pub fn i_srv_now_ms() -> [] int {
+    return i_offer_age();
+}
+
+// The leaf's notAfter of the identity that answered the ClientHello (seconds), recorded then so a
+// `replace_identity` before the client's Finished does not change what the tickets bind.
+pub fn i_srv_not_after() -> [] int {
+    return i_not_after();
+}
+
+// How many tickets' randomness `serve` drew (`b_ticket_random`).
+pub fn i_srv_drawn() -> [] int {
+    return i_ticket_len();
 }
 
 pub fn read_aead[&i](ints: &i [int]) -> [] &i [int] {
@@ -432,11 +480,46 @@ pub fn f_cert_send() -> [] int {
     return 16777216;
 }
 
+// Client authentication (`docs/tls-server.md` §13): the connection was served with a CertificateRequest
+// to send, and with the certificate required; the client sent a certificate that verified (its leaf is at
+// `b_leaf`) and is awaited at CertificateVerify; and the client is established as that identity.
+pub fn f_auth_request() -> [] int {
+    return 32768;
+}
+
+pub fn f_auth_require() -> [] int {
+    return 65536;
+}
+
+pub fn f_client_cert() -> [] int {
+    return 131072;
+}
+
+pub fn f_client_auth() -> [] int {
+    return 262144;
+}
+
+// A server slot's fields for a client's identity, the client's own that a server never uses: the time
+// `serve` was given in seconds (the chain's clock), and the generation of the client store the chain was
+// verified under.
+pub fn i_peer_generation() -> [] int {
+    return i_context_len();
+}
+
+// The verified client leaf's notAfter (seconds), where a client keeps when its identity was last verified:
+// not `i_not_after`, which a server slot holds for its own identity's notAfter (`i_srv_not_after`, the
+// tickets' lifetime bound).
+pub fn i_peer_not_after() -> [] int {
+    return i_verified_at();
+}
+
 // ---- The byte slice ----
 
 // One incoming record, header included.
+// What a connection keeps once established comes first (`bytes_core_len`), then the buffers it needs only while
+// bytes are in flight or a handshake runs (`docs/tls-memory.md` section 7.1).
 pub fn b_in() -> [] int {
-    return 0;
+    return bytes_core_len();
 }
 
 pub fn in_cap() -> [] int {
@@ -489,7 +572,7 @@ pub fn leaf_cap() -> [] int {
 }
 
 pub fn b_keys() -> [] int {
-    return b_leaf() + leaf_cap();
+    return 0;
 }
 
 pub fn k_x25519() -> [] int {
@@ -582,18 +665,18 @@ pub fn k_read_hw() -> [] int {
 }
 
 pub fn k_write_hw() -> [] int {
-    return b_keys() + 1472;
+    return b_keys() + 1584;
 }
 
 // 32 bytes of the engine's randomness, drawn at `start` when an identity is
 // chosen, that hedge the CertificateVerify signature's nonce (RFC 6979 §3.6,
 // `docs/ecdsa-sign.md` §3).
 pub fn k_sign_hedge() -> [] int {
-    return b_keys() + 1728;
+    return b_keys() + 1952;
 }
 
 pub fn keys_len() -> [] int {
-    return 1760;
+    return 1984;
 }
 
 // The largest ticket kept (`docs/tls-resumption.md` §4): a larger one is
@@ -634,8 +717,19 @@ pub fn alpn_offer_cap() -> [] int {
     return 256;
 }
 
-pub fn bytes_len() -> [] int {
+// A client's core: the keys, the ticket state and the ALPN offer. A server's holds no tickets (see `b_alpn`), so its
+// core ends after the two names; the tickets' randomness and the leaf's fingerprint after them (`b_ticket_random`,
+// `b_srv_fp`) are a handshake's, used when the client's Finished is answered, and stay in the area.
+pub fn bytes_core_len() -> [] int {
     return b_alpn_offer() + alpn_offer_cap();
+}
+
+pub fn bytes_core_len_server() -> [] int {
+    return b_offer() + 512;
+}
+
+pub fn bytes_len() -> [] int {
+    return b_leaf() + leaf_cap();
 }
 
 // A server's slot holds no tickets, so their room holds what `tls.alpn`
@@ -648,7 +742,18 @@ pub fn b_alpn() -> [] int {
 }
 
 pub fn b_sni() -> [] int {
-    return b_ticket_host();
+    return b_offer() + 256;
+}
+
+// The randomness of the tickets this connection will make, drawn at `serve` (`docs/tls-server.md` §12.1):
+// 32 bytes of salt and 4 of ticket_age_add each, overwritten as they are used.
+pub fn b_ticket_random() -> [] int {
+    return b_ticket();
+}
+
+// The SHA-256 of that leaf, recorded with it (32 bytes, after the randomness's 288).
+pub fn b_srv_fp() -> [] int {
+    return b_ticket() + 512;
 }
 
 pub fn k_sign_extra() -> [] int {
@@ -955,11 +1060,20 @@ fn server_alert(code: int) -> [] int {
     if code == tls_record.server_early_data_size() {
         return 10;
     }
-    if code == tls_record.server_finished() {
+    if code == tls_record.server_finished() || code == tls_record.server_binder() {
         return 51;
     }
     if code == tls_record.server_missing_extension() {
         return 109;
+    }
+    if code == tls_record.server_client_cert_required() {
+        return 116;
+    }
+    if code == tls_record.server_client_sigalg() {
+        return 47;
+    }
+    if code == tls_record.server_client_store_replaced() {
+        return 46;
     }
     return 80;
 }

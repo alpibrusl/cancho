@@ -114,8 +114,8 @@ W0.3 took the four `__multi3` link errors to passes.
   refuses at the function that reaches the builtin, once per (function,
   family), naming the first builtin found:
   `` `main` uses `spawn`, and threads do not exist on `wasm32-wasip1` ``.
-  Five families (seven since W0.6, below), from `wasi_gap`, an exhaustive `match` over all 137 builtins
-  (69 refused, 80 supported; a new builtin is a compile error until someone
+  Five families (seven since W0.6, below), from `wasi_gap`, an exhaustive `match` over all 158 builtins
+  (69 refused, 89 supported; a new builtin is a compile error until someone
   says which side it is on): **threads** (`spawn`, `join`, `fork_*`),
   **sockets** (`connect`, `bind`, `listen`, `tcp_*`, `conn_*`), **the poller**
   (`poller_*`; `poll_oneoff` is the eventual mapping), **signals**, and
@@ -181,7 +181,7 @@ W0.3 took the four `__multi3` link errors to passes.
   rename, which is the window the builtin exists to close. Not measured under a runtime. A refusal is the safe
   direction; `dir_rename` stays supported. `tests/reject/dir_rename_new_on_wasi.cho` is the fixture. The 47
   refused of #320 are 48 with it; `os_tables.rs` pins the count. (The 118 and 46 that this section said before
-  were stale: `exec_spawn_in` had made it 119 and 47, and the builtin count is now 120.) **Corrected again with `udp.md`:** the count had also moved past 120 (it was 123 builtins before UDP), and the seven datagram builtins (`udp_connect`, `udp_send`, `udp_recv`, `udp_local_port`, `udp_nonblocking`, `udp_close`, `poller_add_udp`) are refused as sockets and the poller are, so there are 130 builtins and 55 refused. `os_tables.rs` pins the 55. **And again with the bound half** (`udp_bind`, `udp_recv_from`, `udp_send_to`, refused as sockets): 133 builtins, 58 refused, 75 supported; the test pins the 58. **And with `udp_detach`/`udp_attach`** (slice 4, refused as sockets are): 135 builtins, 60 refused, 75 supported; the test pins the 60. **And with `conn_peer`** (`conn-peer.md`; refused as sockets): 136 builtins, 61 refused, 75 supported; the test pins the 61. **And with `udp_peer`** (`udp.md` §12; refused as sockets): 137 builtins, 62 refused, 75 supported; the test pins the 62. **And with `tty.md`** (#422 T2; the seven serial verbs `tty_open`, `tty_configure`, `tty_read`, `tty_write`, `tty_flush_input`, `tty_close` and `poller_add_tty`, refused as serial ports are — WASI has no termios, `tty.md` §9): 144 builtins, 69 refused, 75 supported; the test pins the 69. **And with `word-scan.md`** (`load_le64`, `byte_mask64`, `trailing_zeros`, `leading_zeros`, `popcount`: pure, supported -- the 16-byte vectors are scalarised without `simd128`, and `tests/accept/word_scan.cho` passes under wasmtime): 149 builtins in `Builtin::ALL`, still 69 refused, 80 supported; the test still pins the 69.
+  were stale: `exec_spawn_in` had made it 119 and 47, and the builtin count is now 120.) **Corrected again with `udp.md`:** the count had also moved past 120 (it was 123 builtins before UDP), and the seven datagram builtins (`udp_connect`, `udp_send`, `udp_recv`, `udp_local_port`, `udp_nonblocking`, `udp_close`, `poller_add_udp`) are refused as sockets and the poller are, so there are 130 builtins and 55 refused. `os_tables.rs` pins the 55. **And again with the bound half** (`udp_bind`, `udp_recv_from`, `udp_send_to`, refused as sockets): 133 builtins, 58 refused, 75 supported; the test pins the 58. **And with `udp_detach`/`udp_attach`** (slice 4, refused as sockets are): 135 builtins, 60 refused, 75 supported; the test pins the 60. **And with `conn_peer`** (`conn-peer.md`; refused as sockets): 136 builtins, 61 refused, 75 supported; the test pins the 61. **And with `udp_peer`** (`udp.md` §12; refused as sockets): 137 builtins, 62 refused, 75 supported; the test pins the 62. **And with `tty.md`** (#422 T2; the seven serial verbs `tty_open`, `tty_configure`, `tty_read`, `tty_write`, `tty_flush_input`, `tty_close` and `poller_add_tty`, refused as serial ports are — WASI has no termios, `tty.md` §9): 144 builtins, 69 refused, 75 supported; the test pins the 69. **And with `word-scan.md`** (`load_le64`, `byte_mask64`, `trailing_zeros`, `leading_zeros`, `popcount`: pure, supported -- the 16-byte vectors are scalarised without `simd128`, and `tests/accept/word_scan.cho` passes under wasmtime): 149 builtins in `Builtin::ALL`, still 69 refused, 80 supported; the test still pins the 69. (Counted when #382 was rebased onto it: `Builtin::ALL` had 150, not 149, and 81 supported.) **And with #382's four** (`aes_ctr32`, `ghash_powers`, `gcm_tag`, `gcm_tag_diff`, `docs/gcm-wide.md`; supported, as the other crypto builtins are, since they need no host; `ghash_update` retired and kept), and #393's `mul_wide`, `add_carry` and `sub_borrow` (pure, supported), and `read_bytes` (`standard-input.md` §7, supported): 158 builtins, 69 refused, 89 supported. `os_tables.rs` now pins all three, not only the refused count.
 - `run` uses `WASMTIME` (default `wasmtime`) and passes `WASMTIME_FLAGS`
   (e.g. `--dir=.`). A WASI module gets **no** directory unless one is
   granted, so the grant is spelled where it is made.
@@ -310,11 +310,16 @@ program reads it.
 ## W2a results: the console without libc stdio
 
 `cancho-codegen-llvm/src/wasi_console.rs` is the console written against the two WASI
-calls it needs. On wasm32 `putchar`, `getchar`, `write_bytes`, `write_err` and `flush_out`
+calls it needs. On wasm32 `putchar`, `getchar`, `read_bytes`, `write_bytes`, `write_err` and `flush_out`
 no longer touch libc: the module declares `fd_write` and `fd_read` itself
 (`wasm-import-module` / `wasm-import-name` attributes on the IR declarations), keeps its
 own buffers, and `main` flushes stdout when it returns. Native output is unchanged.
 
+- **`read_bytes`** ([`standard-input.md`](standard-input.md) §7, edition 9) first hands out what
+  `getchar`'s 4 KiB stdin buffer holds, then calls `fd_read` straight into the caller's buffer until it
+  is full or the input ends (`cancho_read_into`); it imports nothing `getchar` did not
+  (`a_wasm32_bulk_read_never_calls_libc_stdio`). Run under `wasmtime` it agrees with the native build
+  on bytes, lines and an order-sensitive hash for buffers of 0, 7 and 65,536 bytes.
 - **stdout** is buffered (4 KiB), flushed when it fills, on `flush_out`, and when `main`
   returns, which is what libc does to a pipe, so the bytes and their order are the native
   build's. A write that fails sets a sticky error, as the `FILE`'s indicator does, and

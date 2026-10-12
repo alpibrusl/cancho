@@ -54,6 +54,8 @@ attributes #9002 = { "wasm-import-module"="wasi_snapshot_preview1" "wasm-import-
 @cancho_in_buf = internal global [4096 x i8] zeroinitializer
 @cancho_in_pos = internal global i32 0
 @cancho_in_len = internal global i32 0
+; What stopped the last `cancho_read_into`: 0, or the WASI errno of a failed read.
+@cancho_in_rc = internal global i32 0
 
 ; Write all `n` bytes to `fd`, looping over short writes. 0, or a WASI errno.
 define internal i32 @cancho_write_all(i32 %fd, ptr %p, i32 %n) {
@@ -205,6 +207,52 @@ take:
   store i32 %np, ptr @cancho_in_pos
   %v = zext i8 %b to i32
   ret i32 %v
+}
+
+; `fread(p, 1, n, stdin)` for `read_bytes`: the bytes `getchar` has buffered first,
+; then `fd_read` straight into the caller's buffer until it is full or the input
+; ends. The count; `@cancho_in_rc` says whether a failed read stopped it. A failure
+; after some bytes is not lost: the bytes are answered and the next call reads again.
+define internal i32 @cancho_read_into(ptr %p, i32 %n) {
+entry:
+  store i32 0, ptr @cancho_in_rc
+  %pos = load i32, ptr @cancho_in_pos
+  %len = load i32, ptr @cancho_in_len
+  %avail = sub i32 %len, %pos
+  %small = icmp ult i32 %avail, %n
+  %take = select i1 %small, i32 %avail, i32 %n
+  %src = getelementptr i8, ptr @cancho_in_buf, i32 %pos
+  call void @llvm.memcpy.p0.p0.i32(ptr %p, ptr %src, i32 %take, i1 false)
+  %np = add i32 %pos, %take
+  store i32 %np, ptr @cancho_in_pos
+  %iov = alloca [2 x i32]
+  %nr = alloca i32
+  br label %loop
+loop:
+  %got = phi i32 [ %take, %entry ], [ %got2, %cont ]
+  %left = sub i32 %n, %got
+  %full = icmp eq i32 %left, 0
+  br i1 %full, label %done, label %go
+go:
+  %at = getelementptr i8, ptr %p, i32 %got
+  store ptr %at, ptr %iov
+  %lenslot = getelementptr i8, ptr %iov, i32 4
+  store i32 %left, ptr %lenslot
+  %rc = call i32 @cancho_fd_read(i32 0, ptr %iov, i32 1, ptr %nr)
+  %failed = icmp ne i32 %rc, 0
+  br i1 %failed, label %err, label %cont
+cont:
+  %m = load i32, ptr %nr
+  %got2 = add i32 %got, %m
+  %eof = icmp eq i32 %m, 0
+  br i1 %eof, label %done2, label %loop
+err:
+  store i32 %rc, ptr @cancho_in_rc
+  ret i32 %got
+done2:
+  ret i32 %got
+done:
+  ret i32 %got
 }
 "#
     .to_owned()
