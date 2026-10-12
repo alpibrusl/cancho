@@ -1118,6 +1118,13 @@ impl<'a> FuncEmitter<'a> {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.udp_local_port(&args)
             }
+            Callee::Builtin(Builtin::UdpPeer) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                if args.len() != 4 {
+                    return Err(format!("`udp_peer` needs 4 leaves but {} were given", args.len()));
+                }
+                self.udp_peer(&args)
+            }
             Callee::Builtin(Builtin::PipeRead) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 if args.len() != 3 {
