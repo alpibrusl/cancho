@@ -326,7 +326,21 @@ bit off); nothing here changes that, and the new P-256 code was not run there.
 
 ### 8.4 Mutants
 
-`python3 scripts/p256_mutants.py` (in the Linux arm64 container, with OpenSSL 3.0.13 and pyca/cryptography 41): **125 mutants, 116 killed, 9 survived, 0 failed to build**, each survivor argued equivalent in `EQUIVALENT` (`scripts/p256_mutants.py`): `(v + 8) >> 4` in the recoding; the infinity test of `affine` (no valid input reaches it); the wNAF window threshold (the window is odd, the threshold even); the early carry (it lands in skipped bits); `load_q`'s `k/2` for `(k-1)/2` (k is odd); u1's digits at width 5 (still in the table); the fast path skipped (the old path agrees, which is itself a check); `r` not reduced mod n (probability 2^-128); `sfrom_mont` unreduced (n·G = O). The run was on `gram`, Linux x86-64, 3 hours; the first run in the arm64 container (111 of 127 killed) found the gaps now closed by vectors: the top limb of `is_zero`, the wipes, the straddle offset (an equivalent pair I had written).
+`python3 scripts/p256_mutants.py`, on `gram` (Linux x86-64, `taskset -c 2,3`, pyca/cryptography 46 and `openssl` 3.0.13), at commit
+d0b35f70 (the code of the head; the commits since change the driver, the vectors and documents). The raw output is
+`tests/evidence/p256/mutants.txt`. **125 mutants: 116 killed, 9 survived, 0 failed to build.**
+
+- **Eight survivors are argued equivalent** in `EQUIVALENT` (each argument is printed beside it in the output): `(v + 8) >> 4` in the
+  recoding; the infinity test of `affine` (no valid input reaches it); the wNAF window threshold (the window is odd, the threshold
+  even); the early carry (it lands in bits that are skipped); `load_q`'s `k/2` for `(k-1)/2` (k is odd); u1's digits at width 5 (still
+  in the table); the fast path skipped (the old path agrees, which is itself a check); `sfrom_mont` unreduced (n·G = O).
+- **One was a test gap:** `sign` zeroing only the table's 980 words of `work`. The driver's check looked at those words only; it now
+  checks all of `work` after `sign`, and the mutant run alone is killed (`tests/evidence/p256/mutants_rerun.txt`, commit 0c5e1930).
+
+*Corrected in review:* this section said the run was in the arm64 container and on `gram` both. The first full run (127 mutants,
+111 killed) was in the container; it found the gaps since closed (the top limb of `is_zero`, the wipes, an equivalent straddle offset
+I had written); its output was not kept. The run above is the one this section reports, and the review's "r not reduced mod n" is
+now killed by `ecdsa_sign.finish` called with x in [n, p).
 
 ### 8.5 Vectors and differentials
 
