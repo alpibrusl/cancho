@@ -8,9 +8,14 @@ import std.field25519;
 // arithmetic, so an attacker with a timing oracle on repeated signing
 // operations could learn about the secret scalar. Correct on every
 // checked vector is not the same claim as safe against that attacker.
-// §1 is also explicit about who this is for: a future cancho port of
-// lex-os-guest, not this repository's own Rust tooling, which already
-// has `ed25519-dalek` and should keep using it.
+// §1 names who this is for: a future cancho port of lex-os-guest, not
+// this repository's own Rust tooling, which already has `ed25519-dalek`
+// and should keep using it. It also has a user here now:
+// `packages/x509` verifies Ed25519 certificate signatures with `verify`
+// in the TLS chain path (`verify.cho`). Verification sees only public
+// values (key, message and signature are all the attacker's to see), so
+// the lack of constant time costs nothing there; it matters for `sign`,
+// which the TLS path never calls (#290 tracks constant-time signing).
 
 // A "big number" here is a little-endian [byte] slice, most often 32
 // bytes (256 bits) -- wide enough to hold the field modulus (255 bits)

@@ -15,6 +15,8 @@ mod poller;
 mod process;
 mod signals;
 mod sockets;
+mod tty;
+mod words;
 
 pub(crate) struct BodyEmitter<'a, 'f> {
     pub(crate) builder: FunctionBuilder<'f>,

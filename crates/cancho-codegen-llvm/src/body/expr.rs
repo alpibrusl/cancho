@@ -337,6 +337,11 @@ impl<'a> FuncEmitter<'a> {
                 let (prefix, mode, args) = (prefix.clone(), *mode, args.clone());
                 self.open_file(&prefix, mode, &args)
             }
+            // `docs/tty.md` §3, edition 8.
+            Expr::TtyOpen { prefix, args } => {
+                let (prefix, args) = (prefix.clone(), args.clone());
+                self.tty_open(&prefix, &args)
+            }
             // `docs/file-writes.md` section 7.
             Expr::PathOp { op, prefix, args } => {
                 let (op, prefix, args) = (*op, prefix.clone(), args.clone());
@@ -1063,6 +1068,33 @@ impl<'a> FuncEmitter<'a> {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.ghash_update(&args)
             }
+            // `docs/word-scan.md`: inline IR, no library call.
+            Callee::Builtin(
+                b @ (Builtin::LoadLe64
+                | Builtin::ByteMask64
+                | Builtin::TrailingZeros
+                | Builtin::LeadingZeros
+                | Builtin::Popcount),
+            ) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                let wanted = match b {
+                    Builtin::LoadLe64 => 3,
+                    Builtin::ByteMask64 => 4,
+                    _ => 1,
+                };
+                if args.len() != wanted {
+                    return Err(format!(
+                        "`{}` needs {wanted} leaves but {} were given",
+                        b.name(),
+                        args.len()
+                    ));
+                }
+                match b {
+                    Builtin::LoadLe64 => self.load_le64(&args),
+                    Builtin::ByteMask64 => self.byte_mask64(&args),
+                    _ => Ok(self.bit_count(*b, &args)),
+                }
+            }
             // `docs/byte-search.md`: one `memchr`.
             Callee::Builtin(Builtin::IndexOfByte) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
@@ -1249,6 +1281,31 @@ impl<'a> FuncEmitter<'a> {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.conn_attach(&args, false)
             }
+            // `docs/tty.md` §3, edition 8: configure, read, write, flush,
+            // and the poller family's sixth member.
+            Callee::Builtin(Builtin::TtyOpen) => {
+                unreachable!("`tty_open` is lowered as `Expr::TtyOpen`")
+            }
+            Callee::Builtin(Builtin::TtyConfigure) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.tty_configure(&args)
+            }
+            Callee::Builtin(Builtin::TtyRead) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.tty_read(&args)
+            }
+            Callee::Builtin(Builtin::TtyWrite) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.tty_write(&args)
+            }
+            Callee::Builtin(Builtin::TtyFlushInput) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.tty_flush_input(&args)
+            }
+            Callee::Builtin(Builtin::PollerAddTty) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.poller_ctl(&args, false, false)
+            }
             Callee::Builtin(Builtin::PollerAddListener) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.poller_ctl(&args, true, false)
@@ -1305,6 +1362,7 @@ impl<'a> FuncEmitter<'a> {
             Callee::Builtin(
                 Builtin::ConnClose
                 | Builtin::UdpClose
+                | Builtin::TtyClose
                 | Builtin::ListenerClose
                 | Builtin::PollerClose
                 | Builtin::PipeClose

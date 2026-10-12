@@ -198,6 +198,8 @@ fn leaves_into(ty: &Type, program: &Program, out: &mut Vec<LKind>) -> Result<(),
                     | cancho_ir::PRELUDE_LISTENER
                     | cancho_ir::PRELUDE_CONN
                     | cancho_ir::PRELUDE_UDP
+                    // `docs/tty.md` §3, edition 8: `Udp`'s shape.
+                    | cancho_ir::PRELUDE_PORT
                     | cancho_ir::PRELUDE_POLLER
                     | cancho_ir::PRELUDE_SIGNAL_WATCH
                     // `docs/processes.md` §3.1: a pid, and two descriptors.
@@ -313,13 +315,35 @@ pub(crate) fn emit_module(
     // declares these the same way, on first use rather than unconditionally
     // there, but an unused `declare` here costs nothing, the same reasoning
     // `putchar`'s own unconditional declaration already relies on.
-    text.push_str(&format!("declare ptr @malloc({st})\n"));
-    text.push_str("declare void @free(ptr)\n");
+    //
+    // A program may declare `extern fn free` or `malloc` itself (#388):
+    // releasing a `c_ptr` libc allocated is a legitimate program, and
+    // cancho has no `void`, so the program's `free` returns `i64` where the
+    // arena calls `call void @free(ptr)`. Two declarations of one symbol
+    // with disagreeing signatures is what `clang` refused as `invalid
+    // redefinition`. So these two are guarded like every libc symbol below
+    // them: the program's declaration, when there is one, is the only one,
+    // and the arena calls through its own call-site type (a call whose type
+    // differs from the callee's is accepted with opaque pointers; the result
+    // the arena ignores is `free`'s). Wrapping them under a private name
+    // would still need the libc declaration, and so the same guard.
+    let extern_symbols: std::collections::BTreeSet<&str> =
+        program.externs.iter().map(|e| e.symbol.as_str()).collect();
+    let declare_libc_unless_own = |text: &mut String, symbol: &str, signature: &str| {
+        if !extern_symbols.contains(symbol) {
+            text.push_str(&format!("declare {signature}\n"));
+        }
+    };
+    declare_libc_unless_own(&mut text, "malloc", &format!("ptr @malloc({st})"));
+    declare_libc_unless_own(&mut text, "free", "void @free(ptr)");
     // Checked arithmetic (§5's second slice): the three overflow-reporting
     // intrinsics `Expr::Bin`'s `Add`/`Sub`/`Mul` arms call. Declared
     // unconditionally, the same way `putchar` is -- an unused `declare`
     // costs nothing, and every function in the module shares one `.ll`.
     text.push_str("declare {i64, i1} @llvm.sadd.with.overflow.i64(i64, i64)\n");
+    text.push_str("declare i64 @llvm.cttz.i64(i64, i1)\n");
+    text.push_str("declare i64 @llvm.ctlz.i64(i64, i1)\n");
+    text.push_str("declare i64 @llvm.ctpop.i64(i64)\n");
     text.push_str("declare {i64, i1} @llvm.ssub.with.overflow.i64(i64, i64)\n");
     text.push_str("declare {i64, i1} @llvm.smul.with.overflow.i64(i64, i64)\n");
     // `sqrt` (§7.17, `docs/float-math.md` §2): correctly rounded per
@@ -342,13 +366,6 @@ pub(crate) fn emit_module(
     // every one of these is now guarded the same way: a program naming
     // the symbol itself is trusted to have declared the signature it
     // actually needs, and this backend does not also insist on its own.
-    let extern_symbols: std::collections::BTreeSet<&str> =
-        program.externs.iter().map(|e| e.symbol.as_str()).collect();
-    let declare_libc_unless_own = |text: &mut String, symbol: &str, signature: &str| {
-        if !extern_symbols.contains(symbol) {
-            text.push_str(&format!("declare {signature}\n"));
-        }
-    };
 
     // `listen`/`accept` (`docs/net.md` §7.20, `docs/listen.md` §6):
     // neither takes a capability -- the port was already bound at
@@ -438,6 +455,13 @@ pub(crate) fn emit_module(
     // and `connect` itself alongside the `socket` already declared above.
     declare_libc_unless_own(&mut text, "getaddrinfo", "i32 @getaddrinfo(ptr, ptr, ptr, ptr)");
     declare_libc_unless_own(&mut text, "freeaddrinfo", "void @freeaddrinfo(ptr)");
+    // `docs/tty.md` §3, edition 8: the serial-port configuration calls.
+    // `ioctl` is variadic; the backend emits its call shaped the way the
+    // callee reads it (`native-sockets.md` §3's `fcntl` precedent), so
+    // the declaration is the real variadic one.
+    declare_libc_unless_own(&mut text, "tcsetattr", "i32 @tcsetattr(i32, i32, ptr)");
+    declare_libc_unless_own(&mut text, "tcflush", "i32 @tcflush(i32, i32)");
+    declare_libc_unless_own(&mut text, "ioctl", "i32 @ioctl(i32, i32, ...)");
     declare_libc_unless_own(&mut text, "connect", "i32 @connect(i32, ptr, i32)");
     // The socket handles (`docs/native-sockets.md` §3). `fcntl` is declared
     // variadic, which is what it is: on Apple arm64 a variadic argument is

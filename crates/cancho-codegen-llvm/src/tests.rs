@@ -1591,3 +1591,83 @@ fn a_wasm32_module_fetches_the_command_line_only_if_the_program_reads_it() {
     assert!(native.contains("define i32 @main(i32 %argc, ptr %argv)"), "{native}");
     assert!(!native.contains("_start") && !native.contains("cancho_args_load"), "{native}");
 }
+
+/// #388: a program that declares `extern fn free` (to release a `c_ptr` libc
+/// allocated, here one from `strdup`) used to collide with the arena's own
+/// unconditional `declare void @free(ptr)` -- `clang` refused the module
+/// with `invalid redefinition of function 'free'`, an `internal` error, and
+/// cancho-robot's first spike had to leak the string instead.
+///
+/// The fix: the backend declares `malloc`/`free` only when the program does
+/// not, like every other libc symbol it shares with a program, so the
+/// program's declaration is the only one, with the signature it wrote. The
+/// arena still calls them through its own call-site types. The end-to-end
+/// half (it links and runs) is `backends.rs`.
+#[test]
+fn a_programs_own_free_and_malloc_are_the_only_declarations() {
+    const SOURCE: &str = "edition 5;\n\
+         extern fn strdup[&f, &s](ffi: &f Ffi(\"libc\"), s: &s [byte]) -> [ffi(\"libc\")] c_ptr;\n\
+         extern fn free[&f](ffi: &f Ffi(\"libc\"), p: c_ptr) -> [ffi(\"libc\")] int;\n\
+         extern fn malloc[&f](ffi: &f Ffi(\"libc\"), n: int) -> [ffi(\"libc\")] c_ptr;\n\
+         \n\
+         fn copy_and_free[&f](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int {\n\
+             let p = strdup(ffi, \"x\\0\");\n\
+             free(ffi, p);\n\
+             return 0;\n\
+         }\n\
+         \n\
+         fn main(world: World) -> [] int {\n\
+             let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n\
+             release(io); release(fs); release(heap); release(args); release(net); release(clock);\n\
+             let libc = narrow(ffi, \"libc\");\n\
+             var status = 1;\n\
+             region a {\n\
+                 let kept = alloc_slice[a](4, byte_of(7));\n\
+                 borrow libc as &f in { status = copy_and_free(f); }\n\
+                 status = status + len(kept);\n\
+             }\n\
+             release(libc);\n\
+             return status;\n\
+         }\n\
+    ";
+    let ast = parse(SOURCE).expect("should parse");
+    let program = cancho_ir::lower(&ast).expect("should lower");
+    let triple: Triple = "x86_64-unknown-linux-gnu".parse().expect("a valid triple");
+    let text = emit::emit_module(&program, "main", &triple)
+        .unwrap_or_else(|(_, message)| panic!("{message}"));
+    // The program's declarations are the only ones: one `@free`, one
+    // `@malloc`, each with the signature the program wrote (cancho has no
+    // `void`, so `free` returns `i64`).
+    assert_eq!(
+        text.lines().filter(|l| l.starts_with("declare") && l.contains("@free(")).count(),
+        1,
+        "one `@free` declaration, the program's:\n{text}"
+    );
+    assert_eq!(
+        text.lines().filter(|l| l.starts_with("declare") && l.contains("@malloc(")).count(),
+        1,
+        "one `@malloc` declaration, the program's:\n{text}"
+    );
+    assert!(
+        text.contains("declare i64 @free("),
+        "the program's `free` keeps its own signature:\n{text}"
+    );
+    // The arena's calls go through the backend's own types.
+    assert!(text.contains("call void @free("), "the arena still frees:\n{text}");
+    assert!(text.contains("call ptr @malloc("), "the arena still allocates:\n{text}");
+    // And the program's own call site reaches its declaration.
+    assert!(text.contains("call i64 @free("), "the program's call uses its signature:\n{text}");
+    // A program that declares neither gets the backend's.
+    let plain = parse(
+        "fn main(world: World) -> [] int {\n\
+             let Split { io, ffi, fs, heap, args } = split(world);\n\
+             release(args); release(heap); release(fs); release(io); release(ffi);\n\
+             return 0;\n\
+         }\n",
+    )
+    .expect("should parse");
+    let plain = cancho_ir::lower(&plain).expect("should lower");
+    let plain = emit::emit_module(&plain, "main", &triple).expect("should emit");
+    assert!(plain.contains("declare ptr @malloc(i64)\n"), "{plain}");
+    assert!(plain.contains("declare void @free(ptr)\n"), "{plain}");
+}

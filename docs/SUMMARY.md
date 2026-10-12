@@ -18,6 +18,7 @@
 - [Aliasing: does `&!` mean `&mut`?](aliasing.md)
 - [Collections](collections.md)
 - [Testing](testing.md)
+- [Satisfy: a contract a candidate must meet](satisfy.md)
 - [Formatting](formatting.md)
 - [JSON](json.md)
 - [Hash map](map.md)
@@ -110,6 +111,7 @@
 - [The pure TLS backend in `cancho-hooks`](tls-hooks.md)
 - [TLS 1.3 session resumption](tls-resumption.md)
 - [A TLS 1.3 server](tls-server.md)
+- [TLS performance: the profile and the design](tls-performance.md)
 - [`std.ecdsa_sign`: ECDSA P-256 signing in constant time](ecdsa-sign.md)
 - [Hardware AES and carry-less multiply](crypto-builtins.md)
 

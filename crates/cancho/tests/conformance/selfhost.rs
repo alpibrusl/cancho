@@ -63,6 +63,7 @@ const EDGE: &[&str] = &[
     "fn f() -> [io_write, ffi(\"libc\"), fs_read(\"x\\n\")] int { return 0; }",
     "edition 7;\nfn f() -> [] int { return 1; }",
     "edition 8;\nfn f() -> [] int { return 1; }",
+    "edition 9;\nfn f() -> [] int { return 1; }",
     "edition 99999999999999999999;",
     "edition );\nfn f() -> [] int { return 1; }",
     "module a.b.c;\nimport std.io;\nimport std.buffer as b;\nfn f() -> [] int { return 1; }",
