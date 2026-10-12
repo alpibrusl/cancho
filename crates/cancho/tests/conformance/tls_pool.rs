@@ -4,7 +4,7 @@
 //! messages of any size in any pieces come back byte for byte, that a start with no area free is refused `tls-pool` and
 //! starts nothing, that a connection that needs an area and finds none waits rather than fails, that the areas all come back,
 //! and that no free area or free slot keeps a key, a secret or plaintext (`tls.residue`), with server tickets and
-//! resumption and with a client identity too.
+//! resumption, with a client identity, and on a server that requires client certificates.
 
 use super::*;
 use std::io::Write;
@@ -36,6 +36,19 @@ fn input() -> Vec<u8> {
     bytes
 }
 
+/// `input()` and, for `clientcert`, the clients' CA, the client's chain and its key (`tests/vectors/tls/client_auth`).
+fn input_for(words: &[&str]) -> Vec<u8> {
+    let mut bytes = input();
+    if words.contains(&"clientcert") {
+        let vectors = repo_root().join("tests/vectors/tls/client_auth");
+        for name in ["pool_ca.pem", "pool_chain.pem", "pool_key.pem"] {
+            bytes.push(0);
+            bytes.extend(std::fs::read(vectors.join(name)).unwrap());
+        }
+    }
+    bytes
+}
+
 fn run(exe: &Path, slots: u32, areas: u32, steps: u32, seed: u32) -> Vec<String> {
     run_with(exe, slots, areas, steps, seed, &[])
 }
@@ -57,7 +70,7 @@ fn run_with(
         .spawn()
         .expect("the driver runs");
     let mut stdin = child.stdin.take().unwrap();
-    let bytes = input();
+    let bytes = input_for(words);
     let writer = std::thread::spawn(move || {
         let _ = stdin.write_all(&bytes);
     });
@@ -127,6 +140,24 @@ fn an_engine_with_fewer_work_areas_than_slots_serves_every_connection_on_both_ba
                         .any(|l| l.starts_with("ok tickets: every slot saved one and resumed")),
                     "{words:?}: {got:#?}"
                 );
+            }
+        }
+        // A server that requires client certificates (`docs/tls-server.md` §13): a verified connection keeps its
+        // area (the `peer_` calls read the leaf in it) and gives it back cleared, leaf and all; the store replaced
+        // before the client's Finished fails the handshake cleanly; `tls.residue` 0 after every step.
+        for (slots, areas, seed) in [(4, 4, 10), (5, 2, 11), (1, 1, 12)] {
+            let got = run_with(&exe, slots, areas, 30, seed, &["clientcert"]);
+            for want in [
+                "clientcert: every client verified, its connection keeps its area, residue 0 after every step",
+                "clientcert: a verified connection that fails gives no identity, before and after its alert is taken",
+                "clientcert: dropped, every area back and cleared with the leaf, residue 0",
+                "clientcert: the store replaced before the client's Finished fails the handshake, its area cleared",
+                "clientcert: after the drops no area or core holds a byte, residue 0",
+            ] {
+                assert!(got.iter().any(|l| l.contains(want)), "{want}: {got:#?}");
+            }
+            if areas < slots {
+                assert!(got.iter().any(|l| l.contains("a serve is tls-pool")), "{got:#?}");
             }
         }
         let _ = std::fs::remove_dir_all(&dir);

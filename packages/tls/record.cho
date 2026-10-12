@@ -373,6 +373,42 @@ pub fn server_ticket_key() -> [] int {
     return -66;
 }
 
+// `required` client authentication, and the client's Certificate has no certificate
+// (RFC 8446 §4.4.2; `docs/tls-server.md` §13.2).
+pub fn server_client_cert_required() -> [] int {
+    return -67;
+}
+
+// The client's CertificateVerify names a signature scheme the CertificateRequest did not list
+// (RFC 8446 §4.2.3; `docs/tls-server.md` §13.2).
+pub fn server_client_sigalg() -> [] int {
+    return -68;
+}
+
+// `trust_clients`: a bundle with no certificate, a block that is not one this package reads, more
+// than `tls_identity.max_client_roots()` roots or `client_store_cap()` bytes; `client_auth`: a mode
+// asked for with no store (`docs/tls-server.md` §13.3).
+pub fn server_client_store() -> [] int {
+    return -69;
+}
+
+// `client_auth`: a mode other than 0, 1 and 2.
+pub fn server_client_auth_config() -> [] int {
+    return -70;
+}
+
+// `peer_certificate`: `out` shorter than the certificate.
+pub fn server_peer_buffer() -> [] int {
+    return -71;
+}
+
+// The clients' store was replaced (`trust_clients`) after the client's Certificate verified and before its
+// Finished: the chain was judged under a store the operator has since withdrawn, so the handshake is refused
+// rather than established under it (`docs/tls-server.md` §13.22).
+pub fn server_client_store_replaced() -> [] int {
+    return -73;
+}
+
 pub fn refusal_tag(code: int) -> [] &static [byte] {
     if code == 0 {
         return "ok";
@@ -598,6 +634,25 @@ pub fn refusal_tag(code: int) -> [] &static [byte] {
     }
     if code == -72 {
         return "tls-pool";
+    }
+
+    if code == -67 {
+        return "tls-server-client-cert-required";
+    }
+    if code == -68 {
+        return "tls-server-client-sigalg";
+    }
+    if code == -69 {
+        return "tls-server-client-store";
+    }
+    if code == -70 {
+        return "tls-server-client-auth-config";
+    }
+    if code == -71 {
+        return "tls-server-peer-buffer";
+    }
+    if code == -73 {
+        return "tls-server-client-store-replaced";
     }
     return "unknown";
 }

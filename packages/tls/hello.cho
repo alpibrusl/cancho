@@ -736,3 +736,87 @@ pub fn new_session_ticket[&t, &o](lifetime: int, age_add: int, nonce: int, ticke
     tls_message.put(out, 1, at - 4, 3);
     return at;
 }
+
+// ---- Client authentication (`docs/tls-server.md` §13.2) ----
+
+// The schemes this server verifies a client's CertificateVerify with, one per key type of §13.4: ECDSA
+// P-256 and P-384, RSA-PSS (rsaEncryption keys) and Ed25519.
+pub fn client_scheme(i: int) -> [] int {
+    if i == 0 {
+        return tls_message.ecdsa_p256_sha256();
+    }
+    if i == 1 {
+        return tls_message.ecdsa_p384_sha384();
+    }
+    if i == 2 {
+        return tls_message.rsa_pss_sha256();
+    }
+    if i == 3 {
+        return tls_message.rsa_pss_sha384();
+    }
+    if i == 4 {
+        return tls_message.rsa_pss_sha512();
+    }
+    return tls_message.ed25519();
+}
+
+pub fn client_schemes() -> [] int {
+    return 6;
+}
+
+// Whether `scheme` is one the CertificateRequest listed.
+pub fn client_scheme_listed(scheme: int) -> [] bool {
+    var i = 0;
+    while i < client_schemes() {
+        if client_scheme(i) == scheme {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// The most bytes a CertificateRequest takes (§13.2).
+pub fn certificate_request_cap() -> [] int {
+    return 8248;
+}
+
+// CertificateRequest (§4.3.2), handshake header included: an empty context (post-handshake authentication is
+// not offered), `signature_algorithms` (the schemes above), `signature_algorithms_cert` (those and RSA
+// PKCS#1, the CA signatures `x509_verify` reads), and `certificate_authorities` when `authorities` (each Name
+// after a 2-byte length) is not empty.
+pub fn certificate_request[&a, &o](authorities: &a [byte], out: &!o [byte]) -> [] int {
+    var at = 4;
+    at = tls_message.put(out, at, 0, 1);
+    let list = at;
+    at = tls_message.put(out, at, 0, 2);
+    at = tls_message.put(out, at, 13, 2);
+    at = tls_message.put(out, at, 2 + 2 * client_schemes(), 2);
+    at = tls_message.put(out, at, 2 * client_schemes(), 2);
+    var i = 0;
+    while i < client_schemes() {
+        at = tls_message.put(out, at, client_scheme(i), 2);
+        i = i + 1;
+    }
+    at = tls_message.put(out, at, 50, 2);
+    at = tls_message.put(out, at, 2 + 2 * client_schemes() + 6, 2);
+    at = tls_message.put(out, at, 2 * client_schemes() + 6, 2);
+    i = 0;
+    while i < client_schemes() {
+        at = tls_message.put(out, at, client_scheme(i), 2);
+        i = i + 1;
+    }
+    at = tls_message.put(out, at, tls_message.rsa_pkcs1_sha256(), 2);
+    at = tls_message.put(out, at, tls_message.rsa_pkcs1_sha384(), 2);
+    at = tls_message.put(out, at, tls_message.rsa_pkcs1_sha512(), 2);
+    if len(authorities) > 0 {
+        at = tls_message.put(out, at, 47, 2);
+        at = tls_message.put(out, at, 2 + len(authorities), 2);
+        at = tls_message.put(out, at, len(authorities), 2);
+        at = tls_message.copy_to(authorities, out, at);
+    }
+    tls_message.put(out, list, at - list - 2, 2);
+    tls_message.put(out, 0, tls_message.type_certificate_request(), 1);
+    tls_message.put(out, 1, at - 4, 3);
+    return at;
+}

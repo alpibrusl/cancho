@@ -1,12 +1,13 @@
 /* A wolfSSL client for scripts/tls_server_interop.py (docs/tls-server.md §8, step 2).
  *
- *     wolfssl_client <port> <server name> <ca.pem> <cipher> <groups> <alpn> <message>
+ *     wolfssl_client <port> <server name> <ca.pem> <cipher> <groups> <alpn> <message> [<client chain.pem> <client key.pem>]
  *
  * TLS 1.3 only, to 127.0.0.1. `cipher` is a wolfSSL suite name (TLS13-AES128-GCM-SHA256, TLS13-AES256-GCM-SHA384
  * or TLS13-CHACHA20-POLY1305-SHA256). `groups` is a comma-separated list of X25519, P256, P384 and P521, the
  * first the one key share sent, or `none:` before the list to send no share at all, either way making a server
  * without that group ask with a HelloRetryRequest. `alpn` is a comma-separated list, or `-`. It verifies the
- * chain and the name, sends `message`, half-closes, reads until the server closes, and prints `ok <suite>
+ * chain and the name (and, with the last two arguments, presents the client certificate chain and key a server
+ * asks for: docs/tls-server.md §13), sends `message`, half-closes, reads until the server closes, and prints `ok <suite>
  * <curve> <bytes read>`, or `error <code>` and exits 1. Built with `cc wolfssl_client.c -lwolfssl`. */
 #include <arpa/inet.h>
 #include <stdio.h>
@@ -41,6 +42,9 @@ int main(int argc, char **argv) {
         return fail(NULL, -1);
     if (wolfSSL_CTX_set_cipher_list(ctx, argv[4]) != WOLFSSL_SUCCESS)
         return fail(NULL, -2);
+    if (argc >= 10 && (wolfSSL_CTX_use_certificate_chain_file(ctx, argv[8]) != WOLFSSL_SUCCESS ||
+                       wolfSSL_CTX_use_PrivateKey_file(ctx, argv[9], WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS))
+        return fail(NULL, -10);
     WOLFSSL *ssl = wolfSSL_new(ctx);
     if (wolfSSL_UseSNI(ssl, WOLFSSL_SNI_HOST_NAME, argv[2], strlen(argv[2])) != WOLFSSL_SUCCESS ||
         wolfSSL_check_domain_name(ssl, argv[2]) != WOLFSSL_SUCCESS)

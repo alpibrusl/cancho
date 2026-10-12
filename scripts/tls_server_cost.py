@@ -6,7 +6,7 @@
 `tls_serve` is `tests/programs/tls_serve.cho` built with the LLVM backend (the default) and `packages/tls`. It runs in
 `echo` mode with a P-256 identity; `openssl s_time -new` makes full handshakes against it, one after another, for
 `seconds` (default 20) a row, and the server's CPU time (user and system, from `/proc/<pid>/stat`) is divided by the
-handshakes it completed. Linux only. A row per group the client sends a share of (OpenSSL's `Groups`, through
+handshakes it completed. Linux (`/proc`) or macOS (`ps`). A row per group the client sends a share of (OpenSSL's `Groups`, through
 `OPENSSL_CONF`), and one where the share is P-521's, so a HelloRetryRequest to P-256 comes first. The suite is the
 server's choice: AES-128-GCM where the CPU has AES instructions. A last row is `openssl s_server` with the same
 identity under the same client, for scale.
@@ -32,6 +32,14 @@ import tls_server_interop as interop  # noqa: E402
 
 
 def cpu_seconds(pid):
+    if not os.path.exists(f"/proc/{pid}/stat"):
+        # macOS has no /proc: `ps` gives user + system time as [[dd-]hh:]mm:ss.ss, to a hundredth of a second.
+        out = subprocess.run(["ps", "-o", "time=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+        days, _, rest = out.rpartition("-")
+        total = 0.0
+        for part in rest.split(":"):
+            total = total * 60 + float(part)
+        return total + (int(days) * 86400 if days else 0)
     fields = open(f"/proc/{pid}/stat").read().rsplit(")", 1)[1].split()
     tick = os.sysconf("SC_CLK_TCK")
     return (int(fields[11]) + int(fields[12])) / tick

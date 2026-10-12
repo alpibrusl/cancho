@@ -5,6 +5,7 @@ edition 5;
 // `slots` slots.
 //
 //     tls_pool <slots> <areas> <steps> <seed> [hold] [tickets] [mutual] < ca.pem NUL chain.pem NUL key.pem
+//     tls_pool <slots> <areas> <steps> <seed> clientcert < ca.pem NUL chain.pem NUL key.pem NUL clients_ca.pem NUL client_chain.pem NUL client_key.pem
 //
 // (the three files on standard input, a NUL byte between them; the leaf is for `echo.lex-sys.test`). It prints one
 // line for each thing it checks, `ok ...` or `FAIL ...`, and exits 1 if any failed:
@@ -22,7 +23,8 @@ edition 5;
 //   tickets      (with `tickets`) the server sends two tickets a connection, the client saves one in every slot and
 //                the next connection resumes with it, `tls.residue` 0 throughout; `mutual` opens the client engine
 //                with a client identity (`open_mutual_with_areas`, `add_client_identity`);
-//   drop         a handshake dropped gives its area back cleared; the slots dropped, the areas all free and clear.
+//   drop         a handshake dropped gives its area back cleared; the slots dropped, the areas all free and clear;
+//   clientcert   (instead of the above) a server that requires client certificates: see `drive_clientcert`.
 //
 // With `hold`, `scripts/tls_memory.py engine` measures the two engines with nothing else in the process: it prints
 // `ready start` before the handshakes and `ready established` after them, waiting 4 seconds each time, then sends 16,384 bytes through each connection in turn, prints `ready echoed` and waits 4 seconds;
@@ -529,6 +531,105 @@ fn drive[&i, &c, &s, &w, &a, &m, &t, &k](io: &!i Io, clock: &k Clock, cli: &!c t
     return failed;
 }
 
+// With `clientcert` (`docs/tls-server.md` §13): the server requires a client certificate and the client engine
+// presents one. A connection whose client was verified keeps its area while it lives (`tls_slot.keeps_area`: the
+// `peer_` calls read the leaf in it), and gives it back cleared, leaf and all, when it is dropped; `tls.residue` is
+// 0 after every step. With fewer areas than slots, verified connections hold the areas and a serve with none free
+// is `tls-pool`. Then the clients' store is replaced between the client's CertificateVerify and its Finished: the
+// handshake fails `tls-server-client-store-replaced` and its area comes back cleared.
+fn drive_clientcert[&i, &c, &s, &w, &a, &t, &p](io: &!i Io, cli: &!c tls.Engine, srv: &!s tls.Engine, wire: &!w [byte], app: &!a [byte], st: &!t [int], slots: int, areas: int, seed: int, store: &p [byte]) -> [io_write] int {
+    var failed = 0;
+    let now = 1800000000000;
+    let host = "echo.lex-sys.test";
+    var verified = 0;
+    var kept = 0;
+    var clean = true;
+    var k = 0;
+    var refused = 0;
+    region r {
+        let fp = alloc_slice[r](32, byte_of(0));
+        while k < slots {
+            if tls.areas_free(srv) == 0 {
+                // Every area is held by a verified connection: the serve is refused and starts nothing.
+                if tls.serve(srv, k, now) == 0 - 72 && !tls.holds_area(srv, k) {
+                    refused = refused + 1;
+                }
+                tls.drop(srv, k - areas);
+                tls.drop(cli, k - areas);
+                if tls.residue(srv) != 0 || tls.residue(cli) != 0 {
+                    clean = false;
+                }
+            }
+            tls.serve(srv, k, now);
+            tls.start(cli, k, host, now);
+            settle(cli, srv, wire, st, app, k, 1 + (seed + k) % 1500);
+            if tls.event(srv, k) == tls.event_established() && tls.peer_verified(srv, k) == tls.client_generation(srv) && tls.peer_fingerprint(srv, k, fp) == 32 && tls.client_auth(cli, k) == 1 {
+                verified = verified + 1;
+            }
+            if tls.holds_area(srv, k) {
+                kept = kept + 1;
+            }
+            if tls.residue(srv) != 0 || tls.residue(cli) != 0 {
+                clean = false;
+            }
+            k = k + 1;
+        }
+    }
+    failed = failed + say_n(io, verified == slots && kept == slots && clean, "clientcert: every client verified, its connection keeps its area, residue 0 after every step, slots", slots);
+    if areas < slots {
+        failed = failed + say_n(io, refused == slots - areas, "clientcert: with every area held by a verified connection a serve is tls-pool, then served once one is dropped, refused", refused);
+    }
+    // A verified connection that fails: before its alert is taken it still holds its area, and gives no identity.
+    let f = slots - 1;
+    region q {
+        let msg = alloc_slice[q](300, byte_of(7));
+        tls.send(cli, f, msg);
+    }
+    let nf = tls.take(cli, f, wire);
+    wire[nf - 3] = byte_of(int_of(wire[nf - 3]) ^ 1);
+    let fcode = tls.feed(srv, f, wire[0..nf]);
+    var held = fcode < 0 && tls.holds_area(srv, f) && tls.peer_verified(srv, f) == 0 && tls.peer_not_after(srv, f) == 0;
+    region q {
+        let leaf = alloc_slice[q](16384, byte_of(0));
+        let entry = alloc_slice[q](3, 0);
+        held = held && tls.peer_certificate(srv, f, leaf) == 0 && tls.peer_fingerprint(srv, f, leaf) == 0 && tls.peer_subject(srv, f, leaf) == 0 && tls.peer_serial(srv, f, leaf) == 0 && tls.peer_san(srv, f, 0, entry) == 0;
+    }
+    let falert = tls.take(srv, f, app);
+    failed = failed + say(io, held && falert > 0 && !tls.holds_area(srv, f) && tls.peer_verified(srv, f) == 0 && tls.residue(srv) == 0, "clientcert: a verified connection that fails gives no identity, before and after its alert is taken, and its area back cleared");
+    k = 0;
+    while k < slots {
+        tls.drop(srv, k);
+        tls.drop(cli, k);
+        k = k + 1;
+    }
+    failed = failed + say_n(io, tls.areas_free(srv) == areas && tls.residue(srv) == 0 && tls.residue(cli) == 0, "clientcert: dropped, every area back and cleared with the leaf, residue", tls.residue(srv));
+    // The store replaced while the client holds its Finished: the client's flight is fed one record at a time, and
+    // the store is replaced before the last (its Finished).
+    tls.serve(srv, 0, now);
+    tls.start(cli, 0, host, now);
+    carry(cli, srv, wire, st, app, 0, 65536, true);
+    carry(srv, cli, wire, st, app, 0, 65536, false);
+    let n = tls.take(cli, 0, wire);
+    var at = 0;
+    var records = 0;
+    var code = 0;
+    while at + 5 <= n && code >= 0 {
+        let end = at + 5 + int_of(wire[at + 3]) * 256 + int_of(wire[at + 4]);
+        if end >= n {
+            tls.trust_clients(srv, store);
+        }
+        code = tls.feed(srv, 0, wire[at..end]);
+        records = records + 1;
+        at = end;
+    }
+    let alert = tls.take(srv, 0, app);
+    failed = failed + say_n(io, tag_is(srv, 0, "tls-server-client-store-replaced") && alert > 0 && tls.peer_verified(srv, 0) == 0 && !tls.holds_area(srv, 0) && tls.residue(srv) == 0, "clientcert: the store replaced before the client's Finished fails the handshake, its area cleared, records fed", records);
+    tls.drop(srv, 0);
+    tls.drop(cli, 0);
+    failed = failed + say(io, tls.areas_free(srv) == areas && tls.residue(srv) == 0 && tls.residue(cli) == 0, "clientcert: after the drops no area or core holds a byte, residue 0");
+    return failed;
+}
+
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args, net, clock } = split(world);
     release(ffi);
@@ -544,7 +645,8 @@ fn main(world: World) -> [] int {
                 let seed = number(arg(g, 4));
                 let hold = has_word(g, "hold");
                 let tickets = has_word(g, "tickets");
-                let mutual = has_word(g, "mutual");
+                let clientcert = has_word(g, "clientcert");
+                let mutual = has_word(g, "mutual") || clientcert;
                 borrow mut heap as &!h in {
                     var all = buffer.empty(h, 65536);
                     all = read_stdin(h, i, all);
@@ -576,7 +678,24 @@ fn main(world: World) -> [] int {
                             while cut2 < len(text) && int_of(text[cut2]) != 0 {
                                 cut2 = cut2 + 1;
                             }
-                            if cut2 >= len(text) {
+                            // With `clientcert`, three more: the clients' CA, the client's chain and its key.
+                            var cut3 = cut2 + 1;
+                            while cut3 < len(text) && int_of(text[cut3]) != 0 {
+                                cut3 = cut3 + 1;
+                            }
+                            var cut4 = cut3 + 1;
+                            while cut4 < len(text) && int_of(text[cut4]) != 0 {
+                                cut4 = cut4 + 1;
+                            }
+                            var cut5 = cut4 + 1;
+                            while cut5 < len(text) && int_of(text[cut5]) != 0 {
+                                cut5 = cut5 + 1;
+                            }
+                            var key_end = len(text);
+                            if clientcert {
+                                key_end = cut3;
+                            }
+                            if cut2 >= len(text) || clientcert && cut5 >= len(text) {
                                 io.error_all(i, "tls_pool: expected three files\n");
                             } else {
                                 borrow mut cli as &!cw in {
@@ -585,12 +704,15 @@ fn main(world: World) -> [] int {
                                         entropy[0] = byte_of(99);
                                         tls.seed(sw, entropy);
                                         let roots = tls.trust(cw, text[0..cut1]);
-                                        let id = tls.add_identity(sw, text[cut1 + 1..cut2], text[cut2 + 1..len(text)], "echo.lex-sys.test", 1800000000000);
+                                        let id = tls.add_identity(sw, text[cut1 + 1..cut2], text[cut2 + 1..key_end], "echo.lex-sys.test", 1800000000000);
                                         if tickets {
                                             tls.set_tickets(sw, 2, 3600);
                                             tls.set_resumption(cw, true);
                                         }
-                                        if mutual && tls.add_client_identity(cw, text[cut1 + 1..cut2], text[cut2 + 1..len(text)], "*", 1800000000000) < 0 {
+                                        if clientcert && (tls.trust_clients(sw, text[cut3 + 1..cut4]) != 1 || tls.client_auth_mode(sw, 2) != 0 || tls.add_client_identity(cw, text[cut4 + 1..cut5], text[cut5 + 1..len(text)], "*", 1800000000000) < 0) {
+                                            io.error_all(i, "tls_pool: the client certificate setup was refused\n");
+                                        }
+                                        if mutual && !clientcert && tls.add_client_identity(cw, text[cut1 + 1..cut2], text[cut2 + 1..len(text)], "*", 1800000000000) < 0 {
                                             io.error_all(i, "tls_pool: the client identity was refused\n");
                                         }
                                         if roots < 1 || id < 0 {
@@ -601,7 +723,11 @@ fn main(world: World) -> [] int {
                                                     borrow mut msgb as &!mw in {
                                                         borrow mut stb as &!tw in {
                                                             borrow clock as &kk in {
-                                                                status = drive(i, kk, cw, sw, contents(ww), contents(aw), contents(mw), contents(tw), slots, areas, steps, seed, hold, tickets);
+                                                                if clientcert {
+                                                                    status = drive_clientcert(i, cw, sw, contents(ww), contents(aw), contents(tw), slots, areas, seed, text[cut3 + 1..cut4]);
+                                                                } else {
+                                                                    status = drive(i, kk, cw, sw, contents(ww), contents(aw), contents(mw), contents(tw), slots, areas, steps, seed, hold, tickets);
+                                                                }
                                                             }
                                                         }
                                                     }

@@ -5,11 +5,13 @@ module tls;
 import std.chacha20;
 import tls_cident;
 import tls_client;
+import tls_clientauth;
 import tls_identity;
 import tls_record;
 import tls_server;
 import tls_slot;
 import tls_ticket;
+import x509;
 import x509_key;
 import x509_verify;
 
@@ -493,6 +495,7 @@ fn settle[&e](engine: &!e Engine, slot: int) -> [] int {
 // values of the key exchange and the signature. Best effort, as `docs/tls-core.md` section 8 says of every erasure.
 fn clear_area[&e](engine: &!e Engine, a: int, reach: int) -> [] int {
     let ai = a * tls_client.ints_len();
+    clear_leaf(engine, a);
     var end = tls_slot.ints_core_len();
     if reach >= tls_slot.recv_cap() {
         end = tls_client.ints_len();
@@ -530,6 +533,17 @@ fn clear_area[&e](engine: &!e Engine, a: int, reach: int) -> [] int {
     return 0;
 }
 
+// A server's area may hold a client's leaf (`docs/tls-server.md` §13.6, `b_leaf`, `i_leaf_len` bytes of it): who
+// the client was goes with the area.
+fn clear_leaf[&e](engine: &!e Engine, a: int) -> [] int {
+    let leaf = contents(engine.ints)[a * tls_client.ints_len() + tls_slot.i_leaf_len()];
+    if is_server(engine) && leaf > 0 {
+        let lb = a * tls_client.bytes_len() + tls_slot.b_leaf();
+        tls_slot.zero(contents(engine.bytes)[lb..lb + leaf]);
+    }
+    return 0;
+}
+
 // What a release clears of the last record opened at least: more than a NewSessionTicket the engine keeps
 // (`tls_slot.ticket_cap()` and its fields) or a KeyUpdate.
 fn clean_floor() -> [] int {
@@ -537,7 +551,7 @@ fn clean_floor() -> [] int {
 }
 
 // For tests (`tests/programs/tls_pool.cho`): how many words and bytes that should hold nothing still hold something:
-// every free area's integers, its copy of the core, its last record opened and its received data; every free slot's
+// every free area's integers, its copy of the core, its last record opened and its received data (and a server's, the client leaf it verified); every free slot's
 // core; and the keys and AEAD contexts of every connection that has failed. 0 is what the clearing promises.
 pub fn residue[&e](engine: &e Engine) -> [] int {
     var n = 0;
@@ -556,6 +570,9 @@ pub fn residue[&e](engine: &e Engine) -> [] int {
         n = n + nonzero(contents(engine.bytes)[ab..ab + tls_slot.bytes_core_len()]);
         n = n + nonzero(contents(engine.bytes)[ab + tls_slot.b_plain()..ab + tls_slot.b_plain() + tls_slot.plain_cap()]);
         n = n + nonzero(contents(engine.bytes)[ab + tls_slot.b_recv()..ab + tls_slot.b_recv() + tls_slot.recv_cap()]);
+        if is_server(engine) {
+            n = n + nonzero(contents(engine.bytes)[ab + tls_slot.b_leaf()..ab + tls_slot.b_leaf() + tls_slot.leaf_cap()]);
+        }
         k = k + 1;
     }
     var s = 0;
@@ -919,6 +936,7 @@ pub fn drop[&e](engine: &!e Engine, slot: int) -> [] int {
     if contents(engine.meta)[m_lease(engine, slot)] != 0 {
         let i = ints_of(engine, slot);
         let b = bytes_of(engine, slot);
+        clear_leaf(engine, contents(engine.meta)[m_lease(engine, slot)] - 1);
         tls_client.drop(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()]);
         clear_area(engine, contents(engine.meta)[m_lease(engine, slot)] - 1, tls_slot.recv_cap());
         contents(engine.meta)[m_reach(engine, slot)] = 0;
@@ -1520,6 +1538,10 @@ pub fn serve[&e](engine: &!e Engine, slot: int, now_unix_ms: int) -> [] int {
         let i = ints_of(engine, slot);
         let b = bytes_of(engine, slot);
         code = tls_server.start(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], random);
+        if code == 0 {
+            // The mode and the clock this connection's client chain is checked by (`docs/tls-server.md` §13).
+            tls_clientauth.begin(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.ids), now_unix_ms / 1000);
+        }
         tls_slot.zero(random);
         // The randomness of the tickets this connection may make: a salt and a ticket_age_add each.
         let n = tls_ticket.count(contents(engine.tk));
@@ -1718,4 +1740,175 @@ pub fn retried[&e](engine: &e Engine, slot: int) -> [] bool {
         return false;
     }
     return word(engine, slot, tls_slot.i_flags()) & tls_slot.f_retried() != 0;
+}
+
+// ---- Client certificates (`docs/tls-server.md` §13) ----
+
+// Whether and how the server asks a client for a certificate, for the connections `serve` starts after
+// this: 0 off (the default), 1 optional (a client may send none; one that sends a certificate that does not
+// verify is refused), 2 required. A mode other than 0 needs a store (`trust_clients`) first. 0, or
+// `tls-server-client-auth-config`, `tls-server-client-store`, `tls-role`.
+pub fn client_auth_mode[&e](engine: &!e Engine, mode: int) -> [] int {
+    if !is_server(engine) {
+        return tls_record.role();
+    }
+    return tls_identity.set_client_mode(contents(engine.ids), mode);
+}
+
+// The certificates of a PEM bundle become the store a client's chain is verified against, replacing any
+// before: never the system bundle (`docs/x509-verify.md` §10.3), which is why this is not `trust`. At most
+// 32 roots and 32 KiB, every block a certificate this package reads, else `tls-server-client-store` and the
+// store as it was. Answers the roots stored. A handshake reads the store when its Certificate is handled.
+pub fn trust_clients[&e, &p](engine: &!e Engine, pem: &p [byte]) -> [] int {
+    if !is_server(engine) {
+        return tls_record.role();
+    }
+    return tls_identity.load_client_store(contents(engine.ids), pem);
+}
+
+// How many times the clients' store was replaced: 0 before the first `trust_clients`.
+pub fn client_generation[&e](engine: &e Engine) -> [] int {
+    if !is_server(engine) {
+        return tls_record.role();
+    }
+    return tls_identity.client_generation(contents(engine.ids));
+}
+
+// The generation of the store the client of `slot` was verified under, or 0 when the connection has no
+// verified client (client authentication off, or optional and none sent, or not established). A program
+// that replaced the store to revoke closes the slots whose generation is older than `client_generation`. The
+// identity is read from the work area such a connection keeps (`tls_slot.keeps_area`, `docs/tls-memory.md`
+// §7.1): the leaf is up to 16 KiB, which a slot's core has no room for.
+pub fn peer_verified[&e](engine: &e Engine, slot: int) -> [] int {
+    if !is_server(engine) {
+        return tls_record.role();
+    }
+    if !slot_ok(engine, slot) {
+        return tls_record.bad_slot();
+    }
+    // A connection with a verified client keeps its area (`tls_slot.keeps_area`): one with none has no identity.
+    if !in_area(engine, slot) {
+        return 0;
+    }
+    let i = ints_of(engine, slot);
+    return tls_clientauth.generation(contents(engine.ints)[i..i + tls_client.ints_len()]);
+}
+
+// The verified client's leaf certificate, DER, into `out`: its length, 0 when there is none, or
+// `tls-server-peer-buffer` when `out` is shorter than it (16,384 bytes always hold it).
+pub fn peer_certificate[&e, &o](engine: &e Engine, slot: int, out: &!o [byte]) -> [] int {
+    if !is_server(engine) {
+        return tls_record.role();
+    }
+    if !slot_ok(engine, slot) {
+        return tls_record.bad_slot();
+    }
+    if !in_area(engine, slot) {
+        return 0;
+    }
+    let i = ints_of(engine, slot);
+    let b = bytes_of(engine, slot);
+    let der = tls_clientauth.certificate(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()]);
+    if len(der) > len(out) {
+        return tls_record.server_peer_buffer();
+    }
+    return tls_slot.copy_bytes(der, out[0..len(der)]);
+}
+
+// A range of the verified leaf copied out: `from` and `to` are the view's fields.
+fn peer_range[&e, &o](engine: &e Engine, slot: int, from: int, to: int, out: &!o [byte]) -> [] int {
+    if !is_server(engine) {
+        return tls_record.role();
+    }
+    if !slot_ok(engine, slot) {
+        return tls_record.bad_slot();
+    }
+    if !in_area(engine, slot) {
+        return 0;
+    }
+    let i = ints_of(engine, slot);
+    let b = bytes_of(engine, slot);
+    var n = 0;
+    region r {
+        let view = alloc_slice[r](x509.view_len(), 0);
+        let ints = contents(engine.ints)[i..i + tls_client.ints_len()];
+        let bytes = contents(engine.bytes)[b..b + tls_client.bytes_len()];
+        if tls_clientauth.leaf_view(ints, bytes, view) == 0 {
+            let der = tls_clientauth.certificate(ints, bytes);
+            let size = view[to] - view[from];
+            if size > len(out) {
+                n = tls_record.server_peer_buffer();
+            } else {
+                n = tls_slot.copy_bytes(der[view[from]..view[to]], out[0..size]);
+            }
+        }
+    }
+    return n;
+}
+
+// The verified client's subject Name, DER, into `out`: its length (0: none verified, or an empty subject).
+pub fn peer_subject[&e, &o](engine: &e Engine, slot: int, out: &!o [byte]) -> [] int {
+    return peer_range(engine, slot, x509.subject_start(), x509.subject_end(), out);
+}
+
+// The verified client's serial number, the INTEGER's content bytes, into `out`.
+pub fn peer_serial[&e, &o](engine: &e Engine, slot: int, out: &!o [byte]) -> [] int {
+    return peer_range(engine, slot, x509.serial_start(), x509.serial_end(), out);
+}
+
+// SHA-256 of the verified client's leaf, DER, into `out` (32 bytes): 32, or 0 when none is verified. Computed
+// here from the certificate that was verified, not taken from the client.
+pub fn peer_fingerprint[&e, &o](engine: &e Engine, slot: int, out: &!o [byte]) -> [] int {
+    if !is_server(engine) {
+        return tls_record.role();
+    }
+    if !slot_ok(engine, slot) {
+        return tls_record.bad_slot();
+    }
+    if !in_area(engine, slot) {
+        return 0;
+    }
+    let i = ints_of(engine, slot);
+    let b = bytes_of(engine, slot);
+    return tls_clientauth.fingerprint(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], out);
+}
+
+// When the verified client's leaf expires, seconds since 1970, or 0 when none is verified.
+pub fn peer_not_after[&e](engine: &e Engine, slot: int) -> [] int {
+    if !is_server(engine) || !slot_ok(engine, slot) {
+        return 0;
+    }
+    if !in_area(engine, slot) {
+        return 0;
+    }
+    let i = ints_of(engine, slot);
+    if tls_clientauth.generation(contents(engine.ints)[i..i + tls_client.ints_len()]) == 0 {
+        return 0;
+    }
+    return contents(engine.ints)[i + tls_slot.i_peer_not_after()];
+}
+
+// The verified client's subjectAltName, one GeneralName at a time (`x509_verify.san_next`): `at` 0 starts;
+// `entry` (3 words) gets the tag (0x81 rfc822Name, 0x82 dNSName, 0x86 URI, 0x87 iPAddress, 0xa0 otherName,
+// 0xa4 directoryName) and the content's range in `peer_certificate`'s DER. Answers where the next starts, to
+// pass back as `at`, or 0 when there is none.
+pub fn peer_san[&e, &o](engine: &e Engine, slot: int, at: int, entry: &!o [int]) -> [] int {
+    if !is_server(engine) || !slot_ok(engine, slot) {
+        return 0;
+    }
+    if !in_area(engine, slot) {
+        return 0;
+    }
+    let i = ints_of(engine, slot);
+    let b = bytes_of(engine, slot);
+    var next = 0;
+    region r {
+        let view = alloc_slice[r](x509.view_len(), 0);
+        let ints = contents(engine.ints)[i..i + tls_client.ints_len()];
+        let bytes = contents(engine.bytes)[b..b + tls_client.bytes_len()];
+        if tls_clientauth.leaf_view(ints, bytes, view) == 0 {
+            next = x509_verify.san_next(tls_clientauth.certificate(ints, bytes), view, at, entry);
+        }
+    }
+    return next;
 }
