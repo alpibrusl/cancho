@@ -193,6 +193,61 @@ fn every_nist_sigver_case_passes() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A modulus with leading zero bytes is the same key (`std/rsa.cho`'s
+/// header allows them): every NIST case that verifies with the minimal
+/// modulus verifies with one, two and three zero bytes in front of it,
+/// under PKCS#1 v1.5 and PSS. Review finding C-1 on #209: the
+/// signature's length was checked against the modulus's bits and
+/// `bigmod.pow_mod` against its bytes, so such a key was refused with
+/// `bigmod-refused-output-length`.
+#[test]
+fn a_modulus_with_leading_zero_bytes_is_the_same_key() {
+    let (dir, exe) = build_rsa_driver("leading-zeros", "cranelift");
+    let mut cases = Vec::new();
+    for (file, pss) in [("SigVer15_186-3.rsp", false), ("SigVerPSS_186-3.rsp", true)] {
+        let text =
+            std::fs::read_to_string(repo_root().join("tests/vectors/cavp").join(file)).unwrap();
+        let (mut modulus, mut n, mut h, mut e, mut msg, mut sig, mut salt) =
+            (0, String::new(), 0, String::new(), String::new(), String::new(), String::new());
+        for line in text.lines() {
+            if let Some(m) = line.strip_prefix("[mod = ") {
+                modulus = m.trim_end_matches(']').parse().unwrap();
+                continue;
+            }
+            let Some((k, v)) = line.split_once(" = ") else { continue };
+            let v = v.trim().to_string();
+            match k {
+                "n" => n = v,
+                "SHAAlg" => h = hash_len(&v).expect("only SHA-256/384/512 are kept"),
+                "e" => e = if v.len() % 2 == 1 { format!("0{v}") } else { v },
+                "Msg" => msg = v,
+                "S" => sig = v,
+                "SaltVal" => salt = v,
+                "Result" if modulus >= 2048 && v.starts_with('P') => {
+                    for zeros in ["00", "0000", "000000"] {
+                        cases.push(if pss {
+                            let salt_len = if salt == "00" { 0 } else { salt.len() / 2 };
+                            format!("S {h} {h} {salt_len} {zeros}{n} {e} {msg} {sig}")
+                        } else {
+                            format!("P {h} {zeros}{n} {e} {msg} {sig}")
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    assert_eq!(
+        cases.len(),
+        162,
+        "the 27 passing cases of 2048 bits and over in each file, three ways each"
+    );
+    for (case, line) in cases.iter().zip(run_cases(&exe, &cases)) {
+        assert_eq!(tag(&line), "ok", "{case}: {line}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Every refusal `std.bigmod` and `std.rsa` have, reached with its own
 /// tag. The four PSS refusals that need a crafted signature
 /// (`rsa-pss-trailer`, `-top-bits`, `-padding`, `-mismatch`) are reached

@@ -228,3 +228,30 @@ rather than only run once and discarded.
 > parameter and an empty row, was accepted, ran a shell on both backends, and left `cancho authority` saying `"bounded": true`. A foreign function now borrows exactly one `Ffi`, naming
 > one library (`foreign-declaration`). The same document makes the scope a set, so one program can hold `libc` and `libssl` together, and has the report list every reachable symbol as
 > `scope:symbol`. The `-l`/`-L` flags are the build's and do not appear in the report.
+
+> **#388: a program's own `extern fn free` / `extern fn malloc`.**
+> A program declaring `extern fn free` (to release a `c_ptr` libc allocated,
+> e.g. from `strdup`) collided with the LLVM backend's own unconditional
+> `declare void @free(ptr)` — `clang` refused the module with
+> `invalid redefinition of function 'free'`, answered as `internal`, and the
+> same collision sat one declaration away for `malloc`. The backend now
+> declares `malloc` and `free` only when the program does not, the way it
+> already did for `calloc`, `listen`, `accept` and the rest: the program's
+> declaration is the only one, with the signature it wrote (cancho has no
+> `void`, so a program's `free` returns `i64`), and the arena, boxed slices
+> and the wasi entry call it through their own call-site type (`call void
+> @free(ptr %p)`), which opaque pointers accept; the only difference is a
+> result the arena never reads. Measured with clang 18 on linux-x86_64 by
+> `a_programs_own_free_and_malloc_link_and_run_beside_the_arena_and_boxes`
+> (`backends.rs`), which builds and runs a program with its own `free` and
+> `malloc` beside a `region` and a boxed slice. Not measured: wasm32, where
+> there is no runtime here. A program-declared `free`/`malloc` is already the
+> toolchain row above there (its `int` is `i64` where wasi-libc's `size_t`
+> is 32-bit), and a call whose type differs from the callee's is a
+> signature mismatch `wasm-ld` reports rather than a native-ABI no-op.
+>
+> An earlier version of this slice routed the backend's allocator through
+> private `@cancho_malloc`/`@cancho_free` declarations. Nothing defined
+> those symbols, so every `--backend llvm` program failed to link; it was
+> replaced by the guard above (and a wrapper that defined them would still
+> have needed the libc declaration, and so the same guard).
