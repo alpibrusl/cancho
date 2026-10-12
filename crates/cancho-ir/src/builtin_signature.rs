@@ -608,6 +608,32 @@ impl Builtin {
                 ],
                 Type::Int,
             ),
+            Builtin::LoadLe64 => (
+                vec![
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(0),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Int,
+                ],
+                Type::Int,
+            ),
+            Builtin::ByteMask64 => (
+                vec![
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(0),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Int,
+                    Type::Byte,
+                ],
+                Type::Int,
+            ),
+            Builtin::TrailingZeros | Builtin::LeadingZeros | Builtin::Popcount => {
+                (vec![Type::Int], Type::Int)
+            }
             Builtin::IndexOfByte => (
                 vec![
                     Type::Ref {
