@@ -179,6 +179,7 @@ fn one_libc_symbol_is_named_exactly() {
          \x20 \"labels\": [\n\
          \x20   { \"name\": \"ffi\", \"argument\": \"libc\", \"bounded\": false }\n\
          \x20 ],\n\
+         \x20 \"never_touches\": [\"the console\", \"the filesystem\", \"the network\", \"the heap\", \"the command line\", \"signals\", \"other programs\"],\n\
          \x20 \"foreign_symbols\": [\"getpid\"],\n\
          \x20 \"pure\": [],\n\
          \x20 \"folded_operators\": 0,\n\
