@@ -302,22 +302,38 @@ pub fn variant_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         ast.fail(st, rules.r_arity_mismatch(), from, to);
         return nothing();
     }
+    let whole = types.make_named(st, item);
+    if emit.on(st) && !scope.enum_codable(st, whole) {
+        return skip(st, from, to);
+    }
+    var acc = 0 - 1;
+    if emit.on(st) {
+        acc = emit.insert_at(st, whole, acc, 0, 1, true, emit.variant_position(st, item, variant), 0 - 1);
+    }
     var arg = ast.get(st, id, 7);
     var want = ast.get(st, variant, 5);
     var left = ast.get(st, id, 8);
+    var k = 0;
     while left > 0 && ast.ok(st) {
         let v = expr(st, text, arg);
         if ast.ok(st) {
             scope.expect(st, text, scope.scalar(st, want), v.ty, ast.nstart(st, arg), ast.nend(st, arg));
+            if emit.on(st) && ast.ok(st) {
+                acc = emit.insert_at(st, whole, acc, emit.payload_index(st, item, variant, k), scope.scalar(st, want), v.known, v.value, v.reg);
+            }
         }
         arg = ast.next(st, arg);
         want = ast.next(st, want);
         left = left - 1;
+        k = k + 1;
     }
     if !ast.ok(st) {
         return nothing();
     }
-    return plain(types.make_named(st, item));
+    if emit.on(st) {
+        return in_reg(whole, acc);
+    }
+    return plain(whole);
 }
 
 // The Variant node of the enum `item` called like token `name`, or -1.
@@ -465,7 +481,7 @@ pub fn field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
 // The expressions the code can be written for so far: whole numbers and booleans, names, the
 // operators, and calls.
 pub fn writes_code[&s](st: &!s [int], id: int) -> [] bool {
-    if ast.is_kind(st, id, kinds.NK::EInt) || ast.is_kind(st, id, kinds.NK::EBool) || ast.is_kind(st, id, kinds.NK::EName) || ast.is_kind(st, id, kinds.NK::ECall) || ast.is_kind(st, id, kinds.NK::EStr) || ast.is_kind(st, id, kinds.NK::EIndex) || ast.is_kind(st, id, kinds.NK::EStructLit) || ast.is_kind(st, id, kinds.NK::EField) {
+    if ast.is_kind(st, id, kinds.NK::EInt) || ast.is_kind(st, id, kinds.NK::EBool) || ast.is_kind(st, id, kinds.NK::EName) || ast.is_kind(st, id, kinds.NK::ECall) || ast.is_kind(st, id, kinds.NK::EStr) || ast.is_kind(st, id, kinds.NK::EIndex) || ast.is_kind(st, id, kinds.NK::EStructLit) || ast.is_kind(st, id, kinds.NK::EField) || ast.is_kind(st, id, kinds.NK::EVariant) {
         return true;
     }
     if ast.is_kind(st, id, kinds.NK::EUnary) {
@@ -542,7 +558,7 @@ pub fn unary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         }
         if emit.on(st) {
             let inner = types.ref_inner(st, operand.ty);
-            if inner != 1 && inner != 2 && inner != 5 && !scope.struct_codable(st, inner) {
+            if inner != 1 && inner != 2 && inner != 5 && !scope.aggregate_codable(st, inner) {
                 return skip(st, from, to);
             }
             return in_reg(inner, emit.load_through(st, inner, operand.reg));
@@ -1009,7 +1025,7 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     }
     let result = types.resolve_type(st, callee_type(st, text, ast.get(st, found, 10), callee_dp, fresh, tvars));
     if emit.on(st) {
-        if result != 1 && result != 5 && !scope.struct_codable(st, result) {
+        if result != 1 && result != 5 && !scope.aggregate_codable(st, result) {
             return skip(st, from, to);
         }
         return in_reg(result, emit.call(st, text, callee, result, st[52] - first_arg));

@@ -220,7 +220,8 @@ the stages found, in place, the way this document corrects its own claims.
 | 4d. Output: `split(world)` and its parts, a `borrow` of the `Io`, `putchar`, references to whole numbers and booleans, and what an owned capability discharges | `emit.cho`, `body.cho`, `exprs.cho`, `effects.cho` | the Rust compiler, by what the built programs do and write | **Fourth slice of the backend.** 268 builds run and compared, 14 of them print (characters, decimal numbers by recursion, loops, `if` chains, nested helpers, sequential borrows, a trap after output): the same exit status or trap and the same bytes on the standard output (56 trap); none different |
 | 4e. Strings and slices: a literal as a slice of bytes, `len`, `s[i]` with its bound, `write_bytes`, `int_of`/`byte_of`, a slice passed, kept and reassigned, a store through `*r` and `s[i]` | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho` | the Rust compiler, by what the built programs do and write | **Fifth slice of the backend.** 292 builds run and compared, 24 of them new, 60 trap; none different |
 | 4f. Structs of whole numbers, bytes and booleans: a literal, a field read, a copy, passed and returned, a field written through a unique reference, `*r` of one | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho` | the Rust compiler, by what the built programs do | **Sixth slice of the backend.** 312 builds run and compared, 20 of them new, 63 trap; none different |
-| 4g. The rest of the backend: enums and `match`, references in general, arenas and the heap, generics, `clang` run by the compiler itself | not started | | |
+| 4g. Enums and `match` on them: a variant with payloads, `match` by value and behind a reference (payloads are references, written through), `_` arms, nested | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho` | the Rust compiler, by what the built programs do | **Seventh slice of the backend.** 332 builds run and compared, 20 of them new, 64 trap; none different |
+| 4h. The rest of the backend: references in general, arenas and the heap, generics, tuples, `clang` run by the compiler itself | not started | | |
 
 **The method.** A port that builds no tree has nothing to compare, and one that does
 needs a printer, which is another port. So stage 2's parser wrote the tree the Rust parser
@@ -579,6 +580,16 @@ value is an `extractvalue`; behind a reference it is a `getelementptr` and a loa
 same address and a store. A reference to a struct binding is the address of its slot, as for a whole
 number. Only structs of whole numbers, bytes and booleans have code; a struct with a float or another
 struct in it is still skipped, so the answer is `SKIP` and not wrong code.
+
+**Stage 4g: enums and `match`.** An enum is an aggregate of its tag and, one after the other, the payloads of
+every variant (`{ i64, i64, i1 }` for `A(int)` and `B(bool)`); only the tag and the payloads of the
+variant it names mean anything, and the tag is the variant's position. A value is built with
+`insertvalue` as a struct is; a `match` extracts the tag once (an `extractvalue`, or an address and a
+load behind a reference) and is a flat chain of tests: arm `n` is `ma<n>` when the tag is its variant and
+`mb<n>`, the next test, when it is not; the last arm has no test, since the arms cover everything
+(Rust has already said so), and each ends in a branch to the end of the match. A payload is bound by
+`extractvalue`, or, behind a reference, as the address of its element, so `*w = ..` writes the
+enum in place. Enums with a float or a non-scalar payload are still skipped.
 
 The mutation test of `types.cho` (54 operator swaps) killed 40 on the first corpus of 458 targeted
 body cases (after region-variable, `where`-closure and coercion cases were added; 33 before); the 14

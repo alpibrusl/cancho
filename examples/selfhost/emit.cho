@@ -18,6 +18,7 @@ module selfhost.emit;
 // tag, 1 `int` as `i64` and 5 `bool` as `i1`, which are the only two written so far.
 
 import selfhost.ast;
+import selfhost.kinds;
 import selfhost.types;
 
 pub fn on[&s](st: &!s [int]) -> [] bool {
@@ -138,7 +139,11 @@ pub fn llvm_type[&s](st: &!s [int], ty: int) -> [] int {
         return str(st, "ptr");
     }
     if types.is_named(st, ty) {
-        return struct_type(st, types.named_item(st, ty));
+        let item = types.named_item(st, ty);
+        if ast.is_kind(st, item, kinds.NK::IEnum) {
+            return enum_type(st, item);
+        }
+        return struct_type(st, item);
     }
     return str(st, "i64");
 }
@@ -175,10 +180,9 @@ pub fn field_node[&s](st: &!s [int], item: int, index: int) -> [] int {
     return f;
 }
 
-// The struct value `acc` (or `undef` when it is -1) with field `index` set to the operand.
-pub fn insert_field[&s](st: &!s [int], ty: int, acc: int, index: int, known: bool, value: int, reg: int) -> [] int {
-    let item = types.named_item(st, ty);
-    let fty = field_scalar(st, field_node(st, item, index));
+// The aggregate value `acc` (or `undef` when it is -1) of type `ty` with element `index` of type
+// `fty` set to the operand.
+pub fn insert_at[&s](st: &!s [int], ty: int, acc: int, index: int, fty: int, known: bool, value: int, reg: int) -> [] int {
     let n = start(st);
     str(st, "insertvalue ");
     llvm_type(st, ty);
@@ -196,6 +200,55 @@ pub fn insert_field[&s](st: &!s [int], ty: int, acc: int, index: int, known: boo
     nat(st, index);
     str(st, "\n");
     return n;
+}
+
+// The struct value `acc` (or `undef`) with field `index` set to the operand.
+pub fn insert_field[&s](st: &!s [int], ty: int, acc: int, index: int, known: bool, value: int, reg: int) -> [] int {
+    let item = types.named_item(st, ty);
+    let fty = field_scalar(st, field_node(st, item, index));
+    return insert_at(st, ty, acc, index, fty, known, value, reg);
+}
+
+// An enum is an aggregate of its tag and, one after the other, the payloads of every variant:
+// `{ i64, i64, i1 }` for `A(int)` and `B(bool)`. Only the tag and the payloads of the variant it
+// names mean anything. The tag is the variant's position.
+pub fn enum_type[&s](st: &!s [int], item: int) -> [] int {
+    str(st, "{ i64");
+    var v = ast.get(st, item, 8);
+    while v >= 0 {
+        var p = ast.get(st, v, 5);
+        var n = ast.get(st, v, 6);
+        while n > 0 {
+            str(st, ", ");
+            llvm_type(st, ast.get(st, p, 10));
+            p = ast.next(st, p);
+            n = n - 1;
+        }
+        v = ast.next(st, v);
+    }
+    return str(st, " }");
+}
+
+// The position of the variant `variant` among those of `item`.
+pub fn variant_position[&s](st: &!s [int], item: int, variant: int) -> [] int {
+    var v = ast.get(st, item, 8);
+    var i = 0;
+    while v != variant {
+        v = ast.next(st, v);
+        i = i + 1;
+    }
+    return i;
+}
+
+// The index in the aggregate of payload `k` of `variant`.
+pub fn payload_index[&s](st: &!s [int], item: int, variant: int, k: int) -> [] int {
+    var v = ast.get(st, item, 8);
+    var at = 1;
+    while v != variant {
+        at = at + ast.get(st, v, 6);
+        v = ast.next(st, v);
+    }
+    return at + k;
 }
 
 // Field `index` of the struct value in register `reg`.
@@ -739,6 +792,60 @@ pub fn ret[&s](st: &!s [int], ty: int, known: bool, value: int, reg: int) -> [] 
     nat(st, n);
     str(st, ":\n");
     return 0;
+}
+
+// ---------------------------------------------------------------------------- match ---
+//
+// A `match` is a chain of tests of the tag, flat: arm `n` is `ma<n>` when the tag is its variant and
+// `mb<n>` (the next test) when it is not; the last arm has no test, since the arms cover everything;
+// every arm ends in a branch to `mend<end>`.
+
+// Test the tag in register `tag` against variant position `position`, and open the arm.
+pub fn match_test[&s](st: &!s [int], n: int, tag: int, position: int) -> [] int {
+    let c = start(st);
+    str(st, "icmp eq i64 ");
+    temp(st, tag);
+    str(st, ", ");
+    nat(st, position);
+    str(st, "\n  br i1 ");
+    temp(st, c);
+    str(st, ", label %ma");
+    nat(st, n);
+    str(st, ", label %mb");
+    nat(st, n);
+    str(st, "\nma");
+    nat(st, n);
+    str(st, ":\n");
+    return 0;
+}
+
+// The end of an arm that had a test: on to the next one.
+pub fn match_next[&s](st: &!s [int], n: int, end: int) -> [] int {
+    str(st, "  br label %mend");
+    nat(st, end);
+    str(st, "\nmb");
+    nat(st, n);
+    str(st, ":\n");
+    return 0;
+}
+
+// The end of the last arm, and of the match.
+pub fn match_end[&s](st: &!s [int], end: int) -> [] int {
+    str(st, "  br label %mend");
+    nat(st, end);
+    str(st, "\nmend");
+    nat(st, end);
+    str(st, ":\n");
+    return 0;
+}
+
+// The tag of the enum the register holds, or the one a reference in the register points at.
+pub fn tag_of[&s](st: &!s [int], ty: int, by_ref: bool, reg: int) -> [] int {
+    if by_ref {
+        let address = field_address(st, ty, reg, 0);
+        return load_through(st, 1, address);
+    }
+    return extract_field(st, ty, reg, 0);
 }
 
 // ---------------------------------------------------------------------------- slices ---

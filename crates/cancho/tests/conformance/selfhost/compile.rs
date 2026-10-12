@@ -300,6 +300,31 @@ const STRUCTS: &[&str] = &[
     "struct P { x: int, y: int }\nfn mk() -> [] P { let big = 9223372036854775807; return P { x: big + 1, y: 0 }; }\nfn run() -> [] int { return mk().x; }",
 ];
 
+/// Enums of whole numbers, bytes and booleans, and `match` on them: by value, behind a reference (the
+/// payloads are references, written through), with a `_` arm, nested, in a loop.
+const ENUMS: &[&str] = &[
+    "enum Shape { Circle(int), Rect(int, int), Dot }\nfn area(s: Shape) -> [] int {\n    match s {\n        Shape::Circle(r) => { return r * r * 3; }\n        Shape::Rect(w, h) => { return w * h; }\n        Shape::Dot => { return 1; }\n    }\n}\nfn run() -> [] int { return area(Shape::Circle(5)); }",
+    "enum Shape { Circle(int), Rect(int, int), Dot }\nfn area(s: Shape) -> [] int {\n    match s {\n        Shape::Circle(r) => { return r * r * 3; }\n        Shape::Rect(w, h) => { return w * h; }\n        Shape::Dot => { return 1; }\n    }\n}\nfn run() -> [] int { return area(Shape::Rect(6, 7)); }",
+    "enum Shape { Circle(int), Rect(int, int), Dot }\nfn area(s: Shape) -> [] int {\n    match s {\n        Shape::Circle(r) => { return r * r * 3; }\n        Shape::Rect(w, h) => { return w * h; }\n        Shape::Dot => { return 1; }\n    }\n}\nfn run() -> [] int { return area(Shape::Dot); }",
+    "enum Shape { Circle(int), Rect(int, int), Dot }\nfn area(s: Shape) -> [] int {\n    match s {\n        Shape::Circle(r) => { return r * r * 3; }\n        Shape::Rect(w, h) => { return w * h; }\n        Shape::Dot => { return 1; }\n    }\n}\nfn run() -> [] int { let a = Shape::Circle(2); let b = a; return area(a) + area(b); }",
+    "enum Shape { Circle(int), Rect(int, int), Dot }\nfn area(s: Shape) -> [] int {\n    match s {\n        Shape::Circle(r) => { return r * r * 3; }\n        Shape::Rect(w, h) => { return w * h; }\n        Shape::Dot => { return 1; }\n    }\n}\nfn mk(k: int) -> [] Shape { if k == 0 { return Shape::Dot; } if k == 1 { return Shape::Circle(k + 4); } return Shape::Rect(k, k); }\nfn run() -> [] int { return area(mk(0)) + area(mk(1)) * 10 + area(mk(3)) * 1000; }",
+    "enum Shape { Circle(int), Rect(int, int), Dot }\nfn run() -> [] int {\n    var i = 0;\n    var t = 0;\n    while i < 6 {\n        let s = Shape::Rect(i, i + 1);\n        match s {\n            Shape::Circle(r) => { t = t + r; }\n            Shape::Rect(w, h) => { t = t + w * h; }\n            Shape::Dot => { t = t + 100; }\n        }\n        i = i + 1;\n    }\n    return t;\n}",
+    "enum Shape { Circle(int), Rect(int, int), Dot }\nfn run() -> [] int { let s = Shape::Circle(9); var out = 0; match s { Shape::Circle(r) => { out = r; } _ => { out = 0 - 1; } } return out; }",
+    "enum Shape { Circle(int), Rect(int, int), Dot }\nfn run() -> [] int { let s = Shape::Dot; var out = 5; match s { Shape::Circle(r) => { out = r; } _ => { out = 77; } } return out; }",
+    "enum Shape { Circle(int), Rect(int, int), Dot }\nfn run() -> [] int { let s = Shape::Rect(2, 3); var out = 5; match s { Shape::Dot => { out = 1; } _ => { out = 2; } } return out; }",
+    "enum Shape { Circle(int), Rect(int, int), Dot }\nfn run() -> [] int { let s = Shape::Rect(2, 3); var out = 5; match s { Shape::Rect(_, h) => { out = h; } _ => { out = 2; } } return out; }",
+    "enum Shape { Circle(int), Rect(int, int), Dot }\nfn grow[&q](s: &!q Shape) -> [] int {\n    match s {\n        Shape::Circle(r) => { *r = *r + 1; }\n        Shape::Rect(w, h) => { *w = *w * 2; *h = 0; }\n        Shape::Dot => { }\n    }\n    return 0;\n}\nfn area(s: Shape) -> [] int {\n    match s {\n        Shape::Circle(r) => { return r * r * 3; }\n        Shape::Rect(w, h) => { return w * h; }\n        Shape::Dot => { return 1; }\n    }\n}\nfn run() -> [] int { var c = Shape::Circle(2); var n = 0; borrow mut c as &!q in { n = grow(q); n = grow(q); } return area(c) + n; }",
+    "enum Shape { Circle(int), Rect(int, int), Dot }\nfn grow[&q](s: &!q Shape) -> [] int {\n    match s {\n        Shape::Circle(r) => { *r = *r + 1; }\n        Shape::Rect(w, h) => { *w = *w * 2; *h = 0; }\n        Shape::Dot => { }\n    }\n    return 0;\n}\nfn area(s: Shape) -> [] int {\n    match s {\n        Shape::Circle(r) => { return r * r * 3; }\n        Shape::Rect(w, h) => { return w * h; }\n        Shape::Dot => { return 1; }\n    }\n}\nfn run() -> [] int { var c = Shape::Rect(4, 9); var n = 0; borrow mut c as &!q in { n = grow(q); } return area(c) + 10; }",
+    "enum Shape { Circle(int), Rect(int, int), Dot }\nfn read[&q](s: &q Shape) -> [] int {\n    match s {\n        Shape::Circle(r) => { return *r; }\n        Shape::Rect(w, h) => { return *w + *h; }\n        Shape::Dot => { return 0; }\n    }\n}\nfn run() -> [] int { let s = Shape::Rect(20, 22); var n = 0; borrow s as &q in { n = read(q); } return n; }",
+    "enum Tri { Yes, No, Maybe(bool) }\nfn code(t: Tri) -> [] int {\n    match t {\n        Tri::Yes => { return 1; }\n        Tri::No => { return 2; }\n        Tri::Maybe(b) => { if b { return 3; } return 4; }\n    }\n}\nfn run() -> [] int { return code(Tri::Yes) + code(Tri::No) * 10 + code(Tri::Maybe(true)) * 100 + code(Tri::Maybe(false)) * 1000; }",
+    "enum Byt { Raw(byte), Num(int) }\nfn amount(b: Byt) -> [] int {\n    match b {\n        Byt::Raw(c) => { return int_of(c); }\n        Byt::Num(n) => { return n; }\n    }\n}\nfn run() -> [] int { return amount(Byt::Raw(byte_of(200))) + amount(Byt::Num(7)); }",
+    "enum Op { Add, Sub, Mul }\nfn apply(o: Op, a: int, b: int) -> [] int {\n    match o {\n        Op::Add => { return a + b; }\n        Op::Sub => { return a - b; }\n        Op::Mul => { return a * b; }\n    }\n}\nfn run() -> [] int { return apply(Op::Add, 3, 4) * 100 + apply(Op::Sub, 10, 4) * 10 + apply(Op::Mul, 2, 3); }",
+    "enum Op { Add, Sub, Mul }\nfn apply(o: Op, a: int, b: int) -> [] int {\n    match o {\n        Op::Add => { return a + b; }\n        Op::Sub => { return a - b; }\n        Op::Mul => { return a * b; }\n    }\n}\nfn run() -> [] int { return apply(Op::Mul, 9223372036854775807, 2); }",
+    "enum Op { Add, Sub, Mul }\nfn next(o: Op) -> [] Op {\n    match o {\n        Op::Add => { return Op::Sub; }\n        Op::Sub => { return Op::Mul; }\n        Op::Mul => { return Op::Add; }\n    }\n}\nfn code(o: Op) -> [] int { match o { Op::Add => { return 1; } Op::Sub => { return 2; } Op::Mul => { return 3; } } }\nfn run() -> [] int { var o = Op::Add; var t = 0; var i = 0; while i < 7 { t = t * 4 + code(o); o = next(o); i = i + 1; } return t % 251; }",
+    "enum E { A(int), B(int) }\nfn run() -> [] int { var e = E::A(1); var out = 0; match e { E::A(x) => { match E::B(x + 5) { E::A(y) => { out = y; } E::B(z) => { out = z * 10; } } } E::B(w) => { out = w; } } return out; }",
+    "enum E { A(int), B(int) }\nfn run() -> [] int { var e = E::A(1); var n = 0; borrow mut e as &!q in { match q { E::A(x) => { *x = 41; } E::B(x) => { *x = 0; } } } match e { E::A(x) => { n = x + 1; } E::B(x) => { n = x; } } return n; }",
+];
+
 #[test]
 fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
     let compiler = build("compile", &with_front_end("compile.cho"));
@@ -314,7 +339,7 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
     for program in WITH_MAIN.iter().chain(OUTPUT).chain(STRINGS) {
         jobs.push(((*program).to_owned(), (*program).to_owned()));
     }
-    for program in STRUCTS {
+    for program in STRUCTS.iter().chain(ENUMS) {
         jobs.push((with_main(program), with_main(program)));
     }
     let numbered: Vec<(usize, &(String, String))> = jobs.iter().enumerate().collect();
