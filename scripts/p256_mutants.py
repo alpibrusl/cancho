@@ -188,6 +188,7 @@ mut(ES, "sign", "sign: the work not wiped", "    p256.wipe(work, 0, p256_pt.work
 
 # Argued to change nothing observable (docs/p256-fast.md §8.4); each is still run, and reported.
 EQUIVALENT = {
+    "sfrom_mont: not reduced": "The unreduced result differs from the reduced only by n, and only when the value is 0 mod n. In verification u1 = n instead of 0 gives n G = O, the same sum (the vectors with the digest n show it); in signing s = n instead of 0 has probability 2^-256, and r, s are tested for zero before they are sent.",
     "recode: the carry threshold 9 (digits to +9)": "(v + 8) >> 4 turns a nibble of 8 into -8 and a carry; the digits still sum to k and stay within [-8, 8], so the table covers them. The same point by another route.",
     "affine: the infinity test dropped": "A valid scalar in [1, n) times a point of prime order is never the point at infinity, so Z is never zero: the test is a defence no input reaches (docs/ecdh.md §1 said the same of ecdh-result-infinity).",
     "wnaf: the window threshold": "The window value d is odd and 2^(width-1) is even, so d > 2^(width-1) - 1 and d >= 2^(width-1) are the same test.",

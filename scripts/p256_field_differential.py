@@ -143,6 +143,9 @@ def verify_cases(rng, count, compact=False):
             pt = "04" + h(q[0]) + h(q[1])
             want = "-40" if infinity else "0"
             out.append((f"V {pt} {h(e)} {h(r)}{h(sv)}", want))
+            if e == 0:
+                # The digest n is 0 modulo n: u1 = n unreduced would reach the wNAF if the conversion did not reduce.
+                out.append((f"V {pt} {h(N)} {h(r)}{h(sv)}", want))
             if not infinity:
                 out.append((f"V {pt} {h(e)} {h((r + 1) % N)}{h(sv)}", "-41"))
     return out

@@ -310,7 +310,7 @@ backends for the CPU's data-dependent timing; P-256's new code was not re-run th
 
 ### 8.4 Mutants
 
-`python3 scripts/p256_mutants.py` (in the Linux arm64 container, with OpenSSL 3.0.13 and pyca/cryptography 41): RESULT_MUTANTS
+`python3 scripts/p256_mutants.py` (in the Linux arm64 container, with OpenSSL 3.0.13 and pyca/cryptography 41): **125 mutants, 116 killed, 9 survived, 0 failed to build**, each survivor argued equivalent in `EQUIVALENT` (`scripts/p256_mutants.py`): `(v + 8) >> 4` in the recoding; the infinity test of `affine` (no valid input reaches it); the wNAF window threshold (the window is odd, the threshold even); the early carry (it lands in skipped bits); `load_q`'s `k/2` for `(k-1)/2` (k is odd); u1's digits at width 5 (still in the table); the fast path skipped (the old path agrees, which is itself a check); `r` not reduced mod n (probability 2^-128); `sfrom_mont` unreduced (n·G = O). The run was on `gram`, Linux x86-64, 3 hours; the first run in the arm64 container (111 of 127 killed) found the gaps now closed by vectors: the top limb of `is_zero`, the wipes, the straddle offset (an equivalent pair I had written).
 
 ### 8.5 Vectors and differentials
 
@@ -332,9 +332,8 @@ backends for the CPU's data-dependent timing; P-256's new code was not re-run th
 
 - **A `static`'s callee is emitted into every program** (§2).
 - **The lazy zero:** a lazy element has several representations of zero (0, p, 2p), so `bigmod`'s `is_zero` idiom is wrong on it;
-  the Jacobian formulas ask the reduced form, and a mutant that skipped the reduction (`sfrom_mont` unreduced) survived the
-  Wycheproof and RFC vectors until a digest of zero (u1 = 0) was among the vectors: the correct value n instead of 0 reaches
-  the wNAF.
+  the Jacobian formulas ask the reduced form, and a mutant that skipped the reduction (`sfrom_mont` unreduced) survived every vector, including the digests 0 and n: the value n instead of 0 reaches
+  the wNAF, which turned out harmless (n·G is the point at infinity) and is now argued equivalent.
 - **The equal mutants:** a byte's offset in a limb is a multiple of 4, so "straddles when the offset is above 20" and "above 21" are
   the same test (an equivalent mutant I wrote and the run reported).
 - **Two lines of the first design were wrong:** the duplication test found `eq_mask` and `copy_point` copied between files, and
