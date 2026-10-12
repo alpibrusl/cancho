@@ -288,6 +288,10 @@ pub fn sign[&g, &d, &e, &s, &w](digest: &g [byte], key: &d [byte], extra: &e [by
             if ecdh.public_key(256, t, point, work) == 0 {
                 code = finish(h, key, t, point[1..33], sig, work);
             }
+            // Out of range, or r == 0 or s == 0: the next candidate is
+            // RFC 6979 §3.2 step h.3's (K = HMAC_K(V || 0x00), V = HMAC_K(V)),
+            // which §3.4 also names for an r or s of zero. Not a deviation
+            // from the RFC (#209, review note C-3).
             if code == refused_nonce() {
                 rekey(st, kk, v, sep);
             }
