@@ -1,0 +1,612 @@
+module selfhost.consteval;
+
+// consteval.cho -- a `static` evaluated while the program is compiled.
+//
+// `docs/compile-time-data.md`: a `static` is a function body with no parameters and no run time; the
+// compiler runs it and the table it answers is data in the binary. This is a small interpreter for the
+// bodies that build a table: `let`, `var`, assignment to a name or an element, `if`, `while`, `return`, whole
+// numbers, booleans and bytes, the operators, string literals, `len`, `int_of`, `byte_of`,
+// `alloc_slice[static]`, and the tables of statics declared before. Anything else -- a call to a function of
+// the program, a `match`, a trap, more room than the store has -- is not evaluated, and the static is run when
+// the program starts instead (`body.check_static`). So an answer here is either exactly what the program
+// would compute or none.
+//
+// The interpreter's room is a region of the state (`st[62]`): its header, the statics answered so far, the
+// frames of local names, a few string literals, and the store, one int to an element whatever its type.
+
+import selfhost.ast;
+import selfhost.kinds;
+import selfhost.pass1;
+import selfhost.exprs;
+import selfhost.emit;
+
+// What an expression is worth: whole numbers, booleans and bytes in `a`; a slice as the position of its first
+// element in the store (`a`) and its length (`b`). `ok` is false when the interpreter gave up.
+pub struct Val {
+    ok: bool,
+    a: int,
+    b: int,
+}
+
+fn good(a: int, b: int) -> [] Val {
+    return Val { ok: true, a: a, b: b };
+}
+
+fn gave_up() -> [] Val {
+    return Val { ok: false, a: 0, b: 0 };
+}
+
+// ------------------------------------------------------------------------------------------ room ---
+
+// The header of the region: 0 where the store's free part starts, 1 the fuel left, 2 how many statics are
+// answered, 3 how many names are live, 4 how many string literals are kept, 5 the answer of a `return`.
+fn region_base[&s](st: &!s [int]) -> [] int {
+    return st[62];
+}
+
+fn results_at[&s](st: &!s [int]) -> [] int {
+    return st[62] + 8;
+}
+
+fn frames_at[&s](st: &!s [int]) -> [] int {
+    return results_at(st) + 4 * results_cap();
+}
+
+fn strings_at[&s](st: &!s [int]) -> [] int {
+    return frames_at(st) + 3 * frames_cap();
+}
+
+fn store_at[&s](st: &!s [int]) -> [] int {
+    return strings_at(st) + 2 * strings_cap();
+}
+
+pub fn results_cap() -> [] int {
+    return 1024;
+}
+
+pub fn frames_cap() -> [] int {
+    return 4096;
+}
+
+pub fn strings_cap() -> [] int {
+    return 64;
+}
+
+pub fn store_cap() -> [] int {
+    return 1048576;
+}
+
+// What the region takes in the state.
+pub fn region_size() -> [] int {
+    return ast.const_region();
+}
+
+pub fn fuel_start() -> [] int {
+    return 20000000;
+}
+
+// ------------------------------------------------------------------------------------- the store ---
+
+// `count` elements of the store, all `fill`: where they start, or -1 if there is no room.
+fn allocate[&s](st: &!s [int], count: int, fill: int) -> [] int {
+    let top = st[region_base(st)];
+    if count < 0 || top + count > store_cap() {
+        return 0 - 1;
+    }
+    var i = 0;
+    while i < count {
+        st[store_at(st) + top + i] = fill;
+        i = i + 1;
+    }
+    st[region_base(st)] = top + count;
+    return top;
+}
+
+fn cell[&s](st: &!s [int], base: int, i: int) -> [] int {
+    return st[store_at(st) + base + i];
+}
+
+// A string literal as bytes in the store, once however often it is evaluated: its token, the escapes
+// being the six the lexer allows.
+fn literal[&s, &x](st: &!s [int], text: &x [byte], tok: int) -> [] Val {
+    var k = 0;
+    while k < st[region_base(st) + 4] {
+        if st[strings_at(st) + 2 * k] == tok {
+            return good(st[strings_at(st) + 2 * k + 1], ast.tend(st, tok) - ast.tstart(st, tok) - 2 - escapes(st, text, tok));
+        }
+        k = k + 1;
+    }
+    if st[region_base(st) + 4] >= strings_cap() {
+        return gave_up();
+    }
+    let length = ast.tend(st, tok) - ast.tstart(st, tok) - 2 - escapes(st, text, tok);
+    let base = allocate(st, length, 0);
+    if base < 0 {
+        return gave_up();
+    }
+    var i = ast.tstart(st, tok) + 1;
+    let end = ast.tend(st, tok) - 1;
+    var at = 0;
+    while i < end {
+        var c = int_of(text[i]);
+        if c == 92 {
+            i = i + 1;
+            let e = int_of(text[i]);
+            if e == 'n' {
+                c = 10;
+            } else if e == 'r' {
+                c = 13;
+            } else if e == 't' {
+                c = 9;
+            } else if e == '0' {
+                c = 0;
+            } else {
+                c = e;
+            }
+        }
+        st[store_at(st) + base + at] = c;
+        at = at + 1;
+        i = i + 1;
+    }
+    let kept = st[region_base(st) + 4];
+    st[strings_at(st) + 2 * kept] = tok;
+    st[strings_at(st) + 2 * kept + 1] = base;
+    st[region_base(st) + 4] = kept + 1;
+    return good(base, length);
+}
+
+// How many backslashes of the literal are escapes (each stands for one byte with two bytes of text).
+fn escapes[&s, &x](st: &!s [int], text: &x [byte], tok: int) -> [] int {
+    var n = 0;
+    var i = ast.tstart(st, tok) + 1;
+    let end = ast.tend(st, tok) - 1;
+    while i < end {
+        if int_of(text[i]) == 92 {
+            n = n + 1;
+            i = i + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+// -------------------------------------------------------------------------------------- the names ---
+
+fn push_name[&s](st: &!s [int], name: int, v: Val) -> [] bool {
+    let n = st[region_base(st) + 3];
+    if n >= frames_cap() {
+        return false;
+    }
+    st[frames_at(st) + 3 * n] = name;
+    st[frames_at(st) + 3 * n + 1] = v.a;
+    st[frames_at(st) + 3 * n + 2] = v.b;
+    st[region_base(st) + 3] = n + 1;
+    return true;
+}
+
+// The live name spelled like token `name`: its place among the names, or -1.
+fn find_name[&s, &x](st: &!s [int], text: &x [byte], name: int) -> [] int {
+    var i = st[region_base(st) + 3] - 1;
+    while i >= 0 {
+        if ast.same(st, text, st[frames_at(st) + 3 * i], name) {
+            return i;
+        }
+        i = i - 1;
+    }
+    return 0 - 1;
+}
+
+// The static of the program called like token `name`, answered already: its slice, or not.
+fn find_static[&s, &x](st: &!s [int], text: &x [byte], name: int) -> [] Val {
+    var it = st[15];
+    while it >= 0 {
+        if ast.is_kind(st, it, kinds.NK::IStatic) && ast.same(st, text, ast.get(st, it, 4), name) && ast.get(st, it, 13) == st[22] {
+            var k = 0;
+            while k < st[region_base(st) + 2] {
+                if st[results_at(st) + 4 * k] == it {
+                    return good(st[results_at(st) + 4 * k + 1], st[results_at(st) + 4 * k + 2]);
+                }
+                k = k + 1;
+            }
+            return gave_up();
+        }
+        it = ast.next(st, it);
+    }
+    return gave_up();
+}
+
+// -------------------------------------------------------------------------------- the expressions ---
+
+fn spend[&s](st: &!s [int]) -> [] bool {
+    let left = st[region_base(st) + 1];
+    if left <= 0 {
+        return false;
+    }
+    st[region_base(st) + 1] = left - 1;
+    return true;
+}
+
+fn eval[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Val {
+    if !spend(st) {
+        return gave_up();
+    }
+    if ast.is_kind(st, id, kinds.NK::EInt) || ast.is_kind(st, id, kinds.NK::EBool) {
+        return good(ast.get(st, id, 4), 0);
+    }
+    if ast.is_kind(st, id, kinds.NK::EStr) {
+        return literal(st, text, ast.get(st, id, 4));
+    }
+    if ast.is_kind(st, id, kinds.NK::EName) {
+        let at = find_name(st, text, ast.get(st, id, 4));
+        if at >= 0 {
+            return good(st[frames_at(st) + 3 * at + 1], st[frames_at(st) + 3 * at + 2]);
+        }
+        return find_static(st, text, ast.get(st, id, 4));
+    }
+    if ast.is_kind(st, id, kinds.NK::EUnary) {
+        return unary(st, text, id);
+    }
+    if ast.is_kind(st, id, kinds.NK::EBinary) {
+        return binary(st, text, id);
+    }
+    if ast.is_kind(st, id, kinds.NK::EIndex) {
+        let base = eval(st, text, ast.get(st, id, 4));
+        if !base.ok {
+            return gave_up();
+        }
+        let i = eval(st, text, ast.get(st, id, 5));
+        if !i.ok || i.a < 0 || i.a >= base.b {
+            return gave_up();
+        }
+        return good(cell(st, base.a, i.a), 0);
+    }
+    if ast.is_kind(st, id, kinds.NK::ESlice) {
+        let base = eval(st, text, ast.get(st, id, 4));
+        let from = eval(st, text, ast.get(st, id, 5));
+        let to = eval(st, text, ast.get(st, id, 6));
+        if !base.ok || !from.ok || !to.ok || to.a > base.b || from.a > to.a || from.a < 0 {
+            return gave_up();
+        }
+        return good(base.a + from.a, to.a - from.a);
+    }
+    if ast.is_kind(st, id, kinds.NK::EAllocSlice) {
+        if !pass1.is_word(st, text, ast.get(st, id, 4), "static") {
+            return gave_up();
+        }
+        let count = eval(st, text, ast.get(st, id, 5));
+        let fill = eval(st, text, ast.get(st, id, 6));
+        if !count.ok || !fill.ok {
+            return gave_up();
+        }
+        let base = allocate(st, count.a, fill.a);
+        if base < 0 {
+            return gave_up();
+        }
+        return good(base, count.a);
+    }
+    if ast.is_kind(st, id, kinds.NK::ECall) {
+        return call(st, text, id);
+    }
+    return gave_up();
+}
+
+// `len`, `int_of`, `byte_of` and the three wrapping operations; a call to anything else is not evaluated.
+fn call[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Val {
+    if ast.get(st, id, 4) >= 0 {
+        return gave_up();
+    }
+    let callee = ast.get(st, id, 5);
+    let n = ast.get(st, id, 7);
+    let first = ast.get(st, id, 6);
+    if n == 1 && pass1.is_word(st, text, callee, "len") {
+        let v = eval(st, text, first);
+        if !v.ok {
+            return gave_up();
+        }
+        return good(v.b, 0);
+    }
+    if n == 1 && pass1.is_word(st, text, callee, "int_of") {
+        return eval(st, text, first);
+    }
+    if n == 1 && pass1.is_word(st, text, callee, "byte_of") {
+        let v = eval(st, text, first);
+        if !v.ok || v.a < 0 || v.a > 255 {
+            return gave_up();
+        }
+        return v;
+    }
+    if n == 2 && (pass1.is_word(st, text, callee, "wrapping_add") || pass1.is_word(st, text, callee, "wrapping_sub") || pass1.is_word(st, text, callee, "wrapping_mul")) {
+        let a = eval(st, text, first);
+        let b = eval(st, text, ast.next(st, first));
+        if !a.ok || !b.ok {
+            return gave_up();
+        }
+        if pass1.is_word(st, text, callee, "wrapping_add") {
+            return good(wrapping_add(a.a, b.a), 0);
+        }
+        if pass1.is_word(st, text, callee, "wrapping_sub") {
+            return good(wrapping_sub(a.a, b.a), 0);
+        }
+        return good(wrapping_mul(a.a, b.a), 0);
+    }
+    return gave_up();
+}
+
+fn unary[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Val {
+    let v = eval(st, text, ast.get(st, id, 5));
+    if !v.ok {
+        return gave_up();
+    }
+    let op = ast.get(st, id, 4);
+    if op == 0 {
+        let r = exprs.fold_int(14, 0, v.a);
+        if r.trapped {
+            return gave_up();
+        }
+        return good(r.value, 0);
+    }
+    if op == 1 {
+        if v.a == 0 {
+            return good(1, 0);
+        }
+        return good(0, 0);
+    }
+    if op == 2 {
+        return good(v.a ^ 0 - 1, 0);
+    }
+    return gave_up();
+}
+
+fn binary[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Val {
+    let op = ast.get(st, id, 4);
+    let left = eval(st, text, ast.get(st, id, 5));
+    if !left.ok {
+        return gave_up();
+    }
+    // `||` and `&&` do not look at the right side when the left decides.
+    if op == 0 && left.a != 0 {
+        return good(1, 0);
+    }
+    if op == 1 && left.a == 0 {
+        return good(0, 0);
+    }
+    let right = eval(st, text, ast.get(st, id, 6));
+    if !right.ok {
+        return gave_up();
+    }
+    if op == 0 || op == 1 {
+        if right.a != 0 {
+            return good(1, 0);
+        }
+        return good(0, 0);
+    }
+    if op >= 2 && op <= 7 {
+        var holds = false;
+        if op == 2 {
+            holds = left.a == right.a;
+        } else if op == 3 {
+            holds = left.a != right.a;
+        } else if op == 4 {
+            holds = left.a < right.a;
+        } else if op == 5 {
+            holds = left.a <= right.a;
+        } else if op == 6 {
+            holds = left.a > right.a;
+        } else {
+            holds = left.a >= right.a;
+        }
+        if holds {
+            return good(1, 0);
+        }
+        return good(0, 0);
+    }
+    if op >= 8 && op <= 17 {
+        let r = exprs.fold_int(op, left.a, right.a);
+        if r.trapped {
+            return gave_up();
+        }
+        return good(r.value, 0);
+    }
+    return gave_up();
+}
+
+// -------------------------------------------------------------------------------- the statements ---
+
+// Run `n` statements from `head`: 0 to go on, 1 once a `return` has answered (in the header's slot 5, as
+// the position and the length of the slice), 2 when the interpreter gave up.
+fn run_block[&s, &x](st: &!s [int], text: &x [byte], head: int, n: int) -> [] int {
+    let mark = st[region_base(st) + 3];
+    var stmt = head;
+    var left = n;
+    var outcome = 0;
+    while left > 0 && outcome == 0 {
+        outcome = run_stmt(st, text, stmt);
+        stmt = ast.next(st, stmt);
+        left = left - 1;
+    }
+    st[region_base(st) + 3] = mark;
+    return outcome;
+}
+
+fn run_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] int {
+    if !spend(st) {
+        return 2;
+    }
+    if ast.is_kind(st, id, kinds.NK::SLet) {
+        let v = eval(st, text, ast.get(st, id, 7));
+        if !v.ok || !push_name(st, ast.get(st, id, 5), v) {
+            return 2;
+        }
+        return 0;
+    }
+    if ast.is_kind(st, id, kinds.NK::SAssign) {
+        let place = ast.get(st, id, 4);
+        let v = eval(st, text, ast.get(st, id, 5));
+        if !v.ok {
+            return 2;
+        }
+        if ast.is_kind(st, place, kinds.NK::EName) {
+            let at = find_name(st, text, ast.get(st, place, 4));
+            if at < 0 {
+                return 2;
+            }
+            st[frames_at(st) + 3 * at + 1] = v.a;
+            st[frames_at(st) + 3 * at + 2] = v.b;
+            return 0;
+        }
+        if ast.is_kind(st, place, kinds.NK::EIndex) {
+            let base = eval(st, text, ast.get(st, place, 4));
+            let i = eval(st, text, ast.get(st, place, 5));
+            if !base.ok || !i.ok || i.a < 0 || i.a >= base.b {
+                return 2;
+            }
+            st[store_at(st) + base.a + i.a] = v.a;
+            return 0;
+        }
+        return 2;
+    }
+    if ast.is_kind(st, id, kinds.NK::SIf) {
+        let c = eval(st, text, ast.get(st, id, 4));
+        if !c.ok {
+            return 2;
+        }
+        if c.a != 0 {
+            return run_block(st, text, ast.get(st, id, 5), ast.get(st, id, 6));
+        }
+        if ast.get(st, id, 8) >= 0 {
+            return run_block(st, text, ast.get(st, id, 7), ast.get(st, id, 8));
+        }
+        return 0;
+    }
+    if ast.is_kind(st, id, kinds.NK::SWhile) {
+        while true {
+            let c = eval(st, text, ast.get(st, id, 4));
+            if !c.ok {
+                return 2;
+            }
+            if c.a == 0 {
+                return 0;
+            }
+            let outcome = run_block(st, text, ast.get(st, id, 5), ast.get(st, id, 6));
+            if outcome != 0 {
+                return outcome;
+            }
+        }
+        return 0;
+    }
+    if ast.is_kind(st, id, kinds.NK::SReturn) {
+        let v = eval(st, text, ast.get(st, id, 4));
+        if !v.ok {
+            return 2;
+        }
+        st[region_base(st) + 5] = v.a;
+        st[region_base(st) + 6] = v.b;
+        return 1;
+    }
+    if ast.is_kind(st, id, kinds.NK::SExpr) {
+        let v = eval(st, text, ast.get(st, id, 4));
+        if !v.ok {
+            return 2;
+        }
+        return 0;
+    }
+    return 2;
+}
+
+// ---------------------------------------------------------------------------------------- statics ---
+
+// Evaluate the static `item`, whose declared element type is `element` (1 `int`, 2 `byte`, 5 `bool`): true when it has
+// an answer, which is then among those the statics after it can read (and `emit_data` writes).
+pub fn run[&s, &x](st: &!s [int], text: &x [byte], item: int, element: int) -> [] bool {
+    if element != 1 && element != 2 && element != 5 {
+        return false;
+    }
+    let top = st[region_base(st)];
+    st[region_base(st) + 1] = fuel_start();
+    st[region_base(st) + 3] = 0;
+    let outcome = run_block(st, text, ast.get(st, item, 7), ast.get(st, item, 8));
+    if outcome != 1 {
+        // Nothing of what it allocated is kept.
+        st[region_base(st)] = top;
+        return false;
+    }
+    let n = st[region_base(st) + 2];
+    if n >= results_cap() {
+        st[region_base(st)] = top;
+        return false;
+    }
+    let base = st[region_base(st) + 5];
+    let length = st[region_base(st) + 6];
+    // A `byte` is one byte of data: a value outside 0 to 255 cannot be one.
+    var i = 0;
+    while element == 2 && i < length {
+        if cell(st, base, i) < 0 || cell(st, base, i) > 255 {
+            st[region_base(st)] = top;
+            return false;
+        }
+        i = i + 1;
+    }
+    st[results_at(st) + 4 * n] = item;
+    st[results_at(st) + 4 * n + 1] = base;
+    st[results_at(st) + 4 * n + 2] = length;
+    st[results_at(st) + 4 * n + 3] = element;
+    st[region_base(st) + 2] = n + 1;
+    return true;
+}
+
+// The table of the static `item`, answered by `run`, as data of the module: the elements, and the pair of their address and their
+// number that the code loads. The static's initialiser is one that does nothing. False if there is no room in
+// the module for the elements, in which case the static is left to run when the program starts.
+pub fn emit_data[&s](st: &!s [int], item: int) -> [] bool {
+    var k = 0;
+    var at = 0 - 1;
+    while k < st[region_base(st) + 2] {
+        if st[results_at(st) + 4 * k] == item {
+            at = k;
+        }
+        k = k + 1;
+    }
+    if at < 0 {
+        return false;
+    }
+    let base = st[results_at(st) + 4 * at + 1];
+    let length = st[results_at(st) + 4 * at + 2];
+    let element = st[results_at(st) + 4 * at + 3];
+    // Each element takes at most 24 bytes of text.
+    if st[44] + 24 * length + 400 > st[50] {
+        return false;
+    }
+    emit.aim(st, 0);
+    emit.str(st, "@sd");
+    emit.nat(st, item);
+    emit.str(st, ".data = private constant [");
+    emit.nat(st, length);
+    if element == 2 {
+        emit.str(st, " x i8] [");
+    } else {
+        emit.str(st, " x i64] [");
+    }
+    var i = 0;
+    while i < length {
+        if i > 0 {
+            emit.str(st, ", ");
+        }
+        if element == 2 {
+            emit.str(st, "i8 ");
+        } else {
+            emit.str(st, "i64 ");
+        }
+        emit.int(st, cell(st, base, i));
+        i = i + 1;
+    }
+    emit.str(st, "]\n@sd");
+    emit.nat(st, item);
+    emit.str(st, " = internal constant { ptr, i64 } { ptr @sd");
+    emit.nat(st, item);
+    emit.str(st, ".data, i64 ");
+    emit.nat(st, length);
+    emit.str(st, " }\ndefine void @sinit");
+    emit.nat(st, item);
+    emit.str(st, "() {\n  ret void\n}\n\n");
+    return true;
+}

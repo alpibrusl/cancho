@@ -303,6 +303,7 @@ fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "effects.cho",
         "prims.cho",
         "builtins.cho",
+        "signatures.cho",
         "types.cho",
         "emit.cho",
         "foreign.cho",
@@ -312,6 +313,8 @@ fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "rules.cho",
         "lexcore.cho",
         "tables.cho",
+        "runtime.cho",
+        "consteval.cho",
     ]
 }
 

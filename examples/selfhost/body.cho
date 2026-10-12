@@ -40,6 +40,8 @@ import selfhost.scope;
 import selfhost.exprs;
 import selfhost.effects;
 import selfhost.builtins;
+import selfhost.prims;
+import selfhost.consteval;
 
 // What an expression came to: its type, and whether it is a known integer (a literal, or a
 
@@ -197,6 +199,63 @@ fn variant_arm[&s, &x](st: &!s [int], text: &x [byte], item: int, first: int, k:
     return 0;
 }
 
+// `match` on a value of a prelude enum (`Spawned`, `Exited`, `Read`): in compile mode only, and the arms
+// are taken to be what Rust has checked: a flat chain of tests of the tag, as for an enum of the file.
+fn prelude_match[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int, s: exprs.Ex) -> [] int {
+    let index = types.prelude_index(st, s.ty);
+    let first = builtins.prelude_arm_first(index);
+    let tag = emit.extract_field(st, s.ty, s.reg, 0);
+    let end = emit.label(st);
+    let count = ast.get(st, id, 6);
+    var arm = ast.get(st, id, 5);
+    var k = 0;
+    while k < count && ast.ok(st) {
+        let tok = ast.get(st, arm, 4);
+        var number = 0 - 1;
+        if !pat_wild(st, tok) {
+            number = exprs.prelude_arm_named(st, text, index, pat_variant(st, tok));
+        }
+        var test = 0 - 1;
+        if k + 1 < count && number >= 0 {
+            test = emit.label(st);
+            emit.match_test(st, test, tag, number - first);
+        }
+        let mark = st[21];
+        if number >= 0 {
+            let at = builtins.arm_type_start(number);
+            var cursor = at + 1;
+            var i = 0;
+            while i < builtins.field_type(at) && ast.ok(st) {
+                let t = prims.decode(st, true, cursor, 0 - 1, false);
+                cursor = st[53];
+                let name = pat_binding(st, tok, i);
+                if t == 0 {
+                    exprs.skip(st, ast.nstart(st, id), ast.nend(st, id));
+                } else if !pat_wild(st, name) {
+                    scope.bind(st, name, t, false, ast.nstart(st, id), ast.nend(st, id));
+                    if ast.ok(st) && !types.is_erased(st, t) {
+                        emit.store(st, t, false, 0, emit.extract_field(st, s.ty, s.reg, emit.penum_payload_index(st, index, number, i)), st[39] - 1);
+                    }
+                }
+                i = i + 1;
+            }
+        }
+        if ast.ok(st) {
+            block(st, text, ast.get(st, arm, 5), ast.get(st, arm, 6), ret);
+        }
+        st[21] = mark;
+        if test >= 0 {
+            emit.match_next(st, test, end);
+        }
+        arm = ast.next(st, arm);
+        k = k + 1;
+    }
+    if ast.ok(st) {
+        emit.match_end(st, end);
+    }
+    return 0;
+}
+
 // `match e { Enum::A(x) => { .. } Enum::B => { .. } _ => { .. } }` on a plain enum or a reference
 // to one: every variant once, or a `_` that is not redundant, and the arms cover everything.
 fn match_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
@@ -216,6 +275,9 @@ fn match_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] i
         unique = types.ref_unique(st, held);
         area = types.ref_region(st, held);
         held = types.ref_inner(st, held);
+    }
+    if emit.on(st) && !by_ref && types.is_penum(st, held) {
+        return prelude_match(st, text, id, ret, s);
     }
     if types.is_prelude(st, held) {
         exprs.skip(st, from, to);
@@ -296,7 +358,7 @@ fn borrow_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] 
     if emit.on(st) {
         // The reference is the address of the slot of a whole number or a boolean, and of a byte
         // of its own for what has no code.
-        if types.is_prelude(st, referent) {
+        if types.is_erased(st, referent) {
             emit.store_dummy_pointer(st, st[39] - 1);
         } else if referent == 1 || referent == 5 || scope.aggregate_codable(st, referent) {
             emit.store_slot_address(st, st[39] - 1, scope.slot_of(st, i));
@@ -512,7 +574,7 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
         }
         if ast.ok(st) {
             scope.bind(st, ast.get(st, id, 5), declared, ast.get(st, id, 4) != 0, from, to);
-            if emit.on(st) && ast.ok(st) {
+            if emit.on(st) && ast.ok(st) && !types.is_erased(st, declared) {
                 if types.is_slice_ref(st, declared) {
                     emit.store_slice(st, st[39] - 1, found.reg, found.reg2 < 0, found.value, found.reg2);
                 } else {
@@ -654,7 +716,7 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
         }
         scope.assign_slot(st, i, from, to);
         scope.expect(st, text, scope.binding_type(st, i), found.ty, ast.nstart(st, value), ast.nend(st, value));
-        if emit.on(st) && ast.ok(st) {
+        if emit.on(st) && ast.ok(st) && !types.is_erased(st, scope.binding_type(st, i)) {
             if types.is_slice_ref(st, scope.binding_type(st, i)) {
                 emit.store_slice(st, scope.slot_of(st, i), found.reg, found.reg2 < 0, found.value, found.reg2);
             } else {
@@ -801,7 +863,7 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
                 emit.header_param(st, 7, k);
                 emit.header_param(st, 1, k + 1);
                 k = k + 2;
-            } else if !types.is_prelude(st, pt) {
+            } else if !types.is_erased(st, pt) {
                 emit.header_param(st, pt, k);
                 k = k + 1;
             }
@@ -817,7 +879,7 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
         if emit.on(st) && types.is_slice_ref(st, pt) {
             emit.store_slice_param(st, index, st[39] - 1);
             index = index + 2;
-        } else if emit.on(st) && !types.is_prelude(st, pt) {
+        } else if emit.on(st) && !types.is_erased(st, pt) {
             emit.store_param(st, pt, index, st[39] - 1);
             index = index + 1;
         }
@@ -848,10 +910,15 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
             }
             owned = ast.next(st, owned);
         }
-        effects.check(st, text, fn_item, from, to, authority);
+        if !emit.on(st) {
+            effects.check(st, text, fn_item, from, to, authority);
+        }
     }
     if ast.ok(st) && !terminates(st, ast.get(st, fn_item, 11), ast.get(st, fn_item, 12)) {
         ast.fail(st, rules.r_missing_return(), from, to);
+    }
+    if ast.ok(st) && emit.on(st) && emit.overflowed(st) {
+        ast.fail(st, rules.r_skip(), from, to);
     }
     if ast.ok(st) {
         if emit.on(st) {
@@ -891,6 +958,7 @@ pub fn check_static[&s, &x](st: &!s [int], text: &x [byte], item: int) -> [] int
         return 2;
     }
     st[60] = item + 1;
+    let start = st[44];
     emit.static_header(st, item);
     emit.header_end(st);
     block(st, text, ast.get(st, item, 7), ast.get(st, item, 8), ret);
@@ -909,8 +977,20 @@ pub fn check_static[&s, &x](st: &!s [int], text: &x [byte], item: int) -> [] int
         ast.fail(st, rules.r_missing_return(), from, to);
     }
     st[60] = 0;
+    if ast.ok(st) && emit.overflowed(st) {
+        ast.fail(st, rules.r_skip(), from, to);
+    }
     if ast.ok(st) {
         emit.finish(st);
+        // The compiler runs the body if it can, and the table is data of the module; the code that
+        // would have run it when the program starts is dropped. If it cannot, that code stays.
+        if consteval.run(st, text, item, element) {
+            let kept = st[44];
+            st[44] = start;
+            if !consteval.emit_data(st, item) {
+                st[44] = kept;
+            }
+        }
         return 0;
     }
     if st[3] == rules.r_skip() {

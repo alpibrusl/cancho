@@ -10,6 +10,7 @@ import selfhost.ast;
 import selfhost.types;
 import selfhost.tables;
 import selfhost.builtins;
+import selfhost.signatures;
 import selfhost.lexcore as lc;
 
 // The next integer of a stream: of the builtins' signatures, or of the prelude structs' field types.
@@ -17,7 +18,7 @@ fn code[&s](st: &!s [int], fields: bool, at: int) -> [] int {
     if fields {
         return builtins.field_type(at);
     }
-    return builtins.builtin_sig(at);
+    return signatures.builtin_sig(at);
 }
 
 // The builtin the name at `tok` is, in a file of `edition`, or -1.
@@ -76,7 +77,14 @@ pub fn decode[&s](st: &!s [int], fields: bool, at: int, fresh: int, behind: bool
             k = k + 1;
         }
         st[53] = next;
-        if !ok || n != 0 {
+        if !ok {
+            return 0;
+        }
+        if st[40] != 0 && index != tables.prelude_box() {
+            // In compile mode a resource is a value, and a capability narrowed to a literal is its type.
+            return types.make_prelude(st, index);
+        }
+        if n != 0 {
             return 0;
         }
         if !behind && tables.prelude_res(index) != 0 {

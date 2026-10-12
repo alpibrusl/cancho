@@ -30,6 +30,7 @@ import selfhost.checker;
 import selfhost.body;
 import selfhost.emit;
 import selfhost.pass1;
+import selfhost.runtime;
 import selfhost.kinds;
 
 fn refusal[&i, &s](io: &!i Io, st: &!s [int]) -> [io_write] int {
@@ -86,24 +87,57 @@ fn bodies[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte]) -> [io_write] 
     return 0;
 }
 
-// A call to the initialiser of every `static`, in the order the items come.
-fn init_statics[&i, &s](io: &!i Io, st: &!s [int]) -> [io_write] int {
+// A call to the initialiser of every `static`, in the order the items come, in the module being written.
+fn init_calls[&s](st: &!s [int]) -> [] int {
     var item = st[15];
     while item >= 0 {
         if ast.is_kind(st, item, kinds.NK::IStatic) {
-            console.write_all(io, "  call void @sinit");
-            console.print_nat(io, item);
-            console.write_all(io, "()\n");
+            emit.str(st, "  call void @sinit");
+            emit.nat(st, item);
+            emit.str(st, "()\n");
         }
         item = ast.next(st, item);
     }
     return 0;
 }
 
-// Mode 3: every function is checked, and written as it is; then the module is printed, with the
-// declarations of what the code calls and the C `main` that calls the program's `main` (or, failing
-// that, a function called `run`) and answers its result as the exit status.
-fn compile[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte]) -> [io_write] int {
+// The `main` of the C program: it keeps argc and argv for `arg_count` and `arg`, runs every static's
+// initialiser, calls the program's entry (the node `entry_item`) and answers its result as the status.
+fn shim[&s](st: &!s [int], entry_item: int) -> [] int {
+    emit.str(st, "define i32 @main(i32 %argc, ptr %argv) {\nentry:\n");
+    emit.str(st, "  %count = sext i32 %argc to i64\n  store i64 %count, ptr @cancho_argc\n  store ptr %argv, ptr @cancho_argv\n");
+    init_calls(st);
+    emit.str(st, "  %r = call i64 @lexs_");
+    emit.nat(st, entry_item);
+    emit.str(st, "()\n  %status = trunc i64 %r to i32\n  ret i32 %status\n}\n");
+    return 0;
+}
+
+// Mode 3 and the builder: every function is checked, and written as it is; then the rest of the module
+// is written after them, in the state's buffers: the declarations of what the code calls, the runtime, and
+// the C `main` that calls the program's `main` (or, failing that, a function called `run`). 0, or 1 for a
+// refusal (`st[3]` to `st[5]`).
+fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
+    emit.aim(st, 0);
+    emit.str(st, "declare {i64, i1} @llvm.sadd.with.overflow.i64(i64, i64)\n");
+    emit.str(st, "declare {i64, i1} @llvm.ssub.with.overflow.i64(i64, i64)\n");
+    emit.str(st, "declare {i64, i1} @llvm.smul.with.overflow.i64(i64, i64)\n");
+    emit.str(st, "declare void @llvm.trap()\n");
+    emit.str(st, "declare i32 @putchar(i32)\n");
+    emit.str(st, "declare ptr @malloc(i64)\ndeclare void @free(ptr)\n");
+    emit.str(st, "declare ptr @memmove(ptr, ptr, i64)\ndeclare ptr @memchr(ptr, i32, i64)\n");
+    emit.str(st, "declare i32 @getchar()\ndeclare i64 @write(i32, ptr, i64)\n\n");
+    emit.str(st, runtime.errno_location(st[61] != 0));
+    emit.str(st, runtime.text());
+    emit.str(st, "define i64 @cancho_write_bytes(ptr %p, i64 %n) {\nentry:\n  br label %head\nhead:\n");
+    emit.str(st, "  %i = phi i64 [ 0, %entry ], [ %next, %body ]\n  %more = icmp slt i64 %i, %n\n  br i1 %more, label %body, label %done\n");
+    emit.str(st, "body:\n  %addr = getelementptr i8, ptr %p, i64 %i\n  %b = load i8, ptr %addr\n  %c = zext i8 %b to i32\n");
+    emit.str(st, "  %r = call i32 @putchar(i32 %c)\n  %next = add i64 %i, 1\n  br label %head\ndone:\n  ret i64 %n\n}\n\n");
+    emit.str(st, "define ptr @cancho_arena_alloc(ptr %head, i64 %bytes) {\nentry:\n  %size = add i64 %bytes, 16\n  %node = call ptr @malloc(i64 %size)\n");
+    emit.str(st, "  %none = icmp eq ptr %node, null\n  br i1 %none, label %fail, label %ok\nfail:\n  call void @llvm.trap()\n  unreachable\nok:\n");
+    emit.str(st, "  %old = load ptr, ptr %head\n  store ptr %old, ptr %node\n  store ptr %node, ptr %head\n  %data = getelementptr i8, ptr %node, i64 16\n  ret ptr %data\n}\n\n");
+    emit.str(st, "define void @cancho_arena_free(ptr %first) {\nentry:\n  br label %loop\nloop:\n  %node = phi ptr [ %first, %entry ], [ %next, %body ]\n");
+    emit.str(st, "  %done = icmp eq ptr %node, null\n  br i1 %done, label %out, label %body\nbody:\n  %next = load ptr, ptr %node\n  call void @free(ptr %node)\n  br label %loop\nout:\n  ret void\n}\n\n");
     var item = st[15];
     var entry = 0;
     var entry_item = 0 - 1;
@@ -115,7 +149,7 @@ fn compile[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte]) -> [io_write]
             let mark = st[44];
             let status = body.check_static(st, text, item);
             if status == 1 {
-                return refusal(io, st);
+                return 1;
             }
             if status == 2 {
                 st[44] = mark;
@@ -127,7 +161,7 @@ fn compile[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte]) -> [io_write]
             let mark = st[44];
             let status = body.check_function(st, text, item);
             if status == 1 {
-                return refusal(io, st);
+                return 1;
             }
             if status == 2 {
                 st[44] = mark;
@@ -142,15 +176,40 @@ fn compile[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte]) -> [io_write]
         }
         item = ast.next(st, item);
     }
-    console.write_all(io, "declare {i64, i1} @llvm.sadd.with.overflow.i64(i64, i64)\n");
-    console.write_all(io, "declare {i64, i1} @llvm.ssub.with.overflow.i64(i64, i64)\n");
-    console.write_all(io, "declare {i64, i1} @llvm.smul.with.overflow.i64(i64, i64)\n");
-    console.write_all(io, "declare void @llvm.trap()\n");
-    console.write_all(io, "declare i32 @putchar(i32)\n");
-    console.write_all(io, "declare ptr @malloc(i64)\ndeclare void @free(ptr)\n");
-    console.write_all(io, "declare ptr @memmove(ptr, ptr, i64)\ndeclare ptr @memchr(ptr, i32, i64)\n");
-    console.write_all(io, "declare i32 @getchar()\ndeclare i64 @write(i32, ptr, i64)\n\n");
-    // The string literals, then the functions, then the one helper the code calls.
+    emit.aim(st, 0);
+    if entry != 0 {
+        shim(st, entry_item);
+    }
+    emit.str(st, "; left out: ");
+    emit.nat(st, left_out);
+    emit.str(st, "\n");
+    if emit.overflowed(st) {
+        // The code outgrew its room: what was written is not to be trusted.
+        ast.fail(st, rules.r_skip(), 0, 0);
+        return 1;
+    }
+    return 0;
+}
+
+// The module as bytes in a buffer: the string literals, a newline, then the rest.
+fn module_bytes[&h, &s](heap: &!h Heap, st: &!s [int]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, st[57] + st[44] + 16);
+    var at = 0;
+    while at < st[57] {
+        out = buffer.push(heap, out, byte_of(st[st[56] + at]));
+        at = at + 1;
+    }
+    out = buffer.push(heap, out, byte_of(10));
+    at = 0;
+    while at < st[44] {
+        out = buffer.push(heap, out, byte_of(st[st[43] + at]));
+        at = at + 1;
+    }
+    return out;
+}
+
+// The module as it was written: the string literals, then the rest.
+fn print_module[&i, &s](io: &!i Io, st: &!s [int]) -> [io_write] int {
     var at = 0;
     while at < st[57] {
         putchar(io, st[st[56] + at]);
@@ -162,35 +221,26 @@ fn compile[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte]) -> [io_write]
         putchar(io, st[st[43] + at]);
         at = at + 1;
     }
-    console.write_all(io, "define i64 @cancho_write_bytes(ptr %p, i64 %n) {\nentry:\n  br label %head\nhead:\n");
-    console.write_all(io, "  %i = phi i64 [ 0, %entry ], [ %next, %body ]\n  %more = icmp slt i64 %i, %n\n  br i1 %more, label %body, label %done\n");
-    console.write_all(io, "body:\n  %addr = getelementptr i8, ptr %p, i64 %i\n  %b = load i8, ptr %addr\n  %c = zext i8 %b to i32\n");
-    console.write_all(io, "  %r = call i32 @putchar(i32 %c)\n  %next = add i64 %i, 1\n  br label %head\ndone:\n  ret i64 %n\n}\n\n");
-    console.write_all(io, "define ptr @cancho_arena_alloc(ptr %head, i64 %bytes) {\nentry:\n  %size = add i64 %bytes, 16\n  %node = call ptr @malloc(i64 %size)\n");
-    console.write_all(io, "  %none = icmp eq ptr %node, null\n  br i1 %none, label %fail, label %ok\nfail:\n  call void @llvm.trap()\n  unreachable\nok:\n");
-    console.write_all(io, "  %old = load ptr, ptr %head\n  store ptr %old, ptr %node\n  store ptr %node, ptr %head\n  %data = getelementptr i8, ptr %node, i64 16\n  ret ptr %data\n}\n\n");
-    console.write_all(io, "define void @cancho_arena_free(ptr %first) {\nentry:\n  br label %loop\nloop:\n  %node = phi ptr [ %first, %entry ], [ %next, %body ]\n");
-    console.write_all(io, "  %done = icmp eq ptr %node, null\n  br i1 %done, label %out, label %body\nbody:\n  %next = load ptr, ptr %node\n  call void @free(ptr %node)\n  br label %loop\nout:\n  ret void\n}\n\n");
-    if entry == 2 {
-        console.write_all(io, "define i32 @main(i32 %argc, ptr %argv) {\nentry:\n");
-        init_statics(io, st);
-        console.write_all(io, "  %r = call i64 @lexs_");
-        console.print_nat(io, entry_item);
-        console.write_all(io, "()\n  %status = trunc i64 %r to i32\n  ret i32 %status\n}\n");
-    } else if entry == 1 {
-        console.write_all(io, "define i32 @main(i32 %argc, ptr %argv) {\nentry:\n");
-        init_statics(io, st);
-        console.write_all(io, "  %r = call i64 @lexs_");
-        console.print_nat(io, entry_item);
-        console.write_all(io, "()\n  %status = trunc i64 %r to i32\n  ret i32 %status\n}\n");
+    return 0;
+}
+
+// Mode 3: the module on the standard output.
+fn compile[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte]) -> [io_write] int {
+    if build_module(st, text) != 0 {
+        return refusal(io, st);
     }
-    console.write_all(io, "; left out: ");
-    console.print_nat(io, left_out);
-    console.newline(io);
+    print_module(io, st);
     return 0;
 }
 
 fn answer[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], mode: int) -> [io_write] int {
+    if mode == 5 {
+        // The build keeps what it finds and prints nothing.
+        if ast.parse(st, text) != 0 || checker.check(st, text) != 0 {
+            return 1;
+        }
+        return build_module(st, text);
+    }
     if ast.parse(st, text) != 0 {
         return refusal(io, st);
     }
@@ -239,7 +289,7 @@ fn header_end[&r](raw: &r [byte], at: int) -> [] int {
 }
 
 // One file: the whole of the input.
-fn run_one[&h, &i, &x](heap: &!h Heap, io: &!i Io, text: &x [byte], mode: int) -> [heap, io_write] int {
+fn run_one[&h, &i, &x](heap: &!h Heap, io: &!i Io, text: &x [byte], mode: int, target: int) -> [heap, io_write] int {
     var status = 0;
     let tokens = ast.count_tokens(text);
     var size = ast.size_for(tokens, 1);
@@ -251,6 +301,7 @@ fn run_one[&h, &i, &x](heap: &!h Heap, io: &!i Io, text: &x [byte], mode: int) -
         let st = contents(b);
         if mode == 3 {
             ast.layout_emit(st, tokens, 1);
+            st[61] = target;
         } else {
             ast.layout(st, tokens, 1);
         }
@@ -261,8 +312,25 @@ fn run_one[&h, &i, &x](heap: &!h Heap, io: &!i Io, text: &x [byte], mode: int) -
     return status;
 }
 
-// A stream of files: laid end to end, one byte between them, and parsed in order.
-fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: int) -> [heap, io_write] int {
+// A build whose module is not wanted: its status.
+pub fn discard[&h](heap: &!h Heap, built: Built) -> [heap] int {
+    let Built { ir, status, rule, from, to } = built;
+    buffer.drop(heap, ir);
+    return status;
+}
+
+// What a build (mode 5) comes to: the module as bytes, or the first refusal (the rule and where), and the status.
+pub res struct Built {
+    ir: buffer.Buffer,
+    status: int,
+    rule: int,
+    from: int,
+    to: int,
+}
+
+// A stream of files: laid end to end, one byte between them, and parsed in order. Mode 5 is the build: the
+// module is kept as bytes, for a program to write to a file, and nothing is printed.
+pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: int, target: int) -> [heap, io_write] Built {
     var files = 0;
     var total = 0;
     var at = 0;
@@ -284,6 +352,10 @@ fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: int) -
         left = left - 1;
     }
     var status = 0;
+    var written = buffer.empty(heap, 0);
+    var rule = 0;
+    var from = 0;
+    var to = 0;
     borrow laid as &t in {
         let text = buffer.bytes(t);
         var tokens = 0;
@@ -298,14 +370,15 @@ fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: int) -
             f = f + 1;
         }
         var size = ast.size_for(tokens, files);
-        if mode == 3 || mode == 4 {
+        if mode >= 3 {
             size = size + ast.emit_size(tokens);
         }
         let state = box_slice(heap, size, 0);
         borrow mut state as &!b in {
             let st = contents(b);
-            if mode == 3 || mode == 4 {
+            if mode >= 3 {
                 ast.layout_emit(st, tokens, files);
+                st[61] = target;
             } else {
                 ast.layout(st, tokens, files);
             }
@@ -320,11 +393,41 @@ fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: int) -
                 f = f + 1;
             }
             status = answer(io, st, text, mode);
+            if mode == 5 {
+                if status == 0 {
+                    buffer.drop(heap, written);
+                    written = module_bytes(heap, st);
+                } else {
+                    rule = st[3];
+                    from = st[4];
+                    to = st[5];
+                }
+            }
         }
         unbox_slice(heap, state);
     }
     buffer.drop(heap, laid);
-    return status;
+    return Built { ir: written, status: status, rule: rule, from: from, to: to };
+}
+
+// A line `TARGET darwin` or `TARGET linux` in front of the input says what the code is for (which libc names
+// differ): 1 for darwin, 0 for linux, and 0 if there is no such line.
+pub fn target_of[&r](raw: &r [byte]) -> [] int {
+    if len(raw) >= 14 && lc.spells(raw, 0, 14, "TARGET darwin\n") {
+        return 1;
+    }
+    return 0;
+}
+
+// How many bytes of the input the line took.
+pub fn target_skip[&r](raw: &r [byte]) -> [] int {
+    if len(raw) >= 14 && lc.spells(raw, 0, 14, "TARGET darwin\n") {
+        return 14;
+    }
+    if len(raw) >= 13 && lc.spells(raw, 0, 13, "TARGET linux\n") {
+        return 13;
+    }
+    return 0;
 }
 
 // Read standard input, parse it, and print the answer for `mode`; `many` says that the input is
@@ -339,10 +442,12 @@ pub fn drive(world: World, mode: int, many: bool) -> [] int {
         borrow mut io as &!i in {
             let raw = lc.slurp(h, i);
             borrow raw as &r in {
+                let all = buffer.bytes(r);
+                let rest = all[target_skip(all)..len(all)];
                 if many {
-                    status = run_many(h, i, buffer.bytes(r), mode);
+                    status = discard(h, run_many(h, i, rest, mode, target_of(all)));
                 } else {
-                    status = run_one(h, i, buffer.bytes(r), mode);
+                    status = run_one(h, i, rest, mode, target_of(all));
                 }
             }
             buffer.drop(h, raw);

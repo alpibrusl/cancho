@@ -23,6 +23,50 @@ pub fn prelude_ffi() -> [] int {
     return 2;
 }
 
+pub fn prelude_fs() -> [] int {
+    return 3;
+}
+
+pub fn prelude_args() -> [] int {
+    return 6;
+}
+
+pub fn prelude_file() -> [] int {
+    return 8;
+}
+
+pub fn prelude_opened() -> [] int {
+    return 9;
+}
+
+pub fn prelude_read() -> [] int {
+    return 10;
+}
+
+pub fn prelude_done() -> [] int {
+    return 26;
+}
+
+pub fn prelude_exec() -> [] int {
+    return 37;
+}
+
+pub fn prelude_child() -> [] int {
+    return 39;
+}
+
+pub fn prelude_stdio() -> [] int {
+    return 42;
+}
+
+pub fn prelude_spawned() -> [] int {
+    return 44;
+}
+
+pub fn prelude_exited() -> [] int {
+    return 45;
+}
+
 fn prelude_chars() -> [] &static [byte] {
     return "WorldIoFfiFsHeapBoxArgsSplitFileOpenedReadNetSplitThreadListenerConnListeningAcceptedReceivedSentDialedPollerPollingClockSplitAttachedDoneSignalsSplitSignalWatchWatchingDirDirOpenedDirListListingListedDirStatExecSplitChildPipeChildEndStdioPipedSpawnedExitedUdpUdpOpenedDatagramTtySplitPortTtyOpened";
 }
@@ -408,6 +452,23 @@ static prelude_label_lens: [int] {
     return t;
 }
 
+static prelude_leaf_counts: [int] {
+    let t = alloc_slice[static](53, 0);
+    t[8] = 1;
+    t[14] = 1;
+    t[15] = 1;
+    t[21] = 1;
+    t[29] = 1;
+    t[31] = 1;
+    t[33] = 1;
+    t[39] = 1;
+    t[40] = 1;
+    t[41] = 1;
+    t[46] = 1;
+    t[51] = 1;
+    return t;
+}
+
 static prelude_capabilities: [int] {
     let t = alloc_slice[static](53, 0);
     t[0] = 1;
@@ -472,6 +533,11 @@ pub fn prelude_res(i: int) -> [] int {
 pub fn prelude_labels(i: int) -> [] &static [byte] {
     let start = prelude_label_starts[i];
     return prelude_label_chars()[start..start + prelude_label_lens[i]];
+}
+
+// How many leaves a value of the type is in the code: 1 for a handle, else 0.
+pub fn prelude_leaf(i: int) -> [] int {
+    return prelude_leaf_counts[i];
 }
 
 // Is it a capability, which a foreign function may borrow?

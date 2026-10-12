@@ -136,16 +136,28 @@ pub fn layout[&s](st: &!s [int], tokens: int, files: int) -> [] int {
 // buffers of `per` bytes for each token, one byte to an int. The state is `size_for` plus
 // `emit_size`; the buffers follow it.
 pub fn emit_size(tokens: int) -> [] int {
-    return 4 * emit_per() * (tokens + 16) + 4 * (tokens + 16);
+    return 4 * (emit_per() * (tokens + 16) + emit_floor()) + 4 * (tokens + 16) + const_region();
+}
+
+// What the interpreter of statics (`consteval.cho`) has in the state: its header, the statics it has answered
+// (four slots each, 1,024 of them), the frames of local names (three, 4,096), the string literals it keeps (two,
+// 64) and its store (1,048,576 elements, one int each).
+pub fn const_region() -> [] int {
+    return 8 + 4 * 1024 + 3 * 4096 + 2 * 64 + 1048576;
 }
 
 pub fn emit_per() -> [] int {
     return 200;
 }
 
+// What each buffer has however small the program is: the runtime alone is more than 14,000 bytes.
+pub fn emit_floor() -> [] int {
+    return 40000;
+}
+
 pub fn layout_emit[&s](st: &!s [int], tokens: int, files: int) -> [] int {
     layout(st, tokens, files);
-    let cap = emit_per() * (tokens + 16);
+    let cap = emit_per() * (tokens + 16) + emit_floor();
     let base = size_for(tokens, files);
     st[40] = 1;
     st[41] = 0;
@@ -163,6 +175,7 @@ pub fn layout_emit[&s](st: &!s [int], tokens: int, files: int) -> [] int {
     st[56] = base + 3 * cap;
     st[57] = 0;
     st[58] = 0;
+    st[62] = base + 4 * cap + 4 * (tokens + 16);
     return 0;
 }
 

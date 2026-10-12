@@ -227,7 +227,9 @@ the stages found, in place, the way this document corrects its own claims.
 | 4k. Functions that return a slice, and sub-slices `s[a..b]` of whole numbers, bytes and booleans | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho` | the Rust compiler, by what the built programs do | **Eleventh slice of the backend.** 404 builds run and compared, 22 of them new, 84 trap; none different. The census: 529 of the compiler's own 548 functions get code (488 before) |
 | 4l. Structs and enums whose fields and payloads are structs, enums or a `Box[[T]]` (and `res` ones, `std.buffer`'s `Buffer`), destructuring a struct of the file, a field of a `res` type read through a reference as a borrow, byte parameters and results, and the builtins `wrapping_*`, `copy_into`, `index_of_byte`, `getchar`, `write_err` | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho`, `types.cho` | the Rust compiler, by what the built programs do | **Twelfth slice of the backend.** 424 builds run and compared, 20 of them new, 85 trap; none different. The census: **558 of the compiler's own 558 functions get code, and all 39 of `std.bytes`/`buffer`/`io`** |
 | 4m. Several files, and the bootstrap: a function is named by its node (`@lexs_<n>`), so two modules may have a function of one name; what the code is not written for is left out and a comment says how many; `compiler.cho` is the compiler for a program of several files | `driver.cho`, `emit.cho`, `body.cho`, `compiler.cho`, `bootstrap.rs` | **the compiler against itself**: built by Rust, it compiles its own source to IR, `clang` builds that, and the result compiles the same source to the same IR | **The fixed point.** 100,409 lines of IR, 637 functions, byte for byte the same from the compiler Rust built and from the one it built; 55 functions left out, all of `std.math`, which nothing calls. The checker built by the second compiler agrees with the Rust oracle on 1,980 of 1,980 cases |
-| 4n. What is not done: `alloc` of one value, generics, tuples, floats, sockets and threads in the code; `clang` run by the compiler itself; evaluating a `static` while compiling instead of at start; a compiler that checks as fully as the Rust one (about a fifth of the functions the fuzz cases and the library hold are still `SKIP` in the checker: 346,493 of 1,740,290 in the last count) | not started | | |
+| 4n. Capabilities and handles in the code: a target (`TARGET darwin`/`linux` in front of the input), `runtime.ll` (paths checked against the prefix a capability was narrowed to, `open_*`, `file_write`/`file_read`/`file_close`, `exec_spawn`, `child_wait`, `arg_count`/`arg`), prelude enums and handles as values, `narrow`; and `builder.cho`, the compiler that runs `clang` itself through its `Exec` | `runtime.ll`, `runtime.cho`, `emit.cho`, `exprs.cho`, `types.cho`, `scope.cho`, `driver.cho`, `builder.cho` | the Rust compiler: the programs by what they do (433 builds, 89 trap), the builder by building itself | **The compiler builds a program with no help.** The builder built by Rust builds itself, the result builds itself again, and the three write the same 3.2 MB of IR (equal sha256). The census: 614 of 614 functions (the compiler, its runtime and the builder) and 39 of 39 in `std.bytes`/`buffer`/`io` |
+| 4o. `static` tables computed while the program is compiled: `consteval.cho`, an interpreter for the bodies that build a table (loops, conditionals, the operators, table reads and writes, string literals, `len`/`int_of`/`byte_of`, earlier statics), whose answer is data of the module; a body it cannot run (a call to a function of the program, a trap, too much room) still runs when the program starts | `consteval.cho`, `body.cho`, `ast.cho`, `driver.cho` | the Rust compiler, by what the built programs do | **A difference closed.** 442 builds run and compared (9 new), 89 trap; none different. The census: 644 of 644 |
+| 4p. What is not done: `alloc` of one value, generics, tuples, floats, sockets, threads, pipes and function values in the code (66 of the 115 programs of `tests/accept` still stop at one of them); a static that calls a function of the program is still run at start; a compiler that checks as fully as the Rust one (about a fifth of the functions the fuzz cases and the library hold are still `SKIP` in the checker) | not started | | |
 
 **The method.** A port that builds no tree has nothing to compare, and one that does
 needs a printer, which is another port. So stage 2's parser wrote the tree the Rust parser
@@ -696,6 +698,56 @@ is evaluated when the program starts and not while compiling, and the checker pa
 Rust checker does for about four functions in five (the rest is `SKIP`, which in compile mode means the
 program is trusted to have been checked). The compiler trusts a program that Rust has checked; it
 does not yet replace Rust as the thing that says a program is wrong.
+
+**Stage 4n: the compiler runs `clang`.** The compiler wrote a module and a person ran `clang` on it. The builder
+(`builder.cho`, edition 7) does both: it reads a program on standard input, compiles it, writes the module to
+`<output>.ll` through an `Fs`, and starts `clang` on it through an `Exec`, waits for it, and answers its status. It
+is made of what the language has for the purpose, and the stage is mostly the front end that makes that
+possible in the code:
+
+* a prelude type that is a **handle** (`File`, `Child`...) is one value of the code, a descriptor or a pid; a prelude
+  **enum** (`Opened`, `Read`, `Spawned`, `Exited`, `Stdio`) is the same aggregate as an enum of the file, built and
+  matched alike; a capability **narrowed to a literal** (`Fs("/tmp")`, `narrow(exec, "/usr/bin")`) is its type with the
+  token of the literal kept, which the code gives the runtime to check a path with. The generated tables gained the
+  enums' arms and how many leaves a handle is; the rows of functions are Rust's to check in this mode;
+* `runtime.ll` is the support the code calls, written by hand and printed by the compiler into every module
+  (`runtime.cho` is its text, checked against the file by a test): a path copied and checked (no `..`, the prefix,
+  and `/tmpevil` is not under `/tmp`), `fopen` and `dup` for a file (the close-on-exec descriptor the Rust backend
+  makes), `read` and `write`, `posix_spawn` with the three streams, `waitpid`. An error is its negative
+  `errno`, and the code builds the enum from the number;
+* the module differs by **target** only in where `errno` lives (`__error`, `__errno_location`), so a line
+  `TARGET darwin` or `TARGET linux` in front of the input says which. The Rust backend knows its triple; the
+  compiler is told. The harness gives every program the line of the machine it runs on.
+
+What this does not copy from the Rust backend: `posix_spawn` is given the three streams and nothing else (no
+`closefrom`, no signal mask: the child inherits what the parent has open above descriptor 2 that is not
+close-on-exec, and its signal dispositions), a child is its pid and not a pid with a pidfd, and `clang`'s
+own output is discarded (`Stdio` has no way to inherit), so a build that fails says its status and nothing more.
+
+Along the way: an emit buffer was never bounds-checked, and the runtime alone is bigger than the buffers of a
+program of a few tokens, which silently wrote the end of a function into the middle of the runtime; a buffer is
+now given a floor, and a module that outgrew its buffers is a refusal (`emit.overflowed`). The signature table moved
+to its own generated module (`signatures.cho`) because `builtins.cho` passed the repository's 2,000-line budget.
+
+**The bootstrap, again, with no hand.** `bootstrap.rs` has a second test: the builder built by Rust builds the builder's
+own source (and runs `clang` itself) into the second builder; the second does it again into the third; the three
+write the same IR. The `tests/accept` fixtures are a scoreboard for what is left: 49 of 115 build with the compiler
+built by Rust and give the output and the exit status their headers say, none gives a different one, and the
+other 66 stop at a function the code is not written for: generics (`Option[T]`), tuples (`narrow(fs, "a", "b")`,
+`(int, bool)`), threads, floats, pipes and the one-shot `fs_read`/`fs_write`.
+
+**Stage 4o: a static is computed by the compiler.** Stage 4j built each `static` when the program started, which a
+program could not tell from `docs/compile-time-data.md`'s data in the binary except by a trap, a write or the
+start-up cost. `consteval.cho` is a small interpreter: it runs a static's body over the tree, with one int to an
+element of its store whatever the type, and the answer is written into the module as `@sd<n>.data`, a constant
+array, and `@sd<n>`, a constant pair of its address and its length: read-only, in the binary, and nothing runs at
+the start (the initialiser stays, but empty). It gives up, and the static is run at start as before, on anything it
+does not do exactly: a call to a function of the program (`doubled` in `static_data.cho` calls `twice`), a `match`, an
+overflow or a division by zero (the Rust compiler refuses these at compile time; here the program is
+trusted to have been checked and the trap is at start), an index outside a table, a `byte` outside 0 to 255, more
+store than the 1,048,576 elements it has or fuel than 20 million steps, or a table that would not fit what the module has
+left. A static that reads another reads the answer of the one before it, if that was computed. The tables of the compiler
+itself, 1,100 lines of `t[i] = v;` each, are computed this way, and the fixed point holds.
 
 The mutation test of `types.cho` (54 operator swaps) killed 40 on the first corpus of 458 targeted
 body cases (after region-variable, `where`-closure and coercion cases were added; 33 before); the 14
