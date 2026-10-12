@@ -38,8 +38,7 @@ impl<'a> Parser<'a> {
             // the signal capability (`docs/signals.md`); edition 7 is
             // edition 6 plus the capability to start a program
             // (`docs/processes.md`); edition 8 is edition 7 plus the
-            // serial-port capability (`docs/tty.md` §6)
-            // (`docs/processes.md`). Nothing later than that exists to opt
+            // serial-port capability (`docs/tty.md` §6). Nothing later than that exists to opt
             // into yet.
             if !(1..=8).contains(&value) {
                 return Err(Diagnostic::new(

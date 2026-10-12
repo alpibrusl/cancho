@@ -11,6 +11,23 @@ use cancho_ir::{IOSSIOSPEED, LINUX_RATES, MACOS_STANDARD_STEP, TCSANOW, TTY_EINV
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{MemFlags, Value};
 
+/// The integer fillers between `ioctl`'s request and its pointer on Apple
+/// arm64: the first eight argument registers are `fd`, `request` and these
+/// six, so the variadic pointer lands in the first stack slot.
+const IOCTL_FILLERS: usize = 6;
+
+/// The Cranelift signature of the Apple arm64 `ioctl` call: `fd`, `request`,
+/// the fillers and the pointer. Its length is the argument count the call
+/// site must supply (a mismatch is a verifier panic).
+fn apple_arm64_ioctl_params(
+    pointer: cranelift_codegen::ir::Type,
+) -> Vec<cranelift_codegen::ir::Type> {
+    let mut params = vec![types::I32, types::I32];
+    params.extend([types::I64; IOCTL_FILLERS]);
+    params.push(pointer);
+    params
+}
+
 impl<'a, 'f> BodyEmitter<'a, 'f> {
     /// `tty_open(tty, path)` — `openat(AT_FDCWD, path, O_RDWR | O_NOCTTY |
     /// O_NONBLOCK)`, under the capability's prefix, answering a
@@ -198,12 +215,11 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         );
         if apple_arm64 {
             let filler = self.builder.ins().iconst(types::I64, 0);
-            let mut params = vec![types::I32, types::I32];
-            params.extend([types::I64; 6]);
-            params.push(pointer);
+            let params = apple_arm64_ioctl_params(pointer);
             let mut args = vec![fd, request];
-            args.extend([filler; 6]);
+            args.extend([filler; IOCTL_FILLERS]);
             args.push(cell_at);
+            debug_assert_eq!(params.len(), args.len());
             self.libc_call("ioctl", &params, &[types::I32], &args)
         } else {
             self.libc_call(
@@ -276,5 +292,22 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
 
     fn const_i32(&mut self, value: i64) -> Value {
         self.builder.ins().iconst(types::I32, value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_apple_arm64_ioctl_signature_has_a_slot_for_every_argument() {
+        // fd, request, the fillers, the pointer: nine, the pointer being
+        // the ninth (the first stack slot)
+        let params = apple_arm64_ioctl_params(types::I64);
+        assert_eq!(params.len(), 2 + IOCTL_FILLERS + 1);
+        assert_eq!(params.len(), 9);
+        assert_eq!(&params[..2], &[types::I32, types::I32]);
+        assert!(params[2..8].iter().all(|t| *t == types::I64));
+        assert_eq!(params[8], types::I64);
     }
 }
