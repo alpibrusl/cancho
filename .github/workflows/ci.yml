@@ -49,18 +49,14 @@ jobs:
   # #208 (docs/tls-assurance.md §8): packages/tls against every other TLS
   # server the runner can install, and beside `openssl s_client` on the same
   # handshakes and on the lying server's cases, each failing on a row that
-  # does not; then AFL++ over every fuzzing harness, ten minutes in all.
-  # #208 (docs/tls-assurance.md §8): packages/tls against every other TLS
-  # server the runner can install, and beside `openssl s_client` on the same
-  # handshakes and on the lying server's cases, each failing on a row that
   # does not; then AFL++ over every fuzzing harness.
   #
-  # Split into three parallel jobs, one per concern, because the one job it
-  # was had grown to ~30 minutes of serial steps and GitHub-hosted runners
-  # evict it around the 29-minute wall ("The runner has received a shutdown
-  # signal", exit 143) -- three PRs' red checks were that eviction, not a
-  # TLS failure, and the failure point drifted with the queue's load. The
-  # step commands are unchanged; only the grouping moved.
+  # Split into three parallel jobs, one per concern: the one job it was had
+  # grown to a long serial run, and a long job on a GitHub-hosted runner is
+  # more exposed to runner eviction ("The runner has received a shutdown
+  # signal", exit 143), which is probabilistic and not a TLS failure. Shorter
+  # parallel jobs reduce that exposure; they do not remove it. The step
+  # commands are unchanged; only the grouping moved.
   tls-assurance:
     name: tls-assurance
     runs-on: ubuntu-latest
