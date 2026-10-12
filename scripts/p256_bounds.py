@@ -36,6 +36,12 @@ FORMULAS = {
     "matches": ("std/p256_vf.cho", ["rr", "x_of(pt_acc())", "z_of(pt_acc())"], [], {}, 8),
     "madd": ("std/p256_vf.cho", ["x1", "y1", "z1", "x2", "y2"], ["x_of(d)", "y_of(d)", "z_of(d)"], {}, 8),
     "double_point": ("std/p256_pt.cho", ["x", "y", "z"], ["x3", "y3", "z3"], {"b": Fraction(1)}),
+    # The comb's negation: y from the table (below p) taken from zero. Its merge under `keep` is word
+    # operations, not field ones: the accumulator is then either the old sum or the new, both within the bound.
+    "comb_multiply": ("std/p256_pt.cho", [], ["z_of(sel)"], {"zero": Fraction(0), "y_of(sel)": Fraction(1), "p256.one_mont()": Fraction(1)}),
+    "load_g": ("std/p256_vf.cho", [], ["y_of(pt_ent())", "z_of(pt_ent())"], {"e_zero()": Fraction(0), "y_of(pt_ent())": Fraction(1), "p256.one_mont()": Fraction(1)}),
+    # Signing's s = k^-1 (e + r d) modulo n, in units of n (R = 2^280 is 2^24 n too).
+    "finish": ("std/ecdsa_sign.cho", [], [], {}),
 }
 EXTRA = {}  # filled by formulas registered below, when their files exist
 
@@ -51,9 +57,22 @@ def body(path, name):
 CALL = re.compile(r"p256\.(mul|sqr|add|sub)\(w, ([^)]*?(?:\(\d+\))?)(?:, ([^,]*?\(\d+\)|[\w]+))?(?:, ([^,]*?\(\d+\)|[\w]+))?\);")
 
 
+# Calls that make no field value, and so leave the bounds alone.
+NEUTRAL = {"fe", "base", "init", "wipe", "is_zero", "below_p", "below_n", "store", "one_mont", "b_mont", "words"}
+# The group order's operations are the same kernels with n's constants.
+ALIAS = {"smul": "mul", "ssqr": "sqr", "sadd": "add", "sto_mont": "to_mont", "sfrom_mont": "from_mont"}
+
+
 def args(line):
-    m = re.match(r"\s*p256\.(mul|sqr|add|copy|put_n|to_mont|from_mont|sub(?:2|4|8|16|32|64)?)\(w, (.*)\);\s*$", line)
+    m = re.match(r"\s*p256\.load\((.*), w, (.*)\);\s*$", line)
+    if m:
+        # At most 32 bytes: below 2^256, which is below 2 p and 2 n.
+        return "load", [m.group(2).strip()]
+    m = re.match(r"\s*p256\.(mul|sqr|add|copy|put_n|set_zero|to_mont|from_mont|sreduce|invert|sinvert|smul|ssqr|sadd|sto_mont|sfrom_mont|sub(?:2|4|8|16|32|64)?)\(w, (.*)\);\s*$", line)
     if not m:
+        for name in re.findall(r"p256\.(\w+)\(", line):
+            if name not in NEUTRAL:
+                raise SystemExit(f"not understood, and it is a field operation: {line.strip()}")
         return None
     parts = []
     depth = 0
@@ -69,7 +88,7 @@ def args(line):
         else:
             cur += ch
     parts.append(cur.strip())
-    return m.group(1), parts
+    return ALIAS.get(m.group(1), m.group(1)), parts
 
 
 def pick_k(by):
@@ -92,6 +111,19 @@ def run(path, name, inputs, outputs, consts, b_in, rewrite=None):
         op, parts = a
         if op == "put_n":
             bound[parts[0]] = Fraction(1)
+            continue
+        if op == "set_zero":
+            bound[parts[0]] = Fraction(0)
+            continue
+        if op == "load":
+            bound[parts[0]] = Fraction(2)
+            continue
+        if op in ("sreduce", "invert", "sinvert"):
+            # sreduce answers below n; an inversion's last step is a multiplication of values below 2.
+            x, d = parts
+            if x not in bound:
+                raise SystemExit(f"{name}: {x} used before it is set: {line.strip()}")
+            bound[d] = Fraction(1) if op == "sreduce" else 1 + Fraction(4) / LIMIT
             continue
         if op in ("sqr", "copy", "to_mont", "from_mont"):
             x, d = parts
@@ -144,9 +176,10 @@ def run(path, name, inputs, outputs, consts, b_in, rewrite=None):
 # Functions whose outputs feed each other's inputs share one bound: the smallest B
 # for which every output is at most B when every input is at most B.
 GROUPS = [
-    ["add_points", "mixed_add", "double_point"],
-    ["double", "add_jac", "madd", "load_q", "matches"],
+    ["add_points", "mixed_add", "double_point", "comb_multiply"],
+    ["double", "add_jac", "madd", "load_q", "load_g", "matches"],
     ["on_curve_xy"],
+    ["finish"],
 ]
 
 

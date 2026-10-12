@@ -258,6 +258,13 @@ def main():
     cases += verify_cases(rng, count, vectors)
     cases += edge_signatures(rng, 40 if vectors else count)
     cases += raw_cases(rng, count // 4, vectors)
+    cases.append((f"J {h(1)}", "-52 -57 -52 -54 -31 -42"))
+    # ecdsa_sign.finish with x in [n, p): r = x - n. No k G reaches it (probability about 2^-128).
+    for x in [N, N + 1, P - 1, N + rng.randrange(P - N), rng.randrange(N)]:
+        e, dk, kn = rng.randrange(N), rng.randrange(1, N), rng.randrange(1, N)
+        rv = x % N
+        sv = pow(kn, -1, N) * (e + rv * dk) % N
+        cases.append((f"F {h(e)} {h(dk)} {h(kn)} {h(x)}", h(rv) + h(sv) if rv and sv else "-76"))
     for k in [1, 2, N - 1, rng.randrange(1, N), rng.randrange(1, N)]:
         cases += [(f"G {h(k)}", "1"), (f"H {h(k)}", "1")]
     # The final check of verification: x = r, or x = r + n when that is below p. No real signature

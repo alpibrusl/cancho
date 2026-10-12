@@ -16,6 +16,8 @@
 //     D a      sqr_p, E a sqr_n. The ten limbs of the answer in decimal, to check the accumulators' bound
 //     G k      ecdh.public_key, then whether `work` holds only zeros where the call used it: 1 or 0
 //     H k      ecdsa_sign.sign of the digest k with the key k, then the same
+//     J        the new public entry points given wrong lengths: the six codes, space separated
+//     F e d k x  ecdsa_sign.finish (e, d, k, x 32 bytes each): r || s, or the code
 //     T r x    p256_vf.check_x: 1 when a sum of affine x passes the check against r, else 0
 //     C a b    a * b * c mod p, where c is 8 (a*b, add, add, add) -- a chain of lazy sums
 import std.buffer;
@@ -167,6 +169,38 @@ fn case[&i, &s, &w](io: &!i Io, s: &s [byte], at: int, w: &!w [int]) -> [io_writ
                 i = i + 1;
             }
             io.print_int(io, 1 - dirty);
+            io.newline(io);
+            return 0;
+        } else if op == 74 {
+            let short = alloc_slice[r](31, byte_of(1));
+            let q = alloc_slice[r](64, byte_of(4));
+            io.print_int(io, p256_pt.base_multiply(short, b, b, w));
+            io.space(io);
+            io.print_int(io, p256_pt.base_multiply(a, short, b, w));
+            io.space(io);
+            io.print_int(io, p256_pt.point_multiply(short, a, b, out, w));
+            io.space(io);
+            io.print_int(io, p256_pt.point_multiply(a, a, short, out, w));
+            io.space(io);
+            io.print_int(io, p256_vf.verify(a, q, a, a, w));
+            io.space(io);
+            io.print_int(io, p256_vf.wnaf(w, len(w) - 5, 0, 5));
+            io.newline(io);
+            return 0;
+        } else if op == 70 {
+            let kk = alloc_slice[r](32, byte_of(0));
+            let xx = alloc_slice[r](32, byte_of(0));
+            let sig = alloc_slice[r](64, byte_of(0));
+            let f3 = field_end(s, f2) + 1;
+            let f4 = field_end(s, f3) + 1;
+            hex_into(s, f3, kk);
+            hex_into(s, f4, xx);
+            let code = ecdsa_sign.finish(a, b, kk, xx, sig, w);
+            if code == 0 {
+                print_hex(io, sig);
+            } else {
+                io.print_int(io, code);
+            }
             io.newline(io);
             return 0;
         } else if op == 84 {

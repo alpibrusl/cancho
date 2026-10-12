@@ -123,7 +123,7 @@ mut(PT, "recode", "recode: the carry threshold 9 (digits to +9)", "let c = v + 7
 mut(PT, "recode", "recode: the final carry dropped", "w[dig + 64] = carry;", "w[dig + 64] = 0;")
 mut(PT, "recode", "recode: nibbles from the wrong end of the scalar", "scalar[31 - i / 2]", "scalar[i / 2]")
 mut(PT, "comb_multiply", "comb_multiply: a negative digit not negated", "let neg = value_barrier(d >> 63);", "let neg = value_barrier(0);")
-mut(PT, "comb_multiply", "comb_multiply: entry j for digit j", "let m = value_barrier(eq_mask(j + 1, mag));", "let m = value_barrier(eq_mask(j, mag));")
+mut(PT, "comb_multiply", "comb_multiply: entry j for digit j", "let pick = eq_mask(j + 1, mag) | eq_mask(j, 0) & eq_mask(mag, 0);", "let pick = eq_mask(j, mag) | eq_mask(j, 0) & eq_mask(mag, 0);")
 mut(PT, "comb_multiply", "comb_multiply: the zero digit adds the dummy", "let keep = value_barrier(eq_mask(mag, 0));", "let keep = value_barrier(eq_mask(mag, 100));")
 mut(PT, "comb_multiply", "comb_multiply: position i + 1 of the table", "let row = p256_comb.comb_row((8 * i + j) * 20);", "let row = p256_comb.comb_row((8 * (i + 1) % 65 + j) * 20);")
 mut(PT, "comb_multiply", "comb_multiply: the last position left out", "while i < 65 {", "while i < 64 {")
@@ -184,7 +184,7 @@ mut(ES, "finish", "sign: s without k^-1", "    p256.sinvert(w, kr, kr);\n", "")
 mut(ES, "finish", "sign: r not reduced mod n", "    p256.sreduce(w, rr, rr);\n", "")
 mut(ES, "finish", "sign: r from the secret key", "    p256.load(x, w, rr);", "    p256.load(key, w, rr);")
 mut(ES, "sign", "sign: the digest not reduced for the nonce", "        p256.sreduce(work, p256.fe(p256.base()), p256.fe(p256.base()));\n", "")
-mut(ES, "sign", "sign: the work not wiped", "    p256.wipe(work, 0, p256_pt.work_len());\n", "")
+mut(ES, "sign", "sign: only the words the table used wiped", "    p256.wipe(work, 0, work_len());\n", "    p256.wipe(work, 0, p256_pt.work_len());\n")
 
 # Argued to change nothing observable (docs/p256-fast.md §8.4); each is still run, and reported.
 EQUIVALENT = {
@@ -196,7 +196,6 @@ EQUIVALENT = {
     "load_q: the wrong multiple": "k is odd, so (k - 1) / 2 and k / 2 are the same integer division.",
     "verify: u1's digits at width 5": "A width-5 wNAF of u1 has digits in +-15, all in the generator's table of +-63: the same sum with more additions.",
     "ecdsa P-256: the fast path skipped for the wrong curve": "The generic bigmod path is still there and correct for P-256, so the answers are the same; the mutant shows the two paths agree on every case run.",
-    "sign: r not reduced mod n": "x < p < 2n, and x >= n has probability (p - n) / p, about 2^-128 per signature: no input reaches it (the same reasoning as docs/ecdsa-sign.md §2.1's 2^-256 for r = 0).",
 }
 
 

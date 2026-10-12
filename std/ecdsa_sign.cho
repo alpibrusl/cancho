@@ -182,7 +182,16 @@ fn candidate[&st, &k, &v, &t](st: &!st [int], kk: &k [byte], v: &!v [byte], t: &
 // r = x mod n into sig[0..32] and s = k^-1 (e + r·d) mod n into
 // sig[32..64], on `std.p256`'s arithmetic modulo n. `refused_nonce()` when r or s
 // is zero, so the caller takes the next k.
-fn finish[&e, &d, &k, &x, &s, &w](e: &e [byte], key: &d [byte], k: &k [byte], x: &x [byte], sig: &!s [byte], w: &!w [int]) -> [] int {
+// Public for `tests/programs/p256_driver.cho` (an x in [n, p), which no real k·G
+// reaches); not part of the signing API. `sig` is 64 bytes and `w` `work_len()` words,
+// or -74 and -75.
+pub fn finish[&e, &d, &k, &x, &s, &w](e: &e [byte], key: &d [byte], k: &k [byte], x: &x [byte], sig: &!s [byte], w: &!w [int]) -> [] int {
+    if len(sig) != 64 {
+        return refused_output_length();
+    }
+    if len(w) < work_len() || len(x) > 35 || len(e) > 35 || len(key) > 35 || len(k) > 35 {
+        return refused_work_length();
+    }
     p256.init(w);
     let rr = p256.fe(p256.base());
     let dr = p256.fe(p256.base() + 1);
@@ -292,7 +301,7 @@ pub fn sign[&g, &d, &e, &s, &w](digest: &g [byte], key: &d [byte], extra: &e [by
         bytes.zero(point);
         bignum.zero(st);
     }
-    p256.wipe(work, 0, p256_pt.work_len());
+    p256.wipe(work, 0, work_len());
     if code != 0 {
         bytes.zero(sig);
     }

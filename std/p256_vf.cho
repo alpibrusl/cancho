@@ -273,6 +273,11 @@ fn add_bit[&w](w: &!w [int], x: int, pos: int) -> [] int {
 // (-2^(width-1), 2^(width-1)), nonzero digits at least `width` apart. Public for
 // `tests/programs/p256_driver.cho`.
 pub fn wnaf[&w](w: &!w [int], x: int, dig: int, width: int) -> [] int {
+    // -42 (`ecdsa-work-length`) when the element or the digits are not inside `w`, or the
+    // width is not one this module uses.
+    if x < 0 || dig < 0 || x + 10 > len(w) || dig + 260 > len(w) || width < 2 || width > 8 {
+        return -42;
+    }
     var i = 0;
     while i < 260 {
         w[dig + i] = 0;
@@ -355,6 +360,9 @@ fn matches[&w](w: &!w [int], rr: int) -> [] bool {
 // Whether a sum with affine x `x` (Z = 1) passes the final check against `r`: `matches`, for
 // `tests/programs/p256_driver.cho`, which cannot reach the sums for which x = r + n.
 pub fn check_x[&r, &x, &w](r: &r [byte], x: &x [byte], w: &!w [int]) -> [] bool {
+    if len(w) < work_len() || len(r) > 35 || len(x) > 35 {
+        return false;
+    }
     p256.init(w);
     p256.load(r, w, e_r());
     p256.load(x, w, x_of(pt_acc()));
@@ -368,6 +376,12 @@ pub fn check_x[&r, &x, &w](r: &r [byte], x: &x [byte], w: &!w [int]) -> [] bool 
 // length up to 35. The code is `std.ecdsa`'s: -38 r, -39 s, -33 and -34 the
 // point, -40 infinity, -41 mismatch.
 pub fn verify[&d, &q, &r, &s, &w](digest: &d [byte], point: &q [byte], r: &r [byte], s: &s [byte], w: &!w [int]) -> [] int {
+    if len(w) < work_len() {
+        return -42;
+    }
+    if len(point) != 65 || int_of(point[0]) != 4 {
+        return -31;
+    }
     p256.init(w);
     p256.set_zero(w, e_zero());
     // r and s in [1, n).

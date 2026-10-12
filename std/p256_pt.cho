@@ -299,7 +299,7 @@ fn multiply[&s, &w](w: &!w [int], scalar: &s [byte]) -> [] int {
 // ---- k times the generator, from a table (docs/p256-fast.md §6) ----
 
 // The digits of `scalar` (32 bytes, big-endian) in signed radix 16: k = sum
-// of d_i 16^i, d_i in [-8, 8], 65 of them, the last 0 or 1. A nibble above 8
+// of d_i 16^i, d_i in [-7, 8], 65 of them, the last 0 or 1. A nibble above 8
 // becomes negative and carries one into the next. Arithmetic only: no
 // comparison, no branch, no index on the scalar.
 fn recode[&s, &w](scalar: &s [byte], w: &!w [int]) -> [] int {
@@ -322,7 +322,8 @@ fn recode[&s, &w](scalar: &s [byte], w: &!w [int]) -> [] int {
 // table entry and no doubling. Constant time in k: position i of the table is
 // public; within it every one of the eight multiples is read under a mask, a
 // negative digit is applied by choosing between y and -y under a mask, and a
-// zero digit adds a dummy entry and keeps the old sum under a mask.
+// zero digit adds the position's first entry (a point of the curve) and keeps
+// the old sum under a mask.
 fn comb_multiply[&w](w: &!w [int]) -> [] int {
     let dig = digits();
     let sel = pt_sel();
@@ -338,7 +339,7 @@ fn comb_multiply[&w](w: &!w [int]) -> [] int {
         // All ones for a negative digit; its magnitude.
         let neg = value_barrier(d >> 63);
         let mag = (d ^ neg) - neg;
-        // The entry: x then y, zero for a zero digit.
+        // The entry: x then y.
         let entry = w[x_of(sel)..x_of(sel) + 20];
         var t = 0;
         while t < 20 {
@@ -347,7 +348,12 @@ fn comb_multiply[&w](w: &!w [int]) -> [] int {
         }
         var j = 0;
         while j < 8 {
-            let m = value_barrier(eq_mask(j + 1, mag));
+            // Entry j holds digit j + 1. A zero digit takes entry 0 (the point 16^i G) as its
+            // dummy, so the addition below always has a point of the curve for an operand,
+            // never zeros (`docs/ecdh.md` §3: zero operands showed in the time), and its
+            // result is dropped under `keep`. `j` is public; the masks are of the digit.
+            let pick = eq_mask(j + 1, mag) | eq_mask(j, 0) & eq_mask(mag, 0);
+            let m = value_barrier(pick);
             let row = p256_comb.comb_row((8 * i + j) * 20);
             t = 0;
             while t < 20 {
@@ -438,6 +444,16 @@ fn affine[&x, &y, &w](w: &!w [int], out_x: &!x [byte], out_y: &!y [byte]) -> [] 
 // scalar times the generator, x and y (32 bytes each; `out_y` may be empty).
 // `scalar` is 32 bytes, big-endian, in [1, n), range-checked by the caller.
 pub fn base_multiply[&s, &x, &y, &w](scalar: &s [byte], out_x: &!x [byte], out_y: &!y [byte], w: &!w [int]) -> [] int {
+    // The codes of `std.ecdh`: -51 work, -52 scalar length, -57 output length.
+    if len(w) < work_len() {
+        return -51;
+    }
+    if len(scalar) != 32 {
+        return -52;
+    }
+    if len(out_x) != 32 || len(out_y) != 32 && len(out_y) != 0 {
+        return -57;
+    }
     p256.init(w);
     recode(scalar, w);
     comb_multiply(w);
@@ -449,6 +465,18 @@ pub fn base_multiply[&s, &x, &y, &w](scalar: &s [byte], out_x: &!x [byte], out_y
 // scalar times the peer's point (`px`, `py`, public, 32 bytes each), x only. -55 when a
 // coordinate is not below p, -56 when the point is not on the curve.
 pub fn point_multiply[&s, &px, &py, &x, &w](scalar: &s [byte], peer_x: &px [byte], peer_y: &py [byte], out_x: &!x [byte], w: &!w [int]) -> [] int {
+    if len(w) < work_len() {
+        return -51;
+    }
+    if len(scalar) != 32 {
+        return -52;
+    }
+    if len(out_x) != 32 {
+        return -57;
+    }
+    if len(peer_x) != 32 || len(peer_y) != 32 {
+        return -54;
+    }
     p256.init(w);
     var code = load_point(peer_x, peer_y, w);
     if code != 0 {

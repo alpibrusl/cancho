@@ -17,8 +17,8 @@ import std.p256_kernels;
 //
 // Bounds (`docs/p256-fast.md` §4.3; `scripts/p256_bounds.py` checks them
 // against the formulas of `std.p256_pt`): every element is tight (limbs
-// below 2^28). `mul` and `sqr` take inputs up to 4096 p and answer below
-// 1.001 p. `add` does not reduce. `sub2` to `sub64` add 2 p to 64 p first, so the
+// below 2^28). `mul` and `sqr` answer below p + x y / R: under 1.001 p when
+// both inputs are below 128 p, under 2 p for x y below 2^24 p^2 (4096 p each). `add` does not reduce. `sub2` to `sub64` add 2 p to 64 p first, so the
 // second operand must be below that. The value of an element must stay below 2^280
 // (about 16 million p), which no sequence of the formulas comes near.
 //
