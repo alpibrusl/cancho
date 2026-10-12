@@ -10,6 +10,9 @@ use super::sockets::{BACKENDS, build};
 use super::*;
 
 const ENOTTY: i32 = 25;
+/// What macOS answers for `tcsetattr` on a device that is not a terminal
+/// (`/dev/null`): "Operation not supported by device", where Linux says ENOTTY.
+const ENODEV: i32 = 19;
 const EINVAL: i32 = 22;
 const NO_PORT: i32 = 99;
 
@@ -64,8 +67,9 @@ fn a_missing_device_is_a_value_not_a_crash() {
 }
 
 #[test]
-fn a_device_that_is_not_a_terminal_answers_enotty() {
-    expect("enotty", "/dev/null", 115_200, ENOTTY);
+fn a_device_that_is_not_a_terminal_is_refused_by_tcsetattr() {
+    let refusal = if cfg!(target_os = "macos") { ENODEV } else { ENOTTY };
+    expect("not-a-tty", "/dev/null", 115_200, refusal);
 }
 
 #[test]

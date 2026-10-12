@@ -157,7 +157,7 @@ Every refusal carries a rule tag; none of these reaches a panic:
 | `tty_open` under a bound the path is outside | a located `tty-path` refusal at compile time (the `fs_read` shape) |
 | `tty_open` of a path that is not a device or will not open | `Failed(errno)` in `TtyOpened` — the program's question, not the compiler's |
 | `tty_configure` of a speed the platform has no rate for | `EINVAL` (22), before the port is touched: on Linux anything outside the standard-rate table, on macOS a non-positive rate; a rate the macOS driver itself refuses answers the `errno` of the `IOSSIOSPEED` ioctl |
-| `tty_configure` of a descriptor that is not a terminal | `ENOTTY` (25), from `tcsetattr` — `/dev/null` is the fixture |
+| `tty_configure` of a descriptor that is not a terminal | the `errno` of `tcsetattr`: `ENOTTY` (25) on Linux, `ENODEV` (19) on macOS (measured in CI) — `/dev/null` is the fixture |
 | read/write/flush on a closed or errored port | `-1`, the `Conn` verbs' convention |
 | `poller_add_tty` of an unconfigured port | allowed: registration is orthogonal to configuration, the `poller_add_udp` precedent |
 
