@@ -27,9 +27,6 @@ import tls_liar_auth as A  # noqa: E402
 
 # The cases where the two clients differ on accept or refuse, each on purpose, with why.
 EXPECTED = {
-    "client auth: no signature_algorithms at all: empty Certificate":
-        "RFC 8446 §4.3.2 requires signature_algorithms in a CertificateRequest; OpenSSL refuses the request, this client "
-        "treats it as one it cannot satisfy and answers with the empty Certificate",
     "ALPN: an unoffered selection (spdy/3)": "RFC 7301 §3.1: the server's choice is one of the client's; OpenSSL 3.0 takes any name",
     "ALPN: a selection that is a prefix of an offered name":
         "the same: OpenSSL does not compare the server's choice with the client's offer",
@@ -40,6 +37,9 @@ EXPECTED = {
         "not run under OpenSSL: it needs the session OpenSSL saved from the first connection's ticket",
 }
 SKIPPED = {"client auth: a CertificateRequest in a resumed handshake"}
+# Cases about the engine's own state, which `openssl s_client` has no counterpart for: an identity removed or replaced mid-handshake
+# (the driver's `Z`), answering TLS 1.2 turned off (`V`), and an identity chosen for an IP address host.
+SKIPPED_PARTS = ("identity removed", "identity replaced", "IP address host", "answering TLS 1.2 turned off")
 
 
 class Any:
@@ -114,7 +114,7 @@ def main():
     wanted = sys.argv[1:]
     differ = alerts = agree = known = 0
     for name, tag, alert, encrypted, fn, server_class, config in A.CASES:
-        if config or name in SKIPPED or (wanted and not any(w in name for w in wanted)):
+        if config or name in SKIPPED or any(p in name for p in SKIPPED_PARTS) or (wanted and not any(w in name for w in wanted)):
             continue
         A.LAST_SENT = None
         ours = ("accepted", None) if tag == "ok" else ("refused", alert)

@@ -187,7 +187,9 @@ jobs:
       # (-Verify, -verify), nginx, Go and wolfSSL, in TLS 1.3 and 1.2, through the HTTP client's example driver (built above); and
       # beside `openssl s_client` on the lying server's flights (the same server code, the client's signature verified by it).
       - name: Client certificates and ALPN, the interop matrix (docs/tls-parity.md §6.10)
-        run: python3 scripts/tls_auth_interop.py "$RUNNER_TEMP/http_fetch_nb"
+        run: |
+          sudo mkdir -p /etc/cancho/http_fetch_nb && sudo chown "$USER" /etc/cancho/http_fetch_nb
+          python3 scripts/tls_auth_interop.py "$RUNNER_TEMP/http_fetch_nb"
 
       - name: Client certificates and ALPN, the differential against openssl s_client (§6.10)
         run: python3 scripts/tls_differential_auth.py

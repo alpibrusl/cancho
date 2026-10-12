@@ -12,15 +12,16 @@ edition 5;
 //     --expect         `Expect: 100-continue` with the body    --head          HEAD instead of GET
 //     --connect-ms N, --head-ms N, --body-ms N: the client's timers (5000, 30000, 30000)     --quiet   only failures and the summary
 //     --pool N         idle connections kept for one upstream (8)      --close   `Connection: close` on every request: a connection for each
-//     --client-cert FILE --client-key FILE   a client certificate for an upstream that asks for one (PEM chain, leaf first; P-256 key, PKCS#8 or
-//                      SEC 1, unencrypted): answers a CertificateRequest from every `https` upstream (`docs/tls-parity.md` §6.2). Both, or neither.
+//     --client-identity   a client certificate for an upstream that asks for one (`docs/tls-parity.md` §6.2): the PEM chain (leaf first) in
+//                      /etc/cancho/http_fetch_nb/client.pem and its P-256 key (PKCS#8 or SEC 1, unencrypted) in client.key, a directory fixed at
+//                      build time so the program's authority names it and `/dev/urandom` and nothing else; answers every `https` upstream that asks
 //     --alpn LIST      offer these ALPN protocols, comma-separated (`h2,http/1.1`): this client speaks HTTP/1.1 only, so `--alpn http/1.1` keeps a
 //                      server from choosing h2 (`docs/tls-parity.md` §6.6)
 //
 // A URL is `http://host[:port]/path` or `https://host[:port]/path`. **A host is an IPv4 literal or a name given to `--resolve`**:
 // resolving is the caller's, and this program is the caller (`docs/http-client.md` §3.8). For `https` the PEM bundle of roots on
 // standard input is the trust store (nothing is built in) and the chain is checked against the host as written in the URL.
-// One line per response, as `tls_many`'s are (with `--alpn` or `--client-cert`, an `https` response's line ends with what that connection
+// One line per response, as `tls_many`'s are (with `--alpn` or `--client-identity`, an `https` response's line ends with what that connection
 // negotiated: ` alpn=<protocol, or -> auth=<0 none asked, 1 the chain was sent, 2 the empty Certificate>`):
 //
 //     <lane> <status> <bytes of body> <SHA-256 of them> <new|reused>
@@ -135,7 +136,7 @@ fn value_option[&s](a: &s [byte]) -> [] int {
 // `cfg`: 0 slots, 1 requests per URL, 2 seconds to run, 3 retry allowed, 4 the first URL's argument, 5 how many URLs, 6 how many
 // `--resolve`, 7 whether any URL is `https`, 8 a body: 0 none, 1 with a length, 2 chunked, 9 its size, 10 `Expect`, 11 `HEAD`,
 // 12 quiet, 13 14 15 the connect, head and body timers (0: the default), 16 idle connections kept for one upstream (0: 8), 17 `Connection: close` on every request,
-// 18 19 20 the argument (plus one) holding the `--alpn` list, the `--client-cert` file and the `--client-key` file (0: none). Answers "", or the reason the command line is refused.
+// 18 the argument (plus one) holding the `--alpn` list (0: none), 19 1 for `--client-identity`. Answers "", or the reason the command line is refused.
 fn parse_options[&g, &c, &r](args: &g Args, cfg: &!c [int], resolves: &!r [int]) -> [args] &static [byte] {
     cfg[0] = 8;
     cfg[1] = 1;
@@ -160,18 +161,15 @@ fn parse_options[&g, &c, &r](args: &g Args, cfg: &!c [int], resolves: &!r [int])
         } else if same(a, "--close") {
             cfg[17] = 1;
             at = at + 1;
-        } else if same(a, "--alpn") || same(a, "--client-cert") || same(a, "--client-key") {
+        } else if same(a, "--client-identity") {
+            cfg[19] = 1;
+            at = at + 1;
+        } else if same(a, "--alpn") {
             if at + 1 >= arg_count(args) {
                 return "an option needs a value";
             }
             // The index of the value argument, plus one.
-            if same(a, "--alpn") {
-                cfg[18] = at + 2;
-            } else if same(a, "--client-cert") {
-                cfg[19] = at + 2;
-            } else {
-                cfg[20] = at + 2;
-            }
+            cfg[18] = at + 2;
             at = at + 2;
         } else if slot >= 0 {
             if at + 1 >= arg_count(args) {
@@ -215,9 +213,6 @@ fn parse_options[&g, &c, &r](args: &g Args, cfg: &!c [int], resolves: &!r [int])
     }
     if cfg[11] == 1 && cfg[8] != 0 {
         return "--head and a body do not go together";
-    }
-    if cfg[19] > 0 != cfg[20] > 0 {
-        return "--client-cert and --client-key go together";
     }
     return "";
 }
@@ -765,7 +760,7 @@ fn go[&h, &n, &k, &i, &g, &u, &p, &q](heap: &!h Heap, net: &n Net(""), clock: &k
                             }
                         }
                     }
-                    if roots >= 1 && secure && len(chain) > 0 && configured == 0 {
+                    if roots >= 1 && secure && cfg[19] == 1 && len(chain) > 0 && configured == 0 {
                         borrow mut iox as &!ioh in {
                             configured = fio.client_identity(ioh, chain, key, clock_unix_ms(clock));
                             if configured > 0 {
@@ -826,48 +821,50 @@ fn tls_tag(code: int) -> [] &static [byte] {
     return tls.refusal_tag(code);
 }
 
-// The argument after `name`, or 0.
-fn option_value[&g](args: &g Args, name: &static [byte]) -> [args] int {
+// Whether `name` is one of the arguments.
+fn has_flag[&g](args: &g Args, name: &static [byte]) -> [args] bool {
     var at = 1;
-    while at + 1 < arg_count(args) {
+    while at < arg_count(args) {
         if same(arg(args, at), name) {
-            return at + 1;
+            return true;
         }
         at = at + 1;
     }
-    return 0;
+    return false;
 }
 
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args, net, clock } = split(world);
     release(ffi);
+    // Two paths, fixed at build time (`docs/narrowing-into-several.md`): the entropy, and the directory the client identity is read
+    // from, so the authority report names those two and not `fs_read("")`.
+    let (urandom, idf) = narrow(fs, "/dev/urandom", "/etc/cancho/http_fetch_nb");
     var status = 2;
     borrow mut io as &!i in {
         borrow mut heap as &!h in {
             borrow args as &g in {
                 region r {
                     let entropy = alloc_slice[r](32, byte_of(0));
-                    // The operator names the client certificate's files, so this program holds the whole filesystem (`fs_read("")`) as
-                    // `tls_echo` does; it reads `/dev/urandom` and those two files, and nothing else.
                     let chain = alloc_slice[r](32768, byte_of(0));
                     let key = alloc_slice[r](8192, byte_of(0));
                     var chain_n = 0;
                     var key_n = 0;
                     var unreadable = 0;
-                    borrow fs as &ff in {
-                        fs_read(ff, "/dev/urandom", entropy);
-                        let ci = option_value(g, "--client-cert");
-                        let ki = option_value(g, "--client-key");
-                        if ci > 0 && ki > 0 {
-                            chain_n = fs_read(ff, arg(g, ci), chain);
-                            key_n = fs_read(ff, arg(g, ki), key);
-                            if chain_n <= 0 || key_n <= 0 {
-                                unreadable = 1;
-                            }
+                    borrow urandom as &uf in {
+                        fs_read(uf, "/dev/urandom", entropy);
+                    }
+                    // Read when the flag is anywhere on the line; used only when `parse_options` takes it as the flag.
+                    if has_flag(g, "--client-identity") {
+                        borrow idf as &df in {
+                            chain_n = fs_read(df, "/etc/cancho/http_fetch_nb/client.pem", chain);
+                            key_n = fs_read(df, "/etc/cancho/http_fetch_nb/client.key", key);
+                        }
+                        if chain_n <= 0 || key_n <= 0 {
+                            unreadable = 1;
                         }
                     }
                     if unreadable == 1 {
-                        io.error_all(i, "http_fetch_nb: cannot read --client-cert or --client-key\n");
+                        io.error_all(i, "http_fetch_nb: cannot read /etc/cancho/http_fetch_nb/client.pem and client.key\n");
                     } else {
                         borrow net as &nn in {
                             borrow clock as &cc in {
@@ -880,7 +877,8 @@ fn main(world: World) -> [] int {
             }
         }
     }
-    release(fs);
+    release(urandom);
+    release(idf);
     release(net);
     release(clock);
     release(args);

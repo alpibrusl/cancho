@@ -28,9 +28,9 @@ fn example_files() -> Vec<PathBuf> {
 
 /// The report, pinned, as the TLS echo's is: what the example can reach is the review of it a supervisor reads, so a label that
 /// appears or goes is a red build. No foreign code (`bounded`); the network only outbound (`net_out`, with no host named: the
-/// URLs are the operator's); the sockets and the poller; the clock; the console and standard input (the roots); and the filesystem for
-/// reading (`fs_read("")`, since #386): `/dev/urandom` for the TLS engine's entropy and the two files `--client-cert` and `--client-key`
-/// name, which the operator chooses, as `tls_echo`'s directory is (`docs/tls-parity.md` §6.2). No file is written and nothing is listened on.
+/// URLs are the operator's); the sockets and the poller; the clock; the console and standard input (the roots); and two paths for
+/// reading, fixed at build time by one `narrow`: `/dev/urandom` for the TLS engine's entropy, and `/etc/cancho/http_fetch_nb`, where
+/// `--client-identity` reads the client certificate and key (`docs/tls-parity.md` §6.2). No file is written and nothing is listened on.
 #[test]
 fn the_example_reports_a_bounded_authority_and_no_foreign_code() {
     let out = Command::new(BIN)
@@ -54,7 +54,8 @@ fn the_example_reports_a_bounded_authority_and_no_foreign_code() {
         "\"conn_read\", \"argument\": null",
         "\"conn_write\", \"argument\": null",
         "\"err_write\", \"argument\": null",
-        "\"fs_read\", \"argument\": \"\"",
+        "\"fs_read\", \"argument\": \"/dev/urandom\"",
+        "\"fs_read\", \"argument\": \"/etc/cancho/http_fetch_nb\"",
         "\"heap\", \"argument\": null",
         "\"io_read\", \"argument\": null",
         "\"io_write\", \"argument\": null",
@@ -312,15 +313,14 @@ fn it_offers_alpn_to_https_hello_and_refuses_what_it_cannot_send() {
     assert_eq!(status, Some(0), "no offer, no suffix: {lines:?}");
     assert!(lines[0].ends_with(" new"), "{lines:?}");
 
-    // The identity options go together, and name files that can be read.
+    // The identity is not a path the operator names: `--client-cert` is no option, and `--client-identity` reads the fixed directory,
+    // whose files a test machine does not have (the live mutual-TLS rows install them: `scripts/tls_auth_interop.py`).
     let (status, lines) = run(&fetch, &with(&["--client-cert", "chain.pem"]), Some(&ca));
     assert_eq!(status, Some(2), "{lines:?}");
-    let (status, _) = run(
-        &fetch,
-        &with(&["--client-cert", "/nonexistent.pem", "--client-key", "/nonexistent.key"]),
-        Some(&ca),
-    );
-    assert_eq!(status, Some(2), "files that cannot be read");
+    if !Path::new("/etc/cancho/http_fetch_nb/client.pem").exists() {
+        let (status, _) = run(&fetch, &with(&["--client-identity"]), Some(&ca));
+        assert_eq!(status, Some(2), "the identity's files cannot be read");
+    }
 
     let _ = server.0.kill();
     let _ = server.0.wait();

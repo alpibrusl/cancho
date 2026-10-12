@@ -42,7 +42,8 @@ def measure(fetch, m, work, version, mode, client, handshakes):
         argv = [fetch, "--resolve", f"{I.HOST}=127.0.0.1", "--timeout", "120", "--quiet", "--close", "--slots", "1",
                 "--repeat", str(handshakes)]
         if client:
-            argv += ["--client-cert", m.path("good.pem"), "--client-key", m.path("good.key")]
+            I.install_identity(m, "good")
+            argv += ["--client-identity"]
         argv += [f"https://{I.HOST}:{server.port}/"]
         cpu, code = cpu_of(argv, open(m.path("ca.pem"), "rb").read())
         assert code == 0, f"fetch ended with {code}"

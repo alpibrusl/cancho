@@ -215,10 +215,22 @@ def build_servers(work):
     return out
 
 
+# Where `fetch --client-identity` reads its certificate and key: a directory fixed when it was built, so its authority report names it
+# (`examples/http_fetch_nb/fetch.cho`). The machine running this must let it be written (CI makes it its user's).
+IDENTITY_DIR = "/etc/cancho/http_fetch_nb"
+
+
+def install_identity(m, client):
+    os.makedirs(IDENTITY_DIR, exist_ok=True)
+    shutil.copyfile(m.path(f"{client}.pem"), os.path.join(IDENTITY_DIR, "client.pem"))
+    shutil.copyfile(m.path(f"{client}.key"), os.path.join(IDENTITY_DIR, "client.key"))
+
+
 def run_fetch(fetch, m, port, client=None, alpn=None, extra=()):
     argv = [fetch, "--resolve", f"{HOST}=127.0.0.1", "--timeout", "10"]
     if client:
-        argv += ["--client-cert", m.path(f"{client}.pem"), "--client-key", m.path(f"{client}.key")]
+        install_identity(m, client)
+        argv += ["--client-identity"]
     if alpn is not None:
         argv += ["--alpn", alpn]
     argv += list(extra) + [f"https://{HOST}:{port}/"]

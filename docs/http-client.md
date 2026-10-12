@@ -499,10 +499,10 @@ The calls of §4 exist with these differences *(corrected)*:
 5. **Cost** is §10.5.
 6. **Authority:** the package with a program that makes a request and reads a response reports `heap` and `io_write` (the program printing)
    and nothing else, `bounded`, no foreign code (`the_package_reaches_the_heap_and_nothing_else`); the example reports `args`, `clock`,
-   `conn_read`, `conn_write`, `err_write`, `fs_read("")`, `heap`, `io_read`, `io_write`, `net_out("")` and `poll`, bounded, no
-   foreign code, pinned in `conformance/http_fetch_nb.rs` like the TLS echo's. *Corrected in place (#386): it was `fs_read("/dev/urandom")`. The
-   example now reads the two files `--client-cert` and `--client-key` name, a path the operator chooses at run time, so it holds the whole
-   filesystem for reading as `tls_echo` does (`docs/tls-parity.md` §6.2).*
+   `conn_read`, `conn_write`, `err_write`, `fs_read("/dev/urandom")`, `fs_read("/etc/cancho/http_fetch_nb")`, `heap`, `io_read`, `io_write`,
+   `net_out("")` and `poll`, bounded, no foreign code, pinned in `conformance/http_fetch_nb.rs` like the TLS echo's. *Since #386: the second path
+   is the directory `--client-identity` reads the client certificate and key from, fixed at build time by one `narrow` as `examples/tls_echo_fixed`'s
+   is, so the report still names every path the program can read (`docs/tls-parity.md` §6.2).*
 7. **The gate:** `cargo fmt --all --check` and `cargo clippy --all-targets -- -D warnings` clean; `cargo test --workspace --no-fail-fast` on macOS
    (arm64) and on Linux (aarch64, in Docker: x86-64 is CI's) with the two tests that need a git checkout failing in a worktree and everything
    else passing; `scripts/publish_packages.py --check` clean.
