@@ -941,7 +941,9 @@ that way.
 
 ### 10.8 The next levers, ranked by measured gain
 
-Gain is the share of the as-built x86-64 handshake (§10.3, §10.4) the lever removes, and of a kept request (§10.5). A1's is
+Gain is the share of the as-built x86-64 handshake (§10.3, §10.4) the lever removes, and of a kept request (§10.5). The issues
+are #378's sub-issues; #380 and #381 were reopened for what of their scope is left (B2 and B3, P-384; P-256, `bigmod` and
+Poly1305 on the builtins). A1's is
 measured (the experiment of §10.3); the others are **arithmetic from measured shares and the stated assumption**. The gains are
 of today's handshake and overlap where two act on the same code (P1 and B2 on the check, D3 and D4 on HMAC's compressions); the
 sequence below the table applies each to what the ones before it leave.
@@ -951,11 +953,11 @@ sequence below the table applies each to what the ones before it leave.
 | **A1** | **keep freed region chunks per thread** (a small stack of them: the key schedule nests regions three deep, `hmac.init` in `hkdf.expand` in `hkdf.expand_label`), so `free` never trims and `malloc` never grows the heap. Compiler change, both backends | #375 | **measured**: glibc told not to trim, alternating (§10.3) | **34.4%** (arm64 27.2) | **54.9%** (49.5) | **40.3%** (32.0) | 0 (no `brk` now) |
 | **P1** | **P-256's field on `mul_wide`**: four 64-bit limbs in place of ten of 28 bits (`wide-multiply.md` §11) | #381 | the multiplication kernels (`p256_kernels.mul_p`, `sqr_p`, `sqr_n`) are 24.7% of the server's handshake and 22.2% of the client's by the profile (self time; all kernels 33.0%); assumed **2.5 times** on them, the low end of `wide-multiply.md` §11's 3 to 3.5 for `bigmod` | 14.8 points | 0 | 13.3 | 0 |
 | **B2** | **a fixed-base table for the server's own key** (the check as two combs) | #380 | the check is 24.4%; two combs are about 1.44 times cheaper than a wNAF verification: 2 × `public_key` less one inversion mod p plus one mod n, against `verify_raw`, from `p256-fast.md` §9's M4 parts (34.6, 5.8, 10.0 against 105.8 µs) | 7.5 points | 0 | (B3, per trust anchor: 4.7 on the chain's 15.4%) | 0 |
-| **D3** | **a SHA-256 builtin** (SHA-NI, ARMv8 SHA-2) | new | `crypto.compress` is 7.3% of the server's handshake, 11.6% of a resumed one, 3.8% of the client's (self time); assumed OpenSSL's speed a block (9.4 times on x86-64 at 16 KiB, 11.3 on arm64) | 6.5 points | 10.3 | 3.4 | 0 |
-| **D4** | **HMAC with the key pads kept** (HKDF reuses a keyed state) | new | `hmac.init`'s two compressions, outside its regions: at most 9.9 − 8.1 = 1.8% of the server's handshake, 16.5 − 12.8 = 3.7% of a resumed one, 1.8% of the client's | at most 1.8 | 3.7 | 1.8 | 0 |
-| **L1** | **#395's work areas without the copy a call**: keep a busy connection's lease across calls, or copy only what the call changed | new | `tls.lease` + `tls.settle` are 23.6% of a kept request inclusive (arm64 26.6%); the measured upper bound | 0 | 0 | 0 | **up to 23.6%** (26.6) |
+| **D3** | **a SHA-256 builtin** (SHA-NI, ARMv8 SHA-2) | #445 | `crypto.compress` is 7.3% of the server's handshake, 11.6% of a resumed one, 3.8% of the client's (self time); assumed OpenSSL's speed a block (9.4 times on x86-64 at 16 KiB, 11.3 on arm64) | 6.5 points | 10.3 | 3.4 | 0 |
+| **D4** | **HMAC with the key pads kept** (HKDF reuses a keyed state) | #446 | `hmac.init`'s two compressions, outside its regions: at most 9.9 − 8.1 = 1.8% of the server's handshake, 16.5 − 12.8 = 3.7% of a resumed one, 1.8% of the client's | at most 1.8 | 3.7 | 1.8 | 0 |
+| **L1** | **#395's work areas without the copy a call**: keep a busy connection's lease across calls, or copy only what the call changed | #447 | `tls.lease` + `tls.settle` are 23.6% of a kept request inclusive (arm64 26.6%); the measured upper bound | 0 | 0 | 0 | **up to 23.6%** (26.6) |
 | X1 | X25519 to OpenSSL's cost; one inversion for the two ladders (C3) | | 10.8% of the handshake at 1.40 times OpenSSL: at most 3.1 points; the two inversions are 1.4% (C3: 0.7) | at most 3.1 | 4.4 | 1.9 | 0 |
-| **R1** | **an AEAD that seals in place**, so the record layer stops copying | new | the layer around the cipher (§10.5): 36 of 80 ns at 64 bytes, 174 of 2,838 at 16 KiB (x86-64); `tls_record.*` is 1.3% of a kept request inclusive | under 1 | under 1 | under 1 | under 1.3%; **45% of a 64-byte record's seal, 6 to 11% of a 16 KiB one** on Linux; more on macOS |
+| **R1** | **an AEAD that seals in place**, so the record layer stops copying | #448 | the layer around the cipher (§10.5): 36 of 80 ns at 64 bytes, 174 of 2,838 at 16 KiB (x86-64); `tls_record.*` is 1.3% of a kept request inclusive | under 1 | under 1 | under 1 | under 1.3%; **45% of a 64-byte record's seal, 6 to 11% of a 16 KiB one** on Linux; more on macOS |
 | M1 | `std.bigmod` on `mul_wide` (P-384, RSA) | #381 | not in this handshake; 3 to 3.5 times on `mont_mul` by `wide-multiply.md` §11's arithmetic | 0 | 0 | 0 | 0 |
 
 **Applied in order to the x86-64 server's full handshake (arithmetic, from the shares above):**
