@@ -277,6 +277,8 @@ fn sweep[&i, &e, &t, &p, &s, &q, &n, &a, &r, &v, &x, &c](io: &!i Io, engine: &!e
             front.end_slot(io, engine, tab, st, slot, front.r_queue_timeout(), now);
         } else if phase == front.phase_handshake() && held > cfg[front.c_hs_timeout()] {
             front.end_slot(io, engine, tab, st, slot, front.r_handshake_timeout(), now);
+        } else if phase == front.phase_established() && front.area_overdue(engine, st, cfg, slot, now) {
+            drop_slot(io, engine, tab, st, srv, ap, slot, front.r_record_timeout(), now);
         } else if phase == front.phase_established() && now - st[b + front.s_active()] > cfg[front.c_idle()] {
             close_with(io, engine, tab, poller, st, pend, inq, app, rcv, srv, ap, slot, front.r_idle(), now);
         } else if phase == front.phase_established() && server.pending(srv, st[b + front.s_hslot()] - 1) > 0 {

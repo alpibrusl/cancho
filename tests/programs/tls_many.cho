@@ -313,122 +313,129 @@ fn drive[&h, &n, &k, &i, &q, &g, &e, &u](heap: &!h Heap, net: &n Net(""), clock:
             let pendb = box_slice(heap, pend_cap() * conc, byte_of(0));
             let inb = box_slice(heap, 65536, byte_of(0));
             let appb = box_slice(heap, 16640, byte_of(0));
+            // A region is one 64 KiB chunk, so these two are boxes: 10,000 connections need 240 KB.
+            let handb = box_slice(heap, conc, 0);
+            let evb = box_slice(heap, 2 * conc + 2, 0);
             var failed = 0;
             borrow mut stb as &!sw in {
                 borrow mut pendb as &!pw in {
                     borrow mut inb as &!iw in {
                         borrow mut appb as &!aw in {
-                            let st = contents(sw);
-                            region a {
-                                // The request is exactly 2^14 bytes, one full record: its
-                                // headers padded with `X-Pad`.
-                                let req = alloc_slice[a](16384, byte_of(112));
-                                let head = "GET / HTTP/1.0\r\nHost: ";
-                                var at = 0;
-                                while at < len(head) {
-                                    req[at] = head[at];
-                                    at = at + 1;
-                                }
-                                var j = 0;
-                                while j < len(host) {
-                                    req[at] = host[j];
-                                    at = at + 1;
-                                    j = j + 1;
-                                }
-                                let pad = "\r\nX-Pad: ";
-                                j = 0;
-                                while j < len(pad) {
-                                    req[at] = pad[j];
-                                    at = at + 1;
-                                    j = j + 1;
-                                }
-                                at = 16384;
-                                req[at - 4] = byte_of(13);
-                                req[at - 3] = byte_of(10);
-                                req[at - 2] = byte_of(13);
-                                req[at - 1] = byte_of(10);
-                                let handles = alloc_slice[a](conc, 0);
-                                let events = alloc_slice[a](2 * conc + 2, 0);
-                                var round = 0;
-                                while round < rounds {
-                                    if round > 0 {
-                                        // Each connection's ticket is kept, its slot freed, and the
-                                        // next round starts from nothing but the tickets.
-                                        var k = 0;
-                                        while k < conc {
-                                            handles[k] = tls.save(engine, k);
-                                            tls.drop(engine, k);
-                                            k = k + 1;
+                            borrow mut handb as &!hw in {
+                                borrow mut evb as &!ew in {
+                                    let st = contents(sw);
+                                    region a {
+                                        // The request is exactly 2^14 bytes, one full record: its
+                                        // headers padded with `X-Pad`.
+                                        let req = alloc_slice[a](16384, byte_of(112));
+                                        let head = "GET / HTTP/1.0\r\nHost: ";
+                                        var at = 0;
+                                        while at < len(head) {
+                                            req[at] = head[at];
+                                            at = at + 1;
                                         }
-                                        k = 0;
-                                        while k < stride() * conc {
-                                            st[k] = 0;
-                                            k = k + 1;
+                                        var j = 0;
+                                        while j < len(host) {
+                                            req[at] = host[j];
+                                            at = at + 1;
+                                            j = j + 1;
                                         }
-                                        io.write_all(io, "round 2\n");
-                                    }
-                                    // Dial every connection; each is watched for writable under its slot.
-                                    var s = 0;
-                                    while s < conc {
-                                        match tcp_connect_start(net, ip, port) {
-                                            Dialed::Failed(err) => {
-                                                st[s * stride()] = finished();
-                                                st[s * stride() + 3] = r_socket();
+                                        let pad = "\r\nX-Pad: ";
+                                        j = 0;
+                                        while j < len(pad) {
+                                            req[at] = pad[j];
+                                            at = at + 1;
+                                            j = j + 1;
+                                        }
+                                        at = 16384;
+                                        req[at - 4] = byte_of(13);
+                                        req[at - 3] = byte_of(10);
+                                        req[at - 2] = byte_of(13);
+                                        req[at - 1] = byte_of(10);
+                                        let handles = contents(hw);
+                                        let events = contents(ew);
+                                        var round = 0;
+                                        while round < rounds {
+                                            if round > 0 {
+                                                // Each connection's ticket is kept, its slot freed, and the
+                                                // next round starts from nothing but the tickets.
+                                                var k = 0;
+                                                while k < conc {
+                                                    handles[k] = tls.save(engine, k);
+                                                    tls.drop(engine, k);
+                                                    k = k + 1;
+                                                }
+                                                k = 0;
+                                                while k < stride() * conc {
+                                                    st[k] = 0;
+                                                    k = k + 1;
+                                                }
+                                                io.write_all(io, "round 2\n");
                                             }
-                                            Dialed::Ok(c) => {
-                                                let (grown, slot) = conns.put(heap, table, c);
-                                                table = grown;
-                                                borrow mut table as &!tw in {
-                                                    borrow mut poll as &!pr in {
-                                                        conns.watch(tw, pr, slot, slot, 2);
+                                            // Dial every connection; each is watched for writable under its slot.
+                                            var s = 0;
+                                            while s < conc {
+                                                match tcp_connect_start(net, ip, port) {
+                                                    Dialed::Failed(err) => {
+                                                        st[s * stride()] = finished();
+                                                        st[s * stride() + 3] = r_socket();
+                                                    }
+                                                    Dialed::Ok(c) => {
+                                                        let (grown, slot) = conns.put(heap, table, c);
+                                                        table = grown;
+                                                        borrow mut table as &!tw in {
+                                                            borrow mut poll as &!pr in {
+                                                                conns.watch(tw, pr, slot, slot, 2);
+                                                            }
+                                                        }
+                                                        st[slot * stride()] = connecting();
                                                     }
                                                 }
-                                                st[slot * stride()] = connecting();
+                                                s = s + 1;
                                             }
-                                        }
-                                        s = s + 1;
-                                    }
-                                    let deadline = clock_ms(clock) + 30000;
-                                    var live = 0;
-                                    s = 0;
-                                    while s < conc {
-                                        if st[s * stride()] != finished() {
-                                            live = live + 1;
-                                        }
-                                        s = s + 1;
-                                    }
-                                    while live > 0 && clock_ms(clock) < deadline {
-                                        var ready = 0;
-                                        borrow mut poll as &!pr in {
-                                            ready = poller_wait(pr, events, 200);
-                                        }
-                                        let now = clock_unix_ms(clock);
-                                        var r = 0;
-                                        while r < ready {
-                                            let slot = events[2 * r];
-                                            if slot >= 0 && slot < conc && st[slot * stride()] != finished() {
-                                                var done = 0;
-                                                borrow mut table as &!tw in {
-                                                    borrow mut poll as &!pr in {
-                                                        done = advance(engine, tw, pr, st, contents(pw), contents(aw), contents(iw), req[0..at], host, slot, chunk, now, handles[slot]);
+                                            let deadline = clock_ms(clock) + 30000;
+                                            var live = 0;
+                                            s = 0;
+                                            while s < conc {
+                                                if st[s * stride()] != finished() {
+                                                    live = live + 1;
+                                                }
+                                                s = s + 1;
+                                            }
+                                            while live > 0 && clock_ms(clock) < deadline {
+                                                var ready = 0;
+                                                borrow mut poll as &!pr in {
+                                                    ready = poller_wait(pr, events, 200);
+                                                }
+                                                let now = clock_unix_ms(clock);
+                                                var r = 0;
+                                                while r < ready {
+                                                    let slot = events[2 * r];
+                                                    if slot >= 0 && slot < conc && st[slot * stride()] != finished() {
+                                                        var done = 0;
+                                                        borrow mut table as &!tw in {
+                                                            borrow mut poll as &!pr in {
+                                                                done = advance(engine, tw, pr, st, contents(pw), contents(aw), contents(iw), req[0..at], host, slot, chunk, now, handles[slot]);
+                                                            }
+                                                        }
+                                                        live = live - done;
+                                                    }
+                                                    r = r + 1;
+                                                }
+                                            }
+                                            s = 0;
+                                            while s < conc {
+                                                if st[s * stride()] != finished() {
+                                                    borrow mut table as &!tw in {
+                                                        end_slot(tw, st, s, r_timeout());
                                                     }
                                                 }
-                                                live = live - done;
+                                                s = s + 1;
                                             }
-                                            r = r + 1;
+                                            failed = failed + report(io, engine, st, conc, rounds > 1);
+                                            round = round + 1;
                                         }
                                     }
-                                    s = 0;
-                                    while s < conc {
-                                        if st[s * stride()] != finished() {
-                                            borrow mut table as &!tw in {
-                                                end_slot(tw, st, s, r_timeout());
-                                            }
-                                        }
-                                        s = s + 1;
-                                    }
-                                    failed = failed + report(io, engine, st, conc, rounds > 1);
-                                    round = round + 1;
                                 }
                             }
                         }
@@ -439,6 +446,8 @@ fn drive[&h, &n, &k, &i, &q, &g, &e, &u](heap: &!h Heap, net: &n Net(""), clock:
             unbox_slice(heap, pendb);
             unbox_slice(heap, inb);
             unbox_slice(heap, appb);
+            unbox_slice(heap, handb);
+            unbox_slice(heap, evb);
             conns.drop(heap, table);
             poller_close(poll);
             if failed > 0 {
@@ -462,7 +471,7 @@ fn main(world: World) -> [] int {
                 let port = number(arg(g, 2));
                 let conc = number(arg(g, 4));
                 let chunk = number(arg(g, 5));
-                if conc < 1 || conc > 256 || chunk < 1 || chunk > 65536 || len(arg(g, 3)) > 255 {
+                if conc < 1 || conc > 100000 || chunk < 1 || chunk > 65536 || len(arg(g, 3)) > 255 {
                     io.error_all(i, "tls_many: bad numbers, or a host over 255 bytes\n");
                 } else {
                     borrow mut heap as &!h in {

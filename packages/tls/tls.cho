@@ -33,8 +33,15 @@ import x509_verify;
 // (#209).
 
 pub res struct Engine {
+    // The work areas (`docs/tls-memory.md` section 7): `areas` strides of `tls_client.ints_len()` words and
+    // `tls_client.bytes_len()` bytes, each leased to a connection while it is in its handshake or has bytes in
+    // flight. A connection that is established and idle holds none.
     ints: Box[[int]],
     bytes: Box[[byte]],
+    // Each slot's core (`tls_slot.ints_core_len()` words, `bytes_core_len()` bytes, the server's shorter): what an
+    // established connection keeps. While a connection holds an area, the area's copy is the current one.
+    cints: Box[[int]],
+    cbytes: Box[[byte]],
     roots: Box[[byte]],
     meta: Box[[int]],
     drbg: Box[[byte]],
@@ -88,6 +95,36 @@ fn m_now[&e](engine: &e Engine) -> [] int {
     return 4 + 2 * contents(engine.meta)[m_slots()];
 }
 
+// Then, in `meta`: [5 + 2 slots + s] the work area slot `s` holds, plus one (0: none); [5 + 3 slots] the
+// areas, [5 + 3 slots + 1] how many are free, and the free ones as a stack from [5 + 3 slots + 2], so the area
+// last released is the next leased and the areas touched stay few. [5 + 3 slots + 2 + areas + s]: 1 while the
+// handshake's scratch in slot `s`'s area has not been cleared.
+fn m_lease[&e](engine: &e Engine, slot: int) -> [] int {
+    return 5 + 2 * contents(engine.meta)[m_slots()] + slot;
+}
+
+fn m_areas[&e](engine: &e Engine) -> [] int {
+    return 5 + 3 * contents(engine.meta)[m_slots()];
+}
+
+fn m_free[&e](engine: &e Engine) -> [] int {
+    return m_areas(engine) + 1;
+}
+
+fn m_stack[&e](engine: &e Engine, k: int) -> [] int {
+    return m_areas(engine) + 2 + k;
+}
+
+fn m_dirty[&e](engine: &e Engine, slot: int) -> [] int {
+    return m_areas(engine) + 2 + contents(engine.meta)[m_areas(engine)] + slot;
+}
+
+// [5 + 4 slots + 2 + areas + s]: the most of the received-data buffer slot `s` has filled since it took its area,
+// so a release clears what was written and not the whole buffer.
+fn m_reach[&e](engine: &e Engine, slot: int) -> [] int {
+    return m_dirty(engine, slot) + contents(engine.meta)[m_slots()];
+}
+
 pub fn open[&h](heap: &!h Heap, slots: int) -> [heap] Engine {
     return open_with_tickets(heap, slots, slots);
 }
@@ -96,30 +133,61 @@ pub fn open[&h](heap: &!h Heap, slots: int) -> [heap] Engine {
 // most 65,534), shared by every pool. A save when the room is full
 // replaces the entry the clock hand points at.
 pub fn open_with_tickets[&h](heap: &!h Heap, slots: int, tickets: int) -> [heap] Engine {
-    return build(heap, slots, tickets, false, false);
+    return build(heap, slots, tickets, false, false, slots);
+}
+
+// `open_with_tickets`, with `areas` work areas for the slots to share (at least 1, at most `slots`): each is a
+// handshake's scratch and the buffers of a connection with bytes in flight (`docs/tls-memory.md` section 7), about
+// 270 KiB of address space and as much memory as is touched. `open` has one for every slot, so no call is ever
+// refused for want of one; fewer saves address space. With every area leased, `start`, `start_with` and `serve`
+// are refused `tls-pool` and start nothing; `feed` and `send` take nothing (0) and `finish` answers `would_block()`,
+// as when the engine's buffers are full, so the program offers the bytes again; `recv` and `take` need no area.
+pub fn open_with_areas[&h](heap: &!h Heap, slots: int, tickets: int, areas: int) -> [heap] Engine {
+    return build(heap, slots, tickets, false, false, areas);
 }
 
 // A client engine that also holds client identities, for a server that asks
 // for a certificate (`docs/tls-parity.md` §6.2): `add_client_identity` and
 // its calls need it. About 50 KiB and the key parser's 77 KB more than `open`.
 pub fn open_mutual[&h](heap: &!h Heap, slots: int) -> [heap] Engine {
-    return build(heap, slots, slots, false, true);
+    return build(heap, slots, slots, false, true, slots);
 }
 
 pub fn open_mutual_with_tickets[&h](heap: &!h Heap, slots: int, tickets: int) -> [heap] Engine {
-    return build(heap, slots, tickets, false, true);
+    return build(heap, slots, tickets, false, true, slots);
+}
+
+// `open_mutual_with_tickets`, with `areas` work areas shared by the slots (`open_with_areas`).
+pub fn open_mutual_with_areas[&h](heap: &!h Heap, slots: int, tickets: int, areas: int) -> [heap] Engine {
+    return build(heap, slots, tickets, false, true, areas);
 }
 
 // An engine of `slots` server connections (`docs/tls-server.md` §5.1),
 // with no identity yet: `add_identity` gives it one before `serve`.
 pub fn open_server[&h](heap: &!h Heap, slots: int) -> [heap] Engine {
-    return build(heap, slots, 1, true, false);
+    return build(heap, slots, 1, true, false, slots);
 }
 
-fn build[&h](heap: &!h Heap, slots: int, tickets: int, server: bool, mutual: bool) -> [heap] Engine {
+// `open_server`, with `areas` work areas shared by the slots (`open_with_areas`).
+pub fn open_server_with_areas[&h](heap: &!h Heap, slots: int, areas: int) -> [heap] Engine {
+    return build(heap, slots, 1, true, false, areas);
+}
+
+fn build[&h](heap: &!h Heap, slots: int, tickets: int, server: bool, mutual: bool, areas: int) -> [heap] Engine {
     var n = slots;
     if n < 1 {
         n = 1;
+    }
+    var a = areas;
+    if a < 1 {
+        a = 1;
+    }
+    if a > n {
+        a = n;
+    }
+    var core = tls_slot.bytes_core_len();
+    if server {
+        core = tls_slot.bytes_core_len_server();
     }
     var t = tickets;
     if t < 1 {
@@ -143,7 +211,7 @@ fn build[&h](heap: &!h Heap, slots: int, tickets: int, server: bool, mutual: boo
         srv_len = 1 + x509_key.work_len();
         roots_len = 0;
     }
-    var engine = Engine { ints: box_slice(heap, n * tls_client.ints_len(), 0), bytes: box_slice(heap, n * tls_client.bytes_len(), byte_of(0)), roots: box_slice(heap, roots_len, byte_of(0)), meta: box_slice(heap, 5 + 2 * n, 0), drbg: box_slice(heap, 32, byte_of(0)), tickets: box_slice(heap, t * entry_bytes(), byte_of(0)), tmeta: box_slice(heap, t_entries() + t * t_fields(), 0), ids: box_slice(heap, ids_len, byte_of(0)), srv: box_slice(heap, srv_len, 0), tk: box_slice(heap, tk_len, byte_of(0)) };
+    var engine = Engine { ints: box_slice(heap, a * tls_client.ints_len(), 0), bytes: box_slice(heap, a * tls_client.bytes_len(), byte_of(0)), cints: box_slice(heap, n * tls_slot.ints_core_len(), 0), cbytes: box_slice(heap, n * core, byte_of(0)), roots: box_slice(heap, roots_len, byte_of(0)), meta: box_slice(heap, 7 + 5 * n + a, 0), drbg: box_slice(heap, 32, byte_of(0)), tickets: box_slice(heap, t * entry_bytes(), byte_of(0)), tmeta: box_slice(heap, t_entries() + t * t_fields(), 0), ids: box_slice(heap, ids_len, byte_of(0)), srv: box_slice(heap, srv_len, 0), tk: box_slice(heap, tk_len, byte_of(0)) };
     borrow mut engine as &!w in {
         if server {
             contents(w.srv)[0] = 1;
@@ -153,6 +221,13 @@ fn build[&h](heap: &!h Heap, slots: int, tickets: int, server: bool, mutual: boo
             contents(w.srv)[0] = 2;
         }
         contents(w.meta)[m_slots()] = n;
+        contents(w.meta)[m_areas(w)] = a;
+        contents(w.meta)[m_free(w)] = a;
+        var k = 0;
+        while k < a {
+            contents(w.meta)[m_stack(w, k)] = a - 1 - k;
+            k = k + 1;
+        }
         contents(w.tmeta)[t_capacity()] = t;
         contents(w.tmeta)[t_max_age()] = 3600;
         contents(w.tmeta)[t_next_pool()] = 1;
@@ -161,8 +236,9 @@ fn build[&h](heap: &!h Heap, slots: int, tickets: int, server: bool, mutual: boo
     return engine;
 }
 
-// Frees the engine, after overwriting every slot's secrets and the DRBG
-// key (best effort, `docs/tls-core.md` §8).
+// Frees the engine, after overwriting every slot's secrets (its core, and its work area if it holds one), every
+// work area (the keys a connection had copied into it, the scratch of its handshakes, its plaintext), the saved
+// tickets, the ticket keys and the DRBG key (best effort, `docs/tls-core.md` §8).
 pub fn close[&h](heap: &!h Heap, engine: Engine) -> [heap] int {
     var e = engine;
     borrow mut e as &!w in {
@@ -178,6 +254,15 @@ pub fn close[&h](heap: &!h Heap, engine: Engine) -> [heap] int {
             i = i + 1;
         }
     }
+    // Every area is cleared as a released one is (`clear_area`), the scratch included: `drop` gave back the ones
+    // that were leased, and a free one is clear already, so this is the same work done once more, at the end.
+    borrow mut e as &!w in {
+        var a = 0;
+        while a < contents(w.meta)[m_areas(w)] {
+            clear_area(w, a, tls_slot.recv_cap());
+            a = a + 1;
+        }
+    }
     borrow mut e as &!w in {
         var t = 0;
         while t < contents(w.tmeta)[t_capacity()] {
@@ -189,9 +274,11 @@ pub fn close[&h](heap: &!h Heap, engine: Engine) -> [heap] int {
         tls_identity.wipe(contents(w.ids));
         tls_slot.zero(contents(w.tk));
     }
-    let Engine { ints, bytes, roots, meta, drbg, tickets, tmeta, ids, srv, tk } = e;
+    let Engine { ints, bytes, cints, cbytes, roots, meta, drbg, tickets, tmeta, ids, srv, tk } = e;
     unbox_slice(heap, ints);
     unbox_slice(heap, bytes);
+    unbox_slice(heap, cints);
+    unbox_slice(heap, cbytes);
     unbox_slice(heap, roots);
     unbox_slice(heap, meta);
     unbox_slice(heap, drbg);
@@ -303,12 +390,295 @@ fn slot_ok[&e](engine: &e Engine, slot: int) -> [] bool {
     return slot >= 0 && slot < contents(engine.meta)[m_slots()];
 }
 
-fn ints_of(slot: int) -> [] int {
-    return slot * tls_client.ints_len();
+// ---- Work areas (`docs/tls-memory.md` section 6) ----
+
+// Where slot `slot`'s core is, in `cints` and `cbytes`.
+fn core_ints(slot: int) -> [] int {
+    return slot * tls_slot.ints_core_len();
 }
 
-fn bytes_of(slot: int) -> [] int {
-    return slot * tls_client.bytes_len();
+fn core_len[&e](engine: &e Engine) -> [] int {
+    if is_server(engine) {
+        return tls_slot.bytes_core_len_server();
+    }
+    return tls_slot.bytes_core_len();
+}
+
+fn core_bytes[&e](engine: &e Engine, slot: int) -> [] int {
+    return slot * core_len(engine);
+}
+
+// Where the area slot `slot` holds is, in `ints` and `bytes`: for a slot that holds one (every call below that
+// moves bytes has `lease`d first).
+fn ints_of[&e](engine: &e Engine, slot: int) -> [] int {
+    return (contents(engine.meta)[m_lease(engine, slot)] - 1) * tls_client.ints_len();
+}
+
+fn bytes_of[&e](engine: &e Engine, slot: int) -> [] int {
+    return (contents(engine.meta)[m_lease(engine, slot)] - 1) * tls_client.bytes_len();
+}
+
+// Whether a connection can go without an area: it is established or ended, nothing of it is in a buffer (a record
+// half read, a handshake message half reassembled, bytes for the socket, data for `recv`), and the program asked
+// for nothing kept (`tls_slot.keeps_area`). Everything else it holds is in its core.
+fn idle[&i](ints: &i [int]) -> [] bool {
+    let s = ints[tls_slot.i_state()];
+    return (s == tls_slot.state_connected() || s == tls_slot.state_closed() || s == tls_slot.state_failed()) && ints[tls_slot.i_in_fill()] == 0 && ints[tls_slot.i_hs_fill()] == 0 && ints[tls_slot.i_out_start()] == ints[tls_slot.i_out_end()] && ints[tls_slot.i_recv_start()] == ints[tls_slot.i_recv_end()] && !tls_slot.keeps_area(ints);
+}
+
+// Gives `slot` an area, with its core copied in: 0, or `tls-pool` when every area is leased. A slot that has one
+// keeps it.
+fn lease[&e](engine: &!e Engine, slot: int) -> [] int {
+    if contents(engine.meta)[m_lease(engine, slot)] != 0 {
+        return 0;
+    }
+    let free = contents(engine.meta)[m_free(engine)];
+    if free == 0 {
+        return tls_record.pool();
+    }
+    let a = contents(engine.meta)[m_stack(engine, free - 1)];
+    contents(engine.meta)[m_free(engine)] = free - 1;
+    contents(engine.meta)[m_lease(engine, slot)] = a + 1;
+    // The scratch a handshake leaves is cleared on release: a core that is not established is about to need it.
+    let state = contents(engine.cints)[core_ints(slot) + tls_slot.i_state()];
+    if state != tls_slot.state_connected() && state != tls_slot.state_closed() && state != tls_slot.state_failed() {
+        contents(engine.meta)[m_dirty(engine, slot)] = 1;
+    }
+    let ai = a * tls_client.ints_len();
+    let ci = core_ints(slot);
+    var k = 0;
+    while k < tls_slot.ints_core_len() {
+        contents(engine.ints)[ai + k] = contents(engine.cints)[ci + k];
+        k = k + 1;
+    }
+    let n = core_len(engine);
+    let ab = a * tls_client.bytes_len();
+    let cb = core_bytes(engine, slot);
+    copy_into(contents(engine.bytes)[ab..ab + n], contents(engine.cbytes)[cb..cb + n]);
+    return 0;
+}
+
+// After a call: returns `slot`'s area if the connection no longer needs one, its core taken back out first. While
+// a connection holds an area the area's copy of the core is the current one, and the calls that read read it
+// (`word`, `in_area`). An area goes back cleared (`clear_area`): no free area holds a key, a secret or plaintext.
+fn settle[&e](engine: &!e Engine, slot: int) -> [] int {
+    let held = contents(engine.meta)[m_lease(engine, slot)];
+    if held == 0 {
+        return 0;
+    }
+    let a = held - 1;
+    let ai = a * tls_client.ints_len();
+    let end = contents(engine.ints)[ai + tls_slot.i_recv_end()];
+    if end > contents(engine.meta)[m_reach(engine, slot)] {
+        contents(engine.meta)[m_reach(engine, slot)] = end;
+    }
+    if idle(contents(engine.ints)[ai..ai + tls_client.ints_len()]) {
+        core_out(engine, slot);
+        if contents(engine.meta)[m_dirty(engine, slot)] != 0 {
+            clear_area(engine, a, tls_slot.recv_cap());
+        } else {
+            clear_area(engine, a, contents(engine.meta)[m_reach(engine, slot)]);
+        }
+        contents(engine.meta)[m_dirty(engine, slot)] = 0;
+        contents(engine.meta)[m_reach(engine, slot)] = 0;
+        unlease(engine, slot);
+    }
+    return 0;
+}
+
+// Overwrites what an area held for the connection that is giving it back: its copy of the core (the keys, IVs,
+// secrets, the hardware key schedules, the AEAD contexts), the received data and the last record opened as far as
+// `reach` bytes (and at least `clean_floor`, for the handshake messages an established connection opens), and,
+// after a handshake (`reach` the whole buffer), the transcripts and `std.ecdh`'s work, which hold intermediate
+// values of the key exchange and the signature. Best effort, as `docs/tls-core.md` section 8 says of every erasure.
+fn clear_area[&e](engine: &!e Engine, a: int, reach: int) -> [] int {
+    let ai = a * tls_client.ints_len();
+    var end = tls_slot.ints_core_len();
+    if reach >= tls_slot.recv_cap() {
+        end = tls_client.ints_len();
+    }
+    var j = 0;
+    while j < end {
+        contents(engine.ints)[ai + j] = 0;
+        j = j + 1;
+    }
+    let ab = a * tls_client.bytes_len();
+    // A server's handshake leaves data past its core (the tickets' randomness, the leaf's fingerprint:
+    // `tls_slot.bytes_core_len_server`), inside the room a client's core takes, so after a handshake that room is
+    // cleared whatever the role.
+    var cover = core_len(engine);
+    if reach >= tls_slot.recv_cap() {
+        cover = tls_slot.bytes_core_len();
+    }
+    tls_slot.zero(contents(engine.bytes)[ab..ab + cover]);
+    // A record's content is copied whole to the received data, so the opened record reached no further than it and
+    // its content type byte (the padding after it is zeros); a post-handshake message (a NewSessionTicket, a
+    // KeyUpdate) is opened and not copied, and fits the floor.
+    var plain = reach + 1;
+    if plain < clean_floor() {
+        plain = clean_floor();
+    }
+    if plain > tls_slot.plain_cap() {
+        plain = tls_slot.plain_cap();
+    }
+    var recv = reach;
+    if recv > tls_slot.recv_cap() {
+        recv = tls_slot.recv_cap();
+    }
+    tls_slot.zero(contents(engine.bytes)[ab + tls_slot.b_plain()..ab + tls_slot.b_plain() + plain]);
+    tls_slot.zero(contents(engine.bytes)[ab + tls_slot.b_recv()..ab + tls_slot.b_recv() + recv]);
+    return 0;
+}
+
+// What a release clears of the last record opened at least: more than a NewSessionTicket the engine keeps
+// (`tls_slot.ticket_cap()` and its fields) or a KeyUpdate.
+fn clean_floor() -> [] int {
+    return tls_slot.ticket_cap() + 1024;
+}
+
+// For tests (`tests/programs/tls_pool.cho`): how many words and bytes that should hold nothing still hold something:
+// every free area's integers, its copy of the core, its last record opened and its received data; every free slot's
+// core; and the keys and AEAD contexts of every connection that has failed. 0 is what the clearing promises.
+pub fn residue[&e](engine: &e Engine) -> [] int {
+    var n = 0;
+    var k = 0;
+    while k < contents(engine.meta)[m_free(engine)] {
+        let a = contents(engine.meta)[m_stack(engine, k)];
+        let ai = a * tls_client.ints_len();
+        var j = 0;
+        while j < tls_client.ints_len() {
+            if contents(engine.ints)[ai + j] != 0 {
+                n = n + 1;
+            }
+            j = j + 1;
+        }
+        let ab = a * tls_client.bytes_len();
+        n = n + nonzero(contents(engine.bytes)[ab..ab + tls_slot.bytes_core_len()]);
+        n = n + nonzero(contents(engine.bytes)[ab + tls_slot.b_plain()..ab + tls_slot.b_plain() + tls_slot.plain_cap()]);
+        n = n + nonzero(contents(engine.bytes)[ab + tls_slot.b_recv()..ab + tls_slot.b_recv() + tls_slot.recv_cap()]);
+        k = k + 1;
+    }
+    var s = 0;
+    while s < contents(engine.meta)[m_slots()] {
+        let ci = core_ints(s);
+        let cb = core_bytes(engine, s);
+        if contents(engine.meta)[m_busy(s)] == 0 {
+            var j = 0;
+            while j < tls_slot.ints_core_len() {
+                if contents(engine.cints)[ci + j] != 0 {
+                    n = n + 1;
+                }
+                j = j + 1;
+            }
+            n = n + nonzero(contents(engine.cbytes)[cb..cb + core_len(engine)]);
+        } else if !in_area(engine, s) && contents(engine.cints)[ci + tls_slot.i_state()] == tls_slot.state_failed() {
+            var j = 0;
+            while j < 2 * tls_record.context_len() {
+                if contents(engine.cints)[ci + tls_slot.i_read_aead() + j] != 0 {
+                    n = n + 1;
+                }
+                j = j + 1;
+            }
+            n = n + nonzero(contents(engine.cbytes)[cb + tls_slot.b_keys()..cb + tls_slot.b_keys() + tls_slot.keys_len()]);
+        }
+        s = s + 1;
+    }
+    return n;
+}
+
+fn nonzero[&b](b: &b [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(b) {
+        if int_of(b[i]) != 0 {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+// The area's copy of the core into the core.
+fn core_out[&e](engine: &!e Engine, slot: int) -> [] int {
+    let ai = ints_of(engine, slot);
+    let ci = core_ints(slot);
+    var k = 0;
+    while k < tls_slot.ints_core_len() {
+        contents(engine.cints)[ci + k] = contents(engine.ints)[ai + k];
+        k = k + 1;
+    }
+    let n = core_len(engine);
+    let ab = bytes_of(engine, slot);
+    let cb = core_bytes(engine, slot);
+    copy_into(contents(engine.cbytes)[cb..cb + n], contents(engine.bytes)[ab..ab + n]);
+    return 0;
+}
+
+// Whether `slot`'s current core is in an area (it holds one) rather than in `cints` and `cbytes`.
+fn in_area[&e](engine: &e Engine, slot: int) -> [] bool {
+    return contents(engine.meta)[m_lease(engine, slot)] != 0;
+}
+
+// Word `field` of `slot`'s current core.
+fn word[&e](engine: &e Engine, slot: int, field: int) -> [] int {
+    if in_area(engine, slot) {
+        return contents(engine.ints)[ints_of(engine, slot) + field];
+    }
+    return contents(engine.cints)[core_ints(slot) + field];
+}
+
+// `tls_server.in_handshake` on `slot`'s current core.
+fn handshaking[&e](engine: &e Engine, slot: int) -> [] bool {
+    if in_area(engine, slot) {
+        let a = ints_of(engine, slot);
+        return tls_server.in_handshake(contents(engine.ints)[a..a + tls_slot.ints_core_len()]);
+    }
+    let i = core_ints(slot);
+    return tls_server.in_handshake(contents(engine.cints)[i..i + tls_slot.ints_core_len()]);
+}
+
+// The area back on the stack.
+fn unlease[&e](engine: &!e Engine, slot: int) -> [] int {
+    let a = contents(engine.meta)[m_lease(engine, slot)] - 1;
+    let free = contents(engine.meta)[m_free(engine)];
+    contents(engine.meta)[m_stack(engine, free)] = a;
+    contents(engine.meta)[m_free(engine)] = free + 1;
+    contents(engine.meta)[m_lease(engine, slot)] = 0;
+    return 0;
+}
+
+// A connection with no area that fails without one (`eof`): what `tls_slot.fail` does to it, with no alert to queue.
+// One that had failed already keeps the reason it had.
+fn fail_parked[&e](engine: &!e Engine, slot: int, code: int) -> [] int {
+    let ci = core_ints(slot);
+    if contents(engine.cints)[ci + tls_slot.i_state()] == tls_slot.state_failed() {
+        return contents(engine.cints)[ci + tls_slot.i_failure()];
+    }
+    contents(engine.cints)[ci + tls_slot.i_state()] = tls_slot.state_failed();
+    contents(engine.cints)[ci + tls_slot.i_failure()] = code;
+    var k = 0;
+    while k < 2 * tls_record.context_len() {
+        contents(engine.cints)[ci + tls_slot.i_read_aead() + k] = 0;
+        k = k + 1;
+    }
+    let cb = core_bytes(engine, slot);
+    tls_slot.zero(contents(engine.cbytes)[cb + tls_slot.b_keys()..cb + tls_slot.b_keys() + tls_slot.keys_len()]);
+    return code;
+}
+
+// How many work areas there are, and how many are free.
+pub fn areas[&e](engine: &e Engine) -> [] int {
+    return contents(engine.meta)[m_areas(engine)];
+}
+
+pub fn areas_free[&e](engine: &e Engine) -> [] int {
+    return contents(engine.meta)[m_free(engine)];
+}
+
+// Whether the connection in `slot` holds a work area now: in its handshake, or with bytes in a buffer (half a
+// record, data for `recv`, bytes for the socket). A program that shares few areas bounds how long one is held.
+pub fn holds_area[&e](engine: &e Engine, slot: int) -> [] bool {
+    return slot_ok(engine, slot) && contents(engine.meta)[m_lease(engine, slot)] != 0;
 }
 
 // Starts a connection in `slot` to the server named `host`. `now_unix_ms`
@@ -330,12 +700,15 @@ fn start_plain[&e, &h, &a](engine: &!e Engine, slot: int, host: &h [byte], now_u
     if contents(engine.meta)[m_seeded()] != 1 {
         return tls_record.no_entropy();
     }
-    var code = 0;
+    var code = lease(engine, slot);
+    if code != 0 {
+        return code;
+    }
     region r {
         let random = alloc_slice[r](96, byte_of(0));
         draw(engine, random);
-        let i = ints_of(slot);
-        let b = bytes_of(slot);
+        let i = ints_of(engine, slot);
+        let b = bytes_of(engine, slot);
         code = tls_client.start_alpn(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], host, random, now_unix_ms / 1000, host[0..0], host[0..0], 0, 0, 0, contents(engine.tmeta)[t_resume()] == 1, alpn);
         contents(engine.meta)[m_started(engine, slot)] = now_unix_ms;
         var k = 0;
@@ -345,6 +718,7 @@ fn start_plain[&e, &h, &a](engine: &!e Engine, slot: int, host: &h [byte], now_u
         }
     }
     choose_identity(engine, slot, host);
+    settle(engine, slot);
     contents(engine.meta)[m_busy(slot)] = 1;
     return code;
 }
@@ -356,8 +730,8 @@ fn start_plain[&e, &h, &a](engine: &!e Engine, slot: int, host: &h [byte], now_u
 // identity draws what it always drew. And the trust generation now, which a
 // ticket from this connection is stamped with (§6.5, rule 9).
 fn choose_identity[&e, &h](engine: &!e Engine, slot: int, host: &h [byte]) -> [] int {
-    let i = ints_of(slot);
-    let b = bytes_of(slot);
+    let i = ints_of(engine, slot);
+    let b = bytes_of(engine, slot);
     contents(engine.ints)[i + tls_slot.i_trust_gen()] = contents(engine.tmeta)[t_trust()];
     let id = tls_cident.select(contents(engine.ids), host);
     if id >= 0 {
@@ -376,13 +750,21 @@ pub fn feed[&e, &d](engine: &!e Engine, slot: int, data: &d [byte]) -> [] int {
     if !slot_ok(engine, slot) || contents(engine.meta)[m_busy(slot)] == 0 {
         return tls_record.bad_slot();
     }
-    let i = ints_of(slot);
-    let b = bytes_of(slot);
-    if is_server(engine) {
-        return tls_server.feed(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], data, contents(engine.ids), contents(engine.tk), contents(engine.meta)[m_now(engine)]);
+    if lease(engine, slot) != 0 {
+        // No area free: nothing is taken, as when the engine's buffers are full; the program offers the bytes again.
+        return 0;
     }
-    let used = contents(engine.meta)[m_roots_len()];
-    return tls_client.feed_with(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], data, contents(engine.roots)[0..used], contents(engine.ids));
+    let i = ints_of(engine, slot);
+    let b = bytes_of(engine, slot);
+    var code = 0;
+    if is_server(engine) {
+        code = tls_server.feed(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], data, contents(engine.ids), contents(engine.tk), contents(engine.meta)[m_now(engine)]);
+    } else {
+        let used = contents(engine.meta)[m_roots_len()];
+        code = tls_client.feed_with(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], data, contents(engine.roots)[0..used], contents(engine.ids));
+    }
+    settle(engine, slot);
+    return code;
 }
 
 // Bytes for the socket.
@@ -390,18 +772,30 @@ pub fn take[&e, &o](engine: &!e Engine, slot: int, out: &!o [byte]) -> [] int {
     if !slot_ok(engine, slot) || contents(engine.meta)[m_busy(slot)] == 0 {
         return 0;
     }
-    let i = ints_of(slot);
-    let b = bytes_of(slot);
-    return tls_client.take(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], out);
+    if contents(engine.meta)[m_lease(engine, slot)] == 0 {
+        // A connection without an area has nothing queued (`idle`).
+        return 0;
+    }
+    let i = ints_of(engine, slot);
+    let b = bytes_of(engine, slot);
+    let n = tls_client.take(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], out);
+    settle(engine, slot);
+    return n;
 }
 
 pub fn send[&e, &p](engine: &!e Engine, slot: int, plaintext: &p [byte]) -> [] int {
     if !slot_ok(engine, slot) || contents(engine.meta)[m_busy(slot)] == 0 {
         return tls_record.bad_slot();
     }
-    let i = ints_of(slot);
-    let b = bytes_of(slot);
-    return tls_client.send(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], plaintext);
+    if lease(engine, slot) != 0 {
+        // No area free: nothing is taken, as when the output queue is full.
+        return 0;
+    }
+    let i = ints_of(engine, slot);
+    let b = bytes_of(engine, slot);
+    let n = tls_client.send(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], plaintext);
+    settle(engine, slot);
+    return n;
 }
 
 // Application data: how many bytes, 0 after the peer's close_notify,
@@ -410,9 +804,18 @@ pub fn recv[&e, &o](engine: &!e Engine, slot: int, into: &!o [byte]) -> [] int {
     if !slot_ok(engine, slot) || contents(engine.meta)[m_busy(slot)] == 0 {
         return tls_record.bad_slot();
     }
-    let i = ints_of(slot);
-    let b = bytes_of(slot);
-    return tls_client.recv(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], into);
+    if contents(engine.meta)[m_lease(engine, slot)] == 0 {
+        // A connection without an area has nothing waiting (`idle`): the core answers, `would_block()`, 0 after
+        // close_notify, or the failure, and no area is taken for it.
+        let ci = core_ints(slot);
+        let cb = core_bytes(engine, slot);
+        return tls_client.recv(contents(engine.cints)[ci..ci + tls_slot.ints_core_len()], contents(engine.cbytes)[cb..cb + core_len(engine)], into);
+    }
+    let i = ints_of(engine, slot);
+    let b = bytes_of(engine, slot);
+    let n = tls_client.recv(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], into);
+    settle(engine, slot);
+    return n;
 }
 
 pub fn would_block() -> [] int {
@@ -424,18 +827,37 @@ pub fn eof[&e](engine: &!e Engine, slot: int) -> [] int {
     if !slot_ok(engine, slot) || contents(engine.meta)[m_busy(slot)] == 0 {
         return tls_record.bad_slot();
     }
-    let i = ints_of(slot);
-    let b = bytes_of(slot);
-    return tls_client.peer_eof(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()]);
+    if lease(engine, slot) != 0 {
+        // No area free: `peer_eof` on the core. tls-peer-closed sends no alert, so nothing needs a buffer.
+        let ci = core_ints(slot);
+        if tls_slot.has(contents(engine.cints)[ci..ci + tls_slot.ints_core_len()], tls_slot.f_close_received()) {
+            return 0;
+        }
+        if contents(engine.cints)[ci + tls_slot.i_state()] == tls_slot.state_failed() {
+            return 0;
+        }
+        return fail_parked(engine, slot, tls_record.peer_closed());
+    }
+    let i = ints_of(engine, slot);
+    let b = bytes_of(engine, slot);
+    let n = tls_client.peer_eof(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()]);
+    settle(engine, slot);
+    return n;
 }
 
 pub fn finish[&e](engine: &!e Engine, slot: int) -> [] int {
     if !slot_ok(engine, slot) || contents(engine.meta)[m_busy(slot)] == 0 {
         return tls_record.bad_slot();
     }
-    let i = ints_of(slot);
-    let b = bytes_of(slot);
-    return tls_client.finish(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()]);
+    if lease(engine, slot) != 0 {
+        // No area free: as when the output queue has no room (`tls_client.finish`): nothing changed, call it again.
+        return would_block();
+    }
+    let i = ints_of(engine, slot);
+    let b = bytes_of(engine, slot);
+    let n = tls_client.finish(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()]);
+    settle(engine, slot);
+    return n;
 }
 
 pub fn event_want_read() -> [] int {
@@ -462,16 +884,19 @@ pub fn event[&e](engine: &e Engine, slot: int) -> [] int {
     if !slot_ok(engine, slot) || contents(engine.meta)[m_busy(slot)] == 0 {
         return tls_client.event_failed();
     }
-    let i = ints_of(slot);
-    return tls_client.event(contents(engine.ints)[i..i + tls_client.ints_len()]);
+    if in_area(engine, slot) {
+        let a = ints_of(engine, slot);
+        return tls_client.event(contents(engine.ints)[a..a + tls_slot.ints_core_len()]);
+    }
+    let i = core_ints(slot);
+    return tls_client.event(contents(engine.cints)[i..i + tls_slot.ints_core_len()]);
 }
 
 pub fn failure[&e](engine: &e Engine, slot: int) -> [] int {
     if !slot_ok(engine, slot) {
         return tls_record.bad_slot();
     }
-    let i = ints_of(slot);
-    return tls_client.failure(contents(engine.ints)[i..i + tls_client.ints_len()]);
+    return word(engine, slot, tls_slot.i_failure());
 }
 
 // The alert the peer sent, when `failure` is `tls-alert`.
@@ -479,8 +904,7 @@ pub fn alert_received[&e](engine: &e Engine, slot: int) -> [] int {
     if !slot_ok(engine, slot) {
         return 0;
     }
-    let i = ints_of(slot);
-    return tls_client.alert_received(contents(engine.ints)[i..i + tls_client.ints_len()]);
+    return word(engine, slot, tls_slot.i_alert());
 }
 
 pub fn refusal_tag(code: int) -> [] &static [byte] {
@@ -492,9 +916,24 @@ pub fn drop[&e](engine: &!e Engine, slot: int) -> [] int {
     if !slot_ok(engine, slot) {
         return tls_record.bad_slot();
     }
-    let i = ints_of(slot);
-    let b = bytes_of(slot);
-    tls_client.drop(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()]);
+    if contents(engine.meta)[m_lease(engine, slot)] != 0 {
+        let i = ints_of(engine, slot);
+        let b = bytes_of(engine, slot);
+        tls_client.drop(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()]);
+        clear_area(engine, contents(engine.meta)[m_lease(engine, slot)] - 1, tls_slot.recv_cap());
+        contents(engine.meta)[m_reach(engine, slot)] = 0;
+        contents(engine.meta)[m_dirty(engine, slot)] = 0;
+        unlease(engine, slot);
+    }
+    // The core is what is left of a connection without an area (and of one with, after the area was cleared).
+    let ci = core_ints(slot);
+    var k = 0;
+    while k < tls_slot.ints_core_len() {
+        contents(engine.cints)[ci + k] = 0;
+        k = k + 1;
+    }
+    let cb = core_bytes(engine, slot);
+    tls_slot.zero(contents(engine.cbytes)[cb..cb + core_len(engine)]);
     contents(engine.meta)[m_busy(slot)] = 0;
     return 0;
 }
@@ -640,11 +1079,15 @@ pub fn save_to[&e](engine: &!e Engine, slot: int, pool: int) -> [] int {
     if !slot_ok(engine, slot) || contents(engine.meta)[m_busy(slot)] == 0 {
         return 0;
     }
-    let i = ints_of(slot);
-    let b = bytes_of(slot);
-    let state = contents(engine.ints)[i + tls_slot.i_state()];
-    let n = contents(engine.ints)[i + tls_slot.i_ticket_len()];
-    let flags = contents(engine.ints)[i + tls_slot.i_flags()];
+    // Read from the core, current first if the connection holds an area; what is changed is changed in both.
+    if in_area(engine, slot) {
+        core_out(engine, slot);
+    }
+    let i = core_ints(slot);
+    let b = core_bytes(engine, slot);
+    let state = contents(engine.cints)[i + tls_slot.i_state()];
+    let n = contents(engine.cints)[i + tls_slot.i_ticket_len()];
+    let flags = contents(engine.cints)[i + tls_slot.i_flags()];
     if n == 0 || state == tls_slot.state_failed() || flags & tls_slot.f_tls12() != 0 {
         return 0;
     }
@@ -667,22 +1110,22 @@ pub fn save_to[&e](engine: &!e Engine, slot: int, pool: int) -> [] int {
         contents(engine.tmeta)[t_hand()] = (e + 1) % cap;
         wipe(engine, e);
     }
-    let h = contents(engine.ints)[i + tls_slot.i_ticket_hash()];
-    let host_len = contents(engine.ints)[i + tls_slot.i_host_len()];
+    let h = contents(engine.cints)[i + tls_slot.i_ticket_hash()];
+    let host_len = contents(engine.cints)[i + tls_slot.i_host_len()];
     let at = e * entry_bytes();
     var k = 0;
     while k < n {
-        contents(engine.tickets)[at + k] = contents(engine.bytes)[b + tls_slot.b_ticket() + k];
+        contents(engine.tickets)[at + k] = contents(engine.cbytes)[b + tls_slot.b_ticket() + k];
         k = k + 1;
     }
     k = 0;
     while k < h {
-        contents(engine.tickets)[at + e_psk() + k] = contents(engine.bytes)[b + tls_slot.k_ticket_psk() + k];
+        contents(engine.tickets)[at + e_psk() + k] = contents(engine.cbytes)[b + tls_slot.k_ticket_psk() + k];
         k = k + 1;
     }
     k = 0;
     while k < host_len {
-        contents(engine.tickets)[at + e_host() + k] = contents(engine.bytes)[b + tls_slot.b_ticket_host() + k];
+        contents(engine.tickets)[at + e_host() + k] = contents(engine.cbytes)[b + tls_slot.b_ticket_host() + k];
         k = k + 1;
     }
     contents(engine.tmeta)[tf(e, 0)] = p;
@@ -691,19 +1134,25 @@ pub fn save_to[&e](engine: &!e Engine, slot: int, pool: int) -> [] int {
     contents(engine.tmeta)[tf(e, 3)] = h;
     contents(engine.tmeta)[tf(e, 4)] = host_len;
     contents(engine.tmeta)[tf(e, 5)] = contents(engine.meta)[m_started(engine, slot)];
-    contents(engine.tmeta)[tf(e, 6)] = contents(engine.ints)[i + tls_slot.i_ticket_lifetime()];
-    contents(engine.tmeta)[tf(e, 7)] = contents(engine.ints)[i + tls_slot.i_ticket_age_add()];
-    contents(engine.tmeta)[tf(e, 8)] = contents(engine.ints)[i + tls_slot.i_verified_at()];
-    contents(engine.tmeta)[tf(e, 9)] = contents(engine.ints)[i + tls_slot.i_not_after()];
+    contents(engine.tmeta)[tf(e, 6)] = contents(engine.cints)[i + tls_slot.i_ticket_lifetime()];
+    contents(engine.tmeta)[tf(e, 7)] = contents(engine.cints)[i + tls_slot.i_ticket_age_add()];
+    contents(engine.tmeta)[tf(e, 8)] = contents(engine.cints)[i + tls_slot.i_verified_at()];
+    contents(engine.tmeta)[tf(e, 9)] = contents(engine.cints)[i + tls_slot.i_not_after()];
     // The trust generation when the connection started, not now: a ticket earned
     // by a connection that began before an identity or the roots changed is not
     // offered after (`docs/tls-parity.md` §6.5, rule 9).
-    contents(engine.tmeta)[tf(e, 10)] = contents(engine.ints)[i + tls_slot.i_trust_gen()];
+    contents(engine.tmeta)[tf(e, 10)] = contents(engine.cints)[i + tls_slot.i_trust_gen()];
     contents(engine.tmeta)[tf(e, 11)] = contents(engine.tmeta)[t_saves()];
     contents(engine.tmeta)[t_saves()] = contents(engine.tmeta)[t_saves()] + 1;
-    // Saved once: the slot's copy goes.
-    contents(engine.ints)[i + tls_slot.i_ticket_len()] = 0;
-    tls_slot.zero(contents(engine.bytes)[b + tls_slot.b_ticket()..b + tls_slot.b_ticket_host() + 256]);
+    // Saved once: the slot's copy goes, in the core and in the area if it holds one.
+    contents(engine.cints)[i + tls_slot.i_ticket_len()] = 0;
+    tls_slot.zero(contents(engine.cbytes)[b + tls_slot.b_ticket()..b + tls_slot.b_ticket_host() + 256]);
+    if in_area(engine, slot) {
+        let ai = ints_of(engine, slot);
+        let ab = bytes_of(engine, slot);
+        contents(engine.ints)[ai + tls_slot.i_ticket_len()] = 0;
+        tls_slot.zero(contents(engine.bytes)[ab + tls_slot.b_ticket()..ab + tls_slot.b_ticket_host() + 256]);
+    }
     return p;
 }
 
@@ -834,18 +1283,22 @@ fn start_with_wire[&e, &h, &a](engine: &!e Engine, slot: int, host: &h [byte], n
     let age = now_unix_ms - contents(engine.tmeta)[tf(e, 5)] + contents(engine.tmeta)[tf(e, 7)];
     let verified_at = contents(engine.tmeta)[tf(e, 8)];
     let not_after = contents(engine.tmeta)[tf(e, 9)];
-    var code = 0;
+    var code = lease(engine, slot);
+    if code != 0 {
+        return code;
+    }
     region r {
         let random = alloc_slice[r](96, byte_of(0));
         draw(engine, random);
-        let i = ints_of(slot);
-        let b = bytes_of(slot);
+        let i = ints_of(engine, slot);
+        let b = bytes_of(engine, slot);
         code = tls_client.start_alpn(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], host, random, now_unix_ms / 1000, contents(engine.tickets)[at..at + n], contents(engine.tickets)[at + e_psk()..at + e_psk() + h], age, verified_at, not_after, true, alpn);
         tls_slot.zero(random);
     }
     wipe(engine, e);
     contents(engine.meta)[m_started(engine, slot)] = now_unix_ms;
     choose_identity(engine, slot, host);
+    settle(engine, slot);
     contents(engine.meta)[m_busy(slot)] = 1;
     return code;
 }
@@ -855,8 +1308,7 @@ pub fn resumed[&e](engine: &e Engine, slot: int) -> [] bool {
     if !slot_ok(engine, slot) {
         return false;
     }
-    let i = ints_of(slot);
-    return tls_client.resumed(contents(engine.ints)[i..i + tls_client.ints_len()]);
+    return word(engine, slot, tls_slot.i_flags()) & tls_slot.f_resumed() != 0;
 }
 
 // ---- ALPN and client identities (`docs/tls-parity.md` §6.2, §6.6) ----
@@ -975,8 +1427,12 @@ pub fn client_auth[&e](engine: &e Engine, slot: int) -> [] int {
     if !slot_ok(engine, slot) {
         return 0;
     }
-    let i = ints_of(slot);
-    return tls_client.client_auth(contents(engine.ints)[i..i + tls_client.ints_len()]);
+    if in_area(engine, slot) {
+        let a = ints_of(engine, slot);
+        return tls_client.client_auth(contents(engine.ints)[a..a + tls_slot.ints_core_len()]);
+    }
+    let i = core_ints(slot);
+    return tls_client.client_auth(contents(engine.cints)[i..i + tls_slot.ints_core_len()]);
 }
 
 // ---- The server (`docs/tls-server.md` §5.1) ----
@@ -1053,13 +1509,16 @@ pub fn serve[&e](engine: &!e Engine, slot: int, now_unix_ms: int) -> [] int {
     if tls_identity.count(contents(engine.ids)) == 0 {
         return tls_record.server_no_identity();
     }
-    var code = 0;
+    var code = lease(engine, slot);
+    if code != 0 {
+        return code;
+    }
     advance(engine, now_unix_ms);
     region r {
         let random = alloc_slice[r](96, byte_of(0));
         draw(engine, random);
-        let i = ints_of(slot);
-        let b = bytes_of(slot);
+        let i = ints_of(engine, slot);
+        let b = bytes_of(engine, slot);
         code = tls_server.start(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], random);
         tls_slot.zero(random);
         // The randomness of the tickets this connection may make: a salt and a ticket_age_add each.
@@ -1069,6 +1528,7 @@ pub fn serve[&e](engine: &!e Engine, slot: int, now_unix_ms: int) -> [] int {
         }
         contents(engine.ints)[i + tls_slot.i_srv_drawn()] = n;
     }
+    settle(engine, slot);
     contents(engine.meta)[m_started(engine, slot)] = now_unix_ms;
     contents(engine.meta)[m_busy(slot)] = 1;
     return code;
@@ -1155,7 +1615,7 @@ pub fn ticket_verdict[&e](engine: &e Engine, slot: int) -> [] int {
     if !slot_ok(engine, slot) {
         return 0;
     }
-    return contents(engine.ints)[ints_of(slot) + tls_slot.i_srv_verdict()];
+    return word(engine, slot, tls_slot.i_srv_verdict());
 }
 
 pub fn ticket_verdict_tag(verdict: int) -> [] &static [byte] {
@@ -1172,13 +1632,17 @@ pub fn server_name[&e, &o](engine: &e Engine, slot: int, out: &!o [byte]) -> [] 
     if !slot_ok(engine, slot) {
         return tls_record.bad_slot();
     }
-    let i = ints_of(slot);
-    let b = bytes_of(slot);
-    var n = contents(engine.ints)[i + tls_slot.i_sni_len()];
+    var n = word(engine, slot, tls_slot.i_sni_len());
     if n > len(out) {
         n = len(out);
     }
-    tls_slot.copy_bytes(contents(engine.bytes)[b + tls_slot.b_sni()..b + tls_slot.b_sni() + n], out[0..n]);
+    if in_area(engine, slot) {
+        let a = bytes_of(engine, slot);
+        tls_slot.copy_bytes(contents(engine.bytes)[a + tls_slot.b_sni()..a + tls_slot.b_sni() + n], out[0..n]);
+    } else {
+        let b = core_bytes(engine, slot);
+        tls_slot.copy_bytes(contents(engine.cbytes)[b + tls_slot.b_sni()..b + tls_slot.b_sni() + n], out[0..n]);
+    }
     return n;
 }
 
@@ -1189,16 +1653,29 @@ pub fn alpn[&e, &o](engine: &e Engine, slot: int, out: &!o [byte]) -> [] int {
     if !slot_ok(engine, slot) {
         return tls_record.bad_slot();
     }
-    let i = ints_of(slot);
-    let b = bytes_of(slot);
-    if !is_server(engine) {
-        return tls_client.alpn(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], out);
+    if in_area(engine, slot) {
+        let ai = ints_of(engine, slot);
+        let ab = bytes_of(engine, slot);
+        if !is_server(engine) {
+            return tls_client.alpn(contents(engine.ints)[ai..ai + tls_slot.ints_core_len()], contents(engine.bytes)[ab..ab + core_len(engine)], out);
+        }
+        var n = contents(engine.ints)[ai + tls_slot.i_alpn_len()];
+        if n > len(out) {
+            n = len(out);
+        }
+        tls_slot.copy_bytes(contents(engine.bytes)[ab + tls_slot.b_alpn()..ab + tls_slot.b_alpn() + n], out[0..n]);
+        return n;
     }
-    var n = contents(engine.ints)[i + tls_slot.i_alpn_len()];
+    let i = core_ints(slot);
+    let b = core_bytes(engine, slot);
+    if !is_server(engine) {
+        return tls_client.alpn(contents(engine.cints)[i..i + tls_slot.ints_core_len()], contents(engine.cbytes)[b..b + core_len(engine)], out);
+    }
+    var n = contents(engine.cints)[i + tls_slot.i_alpn_len()];
     if n > len(out) {
         n = len(out);
     }
-    tls_slot.copy_bytes(contents(engine.bytes)[b + tls_slot.b_alpn()..b + tls_slot.b_alpn() + n], out[0..n]);
+    tls_slot.copy_bytes(contents(engine.cbytes)[b + tls_slot.b_alpn()..b + tls_slot.b_alpn() + n], out[0..n]);
     return n;
 }
 
@@ -1210,8 +1687,7 @@ pub fn handshakes_in_progress[&e](engine: &e Engine) -> [] int {
     var n = 0;
     var s = 0;
     while s < contents(engine.meta)[m_slots()] {
-        let i = ints_of(s);
-        if contents(engine.meta)[m_busy(s)] != 0 && tls_server.in_handshake(contents(engine.ints)[i..i + tls_client.ints_len()]) {
+        if contents(engine.meta)[m_busy(s)] != 0 && handshaking(engine, s) {
             n = n + 1;
         }
         s = s + 1;
@@ -1227,19 +1703,19 @@ pub fn suite[&e](engine: &e Engine, slot: int) -> [] int {
     if !slot_ok(engine, slot) {
         return 0;
     }
-    return contents(engine.ints)[ints_of(slot) + tls_slot.i_suite()];
+    return word(engine, slot, tls_slot.i_suite());
 }
 
 pub fn group[&e](engine: &e Engine, slot: int) -> [] int {
     if !slot_ok(engine, slot) {
         return 0;
     }
-    return contents(engine.ints)[ints_of(slot) + tls_slot.i_group()];
+    return word(engine, slot, tls_slot.i_group());
 }
 
 pub fn retried[&e](engine: &e Engine, slot: int) -> [] bool {
     if !slot_ok(engine, slot) {
         return false;
     }
-    return contents(engine.ints)[ints_of(slot) + tls_slot.i_flags()] & tls_slot.f_retried() != 0;
+    return word(engine, slot, tls_slot.i_flags()) & tls_slot.f_retried() != 0;
 }

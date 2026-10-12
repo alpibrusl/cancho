@@ -1121,7 +1121,7 @@ pub fn drop[&i, &b](ints: &!i [int], bytes: &!b [byte]) -> [] int {
     tls_slot.zero(bytes[tls_slot.b_keys()..tls_slot.b_keys() + tls_slot.keys_len()]);
     tls_slot.zero(bytes[tls_slot.b_plain()..tls_slot.b_plain() + tls_slot.plain_cap()]);
     tls_slot.zero(bytes[tls_slot.b_recv()..tls_slot.b_recv() + tls_slot.recv_cap()]);
-    tls_slot.zero(bytes[tls_slot.b_offer()..tls_slot.bytes_len()]);
+    tls_slot.zero(bytes[tls_slot.b_offer()..tls_slot.bytes_core_len()]);
     var k = 0;
     while k < tls_slot.ints_len() {
         ints[k] = 0;

@@ -392,6 +392,15 @@ secrets), and the engine's ticket table 2,440 bytes a ticket.* Shrinking the
 reassembly buffer to the largest certificate message actually seen is §10's question 6. The number is a design estimate and
 #208 measures it.
 
+*Corrected (#383, `docs/tls-memory.md`, measured): (1) the reassembly buffer was never "released into the slot's pool after
+`Finished`": there was no pool, and the buffer was compacted and never freed or cleared; and it is not what made the slot large,
+since a page of it nobody writes is not resident. (2) The slot was not 179 KiB but 262.8 KiB, 10,241 words and 187,191 bytes:
+`std.ecdh`'s work area (75 KiB) had been moved into it (a region holds at most 64 KiB) and this figure was not revisited. (3) What
+was resident for an established connection in `examples/tls_echo` was 119 KiB, because a handshake writes the work area and a
+page or two of each buffer, and a record in flight writes four pages of four buffers more. (4) **As built, an established
+connection holds its core, 4.5 KiB for a server and 8.3 KiB for a client, and leases the rest from a pool of work areas for the
+length of a handshake or of the bytes in flight (`tls-memory.md` §7).***
+
 ---
 
 ## 8. Refusal tags
@@ -427,6 +436,7 @@ history, as `cancho-hooks` stores `attempts.status` today (`docs/tls-nonblocking
 | `tls-client-sign` | *#386:* the signer refused or its check failed while signing a CertificateVerify: a fault, not an input | report it |
 | `tls-no-entropy` | the engine was never seeded | a program bug: seed it in `main` |
 | `tls-slot` | a slot number out of range, or a slot already in use | a program bug |
+| `tls-pool` | every work area of an engine opened with `open_with_areas` is leased: a connection cannot start (an established one that needs an area is not refused: it waits, `feed` and `send` taking nothing) (`tls-memory.md` §7.3) | size the pool for the connections in a handshake or holding a record at one instant; the default has one for every slot, and never refuses |
 
 **Certificates** (`packages/x509`, through `packages/tls`):
 
@@ -487,6 +497,8 @@ Each is a decision this design does not make by default, with the default it ass
    then needs updating)? *Assumed: two labels; mis-issuance of `*.co.uk` is a CA failure the rest of the ecosystem polices.*
 6. **The 64 KiB handshake buffer per slot.** Keep it per slot (100 KiB a connection, §7.4), or share a pool across slots, which
    makes the code harder? *Assumed: per slot until #208 measures.*
+   *Answered (#383, `tls-memory.md`): shared, and not only that buffer: the handshake's scratch and the record buffers too, as work
+   areas leased for as long as a handshake runs or bytes are in flight. Measured, the buffer alone was never the cost (§7.4's correction).*
 7. **ChaCha20 only.** Is losing AES-GCM-only receivers acceptable until #207's measurement? *Assumed: yes, with OpenSSL the default
    until #209.*
 8. **Who reviews (#209).** A person or a firm, named before the work it reviews is called finished.
