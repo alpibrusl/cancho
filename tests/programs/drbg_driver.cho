@@ -1,0 +1,196 @@
+// #289: `std.drbg`, driven from standard input, so the fast-key-erasure
+// construction and its refusals go through one program on both
+// backends. Byte strings in lowercase hex (`-` for empty), one case
+// per line, each answered `<code> <tag> <hex>`:
+//
+//     D <seed> <n>         seed, then draw `n` (decimal) bytes
+//     R <seed> <seed2>     seed, reseed, then draw 32 bytes
+//     U <n>                draw `n` bytes before any seed
+//     S <hex>              seed with a wrong length's bytes
+import std.buffer;
+import std.drbg;
+import std.io;
+
+fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap, io_read] buffer.Buffer {
+    var out = text;
+    var c = getchar(io);
+    while c >= 0 {
+        out = buffer.push(heap, out, byte_of(c));
+        c = getchar(io);
+    }
+    return out;
+}
+
+fn nibble(c: int) -> [] int {
+    if c >= 97 {
+        return c - 87;
+    }
+    return c - 48;
+}
+
+fn field_end[&s](s: &s [byte], at: int) -> [] int {
+    var e = at;
+    while e < len(s) && int_of(s[e]) != 32 && int_of(s[e]) != 10 {
+        e = e + 1;
+    }
+    return e;
+}
+
+fn next_field[&s](s: &s [byte], at: int) -> [] int {
+    return field_end(s, at) + 1;
+}
+
+fn hex_len[&s](s: &s [byte], at: int) -> [] int {
+    if at >= len(s) {
+        return 0;
+    }
+    if field_end(s, at) - at == 1 && int_of(s[at]) == 45 {
+        return 0;
+    }
+    return (field_end(s, at) - at) / 2;
+}
+
+fn hex_into[&s, &o](s: &s [byte], at: int, o: &!o [byte]) -> [] int {
+    let n = hex_len(s, at);
+    var i = 0;
+    while i < len(o) && i < n {
+        o[i] = byte_of(nibble(int_of(s[at + i * 2])) * 16 + nibble(int_of(s[at + i * 2 + 1])));
+        i = i + 1;
+    }
+    return n;
+}
+
+fn number[&s](s: &s [byte], at: int) -> [] int {
+    let e = field_end(s, at);
+    var n = 0;
+    var p = at;
+    while p < e {
+        n = n * 10 + int_of(s[p]) - 48;
+        p = p + 1;
+    }
+    return n;
+}
+
+fn print_hex[&i, &d](io: &!i Io, d: &d [byte]) -> [io_write] int {
+    let digits = "0123456789abcdef";
+    var n = 0;
+    while n < len(d) {
+        let b = int_of(d[n]);
+        io.write_all(io, digits[b >> 4..(b >> 4) + 1]);
+        io.write_all(io, digits[b & 15..(b & 15) + 1]);
+        n = n + 1;
+    }
+    if len(d) == 0 {
+        io.write_all(io, "-");
+    }
+    return 0;
+}
+
+fn report[&i, &d](io: &!i Io, code: int, d: &d [byte]) -> [io_write] int {
+    io.print_int(io, code);
+    io.space(io);
+    io.write_all(io, drbg.refusal_tag(code));
+    io.space(io);
+    if code < 0 {
+        print_hex(io, d[0..0]);
+    } else {
+        print_hex(io, d);
+    }
+    io.write_all(io, "\n");
+    return 0;
+}
+
+fn case[&i, &s, &h](io: &!i Io, s: &s [byte], at: int, heap: &!h Heap) -> [heap, io_write] int {
+    let what = int_of(s[at]);
+    let f1 = next_field(s, at);
+    let f2 = next_field(s, f1);
+    let key = box_slice(heap, drbg.state_len(), byte_of(0));
+    borrow mut key as &!kb in {
+        let k = contents(kb);
+        region r {
+            let seeded = alloc_slice[r](drbg.seeded_len(), 0);
+            let seed = alloc_slice[r](32, byte_of(0));
+            if what == 85 {
+                // U: draw before any seed.
+                let n = number(s, f2);
+                region q {
+                    let out = alloc_slice[q](n, byte_of(0));
+                    let code = drbg.draw(k, seeded, out);
+                    report(io, code, out);
+                }
+            } else if what == 83 {
+                // S: a seed of the wrong length.
+                let n = hex_len(s, f1);
+                region q {
+                    let wrong = alloc_slice[q](n, byte_of(0));
+                    hex_into(s, f1, wrong);
+                    let code = drbg.seed(wrong, k, seeded);
+                    report(io, code, seed[0..0]);
+                }
+            } else {
+                hex_into(s, f1, seed);
+                var code = drbg.seed(seed, k, seeded);
+                if code != 0 {
+                    report(io, code, seed[0..0]);
+                } else if what == 82 {
+                    // R: reseed with the second field, then draw 32.
+                    region q {
+                        let two = alloc_slice[q](32, byte_of(0));
+                        let out = alloc_slice[q](32, byte_of(0));
+                        hex_into(s, f2, two);
+                        code = drbg.seed(two, k, seeded);
+                        if code == 0 {
+                            code = drbg.draw(k, seeded, out);
+                        }
+                        report(io, code, out);
+                    }
+                } else {
+                    // D: draw `n` bytes.
+                    let n = number(s, f2);
+                    region q {
+                        let out = alloc_slice[q](n, byte_of(0));
+                        code = drbg.draw(k, seeded, out);
+                        report(io, code, out);
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, key);
+    return 0;
+}
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
+    var text = buffer.empty(heap, 4096);
+    text = read_stdin(heap, io, text);
+    borrow text as &b in {
+        let s = buffer.bytes(b);
+        var at = 0;
+        while at < len(s) {
+            if int_of(s[at]) != 10 {
+                case(io, s, at, heap);
+            }
+            while at < len(s) && int_of(s[at]) != 10 {
+                at = at + 1;
+            }
+            at = at + 1;
+        }
+    }
+    buffer.drop(heap, text);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(args);
+    release(ffi);
+    release(fs);
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            run(h, i);
+        }
+    }
+    release(heap);
+    release(io);
+    return 0;
+}

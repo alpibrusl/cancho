@@ -20,7 +20,7 @@ for case in x25519 ed25519-sign; do
     reports=$(grep -c "depends on uninitialised value\|uninitialised value(s)" "$work/$case.log" || true)
     summary=$(grep "ERROR SUMMARY" "$work/$case.log" | sed 's/^==[0-9]*== //')
     echo "$case: $(cat "$work/$case.out") -- $summary"
-    if [ "$case" = x25519 ] && [ "$reports" != 0 ]; then
+    if [ "$reports" != 0 ]; then
         grep -A6 "uninitialised" "$work/$case.log" | head -40
         status=1
     fi

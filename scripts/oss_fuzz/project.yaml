@@ -1,0 +1,39 @@
+# OSS-Fuzz integration for the cancho compiler and its TLS stack
+# (free, continuous fuzzing on Google's infra; the third rung of the
+# free-credibility ladder in #209's evidence, after Wycheproof and
+# tlsfuzzer).
+#
+# What this is: the project configuration to submit to
+# https://github.com/google/oss-fuzz/pull/new -- a `projects/cancho`
+# directory with this `project.yaml` and the `build.sh` beside it, both
+# copied from this directory unchanged.
+#
+# The one obstacle, and how this clears it: OSS-Fuzz fuzzes through
+# libFuzzer's `LLVMFuzzerTestOneInput` entry point, and a cancho program
+# exports no symbol but `main` (`docs/tls-assurance.md` \u00a73.1, the same
+# reason AFL++ was chosen over libFuzzer for the in-repo fuzzing). The
+# `shim.c` beside this file clears it: the harness is built with
+# `cancho build --emit obj`, its `main` renamed, and the shim's
+# `LLVMFuzzerTestOneInput` feeds the input to it over stdin -- the same
+# object-linking `tests/ct/ctgrind.c` and `scripts/curve25519_ctgrind.sh`
+# already do, turned into a libFuzzer entry point.
+#
+# Submitting: an OSS-Fuzz maintainer must sponsor the project, and the
+# request is a pull request to google/oss-fuzz adding the directory.
+# Before that PR, run build.sh in the oss-fuzz base-builder image
+# (`gcr.io/oss-fuzz-base/base-builder`) and confirm the binaries fuzz;
+# `$OUT` is where OSS-Fuzz expects the `*_fuzzer` binaries. The e-mail
+# addresses in project.yaml must accept the reports (the fuzz logs and
+# any crash findings).
+
+homepage: "https://github.com/alpibrusl/cancho"
+main_repo: "https://github.com/alpibrusl/cancho"
+language: c++
+primary_contact: "maintainer@alpibru.com"
+fuzzing_engines:
+  - libfuzzer
+sanitizers:
+  - address
+  - undefined
+auto_ccs:
+  - "maintainer@alpibru.com"

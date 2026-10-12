@@ -53,7 +53,23 @@ The LLVM backend compiles through `clang`, named by the `CLANG` environment vari
 every edge of a cancho program. Measured on `examples/hello.cho`: the instrumented binary runs, and `afl-showmap` reports its
 edges. Nothing in the compiler changes, and the code fuzzed is the code shipped: the same IR, through the same `-O2`.
 
-**libFuzzer was the alternative.** It needs a C entry point, `LLVMFuzzerTestOneInput`, that calls into the program. cancho
+**libFuzzer was the alternative, and since `scripts/oss_fuzz/` it is a prepared one.**
+OSS-Fuzz (https://github.com/google/oss-fuzz) runs continuous fuzzing for open-source
+projects, free, forever -- the citable claim is "N CPU-years, zero crashes". Its one
+requirement is libFuzzer's `LLVMFuzzerTestOneInput` entry point, and a cancho program
+exports no symbol but `main`: the same obstacle §3.1 recorded. The integration package
+(`scripts/oss_fuzz/`) clears it the way `tests/ct/ctgrind.c` already proved possible:
+the harness is built with `cancho build --emit obj`, its `main` renamed with `objcopy`,
+and a C shim (`shim.c`) feeds the input over standard input -- verified end to end on a
+`fuzz_der` object, with a corpus seed processed, on this repository's machine; only the
+link against `$LIB_FUZZING_ENGINE` itself waits for OSS-Fuzz's builder image (or a
+clang). `build.sh` builds all seven harnesses that way; `project.yaml` is the project
+configuration to submit as a `projects/cancho` directory in google/oss-fuzz. The
+submission itself needs a sponsoring OSS-Fuzz maintainer and a pull request there --
+outside this repository's CI, and worth doing once the in-repo fuzzing hours and the
+tlsfuzzer matrix are linked in the request.
+
+**The original note, for why AFL++ was chosen first.** It needs a C entry point, `LLVMFuzzerTestOneInput`, that calls into the program. cancho
 exports no symbol but `main`, so libFuzzer would need either a language change (exported functions) or a rewrite of the
 emitted module's `main`. AFL++ runs `main` unchanged in a fork server, reading each input from standard input. It is slower
 than an in-process loop. §3.4 measures how much.
