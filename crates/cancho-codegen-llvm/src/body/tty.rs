@@ -7,10 +7,7 @@
 //! (`native-sockets.md` §3's `fcntl` precedent).
 
 use crate::*;
-use cancho_ir::{
-    CC_AT, CFLAG_AT, CLOCAL, CREAD, CS8, O_NOCTTY, O_NONBLOCK, TCIFLUSH, TCSANOW, TERMIOS_SIZE,
-    TTY_CFLAG_SPEED, VMIN, VTIME,
-};
+use cancho_ir::{IOSSIOSPEED, LINUX_RATES, MACOS_STANDARD_STEP, TCSANOW, TTY_EINVAL, TtyOs};
 
 impl FuncEmitter<'_> {
     /// `tty_open(tty, path)` — `openat(AT_FDCWD, path, O_RDWR | O_NOCTTY |
@@ -20,7 +17,7 @@ impl FuncEmitter<'_> {
     pub(crate) fn tty_open(&mut self, prefix: &str, args: &[Expr]) -> Result<Vec<LValue>, String> {
         let path = self.expr(&args[1])?;
         let path = self.checked_path(prefix, &path)?;
-        let flags = 2 | O_NOCTTY | O_NONBLOCK;
+        let flags = TtyOs::for_darwin(self.is_darwin()).open_flags();
         let fd32 = self.open_at_cwd(&path, flags, 0);
         let fd = self.fresh();
         self.out.push_str(&format!("  {fd} = sext i32 {fd32} to i64\n"));
@@ -34,77 +31,137 @@ impl FuncEmitter<'_> {
 
     /// `tty_configure(port, baud)` — raw mode, 8N1 and the speed, one call
     /// and no mode algebra (`docs/tty.md` §3). `0`, or the platform's
-    /// `errno`. The per-target split is `cancho_ir::tty`'s; the walk is
+    /// `errno`; `EINVAL` for a speed the platform has no rate for, before
+    /// anything is applied. The per-target split is `cancho_ir::TtyOs`,
+    /// chosen by the target being compiled for; the walk is
     /// `cancho-codegen`'s own `tty_configure`'s.
     pub(crate) fn tty_configure(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        let darwin = self.is_darwin();
+        let os = TtyOs::for_darwin(darwin);
         let fd = self.handle_fd(&args[0]);
         let speed = operand(&args[1]);
+        let n = self.fresh().trim_start_matches('%').to_string();
+        let bad_speed = format!("tty.badspeed.{n}");
+        let apply = format!("tty.apply.{n}");
+        let step = format!("tty.step.{n}");
+        let fail_set = format!("tty.failset.{n}");
+        let fail_step = format!("tty.failstep.{n}");
+        let good = format!("tty.good.{n}");
+        let done = format!("tty.done.{n}");
+
+        // The speed first. Linux: the standard rates' `Bxxx` bits by a
+        // select chain over `LINUX_RATES` (`-1` until one matches, so it is
+        // the unknown flag too); macOS: no bits, and a plausible positive
+        // rate (the driver judges the rest).
+        let (bits, unknown) = if darwin {
+            let below = self.fresh();
+            self.out.push_str(&format!("  {below} = add i64 {speed}, -1\n"));
+            let unknown = self.fresh();
+            self.out.push_str(&format!("  {unknown} = icmp uge i64 {below}, 2147483646\n"));
+            ("0".to_string(), unknown)
+        } else {
+            let mut bits = "-1".to_string();
+            for (rate, rate_bits) in LINUX_RATES {
+                let is = self.fresh();
+                self.out.push_str(&format!("  {is} = icmp eq i64 {speed}, {rate}\n"));
+                let next = self.fresh();
+                self.out
+                    .push_str(&format!("  {next} = select i1 {is}, i64 {rate_bits}, i64 {bits}\n"));
+                bits = next;
+            }
+            let unknown = self.fresh();
+            self.out.push_str(&format!("  {unknown} = icmp slt i64 {bits}, 0\n"));
+            (bits, unknown)
+        };
+        self.out.push_str(&format!("  br i1 {unknown}, label %{bad_speed}, label %{apply}\n"));
+        self.out.push_str(&format!("{bad_speed}:\n  br label %{done}\n{apply}:\n"));
 
         // The one `struct termios` this backend owns.
         let termios = self.fresh();
-        self.hoist(format!("  {termios} = alloca i8, i64 {TERMIOS_SIZE}\n"));
+        self.hoist(format!("  {termios} = alloca i8, i64 {}\n", os.termios_size));
 
-        // Raw mode, 8N1, `CLOCAL | CREAD`, `VMIN 0 / VTIME 0`, and the
-        // speed bits on Linux, at the measured offsets and widths.
-        let cflag = CS8 | CLOCAL | CREAD | TTY_CFLAG_SPEED;
-        let width = if cfg!(target_os = "macos") { "i64" } else { "i32" };
-        let stride = if cfg!(target_os = "macos") { 8 } else { 4 };
         // The whole struct is zeroed first, one word per pass at the
-        // target's own width: an alloca answers what was on the stack,
-        // and raw 8N1 is *defined by* the zeros -- no input, output or
-        // local flags, no line discipline, `VMIN 0 / VTIME 0` -- so this
-        // is not hygiene but the configuration itself, and `c_cflag` is
-        // the one field that is not zero by design. The zeroing walks
-        // the struct at the target's field width (4-byte fields on
-        // Linux at 0/4/8/12, 8-byte on macOS at 0/8/16/24), never a
-        // hardcoded offset list that happens to be one target's.
+        // target's own width: an alloca answers what was on the stack, and
+        // raw 8N1 is *defined by* the zeros -- no input, output or local
+        // flags, no line discipline, `VMIN 0 / VTIME 0` -- so this is not
+        // hygiene but the configuration itself, and `c_cflag` is the one
+        // field that is not zero by design.
+        let width = if os.word == 8 { "i64" } else { "i32" };
         let mut at = 0;
-        while at < TERMIOS_SIZE {
-            self.store_word(&termios, at, width, 0);
-            at += stride;
+        while at < os.termios_size {
+            self.store_word(&termios, at, width, "0");
+            at += os.word;
         }
-        self.store_word(&termios, CFLAG_AT, width, cflag);
-        self.store_cc(&termios, CC_AT + VMIN, 0);
-        self.store_cc(&termios, CC_AT + VTIME, 0);
+        let cflag64 = self.fresh();
+        self.out.push_str(&format!("  {cflag64} = or i64 {bits}, {}\n", os.cflag));
+        let cflag = if os.word == 8 {
+            cflag64
+        } else {
+            let narrowed = self.fresh();
+            self.out.push_str(&format!("  {narrowed} = trunc i64 {cflag64} to i32\n"));
+            narrowed
+        };
+        self.store_word(&termios, os.cflag_at, width, &cflag);
+        if darwin {
+            // macOS reads the speed from `c_ispeed`/`c_ospeed`, and zero
+            // there is `B0`: hang up. The first step runs at a standard
+            // rate; `IOSSIOSPEED` below sets the real one.
+            let standard = MACOS_STANDARD_STEP.to_string();
+            self.store_word(&termios, os.ispeed_at, width, &standard);
+            self.store_word(&termios, os.ospeed_at, width, &standard);
+        }
+        self.store_cc(&termios, os.cc_at + os.vmin, 0);
+        self.store_cc(&termios, os.cc_at + os.vtime, 0);
 
-        // Apply: `tcsetattr(fd, TCSANOW, t)`. On Linux this is the whole
-        // configuration — 1,000,000 is a standard rate there (the spike's
-        // finding 1); on macOS this is the first step at a standard rate
-        // and the speed goes in by `IOSSIOSPEED` below (finding 3).
+        // `tcsetattr(fd, TCSANOW, t)`: on Linux the whole configuration; on
+        // macOS the first step, at a standard rate.
         let applied = self.fresh();
         self.out.push_str(&format!(
             "  {applied} = call i32 @tcsetattr(i32 {fd}, i32 {TCSANOW}, ptr {termios})\n"
         ));
-        let mut ok = self.fresh();
-        self.out.push_str(&format!("  {ok} = icmp sge i32 {applied}, 0\n"));
+        let set_ok = self.fresh();
+        self.out.push_str(&format!("  {set_ok} = icmp sge i32 {applied}, 0\n"));
+        let after_set = if darwin { &step } else { &good };
+        self.out.push_str(&format!("  br i1 {set_ok}, label %{after_set}, label %{fail_set}\n"));
 
-        // The speed step, on the path where the flags applied. On Linux
-        // nothing; on macOS the measured `IOSSIOSPEED` ioctl — a fixed
-        // call with the pointer in the first stack slot, the variadic
-        // trap written once instead of ABI-hacked in every program
-        // (`docs/tty.md` §2's note on pyserial's constant).
-        if self.is_darwin() {
-            let speed_cell = self.fresh();
-            self.hoist(format!("  {speed_cell} = alloca i64\n"));
-            self.out.push_str(&format!("  store i64 {speed}, ptr {speed_cell}\n"));
-            let request = 0x8008_5402i64;
+        if darwin {
+            // `ioctl(fd, IOSSIOSPEED, &speed)` is variadic; LLVM lowers the
+            // call the way the callee reads it (on Apple arm64 the pointer
+            // goes on the stack), so no padding is written here -- the
+            // `fcntl` calls in this backend are the precedent.
+            self.out.push_str(&format!("{step}:\n"));
+            let cell = self.fresh();
+            self.hoist(format!("  {cell} = alloca i64\n"));
+            self.out.push_str(&format!("  store i64 {speed}, ptr {cell}\n"));
             let stepped = self.fresh();
             self.out.push_str(&format!(
-                "  {stepped} = call i32 @ioctl(i32 {fd}, i32 {request}, i64 0, i64 0, i64 0, i64 0, i64 0, ptr {speed_cell})\n"
+                "  {stepped} = call i32 (i32, i32, ...) @ioctl(i32 {fd}, i32 {}, ptr {cell})\n",
+                IOSSIOSPEED as u32 as i32
             ));
-            let speed_ok = self.fresh();
-            self.out.push_str(&format!("  {speed_ok} = icmp sge i32 {stepped}, 0\n"));
-            let both = self.fresh();
-            self.out.push_str(&format!("  {both} = and i1 {ok}, {speed_ok}\n"));
-            ok = both;
+            let step_ok = self.fresh();
+            self.out.push_str(&format!("  {step_ok} = icmp sge i32 {stepped}, 0\n"));
+            self.out.push_str(&format!("  br i1 {step_ok}, label %{good}, label %{fail_step}\n"));
+            self.out.push_str(&format!("{fail_step}:\n"));
+        } else {
+            // no speed step on Linux: the block exists so the answer's phi
+            // reads the same on both targets, and is never branched to
+            self.out.push_str(&format!("{fail_step}:\n"));
         }
+        // A refused step answers the `errno` of the call that failed, read
+        // before anything else can overwrite it.
+        let step_reason = self.errno();
+        let step_reason = operand(&step_reason);
+        self.out.push_str(&format!("  br label %{done}\n"));
+        self.out.push_str(&format!("{fail_set}:\n"));
+        let set_reason = self.errno();
+        let set_reason = operand(&set_reason);
+        self.out.push_str(&format!("  br label %{done}\n"));
+        self.out.push_str(&format!("{good}:\n  br label %{done}\n{done}:\n"));
 
-        // `0` when every step applied, `1` when one refused — the errno
-        // itself is in the caller's `Failed` arm if it wants the number;
-        // the two-value shape matches `tty_configure`'s contract: 0 or
-        // the platform's errno, read where the failure happened.
         let answer = self.fresh();
-        self.out.push_str(&format!("  {answer} = select i1 {ok}, i64 0, i64 1\n"));
+        self.out.push_str(&format!(
+            "  {answer} = phi i64 [ {TTY_EINVAL}, %{bad_speed} ], [ {set_reason}, %{fail_set} ], [ {step_reason}, %{fail_step} ], [ 0, %{good} ]\n"
+        ));
         Ok(vec![LValue::Reg(answer)])
     }
 
@@ -143,7 +200,10 @@ impl FuncEmitter<'_> {
     pub(crate) fn tty_flush_input(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
         let fd = self.handle_fd(&args[0]);
         let flushed = self.fresh();
-        self.out.push_str(&format!("  {flushed} = call i32 @tcflush(i32 {fd}, i32 {TCIFLUSH})\n"));
+        self.out.push_str(&format!(
+            "  {flushed} = call i32 @tcflush(i32 {fd}, i32 {})\n",
+            TtyOs::for_darwin(self.is_darwin()).tciflush
+        ));
         let widened = self.fresh();
         self.out.push_str(&format!("  {widened} = sext i32 {flushed} to i64\n"));
         Ok(vec![LValue::Reg(widened)])
@@ -156,7 +216,7 @@ impl FuncEmitter<'_> {
     /// the base is a function-local value, and LLVM forbids one in a
     /// constant-expression position (`clang`'s "invalid use of
     /// function-local name", the emission the first cut shipped).
-    fn store_word(&mut self, base: &str, at: usize, width: &str, value: i64) {
+    fn store_word(&mut self, base: &str, at: usize, width: &str, value: &str) {
         let field = self.fresh();
         self.out
             .push_str(&format!("  {field} = getelementptr inbounds i8, ptr {base}, i64 {at}\n"));

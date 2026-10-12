@@ -597,8 +597,8 @@ pub enum Builtin {
     TtyOpen,
     /// `tty_configure(&!Port, baud: int) -> [] int` -- raw mode, 8N1, and
     /// the speed, one call and no mode algebra (`docs/tty.md` §3). `0`, or
-    /// the `errno` the platform answered (`EINVAL` on macOS for a speed
-    /// past its standard set, measured by the spike).
+    /// the `errno` the platform answered; `EINVAL` for a speed the
+    /// platform has no rate for, before the port is touched (`docs/tty.md` §5).
     TtyConfigure,
     /// `tty_read(&!Port, into: &![byte]) -> [] int` -- what is there,
     /// never blocks (`O_NONBLOCK`; the poller is the waiting story).

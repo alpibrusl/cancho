@@ -32,14 +32,22 @@ fn probe[&t](tty: &t Tty("/dev/serial")) -> [tty_open("/dev/serial"), tty_read, 
             }
             return tty_close(port);
         }
-        TtyOpened::Failed(errno) => { return 0; }
+        TtyOpened::Failed(errno) => {
+            return 0;
+        }
     }
 }
 
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
-    release(ffi); release(fs); release(heap); release(args); release(net);
-    release(clock); release(signals); release(exec);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
 
     // The narrowest form for a run-time port name is a fixed directory
     // plus the name beneath it — the `tls_echo_fixed` pattern. A path

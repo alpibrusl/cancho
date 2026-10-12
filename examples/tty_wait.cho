@@ -1,3 +1,4 @@
+//~ STDOUT ten 50ms waits: the poller slept the wait
 // tty_wait.cho — #422 T3, `docs/tty.md` §3's waiting story made honest: the
 // port sits on the poller, and the poller — not a `usleep` — is what waits.
 //
@@ -17,8 +18,12 @@ import std.buffer;
 
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
-    release(ffi); release(fs); release(args); release(net);
-    release(signals); release(exec);
+    release(ffi);
+    release(fs);
+    release(args);
+    release(net);
+    release(signals);
+    release(exec);
 
     // Open the port if it is there, and register it on the poller. A
     // missing device is a normal event for a tool, not a crash: the loop
@@ -60,7 +65,9 @@ fn main(world: World) -> [] int {
             // registered a servo's answer ends one early; with nothing
             // registered the sleep is the wait — the 501 ms baseline.
             var started = 0;
-            borrow clock as &c in { started = clock_ms(c); }
+            borrow clock as &c in {
+                started = clock_ms(c);
+            }
             borrow mut p as &!pw in {
                 var n = 0;
                 while n < 10 {
@@ -72,16 +79,27 @@ fn main(world: World) -> [] int {
                 }
             }
             var took = 0;
-            borrow clock as &c2 in { took = clock_ms(c2) - started; }
+            borrow clock as &c2 in {
+                took = clock_ms(c2) - started;
+            }
 
+            // The number is the measurement, but a clock is not a fixture: a
+            // wait that took the 500 ms the ten sleeps add up to prints one
+            // fixed line; anything else prints what it measured.
             borrow mut io as &!i in {
-                borrow mut heap as &!h in {
-                    var line = buffer.empty(h, 32);
-                    line = buffer.append(h, line, "ten 50ms waits took ms: ");
-                    line = buffer.push_nat(h, line, took);
-                    line = buffer.push(h, line, byte_of(10));
-                    borrow line as &lb in { io.write_all(i, buffer.bytes(lb)); }
-                    buffer.drop(h, line);
+                if took >= 450 && took <= 1500 {
+                    io.write_all(i, "ten 50ms waits: the poller slept the wait\n");
+                } else {
+                    borrow mut heap as &!h in {
+                        var line = buffer.empty(h, 32);
+                        line = buffer.append(h, line, "ten 50ms waits took ms: ");
+                        line = buffer.push_nat(h, line, took);
+                        line = buffer.push(h, line, byte_of(10));
+                        borrow line as &lb in {
+                            io.write_all(i, buffer.bytes(lb));
+                        }
+                        buffer.drop(h, line);
+                    }
                 }
             }
             release(io);
