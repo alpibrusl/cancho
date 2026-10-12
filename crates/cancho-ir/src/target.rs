@@ -179,10 +179,14 @@ pub fn wasi_gap(builtin: Builtin) -> Option<Gap> {
         | B::ValueBarrier
         | B::HwAesGcm
         | B::AesEncryptBlock
+        | B::AesCtr32
+        | B::GhashPowers
         | B::GhashUpdate
         | B::MulWide
         | B::AddCarry
         | B::SubBorrow
+        | B::GcmTag
+        | B::GcmTagDiff
         | B::ByteOf
         | B::FloatOf
         | B::Truncate

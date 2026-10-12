@@ -1,0 +1,24 @@
+commit 12f343e6
+Linux pipa 7.0.0-38-generic #38-Ubuntu SMP PREEMPT_DYNAMIC Fri Sep  4 09:10:14 UTC 2026 x86_64 GNU/Linux
+Model name:                              12th Gen Intel(R) Core(TM) i7-1260P
+ 10:21:44 up 4 days, 23:41,  7 users,  load average: 9,84, 7,20, 4,78
+cancho-widemul-ctgrind hooks-soak26-pg lex-soft-node-node-1 lex-soft-node-tms-1 lex-soft-node-caddy-1 lex-soft-node-console-1 lex-soft-node-gateway-1 lex-soft-node-logistics-1 lex-soft-node-telemetry-1 lex-soft-node-postgres-1 infra-postgres-1 
+12th Gen Intel(R) Core(TM) i7-1260P, Linux x86_64, load average 9.8 7.2 4.8, pinned to 7, best of 3
+
+AES-128-GCM seal, MB/s
+   size    before     after      x   openssl  after/openssl   open after
+     64       114       222    1.9        21          1054%   93
+   1024       249       362    1.5       190           190%   361
+  16384       253       419    1.7       440            95%   417
+  cycles/byte at 64: before 20.89 after 4.17 openssl 18.98 (OpenSSL takes 455% of the cycles a byte)
+  cycles/byte at 1024: before 9.04 after 1.08 openssl 2.09 (OpenSSL takes 193% of the cycles a byte)
+  cycles/byte at 16384: before 8.2 after 0.94 openssl 0.89 (OpenSSL takes 94% of the cycles a byte)
+
+AES-256-GCM seal, MB/s
+   size    before     after      x   openssl  after/openssl   open after
+     64        18       182   10.1        20           904%   451
+   1024        40      1779   44.5       177          1003%   1620
+  16384        44      1978   45.0       704           281%   571
+  cycles/byte at 64: before 14.99 after 3.07 openssl 14.14 (OpenSSL takes 460% of the cycles a byte)
+  cycles/byte at 1024: before 9.72 after 1.23 openssl 2.26 (OpenSSL takes 183% of the cycles a byte)
+  cycles/byte at 16384: before 8.99 after 1.09 openssl 1.02 (OpenSSL takes 94% of the cycles a byte)

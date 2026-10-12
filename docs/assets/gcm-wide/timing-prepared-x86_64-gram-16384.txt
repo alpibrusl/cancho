@@ -1,0 +1,10 @@
+commit 12f343e6
+Linux pipa 7.0.0-38-generic #38-Ubuntu SMP PREEMPT_DYNAMIC Fri Sep  4 09:10:14 UTC 2026 x86_64 GNU/Linux
+Model name:                              12th Gen Intel(R) Core(TM) i7-1260P
+ 10:34:01 up 4 days, 23:53,  8 users,  load average: 7,30, 8,28, 6,90
+taskset -c 7 python3 scripts/gcm_timing.py out/timing/timing_rev 1000000 --prepared --size 16384
+prepared key, 16384-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 92950 cycles, max |t| = 1.72
+open, data  1000000 samples, median 4287 cycles, max |t| = 3.21
+open, tag   1000000 samples, median 4321 cycles, max |t| = 3.62
+ 10:37:52 up 4 days, 23:57,  8 users,  load average: 7,32, 7,80, 7,01

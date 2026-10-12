@@ -355,6 +355,17 @@ label and no `Split` field. It was written against edition 7 and moved to editio
 (`std.json.parse_with`, which came in the same change, is a new `std` name, so it adds a `body` and a `sig` line and
 changes none; `std` modules are not editions).
 
+Edition 7 also has **`ghash_update`** ([`crypto-builtins.md`](crypto-builtins.md) §3), which #382 **retired but kept**. #382
+added **`aes_ctr32`, `ghash_powers`, `gcm_tag` and `gcm_tag_diff`** ([`gcm-wide.md`](gcm-wide.md) §3.4) to **edition 9**, the
+latest, for the reason the word-scan builtins are there: edition 7 is closed (§6.4) and these are names a program may declare
+for itself (`std/gcm.cho` declares `edition 9`). *(Corrected before merge: the first version of #382 put them in edition 7,
+written while edition 7 was still open.)* `std.gcm` stopped calling `ghash_update`, but the builtin still reads and still answers what it did (a block at a time,
+now computed with the new reduction), so a program written against it before #382 still compiles and runs. *(Corrected
+before merge: the first version of #382 removed it within the edition, and `scripts/history.py --explain`
+(`stability-exemptions.md`) showed the cost: `std/gcm.cho` as it stood before #382 stopped reading, a `not-a-function` past the
+recorded count. Keeping it costs one small function, emitted only in a module that calls it.)* A retired builtin is
+documented as such where it is declared, and nothing in this repository calls it.
+
 ---
 
 ## 8. What this does not do

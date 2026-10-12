@@ -263,12 +263,15 @@ goes in the core (a word after `i_session_len`, before `ints_core_len()`; bytes 
 | `i_trust_gen` | #396 | core (295) | stamped on a ticket when it is saved, after the handshake |
 | `i_srv_verdict`, `i_srv_now_ms`, `i_srv_not_after`, `i_srv_drawn` | #394 | core (aliases of the client's ticket words 20 to 28) | `ticket_verdict` is read after the handshake; the others ride along, being aliases |
 | `k_sign_hedge` (32 B, `keys_len` 1,760) | #396 | core, in the keys | the keys are one range; it is cleared with them |
+| `k_read_hw`, `k_write_hw` (368 B each, were 256; `k_sign_hedge` moves to 1,952, `keys_len` 1,984) | #392 | core, in the keys | each direction's AES round keys and GHASH powers, read on every record after the handshake; cleared with the keys |
 | `b_alpn_offer` (256 B) | #396 | client core (it ends at `b_alpn_offer() + 256`, `bytes_core_len()`) | the same `tls.alpn` read |
 | `b_ticket_random` (at `b_ticket()`, 288 B), `b_srv_fp` (at `b_ticket() + 512`, 32 B) | #394 | server **area** | drawn at `serve` and used by `issue_tickets` when the client's Finished is answered, in the lease the handshake holds; the area is cleared when it goes back (the client core's room, `bytes_core_len()`, which contains them, is cleared after a handshake whatever the role) |
 | the identity store (`tls_cident`), the ticket keys (`tls_ticket`) | #396, #394 | engine-wide boxes (`ids`, `tk`), not slots | cleared by `close` as on `main` |
 
 Sizes after: the integer core is 296 words (2,368 B); a server's byte core 2,272 B (the keys and the two names), so **4,640 B (4.5 KiB) a
-server**; a client's 6,416 B, so **8,784 B (8.6 KiB) a client**. `tests/programs/tls_pool.cho` runs with server tickets and resumption
+server**; a client's 6,416 B, so **8,784 B (8.6 KiB) a client**. *(#392, rebased on this: the two prepared AES-GCM keys grow by 112 B each,
+so the keys are 1,984 B and every core 224 B larger: a server's byte core 2,496 B, **4,864 B (4.75 KiB) a server**; a client's 6,640 B,
+**9,008 B (8.8 KiB) a client**. The figures elsewhere in this document are from before it.)* `tests/programs/tls_pool.cho` runs with server tickets and resumption
 (`tickets`) and with a client identity (`mutual`, `open_mutual_with_areas`), and `tls.residue` is 0 after every step there too. Client
 certificates on the server's side (#384, not merged when this was rebased) keep the client's leaf in `b_leaf` for `peer_certificate`:
 `keeps_area` is where such a connection keeps its area, at what it costs today.
