@@ -693,6 +693,18 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
     if ast.is_kind(st, id, kinds.NK::SReturn) {
         let value = ast.get(st, id, 4);
         let found = exprs.expr(st, text, value);
+        if ast.ok(st) && st[60] != 0 {
+            // A `static` body returns its table, a reference to a slice that may be unique.
+            if !types.is_slice_ref(st, found.ty) {
+                scope.expect(st, text, ret, found.ty, ast.nstart(st, value), ast.nend(st, value));
+                return 0;
+            }
+            scope.expect(st, text, types.make_ref(st, types.ref_unique(st, found.ty), types.static_region(), types.ref_inner(st, ret)), found.ty, ast.nstart(st, value), ast.nend(st, value));
+            if emit.on(st) && ast.ok(st) {
+                emit.static_return(st, st[60] - 1, found.reg, found.reg2 < 0, found.value, found.reg2);
+            }
+            return 0;
+        }
         if ast.ok(st) {
             if types.mentions_block(st, found.ty) {
                 ast.fail(st, rules.r_reference_escapes_region(), ast.nstart(st, value), ast.nend(st, value));
@@ -721,6 +733,7 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
     st[37] = 0 - 1;
     st[39] = 0;
     st[54] = 0;
+    st[60] = 0;
     st[22] = ast.get(st, fn_item, 13);
     st[23] = ast.get(st, fn_item, 14);
     let from = ast.nstart(st, fn_item);
@@ -812,6 +825,60 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
         if emit.on(st) {
             emit.finish(st);
         }
+        return 0;
+    }
+    if st[3] == rules.r_skip() {
+        return 2;
+    }
+    return 1;
+}
+
+// The answer for the `static` item `item`, in compile mode: 0 written, 1 a refusal, 2 `SKIP`.
+pub fn check_static[&s, &x](st: &!s [int], text: &x [byte], item: int) -> [] int {
+    st[2] = 0;
+    st[21] = 0;
+    st[32] = 0;
+    st[35] = 0;
+    st[37] = 0 - 1;
+    st[39] = 0;
+    st[54] = 0;
+    st[22] = ast.get(st, item, 13);
+    st[23] = ast.get(st, item, 14);
+    st[28] = 0 - 1;
+    let from = ast.nstart(st, item);
+    let to = ast.nend(st, item);
+    types.reset(st);
+    let ret = scope.static_type(st, item);
+    if ret == 0 || !emit.on(st) {
+        ast.fail(st, rules.r_skip(), from, to);
+        return 2;
+    }
+    let element = types.element_of(st, ret);
+    if element != 1 && element != 2 && element != 5 {
+        ast.fail(st, rules.r_skip(), from, to);
+        return 2;
+    }
+    st[60] = item + 1;
+    emit.static_header(st, item);
+    emit.header_end(st);
+    block(st, text, ast.get(st, item, 7), ast.get(st, item, 8), ret);
+    var slot = 0;
+    while ast.ok(st) && slot < st[39] {
+        let log = st[38] + 4 * slot;
+        if types.escaping_block(st, st[log], st[log + 1]) >= 0 {
+            ast.fail(st, rules.r_reference_escapes_region(), st[log + 2], st[log + 3]);
+        }
+        slot = slot + 1;
+    }
+    if ast.ok(st) && st[32] != 0 {
+        ast.fail(st, st[32], st[33], st[34]);
+    }
+    if ast.ok(st) && !terminates(st, ast.get(st, item, 7), ast.get(st, item, 8)) {
+        ast.fail(st, rules.r_missing_return(), from, to);
+    }
+    st[60] = 0;
+    if ast.ok(st) {
+        emit.finish(st);
         return 0;
     }
     if st[3] == rules.r_skip() {

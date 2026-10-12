@@ -75,6 +75,20 @@ fn bodies[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte]) -> [io_write] 
     return 0;
 }
 
+// A call to the initialiser of every `static`, in the order the items come.
+fn init_statics[&i, &s](io: &!i Io, st: &!s [int]) -> [io_write] int {
+    var item = st[15];
+    while item >= 0 {
+        if ast.is_kind(st, item, kinds.NK::IStatic) {
+            console.write_all(io, "  call void @sinit");
+            console.print_nat(io, item);
+            console.write_all(io, "()\n");
+        }
+        item = ast.next(st, item);
+    }
+    return 0;
+}
+
 // Mode 3: every function is checked, and written as it is; then the module is printed, with the
 // declarations of what the code calls and the C `main` that calls the program's `main` (or, failing
 // that, a function called `run`) and answers its result as the exit status.
@@ -82,6 +96,11 @@ fn compile[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte]) -> [io_write]
     var item = st[15];
     var entry = 0;
     while item >= 0 {
+        if ast.is_kind(st, item, kinds.NK::IStatic) {
+            if body.check_static(st, text, item) != 0 {
+                return refusal(io, st);
+            }
+        }
         if ast.is_kind(st, item, kinds.NK::IFn) {
             if body.check_function(st, text, item) != 0 {
                 return refusal(io, st);
@@ -123,9 +142,11 @@ fn compile[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte]) -> [io_write]
     console.write_all(io, "  %done = icmp eq ptr %node, null\n  br i1 %done, label %out, label %body\nbody:\n  %next = load ptr, ptr %node\n  call void @free(ptr %node)\n  br label %loop\nout:\n  ret void\n}\n\n");
     if entry == 2 {
         console.write_all(io, "define i32 @main(i32 %argc, ptr %argv) {\nentry:\n");
+        init_statics(io, st);
         console.write_all(io, "  %r = call i64 @lexs_main()\n  %status = trunc i64 %r to i32\n  ret i32 %status\n}\n");
     } else if entry == 1 {
         console.write_all(io, "define i32 @main(i32 %argc, ptr %argv) {\nentry:\n");
+        init_statics(io, st);
         console.write_all(io, "  %r = call i64 @lexs_run()\n  %status = trunc i64 %r to i32\n  ret i32 %status\n}\n");
     }
     return 0;

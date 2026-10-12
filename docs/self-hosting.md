@@ -223,7 +223,8 @@ the stages found, in place, the way this document corrects its own claims.
 | 4g. Enums and `match` on them: a variant with payloads, `match` by value and behind a reference (payloads are references, written through), `_` arms, nested | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho` | the Rust compiler, by what the built programs do | **Seventh slice of the backend.** 332 builds run and compared, 20 of them new, 64 trap; none different |
 | 4h. Arenas: `region` and `alloc_slice[a](n, fill)` of whole numbers, bytes and booleans, in the checker (the arena in scope, the count, the fill a value that copies, the slice cannot leave) and in the code | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho`, `types.cho`, `driver.cho` | the Rust compiler: the checker by answers (1,945 cases), the code by what the built programs do | **Eighth slice of the backend, and a checker rule.** 352 builds run and compared, 20 of them new, 71 trap; none different. The checker's 1,945 cases are identical, 27 of them new |
 | 4i. The heap: `box_slice`, `contents`, `unbox_slice` of whole numbers, bytes and booleans, with a `Heap` borrowed and passed (compile mode only: the checker still answers `SKIP` for a function that has one) | `emit.cho`, `exprs.cho`, `types.cho`, `scope.cho`, `effects.cho` | the Rust compiler, by what the built programs do | **Ninth slice of the backend.** 367 builds run and compared, 15 of them new, 76 trap; none different. The checker's 1,945 cases are unchanged |
-| 4j. The rest of the backend: `alloc` of one value, `static` tables, generics, tuples, `Box` and `Heap` in the checker, `clang` run by the compiler itself | not started | | |
+| 4j. `static` tables: `static name: [T] { .. alloc_slice[static](n, fill) .. return t; }` of whole numbers, bytes and booleans, and the name used as a shared reference to the slice, in the checker (20 new cases) and in the code | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho`, `driver.cho` | the Rust compiler: the checker by answers (1,965 cases), the code by what the built programs do | **Tenth slice of the backend, and a checker rule.** 382 builds run and compared, 15 of them new, 78 trap; none different. The library's skipped functions go from 641 to 612 |
+| 4k. The rest of the backend: `alloc` of one value, functions that return a slice, generics, tuples, `Box` and `Heap` in the checker, `clang` run by the compiler itself | not started | | |
 
 **The method.** A port that builds no tree has nothing to compare, and one that does
 needs a printer, which is another port. So stage 2's parser wrote the tree the Rust parser
@@ -618,6 +619,19 @@ modes a function that holds a box is still `SKIP`, as it was, and the 1,945 case
 is the honest limit of this stage: the code for the heap is compared against Rust by what programs do,
 and the rules for it (`unbox_slice` consumes, `contents` on an owned box) are Rust's alone until the
 checker learns to follow ownership.
+
+**Stage 4j: `static` tables.** The compiler's own generated tables are `static` items, so the compiler could
+not compile itself without them. In the checker the name of a static of this module declared `[T]` for a
+scalar `T` is a shared reference to a slice in the `static` region, as `docs/compile-time-data.md`
+says; the oracle checks only functions, so what had to agree was the uses (20 new cases, none
+different, and 29 more of the library's functions are verified because they read a table). In the code a
+static is a global pair of a pointer and a length, `@sd<n>`, and a function `@sinit<n>` that runs its
+body and stores the pair there; `alloc_slice[static]`, legal only inside such a body, is the heap's
+`malloc` and fill; and the C `main` the driver writes calls every `@sinit` before `main`, in the order the
+items come. Rust evaluates a static while compiling and puts it in read-only data; this builds it when the
+program starts, so a static that reads another is not supported, and the table is writable memory. Neither
+is visible to a program, but the first is a difference: a static whose body traps is a compile error in
+Rust and a trap at startup here.
 
 The mutation test of `types.cho` (54 operator swaps) killed 40 on the first corpus of 458 targeted
 body cases (after region-variable, `where`-closure and coercion cases were added; 33 before); the 14
