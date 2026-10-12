@@ -15,7 +15,7 @@
 //     P a b    the raw kernels on 35-byte (280-bit) operands, limbs all the way to 2^28 - 1: mul_p, R a b mul_n,
 //     D a      sqr_p, E a sqr_n. The ten limbs of the answer in decimal, to check the accumulators' bound
 //     G k      ecdh.public_key, then whether `work` holds only zeros where the call used it: 1 or 0
-//     H k      ecdsa_sign.sign of the digest k with the key k, then the same
+//     H k      ecdsa_sign.sign of the digest k with the key k, then whether all of `work` is zeros
 //     J        the new public entry points given wrong lengths: the six codes, space separated
 //     F e d k x  ecdsa_sign.finish (e, d, k, x 32 bytes each): r || s, or the code
 //     T r x    p256_vf.check_x: 1 when a sum of affine x passes the check against r, else 0
@@ -160,9 +160,14 @@ fn case[&i, &s, &w](io: &!i Io, s: &s [byte], at: int, w: &!w [int]) -> [io_writ
                 let none = alloc_slice[r](0, byte_of(0));
                 ecdsa_sign.sign(a, a, none, sig, w);
             }
+            // `public_key` zeroes what it used; `sign` zeroes all of `work`, as its contract says.
+            var span = p256_pt.work_len();
+            if op == 72 {
+                span = len(w);
+            }
             var dirty = 0;
             i = 0;
-            while i < p256_pt.work_len() {
+            while i < span {
                 if w[i] != 0 {
                     dirty = 1;
                 }
