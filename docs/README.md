@@ -424,6 +424,9 @@ not repeated here; a doc's own header carries its own detail.
 | [`agent-errors.md`](agent-errors.md) | Refusals a machine can read: stable rule tags, `check --output json` | settled and built |
 | [`structured-ingest.md`](structured-ingest.md) | The AST as JSON and back: `cancho print --output json` and `cancho ingest`, the ingest path an agent writes | built |
 | [`tty.md`](tty.md) | `Tty`, the serial-port capability (#422 T1): both measured termios ABIs, the surface, the labels — design |
+| [`crc.md`](crc.md) | `std.crc`: CRC-16/XMODEM, CRC-32/IEEE and two CRC-64s (XZ, and Redis's Jones), and the two-halves design | built |
+| [`net-bounds.md`](net-bounds.md) | Separate ways in and out, set-valued bounds, exact host matching (#362) | design; §2.4 is a report fix recommended first |
+| [`shared-store.md`](shared-store.md) | Several threads, one store: the answer is process-per-core, with the two missing primitives named (#354) | design; answered, topic closed |
 | [`agent-tools.md`](agent-tools.md) | A tool genuinely shaped for an agent's own loop | built (`examples/seek/`) |
 | [`agent-toolbox.md`](agent-toolbox.md) | Whether a *set* of unix-like tools in cancho, with a JSON contract, rule-tagged errors with repair hints and a compiler-derived authority, is worth building — and the protocol that would say so | design; the probes it rests on are run and recorded, nothing is built. Found: `Fs` extent cannot be static (`narrow` takes a literal), no directory listing or regex, `sha256` traps past 64 KiB, a failed `stdout` write is invisible, and lex-os reads a cancho `net_out` label as *no network*; corrects `bulk-io.md` §3.3 and `agent-tools.md` §1 |
 | [`aliasing.md`](aliasing.md) | Whether `&!` should mean Rust's `&mut` | measured — no |
