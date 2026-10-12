@@ -325,6 +325,34 @@ const ENUMS: &[&str] = &[
     "enum E { A(int), B(int) }\nfn run() -> [] int { var e = E::A(1); var n = 0; borrow mut e as &!q in { match q { E::A(x) => { *x = 41; } E::B(x) => { *x = 0; } } } match e { E::A(x) => { n = x + 1; } E::B(x) => { n = x; } } return n; }",
 ];
 
+/// Arenas: `region` and `alloc_slice` of whole numbers, bytes and booleans -- indexed, passed, nested,
+/// allocated in a loop, a count that is negative or too large traps.
+const ARENA_OUTPUT: &[&str] = &[
+    "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(ffi);\n    release(fs);\n    release(heap);\n    release(args);\n    var code = 0;\n    borrow mut io as &!r in {\n        region a {\n            var buf = alloc_slice[a](5, byte_of(65));\n            var i = 0;\n            while i < len(buf) { buf[i] = byte_of(65 + i); i = i + 1; }\n            let n = write_bytes(r, buf);\n            let c = putchar(r, 10);\n            code = n;\n        }\n    }\n    release(io);\n    return code;\n}",
+];
+
+const ARENAS: &[&str] = &[
+    "fn run() -> [] int { var t = 0; region a { let s = alloc_slice[a](5, 7); t = len(s) * 100 + s[4]; } return t; }",
+    "fn run() -> [] int { var t = 0; region a { var s = alloc_slice[a](10, 3); var i = 0; while i < len(s) { s[i] = s[i] + i; i = i + 1; } i = 0; while i < len(s) { t = t + s[i]; i = i + 1; } } return t; }",
+    "fn run() -> [] int { var t = 0; region a { var s = alloc_slice[a](4, byte_of(65)); s[2] = byte_of(200); t = int_of(s[0]) + int_of(s[2]); } return t; }",
+    "fn primes(n: int) -> [] int {\n    var count = 0;\n    region a {\n        var composite = alloc_slice[a](n + 1, false);\n        var i = 2;\n        while i <= n {\n            if !composite[i] {\n                count = count + 1;\n                var j = i * i;\n                while j <= n { composite[j] = true; j = j + i; }\n            }\n            i = i + 1;\n        }\n    }\n    return count;\n}\nfn run() -> [] int { return primes(100) + primes(2) * 1000; }",
+    "fn run() -> [] int { var t = 0; region a { var s = alloc_slice[a](3, 1); region b { var u = alloc_slice[b](3, 10); u[1] = s[0] + 5; t = u[1] + u[2]; } t = t + s[2]; } return t; }",
+    "fn run() -> [] int { var t = 0; region a { region b { var s = alloc_slice[a](2, 4); s[1] = 9; t = s[0] + s[1]; } } return t; }",
+    "fn bump[&r](s: &!r [int]) -> [] int { var i = 0; while i < len(s) { s[i] = s[i] + 1; i = i + 1; } return len(s); }\nfn run() -> [] int { var t = 0; region a { var s = alloc_slice[a](6, 2); let n = bump(s); let m = bump(s); t = n + m + s[5]; } return t; }",
+    "fn run() -> [] int { var i = 0; var t = 0; while i < 50 { region a { var s = alloc_slice[a](100, i); t = t + s[99]; } i = i + 1; } return t; }",
+    "fn run() -> [] int { var t = 0; region a { let s = alloc_slice[a](0, 1); t = len(s); } return t; }",
+    "fn run() -> [] int { var t = 0; region a { let s = alloc_slice[a](0, 1); t = s[0]; } return t; }",
+    "fn run() -> [] int { var t = 0; region a { let s = alloc_slice[a](3, 1); t = s[3]; } return t; }",
+    "fn run() -> [] int { var t = 0; region a { let s = alloc_slice[a](3, 1); t = s[0 - 1]; } return t; }",
+    "fn mk(n: int) -> [] int { var t = 0; region a { let s = alloc_slice[a](n, 1); t = len(s); } return t; }\nfn run() -> [] int { return mk(0 - 1); }",
+    "fn mk(n: int) -> [] int { var t = 0; region a { let s = alloc_slice[a](n, 1); t = len(s); } return t; }\nfn run() -> [] int { return mk(4611686018427387904); }",
+    "fn mk(n: int) -> [] int { var t = 0; region a { let s = alloc_slice[a](n, byte_of(1)); t = len(s); } return t; }\nfn run() -> [] int { return mk(4611686018427387904) + 1; }",
+    "fn find(n: int) -> [] int {\n    region a {\n        var s = alloc_slice[a](n, 0);\n        var i = 0;\n        while i < n { s[i] = i * i; i = i + 1; }\n        if n > 4 { return s[4]; }\n    }\n    return 0 - 1;\n}\nfn run() -> [] int { return find(10) * 100 + find(2) + 1; }",
+    "fn run() -> [] int { var t = 0; region a { region b { let x = alloc_slice[a](2, 1); let y = alloc_slice[b](2, 2); t = x[0] + y[0]; } let z = alloc_slice[a](2, 5); t = t + z[1]; } return t; }",
+    "fn fib(n: int) -> [] int {\n    var r = 0;\n    region a {\n        var t = alloc_slice[a](n + 2, 0);\n        t[1] = 1;\n        var i = 2;\n        while i <= n { t[i] = t[i - 1] + t[i - 2]; i = i + 1; }\n        r = t[n];\n    }\n    return r;\n}\nfn run() -> [] int { return fib(30) % 251; }",
+    "fn fib(n: int) -> [] int {\n    var r = 0;\n    region a {\n        var t = alloc_slice[a](n + 2, 0);\n        t[1] = 1;\n        var i = 2;\n        while i <= n { t[i] = t[i - 1] + t[i - 2]; i = i + 1; }\n        r = t[n];\n    }\n    return r;\n}\nfn run() -> [] int { return fib(100); }",
+];
+
 #[test]
 fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
     let compiler = build("compile", &with_front_end("compile.cho"));
@@ -336,10 +364,10 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
         jobs.push(((*program).to_owned(), (*program).to_owned()));
         jobs.push((with_main(program), with_main(program)));
     }
-    for program in WITH_MAIN.iter().chain(OUTPUT).chain(STRINGS) {
+    for program in WITH_MAIN.iter().chain(OUTPUT).chain(STRINGS).chain(ARENA_OUTPUT) {
         jobs.push(((*program).to_owned(), (*program).to_owned()));
     }
-    for program in STRUCTS.iter().chain(ENUMS) {
+    for program in STRUCTS.iter().chain(ENUMS).chain(ARENAS) {
         jobs.push((with_main(program), with_main(program)));
     }
     let numbered: Vec<(usize, &(String, String))> = jobs.iter().enumerate().collect();

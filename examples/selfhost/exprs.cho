@@ -16,6 +16,7 @@ import selfhost.scope;
 import selfhost.prims;
 import selfhost.builtins;
 import selfhost.effects;
+import selfhost.tables;
 
 // What an expression came to: its type, and whether it is a known integer (a literal, or a
 // literal operation that folded) and which.
@@ -261,6 +262,9 @@ pub fn expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     if ast.is_kind(st, id, kinds.NK::EVariant) {
         return variant_expr(st, text, id);
     }
+    if ast.is_kind(st, id, kinds.NK::EAllocSlice) {
+        return alloc_slice_expr(st, text, id);
+    }
     return skip(st, from, to);
 }
 
@@ -334,6 +338,59 @@ pub fn variant_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         return in_reg(whole, acc);
     }
     return plain(whole);
+}
+
+// `alloc_slice[a](count, fill)`: `count` copies of `fill` in the arena `a`, a unique reference to a slice
+// of them for as long as the block. The arena first, then the count, then the fill, which must be
+// a value that copies: an arena frees memory and runs nothing.
+pub fn alloc_slice_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
+    let from = ast.nstart(st, id);
+    let to = ast.nend(st, id);
+    let area = ast.get(st, id, 4);
+    let count = ast.get(st, id, 5);
+    let fill = ast.get(st, id, 6);
+    if pass1.is_word(st, text, area, "static") {
+        ast.fail(st, rules.r_reference_escapes_region(), from, to);
+        return nothing();
+    }
+    let arena = scope.arena_block(st, text, area);
+    if arena < 0 {
+        ast.fail(st, rules.r_region_not_in_scope(), from, to);
+        return nothing();
+    }
+    let c = expr(st, text, count);
+    if ast.ok(st) {
+        scope.expect(st, text, 1, c.ty, ast.nstart(st, count), ast.nend(st, count));
+    }
+    if !ast.ok(st) {
+        return nothing();
+    }
+    let f = expr(st, text, fill);
+    if !ast.ok(st) {
+        return nothing();
+    }
+    if types.is_prelude(st, f.ty) {
+        if tables.prelude_res(types.prelude_index(st, f.ty)) != 0 {
+            ast.fail(st, rules.r_mode_bound_violated(), ast.nstart(st, fill), ast.nend(st, fill));
+            return nothing();
+        }
+        return skip(st, from, to);
+    }
+    if f.ty < 1 || f.ty > 6 && !types.is_named(st, f.ty) && !types.is_ref(st, f.ty) {
+        return skip(st, from, to);
+    }
+    let result = types.make_ref(st, true, types.block_region(arena), types.make_slice(st, f.ty));
+    if emit.on(st) {
+        if f.ty != 1 && f.ty != 2 && f.ty != 5 {
+            return skip(st, from, to);
+        }
+        let p = emit.alloc_slice(st, arena, f.ty, c.known, c.value, c.reg, f.known, f.value, f.reg);
+        if c.known {
+            return in_slice(result, p, 0 - 1, c.value);
+        }
+        return in_slice(result, p, c.reg, 0);
+    }
+    return plain(result);
 }
 
 // The Variant node of the enum `item` called like token `name`, or -1.
@@ -481,7 +538,7 @@ pub fn field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
 // The expressions the code can be written for so far: whole numbers and booleans, names, the
 // operators, and calls.
 pub fn writes_code[&s](st: &!s [int], id: int) -> [] bool {
-    if ast.is_kind(st, id, kinds.NK::EInt) || ast.is_kind(st, id, kinds.NK::EBool) || ast.is_kind(st, id, kinds.NK::EName) || ast.is_kind(st, id, kinds.NK::ECall) || ast.is_kind(st, id, kinds.NK::EStr) || ast.is_kind(st, id, kinds.NK::EIndex) || ast.is_kind(st, id, kinds.NK::EStructLit) || ast.is_kind(st, id, kinds.NK::EField) || ast.is_kind(st, id, kinds.NK::EVariant) {
+    if ast.is_kind(st, id, kinds.NK::EInt) || ast.is_kind(st, id, kinds.NK::EBool) || ast.is_kind(st, id, kinds.NK::EName) || ast.is_kind(st, id, kinds.NK::ECall) || ast.is_kind(st, id, kinds.NK::EStr) || ast.is_kind(st, id, kinds.NK::EIndex) || ast.is_kind(st, id, kinds.NK::EStructLit) || ast.is_kind(st, id, kinds.NK::EField) || ast.is_kind(st, id, kinds.NK::EVariant) || ast.is_kind(st, id, kinds.NK::EAllocSlice) {
         return true;
     }
     if ast.is_kind(st, id, kinds.NK::EUnary) {
@@ -725,7 +782,7 @@ pub fn index_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         scope.expect(st, text, 1, i.ty, ast.nstart(st, index), ast.nend(st, index));
     }
     if emit.on(st) && ast.ok(st) {
-        if e != 1 && e != 2 {
+        if e != 1 && e != 2 && e != 5 {
             return skip(st, ast.nstart(st, id), ast.nend(st, id));
         }
         let address = emit.element_address(st, e, b.reg, b.reg2 < 0, b.value, b.reg2, i.known, i.value, i.reg);

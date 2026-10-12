@@ -1767,12 +1767,39 @@ BODY_EDGE = {
     'x_callee_arg_row_caller_none': 'fn g() -> [fs_read("/x")] int { return 1; }\nfn f() -> [] int { return g(); }',
     'x_callee_arg_row_caller_same': 'fn g() -> [fs_read("/x")] int { return 1; }\nfn f() -> [fs_read("/x")] int { return g(); }',
     'x_callee_arg_row_caller_plain': 'fn g() -> [fs_read("/x")] int { return 1; }\nfn f[&i](io: &!i Io) -> [io_write] int { let a = g(); return putchar(io, 65); }',
+    'p_arena_ok': 'fn f() -> [] int { region a { let s = alloc_slice[a](3, 0); } return 0; }',
+    'p_arena_use': 'fn f() -> [] int { var t = 0; region a { var s = alloc_slice[a](3, 5); s[1] = 7; t = s[0] + s[1] + len(s); } return t; }',
+    'p_arena_byte': 'fn f() -> [] int { var t = 0; region a { let s = alloc_slice[a](4, byte_of(9)); t = int_of(s[3]); } return t; }',
+    'p_arena_bool': 'fn f() -> [] bool { var t = false; region a { let s = alloc_slice[a](2, true); t = s[1]; } return t; }',
+    'p_arena_float': 'fn f() -> [] int { region a { let s = alloc_slice[a](2, 1.5); } return 0; }',
+    'p_arena_struct': 'struct P { x: int }\nfn f() -> [] int { region a { let s = alloc_slice[a](2, P { x: 1 }); } return 0; }',
+    'p_arena_not_in_scope': 'fn f() -> [] int { region a { let s = alloc_slice[b](3, 0); } return 0; }',
+    'p_arena_outside': 'fn f() -> [] int { let s = alloc_slice[a](3, 0); return 0; }',
+    'p_arena_after': 'fn f() -> [] int { region a { let s = alloc_slice[a](3, 0); } let t = alloc_slice[a](1, 0); return 0; }',
+    'p_arena_static': 'fn f() -> [] int { let s = alloc_slice[static](3, 0); return 0; }',
+    'p_arena_count_bool': 'fn f() -> [] int { region a { let s = alloc_slice[a](true, 0); } return 0; }',
+    'p_arena_count_name': 'fn f() -> [] int { region a { let s = alloc_slice[a](n, 0); } return 0; }',
+    'p_arena_fill_name': 'fn f() -> [] int { region a { let s = alloc_slice[a](3, nope); } return 0; }',
+    'p_arena_elem_mismatch': 'fn f() -> [] int { region a { var s = alloc_slice[a](2, true); s[0] = 3; } return 0; }',
+    'p_arena_borrow_name': 'fn f() -> [] int { var x = 1; borrow x as &r in { let s = alloc_slice[r](3, 0); } return 0; }',
+    'p_arena_escape': 'fn f() -> [] int { region a { var o = alloc_slice[a](1, 0); region b { let s = alloc_slice[b](1, 0); o = s; } } return 0; }',
+    'p_arena_inner_in_outer': 'fn f() -> [] int { var t = 0; region a { region b { let s = alloc_slice[a](2, 4); t = s[0]; } } return t; }',
+    'p_arena_same_name': 'fn f() -> [] int { var t = 0; region a { region a { let s = alloc_slice[a](2, 4); t = s[0]; } } return t; }',
+    'p_arena_returned': 'fn f() -> [] int { region a { let s = alloc_slice[a](3, 0); return s; } }',
+    'p_arena_len_return': 'fn f() -> [] int { region a { let s = alloc_slice[a](3, 0); return len(s); } }',
+    'p_arena_pass': 'fn g[&r](s: &!r [int]) -> [] int { s[0] = 4; return s[0]; }\nfn f() -> [] int { region a { let s = alloc_slice[a](3, 0); return g(s); } }',
+    'p_arena_loop': 'fn f() -> [] int { var i = 0; var t = 0; while i < 3 { region a { let s = alloc_slice[a](2, i); t = t + s[1]; } i = i + 1; } return t; }',
+    'p_arena_res_fill': 'fn f(io: Io) -> [] int { region a { let s = alloc_slice[a](2, io); } return 0; }',
+    'p_arena_ref_fill': 'fn f[&q](x: &q int) -> [] int { region a { let s = alloc_slice[a](2, x); } return 0; }',
+    'p_arena_count_neg': 'fn f() -> [] int { region a { let s = alloc_slice[a](0 - 1, 0); } return 0; }',
+    'p_arena_uref_fill': 'fn f[&q](x: &!q int) -> [] int { region a { let s = alloc_slice[a](2, x); } return 0; }',
+    'p_arena_slice_fill': 'fn f[&q](x: &q [int]) -> [] int { region a { let s = alloc_slice[a](2, x); } return 0; }',
 }
 
 
 # Cases of `BODY_EDGE` whose name starts `p_` that are meant to be skipped (a resource used by value,
 # a type the checker cannot hold, a builtin that performs an effect): every other is answered.
-MUST_SKIP = {"x_callee_arg_row_caller_none", "x_callee_arg_row_caller_same", "x_callee_arg_row_caller_plain", "x_arg_label_putchar", "x_arg_label_and_plain", "p_io_deref", "p_io_by_value", "p_io_assign", "p_split_skips", "p_null_ptr", "p_match_prelude", "p_field_prelude", "p_field_prelude_value", "p_opened_param", "p_fork_clock", "p_poller_close_value", "p_attach", "p_poller_new", "p_child_kill_effect"}
+MUST_SKIP = {"p_arena_res_fill", "x_callee_arg_row_caller_none", "x_callee_arg_row_caller_same", "x_callee_arg_row_caller_plain", "x_arg_label_putchar", "x_arg_label_and_plain", "p_io_deref", "p_io_by_value", "p_io_assign", "p_split_skips", "p_null_ptr", "p_match_prelude", "p_field_prelude", "p_field_prelude_value", "p_opened_param", "p_fork_clock", "p_poller_close_value", "p_attach", "p_poller_new", "p_child_kill_effect"}
 
 
 def build_corpus(paths):

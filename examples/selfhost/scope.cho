@@ -146,6 +146,20 @@ pub fn open_block[&s](st: &!s [int], name: int) -> [] int {
     return id;
 }
 
+// The innermost open block that is an arena called like token `name`, or -1. A `borrow` block keeps
+// its name as `-2 - token` and so is never one.
+pub fn arena_block[&s, &x](st: &!s [int], text: &x [byte], name: int) -> [] int {
+    var id = st[37];
+    while id >= 0 {
+        let kept = st[st[36] + 2 * id + 1];
+        if kept >= 0 && ast.same(st, text, kept, name) {
+            return id;
+        }
+        id = st[st[36] + 2 * id];
+    }
+    return 0 - 1;
+}
+
 pub fn close_block[&s](st: &!s [int]) -> [] int {
     st[37] = st[st[36] + 2 * st[37]];
     return 0;

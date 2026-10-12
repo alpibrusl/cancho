@@ -290,7 +290,7 @@ fn borrow_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] 
     let unique = ast.get(st, id, 5) != 0;
     let referent = scope.binding_type(st, i);
     let mark = st[21];
-    let block_id = scope.open_block(st, ast.get(st, id, 6));
+    let block_id = scope.open_block(st, 0 - 2 - ast.get(st, id, 6));
     scope.freeze(st, i, unique, from, to);
     scope.bind(st, ast.get(st, id, 6), types.make_ref(st, unique, types.block_region(block_id), referent), false, from, to);
     if emit.on(st) {
@@ -359,8 +359,14 @@ fn destructure_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] int {
 
 // `region a { .. }`: an arena's region, a block with nothing frozen.
 fn region_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
-    scope.open_block(st, ast.get(st, id, 4));
+    let arena = scope.open_block(st, ast.get(st, id, 4));
+    if emit.on(st) {
+        emit.arena_open(st, arena);
+    }
     block(st, text, ast.get(st, id, 5), ast.get(st, id, 6), ret);
+    if emit.on(st) && ast.ok(st) {
+        emit.arena_close(st, arena);
+    }
     scope.close_block(st);
     return 0;
 }
@@ -550,7 +556,7 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
                 scope.expect(st, text, e, found.ty, ast.nstart(st, value), ast.nend(st, value));
             }
             if emit.on(st) && ast.ok(st) {
-                if e != 1 && e != 2 {
+                if e != 1 && e != 2 && e != 5 {
                     exprs.skip(st, from, to);
                 } else {
                     let address = emit.element_address(st, e, b.reg, b.reg2 < 0, b.value, b.reg2, i.known, i.value, i.reg);
@@ -688,6 +694,10 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
         let value = ast.get(st, id, 4);
         let found = exprs.expr(st, text, value);
         if ast.ok(st) {
+            if types.mentions_block(st, found.ty) {
+                ast.fail(st, rules.r_reference_escapes_region(), ast.nstart(st, value), ast.nend(st, value));
+                return 0;
+            }
             scope.expect(st, text, ret, found.ty, ast.nstart(st, value), ast.nend(st, value));
             if emit.on(st) && ast.ok(st) {
                 emit.ret(st, ret, found.known, found.value, found.reg);

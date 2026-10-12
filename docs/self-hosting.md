@@ -221,7 +221,8 @@ the stages found, in place, the way this document corrects its own claims.
 | 4e. Strings and slices: a literal as a slice of bytes, `len`, `s[i]` with its bound, `write_bytes`, `int_of`/`byte_of`, a slice passed, kept and reassigned, a store through `*r` and `s[i]` | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho` | the Rust compiler, by what the built programs do and write | **Fifth slice of the backend.** 292 builds run and compared, 24 of them new, 60 trap; none different |
 | 4f. Structs of whole numbers, bytes and booleans: a literal, a field read, a copy, passed and returned, a field written through a unique reference, `*r` of one | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho` | the Rust compiler, by what the built programs do | **Sixth slice of the backend.** 312 builds run and compared, 20 of them new, 63 trap; none different |
 | 4g. Enums and `match` on them: a variant with payloads, `match` by value and behind a reference (payloads are references, written through), `_` arms, nested | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho` | the Rust compiler, by what the built programs do | **Seventh slice of the backend.** 332 builds run and compared, 20 of them new, 64 trap; none different |
-| 4h. The rest of the backend: references in general, arenas and the heap, generics, tuples, `clang` run by the compiler itself | not started | | |
+| 4h. Arenas: `region` and `alloc_slice[a](n, fill)` of whole numbers, bytes and booleans, in the checker (the arena in scope, the count, the fill a value that copies, the slice cannot leave) and in the code | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho`, `types.cho`, `driver.cho` | the Rust compiler: the checker by answers (1,945 cases), the code by what the built programs do | **Eighth slice of the backend, and a checker rule.** 352 builds run and compared, 20 of them new, 71 trap; none different. The checker's 1,945 cases are identical, 27 of them new |
+| 4i. The rest of the backend: the heap (`box_slice`, `contents`, `unbox_slice`), `alloc` of one value, `static` tables, generics, tuples, `clang` run by the compiler itself | not started | | |
 
 **The method.** A port that builds no tree has nothing to compare, and one that does
 needs a printer, which is another port. So stage 2's parser wrote the tree the Rust parser
@@ -590,6 +591,20 @@ load behind a reference) and is a flat chain of tests: arm `n` is `ma<n>` when t
 (Rust has already said so), and each ends in a branch to the end of the match. A payload is bound by
 `extractvalue`, or, behind a reference, as the address of its element, so `*w = ..` writes the
 enum in place. Enums with a float or a non-scalar payload are still skipped.
+
+**Stage 4h: arenas.** `alloc_slice` was not in the checker at all (it answered `SKIP`), so this stage is
+a rule first: the arena named must be open here, and an `alloc_slice[static]` in a function is an
+escape (only a `static` item may add to the static region); then the count, an `int`; then the fill,
+which must copy (a `res` one is `mode-bound-violated`); the result is a unique reference to a slice in
+the arena's block. A `return` of anything pointing into a block is now an escape checked before the
+types are compared, as Rust does it: a function returning `s` from its arena as an `int` said
+`type-mismatch`, and Rust says `reference-escapes-region`; the new cases found that. In the code,
+a `region` is a cell holding the head of a list of its allocations, each a `malloc` with a 16-byte
+header linking to the one before, and the end of the block frees them all; both are two helper
+functions the driver writes (`@cancho_arena_alloc`, `@cancho_arena_free`). A negative count traps, and
+so does a size that overflows, as in the Rust backend, and the fill is a loop. What differs from Rust
+is the allocator (it bumps within a 64 KiB chunk) and one thing that is a gap: a `return` from inside
+a `region` leaves without freeing, so the memory lasts until the program ends.
 
 The mutation test of `types.cho` (54 operator swaps) killed 40 on the first corpus of 458 targeted
 body cases (after region-variable, `where`-closure and coercion cases were added; 33 before); the 14
