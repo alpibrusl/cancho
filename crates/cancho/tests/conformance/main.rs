@@ -103,6 +103,7 @@ mod tls_echo_fixed;
 mod tls_fuzz;
 mod tls_server;
 mod traps;
+mod tty;
 mod udp;
 mod vcs;
 mod vcs_remote;

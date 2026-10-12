@@ -8,7 +8,7 @@
 use super::*;
 
 /// The program. `SEED` is the generator's seed. Prints `buffer start length hash_words hash_masks hash_counts` per line.
-const PROGRAM: &str = r#"edition 8;
+const PROGRAM: &str = r#"edition 9;
 
 import std.io;
 
@@ -49,14 +49,14 @@ fn needle(which: int) -> [] int {
 }
 
 fn main(world: World) -> [] int {
-    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
     release(ffi);
     release(fs);
     release(args);
     release(net);
     release(clock);
     release(signals);
-    release(exec);
+    release(exec); release(tty);
     release(heap);
     region a {
         var which = 0;
@@ -239,10 +239,10 @@ fn the_loads_and_masks_trap_outside_the_slice_and_only_there_on_both_backends() 
         for (name, call, should_trap) in calls {
             let dir = scratch(&format!("word-scan-trap-{name}-{backend}"));
             let source = format!(
-                "edition 8;\n\
+                "edition 9;\n\
                  fn main(world: World) -> [] int {{\n\
-                     let Split {{ io, ffi, fs, heap, args, net, clock, signals, exec }} = split(world);\n\
-                     release(args); release(heap); release(fs); release(ffi); release(io); release(net); release(clock); release(signals); release(exec);\n\
+                     let Split {{ io, ffi, fs, heap, args, net, clock, signals, exec, tty }} = split(world);\n\
+                     release(args); release(heap); release(fs); release(ffi); release(io); release(net); release(clock); release(signals); release(exec); release(tty);\n\
                      var n = 0;\n\
                      region a {{ let t = alloc_slice[a](100, byte_of(7)); n = {call}; }}\n\
                      return n - n;\n\
@@ -267,10 +267,10 @@ fn the_loads_and_masks_trap_outside_the_slice_and_only_there_on_both_backends() 
 /// The counts are total: no input reaches a trap, the extremes included.
 #[test]
 fn the_counts_answer_the_width_for_zero_and_never_trap_on_both_backends() {
-    let source = "edition 8;\n\
+    let source = "edition 9;\n\
         fn main(world: World) -> [] int {\n\
-            let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);\n\
-            release(args); release(heap); release(fs); release(ffi); release(io); release(net); release(clock); release(signals); release(exec);\n\
+            let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);\n\
+            release(args); release(heap); release(fs); release(ffi); release(io); release(net); release(clock); release(signals); release(exec); release(tty);\n\
             let least = 0 - 9223372036854775807 - 1;\n\
             if trailing_zeros(0) != 64 || leading_zeros(0) != 64 || popcount(0) != 0 { return 1; }\n\
             if trailing_zeros(least) != 63 || leading_zeros(least) != 0 || popcount(least) != 1 { return 2; }\n\

@@ -1,6 +1,6 @@
 # Scanning a word at a time: `load_le64`, `byte_mask64` and the bit counts
 
-Status: **built**, edition 8, both backends, and `wasm32-wasip1`.
+Status: **built**, edition 9, both backends, and `wasm32-wasip1`.
 
 ## 1. Why
 
@@ -31,7 +31,7 @@ popcount(x: int) -> int                                  // 0 for 0, 64 for -1
 ```
 
 All five are pure and capability-free: the row is empty, the effects are `Effects::pure()`, and the slice is only read.
-They are edition 8 (section 6).
+They are edition 9 (section 6).
 
 ### 2.1 What happens out of range: a trap, as indexing does
 
@@ -93,7 +93,7 @@ Neither backend calls the C library. The mask is `pcmpeqb` and `pmovmskb` on x86
 `simd128` LLVM scalarises the vectors, so the program is correct and not fast there.
 
 **WASI.** Supported, not refused: nothing here needs the host. `wasm_gap` (`cancho-ir/src/target.rs`) lists the five as
-`None`, so the count of refused builtins in `docs/wasm.md` (62, pinned by `os_tables.rs`; the 48 of the brief is a stale
+`None`, so the count of refused builtins in `docs/wasm.md` (69, pinned by `os_tables.rs`; the 48 of the brief is a stale
 number that `docs/wasm.md` has corrected several times) does not move. Measured under wasmtime: `tests/accept/word_scan.cho` exits 0 and a
 mutant of it (one mask answer plus one) exits 1, so the program really ran there.
 
@@ -170,16 +170,16 @@ the result and the ratios of times as "several times", not as the second digit. 
 
 ## 6. The edition, and what does not move
 
-Edition 8, opened for these five names. `editions.md` section 6.4 closes edition 7 (the freeze: a name added to a closed
+Edition 9, opened for these five names (edition 8 is the serial-port capability, `tty.md`). `editions.md` section 6.4 closes edition 7 (the freeze: a name added to a closed
 edition could shadow a name a program declared for itself), and `popcount` and `trailing_zeros` are the names a program
 writes by hand before the language has them. Previous builtins of this kind (`float_of_bits`, `dir_rename_new`) joined
 the then-latest edition because no file in the repository declared the name; here `examples/selfhost/ast.cho` has a local
 variable named `leading_zeros`: these names are in use, so a new edition is the safe choice. Costs, all one-off: the parser's range
-(`1..=8`, its message, the cancho-written parser's `value > 8`), `Builtin::since`, the selfhost tables regenerated, and
-`tests/reject/unknown_edition.cho` moving to edition 9. `Split` is unchanged.
+(`1..=9`, its message, the cancho-written parser's `value > 9`), `Builtin::since`, the selfhost tables regenerated, and
+`tests/reject/unknown_edition.cho` moving to edition 10. `Split` is unchanged.
 
 **No existing hash moves.** A hash is over a declaration's text, and the edition marker adds bytes only to a file that
-declares it (`editions.md` section 6.3); nothing here declares `edition 8` except the new fixtures. Checked, not assumed:
+declares it (`editions.md` section 6.3); nothing here declares `edition 9` except the new fixtures. Checked, not assumed:
 every `.cho` file under `tests/accept`, `tests/programs`, `examples`, `std`, `packages` and `benches` that exists on
 `origin/main` was given to `cancho ids --std` by an `origin/main` build and by this build, and the outputs compared: 226
 files that either build accepts, 224 byte-identical and 2 different, `examples/selfhost/tables.cho` and `builtins.cho`,
@@ -188,7 +188,7 @@ siblings), so they were not compared. The golden-hash tests of `identity.rs` pas
 
 An edition-7 file that declares its own `popcount`, `trailing_zeros`, `leading_zeros`, `load_le64` or `byte_mask64` keeps
 meaning its own (`tests/accept/word_scan_beside_own_names.cho`, on both backends), and an edition-7 file that names one
-without declaring it is refused as `not-a-function` (`tests/reject/word_scan_is_edition_eight.cho`).
+without declaring it is refused as `not-a-function` (`tests/reject/word_scan_is_edition_nine.cho`).
 
 ## 7. What it is checked by
 
@@ -201,7 +201,7 @@ without declaring it is refused as `not-a-function` (`tests/reject/word_scan_is_
   (buffer, start, length) with a hash of every result: 2,820 lines a seed; **the trap edges**: 20 calls, each bound on both
   sides, a negative `at`, `i64::MIN`, `i64::MAX`, a slice of 7 or 63 bytes, an empty slice, and the exactly-fitting calls
   that must not trap; the counts on the extremes.
-* `tests/reject/word_scan_is_edition_eight.cho` and `tests/reject/byte_mask64_needs_a_byte.cho`.
+* `tests/reject/word_scan_is_edition_nine.cho` and `tests/reject/byte_mask64_needs_a_byte.cho`.
 * On gram (x86-64) the same five conformance tests pass, with Cranelift's `vhigh_bits` lowering to `pmovmskb`.
 
 **Mutants.** Twenty-one, each one edit to the lowering, run against the `word_scan` tests (which include the two backends' agreement and the own-names fixture) and the reject-fixture walk: LLVM and

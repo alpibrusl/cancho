@@ -10,7 +10,7 @@
 // Runs three passes of the kernel and prints the sum of their answers: three times the answer of one pass. The time is
 // the process's own, taken by `run.py`, because an optimiser is free to move a pure call across a clock reading.
 
-edition 8;
+edition 9;
 
 import std.io;
 
@@ -239,7 +239,7 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
 }
 
 fn main(world: World) -> [] int {
-    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
     release(ffi);
     release(fs);
     release(args);
@@ -247,6 +247,7 @@ fn main(world: World) -> [] int {
     release(clock);
     release(signals);
     release(exec);
+    release(tty);
     var status = 1;
     borrow mut heap as &!h in {
         borrow mut io as &!i in {

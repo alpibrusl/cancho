@@ -12,7 +12,7 @@ module selfhost.tables;
 // Its index is its `DefId`, so the order is the Rust order.
 
 pub fn prelude_count() -> [] int {
-    return 49;
+    return 53;
 }
 
 pub fn prelude_box() -> [] int {
@@ -24,11 +24,11 @@ pub fn prelude_ffi() -> [] int {
 }
 
 fn prelude_chars() -> [] &static [byte] {
-    return "WorldIoFfiFsHeapBoxArgsSplitFileOpenedReadNetSplitThreadListenerConnListeningAcceptedReceivedSentDialedPollerPollingClockSplitAttachedDoneSignalsSplitSignalWatchWatchingDirDirOpenedDirListListingListedDirStatExecSplitChildPipeChildEndStdioPipedSpawnedExitedUdpUdpOpenedDatagram";
+    return "WorldIoFfiFsHeapBoxArgsSplitFileOpenedReadNetSplitThreadListenerConnListeningAcceptedReceivedSentDialedPollerPollingClockSplitAttachedDoneSignalsSplitSignalWatchWatchingDirDirOpenedDirListListingListedDirStatExecSplitChildPipeChildEndStdioPipedSpawnedExitedUdpUdpOpenedDatagramTtySplitPortTtyOpened";
 }
 
 static prelude_starts: [int] {
-    let t = alloc_slice[static](49, 0);
+    let t = alloc_slice[static](53, 0);
     t[1] = 5;
     t[2] = 7;
     t[3] = 10;
@@ -77,11 +77,15 @@ static prelude_starts: [int] {
     t[46] = 257;
     t[47] = 260;
     t[48] = 269;
+    t[49] = 277;
+    t[50] = 280;
+    t[51] = 285;
+    t[52] = 289;
     return t;
 }
 
 static prelude_lens: [int] {
-    let t = alloc_slice[static](49, 0);
+    let t = alloc_slice[static](53, 0);
     t[0] = 5;
     t[1] = 2;
     t[2] = 3;
@@ -131,11 +135,15 @@ static prelude_lens: [int] {
     t[46] = 3;
     t[47] = 9;
     t[48] = 8;
+    t[49] = 3;
+    t[50] = 5;
+    t[51] = 4;
+    t[52] = 9;
     return t;
 }
 
 static prelude_arities: [int] {
-    let t = alloc_slice[static](49, 0);
+    let t = alloc_slice[static](53, 0);
     t[2] = 1;
     t[3] = 1;
     t[5] = 1;
@@ -143,11 +151,12 @@ static prelude_arities: [int] {
     t[13] = 2;
     t[27] = 1;
     t[37] = 1;
+    t[49] = 1;
     return t;
 }
 
 static prelude_sinces: [int] {
-    let t = alloc_slice[static](49, 0);
+    let t = alloc_slice[static](53, 0);
     t[0] = 1;
     t[1] = 1;
     t[2] = 1;
@@ -197,11 +206,15 @@ static prelude_sinces: [int] {
     t[46] = 5;
     t[47] = 5;
     t[48] = 5;
+    t[49] = 8;
+    t[50] = 8;
+    t[51] = 8;
+    t[52] = 7;
     return t;
 }
 
 static prelude_publics: [int] {
-    let t = alloc_slice[static](49, 0);
+    let t = alloc_slice[static](53, 0);
     t[0] = 1;
     t[1] = 1;
     t[2] = 1;
@@ -251,11 +264,15 @@ static prelude_publics: [int] {
     t[46] = 1;
     t[47] = 1;
     t[48] = 1;
+    t[49] = 1;
+    t[50] = 1;
+    t[51] = 1;
+    t[52] = 1;
     return t;
 }
 
 static prelude_res_bits: [int] {
-    let t = alloc_slice[static](49, 0);
+    let t = alloc_slice[static](53, 0);
     t[0] = 1;
     t[1] = 1;
     t[2] = 3;
@@ -297,69 +314,77 @@ static prelude_res_bits: [int] {
     t[44] = 1;
     t[46] = 1;
     t[47] = 1;
+    t[49] = 3;
+    t[50] = 1;
+    t[51] = 1;
+    t[52] = 1;
     return t;
 }
 
 fn prelude_label_chars() -> [] &static [byte] {
-    return "args child_signal clock conn_accept conn_read conn_write dir_read dir_write err_write exec= ffi= file_read file_write fs_read= fs_write= heap io_read io_write net_in= net_out= pipe_read pipe_write poll signals= signals_read udp_recv udp_senderr_write io_read io_writeffi*dir_read dir_write file_read file_write fs_read* fs_write*heapargsfile_read file_writeconn_accept conn_read conn_write net_in* net_out* poll udp_recv udp_sendconn_acceptconn_read conn_writepollclocksignals* signals_readsignals_readdir_read dir_writedir_readchild_signal exec*child_signalpipe_read pipe_writeudp_recv udp_send";
+    return "args child_signal clock conn_accept conn_read conn_write dir_read dir_write err_write exec= ffi= file_read file_write fs_read= fs_write= heap io_read io_write net_in= net_out= pipe_read pipe_write poll signals= signals_read tty_open= tty_read tty_write udp_recv udp_senderr_write io_read io_writeffi*dir_read dir_write file_read file_write fs_read* fs_write*heapargsfile_read file_writeconn_accept conn_read conn_write net_in* net_out* poll udp_recv udp_sendconn_acceptconn_read conn_writepollclocksignals* signals_readsignals_readdir_read dir_writedir_readchild_signal exec*child_signalpipe_read pipe_writeudp_recv udp_sendtty_open* tty_read* tty_write*";
 }
 
 static prelude_label_starts: [int] {
-    let t = alloc_slice[static](49, 0);
-    t[1] = 241;
-    t[2] = 267;
-    t[3] = 271;
-    t[4] = 329;
-    t[5] = 333;
-    t[6] = 333;
-    t[7] = 337;
-    t[8] = 337;
-    t[9] = 357;
-    t[10] = 357;
-    t[11] = 357;
-    t[12] = 429;
-    t[13] = 429;
-    t[14] = 429;
-    t[15] = 440;
-    t[16] = 460;
-    t[17] = 460;
-    t[18] = 460;
-    t[19] = 460;
-    t[20] = 460;
-    t[21] = 460;
-    t[22] = 464;
-    t[23] = 464;
-    t[24] = 469;
-    t[25] = 469;
-    t[26] = 469;
-    t[27] = 469;
-    t[28] = 490;
-    t[29] = 490;
-    t[30] = 502;
-    t[31] = 502;
-    t[32] = 520;
-    t[33] = 520;
-    t[34] = 528;
-    t[35] = 528;
-    t[36] = 528;
-    t[37] = 528;
-    t[38] = 546;
-    t[39] = 546;
-    t[40] = 558;
-    t[41] = 578;
-    t[42] = 578;
-    t[43] = 578;
-    t[44] = 578;
-    t[45] = 578;
-    t[46] = 578;
-    t[47] = 595;
-    t[48] = 595;
+    let t = alloc_slice[static](53, 0);
+    t[1] = 270;
+    t[2] = 296;
+    t[3] = 300;
+    t[4] = 358;
+    t[5] = 362;
+    t[6] = 362;
+    t[7] = 366;
+    t[8] = 366;
+    t[9] = 386;
+    t[10] = 386;
+    t[11] = 386;
+    t[12] = 458;
+    t[13] = 458;
+    t[14] = 458;
+    t[15] = 469;
+    t[16] = 489;
+    t[17] = 489;
+    t[18] = 489;
+    t[19] = 489;
+    t[20] = 489;
+    t[21] = 489;
+    t[22] = 493;
+    t[23] = 493;
+    t[24] = 498;
+    t[25] = 498;
+    t[26] = 498;
+    t[27] = 498;
+    t[28] = 519;
+    t[29] = 519;
+    t[30] = 531;
+    t[31] = 531;
+    t[32] = 549;
+    t[33] = 549;
+    t[34] = 557;
+    t[35] = 557;
+    t[36] = 557;
+    t[37] = 557;
+    t[38] = 575;
+    t[39] = 575;
+    t[40] = 587;
+    t[41] = 607;
+    t[42] = 607;
+    t[43] = 607;
+    t[44] = 607;
+    t[45] = 607;
+    t[46] = 607;
+    t[47] = 624;
+    t[48] = 624;
+    t[49] = 624;
+    t[50] = 654;
+    t[51] = 654;
+    t[52] = 654;
     return t;
 }
 
 static prelude_label_lens: [int] {
-    let t = alloc_slice[static](49, 0);
-    t[0] = 241;
+    let t = alloc_slice[static](53, 0);
+    t[0] = 270;
     t[1] = 26;
     t[2] = 4;
     t[3] = 58;
@@ -379,11 +404,12 @@ static prelude_label_lens: [int] {
     t[39] = 12;
     t[40] = 20;
     t[46] = 17;
+    t[49] = 30;
     return t;
 }
 
 static prelude_capabilities: [int] {
-    let t = alloc_slice[static](49, 0);
+    let t = alloc_slice[static](53, 0);
     t[0] = 1;
     t[1] = 1;
     t[2] = 1;
@@ -410,11 +436,13 @@ static prelude_capabilities: [int] {
     t[40] = 1;
     t[41] = 1;
     t[46] = 1;
+    t[49] = 1;
+    t[50] = 1;
     return t;
 }
 
 static prelude_bounds: [int] {
-    let t = alloc_slice[static](49, 0);
+    let t = alloc_slice[static](53, 0);
     return t;
 }
 
@@ -457,15 +485,15 @@ pub fn prelude_bound(i: int) -> [] int {
 }
 
 pub fn builtin_count() -> [] int {
-    return 143;
+    return 150;
 }
 
 fn builtin_chars() -> [] &static [byte] {
-    return "putcharwrite_byteswrite_errflush_outgetcharsplitreleasenarrowfork_heapfork_clockcopy_withincopy_intoindex_of_byteload_le64byte_mask64trailing_zerosleading_zerospopcountwrapping_addwrapping_subwrapping_mulvalue_barrierhw_aes_gcmaes_encrypt_blockghash_updatelenbyte_ofint_offloat_oftruncateis_nansqrtbits_offloat_of_bitsf32_offloat_of32bits_of32f32_of_bitssqrt32f32_of_intint_of_f32fs_readfs_writeopen_readfile_readfile_closeopen_appendopen_writeopen_newopen_rwfile_writefile_pwritefile_preadfile_syncfile_truncatefile_sizefs_renamefs_removefile_lockboxunboxcontentsarg_countargbox_sliceunbox_sliceconnectbindlistenaccepttcp_listentcp_connecttcp_connect_starttcp_acceptpoller_newpoller_add_listenerpoller_add_connpoller_modifypoller_removepoller_waitpoller_closeclock_msclock_unix_msconn_detachconn_attachconn_readconn_writeconn_nonblockingconn_nodelayconn_peerconn_connect_statuslistener_nonblockingconn_closelistener_closeudp_connectudp_bindudp_recv_fromudp_send_toudp_recvudp_sendudp_local_portudp_peerudp_nonblockingudp_closeudp_detachudp_attachpoller_add_udpsignals_watchsignals_pendingpoller_add_signalssignals_closeopen_dirdir_enterdir_open_readdir_closedir_open_newdir_open_appenddir_renamedir_rename_newdir_removedir_syncdir_listdir_nextdir_list_closedir_statdir_modedir_own_modepipe_openexec_spawnexec_spawn_inchild_waitchild_killpipe_readpipe_writepipe_nonblockingpipe_closechild_end_closepoller_add_pipepoller_add_childnull_ptrspawnjointrap";
+    return "putcharwrite_byteswrite_errflush_outgetcharsplitreleasenarrowfork_heapfork_clockcopy_withincopy_intoindex_of_byteload_le64byte_mask64trailing_zerosleading_zerospopcountwrapping_addwrapping_subwrapping_mulvalue_barrierhw_aes_gcmaes_encrypt_blockghash_updatelenbyte_ofint_offloat_oftruncateis_nansqrtbits_offloat_of_bitsf32_offloat_of32bits_of32f32_of_bitssqrt32f32_of_intint_of_f32fs_readfs_writeopen_readfile_readfile_closeopen_appendopen_writeopen_newopen_rwfile_writefile_pwritefile_preadfile_syncfile_truncatefile_sizefs_renamefs_removefile_lockboxunboxcontentsarg_countargbox_sliceunbox_sliceconnectbindlistenaccepttcp_listentcp_connecttcp_connect_starttcp_acceptpoller_newpoller_add_listenerpoller_add_connpoller_modifypoller_removepoller_waitpoller_closeclock_msclock_unix_msconn_detachconn_attachconn_readconn_writeconn_nonblockingconn_nodelayconn_peerconn_connect_statuslistener_nonblockingconn_closelistener_closeudp_connectudp_bindudp_recv_fromudp_send_toudp_recvudp_sendudp_local_portudp_peerudp_nonblockingudp_closeudp_detachudp_attachpoller_add_udptty_opentty_configuretty_readtty_writetty_flush_inputtty_closepoller_add_ttysignals_watchsignals_pendingpoller_add_signalssignals_closeopen_dirdir_enterdir_open_readdir_closedir_open_newdir_open_appenddir_renamedir_rename_newdir_removedir_syncdir_listdir_nextdir_list_closedir_statdir_modedir_own_modepipe_openexec_spawnexec_spawn_inchild_waitchild_killpipe_readpipe_writepipe_nonblockingpipe_closechild_end_closepoller_add_pipepoller_add_childnull_ptrspawnjointrap";
 }
 
 static builtin_starts: [int] {
-    let t = alloc_slice[static](143, 0);
+    let t = alloc_slice[static](150, 0);
     t[1] = 7;
     t[2] = 18;
     t[3] = 27;
@@ -573,46 +601,53 @@ static builtin_starts: [int] {
     t[105] = 1037;
     t[106] = 1047;
     t[107] = 1061;
-    t[108] = 1074;
-    t[109] = 1089;
-    t[110] = 1107;
-    t[111] = 1120;
-    t[112] = 1128;
-    t[113] = 1137;
-    t[114] = 1150;
-    t[115] = 1159;
-    t[116] = 1171;
-    t[117] = 1186;
+    t[108] = 1069;
+    t[109] = 1082;
+    t[110] = 1090;
+    t[111] = 1099;
+    t[112] = 1114;
+    t[113] = 1123;
+    t[114] = 1137;
+    t[115] = 1150;
+    t[116] = 1165;
+    t[117] = 1183;
     t[118] = 1196;
-    t[119] = 1210;
-    t[120] = 1220;
-    t[121] = 1228;
-    t[122] = 1236;
-    t[123] = 1244;
-    t[124] = 1258;
-    t[125] = 1266;
-    t[126] = 1274;
-    t[127] = 1286;
-    t[128] = 1295;
-    t[129] = 1305;
-    t[130] = 1318;
-    t[131] = 1328;
-    t[132] = 1338;
-    t[133] = 1347;
-    t[134] = 1357;
-    t[135] = 1373;
-    t[136] = 1383;
-    t[137] = 1398;
-    t[138] = 1413;
-    t[139] = 1429;
-    t[140] = 1437;
-    t[141] = 1442;
-    t[142] = 1446;
+    t[119] = 1204;
+    t[120] = 1213;
+    t[121] = 1226;
+    t[122] = 1235;
+    t[123] = 1247;
+    t[124] = 1262;
+    t[125] = 1272;
+    t[126] = 1286;
+    t[127] = 1296;
+    t[128] = 1304;
+    t[129] = 1312;
+    t[130] = 1320;
+    t[131] = 1334;
+    t[132] = 1342;
+    t[133] = 1350;
+    t[134] = 1362;
+    t[135] = 1371;
+    t[136] = 1381;
+    t[137] = 1394;
+    t[138] = 1404;
+    t[139] = 1414;
+    t[140] = 1423;
+    t[141] = 1433;
+    t[142] = 1449;
+    t[143] = 1459;
+    t[144] = 1474;
+    t[145] = 1489;
+    t[146] = 1505;
+    t[147] = 1513;
+    t[148] = 1518;
+    t[149] = 1522;
     return t;
 }
 
 static builtin_lens: [int] {
-    let t = alloc_slice[static](143, 0);
+    let t = alloc_slice[static](150, 0);
     t[0] = 7;
     t[1] = 11;
     t[2] = 9;
@@ -720,47 +755,54 @@ static builtin_lens: [int] {
     t[104] = 10;
     t[105] = 10;
     t[106] = 14;
-    t[107] = 13;
-    t[108] = 15;
-    t[109] = 18;
-    t[110] = 13;
-    t[111] = 8;
+    t[107] = 8;
+    t[108] = 13;
+    t[109] = 8;
+    t[110] = 9;
+    t[111] = 15;
     t[112] = 9;
-    t[113] = 13;
-    t[114] = 9;
-    t[115] = 12;
-    t[116] = 15;
-    t[117] = 10;
-    t[118] = 14;
-    t[119] = 10;
-    t[120] = 8;
-    t[121] = 8;
-    t[122] = 8;
-    t[123] = 14;
-    t[124] = 8;
-    t[125] = 8;
-    t[126] = 12;
-    t[127] = 9;
-    t[128] = 10;
-    t[129] = 13;
-    t[130] = 10;
-    t[131] = 10;
-    t[132] = 9;
-    t[133] = 10;
-    t[134] = 16;
+    t[113] = 14;
+    t[114] = 13;
+    t[115] = 15;
+    t[116] = 18;
+    t[117] = 13;
+    t[118] = 8;
+    t[119] = 9;
+    t[120] = 13;
+    t[121] = 9;
+    t[122] = 12;
+    t[123] = 15;
+    t[124] = 10;
+    t[125] = 14;
+    t[126] = 10;
+    t[127] = 8;
+    t[128] = 8;
+    t[129] = 8;
+    t[130] = 14;
+    t[131] = 8;
+    t[132] = 8;
+    t[133] = 12;
+    t[134] = 9;
     t[135] = 10;
-    t[136] = 15;
-    t[137] = 15;
-    t[138] = 16;
-    t[139] = 8;
-    t[140] = 5;
-    t[141] = 4;
-    t[142] = 4;
+    t[136] = 13;
+    t[137] = 10;
+    t[138] = 10;
+    t[139] = 9;
+    t[140] = 10;
+    t[141] = 16;
+    t[142] = 10;
+    t[143] = 15;
+    t[144] = 15;
+    t[145] = 16;
+    t[146] = 8;
+    t[147] = 5;
+    t[148] = 4;
+    t[149] = 4;
     return t;
 }
 
 static builtin_sinces: [int] {
-    let t = alloc_slice[static](143, 0);
+    let t = alloc_slice[static](150, 0);
     t[0] = 1;
     t[1] = 1;
     t[2] = 1;
@@ -774,11 +816,11 @@ static builtin_sinces: [int] {
     t[10] = 5;
     t[11] = 5;
     t[12] = 5;
-    t[13] = 8;
-    t[14] = 8;
-    t[15] = 8;
-    t[16] = 8;
-    t[17] = 8;
+    t[13] = 9;
+    t[14] = 9;
+    t[15] = 9;
+    t[16] = 9;
+    t[17] = 9;
     t[18] = 1;
     t[19] = 1;
     t[20] = 1;
@@ -868,18 +910,18 @@ static builtin_sinces: [int] {
     t[104] = 5;
     t[105] = 5;
     t[106] = 5;
-    t[107] = 6;
-    t[108] = 6;
-    t[109] = 6;
-    t[110] = 6;
-    t[111] = 6;
-    t[112] = 6;
-    t[113] = 6;
+    t[107] = 8;
+    t[108] = 8;
+    t[109] = 8;
+    t[110] = 8;
+    t[111] = 8;
+    t[112] = 8;
+    t[113] = 8;
     t[114] = 6;
     t[115] = 6;
     t[116] = 6;
     t[117] = 6;
-    t[118] = 7;
+    t[118] = 6;
     t[119] = 6;
     t[120] = 6;
     t[121] = 6;
@@ -887,12 +929,12 @@ static builtin_sinces: [int] {
     t[123] = 6;
     t[124] = 6;
     t[125] = 7;
-    t[126] = 7;
-    t[127] = 7;
-    t[128] = 7;
-    t[129] = 7;
-    t[130] = 7;
-    t[131] = 7;
+    t[126] = 6;
+    t[127] = 6;
+    t[128] = 6;
+    t[129] = 6;
+    t[130] = 6;
+    t[131] = 6;
     t[132] = 7;
     t[133] = 7;
     t[134] = 7;
@@ -900,10 +942,17 @@ static builtin_sinces: [int] {
     t[136] = 7;
     t[137] = 7;
     t[138] = 7;
-    t[139] = 3;
-    t[140] = 4;
-    t[141] = 4;
-    t[142] = 1;
+    t[139] = 7;
+    t[140] = 7;
+    t[141] = 7;
+    t[142] = 7;
+    t[143] = 7;
+    t[144] = 7;
+    t[145] = 7;
+    t[146] = 3;
+    t[147] = 4;
+    t[148] = 4;
+    t[149] = 1;
     return t;
 }
 

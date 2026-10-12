@@ -1,7 +1,7 @@
 //~ EXIT 0
 
 // `docs/word-scan.md` §6: a program at edition 7 may declare `popcount`, `trailing_zeros`, `leading_zeros`, `load_le64`
-// and `byte_mask64` itself, and means its own: the new names are not visible before edition 8, so nothing it wrote moves.
+// and `byte_mask64` itself, and means its own: the new names are not visible before edition 9, so nothing it wrote moves.
 
 edition 7;
 

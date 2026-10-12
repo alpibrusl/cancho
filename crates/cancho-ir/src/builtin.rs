@@ -118,18 +118,18 @@ pub enum Builtin {
     IndexOfByte,
     /// `load_le64(text: &t [byte], at: int) -> int` -- the eight bytes `text[at..at + 8]` as one little-endian 64-bit
     /// integer, on every target. Traps unless `0 <= at <= len(text) - 8`, as indexing does. Pure and capability-free.
-    /// Edition 8. `docs/word-scan.md`.
+    /// Edition 9. `docs/word-scan.md`.
     LoadLe64,
     /// `byte_mask64(text: &t [byte], at: int, b: byte) -> int` -- bit `k` of the answer is set when `text[at + k]` is `b`,
-    /// for `k` in 0..64. Traps unless `0 <= at <= len(text) - 64`. Pure. Edition 8. `docs/word-scan.md`.
+    /// for `k` in 0..64. Traps unless `0 <= at <= len(text) - 64`. Pure. Edition 9. `docs/word-scan.md`.
     ByteMask64,
-    /// `trailing_zeros(x: int) -> int` -- the zero bits below the lowest set bit of `x`; 64 for 0. Pure, total. Edition 8.
+    /// `trailing_zeros(x: int) -> int` -- the zero bits below the lowest set bit of `x`; 64 for 0. Pure, total. Edition 9.
     TrailingZeros,
     /// `leading_zeros(x: int) -> int` -- the zero bits above the highest set bit of `x`; 64 for 0, 0 for a negative `x`.
-    /// Pure, total. Edition 8.
+    /// Pure, total. Edition 9.
     LeadingZeros,
     /// `popcount(x: int) -> int` -- the set bits of `x`'s 64-bit pattern (a negative `x` counts its two's complement); 0
-    /// for 0. Pure, total. Edition 8.
+    /// for 0. Pure, total. Edition 9.
     Popcount,
     /// `fork_clock(c: &x Clock) -> Clock` — a second owned `Clock` from a
     /// shared borrow of the first (`docs/parallelism.md` §9).
@@ -604,6 +604,31 @@ pub enum Builtin {
     /// `poller_add_udp(&!Poller, &Udp, token, events) -> [poll] int`: `events` as `poller_add_conn`'s.
     /// There is no modify or remove: closing the socket removes it (`docs/udp.md` §3).
     PollerAddUdp,
+    /// `tty_open(t: &Tty(bound), path: &[byte]) -> [tty_open(bound)] TtyOpened` --
+    /// `docs/tty.md` §3, edition 8 only: open a serial port at `path`,
+    /// under the capability's prefix. Checked at the call site, like
+    /// [`Builtin::UdpBind`]: the path is a run-time value, the bound is
+    /// in the capability's type. `O_RDWR | O_NOCTTY | O_NONBLOCK`.
+    TtyOpen,
+    /// `tty_configure(&!Port, baud: int) -> [] int` -- raw mode, 8N1, and
+    /// the speed, one call and no mode algebra (`docs/tty.md` §3). `0`, or
+    /// the `errno` the platform answered; `EINVAL` for a speed the
+    /// platform has no rate for, before the port is touched (`docs/tty.md` §5).
+    TtyConfigure,
+    /// `tty_read(&!Port, into: &![byte]) -> [] int` -- what is there,
+    /// never blocks (`O_NONBLOCK`; the poller is the waiting story).
+    /// `-1` on error, the `Conn` verbs' convention.
+    TtyRead,
+    /// `tty_write(&Port, bytes: &[byte]) -> [] int` -- whole, or short.
+    /// `-1` on error.
+    TtyWrite,
+    /// `tty_flush_input(&!Port) -> [] int` -- `tcflush(TCIFLUSH)`.
+    TtyFlushInput,
+    /// `tty_close(Port) -> [] int` -- consumes the handle.
+    TtyClose,
+    /// `poller_add_tty(&!Poller, &Port, token, events) -> [poll] int`:
+    /// `events` as `poller_add_conn`'s, the family's sixth member.
+    PollerAddTty,
     /// `signals_watch(&Signals("S")) -> [signals("S")] Watching` --
     /// `docs/signals.md` section 2, edition 6 only: claim the signals `S` the
     /// capability was narrowed to. Checked at the call site (`Expr::Call`
@@ -877,6 +902,13 @@ impl Builtin {
         Builtin::UdpDetach,
         Builtin::UdpAttach,
         Builtin::PollerAddUdp,
+        Builtin::TtyOpen,
+        Builtin::TtyConfigure,
+        Builtin::TtyRead,
+        Builtin::TtyWrite,
+        Builtin::TtyFlushInput,
+        Builtin::TtyClose,
+        Builtin::PollerAddTty,
         Builtin::SignalsWatch,
         Builtin::SignalsPending,
         Builtin::PollerAddSignals,
@@ -1024,6 +1056,13 @@ impl Builtin {
             Builtin::UdpDetach => "udp_detach",
             Builtin::UdpAttach => "udp_attach",
             Builtin::PollerAddUdp => "poller_add_udp",
+            Builtin::TtyOpen => "tty_open",
+            Builtin::TtyConfigure => "tty_configure",
+            Builtin::TtyRead => "tty_read",
+            Builtin::TtyWrite => "tty_write",
+            Builtin::TtyFlushInput => "tty_flush_input",
+            Builtin::TtyClose => "tty_close",
+            Builtin::PollerAddTty => "poller_add_tty",
             Builtin::SignalsWatch => "signals_watch",
             Builtin::SignalsPending => "signals_pending",
             Builtin::PollerAddSignals => "poller_add_signals",
@@ -1127,6 +1166,16 @@ impl Builtin {
             | Builtin::UdpDetach
             | Builtin::UdpAttach
             | Builtin::PollerAddUdp => 5,
+            // `docs/tty.md` §6: edition 8, the same reasoning as every
+            // capability's verbs -- the names are ones a program may
+            // already have declared for itself through `extern fn`.
+            Builtin::TtyOpen
+            | Builtin::TtyConfigure
+            | Builtin::TtyRead
+            | Builtin::TtyWrite
+            | Builtin::TtyFlushInput
+            | Builtin::TtyClose
+            | Builtin::PollerAddTty => 8,
             // `docs/checked-output.md`: a name a program may already have
             // declared for itself, so it is visible from edition 5 only.
             Builtin::FlushOut => 5,
@@ -1209,13 +1258,13 @@ impl Builtin {
             | Builtin::FsRename
             | Builtin::FsRemove
             | Builtin::FileLock => 5,
-            // `docs/word-scan.md` §6: edition 8. Edition 7 is closed (`docs/editions.md` §6.4), and these are names a
+            // `docs/word-scan.md` §6: edition 9. Edition 7 is closed (`docs/editions.md` §6.4), and these are names a
             // program may already declare for itself.
             Builtin::LoadLe64
             | Builtin::ByteMask64
             | Builtin::TrailingZeros
             | Builtin::LeadingZeros
-            | Builtin::Popcount => 8,
+            | Builtin::Popcount => 9,
             _ => 1,
         }
     }
@@ -1300,7 +1349,15 @@ impl Builtin {
             | Builtin::PollerModify
             | Builtin::PollerRemove
             | Builtin::PollerWait
-            | Builtin::PollerAddSignals => 2,
+            | Builtin::PollerAddSignals
+            | Builtin::PollerAddTty => 2,
+            // The capability's region and the path's.
+            Builtin::TtyOpen => 2,
+            // The handle's region and the buffer's (or the capability's
+            // and the path's, for `tty_open`).
+            Builtin::TtyRead | Builtin::TtyWrite => 2,
+            // Only the handle's.
+            Builtin::TtyConfigure | Builtin::TtyFlushInput => 1,
             Builtin::SignalsPending => 1,
             // The handle's region and the name's.
             Builtin::DirEnter
@@ -1409,7 +1466,27 @@ impl Builtin {
             | Builtin::PollerWait
             | Builtin::PollerAddPipe
             | Builtin::PollerAddChild
-            | Builtin::PollerAddSignals => Effects::plain(["poll"]),
+            | Builtin::PollerAddSignals
+            | Builtin::PollerAddTty => Effects::plain(["poll"]),
+            // `docs/tty.md` §4: argument-carrying like `fs_read`, the
+            // path under the capability's bound. The bound is the
+            // capability's own, spent at `tty_open` like `udp_connect`
+            // spends the `Net`'s, so the port's own verbs carry no
+            // argument -- a `Conn`'s shape.
+            // `docs/tty.md` §4: `tty_open` is lowered as `Expr::TtyOpen`,
+            // whose own walk records the label with the capability's
+            // prefix (`tcp_listen`'s shape) — the path is a run-time
+            // value, the bound is in the capability's type.
+            Builtin::TtyOpen => Effects::pure(),
+            // The port's own verbs are path-free, the prefix spent at
+            // `tty_open` (`udp_recv`'s shape): the *handle* carries no
+            // argument, and it is reached only through the capability.
+            Builtin::TtyRead => Effects::plain(["tty_read"]),
+            Builtin::TtyWrite => Effects::plain(["tty_write"]),
+            // Configuring, flushing and closing touch no new domain:
+            // the port is already open under the bound, the same reason
+            // `udp_close` performs nothing.
+            Builtin::TtyConfigure | Builtin::TtyFlushInput | Builtin::TtyClose => Effects::pure(),
             // `docs/signals.md` section 2.1: path-free, the set was spent at
             // `signals_watch`. Closing performs nothing, as `conn_close` does not.
             Builtin::SignalsPending => Effects::plain(["signals_read"]),

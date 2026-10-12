@@ -5,7 +5,7 @@
 // (all 256 values, and five values only so that a needle is found often), every start offset 0..9 into each (so the
 // loads are not all aligned), every length 0..=140 and every `at` the primitive allows, the last one included.
 
-edition 8;
+edition 9;
 
 fn fill[&b](xs: &!b [byte], seed: int, few: bool) -> [] int {
     var x = seed;
@@ -146,7 +146,7 @@ fn check[&t](text: &t [byte]) -> [] int {
 }
 
 fn main(world: World) -> [] int {
-    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
     release(ffi);
     release(fs);
     release(args);
@@ -154,6 +154,7 @@ fn main(world: World) -> [] int {
     release(clock);
     release(signals);
     release(exec);
+    release(tty);
     release(io);
     release(heap);
     var bad = 0;
