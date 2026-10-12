@@ -138,9 +138,9 @@ time (`differ 3`, `differ 37`, `differ 0` is the document index that caught it).
 ### 3.3 Identity
 
 Adding `parse_with` adds a `body` and a `sig` to `std.json` and changes none: `cancho ids --std`
-over a program that imports every `std` module lists 1,677 identities on `origin/main` and the same
-1,677 plus those two on this branch, and 165 programs in `tests/` and `examples/` (the ones `cancho ids` can read) list the same
-identities as before.
+over a program that imports every `std` module lists 1,805 identities on `origin/main` (6a8bc1ed; 1,677 when this was first measured, before more `std` modules arrived) and the same
+1,805 plus those two on this branch (`comm` finds nothing only on `origin/main`). Over the programs in `tests/` and `examples/` that `cancho ids` can read, 95 list identical
+identities with and without this change; with `--std` all 211 differ by exactly those two lines and nothing else. (The earlier run reported 165.)
 
 ## 4. Why it can be trusted
 
