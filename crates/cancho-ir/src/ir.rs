@@ -119,7 +119,7 @@ pub const PRELUDE_UDP_OPENED: usize = 47;
 pub const PRELUDE_DATAGRAM: usize = 48;
 
 /// `docs/tty.md` §3, edition 8: a serial port (`res`, one descriptor leaf,
-/// like `Udp`), what opening one answers, and the ninth `Split` field that
+/// like `Udp`), what opening one answers, and the tenth `Split` field that
 /// carries the capability. Appended last so no earlier index moves.
 pub const PRELUDE_TTY: usize = 49;
 pub const PRELUDE_SPLIT_TTY: usize = 50;

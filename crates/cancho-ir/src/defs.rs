@@ -705,7 +705,7 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     let udp_opened = symbol("UdpOpened");
     let datagram = symbol("Datagram");
     // `docs/tty.md` §3, edition 8: the serial-port capability, what opening
-    // one answers, and the `Split` that carries it as its ninth field.
+    // one answers, and the `Split` that carries it as its tenth field.
     // The handle is `Port` — one name cannot be two types, and the
     // capability's name is `Tty` (`Udp`'s precedent, not `Net`'s).
     let tty = symbol("Tty");
@@ -1569,7 +1569,7 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
             since: 8,
         },
         // Edition 8's `Split`: edition 7's nine fields and `tty`, the
-        // ninth field (`docs/tty.md` §6).
+        // tenth field (`docs/tty.md` §6).
         TypeDef {
             name: split_tty,
             def: split_tty_def,

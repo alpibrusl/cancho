@@ -166,8 +166,8 @@ bound refusal; the runtime answers are values, not diagnostics.
 
 ## 6. Edition
 
-**Edition 8.** `Split` grows its ninth field (`Tty`, beside `exec`'s
-eighth), gated the way `Net`, `Clock` and `Signals` each were
+**Edition 8.** `Split` grows its tenth field (`Tty`, beside `exec`'s
+ninth), gated the way `Net`, `Clock` and `Signals` each were
 (`PRELUDE_TTY` in `ir.rs`, the `defs.rs` capability tables, the
 parser's edition gate, the edition marker in every fixture the new
 surface touches). Edition 7 is shipped and stable at head; no
