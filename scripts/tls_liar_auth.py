@@ -393,6 +393,22 @@ case("client auth: the identity replaced by one for another host between the req
     swapped_before_finished(b"other.example"))
 
 
+@case("client auth: another identity naming the host added ahead of the chosen one before the request: the choice changed, empty Certificate", "ok")
+def chosen_ahead(s):
+    """The chosen identity (number 1) is unchanged, but the host would now choose number 0: the configuration's choice is not the
+    one the connection began with, so nothing is sent (docs/tls-parity.md §6.5)."""
+    f = s.c.ask(f"I 1 {pem_cert(CERT).hex()} {pem_key(KEY).hex()} {HOST.hex()} {NOW}")
+    assert f[0] == "0", f
+    s.start(identity=False)
+    s.cr_exts = SIG
+    f = s.c.ask(f"I 0 {pem_cert(CERT).hex()} {pem_key(KEY).hex()} {HOST.hex()} {NOW}")
+    assert f[0] == "0", f
+    s.c.feed(s.hello_and_flight())
+    s.client_flight("empty")
+    assert s.query()[0] == 2, "client_auth"
+    s.finish_honest()
+
+
 # An IP address as the host: the server's certificate names it, and only `*` or the address itself choose an identity.
 def ip_certificate():
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "10.0.0.1")])

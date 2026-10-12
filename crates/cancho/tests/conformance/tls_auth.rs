@@ -31,7 +31,7 @@ fn field(line: &str, n: usize) -> &str {
 #[test]
 fn every_client_certificate_and_alpn_case_replays_and_ends_with_its_tag_on_both_backends() {
     let cases = cases();
-    assert_eq!(cases.len(), 87);
+    assert_eq!(cases.len(), 88);
     for backend in ["cranelift", "llvm"] {
         let (dir, exe) = super::tls::build_tls_driver("auth", backend);
         for (tag, name, asked, answered) in &cases {

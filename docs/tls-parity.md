@@ -785,13 +785,13 @@ context string and the transcript hash; TLS 1.2's digest is the slot's SHA-256 t
 `tls_slot.transcript_add`), taken after `ClientKeyExchange` and before the extended master secret's key block, so neither is disturbed by the other.
 
 **The lying server** (`scripts/tls_liar_auth.py`, the same server code as `tls_liar.py` imported unchanged; `tests/vectors/tls/liar_auth.txt`, replayed byte for
-byte on both backends by `conformance/tls_auth.rs`): **87 connections** (77 at first, 10 more after review, #396). 48 end `ok`, and every one that sends a chain has its Certificate, its CertificateVerify
+byte on both backends by `conformance/tls_auth.rs`): **88 connections** (77 at first, 11 more after review, #396). 49 end `ok`, and every one that sends a chain has its Certificate, its CertificateVerify
 (under TLS 1.3's context string, or TLS 1.2's SHA-256 over every message) and its Finished checked by pyca/cryptography. The rest, by rule:
 
 | The server does | Tag | Alert |
 |---|---|---|
 | asks, and the client answers: ChaCha20, AES-256-GCM-SHA384, a retry to P-256, a context to echo, the identity named by a wildcard host or by `*`, an unknown extension, a chain of two certificates, the authorities naming the issuer or only the second certificate's issuer, 2,000 authorities (about 60 KB) with ours last; an IP address host with an identity for that address or for `*`; with TLS 1.2 answering turned off, TLS 1.3 still answered; TLS 1.2 under three suites and P-256, a chain of two, the authorities | `ok` | none |
-| asks, and the client cannot or will not: Ed25519 or RSA-PSS only, authorities naming another CA, 2,000 authorities none ours, a name of the issuer's length and other bytes, no identity configured, an identity for another host; the identity removed and another, or the same again, added in its number before the request; removed, or replaced by one for another host, between the request and Finished; an IP address host and an identity for `*.0.0.1`; TLS 1.2 without `ecdsa_sign`, the identity removed between the request and ServerHelloDone, answering TLS 1.2 turned off, Ed25519 only, another CA, 2,000 authorities over four records | `ok`, the empty Certificate | none |
+| asks, and the client cannot or will not: Ed25519 or RSA-PSS only, authorities naming another CA, 2,000 authorities none ours, a name of the issuer's length and other bytes, no identity configured, an identity for another host; the identity removed and another, or the same again, added in its number before the request; removed, or replaced by one for another host, between the request and Finished; another identity naming the host added ahead of the chosen one (the host's choice changed); an IP address host and an identity for `*.0.0.1`; TLS 1.2 without `ecdsa_sign`, the identity removed between the request and ServerHelloDone, answering TLS 1.2 turned off, Ed25519 only, another CA, 2,000 authorities over four records | `ok`, the empty Certificate | none |
 | requires one and none is configured (`certificate_required`) | `tls-alert` | |
 | a TLS 1.3 CertificateRequest with no `signature_algorithms` (after review; it was an empty Certificate) | `tls-missing-extension` | 109 |
 | a second CertificateRequest; one after Finished; one in a resumed handshake; TLS 1.2: a second, one after ServerHelloDone | `tls-unexpected-message` | 10 |
@@ -826,9 +826,9 @@ in the body (`client=client-good alpn=...`) and its SHA-256 is checked. ALPN: th
 completes with no protocol.**
 
 **The differential against `openssl s_client` 3.0.13** (`scripts/tls_differential_auth.py`, the liar's cases beside OpenSSL's client with `-cert`, `-key` and `-alpn`,
-OpenSSL's TLS 1.3 and TLS 1.2 signatures verified by the same server code): **67 connections (the 87, less 9 that configure the engine, 10 about the engine's own state (an identity removed mid-handshake,
+OpenSSL's TLS 1.3 and TLS 1.2 signatures verified by the same server code): **68 connections (the 88, less 9 that configure the engine, 10 about the engine's own state (an identity removed mid-handshake,
 TLS 1.2 answering turned off, an IP address host) and one that needs OpenSSL's
-saved session), 59 agree, 3 differ in the alert only, 5 differ as documented, 0 otherwise** (after review; 58, 3, 6 before, the sixth being the request
+saved session), 60 agree, 3 differ in the alert only, 5 differ as documented, 0 otherwise** (after review; 58, 3, 6 before, the sixth being the request
 without `signature_algorithms`, now refused as OpenSSL refuses it).
 
 | Case | `packages/tls` | OpenSSL | Why |
@@ -851,8 +851,8 @@ inputs join the corpora (`tests/vectors/fuzz`), all replayed on both backends by
 and the 48 honest connections of the lying server (identities and ALPN offers included): **20,000 mutated connections over 62 recorded handshakes, 0 traps** (53 before review). AFL++ was
 not run for this PR (see §6.12).
 
-**Mutants** (`python3 scripts/tls_mutants.py target/release/cancho`): **148, of which 146 killed and 2 argued equivalent, none survived** (103 before,
-45 new). Each new one is a bug in one place: the context string, the transcript missing the Certificate or the CertificateVerify, the request's context not echoed, the
+**Mutants** (`python3 scripts/tls_mutants.py target/release/cancho`): **156, of which 154 killed and 2 argued equivalent, none survived** (103 before,
+53 new; 148, 146 and 2 before review). Each new one is a bug in one place: the context string, the transcript missing the Certificate or the CertificateVerify, the request's context not echoed, the
 digest, the hedge, the notAfter bound on a ticket, the authorities ignored or compared by length alone or only for the first certificate, the scheme not required,
 TLS 1.2's digest under the suite's hash, its chain with TLS 1.3's extensions or cut short, `ecdsa_sign` not required, `*` never matching, any identity for any host, an
 expired leaf or another key accepted, a request that does not parse accepted (authorities that do not tile, a name of length 0, a scheme list twice), the engine not choosing by
@@ -863,7 +863,7 @@ EncryptedExtensions accepted by the parser when nothing was offered (`take_alpn`
 cap refuses it with the same tag). Four of the new ones survived a first run and each got the case that kills it: a name of the issuer's length and other bytes (the comparison
 by length alone), a chain whose second certificate has another issuer (only the first considered), a selection of an offered name's length (h3 for h2), and the engine's default
 offer through `start` rather than `start_alpn`. Three older mutants' texts (`server_name` in a TLS 1.3 ServerHello, an unexpected extension, resumption never advertised) and
-one of the server's (`start` on a server engine, now in `start_plain`) were brought up to the new code. `scripts/tls_server_mutants.py`: **71 of 71 killed.**
+one of the server's (`start` on a server engine, now in `start_plain`) were brought up to the new code. `scripts/tls_server_mutants.py`: **71 of 71 killed.** *After review (#396), eight more:* the hedge never stored, an identity's generation not compared, the identity not chosen again by the host when used (it survived a first run: a generation check covers every swap, so the case that kills it is another identity naming the host added ahead of the chosen one), TLS 1.2 answered when the engine says not to, the identity not checked again when either version's flight is sent, a request without `signature_algorithms` accepted, a wildcard matching an IP address, and a ticket stamped at its save rather than its connection's start; and "the engine does not choose by host" rewritten for the new code.
 
 **Cost of the extra signature** (`scripts/tls_client_auth_cost.py`; the machine is the M-series Mac this was built on, arm64 macOS, load average
 12 to 17 while it ran, the LLVM backend, `fetch` against `openssl s_server -www` 3.6.4 on loopback; the Docker VM had no disk left to run it
