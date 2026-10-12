@@ -9,6 +9,7 @@ import tls_identity;
 import tls_record;
 import tls_server;
 import tls_slot;
+import tls_ticket;
 import x509_key;
 import x509_verify;
 
@@ -45,6 +46,9 @@ pub res struct Engine {
     // its role (1 for a server engine) and the work its key parser uses.
     ids: Box[[byte]],
     srv: Box[[int]],
+    // A server's session tickets (`tls_ticket`, `docs/tls-server.md` §12): the settings and the ring
+    // of ticket keys. Empty on a client engine.
+    tk: Box[[byte]],
 }
 
 // The roots' room, in `x509_verify.store_load`'s format: this machine's
@@ -54,7 +58,8 @@ fn roots_cap() -> [] int {
 }
 
 // meta: [0] slots, [1] seeded, [2] bytes of roots, [3] blocks skipped, [4 + s] slot `s` in use,
-// [4 + slots + s] when slot `s`'s connection started (Unix milliseconds).
+// [4 + slots + s] when slot `s`'s connection started (Unix milliseconds), [4 + 2 * slots] the
+// latest time a server was given (`serve`, `set_time`, the ticket keys): its clock for tickets.
 fn m_slots() -> [] int {
     return 0;
 }
@@ -77,6 +82,10 @@ fn m_busy(slot: int) -> [] int {
 
 fn m_started[&e](engine: &e Engine, slot: int) -> [] int {
     return 4 + contents(engine.meta)[m_slots()] + slot;
+}
+
+fn m_now[&e](engine: &e Engine) -> [] int {
+    return 4 + 2 * contents(engine.meta)[m_slots()];
 }
 
 pub fn open[&h](heap: &!h Heap, slots: int) -> [heap] Engine {
@@ -127,15 +136,18 @@ fn build[&h](heap: &!h Heap, slots: int, tickets: int, server: bool, mutual: boo
         ids_len = tls_cident.cfg_len();
         srv_len = 1 + x509_key.work_len();
     }
+    var tk_len = 0;
     if server {
+        tk_len = tls_ticket.tk_len();
         ids_len = tls_identity.cfg_len();
         srv_len = 1 + x509_key.work_len();
         roots_len = 0;
     }
-    var engine = Engine { ints: box_slice(heap, n * tls_client.ints_len(), 0), bytes: box_slice(heap, n * tls_client.bytes_len(), byte_of(0)), roots: box_slice(heap, roots_len, byte_of(0)), meta: box_slice(heap, 4 + 2 * n, 0), drbg: box_slice(heap, 32, byte_of(0)), tickets: box_slice(heap, t * entry_bytes(), byte_of(0)), tmeta: box_slice(heap, t_entries() + t * t_fields(), 0), ids: box_slice(heap, ids_len, byte_of(0)), srv: box_slice(heap, srv_len, 0) };
+    var engine = Engine { ints: box_slice(heap, n * tls_client.ints_len(), 0), bytes: box_slice(heap, n * tls_client.bytes_len(), byte_of(0)), roots: box_slice(heap, roots_len, byte_of(0)), meta: box_slice(heap, 5 + 2 * n, 0), drbg: box_slice(heap, 32, byte_of(0)), tickets: box_slice(heap, t * entry_bytes(), byte_of(0)), tmeta: box_slice(heap, t_entries() + t * t_fields(), 0), ids: box_slice(heap, ids_len, byte_of(0)), srv: box_slice(heap, srv_len, 0), tk: box_slice(heap, tk_len, byte_of(0)) };
     borrow mut engine as &!w in {
         if server {
             contents(w.srv)[0] = 1;
+            tls_ticket.init(contents(w.tk));
         }
         if mutual {
             contents(w.srv)[0] = 2;
@@ -175,8 +187,9 @@ pub fn close[&h](heap: &!h Heap, engine: Engine) -> [heap] int {
     }
     borrow mut e as &!w in {
         tls_identity.wipe(contents(w.ids));
+        tls_slot.zero(contents(w.tk));
     }
-    let Engine { ints, bytes, roots, meta, drbg, tickets, tmeta, ids, srv } = e;
+    let Engine { ints, bytes, roots, meta, drbg, tickets, tmeta, ids, srv, tk } = e;
     unbox_slice(heap, ints);
     unbox_slice(heap, bytes);
     unbox_slice(heap, roots);
@@ -186,6 +199,7 @@ pub fn close[&h](heap: &!h Heap, engine: Engine) -> [heap] int {
     unbox_slice(heap, tmeta);
     unbox_slice(heap, ids);
     unbox_slice(heap, srv);
+    unbox_slice(heap, tk);
     return 0;
 }
 
@@ -365,7 +379,7 @@ pub fn feed[&e, &d](engine: &!e Engine, slot: int, data: &d [byte]) -> [] int {
     let i = ints_of(slot);
     let b = bytes_of(slot);
     if is_server(engine) {
-        return tls_server.feed(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], data, contents(engine.ids));
+        return tls_server.feed(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], data, contents(engine.ids), contents(engine.tk), contents(engine.meta)[m_now(engine)]);
     }
     let used = contents(engine.meta)[m_roots_len()];
     return tls_client.feed_with(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], data, contents(engine.roots)[0..used], contents(engine.ids));
@@ -618,6 +632,11 @@ pub fn save[&e](engine: &!e Engine, slot: int) -> [] int {
 // 1.2). A `pool` of 0, or one this engine never issued, is a new pool.
 // A ticket is saved once: a second save of the same connection answers 0.
 pub fn save_to[&e](engine: &!e Engine, slot: int, pool: int) -> [] int {
+    // A server slot keeps no client ticket: its fields hold the server's own state (the name the
+    // client sent, the tickets' randomness), which a save would copy out and overwrite.
+    if is_server(engine) {
+        return 0;
+    }
     if !slot_ok(engine, slot) || contents(engine.meta)[m_busy(slot)] == 0 {
         return 0;
     }
@@ -719,6 +738,9 @@ fn pick[&e](engine: &e Engine, pool: int, newest: bool) -> [] int {
 // Forgets every ticket of `pool`, overwriting their secrets. A pool that
 // holds none is ignored.
 pub fn forget[&e](engine: &!e Engine, pool: int) -> [] int {
+    if is_server(engine) {
+        return 0;
+    }
     var e = 0;
     while e < contents(engine.tmeta)[t_capacity()] {
         if pool > 0 && in_pool(engine, e, pool) {
@@ -1032,6 +1054,7 @@ pub fn serve[&e](engine: &!e Engine, slot: int, now_unix_ms: int) -> [] int {
         return tls_record.server_no_identity();
     }
     var code = 0;
+    advance(engine, now_unix_ms);
     region r {
         let random = alloc_slice[r](96, byte_of(0));
         draw(engine, random);
@@ -1039,10 +1062,104 @@ pub fn serve[&e](engine: &!e Engine, slot: int, now_unix_ms: int) -> [] int {
         let b = bytes_of(slot);
         code = tls_server.start(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], random);
         tls_slot.zero(random);
+        // The randomness of the tickets this connection may make: a salt and a ticket_age_add each.
+        let n = tls_ticket.count(contents(engine.tk));
+        if n > 0 {
+            draw(engine, contents(engine.bytes)[b + tls_slot.b_ticket_random()..b + tls_slot.b_ticket_random() + 36 * n]);
+        }
+        contents(engine.ints)[i + tls_slot.i_srv_drawn()] = n;
     }
     contents(engine.meta)[m_started(engine, slot)] = now_unix_ms;
     contents(engine.meta)[m_busy(slot)] = 1;
     return code;
+}
+
+// ---- Session tickets (`docs/tls-server.md` §12) ----
+
+// The engine's clock for tickets moves forward to `now_ms`, and its own ticket key is made, or
+// replaced after a lifetime, if tickets are on and the program supplies no keys (§12.2).
+fn advance[&e](engine: &!e Engine, now_ms: int) -> [] int {
+    if now_ms > contents(engine.meta)[m_now(engine)] {
+        contents(engine.meta)[m_now(engine)] = now_ms;
+    }
+    if contents(engine.meta)[m_seeded()] == 1 && tls_ticket.due(contents(engine.tk), contents(engine.meta)[m_now(engine)]) {
+        region r {
+            let secret = alloc_slice[r](32, byte_of(0));
+            draw(engine, secret);
+            tls_ticket.make_current(contents(engine.tk), secret, contents(engine.meta)[m_now(engine)]);
+            tls_slot.zero(secret);
+        }
+    }
+    return 0;
+}
+
+// Session tickets: `count` of them a connection (0 to 8; 0 is off, the default) lasting `lifetime_s`
+// seconds (1 to 604,800; 3,600 unless set), `tls-server-ticket-config` otherwise.
+pub fn set_tickets[&e](engine: &!e Engine, count: int, lifetime_s: int) -> [] int {
+    if !is_server(engine) {
+        return tls_record.role();
+    }
+    return tls_ticket.configure(contents(engine.tk), count, lifetime_s);
+}
+
+// The ticket keys the program supplies: `keys` is 1 to 4 keys of 32 bytes, the first sealing and the
+// others only opening tickets, for one lifetime from `now_ms` (§12.2). The engine makes no keys of
+// its own after this. A call with the keys it holds changes nothing. `tls-server-ticket-key` for
+// any other length.
+pub fn set_ticket_keys[&e, &k](engine: &!e Engine, keys: &k [byte], now_ms: int) -> [] int {
+    if !is_server(engine) {
+        return tls_record.role();
+    }
+    let code = tls_ticket.set_keys(contents(engine.tk), keys, now_ms);
+    advance(engine, now_ms);
+    return code;
+}
+
+// A new ticket key from the engine's own randomness becomes the one that seals; the key before it
+// opens tickets for one lifetime more. `tls-no-entropy` before `seed`.
+pub fn rotate_ticket_key[&e](engine: &!e Engine, now_ms: int) -> [] int {
+    if !is_server(engine) {
+        return tls_record.role();
+    }
+    if contents(engine.meta)[m_seeded()] != 1 {
+        return tls_record.no_entropy();
+    }
+    advance(engine, now_ms);
+    region r {
+        let secret = alloc_slice[r](32, byte_of(0));
+        draw(engine, secret);
+        tls_ticket.make_current(contents(engine.tk), secret, contents(engine.meta)[m_now(engine)]);
+        tls_slot.zero(secret);
+    }
+    return 0;
+}
+
+// The time the engine uses for tickets, Unix milliseconds: `serve` gives it too. A program whose
+// connections outlast a ticket's lifetime calls this as its clock moves, so a ticket is dated when
+// it is made and not when its connection began (§12.7).
+pub fn set_time[&e](engine: &!e Engine, now_ms: int) -> [] int {
+    if !is_server(engine) {
+        return tls_record.role();
+    }
+    return advance(engine, now_ms);
+}
+
+// How many ticket keys open tickets now (the sealing one included).
+pub fn ticket_keys[&e](engine: &e Engine) -> [] int {
+    return tls_ticket.open_keys(contents(engine.tk), contents(engine.meta)[m_now(engine)]);
+}
+
+// Why the connection in `slot` did or did not resume (`tls_ticket`'s `v_*`; §12.7), known once its
+// ClientHello is answered; `ticket_verdict_tag` names it.
+pub fn ticket_verdict[&e](engine: &e Engine, slot: int) -> [] int {
+    if !slot_ok(engine, slot) {
+        return 0;
+    }
+    return contents(engine.ints)[ints_of(slot) + tls_slot.i_srv_verdict()];
+}
+
+pub fn ticket_verdict_tag(verdict: int) -> [] &static [byte] {
+    return tls_ticket.verdict_tag(verdict);
 }
 
 // The host name the client sent in `server_name`, lowercased, into `out`:

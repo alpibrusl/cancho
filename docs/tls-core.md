@@ -46,6 +46,7 @@ file:
 | `packages/tls/hello.cho` | `tls_hello` | *`docs/tls-server.md` step 2:* the ClientHello parsed with a server's rules, and the messages a server sends |
 | `packages/tls/server.cho` | `tls_server` | *the same:* the server's state machine, its key schedule, the signature and the client's Finished |
 | `packages/tls/identity.cho` | `tls_identity` | *the same:* a server engine's identities (chains, P-256 keys, names) and ALPN list |
+| `packages/tls/ticket.cho` | `tls_ticket` | *`docs/tls-server.md` §12:* the server's session tickets: the sealed ticket, the ring of ticket keys and its rotation, and the rules a ticket must pass |
 
 The package imports `std`, so it is published with `--std` (`docs/package-system.md` §4.8). It requires `packages/x509`, which is
 published with it (`docs/x509.md` §1).

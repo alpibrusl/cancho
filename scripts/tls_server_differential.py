@@ -182,6 +182,9 @@ def main():
     for tag, name, asked, answered in cases():
         if only and not any(o in name for o in only):
             continue
+        if name.startswith("tickets:"):
+            # Several connections on one engine: `scripts/tls_server_tickets_differential.py`'s.
+            continue
         decided = ours(asked, answered)
         if decided is None:
             continue

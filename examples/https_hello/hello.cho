@@ -10,6 +10,7 @@ edition 6;
 //                 [--alpn <p1,p2,...>] [--connections <n>] [--handshakes <n>]
 //                 [--rate <per second>] [--handshake-timeout <ms>] [--idle <ms>]
 //                 [--per-address <n>] [--per-address-rate <per second>]
+//                 [--tickets <n>] [--ticket-lifetime <seconds>] [--ticket-keys <file>]
 //                 [--read-timeout <ms>] [--max-body <MiB>]
 //
 // The options, the certificates (`--dir`, `--identity`), the bounds, `SIGHUP` and
@@ -29,6 +30,7 @@ fn usage[&i](io: &!i Io) -> [err_write] int {
     io.error_all(io, "usage: https_hello --port <n> --dir <directory> [--identity <subdirectory>]... [--alpn <p1,p2>]\n");
     io.error_all(io, "                [--connections <n>] [--handshakes <n>] [--rate <n>] [--handshake-timeout <ms>] [--idle <ms>]\n");
     io.error_all(io, "                [--per-address <n>] [--per-address-rate <n>]\n");
+    io.error_all(io, "                [--tickets <n>] [--ticket-lifetime <seconds>] [--ticket-keys <file in the directory>]\n");
     io.error_all(io, "                [--read-timeout <ms>] [--max-body <MiB>]\n");
     return 2;
 }
@@ -46,6 +48,9 @@ fn serve[&h, &i, &n, &k, &s, &d, &u, &l, &c, &r, &a](heap: &!h Heap, io: &!i Io,
         }
         if status == 0 {
             status = front.add_all(heap, io, dir, ew, subs, sublens, cfg[front.c_identities()], clock_unix_ms(clock));
+        }
+        if status == 0 {
+            status = front.tickets(io, dir, ew, cfg, subs, sublens, clock_unix_ms(clock));
         }
         if status == 0 {
             match tcp_listen(net, cfg[front.cfg_len()], 1024, 0) {
@@ -92,8 +97,8 @@ fn main(world: World) -> [] int {
     borrow mut io as &!i in {
         borrow mut heap as &!h in {
             let cfgb = box_slice(h, front.cfg_len() + 1, 0);
-            let subsb = box_slice(h, 16 * front.sub_cap(), byte_of(0));
-            let lensb = box_slice(h, 16, 0);
+            let subsb = box_slice(h, front.subs_len(), byte_of(0));
+            let lensb = box_slice(h, front.key_slot() + 1, 0);
             borrow mut cfgb as &!cw in {
                 borrow mut subsb as &!uw in {
                     borrow mut lensb as &!lw in {
