@@ -114,6 +114,33 @@ impl Builtin {
                 ],
                 Type::Int,
             ),
+            Builtin::AesCtr32 => (
+                vec![
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(0),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Int,
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Int,
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(2),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(3),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                Type::Int,
+            ),
             Builtin::GhashUpdate => (
                 vec![
                     Type::Ref {
@@ -141,6 +168,94 @@ impl Builtin {
             Builtin::AddCarry | Builtin::SubBorrow => {
                 (vec![Type::Int, Type::Int, Type::Int], Type::Tuple(vec![Type::Int, Type::Int]))
             }
+            Builtin::GhashPowers => (
+                vec![
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(0),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Int,
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                Type::Int,
+            ),
+            Builtin::GcmTag => (
+                vec![
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(0),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Int,
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(2),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(3),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(4),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(5),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                Type::Int,
+            ),
+            Builtin::GcmTagDiff => (
+                vec![
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(0),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Int,
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(2),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(3),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(4),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(5),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                Type::Int,
+            ),
             Builtin::Len => (Vec::new(), Type::Int),
             // Both are checked at the call site: the prefix in the
             // capability's type is what decides the row, and a fixed

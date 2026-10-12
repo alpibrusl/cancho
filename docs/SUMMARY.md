@@ -117,6 +117,7 @@
 - [`std.p256`: faster P-256](p256-fast.md)
 - [Hardware AES and carry-less multiply](crypto-builtins.md)
 - [Wide multiply and add-with-carry](wide-multiply.md)
+- [Multi-block AES-GCM and aggregated GHASH](gcm-wide.md)
 
 # Compile time and program identity
 
