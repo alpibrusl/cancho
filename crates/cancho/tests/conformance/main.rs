@@ -78,6 +78,7 @@ mod http_server_bytes;
 mod http_server_upload;
 mod https_hello;
 mod identity;
+mod ingest;
 mod io;
 mod json;
 mod kdf;
