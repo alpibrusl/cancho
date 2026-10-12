@@ -149,6 +149,9 @@ pub fn llvm_type[&s](st: &!s [int], ty: int) -> [] int {
     if types.is_boxslice(st, ty) {
         return str(st, "{ ptr, i64 }");
     }
+    if types.is_box(st, ty) {
+        return str(st, "ptr");
+    }
     if types.is_penum(st, ty) {
         return penum_type(st, types.prelude_index(st, ty));
     }
@@ -1122,6 +1125,49 @@ pub fn static_load[&s](st: &!s [int], item: int) -> [] int {
 // `Box[[T]]` is the aggregate `{ ptr, i64 }`, the run and its length, and one value in the code like
 // a struct. The run is a `malloc` (trapping when it answers null, as the Rust backend does) and
 // `unbox_slice` the `free`.
+
+// The size in bytes of a value of type `ty`, as a constant of the module (the address of the second of an array).
+pub fn size_of[&s](st: &!s [int], ty: int) -> [] int {
+    str(st, "ptrtoint (ptr getelementptr (");
+    llvm_type(st, ty);
+    return str(st, ", ptr null, i32 1) to i64)");
+}
+
+// `box(heap, v)`: one `malloc` of a value of type `ty`, the value stored there (a null answer traps); the pointer.
+pub fn box_value[&s](st: &!s [int], ty: int, known: bool, value: int, reg: int) -> [] int {
+    let p = start(st);
+    str(st, "call ptr @malloc(i64 ");
+    size_of(st, ty);
+    str(st, ")\n");
+    let none = start(st);
+    str(st, "icmp eq ptr ");
+    temp(st, p);
+    str(st, ", null\n");
+    trap_if(st, none);
+    store_through(st, ty, known, value, reg, p);
+    return p;
+}
+
+// `unbox(heap, b)`: the value of type `ty` the box at `b` holds, which is freed.
+pub fn unbox_value[&s](st: &!s [int], ty: int, b: int) -> [] int {
+    let v = load_through(st, ty, b);
+    str(st, "  call void @free(ptr ");
+    temp(st, b);
+    str(st, ")\n");
+    return v;
+}
+
+// `alloc[a](v)`: the value of type `ty` stored in the arena `arena`; the pointer.
+pub fn arena_value[&s](st: &!s [int], arena: int, ty: int, known: bool, value: int, reg: int) -> [] int {
+    let p = start(st);
+    str(st, "call ptr @cancho_arena_alloc(ptr %ar");
+    nat(st, arena);
+    str(st, ", i64 ");
+    size_of(st, ty);
+    str(st, ")\n");
+    store_through(st, ty, known, value, reg, p);
+    return p;
+}
 
 // `box_slice(heap, count, fill)`: the run, filled. The pointer.
 pub fn heap_run[&s](st: &!s [int], element: int, ck: bool, cv: int, cr: int, fk: bool, fv: int, fr: int) -> [] int {

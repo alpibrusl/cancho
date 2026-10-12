@@ -219,7 +219,7 @@ fn node_codable[&s](st: &!s [int], node: int, depth: int) -> [] bool {
     if t == 1 || t == 2 || t == 5 {
         return true;
     }
-    if types.is_boxslice(st, t) {
+    if types.is_boxslice(st, t) || types.is_box(st, t) {
         return true;
     }
     return depth > 0 && item_codable(st, types.named_item(st, t), depth - 1);
@@ -308,6 +308,9 @@ pub fn aggregate_codable[&s](st: &!s [int], ty: int) -> [] bool {
     if types.is_boxslice(st, ty) {
         let e = types.boxslice_element(st, ty);
         return e == 1 || e == 2 || e == 5;
+    }
+    if types.is_box(st, ty) {
+        return true;
     }
     return struct_codable(st, ty) || enum_codable(st, ty);
 }
@@ -399,6 +402,10 @@ pub fn value_type[&s](st: &!s [int], ty: int) -> [] int {
     }
     if emit.on(st) && ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 2 && ast.get(st, ty, 9) == world_index() && ast.get(st, ty, 7) == 0 {
         return types.make_prelude(st, world_index());
+    }
+    // `Box[T]` written in a signature: one value on the heap, in the code.
+    if emit.on(st) && ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 2 && ast.get(st, ty, 9) == tables.prelude_box() && ast.get(st, ty, 7) == 1 {
+        return types.node_type(st, ty);
     }
     // A capability narrowed to a literal, in the code: `Fs("/tmp")`, `Exec("/bin")`.
     if emit.on(st) && ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 2 && ast.get(st, ty, 7) == 1 && ast.is_kind(st, ast.get(st, ty, 6), kinds.NK::TLit) {

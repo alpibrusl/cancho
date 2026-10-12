@@ -266,6 +266,9 @@ pub fn expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     if ast.is_kind(st, id, kinds.NK::EAllocSlice) {
         return alloc_slice_expr(st, text, id);
     }
+    if ast.is_kind(st, id, kinds.NK::EAlloc) {
+        return alloc_expr(st, text, id);
+    }
     return skip(st, from, to);
 }
 
@@ -532,7 +535,7 @@ pub fn heap_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: int) ->
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     var wanted = 3;
-    if which == 2 {
+    if which == 2 || which == 4 || which == 5 {
         wanted = 2;
     }
     if which == 3 {
@@ -546,6 +549,13 @@ pub fn heap_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: int) ->
         let r = expr(st, text, arg);
         if !ast.ok(st) {
             return nothing();
+        }
+        if types.is_ref(st, r.ty) && types.is_box(st, types.ref_inner(st, r.ty)) {
+            // One value on the heap: the box is a pointer in the slot the reference points at, and
+            // the reference to what it holds is that pointer.
+            let held = types.box_inner(st, types.ref_inner(st, r.ty));
+            let p = emit.load_through(st, 7, r.reg);
+            return in_reg(types.make_ref(st, types.ref_unique(st, r.ty), types.ref_region(st, r.ty), held), p);
         }
         if !types.is_ref(st, r.ty) || !types.is_boxslice(st, types.ref_inner(st, r.ty)) || !scope.aggregate_codable(st, types.ref_inner(st, r.ty)) {
             return skip(st, from, to);
@@ -563,6 +573,31 @@ pub fn heap_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: int) ->
         return skip(st, from, to);
     }
     arg = ast.next(st, arg);
+    if which == 4 {
+        // `box(heap, v)`: the value on the heap.
+        let v = expr(st, text, arg);
+        if !ast.ok(st) {
+            return nothing();
+        }
+        if types.is_erased(st, v.ty) || v.ty < 1 || !(v.ty <= 6 || scope.aggregate_codable(st, v.ty) || types.is_ref(st, v.ty)) || types.is_slice_ref(st, v.ty) {
+            return skip(st, from, to);
+        }
+        effects.perform_named(st, "heap");
+        return in_reg(types.make_box(st, v.ty), emit.box_value(st, v.ty, v.known, v.value, v.reg));
+    }
+    if which == 5 {
+        // `unbox(heap, b)`: the value the box holds, which is freed.
+        let b = expr(st, text, arg);
+        if !ast.ok(st) {
+            return nothing();
+        }
+        if !types.is_box(st, b.ty) {
+            return skip(st, from, to);
+        }
+        effects.perform_named(st, "heap");
+        let held = types.box_inner(st, b.ty);
+        return in_reg(held, emit.unbox_value(st, held, b.reg));
+    }
     if which == 2 {
         let b = expr(st, text, arg);
         if !ast.ok(st) {
@@ -648,6 +683,33 @@ pub fn prelude_variant[&s, &x](st: &!s [int], text: &x [byte], id: int, index: i
         return nothing();
     }
     return in_reg(whole, acc);
+}
+
+// `alloc[a](v)`: a value stored in the arena `a`, a unique reference to it for as long as the block. The arena
+// first, then the value, which must be one that copies.
+pub fn alloc_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
+    let from = ast.nstart(st, id);
+    let to = ast.nend(st, id);
+    let area = ast.get(st, id, 4);
+    let value = ast.get(st, id, 5);
+    // Only the code is written for it: in the other modes it is, as it was, `SKIP`.
+    if !emit.on(st) || pass1.is_word(st, text, area, "static") {
+        return skip(st, from, to);
+    }
+    let arena = scope.arena_block(st, text, area);
+    if arena < 0 {
+        ast.fail(st, rules.r_region_not_in_scope(), from, to);
+        return nothing();
+    }
+    let v = expr(st, text, value);
+    if !ast.ok(st) {
+        return nothing();
+    }
+    if types.is_erased(st, v.ty) || v.ty < 1 || types.is_slice_ref(st, v.ty) || !(v.ty <= 6 || scope.aggregate_codable(st, v.ty) || types.is_ref(st, v.ty)) {
+        return skip(st, from, to);
+    }
+    let result = types.make_ref(st, true, types.block_region(arena), v.ty);
+    return in_reg(result, emit.arena_value(st, arena, v.ty, v.known, v.value, v.reg));
 }
 
 // The Variant node of the enum `item` called like token `name`, or -1.
@@ -785,7 +847,7 @@ pub fn field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         }
         if types.is_ref(st, b.ty) {
             let address = emit.field_address(st, held, b.reg, index);
-            if types.is_boxslice(st, ft) || scope.is_res_item(st, ft) {
+            if types.is_boxslice(st, ft) || types.is_box(st, ft) || scope.is_res_item(st, ft) {
                 // A field that must be consumed is not copied out of a reference: it is borrowed, for
                 // as long as, and as uniquely as, the reference it was reached through.
                 return in_reg(types.make_ref(st, types.ref_unique(st, b.ty), types.ref_region(st, b.ty), ft), address);
@@ -800,7 +862,7 @@ pub fn field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
 // The expressions the code can be written for so far: whole numbers and booleans, names, the
 // operators, and calls.
 pub fn writes_code[&s](st: &!s [int], id: int) -> [] bool {
-    if ast.is_kind(st, id, kinds.NK::EInt) || ast.is_kind(st, id, kinds.NK::EBool) || ast.is_kind(st, id, kinds.NK::EName) || ast.is_kind(st, id, kinds.NK::ECall) || ast.is_kind(st, id, kinds.NK::EStr) || ast.is_kind(st, id, kinds.NK::EIndex) || ast.is_kind(st, id, kinds.NK::EStructLit) || ast.is_kind(st, id, kinds.NK::EField) || ast.is_kind(st, id, kinds.NK::EVariant) || ast.is_kind(st, id, kinds.NK::EAllocSlice) || ast.is_kind(st, id, kinds.NK::ESlice) {
+    if ast.is_kind(st, id, kinds.NK::EInt) || ast.is_kind(st, id, kinds.NK::EBool) || ast.is_kind(st, id, kinds.NK::EName) || ast.is_kind(st, id, kinds.NK::ECall) || ast.is_kind(st, id, kinds.NK::EStr) || ast.is_kind(st, id, kinds.NK::EIndex) || ast.is_kind(st, id, kinds.NK::EStructLit) || ast.is_kind(st, id, kinds.NK::EField) || ast.is_kind(st, id, kinds.NK::EVariant) || ast.is_kind(st, id, kinds.NK::EAllocSlice) || ast.is_kind(st, id, kinds.NK::ESlice) || ast.is_kind(st, id, kinds.NK::EAlloc) {
         return true;
     }
     if ast.is_kind(st, id, kinds.NK::EUnary) {
@@ -1375,6 +1437,12 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         }
         if pass1.is_word(st, text, callee, "contents") {
             return heap_call(st, text, id, 3);
+        }
+        if pass1.is_word(st, text, callee, "box") {
+            return heap_call(st, text, id, 4);
+        }
+        if pass1.is_word(st, text, callee, "unbox") {
+            return heap_call(st, text, id, 5);
         }
     }
     // A builtin the file's edition can name comes first, then a foreign function: not checked.

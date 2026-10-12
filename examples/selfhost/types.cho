@@ -58,6 +58,10 @@ fn boxslice_kind() -> [] int {
     return 13;
 }
 
+fn box_kind() -> [] int {
+    return 14;
+}
+
 fn unbound() -> [] int {
     return 0 - 100;
 }
@@ -179,6 +183,9 @@ fn occurs[&s](st: &!s [int], tv: int, ty: int) -> [] bool {
     if is_boxslice(st, t) {
         return occurs(st, tv, boxslice_element(st, t));
     }
+    if is_box(st, t) {
+        return occurs(st, tv, box_inner(st, t));
+    }
     return false;
 }
 
@@ -194,6 +201,9 @@ pub fn resolve_type[&s](st: &!s [int], ty: int) -> [] int {
     }
     if is_boxslice(st, t) {
         return make_boxslice(st, resolve_type(st, boxslice_element(st, t)));
+    }
+    if is_box(st, t) {
+        return make_box(st, resolve_type(st, box_inner(st, t)));
     }
     return t;
 }
@@ -255,9 +265,29 @@ pub fn node_type[&s](st: &!s [int], node: int) -> [] int {
             if element == 1 || element == 2 || element == 5 {
                 return make_boxslice(st, element);
             }
+            return 0;
+        }
+        // One value on the heap: a pointer, whatever it points at, so a type that holds itself through a
+        // box is no recursion for the code.
+        let inner = node_type(st, arg);
+        if inner != 0 {
+            return make_box(st, inner);
         }
     }
     return 0;
+}
+
+// `Box[T]`, one value of any type on the heap: a pointer in the code.
+pub fn make_box[&s](st: &!s [int], inner: int) -> [] int {
+    return make(st, box_kind(), inner, 0, 0);
+}
+
+pub fn is_box[&s](st: &!s [int], ty: int) -> [] bool {
+    return ty >= first_table() && slot(st, ty, 0) == box_kind();
+}
+
+pub fn box_inner[&s](st: &!s [int], ty: int) -> [] int {
+    return slot(st, ty, 1);
 }
 
 // A prelude type that is a handle: a descriptor or a pid, one value of the code.
@@ -517,6 +547,9 @@ pub fn unify[&s](st: &!s [int], want: int, got: int) -> [] int {
     }
     if is_boxslice(st, expected) && is_boxslice(st, found) {
         return unify(st, boxslice_element(st, expected), boxslice_element(st, found));
+    }
+    if is_box(st, expected) && is_box(st, found) {
+        return unify(st, box_inner(st, expected), box_inner(st, found));
     }
     return 1;
 }
