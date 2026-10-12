@@ -32,14 +32,14 @@ sys.path.insert(0, os.path.join(ROOT, "scripts"))
 import fuzz_corpus  # noqa: E402
 
 HARNESSES = ["der", "chain", "messages", "client", "flight", "hello", "server"]
-PACKAGES = [f"packages/tls/{f}.cho" for f in ("record", "message", "slot", "client12", "client")] + \
-    [f"packages/x509/{f}.cho" for f in ("verify", "names", "x509")]
+PACKAGES = [f"packages/tls/{f}.cho" for f in ("record", "message", "slot", "cident", "client12", "client")] + \
+    [f"packages/x509/{f}.cho" for f in ("verify", "names", "x509", "key")]
 SHARED = ["tests/programs/fuzz_common.cho", "tests/programs/fuzz_fixture.cho"]
 # The server's harnesses, each with its own files.
 FILES = {
     "hello": ["packages/tls/record.cho", "packages/tls/message.cho", "packages/tls/hello.cho", "packages/x509/x509.cho"],
     "server": ["tests/programs/fuzz_server_fixture.cho"]
-    + [f"packages/tls/{f}.cho" for f in ("tls", "record", "message", "slot", "client12", "client", "hello", "identity",
+    + [f"packages/tls/{f}.cho" for f in ("tls", "record", "message", "slot", "cident", "client12", "client", "hello", "identity",
                                         "server")]
     + [f"packages/x509/{f}.cho" for f in ("verify", "names", "x509", "key")],
 }

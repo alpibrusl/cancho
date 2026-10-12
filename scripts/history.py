@@ -13,6 +13,7 @@ in the commit that introduced it.
     python3 scripts/history.py             # replay, and classify what fails
     python3 scripts/history.py --migrate   # then try the two mechanical steps
     python3 scripts/history.py --alias     # or read an old `io` as both halves
+    python3 scripts/history.py --explain   # or hold the plateau (docs/stability-exemptions.md)
 
 `--alias` is what an edition could do inside the compiler without a
 tool: read an old file's `io` label as `io_read, io_write`, the two labels
@@ -28,6 +29,15 @@ refusals, applied only to the file under test. It knows two steps:
 
 Anything else stops it, so what it recovers is a lower bound on what a
 real tool, one that edits every file of a program, would recover.
+
+`--explain` is `docs/hash-stability.md` §7's plateau rule as a checked
+property: a failing rule not listed with a reason in the committed
+exemption file is exit 1, so is a listed rule that fails more revisions
+than its recorded count, and so is a listed rule that no longer fails at
+all (stale). A rule that fails fewer revisions than recorded is reported
+so the count can be lowered. Under `--explain` the replay uses
+`--backend cranelift`, so the instrument depends on no host toolchain
+beyond Rust; `--migrate` and `--alias` keep the default backend.
 """
 
 import argparse
@@ -68,9 +78,10 @@ def revisions():
     return seen
 
 
-def refusals(files, args):
+def refusals(files, args, backend=None):
+    backend_args = ["--backend", backend] if backend else []
     out = subprocess.run(
-        [str(BIN), "check", "--output", "json", *map(str, files), *args],
+        [str(BIN), "check", "--output", "json", *backend_args, *map(str, files), *args],
         capture_output=True,
         text=True,
     ).stdout
@@ -154,9 +165,38 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--migrate", action="store_true")
     parser.add_argument("--alias", action="store_true")
+    # `docs/hash-stability.md` §7's plateau rule: every historical revision
+    # must read under today's compiler, or appear in the committed exemption
+    # list with a reason. In this mode an unexplained failure is exit 1, so
+    # CI can hold the number the doc keeps having to correct.
+    parser.add_argument("--explain", action="store_true")
     options = parser.parse_args()
     if not BIN.exists():
         sys.exit("build first: cargo build --release")
+
+    # The exemption list: one `rule | count | reason` row a line of the table in
+    # `docs/stability-exemptions.md`, read from the committed file so the
+    # debt is in the repository rather than in a paragraph that gets
+    # corrected when the number climbs. Only a row whose first cell names
+    # a rule counts: the header and the dashes row are skipped, and a
+    # first cell that is not a rule name is a typo the check below will
+    # surface as an exemption that never fires.
+    exemptions: dict[str, tuple[int, str]] = {}
+    backend = "cranelift" if options.explain else None
+    if options.explain:
+        list_path = ROOT / "docs" / "stability-exemptions.md"
+        if not list_path.exists():
+            sys.exit("--explain needs docs/stability-exemptions.md")
+        for line in list_path.read_text().splitlines():
+            line = line.strip()
+            if not line.startswith("|") or set(line) <= {"|", "-", " "}:
+                continue
+            cells = [c.strip() for c in line.strip("|").split("|")]
+            if len(cells) < 3 or cells[0] in ("rule", ""):
+                continue
+            if not cells[1].isdigit():
+                sys.exit(f"{list_path}: the count for `{cells[0]}` is not a number: {cells[1]!r}")
+            exemptions[cells[0]] = (int(cells[1]), cells[2])
 
     work = pathlib.Path(tempfile.mkdtemp(prefix="cancho-history-"))
     failing = collections.Counter()
@@ -166,7 +206,7 @@ def main():
     for (blob, path), commit in sorted(revisions().items(), key=lambda kv: kv[0][1]):
         total += 1
         files, target, args = lay_out(work, blob, path, commit)
-        first = refusals(files, args)
+        first = refusals(files, args, backend)
         if not first:
             continue
         failing[(first[0]["rule"], shape(first[0]["message"]))] += 1
@@ -180,7 +220,7 @@ def main():
                 target.read_text(),
             )
             target.write_text(text)
-            now = refusals(files, args)
+            now = refusals(files, args, backend)
             if now:
                 remaining[(now[0]["rule"], shape(now[0]["message"]))] += 1
             else:
@@ -189,24 +229,62 @@ def main():
         if not options.migrate:
             continue
         for _ in range(60):
-            now = refusals(files, args)
+            now = refusals(files, args, backend)
             if not now:
                 break
             step = next((r for r in (repair(target.read_text(), x, target) for x in now) if r), None)
             if step is None:
                 break
             target.write_text(step)
-        now = refusals(files, args)
+        now = refusals(files, args, backend)
         if now:
             remaining[(now[0]["rule"], shape(now[0]["message"]))] += 1
         else:
             recovered[first[0]["rule"]] += 1
     shutil.rmtree(work, ignore_errors=True)
-
     unreadable = sum(failing.values())
     print(f"{total} revisions, {total - unreadable} read today, {unreadable} do not")
     for (rule, message), n in failing.most_common():
         print(f"  {n:4}  {rule:24} {message}")
+    # The plateau check itself: a failure is debt, and debt is either in the
+    # committed list with a reason and a count or it fails the run. A rule
+    # in the list still counts toward the failing total -- the number stays
+    # honest -- but it does not fail the build while it stays at or below
+    # its recorded count. An unlisted rule fails, a listed rule that fails
+    # MORE revisions than recorded fails, and a listed rule that no longer
+    # fails at all (stale) fails; one that merely fails fewer is reported so
+    # its count can be lowered.
+    if options.explain:
+        by_rule = collections.Counter()
+        for (rule, _), n in failing.items():
+            by_rule[rule] += n
+        problems = 0
+        unexplained = sorted(r for r in by_rule if r not in exemptions)
+        grown = sorted(r for r in by_rule if r in exemptions and by_rule[r] > exemptions[r][0])
+        stale = sorted(r for r in exemptions if by_rule[r] == 0)
+        shrunk = sorted(r for r in by_rule if r in exemptions and 0 < by_rule[r] < exemptions[r][0])
+        if unexplained:
+            problems += 1
+            print("\nUNEXPLAINED (add to docs/stability-exemptions.md with a reason, or fix):")
+            for rule in unexplained:
+                print(f"  {by_rule[rule]:4}  {rule}")
+        if grown:
+            problems += 1
+            print("\nGREW past the recorded count (fix the regression; do not raise the count):")
+            for rule in grown:
+                print(f"  {by_rule[rule]:4}  {rule}  (recorded {exemptions[rule][0]})")
+        if stale:
+            problems += 1
+            print("\nSTALE exemptions that no longer fail (remove them from docs/stability-exemptions.md):")
+            for rule in stale:
+                print(f"  {rule:24}  {exemptions[rule][1]}")
+        if shrunk:
+            print("\nimproved below the recorded count (lower it in docs/stability-exemptions.md):")
+            for rule in shrunk:
+                print(f"  {by_rule[rule]:4}  {rule}  (recorded {exemptions[rule][0]})")
+        if problems:
+            sys.exit(1)
+        print(f"\nplateau holds: {len(exemptions)} exempted rules, none grown, every failing rule explained")
     if options.migrate or options.alias:
         how = "the two mechanical steps" if options.migrate else "reading `io` as both halves"
         print(f"\nrecovered by {how}: {sum(recovered.values())}")
