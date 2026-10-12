@@ -165,7 +165,9 @@ MUTANTS = [
     ("handshakes in progress not counted", "tls.cho", "            n = n + 1;\n        }\n        s = s + 1;",
      "            n = n + 0;\n        }\n        s = s + 1;"),
     ("no_application_protocol sent as handshake_failure", "slot.cho", "        return 120;", "        return 40;"),
-    ("missing_extension sent as decode_error", "slot.cho", "        return 109;", "        return 50;"),
+    ("missing_extension sent as decode_error", "slot.cho",
+     "    if code == tls_record.server_missing_extension() {\n        return 109;",
+     "    if code == tls_record.server_missing_extension() {\n        return 50;"),
 ]
 
 # Mutants that change no behaviour a client can reach, each with the argument. Such a mutant must survive.
