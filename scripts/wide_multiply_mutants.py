@@ -12,6 +12,7 @@ each mutant, even on an interrupt. A mutant of the wasm32 path is only killed by
 Exit status 1 if a mutant survives.
 """
 import os
+import re
 import subprocess
 import sys
 
@@ -45,8 +46,16 @@ MUTANTS = [
 
 TESTS = [
     ["cargo", "test", "-p", "cancho-codegen-llvm", "wide_tests"],
-    ["cargo", "test", "-p", "cancho", "--test", "conformance", "--", "wide_multiply", "corpus"],
+    ["cargo", "test", "-p", "cancho", "--test", "conformance", "--", "--include-ignored", "wide_multiply", "corpus"],
 ]
+
+
+# Matched as tokens with any whitespace between them, so `cargo fmt` moving a line break does not stop the script.
+TOKEN = re.compile(r'"(?:[^"\\]|\\.)*"|\d+|[A-Za-z_]\w*|::|==|!=|<=|>=|->|=>|\S')
+
+
+def locate(text, old):
+    return list(re.compile(r"\s*".join(re.escape(t) for t in TOKEN.findall(old))).finditer(text))
 
 
 def passes():
@@ -60,6 +69,9 @@ def passes():
 
 def main():
     wasm = all(os.environ.get(v) for v in ("CLANG", "WASM_LD", "WASI_SYSROOT", "WASMTIME"))
+    if not wasm:
+        # The wasm32 test is `ignore`d in CI and fails here without its toolchain; leave it out rather than fail every mutant.
+        TESTS[1] = [a for a in TESTS[1] if a != "--include-ignored"]
     ok, why = passes()
     assert ok, f"the unmutated tree must pass: {why}"
     print(f"unmutated: passes ({'wasm32 run' if wasm else 'wasm32 not run'})")
@@ -67,13 +79,15 @@ def main():
     for path, needs_wasm, name, old, new in MUTANTS:
         full = os.path.join(ROOT, path)
         original = open(full).read()
-        assert original.count(old) == 1, f"{name}: occurs {original.count(old)} times in {path}"
+        found = locate(original, old)
+        assert len(found) == 1, f"{name}: occurs {len(found)} times in {path}"
+        mutated = original[:found[0].start()] + new + original[found[0].end():]
         if needs_wasm and not wasm:
             print(f"NOT RUN       {name}")
             survived += 1
             continue
         try:
-            open(full, "w").write(original.replace(old, new))
+            open(full, "w").write(mutated)
             ok, why = passes()
         finally:
             open(full, "w").write(original)

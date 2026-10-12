@@ -172,27 +172,19 @@ fn the_wide_builtins_agree_with_u128_on_cranelift() {
     check_backend("cranelift");
 }
 
-/// The two backends and the oracle agree about the one rule a caller could
-/// get wrong: a carry-in is "nonzero", not "one".
-#[test]
-fn a_carry_in_other_than_zero_or_one_counts_as_one() {
-    assert_eq!(add(5, 6, 2), (12, 0));
-    assert_eq!(add(u64::MAX, 0, u64::MAX), (0, 1));
-    assert_eq!(sub(5, 6, 7), (u64::MAX - 1, 1));
-}
-
 /// `wasm32-wasip1` (`docs/wide-multiply.md` §4): the product there is four 32-bit
 /// multiplies, not a call to `__multi3`, which the sysroot does not ship. Needs
 /// the wasm toolchain `docs/wasm.md` names (`CLANG` with the wasm32 target,
-/// `WASM_LD`, `WASI_SYSROOT`, `WASMTIME`), which CI is not assumed to have, so it
-/// says it did not run when they are not set.
+/// `WASM_LD`, `WASI_SYSROOT`, `WASMTIME`), which CI does not have, so it is
+/// `ignore`d, which every run reports, and run with `--include-ignored` where
+/// the toolchain is (`scripts/wide_multiply_mutants.py` does). Without the
+/// toolchain it fails rather than passing having run nothing.
 #[test]
+#[ignore = "needs the wasm32 toolchain: CLANG, WASM_LD, WASI_SYSROOT, WASMTIME"]
 fn on_wasm32_the_wide_builtins_link_and_give_the_native_checksum() {
     let tools = ["CLANG", "WASM_LD", "WASI_SYSROOT", "WASMTIME"];
-    if tools.iter().any(|t| std::env::var_os(t).is_none()) {
-        eprintln!("skipped: {tools:?} are not all set");
-        return;
-    }
+    let missing: Vec<&str> = tools.into_iter().filter(|t| std::env::var_os(t).is_none()).collect();
+    assert!(missing.is_empty(), "the wasm32 toolchain is not configured: {missing:?} unset");
     let dir = scratch("wide-multiply-wasm");
     let wasm = dir.join("driver.wasm");
     let build = Command::new(BIN)

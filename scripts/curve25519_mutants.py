@@ -6,7 +6,7 @@
 
 Each mutant is one of the four files with one deliberate bug. All four are built as local modules (`field25519`,
 `field25519_51`, `x25519`, `ed25519`) beside a copy of `tests/programs/curve25519_driver.cho`, and run against: the RFC 7748 table, every
-Wycheproof X25519 and Ed25519 case, `tests/accept/ed25519.cho`'s three OpenSSL keypairs (public key, signature, verify, a tampered
+Wycheproof X25519 and Ed25519 case, the two fields' unit tests (`tests/lex/field25519*_test.cho`), `tests/accept/ed25519.cho`'s three OpenSSL keypairs (public key, signature, verify, a tampered
 signature refused), and 300 rounds of `scripts/curve25519_differential.py`. A mutant is killed when any of them
 disagrees or the driver traps. The unmutated files are run first and must pass. Exit status 1 if a mutant survives or
 fails to build.
@@ -34,9 +34,10 @@ MUTANTS = [
     ("field25519_51", "a product missing from column 2", "    let (h2, l2) = mac(h2, l2, a2, b0);\n", ""),
     ("field25519_51", "the carry of the low-word addition lost", "    return (wrapping_add(wrapping_add(hi, h), c), s);", "    return (wrapping_add(hi, h), s);"),
     ("field25519_51", "the carry into the next column loses the high word", "    return (wrapping_add(hi, c), s);", "    return (hi, s);"),
-    ("field25519_51", "the column carry shifted by 12, not 13", "| (hi << 13);", "| (hi << 12);"),
-    ("field25519_51", "the column carry's low part masked to 12 bits", "(lo >> 51 & 0x1fff)", "(lo >> 51 & 0xfff)"),
+    ("field25519_51", "the column carry shifted by 12, not 13", "| hi << 13;", "| hi << 12;"),
+    ("field25519_51", "the column carry's low part masked to 12 bits", "return lo >> 51 & 0x1fff |", "return lo >> 51 & 0xfff |"),
     ("field25519_51", "the top carry folded in as 1, not 19", "r0 = wrapping_add(r0, wrapping_mul(c, 19));", "r0 = wrapping_add(r0, c);"),
+    ("field25519_51", "the top carry's shift not masked", "c = r0 >> 51 & 0x1fff;", "c = r0 >> 51;"),
     ("field25519_51", "limb 0's carry never reaches limb 1", "    r1 = wrapping_add(r1, c);\n    c = r1 >> 51;", "    c = r1 >> 51;"),
     ("field25519_51", "sub's bias for limb 0 off by one", "wrapping_add(a[0], 0xfffffffffffda)", "wrapping_add(a[0], 0xfffffffffffdb)"),
     ("field25519_51", "sub's bias for limb 3 too small", "wrapping_add(a[3], 0xffffffffffffe)", "wrapping_add(a[3], 0xffffffffffffc)"),
@@ -46,7 +47,7 @@ MUTANTS = [
     ("field25519_51", "pack never subtracts p", "wrapping_add(t[0], wrapping_mul(q, 19))", "wrapping_add(t[0], 0)"),
     ("field25519_51", "pack does one weak carry pass, not two", "        weak(t);\n        weak(t);\n", "        weak(t);\n"),
     ("field25519_51", "unpack keeps bit 255", "o[4] = w3 >> 12 & m51();", "o[4] = w3 >> 12 & 0xfffffffffffff;"),
-    ("field25519_51", "the byte order of pack's third word", "out[16 + i] = byte_of(w2 >> (8 * i) & 255);", "out[16 + i] = byte_of(w3 >> (8 * i) & 255);"),
+    ("field25519_51", "the byte order of pack's third word", "out[16 + i] = byte_of(w2 >> 8 * i & 255);", "out[16 + i] = byte_of(w3 >> 8 * i & 255);"),
     ("x25519", "a24 as 121666", "field25519_51.mul_small(z2, c, 121665);", "field25519_51.mul_small(z2, c, 121666);"),
     ("x25519", "bit 254 not set by the clamp", "    if i == 254 {\n        return 1;\n    }", "    if i == 254 {\n        return int_of(k[31]) >> 6 & 1;\n    }"),
     ("x25519", "the low three bits not cleared", "    if i < 3 || i == 255 {", "    if i == 255 {"),
@@ -95,6 +96,24 @@ def evidence():
     return cases, checks
 
 
+# A mutant names what it changes, not how `cancho fmt` lays it out: its text is matched as tokens, with any whitespace between
+# them, so a reformatting cannot make the script stop (as it did once, on `cancho fmt`'s parentheses and line breaks).
+TOKEN = re.compile(r'"(?:[^"\\]|\\.)*"|0x[0-9a-fA-F]+|\d+|[A-Za-z_]\w*|==|!=|<=|>=|<<|>>|&&|\|\||->|\S')
+
+
+def pattern(old):
+    return re.compile(r"\s*".join(re.escape(t) for t in TOKEN.findall(old)))
+
+
+def mutate(text, old, new):
+    """`text` with the one place `old` occurs (as tokens) replaced by `new`; (text, how many places)."""
+    found = list(pattern(old).finditer(text))
+    if len(found) != 1:
+        return None, len(found)
+    m = found[0]
+    return text[:m.start()] + new + text[m.end():], 1
+
+
 def run(compiler, sources, driver_src, work, cases, checks):
     paths = []
     for name, text in sources.items():
@@ -117,6 +136,14 @@ def run(compiler, sources, driver_src, work, cases, checks):
     for i, (check, answer) in enumerate(zip(checks, answers)):
         if not check(answer):
             return True, [f"case {i}: {cases[i][:50]}"]
+    # The fields' own unit tests (`tests/lex/field25519*_test.cho`), against the local, possibly mutated, module.
+    for field in ("field25519", "field25519_51"):
+        test = open(os.path.join(ROOT, f"tests/lex/{field}_test.cho")).read().replace(f"import std.{field};", f"import {field};")
+        test_path = os.path.join(work, f"{field}_test.cho")
+        open(test_path, "w").write(test)
+        ran = subprocess.run([compiler, "test", "--std", test_path, os.path.join(work, f"{field}.cho")], capture_output=True, text=True)
+        if ran.returncode != 0:
+            return True, [f"tests/lex/{field}_test.cho"]
     diff = subprocess.run([sys.executable, os.path.join(ROOT, "scripts/curve25519_differential.py"), exe, "300", "60"],
                           capture_output=True, text=True)
     if diff.returncode != 0:
@@ -135,10 +162,10 @@ def main():
         assert dead is False, f"the unmutated files must pass: {why}"
         print(f"unmutated: passes {len(cases)} cases and the differential")
         for file, name, old, new in MUTANTS:
-            n = sources[file].count(old)
+            text, n = mutate(sources[file], old, new)
             assert n == 1, f"{name}: occurs {n} times in {file}"
             mutated = dict(sources)
-            mutated[file] = sources[file].replace(old, new)
+            mutated[file] = text
             dead, why = run(compiler, mutated, driver_src, work, cases, checks)
             verdict = {True: "killed", False: "SURVIVED", None: "DID NOT BUILD"}[dead]
             print(f"{verdict:13} {file}: {name}: {'; '.join(why)}")
