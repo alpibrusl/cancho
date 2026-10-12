@@ -25,7 +25,7 @@ pub fn bind[&s](st: &!s [int], name: int, ty: int, mutable: bool, from: int, to:
     if emit.on(st) {
         if types.is_prelude(st, ty) {
             // nothing to keep
-        } else if ty != 1 && ty != 2 && ty != 5 && !types.is_ref(st, ty) && !struct_codable(st, ty) {
+        } else if ty != 1 && ty != 2 && ty != 5 && !types.is_ref(st, ty) && !aggregate_codable(st, ty) {
             return ast.fail(st, rules.r_skip(), from, to);
         } else if types.is_slice_ref(st, ty) {
             emit.alloca_slice(st, st[39]);
@@ -216,6 +216,40 @@ pub fn struct_codable[&s](st: &!s [int], ty: int) -> [] bool {
         f = ast.next(st, f);
     }
     return true;
+}
+
+// An enum with at least one variant, each payload a whole number, a byte or a boolean.
+pub fn enum_codable[&s](st: &!s [int], ty: int) -> [] bool {
+    if !types.is_named(st, ty) {
+        return false;
+    }
+    let item = types.named_item(st, ty);
+    if !enum_plain(st, item) {
+        return false;
+    }
+    var v = ast.get(st, item, 8);
+    if v < 0 {
+        return false;
+    }
+    while v >= 0 {
+        var p = ast.get(st, v, 5);
+        var n = ast.get(st, v, 6);
+        while n > 0 {
+            let t = ast.get(st, p, 10);
+            if t != 1 && t != 2 && t != 5 {
+                return false;
+            }
+            p = ast.next(st, p);
+            n = n - 1;
+        }
+        v = ast.next(st, v);
+    }
+    return true;
+}
+
+// A value of this type has code: a struct or an enum of scalars, one aggregate in the code.
+pub fn aggregate_codable[&s](st: &!s [int], ty: int) -> [] bool {
+    return struct_codable(st, ty) || enum_codable(st, ty);
 }
 
 // `World`, the first of the prelude types: what `main` is handed, and nothing a value of can do
