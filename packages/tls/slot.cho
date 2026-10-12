@@ -205,7 +205,7 @@ pub fn i_group() -> [] int {
 // Two running transcripts, SHA-256 and SHA-384, both fed until the suite
 // is known (RFC 8446 §4.4.1 lets a client keep both).
 pub fn i_transcript() -> [] int {
-    return 20;
+    return ints_core_len();
 }
 
 pub fn i_transcript384() -> [] int {
@@ -222,7 +222,7 @@ pub fn i_ecdh_work() -> [] int {
 // (0: none), its obfuscated age, and its hash's length (the suite's hash
 // must match it).
 pub fn i_offer_len() -> [] int {
-    return i_ecdh_work() + ecdh.work_len();
+    return 20;
 }
 
 pub fn i_offer_age() -> [] int {
@@ -324,8 +324,21 @@ pub fn i_trust_gen() -> [] int {
     return i_alpn_len() + 8;
 }
 
-pub fn ints_len() -> [] int {
+// What a connection keeps once established: the words before the transcripts (`docs/tls-memory.md` section 7.1). A
+// field added at the end of the integers goes here, and is in the core; the transcripts and `std.ecdh`'s work after
+// them are the handshake's scratch, which the engine leases to a connection while it needs it.
+pub fn ints_core_len() -> [] int {
     return i_alpn_len() + 9;
+}
+
+pub fn ints_len() -> [] int {
+    return i_ecdh_work() + ecdh.work_len();
+}
+
+// Whether an established connection needs its buffers kept: the engine takes its work area back when it does
+// not (`tls.cho`'s `idle`). Nothing does yet.
+pub fn keeps_area[&i](ints: &i [int]) -> [] bool {
+    return false;
 }
 
 // A server's resumption (`docs/tls-server.md` §12) uses fields of the client's that a server slot has
@@ -458,8 +471,10 @@ pub fn f_cert_send() -> [] int {
 // ---- The byte slice ----
 
 // One incoming record, header included.
+// What a connection keeps once established comes first (`bytes_core_len`), then the buffers it needs only while
+// bytes are in flight or a handshake runs (`docs/tls-memory.md` section 7.1).
 pub fn b_in() -> [] int {
-    return 0;
+    return bytes_core_len();
 }
 
 pub fn in_cap() -> [] int {
@@ -512,7 +527,7 @@ pub fn leaf_cap() -> [] int {
 }
 
 pub fn b_keys() -> [] int {
-    return b_leaf() + leaf_cap();
+    return 0;
 }
 
 pub fn k_x25519() -> [] int {
@@ -657,8 +672,19 @@ pub fn alpn_offer_cap() -> [] int {
     return 256;
 }
 
-pub fn bytes_len() -> [] int {
+// A client's core: the keys, the ticket state and the ALPN offer. A server's holds no tickets (see `b_alpn`), so its
+// core ends after the two names; the tickets' randomness and the leaf's fingerprint after them (`b_ticket_random`,
+// `b_srv_fp`) are a handshake's, used when the client's Finished is answered, and stay in the area.
+pub fn bytes_core_len() -> [] int {
     return b_alpn_offer() + alpn_offer_cap();
+}
+
+pub fn bytes_core_len_server() -> [] int {
+    return b_offer() + 512;
+}
+
+pub fn bytes_len() -> [] int {
+    return b_leaf() + leaf_cap();
 }
 
 // A server's slot holds no tickets, so their room holds what `tls.alpn`
@@ -671,7 +697,7 @@ pub fn b_alpn() -> [] int {
 }
 
 pub fn b_sni() -> [] int {
-    return b_ticket_host();
+    return b_offer() + 256;
 }
 
 // The randomness of the tickets this connection will make, drawn at `serve` (`docs/tls-server.md` §12.1):

@@ -1,0 +1,101 @@
+  cancho n=50     start        VmRSS      2412 KiB
+  cancho n=50     connected    VmRSS      6760 KiB
+  cancho n=50     handshake    VmRSS      7932 KiB
+  cancho n=50     established  VmRSS      3188 KiB
+  cancho n=50     echoed       VmRSS      5028 KiB
+  cancho n=50     partial      VmRSS      6280 KiB
+  cancho n=50     all-echoed   VmRSS      9268 KiB
+  cancho n=100    start        VmRSS      2240 KiB
+  cancho n=100    connected    VmRSS     11304 KiB
+  cancho n=100    handshake    VmRSS     13644 KiB
+  cancho n=100    established  VmRSS      4008 KiB
+  cancho n=100    echoed       VmRSS      7652 KiB
+  cancho n=100    partial      VmRSS     10192 KiB
+  cancho n=100    all-echoed   VmRSS     16212 KiB
+  cancho n=200    start        VmRSS      2260 KiB
+  cancho n=200    connected    VmRSS     20388 KiB
+  cancho n=200    handshake    VmRSS     25060 KiB
+  cancho n=200    established  VmRSS      5676 KiB
+  cancho n=200    echoed       VmRSS     12932 KiB
+  cancho n=200    partial      VmRSS     18036 KiB
+  cancho n=200    all-echoed   VmRSS     30140 KiB
+  cancho n=10000  start        VmRSS      2396 KiB
+  cancho n=10000  connected    VmRSS    911520 KiB
+  cancho n=10000  handshake    VmRSS   1145864 KiB
+  cancho n=10000  established  VmRSS    169712 KiB
+  cancho n=10000  echoed       VmRSS    529768 KiB
+  cancho n=10000  partial      VmRSS    809076 KiB
+  cancho n=10000  all-echoed   VmRSS   1417240 KiB
+
+KiB of server RSS per connection, over RSS at start (cancho ):
+| N | connected | handshake | established | echoed | partial | all-echoed |
+|---|---|---|---|---|---|---|
+| 50 | 87.0 | 110.4 | 15.5 | 52.3 | 77.4 | 137.1 |
+| 100 | 90.6 | 114.0 | 17.7 | 54.1 | 79.5 | 139.7 |
+| 200 | 90.6 | 114.0 | 17.1 | 53.4 | 78.9 | 139.4 |
+| 10000 | 90.9 | 114.3 | 16.7 | 52.7 | 80.7 | 141.5 |
+  engine n=50     areas=50     start        VmRSS      2524 KiB
+  engine n=50     areas=50     established  VmRSS      3272 KiB
+  engine n=50     areas=50     echoed       VmRSS      3328 KiB
+  engine n=100    areas=100    start        VmRSS      2396 KiB
+  engine n=100    areas=100    established  VmRSS      3924 KiB
+  engine n=100    areas=100    echoed       VmRSS      3980 KiB
+  engine n=200    areas=200    start        VmRSS      2408 KiB
+  engine n=200    areas=200    established  VmRSS      5212 KiB
+  engine n=200    areas=200    echoed       VmRSS      5268 KiB
+  engine n=10000  areas=10000  start        VmRSS      2564 KiB
+  engine n=10000  areas=10000  established  VmRSS    130768 KiB
+  engine n=10000  areas=10000  echoed       VmRSS    131136 KiB
+
+KiB of RSS per connection (a client slot and a server slot), over RSS at start:
+| N | areas | established | echoed |
+|---|---|---|---|
+| 50 | 50 | 15.0 | 16.1 |
+| 100 | 100 | 15.3 | 15.8 |
+| 200 | 200 | 14.0 | 14.3 |
+| 10000 | 10000 | 12.8 | 12.9 |
+  https n=50     start        VmRSS      2348 KiB
+  https n=50     connected    VmRSS      6596 KiB
+  https n=50     handshake    VmRSS      7896 KiB
+  https n=50     established  VmRSS      9092 KiB
+  https n=50     echoed       VmRSS     11880 KiB
+  https n=100    start        VmRSS      2412 KiB
+  https n=100    connected    VmRSS     10920 KiB
+  https n=100    handshake    VmRSS     13380 KiB
+  https n=100    established  VmRSS     15780 KiB
+  https n=100    echoed       VmRSS     21328 KiB
+  https n=200    start        VmRSS      2404 KiB
+  https n=200    connected    VmRSS     19408 KiB
+  https n=200    handshake    VmRSS     24348 KiB
+  https n=200    established  VmRSS     29164 KiB
+  https n=200    echoed       VmRSS     40240 KiB
+
+KiB of server RSS per connection, over RSS at start (https ):
+| N | connected | handshake | established | echoed | partial | all-echoed |
+|---|---|---|---|---|---|---|
+| 50 | 85.0 | 111.0 | 134.9 | 190.6 | - | - |
+| 100 | 85.1 | 109.7 | 133.7 | 189.2 | - | - |
+| 200 | 85.0 | 109.7 | 133.8 | 189.2 | - | - |
+  https n=50     start        VmRSS      2608 KiB
+  https n=50     connected    VmRSS      6956 KiB
+  https n=50     handshake    VmRSS      8124 KiB
+  https n=50     established  VmRSS      3960 KiB
+  https n=50     echoed       VmRSS      6000 KiB
+  https n=100    start        VmRSS      2440 KiB
+  https n=100    connected    VmRSS     11504 KiB
+  https n=100    handshake    VmRSS     13836 KiB
+  https n=100    established  VmRSS      5400 KiB
+  https n=100    echoed       VmRSS      9436 KiB
+  https n=200    start        VmRSS      2448 KiB
+  https n=200    connected    VmRSS     20576 KiB
+  https n=200    handshake    VmRSS     25256 KiB
+  https n=200    established  VmRSS      8268 KiB
+  https n=200    echoed       VmRSS     16304 KiB
+
+KiB of server RSS per connection, over RSS at start (https ):
+| N | connected | handshake | established | echoed | partial | all-echoed |
+|---|---|---|---|---|---|---|
+| 50 | 87.0 | 110.3 | 27.0 | 67.8 | - | - |
+| 100 | 90.6 | 114.0 | 29.6 | 70.0 | - | - |
+| 200 | 90.6 | 114.0 | 29.1 | 69.3 | - | - |
+ALLDONE3

@@ -1,0 +1,54 @@
+[
+ {
+  "n": 50,
+  "rss": {
+   "start": 8120,
+   "connected": 9176,
+   "handshake": 11500,
+   "established": 10124,
+   "echoed": 10140,
+   "partial": 10904,
+   "all-echoed": 10260
+  },
+  "start_after_restart": 8096
+ },
+ {
+  "n": 100,
+  "rss": {
+   "start": 8048,
+   "connected": 9852,
+   "handshake": 14332,
+   "established": 11588,
+   "echoed": 11604,
+   "partial": 13148,
+   "all-echoed": 11720
+  },
+  "start_after_restart": 8104
+ },
+ {
+  "n": 200,
+  "rss": {
+   "start": 8148,
+   "connected": 11572,
+   "handshake": 19868,
+   "established": 14412,
+   "echoed": 14428,
+   "partial": 17544,
+   "all-echoed": 14544
+  },
+  "start_after_restart": 8092
+ },
+ {
+  "n": 10000,
+  "rss": {
+   "start": 8060,
+   "connected": 170492,
+   "handshake": 566948,
+   "established": 286304,
+   "echoed": 286320,
+   "partial": 443484,
+   "all-echoed": 286440
+  },
+  "start_after_restart": 8116
+ }
+]

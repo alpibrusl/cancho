@@ -36,6 +36,11 @@ server on a free port with the options it needs, and says `ok` or what failed:
                affected, and a place freed by a close is usable again
     addr-rate  `--per-address-rate 2`: six clients from one address are started two a second, while a client from
                another address (Linux only, as above) is not delayed by them
+    areas      `--areas 16`: 1,000 clients are served, their handshakes delayed to the areas free, 6 of the 1,000
+               established connections used at once, and the server's resident memory for 1,000 idle ones is measured
+               (docs/tls-memory.md)
+    stall      `--areas 2`: a peer that sends half a record and stops is ended `record-timeout` after
+               `--handshake-timeout`, while another connection goes on; `--areas 1` is a usage error
 
 curl and mosquitto's clients are not here: they speak HTTP and MQTT, which an echo answers with their own request.
 Their interop with this server is docs/tls-server.md §10.2's matrix, against `tests/programs/tls_serve.cho`.
@@ -665,11 +670,128 @@ def case_addr_rate(exe):
         server.stop()
 
 
+def rss_kib(pid):
+    """The process's resident memory in KiB (Linux), or None."""
+    try:
+        for line in open(f"/proc/{pid}/status"):
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1])
+    except OSError:
+        return None
+    return None
+
+
+def case_areas(exe):
+    """`--areas 16` for 1,000 connections (docs/tls-memory.md section 7): the handshakes are delayed to the areas free
+    and not refused, the 1,000 established connections that are idle hold no area, 6 of them are used at once, and on
+    Linux 1,000 idle connections are well under what a slot a connection cost (119 KiB each). A thousand and not a
+    hundred because a kernel with transparent huge pages `always` (CI's) counts the few areas that are in use in
+    units of 2 MiB, which a hundred connections do not amortise."""
+    count = 1000
+    server = Server(exe, extra=["--connections", "1100", "--handshakes", "64", "--areas", "16", "--rate", "100000"])
+    try:
+        errors = []
+        conns = []
+        lock = threading.Lock()
+        before = rss_kib(server.proc.pid)
+
+        def dial(first):
+            try:
+                for k in range(first, first + count // 40):
+                    c = connect(server.port, timeout=120)
+                    echo(c, b"hello %d" % k)
+                    with lock:
+                        conns.append(c)
+            except Exception as e:  # noqa: BLE001 -- every failure is reported
+                errors.append(f"{first}: {e!r}")
+
+        threads = [threading.Thread(target=dial, args=(k * (count // 40),)) for k in range(40)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(300)
+        if errors or len(conns) != count:
+            return f"{len(errors)} of 40 dialers failed, {len(conns)} of {count} connected, first: {errors[:1]}"
+        time.sleep(1)
+        after = rss_kib(server.proc.pid)
+        busy = []
+
+        def work(k):
+            try:
+                rnd = random.Random(k)
+                for _ in range(30):
+                    echo(conns[k], rnd.randbytes(rnd.randint(1, 20000)))
+            except Exception as e:  # noqa: BLE001
+                busy.append(f"{k}: {e!r}")
+
+        workers = [threading.Thread(target=work, args=(k,)) for k in range(6)]
+        for t in workers:
+            t.start()
+        for t in workers:
+            t.join(120)
+        if busy:
+            return f"{len(busy)} of 6 busy connections failed, first: {busy[0]}"
+        for c in conns:
+            c.unwrap()
+            c.close()
+        ended = server.wait_for(lambda l: " closed ok " in l, 60, count)
+        note = ""
+        if before is not None and after is not None:
+            per = (after - before) / count
+            if per > 60:
+                return f"{count} idle connections cost {per:.1f} KiB each in the server, over the 60 KiB this case allows"
+            note = f", {per:.1f} KiB resident each idle"
+        return f"ok ({count} connections on 16 areas, 6 busy at once{note}; {len(ended)} closed ok)"
+    finally:
+        server.stop()
+
+
+def half_record(port):
+    """A client that handshakes, then sends the first 100 bytes of a 16 KiB record and nothing more: (socket, sslobj)."""
+    raw = socket.create_connection(("127.0.0.1", port), timeout=30)
+    inc, out = ssl.MemoryBIO(), ssl.MemoryBIO()
+    obj = context().wrap_bio(inc, out, server_hostname=HOST)
+    while True:
+        try:
+            obj.do_handshake()
+            break
+        except ssl.SSLWantReadError:
+            raw.sendall(out.read())
+            inc.write(raw.recv(65536))
+    raw.sendall(out.read())
+    obj.write(b"\0" * 16384)
+    raw.sendall(out.read()[:100])
+    return raw, obj
+
+
+def case_stall(exe):
+    """`--areas 2`: a peer that sends half a record and stops holds the one area traffic has; another connection waits,
+    and is served once `record-timeout` (after `--handshake-timeout`, here 1 s) ends the staller. `--areas 1` is refused."""
+    bad = subprocess.run([exe, "--port", "1", "--dir", "/nonexistent", "--areas", "1"], capture_output=True)
+    if bad.returncode != 2:
+        return f"--areas 1 exited {bad.returncode}, not 2 (a usage error)"
+    server = Server(exe, extra=["--areas", "2", "--handshake-timeout", "1000"])
+    try:
+        honest = connect(server.port, timeout=30)
+        echo(honest, b"before")
+        raw, _ = half_record(server.port)
+        t0 = time.monotonic()
+        echo(honest, b"x" * 20000)
+        waited = time.monotonic() - t0
+        line = server.wait_for(lambda l: " closed record-timeout " in l, 10)
+        echo(honest, b"after")
+        honest.unwrap()
+        raw.close()
+        return f"ok (the other connection echoed 20,000 bytes in {waited:.2f} s on the second area; the staller ended record-timeout: {len(line)})"
+    finally:
+        server.stop()
+
+
 CASES = {"suites": case_suites, "many": case_many, "reload": case_reload, "bound": case_bound,
          "rate": case_rate, "full": case_full, "idle": case_idle, "shutdown": case_shutdown,
          "peer": case_peer, "per-address": case_per_address, "addr-rate": case_addr_rate,
          "tickets": case_tickets, "ticket-keys": case_ticket_keys, "ticket-identity": case_ticket_identity,
-         "ticket-lifetime": case_ticket_lifetime}
+         "ticket-lifetime": case_ticket_lifetime, "areas": case_areas, "stall": case_stall}
 
 
 # ---- the cost ----

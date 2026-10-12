@@ -248,6 +248,12 @@ pub fn role() -> [] int {
     return -57;
 }
 
+// Every work area of the engine is leased (`tls.open_with_areas`, `docs/tls-memory.md` section 6): a connection
+// cannot start, or a parked one cannot be fed.
+pub fn pool() -> [] int {
+    return -72;
+}
+
 // A TLS 1.3 ClientHello without `signature_algorithms`, `supported_groups` or `key_share`
 // (RFC 8446 §9.2).
 pub fn server_missing_extension() -> [] int {
@@ -589,6 +595,9 @@ pub fn refusal_tag(code: int) -> [] &static [byte] {
     }
     if code == -66 {
         return "tls-server-ticket-key";
+    }
+    if code == -72 {
+        return "tls-pool";
     }
     return "unknown";
 }
