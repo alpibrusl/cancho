@@ -1,0 +1,107 @@
+  cancho n=50     start        VmRSS      1640 KiB
+  cancho n=50     connected    VmRSS      5888 KiB
+  cancho n=50     handshake    VmRSS      6988 KiB
+  cancho n=50     established  VmRSS      7588 KiB
+  cancho n=50     echoed       VmRSS     12176 KiB
+  cancho n=50     partial      VmRSS     12176 KiB
+  cancho n=50     all-echoed   VmRSS     12176 KiB
+  cancho n=100    start        VmRSS      1636 KiB
+  cancho n=100    connected    VmRSS     10144 KiB
+  cancho n=100    handshake    VmRSS     12356 KiB
+  cancho n=100    established  VmRSS     13556 KiB
+  cancho n=100    echoed       VmRSS     22720 KiB
+  cancho n=100    partial      VmRSS     22720 KiB
+  cancho n=100    all-echoed   VmRSS     22720 KiB
+  cancho n=200    start        VmRSS      1640 KiB
+  cancho n=200    connected    VmRSS     18644 KiB
+  cancho n=200    handshake    VmRSS     23080 KiB
+  cancho n=200    established  VmRSS     25472 KiB
+  cancho n=200    echoed       VmRSS     43800 KiB
+  cancho n=200    partial      VmRSS     43800 KiB
+  cancho n=200    all-echoed   VmRSS     43800 KiB
+  cancho n=10000  start        VmRSS      1712 KiB
+  cancho n=10000  connected    VmRSS    853976 KiB
+  cancho n=10000  handshake    VmRSS   1075680 KiB
+  cancho n=10000  established  VmRSS   1196040 KiB
+  cancho n=10000  echoed       VmRSS   2111088 KiB
+  cancho n=10000  partial      VmRSS   2111088 KiB
+  cancho n=10000  all-echoed   VmRSS   2111088 KiB
+
+KiB of server RSS per connection, over RSS at start (cancho ):
+| N | connected | handshake | established | echoed | partial | all-echoed |
+|---|---|---|---|---|---|---|
+| 50 | 85.0 | 107.0 | 119.0 | 210.7 | 210.7 | 210.7 |
+| 100 | 85.1 | 107.2 | 119.2 | 210.8 | 210.8 | 210.8 |
+| 200 | 85.0 | 107.2 | 119.2 | 210.8 | 210.8 | 210.8 |
+| 10000 | 85.2 | 107.4 | 119.4 | 210.9 | 210.9 | 210.9 |
+  openssl n=50     start        VmRSS      6324 KiB
+  openssl n=50     connected    VmRSS      6812 KiB
+  openssl n=50     handshake    VmRSS      9044 KiB
+  openssl n=50     established  VmRSS      7768 KiB
+  openssl n=50     echoed       VmRSS      8880 KiB
+  openssl n=50     partial      VmRSS      8880 KiB
+  openssl n=50     all-echoed   VmRSS      8880 KiB
+  openssl n=100    start        VmRSS      6328 KiB
+  openssl n=100    connected    VmRSS      7244 KiB
+  openssl n=100    handshake    VmRSS     11568 KiB
+  openssl n=100    established  VmRSS      8980 KiB
+  openssl n=100    echoed       VmRSS     11192 KiB
+  openssl n=100    partial      VmRSS     11192 KiB
+  openssl n=100    all-echoed   VmRSS     11192 KiB
+  openssl n=200    start        VmRSS      6328 KiB
+  openssl n=200    connected    VmRSS      8100 KiB
+  openssl n=200    handshake    VmRSS     16600 KiB
+  openssl n=200    established  VmRSS     11400 KiB
+  openssl n=200    echoed       VmRSS     15808 KiB
+  openssl n=200    partial      VmRSS     15808 KiB
+  openssl n=200    all-echoed   VmRSS     15808 KiB
+  openssl n=10000  start        VmRSS      6324 KiB
+  openssl n=10000  connected    VmRSS     92164 KiB
+  openssl n=10000  handshake    VmRSS    510280 KiB
+Traceback (most recent call last):
+  File "/work/scripts/tls_memory.py", line 159, in read_exactly
+    got += self.obj.read(n - len(got))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/ssl.py", line 859, in read
+    v = self._sslobj.read(len)
+        ^^^^^^^^^^^^^^^^^^^^^^
+ssl.SSLWantReadError: The operation did not complete (read) (_ssl.c:2570)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/work/scripts/tls_memory.py", line 261, in <module>
+    main()
+  File "/work/scripts/tls_memory.py", line 251, in main
+    results.append(run(a.kind, a.exe, n, a.extra))
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/scripts/tls_memory.py", line 205, in run
+    c.read_exactly(1)
+  File "/work/scripts/tls_memory.py", line 161, in read_exactly
+    self.inc.write(self.sock.recv(65536))
+                   ^^^^^^^^^^^^^^^^^^^^^
+ConnectionResetError: [Errno 104] Connection reset by peer
+  openssl n=50     start        VmRSS      6320 KiB
+  openssl n=50     connected    VmRSS      6808 KiB
+  openssl n=50     handshake    VmRSS      8632 KiB
+  openssl n=50     established  VmRSS      7264 KiB
+  openssl n=50     echoed       VmRSS      7280 KiB
+  openssl n=50     partial      VmRSS      8024 KiB
+  openssl n=50     all-echoed   VmRSS      7368 KiB
+  openssl n=100    start        VmRSS      6316 KiB
+  openssl n=100    connected    VmRSS      7232 KiB
+  openssl n=100    handshake    VmRSS     10736 KiB
+  openssl n=100    established  VmRSS      7924 KiB
+  openssl n=100    echoed       VmRSS      7940 KiB
+  openssl n=100    partial      VmRSS      9476 KiB
+  openssl n=100    all-echoed   VmRSS      8028 KiB
+  openssl n=200    start        VmRSS      6316 KiB
+  openssl n=200    connected    VmRSS      8088 KiB
+  openssl n=200    handshake    VmRSS     14928 KiB
+  openssl n=200    established  VmRSS      9304 KiB
+  openssl n=200    echoed       VmRSS      9320 KiB
+  openssl n=200    partial      VmRSS     12428 KiB
+  openssl n=200    all-echoed   VmRSS      9404 KiB
+  openssl n=10000  start        VmRSS      6316 KiB
+  openssl n=10000  connected    VmRSS     92156 KiB
+  openssl n=10000  handshake    VmRSS    425440 KiB

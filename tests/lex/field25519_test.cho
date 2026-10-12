@@ -1,0 +1,43 @@
+import std.field25519;
+import std.test;
+
+// `std.field25519`, 16 limbs of 16 bits, now serves Ed25519 only. Two of its
+// bugs used to be caught only by X25519's vectors (`docs/wide-multiply.md`
+// §10.2), which no longer run on it; these are the corners those vectors hit.
+
+// 2^256 - 1 = 2p + 37: `pack` needs both of its trial subtractions.
+fn test_pack_subtracts_p_twice() -> [] int {
+    region r {
+        let a = alloc_slice[r](16, 65535);
+        let t = alloc_slice[r](field25519.scratch_len(), 0);
+        let out = alloc_slice[r](32, byte_of(9));
+        field25519.pack(out, a, t);
+        test.assert_eq(int_of(out[0]), 37);
+        var i = 1;
+        while i < 32 {
+            test.assert_eq(int_of(out[i]), 0);
+            i = i + 1;
+        }
+    }
+    return 0;
+}
+
+// Thirty-two bytes of 0xff: the top bit is ignored (RFC 7748 §5), so the value
+// is 2^255 - 1 = p + 18, which packs to 18.
+fn test_unpack_ignores_the_top_bit() -> [] int {
+    region r {
+        let s = alloc_slice[r](32, byte_of(255));
+        let a = alloc_slice[r](16, 0);
+        let t = alloc_slice[r](field25519.scratch_len(), 0);
+        let out = alloc_slice[r](32, byte_of(9));
+        field25519.unpack(a, s);
+        field25519.pack(out, a, t);
+        test.assert_eq(int_of(out[0]), 18);
+        var i = 1;
+        while i < 32 {
+            test.assert_eq(int_of(out[i]), 0);
+            i = i + 1;
+        }
+    }
+    return 0;
+}

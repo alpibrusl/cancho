@@ -22,18 +22,41 @@ server on a free port with the options it needs, and says `ok` or what failed:
     shutdown   SIGTERM with 10 connections open: each gets close_notify, the server exits 0
     peer       every line about a connection names its peer (`peer=127.0.0.1:<the client's source port>`), the
                established, closed and refused lines alike (docs/conn-peer.md)
+    tickets    `--tickets 2`: a client that kept its session resumes (Python `ssl`, `session_reused`), three times
+               from the one session, and the server's line says `resumed=yes`; without the flag nothing resumes
+    ticket-keys  `--ticket-keys <file>` shared by two processes: a session from one resumes at the other and not
+               at a third with another file; a rotation by SIGHUP (a new key on top) keeps the old session for
+               one lifetime, a second rotation that drops its key refuses it; a bad file is refused and the keys
+               stay
+    ticket-identity  a certificate renewed and loaded by SIGHUP refuses the tickets of the old (they were made
+               for the other certificate), and a reload of the same certificate keeps them
+    ticket-lifetime  `--ticket-lifetime 2`: a session offered after 3 seconds does not resume
     per-address  `--per-address 3`: a fourth connection from one address is closed at once (`per-address`), one
                from another address (127.0.0.2: Linux has all of 127.0.0.0/8, macOS only 127.0.0.1) is not
                affected, and a place freed by a close is usable again
     addr-rate  `--per-address-rate 2`: six clients from one address are started two a second, while a client from
                another address (Linux only, as above) is not delayed by them
+    clientauth `--client-ca` with and without `--require-client-cert` (docs/tls-server.md §13.10): the log line of a
+               client with a certificate says the subject and fingerprint OpenSSL reports for it (a subject with
+               commas, quotes, `+`, `#`, a trailing space and a non-ASCII letter included); no certificate when
+               required, and a stranger's, are refused with their tags; after SIGHUP with another CA the old client's
+               connection ends `revoked`, its next one is refused and the new CA's is served; a refused file leaves the
+               store as it was; with no `--require-client-cert` a client with none is served and logged without one
+    areas      `--areas 16`: 1,000 clients are served, their handshakes delayed to the areas free, 6 of the 1,000
+               established connections used at once, and the server's resident memory for 1,000 idle ones is measured
+               (docs/tls-memory.md)
+    stall      `--areas 2`: a peer that sends half a record and stops is ended `record-timeout` after
+               `--handshake-timeout`, while another connection goes on; `--areas 1` is a usage error
 
 curl and mosquitto's clients are not here: they speak HTTP and MQTT, which an echo answers with their own request.
 Their interop with this server is docs/tls-server.md §10.2's matrix, against `tests/programs/tls_serve.cho`.
 
 With `--cost <seconds>`: `openssl s_time -new` against the server for that long, with 1 and with 4 clients at once
 and the bounds lifted, then 4 clients against the default bounds, and the server's CPU (Linux `/proc/<pid>/stat`;
-elsewhere `ps`) divided by the handshakes: connections a second, and milliseconds of CPU a handshake. One line a case, then a count; exit status 1 if any failed.
+elsewhere `ps`) divided by the handshakes: connections a second, and milliseconds of CPU a handshake. With `--cost <seconds> --tickets
+[--rounds <n>]` instead (docs/tls-server.md §12.9): a full handshake with tickets off, a full one with two tickets sent, and a resumed
+one (Python's `ssl`, one connection at a time), `n` times round in turn, the median and the best ms of server CPU of each.
+One line a case, then a count; exit status 1 if any failed.
 """
 import os
 import re
@@ -66,9 +89,11 @@ def free_port():
 class Server:
     """`tls_echo` on a free port, its lines collected as they come."""
 
-    def __init__(self, exe, identity="first", extra=()):
+    def __init__(self, exe, identity="first", extra=(), files=None):
         self.work = tempfile.mkdtemp(prefix="tls_echo_")
         self.install(identity)
+        for name, data in (files or {}).items():
+            open(os.path.join(self.work, name), "wb").write(data)
         self.port = free_port()
         self.lines = []
         self.cond = threading.Condition()
@@ -259,6 +284,140 @@ def case_reload(exe):
             c.unwrap()
             c.close()
         return "ok (old kept, new renewed, refused reload left renewed serving)"
+    finally:
+        server.stop()
+
+
+# Python's ssl hands a session only to the SSLContext it came from.
+SESSION_CONTEXT = context()
+
+
+def make_session(port):
+    """A full connection that echoes (so the client has read the NewSessionTickets): its session."""
+    raw = socket.create_connection(("127.0.0.1", port), timeout=10)
+    c = SESSION_CONTEXT.wrap_socket(raw, server_hostname=HOST)
+    echo(c, b"to get a ticket")
+    sess = c.session
+    reused = c.session_reused
+    c.unwrap()
+    c.close()
+    return sess, reused
+
+
+def resume_with(port, sess):
+    """A connection offering `sess`: whether it resumed, and the session it ends with."""
+    raw = socket.create_connection(("127.0.0.1", port), timeout=10)
+    c = SESSION_CONTEXT.wrap_socket(raw, server_hostname=HOST, session=sess)
+    echo(c, b"offering a ticket")
+    reused = c.session_reused
+    new = c.session
+    c.unwrap()
+    c.close()
+    return reused, new
+
+
+def case_tickets(exe):
+    off = Server(exe)
+    try:
+        sess, _ = make_session(off.port)
+        reused, _ = resume_with(off.port, sess)
+        if reused:
+            return "a server without --tickets resumed"
+    finally:
+        off.stop()
+    server = Server(exe, extra=["--tickets", "2"])
+    try:
+        sess, first = make_session(server.port)
+        if first:
+            return "the first connection resumed"
+        for n in range(3):
+            reused, _ = resume_with(server.port, sess)
+            if not reused:
+                return f"resumption {n} from one session did not resume"
+        lines = server.wait_for(lambda l: " established " in l, 5, 4)
+        got = [field(l, "resumed") for l in lines]
+        if got != ["no", "yes", "yes", "yes"]:
+            return f"the server's lines say resumed={got}"
+        return "ok (full, then resumed 3 times from one session; off without the flag)"
+    finally:
+        server.stop()
+
+
+def case_ticket_keys(exe):
+    k1, k2, k3 = (os.urandom(32).hex().encode() for _ in range(3))
+    a = Server(exe, extra=["--tickets", "1", "--ticket-keys", "keys"], files={"keys": k1 + b"\n"})
+    b = Server(exe, extra=["--tickets", "1", "--ticket-keys", "keys"], files={"keys": k1 + b"\n"})
+    c = Server(exe, extra=["--tickets", "1", "--ticket-keys", "keys"], files={"keys": k3 + b"\n"})
+    try:
+        sess, _ = make_session(a.port)
+        if not resume_with(b.port, sess)[0]:
+            return "process B, with A's key file, did not resume A's session"
+        if resume_with(c.port, sess)[0]:
+            return "process C, with another key, resumed A's session"
+        # A rotation: the new key on top, the old below it, then SIGHUP.
+        open(os.path.join(a.work, "keys"), "wb").write(k2 + b"\n" + k1 + b"\n")
+        a.signal(signal.SIGHUP)
+        a.wait_for(lambda l: l == "reload tickets ok", 5)
+        reused, newer = resume_with(a.port, sess)
+        if not reused:
+            return "after a rotation the previous key no longer opened the session"
+        # The session it ends with was made under the new key; drop the old key.
+        sess2, _ = make_session(a.port)
+        open(os.path.join(a.work, "keys"), "wb").write(k2 + b"\n")
+        a.signal(signal.SIGHUP)
+        a.wait_for(lambda l: l == "reload tickets ok", 5, 2)
+        if resume_with(a.port, sess)[0]:
+            return "a session from a key that was dropped resumed"
+        if not resume_with(a.port, sess2)[0]:
+            return "a session from the current key did not resume after the old key was dropped"
+        # A bad file is refused and the keys stay.
+        open(os.path.join(a.work, "keys"), "wb").write(b"not hex\n")
+        a.signal(signal.SIGHUP)
+        a.wait_for(lambda l: l == "reload tickets refused tls-server-ticket-key", 5)
+        if not resume_with(a.port, sess2)[0]:
+            return "a refused key file took the keys away"
+        return "ok (A's session resumed at B, not at C; rotated by SIGHUP; the dropped key refused; a bad file refused)"
+    finally:
+        for s in (a, b, c):
+            s.stop()
+
+
+def case_ticket_identity(exe):
+    server = Server(exe, identity="first", extra=["--tickets", "1"])
+    try:
+        sess, _ = make_session(server.port)
+        if not resume_with(server.port, sess)[0]:
+            return "no resumption before the reload"
+        server.install("first", files=("chain.pem", "key.pem"))
+        server.signal(signal.SIGHUP)
+        server.wait_for(lambda l: l == "reload 0 ok", 5)
+        reused, sess = resume_with(server.port, sess)
+        if not reused:
+            return "a reload of the same certificate refused the ticket"
+        server.install("renewed", files=("chain.pem", "key.pem"))
+        server.signal(signal.SIGHUP)
+        server.wait_for(lambda l: l == "reload 0 ok", 5, 2)
+        reused, sess = resume_with(server.port, sess)
+        if reused:
+            return "a ticket made for the old certificate resumed after the identity was replaced"
+        # The session it ends with is for the renewed certificate.
+        if not resume_with(server.port, sess)[0]:
+            return "the renewed certificate's own session did not resume"
+        return "ok (kept across a reload of the same certificate, refused after a renewal, the new one resumes)"
+    finally:
+        server.stop()
+
+
+def case_ticket_lifetime(exe):
+    server = Server(exe, extra=["--tickets", "1", "--ticket-lifetime", "2"])
+    try:
+        sess, _ = make_session(server.port)
+        if not resume_with(server.port, sess)[0]:
+            return "no resumption inside the lifetime"
+        time.sleep(3.2)
+        if resume_with(server.port, sess)[0]:
+            return "a session resumed after its lifetime"
+        return "ok (inside 2 s resumed, 3.2 s later not)"
     finally:
         server.stop()
 
@@ -517,9 +676,230 @@ def case_addr_rate(exe):
         server.stop()
 
 
-CASES = {"suites": case_suites, "many": case_many, "reload": case_reload, "bound": case_bound,
+def case_clientauth(exe):
+    return clientauth(exe, lambda conn: echo(conn, b"mutual"), Server)
+
+
+def clientauth(exe, talk, server_class):
+    """The case `clientauth`, for a server that `server_class` starts and `talk(conn)` exchanges data with (it raises
+    `AssertionError` or an `ssl`/`OSError` when the exchange does not work)."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import clientauth_fixture as pki
+    ca, other = pki.make_ca("fleet root"), pki.make_ca("another root")
+    awkward_key, awkward = pki.make_client(ca, pki.AWKWARD)
+    plain_key, plain = pki.make_client(ca, pki.PLAIN)
+    stranger_key, stranger = pki.make_client(other, pki.PLAIN)
+    keep = tempfile.mkdtemp(prefix="tls_echo_pki_")
+    paths = {}
+    for name, (key, cert) in {"awkward": (awkward_key, awkward), "plain": (plain_key, plain),
+                              "stranger": (stranger_key, stranger)}.items():
+        paths[name] = (os.path.join(keep, name + ".pem"), os.path.join(keep, name + ".key"))
+        open(paths[name][0], "wb").write(pki.pem(cert))
+        open(paths[name][1], "wb").write(pki.key_pem(key))
+
+    def attempt(server, name):
+        """Connect presenting `name`'s certificate (or none) and echo: None, or what failed."""
+        ctx = context()
+        if name:
+            ctx.load_cert_chain(*paths[name])
+        try:
+            conn = ctx.wrap_socket(socket.create_connection(("127.0.0.1", server.port), timeout=10), server_hostname=HOST)
+            talk(conn)
+            return conn
+        except (ssl.SSLError, ConnectionError, AssertionError, OSError) as e:
+            return e
+
+    def established(server, count):
+        return [l for l in server.wait_for(lambda l: " established " in l, 10, count)][count - 1]
+
+    server = server_class(exe, extra=["--client-ca", "clients.pem", "--require-client-cert"],
+                          files={"clients.pem": pki.pem(ca[1])})
+    try:
+        conn = attempt(server, "awkward")
+        if isinstance(conn, Exception):
+            return f"a client with a certificate was refused: {conn!r}"
+        line = established(server, 1)
+        subject, fp = pki.openssl_view(paths["awkward"][0])
+        got = re.search(r" client=(.*) fp=([0-9a-f]{16}) waited=", line)
+        if not got or (got.group(1), got.group(2)) != (subject, fp):
+            return f"the line says {got and got.groups()}, OpenSSL reports {(subject, fp)}: {line}"
+        plain_conn = attempt(server, "plain")
+        if isinstance(plain_conn, Exception):
+            return f"a second client was refused: {plain_conn!r}"
+        subject2, fp2 = pki.openssl_view(paths["plain"][0])
+        got2 = re.search(r" client=(.*) fp=([0-9a-f]{16}) waited=", established(server, 2))
+        if not got2 or (got2.group(1), got2.group(2)) != (subject2, fp2):
+            return f"the second line says {got2 and got2.groups()}, OpenSSL reports {(subject2, fp2)}"
+        for who, tag in ((None, "tls-server-client-cert-required"), ("stranger", "x509-unknown-issuer")):
+            r = attempt(server, who)
+            if not isinstance(r, Exception):
+                return f"{who or 'a client with no certificate'} was served"
+            server.wait_for(lambda l, t=tag: f" closed {t} " in l, 5)
+        # The store replaced by another CA's: the old client is closed, revoked.
+        open(os.path.join(server.work, "clients.pem"), "wb").write(pki.pem(other[1]))
+        server.signal(signal.SIGHUP)
+        server.wait_for(lambda l: l == "reload client-ca ok", 5)
+        server.wait_for(lambda l: " closed revoked " in l, 5, 2)
+        try:
+            talk(conn)
+            return "a connection verified under the old store still echoes after it was replaced"
+        except (ssl.SSLError, ConnectionError, AssertionError, OSError):
+            pass
+        if not isinstance(attempt(server, "awkward"), Exception):
+            return "the old CA's client was served after the store was replaced"
+        fresh = attempt(server, "stranger")
+        if isinstance(fresh, Exception):
+            return f"the new CA's client was refused: {fresh!r}"
+        # A refused file leaves the store as it was.
+        open(os.path.join(server.work, "clients.pem"), "wb").write(b"not a certificate\n")
+        server.signal(signal.SIGHUP)
+        server.wait_for(lambda l: l == "reload client-ca refused tls-server-client-store", 5)
+        again = attempt(server, "stranger")
+        if isinstance(again, Exception):
+            return f"after a refused file the new CA's client was refused: {again!r}"
+    finally:
+        server.stop()
+    optional = server_class(exe, extra=["--client-ca", "clients.pem"], files={"clients.pem": pki.pem(ca[1])})
+    try:
+        none = attempt(optional, None)
+        if isinstance(none, Exception):
+            return f"optional: a client with no certificate was refused: {none!r}"
+        if " client=" in established(optional, 1):
+            return "optional: a client with no certificate was logged with one"
+        some = attempt(optional, "plain")
+        if isinstance(some, Exception):
+            return f"optional: a client with a certificate was refused: {some!r}"
+        if " client=" not in established(optional, 2):
+            return "optional: a client with a certificate was logged with none"
+        if not isinstance(attempt(optional, "stranger"), Exception):
+            return "optional: a certificate of an unknown CA was served"
+    finally:
+        optional.stop()
+    return "ok (the subject and fingerprint OpenSSL reports, required and optional, revoked on SIGHUP, a refused file kept the store)"
+
+
+def rss_kib(pid):
+    """The process's resident memory in KiB (Linux), or None."""
+    try:
+        for line in open(f"/proc/{pid}/status"):
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1])
+    except OSError:
+        return None
+    return None
+
+
+def case_areas(exe):
+    """`--areas 16` for 1,000 connections (docs/tls-memory.md section 7): the handshakes are delayed to the areas free
+    and not refused, the 1,000 established connections that are idle hold no area, 6 of them are used at once, and on
+    Linux 1,000 idle connections are well under what a slot a connection cost (119 KiB each). A thousand and not a
+    hundred because a kernel with transparent huge pages `always` (CI's) counts the few areas that are in use in
+    units of 2 MiB, which a hundred connections do not amortise."""
+    count = 1000
+    server = Server(exe, extra=["--connections", "1100", "--handshakes", "64", "--areas", "16", "--rate", "100000"])
+    try:
+        errors = []
+        conns = []
+        lock = threading.Lock()
+        before = rss_kib(server.proc.pid)
+
+        def dial(first):
+            try:
+                for k in range(first, first + count // 40):
+                    c = connect(server.port, timeout=120)
+                    echo(c, b"hello %d" % k)
+                    with lock:
+                        conns.append(c)
+            except Exception as e:  # noqa: BLE001 -- every failure is reported
+                errors.append(f"{first}: {e!r}")
+
+        threads = [threading.Thread(target=dial, args=(k * (count // 40),)) for k in range(40)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(300)
+        if errors or len(conns) != count:
+            return f"{len(errors)} of 40 dialers failed, {len(conns)} of {count} connected, first: {errors[:1]}"
+        time.sleep(1)
+        after = rss_kib(server.proc.pid)
+        busy = []
+
+        def work(k):
+            try:
+                rnd = random.Random(k)
+                for _ in range(30):
+                    echo(conns[k], rnd.randbytes(rnd.randint(1, 20000)))
+            except Exception as e:  # noqa: BLE001
+                busy.append(f"{k}: {e!r}")
+
+        workers = [threading.Thread(target=work, args=(k,)) for k in range(6)]
+        for t in workers:
+            t.start()
+        for t in workers:
+            t.join(120)
+        if busy:
+            return f"{len(busy)} of 6 busy connections failed, first: {busy[0]}"
+        for c in conns:
+            c.unwrap()
+            c.close()
+        ended = server.wait_for(lambda l: " closed ok " in l, 60, count)
+        note = ""
+        if before is not None and after is not None:
+            per = (after - before) / count
+            if per > 60:
+                return f"{count} idle connections cost {per:.1f} KiB each in the server, over the 60 KiB this case allows"
+            note = f", {per:.1f} KiB resident each idle"
+        return f"ok ({count} connections on 16 areas, 6 busy at once{note}; {len(ended)} closed ok)"
+    finally:
+        server.stop()
+
+
+def half_record(port):
+    """A client that handshakes, then sends the first 100 bytes of a 16 KiB record and nothing more: (socket, sslobj)."""
+    raw = socket.create_connection(("127.0.0.1", port), timeout=30)
+    inc, out = ssl.MemoryBIO(), ssl.MemoryBIO()
+    obj = context().wrap_bio(inc, out, server_hostname=HOST)
+    while True:
+        try:
+            obj.do_handshake()
+            break
+        except ssl.SSLWantReadError:
+            raw.sendall(out.read())
+            inc.write(raw.recv(65536))
+    raw.sendall(out.read())
+    obj.write(b"\0" * 16384)
+    raw.sendall(out.read()[:100])
+    return raw, obj
+
+
+def case_stall(exe):
+    """`--areas 2`: a peer that sends half a record and stops holds the one area traffic has; another connection waits,
+    and is served once `record-timeout` (after `--handshake-timeout`, here 1 s) ends the staller. `--areas 1` is refused."""
+    bad = subprocess.run([exe, "--port", "1", "--dir", "/nonexistent", "--areas", "1"], capture_output=True)
+    if bad.returncode != 2:
+        return f"--areas 1 exited {bad.returncode}, not 2 (a usage error)"
+    server = Server(exe, extra=["--areas", "2", "--handshake-timeout", "1000"])
+    try:
+        honest = connect(server.port, timeout=30)
+        echo(honest, b"before")
+        raw, _ = half_record(server.port)
+        t0 = time.monotonic()
+        echo(honest, b"x" * 20000)
+        waited = time.monotonic() - t0
+        line = server.wait_for(lambda l: " closed record-timeout " in l, 10)
+        echo(honest, b"after")
+        honest.unwrap()
+        raw.close()
+        return f"ok (the other connection echoed 20,000 bytes in {waited:.2f} s on the second area; the staller ended record-timeout: {len(line)})"
+    finally:
+        server.stop()
+
+
+CASES = {"clientauth": case_clientauth, "suites": case_suites, "many": case_many, "reload": case_reload, "bound": case_bound,
          "rate": case_rate, "full": case_full, "idle": case_idle, "shutdown": case_shutdown,
-         "peer": case_peer, "per-address": case_per_address, "addr-rate": case_addr_rate}
+         "peer": case_peer, "per-address": case_per_address, "addr-rate": case_addr_rate,
+         "tickets": case_tickets, "ticket-keys": case_ticket_keys, "ticket-identity": case_ticket_identity,
+         "ticket-lifetime": case_ticket_lifetime, "areas": case_areas, "stall": case_stall}
 
 
 # ---- the cost ----
@@ -559,6 +939,50 @@ def cost(exe, seconds, clients, extra):
         server.stop()
 
 
+def cost_python(exe, seconds, extra, resume):
+    """The server's CPU for connections made by Python's `ssl`, one at a time for `seconds`: each a full handshake, or
+    (`resume`) one offering the session a first full handshake was sent. The server's lines say how many were
+    established, and how many of those resumed."""
+    server = Server(exe, extra=extra)
+    try:
+        sess = make_session(server.port)[0] if resume else None
+        before = cpu_seconds(server.proc.pid)
+        mark = len(server.lines)
+        end = time.time() + seconds
+        while time.time() < end:
+            raw = socket.create_connection(("127.0.0.1", server.port), timeout=10)
+            c = SESSION_CONTEXT.wrap_socket(raw, server_hostname=HOST, session=sess)
+            c.sendall(b"x")
+            c.recv(1)
+            c.close()
+        time.sleep(1)
+        cpu = cpu_seconds(server.proc.pid) - before
+        lines = [l for l in server.text()[mark:] if " established " in l]
+        done = sum(1 for l in lines if (field(l, "resumed") == "yes") == resume)
+        return done, cpu
+    finally:
+        server.stop()
+
+
+def cost_tickets(exe, seconds, rounds):
+    """Full without tickets, full with two sent, and resumed, `rounds` times round in turn (a machine whose speed
+    changes over the minutes moves all three together): the median and the best ms of server CPU a handshake."""
+    import statistics
+    kinds = [("full, tickets off", UNBOUNDED, False), ("full, tickets on (2 sent)", UNBOUNDED + ["--tickets", "2"], False),
+             ("resumed, tickets on", UNBOUNDED + ["--tickets", "2"], True)]
+    per = {k[0]: [] for k in kinds}
+    for _ in range(rounds):
+        for what, extra, resume in kinds:
+            done, cpu = cost_python(exe, seconds, extra, resume)
+            if done:
+                per[what].append(cpu / done * 1000)
+    full = statistics.median(per[kinds[0][0]])
+    for what, _, _ in kinds:
+        med, best = statistics.median(per[what]), min(per[what])
+        print(f"cost       {what}: median {med:.2f} ms, best {best:.2f} ms a handshake of server CPU "
+              f"({med / full:.2f} of the median full handshake; {rounds} rounds of {seconds} s)", flush=True)
+
+
 def main():
     args = sys.argv[1:]
     if not args:
@@ -570,6 +994,10 @@ def main():
         k = args.index("--cost")
         seconds = int(args[k + 1])
         del args[k:k + 2]
+    if "--rounds" in args:
+        k = args.index("--rounds")
+        del args[k:k + 2]
+    args = [a for a in args if a != "--tickets"]
     names = args or list(CASES)
     failed = 0
     for name in names:
@@ -581,13 +1009,16 @@ def main():
         failed += 0 if ok else 1
         print(f"{name:10} {result}", flush=True)
     rows = [(1, UNBOUNDED, "no bounds"), (4, UNBOUNDED, "no bounds"), (4, [], "the defaults: --rate 100")]
-    for clients, extra, what in (rows if seconds else []):
+    for clients, extra, what in (rows if seconds and "--tickets" not in sys.argv else []):
         done, cpu, established = cost(exe, seconds, clients, extra)
         rate = done / seconds
         per = cpu / done * 1000 if done else 0
         print(f"cost       {clients} client(s), {what}, {seconds} s: {done} handshakes ({established} logged), "
               f"{rate:.0f} a second, {cpu:.2f} s of server CPU ({cpu / seconds:.0%} of a core), "
               f"{per:.2f} ms a handshake", flush=True)
+    if seconds and "--tickets" in sys.argv:
+        rounds = int(sys.argv[sys.argv.index("--rounds") + 1]) if "--rounds" in sys.argv else 5
+        cost_tickets(exe, seconds, rounds)
     print(f"{len(names) - failed} of {len(names)} cases ok")
     return 1 if failed else 0
 

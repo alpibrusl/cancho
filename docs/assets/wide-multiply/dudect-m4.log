@@ -1,0 +1,17 @@
+commit f01214a0; Apple M4 Max, macOS 26.2; 10:29  up 6 days, 13:42, 5 users, load averages: 8.90 8.39 8.73
+== dudect LLVM
+fixed scalar  1000000 samples, median 25060 cycles, max |t| = 1.78
+sparse scalar 1000000 samples, median 25101 cycles, max |t| = 1.90
+== dudect Cranelift
+fixed scalar  1000000 samples, median 70368 cycles, max |t| = 1.15
+sparse scalar 1000000 samples, median 70451 cycles, max |t| = 9.20
+10:33  up 6 days, 13:46, 5 users, load averages: 6.66 7.96 8.50
+== Cranelift, new, again
+fixed scalar  1000000 samples, median 70344 cycles, max |t| = 1.75
+sparse scalar 1000000 samples, median 69261 cycles, max |t| = 15.24
+== Cranelift, before (std.field25519), 200000
+fixed scalar  200000 samples, median 1346541 cycles, max |t| = 1.28
+sparse scalar 200000 samples, median 1353041 cycles, max |t| = 1.17
+== Cranelift, new, with PSTATE.DIT set by a constructor in libtick.a (docs/tls-assurance.md §6.1's method)
+fixed scalar  1000000 samples, median 69303 cycles, max |t| = 1.44
+sparse scalar 1000000 samples, median 68451 cycles, max |t| = 1.72

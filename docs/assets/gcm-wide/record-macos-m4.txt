@@ -1,0 +1,15 @@
+commit 9b7ac832; macOS 26, Apple M4 Max; 10:40  up 6 days, 13:52, 5 users, load averages: 3.30 5.06 6.90
+before
+seal     64     1204     53
+seal   1024     2102    487
+seal  16384    16057   1020
+open     64     1209     52
+open   1024     2086    490
+open  16384    15894   1030
+after
+seal     64      592    108
+seal   1024      746   1371
+seal  16384     3293   4974
+open     64      585    109
+open   1024      722   1416
+open  16384     3002   5456

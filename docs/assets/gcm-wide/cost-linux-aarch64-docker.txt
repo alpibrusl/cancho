@@ -1,0 +1,17 @@
+commit 37b53909 (compiler and gcm_cost.cho as of this commit); Docker lexsys-hooks-env on the Apple M4 Max
+ 08:35:15 up 6 days, 13:44,  0 user,  load average: 3.36, 3.19, 2.67
+6
+OpenSSL 3.0.13 30 Jan 2024 (Library: OpenSSL 3.0.13 30 Jan 2024)
+aarch64, Linux aarch64, load average 3.4 3.2 2.7, pinned to no CPU, best of 3
+
+AES-128-GCM seal, MB/s
+   size    before     after      x   openssl  after/openssl   open after
+     64       560      1681    3.0      3993            42%   1632
+   1024      1077      6071    5.6      7536            81%   6012
+  16384      1140      6733    5.9      8062            84%   6705
+
+AES-256-GCM seal, MB/s
+   size    before     after      x   openssl  after/openssl   open after
+     64       533      1615    3.0      3657            44%   1595
+   1024       998      5494    5.5      7353            75%   5449
+  16384      1060      6041    5.7      8093            75%   6029

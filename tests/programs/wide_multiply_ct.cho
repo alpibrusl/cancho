@@ -1,0 +1,72 @@
+edition 7;
+
+// `docs/wide-multiply.md` §5: the function whose object code
+// `scripts/wide_multiply_objdump.py` reads. Its operands come from the
+// command line, so nothing folds, and it returns every word the three
+// builtins answer, folded with `wrapping_add` (a checked `+` would add a
+// branch of its own). The disassembly of `words` must contain no jump.
+import std.io;
+
+pub fn words(a: int, b: int, c: int) -> [] int {
+    let (h, l) = mul_wide(a, b);
+    let (s, co) = add_carry(h, l, c);
+    let (d, bo) = sub_borrow(s, co, a);
+    return wrapping_add(wrapping_add(h, l), wrapping_add(wrapping_add(s, co), wrapping_add(d, bo)));
+}
+
+// A multi-word add and a 4x4-word product, the shape of a bignum inner
+// loop: `x[0..4] * y[0..4]` into `out[0..8]`, schoolbook, no branch on
+// a value.
+pub fn product4[&x, &y, &o](x: &x [int], y: &y [int], o: &!o [int]) -> [] int {
+    var i = 0;
+    while i < 8 {
+        o[i] = 0;
+        i = i + 1;
+    }
+    i = 0;
+    while i < 4 {
+        var carry = 0;
+        var j = 0;
+        while j < 4 {
+            let (h, l) = mul_wide(x[i], y[j]);
+            let (s, c1) = add_carry(o[i + j], l, 0);
+            let (s2, c2) = add_carry(s, carry, 0);
+            o[i + j] = s2;
+            carry = wrapping_add(wrapping_add(h, c1), c2);
+            j = j + 1;
+        }
+        o[i + 4] = carry;
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    var n = 0;
+    borrow args as &g in {
+        n = arg_count(g);
+    }
+    release(args);
+    var r = words(n, n + 1, n + 2);
+    region g {
+        let x = alloc_slice[g](4, n);
+        let y = alloc_slice[g](4, n + 1);
+        let o = alloc_slice[g](8, 0);
+        product4(x, y, o);
+        r = r + o[7];
+    }
+    borrow mut io as &!i in {
+        io.print_int(i, r);
+        io.newline(i);
+    }
+    release(io);
+    return 0;
+}

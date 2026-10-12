@@ -1,0 +1,16 @@
+commit 37b53909; macOS 26 on the Apple M4 Max; first line is the HEAD the run started at
+477ab9b8
+10:22  up 6 days, 13:35, 5 users, load averages: 8.77 8.66 9.07
+Apple M4 Max, Darwin arm64, load average 8.8 8.7 9.1, pinned to no CPU, best of 3
+
+AES-128-GCM seal, MB/s
+   size    before     after      x   openssl  after/openssl   open after
+     64        98      1739   17.7       595           292%   1723
+   1024       662      6004    9.1      5553           108%   6023
+  16384      1028      6680    6.5     10305            65%   6729
+
+AES-256-GCM seal, MB/s
+   size    before     after      x   openssl  after/openssl   open after
+     64        97      1746   18.0       757           231%   1694
+   1024       635      5469    8.6      5029           109%   5434
+  16384       972      5970    6.1      8735            68%   5981

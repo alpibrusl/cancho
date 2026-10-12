@@ -568,6 +568,46 @@ pub fn parse[&s, &t](src: &s [byte], tape: &!t [int]) -> [] int {
     return result;
 }
 
+// `parse` with the scratch state in the caller's hands, so that parsing costs
+// no `region` (`docs/json.md` §3.1).
+//
+// `parse` makes its two ints of state in a region of its own on every call.
+// Measured on macOS that region is almost all of what a small document costs:
+// about 650 ns a call against 63 to 106 ns with the state passed in, and it
+// is a call into the allocator that gets *slower* with threads (1.7x to 2.6x
+// at 16), where this one scales like the work does. On Linux the region is
+// cheap (283 ns against 255). A caller that parses many small documents --
+// JSON lines, one request body after another -- allocates `st` and `tape`
+// once and calls this per document.
+//
+// `st` is at least two ints: `st[0]` the position and `st[1]` the node
+// count while parsing. Their contents on entry do not matter (they are set
+// first), so one `st` is reused for any number of documents, and nothing of
+// one document is visible to the next. A shorter `st` is a bug in the
+// caller and traps at the first store, as an out-of-range index always does.
+//
+// The answer is exactly `parse`'s, for every `src`: the same node count, or
+// the same negative error, and the same `tape` written. `parse` is left as
+// it was, byte for byte, so that no identity that mentions it moves
+// (`docs/hash-stability.md`); `tests/programs/json_with_diff.cho` runs both
+// on one corpus and compares the answers and the tapes.
+pub fn parse_with[&s, &t, &q](src: &s [byte], tape: &!t [int], st: &!q [int]) -> [] int {
+    st[0] = 0;
+    st[1] = 0;
+    skip_ws(src, st);
+    var code = value_node(src, tape, st, 0);
+    if code == 0 {
+        skip_ws(src, st);
+        if st[0] != len(src) {
+            code = err_trailing();
+        }
+    }
+    if code == 0 {
+        return st[1];
+    }
+    return 0 - (st[0] * 16 + code);
+}
+
 // ---- reading the tape ----------------------------------------------------
 
 // The kind of node `i`, or -1 if `i` is not a node.

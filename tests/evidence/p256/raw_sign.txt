@@ -1,0 +1,7 @@
+# commit 3b71b5292370f40cbf6e29c7ef57cb91050d753d (branch p256-faster); machine gram, Intel Core i7-1260P, Linux 7.0.0-38-generic, x86-64; LLVM backend
+# taskset -c 2-3 (one physical core, both threads); governor of cpu2/cpu3: performance/performance
+# start: 2026-10-12T10:45:26+02:00;  10:45:26 up 5 days, 4 min, 11 users,  load average: 7,13, 6,99, 6,85
+# python3 scripts/ecdsa_sign_timing.py sign_timing 1000000
+P-256 sign, fixed key 1000000 samples, median 253981 cycles, max |t| = 2.40
+P-256 sign, key 1     1000000 samples, median 260715 cycles, max |t| = 2.25
+# end: 2026-10-12T10:49:41+02:00;  10:49:41 up 5 days, 9 min, 10 users,  load average: 8,01, 7,26, 6,97

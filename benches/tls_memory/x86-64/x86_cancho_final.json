@@ -1,0 +1,302 @@
+[
+ {
+  "n": 50,
+  "rss": {
+   "start": 2416,
+   "connected": 6720,
+   "handshake": 7888,
+   "established": 3184,
+   "echoed": 5024,
+   "partial": 6276,
+   "all-echoed": 9244
+  },
+  "smaps_established": [
+   [
+    1632,
+    1056,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    14756,
+    536,
+    "[anon]"
+   ],
+   [
+    552,
+    396,
+    "[heap]"
+   ],
+   [
+    300,
+    300,
+    "/home/alpibru/Workspace/tlsmem-bin/tls_echo_new4"
+   ],
+   [
+    1092,
+    228,
+    "[anon]"
+   ],
+   [
+    188,
+    188,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    160,
+    160,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    312,
+    120,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    44,
+    44,
+    "/home/alpibru/Workspace/tlsmem-bin/tls_echo_new4"
+   ],
+   [
+    44,
+    44,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    52,
+    20,
+    "[anon]"
+   ],
+   [
+    132,
+    20,
+    "[stack]"
+   ]
+  ],
+  "start_after_restart": 2416
+ },
+ {
+  "n": 100,
+  "rss": {
+   "start": 2240,
+   "connected": 10860,
+   "handshake": 13204,
+   "established": 4016,
+   "echoed": 7660,
+   "partial": 10200,
+   "all-echoed": 16196
+  },
+  "smaps_established": [
+   [
+    31100,
+    1336,
+    "[anon]"
+   ],
+   [
+    1632,
+    1056,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    740,
+    480,
+    "[anon]"
+   ],
+   [
+    300,
+    300,
+    "/home/alpibru/Workspace/tlsmem-bin/tls_echo_new4"
+   ],
+   [
+    188,
+    188,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    340,
+    176,
+    "[heap]"
+   ],
+   [
+    160,
+    160,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    312,
+    120,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    44,
+    44,
+    "/home/alpibru/Workspace/tlsmem-bin/tls_echo_new4"
+   ],
+   [
+    44,
+    44,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    52,
+    20,
+    "[anon]"
+   ],
+   [
+    132,
+    20,
+    "[stack]"
+   ]
+  ],
+  "start_after_restart": 2244
+ },
+ {
+  "n": 200,
+  "rss": {
+   "start": 2264,
+   "connected": 19508,
+   "handshake": 24172,
+   "established": 5684,
+   "echoed": 12936,
+   "partial": 18040,
+   "all-echoed": 30092
+  },
+  "smaps_established": [
+   [
+    62180,
+    2536,
+    "[anon]"
+   ],
+   [
+    1632,
+    1056,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    1188,
+    928,
+    "[anon]"
+   ],
+   [
+    300,
+    300,
+    "/home/alpibru/Workspace/tlsmem-bin/tls_echo_new4"
+   ],
+   [
+    368,
+    196,
+    "[heap]"
+   ],
+   [
+    188,
+    188,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    160,
+    160,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    312,
+    120,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    44,
+    44,
+    "/home/alpibru/Workspace/tlsmem-bin/tls_echo_new4"
+   ],
+   [
+    44,
+    44,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    52,
+    20,
+    "[anon]"
+   ],
+   [
+    132,
+    20,
+    "[stack]"
+   ]
+  ],
+  "start_after_restart": 2252
+ },
+ {
+  "n": 10000,
+  "rss": {
+   "start": 2400,
+   "connected": 866840,
+   "handshake": 1101180,
+   "established": 169792,
+   "echoed": 529848,
+   "partial": 809156,
+   "all-echoed": 1414812
+  },
+  "smaps_established": [
+   [
+    3155212,
+    166960,
+    "[anon]"
+   ],
+   [
+    1632,
+    1056,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    644,
+    484,
+    "[anon]"
+   ],
+   [
+    300,
+    300,
+    "/home/alpibru/Workspace/tlsmem-bin/tls_echo_new4"
+   ],
+   [
+    468,
+    288,
+    "[heap]"
+   ],
+   [
+    188,
+    188,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    160,
+    160,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    312,
+    120,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    44,
+    44,
+    "/home/alpibru/Workspace/tlsmem-bin/tls_echo_new4"
+   ],
+   [
+    44,
+    44,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    256,
+    40,
+    "[anon]"
+   ],
+   [
+    52,
+    20,
+    "[anon]"
+   ]
+  ],
+  "start_after_restart": 2400
+ }
+]

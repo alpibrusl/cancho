@@ -110,6 +110,15 @@ fn pump[&i, &e, &t, &p, &s, &q, &n, &a, &r, &v, &x](io: &!i Io, engine: &!e tls.
                 st[b + front.s_since()] = now;
                 going = true;
             }
+            if ev == tls.event_established() && st[b + front.s_phase()] == front.phase_handshake() && front.stale(engine, slot) {
+                // Verified under a store replaced since (the engine refuses that before Finished; this is the
+                // program's own check): closed as `revoked`, never served.
+                tls.finish(engine, slot);
+                st[b + front.s_phase()] = front.phase_closing();
+                st[b + front.s_since()] = now;
+                st[b + front.s_reason()] = front.r_revoked();
+                going = true;
+            }
             if ev == tls.event_established() && st[b + front.s_phase()] == front.phase_handshake() {
                 front.log_established(io, engine, st, slot, now);
                 st[b + front.s_phase()] = front.phase_established();
@@ -277,6 +286,8 @@ fn sweep[&i, &e, &t, &p, &s, &q, &n, &a, &r, &v, &x, &c](io: &!i Io, engine: &!e
             front.end_slot(io, engine, tab, st, slot, front.r_queue_timeout(), now);
         } else if phase == front.phase_handshake() && held > cfg[front.c_hs_timeout()] {
             front.end_slot(io, engine, tab, st, slot, front.r_handshake_timeout(), now);
+        } else if phase == front.phase_established() && front.area_overdue(engine, st, cfg, slot, now) {
+            drop_slot(io, engine, tab, st, srv, ap, slot, front.r_record_timeout(), now);
         } else if phase == front.phase_established() && now - st[b + front.s_active()] > cfg[front.c_idle()] {
             close_with(io, engine, tab, poller, st, pend, inq, app, rcv, srv, ap, slot, front.r_idle(), now);
         } else if phase == front.phase_established() && server.pending(srv, st[b + front.s_hslot()] - 1) > 0 {
@@ -289,6 +300,19 @@ fn sweep[&i, &e, &t, &p, &s, &q, &n, &a, &r, &v, &x, &c](io: &!i Io, engine: &!e
         } else if phase == front.phase_closing() && held > cfg[front.c_hs_timeout()] {
             // Our close_notify was never taken: the peer is not reading.
             drop_slot(io, engine, tab, st, srv, ap, slot, st[b + front.s_reason()], now);
+        }
+        slot = slot + 1;
+    }
+    return 0;
+}
+
+// The clients' store was replaced (`SIGHUP`): every established connection whose client was verified under the
+// old one is sent close_notify and ended (`closed revoked`), as `examples/tls_echo/echo.cho` does.
+fn revoke_stale[&i, &e, &t, &p, &s, &q, &n, &a, &r, &v, &x, &c](io: &!i Io, engine: &!e tls.Engine, tab: &!t conns.Table, poller: &!p Poller, st: &!s [int], pend: &!q [byte], inq: &!n [byte], app: &!a [byte], rcv: &!r [byte], srv: &!v server.Server, ap: &!x [int], cfg: &c [int], now: int) -> [conn_read, conn_write, poll, io_write] int {
+    var slot = 0;
+    while slot < cfg[front.c_conns()] {
+        if st[slot * front.stride() + front.s_phase()] == front.phase_established() && front.stale(engine, slot) {
+            close_with(io, engine, tab, poller, st, pend, inq, app, rcv, srv, ap, slot, front.r_revoked(), now);
         }
         slot = slot + 1;
     }
@@ -411,6 +435,7 @@ pub fn run[&h, &i, &l, &k, &e, &d, &w, &u, &n, &c](heap: &!h Heap, io: &!i Io, l
                                                                             }
                                                                             now = clock_ms(clock);
                                                                             let now_unix = clock_unix_ms(clock);
+                                                                            tls.set_time(engine, now_unix);
                                                                             var j = 0;
                                                                             while j < ready {
                                                                                 let token = events[2 * j];
@@ -420,6 +445,15 @@ pub fn run[&h, &i, &l, &k, &e, &d, &w, &u, &n, &c](heap: &!h Heap, io: &!i Io, l
                                                                                     let mask = signals_pending(watch);
                                                                                     if sg.has(mask, sg.sighup()) {
                                                                                         front.reload(heap, io, dir, engine, subs, sublens, cfg[front.c_identities()], now_unix);
+                                                                                        if front.reload_clients(heap, io, dir, engine, subs, sublens, cfg) == 1 {
+                                                                                            borrow mut table as &!tw in {
+                                                                                                borrow mut poll as &!pw in {
+                                                                                                    borrow mut srv as &!sv in {
+                                                                                                        revoke_stale(io, engine, tw, pw, st, contents(pdw), contents(iw), contents(aw), contents(vw), sv, ap, cfg, now);
+                                                                                                    }
+                                                                                                }
+                                                                                            }
+                                                                                        }
                                                                                     }
                                                                                     if sg.any(mask, sg.stop_signals()) && gl[front.g_stopping()] == 0 {
                                                                                         gl[front.g_stopping()] = 1;

@@ -499,6 +499,10 @@ impl<'a> FuncEmitter<'a> {
             Callee::Builtin(Builtin::WrappingAdd) => self.wrapping("add", evaluated),
             Callee::Builtin(Builtin::WrappingSub) => self.wrapping("sub", evaluated),
             Callee::Builtin(Builtin::WrappingMul) => self.wrapping("mul", evaluated),
+            // `docs/wide-multiply.md` §4: register arithmetic, `body/wide.rs`.
+            Callee::Builtin(Builtin::MulWide) => self.mul_wide(evaluated),
+            Callee::Builtin(Builtin::AddCarry) => self.add_carry(evaluated, false),
+            Callee::Builtin(Builtin::SubBorrow) => self.add_carry(evaluated, true),
             Callee::Builtin(Builtin::PutChar) => {
                 let skip = Builtin::PutChar.erased_args();
                 let c = evaluated
@@ -591,6 +595,13 @@ impl<'a> FuncEmitter<'a> {
             // `docs/checked-output.md`: the stream the arm above writes
             // into, flushed and asked whether any of it failed.
             Callee::Builtin(Builtin::FlushOut) => Ok(self.flush_out()),
+            // `docs/standard-input.md` §7: many bytes of standard input in
+            // one call, sorted into `Read`'s three constructors.
+            Callee::Builtin(Builtin::ReadBytes) => {
+                let skip = Builtin::ReadBytes.erased_args();
+                let flat: Vec<LValue> = evaluated.into_iter().skip(skip).flatten().collect();
+                self.read_stdin(&flat)
+            }
             // `docs/arguments.md` §3: `argc`, exactly as `main` was
             // handed it and stashed into `@lexs_argc` before this
             // function's own body could run.
@@ -1064,6 +1075,10 @@ impl<'a> FuncEmitter<'a> {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.aes_encrypt_block(&args)
             }
+            Callee::Builtin(Builtin::AesCtr32) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.aes_ctr32(&args)
+            }
             Callee::Builtin(Builtin::GhashUpdate) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.ghash_update(&args)
@@ -1094,6 +1109,18 @@ impl<'a> FuncEmitter<'a> {
                     Builtin::ByteMask64 => self.byte_mask64(&args),
                     _ => Ok(self.bit_count(*b, &args)),
                 }
+            }
+            Callee::Builtin(Builtin::GhashPowers) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.ghash_powers(&args)
+            }
+            Callee::Builtin(Builtin::GcmTag) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.gcm_tag(&args, false)
+            }
+            Callee::Builtin(Builtin::GcmTagDiff) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.gcm_tag(&args, true)
             }
             // `docs/byte-search.md`: one `memchr`.
             Callee::Builtin(Builtin::IndexOfByte) => {

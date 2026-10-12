@@ -151,7 +151,15 @@ impl<'a> Emitter<'a> {
             .module
             .declare_data(stderr_symbol, Linkage::Import, true, false)
             .map_err(|e| CodegenError::plain(e.to_string()))?;
-        let console = Console { putchar, getchar, fwrite, stdout, stderr };
+        let stdin_symbol = match self.module.isa().triple().operating_system {
+            target_lexicon::OperatingSystem::Darwin(_) => "__stdinp",
+            _ => "stdin",
+        };
+        let stdin = self
+            .module
+            .declare_data(stdin_symbol, Linkage::Import, true, false)
+            .map_err(|e| CodegenError::plain(e.to_string()))?;
+        let console = Console { putchar, getchar, fwrite, stdout, stderr, stdin };
 
         // §8.4: a foreign function is an import under the symbol its
         // declaration named. Its capability parameters carry no data and so

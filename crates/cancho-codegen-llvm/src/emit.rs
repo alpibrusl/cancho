@@ -310,6 +310,16 @@ pub(crate) fn emit_module(
     };
     text.push_str(&format!("@{stdout_symbol} = external global ptr\n"));
     text.push_str(&format!("@{stderr_symbol} = external global ptr\n"));
+    // `read_bytes` (`docs/standard-input.md` §7): `fread` on the stream
+    // `getchar` reads, named the way `stdout` is. A wasm32 module has no
+    // stdio of its own to declare (`wasi_console`), so it never reaches it.
+    let stdin_symbol = match triple.operating_system {
+        target_lexicon::OperatingSystem::Darwin(_) => "__stdinp",
+        _ => "stdin",
+    };
+    text.push_str(&format!("@{stdin_symbol} = external global ptr\n"));
+    text.push_str(&format!("declare {st} @fread(ptr, {st}, {st}, ptr)\n"));
+    text.push_str("declare void @clearerr(ptr)\n");
     // `region`/`alloc_slice` (§7.5): one `malloc` per arena, one `free` on
     // the way out -- `cancho-codegen`'s own `body/memory.rs` `libc_fn`
     // declares these the same way, on first use rather than unconditionally
@@ -346,6 +356,9 @@ pub(crate) fn emit_module(
     text.push_str("declare i64 @llvm.ctpop.i64(i64)\n");
     text.push_str("declare {i64, i1} @llvm.ssub.with.overflow.i64(i64, i64)\n");
     text.push_str("declare {i64, i1} @llvm.smul.with.overflow.i64(i64, i64)\n");
+    // `docs/wide-multiply.md` §4: the unsigned pair `add_carry` and `sub_borrow` use.
+    text.push_str("declare {i64, i1} @llvm.uadd.with.overflow.i64(i64, i64)\n");
+    text.push_str("declare {i64, i1} @llvm.usub.with.overflow.i64(i64, i64)\n");
     // `sqrt` (§7.17, `docs/float-math.md` §2): correctly rounded per
     // IEEE-754, which is why this is the one arithmetic builtin that is
     // an intrinsic rather than an instruction sequence.

@@ -1,0 +1,234 @@
+edition 7;
+
+// `docs/wide-multiply.md` §6: `mul_wide`, `add_carry` and `sub_borrow`,
+// driven from standard input. One case per line, words as 16 lowercase hex
+// digits (an `int` read as unsigned):
+//
+//     M <a> <b>             mul_wide:   "<hi> <lo>"
+//     A <a> <b> <carry>     add_carry:  "<sum> <carry_out>"
+//     S <a> <b> <borrow>    sub_borrow: "<difference> <borrow_out>"
+//     R <seed> <count>      <count> random cases of each, from a generator
+//                           the test reproduces; one line, a checksum of
+//                           every answer. The words are biased toward the
+//                           values the carries turn on (0, 1, 2^32 +- 1,
+//                           2^63 +- 1, 2^64 - 1).
+import std.buffer;
+import std.io;
+
+fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap, io_read] buffer.Buffer {
+    var out = text;
+    var c = getchar(io);
+    while c >= 0 {
+        out = buffer.push(heap, out, byte_of(c));
+        c = getchar(io);
+    }
+    return out;
+}
+
+fn nibble(c: int) -> [] int {
+    if c >= 97 {
+        return c - 87;
+    }
+    return c - 48;
+}
+
+fn field_end[&s](s: &s [byte], at: int) -> [] int {
+    var e = at;
+    while e < len(s) && int_of(s[e]) != 32 && int_of(s[e]) != 10 {
+        e = e + 1;
+    }
+    return e;
+}
+
+fn word_at[&s](s: &s [byte], at: int) -> [] int {
+    var v = 0;
+    var i = 0;
+    while i < 16 {
+        v = v << 4 | nibble(int_of(s[at + i]));
+        i = i + 1;
+    }
+    return v;
+}
+
+fn decimal[&s](s: &s [byte], at: int, end: int) -> [] int {
+    var n = 0;
+    var i = at;
+    while i < end {
+        // `wrapping_mul`: a checked `*` is `smul.with.overflow`, a `__multi3`
+        // call on wasm32, which the program is run on as well.
+        n = wrapping_mul(n, 10) + int_of(s[i]) - 48;
+        i = i + 1;
+    }
+    return n;
+}
+
+fn print_word[&i](io: &!i Io, x: int) -> [io_write] int {
+    let digits = "0123456789abcdef";
+    var shift = 60;
+    while shift >= 0 {
+        let d = x >> shift & 15;
+        io.write_all(io, digits[d..d + 1]);
+        shift = shift - 4;
+    }
+    return 0;
+}
+
+fn print_pair[&i](io: &!i Io, x: int, y: int) -> [io_write] int {
+    print_word(io, x);
+    io.write_all(io, " ");
+    print_word(io, y);
+    io.newline(io);
+    return 0;
+}
+
+// The generator the test reproduces: a 64-bit LCG, each output word made of
+// the high halves of two steps.
+fn step(x: int) -> [] int {
+    return wrapping_add(wrapping_mul(x, 6364136223846793005), 1442695040888963407);
+}
+
+fn half(x: int) -> [] int {
+    return x >> 32 & 4294967295;
+}
+
+fn pick(x: int) -> [] int {
+    return x >> 40 & 15;
+}
+
+fn edge(sel: int, word: int) -> [] int {
+    if sel == 0 {
+        return 0;
+    }
+    if sel == 1 {
+        return -1;
+    }
+    if sel == 2 {
+        return -9223372036854775807 - 1;
+    }
+    if sel == 3 {
+        return 9223372036854775807;
+    }
+    if sel == 4 {
+        return 4294967296;
+    }
+    if sel == 5 {
+        return 4294967295;
+    }
+    if sel == 6 {
+        return 1;
+    }
+    if sel == 7 {
+        return -4294967296;
+    }
+    return word;
+}
+
+fn mix(acc: int, v: int) -> [] int {
+    return wrapping_mul(acc ^ v, 1099511628211);
+}
+
+fn random_cases[&i](io: &!i Io, seed: int, count: int) -> [io_write] int {
+    var x = seed;
+    var acc = -3750763034362895579;
+    var n = 0;
+    while n < count {
+        var w = 0;
+        var k = 0;
+        // Three words: a, b, and the carry.
+        var words = 0;
+        var a = 0;
+        var b = 0;
+        var c = 0;
+        while words < 3 {
+            x = step(x);
+            let sel = pick(x);
+            let hi = half(x);
+            x = step(x);
+            w = edge(sel, hi << 32 | half(x));
+            if words == 0 {
+                a = w;
+            } else if words == 1 {
+                b = w;
+            } else {
+                c = w;
+            }
+            words = words + 1;
+        }
+        let (mh, ml) = mul_wide(a, b);
+        let (s, co) = add_carry(a, b, c);
+        let (d, bo) = sub_borrow(a, b, c);
+        acc = mix(mix(mix(acc, mh), ml), mix(mix(s, co), mix(d, bo)));
+        n = n + 1;
+    }
+    print_word(io, acc);
+    io.newline(io);
+    return 0;
+}
+
+// One case, the line starting at `at`; answers where the next line starts.
+fn one[&i, &s](io: &!i Io, s: &s [byte], at: int) -> [io_write] int {
+    let op = int_of(s[at]);
+    let f1 = at + 2;
+    let e1 = field_end(s, f1);
+    let f2 = e1 + 1;
+    let e2 = field_end(s, f2);
+    if op == 82 {
+        random_cases(io, word_at(s, f1), decimal(s, f2, e2));
+        return e2 + 1;
+    }
+    let a = word_at(s, f1);
+    let b = word_at(s, f2);
+    if op == 77 {
+        let (h, l) = mul_wide(a, b);
+        print_pair(io, h, l);
+        return e2 + 1;
+    }
+    let f3 = e2 + 1;
+    let e3 = field_end(s, f3);
+    let c = word_at(s, f3);
+    if op == 65 {
+        let (v, o) = add_carry(a, b, c);
+        print_pair(io, v, o);
+    } else {
+        let (v, o) = sub_borrow(a, b, c);
+        print_pair(io, v, o);
+    }
+    return e3 + 1;
+}
+
+fn cases[&i, &s](io: &!i Io, s: &s [byte]) -> [io_write] int {
+    var at = 0;
+    while at < len(s) {
+        at = one(io, s, at);
+    }
+    return 0;
+}
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
+    var text = buffer.empty(heap, 4096);
+    text = read_stdin(heap, io, text);
+    borrow text as &b in {
+        cases(io, buffer.bytes(b));
+    }
+    buffer.drop(heap, text);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            run(h, i);
+        }
+    }
+    release(heap);
+    release(io);
+    return 0;
+}

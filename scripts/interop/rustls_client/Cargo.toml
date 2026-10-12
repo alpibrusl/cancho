@@ -1,0 +1,12 @@
+# A rustls client that reconnects with the session it was sent, for scripts/tls_server_tickets_interop.py
+# (docs/tls-server.md §12.8). Its own workspace: it is a test peer, not part of the compiler's.
+[package]
+name = "rustls_client"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+
+[workspace]

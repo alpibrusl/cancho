@@ -1,0 +1,121 @@
+  openssl n=50     start        VmRSS      8116 KiB
+  openssl n=50     connected    VmRSS      9172 KiB
+  openssl n=50     handshake    VmRSS     11972 KiB
+  openssl n=50     established  VmRSS     11300 KiB
+  openssl n=50     echoed       VmRSS     11812 KiB
+  openssl n=50     partial      VmRSS     11812 KiB
+  openssl n=50     all-echoed   VmRSS     11812 KiB
+  openssl n=100    start        VmRSS      8092 KiB
+  openssl n=100    connected    VmRSS      9896 KiB
+  openssl n=100    handshake    VmRSS     15076 KiB
+  openssl n=100    established  VmRSS     13704 KiB
+  openssl n=100    echoed       VmRSS     14768 KiB
+  openssl n=100    partial      VmRSS     14768 KiB
+  openssl n=100    all-echoed   VmRSS     14768 KiB
+  openssl n=200    start        VmRSS      8056 KiB
+  openssl n=200    connected    VmRSS     11544 KiB
+  openssl n=200    handshake    VmRSS     21400 KiB
+  openssl n=200    established  VmRSS     18700 KiB
+  openssl n=200    echoed       VmRSS     20860 KiB
+  openssl n=200    partial      VmRSS     20860 KiB
+  openssl n=200    all-echoed   VmRSS     20860 KiB
+  openssl n=10000  start        VmRSS      8048 KiB
+  openssl n=10000  connected    VmRSS    170480 KiB
+  openssl n=10000  handshake    VmRSS    639796 KiB
+  openssl n=10000  established  VmRSS    501836 KiB
+  openssl n=10000  echoed       VmRSS    611788 KiB
+  openssl n=10000  partial      VmRSS    611788 KiB
+  openssl n=10000  all-echoed   VmRSS    611788 KiB
+
+KiB of server RSS per connection, over RSS at start (openssl ):
+| N | connected | handshake | established | echoed | partial | all-echoed |
+|---|---|---|---|---|---|---|
+| 50 | 21.1 | 77.1 | 63.7 | 73.9 | 73.9 | 73.9 |
+| 100 | 18.0 | 69.8 | 56.1 | 66.8 | 66.8 | 66.8 |
+| 200 | 17.4 | 66.7 | 53.2 | 64.0 | 64.0 | 64.0 |
+| 10000 | 16.2 | 63.2 | 49.4 | 60.4 | 60.4 | 60.4 |
+  openssl n=50     start        VmRSS      8120 KiB
+  openssl n=50     connected    VmRSS      9176 KiB
+  openssl n=50     handshake    VmRSS     11500 KiB
+  openssl n=50     established  VmRSS     10124 KiB
+  openssl n=50     echoed       VmRSS     10140 KiB
+  openssl n=50     partial      VmRSS     10904 KiB
+  openssl n=50     all-echoed   VmRSS     10260 KiB
+  openssl n=100    start        VmRSS      8048 KiB
+  openssl n=100    connected    VmRSS      9852 KiB
+  openssl n=100    handshake    VmRSS     14332 KiB
+  openssl n=100    established  VmRSS     11588 KiB
+  openssl n=100    echoed       VmRSS     11604 KiB
+  openssl n=100    partial      VmRSS     13148 KiB
+  openssl n=100    all-echoed   VmRSS     11720 KiB
+  openssl n=200    start        VmRSS      8148 KiB
+  openssl n=200    connected    VmRSS     11572 KiB
+  openssl n=200    handshake    VmRSS     19868 KiB
+  openssl n=200    established  VmRSS     14412 KiB
+  openssl n=200    echoed       VmRSS     14428 KiB
+  openssl n=200    partial      VmRSS     17544 KiB
+  openssl n=200    all-echoed   VmRSS     14544 KiB
+  openssl n=10000  start        VmRSS      8060 KiB
+  openssl n=10000  connected    VmRSS    170492 KiB
+  openssl n=10000  handshake    VmRSS    566948 KiB
+  openssl n=10000  established  VmRSS    286304 KiB
+  openssl n=10000  echoed       VmRSS    286320 KiB
+  openssl n=10000  partial      VmRSS    443484 KiB
+  openssl n=10000  all-echoed   VmRSS    286440 KiB
+
+KiB of server RSS per connection, over RSS at start (openssl release):
+| N | connected | handshake | established | echoed | partial | all-echoed |
+|---|---|---|---|---|---|---|
+| 50 | 21.1 | 67.6 | 40.1 | 40.4 | 55.7 | 42.8 |
+| 100 | 18.0 | 62.8 | 35.4 | 35.6 | 51.0 | 36.7 |
+| 200 | 17.1 | 58.6 | 31.3 | 31.4 | 47.0 | 32.0 |
+| 10000 | 16.2 | 55.9 | 27.8 | 27.8 | 43.5 | 27.8 |
+  engine n=50     areas=50     start        VmRSS      2360 KiB
+  engine n=50     areas=50     established  VmRSS     12900 KiB
+  engine n=50     areas=50     echoed       VmRSS     18652 KiB
+  engine n=100    areas=100    start        VmRSS      2360 KiB
+  engine n=100    areas=100    established  VmRSS     23488 KiB
+  engine n=100    areas=100    echoed       VmRSS     34980 KiB
+  engine n=200    areas=200    start        VmRSS      2368 KiB
+  engine n=200    areas=200    established  VmRSS     44616 KiB
+  engine n=200    areas=200    echoed       VmRSS     67596 KiB
+  engine n=10000  areas=10000  start        VmRSS      2364 KiB
+  engine n=10000  areas=10000  established  VmRSS   2116568 KiB
+  engine n=10000  areas=10000  echoed       VmRSS   3265220 KiB
+
+KiB of RSS per connection (a client slot and a server slot), over RSS at start:
+| N | areas | established | echoed |
+|---|---|---|---|
+| 50 | 50 | 210.8 | 325.8 |
+| 100 | 100 | 211.3 | 326.2 |
+| 200 | 200 | 211.2 | 326.1 |
+| 10000 | 10000 | 211.4 | 326.3 |
+  engine n=50     areas=50     start        VmRSS      2516 KiB
+  engine n=50     areas=50     established  VmRSS      3236 KiB
+  engine n=50     areas=50     echoed       VmRSS      3320 KiB
+  engine n=100    areas=100    start        VmRSS      2384 KiB
+  engine n=100    areas=100    established  VmRSS      3884 KiB
+  engine n=100    areas=100    echoed       VmRSS      3968 KiB
+  engine n=200    areas=200    start        VmRSS      2396 KiB
+  engine n=200    areas=200    established  VmRSS      5172 KiB
+  engine n=200    areas=200    echoed       VmRSS      5256 KiB
+  engine n=10000  areas=10000  start        VmRSS      2556 KiB
+  engine n=10000  areas=10000  established  VmRSS    130732 KiB
+  engine n=10000  areas=10000  echoed       VmRSS    131128 KiB
+
+KiB of RSS per connection (a client slot and a server slot), over RSS at start:
+| N | areas | established | echoed |
+|---|---|---|---|
+| 50 | 50 | 14.4 | 16.1 |
+| 100 | 100 | 15.0 | 15.8 |
+| 200 | 200 | 13.9 | 14.3 |
+| 10000 | 10000 | 12.8 | 12.9 |
+  engine n=10000  areas=64     start        VmRSS      2388 KiB
+  engine n=10000  areas=64     established  VmRSS    130572 KiB
+  engine n=10000  areas=64     echoed       VmRSS    130968 KiB
+
+KiB of RSS per connection (a client slot and a server slot), over RSS at start:
+| N | areas | established | echoed |
+|---|---|---|---|
+| 10000 | 64 | 12.8 | 12.9 |
+ALLDONE
