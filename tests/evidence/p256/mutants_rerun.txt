@@ -1,0 +1,6 @@
+# commit 0c5e1930a033de53cf0d94481b7ee395d5defbca; gram; the one survivor the full run did not argue, after the H check was widened
+scratch copy in /home/alpibru/p256/mut2/p256-mutants-1p7upfjs
+unmutated tree passes (172 s)
+  killed   sign: only the words the table used wiped   [tests]
+
+1 mutants: 1 killed, 0 survived, 0 did not build

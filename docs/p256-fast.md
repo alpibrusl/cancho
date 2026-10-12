@@ -1,6 +1,6 @@
 # `std.p256`: faster P-256 (#380, part of #378)
 
-> **Status: design (this commit), then built step by step; §9 is filled in as each step is measured.** The TLS performance
+> **Status: built; not independently reviewed (#209).** §1 is the profile that came first (the design was committed before the code); §2 to §7 are the design as built, §8 its gates, §9 what it costs, §10 what fell short. The TLS performance
 > work (#378) names P-256 as the largest single cost in a server handshake: `std.ecdsa_sign.sign` is 0.80 ms on an M4 and
 > 1.24 ms on the i7 of `gram`, OpenSSL's is 23 µs. `docs/ecdsa.md` §5.4 and `docs/ecdsa-sign.md` §9 said where the time goes
 > without measuring it. §1 measures it; §2 to §7 are the design that follows from the numbers; §8 is how it is checked.
@@ -14,7 +14,24 @@ All numbers `python3 scripts/p256_bench.py <driver>` (`tests/programs/p256_profi
 backend, one core. **Machines, with the load when measured:**
 
 - **M4**: Apple M4 Max, macOS 26, native arm64. Load average 4.8 (other agents building): the figures move about 10% between runs.
-- **Docker arm64**: the image `lexsys-hooks-env` on the same M4 Max, in Docker Desktop's 6-vCPU Linux VM. Load average 4.3.
+- **Instructions, which no load moves.** `scripts/tls_perf.py` (`docs/tls-performance.md` §6, which landed on `main` during this
+work) counts each primitive's instructions under valgrind. On `gram` (x86-64, valgrind 3.26) at this branch's head:
+
+| Operation (`tests/programs/tls_prims_bench.cho`) | `main` (the recorded baseline) | this branch | |
+|---|---|---|---|
+| `p256_public` | 23,446,022 | 1,197,245 | 19.6x fewer |
+| `p256_shared` | 23,449,254 | 5,002,771 | 4.7x |
+| `ecdsa_p256_sign` | 25,330,450 | 1,630,478 | 15.5x |
+| `ecdsa_p256_sign_checked` | 50,575,425 | 5,126,392 | 9.9x |
+| `ecdsa_p256_verify` | 25,246,146 | 3,488,054 | 7.2x |
+
+These are the five entries of `benches/tls_baseline.json`'s `linux-x86_64` re-recorded in this change, as the guard asks of a
+primitive that got more than 1.3 times cheaper; the 28 other operations counted within 2% of their baseline and were left as
+they were. **The `linux-aarch64` entries were not re-recorded**: the Docker VM's disk was full and the compiler could not be rebuilt
+in it (a build of an older revision of this branch counted the same five about as many times fewer). A `check` on Linux aarch64
+will fail on those five until they are; CI runs the guard on x86-64 only.
+
+**Docker arm64**: the image `lexsys-hooks-env` on the same M4 Max, in Docker Desktop's 6-vCPU Linux VM. Load average 4.3.
 - **gram**: Intel Core i7-1260P (Alder Lake, performance core 2 of a hyper-threaded pair; `taskset -c 2`), Linux x86-64,
   the `powersave` governor. Load average 5 to 6 (a soak of another project on cores 8 to 15, other agents on 0-1, 4-5 and 6).
 
@@ -92,23 +109,42 @@ So of the 5-fold on the M4 (3.8-fold on the i7), about 2 is going from loops ove
   128-bit product and no carry flag. A limb product must fit 63 bits with room to add: the widest limb for a *fused* step
   is 30 bits (`docs/rsa.md` §2.1), and for a column sum of ten products, 28.
 - **No allocation per call**: `work` is the caller's `[int]`. A table the size of the generator's cannot be in `work`, because
-  the caller's `work` is zeroed after every call (§6) and filling it costs more than the signature. **A `static` can hold it**
+  the caller's `work` is zeroed after every call (§6) and filling it costs more than the signature. **A `static` holds it**
   (`docs/compile-time-data.md`): evaluated while compiling, read-only data in the binary, indexed like any slice. Built from a
   hex string by a loop, a 10,400-word static takes 0.14 s to compile and nothing at run time (measured).
+- **A function a `static` calls is emitted into every program built with `--std`**, used or not
+  (`modules::std_declarations_cost_nothing_unless_called` found it: the first version of the table module called a helper
+  to decode its hex digits). So the tables' bodies hold their literal and decode it inline, and `std` stays free when
+  unused. Found, and fixed here, not fixed in the compiler.
 - **A builtin for a wide multiply may land later** (#378, another change). Nothing here depends on it, and §4.2 says where it
   would be used.
 
-## 3. The plan, in the order that pays most per change
+## 3. The steps, and what each was worth
 
-| Step | What | Expected, from §1's measured parts |
-|---|---|---|
-| 1 | A P-256 field: ten limbs of 28 bits, straight-line kernels, lazy reduction (§4) | multiplication 115 → 23 ns on the M4: the ladder 767 → about 170 µs |
-| 2 | Arithmetic modulo n on the same kernels; inversion with the exponent's structure (§5) | inversions 94 → about 20 µs of a signature |
-| 3 | A fixed-base table for k·G, signed four-bit digits, no doublings (§6) | `public_key` and `sign`: 65 mixed additions instead of 320 operations: about 40 µs |
-| 4 | Verification: Shamir's trick with wNAF and the generator's odd multiples (§7) | the 192 expected additions of 16 multiplications become about 75 of 11 to 16: 1.3 times fewer multiplications on top of step 1 |
-| 5 | Cheaper additions and subtractions (§4.5), squarings, if they pay | whatever §9 measures |
+Each step was measured when it was built (M4, LLVM, `scripts/p256_bench.py`, load average 4 to 8, so each figure moves
+about 10%) and is kept because it paid. "Expected" is what this document's first commit computed from §1's parts.
 
-Each step is measured, and kept only if it pays (§9).
+| Step | What | Expected | Measured (cumulative) |
+|---|---|---|---|
+| 0 | `main` | | `public_key` 767, `shared` 779, `sign` 803, `verify` 827 µs |
+| 1 | Ten-limb 28-bit field, straight-line kernels, lazy reduction; the ladder on it (§4) | ladder 767 → about 170 µs | `shared` 161, `public_key` 162 µs; `sign` 229 µs |
+| 2 | Arithmetic modulo n on the same kernels (§5) | inversions 94 → about 20 µs | inversion mod p 6.1, mod n 9.8 µs; `sign` 183 µs |
+| 3 | Fixed-base table for k·G, signed four-bit digits (§6) | `public_key` about 40 µs | `public_key` 39.5, `sign` 62.7 µs |
+| 4 | Verification by wNAF, Shamir's trick, the generator's odd multiples (§7) | 1.3 times fewer multiplications on top of step 1 | `verify` 124 µs |
+| 5 | Slices for the operands (one bounds check, not ten), no copy loops, a projective final check | none computed | `shared` 141, `public_key` 34, `sign` 59, `verify` 105 µs |
+
+Every expectation held or was beaten: step 1 and step 3 within 3%, step 2 a little better, step 4 (computed 112 to 130 µs) at
+124. The issue's expectation (signing 3 to 4 times faster, verification about 2 times) was a fraction of what the field
+alone gives.
+
+*Tried and measured, not kept:*
+- **The special form on 30-bit limbs** (9 limbs, row by row): 27 ns a multiplication against 23 for 10×28 (§4.1).
+- **Checked arithmetic in the kernels**: 55 ns against 23 (M4), 65 against 44 (i7). The `wrapping_*` is proved (§4.3).
+- **A dedicated squaring**: 18 to 21 ns against 22 to 23 for a multiplication, kept (55 products against 100, but the
+  reduction and the carries are the same).
+- **Addition and subtraction without the carry pass** (timing only, wrong answers): an add and a subtract in 7 ns against 16.
+  Not built: it needs the bounds script to track limb widths as well as values, and the ladder's additions are a fifth of its
+  time, so it is worth at most 10% for a change to the part that must stay provable. Left as §10's first item.
 
 ---
 
@@ -139,7 +175,8 @@ limb's product (2^64) does not fit this language's signed 64-bit `int`.
 
 *Where a wide multiply would be used.* The product of two 28-bit limbs fits in `int`. A builtin giving the high and low
 halves of a 64×64 product would let the limbs be 64 bits (4 limbs, 16 products), and this module's kernels would be rewritten
-on it; nothing outside `std/p256_kernels.cho` (generated) would change.
+on it by changing the generator; nothing outside `std/p256_kernels.cho` (generated) would change, and its tests
+(`tests/vectors/p256.txt`) would be the check.
 
 ### 4.3 `wrapping_*`, and the proof that it cannot wrap
 
@@ -148,101 +185,282 @@ branch after every addition and multiplication, and §1.2 measured it at 2.4 tim
 here are `wrapping_*` because **the generator computes, column by column, the largest value the accumulator can hold when every
 limb is at its maximum (2^28 − 1) and refuses to write the file if any reaches 2^63**. The largest is 2^60.0 (the multiplication
 modulo n, column 9). So the `wrapping_*` is a statement about code that is straight-line and has no data dependence: the same
-bound holds for every input. A wrong bound is a failed generation. `std.field25519` made the same choice (its header). Everything
-else in `std.p256` is checked arithmetic.
+bound holds for every input. A wrong bound is a failed generation. And it is tested at the bound: `tests/vectors/p256.txt` has the
+four kernels on operands of 280 bits with every limb 2^28 − 1 and other extreme limb patterns, against the exact
+identity (x·y + m·p) / R in Python. `std.field25519` made the same choice (its header). Everything else in `std.p256` is checked
+arithmetic.
 
 Invariants, stated in `std/p256_kernels.cho`'s header and checked by `scripts/p256_bounds.py` against every formula:
 - every input is tight (limbs below 2^28) and every output is tight;
-- `mul` and `sqr` accept inputs up to 4096 p and answer below 1.001 p;
+- `mul` and `sqr` answer below p + x·y/R: under 2 p for inputs whose product is below 2^24 p² (4096 p each), and under 1.001 p
+  when both are below 128 p, which is every input the formulas give (§4.4: at most 66 p). *Corrected in review: this line said "inputs up to 4096 p, answer below 1.001 p", which holds only for the second case.*
 - `add(x, y)` answers x + y, tight, not reduced;
-- `sub(x, y)` answers x − y + 32 p, for y below 32 p, tight; it needs no mask, no branch, no borrow handling: every limb of
-  the constant is above 2^28, so no limb goes negative before the carry pass;
+- `subK(x, y)` answers x − y + K p, for y below K p, K = 2, 4, 8, 16, 32 or 64, tight; it needs no mask, no branch, no borrow
+  handling: every limb of the constant is above 2^28, so no limb goes negative before the carry pass;
 - an element stays below 2^280, which is 16 million p.
 
 ### 4.4 No reductions inside the formulas
 
-The formulas of `docs/ecdh.md` §2 add and subtract between multiplications, up to six deep. With R = 2^280, the values stay
-below 100 p. `scripts/p256_bounds.py` parses each formula's source, propagates an upper bound through every `p256.mul`, `sqr`,
-`add` and `sub`, and fails if a multiplication input exceeds 4096 p, a subtrahend 32 p, or a value 2^280. The only full
-reductions are at the end: `from_mont`, which multiplies by 1 (the result is at most p) and subtracts p once under a mask
-(`value_barrier`, `docs/value-barrier.md`), for the output of an operation and for the one comparison that needs an exact value.
+The formulas of `docs/ecdh.md` §2 add and subtract between multiplications, up to six deep. `scripts/p256_bounds.py` parses each
+formula's source (`add_points`, `mixed_add`, `double_point`, the Jacobian `double`, `add_jac`, `madd`, the final check, the
+curve equation), propagates an upper bound through every `p256.mul`, `sqr`, `add`, `copy` and `subK`, and fails if a
+multiplication input exceeds 4096 p, a subtrahend exceeds its K, or a value 2^280. Functions whose outputs feed each other's
+inputs form a group, and the script finds the smallest bound B such that every output is at most B when every input is: 5 p for
+the complete formulas of the ladder and the table, 32 p for the Jacobian ones (the largest product is 4,356 p², against a limit
+of 16.7 million, the largest value 66 p against 16.7 million). With `--rewrite` it also chooses each bare `p256.sub`'s K. The only
+full reductions are `from_mont`, which multiplies by 1 (the result is at most p) and subtracts p once under a mask
+(`value_barrier`, `docs/value-barrier.md`), for the output of an operation and for the comparisons that need an exact value.
 
 ### 4.5 Additions and subtractions
 
-Measured with the multiplication at 23 ns: an addition and a subtraction take 8 to 9 ns each on the M4, in a dependent chain:
-ten limbs and a carry pass. With 1.6 per multiplication they would be 35% of the ladder's time (§1.1: 65 µs of 161 µs after
-step 1). Two ways to reduce that, tried after the steps above and kept if they pay: fewer (the formulas have chains such as
-x + x + x); and carries only where a multiplication needs tight limbs (a sum of two tight limbs is below 2^29, and
-`scripts/p256_bounds.py` would then track the limb bound as well as the value's).
+An addition or subtraction is ten limbs and a carry pass, 5 to 8 ns on the M4. With 1.6 of them for every multiplication they
+are about a fifth to a third of the ladder's time (§3 lists the carry-free version as measured and not built).
 
 ---
 
-## 5. Inversion
+## 5. Inversion and the group order
 
 Fermat's a^(p−2) and a^(n−2), the exponents public, so their windows may be read from memory. Fixed four-bit windows over the
 exponent's nibbles: 252 squarings, 14 multiplications for the table and one per nonzero nibble (31 for p − 2, whose runs of
-zeros are long, 53 for n − 2). Measured on the M4 after step 1: p 6.1 µs, n 9.8 µs. An addition chain exploiting the runs of
-ones in p − 2 would save about 33 multiplications (0.8 µs of 6): not worth its code until the rest is cheap, and §9 says whether
-it is then.
+zeros are long, 53 for n − 2). Measured on the M4: p 5.7 µs, n 10.1 µs (against 43.7 and 50.2). An addition chain exploiting the
+runs of ones in p − 2 would save about 33 multiplications (0.8 µs of 6): not worth its code.
+
+Signing's `s = k⁻¹ (e + r·d) mod n` is `smul`, `sadd`, `sinvert` and the conversions on the same kernels with n's constants: no
+second Montgomery implementation.
 
 ## 6. Fixed-base multiplication by the generator
 
-**Signed four-bit digits and a table of every digit at every position.** k = Σ dᵢ·16ⁱ, dᵢ in [−8, 8], 65 digits (the recoding
-carries: a nibble above 8 becomes negative and adds one to the next). The table holds (j+1)·16ⁱ·G for i in 0..64, j in 0..7: 520
-affine points, in Montgomery form, 83 KB as a `static` of 10,400 words. **k·G is then the sum of 65 table entries, no doubling
-at all**, each a mixed (affine) addition, RCB algorithm 5, 11 multiplications.
+**Signed four-bit digits and a table of every digit at every position.** k = Σ dᵢ·16ⁱ, dᵢ in [−7, 8], 65 digits (the recoding
+carries: a nibble above 8 becomes negative and adds one to the next; *corrected in review from "[−8, 8]": −8 never occurs, 8 does*). The table holds (j+1)·16ⁱ·G for i in 0..64, j in 0..7: 520
+affine points, in Montgomery form, 83 KB as a `static` of 10,400 words (`std/p256_comb.cho`, 79 KB of hex). **k·G is then the
+sum of 65 table entries, no doubling at all**, each a mixed (affine) addition, RCB algorithm 5, 11 multiplications.
 
 **Constant time, for the secret k:**
-- the digit's sign and magnitude come from arithmetic (a shift and an xor), not a comparison;
+- the recoding is arithmetic on the nibbles (`(v + 7) >> 4`), no comparison;
+- a digit's sign and magnitude come from a shift and an xor, the masks through `value_barrier`;
 - **the entry is chosen by reading all eight under masks**, each ORed in under a mask that is all ones for the one wanted
-  (`docs/ecdh.md` §2), the masks through `value_barrier`; no address depends on the digit. Each of the 65 positions is
-  a different part of the table, so the position is public and only the entry within it is secret;
-- the sign is applied by selecting between y and −y under a mask, never by a branch;
-- **a zero digit** adds a dummy and keeps the old sum by a mask: the same operations whatever the digit;
-- the formulas are complete (RCB), so the sum being equal to the entry, or the point at infinity, needs no case.
+  (`docs/ecdh.md` §2); no address depends on the digit. Each of the 65 positions is a different part of the table, so the
+  position is public and only the entry within it is secret;
+- the sign is applied by selecting between y and 2p − y under a mask, never by a branch;
+- **a zero digit** adds a dummy, the position's first entry (16ⁱ·G, a point of the curve), and keeps the old sum under a mask:
+  the same operations whatever the digit, and never zero operands. *Corrected in review: the first version added an all-zero
+  entry. That was the same instructions, but zero operands are what `docs/ecdh.md` §3 measured leaking through data-dependent
+  timing (|t| = 16 on the M4); a scalar whose digits are all zero but the top one is now one of the timing tests (§8.3).*
+- the formulas are complete, so a sum equal to the entry, or the point at infinity, needs no case.
 
-The table is a **`static`**, generated by `scripts/p256_tables.py` into `std/p256_comb.cho` from Python's integers and checked
-against OpenSSL's point arithmetic (`--check` fails when the file is stale). It is built at compile time and costs nothing at
-run time. That is what the language allows without allocation per call.
-
-**Expected** (M4, from §1 and step 1): 65 × (11 multiplications × 23 ns + 23 additions or subtractions × 8.5 ns + a select of
-8 × 20 words) ≈ 65 × 0.5 µs = 33 µs, plus the inversion 6 µs: `public_key` about 40 µs, against 160 after step 1 and 767 now.
+The table is generated by `scripts/p256_tables.py` from Python's integers and checked against OpenSSL's scalar multiplication
+(552 points, `--check`); the file's currency is a test.
 
 ## 7. Verification
 
-Public data, so variable time is allowed. `u1·G + u2·Q` with one doubling chain (Shamir), **wNAF**: u1 in width 7 against a
-table of the generator's odd multiples 1G, 3G, …, 63G (32 affine points, a `static`, ≈ 1/8 of the bits nonzero, mixed
-additions); u2 in width 5 against 1Q, 3Q, …, 15Q, built per call (7 additions and a doubling). Jacobian coordinates and the
-doubling of `ecdsa.double` (8 multiplications) with its explicit cases for infinity and equal points as `std.ecdsa` has them. About 256 doublings and 75 additions,
-against 256 and 192 now; the two inversions (mod n for u1, u2; mod p for the x coordinate) as in §5. P-384 verification is unchanged:
-it stays on `std.bigmod` (§10).
+Public data, so variable time is allowed. u1·G + u2·Q with one doubling chain (Shamir), **wNAF**: u1 in width 7 against a table of
+the generator's odd multiples 1G, 3G, …, 63G (32 affine points, the second `static`; ≈ 1/8 of the bits nonzero, mixed
+additions); u2 in width 5 against 1Q, 3Q, …, 15Q built per call (7 additions and a doubling). Jacobian coordinates with the
+doubling of dbl-2001-b (8 multiplications), add-2007-bl and madd-2007-bl, and the cases they do not cover (an equal pair, an
+opposite pair) handled by the caller of the formula, as `std.ecdsa` did; whether a lazy value is zero modulo p is asked of its
+reduced form, whether the sum is the point at infinity is a flag. About 256 doublings and 75 additions, against 256 and 192
+before. **The final check has no inversion**: x = X/Z² equals r modulo n when X = r·Z², or X = (r+n)·Z² when r + n < p (a case
+with probability 2^-128 that no real signature reaches, so `check_x` and vectors test it on its own). The inversion mod n for
+u1 and u2 stays. P-384 verification is unchanged: it stays on `std.bigmod` (§10).
+
+---
 
 ## 8. Constant time, and the gates
 
-**Every function that handles a secret, and why it is constant time** (the audit of the x86-64 object is §9):
+### 8.1 The argument, function by function
 
-| Function | Secret | Why |
+| Function | Secret | Why it is constant time |
 |---|---|---|
-| `p256_kernels.mul_*`, `sqr_*`, `add`, `sub` | the operands | straight-line, every loop unrolled: no branch, no index |
+| `p256_kernels.mul_*`, `sqr_*`, `add`, `sub_K` | the operands | straight-line, every loop unrolled: no branch, no index |
 | `p256_kernels.canon_*` | the value | the borrow over ten limbs, then the subtraction under a mask through `value_barrier` |
 | `p256.load`, `store` | a scalar's bytes | the limb a byte lands in, and whether it straddles two, depend on its position; no range check (the caller made a constant-time one) |
-| `p256.invert`, `sinvert` | the operand | the exponent p − 2 or n − 2 is public; a window of zero is skipped because the *exponent's* is zero |
+| `p256.invert`, `sinvert` (`pow`) | the operand | the exponent p − 2 or n − 2 is public; a window of zero is skipped because the *exponent's* is zero |
+| `p256.is_zero` | the value | every limb ORed, one branch on the answer (it used to stop at the first nonzero limb; `affine` asks of a secret's Z) |
 | `p256_pt.select`, `multiply` | the scalar | as `docs/ecdh.md` §2: all sixteen entries read under masks, complete formulas |
-| the comb (§6) | k | above |
+| `p256_pt.recode`, `comb_multiply` | k | §6 |
 | `ecdsa_sign.finish` | d, k | `load`, `sto_mont`, `sinvert`, `smul`, `sadd` as above; `is_zero` of r and s is on public values (`docs/ecdsa-sign.md` §2.1) |
+| `p256_vf.*` | none | public data; nothing here is constant time |
 
-**Gates**, all of them, on every step: the vectors byte for byte (RFC 6979 A.2.5; `ecdsa_sign_differential.py` `openssl` and
-`reference` at 10,000; `ecdsa_differential.py`; `ecdh_differential.py`; the key parser; Wycheproof and CAVP); the x509 matrix and the TLS
-suites that use these; new differentials of the field (`scripts/p256_field_differential.py`) and of the table; mutants of the
-new code; `scripts/ecdh_timing.py` and `scripts/ecdsa_sign_timing.py` at 10^6 measurements with |t| < 4.5 on `gram`; the audit of
-the x86-64 object; costs before and after on all three machines, in this document and as a comment on #378.
+What stays variable time, all of it on public values, is what `docs/ecdh.md` §2 listed: the peer's point checks, the infinity test of
+the result (which a valid input never reaches), the exponents, the scalar range check's answer.
 
-## 9. Results
+### 8.2 The audit of the x86-64 object
 
-*(Filled in as each step is measured; §1 is the "before" of every row.)*
+`scripts/chacha20_branches.py` over the objects of `tests/programs/ecdh_timing.cho` and `ecdsa_sign_timing.cho` (LLVM, on
+`gram`), every non-trap conditional jump read in the disassembly (`scripts/p256_ctx.py` prints each with the instructions
+before it): 69 non-trap jumps in all (`ecdh.o`) and every one read. None tests a secret.
+- **Loop counters, lengths and the code of a call** (`cmp $K,%reg` against 8, 20, 30, 65, 0x40, a slice's length): `select`,
+  `multiply`, `comb_multiply`, `recode`, `base_multiply`, `point_multiply`, `store`, `load`, `wipe`, `check_p256`.
+- **`p256.load` and `p256.store`'s `cmp $0x15,%rcx; jb`**: `off > 20`, a byte's position in its limb.
+- **`p256.pow`**: the `started` flag, `scalar` (which field), and `nib != 0`: all of the public exponent.
+- **`comb_multiply`'s one `test %cl,%cl; je`** is not a branch on a digit: `cl` is `setb`/`setb`/`and` of two *pointer* comparisons,
+  the overlap test LLVM makes before it vectorises the masked OR loop (the entry in `work` against the row of the static).
+  The mask in the loop is `and`/`or` on `xmm` registers.
+- **`cmovb`, `cmovne`, `cmovae`, `cmovle`**: `max(len - 0x370, 0)` and similar lengths, the hexadecimal digit of a curve constant, and
+  `check_p256`'s answer of `in_range` (a public result of a constant-time comparison, as `docs/ecdh.md` §3).
+- **`affine`'s `cmpq $0x0,...; jne` chain** was `is_zero` stopping at the first nonzero limb of a secret's Z: a leak of the position of
+  the first nonzero limb, at probability 2^-28 a limb. It is now an OR of all ten limbs and one branch on the answer (§8.1).
+- **`p256_kernels.*`** (mul, sqr, add, sub_K, canon): no conditional jump except the overflow and bounds checks to `ud2`; `canon_*` has
+  none and its mask is `value_barrier`'s.
+- **`ecdsa_sign.finish`**: `is_zero` of r and of s (public once sent) and `store`'s loop; `sign`: the lengths, the attempt counter and the codes
+  of public checks.
 
-## 10. Not done
+*Re-read after the review's fixes (commit 3b71b529, `ecdh_timing.cho` and `ecdsa_sign_timing.cho` again):* `comb_multiply` now
+has five non-trap jumps: the counters of its three loops (`cmp $0x8`, `$0x14`, `$0xf0`, then the position), and the overlap test,
+now `test %sil,%sil` after the same two `setb` and an `and`. The dummy's selection, `eq_mask(j + 1, mag) | eq_mask(j, 0) &
+eq_mask(mag, 0)`, compiled to `lea`/`and`/`or`/`sar`, no branch; the one `test %cl,%cl; jne` beside it goes to `ud2` (a hoisted
+overflow check, `seto`). The length checks added to `base_multiply`, `point_multiply` and `finish` compare lengths. `finish` and
+`sign` otherwise as above; `sign`'s new `test $K,%r9; jne` is the wipe loop's remainder (it now zeroes all of `work`).
 
-- P-384: it stays on `std.bigmod`. The kernels are generated, so a 14-limb P-384 field would be a generator parameter; no
-  program in this repository signs or exchanges on P-384 in a hot path (`docs/tls-server.md` §6: 6 ms a handshake is the
-  P-384 client's choice, not the server's).
+### 8.3 Timing: dudect on `gram`
+
+*Which code was timed.* The branch was squashed to two commits before merging, because `scripts/history.py --explain` (the
+stability plateau) replays every revision of every `std/` file and the development's intermediate ones would not read today. The
+commits the evidence names (3b71b529 timed, d0b35f70 and 0c5e1930 mutated) are kept on the branch `p256-faster-unsquashed`; the
+blobs of every file they timed and mutated (`std/p256*.cho`, `ecdh`, `ecdsa`, `ecdsa_sign`, `bigmod`, `hmac`, `crypto`, and
+`tests/programs/ecdh_timing.cho` and `ecdsa_sign_timing.cho`) are byte for byte this commit's: `git diff 3b71b529 <head> -- <file>`
+is empty for each, and `p256_kernels.cho` is blob 258095cda311, `p256_pt.cho` 320680bcc0ba, `ecdsa_sign.cho` b643f7c30b13.
+
+**The runs, raw:** `tests/evidence/p256/raw_public_key.txt`, `raw_shared.txt` and `raw_sign.txt`, each with its header: the commit
+timed (3b71b529; `git diff 3b71b529 HEAD -- std tests/programs` is empty), the machine, the governor, and the load at its start and
+end. Intel Core i7-1260P, Linux x86-64, LLVM backend, `rdtscp`; `taskset -c 2-3` (one physical core, both of its threads, for the
+script and the program it runs); **the governor of cpu2 and cpu3 set to `performance` for the runs and back to `powersave` after**.
+The machine was shared with other jobs on its other cores: **load average 4.3 to 8.0** during the runs (the headers have each). The
+classes are interleaved within each batch, so what that load does to the time it does to both; it is why the medians move between
+tests run at different times. Fixed against random, 10^6 measurements a test, batches of 50,000. **The gate is |t| < 4.5.**
+
+| Function | Test | Measurements | Median (TSC cycles) | max \|t\| |
+|---|---|---|---|---|
+| `ecdh.public_key` P-256 (the table) | scalar 1 against random | 1,000,000 | 181,964 | **2.21** |
+| | a fixed scalar against random | 1,000,000 | 182,481 | **1.85** |
+| | scalar 0x88..88 (every digit 8) against random | 1,000,000 | 325,371 | **2.21** |
+| | scalar n − 1 (every digit carried) against random | 1,000,000 | 306,205 | **2.32** |
+| | scalar 16^63 (every digit zero but the top: the dummy added 64 times, the sum at infinity throughout) against random | 1,000,000 | 330,297 | **2.18** |
+| `ecdh.shared` P-256 (the ladder) | scalar 1 against random | 1,000,000 | 978,555 | **1.73** |
+| | a fixed scalar against random | 1,000,000 | 785,486 | **1.78** |
+| | scalar 16^63 against random | 1,000,000 | 799,812 | **1.70** |
+| `ecdsa_sign.sign` | a fixed key against random | 1,000,000 | 253,981 | **2.40** |
+| | the key 1 against random | 1,000,000 | 260,715 | **2.25** |
+
+All ten pass. *Corrected in review:* the first runs of this section were at the `powersave` governor, of code two commits older than
+the head they were reported for (a commit had since changed `p256.init` and the constants' layout), and their output was not
+committed; their figures (all |t| ≤ 2.07) are replaced by these. **Not timed: Cranelift, and Apple silicon on either backend.**
+`docs/tls-assurance.md` §6.1 found scalar 1 failing on the M4 for both backends through the CPU's data-dependent timing (Arm's DIT
+bit off); nothing here changes that, and the new P-256 code was not run there.
+
+### 8.4 Mutants
+
+`python3 scripts/p256_mutants.py`, on `gram` (Linux x86-64, `taskset -c 2,3`, pyca/cryptography 46 and `openssl` 3.0.13), at commit
+d0b35f70 (the code of the head; the commits since change the driver, the vectors and documents). The raw output is
+`tests/evidence/p256/mutants.txt`. **125 mutants: 116 killed, 9 survived, 0 failed to build.**
+
+- **Eight survivors are argued equivalent** in `EQUIVALENT` (each argument is printed beside it in the output): `(v + 8) >> 4` in the
+  recoding; the infinity test of `affine` (no valid input reaches it); the wNAF window threshold (the window is odd, the threshold
+  even); the early carry (it lands in bits that are skipped); `load_q`'s `k/2` for `(k-1)/2` (k is odd); u1's digits at width 5 (still
+  in the table); the fast path skipped (the old path agrees, which is itself a check); `sfrom_mont` unreduced (n·G = O).
+- **One was a test gap:** `sign` zeroing only the table's 980 words of `work`. The driver's check looked at those words only; it now
+  checks all of `work` after `sign`, and the mutant run alone is killed (`tests/evidence/p256/mutants_rerun.txt`, commit 0c5e1930).
+
+*Corrected in review:* this section said the run was in the arm64 container and on `gram` both. The first full run (127 mutants,
+111 killed) was in the container; it found the gaps since closed (the top limb of `is_zero`, the wipes, an equivalent straddle offset
+I had written); its output was not kept. The run above is the one this section reports, and the review's "r not reduced mod n" is
+now killed by `ecdsa_sign.finish` called with x in [n, p).
+
+### 8.5 Vectors and differentials
+
+- **Every existing vector, byte for byte:** RFC 6979 A.2.5 on both backends; Wycheproof (`ecdh_secp256r1_ecpoint`, 355 cases; ECDSA,
+  1,370 valid and 1,728 invalid); NIST CAVP KAS and SigVer; the key-parser files; the x509 matrix; the TLS suites of `cargo test`.
+- **`tests/vectors/p256.txt`** (1,823 cases, both backends, in `cargo test`): the field and group-order arithmetic against Python's
+  integers; k·G of 100-odd edge and random scalars (8 and 9 in every nibble, n − 1, 2^255, the refusals of 0, n and 2^256 − 1); the
+  wNAF digit for digit; signatures crafted for chosen u1 and u2 under the keys 1, 2, n − 1 and a random one, so that Shamir's trick
+  adds equal and opposite points and reaches infinity (`-40`), with u1 = 0 too; r and s at the edges of the limb representation;
+  the final check of `r + n`; the four kernels at the worst case of their accumulators; `ecdsa_sign.finish` with x in [n, p),
+  which no real k·G reaches; every new public entry point given wrong lengths, which must answer its code and not trap.
+- **Python, uncapped** (`scripts/p256_field_differential.py <driver> 20000`): 276,671 cases on LLVM, 41,693 on Cranelift, 0 differences.
+- **OpenSSL on `gram`** (Linux x86-64, pyca/cryptography 46, OpenSSL 3.5.5 behind it and `openssl` 3.0.13 on the command line):
+  `ecdsa_sign_differential.py openssl` **10,000 signatures accepted by both, 10,000 flipped refused by both, 0 differences**;
+  `reference` (RFC 6979 in Python, byte for byte) 10,000, 0 differences; `keys` 100 keys, 600 checks, 0 differences;
+  `ecdsa_differential.py openssl` 4,000, `registers` 20,000, 0 differences; `ecdh_differential.py` 1,000 key pairs a curve, 4,200
+  checks, 0 differences.
+
+### 8.6 What it found
+
+- **A `static`'s callee is emitted into every program** (§2).
+- **The lazy zero:** a lazy element has several representations of zero (0, p, 2p), so `bigmod`'s `is_zero` idiom is wrong on it;
+  the Jacobian formulas ask the reduced form, and a mutant that skipped the reduction (`sfrom_mont` unreduced) survived every vector, including the digests 0 and n: the value n instead of 0 reaches
+  the wNAF, which turned out harmless (n·G is the point at infinity) and is now argued equivalent.
+- **The equal mutants:** a byte's offset in a limb is a multiple of 4, so "straddles when the offset is above 20" and "above 21" are
+  the same test (an equivalent mutant I wrote and the run reported).
+- **Two lines of the first design were wrong:** the duplication test found `eq_mask` and `copy_point` copied between files, and
+  the formatting test found that `cancho fmt` drops parentheses the generators had written.
+
+## 9. Cost
+
+`python3 scripts/p256_bench.py <after> --vs <before> ...`: each driver run alternately five times for every operation, the best of five of each,
+LLVM backend, one core, minus the run of one round. `<before>` is `tests/programs/p256_profile_before.cho` built by `main`'s compiler
+(the worktree `origin/main` at the base of this PR), `<after>` is `p256_profile.cho` built by this branch's.
+
+**Apple M4 Max, macOS 26, native arm64** (load average 12.7 to 13.5, other jobs building; three passes, the median shown, passes within 3%):
+
+| Operation | before | after | |
+|---|---|---|---|
+| field multiplication mod p | 117 ns | 20 ns | 5.8x |
+| field squaring mod p | 117 ns | 19 ns | 6.1x |
+| addition + subtraction mod p | 36 ns | 13 ns | 2.7x |
+| inversion mod p | 44.4 µs | 5.8 µs | 7.7x |
+| inversion mod n | 51.9 µs | 10.0 µs | 5.2x |
+| multiplication mod n | 112 ns | 32 ns | 3.5x |
+| `ecdh.public_key` (k·G) | 768 µs | 34.6 µs | **22x** |
+| `ecdh.shared` (k·P) | 755 µs | 138 µs | **5.5x** |
+| `ecdsa_sign.sign` | 820 µs | 59.2 µs | **13.8x** |
+| `ecdsa_sign.sign_checked` | 1,644 µs | 163.6 µs | **10.1x** |
+| `ecdsa.verify_raw` | 814 µs | 105.8 µs | **7.7x** |
+
+**Intel Core i7-1260P (`gram`), Linux x86-64, performance core 2 (`taskset -c 2`)**: the machine was shared with other jobs the whole
+time (load average 6 to 13, the core at 0.5 to 1.8 GHz under `powersave`, on a sibling thread busy with someone's build), so the absolute
+times of three passes ranged over a factor of 2 to 4. The ratio of each interleaved pair is steady, and is what is reliable; the times
+are the fastest of the three passes:
+
+| Operation | before | after | ratio (range of the three passes) |
+|---|---|---|---|
+| field multiplication mod p | 255 ns | 64 ns | 3.8 to 4.0x |
+| `ecdh.public_key` | 1,575 µs | 84 µs | 16.7 to 18.6x |
+| `ecdh.shared` | 2,052 µs | 577 µs | 3.6 to 4.2x |
+| `ecdsa_sign.sign` | 1,716 µs | 124 µs | 13.6 to 14.5x |
+| `ecdsa_sign.sign_checked` | 3,508 µs | 379 µs | 8.6 to 9.3x |
+| `ecdsa.verify_raw` | 1,742 µs | 258 µs | 5.9 to 7.0x |
+
+An earlier, quieter minute (load 5.8, `docs/p256-fast.md` §1's first table) gave `main` at 1,143 µs for `public_key`, 1,240 µs for `sign` and
+1,231 µs for `verify`; the prototype multiplication on that machine was 44 ns against 167 ns generic. So an unloaded i7 signs in about
+a tenth of 1.24 ms by the ratio, which is not a measurement. **Not measured on a quiet core: it was not available.**
+
+**Docker arm64** (the image `lexsys-hooks-env`, a 6-vCPU Linux VM on the same M4 Max): `main` before, measured early (load 4.3):
+`public_key` 757 µs, `shared` 746, `sign` 808, `sign_checked` 1,631, `verify` 848, multiplication 114 ns, inversions 44.7 and 50.1 µs. The
+**after** was not measured: the VM's disk filled (other jobs' images; 63 GB of 90, 36 GB of volumes) while the mutant run was in it,
+and no container could start. What ran in it before that: the whole `cargo test --workspace --no-fail-fast` of this branch, Linux
+aarch64, **627 passed and 2 failed** (`project::a_compiler_other_than_the_one_named_is_refused` and
+`vcs_remote::a_lock_holds_a_commit_and_never_a_name`, which need a git checkout the container does not have: the worktree's `.git`
+points outside it); every p256, ecdh, ecdsa and tls test passed. The M4 above is the same CPU natively.
+
+**For reference**, OpenSSL 3.0.13 on `docs/ecdsa-sign.md` §7's i7: `ecdsap256` signs in 23 µs and `docs/ecdsa.md` §5.4's Xeon verifies in 75 µs. Against
+those, on the M4 (not the same machine): signing is 2.6 times OpenSSL's time, down from 36 times (a different machine, so indicative).
+
+**The check after signing (`docs/tls-server.md` §3.3), re-measured.** `sign_checked` less `sign` is 104 µs on the M4: the check is now
+64% of the combined cost, where it was 49% (it was equal to the signature on the i7). Re-measured after the review's fixes (`sign` now zeroes all of `work`, 9,593 words; the comb's dummy is a point): `sign` 58.9 µs,
+`sign_checked` 164 µs, `public_key` 35.5 µs, the same within the noise. A full handshake that signs and checks now spends
+164 µs there, where it spent 1.64 ms. The check stays, as the design decided: a fault during signing leaks the key, 104 µs is 0.1 ms of a
+handshake whose other costs are the TLS engine's, and it is verification alone that is now the larger half.
+
+## 10. Not done, fell short, not verified
+
+- **Carry-free addition and subtraction** (§3): at most 10% of the ladder; it needs the bounds script to track limb widths.
+- **P-384** stays on `std.bigmod`: its field would be 15 limbs of 28 bits (225 products) and a table twice the size; the kernels
+  are generated, so it is a generator parameter, but no program here signs or exchanges on P-384 in a hot path
+  (`docs/tls-server.md` §6: 6 ms a handshake is the P-384 client's choice, not the server's).
+- **Against OpenSSL**: signing is still about 2.5 times its time (23 µs on the i7 of `docs/ecdsa-sign.md` §7 against §9's figure), and
+  the ladder (`shared`) about five times; both are field-multiplication bound at 20 ns, and OpenSSL's are assembly with a 64-bit
+  multiply.
+- **Not timing-tested:** `p256_vf` (public data) and the key parser (as before). Cranelift was not timed (`docs/ecdh.md` §3 found its
+  P-384 noisy; P-256 was not re-run on it here).
+- **Not independently reviewed** (#209), and not run: the server interop matrix of `docs/tls-server.md` §10.2 needs the container of
+  `scripts/interop/server.Dockerfile` with Go, wolfSSL and mosquitto; CI's `tls-assurance` job runs it (see the PR).

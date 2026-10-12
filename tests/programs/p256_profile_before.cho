@@ -2,7 +2,7 @@
 // `rounds` times, for `scripts/p256_bench.py`. Standard input is one line,
 // `<op> <rounds>`.
 //
-//     m  bigmod.mul, a  bigmod.add, s  bigmod.sub (mod p, in registers)
+//     m  bigmod.mul, q  its square, p  bigmod.add then bigmod.sub (mod p, in registers)
 //     i  bigmod.inverse mod p,  n  bigmod.inverse mod n
 //     g  ecdh.public_key,  h  ecdh.shared,  k  ecdsa_sign.sign,  c  sign_checked,  v  ecdsa.verify_raw
 import std.bigmod;
@@ -58,8 +58,8 @@ fn work_loop[&w, &o](op: int, rounds: int, w: &!w [int], out: &!o [byte]) -> [] 
         let shared = alloc_slice[r](32, byte_of(0));
         ecdh.public_key(256, key, point, w);
         ecdsa_sign.sign(digest, key, extra, sig, w);
-        if op == 109 || op == 97 || op == 115 || op == 105 || op == 110 {
-            if op == 110 {
+        if op == 109 || op == 113 || op == 112 || op == 105 || op == 110 || op == 111 {
+            if op == 110 || op == 111 {
                 bigmod.setup(n, w);
             } else {
                 bigmod.setup(p, w);
@@ -73,10 +73,13 @@ fn work_loop[&w, &o](op: int, rounds: int, w: &!w [int], out: &!o [byte]) -> [] 
         while k < rounds {
             if op == 109 {
                 bigmod.mul(w, bigmod.reg(0), bigmod.reg(1), bigmod.reg(0));
-            } else if op == 97 {
+            } else if op == 113 {
+                bigmod.mul(w, bigmod.reg(0), bigmod.reg(0), bigmod.reg(0));
+            } else if op == 112 {
                 bigmod.add(w, bigmod.reg(0), bigmod.reg(1), bigmod.reg(0));
-            } else if op == 115 {
                 bigmod.sub(w, bigmod.reg(0), bigmod.reg(1), bigmod.reg(0));
+            } else if op == 111 {
+                bigmod.mul(w, bigmod.reg(0), bigmod.reg(1), bigmod.reg(0));
             } else if op == 105 || op == 110 {
                 bigmod.inverse(w, bigmod.reg(0), bigmod.reg(0));
             } else if op == 103 {
@@ -96,7 +99,7 @@ fn work_loop[&w, &o](op: int, rounds: int, w: &!w [int], out: &!o [byte]) -> [] 
             }
             k = k + 1;
         }
-        if op == 109 || op == 97 || op == 115 || op == 105 || op == 110 {
+        if op == 109 || op == 113 || op == 112 || op == 105 || op == 110 || op == 111 {
             bigmod.store_reg(w, bigmod.reg(0), out[0..32]);
         }
     }

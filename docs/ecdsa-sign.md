@@ -271,6 +271,9 @@ replaced by `bignum.zero` (the duplication check found it a copy), stood at the 
 
 ## 7. Cost
 
+*Corrected (#380, `docs/p256-fast.md` §9): `sign` is **59 µs** on the M4 (820 µs before) and 124 µs on the loaded i7 (1,716 µs interleaved; 1.47 ms in the table below), `sign_checked` 164 µs; the two items §9 lists as not done are done. The table below is `main` before.*
+
+
 `python3 scripts/ecdsa_sign_bench.py <driver>`: 2,000 signatures with random keys and digests, best of three runs, minus a
 run of as many DER encodings for the driver's own reading and printing. LLVM backend, one core:
 
@@ -300,7 +303,7 @@ inversion and the two `bigmod.setup`s are the rest. OpenSSL's `openssl speed ecd
 ## 9. Not done
 
 - **A fixed-base table for k·G** and **arithmetic specialised to P-256's prime**: the two speed-ups `docs/tls-server.md` §8
-  step 7 names. The ladder is the variable-base one with G as its point.
+  step 7 names. *Done (#380, `docs/p256-fast.md`): the table is `std.p256_comb`, the arithmetic `std.p256`, s = k⁻¹(e + r·d) is on the same kernels, and §2.2's `load_secret` is `std.p256.load`, which does the same by position.*
 - **P-384, Ed25519 and RSA-PSS signing**: `docs/tls-server.md` §8 step 7, each with its own timing test.
 - **A timing test of the key parser**: §4.3 says why it is audited only.
 - **Zeroing that a test could see.** The wipes of §3 are best effort and no test reads `work` after `sign`; a mutant that
