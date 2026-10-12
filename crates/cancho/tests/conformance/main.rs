@@ -93,6 +93,7 @@ mod project;
 mod refusals;
 mod release;
 mod rsa;
+mod satisfy;
 mod selfhost;
 mod signals;
 mod sockets;
