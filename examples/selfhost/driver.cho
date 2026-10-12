@@ -106,20 +106,38 @@ fn init_statics[&i, &s](io: &!i Io, st: &!s [int]) -> [io_write] int {
 fn compile[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte]) -> [io_write] int {
     var item = st[15];
     var entry = 0;
+    var entry_item = 0 - 1;
+    // What the code is not written for is left out; a call to it then does not link, which is how a
+    // program learns of it. Its place is said in a comment of the module.
+    var left_out = 0;
     while item >= 0 {
         if ast.is_kind(st, item, kinds.NK::IStatic) {
-            if body.check_static(st, text, item) != 0 {
+            let mark = st[44];
+            let status = body.check_static(st, text, item);
+            if status == 1 {
                 return refusal(io, st);
+            }
+            if status == 2 {
+                st[44] = mark;
+                emit.static_stub(st, item);
+                left_out = left_out + 1;
             }
         }
         if ast.is_kind(st, item, kinds.NK::IFn) {
-            if body.check_function(st, text, item) != 0 {
+            let mark = st[44];
+            let status = body.check_function(st, text, item);
+            if status == 1 {
                 return refusal(io, st);
             }
-            if pass1.is_word(st, text, ast.get(st, item, 4), "main") {
+            if status == 2 {
+                st[44] = mark;
+                left_out = left_out + 1;
+            } else if pass1.is_word(st, text, ast.get(st, item, 4), "main") {
                 entry = 2;
+                entry_item = item;
             } else if entry == 0 && pass1.is_word(st, text, ast.get(st, item, 4), "run") {
                 entry = 1;
+                entry_item = item;
             }
         }
         item = ast.next(st, item);
@@ -156,12 +174,19 @@ fn compile[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte]) -> [io_write]
     if entry == 2 {
         console.write_all(io, "define i32 @main(i32 %argc, ptr %argv) {\nentry:\n");
         init_statics(io, st);
-        console.write_all(io, "  %r = call i64 @lexs_main()\n  %status = trunc i64 %r to i32\n  ret i32 %status\n}\n");
+        console.write_all(io, "  %r = call i64 @lexs_");
+        console.print_nat(io, entry_item);
+        console.write_all(io, "()\n  %status = trunc i64 %r to i32\n  ret i32 %status\n}\n");
     } else if entry == 1 {
         console.write_all(io, "define i32 @main(i32 %argc, ptr %argv) {\nentry:\n");
         init_statics(io, st);
-        console.write_all(io, "  %r = call i64 @lexs_run()\n  %status = trunc i64 %r to i32\n  ret i32 %status\n}\n");
+        console.write_all(io, "  %r = call i64 @lexs_");
+        console.print_nat(io, entry_item);
+        console.write_all(io, "()\n  %status = trunc i64 %r to i32\n  ret i32 %status\n}\n");
     }
+    console.write_all(io, "; left out: ");
+    console.print_nat(io, left_out);
+    console.newline(io);
     return 0;
 }
 
@@ -273,13 +298,13 @@ fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: int) -
             f = f + 1;
         }
         var size = ast.size_for(tokens, files);
-        if mode == 4 {
+        if mode == 3 || mode == 4 {
             size = size + ast.emit_size(tokens);
         }
         let state = box_slice(heap, size, 0);
         borrow mut state as &!b in {
             let st = contents(b);
-            if mode == 4 {
+            if mode == 3 || mode == 4 {
                 ast.layout_emit(st, tokens, files);
             } else {
                 ast.layout(st, tokens, files);

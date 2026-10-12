@@ -16,6 +16,7 @@
 
 use super::*;
 
+mod bootstrap;
 mod cases;
 mod compile;
 use cases::BODY_EDGE;

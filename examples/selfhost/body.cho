@@ -792,7 +792,7 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
             ast.fail(st, rules.r_skip(), from, to);
             return 2;
         }
-        emit.header_start(st, text, ast.get(st, fn_item, 4), ret);
+        emit.header_start(st, fn_item, ret);
         k = 0;
         p = ast.get(st, fn_item, 7);
         while p >= 0 {

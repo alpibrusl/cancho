@@ -1259,7 +1259,7 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         if result != 1 && result != 5 && !scope.aggregate_codable(st, result) && !scope.slice_codable(st, result) {
             return skip(st, from, to);
         }
-        let answer = emit.call(st, text, callee, result, st[52] - first_arg);
+        let answer = emit.call(st, found, result, st[52] - first_arg);
         if types.is_slice_ref(st, result) {
             return in_slice(result, answer, st[59], 0);
         }

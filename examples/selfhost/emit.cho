@@ -736,13 +736,13 @@ pub fn push_arg[&s](st: &!s [int], ty: int, known: bool, value: int, reg: int) -
 
 // The call of `name`, the identifier at token `name` of `text`, to the last `n` arguments pushed,
 // returning `ret`; answers the temporary of the result.
-pub fn call[&s, &x](st: &!s [int], text: &x [byte], name: int, ret: int, n: int) -> [] int {
+pub fn call[&s](st: &!s [int], callee: int, ret: int, n: int) -> [] int {
     let first = st[52] - n;
     let result = start(st);
     str(st, "call ");
     ret_type(st, ret);
     str(st, " @lexs_");
-    slice(st, text, ast.tstart(st, name), ast.tend(st, name));
+    nat(st, callee);
     str(st, "(");
     var i = 0;
     while i < n {
@@ -1003,6 +1003,17 @@ pub fn static_header[&s](st: &!s [int], item: int) -> [] int {
     str(st, "define void @sinit");
     nat(st, item);
     str(st, "(");
+    return 0;
+}
+
+// A static the code is not written for: a global that is never read and an initialiser that does nothing.
+pub fn static_stub[&s](st: &!s [int], item: int) -> [] int {
+    aim(st, 0);
+    str(st, "@sd");
+    nat(st, item);
+    str(st, " = internal global { ptr, i64 } zeroinitializer\ndefine void @sinit");
+    nat(st, item);
+    str(st, "() {\n  ret void\n}\n\n");
     return 0;
 }
 
@@ -1486,15 +1497,15 @@ pub fn stderr_write[&s](st: &!s [int]) -> [] int {
 
 // ----------------------------------------------------------------------- functions ---
 
-// The head of a function goes to the output at once: `define <ret> @lexs_<name>(`, then one
+// The head of a function goes to the output at once: `define <ret> @lexs_<n>(`, `n` the function's node, which no other function shares, then one
 // `header_param` for each parameter and a `header_end`. Its body and `alloca`s wait in their buffers
 // until `finish`.
-pub fn header_start[&s, &x](st: &!s [int], text: &x [byte], name: int, ret_ty: int) -> [] int {
+pub fn header_start[&s](st: &!s [int], item: int, ret_ty: int) -> [] int {
     aim(st, 0);
     str(st, "define ");
     ret_type(st, ret_ty);
     str(st, " @lexs_");
-    slice(st, text, ast.tstart(st, name), ast.tend(st, name));
+    nat(st, item);
     str(st, "(");
     return 0;
 }

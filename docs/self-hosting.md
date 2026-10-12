@@ -226,7 +226,8 @@ the stages found, in place, the way this document corrects its own claims.
 | 4j. `static` tables: `static name: [T] { .. alloc_slice[static](n, fill) .. return t; }` of whole numbers, bytes and booleans, and the name used as a shared reference to the slice, in the checker (20 new cases) and in the code | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho`, `driver.cho` | the Rust compiler: the checker by answers (1,965 cases), the code by what the built programs do | **Tenth slice of the backend, and a checker rule.** 382 builds run and compared, 15 of them new, 78 trap; none different. The library's skipped functions go from 641 to 612 |
 | 4k. Functions that return a slice, and sub-slices `s[a..b]` of whole numbers, bytes and booleans | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho` | the Rust compiler, by what the built programs do | **Eleventh slice of the backend.** 404 builds run and compared, 22 of them new, 84 trap; none different. The census: 529 of the compiler's own 548 functions get code (488 before) |
 | 4l. Structs and enums whose fields and payloads are structs, enums or a `Box[[T]]` (and `res` ones, `std.buffer`'s `Buffer`), destructuring a struct of the file, a field of a `res` type read through a reference as a borrow, byte parameters and results, and the builtins `wrapping_*`, `copy_into`, `index_of_byte`, `getchar`, `write_err` | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho`, `types.cho` | the Rust compiler, by what the built programs do | **Twelfth slice of the backend.** 424 builds run and compared, 20 of them new, 85 trap; none different. The census: **558 of the compiler's own 558 functions get code, and all 39 of `std.bytes`/`buffer`/`io`** |
-| 4m. The rest: several files and the modules' names (what the census cannot show), `alloc` of one value, generics, tuples, `clang` run by the compiler itself, then the bootstrap | not started | | |
+| 4m. Several files, and the bootstrap: a function is named by its node (`@lexs_<n>`), so two modules may have a function of one name; what the code is not written for is left out and a comment says how many; `compiler.cho` is the compiler for a program of several files | `driver.cho`, `emit.cho`, `body.cho`, `compiler.cho`, `bootstrap.rs` | **the compiler against itself**: built by Rust, it compiles its own source to IR, `clang` builds that, and the result compiles the same source to the same IR | **The fixed point.** 100,409 lines of IR, 637 functions, byte for byte the same from the compiler Rust built and from the one it built; 55 functions left out, all of `std.math`, which nothing calls. The checker built by the second compiler agrees with the Rust oracle on 1,980 of 1,980 cases |
+| 4n. What is not done: `alloc` of one value, generics, tuples, floats, sockets and threads in the code; `clang` run by the compiler itself; evaluating a `static` while compiling instead of at start; a compiler that checks as fully as the Rust one (633 functions of the library are still `SKIP` in the checker) | not started | | |
 
 **The method.** A port that builds no tree has nothing to compare, and one that does
 needs a printer, which is another port. So stage 2's parser wrote the tree the Rust parser
@@ -670,6 +671,31 @@ descriptor 2). The census, rerun: **558 of 558** of the compiler's functions and
 `std.bytes`/`buffer`/`io`. That is the end of what the census can see and the start of what it cannot: a
 function that calls another module's, two modules that each have a function of one name, and a whole
 program built into a binary.
+
+**Stage 4m: several files, and the fixed point.** A function was named in the code by its identifier, which two
+modules may share (`ast.get` and `lexcore.get` would both be `@lexs_get`); it is now named by the number of its
+node in the tree, `@lexs_<n>`, which nothing else shares, and a call names the node it resolved to. A
+function the code is not written for is no longer a refusal of the program: it is left out, with its body
+rolled back from the output and a comment at the end of the module (`; left out: 55`) saying how many, and a
+call to it does not link, which is how a program learns. A static that is left out gets a stub.
+`compiler.cho` is the compiler for a program of several files (`drive(world, 3, true)`), and the first try
+was to give it its own source and the `std` modules it imports, in the stream `driver.cho` reads:
+
+* the compiler built by Rust (the *first*) wrote 100,409 lines of IR, 637 functions, for it;
+* `clang -O1` built that without a word, 343 KB: the *second*, which no Rust compiler took part in;
+* the second, given the same stream, wrote the same IR, byte for byte (`shasum` equal); `clang` builds that
+  too, and the third writes it again. `bootstrap.rs` is that test (5.5 seconds);
+* the checker (`bodies.cho`) built by the second compiler agrees with the Rust oracle on 1,980 of 1,980
+  cases, as the one Rust built does.
+
+What this is and is not. It is a compiler, written in the language, that is a fixed point of itself on its
+own source. It is not yet the end of `epic #295`: `clang` is still run by hand (or by the test), the first
+compiler is still built by Rust, the 55 functions left out are `std.math`'s (floating point), a program that
+needs generics, tuples, floats, sockets or threads in the code is not one this compiler can build, a `static`
+is evaluated when the program starts and not while compiling, and the checker part is a port of what the
+Rust checker does for 80% of the library only (the rest is `SKIP`, which in compile mode means the
+program is trusted to have been checked). The compiler trusts a program that Rust has checked; it
+does not yet replace Rust as the thing that says a program is wrong.
 
 The mutation test of `types.cho` (54 operator swaps) killed 40 on the first corpus of 458 targeted
 body cases (after region-variable, `where`-closure and coercion cases were added; 33 before); the 14
