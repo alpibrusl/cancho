@@ -173,9 +173,13 @@ pub fn llvm_type[&s](st: &!s [int], ty: int) -> [] int {
     if types.is_named(st, ty) {
         let item = types.named_item(st, ty);
         if ast.is_kind(st, item, kinds.NK::IEnum) {
-            return enum_type(st, item);
+            return enum_type(st, ty);
         }
-        return struct_type(st, item);
+        return struct_type(st, ty);
+    }
+    if types.is_tvar(st, ty) && types.shallow(st, ty) != ty {
+        // A type a variable of the call has been solved to.
+        return llvm_type(st, types.shallow(st, ty));
     }
     return str(st, "i64");
 }
@@ -183,11 +187,11 @@ pub fn llvm_type[&s](st: &!s [int], ty: int) -> [] int {
 // A plain struct is an LLVM aggregate of its fields, `{ i64, i1 }`: one value, so it is stored,
 // loaded, passed and returned like a whole number, and its fields are `insertvalue` and
 // `extractvalue` (or an address and a load or store, behind a reference).
-pub fn struct_type[&s](st: &!s [int], item: int) -> [] int {
+pub fn struct_type[&s](st: &!s [int], ty: int) -> [] int {
     str(st, "{ ");
-    var f = ast.get(st, item, 8);
+    var f = ast.get(st, types.named_item(st, ty), 8);
     while f >= 0 {
-        llvm_type(st, field_scalar(st, f));
+        llvm_type(st, field_scalar(st, f, ty));
         f = ast.next(st, f);
         if f >= 0 {
             str(st, ", ");
@@ -197,8 +201,8 @@ pub fn struct_type[&s](st: &!s [int], item: int) -> [] int {
 }
 
 // The type of the field declared by node `f`: a scalar tag, a struct or an enum, a box.
-pub fn field_scalar[&s](st: &!s [int], f: int) -> [] int {
-    return types.node_type(st, ast.get(st, f, 5));
+pub fn field_scalar[&s](st: &!s [int], f: int, ty: int) -> [] int {
+    return types.node_type(st, ast.get(st, f, 5), ty);
 }
 
 // The field of `item` at position `index`, by its declaration node.
@@ -237,22 +241,22 @@ pub fn insert_at[&s](st: &!s [int], ty: int, acc: int, index: int, fty: int, kno
 // The struct value `acc` (or `undef`) with field `index` set to the operand.
 pub fn insert_field[&s](st: &!s [int], ty: int, acc: int, index: int, known: bool, value: int, reg: int) -> [] int {
     let item = types.named_item(st, ty);
-    let fty = field_scalar(st, field_node(st, item, index));
+    let fty = field_scalar(st, field_node(st, item, index), ty);
     return insert_at(st, ty, acc, index, fty, known, value, reg);
 }
 
 // An enum is an aggregate of its tag and, one after the other, the payloads of every variant:
 // `{ i64, i64, i1 }` for `A(int)` and `B(bool)`. Only the tag and the payloads of the variant it
 // names mean anything. The tag is the variant's position.
-pub fn enum_type[&s](st: &!s [int], item: int) -> [] int {
+pub fn enum_type[&s](st: &!s [int], ty: int) -> [] int {
     str(st, "{ i64");
-    var v = ast.get(st, item, 8);
+    var v = ast.get(st, types.named_item(st, ty), 8);
     while v >= 0 {
         var p = ast.get(st, v, 5);
         var n = ast.get(st, v, 6);
         while n > 0 {
             str(st, ", ");
-            llvm_type(st, types.node_type(st, p));
+            llvm_type(st, types.node_type(st, p, ty));
             p = ast.next(st, p);
             n = n - 1;
         }
@@ -816,13 +820,14 @@ pub fn push_arg[&s](st: &!s [int], ty: int, known: bool, value: int, reg: int) -
 
 // The call of `name`, the identifier at token `name` of `text`, to the last `n` arguments pushed,
 // returning `ret`; answers the temporary of the result.
-pub fn call[&s](st: &!s [int], callee: int, ret: int, n: int) -> [] int {
+pub fn call[&s](st: &!s [int], callee: int, inst: int, ret: int, n: int) -> [] int {
     let first = st[52] - n;
     let result = start(st);
     str(st, "call ");
     ret_type(st, ret);
     str(st, " @lexs_");
     nat(st, callee);
+    instance_suffix(st, inst);
     str(st, "(");
     var i = 0;
     while i < n {
@@ -1838,12 +1843,22 @@ pub fn answer_enum[&s](st: &!s [int], ty: int, kind: int, v: int) -> [] int {
 // The head of a function goes to the output at once: `define <ret> @lexs_<n>(`, `n` the function's node, which no other function shares, then one
 // `header_param` for each parameter and a `header_end`. Its body and `alloca`s wait in their buffers
 // until `finish`.
-pub fn header_start[&s](st: &!s [int], item: int, ret_ty: int) -> [] int {
+// `i<n>` after a function's name, for the instance `n - 1` of a generic one (`inst` is 0 for the others).
+pub fn instance_suffix[&s](st: &!s [int], inst: int) -> [] int {
+    if inst > 0 {
+        str(st, "i");
+        nat(st, inst - 1);
+    }
+    return 0;
+}
+
+pub fn header_start[&s](st: &!s [int], item: int, inst: int, ret_ty: int) -> [] int {
     aim(st, 0);
     str(st, "define ");
     ret_type(st, ret_ty);
     str(st, " @lexs_");
     nat(st, item);
+    instance_suffix(st, inst);
     str(st, "(");
     return 0;
 }

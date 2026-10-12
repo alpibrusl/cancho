@@ -29,6 +29,7 @@ import selfhost.listing;
 import selfhost.checker;
 import selfhost.body;
 import selfhost.emit;
+import selfhost.instances;
 import selfhost.pass1;
 import selfhost.runtime;
 import selfhost.kinds;
@@ -175,6 +176,30 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
             }
         }
         item = ast.next(st, item);
+    }
+    // The generic functions called, each at the types it was asked for; a call from one can ask for more.
+    var instance = 0;
+    while instance < instances.count(st) {
+        let mark = st[44];
+        instances.begin(st, instance);
+        let status = body.check_function(st, text, instances.item_of(st, instance));
+        instances.end(st);
+        if status == 1 {
+            return 1;
+        }
+        if status == 2 {
+            st[44] = mark;
+            left_out = left_out + 1;
+            emit.aim(st, 0);
+            emit.str(st, "; instance ");
+            emit.nat(st, instance);
+            emit.str(st, " left out at ");
+            emit.nat(st, st[4]);
+            emit.str(st, " ");
+            emit.nat(st, st[5]);
+            emit.str(st, "\n");
+        }
+        instance = instance + 1;
     }
     emit.aim(st, 0);
     if entry != 0 {

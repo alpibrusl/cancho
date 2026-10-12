@@ -140,6 +140,16 @@ pub fn make_named[&s](st: &!s [int], item: int) -> [] int {
     return make(st, named_kind(), item, 0, 0);
 }
 
+// A struct or an enum with type arguments (one or two): `Option[int]`, `Pair[A, B]`.
+pub fn make_named_args[&s](st: &!s [int], item: int, a: int, b: int) -> [] int {
+    return make(st, named_kind(), item, a, b);
+}
+
+// Argument `k` of a named type, or 0 if it has none there.
+pub fn named_arg[&s](st: &!s [int], ty: int, k: int) -> [] int {
+    return slot(st, ty, 2 + k);
+}
+
 // A rigid type parameter of the function being checked, by its position.
 pub fn make_param[&s](st: &!s [int], index: int) -> [] int {
     return make(st, param_kind(), index, 0, 0);
@@ -194,6 +204,16 @@ fn occurs[&s](st: &!s [int], tv: int, ty: int) -> [] bool {
     if is_box(st, t) {
         return occurs(st, tv, box_inner(st, t));
     }
+    if is_named(st, t) {
+        var j = 0;
+        while j < 2 {
+            let x = named_arg(st, t, j);
+            if x != 0 && occurs(st, tv, x) {
+                return true;
+            }
+            j = j + 1;
+        }
+    }
     if is_tuple(st, t) {
         var k = 0;
         while k < tuple_size(st, t) {
@@ -221,6 +241,13 @@ pub fn resolve_type[&s](st: &!s [int], ty: int) -> [] int {
     }
     if is_box(st, t) {
         return make_box(st, resolve_type(st, box_inner(st, t)));
+    }
+    if is_named(st, t) && named_arg(st, t, 0) != 0 {
+        var b = named_arg(st, t, 1);
+        if b != 0 {
+            b = resolve_type(st, b);
+        }
+        return make_named_args(st, named_item(st, t), resolve_type(st, named_arg(st, t, 0)), b);
     }
     if is_tuple(st, t) {
         let c = tuple_size(st, t) == 3;
@@ -271,18 +298,18 @@ pub fn boxslice_element[&s](st: &!s [int], ty: int) -> [] int {
 // The type a resolved type node stands for in a declaration -- a field, a payload -- when code is
 // written for it: a whole number, byte or boolean (its tag), a struct or an enum of the file, or a
 // `Box[[T]]` of those scalars; else 0.
-pub fn node_type[&s](st: &!s [int], node: int) -> [] int {
+pub fn node_type[&s](st: &!s [int], node: int, ctx: int) -> [] int {
     if ast.is_kind(st, node, kinds.NK::TTuple) {
         let n = ast.get(st, node, 7);
         if n != 2 && n != 3 {
             return 0;
         }
         let first = ast.get(st, node, 6);
-        let a = node_type(st, first);
-        let b = node_type(st, ast.next(st, first));
+        let a = node_type(st, first, ctx);
+        let b = node_type(st, ast.next(st, first), ctx);
         var c = 0;
         if n == 3 {
-            c = node_type(st, ast.next(st, ast.next(st, first)));
+            c = node_type(st, ast.next(st, ast.next(st, first)), ctx);
         }
         if a == 0 || b == 0 || n == 3 && c == 0 {
             return 0;
@@ -296,8 +323,40 @@ pub fn node_type[&s](st: &!s [int], node: int) -> [] int {
     if kind == 0 {
         return ast.get(st, node, 10);
     }
+    if kind == 1 {
+        // A type parameter: of the declaration the node is in (the arguments of the type `ctx`), or of the
+        // function being compiled -- the variables of the call whose signature this is, or the instance.
+        let k = ast.get(st, node, 9);
+        if ctx >= 0 {
+            return shallow(st, named_arg(st, shallow(st, ctx), k));
+        }
+        if st[31] >= 0 {
+            return st[31] + k;
+        }
+        if st[63] > 0 {
+            return env_arg(st, k);
+        }
+        return 0;
+    }
     if kind == 3 {
-        return make_named(st, ast.get(st, node, 9));
+        let item = ast.get(st, node, 9);
+        let n = ast.get(st, node, 7);
+        if n == 0 {
+            return make_named(st, item);
+        }
+        if n > 2 {
+            return 0;
+        }
+        let head = ast.get(st, node, 6);
+        let a = node_type(st, head, ctx);
+        var b = 0;
+        if n == 2 {
+            b = node_type(st, ast.next(st, head), ctx);
+        }
+        if a == 0 || n == 2 && b == 0 {
+            return 0;
+        }
+        return make_named_args(st, item, a, b);
     }
     if kind == 2 && ast.get(st, node, 9) != tables.prelude_box() {
         // A capability or a handle or a prelude enum written in a declaration, narrowed to a literal or not.
@@ -312,7 +371,7 @@ pub fn node_type[&s](st: &!s [int], node: int) -> [] int {
     if kind == 2 && ast.get(st, node, 9) == tables.prelude_box() && ast.get(st, node, 7) == 1 {
         let arg = ast.get(st, node, 6);
         if ast.is_kind(st, arg, kinds.NK::TSlice) {
-            let element = node_type(st, ast.get(st, arg, 6));
+            let element = node_type(st, ast.get(st, arg, 6), ctx);
             if element == 1 || element == 2 || element == 5 {
                 return make_boxslice(st, element);
             }
@@ -320,12 +379,46 @@ pub fn node_type[&s](st: &!s [int], node: int) -> [] int {
         }
         // One value on the heap: a pointer, whatever it points at, so a type that holds itself through a
         // box is no recursion for the code.
-        let inner = node_type(st, arg);
+        let inner = node_type(st, arg, ctx);
         if inner != 0 {
             return make_box(st, inner);
         }
     }
     return 0;
+}
+
+// A struct or an enum with its type parameters standing for variables not yet solved: what a literal of
+// a generic declaration is until the values it holds, or the type it is expected to be, say.
+pub fn fresh_named[&s](st: &!s [int], item: int, n: int) -> [] int {
+    let a = fresh_tvar(st);
+    var b = 0;
+    if n == 2 {
+        b = fresh_tvar(st);
+    }
+    return make_named_args(st, item, a, b);
+}
+
+// The type the expression being written is expected to have, if the code knows: set by a `let` that
+// says a type and by a `return`, read by a literal of a generic declaration that has nothing else to learn its
+// parameters from (`Option::None`). 0 when there is none.
+pub fn hint[&s](st: &!s [int]) -> [] int {
+    if st[40] == 0 {
+        return 0;
+    }
+    return st[st[62] + ast.const_region() + 12];
+}
+
+pub fn set_hint[&s](st: &!s [int], ty: int) -> [] int {
+    if st[40] == 0 {
+        return 0;
+    }
+    st[st[62] + ast.const_region() + 12] = ty;
+    return 0;
+}
+
+// Argument `k` of the instance of a generic function being compiled (`instances.cho` keeps them).
+pub fn env_arg[&s](st: &!s [int], k: int) -> [] int {
+    return st[st[62] + ast.const_region() + 3 + k];
 }
 
 // `Box[T]`, one value of any type on the heap: a pointer in the code.
@@ -634,6 +727,19 @@ pub fn unify[&s](st: &!s [int], want: int, got: int) -> [] int {
         return unify(st, slice_element(st, expected), slice_element(st, found));
     }
     if is_named(st, expected) && is_named(st, found) && named_item(st, expected) == named_item(st, found) {
+        // The same declaration: its arguments, where it has any.
+        var k = 0;
+        while k < 2 {
+            let x = named_arg(st, expected, k);
+            let y = named_arg(st, found, k);
+            if x != 0 && y != 0 {
+                let r = unify(st, x, y);
+                if r != 0 {
+                    return r;
+                }
+            }
+            k = k + 1;
+        }
         return 0;
     }
     if is_param(st, expected) && is_param(st, found) && slot(st, expected, 1) == slot(st, found, 1) {
