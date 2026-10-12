@@ -24,7 +24,7 @@ enum Cap {
     Io,
 }
 
-struct Test {
+pub(crate) struct Test {
     /// The module it is declared in, empty for the root.
     module: Vec<String>,
     name: String,
@@ -114,7 +114,7 @@ fn classify(ast: &Ast, file: &str, decl: &FnDecl) -> Result<Vec<Cap>, Failure> {
     Ok(caps)
 }
 
-fn discover(inputs: &[PathBuf]) -> Result<Vec<Test>, Failure> {
+pub(crate) fn discover(inputs: &[PathBuf]) -> Result<Vec<Test>, Failure> {
     let mut tests = Vec::new();
     for input in inputs {
         let text = std::fs::read_to_string(input)
@@ -287,7 +287,7 @@ pub fn cmd_test(args: &[String]) -> Result<ExitCode, Failure> {
     result
 }
 
-fn run_all(
+pub(crate) fn run_all(
     dir: &Path,
     inputs: &[PathBuf],
     tests: &[Test],

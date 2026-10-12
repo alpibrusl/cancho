@@ -65,6 +65,7 @@ EDGE = {
     "effects": 'fn f() -> [io_write, ffi("libc"), fs_read("x\\n")] int { return 0; }',
     "edition_ok": "edition 7;\nfn f() -> [] int { return 1; }",
     "edition_8": "edition 8;\nfn f() -> [] int { return 1; }",
+    "edition_9": "edition 9;\nfn f() -> [] int { return 1; }",
     "edition_0": "edition 0;\nfn f() -> [] int { return 1; }",
     "edition_big": "edition 99999999999999999999;\nfn f() -> [] int { return 1; }",
     "edition_word": "edition x;\nfn f() -> [] int { return 1; }",

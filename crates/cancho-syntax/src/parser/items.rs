@@ -37,13 +37,15 @@ impl<'a> Parser<'a> {
             // (`docs/native-sockets.md` §3); edition 6 is edition 5 plus
             // the signal capability (`docs/signals.md`); edition 7 is
             // edition 6 plus the capability to start a program
-            // (`docs/processes.md`). Nothing later than that exists to opt
-            // into yet.
-            if !(1..=7).contains(&value) {
+            // (`docs/processes.md`); edition 8 is edition 7 plus the
+            // serial-port capability (`docs/tty.md` §6); edition 9 is
+            // edition 8 plus the word-at-a-time scan (`docs/word-scan.md`).
+            // Nothing later than that exists to opt into yet.
+            if !(1..=9).contains(&value) {
                 return Err(Diagnostic::new(
                     Rule::UnknownEdition,
                     format!(
-                        "unknown edition {value}; the only editions today are 1, 2, 3, 4, 5, 6 and 7"
+                        "unknown edition {value}; the only editions today are 1, 2, 3, 4, 5, 6, 7, 8 and 9"
                     ),
                     keyword.span.to(tok.span),
                 ));
