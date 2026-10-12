@@ -1,0 +1,147 @@
+{
+ "machine": {
+  "arch": "aarch64",
+  "kernel": "6.8.0-100-generic",
+  "system": "Linux",
+  "thp": "madvise",
+  "load": [
+   2.48291015625,
+   2.75830078125,
+   2.8564453125
+  ]
+ },
+ "ops": {
+  "x25519_public/0": {
+   "ns": 32714,
+   "rounds": 16384
+  },
+  "x25519_shared/0": {
+   "ns": 25878,
+   "rounds": 16384
+  },
+  "p256_public/0": {
+   "ns": 34057,
+   "rounds": 16384
+  },
+  "p256_shared/0": {
+   "ns": 140380,
+   "rounds": 4096
+  },
+  "ecdsa_p256_verify/0": {
+   "ns": 108398,
+   "rounds": 4096
+  },
+  "ecdsa_p256_sign/0": {
+   "ns": 52978,
+   "rounds": 8192
+  },
+  "ecdsa_p256_sign_checked/0": {
+   "ns": 160156,
+   "rounds": 2048
+  },
+  "sha256/64": {
+   "ns": 554,
+   "rounds": 1048576
+  },
+  "sha256/1024": {
+   "ns": 4409,
+   "rounds": 131072
+  },
+  "sha256/16384": {
+   "ns": 66406,
+   "rounds": 8192
+  },
+  "sha384/64": {
+   "ns": 313,
+   "rounds": 1048576
+  },
+  "sha384/1024": {
+   "ns": 2288,
+   "rounds": 131072
+  },
+  "sha384/16384": {
+   "ns": 31982,
+   "rounds": 16384
+  },
+  "hmac_sha256/64": {
+   "ns": 1441,
+   "rounds": 262144
+  },
+  "hmac_sha256/1024": {
+   "ns": 5279,
+   "rounds": 65536
+  },
+  "hmac_sha256/16384": {
+   "ns": 66772,
+   "rounds": 8192
+  },
+  "hkdf_expand_label_32/0": {
+   "ns": 5050,
+   "rounds": 65536
+  },
+  "hkdf_extract_32/0": {
+   "ns": 1190,
+   "rounds": 262144
+  },
+  "aes128gcm_seal/64": {
+   "ns": 29,
+   "rounds": 16777216
+  },
+  "aes128gcm_seal/1024": {
+   "ns": 177,
+   "rounds": 2097152
+  },
+  "aes128gcm_seal/16384": {
+   "ns": 2449,
+   "rounds": 131072
+  },
+  "aes128gcm_open/64": {
+   "ns": 30,
+   "rounds": 16777216
+  },
+  "aes128gcm_open/1024": {
+   "ns": 177,
+   "rounds": 2097152
+  },
+  "aes128gcm_open/16384": {
+   "ns": 2464,
+   "rounds": 131072
+  },
+  "chacha20poly1305_seal/64": {
+   "ns": 635,
+   "rounds": 524288
+  },
+  "chacha20poly1305_seal/1024": {
+   "ns": 5340,
+   "rounds": 65536
+  },
+  "chacha20poly1305_seal/16384": {
+   "ns": 80566,
+   "rounds": 4096
+  },
+  "chacha20poly1305_open/64": {
+   "ns": 650,
+   "rounds": 524288
+  },
+  "chacha20poly1305_open/1024": {
+   "ns": 5371,
+   "rounds": 65536
+  },
+  "chacha20poly1305_open/16384": {
+   "ns": 80566,
+   "rounds": 4096
+  },
+  "aes128gcm_prepare/0": {
+   "ns": 1281,
+   "rounds": 262144
+  },
+  "hkdf_expand_label_48/0": {
+   "ns": 5218,
+   "rounds": 65536
+  },
+  "calibrate/0": {
+   "ns": 1293,
+   "rounds": 262144
+  }
+ }
+}

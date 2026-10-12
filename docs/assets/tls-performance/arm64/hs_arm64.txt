@@ -1,0 +1,35 @@
+Mon Oct 12 19:46:08 UTC 2026
+ 19:46:08 up 7 days, 55 min,  0 user,  load average: 2.00, 2.69, 2.40
+6.8.0-100-generic
+6
+perf counters: none; load (1.998046875, 2.69140625, 2.4033203125)
+-- round 1 of 3, load (1.998046875, 2.69140625, 2.4033203125)
+server-full cancho tls_echo                    11730 handshakes     0.408 ms CPU
+server-full openssl s_server                   17204 handshakes     0.191 ms CPU
+server-full openssl oserv                      18687 handshakes     0.141 ms CPU
+server-resumed cancho tls_echo --tickets 2     11250 handshakes     0.430 ms CPU
+server-resumed openssl s_server                17530 handshakes     0.204 ms CPU
+client-full cancho tls_many (200 less 1)         199 handshakes     0.634 ms CPU
+client-full openssl tconn                      17100 handshakes     0.280 ms CPU
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.299 ms CPU
+client-resumed openssl tconn                   17393 handshakes     0.278 ms CPU
+-- round 2 of 3, load (3.04345703125, 2.8583984375, 2.47998046875)
+server-full cancho tls_echo                    11993 handshakes     0.404 ms CPU
+server-full openssl s_server                   16886 handshakes     0.192 ms CPU
+server-full openssl oserv                      18726 handshakes     0.142 ms CPU
+server-resumed cancho tls_echo --tickets 2     10546 handshakes     0.455 ms CPU
+server-resumed openssl s_server                17750 handshakes     0.202 ms CPU
+client-full cancho tls_many (200 less 1)         199 handshakes     0.649 ms CPU
+client-full openssl tconn                      17266 handshakes     0.281 ms CPU
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.309 ms CPU
+client-resumed openssl tconn                   17750 handshakes     0.273 ms CPU
+-- round 3 of 3, load (3.39990234375, 3.005859375, 2.556640625)
+server-full cancho tls_echo                    11558 handshakes     0.427 ms CPU
+server-full openssl s_server                   16798 handshakes     0.195 ms CPU
+server-full openssl oserv                      18744 handshakes     0.144 ms CPU
+server-resumed cancho tls_echo --tickets 2     10593 handshakes     0.461 ms CPU
+server-resumed openssl s_server                17156 handshakes     0.206 ms CPU
+client-full cancho tls_many (200 less 1)         199 handshakes     0.699 ms CPU
+client-full openssl tconn                      16850 handshakes     0.284 ms CPU
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.313 ms CPU
+client-resumed openssl tconn                   17387 handshakes     0.280 ms CPU

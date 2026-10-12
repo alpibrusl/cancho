@@ -1,0 +1,36 @@
+ 19:33:46 up 7 days, 43 min,  0 user,  load average: 1.48, 1.67, 1.62
+machine: {"arch": "aarch64", "kernel": "6.8.0-100-generic", "system": "Linux", "thp": "madvise", "load": [1.4833984375, 1.66748046875, 1.62158203125]}
+operation                            size    ns/call  cycles/call   instr/call   IPC
+x25519_public                           0      31005                                
+x25519_shared                           0      24963                                
+p256_public                             0      32836                                
+p256_shared                             0     134765                                
+ecdsa_p256_verify                       0     104003                                
+ecdsa_p256_sign                         0      50781                                
+ecdsa_p256_sign_checked                 0     154296                                
+sha256                                 64        530                                
+sha256                               1024       4249                                
+sha256                              16384      63476                                
+sha384                                 64        307                                
+sha384                               1024       2201                                
+sha384                              16384      30273                                
+hmac_sha256                            64       1411                                
+hmac_sha256                          1024       5081                                
+hmac_sha256                         16384      64819                                
+hkdf_expand_label_32                    0       4417                                
+hkdf_extract_32                         0       1144                                
+aes128gcm_seal                         64         28                                
+aes128gcm_seal                       1024        171                                
+aes128gcm_seal                      16384       2311                                
+aes128gcm_open                         64         28                                
+aes128gcm_open                       1024        172                                
+aes128gcm_open                      16384       2334                                
+chacha20poly1305_seal                  64        616                                
+chacha20poly1305_seal                1024       5111                                
+chacha20poly1305_seal               16384      76904                                
+chacha20poly1305_open                  64        629                                
+chacha20poly1305_open                1024       5142                                
+chacha20poly1305_open               16384      78125                                
+aes128gcm_prepare                       0       1243                                
+hkdf_expand_label_48                    0       4608                                
+calibrate                               0       1251                                

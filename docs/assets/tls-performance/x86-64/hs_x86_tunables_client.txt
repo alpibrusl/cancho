@@ -1,0 +1,14 @@
+lun 12 oct 2026 21:40:12 CEST
+ 21:40:12 up 5 days, 10:59,  7 users,  load average: 2,05, 2,09, 1,97
+GLIBC_TUNABLES=glibc.malloc.trim_threshold=33554432:glibc.malloc.top_pad=1048576
+perf counters: user and kernel; load (2.05126953125, 2.09423828125, 1.9697265625)
+-- round 1 of 2, load (2.05126953125, 2.09423828125, 1.9697265625)
+client-full cancho tls_many (200 less 1)         199 handshakes     0.818 ms CPU    2.738 M cycles   11.011 M instructions
+client-full openssl tconn                      11874 handshakes     0.492 ms CPU    1.634 M cycles    3.363 M instructions
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.199 ms CPU    1.001 M cycles    3.589 M instructions
+client-resumed openssl tconn                   16983 handshakes     0.309 ms CPU    0.835 M cycles    1.651 M instructions
+-- round 2 of 2, load (2.10986328125, 2.103515625, 1.97705078125)
+client-full cancho tls_many (200 less 1)         199 handshakes     0.933 ms CPU    2.694 M cycles   10.872 M instructions
+client-full openssl tconn                       9409 handshakes     0.623 ms CPU    1.633 M cycles    3.363 M instructions
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.492 ms CPU    0.948 M cycles    3.338 M instructions
+client-resumed openssl tconn                   17657 handshakes     0.298 ms CPU    0.834 M cycles    1.653 M instructions

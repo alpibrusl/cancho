@@ -1,0 +1,43 @@
+ 21:56:00 up 5 days, 11:15,  6 users,  load average: 1,07, 1,27, 1,79
+-- record_cost
+seal     64       80    790
+seal   1024      252   4060
+seal  16384     2838   5771
+open     64       80    796
+open   1024      236   4321
+open  16384     2655   6169
+<not counted>,,cpu_atom/cycles/u,0,0.00,,
+71486896804,,cpu_core/cycles/u,17917054680,100.00,,
+17917.05,msec,task-clock:u,17917054680,100.00,,
+-- gcm_cost 16 hw
+seal     64       44   1436
+seal   1024      188   5425
+seal  16384     2664   6149
+open     64       45   1406
+open   1024      191   5340
+open  16384     2682   6107
+total 77216088064
+<not counted>,,cpu_atom/cycles/u,0,0.00,,
+70225563998,,cpu_core/cycles/u,17908417564,100.00,,
+17908.42,msec,task-clock:u,17908417564,100.00,,
+-- record_cost
+seal     64       86    740
+seal   1024      262   3896
+seal  16384     2957   5540
+open     64       82    776
+open   1024      242   4214
+open  16384     2693   6081
+<not counted>,,cpu_atom/cycles/u,0,0.00,,
+69172380205,,cpu_core/cycles/u,17901707032,100.00,,
+17901.71,msec,task-clock:u,17901707032,100.00,,
+-- gcm_cost 16 hw
+seal     64       45   1414
+seal   1024      192   5329
+seal  16384     2672   6131
+open     64       46   1388
+open   1024      193   5294
+open  16384     2703   6059
+total 76562825216
+<not counted>,,cpu_atom/cycles/u,0,0.00,,
+69510714145,,cpu_core/cycles/u,17905363112,100.00,,
+17905.36,msec,task-clock:u,17905363112,100.00,,

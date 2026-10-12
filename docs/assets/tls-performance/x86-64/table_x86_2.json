@@ -1,0 +1,215 @@
+{
+ "machine": {
+  "arch": "x86_64",
+  "kernel": "7.0.0-38-generic",
+  "system": "Linux",
+  "cpu": "12th Gen Intel(R) Core(TM) i7-1260P",
+  "governor": "powersave",
+  "thp": "madvise",
+  "load": [
+   2.41455078125,
+   2.79296875,
+   2.3798828125
+  ]
+ },
+ "ops": {
+  "x25519_public/0": {
+   "ns": 43579,
+   "rounds": 8192,
+   "cycles": 148944.9,
+   "instructions": 694025.1
+  },
+  "x25519_shared/0": {
+   "ns": 43090,
+   "rounds": 8192,
+   "cycles": 148784.1,
+   "instructions": 694025.1
+  },
+  "p256_public/0": {
+   "ns": 69091,
+   "rounds": 8192,
+   "cycles": 231690.5,
+   "instructions": 1197245.1
+  },
+  "p256_shared/0": {
+   "ns": 292968,
+   "rounds": 2048,
+   "cycles": 973106.0,
+   "instructions": 5002735.5
+  },
+  "ecdsa_p256_verify/0": {
+   "ns": 206054,
+   "rounds": 2048,
+   "cycles": 686794.9,
+   "instructions": 3488054.3
+  },
+  "ecdsa_p256_sign/0": {
+   "ns": 96679,
+   "rounds": 4096,
+   "cycles": 326630.1,
+   "instructions": 1630478.2
+  },
+  "ecdsa_p256_sign_checked/0": {
+   "ns": 301757,
+   "rounds": 1024,
+   "cycles": 1011349.1,
+   "instructions": 5116232.6
+  },
+  "sha256/64": {
+   "ns": 751,
+   "rounds": 524288,
+   "cycles": 2512.6,
+   "instructions": 15155.0
+  },
+  "sha256/1024": {
+   "ns": 6332,
+   "rounds": 65536,
+   "cycles": 20985.3,
+   "instructions": 122000.0
+  },
+  "sha256/16384": {
+   "ns": 93750,
+   "rounds": 4096,
+   "cycles": 318683.5,
+   "instructions": 1831520.1
+  },
+  "sha384/64": {
+   "ns": 442,
+   "rounds": 1048576,
+   "cycles": 1491.7,
+   "instructions": 8543.0
+  },
+  "sha384/1024": {
+   "ns": 3250,
+   "rounds": 131072,
+   "cycles": 10823.3,
+   "instructions": 58804.0
+  },
+  "sha384/16384": {
+   "ns": 45898,
+   "rounds": 8192,
+   "cycles": 151800.4,
+   "instructions": 824044.1
+  },
+  "hmac_sha256/64": {
+   "ns": 2037,
+   "rounds": 262144,
+   "cycles": 6702.6,
+   "instructions": 40162.0
+  },
+  "hmac_sha256/1024": {
+   "ns": 7492,
+   "rounds": 65536,
+   "cycles": 24836.3,
+   "instructions": 147007.0
+  },
+  "hmac_sha256/16384": {
+   "ns": 94726,
+   "rounds": 4096,
+   "cycles": 311316.3,
+   "instructions": 1856527.1
+  },
+  "hkdf_expand_label_32/0": {
+   "ns": 7125,
+   "rounds": 65536,
+   "cycles": 8832.4,
+   "instructions": 34537.0
+  },
+  "hkdf_extract_32/0": {
+   "ns": 1678,
+   "rounds": 262144,
+   "cycles": 5575.9,
+   "instructions": 33418.0
+  },
+  "aes128gcm_seal/64": {
+   "ns": 51,
+   "rounds": 8388608,
+   "cycles": 168.6,
+   "instructions": 738.0
+  },
+  "aes128gcm_seal/1024": {
+   "ns": 228,
+   "rounds": 2097152,
+   "cycles": 746.0,
+   "instructions": 3143.0
+  },
+  "aes128gcm_seal/16384": {
+   "ns": 3211,
+   "rounds": 131072,
+   "cycles": 10703.1,
+   "instructions": 43463.0
+  },
+  "aes128gcm_open/64": {
+   "ns": 51,
+   "rounds": 8388608,
+   "cycles": 170.4,
+   "instructions": 746.0
+  },
+  "aes128gcm_open/1024": {
+   "ns": 232,
+   "rounds": 2097152,
+   "cycles": 751.2,
+   "instructions": 3151.0
+  },
+  "aes128gcm_open/16384": {
+   "ns": 3227,
+   "rounds": 131072,
+   "cycles": 10642.6,
+   "instructions": 43471.0
+  },
+  "chacha20poly1305_seal/64": {
+   "ns": 791,
+   "rounds": 524288,
+   "cycles": 2433.5,
+   "instructions": 14602.0
+  },
+  "chacha20poly1305_seal/1024": {
+   "ns": 6454,
+   "rounds": 65536,
+   "cycles": 20170.5,
+   "instructions": 119047.0
+  },
+  "chacha20poly1305_seal/16384": {
+   "ns": 96435,
+   "rounds": 4096,
+   "cycles": 292298.0,
+   "instructions": 1790167.1
+  },
+  "chacha20poly1305_open/64": {
+   "ns": 797,
+   "rounds": 524288,
+   "cycles": 2471.1,
+   "instructions": 14964.0
+  },
+  "chacha20poly1305_open/1024": {
+   "ns": 6484,
+   "rounds": 65536,
+   "cycles": 20212.9,
+   "instructions": 119409.0
+  },
+  "chacha20poly1305_open/16384": {
+   "ns": 97412,
+   "rounds": 4096,
+   "cycles": 293353.0,
+   "instructions": 1790529.1
+  },
+  "aes128gcm_prepare/0": {
+   "ns": 1964,
+   "rounds": 262144,
+   "cycles": 6214.9,
+   "instructions": 36912.0
+  },
+  "hkdf_expand_label_48/0": {
+   "ns": 6881,
+   "rounds": 65536,
+   "cycles": 9023.2,
+   "instructions": 34935.0
+  },
+  "calibrate/0": {
+   "ns": 288,
+   "rounds": 1048576,
+   "cycles": 1000.2,
+   "instructions": 1007.0
+  }
+ }
+}

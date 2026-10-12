@@ -1,0 +1,56 @@
+11445 samples from 1 file(s)
+category                                                     share
+system calls (sockets, epoll)                               50.26%
+engine and event loop (parsing, copies, bookkeeping)        46.01%
+record AEAD, traffic-key setup                               2.06%
+not attributed (interrupts, samples with no stack)           0.92%
+memory: malloc, free, brk                                    0.75%
+
+inclusive share of the 40 most common frames named lexs_*:
+ 98.16%  lexs_https_loop.run
+ 98.16%  lexs_serve
+ 98.16%  lexs_main
+ 90.96%  lexs_https_loop.pump
+ 61.54%  lexs_https_loop.flush_touched
+ 48.55%  lexs_tls_front.flush_slot
+ 39.33%  lexs_std.conns.write
+ 17.20%  lexs_tls.settle
+ 14.64%  lexs_std.conns.read
+  9.56%  lexs_tls.recv
+  9.42%  lexs_tls.lease
+  9.06%  lexs_tls.core_out
+  8.59%  lexs_tls.take
+  7.16%  lexs_tls.feed
+  6.72%  lexs_tls.clear_area
+  6.06%  lexs_tls.send
+  4.47%  lexs_hello_app.handle
+  2.35%  lexs_tls_server.feed
+  1.85%  lexs_hello_app.answer_for
+  1.58%  lexs_tls_server.on_record
+  1.52%  lexs_http.server.output
+  1.51%  lexs_http.server.advance
+  1.44%  lexs_http.server.produce
+  1.22%  lexs_tls_client.send
+  1.19%  lexs_std.http.parse
+  1.17%  lexs_tls_slot.queue_record
+  1.14%  lexs_tls_record.seal
+  1.08%  lexs_http.server.deliver_to
+  1.01%  lexs_std.route.find
+  0.77%  lexs_http.server.room
+  0.66%  lexs_std.route.relation
+  0.62%  lexs_std.route.matches
+  0.60%  lexs_tls_record.open
+  0.59%  lexs_http.server.input
+  0.48%  lexs_http.server.reply_as
+  0.47%  lexs_std.http.respond_head_with
+  0.45%  lexs_std.gcm.seal_hardware
+  0.41%  lexs_tls.event
+  0.40%  lexs_std.gcm.open_hardware
+  0.24%  lexs_std.map.find_slot$int
+
+memory: 0.8% of the samples; in the `brk` system call 0.0%, in page faults 0.0%, under glibc's `systrim` (giving the top of the heap back) 0.0%, neither 0.8%
+the program's function nearest the allocator:
+  0.36%  lexs_tls_server.on_record
+  0.21%  lexs_tls_record.seal
+  0.10%  lexs_hello_app.answer_for
+  0.09%  lexs_tls_record.open

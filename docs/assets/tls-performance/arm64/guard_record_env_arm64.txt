@@ -1,0 +1,4 @@
+ 19:27:06 up 7 days, 36 min,  0 user,  load average: 2.17, 1.99, 1.63
+6
+Linux 397b4c2561c6 6.8.0-100-generic #100-Ubuntu SMP PREEMPT_DYNAMIC Tue Jan 13 16:39:21 UTC 2026 aarch64 aarch64 aarch64 GNU/Linux
+valgrind-3.22.0
