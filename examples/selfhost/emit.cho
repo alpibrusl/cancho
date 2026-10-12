@@ -20,12 +20,20 @@ module selfhost.emit;
 import selfhost.ast;
 import selfhost.kinds;
 import selfhost.types;
+import selfhost.prims;
+import selfhost.builtins;
 
 pub fn on[&s](st: &!s [int]) -> [] bool {
     return st[40] != 0;
 }
 
 // Write to buffer `target`.
+// Has a buffer of the code been written past its end? Each of the four holds `st[50]` bytes, and a byte
+// past the end of one is in the next, so an answer of the code is no good once this is true.
+pub fn overflowed[&s](st: &!s [int]) -> [] bool {
+    return st[44] > st[50] || st[46] > st[50] || st[48] > st[50] || st[57] > st[50];
+}
+
 pub fn aim[&s](st: &!s [int], target: int) -> [] int {
     st[49] = target;
     return 0;
@@ -141,6 +149,12 @@ pub fn llvm_type[&s](st: &!s [int], ty: int) -> [] int {
     if types.is_boxslice(st, ty) {
         return str(st, "{ ptr, i64 }");
     }
+    if types.is_penum(st, ty) {
+        return penum_type(st, types.prelude_index(st, ty));
+    }
+    if types.is_prelude(st, ty) {
+        return str(st, "i64");
+    }
     if types.is_named(st, ty) {
         let item = types.named_item(st, ty);
         if ast.is_kind(st, item, kinds.NK::IEnum) {
@@ -232,6 +246,53 @@ pub fn enum_type[&s](st: &!s [int], item: int) -> [] int {
     return str(st, " }");
 }
 
+// A prelude enum is the same aggregate as one of the file: the tag, then the payloads of every arm that
+// are anything in the code, one after the other.
+pub fn penum_type[&s](st: &!s [int], index: int) -> [] int {
+    str(st, "{ i64");
+    let first = builtins.prelude_arm_first(index);
+    var k = 0;
+    while k < builtins.prelude_arm_count(index) {
+        let at = builtins.arm_type_start(first + k);
+        var cursor = at + 1;
+        var j = 0;
+        while j < builtins.field_type(at) {
+            let t = prims.decode(st, true, cursor, 0 - 1, false);
+            cursor = st[53];
+            if t != 0 && !types.is_erased(st, t) {
+                str(st, ", ");
+                llvm_type(st, t);
+            }
+            j = j + 1;
+        }
+        k = k + 1;
+    }
+    return str(st, " }");
+}
+
+// The index in the aggregate of payload `j` of arm number `arm` (of all) of the prelude enum `index`.
+pub fn penum_payload_index[&s](st: &!s [int], index: int, arm: int, j: int) -> [] int {
+    let first = builtins.prelude_arm_first(index);
+    var at_index = 1;
+    var k = first;
+    while k <= arm {
+        let at = builtins.arm_type_start(k);
+        var cursor = at + 1;
+        var i = 0;
+        let stop = builtins.field_type(at);
+        while i < stop && (k < arm || i < j) {
+            let t = prims.decode(st, true, cursor, 0 - 1, false);
+            cursor = st[53];
+            if t != 0 && !types.is_erased(st, t) {
+                at_index = at_index + 1;
+            }
+            i = i + 1;
+        }
+        k = k + 1;
+    }
+    return at_index;
+}
+
 // The position of the variant `variant` among those of `item`.
 pub fn variant_position[&s](st: &!s [int], item: int, variant: int) -> [] int {
     var v = ast.get(st, item, 8);
@@ -282,6 +343,10 @@ pub fn field_address[&s](st: &!s [int], ty: int, ptr_reg: int, index: int) -> []
 
 // An operand: a constant or a temporary.
 pub fn operand[&s](st: &!s [int], ty: int, known: bool, value: int, reg: int) -> [] int {
+    if ty == 7 && !known && reg == 0 - 1 {
+        // A pointer that is not anywhere: the prefix of a capability that was not narrowed.
+        return str(st, "null");
+    }
     if reg <= 0 - 2 {
         // A string literal's global, `@str.<n>`, kept as `-2 - n`.
         str(st, "@str.");
@@ -1493,6 +1558,195 @@ pub fn stderr_write[&s](st: &!s [int]) -> [] int {
     str(st, ")\n");
     st[52] = st[52] - 3;
     return n;
+}
+
+// -------------------------------------------------------------- files, processes, arguments ---
+//
+// What these builtins do is in `runtime.ll`; here is the call and the answer. A call pops the arguments
+// the walk pushed (`push_value`): a slice is two, a handle borrowed one (the address of its slot), a
+// handle given one.
+
+// The argument `k` from the top of the stack of arguments, printed as an operand of type `ty`.
+fn arg_operand[&s](st: &!s [int], k: int, ty: int) -> [] int {
+    let at = st[51] + 4 * (st[52] - k);
+    return operand(st, ty, st[at + 1] != 0, st[at + 2], st[at + 3]);
+}
+
+// `arg_count(args)`: argc.
+pub fn command_count[&s](st: &!s [int]) -> [] int {
+    let n = start(st);
+    str(st, "load i64, ptr @cancho_argc\n");
+    st[52] = st[52] - 1;
+    return n;
+}
+
+// `arg(args, n)`: argument n of the command line; the pointer, its length left in `st[59]`.
+pub fn command_arg[&s](st: &!s [int]) -> [] int {
+    let p = start(st);
+    str(st, "call ptr @cancho_arg(i64 ");
+    arg_operand(st, 1, 1);
+    str(st, ")\n");
+    let n = start(st);
+    str(st, "call i64 @strlen(ptr ");
+    temp(st, p);
+    str(st, ")\n");
+    st[59] = n;
+    st[52] = st[52] - 2;
+    return p;
+}
+
+// `file_write(file, bytes)` (0) and `file_read(file, into)` (1): the count or minus the errno. The
+// handle is borrowed, so the argument is the address of its slot.
+pub fn fd_transfer[&s](st: &!s [int], reading: bool) -> [] int {
+    let fd = start(st);
+    str(st, "load i64, ptr ");
+    arg_operand(st, 3, 7);
+    str(st, "\n");
+    let n = start(st);
+    if reading {
+        str(st, "call i64 @cancho_fd_read(i64 ");
+    } else {
+        str(st, "call i64 @cancho_fd_write(i64 ");
+    }
+    temp(st, fd);
+    str(st, ", ptr ");
+    arg_operand(st, 2, 7);
+    str(st, ", i64 ");
+    arg_operand(st, 1, 1);
+    str(st, ")\n");
+    st[52] = st[52] - 3;
+    return n;
+}
+
+// `file_close(file)`: what `close(2)` answered.
+pub fn fd_close[&s](st: &!s [int]) -> [] int {
+    let n = start(st);
+    str(st, "call i64 @cancho_fd_close(i64 ");
+    arg_operand(st, 1, 1);
+    str(st, ")\n");
+    st[52] = st[52] - 1;
+    return n;
+}
+
+// `child_wait(child)`: the exit code, 256 and the signal, or minus the errno.
+pub fn wait_child[&s](st: &!s [int]) -> [] int {
+    let n = start(st);
+    str(st, "call i64 @cancho_wait(i64 ");
+    arg_operand(st, 1, 1);
+    str(st, ")\n");
+    st[52] = st[52] - 1;
+    return n;
+}
+
+// `open_read` (0), `open_write` (1), `open_append` (2), `open_new` (3) and `open_rw` (4): a descriptor or minus the
+// errno. The arguments are the path (a pointer and a length) and the prefix (the same).
+pub fn open_path[&s](st: &!s [int], mode: int) -> [] int {
+    let n = start(st);
+    str(st, "call i64 @cancho_open(ptr ");
+    arg_operand(st, 4, 7);
+    str(st, ", i64 ");
+    arg_operand(st, 3, 1);
+    str(st, ", ptr ");
+    arg_operand(st, 2, 7);
+    str(st, ", i64 ");
+    arg_operand(st, 1, 1);
+    str(st, ", i64 ");
+    nat(st, mode);
+    str(st, ")\n");
+    st[52] = st[52] - 4;
+    return n;
+}
+
+// `exec_spawn`: the path, the prefix, the arguments and the environment (a pointer and a length each), then the
+// three streams as (tag, the child's end, the file) each: the pid or minus the errno.
+pub fn spawn_process[&s](st: &!s [int]) -> [] int {
+    let n = start(st);
+    str(st, "call i64 @cancho_spawn(");
+    var k = 17;
+    while k >= 1 {
+        let at = st[51] + 4 * (st[52] - k);
+        if k != 17 {
+            str(st, ", ");
+        }
+        // pointers are the first seven of the first eight; the rest are whole numbers
+        if k == 17 || k == 15 || k == 13 || k == 11 {
+            str(st, "ptr ");
+            operand(st, 7, false, 0, st[at + 3]);
+        } else {
+            str(st, "i64 ");
+            operand(st, 1, st[at + 1] != 0, st[at + 2], st[at + 3]);
+        }
+        k = k - 1;
+    }
+    str(st, ")\n");
+    st[52] = st[52] - 17;
+    return n;
+}
+
+// The answer of a builtin as the value of the prelude enum `ty`, from the raw result `v` (a count, a
+// descriptor, a pid... or minus the errno): `kind` 0 is `Ok(v)` or `Failed(errno)` (`Opened`, `Done`,
+// `Spawned`), 1 a read (`Data(v)` for more than 0, `End` at 0, else `Failed`), 2 an exit status (`Code(v)` below
+// 256, `Signaled(v - 256)`, else `Failed`).
+pub fn answer_enum[&s](st: &!s [int], ty: int, kind: int, v: int) -> [] int {
+    let negative = start(st);
+    str(st, "icmp slt i64 ");
+    temp(st, v);
+    str(st, ", 0\n");
+    let flipped = start(st);
+    str(st, "sub i64 0, ");
+    temp(st, v);
+    str(st, "\n");
+    var tag = 0;
+    var third = 0 - 1;
+    if kind == 0 {
+        tag = start(st);
+        str(st, "select i1 ");
+        temp(st, negative);
+        str(st, ", i64 1, i64 0\n");
+    } else if kind == 1 {
+        let empty = start(st);
+        str(st, "icmp eq i64 ");
+        temp(st, v);
+        str(st, ", 0\n");
+        let middle = start(st);
+        str(st, "select i1 ");
+        temp(st, empty);
+        str(st, ", i64 1, i64 0\n");
+        tag = start(st);
+        str(st, "select i1 ");
+        temp(st, negative);
+        str(st, ", i64 2, i64 ");
+        temp(st, middle);
+        str(st, "\n");
+    } else {
+        let killed = start(st);
+        str(st, "icmp sge i64 ");
+        temp(st, v);
+        str(st, ", 256\n");
+        let middle = start(st);
+        str(st, "select i1 ");
+        temp(st, killed);
+        str(st, ", i64 1, i64 0\n");
+        tag = start(st);
+        str(st, "select i1 ");
+        temp(st, negative);
+        str(st, ", i64 2, i64 ");
+        temp(st, middle);
+        str(st, "\n");
+        third = start(st);
+        str(st, "sub i64 ");
+        temp(st, v);
+        str(st, ", 256\n");
+    }
+    var acc = insert_at(st, ty, 0 - 1, 0, 1, false, 0, tag);
+    acc = insert_at(st, ty, acc, 1, 1, false, 0, v);
+    if kind == 2 {
+        acc = insert_at(st, ty, acc, 2, 1, false, 0, third);
+        acc = insert_at(st, ty, acc, 3, 1, false, 0, flipped);
+    } else {
+        acc = insert_at(st, ty, acc, 2, 1, false, 0, flipped);
+    }
+    return acc;
 }
 
 // ----------------------------------------------------------------------- functions ---

@@ -23,7 +23,7 @@ import selfhost.tables;
 // that span) is what the escape check reads once the body is done. A binding starts owned.
 pub fn bind[&s](st: &!s [int], name: int, ty: int, mutable: bool, from: int, to: int) -> [] int {
     if emit.on(st) {
-        if types.is_prelude(st, ty) {
+        if types.is_erased(st, ty) {
             // nothing to keep
         } else if ty != 1 && ty != 2 && ty != 5 && !types.is_ref(st, ty) && !aggregate_codable(st, ty) {
             return ast.fail(st, rules.r_skip(), from, to);
@@ -302,6 +302,9 @@ pub fn slice_codable[&s](st: &!s [int], ty: int) -> [] bool {
 
 // A value of this type has code: a struct or an enum of scalars, one aggregate in the code.
 pub fn aggregate_codable[&s](st: &!s [int], ty: int) -> [] bool {
+    if types.is_handle(st, ty) || types.is_penum(st, ty) {
+        return true;
+    }
     if types.is_boxslice(st, ty) {
         let e = types.boxslice_element(st, ty);
         return e == 1 || e == 2 || e == 5;
@@ -397,8 +400,12 @@ pub fn value_type[&s](st: &!s [int], ty: int) -> [] int {
     if emit.on(st) && ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 2 && ast.get(st, ty, 9) == world_index() && ast.get(st, ty, 7) == 0 {
         return types.make_prelude(st, world_index());
     }
+    // A capability narrowed to a literal, in the code: `Fs("/tmp")`, `Exec("/bin")`.
+    if emit.on(st) && ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 2 && ast.get(st, ty, 7) == 1 && ast.is_kind(st, ast.get(st, ty, 6), kinds.NK::TLit) {
+        return types.make_prelude_lit(st, ast.get(st, ty, 9), ast.get(st, ast.get(st, ty, 6), 4));
+    }
     // A prelude type without arguments that is not a resource: `Done`, `Read`, `Opened`.
-    if ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 2 && ast.get(st, ty, 7) == 0 && tables.prelude_res(ast.get(st, ty, 9)) == 0 {
+    if ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 2 && ast.get(st, ty, 7) == 0 && (tables.prelude_res(ast.get(st, ty, 9)) == 0 || emit.on(st)) {
         return types.make_prelude(st, ast.get(st, ty, 9));
     }
     if ast.get(st, ty, 8) == 3 && (struct_plain(st, ast.get(st, ty, 9)) || enum_plain(st, ast.get(st, ty, 9)) || emit.on(st) && item_codable(st, ast.get(st, ty, 9), 6)) {

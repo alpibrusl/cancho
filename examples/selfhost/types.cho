@@ -24,6 +24,7 @@ import selfhost.kinds;
 import selfhost.rules;
 import selfhost.pass1;
 import selfhost.tables;
+import selfhost.builtins;
 
 pub fn first_table() -> [] int {
     return 8;
@@ -202,6 +203,18 @@ pub fn make_prelude[&s](st: &!s [int], index: int) -> [] int {
     return make(st, prelude_kind(), index, 0, 0);
 }
 
+// A prelude type that a capability narrowed to a literal is: the type, and the token of the string
+// literal it was narrowed to (`Fs("/tmp")`, `narrow(exec, "/bin")`), kept one more than it is so that
+// 0 says there is none. The code uses it to check a path against the prefix.
+pub fn make_prelude_lit[&s](st: &!s [int], index: int, tok: int) -> [] int {
+    return make(st, prelude_kind(), index, 0, tok + 1);
+}
+
+// The token of the literal a prelude type was narrowed to, or -1.
+pub fn prelude_lit_tok[&s](st: &!s [int], ty: int) -> [] int {
+    return slot(st, ty, 3) - 1;
+}
+
 // The index in `tables.cho` of a prelude type.
 pub fn prelude_index[&s](st: &!s [int], ty: int) -> [] int {
     return slot(st, ty, 1);
@@ -245,6 +258,21 @@ pub fn node_type[&s](st: &!s [int], node: int) -> [] int {
         }
     }
     return 0;
+}
+
+// A prelude type that is a handle: a descriptor or a pid, one value of the code.
+pub fn is_handle[&s](st: &!s [int], ty: int) -> [] bool {
+    return is_prelude(st, ty) && tables.prelude_leaf(prelude_index(st, ty)) == 1;
+}
+
+// A prelude enum (`Spawned`, `Opened`, `Read`): a tag and the payloads of its arms, one aggregate.
+pub fn is_penum[&s](st: &!s [int], ty: int) -> [] bool {
+    return is_prelude(st, ty) && builtins.prelude_arm_count(prelude_index(st, ty)) > 0;
+}
+
+// A prelude type that is nothing in the code: a capability, the `World`, a `Split`.
+pub fn is_erased[&s](st: &!s [int], ty: int) -> [] bool {
+    return is_prelude(st, ty) && !is_handle(st, ty) && !is_penum(st, ty);
 }
 
 // A reference to a slice: a pointer and a length in the code.

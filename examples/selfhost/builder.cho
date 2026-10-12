@@ -1,0 +1,164 @@
+edition 7;
+
+// builder.cho -- the compiler that builds a program: from source to an executable, with no help.
+//
+// Stage 4 of the self-hosting port (`docs/self-hosting.md` section 6, epic #295). Reads a program on
+// standard input (the stream `driver.cho` reads: a `TARGET` line, then `FILE <length>` and the files),
+// compiles it, writes the LLVM IR to `<output>.ll`, and starts `clang` on it with the `Exec` it was given,
+// to make `<output>`:
+//
+//     builder <output> [clang]            clang defaults to /usr/bin/clang
+//
+// Everything it does it does through a capability: the standard input and output through `Io`, the file
+// through `Fs`, `clang` through `Exec`, the command line through `Args`. Built by the Rust compiler it is
+// the first compiler; built by itself, the second.
+
+import std.buffer;
+import std.io as console;
+import selfhost.lexcore as lc;
+import selfhost.rules;
+import selfhost.driver;
+
+// All of `bytes` to the file, which may take several writes: 0, or the errno.
+fn write_all[&w, &b](file: &!w File, bytes: &b [byte]) -> [file_write] int {
+    var at = 0;
+    while at < len(bytes) {
+        match file_write(file, bytes[at..len(bytes)]) {
+            Done::Ok(n) => {
+                at = at + n;
+            }
+            Done::Failed(e) => {
+                return e;
+            }
+        }
+    }
+    return 0;
+}
+
+// `bytes` as the file at `path`, made or emptied: 0, or the errno.
+fn store[&f, &p, &b](fs: &f Fs(""), path: &p [byte], bytes: &b [byte]) -> [fs_write(""), file_write] int {
+    match open_write(fs, path) {
+        Opened::Ok(file) => {
+            var written = file;
+            var status = 0;
+            borrow mut written as &!w in {
+                status = write_all(w, bytes);
+            }
+            file_close(written);
+            return status;
+        }
+        Opened::Failed(e) => {
+            return e;
+        }
+    }
+}
+
+// `clang` started on the arguments in `list` (each followed by a NUL) and waited for: its exit status, 128 and the signal if
+// it was killed, or 255 if it did not run.
+fn run_clang[&x, &c, &l](exec: &x Exec(""), clang: &c [byte], list: &l [byte]) -> [exec("")] int {
+    match exec_spawn(exec, clang, list, "", Stdio::Null, Stdio::Null, Stdio::Null) {
+        Spawned::Ok(child) => {
+            match child_wait(child) {
+                Exited::Code(n) => {
+                    return n;
+                }
+                Exited::Signaled(s) => {
+                    return 128 + s;
+                }
+                Exited::Failed(e) => {
+                    return 255;
+                }
+            }
+        }
+        Spawned::Failed(e) => {
+            return 255;
+        }
+    }
+}
+
+// What a refusal says, on the standard error: `ERR rule from to`.
+fn report[&h, &i, &b](heap: &!h Heap, io: &!i Io, built: &b driver.Built) -> [heap, err_write] int {
+    var line = buffer.empty(heap, 64);
+    line = buffer.append(heap, line, "ERR ");
+    line = buffer.append(heap, line, rules.rule_tag(built.rule));
+    line = buffer.append(heap, line, " ");
+    line = buffer.push_nat(heap, line, built.from);
+    line = buffer.append(heap, line, " ");
+    line = buffer.push_nat(heap, line, built.to);
+    line = buffer.append(heap, line, "\n");
+    borrow line as &l in {
+        write_err(io, buffer.bytes(l));
+    }
+    buffer.drop(heap, line);
+    return 1;
+}
+
+fn build[&h, &i, &a, &f, &x](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec("")) -> [heap, io_read, io_write, err_write, args, fs_write(""), file_write, exec("")] int {
+    if arg_count(args) < 2 {
+        write_err(io, "usage: builder <output> [clang] < program\n");
+        return 2;
+    }
+    let output = arg(args, 1);
+    var clang = "/usr/bin/clang";
+    if arg_count(args) > 2 {
+        clang = arg(args, 2);
+    }
+    var status = 0;
+    let raw = lc.slurp(heap, io);
+    borrow raw as &r in {
+        let all = buffer.bytes(r);
+        let built = driver.run_many(heap, io, all[driver.target_skip(all)..len(all)], 5, driver.target_of(all));
+        borrow built as &b in {
+            if b.status != 0 {
+                status = report(heap, io, b);
+            } else {
+                var path = buffer.append(heap, buffer.empty(heap, len(output) + 4), output);
+                path = buffer.append(heap, path, ".ll");
+                borrow path as &p in {
+                    status = store(fs, buffer.bytes(p), buffer.bytes(b.ir));
+                    if status == 0 {
+                        var list = buffer.append(heap, buffer.empty(heap, 256), "-O1\0-Wno-override-module\0");
+                        list = buffer.append(heap, list, buffer.bytes(p));
+                        list = buffer.append(heap, list, "\0-o\0");
+                        list = buffer.append(heap, list, output);
+                        list = buffer.push(heap, list, byte_of(0));
+                        borrow list as &l in {
+                            status = run_clang(exec, clang, buffer.bytes(l));
+                        }
+                        buffer.drop(heap, list);
+                    }
+                }
+                buffer.drop(heap, path);
+            }
+        }
+        driver.discard(heap, built);
+    }
+    buffer.drop(heap, raw);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(clock);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow fs as &f in {
+                    borrow exec as &x in {
+                        status = build(h, i, a, f, x);
+                    }
+                }
+            }
+        }
+    }
+    release(exec);
+    release(fs);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

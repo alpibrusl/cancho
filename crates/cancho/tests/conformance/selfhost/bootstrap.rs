@@ -15,7 +15,7 @@ use super::*;
 
 /// The program the compiler compiles: the `std` modules it imports, then its own, then its root, as
 /// `FILE <length>` lines and the files (the stream `driver.cho` reads).
-fn own_source() -> String {
+fn own_source(root_module: &str) -> String {
     let root = repo_root();
     let mut files: Vec<PathBuf> = ["math", "bytes", "buffer", "io"]
         .iter()
@@ -23,13 +23,32 @@ fn own_source() -> String {
         .collect();
     let own = root.join("examples/selfhost");
     for module in [
-        "lexcore", "tables", "kinds", "rules", "ast", "pass1", "foreign", "builtins", "types",
-        "prims", "scope", "effects", "emit", "exprs", "body", "listing", "checker", "driver",
-        "compiler",
+        "lexcore",
+        "tables",
+        "runtime",
+        "kinds",
+        "rules",
+        "ast",
+        "pass1",
+        "foreign",
+        "builtins",
+        "signatures",
+        "types",
+        "prims",
+        "scope",
+        "effects",
+        "emit",
+        "exprs",
+        "body",
+        "listing",
+        "checker",
+        "driver",
     ] {
         files.push(own.join(format!("{module}.cho")));
     }
-    let mut stream = String::new();
+    files.push(own.join(format!("{root_module}.cho")));
+    let target = if cfg!(target_os = "macos") { "darwin" } else { "linux" };
+    let mut stream = format!("TARGET {target}\n");
     for file in files {
         let text = std::fs::read_to_string(&file).expect("a source file");
         stream.push_str(&format!("FILE {}\n{text}", text.len()));
@@ -40,11 +59,11 @@ fn own_source() -> String {
 #[test]
 fn the_compiler_in_cancho_compiles_itself_to_a_fixed_point() {
     let first = build("bootstrap-1", &with_front_end("compiler.cho"));
-    let source = own_source();
+    let source = own_source("compiler");
 
     let ir_1 = answer(&first, &source);
     assert!(
-        ir_1.starts_with("declare"),
+        !ir_1.starts_with("ERR"),
         "the first compiler should write code for its own source, but answered:\n{}",
         &ir_1[..ir_1.len().min(300)]
     );
@@ -81,4 +100,72 @@ fn the_compiler_in_cancho_compiles_itself_to_a_fixed_point() {
             .position(|(a, b)| a != b)
             .unwrap_or(ir_1.len().min(ir_2.len()))
     );
+}
+
+/// The same, with no help but a `clang` to be run: the builder (`builder.cho`) reads a program, writes its IR
+/// to a file and starts `clang` on it through its `Exec`. Built by Rust it is the first builder; it builds the
+/// second from its own source, and the second builds the third. All three write the same IR.
+#[test]
+fn the_builder_in_cancho_builds_itself_with_no_help() {
+    let first = build("bootstrap-builder", &with_front_end("builder.cho"));
+    let source = own_source("builder");
+    let dir = scratch("selfhost-bootstrap-builder-run");
+    let clang = std::env::var("CLANG").unwrap_or_else(|_| "/usr/bin/clang".to_owned());
+
+    let run = |builder: &Path, output: &Path| {
+        let mut child = Command::new(builder)
+            .arg(output)
+            .arg(&clang)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("the builder runs");
+        child
+            .stdin
+            .take()
+            .expect("a piped stdin")
+            .write_all(source.as_bytes())
+            .expect("the builder reads its input");
+        let done = child.wait_with_output().expect("the builder finishes");
+        assert!(
+            done.status.success(),
+            "the builder should build its source, but said:\n{}{}",
+            String::from_utf8_lossy(&done.stdout),
+            String::from_utf8_lossy(&done.stderr)
+        );
+    };
+
+    let (second, third) = (dir.join("second"), dir.join("third"));
+    run(&first, &second);
+    run(&second, &third);
+    let (ir_2, ir_3) = (
+        std::fs::read(dir.join("second.ll")).expect("the first builder wrote the IR"),
+        std::fs::read(dir.join("third.ll")).expect("the second builder wrote the IR"),
+    );
+    assert!(ir_2.len() > 100_000, "the IR is only {} bytes", ir_2.len());
+    assert!(
+        ir_2 == ir_3,
+        "the builder built by itself writes different code from the one built by Rust: {} and {} bytes",
+        ir_2.len(),
+        ir_3.len()
+    );
+
+    // And what it builds runs: a program of its own.
+    let program = "fn main(world: World) -> [] int { release(world); return 42; }";
+    let target = if cfg!(target_os = "macos") { "darwin" } else { "linux" };
+    let stream = format!("TARGET {target}\nFILE {}\n{program}", program.len());
+    let made = dir.join("made");
+    let mut child = Command::new(&third)
+        .arg(&made)
+        .arg(&clang)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("the third builder runs");
+    child.stdin.take().expect("a piped stdin").write_all(stream.as_bytes()).expect("input");
+    assert!(child.wait().expect("the builder finishes").success());
+    let ended = Command::new(&made).output().expect("the program runs");
+    assert_eq!(ended.status.code(), Some(42));
 }
