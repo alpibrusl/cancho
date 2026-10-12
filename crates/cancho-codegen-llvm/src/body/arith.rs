@@ -99,6 +99,11 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::WriteErr
                     | Builtin::GetChar
                     | Builtin::WrappingAdd
+                    | Builtin::LoadLe64
+                    | Builtin::ByteMask64
+                    | Builtin::TrailingZeros
+                    | Builtin::LeadingZeros
+                    | Builtin::Popcount
                     | Builtin::WrappingSub
                     | Builtin::WrappingMul
                     | Builtin::ValueBarrier
@@ -136,8 +141,14 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::PollerAddSignals
                     | Builtin::PollerAddPipe
                     | Builtin::PollerAddChild
+                    | Builtin::PollerAddTty
                     | Builtin::SignalsPending
                     | Builtin::SignalsClose
+                    | Builtin::TtyConfigure
+                    | Builtin::TtyRead
+                    | Builtin::TtyWrite
+                    | Builtin::TtyFlushInput
+                    | Builtin::TtyClose
                     | Builtin::DirClose
                     | Builtin::DirListClose
                     | Builtin::ClockMs
