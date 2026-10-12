@@ -275,6 +275,31 @@ const STRINGS: &[&str] = &[
     "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(ffi);\n    release(fs);\n    release(heap);\n    release(args);\n    var code = 0;\n    borrow mut io as &!r in {\n        var buf = \"zzz\";\n        var n = 0;\n        while n < len(buf) { let o = putchar(r, int_of(buf[n])); n = n + 1; }\n        let nl = putchar(r, 10);\n    }\n    release(io);\n    return code;\n}",
 ];
 
+/// Structs of whole numbers, bytes and booleans: a literal, a field read, a copy, a struct passed and
+/// returned, a field written through a unique reference, `*r` of one.
+const STRUCTS: &[&str] = &[
+    "struct P { x: int, y: int }\nfn run() -> [] int { let p = P { x: 3, y: 4 }; return p.x * 10 + p.y; }",
+    "struct P { x: int, y: int }\nfn run() -> [] int { let p = P { x: 3, y: 4 }; let q = p; return q.y - p.x; }",
+    "struct P { x: int, y: int }\nfn mk(a: int, b: int) -> [] P { return P { x: a, y: b }; }\nfn run() -> [] int { let p = mk(7, 9); return p.y - p.x; }",
+    "struct P { x: int, y: int }\nfn sum(p: P) -> [] int { return p.x + p.y; }\nfn run() -> [] int { return sum(P { x: 20, y: 22 }); }",
+    "struct P { x: int, y: int }\nfn swap(p: P) -> [] P { return P { x: p.y, y: p.x }; }\nfn run() -> [] int { let q = swap(P { x: 1, y: 2 }); return q.x * 10 + q.y; }",
+    "struct P { x: int, y: int }\nfn run() -> [] int { var p = P { x: 1, y: 2 }; p = P { x: p.y, y: p.x + 5 }; return p.x * 10 + p.y; }",
+    "struct P { x: int, y: int }\nfn bump[&r](p: &!r P) -> [] int { p.x = p.x + 1; p.y = p.y * 2; return p.x + p.y; }\nfn run() -> [] int { var p = P { x: 1, y: 5 }; var n = 0; borrow mut p as &!q in { n = bump(q); n = n + bump(q); } return n + p.x * 100; }",
+    "struct P { x: int, y: int }\nfn get[&r](p: &r P) -> [] int { return p.y; }\nfn run() -> [] int { let p = P { x: 1, y: 42 }; var n = 0; borrow p as &q in { n = get(q); } return n; }",
+    "struct P { x: int, y: int }\nfn whole[&r](p: &r P) -> [] int { let c = *p; return c.x + c.y; }\nfn run() -> [] int { let p = P { x: 30, y: 12 }; var n = 0; borrow p as &q in { n = whole(q); } return n; }",
+    "struct P { x: int, y: int }\nfn run() -> [] int { var p = P { x: 0, y: 0 }; var i = 0; while i < 10 { p = P { x: p.x + i, y: p.y + 2 }; i = i + 1; } return p.x + p.y; }",
+    "struct Flags { a: bool, b: bool, n: int }\nfn run() -> [] int { let f = Flags { a: true, b: false, n: 5 }; if f.a && !f.b { return f.n; } return 0; }",
+    "struct B { c: byte, n: int }\nfn run() -> [] int { let b = B { c: byte_of(200), n: 1 }; return int_of(b.c) + b.n; }",
+    "struct B { c: byte, n: int }\nfn run() -> [] int { var b = B { c: byte_of(7), n: 1 }; b = B { c: byte_of(int_of(b.c) + 1), n: b.n }; return int_of(b.c); }",
+    "struct One { v: int }\nfn inc(o: One) -> [] One { return One { v: o.v + 1 }; }\nfn run() -> [] int { return inc(inc(inc(One { v: 0 }))).v; }",
+    "struct P { x: int, y: int }\nfn run() -> [] int { let big = 9223372036854775807; let p = P { x: big, y: 1 }; return p.x + p.y; }",
+    "struct P { x: int, y: int }\nfn add1[&r](p: &!r P) -> [] int { p.x = p.x + 1; return 0; }\nfn run() -> [] int { var p = P { x: 9223372036854775807, y: 1 }; var n = 0; borrow mut p as &!q in { n = add1(q); } return n; }",
+    "struct P { x: int, y: int }\nfn run() -> [] int { var p = P { x: 1, y: 1 }; var n = 0; borrow mut p as &!q in { q.x = 5; *q = P { x: q.x * 2, y: q.y + 1 }; n = q.x + q.y; } return n + p.x; }",
+    "struct A { n: int }\nstruct C { m: int, ok: bool }\nfn run() -> [] int { let a = A { n: 3 }; let c = C { m: a.n * 2, ok: true }; if c.ok { return c.m; } return 0; }",
+    "struct P { x: int, y: int }\nfn f(p: P, k: int) -> [] int { if k == 0 { return p.x; } return f(P { x: p.x + p.y, y: p.x }, k - 1); }\nfn run() -> [] int { return f(P { x: 1, y: 0 }, 10); }",
+    "struct P { x: int, y: int }\nfn mk() -> [] P { let big = 9223372036854775807; return P { x: big + 1, y: 0 }; }\nfn run() -> [] int { return mk().x; }",
+];
+
 #[test]
 fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
     let compiler = build("compile", &with_front_end("compile.cho"));
@@ -288,6 +313,9 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
     }
     for program in WITH_MAIN.iter().chain(OUTPUT).chain(STRINGS) {
         jobs.push(((*program).to_owned(), (*program).to_owned()));
+    }
+    for program in STRUCTS {
+        jobs.push((with_main(program), with_main(program)));
     }
     let numbered: Vec<(usize, &(String, String))> = jobs.iter().enumerate().collect();
     let results = in_parallel(&numbered, |(index, (rust_text, cancho_text))| {
