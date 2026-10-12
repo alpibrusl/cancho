@@ -15,6 +15,9 @@ in a phase, as the script printed it, and each `.json` is the same run as `--jso
 | `after.log`, `x86_cancho_final.json`, `x86_engine_final.json`, `x86_https_final.json` | the change as it is: `tls_echo`, the engines alone, `https_hello` |
 | `x86_engine_new64.json` | the engines alone at 10,000 connections on 64 work areas, first version (the areas' clearing and the core's copy do not change what is resident) |
 
+`*/after-rebased.log` and `*_rebased.json` (both machines): the change after its rebase onto `main` with #394 and #396 (`docs/tls-memory.md`
+§10.4): `tls_echo`, the engines alone, `https_hello`.
+
 `arm64/`: Docker on the Mac (`lexsys-hooks-env`, native Linux 6.8, OpenSSL 3.0.13), the same runs for that machine:
 `before-tls_echo-and-openssl.log` (`tls_echo` before; the OpenSSL run in it was restarted), `before-openssl-and-engines.log`
 (OpenSSL default and released, the engines alone before, then after the first version), `after-first-version-and-https-before.log`

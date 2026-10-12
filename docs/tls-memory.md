@@ -369,7 +369,7 @@ connection that ends without an area); mutants for the lease, the copies and the
 
 The second commit of #395 (the first is this document), with the review's fixes. **Changed:** `packages/tls/slot.cho` (the reorder of §7.1,
 `ints_core_len`, `bytes_core_len`, `bytes_core_len_server`, `keeps_area`: 39 lines), `tls.cho` (the areas, their clearing and `residue`: 916
-lines to 1,367), `client.cho` (one range in `drop`), `record.cho` (`tls-pool`, -72); `examples/tls_echo/front.cho`, `echo.cho`, `tls_echo.cho`,
+lines to 1,367 on the first base; 1,245 to 1,721 after the rebase of §10.4), `client.cho` (one range in `drop`), `record.cho` (`tls-pool`, -72); `examples/tls_echo/front.cho`, `echo.cho`, `tls_echo.cho`,
 `examples/https_hello/hello.cho` and `loop.cho` (`--areas`, at least 2; a handshake bound of half the areas; `record-timeout`; `--connections` up to
 1,048,576); the stores. **Added:** `tests/programs/tls_pool.cho` and `conformance/tls_pool.rs`; engine mutants in `scripts/tls_mutants.py`, one
 in `tls_server_mutants.py`; the `areas` and `stall` cases of `scripts/tls_echo_test.py` and `areas` of `scripts/https_hello_test.py`;
@@ -377,6 +377,8 @@ in `tls_server_mutants.py`; the `areas` and `stall` cases of `scripts/tls_echo_t
 run behind these tables, `benches/tls_memory/` (its README says which file is which).
 
 ### 10.1 Measured after
+
+These were measured on the first base, `main` before #394 and #396; §10.4 repeats them after the rebase onto both.
 
 **`examples/tls_echo`, KiB of RSS a connection** (§2's method and machines; before is §4):
 
@@ -466,3 +468,46 @@ only that none showed. No timing is taken from `gram`.
 both differentials, AFL over every harness, `tls_echo_test.py` (now 13 cases: `areas` and `stall` new) and `https_hello_test.py` (20: `areas` new).
 `tests/programs/tls_pool.cho` through every order of lease and release, on both backends and both operating systems, with `tls.residue` 0 after every
 step, release and drop. Mutants: `scripts/tls_mutants.py` 128 of 128 killed (25 of them on the work areas: the copies, the lease, the idle test, the clearing, the reads of a core an area holds), `tls_server_mutants.py` 72 of 72; no mutant is argued equivalent. **Not covered:** `save_to` while an area is held (it needs a server that sends a ticket: #379's).
+
+### 10.4 After the rebase onto #394 and #396
+
+`main` with server tickets (#394) and client certificates and ALPN (#396), and this change on top (§7.1 places their fields). Same
+method; tickets off (`tls_echo`'s default); raw output `benches/tls_memory/*/after-rebased.log` and `*_rebased.json`.
+
+*arm64, `tls_echo`*
+
+| connections | connected | handshake | established | echoed | partial | all-echoed |
+|---|---|---|---|---|---|---|
+| 50 | 86.4 | 108.6 | 16.7 | 53.5 | 79.5 | 138.9 |
+| 100 | 86.3 | 108.1 | 18.4 | 54.8 | 82.8 | 142.8 |
+| 200 | 86.3 | 107.9 | 17.5 | 53.8 | 81.8 | 142.1 |
+| 10,000 | 86.5 | 107.8 | 16.8 | 52.8 | 81.0 | 141.6 |
+
+*x86-64, `tls_echo`*
+
+| connections | connected | handshake | established | echoed | partial | all-echoed |
+|---|---|---|---|---|---|---|
+| 50 | 86.3 | 109.9 | 15.4 | 52.2 | 78.2 | 137.6 |
+| 100 | 86.3 | 109.9 | 17.7 | 54.1 | 82.1 | 142.0 |
+| 200 | 86.3 | 109.9 | 17.1 | 53.4 | 81.5 | 141.8 |
+| 10,000 | 86.5 | 110.2 | 16.8 | 52.8 | 81.0 | 141.6 |
+
+*The engines alone, a client slot and a server slot together, arm64 / x86-64:*
+
+| connections | areas | established | echoed |
+|---|---|---|---|
+| 50 | 50 | 14.2 | 15.3 |
+| 100 | 100 | 15.6 | 16.2 |
+| 200 | 200 | 14.4 | 14.6 |
+| 10,000 | 10,000 | 13.2 | 13.2 |
+
+| connections | areas | established | echoed |
+|---|---|---|---|
+| 50 | 50 | 15.5 | 16.6 |
+| 100 | 100 | 15.6 | 16.2 |
+| 200 | 200 | 14.5 | 14.8 |
+| 10,000 | 10,000 | 13.2 | 13.2 |
+
+At 10,000 connections an established idle connection is 16.8 KiB (16.7 before the rebase), after a record 52.8, every connection holding half a
+record 81.0, the high-water mark 141.6; connected 86.5 and mid-handshake 107.8 / 110.2; a client and a server slot together 13.2 KiB (12.8 before
+the rebase: #396's 320 bytes of client core and 4 words). `https_hello` idle 29.0 to 30.4 KiB (arm64) and 27.2 to 29.8 (x86-64) at 50 to 200.
