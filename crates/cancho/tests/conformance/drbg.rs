@@ -50,14 +50,10 @@ fn fast_key_erasure_draws() {
         format!("D {SEED} 64"),
     ];
     let want = [
-        format!("0 ok 2b23cce7a26023ab3f0eef693ac87f64258235eab1f7a32dc22762a0485b410c"),
-        format!("0 ok 2b23cce7a26023ab3f0eef693ac87f64"),
-        format!(
-            "0 ok 2b23cce7a26023ab3f0eef693ac87f64258235eab1f7a32dc22762a0485b410c2d41a59c90e41a8e7a4dccaa1c460699"
-        ),
-        format!(
-            "0 ok 2b23cce7a26023ab3f0eef693ac87f64258235eab1f7a32dc22762a0485b410c2d41a59c90e41a8e7a4dccaa1c46069983b1a333ce25719ec3437768ab57fa42"
-        ),
+        "0 ok 2b23cce7a26023ab3f0eef693ac87f64258235eab1f7a32dc22762a0485b410c".to_string(),
+        "0 ok 2b23cce7a26023ab3f0eef693ac87f64".to_string(),
+        "0 ok 2b23cce7a26023ab3f0eef693ac87f64258235eab1f7a32dc22762a0485b410c2d41a59c90e41a8e7a4dccaa1c460699".to_string(),
+        "0 ok 2b23cce7a26023ab3f0eef693ac87f64258235eab1f7a32dc22762a0485b410c2d41a59c90e41a8e7a4dccaa1c46069983b1a333ce25719ec3437768ab57fa42".to_string(),
     ];
     for backend in ["cranelift"] {
         let (dir, exe) = build_drbg_driver("draws", backend);
@@ -78,13 +74,13 @@ fn reseed_erases_and_refusals() {
     let cases = vec![
         format!("R {SEED} {SEED2}"),
         format!("D {SEED2} 32"),
-        format!("U 32"),
-        format!("S ff"),
-        format!("S -"),
+        "U 32".to_string(),
+        "S ff".to_string(),
+        "S -".to_string(),
     ];
     let want = [
-        format!("0 ok 66dd107034b4582a2ef42c5e1ea475f2fea477a10a9f1d75b3635243b2506b32"),
-        format!("0 ok 66dd107034b4582a2ef42c5e1ea475f2fea477a10a9f1d75b3635243b2506b32"),
+        "0 ok 66dd107034b4582a2ef42c5e1ea475f2fea477a10a9f1d75b3635243b2506b32".to_string(),
+        "0 ok 66dd107034b4582a2ef42c5e1ea475f2fea477a10a9f1d75b3635243b2506b32".to_string(),
         "-2 drbg-unseeded -".to_string(),
         "-1 drbg-seed-length -".to_string(),
         "-1 drbg-seed-length -".to_string(),

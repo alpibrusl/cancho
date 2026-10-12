@@ -108,32 +108,6 @@ fn bn_shl1_into[&a](a: &!a [byte], bit_in: int) -> [] int {
     return carry;
 }
 
-// `o = a * b`, schoolbook, `o` pre-zeroed and `len(o) == len(a) + len(b)`.
-fn bn_mul_full[&o, &a, &b](o: &!o [byte], a: &a [byte], b: &b [byte]) -> [] int {
-    let na = len(a);
-    let nb = len(b);
-    var i = 0;
-    while i < na {
-        var carry = 0;
-        var j = 0;
-        while j < nb {
-            let prod = int_of(a[i]) * int_of(b[j]) + int_of(o[i + j]) + carry;
-            o[i + j] = byte_of(prod & 0xff);
-            carry = prod >> 8;
-            j = j + 1;
-        }
-        var k = i + nb;
-        while carry > 0 {
-            let sum = int_of(o[k]) + carry;
-            o[k] = byte_of(sum & 0xff);
-            carry = sum >> 8;
-            k = k + 1;
-        }
-        i = i + 1;
-    }
-    return 0;
-}
-
 // `o = x mod m`, `o` pre-zeroed and `len(o) == len(m)`. Bit-serial long
 // division: shift the running remainder left by one bit of `x` at a
 // time, from the most significant end, subtracting `m` back out
@@ -194,13 +168,10 @@ fn ct_sub_if_ge[&a, &m](a: &!a [byte], m: &m [byte]) -> [] int {
     var i = 0;
     while i < len(a) {
         let d = int_of(a[i]) - (int_of(m[i]) & mask) - need;
-        if d < 0 {
-            a[i] = byte_of(d + 256);
-            need = 1;
-        } else {
-            a[i] = byte_of(d);
-            need = 0;
-        }
+        // d is in -256..255: its low byte is the digit (d + 256 when it
+        // went negative), and its sign bit is the next borrow.
+        a[i] = byte_of(d & 0xff);
+        need = d >> 63 & 1;
         i = i + 1;
     }
     return 0;
@@ -227,7 +198,7 @@ fn ct_add_masked[&a, &b](a: &!a [byte], b: &b [byte], mask: int) -> [] int {
 // from the top bit of the reduced `a`:
 // each bit doubles the accumulator and adds `b` under a mask made
 // through `value_barrier`, so nothing branches on `a`, `b` or the
-// accumulator (#290). The schoolbook `bn_mul_full` this replaces had
+// accumulator (#290). The schoolbook multiply this replaces had
 // a carry loop that ran for as long as the carry was set -- a branch
 // and an iteration count on the operands.
 fn bn_mulmod[&o, &a, &b, &m](o: &!o [byte], a: &a [byte], b: &b [byte], m: &m [byte]) -> [] int {
