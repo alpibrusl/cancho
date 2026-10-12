@@ -7,7 +7,10 @@ Each mutant is `packages/http-client/wire.cho` or `client.cho` (`slot.cho` is on
 scratch directory with the other, and the tests of `tests/packages/http_client_*.cho` are run against it (`cancho test`). A mutant is killed when a test
 fails or traps. The unmutated source is run first and must pass. A mutant that changes nothing the tests can reach is in EQUIVALENT
 with the argument, and must survive. Exit status 1 if a mutant survives, an `old` text does not occur exactly once, or a mutant fails
-to build (a mutant that does not compile proves nothing). A run that hangs for 60 seconds (the tests take 3) counts as killed.
+to build (a mutant that does not compile proves nothing). A run that hangs for 60 seconds (the tests take 3) counts as killed, and so does one
+whose processes together hold more than MEM_LIMIT of memory: a mutant that makes a loop endless can also make it allocate without end (the
+`take: the sent count not advanced` mutant reached 8 GB in 50 seconds), and with four running at once that took the CI runner down ("the runner
+has received a shutdown signal"), which looked like an eviction and was not.
 
 The live tests (`scripts/http_client_test.py`) are not run here: they need servers and take a minute.
 """
@@ -26,6 +29,9 @@ TESTS = [os.path.join(ROOT, "tests/packages", f) for f in (
     "http_client_harness.cho", "http_client_test.cho", "http_client_pool_test.cho", "http_client_time_test.cho",
     "http_client_wire_test.cho", "http_client_flow_test.cho", "http_client_edge_test.cho")]
 LIMIT = 60
+# What one mutant's processes may hold in memory (resident, summed over its process group) before it is killed as a runaway. The unmutated tests
+# peak at well under this (`CANCHO_MUTANT_MEM_MB` raises it if a machine needs more).
+MEM_LIMIT = int(os.environ.get("CANCHO_MUTANT_MEM_MB", "1536")) * 1024 * 1024
 
 W, C = "wire", "client"
 MUTANTS = []
@@ -623,6 +629,31 @@ m(C, "free_slots: closing slots counted", "pub fn free_slots[&r](c: &r Client) -
 m(C, "ticket_slot: the generation is the slot", "    return t % span();\n}\n\n// The slot's input buffer.", "    return t / span();\n}\n\n// The slot's input buffer.")
 
 
+def group_rss(pgid):
+    """The resident bytes of every process in process group `pgid` (Linux: /proc). 0 where /proc is not there, which turns the check off."""
+    total = 0
+    page = os.sysconf("SC_PAGE_SIZE")
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return 0
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/stat") as f:
+                stat = f.read()
+            # The command name is in parentheses and may hold spaces: the fields after its last ")" are state, ppid, pgrp, ...
+            fields = stat[stat.rindex(")") + 2:].split()
+            if int(fields[2]) != pgid:
+                continue
+            with open(f"/proc/{entry}/statm") as f:
+                total += int(f.read().split()[1]) * page
+        except (OSError, ValueError, IndexError):
+            continue
+    return total
+
+
 def run(exe, texts, name):
     """`cancho test` on the (mutated) sources. A run that hangs past LIMIT seconds is killed, with the test program it started
     (a mutant that makes a loop endless is caught by the tests not finishing), and answers `Ran(4, ..)`."""
@@ -635,12 +666,21 @@ def run(exe, texts, name):
             paths.append(path)
         p = subprocess.Popen([exe, "test", "--std", SLOT] + paths + TESTS, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                              start_new_session=True)
-        try:
-            out, err = p.communicate(timeout=LIMIT)
-        except subprocess.TimeoutExpired:
-            os.killpg(p.pid, signal.SIGKILL)
-            p.communicate()
-            return Ran(4, "FAILED: hung past the limit", "")
+        waited = 0.0
+        while True:
+            try:
+                out, err = p.communicate(timeout=0.25)
+                break
+            except subprocess.TimeoutExpired:
+                waited += 0.25
+            if waited >= LIMIT:
+                os.killpg(p.pid, signal.SIGKILL)
+                p.communicate()
+                return Ran(4, "FAILED: hung past the limit", "")
+            if MEM_LIMIT and group_rss(p.pid) > MEM_LIMIT:
+                os.killpg(p.pid, signal.SIGKILL)
+                p.communicate()
+                return Ran(4, "FAILED: grew past the memory limit", "")
     return Ran(p.returncode, out, err)
 
 
