@@ -36,14 +36,25 @@ fn input() -> Vec<u8> {
     bytes
 }
 
-/// `input()` and, for `clientcert`, the clients' CA, the client's chain and its key (`tests/vectors/tls/client_auth`).
+/// `input()` and, for `clientcert` (`tests/vectors/tls/client_auth`): the clients' CAs (`pool_ca.pem` and
+/// `pool_ca2.pem`, one bundle), the client's chain and its key, and two more chains for that key: a longer leaf and one
+/// larger than the engine keeps outside a work area (`docs/tls-memory.md` §11).
 fn input_for(words: &[&str]) -> Vec<u8> {
     let mut bytes = input();
     if words.contains(&"clientcert") {
         let vectors = repo_root().join("tests/vectors/tls/client_auth");
-        for name in ["pool_ca.pem", "pool_chain.pem", "pool_key.pem"] {
+        let read = |name: &str| std::fs::read(vectors.join(name)).unwrap();
+        let mut cas = read("pool_ca.pem");
+        cas.extend(read("pool_ca2.pem"));
+        for file in [
+            cas,
+            read("pool_chain.pem"),
+            read("pool_key.pem"),
+            read("pool_chain2.pem"),
+            read("pool_big_chain.pem"),
+        ] {
             bytes.push(0);
-            bytes.extend(std::fs::read(vectors.join(name)).unwrap());
+            bytes.extend(file);
         }
     }
     bytes
@@ -142,22 +153,47 @@ fn an_engine_with_fewer_work_areas_than_slots_serves_every_connection_on_both_ba
                 );
             }
         }
-        // A server that requires client certificates (`docs/tls-server.md` §13): a verified connection keeps its
-        // area (the `peer_` calls read the leaf in it) and gives it back cleared, leaf and all; the store replaced
-        // before the client's Finished fails the handshake cleanly; `tls.residue` 0 after every step.
+        // A server that requires client certificates (`docs/tls-server.md` §13, `docs/tls-memory.md` §11): a verified
+        // connection gives its area back after its handshake, its leaf kept in the engine's room for the slot, and the
+        // `peer_` calls answer what was verified from it, idle and while an area is held again for a record; a failure,
+        // a socket's end (with and without an area free), a drop and the slot's next connection leave nothing of it; a
+        // leaf larger than the room keeps its area, and with fewer areas than slots such leaves can hold them all; the
+        // store replaced before the client's Finished fails the handshake cleanly; `tls.residue` 0 after every step.
         for (slots, areas, seed) in [(4, 4, 10), (5, 2, 11), (1, 1, 12)] {
             let got = run_with(&exe, slots, areas, 30, seed, &["clientcert"]);
             for want in [
-                "clientcert: every client verified, its connection keeps its area, residue 0 after every step",
+                "clientcert: every client verified, its connection gives its area back and keeps its identity, residue 0",
+                "clientcert: traffic on verified connections, an area taken and given back each time, the identity the same",
                 "clientcert: a verified connection that fails gives no identity, before and after its alert is taken",
-                "clientcert: dropped, every area back and cleared with the leaf, residue 0",
+                "clientcert: dropped, every area back and every leaf cleared, residue 0",
+                "clientcert: a slot's next connection has its own leaf and nothing of the last one",
+                "clientcert: a leaf larger than the room keeps its area and is read from it",
+                "clientcert: the large leaves' areas come back cleared when dropped, residue 0",
                 "clientcert: the store replaced before the client's Finished fails the handshake, its area cleared",
                 "clientcert: after the drops no area or core holds a byte, residue 0",
             ] {
                 assert!(got.iter().any(|l| l.contains(want)), "{want}: {got:#?}");
             }
             if areas < slots {
-                assert!(got.iter().any(|l| l.contains("a serve is tls-pool")), "{got:#?}");
+                assert!(
+                    got.iter().any(|l| l.contains(
+                        "with every area held by a connection with a large leaf a serve is tls-pool"
+                    )),
+                    "{got:#?}"
+                );
+                assert!(
+                    got.iter().any(|l| l.contains(
+                        "whose socket ends gives its leaf up, residue 0, with no area free 1"
+                    )),
+                    "{got:#?}"
+                );
+            } else if slots > 1 {
+                assert!(
+                    got.iter().any(|l| l.contains(
+                        "whose socket ends gives its leaf up, residue 0, with no area free 0"
+                    )),
+                    "{got:#?}"
+                );
             }
         }
         let _ = std::fs::remove_dir_all(&dir);

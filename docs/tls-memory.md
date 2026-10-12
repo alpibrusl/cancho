@@ -277,7 +277,7 @@ certificates on the server's side (#384, not merged when this was rebased) keep 
 `keeps_area` is where such a connection keeps its area, at what it costs today. *As #384 merged (`docs/tls-server.md` §13.22): its words
 (`i_peer_generation`, `i_peer_not_after`, `i_leaf_len`, the flags) are core words; a connection with a verified client keeps its area
 (`keeps_area`), which goes back cleared with the leaf; `tls_pool.cho clientcert` asserts `tls.residue` 0 after every step.* *Measured and changed by §11: such a connection
-held about 110 KiB; the leaf now has a room of its own a slot and the area goes back.*
+was 126.0 KiB idle (17.0 without a client certificate); the leaf now has a room of its own a slot and the area goes back.*
 
 ### 7.2 The engine
 
@@ -657,3 +657,73 @@ What it costs: 2,048 bytes of address space a server slot (`n * 2,048`, allocate
 empty), written only for a verified connection; for each, `i_leaf_len` bytes, which on 4 KiB pages two neighbouring slots share,
 so **about 2 KiB resident a verified connection** when every slot holds one (arithmetic; §11.6 measures it). One copy of the leaf
 a connection (572 bytes for the P-256 device). No copy on a lease.
+
+### 11.6 As built, and measured after
+
+**Changed.** `packages/tls/slot.cho`: `peer_cap()` (2,048), the flag `f_leaf_kept` (524,288, free until now), and `keeps_area`
+false once the leaf is kept. `clientauth.cho`: `keep`, `kept`, `forget`, and `view_of` and `fingerprint_of` (the old
+`leaf_view` and `fingerprint` call them). `tls.cho`: the box `peers` (server engines only), the copy in `settle`, `forget` in
+`fail_parked` and `drop`, `residue` over the rooms, `core_now` and `peer_der`, and the `peer_` calls reading through them
+(1,914 lines to 1,944). No slot layout moved: a slot is the same 10,245 words and 187,703 bytes, a server core the same 4,864
+bytes. `examples/` are unchanged: they ask the same calls. The stores are republished (`scripts/publish_packages.py`).
+
+**Measured after**, the same runs (`mtls-after.log`), KiB of server RSS a connection:
+
+| N | arm64: none | P-256 before | **P-256 after** | RSA before | **RSA after** | x86-64: none | P-256 before | **P-256 after** | RSA before | **RSA after** |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 50 | 18.3 | 127.8 | **18.4** | 132.2 | **18.6** | 15.7 | 127.1 | **15.5** | 129.5 | **15.8** |
+| 100 | 19.4 | 127.0 | **21.3** | 131.2 | **21.5** | 18.0 | 127.4 | **19.9** | 129.8 | **21.0** |
+| 200 | 18.1 | 126.3 | **20.1** | 130.4 | **20.1** | 17.4 | 127.3 | **19.4** | 129.7 | **19.4** |
+| 10,000 | 17.0 | 126.0 | **19.0** | 130.0 | **19.0** | 17.0 | 127.7 | **19.0** | 130.0 | **19.0** |
+
+(established and idle; "none" is the run without client certificates after the change, the same as before it: 17.0 at 10,000
+on both.) **A verified idle connection is 19.0 KiB at 10,000 connections on both machines, from 126.0 and 127.7: 2.0 KiB more than
+one without a client certificate**, the room's page shared by two slots, as §11.5 reckoned; the RSA chain's 970-byte leaf costs
+the same. OpenSSL, the same certificate, the same machines: 31.5 and 61.0 by default, 19.8 and 33.9 with its buffers released.
+After a 16 KiB record each: 55.0 on both (from 212.7 and 213.6; 53.0 without a client certificate). The other phases are
+unchanged (connected 86.7, a handshake 108.1 and 110.5: an area either way).
+
+**`--areas`.** With `--areas 64` and 200 clients presenting the P-256 certificate, **200 of 200 established** (20.0 KiB each on
+arm64, 19.4 on x86-64; before, 64 of 200). The phases with `--areas 64` (`*_p256_areas64.json`, established ones only: the
+handshakes are bounded at 32), at 10,000 verified connections: established 19.0, echoed 55.0, **every connection holding half a
+record 55.2, all echoed 55.6** on both machines (with an area for every slot they are 83.5 and 144.9): what a record in flight
+costs is now bounded by the pool, verified or not. `tls_echo --areas` no longer ends verified connections:
+`scripts/tls_echo_test.py ... clientauth-areas`, four verified connections on two areas idle past `--handshake-timeout` and still
+echoing, passes here and fails on `0e40f430`.
+
+**Tests.** `tests/programs/tls_pool.cho clientcert` (`conformance/tls_pool.rs`, both backends; `(slots, areas)` of (4, 4), (5, 2)
+and (1, 1)): every verified connection gives its area back after its handshake and every `peer_` call answers the leaf byte for
+byte (the DER decoded from the client's own PEM, its SHA-256, the subject, the serial, notAfter, the subjectAltNames counted inside
+the DER, the generation); traffic on random slots in random pieces, its first record fed half so the connection holds an area again
+while the identity is read, and released after; a verified connection that fails (no identity before or after its alert is taken,
+its room emptied); a slot's next connection with a shorter leaf after a longer one dropped while it held an area (nothing of it
+left: `residue` counts a room's bytes past the leaf); leaves larger than the room (`pool_big_chain.pem`, 4,318 bytes, 80 SANs) keep
+their areas and are read from them, and with fewer areas than slots hold them all, a `serve` then `tls-pool`; a socket's end on a
+verified connection with no area free (the core alone fails, `fail_parked`) and with one; the store replaced before the client's
+Finished. `tls.residue` is 0 after every step. The new vectors: `tests/vectors/tls/client_auth/pool_ca2.pem`, `pool_chain2.pem`
+(418 bytes, two SANs) and `pool_big_chain.pem`, for `pool_key.pem`'s key. The recordings (`liar_client.txt`, `liar_client_auth.txt`)
+replay unchanged byte for byte (`conformance/tls_server.rs`, `tls_client_auth.rs`): nothing a peer sees changed. The examples'
+live tests: `tls_echo_test.py` 19 of 19 (`clientauth-areas` new), `https_hello_test.py` 22 of 22 (arm64, Docker).
+
+**Mutants.** `scripts/tls_server_mutants.py`: 16 new on the moved code (the copy skipped, short, before the client is verified,
+into the next slot's room; the area kept anyway, given back for a large leaf; the room not emptied on a failure, a parked failure,
+a drop with and without an area, or emptied without zeroing; the area's `b_leaf` read for a kept leaf, the room read for a large one;
+the slot's core read while an area holds the current one; the engine never keeping a leaf), one of #398's rewritten for the new
+`keeps_area`; the counts are in `tests/vectors/tls/client_auth/mutants.txt`. One is argued equivalent: the room read whether or not
+the connection is verified (a leaf is kept only for a verified connection and given up in the call that fails it, so `kept`'s own
+test is a second line). A first version argued "the copy before the client is verified" equivalent too, and the run killed it: after a
+handshake failed at its Finished, the next `take` would have copied the leaf again into the failed connection's room, which
+`residue` saw; the argument was wrong, the guard is not redundant. `scripts/tls_mutants.py` (the engine's): 181 of 183 killed, 2
+equivalent, as before.
+
+### 11.7 Not done, and not verified
+
+- **A leaf over 2,048 bytes** still keeps its area, and `tls_echo --areas` ends such a connection `record-timeout` (the
+  `clientauth-areas` case asserts it): the example cannot tell an area held for a leaf from one held by half a record. The fleets
+  this was for present device certificates of about 400 to 600 bytes; a program with larger client leaves runs without `--areas`,
+  or the room grows (`peer_cap`, address space every server slot has).
+- **`https_hello`'s memory** with client certificates was not measured; it shares `tls_echo`'s engine calls and front end.
+- **The room's address space**, 2,048 bytes a server slot, is allocated whether or not client authentication is on (2 GiB at
+  `tls_echo`'s ceiling of 1,048,576 connections, resident only where written).
+- Timings: none taken. The copy is one pass over the leaf's bytes a connection, in the call that verified its Finished; a lease
+  copies nothing more than before.

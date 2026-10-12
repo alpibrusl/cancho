@@ -1299,7 +1299,13 @@ tls.client_generation(engine) -> n                  // §13.3
   (`x509.parse`, once a call). So no slot grows, and the **chain buffer is the handshake
   reassembly buffer** the slot already has (64 KiB, `hs_cap`), bounded by §13.2's 16,384 and five certificates.
   *The only allocation is the verifier's own region, freed when the message is handled: the message copy
-  (at most 16,388 bytes), the ranges, a 40-word view a certificate, the signature work area.*
+  (at most 16,388 bytes), the ranges, a 40-word view a certificate, the signature work area.* *Corrected by
+  `docs/tls-memory.md` §11: after #395 `b_leaf` is in the work area, and keeping the leaf there kept the area for the
+  connection's life: a verified idle `tls_echo` connection was 126.0 KiB resident (arm64; 127.7 on x86-64) at 10,000 connections
+  where one without a client certificate is 17.0, and `--areas` ended it `record-timeout`. A leaf of up to 2,048
+  bytes is now copied, when the client's Finished has verified, to a room of its own for the slot (2,048 bytes of
+  address space a server slot, written only for a verified connection), and the area goes back; a larger leaf keeps
+  the area as before.*
 - **`peer_verified` is the gate.** Every other call answers 0 bytes when it is 0 or the connection is not established
   (or closed after establishment), so an `optional` connection with no certificate, a failed one and a slot that was
   reused read nothing: `start` zeroes the length, and the leaf's bytes are never read past it.
@@ -1461,6 +1467,8 @@ The handshake rate bound of §11.2 (100 a second) is then a larger share of a co
 `--rate` default is not changed, and a program with certificates sets it from its own figure.
 
 **Memory:** per slot **0 bytes** (§13.6); per engine **+32,776 bytes** (§13.3); the flight's transient buffer +8,247.
+*Corrected by `docs/tls-memory.md` §11: 0 bytes of slot layout, but a verified connection kept its work area; since §11 a
+server engine has 2,048 bytes of address space a slot for a verified client's leaf, resident only where one is kept.*
 *As built: a test asserts the three sizes* (`L` in `tests/programs/tls_server_driver.cho`, the case `memory` of the recording): a
 slot's `ints` are 10,245 words and its `bytes` 187,703 (10,241 and 187,191 before #396 gave the client its own certificates), **both exactly what they are on main without this change** (measured by
 building the same program against `origin/main`'s `packages/tls` and against this tree's), and the engine's `cfg` is 280,690
@@ -1557,7 +1565,8 @@ quotes, a `+`, a leading `#` and a trailing space, a `;`, `<`, `>`, a backslash 
 - **Mutants.** `python3 scripts/tls_server_mutants.py <cancho> [--shard k/n]` replays the recordings of §10.3, §12 and this section: **211
   mutants, 208 killed, 3 equivalent (argued in the script), 0 survived** on `main` after #394, #395 and #396 (five shards: three on the
   M4, two on gram; one mutant, the certificate given whether or not verified, survived the first run on #395's areas and is killed by a
-  check added to `tls_pool.cho clientcert`, run again; the output is committed, `tests/vectors/tls/client_auth/mutants.txt`). When the
+  check added to `tls_pool.cho clientcert`, run again; the output is committed, `tests/vectors/tls/client_auth/mutants.txt`;
+  *since `docs/tls-memory.md` §11 the file is that change's run: 227 mutants, 223 killed, 4 equivalent*). When the
   recordings do not tell a mutant apart, the script also builds and runs `tls_pool.cho clientcert` against it. 146 are `main`'s and 65 are new: the purpose, the context string, each message's place in the transcript, the
   optional/required test, the bounds, the strict store, the identity gate, the states, the alerts, each `tls-role` refusal, the clock, and
   the three hooks of §13.8. The three equivalent: a leaf over the room (the message bound already holds it), a block `store_load`
@@ -1702,7 +1711,9 @@ cleared. Placed:
 | the leaf DER, `b_leaf` (up to 16,384 bytes) | **area, kept** | `peer_certificate`, `peer_subject`, `peer_serial`, `peer_fingerprint` and `peer_san` read it after the handshake; it is up to 16 KiB, which no core has room for |
 | the client's Certificate as received (`b_hs`), the verifier's region | area, transient | used while the Certificate is handled |
 
-So **a connection whose client was verified keeps its work area** while it lives: `tls_slot.keeps_area` is true for a
+*Superseded by `docs/tls-memory.md` §11, which measured what this paragraph did not and changed it: a verified leaf of up to
+2,048 bytes is kept in a room of its own a slot, and the connection gives its area back after the handshake. The paragraph
+is as #398 merged it.* So **a connection whose client was verified keeps its work area** while it lives: `tls_slot.keeps_area` is true for a
 server slot with `f_client_auth` and not failed, the hook #395 left for this (`docs/tls-memory.md` §7.1). Its area goes back
 when it is dropped or fails, and **cleared with the leaf** (`clear_leaf`, in every release and in `drop`); `tls.residue`
 counts a server's free areas' `b_leaf` too. An optional connection with no certificate, a failed one, and every server

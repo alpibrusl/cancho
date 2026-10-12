@@ -364,7 +364,45 @@ MUTANTS = [
      "        if ints[tls_slot.i_peer_generation()] != tls_identity.client_generation(cfg) {", "        if false {"),
     # ---- On #395's work areas (docs/tls-server.md §13.22): the area a verified client's connection keeps ----
     ("a verified client's connection gives its area back", "slot.cho",
-     "    return has(ints, f_client_auth()) && ints[i_state()] != state_failed();", "    return false;"),
+     "    return has(ints, f_client_auth()) && ints[i_state()] != state_failed() && !has(ints, f_leaf_kept());",
+     "    return false;"),
+    # ---- The verified leaf outside the work area (docs/tls-memory.md §11): the room a slot, what it is read from ----
+    ("a leaf kept in the room keeps the area too", "slot.cho", " && ints[i_state()] != state_failed() && !has(ints, f_leaf_kept());",
+     " && ints[i_state()] != state_failed();"),
+    ("the leaf never kept in the room", "clientauth.cho", "    if verified(ints) && n <= len(room) {", "    if false {"),
+    ("the engine never keeps a leaf", "tls.cho",
+     "    if is_server(engine) {\n        let ab = a * tls_client.bytes_len();", "    if false {\n        let ab = a * tls_client.bytes_len();"),
+    ("the leaf marked kept and not copied", "clientauth.cho",
+     "        tls_slot.copy_bytes(bytes[tls_slot.b_leaf()..tls_slot.b_leaf() + n], room[0..n]);\n", ""),
+    ("the leaf copied a byte short", "clientauth.cho",
+     "tls_slot.copy_bytes(bytes[tls_slot.b_leaf()..tls_slot.b_leaf() + n], room[0..n]);",
+     "tls_slot.copy_bytes(bytes[tls_slot.b_leaf()..tls_slot.b_leaf() + n - 1], room[0..n - 1]);"),
+    ("the leaf copied before the client is verified", "clientauth.cho", "    if verified(ints) && n <= len(room) {",
+     "    if n > 0 && n <= len(room) {"),
+    ("the room read whether or not the connection is verified", "clientauth.cho",
+     "    if verified(ints) && tls_slot.has(ints, tls_slot.f_leaf_kept()) {", "    if tls_slot.has(ints, tls_slot.f_leaf_kept()) {"),
+    ("a failed connection keeps its leaf in the room", "clientauth.cho",
+     "        if ints[tls_slot.i_state()] == tls_slot.state_failed() {\n            forget(ints, room);",
+     "        if false {\n            forget(ints, room);"),
+    ("a connection that fails with no area keeps its leaf in the room", "tls.cho",
+     "    contents(engine.cints)[ci + tls_slot.i_failure()] = code;\n    if is_server(engine) {",
+     "    contents(engine.cints)[ci + tls_slot.i_failure()] = code;\n    if false {"),
+    ("a dropped connection's leaf left in the room", "tls.cho",
+     "    if is_server(engine) {\n        // The leaf kept for the connection", "    if false {\n        // The leaf kept for the connection"),
+    ("a connection dropped holding an area leaves its leaf in the room", "tls.cho",
+     "            tls_clientauth.forget(contents(engine.ints)[a..a + tls_slot.ints_core_len()], contents(engine.peers)[p..p + tls_slot.peer_cap()]);\n",
+     "            let skipped = a;\n"),
+    ("forget leaves the leaf's bytes", "clientauth.cho", "        tls_slot.zero(room[0..ints[tls_slot.i_leaf_len()]]);\n", ""),
+    ("the next slot's room", "tls.cho",
+     "    if is_server(engine) {\n        let ab = a * tls_client.bytes_len();\n        let p = slot * tls_slot.peer_cap();",
+     "    if is_server(engine) {\n        let ab = a * tls_client.bytes_len();\n        let p = (slot + 1) % contents(engine.meta)[m_slots()] * tls_slot.peer_cap();"),
+    ("the area's b_leaf read when the leaf is in the room", "tls.cho",
+     "    if in_area(engine, slot) && !tls_slot.has(ints, tls_slot.f_leaf_kept()) {", "    if in_area(engine, slot) {"),
+    ("the identity read from the slot's core while an area holds the current one", "tls.cho",
+     "fn core_now[&e](engine: &e Engine, slot: int) -> [] &e [int] {\n    if in_area(engine, slot) {",
+     "fn core_now[&e](engine: &e Engine, slot: int) -> [] &e [int] {\n    if false {"),
+    ("a large leaf read from the room", "tls.cho",
+     "    if in_area(engine, slot) && !tls_slot.has(ints, tls_slot.f_leaf_kept()) {", "    if false {"),
     ("a released area keeps the client's leaf", "tls.cho", "    let ai = a * tls_client.ints_len();\n    clear_leaf(engine, a);\n",
      "    let ai = a * tls_client.ints_len();\n"),
     ("a dropped connection's area keeps the client's leaf", "tls.cho",
@@ -469,6 +507,10 @@ EQUIVALENT = {
     "a block the engine cannot read tolerated":
         "every block of the file must be a certificate that was stored (`n != pem_blocks(pem)`), and a block that "
         "was skipped is a block that was not stored, so the count already refuses it",
+    "the room read whether or not the connection is verified":
+        "a leaf is kept only for a verified connection, and the only way it stops being verified is a failure, which "
+        "gives the room up (`forget`, the kept flag cleared) in the call that failed it (`settle`, or `fail_parked` for a "
+        "socket's end with no area): `kept` never sees the flag on an unverified connection; the test is a second line",
     "a leaf over the room not refused":
         "the Certificate message is at most 16,384 bytes (checked at its header, `max_message`), so a leaf in it is "
         "under `leaf_cap()`, also 16,384: the check is a second line of defence",
@@ -515,10 +557,13 @@ def evidence(cancho, pkg, work):
 
 
 def pool_input():
-    """`tests/programs/tls_pool.cho clientcert`'s standard input: six PEM files, a NUL byte between them."""
-    files = ["echo/ca.pem", "echo/first/chain.pem", "echo/first/key.pem", "client_auth/pool_ca.pem",
-             "client_auth/pool_chain.pem", "client_auth/pool_key.pem"]
-    return b"\0".join(open(os.path.join(ROOT, "tests/vectors/tls", f), "rb").read() for f in files)
+    """`tests/programs/tls_pool.cho clientcert`'s standard input: eight PEM files, a NUL byte between them (the clients'
+    two CAs are one bundle), as `crates/cancho/tests/conformance/tls_pool.rs` gives it."""
+    read = lambda f: open(os.path.join(ROOT, "tests/vectors/tls", f), "rb").read()
+    files = [read("echo/ca.pem"), read("echo/first/chain.pem"), read("echo/first/key.pem"),
+             read("client_auth/pool_ca.pem") + read("client_auth/pool_ca2.pem"), read("client_auth/pool_chain.pem"),
+             read("client_auth/pool_key.pem"), read("client_auth/pool_chain2.pem"), read("client_auth/pool_big_chain.pem")]
+    return b"\0".join(files)
 
 
 def pool_evidence(cancho, pkg, work):

@@ -1,0 +1,144 @@
+=== after p256 2026-10-12T20:37:09Z counts=50,100,200,10000
+  cancho n=50     start        VmRSS      2740 KiB
+  cancho n=50     connected    VmRSS      7068 KiB
+  cancho n=50     handshake    VmRSS      8248 KiB
+  cancho n=50     established  VmRSS      3516 KiB
+  cancho n=50     echoed       VmRSS      5356 KiB
+  cancho n=50     partial      VmRSS      6664 KiB
+  cancho n=50     all-echoed   VmRSS      9668 KiB
+  cancho n=100    start        VmRSS      2508 KiB
+  cancho n=100    connected    VmRSS     11156 KiB
+  cancho n=100    handshake    VmRSS     13536 KiB
+  cancho n=100    established  VmRSS      4500 KiB
+  cancho n=100    echoed       VmRSS      8140 KiB
+  cancho n=100    partial      VmRSS     10952 KiB
+  cancho n=100    all-echoed   VmRSS     17028 KiB
+  cancho n=200    start        VmRSS      2508 KiB
+  cancho n=200    connected    VmRSS     19804 KiB
+  cancho n=200    handshake    VmRSS     24568 KiB
+  cancho n=200    established  VmRSS      6380 KiB
+  cancho n=200    echoed       VmRSS     13624 KiB
+  cancho n=200    partial      VmRSS     19284 KiB
+  cancho n=200    all-echoed   VmRSS     31492 KiB
+  cancho n=10000  start        VmRSS      2648 KiB
+  cancho n=10000  connected    VmRSS    869908 KiB
+  cancho n=10000  handshake    VmRSS   1108052 KiB
+  cancho n=10000  established  VmRSS    192856 KiB
+  cancho n=10000  echoed       VmRSS    552908 KiB
+  cancho n=10000  partial      VmRSS    837416 KiB
+  cancho n=10000  all-echoed   VmRSS   1451156 KiB
+
+KiB of server RSS per connection, over RSS at start (cancho  --client benches/tls_memory/clientauth/p256):
+| N | connected | handshake | established | echoed | partial | all-echoed |
+|---|---|---|---|---|---|---|
+| 50 | 86.6 | 110.2 | 15.5 | 52.3 | 78.5 | 138.6 |
+| 100 | 86.5 | 110.3 | 19.9 | 56.3 | 84.4 | 145.2 |
+| 200 | 86.5 | 110.3 | 19.4 | 55.6 | 83.9 | 144.9 |
+| 10000 | 86.7 | 110.5 | 19.0 | 55.0 | 83.5 | 144.9 |
+=== after rsa 2026-10-12T20:45:51Z counts=50,100,200,10000
+  cancho n=50     start        VmRSS      2736 KiB
+  cancho n=50     connected    VmRSS      7064 KiB
+  cancho n=50     handshake    VmRSS      8248 KiB
+  cancho n=50     established  VmRSS      3528 KiB
+  cancho n=50     echoed       VmRSS      5364 KiB
+  cancho n=50     partial      VmRSS      6672 KiB
+  cancho n=50     all-echoed   VmRSS      9692 KiB
+  cancho n=100    start        VmRSS      2412 KiB
+  cancho n=100    connected    VmRSS     11060 KiB
+  cancho n=100    handshake    VmRSS     13540 KiB
+  cancho n=100    established  VmRSS      4512 KiB
+  cancho n=100    echoed       VmRSS      8148 KiB
+  cancho n=100    partial      VmRSS     10960 KiB
+  cancho n=100    all-echoed   VmRSS     17076 KiB
+  cancho n=200    start        VmRSS      2516 KiB
+  cancho n=200    connected    VmRSS     19812 KiB
+  cancho n=200    handshake    VmRSS     24568 KiB
+  cancho n=200    established  VmRSS      6392 KiB
+  cancho n=200    echoed       VmRSS     13632 KiB
+  cancho n=200    partial      VmRSS     19292 KiB
+  cancho n=200    all-echoed   VmRSS     31580 KiB
+  cancho n=10000  start        VmRSS      2648 KiB
+  cancho n=10000  connected    VmRSS    869908 KiB
+  cancho n=10000  handshake    VmRSS   1108016 KiB
+  cancho n=10000  established  VmRSS    192864 KiB
+  cancho n=10000  echoed       VmRSS    552912 KiB
+  cancho n=10000  partial      VmRSS    837420 KiB
+  cancho n=10000  all-echoed   VmRSS   1455052 KiB
+
+KiB of server RSS per connection, over RSS at start (cancho  --client benches/tls_memory/clientauth/rsa):
+| N | connected | handshake | established | echoed | partial | all-echoed |
+|---|---|---|---|---|---|---|
+| 50 | 86.6 | 110.2 | 15.8 | 52.6 | 78.7 | 139.1 |
+| 100 | 86.5 | 111.3 | 21.0 | 57.4 | 85.5 | 146.6 |
+| 200 | 86.5 | 110.3 | 19.4 | 55.6 | 83.9 | 145.3 |
+| 10000 | 86.7 | 110.5 | 19.0 | 55.0 | 83.5 | 145.2 |
+=== after plain 2026-10-12T20:54:55Z counts=50,100,200,10000
+  cancho n=50     start        VmRSS      2656 KiB
+  cancho n=50     connected    VmRSS      6984 KiB
+  cancho n=50     handshake    VmRSS      8164 KiB
+  cancho n=50     established  VmRSS      3440 KiB
+  cancho n=50     echoed       VmRSS      5288 KiB
+  cancho n=50     partial      VmRSS      6596 KiB
+  cancho n=50     all-echoed   VmRSS      9560 KiB
+  cancho n=100    start        VmRSS      2452 KiB
+  cancho n=100    connected    VmRSS     11100 KiB
+  cancho n=100    handshake    VmRSS     13468 KiB
+  cancho n=100    established  VmRSS      4252 KiB
+  cancho n=100    echoed       VmRSS      7892 KiB
+  cancho n=100    partial      VmRSS     10704 KiB
+  cancho n=100    all-echoed   VmRSS     16700 KiB
+  cancho n=200    start        VmRSS      2464 KiB
+  cancho n=200    connected    VmRSS     19760 KiB
+  cancho n=200    handshake    VmRSS     24480 KiB
+  cancho n=200    established  VmRSS      5940 KiB
+  cancho n=200    echoed       VmRSS     13196 KiB
+  cancho n=200    partial      VmRSS     18856 KiB
+  cancho n=200    all-echoed   VmRSS     30912 KiB
+  cancho n=10000  start        VmRSS      2608 KiB
+  cancho n=10000  connected    VmRSS    869868 KiB
+  cancho n=10000  handshake    VmRSS   1106744 KiB
+  cancho n=10000  established  VmRSS    172816 KiB
+  cancho n=10000  echoed       VmRSS    532868 KiB
+  cancho n=10000  partial      VmRSS    817376 KiB
+  cancho n=10000  all-echoed   VmRSS   1423036 KiB
+
+KiB of server RSS per connection, over RSS at start (cancho ):
+| N | connected | handshake | established | echoed | partial | all-echoed |
+|---|---|---|---|---|---|---|
+| 50 | 86.6 | 110.2 | 15.7 | 52.6 | 78.8 | 138.1 |
+| 100 | 86.5 | 110.2 | 18.0 | 54.4 | 82.5 | 142.5 |
+| 200 | 86.5 | 110.1 | 17.4 | 53.7 | 82.0 | 142.2 |
+| 10000 | 86.7 | 110.4 | 17.0 | 53.0 | 81.5 | 142.0 |
+=== after probe 2026-10-12T21:03:47Z counts=50,100,200,10000
+  cancho n=200    established 200 of 200 (the next not within 5.0 s); VmRSS 6388 KiB, 19.4 KiB a connection over start
+  cancho n=200    established 200 of 200 (the next not within 5.0 s); VmRSS 5944 KiB, 17.6 KiB a connection over start
+=== after areas 2026-10-12T21:04:07Z counts=50,100,200,10000
+  cancho n=50     start        VmRSS      2712 KiB
+  cancho n=50     established  VmRSS      3516 KiB
+  cancho n=50     echoed       VmRSS      5356 KiB
+  cancho n=50     partial      VmRSS      6664 KiB
+  cancho n=50     all-echoed   VmRSS      9668 KiB
+  cancho n=100    start        VmRSS      2508 KiB
+  cancho n=100    established  VmRSS      4504 KiB
+  cancho n=100    echoed       VmRSS      8144 KiB
+  cancho n=100    partial      VmRSS      9864 KiB
+  cancho n=100    all-echoed   VmRSS     13736 KiB
+  cancho n=200    start        VmRSS      2512 KiB
+  cancho n=200    established  VmRSS      6384 KiB
+  cancho n=200    echoed       VmRSS     13628 KiB
+  cancho n=200    partial      VmRSS     15348 KiB
+  cancho n=200    all-echoed   VmRSS     19220 KiB
+  cancho n=10000  start        VmRSS      2572 KiB
+  cancho n=10000  established  VmRSS    192780 KiB
+  cancho n=10000  echoed       VmRSS    552832 KiB
+  cancho n=10000  partial      VmRSS    554552 KiB
+  cancho n=10000  all-echoed   VmRSS    558424 KiB
+
+KiB of server RSS per connection, over RSS at start (cancho --areas 64 --client benches/tls_memory/clientauth/p256):
+| N | connected | handshake | established | echoed | partial | all-echoed |
+|---|---|---|---|---|---|---|
+| 50 | - | - | 16.1 | 52.9 | 79.0 | 139.1 |
+| 100 | - | - | 20.0 | 56.4 | 73.6 | 112.3 |
+| 200 | - | - | 19.4 | 55.6 | 64.2 | 83.5 |
+| 10000 | - | - | 19.0 | 55.0 | 55.2 | 55.6 |
+=== done 2026-10-12T21:11:59Z

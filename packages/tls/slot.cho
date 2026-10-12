@@ -348,9 +348,18 @@ pub fn ints_len() -> [] int {
 // Whether an established connection needs its buffers kept: the engine takes its work area back when it does
 // not (`tls.cho`'s `idle`).
 pub fn keeps_area[&i](ints: &i [int]) -> [] bool {
-    // A server's connection with a verified client (`docs/tls-server.md` §13.6) keeps its area until it is dropped
-    // or fails: the leaf `peer_certificate` and the other `peer_` calls read is in `b_leaf`, up to 16 KiB.
-    return has(ints, f_client_auth()) && ints[i_state()] != state_failed();
+    // A server's connection with a verified client (`docs/tls-server.md` §13.6) whose leaf, up to 16 KiB in `b_leaf`,
+    // is larger than the engine keeps outside the area (`peer_cap`, `f_leaf_kept`) keeps its area until it is dropped
+    // or fails: `peer_certificate` and the other `peer_` calls read the leaf there (`docs/tls-memory.md` §11).
+    return has(ints, f_client_auth()) && ints[i_state()] != state_failed() && !has(ints, f_leaf_kept());
+}
+
+// The most bytes of a verified client's leaf the engine keeps for a server connection outside its work area, in a
+// room of its own a slot (`tls.cho`'s `peers`), so that the area goes back after the handshake: a device's P-256
+// certificate is about 570 bytes, an RSA-2048 one under an intermediate about 970 (`docs/tls-memory.md` §11). A
+// larger leaf keeps the area (`keeps_area`).
+pub fn peer_cap() -> [] int {
+    return 2048;
 }
 
 // A server's resumption (`docs/tls-server.md` §12) uses fields of the client's that a server slot has
@@ -497,6 +506,12 @@ pub fn f_client_cert() -> [] int {
 
 pub fn f_client_auth() -> [] int {
     return 262144;
+}
+
+// The verified client's leaf was copied to the engine's room for this slot (`peer_cap`), which the `peer_` calls read
+// from then on: the connection needs no area for it (`keeps_area`, `docs/tls-memory.md` §11).
+pub fn f_leaf_kept() -> [] int {
+    return 524288;
 }
 
 // A server slot's fields for a client's identity, the client's own that a server never uses: the time

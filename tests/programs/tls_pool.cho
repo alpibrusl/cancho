@@ -5,7 +5,7 @@ edition 5;
 // `slots` slots.
 //
 //     tls_pool <slots> <areas> <steps> <seed> [hold] [tickets] [mutual] < ca.pem NUL chain.pem NUL key.pem
-//     tls_pool <slots> <areas> <steps> <seed> clientcert < ca.pem NUL chain.pem NUL key.pem NUL clients_ca.pem NUL client_chain.pem NUL client_key.pem
+//     tls_pool <slots> <areas> <steps> <seed> clientcert < ca.pem NUL chain.pem NUL key.pem NUL clients_cas.pem NUL client_chain.pem NUL client_key.pem NUL client_chain2.pem NUL client_big_chain.pem
 //
 // (the three files on standard input, a NUL byte between them; the leaf is for `echo.lex-sys.test`). It prints one
 // line for each thing it checks, `ok ...` or `FAIL ...`, and exits 1 if any failed:
@@ -30,8 +30,10 @@ edition 5;
 // `ready start` before the handshakes and `ready established` after them, waiting 4 seconds each time, then sends 16,384 bytes through each connection in turn, prints `ready echoed` and waits 4 seconds;
 // then it goes on as above.
 import std.buffer;
+import std.crypto;
 import std.io;
 import tls;
+import x509;
 
 fn number[&s](s: &s [byte]) -> [] int {
     var n = 0;
@@ -531,82 +533,229 @@ fn drive[&i, &c, &s, &w, &a, &m, &t, &k](io: &!i Io, clock: &k Clock, cli: &!c t
     return failed;
 }
 
-// With `clientcert` (`docs/tls-server.md` §13): the server requires a client certificate and the client engine
-// presents one. A connection whose client was verified keeps its area while it lives (`tls_slot.keeps_area`: the
-// `peer_` calls read the leaf in it), and gives it back cleared, leaf and all, when it is dropped; `tls.residue` is
-// 0 after every step. With fewer areas than slots, verified connections hold the areas and a serve with none free
-// is `tls-pool`. Then the clients' store is replaced between the client's CertificateVerify and its Finished: the
-// handshake fails `tls-server-client-store-replaced` and its area comes back cleared.
-fn drive_clientcert[&i, &c, &s, &w, &a, &t, &p](io: &!i Io, cli: &!c tls.Engine, srv: &!s tls.Engine, wire: &!w [byte], app: &!a [byte], st: &!t [int], slots: int, areas: int, seed: int, store: &p [byte]) -> [io_write] int {
+fn same[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {
+    if len(x) != len(y) {
+        return false;
+    }
+    var j = 0;
+    while j < len(x) {
+        if x[j] != y[j] {
+            return false;
+        }
+        j = j + 1;
+    }
+    return true;
+}
+
+// Whether every `peer_` call on `k` answers the client's leaf `want` (its DER) as verified: the certificate byte for
+// byte, its SHA-256, a subject and a serial, a notAfter, `sans` subjectAltNames each inside the DER, and the
+// generation of the store now.
+fn identity_is[&e, &w](srv: &e tls.Engine, k: int, want: &w [byte], sans: int) -> [] bool {
+    var ok = tls.peer_verified(srv, k) == tls.client_generation(srv) && tls.peer_not_after(srv, k) > 0;
+    region q {
+        let got = alloc_slice[q](16384, byte_of(0));
+        let n = tls.peer_certificate(srv, k, got);
+        ok = ok && n == len(want) && same(got[0..len(want)], want);
+        let fp = alloc_slice[q](32, byte_of(0));
+        crypto.sha256(want, fp);
+        ok = ok && tls.peer_fingerprint(srv, k, got[0..32]) == 32 && same(got[0..32], fp);
+        ok = ok && tls.peer_subject(srv, k, got) > 0 && tls.peer_serial(srv, k, got) > 0;
+        let entry = alloc_slice[q](3, 0);
+        var count = 0;
+        var at = tls.peer_san(srv, k, 0, entry);
+        while at > 0 && count <= sans {
+            ok = ok && entry[1] <= entry[2] && entry[2] <= len(want);
+            count = count + 1;
+            at = tls.peer_san(srv, k, at, entry);
+        }
+        ok = ok && count == sans;
+    }
+    return ok;
+}
+
+// Whether no `peer_` call on `k` answers an identity.
+fn no_identity[&e](srv: &e tls.Engine, k: int) -> [] bool {
+    var none = tls.peer_verified(srv, k) == 0 && tls.peer_not_after(srv, k) == 0;
+    region q {
+        let leaf = alloc_slice[q](16384, byte_of(0));
+        let entry = alloc_slice[q](3, 0);
+        none = none && tls.peer_certificate(srv, k, leaf) == 0 && tls.peer_fingerprint(srv, k, leaf) == 0 && tls.peer_subject(srv, k, leaf) == 0 && tls.peer_serial(srv, k, leaf) == 0 && tls.peer_san(srv, k, 0, entry) == 0;
+    }
+    return none;
+}
+
+// A new connection in slot `k` of both engines, carried to its end.
+fn connect_pair[&c, &s, &w, &t, &a](cli: &!c tls.Engine, srv: &!s tls.Engine, wire: &!w [byte], st: &!t [int], app: &!a [byte], k: int, chunk: int) -> [] int {
+    st[k * 4] = 0;
+    st[k * 4 + 1] = 0;
+    st[k * 4 + 2] = 0;
+    tls.serve(srv, k, 1800000000000);
+    tls.start(cli, k, "echo.lex-sys.test", 1800000000000);
+    return settle(cli, srv, wire, st, app, k, chunk);
+}
+
+// With `clientcert` (`docs/tls-server.md` §13, `docs/tls-memory.md` §11): the server requires a client certificate and
+// the client engine presents one. A connection whose client was verified gives its area back once its handshake is
+// done, the leaf kept in the engine's room for its slot, and every `peer_` call answers what was verified from it,
+// while the connection is idle and while it holds an area again for a record; a failure, a drop and the slot's next
+// connection leave nothing of it. A leaf larger than the room (`pool_big_chain.pem`) keeps its area, as every verified
+// leaf did before; with fewer areas than slots such connections can hold every area, and a serve is then `tls-pool`.
+// Then the clients' store is replaced between the client's CertificateVerify and its Finished: the handshake fails
+// `tls-server-client-store-replaced` and nothing of it is kept. `tls.residue` is 0 after every step.
+fn drive_clientcert[&i, &c, &s, &w, &a, &m, &t, &p, &u](io: &!i Io, cli: &!c tls.Engine, srv: &!s tls.Engine, wire: &!w [byte], app: &!a [byte], msg: &!m [byte], st: &!t [int], slots: int, areas: int, steps: int, seed: int, pems: &p [byte], cuts: &u [int]) -> [io_write] int {
     var failed = 0;
     let now = 1800000000000;
-    let host = "echo.lex-sys.test";
-    var verified = 0;
-    var kept = 0;
-    var clean = true;
-    var k = 0;
-    var refused = 0;
+    let store = pems[cuts[2] + 1..cuts[3]];
+    let key = pems[cuts[4] + 1..cuts[5]];
     region r {
-        let fp = alloc_slice[r](32, byte_of(0));
+        // The leaves the client presents, as DER: `pool_chain.pem`'s, `pool_chain2.pem`'s (longer), `pool_big_chain.pem`'s.
+        let small = alloc_slice[r](16384, byte_of(0));
+        let other = alloc_slice[r](16384, byte_of(0));
+        let big = alloc_slice[r](16384, byte_of(0));
+        let info = alloc_slice[r](2, 0);
+        x509.pem_next(pems[cuts[3] + 1..cuts[4]], 0, small, info);
+        let ns = info[0];
+        x509.pem_next(pems[cuts[5] + 1..cuts[6]], 0, other, info);
+        let no = info[0];
+        x509.pem_next(pems[cuts[6] + 1..len(pems)], 0, big, info);
+        let nb = info[0];
+        var verified = 0;
+        var released = 0;
+        var clean = true;
+        var k = 0;
         while k < slots {
-            if tls.areas_free(srv) == 0 {
-                // Every area is held by a verified connection: the serve is refused and starts nothing.
-                if tls.serve(srv, k, now) == 0 - 72 && !tls.holds_area(srv, k) {
-                    refused = refused + 1;
-                }
-                tls.drop(srv, k - areas);
-                tls.drop(cli, k - areas);
-                if tls.residue(srv) != 0 || tls.residue(cli) != 0 {
-                    clean = false;
-                }
-            }
-            tls.serve(srv, k, now);
-            tls.start(cli, k, host, now);
-            settle(cli, srv, wire, st, app, k, 1 + (seed + k) % 1500);
-            if tls.event(srv, k) == tls.event_established() && tls.peer_verified(srv, k) == tls.client_generation(srv) && tls.peer_fingerprint(srv, k, fp) == 32 && tls.client_auth(cli, k) == 1 {
+            connect_pair(cli, srv, wire, st, app, k, 1 + (seed + k) % 1500);
+            if tls.event(srv, k) == tls.event_established() && tls.client_auth(cli, k) == 1 && identity_is(srv, k, small[0..ns], 1) {
                 verified = verified + 1;
             }
-            if tls.holds_area(srv, k) {
-                kept = kept + 1;
+            if !tls.holds_area(srv, k) {
+                released = released + 1;
             }
             if tls.residue(srv) != 0 || tls.residue(cli) != 0 {
                 clean = false;
             }
             k = k + 1;
         }
+        failed = failed + say_n(io, verified == slots && released == slots && clean && tls.areas_free(srv) == areas, "clientcert: every client verified, its connection gives its area back and keeps its identity, residue 0 after every step, slots", slots);
+        // Traffic: a message on a slot the LCG picks; its first record fed half to the server, which then holds an area
+        // again (the identity is read from the room, the area's copy of the core saying it is there), then the rest.
+        var x = seed;
+        var step = 0;
+        var held = 0;
+        var good = true;
+        while step < steps {
+            x = next(x);
+            let slot = x / 7 % slots;
+            x = next(x);
+            let size = 1 + x / 7 % 20000;
+            var j = 0;
+            while j < size {
+                msg[j] = byte_of(pattern(slot, st[slot * 4] + j));
+                j = j + 1;
+            }
+            st[slot * 4] = st[slot * 4] + tls.send(cli, slot, msg[0..size]);
+            let out = tls.take(cli, slot, wire);
+            let cut = 5 + (int_of(wire[3]) * 256 + int_of(wire[4])) / 2;
+            var used = tls.feed(srv, slot, wire[0..cut]);
+            if tls.holds_area(srv, slot) && identity_is(srv, slot, small[0..ns], 1) && tls.residue(srv) == 0 {
+                held = held + 1;
+            }
+            while used < out {
+                let c = tls.feed(srv, slot, wire[used..out]);
+                if c <= 0 {
+                    used = out;
+                    good = false;
+                }
+                used = used + c;
+                server_echo(srv, app, slot);
+            }
+            settle(cli, srv, wire, st, app, slot, 1 + x % 3000);
+            if st[slot * 4 + 1] != st[slot * 4] || st[slot * 4 + 2] != 0 || tls.holds_area(srv, slot) || !identity_is(srv, slot, small[0..ns], 1) || tls.residue(srv) != 0 || tls.residue(cli) != 0 {
+                good = false;
+            }
+            step = step + 1;
+        }
+        failed = failed + say_n(io, good && held == steps, "clientcert: traffic on verified connections, an area taken and given back each time, the identity the same while it is held and after, residue 0, steps", steps);
+        // A verified connection that fails: before its alert is taken it still holds its area, and gives no identity.
+        let f = slots - 1;
+        region q {
+            let bad = alloc_slice[q](300, byte_of(7));
+            tls.send(cli, f, bad);
+        }
+        let nf = tls.take(cli, f, wire);
+        wire[nf - 3] = byte_of(int_of(wire[nf - 3]) ^ 1);
+        let fcode = tls.feed(srv, f, wire[0..nf]);
+        let before = fcode < 0 && tls.holds_area(srv, f) && no_identity(srv, f);
+        let falert = tls.take(srv, f, app);
+        failed = failed + say(io, before && falert > 0 && !tls.holds_area(srv, f) && no_identity(srv, f) && tls.residue(srv) == 0, "clientcert: a verified connection that fails gives no identity, before and after its alert is taken, and its area and its leaf back cleared");
+        k = 0;
+        while k < slots {
+            tls.drop(srv, k);
+            tls.drop(cli, k);
+            k = k + 1;
+        }
+        failed = failed + say_n(io, tls.areas_free(srv) == areas && tls.residue(srv) == 0 && tls.residue(cli) == 0, "clientcert: dropped, every area back and every leaf cleared, residue", tls.residue(srv));
+        // A slot's next connection: a longer leaf (two SANs), then a shorter one, in slot 0.
+        tls.replace_client_identity(cli, 0, pems[cuts[5] + 1..cuts[6]], key, now);
+        connect_pair(cli, srv, wire, st, app, 0, 700);
+        var reuse = identity_is(srv, 0, other[0..no], 2) && !tls.holds_area(srv, 0) && tls.residue(srv) == 0;
+        // Dropped while it holds an area again, half a record fed.
+        tls.send(cli, 0, msg[0..1000]);
+        tls.take(cli, 0, wire);
+        tls.feed(srv, 0, wire[0..500]);
+        reuse = reuse && tls.holds_area(srv, 0) && identity_is(srv, 0, other[0..no], 2);
+        tls.drop(srv, 0);
+        tls.drop(cli, 0);
+        reuse = reuse && tls.residue(srv) == 0 && no_identity(srv, 0);
+        tls.replace_client_identity(cli, 0, pems[cuts[3] + 1..cuts[4]], key, now);
+        connect_pair(cli, srv, wire, st, app, 0, 900);
+        reuse = reuse && identity_is(srv, 0, small[0..ns], 1) && tls.residue(srv) == 0;
+        failed = failed + say(io, reuse, "clientcert: a slot's next connection has its own leaf and nothing of the last one, which was longer and dropped holding an area, residue 0");
+        // Leaves larger than the room keep their areas. With one slot, in slot 0 itself.
+        tls.replace_client_identity(cli, 0, pems[cuts[6] + 1..len(pems)], key, now);
+        var first = 1;
+        if slots == 1 {
+            tls.drop(srv, 0);
+            tls.drop(cli, 0);
+            first = 0;
+        }
+        var bigs = 0;
+        var j = first;
+        while j < slots && tls.areas_free(srv) > 0 {
+            connect_pair(cli, srv, wire, st, app, j, 1 + (seed + j) % 1500);
+            if identity_is(srv, j, big[0..nb], 80) && tls.holds_area(srv, j) && tls.residue(srv) == 0 && tls.residue(cli) == 0 {
+                bigs = bigs + 1;
+            }
+            j = j + 1;
+        }
+        failed = failed + say_n(io, bigs == j - first && bigs > 0, "clientcert: a leaf larger than the room keeps its area and is read from it, connections", bigs);
+        if j < slots {
+            failed = failed + say(io, tls.serve(srv, j, now) == 0 - 72 && !tls.holds_area(srv, j), "clientcert: with every area held by a connection with a large leaf a serve is tls-pool");
+        }
+        if slots > 1 {
+            // The socket of slot 0's connection, a verified one with its leaf in the room, ends: with no area free when
+            // the large leaves hold them all (the core alone fails), else with one.
+            let parked = tls.areas_free(srv) == 0;
+            tls.eof(srv, 0);
+            var none_free = 0;
+            if parked {
+                none_free = 1;
+            }
+            failed = failed + say_n(io, tag_is(srv, 0, "tls-peer-closed") && no_identity(srv, 0) && !tls.holds_area(srv, 0) && tls.residue(srv) == 0, "clientcert: a verified connection whose socket ends gives its leaf up, residue 0, with no area free", none_free);
+        }
+        k = 0;
+        while k < slots {
+            tls.drop(srv, k);
+            tls.drop(cli, k);
+            k = k + 1;
+        }
+        failed = failed + say(io, tls.areas_free(srv) == areas && tls.residue(srv) == 0 && tls.residue(cli) == 0, "clientcert: the large leaves' areas come back cleared when dropped, residue 0");
+        tls.replace_client_identity(cli, 0, pems[cuts[3] + 1..cuts[4]], key, now);
     }
-    failed = failed + say_n(io, verified == slots && kept == slots && clean, "clientcert: every client verified, its connection keeps its area, residue 0 after every step, slots", slots);
-    if areas < slots {
-        failed = failed + say_n(io, refused == slots - areas, "clientcert: with every area held by a verified connection a serve is tls-pool, then served once one is dropped, refused", refused);
-    }
-    // A verified connection that fails: before its alert is taken it still holds its area, and gives no identity.
-    let f = slots - 1;
-    region q {
-        let msg = alloc_slice[q](300, byte_of(7));
-        tls.send(cli, f, msg);
-    }
-    let nf = tls.take(cli, f, wire);
-    wire[nf - 3] = byte_of(int_of(wire[nf - 3]) ^ 1);
-    let fcode = tls.feed(srv, f, wire[0..nf]);
-    var held = fcode < 0 && tls.holds_area(srv, f) && tls.peer_verified(srv, f) == 0 && tls.peer_not_after(srv, f) == 0;
-    region q {
-        let leaf = alloc_slice[q](16384, byte_of(0));
-        let entry = alloc_slice[q](3, 0);
-        held = held && tls.peer_certificate(srv, f, leaf) == 0 && tls.peer_fingerprint(srv, f, leaf) == 0 && tls.peer_subject(srv, f, leaf) == 0 && tls.peer_serial(srv, f, leaf) == 0 && tls.peer_san(srv, f, 0, entry) == 0;
-    }
-    let falert = tls.take(srv, f, app);
-    failed = failed + say(io, held && falert > 0 && !tls.holds_area(srv, f) && tls.peer_verified(srv, f) == 0 && tls.residue(srv) == 0, "clientcert: a verified connection that fails gives no identity, before and after its alert is taken, and its area back cleared");
-    k = 0;
-    while k < slots {
-        tls.drop(srv, k);
-        tls.drop(cli, k);
-        k = k + 1;
-    }
-    failed = failed + say_n(io, tls.areas_free(srv) == areas && tls.residue(srv) == 0 && tls.residue(cli) == 0, "clientcert: dropped, every area back and cleared with the leaf, residue", tls.residue(srv));
     // The store replaced while the client holds its Finished: the client's flight is fed one record at a time, and
     // the store is replaced before the last (its Finished).
     tls.serve(srv, 0, now);
-    tls.start(cli, 0, host, now);
+    tls.start(cli, 0, "echo.lex-sys.test", now);
     carry(cli, srv, wire, st, app, 0, 65536, true);
     carry(srv, cli, wire, st, app, 0, 65536, false);
     let n = tls.take(cli, 0, wire);
@@ -623,11 +772,27 @@ fn drive_clientcert[&i, &c, &s, &w, &a, &t, &p](io: &!i Io, cli: &!c tls.Engine,
         at = end;
     }
     let alert = tls.take(srv, 0, app);
-    failed = failed + say_n(io, tag_is(srv, 0, "tls-server-client-store-replaced") && alert > 0 && tls.peer_verified(srv, 0) == 0 && !tls.holds_area(srv, 0) && tls.residue(srv) == 0, "clientcert: the store replaced before the client's Finished fails the handshake, its area cleared, records fed", records);
+    failed = failed + say_n(io, tag_is(srv, 0, "tls-server-client-store-replaced") && alert > 0 && no_identity(srv, 0) && !tls.holds_area(srv, 0) && tls.residue(srv) == 0, "clientcert: the store replaced before the client's Finished fails the handshake, its area cleared, records fed", records);
     tls.drop(srv, 0);
     tls.drop(cli, 0);
     failed = failed + say(io, tls.areas_free(srv) == areas && tls.residue(srv) == 0 && tls.residue(cli) == 0, "clientcert: after the drops no area or core holds a byte, residue 0");
     return failed;
+}
+
+// Where the `k`th NUL byte of `text` is (`len(text)` when there are fewer).
+fn nul[&t](text: &t [byte], k: int) -> [] int {
+    var seen = 0;
+    var j = 0;
+    while j < len(text) {
+        if int_of(text[j]) == 0 {
+            seen = seen + 1;
+            if seen == k {
+                return j;
+            }
+        }
+        j = j + 1;
+    }
+    return len(text);
 }
 
 fn main(world: World) -> [] int {
@@ -695,7 +860,13 @@ fn main(world: World) -> [] int {
                             if clientcert {
                                 key_end = cut3;
                             }
-                            if cut2 >= len(text) || clientcert && cut5 >= len(text) {
+                            let cuts = alloc_slice[r](7, 0);
+                            var c = 0;
+                            while c < 7 {
+                                cuts[c] = nul(text, c + 1);
+                                c = c + 1;
+                            }
+                            if cut2 >= len(text) || clientcert && cuts[6] >= len(text) {
                                 io.error_all(i, "tls_pool: expected three files\n");
                             } else {
                                 borrow mut cli as &!cw in {
@@ -709,7 +880,7 @@ fn main(world: World) -> [] int {
                                             tls.set_tickets(sw, 2, 3600);
                                             tls.set_resumption(cw, true);
                                         }
-                                        if clientcert && (tls.trust_clients(sw, text[cut3 + 1..cut4]) != 1 || tls.client_auth_mode(sw, 2) != 0 || tls.add_client_identity(cw, text[cut4 + 1..cut5], text[cut5 + 1..len(text)], "*", 1800000000000) < 0) {
+                                        if clientcert && (tls.trust_clients(sw, text[cut3 + 1..cut4]) < 1 || tls.client_auth_mode(sw, 2) != 0 || tls.add_client_identity(cw, text[cut4 + 1..cut5], text[cut5 + 1..cuts[5]], "*", 1800000000000) < 0) {
                                             io.error_all(i, "tls_pool: the client certificate setup was refused\n");
                                         }
                                         if mutual && !clientcert && tls.add_client_identity(cw, text[cut1 + 1..cut2], text[cut2 + 1..len(text)], "*", 1800000000000) < 0 {
@@ -724,7 +895,7 @@ fn main(world: World) -> [] int {
                                                         borrow mut stb as &!tw in {
                                                             borrow clock as &kk in {
                                                                 if clientcert {
-                                                                    status = drive_clientcert(i, cw, sw, contents(ww), contents(aw), contents(tw), slots, areas, seed, text[cut3 + 1..cut4]);
+                                                                    status = drive_clientcert(i, cw, sw, contents(ww), contents(aw), contents(mw), contents(tw), slots, areas, steps, seed, text, cuts);
                                                                 } else {
                                                                     status = drive(i, kk, cw, sw, contents(ww), contents(aw), contents(mw), contents(tw), slots, areas, steps, seed, hold, tickets);
                                                                 }

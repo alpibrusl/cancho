@@ -201,7 +201,10 @@ pub fn certificate[&i, &b](ints: &i [int], bytes: &b [byte]) -> [] &b [byte] {
 // The verified leaf parsed into `view` (`x509.view_len()` words): 0, or a refusal (also when there is
 // no verified leaf).
 pub fn leaf_view[&i, &b, &v](ints: &i [int], bytes: &b [byte], view: &!v [int]) -> [] int {
-    let der = certificate(ints, bytes);
+    return view_of(certificate(ints, bytes), view);
+}
+
+pub fn view_of[&d, &v](der: &d [byte], view: &!v [int]) -> [] int {
     if len(der) == 0 {
         return tls_record.x509_decode();
     }
@@ -210,10 +213,53 @@ pub fn leaf_view[&i, &b, &v](ints: &i [int], bytes: &b [byte], view: &!v [int]) 
 
 // SHA-256 of the verified leaf's DER into `out` (32 bytes): 32, or 0 when there is none.
 pub fn fingerprint[&i, &b, &o](ints: &i [int], bytes: &b [byte], out: &!o [byte]) -> [] int {
-    let der = certificate(ints, bytes);
+    return fingerprint_of(certificate(ints, bytes), out);
+}
+
+pub fn fingerprint_of[&d, &o](der: &d [byte], out: &!o [byte]) -> [] int {
     if len(der) == 0 || len(out) < 32 {
         return 0;
     }
     crypto.sha256(der, out[0..32]);
     return 32;
+}
+
+// ---- The leaf outside the work area (`docs/tls-memory.md` §11) ----
+
+// After an engine call on a server connection that holds its area (`ints` and `bytes` are the area, `room` the
+// engine's `tls_slot.peer_cap()` bytes for this slot): a client established as verified whose leaf fits has it copied
+// to `room`, once, and `f_leaf_kept` says so, so the area can go back; a connection that failed since gives it up.
+// The copy is of the bytes `verify_chain` and CertificateVerify were given, made when `established` has just let
+// the identity live, in the call that did: nothing writes `b_leaf` after `on_certificate`.
+pub fn keep[&i, &b, &r](ints: &!i [int], bytes: &b [byte], room: &!r [byte]) -> [] int {
+    if tls_slot.has(ints, tls_slot.f_leaf_kept()) {
+        if ints[tls_slot.i_state()] == tls_slot.state_failed() {
+            forget(ints, room);
+        }
+        return 0;
+    }
+    let n = ints[tls_slot.i_leaf_len()];
+    if verified(ints) && n <= len(room) {
+        tls_slot.copy_bytes(bytes[tls_slot.b_leaf()..tls_slot.b_leaf() + n], room[0..n]);
+        tls_slot.set_flag(ints, tls_slot.f_leaf_kept());
+    }
+    return 0;
+}
+
+// The leaf kept in `room`: empty unless the connection is established as verified and its leaf was kept there.
+pub fn kept[&i, &r](ints: &i [int], room: &r [byte]) -> [] &r [byte] {
+    var n = 0;
+    if verified(ints) && tls_slot.has(ints, tls_slot.f_leaf_kept()) {
+        n = ints[tls_slot.i_leaf_len()];
+    }
+    return room[0..n];
+}
+
+// The leaf in `room` overwritten and no longer kept: when the connection fails, and when its slot is dropped.
+pub fn forget[&i, &r](ints: &!i [int], room: &!r [byte]) -> [] int {
+    if tls_slot.has(ints, tls_slot.f_leaf_kept()) {
+        tls_slot.zero(room[0..ints[tls_slot.i_leaf_len()]]);
+        tls_slot.clear_flag(ints, tls_slot.f_leaf_kept());
+    }
+    return 0;
 }
