@@ -186,7 +186,14 @@ fn every_rule_has_a_fixture() {
     // compiler's failures, and a fixture that produced one would be a bug
     // report. `docs/internal-errors.md` §5: it is covered by the unit
     // tests in `cancho` and `cancho-codegen`, which break the IR by hand.
-    const COVERED_ELSEWHERE: [&str; 2] = ["not-public", "internal"];
+    // `not-public` and `internal` are the two the single-file harness
+    // cannot reach by construction; `ingest-*` are the three a `.cho`
+    // fixture cannot reach at all -- they name the refusals of the JSON
+    // ingest path, whose fixtures are `.json` handed to `cancho ingest`,
+    // and `cancho_syntax::ingest`'s own tests hold one per rule
+    // (`docs/structured-ingest.md` §3).
+    const COVERED_ELSEWHERE: [&str; 5] =
+        ["not-public", "internal", "ingest-arity", "ingest-json", "ingest-node"];
 
     let declared: BTreeSet<String> = fixtures("reject")
         .iter()

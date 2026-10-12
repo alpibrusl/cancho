@@ -2,7 +2,7 @@
 
 > **Status: settled.** The one I/O direction the language did not have.
 >
-> **§7 adds the bulk read** (`read_bytes`, edition 7): `getchar` is a libc call per byte,
+> **§7 adds the bulk read** (`read_bytes`, edition 9): `getchar` is a libc call per byte,
 > 72 MB/s on macOS, and §3.2's "no buffer-filling read" is corrected there.
 
 ---
@@ -195,7 +195,7 @@ header.
 read_bytes[&i, &b](io: &!i Io, into: &!b [byte]) -> [io_read] Read
 ```
 
-Edition 7. `Read` is `file_read`'s own: `Got(n)`, `End`, `Failed(errno)`
+Edition 9 (7 when the PR was opened; edition 7 has since been closed by `editions.md` §6.4 and the word-scan slice opened 9, so `read_bytes` joined it). `Read` is `file_read`'s own: `Got(n)`, `End`, `Failed(errno)`
 ([`file-handles.md`](file-handles.md) §3). It fills `into` from the front and
 says how many bytes it put there.
 
@@ -277,7 +277,7 @@ native one for buffers of 0, 7 and 65,536 bytes and for a `getchar` header follo
 |---|---|
 | **A query for what standard input is** (a pipe, a file, a terminal; `fstat`/`isatty`) | **Not built, and not cheap as asked.** The question is useful for a tool that wants to choose a strategy, but the use named for it, *seeking*, needs more than the answer: there is no way to hold a `File` for descriptor 0 (a `File` comes from `open_read` of a path), so `file_pread` cannot be pointed at standard input, and `lseek` has no builtin. A kind query alone would let a tool learn that it could seek and then be unable to. The slice that closes it is two builtins under `io_read`, `stdin_kind(io) -> int` and a positional read (`stdin_pread(io, at, into) -> Read`, `EBADF`/`ESPIPE` when it is a pipe), on three backends (WASI has `fd_fdstat_get` and `fd_pread`). The authority argument of §7.1 applies unchanged: it has to be behind `Io`, not `Fs("")` and `/dev/stdin` |
 | **A read that returns what has arrived** | §7.3. Nothing has asked |
-| **`std.io.read_into`** | A wrapper like `std.io.write_all`. `std.io` is an edition-1 file and cannot name an edition-7 builtin without declaring the edition, which would move the identity of every function in it (`editions.md` §6.3); `std.io` gets a second module or an edition marker in a slice of its own |
+| **`std.io.read_into`** | A wrapper like `std.io.write_all`. `std.io` is an edition-1 file and cannot name an edition-9 builtin without declaring the edition, which would move the identity of every function in it (`editions.md` §6.3); `std.io` gets a second module or an edition marker in a slice of its own |
 | **Standard input as a `File`** | Same reason as the seek row |
 
 ## 8. The suite
@@ -297,4 +297,4 @@ may not call `getchar`, and the refusal names the label it is missing.
 | `stdin_roundtrip.cho` | `getchar` to end of input, a row carrying both labels, and the first fixture with a `//~ STDIN` |
 | `examples/tally.cho` | A real `wc` over standard input: the program that could not be written before, and the one that found the two things in §3.2 |
 | `tests/programs/stdin_read_bytes.cho`, `conformance/stdin_bulk.rs` | §7: every byte once and in order for buffers of 0, 1, 7, 4,096, 65,536 and 1 MiB over inputs of 0 bytes to 24 MiB, input that arrives in pieces (3 to 500 writes, 2 ms apart), mixed with `getchar`, a closed descriptor (`9`), a directory (`21`) and `/dev/null`; the authority row; on both backends |
-| `tests/reject/read_bytes_is_edition_seven.cho` | `read_bytes` is not a name before edition 7 |
+| `tests/reject/read_bytes_is_edition_nine.cho` | `read_bytes` is not a name before edition 9 |

@@ -672,14 +672,22 @@ fn edition_seven_is_accepted() {
     assert_eq!(ast.edition_of(ItemId(item.unwrap() as u32)), 7);
 }
 
-/// There is nothing later than edition 7 to opt into yet
-/// (`docs/editions.md` §7), so any other number is refused rather than
-/// silently accepted.
+/// Edition 9 is the word-at-a-time scan (`docs/word-scan.md`).
+#[test]
+fn edition_nine_is_accepted() {
+    let (ast, decl) = one_fn("edition 9;\nfn f() -> [] int { return 1; }");
+    let item = ast.items.iter().position(|i| matches!(i, Item::Fn(d) if d.name == decl.name));
+    assert_eq!(ast.edition_of(ItemId(item.unwrap() as u32)), 9);
+}
+
+/// There is nothing later than edition 9 to opt into yet
+/// (`docs/editions.md` §7, `docs/tty.md` §6), so any other number is
+/// refused rather than silently accepted.
 #[test]
 fn an_unknown_edition_is_refused() {
-    let err = parse("edition 8;\nfn f() -> [] int { return 1; }").unwrap_err();
+    let err = parse("edition 10;\nfn f() -> [] int { return 1; }").unwrap_err();
     assert_eq!(err.rule, Rule::UnknownEdition);
-    assert!(err.message.contains("unknown edition 8"), "{}", err.message);
+    assert!(err.message.contains("unknown edition 10"), "{}", err.message);
 }
 
 /// The marker comes before even `module` (§6.1) — checked once, ahead

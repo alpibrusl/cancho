@@ -28,8 +28,9 @@ fn example_files() -> Vec<PathBuf> {
 
 /// The report, pinned, as the TLS echo's is: what the example can reach is the review of it a supervisor reads, so a label that
 /// appears or goes is a red build. No foreign code (`bounded`); the network only outbound (`net_out`, with no host named: the
-/// URLs are the operator's); the sockets and the poller; the clock; the console and standard input (the roots); and one path,
-/// `/dev/urandom`, for the TLS engine's entropy. No file is written and nothing is listened on.
+/// URLs are the operator's); the sockets and the poller; the clock; the console and standard input (the roots); and two paths for
+/// reading, fixed at build time by one `narrow`: `/dev/urandom` for the TLS engine's entropy, and `/etc/cancho/http_fetch_nb`, where
+/// `--client-identity` reads the client certificate and key (`docs/tls-parity.md` §6.2). No file is written and nothing is listened on.
 #[test]
 fn the_example_reports_a_bounded_authority_and_no_foreign_code() {
     let out = Command::new(BIN)
@@ -54,6 +55,7 @@ fn the_example_reports_a_bounded_authority_and_no_foreign_code() {
         "\"conn_write\", \"argument\": null",
         "\"err_write\", \"argument\": null",
         "\"fs_read\", \"argument\": \"/dev/urandom\"",
+        "\"fs_read\", \"argument\": \"/etc/cancho/http_fetch_nb\"",
         "\"heap\", \"argument\": null",
         "\"io_read\", \"argument\": null",
         "\"io_write\", \"argument\": null",
@@ -248,6 +250,77 @@ fn it_fetches_over_tls_from_https_hello_verifying_the_name_and_closing_with_clos
         Some(2),
         "a trust store with no root is refused before anything is dialled: {lines:?}"
     );
+
+    let _ = server.0.kill();
+    let _ = server.0.wait();
+    let _ = reader.join();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// ALPN and client certificates through the example (`docs/tls-parity.md` §6.6, §6.2): against `examples/https_hello` serving `mqtt` and
+/// `http/1.1`, an offer of `h2,http/1.1` is answered `http/1.1` and the response line says so, with no certificate asked for (`auth=0`);
+/// an offer the server does not speak is refused by the server (`no_application_protocol`); and the identity options go together and name
+/// files that can be read (the live mutual-TLS rows are `scripts/tls_auth_interop.py`'s).
+#[test]
+fn it_offers_alpn_to_https_hello_and_refuses_what_it_cannot_send() {
+    let dir = scratch("http-fetch-alpn");
+    let fetch = build(&dir, "http_fetch_nb", &example_files());
+    let hello = build(&dir, "https_hello", &super::https_hello::example_files());
+    let certs = dir.join("certs");
+    std::fs::create_dir_all(&certs).unwrap();
+    install("first", &certs, &["chain.pem", "key.pem", "names"]);
+    let port = free_port();
+    let mut server = Running(
+        Command::new(&hello)
+            .args(["--port", &port.to_string(), "--dir"])
+            .arg(&certs)
+            .args(["--idle", "60000", "--connections", "16", "--alpn", "mqtt,http/1.1"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let log = Arc::new(Log { lines: Mutex::new(Vec::new()), more: Condvar::new() });
+    let stdout = server.0.stdout.take().unwrap();
+    let writer = Arc::clone(&log);
+    let reader = std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            writer.lines.lock().unwrap().push(line.unwrap());
+            writer.more.notify_all();
+        }
+    });
+    log.wait("listening", 1);
+    let ca = std::fs::read(repo_root().join("tests/vectors/tls/echo/ca.pem")).unwrap();
+    let name = "echo.lex-sys.test";
+    let url = format!("https://{name}:{port}/hello/n1");
+    let resolve = ["--resolve".to_string(), format!("{name}=127.0.0.1")];
+    let with = |extra: &[&str]| {
+        let mut args = resolve.to_vec();
+        args.extend(extra.iter().map(|s| s.to_string()));
+        args.push(url.clone());
+        args
+    };
+
+    let (status, lines) = run(&fetch, &with(&["--alpn", "h2,http/1.1"]), Some(&ca));
+    assert_eq!(status, Some(0), "{lines:?}");
+    assert!(lines[0].ends_with(" new alpn=http/1.1 auth=0"), "the choice is reported: {lines:?}");
+    let (status, lines) = run(&fetch, &with(&["--alpn", "http/1.1"]), Some(&ca));
+    assert_eq!(status, Some(0), "{lines:?}");
+    assert!(lines[0].ends_with(" new alpn=http/1.1 auth=0"), "{lines:?}");
+    let (status, lines) = run(&fetch, &with(&["--alpn", "h2"]), Some(&ca));
+    assert_eq!(status, Some(1), "nothing in common ends the handshake: {lines:?}");
+    assert_eq!(lines[0], "0 failed client.tls", "{lines:?}");
+    let (status, lines) = run(&fetch, &with(&[]), Some(&ca));
+    assert_eq!(status, Some(0), "no offer, no suffix: {lines:?}");
+    assert!(lines[0].ends_with(" new"), "{lines:?}");
+
+    // The identity is not a path the operator names: `--client-cert` is no option, and `--client-identity` reads the fixed directory,
+    // whose files a test machine does not have (the live mutual-TLS rows install them: `scripts/tls_auth_interop.py`).
+    let (status, lines) = run(&fetch, &with(&["--client-cert", "chain.pem"]), Some(&ca));
+    assert_eq!(status, Some(2), "{lines:?}");
+    if !Path::new("/etc/cancho/http_fetch_nb/client.pem").exists() {
+        let (status, _) = run(&fetch, &with(&["--client-identity"]), Some(&ca));
+        assert_eq!(status, Some(2), "the identity's files cannot be read");
+    }
 
     let _ = server.0.kill();
     let _ = server.0.wait();

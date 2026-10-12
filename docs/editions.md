@@ -337,12 +337,21 @@ that never replaces a name, and `dir_mode` and `dir_own_mode` ([`directory-listi
 Each is a builtin under an existing label and a name an older file may already declare, so it is absent before
 edition 7 (`tests/reject/dir_rename_new_is_edition_seven.cho`) and nothing else about edition 6 changes.
 
+**Edition 9 is edition 8 plus the word-at-a-time scan** ([`word-scan.md`](word-scan.md)): the builtins `load_le64`,
+`byte_mask64`, `trailing_zeros`, `leading_zeros` and `popcount`. It exists because §6.4 closes edition 7 and edition 8 is the serial-port capability (the freeze: a name
+added to a closed edition could shadow a user's own), and these are exactly the names a program may declare for itself: `popcount` and
+`trailing_zeros` are what anyone writes by hand before the language has them (`tests/accept/word_scan_beside_own_names.cho`
+declares all five at edition 7 and means its own). `Split` is unchanged, so an edition-9 file destructures the ten fields
+edition 8 does. A file that declares `edition 9` hashes differently from its edition-8 text (§6.3), which touches only the
+files that adopt it; no other file's hash moves (`word-scan.md` §6 counts it).
+
 And **`read_bytes`** ([`standard-input.md`](standard-input.md) §7), standard input in bulk under the existing
 `io_read` label: `read_bytes(io, into) -> [io_read] Read`, with `file_read`'s own `Read`. A builtin under an existing
 label and a name a program may already declare (it is a natural name for a user function), so it is absent before
-edition 7 (`tests/reject/read_bytes_is_edition_seven.cho`) and nothing else about edition 6 changes. It adds no type, no
-label and no `Split` field. Adding it moved no identity: `cancho ids --std` over a program that imports every `std`
-module gives the same 1,677 hashes before and after, and 165 of the repository's programs give the same list
+edition 9 (`tests/reject/read_bytes_is_edition_nine.cho`) and nothing else about edition 8 changes. It adds no type, no
+label and no `Split` field. It was written against edition 7 and moved to edition 9 when that edition was found closed
+(§6.4) with word-scan opening 9. Adding it moved no identity: `cancho ids --std` over a program that imports every
+`std` module gives the same hashes before and after (counts in the PR), and the repository's programs give the same list
 (`std.json.parse_with`, which came in the same change, is a new `std` name, so it adds a `body` and a `sig` line and
 changes none; `std` modules are not editions).
 

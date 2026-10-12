@@ -1272,6 +1272,22 @@ fn the_two_backends_agree_beside_a_program_s_own_memchr() {
     );
 }
 
+/// `docs/word-scan.md`: the word-at-a-time primitives against loops written a byte and a bit at a time, on both backends.
+#[test]
+fn the_two_backends_agree_on_word_scan() {
+    assert_backends_agree("backends-word-scan", "tests/accept/word_scan.cho", "");
+}
+
+/// `docs/word-scan.md` §6: an edition-7 program's own `popcount` and friends are untouched, on both backends.
+#[test]
+fn the_two_backends_agree_beside_a_program_s_own_word_scan_names() {
+    assert_backends_agree(
+        "backends-word-scan-own-names",
+        "tests/accept/word_scan_beside_own_names.cho",
+        "",
+    );
+}
+
 /// `join(a) + join(b)`: a join as an arithmetic operand, which the LLVM backend could not type.
 #[test]
 fn the_two_backends_agree_on_a_join_as_an_operand() {
@@ -1408,4 +1424,75 @@ fn the_two_backends_answer_the_results_stub_port() {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+/// #388: a program that declares `extern fn free` and `extern fn malloc`
+/// itself -- cancho has no `void`, so its `free` returns `int` where the
+/// backend's own arena and boxed slices call `free` as `void` -- while also
+/// using a `region` and a boxed slice, which allocate through the backend's
+/// own `malloc`/`free`. The backend used to declare both unconditionally,
+/// and `clang` refused the module (`invalid redefinition of function
+/// 'free'`). This builds the program with `--backend llvm` and *runs* it:
+/// the symbols have to link and the arena and the box have to work, which
+/// the IR-text tests in `cancho-codegen-llvm` cannot show.
+#[test]
+fn a_programs_own_free_and_malloc_link_and_run_beside_the_arena_and_boxes() {
+    const SOURCE: &str = "edition 5;\n\
+         extern fn strdup[&f, &s](ffi: &f Ffi(\"libc\"), s: &s [byte]) -> [ffi(\"libc\")] c_ptr;\n\
+         extern fn free[&f](ffi: &f Ffi(\"libc\"), p: c_ptr) -> [ffi(\"libc\")] int;\n\
+         extern fn malloc[&f](ffi: &f Ffi(\"libc\"), n: int) -> [ffi(\"libc\")] c_ptr;\n\
+         \n\
+         fn copy_and_free[&f](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int {\n\
+             let p = strdup(ffi, \"x\\0\");\n\
+             free(ffi, p);\n\
+             let q = malloc(ffi, 16);\n\
+             free(ffi, q);\n\
+             return 0;\n\
+         }\n\
+         \n\
+         fn boxed[&h](heap: &!h Heap) -> [heap] int {\n\
+             let b = box_slice(heap, 5, byte_of(7));\n\
+             return unbox_slice(heap, b);\n\
+         }\n\
+         \n\
+         fn main(world: World) -> [] int {\n\
+             let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n\
+             release(io); release(fs); release(args); release(net); release(clock);\n\
+             let libc = narrow(ffi, \"libc\");\n\
+             var status = 1;\n\
+             region a {\n\
+                 let kept = alloc_slice[a](4, byte_of(7));\n\
+                 borrow libc as &f in { status = copy_and_free(f); }\n\
+                 status = status + len(kept);\n\
+             }\n\
+             borrow mut heap as &!h in { status = status + boxed(h); }\n\
+             release(libc);\n\
+             release(heap);\n\
+             return status;\n\
+         }\n";
+    let dir = scratch("backends-own-free-malloc");
+    let source = dir.join("own_free.cho");
+    std::fs::write(&source, SOURCE).expect("a writable fixture");
+    let exe = dir.join("out");
+    let build = Command::new(BIN)
+        .args([
+            "build".as_ref(),
+            source.as_os_str(),
+            "--std".as_ref(),
+            "--backend".as_ref(),
+            "llvm".as_ref(),
+            "-o".as_ref(),
+            exe.as_os_str(),
+        ])
+        .output()
+        .expect("the compiler runs");
+    assert!(
+        build.status.success(),
+        "`--backend llvm` should build a program with its own `free`/`malloc`, but said:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&exe).output().expect("the compiled program runs");
+    let _ = std::fs::remove_dir_all(&dir);
+    // 0 from the libc round trip, 4 from the arena's slice, 5 from the box.
+    assert_eq!(run.status.code(), Some(9), "{}", String::from_utf8_lossy(&run.stderr));
 }

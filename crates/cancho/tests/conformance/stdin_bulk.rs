@@ -185,7 +185,7 @@ fn a_program_that_never_reads_standard_input_cannot_call_it() {
     let file = dir.join("p.cho");
     std::fs::write(
         &file,
-        "edition 7;\n\
+        "edition 9;\n\
          fn pull[&i](io: &!i Io) -> [io_write] int {\n\
              region a {\n\
                  let buf = alloc_slice[a](8, byte_of(0));\n\

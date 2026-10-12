@@ -3,11 +3,11 @@
 //
 //     stdin_read MODE < file          MODE
 //   getchar  `getchar` one byte at a time straight into the chunk's room: the cheapest way the language had
-//   bulk     `read_bytes`, 64 KiB at a time (edition 7)
+//   bulk     `read_bytes`, 64 KiB at a time (edition 9)
 //   dev      the path /dev/stdin through `Fs` and `file_read`. NOT a way to read standard input: it reaches it
 //            through the file system, so the authority report says `fs_read` and not `io_read`. Here only to say
 //            what the speed of a bulk read is on this machine, so `bulk` can be compared with it.
-edition 7;
+edition 9;
 
 import std.buffer;
 import std.bytes;
@@ -130,12 +130,13 @@ fn through_dev[&h, &f](heap: &!h Heap, fs: &f Fs("")) -> [heap, file_read, fs_re
 }
 
 fn main(world: World) -> [] int {
-    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
     release(ffi);
     release(net);
     release(clock);
     release(signals);
     release(exec);
+    release(tty);
     var how = 0;
     borrow args as &g in {
         let a1 = arg(g, 1);
