@@ -41,6 +41,7 @@ import selfhost.exprs;
 import selfhost.effects;
 import selfhost.builtins;
 import selfhost.prims;
+import selfhost.consteval;
 
 // What an expression came to: its type, and whether it is a known integer (a literal, or a
 
@@ -957,6 +958,7 @@ pub fn check_static[&s, &x](st: &!s [int], text: &x [byte], item: int) -> [] int
         return 2;
     }
     st[60] = item + 1;
+    let start = st[44];
     emit.static_header(st, item);
     emit.header_end(st);
     block(st, text, ast.get(st, item, 7), ast.get(st, item, 8), ret);
@@ -980,6 +982,15 @@ pub fn check_static[&s, &x](st: &!s [int], text: &x [byte], item: int) -> [] int
     }
     if ast.ok(st) {
         emit.finish(st);
+        // The compiler runs the body if it can, and the table is data of the module; the code that
+        // would have run it when the program starts is dropped. If it cannot, that code stays.
+        if consteval.run(st, text, item, element) {
+            let kept = st[44];
+            st[44] = start;
+            if !consteval.emit_data(st, item) {
+                st[44] = kept;
+            }
+        }
         return 0;
     }
     if st[3] == rules.r_skip() {
