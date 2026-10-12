@@ -1,0 +1,23 @@
+commit f01214a0; Apple M4 Max, macOS; wasm32 toolchain set
+unmutated: passes (wasm32 run)
+killed        the product is a sum: test wide_tests::on_x86_64_and_aarch64_the_product_is_one_128_bit_multiply_and_nothing_branches ... FAILED; test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 50 filtered out; finished in 0.00s
+killed        the high word shifted by 63: test wide_multiply::the_wide_builtins_agree_with_u128_on_llvm ... FAILED; test corpus::accepted_programs_build_and_run ... FAILED
+killed        the first operand sign-extended: test wide_multiply::the_wide_builtins_agree_with_u128_on_llvm ... FAILED; test corpus::accepted_programs_build_and_run ... FAILED
+killed        high and low swapped: test wide_multiply::the_wide_builtins_agree_with_u128_on_llvm ... FAILED; test corpus::accepted_programs_build_and_run ... FAILED
+killed        add_carry subtracts: test wide_multiply::the_wide_builtins_agree_with_u128_on_llvm ... FAILED; test corpus::accepted_programs_build_and_run ... FAILED
+killed        a carry in of zero counts as one: test wide_multiply::on_wasm32_the_wide_builtins_link_and_give_the_native_checksum ... FAILED; test wide_multiply::the_wide_builtins_agree_with_u128_on_llvm ... FAILED
+killed        the two carries are anded: test wide_multiply::on_wasm32_the_wide_builtins_link_and_give_the_native_checksum ... FAILED; test wide_multiply::the_wide_builtins_agree_with_u128_on_llvm ... FAILED
+killed        the carry in never added: test wide_multiply::on_wasm32_the_wide_builtins_link_and_give_the_native_checksum ... FAILED; test wide_multiply::the_wide_builtins_agree_with_u128_on_llvm ... FAILED
+killed        the first overflow bit used twice: test wide_multiply::on_wasm32_the_wide_builtins_link_and_give_the_native_checksum ... FAILED; test wide_multiply::the_wide_builtins_agree_with_u128_on_llvm ... FAILED
+killed        aarch64 takes the narrow path: test wide_tests::on_x86_64_and_aarch64_the_product_is_one_128_bit_multiply_and_nothing_branches ... FAILED; test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 50 filtered out; finished in 0.00s
+killed        wasm32: the middle carry shifted by 31: test wide_multiply::on_wasm32_the_wide_builtins_link_and_give_the_native_checksum ... FAILED; test result: FAILED. 22 passed; 1 failed; 0 ignored; 0 measured; 604 filtered out; finished in 38.08s
+killed        wasm32: the middle sum masked to 31 bits: test wide_multiply::on_wasm32_the_wide_builtins_link_and_give_the_native_checksum ... FAILED; test result: FAILED. 22 passed; 1 failed; 0 ignored; 0 measured; 604 filtered out; finished in 37.78s
+killed        wasm32: the cross term dropped: test wide_multiply::on_wasm32_the_wide_builtins_link_and_give_the_native_checksum ... FAILED; test result: FAILED. 22 passed; 1 failed; 0 ignored; 0 measured; 604 filtered out; finished in 37.72s
+killed        Cranelift: the signed high multiply: test wide_multiply::the_wide_builtins_agree_with_u128_on_cranelift ... FAILED; test result: FAILED. 22 passed; 1 failed; 0 ignored; 0 measured; 604 filtered out; finished in 38.51s
+killed        Cranelift: a signed carry test: test wide_multiply::the_wide_builtins_agree_with_u128_on_cranelift ... FAILED; test result: FAILED. 22 passed; 1 failed; 0 ignored; 0 measured; 604 filtered out; finished in 41.02s
+killed        Cranelift: the borrow test is >=: test wide_multiply::the_wide_builtins_agree_with_u128_on_cranelift ... FAILED; test result: FAILED. 22 passed; 1 failed; 0 ignored; 0 measured; 604 filtered out; finished in 51.09s
+killed        Cranelift: the carries are anded: test wide_multiply::the_wide_builtins_agree_with_u128_on_cranelift ... FAILED; test result: FAILED. 22 passed; 1 failed; 0 ignored; 0 measured; 604 filtered out; finished in 38.40s
+killed        Cranelift: a zero carry in counts: test wide_multiply::the_wide_builtins_agree_with_u128_on_cranelift ... FAILED; test result: FAILED. 22 passed; 1 failed; 0 ignored; 0 measured; 604 filtered out; finished in 38.58s
+killed        Cranelift: high and low swapped: test wide_multiply::the_wide_builtins_agree_with_u128_on_cranelift ... FAILED; test result: FAILED. 22 passed; 1 failed; 0 ignored; 0 measured; 604 filtered out; finished in 36.90s
+killed        the builtins visible from edition 6: test corpus::refused_programs_are_refused_with_the_stated_reason ... FAILED; test result: FAILED. 22 passed; 1 failed; 0 ignored; 0 measured; 604 filtered out; finished in 196.59s
+20 mutants, 20 killed

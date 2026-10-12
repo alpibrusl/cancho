@@ -116,6 +116,13 @@ impl Builtin {
                 ],
                 Type::Int,
             ),
+            // `docs/wide-multiply.md` §3: unsigned words in `int`s, a pair out.
+            Builtin::MulWide => {
+                (vec![Type::Int, Type::Int], Type::Tuple(vec![Type::Int, Type::Int]))
+            }
+            Builtin::AddCarry | Builtin::SubBorrow => {
+                (vec![Type::Int, Type::Int, Type::Int], Type::Tuple(vec![Type::Int, Type::Int]))
+            }
             Builtin::Len => (Vec::new(), Type::Int),
             // Both are checked at the call site: the prefix in the
             // capability's type is what decides the row, and a fixed
