@@ -913,6 +913,58 @@ pub fn alloc_slice[&s](st: &!s [int], arena: int, element: int, ck: bool, cv: in
     return p;
 }
 
+// -------------------------------------------------------------------------- statics ---
+//
+// A `static` table is a global `@sd<n>`, the pair of a pointer and a length (`n` the item's node), and
+// a function `@sinit<n>` that runs its body and stores the result there. The driver calls every
+// `@sinit` before `main`, in the order the items come. The table is `malloc`ed, once, and never freed.
+
+pub fn static_header[&s](st: &!s [int], item: int) -> [] int {
+    aim(st, 0);
+    str(st, "@sd");
+    nat(st, item);
+    str(st, " = internal global { ptr, i64 } zeroinitializer\n");
+    str(st, "define void @sinit");
+    nat(st, item);
+    str(st, "(");
+    return 0;
+}
+
+// `return table;` in a static body: the pair stored in the global, and the function ends.
+pub fn static_return[&s](st: &!s [int], item: int, p: int, lk: bool, lv: int, lr: int) -> [] int {
+    let pair = types.make_boxslice(st, 1);
+    let first = insert_at(st, pair, 0 - 1, 0, 7, false, 0, p);
+    let both = insert_at(st, pair, first, 1, 1, lk, lv, lr);
+    str(st, "  store { ptr, i64 } ");
+    temp(st, both);
+    str(st, ", ptr @sd");
+    nat(st, item);
+    str(st, "\n  ret void\n");
+    let n = label(st);
+    str(st, "dead");
+    nat(st, n);
+    str(st, ":\n");
+    return 0;
+}
+
+// The pointer of the table of static item `item`; its length is left in `st[59]`.
+pub fn static_load[&s](st: &!s [int], item: int) -> [] int {
+    let pair = start(st);
+    str(st, "load { ptr, i64 }, ptr @sd");
+    nat(st, item);
+    str(st, "\n");
+    let p = start(st);
+    str(st, "extractvalue { ptr, i64 } ");
+    temp(st, pair);
+    str(st, ", 0\n");
+    let n = start(st);
+    str(st, "extractvalue { ptr, i64 } ");
+    temp(st, pair);
+    str(st, ", 1\n");
+    st[59] = n;
+    return p;
+}
+
 // ---------------------------------------------------------------------------- heap ---
 //
 // `Box[[T]]` is the aggregate `{ ptr, i64 }`, the run and its length, and one value in the code like

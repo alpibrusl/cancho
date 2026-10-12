@@ -270,6 +270,19 @@ pub fn aggregate_codable[&s](st: &!s [int], ty: int) -> [] bool {
     return struct_codable(st, ty) || enum_codable(st, ty);
 }
 
+// The type of the table a `static` item declares, `&static [T]` for a scalar T, or 0.
+pub fn static_type[&s](st: &!s [int], item: int) -> [] int {
+    let declared = ast.get(st, item, 6);
+    if !ast.is_kind(st, declared, kinds.NK::TSlice) {
+        return 0;
+    }
+    let element = scalar(st, ast.get(st, declared, 6));
+    if element == 0 {
+        return 0;
+    }
+    return types.make_ref(st, false, types.static_region(), types.make_slice(st, element));
+}
+
 // `Heap`, the prelude type the heap operations are reached through.
 pub fn heap_index() -> [] int {
     return 4;

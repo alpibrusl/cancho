@@ -349,12 +349,19 @@ pub fn alloc_slice_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] E
     let area = ast.get(st, id, 4);
     let count = ast.get(st, id, 5);
     let fill = ast.get(st, id, 6);
+    var in_static = false;
     if pass1.is_word(st, text, area, "static") {
-        ast.fail(st, rules.r_reference_escapes_region(), from, to);
-        return nothing();
+        if st[60] == 0 {
+            ast.fail(st, rules.r_reference_escapes_region(), from, to);
+            return nothing();
+        }
+        in_static = true;
     }
-    let arena = scope.arena_block(st, text, area);
-    if arena < 0 {
+    var arena = 0 - 1;
+    if !in_static {
+        arena = scope.arena_block(st, text, area);
+    }
+    if arena < 0 && !in_static {
         ast.fail(st, rules.r_region_not_in_scope(), from, to);
         return nothing();
     }
@@ -379,12 +386,21 @@ pub fn alloc_slice_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] E
     if f.ty < 1 || f.ty > 6 && !types.is_named(st, f.ty) && !types.is_ref(st, f.ty) {
         return skip(st, from, to);
     }
-    let result = types.make_ref(st, true, types.block_region(arena), types.make_slice(st, f.ty));
+    var home = types.static_region();
+    if !in_static {
+        home = types.block_region(arena);
+    }
+    let result = types.make_ref(st, true, home, types.make_slice(st, f.ty));
     if emit.on(st) {
         if f.ty != 1 && f.ty != 2 && f.ty != 5 {
             return skip(st, from, to);
         }
-        let p = emit.alloc_slice(st, arena, f.ty, c.known, c.value, c.reg, f.known, f.value, f.reg);
+        var p = 0;
+        if in_static {
+            p = emit.heap_run(st, f.ty, c.known, c.value, c.reg, f.known, f.value, f.reg);
+        } else {
+            p = emit.alloc_slice(st, arena, f.ty, c.known, c.value, c.reg, f.known, f.value, f.reg);
+        }
         if c.known {
             return in_slice(result, p, 0 - 1, c.value);
         }
@@ -644,13 +660,42 @@ pub fn name_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         }
         return plain(scope.binding_type(st, i));
     }
-    // A name that is not a local may still be a `static`, a function used as a value, or a
-    // builtin: those are values of types this slice does not check.
+    // A `static` of this module declared as a slice of scalars is a shared reference to it.
+    let table = static_named(st, text, name);
+    if table >= 0 {
+        let ty = scope.static_type(st, table);
+        if ty == 0 {
+            return skip(st, from, to);
+        }
+        if emit.on(st) {
+            let element = types.element_of(st, ty);
+            if element != 1 && element != 2 && element != 5 {
+                return skip(st, from, to);
+            }
+            let p = emit.static_load(st, table);
+            return in_slice(ty, p, st[59], 0);
+        }
+        return plain(ty);
+    }
+    // A name that is not a local may still be a function used as a value, or a builtin: those are
+    // values of types this slice does not check.
     if names_something(st, text, name) {
         return skip(st, from, to);
     }
     ast.fail(st, rules.r_unknown_name(), from, to);
     return nothing();
+}
+
+// The `static` item of the current module called like token `name`, or -1.
+pub fn static_named[&s, &x](st: &!s [int], text: &x [byte], name: int) -> [] int {
+    var it = st[15];
+    while it >= 0 {
+        if ast.is_kind(st, it, kinds.NK::IStatic) && ast.same(st, text, ast.get(st, it, 4), name) && ast.get(st, it, 13) == st[22] {
+            return it;
+        }
+        it = ast.next(st, it);
+    }
+    return 0 - 1;
 }
 
 // Is `name` a static of the current function's module, a function of any module, or a builtin?
