@@ -1,0 +1,12 @@
+// census.cho -- which of a program's functions the code is written for.
+//
+// The bodies mode with the code on (`driver.cho`, mode 4): one line a function, `OK` where the checker
+// accepts it and writes code for it, `SKIP <start> <end>` with the first construct it has no code for, or
+// the first refusal. A way to measure how far the compiler in cancho is from compiling a program, the
+// compiler itself most of all.
+
+import selfhost.driver;
+
+fn main(world: World) -> [] int {
+    return driver.drive(world, 4, true);
+}
