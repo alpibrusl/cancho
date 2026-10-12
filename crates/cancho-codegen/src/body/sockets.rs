@@ -622,6 +622,69 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         vec![tag, moved, reason]
     }
 
+    /// `udp_peer(&Udp, ticket, &![byte])` (`docs/udp.md` §12): who a ticket names, in the 19 bytes `conn_peer` writes (family `4`,
+    /// the address in bytes 1 to 4 and zero to 17, the port big-endian), from the ring entry the ticket indexes. The three checks
+    /// `udp_send_to` makes come first: a ticket that fails them answers `EBADF`; a buffer under 19 bytes answers `EINVAL`; in
+    /// neither case is anything written.
+    pub(crate) fn udp_peer(&mut self, args: &[Value]) -> Vec<Value> {
+        let fd = self.handle_fd(args[0]);
+        let (ticket, out, room) = (args[1], args[2], args[3]);
+        let (entry, _) = self.peer_entry(ticket);
+        let stored = self.builder.ins().load(
+            types::I64,
+            MemFlags::trusted(),
+            entry,
+            cancho_ir::UDP_PEER_TICKET_AT,
+        );
+        let owner = self.builder.ins().load(
+            types::I32,
+            MemFlags::trusted(),
+            entry,
+            cancho_ir::UDP_PEER_FD_AT,
+        );
+        let positive = self.builder.ins().icmp_imm(IntCC::SignedGreaterThan, ticket, 0);
+        let current = self.builder.ins().icmp(IntCC::Equal, stored, ticket);
+        let mine = self.builder.ins().icmp(IntCC::Equal, owner, fd);
+        let valid = self.builder.ins().band(positive, current);
+        let valid = self.builder.ins().band(valid, mine);
+
+        let merge = self.builder.create_block();
+        self.builder.append_block_param(merge, types::I64);
+        let check_room = self.builder.create_block();
+        let write = self.builder.create_block();
+        let ebadf = self.builder.ins().iconst(types::I64, EBADF);
+        self.builder.ins().brif(valid, check_room, &[], merge, &[ebadf.into()]);
+
+        self.builder.switch_to_block(check_room);
+        self.builder.seal_block(check_room);
+        let enough = self.builder.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, room, 19);
+        let einval = self.builder.ins().iconst(types::I64, EINVAL);
+        self.builder.ins().brif(enough, write, &[], merge, &[einval.into()]);
+
+        self.builder.switch_to_block(write);
+        self.builder.seal_block(write);
+        let four = self.builder.ins().iconst(types::I8, 4);
+        self.builder.ins().store(MemFlags::trusted(), four, out, 0);
+        for i in 0..4 {
+            let byte = self.builder.ins().load(types::I8, MemFlags::trusted(), entry, 4 + i);
+            self.builder.ins().store(MemFlags::trusted(), byte, out, 1 + i);
+        }
+        let zero = self.builder.ins().iconst(types::I8, 0);
+        for i in 5..17 {
+            self.builder.ins().store(MemFlags::trusted(), zero, out, i);
+        }
+        for i in 0..2 {
+            let byte = self.builder.ins().load(types::I8, MemFlags::trusted(), entry, 2 + i);
+            self.builder.ins().store(MemFlags::trusted(), byte, out, 17 + i);
+        }
+        let done = self.builder.ins().iconst(types::I64, 0);
+        self.builder.ins().jump(merge, &[done.into()]);
+
+        self.builder.switch_to_block(merge);
+        self.builder.seal_block(merge);
+        vec![self.builder.block_params(merge)[0]]
+    }
+
     /// `udp_local_port(&Udp)`: the port the kernel chose, from `getsockname`, or `-errno`.
     pub(crate) fn udp_local_port(&mut self, args: &[Value]) -> Vec<Value> {
         let pointer = self.pointer;

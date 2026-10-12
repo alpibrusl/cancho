@@ -111,6 +111,7 @@ pub fn wasi_gap(builtin: Builtin) -> Option<Gap> {
         | B::UdpRecv
         | B::UdpSend
         | B::UdpLocalPort
+        | B::UdpPeer
         | B::UdpNonblocking
         | B::UdpClose
         | B::UdpDetach

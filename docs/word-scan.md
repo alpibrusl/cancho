@@ -93,7 +93,7 @@ Neither backend calls the C library. The mask is `pcmpeqb` and `pmovmskb` on x86
 `simd128` LLVM scalarises the vectors, so the program is correct and not fast there.
 
 **WASI.** Supported, not refused: nothing here needs the host. `wasm_gap` (`cancho-ir/src/target.rs`) lists the five as
-`None`, so the count of refused builtins in `docs/wasm.md` (61, pinned by `os_tables.rs`; the 48 of the brief is a stale
+`None`, so the count of refused builtins in `docs/wasm.md` (62, pinned by `os_tables.rs`; the 48 of the brief is a stale
 number that `docs/wasm.md` has corrected several times) does not move. Measured under wasmtime: `tests/accept/word_scan.cho` exits 0 and a
 mutant of it (one mask answer plus one) exits 1, so the program really ran there.
 

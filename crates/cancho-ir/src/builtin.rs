@@ -570,6 +570,12 @@ pub enum Builtin {
     UdpSend,
     /// `udp_local_port(&Udp) -> [] int`: the port the kernel chose, or `-errno`.
     UdpLocalPort,
+    /// `udp_peer(&Udp, ticket, &![byte]) -> [] int` -- `docs/udp.md` §12: who a ticket names, as data. Writes the sender's
+    /// address and port into the caller's buffer in the form `conn_peer` uses (19 bytes: family, sixteen address bytes, the port
+    /// big-endian; a datagram's sender is always family `4` until sockets are dual-stack), after the three checks `udp_send_to`
+    /// makes. `0`, or `EBADF` for a ticket not valid on this socket, or `EINVAL` for a buffer under 19 bytes (nothing is written
+    /// then). It reaches nothing: there is still no send to an address.
+    UdpPeer,
     /// `udp_nonblocking(&!Udp) -> [] int`: one way, explicit.
     UdpNonblocking,
     /// `udp_close(Udp) -> [] int`: consumes the handle.
@@ -865,6 +871,7 @@ impl Builtin {
         Builtin::UdpRecv,
         Builtin::UdpSend,
         Builtin::UdpLocalPort,
+        Builtin::UdpPeer,
         Builtin::UdpNonblocking,
         Builtin::UdpClose,
         Builtin::UdpDetach,
@@ -1011,6 +1018,7 @@ impl Builtin {
             Builtin::UdpRecv => "udp_recv",
             Builtin::UdpSend => "udp_send",
             Builtin::UdpLocalPort => "udp_local_port",
+            Builtin::UdpPeer => "udp_peer",
             Builtin::UdpNonblocking => "udp_nonblocking",
             Builtin::UdpClose => "udp_close",
             Builtin::UdpDetach => "udp_detach",
@@ -1113,6 +1121,7 @@ impl Builtin {
             | Builtin::UdpRecv
             | Builtin::UdpSend
             | Builtin::UdpLocalPort
+            | Builtin::UdpPeer
             | Builtin::UdpNonblocking
             | Builtin::UdpClose
             | Builtin::UdpDetach
@@ -1280,6 +1289,7 @@ impl Builtin {
             | Builtin::ConnPeer
             | Builtin::UdpRecv
             | Builtin::UdpSend
+            | Builtin::UdpPeer
             | Builtin::UdpSendTo => 2,
             // The handle's region, the buffer's, and the ticket cell's.
             Builtin::UdpRecvFrom => 3,

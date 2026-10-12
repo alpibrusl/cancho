@@ -122,6 +122,7 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::ConnConnectStatus
                     | Builtin::ListenerNonblocking
                     | Builtin::UdpLocalPort
+                    | Builtin::UdpPeer
                     | Builtin::UdpNonblocking
                     | Builtin::UdpClose
                     | Builtin::PollerAddUdp
