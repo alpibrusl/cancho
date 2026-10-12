@@ -266,6 +266,15 @@ pub fn expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     if ast.is_kind(st, id, kinds.NK::EAllocSlice) {
         return alloc_slice_expr(st, text, id);
     }
+    if ast.is_kind(st, id, kinds.NK::EAlloc) {
+        return alloc_expr(st, text, id);
+    }
+    if ast.is_kind(st, id, kinds.NK::ETuple) && emit.on(st) {
+        return tuple_expr(st, text, id);
+    }
+    if ast.is_kind(st, id, kinds.NK::ETupleField) && emit.on(st) {
+        return tuple_field_expr(st, text, id);
+    }
     return skip(st, from, to);
 }
 
@@ -441,7 +450,7 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
     let nargs = ast.get(st, id, 7);
     var arg = ast.get(st, id, 6);
     if which == 1 {
-        if nargs != 2 {
+        if nargs < 2 || nargs > 4 {
             return skip(st, from, to);
         }
         let c = expr(st, text, arg);
@@ -452,7 +461,40 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
         if !types.is_prelude(st, c.ty) || !ast.is_kind(st, lit, kinds.NK::EStr) {
             return skip(st, from, to);
         }
-        return in_reg(types.make_prelude_lit(st, types.prelude_index(st, c.ty), ast.get(st, lit, 4)), 0 - 1);
+        let index = types.prelude_index(st, c.ty);
+        let first = types.make_prelude_lit(st, index, ast.get(st, lit, 4));
+        if nargs == 2 {
+            return in_reg(first, 0 - 1);
+        }
+        // Several literals: a tuple of the capabilities narrowed to each, which are nothing in the code.
+        let second_lit = ast.next(st, lit);
+        let second = types.make_prelude_lit(st, index, ast.get(st, second_lit, 4));
+        if nargs == 3 {
+            return in_reg(types.make_pair(st, first, second), 0 - 1);
+        }
+        let third = types.make_prelude_lit(st, index, ast.get(st, ast.next(st, second_lit), 4));
+        return in_reg(types.make_triple(st, first, second, third), 0 - 1);
+    }
+    if which == 8 || which == 9 {
+        // `fs_read(fs, path, into)` and `fs_write(fs, path, bytes)`: a file opened, read or written once and closed.
+        if nargs != 3 {
+            return skip(st, from, to);
+        }
+        let c = expr(st, text, arg);
+        arg = ast.next(st, arg);
+        let path = expr(st, text, arg);
+        arg = ast.next(st, arg);
+        let bytes = expr(st, text, arg);
+        if !ast.ok(st) {
+            return nothing();
+        }
+        if !scope.slice_codable(st, path.ty) || !scope.slice_codable(st, bytes.ty) {
+            return skip(st, from, to);
+        }
+        push_value(st, path);
+        push_prefix(st, text, c.ty);
+        push_value(st, bytes);
+        return in_reg(1, emit.fs_once(st, which == 9));
     }
     if which <= 6 {
         if nargs != 2 {
@@ -532,7 +574,7 @@ pub fn heap_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: int) ->
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     var wanted = 3;
-    if which == 2 {
+    if which == 2 || which == 4 || which == 5 {
         wanted = 2;
     }
     if which == 3 {
@@ -546,6 +588,13 @@ pub fn heap_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: int) ->
         let r = expr(st, text, arg);
         if !ast.ok(st) {
             return nothing();
+        }
+        if types.is_ref(st, r.ty) && types.is_box(st, types.ref_inner(st, r.ty)) {
+            // One value on the heap: the box is a pointer in the slot the reference points at, and
+            // the reference to what it holds is that pointer.
+            let held = types.box_inner(st, types.ref_inner(st, r.ty));
+            let p = emit.load_through(st, 7, r.reg);
+            return in_reg(types.make_ref(st, types.ref_unique(st, r.ty), types.ref_region(st, r.ty), held), p);
         }
         if !types.is_ref(st, r.ty) || !types.is_boxslice(st, types.ref_inner(st, r.ty)) || !scope.aggregate_codable(st, types.ref_inner(st, r.ty)) {
             return skip(st, from, to);
@@ -563,6 +612,31 @@ pub fn heap_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: int) ->
         return skip(st, from, to);
     }
     arg = ast.next(st, arg);
+    if which == 4 {
+        // `box(heap, v)`: the value on the heap.
+        let v = expr(st, text, arg);
+        if !ast.ok(st) {
+            return nothing();
+        }
+        if types.is_erased(st, v.ty) || v.ty < 1 || !(v.ty <= 6 || scope.aggregate_codable(st, v.ty) || types.is_ref(st, v.ty)) || types.is_slice_ref(st, v.ty) {
+            return skip(st, from, to);
+        }
+        effects.perform_named(st, "heap");
+        return in_reg(types.make_box(st, v.ty), emit.box_value(st, v.ty, v.known, v.value, v.reg));
+    }
+    if which == 5 {
+        // `unbox(heap, b)`: the value the box holds, which is freed.
+        let b = expr(st, text, arg);
+        if !ast.ok(st) {
+            return nothing();
+        }
+        if !types.is_box(st, b.ty) {
+            return skip(st, from, to);
+        }
+        effects.perform_named(st, "heap");
+        let held = types.box_inner(st, b.ty);
+        return in_reg(held, emit.unbox_value(st, held, b.reg));
+    }
     if which == 2 {
         let b = expr(st, text, arg);
         if !ast.ok(st) {
@@ -648,6 +722,115 @@ pub fn prelude_variant[&s, &x](st: &!s [int], text: &x [byte], id: int, index: i
         return nothing();
     }
     return in_reg(whole, acc);
+}
+
+// `(a, b)` and `(a, b, c)`: an aggregate of the parts, in the code. Larger tuples, and parts that are
+// slices or have nothing in the code beside others that have, have no code.
+pub fn tuple_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
+    let from = ast.nstart(st, id);
+    let to = ast.nend(st, id);
+    let n = ast.get(st, id, 5);
+    if n != 2 && n != 3 {
+        return skip(st, from, to);
+    }
+    var vals = nothing();
+    var a = nothing();
+    var b = nothing();
+    var c = nothing();
+    var arg = ast.get(st, id, 4);
+    var k = 0;
+    while k < n && ast.ok(st) {
+        let one = expr(st, text, arg);
+        if k == 0 {
+            a = one;
+        } else if k == 1 {
+            b = one;
+        } else {
+            c = one;
+        }
+        arg = ast.next(st, arg);
+        k = k + 1;
+    }
+    if !ast.ok(st) {
+        return nothing();
+    }
+    var tc = 0;
+    if n == 3 {
+        tc = c.ty;
+    }
+    let whole = types.make_tuple(st, n, a.ty, b.ty, tc);
+    if types.is_erased(st, whole) {
+        return in_reg(whole, 0 - 1);
+    }
+    if !scope.tuple_codable(st, whole) {
+        return skip(st, from, to);
+    }
+    var acc = emit.insert_at(st, whole, 0 - 1, 0, a.ty, a.known, a.value, a.reg);
+    acc = emit.insert_at(st, whole, acc, 1, b.ty, b.known, b.value, b.reg);
+    if n == 3 {
+        acc = emit.insert_at(st, whole, acc, 2, c.ty, c.known, c.value, c.reg);
+    }
+    return in_reg(whole, acc);
+}
+
+// `t.0`: a part of a tuple; through a reference, a `val` one is copied out and a `res` one is borrowed.
+pub fn tuple_field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
+    let from = ast.nstart(st, id);
+    let to = ast.nend(st, id);
+    let b = expr(st, text, ast.get(st, id, 4));
+    if !ast.ok(st) {
+        return nothing();
+    }
+    var held = b.ty;
+    if types.is_ref(st, held) {
+        held = types.ref_inner(st, held);
+    }
+    let k = ast.get(st, id, 5);
+    if !types.is_tuple(st, held) || k >= types.tuple_size(st, held) {
+        return skip(st, from, to);
+    }
+    let pt = types.tuple_part(st, held, k);
+    if types.is_erased(st, held) {
+        return in_reg(pt, 0 - 1);
+    }
+    if !scope.tuple_codable(st, held) {
+        return skip(st, from, to);
+    }
+    if types.is_ref(st, b.ty) {
+        let address = emit.field_address(st, held, b.reg, k);
+        if scope.is_res_type(st, pt) {
+            return in_reg(types.make_ref(st, types.ref_unique(st, b.ty), types.ref_region(st, b.ty), pt), address);
+        }
+        return in_reg(pt, emit.load_through(st, pt, address));
+    }
+    return in_reg(pt, emit.extract_field(st, held, b.reg, k));
+}
+
+// `alloc[a](v)`: a value stored in the arena `a`, a unique reference to it for as long as the block. The arena
+// first, then the value, which must be one that copies.
+pub fn alloc_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
+    let from = ast.nstart(st, id);
+    let to = ast.nend(st, id);
+    let area = ast.get(st, id, 4);
+    let value = ast.get(st, id, 5);
+    // Only the code is written for it: in the other modes it is, as it was, `SKIP`.
+    if !emit.on(st) || pass1.is_word(st, text, area, "static") {
+        return skip(st, from, to);
+    }
+    let arena = scope.arena_block(st, text, area);
+    if arena < 0 {
+        ast.fail(st, rules.r_region_not_in_scope(), from, to);
+        return nothing();
+    }
+    let v = expr(st, text, value);
+    if !ast.ok(st) {
+        return nothing();
+    }
+    if types.is_erased(st, v.ty) || v.ty < 1 || types.is_slice_ref(st, v.ty) || !(v.ty <= 6 || scope.aggregate_codable(st, v.ty) || types.is_ref(st, v.ty)) {
+        return skip(st, from, to);
+    }
+    let result = types.make_ref(st, true, types.block_region(arena), v.ty);
+    return in_reg(result, emit.arena_value(st, arena, v.ty, v.known, v.value, v.reg));
 }
 
 // The Variant node of the enum `item` called like token `name`, or -1.
@@ -785,7 +968,7 @@ pub fn field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         }
         if types.is_ref(st, b.ty) {
             let address = emit.field_address(st, held, b.reg, index);
-            if types.is_boxslice(st, ft) || scope.is_res_item(st, ft) {
+            if scope.is_res_type(st, ft) {
                 // A field that must be consumed is not copied out of a reference: it is borrowed, for
                 // as long as, and as uniquely as, the reference it was reached through.
                 return in_reg(types.make_ref(st, types.ref_unique(st, b.ty), types.ref_region(st, b.ty), ft), address);
@@ -800,7 +983,7 @@ pub fn field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
 // The expressions the code can be written for so far: whole numbers and booleans, names, the
 // operators, and calls.
 pub fn writes_code[&s](st: &!s [int], id: int) -> [] bool {
-    if ast.is_kind(st, id, kinds.NK::EInt) || ast.is_kind(st, id, kinds.NK::EBool) || ast.is_kind(st, id, kinds.NK::EName) || ast.is_kind(st, id, kinds.NK::ECall) || ast.is_kind(st, id, kinds.NK::EStr) || ast.is_kind(st, id, kinds.NK::EIndex) || ast.is_kind(st, id, kinds.NK::EStructLit) || ast.is_kind(st, id, kinds.NK::EField) || ast.is_kind(st, id, kinds.NK::EVariant) || ast.is_kind(st, id, kinds.NK::EAllocSlice) || ast.is_kind(st, id, kinds.NK::ESlice) {
+    if ast.is_kind(st, id, kinds.NK::EInt) || ast.is_kind(st, id, kinds.NK::EBool) || ast.is_kind(st, id, kinds.NK::EName) || ast.is_kind(st, id, kinds.NK::ECall) || ast.is_kind(st, id, kinds.NK::EStr) || ast.is_kind(st, id, kinds.NK::EIndex) || ast.is_kind(st, id, kinds.NK::EStructLit) || ast.is_kind(st, id, kinds.NK::EField) || ast.is_kind(st, id, kinds.NK::EVariant) || ast.is_kind(st, id, kinds.NK::EAllocSlice) || ast.is_kind(st, id, kinds.NK::ESlice) || ast.is_kind(st, id, kinds.NK::EAlloc) || ast.is_kind(st, id, kinds.NK::ETuple) || ast.is_kind(st, id, kinds.NK::ETupleField) {
         return true;
     }
     if ast.is_kind(st, id, kinds.NK::EUnary) {
@@ -1364,6 +1547,12 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         if pass1.is_word(st, text, callee, "exec_spawn") {
             return capability_call(st, text, id, 7);
         }
+        if pass1.is_word(st, text, callee, "fs_read") {
+            return capability_call(st, text, id, 8);
+        }
+        if pass1.is_word(st, text, callee, "fs_write") {
+            return capability_call(st, text, id, 9);
+        }
     }
     // The heap: only the code is written for it, in compile mode.
     if emit.on(st) && qualifier < 0 {
@@ -1375,6 +1564,12 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         }
         if pass1.is_word(st, text, callee, "contents") {
             return heap_call(st, text, id, 3);
+        }
+        if pass1.is_word(st, text, callee, "box") {
+            return heap_call(st, text, id, 4);
+        }
+        if pass1.is_word(st, text, callee, "unbox") {
+            return heap_call(st, text, id, 5);
         }
     }
     // A builtin the file's edition can name comes first, then a foreign function: not checked.

@@ -219,8 +219,14 @@ fn node_codable[&s](st: &!s [int], node: int, depth: int) -> [] bool {
     if t == 1 || t == 2 || t == 5 {
         return true;
     }
-    if types.is_boxslice(st, t) {
+    if types.is_boxslice(st, t) || types.is_box(st, t) || types.is_handle(st, t) || types.is_penum(st, t) {
         return true;
+    }
+    if types.is_tuple(st, t) {
+        return tuple_codable(st, t);
+    }
+    if !types.is_named(st, t) {
+        return false;
     }
     return depth > 0 && item_codable(st, types.named_item(st, t), depth - 1);
 }
@@ -301,13 +307,56 @@ pub fn slice_codable[&s](st: &!s [int], ty: int) -> [] bool {
 }
 
 // A value of this type has code: a struct or an enum of scalars, one aggregate in the code.
+// A tuple whose parts the code holds: whole numbers, bytes, booleans or aggregates.
+pub fn tuple_codable[&s](st: &!s [int], ty: int) -> [] bool {
+    if !types.is_tuple(st, ty) {
+        return false;
+    }
+    var k = 0;
+    while k < types.tuple_size(st, ty) {
+        let p = types.tuple_part(st, ty, k);
+        if p != 1 && p != 2 && p != 5 && !aggregate_codable(st, p) {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+// Must a value of this type be ended by something, a `res` one? A box, a handle, an enum of the prelude that holds
+// one, a struct declared `res`, a tuple that has such a part.
+pub fn is_res_type[&s](st: &!s [int], ty: int) -> [] bool {
+    if types.is_boxslice(st, ty) || types.is_box(st, ty) || types.is_handle(st, ty) || is_res_item(st, ty) {
+        return true;
+    }
+    if types.is_penum(st, ty) {
+        return tables.prelude_res(types.prelude_index(st, ty)) != 0;
+    }
+    if types.is_tuple(st, ty) {
+        var k = 0;
+        while k < types.tuple_size(st, ty) {
+            if is_res_type(st, types.tuple_part(st, ty, k)) {
+                return true;
+            }
+            k = k + 1;
+        }
+    }
+    return false;
+}
+
 pub fn aggregate_codable[&s](st: &!s [int], ty: int) -> [] bool {
+    if types.is_tuple(st, ty) {
+        return tuple_codable(st, ty);
+    }
     if types.is_handle(st, ty) || types.is_penum(st, ty) {
         return true;
     }
     if types.is_boxslice(st, ty) {
         let e = types.boxslice_element(st, ty);
         return e == 1 || e == 2 || e == 5;
+    }
+    if types.is_box(st, ty) {
+        return true;
     }
     return struct_codable(st, ty) || enum_codable(st, ty);
 }
@@ -400,6 +449,14 @@ pub fn value_type[&s](st: &!s [int], ty: int) -> [] int {
     if emit.on(st) && ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 2 && ast.get(st, ty, 9) == world_index() && ast.get(st, ty, 7) == 0 {
         return types.make_prelude(st, world_index());
     }
+    // A tuple written in a signature.
+    if emit.on(st) && ast.is_kind(st, ty, kinds.NK::TTuple) {
+        return types.node_type(st, ty);
+    }
+    // `Box[T]` written in a signature: one value on the heap, in the code.
+    if emit.on(st) && ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 2 && ast.get(st, ty, 9) == tables.prelude_box() && ast.get(st, ty, 7) == 1 {
+        return types.node_type(st, ty);
+    }
     // A capability narrowed to a literal, in the code: `Fs("/tmp")`, `Exec("/bin")`.
     if emit.on(st) && ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 2 && ast.get(st, ty, 7) == 1 && ast.is_kind(st, ast.get(st, ty, 6), kinds.NK::TLit) {
         return types.make_prelude_lit(st, ast.get(st, ty, 9), ast.get(st, ast.get(st, ty, 6), 4));
@@ -445,6 +502,9 @@ pub fn field_type[&s](st: &!s [int], item: int, index: int) -> [] int {
 // parameters are what the regions are; for a callee it is the first of the variables made for
 // its region parameters, which stand in for them at this call.
 pub fn lower_type[&s, &x](st: &!s [int], text: &x [byte], ty: int, dp: int, fresh: int) -> [] int {
+    if emit.on(st) && ast.is_kind(st, ty, kinds.NK::TTuple) {
+        return types.node_type(st, ty);
+    }
     if ast.is_kind(st, ty, kinds.NK::TName) {
         return value_type(st, ty);
     }

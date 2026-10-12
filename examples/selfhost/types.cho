@@ -58,6 +58,18 @@ fn boxslice_kind() -> [] int {
     return 13;
 }
 
+fn box_kind() -> [] int {
+    return 14;
+}
+
+fn pair_kind() -> [] int {
+    return 15;
+}
+
+fn triple_kind() -> [] int {
+    return 16;
+}
+
 fn unbound() -> [] int {
     return 0 - 100;
 }
@@ -179,6 +191,18 @@ fn occurs[&s](st: &!s [int], tv: int, ty: int) -> [] bool {
     if is_boxslice(st, t) {
         return occurs(st, tv, boxslice_element(st, t));
     }
+    if is_box(st, t) {
+        return occurs(st, tv, box_inner(st, t));
+    }
+    if is_tuple(st, t) {
+        var k = 0;
+        while k < tuple_size(st, t) {
+            if occurs(st, tv, tuple_part(st, t, k)) {
+                return true;
+            }
+            k = k + 1;
+        }
+    }
     return false;
 }
 
@@ -194,6 +218,16 @@ pub fn resolve_type[&s](st: &!s [int], ty: int) -> [] int {
     }
     if is_boxslice(st, t) {
         return make_boxslice(st, resolve_type(st, boxslice_element(st, t)));
+    }
+    if is_box(st, t) {
+        return make_box(st, resolve_type(st, box_inner(st, t)));
+    }
+    if is_tuple(st, t) {
+        let c = tuple_size(st, t) == 3;
+        if c {
+            return make_triple(st, resolve_type(st, tuple_part(st, t, 0)), resolve_type(st, tuple_part(st, t, 1)), resolve_type(st, tuple_part(st, t, 2)));
+        }
+        return make_pair(st, resolve_type(st, tuple_part(st, t, 0)), resolve_type(st, tuple_part(st, t, 1)));
     }
     return t;
 }
@@ -238,6 +272,23 @@ pub fn boxslice_element[&s](st: &!s [int], ty: int) -> [] int {
 // written for it: a whole number, byte or boolean (its tag), a struct or an enum of the file, or a
 // `Box[[T]]` of those scalars; else 0.
 pub fn node_type[&s](st: &!s [int], node: int) -> [] int {
+    if ast.is_kind(st, node, kinds.NK::TTuple) {
+        let n = ast.get(st, node, 7);
+        if n != 2 && n != 3 {
+            return 0;
+        }
+        let first = ast.get(st, node, 6);
+        let a = node_type(st, first);
+        let b = node_type(st, ast.next(st, first));
+        var c = 0;
+        if n == 3 {
+            c = node_type(st, ast.next(st, ast.next(st, first)));
+        }
+        if a == 0 || b == 0 || n == 3 && c == 0 {
+            return 0;
+        }
+        return make_tuple(st, n, a, b, c);
+    }
     if !ast.is_kind(st, node, kinds.NK::TName) {
         return 0;
     }
@@ -248,6 +299,16 @@ pub fn node_type[&s](st: &!s [int], node: int) -> [] int {
     if kind == 3 {
         return make_named(st, ast.get(st, node, 9));
     }
+    if kind == 2 && ast.get(st, node, 9) != tables.prelude_box() {
+        // A capability or a handle or a prelude enum written in a declaration, narrowed to a literal or not.
+        if ast.get(st, node, 7) == 0 {
+            return make_prelude(st, ast.get(st, node, 9));
+        }
+        if ast.get(st, node, 7) == 1 && ast.is_kind(st, ast.get(st, node, 6), kinds.NK::TLit) {
+            return make_prelude_lit(st, ast.get(st, node, 9), ast.get(st, ast.get(st, node, 6), 4));
+        }
+        return 0;
+    }
     if kind == 2 && ast.get(st, node, 9) == tables.prelude_box() && ast.get(st, node, 7) == 1 {
         let arg = ast.get(st, node, 6);
         if ast.is_kind(st, arg, kinds.NK::TSlice) {
@@ -255,7 +316,63 @@ pub fn node_type[&s](st: &!s [int], node: int) -> [] int {
             if element == 1 || element == 2 || element == 5 {
                 return make_boxslice(st, element);
             }
+            return 0;
         }
+        // One value on the heap: a pointer, whatever it points at, so a type that holds itself through a
+        // box is no recursion for the code.
+        let inner = node_type(st, arg);
+        if inner != 0 {
+            return make_box(st, inner);
+        }
+    }
+    return 0;
+}
+
+// `Box[T]`, one value of any type on the heap: a pointer in the code.
+pub fn make_box[&s](st: &!s [int], inner: int) -> [] int {
+    return make(st, box_kind(), inner, 0, 0);
+}
+
+pub fn is_box[&s](st: &!s [int], ty: int) -> [] bool {
+    return ty >= first_table() && slot(st, ty, 0) == box_kind();
+}
+
+pub fn box_inner[&s](st: &!s [int], ty: int) -> [] int {
+    return slot(st, ty, 1);
+}
+
+// A tuple of two or three parts: an anonymous struct, an aggregate in the code. (Larger ones have no code.)
+pub fn make_pair[&s](st: &!s [int], a: int, b: int) -> [] int {
+    return make(st, pair_kind(), a, b, 0);
+}
+
+pub fn make_triple[&s](st: &!s [int], a: int, b: int, c: int) -> [] int {
+    return make(st, triple_kind(), a, b, c);
+}
+
+pub fn is_tuple[&s](st: &!s [int], ty: int) -> [] bool {
+    return ty >= first_table() && (slot(st, ty, 0) == pair_kind() || slot(st, ty, 0) == triple_kind());
+}
+
+pub fn tuple_size[&s](st: &!s [int], ty: int) -> [] int {
+    if slot(st, ty, 0) == triple_kind() {
+        return 3;
+    }
+    return 2;
+}
+
+// Part `k` of a tuple.
+pub fn tuple_part[&s](st: &!s [int], ty: int, k: int) -> [] int {
+    return slot(st, ty, 1 + k);
+}
+
+// A tuple made of the parts, or 0 if it has none the code is written for.
+pub fn make_tuple[&s](st: &!s [int], n: int, a: int, b: int, c: int) -> [] int {
+    if n == 2 {
+        return make_pair(st, a, b);
+    }
+    if n == 3 {
+        return make_triple(st, a, b, c);
     }
     return 0;
 }
@@ -272,6 +389,16 @@ pub fn is_penum[&s](st: &!s [int], ty: int) -> [] bool {
 
 // A prelude type that is nothing in the code: a capability, the `World`, a `Split`.
 pub fn is_erased[&s](st: &!s [int], ty: int) -> [] bool {
+    if is_tuple(st, ty) {
+        var k = 0;
+        while k < tuple_size(st, ty) {
+            if !is_erased(st, tuple_part(st, ty, k)) {
+                return false;
+            }
+            k = k + 1;
+        }
+        return true;
+    }
     return is_prelude(st, ty) && !is_handle(st, ty) && !is_penum(st, ty);
 }
 
@@ -517,6 +644,20 @@ pub fn unify[&s](st: &!s [int], want: int, got: int) -> [] int {
     }
     if is_boxslice(st, expected) && is_boxslice(st, found) {
         return unify(st, boxslice_element(st, expected), boxslice_element(st, found));
+    }
+    if is_box(st, expected) && is_box(st, found) {
+        return unify(st, box_inner(st, expected), box_inner(st, found));
+    }
+    if is_tuple(st, expected) && is_tuple(st, found) && tuple_size(st, expected) == tuple_size(st, found) {
+        var k = 0;
+        while k < tuple_size(st, expected) {
+            let r = unify(st, tuple_part(st, expected, k), tuple_part(st, found, k));
+            if r != 0 {
+                return r;
+            }
+            k = k + 1;
+        }
+        return 0;
     }
     return 1;
 }
