@@ -65,7 +65,7 @@ impl Json {
 /// thing that is not JSON, positioned in the text that was read.
 pub fn read_json(text: &str) -> Result<Json, Diagnostic> {
     let mut at = 0usize;
-    let value = read_value(text.as_bytes(), text, &mut at)?;
+    let value = read_value(text.as_bytes(), text, &mut at, 0)?;
     skip_ws(text.as_bytes(), &mut at);
     if at != text.len() {
         return Err(Diagnostic::new(
@@ -83,9 +83,21 @@ fn skip_ws(bytes: &[u8], at: &mut usize) {
     }
 }
 
-fn read_value(bytes: &[u8], text: &str, at: &mut usize) -> Result<Json, Diagnostic> {
+/// How deep arrays and objects may nest. The reader and the builder
+/// recurse, so an unbounded depth is a stack overflow on a few hundred
+/// thousand `[`; a refusal is the only honest answer to such a file.
+pub const MAX_DEPTH: usize = 128;
+
+fn read_value(bytes: &[u8], text: &str, at: &mut usize, depth: usize) -> Result<Json, Diagnostic> {
     skip_ws(bytes, at);
     let start = *at;
+    if depth > MAX_DEPTH && matches!(bytes.get(start), Some(b'{' | b'[')) {
+        return Err(Diagnostic::new(
+            Rule::IngestJson,
+            format!("the JSON nests deeper than {MAX_DEPTH} levels"),
+            Span::new(start as u32, start as u32 + 1),
+        ));
+    }
     let Some(&b) = bytes.get(start) else {
         return Err(Diagnostic::new(
             Rule::IngestJson,
@@ -104,7 +116,7 @@ fn read_value(bytes: &[u8], text: &str, at: &mut usize) -> Result<Json, Diagnost
             }
             loop {
                 skip_ws(bytes, at);
-                let key = match read_value(bytes, text, at)? {
+                let key = match read_value(bytes, text, at, depth + 1)? {
                     Json::Str(key, _) => key,
                     other => {
                         return Err(Diagnostic::new(
@@ -130,7 +142,7 @@ fn read_value(bytes: &[u8], text: &str, at: &mut usize) -> Result<Json, Diagnost
                     ));
                 }
                 *at += 1;
-                let value = read_value(bytes, text, at)?;
+                let value = read_value(bytes, text, at, depth + 1)?;
                 entries.push((key, value));
                 skip_ws(bytes, at);
                 match bytes.get(*at) {
@@ -158,7 +170,7 @@ fn read_value(bytes: &[u8], text: &str, at: &mut usize) -> Result<Json, Diagnost
                 return Ok(Json::Array(items, Span::new(start as u32, *at as u32)));
             }
             loop {
-                items.push(read_value(bytes, text, at)?);
+                items.push(read_value(bytes, text, at, depth + 1)?);
                 skip_ws(bytes, at);
                 match bytes.get(*at) {
                     Some(&b',') => *at += 1,

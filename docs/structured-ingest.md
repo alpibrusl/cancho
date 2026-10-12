@@ -82,7 +82,7 @@ old ones:
 
 | tag | what it names |
 |---|---|
-| `ingest-json` | the file is not JSON at all, or an object is not where one must be |
+| `ingest-json` | the file is not JSON at all, or an object is not where one must be, or it nests deeper than 128 levels (the reader and builder recurse, so the depth is bounded) |
 | `ingest-node` | a node's `kind` field names nothing the compiler builds — an unknown vocabulary word, not a malformed one |
 | `ingest-arity` | a known node with the wrong shape: a missing field, a wrong-typed field, a negative tuple index |
 

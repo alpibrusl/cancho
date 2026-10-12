@@ -308,13 +308,17 @@ impl Rule {
                  `.`, `+` and `-`, comma separated, each once, such as `\"libc,libssl\"`."
             }
             Rule::IngestJson => {
-                "The JSON handed to `cancho ingest` has to be JSON, with an object where the \n                 shape needs one (`docs/structured-ingest.md`)."
+                "The JSON handed to `cancho ingest` has to be JSON, nested no deeper than the \
+                 reader allows, with an object where the shape needs one \
+                 (`docs/structured-ingest.md`)."
             }
             Rule::IngestNode => {
-                "A JSON node's `kind` has to name something the compiler builds. An unknown \n                 word is a vocabulary error, not a malformed one."
+                "A JSON node's `kind` has to name something the compiler builds. An unknown \
+                 word is a vocabulary error, not a malformed one."
             }
             Rule::IngestArity => {
-                "A known JSON node with a missing or wrongly typed field, or a negative \n                 tuple index, cannot become a tree."
+                "A known JSON node with a missing or wrongly typed field, or a negative \
+                 tuple index, cannot become a tree."
             }
             Rule::InfiniteType => {
                 "A type that contains itself has no finite size, so a `Box` has to sit somewhere on \

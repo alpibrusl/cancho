@@ -716,8 +716,16 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     let start = builtins.builtin_sig_start(b);
-    if builtins.builtin_sig(start) != 0 || emit.on(st) || !effects.perform(st, b) {
+    if builtins.builtin_sig(start) != 0 || !effects.perform(st, b) {
         return skip(st, from, to);
+    }
+    // The only builtin code is written for so far is `putchar`.
+    var written = false;
+    if emit.on(st) {
+        if !lc.spells(text, ast.tstart(st, ast.get(st, id, 5)), ast.tend(st, ast.get(st, id, 5)), "putchar") {
+            return skip(st, from, to);
+        }
+        written = true;
     }
     var fresh = 0 - 1;
     var made = 0;
@@ -745,6 +753,9 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
                 skip(st, from, to);
             } else {
                 scope.expect(st, text, param, a.ty, ast.nstart(st, arg), ast.nend(st, arg));
+                if written {
+                    emit.push_arg(st, a.ty, a.known, a.value, a.reg);
+                }
             }
         }
         arg = ast.next(st, arg);
@@ -756,6 +767,9 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
     let result = prims.decode(st, false, cursor, fresh, false);
     if result == 0 {
         return skip(st, from, to);
+    }
+    if written {
+        return in_reg(result, emit.put_char(st));
     }
     return plain(result);
 }
@@ -797,6 +811,20 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
             return skip(st, from, to);
         }
         return constant(0);
+    }
+    // `split(world)`: the parts of the `World`, which are nothing in the code.
+    if emit.on(st) && qualifier < 0 && pass1.is_word(st, text, callee, "split") {
+        if nargs != 1 {
+            return skip(st, from, to);
+        }
+        let given = expr(st, text, ast.get(st, id, 6));
+        if !ast.ok(st) {
+            return nothing();
+        }
+        if !types.is_prelude(st, given.ty) {
+            return skip(st, from, to);
+        }
+        return in_reg(types.make_prelude(st, builtins.split_for(st[23])), 0 - 1);
     }
     // A builtin the file's edition can name comes first, then a foreign function: not checked.
     let known = prims.builtin_at(st, text, callee, st[23]);

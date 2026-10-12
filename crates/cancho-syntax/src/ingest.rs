@@ -689,9 +689,38 @@ fn item_to_json(ast: &Ast, index: usize) -> Json {
 /// marker, and neither does the JSON form. A JSON that tries to set one
 /// is refused rather than silently dropped.
 pub fn json_to_ast(json: &Json) -> Result<Ast, Diagnostic> {
+    // A `Json` need not come from `read_json`, and the builder recurses
+    // as deep as the tree: bound it here, with the reader's own limit.
+    if let Some(span) = too_deep(json, 0) {
+        return Err(Diagnostic::new(
+            Rule::IngestJson,
+            format!("the JSON nests deeper than {} levels", crate::json::MAX_DEPTH),
+            span,
+        ));
+    }
     let mut builder = Builder { ast: Ast::new() };
     builder.unit(json)?;
     Ok(builder.ast)
+}
+
+/// The span of the first container past [`crate::json::MAX_DEPTH`], looking
+/// no further down than that, so the check itself cannot overflow.
+fn too_deep(json: &Json, depth: usize) -> Option<Span> {
+    match json {
+        Json::Array(items, span) => {
+            if depth >= crate::json::MAX_DEPTH {
+                return Some(*span);
+            }
+            items.iter().find_map(|item| too_deep(item, depth + 1))
+        }
+        Json::Object(entries, span) => {
+            if depth >= crate::json::MAX_DEPTH {
+                return Some(*span);
+            }
+            entries.iter().find_map(|(_, v)| too_deep(v, depth + 1))
+        }
+        _ => None,
+    }
 }
 
 /// Builds the tree into a fresh `Ast`, interned names and arena pushes in
@@ -1601,6 +1630,36 @@ fn kind_json_span(json: &Json) -> Span {
 mod tests {
     use super::*;
     use crate::json::{read_json, write_json};
+
+    #[test]
+    fn deep_nesting_is_a_refusal_not_a_crash() {
+        // Far past any stack: the reader refuses before it recurses.
+        let text = "[".repeat(100_000);
+        let err = read_json(&text).expect_err("100k levels is refused");
+        assert_eq!(err.rule, Rule::IngestJson);
+        let objects = "{\"a\":".repeat(100_000);
+        let err = read_json(&objects).expect_err("100k objects is refused");
+        assert_eq!(err.rule, Rule::IngestJson);
+        // Just inside the limit still reads; just outside does not.
+        let inside = format!(
+            "{}{}",
+            "[".repeat(crate::json::MAX_DEPTH + 1),
+            "]".repeat(crate::json::MAX_DEPTH + 1)
+        );
+        assert!(read_json(&inside).is_ok());
+        let outside = format!("[{inside}]");
+        assert!(read_json(&outside).is_err());
+    }
+
+    #[test]
+    fn a_tree_built_too_deep_is_refused_by_the_builder() {
+        let mut json = Json::Array(Vec::new(), Span::new(0, 0));
+        for _ in 0..(crate::json::MAX_DEPTH + 1) {
+            json = Json::Array(vec![json], Span::new(0, 0));
+        }
+        let err = json_to_ast(&json).expect_err("too deep");
+        assert_eq!(err.rule, Rule::IngestJson);
+    }
 
     fn round_trip(src: &str) -> String {
         let ast = crate::parse(src).expect("the fixture parses");
