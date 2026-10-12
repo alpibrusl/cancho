@@ -1,6 +1,7 @@
 edition 6;
 module tls_identity;
 import std.bytes;
+import std.crypto;
 import tls_message;
 import tls_record;
 import tls_slot;
@@ -21,7 +22,8 @@ import x509_names;
 // wire form (each name after its length byte); then each identity, a
 // fixed stride: in use (1 byte), the key (32), its public point (65), the
 // names' length (2) and the names, the certificate_list's length (3) and
-// the list, as Certificate sends it.
+// the list, as Certificate sends it, then the leaf certificate's SHA-256 (32) and its notAfter (8, seconds
+// since 1970), which a session ticket binds to (`docs/tls-server.md` §12.3 d).
 
 pub fn max_identities() -> [] int {
     return 16;
@@ -70,8 +72,16 @@ fn o_list() -> [] int {
     return o_list_len() + 3;
 }
 
-fn stride() -> [] int {
+fn o_fp() -> [] int {
     return o_list() + chain_cap();
+}
+
+fn o_not_after() -> [] int {
+    return o_fp() + 32;
+}
+
+fn stride() -> [] int {
+    return o_not_after() + 8;
 }
 
 fn at(id: int) -> [] int {
@@ -160,6 +170,17 @@ pub fn list[&c](cfg: &c [byte], id: int) -> [] &c [byte] {
     return cfg[at(id) + o_list()..at(id) + o_list() + n];
 }
 
+// The SHA-256 of identity `id`'s leaf certificate, which a session ticket records: a replaced
+// identity with another certificate has another one, and the tickets of the old are refused.
+pub fn fingerprint[&c](cfg: &c [byte], id: int) -> [] &c [byte] {
+    return cfg[at(id) + o_fp()..at(id) + o_fp() + 32];
+}
+
+// The leaf's notAfter, seconds since 1970: no ticket outlives it.
+pub fn not_after[&c](cfg: &c [byte], id: int) -> [] int {
+    return tls_message.get(cfg, at(id) + o_not_after(), 8);
+}
+
 // A key parser's refusal as this package's (`x509_key.refusal_tag`): a
 // key of another algorithm or curve is `server_key_type`; anything else
 // about the file, `server_key_format`.
@@ -194,6 +215,7 @@ pub fn load[&c, &p, &k, &n, &w](cfg: &!c [byte], id: int, chain_pem: &p [byte], 
         let pub_point = alloc_slice[r](65, byte_of(0));
         var n = 0;
         var certs = 0;
+        var leaf_not_after = 0;
         var from = 0;
         var going = true;
         while code == 0 && going {
@@ -213,6 +235,7 @@ pub fn load[&c, &p, &k, &n, &w](cfg: &!c [byte], id: int, chain_pem: &p [byte], 
                     } else if view[x509.not_after()] < now {
                         code = tls_record.server_cert_expired();
                     }
+                    leaf_not_after = view[x509.not_after()];
                 }
                 tls_message.put(chain, n, info[0], 3);
                 tls_slot.copy_bytes(der[0..info[0]], chain[n + 3..n + 3 + info[0]]);
@@ -245,6 +268,8 @@ pub fn load[&c, &p, &k, &n, &w](cfg: &!c [byte], id: int, chain_pem: &p [byte], 
             bytes.zero(cfg[b + o_list()..b + o_list() + chain_cap()]);
             tls_message.put(cfg, b + o_list_len(), n, 3);
             tls_slot.copy_bytes(chain[0..n], cfg[b + o_list()..b + o_list() + n]);
+            crypto.sha256(chain[3..3 + tls_message.get(chain, 0, 3)], cfg[b + o_fp()..b + o_fp() + 32]);
+            tls_message.put(cfg, b + o_not_after(), leaf_not_after, 8);
             if !keep_names {
                 bytes.zero(cfg[b + o_names()..b + o_names() + names_cap()]);
                 tls_message.put(cfg, b + o_names_len(), len(names), 2);

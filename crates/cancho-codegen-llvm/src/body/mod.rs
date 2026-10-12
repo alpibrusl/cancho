@@ -22,6 +22,7 @@ mod process;
 mod signals;
 mod sockets;
 mod tty;
+mod wide;
 mod words;
 
 /// Where `hoist`ed allocas land: a line no instruction can be mistaken for.

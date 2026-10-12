@@ -1,0 +1,35 @@
+commit f01214a0 (tree synced to gram; before = std/x25519.cho at e347688d^); Intel i7-1260P, taskset -c 4-5
+ 10:58:18 up 5 days, 17 min,  9 users,  load average: 6,81, 7,52, 7,28
+before: x25519_before.cho; backend llvm
+before 1.608 ms
+after  0.098 ms
+before 2.369 ms
+after  0.142 ms
+before 2.373 ms
+after  0.132 ms
+before 2.372 ms
+after  0.154 ms
+before 2.360 ms
+after  0.143 ms
+before 1.603 ms
+after  0.094 ms
+before 1.580 ms
+after  0.051 ms
+before median 2.360 ms, min 1.580 ms
+after  median 0.132 ms, min 0.051 ms
+speed-up (medians): 17.9x
+before: x25519_before.cho; backend cranelift
+before 2.559 ms
+after  0.224 ms
+before 3.809 ms
+after  0.327 ms
+before 3.675 ms
+after  0.303 ms
+before 3.969 ms
+after  0.333 ms
+before 4.308 ms
+after  0.442 ms
+before median 3.809 ms, min 2.559 ms
+after  median 0.327 ms, min 0.224 ms
+speed-up (medians): 11.6x
+ 11:02:09 up 5 days, 21 min,  9 users,  load average: 6,98, 7,43, 7,31

@@ -351,6 +351,22 @@ pub fn missing_extension() -> [] int {
     return -132;
 }
 
+// A resumption whose ticket the server authored and passed every rule, and whose binder does not
+// match (RFC 8446 §4.2.11.2; `docs/tls-server.md` §12.3 f).
+pub fn server_binder() -> [] int {
+    return -64;
+}
+
+// `set_tickets`: a count over 8, or a lifetime outside one second to seven days.
+pub fn server_ticket_config() -> [] int {
+    return -65;
+}
+
+// `set_ticket_keys`: no key, a list that is not a whole number of 32-byte keys, or more than 4.
+pub fn server_ticket_key() -> [] int {
+    return -66;
+}
+
 pub fn refusal_tag(code: int) -> [] &static [byte] {
     if code == 0 {
         return "ok";
@@ -564,6 +580,15 @@ pub fn refusal_tag(code: int) -> [] &static [byte] {
     }
     if code == -132 {
         return "tls-missing-extension";
+    }
+    if code == -64 {
+        return "tls-server-binder";
+    }
+    if code == -65 {
+        return "tls-server-ticket-config";
+    }
+    if code == -66 {
+        return "tls-server-ticket-key";
     }
     return "unknown";
 }

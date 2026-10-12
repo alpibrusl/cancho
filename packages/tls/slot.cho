@@ -328,6 +328,29 @@ pub fn ints_len() -> [] int {
     return i_alpn_len() + 9;
 }
 
+// A server's resumption (`docs/tls-server.md` §12) uses fields of the client's that a server slot has
+// no use for: the verdict on the ticket offered (`tls_ticket`'s `v_*`) where the client keeps a
+// ticket's lifetime, and the engine's clock at the last `feed`, in milliseconds, where
+// it keeps the age of the ticket it offered.
+pub fn i_srv_verdict() -> [] int {
+    return i_ticket_lifetime();
+}
+
+pub fn i_srv_now_ms() -> [] int {
+    return i_offer_age();
+}
+
+// The leaf's notAfter of the identity that answered the ClientHello (seconds), recorded then so a
+// `replace_identity` before the client's Finished does not change what the tickets bind.
+pub fn i_srv_not_after() -> [] int {
+    return i_not_after();
+}
+
+// How many tickets' randomness `serve` drew (`b_ticket_random`).
+pub fn i_srv_drawn() -> [] int {
+    return i_ticket_len();
+}
+
 pub fn read_aead[&i](ints: &i [int]) -> [] &i [int] {
     return ints[i_read_aead()..i_read_aead() + tls_record.context_len()];
 }
@@ -651,6 +674,17 @@ pub fn b_sni() -> [] int {
     return b_ticket_host();
 }
 
+// The randomness of the tickets this connection will make, drawn at `serve` (`docs/tls-server.md` §12.1):
+// 32 bytes of salt and 4 of ticket_age_add each, overwritten as they are used.
+pub fn b_ticket_random() -> [] int {
+    return b_ticket();
+}
+
+// The SHA-256 of that leaf, recorded with it (32 bytes, after the randomness's 288).
+pub fn b_srv_fp() -> [] int {
+    return b_ticket() + 512;
+}
+
 pub fn k_sign_extra() -> [] int {
     return k_server_random();
 }
@@ -955,7 +989,7 @@ fn server_alert(code: int) -> [] int {
     if code == tls_record.server_early_data_size() {
         return 10;
     }
-    if code == tls_record.server_finished() {
+    if code == tls_record.server_finished() || code == tls_record.server_binder() {
         return 51;
     }
     if code == tls_record.server_missing_extension() {

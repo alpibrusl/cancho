@@ -245,9 +245,22 @@ class Client:
         self.expect_alpn = None
         self.expect_chain = [der(MAIN), der(CA)]
         self.expect_key = MAIN_KEY
+        # Resumption (docs/tls-server.md §12; scripts/tls_liar_tickets.py): the tickets offered, each
+        # (ticket, PSK or None for a made-up one, the hash it was made under, the age claimed in ms); the
+        # modes sent; whether the server must resume; the tickets this connection was sent.
+        self.psks = []
+        self.modes = b"\1\1"
+        self.expect_resume = False
+        self.binder_flip = None  # the index of an identity whose binder is wrong
+        self.binder_pad = 0
+        self.binder_flip_at = 0  # which byte of that binder is wrong: 0 the first, -1 the last
+        self.binder_no_hrr = False  # a binder that leaves the HelloRetryRequest out of the transcript
+        self.binders_keep = None  # fewer binders than identities
+        self.tickets = []
+        self.sh_psk = None
 
     # ---- setting up the server ----
-    def setup(self, alpn=None, identities=None, seed=SEED):
+    def setup(self, alpn=None, identities=None, seed=SEED, tickets=None, keys=None):
         f = self.c.ask(f"E {seed.hex()}")
         assert f[:2] == ["0", "ok"], f
         for chain, key, names in identities or [(CHAIN, key_pem(MAIN_KEY), HOST),
@@ -256,6 +269,12 @@ class Client:
             assert f[1] == "ok", f
         if alpn is not None:
             f = self.c.ask(f"A {alpn.hex()}")
+            assert f[:2] == ["0", "ok"], f
+        if tickets is not None:
+            f = self.c.ask(f"T {tickets[0]} {tickets[1]}")
+            assert f[:2] == ["0", "ok"], f
+        if keys is not None:
+            f = self.c.ask(f"K {b''.join(keys).hex()} {NOW_MS}")
             assert f[:2] == ["0", "ok"], f
         f = self.c.ask(f"V {NOW_MS}")
         assert f[:3] == ["0", "ok", "1"], f
@@ -292,15 +311,51 @@ class Client:
         if self.alpn is not None:
             names = b"".join(bytes([len(n)]) + n for n in self.alpn)
             e += ext(16, u16(len(names)) + names)
-        e += ext(45, b"\1\1")
+        if self.modes is not None:
+            e += ext(45, self.modes)
         if self.early:
             e += ext(42, b"")
         return e + self.extra
+
+    def psk_extension(self, binders):
+        """pre_shared_key (RFC 8446 §4.2.11) with the given binders (each bytes)."""
+        ids = b"".join(u16(len(t)) + t + (age + 0).to_bytes(4, "big") for t, _, _, age in self.psks)
+        binders = binders[:self.binders_keep]
+        return ext(41, u16(len(ids)) + ids + u16(sum(1 + len(b) for b in binders))
+                   + b"".join(bytes([len(b)]) + b for b in binders))
+
+    def binder(self, k, truncated):
+        """Entry k's binder over the transcript so far and the ClientHello truncated before its binders."""
+        _, psk, h, _ = self.psks[k]
+        hash = hashlib.sha256 if h == 32 else hashlib.sha384
+        if psk is None:
+            return bytes(h)
+        early = hmac.new(bytes(h), psk, hash).digest()
+        key = expand_label(derive(early, b"res binder", b"", hash), b"finished", b"", h, hash)
+        prefix = self.transcript if self.retried and not self.binder_no_hrr else b""
+        mac = hmac.new(key, hash(prefix + truncated).digest(), hash).digest()
+        if self.binder_flip == k and self.binder_flip_at is not None:
+            at = self.binder_flip_at
+            mac = mac[:at] + bytes([mac[at] ^ 1]) + mac[at + 1:] if at >= 0 else mac[:at] + bytes([mac[at] ^ 1])
+        return mac + bytes(self.binder_pad if self.binder_flip == k else 0)
 
     def client_hello(self, legacy=0x0303, compression=b"\0", body=None):
         if body is None:
             exts = self.extensions()
             suites = b"".join(u16(s) for s in self.suites)
+            if self.psks:
+                # The binders' length is known before they are: build with zeros, then fill them in.
+                zeros = [bytes(h) for _, _, h, _ in self.psks]
+                # A binder longer than the zeros changes the header's length, which the binder covers: so settle.
+                for rounds in range(3):
+                    full = exts + self.psk_extension(zeros)
+                    body = (u16(legacy) + self.random + bytes([len(self.sid)]) + self.sid + u16(len(suites)) + suites
+                            + bytes([len(compression)]) + compression + u16(len(full)) + full)
+                    hello = message(1, body)
+                    tail = 2 + sum(1 + len(b) for b in zeros[:self.binders_keep])
+                    truncated = hello[:len(hello) - tail]
+                    zeros = [self.binder(k, truncated) for k in range(len(self.psks))]
+                exts = full
             body = (u16(legacy) + self.random + bytes([len(self.sid)]) + self.sid + u16(len(suites)) + suites
                     + bytes([len(compression)]) + compression + u16(len(exts)) + exts)
         return message(1, body)
@@ -347,8 +402,10 @@ class Client:
             assert kind not in found, f"extension {kind} twice"
             found[kind] = b[at + 4:at + 4 + n]
             at += 4 + n
-        assert set(found) == {43, 51}, f"extensions {sorted(found)}"
+        assert set(found) in ({43, 51}, {43, 51, 41}), f"extensions {sorted(found)}"
         assert found[43] == u16(0x0304)
+        self.sh_psk = int.from_bytes(found[41], "big") if 41 in found else None
+        assert 41 not in found or found[41] == u16(self.sh_psk), "a 2-byte selected identity"
         return random, suite, found[51]
 
     def retry(self, hello2=None):
@@ -392,7 +449,12 @@ class Client:
         h = self.hash
         n = h().digest_size
         shared = self.shared_secret(group, ks[4:])
-        early = hmac.new(bytes(n), bytes(n), h).digest()
+        assert (self.sh_psk is not None) == self.expect_resume, f"resumed: {self.sh_psk}, wanted {self.expect_resume}"
+        psk = bytes(n)
+        if self.sh_psk is not None:
+            ticket, psk, ph, _ = self.psks[self.sh_psk]
+            assert ph == n, "the PSK's hash is the suite's"
+        early = hmac.new(bytes(n), psk, h).digest()
         hs = hmac.new(derive(early, b"derived", b"", h), shared, h).digest()
         self.c_hs = derive(hs, b"c hs traffic", self.transcript, h)
         self.s_hs = derive(hs, b"s hs traffic", self.transcript, h)
@@ -413,6 +475,20 @@ class Client:
             n = 4 + int.from_bytes(data[1:4], "big")
             msgs.append(data[:n])
             data = data[n:]
+        if self.sh_psk is not None:
+            # A resumed handshake: EncryptedExtensions and Finished, no Certificate, no CertificateVerify.
+            assert [m[0] for m in msgs] == [8, 20], [m[0] for m in msgs]
+            ee, fin = msgs
+            want = b""
+            if self.expect_alpn:
+                want += ext(16, u16(1 + len(self.expect_alpn)) + bytes([len(self.expect_alpn)]) + self.expect_alpn)
+            assert self.sni_ack_resumed(ee, want), f"EncryptedExtensions {ee.hex()}"
+            self.transcript += ee
+            key = expand_label(self.s_hs, b"finished", b"", len(self.s_hs), h)
+            assert fin == message(20, hmac.new(key, h(self.transcript).digest(), h).digest()), "the server's Finished"
+            self.transcript += fin
+            self.app_th = self.transcript
+            return
         assert [m[0] for m in msgs] == [8, 11, 15, 20], [m[0] for m in msgs]
         ee, cert, cv, fin = msgs
         want = b""
@@ -435,6 +511,11 @@ class Client:
         self.transcript += fin
         self.app_th = self.transcript
 
+    def sni_ack_resumed(self, ee, want):
+        """A resumed EncryptedExtensions: the empty server_name acknowledgement as a full handshake's."""
+        ack = ext(0, b"") if self.expect_sni_ack else b""
+        return ee == message(8, u16(len(ack + want)) + ack + want)
+
     def finished(self, mac=None):
         h = self.hash
         key = expand_label(self.c_hs, b"finished", b"", len(self.c_hs), h)
@@ -443,11 +524,32 @@ class Client:
     def finish(self, ccs=None, extra=b""):
         """The client's second flight: change_cipher_spec (in compatibility mode) and Finished."""
         out = plain_record(20, b"\1") if (self.ccs if ccs is None else ccs) else b""
-        out += self.write.seal(22, self.finished()) + extra
+        fin = self.finished()
+        out += self.write.seal(22, fin) + extra
         h = self.hash
         f = self.c.feed(out)
         self.read = Keys(derive(self.master, b"s ap traffic", self.app_th, h), self.suite)
         self.write = Keys(derive(self.master, b"c ap traffic", self.app_th, h), self.suite)
+        if f[2] == "3":
+            # The NewSessionTickets the server sent after the Finished (RFC 8446 §4.6.1), under its
+            # application key, each with the PSK it makes (§4.6.1: from the resumption master secret).
+            res = derive(self.master, b"res master", self.app_th + fin, h)
+            self.tickets = []
+            for rec in self.c.take():
+                kind, content = self.read.open(rec)
+                assert kind == 22 and content[0] == 4, (kind, content[:4].hex())
+                assert content[1:4] == u24(len(content) - 4)
+                body = content[4:]
+                nonce_len = body[8]
+                nonce = body[9:9 + nonce_len]
+                at = 9 + nonce_len
+                size = int.from_bytes(body[at:at + 2], "big")
+                ticket = body[at + 2:at + 2 + size]
+                assert body[at + 2 + size:] == u16(0), "no extensions: never early_data (§12.3 b)"
+                self.tickets.append({
+                    "lifetime": int.from_bytes(body[0:4], "big"), "age_add": int.from_bytes(body[4:8], "big"),
+                    "nonce": nonce, "ticket": ticket, "psk": expand_label(res, b"resumption", nonce, len(res), h),
+                    "hash": len(res), "suite": self.suite})
         return f
 
     def established(self):
@@ -821,7 +923,7 @@ def identities_full(c):
 @case("the other role's calls on each engine", "tls-role", None, None)
 def roles(c):
     f = c.c.ask("C")
-    assert f == ["-57", "tls-role"] * 6, f
+    assert f == ["-57", "tls-role"] * 10, f
 
 
 @case("replace_identity: a renewed chain and key are served, the names kept", "ok")
@@ -1275,6 +1377,8 @@ def main():
     print(f"{len(CASES)} cases, {bad} failed")
     sys.exit(1 if bad else 0)
 
+
+import tls_liar_tickets  # noqa: E402,F401 -- registers the session-ticket cases (docs/tls-server.md §12.8)
 
 if __name__ == "__main__":
     main()

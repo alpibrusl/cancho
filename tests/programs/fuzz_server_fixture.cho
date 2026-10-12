@@ -25,3 +25,9 @@ pub fn now_ms() -> [] int {
 pub fn seed() -> [] &static [byte] {
     return "fuzz_server's fixed seed, 32 by.";
 }
+
+// The ticket key (`docs/tls-server.md` §12): fixed and public, so `scripts/tls_server_fuzz_seeds.py` can seal tickets the
+// fuzzer's engine opens and start the fuzzing from a ClientHello that resumes.
+pub fn ticket_key() -> [] &static [byte] {
+    return "fuzz_server's ticket key, 32 by.";
+}
