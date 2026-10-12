@@ -299,7 +299,7 @@ pub fn variant_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         ast.fail(st, rules.r_not_public(), from, to);
         return nothing();
     }
-    if !scope.enum_plain(st, item) {
+    if !scope.enum_plain(st, item) && !(emit.on(st) && scope.item_codable(st, item, 6)) {
         return skip(st, from, to);
     }
     if ast.get(st, id, 8) != ast.get(st, variant, 6) {
@@ -321,9 +321,9 @@ pub fn variant_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     while left > 0 && ast.ok(st) {
         let v = expr(st, text, arg);
         if ast.ok(st) {
-            scope.expect(st, text, scope.scalar(st, want), v.ty, ast.nstart(st, arg), ast.nend(st, arg));
+            scope.expect(st, text, scope.node_val(st, want), v.ty, ast.nstart(st, arg), ast.nend(st, arg));
             if emit.on(st) && ast.ok(st) {
-                acc = emit.insert_at(st, whole, acc, emit.payload_index(st, item, variant, k), scope.scalar(st, want), v.known, v.value, v.reg);
+                acc = emit.insert_at(st, whole, acc, emit.payload_index(st, item, variant, k), scope.node_val(st, want), v.known, v.value, v.reg);
             }
         }
         arg = ast.next(st, arg);
@@ -534,7 +534,7 @@ pub fn struct_lit[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         ast.fail(st, rules.r_not_public(), from, to);
         return nothing();
     }
-    if !scope.struct_plain(st, item) {
+    if !scope.struct_plain(st, item) && !(emit.on(st) && scope.item_codable(st, item, 6)) {
         return skip(st, from, to);
     }
     if emit.on(st) && !scope.struct_codable(st, types.make_named(st, item)) {
@@ -619,6 +619,11 @@ pub fn field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         }
         if types.is_ref(st, b.ty) {
             let address = emit.field_address(st, held, b.reg, index);
+            if types.is_boxslice(st, ft) || scope.is_res_item(st, ft) {
+                // A field that must be consumed is not copied out of a reference: it is borrowed, for
+                // as long as, and as uniquely as, the reference it was reached through.
+                return in_reg(types.make_ref(st, types.ref_unique(st, b.ty), types.ref_region(st, b.ty), ft), address);
+            }
             return in_reg(ft, emit.load_through(st, ft, address));
         }
         return in_reg(ft, emit.extract_field(st, held, b.reg, index));
@@ -997,6 +1002,20 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
             written = 3;
         } else if lc.spells(text, ast.tstart(st, at), ast.tend(st, at), "byte_of") {
             written = 4;
+        } else if lc.spells(text, ast.tstart(st, at), ast.tend(st, at), "wrapping_add") {
+            written = 5;
+        } else if lc.spells(text, ast.tstart(st, at), ast.tend(st, at), "wrapping_sub") {
+            written = 6;
+        } else if lc.spells(text, ast.tstart(st, at), ast.tend(st, at), "wrapping_mul") {
+            written = 7;
+        } else if lc.spells(text, ast.tstart(st, at), ast.tend(st, at), "copy_into") {
+            written = 8;
+        } else if lc.spells(text, ast.tstart(st, at), ast.tend(st, at), "index_of_byte") {
+            written = 9;
+        } else if lc.spells(text, ast.tstart(st, at), ast.tend(st, at), "getchar") {
+            written = 10;
+        } else if lc.spells(text, ast.tstart(st, at), ast.tend(st, at), "write_err") {
+            written = 11;
         } else {
             return skip(st, from, to);
         }
@@ -1028,7 +1047,7 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
                 skip(st, from, to);
             } else {
                 scope.expect(st, text, param, a.ty, ast.nstart(st, arg), ast.nend(st, arg));
-                if written == 1 || written == 2 {
+                if written != 0 && written != 3 && written != 4 {
                     push_value(st, a);
                 }
                 last = a;
@@ -1055,6 +1074,21 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
     }
     if written == 4 {
         return in_reg(result, emit.truncate_to_byte(st, last.known, last.value, last.reg));
+    }
+    if written >= 5 && written <= 7 {
+        return in_reg(result, emit.plain_arith(st, written - 5));
+    }
+    if written == 8 {
+        return in_reg(result, emit.bulk_copy(st));
+    }
+    if written == 9 {
+        return in_reg(result, emit.find_byte(st));
+    }
+    if written == 10 {
+        return in_reg(result, emit.stdin_char(st));
+    }
+    if written == 11 {
+        return in_reg(result, emit.stderr_write(st));
     }
     return plain(result);
 }

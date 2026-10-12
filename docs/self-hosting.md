@@ -225,7 +225,8 @@ the stages found, in place, the way this document corrects its own claims.
 | 4i. The heap: `box_slice`, `contents`, `unbox_slice` of whole numbers, bytes and booleans, with a `Heap` borrowed and passed (compile mode only: the checker still answers `SKIP` for a function that has one) | `emit.cho`, `exprs.cho`, `types.cho`, `scope.cho`, `effects.cho` | the Rust compiler, by what the built programs do | **Ninth slice of the backend.** 367 builds run and compared, 15 of them new, 76 trap; none different. The checker's 1,945 cases are unchanged |
 | 4j. `static` tables: `static name: [T] { .. alloc_slice[static](n, fill) .. return t; }` of whole numbers, bytes and booleans, and the name used as a shared reference to the slice, in the checker (20 new cases) and in the code | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho`, `driver.cho` | the Rust compiler: the checker by answers (1,965 cases), the code by what the built programs do | **Tenth slice of the backend, and a checker rule.** 382 builds run and compared, 15 of them new, 78 trap; none different. The library's skipped functions go from 641 to 612 |
 | 4k. Functions that return a slice, and sub-slices `s[a..b]` of whole numbers, bytes and booleans | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho` | the Rust compiler, by what the built programs do | **Eleventh slice of the backend.** 404 builds run and compared, 22 of them new, 84 trap; none different. The census: 529 of the compiler's own 548 functions get code (488 before) |
-| 4l. The rest of the backend: structs with fields that are not whole numbers, bytes or booleans (and the resource structs of `std.buffer`), several files and the modules' names, the builtins left, `alloc` of one value, generics, tuples, `clang` run by the compiler itself | not started | | |
+| 4l. Structs and enums whose fields and payloads are structs, enums or a `Box[[T]]` (and `res` ones, `std.buffer`'s `Buffer`), destructuring a struct of the file, a field of a `res` type read through a reference as a borrow, byte parameters and results, and the builtins `wrapping_*`, `copy_into`, `index_of_byte`, `getchar`, `write_err` | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho`, `types.cho` | the Rust compiler, by what the built programs do | **Twelfth slice of the backend.** 424 builds run and compared, 20 of them new, 85 trap; none different. The census: **558 of the compiler's own 558 functions get code, and all 39 of `std.bytes`/`buffer`/`io`** |
+| 4m. The rest: several files and the modules' names (what the census cannot show), `alloc` of one value, generics, tuples, `clang` run by the compiler itself, then the bootstrap | not started | | |
 
 **The method.** A port that builds no tree has nothing to compare, and one that does
 needs a printer, which is another port. So stage 2's parser wrote the tree the Rust parser
@@ -655,6 +656,20 @@ element and the difference. The census, rerun after it: 529 of the compiler's 54
 the 39 in `std.bytes`/`buffer`/`io`. What is left of the compiler's own: `block` and `lc.step`, which return
 structs with a field that is a list or a boolean pair (8), `wrapping_mul` (2), `Buffer` and what returns it
 (`std.buffer`, 19 of its own): the struct that owns a `Box`.
+
+**Stage 4l: structs that hold structs.** The census said what was left, and it was a few things. A field or a
+payload now has a type that is a scalar, a struct or an enum of the file, or a `Box[[T]]` of scalars
+(`types.node_type`), and the LLVM aggregate nests: `{ { i64, i1 }, i64 }`. A struct declared `res`
+is one too, since what ends it is Rust's to say; `let S { a, b } = value;` takes one apart. Reading
+a field through a reference follows `docs/reading-references.md` §2.0: a `val` one is copied out, a `res`
+one (the `Box` of `Buffer`) comes back as a reference to it, which is what `contents(b.held)` needs. Two
+smaller things were in the way of `std.buffer`: a byte could not be a parameter or a result, and five
+builtins had no code (`wrapping_add`/`sub`/`mul` are the plain instructions, `copy_into` a bounds test and
+`memmove`, `index_of_byte` a `memchr`, `getchar` the C function sign-extended, `write_err` a `write` to
+descriptor 2). The census, rerun: **558 of 558** of the compiler's functions and 39 of 39 in
+`std.bytes`/`buffer`/`io`. That is the end of what the census can see and the start of what it cannot: a
+function that calls another module's, two modules that each have a function of one name, and a whole
+program built into a binary.
 
 The mutation test of `types.cho` (54 operator swaps) killed 40 on the first corpus of 458 targeted
 body cases (after region-variable, `where`-closure and coercion cases were added; 33 before); the 14

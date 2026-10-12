@@ -20,8 +20,10 @@ module selfhost.types;
 // scalars, in regions that are parameters, `static`, or variables a call makes.
 
 import selfhost.ast;
+import selfhost.kinds;
 import selfhost.rules;
 import selfhost.pass1;
+import selfhost.tables;
 
 pub fn first_table() -> [] int {
     return 8;
@@ -217,6 +219,32 @@ pub fn is_boxslice[&s](st: &!s [int], ty: int) -> [] bool {
 
 pub fn boxslice_element[&s](st: &!s [int], ty: int) -> [] int {
     return slot(st, ty, 1);
+}
+
+// The type a resolved type node stands for in a declaration -- a field, a payload -- when code is
+// written for it: a whole number, byte or boolean (its tag), a struct or an enum of the file, or a
+// `Box[[T]]` of those scalars; else 0.
+pub fn node_type[&s](st: &!s [int], node: int) -> [] int {
+    if !ast.is_kind(st, node, kinds.NK::TName) {
+        return 0;
+    }
+    let kind = ast.get(st, node, 8);
+    if kind == 0 {
+        return ast.get(st, node, 10);
+    }
+    if kind == 3 {
+        return make_named(st, ast.get(st, node, 9));
+    }
+    if kind == 2 && ast.get(st, node, 9) == tables.prelude_box() && ast.get(st, node, 7) == 1 {
+        let arg = ast.get(st, node, 6);
+        if ast.is_kind(st, arg, kinds.NK::TSlice) {
+            let element = node_type(st, ast.get(st, arg, 6));
+            if element == 1 || element == 2 || element == 5 {
+                return make_boxslice(st, element);
+            }
+        }
+    }
+    return 0;
 }
 
 // A reference to a slice: a pointer and a length in the code.

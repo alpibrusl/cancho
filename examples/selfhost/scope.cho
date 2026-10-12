@@ -208,57 +208,87 @@ pub fn struct_plain[&s](st: &!s [int], item: int) -> [] bool {
     return true;
 }
 
-// A value of this type has code written for it: a plain struct with at least one field, each a whole
-// number, a byte or a boolean.
-pub fn struct_codable[&s](st: &!s [int], ty: int) -> [] bool {
-    if !types.is_named(st, ty) {
+// Is the declaration `node` of a field or a payload one code is written for: a whole number, a
+// byte, a boolean, a run on the heap of those, or a struct or an enum that is itself such? `depth`
+// stops a declaration that holds itself.
+fn node_codable[&s](st: &!s [int], node: int, depth: int) -> [] bool {
+    let t = types.node_type(st, node);
+    if t == 0 {
         return false;
     }
-    let item = types.named_item(st, ty);
-    if !struct_plain(st, item) {
-        return false;
+    if t == 1 || t == 2 || t == 5 {
+        return true;
     }
-    var f = ast.get(st, item, 8);
-    if f < 0 {
-        return false;
+    if types.is_boxslice(st, t) {
+        return true;
     }
-    while f >= 0 {
-        let t = emit.field_scalar(st, f);
-        if t != 1 && t != 2 && t != 5 {
-            return false;
-        }
-        f = ast.next(st, f);
-    }
-    return true;
+    return depth > 0 && item_codable(st, types.named_item(st, t), depth - 1);
 }
 
-// An enum with at least one variant, each payload a whole number, a byte or a boolean.
-pub fn enum_codable[&s](st: &!s [int], ty: int) -> [] bool {
-    if !types.is_named(st, ty) {
+// A struct or an enum code is written for: no type parameters, a field or a variant at least, and
+// every field or payload as `node_codable` says. A `res` one is too: what ends it is Rust's to say.
+pub fn item_codable[&s](st: &!s [int], item: int, depth: int) -> [] bool {
+    if ast.get(st, item, 7) >= 0 {
         return false;
     }
-    let item = types.named_item(st, ty);
-    if !enum_plain(st, item) {
-        return false;
-    }
-    var v = ast.get(st, item, 8);
-    if v < 0 {
-        return false;
-    }
-    while v >= 0 {
-        var p = ast.get(st, v, 5);
-        var n = ast.get(st, v, 6);
-        while n > 0 {
-            let t = ast.get(st, p, 10);
-            if t != 1 && t != 2 && t != 5 {
+    if ast.is_kind(st, item, kinds.NK::IStruct) {
+        var f = ast.get(st, item, 8);
+        if f < 0 {
+            return false;
+        }
+        while f >= 0 {
+            if !node_codable(st, ast.get(st, f, 5), depth) {
                 return false;
             }
-            p = ast.next(st, p);
-            n = n - 1;
+            f = ast.next(st, f);
         }
-        v = ast.next(st, v);
+        return true;
     }
-    return true;
+    if ast.is_kind(st, item, kinds.NK::IEnum) {
+        var v = ast.get(st, item, 8);
+        if v < 0 {
+            return false;
+        }
+        while v >= 0 {
+            var p = ast.get(st, v, 5);
+            var n = ast.get(st, v, 6);
+            while n > 0 {
+                if !node_codable(st, p, depth) {
+                    return false;
+                }
+                p = ast.next(st, p);
+                n = n - 1;
+            }
+            v = ast.next(st, v);
+        }
+        return true;
+    }
+    return false;
+}
+
+// A value of this type has code written for it: a struct (see `item_codable`).
+pub fn struct_codable[&s](st: &!s [int], ty: int) -> [] bool {
+    return types.is_named(st, ty) && ast.is_kind(st, types.named_item(st, ty), kinds.NK::IStruct) && item_codable(st, types.named_item(st, ty), 6);
+}
+
+// The same for an enum.
+pub fn enum_codable[&s](st: &!s [int], ty: int) -> [] bool {
+    return types.is_named(st, ty) && ast.is_kind(st, types.named_item(st, ty), kinds.NK::IEnum) && item_codable(st, types.named_item(st, ty), 6);
+}
+
+// Is this a struct or an enum declared `res`?
+pub fn is_res_item[&s](st: &!s [int], ty: int) -> [] bool {
+    return types.is_named(st, ty) && ast.get(st, types.named_item(st, ty), 6) == 2;
+}
+
+// The type of a field's or a payload's declaration: a scalar; and when the code is written, also a
+// struct, an enum or a box.
+pub fn node_val[&s](st: &!s [int], node: int) -> [] int {
+    let t = scalar(st, node);
+    if t == 0 && emit.on(st) {
+        return types.node_type(st, node);
+    }
+    return t;
 }
 
 // A reference to a slice of whole numbers, bytes or booleans: a pointer and a length in the code.
@@ -371,7 +401,7 @@ pub fn value_type[&s](st: &!s [int], ty: int) -> [] int {
     if ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 2 && ast.get(st, ty, 7) == 0 && tables.prelude_res(ast.get(st, ty, 9)) == 0 {
         return types.make_prelude(st, ast.get(st, ty, 9));
     }
-    if ast.get(st, ty, 8) == 3 && (struct_plain(st, ast.get(st, ty, 9)) || enum_plain(st, ast.get(st, ty, 9))) {
+    if ast.get(st, ty, 8) == 3 && (struct_plain(st, ast.get(st, ty, 9)) || enum_plain(st, ast.get(st, ty, 9)) || emit.on(st) && item_codable(st, ast.get(st, ty, 9), 6)) {
         return types.make_named(st, ast.get(st, ty, 9));
     }
     return 0;
@@ -399,7 +429,7 @@ pub fn field_type[&s](st: &!s [int], item: int, index: int) -> [] int {
         f = ast.next(st, f);
         i = i + 1;
     }
-    return scalar(st, ast.get(st, f, 5));
+    return node_val(st, ast.get(st, f, 5));
 }
 
 // The type of the resolved type node `ty`, written in a declaration whose `[...]` starts at `dp`,

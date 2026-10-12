@@ -171,7 +171,7 @@ fn variant_arm[&s, &x](st: &!s [int], text: &x [byte], item: int, first: int, k:
             if again {
                 ast.fail(st, rules.r_duplicate_declaration(), from, to);
             } else {
-                var ty = scope.scalar(st, want);
+                var ty = scope.node_val(st, want);
                 if by_ref {
                     ty = types.make_ref(st, unique, area, ty);
                 }
@@ -319,6 +319,34 @@ fn destructure_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] int {
     let to = ast.nend(st, id);
     let v = exprs.expr(st, text, ast.get(st, id, 7));
     if !ast.ok(st) {
+        return 0;
+    }
+    if emit.on(st) && scope.struct_codable(st, v.ty) {
+        // `let S { a, b: c } = value;` of a struct of the file: each field a binding of its own.
+        let item = types.named_item(st, v.ty);
+        var q = ast.get(st, id, 6) + 1;
+        while ast.ok(st) && !pass1.is_code(st, q, lc.Tok::RBrace) {
+            let field = q;
+            var named = q;
+            q = q + 1;
+            if pass1.is_code(st, q, lc.Tok::Colon) {
+                named = q + 1;
+                q = q + 2;
+            }
+            let index = scope.field_index(st, text, item, field);
+            if index < 0 {
+                exprs.skip(st, from, to);
+            } else {
+                let ty = scope.field_type(st, item, index);
+                scope.bind(st, named, ty, false, from, to);
+                if ast.ok(st) {
+                    emit.store(st, ty, false, 0, emit.extract_field(st, v.ty, v.reg, index), st[39] - 1);
+                }
+            }
+            if pass1.is_code(st, q, lc.Tok::Comma) {
+                q = q + 1;
+            }
+        }
         return 0;
     }
     if !types.is_prelude(st, v.ty) {
@@ -751,12 +779,12 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
     let ret = scope.lower_type(st, text, ast.get(st, fn_item, 10), st[28], 0 - 1);
     if emit.on(st) {
         // Code is written for functions of whole numbers and booleans, which are not generic.
-        var ok = ret == 1 || ret == 5 || scope.aggregate_codable(st, ret) || scope.slice_codable(st, ret);
+        var ok = ret == 1 || ret == 2 || ret == 5 || scope.aggregate_codable(st, ret) || scope.slice_codable(st, ret);
         var k = 0;
         var p = ast.get(st, fn_item, 7);
         while p >= 0 {
             let pt = scope.lower_type(st, text, ast.get(st, p, 5), st[28], 0 - 1);
-            ok = ok && (pt == 1 || pt == 5 || types.is_prelude(st, pt) || types.is_ref(st, pt) || scope.aggregate_codable(st, pt));
+            ok = ok && (pt == 1 || pt == 2 || pt == 5 || types.is_prelude(st, pt) || types.is_ref(st, pt) || scope.aggregate_codable(st, pt));
             p = ast.next(st, p);
             k = k + 1;
         }
