@@ -98,6 +98,106 @@ fn printing_preserves_every_identity_and_is_idempotent() {
     assert!(checked > 100, "the walk should have found the whole suite, found {checked}");
 }
 
+/// The same two contracts, over JSON this time (`docs/structured-ingest.md`
+/// §4): a file's AST rendered as data, read back, and printed must give
+/// text whose declarations hash identically to the source's — and the
+/// JSON of the ingested text must be a fixed point.
+///
+/// The walk is the same one, over the same corpus, so a node the printer
+/// can render but the JSON round trip cannot is a red build the day it
+/// is added, not a discovery later.
+#[test]
+fn ingesting_json_preserves_every_identity_and_is_idempotent() {
+    let mut checked = 0;
+    for dir in [
+        "tests/accept",
+        "tests/reject",
+        "examples",
+        "std",
+        "packages/net-sockets",
+        "packages/net-connect",
+        "packages/agent-wire",
+        "packages/http-request",
+        "packages/http-response",
+    ] {
+        for entry in std::fs::read_dir(repo_root().join(dir)).expect("a readable directory") {
+            let path = entry.expect("a readable entry").path();
+            if path.extension().and_then(|e| e.to_str()) != Some("cho") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).expect("a readable fixture");
+            let Ok(ast) = cancho_syntax::parse(&source) else { continue };
+            let json = cancho_syntax::ast_to_json(&ast);
+            let text = cancho_syntax::write_json(&json);
+            let rebuilt = cancho_syntax::json_to_ast(
+                &cancho_syntax::read_json(&text).expect("the JSON we wrote reads back"),
+            )
+            .unwrap_or_else(|d| {
+                panic!(
+                    "{}: the JSON we wrote does not build: {} (rule {})",
+                    path.display(),
+                    d.message,
+                    d.rule.tag()
+                )
+            });
+            let ingested = cancho_syntax::print(&rebuilt);
+            let reparsed = cancho_syntax::parse(&ingested).unwrap_or_else(|d| {
+                panic!(
+                    "{}: ingested text does not parse: {}\n{ingested}",
+                    path.display(),
+                    d.message
+                )
+            });
+            let before = cancho_id::identify(&ast);
+            let after = cancho_id::identify(&reparsed);
+            assert_eq!(
+                before.functions.len(),
+                after.functions.len(),
+                "{}: a declaration went missing through JSON",
+                path.display()
+            );
+            for (a, b) in before.functions.iter().zip(after.functions.iter()) {
+                assert_eq!(
+                    a.sig,
+                    b.sig,
+                    "{}: `{}`'s signature changed through JSON",
+                    path.display(),
+                    a.name
+                );
+                assert_eq!(
+                    a.body,
+                    b.body,
+                    "{}: `{}`'s body changed through JSON",
+                    path.display(),
+                    a.name
+                );
+            }
+            for (a, b) in before.types.iter().zip(after.types.iter()) {
+                assert_eq!(a.id, b.id, "{}: `{}` changed through JSON", path.display(), a.name);
+            }
+            // The fixed point: ingesting the JSON of the ingested text is
+            // the same text.
+            let again = cancho_syntax::print(
+                &cancho_syntax::json_to_ast(
+                    &cancho_syntax::read_json(&cancho_syntax::write_json(
+                        &cancho_syntax::ast_to_json(&reparsed),
+                    ))
+                    .expect("the second JSON reads"),
+                )
+                .expect("the second JSON builds"),
+            );
+            assert_eq!(
+                ingested,
+                again,
+                "{}: the JSON round trip is not a fixed point",
+                path.display()
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 100, "the walk should have found the whole suite, found {checked}");
+}
+
 /// A module's whole cost to the identity system, which is nothing
 /// (`docs/modules.md` §2).
 ///
