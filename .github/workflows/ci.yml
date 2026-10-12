@@ -132,7 +132,7 @@ jobs:
             packages/x509/{verify,names,x509,key}.cho \
             -o "$RUNNER_TEMP/tls_serve"
           ./target/release/cancho build --std tests/programs/tls_many.cho \
-            packages/tls/{tls,record,message,slot,client12,client,hello,identity,ticket,server}.cho \
+            packages/tls/{tls,record,message,slot,cident,client12,client,hello,identity,ticket,server}.cho \
             packages/x509/{verify,names,x509,key}.cho \
             -o "$RUNNER_TEMP/tls_many"
       - name: The server's interop matrix (docs/tls-server.md §10.2)
