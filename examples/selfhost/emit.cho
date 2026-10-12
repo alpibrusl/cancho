@@ -18,6 +18,7 @@ module selfhost.emit;
 // tag, 1 `int` as `i64` and 5 `bool` as `i1`, which are the only two written so far.
 
 import selfhost.ast;
+import selfhost.types;
 
 pub fn on[&s](st: &!s [int]) -> [] bool {
     return st[40] != 0;
@@ -120,6 +121,9 @@ pub fn llvm_type[&s](st: &!s [int], ty: int) -> [] int {
     if ty == 5 {
         return str(st, "i1");
     }
+    if types.is_ref(st, ty) {
+        return str(st, "ptr");
+    }
     return str(st, "i64");
 }
 
@@ -197,6 +201,36 @@ pub fn store_param[&s](st: &!s [int], ty: int, index: int, slot: int) -> [] int 
     nat(st, index);
     str(st, ", ptr %s");
     nat(st, slot);
+    str(st, "\n");
+    return 0;
+}
+
+// A pointer to the stack slot of the binding declared as number `slot`, stored in the slot of the
+// reference declared as `into`: a reference to a whole number or a boolean.
+pub fn store_slot_address[&s](st: &!s [int], into: int, slot: int) -> [] int {
+    str(st, "  store ptr %s");
+    nat(st, slot);
+    str(st, ", ptr %s");
+    nat(st, into);
+    str(st, "\n");
+    return 0;
+}
+
+// A reference to a value that has no representation (`Io`, which is nothing in the code) is a
+// pointer to a byte of its own; the byte is in the entry block, and the pointer is stored in the
+// slot of the reference declared as `into`.
+pub fn store_dummy_pointer[&s](st: &!s [int], into: int) -> [] int {
+    let n = fresh(st);
+    let keep = st[49];
+    st[49] = 2;
+    str(st, "  %t");
+    nat(st, n);
+    str(st, " = alloca i8, i64 1\n");
+    st[49] = keep;
+    str(st, "  store ptr %t");
+    nat(st, n);
+    str(st, ", ptr %s");
+    nat(st, into);
     str(st, "\n");
     return 0;
 }
@@ -566,6 +600,26 @@ pub fn call[&s, &x](st: &!s [int], text: &x [byte], name: int, ret: int, n: int)
     str(st, ")\n");
     st[52] = first;
     return result;
+}
+
+// `putchar` of the last two arguments pushed, the second a whole number: the character to the
+// standard output, answering the temporary of the C function's result as a whole number.
+pub fn put_char[&s](st: &!s [int]) -> [] int {
+    let at = st[51] + 4 * (st[52] - 1);
+    let narrow = start(st);
+    str(st, "trunc i64 ");
+    operand(st, st[at], st[at + 1] != 0, st[at + 2], st[at + 3]);
+    str(st, " to i32\n");
+    let done = start(st);
+    str(st, "call i32 @putchar(i32 ");
+    temp(st, narrow);
+    str(st, ")\n");
+    let wide = start(st);
+    str(st, "sext i32 ");
+    temp(st, done);
+    str(st, " to i64\n");
+    st[52] = st[52] - 2;
+    return wide;
 }
 
 // ---------------------------------------------------------------------- statements ---

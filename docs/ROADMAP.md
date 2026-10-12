@@ -378,3 +378,5 @@ the Cranelift dependency all check out). The decision is **not yet**:
 29,368 real lines of compiler and no asker for a cancho-hosted
 compiler today. Revisit `self-hosting.md` when one exists, rather than
 re-running this spike.
+
+| [#422](https://github.com/alpibrusl/cancho/issues/422) T1 | [Tty](tty.md) | #422 T1, asker cancho-robot. The serial-port capability's design: both termios ABIs from the spike's measurements (72/8 vs 60/4 bytes, the macOS two-step and its measured `IOSSIOSPEED` — which pyserial hard-codes *wrong*, and neither belongs in a program), the variadic-`ioctl` trap recorded as the argument for the whole epic, the seven-verb surface, `tty_read`/`tty_write` labels answer `never touches the filesystem`-while-opening-a-device (finding 6), and the four open decisions answered: prefix narrowing (non-empty, for the reason `net-bounds.md` §2.4 records), a plain validated integer for speeds, edition 8 (shared with #400's word-scan), V4L2 deferred. One new rule tag, `tty-path`. T2–T4 implementable from this; T5 is the robot's, hardware-gated |
