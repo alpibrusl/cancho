@@ -68,6 +68,9 @@ jobs:
           ./target/release/cancho build --std tests/programs/tls_prims_bench.cho -o "$RUNNER_TEMP/tls_prims_bench"
           python3 scripts/tls_perf.py check "$RUNNER_TEMP/tls_prims_bench"
 
+      - name: The guard can fail (X25519 and SHA-256 done twice in a copy of the benchmark)
+        run: python3 scripts/tls_perf_mutant.py ./target/release/cancho
+
   # #208 (docs/tls-assurance.md §8): packages/tls against every other TLS
   # server the runner can install, and beside `openssl s_client` on the same
   # handshakes and on the lying server's cases, each failing on a row that

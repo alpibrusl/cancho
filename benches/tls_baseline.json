@@ -1,6 +1,6 @@
 {
  "machines": {
-  "aarch64": {
+  "linux-aarch64": {
    "description": "Apple M4 Max under Docker Desktop (6-vCPU VM), Ubuntu 24.04, Linux 6.8.0-100 aarch64, valgrind 3.22 (docs/tls-performance.md §2)",
    "instructions": {
     "aes128gcm_open/1024": 21489.0,
@@ -73,7 +73,7 @@
     "x25519_shared/0": 338.762
    }
   },
-  "x86_64": {
+  "linux-x86_64": {
    "description": "Intel Core i7-1260P (a P-core), Ubuntu 26.04, Linux 7.0.0-38, clang from the system, valgrind 3.26; shared with other work (docs/tls-performance.md §2)",
    "instructions": {
     "aes128gcm_open/1024": 25836.0,

@@ -17,12 +17,16 @@ laptop-class CPU whose clock moves by a third with the load on the other cores, 
 operation executes (callgrind's `Ir`, from the difference of two runs with different numbers of calls, so the setup cancels):
 that count does not depend on the clock, on the load or on what else shares the core, which on the machine of §2 moved the
 time of the same operation by a factor of two within a minute. It fails an operation whose count is more than `--factor`
-(default 1.3) times the baseline's, or that the baseline has and this run lacks. Where there is no valgrind it falls back to
-the time of each operation divided by the same run's `calibrate` (a dependent multiply-add chain that no change to a
-primitive touches), compared with the quotient recorded for the architecture, at `--time-factor` (default 2.0, because the
-quotient moved by 1.6 between two runs minutes apart on that machine). §6 says what each catches and what neither can.
+(default 1.3) times the baseline's or less than its reciprocal (a primitive that got that much cheaper re-records its baseline
+in the same change, §1.3), one the baseline has and this run lacks, and one this run has and the baseline lacks. A run under
+valgrind that does not exit 0 with its `checksum` line is an error, not a count. Where there is no valgrind it falls back to
+the time of each operation divided by the same run's `calibrate` (a loop that no change to a primitive touches; on
+x86-64 the compiler reduces it to about one instruction a step, docs/tls-performance.md §6), compared at `--time-factor` (default 2.0, because the quotient moved by 1.6 between two runs minutes apart
+on that machine), and only against an entry recorded on the same system and architecture: a time from a Linux VM says
+nothing about macOS on the same chip. §6 says what each catches and what neither can.
 
-`record` writes the current run's instruction counts (with valgrind) and quotients into the baseline file under `--machine`.
+Baseline entries are keyed `<system>-<architecture>` (`linux-x86_64`, `linux-aarch64`). `record` writes the current run's
+instruction counts (with valgrind) and quotients under `--machine`, by default this machine's key.
 
 `profile` sorts the samples of a `perf record --call-graph dwarf,32768 -p <pid>` of a server (or of a client run in a loop)
 into the categories of docs/tls-performance.md §3.3, by which frames each stack passes through, and prints each as a share of
@@ -53,16 +57,6 @@ def run_bench(exe, target, repeats, only=0, rounds=0, size=0):
         if len(f) == 4 and f[1].isdigit():
             rows[f"{f[0]}/{f[1]}"] = (int(f[2]), int(f[3]))
     return rows
-
-
-def opnames(exe):
-    """Operation numbers by name: the program numbers them 1.. in the order it prints them."""
-    rows = run_bench(exe, 1, 1)
-    order, seen = [], set()
-    for key in rows:
-        order.append(key)
-        seen.add(key)
-    return order
 
 
 def perf_counts(exe, op, size, rounds, tries=5):
@@ -117,17 +111,10 @@ def numbers(exe, target, repeats, with_perf):
                 best[key] = (ns, rounds)
     result = {k: {"ns": ns, "rounds": rounds} for k, (ns, rounds) in best.items()}
     if with_perf:
-        index = {k: i for i, k in enumerate(opnames(exe))}
-        # Operation numbers: the program's order of first appearance by name.
-        ordered, seen = [], set()
-        for key in index:
-            n = key.split("/")[0]
-            if n not in seen:
-                seen.add(n)
-                ordered.append(n)
+        ops = {key: op for key, op, _ in op_keys(exe)}
         for key, row in result.items():
-            name, size = key.split("/")
-            op = ordered.index(name) + 1
+            size = key.split("/")[1]
+            op = ops[key]
             n2 = max(4, row["rounds"])
             n1 = max(1, n2 // 4)
             c1, i1 = perf_counts(exe, op, int(size), n1)
@@ -188,8 +175,13 @@ def rounds_for(name, size):
 
 
 def callgrind_ir(exe, op, size, rounds):
+    """The instructions one run executes under callgrind. The run must exit 0 and print its `checksum` line: a program
+    that trapped part way would otherwise be counted as cheap."""
     cmd = ["valgrind", "--tool=callgrind", "--callgrind-out-file=/dev/null", exe, "1", "1", str(op), str(rounds), str(size)]
     r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0 or not any(l.startswith("checksum ") for l in r.stdout.splitlines()):
+        raise RuntimeError(f"operation {op} ({size} bytes, {rounds} calls) did not finish under valgrind: exit {r.returncode}, "
+                           f"stdout {r.stdout[-200:]!r}, stderr {r.stderr[-300:]!r}")
     m = re.search(r"Collected : (\d+)", r.stderr)
     if not m:
         raise RuntimeError(f"no instruction count from valgrind: {r.stderr[-300:]}")
@@ -206,8 +198,11 @@ def instruction_counts(exe):
 
 
 def arch_tag():
-    return {"x86_64": "x86_64", "amd64": "x86_64", "aarch64": "aarch64", "arm64": "aarch64"}.get(platform.machine().lower(),
+    """The baseline entry for this machine: operating system and architecture (`linux-x86_64`, `linux-aarch64`,
+    `darwin-aarch64`). Instruction counts depend on the code the compiler emits for that pair; times depend on the machine."""
+    arch = {"x86_64": "x86_64", "amd64": "x86_64", "aarch64": "aarch64", "arm64": "aarch64"}.get(platform.machine().lower(),
                                                                                           platform.machine().lower())
+    return f"{platform.system().lower()}-{arch}"
 
 
 def cmd_check(a):
@@ -220,6 +215,10 @@ def cmd_check(a):
     mode = a.mode
     if mode == "auto":
         mode = "instructions" if shutil.which("valgrind") and "instructions" in entry else "time"
+    if mode == "time" and tag != arch_tag():
+        # A time is a property of the machine that recorded it; another system's entry measures nothing here.
+        print(f"time mode against {tag!r} on a {arch_tag()} machine: refused; record a baseline here", file=sys.stderr)
+        return 2
     bad = 0
     if mode == "instructions":
         want, got, factor, unit = entry["instructions"], instruction_counts(a.exe), a.factor, "instructions a call"
@@ -230,7 +229,7 @@ def cmd_check(a):
     for key, w in want.items():
         name, size = key.split("/")
         if key not in got:
-            print(f"{name:34} {size:>6} {'missing':>14}")
+            print(f"{name:34} {size:>6} {'missing':>14}  NOT MEASURED: the baseline has it")
             bad += 1
             continue
         ratio = got[key] / w
@@ -238,8 +237,18 @@ def cmd_check(a):
         if ratio > factor:
             flag = f"  SLOWER THAN {factor}x"
             bad += 1
+        elif ratio < 1 / factor:
+            # §1.3: a primitive that got cheaper re-records its baseline in the same change, so it cannot drift back.
+            flag = f"  CHEAPER THAN 1/{factor}: re-record the baseline"
+            bad += 1
         print(f"{name:34} {size:>6} {got[key]:>14.2f} {w:>14.2f} {ratio:>7.2f}{flag}")
-    print(f"{len(want) - bad} of {len(want)} within {factor}x of the baseline")
+    for key in got:
+        if key not in want:
+            name, size = key.split("/")
+            print(f"{name:34} {size:>6} {got[key]:>14.2f} {'none':>14}  NEW ROW: record it in the baseline")
+            bad += 1
+    total = len(set(want) | set(got))
+    print(f"{total - bad} of {total} rows within {factor}x either way of the baseline")
     return 1 if bad else 0
 
 
@@ -364,7 +373,8 @@ def main():
             p.add_argument("--json")
         else:
             p.add_argument("--baseline", default=os.path.join(here, "..", "benches", "tls_baseline.json"))
-            p.add_argument("--machine", default=None if name == "check" else arch_tag())
+            p.add_argument("--machine", default=None if name == "check" else arch_tag(),
+                           help="the baseline entry, by default this machine's `<system>-<architecture>`")
         if name == "check":
             p.add_argument("--factor", type=float, default=1.3, help="instruction counts: how many times the baseline fails")
             p.add_argument("--time-factor", type=float, default=2.0, help="timed quotients, without valgrind")

@@ -45,7 +45,9 @@ fn number_of[&s](text: &s [byte]) -> [] int {
 // 13 AES-128-GCM seal        14 AES-128-GCM open        15 ChaCha20-Poly1305 seal   16 ChaCha20-Poly1305 open
 // 17 AES-128-GCM prepare (the key schedule and the hash key, once per traffic key)
 // 18 HKDF-Expand-Label (48, SHA-384)
-// 19 calibration: 1,000 steps of a dependent multiply-add chain, which no change to a primitive can touch
+// 19 calibration: 1,000 steps of a multiply-add chain, which no change to a primitive can touch. On x86-64 LLVM folds the
+//    arithmetic out of the loop (the constants are not in the binary): what is left is a counted loop of about one instruction
+//    and one cycle a step, 1,007 instructions a call. That is still independent of every primitive, which is all it is for.
 fn ops() -> [] int {
     return 19;
 }
