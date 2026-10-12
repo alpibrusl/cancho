@@ -1,0 +1,10 @@
+# commit 3b71b5292370f40cbf6e29c7ef57cb91050d753d (branch p256-faster); machine gram, Intel Core i7-1260P, Linux 7.0.0-38-generic, x86-64; LLVM backend
+# taskset -c 2-3 (one physical core, both threads); governor of cpu2/cpu3: performance/performance
+# start: 2026-10-12T10:14:33+02:00;  10:14:33 up 4 days, 23:33,  4 users,  load average: 4,28, 3,14, 2,95
+# python3 scripts/ecdh_timing.py ecdh_timing 1000000 --curves=256 --public-key
+P-256 public_key scalar 1     1000000 samples, median 181964 cycles, max |t| = 2.21
+P-256 public_key fixed scalar 1000000 samples, median 182481 cycles, max |t| = 1.85
+P-256 public_key scalar 0x88.. 1000000 samples, median 325371 cycles, max |t| = 2.21
+P-256 public_key scalar n - 1 1000000 samples, median 306205 cycles, max |t| = 2.32
+P-256 public_key scalar 16^k  1000000 samples, median 330297 cycles, max |t| = 2.18
+# end: 2026-10-12T10:25:03+02:00;  10:25:03 up 4 days, 23:44,  6 users,  load average: 9,21, 8,10, 5,61
