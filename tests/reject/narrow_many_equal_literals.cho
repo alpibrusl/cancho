@@ -1,0 +1,13 @@
+//~ ERROR are the same path
+//~ RULE capability-not-narrowable
+
+// Two equal literals: the second child grants nothing the first does not, and two capabilities for one path are not a narrowing.
+// (`docs/narrowing-into-several.md` section 5.)
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io); release(ffi); release(heap); release(args);
+    let (a, b) = narrow(fs, "/etc/ssl", "/etc/ssl");
+    release(a); release(b);
+    return 0;
+}

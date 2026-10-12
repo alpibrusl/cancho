@@ -1,0 +1,406 @@
+edition 5;
+
+module http_client_flow;
+
+import std.buffer;
+import std.bytes;
+import std.test;
+import http_client as hc;
+import http_client_wire as wire;
+import http_client_harness as th;
+
+// `http_client` (`docs/http-client.md` §3.2, §5): back-pressure with a body many times the buffer, the order of events, a slot
+// that is freed with an event still waiting, and a seeded random run of every call.
+
+// A response of `size` pattern bytes, framed by `Content-Length` (`chunked` false) or in chunks of up to 1,000 bytes.
+fn big_response[&h](heap: &!h Heap, size: int, chunked: bool) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, size + 1024);
+    if chunked {
+        out = buffer.append(heap, out, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n");
+    } else {
+        out = buffer.append(heap, out, "HTTP/1.1 200 OK\r\nContent-Length: ");
+        out = buffer.push_nat(heap, out, size);
+        out = buffer.append(heap, out, "\r\n\r\n");
+    }
+    region a {
+        let piece = alloc_slice[a](1000, byte_of(0));
+        let framed = alloc_slice[a](1100, byte_of(0));
+        var at = 0;
+        while at < size {
+            var n = size - at;
+            if n > 1000 {
+                n = 1000;
+            }
+            th.pattern(piece[0..n], at);
+            if chunked {
+                let end = wire.write_chunk(framed, 0, piece[0..n]);
+                out = buffer.append(heap, out, framed[0..end]);
+            } else {
+                out = buffer.append(heap, out, piece[0..n]);
+            }
+            at = at + n;
+        }
+    }
+    if chunked {
+        out = buffer.append(heap, out, "0\r\n\r\n");
+    }
+    return out;
+}
+
+// A response of `size` bytes through a 2,048-byte input buffer to a consumer that takes 100 bytes a turn: `give` is offered
+// `offer` bytes at a time and takes what `room` allows, and the body that comes out is the one that went in. Answers the first
+// failed check, or the number of times the buffer was full (which must not be 0).
+fn through_a_small_buffer[&h](heap: &!h Heap, size: int, chunked: bool, offer: int, needs_full: bool) -> [heap] int {
+    var failed = 0;
+    var full = 0;
+    var c = hc.open(heap, 1, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            let seen = alloc_slice[a](4, 0);
+            w[1] = th.mode_dial() + th.mode_detach();
+            let t = th.started(heap, cw, w, log, 1, "GET", "/big", hc.body_none(), 0, 0);
+            buffer.drop(heap, th.sent(heap, cw, 0, 1));
+            var text = big_response(heap, size, chunked);
+            var consumed = 0;
+            var at = 0;
+            var done = false;
+            var turns = 0;
+            var all_ok = true;
+            borrow text as &tb in {
+                let bytes_in = buffer.bytes(tb);
+                while !done && turns < 100000 {
+                    turns = turns + 1;
+                    // Offer the next piece.
+                    if at < len(bytes_in) {
+                        var to = at + offer;
+                        if to > len(bytes_in) {
+                            to = len(bytes_in);
+                        }
+                        let room = hc.room(cw, 0);
+                        let n = hc.give(cw, 0, bytes_in[at..to], 2);
+                        if n > room || n > to - at || n < 0 {
+                            all_ok = false;
+                        }
+                        if n < to - at {
+                            full = full + 1;
+                            if hc.room(cw, 0) != 0 && hc.avail(cw, t) == 0 {
+                                all_ok = false;
+                            }
+                        }
+                        at = at + n;
+                    }
+                    // The consumer takes 100 bytes of what is waiting.
+                    var going = true;
+                    while going {
+                        match hc.poll(cw, 2) {
+                            hc.Event::None => {
+                                going = false;
+                            }
+                            hc.Event::Done(t2) => {
+                                done = true;
+                            }
+                            hc.Event::Failed(t2) => {
+                                all_ok = false;
+                                done = true;
+                            }
+                            hc.Event::Close(k) => {
+                                hc.detach(cw, k, 2);
+                            }
+                            _ => {
+                            }
+                        }
+                    }
+                    var avail = hc.avail(cw, t);
+                    if avail > 100 {
+                        avail = 100;
+                    }
+                    if avail > 0 {
+                        let got = hc.body(cw, t);
+                        if !th.is_pattern(got[0..avail], consumed) {
+                            all_ok = false;
+                        }
+                        if hc.consume(cw, t, avail, 3) != avail {
+                            all_ok = false;
+                        }
+                        consumed = consumed + avail;
+                    }
+                }
+            }
+            buffer.drop(heap, text);
+            // Whatever the last turn left, the loop ends on Done; drain a final event.
+            th.ck(w, 133, all_ok);
+            th.eq(w, 134, consumed, size);
+            th.ck(w, 135, done);
+            th.ck(w, 136, full > 0 || !needs_full);
+            th.eq(w, 137, seen[0], 0);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_a_body_many_times_the_buffer_flows_through_under_back_pressure[&h](heap: &!h Heap) -> [heap] int {
+    var r = through_a_small_buffer(heap, 60000, false, 700, true);
+    if r == 0 {
+        r = through_a_small_buffer(heap, 60000, true, 700, true);
+    }
+    if r == 0 {
+        r = through_a_small_buffer(heap, 5000, false, 1, false);
+    }
+    if r == 0 {
+        r = through_a_small_buffer(heap, 5000, true, 3, false);
+    }
+    if r == 0 {
+        // Exactly the buffer, one byte under and one over.
+        r = through_a_small_buffer(heap, 2048, false, 5000, true);
+    }
+    return r;
+}
+
+pub fn test_a_slot_freed_with_an_event_waiting_is_not_given_to_another_request_until_it_is_seen[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 1, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            let t = hc.request(cw, 0, 1, "GET", "/a", "h", "", hc.body_none(), 0);
+            // The dial fails; `Failed` and `Close` are waiting. The caller detaches before it has looked at them.
+            th.eq(w, 172, hc.connect_failed(cw, 0, 0, 1), 0);
+            th.eq(w, 173, hc.detach(cw, 0, 1), 0);
+            th.eq(w, 174, hc.free_slots(cw), 1);
+            // The slot is free but the failure has not been reported: another request must not erase it.
+            th.eq(w, 176, hc.request(cw, 2, 1, "GET", "/b", "h", "", hc.body_none(), 0), 0 - wire.c_full());
+            w[1] = th.mode_detach();
+            buffer.drop(heap, th.pump(heap, cw, w, log, buffer.empty(heap, 16), 2));
+            th.eq(w, 179, th.count_of(w, log, 6), 1);
+            th.eq(w, 180, hc.failure(cw, t), wire.c_connect());
+            ck_ticket(w, hc.request(cw, 3, 1, "GET", "/b", "h", "", hc.body_none(), 0));
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+fn ck_ticket[&w](w: &!w [int], t: int) -> [] int {
+    th.ck(w, 190, t > 0);
+    return 0;
+}
+
+pub fn test_events_come_in_order_slot_by_slot_and_none_is_lost[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 3, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](2000, 0);
+            w[1] = th.mode_all();
+            let ok = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+            // Three requests at once, answered in a different order; then a hundred rounds of the same.
+            var round = 0;
+            while round < 100 {
+                let t0 = hc.request(cw, round, 1, "GET", "/0", "h", "", hc.body_none(), 0);
+                let t1 = hc.request(cw, round, 2, "GET", "/1", "h", "", hc.body_none(), 0);
+                let t2 = hc.request(cw, round, 3, "GET", "/2", "h", "", hc.body_none(), 0);
+                buffer.drop(heap, th.pump(heap, cw, w, log, buffer.empty(heap, 16), round));
+                buffer.drop(heap, th.sent(heap, cw, hc.ticket_slot(t2), round));
+                buffer.drop(heap, th.sent(heap, cw, hc.ticket_slot(t0), round));
+                buffer.drop(heap, th.sent(heap, cw, hc.ticket_slot(t1), round));
+                buffer.drop(heap, th.feed(heap, cw, w, log, buffer.empty(heap, 16), hc.ticket_slot(t1), ok, 1000, round));
+                buffer.drop(heap, th.feed(heap, cw, w, log, buffer.empty(heap, 16), hc.ticket_slot(t2), ok, 1000, round));
+                buffer.drop(heap, th.feed(heap, cw, w, log, buffer.empty(heap, 16), hc.ticket_slot(t0), ok, 1000, round));
+                th.eq(w, 216, hc.status(cw, t0), 200);
+                th.eq(w, 217, hc.status(cw, t1), 200);
+                th.eq(w, 218, hc.status(cw, t2), 200);
+                round = round + 1;
+                // Keep the log from growing: forget it, having checked the order of what it holds.
+                var i = 0;
+                var heads = 0;
+                var dones = 0;
+                while i < w[0] {
+                    if th.kind_of(log[i]) == 3 {
+                        heads = heads + 1;
+                    }
+                    if th.kind_of(log[i]) == 5 {
+                        dones = dones + 1;
+                        // A `Done` is after its own `Head`.
+                        if heads < dones {
+                            th.ck(w, 232, false);
+                        }
+                    }
+                    i = i + 1;
+                }
+                th.eq(w, 237, heads, 3);
+                th.eq(w, 238, dones, 3);
+                w[0] = 0;
+            }
+            th.eq(w, 241, hc.connects(cw), 3);
+            th.eq(w, 242, hc.reuses(cw), 297);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+// ---------------------------------------------------------------------
+// Anything, in any order
+// ---------------------------------------------------------------------
+
+// Pieces of responses, whole and cut: what a random run feeds a connection.
+fn fragment(i: int) -> [] &static [byte] {
+    if i == 0 {
+        return "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello";
+    }
+    if i == 1 {
+        return "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\n";
+    }
+    if i == 2 {
+        return "HTTP/1.1 100 Continue\r\n\r\n";
+    }
+    if i == 3 {
+        return "HTTP/1.1 204 No Content\r\n\r\n";
+    }
+    if i == 4 {
+        return "HTTP/1.0 200 OK\r\nConnection: close\r\n\r\nuntil the end";
+    }
+    if i == 5 {
+        return "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\n";
+    }
+    if i == 6 {
+        return "2\r\nok\r\n0\r\n\r\n";
+    }
+    if i == 7 {
+        return "HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\n\r\n";
+    }
+    if i == 8 {
+        return "\r\n\r\n\r\n";
+    }
+    if i == 9 {
+        return "HTTP/1.1 101 Switching Protocols\r\n\r\n";
+    }
+    if i == 10 {
+        return "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz";
+    }
+    return "x";
+}
+
+fn invariants[&r](c: &r hc.Client) -> [] int {
+    var bad = 0;
+    if hc.idle(c) + hc.active(c) + hc.free_slots(c) != hc.slots(c) {
+        bad = 1;
+    }
+    var k = 0;
+    while k < hc.slots(c) {
+        if hc.room(c, k) < 0 || hc.room(c, k) > 2048 || hc.pending(c, k) < 0 || hc.pending(c, k) > 1024 {
+            bad = 2;
+        }
+        let t = hc.ticket_of(c, k);
+        if t >= 0 && (hc.avail(c, t) < 0 || hc.avail(c, t) > 2048 || hc.send_room(c, t) < 0 || hc.send_room(c, t) > 1024) {
+            bad = 3;
+        }
+        k = k + 1;
+    }
+    return bad;
+}
+
+fn random_operations[&r](c: &!r hc.Client, seed: int) -> [] int {
+    var rnd = seed;
+    var now = 0;
+    var steps = 0;
+    var bad = 0;
+    var tickets = 0;
+    region a {
+        let held = alloc_slice[a](8, 0 - 1);
+        let out = alloc_slice[a](40, byte_of(0));
+        let body = alloc_slice[a](700, byte_of(0));
+        th.pattern(body, 0);
+        while steps < 4000 && bad == 0 {
+            rnd = (rnd * 1103515245 + 12345) % 2147483648;
+            let op = rnd / 65536 % 17;
+            let slot = rnd / 4096 % 6 - 1;
+            let pick = held[rnd / 256 % 8];
+            let frag = fragment(rnd / 512 % 12);
+            let cut = rnd / 16 % (len(frag) + 1);
+            if op == 0 || op == 1 {
+                var body_mode = hc.body_none();
+                let which = rnd / 8 % 4;
+                if which == 1 {
+                    body_mode = hc.body_chunked();
+                } else if which == 2 {
+                    body_mode = rnd / 64 % 900;
+                }
+                let t = hc.request(c, now, rnd / 128 % 3, "POST", "/r", "h", "", body_mode, rnd / 32 % 8);
+                if t > 0 {
+                    held[tickets % 8] = t;
+                    tickets = tickets + 1;
+                }
+            } else if op == 2 {
+                match hc.poll(c, now) {
+                    hc.Event::Connect(k) => {
+                        if rnd / 8 % 3 != 0 {
+                            hc.connected(c, k, now);
+                        } else {
+                            hc.connect_failed(c, k, rnd / 8 % 5, now);
+                        }
+                    }
+                    hc.Event::Close(k) => {
+                        if rnd / 8 % 4 != 0 {
+                            hc.detach(c, k, now);
+                        }
+                    }
+                    hc.Event::Body(t) => {
+                        hc.consume(c, t, hc.avail(c, t) / 2, now);
+                    }
+                    _ => {
+                    }
+                }
+            } else if op == 3 {
+                hc.take(c, slot, out[0..1 + rnd / 8 % 39], now);
+            } else if op == 4 || op == 5 || op == 6 {
+                hc.give(c, slot, frag[0..cut], now);
+            } else if op == 7 {
+                hc.eof(c, slot, now);
+            } else if op == 8 {
+                hc.reset(c, slot, now);
+            } else if op == 9 {
+                hc.consume(c, pick, rnd / 8 % 40, now);
+            } else if op == 10 {
+                hc.tick(c, now);
+            } else if op == 11 {
+                hc.abort(c, pick, now);
+            } else if op == 12 {
+                hc.send_body(c, pick, body[0..rnd / 8 % 700], now);
+            } else if op == 13 {
+                hc.end_body(c, pick, now);
+            } else if op == 14 {
+                hc.detach(c, slot, now);
+            } else if op == 15 {
+                hc.retire(c, rnd / 8 % 4, now);
+            } else {
+                now = now + rnd / 8 % 7000;
+            }
+            bad = invariants(c);
+            steps = steps + 1;
+        }
+    }
+    return bad;
+}
+
+pub fn test_random_operations_never_trap_or_break_a_bound[&h](heap: &!h Heap) -> [heap] int {
+    var seed = 1;
+    var failed = 0;
+    while seed < 17 && failed == 0 {
+        var c = hc.open(heap, 4, 2048, 1024, th.limits(5000, 3000, 3000, 20000, 1000, 5000, 30000, 2, 5));
+        borrow mut c as &!cw in {
+            failed = random_operations(cw, seed * 7919);
+        }
+        hc.close(heap, c);
+        seed = seed + 1;
+    }
+    return failed;
+}

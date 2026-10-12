@@ -1,0 +1,13 @@
+//~ ERROR `narrow` takes a capability and one or more literals
+//~ RULE arity-mismatch
+
+// Zero literals: `narrow(fs)` was an arity mismatch before the multi-literal form and still is.
+// (`docs/narrowing-into-several.md` section 5.)
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io); release(ffi); release(heap); release(args);
+    let a = narrow(fs);
+    release(a);
+    return 0;
+}

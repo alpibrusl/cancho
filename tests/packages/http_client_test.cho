@@ -1,0 +1,308 @@
+edition 5;
+
+import std.buffer;
+import std.bytes;
+import std.test;
+import http_client as hc;
+import http_client_wire as wire;
+import http_client_harness as th;
+
+// `http_client` (`docs/http-client.md`): every framing of a response split every way, and every response that is refused.
+// Run with the package beside it: `cancho test --std packages/http-client/wire.cho packages/http-client/client.cho
+// tests/packages/http_client_harness.cho tests/packages/http_client_test.cho tests/packages/http_client_pool_test.cho
+// tests/packages/http_client_time_test.cho` (`conformance/http_client.rs`).
+
+fn test_a_body_with_a_length_arrives_whole_split_every_way[&h](heap: &!h Heap) -> [heap] int {
+    return th.every_step(heap, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 11\r\n\r\nhello world", "hello world", "GET", false, true);
+}
+
+fn test_a_length_of_nothing_has_no_body[&h](heap: &!h Heap) -> [heap] int {
+    return th.every_step(heap, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n", "", "GET", false, true);
+}
+
+fn test_a_chunked_body_is_decoded_split_every_way[&h](heap: &!h Heap) -> [heap] int {
+    // Two chunks, an extension on one, and a trailer.
+    return th.every_step(heap, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n6;ext=1\r\n world\r\n0\r\nX-Trailer: 1\r\n\r\n", "hello world", "GET", false, true);
+}
+
+fn test_a_chunk_size_may_be_upper_case_hex[&h](heap: &!h Heap) -> [heap] int {
+    return th.every_step(heap, "HTTP/1.1 200 OK\r\nTransfer-Encoding: Chunked\r\n\r\nA\r\n0123456789\r\n0\r\n\r\n", "0123456789", "GET", false, true);
+}
+
+fn test_a_body_that_runs_to_the_end_of_the_connection_ends_with_it[&h](heap: &!h Heap) -> [heap] int {
+    return th.every_step(heap, "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nuntil the end", "until the end", "GET", true, false);
+}
+
+fn test_a_head_response_has_no_body_whatever_it_says[&h](heap: &!h Heap) -> [heap] int {
+    return th.every_step(heap, "HTTP/1.1 200 OK\r\nContent-Length: 5000\r\n\r\n", "", "HEAD", false, true);
+}
+
+fn test_204_and_304_have_no_body[&h](heap: &!h Heap) -> [heap] int {
+    var r = th.every_step(heap, "HTTP/1.1 204 No Content\r\n\r\n", "", "DELETE", false, true);
+    if r == 0 {
+        r = th.every_step(heap, "HTTP/1.1 304 Not Modified\r\nContent-Length: 10\r\nETag: \"x\"\r\n\r\n", "", "GET", false, true);
+    }
+    return r;
+}
+
+fn test_interim_responses_are_skipped[&h](heap: &!h Heap) -> [heap] int {
+    var r = th.every_step(heap, "HTTP/1.1 102 Processing\r\n\r\nHTTP/1.1 103 Early Hints\r\nLink: </a>\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", "ok", "GET", false, true);
+    if r == 0 {
+        r = th.every_step(heap, "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n", "ok", "GET", false, true);
+    }
+    return r;
+}
+
+fn test_a_one_point_oh_response_is_read_but_its_connection_is_not_kept[&h](heap: &!h Heap) -> [heap] int {
+    return th.every_step(heap, "HTTP/1.0 200 OK\r\nContent-Length: 3\r\n\r\nabc", "abc", "GET", false, false);
+}
+
+fn test_a_get_with_a_length_body[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 2, 4096, 4096, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = 0;
+            let t = hc.request(cw, 100, 7, "GET", "/x?y=1", "up.test:8080", "Accept: */*\r\n", hc.body_none(), 0);
+            th.ck(w, 69, t > 0);
+            th.eq(w, 70, hc.ticket_slot(t), 0);
+            var sink = buffer.empty(heap, 64);
+            sink = th.pump(heap, cw, w, log, sink, 100);
+            // The first thing is a request to dial; nothing is sent before the dial is done.
+            th.eq(w, 74, w[0], 1);
+            th.eq(w, 75, log[0], 100000000);
+            th.eq(w, 76, hc.key(cw, 0), 7);
+            th.eq(w, 77, hc.pending(cw, 0), 0);
+            th.eq(w, 78, hc.connected(cw, 0, 105), 0);
+            th.ck(w, 79, hc.pending(cw, 0) > 0);
+            th.assert_bytes(heap, w, 80, th.sent(heap, cw, 0, 106), "GET /x?y=1 HTTP/1.1\r\nHost: up.test:8080\r\nAccept: */*\r\n\r\n");
+            th.ck(w, 81, hc.request_complete(cw, t));
+            // A response in two pieces, the head and then the body.
+            w[1] = th.mode_all();
+            let first = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 11\r\n\r\nhello";
+            sink = th.feed(heap, cw, w, log, sink, 0, first, 1000, 110);
+            th.eq(w, 86, w[0], 3);
+            th.eq(w, 87, th.kind_of(log[1]), 3);
+            th.eq(w, 88, th.kind_of(log[2]), 4);
+            th.eq(w, 89, hc.status(cw, t), 200);
+            th.eq(w, 90, hc.version(cw, t), 11);
+            th.eq(w, 91, hc.content_length(cw, t), 11);
+            th.eq(w, 92, hc.body_kind(cw, t), 1);
+            sink = th.feed(heap, cw, w, log, sink, 0, " world", 1000, 120);
+            th.eq(w, 94, w[0], 5);
+            th.eq(w, 95, th.kind_of(log[3]), 4);
+            th.eq(w, 96, th.kind_of(log[4]), 5);
+            th.assert_bytes(heap, w, 97, sink, "hello world");
+            // The connection went back to the pool.
+            th.eq(w, 99, hc.idle(cw), 1);
+            th.eq(w, 100, hc.active(cw), 0);
+            th.eq(w, 101, hc.connects(cw), 1);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+fn test_a_status_line_that_is_not_one_is_refused[&h](heap: &!h Heap) -> [heap] int {
+    var r = th.fail_every_step(heap, "HTP/1.1 200 OK\r\n\r\n", wire.c_status_line());
+    if r == 0 {
+        r = th.fail_every_step(heap, "ICY 200 OK\r\n\r\n", wire.c_status_line());
+    }
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.1  200 OK\r\n\r\n", wire.c_status_line());
+    }
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.1 20 OK\r\n\r\n", wire.c_status_line());
+    }
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.1 2000 OK\r\n\r\n", wire.c_status_line());
+    }
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.1 200\r\n\r\n", wire.c_status_line());
+    }
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.1 20a OK\r\n\r\n", wire.c_status_line());
+    }
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/x.1 200 OK\r\n\r\n", wire.c_status_line());
+    }
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.x 200 OK\r\n\r\n", wire.c_status_line());
+    }
+    return r;
+}
+
+fn test_a_version_that_is_not_one_point_x_is_refused[&h](heap: &!h Heap) -> [heap] int {
+    var r = th.fail_every_step(heap, "HTTP/2 200 OK\r\n\r\n", wire.c_version());
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.2 200 OK\r\n\r\n", wire.c_version());
+    }
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/0.9 200 OK\r\n\r\n", wire.c_version());
+    }
+    return r;
+}
+
+fn test_a_status_out_of_range_is_refused_and_a_switch_of_protocols_is_not_spoken[&h](heap: &!h Heap) -> [heap] int {
+    var r = th.fail_every_step(heap, "HTTP/1.1 099 X\r\n\r\n", wire.c_status());
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.1 600 X\r\n\r\n", wire.c_status());
+    }
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.1 999 X\r\n\r\n", wire.c_status());
+    }
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n", wire.c_upgrade());
+    }
+    return r;
+}
+
+fn test_malformed_headers_are_refused[&h](heap: &!h Heap) -> [heap] int {
+    var r = th.fail_every_step(heap, "HTTP/1.1 200 OK\r\nBad Header: x\r\n\r\n", wire.c_resp_header());
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.1 200 OK\r\n: x\r\n\r\n", wire.c_resp_header());
+    }
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.1 200 OK\r\nNoColon\r\n\r\n", wire.c_resp_header());
+    }
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.1 200 OK\nContent-Length: 0\n\n", wire.c_resp_header());
+    }
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.1 200 OK\r\nA: b\nC: d\r\n\r\n", wire.c_resp_header());
+    }
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.1 200 OK\r\nA: b\rC: d\r\n\r\n", wire.c_resp_header());
+    }
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.1 200 OK\r\nA: b\r\n c\r\n\r\n", wire.c_fold());
+    }
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.1 200 OK\r\nA: b\r\n\tc\r\n\r\n", wire.c_fold());
+    }
+    if r == 0 {
+        // A control byte in a value.
+        var text = buffer.empty(heap, 64);
+        text = buffer.append(heap, text, "HTTP/1.1 200 OK\r\nA: b");
+        text = buffer.push(heap, text, byte_of(1));
+        text = buffer.append(heap, text, "c\r\n\r\n");
+        r = th.fail_built(heap, text, wire.c_resp_header());
+    }
+    if r == 0 {
+        // More headers than the table holds.
+        r = th.fail_built(heap, th.repeated(heap, "HTTP/1.1 200 OK\r\n", "A: b\r\n", 65, "\r\n"), wire.c_resp_header());
+    }
+    return r;
+}
+
+fn test_lengths_that_could_be_read_two_ways_are_refused[&h](heap: &!h Heap) -> [heap] int {
+    var r = th.fail_every_step(heap, "HTTP/1.1 200 OK\r\nContent-Length: -1\r\n\r\n", wire.c_resp_length());
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.1 200 OK\r\nContent-Length: +1\r\n\r\n", wire.c_resp_length());
+    }
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.1 200 OK\r\nContent-Length: 1x\r\n\r\n", wire.c_resp_length());
+    }
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.1 200 OK\r\nContent-Length: 1, 1\r\n\r\n", wire.c_resp_length());
+    }
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.1 200 OK\r\nContent-Length:\r\n\r\n", wire.c_resp_length());
+    }
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.1 200 OK\r\nContent-Length: 1234567890123456\r\n\r\n", wire.c_resp_length());
+    }
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 5\r\n\r\nhello", wire.c_resp_length());
+    }
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\ncontent-length: 6\r\n\r\nhello", wire.c_resp_length());
+    }
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\nhello", wire.c_two_lengths());
+    }
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\n", wire.c_two_lengths());
+    }
+    return r;
+}
+
+fn test_a_transfer_encoding_that_is_not_exactly_chunked_is_refused[&h](heap: &!h Heap) -> [heap] int {
+    var r = th.fail_every_step(heap, "HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n", wire.c_transfer_encoding());
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.1 200 OK\r\nTransfer-Encoding: identity\r\n\r\n", wire.c_transfer_encoding());
+    }
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked, chunked\r\n\r\n", wire.c_transfer_encoding());
+    }
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: chunked\r\n\r\n", wire.c_transfer_encoding());
+    }
+    if r == 0 {
+        r = th.fail_every_step(heap, "HTTP/1.0 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n", wire.c_transfer_encoding());
+    }
+    return r;
+}
+
+fn test_a_head_that_does_not_fit_is_refused[&h](heap: &!h Heap) -> [heap] int {
+    // 4,096 is the input buffer here: a head that fills it with no blank line is too large, however it is cut.
+    var r = th.fail_built(heap, th.repeated(heap, "HTTP/1.1 200 OK\r\n", "X-Pad: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n", 80, "\r\n"), wire.c_head_too_large());
+    if r == 0 {
+        // No end to a header line at all.
+        r = th.fail_built(heap, th.repeated(heap, "HTTP/1.1 200 OK\r\nX: ", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 140, ""), wire.c_head_too_large());
+    }
+    return r;
+}
+
+fn test_a_chunked_body_that_is_not_chunked_is_refused[&h](heap: &!h Heap) -> [heap] int {
+    let head = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n";
+    var r = th.fail_built(heap, th.repeated(heap, head, "zz\r\n", 1, ""), wire.c_chunk());
+    if r == 0 {
+        // No size at all.
+        r = th.fail_built(heap, th.repeated(heap, head, "\r\nhello\r\n", 1, ""), wire.c_chunk());
+    }
+    if r == 0 {
+        // A size with a sign or a space.
+        r = th.fail_built(heap, th.repeated(heap, head, "+5\r\nhello\r\n", 1, ""), wire.c_chunk());
+    }
+    if r == 0 {
+        r = th.fail_built(heap, th.repeated(heap, head, "5 \r\nhello\r\n", 1, ""), wire.c_chunk());
+    }
+    if r == 0 {
+        // The CRLF after the data is missing, or is something else.
+        r = th.fail_built(heap, th.repeated(heap, head, "5\r\nhelloXX", 1, ""), wire.c_chunk());
+    }
+    if r == 0 {
+        r = th.fail_built(heap, th.repeated(heap, head, "5\r\nhello\n", 1, ""), wire.c_chunk());
+    }
+    if r == 0 {
+        // A size line with a bare LF.
+        r = th.fail_built(heap, th.repeated(heap, head, "5\nhello\r\n", 1, ""), wire.c_chunk());
+    }
+    if r == 0 {
+        // A size past what a length may be.
+        r = th.fail_built(heap, th.repeated(heap, head, "FFFFFFFFFFFFFFFFF\r\n", 1, ""), wire.c_chunk());
+    }
+    if r == 0 {
+        // A size line longer than 128 bytes, all digits and then all extension.
+        r = th.fail_built(heap, th.repeated(heap, head, "0000000000", 14, "5\r\nhello\r\n"), wire.c_chunk());
+    }
+    if r == 0 {
+        r = th.fail_built(heap, th.repeated(heap, head, "5;", 1, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\nhello\r\n0\r\n\r\n"), wire.c_chunk());
+    }
+    return r;
+}
+
+fn test_trailers_are_skipped_but_not_without_bound[&h](heap: &!h Heap) -> [heap] int {
+    let head = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n";
+    // More than 8 KiB of trailers.
+    var r = th.fail_built(heap, th.repeated(heap, head, "2\r\nok\r\n0\r\nX-Trailer: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n", 100, "\r\n"), wire.c_trailers_too_large());
+    return r;
+}
+
+fn test_too_many_interim_responses_are_refused[&h](heap: &!h Heap) -> [heap] int {
+    return th.fail_built(heap, th.repeated(heap, "", "HTTP/1.1 102 Processing\r\n\r\n", 9, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"), wire.c_too_many_informational());
+}

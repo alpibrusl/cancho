@@ -1,0 +1,53 @@
+// `docs/narrowing-into-several.md` §8: the children moved into a struct and
+// released elsewhere. Each field is an ordinary `Fs(p)`.
+//~ STDOUT 16
+//~ EXIT 0
+
+struct Held {
+    left: Fs("/dev/zero"),
+    right: Fs("/dev/urandom"),
+}
+
+fn print_nat[&i](io: &!i Io, n: int) -> [io_write] int {
+    if n >= 10 {
+        print_nat(io, n / 10);
+    }
+    return putchar(io, '0' + n % 10);
+}
+
+fn read_both[&a, &b, &o](l: &a Fs("/dev/zero"), r: &b Fs("/dev/urandom"), out: &!o [byte]) -> [fs_read("/dev/zero"), fs_read("/dev/urandom")] int {
+    return fs_read(l, "/dev/zero", out) + fs_read(r, "/dev/urandom", out);
+}
+
+fn consume[&o](h: Held, out: &!o [byte]) -> [fs_read("/dev/zero"), fs_read("/dev/urandom")] int {
+    let Held { left, right } = h;
+    var n = 0;
+    borrow left as &a in {
+        borrow right as &b in {
+            n = read_both(a, b, out);
+        }
+    }
+    release(left);
+    release(right);
+    return n;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(heap);
+    release(args);
+    let (zero, random) = narrow(fs, "/dev/zero", "/dev/urandom");
+    let h = Held { left: zero, right: random };
+    var got = 0;
+    region r {
+        let buffer = alloc_slice[r](8, byte_of(0));
+        got = consume(h, buffer);
+    }
+    borrow mut io as &!i in {
+        print_nat(i, got);
+        putchar(i, 10);
+    }
+    release(io);
+    return 0;
+}

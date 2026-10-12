@@ -768,6 +768,16 @@ fn widen(fs: &!f Fs) -> [fs_write("/")] int {
 > there is no second use. For the same reason a *borrowed* capability cannot
 > be narrowed: a borrow is the promise to give it back.
 >
+> **Narrowing into several.** For the two path capabilities, `Fs` and `Exec`,
+> `narrow(cap, "a", "b", ...)` spends `cap` once and answers a *tuple* of
+> `cap`'s type narrowed to each literal, in the order written. The lattice
+> still has one chain per capability, but a program may now hold several
+> capabilities that are not on one chain, each strictly inside the one
+> consumed, so the children together reach nothing the parent did not and
+> `main`'s narrowing line still names everything the program will ever touch.
+> The literals are checked as the single form checks them, and must be
+> pairwise unrelated. `docs/narrowing-into-several.md`.
+>
 > **Covering, not equality.** §8.2's discharge rule reads the same prefix
 > order: owning `Ffi("")` discharges every `ffi(...)` label, because its
 > holder can narrow to any of them, and owning a `World` discharges both

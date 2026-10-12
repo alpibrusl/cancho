@@ -179,7 +179,10 @@ fn shortest_printing_agrees_with_an_oracle() {
     let mut wrong = Vec::new();
     for (value, line) in values.iter().zip(&lines) {
         let expected = format!("{value:e}");
-        if &expected != line {
+        // `{:e}` rounds an exact tie between two shortest decimals up and
+        // `float_into` to the even digit (`float-printing.md` §3.4); the
+        // tie is checked against the exact value.
+        if &expected != line && !super::float_text::is_rust_or_even_tie(*value, line, &expected) {
             wrong.push(format!("{expected} printed as {line}"));
         }
     }

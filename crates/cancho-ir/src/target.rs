@@ -100,6 +100,7 @@ pub fn wasi_gap(builtin: Builtin) -> Option<Gap> {
         | B::ConnConnectStatus
         | B::ConnDetach
         | B::ConnNodelay
+        | B::ConnPeer
         | B::ConnNonblocking
         | B::ConnRead
         | B::ConnWrite
@@ -110,8 +111,11 @@ pub fn wasi_gap(builtin: Builtin) -> Option<Gap> {
         | B::UdpRecv
         | B::UdpSend
         | B::UdpLocalPort
+        | B::UdpPeer
         | B::UdpNonblocking
-        | B::UdpClose => Some(Gap::Sockets),
+        | B::UdpClose
+        | B::UdpDetach
+        | B::UdpAttach => Some(Gap::Sockets),
         B::PollerNew
         | B::PollerClose
         | B::PollerAddChild
@@ -160,6 +164,7 @@ pub fn wasi_gap(builtin: Builtin) -> Option<Gap> {
         | B::FloatOf
         | B::Truncate
         | B::BitsOf
+        | B::FloatOfBits
         | B::F32Of
         | B::FloatOf32
         | B::BitsOf32

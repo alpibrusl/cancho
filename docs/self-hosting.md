@@ -209,8 +209,15 @@ the stages found, in place, the way this document corrects its own claims.
 | 3d. References and slices of scalars | `examples/selfhost/types.cho` and `body.cho` | `check_bodies` | **Second slice.** Every function the port answers is the Rust answer: 644 repository programs, the library's 789 functions with one program (**437 verified `OK`, 55%**, from 34%), 408 targeted cases (104 for references, regions and slices), and 39,826 fuzz cases (35,352 alone, 4,474 with the library): 39,547 identical, none different; 279 are not UTF-8 |
 | 3e-1. Structs of scalars | `body.cho` (types in `types.cho`) | `check_bodies` | **Third slice.** Every function the port answers is the Rust answer: 81 targeted cases for struct literals, field reads and writes (539 in all), 8,000 fuzz cases alone and 4,200 with the library, 1,165 library cases: none different |
 | 3e-2. Enums of scalars and `match` | `body.cho` | `check_bodies` | **Fourth slice.** Every function the port answers is the Rust answer: 85 targeted cases for enum values, `match` and its errors (624 in all, 5 cross-module in the several-files test), ~11,000 fuzz cases and 1,269 library cases: none different; the library's verified bodies are 461 of 814 (57%) |
-| 3e-3. The rest of the bodies: builtins, generics, tuples, `borrow` and `region` blocks, threads, then linearity, effects, regions | not started | `check_bodies` | |
-| 4. Backend | not started | | |
+| 3e-3. Generic functions | `body.cho` (type variables and parameters in `types.cho`) | `check_bodies` | **Fifth slice.** Every function the port answers is the Rust answer: 88 targeted cases for type parameters, inference at a call and `ambiguous-type` (712 in all, 4 cross-module in the several-files test), 15,774 fuzz cases (11,220 alone, 4,554 with the library) and 1,359 library cases: none different; the library's verified bodies stay at 461 of 814 |
+| 3e-4. `borrow` and `region` blocks | `body.cho` (block regions in `types.cho`) | `check_bodies` | **Sixth slice.** Every function the port answers is the Rust answer: 1,271 targeted body cases (456 of them for borrows, regions and their variants), 2 cross-module in the several-files test, 16,000 fuzz cases (11,463 alone, 4,726 with the library) and 1,475 library cases: none different; the library's verified bodies stay at 461 of 814 |
+| 3e-5. Builtins that perform nothing, and prelude types | `prims.cho`, over a generated `builtins.cho` | `check_bodies` | **Seventh slice.** Every function the port answers is the Rust answer: 1,376 targeted body cases (105 new, among them the ones that must be answered and not skipped), ~19,000 fuzz cases and 2,033 library cases: none different; the library's verified bodies go from 461 to **590 of 814 (72%)** |
+| 3e-6. Effect rows | `effects.cho` | `check_bodies` | **Eighth slice.** Every function the port answers is the Rust answer: 1,443 targeted body cases (67 new, with the strict ones that must be answered), ~19,500 fuzz cases (13,434 alone, 6,044 with the library) and 2,156 library cases: none different; the library's verified bodies are **625 of 855 (73%)** |
+| 3e-7. The rest of the bodies: arena allocation (`alloc`, `alloc_slice`), the heap builtins (`box_slice`, `contents`), generic types, tuples, threads, then linearity, effects with arguments, regions | not started | `check_bodies` | |
+| 4a. Writing LLVM IR for functions of `int` and `bool`: literals, the arithmetic and bitwise operators with their traps, comparisons, calls, `let`, assignment, `return` | `examples/selfhost/emit.cho`, written by the checker as it walks (`compile.cho`) | the Rust compiler, by what the built programs do | **First slice of the backend.** 74 programs built both ways and run: the same exit status, or a trap in both (18 trap); none different |
+| 4b. Control flow: `if` with `else`, `while`, `&&` and `||` (the right side only when the left has not decided it) | `emit.cho` and `body.cho` | the Rust compiler, by what the built programs do | **Second slice of the backend.** 123 programs built both ways and run, 49 of them new (loops, recursion, early returns, short-circuit that must not run its right side, traps inside loops): the same exit status or a trap in both (27 trap); none different |
+| 4c. `World`, `release` and a real `main`: `main(world: World)` calls the program, a `World` passed between functions, `release(world)` | `emit.cho`, `body.cho`, `types.cho`, `driver.cho` | the Rust compiler, by what the built programs do | **Third slice of the backend.** 254 builds run and compared: every one of the 123 programs through the old `run` convention and through a real `main`, and 8 more with a `main` of their own (a `World` passed on, `release` used as a value): the same exit status or a trap in both (55 trap); none different |
+| 4d. The rest of the backend: bytes and strings, output (`split`, `Io`), structs, enums, references, generics, `clang` run by the compiler itself | not started | | |
 
 **The method.** A port that builds no tree has nothing to compare, and one that does
 needs a printer, which is another port. So stage 2's parser wrote the tree the Rust parser
@@ -266,7 +273,7 @@ refusal found before it still counted and anything after it did not, and a skipp
 counted, by what the oracle said, not hidden. Each slice removed some; the last removed the
 answer, and the harnesses now fail on anything but the oracle's. **Generated
 tables.** The prelude's 49 types (46 before `udp.md` added `Udp`, `UdpOpened` and `Datagram`) (name, arity, edition, whether another module may name it,
-which parameters are `val`-bounded) and the 133 builtins' names (118 when this was written) and editions are data the port
+which parameters are `val`-bounded) and the 137 builtins' names (118 when this was written) and editions are data the port
 cannot read from Rust, so `tables.cho` is generated, and a `cancho-ir` test fails when it is
 not what `prelude_types`, `mode_of` and `Builtin::ALL` say (`UPDATE_SELFHOST_TABLES=1 cargo test -p
 cancho-ir selfhost_tables` rewrites it).
@@ -413,6 +420,128 @@ write), and a `match` terminates when every arm does. Anything else about an enu
 `res` one, a payload that is not a scalar, a prelude type) is `SKIP`. The mutation test of
 `body.cho` kills 180 of 255; the survivors in the new code are node numbers that are never 0 and
 loop bounds the guards above them already settle.
+
+**Stage 3e-3: generic functions.** The type table gains a rigid type parameter (`Param`, by its
+position) and a type variable (`Var`, with its solution in an array beside the table, like the
+region variables). A call to a generic function makes a fresh variable for each type parameter of the
+callee, lowers the callee's declared types with the parameters as those variables, and unifies each
+argument with its parameter, binding variables as `Unifier::unify` does (an occurs check, and the
+result a `type-mismatch`, a `region-mismatch` or an `infinite-type`). Once the arguments have been
+unified every variable has to be solved: the first that is not is `ambiguous-type` at the call. The
+return type is then resolved all the way down, so no variable leaves the call, and nothing else in
+the checker needs to look through one. A function whose own type parameters are all `val`-bounded
+is checked with them as rigid types; one with an unbounded `T` is `SKIP`, because a value of `T` could
+be a resource and linearity is not checked yet. Generic structs and enums (a type applied to types)
+are the next slice. The library gains nothing (its generic functions mostly take a `Heap` or have an
+unbounded `T`), so the number of bodies verified stays at 461 of 814. The mutation test of
+`body.cho` kills 190 of 271, its survivors in the new code changing only whether a function is
+`SKIP` (which the comparison cannot see) or a loop bound the guards settle; that of
+`types.cho` kills 60 of 78 (40 of 54 before), the survivors in the new code being an occurs check no
+found type can reach, a variable compared with itself that a found type cannot be, and counters that
+stay distinct under the swap.
+
+**Stage 3e-4: `borrow` and `region` blocks.** A block is a region of its own, numbered in the
+order it opens and remembering the block that was open around it; a reference into it is `Ref`
+with that region, and `outlives` answers as `Region::Block` does (a block outlives the ones it
+encloses, a region parameter outlives every block, nothing outlives `static`). `borrow x as &r in {}`
+looks `x` up (`unknown-name`), opens the block, freezes `x` (or locks it, for `borrow mut`), binds
+`r` to a reference of the block's region, checks the body and thaws; `region a {}` is the same
+with nothing frozen. Whether a binding is borrowed is a flag in its record: owned, frozen by
+n shared borrows, or locked by a unique one. A name read while locked, an assignment while frozen
+or locked, a second unique borrow, and a unique borrow of a frozen name are `borrow-conflict`.
+Rust finds those in its linear pass, which runs after the body and only if the body had no
+error, so the port notes the first as it walks and reports it at the end, after the check that
+no binding holds a reference into a block it outlives (every binding is logged with the block open
+where it was declared) and before the row and the missing `return`. A `let` annotation that names a
+region inside a block is `SKIP`, because the name may be the block's own. A `borrow` or `region`
+whose body returns terminates the block around it. The header of the state grows to 48 slots and
+a binding record to four. Of the first mutation run's survivors, some showed that the cases
+used the first binding and the first block everywhere (so an offset swap changed nothing); the
+cases now come padded with bindings, with sibling blocks opened before, and without the final
+`return` that made the statement after a returning block `unreachable-statement` before a
+conflict could be reported. The mutation test of the new code in `body.cho` kills 33 of 42, the
+survivors being equivalent comparisons, a stored name nothing reads, and loops whose only effect is
+whether a function is `SKIP`.
+
+**Stage 3e-5: builtins and prelude types.** What the checker needs to know of a builtin is data, so it
+is generated: `builtins.cho`, beside `tables.cho`, holds for each builtin its signature as a prefix-coded
+run of integers (a scalar, a reference with its region parameter, a slice, a prelude type, a tuple, a type
+parameter), its region parameters and its effect labels, and for each prelude struct its fields (the
+`Split` of each edition). `prims.cho` decodes a signature into the checker's types, with each region
+parameter a fresh variable, and a call to a builtin goes the way a call to a function does: the
+arity (`arity-mismatch`), each argument unified with its parameter, the result. What it cannot hold (a
+tuple, a type parameter, a literal type, a prelude type that is a resource and not behind a reference) decodes to
+nothing and the call is `SKIP`; so is a builtin the lowering checks by hand (`split`, `release`, `len`,
+`box`), and a builtin that performs an effect, because rows are not checked yet and answering `OK`
+for a function whose row Rust would refuse would be wrong. The prelude types without arguments are now
+types of the checker too: `Io`, `Heap`, `Args`, `File` behind a reference (a borrowed capability is
+`val`), and `Done`, `Read` (not resources) by value; a field read or a `match` on one is `SKIP`. The case
+list now has a strictness: a skipped function cannot be seen by a comparison, so a change that only
+makes the port give up would pass; the cases written to be answered are marked, and one of them
+skipped is a failure. The mutation test of `prims.cho` kills 27 of 38 (9 of 38 before the cases
+were written for it), the survivors being branches no builtin the checker can call reaches. The state
+and `body.cho` were split for length: `scope.cho` (bindings, borrows, blocks and the lowering of written
+types), `exprs.cho` (expressions, folding, calls) and `body.cho` (statements and `check_function`).
+
+**Stage 3e-6: effect rows.** A function's row is exact (`docs/linearity-and-effects.md` section 7.3): what
+its body performs, which is what the builtins it calls perform and what the rows of the functions it
+calls say, must be the row, both ways. Rust finds the first label in the body that the row does not
+declare (`effect-not-declared`), and failing that the first in the row the body does not perform
+(`effect-declared-not-performed`); both are refused at the function. A set of labels is an integer here, bit
+i for the i-th label of the generated table (twenty, so far), a label a function's row names that no
+builtin performs is a flag in a high bit, and so is one that carries an argument (`fs_read("/tmp")`).
+A call to a builtin adds its labels, a call to a function adds the labels of its row, in whatever branch
+or loop it is, and `check` compares the two sets once the body is clean and the borrow conflicts are
+reported, where Rust does, and before the missing `return`. What it leaves to `SKIP`: a callee whose
+row has an argument or an unknown label, and a body that performs anything in a function whose own row
+has an argument label, because a plain label and one with an argument are different labels and
+the port does not yet follow how an owned capability discharges them. A function that owns a capability
+by value is not checked either, so nothing is discharged here. The cases include the row in either
+order, with a trailing comma, with a duplicate, with a name nothing performs, rows that propagate
+through two and three callees and through recursion, and an effect in a dead branch, a short-circuit
+and an argument. The mutation test of `effects.cho` kills 24 of 31, the survivors being loop bounds
+that read one label past the table and a sentinel, and one case it found missing (a callee whose row is
+only an argument label), which is now one. With the pure builtins this takes the library from 590 of
+814 to 625 of 855 verified, and the checker can now answer for a function that prints.
+
+**Stage 4a: the first code.** The backend is written the way the Rust one is: the module is LLVM IR as
+text, and `clang` turns it into the executable (`cancho-codegen-llvm` does the same, so nothing here
+needs a library cancho cannot reach). The port writes it while the checker walks, because the checker
+already visits every expression in the order it runs and knows its type: the state gains three
+buffers (the finished output, the function being written, and its `alloca`s, which belong in the entry
+block however late a `let` comes), and `emit.cho` the operations that write to them, an operand being
+a constant or a temporary `%t<n>`. Each function is `define i64 @lexs_name(...)` with a stack slot for
+each binding, a `load` for a name, `llvm.sadd.with.overflow` and its siblings and a branch to a trap
+for `+`, `-` and `*`, the explicit checks `sdiv` and `srem` need for a zero divisor and `int::MIN` by
+-1, the range check on a shift, comparisons as `icmp`, a `call` for a call and a `ret` for a
+`return`. The checker does what it did and writes only when `compile` mode asks; anything it cannot
+write yet (floats, bytes, references, control flow, a generic function) is a `SKIP`, which in this
+mode is a refusal with the function named. The IR is not compared with the Rust backend's, which is
+another text; the programs are: each of 74 is built by both compilers and run, and must end the same
+way, the same exit status or a trap. A program the Rust build needs a `main(world)` for: the cancho
+compiler calls a function named `run` from a C `main` for now, until `World` and `release` are checked.
+
+**Stage 4b: control flow.** An `if` is a branch on the condition to a `then` block, an `else` block (empty
+when there is none) and an `end` block; a `while` is a `head` block where the condition is computed, a
+branch to the `body` or the `end`, and a jump back. Each construct takes one number from the same counter
+the trap blocks use, so no two share a label. `a && b` and `a || b` keep their result in a stack slot of
+their own: after `a` the slot holds it and `b` is computed only if `a` did not decide the answer. The
+condition now hands its value back so the branch can name it. After a `return` the next block is a
+`dead` one, so every `br` that ends an arm has a block to end, and the end of the function is an
+`unreachable` the checker has shown nothing reaches. Programs that matter here: a short-circuit whose
+right side would trap if it ran (it must not), loops that trap on the iteration that overflows, an early
+`return` from inside a loop, and the recursive ones.
+
+**Stage 4c: `World` and `main`.** `World` is the first prelude type with a type of its own in the table
+(by its index in `tables.cho`), and only in compile mode, where it is a type a parameter may have and a
+function may pass on. Like the Rust backend the port writes no code for it: a function's `World`
+parameter has no argument and no stack slot, and a call's `World` argument is not passed. `release(w)`
+is a call that writes nothing and answers `0`. The driver calls the program's `main` from the C one
+when it has it, and a function called `run` when it has not, as before. The checker's answers do not
+change: outside compile mode a `World` still makes a function `SKIP`, because checking `main` means
+checking that its `World` is consumed exactly once, which is linearity and not written; in compile mode
+the program is taken to be well formed, which is the Rust compiler's to say. The 123 programs are built
+through a real `main` as well as through `run`.
 
 The mutation test of `types.cho` (54 operator swaps) killed 40 on the first corpus of 458 targeted
 body cases (after region-variable, `where`-closure and coercion cases were added; 33 before); the 14

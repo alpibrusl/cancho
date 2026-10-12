@@ -1,0 +1,668 @@
+edition 5;
+
+module fetch_io;
+
+// `fetch_io` -- the I/O for `packages/http-client` (`docs/http-client.md` §3.7): the part of a program that owns the sockets, the
+// TLS engine and the poller, so that the client itself can own none. One thread, one `Poller`, every connection in a slot of
+// `std.conns` and the same slot of the client and, for an `https` upstream, of the TLS engine.
+//
+//     socket -> inq -> tls.feed -> tls.recv -> rcv -> http_client.give         the response
+//     http_client.take -> req -> tls.send -> tls.take -> pend -> socket        the request
+//
+// Over plain TCP the engine is not in the path: `inq` goes to `give` and `take` goes to `pend`. Each stage moves only when the
+// stage after it has emptied, the rule `examples/https_hello/loop.cho` states: a body the caller does not consume stops
+// `http_client.room`, which stops `give`, which stops the engine being fed, which stops the socket being read.
+//
+// The program owns what happens to the client's events (`Head`, `Body`, `Done`, `Failed`); this module is told two of them:
+// `Connect` (`dial`) and `Close` (`shut`). It never calls `poll`.
+//
+// **Names are the caller's** (`docs/http-client.md` §3.8): an upstream is an IPv4 literal, a port, and, for TLS, the name its
+// certificate must carry. **Trust is the caller's**: `trust` takes a PEM bundle, and an engine with none refuses every
+// handshake. Nothing is built in.
+
+import std.conns;
+import http_client as hc;
+import tls;
+
+// Per connection, `st[k * stride() ..]`:
+//
+//     0 phase     0 none, 1 dialling, 2 TLS handshake, 3 up, 4 closing
+//     1 table slot in `std.conns`       2 1 if TLS
+//     3,4 inq: bytes read, not yet fed or given       5,6 rcv: plaintext received, not yet given
+//     7,8 req: plaintext taken from the client, not yet sent       9,10 pend: bytes for the socket
+//     11 what the poller is asked for (1 read, 2 write)       12 1 once the socket has ended
+//     13 1 once the client has been told the transport is gone       14 1 if the last turn moved anything
+//     15 1 if the socket was full when the last turn ended       16 1 once a write failed: the request is lost, a response may still be read
+pub fn stride() -> [] int {
+    return 20;
+}
+
+fn s_phase() -> [] int {
+    return 0;
+}
+
+fn s_ts() -> [] int {
+    return 1;
+}
+
+fn s_tls() -> [] int {
+    return 2;
+}
+
+fn s_is() -> [] int {
+    return 3;
+}
+
+fn s_ie() -> [] int {
+    return 4;
+}
+
+fn s_rs() -> [] int {
+    return 5;
+}
+
+fn s_re() -> [] int {
+    return 6;
+}
+
+fn s_qs() -> [] int {
+    return 7;
+}
+
+fn s_qe() -> [] int {
+    return 8;
+}
+
+fn s_ps() -> [] int {
+    return 9;
+}
+
+fn s_pe() -> [] int {
+    return 10;
+}
+
+fn s_watch() -> [] int {
+    return 11;
+}
+
+fn s_eof() -> [] int {
+    return 12;
+}
+
+fn s_gone() -> [] int {
+    return 13;
+}
+
+fn s_moved() -> [] int {
+    return 14;
+}
+
+fn s_blocked() -> [] int {
+    return 15;
+}
+
+fn s_wdead() -> [] int {
+    return 16;
+}
+
+// Buffers, per connection.
+fn inq_cap() -> [] int {
+    return 32768;
+}
+
+fn rcv_cap() -> [] int {
+    return 16640;
+}
+
+fn req_cap() -> [] int {
+    return 16384;
+}
+
+fn pend_cap() -> [] int {
+    return 32768;
+}
+
+// Upstreams: at most this many, an address of at most 15 bytes and a name of at most 63.
+pub fn max_upstreams() -> [] int {
+    return 64;
+}
+
+pub res struct Rest {
+    poller: Poller,
+    engine: tls.Engine,
+    st: Box[[int]],
+    inq: Box[[byte]],
+    rcv: Box[[byte]],
+    req: Box[[byte]],
+    pend: Box[[byte]],
+    events: Box[[int]],
+    // Per upstream: port, 1 if TLS, address length, name length; then the address and the name.
+    ups: Box[[int]],
+    ips: Box[[byte]],
+    names: Box[[byte]],
+    slots: int,
+    nups: int,
+    tls_on: int,
+    seeded: int,
+}
+
+pub res struct Loop {
+    tab: conns.Table,
+    rest: Rest,
+}
+
+pub enum Started {
+    Ok(Loop),
+    Failed(int),
+}
+
+// A `Loop` for a client of `slots` connections. The TLS engine has a slot for each (269,119 bytes apiece) only when `tls_on`.
+pub fn open[&h](heap: &!h Heap, slots: int, tls_on: bool) -> [heap] Started {
+    match poller_new() {
+        Polling::Failed(e) => {
+            return Started::Failed(e);
+        }
+        Polling::Ok(p) => {
+            var engine_slots = 1;
+            var on = 0;
+            if tls_on {
+                engine_slots = slots;
+                on = 1;
+            }
+            let rest = Rest { poller: p, engine: tls.open(heap, engine_slots), st: box_slice(heap, stride() * slots, 0), inq: box_slice(heap, inq_cap() * slots, byte_of(0)), rcv: box_slice(heap, rcv_cap() * slots, byte_of(0)), req: box_slice(heap, req_cap() * slots, byte_of(0)), pend: box_slice(heap, pend_cap() * slots, byte_of(0)), events: box_slice(heap, 2 * slots + 2, 0), ups: box_slice(heap, 4 * max_upstreams(), 0), ips: box_slice(heap, 16 * max_upstreams(), byte_of(0)), names: box_slice(heap, 64 * max_upstreams(), byte_of(0)), slots: slots, nups: 0, tls_on: on, seeded: 0 };
+            return Started::Ok(Loop { tab: conns.empty(heap, slots), rest: rest });
+        }
+    }
+}
+
+pub fn close[&h](heap: &!h Heap, io: Loop) -> [heap] int {
+    let Loop { tab, rest } = io;
+    conns.drop(heap, tab);
+    let Rest { poller, engine, st, inq, rcv, req, pend, events, ups, ips, names, slots, nups, tls_on, seeded } = rest;
+    poller_close(poller);
+    tls.close(heap, engine);
+    unbox_slice(heap, st);
+    unbox_slice(heap, inq);
+    unbox_slice(heap, rcv);
+    unbox_slice(heap, req);
+    unbox_slice(heap, pend);
+    unbox_slice(heap, events);
+    unbox_slice(heap, ups);
+    unbox_slice(heap, ips);
+    unbox_slice(heap, names);
+    return 0;
+}
+
+// The roots an `https` upstream's chain is checked against (PEM). How many were read; 0 means every handshake will be refused.
+pub fn trust[&i, &p](io: &!i Loop, pem: &p [byte]) -> [] int {
+    return tls.trust(io.rest.engine, pem);
+}
+
+// 32 bytes of entropy for the engine's generator.
+pub fn seed[&i, &e](io: &!i Loop, entropy: &e [byte]) -> [] int {
+    let code = tls.seed(io.rest.engine, entropy);
+    if code == 0 {
+        io.rest.seeded = 1;
+    }
+    return code;
+}
+
+// An upstream: the address to dial (an IPv4 literal), the port, and, for TLS, the name the certificate must carry (and the SNI).
+// Its number -- the `key` of `http_client.request` -- or -1 if there is no room or a string is too long.
+pub fn add_upstream[&i, &a, &n](io: &!i Loop, ip: &a [byte], port: int, secure: bool, name: &n [byte]) -> [] int {
+    let u = io.rest.nups;
+    if u >= max_upstreams() || len(ip) > 15 || len(name) > 63 || len(ip) < 1 {
+        return 0 - 1;
+    }
+    let ups = contents(io.rest.ups);
+    ups[4 * u] = port;
+    if secure {
+        ups[4 * u + 1] = 1;
+    } else {
+        ups[4 * u + 1] = 0;
+    }
+    ups[4 * u + 2] = len(ip);
+    ups[4 * u + 3] = len(name);
+    copy_into(contents(io.rest.ips)[16 * u..16 * u + len(ip)], ip);
+    copy_into(contents(io.rest.names)[64 * u..64 * u + len(name)], name);
+    io.rest.nups = u + 1;
+    return u;
+}
+
+// ---------------------------------------------------------------------
+// A connection's turn
+// ---------------------------------------------------------------------
+
+// The slot's connection is over for the client: it is told once, as a failure of the transport (`reset`) or an end (`eof`).
+fn tell_reset[&r, &cl](rest: &!r Rest, c: &!cl hc.Client, k: int, now: int) -> [] int {
+    let st = contents(rest.st);
+    if st[k * stride() + s_gone()] == 0 {
+        st[k * stride() + s_gone()] = 1;
+        hc.reset(c, k, now);
+    }
+    return 0;
+}
+
+fn tell_eof[&r, &cl](rest: &!r Rest, c: &!cl hc.Client, k: int, now: int) -> [] int {
+    let st = contents(rest.st);
+    if st[k * stride() + s_gone()] == 0 {
+        st[k * stride() + s_gone()] = 1;
+        hc.eof(c, k, now);
+    }
+    return 0;
+}
+
+// Writes what is waiting for the socket, taking more from the engine when the buffer empties. 0: nothing is waiting. 1: the
+// socket is full. -1: the socket failed.
+fn flush[&t, &r](tab: &!t conns.Table, rest: &!r Rest, k: int) -> [conn_write] int {
+    let st = contents(rest.st);
+    let b = k * stride();
+    let pb = k * pend_cap();
+    let pend = contents(rest.pend);
+    var again = true;
+    while again {
+        again = false;
+        if st[b + s_ps()] == st[b + s_pe()] {
+            st[b + s_ps()] = 0;
+            st[b + s_pe()] = 0;
+            if st[b + s_tls()] == 1 && st[b + s_phase()] >= 2 {
+                st[b + s_pe()] = tls.take(rest.engine, k, pend[pb..pb + pend_cap()]);
+            }
+        }
+        if st[b + s_ps()] < st[b + s_pe()] {
+            match conns.write(tab, st[b + s_ts()], pend[pb + st[b + s_ps()]..pb + st[b + s_pe()]]) {
+                Sent::Wrote(n) => {
+                    st[b + s_ps()] = st[b + s_ps()] + n;
+                    st[b + s_moved()] = 1;
+                    again = true;
+                }
+                Sent::Again => {
+                    return 1;
+                }
+                Sent::Failed(e) => {
+                    return 0 - 1;
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+// Everything that can be done for the connection in slot `k` now, without waiting. `now` is the client's clock, `now_unix` the
+// time certificates are checked against.
+fn pump[&t, &r, &cl](tab: &!t conns.Table, rest: &!r Rest, c: &!cl hc.Client, k: int, now: int, now_unix: int) -> [conn_read, conn_write, poll] int {
+    let st = contents(rest.st);
+    let b = k * stride();
+    if st[b + s_phase()] == 0 || st[b + s_gone()] == 1 {
+        return 0;
+    }
+    st[b + s_moved()] = 0;
+    let ts = st[b + s_ts()];
+    let secure = st[b + s_tls()] == 1;
+    if st[b + s_phase()] == 1 {
+        // Dialling: the poller said writable (or the socket hung up).
+        if conns.connect_status(tab, ts) != 0 {
+            st[b + s_gone()] = 1;
+            hc.connect_failed(c, k, hc.kind_connect(), now);
+            return 1;
+        }
+        conns.nodelay(tab, ts);
+        if secure {
+            let u = hc.key(c, k);
+            let nm = contents(rest.names)[64 * u..64 * u + contents(rest.ups)[4 * u + 3]];
+            let code = tls.start(rest.engine, k, nm, now_unix);
+            if code != 0 {
+                st[b + s_gone()] = 1;
+                hc.connect_failed(c, k, hc.kind_tls(), now);
+                return 1;
+            }
+            st[b + s_phase()] = 2;
+        } else {
+            st[b + s_phase()] = 3;
+            hc.connected(c, k, now);
+        }
+        conns.rewatch(tab, rest.poller, ts, k, 1);
+        st[b + s_watch()] = 1;
+    }
+    let ib = k * inq_cap();
+    let rb = k * rcv_cap();
+    let qb = k * req_cap();
+    let pb = k * pend_cap();
+    let inq = contents(rest.inq);
+    let rcv = contents(rest.rcv);
+    let req = contents(rest.req);
+    let pend = contents(rest.pend);
+    var going = true;
+    var blocked = false;
+    while going && st[b + s_gone()] == 0 {
+        going = false;
+        var w = 0;
+        if st[b + s_wdead()] == 0 {
+            w = flush(tab, rest, k);
+        }
+        if w < 0 {
+            // The peer has gone or shut its end while the request was still being sent. What it said before may be waiting to be
+            // read (a 413 sent as soon as it saw the head, say), so the socket is read on: the request is what is lost.
+            st[b + s_wdead()] = 1;
+            st[b + s_ps()] = 0;
+            st[b + s_pe()] = 0;
+            st[b + s_qs()] = 0;
+            st[b + s_qe()] = 0;
+            w = 0;
+            going = true;
+            st[b + s_moved()] = 1;
+        }
+        blocked = w == 1;
+        if secure {
+            let ev = tls.event(rest.engine, k);
+            if st[b + s_phase()] == 2 {
+                if ev == tls.event_failed() || ev == tls.event_closed() {
+                    st[b + s_gone()] = 1;
+                    hc.connect_failed(c, k, hc.kind_tls(), now);
+                    return 1;
+                }
+                if ev == tls.event_established() {
+                    st[b + s_phase()] = 3;
+                    hc.connected(c, k, now);
+                    going = true;
+                    st[b + s_moved()] = 1;
+                }
+            } else if ev == tls.event_failed() && st[b + s_ps()] == st[b + s_pe()] {
+                tell_reset(rest, c, k, now);
+                return 1;
+            }
+        }
+        if st[b + s_phase()] == 3 && !blocked {
+            // The request: from the client, through the engine when there is one.
+            if st[b + s_wdead()] == 1 {
+            } else if secure {
+                if st[b + s_qs()] == st[b + s_qe()] {
+                    st[b + s_qs()] = 0;
+                    st[b + s_qe()] = hc.take(c, k, req[qb..qb + req_cap()], now);
+                }
+                if st[b + s_qs()] < st[b + s_qe()] {
+                    let m = tls.send(rest.engine, k, req[qb + st[b + s_qs()]..qb + st[b + s_qe()]]);
+                    if m > 0 {
+                        st[b + s_qs()] = st[b + s_qs()] + m;
+                        going = true;
+                        st[b + s_moved()] = 1;
+                    } else if m < 0 {
+                        tell_reset(rest, c, k, now);
+                        return 1;
+                    }
+                }
+            } else if st[b + s_ps()] == st[b + s_pe()] {
+                let n = hc.take(c, k, pend[pb..pb + pend_cap()], now);
+                if n > 0 {
+                    st[b + s_ps()] = 0;
+                    st[b + s_pe()] = n;
+                    going = true;
+                    st[b + s_moved()] = 1;
+                }
+            }
+            // The response: plaintext to the client as it has room for it.
+            if secure {
+                if st[b + s_rs()] < st[b + s_re()] {
+                    let n = hc.give(c, k, rcv[rb + st[b + s_rs()]..rb + st[b + s_re()]], now);
+                    if n > 0 {
+                        st[b + s_rs()] = st[b + s_rs()] + n;
+                        going = true;
+                        st[b + s_moved()] = 1;
+                    }
+                }
+                if st[b + s_rs()] == st[b + s_re()] {
+                    st[b + s_rs()] = 0;
+                    st[b + s_re()] = 0;
+                    let got = tls.recv(rest.engine, k, rcv[rb..rb + rcv_cap()]);
+                    if got > 0 {
+                        st[b + s_re()] = got;
+                        going = true;
+                        st[b + s_moved()] = 1;
+                    } else if got == 0 {
+                        // The peer's close_notify, after everything it sent was handed over.
+                        tls.finish(rest.engine, k);
+                        st[b + s_phase()] = 4;
+                        tell_eof(rest, c, k, now);
+                        going = true;
+                        st[b + s_moved()] = 1;
+                    } else if got != tls.would_block() {
+                        tell_reset(rest, c, k, now);
+                        return 1;
+                    }
+                }
+            } else if st[b + s_is()] < st[b + s_ie()] {
+                let n = hc.give(c, k, inq[ib + st[b + s_is()]..ib + st[b + s_ie()]], now);
+                if n > 0 {
+                    st[b + s_is()] = st[b + s_is()] + n;
+                    going = true;
+                    st[b + s_moved()] = 1;
+                }
+            }
+        }
+        // Bytes the socket gave go to the engine.
+        if secure && st[b + s_is()] < st[b + s_ie()] && st[b + s_phase()] >= 2 {
+            let n = tls.feed(rest.engine, k, inq[ib + st[b + s_is()]..ib + st[b + s_ie()]]);
+            if n > 0 {
+                st[b + s_is()] = st[b + s_is()] + n;
+                going = true;
+                st[b + s_moved()] = 1;
+            } else if n < 0 {
+                // Failed: the engine's alert, if any, is written on the next turn.
+                st[b + s_is()] = st[b + s_ie()];
+                going = true;
+                st[b + s_moved()] = 1;
+            }
+        }
+        if st[b + s_is()] == st[b + s_ie()] {
+            st[b + s_is()] = 0;
+            st[b + s_ie()] = 0;
+        }
+        // The socket is read once nothing else moved this turn, and only when what was read before has gone on.
+        var wants_read = !going && !blocked && st[b + s_eof()] == 0 && st[b + s_ie()] == 0 && st[b + s_phase()] != 4;
+        if wants_read && secure {
+            wants_read = st[b + s_rs()] == st[b + s_re()];
+        }
+        var limit = inq_cap();
+        if wants_read && !secure && st[b + s_phase()] == 3 {
+            // Over plain TCP the client's room is the limit.
+            limit = hc.room(c, k);
+            if limit > inq_cap() {
+                limit = inq_cap();
+            }
+            wants_read = limit > 0;
+        }
+        if wants_read {
+            match conns.read(tab, ts, inq[ib..ib + limit]) {
+                Received::Data(n) => {
+                    st[b + s_ie()] = n;
+                    going = true;
+                    st[b + s_moved()] = 1;
+                }
+                Received::End => {
+                    st[b + s_eof()] = 1;
+                    if secure {
+                        let code = tls.eof(rest.engine, k);
+                        if code != 0 && st[b + s_phase()] == 3 {
+                            // The socket ended before the engine saw close_notify: what came may have been cut short.
+                            tell_reset(rest, c, k, now);
+                            return 1;
+                        }
+                        going = true;
+                        st[b + s_moved()] = 1;
+                    } else if st[b + s_phase()] == 3 {
+                        tell_eof(rest, c, k, now);
+                    }
+                }
+                Received::Again => {
+                }
+                Received::Failed(e) => {
+                    tell_reset(rest, c, k, now);
+                    return 1;
+                }
+            }
+        }
+    }
+    // What the poller is asked to watch: writable while bytes wait, readable while the connection can take what it reads.
+    var want = 0;
+    if blocked {
+        want = 2;
+    }
+    if st[b + s_eof()] == 0 && st[b + s_phase()] != 4 && st[b + s_ie()] == 0 {
+        if secure {
+            if st[b + s_rs()] == st[b + s_re()] {
+                want = want + 1;
+            }
+        } else if st[b + s_phase()] != 3 || hc.room(c, k) > 0 {
+            want = want + 1;
+        }
+    }
+    if want != st[b + s_watch()] {
+        conns.rewatch(tab, rest.poller, ts, k, want);
+        st[b + s_watch()] = want;
+    }
+    st[b + s_blocked()] = 0;
+    if blocked {
+        st[b + s_blocked()] = 1;
+    }
+    return st[b + s_moved()];
+}
+
+// Does the connection in slot `k` have something to do that no socket event will announce: bytes the client has for it, bytes in
+// its buffers, or room the client has made for what the socket would give?
+fn busy[&r, &cl](rest: &r Rest, c: &cl hc.Client, k: int) -> [] bool {
+    let st = contents(rest.st);
+    let b = k * stride();
+    if st[b + s_phase()] < 2 || st[b + s_gone()] == 1 {
+        return false;
+    }
+    // Bytes the socket would not take wait for the poller, not for another turn; the others wait on the client or the engine.
+    if st[b + s_ps()] < st[b + s_pe()] {
+        return st[b + s_blocked()] == 0;
+    }
+    if st[b + s_is()] < st[b + s_ie()] || st[b + s_rs()] < st[b + s_re()] || st[b + s_qs()] < st[b + s_qe()] {
+        return true;
+    }
+    if st[b + s_phase()] == 3 && hc.pending(c, k) > 0 && st[b + s_wdead()] == 0 {
+        return true;
+    }
+    return st[b + s_phase()] == 3 && st[b + s_eof()] == 0 && st[b + s_watch()] % 2 == 0 && hc.room(c, k) > 0;
+}
+
+// ---------------------------------------------------------------------
+// Connections begin and end
+// ---------------------------------------------------------------------
+
+// `Event::Connect(k)`: dial what request `k`'s key names. A dial the kernel refuses at once is told to the client now; one it
+// reports later is told when the poller says the socket is writable.
+pub fn dial[&h, &n, &cl](heap: &!h Heap, io: Loop, net: &n Net(""), c: &!cl hc.Client, k: int, now: int) -> [heap, net_out(""), poll] Loop {
+    let Loop { tab, rest } = io;
+    var table = tab;
+    var rs = rest;
+    borrow mut rs as &!rw in {
+        let u = hc.key(c, k);
+        if u < 0 || u >= rw.nups {
+            hc.connect_failed(c, k, hc.kind_connect(), now);
+        } else if contents(rw.ups)[4 * u + 1] == 1 && rw.seeded == 0 {
+            // An https upstream and no entropy for the engine: the handshake cannot be started.
+            hc.connect_failed(c, k, hc.kind_tls(), now);
+        } else {
+            let port = contents(rw.ups)[4 * u];
+            let secure = contents(rw.ups)[4 * u + 1] == 1;
+            match tcp_connect_start(net, contents(rw.ips)[16 * u..16 * u + contents(rw.ups)[4 * u + 2]], port) {
+                Dialed::Failed(e) => {
+                    hc.connect_failed(c, k, hc.kind_connect(), now);
+                }
+                Dialed::Ok(conn) => {
+                    let (grown, ts) = conns.put(heap, table, conn);
+                    table = grown;
+                    if ts < 0 {
+                        hc.connect_failed(c, k, hc.kind_connect(), now);
+                    } else {
+                        let st = contents(rw.st);
+                        var i = 0;
+                        while i < stride() {
+                            st[k * stride() + i] = 0;
+                            i = i + 1;
+                        }
+                        st[k * stride() + s_phase()] = 1;
+                        st[k * stride() + s_ts()] = ts;
+                        if secure {
+                            st[k * stride() + s_tls()] = 1;
+                        }
+                        borrow mut table as &!tw in {
+                            conns.watch(tw, rw.poller, ts, k, 2);
+                        }
+                        st[k * stride() + s_watch()] = 2;
+                    }
+                }
+            }
+        }
+    }
+    return Loop { tab: table, rest: rs };
+}
+
+// `Event::Close(k)`: the client is finished with the transport. A TLS connection that is up is sent close_notify (once, best
+// effort: the socket is non-blocking and the connection is going), its engine slot is wiped, the socket is closed, and the slot
+// is handed back to the client.
+pub fn shut[&i, &cl](io: &!i Loop, c: &!cl hc.Client, k: int, now: int) -> [conn_write] int {
+    let st = contents(io.rest.st);
+    let b = k * stride();
+    if st[b + s_phase()] != 0 {
+        if st[b + s_tls()] == 1 && st[b + s_phase()] >= 2 {
+            if st[b + s_phase()] == 3 && st[b + s_gone()] == 0 {
+                tls.finish(io.rest.engine, k);
+                flush(io.tab, io.rest, k);
+            }
+            tls.drop(io.rest.engine, k);
+        }
+        conns.close(io.tab, st[b + s_ts()]);
+    }
+    var i = 0;
+    while i < stride() {
+        st[b + i] = 0;
+        i = i + 1;
+    }
+    hc.detach(c, k, now);
+    return 0;
+}
+
+// ---------------------------------------------------------------------
+// The loop's turn
+// ---------------------------------------------------------------------
+
+// One turn of the loop: pump the connections that have something to do, wait for the poller no longer than `wait_ms` and no
+// longer than the client's next timer, and pump the ones it named. Answers how many connections the poller named.
+pub fn step[&i, &cl, &k](io: &!i Loop, c: &!cl hc.Client, clock: &k Clock, wait_ms: int) -> [conn_read, conn_write, poll, clock] int {
+    var now = clock_ms(clock);
+    var unix = clock_unix_ms(clock);
+    var wait = wait_ms;
+    var work = false;
+    var s = 0;
+    while s < io.rest.slots {
+        if busy(io.rest, c, s) {
+            if pump(io.tab, io.rest, c, s, now, unix) == 1 {
+                work = true;
+            }
+        }
+        s = s + 1;
+    }
+    let due = hc.next_deadline(c, now);
+    if due >= 0 && due < wait {
+        wait = due;
+    }
+    if work {
+        wait = 0;
+    }
+    let ready = poller_wait(io.rest.poller, contents(io.rest.events), wait);
+    now = clock_ms(clock);
+    unix = clock_unix_ms(clock);
+    var j = 0;
+    while j < ready {
+        let slot = contents(io.rest.events)[2 * j];
+        if slot >= 0 && slot < io.rest.slots {
+            pump(io.tab, io.rest, c, slot, now, unix);
+        }
+        j = j + 1;
+    }
+    return ready;
+}

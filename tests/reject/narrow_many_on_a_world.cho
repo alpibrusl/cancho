@@ -1,0 +1,13 @@
+//~ ERROR carries no value to narrow
+//~ RULE capability-not-narrowable
+
+// Only the capabilities that name something narrow, and `Heap` does not, however many literals.
+// (`docs/narrowing-into-several.md` section 5.)
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io); release(ffi); release(args);
+    let (a, b) = narrow(heap, "x", "y");
+    release(a); release(b);
+    return 0;
+}

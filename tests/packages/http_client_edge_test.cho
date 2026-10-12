@@ -1,0 +1,1263 @@
+edition 5;
+
+module http_client_edge;
+
+import std.buffer;
+import std.bytes;
+import std.test;
+import http_client as hc;
+import http_client_wire as wire;
+import http_client_harness as th;
+
+// `http_client`, the places the other tests walked past and `scripts/http_client_mutants.py` found: the numbers `open` brings into
+// range, what a failed or finished request answers to, who is asked what by whom, the clocks restarting exactly when they should,
+// and the events a caller must not be told after it gave a request up. Each test says which site it is for.
+
+pub fn test_open_brings_its_numbers_into_range[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    // 1,025 slots are 1,024.
+    var c = hc.open(heap, 1025, 2048, 1024, hc.default_limits());
+    borrow c as &cr in {
+        region a0 {
+            let w0 = alloc_slice[a0](8, 0);
+            th.eq(w0, 0, hc.slots(cr), 1024);
+            failed = w0[7];
+        }
+    }
+    hc.close(heap, c);
+    // Buffers of 10 bytes are 2,048 and 1,024: a fresh connection takes a response of 2,048 bytes and a request of 1,024 less its head.
+    var d = hc.open(heap, 1, 10, 10, hc.default_limits());
+    borrow mut d as &!dw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = th.mode_dial();
+            let t = th.started(heap, dw, w, log, 1, "POST", "/p", 5000, 0, 0);
+            th.eq(w, 36, hc.room(dw, 0), 2048);
+            th.eq(w, 37, hc.send_room(dw, t), 1024 - len("POST /p HTTP/1.1\r\nHost: h\r\nContent-Length: 5000\r\n\r\n"));
+            failed = failed + w[7];
+        }
+    }
+    hc.close(heap, d);
+    return failed;
+}
+
+// A response head of `size` bytes (a long header) given in one piece to a client whose input buffer is `in_size`. With
+// `ended` false there is no blank line at the end: the head is not yet whole, and only its size can say it never will be.
+fn head_of_size[&h](heap: &!h Heap, in_size: int, size: int, ended: bool) -> [heap] int {
+    var code = 0 - 1;
+    var c = hc.open(heap, 1, in_size, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = th.mode_all();
+            let t = th.started(heap, cw, w, log, 1, "GET", "/x", hc.body_none(), 0, 0);
+            buffer.drop(heap, th.sent(heap, cw, 0, 1));
+            let head = alloc_slice[a](size, byte_of(97));
+            copy_into(head[0..20], "HTTP/1.1 200 OK\r\nX: ");
+            if ended {
+                head[size - 4] = byte_of(13);
+                head[size - 3] = byte_of(10);
+                head[size - 2] = byte_of(13);
+                head[size - 1] = byte_of(10);
+            }
+            buffer.drop(heap, th.feed(heap, cw, w, log, buffer.empty(heap, 16), 0, head, 100000, 2));
+            code = hc.failure(cw, t);
+        }
+    }
+    hc.close(heap, c);
+    return code;
+}
+
+pub fn test_a_head_may_be_16384_bytes_and_no_more_whatever_the_buffer[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    // The buffer is 65,536: a head of 17,000 is past the 16,384 the wire module allows, one of 16,384 is not.
+    if head_of_size(heap, 65536, 17000, true) != wire.c_head_too_large() {
+        failed = 1;
+    }
+    if head_of_size(heap, 65536, 16384, true) != 0 {
+        failed = failed + 2;
+    }
+    if head_of_size(heap, 65536, 16385, true) != wire.c_head_too_large() {
+        failed = failed + 4;
+    }
+    // And a buffer of 4,096 holds a head of 4,096 and not 4,097.
+    if head_of_size(heap, 4096, 4096, true) != 0 {
+        failed = failed + 8;
+    }
+    if head_of_size(heap, 4096, 4097, true) != wire.c_head_too_large() {
+        failed = failed + 16;
+    }
+    // A head that never ends is refused when it has taken the 16,384 bytes it may, not when the buffer of 65,536 is full.
+    if head_of_size(heap, 65536, 20000, false) != wire.c_head_too_large() {
+        failed = failed + 32;
+    }
+    return failed;
+}
+
+pub fn test_nothing_can_be_done_for_a_request_that_failed[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 2, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            // Not detached by the harness: the connection is closing and the caller has not yet closed it.
+            w[1] = th.mode_dial();
+            let t = th.started(heap, cw, w, log, 1, "POST", "/p", hc.body_chunked(), 0, 0);
+            buffer.drop(heap, th.sent(heap, cw, 0, 1));
+            th.eq(w, 110, hc.eof(cw, 0, 2), 0);
+            buffer.drop(heap, th.pump(heap, cw, w, log, buffer.empty(heap, 16), 2));
+            th.eq(w, 112, hc.failure(cw, t), wire.c_closed_early());
+            th.eq(w, 113, hc.send_body(cw, t, "x", 3), 0 - wire.c_ticket());
+            th.eq(w, 114, hc.end_body(cw, t, 3), 0 - wire.c_ticket());
+            th.eq(w, 115, hc.send_room(cw, t), 0);
+            th.eq(w, 116, hc.pending(cw, 0), 0);
+            th.eq(w, 117, hc.abort(cw, t, 3), 0 - 1);
+            th.eq(w, 118, hc.consume(cw, t, 0, 3), 0 - 1);
+            // The closing connection takes whatever comes and keeps none of it; a second end changes nothing.
+            th.eq(w, 120, hc.give(cw, 0, "HTTP/1.1 200 OK\r\n\r\n", 3), len("HTTP/1.1 200 OK\r\n\r\n"));
+            th.eq(w, 121, hc.room(cw, 0), 0);
+            th.eq(w, 122, hc.eof(cw, 0, 3), 0);
+            th.eq(w, 123, hc.reset(cw, 0, 3), 0);
+            buffer.drop(heap, th.pump(heap, cw, w, log, buffer.empty(heap, 16), 3));
+            th.eq(w, 125, th.count_of(w, log, 6), 1);
+            th.eq(w, 126, hc.close_reason(cw, 0), hc.r_failed());
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_a_failure_takes_a_body_that_was_waiting_with_it[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 1, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = th.mode_dial() + th.mode_detach();
+            let t = th.started(heap, cw, w, log, 1, "GET", "/x", hc.body_none(), 0, 0);
+            buffer.drop(heap, th.sent(heap, cw, 0, 1));
+            // Part of a body has arrived and been announced, not yet looked at; then the connection ends.
+            th.eq(w, 145, hc.give(cw, 0, "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc", 2), len("HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc"));
+            th.eq(w, 146, hc.eof(cw, 0, 3), 0);
+            buffer.drop(heap, th.pump(heap, cw, w, log, buffer.empty(heap, 16), 3));
+            th.eq(w, 148, hc.failure(cw, t), wire.c_truncated());
+            th.eq(w, 149, th.count_of(w, log, 3), 1);
+            th.eq(w, 150, th.count_of(w, log, 4), 0);
+            th.eq(w, 151, th.count_of(w, log, 6), 1);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_each_upstream_has_its_own_idle_connections_and_the_newest_is_taken[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 4, 2048, 1024, th.limits(0, 0, 0, 0, 1000, 0, 0, 1, 1000));
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](128, 0);
+            w[1] = th.mode_all();
+            let ok = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+            // One idle connection is kept for each upstream, not one in all.
+            th.exchange(heap, cw, w, log, 1, "/a", ok, 10);
+            th.exchange(heap, cw, w, log, 2, "/b", ok, 20);
+            th.eq(w, 171, hc.idle(cw), 2);
+            // Two at once on the first upstream, finished in turn: the older of the two returns first and is the one kept.
+            let t1 = hc.request(cw, 30, 1, "GET", "/1", "h", "", hc.body_none(), 0);
+            let t2 = hc.request(cw, 30, 1, "GET", "/2", "h", "", hc.body_none(), 0);
+            buffer.drop(heap, th.pump(heap, cw, w, log, buffer.empty(heap, 16), 30));
+            th.ck(w, 176, hc.ticket_slot(t1) != hc.ticket_slot(t2));
+            buffer.drop(heap, th.sent(heap, cw, hc.ticket_slot(t1), 31));
+            buffer.drop(heap, th.sent(heap, cw, hc.ticket_slot(t2), 31));
+            th.reply(heap, cw, w, log, hc.ticket_slot(t1), ok, 40);
+            th.reply(heap, cw, w, log, hc.ticket_slot(t2), ok, 50);
+            th.eq(w, 181, hc.idle(cw), 2);
+            th.eq(w, 182, hc.close_reason(cw, hc.ticket_slot(t2)), hc.r_pool_full());
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_the_connection_used_last_is_the_one_used_next[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 3, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](128, 0);
+            w[1] = th.mode_all();
+            let ok = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+            let t1 = hc.request(cw, 0, 1, "GET", "/1", "h", "", hc.body_none(), 0);
+            let t2 = hc.request(cw, 0, 1, "GET", "/2", "h", "", hc.body_none(), 0);
+            buffer.drop(heap, th.pump(heap, cw, w, log, buffer.empty(heap, 16), 0));
+            buffer.drop(heap, th.sent(heap, cw, hc.ticket_slot(t1), 1));
+            buffer.drop(heap, th.sent(heap, cw, hc.ticket_slot(t2), 1));
+            // The first is back in the pool at 10, the second at 20.
+            th.reply(heap, cw, w, log, hc.ticket_slot(t1), ok, 10);
+            th.reply(heap, cw, w, log, hc.ticket_slot(t2), ok, 20);
+            th.eq(w, 207, hc.idle(cw), 2);
+            let t3 = hc.request(cw, 30, 1, "GET", "/3", "h", "", hc.body_none(), 0);
+            th.eq(w, 209, hc.ticket_slot(t3), hc.ticket_slot(t2));
+            // And the least recently used is the one closed for another upstream's sake (the third slot is free: take it first).
+            let t4 = hc.request(cw, 31, 2, "GET", "/4", "h", "", hc.body_none(), 0);
+            th.ck(w, 212, hc.ticket_slot(t4) != hc.ticket_slot(t3));
+            th.eq(w, 213, hc.free_slots(cw), 0);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_a_connection_that_has_carried_its_share_is_closed_and_not_before[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    // Two requests to a connection.
+    var c = hc.open(heap, 2, 2048, 1024, th.limits(0, 0, 0, 0, 1000, 0, 0, 8, 2));
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](128, 0);
+            w[1] = th.mode_all();
+            let ok = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+            th.exchange(heap, cw, w, log, 1, "/1", ok, 10);
+            th.eq(w, 232, hc.idle(cw), 1);
+            let t2 = th.exchange(heap, cw, w, log, 1, "/2", ok, 20);
+            th.ck(w, 234, hc.reused(cw, t2));
+            th.eq(w, 235, hc.idle(cw), 0);
+            th.eq(w, 236, hc.close_reason(cw, hc.ticket_slot(t2)), hc.r_max_requests());
+            th.eq(w, 237, hc.connects(cw), 1);
+            let t3 = th.exchange(heap, cw, w, log, 1, "/3", ok, 30);
+            th.ck(w, 239, !hc.reused(cw, t3));
+            th.eq(w, 240, hc.connects(cw), 2);
+            th.eq(w, 241, hc.idle(cw), 1);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_a_post_with_no_body_completes_and_its_connection_is_kept[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 1, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = th.mode_all();
+            let t = th.started(heap, cw, w, log, 1, "POST", "/p", 0, 0, 0);
+            th.ck(w, 258, !hc.request_complete(cw, t));
+            th.assert_bytes(heap, w, 259, th.sent(heap, cw, 0, 1), "POST /p HTTP/1.1\r\nHost: h\r\nContent-Length: 0\r\n\r\n");
+            th.ck(w, 260, hc.request_complete(cw, t));
+            th.reply(heap, cw, w, log, 0, "HTTP/1.1 204 No Content\r\n\r\n", 2);
+            th.eq(w, 262, hc.idle(cw), 1);
+            // A body of 0 has nothing to give or to end.
+            th.eq(w, 264, hc.send_room(cw, t), 0);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_expect_is_asked_only_of_a_request_with_a_body[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 3, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = th.mode_all();
+            // A GET that asks for Expect has nothing to wait for: the head is plain and the request is whole at once.
+            let t = th.started(heap, cw, w, log, 1, "GET", "/g", hc.body_none(), hc.flag_expect(), 0);
+            th.assert_bytes(heap, w, 282, th.sent(heap, cw, 0, 1), "GET /g HTTP/1.1\r\nHost: h\r\n\r\n");
+            th.ck(w, 283, hc.request_complete(cw, t));
+            // A POST of 0 bytes too.
+            let u = th.started(heap, cw, w, log, 2, "POST", "/p", 0, hc.flag_expect(), 2);
+            th.assert_bytes(heap, w, 286, th.sent(heap, cw, hc.ticket_slot(u), 3), "POST /p HTTP/1.1\r\nHost: h\r\nContent-Length: 0\r\n\r\n");
+            th.ck(w, 287, hc.request_complete(cw, u));
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_an_evicted_connection_says_why_it_was_closed[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 1, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = th.mode_all();
+            th.exchange(heap, cw, w, log, 1, "/a", "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n", 10);
+            w[1] = th.mode_dial();
+            let t = hc.request(cw, 20, 2, "GET", "/b", "h", "", hc.body_none(), 0);
+            th.ck(w, 306, t > 0);
+            th.eq(w, 307, hc.close_reason(cw, 0), hc.r_evicted());
+            th.eq(w, 308, hc.key(cw, 0), 2);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+// ---------------------------------------------------------------------
+// The output buffer
+// ---------------------------------------------------------------------
+
+pub fn test_the_room_for_a_body_counts_what_the_transport_has_taken_only_when_it_cannot_be_replayed[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 3, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = th.mode_all();
+            let head = len("POST /p HTTP/1.1\r\nHost: h\r\nContent-Length: 5000\r\n\r\n");
+            let piece = alloc_slice[a](7, byte_of(0));
+            // Not replayable: the 7 bytes taken are room again.
+            let t = th.started(heap, cw, w, log, 1, "POST", "/p", 5000, 0, 0);
+            th.eq(w, 332, hc.send_room(cw, t), 1024 - head);
+            th.eq(w, 333, hc.take(cw, hc.ticket_slot(t), piece, 1), 7);
+            th.eq(w, 334, hc.send_room(cw, t), 1024 - head + 7);
+            // Replayable (the caller allowed a retry): they are kept, and are not room.
+            let u = th.started(heap, cw, w, log, 2, "POST", "/p", 5000, hc.flag_retry(), 2);
+            th.eq(w, 337, hc.send_room(cw, u), 1024 - head);
+            th.eq(w, 338, hc.take(cw, hc.ticket_slot(u), piece, 3), 7);
+            th.eq(w, 339, hc.send_room(cw, u), 1024 - head);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_a_body_given_after_a_part_of_the_head_was_taken_follows_the_rest_of_it[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 1, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = th.mode_all();
+            let t = th.started(heap, cw, w, log, 1, "POST", "/p", 12, 0, 0);
+            let head = "POST /p HTTP/1.1\r\nHost: h\r\nContent-Length: 12\r\n\r\n";
+            let piece = alloc_slice[a](11, byte_of(0));
+            th.eq(w, 358, hc.take(cw, 0, piece, 1), 11);
+            // Eleven bytes of the head are out; the body goes behind the 41 that are left, with nothing lost or moved.
+            th.eq(w, 360, hc.send_body(cw, t, "0123456789ab", 2), 12);
+            let rest = th.sent(heap, cw, 0, 3);
+            borrow rest as &rb in {
+                th.ck(w, 363, bytes.equal(buffer.bytes(rb), "x"[0..0]) || len(buffer.bytes(rb)) == len(head) - 11 + 12);
+                th.ck(w, 364, bytes.starts_with(buffer.bytes(rb), head[11..len(head)]));
+                th.ck(w, 365, bytes.ends_with(buffer.bytes(rb), "0123456789ab"));
+            }
+            buffer.drop(heap, rest);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_the_last_chunk_is_written_only_when_there_is_room_and_never_while_the_request_is_held[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 2, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = th.mode_all();
+            // Held: nothing is written, and the answer is "not yet".
+            let t = th.started(heap, cw, w, log, 1, "POST", "/p", hc.body_chunked(), hc.flag_expect(), 0);
+            th.eq(w, 385, hc.end_body(cw, t, 1), 0);
+            th.eq(w, 386, hc.pending(cw, 0), len("POST /p HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\nExpect: 100-continue\r\n\r\n"));
+            // Full: the body fills the buffer to the last byte, and the last chunk has nowhere to go.
+            let u = th.started(heap, cw, w, log, 2, "POST", "/p", hc.body_chunked(), 0, 2);
+            let slot = hc.ticket_slot(u);
+            let room = hc.send_room(cw, u);
+            let big = alloc_slice[a](1000, byte_of(122));
+            th.eq(w, 392, hc.send_body(cw, u, big, 3), room);
+            th.eq(w, 393, hc.send_room(cw, u), 0);
+            th.eq(w, 394, hc.end_body(cw, u, 4), 0);
+            ck_not_ended(w, hc.request_complete(cw, u));
+            // Once the transport has taken it, the last chunk fits.
+            buffer.drop(heap, th.sent(heap, cw, slot, 5));
+            th.eq(w, 398, hc.end_body(cw, u, 6), 1);
+            th.eq(w, 399, hc.send_room(cw, u), 0);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+fn ck_not_ended[&w](w: &!w [int], complete: bool) -> [] int {
+    th.ck(w, 408, !complete);
+    return 0;
+}
+
+pub fn test_a_chunked_request_has_room_for_exactly_what_its_framing_leaves[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 1, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = th.mode_all();
+            let t = th.started(heap, cw, w, log, 1, "POST", "/p", hc.body_chunked(), 0, 0);
+            let head = len("POST /p HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n");
+            th.eq(w, 422, hc.send_room(cw, t), wire.chunk_fit(1024 - head));
+            ck_less(w, hc.send_room(cw, t), 1024 - head);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+fn ck_less[&w](w: &!w [int], a: int, b: int) -> [] int {
+    th.ck(w, 432, a < b && a > 0);
+    return 0;
+}
+
+// ---------------------------------------------------------------------
+// What the clocks start from
+// ---------------------------------------------------------------------
+
+pub fn test_a_body_handed_over_while_bytes_wait_does_not_restart_the_head_clock[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 1, 2048, 1024, th.limits(0, 200, 0, 0, 1000, 0, 0, 8, 1000));
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = th.mode_all();
+            let t = th.started(heap, cw, w, log, 1, "POST", "/p", hc.body_chunked(), 0, 0);
+            buffer.drop(heap, th.sent(heap, cw, 0, 10));
+            // Nothing waits: a piece given at 20 starts the clock there. A second given at 150 while the first still waits does not.
+            th.eq(w, 451, hc.send_body(cw, t, "aaa", 20), 3);
+            th.eq(w, 452, hc.send_body(cw, t, "bbb", 150), 3);
+            th.eq(w, 453, hc.next_deadline(cw, 150), 70);
+            th.eq(w, 454, hc.tick(cw, 219), 0);
+            th.eq(w, 455, hc.tick(cw, 220), 1);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_the_head_clock_runs_from_the_moment_the_connection_was_made_if_nothing_is_taken[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 1, 2048, 1024, th.limits(0, 200, 0, 0, 1000, 0, 0, 8, 1000));
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = 0;
+            let t = hc.request(cw, 0, 1, "GET", "/x", "h", "", hc.body_none(), 0);
+            buffer.drop(heap, th.pump(heap, cw, w, log, buffer.empty(heap, 16), 0));
+            // Dialled for 1,000 ms; the bytes are then waiting for a transport that does not take them.
+            th.eq(w, 474, hc.connected(cw, 0, 1000), 0);
+            th.eq(w, 475, hc.next_deadline(cw, 1000), 200);
+            th.eq(w, 476, hc.tick(cw, 1199), 0);
+            th.eq(w, 477, hc.tick(cw, 1200), 1);
+            ck_failed(w, hc.failure(cw, t), wire.c_head_timeout());
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+fn ck_failed[&w](w: &!w [int], got: int, want: int) -> [] int {
+    th.eq(w, 487, got, want);
+    return 0;
+}
+
+pub fn test_the_expect_clock_runs_from_the_last_byte_of_the_head_not_the_first[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 1, 2048, 1024, th.limits(0, 0, 0, 0, 1000, 0, 0, 8, 1000));
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = th.mode_all();
+            let t = th.started(heap, cw, w, log, 1, "POST", "/e", 10, hc.flag_expect(), 0);
+            let head = len("POST /e HTTP/1.1\r\nHost: h\r\nContent-Length: 10\r\nExpect: 100-continue\r\n\r\n");
+            let first = alloc_slice[a](7, byte_of(0));
+            th.eq(w, 502, hc.take(cw, 0, first, 10), 7);
+            // A part of the head is out; the clock does not run yet.
+            th.eq(w, 504, hc.next_deadline(cw, 10), 0 - 1);
+            let rest = alloc_slice[a](head, byte_of(0));
+            th.eq(w, 506, hc.take(cw, 0, rest, 20), head - 7);
+            th.eq(w, 507, hc.next_deadline(cw, 20), 1000);
+            ck_ticket(w, t);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+fn ck_ticket[&w](w: &!w [int], t: int) -> [] int {
+    th.ck(w, 517, t > 0);
+    return 0;
+}
+
+pub fn test_the_total_and_the_connect_clocks_run_from_the_request_and_the_dial[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 2, 2048, 1024, th.limits(10000, 300, 300, 1000, 1000, 0, 0, 8, 1000));
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = 0;
+            // A request made at 5,000: the whole exchange has until 6,000 though the dial has until 15,000.
+            let t = hc.request(cw, 5000, 1, "GET", "/x", "h", "", hc.body_none(), 0);
+            buffer.drop(heap, th.pump(heap, cw, w, log, buffer.empty(heap, 16), 5000));
+            th.eq(w, 532, hc.next_deadline(cw, 5000), 1000);
+            th.eq(w, 533, hc.tick(cw, 5999), 0);
+            th.eq(w, 534, hc.tick(cw, 6000), 1);
+            w[1] = th.mode_detach();
+            buffer.drop(heap, th.pump(heap, cw, w, log, buffer.empty(heap, 16), 6000));
+            th.eq(w, 537, hc.failure(cw, t), wire.c_total_timeout());
+            // Connected at 7,000 and the head waited for from 7,000 (the request is taken at once): the head clock, then.
+            let u = hc.request(cw, 7000, 1, "GET", "/y", "h", "", hc.body_none(), 0);
+            w[1] = th.mode_dial() + th.mode_detach();
+            buffer.drop(heap, th.pump(heap, cw, w, log, buffer.empty(heap, 16), 7000));
+            buffer.drop(heap, th.sent(heap, cw, hc.ticket_slot(u), 7100));
+            // Taken at 7,100: the head clock says 7,400; the total says 8,000.
+            th.eq(w, 544, hc.next_deadline(cw, 7100), 300);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_the_earliest_of_several_timers_is_the_next[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 3, 2048, 1024, th.limits(100, 0, 0, 0, 1000, 0, 0, 8, 1000));
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = 0;
+            hc.request(cw, 50, 1, "GET", "/a", "h", "", hc.body_none(), 0);
+            hc.request(cw, 20, 2, "GET", "/b", "h", "", hc.body_none(), 0);
+            hc.request(cw, 80, 3, "GET", "/c", "h", "", hc.body_none(), 0);
+            buffer.drop(heap, th.pump(heap, cw, w, log, buffer.empty(heap, 16), 80));
+            // Dials due at 150, 120 and 180: the earliest, 120, from 80 is 40 ms away.
+            th.eq(w, 565, hc.next_deadline(cw, 80), 40);
+            th.eq(w, 566, hc.next_deadline(cw, 120), 0);
+            th.eq(w, 567, hc.next_deadline(cw, 500), 0);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_an_idle_connection_is_closed_at_the_end_of_its_life_even_with_no_idle_limit[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    // No idle limit, a life of 1,000 ms.
+    var c = hc.open(heap, 1, 2048, 1024, th.limits(0, 0, 0, 0, 1000, 0, 1000, 8, 1000));
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = th.mode_all();
+            th.exchange(heap, cw, w, log, 1, "/a", "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n", 100);
+            // The connection was made at 0 (the harness connects as the request is made, at 100).
+            th.eq(w, 586, hc.next_deadline(cw, 100), 1000);
+            th.eq(w, 587, hc.tick(cw, 1099), 0);
+            th.eq(w, 588, hc.tick(cw, 1100), 1);
+            buffer.drop(heap, th.pump(heap, cw, w, log, buffer.empty(heap, 16), 1100));
+            th.eq(w, 590, hc.close_reason(cw, 0), hc.r_lifetime());
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_the_exchange_bound_does_not_run_once_the_response_is_whole[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 1, 2048, 1024, th.limits(0, 0, 0, 1000, 1000, 0, 0, 8, 1000));
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = th.mode_dial() + th.mode_detach();
+            let t = th.started(heap, cw, w, log, 1, "GET", "/x", hc.body_none(), 0, 0);
+            buffer.drop(heap, th.sent(heap, cw, 0, 1));
+            // The whole response is in, consumed, and `Done` is waiting to be looked at; the caller is slow.
+            th.eq(w, 609, hc.give(cw, 0, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", 2), len("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"));
+            th.eq(w, 610, hc.consume(cw, t, 2, 3), 2);
+            th.eq(w, 611, hc.next_deadline(cw, 3), 0 - 1);
+            th.eq(w, 612, hc.tick(cw, 50000), 0);
+            // It is over: nothing more can be done to it, and a second end of the transport does not make it a failure.
+            th.eq(w, 614, hc.consume(cw, t, 0, 3), 0 - 1);
+            th.eq(w, 615, hc.eof(cw, 0, 4), 0);
+            buffer.drop(heap, th.pump(heap, cw, w, log, buffer.empty(heap, 16), 4));
+            th.eq(w, 617, th.count_of(w, log, 5), 1);
+            th.eq(w, 618, th.count_of(w, log, 6), 0);
+            // The transport ended before the caller looked, so the connection is not kept.
+            th.eq(w, 620, hc.idle(cw), 0);
+            th.eq(w, 621, hc.close_reason(cw, 0), hc.r_not_reusable());
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+// ---------------------------------------------------------------------
+// Who may say what
+// ---------------------------------------------------------------------
+
+pub fn test_each_state_of_a_slot_answers_a_give_as_it_should[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 2, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = th.mode_detach();
+            // Dialling: not connected, so -1; and an end of it fails the dial.
+            let t = hc.request(cw, 0, 1, "GET", "/x", "h", "", hc.body_none(), 0);
+            buffer.drop(heap, th.pump(heap, cw, w, log, buffer.empty(heap, 16), 0));
+            th.eq(w, 644, hc.give(cw, 0, "x", 1), 0 - 1);
+            th.eq(w, 645, hc.room(cw, 0), 0);
+            th.eq(w, 646, hc.eof(cw, 0, 1), 0);
+            buffer.drop(heap, th.pump(heap, cw, w, log, buffer.empty(heap, 16), 1));
+            th.eq(w, 648, hc.failure(cw, t), wire.c_connect());
+            th.eq(w, 649, th.count_of(w, log, 6), 1);
+            // Free: -1, and an end or a reset of nothing is refused.
+            th.eq(w, 651, hc.give(cw, 0, "x", 2), 0 - 1);
+            th.eq(w, 652, hc.eof(cw, 0, 2), 0 - 1);
+            th.eq(w, 653, hc.reset(cw, 0, 2), 0 - 1);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_nothing_arriving_on_an_idle_connection_leaves_it_idle[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 1, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = th.mode_all();
+            th.exchange(heap, cw, w, log, 1, "/a", "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n", 10);
+            th.eq(w, 670, hc.give(cw, 0, "", 11), 0);
+            th.eq(w, 671, hc.idle(cw), 1);
+            th.eq(w, 672, hc.give(cw, 0, "x", 12), 1);
+            th.eq(w, 673, hc.idle(cw), 0);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_bytes_behind_a_response_whose_done_is_waiting_keep_the_connection_from_the_pool[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 1, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = th.mode_dial() + th.mode_detach();
+            let t = th.started(heap, cw, w, log, 1, "GET", "/x", hc.body_none(), 0, 0);
+            buffer.drop(heap, th.sent(heap, cw, 0, 1));
+            th.eq(w, 691, hc.give(cw, 0, "HTTP/1.1 204 No Content\r\n\r\n", 2), len("HTTP/1.1 204 No Content\r\n\r\n"));
+            // Complete, and the caller has not yet looked: it takes no more, and a byte that comes is noted.
+            th.eq(w, 693, hc.room(cw, 0), 0);
+            th.eq(w, 694, hc.give(cw, 0, "HTTP/1.1 200", 3), len("HTTP/1.1 200"));
+            buffer.drop(heap, th.pump(heap, cw, w, log, buffer.empty(heap, 16), 3));
+            th.eq(w, 696, hc.close_reason(cw, 0), hc.r_not_reusable());
+            th.eq(w, 697, hc.idle(cw), 0);
+            ck_ticket(w, t);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_a_complete_response_takes_no_more_while_its_body_waits_for_the_caller[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 1, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = th.mode_dial() + th.mode_detach();
+            let t = th.started(heap, cw, w, log, 1, "GET", "/x", hc.body_none(), 0, 0);
+            buffer.drop(heap, th.sent(heap, cw, 0, 1));
+            th.eq(w, 716, hc.give(cw, 0, "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nabcd", 2), len("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nabcd"));
+            // Every byte of the body is here, unconsumed: the buffer has room, the response needs none.
+            th.eq(w, 718, hc.room(cw, 0), 0);
+            th.eq(w, 719, hc.avail(cw, t), 4);
+            // Consumed: `Done` is waiting, and the slot still takes nothing.
+            th.eq(w, 721, hc.consume(cw, t, 4, 3), 4);
+            th.eq(w, 722, hc.room(cw, 0), 0);
+            th.eq(w, 723, hc.body_kind(cw, t), 1);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+// ---------------------------------------------------------------------
+// Reading the response
+// ---------------------------------------------------------------------
+
+pub fn test_a_response_that_is_not_http_is_refused_before_its_head_is_whole[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var step = 1;
+    while step < 20 {
+        var c = hc.open(heap, 1, 2048, 1024, hc.default_limits());
+        borrow mut c as &!cw in {
+            region a {
+                let w = alloc_slice[a](8, 0);
+                let log = alloc_slice[a](64, 0);
+                w[1] = th.mode_all();
+                let t = th.started(heap, cw, w, log, 1, "GET", "/x", hc.body_none(), 0, 0);
+                buffer.drop(heap, th.sent(heap, cw, 0, 1));
+                // An alert from a TLS server on a plain port, say: no line ends, the first bytes are enough.
+                buffer.drop(heap, th.feed(heap, cw, w, log, buffer.empty(heap, 16), 0, "XTTP/1.1 200 OK", step, 2));
+                th.eq(w, 749, hc.failure(cw, t), wire.c_status_line());
+                failed = failed + w[7];
+            }
+        }
+        hc.close(heap, c);
+        step = step + 7;
+    }
+    return failed;
+}
+
+// `count` interim responses and then a final one, the whole fed in pieces of `step` bytes except that the last byte of the last
+// interim head arrives together with the final head: the interim head is whole only then, and what is left of the buffer after it is
+// a final head that is whole already, which must be found where it starts and not where an earlier look at the buffer stopped.
+fn interims[&h](heap: &!h Heap, count: int, step: int) -> [heap] int {
+    var code = 0 - 1;
+    var c = hc.open(heap, 1, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](256, 0);
+            w[1] = th.mode_all();
+            let t = th.started(heap, cw, w, log, 1, "GET", "/x", hc.body_none(), 0, 0);
+            buffer.drop(heap, th.sent(heap, cw, 0, 1));
+            let interim = "HTTP/1.1 102 Processing\r\n\r\n";
+            let final_head = "HTTP/1.1 204 No\r\n\r\n";
+            var text = buffer.empty(heap, 512);
+            var i = 0;
+            while i < count {
+                text = buffer.append(heap, text, interim);
+                i = i + 1;
+            }
+            text = buffer.append(heap, text, final_head);
+            borrow text as &tb in {
+                let all = buffer.bytes(tb);
+                let cut = count * len(interim) - 1;
+                buffer.drop(heap, th.feed(heap, cw, w, log, buffer.empty(heap, 16), 0, all[0..cut], step, 2));
+                buffer.drop(heap, th.feed(heap, cw, w, log, buffer.empty(heap, 16), 0, all[cut..len(all)], 1000, 3));
+            }
+            buffer.drop(heap, text);
+            code = hc.failure(cw, t);
+            if code == 0 && th.count_of(w, log, 5) != 1 {
+                code = 0 - 2;
+            }
+            if w[7] != 0 {
+                code = 1000;
+            }
+        }
+    }
+    hc.close(heap, c);
+    return code;
+}
+
+pub fn test_eight_interim_responses_are_read_and_a_ninth_is_refused_however_they_arrive[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    if interims(heap, 8, 1000) != 0 {
+        failed = 1;
+    }
+    // The interim heads in single bytes, and the final head in one piece behind them: the blank line must be found where the
+    // last interim head ended, not where the scan was left.
+    if interims(heap, 8, 1) != 0 {
+        failed = failed + 2;
+    }
+    if interims(heap, 1, 1) != 0 {
+        failed = failed + 4;
+    }
+    if interims(heap, 9, 1000) != wire.c_too_many_informational() {
+        failed = failed + 8;
+    }
+    return failed;
+}
+
+pub fn test_only_a_100_releases_a_held_body[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 1, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = th.mode_all();
+            let t = th.started(heap, cw, w, log, 1, "POST", "/e", 10, hc.flag_expect(), 0);
+            buffer.drop(heap, th.sent(heap, cw, 0, 1));
+            th.reply(heap, cw, w, log, 0, "HTTP/1.1 102 Processing\r\n\r\n", 2);
+            th.eq(w, 831, hc.send_room(cw, t), 0);
+            th.eq(w, 832, th.count_of(w, log, 2), 0);
+            th.reply(heap, cw, w, log, 0, "HTTP/1.1 100 Continue\r\n\r\n", 3);
+            th.eq(w, 834, hc.send_room(cw, t), 10);
+            th.eq(w, 835, th.count_of(w, log, 2), 1);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_an_early_response_drops_what_was_still_to_be_sent_and_releases_the_hold_at_once[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 2, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            // The body of the response is not eaten, so the request is still in progress when the caller looks.
+            w[1] = th.mode_dial() + th.mode_detach();
+            let t = th.started(heap, cw, w, log, 1, "POST", "/p", 5000, 0, 0);
+            th.eq(w, 853, hc.send_body(cw, t, "0123456789", 1), 10);
+            th.ck(w, 854, hc.pending(cw, 0) > 0);
+            th.eq(w, 855, hc.give(cw, 0, "HTTP/1.1 413 No\r\nContent-Length: 2\r\n\r\nno", 2), len("HTTP/1.1 413 No\r\nContent-Length: 2\r\n\r\nno"));
+            th.eq(w, 856, hc.pending(cw, 0), 0);
+            th.eq(w, 857, hc.send_room(cw, t), 0);
+            // The same with the body held back: the hold is over, nothing waits to be sent.
+            let u = th.started(heap, cw, w, log, 2, "POST", "/p", 5000, hc.flag_expect(), 3);
+            th.eq(w, 860, hc.take(cw, hc.ticket_slot(u), alloc_slice[a](1000, byte_of(0)), 4), len("POST /p HTTP/1.1\r\nHost: h\r\nContent-Length: 5000\r\nExpect: 100-continue\r\n\r\n"));
+            th.eq(w, 861, hc.give(cw, hc.ticket_slot(u), "HTTP/1.1 417 No\r\nContent-Length: 2\r\n\r\nno", 5), len("HTTP/1.1 417 No\r\nContent-Length: 2\r\n\r\nno"));
+            th.eq(w, 862, hc.pending(cw, hc.ticket_slot(u)), 0);
+            th.eq(w, 863, th.count_of(w, log, 2), 0);
+            // No `Continue` is owed once the answer is in, whatever the clock says.
+            th.eq(w, 865, hc.tick(cw, 100000), 0);
+            th.eq(w, 866, th.count_of(w, log, 2), 0);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_nothing_of_a_response_is_read_before_its_head_is_in[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 2, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = th.mode_dial() + th.mode_detach();
+            let t = th.started(heap, cw, w, log, 1, "GET", "/x", hc.body_none(), 0, 0);
+            buffer.drop(heap, th.sent(heap, cw, 0, 1));
+            th.eq(w, 884, hc.status(cw, t), 0 - 1);
+            th.eq(w, 885, hc.version(cw, t), 0 - 1);
+            th.eq(w, 886, hc.body_kind(cw, t), 0 - 1);
+            th.eq(w, 887, hc.content_length(cw, t), 0 - 1);
+            th.eq(w, 888, hc.header_count(cw, t), 0);
+            th.eq(w, 889, hc.avail(cw, t), 0);
+            th.eq(w, 890, len(hc.head(cw, t)), 0);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_the_headers_of_the_second_slot_and_of_a_shorter_response_are_read_as_they_are[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 2, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = th.mode_dial() + th.mode_detach();
+            let t0 = th.started(heap, cw, w, log, 1, "GET", "/0", hc.body_none(), 0, 0);
+            let t1 = th.started(heap, cw, w, log, 2, "GET", "/1", hc.body_none(), 0, 0);
+            th.eq(w, 908, hc.ticket_slot(t1), 1);
+            buffer.drop(heap, th.sent(heap, cw, 0, 1));
+            buffer.drop(heap, th.sent(heap, cw, 1, 1));
+            th.reply(heap, cw, w, log, 1, "HTTP/1.1 200 OK\r\nX-One: 1\r\nX-Two: two\r\nContent-Length: 0\r\n\r\n", 2);
+            th.eq(w, 912, hc.header_count(cw, t1), 3);
+            th.ck(w, 913, bytes.equal(hc.header_name(cw, t1, 1), "X-Two"));
+            th.ck(w, 914, bytes.equal(hc.header_value(cw, t1, 1), "two"));
+            th.ck(w, 915, bytes.equal(hc.header(cw, t1, "x-two"), "two"));
+            // The slot answers the second request on the same upstream with fewer headers: the old ones are not there.
+            buffer.drop(heap, th.sent(heap, cw, 0, 1));
+            th.reply(heap, cw, w, log, 0, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n", 3);
+            th.eq(w, 919, hc.header_count(cw, t0), 1);
+            th.eq(w, 920, len(hc.header_name(cw, t0, 1)), 0);
+            th.eq(w, 921, len(hc.header_value(cw, t0, 1)), 0);
+            th.eq(w, 922, len(hc.header_name(cw, t0, 2)), 0);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_a_ticket_that_is_not_the_slots_current_one_is_not_complete_or_reused[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 2, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = th.mode_all();
+            let ok = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+            let t1 = th.exchange(heap, cw, w, log, 1, "/a", ok, 10);
+            let t2 = th.exchange(heap, cw, w, log, 1, "/b", ok, 20);
+            th.ck(w, 941, hc.request_complete(cw, t2));
+            th.ck(w, 942, hc.reused(cw, t2));
+            // The first request's ticket is the slot's past: it is neither.
+            th.ck(w, 944, !hc.request_complete(cw, t1));
+            th.ck(w, 945, !hc.reused(cw, t1));
+            th.ck(w, 946, !hc.request_complete(cw, 0 - 1));
+            th.ck(w, 947, !hc.reused(cw, 5));
+            th.ck(w, 948, !hc.request_complete(cw, 1));
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+// ---------------------------------------------------------------------
+// The one retry, the clocks it restarts, and giving a request up
+// ---------------------------------------------------------------------
+
+pub fn test_a_replayed_request_is_not_complete_until_it_is_sent_again_and_its_dial_has_its_own_clock[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 2, 2048, 1024, th.limits(500, 0, 0, 0, 1000, 0, 0, 8, 1000));
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](128, 0);
+            w[1] = th.mode_all();
+            let t = th.second_on_reused(heap, cw, w, log, "GET", hc.body_none(), hc.flag_retry());
+            buffer.drop(heap, th.sent(heap, cw, 0, 21));
+            th.ck(w, 970, hc.request_complete(cw, t));
+            w[1] = th.mode_detach();
+            th.eq(w, 972, hc.eof(cw, 0, 22), 0);
+            buffer.drop(heap, th.pump(heap, cw, w, log, buffer.empty(heap, 16), 3000));
+            // Detached at 3,000: the dial is due 500 ms from then, not from the request at 20.
+            th.ck(w, 975, !hc.request_complete(cw, t));
+            th.eq(w, 976, hc.next_deadline(cw, 3000), 500);
+            th.eq(w, 977, hc.connected(cw, 0, 3100), 0);
+            buffer.drop(heap, th.sent(heap, cw, 0, 3100));
+            th.ck(w, 979, hc.request_complete(cw, t));
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_giving_a_request_up_before_it_is_looked_at_leaves_nothing_to_look_at[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 3, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](128, 0);
+            // The head and a part of the body have come and nobody has looked.
+            w[1] = th.mode_dial() + th.mode_detach();
+            let t = th.started(heap, cw, w, log, 1, "GET", "/x", hc.body_none(), 0, 0);
+            buffer.drop(heap, th.sent(heap, cw, 0, 1));
+            hc.give(cw, 0, "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc", 2);
+            th.eq(w, 999, hc.abort(cw, t, 3), 0);
+            buffer.drop(heap, th.pump(heap, cw, w, log, buffer.empty(heap, 16), 3));
+            th.eq(w, 1001, th.count_of(w, log, 3), 0);
+            th.eq(w, 1002, th.count_of(w, log, 4), 0);
+            th.eq(w, 1003, th.count_of(w, log, 7), 1);
+            th.eq(w, 1004, hc.free_slots(cw), 3);
+            // A `Continue` waiting.
+            let u = th.started(heap, cw, w, log, 2, "POST", "/e", 4, hc.flag_expect(), 4);
+            buffer.drop(heap, th.sent(heap, cw, hc.ticket_slot(u), 5));
+            hc.give(cw, hc.ticket_slot(u), "HTTP/1.1 100 Continue\r\n\r\n", 6);
+            th.eq(w, 1009, hc.abort(cw, u, 7), 0);
+            let before = th.count_of(w, log, 2);
+            buffer.drop(heap, th.pump(heap, cw, w, log, buffer.empty(heap, 16), 7));
+            th.eq(w, 1012, th.count_of(w, log, 2), before);
+            // A response that is whole and consumed, `Done` waiting.
+            let v = th.started(heap, cw, w, log, 3, "GET", "/y", hc.body_none(), 0, 8);
+            buffer.drop(heap, th.sent(heap, cw, hc.ticket_slot(v), 9));
+            hc.give(cw, hc.ticket_slot(v), "HTTP/1.1 204 No Content\r\n\r\n", 10);
+            th.eq(w, 1017, hc.abort(cw, v, 11), 0);
+            let dones = th.count_of(w, log, 5);
+            buffer.drop(heap, th.pump(heap, cw, w, log, buffer.empty(heap, 16), 11));
+            th.eq(w, 1020, th.count_of(w, log, 5), dones);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_giving_up_a_request_that_is_being_replayed_keeps_the_reason_the_connection_is_closing[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 2, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](128, 0);
+            w[1] = th.mode_dial();
+            let t = th.second_on_reused(heap, cw, w, log, "GET", hc.body_none(), hc.flag_retry());
+            buffer.drop(heap, th.sent(heap, cw, 0, 21));
+            th.eq(w, 1038, hc.eof(cw, 0, 22), 0);
+            th.eq(w, 1039, hc.close_reason(cw, 0), hc.r_retry());
+            th.eq(w, 1040, hc.abort(cw, t, 23), 0);
+            th.eq(w, 1041, hc.close_reason(cw, 0), hc.r_retry());
+            // Closed and detached, the slot is free: the request is not replayed for a caller that gave it up.
+            w[1] = th.mode_detach();
+            buffer.drop(heap, th.pump(heap, cw, w, log, buffer.empty(heap, 16), 24));
+            th.eq(w, 1045, hc.free_slots(cw), 2);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_a_body_that_was_consumed_behind_the_callers_back_is_not_announced[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 1, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = th.mode_dial() + th.mode_detach();
+            let t = th.started(heap, cw, w, log, 1, "GET", "/x", hc.body_none(), 0, 0);
+            buffer.drop(heap, th.sent(heap, cw, 0, 1));
+            hc.give(cw, 0, "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nabcd", 2);
+            // The caller read the body straight away, without waiting for the event that announced it.
+            th.eq(w, 1065, hc.consume(cw, t, 4, 3), 4);
+            buffer.drop(heap, th.pump(heap, cw, w, log, buffer.empty(heap, 16), 3));
+            th.eq(w, 1067, th.count_of(w, log, 3), 1);
+            th.eq(w, 1068, th.count_of(w, log, 4), 0);
+            th.eq(w, 1069, th.count_of(w, log, 5), 1);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+// ---------------------------------------------------------------------
+// The queue of events, and a reused connection's clock
+// ---------------------------------------------------------------------
+
+pub fn test_a_slot_freed_before_its_events_were_polled_is_not_queued_twice_and_no_event_is_lost[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    // Three slots, so a queue of three.
+    var c = hc.open(heap, 3, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = 0;
+            hc.request(cw, 0, 1, "GET", "/a", "h", "", hc.body_none(), 0);
+            let t1 = hc.request(cw, 0, 2, "GET", "/b", "h", "", hc.body_none(), 0);
+            // Slot 1 is given up and released by a caller that never looked at the events: it is free, and still in the queue.
+            th.eq(w, 1093, hc.abort(cw, t1, 1), 0);
+            th.eq(w, 1094, hc.detach(cw, 1, 1), 0);
+            // A request that finds slot 1 free again takes it, and must not queue it a second time: with the third request that
+            // would be four entries in a queue of three, and the oldest event, the first request's dial, would be overwritten.
+            let t3 = hc.request(cw, 2, 3, "GET", "/c", "h", "", hc.body_none(), 0);
+            th.eq(w, 1098, hc.ticket_slot(t3), 1);
+            hc.request(cw, 3, 4, "GET", "/d", "h", "", hc.body_none(), 0);
+            buffer.drop(heap, th.pump(heap, cw, w, log, buffer.empty(heap, 16), 3));
+            th.eq(w, 1101, th.count_of(w, log, 1), 3);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_a_connection_taken_from_the_pool_starts_its_progress_clock_with_the_request[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 1, 2048, 1024, th.limits(0, 200, 0, 0, 1000, 0, 0, 8, 1000));
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = th.mode_all();
+            th.exchange(heap, cw, w, log, 1, "/a", "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n", 10);
+            // Made at 5,000 on a connection idle since 10, its bytes waiting for a transport that has not taken them.
+            hc.request(cw, 5000, 1, "GET", "/b", "h", "", hc.body_none(), 0);
+            th.eq(w, 1120, hc.next_deadline(cw, 5000), 200);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_all_the_room_there_is_after_a_part_of_the_head_was_taken_can_be_used[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 1, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = th.mode_all();
+            let t = th.started(heap, cw, w, log, 1, "POST", "/p", 4000, 0, 0);
+            let head = "POST /p HTTP/1.1\r\nHost: h\r\nContent-Length: 4000\r\n\r\n";
+            let piece = alloc_slice[a](10, byte_of(0));
+            th.eq(w, 1139, hc.take(cw, 0, piece, 1), 10);
+            // 1,024 bytes of buffer, 10 of the head gone: the body may take everything that is not the rest of the head.
+            let room = hc.send_room(cw, t);
+            th.eq(w, 1142, room, 1024 - len(head) + 10);
+            let body = alloc_slice[a](4000, byte_of(0));
+            th.pattern(body, 0);
+            th.eq(w, 1145, hc.send_body(cw, t, body[0..room], 2), room);
+            // What goes out is the rest of the head and then the body, byte for byte.
+            let out = th.sent(heap, cw, 0, 3);
+            borrow out as &ob in {
+                let got = buffer.bytes(ob);
+                th.eq(w, 1150, len(got), len(head) - 10 + room);
+                th.ck(w, 1151, bytes.starts_with(got, head[10..len(head)]));
+                th.ck(w, 1152, th.is_pattern(got[len(head) - 10..len(got)], 0));
+            }
+            buffer.drop(heap, out);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_a_stale_header_of_an_earlier_response_on_the_slot_is_not_read[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 1, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = th.mode_dial() + th.mode_detach();
+            let t1 = th.started(heap, cw, w, log, 1, "GET", "/0", hc.body_none(), 0, 0);
+            buffer.drop(heap, th.sent(heap, cw, 0, 1));
+            th.reply(heap, cw, w, log, 0, "HTTP/1.1 200 OK\r\nX-One: 1\r\nX-Two: two\r\nX-Three: 3\r\nContent-Length: 0\r\n\r\n", 2);
+            th.eq(w, 1173, hc.header_count(cw, t1), 4);
+            buffer.drop(heap, th.pump(heap, cw, w, log, buffer.empty(heap, 16), 2));
+            // The same connection, a response with one header: the others are not there.
+            let t2 = hc.request(cw, 3, 1, "GET", "/1", "h", "", hc.body_none(), 0);
+            th.ck(w, 1177, hc.reused(cw, t2));
+            buffer.drop(heap, th.sent(heap, cw, 0, 3));
+            th.reply(heap, cw, w, log, 0, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n", 4);
+            th.eq(w, 1180, hc.header_count(cw, t2), 1);
+            th.eq(w, 1181, len(hc.header_name(cw, t2, 1)), 0);
+            th.eq(w, 1182, len(hc.header_value(cw, t2, 1)), 0);
+            th.eq(w, 1183, len(hc.header_name(cw, t2, 2)), 0);
+            th.eq(w, 1184, len(hc.header(cw, t2, "x-two")), 0);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_a_limit_of_no_requests_a_connection_means_no_limit[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 1, 2048, 1024, th.limits(0, 0, 0, 0, 1000, 0, 0, 8, 0));
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = th.mode_all();
+            let ok = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+            th.exchange(heap, cw, w, log, 1, "/1", ok, 10);
+            th.exchange(heap, cw, w, log, 1, "/2", ok, 20);
+            th.exchange(heap, cw, w, log, 1, "/3", ok, 30);
+            th.eq(w, 1204, hc.connects(cw), 1);
+            th.eq(w, 1205, hc.reuses(cw), 2);
+            th.eq(w, 1206, hc.idle(cw), 1);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_a_connection_is_kept_to_the_millisecond_before_its_life_ends_and_not_after[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    // A life of 1,000 ms from the connection (made at 0).
+    var c = hc.open(heap, 2, 2048, 1024, th.limits(0, 0, 0, 0, 1000, 0, 1000, 8, 1000));
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = th.mode_all();
+            let ok = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+            // Two connections, both made at 0, answered at 999 and at 1,000.
+            let t1 = hc.request(cw, 0, 1, "GET", "/1", "h", "", hc.body_none(), 0);
+            let t2 = hc.request(cw, 0, 2, "GET", "/2", "h", "", hc.body_none(), 0);
+            buffer.drop(heap, th.pump(heap, cw, w, log, buffer.empty(heap, 16), 0));
+            buffer.drop(heap, th.sent(heap, cw, hc.ticket_slot(t1), 0));
+            buffer.drop(heap, th.sent(heap, cw, hc.ticket_slot(t2), 0));
+            th.reply(heap, cw, w, log, hc.ticket_slot(t1), ok, 999);
+            th.eq(w, 1231, hc.idle(cw), 1);
+            th.reply(heap, cw, w, log, hc.ticket_slot(t2), ok, 1000);
+            th.eq(w, 1233, hc.idle(cw), 1);
+            th.eq(w, 1234, hc.close_reason(cw, hc.ticket_slot(t2)), hc.r_lifetime());
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}
+
+pub fn test_a_response_byte_ends_the_replay_and_gives_the_retained_bytes_back_as_room[&h](heap: &!h Heap) -> [heap] int {
+    var failed = 0;
+    var c = hc.open(heap, 1, 2048, 1024, hc.default_limits());
+    borrow mut c as &!cw in {
+        region a {
+            let w = alloc_slice[a](8, 0);
+            let log = alloc_slice[a](64, 0);
+            w[1] = th.mode_dial() + th.mode_detach();
+            // A request the caller allowed to be replayed keeps what it sent; a byte of a response means it never will be.
+            let t = th.started(heap, cw, w, log, 1, "POST", "/p", 4000, hc.flag_retry(), 0);
+            let head = len("POST /p HTTP/1.1\r\nHost: h\r\nContent-Length: 4000\r\n\r\n");
+            let piece = alloc_slice[a](head, byte_of(0));
+            th.eq(w, 1254, hc.take(cw, 0, piece, 1), head);
+            th.eq(w, 1255, hc.send_room(cw, t), 1024 - head);
+            th.eq(w, 1256, hc.give(cw, 0, "H", 2), 1);
+            th.eq(w, 1257, hc.send_room(cw, t), 1024);
+            failed = w[7];
+        }
+    }
+    hc.close(heap, c);
+    return failed;
+}

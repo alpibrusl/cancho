@@ -1,0 +1,606 @@
+edition 5;
+
+module http_client_wire_test;
+
+import std.buffer;
+import std.bytes;
+import std.test;
+import http_client_wire as wire;
+import http_client_harness as th;
+
+// `http_client_wire` (`docs/http-client.md` §3.3, §3.4): the response head's table, every proper prefix of a head, the chunk
+// decoder on its own, and the request head as it is written. No client, no clock: bytes in, bytes out.
+
+pub fn test_a_head_is_read_into_its_table() -> [] int {
+    var failed = 0;
+    region a {
+        let w = alloc_slice[a](8, 0);
+        let table = alloc_slice[a](wire.slots(8), 0);
+        let src = "HTTP/1.1 404 Not Found\r\nContent-Type:text/plain \r\nX-A:   b c  \r\nConnection: Keep-Alive, close\r\nContent-Length: 12\r\n\r\nbody";
+        let n = wire.parse_head(src, table, 4096);
+        th.eq(w, 21, n, len(src) - 4);
+        th.eq(w, 22, table[0], 404);
+        th.eq(w, 23, table[1], 11);
+        th.eq(w, 24, table[2], 4);
+        th.eq(w, 25, table[3], n);
+        th.eq(w, 26, table[4], 12);
+        // Not chunked; both `keep-alive` and `close` listed.
+        th.eq(w, 28, table[5], 6);
+        th.ck(w, 29, bytes.equal(src[table[6]..table[7]], "Not Found"));
+        th.ck(w, 30, bytes.equal(src[table[16]..table[17]], "Content-Type"));
+        th.ck(w, 31, bytes.equal(src[table[18]..table[19]], "text/plain"));
+        th.ck(w, 32, bytes.equal(src[table[20]..table[21]], "X-A"));
+        th.ck(w, 33, bytes.equal(src[table[22]..table[23]], "b c"));
+        th.eq(w, 34, wire.find_header(src, table, "x-a"), 1);
+        th.eq(w, 35, wire.find_header(src, table, "connection"), 2);
+        th.eq(w, 36, wire.find_header(src, table, "absent"), 0 - 1);
+        th.ck(w, 37, wire.header_is(src, table, 3, "content-length"));
+        // The table can be smaller than the headers: that is a refusal, not a trap.
+        let small = alloc_slice[a](wire.slots(3), 0);
+        let r = wire.parse_head(src, small, 4096);
+        th.eq(w, 41, wire.error_code(r), wire.c_resp_header());
+        // Chunked written in any case, an empty reason; and HTTP/1.0 has no transfer codings.
+        let two = "HTTP/1.1 200 \r\nTransfer-ENCODING: CHUNKED\r\n\r\n";
+        th.eq(w, 44, wire.parse_head(two, table, 4096), len(two));
+        th.eq(w, 45, table[1], 11);
+        th.eq(w, 46, table[5], 1);
+        th.eq(w, 47, table[4], 0 - 1);
+        th.eq(w, 48, wire.error_code(wire.parse_head("HTTP/1.0 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n", table, 4096)), wire.c_transfer_encoding());
+        failed = w[7];
+    }
+    return failed;
+}
+
+// Every proper prefix of `src` is incomplete, and `src` itself is not.
+fn prefixes_are_incomplete[&x](src: &x [byte]) -> [] int {
+    var bad = 0;
+    region a {
+        let table = alloc_slice[a](wire.slots(16), 0);
+        var n = 0;
+        while n < len(src) {
+            let r = wire.parse_head(src[0..n], table, 4096);
+            if !wire.is_incomplete(r) {
+                bad = bad + 1;
+            }
+            n = n + 1;
+        }
+        if wire.is_incomplete(wire.parse_head(src, table, 4096)) {
+            bad = bad + 1000;
+        }
+    }
+    return bad;
+}
+
+pub fn test_every_proper_prefix_of_a_head_is_incomplete_and_never_a_refusal() -> [] int {
+    var r = prefixes_are_incomplete("HTTP/1.1 200 OK\r\n\r\n");
+    if r == 0 {
+        r = prefixes_are_incomplete("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\n");
+    }
+    if r == 0 {
+        r = prefixes_are_incomplete("HTTP/1.0 301 Moved\r\nLocation: http://x/\r\nTransfer-Encoding: chunked\r\n\r\n");
+    }
+    return r;
+}
+
+// Refused heads: the code and the position.
+fn refused[&x](src: &x [byte], code: int, at: int) -> [] int {
+    var bad = 0;
+    region a {
+        let table = alloc_slice[a](wire.slots(4), 0);
+        let r = wire.parse_head(src, table, 4096);
+        if wire.error_code(r) != code {
+            bad = 1;
+        }
+        if at >= 0 && wire.error_position(r) != at {
+            bad = bad + 2;
+        }
+    }
+    return bad;
+}
+
+pub fn test_a_refused_head_says_where_and_why() -> [] int {
+    var r = refused("HTTP/1.1 200 OK\r\nA: b\r\n\r\n", 0, 0 - 1);
+    if r == 0 {
+        r = refused("XTTP/1.1 200 OK\r\n\r\n", wire.c_status_line(), 0);
+    }
+    if r == 0 {
+        r = refused("HTTP/1.1 2x0 OK\r\n\r\n", wire.c_status_line(), 10);
+    }
+    if r == 0 {
+        r = refused("HTTP/3.0 200 OK\r\n\r\n", wire.c_version(), 5);
+    }
+    if r == 0 {
+        r = refused("HTTP/1.1 200 OK\r\nA b\r\n\r\n", wire.c_resp_header(), 18);
+    }
+    if r == 0 {
+        r = refused("HTTP/1.1 200 OK\r\nA: b\r\n c: d\r\n\r\n", wire.c_fold(), 23);
+    }
+    if r == 0 {
+        // A head longer than the limit it was given, with no end in sight.
+        r = refused("HTTP/1.1 200 OK\r\nA: bbbbbbbbbbbbbbbbbbbb", wire.c_incomplete(), 0 - 1);
+    }
+    return r;
+}
+
+pub fn test_the_head_limit_is_exact() -> [] int {
+    var failed = 0;
+    region a {
+        let w = alloc_slice[a](8, 0);
+        let table = alloc_slice[a](wire.slots(4), 0);
+        let src = "HTTP/1.1 200 OK\r\nA: b\r\n\r\n";
+        // A head of exactly `limit` bytes is read; with one byte less room it is too large.
+        th.eq(w, 132, wire.parse_head(src, table, len(src)), len(src));
+        th.eq(w, 133, wire.error_code(wire.parse_head(src, table, len(src) - 1)), wire.c_head_too_large());
+        // And a limit past `max_head` is `max_head`.
+        th.eq(w, 135, wire.max_head(), 16384);
+        failed = w[7];
+    }
+    return failed;
+}
+
+// Decodes `raw` fed `step` bytes at a time, in place, the way the client does: each piece lands in the buffer right after the
+// bytes already decoded, and the decoder writes its data bytes over the front of it. The decoded bytes come back; `out[0]` is
+// the code, `out[1]` the decoder's state, `out[2]` the raw bytes left over behind the end of the body.
+fn decode[&h, &x, &o](heap: &!h Heap, raw: &x [byte], step: int, out: &!o [int]) -> [heap] buffer.Buffer {
+    var decoded = buffer.empty(heap, 64);
+    region a {
+        let buf = alloc_slice[a](len(raw) + 8, byte_of(0));
+        let st = alloc_slice[a](wire.chunk_slots(), 0);
+        var wrote = 0;
+        var at = 0;
+        var code = 0;
+        var left = 0;
+        while at < len(raw) && code == 0 && st[0] != wire.chunk_done() {
+            var to = at + step;
+            if to > len(raw) {
+                to = len(raw);
+            }
+            let n = to - at;
+            copy_into(buf[wrote..wrote + n], raw[at..to]);
+            code = wire.chunk_run(buf, wrote, wrote + n, wrote, st, 0);
+            wrote = st[3];
+            if st[0] == wire.chunk_done() {
+                left = n - st[4];
+            }
+            at = to;
+        }
+        decoded = buffer.append(heap, decoded, buf[0..wrote]);
+        out[0] = code;
+        out[1] = st[0];
+        out[2] = left + (len(raw) - at);
+    }
+    return decoded;
+}
+
+// `raw` decodes to `want` at every step, finishing with `extra` bytes left over (given in the input after the end of the body).
+fn decodes_to[&h, &x, &y](heap: &!h Heap, raw: &x [byte], want: &y [byte], extra: int) -> [heap] int {
+    var bad = 0;
+    var step = 1;
+    while step <= len(raw) + 1 {
+        region a {
+            let out = alloc_slice[a](4, 0);
+            let got = decode(heap, raw, step, out);
+            if out[0] != 0 || out[1] != wire.chunk_done() || out[2] != extra {
+                bad = bad + 1;
+            }
+            borrow got as &gb in {
+                if !bytes.equal(buffer.bytes(gb), want) {
+                    bad = bad + 1;
+                }
+            }
+            buffer.drop(heap, got);
+        }
+        step = step + 1;
+    }
+    return bad;
+}
+
+pub fn test_the_chunk_decoder_decodes_every_body_split_every_way[&h](heap: &!h Heap) -> [heap] int {
+    var r = decodes_to(heap, "0\r\n\r\n", "", 0);
+    if r == 0 {
+        r = decodes_to(heap, "5\r\nhello\r\n0\r\n\r\n", "hello", 0);
+    }
+    if r == 0 {
+        r = decodes_to(heap, "5\r\nhello\r\n6\r\n world\r\n1\r\n!\r\n0\r\n\r\n", "hello world!", 0);
+    }
+    if r == 0 {
+        r = decodes_to(heap, "a\r\n0123456789\r\nA\r\nabcdefghij\r\n0\r\n\r\n", "0123456789abcdefghij", 0);
+    }
+    if r == 0 {
+        // An extension is skipped, with or without a value, and a size may have leading zeros.
+        r = decodes_to(heap, "005;x=y;z\r\nhello\r\n0;done\r\n\r\n", "hello", 0);
+    }
+    if r == 0 {
+        // Trailers are skipped: one, and several.
+        r = decodes_to(heap, "2\r\nok\r\n0\r\nX-A: 1\r\nX-B: two\r\n\r\n", "ok", 0);
+    }
+    if r == 0 {
+        // The CRLF in the data is data.
+        r = decodes_to(heap, "6\r\na\r\n\r\nb\r\n0\r\n\r\n", "a\r\n\r\nb", 0);
+    }
+    if r == 0 {
+        // Bytes behind the end are not touched.
+        r = decodes_to(heap, "2\r\nok\r\n0\r\n\r\nGET / HTTP/1.1", "ok", 14);
+    }
+    return r;
+}
+
+// `raw` is refused with `code`, at every step.
+fn decoding_refused[&h, &x](heap: &!h Heap, raw: &x [byte], code: int) -> [heap] int {
+    var bad = 0;
+    var step = 1;
+    while step <= len(raw) + 1 {
+        region a {
+            let out = alloc_slice[a](4, 0);
+            buffer.drop(heap, decode(heap, raw, step, out));
+            if out[0] != code {
+                bad = bad + 1;
+            }
+        }
+        step = step + 1;
+    }
+    return bad;
+}
+
+pub fn test_the_chunk_decoder_refuses_what_is_not_chunked[&h](heap: &!h Heap) -> [heap] int {
+    var r = decoding_refused(heap, "g\r\n", wire.c_chunk());
+    if r == 0 {
+        r = decoding_refused(heap, "\r\n", wire.c_chunk());
+    }
+    if r == 0 {
+        r = decoding_refused(heap, ";x\r\n", wire.c_chunk());
+    }
+    if r == 0 {
+        r = decoding_refused(heap, "-1\r\n", wire.c_chunk());
+    }
+    if r == 0 {
+        r = decoding_refused(heap, "5\rX", wire.c_chunk());
+    }
+    if r == 0 {
+        r = decoding_refused(heap, "5\n", wire.c_chunk());
+    }
+    if r == 0 {
+        r = decoding_refused(heap, "2\r\nokX", wire.c_chunk());
+    }
+    if r == 0 {
+        r = decoding_refused(heap, "2\r\nok\rX", wire.c_chunk());
+    }
+    if r == 0 {
+        r = decoding_refused(heap, "2\r\nok\r\n0\r\n\rX", wire.c_chunk());
+    }
+    if r == 0 {
+        r = decoding_refused(heap, "0\r\nA: b\nC\r\n", wire.c_chunk());
+    }
+    if r == 0 {
+        r = decoding_refused(heap, "0\r\n\n", wire.c_chunk());
+    }
+    if r == 0 {
+        // A size past 2^50 (twelve hex digits is not; thirteen with a high digit is).
+        r = decoding_refused(heap, "4000000000000000\r\n", wire.c_chunk());
+    }
+    if r == 0 {
+        // A control byte in an extension.
+        var line = buffer.empty(heap, 16);
+        line = buffer.append(heap, line, "5;a");
+        line = buffer.push(heap, line, byte_of(1));
+        line = buffer.append(heap, line, "\r\nhello\r\n");
+        borrow line as &lb in {
+            r = decoding_refused(heap, buffer.bytes(lb), wire.c_chunk());
+        }
+        buffer.drop(heap, line);
+    }
+    return r;
+}
+
+pub fn test_the_chunk_decoder_bounds_a_size_line_and_the_trailers[&h](heap: &!h Heap) -> [heap] int {
+    var r = 0;
+    // A size line of 128 bytes is read; of 129 it is refused.
+    var ok = buffer.empty(heap, 256);
+    var i = 0;
+    while i < 127 {
+        ok = buffer.push(heap, ok, byte_of(48));
+        i = i + 1;
+    }
+    ok = buffer.append(heap, ok, "1\r\nx\r\n0\r\n\r\n");
+    borrow ok as &okb in {
+        r = decodes_to(heap, buffer.bytes(okb), "x", 0);
+    }
+    buffer.drop(heap, ok);
+    if r == 0 {
+        var long = buffer.empty(heap, 256);
+        i = 0;
+        while i < 128 {
+            long = buffer.push(heap, long, byte_of(48));
+            i = i + 1;
+        }
+        long = buffer.append(heap, long, "1\r\nx\r\n0\r\n\r\n");
+        borrow long as &lb in {
+            r = decoding_refused(heap, buffer.bytes(lb), wire.c_chunk());
+        }
+        buffer.drop(heap, long);
+    }
+    if r == 0 {
+        // Trailers of 8,192 bytes are skipped; one byte more is refused.
+        var t = buffer.empty(heap, 9000);
+        t = buffer.append(heap, t, "0\r\nX: ");
+        i = 0;
+        while i < 8192 - 3 - 2 {
+            t = buffer.push(heap, t, byte_of(97));
+            i = i + 1;
+        }
+        t = buffer.append(heap, t, "\r\n\r\n");
+        borrow t as &tb in {
+            r = decodes_to(heap, buffer.bytes(tb), "", 0);
+        }
+        buffer.drop(heap, t);
+    }
+    return r;
+}
+
+// ---------------------------------------------------------------------
+// The request head
+// ---------------------------------------------------------------------
+
+fn head_is[&x, &m, &t, &hh, &e](want: &x [byte], method: &m [byte], target: &t [byte], host: &hh [byte], extra: &e [byte], body: int, expect: bool, close: bool) -> [] bool {
+    var ok = false;
+    region a {
+        let out = alloc_slice[a](512, byte_of(0));
+        let n = wire.write_head(out, method, target, host, extra, body, expect, close);
+        ok = n == len(want) && bytes.equal(out[0..n], want);
+    }
+    return ok;
+}
+
+pub fn test_a_request_head_is_written_exactly() -> [] int {
+    var failed = 0;
+    region a {
+        let w = alloc_slice[a](8, 0);
+        th.ck(w, 358, head_is("GET / HTTP/1.1\r\nHost: h\r\n\r\n", "GET", "/", "h", "", wire.body_none(), false, false));
+        th.ck(w, 359, head_is("POST /p HTTP/1.1\r\nHost: h\r\nContent-Length: 0\r\n\r\n", "POST", "/p", "h", "", 0, false, false));
+        th.ck(w, 360, head_is("GET /p HTTP/1.1\r\nHost: h\r\n\r\n", "GET", "/p", "h", "", 0, false, false));
+        th.ck(w, 361, head_is("PUT /p HTTP/1.1\r\nHost: h\r\nContent-Length: 1234567\r\n\r\n", "PUT", "/p", "h", "", 1234567, false, false));
+        th.ck(w, 362, head_is("PUT /p HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n", "PUT", "/p", "h", "", wire.body_chunked(), false, false));
+        th.ck(w, 363, head_is("POST /p HTTP/1.1\r\nHost: h:1\r\nA: b\r\nContent-Length: 9\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n", "POST", "/p", "h:1", "A: b\r\n", 9, true, true));
+        // Too small a buffer is -1, never a trap.
+        let small = alloc_slice[a](10, byte_of(0));
+        th.eq(w, 366, wire.write_head(small, "GET", "/", "h", "", wire.body_none(), false, false), 0 - 1);
+        let exact = alloc_slice[a](len("GET / HTTP/1.1\r\nHost: h\r\n\r\n"), byte_of(0));
+        th.eq(w, 368, wire.write_head(exact, "GET", "/", "h", "", wire.body_none(), false, false), len(exact));
+        let one_less = alloc_slice[a](len(exact) - 1, byte_of(0));
+        th.eq(w, 370, wire.write_head(one_less, "GET", "/", "h", "", wire.body_none(), false, false), 0 - 1);
+        failed = w[7];
+    }
+    return failed;
+}
+
+pub fn test_chunk_framing_for_a_request_body_fits_its_room_exactly() -> [] int {
+    var failed = 0;
+    region a {
+        let w = alloc_slice[a](8, 0);
+        let out = alloc_slice[a](64, byte_of(0));
+        th.eq(w, 381, wire.write_chunk(out, 0, "hello"), 10);
+        th.ck(w, 382, bytes.equal(out[0..10], "5\r\nhello\r\n"));
+        th.eq(w, 383, wire.write_chunk(out, 10, "0123456789abcdef"), 10 + 16 + 6);
+        th.ck(w, 384, bytes.equal(out[10..32], "10\r\n0123456789abcdef\r\n"));
+        th.eq(w, 385, wire.write_last_chunk(out, 32), 37);
+        th.ck(w, 386, bytes.equal(out[32..37], "0\r\n\r\n"));
+        // `chunk_fit` is the largest piece whose framing fits, for every room.
+        var room = 0;
+        while room < 400 {
+            let n = wire.chunk_fit(room);
+            if n > 0 && n + wire.chunk_overhead(n) > room {
+                th.ck(w, 392, false);
+            }
+            if n + 1 + wire.chunk_overhead(n + 1) <= room {
+                th.ck(w, 395, false);
+            }
+            room = room + 1;
+        }
+        // A write that does not fit is -1 and writes nothing.
+        let tight = alloc_slice[a](9, byte_of(120));
+        th.eq(w, 401, wire.write_chunk(tight, 0, "hello"), 0 - 1);
+        th.eq(w, 402, int_of(tight[0]), 120);
+        failed = w[7];
+    }
+    return failed;
+}
+
+pub fn test_the_validators_accept_what_they_should() -> [] int {
+    var failed = 0;
+    region a {
+        let w = alloc_slice[a](8, 0);
+        th.ck(w, 412, wire.valid_method("GET"));
+        th.ck(w, 413, wire.valid_method("M-SEARCH"));
+        th.ck(w, 414, !wire.valid_method("get set"));
+        th.ck(w, 415, !wire.valid_method("CONNECT"));
+        th.ck(w, 416, wire.valid_method("connect"));
+        th.ck(w, 417, wire.valid_target("/"));
+        th.ck(w, 418, wire.valid_target("*"));
+        th.ck(w, 419, wire.valid_target("/a/b%20c?d=e&f=%7E"));
+        th.ck(w, 420, !wire.valid_target("a"));
+        th.ck(w, 421, wire.valid_host("example.com"));
+        th.ck(w, 422, wire.valid_host("127.0.0.1:8080"));
+        th.ck(w, 423, wire.valid_host("[fe80::1%25eth0]:8080"));
+        th.ck(w, 424, !wire.valid_host("a@b"));
+        th.ck(w, 425, !wire.valid_host("a?b"));
+        th.ck(w, 426, wire.valid_extra(""));
+        th.ck(w, 427, wire.valid_extra("A: b\r\n"));
+        th.ck(w, 428, wire.valid_extra("A:\r\nB: c d\r\n"));
+        th.ck(w, 429, !wire.valid_extra("A: b\r"));
+        th.ck(w, 430, !wire.valid_extra("A: b\r\n\r\n"));
+        th.ck(w, 431, !wire.valid_extra("Host: x\r\n"));
+        failed = w[7];
+    }
+    return failed;
+}
+
+pub fn test_the_validators_stop_exactly_at_their_bounds() -> [] int {
+    var failed = 0;
+    region a {
+        let w = alloc_slice[a](8, 0);
+        // A method of 32 bytes, not 33.
+        let m32 = alloc_slice[a](32, byte_of(65));
+        let m33 = alloc_slice[a](33, byte_of(65));
+        th.ck(w, 444, wire.valid_method(m32));
+        th.ck(w, 445, !wire.valid_method(m33));
+        // A target of 8,192 bytes, not 8,193.
+        let t8192 = alloc_slice[a](8192, byte_of(97));
+        t8192[0] = byte_of(47);
+        let t8193 = alloc_slice[a](8193, byte_of(97));
+        t8193[0] = byte_of(47);
+        th.ck(w, 451, wire.valid_target(t8192));
+        th.ck(w, 452, !wire.valid_target(t8193));
+        // A host of 255 bytes, not 256.
+        let h255 = alloc_slice[a](255, byte_of(97));
+        let h256 = alloc_slice[a](256, byte_of(97));
+        th.ck(w, 456, wire.valid_host(h255));
+        th.ck(w, 457, !wire.valid_host(h256));
+        // Every name the client writes itself, in any case, and a line that does not end with exactly CRLF.
+        th.ck(w, 459, !wire.valid_extra("Trailer: x\r\n"));
+        th.ck(w, 460, !wire.valid_extra("PROXY-CONNECTION: keep-alive\r\n"));
+        th.ck(w, 461, !wire.valid_extra("A: b\rXY"));
+        th.ck(w, 462, !wire.valid_extra("A: b\nXY"));
+        th.ck(w, 463, !wire.valid_extra("A: b\n\r"));
+        // A CR followed by anything but LF ends no line, even when what follows could be the start of a good one.
+        th.ck(w, 465, !wire.valid_extra("A: b\rXB: c\r\n"));
+        th.ck(w, 466, wire.valid_extra("X-Trailer: x\r\nX-Proxy: y\r\n"));
+        failed = w[7];
+    }
+    return failed;
+}
+
+pub fn test_a_request_head_says_a_body_of_nothing_only_where_it_must() -> [] int {
+    var failed = 0;
+    region a {
+        let w = alloc_slice[a](8, 0);
+        th.ck(w, 476, head_is("PUT /p HTTP/1.1\r\nHost: h\r\nContent-Length: 0\r\n\r\n", "PUT", "/p", "h", "", 0, false, false));
+        th.ck(w, 477, head_is("PATCH /p HTTP/1.1\r\nHost: h\r\nContent-Length: 0\r\n\r\n", "PATCH", "/p", "h", "", 0, false, false));
+        th.ck(w, 478, head_is("DELETE /p HTTP/1.1\r\nHost: h\r\n\r\n", "DELETE", "/p", "h", "", 0, false, false));
+        th.ck(w, 479, head_is("GET /p HTTP/1.1\r\nHost: h\r\nContent-Length: 1\r\n\r\n", "GET", "/p", "h", "", 1, false, false));
+        th.ck(w, 480, head_is("OPTIONS /p HTTP/1.1\r\nHost: h\r\nContent-Length: 10\r\n\r\n", "OPTIONS", "/p", "h", "", 10, false, false));
+        th.ck(w, 481, head_is("POST /p HTTP/1.1\r\nHost: h\r\nContent-Length: 1234567890\r\n\r\n", "POST", "/p", "h", "", 1234567890, false, false));
+        // Chunk sizes in lower case hex.
+        let out = alloc_slice[a](600, byte_of(0));
+        let data = alloc_slice[a](255, byte_of(120));
+        th.eq(w, 485, wire.write_chunk(out, 0, data[0..26]), 26 + 2 + 4);
+        th.ck(w, 486, bytes.starts_with(out, "1a\r\n"));
+        th.eq(w, 487, wire.write_chunk(out, 0, data), 255 + 2 + 4);
+        th.ck(w, 488, bytes.starts_with(out, "ff\r\n"));
+        failed = w[7];
+    }
+    return failed;
+}
+
+// `src` parsed with `limit`: the code it is refused with, or 0.
+fn code_with_limit[&x](src: &x [byte], limit: int) -> [] int {
+    var code = 0 - 1;
+    region a {
+        let table = alloc_slice[a](wire.slots(8), 0);
+        code = wire.error_code(wire.parse_head(src, table, limit));
+    }
+    return code;
+}
+
+pub fn test_a_head_is_too_large_exactly_at_its_limit_and_never_past_16384() -> [] int {
+    var failed = 0;
+    region a {
+        let w = alloc_slice[a](8, 0);
+        let src = "HTTP/1.1 200 OK\r\nA: bbbbbbbbbb";
+        // As many bytes as the limit, and no end to the head yet: too large, not "wait for more".
+        th.eq(w, 510, code_with_limit(src, len(src)), wire.c_head_too_large());
+        th.eq(w, 511, code_with_limit(src, len(src) + 1), wire.c_incomplete());
+        // A limit past `max_head` is `max_head`: 17,000 bytes of head with no end are too large for a limit of 100,000.
+        let big = alloc_slice[a](17000, byte_of(97));
+        copy_into(big[0..17], "HTTP/1.1 200 OK\r\n");
+        th.eq(w, 515, code_with_limit(big, 100000), wire.c_head_too_large());
+        failed = w[7];
+    }
+    return failed;
+}
+
+pub fn test_the_edges_of_a_status_line_and_a_header_line() -> [] int {
+    var failed = 0;
+    region a {
+        let w = alloc_slice[a](8, 0);
+        let table = alloc_slice[a](wire.slots(8), 0);
+        let low = "HTTP/1.1 100 Continue\r\n\r\n";
+        th.eq(w, 527, wire.parse_head(low, table, 4096), len(low));
+        th.eq(w, 528, table[0], 100);
+        let high = "HTTP/1.1 599 Odd\r\n\r\n";
+        th.eq(w, 530, wire.parse_head(high, table, 4096), len(high));
+        th.eq(w, 531, table[0], 599);
+        // A control byte in the reason is refused, and so is a status line or a header that ends in a bare CR.
+        let plain = "HTTP/1.1 200 OK\r\n\r\n";
+        let ctl = alloc_slice[a](len(plain), byte_of(0));
+        copy_into(ctl, plain);
+        ctl[13] = byte_of(1);
+        th.eq(w, 537, code_with_limit(ctl, 4096), wire.c_status_line());
+        th.eq(w, 538, code_with_limit("HTTP/1.1 200 OK\rXA: b\r\n\r\n", 4096), wire.c_status_line());
+        th.eq(w, 539, code_with_limit("HTTP/1.1 200 OK\r\nA: b\rXB: c\r\n\r\n", 4096), wire.c_resp_header());
+        failed = w[7];
+    }
+    return failed;
+}
+
+// "0\r\nX:" and `n` letters, then the blank line: a trailer section whose only line is `n + 3` bytes with its CR.
+fn with_trailer_of[&h](heap: &!h Heap, n: int) -> [heap] buffer.Buffer {
+    var t = buffer.empty(heap, n + 32);
+    t = buffer.append(heap, t, "0\r\nX:");
+    var i = 0;
+    while i < n {
+        t = buffer.push(heap, t, byte_of(97));
+        i = i + 1;
+    }
+    return buffer.append(heap, t, "\r\n\r\n");
+}
+
+pub fn test_the_chunk_decoder_keeps_no_line_over_from_one_chunk_to_the_next[&h](heap: &!h Heap) -> [heap] int {
+    var r = 0;
+    // A hundred chunks of one byte: each size line is short, and together they are far past the 128 a line may take.
+    var many = buffer.empty(heap, 1024);
+    var i = 0;
+    var want = buffer.empty(heap, 128);
+    while i < 100 {
+        many = buffer.append(heap, many, "1\r\nx\r\n");
+        want = buffer.push(heap, want, byte_of(120));
+        i = i + 1;
+    }
+    many = buffer.append(heap, many, "0\r\n\r\n");
+    borrow many as &mb in {
+        borrow want as &wb in {
+            r = decodes_to(heap, buffer.bytes(mb), buffer.bytes(wb), 0);
+        }
+    }
+    buffer.drop(heap, many);
+    buffer.drop(heap, want);
+    return r;
+}
+
+pub fn test_the_chunk_decoder_refuses_a_size_past_two_to_the_fiftieth_a_size_line_with_nothing_in_it_and_a_ragged_trailer[&h](heap: &!h Heap) -> [heap] int {
+    var r = decoding_refused(heap, "8000000000000\r\n", wire.c_chunk());
+    if r == 0 {
+        // After a chunk, a size line with no digits is not the last chunk.
+        r = decoding_refused(heap, "2\r\nok\r\n\r\n", wire.c_chunk());
+    }
+    if r == 0 {
+        r = decoding_refused(heap, "0\r\nA: b\rX\r\n\r\n", wire.c_chunk());
+    }
+    return r;
+}
+
+pub fn test_trailers_of_8192_bytes_are_skipped_and_of_8193_refused[&h](heap: &!h Heap) -> [heap] int {
+    var r = 0;
+    let ok = with_trailer_of(heap, 8189);
+    borrow ok as &okb in {
+        r = decodes_to(heap, buffer.bytes(okb), "", 0);
+    }
+    buffer.drop(heap, ok);
+    if r == 0 {
+        let long = with_trailer_of(heap, 8190);
+        borrow long as &lb in {
+            r = decoding_refused(heap, buffer.bytes(lb), wire.c_trailers_too_large());
+        }
+        buffer.drop(heap, long);
+    }
+    return r;
+}

@@ -9,6 +9,7 @@ edition 6;
 //     tls_echo --port <n> --dir <directory> [--identity <subdirectory>]...
 //              [--alpn <p1,p2,...>] [--connections <n>] [--handshakes <n>]
 //              [--rate <per second>] [--handshake-timeout <ms>] [--idle <ms>]
+//              [--per-address <n>] [--per-address-rate <per second>]
 //
 // `--dir` holds the certificates: `chain.pem` (PEM, leaf first), `key.pem`
 // (P-256, PKCS#8 or SEC 1, unencrypted) and `names` (the host names it
@@ -16,7 +17,9 @@ edition 6;
 // up to 16, the first the default for an unknown or absent name
 // (`examples/tls_echo/identity.cho` says why the directory is opened once
 // and read through the handle). The engine's entropy is 32 bytes of
-// `/dev/urandom`.
+// `/dev/urandom`. Because the operator names the directory, `main` holds `Fs("")` and the
+// report says `fs_read("")`; `examples/tls_echo_fixed` is this server with the directory
+// fixed at build time, and reports the two paths it reads (`serve` and the loop are shared).
 //
 // The defaults: no ALPN; 256 connections; 32 handshakes in progress and
 // 100 started a second (a full handshake measured 3.0 ms of this server's
@@ -41,58 +44,8 @@ import tls;
 fn usage[&i](io: &!i Io) -> [err_write] int {
     io.error_all(io, "usage: tls_echo --port <n> --dir <directory> [--identity <subdirectory>]... [--alpn <p1,p2>]\n");
     io.error_all(io, "                [--connections <n>] [--handshakes <n>] [--rate <n>] [--handshake-timeout <ms>] [--idle <ms>]\n");
+    io.error_all(io, "                [--per-address <n>] [--per-address-rate <n>]\n");
     return 2;
-}
-
-// Everything after the directory is open: the engine, the identities, the
-// listener, the signals, the loop.
-fn serve[&h, &i, &n, &k, &s, &d, &u, &l, &c, &r, &a](heap: &!h Heap, io: &!i Io, net: &n Net(""), clock: &k Clock, claim: &s Signals("HUP,INT,TERM"), dir: &d Dir, subs: &u [byte], sublens: &l [int], cfg: &c [int], entropy: &r [byte], alpn: &a [byte]) -> [heap, dir_read, file_read, err_write, io_write, net_in(""), conn_accept, conn_read, conn_write, poll, clock, signals("HUP,INT,TERM"), signals_read] int {
-    var status = 0;
-    var engine = tls.open_server(heap, cfg[front.c_conns()]);
-    borrow mut engine as &!ew in {
-        tls.seed(ew, entropy);
-        if len(alpn) > 0 && tls.set_alpn(ew, alpn) != 0 {
-            io.error_all(io, "tls_echo: --alpn refused, tls-server-alpn-list\n");
-            status = 2;
-        }
-        if status == 0 {
-            status = front.add_all(heap, io, dir, ew, subs, sublens, cfg[front.c_identities()], clock_unix_ms(clock));
-        }
-        if status == 0 {
-            match tcp_listen(net, cfg[front.cfg_len()], 1024, 0) {
-                Listening::Ok(l) => {
-                    var listener = l;
-                    borrow mut listener as &!lh in {
-                        listener_nonblocking(lh);
-                        match signals_watch(claim) {
-                            Watching::Ok(w) => {
-                                var watch = w;
-                                io.write_all(io, "listening ");
-                                io.print_int(io, cfg[front.cfg_len()]);
-                                io.newline(io);
-                                front.flush(io);
-                                borrow mut watch as &!wh in {
-                                    status = echo_loop.run(heap, io, lh, clock, ew, dir, wh, subs, sublens, cfg);
-                                }
-                                signals_close(watch);
-                            }
-                            Watching::Failed(e) => {
-                                io.error_all(io, "tls_echo: cannot claim HUP, INT and TERM\n");
-                                status = 7;
-                            }
-                        }
-                    }
-                    listener_close(listener);
-                }
-                Listening::Failed(e) => {
-                    io.error_all(io, "tls_echo: cannot listen\n");
-                    status = 3;
-                }
-            }
-        }
-    }
-    tls.close(heap, engine);
-    return status;
 }
 
 fn main(world: World) -> [] int {
@@ -156,7 +109,7 @@ fn main(world: World) -> [] int {
                                                 borrow net as &nn in {
                                                     borrow clock as &kk in {
                                                         borrow claim as &ss in {
-                                                            status = serve(h, i, nn, kk, ss, dh, contents(uw), contents(lw), cfg, entropy, alpn[0..info[0]]);
+                                                            status = echo_loop.serve(h, i, nn, kk, ss, dh, contents(uw), contents(lw), cfg, entropy, alpn[0..info[0]]);
                                                         }
                                                     }
                                                 }

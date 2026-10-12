@@ -852,6 +852,16 @@ impl<'a> FuncEmitter<'a> {
                 self.out.push_str(&format!("  {result} = bitcast i32 {low} to float\n"));
                 Ok(vec![LValue::Reg(result)])
             }
+            Callee::Builtin(Builtin::FloatOfBits) => {
+                let n = evaluated
+                    .into_iter()
+                    .flatten()
+                    .next()
+                    .ok_or_else(|| "`float_of_bits` needs an int argument".to_owned())?;
+                let result = self.fresh();
+                self.out.push_str(&format!("  {result} = bitcast i64 {} to double\n", operand(&n)));
+                Ok(vec![LValue::Reg(result)])
+            }
             Callee::Builtin(Builtin::BitsOf) => {
                 let x = evaluated
                     .into_iter()
@@ -1115,6 +1125,13 @@ impl<'a> FuncEmitter<'a> {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.udp_local_port(&args)
             }
+            Callee::Builtin(Builtin::UdpPeer) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                if args.len() != 4 {
+                    return Err(format!("`udp_peer` needs 4 leaves but {} were given", args.len()));
+                }
+                self.udp_peer(&args)
+            }
             Callee::Builtin(Builtin::PipeRead) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 if args.len() != 3 {
@@ -1225,11 +1242,19 @@ impl<'a> FuncEmitter<'a> {
             }
             Callee::Builtin(Builtin::ConnDetach) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
-                self.conn_detach(&args)
+                self.conn_detach(&args, false)
+            }
+            Callee::Builtin(Builtin::UdpDetach) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.conn_detach(&args, true)
+            }
+            Callee::Builtin(Builtin::UdpAttach) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.conn_attach(&args, true)
             }
             Callee::Builtin(Builtin::ConnAttach) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
-                self.conn_attach(&args)
+                self.conn_attach(&args, false)
             }
             Callee::Builtin(Builtin::PollerAddListener) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
@@ -1265,6 +1290,16 @@ impl<'a> FuncEmitter<'a> {
             ) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.nonblocking(&args)
+            }
+            Callee::Builtin(Builtin::ConnPeer) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                if args.len() != 3 {
+                    return Err(format!(
+                        "`conn_peer` needs 3 leaves but {} were given",
+                        args.len()
+                    ));
+                }
+                self.conn_peer(&args)
             }
             Callee::Builtin(Builtin::ConnNodelay) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();

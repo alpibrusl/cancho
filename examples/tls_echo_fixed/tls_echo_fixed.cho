@@ -1,0 +1,144 @@
+edition 6;
+
+// `tls_echo_fixed` -- `examples/tls_echo` with the certificate directory fixed at build
+// time (`docs/narrowing-into-several.md` section 9, question 5 and the example of
+// section 5): `main` narrows the filesystem to two paths with one `narrow` --
+// `/dev/urandom` for the engine's 32 bytes of entropy and `/etc/cancho/tls_echo` for
+// the certificates -- so the authority report names those two and not `fs_read("")`:
+//
+//     tls_echo_fixed --port <n> [--identity <subdirectory>]... [--alpn <p1,p2,...>]
+//                    [--connections <n>] [--handshakes <n>] [--rate <per second>]
+//                    [--handshake-timeout <ms>] [--idle <ms>]
+//
+// What it costs: the directory is part of the build (change it by editing the literal
+// below and rebuilding), and `--dir` is refused. Everything else is `tls_echo`'s --
+// `examples/tls_echo/echo.cho` has the shared `serve` and the loop, `front.cho` the
+// options, the bounds and the log -- and so are the exit statuses: 0 stopped by a
+// signal, 2 a usage error, 3 the port cannot be listened on, 4 no poller, 5 the
+// entropy or the directory cannot be read, 6 an identity refused, 7 the signals cannot
+// be claimed.
+//
+// Build: cancho build --std examples/tls_echo_fixed/tls_echo_fixed.cho
+//        examples/tls_echo/echo.cho examples/tls_echo/front.cho
+//        examples/tls_echo/identity.cho packages/tls/*.cho
+
+import std.bytes;
+import std.io;
+import echo_loop;
+import tls_front as front;
+import tls;
+
+fn usage[&i](io: &!i Io) -> [err_write] int {
+    io.error_all(io, "usage: tls_echo_fixed --port <n> [--identity <subdirectory>]... [--alpn <p1,p2>]\n");
+    io.error_all(io, "                      [--connections <n>] [--handshakes <n>] [--rate <n>] [--handshake-timeout <ms>] [--idle <ms>]\n");
+    return 2;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);
+    release(ffi);
+    // The whole of the filesystem this program will ever touch, written once:
+    // the entropy file and the directory the certificates are in. Everything
+    // after this line holds one or the other, and the report says so.
+    let (urandom, certs) = narrow(fs, "/dev/urandom", "/etc/cancho/tls_echo");
+    let claim = narrow(signals, "HUP,INT,TERM");
+    var status = 0;
+    borrow mut io as &!i in {
+        borrow mut heap as &!h in {
+            let cfgb = box_slice(h, front.cfg_len() + 1, 0);
+            let subsb = box_slice(h, 16 * front.sub_cap(), byte_of(0));
+            let lensb = box_slice(h, 16, 0);
+            borrow mut cfgb as &!cw in {
+                borrow mut subsb as &!uw in {
+                    borrow mut lensb as &!lw in {
+                        let cfg = contents(cw);
+                        cfg[front.c_conns()] = 256;
+                        cfg[front.c_handshakes()] = 32;
+                        cfg[front.c_rate()] = 100;
+                        cfg[front.c_hs_timeout()] = 10000;
+                        cfg[front.c_idle()] = 60000;
+                        region r {
+                            let alpn = alloc_slice[r](512, byte_of(0));
+                            let info = alloc_slice[r](2, 0);
+                            let entropy = alloc_slice[r](32, byte_of(0));
+                            borrow args as &g in {
+                                // The directory is not an option here: `--dir` is
+                                // refused, because the program holds no more of the
+                                // filesystem than the literal above.
+                                let named = front.parse_flags(g, cfg, contents(uw), contents(lw), alpn, info);
+                                if len(named) != 0 {
+                                    info[1] = 2;
+                                }
+                            }
+                            if cfg[front.c_identities()] == 0 {
+                                // No `--identity`: the directory itself is the one.
+                                cfg[front.c_identities()] = 1;
+                            }
+                            if info[1] != 0 {
+                                status = usage(i);
+                            } else {
+                                // The two uses of a path: the entropy, and the
+                                // directory, opened once. Nothing after them is
+                                // handed a filesystem capability: `serve`, the
+                                // loop and the reload hold the directory handle.
+                                borrow urandom as &uf in {
+                                    if fs_read(uf, "/dev/urandom", entropy) != 32 {
+                                        io.error_all(i, "tls_echo_fixed: cannot read 32 bytes of /dev/urandom\n");
+                                        status = 5;
+                                    }
+                                }
+                                var opened = DirOpened::Failed(2);
+                                borrow certs as &cf in {
+                                    // `opened` holds a `res` value and cannot be
+                                    // assigned over, so the placeholder is consumed first.
+                                    match opened {
+                                        DirOpened::Ok(unused) => {
+                                            dir_close(unused);
+                                        }
+                                        DirOpened::Failed(unused) => {
+                                        }
+                                    }
+                                    opened = open_dir(cf, "/etc/cancho/tls_echo");
+                                }
+                                match opened {
+                                    DirOpened::Ok(d) => {
+                                        var dir = d;
+                                        if status == 0 {
+                                            borrow dir as &dh in {
+                                                borrow net as &nn in {
+                                                    borrow clock as &kk in {
+                                                        borrow claim as &ss in {
+                                                            status = echo_loop.serve(h, i, nn, kk, ss, dh, contents(uw), contents(lw), cfg, entropy, alpn[0..info[0]]);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        dir_close(dir);
+                                    }
+                                    DirOpened::Failed(e) => {
+                                        io.error_all(i, "tls_echo_fixed: cannot open /etc/cancho/tls_echo\n");
+                                        status = 5;
+                                    }
+                                }
+                                bytes.zero(entropy);
+                            }
+                        }
+                    }
+                }
+            }
+            unbox_slice(h, cfgb);
+            unbox_slice(h, subsb);
+            unbox_slice(h, lensb);
+        }
+    }
+    release(urandom);
+    release(certs);
+    release(net);
+    release(clock);
+    release(claim);
+    release(args);
+    release(io);
+    release(heap);
+    return status;
+}

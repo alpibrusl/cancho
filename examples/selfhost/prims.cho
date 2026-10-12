@@ -1,0 +1,107 @@
+module selfhost.prims;
+
+// prims.cho -- the builtins, as the checker meets them.
+//
+// A builtin's signature is data (`builtins.cho`, generated from `Builtin::signature`): a prefix-coded
+// run of integers the checker decodes into its own types. A type it has no way to hold yet decodes
+// to 0, and the call is `SKIP`, raised where the Rust checker would have met it.
+
+import selfhost.ast;
+import selfhost.types;
+import selfhost.tables;
+import selfhost.builtins;
+import selfhost.lexcore as lc;
+
+// The next integer of a stream: of the builtins' signatures, or of the prelude structs' field types.
+fn code[&s](st: &!s [int], fields: bool, at: int) -> [] int {
+    if fields {
+        return builtins.field_type(at);
+    }
+    return builtins.builtin_sig(at);
+}
+
+// The builtin the name at `tok` is, in a file of `edition`, or -1.
+pub fn builtin_at[&s, &x](st: &!s [int], text: &x [byte], tok: int, edition: int) -> [] int {
+    var b = 0;
+    while b < tables.builtin_count() {
+        if lc.spells(text, ast.tstart(st, tok), ast.tend(st, tok), tables.builtin_name(b)) && tables.builtin_since(b) <= edition {
+            return b;
+        }
+        b = b + 1;
+    }
+    return 0 - 1;
+}
+
+// The type coded at `at` of the stream, with a region parameter `r` of its builtin standing for
+// `fresh + r`, or 0 if it is one the checker cannot hold. `behind` says the type is the referent of
+// a reference: a prelude type that is a resource (a capability, a handle) is a value of this
+// checker only behind one, which is `val`. `st[53]` is left at the first integer after the type,
+// whether or not it was one the checker holds.
+pub fn decode[&s](st: &!s [int], fields: bool, at: int, fresh: int, behind: bool) -> [] int {
+    let c = code(st, fields, at);
+    st[53] = at + 1;
+    if c >= 1 && c <= 6 {
+        return c;
+    }
+    if c == 10 || c == 11 {
+        let r = code(st, fields, at + 1);
+        let inner = decode(st, fields, at + 2, fresh, true);
+        if inner == 0 {
+            return 0;
+        }
+        var area = types.static_region();
+        if r != 99 {
+            area = fresh + r;
+        }
+        return types.make_ref(st, c == 11, area, inner);
+    }
+    if c == 12 {
+        let element = decode(st, fields, at + 1, fresh, false);
+        if element == 0 || element > 6 {
+            return 0;
+        }
+        return types.make_slice(st, element);
+    }
+    if c == 13 {
+        let index = code(st, fields, at + 1);
+        let n = code(st, fields, at + 2);
+        var next = at + 3;
+        var ok = true;
+        var k = 0;
+        while k < n {
+            if decode(st, fields, next, fresh, false) == 0 {
+                ok = false;
+            }
+            next = st[53];
+            k = k + 1;
+        }
+        st[53] = next;
+        if !ok || n != 0 {
+            return 0;
+        }
+        if !behind && tables.prelude_res(index) != 0 {
+            return 0;
+        }
+        return types.make_prelude(st, index);
+    }
+    if c == 14 {
+        let n = code(st, fields, at + 1);
+        var next = at + 2;
+        var k = 0;
+        while k < n {
+            decode(st, fields, next, fresh, false);
+            next = st[53];
+            k = k + 1;
+        }
+        st[53] = next;
+        return 0;
+    }
+    if c == 15 {
+        st[53] = at + 2;
+        return 0;
+    }
+    if c == 16 {
+        return 6;
+    }
+    return 0;
+}

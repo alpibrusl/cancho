@@ -9,10 +9,13 @@ mod conc;
 mod expr;
 mod foreign;
 mod memory;
+mod narrow;
 mod net;
 mod process;
 mod signals;
 mod stmt;
+
+use narrow::{check_narrowing, narrow_into_several, narrow_many_refusal};
 
 /// A `static` as the checker knows it, before evaluation
 /// (`docs/compile-time-data.md` §2).
@@ -373,21 +376,39 @@ impl<'a> FnLowering<'a> {
         args: &[ExprId],
         span: Span,
     ) -> Result<(Expr, Type), Diagnostic> {
-        let [capability, literal] = args else {
+        // `docs/narrowing-into-several.md` section 5: a capability and one
+        // literal is the single form; a capability and two or more is the
+        // multi-literal form. One argument or none was `arity-mismatch` before
+        // and still is.
+        let [capability, literal, more @ ..] = args else {
             return Err(Diagnostic::new(
                 Rule::ArityMismatch,
-                format!("`narrow` takes 2 arguments, but {} were given", args.len()),
+                format!(
+                    "`narrow` takes a capability and one or more literals, but {}",
+                    match args.len() {
+                        0 => "no arguments were given".to_string(),
+                        1 => "no literal was given".to_string(),
+                        n => format!("{n} arguments were given"),
+                    }
+                ),
                 span,
             ));
         };
-        let AstExpr::Str(target) = self.ast.expr(*literal) else {
-            return Err(Diagnostic::new(
-                Rule::CapabilityNotNarrowable,
-                "`narrow` takes a literal, so the refinement can be checked where it is written",
-                self.ast.expr_span(*literal),
-            ));
-        };
-        let target = target.clone();
+        let mut targets = Vec::with_capacity(args.len() - 1);
+        let mut spans = Vec::with_capacity(args.len() - 1);
+        for literal in std::iter::once(literal).chain(more) {
+            let AstExpr::Str(target) = self.ast.expr(*literal) else {
+                return Err(Diagnostic::new(
+                    Rule::CapabilityNotNarrowable,
+                    "`narrow` takes a literal, so the refinement can be checked where it is written",
+                    self.ast.expr_span(*literal),
+                ));
+            };
+            targets.push(target.clone());
+            spans.push(self.ast.expr_span(*literal));
+        }
+        let many = !more.is_empty();
+        let target = targets[0].clone();
 
         let (value, found) = self.expr(*capability)?;
         let resolved = self.unifier.resolve(&found);
@@ -437,6 +458,16 @@ impl<'a> FnLowering<'a> {
                 span,
             ));
         };
+        // `docs/narrowing-into-several.md` section 5, item 4: only the two
+        // path capabilities narrow into several. The others already name a
+        // set in one capability, or (`Net`) have no asker.
+        if many && which != PRELUDE_FS && which != PRELUDE_EXEC {
+            return Err(Diagnostic::new(
+                Rule::CapabilityNotNarrowable,
+                narrow_many_refusal(which),
+                span,
+            ));
+        }
         // `docs/signals.md` section 2.1: a set of signals narrows as a set --
         // any order, each member claimable, strictly inside what is held --
         // and the type it answers is the canonical spelling, so two programs
@@ -451,39 +482,10 @@ impl<'a> FnLowering<'a> {
             let canonical = self.narrow_ffi(current, &target, span)?;
             return Ok((value, Type::Named(DefId(which as u32), vec![Type::Lit(canonical)])));
         }
-        if !target.starts_with(current.as_str()) {
-            return Err(Diagnostic::new(
-                Rule::CapabilityNotNarrowable,
-                format!(
-                    "`{current}` cannot be narrowed to `{target}`: a capability is attenuated, never widened, and a program must not be able to grant itself what it was not given"
-                ),
-                span,
-            ));
+        if many {
+            return narrow_into_several(value, which, current, &targets, &spans, span);
         }
-        // A path prefix extends at a separator or not at all. `/tmp` is not
-        // a prefix of `/tmpevil` in any sense a filesystem would recognise,
-        // and a textual check that said otherwise would hand a program the
-        // directory next door. `Ffi` has no separator and no such case, and
-        // neither does `Net`: `docs/net.md` §4 bounds a `net_out` label by
-        // plain textual prefix on `"host:port"`, the same way an `egress`
-        // entry does, with no boundary character of its own.
-        // `docs/processes.md` §4.1: `Exec`'s prefix is a path, with `Fs`'s rule.
-        if (which == PRELUDE_FS || which == PRELUDE_EXEC) && !extends_path(current, &target) {
-            return Err(Diagnostic::new(
-                Rule::CapabilityNotNarrowable,
-                format!(
-                    "`{current}` cannot be narrowed to `{target}`: a path prefix extends at a `/`, and `{target}` is a different name that merely starts with the same bytes"
-                ),
-                span,
-            ));
-        }
-        if &target == current {
-            return Err(Diagnostic::new(
-                Rule::CapabilityNotNarrowable,
-                format!("this narrows `{current}` to itself, which grants nothing new"),
-                span,
-            ));
-        }
+        check_narrowing(which, current, &target, span)?;
 
         Ok((value, Type::Named(DefId(which as u32), vec![Type::Lit(target)])))
     }

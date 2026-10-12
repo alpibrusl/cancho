@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish `packages/x509`, `packages/tls` and `packages/http-server` as `.cancho-vcs` stores (docs/tls-hooks.md §3).
+"""Publish `packages/x509`, `packages/tls`, `packages/http-client` and `packages/http-server` as `.cancho-vcs` stores (docs/tls-hooks.md §3).
 
     python3 scripts/publish_packages.py            # rebuild the committed stores
     python3 scripts/publish_packages.py --check    # fail if they are not what a fresh publish gives
@@ -29,7 +29,7 @@ import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PACKAGES = ["x509", "tls"]
+PACKAGES = ["x509", "tls", "http-client"]
 FLAT = ["http-server"]
 STORE = ".cancho-vcs"
 
@@ -53,7 +53,7 @@ def modules(tree):
             mod = re.search(r"^module\s+(\w+)\s*;", text, re.M)
             if not mod:
                 raise SystemExit(f"{pkg}/{name} declares no module")
-            imports = [i for i in re.findall(r"^import\s+([\w.]+)\s*;", text, re.M) if not i.startswith("std.")]
+            imports = [i for i in re.findall(r"^import\s+([\w.]+)(?:\s+as\s+\w+)?\s*;", text, re.M) if not i.startswith("std.")]
             found[mod.group(1)] = (pkg, os.path.join(d, name), imports)
     return found
 

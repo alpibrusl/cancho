@@ -1,0 +1,13 @@
+//~ ERROR are nested
+//~ RULE capability-not-narrowable
+
+// The same, written inner first: the check is symmetric.
+// (`docs/narrowing-into-several.md` section 5.)
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io); release(ffi); release(heap); release(args);
+    let (a, b) = narrow(fs, "/var/lib/app/cache", "/var/lib/app");
+    release(a); release(b);
+    return 0;
+}

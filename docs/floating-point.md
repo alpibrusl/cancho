@@ -175,8 +175,9 @@ a generated NaN's sign and payload to the hardware, and x86-64 sets the
 sign where aarch64 does not. A bare reinterpretation therefore made
 `bits_of(0.0 / 0.0)` the one expression in the language whose value
 depended on the target. Every NaN now reads as `0x7ff8000000000000`.
-Nothing is lost by this, because no program can construct a NaN payload
-without `float_of_bits`, which is missing on purpose (below). See
+Nothing is lost by this: arithmetic never reaches a NaN's payload, and
+the one way to *build* one, `float_of_bits` (below, edition 7), is read
+back by `bits_of` as the same one pattern. See
 [`differential.md`](differential.md) §4.
 
 It exists so that **taking a float apart is a program's job rather than
@@ -186,9 +187,28 @@ enough: `std.fmt.float_into` is written in cancho, on this one
 instruction, and nothing else about floats had to move into the compiler
 to make it possible.
 
-The inverse, `float_of_bits`, is **not** here. Adding it would be a line
-of code; nothing has needed it, and a builtin with no caller is a
-builtin nobody has checked.
+```
+float_of_bits(n: int) -> [] float   // edition 7: the float whose 64 bits are n
+```
+
+The inverse, and as little a conversion as `bits_of`: a `bitcast`, on
+both backends, no arithmetic. **It was missing on purpose** -- "a builtin
+with no caller is a builtin nobody has checked" -- until it had one: the
+`table` tool (`cancho-table`, `docs/numbers.md`) keeps a float column as
+an order-preserving `int` and had to turn it back into a double through
+`ldexp` and two loops over the exponent, and `std.math` wrote `pow2` by
+squaring for the same lack. Every pattern is a value, subnormals,
+infinities and `-0.0` included, so `bits_of(float_of_bits(n)) == n` for
+every `n` that is not a NaN's. A NaN built with a payload *is* a NaN with
+that payload (`is_nan` sees it), but `bits_of` answers the canonical
+pattern for it, as for every NaN (above): the pair is an identity on
+everything but NaN payloads, and that is the one thing it does not do.
+
+Edition 7 and nothing else about edition 6 changes: `float_of_bits` is a
+name an older file may already declare, so it is not a builtin there
+(`tests/reject/float_of_bits_is_edition_seven.cho`;
+`tests/accept/float_of_bits.cho` on both backends, and the
+1,000,000-pattern round trip in `scripts/float_differential.py`).
 
 ---
 

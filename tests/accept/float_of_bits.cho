@@ -1,0 +1,72 @@
+// `docs/floating-point.md` §4.1: `float_of_bits`, `bits_of`'s inverse
+// (edition 7). Every pattern is a value: 1.5 and -0.0 by their bits, the
+// smallest subnormal as a float that is not zero, infinity, and a NaN with a
+// payload, which `bits_of` reads back as the one canonical NaN.
+//~ STDOUT one-and-a-half 1
+//~ STDOUT minus-zero-sign 1
+//~ STDOUT minus-zero-equals-zero 1
+//~ STDOUT smallest-subnormal-nonzero 1
+//~ STDOUT smallest-subnormal-halved 0
+//~ STDOUT infinity 1
+//~ STDOUT payload-nan-is-nan 1
+//~ STDOUT payload-nan-reads-canonical 9221120237041090560
+//~ STDOUT round-trip-differences 0
+//~ EXIT 0
+edition 7;
+
+import std.io;
+
+fn label[&i, &s](io: &!i Io, name: &s [byte], value: int) -> [io_write] int {
+    io.write_all(io, name);
+    io.space(io);
+    io.print_int(io, value);
+    io.newline(io);
+    return 0;
+}
+
+fn flag(b: bool) -> [] int {
+    if b {
+        return 1;
+    }
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(args);
+    release(fs);
+    release(ffi);
+    release(heap);
+    let minus_zero = float_of_bits(0 - 9223372036854775807 - 1);
+    let tiny = float_of_bits(1);
+    let infinity = float_of_bits(9218868437227405312);
+    let payload_nan = float_of_bits(9218868437227405313);
+    // 64 patterns spread over the whole range, including the sign bit.
+    var differences = 0;
+    var bits = 0 - 9223372036854775807 - 1;
+    var n = 0;
+    while n < 64 {
+        let pattern = bits + n * 144115188075855872 + n;
+        if bits_of(float_of_bits(pattern)) != pattern && !is_nan(float_of_bits(pattern)) {
+            differences = differences + 1;
+        }
+        n = n + 1;
+    }
+    borrow mut io as &!i in {
+        label(i, "one-and-a-half", flag(float_of_bits(4609434218613702656) == 1.5));
+        label(i, "minus-zero-sign", flag(bits_of(minus_zero) < 0));
+        label(i, "minus-zero-equals-zero", flag(minus_zero == 0.0));
+        label(i, "smallest-subnormal-nonzero", flag(tiny > 0.0));
+        label(i, "smallest-subnormal-halved", flag(tiny * 0.5 > 0.0));
+        label(i, "infinity", flag(infinity == infinity + 1.0));
+        label(i, "payload-nan-is-nan", flag(is_nan(payload_nan)));
+        label(i, "payload-nan-reads-canonical", bits_of(payload_nan));
+        label(i, "round-trip-differences", differences);
+    }
+    release(io);
+    return 0;
+}

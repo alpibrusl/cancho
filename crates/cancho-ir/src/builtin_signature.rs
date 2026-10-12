@@ -283,6 +283,7 @@ impl Builtin {
             // it reaches no library (`docs/float-math.md` §3).
             Builtin::Sqrt => (vec![Type::Float], Type::Float),
             Builtin::BitsOf => (vec![Type::Float], Type::Int),
+            Builtin::FloatOfBits => (vec![Type::Int], Type::Float),
             Builtin::F32Of => (vec![Type::Float], Type::F32),
             Builtin::FloatOf32 => (vec![Type::F32], Type::Float),
             Builtin::BitsOf32 => (vec![Type::F32], Type::Int),
@@ -644,6 +645,23 @@ impl Builtin {
                 }],
                 named(PRELUDE_CLOCK),
             ),
+            // `docs/conn-peer.md` §3: the connection is only read (`getpeername` moves
+            // nothing), the buffer is written into.
+            Builtin::ConnPeer => (
+                vec![
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_CONN)),
+                    },
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                Type::Int,
+            ),
             Builtin::ConnNonblocking | Builtin::ConnNodelay | Builtin::ConnConnectStatus => (
                 vec![Type::Ref {
                     unique: true,
@@ -807,6 +825,22 @@ impl Builtin {
                 }],
                 Type::Int,
             ),
+            Builtin::UdpPeer => (
+                vec![
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_UDP)),
+                    },
+                    Type::Int,
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                Type::Int,
+            ),
             Builtin::UdpNonblocking => (
                 vec![Type::Ref {
                     unique: true,
@@ -816,6 +850,8 @@ impl Builtin {
                 Type::Int,
             ),
             Builtin::UdpClose => (vec![named(PRELUDE_UDP)], Type::Int),
+            Builtin::UdpDetach => (vec![named(PRELUDE_UDP)], Type::Int),
+            Builtin::UdpAttach => (vec![Type::Int], named(PRELUDE_UDP_OPENED)),
             Builtin::PollerAddUdp => (
                 vec![
                     Type::Ref {

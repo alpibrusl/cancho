@@ -533,13 +533,14 @@ pieces, so what was in `echo.cho` and `tls_echo.cho` and has nothing to do with 
 ```
 tls_echo --port <n> --dir <directory> [--identity <subdirectory>]... [--alpn <p1,p2>]
          [--connections <n>] [--handshakes <n>] [--rate <per second>] [--handshake-timeout <ms>] [--idle <ms>]
+         [--per-address <n>] [--per-address-rate <per second>]
 ```
 
 It logs, per connection, what was negotiated and how it ended:
 
 ```
-conn 7 established suite=TLS_AES_128_GCM_SHA256 group=x25519 sni=echo.lex-sys.test alpn=echo hrr=no waited=0 handshake=5
-conn 7 closed ok in=11 ms=1009
+conn 7 peer=127.0.0.1:51109 established suite=TLS_AES_128_GCM_SHA256 group=x25519 sni=echo.lex-sys.test alpn=echo hrr=no waited=0 handshake=5
+conn 7 peer=127.0.0.1:51109 closed ok in=11 ms=1009
 ```
 
 **The authority report** is bounded and pinned by `conformance/tls_echo.rs`: `args`, `clock`, `conn_accept`, `conn_read`,
@@ -557,6 +558,12 @@ link there is refused (`ELOOP`): certbot's `live/` is links into `archive/` and 
 `..data/`, so a deployment copies the files in (a certbot `--deploy-hook` does, and sets the permissions this process
 needs at the same time). A program that knew its directory at build time could narrow to the literal instead
 (`Fs("/etc/cancho-mqtt")`), and its row would say so.
+
+*(Built, PR #364, `narrowing-into-several.md` §11.1: `examples/tls_echo_fixed` is that program. Its `main` is
+`narrow(fs, "/dev/urandom", "/etc/cancho/tls_echo")`, one `narrow` for the two paths it reads, so its pinned report
+(`conformance/tls_echo_fixed.rs`) has `fs_read("/dev/urandom")` and `fs_read("/etc/cancho/tls_echo")` where `tls_echo`'s has
+`fs_read("")`, and the same labels otherwise. It shares `serve` and the loop with `tls_echo`; the cost is that the directory is
+fixed when it is built and `--dir` is refused.)*
 
 ### 11.2 The two decisions
 
@@ -581,6 +588,15 @@ at once) is the common case of "too many handshakes", and delaying it costs each
 retry with backoff; the attacker's case is bounded either way, by the same two numbers. The alternative of leaving the
 excess in the kernel's listen queue is not available: there is no way to stop watching a `Listener` short of closing it
 (`poller_remove` takes a `Conn`), so a listener that is not accepted from wakes `poller_wait` at once, every time.
+
+**Per address** ([`conn-peer.md`](conn-peer.md)). Every line the example prints about a connection says who it is from
+(`peer=<address>:<port>`: `conn 3 peer=127.0.0.1:51109 established ...`, `refused 7 peer=... full`), from `conns.peer`
+asked once after the connection is put in its slot. Two more bounds count under the peer's key (`addr.key`: an IPv4
+address, an IPv6 /64), both off unless given: `--per-address <n>` closes a connection at once, as the table does
+(`refused <id> peer=... per-address`), when `<n>` from its key are already held; `--per-address-rate <n>` leaves a queued
+connection queued while `<n>` handshakes from its key were already started in this second, and does not hold up the
+connections behind it. The second keeps a table of 1,024 keys per one-second window; a 1,025th key in a window waits for
+the next. A client behind a proxy or NAT is the proxy's or the NAT's address and counts with everything behind it.
 
 The defaults: 256 connections, 32 handshakes in progress, 100 started a second, 10 s to finish a handshake, 60 s
 idle. *Corrected on this PR:* the rate's default was 200, "most of one core" at 4 ms; CI's x86-64 runner measured
@@ -613,6 +629,9 @@ close_notify on established ones, and exits once those are written or after two 
   | `full` | `--connections 4`: a fifth connection is closed at once (0 ms), before a handshake |
   | `idle` | `--idle 1000`: close_notify after 1.00 s |
   | `shutdown` | `SIGTERM` with 10 connections: 10 close_notify, exit 0 |
+  | `peer` | the established, closed and refused lines each say `peer=127.0.0.1:<the client's source port>` |
+  | `per-address` | `--per-address 3`: a fourth connection from 127.0.0.1 is closed at once (0 ms) as `per-address`; a client from 127.0.0.2 (Linux only; macOS has no second loopback address, and the step says it was skipped) is served; a place freed by a close is reusable |
+  | `addr-rate` | `--per-address-rate 2`: six clients from one address complete in 2.0 s (the last waited 1.99 s); a client from 127.0.0.2 meanwhile took 48 ms (Linux) |
 
   curl and mosquitto are not in it: they speak HTTP and MQTT, which an echo answers with their own request; their
   interop with this engine is §10.2's matrix.
@@ -667,8 +686,11 @@ i7 against 0.82 on the M4, and as much again for the check). It is why the rate'
   `examples/https_hello` is this example with it where the echo is.
 - **More than one core.** One thread, as the design's programs are today; a second core is a second process on the
   same port, which `tcp_listen`'s `SO_REUSEPORT` flag allows, not tried.
-- **A flood from many addresses** was not run; the bounds are per process, not per peer. A per-address bound is the
-  broker's and the gateway's to design, with the address, which `std.conns` does not give today.
+- **A flood from many addresses** was not run; the bounds are per process, not per peer. **Corrected
+  ([`conn-peer.md`](conn-peer.md)):** `std.conns` now gives the address (`conns.peer`), and `examples/tls_echo` has the
+  per-address bounds (`--per-address`, `--per-address-rate`, `front.cho`), tested with clients from two addresses
+  (`scripts/tls_echo_test.py`: `per-address`, `addr-rate`). A flood from *many* addresses against the table of
+  1,024 keys is still not run.
 - **Cranelift**: the tests in CI build the example with the LLVM backend. Built with Cranelift by hand on darwin-aarch64,
   it passes the same 8 cases (`many` in 3.4 s against LLVM's 0.8); its cost is not measured.
 - **Not independently reviewed (#209)**, as the engine.

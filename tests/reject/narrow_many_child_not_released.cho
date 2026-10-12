@@ -1,0 +1,13 @@
+//~ ERROR is still live here
+//~ RULE linear-value-unconsumed
+
+// Every child is a `res` value and must be consumed: dropping one is the leak linearity refuses.
+// (`docs/narrowing-into-several.md` section 5.)
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io); release(ffi); release(heap); release(args);
+    let (a, b) = narrow(fs, "/dev/urandom", "/etc/ssl");
+    release(a);
+    return 0;
+}

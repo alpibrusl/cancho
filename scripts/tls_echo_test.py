@@ -20,6 +20,13 @@ server on a free port with the options it needs, and says `ok` or what failed:
     full       `--connections 4`: a fifth connection is closed at once, before a handshake
     idle       `--idle 1000`: an established connection with no traffic gets close_notify
     shutdown   SIGTERM with 10 connections open: each gets close_notify, the server exits 0
+    peer       every line about a connection names its peer (`peer=127.0.0.1:<the client's source port>`), the
+               established, closed and refused lines alike (docs/conn-peer.md)
+    per-address  `--per-address 3`: a fourth connection from one address is closed at once (`per-address`), one
+               from another address (127.0.0.2: Linux has all of 127.0.0.0/8, macOS only 127.0.0.1) is not
+               affected, and a place freed by a close is usable again
+    addr-rate  `--per-address-rate 2`: six clients from one address are started two a second, while a client from
+               another address (Linux only, as above) is not delayed by them
 
 curl and mosquitto's clients are not here: they speak HTTP and MQTT, which an echo answers with their own request.
 Their interop with this server is docs/tls-server.md §10.2's matrix, against `tests/programs/tls_serve.cho`.
@@ -376,8 +383,143 @@ def case_shutdown(exe):
         server.stop()
 
 
+def second_source():
+    """A second local address to connect from, or None where there is only 127.0.0.1 (macOS)."""
+    s = socket.socket()
+    try:
+        s.bind(("127.0.0.2", 0))
+        return "127.0.0.2"
+    except OSError:
+        return None
+    finally:
+        s.close()
+
+
+def connect_from(port, source, alpn=None, timeout=10):
+    raw = socket.socket()
+    raw.settimeout(timeout)
+    raw.bind((source, 0))
+    raw.connect(("127.0.0.1", port))
+    return context(alpn).wrap_socket(raw, server_hostname=HOST)
+
+
+def case_peer(exe):
+    server = Server(exe, extra=["--connections", "2"])
+    try:
+        c = connect(server.port)
+        local = c.getsockname()[1]
+        echo(c, b"who am i")
+        established = server.wait_for(lambda l: " established " in l, 5)[0]
+        c.unwrap()
+        c.close()
+        closed = server.wait_for(lambda l: " closed " in l, 5)[0]
+        want = f"127.0.0.1:{local}"
+        for name, line in (("established", established), ("closed", closed)):
+            if field(line, "peer") != want:
+                return f"the {name} line says peer={field(line, 'peer')}, wanted {want}: {line}"
+        # Over the table: refused at once, and the line still says who.
+        held = [socket.create_connection(("127.0.0.1", server.port)) for _ in range(2)]
+        time.sleep(0.3)
+        extra = socket.create_connection(("127.0.0.1", server.port), timeout=5)
+        refused = server.wait_for(lambda l: l.startswith("refused ") and l.endswith(" full"), 5)[0]
+        if field(refused, "peer") != f"127.0.0.1:{extra.getsockname()[1]}":
+            return f"the refused line says peer={field(refused, 'peer')}: {refused}"
+        for h in held + [extra]:
+            h.close()
+        return f"ok (peer={want} on established and closed; refused names its peer too)"
+    finally:
+        server.stop()
+
+
+def case_per_address(exe):
+    server = Server(exe, extra=["--per-address", "3"])
+    try:
+        held = [socket.create_connection(("127.0.0.1", server.port)) for _ in range(3)]
+        time.sleep(0.3)
+        extra = socket.create_connection(("127.0.0.1", server.port), timeout=5)
+        t0 = time.monotonic()
+        try:
+            got = extra.recv(1)
+        except ConnectionResetError:
+            got = b""
+        took = time.monotonic() - t0
+        refused = server.wait_for(lambda l: l.startswith("refused ") and l.endswith(" per-address"), 5)[0]
+        if field(refused, "peer") != f"127.0.0.1:{extra.getsockname()[1]}":
+            return f"the refused line names {field(refused, 'peer')}: {refused}"
+        if got != b"" or took > 1.0:
+            return f"the fourth connection was not closed at once ({got!r}, {took:.2f} s)"
+        note = "no second address here (macOS): the unaffected-client step is skipped"
+        other = second_source()
+        if other:
+            c = connect_from(server.port, other)
+            echo(c, b"from another address")
+            line = server.wait_for(lambda l: " established " in l and f"peer={other}:" in l, 5)[0]
+            c.unwrap()
+            c.close()
+            note = f"a client from {other} is not affected ({field(line, 'peer')})"
+        # A place freed by a close is usable again.
+        held.pop().close()
+        time.sleep(0.3)
+        again = connect(server.port)
+        echo(again, b"after a close")
+        again.unwrap()
+        again.close()
+        for h in held + [extra]:
+            h.close()
+        return f"ok (fourth refused in {took * 1000:.0f} ms as per-address; {note}; a freed place is reusable)"
+    finally:
+        server.stop()
+
+
+def case_addr_rate(exe):
+    server = Server(exe, extra=["--per-address-rate", "2"])
+    try:
+        errors = []
+        done = []
+
+        def client(k):
+            try:
+                with connect(server.port, timeout=30) as c:
+                    echo(c, f"client {k}".encode())
+                    c.unwrap()
+                done.append(time.monotonic())
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"{k}: {e!r}")
+
+        threads = [threading.Thread(target=client, args=(k,)) for k in range(6)]
+        t0 = time.monotonic()
+        for t in threads:
+            t.start()
+        note = "no second address here (macOS): the unaffected-client step is skipped"
+        other = second_source()
+        if other:
+            time.sleep(0.3)
+            t1 = time.monotonic()
+            c = connect_from(server.port, other, timeout=30)
+            echo(c, b"another address")
+            c.unwrap()
+            c.close()
+            quick = time.monotonic() - t1
+            if quick > 1.0:
+                return f"a client from {other} waited {quick:.2f} s behind the other address"
+            note = f"a client from {other} took {quick * 1000:.0f} ms meanwhile"
+        for t in threads:
+            t.join(60)
+        elapsed = time.monotonic() - t0
+        if errors:
+            return f"{len(errors)} failed, first: {errors[0]}"
+        lines = server.wait_for(lambda l: " established " in l and "peer=127.0.0.1:" in l, 5, 6)
+        waits = sorted(int(field(l, "waited")) for l in lines)
+        if elapsed < 1.8 or waits[-1] < 1500:
+            return f"not limited per address: {elapsed:.2f} s, waits {waits}"
+        return f"ok (6 from one address in {elapsed:.2f} s, waited {waits[0]} to {waits[-1]} ms; {note})"
+    finally:
+        server.stop()
+
+
 CASES = {"suites": case_suites, "many": case_many, "reload": case_reload, "bound": case_bound,
-         "rate": case_rate, "full": case_full, "idle": case_idle, "shutdown": case_shutdown}
+         "rate": case_rate, "full": case_full, "idle": case_idle, "shutdown": case_shutdown,
+         "peer": case_peer, "per-address": case_per_address, "addr-rate": case_addr_rate}
 
 
 # ---- the cost ----

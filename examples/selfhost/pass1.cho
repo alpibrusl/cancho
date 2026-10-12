@@ -194,7 +194,7 @@ pub fn count_params[&s](st: &!s [int], dp: int, regions: bool) -> [] int {
 }
 
 // Is the `k`th type parameter written `: val`?
-fn param_bounded[&s](st: &!s [int], dp: int, k: int) -> [] bool {
+pub fn param_bounded[&s](st: &!s [int], dp: int, k: int) -> [] bool {
     let name = nth_param(st, dp, false, k);
     return name >= 0 && is_code(st, name + 1, lc.Tok::Colon);
 }

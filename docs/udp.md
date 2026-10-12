@@ -154,7 +154,9 @@ document's, and it is stated here so the two designs do not each assume the othe
    `udp_nonblocking`, `udp_close`, `udp_local_port`, `poller_add_udp`; tests and mutants.
 3. **The bound half**: `udp_bind`, the peer ring, `udp_recv_from`, `udp_send_to`; the forgery tests (§10).
 4. **`std.conns`-style table** for `Udp` tickets, if a program asks (a resolver holding many upstream sockets
-   will); decided by the programs, not here.
+   will); decided by the programs, not here. **A program asked** ([cancho-dns](https://github.com/alpibrusl/cancho-dns)
+   D3: one connected socket per query in flight, a source port per query, the only form that keeps the
+   defence of `docs/design.md` §6). Built as §11.
 
 | Question | Settled |
 |---|---|
@@ -232,6 +234,66 @@ an order of magnitude; a program that holds replies longer must answer or drop t
 tickets.
 
 **Not done.** The round-trip measurement against a C loop. A `std` table of `Udp` handles for a program that
-holds many upstream sockets (slice 4, when a program asks). The ring is a fixed size; a larger one is a
+holds many upstream sockets (slice 4: built, §11). The ring is a fixed size; a larger one is a
 constant in `socket_os.rs`. Darwin: this slice's tests (the ring, the tickets, `udp_bind`) passed on the
 `darwin-aarch64` CI job of #358; that is the CI result, not a run on a Mac here.
+
+## 11. Slice 4: tickets for datagram sockets
+
+**Why now.** cancho-dns D3 sends every upstream query from a fresh connected socket, so that its source port is
+the kernel's and unpredictable (§5), and it has hundreds of queries in flight. `Udp` is a resource and `std.vec`
+holds only copyable things (`native-sockets.md` §10.3), so there was nowhere to put them: found by reading the
+forwarder's design against the language before writing it, not by a failure.
+
+**What it is.** `conn_detach`/`conn_attach` again, for `Udp`:
+
+- `udp_detach(Udp) -> int` ends the handle, leaves the descriptor open and answers a **ticket**; `-1` means the
+  descriptor is past the epoch table and the socket was closed rather than leaked.
+- `udp_attach(int) -> UdpOpened` redeems a ticket **once** (`Ok(Udp)`), or `Failed(EBADF)`: never issued, already
+  redeemed, copied, forged, of the other kind, or for a descriptor since reused. `UdpOpened` is reused; no new type.
+- `std.udps`: `put`, `send`, `recv`, `nonblocking`, `local_port`, `watch`, `close` and `drop` over **a `std.conns`
+  `Table`** (`empty`, `live` and `slots` are `conns`'s). A table holds tickets, not sockets, and the kind bit below
+  makes each verb refuse the other kind's, so one table may hold both; `conns` gained `store`, `replace`, `ticket_at`
+  and `release_slot` as public so that the two modules share the slot bookkeeping instead of copying it (the
+  repository refuses a duplicated function body).
+
+**One epoch table, a kind bit.** Both kinds of ticket use the descriptor epochs of `native-sockets.md` §10.3, because
+a descriptor is one thing whatever it carries. Left like that, a `Conn`'s ticket would redeem as a `Udp` and the
+reverse: memory-safe, since both are descriptors, but the wrong verbs on the wrong socket. So a `Udp` ticket sets
+**bit 31 of its descriptor half**. `conn_attach` reads all 32 bits, finds a descriptor beyond the 65,536-entry table
+and refuses it; `udp_attach` requires the bit and reads the other 31. No second table, and the 31-bit epoch and
+the odd/even rule are unchanged.
+
+**Built and tested** on both backends (`tests/conformance/udp.rs`): a ticket from `udp_connect` redeems and the
+socket still sends and receives; eight forged redemptions refused (zero, negative, one, `i64::MAX`, the real ticket
+plus one, plus two epochs, with the kind bit cleared, and redeemed as a `Conn`); a second redemption refused; a
+`Conn`'s ticket refused by `udp_attach` and not spent by the refusal; and a three-socket table (slots in order, each
+send and receive finding its own peer, a closed slot refusing stale use and being reused, `drop` closing the rest).
+The builtins are refused on WASI with the others (`Gap::Sockets`) and are edition 5.
+
+**Not done.** Nothing here measures what a table costs per datagram (two extra builtin calls and two table accesses,
+as `native-sockets.md` §10.3 says for `Conn`); cancho-dns D3 is the first program that will.
+
+## 12. Slice 5: who a ticket names
+
+**Why.** cancho-dns needs to refuse clients outside configured networks and to rate-limit by client network (`design.md` section 6 there). A bound
+socket answers a sender through a *ticket*, deliberately not an address (§4), so a program could not read who had written to it.
+Found by reading that policy against the language before writing it. (`conn_peer` for an accepted TCP connection had been added
+meanwhile for two other programs, `conn-peer.md`; the datagram half is what was left.)
+
+**What it adds**, edition 5, refused on WASI with the other socket builtins, no capability and no authority label:
+`udp_peer(&Udp, ticket, &![byte]) -> int` writes the sender a ticket names into the caller's buffer in **the form `conn_peer` uses**
+(19 bytes: family, sixteen address bytes, the port big-endian; the family is always `4` here, as every cancho socket is IPv4), so
+`std.addr.decode` reads it and `std.addr.key` keys a bound on it. It makes the three checks `udp_send_to` makes (positive, still the
+one its ring entry holds, issued to *this* socket) and answers `EBADF` if one fails; a buffer under 19 bytes answers `EINVAL`; in
+neither case is anything written. `0` otherwise.
+
+**Why it grants nothing.** The address is data the program received anyway. There is still no send to an address, and `udp_send_to`
+still takes only a ticket, so the authority report is unchanged: a program can *decide* about a client, not *reach* one it was not given.
+
+**Built and tested** on both backends over real sockets: the sender's address and port as the client's own socket reports them;
+six refused tickets (never issued, zero, negative, a ring's length ahead and behind, another socket's) each `EBADF`; a buffer of 18 bytes
+`EINVAL` and untouched. Eight mutants killed (the owner check dropped, the buffer size unchecked, the address read from the wrong
+offset, a padding byte left unwritten, on each backend).
+
+**Not done.** IPv6 (a datagram's sender is IPv4 until sockets are dual-stack).

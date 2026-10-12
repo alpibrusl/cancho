@@ -1,0 +1,14 @@
+//~ ERROR has already been consumed
+//~ RULE linear-use-after-move
+
+// `narrow` consumes its capability in the multi-literal form too: a second narrowing of `fs` is a use after the move.
+// (`docs/narrowing-into-several.md` section 5.)
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io); release(ffi); release(heap); release(args);
+    let (a, b) = narrow(fs, "/dev/urandom", "/etc/ssl");
+    let c = narrow(fs, "/tmp");
+    release(a); release(b); release(c);
+    return 0;
+}

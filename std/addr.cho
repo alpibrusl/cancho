@@ -1,0 +1,490 @@
+module std.addr;
+
+// `std.addr` -- an IP address and port as a value, its text, and the key a
+// per-address bound counts under (`docs/conn-peer.md`).
+//
+// Pure: no effect, no capability, no heap. A `Peer` is what `conns.peer`
+// answers for the other end of an accepted connection, and it is data the
+// program holds, not authority: nothing here dials, listens or reaches a
+// file, and a program that holds a thousand of them has the same
+// `cancho authority` report as one that holds none.
+//
+// An address is four 32-bit words in network order. An IPv4 address is
+// `family 4` with the address in `w3` and the other words zero; an IPv6
+// address is `family 6`. **An IPv4-mapped IPv6 address (`::ffff:a.b.c.d`) is
+// always the IPv4 one**: a dual-stack listener reports an IPv4 client as the
+// mapped address, and the same client must not count under two keys
+// (`docs/conn-peer.md` section 4). Every constructor here normalises, so a
+// `Peer` made by this module never has `family 6` with `w0 = w1 = 0` and
+// `w2 = 0xffff`.
+
+pub struct Peer {
+    // 4 or 6.
+    family: int,
+    // The address, four big-endian 32-bit words; an IPv4 address is `w3`.
+    w0: int,
+    w1: int,
+    w2: int,
+    w3: int,
+    // 0..65535; 0 for an address parsed from text without one.
+    port: int,
+}
+
+pub enum Parsed {
+    Ok(Peer),
+    // The text is not an address: nothing is guessed.
+    Bad,
+}
+
+// What a per-address bound counts under: the whole IPv4 address, or the
+// first 64 bits (the /64) of an IPv6 one. 64 bits because that is what one
+// subscriber is handed, so a client that rotates the rest of its address
+// does not get a fresh allowance. Two keys are the same address group if
+// `same_key` says so; they are not packed into one integer because 96 bits
+// of distinction do not fit in 64 (`docs/conn-peer.md` section 5).
+pub struct Key {
+    family: int,
+    bits: int,
+}
+
+// The longest `text` can write (a full IPv6 address) and `text_port`
+// (`[` + address + `]:` + five digits).
+pub fn max_text() -> [] int {
+    return 47;
+}
+
+// The size of the buffer `conn_peer` fills.
+pub fn raw_len() -> [] int {
+    return 19;
+}
+
+fn mapped(w0: int, w1: int, w2: int) -> [] bool {
+    return w0 == 0 && w1 == 0 && w2 == 0xffff;
+}
+
+// An IPv4 address from its four octets (each taken modulo 256) and a port
+// (modulo 65536).
+pub fn v4(a: int, b: int, c: int, d: int, port: int) -> [] Peer {
+    let w = (a & 255) << 24 | (b & 255) << 16 | (c & 255) << 8 | d & 255;
+    return Peer { family: 4, w0: 0, w1: 0, w2: 0, w3: w, port: port & 0xffff };
+}
+
+// An IPv6 address from four 32-bit words (each taken modulo 2^32) and a port.
+// A mapped IPv4 address comes back as the IPv4 one.
+pub fn v6(w0: int, w1: int, w2: int, w3: int, port: int) -> [] Peer {
+    let a = w0 & 0xffffffff;
+    let b = w1 & 0xffffffff;
+    let c = w2 & 0xffffffff;
+    let d = w3 & 0xffffffff;
+    if mapped(a, b, c) {
+        return Peer { family: 4, w0: 0, w1: 0, w2: 0, w3: d, port: port & 0xffff };
+    }
+    return Peer { family: 6, w0: a, w1: b, w2: c, w3: d, port: port & 0xffff };
+}
+
+// A `Peer` from the parts `family`, `word` and `port` gave, for a program that keeps them
+// in an integer array (`examples/tls_echo/front.cho` keeps a connection's peer that way, the
+// connection being gone by the time the log line is written). An IPv4 address is `w3`; any
+// family but 4 is IPv6. Normalises as the other constructors do.
+pub fn from_parts(family: int, w0: int, w1: int, w2: int, w3: int, port: int) -> [] Peer {
+    if family == 4 {
+        return v4(w3 >> 24, w3 >> 16, w3 >> 8, w3, port);
+    }
+    return v6(w0, w1, w2, w3, port);
+}
+
+pub fn family(p: Peer) -> [] int {
+    return p.family;
+}
+
+pub fn port(p: Peer) -> [] int {
+    return p.port;
+}
+
+// The same address with another port (0 to drop it).
+pub fn with_port(p: Peer, port: int) -> [] Peer {
+    return Peer { family: p.family, w0: p.w0, w1: p.w1, w2: p.w2, w3: p.w3, port: port & 0xffff };
+}
+
+// The `i`th 32-bit word of the address, 0..3; 0 out of range.
+pub fn word(p: Peer, i: int) -> [] int {
+    if i == 0 {
+        return p.w0;
+    }
+    if i == 1 {
+        return p.w1;
+    }
+    if i == 2 {
+        return p.w2;
+    }
+    if i == 3 {
+        return p.w3;
+    }
+    return 0;
+}
+
+// Whether the two are the same address, ports ignored.
+pub fn same_address(a: Peer, b: Peer) -> [] bool {
+    return a.family == b.family && a.w0 == b.w0 && a.w1 == b.w1 && a.w2 == b.w2 && a.w3 == b.w3;
+}
+
+// Whether the two are the same address and port.
+pub fn same(a: Peer, b: Peer) -> [] bool {
+    return same_address(a, b) && a.port == b.port;
+}
+
+// A `Peer` from the 19 bytes `conn_peer` writes: `4` or `6`, sixteen address
+// bytes, the port big-endian. `Bad` for a shorter slice or another family.
+pub fn decode[&r](raw: &r [byte]) -> [] Parsed {
+    if len(raw) < 19 {
+        return Parsed::Bad;
+    }
+    let f = int_of(raw[0]);
+    if f != 4 && f != 6 {
+        return Parsed::Bad;
+    }
+    let port = int_of(raw[17]) << 8 | int_of(raw[18]);
+    if f == 4 {
+        let w = int_of(raw[1]) << 24 | int_of(raw[2]) << 16 | int_of(raw[3]) << 8 | int_of(raw[4]);
+        return Parsed::Ok(Peer { family: 4, w0: 0, w1: 0, w2: 0, w3: w, port: port });
+    }
+    var w0 = 0;
+    var w1 = 0;
+    var w2 = 0;
+    var w3 = 0;
+    var k = 0;
+    while k < 4 {
+        w0 = w0 << 8 | int_of(raw[1 + k]);
+        w1 = w1 << 8 | int_of(raw[5 + k]);
+        w2 = w2 << 8 | int_of(raw[9 + k]);
+        w3 = w3 << 8 | int_of(raw[13 + k]);
+        k = k + 1;
+    }
+    return Parsed::Ok(v6(w0, w1, w2, w3, port));
+}
+
+// The key a per-address bound counts under.
+pub fn key(p: Peer) -> [] Key {
+    if p.family == 4 {
+        return Key { family: 4, bits: p.w3 };
+    }
+    return Key { family: 6, bits: p.w0 << 32 | p.w1 };
+}
+
+pub fn same_key(a: Key, b: Key) -> [] bool {
+    return a.family == b.family && a.bits == b.bits;
+}
+
+pub fn key_family(k: Key) -> [] int {
+    return k.family;
+}
+
+// The 32 bits of an IPv4 address, or the first 64 of an IPv6 one (a negative
+// number if the top bit is set: it is a bit pattern, not a quantity).
+pub fn key_bits(k: Key) -> [] int {
+    return k.bits;
+}
+
+// A key from its two parts, as `key_family` and `key_bits` gave them.
+pub fn key_from(family: int, bits: int) -> [] Key {
+    return Key { family: family, bits: bits };
+}
+
+// ---- text ------------------------------------------------------------
+
+fn put[&o](out: &!o [byte], at: int, c: int) -> [] int {
+    out[at] = byte_of(c);
+    return at + 1;
+}
+
+// `n` (0..65535) in decimal at `at`; answers where it ended.
+fn put_dec[&o](out: &!o [byte], at: int, n: int) -> [] int {
+    var div = 10000;
+    var started = false;
+    var p = at;
+    while div > 0 {
+        let d = n / div % 10;
+        if d != 0 || started || div == 1 {
+            p = put(out, p, '0' + d);
+            started = true;
+        }
+        div = div / 10;
+    }
+    return p;
+}
+
+// The character of a nibble, lower case.
+fn hex_char(d: int) -> [] int {
+    if d > 9 {
+        return 'a' + (d - 10);
+    }
+    return '0' + d;
+}
+
+// A group (0..65535) in lower-case hex without leading zeros.
+fn put_hex[&o](out: &!o [byte], at: int, g: int) -> [] int {
+    var shift = 12;
+    var started = false;
+    var p = at;
+    while shift >= 0 {
+        let d = g >> shift & 15;
+        if d != 0 || started || shift == 0 {
+            p = put(out, p, hex_char(d));
+            started = true;
+        }
+        shift = shift - 4;
+    }
+    return p;
+}
+
+// The `i`th 16-bit group of an IPv6 address.
+fn group(p: Peer, i: int) -> [] int {
+    let w = word(p, i / 2);
+    if i % 2 == 0 {
+        return w >> 16 & 0xffff;
+    }
+    return w & 0xffff;
+}
+
+// Groups `from..to`, joined by `:`.
+fn put_groups[&o](out: &!o [byte], at: int, p: Peer, from: int, to: int) -> [] int {
+    var i = from;
+    var q = at;
+    while i < to {
+        if i > from {
+            q = put(out, q, ':');
+        }
+        q = put_hex(out, q, group(p, i));
+        i = i + 1;
+    }
+    return q;
+}
+
+// The address as text into `out`: `1.2.3.4`, or an IPv6 address in the
+// canonical form of RFC 5952 (lower-case, no leading zeros, the longest run
+// of two or more zero groups written `::`, the first such run on a tie).
+// Answers the length, or -1 if `out` is under `max_text()` bytes, in which
+// case nothing is written. The port is not part of it.
+pub fn text[&o](p: Peer, out: &!o [byte]) -> [] int {
+    if len(out) < 47 {
+        return 0 - 1;
+    }
+    if p.family == 4 {
+        var q = put_dec(out, 0, p.w3 >> 24 & 255);
+        q = put(out, q, '.');
+        q = put_dec(out, q, p.w3 >> 16 & 255);
+        q = put(out, q, '.');
+        q = put_dec(out, q, p.w3 >> 8 & 255);
+        q = put(out, q, '.');
+        return put_dec(out, q, p.w3 & 255);
+    }
+    var best = 0 - 1;
+    var best_len = 0;
+    var i = 0;
+    while i < 8 {
+        if group(p, i) == 0 {
+            var j = i;
+            while j < 8 && group(p, j) == 0 {
+                j = j + 1;
+            }
+            if j - i > best_len {
+                best = i;
+                best_len = j - i;
+            }
+            i = j;
+        } else {
+            i = i + 1;
+        }
+    }
+    if best_len < 2 {
+        return put_groups(out, 0, p, 0, 8);
+    }
+    var q = put_groups(out, 0, p, 0, best);
+    q = put(out, q, ':');
+    q = put(out, q, ':');
+    return put_groups(out, q, p, best + best_len, 8);
+}
+
+// The address and port as text: `1.2.3.4:80`, `[::1]:80`, the form a log line
+// or an `X-Forwarded-For` entry with a port wants. Same answer as `text`.
+pub fn text_port[&o](p: Peer, out: &!o [byte]) -> [] int {
+    if len(out) < 47 {
+        return 0 - 1;
+    }
+    var q = 0;
+    if p.family == 6 {
+        q = put(out, q, '[');
+    }
+    let n = text(p, out[q..len(out)]);
+    q = q + n;
+    if p.family == 6 {
+        q = put(out, q, ']');
+    }
+    q = put(out, q, ':');
+    return put_dec(out, q, p.port);
+}
+
+// ---- parsing ---------------------------------------------------------
+
+// A dotted quad in `s`, all of it: four decimal octets of one to three
+// digits, none with a leading zero (so `010` is refused, not read as eight or
+// ten), each at most 255. -1, or the address as a 32-bit number.
+fn parse_quad[&r](s: &r [byte]) -> [] int {
+    var value = 0;
+    var octets = 0;
+    var i = 0;
+    while octets < 4 {
+        var digits = 0;
+        var n = 0;
+        let first = i;
+        while i < len(s) && int_of(s[i]) >= '0' && int_of(s[i]) <= '9' && digits < 4 {
+            n = n * 10 + int_of(s[i]) - '0';
+            digits = digits + 1;
+            i = i + 1;
+        }
+        if digits == 0 || digits > 3 || n > 255 {
+            return 0 - 1;
+        }
+        if digits > 1 && int_of(s[first]) == '0' {
+            return 0 - 1;
+        }
+        value = value << 8 | n;
+        octets = octets + 1;
+        if octets < 4 {
+            if i >= len(s) || int_of(s[i]) != '.' {
+                return 0 - 1;
+            }
+            i = i + 1;
+        }
+    }
+    if i != len(s) {
+        return 0 - 1;
+    }
+    return value;
+}
+
+// The value of a hexadecimal digit of either case, or -1.
+fn nibble_of(c: int) -> [] int {
+    let lower = c | 32;
+    if c >= '0' && c <= '9' {
+        return c - '0';
+    }
+    if lower >= 'a' && lower <= 'f' {
+        return lower - 'a' + 10;
+    }
+    return 0 - 1;
+}
+
+// An address from text, port 0: dotted quad, or IPv6 in any of the forms RFC
+// 4291 allows (full, `::`, a trailing dotted quad) with either case of digits.
+// `::ffff:a.b.c.d` is the IPv4 address. No brackets, no zone (`%eth0`), no
+// prefix length, no surrounding space: those are `Bad`.
+pub fn parse[&r](s: &r [byte]) -> [] Parsed {
+    var colon = false;
+    var k = 0;
+    while k < len(s) {
+        if int_of(s[k]) == ':' {
+            colon = true;
+        }
+        k = k + 1;
+    }
+    if !colon {
+        let q = parse_quad(s);
+        if q < 0 {
+            return Parsed::Bad;
+        }
+        return Parsed::Ok(Peer { family: 4, w0: 0, w1: 0, w2: 0, w3: q, port: 0 });
+    }
+    region g {
+        let groups = alloc_slice[g](8, 0);
+        var count = 0;
+        // Groups before the `::`; -1 if there was none.
+        var gap = 0 - 1;
+        var i = 0;
+        if len(s) >= 2 && int_of(s[0]) == ':' && int_of(s[1]) == ':' {
+            gap = 0;
+            i = 2;
+        } else if len(s) > 0 && int_of(s[0]) == ':' {
+            return Parsed::Bad;
+        }
+        var more = i < len(s);
+        while more {
+            // The next token runs to a `:` or the end.
+            var end = i;
+            var dotted = false;
+            while end < len(s) && int_of(s[end]) != ':' {
+                if int_of(s[end]) == '.' {
+                    dotted = true;
+                }
+                end = end + 1;
+            }
+            if dotted {
+                // A trailing dotted quad is two groups and must be last.
+                if end != len(s) || count > 6 {
+                    return Parsed::Bad;
+                }
+                let q = parse_quad(s[i..end]);
+                if q < 0 {
+                    return Parsed::Bad;
+                }
+                groups[count] = q >> 16 & 0xffff;
+                groups[count + 1] = q & 0xffff;
+                count = count + 2;
+                more = false;
+            } else {
+                if end == i || end - i > 4 || count > 7 {
+                    return Parsed::Bad;
+                }
+                var v = 0;
+                var j = i;
+                while j < end {
+                    let h = nibble_of(int_of(s[j]));
+                    if h < 0 {
+                        return Parsed::Bad;
+                    }
+                    v = v * 16 + h;
+                    j = j + 1;
+                }
+                groups[count] = v;
+                count = count + 1;
+                if end == len(s) {
+                    more = false;
+                } else if end + 1 < len(s) && int_of(s[end + 1]) == ':' {
+                    // `::`
+                    if gap >= 0 {
+                        return Parsed::Bad;
+                    }
+                    gap = count;
+                    i = end + 2;
+                    if i == len(s) {
+                        more = false;
+                    }
+                } else {
+                    // A single `:` must be followed by another group.
+                    if end + 1 == len(s) {
+                        return Parsed::Bad;
+                    }
+                    i = end + 1;
+                }
+            }
+        }
+        if gap < 0 && count != 8 {
+            return Parsed::Bad;
+        }
+        if gap >= 0 && count > 7 {
+            return Parsed::Bad;
+        }
+        // Spread the groups after the gap to the end.
+        var full = alloc_slice[g](8, 0);
+        var a = 0;
+        while a < count {
+            var at = a;
+            if gap >= 0 && a >= gap {
+                at = a + 8 - count;
+            }
+            full[at] = groups[a];
+            a = a + 1;
+        }
+        return Parsed::Ok(v6(full[0] << 16 | full[1], full[2] << 16 | full[3], full[4] << 16 | full[5], full[6] << 16 | full[7], 0));
+    }
+}

@@ -1,0 +1,54 @@
+// `docs/narrowing-into-several.md` §5 and §8: three children, and the tuple
+// they come in handled every way a tuple is: destructured by a `let` pattern,
+// stored whole and passed whole to a function that destructures it, and one
+// child released unread. (`narrow_many_in_struct.cho` puts them in a struct.) A helper that needs two of them
+// borrows two and declares both labels (§4.1).
+//~ STDOUT 16
+//~ EXIT 0
+
+fn print_nat[&i](io: &!i Io, n: int) -> [io_write] int {
+    if n >= 10 {
+        print_nat(io, n / 10);
+    }
+    return putchar(io, '0' + n % 10);
+}
+
+fn both[&a, &b, &o](l: &a Fs("/dev/zero"), r: &b Fs("/dev/urandom"), out: &!o [byte]) -> [fs_read("/dev/zero"), fs_read("/dev/urandom")] int {
+    return fs_read(l, "/dev/zero", out) + fs_read(r, "/dev/urandom", out);
+}
+
+// The tuple passed whole. A capability inside a tuple is not owned by the
+// parameter in the sense that discharges a label, so the row names both.
+fn whole[&o](pair: (Fs("/dev/zero"), Fs("/dev/urandom")), out: &!o [byte]) -> [fs_read("/dev/zero"), fs_read("/dev/urandom")] int {
+    let (l, r) = pair;
+    var n = 0;
+    borrow l as &a in {
+        borrow r as &b in {
+            n = both(a, b, out);
+        }
+    }
+    release(l);
+    release(r);
+    return n;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(heap);
+    release(args);
+    let (zero, random, spare) = narrow(fs, "/dev/zero", "/dev/urandom", "/dev/null");
+    release(spare);
+    let pair = (zero, random);
+    var got = 0;
+    region r {
+        let buffer = alloc_slice[r](8, byte_of(0));
+        got = got + whole(pair, buffer);
+    }
+    borrow mut io as &!i in {
+        print_nat(i, got);
+        putchar(i, 10);
+    }
+    release(io);
+    return 0;
+}
