@@ -81,13 +81,18 @@ impl Index {
         dir: &Path,
         with_std: bool,
         std: &[(&str, &str)],
-    ) -> io::Result<(Self, Vec<String>)> {
+    ) -> io::Result<(Self, Vec<String>, usize)> {
         // One file at a time, because identity is per-program and a
         // directory is not one program: two files may declare helpers of
         // the same name today (the pre-module era) and a merged walk
         // would refuse them rather than index them.
-        let mut map = BTreeMap::new();
+        let mut map: BTreeMap<(String, String), IndexEntry> = BTreeMap::new();
+        // Which file first claimed each (module, name), so a second file
+        // declaring the same root-module name with a different identity
+        // is reported rather than silently overwriting the first.
+        let mut origin: BTreeMap<(String, String), String> = BTreeMap::new();
         let mut problems = Vec::new();
+        let mut collisions = 0usize;
         let mut files: Vec<PathBuf> = Vec::new();
         collect_cho(dir, &mut files)?;
         files.sort();
@@ -107,7 +112,24 @@ impl Index {
                             sig: f.sig.to_hex(),
                             body: f.body.to_hex(),
                         };
-                        map.insert((f.module, f.name), entry);
+                        let key = (f.module, f.name);
+                        match map.get(&key) {
+                            Some(first) if *first == entry => {}
+                            Some(_) => {
+                                collisions += 1;
+                                problems.push(format!(
+                                    "collision: `{}` is declared with a different identity in \
+                                     `{}` and in `{}`; the index keeps the first",
+                                    qualified(&key.0, &key.1),
+                                    origin[&key],
+                                    file_name
+                                ));
+                            }
+                            None => {
+                                origin.insert(key.clone(), file_name.clone());
+                                map.insert(key, entry);
+                            }
+                        }
                     }
                 }
                 Err(rendered) => {
@@ -118,8 +140,12 @@ impl Index {
                 }
             }
         }
-        Ok((Self(map), problems))
+        Ok((Self(map), problems, collisions))
     }
+}
+
+fn qualified(module: &str, name: &str) -> String {
+    if module.is_empty() { name.to_owned() } else { format!("{module}::{name}") }
 }
 
 /// Every `.cho` under `dir`, recursively, in sorted order.
@@ -127,7 +153,13 @@ fn collect_cho(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.is_dir() {
+        let kind = entry.file_type()?;
+        // A symlink is never followed: a link to an ancestor would loop,
+        // and a link out of the tree is not this repository's source.
+        if kind.is_symlink() {
+            continue;
+        }
+        if kind.is_dir() {
             let name = entry.file_name();
             // `.cancho` is the store itself; `.git` is not source; a
             // target directory is never source.
@@ -195,7 +227,7 @@ pub fn cmd_sync(args: &[String]) -> Result<std::process::ExitCode, Failure> {
 
     let std: Vec<(&str, &str)> =
         if with_std { STD.iter().map(|(n, t)| (*n, *t)).collect() } else { Vec::new() };
-    let (index, problems) = Index::from_source(&dir, with_std, &std)
+    let (index, problems, collisions) = Index::from_source(&dir, with_std, &std)
         .map_err(|e| environment(format!("cannot walk `{}`: {e}", dir.display())))?;
 
     let old = if index_path.exists() {
@@ -271,7 +303,11 @@ pub fn cmd_sync(args: &[String]) -> Result<std::process::ExitCode, Failure> {
             println!("  {body_changed} body change(s)");
         }
         if sig_changed > 0 {
-            println!("  {sig_changed} signature change(s) — callers by `SigId` affected");
+            println!(
+                "  {sig_changed} signature change(s) — callers by `SigId` affected; no op \
+                 record is written (there is no op for it yet), so the index entry is \
+                 overwritten in place"
+            );
         }
         if removed > 0 {
             println!("  {removed} declaration(s) removed");
@@ -284,7 +320,7 @@ pub fn cmd_sync(args: &[String]) -> Result<std::process::ExitCode, Failure> {
     }
 
     if check {
-        if added > 0 || body_changed > 0 || sig_changed > 0 || removed > 0 {
+        if added > 0 || body_changed > 0 || sig_changed > 0 || removed > 0 || collisions > 0 {
             return Ok(std::process::ExitCode::from(1u8));
         }
         return Ok(std::process::ExitCode::SUCCESS);

@@ -146,3 +146,49 @@ fn a_removal_is_one_remove_op_and_a_shorter_index() {
     assert_eq!(count, 2, "add then remove: two op records");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Two files in the root module declaring the same name with different
+/// bodies: the index cannot hold both, and it says so instead of letting
+/// the later file silently overwrite the earlier one.
+#[test]
+fn a_root_module_name_declared_in_two_files_is_a_reported_collision() {
+    let dir = scratch("vcs-sync-collision");
+    std::fs::write(dir.join("a.cho"), "fn helper() -> [] int { return 1; }\n").unwrap();
+    std::fs::write(dir.join("b.cho"), "fn helper() -> [] int { return 2; }\n").unwrap();
+    let out = Command::new(BIN)
+        .args(["vcs", "sync", "--dir"])
+        .arg(&dir)
+        .output()
+        .expect("the compiler runs");
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("collision: `helper`"), "the collision is named:\n{text}");
+    assert!(text.contains("a.cho") && text.contains("b.cho"), "both files are named:\n{text}");
+    let check = Command::new(BIN)
+        .args(["vcs", "sync", "--dir"])
+        .arg(&dir)
+        .arg("--check")
+        .output()
+        .expect("the compiler runs");
+    assert_eq!(check.status.code(), Some(1), "a collision turns --check red");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A symlinked directory is not followed: a link back to an ancestor
+/// would otherwise recurse until the OS refuses.
+#[cfg(unix)]
+#[test]
+fn a_symlinked_directory_is_not_walked() {
+    let dir = scratch("vcs-sync-symlink");
+    write_two(&dir, ONE);
+    std::os::unix::fs::symlink(&dir, dir.join("loop")).expect("a symlink");
+    let out = Command::new(BIN)
+        .args(["vcs", "sync", "--dir"])
+        .arg(&dir)
+        .output()
+        .expect("the compiler runs");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("1 declaration(s) added"), "only the real file is indexed:\n{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
