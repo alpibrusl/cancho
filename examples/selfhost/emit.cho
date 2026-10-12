@@ -137,7 +137,91 @@ pub fn llvm_type[&s](st: &!s [int], ty: int) -> [] int {
     if ty == 7 || types.is_ref(st, ty) {
         return str(st, "ptr");
     }
+    if types.is_named(st, ty) {
+        return struct_type(st, types.named_item(st, ty));
+    }
     return str(st, "i64");
+}
+
+// A plain struct is an LLVM aggregate of its fields, `{ i64, i1 }`: one value, so it is stored,
+// loaded, passed and returned like a whole number, and its fields are `insertvalue` and
+// `extractvalue` (or an address and a load or store, behind a reference).
+pub fn struct_type[&s](st: &!s [int], item: int) -> [] int {
+    str(st, "{ ");
+    var f = ast.get(st, item, 8);
+    while f >= 0 {
+        llvm_type(st, field_scalar(st, f));
+        f = ast.next(st, f);
+        if f >= 0 {
+            str(st, ", ");
+        }
+    }
+    return str(st, " }");
+}
+
+// The scalar type tag of the field declared by node `f`.
+pub fn field_scalar[&s](st: &!s [int], f: int) -> [] int {
+    return ast.get(st, ast.get(st, f, 5), 10);
+}
+
+// The field of `item` at position `index`, by its declaration node.
+pub fn field_node[&s](st: &!s [int], item: int, index: int) -> [] int {
+    var f = ast.get(st, item, 8);
+    var i = 0;
+    while i < index {
+        f = ast.next(st, f);
+        i = i + 1;
+    }
+    return f;
+}
+
+// The struct value `acc` (or `undef` when it is -1) with field `index` set to the operand.
+pub fn insert_field[&s](st: &!s [int], ty: int, acc: int, index: int, known: bool, value: int, reg: int) -> [] int {
+    let item = types.named_item(st, ty);
+    let fty = field_scalar(st, field_node(st, item, index));
+    let n = start(st);
+    str(st, "insertvalue ");
+    llvm_type(st, ty);
+    str(st, " ");
+    if acc < 0 {
+        str(st, "undef");
+    } else {
+        temp(st, acc);
+    }
+    str(st, ", ");
+    llvm_type(st, fty);
+    str(st, " ");
+    operand(st, fty, known, value, reg);
+    str(st, ", ");
+    nat(st, index);
+    str(st, "\n");
+    return n;
+}
+
+// Field `index` of the struct value in register `reg`.
+pub fn extract_field[&s](st: &!s [int], ty: int, reg: int, index: int) -> [] int {
+    let n = start(st);
+    str(st, "extractvalue ");
+    llvm_type(st, ty);
+    str(st, " ");
+    temp(st, reg);
+    str(st, ", ");
+    nat(st, index);
+    str(st, "\n");
+    return n;
+}
+
+// The address of field `index` of the struct a reference points at.
+pub fn field_address[&s](st: &!s [int], ty: int, ptr_reg: int, index: int) -> [] int {
+    let n = start(st);
+    str(st, "getelementptr ");
+    llvm_type(st, ty);
+    str(st, ", ptr ");
+    temp(st, ptr_reg);
+    str(st, ", i32 0, i32 ");
+    nat(st, index);
+    str(st, "\n");
+    return n;
 }
 
 // An operand: a constant or a temporary.

@@ -219,7 +219,8 @@ the stages found, in place, the way this document corrects its own claims.
 | 4c. `World`, `release` and a real `main`: `main(world: World)` calls the program, a `World` passed between functions, `release(world)` | `emit.cho`, `body.cho`, `types.cho`, `driver.cho` | the Rust compiler, by what the built programs do | **Third slice of the backend.** 254 builds run and compared: every one of the 123 programs through the old `run` convention and through a real `main`, and 8 more with a `main` of their own (a `World` passed on, `release` used as a value): the same exit status or a trap in both (55 trap); none different |
 | 4d. Output: `split(world)` and its parts, a `borrow` of the `Io`, `putchar`, references to whole numbers and booleans, and what an owned capability discharges | `emit.cho`, `body.cho`, `exprs.cho`, `effects.cho` | the Rust compiler, by what the built programs do and write | **Fourth slice of the backend.** 268 builds run and compared, 14 of them print (characters, decimal numbers by recursion, loops, `if` chains, nested helpers, sequential borrows, a trap after output): the same exit status or trap and the same bytes on the standard output (56 trap); none different |
 | 4e. Strings and slices: a literal as a slice of bytes, `len`, `s[i]` with its bound, `write_bytes`, `int_of`/`byte_of`, a slice passed, kept and reassigned, a store through `*r` and `s[i]` | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho` | the Rust compiler, by what the built programs do and write | **Fifth slice of the backend.** 292 builds run and compared, 24 of them new, 60 trap; none different |
-| 4f. The rest of the backend: structs, enums, references in general, arenas and the heap, generics, `clang` run by the compiler itself | not started | | |
+| 4f. Structs of whole numbers, bytes and booleans: a literal, a field read, a copy, passed and returned, a field written through a unique reference, `*r` of one | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho` | the Rust compiler, by what the built programs do | **Sixth slice of the backend.** 312 builds run and compared, 20 of them new, 63 trap; none different |
+| 4g. The rest of the backend: enums and `match`, references in general, arenas and the heap, generics, `clang` run by the compiler itself | not started | | |
 
 **The method.** A port that builds no tree has nothing to compare, and one that does
 needs a printer, which is another port. So stage 2's parser wrote the tree the Rust parser
@@ -569,6 +570,15 @@ so the two stay in order in the C library's buffer. `int_of` is a `zext`; `byte_
 255, which the first run showed: the first version truncated, and the Rust build trapped.
 Reassigning a slice variable (`s = "yyyy"`) stored one pointer into a slot that does not exist, which
 clang found.
+
+**Stage 4f: structs.** A plain struct is an LLVM aggregate of its fields, `{ i64, i1 }`, which is one value:
+the slot, the parameter, the argument and the return are each a single operand, as they are for a whole
+number, and the checker's existing walk needed only the pieces that look inside. A literal is a chain of
+`insertvalue` from `undef`, in declaration order (the order Rust already enforces); a field read of a
+value is an `extractvalue`; behind a reference it is a `getelementptr` and a load, and `r.x = v` is the
+same address and a store. A reference to a struct binding is the address of its slot, as for a whole
+number. Only structs of whole numbers, bytes and booleans have code; a struct with a float or another
+struct in it is still skipped, so the answer is `SKIP` and not wrong code.
 
 The mutation test of `types.cho` (54 operator swaps) killed 40 on the first corpus of 458 targeted
 body cases (after region-variable, `where`-closure and coercion cases were added; 33 before); the 14

@@ -373,9 +373,13 @@ pub fn struct_lit[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     if !scope.struct_plain(st, item) {
         return skip(st, from, to);
     }
+    if emit.on(st) && !scope.struct_codable(st, types.make_named(st, item)) {
+        return skip(st, from, to);
+    }
     let first = ast.get(st, id, 6);
     var init = first;
     var previous = 0 - 1;
+    var acc = 0 - 1;
     while init >= 0 && ast.ok(st) {
         let name = ast.get(st, init, 4);
         let value = ast.get(st, init, 5);
@@ -391,6 +395,9 @@ pub fn struct_lit[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
             let v = expr(st, text, value);
             if ast.ok(st) {
                 scope.expect(st, text, scope.field_type(st, item, index), v.ty, ast.nstart(st, value), ast.nend(st, value));
+                if emit.on(st) && ast.ok(st) {
+                    acc = emit.insert_field(st, types.make_named(st, item), acc, index, v.known, v.value, v.reg);
+                }
             }
         }
         init = ast.next(st, init);
@@ -404,6 +411,9 @@ pub fn struct_lit[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     }
     if !ast.ok(st) {
         return nothing();
+    }
+    if emit.on(st) {
+        return in_reg(types.make_named(st, item), acc);
     }
     return plain(types.make_named(st, item));
 }
@@ -438,13 +448,24 @@ pub fn field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         ast.fail(st, rules.r_unknown_name(), from, to);
         return nothing();
     }
+    if emit.on(st) {
+        let ft = scope.field_type(st, item, index);
+        if !scope.struct_codable(st, types.make_named(st, item)) {
+            return skip(st, from, to);
+        }
+        if types.is_ref(st, b.ty) {
+            let address = emit.field_address(st, held, b.reg, index);
+            return in_reg(ft, emit.load_through(st, ft, address));
+        }
+        return in_reg(ft, emit.extract_field(st, held, b.reg, index));
+    }
     return plain(scope.field_type(st, item, index));
 }
 
 // The expressions the code can be written for so far: whole numbers and booleans, names, the
 // operators, and calls.
 pub fn writes_code[&s](st: &!s [int], id: int) -> [] bool {
-    if ast.is_kind(st, id, kinds.NK::EInt) || ast.is_kind(st, id, kinds.NK::EBool) || ast.is_kind(st, id, kinds.NK::EName) || ast.is_kind(st, id, kinds.NK::ECall) || ast.is_kind(st, id, kinds.NK::EStr) || ast.is_kind(st, id, kinds.NK::EIndex) {
+    if ast.is_kind(st, id, kinds.NK::EInt) || ast.is_kind(st, id, kinds.NK::EBool) || ast.is_kind(st, id, kinds.NK::EName) || ast.is_kind(st, id, kinds.NK::ECall) || ast.is_kind(st, id, kinds.NK::EStr) || ast.is_kind(st, id, kinds.NK::EIndex) || ast.is_kind(st, id, kinds.NK::EStructLit) || ast.is_kind(st, id, kinds.NK::EField) {
         return true;
     }
     if ast.is_kind(st, id, kinds.NK::EUnary) {
@@ -521,7 +542,7 @@ pub fn unary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         }
         if emit.on(st) {
             let inner = types.ref_inner(st, operand.ty);
-            if inner != 1 && inner != 2 && inner != 5 {
+            if inner != 1 && inner != 2 && inner != 5 && !scope.struct_codable(st, inner) {
                 return skip(st, from, to);
             }
             return in_reg(inner, emit.load_through(st, inner, operand.reg));
@@ -988,7 +1009,7 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     }
     let result = types.resolve_type(st, callee_type(st, text, ast.get(st, found, 10), callee_dp, fresh, tvars));
     if emit.on(st) {
-        if result != 1 && result != 5 {
+        if result != 1 && result != 5 && !scope.struct_codable(st, result) {
             return skip(st, from, to);
         }
         return in_reg(result, emit.call(st, text, callee, result, st[52] - first_arg));
