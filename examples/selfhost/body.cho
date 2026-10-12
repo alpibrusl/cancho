@@ -39,6 +39,7 @@ import selfhost.emit;
 import selfhost.scope;
 import selfhost.exprs;
 import selfhost.effects;
+import selfhost.builtins;
 
 // What an expression came to: its type, and whether it is a known integer (a literal, or a
 
@@ -258,10 +259,67 @@ fn borrow_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] 
     let block_id = scope.open_block(st, ast.get(st, id, 6));
     scope.freeze(st, i, unique, from, to);
     scope.bind(st, ast.get(st, id, 6), types.make_ref(st, unique, types.block_region(block_id), referent), false, from, to);
+    if emit.on(st) {
+        // The reference is the address of the slot of a whole number or a boolean, and of a byte
+        // of its own for what has no code.
+        if types.is_prelude(st, referent) {
+            emit.store_dummy_pointer(st, st[39] - 1);
+        } else if referent == 1 || referent == 5 {
+            emit.store_slot_address(st, st[39] - 1, scope.slot_of(st, i));
+        } else {
+            exprs.skip(st, from, to);
+        }
+    }
     block(st, text, ast.get(st, id, 7), ast.get(st, id, 8), ret);
     scope.thaw(st, i, unique);
     st[21] = mark;
     scope.close_block(st);
+    return 0;
+}
+
+// `let Split { io, fs, .. } = split(world);`: the parts of a prelude struct, each a binding of its own
+// type (which is nothing in the code), written for compile mode only. A field may be renamed
+// (`io: out`); all of them are taken to be named, which the Rust compiler has already checked.
+fn destructure_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] int {
+    let from = ast.nstart(st, id);
+    let to = ast.nend(st, id);
+    let v = exprs.expr(st, text, ast.get(st, id, 7));
+    if !ast.ok(st) {
+        return 0;
+    }
+    if !types.is_prelude(st, v.ty) {
+        exprs.skip(st, from, to);
+        return 0;
+    }
+    let first = builtins.prelude_field_first(types.prelude_index(st, v.ty));
+    let count = builtins.prelude_field_count(types.prelude_index(st, v.ty));
+    var p = ast.get(st, id, 6) + 1;
+    while ast.ok(st) && !pass1.is_code(st, p, lc.Tok::RBrace) {
+        let field = p;
+        var named = p;
+        p = p + 1;
+        if pass1.is_code(st, p, lc.Tok::Colon) {
+            named = p + 1;
+            p = p + 2;
+        }
+        var j = 0;
+        var found = 0 - 1;
+        while j < count {
+            if lc.spells(text, ast.tstart(st, field), ast.tend(st, field), builtins.field_name(first + j)) {
+                found = j;
+            }
+            j = j + 1;
+        }
+        if found < 0 {
+            exprs.skip(st, from, to);
+        } else {
+            let ty = types.make_prelude(st, builtins.field_type(builtins.field_type_start(first + found) + 1));
+            scope.bind(st, named, ty, false, from, to);
+        }
+        if pass1.is_code(st, p, lc.Tok::Comma) {
+            p = p + 1;
+        }
+    }
     return 0;
 }
 
@@ -348,7 +406,7 @@ fn writes_stmt[&s](st: &!s [int], id: int) -> [] bool {
     if ast.is_kind(st, id, kinds.NK::SAssign) {
         return ast.is_kind(st, ast.get(st, id, 4), kinds.NK::EName);
     }
-    return ast.is_kind(st, id, kinds.NK::SLet) || ast.is_kind(st, id, kinds.NK::SExpr) || ast.is_kind(st, id, kinds.NK::SReturn) || ast.is_kind(st, id, kinds.NK::SIf) || ast.is_kind(st, id, kinds.NK::SWhile);
+    return ast.is_kind(st, id, kinds.NK::SBorrow) || ast.is_kind(st, id, kinds.NK::SRegion) || ast.is_kind(st, id, kinds.NK::SDestructure) || ast.is_kind(st, id, kinds.NK::SLet) || ast.is_kind(st, id, kinds.NK::SExpr) || ast.is_kind(st, id, kinds.NK::SReturn) || ast.is_kind(st, id, kinds.NK::SIf) || ast.is_kind(st, id, kinds.NK::SWhile);
 }
 
 fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
@@ -510,6 +568,9 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
     if ast.is_kind(st, id, kinds.NK::SBorrow) {
         return borrow_stmt(st, text, id, ret);
     }
+    if ast.is_kind(st, id, kinds.NK::SDestructure) {
+        return destructure_stmt(st, text, id);
+    }
     if ast.is_kind(st, id, kinds.NK::SRegion) {
         return region_stmt(st, text, id, ret);
     }
@@ -601,7 +662,7 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
         var p = ast.get(st, fn_item, 7);
         while p >= 0 {
             let pt = scope.lower_type(st, text, ast.get(st, p, 5), st[28], 0 - 1);
-            ok = ok && (pt == 1 || pt == 5 || types.is_prelude(st, pt));
+            ok = ok && (pt == 1 || pt == 5 || types.is_prelude(st, pt) || types.is_ref(st, pt));
             p = ast.next(st, p);
             k = k + 1;
         }
@@ -649,7 +710,16 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
     }
     if ast.ok(st) {
         // The row is exact, both ways.
-        effects.check(st, text, fn_item, from, to);
+        var authority = 0;
+        var owned = ast.get(st, fn_item, 7);
+        while owned >= 0 {
+            let kind = scope.lower_type(st, text, ast.get(st, owned, 5), st[28], 0 - 1);
+            if types.is_prelude(st, kind) {
+                authority = effects.union(st, authority, effects.discharged(st, types.prelude_index(st, kind)));
+            }
+            owned = ast.next(st, owned);
+        }
+        effects.check(st, text, fn_item, from, to, authority);
     }
     if ast.ok(st) && !terminates(st, ast.get(st, fn_item, 11), ast.get(st, fn_item, 12)) {
         ast.fail(st, rules.r_missing_return(), from, to);
