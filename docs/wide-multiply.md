@@ -235,21 +235,37 @@ pass of `pack`, p and p + 1, (p - 1)^2, 2 * 2^-1).
   checks, 0 differences** on macOS arm64 with LLVM; 20,000 and 300, 0 differences, on aarch64 Linux.
 - `mul_wide`, `add_carry`, `sub_borrow`: §9, on all of LLVM, Cranelift and wasm32, on macOS arm64 and on x86-64 Linux (both backends
   there too; wasm32 only on macOS).
-- Mutants. `scripts/wide_multiply_mutants.py`: **20 of 20 killed** (the LLVM lowering and its wasm32 path, the Cranelift lowering, the
-  edition). `scripts/curve25519_mutants.py`: 38 mutants of the four files, **33 killed**, 5 survive: three of them were known
-  (`docs/x25519.md` §5: the X25519 "final swap left out", which is equivalent because clamping clears bit 0, and Ed25519's
-  `point_equal`); two are **new, and a loss of coverage**: `std.field25519`'s "`pack` does one trial subtraction" and "`unpack` keeps
-  the top bit" were killed by X25519's vectors, and X25519 no longer runs on that field. They are bugs in a module only Ed25519 now
-  uses, and Ed25519's vectors do not reach them; a test of `std.field25519` through Ed25519 would. The fifth, "`pack` of the new field does one weak
-  carry pass, not two", is, I believe, equivalent: the later `q` step absorbs the one extra bit that a single pass can leave
-  (checked on the crafted element of the unit test, not proved for every input bound), and the second pass is kept as margin.
+- **A bound that was false, found in review and corrected here.** The first version of this module said `mul` accepts limbs under
+  2^54. It did not: with every limb at 2^54 - 1, the carry out of column 4 times 19 is above 2^63, `finish`'s `r0 >> 51` is an
+  arithmetic shift, and `mul(a, a)` gave wrong bytes. X25519 was not affected (its limbs stay under about 3 * 2^51), a port of Ed25519's
+  larger sums would have been. The shift is now masked to the 13 bits it means, and `test_mul_and_square_at_the_input_bound` checks
+  the bound itself against Python's `(v * v) % p`.
+- Mutants (raw output in `docs/assets/wide-multiply/`). `scripts/wide_multiply_mutants.py`: **20 of 20 killed** (the LLVM lowering
+  and its wasm32 path, the Cranelift lowering, the edition), with the wasm32 toolchain set. `scripts/curve25519_mutants.py`: **39
+  mutants of the four files, 36 killed**; both scripts now match a mutant's text as tokens, so `cancho fmt` cannot stop them (it
+  did once: the first count, 33 of 38, could not be re-run after the formatting commit). The three that survive:
+  the X25519 "final swap left out" (equivalent: clamping clears bit 0) and Ed25519's `point_equal` (`docs/x25519.md` §5) were
+  known; "`pack` of the new field does one weak carry pass, not two" is, I believe, equivalent: the later `q` step absorbs the one
+  extra bit a single pass can leave (seen on the crafted element of the unit test, not proved for every input), and the second pass
+  stays as margin. Two `std.field25519` mutants ("`pack` does one trial subtraction", "`unpack` keeps the top bit") used to be
+  killed only by X25519's vectors, which no longer run on that field; `tests/lex/field25519_test.cho` now kills them directly.
 
 ### 10.3 Constant time
 
-| What | x86-64 gram, LLVM | Apple M4 Max, LLVM | aarch64 Linux (Docker on the M4), LLVM |
+Raw logs, with the commit and the machine, are in `docs/assets/wide-multiply/`.
+
+| What | x86-64 gram (i7-1260P, cores 4-5) | Apple M4 Max, macOS | aarch64 Linux (Docker on the M4) |
 |---|---|---|---|
-| dudect (`scripts/x25519_timing.py`), 10^6 samples a test, fixed scalar / sparse scalar, max abs t (bar 4.5) | 1.94 / 1.78 | 1.69 / 2.47 | 1.40 / 1.21 |
-| ctgrind (`scripts/curve25519_ctgrind.sh`, Valgrind Memcheck, scalar marked undefined) | not run: no Valgrind on gram | not run: no Valgrind on macOS | **0 reports** (the planted-`if` control of `docs/x25519.md` §3.1 not re-run; Ed25519 signing, the known exception, 1,300) |
+| dudect (`scripts/x25519_timing.py`), LLVM, 10^6 samples a test, fixed / sparse scalar, max abs t (bar 4.5) | 1.27 / 1.41 | 1.78 / 1.90 | 1.40 / 1.21 (before the review's fix to `finish`) |
+| dudect, **Cranelift** | 1.32 / 1.37 (load 7.8) | 1.15 / **9.20**, again 1.75 / **15.24: fails**; with `PSTATE.DIT` set, 1.44 / 1.72 | not run |
+| ctgrind (`scripts/curve25519_ctgrind.sh`, Valgrind Memcheck, scalar marked undefined), LLVM | **0 reports**; the control (an `if` on the secret bit planted in the ladder) **251 errors**; Ed25519 signing, the known exception, 1,937 | not run: no Valgrind on macOS | 0 reports (control not run there) |
+
+**Cranelift carries no constant-time claim for X25519 on Apple silicon.** Its X25519 fails dudect on the sparse scalar on the M4,
+twice, at |t| 9.2 and 15.2, and passes when `PSTATE.DIT` is set from outside the program (a constructor in `libtick.a`, the method of
+`docs/tls-assurance.md` §6.1). So what varies is the CPU's own timing of some instruction on these operands with DIT clear, which the
+LLVM backend's `main` sets and Cranelift's does not (it cannot emit the instruction). The 16-bit field on Cranelift passed (200,000
+samples, |t| 1.28 / 1.17; fewer samples, as it is 20 times slower, so a weaker test). This is the limitation `docs/crypto-builtins.md`
+§5 already states for Cranelift's AES-GCM: a TLS build uses LLVM, the default.
 
 - Branch audit (`scripts/chacha20_branches.py`, x86-64): in every function of `std.field25519_51` the only conditional jumps are
   bounds-check traps, plus `square_n`'s loop counter; `pack` has three `cmovb`, on the output slice's length. In `x25519.scalarmult`
@@ -265,23 +281,23 @@ pass of `pack`, p and p + 1, (p - 1)^2, 2 * 2^-1).
   | Cranelift, aarch64 | 32 | `umulh` | `cset` | none |
 
   The x86-64 LLVM code is `mulx`-free: the baseline x86-64 target has no BMI2, and `-march=native` bought nothing in C (§2).
-- **Not run:** a dudect test of Cranelift's X25519, on either machine. Cranelift does not set `PSTATE.DIT`, and `docs/tls-assurance.md`
-  §6.1 found Cranelift failing it for other primitives; the instructions it chooses are the ones above, but no timing test says so.
 
 ### 10.4 Speed
 
-`scripts/curve25519_bench.py`, median of five runs of N operations less one, N chosen so a run is about a second; "before" is
-the unchanged ladder on `std.field25519` (the same source built as a local module on the same compiler), "after" the final tree. OpenSSL is
-`openssl speed ecdhx25519` on the same machine.
+`scripts/x25519_before_after.py` (rerunnable): "before" is `std/x25519.cho` as it was before this change, taken from git and built as a
+local module over the unchanged `std.field25519` with the same compiler; "after" is the tree. The two alternate, each figure
+`scripts/curve25519_bench.py`'s (median of five runs of N operations, less one). Raw output in `docs/assets/wide-multiply/before-after-*.log`.
+OpenSSL is `openssl speed ecdhx25519` on the same machine.
 
-| Machine, CPU, load | Backend | before | after | speed-up | OpenSSL |
+| Machine, CPU, load | Backend | before | after | speed-up (medians) | OpenSSL |
 |---|---|---|---|---|---|
-| Apple M4 Max, macOS, idle | LLVM | 0.585 ms | **0.025 ms** | **23x** | 0.019 ms (OpenSSL 3.6.4) |
-| | Cranelift | 1.362 ms | 0.071 ms | 19x | |
-| aarch64 Linux, Docker on the M4 Max, idle | LLVM | 0.60 ms | 0.026 ms | 23x | 0.019 ms (OpenSSL 3.0.13) |
-| gram, Intel i7-1260P, cores 4-5, **load average 6 to 12 from other agents**, seven interleaved runs | LLVM | median 1.87 ms (min 1.32) | median 0.108 ms (min 0.068) | 17x on medians, 19x on minima | 0.0267 ms, measured earlier when quiet |
-| | Cranelift | median 3.98 ms (min 2.69) | median 0.398 ms (min 0.336) | 10x | |
-| gram, an earlier run before the squaring change, load 3.6 | LLVM | 0.664 to 0.93 ms | 0.051 to 0.063 ms | 12 to 13x | |
+| Apple M4 Max, macOS, load 6 to 9 from other agents, 5 alternating runs | LLVM | 0.575 ms | **0.025 ms** | **23x** | 0.019 ms (OpenSSL 3.6.4) |
+| | Cranelift | 1.277 ms | 0.065 ms | 20x | |
+| aarch64 Linux, Docker on the M4 Max (an earlier run, before the review's fix) | LLVM | 0.60 ms | 0.026 ms | 23x | 0.019 ms (OpenSSL 3.0.13) |
+| gram, Intel i7-1260P, cores 4-5, **load average 7 from other agents**, 7 alternating runs | LLVM | median 2.36 ms (min 1.58) | median 0.132 ms (min 0.051) | 18x | 0.0267 ms, measured earlier when quiet |
+| | Cranelift, 5 runs | median 3.81 ms (min 2.56) | median 0.327 ms (min 0.224) | 12x | |
+| gram, earlier runs: load 3.6 before the squaring change; load 6 to 12 | LLVM | 0.664 to 0.93 ms; median 1.87 | 0.051 to 0.063 ms; median 0.108 | 12 to 13x; 17x | |
+| | Cranelift, load 6 to 12 | median 3.98 ms | median 0.398 ms | 10x | |
 
 gram's absolute figures are not reproducible: it ran at one third of its early speed by the end of the work, other agents' jobs
 included one on a sibling hardware thread of the pinned cores. The ratios within one interleaved run are the evidence, not the
@@ -289,7 +305,7 @@ milliseconds; the three quiet-time anchors are the early 0.664 ms before, the C 
 
 ### 10.5 Where the gain came from
 
-On the M4, LLVM: 0.585 ms before. The new field with the old bit-loop inversion would cost 253 + 251 = 504 field operations for the
+On the M4, LLVM: 0.575 to 0.585 ms before. The new field with the old bit-loop inversion would cost 253 + 251 = 504 field operations for the
 inversion against 265; with 2,550 in the ladder that is about 8%, so 1.1x of the 23x is the addition chain, and the squaring
 (15 products against 25, measured 8% on the whole) another 1.1x. The rest, about 19x, is the representation:
 **25 products in 5 limbs against 256 in 16, and `mul_wide` and `add_carry` letting each be two instructions.** That is more than §2's C
@@ -299,9 +315,9 @@ every limb a load and a store through a slice), and the 51-bit code, being strai
 
 ### 10.6 Verdict
 
-**It reaches 3x, and by a wide margin: 23x on arm64, 17 to 19x on x86-64 under load, 19x on Cranelift/arm64 and 10x on Cranelift/x86-64
-(load).** X25519 costs 1.3 times OpenSSL's hand-written assembly on the M4 (0.025 against 0.019 ms) and about 2.5 to 4 times on
-gram (0.068 to 0.108 ms under load against 0.0267 ms quiet; the comparison is unfair to this language until gram is quiet).
+**It reaches 3x, and by a wide margin: 23x on arm64 and 17 to 18x on a loaded x86-64 with LLVM; 20x on arm64 and 10 to 12x on the loaded
+x86-64 with Cranelift.** (Cranelift's X25519 is not constant time on the M4 without DIT, §10.3; a TLS build uses LLVM.) X25519 costs 1.3 times OpenSSL's hand-written assembly on the M4 (0.025 against 0.019 ms) and about 2.5 to 4 times on
+gram (0.051 to 0.132 ms under load against 0.0267 ms quiet; the comparison is unfair to this language until gram is quiet).
 The wide builtins are therefore worth keeping, and the larger win for every public-key operation exists *if* the others behave
 like X25519 (§11).
 

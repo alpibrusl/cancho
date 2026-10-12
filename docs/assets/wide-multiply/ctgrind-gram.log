@@ -1,0 +1,5 @@
+commit f01214a0; gram, Intel i7-1260P, x86-64; inside debian:13-slim (valgrind 3.24.0, --cpuset-cpus=4-5); compiler built on the host
+x25519: 0 5e9d -- ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)
+ed25519-sign: 0 5210 -- ERROR SUMMARY: 1937 errors from 10 contexts (suppressed: 0 from 0)
+x25519 with an if on the secret bit planted (the control): 1 reports -- ERROR SUMMARY: 251 errors from 1 contexts (suppressed: 0 from 0)
+exit=0

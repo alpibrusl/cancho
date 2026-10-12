@@ -31,9 +31,14 @@ def main():
     ap.add_argument("--runs", type=int, default=7)
     ap.add_argument("--rounds", type=int, default=2000)
     ap.add_argument("--taskset")
+    ap.add_argument("--before-file", help="the old std/x25519.cho, where the tree has no git history (a copy on another machine)")
     a = ap.parse_args()
-    rev = git("log", "-1", "--format=%H", "-S", "import std.field25519;", "--", "std/x25519.cho").strip()
-    old = git("show", f"{rev}^:std/x25519.cho").replace("module std.x25519;", "module x25519old;", 1)
+    if a.before_file:
+        rev, old = a.before_file, open(a.before_file).read()
+    else:
+        rev = git("log", "-1", "--format=%H", "-S", "import std.field25519;", "--", "std/x25519.cho").strip()
+        old = git("show", f"{rev}^:std/x25519.cho")
+    old = old.replace("module std.x25519;", "module x25519old;", 1)
     bench = open(os.path.join(ROOT, "tests/programs/ed25519_bench.cho")).read()
     with tempfile.TemporaryDirectory() as d:
         open(os.path.join(d, "x25519old.cho"), "w").write(old)
@@ -45,7 +50,7 @@ def main():
                        check=True, capture_output=True)
         subprocess.run([a.cancho, "build", "--std", *b, os.path.join(ROOT, "tests/programs/ed25519_bench.cho"), "-o", exes["after"]],
                        check=True, capture_output=True)
-        print(f"before: std/x25519.cho at {rev[:10]}^; backend {a.backend}")
+        print(f"before: {rev}; backend {a.backend}")
         got = {"before": [], "after": []}
         pin = ["taskset", "-c", a.taskset] if a.taskset else []
         for _ in range(a.runs):
