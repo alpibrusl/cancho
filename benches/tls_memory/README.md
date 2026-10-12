@@ -23,3 +23,20 @@ in a phase, as the script printed it, and each `.json` is the same run as `--jso
 (OpenSSL default and released, the engines alone before, then after the first version), `after-first-version-and-https-before.log`
 (the first version, `https_hello` before, and the engines alone at 100,000 connections on 64 areas, `arm_engine_after100k.json`),
 `after.log` (the change as it is). `arm_engine_new64.json`: 10,000 connections on 64 areas, first version.
+
+**Client certificates (`docs/tls-memory.md` §11).** Both machines, the same way (x86-64 on cores 6 and 7 only):
+`mtls-before.log` is `examples/tls_echo` from `origin/main` at `0e40f430` (#398 merged) and OpenSSL's server, every run in the
+order the log shows, and `mtls-after.log` the same `tls_echo` runs with §11's change. Each `.json` is one run as `--json` wrote it,
+named `<machine>_mtls_<before|after>_<kind>.json`:
+
+| kind | what |
+|---|---|
+| `plain` | `tls_echo`, no client certificate asked for |
+| `p256` | `tls_echo --client-ca --require-client-cert`, every client presenting `clientauth/p256/` (a 572-byte P-256 leaf) |
+| `rsa` | the same with `clientauth/rsa/` (a 970-byte RSA-2048 leaf and its RSA-2048 intermediate) |
+| `probe64`, `probe64_plain` | `--probe 5` with `--areas 64` and 200 clients, with `clientauth/p256/` and with no client certificate: how many are established |
+| `p256_areas64` (after only) | `p256` with `tls_echo --areas 64`, the established phases only (`--established-only`) |
+| `ossl`, `ossl_rel` | `benches/server/ossl_hold.c`, default and `release` (`SSL_MODE_RELEASE_BUFFERS`), no client certificate |
+| `ossl_p256`, `ossl_rel_p256`, `ossl_rsa` | `ossl_hold ... verify <ca.pem>` (what `openssl s_server -Verify` sets), the clients presenting `clientauth/p256/` or `clientauth/rsa/` |
+
+`clientauth/` holds the certificates and keys the clients present (test material, made once by `clientauth/make.sh`).

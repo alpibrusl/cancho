@@ -47,6 +47,9 @@ server on a free port with the options it needs, and says `ok` or what failed:
                (docs/tls-memory.md)
     stall      `--areas 2`: a peer that sends half a record and stops is ended `record-timeout` after
                `--handshake-timeout`, while another connection goes on; `--areas 1` is a usage error
+    clientauth-areas  `--areas 2` with client certificates required (docs/tls-memory.md §11): four verified
+               connections served on two areas and idle past `--handshake-timeout` still echo (their areas went back
+               after the handshake); a leaf over 2,048 bytes holds an area and is ended `record-timeout`
 
 curl and mosquitto's clients are not here: they speak HTTP and MQTT, which an echo answers with their own request.
 Their interop with this server is docs/tls-server.md §10.2's matrix, against `tests/programs/tls_serve.cho`.
@@ -778,6 +781,61 @@ def clientauth(exe, talk, server_class):
     return "ok (the subject and fingerprint OpenSSL reports, required and optional, revoked on SIGHUP, a refused file kept the store)"
 
 
+def case_clientauth_areas(exe):
+    """`--areas 2` with client certificates required (docs/tls-memory.md §11): verified connections give their areas
+    back after the handshake, so four of them are served on two areas, stay idle past `--handshake-timeout` (1 s) and
+    still echo; before §11 each held its area for life and `record-timeout` ended it. A client whose leaf is larger
+    than the engine keeps outside an area (2,048 bytes) still holds one, and is ended `record-timeout` as any connection
+    holding an area past the timeout is."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import clientauth_fixture as pki
+    ca = pki.make_ca("fleet root")
+    keep = tempfile.mkdtemp(prefix="tls_echo_pki_")
+    paths = {}
+    many = [f"device-{k}.a-long-name-for-a-fleet.example" for k in range(60)]
+    for name, dns in (("small", "device.fleet.test"), ("large", many)):
+        key, cert = pki.make_client(ca, pki.PLAIN, dns)
+        paths[name] = (os.path.join(keep, name + ".pem"), os.path.join(keep, name + ".key"), len(cert.public_bytes(
+            pki.serialization.Encoding.DER)))
+        open(paths[name][0], "wb").write(pki.pem(cert))
+        open(paths[name][1], "wb").write(pki.key_pem(key))
+    if not (paths["small"][2] <= 2048 < paths["large"][2]):
+        return f"the leaves are {paths['small'][2]} and {paths['large'][2]} bytes, not either side of 2,048"
+
+    def attempt(server, name):
+        ctx = context()
+        ctx.load_cert_chain(*paths[name][:2])
+        conn = ctx.wrap_socket(socket.create_connection(("127.0.0.1", server.port), timeout=10), server_hostname=HOST)
+        echo(conn, b"mutual")
+        return conn
+
+    server = Server(exe, extra=["--areas", "2", "--handshake-timeout", "1000", "--client-ca", "clients.pem",
+                                "--require-client-cert"], files={"clients.pem": pki.pem(ca[1])})
+    try:
+        conns = [attempt(server, "small") for _ in range(4)]
+        time.sleep(3)
+        for c in conns:
+            echo(c, b"still here")
+        if any(" closed record-timeout " in l for l in server.text()):
+            return "a verified connection was ended record-timeout: it held its area"
+        large = attempt(server, "large")
+        server.wait_for(lambda l: " closed record-timeout " in l, 10)
+        try:
+            echo(large, b"x")
+            return "the connection with a large leaf still echoes after record-timeout"
+        except (ssl.SSLError, ConnectionError, AssertionError, OSError):
+            pass
+        for c in conns:
+            echo(c, b"after")
+            c.unwrap()
+            c.close()
+    finally:
+        server.stop()
+        shutil.rmtree(keep, ignore_errors=True)
+    return (f"ok (4 verified connections on 2 areas idle past the timeout and served; a {paths['large'][2]}-byte leaf "
+            f"held its area and was ended record-timeout; the small leaf {paths['small'][2]} bytes)")
+
+
 def rss_kib(pid):
     """The process's resident memory in KiB (Linux), or None."""
     try:
@@ -899,7 +957,8 @@ CASES = {"clientauth": case_clientauth, "suites": case_suites, "many": case_many
          "rate": case_rate, "full": case_full, "idle": case_idle, "shutdown": case_shutdown,
          "peer": case_peer, "per-address": case_per_address, "addr-rate": case_addr_rate,
          "tickets": case_tickets, "ticket-keys": case_ticket_keys, "ticket-identity": case_ticket_identity,
-         "ticket-lifetime": case_ticket_lifetime, "areas": case_areas, "stall": case_stall}
+         "ticket-lifetime": case_ticket_lifetime, "areas": case_areas, "stall": case_stall,
+         "clientauth-areas": case_clientauth_areas}
 
 
 # ---- the cost ----

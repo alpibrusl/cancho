@@ -6,6 +6,15 @@
     python3 scripts/tls_memory.py https   <https_hello> [...]
     python3 scripts/tls_memory.py engine  <tls_pool> [--areas <n>] [...]
 
+    --client <dir>      every client presents a certificate: `<dir>/chain.pem` and `<dir>/key.pem`, and the server
+                        requires one from the CAs of `<dir>/ca.pem` (`tls_echo --client-ca --require-client-cert`;
+                        `ossl_hold ... verify <ca.pem>`, what `openssl s_server -Verify` sets): docs/tls-memory.md §11
+    --established-only  only the second server (established, echoed, partial, all-echoed), for a server whose
+                        handshakes in progress are bounded below N (`tls_echo --areas`)
+    --server-areas <n>  `tls_echo --areas <n>` (the script's own `--areas` is the engine's, for `engine`)
+    --probe <timeout>   instead of the phases: connections are handshaken one at a time until one is not established
+                        within `timeout` seconds (or N are); prints how many were and the RSS a connection
+
 Starts a server for each count N (so one count's heap never carries into the next) and opens N connections one after
 another from this process. It reads the server's VmRSS (Linux `/proc/<pid>/status`) after each phase. The first server
 is for the phases in which the connections have not finished their handshakes:
@@ -93,18 +102,23 @@ def mappings(pid):
 
 
 class Server:
-    def __init__(self, kind, exe, n, extra):
+    def __init__(self, kind, exe, n, extra, client=None):
         self.kind = kind
         self.port = free_port()
         first = os.path.join(VECTORS, "first")
         if kind == "openssl":
             cmd = [exe, str(self.port), os.path.join(first, "chain.pem"), os.path.join(first, "key.pem")] + extra
+            if client:
+                cmd += ["verify", os.path.join(client, "ca.pem")]
         else:
             work = tempfile.mkdtemp(prefix="tls_memory_")
             for f in ("chain.pem", "key.pem", "names"):
                 shutil.copyfile(os.path.join(first, f), os.path.join(work, f))
             cmd = [exe, "--port", str(self.port), "--dir", work, "--connections", str(n), "--handshakes", str(n),
                    "--rate", "1000000", "--handshake-timeout", "3600000", "--idle", "3600000"] + extra
+            if client:
+                shutil.copyfile(os.path.join(client, "ca.pem"), os.path.join(work, "client-ca.pem"))
+                cmd += ["--client-ca", "client-ca.pem", "--require-client-cert"]
         self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         line = self.proc.stdout.readline().decode()
         if not line.startswith("listening"):
@@ -144,7 +158,10 @@ class Client:
             pass
         self.sock.sendall(self.out.read())
         while True:
-            self.inc.write(self.sock.recv(65536))
+            data = self.sock.recv(65536)
+            if not data:
+                raise ConnectionError("the server closed the connection in the handshake")
+            self.inc.write(data)
             try:
                 self.obj.do_handshake()
                 break
@@ -182,40 +199,51 @@ class Client:
         return got
 
 
-def run(kind, exe, n, extra):
+def context(client):
     ctx = ssl.create_default_context(cafile=CA)
     ctx.minimum_version = ssl.TLSVersion.TLSv1_3
-    result = {"n": n, "rss": {}}
+    if client:
+        ctx.load_cert_chain(os.path.join(client, "chain.pem"), os.path.join(client, "key.pem"))
+    return ctx
+
+
+def run(kind, exe, n, extra, client=None, established_only=False):
+    ctx = context(client)
+    result = {"n": n, "rss": {}, "client": client}
 
     def sample(srv, phase):
         time.sleep(1.0 + n / 5000)
         result["rss"][phase] = srv.rss()
         print(f"  {kind} n={n:<6} {phase:<12} VmRSS {result['rss'][phase]:>9} KiB", flush=True)
 
-    # First server: the connections that have not begun, and the handshakes all waiting for the client's Finished.
-    srv = Server(kind, exe, n, extra)
-    time.sleep(0.5)
-    sample(srv, "start")
-    raw = [socket.create_connection(("127.0.0.1", srv.port)) for _ in range(n)]
-    sample(srv, "connected")
-    for s in raw:
-        s.close()
-    srv.stop()
-    srv = Server(kind, exe, n, extra)
-    time.sleep(0.5)
-    base = srv.rss()
-    conns = []
-    for _ in range(n):
-        c = Client(srv.port, ctx)
-        c.handshake_to_finished()
-        conns.append(c)
-    sample(srv, "handshake")
-    del conns
-    srv.stop()
+    base = None
+    if not established_only:
+        # First server: the connections that have not begun, and the handshakes all waiting for the client's Finished.
+        srv = Server(kind, exe, n, extra, client)
+        time.sleep(0.5)
+        sample(srv, "start")
+        raw = [socket.create_connection(("127.0.0.1", srv.port)) for _ in range(n)]
+        sample(srv, "connected")
+        for s in raw:
+            s.close()
+        srv.stop()
+        srv = Server(kind, exe, n, extra, client)
+        time.sleep(0.5)
+        base = srv.rss()
+        conns = []
+        for _ in range(n):
+            c = Client(srv.port, ctx)
+            c.handshake_to_finished()
+            conns.append(c)
+        sample(srv, "handshake")
+        del conns
+        srv.stop()
 
     # Second server: the handshakes done as a program that bounds them does (one at a time here), then idle.
-    srv = Server(kind, exe, n, extra)
+    srv = Server(kind, exe, n, extra, client)
     time.sleep(0.5)
+    if established_only:
+        sample(srv, "start")
     conns = []
     for _ in range(n):
         c = Client(srv.port, ctx)
@@ -260,6 +288,35 @@ def run(kind, exe, n, extra):
     return result
 
 
+def probe(kind, exe, n, extra, client, timeout):
+    """Connections handshaken one at a time, each with `timeout` seconds to be established and echo a byte, until one is
+    not or N are: how many a server holds when something (its work areas, `tls_echo --areas`) runs out."""
+    ctx = context(client)
+    srv = Server(kind, exe, n, extra, client)
+    time.sleep(0.5)
+    start = srv.rss()
+    conns, done = [], 0
+    for _ in range(n):
+        c = Client(srv.port, ctx)
+        c.sock.settimeout(timeout)
+        try:
+            c.handshake_to_finished()
+            c.finish()
+            c.sock.sendall(c.write(b"x"))
+            c.read_exactly(1)
+        except (OSError, ssl.SSLError, ConnectionError):
+            conns.append(c)
+            break
+        conns.append(c)
+        done += 1
+    time.sleep(1.0 + n / 5000)
+    rss = srv.rss()
+    print(f"  {kind} n={n:<6} established {done} of {n} (the next not within {timeout} s); VmRSS {rss} KiB, "
+          f"{(rss - start) / max(done, 1):.1f} KiB a connection over start", flush=True)
+    srv.stop()
+    return {"n": n, "probe": {"established": done, "timeout_s": timeout, "start": start, "rss": rss}, "client": client}
+
+
 def run_engine(exe, n, areas):
     pem = b""
     for part in (CA, os.path.join(VECTORS, "first/chain.pem"), os.path.join(VECTORS, "first/key.pem")):
@@ -299,13 +356,27 @@ def main():
     ap.add_argument("extra", nargs="*")
     ap.add_argument("--counts", default="50,100,200")
     ap.add_argument("--json")
+    ap.add_argument("--client")
+    ap.add_argument("--established-only", action="store_true")
+    ap.add_argument("--probe", type=float)
+    ap.add_argument("--server-areas", type=int, help="`tls_echo --areas <n>`: the example's work areas")
     a = ap.parse_args()
+    if a.server_areas:
+        a.extra += ["--areas", str(a.server_areas)]
+    client = os.path.abspath(a.client) if a.client else None
     results = []
     for n in [int(x) for x in a.counts.split(",")]:
         if a.kind == "engine":
             results.append(run_engine(a.exe, n, a.areas))
+        elif a.probe:
+            results.append(probe(a.kind, a.exe, n, a.extra, client, a.probe))
         else:
-            results.append(run(a.kind, a.exe, n, a.extra))
+            results.append(run(a.kind, a.exe, n, a.extra, client, a.established_only))
+    if a.probe:
+        if a.json:
+            with open(a.json, "w") as f:
+                json.dump(results, f, indent=1)
+        return
     if a.kind == "engine":
         print()
         print("KiB of RSS per connection (a client slot and a server slot), over RSS at start:")
@@ -318,7 +389,8 @@ def main():
                 json.dump(results, f, indent=1)
         return
     print()
-    print(f"KiB of server RSS per connection, over RSS at start ({a.kind} {' '.join(a.extra)}):")
+    print(f"KiB of server RSS per connection, over RSS at start ({a.kind} {' '.join(a.extra)}"
+          f"{' --client ' + a.client if a.client else ''}):")
     print(table(results))
     if a.json:
         with open(a.json, "w") as f:

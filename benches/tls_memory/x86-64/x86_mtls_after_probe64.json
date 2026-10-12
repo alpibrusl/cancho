@@ -1,0 +1,12 @@
+[
+ {
+  "n": 200,
+  "probe": {
+   "established": 200,
+   "timeout_s": 5.0,
+   "start": 2512,
+   "rss": 6388
+  },
+  "client": "/home/alpibru/Workspace/mtls-memory/src2/benches/tls_memory/clientauth/p256"
+ }
+]

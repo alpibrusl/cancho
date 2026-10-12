@@ -1,0 +1,306 @@
+[
+ {
+  "n": 50,
+  "rss": {
+   "start": 1892,
+   "connected": 6224,
+   "handshake": 7424,
+   "established": 8500,
+   "echoed": 12732,
+   "partial": 12732,
+   "all-echoed": 12732
+  },
+  "client": "/w/benches/tls_memory/clientauth/rsa",
+  "smaps_established": [
+   [
+    15892,
+    6536,
+    "[anon]"
+   ],
+   [
+    1640,
+    896,
+    "/usr/lib/aarch64-linux-gnu/libc.so.6"
+   ],
+   [
+    496,
+    496,
+    "/target/bin/tls_echo_base"
+   ],
+   [
+    564,
+    328,
+    "[heap]"
+   ],
+   [
+    156,
+    148,
+    "/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1"
+   ],
+   [
+    132,
+    20,
+    "[stack]"
+   ],
+   [
+    48,
+    16,
+    "[anon]"
+   ],
+   [
+    12,
+    12,
+    "/usr/lib/aarch64-linux-gnu/libc.so.6"
+   ],
+   [
+    8,
+    8,
+    "/usr/lib/aarch64-linux-gnu/libc.so.6"
+   ],
+   [
+    8,
+    8,
+    "[anon]"
+   ],
+   [
+    8,
+    8,
+    "/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1"
+   ],
+   [
+    8,
+    8,
+    "/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1"
+   ]
+  ],
+  "start_after_restart": 1896
+ },
+ {
+  "n": 100,
+  "rss": {
+   "start": 1772,
+   "connected": 10424,
+   "handshake": 12700,
+   "established": 14896,
+   "echoed": 23324,
+   "partial": 23324,
+   "all-echoed": 23324
+  },
+  "client": "/w/benches/tls_memory/clientauth/rsa",
+  "smaps_established": [
+   [
+    31932,
+    13056,
+    "[anon]"
+   ],
+   [
+    1640,
+    896,
+    "/usr/lib/aarch64-linux-gnu/libc.so.6"
+   ],
+   [
+    496,
+    496,
+    "/target/bin/tls_echo_base"
+   ],
+   [
+    344,
+    192,
+    "[heap]"
+   ],
+   [
+    156,
+    156,
+    "/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1"
+   ],
+   [
+    132,
+    24,
+    "[stack]"
+   ],
+   [
+    48,
+    16,
+    "[anon]"
+   ],
+   [
+    12,
+    12,
+    "/usr/lib/aarch64-linux-gnu/libc.so.6"
+   ],
+   [
+    8,
+    8,
+    "/usr/lib/aarch64-linux-gnu/libc.so.6"
+   ],
+   [
+    8,
+    8,
+    "[anon]"
+   ],
+   [
+    8,
+    8,
+    "/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1"
+   ],
+   [
+    8,
+    8,
+    "/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1"
+   ]
+  ],
+  "start_after_restart": 1768
+ },
+ {
+  "n": 200,
+  "rss": {
+   "start": 1764,
+   "connected": 19068,
+   "handshake": 23480,
+   "established": 27852,
+   "echoed": 44720,
+   "partial": 44720,
+   "all-echoed": 44720
+  },
+  "client": "/w/benches/tls_memory/clientauth/rsa",
+  "smaps_established": [
+   [
+    63544,
+    26020,
+    "[anon]"
+   ],
+   [
+    1640,
+    896,
+    "/usr/lib/aarch64-linux-gnu/libc.so.6"
+   ],
+   [
+    496,
+    496,
+    "/target/bin/tls_echo_base"
+   ],
+   [
+    372,
+    188,
+    "[heap]"
+   ],
+   [
+    156,
+    156,
+    "/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1"
+   ],
+   [
+    132,
+    20,
+    "[stack]"
+   ],
+   [
+    48,
+    16,
+    "[anon]"
+   ],
+   [
+    12,
+    12,
+    "/usr/lib/aarch64-linux-gnu/libc.so.6"
+   ],
+   [
+    8,
+    8,
+    "/usr/lib/aarch64-linux-gnu/libc.so.6"
+   ],
+   [
+    8,
+    8,
+    "[anon]"
+   ],
+   [
+    8,
+    8,
+    "/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1"
+   ],
+   [
+    8,
+    8,
+    "/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1"
+   ]
+  ],
+  "start_after_restart": 1764
+ },
+ {
+  "n": 10000,
+  "rss": {
+   "start": 1904,
+   "connected": 869168,
+   "handshake": 1083284,
+   "established": 1302032,
+   "echoed": 2145020,
+   "partial": 2145020,
+   "all-echoed": 2145020
+  },
+  "client": "/w/benches/tls_memory/clientauth/rsa",
+  "smaps_established": [
+   [
+    3164000,
+    1300080,
+    "[anon]"
+   ],
+   [
+    1640,
+    896,
+    "/usr/lib/aarch64-linux-gnu/libc.so.6"
+   ],
+   [
+    496,
+    496,
+    "/target/bin/tls_echo_base"
+   ],
+   [
+    468,
+    288,
+    "[heap]"
+   ],
+   [
+    156,
+    140,
+    "/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1"
+   ],
+   [
+    256,
+    40,
+    "[anon]"
+   ],
+   [
+    132,
+    20,
+    "[stack]"
+   ],
+   [
+    48,
+    16,
+    "[anon]"
+   ],
+   [
+    12,
+    12,
+    "/usr/lib/aarch64-linux-gnu/libc.so.6"
+   ],
+   [
+    8,
+    8,
+    "/usr/lib/aarch64-linux-gnu/libc.so.6"
+   ],
+   [
+    8,
+    8,
+    "[anon]"
+   ],
+   [
+    8,
+    8,
+    "/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1"
+   ]
+  ],
+  "start_after_restart": 1896
+ }
+]

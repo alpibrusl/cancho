@@ -1,0 +1,300 @@
+=== before plain 2026-10-12T19:27:32Z counts=50,100,200,10000
+  cancho n=50     start        VmRSS      1836 KiB
+  cancho n=50     connected    VmRSS      6168 KiB
+  cancho n=50     handshake    VmRSS      7364 KiB
+  cancho n=50     established  VmRSS      2748 KiB
+  cancho n=50     echoed       VmRSS      4588 KiB
+  cancho n=50     partial      VmRSS      5896 KiB
+  cancho n=50     all-echoed   VmRSS      8860 KiB
+  cancho n=100    start        VmRSS      1704 KiB
+  cancho n=100    connected    VmRSS     10360 KiB
+  cancho n=100    handshake    VmRSS     12624 KiB
+  cancho n=100    established  VmRSS      3640 KiB
+  cancho n=100    echoed       VmRSS      7284 KiB
+  cancho n=100    partial      VmRSS     10096 KiB
+  cancho n=100    all-echoed   VmRSS     16092 KiB
+  cancho n=200    start        VmRSS      1712 KiB
+  cancho n=200    connected    VmRSS     19012 KiB
+  cancho n=200    handshake    VmRSS     23392 KiB
+  cancho n=200    established  VmRSS      5324 KiB
+  cancho n=200    echoed       VmRSS     12580 KiB
+  cancho n=200    partial      VmRSS     18240 KiB
+  cancho n=200    all-echoed   VmRSS     30296 KiB
+  cancho n=10000  start        VmRSS      1860 KiB
+  cancho n=10000  connected    VmRSS    869124 KiB
+  cancho n=10000  handshake    VmRSS   1082000 KiB
+  cancho n=10000  established  VmRSS    172208 KiB
+  cancho n=10000  echoed       VmRSS    532264 KiB
+  cancho n=10000  partial      VmRSS    816772 KiB
+  cancho n=10000  all-echoed   VmRSS   1422432 KiB
+
+KiB of server RSS per connection, over RSS at start (cancho ):
+| N | connected | handshake | established | echoed | partial | all-echoed |
+|---|---|---|---|---|---|---|
+| 50 | 86.6 | 110.6 | 18.2 | 55.0 | 81.2 | 140.5 |
+| 100 | 86.6 | 109.2 | 19.4 | 55.8 | 83.9 | 143.9 |
+| 200 | 86.5 | 108.4 | 18.1 | 54.3 | 82.6 | 142.9 |
+| 10000 | 86.7 | 108.0 | 17.0 | 53.0 | 81.5 | 142.1 |
+=== before p256 2026-10-12T19:36:10Z counts=50,100,200,10000
+  cancho n=50     start        VmRSS      1896 KiB
+  cancho n=50     connected    VmRSS      6228 KiB
+  cancho n=50     handshake    VmRSS      7424 KiB
+  cancho n=50     established  VmRSS      8288 KiB
+  cancho n=50     echoed       VmRSS     12640 KiB
+  cancho n=50     partial      VmRSS     12640 KiB
+  cancho n=50     all-echoed   VmRSS     12640 KiB
+  cancho n=100    start        VmRSS      1772 KiB
+  cancho n=100    connected    VmRSS     10424 KiB
+  cancho n=100    handshake    VmRSS     12696 KiB
+  cancho n=100    established  VmRSS     14472 KiB
+  cancho n=100    echoed       VmRSS     23148 KiB
+  cancho n=100    partial      VmRSS     23148 KiB
+  cancho n=100    all-echoed   VmRSS     23148 KiB
+  cancho n=200    start        VmRSS      1768 KiB
+  cancho n=200    connected    VmRSS     19068 KiB
+  cancho n=200    handshake    VmRSS     23472 KiB
+  cancho n=200    established  VmRSS     27024 KiB
+  cancho n=200    echoed       VmRSS     44380 KiB
+  cancho n=200    partial      VmRSS     44380 KiB
+  cancho n=200    all-echoed   VmRSS     44380 KiB
+  cancho n=10000  start        VmRSS      1888 KiB
+  cancho n=10000  connected    VmRSS    869152 KiB
+  cancho n=10000  handshake    VmRSS   1083308 KiB
+  cancho n=10000  established  VmRSS   1261464 KiB
+  cancho n=10000  echoed       VmRSS   2128892 KiB
+  cancho n=10000  partial      VmRSS   2128892 KiB
+  cancho n=10000  all-echoed   VmRSS   2128892 KiB
+
+KiB of server RSS per connection, over RSS at start (cancho  --client benches/tls_memory/clientauth/p256):
+| N | connected | handshake | established | echoed | partial | all-echoed |
+|---|---|---|---|---|---|---|
+| 50 | 86.6 | 110.6 | 127.8 | 214.9 | 214.9 | 214.9 |
+| 100 | 86.5 | 109.2 | 127.0 | 213.8 | 213.8 | 213.8 |
+| 200 | 86.5 | 108.5 | 126.3 | 213.1 | 213.1 | 213.1 |
+| 10000 | 86.7 | 108.1 | 126.0 | 212.7 | 212.7 | 212.7 |
+=== before rsa 2026-10-12T19:44:52Z counts=50,100,200,10000
+  cancho n=50     start        VmRSS      1892 KiB
+  cancho n=50     connected    VmRSS      6224 KiB
+  cancho n=50     handshake    VmRSS      7424 KiB
+  cancho n=50     established  VmRSS      8500 KiB
+  cancho n=50     echoed       VmRSS     12732 KiB
+  cancho n=50     partial      VmRSS     12732 KiB
+  cancho n=50     all-echoed   VmRSS     12732 KiB
+  cancho n=100    start        VmRSS      1772 KiB
+  cancho n=100    connected    VmRSS     10424 KiB
+  cancho n=100    handshake    VmRSS     12700 KiB
+  cancho n=100    established  VmRSS     14896 KiB
+  cancho n=100    echoed       VmRSS     23324 KiB
+  cancho n=100    partial      VmRSS     23324 KiB
+  cancho n=100    all-echoed   VmRSS     23324 KiB
+  cancho n=200    start        VmRSS      1764 KiB
+  cancho n=200    connected    VmRSS     19068 KiB
+  cancho n=200    handshake    VmRSS     23480 KiB
+  cancho n=200    established  VmRSS     27852 KiB
+  cancho n=200    echoed       VmRSS     44720 KiB
+  cancho n=200    partial      VmRSS     44720 KiB
+  cancho n=200    all-echoed   VmRSS     44720 KiB
+  cancho n=10000  start        VmRSS      1904 KiB
+  cancho n=10000  connected    VmRSS    869168 KiB
+  cancho n=10000  handshake    VmRSS   1083284 KiB
+  cancho n=10000  established  VmRSS   1302032 KiB
+  cancho n=10000  echoed       VmRSS   2145020 KiB
+  cancho n=10000  partial      VmRSS   2145020 KiB
+  cancho n=10000  all-echoed   VmRSS   2145020 KiB
+
+KiB of server RSS per connection, over RSS at start (cancho  --client benches/tls_memory/clientauth/rsa):
+| N | connected | handshake | established | echoed | partial | all-echoed |
+|---|---|---|---|---|---|---|
+| 50 | 86.6 | 110.6 | 132.2 | 216.8 | 216.8 | 216.8 |
+| 100 | 86.5 | 109.3 | 131.2 | 215.5 | 215.5 | 215.5 |
+| 200 | 86.5 | 108.6 | 130.4 | 214.8 | 214.8 | 214.8 |
+| 10000 | 86.7 | 108.1 | 130.0 | 214.3 | 214.3 | 214.3 |
+=== before ossl 2026-10-12T19:53:20Z counts=50,100,200,10000
+  openssl n=50     start        VmRSS      6328 KiB
+  openssl n=50     connected    VmRSS      6816 KiB
+  openssl n=50     handshake    VmRSS      9036 KiB
+  openssl n=50     established  VmRSS      7772 KiB
+  openssl n=50     echoed       VmRSS      8884 KiB
+  openssl n=50     partial      VmRSS      8884 KiB
+  openssl n=50     all-echoed   VmRSS      8884 KiB
+  openssl n=100    start        VmRSS      6328 KiB
+  openssl n=100    connected    VmRSS      7244 KiB
+  openssl n=100    handshake    VmRSS     11568 KiB
+  openssl n=100    established  VmRSS      8980 KiB
+  openssl n=100    echoed       VmRSS     11192 KiB
+  openssl n=100    partial      VmRSS     11192 KiB
+  openssl n=100    all-echoed   VmRSS     11192 KiB
+  openssl n=200    start        VmRSS      6324 KiB
+  openssl n=200    connected    VmRSS      8096 KiB
+  openssl n=200    handshake    VmRSS     16584 KiB
+  openssl n=200    established  VmRSS     11400 KiB
+  openssl n=200    echoed       VmRSS     15808 KiB
+  openssl n=200    partial      VmRSS     15808 KiB
+  openssl n=200    all-echoed   VmRSS     15808 KiB
+  openssl n=10000  start        VmRSS      6328 KiB
+  openssl n=10000  connected    VmRSS     92168 KiB
+  openssl n=10000  handshake    VmRSS    510280 KiB
+  openssl n=10000  established  VmRSS    248440 KiB
+  openssl n=10000  echoed       VmRSS    468140 KiB
+  openssl n=10000  partial      VmRSS    468140 KiB
+  openssl n=10000  all-echoed   VmRSS    468140 KiB
+
+KiB of server RSS per connection, over RSS at start (openssl ):
+| N | connected | handshake | established | echoed | partial | all-echoed |
+|---|---|---|---|---|---|---|
+| 50 | 9.8 | 54.2 | 28.9 | 51.1 | 51.1 | 51.1 |
+| 100 | 9.2 | 52.4 | 26.5 | 48.6 | 48.6 | 48.6 |
+| 200 | 8.9 | 51.3 | 25.4 | 47.4 | 47.4 | 47.4 |
+| 10000 | 8.6 | 50.4 | 24.2 | 46.2 | 46.2 | 46.2 |
+=== before ossl-rel 2026-10-12T20:01:39Z counts=50,100,200,10000
+  openssl n=50     start        VmRSS      6328 KiB
+  openssl n=50     connected    VmRSS      6816 KiB
+  openssl n=50     handshake    VmRSS      8640 KiB
+  openssl n=50     established  VmRSS      7260 KiB
+  openssl n=50     echoed       VmRSS      7276 KiB
+  openssl n=50     partial      VmRSS      8020 KiB
+  openssl n=50     all-echoed   VmRSS      7364 KiB
+  openssl n=100    start        VmRSS      6324 KiB
+  openssl n=100    connected    VmRSS      7240 KiB
+  openssl n=100    handshake    VmRSS     10736 KiB
+  openssl n=100    established  VmRSS      7932 KiB
+  openssl n=100    echoed       VmRSS      7948 KiB
+  openssl n=100    partial      VmRSS      9484 KiB
+  openssl n=100    all-echoed   VmRSS      8036 KiB
+  openssl n=200    start        VmRSS      6328 KiB
+  openssl n=200    connected    VmRSS      8100 KiB
+  openssl n=200    handshake    VmRSS     14924 KiB
+  openssl n=200    established  VmRSS      9308 KiB
+  openssl n=200    echoed       VmRSS      9324 KiB
+  openssl n=200    partial      VmRSS     12432 KiB
+  openssl n=200    all-echoed   VmRSS      9408 KiB
+  openssl n=10000  start        VmRSS      6328 KiB
+  openssl n=10000  connected    VmRSS     92168 KiB
+  openssl n=10000  handshake    VmRSS    425440 KiB
+  openssl n=10000  established  VmRSS    142832 KiB
+  openssl n=10000  echoed       VmRSS    142848 KiB
+  openssl n=10000  partial      VmRSS    300152 KiB
+  openssl n=10000  all-echoed   VmRSS    142936 KiB
+
+KiB of server RSS per connection, over RSS at start (openssl release):
+| N | connected | handshake | established | echoed | partial | all-echoed |
+|---|---|---|---|---|---|---|
+| 50 | 9.8 | 46.2 | 18.6 | 19.0 | 33.8 | 20.7 |
+| 100 | 9.2 | 44.1 | 16.1 | 16.2 | 31.6 | 17.1 |
+| 200 | 8.9 | 43.0 | 14.9 | 15.0 | 30.5 | 15.4 |
+| 10000 | 8.6 | 41.9 | 13.7 | 13.7 | 29.4 | 13.7 |
+=== before ossl-p256 2026-10-12T20:09:58Z counts=50,100,200,10000
+  openssl n=50     start        VmRSS      6332 KiB
+  openssl n=50     connected    VmRSS      6816 KiB
+  openssl n=50     handshake    VmRSS      9052 KiB
+  openssl n=50     established  VmRSS      8156 KiB
+  openssl n=50     echoed       VmRSS      9208 KiB
+  openssl n=50     partial      VmRSS      9208 KiB
+  openssl n=50     all-echoed   VmRSS      9208 KiB
+  openssl n=100    start        VmRSS      6340 KiB
+  openssl n=100    connected    VmRSS      7252 KiB
+  openssl n=100    handshake    VmRSS     11572 KiB
+  openssl n=100    established  VmRSS      9712 KiB
+  openssl n=100    echoed       VmRSS     11808 KiB
+  openssl n=100    partial      VmRSS     11808 KiB
+  openssl n=100    all-echoed   VmRSS     11808 KiB
+  openssl n=200    start        VmRSS      6328 KiB
+  openssl n=200    connected    VmRSS      8100 KiB
+  openssl n=200    handshake    VmRSS     16620 KiB
+  openssl n=200    established  VmRSS     12880 KiB
+  openssl n=200    echoed       VmRSS     17060 KiB
+  openssl n=200    partial      VmRSS     17060 KiB
+  openssl n=200    all-echoed   VmRSS     17060 KiB
+  openssl n=10000  start        VmRSS      6340 KiB
+  openssl n=10000  connected    VmRSS     92176 KiB
+  openssl n=10000  handshake    VmRSS    510272 KiB
+  openssl n=10000  established  VmRSS    321584 KiB
+  openssl n=10000  echoed       VmRSS    530028 KiB
+  openssl n=10000  partial      VmRSS    530028 KiB
+  openssl n=10000  all-echoed   VmRSS    530028 KiB
+
+KiB of server RSS per connection, over RSS at start (openssl  --client benches/tls_memory/clientauth/p256):
+| N | connected | handshake | established | echoed | partial | all-echoed |
+|---|---|---|---|---|---|---|
+| 50 | 9.7 | 54.4 | 36.5 | 57.5 | 57.5 | 57.5 |
+| 100 | 9.1 | 52.3 | 33.7 | 54.7 | 54.7 | 54.7 |
+| 200 | 8.9 | 51.5 | 32.8 | 53.7 | 53.7 | 53.7 |
+| 10000 | 8.6 | 50.4 | 31.5 | 52.4 | 52.4 | 52.4 |
+=== before ossl-rel-p256 2026-10-12T20:18:17Z counts=50,100,200,10000
+  openssl n=50     start        VmRSS      6336 KiB
+  openssl n=50     connected    VmRSS      6820 KiB
+  openssl n=50     handshake    VmRSS      8640 KiB
+  openssl n=50     established  VmRSS      7576 KiB
+  openssl n=50     echoed       VmRSS      7592 KiB
+  openssl n=50     partial      VmRSS      8336 KiB
+  openssl n=50     all-echoed   VmRSS      7692 KiB
+  openssl n=100    start        VmRSS      6340 KiB
+  openssl n=100    connected    VmRSS      7252 KiB
+  openssl n=100    handshake    VmRSS     10716 KiB
+  openssl n=100    established  VmRSS      8576 KiB
+  openssl n=100    echoed       VmRSS      8592 KiB
+  openssl n=100    partial      VmRSS     10124 KiB
+  openssl n=100    all-echoed   VmRSS      8692 KiB
+  openssl n=200    start        VmRSS      6336 KiB
+  openssl n=200    connected    VmRSS      8108 KiB
+  openssl n=200    handshake    VmRSS     14912 KiB
+  openssl n=200    established  VmRSS     10552 KiB
+  openssl n=200    echoed       VmRSS     10568 KiB
+  openssl n=200    partial      VmRSS     13672 KiB
+  openssl n=200    all-echoed   VmRSS     10668 KiB
+  openssl n=10000  start        VmRSS      6340 KiB
+  openssl n=10000  connected    VmRSS     92176 KiB
+  openssl n=10000  handshake    VmRSS    424332 KiB
+  openssl n=10000  established  VmRSS    204564 KiB
+  openssl n=10000  echoed       VmRSS    204580 KiB
+  openssl n=10000  partial      VmRSS    361880 KiB
+  openssl n=10000  all-echoed   VmRSS    204680 KiB
+
+KiB of server RSS per connection, over RSS at start (openssl release --client benches/tls_memory/clientauth/p256):
+| N | connected | handshake | established | echoed | partial | all-echoed |
+|---|---|---|---|---|---|---|
+| 50 | 9.7 | 46.1 | 24.8 | 25.1 | 40.0 | 27.1 |
+| 100 | 9.1 | 43.8 | 22.4 | 22.5 | 37.8 | 23.5 |
+| 200 | 8.9 | 42.9 | 21.1 | 21.2 | 36.7 | 21.7 |
+| 10000 | 8.6 | 41.8 | 19.8 | 19.8 | 35.6 | 19.8 |
+=== before ossl-rsa 2026-10-12T20:26:43Z counts=50,100,200,10000
+  openssl n=50     start        VmRSS      6336 KiB
+  openssl n=50     connected    VmRSS      6824 KiB
+  openssl n=50     handshake    VmRSS      9060 KiB
+  openssl n=50     established  VmRSS      8368 KiB
+  openssl n=50     echoed       VmRSS      9492 KiB
+  openssl n=50     partial      VmRSS      9492 KiB
+  openssl n=50     all-echoed   VmRSS      9492 KiB
+  openssl n=100    start        VmRSS      6336 KiB
+  openssl n=100    connected    VmRSS      7252 KiB
+  openssl n=100    handshake    VmRSS     11572 KiB
+  openssl n=100    established  VmRSS     10164 KiB
+  openssl n=100    echoed       VmRSS     12400 KiB
+  openssl n=100    partial      VmRSS     12400 KiB
+  openssl n=100    all-echoed   VmRSS     12400 KiB
+  openssl n=200    start        VmRSS      6332 KiB
+  openssl n=200    connected    VmRSS      8108 KiB
+  openssl n=200    handshake    VmRSS     16620 KiB
+  openssl n=200    established  VmRSS     13780 KiB
+  openssl n=200    echoed       VmRSS     18224 KiB
+  openssl n=200    partial      VmRSS     18224 KiB
+  openssl n=200    all-echoed   VmRSS     18224 KiB
+  openssl n=10000  start        VmRSS      6336 KiB
+  openssl n=10000  connected    VmRSS     92176 KiB
+  openssl n=10000  handshake    VmRSS    510604 KiB
+  openssl n=10000  established  VmRSS    367192 KiB
+  openssl n=10000  echoed       VmRSS    588464 KiB
+  openssl n=10000  partial      VmRSS    588464 KiB
+  openssl n=10000  all-echoed   VmRSS    588464 KiB
+
+KiB of server RSS per connection, over RSS at start (openssl  --client benches/tls_memory/clientauth/rsa):
+| N | connected | handshake | established | echoed | partial | all-echoed |
+|---|---|---|---|---|---|---|
+| 50 | 9.8 | 54.5 | 40.6 | 63.1 | 63.1 | 63.1 |
+| 100 | 9.2 | 52.4 | 38.3 | 60.6 | 60.6 | 60.6 |
+| 200 | 8.9 | 51.4 | 37.2 | 59.5 | 59.5 | 59.5 |
+| 10000 | 8.6 | 50.4 | 36.1 | 58.2 | 58.2 | 58.2 |
+=== before probe 2026-10-12T20:35:50Z counts=50,100,200,10000
+  cancho n=200    established 64 of 200 (the next not within 5.0 s); VmRSS 9940 KiB, 127.8 KiB a connection over start
+  cancho n=200    established 200 of 200 (the next not within 5.0 s); VmRSS 5320 KiB, 18.0 KiB a connection over start
+=== done 2026-10-12T20:36:05Z

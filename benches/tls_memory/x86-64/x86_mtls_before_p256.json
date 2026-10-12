@@ -1,0 +1,306 @@
+[
+ {
+  "n": 50,
+  "rss": {
+   "start": 2632,
+   "connected": 6960,
+   "handshake": 8140,
+   "established": 8988,
+   "echoed": 13300,
+   "partial": 13300,
+   "all-echoed": 13300
+  },
+  "client": "/home/alpibru/Workspace/mtls-memory/src/benches/tls_memory/clientauth/p256",
+  "smaps_established": [
+   [
+    14780,
+    6164,
+    "[anon]"
+   ],
+   [
+    1632,
+    1056,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    408,
+    408,
+    "/home/alpibru/Workspace/mtls-memory/bin/tls_echo_base"
+   ],
+   [
+    564,
+    328,
+    "[heap]"
+   ],
+   [
+    1124,
+    264,
+    "[anon]"
+   ],
+   [
+    188,
+    188,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    160,
+    160,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    144,
+    144,
+    "/home/alpibru/Workspace/mtls-memory/bin/tls_echo_base"
+   ],
+   [
+    312,
+    120,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    44,
+    44,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    52,
+    20,
+    "[anon]"
+   ],
+   [
+    132,
+    20,
+    "[stack]"
+   ]
+  ],
+  "start_after_restart": 2628
+ },
+ {
+  "n": 100,
+  "rss": {
+   "start": 2500,
+   "connected": 11148,
+   "handshake": 13532,
+   "established": 15240,
+   "echoed": 23832,
+   "partial": 23832,
+   "all-echoed": 23832
+  },
+  "client": "/home/alpibru/Workspace/mtls-memory/src/benches/tls_memory/clientauth/p256",
+  "smaps_established": [
+   [
+    31148,
+    12748,
+    "[anon]"
+   ],
+   [
+    1632,
+    1056,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    408,
+    408,
+    "/home/alpibru/Workspace/mtls-memory/bin/tls_echo_base"
+   ],
+   [
+    340,
+    188,
+    "[heap]"
+   ],
+   [
+    188,
+    188,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    160,
+    160,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    144,
+    144,
+    "/home/alpibru/Workspace/mtls-memory/bin/tls_echo_base"
+   ],
+   [
+    312,
+    120,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    796,
+    72,
+    "[anon]"
+   ],
+   [
+    44,
+    44,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    52,
+    20,
+    "[anon]"
+   ],
+   [
+    132,
+    20,
+    "[stack]"
+   ]
+  ],
+  "start_after_restart": 2504
+ },
+ {
+  "n": 200,
+  "rss": {
+   "start": 2508,
+   "connected": 19804,
+   "handshake": 24556,
+   "established": 27976,
+   "echoed": 45164,
+   "partial": 45164,
+   "all-echoed": 45164
+  },
+  "client": "/home/alpibru/Workspace/mtls-memory/src/benches/tls_memory/clientauth/p256",
+  "smaps_established": [
+   [
+    62284,
+    25480,
+    "[anon]"
+   ],
+   [
+    1632,
+    1056,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    408,
+    408,
+    "/home/alpibru/Workspace/mtls-memory/bin/tls_echo_base"
+   ],
+   [
+    372,
+    192,
+    "[heap]"
+   ],
+   [
+    188,
+    188,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    160,
+    160,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    144,
+    144,
+    "/home/alpibru/Workspace/mtls-memory/bin/tls_echo_base"
+   ],
+   [
+    312,
+    120,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    1272,
+    72,
+    "[anon]"
+   ],
+   [
+    44,
+    44,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    52,
+    20,
+    "[anon]"
+   ],
+   [
+    132,
+    20,
+    "[stack]"
+   ]
+  ],
+  "start_after_restart": 2500
+ },
+ {
+  "n": 10000,
+  "rss": {
+   "start": 2636,
+   "connected": 869896,
+   "handshake": 1108036,
+   "established": 1279408,
+   "echoed": 2138256,
+   "partial": 2138256,
+   "all-echoed": 2138256
+  },
+  "client": "/home/alpibru/Workspace/mtls-memory/src/benches/tls_memory/clientauth/p256",
+  "smaps_established": [
+   [
+    3163692,
+    1276784,
+    "[anon]"
+   ],
+   [
+    1632,
+    1056,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    408,
+    408,
+    "/home/alpibru/Workspace/mtls-memory/bin/tls_echo_base"
+   ],
+   [
+    468,
+    288,
+    "[heap]"
+   ],
+   [
+    188,
+    188,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    160,
+    160,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    144,
+    144,
+    "/home/alpibru/Workspace/mtls-memory/bin/tls_echo_base"
+   ],
+   [
+    312,
+    120,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    320,
+    64,
+    "[anon]"
+   ],
+   [
+    44,
+    44,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    256,
+    40,
+    "[anon]"
+   ],
+   [
+    132,
+    24,
+    "[stack]"
+   ]
+  ],
+  "start_after_restart": 2640
+ }
+]

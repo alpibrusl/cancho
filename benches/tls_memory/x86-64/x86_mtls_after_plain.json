@@ -1,0 +1,306 @@
+[
+ {
+  "n": 50,
+  "rss": {
+   "start": 2656,
+   "connected": 6984,
+   "handshake": 8164,
+   "established": 3440,
+   "echoed": 5288,
+   "partial": 6596,
+   "all-echoed": 9560
+  },
+  "client": null,
+  "smaps_established": [
+   [
+    1632,
+    1056,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    15584,
+    740,
+    "[anon]"
+   ],
+   [
+    664,
+    440,
+    "[heap]"
+   ],
+   [
+    412,
+    412,
+    "/home/alpibru/Workspace/mtls-memory/bin/tls_echo_new"
+   ],
+   [
+    188,
+    184,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    160,
+    160,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    144,
+    144,
+    "/home/alpibru/Workspace/mtls-memory/bin/tls_echo_new"
+   ],
+   [
+    312,
+    120,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    44,
+    44,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    320,
+    28,
+    "[anon]"
+   ],
+   [
+    52,
+    20,
+    "[anon]"
+   ],
+   [
+    132,
+    20,
+    "[stack]"
+   ]
+  ],
+  "start_after_restart": 2636
+ },
+ {
+  "n": 100,
+  "rss": {
+   "start": 2452,
+   "connected": 11100,
+   "handshake": 13468,
+   "established": 4252,
+   "echoed": 7892,
+   "partial": 10704,
+   "all-echoed": 16700
+  },
+  "client": null,
+  "smaps_established": [
+   [
+    31148,
+    1340,
+    "[anon]"
+   ],
+   [
+    1632,
+    1056,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    1000,
+    508,
+    "[anon]"
+   ],
+   [
+    412,
+    412,
+    "/home/alpibru/Workspace/mtls-memory/bin/tls_echo_new"
+   ],
+   [
+    188,
+    188,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    340,
+    168,
+    "[heap]"
+   ],
+   [
+    160,
+    160,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    144,
+    144,
+    "/home/alpibru/Workspace/mtls-memory/bin/tls_echo_new"
+   ],
+   [
+    312,
+    120,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    44,
+    44,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    52,
+    20,
+    "[anon]"
+   ],
+   [
+    132,
+    20,
+    "[stack]"
+   ]
+  ],
+  "start_after_restart": 2452
+ },
+ {
+  "n": 200,
+  "rss": {
+   "start": 2464,
+   "connected": 19760,
+   "handshake": 24480,
+   "established": 5940,
+   "echoed": 13196,
+   "partial": 18856,
+   "all-echoed": 30912
+  },
+  "client": null,
+  "smaps_established": [
+   [
+    63640,
+    3496,
+    "[anon]"
+   ],
+   [
+    1632,
+    1056,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    412,
+    412,
+    "/home/alpibru/Workspace/mtls-memory/bin/tls_echo_new"
+   ],
+   [
+    188,
+    188,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    372,
+    176,
+    "[heap]"
+   ],
+   [
+    160,
+    160,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    144,
+    144,
+    "/home/alpibru/Workspace/mtls-memory/bin/tls_echo_new"
+   ],
+   [
+    312,
+    120,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    44,
+    44,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    320,
+    28,
+    "[anon]"
+   ],
+   [
+    132,
+    24,
+    "[stack]"
+   ],
+   [
+    52,
+    20,
+    "[anon]"
+   ]
+  ],
+  "start_after_restart": 2460
+ },
+ {
+  "n": 10000,
+  "rss": {
+   "start": 2608,
+   "connected": 869868,
+   "handshake": 1106744,
+   "established": 172816,
+   "echoed": 532868,
+   "partial": 817376,
+   "all-echoed": 1423036
+  },
+  "client": null,
+  "smaps_established": [
+   [
+    3183844,
+    170252,
+    "[anon]"
+   ],
+   [
+    1632,
+    1056,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    412,
+    412,
+    "/home/alpibru/Workspace/mtls-memory/bin/tls_echo_new"
+   ],
+   [
+    468,
+    288,
+    "[heap]"
+   ],
+   [
+    188,
+    184,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    160,
+    160,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    144,
+    144,
+    "/home/alpibru/Workspace/mtls-memory/bin/tls_echo_new"
+   ],
+   [
+    312,
+    120,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ],
+   [
+    44,
+    44,
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+   ],
+   [
+    256,
+    40,
+    "[anon]"
+   ],
+   [
+    52,
+    20,
+    "[anon]"
+   ],
+   [
+    16,
+    16,
+    "/usr/lib/x86_64-linux-gnu/libc.so.6"
+   ]
+  ],
+  "start_after_restart": 2616
+ }
+]

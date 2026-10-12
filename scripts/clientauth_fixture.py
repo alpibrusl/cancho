@@ -34,14 +34,15 @@ def make_ca(name):
 
 
 def make_client(ca, attributes, dns="device.fleet.test"):
-    """A client certificate of `ca` = (key, cert) with the subject attributes `attributes` (oid, value) in order."""
+    """A client certificate of `ca` = (key, cert) with the subject attributes `attributes` (oid, value) in order, and
+    the dNSName `dns` (or each of a list of them) as its subjectAltName."""
     now = datetime.datetime.now(datetime.timezone.utc)
     key = ec.generate_private_key(ec.SECP256R1())
     subject = x509.Name([x509.NameAttribute(oid, value) for oid, value in attributes])
     cert = (x509.CertificateBuilder().subject_name(subject).issuer_name(ca[1].subject).public_key(key.public_key())
             .serial_number(x509.random_serial_number()).not_valid_before(now - datetime.timedelta(days=1))
             .not_valid_after(now + datetime.timedelta(days=30))
-            .add_extension(x509.SubjectAlternativeName([x509.DNSName(dns)]), False)
+            .add_extension(x509.SubjectAlternativeName([x509.DNSName(d) for d in ([dns] if isinstance(dns, str) else dns)]), False)
             .add_extension(x509.KeyUsage(True, False, False, False, False, False, False, False, False), True)
             .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.CLIENT_AUTH]), False)
             .sign(ca[0], hashes.SHA256()))
