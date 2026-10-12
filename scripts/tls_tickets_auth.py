@@ -176,6 +176,21 @@ def by_host(c):
     s.client_flight("chain")
 
 
+@case("a slot emptied and refilled mid-handshake: the new identity does not name the host, so the request gets the empty Certificate")
+def refilled_mid_handshake(c):
+    assert identity(c)[0] == 0
+    s = Eng(c)
+    assert s.begin(L.NOW) is None
+    s.cr_exts = A.SIG
+    recs = L.records(s.hello_and_flight())
+    s.c.feed(recs[0])
+    assert c.ask("Z 0")[:2] == ["0", "ok"]
+    assert identity(c, hosts=b"someone.else.example")[0] == 0
+    s.c.feed(b"".join(recs[1:]))
+    s.client_flight("empty")
+    assert s.engine_auth() == 2, "client_auth"
+
+
 @case("the identities' own refusals through the engine: full, never added, expired, mismatched")
 def refusals(c):
     for n in range(4):

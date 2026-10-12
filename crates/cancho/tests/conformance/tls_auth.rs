@@ -79,7 +79,7 @@ fn the_engine_keeps_a_ticket_back_when_the_identity_changes_and_chooses_it_by_ho
             cases.last_mut().unwrap().1.push(line.to_string());
         }
     }
-    assert_eq!(cases.len(), 13);
+    assert_eq!(cases.len(), 14);
     for backend in ["cranelift", "llvm"] {
         let (dir, exe) = super::tls::build_tls_tickets_in("tls-auth-tickets", backend);
         for (name, asked, answered) in &cases {

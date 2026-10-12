@@ -803,7 +803,8 @@ byte on both backends by `conformance/tls_auth.rs`): **87 connections** (77 at f
 
 The server also checks the ClientHello: the ALPN extension is there once, with exactly the offer, between `signature_algorithms_cert` and
 `supported_versions`, and absent when nothing was offered. **The engine's rules** (`scripts/tls_tickets_auth.py`, `tests/vectors/tls/tickets_auth.txt`,
-13 cases): an identity added, replaced or removed keeps a saved ticket back (rule 9), and so do an identity added or removed, and a `trust` call, between a connection's start and its ticket (after review), and a ticket saved after is offered and resumed with `client_auth` 0;
+14 cases): an identity added, replaced or removed keeps a saved ticket back (rule 9); a slot emptied and refilled mid-handshake for another host
+answers with the empty Certificate (the engine-level case of the review's finding 1, first written on this branch by the reviewer); and so do an identity added or removed, and a `trust` call, between a connection's start and its ticket (after review), and a ticket saved after is offered and resumed with `client_auth` 0;
 the client certificate's `notAfter` bounds a ticket whose server certificate lasts ten years (rule 10), offered at `notAfter` and not after; the identity is
 chosen by the host; four identities, a fifth, a replace and a remove of ones never added, a mismatched key, an expired leaf and no hosts are refused through the
 engine with their tags; the default offer is what `start` sends and a connection's own replaces it, even by none; a ticket resumes under another offer and the new
