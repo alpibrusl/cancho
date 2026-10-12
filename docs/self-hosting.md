@@ -221,7 +221,7 @@ the stages found, in place, the way this document corrects its own claims.
 | 4e. Strings and slices: a literal as a slice of bytes, `len`, `s[i]` with its bound, `write_bytes`, `int_of`/`byte_of`, a slice passed, kept and reassigned, a store through `*r` and `s[i]` | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho` | the Rust compiler, by what the built programs do and write | **Fifth slice of the backend.** 292 builds run and compared, 24 of them new, 60 trap; none different |
 | 4f. Structs of whole numbers, bytes and booleans: a literal, a field read, a copy, passed and returned, a field written through a unique reference, `*r` of one | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho` | the Rust compiler, by what the built programs do | **Sixth slice of the backend.** 312 builds run and compared, 20 of them new, 63 trap; none different |
 | 4g. Enums and `match` on them: a variant with payloads, `match` by value and behind a reference (payloads are references, written through), `_` arms, nested | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho` | the Rust compiler, by what the built programs do | **Seventh slice of the backend.** 332 builds run and compared, 20 of them new, 64 trap; none different |
-| 4h. Arenas: `region` and `alloc_slice[a](n, fill)` of whole numbers, bytes and booleans, in the checker (the arena in scope, the count, the fill a value that copies, the slice cannot leave) and in the code | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho`, `types.cho`, `driver.cho` | the Rust compiler: the checker by answers (1,945 cases), the code by what the built programs do | **Eighth slice of the backend, and a checker rule.** 352 builds run and compared, 20 of them new, 71 trap; none different. The checker's 1,945 cases are identical, 25 of them new |
+| 4h. Arenas: `region` and `alloc_slice[a](n, fill)` of whole numbers, bytes and booleans, in the checker (the arena in scope, the count, the fill a value that copies, the slice cannot leave) and in the code | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho`, `types.cho`, `driver.cho` | the Rust compiler: the checker by answers (1,945 cases), the code by what the built programs do | **Eighth slice of the backend, and a checker rule.** 352 builds run and compared, 20 of them new, 71 trap; none different. The checker's 1,945 cases are identical, 27 of them new |
 | 4i. The rest of the backend: the heap (`box_slice`, `contents`, `unbox_slice`), `alloc` of one value, `static` tables, generics, tuples, `clang` run by the compiler itself | not started | | |
 
 **The method.** A port that builds no tree has nothing to compare, and one that does
@@ -598,7 +598,7 @@ escape (only a `static` item may add to the static region); then the count, an `
 which must copy (a `res` one is `mode-bound-violated`); the result is a unique reference to a slice in
 the arena's block. A `return` of anything pointing into a block is now an escape checked before the
 types are compared, as Rust does it: a function returning `s` from its arena as an `int` said
-`type-mismatch`, and Rust says `reference-escapes-region`; the 25 new cases found that. In the code,
+`type-mismatch`, and Rust says `reference-escapes-region`; the new cases found that. In the code,
 a `region` is a cell holding the head of a list of its allocations, each a `malloc` with a 16-byte
 header linking to the one before, and the end of the block frees them all; both are two helper
 functions the driver writes (`@cancho_arena_alloc`, `@cancho_arena_free`). A negative count traps, and
