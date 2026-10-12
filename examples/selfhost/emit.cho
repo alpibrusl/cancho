@@ -167,9 +167,9 @@ pub fn struct_type[&s](st: &!s [int], item: int) -> [] int {
     return str(st, " }");
 }
 
-// The scalar type tag of the field declared by node `f`.
+// The type of the field declared by node `f`: a scalar tag, a struct or an enum, a box.
 pub fn field_scalar[&s](st: &!s [int], f: int) -> [] int {
-    return ast.get(st, ast.get(st, f, 5), 10);
+    return types.node_type(st, ast.get(st, f, 5));
 }
 
 // The field of `item` at position `index`, by its declaration node.
@@ -223,7 +223,7 @@ pub fn enum_type[&s](st: &!s [int], item: int) -> [] int {
         var n = ast.get(st, v, 6);
         while n > 0 {
             str(st, ", ");
-            llvm_type(st, ast.get(st, p, 10));
+            llvm_type(st, types.node_type(st, p));
             p = ast.next(st, p);
             n = n - 1;
         }
@@ -736,13 +736,13 @@ pub fn push_arg[&s](st: &!s [int], ty: int, known: bool, value: int, reg: int) -
 
 // The call of `name`, the identifier at token `name` of `text`, to the last `n` arguments pushed,
 // returning `ret`; answers the temporary of the result.
-pub fn call[&s, &x](st: &!s [int], text: &x [byte], name: int, ret: int, n: int) -> [] int {
+pub fn call[&s](st: &!s [int], callee: int, ret: int, n: int) -> [] int {
     let first = st[52] - n;
     let result = start(st);
     str(st, "call ");
-    llvm_type(st, ret);
+    ret_type(st, ret);
     str(st, " @lexs_");
-    slice(st, text, ast.tstart(st, name), ast.tend(st, name));
+    nat(st, callee);
     str(st, "(");
     var i = 0;
     while i < n {
@@ -757,7 +757,83 @@ pub fn call[&s, &x](st: &!s [int], text: &x [byte], name: int, ret: int, n: int)
     }
     str(st, ")\n");
     st[52] = first;
+    if types.is_slice_ref(st, ret) {
+        // A slice comes back as the pair; its two parts, the length left in `st[59]`.
+        let p = start(st);
+        str(st, "extractvalue { ptr, i64 } ");
+        temp(st, result);
+        str(st, ", 0\n");
+        let len = start(st);
+        str(st, "extractvalue { ptr, i64 } ");
+        temp(st, result);
+        str(st, ", 1\n");
+        st[59] = len;
+        return p;
+    }
     return result;
+}
+
+// The type a function answers: a reference to a slice is the pair of its pointer and its length.
+pub fn ret_type[&s](st: &!s [int], ty: int) -> [] int {
+    if types.is_slice_ref(st, ty) {
+        return str(st, "{ ptr, i64 }");
+    }
+    return llvm_type(st, ty);
+}
+
+// `return s;` of a slice: the pair.
+pub fn ret_slice[&s](st: &!s [int], p: int, lk: bool, lv: int, lr: int) -> [] int {
+    let pair = types.make_boxslice(st, 1);
+    let first = insert_at(st, pair, 0 - 1, 0, 7, false, 0, p);
+    let both = insert_at(st, pair, first, 1, 1, lk, lv, lr);
+    str(st, "  ret { ptr, i64 } ");
+    temp(st, both);
+    str(st, "\n");
+    let n = label(st);
+    str(st, "dead");
+    nat(st, n);
+    str(st, ":\n");
+    return 0;
+}
+
+// `s[a..b]` of a slice (`base`, its length) of `element`: an end past the length traps, and so does a
+// start past the end (an inverted range); the address of the first element is answered and the new
+// length left in `st[59]`.
+pub fn subslice[&s](st: &!s [int], element: int, base: int, lk: bool, lv: int, lr: int, ak: bool, av: int, ar: int, zk: bool, zv: int, zr: int) -> [] int {
+    let past = start(st);
+    str(st, "icmp ugt i64 ");
+    operand(st, 1, zk, zv, zr);
+    str(st, ", ");
+    operand(st, 1, lk, lv, lr);
+    str(st, "\n");
+    trap_if(st, past);
+    let inverted = start(st);
+    str(st, "icmp ugt i64 ");
+    operand(st, 1, ak, av, ar);
+    str(st, ", ");
+    operand(st, 1, zk, zv, zr);
+    str(st, "\n");
+    trap_if(st, inverted);
+    let offset = start(st);
+    str(st, "mul i64 ");
+    operand(st, 1, ak, av, ar);
+    str(st, ", ");
+    nat(st, stride(st, element));
+    str(st, "\n");
+    let at = start(st);
+    str(st, "getelementptr i8, ptr ");
+    operand(st, 7, false, 0, base);
+    str(st, ", i64 ");
+    temp(st, offset);
+    str(st, "\n");
+    let length = start(st);
+    str(st, "sub i64 ");
+    operand(st, 1, zk, zv, zr);
+    str(st, ", ");
+    operand(st, 1, ak, av, ar);
+    str(st, "\n");
+    st[59] = length;
+    return at;
 }
 
 // `putchar` of the last two arguments pushed, the second a whole number: the character to the
@@ -927,6 +1003,17 @@ pub fn static_header[&s](st: &!s [int], item: int) -> [] int {
     str(st, "define void @sinit");
     nat(st, item);
     str(st, "(");
+    return 0;
+}
+
+// A static the code is not written for: a global that is never read and an initialiser that does nothing.
+pub fn static_stub[&s](st: &!s [int], item: int) -> [] int {
+    aim(st, 0);
+    str(st, "@sd");
+    nat(st, item);
+    str(st, " = internal global { ptr, i64 } zeroinitializer\ndefine void @sinit");
+    nat(st, item);
+    str(st, "() {\n  ret void\n}\n\n");
     return 0;
 }
 
@@ -1286,17 +1373,139 @@ pub fn write_slice[&s](st: &!s [int]) -> [] int {
     return n;
 }
 
+// The builtins that work on the arguments pushed: `wrapping_add` (0), `wrapping_sub` (1),
+// `wrapping_mul` (2) of the last two, with no overflow check.
+pub fn plain_arith[&s](st: &!s [int], kind: int) -> [] int {
+    let b_at = st[51] + 4 * (st[52] - 1);
+    let a_at = st[51] + 4 * (st[52] - 2);
+    let n = start(st);
+    if kind == 0 {
+        str(st, "add");
+    } else if kind == 1 {
+        str(st, "sub");
+    } else {
+        str(st, "mul");
+    }
+    str(st, " i64 ");
+    operand(st, 1, st[a_at + 1] != 0, st[a_at + 2], st[a_at + 3]);
+    str(st, ", ");
+    operand(st, 1, st[b_at + 1] != 0, st[b_at + 2], st[b_at + 3]);
+    str(st, "\n");
+    st[52] = st[52] - 2;
+    return n;
+}
+
+// `copy_into(dst, src)`: all of `src` to the front of `dst`, as one `memmove`; a source longer than the room
+// traps. The pointer and length of each are the four arguments pushed; answers the length of `src`.
+pub fn bulk_copy[&s](st: &!s [int]) -> [] int {
+    let to = st[51] + 4 * (st[52] - 4);
+    let room = st[51] + 4 * (st[52] - 3);
+    let from = st[51] + 4 * (st[52] - 2);
+    let count = st[51] + 4 * (st[52] - 1);
+    let past = start(st);
+    str(st, "icmp sgt i64 ");
+    operand(st, 1, st[count + 1] != 0, st[count + 2], st[count + 3]);
+    str(st, ", ");
+    operand(st, 1, st[room + 1] != 0, st[room + 2], st[room + 3]);
+    str(st, "\n");
+    trap_if(st, past);
+    str(st, "  call ptr @memmove(ptr ");
+    operand(st, 7, false, 0, st[to + 3]);
+    str(st, ", ptr ");
+    operand(st, 7, false, 0, st[from + 3]);
+    str(st, ", i64 ");
+    operand(st, 1, st[count + 1] != 0, st[count + 2], st[count + 3]);
+    str(st, ")\n");
+    let answer = start(st);
+    str(st, "add i64 0, ");
+    operand(st, 1, st[count + 1] != 0, st[count + 2], st[count + 3]);
+    str(st, "\n");
+    st[52] = st[52] - 4;
+    return answer;
+}
+
+// `index_of_byte(text, b)`: one `memchr`; the offset of the first match, or -1.
+pub fn find_byte[&s](st: &!s [int]) -> [] int {
+    let base = st[51] + 4 * (st[52] - 3);
+    let length = st[51] + 4 * (st[52] - 2);
+    let wanted = st[51] + 4 * (st[52] - 1);
+    let widened = start(st);
+    str(st, "zext i8 ");
+    operand(st, 2, st[wanted + 1] != 0, st[wanted + 2], st[wanted + 3]);
+    str(st, " to i32\n");
+    let found = start(st);
+    str(st, "call ptr @memchr(ptr ");
+    operand(st, 7, false, 0, st[base + 3]);
+    str(st, ", i32 ");
+    temp(st, widened);
+    str(st, ", i64 ");
+    operand(st, 1, st[length + 1] != 0, st[length + 2], st[length + 3]);
+    str(st, ")\n");
+    let missing = start(st);
+    str(st, "icmp eq ptr ");
+    temp(st, found);
+    str(st, ", null\n");
+    let at = start(st);
+    str(st, "ptrtoint ptr ");
+    temp(st, found);
+    str(st, " to i64\n");
+    let origin = start(st);
+    str(st, "ptrtoint ptr ");
+    operand(st, 7, false, 0, st[base + 3]);
+    str(st, " to i64\n");
+    let offset = start(st);
+    str(st, "sub i64 ");
+    temp(st, at);
+    str(st, ", ");
+    temp(st, origin);
+    str(st, "\n");
+    let answer = start(st);
+    str(st, "select i1 ");
+    temp(st, missing);
+    str(st, ", i64 -1, i64 ");
+    temp(st, offset);
+    str(st, "\n");
+    st[52] = st[52] - 3;
+    return answer;
+}
+
+// `getchar(io)`: the next byte of the standard input, or -1 at its end (sign-extended).
+pub fn stdin_char[&s](st: &!s [int]) -> [] int {
+    let got = start(st);
+    str(st, "call i32 @getchar()\n");
+    let wide = start(st);
+    str(st, "sext i32 ");
+    temp(st, got);
+    str(st, " to i64\n");
+    st[52] = st[52] - 1;
+    return wide;
+}
+
+// `write_err(io, s)`: the bytes of `s` to the standard error; how many.
+pub fn stderr_write[&s](st: &!s [int]) -> [] int {
+    let ptr_at = st[51] + 4 * (st[52] - 2);
+    let len_at = st[51] + 4 * (st[52] - 1);
+    let n = start(st);
+    str(st, "call i64 @write(i32 2, ptr ");
+    operand(st, 7, false, 0, st[ptr_at + 3]);
+    str(st, ", i64 ");
+    operand(st, 1, st[len_at + 1] != 0, st[len_at + 2], st[len_at + 3]);
+    str(st, ")\n");
+    st[52] = st[52] - 3;
+    return n;
+}
+
 // ----------------------------------------------------------------------- functions ---
 
-// The head of a function goes to the output at once: `define <ret> @lexs_<name>(`, then one
+// The head of a function goes to the output at once: `define <ret> @lexs_<n>(`, `n` the function's node, which no other function shares, then one
 // `header_param` for each parameter and a `header_end`. Its body and `alloca`s wait in their buffers
 // until `finish`.
-pub fn header_start[&s, &x](st: &!s [int], text: &x [byte], name: int, ret_ty: int) -> [] int {
+pub fn header_start[&s](st: &!s [int], item: int, ret_ty: int) -> [] int {
     aim(st, 0);
     str(st, "define ");
-    llvm_type(st, ret_ty);
+    ret_type(st, ret_ty);
     str(st, " @lexs_");
-    slice(st, text, ast.tstart(st, name), ast.tend(st, name));
+    nat(st, item);
     str(st, "(");
     return 0;
 }
