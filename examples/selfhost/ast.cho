@@ -1684,7 +1684,7 @@ pub fn unit[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
             value = int_value(st, text, tok, false);
         }
         expect(st, lc.Tok::Semi);
-        if ok(st) && (value < 1 || value > 7) {
+        if ok(st) && (value < 1 || value > 8) {
             fail(st, rules.r_unknown_edition(), tstart(st, keyword), tend(st, tok));
         }
         st[6] = value;
