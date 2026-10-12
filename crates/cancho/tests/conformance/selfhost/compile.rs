@@ -215,6 +215,16 @@ const PROGRAMS: &[&str] = &[
     "fn ack(m: int, n: int) -> [] int { if m == 0 { return n + 1; } if n == 0 { return ack(m - 1, 1); } return ack(m - 1, ack(m, n - 1)); }\nfn run() -> [] int { return ack(2, 3); }",
 ];
 
+/// Generic functions, structs and enums: one copy of a function for each type it is called at.
+const GENERICS: &[&str] = &[
+    "fn id[T](x: T) -> [] T { return x; }\nfn run() -> [] int { var t = id(7); if id(true) { t = t + 1; } return t; }",
+    "struct Pair[A, B] { first: A, second: B }\nfn swap[A, B](p: Pair[A, B]) -> [] Pair[B, A] { let Pair { first, second } = p; return Pair { first: second, second: first }; }\nfn run() -> [] int { let q = swap(Pair { first: 3, second: true }); if q.first { return q.second + 10; } return 0; }",
+    "enum Opt[T] { Nothing, Just(T) }\nfn or_else[T: val](o: Opt[T], d: T) -> [] T { match o { Opt::Nothing => { return d; } Opt::Just(v) => { return v; } } }\nfn run() -> [] int { let a: Opt[int] = Opt::Just(5); let b: Opt[int] = Opt::Nothing; return or_else(a, 0) * 10 + or_else(b, 3) + or_else(Opt::Nothing, 100); }",
+    "enum Opt[T] { Nothing, Just(T) }\nfn pick[T: val](o: Opt[T], d: T) -> [] T { match o { Opt::Nothing => { return d; } Opt::Just(v) => { return v; } } }\nfn twice[T: val](o: Opt[T], d: T) -> [] T { return pick(o, pick(Opt::Nothing, d)); }\nfn run() -> [] int { return twice(Opt::Just(9), 1) + twice(Opt::Nothing, 4); }",
+    "struct Cell[T] { value: T, tag: int }\nfn tagged[T](v: T, t: int) -> [] Cell[T] { return Cell { value: v, tag: t }; }\nfn bump(c: Cell[bool]) -> [] int { if c.value { return c.tag + 1; } return 0; }\nfn run() -> [] int { return bump(tagged(true, 4)); }",
+    "enum Opt[T] { Nothing, Just(T) }\nfn run() -> [] int { let a: Opt[int] = Opt::Just(9223372036854775807); match a { Opt::Just(v) => { return v + 1; } Opt::Nothing => { return 0; } } }",
+];
+
 /// Programs with a `main` of their own, which the cancho compiler calls as the C `main` does.
 const WITH_MAIN: &[&str] = &[
     "fn finish(w: World) -> [] int { release(w); return 3; }\nfn main(world: World) -> [] int { return finish(world); }",
@@ -485,7 +495,7 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
     for program in WITH_MAIN.iter().chain(OUTPUT).chain(STRINGS).chain(OWN_MAIN) {
         jobs.push(((*program).to_owned(), (*program).to_owned()));
     }
-    for program in STRUCTS.iter().chain(ENUMS).chain(ARENAS) {
+    for program in STRUCTS.iter().chain(ENUMS).chain(GENERICS).chain(ARENAS) {
         jobs.push((with_main(program), with_main(program)));
     }
     let numbered: Vec<(usize, &(String, String))> = jobs.iter().enumerate().collect();

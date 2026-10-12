@@ -39,6 +39,7 @@ fn own_source(root_module: &str) -> String {
         "effects",
         "emit",
         "consteval",
+        "instances",
         "exprs",
         "body",
         "listing",

@@ -12,6 +12,7 @@ import selfhost.rules;
 import selfhost.pass1;
 import selfhost.types;
 import selfhost.emit;
+import selfhost.instances;
 import selfhost.scope;
 import selfhost.prims;
 import selfhost.builtins;
@@ -312,12 +313,16 @@ pub fn variant_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         ast.fail(st, rules.r_not_public(), from, to);
         return nothing();
     }
-    if !scope.enum_plain(st, item) && !(emit.on(st) && scope.item_codable(st, item, 6)) {
+    if !emit.on(st) && !scope.enum_plain(st, item) {
         return skip(st, from, to);
     }
     if ast.get(st, id, 8) != ast.get(st, variant, 6) {
         ast.fail(st, rules.r_arity_mismatch(), from, to);
         return nothing();
+    }
+    let nparams = pass1.count_params(st, ast.get(st, item, 7), false);
+    if nparams > 0 {
+        return variant_generic(st, text, id, item, variant, nparams);
     }
     let whole = types.make_named(st, item);
     if emit.on(st) && !scope.enum_codable(st, whole) {
@@ -334,9 +339,9 @@ pub fn variant_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     while left > 0 && ast.ok(st) {
         let v = expr(st, text, arg);
         if ast.ok(st) {
-            scope.expect(st, text, scope.node_val(st, want), v.ty, ast.nstart(st, arg), ast.nend(st, arg));
+            scope.expect(st, text, scope.node_val(st, want, whole), v.ty, ast.nstart(st, arg), ast.nend(st, arg));
             if emit.on(st) && ast.ok(st) {
-                acc = emit.insert_at(st, whole, acc, emit.payload_index(st, item, variant, k), scope.node_val(st, want), v.known, v.value, v.reg);
+                acc = emit.insert_at(st, whole, acc, emit.payload_index(st, item, variant, k), scope.node_val(st, want, whole), v.known, v.value, v.reg);
             }
         }
         arg = ast.next(st, arg);
@@ -351,6 +356,72 @@ pub fn variant_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         return in_reg(whole, acc);
     }
     return plain(whole);
+}
+
+// `Option::Some(5)`, `Option::None`: a value of a declaration with type parameters. The parameters are variables
+// that the payloads, or the type the context expects, solve; the code is written once they are, so up to four
+// payloads are evaluated first. Only the code is written for it.
+pub fn variant_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: int, variant: int, nparams: int) -> [] Ex {
+    let from = ast.nstart(st, id);
+    let to = ast.nend(st, id);
+    let count = ast.get(st, id, 8);
+    if !emit.on(st) || nparams > 2 || count > 4 {
+        return skip(st, from, to);
+    }
+    let whole = types.fresh_named(st, item, nparams);
+    let expected = types.hint(st);
+    types.set_hint(st, 0);
+    if expected != 0 && types.is_named(st, types.shallow(st, expected)) && types.named_item(st, types.shallow(st, expected)) == item {
+        scope.expect(st, text, expected, whole, from, to);
+    }
+    var e0 = nothing();
+    var e1 = nothing();
+    var e2 = nothing();
+    var e3 = nothing();
+    var arg = ast.get(st, id, 7);
+    var want = ast.get(st, variant, 5);
+    var k = 0;
+    while k < count && ast.ok(st) {
+        let v = expr(st, text, arg);
+        if ast.ok(st) {
+            scope.expect(st, text, scope.node_val(st, want, whole), v.ty, ast.nstart(st, arg), ast.nend(st, arg));
+        }
+        if k == 0 {
+            e0 = v;
+        } else if k == 1 {
+            e1 = v;
+        } else if k == 2 {
+            e2 = v;
+        } else {
+            e3 = v;
+        }
+        arg = ast.next(st, arg);
+        want = ast.next(st, want);
+        k = k + 1;
+    }
+    if !ast.ok(st) {
+        return nothing();
+    }
+    if !scope.enum_codable(st, whole) {
+        return skip(st, from, to);
+    }
+    var acc = emit.insert_at(st, whole, 0 - 1, 0, 1, true, emit.variant_position(st, item, variant), 0 - 1);
+    want = ast.get(st, variant, 5);
+    k = 0;
+    while k < count {
+        var v = e0;
+        if k == 1 {
+            v = e1;
+        } else if k == 2 {
+            v = e2;
+        } else if k == 3 {
+            v = e3;
+        }
+        acc = emit.insert_at(st, whole, acc, emit.payload_index(st, item, variant, k), scope.node_val(st, want, whole), v.known, v.value, v.reg);
+        want = ast.next(st, want);
+        k = k + 1;
+    }
+    return in_reg(whole, acc);
 }
 
 // `alloc_slice[a](count, fill)`: `count` copies of `fill` in the arena `a`, a unique reference to a slice
@@ -883,7 +954,11 @@ pub fn struct_lit[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         ast.fail(st, rules.r_not_public(), from, to);
         return nothing();
     }
-    if !scope.struct_plain(st, item) && !(emit.on(st) && scope.item_codable(st, item, 6)) {
+    let nparams = pass1.count_params(st, ast.get(st, item, 7), false);
+    if nparams > 0 {
+        return struct_generic(st, text, id, item, nparams);
+    }
+    if !emit.on(st) && !scope.struct_plain(st, item) {
         return skip(st, from, to);
     }
     if emit.on(st) && !scope.struct_codable(st, types.make_named(st, item)) {
@@ -907,7 +982,7 @@ pub fn struct_lit[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
             previous = index;
             let v = expr(st, text, value);
             if ast.ok(st) {
-                scope.expect(st, text, scope.field_type(st, item, index), v.ty, ast.nstart(st, value), ast.nend(st, value));
+                scope.expect(st, text, scope.field_type(st, types.make_named(st, item), index), v.ty, ast.nstart(st, value), ast.nend(st, value));
                 if emit.on(st) && ast.ok(st) {
                     acc = emit.insert_field(st, types.make_named(st, item), acc, index, v.known, v.value, v.reg);
                 }
@@ -929,6 +1004,89 @@ pub fn struct_lit[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         return in_reg(types.make_named(st, item), acc);
     }
     return plain(types.make_named(st, item));
+}
+
+// A struct literal of a declaration with type parameters, in the code only: the parameters are variables the
+// values, or the type expected, solve; up to four fields, all given, in the order declared.
+pub fn struct_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: int, nparams: int) -> [] Ex {
+    let from = ast.nstart(st, id);
+    let to = ast.nend(st, id);
+    if !emit.on(st) || nparams > 2 {
+        return skip(st, from, to);
+    }
+    let whole = types.fresh_named(st, item, nparams);
+    let expected = types.hint(st);
+    types.set_hint(st, 0);
+    if expected != 0 && types.is_named(st, types.shallow(st, expected)) && types.named_item(st, types.shallow(st, expected)) == item {
+        scope.expect(st, text, expected, whole, from, to);
+    }
+    let first = ast.get(st, id, 6);
+    var init = first;
+    var previous = 0 - 1;
+    var count = 0;
+    var e0 = nothing();
+    var e1 = nothing();
+    var e2 = nothing();
+    var e3 = nothing();
+    while init >= 0 && ast.ok(st) {
+        let name = ast.get(st, init, 4);
+        let value = ast.get(st, init, 5);
+        let index = scope.field_index(st, text, item, name);
+        if index < 0 {
+            ast.fail(st, rules.r_unknown_name(), from, to);
+        } else if given_before(st, text, first, init, name) {
+            ast.fail(st, rules.r_duplicate_declaration(), from, to);
+        } else if index < previous {
+            ast.fail(st, rules.r_field_order(), ast.nstart(st, value), ast.nend(st, value));
+        } else if index > 3 {
+            return skip(st, from, to);
+        } else {
+            previous = index;
+            let v = expr(st, text, value);
+            if ast.ok(st) {
+                scope.expect(st, text, scope.field_type(st, whole, index), v.ty, ast.nstart(st, value), ast.nend(st, value));
+            }
+            if index == 0 {
+                e0 = v;
+            } else if index == 1 {
+                e1 = v;
+            } else if index == 2 {
+                e2 = v;
+            } else {
+                e3 = v;
+            }
+            count = count + 1;
+        }
+        init = ast.next(st, init);
+    }
+    var decl = ast.get(st, item, 8);
+    while decl >= 0 && ast.ok(st) {
+        if !given_before(st, text, first, 0 - 1, ast.get(st, decl, 4)) {
+            ast.fail(st, rules.r_missing_field(), from, to);
+        }
+        decl = ast.next(st, decl);
+    }
+    if !ast.ok(st) {
+        return nothing();
+    }
+    if !scope.struct_codable(st, whole) {
+        return skip(st, from, to);
+    }
+    var acc = 0 - 1;
+    var index = 0;
+    while index < count {
+        var v = e0;
+        if index == 1 {
+            v = e1;
+        } else if index == 2 {
+            v = e2;
+        } else if index == 3 {
+            v = e3;
+        }
+        acc = emit.insert_field(st, whole, acc, index, v.known, v.value, v.reg);
+        index = index + 1;
+    }
+    return in_reg(whole, acc);
 }
 
 // `base.name`: a field of a struct, or of a reference to one, copied out.
@@ -962,8 +1120,8 @@ pub fn field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         return nothing();
     }
     if emit.on(st) {
-        let ft = scope.field_type(st, item, index);
-        if !scope.struct_codable(st, types.make_named(st, item)) {
+        let ft = scope.field_type(st, held, index);
+        if !scope.struct_codable(st, held) {
             return skip(st, from, to);
         }
         if types.is_ref(st, b.ty) {
@@ -977,7 +1135,7 @@ pub fn field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         }
         return in_reg(ft, emit.extract_field(st, held, b.reg, index));
     }
-    return plain(scope.field_type(st, item, index));
+    return plain(scope.field_type(st, held, index));
 }
 
 // The expressions the code can be written for so far: whole numbers and booleans, names, the
@@ -1604,7 +1762,7 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     if !plain_function(st, text, found) {
         return skip(st, from, to);
     }
-    if emit.on(st) && pass1.count_params(st, ast.get(st, found, 6), false) > 0 {
+    if emit.on(st) && pass1.count_params(st, ast.get(st, found, 6), false) > 2 {
         return skip(st, from, to);
     }
     // What the callee's row says it performs, the caller performs.
@@ -1637,15 +1795,46 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     var arg = ast.get(st, id, 6);
     let first_arg = st[52];
     while param >= 0 && ast.ok(st) {
-        let a = expr(st, text, arg);
-        if ast.ok(st) {
-            scope.expect(st, text, callee_type(st, text, ast.get(st, param, 5), callee_dp, fresh, tvars), a.ty, ast.nstart(st, arg), ast.nend(st, arg));
-            if emit.on(st) && !types.is_erased(st, a.ty) {
-                push_value(st, a);
+        if emit.on(st) && tmade > 0 && ast.is_kind(st, arg, kinds.NK::EVariant) && ast.get(st, arg, 8) == 0 {
+            // `Option::None` as an argument waits for the others to say what its type is: a mark for it
+            // is pushed, and the value is written below.
+            emit.push_arg(st, 0 - 7, false, param, arg);
+        } else {
+            let a = expr(st, text, arg);
+            if ast.ok(st) {
+                scope.expect(st, text, callee_type(st, text, ast.get(st, param, 5), callee_dp, fresh, tvars), a.ty, ast.nstart(st, arg), ast.nend(st, arg));
+                if emit.on(st) && !types.is_erased(st, a.ty) {
+                    push_value(st, a);
+                }
             }
         }
         param = ast.next(st, param);
         arg = ast.next(st, arg);
+    }
+    var slot = first_arg;
+    while emit.on(st) && ast.ok(st) && slot < st[52] {
+        let at = st[51] + 4 * slot;
+        if st[at] == 0 - 7 {
+            let waiting = st[at + 3];
+            types.set_hint(st, callee_type(st, text, ast.get(st, st[at + 2], 5), callee_dp, fresh, tvars));
+            let a = expr(st, text, waiting);
+            types.set_hint(st, 0);
+            if ast.ok(st) {
+                scope.expect(st, text, callee_type(st, text, ast.get(st, st[at + 2], 5), callee_dp, fresh, tvars), a.ty, ast.nstart(st, waiting), ast.nend(st, waiting));
+            }
+            if ast.ok(st) && !types.is_erased(st, a.ty) {
+                st[at] = a.ty;
+                st[at + 1] = ast.flag(a.known);
+                st[at + 2] = a.value;
+                st[at + 3] = a.reg;
+            } else {
+                st[at] = 1;
+                st[at + 1] = 1;
+                st[at + 2] = 0;
+                st[at + 3] = 0 - 1;
+            }
+        }
+        slot = slot + 1;
     }
     // What the callee's `where` clauses demand of the regions the arguments solved.
     var k = 0;
@@ -1674,7 +1863,15 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         if result != 1 && result != 5 && !scope.aggregate_codable(st, result) && !scope.slice_codable(st, result) {
             return skip(st, from, to);
         }
-        let answer = emit.call(st, found, result, st[52] - first_arg);
+        var inst = 0;
+        if tmade > 0 {
+            let made_at = instances.request(st, found, tvars, tmade);
+            if made_at < 0 {
+                return skip(st, from, to);
+            }
+            inst = made_at + 1;
+        }
+        let answer = emit.call(st, found, inst, result, st[52] - first_arg);
         if types.is_slice_ref(st, result) {
             return in_slice(result, answer, st[59], 0);
         }
@@ -1699,12 +1896,28 @@ pub fn plain_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
     if !emit.on(st) && !effects.plain_row(st, effects.row_mask(st, text, fn_item)) {
         return false;
     }
+    // The type parameters stand for variables that are not used again, to see that the types can be written.
+    var scratch = 0 - 1;
+    var made = 0;
+    while emit.on(st) && made < pass1.count_params(st, dp, false) {
+        let v = types.fresh_tvar(st);
+        if made == 0 {
+            scratch = v;
+        }
+        made = made + 1;
+    }
+    st[31] = scratch;
+    var good = true;
     var param = ast.get(st, fn_item, 7);
     while param >= 0 {
         if scope.lower_type(st, text, ast.get(st, param, 5), dp, 0 - 1) == 0 {
-            return false;
+            good = false;
         }
         param = ast.next(st, param);
     }
-    return scope.lower_type(st, text, ast.get(st, fn_item, 10), dp, 0 - 1) != 0;
+    if scope.lower_type(st, text, ast.get(st, fn_item, 10), dp, 0 - 1) == 0 {
+        good = false;
+    }
+    st[31] = 0 - 1;
+    return good;
 }

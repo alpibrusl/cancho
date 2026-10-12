@@ -211,8 +211,8 @@ pub fn struct_plain[&s](st: &!s [int], item: int) -> [] bool {
 // Is the declaration `node` of a field or a payload one code is written for: a whole number, a
 // byte, a boolean, a run on the heap of those, or a struct or an enum that is itself such? `depth`
 // stops a declaration that holds itself.
-fn node_codable[&s](st: &!s [int], node: int, depth: int) -> [] bool {
-    let t = types.node_type(st, node);
+fn node_codable[&s](st: &!s [int], node: int, ctx: int, depth: int) -> [] bool {
+    let t = types.node_type(st, node, ctx);
     if t == 0 {
         return false;
     }
@@ -228,13 +228,15 @@ fn node_codable[&s](st: &!s [int], node: int, depth: int) -> [] bool {
     if !types.is_named(st, t) {
         return false;
     }
-    return depth > 0 && item_codable(st, types.named_item(st, t), depth - 1);
+    return depth > 0 && item_codable(st, t, depth - 1);
 }
 
 // A struct or an enum code is written for: no type parameters, a field or a variant at least, and
 // every field or payload as `node_codable` says. A `res` one is too: what ends it is Rust's to say.
-pub fn item_codable[&s](st: &!s [int], item: int, depth: int) -> [] bool {
-    if ast.get(st, item, 7) >= 0 {
+pub fn item_codable[&s](st: &!s [int], ty: int, depth: int) -> [] bool {
+    let item = types.named_item(st, ty);
+    // A declaration with type parameters is codable at the arguments of `ty`, which must all be there.
+    if ast.get(st, item, 7) >= 0 && types.named_arg(st, ty, 0) == 0 {
         return false;
     }
     if ast.is_kind(st, item, kinds.NK::IStruct) {
@@ -243,7 +245,7 @@ pub fn item_codable[&s](st: &!s [int], item: int, depth: int) -> [] bool {
             return false;
         }
         while f >= 0 {
-            if !node_codable(st, ast.get(st, f, 5), depth) {
+            if !node_codable(st, ast.get(st, f, 5), ty, depth) {
                 return false;
             }
             f = ast.next(st, f);
@@ -259,7 +261,7 @@ pub fn item_codable[&s](st: &!s [int], item: int, depth: int) -> [] bool {
             var p = ast.get(st, v, 5);
             var n = ast.get(st, v, 6);
             while n > 0 {
-                if !node_codable(st, p, depth) {
+                if !node_codable(st, p, ty, depth) {
                     return false;
                 }
                 p = ast.next(st, p);
@@ -274,12 +276,12 @@ pub fn item_codable[&s](st: &!s [int], item: int, depth: int) -> [] bool {
 
 // A value of this type has code written for it: a struct (see `item_codable`).
 pub fn struct_codable[&s](st: &!s [int], ty: int) -> [] bool {
-    return types.is_named(st, ty) && ast.is_kind(st, types.named_item(st, ty), kinds.NK::IStruct) && item_codable(st, types.named_item(st, ty), 6);
+    return types.is_named(st, ty) && ast.is_kind(st, types.named_item(st, ty), kinds.NK::IStruct) && item_codable(st, ty, 6);
 }
 
 // The same for an enum.
 pub fn enum_codable[&s](st: &!s [int], ty: int) -> [] bool {
-    return types.is_named(st, ty) && ast.is_kind(st, types.named_item(st, ty), kinds.NK::IEnum) && item_codable(st, types.named_item(st, ty), 6);
+    return types.is_named(st, ty) && ast.is_kind(st, types.named_item(st, ty), kinds.NK::IEnum) && item_codable(st, ty, 6);
 }
 
 // Is this a struct or an enum declared `res`?
@@ -289,10 +291,10 @@ pub fn is_res_item[&s](st: &!s [int], ty: int) -> [] bool {
 
 // The type of a field's or a payload's declaration: a scalar; and when the code is written, also a
 // struct, an enum or a box.
-pub fn node_val[&s](st: &!s [int], node: int) -> [] int {
+pub fn node_val[&s](st: &!s [int], node: int, ctx: int) -> [] int {
     let t = scalar(st, node);
     if t == 0 && emit.on(st) {
-        return types.node_type(st, node);
+        return types.node_type(st, node, ctx);
     }
     return t;
 }
@@ -444,6 +446,9 @@ pub fn value_type[&s](st: &!s [int], ty: int) -> [] int {
         if st[31] >= 0 {
             return st[31] + ast.get(st, ty, 9);
         }
+        if emit.on(st) && st[63] > 0 {
+            return types.env_arg(st, ast.get(st, ty, 9));
+        }
         return types.make_param(st, ast.get(st, ty, 9));
     }
     if emit.on(st) && ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 2 && ast.get(st, ty, 9) == world_index() && ast.get(st, ty, 7) == 0 {
@@ -451,11 +456,11 @@ pub fn value_type[&s](st: &!s [int], ty: int) -> [] int {
     }
     // A tuple written in a signature.
     if emit.on(st) && ast.is_kind(st, ty, kinds.NK::TTuple) {
-        return types.node_type(st, ty);
+        return types.node_type(st, ty, 0 - 1);
     }
     // `Box[T]` written in a signature: one value on the heap, in the code.
     if emit.on(st) && ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 2 && ast.get(st, ty, 9) == tables.prelude_box() && ast.get(st, ty, 7) == 1 {
-        return types.node_type(st, ty);
+        return types.node_type(st, ty, 0 - 1);
     }
     // A capability narrowed to a literal, in the code: `Fs("/tmp")`, `Exec("/bin")`.
     if emit.on(st) && ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 2 && ast.get(st, ty, 7) == 1 && ast.is_kind(st, ast.get(st, ty, 6), kinds.NK::TLit) {
@@ -465,7 +470,11 @@ pub fn value_type[&s](st: &!s [int], ty: int) -> [] int {
     if ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 2 && ast.get(st, ty, 7) == 0 && (tables.prelude_res(ast.get(st, ty, 9)) == 0 || emit.on(st)) {
         return types.make_prelude(st, ast.get(st, ty, 9));
     }
-    if ast.get(st, ty, 8) == 3 && (struct_plain(st, ast.get(st, ty, 9)) || enum_plain(st, ast.get(st, ty, 9)) || emit.on(st) && item_codable(st, ast.get(st, ty, 9), 6)) {
+    if emit.on(st) && ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 3 {
+        // A struct or an enum of the file, with its arguments if it has any.
+        return types.node_type(st, ty, 0 - 1);
+    }
+    if ast.get(st, ty, 8) == 3 && (struct_plain(st, ast.get(st, ty, 9)) || enum_plain(st, ast.get(st, ty, 9))) {
         return types.make_named(st, ast.get(st, ty, 9));
     }
     return 0;
@@ -486,14 +495,14 @@ pub fn field_index[&s, &x](st: &!s [int], text: &x [byte], item: int, name: int)
 }
 
 // The scalar type of field number `index` of the struct `item`.
-pub fn field_type[&s](st: &!s [int], item: int, index: int) -> [] int {
-    var f = ast.get(st, item, 8);
+pub fn field_type[&s](st: &!s [int], ty: int, index: int) -> [] int {
+    var f = ast.get(st, types.named_item(st, ty), 8);
     var i = 0;
     while i < index {
         f = ast.next(st, f);
         i = i + 1;
     }
-    return node_val(st, ast.get(st, f, 5));
+    return node_val(st, ast.get(st, f, 5), ty);
 }
 
 // The type of the resolved type node `ty`, written in a declaration whose `[...]` starts at `dp`,
@@ -503,7 +512,7 @@ pub fn field_type[&s](st: &!s [int], item: int, index: int) -> [] int {
 // its region parameters, which stand in for them at this call.
 pub fn lower_type[&s, &x](st: &!s [int], text: &x [byte], ty: int, dp: int, fresh: int) -> [] int {
     if emit.on(st) && ast.is_kind(st, ty, kinds.NK::TTuple) {
-        return types.node_type(st, ty);
+        return types.node_type(st, ty, 0 - 1);
     }
     if ast.is_kind(st, ty, kinds.NK::TName) {
         return value_type(st, ty);

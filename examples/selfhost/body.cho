@@ -36,6 +36,7 @@ import selfhost.rules;
 import selfhost.pass1;
 import selfhost.types;
 import selfhost.emit;
+import selfhost.instances;
 import selfhost.scope;
 import selfhost.exprs;
 import selfhost.effects;
@@ -173,7 +174,7 @@ fn variant_arm[&s, &x](st: &!s [int], text: &x [byte], item: int, first: int, k:
             if again {
                 ast.fail(st, rules.r_duplicate_declaration(), from, to);
             } else {
-                var ty = scope.node_val(st, want);
+                var ty = scope.node_val(st, want, held);
                 if by_ref {
                     ty = types.make_ref(st, unique, area, ty);
                 }
@@ -399,7 +400,7 @@ fn destructure_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] int {
             if index < 0 {
                 exprs.skip(st, from, to);
             } else {
-                let ty = scope.field_type(st, item, index);
+                let ty = scope.field_type(st, v.ty, index);
                 scope.bind(st, named, ty, false, from, to);
                 if ast.ok(st) {
                     emit.store(st, ty, false, 0, emit.extract_field(st, v.ty, v.reg, index), st[39] - 1);
@@ -581,7 +582,16 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
     }
     if ast.is_kind(st, id, kinds.NK::SLet) {
         let value = ast.get(st, id, 7);
+        let note = ast.get(st, id, 6);
+        if emit.on(st) && note >= 0 && st[37] < 0 {
+            // The type written is what a literal of a generic declaration is expected to be.
+            pass1.resolve(st, text, note, st[22], st[23], st[28], true, false);
+            if ast.ok(st) {
+                types.set_hint(st, scope.lower_type(st, text, note, st[28], 0 - 1));
+            }
+        }
         let found = exprs.expr(st, text, value);
+        types.set_hint(st, 0);
         if !ast.ok(st) {
             return 0;
         }
@@ -721,12 +731,12 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
                 ast.fail(st, rules.r_unknown_name(), from, to);
                 return 0;
             }
-            scope.expect(st, text, scope.field_type(st, item, index), found.ty, ast.nstart(st, value), ast.nend(st, value));
+            scope.expect(st, text, scope.field_type(st, referent, index), found.ty, ast.nstart(st, value), ast.nend(st, value));
             if emit.on(st) && ast.ok(st) {
                 if !scope.struct_codable(st, referent) {
                     exprs.skip(st, from, to);
                 } else {
-                    let ft = scope.field_type(st, item, index);
+                    let ft = scope.field_type(st, referent, index);
                     let address = emit.field_address(st, referent, b.reg, index);
                     emit.store_through(st, ft, found.known, found.value, found.reg, address);
                 }
@@ -817,7 +827,11 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
     }
     if ast.is_kind(st, id, kinds.NK::SReturn) {
         let value = ast.get(st, id, 4);
+        if emit.on(st) && st[60] == 0 {
+            types.set_hint(st, ret);
+        }
         let found = exprs.expr(st, text, value);
+        types.set_hint(st, 0);
         if ast.ok(st) && st[60] != 0 {
             // A `static` body returns its table, a reference to a slice that may be unique.
             if !types.is_slice_ref(st, found.ty) {
@@ -869,6 +883,9 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
     let to = ast.nend(st, fn_item);
     st[28] = ast.get(st, fn_item, 6);
     types.reset(st);
+    if st[63] > 0 {
+        instances.load_env(st);
+    }
     if !plain_function_type(st, text, fn_item) {
         ast.fail(st, rules.r_skip(), from, to);
         return 2;
@@ -885,11 +902,11 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
             p = ast.next(st, p);
             k = k + 1;
         }
-        if !ok || pass1.count_params(st, st[28], false) > 0 {
+        if !ok || pass1.count_params(st, st[28], false) > 0 && st[63] == 0 {
             ast.fail(st, rules.r_skip(), from, to);
             return 2;
         }
-        emit.header_start(st, fn_item, ret);
+        emit.header_start(st, fn_item, st[63], ret);
         k = 0;
         p = ast.get(st, fn_item, 7);
         while p >= 0 {
@@ -1042,7 +1059,7 @@ fn plain_function_type[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> 
     while k < pass1.count_params(st, dp, false) {
         // A value of a type parameter that is not `val` could be a resource: linearity is not
         // checked yet.
-        if !pass1.param_bounded(st, dp, k) {
+        if st[63] == 0 && !pass1.param_bounded(st, dp, k) {
             return false;
         }
         k = k + 1;

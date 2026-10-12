@@ -315,6 +315,7 @@ fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "tables.cho",
         "runtime.cho",
         "consteval.cho",
+        "instances.cho",
     ]
 }
 

@@ -136,7 +136,7 @@ pub fn layout[&s](st: &!s [int], tokens: int, files: int) -> [] int {
 // buffers of `per` bytes for each token, one byte to an int. The state is `size_for` plus
 // `emit_size`; the buffers follow it.
 pub fn emit_size(tokens: int) -> [] int {
-    return 4 * (emit_per() * (tokens + 16) + emit_floor()) + 4 * (tokens + 16) + const_region();
+    return 4 * (emit_per() * (tokens + 16) + emit_floor()) + 4 * (tokens + 16) + const_region() + inst_region();
 }
 
 // What the interpreter of statics (`consteval.cho`) has in the state: its header, the statics it has answered
@@ -144,6 +144,12 @@ pub fn emit_size(tokens: int) -> [] int {
 // 64) and its store (1,048,576 elements, one int each).
 pub fn const_region() -> [] int {
     return 8 + 4 * 1024 + 3 * 4096 + 2 * 64 + 1048576;
+}
+
+// What the instances of generic functions take in the state (`instances.cho`): a header of 16, four slots for each
+// of 1,024 instances, and the 65,536 slots their type arguments are written in.
+pub fn inst_region() -> [] int {
+    return 16 + 4096 + 65536;
 }
 
 pub fn emit_per() -> [] int {

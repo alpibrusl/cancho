@@ -1,0 +1,240 @@
+module selfhost.instances;
+
+// instances.cho -- the generic functions a program calls, one copy for each type they are called at.
+//
+// A function with type parameters is not compiled where it is declared: a call to it knows what the
+// parameters are (the checker solved them), so the call asks for an *instance*, the function at those types,
+// and gets a name for it; the driver compiles the instances after the other functions, each with its parameters
+// standing for the types asked, and a call from an instance can ask for more.
+//
+// Types cross from one function to another as codes, because each function has a table of types of its own:
+// 1 to 7 a scalar; 20, the declaration, how many arguments, and them, a struct or an enum; 21 and 22 the
+// run and the single value on the heap; 23 and 24 a tuple of two and of three; 25, the prelude type and the
+// token of the literal it was narrowed to (one more than it, 0 for none). A reference has no code, so a call
+// whose type arguments hold one is not compiled.
+//
+// The room is a region of the state after the statics' (`ast.inst_region`): 0 how many instances, 1 where
+// the next code goes, 3 to 10 the arguments of the instance being compiled as types of the function's own
+// table (`types.env_arg`), 11 the cursor of a decode; then four slots an instance (the declaration, where its
+// codes start, how many arguments) and the codes.
+
+import selfhost.ast;
+import selfhost.types;
+
+fn base[&s](st: &!s [int]) -> [] int {
+    return st[62] + ast.const_region();
+}
+
+fn table_at[&s](st: &!s [int]) -> [] int {
+    return base(st) + 16;
+}
+
+fn codes_at[&s](st: &!s [int]) -> [] int {
+    return base(st) + 16 + 4096;
+}
+
+fn codes_cap() -> [] int {
+    return 65536;
+}
+
+pub fn count[&s](st: &!s [int]) -> [] int {
+    return st[base(st)];
+}
+
+// The declaration of instance `k`.
+pub fn item_of[&s](st: &!s [int], k: int) -> [] int {
+    return st[table_at(st) + 4 * k];
+}
+
+fn put_code[&s](st: &!s [int], code: int) -> [] bool {
+    let top = st[base(st) + 1];
+    if top >= codes_cap() {
+        return false;
+    }
+    st[codes_at(st) + top] = code;
+    st[base(st) + 1] = top + 1;
+    return true;
+}
+
+// The code of a type that is known all the way down, written after the last; false if it has none.
+fn encode[&s](st: &!s [int], ty: int) -> [] bool {
+    let t = types.resolve_type(st, ty);
+    if t >= 1 && t < types.first_table() {
+        return put_code(st, t);
+    }
+    if types.is_named(st, t) {
+        var n = 0;
+        if types.named_arg(st, t, 0) != 0 {
+            n = 1;
+        }
+        if types.named_arg(st, t, 1) != 0 {
+            n = 2;
+        }
+        if !put_code(st, 20) || !put_code(st, types.named_item(st, t)) || !put_code(st, n) {
+            return false;
+        }
+        var k = 0;
+        while k < n {
+            if !encode(st, types.named_arg(st, t, k)) {
+                return false;
+            }
+            k = k + 1;
+        }
+        return true;
+    }
+    if types.is_boxslice(st, t) {
+        return put_code(st, 21) && encode(st, types.boxslice_element(st, t));
+    }
+    if types.is_box(st, t) {
+        return put_code(st, 22) && encode(st, types.box_inner(st, t));
+    }
+    if types.is_tuple(st, t) {
+        let n = types.tuple_size(st, t);
+        if !put_code(st, 21 + n) {
+            return false;
+        }
+        var k = 0;
+        while k < n {
+            if !encode(st, types.tuple_part(st, t, k)) {
+                return false;
+            }
+            k = k + 1;
+        }
+        return true;
+    }
+    if types.is_prelude(st, t) {
+        return put_code(st, 25) && put_code(st, types.prelude_index(st, t)) && put_code(st, types.prelude_lit_tok(st, t) + 1);
+    }
+    return false;
+}
+
+// The type the codes at position `at` of the stream are, in the table of the function being compiled; the
+// position after them is left in the region's slot 11.
+fn decode[&s](st: &!s [int], at: int) -> [] int {
+    let code = st[codes_at(st) + at];
+    st[base(st) + 11] = at + 1;
+    if code >= 1 && code < types.first_table() {
+        return code;
+    }
+    if code == 20 {
+        let item = st[codes_at(st) + at + 1];
+        let n = st[codes_at(st) + at + 2];
+        var a = 0;
+        var b = 0;
+        var next = at + 3;
+        if n >= 1 {
+            a = decode(st, next);
+            next = st[base(st) + 11];
+        }
+        if n == 2 {
+            b = decode(st, next);
+            next = st[base(st) + 11];
+        }
+        st[base(st) + 11] = next;
+        if n == 0 {
+            return types.make_named(st, item);
+        }
+        return types.make_named_args(st, item, a, b);
+    }
+    if code == 21 {
+        let element = decode(st, at + 1);
+        return types.make_boxslice(st, element);
+    }
+    if code == 22 {
+        let inner = decode(st, at + 1);
+        return types.make_box(st, inner);
+    }
+    if code == 23 || code == 24 {
+        let a = decode(st, at + 1);
+        let b = decode(st, st[base(st) + 11]);
+        var c = 0;
+        if code == 24 {
+            c = decode(st, st[base(st) + 11]);
+        }
+        return types.make_tuple(st, code - 21, a, b, c);
+    }
+    if code == 25 {
+        let index = st[codes_at(st) + at + 1];
+        let lit = st[codes_at(st) + at + 2];
+        st[base(st) + 11] = at + 3;
+        if lit > 0 {
+            return types.make_prelude_lit(st, index, lit - 1);
+        }
+        return types.make_prelude(st, index);
+    }
+    return 0;
+}
+
+// The instance of function `item` at the types `tvars` to `tvars + n - 1` of the function being compiled have
+// come to be: its number, or -1 if a type has no code, there is no room, or n is more than 4.
+pub fn request[&s](st: &!s [int], item: int, tvars: int, n: int) -> [] int {
+    if n > 4 {
+        return 0 - 1;
+    }
+    let start = st[base(st) + 1];
+    var k = 0;
+    while k < n {
+        if !encode(st, tvars + k) {
+            st[base(st) + 1] = start;
+            return 0 - 1;
+        }
+        k = k + 1;
+    }
+    let end = st[base(st) + 1];
+    var j = 0;
+    while j < st[base(st)] {
+        let row = table_at(st) + 4 * j;
+        if st[row] == item && st[row + 2] == end - start && same_codes(st, st[row + 1], start, end - start) {
+            st[base(st) + 1] = start;
+            return j;
+        }
+        j = j + 1;
+    }
+    let made = st[base(st)];
+    if made >= 1024 {
+        st[base(st) + 1] = start;
+        return 0 - 1;
+    }
+    let row = table_at(st) + 4 * made;
+    st[row] = item;
+    st[row + 1] = start;
+    st[row + 2] = end - start;
+    st[row + 3] = n;
+    st[base(st)] = made + 1;
+    return made;
+}
+
+fn same_codes[&s](st: &!s [int], a: int, b: int, length: int) -> [] bool {
+    var i = 0;
+    while i < length {
+        if st[codes_at(st) + a + i] != st[codes_at(st) + b + i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Compile instance `k` next: the arguments are decoded into the function's own table once it has one
+// (`load_env`).
+pub fn begin[&s](st: &!s [int], k: int) -> [] int {
+    st[63] = k + 1;
+    return 0;
+}
+
+pub fn end[&s](st: &!s [int]) -> [] int {
+    st[63] = 0;
+    return 0;
+}
+
+pub fn load_env[&s](st: &!s [int]) -> [] int {
+    let row = table_at(st) + 4 * (st[63] - 1);
+    var at = st[row + 1];
+    var k = 0;
+    while k < st[row + 3] {
+        st[base(st) + 3 + k] = decode(st, at);
+        at = st[base(st) + 11];
+        k = k + 1;
+    }
+    return 0;
+}
