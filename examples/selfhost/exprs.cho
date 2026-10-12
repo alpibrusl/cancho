@@ -16,6 +16,7 @@ import selfhost.scope;
 import selfhost.prims;
 import selfhost.builtins;
 import selfhost.effects;
+import selfhost.tables;
 
 // What an expression came to: its type, and whether it is a known integer (a literal, or a
 // literal operation that folded) and which.
@@ -24,23 +25,38 @@ pub struct Ex {
     known: bool,
     value: int,
     reg: int,
+    reg2: int,
 }
 
 pub fn plain(ty: int) -> [] Ex {
-    return Ex { ty: ty, known: false, value: 0, reg: 0 - 1 };
+    return Ex { ty: ty, known: false, value: 0, reg: 0 - 1, reg2: 0 - 1 };
 }
 
 pub fn constant(value: int) -> [] Ex {
-    return Ex { ty: 1, known: true, value: value, reg: 0 - 1 };
+    return Ex { ty: 1, known: true, value: value, reg: 0 - 1, reg2: 0 - 1 };
 }
 
 pub fn nothing() -> [] Ex {
-    return Ex { ty: 0, known: false, value: 0, reg: 0 - 1 };
+    return Ex { ty: 0, known: false, value: 0, reg: 0 - 1, reg2: 0 - 1 };
 }
 
 // A value in the temporary `reg` of the code being written.
 pub fn in_reg(ty: int, reg: int) -> [] Ex {
-    return Ex { ty: ty, known: false, value: 0, reg: reg };
+    return Ex { ty: ty, known: false, value: 0, reg: reg, reg2: 0 - 1 };
+}
+
+// A reference to a slice in the code: the pointer (a temporary, or `-2 - n` for the global of a
+// string literal) and the length, a temporary or, if `reg2` is -1, the constant `length`.
+pub fn in_slice(ty: int, reg: int, reg2: int, length: int) -> [] Ex {
+    return Ex { ty: ty, known: false, value: length, reg: reg, reg2: reg2 };
+}
+
+// The operands of a value that has been computed, pushed as arguments of a call: a slice is two.
+pub fn push_value[&s](st: &!s [int], a: Ex) -> [] int {
+    if types.is_slice_ref(st, a.ty) {
+        return emit.push_slice(st, a.reg, a.reg2 < 0, a.value, a.reg2);
+    }
+    return emit.push_arg(st, a.ty, a.known, a.value, a.reg);
 }
 
 // Something the port does not check yet: the function's answer is `SKIP`.
@@ -206,13 +222,18 @@ pub fn expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     }
     if ast.is_kind(st, id, kinds.NK::EBool) {
         if emit.on(st) {
-            return Ex { ty: 5, known: true, value: ast.get(st, id, 4), reg: 0 - 1 };
+            return Ex { ty: 5, known: true, value: ast.get(st, id, 4), reg: 0 - 1, reg2: 0 - 1 };
         }
         return plain(5);
     }
     if ast.is_kind(st, id, kinds.NK::EStr) {
         // A literal is a shared slice of bytes in the `static` region.
-        return plain(types.make_ref(st, false, types.static_region(), types.make_slice(st, 2)));
+        let literal = types.make_ref(st, false, types.static_region(), types.make_slice(st, 2));
+        if emit.on(st) {
+            let n = emit.string_constant(st, text, ast.get(st, id, 4));
+            return in_slice(literal, 0 - 2 - n, 0 - 1, st[59]);
+        }
+        return plain(literal);
     }
     if ast.is_kind(st, id, kinds.NK::EName) {
         return name_expr(st, text, id);
@@ -240,6 +261,9 @@ pub fn expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     }
     if ast.is_kind(st, id, kinds.NK::EVariant) {
         return variant_expr(st, text, id);
+    }
+    if ast.is_kind(st, id, kinds.NK::EAllocSlice) {
+        return alloc_slice_expr(st, text, id);
     }
     return skip(st, from, to);
 }
@@ -282,22 +306,182 @@ pub fn variant_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         ast.fail(st, rules.r_arity_mismatch(), from, to);
         return nothing();
     }
+    let whole = types.make_named(st, item);
+    if emit.on(st) && !scope.enum_codable(st, whole) {
+        return skip(st, from, to);
+    }
+    var acc = 0 - 1;
+    if emit.on(st) {
+        acc = emit.insert_at(st, whole, acc, 0, 1, true, emit.variant_position(st, item, variant), 0 - 1);
+    }
     var arg = ast.get(st, id, 7);
     var want = ast.get(st, variant, 5);
     var left = ast.get(st, id, 8);
+    var k = 0;
     while left > 0 && ast.ok(st) {
         let v = expr(st, text, arg);
         if ast.ok(st) {
             scope.expect(st, text, scope.scalar(st, want), v.ty, ast.nstart(st, arg), ast.nend(st, arg));
+            if emit.on(st) && ast.ok(st) {
+                acc = emit.insert_at(st, whole, acc, emit.payload_index(st, item, variant, k), scope.scalar(st, want), v.known, v.value, v.reg);
+            }
         }
         arg = ast.next(st, arg);
         want = ast.next(st, want);
         left = left - 1;
+        k = k + 1;
     }
     if !ast.ok(st) {
         return nothing();
     }
-    return plain(types.make_named(st, item));
+    if emit.on(st) {
+        return in_reg(whole, acc);
+    }
+    return plain(whole);
+}
+
+// `alloc_slice[a](count, fill)`: `count` copies of `fill` in the arena `a`, a unique reference to a slice
+// of them for as long as the block. The arena first, then the count, then the fill, which must be
+// a value that copies: an arena frees memory and runs nothing.
+pub fn alloc_slice_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
+    let from = ast.nstart(st, id);
+    let to = ast.nend(st, id);
+    let area = ast.get(st, id, 4);
+    let count = ast.get(st, id, 5);
+    let fill = ast.get(st, id, 6);
+    var in_static = false;
+    if pass1.is_word(st, text, area, "static") {
+        if st[60] == 0 {
+            ast.fail(st, rules.r_reference_escapes_region(), from, to);
+            return nothing();
+        }
+        in_static = true;
+    }
+    var arena = 0 - 1;
+    if !in_static {
+        arena = scope.arena_block(st, text, area);
+    }
+    if arena < 0 && !in_static {
+        ast.fail(st, rules.r_region_not_in_scope(), from, to);
+        return nothing();
+    }
+    let c = expr(st, text, count);
+    if ast.ok(st) {
+        scope.expect(st, text, 1, c.ty, ast.nstart(st, count), ast.nend(st, count));
+    }
+    if !ast.ok(st) {
+        return nothing();
+    }
+    let f = expr(st, text, fill);
+    if !ast.ok(st) {
+        return nothing();
+    }
+    if types.is_prelude(st, f.ty) {
+        if tables.prelude_res(types.prelude_index(st, f.ty)) != 0 {
+            ast.fail(st, rules.r_mode_bound_violated(), ast.nstart(st, fill), ast.nend(st, fill));
+            return nothing();
+        }
+        return skip(st, from, to);
+    }
+    if f.ty < 1 || f.ty > 6 && !types.is_named(st, f.ty) && !types.is_ref(st, f.ty) {
+        return skip(st, from, to);
+    }
+    var home = types.static_region();
+    if !in_static {
+        home = types.block_region(arena);
+    }
+    let result = types.make_ref(st, true, home, types.make_slice(st, f.ty));
+    if emit.on(st) {
+        if f.ty != 1 && f.ty != 2 && f.ty != 5 {
+            return skip(st, from, to);
+        }
+        var p = 0;
+        if in_static {
+            p = emit.heap_run(st, f.ty, c.known, c.value, c.reg, f.known, f.value, f.reg);
+        } else {
+            p = emit.alloc_slice(st, arena, f.ty, c.known, c.value, c.reg, f.known, f.value, f.reg);
+        }
+        if c.known {
+            return in_slice(result, p, 0 - 1, c.value);
+        }
+        return in_slice(result, p, c.reg, 0);
+    }
+    return plain(result);
+}
+
+// Is this the `&!x Heap` a heap operation is reached through?
+fn is_heap_ref[&s](st: &!s [int], ty: int) -> [] bool {
+    return types.is_ref(st, ty) && types.ref_unique(st, ty) && types.is_prelude(st, types.ref_inner(st, ty)) && types.prelude_index(st, types.ref_inner(st, ty)) == scope.heap_index();
+}
+
+// `box_slice(heap, count, fill)` (1), `unbox_slice(heap, box)` (2) and `contents(box_ref)` (3), of
+// whole numbers, bytes and booleans: compile mode only, so a function that has one is not checked.
+pub fn heap_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: int) -> [] Ex {
+    let from = ast.nstart(st, id);
+    let to = ast.nend(st, id);
+    var wanted = 3;
+    if which == 2 {
+        wanted = 2;
+    }
+    if which == 3 {
+        wanted = 1;
+    }
+    if ast.get(st, id, 7) != wanted {
+        return skip(st, from, to);
+    }
+    var arg = ast.get(st, id, 6);
+    if which == 3 {
+        let r = expr(st, text, arg);
+        if !ast.ok(st) {
+            return nothing();
+        }
+        if !types.is_ref(st, r.ty) || !types.is_boxslice(st, types.ref_inner(st, r.ty)) || !scope.aggregate_codable(st, types.ref_inner(st, r.ty)) {
+            return skip(st, from, to);
+        }
+        let boxed = types.ref_inner(st, r.ty);
+        let p = emit.heap_view(st, boxed, r.reg);
+        let slice = types.make_ref(st, types.ref_unique(st, r.ty), types.ref_region(st, r.ty), types.make_slice(st, types.boxslice_element(st, boxed)));
+        return in_slice(slice, p, st[59], 0);
+    }
+    let h = expr(st, text, arg);
+    if !ast.ok(st) {
+        return nothing();
+    }
+    if !is_heap_ref(st, h.ty) {
+        return skip(st, from, to);
+    }
+    arg = ast.next(st, arg);
+    if which == 2 {
+        let b = expr(st, text, arg);
+        if !ast.ok(st) {
+            return nothing();
+        }
+        if !types.is_boxslice(st, b.ty) || !scope.aggregate_codable(st, b.ty) {
+            return skip(st, from, to);
+        }
+        effects.perform_named(st, "heap");
+        return in_reg(1, emit.heap_free(st, b.ty, b.reg));
+    }
+    let count = arg;
+    let fill = ast.next(st, arg);
+    let c = expr(st, text, count);
+    if ast.ok(st) {
+        scope.expect(st, text, 1, c.ty, ast.nstart(st, count), ast.nend(st, count));
+    }
+    if !ast.ok(st) {
+        return nothing();
+    }
+    let f = expr(st, text, fill);
+    if !ast.ok(st) {
+        return nothing();
+    }
+    if f.ty != 1 && f.ty != 2 && f.ty != 5 {
+        return skip(st, from, to);
+    }
+    effects.perform_named(st, "heap");
+    let boxed = types.make_boxslice(st, f.ty);
+    let p = emit.heap_run(st, f.ty, c.known, c.value, c.reg, f.known, f.value, f.reg);
+    return in_reg(boxed, emit.make_box(st, boxed, p, c.known, c.value, c.reg));
 }
 
 // The Variant node of the enum `item` called like token `name`, or -1.
@@ -353,9 +537,13 @@ pub fn struct_lit[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     if !scope.struct_plain(st, item) {
         return skip(st, from, to);
     }
+    if emit.on(st) && !scope.struct_codable(st, types.make_named(st, item)) {
+        return skip(st, from, to);
+    }
     let first = ast.get(st, id, 6);
     var init = first;
     var previous = 0 - 1;
+    var acc = 0 - 1;
     while init >= 0 && ast.ok(st) {
         let name = ast.get(st, init, 4);
         let value = ast.get(st, init, 5);
@@ -371,6 +559,9 @@ pub fn struct_lit[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
             let v = expr(st, text, value);
             if ast.ok(st) {
                 scope.expect(st, text, scope.field_type(st, item, index), v.ty, ast.nstart(st, value), ast.nend(st, value));
+                if emit.on(st) && ast.ok(st) {
+                    acc = emit.insert_field(st, types.make_named(st, item), acc, index, v.known, v.value, v.reg);
+                }
             }
         }
         init = ast.next(st, init);
@@ -384,6 +575,9 @@ pub fn struct_lit[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     }
     if !ast.ok(st) {
         return nothing();
+    }
+    if emit.on(st) {
+        return in_reg(types.make_named(st, item), acc);
     }
     return plain(types.make_named(st, item));
 }
@@ -418,17 +612,28 @@ pub fn field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         ast.fail(st, rules.r_unknown_name(), from, to);
         return nothing();
     }
+    if emit.on(st) {
+        let ft = scope.field_type(st, item, index);
+        if !scope.struct_codable(st, types.make_named(st, item)) {
+            return skip(st, from, to);
+        }
+        if types.is_ref(st, b.ty) {
+            let address = emit.field_address(st, held, b.reg, index);
+            return in_reg(ft, emit.load_through(st, ft, address));
+        }
+        return in_reg(ft, emit.extract_field(st, held, b.reg, index));
+    }
     return plain(scope.field_type(st, item, index));
 }
 
 // The expressions the code can be written for so far: whole numbers and booleans, names, the
 // operators, and calls.
 pub fn writes_code[&s](st: &!s [int], id: int) -> [] bool {
-    if ast.is_kind(st, id, kinds.NK::EInt) || ast.is_kind(st, id, kinds.NK::EBool) || ast.is_kind(st, id, kinds.NK::EName) || ast.is_kind(st, id, kinds.NK::ECall) {
+    if ast.is_kind(st, id, kinds.NK::EInt) || ast.is_kind(st, id, kinds.NK::EBool) || ast.is_kind(st, id, kinds.NK::EName) || ast.is_kind(st, id, kinds.NK::ECall) || ast.is_kind(st, id, kinds.NK::EStr) || ast.is_kind(st, id, kinds.NK::EIndex) || ast.is_kind(st, id, kinds.NK::EStructLit) || ast.is_kind(st, id, kinds.NK::EField) || ast.is_kind(st, id, kinds.NK::EVariant) || ast.is_kind(st, id, kinds.NK::EAllocSlice) {
         return true;
     }
     if ast.is_kind(st, id, kinds.NK::EUnary) {
-        return ast.get(st, id, 4) != 3;
+        return true;
     }
     if ast.is_kind(st, id, kinds.NK::EBinary) {
         return true;
@@ -447,17 +652,50 @@ pub fn name_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
             if types.is_prelude(st, scope.binding_type(st, i)) {
                 return in_reg(scope.binding_type(st, i), 0 - 1);
             }
+            if types.is_slice_ref(st, scope.binding_type(st, i)) {
+                let p = emit.load_slice(st, scope.slot_of(st, i));
+                return in_slice(scope.binding_type(st, i), p, st[59], 0);
+            }
             return in_reg(scope.binding_type(st, i), emit.load(st, scope.binding_type(st, i), scope.slot_of(st, i)));
         }
         return plain(scope.binding_type(st, i));
     }
-    // A name that is not a local may still be a `static`, a function used as a value, or a
-    // builtin: those are values of types this slice does not check.
+    // A `static` of this module declared as a slice of scalars is a shared reference to it.
+    let table = static_named(st, text, name);
+    if table >= 0 {
+        let ty = scope.static_type(st, table);
+        if ty == 0 {
+            return skip(st, from, to);
+        }
+        if emit.on(st) {
+            let element = types.element_of(st, ty);
+            if element != 1 && element != 2 && element != 5 {
+                return skip(st, from, to);
+            }
+            let p = emit.static_load(st, table);
+            return in_slice(ty, p, st[59], 0);
+        }
+        return plain(ty);
+    }
+    // A name that is not a local may still be a function used as a value, or a builtin: those are
+    // values of types this slice does not check.
     if names_something(st, text, name) {
         return skip(st, from, to);
     }
     ast.fail(st, rules.r_unknown_name(), from, to);
     return nothing();
+}
+
+// The `static` item of the current module called like token `name`, or -1.
+pub fn static_named[&s, &x](st: &!s [int], text: &x [byte], name: int) -> [] int {
+    var it = st[15];
+    while it >= 0 {
+        if ast.is_kind(st, it, kinds.NK::IStatic) && ast.same(st, text, ast.get(st, it, 4), name) && ast.get(st, it, 13) == st[22] {
+            return it;
+        }
+        it = ast.next(st, it);
+    }
+    return 0 - 1;
 }
 
 // Is `name` a static of the current function's module, a function of any module, or a builtin?
@@ -494,6 +732,13 @@ pub fn unary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         }
         if types.is_slice(st, types.ref_inner(st, operand.ty)) || types.is_prelude(st, types.ref_inner(st, operand.ty)) {
             return skip(st, from, to);
+        }
+        if emit.on(st) {
+            let inner = types.ref_inner(st, operand.ty);
+            if inner != 1 && inner != 2 && inner != 5 && !scope.aggregate_codable(st, inner) {
+                return skip(st, from, to);
+            }
+            return in_reg(inner, emit.load_through(st, inner, operand.reg));
         }
         return plain(types.ref_inner(st, operand.ty));
     }
@@ -656,6 +901,13 @@ pub fn index_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     if ast.ok(st) {
         scope.expect(st, text, 1, i.ty, ast.nstart(st, index), ast.nend(st, index));
     }
+    if emit.on(st) && ast.ok(st) {
+        if e != 1 && e != 2 && e != 5 {
+            return skip(st, ast.nstart(st, id), ast.nend(st, id));
+        }
+        let address = emit.element_address(st, e, b.reg, b.reg2 < 0, b.value, b.reg2, i.known, i.value, i.reg);
+        return in_reg(e, emit.load_through(st, e, address));
+    }
     return plain(e);
 }
 
@@ -705,6 +957,12 @@ pub fn len_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     if !ast.ok(st) {
         return nothing();
     }
+    if emit.on(st) {
+        if a.reg2 >= 0 {
+            return in_reg(1, a.reg2);
+        }
+        return constant(a.value);
+    }
     return plain(1);
 }
 
@@ -719,14 +977,23 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
     if builtins.builtin_sig(start) != 0 || !effects.perform(st, b) {
         return skip(st, from, to);
     }
-    // The only builtin code is written for so far is `putchar`.
-    var written = false;
+    // The builtins code is written for so far: 1 `putchar`, 2 `write_bytes`, 3 `int_of`, 4 `byte_of`.
+    var written = 0;
     if emit.on(st) {
-        if !lc.spells(text, ast.tstart(st, ast.get(st, id, 5)), ast.tend(st, ast.get(st, id, 5)), "putchar") {
+        let at = ast.get(st, id, 5);
+        if lc.spells(text, ast.tstart(st, at), ast.tend(st, at), "putchar") {
+            written = 1;
+        } else if lc.spells(text, ast.tstart(st, at), ast.tend(st, at), "write_bytes") {
+            written = 2;
+        } else if lc.spells(text, ast.tstart(st, at), ast.tend(st, at), "int_of") {
+            written = 3;
+        } else if lc.spells(text, ast.tstart(st, at), ast.tend(st, at), "byte_of") {
+            written = 4;
+        } else {
             return skip(st, from, to);
         }
-        written = true;
     }
+    var last = nothing();
     var fresh = 0 - 1;
     var made = 0;
     while made < builtins.builtin_regions(b) {
@@ -753,9 +1020,10 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
                 skip(st, from, to);
             } else {
                 scope.expect(st, text, param, a.ty, ast.nstart(st, arg), ast.nend(st, arg));
-                if written {
-                    emit.push_arg(st, a.ty, a.known, a.value, a.reg);
+                if written == 1 || written == 2 {
+                    push_value(st, a);
                 }
+                last = a;
             }
         }
         arg = ast.next(st, arg);
@@ -768,8 +1036,17 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
     if result == 0 {
         return skip(st, from, to);
     }
-    if written {
+    if written == 1 {
         return in_reg(result, emit.put_char(st));
+    }
+    if written == 2 {
+        return in_reg(result, emit.write_slice(st));
+    }
+    if written == 3 {
+        return in_reg(result, emit.widen(st, last.known, last.value, last.reg));
+    }
+    if written == 4 {
+        return in_reg(result, emit.truncate_to_byte(st, last.known, last.value, last.reg));
     }
     return plain(result);
 }
@@ -825,6 +1102,18 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
             return skip(st, from, to);
         }
         return in_reg(types.make_prelude(st, builtins.split_for(st[23])), 0 - 1);
+    }
+    // The heap: only the code is written for it, in compile mode.
+    if emit.on(st) && qualifier < 0 {
+        if pass1.is_word(st, text, callee, "box_slice") {
+            return heap_call(st, text, id, 1);
+        }
+        if pass1.is_word(st, text, callee, "unbox_slice") {
+            return heap_call(st, text, id, 2);
+        }
+        if pass1.is_word(st, text, callee, "contents") {
+            return heap_call(st, text, id, 3);
+        }
     }
     // A builtin the file's edition can name comes first, then a foreign function: not checked.
     let known = prims.builtin_at(st, text, callee, st[23]);
@@ -895,7 +1184,7 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         if ast.ok(st) {
             scope.expect(st, text, callee_type(st, text, ast.get(st, param, 5), callee_dp, fresh, tvars), a.ty, ast.nstart(st, arg), ast.nend(st, arg));
             if emit.on(st) && !types.is_prelude(st, a.ty) {
-                emit.push_arg(st, a.ty, a.known, a.value, a.reg);
+                push_value(st, a);
             }
         }
         param = ast.next(st, param);
@@ -925,7 +1214,7 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     }
     let result = types.resolve_type(st, callee_type(st, text, ast.get(st, found, 10), callee_dp, fresh, tvars));
     if emit.on(st) {
-        if result != 1 && result != 5 {
+        if result != 1 && result != 5 && !scope.aggregate_codable(st, result) {
             return skip(st, from, to);
         }
         return in_reg(result, emit.call(st, text, callee, result, st[52] - first_arg));

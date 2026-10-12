@@ -97,12 +97,12 @@ pub struct Dp {
 // What `st` must hold for a program of `tokens` tokens in `files` files: every node takes at
 // least a token, so the number of tokens bounds the number of nodes.
 pub fn size_for(tokens: int, files: int) -> [] int {
-    return 56 + 4 * tokens + 2 * (files + 2) + 2 * files + 16 * (tokens + 16) + 5 * (tokens + 16) + 40 * (tokens + 16) + 6 * (tokens + 16);
+    return 64 + 4 * tokens + 2 * (files + 2) + 2 * files + 16 * (tokens + 16) + 5 * (tokens + 16) + 40 * (tokens + 16) + 6 * (tokens + 16);
 }
 
 pub fn layout[&s](st: &!s [int], tokens: int, files: int) -> [] int {
-    st[19] = 56 + 3 * tokens;
-    st[16] = 56 + 4 * tokens;
+    st[19] = 64 + 3 * tokens;
+    st[16] = 64 + 4 * tokens;
     st[18] = st[16] + 2 * (files + 2);
     st[14] = st[18] + 2 * files;
     st[17] = files;
@@ -136,7 +136,7 @@ pub fn layout[&s](st: &!s [int], tokens: int, files: int) -> [] int {
 // buffers of `per` bytes for each token, one byte to an int. The state is `size_for` plus
 // `emit_size`; the buffers follow it.
 pub fn emit_size(tokens: int) -> [] int {
-    return 3 * emit_per() * (tokens + 16) + 4 * (tokens + 16);
+    return 4 * emit_per() * (tokens + 16) + 4 * (tokens + 16);
 }
 
 pub fn emit_per() -> [] int {
@@ -158,8 +158,11 @@ pub fn layout_emit[&s](st: &!s [int], tokens: int, files: int) -> [] int {
     st[48] = 0;
     st[49] = 0;
     st[50] = cap;
-    st[51] = base + 3 * cap;
+    st[51] = base + 4 * cap;
     st[52] = 0;
+    st[56] = base + 3 * cap;
+    st[57] = 0;
+    st[58] = 0;
     return 0;
 }
 
@@ -328,16 +331,16 @@ pub fn fail[&s](st: &!s [int], rule: int, from: int, to: int) -> [] int {
 // ------------------------------------------------------- token plumbing ---
 
 pub fn tstart[&s](st: &!s [int], i: int) -> [] int {
-    return st[56 + 3 * i + 1];
+    return st[64 + 3 * i + 1];
 }
 
 pub fn tend[&s](st: &!s [int], i: int) -> [] int {
-    return st[56 + 3 * i + 2];
+    return st[64 + 3 * i + 2];
 }
 
 // The code of token `i`, whatever the parser's state.
 pub fn code_at[&s](st: &!s [int], i: int) -> [] int {
-    return st[56 + 3 * i];
+    return st[64 + 3 * i];
 }
 
 // The kind of the token `n` ahead, saturating at end of file. After a refusal
@@ -1791,9 +1794,9 @@ pub fn tokenize[&s, &x](st: &!s [int], text: &x [byte], base: int) -> [] int {
     var done = false;
     while !done {
         if pos >= len(text) {
-            st[56 + 3 * n] = eof_code();
-            st[56 + 3 * n + 1] = base + len(text);
-            st[56 + 3 * n + 2] = base + len(text);
+            st[64 + 3 * n] = eof_code();
+            st[64 + 3 * n + 1] = base + len(text);
+            st[64 + 3 * n + 2] = base + len(text);
             n = n + 1;
             done = true;
         } else {
@@ -1802,9 +1805,9 @@ pub fn tokenize[&s, &x](st: &!s [int], text: &x [byte], base: int) -> [] int {
                     pos = next;
                 }
                 lc.Step::Token(k, from, to) => {
-                    st[56 + 3 * n] = lc.code(k);
-                    st[56 + 3 * n + 1] = base + from;
-                    st[56 + 3 * n + 2] = base + to;
+                    st[64 + 3 * n] = lc.code(k);
+                    st[64 + 3 * n + 1] = base + from;
+                    st[64 + 3 * n + 2] = base + to;
                     n = n + 1;
                     after_dot = lc.is_dot(k);
                     pos = to;

@@ -218,7 +218,13 @@ the stages found, in place, the way this document corrects its own claims.
 | 4b. Control flow: `if` with `else`, `while`, `&&` and `||` (the right side only when the left has not decided it) | `emit.cho` and `body.cho` | the Rust compiler, by what the built programs do | **Second slice of the backend.** 123 programs built both ways and run, 49 of them new (loops, recursion, early returns, short-circuit that must not run its right side, traps inside loops): the same exit status or a trap in both (27 trap); none different |
 | 4c. `World`, `release` and a real `main`: `main(world: World)` calls the program, a `World` passed between functions, `release(world)` | `emit.cho`, `body.cho`, `types.cho`, `driver.cho` | the Rust compiler, by what the built programs do | **Third slice of the backend.** 254 builds run and compared: every one of the 123 programs through the old `run` convention and through a real `main`, and 8 more with a `main` of their own (a `World` passed on, `release` used as a value): the same exit status or a trap in both (55 trap); none different |
 | 4d. Output: `split(world)` and its parts, a `borrow` of the `Io`, `putchar`, references to whole numbers and booleans, and what an owned capability discharges | `emit.cho`, `body.cho`, `exprs.cho`, `effects.cho` | the Rust compiler, by what the built programs do and write | **Fourth slice of the backend.** 268 builds run and compared, 14 of them print (characters, decimal numbers by recursion, loops, `if` chains, nested helpers, sequential borrows, a trap after output): the same exit status or trap and the same bytes on the standard output (56 trap); none different |
-| 4e. The rest of the backend: strings and `write_bytes`, bytes, slices, structs, enums, references in general, generics, `clang` run by the compiler itself | not started | | |
+| 4e. Strings and slices: a literal as a slice of bytes, `len`, `s[i]` with its bound, `write_bytes`, `int_of`/`byte_of`, a slice passed, kept and reassigned, a store through `*r` and `s[i]` | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho` | the Rust compiler, by what the built programs do and write | **Fifth slice of the backend.** 292 builds run and compared, 24 of them new, 60 trap; none different |
+| 4f. Structs of whole numbers, bytes and booleans: a literal, a field read, a copy, passed and returned, a field written through a unique reference, `*r` of one | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho` | the Rust compiler, by what the built programs do | **Sixth slice of the backend.** 312 builds run and compared, 20 of them new, 63 trap; none different |
+| 4g. Enums and `match` on them: a variant with payloads, `match` by value and behind a reference (payloads are references, written through), `_` arms, nested | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho` | the Rust compiler, by what the built programs do | **Seventh slice of the backend.** 332 builds run and compared, 20 of them new, 64 trap; none different |
+| 4h. Arenas: `region` and `alloc_slice[a](n, fill)` of whole numbers, bytes and booleans, in the checker (the arena in scope, the count, the fill a value that copies, the slice cannot leave) and in the code | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho`, `types.cho`, `driver.cho` | the Rust compiler: the checker by answers (1,945 cases), the code by what the built programs do | **Eighth slice of the backend, and a checker rule.** 352 builds run and compared, 20 of them new, 71 trap; none different. The checker's 1,945 cases are identical, 27 of them new |
+| 4i. The heap: `box_slice`, `contents`, `unbox_slice` of whole numbers, bytes and booleans, with a `Heap` borrowed and passed (compile mode only: the checker still answers `SKIP` for a function that has one) | `emit.cho`, `exprs.cho`, `types.cho`, `scope.cho`, `effects.cho` | the Rust compiler, by what the built programs do | **Ninth slice of the backend.** 367 builds run and compared, 15 of them new, 76 trap; none different. The checker's 1,945 cases are unchanged |
+| 4j. `static` tables: `static name: [T] { .. alloc_slice[static](n, fill) .. return t; }` of whole numbers, bytes and booleans, and the name used as a shared reference to the slice, in the checker (20 new cases) and in the code | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho`, `driver.cho` | the Rust compiler: the checker by answers (1,965 cases), the code by what the built programs do | **Tenth slice of the backend, and a checker rule.** 382 builds run and compared, 15 of them new, 78 trap; none different. The library's skipped functions go from 641 to 612 |
+| 4k. The rest of the backend: `alloc` of one value, functions that return a slice, generics, tuples, `Box` and `Heap` in the checker, `clang` run by the compiler itself | not started | | |
 
 **The method.** A port that builds no tree has nothing to compare, and one that does
 needs a printer, which is another port. So stage 2's parser wrote the tree the Rust parser
@@ -556,6 +562,76 @@ for what the capability allows (section 8.2 of `docs/linearity-and-effects.md`),
 subtracts what the parameters discharge, taken from the same generated table that `discharged_by`
 fills, before comparing. The test now compares what a program writes as well as how it ends, and
 the first thing a cancho-written compiler printed was `Hi`.
+
+**Stage 4e: strings and slices.** A reference to a slice is two values, a pointer and a length: a slot
+for each (`%s7_0`, `%s7_1`), two parameters in the header, two arguments in a call, and `len` is a load
+of the second. A string literal is a private constant `@str.N` written to a fourth buffer (the six
+escapes the lexer knows are decoded as the constant is written) and the driver prints the constants
+before the functions. `s[i]` is a comparison of the index against the length, unsigned so a negative
+index fails the same test, a trap, then a `getelementptr`; a store through it or through `*r` is the
+same address and a `store`. `write_bytes` is a loop over `putchar` in a helper the driver writes once,
+so the two stay in order in the C library's buffer. `int_of` is a `zext`; `byte_of` traps outside 0 to
+255, which the first run showed: the first version truncated, and the Rust build trapped.
+Reassigning a slice variable (`s = "yyyy"`) stored one pointer into a slot that does not exist, which
+clang found.
+
+**Stage 4f: structs.** A plain struct is an LLVM aggregate of its fields, `{ i64, i1 }`, which is one value:
+the slot, the parameter, the argument and the return are each a single operand, as they are for a whole
+number, and the checker's existing walk needed only the pieces that look inside. A literal is a chain of
+`insertvalue` from `undef`, in declaration order (the order Rust already enforces); a field read of a
+value is an `extractvalue`; behind a reference it is a `getelementptr` and a load, and `r.x = v` is the
+same address and a store. A reference to a struct binding is the address of its slot, as for a whole
+number. Only structs of whole numbers, bytes and booleans have code; a struct with a float or another
+struct in it is still skipped, so the answer is `SKIP` and not wrong code.
+
+**Stage 4g: enums and `match`.** An enum is an aggregate of its tag and, one after the other, the payloads of
+every variant (`{ i64, i64, i1 }` for `A(int)` and `B(bool)`); only the tag and the payloads of the
+variant it names mean anything, and the tag is the variant's position. A value is built with
+`insertvalue` as a struct is; a `match` extracts the tag once (an `extractvalue`, or an address and a
+load behind a reference) and is a flat chain of tests: arm `n` is `ma<n>` when the tag is its variant and
+`mb<n>`, the next test, when it is not; the last arm has no test, since the arms cover everything
+(Rust has already said so), and each ends in a branch to the end of the match. A payload is bound by
+`extractvalue`, or, behind a reference, as the address of its element, so `*w = ..` writes the
+enum in place. Enums with a float or a non-scalar payload are still skipped.
+
+**Stage 4h: arenas.** `alloc_slice` was not in the checker at all (it answered `SKIP`), so this stage is
+a rule first: the arena named must be open here, and an `alloc_slice[static]` in a function is an
+escape (only a `static` item may add to the static region); then the count, an `int`; then the fill,
+which must copy (a `res` one is `mode-bound-violated`); the result is a unique reference to a slice in
+the arena's block. A `return` of anything pointing into a block is now an escape checked before the
+types are compared, as Rust does it: a function returning `s` from its arena as an `int` said
+`type-mismatch`, and Rust says `reference-escapes-region`; the new cases found that. In the code,
+a `region` is a cell holding the head of a list of its allocations, each a `malloc` with a 16-byte
+header linking to the one before, and the end of the block frees them all; both are two helper
+functions the driver writes (`@cancho_arena_alloc`, `@cancho_arena_free`). A negative count traps, and
+so does a size that overflows, as in the Rust backend, and the fill is a loop. What differs from Rust
+is the allocator (it bumps within a 64 KiB chunk) and one thing that is a gap: a `return` from inside
+a `region` leaves without freeing, so the memory lasts until the program ends.
+
+**Stage 4i: the heap.** `Box[[T]]` is a pointer and a length, which in the code is the aggregate
+`{ ptr, i64 }`: one value, like a struct, so it is stored, moved and passed as one operand, and a
+reference to a box is the address of its slot, so `borrow mut b as &!q in { contents(q) .. }` is the
+borrow of a whole number again. `box_slice` is the arena's size and fill with a `malloc` in place of
+the arena (a null answer traps, as in the Rust backend); `contents(q)` loads the pointer and the length
+back into a slice in the block of the borrow; `unbox_slice` is a `free` and the length. They are
+written for compile mode only: the checker has no `Box` type and no ownership of one, so in the other
+modes a function that holds a box is still `SKIP`, as it was, and the 1,945 cases are unchanged. That
+is the honest limit of this stage: the code for the heap is compared against Rust by what programs do,
+and the rules for it (`unbox_slice` consumes, `contents` on an owned box) are Rust's alone until the
+checker learns to follow ownership.
+
+**Stage 4j: `static` tables.** The compiler's own generated tables are `static` items, so the compiler could
+not compile itself without them. In the checker the name of a static of this module declared `[T]` for a
+scalar `T` is a shared reference to a slice in the `static` region, as `docs/compile-time-data.md`
+says; the oracle checks only functions, so what had to agree was the uses (20 new cases, none
+different, and 29 more of the library's functions are verified because they read a table). In the code a
+static is a global pair of a pointer and a length, `@sd<n>`, and a function `@sinit<n>` that runs its
+body and stores the pair there; `alloc_slice[static]`, legal only inside such a body, is the heap's
+`malloc` and fill; and the C `main` the driver writes calls every `@sinit` before `main`, in the order the
+items come. Rust evaluates a static while compiling and puts it in read-only data; this builds it when the
+program starts, so a static that reads another is not supported, and the table is writable memory. Neither
+is visible to a program, but the first is a difference: a static whose body traps is a compile error in
+Rust and a trap at startup here.
 
 The mutation test of `types.cho` (54 operator swaps) killed 40 on the first corpus of 458 targeted
 body cases (after region-variable, `where`-closure and coercion cases were added; 33 before); the 14
