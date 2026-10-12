@@ -1,7 +1,7 @@
-# std.crc: the three checksums, and the 64-bit one that needed a design
+# std.crc: the checksums, and the 64-bit ones that needed a design
 
-> **Status: built.** `std.crc` ships CRC-16/XMODEM, CRC-32/IEEE and
-> CRC-64/XZ, each with the incremental `start`/`update`/`finish` a
+> **Status: built.** `std.crc` ships CRC-16/XMODEM, CRC-32/IEEE,
+> CRC-64/XZ and CRC-64/REDIS, each with the incremental `start`/`update`/`finish` a
 > snapshot writer needs and a one-call `of`, gated against the standard
 > catalogue's published check values for `"123456789"`
 > (`tests/accept/crc_check_values.cho`).
@@ -14,7 +14,8 @@ Two askers cleared `CONTRIBUTING.md`'s bar (#352): cancho-cache's
 cluster-lite epic needs **CRC-16/XMODEM** (`crc16(key) mod 16384` is a
 Redis Cluster hash slot, and a cluster-aware client must agree with the
 server byte for byte), and a snapshot/replication format needs
-**CRC-64**; cancho-log's private `crc.cho` (a CRC-32C — a different
+**CRC-64** (Redis's, so an RDB or a payload checks byte for byte;
+`std.crc` also carries the catalogue's CRC-64/XZ); cancho-log's private `crc.cho` (a CRC-32C — a different
 polynomial, which stays where it is) is the second asker for the
 module. `std.crc` adds the **CRC-32/IEEE** a record check wants.
 
@@ -50,23 +51,33 @@ hi  = table_hi[idx] ^ (shr >> 32)
 The table is stored the same way — two 256-entry statics, built in
 halves through all eight steps of each entry (the shift moves a bit
 from `hi` into `lo`'s top; the halves xor their own half of the
-polynomial, `0xd7870f42` below and `0xc96c5795` above). Splitting is
+polynomial, `0xd7870f42` below and `0xc96c5795` above, for XZ). Splitting is
 the design, not an optimisation: the one-word table cannot be written
 in this language at all.
 
-## 3. Which CRC-64, corrected in place
+## 3. Which CRC-64: two, and an earlier claim here was false
 
-The filing issue (#352) cited poly `0xad93d23594c935a9` with check value
-`0xE9C6D914C4B8D9CA` for `"123456789"`. **Verified rather than assumed:
-that check value belongs to no standard init/xorout combination of that
-polynomial** — all four (init 0/~0, xorout 0/~0) were computed and none
-match. The value the catalogue records for the *standard* reflected
-"Jones" CRC (CRC-64/XZ, poly `0xC96C5795D7870F42`, init and xorout all
-ones) is `0x995DC9BBDF1939FA`, and that is what `std.crc` implements
-and gates on. Redis's own `crc64` uses the same polynomial with the
-initial state carried in by the caller — a caller who wants Redis's
-exact form starts from `0` rather than `crc64_start()` and skips
-`crc64_finish`.
+The filing issue (#352) cited poly `0xad93d23594c935a9` with check
+value `0xE9C6D914C4B8D9CA` for `"123456789"`. An earlier version of this
+section said that value "matches no init/xorout combination" of that
+polynomial, and that Redis's `crc64` is the XZ polynomial. **Both were
+wrong, and the error is corrected here, where it was made.** Computed
+independently (a bitwise reflected CRC in Python, using the reflected
+polynomial `0x95ac9329ac4bc9b5`):
+
+| Variant | Polynomial (normal / reflected) | init | xorout | `"123456789"` |
+|---|---|---|---|---|
+| CRC-64/REDIS ("Jones") | `0xad93d23594c935a9` / `0x95ac9329ac4bc9b5` | 0 | 0 | `0xE9C6D914C4B8D9CA` |
+| CRC-64/XZ (ECMA-182) | `0x42f0e1eba9ea3693` / `0xc96c5795d7870f42` | all ones | all ones | `0x995DC9BBDF1939FA` |
+
+The first row is the value in Redis's own `crc64.c` test
+(`crc64(0, "123456789", 9) == 0xe9c6d914c4b8d9ca`), so the issue's pair
+was right all along; the earlier check had tried the wrong polynomial.
+The "Jones" label belongs to the Redis polynomial, **not** to XZ, which
+is the ECMA-182 polynomial. `std.crc` ships both (`crc64_*` is XZ,
+`crc64_redis_*` is Redis), over one machinery: they differ in the
+polynomial halves of the table and in the two constants. Both are gated
+by `tests/accept/crc_check_values.cho`, one-call and incremental.
 
 ## 4. The interface
 
@@ -84,7 +95,12 @@ crc32_of[&b](data) -> [] int          // 0xCBF43926
 crc64_start() -> [] (int, int)         // two all-ones halves
 crc64_update[&b](state, data) -> [] (int, int)
 crc64_finish(state) -> [] (int, int)   // each half complemented
-crc64_of[&b](data) -> [] (int, int)   // (0x995DC9BB, 0xDF1939FA)
+crc64_of[&b](data) -> [] (int, int)   // (0x995DC9BB, 0xDF1939FA): CRC-64/XZ
+
+crc64_redis_start() -> [] (int, int)   // (0, 0)
+crc64_redis_update[&b](state, data) -> [] (int, int)
+crc64_redis_finish(state) -> [] (int, int)   // the state: no final xor
+crc64_redis_of[&b](data) -> [] (int, int)    // (0xE9C6D914, 0xC4B8D9CA): Redis's
 ```
 
 CRC-64's state and answer are the `(hi, lo)` pair rather than one
@@ -103,7 +119,7 @@ the exact loop Redis's own `crc16` reference implements.
 the catalogue, and the incremental forms two ways: one byte at a time,
 and CRC-64 split across two updates of different lengths — the
 snapshot case, where a record is checksummed in slices between turns of
-an event loop. All six answers must agree. The issue's suggested
+an event loop. All eight answers (four checksums, each one-call and incremental) must agree with the published values. The issue's suggested
 differential against a live Redis (`CLUSTER KEYSLOT`, `redis-check-rdb`)
 is noted as a follow-up where Redis is available; the catalogue's
 published vectors are the gate here, and they are checked, not assumed.

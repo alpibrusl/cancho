@@ -50,7 +50,8 @@ the axis is now the capability rather than the verb — which is what
 makes a program that does both sayable.
 
 An existing program's `net` field splits mechanically; the edition that
-introduces it is a new one (edition 8), additive by construction, the
+introduces it is the next edition (its number is not fixed here: other proposals claim
+edition 8), additive by construction, the
 same way every capability has arrived (`docs/editions.md` §7).
 
 ### 2.2 Set-valued bounds, by several children from one narrow
