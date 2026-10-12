@@ -22,8 +22,8 @@ mod process;
 mod signals;
 mod sockets;
 mod tty;
-mod words;
 mod wide;
+mod words;
 
 /// Where `hoist`ed allocas land: a line no instruction can be mistaken for.
 const HOIST_MARK: &str = "  ; hoisted allocas\n";
