@@ -82,8 +82,10 @@ module tls_front;
 // `tls-server-*` tag, ...).
 
 import std.addr;
+import std.bytes;
 import std.conns;
 import std.flags;
+import std.http;
 import std.io;
 import echo_identity;
 import tls;
@@ -134,8 +136,27 @@ pub fn c_max_body() -> [] int {
     return 9;
 }
 
-pub fn cfg_len() -> [] int {
+// `--tickets`: session tickets a connection (`docs/tls-server.md` §12), 0 for none; and `--ticket-lifetime` in seconds
+// (0: the engine's 3,600).
+pub fn c_tickets() -> [] int {
     return 10;
+}
+
+pub fn c_ticket_lifetime() -> [] int {
+    return 11;
+}
+
+pub fn cfg_len() -> [] int {
+    return 12;
+}
+
+// The identities' subdirectories take the first 16 slots of `subs`; the 17th holds the name of `--ticket-keys`'s file.
+pub fn key_slot() -> [] int {
+    return 16;
+}
+
+pub fn subs_len() -> [] int {
+    return 17 * sub_cap();
 }
 
 // The room for an identity's subdirectory name, in `subs`.
@@ -488,6 +509,11 @@ pub fn log_established[&i, &e, &s](io: &!i Io, engine: &e tls.Engine, st: &s [in
     } else {
         io.write_all(io, " hrr=no");
     }
+    if tls.resumed(engine, slot) {
+        io.write_all(io, " resumed=yes");
+    } else {
+        io.write_all(io, " resumed=no");
+    }
     io.write_all(io, " waited=");
     io.print_int(io, st[b + s_waited()]);
     io.write_all(io, " handshake=");
@@ -652,6 +678,79 @@ pub fn admit[&i, &e, &t, &p, &s, &g, &q, &c](io: &!i Io, engine: &!e tls.Engine,
     return ended;
 }
 
+// The ticket keys of `--ticket-keys`, a file beneath `dir` of up to 4 lines of 64 hex digits (`openssl rand -hex 32`),
+// the newest first (`docs/tls-server.md` §12.2), given to the engine. Answers the engine's answer, or the
+// `echo_identity` file code for a file that could not be read. A file that is not hex is given to the engine as no key,
+// which refuses it (`tls-server-ticket-key`), so the old keys stay. The keys' text and bytes are overwritten.
+pub fn load_keys[&d, &s, &l, &e](dir: &d Dir, subs: &s [byte], sublens: &l [int], engine: &!e tls.Engine, now_unix: int) -> [dir_read, file_read] int {
+    var answer = 0;
+    region r {
+        let text = alloc_slice[r](1024, byte_of(0));
+        let keys = alloc_slice[r](128, byte_of(0));
+        let at = key_slot() * sub_cap();
+        let n = echo_identity.read_file(dir, subs[at..at + sublens[key_slot()]], text);
+        if n < 0 {
+            answer = echo_identity.file_base() + n;
+        } else {
+            var got = 0;
+            var half = 0 - 1;
+            var ok = true;
+            var k = 0;
+            while k < n {
+                let c = int_of(text[k]);
+                if c == ' ' || c == '\n' || c == '\r' || c == '\t' {
+                    if half >= 0 {
+                        ok = false;
+                    }
+                } else if http.hex_value(c) < 0 || got >= 128 {
+                    ok = false;
+                } else if half < 0 {
+                    half = http.hex_value(c);
+                } else {
+                    keys[got] = byte_of(half * 16 + http.hex_value(c));
+                    got = got + 1;
+                    half = 0 - 1;
+                }
+                k = k + 1;
+            }
+            if !ok || half >= 0 {
+                got = 0;
+            }
+            answer = tls.set_ticket_keys(engine, keys[0..got], now_unix);
+        }
+        bytes.zero(text);
+        bytes.zero(keys);
+    }
+    return answer;
+}
+
+// Session tickets as the command line asked (`--tickets`, `--ticket-lifetime`, `--ticket-keys`): given to the engine, with
+// the keys if a file was named. 0, or 6 (said on standard error). With `--tickets` 0 nothing is done.
+pub fn tickets[&i, &d, &e, &c, &u, &l](io: &!i Io, dir: &d Dir, engine: &!e tls.Engine, cfg: &c [int], subs: &u [byte], sublens: &l [int], now_unix: int) -> [dir_read, file_read, err_write] int {
+    if cfg[c_tickets()] == 0 {
+        return 0;
+    }
+    var lifetime = cfg[c_ticket_lifetime()];
+    if lifetime == 0 {
+        lifetime = 3600;
+    }
+    let code = tls.set_tickets(engine, cfg[c_tickets()], lifetime);
+    if code != 0 {
+        io.error_all(io, "tls_echo: tickets refused, ");
+        io.error_all(io, tls.refusal_tag(code));
+        io.error_all(io, "\n");
+        return 6;
+    }
+    if sublens[key_slot()] > 0 {
+        let keys = load_keys(dir, subs, sublens, engine, now_unix);
+        if keys != 0 {
+            io.error_all(io, "tls_echo: --ticket-keys unreadable or refused\n");
+            return 6;
+        }
+    }
+    return 0;
+}
+
 // Every identity read again beneath `dir` and replaced in the engine.
 pub fn reload[&h, &i, &d, &e, &u, &l](heap: &!h Heap, io: &!i Io, dir: &d Dir, engine: &!e tls.Engine, subs: &u [byte], sublens: &l [int], count: int, now_unix: int) -> [heap, dir_read, file_read, io_write] int {
     var id = 0;
@@ -677,6 +776,23 @@ pub fn reload[&h, &i, &d, &e, &u, &l](heap: &!h Heap, io: &!i Io, dir: &d Dir, e
         io.newline(io);
         flush(io);
         id = id + 1;
+    }
+    if sublens[key_slot()] > 0 {
+        let code = load_keys(dir, subs, sublens, engine, now_unix);
+        io.write_all(io, "reload tickets ");
+        if code == 0 {
+            io.write_all(io, "ok");
+        } else if code <= echo_identity.file_base() {
+            io.write_all(io, "unreadable errno=");
+            io.print_int(io, echo_identity.failed_errno(code));
+            bad = bad + 1;
+        } else {
+            io.write_all(io, "refused ");
+            io.write_all(io, tls.refusal_tag(code));
+            bad = bad + 1;
+        }
+        io.newline(io);
+        flush(io);
     }
     return bad;
 }
@@ -887,7 +1003,7 @@ pub fn parse_flags[&g, &c, &u, &n, &a, &f](g: &g Args, cfg: &!c [int], subs: &!u
                     dir = text;
                 } else if flags.named(name, "identity") {
                     let k = cfg[c_identities()];
-                    if k >= 16 || len(text) == 0 || len(text) > sub_cap() {
+                    if k >= key_slot() || len(text) == 0 || len(text) > sub_cap() {
                         bad = true;
                     } else {
                         var j = 0;
@@ -897,6 +1013,21 @@ pub fn parse_flags[&g, &c, &u, &n, &a, &f](g: &g Args, cfg: &!c [int], subs: &!u
                         }
                         sublens[k] = len(text);
                         cfg[c_identities()] = k + 1;
+                    }
+                } else if flags.named(name, "tickets") {
+                    bad = bad || !set_number(cfg, c_tickets(), text, 0, 8);
+                } else if flags.named(name, "ticket-lifetime") {
+                    bad = bad || !set_number(cfg, c_ticket_lifetime(), text, 1, 604800);
+                } else if flags.named(name, "ticket-keys") {
+                    if len(text) == 0 || len(text) > sub_cap() {
+                        bad = true;
+                    } else {
+                        var j = 0;
+                        while j < len(text) {
+                            subs[key_slot() * sub_cap() + j] = text[j];
+                            j = j + 1;
+                        }
+                        sublens[key_slot()] = len(text);
                     }
                 } else if flags.named(name, "alpn") {
                     if len(text) > len(alpn) {

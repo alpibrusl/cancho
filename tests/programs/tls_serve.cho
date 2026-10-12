@@ -6,7 +6,7 @@ edition 5;
 // thread, one `Poller`, up to 64 connections at once, each in an engine
 // slot.
 //
-//     tls_serve <port> <mode> <alpn> <count> <seed> [<chain> <key> <names>]...
+//     tls_serve <port> <mode> <alpn> <count> <seed> <tickets> [<chain> <key> <names>]...
 //
 // `mode` is what the server does with a connection's data once the
 // handshake is done:
@@ -23,12 +23,17 @@ edition 5;
 // `alpn` is the protocols the server speaks, comma-separated, or `-` for
 // none. After `count` connections have ended the server exits (0: never).
 // `seed` is 64 hex digits for the engine's DRBG, or `-` for 32 bytes of
-// /dev/urandom. Each identity is a PEM chain file, its PEM key file, and
-// its names, comma-separated; the first is the default.
+// /dev/urandom. `tickets` is `-` for none (the default of the engine), or
+// `<count>[:<lifetime in seconds>[:<key file>]]`: session tickets
+// (`docs/tls-server.md` §12), the key file holding 1 to 4 keys of 32 bytes,
+// the first sealing, as `tls.set_ticket_keys` takes them. Each identity is
+// a PEM chain file, its PEM key file, and its names, comma-separated; the
+// first is the default.
 //
 // Each connection that ends prints one line:
 //
 //     conn <code> <tag> <server_name or -> <alpn or -> <bytes received> <suite> <group> <retried|direct>
+//          <resumed|full> <the ticket verdict's tag>
 //
 // (the suite and group as decimal numbers: 4865 is 0x1301, 29 X25519.)
 //
@@ -155,6 +160,12 @@ fn end_slot[&i, &e, &t, &s](io: &!i Io, engine: &!e tls.Engine, tab: &!t conns.T
     } else {
         io.write_all(io, " direct");
     }
+    if tls.resumed(engine, slot) {
+        io.write_all(io, " resumed ");
+    } else {
+        io.write_all(io, " full ");
+    }
+    io.write_all(io, tls.ticket_verdict_tag(tls.ticket_verdict(engine, slot)));
     io.newline(io);
     flush(io);
     var k = 0;
@@ -449,10 +460,11 @@ fn advance[&i, &e, &t, &p, &s, &q, &a, &n](io: &!i Io, engine: &!e tls.Engine, t
                             used = used + c;
                         }
                         let left = drain(engine, st, app, slot);
-                        if tls.event(engine, slot) == tls.event_established() || left == 0 {
-                            if answer(io, engine, st, app, slot, mode) == 1 {
-                                st[b + 5] = 1;
-                            }
+                        // Not only when `event` says established: it says want_write while the engine has
+                        // output, and a handshake that ends with NewSessionTickets queued (`docs/tls-server.md`
+                        // §12.6) has some. `answer` does nothing until the data it waits for is whole.
+                        if answer(io, engine, st, app, slot, mode) == 1 {
+                            st[b + 5] = 1;
                         }
                         if left == 0 {
                             // close_notify: answer it, and the connection is done.
@@ -600,8 +612,50 @@ fn spaced[&s, &o](s: &s [byte], out: &!o [byte]) -> [] int {
     return k;
 }
 
+// `<count>[:<lifetime>[:<key file>]]` (argument 6) given to the engine as its tickets and keys.
+fn tickets[&i, &f, &g, &e](io: &!i Io, fs: &f Fs(""), g: &g Args, engine: &!e tls.Engine, now: int) -> [fs_read(""), err_write, args] int {
+    let spec = arg(g, 6);
+    if is_word(spec, "-") {
+        return 0;
+    }
+    var at = 0;
+    var count = 0;
+    while at < len(spec) && int_of(spec[at]) != 58 {
+        count = count * 10 + int_of(spec[at]) - 48;
+        at = at + 1;
+    }
+    var life = 3600;
+    var file = at;
+    if at < len(spec) {
+        life = 0;
+        at = at + 1;
+        file = at;
+        while file < len(spec) && int_of(spec[file]) != 58 {
+            life = life * 10 + int_of(spec[file]) - 48;
+            file = file + 1;
+        }
+    }
+    let code = tls.set_tickets(engine, count, life);
+    if code != 0 {
+        io.error_all(io, "tls_serve: tickets refused: ");
+        io.error_all(io, tls.refusal_tag(code));
+        io.error_all(io, "\n");
+    }
+    if file + 1 < len(spec) {
+        region r {
+            let keys = alloc_slice[r](128, byte_of(0));
+            let n = fs_read(fs, spec[file + 1..len(spec)], keys);
+            let c2 = tls.set_ticket_keys(engine, keys[0..n], now);
+            if n < 0 || c2 != 0 {
+                io.error_all(io, "tls_serve: ticket keys refused\n");
+            }
+        }
+    }
+    return 0;
+}
+
 fn load[&h, &i, &f, &g, &e](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), g: &g Args, engine: &!e tls.Engine, now: int) -> [heap, fs_read(""), err_write, args] int {
-    var a = 6;
+    var a = 7;
     var bad = 0;
     let chainb = box_slice(heap, 65536, byte_of(0));
     let keyb = box_slice(heap, 8192, byte_of(0));
@@ -647,8 +701,8 @@ fn main(world: World) -> [] int {
     var status = 2;
     borrow mut io as &!i in {
         borrow args as &g in {
-            if arg_count(g) < 9 {
-                io.error_all(i, "usage: tls_serve <port> <echo|http|mqtt> <alpn|-> <count> <seed|-> <chain> <key> <names> ...\n");
+            if arg_count(g) < 10 {
+                io.error_all(i, "usage: tls_serve <port> <echo|http|mqtt> <alpn|-> <count> <seed|-> <tickets|-> <chain> <key> <names> ...\n");
             } else {
                 var mode = mode_mqtt();
                 if is_word(arg(g, 2), "echo") {
@@ -682,6 +736,7 @@ fn main(world: World) -> [] int {
                             borrow clock as &cc in {
                                 now = clock_unix_ms(cc);
                             }
+                            tickets(i, ff, g, ew, now);
                             if load(h, i, ff, g, ew, now) == 0 {
                                 borrow net as &nn in {
                                     match tcp_listen(nn, number(arg(g, 1)), 128, 0) {

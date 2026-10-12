@@ -231,6 +231,7 @@ pub fn run[&h, &i, &l, &k, &e, &d, &w, &u, &n, &c](heap: &!h Heap, io: &!i Io, l
                                             }
                                             now = clock_ms(clock);
                                             let now_unix = clock_unix_ms(clock);
+                                            tls.set_time(engine, now_unix);
                                             var j = 0;
                                             while j < ready {
                                                 let token = events[2 * j];
@@ -321,6 +322,9 @@ pub fn serve[&h, &i, &n, &k, &s, &d, &u, &l, &c, &r, &a](heap: &!h Heap, io: &!i
         }
         if status == 0 {
             status = front.add_all(heap, io, dir, ew, subs, sublens, cfg[front.c_identities()], clock_unix_ms(clock));
+        }
+        if status == 0 {
+            status = front.tickets(io, dir, ew, cfg, subs, sublens, clock_unix_ms(clock));
         }
         if status == 0 {
             match tcp_listen(net, cfg[front.cfg_len()], 1024, 0) {
