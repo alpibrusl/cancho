@@ -337,9 +337,23 @@ fn start_plain[&e, &h, &a](engine: &!e Engine, slot: int, host: &h [byte], now_u
 
 // The identity (if any) that may answer this connection's CertificateRequest:
 // the first whose hosts name `host` (`docs/tls-parity.md` §6.2), kept in the
-// slot as its number plus one.
+// slot with its generation and 32 bytes of the engine's randomness for the
+// signature's nonce, drawn only when there is one, so an engine with no
+// identity draws what it always drew. And the trust generation now, which a
+// ticket from this connection is stamped with (§6.5, rule 9).
 fn choose_identity[&e, &h](engine: &!e Engine, slot: int, host: &h [byte]) -> [] int {
-    contents(engine.ints)[ints_of(slot) + tls_slot.i_identity()] = tls_cident.select(contents(engine.ids), host) + 1;
+    let i = ints_of(slot);
+    let b = bytes_of(slot);
+    contents(engine.ints)[i + tls_slot.i_trust_gen()] = contents(engine.tmeta)[t_trust()];
+    let id = tls_cident.select(contents(engine.ids), host);
+    if id >= 0 {
+        region r {
+            let hedge = alloc_slice[r](32, byte_of(0));
+            draw(engine, hedge);
+            tls_client.bind_identity(contents(engine.ints)[i..i + tls_client.ints_len()], contents(engine.bytes)[b..b + tls_client.bytes_len()], contents(engine.ids), id, hedge);
+            tls_slot.zero(hedge);
+        }
+    }
     return 0;
 }
 
@@ -662,7 +676,10 @@ pub fn save_to[&e](engine: &!e Engine, slot: int, pool: int) -> [] int {
     contents(engine.tmeta)[tf(e, 7)] = contents(engine.ints)[i + tls_slot.i_ticket_age_add()];
     contents(engine.tmeta)[tf(e, 8)] = contents(engine.ints)[i + tls_slot.i_verified_at()];
     contents(engine.tmeta)[tf(e, 9)] = contents(engine.ints)[i + tls_slot.i_not_after()];
-    contents(engine.tmeta)[tf(e, 10)] = contents(engine.tmeta)[t_trust()];
+    // The trust generation when the connection started, not now: a ticket earned
+    // by a connection that began before an identity or the roots changed is not
+    // offered after (`docs/tls-parity.md` §6.5, rule 9).
+    contents(engine.tmeta)[tf(e, 10)] = contents(engine.ints)[i + tls_slot.i_trust_gen()];
     contents(engine.tmeta)[tf(e, 11)] = contents(engine.tmeta)[t_saves()];
     contents(engine.tmeta)[t_saves()] = contents(engine.tmeta)[t_saves()] + 1;
     // Saved once: the slot's copy goes.
@@ -861,6 +878,18 @@ pub fn set_alpn_offer[&e, &t](engine: &!e Engine, protocols: &t [byte]) -> [] in
         }
     }
     return code;
+}
+
+// Whether a TLS 1.2 CertificateRequest may be answered with a certificate
+// (default yes). TLS 1.2 sends the client's Certificate in the clear, so a
+// program that does not want its identity on the wire unencrypted turns this
+// off, and TLS 1.2 servers get the empty Certificate (`docs/tls-parity.md`
+// §6.4). `tls-role` on an engine not opened with `open_mutual`.
+pub fn set_client_auth_tls12[&e](engine: &!e Engine, on: bool) -> [] int {
+    if !is_mutual(engine) {
+        return tls_record.role();
+    }
+    return tls_cident.set_tls12(contents(engine.ids), on);
 }
 
 // A client identity: the chain `chain_pem` (PEM certificates, leaf first) and

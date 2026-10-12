@@ -450,6 +450,11 @@ fn on_finished[&i, &b, &m, &c](ints: &!i [int], bytes: &!b [byte], message: &m [
             let ccs = alloc_slice[r](1, byte_of(1));
             code = tls_slot.queue_record(ints, bytes, tls_record.type_change_cipher_spec(), ccs);
             tls_slot.set_write_keys(ints, bytes, tls_slot.k_client_hs());
+            if tls_slot.has(ints, tls_slot.f_cert_send()) && !tls_client12.identity_current(ints, bytes, cred) {
+                // The identity changed since the request was answered: the
+                // empty Certificate instead (`docs/tls-parity.md` §6.5).
+                tls_slot.clear_flag(ints, tls_slot.f_cert_send());
+            }
             if code == 0 && tls_slot.has(ints, tls_slot.f_cert_send()) {
                 code = send_identity(ints, bytes, cred);
             } else if code == 0 && tls_slot.has(ints, tls_slot.f_cert_requested()) {
@@ -524,7 +529,7 @@ fn send_identity[&i, &b, &c](ints: &!i [int], bytes: &!b [byte], cred: &c [byte]
             let digest = alloc_slice[r](32, byte_of(0));
             crypto.sha256(content, digest);
             let cv = alloc_slice[r](80, byte_of(0));
-            let n = tls_client12.certificate_verify_message(ints, cred, digest, bytes[tls_slot.k_client_hs()..tls_slot.k_client_hs() + h], cv);
+            let n = tls_client12.certificate_verify_message(ints, cred, digest, bytes[tls_slot.k_sign_hedge()..tls_slot.k_sign_hedge() + 32], cv);
             if n < 0 {
                 code = n;
             } else {
@@ -644,7 +649,7 @@ fn on_message[&i, &b, &m, &p, &c](ints: &!i [int], bytes: &!b [byte], message: &
                 tls_slot.copy_bytes(body[1..1 + cn], bytes[tls_slot.k_context()..tls_slot.k_context() + cn]);
                 ints[tls_slot.i_context_len()] = cn;
                 tls_slot.set_flag(ints, tls_slot.f_cert_requested());
-                tls_client12.answer_request(ints, cred, body, info);
+                tls_client12.answer_request(ints, bytes, cred, body, info);
                 tls_slot.transcript_add(ints, message);
             }
         }
@@ -1064,6 +1069,21 @@ pub fn failure[&i](ints: &i [int]) -> [] int {
 // Whether the connection resumed a session (known once established).
 pub fn resumed[&i](ints: &i [int]) -> [] bool {
     return tls_slot.has(ints, tls_slot.f_resumed());
+}
+
+// The identity a CertificateRequest may be answered with (`docs/tls-parity.md`
+// §6.2, §6.5): `id` (-1 for none) of `cred`, its generation now, and `hedge`,
+// 32 bytes of the caller's randomness for the signature's nonce. Called after
+// `start`, before the server's flight.
+pub fn bind_identity[&i, &b, &c, &h](ints: &!i [int], bytes: &!b [byte], cred: &c [byte], id: int, hedge: &h [byte]) -> [] int {
+    if id < 0 || !tls_cident.in_use(cred, id) || len(hedge) != 32 {
+        ints[tls_slot.i_identity()] = 0;
+        return 0;
+    }
+    ints[tls_slot.i_identity()] = id + 1;
+    ints[tls_slot.i_identity_gen()] = tls_cident.generation(cred, id);
+    tls_slot.copy_bytes(hedge, bytes[tls_slot.k_sign_hedge()..tls_slot.k_sign_hedge() + 32]);
+    return 0;
 }
 
 // What became of a CertificateRequest (`docs/tls-parity.md` §6.3): 0 none

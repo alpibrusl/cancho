@@ -15,11 +15,17 @@ import x509_names;
 // with every `feed`. The engine never reads a file and has no function that
 // answers a key. Not independently reviewed (#209).
 //
-// The layout, a fixed stride per identity: in use (1 byte), the key (32),
+// The layout: a header of 8 bytes (the generation counter, 6 bytes, which
+// every `load` and `remove` raises and nothing lowers, then 1 byte: 1 when
+// a TLS 1.2 CertificateRequest may be answered, the default; 0 when only TLS
+// 1.3's may, whose Certificate is encrypted), then a fixed stride per
+// identity: in use (1 byte), the key (32),
 // its public point (65), the leaf's notAfter (6), the hosts' length (2) and
 // the hosts, the certificate_list's length (3) and the list as TLS 1.3's
 // Certificate sends it (each certificate after a 3-byte length, then 2
-// bytes of no extensions).
+// bytes of no extensions), and its generation (6 bytes): the counter's value
+// when it was loaded, so a connection that chose it can tell it from an
+// identity loaded later into the same number (`docs/tls-parity.md` §6.5).
 
 pub fn max_identities() -> [] int {
     return 4;
@@ -63,16 +69,56 @@ fn o_list() -> [] int {
     return o_list_len() + 3;
 }
 
-fn stride() -> [] int {
+fn o_gen() -> [] int {
     return o_list() + chain_cap();
 }
 
+fn stride() -> [] int {
+    return o_gen() + 6;
+}
+
+fn header() -> [] int {
+    return 8;
+}
+
 fn at(id: int) -> [] int {
-    return id * stride();
+    return header() + id * stride();
 }
 
 pub fn cfg_len() -> [] int {
-    return max_identities() * stride();
+    return header() + max_identities() * stride();
+}
+
+// Raises the generation counter; its new value.
+fn next_generation[&c](cfg: &!c [byte]) -> [] int {
+    let g = tls_message.get(cfg, 0, 6) + 1;
+    tls_message.put(cfg, 0, g, 6);
+    return g;
+}
+
+// Identity `id`'s generation (0 when not in use).
+pub fn generation[&c](cfg: &c [byte], id: int) -> [] int {
+    if !in_use(cfg, id) {
+        return 0;
+    }
+    return tls_message.get(cfg, at(id) + o_gen(), 6);
+}
+
+// Whether a TLS 1.2 CertificateRequest may be answered with a certificate,
+// which TLS 1.2 sends in the clear (`docs/tls-parity.md` §6.4): yes unless
+// turned off.
+pub fn tls12_allowed[&c](cfg: &c [byte]) -> [] bool {
+    return len(cfg) >= cfg_len() && int_of(cfg[6]) == 0;
+}
+
+pub fn set_tls12[&c](cfg: &!c [byte], on: bool) -> [] int {
+    if len(cfg) >= cfg_len() {
+        cfg[6] = byte_of(1);
+        if on {
+            cfg[6] = byte_of(0);
+        }
+    }
+    return 0;
 }
 
 pub fn in_use[&c](cfg: &c [byte], id: int) -> [] bool {
@@ -231,6 +277,7 @@ pub fn load[&c, &p, &k, &n, &w](cfg: &!c [byte], id: int, chain_pem: &p [byte], 
                     i = i + 1;
                 }
             }
+            tls_message.put(cfg, b + o_gen(), next_generation(cfg), 6);
             cfg[b] = byte_of(1);
         }
         bytes.zero(secret);
@@ -274,11 +321,13 @@ pub fn remove[&c](cfg: &!c [byte], id: int) -> [] int {
         return tls_record.client_no_identity();
     }
     bytes.zero(cfg[at(id)..at(id) + stride()]);
+    next_generation(cfg);
     return 0;
 }
 
 // The identity whose hosts match `host` (`x509_names`'s rules, so
-// `*.example.com` stands for one label; `*` alone matches every host), the
+// `*.example.com` stands for one label; `*` alone matches every host; an IP
+// address matches only `*` or itself, never a wildcard: `*.0.0.1` is not `10.0.0.1`), the
 // first in the order of the slots; or -1 when none does. An identity is
 // never sent to a host it does not name (`docs/tls-parity.md` §6.2).
 pub fn select[&c, &h](cfg: &c [byte], host: &h [byte]) -> [] int {
@@ -310,6 +359,10 @@ pub fn select[&c, &h](cfg: &c [byte], host: &h [byte]) -> [] int {
                     if e > p && found < 0 {
                         if e - p == 1 && int_of(names[p]) == 42 {
                             found = id;
+                        } else if x509.is_ip_literal(lower) {
+                            if bytes.equal(names[p..e], lower) {
+                                found = id;
+                            }
                         } else if x509_names.dns_matches(names[p..e], lower) {
                             found = id;
                         }

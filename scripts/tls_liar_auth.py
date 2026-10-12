@@ -151,10 +151,15 @@ class AuthServer(Server):
         self.chain = None
         self.observed = None
 
-    def start(self, alpn=None, identity=True, hosts=HOST, extra=()):
+    def start(self, alpn=None, identity=True, hosts=HOST, extra=(), host=HOST):
         prelude(self.c, alpn, identity, hosts, extra)
         self.chain = [self.client_cert] + list(extra)
-        super().start()
+        f = self.c.ask(f"C {host.hex()} {L.RANDOM.hex()} {L.ROOTS.hex()} {NOW}")
+        assert f[0] == "0", f
+        (hello,) = self.c.take()
+        msg, self.sid, self.client_shares, _ = L.parse_client_hello(hello)
+        self.transcript = msg
+        self.ccs_sent = False
         check_offer(self.transcript, alpn)
 
     def cr_message(self):
@@ -312,7 +317,8 @@ case("client auth: an authorities name of the issuer's length and other bytes: e
 case("client auth: no common signature scheme (Ed25519 only): empty Certificate", "ok")(
     mutual("empty", 2, sigalgs(ED25519)))
 case("client auth: RSA-PSS only: empty Certificate", "ok")(mutual("empty", 2, sigalgs(RSA_PSS)))
-case("client auth: no signature_algorithms at all: empty Certificate", "ok")(mutual("empty", 2, authorities([CA_NAME])))
+case("client auth: no signature_algorithms at all (RFC 8446 §4.3.2)", "tls-missing-extension", 109)(
+    lambda s: (s.start(), setattr(s, "cr_exts", authorities([CA_NAME])), s.c.feed(s.hello_and_flight())))
 case("client auth: the authorities name another CA only: empty Certificate", "ok")(
     mutual("empty", 2, SIG + authorities([OTHER_CA_NAME])))
 case("client auth: no identity configured: empty Certificate", "ok")(mutual("empty", 2, SIG, identity=False))
@@ -339,6 +345,84 @@ def required_without_identity(s):
     s.client_flight("empty")
     s.c.feed(s.write.seal(21, b"\2\x74"))
 
+
+# ---- TLS 1.3: the identity changed while the handshake was in flight (docs/tls-parity.md §6.5) ----
+def swap(s, hosts):
+    """Identity 0 removed, and (unless `hosts` is None) another loaded in its number for `hosts`."""
+    f = s.c.ask("Z 0")
+    assert f[0] == "0", f
+    if hosts is not None:
+        f = s.c.ask(f"I 0 {pem_cert(CERT).hex()} {pem_key(KEY).hex()} {hosts.hex()} {NOW}")
+        assert f[0] == "0", f
+
+
+def swapped_before_request(hosts):
+    def run(s):
+        s.start()
+        s.cr_exts = SIG
+        swap(s, hosts)
+        s.c.feed(s.hello_and_flight())
+        s.client_flight("empty")
+        assert s.query()[0] == 2, "client_auth"
+        s.finish_honest()
+    return run
+
+
+def swapped_before_finished(hosts):
+    """The flight in two feeds: everything through the CertificateRequest, then (after the swap) the rest."""
+    def run(s):
+        s.start()
+        s.cr_exts = SIG
+        recs = L.records(s.hello_and_flight())
+        s.c.feed(b"".join(recs[:3]))
+        swap(s, hosts)
+        s.c.feed(b"".join(recs[3:]))
+        s.client_flight("empty")
+        assert s.query()[0] == 2, "client_auth"
+        s.finish_honest()
+    return run
+
+
+case("client auth: the identity removed and another, for another host, added in its number before the request: empty Certificate", "ok")(
+    swapped_before_request(b"other.example"))
+case("client auth: the identity removed and the same one added again before the request (a new generation): empty Certificate", "ok")(
+    swapped_before_request(HOST))
+case("client auth: the identity removed between the request and Finished: empty Certificate, not a signature by a removed key", "ok")(
+    swapped_before_finished(None))
+case("client auth: the identity replaced by one for another host between the request and Finished: empty Certificate", "ok")(
+    swapped_before_finished(b"other.example"))
+
+
+# An IP address as the host: the server's certificate names it, and only `*` or the address itself choose an identity.
+def ip_certificate():
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "10.0.0.1")])
+    import ipaddress
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(CA[1].subject).public_key(L.KEY.public_key())
+            .serial_number(389).not_valid_before(START).not_valid_after(END)
+            .add_extension(x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address("10.0.0.1"))]), False)
+            .sign(CA[0], None))
+    return cert.public_bytes(serialization.Encoding.DER)
+
+
+IP_DER = ip_certificate()
+
+
+def ip_host(expect, auth, hosts):
+    def run(s):
+        s.start(hosts=hosts, host=b"10.0.0.1")
+        s.cert_der = IP_DER
+        s.cr_exts = SIG
+        s.c.feed(s.hello_and_flight())
+        s.client_flight(expect)
+        assert s.query()[0] == auth, "client_auth"
+        s.finish_honest()
+    return run
+
+
+case("client auth: an IP address host and an identity for `*.0.0.1`: no wildcard matches an address, empty Certificate", "ok")(
+    ip_host("empty", 2, b"*.0.0.1"))
+case("client auth: an IP address host and an identity for that address: the chain", "ok")(ip_host("chain", 1, b"10.0.0.1"))
+case("client auth: an IP address host and an identity for `*`: the chain", "ok")(ip_host("chain", 1, b"*"))
 
 # ---- TLS 1.3: a request that lies ----
 case("client auth: a second CertificateRequest", "tls-unexpected-message", 10)(
@@ -629,6 +713,35 @@ case12("TLS 1.2 client auth: a CertificateRequest with an authorities list that 
                s.c.feed(s.flight12())))
 case12("TLS 1.2 client auth: a signature_algorithms list of odd length", "tls-decode-error", 50)(
     lambda s: (s.start(), setattr(s, "cr_raw", b"\1\x40" + u16(3) + b"\4\3\0" + u16(0)), s.c.feed(s.flight12())))
+
+
+def mutual12_tls13_only(s):
+    """TLS 1.2 client authentication turned off (`set_client_auth_tls12`): a TLS 1.2 request gets the empty Certificate."""
+    f = s.c.ask("V 0")
+    assert f[0] == "0", f
+    mutual12("empty", 2, ([ECDSA_SIGN], [ECDSA_SHA256], []))(s)
+
+
+case12("TLS 1.2 client auth: answering TLS 1.2 turned off, its Certificate being in the clear: empty Certificate", "ok")(mutual12_tls13_only)
+case("client auth: answering TLS 1.2 turned off, TLS 1.3 still answered", "ok")(
+    lambda s: (s.c.ask("V 0"), mutual("chain", 1, SIG)(s)))
+
+
+@case12("TLS 1.2 client auth: the identity removed between the request and ServerHelloDone: empty Certificate", "ok")
+def swapped12(s):
+    s.start()
+    s.suite = 0xc02b
+    s.cr = ([ECDSA_SIGN], [ECDSA_SHA256], [])
+    recs = L.records(s.flight12())
+    s.c.feed(b"".join(recs[:-1]))
+    swap(s, None)
+    s.c.feed(recs[-1])
+    s.client_flight("empty")
+    assert s.query()[0] == 2, "client_auth"
+    s.c.feed(s.server_finish())
+    s.check_request()
+    f = s.c.feed(s.write.seal(23, b"mutual 1.2") + s.write.seal(21, b"\1\0"))
+    assert f[2] == "4", f"closed: {f}"
 
 
 @case12("TLS 1.2 client auth: a second CertificateRequest", "tls-unexpected-message", 10)

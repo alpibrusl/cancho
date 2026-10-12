@@ -23,6 +23,8 @@ edition 5;
 //                                             tls_client.start_psk: `C`, offering a ticket (`docs/tls-resumption.md`)
 //     I <id> <chain> <key> <hosts> <now>      tls_cident.load: a client identity (PEM chain and key, the hosts it names:
 //                                             `docs/tls-parity.md` §6.2), answered `<code> <tag> 0 - -`
+//     Z <id>                                  tls_cident.remove: the identity forgotten, answered as `I`
+//     V <0|1>                                 tls_cident.set_tls12: whether a TLS 1.2 request may be answered, as `I`
 //     L <protocols>                           the ALPN offer (text) the next `C` sends (`docs/tls-parity.md` §6.6)
 //     Y                                       `0 ok <client_auth 0|1|2> <ALPN protocol chosen, hex or -> - -`
 //     K                                       what resumption knows: `0 ok <event> - - <resumed 0|1> <ticket kept>
@@ -269,6 +271,16 @@ fn client_op[&i, &s, &n, &b, &o, &p, &e](io: &!i Io, s: &s [byte], at: int, ints
         io.write_all(io, " 0 - -");
         io.newline(io);
         return 0;
+    } else if op == 90 || op == 86 {
+        if op == 90 {
+            code = tls_cident.remove(store[roots_cap()..offer_at()], number(s, f));
+        } else {
+            code = tls_cident.set_tls12(store[roots_cap()..offer_at()], number(s, f) == 1);
+        }
+        tag_line(io, code);
+        io.write_all(io, " 0 - -");
+        io.newline(io);
+        return 0;
     } else if op == 76 {
         region r {
             let text = alloc_slice[r](hex_len(s, f), byte_of(0));
@@ -310,7 +322,15 @@ fn client_op[&i, &s, &n, &b, &o, &p, &e](io: &!i Io, s: &s [byte], at: int, ints
             f = next_field(s, next_field(s, f));
             let m = int_of(store[offer_at()]) * 256 + int_of(store[offer_at() + 1]);
             code = tls_client.start_alpn(ints, bytes, host, random, number(s, f), host[0..0], host[0..0], 0, 0, 0, false, store[offer_at() + 2..offer_at() + 2 + m]);
-            ints[tls_slot.i_identity()] = tls_cident.select(store[roots_cap()..offer_at()], host) + 1;
+            // The identity the host chooses, and 32 fixed bytes for the
+            // signature's hedge (the bytes 60 to 7f), so a recording replays.
+            let hedge = alloc_slice[r](32, byte_of(0));
+            var k = 0;
+            while k < 32 {
+                hedge[k] = byte_of(96 + k);
+                k = k + 1;
+            }
+            tls_client.bind_identity(ints, bytes, store[roots_cap()..offer_at()], tls_cident.select(store[roots_cap()..offer_at()], host), hedge);
         }
     } else if op == 82 {
         region r {

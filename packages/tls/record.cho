@@ -345,6 +345,12 @@ pub fn extension_repeat() -> [] int {
     return -131;
 }
 
+// A TLS 1.3 CertificateRequest without `signature_algorithms`, which RFC 8446 §4.3.2 requires
+// (`docs/tls-parity.md` §6.3; the server's own is `tls-server-missing-extension`).
+pub fn missing_extension() -> [] int {
+    return -132;
+}
+
 pub fn refusal_tag(code: int) -> [] &static [byte] {
     if code == 0 {
         return "ok";
@@ -555,6 +561,9 @@ pub fn refusal_tag(code: int) -> [] &static [byte] {
     }
     if code == -131 {
         return "tls-extension-repeat";
+    }
+    if code == -132 {
+        return "tls-missing-extension";
     }
     return "unknown";
 }

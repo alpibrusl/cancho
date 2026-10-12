@@ -189,6 +189,32 @@ def refusals(c):
     assert identity(c, hosts=b" ")[1] == "tls-client-names"
 
 
+def changed_mid_connection(change):
+    """A connection whose identity or trust store changes after it started and before its ticket comes: the ticket is stamped
+    with the generation at the start, so it is not offered after (rule 9)."""
+    def run(c):
+        assert identity(c)[0] == 0
+        s = Eng(c)
+        assert s.begin(L.NOW) is None
+        s.cr_exts = A.SIG
+        s.c.feed(s.hello_and_flight())
+        s.client_flight("chain")
+        change(c)
+        L.issue(s)
+        h = finish(s, c)
+        assert h > 0, "saved"
+        assert not offers(c, L.NOW + 10, h)[1], "not offered: the connection began under what changed"
+    return run
+
+
+case("an identity added after the connection started and before its ticket came: the ticket is not offered")(
+    changed_mid_connection(lambda c: identity(c, hosts=b"another.example")))
+case("an identity removed after the connection started and before its ticket came: the ticket is not offered")(
+    changed_mid_connection(lambda c: c.ask("Z 0")))
+case("the trust store changed after the connection started and before its ticket came: the ticket is not offered")(
+    changed_mid_connection(lambda c: c.ask(f"T {L.ROOTS.hex()}")))
+
+
 @case("ALPN: the default offer is sent; a connection's own replaces it, even by none; a bad offer is refused")
 def alpn_offers(c):
     assert c.ask(f"L {b'h2 http/1.1'.hex()}")[:2] == ["0", "ok"]

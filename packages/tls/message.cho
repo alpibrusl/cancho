@@ -1139,6 +1139,10 @@ pub fn certificate_request[&b, &i](b: &b [byte], info: &!i [int]) -> [] int {
         }
         at = body + size;
     }
+    if !seen_sigalgs {
+        // RFC 8446 §4.3.2: "The signature_algorithms extension MUST be specified".
+        return tls_record.missing_extension();
+    }
     return 0;
 }
 

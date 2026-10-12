@@ -310,8 +310,22 @@ pub fn i_alpn_at() -> [] int {
     return i_alpn_len() + 6;
 }
 
-pub fn ints_len() -> [] int {
+// A client's identity (`docs/tls-parity.md` §6.5): the generation of the
+// identity chosen at `start` (`tls_cident.generation`), which must still be
+// its generation when a CertificateRequest is answered and when the chain is
+// sent; and the engine's trust generation at `start`, which a ticket from this
+// connection is stamped with, so a ticket earned before an identity or the
+// trust store changed is not offered after.
+pub fn i_identity_gen() -> [] int {
     return i_alpn_len() + 7;
+}
+
+pub fn i_trust_gen() -> [] int {
+    return i_alpn_len() + 8;
+}
+
+pub fn ints_len() -> [] int {
+    return i_alpn_len() + 9;
 }
 
 pub fn read_aead[&i](ints: &i [int]) -> [] &i [int] {
@@ -571,8 +585,15 @@ pub fn k_write_hw() -> [] int {
     return b_keys() + 1472;
 }
 
+// 32 bytes of the engine's randomness, drawn at `start` when an identity is
+// chosen, that hedge the CertificateVerify signature's nonce (RFC 6979 §3.6,
+// `docs/ecdsa-sign.md` §3).
+pub fn k_sign_hedge() -> [] int {
+    return b_keys() + 1728;
+}
+
 pub fn keys_len() -> [] int {
-    return 1728;
+    return 1760;
 }
 
 // The largest ticket kept (`docs/tls-resumption.md` §4): a larger one is
@@ -876,6 +897,9 @@ pub fn alert_for(code: int) -> [] int {
     }
     if code == tls_record.alpn_selected() || code == tls_record.extension_repeat() {
         return 47;
+    }
+    if code == tls_record.missing_extension() {
+        return 109;
     }
     if code == tls_record.decode_error() {
         return 50;

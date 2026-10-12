@@ -2,7 +2,6 @@ module tls_client12;
 import std.bytes;
 import std.ecdh;
 import std.ecdsa_sign;
-import std.hkdf;
 import std.x25519;
 import tls_cident;
 import tls_message;
@@ -24,11 +23,13 @@ import x509;
 // `certificate_request12_info`'s, of `body`) is answered with the identity
 // chosen at `start` (`docs/tls-parity.md` §6.3): one was chosen, the request
 // lists the scheme the key signs with, and its authorities list is empty or
-// names an issuer of the chain. Sets `f_cert_send` if so. Shared by both
+// names an issuer of the chain; and in TLS 1.2, where a Certificate travels
+// in the clear, the engine allows it. Sets `f_cert_send` if so. Shared by both
 // versions.
-pub fn answer_request[&i, &c, &m, &f](ints: &!i [int], cred: &c [byte], body: &m [byte], info: &f [int]) -> [] int {
+pub fn answer_request[&i, &b, &c, &m, &f](ints: &!i [int], bytes: &b [byte], cred: &c [byte], body: &m [byte], info: &f [int]) -> [] int {
     let id = ints[tls_slot.i_identity()] - 1;
-    if id >= 0 && tls_cident.in_use(cred, id) && info[tls_message.cr_sigalg()] == 1 {
+    let allowed = !tls_slot.has(ints, tls_slot.f_tls12()) || tls_cident.tls12_allowed(cred);
+    if identity_current(ints, bytes, cred) && allowed && info[tls_message.cr_sigalg()] == 1 {
         let from = info[tls_message.cr_ca_start()];
         let to = info[tls_message.cr_ca_end()];
         if to == from || tls_cident.names_issuer(cred, id, body[from..to]) {
@@ -36,6 +37,20 @@ pub fn answer_request[&i, &c, &m, &f](ints: &!i [int], cred: &c [byte], body: &m
         }
     }
     return 0;
+}
+
+// Whether the identity chosen at `start` is still the one the engine holds
+// under that number (`docs/tls-parity.md` §6.5): in use, of the generation
+// recorded at `start`, and still the identity the host's name chooses. An
+// identity removed and another added in its number between `start` and the
+// request, or between the request and the client's flight, is never sent:
+// the connection answers with the empty Certificate.
+pub fn identity_current[&i, &b, &c](ints: &i [int], bytes: &b [byte], cred: &c [byte]) -> [] bool {
+    let id = ints[tls_slot.i_identity()] - 1;
+    if id < 0 || !tls_cident.in_use(cred, id) || tls_cident.generation(cred, id) != ints[tls_slot.i_identity_gen()] {
+        return false;
+    }
+    return tls_cident.select(cred, bytes[tls_slot.k_host()..tls_slot.k_host() + ints[tls_slot.i_host_len()]]) == id;
 }
 
 // The protocol `name` the server chose (RFC 7301 §3.1), against the offer
@@ -74,16 +89,14 @@ pub fn client_not_after(server: int, client: int) -> [] int {
 
 // The client's CertificateVerify message (type, length, scheme, signature),
 // into `out` (80 bytes): `digest` (SHA-256) signed by the identity chosen,
-// the nonce hedged with bytes derived from `secret`, a secret the slot holds
-// now (`docs/tls-parity.md` §6.4). The length written, or
+// the nonce hedged with the 32 bytes of the engine's randomness drawn at
+// `start` (`tls_slot.k_sign_hedge`; RFC 6979 §3.6, `docs/tls-parity.md` §6.4). The length written, or
 // `tls-client-sign` if the signer refused or its check failed. The signer's
 // work is the slot's `std.ecdh` work, free once the key exchange is done.
-pub fn certificate_verify_message[&i, &c, &g, &s, &o](ints: &!i [int], cred: &c [byte], digest: &g [byte], secret: &s [byte], out: &!o [byte]) -> [] int {
+pub fn certificate_verify_message[&i, &c, &g, &e, &o](ints: &!i [int], cred: &c [byte], digest: &g [byte], extra: &e [byte], out: &!o [byte]) -> [] int {
     let id = ints[tls_slot.i_identity()] - 1;
     var n = 0;
     region r {
-        let extra = alloc_slice[r](32, byte_of(0));
-        hkdf.expand_label(len(secret), secret, "client sign hedge", "", extra);
         let sig = alloc_slice[r](64, byte_of(0));
         let der = alloc_slice[r](ecdsa_sign.der_max(), byte_of(0));
         var code = ecdsa_sign.sign_checked(digest, tls_cident.key(cred, id), tls_cident.point(cred, id), extra, sig, ints[tls_slot.i_ecdh_work()..tls_slot.i_ecdh_work() + ecdh.work_len()]);
@@ -103,7 +116,6 @@ pub fn certificate_verify_message[&i, &c, &g, &s, &o](ints: &!i [int], cred: &c 
         if code != 0 {
             n = tls_record.client_sign();
         }
-        tls_slot.zero(extra);
         tls_slot.zero(sig);
     }
     return n;
@@ -143,7 +155,7 @@ pub fn on_message12[&i, &b, &m, &p, &c](ints: &!i [int], bytes: &!b [byte], mess
             code = tls_message.certificate_request12_info(message[4..len(message)], info);
             if code == 0 {
                 tls_slot.set_flag(ints, tls_slot.f_cert_requested());
-                answer_request(ints, cred, message[4..len(message)], info);
+                answer_request(ints, bytes, cred, message[4..len(message)], info);
                 tls_slot.transcript_add(ints, message);
             }
         }
@@ -246,6 +258,11 @@ fn on_server_done[&i, &b, &m, &c](ints: &!i [int], bytes: &!b [byte], message: &
     let curve = tls_slot.curve_of(group);
     var code = 0;
     region r {
+        if tls_slot.has(ints, tls_slot.f_cert_send()) && !identity_current(ints, bytes, cred) {
+            // The identity changed since the request was answered: the empty
+            // Certificate instead (`docs/tls-parity.md` §6.5).
+            tls_slot.clear_flag(ints, tls_slot.f_cert_send());
+        }
         if tls_slot.has(ints, tls_slot.f_cert_send()) {
             // The identity's chain, a list of DER certificates with no
             // per-certificate extensions (RFC 5246 §7.4.2).
@@ -304,7 +321,7 @@ fn on_server_done[&i, &b, &m, &c](ints: &!i [int], bytes: &!b [byte], message: &
                 let digest = alloc_slice[r](32, byte_of(0));
                 tls_slot.transcript_hash(ints, digest);
                 let cv = alloc_slice[r](80, byte_of(0));
-                let n = certificate_verify_message(ints, cred, digest, master, cv);
+                let n = certificate_verify_message(ints, cred, digest, bytes[tls_slot.k_sign_hedge()..tls_slot.k_sign_hedge() + 32], cv);
                 if n < 0 {
                     code = n;
                 } else {

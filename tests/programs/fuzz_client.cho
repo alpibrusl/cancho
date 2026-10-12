@@ -44,7 +44,7 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read] int {
                             } else {
                                 code = tls_client.start(ints, bytes, fuzz_fixture.host(), contents(r), fuzz_fixture.now());
                             }
-                            ints[tls_slot.i_identity()] = 1;
+                            fuzz_common.bind_identity(contents(s), ints, bytes);
                             fuzz_common.drain(ints, bytes, contents(o));
                             var at = 0;
                             while code >= 0 && at < total {

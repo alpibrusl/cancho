@@ -75,6 +75,16 @@ pub fn load_identity[&s, &n](store: &!s [byte], ints: &!n [int]) -> [] int {
     return tls_cident.load(store[roots_cap()..store_len()], 0, fuzz_fixture.identity_chain(), fuzz_fixture.identity_key(), "*", false, fuzz_fixture.now(), ints[tls_slot.i_ecdh_work()..tls_slot.i_ecdh_work() + x509_key.work_len()]);
 }
 
+// The fixture identity bound to the connection just started, with a fixed hedge.
+pub fn bind_identity[&s, &n, &b](store: &s [byte], ints: &!n [int], bytes: &!b [byte]) -> [] int {
+    var code = 0;
+    region r {
+        let hedge = alloc_slice[r](32, byte_of(7));
+        code = tls_client.bind_identity(ints, bytes, store[roots_cap()..store_len()], 0, hedge);
+    }
+    return code;
+}
+
 // Everything `take` and `recv` have, taken as a caller would; how many
 // bytes that was.
 pub fn drain[&n, &b, &o](ints: &!n [int], bytes: &!b [byte], out: &!o [byte]) -> [] int {
