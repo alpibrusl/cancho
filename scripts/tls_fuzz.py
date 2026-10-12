@@ -33,10 +33,21 @@ def traces():
     out = []
     for path in sorted(glob.glob(os.path.join(ROOT, "tests/vectors/tls/*_*.txt"))):
         name = os.path.basename(path)
-        if not (name.startswith("tlslite_") or name.startswith("openssl12_")):
+        if not (name.startswith("tlslite_") or name.startswith("openssl12_") or name.startswith("openssl13_")):
             continue
-        asked = [l.rstrip("\n") for l in open(path) if l[:2] in ("C ", "F ", "W ", "Q")]
+        # `I` is a client identity (docs/tls-parity.md §6), which the mutual traces are given first.
+        asked = [l.rstrip("\n") for l in open(path) if l[:2] in ("I ", "C ", "F ", "W ") or l.startswith("Q")]
         out.append((name, asked))
+    # The honest connections of the client-certificate and ALPN lying server, ALPN offers and identities included.
+    current = None
+    for line in open(os.path.join(ROOT, "tests/vectors/tls/liar_auth.txt")):
+        line = line.rstrip("\n")
+        if line.startswith("## "):
+            current = [] if line.startswith("## ok ") else None
+            if current is not None:
+                out.append((line[3:], current))
+        elif current is not None and line[:2] in ("I ", "L ", "C ", "F ", "W "):
+            current.append(line)
     return out
 
 
