@@ -1503,11 +1503,11 @@ fn a_wasm32_console_never_calls_libc_stdio() {
 /// Text only, so CI runs it.
 #[test]
 fn a_wasm32_bulk_read_never_calls_libc_stdio() {
-    const BULK: &str = "edition 7;\n\
+    const BULK: &str = "edition 9;\n\
          fn main(world: World) -> [] int {\n\
-             let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);\n\
+             let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);\n\
              release(ffi); release(fs); release(heap); release(args); release(net);\n\
-             release(clock); release(signals); release(exec);\n\
+             release(clock); release(signals); release(exec); release(tty);\n\
              var n = 0;\n\
              borrow mut io as &!i in {\n\
                  region a {\n\
