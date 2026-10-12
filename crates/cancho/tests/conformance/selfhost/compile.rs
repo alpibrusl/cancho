@@ -13,18 +13,20 @@
 
 use super::*;
 
-/// What a program did: its exit status, or that it was stopped by a signal, which is how a trap ends.
+/// What a program did: its exit status, or that it was stopped by a signal, which is how a trap
+/// ends, and what it wrote to its standard output.
 #[derive(Debug, PartialEq)]
 enum Ended {
-    Status(i32),
-    Trapped,
+    Status(i32, String),
+    Trapped(String),
 }
 
 fn run_it(exe: &Path) -> Ended {
     let out = Command::new(exe).output().expect("the program runs");
+    let printed = String::from_utf8_lossy(&out.stdout).into_owned();
     match out.status.code() {
-        Some(code) => Ended::Status(code),
-        None => Ended::Trapped,
+        Some(code) => Ended::Status(code, printed),
+        None => Ended::Trapped(printed),
     }
 }
 
@@ -224,6 +226,25 @@ const WITH_MAIN: &[&str] = &[
     "fn main(world: World) -> [] int { let r = release(world); return r + 4; }",
 ];
 
+/// Programs that print: a `main` with the whole `World`, split, the parts it does not use released, the
+/// `Io` borrowed for the block that writes. What they write to the standard output must be the same.
+const OUTPUT: &[&str] = &[
+    "fn say[&i](io: &!i Io, c: int) -> [io_write] int { return putchar(io, c); }\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n        release(ffi);\n        release(fs);\n        release(heap);\n        release(args);\n    borrow mut io as &!r in {\n        say(r, 72);\n        say(r, 105);\n        say(r, 10);\n    }\n    release(io);\n    return 0;\n}",
+    "fn put[&i](io: &!i Io, c: int) -> [io_write] int { return putchar(io, c); }\nfn hello[&i](io: &!i Io) -> [io_write] int {\n    let a = put(io, 72); let b = put(io, 101); let c = put(io, 108); let d = put(io, 108); let e = put(io, 111);\n    let f = put(io, 44); let g = put(io, 32); let h = put(io, 119); let j = put(io, 111); let k = put(io, 114);\n    let l = put(io, 108); let m = put(io, 100); let n = put(io, 33); return put(io, 10);\n}\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n        release(ffi);\n        release(fs);\n        release(heap);\n        release(args);\n    borrow mut io as &!r in { let x = hello(r); }\n    release(io);\n    return 0;\n}",
+    "fn print_nat[&i](io: &!i Io, n: int) -> [io_write] int {\n    if n >= 10 { let r = print_nat(io, n / 10); }\n    return putchar(io, 48 + n % 10);\n}\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n        release(ffi);\n        release(fs);\n        release(heap);\n        release(args);\n    borrow mut io as &!r in { let a = print_nat(r, 12345); let b = putchar(r, 10); }\n    release(io);\n    return 0;\n}",
+    "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n        release(ffi);\n        release(fs);\n        release(heap);\n        release(args);\n    borrow mut io as &!r in {\n        var c = 97;\n        while c < 123 { let x = putchar(r, c); c = c + 1; }\n        let y = putchar(r, 10);\n    }\n    release(io);\n    return 0;\n}",
+    "fn print_nat[&i](io: &!i Io, n: int) -> [io_write] int {\n    if n >= 10 { let r = print_nat(io, n / 10); }\n    return putchar(io, 48 + n % 10);\n}\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n        release(ffi);\n        release(fs);\n        release(heap);\n        release(args);\n    borrow mut io as &!r in {\n        var i = 1;\n        while i <= 15 {\n            if i % 15 == 0 { let a = putchar(r, 70); let b = putchar(r, 66); }\n            else if i % 5 == 0 { let a = putchar(r, 66); }\n            else if i % 3 == 0 { let a = putchar(r, 70); }\n            else { let a = print_nat(r, i); }\n            let n = putchar(r, 10);\n            i = i + 1;\n        }\n    }\n    release(io);\n    return 0;\n}",
+    "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n        release(ffi);\n        release(fs);\n        release(heap);\n        release(args);\n    borrow mut io as &!r in { let a = putchar(r, 79); let b = putchar(r, 75); let c = putchar(r, 10); }\n    release(io);\n    return 7;\n}",
+    "fn big(n: int) -> [] int { return n + 1; }\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n        release(ffi);\n        release(fs);\n        release(heap);\n        release(args);\n    borrow mut io as &!r in { let a = putchar(r, 97); let b = putchar(r, 98); }\n    release(io);\n    return big(9223372036854775807);\n}",
+    "fn line[&i](io: &!i Io, c: int, n: int) -> [io_write] int {\n    var k = 0;\n    while k < n { let x = putchar(io, c); k = k + 1; }\n    return putchar(io, 10);\n}\nfn tri[&i](io: &!i Io, n: int) -> [io_write] int {\n    var k = 1;\n    while k <= n { let x = line(io, 42, k); k = k + 1; }\n    return 0;\n}\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n        release(ffi);\n        release(fs);\n        release(heap);\n        release(args);\n    borrow mut io as &!r in { let t = tri(r, 5); }\n    release(io);\n    return 0;\n}",
+    "fn print_nat[&i](io: &!i Io, n: int) -> [io_write] int {\n    if n >= 10 { let r = print_nat(io, n / 10); }\n    return putchar(io, 48 + n % 10);\n}\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n        release(ffi);\n        release(fs);\n        release(heap);\n        release(args);\n    var steps = 0;\n    borrow mut io as &!r in {\n        var x = 27;\n        while x != 1 {\n            if x % 2 == 0 { x = x / 2; } else { x = 3 * x + 1; }\n            steps = steps + 1;\n        }\n        let a = print_nat(r, steps);\n        let b = putchar(r, 10);\n    }\n    release(io);\n    return steps % 256;\n}",
+    "fn print_int[&i](io: &!i Io, n: int) -> [io_write] int {\n    if n < 0 { let m = putchar(io, 45); return print_nat(io, 0 - n); }\n    return print_nat(io, n);\n}\nfn print_nat[&i](io: &!i Io, n: int) -> [io_write] int {\n    if n >= 10 { let r = print_nat(io, n / 10); }\n    return putchar(io, 48 + n % 10);\n}\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n        release(ffi);\n        release(fs);\n        release(heap);\n        release(args);\n    borrow mut io as &!r in { let a = print_int(r, 0 - 4096); let b = putchar(r, 10); let c = print_int(r, 0); let d = putchar(r, 10); }\n    release(io);\n    return 0;\n}",
+    "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n        release(ffi);\n        release(fs);\n        release(heap);\n        release(args);\n    borrow mut io as &!a in { let x = putchar(a, 49); }\n    borrow mut io as &!b in { let y = putchar(b, 50); let z = putchar(b, 10); }\n    release(io);\n    return 0;\n}",
+    "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n        release(ffi);\n        release(fs);\n        release(heap);\n        release(args);\n    var r = 0;\n    borrow mut io as &!p in { r = putchar(p, 65); let n = putchar(p, 10); }\n    release(io);\n    return r % 256;\n}",
+    "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n        release(ffi);\n        release(fs);\n        release(heap);\n        release(args);\n    borrow mut io as &!r in {\n        var i = 0;\n        while i < 1000 { let c = putchar(r, 48 + i % 10); if i % 50 == 49 { let n = putchar(r, 10); } i = i + 1; }\n    }\n    release(io);\n    return 0;\n}",
+    "fn bump[&i](io: &!i Io, n: int) -> [io_write] int { return putchar(io, 48 + n); }\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n        release(ffi);\n        release(fs);\n        release(heap);\n        release(args);\n    var n = 3;\n    borrow mut io as &!r in { borrow n as &m in { let a = bump(r, 4); } let b = putchar(r, 10); }\n    release(io);\n    return n;\n}",
+];
+
 #[test]
 fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
     let compiler = build("compile", &with_front_end("compile.cho"));
@@ -235,7 +256,7 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
         jobs.push(((*program).to_owned(), (*program).to_owned()));
         jobs.push((with_main(program), with_main(program)));
     }
-    for program in WITH_MAIN {
+    for program in WITH_MAIN.iter().chain(OUTPUT) {
         jobs.push(((*program).to_owned(), (*program).to_owned()));
     }
     let numbered: Vec<(usize, &(String, String))> = jobs.iter().enumerate().collect();
@@ -250,7 +271,7 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
     let mut different = Vec::new();
     let mut trapped = 0;
     for (program, theirs, ours) in &results {
-        if theirs == &Ended::Trapped {
+        if matches!(theirs, Ended::Trapped(_)) {
             trapped += 1;
         }
         if theirs != ours {
