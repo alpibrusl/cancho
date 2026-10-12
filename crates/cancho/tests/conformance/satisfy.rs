@@ -93,3 +93,45 @@ fn a_contract_with_no_tests_cannot_be_satisfied() {
     assert_eq!(out.status.code(), Some(2), "an empty contract is a usage error");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// An empty contract must not borrow the candidate's own `test_*`
+/// functions to look non-empty: tests are the contract's alone.
+#[test]
+fn a_candidates_own_tests_do_not_make_an_empty_contract_pass() {
+    let dir = scratch("satisfy-candidate-tests");
+    let contract = dir.join("c.cho");
+    let candidate = dir.join("k.cho");
+    std::fs::write(&contract, "fn helper() -> [] int { return 0; }\n").expect("a writable fixture");
+    std::fs::write(
+        &candidate,
+        "pub fn double(n: int) -> [] int { return n + n; }\nfn test_own() -> [] int { return 0; }\n",
+    )
+    .expect("a writable fixture");
+    let out = Command::new(BIN)
+        .args(["satisfy".as_ref(), contract.as_os_str(), candidate.as_os_str()])
+        .output()
+        .expect("the compiler runs");
+    assert_eq!(out.status.code(), Some(2), "no contract tests is still exit 2");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A contract whose tests never call the candidate would be satisfied by
+/// anything; it is refused like an empty contract.
+#[test]
+fn a_contract_that_never_calls_the_candidate_is_refused() {
+    let dir = scratch("satisfy-no-call");
+    let contract = dir.join("c.cho");
+    let candidate = dir.join("k.cho");
+    // The only mention of `double` is in a comment.
+    std::fs::write(&contract, "// double(3) == 6\nfn test_trivial() -> [] int { return 0; }\n")
+        .expect("a writable fixture");
+    std::fs::write(&candidate, GOOD_CANDIDATE).expect("a writable fixture");
+    let out = Command::new(BIN)
+        .args(["satisfy".as_ref(), contract.as_os_str(), candidate.as_os_str()])
+        .output()
+        .expect("the compiler runs");
+    assert_eq!(out.status.code(), Some(2), "a vacuous contract is a usage refusal");
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(text.contains("never calls"), "the refusal says why:\n{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

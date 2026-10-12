@@ -74,15 +74,33 @@ pub fn cmd_satisfy(args: &[String]) -> Result<ExitCode, Failure> {
     };
 
     // 3. Run the contract's tests against the candidate, exactly as
-    //    `cancho test` does. The tests are discovered from the pair;
-    //    a contract with none is a contract that checks nothing, and
+    //    `cancho test` does. The tests are discovered from the contract alone: a `test_*`
+    //    function in the candidate is not the contract's, and counting it
+    //    would let an empty contract pass on the candidate's own tests.
+    //    A contract with none is a contract that checks nothing, and
     //    that is a usage error rather than a pass.
-    let tests = crate::test_cli::discover(&[contract.clone(), candidate.clone()])?;
+    let tests = crate::test_cli::discover(std::slice::from_ref(&contract))?;
     if tests.is_empty() {
         return Err(usage(
             "the contract declares no `test_*` functions; a contract that \
              tests nothing cannot be satisfied",
         ));
+    }
+    // A contract whose text never calls anything the candidate declares
+    //    constrains nothing about it: every test would pass against any
+    //    candidate. Refused the way an empty contract is.
+    let contract_text = &files[0].1;
+    let provided: Vec<&str> = candidate_names
+        .iter()
+        .map(|(_, name)| name.as_str())
+        .filter(|name| !name.starts_with("test_"))
+        .collect();
+    if !provided.is_empty() && !calls_any(contract_text, &provided) {
+        return Err(usage(format!(
+            "the contract never calls anything the candidate declares ({}); a contract \
+             that does not exercise the candidate is satisfied by every candidate",
+            provided.join(", ")
+        )));
     }
     let dir = std::env::temp_dir().join(format!("cancho-satisfy-{}", std::process::id()));
     std::fs::create_dir_all(&dir)
@@ -121,4 +139,61 @@ pub fn cmd_satisfy(args: &[String]) -> Result<ExitCode, Failure> {
         println!("not satisfied: see the test failures above");
         Ok(code)
     }
+}
+
+/// Whether `text` contains a call, `name(`, to any of `names`: a
+/// syntactic check on the contract's own source, comments and string
+/// literals set aside. A declaration `fn name(` is not a call. It is
+/// deliberately by name, not by resolution: the pair has already
+/// checked, so a name that is called is the one the pair resolved.
+fn calls_any(text: &str, names: &[&str]) -> bool {
+    let mut code = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '/' if chars.peek() == Some(&'/') => {
+                for d in chars.by_ref() {
+                    if d == '\n' {
+                        code.push('\n');
+                        break;
+                    }
+                }
+            }
+            '"' => {
+                while let Some(d) = chars.next() {
+                    if d == '\\' {
+                        chars.next();
+                    } else if d == '"' {
+                        break;
+                    }
+                }
+                code.push(' ');
+            }
+            other => code.push(other),
+        }
+    }
+    let bytes = code.as_bytes();
+    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut previous = "";
+    let mut i = 0;
+    while i < bytes.len() {
+        if is_ident(bytes[i]) {
+            let start = i;
+            while i < bytes.len() && is_ident(bytes[i]) {
+                i += 1;
+            }
+            let word = &code[start..i];
+            let mut j = i;
+            while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            if previous != "fn" && bytes.get(j) == Some(&b'(') && names.contains(&word) {
+                return true;
+            }
+            previous = word;
+        } else {
+            i += 1;
+        }
+    }
+    false
 }

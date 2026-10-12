@@ -78,6 +78,15 @@ those two commands composed, with the verdict named.
   program), that is a new slice with its own design; today's honest
   answer is the witness.
 
+A contract that never calls the candidate is refused (exit 2, like an
+empty one): the check is syntactic, a call `name(` to something the
+candidate declares in the contract's own source, comments and strings
+set aside. It is a floor, not a proof of strength: a contract that
+calls the candidate once and asserts nothing about the result is still
+satisfied, and so is one that calls it only on a branch no test takes.
+Strength is the contract author's, which is the same limit a test
+suite has.
+
 ## 4. The committed artifact
 
 `tests/satisfy/` holds the first real contract and its candidate —
