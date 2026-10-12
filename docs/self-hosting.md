@@ -218,7 +218,8 @@ the stages found, in place, the way this document corrects its own claims.
 | 4b. Control flow: `if` with `else`, `while`, `&&` and `||` (the right side only when the left has not decided it) | `emit.cho` and `body.cho` | the Rust compiler, by what the built programs do | **Second slice of the backend.** 123 programs built both ways and run, 49 of them new (loops, recursion, early returns, short-circuit that must not run its right side, traps inside loops): the same exit status or a trap in both (27 trap); none different |
 | 4c. `World`, `release` and a real `main`: `main(world: World)` calls the program, a `World` passed between functions, `release(world)` | `emit.cho`, `body.cho`, `types.cho`, `driver.cho` | the Rust compiler, by what the built programs do | **Third slice of the backend.** 254 builds run and compared: every one of the 123 programs through the old `run` convention and through a real `main`, and 8 more with a `main` of their own (a `World` passed on, `release` used as a value): the same exit status or a trap in both (55 trap); none different |
 | 4d. Output: `split(world)` and its parts, a `borrow` of the `Io`, `putchar`, references to whole numbers and booleans, and what an owned capability discharges | `emit.cho`, `body.cho`, `exprs.cho`, `effects.cho` | the Rust compiler, by what the built programs do and write | **Fourth slice of the backend.** 268 builds run and compared, 14 of them print (characters, decimal numbers by recursion, loops, `if` chains, nested helpers, sequential borrows, a trap after output): the same exit status or trap and the same bytes on the standard output (56 trap); none different |
-| 4e. The rest of the backend: strings and `write_bytes`, bytes, slices, structs, enums, references in general, generics, `clang` run by the compiler itself | not started | | |
+| 4e. Strings and slices: a literal as a slice of bytes, `len`, `s[i]` with its bound, `write_bytes`, `int_of`/`byte_of`, a slice passed, kept and reassigned, a store through `*r` and `s[i]` | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho` | the Rust compiler, by what the built programs do and write | **Fifth slice of the backend.** 292 builds run and compared, 24 of them new, 60 trap; none different |
+| 4f. The rest of the backend: structs, enums, references in general, arenas and the heap, generics, `clang` run by the compiler itself | not started | | |
 
 **The method.** A port that builds no tree has nothing to compare, and one that does
 needs a printer, which is another port. So stage 2's parser wrote the tree the Rust parser
@@ -556,6 +557,18 @@ for what the capability allows (section 8.2 of `docs/linearity-and-effects.md`),
 subtracts what the parameters discharge, taken from the same generated table that `discharged_by`
 fills, before comparing. The test now compares what a program writes as well as how it ends, and
 the first thing a cancho-written compiler printed was `Hi`.
+
+**Stage 4e: strings and slices.** A reference to a slice is two values, a pointer and a length: a slot
+for each (`%s7_0`, `%s7_1`), two parameters in the header, two arguments in a call, and `len` is a load
+of the second. A string literal is a private constant `@str.N` written to a fourth buffer (the six
+escapes the lexer knows are decoded as the constant is written) and the driver prints the constants
+before the functions. `s[i]` is a comparison of the index against the length, unsigned so a negative
+index fails the same test, a trap, then a `getelementptr`; a store through it or through `*r` is the
+same address and a `store`. `write_bytes` is a loop over `putchar` in a helper the driver writes once,
+so the two stay in order in the C library's buffer. `int_of` is a `zext`; `byte_of` traps outside 0 to
+255, which the first run showed: the first version truncated, and the Rust build trapped.
+Reassigning a slice variable (`s = "yyyy"`) stored one pointer into a slot that does not exist, which
+clang found.
 
 The mutation test of `types.cho` (54 operator swaps) killed 40 on the first corpus of 458 targeted
 body cases (after region-variable, `where`-closure and coercion cases were added; 33 before); the 14
