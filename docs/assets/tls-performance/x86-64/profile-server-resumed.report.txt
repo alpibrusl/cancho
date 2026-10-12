@@ -1,0 +1,80 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 4700
+#
+# Samples: 11K of event 'cpu_core/cycles/P'
+# Event count (approx.): 15331660133
+#
+# Overhead  Symbol                                     
+# ........  ...........................................
+#
+    11.61%  [.] lexs_std.crypto.compress
+            |          
+            |--6.35%--lexs_std.crypto.sha256_update
+            |          |          
+            |          |--2.67%--lexs_std.hmac.init
+            |          |          |          
+            |          |           --1.88%--lexs_std.hkdf.expand
+            |          |                     |          
+            |          |                      --1.55%--lexs_std.hkdf.expand_label
+            |          |          
+            |          |--2.52%--lexs_std.hmac.final
+            |          |          |          
+            |          |           --1.81%--lexs_std.hkdf.expand
+            |          |                     |          
+            |          |                      --1.55%--lexs_std.hkdf.expand_label
+            |          |          
+            |           --0.66%--lexs_tls_server.respond
+            |                     lexs_tls_server.on_client_hello
+            |                     lexs_tls_server.on_message
+            |                     lexs_tls_server.on_handshake_bytes
+            |                     lexs_tls_server.on_record
+            |                     lexs_tls_server.feed
+            |                     lexs_tls.feed
+            |                     lexs_echo_loop.pump
+            |                     lexs_echo_loop.run
+            |                     lexs_echo_loop.serve
+            |                     lexs_main
+            |                     __libc_start_call_main
+            |                     __libc_start_main_impl (inlined)
+            |                     _start
+            |          
+             --5.25%--lexs_std.crypto.sha256_final
+                       |          
+                        --4.71%--lexs_std.hmac.final
+                                  |          
+                                  |--3.42%--lexs_std.hkdf.expand
+                                  |          |          
+                                  |          |--2.83%--lexs_std.hkdf.expand_label
+                                  |          |          |          
+                                  |          |          |--0.56%--lexs_tls_slot.set_read_keys
+                                  |          |          |          
+                                  |          |          |--0.52%--lexs_tls_server.handshake_secrets
+                                  |          |          |          lexs_tls_server.respond
+                                  |          |          |          lexs_tls_server.on_client_hello
+                                  |          |          |          lexs_tls_server.on_message
+                                  |          |          |          lexs_tls_server.on_handshake_bytes
+                                  |          |          |          lexs_tls_server.on_record
+                                  |          |          |          lexs_tls_server.feed
+                                  |          |          |          lexs_tls.feed
+                                  |          |          |          lexs_echo_loop.pump
+                                  |          |          |          lexs_echo_loop.run
+                                  |          |          |          lexs_echo_loop.serve
+                                  |          |          |          lexs_main
+                                  |          |          |          __libc_start_call_main
+                                  |          |          |          __libc_start_main_impl (inlined)
+                                  |          |          |          _start
+                                  |          |          |          
+                                  |          |          |--0.51%--lexs_tls_server.issue_tickets
+                                  |          |          |          lexs_tls_server.on_client_finished
+                                  |          |          |          lexs_tls_server.on_message
+                                  |          |          |          lexs_tls_server.on_handshake_bytes
+                                  |          |          |          lexs_tls_server.on_record
+                                  |          |          |          lexs_tls_server.feed
+                                  |          |          |          lexs_tls.feed
+                                  |          |          |          lexs_echo_loop.pump
+                                  |          |          |          lexs_echo_loop.run
+                                  |          |          |          lexs_echo_loop.serve
+                                  |          |          |          lexs_main
+                                  |          |          |          __libc_start_call_main

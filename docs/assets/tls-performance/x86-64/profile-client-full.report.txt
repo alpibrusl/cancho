@@ -1,0 +1,80 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 19598
+#
+# Samples: 10K of event 'cpu_core/cycles/P'
+# Event count (approx.): 14006863830
+#
+# Overhead  Symbol                                     
+# ........  ...........................................
+#
+    11.34%  [.] lexs_std.p256_kernels.mul_p
+            |          
+            |--5.58%--lexs_std.p256_vf.double
+            |          lexs_std.p256_vf.verify
+            |          lexs_std.ecdsa.verify
+            |          lexs_std.ecdsa.verify_der
+            |          |          
+            |          |--2.85%--lexs_x509_verify.signature_ok
+            |          |          lexs_x509_verify.extend
+            |          |          lexs_x509_verify.chain
+            |          |          lexs_x509_verify.verify
+            |          |          lexs_tls_slot.verify_chain
+            |          |          lexs_tls_client.on_certificate
+            |          |          lexs_tls_client.on_message
+            |          |          lexs_tls_client.on_handshake_bytes
+            |          |          lexs_tls_client.on_record
+            |          |          lexs_tls_client.feed_with
+            |          |          lexs_tls.feed
+            |          |          lexs_advance
+            |          |          lexs_drive
+            |          |          lexs_main
+            |          |          __libc_start_call_main
+            |          |          __libc_start_main_impl (inlined)
+            |          |          _start
+            |          |          
+            |           --2.73%--lexs_tls_slot.check_signature
+            |                     lexs_tls_client.on_certificate_verify
+            |                     lexs_tls_client.on_handshake_bytes
+            |                     lexs_tls_client.on_record
+            |                     lexs_tls_client.feed_with
+            |                     lexs_tls.feed
+            |                     lexs_advance
+            |                     lexs_drive
+            |                     lexs_main
+            |                     __libc_start_call_main
+            |                     __libc_start_main_impl (inlined)
+            |                     _start
+            |          
+            |--4.03%--lexs_std.p256_vf.add_jac
+            |          lexs_std.p256_vf.verify
+            |          lexs_std.ecdsa.verify
+            |          lexs_std.ecdsa.verify_der
+            |          |          
+            |          |--2.08%--lexs_x509_verify.signature_ok
+            |          |          lexs_x509_verify.extend
+            |          |          lexs_x509_verify.chain
+            |          |          lexs_x509_verify.verify
+            |          |          lexs_tls_slot.verify_chain
+            |          |          lexs_tls_client.on_certificate
+            |          |          lexs_tls_client.on_message
+            |          |          lexs_tls_client.on_handshake_bytes
+            |          |          lexs_tls_client.on_record
+            |          |          lexs_tls_client.feed_with
+            |          |          lexs_tls.feed
+            |          |          lexs_advance
+            |          |          lexs_drive
+            |          |          lexs_main
+            |          |          __libc_start_call_main
+            |          |          __libc_start_main_impl (inlined)
+            |          |          _start
+            |          |          
+            |           --1.95%--lexs_tls_slot.check_signature
+            |                     lexs_tls_client.on_certificate_verify
+            |                     lexs_tls_client.on_handshake_bytes
+            |                     lexs_tls_client.on_record
+            |                     lexs_tls_client.feed_with
+            |                     lexs_tls.feed
+            |                     lexs_advance
+            |                     lexs_drive

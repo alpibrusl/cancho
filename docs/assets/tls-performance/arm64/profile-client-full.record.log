@@ -1,0 +1,10 @@
+[ perf record: Woken up 634 times to write data ]
+Warning:
+Processed 258333 events and lost 1 chunks!
+
+Check IO/CPU overload!
+
+Warning:
+Processed 15164 samples and lost 20.88%!
+
+[ perf record: Captured and wrote 254.612 MB /w/.perf-scratch/prof_arm64/client-full.data (11997 samples) ]

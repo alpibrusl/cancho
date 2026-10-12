@@ -1,0 +1,20 @@
+== pass 1 default 21:40:55 load 2.44 2.19 2.01
+cost       plain `examples/api` over kload, GET /users/42: 127459 125817 125459 requests a second (5 s rounds), 6.17 microseconds of server CPU a request
+cost       `oserv` plain (OpenSSL's server code, no TLS) over kload, GET /hello/42: 121929 121305 121756 requests a second (5 s rounds), 6.01 microseconds of server CPU a request
+cost       `https_hello` over tload (TLS 1.3, keep-alive), GET /hello/42: 88985 89750 88832 requests a second (5 s rounds), 9.20 microseconds of server CPU a request
+cost       `oserv` over tload (OpenSSL, TLS 1.3, keep-alive), GET /hello/42: 80560 80380 80940 requests a second (5 s rounds), 8.30 microseconds of server CPU a request
+== pass 1 tunables 21:41:58 load 3.38 2.51 2.13
+cost       plain `examples/api` over kload, GET /users/42: 122784 121811 121878 requests a second (5 s rounds), 6.27 microseconds of server CPU a request
+cost       `oserv` plain (OpenSSL's server code, no TLS) over kload, GET /hello/42: 119283 120214 119577 requests a second (5 s rounds), 6.06 microseconds of server CPU a request
+cost       `https_hello` over tload (TLS 1.3, keep-alive), GET /hello/42: 88025 88118 87907 requests a second (5 s rounds), 9.13 microseconds of server CPU a request
+cost       `oserv` over tload (OpenSSL, TLS 1.3, keep-alive), GET /hello/42: 124278 122211 120204 requests a second (5 s rounds), 8.10 microseconds of server CPU a request
+== pass 2 default 21:43:01 load 3.46 2.70 2.22
+cost       plain `examples/api` over kload, GET /users/42: 174121 171065 170012 requests a second (5 s rounds), 5.79 microseconds of server CPU a request
+cost       `oserv` plain (OpenSSL's server code, no TLS) over kload, GET /hello/42: 188153 188214 185635 requests a second (5 s rounds), 5.30 microseconds of server CPU a request
+cost       `https_hello` over tload (TLS 1.3, keep-alive), GET /hello/42: 105337 86009 81548 requests a second (5 s rounds), 9.81 microseconds of server CPU a request
+cost       `oserv` over tload (OpenSSL, TLS 1.3, keep-alive), GET /hello/42: 77769 78713 80134 requests a second (5 s rounds), 8.66 microseconds of server CPU a request
+== pass 2 tunables 21:44:05 load 3.48 2.86 2.31
+cost       plain `examples/api` over kload, GET /users/42: 122150 122070 118531 requests a second (5 s rounds), 6.44 microseconds of server CPU a request
+cost       `oserv` plain (OpenSSL's server code, no TLS) over kload, GET /hello/42: 110899 104704 110720 requests a second (5 s rounds), 6.76 microseconds of server CPU a request
+cost       `https_hello` over tload (TLS 1.3, keep-alive), GET /hello/42: 83360 85126 71561 requests a second (5 s rounds), 11.18 microseconds of server CPU a request
+cost       `oserv` over tload (OpenSSL, TLS 1.3, keep-alive), GET /hello/42: 86092 84361 81923 requests a second (5 s rounds), 11.12 microseconds of server CPU a request

@@ -1,0 +1,36 @@
+baseline linux-aarch64 (Apple M4 Max under Docker Desktop (6-vCPU VM), Ubuntu 24.04, Linux 6.8.0-100 aarch64, valgrind 3.22 (docs/tls-performance.md §2)); instructions: instructions a call
+operation                            size            now       recorded   ratio
+aes128gcm_open                       1024        3459.00        3459.00    1.00
+aes128gcm_open                      16384       48459.00       48440.80    1.00
+aes128gcm_open                         64         771.00         771.00    1.00
+aes128gcm_prepare                       0       33152.36       32877.40    1.01
+aes128gcm_seal                       1024        3461.30        3461.30    1.00
+aes128gcm_seal                      16384       48454.00       48545.20    1.00
+aes128gcm_seal                         64         766.00         766.00    1.00
+calibrate                               0        4006.00        4006.00    1.00
+chacha20poly1305_open                1024      119795.00      119795.00    1.00
+chacha20poly1305_open               16384     1790656.75     1790675.00    1.00
+chacha20poly1305_open                  64       15365.00       15365.00    1.00
+chacha20poly1305_seal                1024      119341.82      119343.80    1.00
+chacha20poly1305_seal               16384     1790238.25     1790240.20    1.00
+chacha20poly1305_seal                  64       14910.18       14912.20    1.00
+ecdsa_p256_sign                         0     1061089.50    26255738.00    0.04  CHEAPER THAN 1/1.3: re-record the baseline
+ecdsa_p256_sign_checked                 0     3357172.00    52883055.00    0.06  CHEAPER THAN 1/1.3: re-record the baseline
+ecdsa_p256_verify                       0     2297377.50    26628600.00    0.09  CHEAPER THAN 1/1.3: re-record the baseline
+hkdf_expand_label_32                    0       27503.00       27503.00    1.00
+hkdf_expand_label_48                    0       30285.00       30284.60    1.00
+hkdf_extract_32                         0       26209.00       26209.00    1.00
+hmac_sha256                          1024      111504.82      111504.80    1.00
+hmac_sha256                         16384     1395761.25     1395761.20    1.00
+hmac_sha256                            64       31238.00       31238.00    1.00
+p256_public                             0      758208.50    24353384.50    0.03  CHEAPER THAN 1/1.3: re-record the baseline
+p256_shared                             0     3226691.50    24356859.50    0.13  CHEAPER THAN 1/1.3: re-record the baseline
+sha256                               1024       91858.82       91856.80    1.00
+sha256                              16384     1376115.25     1376113.20    1.00
+sha256                                 64       11592.00       11590.00    1.00
+sha384                               1024       49361.00       49359.00    1.00
+sha384                              16384      690539.25      690537.20    1.00
+sha384                                 64        7259.18        7257.20    1.00
+x25519_public                           0      525613.00    11089848.00    0.05  CHEAPER THAN 1/1.3: re-record the baseline
+x25519_shared                           0      525576.50    11089848.00    0.05  CHEAPER THAN 1/1.3: re-record the baseline
+26 of 33 rows within 1.3x either way of the baseline

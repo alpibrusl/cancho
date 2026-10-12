@@ -1,0 +1,70 @@
+5931 samples from 1 file(s)
+category                                                     share
+memory: malloc, free, brk                                   28.31%
+ECDSA verify: the server's check before sending             25.59%
+ECDSA sign                                                  13.89%
+X25519 (key pair and shared secret)                         12.21%
+HKDF, HMAC (key schedule, Finished)                          6.46%
+system calls (sockets, epoll)                                5.31%
+engine and event loop (parsing, copies, bookkeeping)         3.95%
+SHA-256/384 (transcript, digests)                            2.33%
+record AEAD, traffic-key setup                               1.50%
+memory: page faults (first touch, or pages the kernel took back)   0.40%
+not attributed (interrupts, samples with no stack)           0.05%
+
+inclusive share of the 40 most common frames named lexs_*:
+ 95.67%  lexs_main
+ 95.67%  lexs_echo_loop.run
+ 95.67%  lexs_echo_loop.serve
+ 91.30%  lexs_echo_loop.pump
+ 87.03%  lexs_tls.feed
+ 86.07%  lexs_tls_server.feed
+ 86.04%  lexs_tls_server.on_record
+ 85.21%  lexs_tls_server.on_handshake_bytes
+ 74.69%  lexs_tls_server.on_client_hello
+ 73.85%  lexs_tls_server.respond
+ 41.31%  lexs_tls_server.certificate_verify
+ 40.47%  lexs_tls_server.sign
+ 25.59%  lexs_std.p256_vf.verify
+ 20.01%  lexs_std.hkdf.expand_label
+ 14.70%  lexs_std.p256_vf.double
+ 14.55%  lexs_std.ecdsa_sign.sign
+ 14.42%  lexs_std.hkdf.expand
+ 12.29%  lexs_std.p256_kernels.mul_p
+  9.58%  lexs_std.x25519.scalarmult
+  9.44%  lexs_tls_server.on_client_finished
+  9.24%  lexs_tls_server.key_exchange
+  9.14%  lexs_std.p256_pt.base_multiply
+  8.03%  lexs_std.hmac.init
+  7.79%  lexs_std.crypto.compress
+  7.27%  lexs_std.p256_pt.comb_multiply
+  7.17%  lexs_tls_slot.set_read_keys
+  7.15%  lexs_tls_server.handshake_secrets
+  7.06%  lexs_std.p256.pow
+  6.68%  lexs_std.p256_pt.mixed_add
+  6.64%  lexs_std.p256_kernels.sqr_p
+  6.44%  lexs_tls_slot.set_write_keys
+  6.29%  lexs_std.p256_kernels.add
+  6.19%  lexs_std.field25519_51.mul
+  5.51%  lexs_std.p256_vf.add_jac
+  5.21%  lexs_std.field25519_51.square
+  5.16%  lexs_std.hmac.final
+  4.91%  lexs_std.crypto.sha256_update
+  4.45%  lexs_tls_client.finished_mac
+  3.93%  lexs_std.crypto.sha256_final
+  3.89%  lexs_std.p256_kernels.sqr_n
+
+memory: 28.3% of the samples; in the `brk` system call 24.2%, in page faults 3.3%, under glibc's `systrim` (giving the top of the heap back) 21.4%, neither 0.8%
+the program's function nearest the allocator:
+  5.93%  lexs_std.hmac.init
+  5.46%  lexs_std.hkdf.expand_label
+  4.50%  lexs_std.hkdf.expand
+  1.60%  lexs_std.aes.sub_word
+  1.26%  lexs_tls_server.on_client_finished
+  0.99%  lexs_tls_server.on_handshake_bytes
+  0.93%  lexs_tls.draw
+  0.83%  lexs_tls_server.respond
+  0.69%  lexs_tls_server.on_record
+  0.67%  lexs_tls_client.finished_mac
+  0.62%  lexs_std.gcm.prepare_parts
+  0.57%  lexs_tls_slot.set_read_keys

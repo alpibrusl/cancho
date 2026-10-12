@@ -1,0 +1,30 @@
+Mon Oct 12 19:58:58 UTC 2026
+ 19:58:58 up 7 days,  1:08,  0 user,  load average: 2.51, 3.12, 2.97
+== default
+perf counters: none; load (2.505859375, 3.12060546875, 2.97265625)
+-- round 1 of 1, load (2.505859375, 3.12060546875, 2.97265625)
+server-resumed cancho tls_echo --tickets 2     21431 handshakes     0.297 ms CPU
+server-resumed openssl s_server                35944 handshakes     0.137 ms CPU
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.261 ms CPU
+client-resumed openssl tconn                   35649 handshakes     0.123 ms CPU
+== GLIBC_TUNABLES=glibc.malloc.trim_threshold=33554432:glibc.malloc.top_pad=1048576
+perf counters: none; load (2.5703125, 3.0751953125, 2.9638671875)
+-- round 1 of 1, load (2.5703125, 3.0751953125, 2.9638671875)
+server-resumed cancho tls_echo --tickets 2     33158 handshakes     0.150 ms CPU
+server-resumed openssl s_server                35545 handshakes     0.141 ms CPU
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.171 ms CPU
+client-resumed openssl tconn                   35659 handshakes     0.122 ms CPU
+== default
+perf counters: none; load (2.51123046875, 3.02001953125, 2.94873046875)
+-- round 1 of 1, load (2.51123046875, 3.02001953125, 2.94873046875)
+server-resumed cancho tls_echo --tickets 2     20457 handshakes     0.312 ms CPU
+server-resumed openssl s_server                35121 handshakes     0.142 ms CPU
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.325 ms CPU
+client-resumed openssl tconn                   33944 handshakes     0.129 ms CPU
+== GLIBC_TUNABLES=glibc.malloc.trim_threshold=33554432:glibc.malloc.top_pad=1048576
+perf counters: none; load (2.4111328125, 2.9541015625, 2.92822265625)
+-- round 1 of 1, load (2.4111328125, 2.9541015625, 2.92822265625)
+server-resumed cancho tls_echo --tickets 2     31985 handshakes     0.155 ms CPU
+server-resumed openssl s_server                34803 handshakes     0.142 ms CPU
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.192 ms CPU
+client-resumed openssl tconn                   34380 handshakes     0.128 ms CPU

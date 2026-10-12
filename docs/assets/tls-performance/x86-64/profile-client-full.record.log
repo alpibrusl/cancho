@@ -1,0 +1,11 @@
+WARNING: A requested CPU in '0' is not supported by PMU 'cpu_atom' (CPUs 8-15) for event 'cpu_atom/cycles/P'
+[ perf record: Woken up 1358 times to write data ]
+Warning:
+Processed 321498 events and lost 1 chunks!
+
+Check IO/CPU overload!
+
+Warning:
+Processed 30310 samples and lost 64,66%!
+
+[ perf record: Captured and wrote 351,420 MB /home/alpibru/Workspace/cancho-perf-asbuilt/prof_x86/client-full.data (10712 samples) ]

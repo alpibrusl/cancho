@@ -1,0 +1,31 @@
+ 20:01:17 up 7 days,  1:10,  0 user,  load average: 2.31, 2.84, 2.89
+-- record_cost
+seal     64       69    920
+seal   1024      225   4536
+seal  16384     2776   5901
+open     64       65    976
+open   1024      210   4860
+open  16384     2525   6488
+-- gcm_cost 16 hw
+seal     64       38   1645
+seal   1024      172   5927
+seal  16384     2482   6598
+open     64       39   1631
+open   1024      172   5942
+open  16384     2486   6590
+total 84743815168
+-- record_cost
+seal     64       69    926
+seal   1024      225   4548
+seal  16384     2840   5767
+open     64       66    969
+open   1024      207   4933
+open  16384     2536   6459
+-- gcm_cost 16 hw
+seal     64       38   1650
+seal   1024      172   5949
+seal  16384     2479   6608
+open     64       40   1595
+open   1024      173   5909
+open  16384     2488   6582
+total 84310753280

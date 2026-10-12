@@ -1,0 +1,80 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 5K of event 'cpu-clock'
+# Event count (approx.): 2966982750
+#
+# Overhead  Symbol                                
+# ........  ......................................
+#
+    12.21%  [.] lexs_std.p256_kernels.mul_p
+            |          
+            |--4.11%--lexs_std.p256_pt.mixed_add
+            |          |          
+            |           --4.05%--lexs_std.p256_pt.comb_multiply
+            |                     lexs_std.p256_pt.base_multiply
+            |                     lexs_std.ecdsa_sign.sign
+            |                     lexs_tls_server.sign
+            |                     lexs_tls_server.certificate_verify
+            |                     lexs_tls_server.respond
+            |                     lexs_tls_server.on_client_hello
+            |                     lexs_tls_server.on_handshake_bytes
+            |                     lexs_tls_server.on_record
+            |                     lexs_tls_server.feed
+            |                     lexs_tls.feed
+            |                     lexs_echo_loop.pump
+            |                     lexs_echo_loop.run
+            |                     lexs_echo_loop.serve
+            |                     lexs_main
+            |                     main
+            |                     __libc_start_call_main
+            |                     __libc_start_main_impl (inlined)
+            |                     _start
+            |          
+            |--3.49%--lexs_std.p256_vf.double
+            |          |          
+            |           --3.47%--lexs_std.p256_vf.verify
+            |                     lexs_tls_server.sign
+            |                     lexs_tls_server.certificate_verify
+            |                     lexs_tls_server.respond
+            |                     lexs_tls_server.on_client_hello
+            |                     lexs_tls_server.on_handshake_bytes
+            |                     lexs_tls_server.on_record
+            |                     lexs_tls_server.feed
+            |                     lexs_tls.feed
+            |                     lexs_echo_loop.pump
+            |                     lexs_echo_loop.run
+            |                     lexs_echo_loop.serve
+            |                     lexs_main
+            |                     main
+            |                     __libc_start_call_main
+            |                     __libc_start_main_impl (inlined)
+            |                     _start
+            |          
+            |--2.92%--lexs_std.p256_vf.add_jac
+            |          |          
+            |           --2.88%--lexs_std.p256_vf.verify
+            |                     lexs_tls_server.sign
+            |                     lexs_tls_server.certificate_verify
+            |                     lexs_tls_server.respond
+            |                     lexs_tls_server.on_client_hello
+            |                     lexs_tls_server.on_handshake_bytes
+            |                     lexs_tls_server.on_record
+            |                     lexs_tls_server.feed
+            |                     lexs_tls.feed
+            |                     lexs_echo_loop.pump
+            |                     lexs_echo_loop.run
+            |                     lexs_echo_loop.serve
+            |                     lexs_main
+            |                     main
+            |                     __libc_start_call_main
+            |                     __libc_start_main_impl (inlined)
+            |                     _start
+            |          
+             --1.26%--lexs_std.p256_vf.madd
+                       |          
+                        --1.25%--lexs_std.p256_vf.verify
+                                  lexs_tls_server.sign
+                                  lexs_tls_server.certificate_verify

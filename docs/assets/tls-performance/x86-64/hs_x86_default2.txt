@@ -1,0 +1,13 @@
+lun 12 oct 2026 21:49:39 CEST
+ 21:49:39 up 5 days, 11:09,  6 users,  load average: 1,72, 2,37, 2,29
+perf counters: user and kernel; load (1.7236328125, 2.3740234375, 2.29248046875)
+-- round 1 of 1, load (1.7236328125, 2.3740234375, 2.29248046875)
+server-full cancho tls_echo                     6738 handshakes     0.785 ms CPU    2.834 M cycles    9.674 M instructions
+server-full openssl s_server                   10728 handshakes     0.279 ms CPU    0.993 M cycles    1.779 M instructions
+server-full openssl oserv                      11083 handshakes     0.258 ms CPU    0.932 M cycles    1.762 M instructions
+server-resumed cancho tls_echo --tickets 2     11942 handshakes     0.574 ms CPU    2.073 M cycles    5.272 M instructions
+server-resumed openssl s_server                22595 handshakes     0.239 ms CPU    0.862 M cycles    1.734 M instructions
+client-full cancho tls_many (200 less 1)         199 handshakes     1.247 ms CPU    4.644 M cycles   14.056 M instructions
+client-full openssl tconn                      13433 handshakes     0.437 ms CPU    1.630 M cycles    3.366 M instructions
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.554 ms CPU    2.051 M cycles    5.257 M instructions
+client-resumed openssl tconn                   22526 handshakes     0.233 ms CPU    0.834 M cycles    1.652 M instructions
