@@ -138,6 +138,9 @@ pub fn llvm_type[&s](st: &!s [int], ty: int) -> [] int {
     if ty == 7 || types.is_ref(st, ty) {
         return str(st, "ptr");
     }
+    if types.is_boxslice(st, ty) {
+        return str(st, "{ ptr, i64 }");
+    }
     if types.is_named(st, ty) {
         let item = types.named_item(st, ty);
         if ast.is_kind(st, item, kinds.NK::IEnum) {
@@ -825,21 +828,18 @@ pub fn arena_close[&s](st: &!s [int], id: int) -> [] int {
     return 0;
 }
 
-// `alloc_slice[a](count, fill)` of a whole number, a byte or a boolean: a negative count traps, so
-// does a size that overflows; the run is `count` copies of the fill, written by a loop. The pointer.
-pub fn alloc_slice[&s](st: &!s [int], arena: int, element: int, ck: bool, cv: int, cr: int, fk: bool, fv: int, fr: int) -> [] int {
+// The size in bytes of `count` elements: a negative count traps, and so does a size that overflows.
+fn slice_bytes[&s](st: &!s [int], element: int, ck: bool, cv: int, cr: int) -> [] int {
     let negative = start(st);
     str(st, "icmp slt i64 ");
     operand(st, 1, ck, cv, cr);
     str(st, ", 0\n");
     trap_if(st, negative);
-    let bytes = checked(st, 2, ck, cv, cr, true, stride(st, element), 0 - 1);
-    let p = start(st);
-    str(st, "call ptr @cancho_arena_alloc(ptr %ar");
-    nat(st, arena);
-    str(st, ", i64 ");
-    temp(st, bytes);
-    str(st, ")\n");
+    return checked(st, 2, ck, cv, cr, true, stride(st, element), 0 - 1);
+}
+
+// `count` copies of the fill written into the run at `p`, by a loop.
+fn fill_run[&s](st: &!s [int], p: int, element: int, ck: bool, cv: int, cr: int, fk: bool, fv: int, fr: int) -> [] int {
     let n = label(st);
     let keep = st[49];
     st[49] = 2;
@@ -897,6 +897,68 @@ pub fn alloc_slice[&s](st: &!s [int], arena: int, element: int, ck: bool, cv: in
     str(st, "\nfe");
     nat(st, n);
     str(st, ":\n");
+    return 0;
+}
+
+// `alloc_slice[a](count, fill)` of a whole number, a byte or a boolean, in arena `arena`. The pointer.
+pub fn alloc_slice[&s](st: &!s [int], arena: int, element: int, ck: bool, cv: int, cr: int, fk: bool, fv: int, fr: int) -> [] int {
+    let bytes = slice_bytes(st, element, ck, cv, cr);
+    let p = start(st);
+    str(st, "call ptr @cancho_arena_alloc(ptr %ar");
+    nat(st, arena);
+    str(st, ", i64 ");
+    temp(st, bytes);
+    str(st, ")\n");
+    fill_run(st, p, element, ck, cv, cr, fk, fv, fr);
+    return p;
+}
+
+// ---------------------------------------------------------------------------- heap ---
+//
+// `Box[[T]]` is the aggregate `{ ptr, i64 }`, the run and its length, and one value in the code like
+// a struct. The run is a `malloc` (trapping when it answers null, as the Rust backend does) and
+// `unbox_slice` the `free`.
+
+// `box_slice(heap, count, fill)`: the run, filled. The pointer.
+pub fn heap_run[&s](st: &!s [int], element: int, ck: bool, cv: int, cr: int, fk: bool, fv: int, fr: int) -> [] int {
+    let bytes = slice_bytes(st, element, ck, cv, cr);
+    let p = start(st);
+    str(st, "call ptr @malloc(i64 ");
+    temp(st, bytes);
+    str(st, ")\n");
+    let none = start(st);
+    str(st, "icmp eq ptr ");
+    temp(st, p);
+    str(st, ", null\n");
+    trap_if(st, none);
+    fill_run(st, p, element, ck, cv, cr, fk, fv, fr);
+    return p;
+}
+
+// The box value of the run at `p` of `count` elements.
+pub fn make_box[&s](st: &!s [int], boxed: int, p: int, ck: bool, cv: int, cr: int) -> [] int {
+    let first = insert_at(st, boxed, 0 - 1, 0, 7, false, 0, p);
+    return insert_at(st, boxed, first, 1, 1, ck, cv, cr);
+}
+
+// `unbox_slice(heap, b)`: free the run of the box in register `b`; the number of elements.
+pub fn heap_free[&s](st: &!s [int], boxed: int, b: int) -> [] int {
+    let p = extract_field(st, boxed, b, 0);
+    let n = extract_field(st, boxed, b, 1);
+    str(st, "  call void @free(ptr ");
+    temp(st, p);
+    str(st, ")\n");
+    return n;
+}
+
+// `contents(b)` of a reference in register `r` to a box: the pointer (a temporary), and the length
+// left in `st[59]`.
+pub fn heap_view[&s](st: &!s [int], boxed: int, r: int) -> [] int {
+    let at = field_address(st, boxed, r, 0);
+    let p = load_through(st, 7, at);
+    let at_len = field_address(st, boxed, r, 1);
+    let n = load_through(st, 1, at_len);
+    st[59] = n;
     return p;
 }
 
