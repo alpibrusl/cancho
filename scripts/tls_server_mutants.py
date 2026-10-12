@@ -18,7 +18,7 @@ import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TLS = ["tls.cho", "record.cho", "message.cho", "slot.cho", "client12.cho", "client.cho", "hello.cho", "identity.cho",
+TLS = ["tls.cho", "record.cho", "message.cho", "slot.cho", "cident.cho", "client12.cho", "client.cho", "hello.cho", "identity.cho",
        "server.cho"]
 X509 = ["verify.cho", "names.cho", "x509.cho", "key.cho"]
 
@@ -157,15 +157,17 @@ MUTANTS = [
      "pub fn serve[&e](engine: &!e Engine, slot: int, now_unix_ms: int) -> [] int {\n    if !is_server(engine) {",
      "pub fn serve[&e](engine: &!e Engine, slot: int, now_unix_ms: int) -> [] int {\n    if false {"),
     ("start on a server engine", "tls.cho",
-     "pub fn start[&e, &h](engine: &!e Engine, slot: int, host: &h [byte], now_unix_ms: int) -> [] int {\n    if is_server(engine) {",
-     "pub fn start[&e, &h](engine: &!e Engine, slot: int, host: &h [byte], now_unix_ms: int) -> [] int {\n    if false {"),
+     "fn start_plain[&e, &h, &a](engine: &!e Engine, slot: int, host: &h [byte], now_unix_ms: int, alpn: &a [byte]) -> [] int {\n    if is_server(engine) {",
+     "fn start_plain[&e, &h, &a](engine: &!e Engine, slot: int, host: &h [byte], now_unix_ms: int, alpn: &a [byte]) -> [] int {\n    if false {"),
     ("serve with no identity", "tls.cho", "    if tls_identity.count(contents(engine.ids)) == 0 {", "    if false {"),
     ("a 17th identity added", "tls.cho", "    if id == tls_identity.max_identities() {\n        return tls_record.server_identities_full();",
      "    if id == tls_identity.max_identities() + 1 {\n        return tls_record.server_identities_full();"),
     ("handshakes in progress not counted", "tls.cho", "            n = n + 1;\n        }\n        s = s + 1;",
      "            n = n + 0;\n        }\n        s = s + 1;"),
     ("no_application_protocol sent as handshake_failure", "slot.cho", "        return 120;", "        return 40;"),
-    ("missing_extension sent as decode_error", "slot.cho", "        return 109;", "        return 50;"),
+    ("missing_extension sent as decode_error", "slot.cho",
+     "    if code == tls_record.server_missing_extension() {\n        return 109;",
+     "    if code == tls_record.server_missing_extension() {\n        return 50;"),
 ]
 
 # Mutants that change no behaviour a client can reach, each with the argument. Such a mutant must survive.

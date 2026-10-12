@@ -251,6 +251,41 @@ builtins.
 > measurement above is the evidence, not an assumption: the corpus grew
 > by 24 revisions in this same window and only 3 joined the unreadable
 > pile. The vocabulary moved. The past it could break did not.
+>
+> **Held mechanically (current at head).** The number this section kept
+> having to re-state is now a checked property rather than a paragraph.
+> `scripts/history.py --explain` replays every distinct revision of
+> every `.cho` under `std/` and `examples/` through today's compiler and
+> refuses, exit 1, on any failing rule not listed with a reason in
+> [`stability-exemptions.md`](stability-exemptions.md); a listed rule
+> that stops failing fails the run as stale, so the list only ever shrinks,
+> and the CI job `stability-plateau` runs it on every push with the full
+> history fetched. The failing count stays honest — an exemption does
+> not remove a revision from the number — so the 37%→39% climb this
+> section could only correct in prose is, from here, either a red build
+> or a new line in a committed file with a reason beside it. Each exempted
+> rule carries a revision **count**, and the check fails on any increase
+> past it, on an unlisted rule, and on a listed rule that no longer fails
+> (the counts only ratchet down).
+>
+> **Corrected in place: 65% (now 67%) versus 39% are different corpora,
+> not a regression.** The exemption file's baseline was first measured at
+> 203 revisions, 133 failing (65%), and is **210 revisions, 140 failing
+> (67%)** at the time of the latest merge of `main`; the 39% of #163 was
+> 193 revisions, 76 failing. Re-run today, `scripts/history.py` gives the
+> same 140/210 on the default backend and on `--backend cranelift`, so the
+> backend is not the cause (checked). What differs is what is replayed:
+> `revisions()` keeps only paths ending `.cho`, and since the source
+> extension was renamed from `.ls` (#347) it no longer sees the **382**
+> distinct `.ls` file revisions older than the rename (counted by blob and
+> path over the history of `std/` and `examples/`; **210** `.cho` ones
+> remain). The rename also made every file a new `(blob, path)` at the
+> rename commit, so what is replayed is mostly each file's state from #347
+> on. The 39% is therefore not superseded: it describes a corpus the
+> instrument can no longer replay, and 67% is the figure for the
+> post-rename corpus only. Replaying the `.ls` revisions (laying each out
+> as `.cho`) is the open follow-up; until then read the two numbers as
+> separate series.
 
 ---
 

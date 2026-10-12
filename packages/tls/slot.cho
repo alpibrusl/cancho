@@ -299,8 +299,33 @@ pub fn i_session_len() -> [] int {
     return i_alpn_len() + 4;
 }
 
-pub fn ints_len() -> [] int {
+// A client's ALPN (`docs/tls-parity.md` §6.6): the length of the offer kept at
+// `b_alpn_offer`, and where the protocol the server chose starts in it (its
+// length is `i_alpn_len`, as for a server's choice).
+pub fn i_alpn_offer_len() -> [] int {
     return i_alpn_len() + 5;
+}
+
+pub fn i_alpn_at() -> [] int {
+    return i_alpn_len() + 6;
+}
+
+// A client's identity (`docs/tls-parity.md` §6.5): the generation of the
+// identity chosen at `start` (`tls_cident.generation`), which must still be
+// its generation when a CertificateRequest is answered and when the chain is
+// sent; and the engine's trust generation at `start`, which a ticket from this
+// connection is stamped with, so a ticket earned before an identity or the
+// trust store changed is not offered after.
+pub fn i_identity_gen() -> [] int {
+    return i_alpn_len() + 7;
+}
+
+pub fn i_trust_gen() -> [] int {
+    return i_alpn_len() + 8;
+}
+
+pub fn ints_len() -> [] int {
+    return i_alpn_len() + 9;
 }
 
 pub fn read_aead[&i](ints: &i [int]) -> [] &i [int] {
@@ -399,6 +424,12 @@ pub fn f_sni_used() -> [] int {
 // ServerHello or HelloRetryRequest (RFC 8446 Appendix D.4).
 pub fn f_ccs_sent() -> [] int {
     return 16384;
+}
+
+// A client's: the CertificateRequest was answered with the identity chosen
+// at `start`, not the empty Certificate (`docs/tls-parity.md` §6.3).
+pub fn f_cert_send() -> [] int {
+    return 16777216;
 }
 
 // ---- The byte slice ----
@@ -554,8 +585,15 @@ pub fn k_write_hw() -> [] int {
     return b_keys() + 1472;
 }
 
+// 32 bytes of the engine's randomness, drawn at `start` when an identity is
+// chosen, that hedge the CertificateVerify signature's nonce (RFC 6979 §3.6,
+// `docs/ecdsa-sign.md` §3).
+pub fn k_sign_hedge() -> [] int {
+    return b_keys() + 1728;
+}
+
 pub fn keys_len() -> [] int {
-    return 1728;
+    return 1760;
 }
 
 // The largest ticket kept (`docs/tls-resumption.md` §4): a larger one is
@@ -585,8 +623,19 @@ pub fn b_ticket_host() -> [] int {
     return k_ticket_psk() + 48;
 }
 
-pub fn bytes_len() -> [] int {
+// The ALPN offer, in its wire form (each name after its length byte), copied
+// at `start` so a later change does not touch a handshake in flight
+// (`docs/tls-parity.md` §6.6). In the bytes `drop` overwrites.
+pub fn b_alpn_offer() -> [] int {
     return b_ticket_host() + 256;
+}
+
+pub fn alpn_offer_cap() -> [] int {
+    return 256;
+}
+
+pub fn bytes_len() -> [] int {
+    return b_alpn_offer() + alpn_offer_cap();
 }
 
 // A server's slot holds no tickets, so their room holds what `tls.alpn`
@@ -845,6 +894,12 @@ pub fn alert_for(code: int) -> [] int {
     }
     if code == tls_record.key_share() || code == tls_record.hello_retry() || code == tls_record.illegal_psk() {
         return 47;
+    }
+    if code == tls_record.alpn_selected() || code == tls_record.extension_repeat() {
+        return 47;
+    }
+    if code == tls_record.missing_extension() {
+        return 109;
     }
     if code == tls_record.decode_error() {
         return 50;

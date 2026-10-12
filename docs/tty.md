@@ -1,6 +1,6 @@
 # Tty: a capability for serial ports
 
-> **Status: design (T1 of #422), nothing built.** Every ABI number below
+> **Status: designed (T1 of #422) and built (T2–T4; the surface below is what ships).** Every ABI number below
 > is measured, not remembered: `cancho-robot`'s spike
 > (`spike/ping-at-1mbaud`, `spikes/ping/abi.c` on darwin-aarch64 and
 > `spikes/ping/abi_linux.c` on the robot's Raspberry Pi 5, its research
@@ -49,6 +49,13 @@ T3's measurement).
 | the macOS `IOSSIOSPEED` | `0x80085402` as measured by this spike (`_IOW('T', 2, speed_t)`, 8-byte `speed_t`); **pyserial 3.5 hard-codes `0x80045402`** (a 4-byte size) — both accepted by this driver as far as observed, but the number in a program should be the measured one, and neither belongs in a program |
 
 
+Two cells the table cannot show: `CS8` is `0x30` on Linux and `0x300`
+on macOS (their `CSIZE` fields sit at different bits), and macOS reads
+the speed from `c_ispeed`/`c_ospeed` where Linux/glibc takes it from
+`c_cflag`'s `CBAUD` bits. The backend picks every number by the target
+being compiled for (`cancho_ir::TtyOs`), never by the host the compiler
+runs on.
+
 Every one of these is a constant a program writing `extern fn` has to
 get right per platform today, with no help from the compiler. None of
 them reaches program source under `Tty`.
@@ -67,26 +74,28 @@ it is an ABI hack that happens to work on one target.
 ## 3. The surface
 
 ```cho
-res Tty   -- a serial port, linear: one closer
+res Tty            -- the capability, prefix-narrowed: Tty("/dev")
+res Port           -- a serial port, linear: one closer (Udp's shape beside Net)
 
-tty_open(t: &Tty(""), path: &[byte]) -> Opening     // Ok(Tty) | Failed(errno)
-tty_configure(t: &!Tty, baud: int) -> int           // raw, 8N1, a speed; 0, or the errno
-tty_read(t: &!Tty, into: &![byte]) -> int          // what is there, never blocks; -1 on error
-tty_write(t: &Tty, bytes: &[byte]) -> int          // whole, or short; -1 on error
-tty_flush_input(t: &!Tty) -> int
-tty_close(t: Tty) -> int
-poller_add_tty(p: &!Poller, t: &Tty, token: int, events: int) -> int
+tty_open(t: &Tty(bound), path: &[byte]) -> TtyOpened   // Ok(Port) | Failed(errno)
+tty_configure(p: &!Port, baud: int) -> int             // raw, 8N1, a speed; 0, or the errno
+tty_read(p: &!Port, into: &![byte]) -> int             // what is there, never blocks; -1 on error
+tty_write(p: &Port, bytes: &[byte]) -> int             // whole, or short; -1 on error
+tty_flush_input(p: &!Port) -> int
+tty_close(p: Port) -> int
+poller_add_tty(q: &!Poller, p: &Port, token: int, events: int) -> int
 ```
 
-`Opening` is the enum `File`'s verbs answer (`Opened`/`Failed` shape,
-the `File`/`Udp` precedent) rather than a bare `int`, so a refusal is
+`TtyOpened` is the enum `File`'s verbs answer (`Opened`/`Failed` shape,
+the `File`/`Udp` precedent: the capability keeps the name `Tty` and the
+handle is named `Port`, as `Udp` is beside `Net`) rather than a bare `int`, so a refusal is
 a value the caller matches, not a number it has to know the sign
 convention of. Configuration is one call rather than a mode algebra:
 the robot needs exactly one setting (raw, 8N1, a speed), and a mode
 algebra in the language would re-open the termios surface this
 capability exists to close. `tty_read` never blocks: the port is opened
 `O_RDWR | O_NOCTTY | O_NONBLOCK`, which is also why read and write
-take a `&!Tty` / `&Tty` split like `Conn`'s verbs, and why the poller —
+take a `&!Port` / `&Port` split like `Conn`'s verbs, and why the poller —
 not a `VMIN`/`VTIME` pair — is the waiting story.
 
 `poller_add_tty` takes `events` like `poller_add_conn`'s, registering
@@ -96,13 +105,16 @@ plugs in.
 
 ## 4. Authority: the row says the truth
 
-`tty_open` reads a path under the capability's bound, so the labels
-are argument-carrying and narrowable exactly as `fs_read` is:
+`tty_open` reads a path under the capability's bound, so its label is
+argument-carrying and narrowable exactly as `fs_read` is; `tty_read` and
+`tty_write` are path-free, the prefix having been spent at open
+(`udp_recv`'s shape):
 
 ```
 performs
-    tty_read("/dev")
-    tty_write("/dev")
+    tty_open("/dev")
+    tty_read
+    tty_write
 never touches
     ...
 ```
@@ -127,9 +139,13 @@ so. `Tty("/dev")` is the shape a program names the node beneath
 Named baud constants would re-encode libc's octal table into the
 language; exposing the B-constants is the leak this epic closes. The
 backend validates the integer against the platform's supported set
-(Linux: the standard rates including 1,000,000; macOS: the standard
-rates for the `tcsetattr` step, then `IOSSIOSPEED` for anything else)
-and answers the `errno` on refusal. The robot needs exactly one
+and answers `EINVAL` before the port is touched. Linux: the table of
+standard rates (50 to 4,000,000, `cancho_ir::LINUX_RATES`), whose
+`Bxxx` bits go into `c_cflag`. macOS: any positive rate, applied in two
+steps -- raw mode with `c_ispeed`/`c_ospeed` at a standard 115,200 (a
+zero speed there is `B0`, hang up), then `IOSSIOSPEED` for the real
+one -- and a rate the driver itself refuses answers that ioctl's
+`errno`. The robot needs exactly one
 speed; the vocabulary stays one `int` wide.
 
 ## 5. What is refused, not trapped
@@ -139,8 +155,9 @@ Every refusal carries a rule tag; none of these reaches a panic:
 | Condition | Answer |
 |---|---|
 | `tty_open` under a bound the path is outside | a located `tty-path` refusal at compile time (the `fs_read` shape) |
-| `tty_open` of a path that is not a device or will not open | `Failed(errno)` in `Opening` — the program's question, not the compiler's |
-| `tty_configure` of a speed the platform refuses | the `errno` (`EINVAL` on macOS past the standard set, measured), `0` on success |
+| `tty_open` of a path that is not a device or will not open | `Failed(errno)` in `TtyOpened` — the program's question, not the compiler's |
+| `tty_configure` of a speed the platform has no rate for | `EINVAL` (22), before the port is touched: on Linux anything outside the standard-rate table, on macOS a non-positive rate; a rate the macOS driver itself refuses answers the `errno` of the `IOSSIOSPEED` ioctl |
+| `tty_configure` of a descriptor that is not a terminal | the `errno` of `tcsetattr`: `ENOTTY` (25) on Linux, `ENODEV` (19) on macOS (measured in CI) — `/dev/null` is the fixture |
 | read/write/flush on a closed or errored port | `-1`, the `Conn` verbs' convention |
 | `poller_add_tty` of an unconfigured port | allowed: registration is orthogonal to configuration, the `poller_add_udp` precedent |
 
@@ -149,8 +166,8 @@ bound refusal; the runtime answers are values, not diagnostics.
 
 ## 6. Edition
 
-**Edition 8.** `Split` grows its ninth field (`Tty`, beside `exec`'s
-eighth), gated the way `Net`, `Clock` and `Signals` each were
+**Edition 8.** `Split` grows its tenth field (`Tty`, beside `exec`'s
+ninth), gated the way `Net`, `Clock` and `Signals` each were
 (`PRELUDE_TTY` in `ir.rs`, the `defs.rs` capability tables, the
 parser's edition gate, the edition marker in every fixture the new
 surface touches). Edition 7 is shipped and stable at head; no

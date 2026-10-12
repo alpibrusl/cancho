@@ -18,6 +18,7 @@ import selfhost.builtins;
 import selfhost.lexcore as lc;
 import selfhost.pass1;
 import selfhost.tables;
+import std.bytes;
 
 pub fn two_to[&s](st: &!s [int], n: int) -> [] int {
     var v = 1;
@@ -102,26 +103,11 @@ pub fn perform[&s](st: &!s [int], b: int) -> [] bool {
     return true;
 }
 
-// Are the bytes of `a` and of `b` the same text?
-fn same_text(a: &static [byte], b: &static [byte]) -> [] bool {
-    if len(a) != len(b) {
-        return false;
-    }
-    var i = 0;
-    while i < len(a) {
-        if a[i] != b[i] {
-            return false;
-        }
-        i = i + 1;
-    }
-    return true;
-}
-
 // The function performs the label called `name`, which some builtin performs.
 pub fn perform_named[&s](st: &!s [int], name: &static [byte]) -> [] int {
     var n = 0;
     while n < builtins.effect_count() {
-        if same_text(builtins.effect_name(n), name) && !has(st, st[54], n) {
+        if bytes.equal(builtins.effect_name(n), name) && !has(st, st[54], n) {
             st[54] = st[54] + two_to(st, n);
         }
         n = n + 1;
