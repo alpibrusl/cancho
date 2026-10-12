@@ -98,6 +98,7 @@ mod satisfy;
 mod selfhost;
 mod signals;
 mod sockets;
+mod stdin_bulk;
 mod testing;
 mod tls;
 mod tls_auth;

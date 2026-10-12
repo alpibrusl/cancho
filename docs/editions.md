@@ -345,6 +345,16 @@ declares all five at edition 7 and means its own). `Split` is unchanged, so an e
 edition 8 does. A file that declares `edition 9` hashes differently from its edition-8 text (§6.3), which touches only the
 files that adopt it; no other file's hash moves (`word-scan.md` §6 counts it).
 
+And **`read_bytes`** ([`standard-input.md`](standard-input.md) §7), standard input in bulk under the existing
+`io_read` label: `read_bytes(io, into) -> [io_read] Read`, with `file_read`'s own `Read`. A builtin under an existing
+label and a name a program may already declare (it is a natural name for a user function), so it is absent before
+edition 9 (`tests/reject/read_bytes_is_edition_nine.cho`) and nothing else about edition 8 changes. It adds no type, no
+label and no `Split` field. It was written against edition 7 and moved to edition 9 when that edition was found closed
+(§6.4) with word-scan opening 9. Adding it moved no identity: `cancho ids --std` over a program that imports every
+`std` module gives the same hashes before and after (counts in the PR), and the repository's programs give the same list
+(`std.json.parse_with`, which came in the same change, is a new `std` name, so it adds a `body` and a `sig` line and
+changes none; `std` modules are not editions).
+
 ---
 
 ## 8. What this does not do
