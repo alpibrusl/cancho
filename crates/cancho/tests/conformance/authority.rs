@@ -124,7 +124,7 @@ fn the_authority_report_has_a_machine_readable_form() {
         text.matches(']').count(),
         "unbalanced brackets:\n{text}"
     );
-    for key in ["\"effects\"", "\"labels\"", "\"foreign_symbols\""] {
+    for key in ["\"effects\"", "\"labels\"", "\"never_touches\"", "\"foreign_symbols\""] {
         assert!(text.contains(key), "missing {key}:\n{text}");
     }
     // The coarse kind and the precise argument, both present and distinct.
@@ -140,6 +140,22 @@ fn the_authority_report_has_a_machine_readable_form() {
         "an unnarrowed label needs an explicit null:\n{text}"
     );
     assert!(text.contains("\"labs\""), "the foreign symbol should be named:\n{text}");
+    // The negative half beside the positive one (`docs/authority.md` §2.2):
+    // `tour.cho` touches the filesystem and the console, so those two
+    // domains must be absent from the proof, and a domain it never
+    // touches must be present — silence is not how absence is spelled.
+    assert!(
+        text.contains("\"never_touches\": ["),
+        "the negative half is the point of a capability language:\n{text}"
+    );
+    assert!(
+        !text.contains("\"the filesystem\""),
+        "`tour.cho` touches the filesystem, so it cannot be proven out of reach:\n{text}"
+    );
+    assert!(
+        text.contains("\"other programs\""),
+        "`tour.cho` performs no `exec`, so the report must say so as data:\n{text}"
+    );
 
     // And the human form is unchanged by the flag's existence.
     let plain = Command::new(BIN)
