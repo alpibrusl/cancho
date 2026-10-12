@@ -261,6 +261,15 @@ pub fn enum_codable[&s](st: &!s [int], ty: int) -> [] bool {
     return true;
 }
 
+// A reference to a slice of whole numbers, bytes or booleans: a pointer and a length in the code.
+pub fn slice_codable[&s](st: &!s [int], ty: int) -> [] bool {
+    if !types.is_slice_ref(st, ty) {
+        return false;
+    }
+    let e = types.element_of(st, ty);
+    return e == 1 || e == 2 || e == 5;
+}
+
 // A value of this type has code: a struct or an enum of scalars, one aggregate in the code.
 pub fn aggregate_codable[&s](st: &!s [int], ty: int) -> [] bool {
     if types.is_boxslice(st, ty) {

@@ -629,7 +629,7 @@ pub fn field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
 // The expressions the code can be written for so far: whole numbers and booleans, names, the
 // operators, and calls.
 pub fn writes_code[&s](st: &!s [int], id: int) -> [] bool {
-    if ast.is_kind(st, id, kinds.NK::EInt) || ast.is_kind(st, id, kinds.NK::EBool) || ast.is_kind(st, id, kinds.NK::EName) || ast.is_kind(st, id, kinds.NK::ECall) || ast.is_kind(st, id, kinds.NK::EStr) || ast.is_kind(st, id, kinds.NK::EIndex) || ast.is_kind(st, id, kinds.NK::EStructLit) || ast.is_kind(st, id, kinds.NK::EField) || ast.is_kind(st, id, kinds.NK::EVariant) || ast.is_kind(st, id, kinds.NK::EAllocSlice) {
+    if ast.is_kind(st, id, kinds.NK::EInt) || ast.is_kind(st, id, kinds.NK::EBool) || ast.is_kind(st, id, kinds.NK::EName) || ast.is_kind(st, id, kinds.NK::ECall) || ast.is_kind(st, id, kinds.NK::EStr) || ast.is_kind(st, id, kinds.NK::EIndex) || ast.is_kind(st, id, kinds.NK::EStructLit) || ast.is_kind(st, id, kinds.NK::EField) || ast.is_kind(st, id, kinds.NK::EVariant) || ast.is_kind(st, id, kinds.NK::EAllocSlice) || ast.is_kind(st, id, kinds.NK::ESlice) {
         return true;
     }
     if ast.is_kind(st, id, kinds.NK::EUnary) {
@@ -938,7 +938,15 @@ pub fn subslice_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     if !ast.ok(st) {
         return nothing();
     }
-    return plain(types.make_ref(st, types.ref_unique(st, b.ty), types.ref_region(st, b.ty), types.make_slice(st, e)));
+    let narrowed = types.make_ref(st, types.ref_unique(st, b.ty), types.ref_region(st, b.ty), types.make_slice(st, e));
+    if emit.on(st) {
+        if e != 1 && e != 2 && e != 5 {
+            return skip(st, ast.nstart(st, id), ast.nend(st, id));
+        }
+        let at = emit.subslice(st, e, b.reg, b.reg2 < 0, b.value, b.reg2, a.known, a.value, a.reg, z.known, z.value, z.reg);
+        return in_slice(narrowed, at, st[59], 0);
+    }
+    return plain(narrowed);
 }
 
 // `len(s)`: how many elements a slice has.
@@ -1214,10 +1222,14 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     }
     let result = types.resolve_type(st, callee_type(st, text, ast.get(st, found, 10), callee_dp, fresh, tvars));
     if emit.on(st) {
-        if result != 1 && result != 5 && !scope.aggregate_codable(st, result) {
+        if result != 1 && result != 5 && !scope.aggregate_codable(st, result) && !scope.slice_codable(st, result) {
             return skip(st, from, to);
         }
-        return in_reg(result, emit.call(st, text, callee, result, st[52] - first_arg));
+        let answer = emit.call(st, text, callee, result, st[52] - first_arg);
+        if types.is_slice_ref(st, result) {
+            return in_slice(result, answer, st[59], 0);
+        }
+        return in_reg(result, answer);
     }
     return plain(result);
 }

@@ -740,7 +740,7 @@ pub fn call[&s, &x](st: &!s [int], text: &x [byte], name: int, ret: int, n: int)
     let first = st[52] - n;
     let result = start(st);
     str(st, "call ");
-    llvm_type(st, ret);
+    ret_type(st, ret);
     str(st, " @lexs_");
     slice(st, text, ast.tstart(st, name), ast.tend(st, name));
     str(st, "(");
@@ -757,7 +757,83 @@ pub fn call[&s, &x](st: &!s [int], text: &x [byte], name: int, ret: int, n: int)
     }
     str(st, ")\n");
     st[52] = first;
+    if types.is_slice_ref(st, ret) {
+        // A slice comes back as the pair; its two parts, the length left in `st[59]`.
+        let p = start(st);
+        str(st, "extractvalue { ptr, i64 } ");
+        temp(st, result);
+        str(st, ", 0\n");
+        let len = start(st);
+        str(st, "extractvalue { ptr, i64 } ");
+        temp(st, result);
+        str(st, ", 1\n");
+        st[59] = len;
+        return p;
+    }
     return result;
+}
+
+// The type a function answers: a reference to a slice is the pair of its pointer and its length.
+pub fn ret_type[&s](st: &!s [int], ty: int) -> [] int {
+    if types.is_slice_ref(st, ty) {
+        return str(st, "{ ptr, i64 }");
+    }
+    return llvm_type(st, ty);
+}
+
+// `return s;` of a slice: the pair.
+pub fn ret_slice[&s](st: &!s [int], p: int, lk: bool, lv: int, lr: int) -> [] int {
+    let pair = types.make_boxslice(st, 1);
+    let first = insert_at(st, pair, 0 - 1, 0, 7, false, 0, p);
+    let both = insert_at(st, pair, first, 1, 1, lk, lv, lr);
+    str(st, "  ret { ptr, i64 } ");
+    temp(st, both);
+    str(st, "\n");
+    let n = label(st);
+    str(st, "dead");
+    nat(st, n);
+    str(st, ":\n");
+    return 0;
+}
+
+// `s[a..b]` of a slice (`base`, its length) of `element`: an end past the length traps, and so does a
+// start past the end (an inverted range); the address of the first element is answered and the new
+// length left in `st[59]`.
+pub fn subslice[&s](st: &!s [int], element: int, base: int, lk: bool, lv: int, lr: int, ak: bool, av: int, ar: int, zk: bool, zv: int, zr: int) -> [] int {
+    let past = start(st);
+    str(st, "icmp ugt i64 ");
+    operand(st, 1, zk, zv, zr);
+    str(st, ", ");
+    operand(st, 1, lk, lv, lr);
+    str(st, "\n");
+    trap_if(st, past);
+    let inverted = start(st);
+    str(st, "icmp ugt i64 ");
+    operand(st, 1, ak, av, ar);
+    str(st, ", ");
+    operand(st, 1, zk, zv, zr);
+    str(st, "\n");
+    trap_if(st, inverted);
+    let offset = start(st);
+    str(st, "mul i64 ");
+    operand(st, 1, ak, av, ar);
+    str(st, ", ");
+    nat(st, stride(st, element));
+    str(st, "\n");
+    let at = start(st);
+    str(st, "getelementptr i8, ptr ");
+    operand(st, 7, false, 0, base);
+    str(st, ", i64 ");
+    temp(st, offset);
+    str(st, "\n");
+    let length = start(st);
+    str(st, "sub i64 ");
+    operand(st, 1, zk, zv, zr);
+    str(st, ", ");
+    operand(st, 1, ak, av, ar);
+    str(st, "\n");
+    st[59] = length;
+    return at;
 }
 
 // `putchar` of the last two arguments pushed, the second a whole number: the character to the
@@ -1294,7 +1370,7 @@ pub fn write_slice[&s](st: &!s [int]) -> [] int {
 pub fn header_start[&s, &x](st: &!s [int], text: &x [byte], name: int, ret_ty: int) -> [] int {
     aim(st, 0);
     str(st, "define ");
-    llvm_type(st, ret_ty);
+    ret_type(st, ret_ty);
     str(st, " @lexs_");
     slice(st, text, ast.tstart(st, name), ast.tend(st, name));
     str(st, "(");

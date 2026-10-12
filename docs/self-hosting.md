@@ -224,7 +224,8 @@ the stages found, in place, the way this document corrects its own claims.
 | 4h. Arenas: `region` and `alloc_slice[a](n, fill)` of whole numbers, bytes and booleans, in the checker (the arena in scope, the count, the fill a value that copies, the slice cannot leave) and in the code | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho`, `types.cho`, `driver.cho` | the Rust compiler: the checker by answers (1,945 cases), the code by what the built programs do | **Eighth slice of the backend, and a checker rule.** 352 builds run and compared, 20 of them new, 71 trap; none different. The checker's 1,945 cases are identical, 27 of them new |
 | 4i. The heap: `box_slice`, `contents`, `unbox_slice` of whole numbers, bytes and booleans, with a `Heap` borrowed and passed (compile mode only: the checker still answers `SKIP` for a function that has one) | `emit.cho`, `exprs.cho`, `types.cho`, `scope.cho`, `effects.cho` | the Rust compiler, by what the built programs do | **Ninth slice of the backend.** 367 builds run and compared, 15 of them new, 76 trap; none different. The checker's 1,945 cases are unchanged |
 | 4j. `static` tables: `static name: [T] { .. alloc_slice[static](n, fill) .. return t; }` of whole numbers, bytes and booleans, and the name used as a shared reference to the slice, in the checker (20 new cases) and in the code | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho`, `driver.cho` | the Rust compiler: the checker by answers (1,965 cases), the code by what the built programs do | **Tenth slice of the backend, and a checker rule.** 382 builds run and compared, 15 of them new, 78 trap; none different. The library's skipped functions go from 641 to 612 |
-| 4k. The rest of the backend: `alloc` of one value, functions that return a slice, generics, tuples, `Box` and `Heap` in the checker, `clang` run by the compiler itself | not started | | |
+| 4k. Functions that return a slice, and sub-slices `s[a..b]` of whole numbers, bytes and booleans | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho` | the Rust compiler, by what the built programs do | **Eleventh slice of the backend.** 404 builds run and compared, 22 of them new, 84 trap; none different. The census: 529 of the compiler's own 548 functions get code (488 before) |
+| 4l. The rest of the backend: structs with fields that are not whole numbers, bytes or booleans (and the resource structs of `std.buffer`), several files and the modules' names, the builtins left, `alloc` of one value, generics, tuples, `clang` run by the compiler itself | not started | | |
 
 **The method.** A port that builds no tree has nothing to compare, and one that does
 needs a printer, which is another port. So stage 2's parser wrote the tree the Rust parser
@@ -645,6 +646,15 @@ of the compiler's functions stop at: a function that returns a slice or calls on
 that is not a whole number, byte or boolean (`block`'s result, `Buffer`: about 14), a few builtins
 (`wrapping_mul`) and floats (1). Not measured: calls across modules, which the test programs do not make, and
 a binary that has been built from all of it.
+
+**Stage 4k: slices that come back.** A function that returns a reference to a slice answers the pair, the
+LLVM aggregate `{ ptr, i64 }`, and a call to one takes the pair apart again into a pointer and a length;
+`return s;` builds it. `s[a..b]` is Rust's two tests, as in the backend: an end past the length traps, then a
+start past the end, both unsigned so that a negative number is a large one; then the address of the first
+element and the difference. The census, rerun after it: 529 of the compiler's 548 functions (97%) and 24 of
+the 39 in `std.bytes`/`buffer`/`io`. What is left of the compiler's own: `block` and `lc.step`, which return
+structs with a field that is a list or a boolean pair (8), `wrapping_mul` (2), `Buffer` and what returns it
+(`std.buffer`, 19 of its own): the struct that owns a `Box`.
 
 The mutation test of `types.cho` (54 operator swaps) killed 40 on the first corpus of 458 targeted
 body cases (after region-variable, `where`-closure and coercion cases were added; 33 before); the 14
