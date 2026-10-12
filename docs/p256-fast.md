@@ -290,26 +290,32 @@ before it): 69 non-trap jumps in all (`ecdh.o`) and every one read. None tests a
 
 ### 8.3 Timing: dudect on `gram`
 
-Intel Core i7-1260P, performance core 2 (`taskset -c 2`), Linux x86-64, LLVM backend, `rdtscp`, the `powersave` governor, a
-machine shared with other jobs (load average 3 to 9 during these runs, the core at 1.3 to 1.8 GHz, which is why the medians are
-large: the classes are interleaved, so it moves both alike). Fixed against random, as before, 10^6 measurements a test, batches of
-50,000. **The gate is |t| < 4.5.**
+**The runs, raw:** `tests/evidence/p256/raw_public_key.txt`, `raw_shared.txt` and `raw_sign.txt`, each with its header: the commit
+timed (3b71b529; `git diff 3b71b529 HEAD -- std tests/programs` is empty), the machine, the governor, and the load at its start and
+end. Intel Core i7-1260P, Linux x86-64, LLVM backend, `rdtscp`; `taskset -c 2-3` (one physical core, both of its threads, for the
+script and the program it runs); **the governor of cpu2 and cpu3 set to `performance` for the runs and back to `powersave` after**.
+The machine was shared with other jobs on its other cores: **load average 4.3 to 8.0** during the runs (the headers have each). The
+classes are interleaved within each batch, so what that load does to the time it does to both; it is why the medians move between
+tests run at different times. Fixed against random, 10^6 measurements a test, batches of 50,000. **The gate is |t| < 4.5.**
 
 | Function | Test | Measurements | Median (TSC cycles) | max \|t\| |
 |---|---|---|---|---|
-| `ecdh.public_key` P-256 (the table) | scalar 1 against random | 1,000,000 | 451,194 | **1.83** |
-| | a fixed scalar against random | 1,000,000 | 395,631 | **1.94** |
-| | scalar 0x88..88 (every digit 8) against random | 1,000,000 | 289,785 | **1.74** |
-| | scalar n − 1 (every digit carried) against random | 1,000,000 | 252,135 | **2.07** |
-| `ecdh.shared` P-256 (the ladder) | scalar 1 against random | 1,000,000 | 1,359,306 | **1.63** |
-| | a fixed scalar against random | 1,000,000 | 1,217,884 | **1.29** |
-| `ecdsa_sign.sign` | a fixed key against random | 1,000,000 | 629,929 | **2.07** |
-| | the key 1 against random | 1,000,000 | 378,814 | **1.41** |
+| `ecdh.public_key` P-256 (the table) | scalar 1 against random | 1,000,000 | 181,964 | **2.21** |
+| | a fixed scalar against random | 1,000,000 | 182,481 | **1.85** |
+| | scalar 0x88..88 (every digit 8) against random | 1,000,000 | 325,371 | **2.21** |
+| | scalar n − 1 (every digit carried) against random | 1,000,000 | 306,205 | **2.32** |
+| | scalar 16^63 (every digit zero but the top: the dummy added 64 times, the sum at infinity throughout) against random | 1,000,000 | 330,297 | **2.18** |
+| `ecdh.shared` P-256 (the ladder) | scalar 1 against random | 1,000,000 | 978,555 | **1.73** |
+| | a fixed scalar against random | 1,000,000 | 785,486 | **1.78** |
+| | scalar 16^63 against random | 1,000,000 | 799,812 | **1.70** |
+| `ecdsa_sign.sign` | a fixed key against random | 1,000,000 | 253,981 | **2.40** |
+| | the key 1 against random | 1,000,000 | 260,715 | **2.25** |
 
-All eight pass. The two extra `public_key` classes are the comb's own extremes (§6), not in the earlier tests. The timing programs
-were built before the last two commits, which removed two unused constants and changed comments: the code of every function timed is
-the same text. Cranelift and Apple silicon were not timed (`docs/tls-assurance.md` §6.1 found the M4 fails scalar 1 on both
-backends for the CPU's data-dependent timing; P-256's new code was not re-run there).
+All ten pass. *Corrected in review:* the first runs of this section were at the `powersave` governor, of code two commits older than
+the head they were reported for (a commit had since changed `p256.init` and the constants' layout), and their output was not
+committed; their figures (all |t| ≤ 2.07) are replaced by these. **Not timed: Cranelift, and Apple silicon on either backend.**
+`docs/tls-assurance.md` §6.1 found scalar 1 failing on the M4 for both backends through the CPU's data-dependent timing (Arm's DIT
+bit off); nothing here changes that, and the new P-256 code was not run there.
 
 ### 8.4 Mutants
 
@@ -395,7 +401,8 @@ points outside it); every p256, ecdh, ecdsa and tls test passed. The M4 above is
 those, on the M4 (not the same machine): signing is 2.6 times OpenSSL's time, down from 36 times (a different machine, so indicative).
 
 **The check after signing (`docs/tls-server.md` §3.3), re-measured.** `sign_checked` less `sign` is 104 µs on the M4: the check is now
-64% of the combined cost, where it was 49% (it was equal to the signature on the i7). A full handshake that signs and checks now spends
+64% of the combined cost, where it was 49% (it was equal to the signature on the i7). Re-measured after the review's fixes (`sign` now zeroes all of `work`, 9,593 words; the comb's dummy is a point): `sign` 58.9 µs,
+`sign_checked` 164 µs, `public_key` 35.5 µs, the same within the noise. A full handshake that signs and checks now spends
 164 µs there, where it spent 1.64 ms. The check stays, as the design decided: a fault during signing leaks the key, 104 µs is 0.1 ms of a
 handshake whose other costs are the TLS engine's, and it is verification alone that is now the larger half.
 
