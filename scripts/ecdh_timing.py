@@ -60,6 +60,9 @@ def main():
             # The table's other extremes: every digit 8 (the largest magnitude), and n - 1
             # (every digit negative or zero after the carries).
             tests += [("scalar 0x88..", int("88" * size, 16)), ("scalar n - 1", order - 1)]
+        # Every digit zero but the top one, so the table's dummy is added 63 (or 95) times
+        # while the sum is still the point at infinity: zero operands, if any are left.
+        tests += [("scalar 16^k", 1 << (curve - 4))]
         for name, first in tests:
             # Samples are taken in batches, each one run of the program, the classes
             # interleaved within a batch (a batch of 10^6 would be 100 MB of hex).
