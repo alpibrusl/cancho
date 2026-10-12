@@ -39,7 +39,7 @@ chunk and traps when full, so buffers are heap boxes sized when the program star
 | `examples/fetch` | a blocking `GET`, the reference for "a cancho client", libc sockets | one request at a time; it waits |
 | `std.http` | a strict **request** parser into an integer table (`parse`), `dechunk` (a whole chunked body in one call), response *writers* | no response parser; `dechunk` needs the whole body in memory, so it cannot stream |
 | `std.conns` | `Table` of connections by slot, `read`/`write`/`watch`/`connect_status`, `nonblocking`, `nodelay`; with `tcp_connect_start` a **non-blocking connect to an IP literal** (a name stalls the loop: `native-sockets.md` §10.6) | |
-| `packages/tls` | a client `Engine`: `start`, `feed`/`take`/`send`/`recv` (bytes in, bytes out, no socket inside), the chain verified against roots the caller gave, the name and the time given at `start`; tickets for resumption | one engine is all clients or all servers; one slot is **269,391 bytes** (measured: `tls_client.ints_len()` is 10,243 words, 81,944 bytes, and `bytes_len()` 187,447 bytes; *corrected in place, #386: 269,119 before ALPN's two words and 256 bytes of offer*), so 64 TLS connections are 17 MB |
+| `packages/tls` | a client `Engine`: `start`, `feed`/`take`/`send`/`recv` (bytes in, bytes out, no socket inside), the chain verified against roots the caller gave, the name and the time given at `start`; tickets for resumption | one engine is all clients or all servers; one slot is **269,439 bytes** (measured: `tls_client.ints_len()` is 10,245 words, 81,960 bytes, and `bytes_len()` 187,479 bytes; *corrected in place, #386: 269,119 before ALPN, the client identity and its hedge took four words and 288 bytes*), so 64 TLS connections are 17 MB |
 | `packages/http-server` byte-fed mode | the shape to mirror: `attach`/`input`/`output`/`room`/`closing`/`detach`, the clock an argument, every buffer fixed at `open_bytes` | |
 | `examples/tls_nb/rtcp.cho` | `rtcp.Resolver`: DNS over TCP as a state machine on the caller's poller (a lookup does not stop the loop: a 2 ms gap against 302 ms for `getaddrinfo`, `tls-nonblocking.md` §7) | it is an example file (with `dns.cho`), not a package, and it is `Net("")`-only |
 | `tests/programs/tls_many.cho` | a client of `packages/tls` on one poller: connect, handshake, request, read to close_notify | one request per connection |
@@ -250,7 +250,7 @@ TLS needs is the caller's, in the order `https_hello` and `tls_many` do it:
    `tls.recv` plaintext goes to `give`. A failed handshake is `connect_failed(c, k, kind_tls(), now)` (`client.tls`; the engine's own
    refusal tag, `tls.refusal_tag(tls.failure(engine, k))`, is the caller's to log).
 4. A connection that the client says to `Close` gets `tls.finish` (close_notify) and then the socket's close and `tls.drop`.
-   An idle pooled TLS connection costs its 269,391-byte engine slot, so `slots` bounds TLS memory directly: 16 TLS connections are 4.3 MB.
+   An idle pooled TLS connection costs its 269,439-byte engine slot, so `slots` bounds TLS memory directly: 16 TLS connections are 4.3 MB.
 
 **The driver is built in this PR** (`examples/http_fetch_nb/fetch_io.cho`): poller, `std.conns`, the dial, the TLS pump and the client
 table in one loop, in the shape of `tls_many`'s `advance`/`flush`. It is an example module and not a package, for the reason
@@ -560,7 +560,7 @@ Fixed when the client and the driver are opened; nothing is allocated per reques
 |---|---|
 | the client's slot | `in_size + out_size` + 48 words of state + 272 words of parse table + 1 word of queue = **84,488** with the example's 65,536 and 16,384 |
 | the driver's buffers (`fetch_io`) | 32,768 read + 16,640 plaintext received + 16,384 request + 32,768 write + 20 words = **98,720** |
-| the TLS engine's slot, an `https` upstream only | **269,391** |
+| the TLS engine's slot, an `https` upstream only | **269,439** |
 
 So a plain connection is **183,208 bytes** (179 KiB) and a TLS one **452,327** (442 KiB): 64 TLS connections are 28.9 MB, 17.2 MB of which is
 the engine. The live `big` case moves 50 MB through a client of 8 slots in 2 to 3 MB of resident memory on macOS (19 to 20 MB on Linux, which
