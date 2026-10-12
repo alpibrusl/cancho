@@ -1,0 +1,58 @@
+[
+ {
+  "n": 50,
+  "rss": {
+   "start": 6336,
+   "connected": 6824,
+   "handshake": 9060,
+   "established": 8368,
+   "echoed": 9492,
+   "partial": 9492,
+   "all-echoed": 9492
+  },
+  "client": "/w/benches/tls_memory/clientauth/rsa",
+  "start_after_restart": 6332
+ },
+ {
+  "n": 100,
+  "rss": {
+   "start": 6336,
+   "connected": 7252,
+   "handshake": 11572,
+   "established": 10164,
+   "echoed": 12400,
+   "partial": 12400,
+   "all-echoed": 12400
+  },
+  "client": "/w/benches/tls_memory/clientauth/rsa",
+  "start_after_restart": 6328
+ },
+ {
+  "n": 200,
+  "rss": {
+   "start": 6332,
+   "connected": 8108,
+   "handshake": 16620,
+   "established": 13780,
+   "echoed": 18224,
+   "partial": 18224,
+   "all-echoed": 18224
+  },
+  "client": "/w/benches/tls_memory/clientauth/rsa",
+  "start_after_restart": 6336
+ },
+ {
+  "n": 10000,
+  "rss": {
+   "start": 6336,
+   "connected": 92176,
+   "handshake": 510604,
+   "established": 367192,
+   "echoed": 588464,
+   "partial": 588464,
+   "all-echoed": 588464
+  },
+  "client": "/w/benches/tls_memory/clientauth/rsa",
+  "start_after_restart": 6336
+ }
+]

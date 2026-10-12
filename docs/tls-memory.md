@@ -276,7 +276,8 @@ so the keys are 1,984 B and every core 224 B larger: a server's byte core 2,496 
 certificates on the server's side (#384, not merged when this was rebased) keep the client's leaf in `b_leaf` for `peer_certificate`:
 `keeps_area` is where such a connection keeps its area, at what it costs today. *As #384 merged (`docs/tls-server.md` §13.22): its words
 (`i_peer_generation`, `i_peer_not_after`, `i_leaf_len`, the flags) are core words; a connection with a verified client keeps its area
-(`keeps_area`), which goes back cleared with the leaf; `tls_pool.cho clientcert` asserts `tls.residue` 0 after every step.*
+(`keeps_area`), which goes back cleared with the leaf; `tls_pool.cho clientcert` asserts `tls.residue` 0 after every step.* *Measured and changed by §11: such a connection
+held about 110 KiB; the leaf now has a room of its own a slot and the area goes back.*
 
 ### 7.2 The engine
 
@@ -516,3 +517,143 @@ method; tickets off (`tls_echo`'s default); raw output `benches/tls_memory/*/aft
 At 10,000 connections an established idle connection is 16.8 KiB (16.7 before the rebase), after a record 52.8, every connection holding half a
 record 81.0, the high-water mark 141.6; connected 86.5 and mid-handshake 107.8 / 110.2; a client and a server slot together 13.2 KiB (12.8 before
 the rebase: #396's 320 bytes of client core and 4 words). `https_hello` idle 29.0 to 30.4 KiB (arm64) and 27.2 to 29.8 (x86-64) at 50 to 200.
+
+## 11. Client certificates: the verified leaf outside the work area
+
+> Status: **measured, decided, built** (this section's PR). The first commit is §11.1 to §11.5: the measurement of what PR #398
+> (mutual TLS, `docs/tls-server.md` §13) costs an idle connection, and the design; §11.6 is what the second built and
+> measured. Raw output: `benches/tls_memory/{arm64,x86-64}/mtls-*.log` and `*_mtls_*.json` (`benches/tls_memory/README.md`).
+
+### 11.1 The question
+
+#398 kept the verified client's leaf certificate where the handshake had put it, `b_leaf`, which since #395 is in the
+**work area** (§7.1), and so made a connection whose client presented a verified certificate keep its area for its whole
+life (`tls_slot.keeps_area`). Its author did not measure that, and named two ways out: (a) a small leaf in the core, (b) only
+the identity fields the program reads in an engine-wide table. The rule set for this section: if a verified idle connection
+costs more than about twice an unverified one, build one of them; otherwise write the cost down and close the question.
+
+### 11.2 How it was measured
+
+§2's script and phases, with one change: `scripts/tls_memory.py --client <dir>` makes every client present `<dir>/chain.pem`
+with its key, and starts the server requiring a certificate from `<dir>/ca.pem` (`tls_echo --client-ca ...
+--require-client-cert`; for OpenSSL, `benches/server/ossl_hold.c ... verify <ca.pem>`, which sets
+`SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT`, what `openssl s_server -Verify` sets: `s_server` itself serves one
+connection at a time and cannot hold N). The certificates are `benches/tls_memory/clientauth/` (`make.sh` made them, with
+OpenSSL): **`p256/`**, a device's certificate, ECDSA P-256 under a P-256 CA, a subject of three attributes, a URI and a DNS
+subjectAltName, keyUsage, extendedKeyUsage `clientAuth` and both key identifiers, **572 bytes** of DER; **`rsa/`**, an
+RSA-2048 leaf (**970 bytes**) under an RSA-2048 intermediate the client sends, under an RSA-2048 root. N is 50, 100, 200 and
+10,000; the machines are §2's (arm64: Docker on the Mac, Linux 6.8, OpenSSL 3.0.13; x86-64: `gram`, Linux 7.0, OpenSSL 3.5.5,
+cores 6 and 7 only, other work on its other cores). RSS only; nothing here is a timing. `--probe <s>` handshakes connections
+one at a time until one is not established within `s` seconds, for `--areas`.
+
+### 11.3 Measured: what a verified connection cost
+
+KiB of server RSS a connection (§2), `examples/tls_echo` from `origin/main` at `0e40f430` (#398 merged).
+
+*arm64*
+
+| N | without client certificates: established | echoed | P-256 client: established | echoed | RSA-2048 chain: established | echoed |
+|---|---|---|---|---|---|---|
+| 50 | 18.2 | 55.0 | 127.8 | 214.9 | 132.2 | 216.8 |
+| 100 | 19.4 | 55.8 | 127.0 | 213.8 | 131.2 | 215.5 |
+| 200 | 18.1 | 54.3 | 126.3 | 213.1 | 130.4 | 214.8 |
+| 10,000 | 17.0 | 53.0 | 126.0 | 212.7 | 130.0 | 214.3 |
+
+*x86-64*
+
+| N | without client certificates: established | echoed | P-256 client: established | echoed | RSA-2048 chain: established | echoed |
+|---|---|---|---|---|---|---|
+| 50 | 15.7 | 52.5 | 127.1 | 213.4 | 129.5 | 214.2 |
+| 100 | 18.1 | 54.5 | 127.4 | 213.3 | 129.8 | 214.1 |
+| 200 | 17.7 | 54.0 | 127.3 | 213.3 | 129.7 | 214.1 |
+| 10,000 | 17.0 | 53.0 | 127.7 | 213.6 | 130.0 | 214.3 |
+
+`connected` and `handshake` are the same with and without (86.5 to 86.7 and 108.0 to 110.6 KiB: a handshake holds an area
+either way), and `partial` and `all-echoed` of a verified connection are its `echoed` (its area is held whatever it does).
+
+**OpenSSL's server** on the same machines, idle established connections at 10,000 (the other counts in the logs):
+
+| | arm64, default | arm64, released buffers | x86-64, default | x86-64, released buffers |
+|---|---|---|---|---|
+| no client certificate | 24.2 | 13.7 | 49.4 | 27.8 |
+| P-256 client, verified | 31.5 | 19.8 | 61.0 | 33.9 |
+| RSA-2048 chain, verified | 36.1 | | 66.9 | |
+
+**A verified idle connection was 126.0 KiB (arm64) and 127.7 KiB (x86-64) at 10,000 connections, against 17.0 without client
+certificates: 7.4 and 7.5 times, 109 and 111 KiB more.** The RSA-2048 chain is 130.0 on both. The threshold was twice. OpenSSL
+keeps the peer's certificates parsed in its session for as long as the connection lives and pays 6 to 12 KiB for the P-256 one
+(19.8 against 13.7 and 33.9 against 27.8 with its buffers released, 31.5 against 24.2 and 61.0 against 49.4 without), 12 to 18 for
+the RSA leaf and its intermediate (36.1 and 66.9 against 24.2 and 49.4); `tls_echo` paid 109 because what kept the leaf was the area, and an area is
+the handshake's whole scratch (§3): the ECDH work area alone is 75 KiB, written by every handshake. After a record each, a
+verified connection is 213 KiB, four times an unverified one's 53, because the record buffers it wrote stay with the area.
+
+**`--areas`.** With `--areas 64` and 200 clients, each presenting the P-256 certificate (`--probe 5`): **64 of 200 established**,
+the 65th not within 5 s, because 64 verified connections hold the 64 areas (127.8 KiB each on arm64, 127.5 on x86-64); without
+client certificates 200 of 200 (18.0 and 17.9 KiB each). And **`--areas` ended every verified connection**: `tls_echo` ends an established connection that holds an
+area for longer than `--handshake-timeout` (`record-timeout`, §7.5), and a verified one always held one. A client that presented
+a P-256 certificate to `tls_echo --areas 4 --handshake-timeout 1000 --client-ca ... --require-client-cert`, echoed a byte and
+waited 6 s was closed `record-timeout` after 1.3 s (`scripts/tls_echo_test.py ... clientauth-areas` fails on `0e40f430`).
+
+### 11.4 What the program reads, and the decision
+
+The calls (`docs/tls-server.md` §13.6), and what each needs after the handshake:
+
+| call | needs | read by |
+|---|---|---|
+| `peer_verified` | the generation, the identity flags, the state: **core words** already | `tls_echo` on every `SIGHUP` (`stale`), `https_hello` |
+| `peer_not_after` | `i_peer_not_after`, a **core word** already | `tls_serve`, the driver |
+| `peer_fingerprint` | SHA-256 of the leaf's DER, computed at the call | `tls_echo` and `https_hello` (the log line), `tls_serve` |
+| `peer_subject`, `peer_serial` | ranges of the leaf's DER, parsed at the call | `tls_echo` (the log line), `tls_serve` |
+| `peer_certificate` | **the leaf's DER, whole** | `tls_serve`, the driver |
+| `peer_san` | the leaf's DER: an entry is a *range in `peer_certificate`'s DER* | `tls_serve`, the driver |
+
+**(b) as proposed, the identity fields alone, cannot keep the API.** `peer_certificate` gives the DER and `peer_san` answers
+offsets into it; a table of fields would have to keep the DER anyway, or change two calls. So what is kept is the leaf's DER, and
+everything the calls compute from it is computed as before, from the same bytes. **Where it is kept is (b)'s, not (a)'s.** The core
+is copied into an area and out again on every lease (§7.2), twice a request on a keep-alive connection: a leaf of up to 2 KiB in the
+core would put 2 KiB more in each of those copies for every server connection, verified or not, and 2 KiB more resident in every
+server slot that has ever served one (the copy writes the core whole). A room of its own a slot, beside the cores, is written once
+when the client's Finished has verified, read by the `peer_` calls only, and touched only for a connection that was verified.
+
+**Decided: build it.** A server engine gets **`peers`**, `tls_slot.peer_cap()` = **2,048 bytes a slot**; when a connection is
+established as a verified client and its leaf fits, the leaf is copied there and the area can go back; a leaf over 2,048 bytes
+keeps the area as before. 2,048 holds the measured P-256 device leaf (572) and RSA-2048 leaf (970) with room for more names; a
+bigger room is address space every server slot has (2 GiB at 1,048,576 slots, `tls_echo`'s ceiling; the cores are 4.75 KiB a
+slot), and resident only where written.
+
+### 11.5 The design, and its hazards
+
+- **The copy.** In `tls.cho`'s `settle`, after every call on a server connection that holds an area,
+  `tls_clientauth.keep(area, room)`: if the connection is established as verified (`tls_clientauth.verified`: `f_client_auth` and
+  not failed) and the leaf is not yet kept and is at most 2,048 bytes, the `i_leaf_len` bytes at `b_leaf` are copied to the slot's
+  room and the core flag **`f_leaf_kept`** is set. `keeps_area` becomes `f_client_auth && !failed && !f_leaf_kept`, so the same
+  `settle` gives the area back (cleared, `b_leaf` included, as before).
+- **Exactly what was verified.** `b_leaf` is written once, by `on_certificate`, with the bytes `verify_chain` verified, and
+  CertificateVerify's signature is checked against them; nothing writes it afterwards. The copy is made in the call whose Finished
+  set `f_client_auth` (`established`), from the same area, before the area can go back. The length is the core word `i_leaf_len`;
+  the room holds nothing past it.
+- **No aliasing.** The room is indexed by slot, a slot has one connection at a time (`serve` refuses a busy slot), and the room is
+  emptied whenever the connection that owns it stops (below). Nothing in it is shared between slots and nothing is looked up by
+  content.
+- **Reads.** The `peer_` calls read the slot's *current* core (the area's copy while it holds one, §7.2): when it says
+  `f_leaf_kept` the leaf is the room's `i_leaf_len` bytes, gated as before by `verified`; otherwise, for a larger leaf, the area's
+  `b_leaf`, as before. `peer_verified` and `peer_not_after` read core words, so they answer from the core of a connection without an
+  area (before, `peer_verified` answered 0 for a connection without one, which a verified connection never was). A verified
+  connection that takes an area again for a record reads the room: the area's `b_leaf` was cleared when it went back.
+- **Emptied** (`tls_clientauth.forget`: the `i_leaf_len` bytes zeroed and the flag cleared): when the connection **fails** (in the
+  `settle` of the call that failed it, or in `fail_parked` for a socket's end with no area free), when the slot is **dropped**
+  (`drop`, before the core is cleared, whether it holds an area or not), and so by **`close`**, which drops every slot. A closed
+  connection (close_notify) keeps its identity until it is dropped, as §13.6 says it does.
+- **`tls.residue`** counts, for a server engine, every byte of a slot's room that is not the leaf of a busy, non-failed connection
+  with `f_leaf_kept`: a free slot's room must be zeros, a failed connection's too, and a kept leaf's room must be zeros past
+  `i_leaf_len` (so a slot's next, shorter leaf cannot sit on the tail of the last one).
+- **The store replaced at Finished** (`tls-server-client-store-replaced`, §13.22): `established` refuses before `f_client_auth` is
+  set, so nothing is copied; the connection fails as before. **Resumption** (§13.8): a resumed connection presents no certificate and
+  has no identity, so nothing is copied.
+- **The API is unchanged**: the same calls, the same answers, the same refusals; the recordings of the lying client and the client
+  certificates replay byte for byte (§11.6).
+
+What it costs: 2,048 bytes of address space a server slot (`n * 2,048`, allocated by `open_server*` only; a client engine's is
+empty), written only for a verified connection; for each, `i_leaf_len` bytes, which on 4 KiB pages two neighbouring slots share,
+so **about 2 KiB resident a verified connection** when every slot holds one (arithmetic; §11.6 measures it). One copy of the leaf
+a connection (572 bytes for the P-256 device). No copy on a lease.

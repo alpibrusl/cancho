@@ -2,10 +2,13 @@
 // per-connection resident memory of an ordinary OpenSSL server, to put beside `examples/tls_echo`'s. It does what
 // `tls_echo` does and no more: accept, handshake, echo. No tickets are sent (SSL_OP_NO_TICKET), as `tls_echo` sends none.
 //
-//   ossl_hold <port> <chain.pem> <key.pem> [release]
+//   ossl_hold <port> <chain.pem> <key.pem> [release] [verify <ca.pem>]
 //
 // With `release`, SSL_MODE_RELEASE_BUFFERS: OpenSSL frees a connection's record buffers whenever they are empty, which is
-// what a server with many idle connections sets. Without it the buffers stay once allocated. Prints `listening <port>`.
+// what a server with many idle connections sets. Without it the buffers stay once allocated. With `verify`, a client
+// certificate is required and verified against the CAs of `ca.pem`: SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
+// what `openssl s_server -Verify` sets (docs/tls-memory.md §11; `s_server` itself serves one connection at a time, so it
+// cannot hold N). Prints `listening <port>`.
 //
 //   gcc -O2 -o ossl_hold benches/server/ossl_hold.c -lssl -lcrypto
 #include <arpa/inet.h>
@@ -32,8 +35,14 @@ static void drop(int ep, Conn *c) {
 }
 
 int main(int argc, char **argv) {
-  if (argc < 4) { fprintf(stderr, "usage: ossl_hold <port> <chain.pem> <key.pem> [release]\n"); return 2; }
-  int port = atoi(argv[1]), release = argc > 4 && !strcmp(argv[4], "release");
+  if (argc < 4) { fprintf(stderr, "usage: ossl_hold <port> <chain.pem> <key.pem> [release] [verify <ca.pem>]\n"); return 2; }
+  int port = atoi(argv[1]), release = 0;
+  const char *verify = 0;
+  for (int k = 4; k < argc; k++) {
+    if (!strcmp(argv[k], "release")) release = 1;
+    else if (!strcmp(argv[k], "verify") && k + 1 < argc) verify = argv[++k];
+    else { fprintf(stderr, "ossl_hold: unknown argument %s\n", argv[k]); return 2; }
+  }
   SSL_CTX *ctx = SSL_CTX_new(TLS_server_method());
   SSL_CTX_set_min_proto_version(ctx, TLS1_3_VERSION);
   SSL_CTX_set_options(ctx, SSL_OP_NO_TICKET);
@@ -42,6 +51,11 @@ int main(int argc, char **argv) {
   SSL_CTX_set_mode(ctx, SSL_MODE_ENABLE_PARTIAL_WRITE | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER | (release ? SSL_MODE_RELEASE_BUFFERS : 0));
   if (SSL_CTX_use_certificate_chain_file(ctx, argv[2]) != 1 || SSL_CTX_use_PrivateKey_file(ctx, argv[3], SSL_FILETYPE_PEM) != 1) {
     ERR_print_errors_fp(stderr); return 1;
+  }
+  if (verify) {
+    if (SSL_CTX_load_verify_locations(ctx, verify, 0) != 1) { ERR_print_errors_fp(stderr); return 1; }
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, 0);
+    SSL_CTX_set_client_CA_list(ctx, SSL_load_client_CA_file(verify));
   }
   int ls = socket(AF_INET, SOCK_STREAM, 0), one = 1;
   setsockopt(ls, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);

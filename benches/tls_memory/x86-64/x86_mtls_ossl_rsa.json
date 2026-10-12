@@ -1,0 +1,58 @@
+[
+ {
+  "n": 50,
+  "rss": {
+   "start": 8204,
+   "connected": 9176,
+   "handshake": 11876,
+   "established": 12040,
+   "echoed": 12328,
+   "partial": 12328,
+   "all-echoed": 12328
+  },
+  "client": "/home/alpibru/Workspace/mtls-memory/src/benches/tls_memory/clientauth/rsa",
+  "start_after_restart": 8136
+ },
+ {
+  "n": 100,
+  "rss": {
+   "start": 8128,
+   "connected": 9908,
+   "handshake": 15156,
+   "established": 15480,
+   "echoed": 16048,
+   "partial": 16048,
+   "all-echoed": 16048
+  },
+  "client": "/home/alpibru/Workspace/mtls-memory/src/benches/tls_memory/clientauth/rsa",
+  "start_after_restart": 8204
+ },
+ {
+  "n": 200,
+  "rss": {
+   "start": 8192,
+   "connected": 11660,
+   "handshake": 21592,
+   "established": 22220,
+   "echoed": 23340,
+   "partial": 23340,
+   "all-echoed": 23340
+  },
+  "client": "/home/alpibru/Workspace/mtls-memory/src/benches/tls_memory/clientauth/rsa",
+  "start_after_restart": 8140
+ },
+ {
+  "n": 10000,
+  "rss": {
+   "start": 8196,
+   "connected": 170608,
+   "handshake": 649408,
+   "established": 676928,
+   "echoed": 732360,
+   "partial": 732360,
+   "all-echoed": 732360
+  },
+  "client": "/home/alpibru/Workspace/mtls-memory/src/benches/tls_memory/clientauth/rsa",
+  "start_after_restart": 8188
+ }
+]

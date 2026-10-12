@@ -1,0 +1,58 @@
+[
+ {
+  "n": 50,
+  "rss": {
+   "start": 6328,
+   "connected": 6816,
+   "handshake": 9036,
+   "established": 7772,
+   "echoed": 8884,
+   "partial": 8884,
+   "all-echoed": 8884
+  },
+  "client": null,
+  "start_after_restart": 6316
+ },
+ {
+  "n": 100,
+  "rss": {
+   "start": 6328,
+   "connected": 7244,
+   "handshake": 11568,
+   "established": 8980,
+   "echoed": 11192,
+   "partial": 11192,
+   "all-echoed": 11192
+  },
+  "client": null,
+  "start_after_restart": 6328
+ },
+ {
+  "n": 200,
+  "rss": {
+   "start": 6324,
+   "connected": 8096,
+   "handshake": 16584,
+   "established": 11400,
+   "echoed": 15808,
+   "partial": 15808,
+   "all-echoed": 15808
+  },
+  "client": null,
+  "start_after_restart": 6312
+ },
+ {
+  "n": 10000,
+  "rss": {
+   "start": 6328,
+   "connected": 92168,
+   "handshake": 510280,
+   "established": 248440,
+   "echoed": 468140,
+   "partial": 468140,
+   "all-echoed": 468140
+  },
+  "client": null,
+  "start_after_restart": 6328
+ }
+]

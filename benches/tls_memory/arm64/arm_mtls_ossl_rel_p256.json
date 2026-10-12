@@ -1,0 +1,58 @@
+[
+ {
+  "n": 50,
+  "rss": {
+   "start": 6336,
+   "connected": 6820,
+   "handshake": 8640,
+   "established": 7576,
+   "echoed": 7592,
+   "partial": 8336,
+   "all-echoed": 7692
+  },
+  "client": "/w/benches/tls_memory/clientauth/p256",
+  "start_after_restart": 6336
+ },
+ {
+  "n": 100,
+  "rss": {
+   "start": 6340,
+   "connected": 7252,
+   "handshake": 10716,
+   "established": 8576,
+   "echoed": 8592,
+   "partial": 10124,
+   "all-echoed": 8692
+  },
+  "client": "/w/benches/tls_memory/clientauth/p256",
+  "start_after_restart": 6324
+ },
+ {
+  "n": 200,
+  "rss": {
+   "start": 6336,
+   "connected": 8108,
+   "handshake": 14912,
+   "established": 10552,
+   "echoed": 10568,
+   "partial": 13672,
+   "all-echoed": 10668
+  },
+  "client": "/w/benches/tls_memory/clientauth/p256",
+  "start_after_restart": 6340
+ },
+ {
+  "n": 10000,
+  "rss": {
+   "start": 6340,
+   "connected": 92176,
+   "handshake": 424332,
+   "established": 204564,
+   "echoed": 204580,
+   "partial": 361880,
+   "all-echoed": 204680
+  },
+  "client": "/w/benches/tls_memory/clientauth/p256",
+  "start_after_restart": 6340
+ }
+]
