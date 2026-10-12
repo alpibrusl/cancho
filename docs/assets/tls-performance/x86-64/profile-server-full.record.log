@@ -1,0 +1,7 @@
+[ perf record: Woken up 1223 times to write data ]
+Warning:
+Processed 127228 events and lost 5 chunks!
+
+Check IO/CPU overload!
+
+[ perf record: Captured and wrote 305,749 MB /home/alpibru/Workspace/cancho-perf-asbuilt/prof_x86/server-full.data (9462 samples) ]

@@ -1,0 +1,80 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 3167
+#
+# Samples: 11K of event 'cpu-clock'
+# Event count (approx.): 6001499250
+#
+# Overhead  Symbol                                  
+# ........  ........................................
+#
+     4.86%  [.] lexs_std.p256_kernels.mul_p
+            |          
+            |--2.22%--lexs_std.p256_vf.double
+            |          |          
+            |           --2.19%--lexs_std.p256_vf.verify
+            |                     lexs_std.ecdsa.verify
+            |                     lexs_std.ecdsa.verify_der
+            |                     |          
+            |                     |--1.12%--lexs_x509_verify.signature_ok
+            |                     |          lexs_x509_verify.extend
+            |                     |          lexs_x509_verify.chain
+            |                     |          lexs_x509_verify.verify
+            |                     |          lexs_tls_slot.verify_chain
+            |                     |          lexs_tls_client.on_certificate
+            |                     |          lexs_tls_client.on_handshake_bytes
+            |                     |          lexs_tls_client.on_record
+            |                     |          lexs_tls_client.feed_with
+            |                     |          lexs_tls.feed
+            |                     |          lexs_advance
+            |                     |          lexs_drive
+            |                     |          lexs_main
+            |                     |          main
+            |                     |          
+            |                      --1.08%--lexs_tls_slot.check_signature
+            |                                lexs_tls_client.on_certificate_verify
+            |                                lexs_tls_client.on_handshake_bytes
+            |                                lexs_tls_client.on_record
+            |                                lexs_tls_client.feed_with
+            |                                lexs_tls.feed
+            |                                lexs_advance
+            |                                lexs_drive
+            |                                lexs_main
+            |                                main
+            |          
+            |--1.76%--lexs_std.p256_vf.add_jac
+            |          |          
+            |           --1.75%--lexs_std.p256_vf.verify
+            |                     lexs_std.ecdsa.verify
+            |                     lexs_std.ecdsa.verify_der
+            |                     |          
+            |                     |--0.93%--lexs_tls_slot.check_signature
+            |                     |          lexs_tls_client.on_certificate_verify
+            |                     |          lexs_tls_client.on_handshake_bytes
+            |                     |          lexs_tls_client.on_record
+            |                     |          lexs_tls_client.feed_with
+            |                     |          lexs_tls.feed
+            |                     |          lexs_advance
+            |                     |          lexs_drive
+            |                     |          lexs_main
+            |                     |          main
+            |                     |          
+            |                      --0.82%--lexs_x509_verify.signature_ok
+            |                                lexs_x509_verify.extend
+            |                                lexs_x509_verify.chain
+            |                                lexs_x509_verify.verify
+            |                                lexs_tls_slot.verify_chain
+            |                                lexs_tls_client.on_certificate
+            |                                lexs_tls_client.on_handshake_bytes
+            |                                lexs_tls_client.on_record
+            |                                lexs_tls_client.feed_with
+            |                                lexs_tls.feed
+            |                                lexs_advance
+            |                                lexs_drive
+            |                                lexs_main
+            |                                main
+            |          
+             --0.83%--lexs_std.p256_vf.madd
+                       |          
+                        --0.83%--lexs_std.p256_vf.verify

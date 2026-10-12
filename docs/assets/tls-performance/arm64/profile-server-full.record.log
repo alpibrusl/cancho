@@ -1,0 +1,2 @@
+[ perf record: Woken up 818 times to write data ]
+[ perf record: Captured and wrote 204.445 MB /w/.perf-scratch/prof_arm64/server-full.data (5931 samples) ]

@@ -1,0 +1,69 @@
+9174 samples from 1 file(s)
+category                                                     share
+memory: malloc, free, brk                                   48.47%
+X25519 (key pair and shared secret)                         16.62%
+HKDF, HMAC (key schedule, Finished)                         15.05%
+system calls (sockets, epoll)                                7.98%
+engine and event loop (parsing, copies, bookkeeping)         5.28%
+record AEAD, traffic-key setup                               3.64%
+SHA-256/384 (transcript, digests)                            2.42%
+memory: page faults (first touch, or pages the kernel took back)   0.40%
+not attributed (interrupts, samples with no stack)           0.11%
+certificate parsing                                          0.02%
+
+inclusive share of the 40 most common frames named lexs_*:
+ 94.24%  lexs_main
+ 94.24%  lexs_echo_loop.serve
+ 94.24%  lexs_echo_loop.run
+ 89.09%  lexs_echo_loop.pump
+ 80.40%  lexs_tls.feed
+ 80.37%  lexs_tls_server.feed
+ 80.30%  lexs_tls_server.on_record
+ 79.25%  lexs_tls_server.on_handshake_bytes
+ 54.70%  lexs_tls_server.on_client_hello
+ 53.56%  lexs_tls_server.respond
+ 34.65%  lexs_std.hkdf.expand_label
+ 25.95%  lexs_std.hkdf.expand
+ 23.64%  lexs_tls_server.on_client_finished
+ 13.68%  lexs_std.hmac.init
+ 13.23%  lexs_std.crypto.compress
+ 12.81%  lexs_tls_server.issue_tickets
+ 12.67%  lexs_std.x25519.scalarmult
+ 12.30%  lexs_tls_server.key_exchange
+ 10.46%  lexs_std.hmac.final
+  9.76%  lexs_tls_slot.set_read_keys
+  9.56%  lexs_tls_slot.set_write_keys
+  9.33%  lexs_tls_server.handshake_secrets
+  9.24%  lexs_tls_server.try_resume
+  7.96%  lexs_std.crypto.sha256_update
+  7.84%  lexs_std.field25519_51.square
+  7.74%  lexs_std.field25519_51.mul
+  7.16%  lexs_std.crypto.sha256_final
+  6.19%  lexs_tls_ticket.subkey
+  6.10%  lexs_tls_client.finished_mac
+  5.96%  lexs_tls_front.flush_slot
+  5.96%  lexs_tls_ticket.seal
+  5.86%  lexs_tls_server.binder_ok
+  5.01%  lexs_std.gcm.prepare_parts
+  4.55%  lexs_std.conns.write
+  4.47%  lexs_std.hmac.mac
+  3.32%  lexs_std.aes.sub_word
+  2.86%  lexs_std.aes.round_keys
+  2.82%  lexs_tls_ticket.open
+  2.58%  lexs_tls_front.admit
+  2.28%  lexs_tls.serve
+
+memory: 48.5% of the samples; in the `brk` system call 41.2%, in page faults 5.7%, under glibc's `systrim` (giving the top of the heap back) 35.2%, neither 1.5%
+the program's function nearest the allocator:
+  9.95%  lexs_std.hmac.init
+  9.76%  lexs_std.hkdf.expand_label
+  6.87%  lexs_std.hkdf.expand
+  3.11%  lexs_tls_ticket.subkey
+  2.31%  lexs_std.aes.sub_word
+  1.91%  lexs_tls_server.on_client_finished
+  1.42%  lexs_tls_server.issue_tickets
+  1.18%  lexs_tls_server.respond
+  1.13%  lexs_tls.draw
+  1.08%  lexs_tls_client.finished_mac
+  0.98%  lexs_tls_ticket.seal
+  0.86%  lexs_tls_server.on_handshake_bytes

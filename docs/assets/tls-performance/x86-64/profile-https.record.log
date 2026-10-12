@@ -1,0 +1,2 @@
+[ perf record: Woken up 1506 times to write data ]
+[ perf record: Captured and wrote 376,531 MB /home/alpibru/Workspace/cancho-perf-asbuilt/prof_x86/https.data (11959 samples) ]

@@ -5,7 +5,8 @@
     python3 scripts/tls_perf.py table  ./tls_prims_bench [--repeats 5] [--target 300] [--json out.json]
     python3 scripts/tls_perf.py check  ./tls_prims_bench [--baseline benches/tls_baseline.json] [--factor 1.3]
     python3 scripts/tls_perf.py record ./tls_prims_bench --machine <tag> [--baseline benches/tls_baseline.json]
-    python3 scripts/tls_perf.py profile <perf script output>... [--total-us <CPU a handshake in microseconds>] [--top 40]
+    python3 scripts/tls_perf.py profile <perf script output>... [--total-us <CPU a handshake in microseconds>] [--top 40] [--memory]
+    python3 scripts/tls_perf.py openssl [--seconds 3]
 
 `table` prints, for every operation of `tests/programs/tls_prims_bench.cho`, the least of `--repeats` runs of at least
 `--target` milliseconds each, in nanoseconds a call. Where `perf stat` can count user cycles (Linux, with the
@@ -33,7 +34,13 @@ into the categories of docs/tls-performance.md §3.3, by which frames each stack
 the samples and, given `--total-us` (the CPU a handshake or a request costs, measured on its own), as microseconds. Make the
 input with `perf script -F comm,ip,sym > file`. The categories are exclusive and tested in this order: memory (malloc, free,
 brk and the page faults they cause), then the primitives (X25519, ECDSA verify, ECDSA sign, HKDF and HMAC, SHA-2, the AEADs),
-then system calls, then the rest of the program's own code.
+then system calls, then the rest of the program's own code. `--memory` splits the memory category: how much of it is in the
+kernel (the `brk` system call, page faults) and which of the program's functions made the call (docs/tls-performance.md §10.4).
+
+`openssl` runs `openssl speed` for the same primitives (`ecdsap256`, `ecdhx25519`, `ecdhp256`, SHA-256 and SHA-384 at 64,
+1,024 and 16,384 bytes, HMAC-SHA-256 at 64, and AES-128-GCM and ChaCha20-Poly1305 sealed as a TLS record is, `-aead`, at the
+three sizes) and prints the time a call; where `perf stat` can count, also cycles a call, which is the time a call times the
+run's cycles over its task-clock (§2.2). Pin it to the core the table ran on (`taskset -c 0`).
 """
 import argparse
 import json
@@ -264,7 +271,7 @@ def cmd_record(a):
     if shutil.which("valgrind"):
         entry["instructions"] = {k: round(v, 1) for k, v in instruction_counts(a.exe).items()}
     base["machines"][a.machine] = entry
-    json.dump(base, open(a.baseline, "w"), indent=1, sort_keys=True)
+    json.dump(base, open(a.baseline, "w"), indent=1, sort_keys=True, ensure_ascii=False)
     open(a.baseline, "a").write("\n")
     print(f"recorded {len(entry['quotients'])} quotients and {len(entry.get('instructions', {}))} instruction counts for {a.machine} in {a.baseline}")
     return 0
@@ -303,11 +310,14 @@ def category(stack):
         return "memory: malloc, free, brk"
     if any(f in FAULT for f in stack):
         return "memory: page faults (first touch, or pages the kernel took back)"
-    if has("lexs_std.x25519.scalarmult"):
+    # `std.field25519_51` (#393) is X25519's field alone in a TLS process; a ladder inlined into its caller leaves only it.
+    if has("lexs_std.x25519.scalarmult", "lexs_std.field25519_51"):
         return "X25519 (key pair and shared secret)"
     if has("lexs_std.ecdh.shared", "lexs_std.ecdh.public_key") and not has("lexs_std.ecdsa_sign"):
         return "P-256/P-384 ECDH"
-    if has("lexs_std.ecdsa.verify"):
+    # Since #397 a P-256 verification is `std.p256_vf.verify`, and the server's check after signing reaches it from
+    # `tls_server.sign` with `ecdsa_sign.sign_checked` and `ecdsa.verify_raw` inlined away (docs/tls-performance.md §10).
+    if has("lexs_std.ecdsa.verify", "lexs_std.p256_vf.verify"):
         if has("lexs_x509_verify"):
             return "ECDSA verify: the chain (CA signature on the leaf)"
         if has("lexs_tls_client.on_certificate_verify"):
@@ -353,6 +363,72 @@ def cmd_profile(a):
             if f.startswith("lexs_") and shown < a.top:
                 print(f"{v / n * 100:6.2f}%  {f}")
                 shown += 1
+    if a.memory:
+        memory_split(stacks)
+    return 0
+
+
+def memory_split(stacks):
+    """The memory category's samples: in the kernel (the `brk` system call, page faults) or in the allocator's user code, and
+    the program's function nearest the allocator on each stack (a `region`'s `malloc` or `free` is emitted into the function
+    that opens it)."""
+    n = len(stacks)
+    mem = [st for st in stacks if any(f in ALLOC for f in st)]
+
+    def share(pred):
+        return sum(1 for st in mem if pred(st)) / n * 100 if n else 0.0
+
+    brk = lambda st: any("brk" in f for f in st)  # noqa: E731
+    fault = lambda st: any(f in FAULT for f in st)  # noqa: E731
+    trim = lambda st: any(f.startswith("systrim") for f in st)  # noqa: E731
+    print(f"\nmemory: {len(mem) / n * 100:.1f}% of the samples; in the `brk` system call {share(brk):.1f}%, in page faults "
+          f"{share(fault):.1f}%, under glibc's `systrim` (giving the top of the heap back) {share(trim):.1f}%, neither "
+          f"{share(lambda st: not brk(st) and not fault(st)):.1f}%")
+    callers = {}
+    for st in mem:
+        own = [f for f in st if f.startswith("lexs_")]
+        k = own[-1] if own else "(none)"
+        callers[k] = callers.get(k, 0) + 1
+    print("the program's function nearest the allocator:")
+    for k, v in sorted(callers.items(), key=lambda kv: -kv[1])[:12]:
+        print(f"{v / n * 100:6.2f}%  {k}")
+
+
+SPEED = [("ecdsap256", ["ecdsap256"]), ("ecdhx25519", ["ecdhx25519"]), ("ecdhp256", ["ecdhp256"])]
+SPEED += [(h, ["-evp", h, "-bytes", str(b)]) for h in ("sha256", "sha384") for b in (64, 1024, 16384)]
+SPEED += [("hmac-sha256", ["-hmac", "sha256", "-bytes", "64"])]
+SPEED += [(c, ["-aead", "-evp", c, "-bytes", str(b)]) for c in ("aes-128-gcm", "chacha20-poly1305") for b in (64, 1024, 16384)]
+
+
+def cmd_openssl(a):
+    """OpenSSL's cost of the same primitives on this machine (§2.2)."""
+    env = {**os.environ, "LC_ALL": "C"}
+    print("machine:", json.dumps(machine()))
+    print(subprocess.run(["openssl", "version"], capture_output=True, text=True).stdout.strip())
+    with_perf = can_perf()
+    for name, args in SPEED:
+        cmd = ["openssl", "speed", "-seconds", str(a.seconds)] + args
+        if with_perf:
+            cmd = ["perf", "stat", "-x,", "-e", "cycles:u,task-clock"] + cmd
+        r = subprocess.run(cmd, capture_output=True, text=True, env=env)
+        hz = None
+        if with_perf:
+            cyc = clock = None
+            for line in r.stderr.splitlines():
+                f = line.split(",")
+                if len(f) < 3 or not f[0].replace(".", "").isdigit():
+                    continue
+                if "cycles" in f[2] and "atom" not in f[2]:
+                    cyc = float(f[0])
+                elif "task-clock" in f[2]:
+                    clock = float(f[0]) / 1e3
+            hz = cyc / clock if cyc and clock else None
+        for line in (r.stderr + r.stdout).splitlines():
+            m = re.search(r": (\d+) (.+?) in ([\d.]+)s", line)
+            if m:
+                ns = float(m.group(3)) / int(m.group(1)) * 1e9
+                cyc = f"{ns * 1e-9 * hz:12.0f} cycles  ({hz / 1e9:.2f} GHz)" if hz else ""
+                print(f"{name:18} {' '.join(args):38} {ns:12.1f} ns  {cyc}  | {line.strip()}")
     return 0
 
 
@@ -364,6 +440,9 @@ def main():
     pp.add_argument("files", nargs="+")
     pp.add_argument("--total-us", type=float, default=0)
     pp.add_argument("--top", type=int, default=0)
+    pp.add_argument("--memory", action="store_true", help="split the memory category: kernel or not, and by caller")
+    po = sub.add_parser("openssl")
+    po.add_argument("--seconds", type=int, default=3)
     for name in ("table", "check", "record"):
         p = sub.add_parser(name)
         p.add_argument("exe")
@@ -384,6 +463,8 @@ def main():
     a = ap.parse_args()
     if a.cmd == "profile":
         return cmd_profile(a)
+    if a.cmd == "openssl":
+        return cmd_openssl(a)
     a.exe = os.path.abspath(a.exe)
     return {"table": cmd_table, "check": cmd_check, "record": cmd_record}[a.cmd](a) or 0
 
