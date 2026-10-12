@@ -30,10 +30,20 @@ pub fn aim[&s](st: &!s [int], target: int) -> [] int {
     return 0;
 }
 
+// Buffer 3, the constants (string literals), keeps its base and length in slots 56 and 57; the
+// others in 43 and 44, 45 and 46, 47 and 48.
+fn base_slot(t: int) -> [] int {
+    if t == 3 {
+        return 56;
+    }
+    return 43 + 2 * t;
+}
+
 pub fn put[&s](st: &!s [int], b: int) -> [] int {
     let t = st[49];
-    st[st[43 + 2 * t] + st[44 + 2 * t]] = b;
-    st[44 + 2 * t] = st[44 + 2 * t] + 1;
+    let base = base_slot(t);
+    st[st[base] + st[base + 1]] = b;
+    st[base + 1] = st[base + 1] + 1;
     return 0;
 }
 
@@ -89,8 +99,8 @@ pub fn copy[&s](st: &!s [int], from: int, to: int) -> [] int {
     let keep = st[49];
     st[49] = to;
     var i = 0;
-    while i < st[44 + 2 * from] {
-        put(st, st[st[43 + 2 * from] + i]);
+    while i < st[base_slot(from) + 1] {
+        put(st, st[st[base_slot(from)] + i]);
         i = i + 1;
     }
     st[49] = keep;
@@ -98,7 +108,7 @@ pub fn copy[&s](st: &!s [int], from: int, to: int) -> [] int {
 }
 
 pub fn clear[&s](st: &!s [int], target: int) -> [] int {
-    st[44 + 2 * target] = 0;
+    st[base_slot(target) + 1] = 0;
     return 0;
 }
 
@@ -121,7 +131,10 @@ pub fn llvm_type[&s](st: &!s [int], ty: int) -> [] int {
     if ty == 5 {
         return str(st, "i1");
     }
-    if types.is_ref(st, ty) {
+    if ty == 2 {
+        return str(st, "i8");
+    }
+    if ty == 7 || types.is_ref(st, ty) {
         return str(st, "ptr");
     }
     return str(st, "i64");
@@ -129,6 +142,11 @@ pub fn llvm_type[&s](st: &!s [int], ty: int) -> [] int {
 
 // An operand: a constant or a temporary.
 pub fn operand[&s](st: &!s [int], ty: int, known: bool, value: int, reg: int) -> [] int {
+    if reg <= 0 - 2 {
+        // A string literal's global, `@str.<n>`, kept as `-2 - n`.
+        str(st, "@str.");
+        return nat(st, 0 - 2 - reg);
+    }
     if known {
         if ty == 5 {
             if value != 0 {
@@ -637,6 +655,224 @@ pub fn ret[&s](st: &!s [int], ty: int, known: bool, value: int, reg: int) -> [] 
     nat(st, n);
     str(st, ":\n");
     return 0;
+}
+
+// ---------------------------------------------------------------------------- slices ---
+//
+// A reference to a slice is two values in the code, a pointer and a length: a binding of one has two
+// stack slots, `%s<n>_0` and `%s<n>_1`, a parameter two arguments, and an argument two operands. The
+// pointer part is a temporary or the global of a string literal (`reg` of `-2 - n`), the length a
+// temporary, or the constant `value` when there is no register (`reg2` of -1).
+
+// A binding of a reference to a slice: its two stack slots.
+pub fn alloca_slice[&s](st: &!s [int], slot: int) -> [] int {
+    let keep = st[49];
+    st[49] = 2;
+    str(st, "  %s");
+    nat(st, slot);
+    str(st, "_0 = alloca ptr\n  %s");
+    nat(st, slot);
+    str(st, "_1 = alloca i64\n");
+    st[49] = keep;
+    return 0;
+}
+
+// Load both parts; answers the temporary of the pointer, and the length's is left in `st[59]`.
+pub fn load_slice[&s](st: &!s [int], slot: int) -> [] int {
+    let p = start(st);
+    str(st, "load ptr, ptr %s");
+    nat(st, slot);
+    str(st, "_0\n");
+    let n = start(st);
+    str(st, "load i64, ptr %s");
+    nat(st, slot);
+    str(st, "_1\n");
+    st[59] = n;
+    return p;
+}
+
+// Store a pointer (a temporary or a global) and a length into the slots of a binding.
+pub fn store_slice[&s](st: &!s [int], slot: int, ptr_reg: int, len_known: bool, len_value: int, len_reg: int) -> [] int {
+    str(st, "  store ptr ");
+    operand(st, 7, false, 0, ptr_reg);
+    str(st, ", ptr %s");
+    nat(st, slot);
+    str(st, "_0\n  store i64 ");
+    operand(st, 1, len_known, len_value, len_reg);
+    str(st, ", ptr %s");
+    nat(st, slot);
+    str(st, "_1\n");
+    return 0;
+}
+
+// A parameter that is a reference to a slice: both arguments into the slots.
+pub fn store_slice_param[&s](st: &!s [int], index: int, slot: int) -> [] int {
+    str(st, "  store ptr %arg");
+    nat(st, index);
+    str(st, ", ptr %s");
+    nat(st, slot);
+    str(st, "_0\n  store i64 %arg");
+    nat(st, index + 1);
+    str(st, ", ptr %s");
+    nat(st, slot);
+    str(st, "_1\n");
+    return 0;
+}
+
+// The two operands of a slice, pushed as the arguments of a call.
+pub fn push_slice[&s](st: &!s [int], ptr_reg: int, len_known: bool, len_value: int, len_reg: int) -> [] int {
+    push_arg(st, 7, false, 0, ptr_reg);
+    return push_arg(st, 1, len_known, len_value, len_reg);
+}
+
+// The text of a string literal as a global of its own, `@str.<n>`: the number answered, the length
+// left in `st[59]`. The token includes its quotes; the six escapes are what the lexer allows.
+pub fn string_constant[&s, &x](st: &!s [int], text: &x [byte], tok: int) -> [] int {
+    let n = st[58];
+    st[58] = n + 1;
+    // Its length first, so the array can be sized.
+    var length = 0;
+    var i = ast.tstart(st, tok) + 1;
+    let end = ast.tend(st, tok) - 1;
+    while i < end {
+        if int_of(text[i]) == 92 {
+            i = i + 1;
+        }
+        length = length + 1;
+        i = i + 1;
+    }
+    let keep = st[49];
+    st[49] = 3;
+    str(st, "@str.");
+    nat(st, n);
+    str(st, " = private unnamed_addr constant [");
+    nat(st, length);
+    str(st, " x i8] [");
+    var k = 0;
+    i = ast.tstart(st, tok) + 1;
+    while i < end {
+        var c = int_of(text[i]);
+        if c == 92 {
+            i = i + 1;
+            let e = int_of(text[i]);
+            if e == 'n' {
+                c = 10;
+            } else if e == 'r' {
+                c = 13;
+            } else if e == 't' {
+                c = 9;
+            } else if e == '0' {
+                c = 0;
+            } else {
+                c = e;
+            }
+        }
+        if k > 0 {
+            str(st, ", ");
+        }
+        str(st, "i8 ");
+        nat(st, c);
+        k = k + 1;
+        i = i + 1;
+    }
+    str(st, "]\n");
+    st[49] = keep;
+    st[59] = length;
+    return n;
+}
+
+// Bytes of a slice are one each and whole numbers eight; the other element types are not written yet.
+fn stride[&s](st: &!s [int], ty: int) -> [] int {
+    if ty == 2 {
+        return 1;
+    }
+    return 8;
+}
+
+// The address of element `index` of the slice `(base, length)`, after a bounds check: the temporary
+// of the pointer. A negative index is a large one to the unsigned comparison, as in Rust.
+pub fn element_address[&s](st: &!s [int], element: int, base_reg: int, len_known: bool, len_value: int, len_reg: int, ik: bool, iv: int, ir: int) -> [] int {
+    let outside = start(st);
+    str(st, "icmp uge i64 ");
+    operand(st, 1, ik, iv, ir);
+    str(st, ", ");
+    operand(st, 1, len_known, len_value, len_reg);
+    str(st, "\n");
+    trap_if(st, outside);
+    let at = start(st);
+    str(st, "mul i64 ");
+    operand(st, 1, ik, iv, ir);
+    str(st, ", ");
+    nat(st, stride(st, element));
+    str(st, "\n");
+    let p = start(st);
+    str(st, "getelementptr i8, ptr ");
+    operand(st, 7, false, 0, base_reg);
+    str(st, ", i64 ");
+    temp(st, at);
+    str(st, "\n");
+    return p;
+}
+
+// A load from an address: of a byte, a whole number or a boolean.
+pub fn load_through[&s](st: &!s [int], ty: int, address: int) -> [] int {
+    let n = start(st);
+    str(st, "load ");
+    llvm_type(st, ty);
+    str(st, ", ptr ");
+    temp(st, address);
+    str(st, "\n");
+    return n;
+}
+
+pub fn store_through[&s](st: &!s [int], ty: int, known: bool, value: int, reg: int, address: int) -> [] int {
+    str(st, "  store ");
+    llvm_type(st, ty);
+    str(st, " ");
+    operand(st, ty, known, value, reg);
+    str(st, ", ptr ");
+    temp(st, address);
+    str(st, "\n");
+    return 0;
+}
+
+// `int_of(byte)` and `byte_of(int)`: a widening and a truncation.
+pub fn widen[&s](st: &!s [int], known: bool, value: int, reg: int) -> [] int {
+    let n = start(st);
+    str(st, "zext i8 ");
+    operand(st, 2, known, value, reg);
+    str(st, " to i64\n");
+    return n;
+}
+
+pub fn truncate_to_byte[&s](st: &!s [int], known: bool, value: int, reg: int) -> [] int {
+    // `byte_of` traps on a number outside 0 to 255, as the Rust build does; unsigned, one test.
+    let outside = start(st);
+    str(st, "icmp ugt i64 ");
+    operand(st, 1, known, value, reg);
+    str(st, ", 255\n");
+    trap_if(st, outside);
+    let n = start(st);
+    str(st, "trunc i64 ");
+    operand(st, 1, known, value, reg);
+    str(st, " to i8\n");
+    return n;
+}
+
+// `write_bytes(io, s)`: the slice written to the standard output, a byte at a time through the C
+// library's buffer (`putchar` writes to it as well, so the two stay in order); the answer is the
+// number of bytes. The function is `@cancho_write_bytes`, written once by the driver.
+pub fn write_slice[&s](st: &!s [int]) -> [] int {
+    let len_at = st[51] + 4 * (st[52] - 1);
+    let ptr_at = st[51] + 4 * (st[52] - 2);
+    let n = start(st);
+    str(st, "call i64 @cancho_write_bytes(ptr ");
+    operand(st, 7, false, 0, st[ptr_at + 3]);
+    str(st, ", i64 ");
+    operand(st, 1, st[len_at + 1] != 0, st[len_at + 2], st[len_at + 3]);
+    str(st, ")\n");
+    st[52] = st[52] - 3;
+    return n;
 }
 
 // ----------------------------------------------------------------------- functions ---

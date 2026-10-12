@@ -195,6 +195,11 @@ pub fn prelude_index[&s](st: &!s [int], ty: int) -> [] int {
     return slot(st, ty, 1);
 }
 
+// A reference to a slice: a pointer and a length in the code.
+pub fn is_slice_ref[&s](st: &!s [int], ty: int) -> [] bool {
+    return is_ref(st, ty) && is_slice(st, ref_inner(st, ty));
+}
+
 pub fn is_prelude[&s](st: &!s [int], ty: int) -> [] bool {
     return ty >= first_table() && slot(st, ty, 0) == prelude_kind();
 }

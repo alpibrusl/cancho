@@ -25,8 +25,10 @@ pub fn bind[&s](st: &!s [int], name: int, ty: int, mutable: bool, from: int, to:
     if emit.on(st) {
         if types.is_prelude(st, ty) {
             // nothing to keep
-        } else if ty != 1 && ty != 5 && !types.is_ref(st, ty) {
+        } else if ty != 1 && ty != 2 && ty != 5 && !types.is_ref(st, ty) {
             return ast.fail(st, rules.r_skip(), from, to);
+        } else if types.is_slice_ref(st, ty) {
+            emit.alloca_slice(st, st[39]);
         } else {
             emit.alloca(st, ty, st[39]);
         }
