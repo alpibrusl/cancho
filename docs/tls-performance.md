@@ -46,8 +46,8 @@ document measures it on one x86-64 machine and one arm64 machine, each with Open
    gives about 3.4 times, and 3 times needs about 5.
    *Corrected (§10.6): the target was reached by another route, and further. Wide multiply was built (#393) and moved X25519;
    #397 moved P-256 on a 28-bit field without it. The server's handshake is 2.86 times OpenSSL's cycles with neither A1 nor B2
-   nor C1, and the speed-ups on the field arithmetic were 15 to 18 times where this assumed 1.7 to 4; "3 times needs about 5"
-   was false: 3 times was reached with wide multiply on X25519 only.*
+   nor C1: the operations became 6.8 (the check) to 17 (the ladders) times cheaper where this assumed 1.7 to 4 times on their
+   field multiplications; "3 times needs about 5" was false: 3 times was reached with wide multiply on X25519 only.*
 4. **The guard has to count instructions, not time.** On the x86-64 machine the clock moved between 1.4 and about 4 GHz within
    minutes, because other work shared the package's power budget, and the same primitive's time moved by two. Instruction
    counts under `valgrind` do not move, are the same as the hardware's, and catch a primitive made twice slower (§6).
@@ -485,7 +485,8 @@ measurement:**
   P-256's); C3 (3.2 points) and A2 (0.9) are the small levers that would give it some. Against the leaner `oserv` it is not reached
   (§3.3). **The 3-times stretch needs wide multiply at about 5 times on the field multiplications.**
   *Corrected (§10.6, §10.7): as built the server's handshake is 2.86 times `s_server` (3.04 times `oserv`) without A1, B2 or C1;
-  the stretch was reached because the new fields gave 15 to 18 times on the operations, not the 2.5 to 5 assumed here.*
+  the stretch was reached because the operations became 6.8 (the check) to 17 (the ladders) times cheaper, where this assumed
+  2.5 to 5 times on their field multiplications.*
 - *Corrected (review of #391):* this table said 28.9% and 4.4 times. B2 was priced with one inversion where a verification
   does two, and B5's 1.7 times was applied to the whole ECDSA time where the basis column says 79% of it.
 - The client handshake with A1, B3, B4, C1 and B5: 100 − 9.9 − 15.8 − 7.7 − 16.1 − 10.1 = **40.4%**, which is **7.8M cycles,
@@ -918,10 +919,12 @@ told not to trim; server CPU a request in microseconds:
 | client, full, x86-64 | 7.8M, **4.6 times** `tconn` | 4.51M, **2.77 times** | 2.69M, **1.65 times** |
 | server, resumed, x86-64 | 7.0M (6.1M with A1) | 2.00M, 2.34 times OpenSSL's resumed | 0.90M, 1.05 times |
 
-The projection was conservative where it assumed a speed-up (2.5 and 4 times on the field multiplications; 15 to 18 times
-happened, because the new fields also removed the old ones' bounds checks, loads and stores, `p256-fast.md` §1.2,
-`wide-multiply.md` §10.5) and right about the allocator's cycles. It was wrong about the order: it put A1 first for its gain
-over effort, and the change that came first, and gave most, was the field arithmetic.
+The projection was conservative on every operation and right about the allocator's cycles. It assumed 2.5 to 4 times on
+X25519's field multiplications and 1.7 on P-256's. X25519 became 17 times cheaper in the handshake: 51-bit limbs remove the
+16-bit representation's 256-product schoolbook and its bounds-checked loads and stores (`wide-multiply.md` §10.5). P-256's
+field multiplication became 3.8 to 4.0 times faster on this machine (`p256-fast.md` §9), and with the comb that made the
+signature 15 times cheaper, and with wNAF the check 6.8 times. It was wrong about the order: it put A1 first for its gain over
+effort, and the changes that came first, and gave most, were the fields and the comb.
 
 ### 10.7 The targets of §1.1, as built
 
