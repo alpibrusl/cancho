@@ -393,6 +393,81 @@ pub fn alloc_slice_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] E
     return plain(result);
 }
 
+// Is this the `&!x Heap` a heap operation is reached through?
+fn is_heap_ref[&s](st: &!s [int], ty: int) -> [] bool {
+    return types.is_ref(st, ty) && types.ref_unique(st, ty) && types.is_prelude(st, types.ref_inner(st, ty)) && types.prelude_index(st, types.ref_inner(st, ty)) == scope.heap_index();
+}
+
+// `box_slice(heap, count, fill)` (1), `unbox_slice(heap, box)` (2) and `contents(box_ref)` (3), of
+// whole numbers, bytes and booleans: compile mode only, so a function that has one is not checked.
+pub fn heap_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: int) -> [] Ex {
+    let from = ast.nstart(st, id);
+    let to = ast.nend(st, id);
+    var wanted = 3;
+    if which == 2 {
+        wanted = 2;
+    }
+    if which == 3 {
+        wanted = 1;
+    }
+    if ast.get(st, id, 7) != wanted {
+        return skip(st, from, to);
+    }
+    var arg = ast.get(st, id, 6);
+    if which == 3 {
+        let r = expr(st, text, arg);
+        if !ast.ok(st) {
+            return nothing();
+        }
+        if !types.is_ref(st, r.ty) || !types.is_boxslice(st, types.ref_inner(st, r.ty)) || !scope.aggregate_codable(st, types.ref_inner(st, r.ty)) {
+            return skip(st, from, to);
+        }
+        let boxed = types.ref_inner(st, r.ty);
+        let p = emit.heap_view(st, boxed, r.reg);
+        let slice = types.make_ref(st, types.ref_unique(st, r.ty), types.ref_region(st, r.ty), types.make_slice(st, types.boxslice_element(st, boxed)));
+        return in_slice(slice, p, st[59], 0);
+    }
+    let h = expr(st, text, arg);
+    if !ast.ok(st) {
+        return nothing();
+    }
+    if !is_heap_ref(st, h.ty) {
+        return skip(st, from, to);
+    }
+    arg = ast.next(st, arg);
+    if which == 2 {
+        let b = expr(st, text, arg);
+        if !ast.ok(st) {
+            return nothing();
+        }
+        if !types.is_boxslice(st, b.ty) || !scope.aggregate_codable(st, b.ty) {
+            return skip(st, from, to);
+        }
+        effects.perform_named(st, "heap");
+        return in_reg(1, emit.heap_free(st, b.ty, b.reg));
+    }
+    let count = arg;
+    let fill = ast.next(st, arg);
+    let c = expr(st, text, count);
+    if ast.ok(st) {
+        scope.expect(st, text, 1, c.ty, ast.nstart(st, count), ast.nend(st, count));
+    }
+    if !ast.ok(st) {
+        return nothing();
+    }
+    let f = expr(st, text, fill);
+    if !ast.ok(st) {
+        return nothing();
+    }
+    if f.ty != 1 && f.ty != 2 && f.ty != 5 {
+        return skip(st, from, to);
+    }
+    effects.perform_named(st, "heap");
+    let boxed = types.make_boxslice(st, f.ty);
+    let p = emit.heap_run(st, f.ty, c.known, c.value, c.reg, f.known, f.value, f.reg);
+    return in_reg(boxed, emit.make_box(st, boxed, p, c.known, c.value, c.reg));
+}
+
 // The Variant node of the enum `item` called like token `name`, or -1.
 pub fn variant_named[&s, &x](st: &!s [int], text: &x [byte], item: int, name: int) -> [] int {
     var v = ast.get(st, item, 8);
@@ -982,6 +1057,18 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
             return skip(st, from, to);
         }
         return in_reg(types.make_prelude(st, builtins.split_for(st[23])), 0 - 1);
+    }
+    // The heap: only the code is written for it, in compile mode.
+    if emit.on(st) && qualifier < 0 {
+        if pass1.is_word(st, text, callee, "box_slice") {
+            return heap_call(st, text, id, 1);
+        }
+        if pass1.is_word(st, text, callee, "unbox_slice") {
+            return heap_call(st, text, id, 2);
+        }
+        if pass1.is_word(st, text, callee, "contents") {
+            return heap_call(st, text, id, 3);
+        }
     }
     // A builtin the file's edition can name comes first, then a foreign function: not checked.
     let known = prims.builtin_at(st, text, callee, st[23]);

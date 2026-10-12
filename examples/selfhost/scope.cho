@@ -263,7 +263,16 @@ pub fn enum_codable[&s](st: &!s [int], ty: int) -> [] bool {
 
 // A value of this type has code: a struct or an enum of scalars, one aggregate in the code.
 pub fn aggregate_codable[&s](st: &!s [int], ty: int) -> [] bool {
+    if types.is_boxslice(st, ty) {
+        let e = types.boxslice_element(st, ty);
+        return e == 1 || e == 2 || e == 5;
+    }
     return struct_codable(st, ty) || enum_codable(st, ty);
+}
+
+// `Heap`, the prelude type the heap operations are reached through.
+pub fn heap_index() -> [] int {
+    return 4;
 }
 
 // `World`, the first of the prelude types: what `main` is handed, and nothing a value of can do

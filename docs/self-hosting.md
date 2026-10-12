@@ -222,7 +222,8 @@ the stages found, in place, the way this document corrects its own claims.
 | 4f. Structs of whole numbers, bytes and booleans: a literal, a field read, a copy, passed and returned, a field written through a unique reference, `*r` of one | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho` | the Rust compiler, by what the built programs do | **Sixth slice of the backend.** 312 builds run and compared, 20 of them new, 63 trap; none different |
 | 4g. Enums and `match` on them: a variant with payloads, `match` by value and behind a reference (payloads are references, written through), `_` arms, nested | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho` | the Rust compiler, by what the built programs do | **Seventh slice of the backend.** 332 builds run and compared, 20 of them new, 64 trap; none different |
 | 4h. Arenas: `region` and `alloc_slice[a](n, fill)` of whole numbers, bytes and booleans, in the checker (the arena in scope, the count, the fill a value that copies, the slice cannot leave) and in the code | `emit.cho`, `body.cho`, `exprs.cho`, `scope.cho`, `types.cho`, `driver.cho` | the Rust compiler: the checker by answers (1,945 cases), the code by what the built programs do | **Eighth slice of the backend, and a checker rule.** 352 builds run and compared, 20 of them new, 71 trap; none different. The checker's 1,945 cases are identical, 27 of them new |
-| 4i. The rest of the backend: the heap (`box_slice`, `contents`, `unbox_slice`), `alloc` of one value, `static` tables, generics, tuples, `clang` run by the compiler itself | not started | | |
+| 4i. The heap: `box_slice`, `contents`, `unbox_slice` of whole numbers, bytes and booleans, with a `Heap` borrowed and passed (compile mode only: the checker still answers `SKIP` for a function that has one) | `emit.cho`, `exprs.cho`, `types.cho`, `scope.cho`, `effects.cho` | the Rust compiler, by what the built programs do | **Ninth slice of the backend.** 367 builds run and compared, 15 of them new, 76 trap; none different. The checker's 1,945 cases are unchanged |
+| 4j. The rest of the backend: `alloc` of one value, `static` tables, generics, tuples, `Box` and `Heap` in the checker, `clang` run by the compiler itself | not started | | |
 
 **The method.** A port that builds no tree has nothing to compare, and one that does
 needs a printer, which is another port. So stage 2's parser wrote the tree the Rust parser
@@ -605,6 +606,18 @@ functions the driver writes (`@cancho_arena_alloc`, `@cancho_arena_free`). A neg
 so does a size that overflows, as in the Rust backend, and the fill is a loop. What differs from Rust
 is the allocator (it bumps within a 64 KiB chunk) and one thing that is a gap: a `return` from inside
 a `region` leaves without freeing, so the memory lasts until the program ends.
+
+**Stage 4i: the heap.** `Box[[T]]` is a pointer and a length, which in the code is the aggregate
+`{ ptr, i64 }`: one value, like a struct, so it is stored, moved and passed as one operand, and a
+reference to a box is the address of its slot, so `borrow mut b as &!q in { contents(q) .. }` is the
+borrow of a whole number again. `box_slice` is the arena's size and fill with a `malloc` in place of
+the arena (a null answer traps, as in the Rust backend); `contents(q)` loads the pointer and the length
+back into a slice in the block of the borrow; `unbox_slice` is a `free` and the length. They are
+written for compile mode only: the checker has no `Box` type and no ownership of one, so in the other
+modes a function that holds a box is still `SKIP`, as it was, and the 1,945 cases are unchanged. That
+is the honest limit of this stage: the code for the heap is compared against Rust by what programs do,
+and the rules for it (`unbox_slice` consumes, `contents` on an owned box) are Rust's alone until the
+checker learns to follow ownership.
 
 The mutation test of `types.cho` (54 operator swaps) killed 40 on the first corpus of 458 targeted
 body cases (after region-variable, `where`-closure and coercion cases were added; 33 before); the 14
