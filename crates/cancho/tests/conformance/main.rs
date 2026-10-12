@@ -102,6 +102,7 @@ mod stdin_bulk;
 mod testing;
 mod tls;
 mod tls_auth;
+mod tls_client_auth;
 mod tls_echo;
 mod tls_echo_fixed;
 mod tls_fuzz;

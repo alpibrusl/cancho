@@ -8,6 +8,7 @@ import std.hkdf;
 import std.hmac;
 import std.x25519;
 import tls_client;
+import tls_clientauth;
 import tls_hello;
 import tls_identity;
 import tls_message;
@@ -53,7 +54,7 @@ pub fn start[&i, &b, &r](ints: &!i [int], bytes: &!b [byte], random: &r [byte]) 
 // established nor ended.
 pub fn in_handshake[&i](ints: &i [int]) -> [] bool {
     let s = ints[tls_slot.i_state()];
-    return s == tls_slot.state_wait_client_hello() || s == tls_slot.state_wait_client_hello2() || s == tls_slot.state_wait_client_finished();
+    return s == tls_slot.state_wait_client_hello() || s == tls_slot.state_wait_client_hello2() || s == tls_slot.state_wait_client_finished() || s == tls_slot.state_wait_client_certificate() || s == tls_slot.state_wait_client_verify();
 }
 
 // ---- The key schedule (RFC 8446 §7.1) ----
@@ -194,6 +195,12 @@ fn try_resume[&i, &b, &m, &f, &c, &t](ints: &!i [int], bytes: &!b [byte], messag
     if count == 0 {
         return 0 - 1;
     }
+    if tls_slot.has(ints, tls_slot.f_auth_require()) {
+        // A resumption is not an authentication: with client certificates required, the client presents its
+        // certificate again (`docs/tls-server.md` §13.8, R6).
+        ints[tls_slot.i_srv_verdict()] = tls_ticket.v_auth();
+        return 0 - 1;
+    }
     if tls_ticket.count(tk) == 0 {
         ints[tls_slot.i_srv_verdict()] = tls_ticket.v_off();
         return 0 - 1;
@@ -272,7 +279,9 @@ fn issue_tickets[&i, &b, &c, &t](ints: &!i [int], bytes: &!b [byte], cfg: &c [by
     if ints[tls_slot.i_srv_not_after()] - now / 1000 < lifetime {
         lifetime = ints[tls_slot.i_srv_not_after()] - now / 1000;
     }
-    if n == 0 || !tls_slot.has(ints, tls_slot.f_advertise()) || !tls_ticket.has_current(tk) || lifetime <= 0 {
+    // No ticket to a client that was authenticated by a certificate: a resumption would not carry who it was
+    // (`docs/tls-server.md` §13.8, R1).
+    if n == 0 || !tls_slot.has(ints, tls_slot.f_advertise()) || !tls_ticket.has_current(tk) || lifetime <= 0 || tls_clientauth.certified(ints) {
         n = 0;
     }
     var k = 0;
@@ -458,6 +467,10 @@ fn respond[&i, &b, &m, &f, &c, &t](ints: &!i [int], bytes: &!b [byte], message: 
     if psk < 0 && psk != 0 - 1 {
         return psk;
     }
+    if psk >= 0 {
+        // A resumed handshake asks for no certificate (RFC 8446 §4.3.2; `docs/tls-server.md` §13.8).
+        tls_slot.clear_flag(ints, tls_slot.f_auth_request());
+    }
     tls_slot.transcript_add(ints, message);
     let h = tls_slot.hash_len(ints);
     region r {
@@ -491,13 +504,25 @@ fn respond[&i, &b, &m, &f, &c, &t](ints: &!i [int], bytes: &!b [byte], message: 
     tls_slot.set_write_keys(ints, bytes, tls_slot.k_server_hs());
     region q {
         // The encrypted flight: at most a 6 + 4 + 3 + 255-byte
-        // EncryptedExtensions, the Certificate, a CertificateVerify and
-        // a Finished.
-        let flight = alloc_slice[q](tls_identity.chain_cap() + 1024, byte_of(0));
+        // EncryptedExtensions, the CertificateRequest when client
+        // authentication is on (`docs/tls-server.md` §13.2), the
+        // Certificate, a CertificateVerify and a Finished.
+        var room = 0;
+        if tls_clientauth.requested(ints) {
+            room = tls_hello.certificate_request_cap();
+        }
+        let flight = alloc_slice[q](tls_identity.chain_cap() + 1024 + room, byte_of(0));
         var n = 0;
         let used = tls_slot.has(ints, tls_slot.f_sni_used());
         n = tls_hello.encrypted_extensions(used, bytes[tls_slot.b_alpn()..tls_slot.b_alpn() + ints[tls_slot.i_alpn_len()]], flight);
         tls_slot.transcript_add(ints, flight[0..n]);
+        // The CertificateRequest, when client authentication is on and this is not a resumption
+        // (`docs/tls-server.md` §13.2, §13.8: a resumed handshake asks for no certificate).
+        if tls_clientauth.requested(ints) {
+            let asked = tls_clientauth.request(cfg, flight[n..len(flight)]);
+            tls_slot.transcript_add(ints, flight[n..n + asked]);
+            n = n + asked;
+        }
         // A resumed handshake has no Certificate or CertificateVerify: the PSK is the proof.
         var c = n;
         var v = 0;
@@ -534,6 +559,9 @@ fn respond[&i, &b, &m, &f, &c, &t](ints: &!i [int], bytes: &!b [byte], message: 
     tls_slot.set_write_keys(ints, bytes, tls_slot.k_server_ap());
     tls_slot.set_read_keys(ints, bytes, tls_slot.k_client_hs());
     ints[tls_slot.i_state()] = tls_slot.state_wait_client_finished();
+    if tls_clientauth.requested(ints) {
+        ints[tls_slot.i_state()] = tls_slot.state_wait_client_certificate();
+    }
     return 0;
 }
 
@@ -607,6 +635,10 @@ fn on_client_finished[&i, &b, &m, &c, &t](ints: &!i [int], bytes: &!b [byte], me
         tls_slot.zero(want);
     }
     if code == 0 {
+        // A store replaced since the client's chain was verified refuses here, before any ticket or key.
+        code = tls_clientauth.established(ints, cfg);
+    }
+    if code == 0 {
         tls_slot.transcript_add(ints, message);
         // The resumption master secret needs the master secret, and the tickets need the
         // application write key, which is in place.
@@ -664,6 +696,12 @@ fn on_message[&i, &b, &m, &c, &t](ints: &!i [int], bytes: &!b [byte], message: &
     if hello && kind == tls_message.type_client_hello() {
         return on_client_hello(ints, bytes, message, cfg, tk);
     }
+    if state == tls_slot.state_wait_client_certificate() && kind == tls_message.type_certificate() {
+        return tls_clientauth.on_certificate(ints, bytes, message, cfg);
+    }
+    if state == tls_slot.state_wait_client_verify() && kind == tls_message.type_certificate_verify() {
+        return tls_clientauth.on_certificate_verify(ints, bytes, message);
+    }
     if state == tls_slot.state_wait_client_finished() && kind == tls_message.type_finished() {
         return on_client_finished(ints, bytes, message, cfg, tk);
     }
@@ -699,16 +737,23 @@ fn on_handshake_bytes[&i, &b, &d, &c, &t](ints: &!i [int], bytes: &!b [byte], co
                 code = tls_record.unexpected_message();
             } else if hello && n > tls_hello.max_client_hello() {
                 code = tls_record.server_client_hello_length();
+            } else if state == tls_slot.state_wait_client_certificate() && int_of(bytes[p]) == tls_message.type_certificate() && n > tls_clientauth.max_message() {
+                // The client's chain is bounded when its header is in
+                // (`docs/tls-server.md` §13.2), before it is read.
+                code = tls_record.x509_chain_too_large();
             } else if 4 + n > tls_slot.hs_cap() {
                 code = tls_record.record_overflow();
             } else if have < 4 + n {
                 going = false;
-            } else if have > 4 + n {
+            } else if have > 4 + n && !(state == tls_slot.state_wait_client_certificate() && int_of(bytes[p]) == tls_message.type_certificate() || state == tls_slot.state_wait_client_verify() && int_of(bytes[p]) == tls_message.type_certificate_verify()) {
                 // Every message a server takes is followed by a new key or
                 // a new flight: a ClientHello, a Finished, a KeyUpdate. So
                 // none may share a record with what follows it (RFC 8446
                 // §5.1), and that is refused before the message is
-                // handled, so nothing is sent for it.
+                // handled, so nothing is sent for it. The client's
+                // Certificate and CertificateVerify are followed by the
+                // rest of its flight under the same key, and may share a
+                // record with it.
                 code = tls_record.unexpected_message();
             } else {
                 region r {
@@ -742,6 +787,12 @@ fn skip_early[&i](ints: &!i [int], body: int) -> [] int {
     return 0;
 }
 
+// Whether the server's flight is sent and the client's Finished is not yet in: the states in which the
+// client's second flight, or an alert in the clear, is expected.
+fn flight_sent(state: int) -> [] bool {
+    return state == tls_slot.state_wait_client_finished() || state == tls_slot.state_wait_client_certificate() || state == tls_slot.state_wait_client_verify();
+}
+
 // One whole record from `bytes[tls_slot.b_in()..]`, `n` bytes long.
 fn on_record[&i, &b, &c, &t](ints: &!i [int], bytes: &!b [byte], n: int, cfg: &c [byte], tk: &t [byte]) -> [] int {
     let kind = int_of(bytes[tls_slot.b_in()]);
@@ -750,14 +801,14 @@ fn on_record[&i, &b, &c, &t](ints: &!i [int], bytes: &!b [byte], n: int, cfg: &c
     if kind == tls_record.type_change_cipher_spec() {
         // One, exactly `01`, after the first ClientHello and before the
         // client's Finished (RFC 8446 Appendix D.4).
-        let between = state == tls_slot.state_wait_client_hello2() || state == tls_slot.state_wait_client_finished();
+        let between = state == tls_slot.state_wait_client_hello2() || flight_sent(state);
         if body != 1 || int_of(bytes[tls_slot.b_in() + 5]) != 1 || tls_slot.has(ints, tls_slot.f_ccs_seen()) || !between {
             return tls_record.unexpected_message();
         }
         tls_slot.set_flag(ints, tls_slot.f_ccs_seen());
         return 0;
     }
-    let plain_alert = kind == tls_record.type_alert() && state == tls_slot.state_wait_client_finished();
+    let plain_alert = kind == tls_record.type_alert() && flight_sent(state);
     if !tls_slot.has(ints, tls_slot.f_read_protected()) || plain_alert {
         if kind == tls_record.type_application_data() && tls_slot.has(ints, tls_slot.f_early()) && state == tls_slot.state_wait_client_hello2() {
             // Early data, before a second ClientHello.

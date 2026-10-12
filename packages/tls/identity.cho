@@ -8,6 +8,7 @@ import tls_slot;
 import x509;
 import x509_key;
 import x509_names;
+import x509_verify;
 
 // `tls_identity` -- what a server engine is configured with
 // (`docs/tls-server.md` §2.1, §4): up to 16 identities, each a chain, its
@@ -23,7 +24,9 @@ import x509_names;
 // fixed stride: in use (1 byte), the key (32), its public point (65), the
 // names' length (2) and the names, the certificate_list's length (3) and
 // the list, as Certificate sends it, then the leaf certificate's SHA-256 (32) and its notAfter (8, seconds
-// since 1970), which a session ticket binds to (`docs/tls-server.md` §12.3 d).
+// since 1970), which a session ticket binds to (`docs/tls-server.md` §12.3 d). After the identities, the clients' trust
+// store and the mode of client authentication (`docs/tls-server.md` §13.3): the mode (1 byte), the generation (4), the
+// store's length (3) and the store, in `x509_verify.store_load`'s format.
 
 pub fn max_identities() -> [] int {
     return 16;
@@ -88,8 +91,12 @@ fn at(id: int) -> [] int {
     return ids_base() + id * stride();
 }
 
-pub fn cfg_len() -> [] int {
+fn client_base() -> [] int {
     return ids_base() + max_identities() * stride();
+}
+
+pub fn cfg_len() -> [] int {
+    return client_base() + 8 + client_store_cap();
 }
 
 // ---- ALPN ----
@@ -322,4 +329,130 @@ pub fn select[&c, &h](cfg: &c [byte], host: &h [byte]) -> [] int {
 // Every key and chain overwritten (best effort, `docs/tls-pure.md` §7.3).
 pub fn wipe[&c](cfg: &!c [byte]) -> [] int {
     return bytes.zero(cfg);
+}
+
+// ---- The clients' trust store (`docs/tls-server.md` §13.3) ----
+
+// The most roots, and bytes, a client store holds: the system bundle's 128 roots take 138,350 bytes
+// (`docs/x509-verify.md` §8.2), so a bundle over either is refused whole, a tripwire against pointing
+// the store at the system roots, which it must never hold (`docs/x509-verify.md` §10.3).
+pub fn max_client_roots() -> [] int {
+    return 32;
+}
+
+// 32 KiB, not 64: the store is staged in a region before it replaces the old one, and a region chunk is
+// 64 KiB, one larger `alloc_slice` traps (`docs/websocket-spike.md` §4).
+pub fn client_store_cap() -> [] int {
+    return 32768;
+}
+
+// The most bytes the CertificateRequest's certificate_authorities list takes; over it the extension is left
+// out (`docs/tls-server.md` §13.2).
+pub fn authorities_cap() -> [] int {
+    return 8192;
+}
+
+// 0 off, 1 optional, 2 required.
+pub fn client_mode[&c](cfg: &c [byte]) -> [] int {
+    return int_of(cfg[client_base()]);
+}
+
+// How many times the store was replaced.
+pub fn client_generation[&c](cfg: &c [byte]) -> [] int {
+    return tls_message.get(cfg, client_base() + 1, 4);
+}
+
+// The store, for `x509_verify.verify_chain`.
+pub fn client_store[&c](cfg: &c [byte]) -> [] &c [byte] {
+    let n = tls_message.get(cfg, client_base() + 5, 3);
+    return cfg[client_base() + 8..client_base() + 8 + n];
+}
+
+// The mode, taken by `serve` for the connections it starts. A mode other than off needs a store.
+pub fn set_client_mode[&c](cfg: &!c [byte], mode: int) -> [] int {
+    if mode < 0 || mode > 2 {
+        return tls_record.server_client_auth_config();
+    }
+    if mode != 0 && len(client_store(cfg)) == 0 {
+        return tls_record.server_client_store();
+    }
+    cfg[client_base()] = byte_of(mode);
+    return 0;
+}
+
+// How many PEM blocks `pem` begins ("-----BEGIN "), of any label.
+fn pem_blocks[&p](pem: &p [byte]) -> [] int {
+    let mark = "-----BEGIN ";
+    var n = 0;
+    var at = 0;
+    while at + 11 <= len(pem) {
+        var same = true;
+        var k = 0;
+        while same && k < 11 {
+            if pem[at + k] != mark[k] {
+                same = false;
+            }
+            k = k + 1;
+        }
+        if same {
+            n = n + 1;
+            at = at + 11;
+        } else {
+            at = at + 1;
+        }
+    }
+    return n;
+}
+
+// Replaces the store with the certificates of `pem`: the roots stored, or `server_client_store` for a
+// bundle with no certificate, a block that is not one this package reads, or over the bounds. Nothing
+// changes on a refusal. The generation counts the replacements.
+pub fn load_client_store[&c, &p](cfg: &!c [byte], pem: &p [byte]) -> [] int {
+    var code = 0;
+    region r {
+        let store = alloc_slice[r](client_store_cap(), byte_of(0));
+        let info = alloc_slice[r](2, 0);
+        let n = x509_verify.store_load(pem, store, info);
+        // Every block must be a certificate stored: a private key pasted into the file, or a block cut short,
+        // is a mistake to report (`docs/tls-server.md` §13.3).
+        if n <= 0 || n > max_client_roots() || info[1] != 0 || n != pem_blocks(pem) {
+            code = tls_record.server_client_store();
+        } else {
+            let b = client_base();
+            bytes.zero(cfg[b + 8..b + 8 + client_store_cap()]);
+            tls_slot.copy_bytes(store[0..info[0]], cfg[b + 8..b + 8 + info[0]]);
+            tls_message.put(cfg, b + 5, info[0], 3);
+            // Saturates rather than wrapping: a generation of 0 would read as "no identity" (`peer_verified`).
+            // 2^32 - 1 replacements is one a second for 136 years.
+            var g = client_generation(cfg) + 1;
+            if g > 4294967295 {
+                g = 4294967295;
+            }
+            tls_message.put(cfg, b + 1, g, 4);
+            code = n;
+        }
+    }
+    return code;
+}
+
+// The subject Name of each root of the store, each after a 2-byte length, into `out`
+// (`authorities_cap()` bytes at most): how many bytes, or 0 when the list does not fit and
+// certificate_authorities is left out.
+pub fn client_authorities[&c, &o](cfg: &c [byte], out: &!o [byte]) -> [] int {
+    let store = client_store(cfg);
+    var at = 0;
+    var n = 0;
+    while at + 7 <= len(store) {
+        let size = tls_message.get(store, at, 3);
+        let so = tls_message.get(store, at + 3, 2);
+        let sl = tls_message.get(store, at + 5, 2);
+        if sl == 0 || at + 7 + size > len(store) || so + sl > size || n + 2 + sl > authorities_cap() || n + 2 + sl > len(out) {
+            return 0;
+        }
+        tls_message.put(out, n, sl, 2);
+        tls_slot.copy_bytes(store[at + 7 + so..at + 7 + so + sl], out[n + 2..n + 2 + sl]);
+        n = n + 2 + sl;
+        at = at + 7 + size;
+    }
+    return n;
 }

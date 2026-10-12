@@ -274,7 +274,9 @@ so the keys are 1,984 B and every core 224 B larger: a server's byte core 2,496 
 **9,008 B (8.8 KiB) a client**. The figures elsewhere in this document are from before it.)* `tests/programs/tls_pool.cho` runs with server tickets and resumption
 (`tickets`) and with a client identity (`mutual`, `open_mutual_with_areas`), and `tls.residue` is 0 after every step there too. Client
 certificates on the server's side (#384, not merged when this was rebased) keep the client's leaf in `b_leaf` for `peer_certificate`:
-`keeps_area` is where such a connection keeps its area, at what it costs today.
+`keeps_area` is where such a connection keeps its area, at what it costs today. *As #384 merged (`docs/tls-server.md` §13.22): its words
+(`i_peer_generation`, `i_peer_not_after`, `i_leaf_len`, the flags) are core words; a connection with a verified client keeps its area
+(`keeps_area`), which goes back cleared with the leaf; `tls_pool.cho clientcert` asserts `tls.residue` 0 after every step.*
 
 ### 7.2 The engine
 

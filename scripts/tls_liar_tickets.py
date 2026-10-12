@@ -812,6 +812,12 @@ def resumed_bad_finished(c):
 # client's Finished comes. Each case changes one of them between the two (and the client's Finished arrives after it),
 # then asserts the connection's outcome and what its tickets bind, by resuming one. Another PR that adds state read at
 # one message and used at another adds its cases here.
+#
+# Client certificates (docs/tls-server.md §13) read the clients' store at the client's Certificate and trust it at the
+# client's Finished; their `midway:` cases need the client of `scripts/tls_liar_client_auth.py`, which sends a
+# Certificate and a CertificateVerify, so they are there and in `tests/vectors/tls/liar_client_auth.txt`: the store
+# replaced between the CertificateRequest and the Certificate, between the CertificateVerify and the Finished (the
+# same CA, another CA, a replacement refused), and the clock moved past the leaf's notAfter.
 
 RENEWED = m.leaf(m.MAIN_KEY, [HOST.decode()], serial=71)
 R_LINE = f"R 0 {(m.pem(RENEWED) + m.pem(m.CA)).hex()} {m.key_pem(m.MAIN_KEY).hex()} {NOW_MS}"

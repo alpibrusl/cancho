@@ -95,6 +95,16 @@ pub fn state_wait_client_finished() -> [] int {
     return 22;
 }
 
+// With client authentication (`docs/tls-server.md` §13.2), after the flight the server waits for the
+// client's Certificate, then, if it holds a certificate, its CertificateVerify, then the Finished.
+pub fn state_wait_client_certificate() -> [] int {
+    return 23;
+}
+
+pub fn state_wait_client_verify() -> [] int {
+    return 24;
+}
+
 // `event`'s answers (`docs/tls-pure.md` §2.2).
 pub fn event_want_read() -> [] int {
     return 1;
@@ -336,9 +346,11 @@ pub fn ints_len() -> [] int {
 }
 
 // Whether an established connection needs its buffers kept: the engine takes its work area back when it does
-// not (`tls.cho`'s `idle`). Nothing does yet.
+// not (`tls.cho`'s `idle`).
 pub fn keeps_area[&i](ints: &i [int]) -> [] bool {
-    return false;
+    // A server's connection with a verified client (`docs/tls-server.md` §13.6) keeps its area until it is dropped
+    // or fails: the leaf `peer_certificate` and the other `peer_` calls read is in `b_leaf`, up to 16 KiB.
+    return has(ints, f_client_auth()) && ints[i_state()] != state_failed();
 }
 
 // A server's resumption (`docs/tls-server.md` §12) uses fields of the client's that a server slot has
@@ -466,6 +478,39 @@ pub fn f_ccs_sent() -> [] int {
 // at `start`, not the empty Certificate (`docs/tls-parity.md` §6.3).
 pub fn f_cert_send() -> [] int {
     return 16777216;
+}
+
+// Client authentication (`docs/tls-server.md` §13): the connection was served with a CertificateRequest
+// to send, and with the certificate required; the client sent a certificate that verified (its leaf is at
+// `b_leaf`) and is awaited at CertificateVerify; and the client is established as that identity.
+pub fn f_auth_request() -> [] int {
+    return 32768;
+}
+
+pub fn f_auth_require() -> [] int {
+    return 65536;
+}
+
+pub fn f_client_cert() -> [] int {
+    return 131072;
+}
+
+pub fn f_client_auth() -> [] int {
+    return 262144;
+}
+
+// A server slot's fields for a client's identity, the client's own that a server never uses: the time
+// `serve` was given in seconds (the chain's clock), and the generation of the client store the chain was
+// verified under.
+pub fn i_peer_generation() -> [] int {
+    return i_context_len();
+}
+
+// The verified client leaf's notAfter (seconds), where a client keeps when its identity was last verified:
+// not `i_not_after`, which a server slot holds for its own identity's notAfter (`i_srv_not_after`, the
+// tickets' lifetime bound).
+pub fn i_peer_not_after() -> [] int {
+    return i_verified_at();
 }
 
 // ---- The byte slice ----
@@ -1020,6 +1065,15 @@ fn server_alert(code: int) -> [] int {
     }
     if code == tls_record.server_missing_extension() {
         return 109;
+    }
+    if code == tls_record.server_client_cert_required() {
+        return 116;
+    }
+    if code == tls_record.server_client_sigalg() {
+        return 47;
+    }
+    if code == tls_record.server_client_store_replaced() {
+        return 46;
     }
     return 80;
 }
