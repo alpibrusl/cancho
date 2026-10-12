@@ -124,7 +124,7 @@ jobs:
       - name: Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y nginx python3-cryptography libssl-dev curl gcc
+          sudo apt-get install -y nginx python3-cryptography libssl-dev curl gcc libwolfssl-dev
       - name: Compiler
         run: cargo build --release -p cancho
       - name: The TLS echo example (docs/tls-server.md §11)
