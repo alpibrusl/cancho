@@ -60,6 +60,7 @@ fn commands() -> Vec<CommandInfo> {
         cmd_authority(),
         cmd_layout(),
         cmd_print(),
+        cmd_ingest(),
         cmd_agent_guidelines(),
         cmd_vcs(),
         cmd_install(),
@@ -302,8 +303,35 @@ fn cmd_print() -> CommandInfo {
     )
     .idempotent(true)
     .add_argument("file", "string", "exactly one .cho file", true)
-    .with_examples(vec![("Render a file canonically", "cancho print app.cho")])
-    .with_see_also(vec!["ids"])
+    .add_option(
+        "output",
+        "enum[json]",
+        "the tree as JSON rather than canonical text (docs/structured-ingest.md)",
+        None,
+    )
+    .with_examples(vec![
+        ("Render a file canonically", "cancho print app.cho"),
+        ("The same tree as data, for an agent to read", "cancho print --output json app.cho"),
+    ])
+    .with_see_also(vec!["ids", "ingest"])
+}
+
+fn cmd_ingest() -> CommandInfo {
+    CommandInfo::new(
+        "ingest",
+        "the missing half of `print`: a JSON unit in, canonical .cho text out (docs/structured-ingest.md) -- an agent writes the data form and the compiler checks it against the same vocabulary the encoder writes, refusing with a rule like any other (ingest-json, ingest-node, ingest-arity)",
+    )
+    .idempotent(true)
+    .add_argument("file", "string", "exactly one .json file", true)
+    .add_option("output", "enum[json]", "a refusal as data: rule, message, position (docs/structured-ingest.md)", None)
+    .with_examples(vec![
+        ("Render a JSON unit as canonical text", "cancho ingest unit.json"),
+        (
+            "The loop an agent closes with it",
+            "cancho print --output json app.cho > unit.json && cancho ingest unit.json",
+        ),
+    ])
+    .with_see_also(vec!["print", "check"])
 }
 
 fn cmd_agent_guidelines() -> CommandInfo {
