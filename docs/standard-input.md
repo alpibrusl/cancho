@@ -3,7 +3,7 @@
 > **Status: settled.** The one I/O direction the language did not have.
 >
 > **§7 adds the bulk read** (`read_bytes`, edition 9): `getchar` is a libc call per byte,
-> 72 MB/s on macOS, and §3.2's "no buffer-filling read" is corrected there.
+> 75 MB/s on macOS, and §3.2's "no buffer-filling read" is corrected there.
 
 ---
 
@@ -206,16 +206,16 @@ says how many bytes it put there.
 byte, on the 31.7 MB file of its benchmark and on this repository's
 `benches/stdin_read.cho` (71.7 MB of JSON lines here):
 
-| | macOS (arm64, load 15 to 22) | Linux x86-64 (`gram`, cores 0 to 5) |
+| | macOS (arm64, load 10 to 20) | Linux x86-64 (`gram`, cores 0 to 5, load 5) |
 |---|---|---|
-| `getchar` into the chunk's room | **72 MB/s** (0.99 s) | **315 MB/s** (0.23 s) |
-| **`read_bytes`**, 64 KiB at a time | **5,480 MB/s** (0.013 s), 76x | **2,070 MB/s** (0.035 s), 6.6x |
-| `/dev/stdin` through `file_read` (not a way to read standard input) | 5,530 MB/s | 2,030 MB/s |
-| the same three from a pipe (`cat FILE` into the program) | 74 / 3,990 / 5,040 MB/s | 267 / 2,040 / 2,090 MB/s |
+| `getchar` into the chunk's room | **75 MB/s** (0.96 s) | **438 MB/s** (0.16 s) |
+| **`read_bytes`**, 64 KiB at a time | **5,465 MB/s** (0.013 s), 73x | **4,290 MB/s** (0.017 s), 9.8x |
+| `/dev/stdin` through `file_read` (not a way to read standard input) | 5,490 MB/s | 4,314 MB/s |
+| the same three from a pipe (`cat FILE` into the program) | 75 / 4,244 / 5,129 MB/s | 410 / 3,961 / 3,859 MB/s |
 
-Best of 3, wall time; the program counts the bytes and newlines in 64 KiB chunks and
+Best of 5, wall time, re-measured after the rebase onto edition 9 (the earlier run, best of 3, read 72 / 5,480 / 5,530 MB/s on macOS and 315 / 2,070 / 2,030 on Linux; the Linux figures moved a good deal between the two runs, so read the ratio's order, not its digits); the program counts the bytes and newlines in 64 KiB chunks and
 keeps nothing (`benches/stdin_read.py` checks each mode's count against Python's
-before timing it). `getchar` is a libc call per byte (14 ns on this Mac) and nothing in
+before timing it). `getchar` is a libc call per byte (13 ns on this Mac) and nothing in
 the program; the bulk read is within noise of the file read on both machines, so the
 read is no longer what the time is spent on.
 

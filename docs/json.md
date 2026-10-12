@@ -92,26 +92,27 @@ sorts beside `parse`).
 
 **Measured** (`benches/json_lines.py`: 1,000,000 JSON lines of 72 bytes, `{"id":..,"status":..,
 "bytes":..,"path":..,"note":..}`, the task per line `parse`, `get` of `status` and `bytes`, two
-`to_int`, a count and a sum; cost per line = (best of 3 runs of 11 rounds − best of 3 runs of 1
+`to_int`, a count and a sum; cost per line = (best of 5 runs of 11 rounds − best of 5 runs of 1
 round) / 10 rounds / lines, so reading the file drops out; every mode's answer is compared with
 the rows' before it is timed). `parse` is one tape reused for every line; `region` is a tape
 allocated in a region per line, which is what a first version writes.
 
 | ns per line, wall clock | `parse` | `region` | **`parse_with`** | `parse` / `parse_with` |
 |---|---:|---:|---:|---:|
-| macOS arm64, 1 thread (load 15 to 22) | 625 | 1,148 | **107** | **5.8x** |
-| macOS, 2 / 4 / 8 / 16 threads, `parse` | 1,241 / 1,403 / 1,492 / 1,628 | | | |
-| macOS, 2 / 4 / 8 / 16 threads, `parse_with` | | | 55 / 30 / 13.8 / **12.3** | **132x** at 16 |
-| macOS before this change (`origin/main`'s compiler, same program without `parse_with`) | 606 (1 thread), 1,608 (16) | 1,115 (1), 3,163 (16) | not there | |
-| Linux x86-64 (`gram`, cores 0 to 5, load 5), 1 thread | 303 | 360 | **258** | 1.18x |
-| Linux, 2 / 4 / 6 threads, `parse` | 180 / 165 / 159 | 315 / 192 / 194 | | |
-| Linux, 2 / 4 / 6 threads, `parse_with` | | | 164 / 142 / **129** | 1.23x at 6 |
+| macOS arm64, 1 thread (re-measured after the rebase onto edition 9; load 10 rising to 20; best of 5) | 567 | 1,035 | **94** | **6.1x** |
+| macOS, 16 threads (same run) | 1,623 | 3,219 | **9.7** | 167x |
+| macOS, 2 / 4 / 8 threads, `parse` (from the earlier run, load 15 to 22) | 1,241 / 1,403 / 1,492 | | | |
+| macOS, 2 / 4 / 8 threads, `parse_with` (from the earlier run) | | | 55 / 30 / 13.8 | |
+| macOS before this change (`origin/main`'s compiler, same program without `parse_with`; same session, load 20) | 571 (1 thread), 1,568 (16) | 1,139 (1), 3,222 (16) | not there | |
+| Linux x86-64 (`gram`, cores 0 to 5, load 5; re-measured; best of 5), 1 thread | 237 | 280 | **233** | 1.02x |
+| Linux, 6 threads (same run) | 156 | 193 | **80.5** | 1.94x |
+| Linux, 2 / 4 threads (from the earlier run: `parse` 180 / 165, `region` 315 / 192, `parse_with` 164 / 142) | | | | |
 
 Per line is wall time over all lines, so a perfectly parallel mode divides by the thread count.
-`parse` on the Mac does the opposite: **1.6 µs per line at 16 threads against 0.6 µs at 1**, 2.6x
-*slower* with 16 threads than with one: a `region` is a `malloc` and a `free`, and this
-allocator does not scale with threads here (not diagnosed further); `parse_with` goes from 107 to 12.3 ns, 8.7x. On Linux the arena is cheap (about 30 ns),
-so the gain is 1.18x, which is what `readers.md` predicted (283 against 255). The number worth
+`parse` on the Mac does the opposite: **1.6 µs per line at 16 threads against 0.57 µs at 1**, 2.6x
+*slower* with 16 threads than with one (2.9x in the re-measured run): a `region` is a `malloc` and a `free`, and this
+allocator does not scale with threads here (not diagnosed further); `parse_with` goes from 94 to 9.7 ns, 9.6x. On Linux the arena is cheap (about 30 ns),
+so the gain at one thread is small (1.02x in the re-measured run, 1.18x in the earlier one), which is what `readers.md` predicted (283 against 255). The number worth
 having is the Mac's: it is where a user's laptop is, and where "a library function that gets
 slower when you add threads" costs a day to find.
 

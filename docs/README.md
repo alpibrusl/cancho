@@ -362,7 +362,7 @@ not repeated here; a doc's own header carries its own detail.
 | [`sharing.md`](sharing.md) | Why `Rc` is not expressible, and `Gen` | settled and built — corrects `linearity-and-effects.md` §9 |
 | [`tuples.md`](tuples.md) | `(A, B)` as a structural anonymous struct | settled and built |
 | [`shadowing.md`](shadowing.md) | Shadowing: allowed exactly when the binding is dead | settled and built |
-| [`standard-input.md`](standard-input.md) | `getchar`: a second label on `Io`, not a new capability; `read_bytes` (edition 9): the bulk read behind the same label, 76x `getchar` on macOS | settled and built |
+| [`standard-input.md`](standard-input.md) | `getchar`: a second label on `Io`, not a new capability; `read_bytes` (edition 9): the bulk read behind the same label, 73x `getchar` on macOS | settled and built |
 | [`modules.md`](modules.md) | `module`/`import`/`pub`; a module is a namespace, not a trust boundary | settled and built |
 | [`standard-library.md`](standard-library.md) | What belongs in `std`, and how a function earns its way in | written and built |
 | [`mode-polymorphism.md`](mode-polymorphism.md) | `[T: val]` bounds | settled and built — found a leak and a double free |
