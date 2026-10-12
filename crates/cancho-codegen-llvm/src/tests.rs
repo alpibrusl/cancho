@@ -1094,7 +1094,7 @@ fn a_region_left_by_return_frees_its_chunk_before_the_ret() {
         for (at, line) in lines.iter().enumerate() {
             if line.starts_with("ret ") {
                 assert!(
-                    lines[..at].last().is_some_and(|l| l.starts_with("call void @cancho_free(")),
+                    lines[..at].last().is_some_and(|l| l.starts_with("call void @free(")),
                     "`{name}`: a `ret` with no `free` just before it:\n{text}"
                 );
             }
@@ -1102,13 +1102,13 @@ fn a_region_left_by_return_frees_its_chunk_before_the_ret() {
     }
     // `left_by_return`: one chunk, one `return`, one `free`.
     let one = function_text(&module, "left_by_return");
-    assert_eq!(count(one, "call ptr @cancho_malloc("), 1, "{one}");
-    assert_eq!(count(one, "call void @cancho_free("), 1, "{one}");
+    assert_eq!(count(one, "call ptr @malloc("), 1, "{one}");
+    assert_eq!(count(one, "call void @free("), 1, "{one}");
     // `nested`: the inner `return` frees both chunks, the inner region's
     // fall-out frees its own, the outer `return` the outer one: four.
     let two = function_text(&module, "nested");
-    assert_eq!(count(two, "call ptr @cancho_malloc("), 2, "{two}");
-    assert_eq!(count(two, "call void @cancho_free("), 4, "{two}");
+    assert_eq!(count(two, "call ptr @malloc("), 2, "{two}");
+    assert_eq!(count(two, "call void @free("), 4, "{two}");
 }
 
 #[test]
@@ -1152,9 +1152,9 @@ fn a_wasm32_module_has_the_shape_wasi_libc_needs() {
     assert!(text.contains("define void @_start()"), "the module defines its own `_start`");
     assert!(!text.contains("__main_argc_argv"), "nothing calls wasi-libc's `__main_void` now");
     assert!(!text.contains("define i32 @main("), "no plain `main` on wasm");
-    assert!(text.contains("declare ptr @cancho_malloc(i32)"), "`malloc` with a 32-bit `size_t`");
-    assert!(!text.contains("declare ptr @cancho_malloc(i64)"), "no 64-bit `malloc`");
-    assert!(text.contains("call ptr @cancho_malloc(i32 "), "calls pass a 32-bit size");
+    assert!(text.contains("declare ptr @malloc(i32)"), "`malloc` with a 32-bit `size_t`");
+    assert!(!text.contains("declare ptr @malloc(i64)"), "no 64-bit `malloc`");
+    assert!(text.contains("call ptr @malloc(i32 "), "calls pass a 32-bit size");
     assert!(
         text.contains("icmp ugt i64") && text.contains(", 4294967295"),
         "a huge size is clamped to the target's maximum, not truncated"
@@ -1164,7 +1164,7 @@ fn a_wasm32_module_has_the_shape_wasi_libc_needs() {
     let host: Triple = "x86_64-unknown-linux-gnu".parse().expect("a valid triple");
     let native = emit::emit_module(&program, "main", &host).expect("native should emit");
     assert!(native.contains("define i32 @main("), "{native}");
-    assert!(native.contains("declare ptr @cancho_malloc(i64)"));
+    assert!(native.contains("declare ptr @malloc(i64)"));
     assert!(!native.contains("4294967295"), "no clamp on a native module");
 }
 
@@ -1390,13 +1390,7 @@ fn every_sized_libc_call_on_wasm32_passes_a_32_bit_size() {
         let text = emit::emit_module(&program, "main", &wasm).expect("wasm32 should emit");
         for line in text.lines() {
             for func in SIZED {
-                // The arena's own allocator lives under the backend's private
-                // `cancho_` namespace (#388), so a `region` reaches it as
-                // `@cancho_malloc(` -- the same sized call, and the name a
-                // program's own `extern fn malloc` no longer collides with.
-                if !line.contains(&format!("@{func}("))
-                    && !line.contains(&format!("@cancho_{func}("))
-                {
+                if !line.contains(&format!("@{func}(")) {
                     continue;
                 }
                 let allowed = if func == "pread" || func == "pwrite" { 1 } else { 0 };
@@ -1410,7 +1404,7 @@ fn every_sized_libc_call_on_wasm32_passes_a_32_bit_size() {
         }
         // The host is not touched: its sizes are still 64-bit.
         let native = emit::emit_module(&program, "main", &host).expect("native should emit");
-        assert!(native.contains("declare ptr @cancho_malloc(i64)"), "{name}");
+        assert!(native.contains("declare ptr @malloc(i64)"), "{name}");
     }
     for func in ["malloc", "memmove", "fwrite", "strlen", "read", "write"] {
         assert!(seen.contains(func), "the fixtures never reached `{func}`: {seen:?}");
@@ -1604,13 +1598,13 @@ fn a_wasm32_module_fetches_the_command_line_only_if_the_program_reads_it() {
 /// with `invalid redefinition of function 'free'`, an `internal` error, and
 /// cancho-robot's first spike had to leak the string instead.
 ///
-/// The fix is at the root: the arena's allocator lives under the backend's
-/// private `cancho_` namespace, so a program's declaration owns `@free`
-/// outright -- one declaration, the program's signature, and the arena
-/// never touches the name. `malloc` is the same collision one declaration
-/// away.
+/// The fix: the backend declares `malloc`/`free` only when the program does
+/// not, like every other libc symbol it shares with a program, so the
+/// program's declaration is the only one, with the signature it wrote. The
+/// arena still calls them through its own call-site types. The end-to-end
+/// half (it links and runs) is `backends.rs`.
 #[test]
-fn a_programs_own_free_and_malloc_never_collide_with_the_arena() {
+fn a_programs_own_free_and_malloc_are_the_only_declarations() {
     const SOURCE: &str = "edition 5;\n\
          extern fn strdup[&f, &s](ffi: &f Ffi(\"libc\"), s: &s [byte]) -> [ffi(\"libc\")] c_ptr;\n\
          extern fn free[&f](ffi: &f Ffi(\"libc\"), p: c_ptr) -> [ffi(\"libc\")] int;\n\
@@ -1658,17 +1652,22 @@ fn a_programs_own_free_and_malloc_never_collide_with_the_arena() {
         text.contains("declare i64 @free("),
         "the program's `free` keeps its own signature:\n{text}"
     );
-    // The arena's own allocator never touches either name.
-    assert!(
-        text.contains("declare void @cancho_free(ptr)"),
-        "the arena keeps its own free:\n{text}"
-    );
-    assert!(
-        text.contains("declare ptr @cancho_malloc(i64)"),
-        "the arena keeps its own malloc:\n{text}"
-    );
-    assert!(!text.contains("call void @free("), "no arena call uses the program's name:\n{text}");
-    assert!(!text.contains("call ptr @malloc("), "no arena call uses the program's name:\n{text}");
+    // The arena's calls go through the backend's own types.
+    assert!(text.contains("call void @free("), "the arena still frees:\n{text}");
+    assert!(text.contains("call ptr @malloc("), "the arena still allocates:\n{text}");
     // And the program's own call site reaches its declaration.
     assert!(text.contains("call i64 @free("), "the program's call uses its signature:\n{text}");
+    // A program that declares neither gets the backend's.
+    let plain = parse(
+        "fn main(world: World) -> [] int {\n\
+             let Split { io, ffi, fs, heap, args } = split(world);\n\
+             release(args); release(heap); release(fs); release(io); release(ffi);\n\
+             return 0;\n\
+         }\n",
+    )
+    .expect("should parse");
+    let plain = cancho_ir::lower(&plain).expect("should lower");
+    let plain = emit::emit_module(&plain, "main", &triple).expect("should emit");
+    assert!(plain.contains("declare ptr @malloc(i64)\n"), "{plain}");
+    assert!(plain.contains("declare void @free(ptr)\n"), "{plain}");
 }
