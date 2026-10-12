@@ -794,6 +794,112 @@ pub fn ret[&s](st: &!s [int], ty: int, known: bool, value: int, reg: int) -> [] 
     return 0;
 }
 
+// -------------------------------------------------------------------------- arenas ---
+//
+// A `region a { .. }` is a cell `%ar<n>` (the number of its block) holding the head of a list of the
+// allocations made in it; each is a `malloc` with a header that links to the one before, and the end
+// of the block frees them all. Both are the two helpers the driver writes, `@cancho_arena_alloc`
+// and `@cancho_arena_free`. A `return` inside the block leaves without freeing: the memory is
+// handed back when the program ends, which a program of any length would not do.
+
+pub fn arena_open[&s](st: &!s [int], id: int) -> [] int {
+    let keep = st[49];
+    st[49] = 2;
+    str(st, "  %ar");
+    nat(st, id);
+    str(st, " = alloca ptr\n");
+    st[49] = keep;
+    str(st, "  store ptr null, ptr %ar");
+    nat(st, id);
+    str(st, "\n");
+    return 0;
+}
+
+pub fn arena_close[&s](st: &!s [int], id: int) -> [] int {
+    let head = start(st);
+    str(st, "load ptr, ptr %ar");
+    nat(st, id);
+    str(st, "\n  call void @cancho_arena_free(ptr ");
+    temp(st, head);
+    str(st, ")\n");
+    return 0;
+}
+
+// `alloc_slice[a](count, fill)` of a whole number, a byte or a boolean: a negative count traps, so
+// does a size that overflows; the run is `count` copies of the fill, written by a loop. The pointer.
+pub fn alloc_slice[&s](st: &!s [int], arena: int, element: int, ck: bool, cv: int, cr: int, fk: bool, fv: int, fr: int) -> [] int {
+    let negative = start(st);
+    str(st, "icmp slt i64 ");
+    operand(st, 1, ck, cv, cr);
+    str(st, ", 0\n");
+    trap_if(st, negative);
+    let bytes = checked(st, 2, ck, cv, cr, true, stride(st, element), 0 - 1);
+    let p = start(st);
+    str(st, "call ptr @cancho_arena_alloc(ptr %ar");
+    nat(st, arena);
+    str(st, ", i64 ");
+    temp(st, bytes);
+    str(st, ")\n");
+    let n = label(st);
+    let keep = st[49];
+    st[49] = 2;
+    str(st, "  %fc");
+    nat(st, n);
+    str(st, " = alloca i64\n");
+    st[49] = keep;
+    str(st, "  store i64 0, ptr %fc");
+    nat(st, n);
+    str(st, "\n  br label %fh");
+    nat(st, n);
+    str(st, "\nfh");
+    nat(st, n);
+    str(st, ":\n");
+    let i = start(st);
+    str(st, "load i64, ptr %fc");
+    nat(st, n);
+    str(st, "\n");
+    let more = start(st);
+    str(st, "icmp slt i64 ");
+    temp(st, i);
+    str(st, ", ");
+    operand(st, 1, ck, cv, cr);
+    str(st, "\n  br i1 ");
+    temp(st, more);
+    str(st, ", label %fb");
+    nat(st, n);
+    str(st, ", label %fe");
+    nat(st, n);
+    str(st, "\nfb");
+    nat(st, n);
+    str(st, ":\n");
+    let offset = start(st);
+    str(st, "mul i64 ");
+    temp(st, i);
+    str(st, ", ");
+    nat(st, stride(st, element));
+    str(st, "\n");
+    let at = start(st);
+    str(st, "getelementptr i8, ptr ");
+    temp(st, p);
+    str(st, ", i64 ");
+    temp(st, offset);
+    str(st, "\n");
+    store_through(st, element, fk, fv, fr, at);
+    let next = start(st);
+    str(st, "add i64 ");
+    temp(st, i);
+    str(st, ", 1\n  store i64 ");
+    temp(st, next);
+    str(st, ", ptr %fc");
+    nat(st, n);
+    str(st, "\n  br label %fh");
+    nat(st, n);
+    str(st, "\nfe");
+    nat(st, n);
+    str(st, ":\n");
+    return p;
+}
+
 // ---------------------------------------------------------------------------- match ---
 //
 // A `match` is a chain of tests of the tag, flat: arm `n` is `ma<n>` when the tag is its variant and

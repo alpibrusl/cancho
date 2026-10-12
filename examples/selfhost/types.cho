@@ -253,6 +253,23 @@ pub fn element_of[&s](st: &!s [int], ty: int) -> [] int {
     return 0;
 }
 
+// Does a reference in the type point into a block, a `borrow` or an arena? Nothing of the sort may
+// leave the function.
+pub fn mentions_block[&s](st: &!s [int], ty: int) -> [] bool {
+    var t = resolve_type(st, ty);
+    while is_ref(st, t) || is_slice(st, t) {
+        if is_slice(st, t) {
+            t = slice_element(st, t);
+        } else {
+            if is_block(ref_region(st, t)) {
+                return true;
+            }
+            t = ref_inner(st, t);
+        }
+    }
+    return false;
+}
+
 // ------------------------------------------------------------- regions ---
 
 pub fn is_var(area: int) -> [] bool {
