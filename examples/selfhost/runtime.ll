@@ -157,6 +157,31 @@ dupfail:
   ret i64 %n2
 }
 
+; fs_read (0) and fs_write (1) in one: the path checked, opened, one read or write, closed; the count, or -1.
+define i64 @cancho_fs_once(ptr %src, i64 %len, ptr %prefix, i64 %plen, ptr %p, i64 %n, i64 %writing) {
+entry:
+  %mode = icmp eq i64 %writing, 1
+  %kind = select i1 %mode, i64 1, i64 0
+  %fd = call i64 @cancho_open(ptr %src, i64 %len, ptr %prefix, i64 %plen, i64 %kind)
+  %bad = icmp slt i64 %fd, 0
+  br i1 %bad, label %fail, label %go
+fail:
+  ret i64 -1
+go:
+  %f32 = trunc i64 %fd to i32
+  br i1 %mode, label %w, label %r
+w:
+  %wn = call i64 @write(i32 %f32, ptr %p, i64 %n)
+  br label %done
+r:
+  %rn = call i64 @read(i32 %f32, ptr %p, i64 %n)
+  br label %done
+done:
+  %moved = phi i64 [ %wn, %w ], [ %rn, %r ]
+  call i32 @close(i32 %f32)
+  ret i64 %moved
+}
+
 ; write(2) and read(2) on a descriptor: the count, or minus the errno.
 define i64 @cancho_fd_write(i64 %fd, ptr %p, i64 %n) {
 entry:

@@ -447,6 +447,38 @@ fn destructure_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] int {
     return 0;
 }
 
+// `let (a, b) = value;`: the parts of a tuple, each a binding of its own, in compile mode only.
+fn destructure_tuple_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] int {
+    let from = ast.nstart(st, id);
+    let to = ast.nend(st, id);
+    let v = exprs.expr(st, text, ast.get(st, id, 5));
+    if !ast.ok(st) {
+        return 0;
+    }
+    if !emit.on(st) || !types.is_tuple(st, v.ty) {
+        exprs.skip(st, from, to);
+        return 0;
+    }
+    var q = ast.get(st, id, 4) + 1;
+    var k = 0;
+    while k < types.tuple_size(st, v.ty) && ast.ok(st) {
+        let name = q;
+        q = q + 1;
+        if pass1.is_code(st, q, lc.Tok::Comma) {
+            q = q + 1;
+        }
+        let part = types.tuple_part(st, v.ty, k);
+        if !pat_wild(st, name) {
+            scope.bind(st, name, part, false, from, to);
+            if ast.ok(st) && !types.is_erased(st, part) {
+                emit.store(st, part, false, 0, emit.extract_field(st, v.ty, v.reg, k), st[39] - 1);
+            }
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
 // `region a { .. }`: an arena's region, a block with nothing frozen.
 fn region_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
     let arena = scope.open_block(st, ast.get(st, id, 4));
@@ -537,7 +569,7 @@ fn writes_stmt[&s](st: &!s [int], id: int) -> [] bool {
         let place = ast.get(st, id, 4);
         return ast.is_kind(st, place, kinds.NK::EName) || ast.is_kind(st, place, kinds.NK::EIndex) || ast.is_kind(st, place, kinds.NK::EUnary) || ast.is_kind(st, place, kinds.NK::EField);
     }
-    return ast.is_kind(st, id, kinds.NK::SMatch) || ast.is_kind(st, id, kinds.NK::SBorrow) || ast.is_kind(st, id, kinds.NK::SRegion) || ast.is_kind(st, id, kinds.NK::SDestructure) || ast.is_kind(st, id, kinds.NK::SLet) || ast.is_kind(st, id, kinds.NK::SExpr) || ast.is_kind(st, id, kinds.NK::SReturn) || ast.is_kind(st, id, kinds.NK::SIf) || ast.is_kind(st, id, kinds.NK::SWhile);
+    return ast.is_kind(st, id, kinds.NK::SMatch) || ast.is_kind(st, id, kinds.NK::SDestructureTuple) || ast.is_kind(st, id, kinds.NK::SBorrow) || ast.is_kind(st, id, kinds.NK::SRegion) || ast.is_kind(st, id, kinds.NK::SDestructure) || ast.is_kind(st, id, kinds.NK::SLet) || ast.is_kind(st, id, kinds.NK::SExpr) || ast.is_kind(st, id, kinds.NK::SReturn) || ast.is_kind(st, id, kinds.NK::SIf) || ast.is_kind(st, id, kinds.NK::SWhile);
 }
 
 fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
@@ -734,6 +766,9 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
     if ast.is_kind(st, id, kinds.NK::SDestructure) {
         return destructure_stmt(st, text, id);
     }
+    if ast.is_kind(st, id, kinds.NK::SDestructureTuple) {
+        return destructure_tuple_stmt(st, text, id);
+    }
     if ast.is_kind(st, id, kinds.NK::SRegion) {
         return region_stmt(st, text, id, ret);
     }
@@ -841,12 +876,12 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
     let ret = scope.lower_type(st, text, ast.get(st, fn_item, 10), st[28], 0 - 1);
     if emit.on(st) {
         // Code is written for functions of whole numbers and booleans, which are not generic.
-        var ok = ret == 1 || ret == 2 || ret == 5 || scope.aggregate_codable(st, ret) || scope.slice_codable(st, ret);
+        var ok = ret == 1 || ret == 2 || ret == 5 || scope.aggregate_codable(st, ret) || scope.slice_codable(st, ret) || types.is_erased(st, ret);
         var k = 0;
         var p = ast.get(st, fn_item, 7);
         while p >= 0 {
             let pt = scope.lower_type(st, text, ast.get(st, p, 5), st[28], 0 - 1);
-            ok = ok && (pt == 1 || pt == 2 || pt == 5 || types.is_prelude(st, pt) || types.is_ref(st, pt) || scope.aggregate_codable(st, pt));
+            ok = ok && (pt == 1 || pt == 2 || pt == 5 || types.is_prelude(st, pt) || types.is_ref(st, pt) || scope.aggregate_codable(st, pt) || types.is_erased(st, pt));
             p = ast.next(st, p);
             k = k + 1;
         }
