@@ -288,6 +288,13 @@ before it): 69 non-trap jumps in all (`ecdh.o`) and every one read. None tests a
 - **`ecdsa_sign.finish`**: `is_zero` of r and of s (public once sent) and `store`'s loop; `sign`: the lengths, the attempt counter and the codes
   of public checks.
 
+*Re-read after the review's fixes (commit 3b71b529, `ecdh_timing.cho` and `ecdsa_sign_timing.cho` again):* `comb_multiply` now
+has five non-trap jumps: the counters of its three loops (`cmp $0x8`, `$0x14`, `$0xf0`, then the position), and the overlap test,
+now `test %sil,%sil` after the same two `setb` and an `and`. The dummy's selection, `eq_mask(j + 1, mag) | eq_mask(j, 0) &
+eq_mask(mag, 0)`, compiled to `lea`/`and`/`or`/`sar`, no branch; the one `test %cl,%cl; jne` beside it goes to `ud2` (a hoisted
+overflow check, `seto`). The length checks added to `base_multiply`, `point_multiply` and `finish` compare lengths. `finish` and
+`sign` otherwise as above; `sign`'s new `test $K,%r9; jne` is the wipe loop's remainder (it now zeroes all of `work`).
+
 ### 8.3 Timing: dudect on `gram`
 
 **The runs, raw:** `tests/evidence/p256/raw_public_key.txt`, `raw_shared.txt` and `raw_sign.txt`, each with its header: the commit
