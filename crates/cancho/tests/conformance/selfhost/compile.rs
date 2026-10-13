@@ -307,6 +307,22 @@ const DEFERS: &[&str] = &[
     "res struct T { fd: int }\nfn open(n: int) -> [] T { return T { fd: n }; }\nfn close(t: T) -> [] int { let T { fd } = t; return fd; }\nfn take(flag: bool) -> [] int {\n    let t = open(7);\n    defer close(t);\n    if flag { return 2; }\n    return 4;\n}\nfn run() -> [] int { return take(true) * 10 + take(false); }",
 ];
 
+/// Words: `load_le64`, `byte_mask64`, the bit counts, `mul_wide`, `add_carry`, `sub_borrow`, `value_barrier`,
+/// `copy_within` and `trap`, with the traps their bounds make.
+const WORDS: &[&str] = &[
+    "edition 9;\nfn run() -> [] int { region a { let t = alloc_slice[a](16, byte_of(0)); t[3] = byte_of(1); t[9] = byte_of(255); return load_le64(t, 0) % 1000 + load_le64(t, 8) % 997; } }",
+    "edition 9;\nfn run() -> [] int { region a { let t = alloc_slice[a](8, byte_of(0)); return load_le64(t, 1); } }",
+    "edition 9;\nfn run() -> [] int { region a { let t = alloc_slice[a](128, byte_of(5)); t[3] = byte_of(9); t[64] = byte_of(9); t[100] = byte_of(9); let m = byte_mask64(t, 0, byte_of(9)); let n = byte_mask64(t, 64, byte_of(9)); return popcount(m) * 100 + trailing_zeros(m) * 10 + popcount(n) + leading_zeros(n) % 7; } }",
+    "edition 9;\nfn run() -> [] int { region a { let t = alloc_slice[a](63, byte_of(5)); return byte_mask64(t, 0, byte_of(5)); } }",
+    "edition 9;\nfn run() -> [] int { return trailing_zeros(0) + leading_zeros(0) + popcount(-1) + trailing_zeros(48) + leading_zeros(1); }",
+    "edition 9;\nfn run() -> [] int { let (h, l) = mul_wide(-1, -1); let (h2, l2) = mul_wide(1000003, 99991); return h % 100 + l % 100 + h2 + l2 % 1000; }",
+    "edition 9;\nfn run() -> [] int { let (s, c) = add_carry(-1, 1, 0); let (s2, c2) = add_carry(-1, -1, 1); let (d, b) = sub_borrow(0, 1, 0); let (d2, b2) = sub_borrow(5, 3, 1); return c * 1000 + c2 * 100 + b * 10 + b2 + s % 7 + s2 % 11 + d % 13 + d2; }",
+    "edition 9;\nfn run() -> [] int { return value_barrier(42) + value_barrier((3 ^ 5) - 1 >> 63); }",
+    "edition 9;\nfn run() -> [] int { region a { let t = alloc_slice[a](10, byte_of(0)); var i = 0; while i < 10 { t[i] = byte_of(i + 1); i = i + 1; } copy_within(t, 2, 0, 5); copy_within(t, 0, 3, 7); return int_of(t[0]) * 1000 + int_of(t[4]) * 100 + int_of(t[9]); } }",
+    "edition 9;\nfn run() -> [] int { region a { let t = alloc_slice[a](10, byte_of(0)); copy_within(t, 6, 0, 5); return 0; } }",
+    "edition 9;\nfn run() -> [] int { if 1 < 2 { trap(); } return 3; }",
+];
+
 /// Programs with a `main` of their own, which the cancho compiler calls as the C `main` does.
 const WITH_MAIN: &[&str] = &[
     "fn finish(w: World) -> [] int { release(w); return 3; }\nfn main(world: World) -> [] int { return finish(world); }",
@@ -644,8 +660,14 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
     {
         jobs.push(((*program).to_owned(), (*program).to_owned()));
     }
-    for program in
-        STRUCTS.iter().chain(ENUMS).chain(DEFERS).chain(GENERICS).chain(FLOATS).chain(ARENAS)
+    for program in STRUCTS
+        .iter()
+        .chain(ENUMS)
+        .chain(DEFERS)
+        .chain(WORDS)
+        .chain(GENERICS)
+        .chain(FLOATS)
+        .chain(ARENAS)
     {
         jobs.push((with_main(program), with_main(program)));
     }

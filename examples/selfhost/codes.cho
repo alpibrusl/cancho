@@ -226,3 +226,43 @@ pub fn net_code[&x](text: &x [byte], from: int, to: int) -> [] int {
     }
     return 0;
 }
+
+// The builtins on words, which `exprs.builtin_call` writes through `wordcode.cho`: 70 `trap`, 71 `copy_within`,
+// 72 `value_barrier`, 73 `mul_wide`, 74 `add_carry`, 75 `sub_borrow`, 76 `load_le64`, 77 `byte_mask64`,
+// 78 `trailing_zeros`, 79 `leading_zeros`, 80 `popcount`; 0 for another name.
+pub fn word_code[&x](text: &x [byte], from: int, to: int) -> [] int {
+    if lc.spells(text, from, to, "trap") {
+        return 70;
+    }
+    if lc.spells(text, from, to, "copy_within") {
+        return 71;
+    }
+    if lc.spells(text, from, to, "value_barrier") {
+        return 72;
+    }
+    if lc.spells(text, from, to, "mul_wide") {
+        return 73;
+    }
+    if lc.spells(text, from, to, "add_carry") {
+        return 74;
+    }
+    if lc.spells(text, from, to, "sub_borrow") {
+        return 75;
+    }
+    if lc.spells(text, from, to, "load_le64") {
+        return 76;
+    }
+    if lc.spells(text, from, to, "byte_mask64") {
+        return 77;
+    }
+    if lc.spells(text, from, to, "trailing_zeros") {
+        return 78;
+    }
+    if lc.spells(text, from, to, "leading_zeros") {
+        return 79;
+    }
+    if lc.spells(text, from, to, "popcount") {
+        return 80;
+    }
+    return 0;
+}
